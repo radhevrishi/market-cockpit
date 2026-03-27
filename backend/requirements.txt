@@ -1,0 +1,41 @@
+# Core
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+sqlalchemy==2.0.31
+aiosqlite==0.20.0
+greenlet>=3.0.0
+pydantic==2.8.2
+pydantic-settings==2.3.4
+
+# Auth
+python-jose[cryptography]==3.3.0
+bcrypt>=4.0.0
+python-multipart==0.0.9
+
+# HTTP / feeds
+httpx==0.27.0
+aiohttp==3.9.5
+feedparser==6.0.11
+beautifulsoup4==4.12.3
+lxml==5.2.2
+
+# Market data
+yfinance==0.2.43
+
+# AI (optional — works without API key)
+anthropic==0.30.0
+
+# Utilities
+schedule==1.2.2
+python-dotenv==1.0.1
+
+# PostgreSQL (required for production on Render/Neon)
+asyncpg==0.29.0
+
+# Optional — uncomment if needed
+# psycopg2-binary==2.9.9
+# redis==5.0.7
+# celery==5.4.0
+# alembic==1.13.2
+# sentry-sdk[fastapi]==2.10.0
+# prometheus-fastapi-instrumentator==7.0.0

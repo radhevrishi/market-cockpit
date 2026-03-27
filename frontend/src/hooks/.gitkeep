@@ -1,0 +1,7 @@
+# Custom hooks directory
+# Examples to add:
+# - useApi.ts
+# - usePortfolio.ts
+# - useNews.ts
+# - useWebSocket.ts
+# - useLocalStorage.ts

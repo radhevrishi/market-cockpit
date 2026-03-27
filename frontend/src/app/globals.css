@@ -1,0 +1,82 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── CSS Custom Properties ───────────────────────────────────────────────── */
+:root {
+  --background: #0A0E1A;
+  --foreground: #F5F7FA;
+  --card: #111B35;
+  --border: #1E2D45;
+  --accent: #0F7ABF;
+}
+
+/* ─── Base ────────────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background-color: #0A0E1A;
+  color: #F5F7FA;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── Scrollbar ───────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #0A0E1A; }
+::-webkit-scrollbar-thumb { background: #1E2D45; border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: #2D3E5F; }
+* { scrollbar-width: thin; scrollbar-color: #1E2D45 #0A0E1A; }
+
+/* ─── Components ──────────────────────────────────────────────────────────── */
+@layer components {
+  .card {
+    @apply bg-[#111B35] rounded-xl border border-[#1E2D45];
+  }
+  .card-hover {
+    @apply card hover:border-[#0F7ABF]/40 transition-colors cursor-pointer;
+  }
+  .badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center font-medium rounded-lg transition-colors;
+  }
+  .btn-primary {
+    @apply bg-[#0F7ABF] hover:bg-[#0E6DAD] text-white;
+  }
+  .btn-secondary {
+    @apply bg-[#1A2847] hover:bg-[#243355] text-[#F5F7FA] border border-[#1E2D45];
+  }
+  .input {
+    @apply bg-[#0A0E1A] border border-[#1E2D45] rounded-lg px-3 py-2 text-[#F5F7FA] placeholder-[#6B7280] focus:outline-none focus:border-[#0F7ABF];
+  }
+  .gradient-text {
+    @apply bg-gradient-to-r from-[#0F7ABF] to-[#06B6D4] bg-clip-text text-transparent;
+  }
+}
+
+/* ─── Animations ──────────────────────────────────────────────────────────── */
+@keyframes shimmer {
+  0%   { background-position: -1000px 0; }
+  100% { background-position:  1000px 0; }
+}
+.animate-shimmer {
+  background: linear-gradient(90deg, #1E2D45 0%, #243355 50%, #1E2D45 100%);
+  background-size: 1000px 100%;
+  animation: shimmer 2s infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+::selection { background-color: rgba(15,122,191,0.3); color: #F5F7FA; }

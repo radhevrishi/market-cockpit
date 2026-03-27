@@ -1,0 +1,43 @@
+# Environment & secrets
+.env
+.env.local
+.env.production
+.env.*.local
+backend/.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.egg
+
+# SQLite database
+*.db
+*.sqlite3
+
+# Node
+node_modules/
+.next/
+out/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+backend.log
+frontend.log
+
+# Docker
+docker-compose.override.yml

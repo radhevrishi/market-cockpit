@@ -1,0 +1,8 @@
+# Components directory - ready for reusable UI components
+# Examples to add:
+# - NewsCard.tsx
+# - PositionCard.tsx
+# - PortfolioSummary.tsx
+# - BriefCard.tsx
+# - FilterPanel.tsx
+# - index.ts (barrel export)
