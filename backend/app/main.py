@@ -121,6 +121,12 @@ async def health_check():
     return status
 
 
+# Alias so the frontend can reach health via the /api/v1 proxy
+@app.get("/api/v1/health", tags=["health"])
+async def health_check_api():
+    return await health_check()
+
+
 @app.get("/", tags=["root"])
 async def root():
     return {"message": "Market Cockpit API", "docs": "/docs", "health": "/health"}
