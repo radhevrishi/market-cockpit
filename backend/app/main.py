@@ -53,6 +53,26 @@ async def _seed_initial_data():
             if deleted:
                 await db.commit()
                 logger.info(f"Cleaned up {deleted} IBEF-scraped articles with broken URLs")
+
+            # Rename remaining "IBEF" articles to proper source names based on URL
+            renames = [
+                ("economictimes.indiatimes.com/industry", "ET Industry"),
+                ("economictimes.indiatimes.com", "ET Markets"),
+                ("business-standard.com/rss/economy", "BS Economy"),
+                ("business-standard.com", "Business Standard"),
+                ("livemint.com", "LiveMint"),
+                ("moneycontrol.com", "MoneyControl"),
+            ]
+            total_renamed = 0
+            for url_pattern, new_name in renames:
+                r = await db.execute(
+                    text("UPDATE news_articles SET source_name = :new_name WHERE source_name = 'IBEF' AND source_url LIKE :pattern"),
+                    {"new_name": new_name, "pattern": f"%{url_pattern}%"},
+                )
+                total_renamed += r.rowcount
+            if total_renamed:
+                await db.commit()
+                logger.info(f"Renamed {total_renamed} IBEF articles to correct source names")
     except Exception as e:
         logger.warning(f"IBEF cleanup failed (non-fatal): {e}")
 
@@ -132,6 +152,10 @@ async def health_check():
     # Return 'present' if key is set and not a placeholder, 'not_configured' otherwise
     ai_status = "present" if (settings.anthropic_api_key and settings.anthropic_api_key != "your-anthropic-api-key-here" and len(settings.anthropic_api_key.strip()) > 0) else "not_configured"
     status["services"]["ai"] = ai_status
+
+    # Check Alpha Vantage key
+    av_status = "present" if (settings.alpha_vantage_key and settings.alpha_vantage_key != "your-alpha-vantage-key-here" and len(settings.alpha_vantage_key.strip()) > 0) else "not_configured"
+    status["services"]["alpha_vantage"] = av_status
 
     return status
 

@@ -2,10 +2,13 @@
 FastAPI router for market data operations.
 """
 
+import logging
 from fastapi import APIRouter, HTTPException, status, Query
 from pydantic import BaseModel
 
 from app.services.market_data import MarketDataService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/market", tags=["market"])
 
@@ -51,8 +54,13 @@ async def get_indices():
     """Get live prices for major market indices."""
     try:
         from app.services.market_data import get_market_indices
-        return await get_market_indices()
-    except Exception:
+        result = await get_market_indices()
+        # Log whether we got live data or fallback
+        live_count = sum(1 for r in result if r.get("change_pct", 0) != 0.0)
+        logger.info(f"Market indices: {live_count}/{len(result)} have live price changes")
+        return result
+    except Exception as e:
+        logger.error(f"Market indices endpoint failed: {e}")
         # Return mock data if fetch fails
         return [
             {"symbol": "NIFTY 50",   "price": 23500, "change_pct": 0.0, "up": True},

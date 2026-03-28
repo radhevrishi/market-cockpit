@@ -17,6 +17,7 @@ interface AiStatus {
 interface HealthResponse {
   services?: {
     ai?: 'configured' | 'not_configured' | 'present';
+    alpha_vantage?: 'configured' | 'not_configured' | 'present';
   };
 }
 
@@ -387,24 +388,25 @@ function StatusBadgeWithBackend({ status, isLoading, label }: { status: 'present
 
 function ApiKeysSection() {
   const [apiKeyStatus, setApiKeyStatus] = useState<'present' | 'not_configured' | 'offline' | 'checking'>('checking');
+  const [avKeyStatus, setAvKeyStatus] = useState<'present' | 'not_configured' | 'offline' | 'checking'>('checking');
   const [isLoadingHealth, setIsLoadingHealth] = useState(false);
+
+  const parseHealth = (health: HealthResponse) => {
+    const aiStatus = health.services?.ai;
+    setApiKeyStatus(aiStatus === 'present' || aiStatus === 'configured' ? 'present' : 'not_configured');
+    const avStatus = health.services?.alpha_vantage;
+    setAvKeyStatus(avStatus === 'present' || avStatus === 'configured' ? 'present' : 'not_configured');
+  };
 
   useEffect(() => {
     const checkHealth = async () => {
       setIsLoadingHealth(true);
       try {
         const { data } = await api.get('/health');
-        const health = data as HealthResponse;
-        const aiStatus = health.services?.ai;
-        if (aiStatus === 'present' || aiStatus === 'configured') {
-          setApiKeyStatus('present');
-        } else if (aiStatus === 'not_configured') {
-          setApiKeyStatus('not_configured');
-        } else {
-          setApiKeyStatus('not_configured');
-        }
+        parseHealth(data as HealthResponse);
       } catch {
         setApiKeyStatus('offline');
+        setAvKeyStatus('offline');
       } finally {
         setIsLoadingHealth(false);
       }
@@ -417,19 +419,17 @@ function ApiKeysSection() {
     setIsLoadingHealth(true);
     try {
       const { data } = await api.get('/health');
+      parseHealth(data as HealthResponse);
       const health = data as HealthResponse;
       const aiStatus = health.services?.ai;
       if (aiStatus === 'present' || aiStatus === 'configured') {
-        setApiKeyStatus('present');
-        toast.success('API key is present!');
-      } else if (aiStatus === 'not_configured') {
-        setApiKeyStatus('not_configured');
-        toast.error('API key not set in .env');
+        toast.success('API keys checked!');
       } else {
-        setApiKeyStatus('not_configured');
+        toast.error('API key not set in .env');
       }
     } catch {
       setApiKeyStatus('offline');
+      setAvKeyStatus('offline');
       toast.error('Backend offline');
     } finally {
       setIsLoadingHealth(false);
@@ -447,7 +447,7 @@ function ApiKeysSection() {
         </div>
       </Row>
       <Row label="Alpha Vantage key" description="Enhanced fundamental data (optional)">
-        <span className="text-[#4A5B6C] text-xs">Not set</span>
+        <StatusBadgeWithBackend status={avKeyStatus} isLoading={isLoadingHealth} />
       </Row>
 
       <div className="mt-4 bg-[#0D1B2E]/60 border border-[#2A3B4C] rounded-xl p-4">

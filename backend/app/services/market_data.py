@@ -448,11 +448,12 @@ async def get_market_indices() -> list[dict]:
             # Use yf.download for batch efficiency (much less rate-limited than .info)
             try:
                 import pandas as pd
-                df = yf.download(symbols, period="2d", group_by="ticker", progress=False, threads=True)
+                # Use 5d to ensure we get at least 2 trading days even over weekends/holidays
+                df = yf.download(symbols, period="5d", group_by="ticker", progress=False, threads=True)
 
                 # Check if download actually returned valid data
                 if df is not None and not df.empty and df.isnull().sum().sum() < len(df) * len(df.columns):
-                    logger.debug(f"yf.download returned {len(df)} rows")
+                    logger.info(f"yf.download returned {len(df)} rows, columns: {list(df.columns[:5])}...")
                     for sym, name in indices.items():
                         try:
                             # Handle both single-ticker (flat columns) and multi-ticker (MultiIndex columns)
@@ -493,15 +494,17 @@ async def get_market_indices() -> list[dict]:
                                         }
                                         logger.debug(f"Index {sym} ({name}): price={price}, change_pct={change_pct:.2f}%")
                         except Exception as e:
-                            logger.debug(f"Failed to parse index {sym}: {e}")
+                            logger.warning(f"Failed to parse index {sym}: {e}")
                             continue
+                else:
+                    logger.warning(f"yf.download returned empty/invalid data: empty={df is None or (hasattr(df, 'empty') and df.empty)}")
             except Exception as e:
-                logger.warning(f"yf.download failed for indices: {e}")
+                logger.error(f"yf.download failed for indices: {e}", exc_info=True)
 
             # No .info fallback — missing indices use the hardcoded fallback values.
             missing_symbols = [sym for sym in indices.keys() if sym not in result]
             if missing_symbols:
-                logger.debug(f"{len(missing_symbols)} indices missing from yf.download; will use fallback values")
+                logger.info(f"{len(missing_symbols)} indices missing from yf.download: {missing_symbols}")
 
             return result
 
@@ -511,7 +514,7 @@ async def get_market_indices() -> list[dict]:
 
         # Consider success if we got at least half of the indices
         if len(live_results) >= len(indices) // 2:
-            logger.debug(f"Got {len(live_results)}/{len(indices)} live indices, using them")
+            logger.info(f"Got {len(live_results)}/{len(indices)} live indices")
             fallback_map = {f["symbol"]: f for f in _INDICES_FALLBACK}
             final = []
             for sym, name in indices.items():
