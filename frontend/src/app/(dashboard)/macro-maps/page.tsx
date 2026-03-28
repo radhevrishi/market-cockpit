@@ -1,238 +1,587 @@
 'use client';
 
-import { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
-const MacroMapsPage = () => {
-  const [timeframe, setTimeframe] = useState('1D');
-  const [assetClass, setAssetClass] = useState('indices');
+interface MarketData {
+  symbol: string;
+  name: string;
+  region: string;
+  flag: string;
+  value: number;
+  change: number;
+  changePercent: number;
+  previousClose: number;
+}
 
-  const indicesData = [
-    // Americas
-    { region: 'Americas', name: 'S&P 500', flag: '🇺🇸', value: 4783.45, change: 1.23 },
-    { region: 'Americas', name: 'NASDAQ', flag: '🇺🇸', value: 15312.50, change: 2.15 },
-    { region: 'Americas', name: 'Dow Jones', flag: '🇺🇸', value: 37490.27, change: 0.85 },
-    { region: 'Americas', name: 'TSX', flag: '🇨🇦', value: 22145.63, change: -0.42 },
-    { region: 'Americas', name: 'Bovespa', flag: '🇧🇷', value: 131256.87, change: 1.87 },
-    { region: 'Americas', name: 'IPC', flag: '🇲🇽', value: 56892.34, change: 0.56 },
-    { region: 'Americas', name: 'MERVAL', flag: '🇦🇷', value: 2156789.45, change: 3.42 },
+interface ApiResponse {
+  indices: MarketData[];
+  currencies: MarketData[];
+  commodities: MarketData[];
+  bonds: MarketData[];
+  updatedAt: string;
+}
 
-    // Europe
-    { region: 'Europe', name: 'FTSE 100', flag: '🇬🇧', value: 7856.42, change: 0.34 },
-    { region: 'Europe', name: 'DAX', flag: '🇩🇪', value: 18234.56, change: 1.56 },
-    { region: 'Europe', name: 'CAC 40', flag: '🇫🇷', value: 7612.89, change: 0.92 },
-    { region: 'Europe', name: 'EURO STOXX', flag: '🇪🇺', value: 4523.17, change: 1.04 },
-    { region: 'Europe', name: 'IBEX 35', flag: '🇪🇸', value: 11234.45, change: 0.67 },
-    { region: 'Europe', name: 'SMI', flag: '🇨🇭', value: 11892.34, change: -0.23 },
+type AssetClass = 'indices' | 'currencies' | 'commodities' | 'bonds';
 
-    // Asia-Pacific
-    { region: 'Asia-Pacific', name: 'Nikkei 225', flag: '🇯🇵', value: 33512.45, change: 2.34 },
-    { region: 'Asia-Pacific', name: 'Hang Seng', flag: '🇭🇰', value: 17234.56, change: 1.12 },
-    { region: 'Asia-Pacific', name: 'Nifty 50', flag: '🇮🇳', value: 21456.78, change: 0.89 },
-    { region: 'Asia-Pacific', name: 'SENSEX', flag: '🇮🇳', value: 72145.34, change: 0.92 },
-    { region: 'Asia-Pacific', name: 'ASX 200', flag: '🇦🇺', value: 7856.23, change: 0.45 },
-    { region: 'Asia-Pacific', name: 'STI', flag: '🇸🇬', value: 3345.67, change: -0.12 },
-    { region: 'Asia-Pacific', name: 'KOSPI', flag: '🇰🇷', value: 2712.45, change: 1.23 },
-  ];
+const THEME = {
+  background: '#0A0E1A',
+  card: '#111B35',
+  cardHover: '#162040',
+  border: '#1A2840',
+  textPrimary: '#F5F7FA',
+  textSecondary: '#8A95A3',
+  accent: '#0F7ABF',
+  green: '#10B981',
+  red: '#EF4444',
+};
 
-  const currenciesData = [
-    { region: 'Global', name: 'EUR/USD', flag: '🇪🇺', value: 1.0856, change: 0.34 },
-    { region: 'Global', name: 'GBP/USD', flag: '🇬🇧', value: 1.2734, change: 0.56 },
-    { region: 'Global', name: 'USD/JPY', flag: '🇯🇵', value: 148.56, change: -0.42 },
-    { region: 'Global', name: 'USD/INR', flag: '🇮🇳', value: 83.45, change: 0.12 },
-    { region: 'Global', name: 'USD/CHF', flag: '🇨🇭', value: 0.8912, change: -0.18 },
-    { region: 'Global', name: 'AUD/USD', flag: '🇦🇺', value: 0.6534, change: 0.23 },
-    { region: 'Global', name: 'USD/CAD', flag: '🇨🇦', value: 1.3567, change: 0.34 },
-  ];
+const ASSET_CLASSES: { key: AssetClass; label: string }[] = [
+  { key: 'indices', label: 'Indices' },
+  { key: 'currencies', label: 'Currencies' },
+  { key: 'commodities', label: 'Commodities' },
+  { key: 'bonds', label: 'Bonds' },
+];
 
-  const commoditiesData = [
-    { region: 'Global', name: 'Gold (USD/oz)', flag: '⭐', value: 2045.50, change: 1.23 },
-    { region: 'Global', name: 'Silver (USD/oz)', flag: '⭐', value: 24.35, change: 2.15 },
-    { region: 'Global', name: 'Crude Oil ($/bbl)', flag: '⭐', value: 82.45, change: -1.32 },
-    { region: 'Global', name: 'Natural Gas ($/MMBtu)', flag: '⭐', value: 2.456, change: 0.45 },
-    { region: 'Global', name: 'Copper (USD/lb)', flag: '⭐', value: 3.87, change: 1.45 },
-    { region: 'Global', name: 'Wheat (USD/bu)', flag: '⭐', value: 5.32, change: -0.67 },
-    { region: 'Global', name: 'Coffee (¢/lb)', flag: '⭐', value: 234.50, change: 3.21 },
-  ];
+export default function MacroMapsPage() {
+  const [data, setData] = useState<ApiResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<AssetClass>('indices');
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [isFetching, setIsFetching] = useState(false);
 
-  const bondsData = [
-    { region: 'Global', name: 'US 10Y Yield', flag: '🇺🇸', value: 4.25, change: 0.12 },
-    { region: 'Global', name: 'US 2Y Yield', flag: '🇺🇸', value: 5.12, change: 0.08 },
-    { region: 'Global', name: 'Germany 10Y', flag: '🇩🇪', value: 2.45, change: 0.05 },
-    { region: 'Global', name: 'UK 10Y', flag: '🇬🇧', value: 3.98, change: 0.14 },
-    { region: 'Global', name: 'Japan 10Y', flag: '🇯🇵', value: 0.98, change: 0.02 },
-    { region: 'Global', name: 'India 10Y', flag: '🇮🇳', value: 6.85, change: 0.18 },
-    { region: 'Global', name: 'Australia 10Y', flag: '🇦🇺', value: 3.92, change: 0.09 },
-  ];
-
-  const getDataByAssetClass = () => {
-    switch (assetClass) {
-      case 'currencies':
-        return currenciesData;
-      case 'commodities':
-        return commoditiesData;
-      case 'bonds':
-        return bondsData;
-      default:
-        return indicesData;
-    }
-  };
-
-  const data = getDataByAssetClass();
-
-  const getChangeColor = (change: number) => {
-    return change >= 0 ? '#10B981' : '#EF4444';
-  };
-
-  const groupByRegion = (data: typeof indicesData) => {
-    const grouped: { [key: string]: typeof indicesData } = {};
-    data.forEach((item) => {
-      if (!grouped[item.region]) {
-        grouped[item.region] = [];
+  const fetchData = useCallback(async () => {
+    try {
+      setIsFetching(true);
+      const response = await fetch('/api/market/macro');
+      if (!response.ok) {
+        throw new Error(`API error: ${response.statusText}`);
       }
-      grouped[item.region].push(item);
+      const jsonData: ApiResponse = await response.json();
+      setData(jsonData);
+      setLastUpdate(new Date());
+      setError(null);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch data';
+      setError(errorMessage);
+      console.error('Error fetching macro data:', err);
+    } finally {
+      setIsFetching(false);
+      setLoading(false);
+    }
+  }, []);
+
+  // Initial fetch
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  // Auto-refresh every 60 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchData();
+    }, 60000);
+
+    return () => clearInterval(interval);
+  }, [fetchData]);
+
+  const groupByRegion = (assets: MarketData[]) => {
+    const grouped: { [region: string]: MarketData[] } = {};
+    assets.forEach((asset) => {
+      if (!grouped[asset.region]) {
+        grouped[asset.region] = [];
+      }
+      grouped[asset.region].push(asset);
     });
     return grouped;
   };
 
-  const theme = {
-    background: '#0A0E1A',
-    cards: '#111B35',
-    border: '#1A2840',
-    textPrimary: '#F5F7FA',
-    textSecondary: '#8A95A3',
-    green: '#10B981',
-    red: '#EF4444',
-    accent: '#0F7ABF',
+  const calculateSummary = () => {
+    if (!data) return null;
+
+    const allData = [
+      ...data.indices,
+      ...data.currencies,
+      ...data.commodities,
+      ...data.bonds,
+    ];
+
+    const positiveCount = allData.filter((item) => item.change > 0).length;
+    const totalCount = allData.length;
+
+    return positiveCount > totalCount / 2 ? 'up' : 'down';
   };
 
-  const regions = groupByRegion(data);
+  const formatTime = (date: Date) => {
+    return date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  };
+
+  if (loading && !data) {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          backgroundColor: THEME.background,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <div style={{ textAlign: 'center' }}>
+          <div
+            style={{
+              width: '40px',
+              height: '40px',
+              border: `3px solid ${THEME.border}`,
+              borderTop: `3px solid ${THEME.accent}`,
+              borderRadius: '50%',
+              margin: '0 auto 16px',
+              animation: 'spin 1s linear infinite',
+            }}
+          />
+          <p style={{ color: THEME.textSecondary, marginTop: '16px' }}>
+            Loading market data...
+          </p>
+          <style>{`
+            @keyframes spin {
+              to { transform: rotate(360deg); }
+            }
+          `}</style>
+        </div>
+      </div>
+    );
+  }
+
+  const activeData = data ? data[activeTab] : [];
+  const groupedData = groupByRegion(activeData);
+  const summary = calculateSummary();
 
   return (
-    <div style={{ background: theme.background, minHeight: '100vh', padding: '2rem', color: theme.textPrimary, fontFamily: 'system-ui, -apple-system, sans-serif' }}>
-      <h1 style={{ fontSize: '2rem', fontWeight: 700, marginBottom: '0.5rem' }}>Macro Maps</h1>
-      <p style={{ fontSize: '1rem', color: theme.textSecondary, marginBottom: '2rem' }}>Global Market Performance</p>
-
-      {/* Timeframe Tabs */}
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '2rem', overflowX: 'auto', paddingBottom: '0.5rem' }}>
-        {['1D', '1W', '1M', '3M', '6M', '1Y', 'YTD'].map((tf) => (
-          <button
-            key={tf}
-            onClick={() => setTimeframe(tf)}
-            style={{
-              padding: '0.625rem 1.25rem',
-              background: timeframe === tf ? theme.accent : theme.cards,
-              color: timeframe === tf ? '#fff' : theme.textSecondary,
-              border: `1px solid ${timeframe === tf ? theme.accent : theme.border}`,
-              borderRadius: '0.5rem',
-              cursor: 'pointer',
-              fontSize: '0.875rem',
-              fontWeight: 600,
-              whiteSpace: 'nowrap',
-              transition: 'all 0.2s',
-            }}
-          >
-            {tf}
-          </button>
-        ))}
+    <div style={{ minHeight: '100vh', backgroundColor: THEME.background }}>
+      {/* Header */}
+      <div style={{ padding: '32px 24px' }}>
+        <h1
+          style={{
+            margin: '0 0 8px 0',
+            fontSize: '32px',
+            fontWeight: 700,
+            color: THEME.textPrimary,
+          }}
+        >
+          Macro Maps
+        </h1>
+        <p style={{ margin: 0, color: THEME.textSecondary, fontSize: '14px' }}>
+          Global market overview and trends
+        </p>
       </div>
 
-      {/* Asset Class Tabs */}
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '2rem', overflowX: 'auto', paddingBottom: '0.5rem' }}>
-        {['indices', 'currencies', 'commodities', 'bonds'].map((asset) => (
-          <button
-            key={asset}
-            onClick={() => setAssetClass(asset)}
+      {/* Summary Section */}
+      {summary && (
+        <div
+          style={{
+            padding: '0 24px 24px',
+          }}
+        >
+          <div
             style={{
-              padding: '0.625rem 1.25rem',
-              background: assetClass === asset ? theme.accent : theme.cards,
-              color: assetClass === asset ? '#fff' : theme.textSecondary,
-              border: `1px solid ${assetClass === asset ? theme.accent : theme.border}`,
-              borderRadius: '0.5rem',
-              cursor: 'pointer',
-              fontSize: '0.875rem',
-              fontWeight: 600,
-              whiteSpace: 'nowrap',
-              transition: 'all 0.2s',
+              padding: '16px 20px',
+              backgroundColor: THEME.card,
+              border: `1px solid ${THEME.border}`,
+              borderRadius: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
             }}
           >
-            {asset.charAt(0).toUpperCase() + asset.slice(1)}
-          </button>
-        ))}
-      </div>
-
-      {/* Market Cards Grid by Region */}
-      {Object.entries(regions).map(([region, items]) => (
-        <div key={region}>
-          <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginTop: '2rem', marginBottom: '1rem', color: theme.accent }}>{region}</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
-            {items.map((item, idx) => (
-              <div
-                key={idx}
-                style={{
-                  background: theme.cards,
-                  borderRadius: '0.75rem',
-                  border: `1px solid ${theme.border}`,
-                  padding: '1.5rem',
-                  transition: 'all 0.3s',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = theme.accent;
-                  e.currentTarget.style.boxShadow = `0 0 15px rgba(15, 122, 191, 0.1)`;
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.borderColor = theme.border;
-                  e.currentTarget.style.boxShadow = 'none';
-                }}
-              >
-                {/* Header */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
-                  <span style={{ fontSize: '1.5rem' }}>{item.flag}</span>
-                  <h3 style={{ fontSize: '1rem', fontWeight: 600, flex: 1 }}>{item.name}</h3>
-                </div>
-
-                {/* Value */}
-                <div style={{ marginBottom: '1rem' }}>
-                  <p style={{ color: theme.textSecondary, fontSize: '0.75rem', marginBottom: '0.25rem' }}>Current Value</p>
-                  <p style={{ fontSize: '1.5rem', fontWeight: 700 }}>
-                    {typeof item.value === 'number' && item.value > 100 ? item.value.toFixed(0) : item.value.toFixed(2)}
-                  </p>
-                </div>
-
-                {/* Change */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <div
-                    style={{
-                      height: '2.5rem',
-                      flex: 1,
-                      background: getChangeColor(item.change) === theme.green ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                      borderRadius: '0.375rem',
-                      position: 'relative',
-                      overflow: 'hidden',
-                    }}
-                  >
-                    <div
-                      style={{
-                        position: 'absolute',
-                        top: 0,
-                        left: 0,
-                        height: '100%',
-                        width: `${Math.min(Math.abs(item.change) * 15, 100)}%`,
-                        background: getChangeColor(item.change),
-                        opacity: 0.3,
-                      }}
-                    />
-                  </div>
-                  <span style={{ fontSize: '0.95rem', fontWeight: 600, color: getChangeColor(item.change), minWidth: '50px', textAlign: 'right' }}>
-                    {item.change > 0 ? '+' : ''}{item.change.toFixed(2)}%
-                  </span>
-                </div>
-              </div>
-            ))}
+            <div
+              style={{
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                backgroundColor: summary === 'up' ? THEME.green : THEME.red,
+                animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+              }}
+            />
+            <p
+              style={{
+                margin: 0,
+                color: THEME.textPrimary,
+                fontSize: '14px',
+                fontWeight: 500,
+              }}
+            >
+              Markets are mostly{' '}
+              <span style={{ color: summary === 'up' ? THEME.green : THEME.red }}>
+                {summary}
+              </span>{' '}
+              today
+            </p>
+            <style>{`
+              @keyframes pulse {
+                0%, 100% { opacity: 1; }
+                50% { opacity: 0.5; }
+              }
+            `}</style>
           </div>
         </div>
-      ))}
+      )}
+
+      {/* Last Update Section */}
+      <div
+        style={{
+          padding: '0 24px 24px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}
+        >
+          <div
+            style={{
+              width: '6px',
+              height: '6px',
+              borderRadius: '50%',
+              backgroundColor: THEME.green,
+              animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+            }}
+          />
+          <span style={{ color: THEME.textSecondary, fontSize: '12px' }}>
+            Live
+          </span>
+          {lastUpdate && (
+            <span style={{ color: THEME.textSecondary, fontSize: '12px' }}>
+              Last updated: {formatTime(lastUpdate)}
+            </span>
+          )}
+        </div>
+        <button
+          onClick={() => {
+            fetchData();
+          }}
+          disabled={isFetching}
+          style={{
+            padding: '6px 12px',
+            backgroundColor: isFetching ? THEME.border : THEME.accent,
+            color: THEME.textPrimary,
+            border: 'none',
+            borderRadius: '4px',
+            cursor: isFetching ? 'not-allowed' : 'pointer',
+            fontSize: '12px',
+            fontWeight: 500,
+            opacity: isFetching ? 0.6 : 1,
+            transition: 'all 0.2s ease',
+          }}
+          onMouseEnter={(e) => {
+            if (!isFetching) {
+              (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#0D6AA8';
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (!isFetching) {
+              (e.currentTarget as HTMLButtonElement).style.backgroundColor = THEME.accent;
+            }
+          }}
+        >
+          {isFetching ? 'Refreshing...' : 'Refresh Now'}
+        </button>
+      </div>
+
+      {/* Tabs */}
+      <div
+        style={{
+          padding: '0 24px 24px',
+          display: 'flex',
+          gap: '8px',
+          borderBottom: `1px solid ${THEME.border}`,
+          overflowX: 'auto',
+        }}
+      >
+        {ASSET_CLASSES.map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => setActiveTab(key)}
+            style={{
+              padding: '12px 16px',
+              backgroundColor: activeTab === key ? 'transparent' : 'transparent',
+              color: activeTab === key ? THEME.accent : THEME.textSecondary,
+              border: 'none',
+              borderBottom: activeTab === key ? `2px solid ${THEME.accent}` : '2px solid transparent',
+              cursor: 'pointer',
+              fontSize: '14px',
+              fontWeight: 500,
+              transition: 'all 0.2s ease',
+              whiteSpace: 'nowrap',
+            }}
+            onMouseEnter={(e) => {
+              if (activeTab !== key) {
+                (e.currentTarget as HTMLButtonElement).style.color = THEME.textPrimary;
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (activeTab !== key) {
+                (e.currentTarget as HTMLButtonElement).style.color = THEME.textSecondary;
+              }
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Content */}
+      <div style={{ padding: '24px' }}>
+        {error && (
+          <div
+            style={{
+              padding: '16px',
+              backgroundColor: `${THEME.red}20`,
+              border: `1px solid ${THEME.red}`,
+              borderRadius: '8px',
+              color: THEME.red,
+              fontSize: '14px',
+              marginBottom: '24px',
+            }}
+          >
+            Error loading data: {error}
+          </div>
+        )}
+
+        {activeData.length === 0 ? (
+          <div
+            style={{
+              textAlign: 'center',
+              padding: '48px 24px',
+              color: THEME.textSecondary,
+            }}
+          >
+            <p style={{ margin: 0, fontSize: '14px' }}>No data available for this category</p>
+          </div>
+        ) : (
+          Object.entries(groupedData).map(([region, regionAssets]) => (
+            <div key={region} style={{ marginBottom: '32px' }}>
+              {/* Region Header */}
+              <h2
+                style={{
+                  margin: '0 0 16px 0',
+                  fontSize: '16px',
+                  fontWeight: 600,
+                  color: THEME.textPrimary,
+                  paddingBottom: '8px',
+                  borderBottom: `1px solid ${THEME.border}`,
+                }}
+              >
+                {region}
+              </h2>
+
+              {/* Cards Grid */}
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+                  gap: '16px',
+                }}
+              >
+                {regionAssets.map((asset) => {
+                  const isPositive = asset.change >= 0;
+                  const changeColor = isPositive ? THEME.green : THEME.red;
+                  const maxChange = Math.max(
+                    ...activeData.map((a) => Math.abs(a.change))
+                  );
+                  const progressPercentage = maxChange > 0 ? (Math.abs(asset.change) / maxChange) * 100 : 0;
+
+                  return (
+                    <div
+                      key={asset.symbol}
+                      style={{
+                        padding: '16px',
+                        backgroundColor: THEME.card,
+                        border: `1px solid ${THEME.border}`,
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        const el = e.currentTarget as HTMLDivElement;
+                        el.style.backgroundColor = THEME.cardHover;
+                        el.style.borderColor = THEME.accent;
+                        el.style.transform = 'translateY(-2px)';
+                      }}
+                      onMouseLeave={(e) => {
+                        const el = e.currentTarget as HTMLDivElement;
+                        el.style.backgroundColor = THEME.card;
+                        el.style.borderColor = THEME.border;
+                        el.style.transform = 'translateY(0)';
+                      }}
+                    >
+                      {/* Top Row: Flag and Name */}
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px',
+                          marginBottom: '12px',
+                        }}
+                      >
+                        <span style={{ fontSize: '20px' }}>{asset.flag}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <p
+                            style={{
+                              margin: 0,
+                              fontSize: '14px',
+                              fontWeight: 500,
+                              color: THEME.textPrimary,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {asset.name}
+                          </p>
+                          <p
+                            style={{
+                              margin: '2px 0 0 0',
+                              fontSize: '11px',
+                              color: THEME.textSecondary,
+                            }}
+                          >
+                            {asset.symbol}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Current Value */}
+                      <div style={{ marginBottom: '12px' }}>
+                        <p
+                          style={{
+                            margin: '0 0 4px 0',
+                            fontSize: '12px',
+                            color: THEME.textSecondary,
+                          }}
+                        >
+                          Current Value
+                        </p>
+                        <p
+                          style={{
+                            margin: 0,
+                            fontSize: '20px',
+                            fontWeight: 700,
+                            color: THEME.textPrimary,
+                          }}
+                        >
+                          {asset.value.toLocaleString('en-US', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </p>
+                      </div>
+
+                      {/* Change Info */}
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          marginBottom: '12px',
+                        }}
+                      >
+                        <div>
+                          <p
+                            style={{
+                              margin: '0 0 4px 0',
+                              fontSize: '12px',
+                              color: THEME.textSecondary,
+                            }}
+                          >
+                            Change
+                          </p>
+                          <p style={{ margin: 0, fontSize: '14px', fontWeight: 600, color: changeColor }}>
+                            {isPositive ? '+' : ''}{asset.change.toLocaleString('en-US', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </p>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <p
+                            style={{
+                              margin: '0 0 4px 0',
+                              fontSize: '12px',
+                              color: THEME.textSecondary,
+                            }}
+                          >
+                            Change %
+                          </p>
+                          <p style={{ margin: 0, fontSize: '14px', fontWeight: 600, color: changeColor }}>
+                            {isPositive ? '+' : ''}{asset.changePercent.toLocaleString('en-US', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}%
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Previous Close */}
+                      <div style={{ marginBottom: '12px' }}>
+                        <p
+                          style={{
+                            margin: '0 0 4px 0',
+                            fontSize: '12px',
+                            color: THEME.textSecondary,
+                          }}
+                        >
+                          Previous Close
+                        </p>
+                        <p
+                          style={{
+                            margin: 0,
+                            fontSize: '13px',
+                            color: THEME.textPrimary,
+                          }}
+                        >
+                          {asset.previousClose.toLocaleString('en-US', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </p>
+                      </div>
+
+                      {/* Progress Bar */}
+                      <div
+                        style={{
+                          width: '100%',
+                          height: '4px',
+                          backgroundColor: THEME.border,
+                          borderRadius: '2px',
+                          overflow: 'hidden',
+                        }}
+                      >
+                        <div
+                          style={{
+                            height: '100%',
+                            backgroundColor: changeColor,
+                            width: `${progressPercentage}%`,
+                            transition: 'width 0.3s ease',
+                          }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
     </div>
   );
-};
-
-export default MacroMapsPage;
+}

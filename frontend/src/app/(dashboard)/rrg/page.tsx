@@ -1,782 +1,433 @@
 'use client';
 
-import { useState } from 'react';
-import { ChevronDown, Play } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Activity, Loader } from 'lucide-react';
 
-interface SectorData {
-  id: string;
+interface Sector {
   name: string;
-  rsRatio: number;
-  rsMomentum: number;
   color: string;
-  quadrant: 'leading' | 'weakening' | 'lagging' | 'improving';
-  previousQuadrant?: 'leading' | 'weakening' | 'lagging' | 'improving';
-  tail?: { dx: number; dy: number };
-}
-
-const SAMPLE_SECTORS: SectorData[] = [
-  {
-    id: 'defence',
-    name: 'Defence',
-    rsRatio: 115,
-    rsMomentum: 120,
-    color: '#10B981',
-    quadrant: 'leading',
-    previousQuadrant: 'improving',
-    tail: { dx: -8, dy: -12 },
-  },
-  {
-    id: 'capital-mkts',
-    name: 'Capital Mkts',
-    rsRatio: 105,
-    rsMomentum: 95,
-    color: '#F59E0B',
-    quadrant: 'weakening',
-    previousQuadrant: 'leading',
-    tail: { dx: 5, dy: -8 },
-  },
-  {
-    id: 'manufacturing',
-    name: 'Manufacturing',
-    rsRatio: 92,
-    rsMomentum: 88,
-    color: '#EF4444',
-    quadrant: 'lagging',
-    previousQuadrant: 'weakening',
-    tail: { dx: 3, dy: -5 },
-  },
-  {
-    id: 'digital',
-    name: 'Digital',
-    rsRatio: 110,
-    rsMomentum: 115,
-    color: '#10B981',
-    quadrant: 'leading',
-    previousQuadrant: 'leading',
-    tail: { dx: 2, dy: 3 },
-  },
-  {
-    id: 'tourism',
-    name: 'Tourism',
-    rsRatio: 88,
-    rsMomentum: 105,
-    color: '#3B82F6',
-    quadrant: 'improving',
-    previousQuadrant: 'lagging',
-    tail: { dx: -5, dy: 8 },
-  },
-  {
-    id: 'ev-auto',
-    name: 'EV & Auto',
-    rsRatio: 120,
-    rsMomentum: 125,
-    color: '#10B981',
-    quadrant: 'leading',
-    previousQuadrant: 'improving',
-    tail: { dx: -3, dy: 4 },
-  },
-  {
-    id: 'mnc',
-    name: 'MNC',
-    rsRatio: 98,
-    rsMomentum: 92,
-    color: '#EF4444',
-    quadrant: 'lagging',
-    previousQuadrant: 'lagging',
-    tail: { dx: -1, dy: -2 },
-  },
-  {
-    id: 'consumption',
-    name: 'Consumption',
-    rsRatio: 102,
-    rsMomentum: 108,
-    color: '#10B981',
-    quadrant: 'leading',
-    previousQuadrant: 'improving',
-    tail: { dx: -4, dy: 6 },
-  },
-  {
-    id: 'cpse',
-    name: 'CPSE',
-    rsRatio: 85,
-    rsMomentum: 110,
-    color: '#3B82F6',
-    quadrant: 'improving',
-    previousQuadrant: 'lagging',
-    tail: { dx: -8, dy: 10 },
-  },
-  {
-    id: 'pse',
-    name: 'PSE',
-    rsRatio: 95,
-    rsMomentum: 87,
-    color: '#F59E0B',
-    quadrant: 'weakening',
-    previousQuadrant: 'improving',
-    tail: { dx: 6, dy: -8 },
-  },
-];
-
-interface Tooltip {
-  x: number;
-  y: number;
-  name: string;
   rsRatio: number;
   rsMomentum: number;
-  visible: boolean;
+  quadrant: 'Leading' | 'Weakening' | 'Lagging' | 'Improving';
+  changePercent: number;
 }
+
+interface Benchmark {
+  symbol: string;
+  price: number;
+  changePercent: number;
+}
+
+interface RRGData {
+  sectors: Sector[];
+  benchmark: Benchmark;
+  market: string;
+  timeframe: string;
+  updatedAt: string;
+}
+
+const THEME = {
+  background: '#0A0E1A',
+  card: '#111B35',
+  cardHover: '#162040',
+  border: '#1A2840',
+  textPrimary: '#F5F7FA',
+  textSecondary: '#8A95A3',
+  accent: '#0F7ABF',
+  green: '#10B981',
+  red: '#EF4444',
+};
+
+const QUADRANT_INFO = {
+  Leading: { bg: '#10B98133', border: '#10B981', label: 'Leading' },
+  Weakening: { bg: '#F59E0B33', border: '#F59E0B', label: 'Weakening' },
+  Lagging: { bg: '#EF444433', border: '#EF4444', label: 'Lagging' },
+  Improving: { bg: '#0F7ABF33', border: '#0F7ABF', label: 'Improving' },
+};
 
 export default function RRGPage() {
   const [market, setMarket] = useState<'india' | 'global'>('india');
-  const [preset, setPreset] = useState('nifty-thematic');
-  const [timeframe, setTimeframe] = useState('6m');
-  const [isAnimating, setIsAnimating] = useState(false);
-  const [tooltip, setTooltip] = useState<Tooltip>({
-    x: 0,
-    y: 0,
-    name: '',
-    rsRatio: 0,
-    rsMomentum: 0,
-    visible: false,
-  });
+  const [timeframe, setTimeframe] = useState<'1m' | '3m' | '6m' | '1y'>('3m');
+  const [data, setData] = useState<RRGData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [hoveredSector, setHoveredSector] = useState<string | null>(null);
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; sector: Sector } | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
 
-  const chartWidth = 600;
-  const chartHeight = 600;
-  const padding = 60;
-  const centerX = padding + (chartWidth - 2 * padding) / 2;
-  const centerY = padding + (chartHeight - 2 * padding) / 2;
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const marketParam = market === 'global' ? 'us' : 'india';
+      const response = await fetch(`/api/market/rrg?market=${marketParam}&timeframe=${timeframe}`);
+      if (!response.ok) throw new Error('Failed to fetch RRG data');
+      const result: RRGData = await response.json();
+      setData(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setLoading(false);
+    }
+  }, [market, timeframe]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const getQuadrantSectors = (quadrant: string) => {
+    return data?.sectors.filter((s) => s.quadrant === quadrant) || [];
+  };
+
+  const handleSvgHover = (sector: Sector, event: React.MouseEvent<SVGCircleElement>) => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    setTooltip({
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+      sector,
+    });
+    setHoveredSector(sector.name);
+  };
+
+  const chartWidth = 500;
+  const chartHeight = 500;
+  const padding = 40;
   const plotWidth = chartWidth - 2 * padding;
   const plotHeight = chartHeight - 2 * padding;
 
-  const scaleRatio = (value: number) => {
-    return padding + ((value - 50) / 50) * (plotWidth / 2);
-  };
-
-  const scaleMomentum = (value: number) => {
-    return chartHeight - padding - ((value - 50) / 50) * (plotHeight / 2);
-  };
-
-  const handleDotHover = (
-    sector: SectorData,
-    mouseX: number,
-    mouseY: number
-  ) => {
-    const x = scaleRatio(sector.rsRatio);
-    const y = scaleMomentum(sector.rsMomentum);
-
-    setTooltip({
-      x: mouseX,
-      y: mouseY,
-      name: sector.name,
-      rsRatio: sector.rsRatio,
-      rsMomentum: sector.rsMomentum,
-      visible: true,
-    });
-  };
-
-  const handleDotLeave = () => {
-    setTooltip({ ...tooltip, visible: false });
-  };
-
-  const getQuadrantTransitions = () => {
-    return SAMPLE_SECTORS
-      .filter((s) => s.previousQuadrant && s.previousQuadrant !== s.quadrant)
-      .map((s) => ({
-        name: s.name,
-        from: s.previousQuadrant!,
-        to: s.quadrant,
-      }));
-  };
-
-  const quadrantLabels = {
-    leading: 'Leading',
-    weakening: 'Weakening',
-    lagging: 'Lagging',
-    improving: 'Improving',
-  };
-
-  const quadrantColors = {
-    leading: '#10B981',
-    weakening: '#F59E0B',
-    lagging: '#EF4444',
-    improving: '#3B82F6',
-  };
+  const getPlotX = (rsRatio: number) => padding + ((rsRatio - 80) / 40) * plotWidth;
+  const getPlotY = (rsMomentum: number) => padding + plotHeight - ((rsMomentum - 80) / 40) * plotHeight;
 
   return (
-    <div
-      style={{
-        backgroundColor: '#0A0E1A',
-        color: '#F5F7FA',
-        minHeight: '100vh',
-        padding: '24px',
-      }}
-    >
-      <div style={{ maxWidth: '1600px', margin: '0 auto' }}>
+    <div style={{ background: THEME.background, minHeight: '100vh', padding: '24px' }}>
+      <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
         {/* Header */}
         <div style={{ marginBottom: '32px' }}>
-          <h1 style={{ fontSize: '28px', fontWeight: '700', marginBottom: '8px' }}>
-            Relative Rotation Graph
-          </h1>
-          <p style={{ color: '#8A95A3', fontSize: '14px' }}>
-            Visualize sector momentum and relative strength rotation
-          </p>
-        </div>
-
-        {/* Controls */}
-        <div
-          style={{
-            display: 'flex',
-            gap: '16px',
-            marginBottom: '24px',
-            flexWrap: 'wrap',
-            alignItems: 'center',
-          }}
-        >
-          {/* Market Toggle */}
-          <div
-            style={{
-              display: 'flex',
-              backgroundColor: '#111B35',
-              borderRadius: '8px',
-              padding: '4px',
-              border: '1px solid #1A2840',
-            }}
-          >
-            {['india', 'global'].map((m) => (
-              <button
-                key={m}
-                onClick={() => setMarket(m as 'india' | 'global')}
-                style={{
-                  padding: '8px 16px',
-                  backgroundColor:
-                    market === m ? '#1A2840' : 'transparent',
-                  color: '#F5F7FA',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                  fontWeight: '500',
-                  transition: 'all 0.2s',
-                  textTransform: 'capitalize',
-                }}
-              >
-                {m}
-              </button>
-            ))}
-          </div>
-
-          {/* Preset Dropdown */}
-          <div style={{ position: 'relative' }}>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                backgroundColor: '#111B35',
-                border: '1px solid #1A2840',
-                borderRadius: '8px',
-                padding: '8px 12px',
-                cursor: 'pointer',
-                minWidth: '220px',
-              }}
-            >
-              <select
-                value={preset}
-                onChange={(e) => setPreset(e.target.value)}
-                style={{
-                  backgroundColor: 'transparent',
-                  color: '#F5F7FA',
-                  border: 'none',
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                  flex: 1,
-                  outline: 'none',
-                }}
-              >
-                <option value="nifty-thematic">Nifty Thematic Indices</option>
-                <option value="nifty-sectoral">Nifty Sectoral</option>
-                <option value="sp500">S&P 500 Sectors</option>
-              </select>
-              <ChevronDown size={16} color="#8A95A3" />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+            <div style={{ width: '32px', height: '32px', background: THEME.accent, borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Activity size={20} color={THEME.background} />
             </div>
+            <h1 style={{ color: THEME.textPrimary, fontSize: '28px', fontWeight: '700', margin: 0 }}>
+              Relative Rotation Graph
+            </h1>
           </div>
 
-          {/* Timeframe Buttons */}
-          <div style={{ display: 'flex', gap: '8px' }}>
-            {['1m', '3m', '6m', '1y'].map((tf) => (
-              <button
-                key={tf}
-                onClick={() => setTimeframe(tf)}
-                style={{
-                  padding: '8px 12px',
-                  backgroundColor:
-                    timeframe === tf ? '#1A2840' : '#111B35',
-                  color: '#F5F7FA',
-                  border: '1px solid #1A2840',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontSize: '13px',
-                  fontWeight: '500',
-                  textTransform: 'uppercase',
-                  transition: 'all 0.2s',
-                }}
-              >
-                {tf}
-              </button>
-            ))}
-          </div>
+          {/* Controls */}
+          <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap', alignItems: 'center' }}>
+            {/* Market Toggle */}
+            <div style={{ display: 'flex', gap: '8px', background: THEME.card, padding: '6px', borderRadius: '8px', border: `1px solid ${THEME.border}` }}>
+              {(['india', 'global'] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setMarket(m)}
+                  style={{
+                    padding: '8px 16px',
+                    background: market === m ? THEME.accent : 'transparent',
+                    color: market === m ? THEME.background : THEME.textSecondary,
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    transition: 'all 0.2s',
+                    textTransform: 'capitalize',
+                  }}
+                >
+                  {m === 'global' ? 'Global (US)' : 'India'}
+                </button>
+              ))}
+            </div>
 
-          {/* Animate Button */}
-          <button
-            onClick={() => setIsAnimating(!isAnimating)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '8px 16px',
-              backgroundColor: isAnimating ? '#10B981' : '#111B35',
-              color: '#F5F7FA',
-              border: '1px solid #1A2840',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '14px',
-              fontWeight: '500',
-              transition: 'all 0.2s',
-            }}
-          >
-            <Play size={16} />
-            Animate
-          </button>
+            {/* Timeframe Buttons */}
+            <div style={{ display: 'flex', gap: '8px' }}>
+              {(['1m', '3m', '6m', '1y'] as const).map((tf) => (
+                <button
+                  key={tf}
+                  onClick={() => setTimeframe(tf)}
+                  style={{
+                    padding: '8px 16px',
+                    background: timeframe === tf ? THEME.accent : THEME.card,
+                    color: timeframe === tf ? THEME.background : THEME.textSecondary,
+                    border: `1px solid ${timeframe === tf ? THEME.accent : THEME.border}`,
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    transition: 'all 0.2s',
+                  }}
+                >
+                  {tf === '1m' ? '1 Month' : tf === '3m' ? '3 Months' : tf === '6m' ? '6 Months' : '1 Year'}
+                </button>
+              ))}
+            </div>
+
+            {/* Last Updated */}
+            {data && (
+              <div style={{ marginLeft: 'auto', fontSize: '12px', color: THEME.textSecondary }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: `${THEME.green}22`, padding: '4px 8px', borderRadius: '4px', color: THEME.green }}>
+                  <span style={{ width: '6px', height: '6px', background: THEME.green, borderRadius: '50%', animation: 'pulse 2s infinite' }}></span>
+                  Live
+                </span>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Main Content */}
-        <div style={{ display: 'flex', gap: '24px' }}>
-          {/* Chart Area */}
-          <div
-            style={{
-              flex: 1,
-              backgroundColor: '#111B35',
-              border: '1px solid #1A2840',
-              borderRadius: '12px',
-              padding: '24px',
-              position: 'relative',
-            }}
-          >
-            <svg
-              width={chartWidth}
-              height={chartHeight}
-              style={{ display: 'block' }}
-              onMouseMove={(e) => {
-                const rect = e.currentTarget.getBoundingClientRect();
-                const mouseX = e.clientX - rect.left;
-                const mouseY = e.clientY - rect.top;
-                // Update tooltip position
-              }}
-            >
-              {/* Grid Background */}
-              <rect
-                x={padding}
-                y={padding}
-                width={plotWidth}
-                height={plotHeight}
-                fill="#0A0E1A"
-                stroke="#1A2840"
-                strokeWidth={1}
-              />
+        {error && (
+          <div style={{ padding: '16px', background: `${THEME.red}22`, border: `1px solid ${THEME.red}`, borderRadius: '8px', color: THEME.red, marginBottom: '24px' }}>
+            Error: {error}
+          </div>
+        )}
 
-              {/* Quadrant Backgrounds */}
-              {/* Leading (top-right, green) */}
-              <rect
-                x={centerX}
-                y={padding}
-                width={(plotWidth / 2)}
-                height={(plotHeight / 2)}
-                fill="#10B981"
-                opacity={0.05}
-              />
+        {loading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>
+            <Loader size={40} color={THEME.accent} style={{ animation: 'spin 1s linear infinite' }} />
+          </div>
+        ) : data ? (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: '24px' }}>
+            {/* RRG Chart */}
+            <div style={{ background: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '12px', padding: '24px' }}>
+              <h2 style={{ color: THEME.textPrimary, fontSize: '16px', fontWeight: '600', marginBottom: '20px', margin: '0 0 20px 0' }}>
+                Sector Rotation Map
+              </h2>
+              <div style={{ overflow: 'auto', display: 'flex', justifyContent: 'center' }}>
+                <svg
+                  ref={svgRef}
+                  width={chartWidth}
+                  height={chartHeight}
+                  style={{ background: 'transparent', position: 'relative' }}
+                >
+                  {/* Quadrant backgrounds */}
+                  <rect x={padding} y={padding} width={plotWidth / 2} height={plotHeight / 2} fill={QUADRANT_INFO.Leading.bg} opacity={0.3} />
+                  <rect x={padding + plotWidth / 2} y={padding} width={plotWidth / 2} height={plotHeight / 2} fill={QUADRANT_INFO.Weakening.bg} opacity={0.3} />
+                  <rect x={padding} y={padding + plotHeight / 2} width={plotWidth / 2} height={plotHeight / 2} fill={QUADRANT_INFO.Improving.bg} opacity={0.3} />
+                  <rect x={padding + plotWidth / 2} y={padding + plotHeight / 2} width={plotWidth / 2} height={plotHeight / 2} fill={QUADRANT_INFO.Lagging.bg} opacity={0.3} />
 
-              {/* Improving (top-left, blue) */}
-              <rect
-                x={padding}
-                y={padding}
-                width={(plotWidth / 2)}
-                height={(plotHeight / 2)}
-                fill="#3B82F6"
-                opacity={0.05}
-              />
+                  {/* Crosshair lines */}
+                  <line x1={getPlotX(100)} y1={padding} x2={getPlotX(100)} y2={padding + plotHeight} stroke={THEME.border} strokeWidth={2} strokeDasharray="4" />
+                  <line x1={padding} y1={getPlotY(100)} x2={padding + plotWidth} y2={getPlotY(100)} stroke={THEME.border} strokeWidth={2} strokeDasharray="4" />
 
-              {/* Lagging (bottom-left, red) */}
-              <rect
-                x={padding}
-                y={centerY}
-                width={(plotWidth / 2)}
-                height={(plotHeight / 2)}
-                fill="#EF4444"
-                opacity={0.05}
-              />
+                  {/* Quadrant labels */}
+                  <text x={padding + (plotWidth * 3) / 4} y={padding + 20} textAnchor="middle" fill={THEME.green} fontSize="12" fontWeight="600">
+                    LEADING
+                  </text>
+                  <text x={padding + plotWidth / 4} y={padding + 20} textAnchor="middle" fill={THEME.accent} fontSize="12" fontWeight="600">
+                    IMPROVING
+                  </text>
+                  <text x={padding + plotWidth / 4} y={padding + plotHeight - 10} textAnchor="middle" fill={THEME.red} fontSize="12" fontWeight="600">
+                    LAGGING
+                  </text>
+                  <text x={padding + (plotWidth * 3) / 4} y={padding + plotHeight - 10} textAnchor="middle" fill="#F59E0B" fontSize="12" fontWeight="600">
+                    WEAKENING
+                  </text>
 
-              {/* Weakening (bottom-right, yellow) */}
-              <rect
-                x={centerX}
-                y={centerY}
-                width={(plotWidth / 2)}
-                height={(plotHeight / 2)}
-                fill="#F59E0B"
-                opacity={0.05}
-              />
+                  {/* Axis labels */}
+                  <text x={padding - 10} y={padding - 10} fill={THEME.textSecondary} fontSize="11">
+                    110
+                  </text>
+                  <text x={padding + plotWidth - 10} y={padding - 10} fill={THEME.textSecondary} fontSize="11">
+                    130
+                  </text>
+                  <text x={padding - 10} y={padding + plotHeight + 5} fill={THEME.textSecondary} fontSize="11">
+                    80
+                  </text>
+                  <text x={padding - 25} y={padding + 15} fill={THEME.textSecondary} fontSize="11">
+                    130
+                  </text>
 
-              {/* Axes */}
-              {/* X-axis (RS-Ratio) */}
-              <line
-                x1={padding}
-                y1={centerY}
-                x2={chartWidth - padding}
-                y2={centerY}
-                stroke="#1A2840"
-                strokeWidth={2}
-              />
-
-              {/* Y-axis (RS-Momentum) */}
-              <line
-                x1={centerX}
-                y1={padding}
-                x2={centerX}
-                y2={chartHeight - padding}
-                stroke="#1A2840"
-                strokeWidth={2}
-              />
-
-              {/* Axis Labels and Ticks */}
-              {/* X-axis labels */}
-              <text
-                x={padding}
-                y={centerY + 24}
-                fontSize="12"
-                fill="#8A95A3"
-                textAnchor="middle"
-              >
-                50
-              </text>
-              <text
-                x={centerX}
-                y={centerY + 24}
-                fontSize="12"
-                fill="#8A95A3"
-                textAnchor="middle"
-              >
-                100
-              </text>
-              <text
-                x={chartWidth - padding}
-                y={centerY + 24}
-                fontSize="12"
-                fill="#8A95A3"
-                textAnchor="middle"
-              >
-                150
-              </text>
-
-              {/* Y-axis labels */}
-              <text
-                x={centerX - 12}
-                y={chartHeight - padding + 4}
-                fontSize="12"
-                fill="#8A95A3"
-                textAnchor="end"
-              >
-                50
-              </text>
-              <text
-                x={centerX - 12}
-                y={centerY + 4}
-                fontSize="12"
-                fill="#8A95A3"
-                textAnchor="end"
-              >
-                100
-              </text>
-              <text
-                x={centerX - 12}
-                y={padding + 4}
-                fontSize="12"
-                fill="#8A95A3"
-                textAnchor="end"
-              >
-                150
-              </text>
-
-              {/* Axis titles */}
-              <text
-                x={chartWidth - padding + 8}
-                y={centerY - 8}
-                fontSize="12"
-                fill="#8A95A3"
-                fontWeight="500"
-              >
-                JdK RS-Ratio
-              </text>
-              <text
-                x={centerX - 12}
-                y={padding - 8}
-                fontSize="12"
-                fill="#8A95A3"
-                fontWeight="500"
-                textAnchor="end"
-              >
-                JdK RS-Momentum
-              </text>
-
-              {/* Center point */}
-              <circle cx={centerX} cy={centerY} r={4} fill="#3B82F6" opacity={0.3} />
-
-              {/* Tail lines and dots */}
-              {SAMPLE_SECTORS.map((sector) => {
-                const x = scaleRatio(sector.rsRatio);
-                const y = scaleMomentum(sector.rsMomentum);
-                const tailStartX = x - (sector.tail?.dx || 0);
-                const tailStartY = y - (sector.tail?.dy || 0);
-
-                return (
-                  <g key={sector.id}>
-                    {/* Tail line */}
-                    {sector.tail && (
-                      <line
-                        x1={tailStartX}
-                        y1={tailStartY}
-                        x2={x}
-                        y2={y}
-                        stroke={sector.color}
-                        strokeWidth={2}
-                        opacity={0.4}
-                        strokeLinecap="round"
+                  {/* Sector points */}
+                  {data.sectors.map((sector) => (
+                    <g key={sector.name}>
+                      <circle
+                        cx={getPlotX(sector.rsRatio)}
+                        cy={getPlotY(sector.rsMomentum)}
+                        r={hoveredSector === sector.name ? 10 : 8}
+                        fill={sector.color}
+                        opacity={hoveredSector === sector.name ? 1 : 0.8}
+                        style={{ cursor: 'pointer', transition: 'all 0.2s' }}
+                        onMouseEnter={(e) => handleSvgHover(sector, e)}
+                        onMouseLeave={() => {
+                          setHoveredSector(null);
+                          setTooltip(null);
+                        }}
                       />
-                    )}
+                      <text
+                        x={getPlotX(sector.rsRatio)}
+                        y={getPlotY(sector.rsMomentum) + 18}
+                        textAnchor="middle"
+                        fill={THEME.textPrimary}
+                        fontSize="12"
+                        fontWeight="600"
+                        pointerEvents="none"
+                      >
+                        {sector.name}
+                      </text>
+                    </g>
+                  ))}
 
-                    {/* Dot */}
-                    <circle
-                      cx={x}
-                      cy={y}
-                      r={7}
-                      fill={sector.color}
-                      opacity={0.9}
-                      cursor="pointer"
-                      onMouseEnter={(e) => {
-                        const rect = e.currentTarget.ownerSVGElement!.getBoundingClientRect();
-                        const clientX = e.clientX;
-                        const clientY = e.clientY;
-                        handleDotHover(sector, clientX - rect.left, clientY - rect.top);
-                      }}
-                      onMouseLeave={handleDotLeave}
-                      style={{
-                        transition: 'r 0.2s',
-                      }}
-                    />
-                  </g>
+                  {/* Tooltip */}
+                  {tooltip && (
+                    <g>
+                      <rect
+                        x={tooltip.x + 10}
+                        y={tooltip.y - 60}
+                        width={160}
+                        height={55}
+                        fill={THEME.card}
+                        stroke={THEME.border}
+                        strokeWidth={1}
+                        rx={6}
+                      />
+                      <text x={tooltip.x + 20} y={tooltip.y - 40} fill={tooltip.sector.color} fontSize="13" fontWeight="600">
+                        {tooltip.sector.name}
+                      </text>
+                      <text x={tooltip.x + 20} y={tooltip.y - 25} fill={THEME.textSecondary} fontSize="11">
+                        RS-Ratio: {tooltip.sector.rsRatio.toFixed(1)}
+                      </text>
+                      <text x={tooltip.x + 20} y={tooltip.y - 12} fill={THEME.textSecondary} fontSize="11">
+                        RS-Mom: {tooltip.sector.rsMomentum.toFixed(1)}
+                      </text>
+                    </g>
+                  )}
+                </svg>
+              </div>
+
+              {/* Chart info */}
+              <div style={{ marginTop: '20px', paddingTop: '20px', borderTop: `1px solid ${THEME.border}`, fontSize: '12px', color: THEME.textSecondary }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  <div>
+                    <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>X-Axis</div>
+                    <div style={{ color: THEME.textPrimary, fontWeight: '600' }}>RS-Ratio (Relative Strength)</div>
+                  </div>
+                  <div>
+                    <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>Y-Axis</div>
+                    <div style={{ color: THEME.textPrimary, fontWeight: '600' }}>RS-Momentum (Rate of Change)</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Right Sidebar */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {/* Benchmark */}
+              <div style={{ background: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '12px', padding: '16px' }}>
+                <h3 style={{ color: THEME.textSecondary, fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', marginBottom: '12px', margin: '0 0 12px 0' }}>
+                  Benchmark
+                </h3>
+                <div>
+                  <div style={{ color: THEME.textPrimary, fontSize: '18px', fontWeight: '700', marginBottom: '4px' }}>
+                    {data.benchmark.symbol}
+                  </div>
+                  <div style={{ fontSize: '16px', fontWeight: '600', color: data.benchmark.changePercent > 0 ? THEME.green : THEME.red, marginBottom: '8px' }}>
+                    {data.benchmark.price.toLocaleString()}
+                  </div>
+                  <div
+                    style={{
+                      display: 'inline-block',
+                      padding: '4px 8px',
+                      background: data.benchmark.changePercent > 0 ? `${THEME.green}22` : `${THEME.red}22`,
+                      color: data.benchmark.changePercent > 0 ? THEME.green : THEME.red,
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                      fontWeight: '600',
+                    }}
+                  >
+                    {data.benchmark.changePercent > 0 ? '+' : ''}
+                    {data.benchmark.changePercent.toFixed(2)}%
+                  </div>
+                </div>
+              </div>
+
+              {/* Quadrants */}
+              {(['Leading', 'Weakening', 'Lagging', 'Improving'] as const).map((quadrant) => {
+                const sectors = getQuadrantSectors(quadrant);
+                const quadrantInfo = QUADRANT_INFO[quadrant];
+                return (
+                  <div
+                    key={quadrant}
+                    style={{
+                      background: THEME.card,
+                      border: `1px solid ${THEME.border}`,
+                      borderRadius: '12px',
+                      padding: '16px',
+                      opacity: sectors.length === 0 ? 0.5 : 1,
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                      <div
+                        style={{
+                          width: '4px',
+                          height: '4px',
+                          background: quadrantInfo.border,
+                          borderRadius: '50%',
+                        }}
+                      />
+                      <h3 style={{ color: THEME.textPrimary, fontSize: '12px', fontWeight: '600', margin: 0 }}>
+                        {quadrant}
+                      </h3>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {sectors.length === 0 ? (
+                        <div style={{ color: THEME.textSecondary, fontSize: '12px' }}>No sectors</div>
+                      ) : (
+                        sectors.map((sector) => (
+                          <div
+                            key={sector.name}
+                            style={{
+                              padding: '8px',
+                              background: THEME.background,
+                              borderRadius: '6px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px',
+                              cursor: 'pointer',
+                              transition: 'all 0.2s',
+                              border: hoveredSector === sector.name ? `1px solid ${sector.color}` : `1px solid transparent`,
+                            }}
+                            onMouseEnter={() => setHoveredSector(sector.name)}
+                            onMouseLeave={() => setHoveredSector(null)}
+                          >
+                            <div
+                              style={{
+                                width: '6px',
+                                height: '6px',
+                                background: sector.color,
+                                borderRadius: '50%',
+                                flexShrink: 0,
+                              }}
+                            />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ color: THEME.textPrimary, fontSize: '12px', fontWeight: '600' }}>
+                                {sector.name}
+                              </div>
+                              <div style={{ color: THEME.textSecondary, fontSize: '10px' }}>
+                                {sector.rsRatio.toFixed(1)} / {sector.rsMomentum.toFixed(1)}
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
                 );
               })}
-
-              {/* Tooltip */}
-              {tooltip.visible && (
-                <g>
-                  <rect
-                    x={tooltip.x + 8}
-                    y={tooltip.y - 60}
-                    width={160}
-                    height={50}
-                    rx={6}
-                    fill="#1A2840"
-                    stroke="#3B82F6"
-                    strokeWidth={1}
-                  />
-                  <text
-                    x={tooltip.x + 16}
-                    y={tooltip.y - 42}
-                    fontSize="12"
-                    fill="#F5F7FA"
-                    fontWeight="600"
-                  >
-                    {tooltip.name}
-                  </text>
-                  <text
-                    x={tooltip.x + 16}
-                    y={tooltip.y - 26}
-                    fontSize="11"
-                    fill="#8A95A3"
-                  >
-                    RS-Ratio: {tooltip.rsRatio.toFixed(1)}
-                  </text>
-                  <text
-                    x={tooltip.x + 16}
-                    y={tooltip.y - 14}
-                    fontSize="11"
-                    fill="#8A95A3"
-                  >
-                    RS-Momentum: {tooltip.rsMomentum.toFixed(1)}
-                  </text>
-                </g>
-              )}
-            </svg>
-
-            {/* Quadrant Labels */}
-            <div
-              style={{
-                position: 'absolute',
-                top: '40px',
-                right: '40px',
-                fontSize: '12px',
-                fontWeight: '600',
-                color: '#10B981',
-              }}
-            >
-              Leading
-            </div>
-            <div
-              style={{
-                position: 'absolute',
-                top: '40px',
-                left: '40px',
-                fontSize: '12px',
-                fontWeight: '600',
-                color: '#3B82F6',
-              }}
-            >
-              Improving
-            </div>
-            <div
-              style={{
-                position: 'absolute',
-                bottom: '40px',
-                right: '40px',
-                fontSize: '12px',
-                fontWeight: '600',
-                color: '#F59E0B',
-              }}
-            >
-              Weakening
-            </div>
-            <div
-              style={{
-                position: 'absolute',
-                bottom: '40px',
-                left: '40px',
-                fontSize: '12px',
-                fontWeight: '600',
-                color: '#EF4444',
-              }}
-            >
-              Lagging
             </div>
           </div>
-
-          {/* Right Sidebar */}
-          <div style={{ width: '280px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
-            {/* Tickers List */}
-            <div
-              style={{
-                backgroundColor: '#111B35',
-                border: '1px solid #1A2840',
-                borderRadius: '12px',
-                padding: '16px',
-              }}
-            >
-              <h3 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>
-                Sectors
-              </h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {SAMPLE_SECTORS.map((sector) => (
-                  <div
-                    key={sector.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '10px',
-                      padding: '8px 10px',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                      transition: 'background-color 0.2s',
-                      backgroundColor: 'transparent',
-                    }}
-                    onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLElement).style.backgroundColor =
-                        '#0A0E1A';
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLElement).style.backgroundColor =
-                        'transparent';
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: '8px',
-                        height: '8px',
-                        borderRadius: '50%',
-                        backgroundColor: sector.color,
-                        flexShrink: 0,
-                      }}
-                    />
-                    <span style={{ fontSize: '13px', flex: 1 }}>
-                      {sector.name}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: '12px',
-                        color: '#8A95A3',
-                      }}
-                    >
-                      {sector.rsRatio}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Transitions Section */}
-            <div
-              style={{
-                backgroundColor: '#111B35',
-                border: '1px solid #1A2840',
-                borderRadius: '12px',
-                padding: '16px',
-              }}
-            >
-              <h3 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>
-                Transitions
-              </h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {getQuadrantTransitions().length > 0 ? (
-                  getQuadrantTransitions().map((transition, idx) => (
-                    <div
-                      key={idx}
-                      style={{
-                        fontSize: '12px',
-                        padding: '8px 10px',
-                        backgroundColor: '#0A0E1A',
-                        borderRadius: '6px',
-                        color: '#F5F7FA',
-                      }}
-                    >
-                      <span style={{ fontWeight: '600' }}>
-                        {transition.name}:
-                      </span>{' '}
-                      <span style={{ color: quadrantColors[transition.from] }}>
-                        {quadrantLabels[transition.from]}
-                      </span>
-                      {' → '}
-                      <span style={{ color: quadrantColors[transition.to] }}>
-                        {quadrantLabels[transition.to]}
-                      </span>
-                    </div>
-                  ))
-                ) : (
-                  <p style={{ fontSize: '12px', color: '#8A95A3' }}>
-                    No sector transitions
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
+        ) : null}
       </div>
+
+      <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.5; }
+        }
+      `}</style>
     </div>
   );
 }

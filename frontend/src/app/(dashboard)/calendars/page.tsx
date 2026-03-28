@@ -1,87 +1,72 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
-const EarningsCalendarPage = () => {
+interface Company {
+  company: string;
+  ticker: string;
+  sector: string;
+}
+
+interface CalendarEvent {
+  [date: string]: Company[];
+}
+
+interface CalendarResponse {
+  india: Company[];
+  us: Company[];
+  calendar: CalendarEvent;
+  weekStart: string;
+  note: string;
+  updatedAt: string;
+}
+
+const THEME = {
+  background: '#0A0E1A',
+  card: '#111B35',
+  cardHover: '#162040',
+  border: '#1A2840',
+  textPrimary: '#F5F7FA',
+  textSecondary: '#8A95A3',
+  accent: '#0F7ABF',
+  green: '#10B981',
+  red: '#EF4444',
+};
+
+export default function CalendarPage() {
   const [market, setMarket] = useState<'india' | 'us'>('india');
   const [weekOffset, setWeekOffset] = useState(0);
+  const [data, setData] = useState<CalendarResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState<string>('');
+  const [error, setError] = useState<string>('');
 
-  // Sample earnings data for a full week
-  const earningsDataByDay = {
-    india: {
-      Monday: [
-        { company: 'TCS', ticker: 'TCS.NS', time: 'BMO', estimatedEPS: '₹4.25' },
-        { company: 'Infosys', ticker: 'INFY.NS', time: 'BMO', estimatedEPS: '₹5.12' },
-        { company: 'Wipro', ticker: 'WIPRO.NS', time: 'AMC', estimatedEPS: '₹2.87' },
-      ],
-      Tuesday: [
-        { company: 'HDFC Bank', ticker: 'HDFCBANK.NS', time: 'BMO', estimatedEPS: '₹45.36' },
-        { company: 'ICICI Bank', ticker: 'ICICIBANK.NS', time: 'AMC', estimatedEPS: '₹38.92' },
-        { company: 'Axis Bank', ticker: 'AXISBANK.NS', time: 'BMO', estimatedEPS: '₹32.45' },
-        { company: 'Kotak Bank', ticker: 'KOTAKBANK.NS', time: 'AMC', estimatedEPS: '₹48.75' },
-      ],
-      Wednesday: [
-        { company: 'Reliance', ticker: 'RELIANCE.NS', time: 'BMO', estimatedEPS: '₹56.23' },
-        { company: 'Bharti Airtel', ticker: 'BHARTIARTL.NS', time: 'AMC', estimatedEPS: '₹3.42' },
-        { company: 'SBI', ticker: 'SBIN.NS', time: 'BMO', estimatedEPS: '₹35.67' },
-      ],
-      Thursday: [
-        { company: 'Bajaj Finance', ticker: 'BAJAJFINSV.NS', time: 'AMC', estimatedEPS: '₹92.34' },
-        { company: 'Maruti Suzuki', ticker: 'MARUTI.NS', time: 'BMO', estimatedEPS: '₹15.45' },
-        { company: 'Asian Paints', ticker: 'ASIANPAINT.NS', time: 'BMO', estimatedEPS: '₹8.23' },
-        { company: 'HUL', ticker: 'HINDUNILVR.NS', time: 'AMC', estimatedEPS: '₹9.87' },
-      ],
-      Friday: [
-        { company: 'ITC', ticker: 'ITC.NS', time: 'BMO', estimatedEPS: '₹5.67' },
-        { company: 'Nestlé', ticker: 'NESTLEIND.NS', time: 'AMC', estimatedEPS: '₹45.23' },
-        { company: 'Sunpharma', ticker: 'SUNPHARMA.NS', time: 'BMO', estimatedEPS: '₹3.12' },
-      ],
-    },
-    us: {
-      Monday: [
-        { company: 'Apple', ticker: 'AAPL', time: 'AMC', estimatedEPS: '$1.68' },
-        { company: 'Microsoft', ticker: 'MSFT', time: 'AMC', estimatedEPS: '$2.93' },
-        { company: 'Google', ticker: 'GOOGL', time: 'AMC', estimatedEPS: '$1.64' },
-      ],
-      Tuesday: [
-        { company: 'Amazon', ticker: 'AMZN', time: 'AMC', estimatedEPS: '$0.94' },
-        { company: 'Tesla', ticker: 'TSLA', time: 'AMC', estimatedEPS: '$0.75' },
-        { company: 'Meta', ticker: 'META', time: 'AMC', estimatedEPS: '$5.42' },
-        { company: 'Nvidia', ticker: 'NVDA', time: 'AMC', estimatedEPS: '$5.32' },
-      ],
-      Wednesday: [
-        { company: 'JPMorgan', ticker: 'JPM', time: 'BMO', estimatedEPS: '$4.02' },
-        { company: 'Goldman Sachs', ticker: 'GS', time: 'BMO', estimatedEPS: '$8.13' },
-        { company: 'Berkshire', ticker: 'BRK.B', time: 'AMC', estimatedEPS: '$6.78' },
-      ],
-      Thursday: [
-        { company: 'Coca-Cola', ticker: 'KO', time: 'BMO', estimatedEPS: '$0.65' },
-        { company: 'Chevron', ticker: 'CVX', time: 'BMO', estimatedEPS: '$7.23' },
-        { company: 'Walmart', ticker: 'WMT', time: 'BMO', estimatedEPS: '$1.89' },
-        { company: 'McDonald', ticker: 'MCD', time: 'AMC', estimatedEPS: '$2.34' },
-      ],
-      Friday: [
-        { company: 'Intel', ticker: 'INTC', time: 'BMO', estimatedEPS: '$0.18' },
-        { company: 'Pfizer', ticker: 'PFE', time: 'AMC', estimatedEPS: '$0.76' },
-        { company: 'Johnson & Johnson', ticker: 'JNJ', time: 'BMO', estimatedEPS: '$2.54' },
-      ],
-    },
+  const fetchCalendarData = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch('/api/market/calendar?market=india');
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch calendar data');
+      }
+
+      const calendarData: CalendarResponse = await response.json();
+      setData(calendarData);
+      setLastUpdated(calendarData.updatedAt);
+      setError('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+      console.error('Error fetching calendar:', err);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const weekHighlights = {
-    india: [
-      'HDFC Bank Q3 Results: Expecting strong loan growth and improved NIM',
-      'TCS Q3 FY25: IT sector outlook to guide market expectations',
-      'Reliance Industries: Focus on refining margins and energy transition',
-      'Banking sector: Multiple banks announcing results this week',
-    ],
-    us: [
-      'Tech Earnings Season: Major companies reporting AI investments',
-      'Apple Q1 FY2024: iPhone sales momentum and services growth',
-      'Amazon AWS: Cloud revenue growth expectations remain high',
-      'Magnificent Seven: Combined performance to impact market sentiment',
-    ],
-  };
+  useEffect(() => {
+    fetchCalendarData();
+    const interval = setInterval(fetchCalendarData, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   const today = new Date();
   const currentWeekStart = new Date(today);
@@ -100,175 +85,420 @@ const EarningsCalendarPage = () => {
   const todayDayOfWeek = today.getDay();
   const currentDayName = days[todayDayOfWeek === 0 ? 4 : todayDayOfWeek - 1];
 
-  const getEarningsForDay = (dayName: string) => {
-    return earningsDataByDay[market][dayName as keyof typeof earningsDataByDay['india']] || [];
+  const getCompaniesForDay = (date: Date) => {
+    if (!data) return [];
+    const dateStr = date.toISOString().split('T')[0];
+    return data.calendar[dateStr] || [];
   };
 
-  const theme = {
-    background: '#0A0E1A',
-    cards: '#111B35',
-    border: '#1A2840',
-    textPrimary: '#F5F7FA',
-    textSecondary: '#8A95A3',
-    green: '#10B981',
-    red: '#EF4444',
-    accent: '#0F7ABF',
+  const getSectorColor = (sector: string) => {
+    const sectorLower = sector.toLowerCase();
+    if (sectorLower.includes('tech') || sectorLower.includes('it')) return THEME.accent;
+    if (sectorLower.includes('bank') || sectorLower.includes('finance')) return THEME.green;
+    if (sectorLower.includes('energy') || sectorLower.includes('oil')) return THEME.red;
+    return THEME.textSecondary;
   };
+
+  const formatDate = (dateString: string) => {
+    try {
+      return new Date(dateString).toLocaleDateString('en-IN', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return dateString;
+    }
+  };
+
+  const quarterCompanies = market === 'india' ? data?.india : data?.us;
 
   return (
-    <div style={{ background: theme.background, minHeight: '100vh', padding: '2rem', color: theme.textPrimary, fontFamily: 'system-ui, -apple-system, sans-serif' }}>
-      <h1 style={{ fontSize: '2rem', fontWeight: 700, marginBottom: '2rem' }}>Earnings Calendar</h1>
+    <div style={{
+      backgroundColor: THEME.background,
+      minHeight: '100vh',
+      padding: '24px',
+      color: THEME.textPrimary,
+      fontFamily: 'system-ui, -apple-system, sans-serif',
+    }}>
+      {/* Header */}
+      <div style={{ marginBottom: '24px' }}>
+        <h1 style={{
+          fontSize: '32px',
+          fontWeight: 'bold',
+          margin: '0 0 8px 0',
+        }}>
+          Earnings Calendar
+        </h1>
+        <p style={{
+          color: THEME.textSecondary,
+          margin: 0,
+          fontSize: '14px',
+        }}>
+          Track major company earnings announcements and results
+        </p>
+      </div>
 
-      {/* Market Toggle */}
-      <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem', alignItems: 'center' }}>
-        <div style={{ display: 'flex', gap: '0.5rem', background: theme.cards, padding: '0.5rem', borderRadius: '0.5rem', border: `1px solid ${theme.border}` }}>
-          {['india', 'us'].map((m) => (
+      {/* Last Updated */}
+      {lastUpdated && !loading && (
+        <div style={{
+          marginBottom: '24px',
+          fontSize: '12px',
+          color: THEME.textSecondary,
+        }}>
+          Last updated: {formatDate(lastUpdated)}
+        </div>
+      )}
+
+      {/* Loading State */}
+      {loading && (
+        <div style={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          height: '400px',
+        }}>
+          <div style={{
+            display: 'inline-block',
+            width: '40px',
+            height: '40px',
+            border: `3px solid ${THEME.border}`,
+            borderTop: `3px solid ${THEME.accent}`,
+            borderRadius: '50%',
+            animation: 'spin 1s linear infinite',
+          }} />
+          <style>{`
+            @keyframes spin {
+              to { transform: rotate(360deg); }
+            }
+          `}</style>
+        </div>
+      )}
+
+      {/* Error State */}
+      {error && !loading && (
+        <div style={{
+          backgroundColor: THEME.card,
+          border: `1px solid ${THEME.red}`,
+          borderRadius: '8px',
+          padding: '16px',
+          color: THEME.red,
+          marginBottom: '24px',
+        }}>
+          Error loading calendar: {error}
+        </div>
+      )}
+
+      {!loading && !error && (
+        <>
+          {/* Market Toggle */}
+          <div style={{
+            marginBottom: '24px',
+            display: 'flex',
+            gap: '8px',
+            backgroundColor: THEME.card,
+            padding: '8px',
+            borderRadius: '8px',
+            border: `1px solid ${THEME.border}`,
+            width: 'fit-content',
+          }}>
+            {(['india', 'us'] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMarket(m)}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  backgroundColor: market === m ? THEME.accent : 'transparent',
+                  color: market === m ? '#fff' : THEME.textSecondary,
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  fontWeight: '500',
+                  transition: 'all 0.2s ease',
+                }}
+              >
+                {m.toUpperCase()}
+              </button>
+            ))}
+          </div>
+
+          {/* Week Navigator */}
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '24px',
+            backgroundColor: THEME.card,
+            padding: '16px',
+            borderRadius: '8px',
+            border: `1px solid ${THEME.border}`,
+          }}>
             <button
-              key={m}
-              onClick={() => setMarket(m as 'india' | 'us')}
+              onClick={() => setWeekOffset(weekOffset - 1)}
               style={{
-                padding: '0.5rem 1rem',
-                borderRadius: '0.375rem',
+                padding: '8px 16px',
+                backgroundColor: THEME.accent,
+                color: '#fff',
                 border: 'none',
-                background: market === m ? theme.accent : 'transparent',
-                color: market === m ? '#fff' : theme.textSecondary,
+                borderRadius: '6px',
                 cursor: 'pointer',
-                fontSize: '0.875rem',
-                fontWeight: 600,
-                transition: 'all 0.2s',
+                fontWeight: '600',
+                fontSize: '13px',
               }}
             >
-              {m.toUpperCase()}
+              Previous Week
             </button>
-          ))}
-        </div>
-      </div>
 
-      {/* Week Navigator */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem', background: theme.cards, padding: '1.5rem', borderRadius: '0.75rem', border: `1px solid ${theme.border}` }}>
-        <button
-          onClick={() => setWeekOffset(weekOffset - 1)}
-          style={{
-            padding: '0.5rem 1rem',
-            background: theme.accent,
-            color: '#fff',
-            border: 'none',
-            borderRadius: '0.375rem',
-            cursor: 'pointer',
-            fontWeight: 600,
-            fontSize: '0.875rem',
-          }}
-        >
-          ← Previous Week
-        </button>
+            <div style={{ textAlign: 'center' }}>
+              <p style={{
+                fontSize: '12px',
+                color: THEME.textSecondary,
+                margin: '0 0 4px 0',
+              }}>
+                Week of
+              </p>
+              <p style={{
+                fontSize: '18px',
+                fontWeight: 'bold',
+                margin: 0,
+              }}>
+                {weekDays[0].date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - {weekDays[4].date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              </p>
+            </div>
 
-        <div style={{ textAlign: 'center' }}>
-          <p style={{ fontSize: '0.875rem', color: theme.textSecondary, marginBottom: '0.5rem' }}>Week of</p>
-          <p style={{ fontSize: '1.25rem', fontWeight: 700 }}>
-            {weekDays[0].date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - {weekDays[4].date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-          </p>
-        </div>
-
-        <button
-          onClick={() => setWeekOffset(weekOffset + 1)}
-          style={{
-            padding: '0.5rem 1rem',
-            background: theme.accent,
-            color: '#fff',
-            border: 'none',
-            borderRadius: '0.375rem',
-            cursor: 'pointer',
-            fontWeight: 600,
-            fontSize: '0.875rem',
-          }}
-        >
-          Next Week →
-        </button>
-      </div>
-
-      {/* Calendar Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '1rem', marginBottom: '2rem' }}>
-        {weekDays.map(({ day, date }) => {
-          const isToday = isCurrentWeek && day === currentDayName;
-          const earnings = getEarningsForDay(day);
-
-          return (
-            <div
-              key={day}
+            <button
+              onClick={() => setWeekOffset(weekOffset + 1)}
               style={{
-                background: theme.cards,
-                borderRadius: '0.75rem',
-                border: isToday ? `2px solid ${theme.accent}` : `1px solid ${theme.border}`,
-                padding: '1.5rem',
-                minHeight: '400px',
-                position: 'relative',
+                padding: '8px 16px',
+                backgroundColor: THEME.accent,
+                color: '#fff',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontWeight: '600',
+                fontSize: '13px',
               }}
             >
-              {/* Day Header */}
-              <div style={{ marginBottom: '1rem', paddingBottom: '1rem', borderBottom: `1px solid ${theme.border}` }}>
-                <p style={{ fontSize: '0.875rem', color: theme.textSecondary, marginBottom: '0.25rem' }}>{day}</p>
-                <p style={{ fontSize: '1.25rem', fontWeight: 700 }}>{date.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}</p>
-                {isToday && <span style={{ display: 'inline-block', background: theme.accent, color: '#fff', padding: '0.25rem 0.625rem', borderRadius: '0.25rem', fontSize: '0.7rem', fontWeight: 600, marginTop: '0.5rem' }}>TODAY</span>}
-              </div>
+              Next Week
+            </button>
+          </div>
 
-              {/* Earnings List */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                {earnings.length > 0 ? (
-                  earnings.map((earning, idx) => (
-                    <div key={idx} style={{ padding: '0.75rem', background: theme.background, borderRadius: '0.5rem', border: `1px solid ${theme.border}` }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
-                        <div>
-                          <p style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.25rem' }}>{earning.company}</p>
-                          <p style={{ fontSize: '0.75rem', color: theme.textSecondary }}>{earning.ticker}</p>
-                        </div>
-                        <span
+          {/* Calendar Grid */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+            gap: '16px',
+            marginBottom: '24px',
+          }}>
+            {weekDays.map(({ day, date }) => {
+              const isToday = isCurrentWeek && day === currentDayName;
+              const companies = getCompaniesForDay(date);
+
+              return (
+                <div
+                  key={day}
+                  style={{
+                    backgroundColor: THEME.card,
+                    borderRadius: '8px',
+                    border: isToday ? `2px solid ${THEME.accent}` : `1px solid ${THEME.border}`,
+                    padding: '16px',
+                    minHeight: '300px',
+                    transition: 'all 0.2s ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isToday) {
+                      e.currentTarget.style.backgroundColor = THEME.cardHover;
+                      e.currentTarget.style.borderColor = THEME.accent;
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isToday) {
+                      e.currentTarget.style.backgroundColor = THEME.card;
+                      e.currentTarget.style.borderColor = THEME.border;
+                    }
+                  }}
+                >
+                  {/* Day Header */}
+                  <div style={{
+                    marginBottom: '12px',
+                    paddingBottom: '12px',
+                    borderBottom: `1px solid ${THEME.border}`,
+                  }}>
+                    <p style={{
+                      fontSize: '12px',
+                      color: THEME.textSecondary,
+                      margin: '0 0 4px 0',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px',
+                    }}>
+                      {day}
+                    </p>
+                    <p style={{
+                      fontSize: '18px',
+                      fontWeight: 'bold',
+                      margin: 0,
+                    }}>
+                      {date.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}
+                    </p>
+                    {isToday && (
+                      <span style={{
+                        display: 'inline-block',
+                        backgroundColor: THEME.accent,
+                        color: '#fff',
+                        padding: '3px 8px',
+                        borderRadius: '3px',
+                        fontSize: '10px',
+                        fontWeight: '600',
+                        marginTop: '6px',
+                      }}>
+                        TODAY
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Companies List */}
+                  <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px',
+                  }}>
+                    {companies.length > 0 ? (
+                      companies.map((company, idx) => (
+                        <div
+                          key={idx}
                           style={{
-                            fontSize: '0.65rem',
-                            fontWeight: 700,
-                            background: earning.time === 'BMO' ? theme.green : theme.accent,
-                            color: '#fff',
-                            padding: '0.25rem 0.5rem',
-                            borderRadius: '0.25rem',
-                            whiteSpace: 'nowrap',
+                            padding: '8px',
+                            backgroundColor: THEME.background,
+                            borderRadius: '4px',
+                            border: `1px solid ${THEME.border}`,
                           }}
                         >
-                          {earning.time}
-                        </span>
-                      </div>
-                      <p style={{ fontSize: '0.75rem', color: theme.green, fontWeight: 600 }}>EPS: {earning.estimatedEPS}</p>
-                    </div>
-                  ))
-                ) : (
-                  <p style={{ color: theme.textSecondary, fontSize: '0.875rem', textAlign: 'center', paddingTop: '2rem' }}>No earnings scheduled</p>
-                )}
+                          <p style={{
+                            fontSize: '12px',
+                            fontWeight: '600',
+                            margin: '0 0 2px 0',
+                          }}>
+                            {company.company}
+                          </p>
+                          <p style={{
+                            fontSize: '11px',
+                            color: THEME.textSecondary,
+                            margin: '0 0 4px 0',
+                          }}>
+                            {company.ticker}
+                          </p>
+                          <span style={{
+                            display: 'inline-block',
+                            backgroundColor: getSectorColor(company.sector),
+                            color: THEME.background,
+                            padding: '2px 6px',
+                            borderRadius: '3px',
+                            fontSize: '10px',
+                            fontWeight: '600',
+                          }}>
+                            {company.sector}
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      <p style={{
+                        color: THEME.textSecondary,
+                        fontSize: '12px',
+                        textAlign: 'center',
+                        paddingTop: '40px',
+                        margin: 0,
+                      }}>
+                        No earnings scheduled
+                      </p>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Major Companies This Quarter */}
+          {quarterCompanies && quarterCompanies.length > 0 && (
+            <div style={{
+              backgroundColor: THEME.card,
+              borderRadius: '8px',
+              border: `1px solid ${THEME.border}`,
+              padding: '20px',
+            }}>
+              <h2 style={{
+                fontSize: '18px',
+                fontWeight: 'bold',
+                margin: '0 0 16px 0',
+                color: THEME.accent,
+              }}>
+                Major Companies This Quarter
+              </h2>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                gap: '12px',
+              }}>
+                {quarterCompanies.map((company, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      padding: '12px',
+                      backgroundColor: THEME.background,
+                      borderRadius: '6px',
+                      border: `1px solid ${THEME.border}`,
+                    }}
+                  >
+                    <p style={{
+                      fontSize: '13px',
+                      fontWeight: '600',
+                      margin: '0 0 4px 0',
+                    }}>
+                      {company.company}
+                    </p>
+                    <p style={{
+                      fontSize: '12px',
+                      color: THEME.textSecondary,
+                      margin: '0 0 6px 0',
+                    }}>
+                      {company.ticker}
+                    </p>
+                    <span style={{
+                      display: 'inline-block',
+                      backgroundColor: getSectorColor(company.sector),
+                      color: THEME.background,
+                      padding: '3px 8px',
+                      borderRadius: '3px',
+                      fontSize: '11px',
+                      fontWeight: '600',
+                    }}>
+                      {company.sector}
+                    </span>
+                  </div>
+                ))}
               </div>
             </div>
-          );
-        })}
-      </div>
+          )}
 
-      {/* Week Highlights */}
-      <div style={{ background: theme.cards, borderRadius: '0.75rem', border: `1px solid ${theme.border}`, padding: '1.5rem' }}>
-        <h2 style={{ fontSize: '1.125rem', fontWeight: 700, marginBottom: '1rem', color: theme.accent }}>This Week's Highlights</h2>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1rem' }}>
-          {weekHighlights[market].map((highlight, idx) => (
-            <div
-              key={idx}
-              style={{
-                padding: '1rem',
-                background: theme.background,
-                borderRadius: '0.5rem',
-                border: `1px solid ${theme.border}`,
-                borderLeft: `3px solid ${theme.accent}`,
-              }}
-            >
-              <p style={{ fontSize: '0.875rem', lineHeight: 1.5 }}>{highlight}</p>
+          {/* Note/Disclaimer */}
+          {data?.note && (
+            <div style={{
+              marginTop: '24px',
+              backgroundColor: THEME.background,
+              borderRadius: '8px',
+              border: `1px solid ${THEME.border}`,
+              padding: '16px',
+              fontSize: '12px',
+              color: THEME.textSecondary,
+              lineHeight: '1.6',
+            }}>
+              <strong style={{ color: THEME.textPrimary }}>Note:</strong> {data.note}
             </div>
-          ))}
-        </div>
-      </div>
+          )}
+        </>
+      )}
     </div>
   );
-};
-
-export default EarningsCalendarPage;
+}
