@@ -221,82 +221,109 @@ export async function fetchCorporateAnnouncements(symbol: string) {
   return nseApiFetch(`/api/corporates-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`, 1800000);
 }
 
+// Fetch corporate announcements filtered by category (Board Meetings with Financial Results)
+export async function fetchBoardMeetingAnnouncements(index: string = 'equities') {
+  // NSE corporate-announcements endpoint with board meeting filter
+  return nseApiFetch(`/api/corporate-announcements?index=${encodeURIComponent(index)}`, 600000); // 10 min cache
+}
+
+// Fetch from BSE corporate announcements for cross-validation
+export async function fetchBseBoardMeetings() {
+  const url = '/BseIndiaAPI/api/AnnGetData/w?strCat=Board%20Meeting&strPrevDate=&strScrip=&strSearch=P&strToDate=&strType=C';
+  const cacheKey = `bse:board-meetings`;
+  const cached = getCached(cacheKey, 600000);
+  if (cached) return cached;
+
+  try {
+    const res = await fetch(`https://api.bseindia.com${url}`, {
+      headers: {
+        'User-Agent': HEADERS['User-Agent'],
+        'Accept': 'application/json',
+        'Referer': 'https://www.bseindia.com/',
+      },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    setCache(cacheKey, data);
+    return data;
+  } catch {
+    return null;
+  }
+}
+
 // ======= SECTOR NORMALIZATION =======
 
-// Normalize granular NSE industry names to broad sectors
+// Normalize granular NSE industry names to ~12 broad sectors
+// This keeps the sector count manageable for heatmap, movers, and RRG displays
 export function normalizeSector(industry: string | undefined): string {
   if (!industry) return 'Other';
   const i = industry.toLowerCase();
-  
-  // Banking & Finance
-  if (i.includes('bank') || i.includes('housing finance') || i.includes('nbfc') || i.includes('micro finance')) return 'Banking';
-  if (i.includes('insurance')) return 'Insurance';
-  if (i.includes('asset management') || i.includes('stock exchange') || i.includes('exchange and data') || i.includes('fintech') || i.includes('financial') || i.includes('capital market')) return 'Financial Services';
-  
-  // Technology
+
+  // Banking & Finance (banks, NBFC, insurance, asset management, fintech)
+  if (i.includes('bank') || i.includes('housing finance') || i.includes('nbfc') || i.includes('micro finance') || i.includes('insurance') || i.includes('asset management') || i.includes('stock exchange') || i.includes('exchange and data') || i.includes('fintech') || i.includes('financial') || i.includes('capital market')) return 'Banking & Finance';
+
+  // IT & Technology
   if (i.includes('it ') || i.includes('software') || i.includes('computer') || i.includes('digital') || i.includes('technology') || i === 'it') return 'IT';
-  if (i.includes('telecom') || i.includes('communication')) return 'Telecom';
-  
-  // Healthcare & Pharma  
+
+  // Healthcare & Pharma
   if (i.includes('pharma') || i.includes('drug') || i.includes('healthcare') || i.includes('hospital') || i.includes('diagnostic') || i.includes('medical')) return 'Healthcare';
-  
-  // Energy & Power
-  if (i.includes('oil') || i.includes('gas') || i.includes('refiner') || i.includes('petroleum') || i.includes('lng')) return 'Energy';
-  if (i.includes('power') || i.includes('electric') || i.includes('renewable') || i.includes('solar') || i.includes('wind') || i.includes('energy')) return 'Power';
-  
-  // Materials & Metals
-  if (i.includes('steel') || i.includes('metal') || i.includes('iron') || i.includes('aluminium') || i.includes('copper') || i.includes('zinc') || i.includes('mining') || i.includes('coal')) return 'Metals & Mining';
-  if (i.includes('cement') || i.includes('building material') || i.includes('construction material')) return 'Cement';
-  if (i.includes('chemical') || i.includes('fertilizer') || i.includes('pesticide') || i.includes('agrochemical') || i.includes('petrochemical')) return 'Chemicals';
-  
-  // Consumer
+
+  // Energy (oil, gas, power, renewables)
+  if (i.includes('oil') || i.includes('gas') || i.includes('refiner') || i.includes('petroleum') || i.includes('lng') || i.includes('power') || i.includes('electric') || i.includes('renewable') || i.includes('solar') || i.includes('wind') || i.includes('energy')) return 'Energy';
+
+  // Metals & Mining (steel, metals, cement, chemicals)
+  if (i.includes('steel') || i.includes('metal') || i.includes('iron') || i.includes('aluminium') || i.includes('copper') || i.includes('zinc') || i.includes('mining') || i.includes('coal') || i.includes('cement') || i.includes('building material') || i.includes('construction material')) return 'Metals & Mining';
+  if (i.includes('chemical') || i.includes('fertilizer') || i.includes('pesticide') || i.includes('agrochemical') || i.includes('petrochemical')) return 'Metals & Mining';
+
+  // FMCG (food, beverages, personal care, consumer staples)
   if (i.includes('fmcg') || i.includes('food') || i.includes('beverage') || i.includes('personal care') || i.includes('tobacco') || i.includes('consumer food')) return 'FMCG';
-  if (i.includes('retail') || i.includes('e-commerce') || i.includes('e-retail') || i.includes('departmental')) return 'Retail';
-  if (i.includes('textile') || i.includes('apparel') || i.includes('readymade') || i.includes('footwear')) return 'Textiles';
-  if (i.includes('hotel') || i.includes('restaurant') || i.includes('tourism') || i.includes('hospitality')) return 'Hospitality';
-  if (i.includes('media') || i.includes('entertainment') || i.includes('broadcasting') || i.includes('printing') || i.includes('film')) return 'Media';
-  
-  // Auto & Transport
+
+  // Consumer (retail, textiles, hospitality, durables, media)
+  if (i.includes('retail') || i.includes('e-commerce') || i.includes('textile') || i.includes('apparel') || i.includes('footwear') || i.includes('hotel') || i.includes('restaurant') || i.includes('hospitality') || i.includes('consumer durable') || i.includes('consumer disc')) return 'Consumer';
+
+  // Media & Telecom
+  if (i.includes('media') || i.includes('entertainment') || i.includes('broadcasting') || i.includes('film') || i.includes('telecom') || i.includes('communication')) return 'Media & Telecom';
+
+  // Auto
   if (i.includes('auto') || i.includes('car') || i.includes('vehicle') || i.includes('tyre') || i.includes('tire') || i.includes('tractor')) return 'Auto';
-  if (i.includes('railway') || i.includes('logistics') || i.includes('shipping') || i.includes('transport') || i.includes('airline') || i.includes('port')) return 'Transport & Logistics';
-  
-  // Industrial  
-  if (i.includes('capital good') || i.includes('engineering') || i.includes('industrial') || i.includes('compressor') || i.includes('bearing') || i.includes('electrode') || i.includes('abrasive')) return 'Capital Goods';
-  if (i.includes('infra') || i.includes('construction') || i.includes('road') || i.includes('civil')) return 'Infrastructure';
-  if (i.includes('defence') || i.includes('defense') || i.includes('aerospace') || i.includes('ship building')) return 'Defence';
-  
-  // Real Estate
-  if (i.includes('real estate') || i.includes('realty') || i.includes('housing') && !i.includes('finance')) return 'Real Estate';
-  
-  // Diversified/Conglomerate
+
+  // Capital Goods & Industrials (engineering, defence, transport)
+  if (i.includes('capital good') || i.includes('engineering') || i.includes('industrial') || i.includes('compressor') || i.includes('bearing') || i.includes('defence') || i.includes('defense') || i.includes('aerospace') || i.includes('railway') || i.includes('logistics') || i.includes('shipping') || i.includes('transport') || i.includes('airline') || i.includes('port')) return 'Capital Goods';
+
+  // Infrastructure & Real Estate
+  if (i.includes('infra') || i.includes('construction') || i.includes('road') || i.includes('civil') || i.includes('real estate') || i.includes('realty')) return 'Infrastructure';
+
+  // Diversified
   if (i.includes('diversified') || i.includes('conglomerate') || i.includes('holding')) return 'Diversified';
-  
-  // If none matched, return original but capitalized
+
   return 'Other';
 }
 
 // ======= DYNAMIC SECTOR MAPPING =======
 
 // Build sector mapping dynamically from NSE sector indices
+// Consolidated to ~12 broad sectors for clean heatmap/movers display
 const sectorIndexMap: Record<string, string> = {
   'NIFTY IT': 'IT',
-  'NIFTY BANK': 'Banking',
-  'NIFTY FINANCIAL SERVICES': 'Financial Services',
+  'NIFTY BANK': 'Banking & Finance',
+  'NIFTY FINANCIAL SERVICES': 'Banking & Finance',
+  'NIFTY PSU BANK': 'Banking & Finance',
   'NIFTY PHARMA': 'Healthcare',
+  'NIFTY HEALTHCARE INDEX': 'Healthcare',
   'NIFTY AUTO': 'Auto',
   'NIFTY METAL': 'Metals & Mining',
   'NIFTY ENERGY': 'Energy',
+  'NIFTY OIL & GAS': 'Energy',
   'NIFTY FMCG': 'FMCG',
   'NIFTY REALTY': 'Real Estate',
-  'NIFTY MEDIA': 'Media',
-  'NIFTY PSE': 'PSE',
+  'NIFTY MEDIA': 'Media & Telecom',
+  'NIFTY PSE': 'Capital Goods',
+  'NIFTY CPSE': 'Capital Goods',
   'NIFTY INFRA': 'Infrastructure',
-  'NIFTY COMMODITIES': 'Commodities',
-  'NIFTY HEALTHCARE INDEX': 'Healthcare',
-  'NIFTY CONSUMER DURABLES': 'Consumer Durables',
-  'NIFTY OIL & GAS': 'Energy',
-  'NIFTY CPSE': 'PSE',
-  'NIFTY MNC': 'MNC',
+  'NIFTY COMMODITIES': 'Metals & Mining',
+  'NIFTY CONSUMER DURABLES': 'Consumer',
+  'NIFTY CONSUMPTION': 'Consumer',
+  'NIFTY MNC': 'Diversified',
 };
 
 let dynamicSectorCache: Record<string, string> | null = null;
@@ -416,139 +443,51 @@ export async function getIPOData() {
   return { current, upcoming, past, bseIPO };
 }
 
-// Sector mapping for NIFTY 50 and extended stocks (NIFTY Next 50, etc.)
+// Static sector mapping using consolidated ~12 broad sectors
+// Used as fallback when dynamic sector map is unavailable
 export const NIFTY50_SECTORS: Record<string, string> = {
   // NIFTY 50 stocks
-  'RELIANCE': 'Energy',
-  'TCS': 'IT',
-  'HDFCBANK': 'Banking',
-  'INFY': 'IT',
-  'ICICIBANK': 'Banking',
-  'HINDUNILVR': 'FMCG',
-  'ITC': 'FMCG',
-  'SBIN': 'Banking',
-  'BHARTIARTL': 'Telecom',
-  'KOTAKBANK': 'Banking',
-  'LT': 'Capital Goods',
-  'HCLTECH': 'IT',
-  'AXISBANK': 'Banking',
-  'ASIANPAINT': 'Consumer Durables',
-  'MARUTI': 'Auto',
-  'SUNPHARMA': 'Healthcare',
-  'TITAN': 'Consumer Durables',
-  'BAJFINANCE': 'Financial Services',
-  'DMART': 'Retail',
-  'ULTRACEMCO': 'Cement',
-  'NTPC': 'Power',
-  'ONGC': 'Energy',
-  'NESTLEIND': 'FMCG',
-  'WIPRO': 'IT',
-  'M&M': 'Auto',
-  'JSWSTEEL': 'Metals & Mining',
-  'POWERGRID': 'Power',
-  'TATASTEEL': 'Metals & Mining',
-  'TATAMOTORS': 'Auto',
-  'ADANIENT': 'Diversified',
-  'ADANIPORTS': 'Infrastructure',
-  'DIVISLAB': 'Healthcare',
-  'COALINDIA': 'Metals & Mining',
-  'BAJAJFINSV': 'Financial Services',
-  'TECHM': 'IT',
-  'DRREDDY': 'Healthcare',
-  'CIPLA': 'Healthcare',
-  'BRITANNIA': 'FMCG',
-  'APOLLOHOSP': 'Healthcare',
-  'EICHERMOT': 'Auto',
-  'TATACONSUM': 'FMCG',
-  'GRASIM': 'Cement',
-  'INDUSINDBK': 'Banking',
-  'BPCL': 'Energy',
-  'HEROMOTOCO': 'Auto',
-  'SBILIFE': 'Insurance',
-  'HDFCLIFE': 'Insurance',
-  'BAJAJ-AUTO': 'Auto',
-  'HINDALCO': 'Metals & Mining',
-  'SHRIRAMFIN': 'Financial Services',
-  // NIFTY Next 50 and other extended stocks
-  'ADANIGREEN': 'Energy',
-  'ADANIPOWER': 'Power',
-  'AMBUJACEM': 'Cement',
-  'BANKBARODA': 'Banking',
-  'BERGEPAINT': 'Consumer Durables',
-  'BOSCHLTD': 'Auto',
-  'CANBK': 'Banking',
-  'CHOLAFIN': 'Financial Services',
-  'COLPAL': 'FMCG',
-  'DABUR': 'FMCG',
-  'DLF': 'Real Estate',
-  'GODREJCP': 'FMCG',
-  'HAVELLS': 'Consumer Durables',
-  'ICICIPRULI': 'Insurance',
-  'IDFC': 'Financial Services',
-  'INDHOTEL': 'Hospitality',
-  'IOC': 'Energy',
-  'IRCTC': 'Transport & Logistics',
-  'JINDALSTEL': 'Metals & Mining',
-  'LICHSGFIN': 'Financial Services',
-  'LICI': 'Insurance',
-  'LODHA': 'Real Estate',
-  'LUPIN': 'Healthcare',
-  'MARICO': 'FMCG',
-  'MOTHERSON': 'Auto',
-  'NAUKRI': 'IT',
-  'NHPC': 'Power',
-  'OBEROIRLTY': 'Real Estate',
-  'OFSS': 'IT',
-  'PEL': 'Financial Services',
-  'PERSISTENT': 'IT',
-  'PETRONET': 'Energy',
-  'PIDILITIND': 'Chemicals',
-  'PNB': 'Banking',
-  'POLYCAB': 'Consumer Durables',
-  'SRF': 'Chemicals',
-  'TATACOMM': 'Telecom',
-  'TATAPOWER': 'Power',
-  'TORNTPHARM': 'Healthcare',
-  'TRENT': 'Retail',
-  'UNIONBANK': 'Banking',
-  'UNITDSPR': 'FMCG',
-  'VEDL': 'Metals & Mining',
-  'ZOMATO': 'Consumer Services',
-  'ZYDUSLIFE': 'Healthcare',
-  'ABB': 'Capital Goods',
-  'ACC': 'Cement',
-  'ATGL': 'Energy',
-  'AUROPHARMA': 'Healthcare',
-  'BHEL': 'Capital Goods',
-  'BIOCON': 'Healthcare',
-  'CGPOWER': 'Capital Goods',
-  'CONCOR': 'Transport & Logistics',
-  'CUMMINSIND': 'Capital Goods',
-  'DELHIVERY': 'Transport & Logistics',
-  'ESCORTS': 'Auto',
-  'GAIL': 'Energy',
-  'GMRINFRA': 'Infrastructure',
-  'HAL': 'Defence',
-  'ICICIGI': 'Insurance',
-  'IDEA': 'Telecom',
-  'IGL': 'Energy',
-  'IPCALAB': 'Healthcare',
-  'IRFC': 'Financial Services',
-  'JIOFIN': 'Financial Services',
-  'MAXHEALTH': 'Healthcare',
-  'MPHASIS': 'IT',
-  'MUTHOOTFIN': 'Financial Services',
-  'PAGEIND': 'Textiles',
-  'PIIND': 'Chemicals',
-  'RECLTD': 'Financial Services',
-  'SAIL': 'Metals & Mining',
-  'SIEMENS': 'Capital Goods',
-  'SJVN': 'Power',
-  'SOLARINDS': 'Chemicals',
-  'SUPREMEIND': 'Chemicals',
-  'TATAELXSI': 'IT',
-  'TIINDIA': 'Auto',
-  'TORNTPOWER': 'Power',
-  'UPL': 'Chemicals',
-  'VOLTAS': 'Consumer Durables',
+  'RELIANCE': 'Energy', 'TCS': 'IT', 'HDFCBANK': 'Banking & Finance', 'INFY': 'IT',
+  'ICICIBANK': 'Banking & Finance', 'HINDUNILVR': 'FMCG', 'ITC': 'FMCG', 'SBIN': 'Banking & Finance',
+  'BHARTIARTL': 'Media & Telecom', 'KOTAKBANK': 'Banking & Finance', 'LT': 'Capital Goods',
+  'HCLTECH': 'IT', 'AXISBANK': 'Banking & Finance', 'ASIANPAINT': 'Consumer', 'MARUTI': 'Auto',
+  'SUNPHARMA': 'Healthcare', 'TITAN': 'Consumer', 'BAJFINANCE': 'Banking & Finance',
+  'DMART': 'Consumer', 'ULTRACEMCO': 'Metals & Mining', 'NTPC': 'Energy', 'ONGC': 'Energy',
+  'NESTLEIND': 'FMCG', 'WIPRO': 'IT', 'M&M': 'Auto', 'JSWSTEEL': 'Metals & Mining',
+  'POWERGRID': 'Energy', 'TATASTEEL': 'Metals & Mining', 'TATAMOTORS': 'Auto',
+  'ADANIENT': 'Diversified', 'ADANIPORTS': 'Infrastructure', 'DIVISLAB': 'Healthcare',
+  'COALINDIA': 'Metals & Mining', 'BAJAJFINSV': 'Banking & Finance', 'TECHM': 'IT',
+  'DRREDDY': 'Healthcare', 'CIPLA': 'Healthcare', 'BRITANNIA': 'FMCG',
+  'APOLLOHOSP': 'Healthcare', 'EICHERMOT': 'Auto', 'TATACONSUM': 'FMCG',
+  'GRASIM': 'Metals & Mining', 'INDUSINDBK': 'Banking & Finance', 'BPCL': 'Energy',
+  'HEROMOTOCO': 'Auto', 'SBILIFE': 'Banking & Finance', 'HDFCLIFE': 'Banking & Finance',
+  'BAJAJ-AUTO': 'Auto', 'HINDALCO': 'Metals & Mining', 'SHRIRAMFIN': 'Banking & Finance',
+  // NIFTY Next 50 and extended stocks
+  'ADANIGREEN': 'Energy', 'ADANIPOWER': 'Energy', 'AMBUJACEM': 'Metals & Mining',
+  'BANKBARODA': 'Banking & Finance', 'BERGEPAINT': 'Consumer', 'BOSCHLTD': 'Auto',
+  'CANBK': 'Banking & Finance', 'CHOLAFIN': 'Banking & Finance', 'COLPAL': 'FMCG',
+  'DABUR': 'FMCG', 'DLF': 'Infrastructure', 'GODREJCP': 'FMCG',
+  'HAVELLS': 'Consumer', 'ICICIPRULI': 'Banking & Finance', 'IDFC': 'Banking & Finance',
+  'INDHOTEL': 'Consumer', 'IOC': 'Energy', 'IRCTC': 'Capital Goods',
+  'JINDALSTEL': 'Metals & Mining', 'LICHSGFIN': 'Banking & Finance', 'LICI': 'Banking & Finance',
+  'LODHA': 'Infrastructure', 'LUPIN': 'Healthcare', 'MARICO': 'FMCG',
+  'MOTHERSON': 'Auto', 'NAUKRI': 'IT', 'NHPC': 'Energy',
+  'OBEROIRLTY': 'Infrastructure', 'OFSS': 'IT', 'PEL': 'Banking & Finance',
+  'PERSISTENT': 'IT', 'PETRONET': 'Energy', 'PIDILITIND': 'Metals & Mining',
+  'PNB': 'Banking & Finance', 'POLYCAB': 'Consumer', 'SRF': 'Metals & Mining',
+  'TATACOMM': 'Media & Telecom', 'TATAPOWER': 'Energy', 'TORNTPHARM': 'Healthcare',
+  'TRENT': 'Consumer', 'UNIONBANK': 'Banking & Finance', 'UNITDSPR': 'FMCG',
+  'VEDL': 'Metals & Mining', 'ZOMATO': 'Consumer', 'ZYDUSLIFE': 'Healthcare',
+  'ABB': 'Capital Goods', 'ACC': 'Metals & Mining', 'ATGL': 'Energy',
+  'AUROPHARMA': 'Healthcare', 'BHEL': 'Capital Goods', 'BIOCON': 'Healthcare',
+  'CGPOWER': 'Capital Goods', 'CONCOR': 'Capital Goods', 'CUMMINSIND': 'Capital Goods',
+  'DELHIVERY': 'Capital Goods', 'ESCORTS': 'Auto', 'GAIL': 'Energy',
+  'GMRINFRA': 'Infrastructure', 'HAL': 'Capital Goods', 'ICICIGI': 'Banking & Finance',
+  'IDEA': 'Media & Telecom', 'IGL': 'Energy', 'IPCALAB': 'Healthcare',
+  'IRFC': 'Banking & Finance', 'JIOFIN': 'Banking & Finance', 'MAXHEALTH': 'Healthcare',
+  'MPHASIS': 'IT', 'MUTHOOTFIN': 'Banking & Finance', 'PAGEIND': 'Consumer',
+  'PIIND': 'Metals & Mining', 'RECLTD': 'Banking & Finance', 'SAIL': 'Metals & Mining',
+  'SIEMENS': 'Capital Goods', 'SJVN': 'Energy', 'SOLARINDS': 'Metals & Mining',
+  'SUPREMEIND': 'Metals & Mining', 'TATAELXSI': 'IT', 'TIINDIA': 'Auto',
+  'TORNTPOWER': 'Energy', 'UPL': 'Metals & Mining', 'VOLTAS': 'Consumer',
 };
