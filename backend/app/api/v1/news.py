@@ -281,7 +281,7 @@ async def reclassify_bottlenecks(
         updated = 0
 
         for art in all_articles:
-            bottleneck_themes = _detect_bottleneck(art.headline, art.summary or "")
+            bottleneck_themes = _detect_bottleneck(art.headline, art.summary or "", region=art.region or "")
             if bottleneck_themes:
                 art.article_type = "BOTTLENECK"
                 art.themes = bottleneck_themes

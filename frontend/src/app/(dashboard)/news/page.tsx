@@ -89,7 +89,7 @@ const SOURCES = [
   // Policy & Geopolitics
   'CSIS', 'Brookings',
 ] as const;
-const IMPORTANCE_LABELS: Record<number, string> = { 1: 'All', 3: 'Medium+', 4: 'High+', 5: 'Critical' };
+const IMPORTANCE_LABELS: Record<number, string> = { 1: 'All', 2: 'Low+', 3: 'Medium+', 4: 'High' };
 
 // Ticker alias map for search expansion (ticker → company name keywords)
 const TICKER_ALIASES: Record<string, string[]> = {
@@ -756,18 +756,25 @@ export default function NewsFeedPage() {
             style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '8px', padding: '7px 12px', color: '#F5F7FA', fontSize: '12px', width: '200px', outline: 'none' }}
           />
           <button
-            onClick={() => { setArticleType(articleType === 'BOTTLENECK' ? 'ALL' : 'BOTTLENECK'); setMinImportance(1); setSourceName('ALL'); }}
+            onClick={() => setArticleType(articleType === 'BOTTLENECK' ? 'ALL' : 'BOTTLENECK')}
             style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: articleType === 'BOTTLENECK' ? '#EF444420' : '#111B35', border: `1px solid ${articleType === 'BOTTLENECK' ? '#EF4444' : '#1E2D45'}`, borderRadius: '8px', padding: '7px 12px', color: articleType === 'BOTTLENECK' ? '#EF4444' : '#8A95A3', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
             title="Show critical bottleneck news (GPU, Memory, Photonics, Power, etc.)"
           >
             BOTTLENECKS
           </button>
           <button
-            onClick={() => { setRegion(region === 'IN' ? 'ALL' : 'IN'); setArticleType('ALL'); }}
+            onClick={() => setRegion(region === 'IN' ? 'ALL' : 'IN')}
             style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: region === 'IN' ? '#0F7ABF20' : '#111B35', border: `1px solid ${region === 'IN' ? '#0F7ABF' : '#1E2D45'}`, borderRadius: '8px', padding: '7px 12px', color: region === 'IN' ? '#0F7ABF' : '#8A95A3', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
             title="Show only India news"
           >
             🇮🇳 India
+          </button>
+          <button
+            onClick={() => setRegion(region === 'US' ? 'ALL' : 'US')}
+            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: region === 'US' ? '#0F7ABF20' : '#111B35', border: `1px solid ${region === 'US' ? '#0F7ABF' : '#1E2D45'}`, borderRadius: '8px', padding: '7px 12px', color: region === 'US' ? '#0F7ABF' : '#8A95A3', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
+            title="Show only US news"
+          >
+            🇺🇸 US
           </button>
           <button
             onClick={() => setShowFilters(f => !f)}
@@ -818,7 +825,7 @@ export default function NewsFeedPage() {
             <div>
               <p style={{ fontSize: '10px', fontWeight: '600', color: '#4A5B6C', margin: '0 0 8px', letterSpacing: '0.5px' }}>IMPORTANCE</p>
               <div style={{ display: 'flex', gap: '6px' }}>
-                {([1, 3, 4, 5] as const).map(n => (
+                {([1, 2, 3, 4] as const).map(n => (
                   <button key={n} onClick={() => setMinImportance(n)}
                     style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', border: `1px solid ${minImportance === n ? '#0F7ABF' : '#1E2D45'}`, backgroundColor: minImportance === n ? '#0F7ABF20' : 'transparent', color: minImportance === n ? '#0F7ABF' : '#8A95A3' }}>
                     {IMPORTANCE_LABELS[n]}

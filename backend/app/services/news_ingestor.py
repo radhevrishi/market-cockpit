@@ -526,15 +526,18 @@ def _headlines_similar(h1: str, h2: str) -> bool:
     return False
 
 
-def _detect_bottleneck(title: str, description: str) -> list[str]:
+def _detect_bottleneck(title: str, description: str, region: str = "") -> list[str]:
     """Detect bottleneck sub-categories from article text.
 
     Returns a list of bottleneck theme tags (e.g. ['GPU_SHORTAGE', 'COWOS_PACKAGING']).
     Empty list means no bottleneck detected.
 
-    Uses BOTTLENECK_REJECT_PHRASES to filter out stock-analysis / investment-advice
-    articles that happen to mention infrastructure keywords but aren't about actual
-    supply constraints.
+    region parameter: "IN" for Indian sources, "US" for US sources.
+    INDIA_* themes are ONLY assigned when:
+      - Article comes from an Indian source (region="IN"), OR
+      - Article explicitly mentions India/Indian context (₹, crore, lakh, nifty, etc.)
+    This prevents US articles about "chip" or "power shortage" from being tagged
+    as India infrastructure bottlenecks.
     """
     text = (title + " " + (description or "")).lower()
     title_lower = title.lower()
@@ -544,8 +547,24 @@ def _detect_bottleneck(title: str, description: str) -> list[str]:
         if re.search(reject_phrase, title_lower):
             return []
 
+    # Determine if article has India context (for INDIA_* theme eligibility)
+    is_india_context = region == "IN"
+    if not is_india_context:
+        india_signals = [
+            "india", "indian", "₹", "rs.", "crore", "lakh", "nifty", "sensex",
+            "bse", "nse", "sebi", "rbi", "modi", "delhi", "mumbai", "chennai",
+            "bangalore", "hyderabad", "kolkata", "pune", "gujarat", "maharashtra",
+            "pli scheme", "make in india", "atmanirbhar", "bharatnet", "sagarmala",
+            "gati shakti", "discom", "nhai", "jnpt", "adani", "tata", "reliance",
+            "vedanta", "bharti", "infosys", "wipro",
+        ]
+        is_india_context = any(sig in text for sig in india_signals)
+
     matched_themes: list[str] = []
     for category, phrases in BOTTLENECK_KEYWORDS.items():
+        # Skip INDIA_* categories for non-India articles
+        if category.startswith("INDIA_") and not is_india_context:
+            continue
         for phrase in phrases:
             if phrase in text:
                 matched_themes.append(category)
@@ -558,18 +577,22 @@ def _detect_bottleneck(title: str, description: str) -> list[str]:
         (r'data center.*power contract', "POWER_GRID"),
         (r'pressuring memory chip', "HBM_MEMORY"),
         (r'divide in memory chip', "HBM_MEMORY"),
-        # India infra patterns (don't require "india" in text)
-        (r'(discom|distribution company).*loss', "INDIA_POWER_GRID"),
-        (r'coal.*stock.*critical', "INDIA_POWER_GRID"),
-        (r'power.*plant.*shut', "INDIA_POWER_GRID"),
-        (r'(nhai|highway).*delay', "INDIA_PORT_LOGISTICS"),
-        (r'(port|terminal).*capacity.*constraint', "INDIA_PORT_LOGISTICS"),
-        (r'pli.*scheme.*(semiconductor|battery|solar)', "INDIA_SEMICONDUCTOR_FAB"),
-        (r'(₹|rs\.?)\s*\d+.*crore.*(fab|semiconductor|chip)', "INDIA_SEMICONDUCTOR_FAB"),
-        (r'(dam|reservoir).*level.*(low|critical|drop)', "INDIA_WATER_INFRA"),
-        (r'(cement|steel|sand).*shortage', "INDIA_HOUSING_INFRA"),
-        (r'construction.*labour.*shortage', "INDIA_HOUSING_INFRA"),
     ]
+    # India-specific regex patterns — only if article has India context
+    if is_india_context:
+        _REGEX_PATTERNS.extend([
+            (r'(discom|distribution company).*loss', "INDIA_POWER_GRID"),
+            (r'coal.*stock.*critical', "INDIA_POWER_GRID"),
+            (r'power.*plant.*shut', "INDIA_POWER_GRID"),
+            (r'(nhai|highway).*delay', "INDIA_PORT_LOGISTICS"),
+            (r'(port|terminal).*capacity.*constraint', "INDIA_PORT_LOGISTICS"),
+            (r'pli.*scheme.*(semiconductor|battery|solar)', "INDIA_SEMICONDUCTOR_FAB"),
+            (r'(₹|rs\.?)\s*\d+.*crore.*(fab|semiconductor|chip)', "INDIA_SEMICONDUCTOR_FAB"),
+            (r'(dam|reservoir).*level.*(low|critical|drop)', "INDIA_WATER_INFRA"),
+            (r'(cement|steel|sand).*shortage', "INDIA_HOUSING_INFRA"),
+            (r'construction.*labour.*shortage', "INDIA_HOUSING_INFRA"),
+        ])
+
     for pattern, category in _REGEX_PATTERNS:
         if category not in matched_themes and re.search(pattern, text):
             matched_themes.append(category)
@@ -1084,9 +1107,32 @@ class NewsIngestor:
     async def _reclassify_bottlenecks(self, db: AsyncSession) -> int:
         """Re-scan existing articles and tag any that match bottleneck keywords.
 
-        Only updates articles that are NOT already tagged as BOTTLENECK.
-        Returns count of newly reclassified articles.
+        Also strips incorrect INDIA_* themes from non-India articles and demotes
+        articles that no longer match any bottleneck category.
+        Returns count of updated articles.
         """
+        # First: fix existing BOTTLENECK articles that may have incorrect INDIA_* themes
+        result_bn = await db.execute(
+            select(NewsArticle).where(NewsArticle.article_type == "BOTTLENECK")
+        )
+        existing_bn = result_bn.scalars().all()
+        fixed = 0
+        for art in existing_bn:
+            new_themes = _detect_bottleneck(art.headline, art.summary or "", region=art.region or "")
+            if new_themes != (art.themes or []):
+                if new_themes:
+                    art.themes = new_themes
+                    fixed += 1
+                else:
+                    # No longer matches any bottleneck — demote to GENERAL
+                    art.article_type = "GENERAL"
+                    art.themes = []
+                    art.importance_score = _score_importance(art.headline, art.summary or "", is_bottleneck=False)
+                    fixed += 1
+        if fixed:
+            logger.info(f"Fixed {fixed} existing BOTTLENECK articles (removed incorrect INDIA_* themes or demoted)")
+
+        # Then: find new bottleneck articles
         result = await db.execute(
             select(NewsArticle).where(NewsArticle.article_type != "BOTTLENECK")
         )
@@ -1094,7 +1140,7 @@ class NewsIngestor:
         updated = 0
 
         for art in articles:
-            themes = _detect_bottleneck(art.headline, art.summary or "")
+            themes = _detect_bottleneck(art.headline, art.summary or "", region=art.region or "")
             if themes:
                 art.article_type = "BOTTLENECK"
                 art.themes = themes
@@ -1104,7 +1150,7 @@ class NewsIngestor:
 
         if updated:
             logger.info(f"Reclassified {updated} existing articles as BOTTLENECK")
-        return updated
+        return updated + fixed
 
     async def _scrape_ibef_news(self, client: httpx.AsyncClient, db: AsyncSession) -> int:
         """Scrape IBEF news page directly as fallback when RSS feed fails.
@@ -1153,7 +1199,7 @@ class NewsIngestor:
 
                 tickers = _extract_tickers(title, "")
                 sentiment = _infer_sentiment(title)
-                bottleneck_themes = _detect_bottleneck(title, "")
+                bottleneck_themes = _detect_bottleneck(title, "", region="IN")
                 is_bottleneck = len(bottleneck_themes) > 0
                 importance = _score_importance(title, "", is_bottleneck=is_bottleneck)
 
@@ -1235,7 +1281,7 @@ class NewsIngestor:
             sentiment = _infer_sentiment(art["headline"])
 
             # Detect bottleneck themes FIRST (affects type & importance)
-            bottleneck_themes = _detect_bottleneck(art["headline"], art["description"])
+            bottleneck_themes = _detect_bottleneck(art["headline"], art["description"], region=art["region"])
             is_bottleneck = len(bottleneck_themes) > 0
 
             importance = _score_importance(art["headline"], art["description"], is_bottleneck=is_bottleneck)

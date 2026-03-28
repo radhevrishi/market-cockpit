@@ -140,6 +140,39 @@ async def _seed_initial_data():
     except Exception as e:
         logger.warning(f"RATING_CHANGE cleanup failed (non-fatal): {e}")
 
+    # Fix India Bottleneck cross-contamination: re-run detection with region awareness
+    # Non-India articles (Tesla, ICE, etc.) that were incorrectly tagged with INDIA_* themes
+    # will be stripped of those themes and possibly demoted from BOTTLENECK
+    try:
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import select
+            from app.models.news import NewsArticle
+            from app.services.news_ingestor import _detect_bottleneck, _score_importance
+            result = await db.execute(
+                select(NewsArticle).where(NewsArticle.article_type == "BOTTLENECK")
+            )
+            articles = result.scalars().all()
+            fixed = 0
+            demoted = 0
+            for art in articles:
+                new_themes = _detect_bottleneck(art.headline, art.summary or "", region=art.region or "")
+                old_themes = art.themes if isinstance(art.themes, list) else []
+                if new_themes != old_themes:
+                    if new_themes:
+                        art.themes = new_themes
+                        fixed += 1
+                    else:
+                        # No longer matches any bottleneck — demote to GENERAL
+                        art.article_type = "GENERAL"
+                        art.themes = []
+                        art.importance_score = _score_importance(art.headline, art.summary or "", is_bottleneck=False)
+                        demoted += 1
+            if fixed or demoted:
+                await db.commit()
+                logger.info(f"Bottleneck region fix: updated {fixed} themes, demoted {demoted} non-bottleneck articles")
+    except Exception as e:
+        logger.warning(f"Bottleneck region fix failed (non-fatal): {e}")
+
     # Reclassify existing GENERAL articles that should be RATING_CHANGE, EARNINGS, etc.
     try:
         async with AsyncSessionLocal() as db:
