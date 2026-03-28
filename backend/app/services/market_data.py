@@ -421,8 +421,41 @@ _INDICES_FALLBACK = [
 ]
 
 
+async def _fetch_yahoo_chart(symbol: str, client: "httpx.AsyncClient") -> Optional[dict]:
+    """Fetch a single ticker's latest price from Yahoo Finance v8 chart API."""
+    try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+        params = {"range": "5d", "interval": "1d", "includePrePost": "false"}
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        resp = await client.get(url, params=params, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            logger.warning(f"Yahoo chart API returned {resp.status_code} for {symbol}")
+            return None
+        data = resp.json()
+        result = data.get("chart", {}).get("result", [])
+        if not result:
+            return None
+        meta = result[0].get("meta", {})
+        price = meta.get("regularMarketPrice", 0)
+        prev_close = meta.get("chartPreviousClose") or meta.get("previousClose", 0)
+        if price and price > 0 and prev_close and prev_close > 0:
+            change_pct = round((price - prev_close) / prev_close * 100, 2)
+            return {"price": round(price, 2), "change_pct": change_pct, "up": change_pct >= 0}
+        elif price and price > 0:
+            return {"price": round(price, 2), "change_pct": 0.0, "up": True}
+    except Exception as e:
+        logger.warning(f"Yahoo chart fetch failed for {symbol}: {e}")
+    return None
+
+
 async def get_market_indices() -> list[dict]:
-    """Fetch major market index quotes using yf.download() for reliability."""
+    """Fetch major market index quotes using Yahoo Finance chart API (httpx).
+
+    Uses the public v8 chart API which is more reliable from cloud servers
+    than the yfinance library (which gets JSON decode errors on Render/cloud IPs).
+    """
+    import httpx
+
     indices = {
         "^NSEI": "NIFTY 50",
         "^BSESN": "SENSEX",
@@ -441,95 +474,38 @@ async def get_market_indices() -> list[dict]:
         return cached
 
     try:
-        def _fetch():
-            symbols = list(indices.keys())
-            result = {}
+        result = {}
+        async with httpx.AsyncClient() as client:
+            # Fetch all indices concurrently
+            import asyncio as _aio
+            tasks = {sym: _fetch_yahoo_chart(sym, client) for sym in indices}
+            results = await _aio.gather(*tasks.values(), return_exceptions=True)
 
-            # Use yf.download for batch efficiency (much less rate-limited than .info)
-            try:
-                import pandas as pd
-                # Use 5d to ensure we get at least 2 trading days even over weekends/holidays
-                df = yf.download(symbols, period="5d", group_by="ticker", progress=False, threads=True)
+            for sym, res in zip(tasks.keys(), results):
+                if isinstance(res, Exception):
+                    logger.warning(f"Exception fetching {sym}: {res}")
+                    continue
+                if res is not None:
+                    name = indices[sym]
+                    result[sym] = {"symbol": name, **res}
 
-                # Check if download actually returned valid data
-                if df is not None and not df.empty and df.isnull().sum().sum() < len(df) * len(df.columns):
-                    logger.info(f"yf.download returned {len(df)} rows, columns: {list(df.columns[:5])}...")
-                    for sym, name in indices.items():
-                        try:
-                            # Handle both single-ticker (flat columns) and multi-ticker (MultiIndex columns)
-                            if len(symbols) == 1:
-                                # Single symbol: df has columns ['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
-                                ticker_df = df
-                            else:
-                                # Multi-symbol: df has MultiIndex columns like [('Close', '^NSEI'), ('Close', '^BSESN')]
-                                try:
-                                    ticker_df = df[sym]
-                                except (KeyError, TypeError):
-                                    # Try getting from MultiIndex columns
-                                    if hasattr(df.columns, 'levels'):
-                                        ticker_cols = [col for col in df.columns if col[1] == sym] if df.columns.nlevels > 1 else []
-                                        if ticker_cols:
-                                            ticker_df = df[[col for col in ticker_cols if col[0] in ['Close', 'Open', 'High', 'Low', 'Volume']]]
-                                            ticker_df.columns = [col[0] for col in ticker_df.columns]
-                                        else:
-                                            ticker_df = None
-                                    else:
-                                        ticker_df = None
+        live_count = len(result)
+        logger.info(f"Yahoo chart API: got {live_count}/{len(indices)} live indices")
 
-                            if ticker_df is not None and not ticker_df.empty:
-                                # Get last 2 rows for price and change calculation
-                                recent = ticker_df.dropna(subset=["Close"]).tail(2)
-                                if len(recent) >= 1:
-                                    price = float(recent["Close"].iloc[-1])
-                                    prev = float(recent["Close"].iloc[-2]) if len(recent) >= 2 else price
-
-                                    # Validate price is reasonable
-                                    if price > 0 and not pd.isna(price):
-                                        change_pct = ((price - prev) / prev * 100) if prev > 0 else 0
-                                        result[sym] = {
-                                            "symbol": name,
-                                            "price": round(price, 2),
-                                            "change_pct": round(change_pct, 2),
-                                            "up": change_pct >= 0,
-                                        }
-                                        logger.debug(f"Index {sym} ({name}): price={price}, change_pct={change_pct:.2f}%")
-                        except Exception as e:
-                            logger.warning(f"Failed to parse index {sym}: {e}")
-                            continue
-                else:
-                    logger.warning(f"yf.download returned empty/invalid data: empty={df is None or (hasattr(df, 'empty') and df.empty)}")
-            except Exception as e:
-                logger.error(f"yf.download failed for indices: {e}", exc_info=True)
-
-            # No .info fallback — missing indices use the hardcoded fallback values.
-            missing_symbols = [sym for sym in indices.keys() if sym not in result]
-            if missing_symbols:
-                logger.info(f"{len(missing_symbols)} indices missing from yf.download: {missing_symbols}")
-
-            return result
-
-        async with _YF_SEMAPHORE:
-            raw = await asyncio.to_thread(_fetch)
-        live_results = [v for v in raw.values() if v is not None]
-
-        # Consider success if we got at least half of the indices
-        if len(live_results) >= len(indices) // 2:
-            logger.info(f"Got {len(live_results)}/{len(indices)} live indices")
+        if live_count >= len(indices) // 2:
             fallback_map = {f["symbol"]: f for f in _INDICES_FALLBACK}
             final = []
             for sym, name in indices.items():
-                val = raw.get(sym)
+                val = result.get(sym)
                 if val is not None:
                     final.append(val)
                 else:
                     fb = fallback_map.get(name, {"symbol": name, "price": 0, "change_pct": 0, "up": True})
-                    logger.debug(f"Using fallback for {name}")
                     final.append(fb)
-            # Cache the result with 5-minute TTL for indices
             _set_cached_quote(cache_key, final, ttl=_INDICES_CACHE_TTL)
             return final
 
-        logger.warning(f"Not enough live index data ({len(live_results)}/{len(indices)}), using fallback")
+        logger.warning(f"Not enough live index data ({live_count}/{len(indices)}), using fallback")
         return _INDICES_FALLBACK
 
     except Exception as e:
