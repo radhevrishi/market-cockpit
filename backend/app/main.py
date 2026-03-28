@@ -41,6 +41,21 @@ async def _seed_initial_data():
     except Exception as e:
         logger.error(f"Startup seeding failed (non-fatal): {e}")
     
+    # One-time cleanup: remove bad IBEF-scraped articles (broken URLs, wrong dates)
+    try:
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import text
+            # Delete articles scraped from ibef.org (they have broken URLs)
+            result = await db.execute(
+                text("DELETE FROM news_articles WHERE source_name = 'IBEF' AND source_url LIKE '%ibef.org%'")
+            )
+            deleted = result.rowcount
+            if deleted:
+                await db.commit()
+                logger.info(f"Cleaned up {deleted} IBEF-scraped articles with broken URLs")
+    except Exception as e:
+        logger.warning(f"IBEF cleanup failed (non-fatal): {e}")
+
     try:
         async with AsyncSessionLocal() as db:
             from app.services.news_ingestor import NewsIngestor

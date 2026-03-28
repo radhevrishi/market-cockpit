@@ -24,11 +24,11 @@ RSS_SOURCES = [
     {"url": "https://feeds.finance.yahoo.com/rss/2.0/headline?s=^NSEI&region=IN&lang=en-IN", "name": "Yahoo Finance IN", "region": "IN"},
     {"url": "https://economictimes.indiatimes.com/news/economy/rss.cms",    "name": "ET Economy",    "region": "IN"},
     {"url": "https://www.moneycontrol.com/rss/economy.xml",                 "name": "MoneyControl Economy", "region": "IN"},
-    # India — IBEF-style industry & economy sources (live RSS alternatives)
-    {"url": "https://economictimes.indiatimes.com/industry/rss.cms",        "name": "IBEF",          "region": "IN"},
-    {"url": "https://www.business-standard.com/rss/economy-policy-106.rss", "name": "IBEF",          "region": "IN"},
-    {"url": "https://www.livemint.com/rss/industry",                        "name": "IBEF",          "region": "IN"},
-    {"url": "https://www.moneycontrol.com/rss/business.xml",                "name": "IBEF",          "region": "IN"},
+    # India — Industry & economy sources
+    {"url": "https://economictimes.indiatimes.com/industry/rss.cms",        "name": "ET Industry",   "region": "IN"},
+    {"url": "https://www.business-standard.com/rss/economy-policy-106.rss", "name": "BS Economy",    "region": "IN"},
+    {"url": "https://www.livemint.com/rss/industry",                        "name": "LiveMint",      "region": "IN"},
+    {"url": "https://www.moneycontrol.com/rss/business.xml",                "name": "MoneyControl",  "region": "IN"},
     # US / Global
     {"url": "https://feeds.finance.yahoo.com/rss/2.0/headline?s=AAPL,MSFT,NVDA,GOOGL,TSLA,AMZN,META&region=US&lang=en-US", "name": "Yahoo Finance US", "region": "US"},
     {"url": "https://feeds.finance.yahoo.com/rss/2.0/headline?s=JPM,BAC,JNJ,PG,XOM,AMD,INTC,NFLX,ORCL&region=US&lang=en-US", "name": "Yahoo Finance US2", "region": "US"},
@@ -750,17 +750,9 @@ class NewsIngestor:
                                 await db.rollback()
                             except Exception:
                                 pass
-                    # After RSS loop: check if we got any IBEF articles; if not, try scraping
-                    ibef_count_result = await db.execute(
-                        select(func.count()).select_from(NewsArticle).where(
-                            NewsArticle.source_name == "IBEF"
-                        )
-                    )
-                    ibef_total = ibef_count_result.scalar() or 0
-                    if ibef_total < 5:
-                        logger.info("Few IBEF articles in DB, trying web scrape fallback...")
-                        scrape_count = await self._scrape_ibef_news(client, db)
-                        total += scrape_count
+                    # IBEF web scraping disabled — it produced articles with broken URLs
+                    # and incorrect timestamps.  Indian industry news is now covered by
+                    # ET Industry, BS Economy, LiveMint, and MoneyControl RSS feeds.
             finally:
                 # Restore proxy env vars
                 _os.environ.update(_saved_proxies)

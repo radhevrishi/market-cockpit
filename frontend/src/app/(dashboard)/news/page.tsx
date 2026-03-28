@@ -74,7 +74,7 @@ interface BnDashboard {
 
 const REGIONS = ['ALL', 'IN', 'US'] as const;
 const TYPES   = ['ALL', 'BOTTLENECK', 'EARNINGS', 'RATING_CHANGE', 'MACRO', 'CORPORATE', 'GENERAL'] as const;
-const SOURCES = ['ALL', 'IBEF', 'ET Markets', 'ET Economy', 'MoneyControl', 'LiveMint', 'Business Standard', 'Yahoo Finance IN', 'Yahoo Finance US', 'Yahoo Tech Semis', 'Yahoo Data Center', 'CNBC', 'CNBC Tech', 'MarketWatch', 'Bloomberg', 'Reuters Finance'] as const;
+const SOURCES = ['ALL', 'ET Markets', 'ET Industry', 'ET Economy', 'MoneyControl', 'LiveMint', 'Business Standard', 'BS Economy', 'Yahoo Finance IN', 'Yahoo Finance US', 'Yahoo Tech Semis', 'Yahoo Data Center', 'CNBC', 'CNBC Tech', 'MarketWatch', 'Bloomberg', 'Reuters Finance'] as const;
 const IMPORTANCE_LABELS: Record<number, string> = { 1: 'All', 3: 'Medium+', 4: 'High+', 5: 'Critical' };
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
@@ -687,11 +687,11 @@ export default function NewsFeedPage() {
             BOTTLENECKS
           </button>
           <button
-            onClick={() => { setSourceName(sourceName === 'IBEF' ? 'ALL' : 'IBEF'); setArticleType('ALL'); }}
-            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: sourceName === 'IBEF' ? '#0F7ABF20' : '#111B35', border: `1px solid ${sourceName === 'IBEF' ? '#0F7ABF' : '#1E2D45'}`, borderRadius: '8px', padding: '7px 12px', color: sourceName === 'IBEF' ? '#0F7ABF' : '#8A95A3', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
-            title="Show only IBEF India news"
+            onClick={() => { setRegion(region === 'IN' ? 'ALL' : 'IN'); setArticleType('ALL'); }}
+            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: region === 'IN' ? '#0F7ABF20' : '#111B35', border: `1px solid ${region === 'IN' ? '#0F7ABF' : '#1E2D45'}`, borderRadius: '8px', padding: '7px 12px', color: region === 'IN' ? '#0F7ABF' : '#8A95A3', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
+            title="Show only India news"
           >
-            IBEF
+            🇮🇳 India
           </button>
           <button
             onClick={() => setShowFilters(f => !f)}

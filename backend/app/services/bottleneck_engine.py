@@ -162,10 +162,17 @@ def _compute_signal_severity(bucket_id: str, articles: list[dict]) -> int:
 
     # Recency: articles in last 24h
     now = datetime.utcnow()
-    recent_count = sum(
-        1 for a in articles
-        if (now - a["published_at"]).total_seconds() < 86400
-    )
+    recent_count = 0
+    for a in articles:
+        pub = a["published_at"]
+        # Strip timezone info for safe comparison with naive utcnow()
+        if hasattr(pub, 'tzinfo') and pub.tzinfo is not None:
+            pub = pub.replace(tzinfo=None)
+        try:
+            if (now - pub).total_seconds() < 86400:
+                recent_count += 1
+        except Exception:
+            pass
     recency_bonus = 0.5 if recent_count >= 2 else (0.2 if recent_count >= 1 else 0)
 
     # Article quality: average importance
