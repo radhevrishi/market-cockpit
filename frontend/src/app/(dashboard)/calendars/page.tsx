@@ -2,24 +2,27 @@
 
 import { useEffect, useState } from 'react';
 
-interface Company {
+interface CalendarItem {
   company: string;
   ticker: string;
-  sector: string;
+  sector?: string;
+  type?: string;
+  description?: string;
+  date?: string;
 }
 
 interface CalendarEvent {
-  [date: string]: Company[];
+  [date: string]: CalendarItem[];
 }
 
 interface CalendarResponse {
-  india?: Company[];
-  us?: Company[];
-  companies?: Company[];
+  india?: CalendarItem[];
+  us?: CalendarItem[];
+  companies?: CalendarItem[];
   events?: any[];
-  calendar: CalendarEvent;
-  weekStart: string;
-  note: string;
+  calendar?: CalendarEvent;
+  weekStart?: string;
+  note?: string;
   source?: string;
   updatedAt: string;
 }
@@ -88,13 +91,14 @@ export default function CalendarPage() {
   const todayDayOfWeek = today.getDay();
   const currentDayName = days[todayDayOfWeek === 0 ? 4 : todayDayOfWeek - 1];
 
-  const getCompaniesForDay = (date: Date) => {
-    if (!data) return [];
+  const getCompaniesForDay = (date: Date): CalendarItem[] => {
+    if (!data || !data.calendar) return [];
     const dateStr = date.toISOString().split('T')[0];
     return data.calendar[dateStr] || [];
   };
 
-  const getSectorColor = (sector: string) => {
+  const getSectorColor = (sector: string | undefined) => {
+    if (!sector) return THEME.textSecondary;
     const sectorLower = sector.toLowerCase();
     if (sectorLower.includes('tech') || sectorLower.includes('it')) return THEME.accent;
     if (sectorLower.includes('bank') || sectorLower.includes('finance')) return THEME.green;
@@ -397,14 +401,14 @@ export default function CalendarPage() {
                           </p>
                           <span style={{
                             display: 'inline-block',
-                            backgroundColor: getSectorColor(company.sector),
+                            backgroundColor: getSectorColor(company.sector || company.type),
                             color: THEME.background,
                             padding: '2px 6px',
                             borderRadius: '3px',
                             fontSize: '10px',
                             fontWeight: '600',
                           }}>
-                            {company.sector}
+                            {company.sector || company.type || 'Event'}
                           </span>
                         </div>
                       ))
