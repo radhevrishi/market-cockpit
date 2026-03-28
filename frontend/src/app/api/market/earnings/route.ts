@@ -91,6 +91,7 @@ function toArray(data: any): any[] {
 }
 
 // Extract earnings-related keywords from filing text
+// This is the STRICT version - matches only clear financial results language
 function isEarningsRelated(text: string): boolean {
   if (!text) return false;
   const lower = text.toLowerCase();
@@ -108,60 +109,98 @@ function isEarningsRelated(text: string): boolean {
     lower.includes('results for the year') ||
     lower.includes('consider the financial') ||
     lower.includes('approve the financial') ||
-    lower.includes('declaration of dividend') ||
-    lower.includes('outcome of board meeting') ||
-    lower.includes('period ended') ||
-    lower.includes('results for period') ||
-    lower.includes('submitted to the exchange') ||
-    lower.includes('inter alia') || // "inter alia, to consider..."
     lower.includes('financial statements') ||
     lower.includes('quarterly earnings') ||
     lower.includes('profit and loss') ||
-    lower.includes('profit & loss') ||
-    lower.includes('balance sheet')
+    lower.includes('profit & loss')
+  );
+}
+
+// Check if attachment text specifically mentions financial results being submitted
+// This distinguishes earnings-related "Outcome of Board Meeting" from non-earnings ones
+function isAttachmentEarningsRelated(text: string): boolean {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  return (
+    lower.includes('financial result') ||
+    lower.includes('period ended') ||
+    lower.includes('quarter ended') ||
+    lower.includes('year ended') ||
+    lower.includes('half year ended') ||
+    (lower.includes('submitted to the exchange') && lower.includes('result'))
   );
 }
 
 // Check multiple fields of an announcement for earnings relevance
+// For "Outcome of Board Meeting" - REQUIRE attchmntText to mention financial results
 function isAnnouncementEarningsRelated(ann: any): boolean {
+  const desc = (ann.desc || '').toLowerCase();
+  const attText = ann.attchmntText || '';
+  const subject = ann.subject || ann.an_subject || '';
+
+  // If desc is "Outcome of Board Meeting" - this is generic, check attchmntText
+  if (desc.includes('outcome of board meeting') || desc.includes('outcome of the board meeting')) {
+    return isAttachmentEarningsRelated(attText);
+  }
+
+  // For other descriptions, check all fields
   return (
-    isEarningsRelated(ann.desc || '') ||
-    isEarningsRelated(ann.subject || '') ||
-    isEarningsRelated(ann.an_subject || '') ||
-    isEarningsRelated(ann.attchmntText || '') ||
+    isEarningsRelated(desc) ||
+    isEarningsRelated(subject) ||
+    isEarningsRelated(attText) ||
     isEarningsRelated(ann.bm_purpose || '') ||
     isEarningsRelated(ann.bm_desc || '') ||
-    isEarningsRelated(ann.purpose || '') ||
-    isEarningsRelated(ann.smIndustry || '')
+    isEarningsRelated(ann.purpose || '')
   );
 }
 
-// Board meetings from NSE often have a purpose field. If it mentions financial results, it's earnings.
-// But many board meetings have purpose = "Financial Results/Dividend" or similar.
-// We should be INCLUSIVE - accept the meeting if purpose contains "result" OR "financial" OR "dividend"
+// Board meetings: check if the bm_purpose indicates financial results
+// NSE bm_purpose examples:
+//   "Financial Results/Dividend" → YES
+//   "Financial Results/Other business matters" → YES
+//   "Board Meeting Intimation" with bm_desc "to consider Dividend" → YES (dividends often with results)
+//   "Other business matters" → NO
+//   "Fund Raising" → NO
+//   "ESOP" → NO
 function isBoardMeetingEarningsRelated(meeting: any): boolean {
-  // Check all possible purpose/description fields
-  const fields = [
-    meeting.bm_purpose, meeting.purpose, meeting.bm_desc, meeting.desc,
-    meeting.subject, meeting.attchmntText, meeting.sm_name,
-  ].filter(Boolean);
+  const purpose = (meeting.bm_purpose || meeting.purpose || '').toLowerCase();
+  const desc = (meeting.bm_desc || meeting.desc || '').toLowerCase();
 
-  for (const field of fields) {
-    const lower = field.toLowerCase();
-    if (
-      lower.includes('result') ||
-      lower.includes('financial') ||
-      lower.includes('dividend') ||
-      lower.includes('earning') ||
-      lower.includes('quarter') ||
-      lower.includes('annual') ||
-      lower.includes('interim') ||
-      lower.includes('accounts') ||
-      lower.includes('audit')
-    ) {
-      return true;
-    }
+  // Explicit NON-earnings purposes — skip these
+  const nonEarningsPurposes = ['fund raising', 'esop', 'buy back', 'buyback', 'bonus', 'split', 'rights issue'];
+  // Only skip if purpose is EXCLUSIVELY non-earnings (no "result" or "financial" or "dividend")
+  if (nonEarningsPurposes.some(p => purpose.includes(p)) &&
+      !purpose.includes('result') && !purpose.includes('financial') && !purpose.includes('dividend')) {
+    return false;
   }
+
+  // Check purpose field directly
+  if (purpose.includes('financial result') || purpose.includes('result')) return true;
+  if (purpose.includes('dividend')) return true;
+
+  // Check bm_desc for financial keywords
+  if (desc.includes('financial result') || desc.includes('quarterly result') ||
+      desc.includes('annual result') || desc.includes('audited') ||
+      desc.includes('unaudited') || desc.includes('period ended') ||
+      desc.includes('quarter ended') || desc.includes('year ended')) return true;
+
+  // "inter alia, to consider and approve the financial results"
+  if (desc.includes('inter alia') || desc.includes('inter-alia')) return true;
+
+  // "consider Dividend" in desc
+  if (desc.includes('consider dividend') || desc.includes('to consider dividend')) return true;
+
+  // "Other business matters" without financial keywords → NOT earnings
+  if (purpose.includes('other business') && !desc.includes('result') && !desc.includes('financial') && !desc.includes('dividend')) {
+    return false;
+  }
+
+  // "Board Meeting Intimation" is generic — check desc
+  if (purpose.includes('board meeting intimation') || purpose === '') {
+    return desc.includes('result') || desc.includes('financial') || desc.includes('dividend') ||
+           desc.includes('quarter') || desc.includes('audit');
+  }
+
   return false;
 }
 
