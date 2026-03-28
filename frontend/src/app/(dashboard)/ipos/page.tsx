@@ -313,7 +313,7 @@ const IPOTrackerPage = () => {
 
             {/* Expanded Content */}
             {expandedIPO === ipo.id && (
-              <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: `1px solid ${theme.border}`, fontSize: '0.85rem', color: theme.textSecondary' }}>
+              <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: `1px solid ${theme.border}`, fontSize: '0.85rem', color: theme.textSecondary }}>
                 <div style={{ marginBottom: '0.75rem' }}>
                   <strong style={{ color: theme.textPrimary }}>About:</strong> {ipo.description}
                 </div>
