@@ -74,7 +74,21 @@ interface BnDashboard {
 
 const REGIONS = ['ALL', 'IN', 'US'] as const;
 const TYPES   = ['ALL', 'BOTTLENECK', 'EARNINGS', 'RATING_CHANGE', 'MACRO', 'CORPORATE', 'GENERAL'] as const;
-const SOURCES = ['ALL', 'ET Markets', 'ET Industry', 'ET Economy', 'MoneyControl', 'LiveMint', 'Business Standard', 'BS Economy', 'Yahoo Finance IN', 'Yahoo Finance US', 'Yahoo Tech Semis', 'Yahoo Data Center', 'CNBC', 'CNBC Tech', 'MarketWatch', 'Bloomberg', 'Reuters Finance'] as const;
+const SOURCES = [
+  'ALL',
+  // India
+  'ET Markets', 'ET Industry', 'ET Economy', 'MoneyControl', 'LiveMint', 'Business Standard', 'BS Economy',
+  'Yahoo Finance IN', 'PIB India', 'ElectronicsB2B',
+  // US / Global Macro
+  'Yahoo Finance US', 'CNBC', 'CNBC Tech', 'MarketWatch', 'Bloomberg', 'Reuters Finance',
+  // Semiconductor & Supply Chain
+  'SemiAnalysis', 'DigiTimes', 'EE Times', 'Semiconductor Engineering', 'IEEE Spectrum', 'Evertiq', 'SEMI',
+  'Yahoo Tech Semis', 'Yahoo Data Center',
+  // Hyperscaler / AI Infra
+  'The Register', 'ServeTheHome', 'The Information',
+  // Policy & Geopolitics
+  'CSIS', 'Brookings',
+] as const;
 const IMPORTANCE_LABELS: Record<number, string> = { 1: 'All', 3: 'Medium+', 4: 'High+', 5: 'Critical' };
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────

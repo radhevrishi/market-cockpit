@@ -16,6 +16,36 @@ router = APIRouter(prefix="/news", tags=["news"])
 logger = logging.getLogger(__name__)
 
 
+async def _auto_refresh_if_stale(db: AsyncSession):
+    """Automatically trigger news ingestion if the latest article is older than 30 minutes.
+
+    This compensates for Render free tier spinning down — ensures users always see
+    fresh articles even if the background poller hasn't run.
+    """
+    try:
+        result = await db.execute(
+            select(NewsArticle.published_at)
+            .order_by(desc(NewsArticle.ingested_at))
+            .limit(1)
+        )
+        latest = result.scalar_one_or_none()
+        if latest is None:
+            stale = True
+        else:
+            # If latest ingestion was more than 30 min ago, refresh
+            if getattr(latest, "tzinfo", None) is not None:
+                latest = latest.replace(tzinfo=None)
+            stale = (datetime.utcnow() - latest).total_seconds() > 1800
+        if stale:
+            logger.info("News data is stale (>30 min), auto-refreshing...")
+            from app.services.news_ingestor import NewsIngestor
+            ingestor = NewsIngestor()
+            count = await ingestor.ingest_all_sources(db)
+            logger.info(f"Auto-refresh ingested {count} articles")
+    except Exception as e:
+        logger.warning(f"Auto-refresh failed (non-fatal): {e}")
+
+
 @router.get("", response_model=list[NewsArticleRead])
 async def get_news(
     region: str | None = Query(None),
@@ -34,11 +64,13 @@ async def get_news(
     If region is specified and != "ALL": returns articles matching that region OR GLOBAL articles.
     """
     try:
+        # Auto-refresh if data is stale (Render free tier spins down)
+        await _auto_refresh_if_stale(db)
         conditions = [
             NewsArticle.importance_score >= min_importance,
             NewsArticle.is_duplicate == False,  # noqa: E712 — exclude duplicates
-            # Hide Tier 3 noise by default (0 = unclassified, kept for backward compat)
-            or_(NewsArticle.investment_tier <= 2, NewsArticle.investment_tier == 0),
+            # Show all articles — Tier 3 filtering was too aggressive and hid legitimate articles
+            # Users can filter by importance instead
         ]
 
         # Only filter by region if explicitly requested and not "ALL"

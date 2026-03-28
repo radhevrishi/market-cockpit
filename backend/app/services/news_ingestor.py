@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # ── RSS sources ───────────────────────────────────────────────────────────────
 RSS_SOURCES = [
-    # India
+    # ── Tier 1: India — Markets & Economy ──────────────────────────────────────
     {"url": "https://economictimes.indiatimes.com/markets/rss.cms",         "name": "ET Markets",    "region": "IN"},
     {"url": "https://www.moneycontrol.com/rss/marketsindia.xml",            "name": "MoneyControl",  "region": "IN"},
     {"url": "https://www.livemint.com/rss/markets",                         "name": "LiveMint",      "region": "IN"},
@@ -29,7 +29,11 @@ RSS_SOURCES = [
     {"url": "https://www.business-standard.com/rss/economy-policy-106.rss", "name": "BS Economy",    "region": "IN"},
     {"url": "https://www.livemint.com/rss/industry",                        "name": "LiveMint",      "region": "IN"},
     {"url": "https://www.moneycontrol.com/rss/business.xml",                "name": "MoneyControl",  "region": "IN"},
-    # US / Global
+    # India — Policy & Semiconductor
+    {"url": "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3",      "name": "PIB India",     "region": "IN"},
+    {"url": "https://www.electronicsb2b.com/feed/",                         "name": "ElectronicsB2B", "region": "IN"},
+
+    # ── Tier 1: US / Global — Macro ────────────────────────────────────────────
     {"url": "https://feeds.finance.yahoo.com/rss/2.0/headline?s=AAPL,MSFT,NVDA,GOOGL,TSLA,AMZN,META&region=US&lang=en-US", "name": "Yahoo Finance US", "region": "US"},
     {"url": "https://feeds.finance.yahoo.com/rss/2.0/headline?s=JPM,BAC,JNJ,PG,XOM,AMD,INTC,NFLX,ORCL&region=US&lang=en-US", "name": "Yahoo Finance US2", "region": "US"},
     {"url": "https://www.cnbc.com/id/100003114/device/rss/rss.html",        "name": "CNBC",          "region": "US"},
@@ -39,10 +43,34 @@ RSS_SOURCES = [
     {"url": "https://www.reutersagency.com/feed/?best-topics=business-finance&post_type=best", "name": "Reuters Finance", "region": "GLOBAL"},
     {"url": "https://feeds.bloomberg.com/markets/news.rss",                 "name": "Bloomberg",     "region": "GLOBAL"},
     {"url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10001147", "name": "CNBC World", "region": "GLOBAL"},
-    # Tech & Supply Chain (bottleneck-rich feeds)
+
+    # ── Tier 2: Industry Signal — Semiconductors & Supply Chain ────────────────
     {"url": "https://feeds.finance.yahoo.com/rss/2.0/headline?s=NVDA,AMD,TSM,MU,AVGO,INTC,ASML,AMAT,LRCX&region=US&lang=en-US", "name": "Yahoo Tech Semis", "region": "US"},
     {"url": "https://www.cnbc.com/id/19854910/device/rss/rss.html",         "name": "CNBC Tech",     "region": "US"},
     {"url": "https://feeds.finance.yahoo.com/rss/2.0/headline?s=EQIX,DLR,VRT,ANET&region=US&lang=en-US", "name": "Yahoo Data Center", "region": "US"},
+    # SemiAnalysis (Substack RSS)
+    {"url": "https://semianalysis.com/feed",                                "name": "SemiAnalysis",  "region": "GLOBAL"},
+    # DigiTimes — Asia supply chain (VERY important)
+    {"url": "https://www.digitimes.com/rss/daily_news_20.xml",              "name": "DigiTimes",     "region": "GLOBAL"},
+    # EE Times — supply chain + design shifts
+    {"url": "https://www.eetimes.com/feed/",                                "name": "EE Times",      "region": "GLOBAL"},
+    # Semiconductor Engineering — deep technical bottlenecks
+    {"url": "https://semiengineering.com/feed/",                            "name": "Semiconductor Engineering", "region": "GLOBAL"},
+    # IEEE Spectrum — future tech signals
+    {"url": "https://spectrum.ieee.org/feeds/feed.rss",                     "name": "IEEE Spectrum",  "region": "GLOBAL"},
+    # Evertiq — manufacturing + OEM signals
+    {"url": "https://evertiq.com/news/rss",                                 "name": "Evertiq",       "region": "GLOBAL"},
+    # SEMI — policy + fab investments
+    {"url": "https://www.semi.org/en/rss-feeds",                            "name": "SEMI",          "region": "GLOBAL"},
+
+    # ── Tier 3: Hyperscaler / AI infra tracking ──────────────────────────────
+    {"url": "https://www.theregister.com/headlines.atom",                   "name": "The Register",  "region": "GLOBAL"},
+    {"url": "https://www.servethehome.com/feed/",                           "name": "ServeTheHome",  "region": "GLOBAL"},
+    {"url": "https://www.theinformation.com/feed",                          "name": "The Information", "region": "US"},
+
+    # ── Tier 4: Policy — Geopolitics & Think Tanks ────────────────────────────
+    {"url": "https://www.csis.org/analysis/feed",                           "name": "CSIS",          "region": "GLOBAL"},
+    {"url": "https://www.brookings.edu/feed/",                              "name": "Brookings",     "region": "GLOBAL"},
 ]
 
 # ── Ticker detection dictionary ───────────────────────────────────────────────
@@ -603,6 +631,60 @@ def _extract_tickers(title: str, description: str) -> list[str]:
     return found[:5]  # max 5 tickers per article
 
 
+def _is_rating_change(title_lower: str) -> bool:
+    """Detect if a headline is about an analyst rating change / broker recommendation.
+
+    Covers Indian brokers (Kotak, CLSA, Morgan Stanley, Goldman Sachs, etc.)
+    and US brokers (upgrades, downgrades, price targets, initiations).
+    """
+    # Direct rating action words
+    rating_keywords = [
+        "upgrade", "downgrade", "rating", "target price", "price target",
+        "initiates coverage", "initiates", "initiate", "reiterate",
+        "maintains buy", "maintains sell", "maintains hold", "maintains add",
+        "maintains reduce", "maintains overweight", "maintains underweight",
+        "maintains outperform", "maintains neutral", "maintains equal-weight",
+        "buy to hold", "hold to buy", "buy to sell", "sell to buy",
+        "hold to sell", "sell to hold", "neutral to buy", "buy to neutral",
+        "overweight to neutral", "neutral to overweight",
+        "underweight to neutral", "equal-weight",
+        "outperform", "underperform", "market perform",
+        "sector perform", "sector outperform",
+        "top pick", "conviction buy", "conviction list",
+    ]
+    if any(kw in title_lower for kw in rating_keywords):
+        return True
+
+    # Broker name + action pattern (e.g. "Goldman Sachs Maintains NVDA to Buy")
+    brokers = [
+        "goldman sachs", "morgan stanley", "jp morgan", "jpmorgan",
+        "citigroup", "citi", "barclays", "ubs", "credit suisse",
+        "deutsche bank", "bank of america", "bofa", "wells fargo",
+        "raymond james", "jefferies", "piper sandler", "bernstein",
+        "kotak", "clsa", "nomura", "macquarie", "hsbc",
+        "motilal oswal", "iifl", "icici securities", "axis securities",
+        "hdfc securities", "emkay", "nuvama", "elara", "prabhudas",
+        "anand rathi", "jm financial", "ambit", "edelweiss",
+        "bernstein", "canaccord", "oppenheimer", "needham",
+        "wedbush", "rosenblatt", "loop capital", "truist",
+        "keybanc", "stifel", "baird", "btig", "cowen",
+    ]
+    actions = ["buy", "sell", "hold", "add", "reduce", "accumulate",
+               "overweight", "underweight", "neutral", "outperform",
+               "equal-weight", "maintains", "upgrades", "downgrades",
+               "raises", "lowers", "cuts", "pt ₹", "pt $", "tp ₹", "tp $"]
+    for broker in brokers:
+        if broker in title_lower:
+            if any(act in title_lower for act in actions):
+                return True
+
+    # Pattern: "X Maintains/Upgrades Y to Buy/Sell" etc.
+    if re.search(r'(maintains|upgrades?|downgrades?|raises?|lowers?|cuts?|initiates?)\s+\w+\s+to\s+(buy|sell|hold|add|reduce|neutral|overweight|underweight|outperform)', title_lower):
+        return True
+
+    return False
+
+
 def _infer_sentiment(title: str) -> str:
     """Infer simple sentiment from headline using word boundary matching."""
     text = title.lower()
@@ -644,22 +726,41 @@ def _parse_rss_xml(xml_text: str, source_name: str, region: str) -> list[dict]:
     """
     articles = []
 
-    # Extract items using regex (handles most RSS 2.0 feeds)
+    # Extract items using regex (handles RSS 2.0 and Atom feeds)
     items = re.findall(r'<item>(.*?)</item>', xml_text, re.DOTALL)
+    # Also handle Atom feeds (e.g. The Register)
+    if not items:
+        items = re.findall(r'<entry>(.*?)</entry>', xml_text, re.DOTALL)
 
     # Determine region more intelligently based on source
-    indian_sources = {"ET Markets", "ET Economy", "MoneyControl", "MoneyControl Economy", "LiveMint", "Business Standard", "IBEF", "Yahoo Finance IN"}
-    us_sources = {"CNBC", "CNBC Economy", "CNBC World", "MarketWatch", "MarketWatch Pulse", "Bloomberg", "Reuters Finance", "Yahoo Finance US", "Yahoo Finance US2"}
+    indian_sources = {"ET Markets", "ET Economy", "MoneyControl", "MoneyControl Economy", "LiveMint", "Business Standard", "IBEF", "Yahoo Finance IN", "PIB India", "ElectronicsB2B"}
+    us_sources = {"CNBC", "CNBC Economy", "CNBC World", "MarketWatch", "MarketWatch Pulse", "Bloomberg", "Reuters Finance", "Yahoo Finance US", "Yahoo Finance US2", "The Information"}
+    # Global sources: auto-detect region from content
+    global_sources = {"SemiAnalysis", "DigiTimes", "EE Times", "Semiconductor Engineering", "IEEE Spectrum", "Evertiq", "SEMI", "The Register", "ServeTheHome", "CSIS", "Brookings"}
 
     for item in items[:30]:  # max 30 per source
         try:
             title_m = re.search(r'<title[^>]*><!\[CDATA\[(.*?)\]\]></title>|<title[^>]*>(.*?)</title>', item, re.DOTALL)
-            link_m  = re.search(r'<link[^>]*>(.*?)</link>|<link[^>]*/>', item, re.DOTALL)
+            # Handle both RSS <link>text</link> and Atom <link href="..."/>
+            link_m  = re.search(r'<link[^>]*>(.*?)</link>', item, re.DOTALL)
+            link_href_m = re.search(r'<link[^>]*href=["\']([^"\']+)["\']', item)
             desc_m  = re.search(r'<description[^>]*><!\[CDATA\[(.*?)\]\]></description>|<description[^>]*>(.*?)</description>', item, re.DOTALL)
+            # Also handle Atom <summary> and <content>
+            if not desc_m:
+                desc_m = re.search(r'<summary[^>]*><!\[CDATA\[(.*?)\]\]></summary>|<summary[^>]*>(.*?)</summary>', item, re.DOTALL)
+            if not desc_m:
+                desc_m = re.search(r'<content[^>]*><!\[CDATA\[(.*?)\]\]></content>|<content[^>]*>(.*?)</content>', item, re.DOTALL)
             date_m  = re.search(r'<pubDate[^>]*>(.*?)</pubDate>', item, re.DOTALL)
+            # Also handle Atom <published> and <updated>
+            if not date_m:
+                date_m = re.search(r'<published[^>]*>(.*?)</published>|<updated[^>]*>(.*?)</updated>', item, re.DOTALL)
 
             title = (title_m.group(1) or title_m.group(2) or "").strip() if title_m else ""
-            link  = (link_m.group(1) or "").strip() if link_m else ""
+            link  = ""
+            if link_m and link_m.group(1).strip():
+                link = link_m.group(1).strip()
+            elif link_href_m:
+                link = link_href_m.group(1).strip()
             desc  = (desc_m.group(1) or desc_m.group(2) or "").strip() if desc_m else ""
 
             # Clean HTML tags from desc
@@ -673,26 +774,41 @@ def _parse_rss_xml(xml_text: str, source_name: str, region: str) -> list[dict]:
             if any(kw in title_lower for kw in LOW_QUALITY_KEYWORDS):
                 continue
 
-            # Parse date
+            # Parse date (RFC 2822 for RSS, ISO 8601 for Atom)
             published_at = datetime.utcnow()
             if date_m:
-                try:
-                    from email.utils import parsedate_to_datetime
-                    published_at = parsedate_to_datetime(date_m.group(1).strip()).replace(tzinfo=None)
-                except Exception:
-                    pass
+                date_str = (date_m.group(1) or (date_m.group(2) if date_m.lastindex and date_m.lastindex >= 2 else None) or "").strip()
+                if date_str:
+                    try:
+                        from email.utils import parsedate_to_datetime
+                        published_at = parsedate_to_datetime(date_str).replace(tzinfo=None)
+                    except Exception:
+                        try:
+                            # Try ISO 8601 (Atom feeds)
+                            published_at = datetime.fromisoformat(date_str.replace("Z", "+00:00")).replace(tzinfo=None)
+                        except Exception:
+                            pass
 
             # Refine region detection
             final_region = region
+            combined_text = (title + " " + desc).lower()
+            india_keywords = ["india", "indian", "nse", "bse", "sensex", "nifty", "rupee", "rbi",
+                            "modi", "sebi", "adani", "reliance", "tata", "infosys", "wipro"]
             if source_name in indian_sources:
                 final_region = "IN"
             elif source_name in us_sources:
-                # Check if article mentions India specifically
-                combined_text = (title + " " + desc).lower()
-                if any(keyword in combined_text for keyword in ["india", "indian", "nse", "bse", "sensex", "nifty", "rupee", "rbi"]):
+                if any(keyword in combined_text for keyword in india_keywords):
                     final_region = "IN"
                 else:
                     final_region = "US"
+            elif source_name in global_sources:
+                # Global/tech sources: check for India or US signals
+                if any(keyword in combined_text for keyword in india_keywords):
+                    final_region = "IN"
+                elif any(keyword in combined_text for keyword in ["us ", "america", "washington", "silicon valley", "wall street"]):
+                    final_region = "US"
+                else:
+                    final_region = "GLOBAL"
 
             articles.append({
                 "headline": title,
@@ -990,13 +1106,15 @@ class NewsIngestor:
             title_lower = art["headline"].lower()
             if is_bottleneck:
                 article_type = "BOTTLENECK"
-            elif any(w in title_lower for w in ["earnings", "results", "profit", "revenue", "q1", "q2", "q3", "q4"]):
+            elif any(w in title_lower for w in ["earnings", "results", "profit", "revenue", "q1", "q2", "q3", "q4",
+                                                  "quarterly", "annual result", "net income"]):
                 article_type = "EARNINGS"
-            elif any(w in title_lower for w in ["upgrade", "downgrade", "target", "rating"]):
+            elif _is_rating_change(title_lower):
                 article_type = "RATING_CHANGE"
-            elif any(w in title_lower for w in ["rbi", "fed", "rate", "gdp", "inflation", "cpi"]):
+            elif any(w in title_lower for w in ["rbi", "fed", "rate cut", "rate hike", "gdp", "inflation", "cpi",
+                                                  "monetary policy", "fiscal deficit", "current account"]):
                 article_type = "MACRO"
-            elif any(w in title_lower for w in ["merger", "acquisition", "deal", "buyout"]):
+            elif any(w in title_lower for w in ["merger", "acquisition", "deal", "buyout", "takeover", "stake"]):
                 article_type = "CORPORATE"
             else:
                 article_type = "GENERAL"
