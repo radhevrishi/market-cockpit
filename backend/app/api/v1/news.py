@@ -5,7 +5,7 @@ import math
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, desc, or_
+from sqlalchemy import select, and_, desc, or_, func, case
 
 from app.core.database import get_db
 from app.core.security import get_current_user
@@ -142,10 +142,14 @@ async def get_news(
         # For bottleneck filter, use a higher limit to show full 3-month history
         effective_limit = 500 if (article_type and article_type == "BOTTLENECK") else limit
 
+        # Sort by published_at but cap future timestamps at NOW() so pre-published
+        # articles (e.g. LiveMint buy/sell recommendations for next trading day)
+        # don't float above genuinely recent articles.
+        capped_time = func.least(NewsArticle.published_at, func.now())
         query = (
             select(NewsArticle)
             .where(and_(*conditions))
-            .order_by(desc(NewsArticle.published_at))
+            .order_by(desc(capped_time))
             .limit(effective_limit)
             .offset(offset)
         )

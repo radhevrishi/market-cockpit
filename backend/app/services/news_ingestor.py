@@ -934,7 +934,8 @@ def _parse_rss_xml(xml_text: str, source_name: str, region: str, source_url: str
             # Parse date (RFC 2822 for RSS, ISO 8601 for Atom)
             # IMPORTANT: Always normalize to UTC before stripping tzinfo,
             # otherwise IST (+0530) timestamps sort incorrectly vs UTC timestamps.
-            published_at = datetime.utcnow()
+            now_utc = datetime.utcnow()
+            published_at = now_utc
             if date_m:
                 date_str = (date_m.group(1) or (date_m.group(2) if date_m.lastindex and date_m.lastindex >= 2 else None) or "").strip()
                 if date_str:
@@ -950,6 +951,10 @@ def _parse_rss_xml(xml_text: str, source_name: str, region: str, source_url: str
                             published_at = dt.astimezone(timezone.utc).replace(tzinfo=None)
                         except Exception:
                             pass
+            # Cap future timestamps at current time — some feeds pre-publish articles
+            # (e.g. LiveMint buy/sell recs for next trading day) with future dates
+            if published_at > now_utc:
+                published_at = now_utc
 
             # Refine region detection
             final_region = region
