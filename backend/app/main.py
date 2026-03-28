@@ -99,6 +99,27 @@ async def _seed_initial_data():
     except Exception as e:
         logger.error(f"Startup news ingestion failed (non-fatal): {e}")
 
+    # Fix misclassified RATING_CHANGE articles (editorial pieces tagged as rating changes)
+    try:
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import select
+            from app.models.news import NewsArticle
+            from app.services.news_ingestor import _is_rating_change
+            result = await db.execute(
+                select(NewsArticle).where(NewsArticle.article_type == "RATING_CHANGE")
+            )
+            articles = result.scalars().all()
+            demoted = 0
+            for art in articles:
+                if not _is_rating_change(art.headline.lower()):
+                    art.article_type = "GENERAL"
+                    demoted += 1
+            if demoted:
+                await db.commit()
+                logger.info(f"Demoted {demoted} editorial articles from RATING_CHANGE to GENERAL")
+    except Exception as e:
+        logger.warning(f"RATING_CHANGE cleanup failed (non-fatal): {e}")
+
     # Reclassify existing GENERAL articles that should be RATING_CHANGE, EARNINGS, etc.
     try:
         async with AsyncSessionLocal() as db:

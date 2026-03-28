@@ -661,6 +661,14 @@ def _is_rating_change(title_lower: str) -> bool:
     Covers Indian brokers (Kotak, CLSA, Morgan Stanley, Goldman Sachs, etc.)
     and US brokers (upgrades, downgrades, price targets, initiations).
     """
+    # Exclude generic buy/sell recommendation editorials FIRST (before broker matching)
+    editorial_phrases = ["stocks to buy", "shares to buy", "buy or sell", "stocks to sell",
+                        "should you buy", "top picks for", "best stocks", "recommends three shares",
+                        "recommends two shares", "recommends five shares", "shares to buy or sell",
+                        "stocks under", "under ₹", "under rs"]
+    if any(ep in title_lower for ep in editorial_phrases):
+        return False
+
     # Direct rating action words
     rating_keywords = [
         "upgrade", "downgrade", "rating", "target price", "price target",
@@ -704,12 +712,6 @@ def _is_rating_change(title_lower: str) -> bool:
     # Pattern: "X Maintains/Upgrades Y to Buy/Sell" etc.
     if re.search(r'(maintains|upgrades?|downgrades?|raises?|lowers?|cuts?|initiates?)\s+\w+\s+to\s+(buy|sell|hold|add|reduce|neutral|overweight|underweight|outperform)', title_lower):
         return True
-
-    # Exclude generic buy/sell recommendation editorials
-    editorial_phrases = ["stocks to buy", "shares to buy", "buy or sell", "stocks to sell",
-                        "should you buy", "top picks for", "best stocks"]
-    if any(ep in title_lower for ep in editorial_phrases):
-        return False
 
     return False
 
