@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import {
   fetchBoardMeetings,
   fetchFinancialResults,
+  fetchLatestFinancialResults,
   fetchNifty500,
   fetchNiftyMidcap250,
   fetchNiftySmallcap250,
@@ -9,6 +10,7 @@ import {
   fetchNiftyNext50,
   fetchBoardMeetingAnnouncements,
   fetchBseBoardMeetings,
+  fetchEventCalendar,
   getSectorForSymbol,
   normalizeSector,
 } from '@/lib/nse';
@@ -32,17 +34,42 @@ function getFiscalQuarter(date: Date): string {
 }
 
 // Parse various date formats from NSE/BSE filings
+// NSE uses: "06-Apr-2026", "29-Mar-2026 00:44:03", "2026-03-29 00:44:03", "28-03-2026"
+const MONTH_MAP: Record<string, number> = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+};
+
 function parseDate(dateStr: string | undefined | null): Date | null {
   if (!dateStr) return null;
+  const s = dateStr.trim();
   try {
-    // Handle DD-MM-YYYY, DD/MM/YYYY
-    const ddmmyyyy = dateStr.match(/(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/);
+    // Format: DD-Mon-YYYY or DD-Mon-YYYY HH:MM:SS (e.g. "06-Apr-2026", "29-Mar-2026 00:44:03")
+    const ddMonYYYY = s.match(/^(\d{1,2})[-\s]([A-Za-z]{3})[-\s](\d{4})/);
+    if (ddMonYYYY) {
+      const month = MONTH_MAP[ddMonYYYY[2].toLowerCase()];
+      if (month !== undefined) {
+        const d = new Date(parseInt(ddMonYYYY[3]), month, parseInt(ddMonYYYY[1]));
+        if (!isNaN(d.getTime())) return d;
+      }
+    }
+
+    // Format: DD-MM-YYYY or DD/MM/YYYY
+    const ddmmyyyy = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/);
     if (ddmmyyyy) {
       const d = new Date(parseInt(ddmmyyyy[3]), parseInt(ddmmyyyy[2]) - 1, parseInt(ddmmyyyy[1]));
       if (!isNaN(d.getTime())) return d;
     }
-    // Handle standard ISO or JS parseable formats
-    const d = new Date(dateStr);
+
+    // Format: YYYY-MM-DD (ISO-like, e.g. "2026-03-29 00:44:03")
+    const iso = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+    if (iso) {
+      const d = new Date(parseInt(iso[1]), parseInt(iso[2]) - 1, parseInt(iso[3]));
+      if (!isNaN(d.getTime())) return d;
+    }
+
+    // Fallback: let JS parse it
+    const d = new Date(s);
     if (!isNaN(d.getTime())) return d;
     return null;
   } catch {
@@ -68,7 +95,23 @@ function isEarningsRelated(text: string): boolean {
     lower.includes('results for the year') ||
     lower.includes('consider the financial') ||
     lower.includes('approve the financial') ||
-    lower.includes('declaration of dividend') // Often accompanies results
+    lower.includes('declaration of dividend') ||
+    lower.includes('outcome of board meeting') || // NSE announcement format
+    lower.includes('period ended') || // "financial results for the period ended"
+    lower.includes('results for period') ||
+    lower.includes('submitted to the exchange') // "has submitted to the Exchange, the financial results"
+  );
+}
+
+// Check multiple fields of an announcement for earnings relevance
+function isAnnouncementEarningsRelated(ann: any): boolean {
+  return (
+    isEarningsRelated(ann.desc || '') ||
+    isEarningsRelated(ann.subject || '') ||
+    isEarningsRelated(ann.an_subject || '') ||
+    isEarningsRelated(ann.attchmntText || '') ||
+    isEarningsRelated(ann.bm_purpose || '') ||
+    isEarningsRelated(ann.bm_desc || '')
   );
 }
 
@@ -173,8 +216,10 @@ export async function GET(request: Request) {
     const [
       boardMeetings,
       financialResults,
+      latestFinancialResults,
       announcements,
       bseMeetings,
+      eventCalendar,
       nifty50Data,
       niftyNext50Data,
       nifty500Data,
@@ -183,8 +228,10 @@ export async function GET(request: Request) {
     ] = await Promise.all([
       fetchBoardMeetings().catch(() => null),
       fetchFinancialResults(formatNSEDate(fromDate), formatNSEDate(toDate)).catch(() => null),
+      fetchLatestFinancialResults().catch(() => null),
       fetchBoardMeetingAnnouncements().catch(() => null),
       fetchBseBoardMeetings().catch(() => null),
+      fetchEventCalendar().catch(() => null),
       fetchNifty50().catch(() => null),
       fetchNiftyNext50().catch(() => null),
       fetchNifty500().catch(() => null),
@@ -199,8 +246,10 @@ export async function GET(request: Request) {
     console.log('Earnings API sources:', {
       boardMeetings: boardMeetings ? 'ok' : 'null',
       financialResults: financialResults ? 'ok' : 'null',
+      latestFinancialResults: latestFinancialResults ? 'ok' : 'null',
       announcements: announcements ? 'ok' : 'null',
       bseMeetings: bseMeetings ? 'ok' : 'null',
+      eventCalendar: eventCalendar ? 'ok' : 'null',
       nifty50: nifty50Data?.data?.length || 0,
       nifty500: nifty500Data?.data?.length || 0,
       midcap250: midcap250Data?.data?.length || 0,
@@ -218,6 +267,11 @@ export async function GET(request: Request) {
       const frSample = financialResults ? (Array.isArray(financialResults) ? financialResults.slice(0, 3) :
         financialResults.data ? financialResults.data.slice(0, 3) :
         Object.keys(financialResults).slice(0, 5).reduce((acc: any, k: string) => { acc[k] = typeof financialResults[k] === 'object' ? 'object' : financialResults[k]; return acc; }, {})) : null;
+      const latestFrSample = latestFinancialResults ? (Array.isArray(latestFinancialResults) ? latestFinancialResults.slice(0, 3) :
+        latestFinancialResults.data ? latestFinancialResults.data.slice(0, 3) : null) : null;
+      const eventCalSample = eventCalendar ? (Array.isArray(eventCalendar) ? eventCalendar.slice(0, 3) :
+        eventCalendar.data ? eventCalendar.data.slice(0, 3) :
+        typeof eventCalendar === 'object' ? Object.keys(eventCalendar).slice(0, 5) : null) : null;
 
       return NextResponse.json({
         debug: true,
@@ -226,8 +280,10 @@ export async function GET(request: Request) {
           boardMeetings: boardMeetings ? { type: typeof boardMeetings, isArray: Array.isArray(boardMeetings), keys: typeof boardMeetings === 'object' && !Array.isArray(boardMeetings) ? Object.keys(boardMeetings) : null, length: Array.isArray(boardMeetings) ? boardMeetings.length : boardMeetings?.data?.length } : null,
           announcements: announcements ? { type: typeof announcements, isArray: Array.isArray(announcements), keys: typeof announcements === 'object' && !Array.isArray(announcements) ? Object.keys(announcements) : null, length: Array.isArray(announcements) ? announcements.length : announcements?.data?.length } : null,
           financialResults: financialResults ? { type: typeof financialResults, isArray: Array.isArray(financialResults), keys: typeof financialResults === 'object' && !Array.isArray(financialResults) ? Object.keys(financialResults) : null } : null,
+          latestFinancialResults: latestFinancialResults ? { type: typeof latestFinancialResults, isArray: Array.isArray(latestFinancialResults), keys: typeof latestFinancialResults === 'object' && !Array.isArray(latestFinancialResults) ? Object.keys(latestFinancialResults) : null, length: Array.isArray(latestFinancialResults) ? latestFinancialResults.length : latestFinancialResults?.data?.length } : null,
+          eventCalendar: eventCalendar ? { type: typeof eventCalendar, isArray: Array.isArray(eventCalendar), keys: typeof eventCalendar === 'object' && !Array.isArray(eventCalendar) ? Object.keys(eventCalendar) : null } : null,
         },
-        samples: { boardMeetings: bmSample, announcements: annSample, financialResults: frSample },
+        samples: { boardMeetings: bmSample, announcements: annSample, financialResults: frSample, latestFinancialResults: latestFrSample, eventCalendar: eventCalSample },
       });
     }
 
@@ -290,10 +346,12 @@ export async function GET(request: Request) {
       const ticker = meeting.bm_symbol || meeting.symbol || '';
       if (!ticker) continue;
 
+      // Check if this board meeting is earnings-related
+      const isRelated = isAnnouncementEarningsRelated(meeting);
       const purpose = meeting.bm_purpose || meeting.purpose || meeting.bm_desc || '';
-      if (!isEarningsRelated(purpose) && purpose.length > 0) continue;
+      // Skip if we have a clear non-financial purpose
+      if (!isRelated && purpose.length > 5 && !purpose.toLowerCase().includes('result')) continue;
 
-      // If purpose is empty, still include (many board meetings are for results)
       const meetingDateStr = meeting.bm_date || meeting.bm_meetingDate || meeting.date || '';
       const meetingDate = parseDate(meetingDateStr);
       if (!meetingDate) continue;
@@ -406,10 +464,11 @@ export async function GET(request: Request) {
       const ticker = ann.symbol || ann.sm_symbol || '';
       if (!ticker) continue;
 
-      const subject = ann.subject || ann.an_subject || ann.desc || '';
-      if (!isEarningsRelated(subject)) continue;
+      // Check all fields for earnings relevance
+      if (!isAnnouncementEarningsRelated(ann)) continue;
 
-      const annDateStr = ann.an_dt || ann.date || ann.sort_date || '';
+      // Try multiple date fields: sort_date is most reliable, then an_dt
+      const annDateStr = ann.sort_date || ann.an_dt || ann.date || '';
       const annDate = parseDate(annDateStr);
       if (!annDate) continue;
 
@@ -418,21 +477,26 @@ export async function GET(request: Request) {
       const quarter = getFiscalQuarter(annDate);
       const key = `${ticker}:${quarter}`;
 
-      // Only add if we don't already have this from board meetings or financial results
-      if (eventsMap.has(key)) continue;
+      // Only add if we don't already have a RESULTS_DECLARED for this ticker+quarter
+      if (eventsMap.has(key) && eventsMap.get(key)!.eventType === 'RESULTS_DECLARED') continue;
 
       const sector = await getSectorForSymbol(ticker);
       const stockInfo = priceLookup[ticker];
       const marketCapValue = stockInfo?.marketCap || 0;
 
+      // Determine if this is an outcome (results declared) or upcoming meeting
+      const descLower = (ann.desc || '').toLowerCase();
+      const attText = (ann.attchmntText || '').toLowerCase();
+      const isOutcome = descLower.includes('outcome') || attText.includes('submitted to the exchange') || attText.includes('period ended');
+
       const event: EarningsEvent = {
         ticker,
         company: ann.sm_name || ann.companyName || ticker,
-        eventType: 'BOARD_MEETING',
+        eventType: isOutcome ? 'RESULTS_DECLARED' : 'BOARD_MEETING',
         announcedDate: annDate.toISOString().split('T')[0],
         eventDate: annDate.toISOString().split('T')[0],
         quarter,
-        quality: 'Upcoming',
+        quality: isOutcome ? 'Upcoming' : 'Upcoming', // Will be updated if we have financial data
         revenue: null,
         operatingProfit: null,
         opm: null,
@@ -467,6 +531,100 @@ export async function GET(request: Request) {
 
       // BSE uses scrip codes, not NSE symbols - skip if we can't map
       // This is a supplementary source only
+    }
+
+    // --- Source 5: Latest Financial Results (no date filter) ---
+    const latestFrArray = toArray(latestFinancialResults);
+    for (const result of latestFrArray) {
+      const ticker = result.symbol || '';
+      if (!ticker) continue;
+
+      const resultDateStr = result.re_broadcastDt || result.broadCastDate || result.an_dt || '';
+      const resultDate = parseDate(resultDateStr);
+      if (!resultDate) continue;
+
+      // Filter by date range
+      if (resultDate < fromDate || resultDate > toDate) continue;
+
+      const quarter = getFiscalQuarter(resultDate);
+      const key = `${ticker}:${quarter}`;
+
+      // Only add if not already present from dated financial results
+      if (eventsMap.has(key) && eventsMap.get(key)!.eventType === 'RESULTS_DECLARED') continue;
+
+      const revenue = parseFloat(result.re_turnover || result.re_revenue || '0');
+      const operatingProfit = parseFloat(result.re_operatingProfit || '0');
+      const netProfit = parseFloat(result.re_netProfit || result.re_proLossAftTax || '0');
+      const eps = parseFloat(result.re_dilEPS || result.re_basicEPS || '0');
+      const opmVal = revenue > 0 ? ((operatingProfit / revenue) * 100) : 0;
+
+      const sector = await getSectorForSymbol(ticker);
+      const stockInfo = priceLookup[ticker];
+
+      const event: EarningsEvent = {
+        ticker,
+        company: result.sm_name || result.companyName || ticker,
+        eventType: 'RESULTS_DECLARED',
+        announcedDate: resultDate.toISOString().split('T')[0],
+        eventDate: resultDate.toISOString().split('T')[0],
+        quarter,
+        quality: assessQuality({ revenue, netProfit, eps, opm: opmVal }),
+        revenue: revenue || null,
+        operatingProfit: operatingProfit || null,
+        opm: revenue > 0 ? opmVal.toFixed(1) : null,
+        netProfit: netProfit || null,
+        eps: eps || null,
+        sector: sector || normalizeSector(stockInfo?.industry),
+        marketCap: getCapCategory((stockInfo?.marketCap || 0) / 10000000),
+        indexMembership: getIndexMembership(ticker, indexMembers),
+        currentPrice: stockInfo?.price || null,
+        priceChange: null,
+        volume: stockInfo?.volume || null,
+        source: 'NSE Latest Results',
+      };
+
+      eventsMap.set(key, event);
+    }
+
+    // --- Source 6: Event Calendar (may have earnings events) ---
+    const eventCalArray = toArray(eventCalendar);
+    for (const event of eventCalArray) {
+      // Event calendar has various event types - filter for earnings
+      const category = (event.bm_category || event.category || event.purpose || '').toLowerCase();
+      if (!category.includes('result') && !category.includes('earning') && !category.includes('financial')) continue;
+
+      const ticker = event.symbol || event.bm_symbol || '';
+      if (!ticker) continue;
+
+      const dateStr = event.bm_date || event.date || event.event_date || '';
+      const eventDate = parseDate(dateStr);
+      if (!eventDate) continue;
+      if (eventDate < fromDate || eventDate > toDate) continue;
+
+      const quarter = getFiscalQuarter(eventDate);
+      const key = `${ticker}:${quarter}`;
+      if (eventsMap.has(key)) continue;
+
+      const sector = await getSectorForSymbol(ticker);
+      const stockInfo = priceLookup[ticker];
+
+      eventsMap.set(key, {
+        ticker,
+        company: event.sm_name || event.companyName || ticker,
+        eventType: 'BOARD_MEETING',
+        announcedDate: null,
+        eventDate: eventDate.toISOString().split('T')[0],
+        quarter,
+        quality: 'Upcoming',
+        revenue: null, operatingProfit: null, opm: null, netProfit: null, eps: null,
+        sector: sector || normalizeSector(stockInfo?.industry),
+        marketCap: getCapCategory((stockInfo?.marketCap || 0) / 10000000),
+        indexMembership: getIndexMembership(ticker, indexMembers),
+        currentPrice: stockInfo?.price || null,
+        priceChange: null,
+        volume: stockInfo?.volume || null,
+        source: 'NSE Event Calendar',
+      });
     }
 
     // ============================================
@@ -513,8 +671,10 @@ export async function GET(request: Request) {
       sources: {
         boardMeetings: bmArray.length,
         financialResults: frArray.length,
+        latestResults: latestFrArray.length,
         announcements: annArray.length,
         bseMeetings: bseArray.length,
+        eventCalendar: eventCalArray.length,
       },
       stockUniverse: {
         nifty50: indexMembers['NIFTY50'].size,

@@ -197,13 +197,28 @@ export async function fetchPreOpen() {
 // ======= EARNINGS & FINANCIAL DATA =======
 
 // Fetch board meetings (earnings announcement dates)
+// NSE returns recent board meeting intimations
 export async function fetchBoardMeetings() {
-  return nseApiFetch('/api/corporate-board-meetings?index=equities', 3600000); // 1hr cache
+  return nseApiFetch('/api/corporate-board-meetings?index=equities', 600000); // 10min cache
 }
 
 // Fetch quarterly financial results
+// Try multiple date format patterns and periods
 export async function fetchFinancialResults(fromDate: string, toDate: string) {
-  return nseApiFetch(`/api/corporates-financial-results?index=equities&period=Quarterly&from_date=${fromDate}&to_date=${toDate}`, 3600000);
+  // Try the standard endpoint first
+  const result = await nseApiFetch(`/api/corporates-financial-results?index=equities&period=Quarterly&from_date=${fromDate}&to_date=${toDate}`, 600000);
+  if (result && (Array.isArray(result) ? result.length > 0 : result?.data?.length > 0)) {
+    return result;
+  }
+  // Try without period filter
+  const result2 = await nseApiFetch(`/api/corporates-financial-results?index=equities&from_date=${fromDate}&to_date=${toDate}`, 600000);
+  return result2;
+}
+
+// Fetch financial results for broader coverage - try different endpoints
+export async function fetchLatestFinancialResults() {
+  // This endpoint might return the most recent results without date filter
+  return nseApiFetch('/api/corporates-financial-results?index=equities', 600000);
 }
 
 // Fetch individual stock detailed quote
