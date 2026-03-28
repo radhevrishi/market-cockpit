@@ -76,6 +76,20 @@ async def _seed_initial_data():
     except Exception as e:
         logger.warning(f"IBEF cleanup failed (non-fatal): {e}")
 
+    # One-time cleanup: fix CDATA-wrapped URLs in existing articles
+    try:
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import text
+            result = await db.execute(
+                text("UPDATE news_articles SET source_url = REPLACE(REPLACE(source_url, '<![CDATA[', ''), ']]>', '') WHERE source_url LIKE '%CDATA%'")
+            )
+            fixed = result.rowcount
+            if fixed:
+                await db.commit()
+                logger.info(f"Fixed {fixed} articles with CDATA-wrapped URLs")
+    except Exception as e:
+        logger.warning(f"CDATA URL cleanup failed (non-fatal): {e}")
+
     try:
         async with AsyncSessionLocal() as db:
             from app.services.news_ingestor import NewsIngestor
