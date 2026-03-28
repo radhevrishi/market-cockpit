@@ -13,18 +13,23 @@ interface IPO {
   id: number;
   company: string;
   exchange: string;
-  status: 'open' | 'upcoming' | 'listed';
+  status: 'open' | 'upcoming' | 'listed' | 'info' | string;
   priceBand: string;
-  dates: string;
+  dates: string | { open?: string; close?: string; listing?: string };
   issueSize: string;
   sector: string;
-  lotSize: number;
+  lotSize: number | string;
   subscription?: Subscription;
   gmp: number;
+  symbol?: string;
+  listingPrice?: number;
+  listingGain?: number;
+  description?: string;
 }
 
 interface IPOResponse {
   ipos: IPO[];
+  summary?: { open: number; upcoming: number; listed: number; total: number };
   updatedAt: string;
   source: string;
 }
@@ -497,7 +502,12 @@ export default function IPOsPage() {
                 fontSize: '12px',
                 color: THEME.textSecondary,
               }}>
-                <strong>Timeline:</strong> {ipo.dates}
+                <strong>Timeline:</strong>{' '}
+                {typeof ipo.dates === 'string'
+                  ? ipo.dates
+                  : ipo.dates && typeof ipo.dates === 'object'
+                    ? `Open: ${ipo.dates.open || '-'} | Close: ${ipo.dates.close || '-'} | Listing: ${ipo.dates.listing || '-'}`
+                    : '-'}
               </div>
             </div>
           ))}

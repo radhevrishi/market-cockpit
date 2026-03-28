@@ -13,11 +13,14 @@ interface CalendarEvent {
 }
 
 interface CalendarResponse {
-  india: Company[];
-  us: Company[];
+  india?: Company[];
+  us?: Company[];
+  companies?: Company[];
+  events?: any[];
   calendar: CalendarEvent;
   weekStart: string;
   note: string;
+  source?: string;
   updatedAt: string;
 }
 
@@ -113,7 +116,9 @@ export default function CalendarPage() {
     }
   };
 
-  const quarterCompanies = market === 'india' ? data?.india : data?.us;
+  const quarterCompanies = market === 'india'
+    ? (data?.india || data?.companies || [])
+    : (data?.us || []);
 
   return (
     <div style={{

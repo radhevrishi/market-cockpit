@@ -14,8 +14,8 @@ interface Quote {
 }
 
 interface QuotesData {
-  quotes: Quote[];
-  market: string;
+  stocks: Quote[];
+  source: string;
   updatedAt: string;
 }
 
@@ -31,7 +31,7 @@ const THEME = {
   red: '#EF4444',
 };
 
-const SECTORS = ['All', 'IT', 'Finance', 'Energy', 'Auto', 'FMCG', 'Chemicals', 'Telecom', 'Healthcare'];
+const SECTORS = ['All', 'IT', 'Banking', 'Energy', 'Auto', 'FMCG', 'Pharma', 'Telecom', 'Healthcare', 'Financial Services', 'Metals', 'Consumer Durables', 'Capital Goods', 'Power', 'Cement', 'Insurance', 'Infrastructure', 'Diversified', 'Mining', 'Retail'];
 const SORT_OPTIONS = ['Name', 'Change%', 'Price', 'Volume'];
 
 export default function ScreenerPage() {
@@ -73,7 +73,7 @@ export default function ScreenerPage() {
   const filteredQuotes = React.useMemo(() => {
     if (!data) return [];
 
-    let filtered = data.quotes.filter((quote) => {
+    let filtered = (data.stocks || []).filter((quote) => {
       const matchesSearch = quote.ticker.toLowerCase().includes(searchTerm.toLowerCase()) ||
         quote.company.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesSector = selectedSector === 'All' || quote.sector === selectedSector;
