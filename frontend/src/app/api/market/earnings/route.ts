@@ -4,16 +4,13 @@ import {
   fetchFinancialResults,
   fetchLatestFinancialResults,
   fetchNifty500,
-  fetchNiftyMidcap250,
   fetchNiftySmallcap250,
   fetchNifty50,
   fetchNiftyNext50,
   fetchBoardMeetingAnnouncements,
   fetchCorporateAnnouncementsPaginated,
   fetchBoardMeetingsForDateRange,
-  fetchBseBoardMeetings,
   fetchEventCalendar,
-  getSectorForSymbol,
   normalizeSector,
 } from '@/lib/nse';
 
@@ -297,17 +294,14 @@ export async function GET(request: Request) {
       return `${dd}-${mm}-${d.getFullYear()}`;
     };
 
-    // For board meetings: fetch intimations from 90 days BEFORE target month
+    // For board meetings: fetch intimations from 60 days BEFORE target month
     // because meetings scheduled for March were intimated in Jan/Feb
     const bmFetchFrom = new Date(fromDate);
-    bmFetchFrom.setDate(bmFetchFrom.getDate() - 90);
-
-    // For announcements: fetch for the target month (results declared in this month)
-    const annFetchFrom = new Date(fromDate);
-    annFetchFrom.setDate(annFetchFrom.getDate() - 7); // 1 week before for overlap
+    bmFetchFrom.setDate(bmFetchFrom.getDate() - 60);
 
     // ============================================
     // STEP 1: Fetch all data sources in parallel
+    // Keep pagination low (3 pages) to avoid Vercel timeout
     // ============================================
     const [
       boardMeetings,
@@ -316,28 +310,22 @@ export async function GET(request: Request) {
       latestFinancialResults,
       announcements,
       announcementsPaginated,
-      bseMeetings,
       eventCalendar,
       nifty50Data,
       niftyNext50Data,
       nifty500Data,
-      midcap250Data,
       smallcap250Data,
     ] = await Promise.all([
       fetchBoardMeetings().catch(() => null),
-      // Fetch board meetings intimated in past 90 days (captures meetings scheduled for target month)
       fetchBoardMeetingsForDateRange(formatNSEDate(bmFetchFrom), formatNSEDate(toDate)).catch(() => null),
       fetchFinancialResults(formatNSEDate(fromDate), formatNSEDate(toDate)).catch(() => null),
       fetchLatestFinancialResults().catch(() => null),
       fetchBoardMeetingAnnouncements().catch(() => null),
-      // Fetch announcements for target month
-      fetchCorporateAnnouncementsPaginated(formatNSEDate(annFetchFrom), formatNSEDate(toDate), 10).catch(() => []),
-      fetchBseBoardMeetings().catch(() => null),
+      fetchCorporateAnnouncementsPaginated(formatNSEDate(fromDate), formatNSEDate(toDate), 3).catch(() => []),
       fetchEventCalendar().catch(() => null),
       fetchNifty50().catch(() => null),
       fetchNiftyNext50().catch(() => null),
       fetchNifty500().catch(() => null),
-      fetchNiftyMidcap250().catch(() => null),
       fetchNiftySmallcap250().catch(() => null),
     ]);
 
@@ -348,7 +336,6 @@ export async function GET(request: Request) {
     const latestFrArray = toArray(latestFinancialResults);
     const annArray1 = toArray(announcements);
     const annArray2 = Array.isArray(announcementsPaginated) ? announcementsPaginated : toArray(announcementsPaginated);
-    const bseArray = toArray(bseMeetings);
     const eventCalArray = toArray(eventCalendar);
 
     // Combine and deduplicate board meetings
@@ -362,10 +349,12 @@ export async function GET(request: Request) {
       }
     }
 
-    // Combine and deduplicate announcements
+    // Combine, deduplicate, and PRE-FILTER announcements (only keep earnings-related)
+    // This is critical for performance — reduces thousands of announcements to dozens
     const annSeen = new Set<string>();
     const annCombined: any[] = [];
     for (const ann of [...annArray1, ...annArray2]) {
+      if (!isAnnouncementEarningsRelated(ann)) continue; // Pre-filter here!
       const key = `${ann.symbol || ann.sm_symbol}:${ann.seq_id || ann.an_dt || ann.sort_date || ''}`;
       if (!annSeen.has(key)) {
         annSeen.add(key);
@@ -375,19 +364,9 @@ export async function GET(request: Request) {
 
     console.log('Earnings API sources:', {
       boardMeetings: bmCombined.length,
-      bmArray1: bmArray1.length,
-      bmArray2: bmArray2.length,
       financialResults: frArray.length,
-      latestFinancialResults: latestFrArray.length,
-      announcements: annCombined.length,
-      annArray1: annArray1.length,
-      annArray2: annArray2.length,
-      bseMeetings: bseArray.length,
+      earningsAnnouncements: annCombined.length,
       eventCalendar: eventCalArray.length,
-      nifty50: nifty50Data?.data?.length || 0,
-      nifty500: nifty500Data?.data?.length || 0,
-      midcap250: midcap250Data?.data?.length || 0,
-      smallcap250: smallcap250Data?.data?.length || 0,
     });
 
     if (debug) {
@@ -406,37 +385,15 @@ export async function GET(request: Request) {
         bmInTargetMonth: bmInMonth.length,
         bmEarningsInTargetMonth: bmEarningsInMonth.length,
         counts: {
-          bmArray1: bmArray1.length,
-          bmArray2: bmArray2.length,
           bmCombined: bmCombined.length,
           frArray: frArray.length,
           latestFrArray: latestFrArray.length,
-          annArray1: annArray1.length,
-          annArray2: annArray2.length,
-          annCombined: annCombined.length,
-          bseArray: bseArray.length,
+          earningsAnnouncements: annCombined.length,
           eventCalArray: eventCalArray.length,
         },
         samples: {
-          boardMeetingsAll: bmCombined.slice(0, 3),
-          boardMeetingsInMonth: bmInMonth.slice(0, 10),
           boardMeetingsEarningsInMonth: bmEarningsInMonth.slice(0, 10),
-          financialResults: frArray.slice(0, 5),
-          latestFinancialResults: latestFrArray.slice(0, 5),
-          announcementsEarnings: annCombined.filter(a => isAnnouncementEarningsRelated(a)).slice(0, 10),
-          bseMeetings: bseArray.slice(0, 5),
-          eventCalendarEarnings: eventCalArray.filter(e => {
-            const d = (e.bm_desc || e.desc || '').toLowerCase();
-            const p = (e.purpose || '').toLowerCase();
-            return d.includes('result') || d.includes('financial') || d.includes('dividend') || p.includes('result') || p.includes('financial');
-          }).slice(0, 10),
-        },
-        rawStructure: {
-          boardMeetings: boardMeetings ? { type: typeof boardMeetings, isArray: Array.isArray(boardMeetings), topKeys: typeof boardMeetings === 'object' && !Array.isArray(boardMeetings) ? Object.keys(boardMeetings).slice(0, 10) : null } : null,
-          financialResults: financialResults ? { type: typeof financialResults, isArray: Array.isArray(financialResults), topKeys: typeof financialResults === 'object' && !Array.isArray(financialResults) ? Object.keys(financialResults).slice(0, 10) : null } : null,
-          announcements: announcements ? { type: typeof announcements, isArray: Array.isArray(announcements), topKeys: typeof announcements === 'object' && !Array.isArray(announcements) ? Object.keys(announcements).slice(0, 10) : null } : null,
-          latestFinancialResults: latestFinancialResults ? { type: typeof latestFinancialResults, isArray: Array.isArray(latestFinancialResults), topKeys: typeof latestFinancialResults === 'object' && !Array.isArray(latestFinancialResults) ? Object.keys(latestFinancialResults).slice(0, 10) : null } : null,
-          eventCalendar: eventCalendar ? { type: typeof eventCalendar, isArray: Array.isArray(eventCalendar), topKeys: typeof eventCalendar === 'object' && !Array.isArray(eventCalendar) ? Object.keys(eventCalendar).slice(0, 10) : null } : null,
+          earningsAnnouncements: annCombined.slice(0, 10),
         },
       });
     }
@@ -447,7 +404,6 @@ export async function GET(request: Request) {
     const indexMembers: Record<string, Set<string>> = {
       'NIFTY50': new Set<string>(),
       'NIFTY500': new Set<string>(),
-      'MIDCAP250': new Set<string>(),
       'SMALLCAP250': new Set<string>(),
     };
 
@@ -474,26 +430,11 @@ export async function GET(request: Request) {
     processStockData(nifty50Data, 'NIFTY50');
     processStockData(niftyNext50Data, 'NIFTY50');
     processStockData(nifty500Data, 'NIFTY500');
-    processStockData(midcap250Data, 'MIDCAP250');
     processStockData(smallcap250Data, 'SMALLCAP250');
 
-    // Pre-batch sector lookups for all tickers we'll encounter
-    const allTickers = new Set<string>();
-    for (const bm of bmCombined) allTickers.add(bm.bm_symbol || bm.symbol || '');
-    for (const fr of frArray) allTickers.add(fr.symbol || '');
-    for (const fr of latestFrArray) allTickers.add(fr.symbol || '');
-    for (const ann of annCombined) allTickers.add(ann.symbol || ann.sm_symbol || '');
-    allTickers.delete('');
-
-    // Batch sector lookup (single await instead of N sequential awaits)
-    const sectorMap: Record<string, string> = {};
-    const tickerArr = Array.from(allTickers);
-    const sectorResults = await Promise.all(tickerArr.map(t => getSectorForSymbol(t)));
-    tickerArr.forEach((t, i) => { sectorMap[t] = sectorResults[i]; });
-
-    // Helper to get sector
+    // Helper to get sector (uses priceLookup industry, deferred sector map built after filtering)
     const getSector = (ticker: string, industry?: string): string => {
-      return sectorMap[ticker] || normalizeSector(industry) || 'Other';
+      return normalizeSector(industry) || normalizeSector(priceLookup[ticker]?.industry) || 'Other';
     };
 
     // ============================================
@@ -509,12 +450,7 @@ export async function GET(request: Request) {
       if (!ticker) continue;
 
       // Check if this board meeting is earnings-related
-      // Be INCLUSIVE: accept if purpose/desc mentions results/financial/dividend or if purpose is empty/short
-      const isRelated = isBoardMeetingEarningsRelated(meeting);
-      const purpose = meeting.bm_purpose || meeting.purpose || '';
-      const desc = meeting.bm_desc || meeting.desc || '';
-      // Only skip if we have a clear non-financial purpose AND desc doesn't mention financial
-      if (!isRelated && purpose.length > 10 && !isBoardMeetingEarningsRelated({ bm_desc: desc })) continue;
+      if (!isBoardMeetingEarningsRelated(meeting)) continue;
 
       const meetingDateStr = meeting.bm_date || meeting.bm_meetingDate || meeting.date || '';
       const meetingDate = parseDate(meetingDateStr);
@@ -604,12 +540,10 @@ export async function GET(request: Request) {
       eventsMap.set(key, event);
     }
 
-    // --- Source 3: NSE Corporate Announcements ---
+    // --- Source 3: NSE Corporate Announcements (pre-filtered during combination) ---
     for (const ann of annCombined) {
       const ticker = ann.symbol || ann.sm_symbol || '';
       if (!ticker) continue;
-
-      if (!isAnnouncementEarningsRelated(ann)) continue;
 
       const annDateStr = ann.sort_date || ann.an_dt || ann.date || '';
       const annDate = parseDate(annDateStr);
@@ -744,46 +678,6 @@ export async function GET(request: Request) {
       });
     }
 
-    // --- Source 6: BSE Board Meetings (cross-validation) ---
-    for (const bse of bseArray) {
-      const purpose = bse.PURPOSE || bse.NEWS_BODY || bse.NEWSSUB || '';
-      if (!isEarningsRelated(purpose) && purpose.length > 10) continue;
-
-      const dateStr = bse.MEETING_DT || bse.DT_TM || bse.NEWS_DT || '';
-      const bseDate = parseDate(dateStr);
-      if (!bseDate) continue;
-      if (bseDate < fromDate || bseDate > toDate) continue;
-
-      // BSE uses scrip codes - try to use NSESYMBOL if available
-      const ticker = bse.NSESYMBOL || bse.SCRIP_CD || '';
-      if (!ticker) continue;
-
-      const quarter = getFiscalQuarter(bseDate);
-      const key = `${ticker}:${quarter}`;
-      if (eventsMap.has(key)) continue; // NSE data takes priority
-
-      const stockInfo = priceLookup[ticker];
-      const marketCapCr = (stockInfo?.marketCap || 0) / 10000000;
-
-      eventsMap.set(key, {
-        ticker,
-        company: bse.SLONGNAME || bse.NEWSUB || ticker,
-        eventType: 'BOARD_MEETING',
-        announcedDate: null,
-        eventDate: bseDate.toISOString().split('T')[0],
-        quarter,
-        quality: 'Upcoming',
-        revenue: null, operatingProfit: null, opm: null, netProfit: null, eps: null,
-        sector: getSector(ticker, stockInfo?.industry),
-        marketCap: getCapCategory(marketCapCr),
-        indexMembership: getIndexMembership(ticker, indexMembers),
-        currentPrice: stockInfo?.price || null,
-        priceChange: null,
-        volume: stockInfo?.volume || null,
-        source: 'BSE',
-      });
-    }
-
     // ============================================
     // STEP 4: Convert to results array and filter
     // ============================================
@@ -828,14 +722,12 @@ export async function GET(request: Request) {
         boardMeetings: bmCombined.length,
         financialResults: frArray.length,
         latestResults: latestFrArray.length,
-        announcements: annCombined.length,
-        bseMeetings: bseArray.length,
+        earningsAnnouncements: annCombined.length,
         eventCalendar: eventCalArray.length,
       },
       stockUniverse: {
         nifty50: indexMembers['NIFTY50'].size,
         nifty500: indexMembers['NIFTY500'].size,
-        midcap250: indexMembers['MIDCAP250'].size,
         smallcap250: indexMembers['SMALLCAP250'].size,
         totalWithPrices: Object.keys(priceLookup).length,
       },
