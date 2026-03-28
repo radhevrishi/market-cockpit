@@ -566,7 +566,9 @@ def _detect_bottleneck(title: str, description: str, region: str = "") -> list[s
         if category.startswith("INDIA_") and not is_india_context:
             continue
         for phrase in phrases:
-            if phrase in text:
+            # Use word-boundary matching to prevent false positives
+            # e.g. "port congestion" must not match inside "airport congestion"
+            if re.search(r'\b' + re.escape(phrase) + r'\b', text):
                 matched_themes.append(category)
                 break  # one match per category is enough
 
@@ -1109,8 +1111,34 @@ class NewsIngestor:
 
         Also strips incorrect INDIA_* themes from non-India articles and demotes
         articles that no longer match any bottleneck category.
+        Also fixes incorrect region assignments from earlier code versions.
         Returns count of updated articles.
         """
+        # Source-based region mapping (mirrors _parse_rss_xml logic)
+        indian_sources = {"ET Markets", "ET Economy", "MoneyControl", "MoneyControl Economy",
+                         "LiveMint", "Business Standard", "IBEF", "Yahoo Finance IN",
+                         "PIB India", "ElectronicsB2B"}
+        us_sources = {"CNBC", "CNBC Economy", "CNBC World", "CNBC Tech", "MarketWatch",
+                     "MarketWatch Pulse", "Bloomberg", "Reuters Finance",
+                     "Yahoo Finance US", "Yahoo Finance US2", "The Information",
+                     "Yahoo Tech Semis"}
+
+        def _correct_region(art) -> str:
+            """Re-derive the correct region from source_name + content signals."""
+            sn = art.source_name or ""
+            if sn in indian_sources:
+                return "IN"
+            if sn in us_sources:
+                # Check if article actually discusses India
+                text = ((art.headline or "") + " " + (art.summary or "")).lower()
+                india_kw = ["india", "indian", "nse", "bse", "sensex", "nifty",
+                           "rupee", "rbi", "modi", "sebi", "adani", "reliance",
+                           "tata", "infosys", "wipro"]
+                if any(kw in text for kw in india_kw):
+                    return "IN"
+                return "US"
+            return art.region or "GLOBAL"
+
         # First: fix existing BOTTLENECK articles that may have incorrect INDIA_* themes
         result_bn = await db.execute(
             select(NewsArticle).where(NewsArticle.article_type == "BOTTLENECK")
@@ -1118,6 +1146,11 @@ class NewsIngestor:
         existing_bn = result_bn.scalars().all()
         fixed = 0
         for art in existing_bn:
+            # Fix region if it was incorrectly assigned
+            correct_region = _correct_region(art)
+            if correct_region != art.region:
+                art.region = correct_region
+
             new_themes = _detect_bottleneck(art.headline, art.summary or "", region=art.region or "")
             if new_themes != (art.themes or []):
                 if new_themes:

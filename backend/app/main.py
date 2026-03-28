@@ -140,7 +140,7 @@ async def _seed_initial_data():
     except Exception as e:
         logger.warning(f"RATING_CHANGE cleanup failed (non-fatal): {e}")
 
-    # Fix India Bottleneck cross-contamination: re-run detection with region awareness
+    # Fix India Bottleneck cross-contamination: correct regions + re-run detection
     # Non-India articles (Tesla, ICE, etc.) that were incorrectly tagged with INDIA_* themes
     # will be stripped of those themes and possibly demoted from BOTTLENECK
     try:
@@ -148,13 +148,40 @@ async def _seed_initial_data():
             from sqlalchemy import select
             from app.models.news import NewsArticle
             from app.services.news_ingestor import _detect_bottleneck, _score_importance
+
+            # Source-based region correction (fixes articles ingested with wrong region)
+            indian_sources = {"ET Markets", "ET Economy", "MoneyControl", "MoneyControl Economy",
+                             "LiveMint", "Business Standard", "IBEF", "Yahoo Finance IN",
+                             "PIB India", "ElectronicsB2B"}
+            us_sources = {"CNBC", "CNBC Economy", "CNBC World", "CNBC Tech", "MarketWatch",
+                         "MarketWatch Pulse", "Bloomberg", "Reuters Finance",
+                         "Yahoo Finance US", "Yahoo Finance US2", "The Information",
+                         "Yahoo Tech Semis"}
+
             result = await db.execute(
                 select(NewsArticle).where(NewsArticle.article_type == "BOTTLENECK")
             )
             articles = result.scalars().all()
             fixed = 0
             demoted = 0
+            region_fixed = 0
             for art in articles:
+                # First: correct region based on source_name
+                sn = art.source_name or ""
+                if sn in indian_sources:
+                    correct_region = "IN"
+                elif sn in us_sources:
+                    text = ((art.headline or "") + " " + (art.summary or "")).lower()
+                    india_kw = ["india", "indian", "nse", "bse", "sensex", "nifty",
+                               "rupee", "rbi", "modi", "sebi", "adani", "reliance",
+                               "tata", "infosys", "wipro"]
+                    correct_region = "IN" if any(kw in text for kw in india_kw) else "US"
+                else:
+                    correct_region = art.region or "GLOBAL"
+                if correct_region != art.region:
+                    art.region = correct_region
+                    region_fixed += 1
+
                 new_themes = _detect_bottleneck(art.headline, art.summary or "", region=art.region or "")
                 old_themes = art.themes if isinstance(art.themes, list) else []
                 if new_themes != old_themes:
@@ -167,9 +194,9 @@ async def _seed_initial_data():
                         art.themes = []
                         art.importance_score = _score_importance(art.headline, art.summary or "", is_bottleneck=False)
                         demoted += 1
-            if fixed or demoted:
+            if fixed or demoted or region_fixed:
                 await db.commit()
-                logger.info(f"Bottleneck region fix: updated {fixed} themes, demoted {demoted} non-bottleneck articles")
+                logger.info(f"Bottleneck region fix: updated {fixed} themes, demoted {demoted}, corrected {region_fixed} regions")
     except Exception as e:
         logger.warning(f"Bottleneck region fix failed (non-fatal): {e}")
 
