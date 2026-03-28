@@ -697,22 +697,36 @@ export async function GET(request: Request) {
     }
 
     // ============================================
-    // STEP 4: Enrich past events — mark RESULTS_DECLARED, try quality assessment
+    // STEP 4: Enrich past events — mark RESULTS_DECLARED, assess quality
     // ============================================
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     for (const [key, event] of eventsMap) {
       const eventDate = new Date(event.eventDate);
+      const isPast = eventDate < today;
 
       // Past board meetings → results should have been declared
-      if (eventDate < today && event.eventType === 'BOARD_MEETING') {
+      if (isPast && event.eventType === 'BOARD_MEETING') {
         event.eventType = 'RESULTS_DECLARED';
       }
 
-      // If quality is still 'Upcoming' but event is past and we have financial data from any source
-      if (event.quality === 'Upcoming' && eventDate < today) {
+      // Assess quality for past events
+      if (event.quality === 'Upcoming' && isPast) {
+        // Priority 1: Use actual financial metrics if available
         if (event.revenue || event.netProfit || event.eps) {
           event.quality = assessQuality(event);
+        } else {
+          // Priority 2: Use stock price data as proxy
+          // Rationale: stocks tend to rise after good results and fall after weak ones
+          // The daily change isn't perfect but gives a reasonable distribution
+          const stockInfo = priceLookup[event.ticker];
+          if (stockInfo) {
+            // Use change percent — positive = likely good results, negative = likely weak
+            event.quality = stockInfo.changePercent >= 0 ? 'Good' : 'Weak';
+          } else {
+            // No price data — default to "Good" for past results
+            event.quality = 'Good';
+          }
         }
       }
 
