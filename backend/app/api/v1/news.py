@@ -16,12 +16,35 @@ router = APIRouter(prefix="/news", tags=["news"])
 logger = logging.getLogger(__name__)
 
 
-async def _auto_refresh_if_stale(db: AsyncSession):
-    """Automatically trigger news ingestion if the latest article is older than 30 minutes.
+_refresh_in_progress = False
 
-    This compensates for Render free tier spinning down — ensures users always see
-    fresh articles even if the background poller hasn't run.
+
+async def _background_refresh():
+    """Run news ingestion in background (non-blocking)."""
+    global _refresh_in_progress
+    try:
+        from app.core.database import AsyncSessionLocal
+        from app.services.news_ingestor import NewsIngestor
+        async with AsyncSessionLocal() as db:
+            ingestor = NewsIngestor()
+            count = await ingestor.ingest_all_sources(db)
+            await db.commit()
+            logger.info(f"Background auto-refresh ingested {count} articles")
+    except Exception as e:
+        logger.warning(f"Background auto-refresh failed (non-fatal): {e}")
+    finally:
+        _refresh_in_progress = False
+
+
+async def _auto_refresh_if_stale(db: AsyncSession):
+    """Kick off background news ingestion if data is stale (>30 min).
+
+    Non-blocking: launches a background task and returns immediately so the
+    GET /news response is not delayed.
     """
+    global _refresh_in_progress
+    if _refresh_in_progress:
+        return  # Already refreshing
     try:
         result = await db.execute(
             select(NewsArticle.published_at)
@@ -32,18 +55,16 @@ async def _auto_refresh_if_stale(db: AsyncSession):
         if latest is None:
             stale = True
         else:
-            # If latest ingestion was more than 30 min ago, refresh
             if getattr(latest, "tzinfo", None) is not None:
                 latest = latest.replace(tzinfo=None)
             stale = (datetime.utcnow() - latest).total_seconds() > 1800
         if stale:
-            logger.info("News data is stale (>30 min), auto-refreshing...")
-            from app.services.news_ingestor import NewsIngestor
-            ingestor = NewsIngestor()
-            count = await ingestor.ingest_all_sources(db)
-            logger.info(f"Auto-refresh ingested {count} articles")
+            logger.info("News data is stale (>30 min), launching background refresh...")
+            _refresh_in_progress = True
+            import asyncio
+            asyncio.create_task(_background_refresh())
     except Exception as e:
-        logger.warning(f"Auto-refresh failed (non-fatal): {e}")
+        logger.warning(f"Auto-refresh check failed (non-fatal): {e}")
 
 
 @router.get("", response_model=list[NewsArticleRead])
