@@ -765,8 +765,8 @@ def _parse_rss_xml(xml_text: str, source_name: str, region: str, source_url: str
     for item in items[:30]:  # max 30 per source
         try:
             title_m = re.search(r'<title[^>]*><!\[CDATA\[(.*?)\]\]></title>|<title[^>]*>(.*?)</title>', item, re.DOTALL)
-            # Handle both RSS <link>text</link> and Atom <link href="..."/>
-            link_m  = re.search(r'<link[^>]*>(.*?)</link>', item, re.DOTALL)
+            # Handle both RSS <link>text</link> (with optional CDATA) and Atom <link href="..."/>
+            link_m  = re.search(r'<link[^>]*><!\[CDATA\[(.*?)\]\]></link>|<link[^>]*>(.*?)</link>', item, re.DOTALL)
             link_href_m = re.search(r'<link[^>]*href=["\']([^"\']+)["\']', item)
             desc_m  = re.search(r'<description[^>]*><!\[CDATA\[(.*?)\]\]></description>|<description[^>]*>(.*?)</description>', item, re.DOTALL)
             # Also handle Atom <summary> and <content>
@@ -781,10 +781,12 @@ def _parse_rss_xml(xml_text: str, source_name: str, region: str, source_url: str
 
             title = (title_m.group(1) or title_m.group(2) or "").strip() if title_m else ""
             link  = ""
-            if link_m and link_m.group(1).strip():
-                link = link_m.group(1).strip()
-            elif link_href_m:
+            if link_m:
+                link = (link_m.group(1) or link_m.group(2) or "").strip()
+            if not link and link_href_m:
                 link = link_href_m.group(1).strip()
+            # Strip any remaining CDATA wrappers from link
+            link = re.sub(r'<!\[CDATA\[|\]\]>', '', link).strip()
             desc  = (desc_m.group(1) or desc_m.group(2) or "").strip() if desc_m else ""
 
             # Clean HTML tags from desc
