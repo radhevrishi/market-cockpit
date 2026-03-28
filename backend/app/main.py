@@ -104,7 +104,7 @@ async def _seed_initial_data():
         async with AsyncSessionLocal() as db:
             from sqlalchemy import select
             from app.models.news import NewsArticle
-            from app.services.news_ingestor import _is_rating_change
+            from app.services.news_ingestor import _is_rating_change, _is_geopolitical, _is_tariff
             result = await db.execute(
                 select(NewsArticle).where(NewsArticle.article_type == "GENERAL")
             )
@@ -118,11 +118,17 @@ async def _seed_initial_data():
                 elif any(w in title_lower for w in ["earnings", "results", "profit", "revenue", "q1", "q2", "q3", "q4", "quarterly", "net income"]):
                     art.article_type = "EARNINGS"
                     reclassified += 1
-                elif any(w in title_lower for w in ["merger", "acquisition", "deal", "buyout", "takeover", "stake"]):
-                    art.article_type = "CORPORATE"
-                    reclassified += 1
                 elif any(w in title_lower for w in ["rbi", "fed", "rate cut", "rate hike", "gdp", "inflation", "cpi", "monetary policy"]):
                     art.article_type = "MACRO"
+                    reclassified += 1
+                elif _is_geopolitical(title_lower):
+                    art.article_type = "GEOPOLITICAL"
+                    reclassified += 1
+                elif _is_tariff(title_lower):
+                    art.article_type = "TARIFF"
+                    reclassified += 1
+                elif any(w in title_lower for w in ["merger", "acquisition", "deal", "buyout", "takeover", "stake"]):
+                    art.article_type = "CORPORATE"
                     reclassified += 1
             if reclassified:
                 await db.commit()

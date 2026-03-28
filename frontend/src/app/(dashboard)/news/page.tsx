@@ -73,7 +73,7 @@ interface BnDashboard {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const REGIONS = ['ALL', 'IN', 'US'] as const;
-const TYPES   = ['ALL', 'BOTTLENECK', 'EARNINGS', 'RATING_CHANGE', 'MACRO', 'CORPORATE', 'GENERAL'] as const;
+const TYPES   = ['ALL', 'BOTTLENECK', 'EARNINGS', 'RATING_CHANGE', 'MACRO', 'GEOPOLITICAL', 'TARIFF', 'CORPORATE', 'GENERAL'] as const;
 const SOURCES = [
   'ALL',
   // India
@@ -91,6 +91,30 @@ const SOURCES = [
 ] as const;
 const IMPORTANCE_LABELS: Record<number, string> = { 1: 'All', 3: 'Medium+', 4: 'High+', 5: 'Critical' };
 
+// Ticker alias map for search expansion (ticker → company name keywords)
+const TICKER_ALIASES: Record<string, string[]> = {
+  'NVDA': ['nvidia', 'jensen huang', 'blackwell', 'h100'],
+  'AAPL': ['apple'],
+  'MSFT': ['microsoft', 'azure', 'satya nadella'],
+  'GOOGL': ['alphabet', 'google', 'deepmind'],
+  'AMZN': ['amazon', 'aws'],
+  'META': ['meta platforms', 'facebook', 'zuckerberg'],
+  'TSLA': ['tesla', 'elon musk'],
+  'AMD': ['amd', 'lisa su'],
+  'INTC': ['intel'],
+  'TSM': ['tsmc', 'taiwan semiconductor'],
+  'AVGO': ['broadcom'],
+  'RELIANCE': ['reliance', 'mukesh ambani'],
+  'TCS': ['tata consultancy', 'tcs'],
+  'INFY': ['infosys'],
+  'HDFCBANK': ['hdfc bank'],
+  'WIPRO': ['wipro'],
+  'TATAMOTORS': ['tata motors'],
+  'ADANIENT': ['adani'],
+  'HAL': ['hindustan aeronautics'],
+  'BEL': ['bharat electronics'],
+};
+
 // ── Hooks ─────────────────────────────────────────────────────────────────────
 
 function useNews(region: string, type: string, minImportance: number, search: string, sourceName: string) {
@@ -101,7 +125,18 @@ function useNews(region: string, type: string, minImportance: number, search: st
       if (region !== 'ALL') params.set('region', region);
       if (type   !== 'ALL') params.set('article_type', type);
       if (sourceName !== 'ALL') params.set('source_name', sourceName);
-      if (search)           params.set('search', search);
+
+      // Expand ticker search: if user types a ticker like "NVDA", also search for "nvidia"
+      let expandedSearch = search;
+      if (search) {
+        const upperSearch = search.toUpperCase().trim();
+        const aliases = TICKER_ALIASES[upperSearch];
+        if (aliases) {
+          expandedSearch = `${search}|${aliases.join('|')}`;
+        }
+      }
+
+      if (expandedSearch) params.set('search', expandedSearch);
       const { data } = await api.get(`/news?${params}`);
       return Array.isArray(data) ? data : [];
     },
@@ -160,7 +195,17 @@ function getTickerSymbols(article: NewsArticle): string[] {
 // Prefer the alias `title`, fall back to `headline` — also decode HTML entities
 const getTitle = (a: NewsArticle) => decodeHtml(a.title || a.headline || '(no title)');
 const getSource = (a: NewsArticle) => a.source || a.source_name || '';
-const getUrl = (a: NewsArticle) => a.url || a.source_url || '#';
+const getUrl = (a: NewsArticle) => cleanUrl(a.url || a.source_url || '#');
+
+// Clean URL: strip CDATA wrappers, ensure absolute, prevent double-domain
+const cleanUrl = (raw: string): string => {
+  if (!raw || raw === '#') return '#';
+  let u = raw.replace(/<!\[CDATA\[/g, '').replace(/\]\]>/g, '').trim();
+  // If URL starts with http inside another domain (double-domain bug), extract the real URL
+  const httpIdx = u.indexOf('http', 1);
+  if (httpIdx > 0 && u.startsWith('http')) u = u.slice(httpIdx);
+  return u;
+};
 
 const importanceDot = (s: number) =>
   s >= 5 ? '#EF4444' : s >= 4 ? '#F59E0B' : s >= 3 ? '#0F7ABF' : '#4A5B6C';
@@ -170,7 +215,7 @@ const tierBadge = (tier?: number) => {
   return null;
 };
 const typeColor = (t: string) =>
-  ({ BOTTLENECK: '#EF4444', EARNINGS: '#10B981', RATING_CHANGE: '#F59E0B', MACRO: '#8B5CF6', CORPORATE: '#06B6D4', GENERAL: '#4A5B6C' })[t] ?? '#4A5B6C';
+  ({ BOTTLENECK: '#EF4444', EARNINGS: '#10B981', RATING_CHANGE: '#F59E0B', MACRO: '#8B5CF6', GEOPOLITICAL: '#DC2626', TARIFF: '#EA580C', CORPORATE: '#06B6D4', GENERAL: '#4A5B6C' })[t] ?? '#4A5B6C';
 const regionFlag = (r: string) => r === 'IN' ? '🇮🇳' : r === 'US' ? '🇺🇸' : '🌐';
 const sentimentBadge = (sentiment?: string) => {
   if (!sentiment) return null;
@@ -213,9 +258,17 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
   const sentiment = sentimentBadge(article.sentiment);
   const tier = tierBadge(article.investment_tier);
 
+  const isStale = (() => {
+    try {
+      const d = new Date(article.published_at);
+      const daysSince = (Date.now() - d.getTime()) / (1000 * 60 * 60 * 24);
+      return daysSince > 7;
+    } catch { return false; }
+  })();
+
   return (
     <div
-      style={{ backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '14px', padding: '16px', cursor: 'pointer', transition: 'border-color 0.15s' }}
+      style={{ backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '14px', padding: '16px', cursor: 'pointer', transition: 'border-color 0.15s', opacity: isStale ? 0.55 : 1 }}
       onClick={() => {
         // Open the original article URL directly in a new tab
         if (url && url !== '#') {
@@ -238,6 +291,15 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
             }}>
               {article.article_type?.replace(/_/g, ' ')}
             </span>
+            {isStale && (
+              <span style={{
+                fontSize: '8px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px',
+                backgroundColor: '#78350F20', color: '#F59E0B', border: '1px solid #F59E0B30',
+                letterSpacing: '0.3px',
+              }}>
+                STALE
+              </span>
+            )}
             {tier && (
               <span style={{
                 fontSize: '8px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px',

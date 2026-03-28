@@ -106,6 +106,12 @@ async def get_news(
                 three_months_ago = datetime.utcnow() - timedelta(days=90)
                 conditions.append(NewsArticle.published_at >= three_months_ago)
 
+        # Default freshness cutoff: 30 days (prevent stale articles from polluting feed)
+        # Only for non-BOTTLENECK queries (bottleneck has its own 90-day window)
+        if not (article_type and article_type == "BOTTLENECK"):
+            thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+            conditions.append(NewsArticle.published_at >= thirty_days_ago)
+
         if source_name and source_name != "ALL":
             conditions.append(NewsArticle.source_name == source_name)
 
@@ -117,12 +123,21 @@ async def get_news(
             )
 
         if search:
-            conditions.append(
-                or_(
-                    NewsArticle.headline.ilike(f"%{search}%"),
-                    NewsArticle.summary.ilike(f"%{search}%"),
+            # Support pipe-separated search terms (for ticker alias expansion from frontend)
+            search_terms = [s.strip() for s in search.split('|') if s.strip()]
+            if len(search_terms) > 1:
+                search_conditions = []
+                for term in search_terms:
+                    search_conditions.append(NewsArticle.headline.ilike(f"%{term}%"))
+                    search_conditions.append(NewsArticle.summary.ilike(f"%{term}%"))
+                conditions.append(or_(*search_conditions))
+            else:
+                conditions.append(
+                    or_(
+                        NewsArticle.headline.ilike(f"%{search}%"),
+                        NewsArticle.summary.ilike(f"%{search}%"),
+                    )
                 )
-            )
 
         # For bottleneck filter, use a higher limit to show full 3-month history
         effective_limit = 500 if (article_type and article_type == "BOTTLENECK") else limit

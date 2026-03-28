@@ -668,11 +668,10 @@ def _is_rating_change(title_lower: str) -> bool:
         "maintains buy", "maintains sell", "maintains hold", "maintains add",
         "maintains reduce", "maintains overweight", "maintains underweight",
         "maintains outperform", "maintains neutral", "maintains equal-weight",
-        "buy to hold", "hold to buy", "buy to sell", "sell to buy",
-        "hold to sell", "sell to hold", "neutral to buy", "buy to neutral",
+        "neutral to buy", "buy to neutral",
         "overweight to neutral", "neutral to overweight",
         "underweight to neutral", "equal-weight",
-        "outperform", "underperform", "market perform",
+        "market perform",
         "sector perform", "sector outperform",
         "top pick", "conviction buy", "conviction list",
     ]
@@ -706,7 +705,39 @@ def _is_rating_change(title_lower: str) -> bool:
     if re.search(r'(maintains|upgrades?|downgrades?|raises?|lowers?|cuts?|initiates?)\s+\w+\s+to\s+(buy|sell|hold|add|reduce|neutral|overweight|underweight|outperform)', title_lower):
         return True
 
+    # Exclude generic buy/sell recommendation editorials
+    editorial_phrases = ["stocks to buy", "shares to buy", "buy or sell", "stocks to sell",
+                        "should you buy", "top picks for", "best stocks"]
+    if any(ep in title_lower for ep in editorial_phrases):
+        return False
+
     return False
+
+
+def _is_geopolitical(title_lower: str) -> bool:
+    """Detect geopolitical/defense articles."""
+    keywords = [
+        "war", "iran", "china", "taiwan", "sanctions", "embargo", "military",
+        "defense", "defence", "geopolitical", "geopolitics", "strait of hormuz",
+        "houthi", "missile", "nato", "pentagon", "troops", "conflict",
+        "airstrikes", "ceasefire", "nuclear", "invasion", "occupation",
+        "south china sea", "us-china", "us-iran", "tariff war",
+        "rare earth", "export ban", "import ban", "chip ban", "chips act",
+        "entity list", "security threat", "national security",
+    ]
+    return any(kw in title_lower for kw in keywords)
+
+
+def _is_tariff(title_lower: str) -> bool:
+    """Detect tariff/trade war articles."""
+    keywords = [
+        "tariff", "trade war", "trade deal", "import duty", "export duty",
+        "customs duty", "anti-dumping", "countervailing", "trade deficit",
+        "trade surplus", "wto", "free trade", "trade agreement",
+        "supply chain disruption", "reshoring", "nearshoring", "onshoring",
+        "decoupling", "de-risking", "friend-shoring",
+    ]
+    return any(kw in title_lower for kw in keywords)
 
 
 def _infer_sentiment(title: str) -> str:
@@ -787,6 +818,13 @@ def _parse_rss_xml(xml_text: str, source_name: str, region: str, source_url: str
                 link = link_href_m.group(1).strip()
             # Strip any remaining CDATA wrappers from link
             link = re.sub(r'<!\[CDATA\[|\]\]>', '', link).strip()
+            # Fix double-domain URLs (e.g., "livemint.com/https://www.livemint.com/...")
+            http_match = re.search(r'https?://', link)
+            if http_match and http_match.start() > 0:
+                # There's content before the http:// — extract the real URL
+                second_http = link.find('http', http_match.start() + 1)
+                if second_http > 0:
+                    link = link[second_http:]
             desc  = (desc_m.group(1) or desc_m.group(2) or "").strip() if desc_m else ""
 
             # Clean HTML tags from desc
@@ -1154,6 +1192,10 @@ class NewsIngestor:
             elif any(w in title_lower for w in ["rbi", "fed", "rate cut", "rate hike", "gdp", "inflation", "cpi",
                                                   "monetary policy", "fiscal deficit", "current account"]):
                 article_type = "MACRO"
+            elif _is_geopolitical(title_lower):
+                article_type = "GEOPOLITICAL"
+            elif _is_tariff(title_lower):
+                article_type = "TARIFF"
             elif any(w in title_lower for w in ["merger", "acquisition", "deal", "buyout", "takeover", "stake"]):
                 article_type = "CORPORATE"
             else:
