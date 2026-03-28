@@ -80,3 +80,70 @@ body {
 .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
 
 ::selection { background-color: rgba(15,122,191,0.3); color: #F5F7FA; }
+
+/* ─── Mobile / Responsive ────────────────────────────────────────────────── */
+
+/* Safe area for iPhone notch + home indicator */
+@supports (padding: env(safe-area-inset-bottom)) {
+  .mobile-bottom-nav {
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  }
+  .mobile-main-content {
+    padding-bottom: calc(64px + env(safe-area-inset-bottom));
+  }
+}
+
+/* Hide desktop sidebar on mobile */
+@media (max-width: 767px) {
+  .desktop-sidebar { display: none !important; }
+  .mobile-bottom-nav { display: flex !important; }
+  .desktop-header-subtitle { display: none !important; }
+  .desktop-user-menu { display: none !important; }
+  .desktop-market-hours { display: none !important; }
+}
+
+/* Show sidebar, hide bottom nav on desktop */
+@media (min-width: 768px) {
+  .desktop-sidebar { display: flex !important; }
+  .mobile-bottom-nav { display: none !important; }
+}
+
+/* Touch-friendly tap targets */
+@media (max-width: 767px) {
+  .mobile-tap-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* Momentum scrolling for iOS */
+.mobile-scroll {
+  -webkit-overflow-scrolling: touch;
+  overflow-x: auto;
+}
+
+/* Prevent iOS zoom on input focus */
+@media (max-width: 767px) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Article detail: full-screen on mobile, centered modal on desktop */
+@media (min-width: 768px) {
+  .article-detail-panel {
+    border-radius: 16px !important;
+    height: auto !important;
+    max-height: calc(100vh - 80px) !important;
+    margin-top: 40px;
+    padding: 28px 32px !important;
+  }
+}
+
+/* Ensure filter source buttons wrap nicely on mobile */
+@media (max-width: 767px) {
+  .filter-sources-wrap {
+    max-height: 120px;
+    overflow-y: auto;
+  }
+}

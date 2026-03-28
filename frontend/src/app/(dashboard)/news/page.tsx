@@ -268,7 +268,7 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
 
   return (
     <div
-      style={{ backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '14px', padding: '16px', cursor: 'pointer', transition: 'border-color 0.15s', opacity: isStale ? 0.55 : 1 }}
+      style={{ backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '14px', padding: '14px', cursor: 'pointer', transition: 'border-color 0.15s', opacity: isStale ? 0.55 : 1 }}
       onClick={() => {
         // Open the original article URL directly in a new tab
         if (url && url !== '#') {
@@ -278,7 +278,7 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
         }
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
         <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: importanceDot(article.importance_score), flexShrink: 0, marginTop: '5px' }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', flexWrap: 'wrap' }}>
@@ -343,10 +343,10 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
         {/* Info button to open detail overlay */}
         <button
           onClick={(e) => { e.stopPropagation(); onSelect(article); }}
-          style={{ background: 'none', border: '1px solid #1E2D45', borderRadius: '6px', color: '#4A5B6C', cursor: 'pointer', padding: '4px 6px', flexShrink: 0, display: 'flex', alignItems: 'center' }}
+          style={{ background: 'none', border: '1px solid #1E2D45', borderRadius: '8px', color: '#4A5B6C', cursor: 'pointer', padding: '8px', flexShrink: 0, display: 'flex', alignItems: 'center', minWidth: '36px', minHeight: '36px', justifyContent: 'center' }}
           title="View details"
         >
-          <ChevronRight style={{ width: '12px', height: '12px' }} />
+          <ChevronRight style={{ width: '14px', height: '14px' }} />
         </button>
       </div>
     </div>
@@ -363,11 +363,12 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
 
   return (
     <div
-      style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: '40px', backgroundColor: 'rgba(0,0,0,0.65)' }}
+      style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: '0px', backgroundColor: 'rgba(0,0,0,0.65)' }}
       onClick={onClose}
     >
       <div
-        style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '16px', width: '100%', maxWidth: '700px', maxHeight: 'calc(100vh - 80px)', overflowY: 'auto', padding: '28px 32px' }}
+        style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '0px', width: '100%', maxWidth: '700px', height: '100vh', maxHeight: '100vh', overflowY: 'auto', padding: '20px 16px' }}
+        className="article-detail-panel"
         onClick={e => e.stopPropagation()}
       >
         {/* Close button */}
@@ -701,13 +702,13 @@ export default function NewsFeedPage() {
   };
 
   return (
-    <div style={{ padding: '20px', maxWidth: '1000px', margin: '0 auto' }}>
+    <div style={{ padding: '12px', maxWidth: '1000px', margin: '0 auto' }}>
 
       {/* ── IN PLAY TODAY bar ─────────────────────────────────────────── */}
       {!inPlayLoading && (
         <div
-          style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '12px', padding: '10px 16px', marginBottom: '16px', overflowX: 'auto', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '12px' }}
-          className="scrollbar-hide"
+          style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '12px', padding: '10px 12px', marginBottom: '12px', overflowX: 'auto', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '10px' }}
+          className="scrollbar-hide mobile-scroll"
         >
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '10px', fontWeight: '700', color: '#F59E0B', flexShrink: 0 }}>
             <Zap style={{ width: '10px', height: '10px' }} /> IN PLAY TODAY
@@ -748,37 +749,40 @@ export default function NewsFeedPage() {
       )}
 
       {/* ── Header ───────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', gap: '12px', flexWrap: 'wrap' }}>
-        <h1 style={{ fontSize: '15px', fontWeight: '700', color: '#F5F7FA', margin: 0 }}>News Feed</h1>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+      <div style={{ marginBottom: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+          <h1 style={{ fontSize: '15px', fontWeight: '700', color: '#F5F7FA', margin: 0 }}>News Feed</h1>
+        </div>
+        {/* Controls row — horizontally scrollable on mobile */}
+        <div className="scrollbar-hide mobile-scroll" style={{ display: 'flex', gap: '8px', alignItems: 'center', overflowX: 'auto', paddingBottom: '4px' }}>
           <input
             value={search} onChange={e => setSearch(e.target.value)} placeholder="Search news…"
-            style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '8px', padding: '7px 12px', color: '#F5F7FA', fontSize: '12px', width: '200px', outline: 'none' }}
+            style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '8px', padding: '7px 12px', color: '#F5F7FA', fontSize: '14px', minWidth: '160px', width: '200px', outline: 'none', flexShrink: 0 }}
           />
           <button
             onClick={() => setArticleType(articleType === 'BOTTLENECK' ? 'ALL' : 'BOTTLENECK')}
-            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: articleType === 'BOTTLENECK' ? '#EF444420' : '#111B35', border: `1px solid ${articleType === 'BOTTLENECK' ? '#EF4444' : '#1E2D45'}`, borderRadius: '8px', padding: '7px 12px', color: articleType === 'BOTTLENECK' ? '#EF4444' : '#8A95A3', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: articleType === 'BOTTLENECK' ? '#EF444420' : '#111B35', border: `1px solid ${articleType === 'BOTTLENECK' ? '#EF4444' : '#1E2D45'}`, borderRadius: '8px', padding: '7px 12px', color: articleType === 'BOTTLENECK' ? '#EF4444' : '#8A95A3', fontSize: '12px', fontWeight: '600', cursor: 'pointer', flexShrink: 0, minHeight: '36px' }}
             title="Show critical bottleneck news (GPU, Memory, Photonics, Power, etc.)"
           >
             BOTTLENECKS
           </button>
           <button
             onClick={() => setRegion(region === 'IN' ? 'ALL' : 'IN')}
-            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: region === 'IN' ? '#0F7ABF20' : '#111B35', border: `1px solid ${region === 'IN' ? '#0F7ABF' : '#1E2D45'}`, borderRadius: '8px', padding: '7px 12px', color: region === 'IN' ? '#0F7ABF' : '#8A95A3', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: region === 'IN' ? '#0F7ABF20' : '#111B35', border: `1px solid ${region === 'IN' ? '#0F7ABF' : '#1E2D45'}`, borderRadius: '8px', padding: '7px 12px', color: region === 'IN' ? '#0F7ABF' : '#8A95A3', fontSize: '12px', fontWeight: '600', cursor: 'pointer', flexShrink: 0, minHeight: '36px' }}
             title="Show only India news"
           >
             🇮🇳 India
           </button>
           <button
             onClick={() => setRegion(region === 'US' ? 'ALL' : 'US')}
-            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: region === 'US' ? '#0F7ABF20' : '#111B35', border: `1px solid ${region === 'US' ? '#0F7ABF' : '#1E2D45'}`, borderRadius: '8px', padding: '7px 12px', color: region === 'US' ? '#0F7ABF' : '#8A95A3', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: region === 'US' ? '#0F7ABF20' : '#111B35', border: `1px solid ${region === 'US' ? '#0F7ABF' : '#1E2D45'}`, borderRadius: '8px', padding: '7px 12px', color: region === 'US' ? '#0F7ABF' : '#8A95A3', fontSize: '12px', fontWeight: '600', cursor: 'pointer', flexShrink: 0, minHeight: '36px' }}
             title="Show only US news"
           >
             🇺🇸 US
           </button>
           <button
             onClick={() => setShowFilters(f => !f)}
-            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: showFilters ? '#0F7ABF' : '#111B35', border: `1px solid ${showFilters ? '#0F7ABF' : '#1E2D45'}`, borderRadius: '8px', padding: '7px 12px', color: '#F5F7FA', fontSize: '12px', cursor: 'pointer' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: showFilters ? '#0F7ABF' : '#111B35', border: `1px solid ${showFilters ? '#0F7ABF' : '#1E2D45'}`, borderRadius: '8px', padding: '7px 12px', color: '#F5F7FA', fontSize: '12px', cursor: 'pointer', flexShrink: 0, minHeight: '36px' }}
           >
             <Filter style={{ width: '12px', height: '12px' }} /> Filters
             {(region !== 'ALL' || articleType !== 'ALL' || minImportance > 1 || sourceName !== 'ALL' || search) && (
@@ -788,7 +792,7 @@ export default function NewsFeedPage() {
           <button
             onClick={handleRefresh}
             disabled={isRefreshing}
-            style={{ backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '8px', padding: '7px 10px', color: isRefreshing ? '#0F7ABF' : '#4A5B6C', cursor: isRefreshing ? 'wait' : 'pointer', opacity: isRefreshing ? 0.7 : 1 }}
+            style={{ backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '8px', padding: '7px 10px', color: isRefreshing ? '#0F7ABF' : '#4A5B6C', cursor: isRefreshing ? 'wait' : 'pointer', opacity: isRefreshing ? 0.7 : 1, flexShrink: 0, minHeight: '36px', minWidth: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
             title={isRefreshing ? 'Fetching latest news from sources…' : 'Refresh news from RSS feeds'}
           >
             <RefreshCw style={{ width: '12px', height: '12px', animation: isRefreshing ? 'spin 1s linear infinite' : 'none' }} />
@@ -798,8 +802,8 @@ export default function NewsFeedPage() {
 
       {/* ── Filter panel ─────────────────────────────────────────────── */}
       {showFilters && (
-        <div style={{ backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '14px', padding: '16px', marginBottom: '16px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
+        <div style={{ backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '14px', padding: '14px', marginBottom: '12px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
             <div>
               <p style={{ fontSize: '10px', fontWeight: '600', color: '#4A5B6C', margin: '0 0 8px', letterSpacing: '0.5px' }}>REGION</p>
               <div style={{ display: 'flex', gap: '6px' }}>

@@ -67,8 +67,6 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
 
   // ── Auth check: mark as checked (public data loads regardless) ──────────
   useEffect(() => {
-    // Always allow dashboard to load — public endpoints work without auth.
-    // Auth-only features (portfolios, watchlists) will handle their own 401s.
     setAuthChecked(true);
   }, []);
 
@@ -78,7 +76,6 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
   useEffect(() => {
     const tickerParam = searchParams?.get('ticker');
     if (tickerParam) {
-      // Default to NASDAQ, but some Indian tickers should use NSE
       const indianTickers = ['RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK', 'WIPRO', 'BAJFINANCE',
                              'TATAMOTORS', 'SUNPHARMA', 'ADANIENT', 'SBIN', 'AXISBANK', 'KOTAKBANK',
                              'HAL', 'BEL', 'NTPC', 'ONGC', 'MARUTI', 'HCLTECH', 'ITC', 'LT', 'POWERGRID',
@@ -98,24 +95,23 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('openTicker', handler);
   }, []);
 
-  // Refetch market data when component re-mounts to ensure fresh data on back/forward navigation
+  // Refetch market data when component re-mounts
   useEffect(() => {
     qc.invalidateQueries({ queryKey: ['market', 'indices'] });
   }, [qc]);
 
-  // Show loading skeleton for first 3 seconds, then hide immediately on data arrival
+  // Show loading skeleton for first 3 seconds
   useEffect(() => {
     const timer = setTimeout(() => setShowLoadingSkeleton(false), 3000);
     return () => clearTimeout(timer);
   }, []);
 
   // Live market indices — refresh every 60 s
-  // IMPORTANT: All hooks must be called before any conditional return (React rules of hooks)
   const { data: liveIndices, isLoading, error } = useQuery<MarketIndex[]>({
     queryKey: ['market', 'indices'],
     queryFn: async () => {
       const { data } = await api.get('/market/indices');
-      setShowLoadingSkeleton(false); // Hide skeleton once data arrives
+      setShowLoadingSkeleton(false);
       return Array.isArray(data) ? data : [];
     },
     staleTime: 60_000,
@@ -123,7 +119,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
     retry: 2,
   });
 
-  // Fetch user profile to get consistent display name (only if logged in)
+  // Fetch user profile
   const hasToken = typeof window !== 'undefined' && !!localStorage.getItem('token');
   const { data: userProfile } = useQuery<UserProfile>({
     queryKey: ['auth', 'me'],
@@ -149,7 +145,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
     );
   }
 
-  // Shape live data into ticker format; fall back to placeholder until loaded
+  // Shape live data into ticker format
   const markets = liveIndices && liveIndices.length > 0
     ? liveIndices.map((m) => {
         const pct = typeof m.change_pct === 'number' ? m.change_pct : 0;
@@ -180,8 +176,8 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
   return (
     <div style={{ display: 'flex', height: '100vh', backgroundColor: '#0A0E1A', overflow: 'hidden' }}>
 
-      {/* ── Sidebar ─────────────────────────────────────────────────────── */}
-      <aside style={{
+      {/* ── Desktop Sidebar ───────────────────────────────────────────── */}
+      <aside className="desktop-sidebar" style={{
         width: '72px',
         flexShrink: 0,
         backgroundColor: '#0D1623',
@@ -256,30 +252,33 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      {/* ── Main ────────────────────────────────────────────────────────── */}
+      {/* ── Main ─────────────────────────────────────────────────────── */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
 
         {/* Top Bar */}
         <header style={{ backgroundColor: '#0D1623', borderBottom: '1px solid #1A2840', flexShrink: 0 }}>
 
-          {/* Markets ticker */}
-          <div style={{
-            height: '36px',
-            backgroundColor: '#060E1A',
-            borderBottom: '1px solid #1A2840',
-            display: 'flex',
-            alignItems: 'center',
-            paddingLeft: '16px',
-            paddingRight: '16px',
-            gap: '28px',
-            overflowX: 'auto',
-            whiteSpace: 'nowrap',
-          }} className="scrollbar-hide">
+          {/* Markets ticker — horizontal scroll on mobile */}
+          <div
+            style={{
+              height: '36px',
+              backgroundColor: '#060E1A',
+              borderBottom: '1px solid #1A2840',
+              display: 'flex',
+              alignItems: 'center',
+              paddingLeft: '12px',
+              paddingRight: '12px',
+              gap: '16px',
+              overflowX: 'auto',
+              whiteSpace: 'nowrap',
+            }}
+            className="scrollbar-hide mobile-scroll"
+          >
             {markets.map(m => (
               <button
                 key={m.symbol}
                 onClick={() => setDrawerTicker({ symbol: m.symbol })}
-                style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '6px' }}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', padding: '4px 4px', borderRadius: '6px' }}
                 title={`View ${m.symbol} details`}
               >
                 <span style={{ fontSize: '11px', fontWeight: '600', color: '#C9D4E0' }}>{m.symbol}</span>
@@ -289,18 +288,20 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
             ))}
           </div>
 
-          {/* Header row */}
-          <div style={{ height: '52px', padding: '0 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div>
-              <span style={{ fontSize: '16px', fontWeight: '700', background: 'linear-gradient(90deg, #0F7ABF, #06B6D4)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+          {/* Header row — compact on mobile */}
+          <div style={{ height: '48px', padding: '0 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '15px', fontWeight: '700', background: 'linear-gradient(90deg, #0F7ABF, #06B6D4)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
                 MARKET COCKPIT
               </span>
-              <span style={{ fontSize: '11px', color: '#4A5B6C', marginLeft: '10px' }}>Bloomberg-lite · India + US</span>
+              <span className="desktop-header-subtitle" style={{ fontSize: '11px', color: '#4A5B6C' }}>Bloomberg-lite · India + US</span>
             </div>
 
             {/* Market hours + Search + User */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-              <MarketHours />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div className="desktop-market-hours">
+                <MarketHours />
+              </div>
 
               <button
                 onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true } as any))}
@@ -311,17 +312,20 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                   background: 'none',
                   border: '1px solid #1A2840',
                   borderRadius: '10px',
-                  padding: '6px 12px',
+                  padding: '6px 10px',
                   cursor: 'pointer',
-                  color: '#6B7A8D'
+                  color: '#6B7A8D',
+                  minHeight: '36px',
+                  minWidth: '36px',
+                  justifyContent: 'center',
                 }}
                 title="Search tickers (Cmd+K)"
               >
                 <Search className="w-4 h-4" />
               </button>
 
-              {/* User menu */}
-              <div style={{ position: 'relative' }}>
+              {/* User menu — hidden on mobile, accessible via bottom nav */}
+              <div className="desktop-user-menu" style={{ position: 'relative' }}>
                 <button onClick={() => setUserMenu(v => !v)}
                   style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'none', border: '1px solid #1A2840', borderRadius: '10px', padding: '6px 12px', cursor: 'pointer', color: '#C9D4E0' }}>
                   <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'linear-gradient(135deg, #0F7ABF, #06B6D4)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '700', color: 'white' }}>
@@ -350,11 +354,91 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        {/* Page content */}
-        <main style={{ flex: 1, overflowY: 'auto', backgroundColor: '#0A0E1A' }}>
+        {/* Page content — add bottom padding on mobile for bottom nav */}
+        <main className="mobile-main-content" style={{ flex: 1, overflowY: 'auto', backgroundColor: '#0A0E1A' }}>
           {children}
         </main>
       </div>
+
+      {/* ── Mobile Bottom Navigation ─────────────────────────────────── */}
+      <nav
+        className="mobile-bottom-nav mobile-bottom-nav"
+        style={{
+          display: 'none',
+          position: 'fixed',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: '56px',
+          backgroundColor: '#0D1623',
+          borderTop: '1px solid #1A2840',
+          zIndex: 50,
+          alignItems: 'center',
+          justifyContent: 'space-around',
+          paddingTop: '4px',
+          paddingBottom: '4px',
+        }}
+      >
+        {NAV.map(item => {
+          const active = isActive(item.href);
+          return (
+            <Link key={item.href} href={item.href}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '2px',
+                padding: '6px 12px',
+                textDecoration: 'none',
+                color: active ? '#0F7ABF' : '#6B7A8D',
+                fontSize: '10px',
+                fontWeight: active ? '600' : '400',
+                minWidth: '56px',
+                minHeight: '44px',
+                justifyContent: 'center',
+              }}>
+              {item.icon}
+              <span>{item.label.split(' ')[0]}</span>
+            </Link>
+          );
+        })}
+        <Link href="/settings"
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '2px',
+            padding: '6px 12px',
+            textDecoration: 'none',
+            color: pathname.startsWith('/settings') ? '#0F7ABF' : '#6B7A8D',
+            fontSize: '10px',
+            minWidth: '56px',
+            minHeight: '44px',
+            justifyContent: 'center',
+          }}>
+          <Settings className="w-5 h-5" />
+          <span>Settings</span>
+        </Link>
+        <button onClick={handleSignOut}
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '2px',
+            padding: '6px 12px',
+            background: 'none',
+            border: 'none',
+            color: '#6B7A8D',
+            fontSize: '10px',
+            cursor: 'pointer',
+            minWidth: '56px',
+            minHeight: '44px',
+            justifyContent: 'center',
+          }}>
+          <LogOut className="w-5 h-5" />
+          <span>Sign Out</span>
+        </button>
+      </nav>
 
       {/* Click-away for user menu */}
       {userMenu && (
