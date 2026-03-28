@@ -152,7 +152,8 @@ export default function HeatmapPage() {
 
     const areas = stocks.map((stock) => {
       if (filters.sizeBy === 'marketCap') {
-        return Math.max(stock.marketCap || 1000, 1000);
+        // Use market cap if available, otherwise use volume as proxy, otherwise equal
+        return Math.max(stock.marketCap || stock.volume || 10000, 10000);
       }
       return 100;
     });
@@ -303,13 +304,19 @@ export default function HeatmapPage() {
             <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px' }}>
               <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>Best</div>
               <div style={{ fontSize: '20px', fontWeight: 'bold', color: THEME.green }}>
-                {data.gainers[0]?.ticker || 'N/A'}
+                {(() => {
+                  const best = data?.stocks?.length ? [...data.stocks].sort((a, b) => b.changePercent - a.changePercent)[0] : null;
+                  return best ? best.ticker : 'N/A';
+                })()}
               </div>
             </div>
             <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px' }}>
               <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>Worst</div>
               <div style={{ fontSize: '20px', fontWeight: 'bold', color: THEME.red }}>
-                {data.losers[0]?.ticker || 'N/A'}
+                {(() => {
+                  const worst = data?.stocks?.length ? [...data.stocks].sort((a, b) => a.changePercent - b.changePercent)[0] : null;
+                  return worst ? worst.ticker : 'N/A';
+                })()}
               </div>
             </div>
           </div>

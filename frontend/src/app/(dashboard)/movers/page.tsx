@@ -322,8 +322,8 @@ export default function MoversPage() {
                     (e.currentTarget as HTMLDivElement).style.transform = 'scale(1)';
                   }}
                 >
-                  <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '8px', color: '#FFFFFF' }}>
-                    {sector.substring(0, 15)}
+                  <div style={{ fontSize: '13px', fontWeight: '600', marginBottom: '8px', color: '#FFFFFF', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {sector}
                   </div>
                   <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#FFFFFF' }}>
                     {info.totalChange > 0 ? '+' : ''}{info.totalChange.toFixed(2)}%

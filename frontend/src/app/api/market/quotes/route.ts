@@ -1,8 +1,25 @@
 import { NextResponse } from 'next/server';
-import { fetchNifty50, fetchGainers, fetchLosers, NIFTY50_SECTORS } from '@/lib/nse';
+import { fetchNifty50, fetchNiftyNext50, fetchGainers, fetchLosers, NIFTY50_SECTORS } from '@/lib/nse';
 import { fetchQuotesWithFallback, US_TOP } from '@/lib/yahoo';
 
 export const dynamic = 'force-dynamic';
+
+// Approximate market cap lookup for top Indian stocks (in crores)
+const APPROX_MCAP: Record<string, number> = {
+  'RELIANCE': 1800000, 'TCS': 1400000, 'HDFCBANK': 1300000, 'ICICIBANK': 900000,
+  'BHARTIARTL': 850000, 'INFY': 700000, 'SBIN': 700000, 'ITC': 600000,
+  'LT': 550000, 'HINDUNILVR': 550000, 'BAJFINANCE': 500000, 'HCLTECH': 450000,
+  'MARUTI': 400000, 'KOTAKBANK': 380000, 'SUNPHARMA': 370000, 'TITAN': 350000,
+  'AXISBANK': 340000, 'ONGC': 320000, 'NTPC': 310000, 'ADANIENT': 300000,
+  'WIPRO': 280000, 'TATAMOTORS': 270000, 'ADANIPORTS': 260000, 'M&M': 250000,
+  'POWERGRID': 240000, 'ULTRACEMCO': 230000, 'NESTLEIND': 220000, 'COALINDIA': 210000,
+  'JSWSTEEL': 200000, 'TATASTEEL': 190000, 'TECHM': 170000, 'BAJAJFINSV': 160000,
+  'GRASIM': 150000, 'BAJAJ-AUTO': 145000, 'INDUSINDBK': 140000, 'HINDALCO': 135000,
+  'CIPLA': 130000, 'DRREDDY': 125000, 'EICHERMOT': 120000, 'BRITANNIA': 115000,
+  'APOLLOHOSP': 110000, 'TATACONSUM': 105000, 'BPCL': 100000, 'HEROMOTOCO': 95000,
+  'SBILIFE': 90000, 'HDFCLIFE': 85000, 'DIVISLAB': 80000, 'SHRIRAMFIN': 75000,
+  'DMART': 350000, 'LICI': 600000, 'HAL': 300000, 'IRFC': 200000,
+};
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -21,26 +38,27 @@ export async function GET(request: Request) {
 }
 
 async function fetchIndianData() {
-  // Try NSE API first (most accurate for Indian market)
-  const [nifty50Data, gainersData, losersData] = await Promise.all([
+  // Fetch NIFTY 50 and NIFTY Next 50 to get ~100 stocks, plus gainers/losers
+  const [nifty50Data, niftyNext50Data, gainersData, losersData] = await Promise.all([
     fetchNifty50(),
+    fetchNiftyNext50(),
     fetchGainers(),
     fetchLosers(),
   ]);
 
   let stocks: any[] = [];
 
+  // Process NIFTY 50 data
   if (nifty50Data && nifty50Data.data) {
-    // NSE API returns data in .data array
     stocks = nifty50Data.data.map((item: any) => ({
       ticker: item.symbol || '',
       company: item.meta?.companyName || item.identifier || item.symbol || '',
       sector: NIFTY50_SECTORS[item.symbol] || 'Other',
       price: item.lastPrice || item.ltP || 0,
-      change: item.change || item.pChange ? (item.lastPrice * (item.pChange || 0)) / 100 : 0,
+      change: typeof item.change === 'number' ? item.change : 0,
       changePercent: item.pChange || 0,
       volume: item.totalTradedVolume || item.trdVol || 0,
-      marketCap: 0,
+      marketCap: APPROX_MCAP[item.symbol] || Math.round((item.lastPrice || 0) * (item.totalTradedVolume || 1) / 100000),
       previousClose: item.previousClose || item.prevClose || 0,
       open: item.open || 0,
       dayHigh: item.dayHigh || 0,
@@ -48,6 +66,31 @@ async function fetchIndianData() {
       yearHigh: item.yearHigh || 0,
       yearLow: item.yearLow || 0,
     })).filter((s: any) => s.ticker && s.price > 0);
+  }
+
+  // Process NIFTY Next 50 data and merge with NIFTY 50
+  if (niftyNext50Data && niftyNext50Data.data) {
+    const next50Stocks = niftyNext50Data.data.map((item: any) => ({
+      ticker: item.symbol || '',
+      company: item.meta?.companyName || item.identifier || item.symbol || '',
+      sector: NIFTY50_SECTORS[item.symbol] || 'Other',
+      price: item.lastPrice || item.ltP || 0,
+      change: typeof item.change === 'number' ? item.change : 0,
+      changePercent: item.pChange || 0,
+      volume: item.totalTradedVolume || item.trdVol || 0,
+      marketCap: APPROX_MCAP[item.symbol] || Math.round((item.lastPrice || 0) * (item.totalTradedVolume || 1) / 100000),
+      previousClose: item.previousClose || item.prevClose || 0,
+      open: item.open || 0,
+      dayHigh: item.dayHigh || 0,
+      dayLow: item.dayLow || 0,
+      yearHigh: item.yearHigh || 0,
+      yearLow: item.yearLow || 0,
+    })).filter((s: any) => s.ticker && s.price > 0);
+
+    // Merge arrays and deduplicate by symbol
+    const tickerSet = new Set(stocks.map(s => s.ticker));
+    const uniqueNext50 = next50Stocks.filter((s: any) => !tickerSet.has(s.ticker));
+    stocks = [...stocks, ...uniqueNext50];
   }
 
   // If NSE data unavailable, try Yahoo Finance as fallback
@@ -79,27 +122,41 @@ async function fetchIndianData() {
   let losers: any[] = [];
 
   if (gainersData && gainersData.NIFTY?.data) {
-    gainers = gainersData.NIFTY.data.map((item: any) => ({
-      ticker: item.symbol,
-      company: item.symbol,
-      sector: NIFTY50_SECTORS[item.symbol] || 'Other',
-      price: item.ltp || item.lastPrice || 0,
-      change: item.netPrice || 0,
-      changePercent: item.perChange || item.pChange || 0,
-      volume: item.tradedQuantity || 0,
-    }));
+    gainers = gainersData.NIFTY.data.map((item: any) => {
+      // netPrice is the PERCENTAGE change, calculate absolute change
+      const percentChange = item.netPrice || item.perChange || item.pChange || 0;
+      const ltp = item.ltp || item.lastPrice || 0;
+      const absoluteChange = (ltp * percentChange) / 100;
+
+      return {
+        ticker: item.symbol,
+        company: item.symbol,
+        sector: NIFTY50_SECTORS[item.symbol] || 'Other',
+        price: ltp,
+        change: absoluteChange,
+        changePercent: percentChange,
+        volume: item.tradedQuantity || item.qty || item.totalTradedVolume || 0,
+      };
+    });
   }
 
   if (losersData && losersData.NIFTY?.data) {
-    losers = losersData.NIFTY.data.map((item: any) => ({
-      ticker: item.symbol,
-      company: item.symbol,
-      sector: NIFTY50_SECTORS[item.symbol] || 'Other',
-      price: item.ltp || item.lastPrice || 0,
-      change: item.netPrice || 0,
-      changePercent: item.perChange || item.pChange || 0,
-      volume: item.tradedQuantity || 0,
-    }));
+    losers = losersData.NIFTY.data.map((item: any) => {
+      // netPrice is the PERCENTAGE change, calculate absolute change
+      const percentChange = item.netPrice || item.perChange || item.pChange || 0;
+      const ltp = item.ltp || item.lastPrice || 0;
+      const absoluteChange = (ltp * percentChange) / 100;
+
+      return {
+        ticker: item.symbol,
+        company: item.symbol,
+        sector: NIFTY50_SECTORS[item.symbol] || 'Other',
+        price: ltp,
+        change: absoluteChange,
+        changePercent: percentChange,
+        volume: item.tradedQuantity || item.qty || item.totalTradedVolume || 0,
+      };
+    });
   }
 
   // If NSE gainers/losers not available, derive from stocks

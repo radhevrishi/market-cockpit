@@ -31,7 +31,7 @@ const THEME = {
   red: '#EF4444',
 };
 
-const SECTORS = ['All', 'IT', 'Banking', 'Energy', 'Auto', 'FMCG', 'Pharma', 'Telecom', 'Healthcare', 'Financial Services', 'Metals', 'Consumer Durables', 'Capital Goods', 'Power', 'Cement', 'Insurance', 'Infrastructure', 'Diversified', 'Mining', 'Retail'];
+const SECTORS = ['All', 'IT', 'Banking', 'Energy', 'Auto', 'FMCG', 'Pharma', 'Telecom', 'Healthcare', 'Financial Services', 'Metals', 'Consumer Durables', 'Capital Goods', 'Power', 'Cement', 'Insurance', 'Infrastructure', 'Diversified', 'Mining', 'Retail', 'Real Estate', 'Chemicals', 'Defence', 'Logistics', 'Hospitality', 'Consumer Services', 'Transportation', 'Textiles', 'Other'];
 const SORT_OPTIONS = ['Name', 'Change%', 'Price', 'Volume'];
 
 export default function ScreenerPage() {
@@ -133,7 +133,7 @@ export default function ScreenerPage() {
             Market Screener
           </h1>
           <p style={{ color: THEME.textSecondary, fontSize: '14px', margin: 0 }}>
-            Real-time stock data powered by Yahoo Finance
+            Real-time stock data powered by NSE India
           </p>
         </div>
 

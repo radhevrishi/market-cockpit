@@ -109,6 +109,21 @@ export async function fetchNiftyBank() {
   return nseApiFetch('/api/equity-stockIndices?index=NIFTY%20BANK', 60000);
 }
 
+// Fetch NIFTY Next 50 stocks
+export async function fetchNiftyNext50() {
+  return nseApiFetch('/api/equity-stockIndices?index=NIFTY%20NEXT%2050', 60000);
+}
+
+// Fetch NIFTY Midcap 50
+export async function fetchNiftyMidcap50() {
+  return nseApiFetch('/api/equity-stockIndices?index=NIFTY%20MIDCAP%2050', 60000);
+}
+
+// Fetch NIFTY 200
+export async function fetchNifty200() {
+  return nseApiFetch('/api/equity-stockIndices?index=NIFTY%20200', 60000);
+}
+
 // Fetch all indices
 export async function fetchAllIndices() {
   return nseApiFetch('/api/allIndices', 60000);
@@ -238,8 +253,9 @@ export async function getIPOData() {
   return { current, upcoming, past, bseIPO };
 }
 
-// Sector mapping for NIFTY 50 stocks
+// Sector mapping for NIFTY 50 and extended stocks (NIFTY Next 50, etc.)
 export const NIFTY50_SECTORS: Record<string, string> = {
+  // NIFTY 50 stocks
   'RELIANCE': 'Energy',
   'TCS': 'IT',
   'HDFCBANK': 'Banking',
@@ -290,4 +306,86 @@ export const NIFTY50_SECTORS: Record<string, string> = {
   'BAJAJ-AUTO': 'Auto',
   'HINDALCO': 'Metals',
   'SHRIRAMFIN': 'Financial Services',
+  // NIFTY Next 50 and other extended stocks
+  'ADANIGREEN': 'Energy',
+  'ADANIPOWER': 'Power',
+  'AMBUJACEM': 'Cement',
+  'BANKBARODA': 'Banking',
+  'BERGEPAINT': 'Consumer Durables',
+  'BOSCHLTD': 'Auto',
+  'CANBK': 'Banking',
+  'CHOLAFIN': 'Financial Services',
+  'COLPAL': 'FMCG',
+  'DABUR': 'FMCG',
+  'DLF': 'Real Estate',
+  'GODREJCP': 'FMCG',
+  'HAVELLS': 'Consumer Durables',
+  'ICICIPRULI': 'Insurance',
+  'IDFC': 'Financial Services',
+  'INDHOTEL': 'Hospitality',
+  'IOC': 'Energy',
+  'IRCTC': 'Transportation',
+  'JINDALSTEL': 'Metals',
+  'LICHSGFIN': 'Financial Services',
+  'LICI': 'Insurance',
+  'LODHA': 'Real Estate',
+  'LUPIN': 'Pharma',
+  'MARICO': 'FMCG',
+  'MOTHERSON': 'Auto',
+  'NAUKRI': 'IT',
+  'NHPC': 'Power',
+  'OBEROIRLTY': 'Real Estate',
+  'OFSS': 'IT',
+  'PEL': 'Financial Services',
+  'PERSISTENT': 'IT',
+  'PETRONET': 'Energy',
+  'PIDILITIND': 'Chemicals',
+  'PNB': 'Banking',
+  'POLYCAB': 'Consumer Durables',
+  'SRF': 'Chemicals',
+  'TATACOMM': 'Telecom',
+  'TATAPOWER': 'Power',
+  'TORNTPHARM': 'Pharma',
+  'TRENT': 'Retail',
+  'UNIONBANK': 'Banking',
+  'UNITDSPR': 'FMCG',
+  'VEDL': 'Metals',
+  'ZOMATO': 'Consumer Services',
+  'ZYDUSLIFE': 'Pharma',
+  'ABB': 'Capital Goods',
+  'ACC': 'Cement',
+  'ATGL': 'Energy',
+  'AUROPHARMA': 'Pharma',
+  'BHEL': 'Capital Goods',
+  'BIOCON': 'Pharma',
+  'CGPOWER': 'Capital Goods',
+  'CONCOR': 'Logistics',
+  'CUMMINSIND': 'Capital Goods',
+  'DELHIVERY': 'Logistics',
+  'ESCORTS': 'Auto',
+  'GAIL': 'Energy',
+  'GMRINFRA': 'Infrastructure',
+  'HAL': 'Defence',
+  'ICICIGI': 'Insurance',
+  'IDEA': 'Telecom',
+  'IGL': 'Energy',
+  'IPCALAB': 'Pharma',
+  'IRFC': 'Financial Services',
+  'JIOFIN': 'Financial Services',
+  'MAXHEALTH': 'Healthcare',
+  'MPHASIS': 'IT',
+  'MUTHOOTFIN': 'Financial Services',
+  'PAGEIND': 'Textiles',
+  'PIIND': 'Chemicals',
+  'RECLTD': 'Financial Services',
+  'SAIL': 'Metals',
+  'SIEMENS': 'Capital Goods',
+  'SJVN': 'Power',
+  'SOLARINDS': 'Chemicals',
+  'SUPREMEIND': 'Chemicals',
+  'TATAELXSI': 'IT',
+  'TIINDIA': 'Auto',
+  'TORNTPOWER': 'Power',
+  'UPL': 'Chemicals',
+  'VOLTAS': 'Consumer Durables',
 };
