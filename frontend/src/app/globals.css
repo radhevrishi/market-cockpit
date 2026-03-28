@@ -147,3 +147,25 @@ body {
     overflow-y: auto;
   }
 }
+
+/* News card hover/active states for touch */
+.news-card {
+  -webkit-tap-highlight-color: transparent;
+}
+.news-card:hover {
+  border-color: #2A3D5A !important;
+  background-color: #131F3A !important;
+}
+.news-card:active {
+  background-color: #162342 !important;
+  border-color: #0F7ABF40 !important;
+  transform: scale(0.995);
+}
+
+/* Better mobile spacing */
+@media (max-width: 767px) {
+  .news-card {
+    padding: 14px 12px !important;
+    border-radius: 12px !important;
+  }
+}

@@ -121,7 +121,7 @@ function useNews(region: string, type: string, minImportance: number, search: st
   return useQuery<NewsArticle[]>({
     queryKey: ['news', region, type, minImportance, search, sourceName],
     queryFn: async () => {
-      const params = new URLSearchParams({ limit: '300', importance_min: String(minImportance) });
+      const params = new URLSearchParams({ limit: '500', importance_min: String(minImportance) });
       if (region !== 'ALL') params.set('region', region);
       if (type   !== 'ALL') params.set('article_type', type);
       if (sourceName !== 'ALL') params.set('source_name', sourceName);
@@ -268,7 +268,8 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
 
   return (
     <div
-      style={{ backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '14px', padding: '14px', cursor: 'pointer', transition: 'border-color 0.15s', opacity: isStale ? 0.55 : 1 }}
+      className="news-card"
+      style={{ backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '14px', padding: '16px', cursor: 'pointer', transition: 'border-color 0.15s, background-color 0.15s', opacity: isStale ? 0.55 : 1 }}
       onClick={() => {
         // Open the original article URL directly in a new tab
         if (url && url !== '#') {
@@ -278,13 +279,13 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
         }
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
-        <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: importanceDot(article.importance_score), flexShrink: 0, marginTop: '5px' }} />
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+        <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: importanceDot(article.importance_score), flexShrink: 0, marginTop: '7px' }} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '10px', color: '#4A5B6C' }}>{regionFlag(article.region)}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '11px', color: '#4A5B6C' }}>{regionFlag(article.region)}</span>
             <span style={{
-              fontSize: '9px', fontWeight: '600', padding: '2px 6px', borderRadius: '4px',
+              fontSize: '10px', fontWeight: '600', padding: '3px 8px', borderRadius: '5px',
               backgroundColor: typeColor(article.article_type) + '22',
               color: typeColor(article.article_type),
               border: `1px solid ${typeColor(article.article_type)}40`,
@@ -293,7 +294,7 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
             </span>
             {isStale && (
               <span style={{
-                fontSize: '8px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px',
+                fontSize: '9px', fontWeight: '700', padding: '3px 8px', borderRadius: '5px',
                 backgroundColor: '#78350F20', color: '#F59E0B', border: '1px solid #F59E0B30',
                 letterSpacing: '0.3px',
               }}>
@@ -302,7 +303,7 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
             )}
             {tier && (
               <span style={{
-                fontSize: '8px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px',
+                fontSize: '9px', fontWeight: '700', padding: '3px 8px', borderRadius: '5px',
                 backgroundColor: tier.bg, color: tier.color,
                 border: `1px solid ${tier.border}`, letterSpacing: '0.3px',
               }}>
@@ -311,7 +312,7 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
             )}
             {sentiment && (
               <span style={{
-                fontSize: '9px', fontWeight: '600', padding: '2px 6px', borderRadius: '4px',
+                fontSize: '10px', fontWeight: '600', padding: '3px 8px', borderRadius: '5px',
                 backgroundColor: sentiment.bg,
                 color: sentiment.color,
                 border: `1px solid ${sentiment.border}`,
@@ -320,30 +321,30 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
               </span>
             )}
             {symbols.slice(0, 3).map(t => (
-              <span key={t} style={{ fontSize: '9px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#0F7ABF18', color: '#0F7ABF', border: '1px solid #0F7ABF30' }}>
+              <span key={t} style={{ fontSize: '10px', fontWeight: '700', padding: '3px 8px', borderRadius: '5px', backgroundColor: '#0F7ABF18', color: '#0F7ABF', border: '1px solid #0F7ABF30' }}>
                 {t}
               </span>
             ))}
             {article.themes?.slice(0, 2).map(th => (
-              <span key={th} style={{ fontSize: '8px', fontWeight: '700', padding: '2px 5px', borderRadius: '4px', backgroundColor: '#EF444415', color: '#F87171', border: '1px solid #EF444430', letterSpacing: '0.3px' }}>
+              <span key={th} style={{ fontSize: '9px', fontWeight: '700', padding: '3px 7px', borderRadius: '5px', backgroundColor: '#EF444415', color: '#F87171', border: '1px solid #EF444430', letterSpacing: '0.3px' }}>
                 {th.replace(/_/g, ' ')}
               </span>
             ))}
           </div>
-          <p style={{ fontSize: '13px', fontWeight: '600', color: '#E8EDF2', margin: '0 0 6px', lineHeight: '1.4' }}>{title}</p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ fontSize: '11px', color: '#4A5B6C' }}>{source}</span>
-            <span style={{ fontSize: '11px', color: '#2A3B4C' }}>·</span>
-            <span style={{ fontSize: '11px', color: '#4A5B6C' }}>{timeAgo(article.published_at)}</span>
+          <p style={{ fontSize: '14px', fontWeight: '600', color: '#E8EDF2', margin: '0 0 8px', lineHeight: '1.45' }}>{title}</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '12px', color: '#6A7B8C', fontWeight: '500' }}>{source}</span>
+            <span style={{ fontSize: '12px', color: '#2A3B4C' }}>·</span>
+            <span style={{ fontSize: '12px', color: '#4A5B6C' }}>{timeAgo(article.published_at)}</span>
             {url && url !== '#' && (
-              <ExternalLink style={{ width: '10px', height: '10px', color: '#3A4B5C' }} />
+              <ExternalLink style={{ width: '11px', height: '11px', color: '#3A4B5C' }} />
             )}
           </div>
         </div>
         {/* Info button to open detail overlay */}
         <button
           onClick={(e) => { e.stopPropagation(); onSelect(article); }}
-          style={{ background: 'none', border: '1px solid #1E2D45', borderRadius: '8px', color: '#4A5B6C', cursor: 'pointer', padding: '8px', flexShrink: 0, display: 'flex', alignItems: 'center', minWidth: '36px', minHeight: '36px', justifyContent: 'center' }}
+          style={{ background: 'none', border: '1px solid #1E2D45', borderRadius: '10px', color: '#4A5B6C', cursor: 'pointer', padding: '10px', flexShrink: 0, display: 'flex', alignItems: 'center', minWidth: '40px', minHeight: '40px', justifyContent: 'center' }}
           title="View details"
         >
           <ChevronRight style={{ width: '14px', height: '14px' }} />
@@ -702,7 +703,7 @@ export default function NewsFeedPage() {
   };
 
   return (
-    <div style={{ padding: '12px', maxWidth: '1000px', margin: '0 auto' }}>
+    <div style={{ padding: '12px 10px', maxWidth: '1000px', margin: '0 auto' }}>
 
       {/* ── IN PLAY TODAY bar ─────────────────────────────────────────── */}
       {!inPlayLoading && (
@@ -904,7 +905,12 @@ export default function NewsFeedPage() {
             </button>
           </div>
         ) : (
-          articles.map(art => <NewsCard key={art.id} article={art} onSelect={setSelectedArticle} />)
+          <>
+            {articles.map(art => <NewsCard key={art.id} article={art} onSelect={setSelectedArticle} />)}
+            <div style={{ textAlign: 'center', padding: '16px 0 8px', fontSize: '12px', color: '#4A5B6C' }}>
+              Showing {articles.length} articles
+            </div>
+          </>
         )}
       </div>
 
