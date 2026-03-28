@@ -258,6 +258,15 @@ export async function GET(request: Request) {
       return `${dd}-${mm}-${d.getFullYear()}`;
     };
 
+    // For board meetings: fetch intimations from 90 days BEFORE target month
+    // because meetings scheduled for March were intimated in Jan/Feb
+    const bmFetchFrom = new Date(fromDate);
+    bmFetchFrom.setDate(bmFetchFrom.getDate() - 90);
+
+    // For announcements: fetch for the target month (results declared in this month)
+    const annFetchFrom = new Date(fromDate);
+    annFetchFrom.setDate(annFetchFrom.getDate() - 7); // 1 week before for overlap
+
     // ============================================
     // STEP 1: Fetch all data sources in parallel
     // ============================================
@@ -277,11 +286,13 @@ export async function GET(request: Request) {
       smallcap250Data,
     ] = await Promise.all([
       fetchBoardMeetings().catch(() => null),
-      fetchBoardMeetingsForDateRange(formatNSEDate(fromDate), formatNSEDate(toDate)).catch(() => null),
+      // Fetch board meetings intimated in past 90 days (captures meetings scheduled for target month)
+      fetchBoardMeetingsForDateRange(formatNSEDate(bmFetchFrom), formatNSEDate(toDate)).catch(() => null),
       fetchFinancialResults(formatNSEDate(fromDate), formatNSEDate(toDate)).catch(() => null),
       fetchLatestFinancialResults().catch(() => null),
       fetchBoardMeetingAnnouncements().catch(() => null),
-      fetchCorporateAnnouncementsPaginated(formatNSEDate(fromDate), formatNSEDate(toDate), 10).catch(() => []),
+      // Fetch announcements for target month
+      fetchCorporateAnnouncementsPaginated(formatNSEDate(annFetchFrom), formatNSEDate(toDate), 10).catch(() => []),
       fetchBseBoardMeetings().catch(() => null),
       fetchEventCalendar().catch(() => null),
       fetchNifty50().catch(() => null),
@@ -342,9 +353,19 @@ export async function GET(request: Request) {
 
     if (debug) {
       // Return raw samples for debugging
+      // Count how many board meetings have bm_date in target month
+      const bmInMonth = bmCombined.filter(bm => {
+        const d = parseDate(bm.bm_date || bm.date || '');
+        return d && d >= fromDate && d <= toDate;
+      });
+      const bmEarningsInMonth = bmInMonth.filter(bm => isBoardMeetingEarningsRelated(bm));
+
       return NextResponse.json({
         debug: true,
         dateRange: { from: formatNSEDate(fromDate), to: formatNSEDate(toDate) },
+        bmFetchRange: { from: formatNSEDate(bmFetchFrom), to: formatNSEDate(toDate) },
+        bmInTargetMonth: bmInMonth.length,
+        bmEarningsInTargetMonth: bmEarningsInMonth.length,
         counts: {
           bmArray1: bmArray1.length,
           bmArray2: bmArray2.length,
@@ -358,12 +379,18 @@ export async function GET(request: Request) {
           eventCalArray: eventCalArray.length,
         },
         samples: {
-          boardMeetings: bmCombined.slice(0, 5),
+          boardMeetingsAll: bmCombined.slice(0, 3),
+          boardMeetingsInMonth: bmInMonth.slice(0, 10),
+          boardMeetingsEarningsInMonth: bmEarningsInMonth.slice(0, 10),
           financialResults: frArray.slice(0, 5),
           latestFinancialResults: latestFrArray.slice(0, 5),
-          announcements: annCombined.slice(0, 5),
+          announcementsEarnings: annCombined.filter(a => isAnnouncementEarningsRelated(a)).slice(0, 10),
           bseMeetings: bseArray.slice(0, 5),
-          eventCalendar: eventCalArray.slice(0, 5),
+          eventCalendarEarnings: eventCalArray.filter(e => {
+            const d = (e.bm_desc || e.desc || '').toLowerCase();
+            const p = (e.purpose || '').toLowerCase();
+            return d.includes('result') || d.includes('financial') || d.includes('dividend') || p.includes('result') || p.includes('financial');
+          }).slice(0, 10),
         },
         rawStructure: {
           boardMeetings: boardMeetings ? { type: typeof boardMeetings, isArray: Array.isArray(boardMeetings), topKeys: typeof boardMeetings === 'object' && !Array.isArray(boardMeetings) ? Object.keys(boardMeetings).slice(0, 10) : null } : null,
@@ -436,22 +463,25 @@ export async function GET(request: Request) {
     const eventsMap = new Map<string, EarningsEvent>();
 
     // --- Source 1: NSE Board Meetings ---
+    // Key insight: bm_date is the MEETING date, but we fetched by INTIMATION date (90 days back).
+    // We must filter by bm_date being within the target month.
     for (const meeting of bmCombined) {
       const ticker = meeting.bm_symbol || meeting.symbol || '';
       if (!ticker) continue;
 
       // Check if this board meeting is earnings-related
-      // Be INCLUSIVE: accept if purpose mentions results/financial/dividend or if purpose is empty/short
+      // Be INCLUSIVE: accept if purpose/desc mentions results/financial/dividend or if purpose is empty/short
       const isRelated = isBoardMeetingEarningsRelated(meeting);
-      const purpose = meeting.bm_purpose || meeting.purpose || meeting.bm_desc || '';
-      // Only skip if we have a clear non-financial purpose and it's NOT earnings related
-      if (!isRelated && purpose.length > 10) continue;
+      const purpose = meeting.bm_purpose || meeting.purpose || '';
+      const desc = meeting.bm_desc || meeting.desc || '';
+      // Only skip if we have a clear non-financial purpose AND desc doesn't mention financial
+      if (!isRelated && purpose.length > 10 && !isBoardMeetingEarningsRelated({ bm_desc: desc })) continue;
 
       const meetingDateStr = meeting.bm_date || meeting.bm_meetingDate || meeting.date || '';
       const meetingDate = parseDate(meetingDateStr);
       if (!meetingDate) continue;
 
-      // Filter by date range
+      // Filter by MEETING DATE being within the target month
       if (meetingDate < fromDate || meetingDate > toDate) continue;
 
       const quarter = getFiscalQuarter(meetingDate);
@@ -631,9 +661,15 @@ export async function GET(request: Request) {
     }
 
     // --- Source 5: NSE Event Calendar ---
+    // Event calendar has purpose + bm_desc fields. Check BOTH for earnings keywords.
     for (const evt of eventCalArray) {
       const category = (evt.bm_category || evt.category || evt.purpose || '').toLowerCase();
-      if (!category.includes('result') && !category.includes('earning') && !category.includes('financial') && !category.includes('board meeting')) continue;
+      const evtDesc = (evt.bm_desc || evt.desc || '').toLowerCase();
+      const isEvtEarnings = category.includes('result') || category.includes('earning') || category.includes('financial') ||
+        evtDesc.includes('result') || evtDesc.includes('financial') || evtDesc.includes('dividend') ||
+        evtDesc.includes('quarter') || evtDesc.includes('annual') || evtDesc.includes('audit') ||
+        evtDesc.includes('inter alia') || evtDesc.includes('period ended');
+      if (!isEvtEarnings) continue;
 
       const ticker = evt.symbol || evt.bm_symbol || '';
       if (!ticker) continue;
