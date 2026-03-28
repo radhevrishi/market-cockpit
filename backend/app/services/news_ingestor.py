@@ -112,7 +112,7 @@ RSS_SOURCES = [
 
     # ── Tier 1: US / Global — Macro ────────────────────────────────────────────
     {"url": "https://feeds.finance.yahoo.com/rss/2.0/headline?s=AAPL,MSFT,NVDA,GOOGL,TSLA,AMZN,META&region=US&lang=en-US", "name": "Yahoo Finance US", "region": "US"},
-    {"url": "https://feeds.finance.yahoo.com/rss/2.0/headline?s=JPM,BAC,JNJ,PG,XOM,AMD,INTC,NFLX,ORCL&region=US&lang=en-US", "name": "Yahoo Finance US2", "region": "US"},
+    {"url": "https://feeds.finance.yahoo.com/rss/2.0/headline?s=JPM,BAC,JNJ,PG,XOM,AMD,INTC,NFLX,ORCL&region=US&lang=en-US", "name": "Yahoo Finance US Financials", "region": "US"},
     {"url": "https://www.cnbc.com/id/100003114/device/rss/rss.html",        "name": "CNBC",          "region": "US"},
     {"url": "https://www.cnbc.com/id/20910258/device/rss/rss.html",         "name": "CNBC Economy",  "region": "US"},
     {"url": "https://feeds.marketwatch.com/marketwatch/topstories/",        "name": "MarketWatch",   "region": "US"},
@@ -550,15 +550,20 @@ def _detect_bottleneck(title: str, description: str, region: str = "") -> list[s
     # Determine if article has India context (for INDIA_* theme eligibility)
     is_india_context = region == "IN"
     if not is_india_context:
-        india_signals = [
+        # Require STRONG India signals — company names alone are too ambiguous
+        # (e.g. "Tata" could appear in "Tesla Terafab" context about chip fabs)
+        strong_india_signals = [
             "india", "indian", "₹", "rs.", "crore", "lakh", "nifty", "sensex",
             "bse", "nse", "sebi", "rbi", "modi", "delhi", "mumbai", "chennai",
             "bangalore", "hyderabad", "kolkata", "pune", "gujarat", "maharashtra",
             "pli scheme", "make in india", "atmanirbhar", "bharatnet", "sagarmala",
-            "gati shakti", "discom", "nhai", "jnpt", "adani", "tata", "reliance",
-            "vedanta", "bharti", "infosys", "wipro",
+            "gati shakti", "discom", "nhai", "jnpt",
         ]
-        is_india_context = any(sig in text for sig in india_signals)
+        # Weak signals: company names — require at least 2 to confirm India context
+        weak_india_signals = ["adani", "tata", "reliance", "vedanta", "bharti", "infosys", "wipro"]
+        strong_match = any(sig in text for sig in strong_india_signals)
+        weak_count = sum(1 for sig in weak_india_signals if sig in text)
+        is_india_context = strong_match or weak_count >= 2
 
     matched_themes: list[str] = []
     for category, phrases in BOTTLENECK_KEYWORDS.items():
@@ -869,7 +874,7 @@ def _parse_rss_xml(xml_text: str, source_name: str, region: str, source_url: str
 
     # Determine region more intelligently based on source
     indian_sources = {"ET Markets", "ET Economy", "MoneyControl", "MoneyControl Economy", "LiveMint", "Business Standard", "IBEF", "Yahoo Finance IN", "PIB India", "ElectronicsB2B"}
-    us_sources = {"CNBC", "CNBC Economy", "CNBC World", "MarketWatch", "MarketWatch Pulse", "Bloomberg", "Reuters Finance", "Yahoo Finance US", "Yahoo Finance US2", "The Information"}
+    us_sources = {"CNBC", "CNBC Economy", "CNBC World", "MarketWatch", "MarketWatch Pulse", "Bloomberg", "Reuters Finance", "Yahoo Finance US", "Yahoo Finance US Financials", "The Information"}
     # Global sources: auto-detect region from content
     global_sources = {"SemiAnalysis", "DigiTimes", "EE Times", "Semiconductor Engineering", "IEEE Spectrum", "Evertiq", "SEMI", "The Register", "ServeTheHome", "CSIS", "Brookings"}
 
@@ -1120,21 +1125,32 @@ class NewsIngestor:
                          "PIB India", "ElectronicsB2B"}
         us_sources = {"CNBC", "CNBC Economy", "CNBC World", "CNBC Tech", "MarketWatch",
                      "MarketWatch Pulse", "Bloomberg", "Reuters Finance",
-                     "Yahoo Finance US", "Yahoo Finance US2", "The Information",
+                     "Yahoo Finance US", "Yahoo Finance US Financials", "The Information",
                      "Yahoo Tech Semis"}
 
         def _correct_region(art) -> str:
-            """Re-derive the correct region from source_name + content signals."""
+            """Re-derive the correct region from source_name + content signals.
+
+            Uses strong/weak India signal detection (same logic as _detect_bottleneck)
+            to prevent false positives like 'tata' in 'Terafab' context.
+            """
             sn = art.source_name or ""
             if sn in indian_sources:
                 return "IN"
             if sn in us_sources:
-                # Check if article actually discusses India
+                # Check if article actually discusses India using strong/weak signals
                 text = ((art.headline or "") + " " + (art.summary or "")).lower()
-                india_kw = ["india", "indian", "nse", "bse", "sensex", "nifty",
-                           "rupee", "rbi", "modi", "sebi", "adani", "reliance",
-                           "tata", "infosys", "wipro"]
-                if any(kw in text for kw in india_kw):
+                strong_india_signals = [
+                    "india", "indian", "nse", "bse", "sensex", "nifty",
+                    "rupee", "rbi", "modi", "sebi", "delhi", "mumbai",
+                    "chennai", "bangalore", "hyderabad", "kolkata", "pune",
+                    "crore", "lakh", "pli scheme", "make in india",
+                ]
+                weak_india_signals = ["adani", "tata", "reliance", "infosys", "wipro",
+                                      "vedanta", "bharti"]
+                strong_match = any(sig in text for sig in strong_india_signals)
+                weak_count = sum(1 for sig in weak_india_signals if sig in text)
+                if strong_match or weak_count >= 2:
                     return "IN"
                 return "US"
             return art.region or "GLOBAL"

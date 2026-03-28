@@ -339,6 +339,18 @@ async def get_bottleneck_dashboard(
                 elif isinstance(t, dict) and t.get("ticker"):
                     symbols.append(t["ticker"])
 
+            # Defense: strip INDIA_* themes from articles that aren't actually India-context
+            # This prevents stale/incorrect INDIA_* tags from polluting the dashboard
+            raw_themes = art.themes if isinstance(art.themes, list) else []
+            if art.region != "IN":
+                clean_themes = [t for t in raw_themes if not t.startswith("INDIA_")]
+            else:
+                clean_themes = raw_themes
+
+            # Skip articles that have no valid themes after cleaning (stale data)
+            if not clean_themes:
+                continue
+
             article_dicts.append({
                 "id": str(art.id),
                 "headline": art.headline,
@@ -347,7 +359,7 @@ async def get_bottleneck_dashboard(
                 "source_url": art.source_url,
                 "published_at": art.published_at,
                 "importance_score": art.importance_score,
-                "themes": art.themes if isinstance(art.themes, list) else [],
+                "themes": clean_themes,
                 "ticker_symbols": symbols,
                 "sentiment": art.sentiment,
             })

@@ -155,7 +155,7 @@ async def _seed_initial_data():
                              "PIB India", "ElectronicsB2B"}
             us_sources = {"CNBC", "CNBC Economy", "CNBC World", "CNBC Tech", "MarketWatch",
                          "MarketWatch Pulse", "Bloomberg", "Reuters Finance",
-                         "Yahoo Finance US", "Yahoo Finance US2", "The Information",
+                         "Yahoo Finance US", "Yahoo Finance US Financials", "The Information",
                          "Yahoo Tech Semis"}
 
             result = await db.execute(
@@ -184,6 +184,13 @@ async def _seed_initial_data():
 
                 new_themes = _detect_bottleneck(art.headline, art.summary or "", region=art.region or "")
                 old_themes = art.themes if isinstance(art.themes, list) else []
+
+                # Extra defense: force-strip INDIA_* themes from non-India articles
+                # even if _detect_bottleneck returned them (e.g. due to generic keywords
+                # like "tata" appearing in a non-India context)
+                if art.region != "IN":
+                    new_themes = [t for t in new_themes if not t.startswith("INDIA_")]
+
                 if new_themes != old_themes:
                     if new_themes:
                         art.themes = new_themes

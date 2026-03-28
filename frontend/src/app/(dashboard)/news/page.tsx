@@ -80,7 +80,7 @@ const SOURCES = [
   'ET Markets', 'ET Industry', 'ET Economy', 'MoneyControl', 'LiveMint', 'Business Standard', 'BS Economy',
   'Yahoo Finance IN', 'PIB India', 'ElectronicsB2B',
   // US / Global Macro
-  'Yahoo Finance US', 'CNBC', 'CNBC Tech', 'MarketWatch', 'Bloomberg', 'Reuters Finance',
+  'Yahoo Finance US', 'Yahoo Finance US Financials', 'CNBC', 'CNBC Tech', 'MarketWatch', 'Bloomberg', 'Reuters Finance',
   // Semiconductor & Supply Chain
   'SemiAnalysis', 'DigiTimes', 'EE Times', 'Semiconductor Engineering', 'IEEE Spectrum', 'Evertiq', 'SEMI',
   'Yahoo Tech Semis', 'Yahoo Data Center',
