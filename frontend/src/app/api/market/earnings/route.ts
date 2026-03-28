@@ -217,6 +217,16 @@ function assessQuality(result: any): 'Good' | 'Weak' | 'Upcoming' {
   return 'Weak';
 }
 
+// Assess quality based on post-earnings price reaction
+// This is a fallback when financial metrics aren't available
+// Logic: if stock moved up significantly after earnings, likely "Good"; down = "Weak"
+function assessQualityFromPriceReaction(priceChangePercent: number | null): 'Good' | 'Weak' | 'Upcoming' {
+  if (priceChangePercent === null || priceChangePercent === undefined) return 'Upcoming';
+  // Positive reaction usually indicates good results
+  if (priceChangePercent >= -2) return 'Good'; // Flat to positive = Good
+  return 'Weak'; // Significant decline = Weak
+}
+
 // Market cap category
 function getCapCategory(marketCapCr: number): string {
   if (marketCapCr >= 50000) return 'Large Cap';
@@ -407,7 +417,7 @@ export async function GET(request: Request) {
       'SMALLCAP250': new Set<string>(),
     };
 
-    const priceLookup: Record<string, { price: number; change: number; changePercent: number; volume: number; marketCap: number; industry: string }> = {};
+    const priceLookup: Record<string, { price: number; change: number; changePercent: number; volume: number; marketCap: number; industry: string; previousClose?: number }> = {};
 
     const processStockData = (data: any, indexKey: string) => {
       if (!data?.data) return;
@@ -563,6 +573,14 @@ export async function GET(request: Request) {
       const attText = (ann.attchmntText || '').toLowerCase();
       const isOutcome = descLower.includes('outcome') || attText.includes('submitted to the exchange') || attText.includes('period ended');
 
+      // For declared results, use price reaction to estimate quality
+      const isPast = annDate < now;
+      let annQuality: 'Good' | 'Weak' | 'Upcoming' = 'Upcoming';
+      if (isOutcome && isPast && stockInfo) {
+        // Use daily price change as proxy for post-earnings reaction
+        annQuality = assessQualityFromPriceReaction(stockInfo.changePercent);
+      }
+
       const event: EarningsEvent = {
         ticker,
         company: ann.sm_name || ann.companyName || ticker,
@@ -570,7 +588,7 @@ export async function GET(request: Request) {
         announcedDate: annDate.toISOString().split('T')[0],
         eventDate: annDate.toISOString().split('T')[0],
         quarter,
-        quality: isOutcome ? 'Upcoming' : 'Upcoming',
+        quality: annQuality,
         revenue: null,
         operatingProfit: null,
         opm: null,
@@ -679,7 +697,30 @@ export async function GET(request: Request) {
     }
 
     // ============================================
-    // STEP 4: Convert to results array and filter
+    // STEP 4: Enrich past events — mark RESULTS_DECLARED, try quality assessment
+    // ============================================
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    for (const [key, event] of eventsMap) {
+      const eventDate = new Date(event.eventDate);
+
+      // Past board meetings → results should have been declared
+      if (eventDate < today && event.eventType === 'BOARD_MEETING') {
+        event.eventType = 'RESULTS_DECLARED';
+      }
+
+      // If quality is still 'Upcoming' but event is past and we have financial data from any source
+      if (event.quality === 'Upcoming' && eventDate < today) {
+        if (event.revenue || event.netProfit || event.eps) {
+          event.quality = assessQuality(event);
+        }
+      }
+
+      eventsMap.set(key, event);
+    }
+
+    // ============================================
+    // STEP 5: Convert to results array and filter
     // ============================================
     let results = Array.from(eventsMap.values());
 

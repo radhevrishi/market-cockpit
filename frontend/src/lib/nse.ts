@@ -202,23 +202,51 @@ export async function fetchBoardMeetings() {
   return nseApiFetch('/api/corporate-board-meetings?index=equities', 600000); // 10min cache
 }
 
+// Helper: convert DD-MM-YYYY to DD-Mon-YYYY (NSE's preferred format)
+function toNSEMonthDate(ddmmyyyy: string): string {
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const parts = ddmmyyyy.split('-');
+  if (parts.length !== 3) return ddmmyyyy;
+  const monthIdx = parseInt(parts[1], 10) - 1;
+  if (monthIdx < 0 || monthIdx > 11) return ddmmyyyy;
+  return `${parts[0]}-${months[monthIdx]}-${parts[2]}`;
+}
+
 // Fetch quarterly financial results
 // Try multiple date format patterns and periods
 export async function fetchFinancialResults(fromDate: string, toDate: string) {
-  // Try the standard endpoint first
-  const result = await nseApiFetch(`/api/corporates-financial-results?index=equities&period=Quarterly&from_date=${fromDate}&to_date=${toDate}`, 600000);
+  // NSE financial results API uses DD-Mon-YYYY format (e.g., "01-Mar-2026")
+  const fromMon = toNSEMonthDate(fromDate);
+  const toMon = toNSEMonthDate(toDate);
+
+  // Try DD-Mon-YYYY format with Quarterly period
+  const result = await nseApiFetch(`/api/corporates-financial-results?index=equities&period=Quarterly&from_date=${fromMon}&to_date=${toMon}`, 600000);
   if (result && (Array.isArray(result) ? result.length > 0 : result?.data?.length > 0)) {
     return result;
   }
-  // Try without period filter
-  const result2 = await nseApiFetch(`/api/corporates-financial-results?index=equities&from_date=${fromDate}&to_date=${toDate}`, 600000);
-  return result2;
+  // Try DD-Mon-YYYY without period filter
+  const result2 = await nseApiFetch(`/api/corporates-financial-results?index=equities&from_date=${fromMon}&to_date=${toMon}`, 600000);
+  if (result2 && (Array.isArray(result2) ? result2.length > 0 : result2?.data?.length > 0)) {
+    return result2;
+  }
+  // Fallback: try DD-MM-YYYY format
+  const result3 = await nseApiFetch(`/api/corporates-financial-results?index=equities&period=Quarterly&from_date=${fromDate}&to_date=${toDate}`, 600000);
+  if (result3 && (Array.isArray(result3) ? result3.length > 0 : result3?.data?.length > 0)) {
+    return result3;
+  }
+  const result4 = await nseApiFetch(`/api/corporates-financial-results?index=equities&from_date=${fromDate}&to_date=${toDate}`, 600000);
+  return result4;
 }
 
 // Fetch financial results for broader coverage - try different endpoints
 export async function fetchLatestFinancialResults() {
   // This endpoint might return the most recent results without date filter
   return nseApiFetch('/api/corporates-financial-results?index=equities', 600000);
+}
+
+// Fetch financial results for a specific company (for enriching announcements)
+export async function fetchCompanyFinancialResults(symbol: string) {
+  return nseApiFetch(`/api/corporates-financial-results?index=equities&symbol=${encodeURIComponent(symbol)}`, 300000);
 }
 
 // Fetch individual stock detailed quote
