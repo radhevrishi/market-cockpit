@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   BarChart3, Newspaper, Calendar, Briefcase, Compass, Bell, Settings, LogOut, ChevronDown, BookMarked, Search,
+  TrendingUp, Grid3X3, RefreshCw, Filter, Globe, Rocket,
 } from 'lucide-react';
 import api from '@/lib/api';
 import TickerDrawer from '@/components/TickerDrawer';
@@ -15,13 +16,14 @@ import MarketHours from '@/components/MarketHours';
 interface NavItem { href: string; label: string; icon: ReactNode; }
 
 const NAV: NavItem[] = [
-  // { href: '/',            label: 'Mission Control', icon: <BarChart3 className="w-5 h-5" /> },
   { href: '/news',        label: 'News Feed',       icon: <Newspaper className="w-5 h-5" /> },
-  // { href: '/calendars',   label: 'Calendars',       icon: <Calendar className="w-5 h-5" /> },
-  // { href: '/portfolios',  label: 'Portfolios',      icon: <Briefcase className="w-5 h-5" /> },
-  // { href: '/watchlists',  label: 'Watchlists',      icon: <BookMarked className="w-5 h-5" /> },
-  // { href: '/themes',      label: 'Themes',          icon: <Compass className="w-5 h-5" /> },
-  // { href: '/alerts',      label: 'Alerts',          icon: <Bell className="w-5 h-5" /> },
+  { href: '/heatmap',     label: 'Heatmap',         icon: <Grid3X3 className="w-5 h-5" /> },
+  { href: '/movers',      label: 'Movers',          icon: <TrendingUp className="w-5 h-5" /> },
+  { href: '/rrg',         label: 'RRG',             icon: <RefreshCw className="w-5 h-5" /> },
+  { href: '/screener',    label: 'Screener',        icon: <Filter className="w-5 h-5" /> },
+  { href: '/ipos',        label: 'IPOs',            icon: <Rocket className="w-5 h-5" /> },
+  { href: '/macro-maps',  label: 'Macro Maps',      icon: <Globe className="w-5 h-5" /> },
+  { href: '/calendars',   label: 'Calendar',        icon: <Calendar className="w-5 h-5" /> },
 ];
 
 // Static fallback shown while live data loads
