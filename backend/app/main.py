@@ -126,6 +126,21 @@ async def _seed_initial_data():
     except Exception as e:
         logger.warning(f"Future timestamp fix failed (non-fatal): {e}")
 
+    # One-time: delete Techmeme articles with techmeme.com source_url
+    # so they get re-ingested with real source article URLs
+    try:
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import text
+            result = await db.execute(
+                text("DELETE FROM news_articles WHERE source_name = 'Techmeme' AND source_url LIKE '%techmeme.com%'")
+            )
+            deleted = result.rowcount
+            if deleted:
+                await db.commit()
+                logger.info(f"Deleted {deleted} Techmeme articles for re-ingestion with real URLs")
+    except Exception as e:
+        logger.warning(f"Techmeme cleanup failed (non-fatal): {e}")
+
     try:
         async with AsyncSessionLocal() as db:
             from app.services.news_ingestor import NewsIngestor
