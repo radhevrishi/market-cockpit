@@ -2,28 +2,30 @@
 
 import { useEffect, useState } from 'react';
 
-interface CalendarItem {
-  company: string;
+interface EarningsResult {
   ticker: string;
-  sector?: string;
-  type?: string;
-  description?: string;
-  date?: string;
+  company: string;
+  resultDate: string;
+  quarter: string;
+  quality: 'Good' | 'Weak' | 'Upcoming';
+  revenue: number | null;
+  operatingProfit: number | null;
+  opm: string | null;
+  netProfit: number | null;
+  eps: number | null;
+  sector: string;
+  marketCap: string;
+  currentPrice: number | null;
+  priceAtResult: number | null;
+  priceChange: number | null;
 }
 
-interface CalendarEvent {
-  [date: string]: CalendarItem[];
-}
-
-interface CalendarResponse {
-  india?: CalendarItem[];
-  us?: CalendarItem[];
-  companies?: CalendarItem[];
-  events?: any[];
-  calendar?: CalendarEvent;
-  weekStart?: string;
-  note?: string;
-  source?: string;
+interface EarningsResponse {
+  results: EarningsResult[];
+  summary: { total: number; good: number; weak: number; upcoming: number };
+  quarter: string;
+  dateRange: { from: string; to: string };
+  source: string;
   updatedAt: string;
 }
 
@@ -37,473 +39,267 @@ const THEME = {
   accent: '#0F7ABF',
   green: '#10B981',
   red: '#EF4444',
+  orange: '#F59E0B',
+  purple: '#8B5CF6',
+};
+
+const qualityColors: Record<string, string> = {
+  Good: THEME.green,
+  Weak: THEME.red,
+  Upcoming: THEME.orange,
 };
 
 export default function CalendarPage() {
-  const [market, setMarket] = useState<'india' | 'us'>('india');
-  const [weekOffset, setWeekOffset] = useState(0);
-  const [data, setData] = useState<CalendarResponse | null>(null);
+  const [data, setData] = useState<EarningsResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [lastUpdated, setLastUpdated] = useState<string>('');
-  const [error, setError] = useState<string>('');
+  const [error, setError] = useState('');
+  const [monthOffset, setMonthOffset] = useState(0);
+  const [qualityFilter, setQualityFilter] = useState<string>('All');
 
-  const fetchCalendarData = async () => {
+  const now = new Date();
+  const viewMonth = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
+  const monthStr = `${viewMonth.getFullYear()}-${(viewMonth.getMonth() + 1).toString().padStart(2, '0')}`;
+  const monthLabel = viewMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+  const fetchData = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/market/calendar?market=india');
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch calendar data');
-      }
-
-      const calendarData: CalendarResponse = await response.json();
-      setData(calendarData);
-      setLastUpdated(calendarData.updatedAt);
+      const res = await fetch(`/api/market/earnings?market=india&month=${monthStr}&includeMovement=true`);
+      if (!res.ok) throw new Error('Failed to fetch earnings data');
+      const json: EarningsResponse = await res.json();
+      setData(json);
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
-      console.error('Error fetching calendar:', err);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    fetchCalendarData();
-    const interval = setInterval(fetchCalendarData, 5 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, []);
+  useEffect(() => { fetchData(); }, [monthOffset]);
 
-  const today = new Date();
-  const currentWeekStart = new Date(today);
-  currentWeekStart.setDate(today.getDate() - today.getDay() + (today.getDay() === 0 ? -6 : 1));
-  const weekStart = new Date(currentWeekStart);
-  weekStart.setDate(currentWeekStart.getDate() + weekOffset * 7);
+  // Build calendar grid
+  const firstDay = new Date(viewMonth.getFullYear(), viewMonth.getMonth(), 1);
+  const lastDay = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 0);
+  const startDayOfWeek = firstDay.getDay(); // 0=Sun
+  const daysInMonth = lastDay.getDate();
 
-  const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
-  const weekDays = days.map((day, idx) => {
-    const date = new Date(weekStart);
-    date.setDate(weekStart.getDate() + idx);
-    return { day, date };
-  });
-
-  const isCurrentWeek = weekOffset === 0;
-  const todayDayOfWeek = today.getDay();
-  const currentDayName = days[todayDayOfWeek === 0 ? 4 : todayDayOfWeek - 1];
-
-  const getCompaniesForDay = (date: Date): CalendarItem[] => {
-    if (!data || !data.calendar) return [];
-    const dateStr = date.toISOString().split('T')[0];
-    return data.calendar[dateStr] || [];
-  };
-
-  const getSectorColor = (sector: string | undefined) => {
-    if (!sector) return THEME.textSecondary;
-    const sectorLower = sector.toLowerCase();
-    if (sectorLower.includes('tech') || sectorLower.includes('it')) return THEME.accent;
-    if (sectorLower.includes('bank') || sectorLower.includes('finance')) return THEME.green;
-    if (sectorLower.includes('energy') || sectorLower.includes('oil')) return THEME.red;
-    return THEME.textSecondary;
-  };
-
-  const formatDate = (dateString: string) => {
-    try {
-      return new Date(dateString).toLocaleDateString('en-IN', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-    } catch {
-      return dateString;
+  // Group results by date
+  const resultsByDate: Record<string, EarningsResult[]> = {};
+  if (data) {
+    for (const r of data.results) {
+      if (qualityFilter !== 'All' && r.quality !== qualityFilter) continue;
+      const d = r.resultDate?.split('T')[0] || '';
+      if (!resultsByDate[d]) resultsByDate[d] = [];
+      resultsByDate[d].push(r);
     }
-  };
+  }
 
-  const quarterCompanies = market === 'india'
-    ? (data?.india || data?.companies || [])
-    : (data?.us || []);
+  const filteredResults = data?.results.filter(r => qualityFilter === 'All' || r.quality === qualityFilter) || [];
+
+  // Calendar cells
+  const cells: { date: number | null; dateStr: string }[] = [];
+  for (let i = 0; i < startDayOfWeek; i++) cells.push({ date: null, dateStr: '' });
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${viewMonth.getFullYear()}-${(viewMonth.getMonth() + 1).toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}`;
+    cells.push({ date: d, dateStr });
+  }
+
+  const todayStr = now.toISOString().split('T')[0];
 
   return (
-    <div style={{
-      backgroundColor: THEME.background,
-      minHeight: '100vh',
-      padding: '24px',
-      color: THEME.textPrimary,
-      fontFamily: 'system-ui, -apple-system, sans-serif',
-    }}>
+    <div style={{ backgroundColor: THEME.background, minHeight: '100vh', padding: '24px', color: THEME.textPrimary, fontFamily: 'system-ui, -apple-system, sans-serif' }}>
       {/* Header */}
       <div style={{ marginBottom: '24px' }}>
-        <h1 style={{
-          fontSize: '32px',
-          fontWeight: 'bold',
-          margin: '0 0 8px 0',
-        }}>
+        <h1 style={{ fontSize: '32px', fontWeight: 'bold', margin: '0 0 8px 0' }}>
           Earnings Calendar
         </h1>
-        <p style={{
-          color: THEME.textSecondary,
-          margin: 0,
-          fontSize: '14px',
-        }}>
-          Track major company earnings announcements and results
+        <p style={{ color: THEME.textSecondary, margin: 0, fontSize: '14px' }}>
+          Indian quarterly results with live NSE data
+          {data ? ` • ${data.dateRange.from} — ${data.dateRange.to} (${data.summary.total} results)` : ''}
         </p>
       </div>
 
-      {/* Last Updated */}
-      {lastUpdated && !loading && (
+      {/* Summary Bar */}
+      {data && !loading && (
         <div style={{
-          marginBottom: '24px',
-          fontSize: '12px',
-          color: THEME.textSecondary,
+          display: 'flex', gap: '16px', marginBottom: '24px', flexWrap: 'wrap',
         }}>
-          Last updated: {formatDate(lastUpdated)}
+          <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '16px 24px', minWidth: '100px' }}>
+            <div style={{ fontSize: '12px', color: THEME.textSecondary, marginBottom: '4px' }}>Results</div>
+            <div style={{ fontSize: '24px', fontWeight: 'bold' }}>{data.summary.total}</div>
+          </div>
+          <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '16px 24px', minWidth: '100px' }}>
+            <div style={{ fontSize: '12px', color: THEME.green, marginBottom: '4px' }}>Good</div>
+            <div style={{ fontSize: '24px', fontWeight: 'bold', color: THEME.green }}>{data.summary.good}</div>
+          </div>
+          <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '16px 24px', minWidth: '100px' }}>
+            <div style={{ fontSize: '12px', color: THEME.red, marginBottom: '4px' }}>Weak</div>
+            <div style={{ fontSize: '24px', fontWeight: 'bold', color: THEME.red }}>{data.summary.weak}</div>
+          </div>
+          <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '16px 24px', minWidth: '100px' }}>
+            <div style={{ fontSize: '12px', color: THEME.orange, marginBottom: '4px' }}>Upcoming</div>
+            <div style={{ fontSize: '24px', fontWeight: 'bold', color: THEME.orange }}>{data.summary.upcoming}</div>
+          </div>
+          <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '16px 24px', minWidth: '100px' }}>
+            <div style={{ fontSize: '12px', color: THEME.purple, marginBottom: '4px' }}>Quarter</div>
+            <div style={{ fontSize: '18px', fontWeight: 'bold', color: THEME.purple }}>{data.quarter}</div>
+          </div>
         </div>
       )}
 
-      {/* Loading State */}
+      {/* Controls: Month Nav + Filters */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <button onClick={() => setMonthOffset(monthOffset - 1)} style={{ padding: '8px 16px', backgroundColor: THEME.accent, color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '14px' }}>←</button>
+          <span style={{ fontSize: '20px', fontWeight: 'bold', minWidth: '180px', textAlign: 'center' }}>{monthLabel}</span>
+          <button onClick={() => setMonthOffset(monthOffset + 1)} style={{ padding: '8px 16px', backgroundColor: THEME.accent, color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '14px' }}>→</button>
+        </div>
+
+        {/* Quality Filter */}
+        <div style={{ display: 'flex', gap: '8px', backgroundColor: THEME.card, padding: '6px', borderRadius: '8px', border: `1px solid ${THEME.border}` }}>
+          {['All', 'Good', 'Weak', 'Upcoming'].map(q => (
+            <button key={q} onClick={() => setQualityFilter(q)} style={{
+              padding: '6px 14px', borderRadius: '5px', border: 'none', cursor: 'pointer', fontSize: '13px', fontWeight: '500',
+              backgroundColor: qualityFilter === q ? (qualityColors[q] || THEME.accent) : 'transparent',
+              color: qualityFilter === q ? '#fff' : THEME.textSecondary,
+              transition: 'all 0.2s',
+            }}>{q}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Loading */}
       {loading && (
-        <div style={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          height: '400px',
-        }}>
-          <div style={{
-            display: 'inline-block',
-            width: '40px',
-            height: '40px',
-            border: `3px solid ${THEME.border}`,
-            borderTop: `3px solid ${THEME.accent}`,
-            borderRadius: '50%',
-            animation: 'spin 1s linear infinite',
-          }} />
-          <style>{`
-            @keyframes spin {
-              to { transform: rotate(360deg); }
-            }
-          `}</style>
+        <div style={{ display: 'flex', justifyContent: 'center', padding: '80px 0' }}>
+          <div style={{ width: '40px', height: '40px', border: `3px solid ${THEME.border}`, borderTop: `3px solid ${THEME.accent}`, borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
       )}
 
-      {/* Error State */}
       {error && !loading && (
-        <div style={{
-          backgroundColor: THEME.card,
-          border: `1px solid ${THEME.red}`,
-          borderRadius: '8px',
-          padding: '16px',
-          color: THEME.red,
-          marginBottom: '24px',
-        }}>
-          Error loading calendar: {error}
+        <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.red}`, borderRadius: '8px', padding: '16px', color: THEME.red, marginBottom: '24px' }}>
+          Error: {error}
         </div>
       )}
 
       {!loading && !error && (
         <>
-          {/* Market Toggle */}
-          <div style={{
-            marginBottom: '24px',
-            display: 'flex',
-            gap: '8px',
-            backgroundColor: THEME.card,
-            padding: '8px',
-            borderRadius: '8px',
-            border: `1px solid ${THEME.border}`,
-            width: 'fit-content',
-          }}>
-            {(['india', 'us'] as const).map((m) => (
-              <button
-                key={m}
-                onClick={() => setMarket(m)}
-                style={{
-                  padding: '8px 16px',
-                  borderRadius: '6px',
-                  border: 'none',
-                  backgroundColor: market === m ? THEME.accent : 'transparent',
-                  color: market === m ? '#fff' : THEME.textSecondary,
-                  cursor: 'pointer',
-                  fontSize: '13px',
-                  fontWeight: '500',
-                  transition: 'all 0.2s ease',
-                }}
-              >
-                {m.toUpperCase()}
-              </button>
-            ))}
-          </div>
-
-          {/* Week Navigator */}
-          <div style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: '24px',
-            backgroundColor: THEME.card,
-            padding: '16px',
-            borderRadius: '8px',
-            border: `1px solid ${THEME.border}`,
-          }}>
-            <button
-              onClick={() => setWeekOffset(weekOffset - 1)}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: THEME.accent,
-                color: '#fff',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                fontWeight: '600',
-                fontSize: '13px',
-              }}
-            >
-              Previous Week
-            </button>
-
-            <div style={{ textAlign: 'center' }}>
-              <p style={{
-                fontSize: '12px',
-                color: THEME.textSecondary,
-                margin: '0 0 4px 0',
-              }}>
-                Week of
-              </p>
-              <p style={{
-                fontSize: '18px',
-                fontWeight: 'bold',
-                margin: 0,
-              }}>
-                {weekDays[0].date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - {weekDays[4].date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-              </p>
+          {/* Monthly Calendar Grid */}
+          <div style={{ backgroundColor: THEME.card, borderRadius: '12px', border: `1px solid ${THEME.border}`, padding: '20px', marginBottom: '24px' }}>
+            {/* Day Headers */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px', marginBottom: '8px' }}>
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
+                <div key={d} style={{ textAlign: 'center', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary, padding: '8px 0', textTransform: 'uppercase' }}>{d}</div>
+              ))}
             </div>
 
-            <button
-              onClick={() => setWeekOffset(weekOffset + 1)}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: THEME.accent,
-                color: '#fff',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                fontWeight: '600',
-                fontSize: '13px',
-              }}
-            >
-              Next Week
-            </button>
-          </div>
+            {/* Calendar Cells */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px' }}>
+              {cells.map((cell, idx) => {
+                if (cell.date === null) return <div key={idx} />;
 
-          {/* Calendar Grid */}
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-            gap: '16px',
-            marginBottom: '24px',
-          }}>
-            {weekDays.map(({ day, date }) => {
-              const isToday = isCurrentWeek && day === currentDayName;
-              const companies = getCompaniesForDay(date);
+                const dayResults = resultsByDate[cell.dateStr] || [];
+                const isToday = cell.dateStr === todayStr;
+                const hasResults = dayResults.length > 0;
 
-              return (
-                <div
-                  key={day}
-                  style={{
-                    backgroundColor: THEME.card,
-                    borderRadius: '8px',
+                return (
+                  <div key={idx} style={{
+                    backgroundColor: isToday ? '#0F7ABF15' : THEME.background,
                     border: isToday ? `2px solid ${THEME.accent}` : `1px solid ${THEME.border}`,
-                    padding: '16px',
-                    minHeight: '300px',
-                    transition: 'all 0.2s ease',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!isToday) {
-                      e.currentTarget.style.backgroundColor = THEME.cardHover;
-                      e.currentTarget.style.borderColor = THEME.accent;
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isToday) {
-                      e.currentTarget.style.backgroundColor = THEME.card;
-                      e.currentTarget.style.borderColor = THEME.border;
-                    }
-                  }}
-                >
-                  {/* Day Header */}
-                  <div style={{
-                    marginBottom: '12px',
-                    paddingBottom: '12px',
-                    borderBottom: `1px solid ${THEME.border}`,
+                    borderRadius: '8px',
+                    padding: '8px',
+                    minHeight: '90px',
+                    transition: 'all 0.2s',
                   }}>
-                    <p style={{
-                      fontSize: '12px',
-                      color: THEME.textSecondary,
-                      margin: '0 0 4px 0',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.5px',
-                    }}>
-                      {day}
-                    </p>
-                    <p style={{
-                      fontSize: '18px',
-                      fontWeight: 'bold',
-                      margin: 0,
-                    }}>
-                      {date.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}
-                    </p>
-                    {isToday && (
-                      <span style={{
-                        display: 'inline-block',
-                        backgroundColor: THEME.accent,
-                        color: '#fff',
-                        padding: '3px 8px',
-                        borderRadius: '3px',
-                        fontSize: '10px',
-                        fontWeight: '600',
-                        marginTop: '6px',
-                      }}>
-                        TODAY
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <span style={{ fontSize: '13px', fontWeight: '600', color: isToday ? THEME.accent : THEME.textSecondary }}>
+                        {cell.date}
                       </span>
-                    )}
-                  </div>
-
-                  {/* Companies List */}
-                  <div style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '8px',
-                  }}>
-                    {companies.length > 0 ? (
-                      companies.map((company, idx) => (
-                        <div
-                          key={idx}
-                          style={{
-                            padding: '8px',
-                            backgroundColor: THEME.background,
-                            borderRadius: '4px',
-                            border: `1px solid ${THEME.border}`,
-                          }}
-                        >
-                          <p style={{
-                            fontSize: '12px',
-                            fontWeight: '600',
-                            margin: '0 0 2px 0',
-                          }}>
-                            {company.company}
-                          </p>
-                          <p style={{
-                            fontSize: '11px',
-                            color: THEME.textSecondary,
-                            margin: '0 0 4px 0',
-                          }}>
-                            {company.ticker}
-                          </p>
-                          <span style={{
-                            display: 'inline-block',
-                            backgroundColor: getSectorColor(company.sector || company.type),
-                            color: THEME.background,
-                            padding: '2px 6px',
-                            borderRadius: '3px',
-                            fontSize: '10px',
-                            fontWeight: '600',
-                          }}>
-                            {company.sector || company.type || 'Event'}
-                          </span>
-                        </div>
-                      ))
+                      {hasResults && (
+                        <span style={{ fontSize: '10px', backgroundColor: THEME.accent, color: '#fff', padding: '1px 5px', borderRadius: '8px', fontWeight: '600' }}>
+                          {dayResults.length}
+                        </span>
+                      )}
+                    </div>
+                    {hasResults ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        {dayResults.slice(0, 4).map((r, i) => (
+                          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{
+                              width: '6px', height: '6px', borderRadius: '50%',
+                              backgroundColor: qualityColors[r.quality] || THEME.textSecondary,
+                              flexShrink: 0,
+                            }} />
+                            <span style={{ fontSize: '11px', fontWeight: '600', color: THEME.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {r.ticker}
+                            </span>
+                          </div>
+                        ))}
+                        {dayResults.length > 4 && (
+                          <span style={{ fontSize: '10px', color: THEME.textSecondary }}>+{dayResults.length - 4} more</span>
+                        )}
+                      </div>
                     ) : (
-                      <p style={{
-                        color: THEME.textSecondary,
-                        fontSize: '12px',
-                        textAlign: 'center',
-                        paddingTop: '40px',
-                        margin: 0,
-                      }}>
-                        No earnings scheduled
-                      </p>
+                      <span style={{ fontSize: '10px', color: THEME.textSecondary }}>No Earnings</span>
                     )}
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
 
-          {/* Major Companies This Quarter */}
-          {quarterCompanies && quarterCompanies.length > 0 && (
-            <div style={{
-              backgroundColor: THEME.card,
-              borderRadius: '8px',
-              border: `1px solid ${THEME.border}`,
-              padding: '20px',
-            }}>
-              <h2 style={{
-                fontSize: '18px',
-                fontWeight: 'bold',
-                margin: '0 0 16px 0',
-                color: THEME.accent,
-              }}>
-                Major Companies This Quarter
+          {/* Results List Table */}
+          {filteredResults.length > 0 && (
+            <div style={{ backgroundColor: THEME.card, borderRadius: '12px', border: `1px solid ${THEME.border}`, padding: '20px' }}>
+              <h2 style={{ fontSize: '18px', fontWeight: 'bold', margin: '0 0 16px 0' }}>
+                Earnings Results ({filteredResults.length})
               </h2>
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
-                gap: '12px',
-              }}>
-                {quarterCompanies.map((company, idx) => (
-                  <div
-                    key={idx}
-                    style={{
-                      padding: '12px',
-                      backgroundColor: THEME.background,
-                      borderRadius: '6px',
-                      border: `1px solid ${THEME.border}`,
-                    }}
-                  >
-                    <p style={{
-                      fontSize: '13px',
-                      fontWeight: '600',
-                      margin: '0 0 4px 0',
-                    }}>
-                      {company.company}
-                    </p>
-                    <p style={{
-                      fontSize: '12px',
-                      color: THEME.textSecondary,
-                      margin: '0 0 6px 0',
-                    }}>
-                      {company.ticker}
-                    </p>
-                    <span style={{
-                      display: 'inline-block',
-                      backgroundColor: getSectorColor(company.sector),
-                      color: THEME.background,
-                      padding: '3px 8px',
-                      borderRadius: '3px',
-                      fontSize: '11px',
-                      fontWeight: '600',
-                    }}>
-                      {company.sector}
-                    </span>
-                  </div>
-                ))}
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                  <thead>
+                    <tr style={{ borderBottom: `1px solid ${THEME.border}` }}>
+                      {['Date', 'Symbol', 'Company', 'Quality', 'Quarter', 'Revenue (Cr)', 'Net Profit (Cr)', 'EPS', 'OPM %', 'Price', 'Move %'].map(h => (
+                        <th key={h} style={{ padding: '10px 8px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '600', fontSize: '11px', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredResults.map((r, i) => (
+                      <tr key={i} style={{ borderBottom: `1px solid ${THEME.border}22` }}>
+                        <td style={{ padding: '10px 8px', whiteSpace: 'nowrap', color: THEME.textSecondary }}>{r.resultDate}</td>
+                        <td style={{ padding: '10px 8px', fontWeight: '700' }}>{r.ticker}</td>
+                        <td style={{ padding: '10px 8px', color: THEME.textSecondary, maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
+                        <td style={{ padding: '10px 8px' }}>
+                          <span style={{
+                            padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '700',
+                            backgroundColor: `${qualityColors[r.quality]}20`,
+                            color: qualityColors[r.quality],
+                          }}>{r.quality}</span>
+                        </td>
+                        <td style={{ padding: '10px 8px', color: THEME.textSecondary }}>{r.quarter}</td>
+                        <td style={{ padding: '10px 8px' }}>{r.revenue ? `₹${r.revenue.toLocaleString()}` : '—'}</td>
+                        <td style={{ padding: '10px 8px', color: r.netProfit && r.netProfit > 0 ? THEME.green : r.netProfit && r.netProfit < 0 ? THEME.red : THEME.textSecondary }}>
+                          {r.netProfit !== null ? `₹${r.netProfit.toLocaleString()}` : '—'}
+                        </td>
+                        <td style={{ padding: '10px 8px' }}>{r.eps !== null ? `₹${r.eps}` : '—'}</td>
+                        <td style={{ padding: '10px 8px' }}>{r.opm ? `${r.opm}%` : '—'}</td>
+                        <td style={{ padding: '10px 8px' }}>{r.currentPrice ? `₹${r.currentPrice.toLocaleString()}` : '—'}</td>
+                        <td style={{ padding: '10px 8px', fontWeight: '600', color: r.priceChange && r.priceChange > 0 ? THEME.green : r.priceChange && r.priceChange < 0 ? THEME.red : THEME.textSecondary }}>
+                          {r.priceChange !== null ? `${r.priceChange > 0 ? '+' : ''}${r.priceChange}%` : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
 
-          {/* Note/Disclaimer */}
-          {data?.note && (
-            <div style={{
-              marginTop: '24px',
-              backgroundColor: THEME.background,
-              borderRadius: '8px',
-              border: `1px solid ${THEME.border}`,
-              padding: '16px',
-              fontSize: '12px',
-              color: THEME.textSecondary,
-              lineHeight: '1.6',
-            }}>
-              <strong style={{ color: THEME.textPrimary }}>Note:</strong> {data.note}
+          {/* Source */}
+          {data?.source && (
+            <div style={{ marginTop: '16px', fontSize: '11px', color: THEME.textSecondary }}>
+              Source: {data.source} • Updated: {data.updatedAt ? new Date(data.updatedAt).toLocaleString() : 'N/A'}
             </div>
           )}
         </>

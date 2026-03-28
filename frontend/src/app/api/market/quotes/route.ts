@@ -1,25 +1,8 @@
 import { NextResponse } from 'next/server';
-import { fetchNifty50, fetchNiftyNext50, NIFTY50_SECTORS } from '@/lib/nse';
+import { fetchNifty50, fetchNiftyNext50, fetchNifty500, fetchNifty200, buildDynamicSectorMap, NIFTY50_SECTORS } from '@/lib/nse';
 import { fetchQuotesWithFallback, US_TOP } from '@/lib/yahoo';
 
 export const dynamic = 'force-dynamic';
-
-// Approximate market cap lookup for top Indian stocks (in crores)
-const APPROX_MCAP: Record<string, number> = {
-  'RELIANCE': 1800000, 'TCS': 1400000, 'HDFCBANK': 1300000, 'ICICIBANK': 900000,
-  'BHARTIARTL': 850000, 'INFY': 700000, 'SBIN': 700000, 'ITC': 600000,
-  'LT': 550000, 'HINDUNILVR': 550000, 'BAJFINANCE': 500000, 'HCLTECH': 450000,
-  'MARUTI': 400000, 'KOTAKBANK': 380000, 'SUNPHARMA': 370000, 'TITAN': 350000,
-  'AXISBANK': 340000, 'ONGC': 320000, 'NTPC': 310000, 'ADANIENT': 300000,
-  'WIPRO': 280000, 'TATAMOTORS': 270000, 'ADANIPORTS': 260000, 'M&M': 250000,
-  'POWERGRID': 240000, 'ULTRACEMCO': 230000, 'NESTLEIND': 220000, 'COALINDIA': 210000,
-  'JSWSTEEL': 200000, 'TATASTEEL': 190000, 'TECHM': 170000, 'BAJAJFINSV': 160000,
-  'GRASIM': 150000, 'BAJAJ-AUTO': 145000, 'INDUSINDBK': 140000, 'HINDALCO': 135000,
-  'CIPLA': 130000, 'DRREDDY': 125000, 'EICHERMOT': 120000, 'BRITANNIA': 115000,
-  'APOLLOHOSP': 110000, 'TATACONSUM': 105000, 'BPCL': 100000, 'HEROMOTOCO': 95000,
-  'SBILIFE': 90000, 'HDFCLIFE': 85000, 'DIVISLAB': 80000, 'SHRIRAMFIN': 75000,
-  'DMART': 350000, 'LICI': 600000, 'HAL': 300000, 'IRFC': 200000,
-};
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -38,57 +21,72 @@ export async function GET(request: Request) {
 }
 
 async function fetchIndianData() {
-  // Fetch NIFTY 50 and NIFTY Next 50 to get ~100 stocks
-  const [nifty50Data, niftyNext50Data] = await Promise.all([
-    fetchNifty50(),
-    fetchNiftyNext50(),
+  // Build dynamic sector map in parallel with stock data
+  const [sectorMap, stocksResponse] = await Promise.all([
+    buildDynamicSectorMap(),
+    // Try NIFTY 500 first, fallback chain to smaller indices
+    fetchNifty500()
+      .then(data => {
+        if (data && data.data && data.data.length > 50) return data;
+        throw new Error('NIFTY 500 insufficient');
+      })
+      .catch(() => fetchNifty200()
+        .then(data => {
+          if (data && data.data && data.data.length > 50) return data;
+          throw new Error('NIFTY 200 insufficient');
+        })
+        .catch(() => null)
+      ),
   ]);
 
   let stocks: any[] = [];
 
-  // Process NIFTY 50 data
-  if (nifty50Data && nifty50Data.data) {
-    stocks = nifty50Data.data.map((item: any) => ({
-      ticker: item.symbol || '',
-      company: item.meta?.companyName || item.identifier || item.symbol || '',
-      sector: NIFTY50_SECTORS[item.symbol] || 'Other',
+  const mapStock = (item: any) => {
+    const symbol = item.symbol || '';
+    // Derive sector dynamically - fallback to static map
+    const sector = sectorMap[symbol] || NIFTY50_SECTORS[symbol] || item.meta?.industry || 'Other';
+    // Use free-float market cap from NSE if available, otherwise estimate
+    const ffmc = item.ffmc || item.freeFloatMktCap || 0;
+    const estimatedMcap = ffmc > 0 ? ffmc : Math.round((item.lastPrice || 0) * (item.totalTradedVolume || 1) / 10000);
+
+    return {
+      ticker: symbol,
+      company: item.meta?.companyName || item.identifier || symbol,
+      sector,
       price: item.lastPrice || item.ltP || 0,
       change: typeof item.change === 'number' ? item.change : 0,
       changePercent: item.pChange || 0,
       volume: item.totalTradedVolume || item.trdVol || 0,
-      marketCap: APPROX_MCAP[item.symbol] || Math.round((item.lastPrice || 0) * (item.totalTradedVolume || 1) / 100000),
+      marketCap: estimatedMcap,
       previousClose: item.previousClose || item.prevClose || 0,
       open: item.open || 0,
       dayHigh: item.dayHigh || 0,
       dayLow: item.dayLow || 0,
       yearHigh: item.yearHigh || 0,
       yearLow: item.yearLow || 0,
-    })).filter((s: any) => s.ticker && s.price > 0);
+    };
+  };
+
+  if (stocksResponse && stocksResponse.data) {
+    stocks = stocksResponse.data.map(mapStock).filter((s: any) => s.ticker && s.price > 0);
   }
 
-  // Process NIFTY Next 50 data and merge with NIFTY 50
-  if (niftyNext50Data && niftyNext50Data.data) {
-    const next50Stocks = niftyNext50Data.data.map((item: any) => ({
-      ticker: item.symbol || '',
-      company: item.meta?.companyName || item.identifier || item.symbol || '',
-      sector: NIFTY50_SECTORS[item.symbol] || 'Other',
-      price: item.lastPrice || item.ltP || 0,
-      change: typeof item.change === 'number' ? item.change : 0,
-      changePercent: item.pChange || 0,
-      volume: item.totalTradedVolume || item.trdVol || 0,
-      marketCap: APPROX_MCAP[item.symbol] || Math.round((item.lastPrice || 0) * (item.totalTradedVolume || 1) / 100000),
-      previousClose: item.previousClose || item.prevClose || 0,
-      open: item.open || 0,
-      dayHigh: item.dayHigh || 0,
-      dayLow: item.dayLow || 0,
-      yearHigh: item.yearHigh || 0,
-      yearLow: item.yearLow || 0,
-    })).filter((s: any) => s.ticker && s.price > 0);
+  // If broad index failed, try NIFTY 50 + Next 50 as final fallback
+  if (stocks.length < 50) {
+    const [nifty50Data, niftyNext50Data] = await Promise.all([
+      fetchNifty50(),
+      fetchNiftyNext50(),
+    ]);
 
-    // Merge arrays and deduplicate by symbol
-    const tickerSet = new Set(stocks.map(s => s.ticker));
-    const uniqueNext50 = next50Stocks.filter((s: any) => !tickerSet.has(s.ticker));
-    stocks = [...stocks, ...uniqueNext50];
+    stocks = [];
+    if (nifty50Data && nifty50Data.data) {
+      stocks = nifty50Data.data.map(mapStock).filter((s: any) => s.ticker && s.price > 0);
+    }
+    if (niftyNext50Data && niftyNext50Data.data) {
+      const tickerSet = new Set(stocks.map(s => s.ticker));
+      const next50 = niftyNext50Data.data.map(mapStock).filter((s: any) => s.ticker && s.price > 0 && !tickerSet.has(s.ticker));
+      stocks = [...stocks, ...next50];
+    }
   }
 
   // If NSE data unavailable, try Yahoo Finance as fallback
@@ -115,18 +113,14 @@ async function fetchIndianData() {
     }).filter(s => s.price > 0);
   }
 
-  // Always derive gainers/losers from the complete stocks array
-  // This ensures we always have both lists with full data (price, change, volume)
-  // The dedicated NSE gainers/losers API is unreliable after market hours
+  // Derive gainers/losers from the complete stocks array
   let gainers: any[] = [];
   let losers: any[] = [];
 
   if (stocks.length > 0) {
     const sorted = [...stocks].sort((a, b) => b.changePercent - a.changePercent);
-    gainers = sorted.filter((s: any) => s.changePercent > 0).slice(0, 25);
-    losers = sorted.filter((s: any) => s.changePercent < 0).slice(0, 25); // already sorted worst first by reverse order
-    // Re-sort losers so worst is first
-    losers = [...stocks].sort((a, b) => a.changePercent - b.changePercent).filter((s: any) => s.changePercent < 0).slice(0, 25);
+    gainers = sorted.filter((s: any) => s.changePercent > 0).slice(0, 30);
+    losers = [...stocks].sort((a, b) => a.changePercent - b.changePercent).filter((s: any) => s.changePercent < 0).slice(0, 30);
   }
 
   const validStocks = stocks.filter(s => s.price > 0);
@@ -144,7 +138,7 @@ async function fetchIndianData() {
         : 0,
       sectors: [...new Set(validStocks.map(s => s.sector))].length,
     },
-    source: nifty50Data?.data ? 'NSE India' : 'Yahoo Finance',
+    source: stocksResponse?.data ? 'NSE India' : 'Yahoo Finance',
     updatedAt: new Date().toISOString(),
   });
 }

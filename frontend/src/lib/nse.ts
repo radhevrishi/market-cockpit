@@ -27,9 +27,9 @@ function getCached(key: string, ttlMs: number): any | null {
 
 function setCache(key: string, data: any) {
   dataCache.set(key, { data, ts: Date.now() });
-  if (dataCache.size > 200) {
+  if (dataCache.size > 500) {
     const oldest = [...dataCache.entries()].sort((a, b) => a[1].ts - b[1].ts);
-    for (let i = 0; i < 50; i++) dataCache.delete(oldest[i][0]);
+    for (let i = 0; i < 100; i++) dataCache.delete(oldest[i][0]);
   }
 }
 
@@ -177,6 +177,105 @@ export async function fetchSectorIndices() {
 // Fetch pre-open market data
 export async function fetchPreOpen() {
   return nseApiFetch('/api/market-data-pre-open?key=NIFTY', 60000);
+}
+
+// ======= EARNINGS & FINANCIAL DATA =======
+
+// Fetch board meetings (earnings announcement dates)
+export async function fetchBoardMeetings() {
+  return nseApiFetch('/api/corporate-board-meetings?index=equities', 3600000); // 1hr cache
+}
+
+// Fetch quarterly financial results
+export async function fetchFinancialResults(fromDate: string, toDate: string) {
+  return nseApiFetch(`/api/corporates-financial-results?index=equities&period=Quarterly&from_date=${fromDate}&to_date=${toDate}`, 3600000);
+}
+
+// Fetch NIFTY 500 stocks (broad market)
+export async function fetchNifty500() {
+  return nseApiFetch('/api/equity-stockIndices?index=NIFTY%20500', 60000);
+}
+
+// Fetch individual stock detailed quote
+export async function fetchStockQuote(symbol: string) {
+  return nseApiFetch(`/api/quote-equity?symbol=${encodeURIComponent(symbol)}`, 300000);
+}
+
+// Fetch stock chart data for historical prices
+export async function fetchStockChart(symbol: string) {
+  return nseApiFetch(`/api/chart-databyindex?index=${encodeURIComponent(symbol)}EQN`, 300000);
+}
+
+// Fetch corporate announcements for a company
+export async function fetchCorporateAnnouncements(symbol: string) {
+  return nseApiFetch(`/api/corporates-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`, 1800000);
+}
+
+// ======= DYNAMIC SECTOR MAPPING =======
+
+// Build sector mapping dynamically from NSE sector indices
+const sectorIndexMap: Record<string, string> = {
+  'NIFTY IT': 'IT',
+  'NIFTY BANK': 'Banking',
+  'NIFTY FINANCIAL SERVICES': 'Financial Services',
+  'NIFTY PHARMA': 'Pharma',
+  'NIFTY AUTO': 'Auto',
+  'NIFTY METAL': 'Metals',
+  'NIFTY ENERGY': 'Energy',
+  'NIFTY FMCG': 'FMCG',
+  'NIFTY REALTY': 'Real Estate',
+  'NIFTY MEDIA': 'Media',
+  'NIFTY PSE': 'PSE',
+  'NIFTY INFRA': 'Infrastructure',
+  'NIFTY COMMODITIES': 'Commodities',
+  'NIFTY HEALTHCARE INDEX': 'Healthcare',
+  'NIFTY CONSUMER DURABLES': 'Consumer Durables',
+  'NIFTY OIL & GAS': 'Energy',
+  'NIFTY CPSE': 'PSE',
+  'NIFTY MNC': 'MNC',
+};
+
+let dynamicSectorCache: Record<string, string> | null = null;
+let sectorCacheTime = 0;
+
+export async function buildDynamicSectorMap(): Promise<Record<string, string>> {
+  // Cache for 24 hours
+  if (dynamicSectorCache && Date.now() - sectorCacheTime < 86400000) {
+    return dynamicSectorCache;
+  }
+
+  const sectorMap: Record<string, string> = {};
+
+  try {
+    // Fetch each sector index and map its stocks
+    const sectorFetches = Object.entries(sectorIndexMap).map(async ([indexName, sectorLabel]) => {
+      try {
+        const data = await nseApiFetch(
+          `/api/equity-stockIndices?index=${encodeURIComponent(indexName)}`,
+          86400000 // 24hr cache for sector membership
+        );
+        if (data && data.data) {
+          for (const item of data.data) {
+            if (item.symbol && !sectorMap[item.symbol]) {
+              sectorMap[item.symbol] = sectorLabel;
+            }
+          }
+        }
+      } catch {}
+    });
+
+    await Promise.all(sectorFetches);
+    dynamicSectorCache = sectorMap;
+    sectorCacheTime = Date.now();
+  } catch {}
+
+  return sectorMap;
+}
+
+// Backwards-compatible helper - tries dynamic first, falls back to static
+export async function getSectorForSymbol(symbol: string): Promise<string> {
+  const map = await buildDynamicSectorMap();
+  return map[symbol] || NIFTY50_SECTORS[symbol] || 'Other';
 }
 
 // ======= BSE API FUNCTIONS =======

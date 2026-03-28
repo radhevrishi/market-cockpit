@@ -48,6 +48,7 @@ export default function MoversPage() {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [filterLargeMovers, setFilterLargeMovers] = useState(false);
 
   const fetchData = async () => {
     try {
@@ -113,8 +114,15 @@ export default function MoversPage() {
   };
 
   const sectorData = getSectorData();
-  const gainers = data?.gainers?.slice(0, 20) || [];
-  const losers = data?.losers?.slice(0, 20) || [];
+  
+  // Filter gainers and losers based on toggle
+  let gainers = data?.gainers?.slice(0, 30) || [];
+  let losers = data?.losers?.slice(0, 30) || [];
+  
+  if (filterLargeMovers) {
+    gainers = gainers.filter(stock => stock.changePercent >= 4);
+    losers = losers.filter(stock => stock.changePercent <= -4);
+  }
 
   const formatNumber = (num: number) => {
     if (num >= 1e7) return (num / 1e7).toFixed(2) + 'Cr';
@@ -200,7 +208,7 @@ export default function MoversPage() {
 
         {/* Summary Stats */}
         {data && !loading && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px', marginBottom: '20px' }}>
             <div style={{
               backgroundColor: THEME.card,
               border: `1px solid ${THEME.border}`,
@@ -208,7 +216,7 @@ export default function MoversPage() {
               padding: '16px',
             }}>
               <div style={{ color: THEME.textSecondary, fontSize: '12px', marginBottom: '8px' }}>Total Stocks</div>
-              <div style={{ fontSize: '28px', fontWeight: 'bold', color: THEME.textPrimary }}>{data.summary.total}</div>
+              <div style={{ fontSize: '28px', fontWeight: 'bold', color: THEME.textPrimary }}>{data.summary.total}+</div>
             </div>
             <div style={{
               backgroundColor: THEME.card,
@@ -254,6 +262,42 @@ export default function MoversPage() {
             </div>
           </div>
         )}
+
+        {/* Filter Toggle */}
+        <div style={{ display: 'flex', gap: '8px', backgroundColor: THEME.card, padding: '6px', borderRadius: '8px', border: `1px solid ${THEME.border}`, width: 'fit-content' }}>
+          <button
+            onClick={() => setFilterLargeMovers(false)}
+            style={{
+              padding: '8px 16px',
+              borderRadius: '6px',
+              border: 'none',
+              backgroundColor: !filterLargeMovers ? THEME.accent : 'transparent',
+              color: !filterLargeMovers ? '#FFFFFF' : THEME.textSecondary,
+              cursor: 'pointer',
+              fontSize: '13px',
+              fontWeight: '500',
+              transition: 'all 0.3s ease',
+            }}
+          >
+            All Movers
+          </button>
+          <button
+            onClick={() => setFilterLargeMovers(true)}
+            style={{
+              padding: '8px 16px',
+              borderRadius: '6px',
+              border: 'none',
+              backgroundColor: filterLargeMovers ? THEME.accent : 'transparent',
+              color: filterLargeMovers ? '#FFFFFF' : THEME.textSecondary,
+              cursor: 'pointer',
+              fontSize: '13px',
+              fontWeight: '500',
+              transition: 'all 0.3s ease',
+            }}
+          >
+            4%+ Movers
+          </button>
+        </div>
       </div>
 
       {/* Loading State */}
