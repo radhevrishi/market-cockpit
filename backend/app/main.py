@@ -90,33 +90,23 @@ async def _seed_initial_data():
     except Exception as e:
         logger.warning(f"CDATA URL cleanup failed (non-fatal): {e}")
 
-    # Clean up existing Hindi/non-English articles that failed translation
+    # Remove existing Hindi/non-English articles from the database
+    # (Hindi PIB RSS source has been removed; no new Hindi articles will be ingested)
     try:
         async with AsyncSessionLocal() as db:
-            from sqlalchemy import select, delete
+            from sqlalchemy import select
             from app.models.news import NewsArticle
-            from app.services.news_ingestor import _is_non_english, _translate_text
-            import httpx
+            from app.services.news_ingestor import _is_non_english
             result = await db.execute(select(NewsArticle))
             articles = result.scalars().all()
-            translated_count = 0
             deleted_count = 0
-            async with httpx.AsyncClient() as client:
-                for art in articles:
-                    if _is_non_english(art.headline):
-                        new_headline = await _translate_text(art.headline, client)
-                        if not _is_non_english(new_headline):
-                            art.headline = new_headline
-                            if art.summary and _is_non_english(art.summary):
-                                art.summary = await _translate_text(art.summary, client)
-                            translated_count += 1
-                        else:
-                            # Translation failed — remove the Hindi article
-                            await db.delete(art)
-                            deleted_count += 1
-            if translated_count or deleted_count:
+            for art in articles:
+                if _is_non_english(art.headline):
+                    await db.delete(art)
+                    deleted_count += 1
+            if deleted_count:
                 await db.commit()
-                logger.info(f"Hindi cleanup: translated {translated_count}, removed {deleted_count} untranslatable articles")
+                logger.info(f"Removed {deleted_count} Hindi/non-English articles from database")
     except Exception as e:
         logger.warning(f"Hindi article cleanup failed (non-fatal): {e}")
 

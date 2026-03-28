@@ -22,11 +22,27 @@ def _is_non_english(text: str) -> bool:
 
 
 async def _translate_text(text: str, client: "httpx.AsyncClient") -> str:
-    """Translate non-English text to English. Tries Anthropic API first, then Google Translate."""
+    """Translate non-English text to English. Tries MyMemory (free), then Anthropic, then Google."""
     if not text or not text.strip():
         return text
 
-    # Method 1: Anthropic API (most reliable from server IPs)
+    # Method 1: MyMemory API (free, 5000 chars/day, reliable from server IPs)
+    try:
+        resp = await client.get(
+            "https://api.mymemory.translated.net/get",
+            params={"q": text[:500], "langpair": "hi|en"},  # max 500 chars per request
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            translated = data.get("responseData", {}).get("translatedText", "").strip()
+            if translated and not _is_non_english(translated) and translated.upper() != text.upper():
+                logger.info(f"MyMemory translated: '{text[:40]}...' -> '{translated[:40]}...'")
+                return translated
+    except Exception as e:
+        logger.warning(f"MyMemory translation failed: {e}")
+
+    # Method 2: Anthropic API (if credits available)
     import os
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
     if anthropic_key:
@@ -51,14 +67,12 @@ async def _translate_text(text: str, client: "httpx.AsyncClient") -> str:
                 if translated and not _is_non_english(translated):
                     logger.info(f"Anthropic translated: '{text[:40]}...' -> '{translated[:40]}...'")
                     return translated
-                else:
-                    logger.warning(f"Anthropic translation still non-English: {translated[:40]}")
             else:
-                logger.warning(f"Anthropic translation HTTP {resp.status_code}: {resp.text[:100]}")
+                logger.debug(f"Anthropic translation HTTP {resp.status_code}")
         except Exception as e:
-            logger.warning(f"Anthropic translation failed: {e}")
+            logger.debug(f"Anthropic translation failed: {e}")
 
-    # Method 2: Google Translate free API (often blocked on server IPs)
+    # Method 3: Google Translate free API (often blocked on server IPs)
     try:
         url = "https://translate.googleapis.com/translate_a/single"
         params = {"client": "gtx", "sl": "auto", "tl": "en", "dt": "t", "q": text}
@@ -71,7 +85,7 @@ async def _translate_text(text: str, client: "httpx.AsyncClient") -> str:
                     logger.info(f"Google translated: '{text[:40]}...' -> '{translated[:40]}...'")
                     return translated.strip()
     except Exception as e:
-        logger.warning(f"Google Translate failed: {e}")
+        logger.debug(f"Google Translate failed: {e}")
 
     logger.warning(f"All translation methods failed for: '{text[:60]}...'")
     return text  # Return original if all methods fail
@@ -93,8 +107,7 @@ RSS_SOURCES = [
     {"url": "https://www.livemint.com/rss/industry",                        "name": "LiveMint",      "region": "IN"},
     {"url": "https://www.moneycontrol.com/rss/business.xml",                "name": "MoneyControl",  "region": "IN"},
     # India — Policy & Semiconductor
-    {"url": "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3",      "name": "PIB India",     "region": "IN"},  # Hindi — will be translated
-    {"url": "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=2&Regid=3",      "name": "PIB India",     "region": "IN"},  # English
+    {"url": "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=2&Regid=3",      "name": "PIB India",     "region": "IN"},  # English only (Hindi feed removed — translation APIs unreliable from server IPs)
     {"url": "https://www.electronicsb2b.com/feed/",                         "name": "ElectronicsB2B", "region": "IN"},
 
     # ── Tier 1: US / Global — Macro ────────────────────────────────────────────
