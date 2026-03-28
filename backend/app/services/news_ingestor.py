@@ -878,7 +878,7 @@ def _parse_rss_xml(xml_text: str, source_name: str, region: str, source_url: str
     indian_sources = {"ET Markets", "ET Economy", "MoneyControl", "MoneyControl Economy", "LiveMint", "Business Standard", "IBEF", "Yahoo Finance IN", "PIB India", "ElectronicsB2B"}
     us_sources = {"CNBC", "CNBC Economy", "CNBC World", "MarketWatch", "MarketWatch Pulse", "Bloomberg", "Reuters Finance", "Yahoo Finance US", "Yahoo Finance US Financials", "The Information"}
     # Global sources: auto-detect region from content
-    global_sources = {"SemiAnalysis", "DigiTimes", "EE Times", "Semiconductor Engineering", "IEEE Spectrum", "Evertiq", "SEMI", "The Register", "ServeTheHome", "CSIS", "Brookings"}
+    global_sources = {"SemiAnalysis", "DigiTimes", "EE Times", "Semiconductor Engineering", "IEEE Spectrum", "Evertiq", "SEMI", "The Register", "ServeTheHome", "CSIS", "Brookings", "Techmeme"}
 
     for item in items[:30]:  # max 30 per source
         try:
@@ -912,10 +912,20 @@ def _parse_rss_xml(xml_text: str, source_name: str, region: str, source_url: str
                 second_http = link.find('http', http_match.start() + 1)
                 if second_http > 0:
                     link = link[second_http:]
-            desc  = (desc_m.group(1) or desc_m.group(2) or "").strip() if desc_m else ""
+            desc_raw = (desc_m.group(1) or desc_m.group(2) or "").strip() if desc_m else ""
+
+            # For aggregator sources (Techmeme), extract the real article URL from description HTML
+            # before stripping tags. Techmeme <link> is a permalink; the actual source is in <description>.
+            if source_name == "Techmeme" and desc_raw:
+                # Find the first non-techmeme href in the description (the actual source article)
+                href_matches = re.findall(r'href=["\']([^"\']+)["\']', desc_raw, re.IGNORECASE)
+                for href in href_matches:
+                    if href.startswith("http") and "techmeme.com" not in href:
+                        link = href
+                        break
 
             # Clean HTML tags from desc
-            desc = re.sub(r'<[^>]+>', '', desc).strip()[:500]
+            desc = re.sub(r'<[^>]+>', '', desc_raw).strip()[:500]
 
             # Ensure source URL is absolute (fix 404 on relative URLs)
             if link and not link.startswith(("http://", "https://")):
@@ -1304,8 +1314,11 @@ class NewsIngestor:
     async def _ingest_source(self, client: httpx.AsyncClient, db: AsyncSession, source: dict) -> int:
         """Fetch one RSS source."""
         try:
-            response = await client.get(source["url"], headers={"User-Agent": "MarketCockpit/1.0"})
+            # Use a browser-like User-Agent; some sites (e.g. Techmeme) block bot UAs
+            ua = "Mozilla/5.0 (compatible; MarketCockpit/1.0; +https://market-cockpit.vercel.app)"
+            response = await client.get(source["url"], headers={"User-Agent": ua})
             if response.status_code != 200:
+                logger.warning(f"HTTP {response.status_code} for {source['url']}")
                 return 0
             xml_text = response.text
         except Exception as e:
@@ -1313,6 +1326,8 @@ class NewsIngestor:
             return 0
 
         articles = _parse_rss_xml(xml_text, source["name"], source["region"], source_url=source["url"])
+        if not articles:
+            logger.info(f"No articles parsed from {source['name']} ({source['url']})")
         count = 0
 
         for art in articles:
