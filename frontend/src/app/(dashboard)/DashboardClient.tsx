@@ -164,7 +164,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
       : MARKETS_FALLBACK;
 
   const isActive = (href: string) =>
-    href === '/' ? pathname === '/' : pathname.startsWith(href);
+    href === '/news' ? (pathname === '/' || pathname === '/news' || pathname.startsWith('/news')) : pathname.startsWith(href);
 
   function handleSignOut() {
     localStorage.removeItem('token');
