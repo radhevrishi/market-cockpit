@@ -22,7 +22,43 @@ def _is_non_english(text: str) -> bool:
 
 
 async def _translate_text(text: str, client: "httpx.AsyncClient") -> str:
-    """Translate non-English text to English using Google Translate free API."""
+    """Translate non-English text to English. Tries Anthropic API first, then Google Translate."""
+    if not text or not text.strip():
+        return text
+
+    # Method 1: Anthropic API (most reliable from server IPs)
+    import os
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+    if anthropic_key:
+        try:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": anthropic_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 300,
+                    "messages": [{"role": "user", "content": f"Translate this Hindi text to English. Return ONLY the English translation, nothing else:\n\n{text}"}],
+                },
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                translated = data.get("content", [{}])[0].get("text", "").strip()
+                if translated and not _is_non_english(translated):
+                    logger.info(f"Anthropic translated: '{text[:40]}...' -> '{translated[:40]}...'")
+                    return translated
+                else:
+                    logger.warning(f"Anthropic translation still non-English: {translated[:40]}")
+            else:
+                logger.warning(f"Anthropic translation HTTP {resp.status_code}: {resp.text[:100]}")
+        except Exception as e:
+            logger.warning(f"Anthropic translation failed: {e}")
+
+    # Method 2: Google Translate free API (often blocked on server IPs)
     try:
         url = "https://translate.googleapis.com/translate_a/single"
         params = {"client": "gtx", "sl": "auto", "tl": "en", "dt": "t", "q": text}
@@ -31,10 +67,14 @@ async def _translate_text(text: str, client: "httpx.AsyncClient") -> str:
             data = resp.json()
             if data and data[0]:
                 translated = "".join(part[0] for part in data[0] if part[0])
-                return translated.strip()
+                if translated.strip() and not _is_non_english(translated.strip()):
+                    logger.info(f"Google translated: '{text[:40]}...' -> '{translated[:40]}...'")
+                    return translated.strip()
     except Exception as e:
-        logger.debug(f"Translation failed: {e}")
-    return text  # Return original if translation fails
+        logger.warning(f"Google Translate failed: {e}")
+
+    logger.warning(f"All translation methods failed for: '{text[:60]}...'")
+    return text  # Return original if all methods fail
 
 
 # ── RSS sources ───────────────────────────────────────────────────────────────
@@ -1172,6 +1212,11 @@ class NewsIngestor:
                 art["headline"] = await _translate_text(art["headline"], client)
             if art["description"] and _is_non_english(art["description"]):
                 art["description"] = await _translate_text(art["description"], client)
+
+            # Skip articles that are STILL in Hindi after translation attempt
+            if _is_non_english(art["headline"]):
+                logger.warning(f"Skipping untranslated article: '{art['headline'][:60]}...'")
+                continue
 
             tickers = _extract_tickers(art["headline"], art["description"])
             sentiment = _infer_sentiment(art["headline"])
