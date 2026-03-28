@@ -14,6 +14,29 @@ from app.models.news import NewsArticle
 
 logger = logging.getLogger(__name__)
 
+
+def _is_non_english(text: str) -> bool:
+    """Check if text contains non-ASCII characters suggesting non-English (Hindi, etc.)."""
+    non_ascii = sum(1 for c in text if ord(c) > 127)
+    return non_ascii > len(text) * 0.3  # >30% non-ASCII chars
+
+
+async def _translate_text(text: str, client: "httpx.AsyncClient") -> str:
+    """Translate non-English text to English using Google Translate free API."""
+    try:
+        url = "https://translate.googleapis.com/translate_a/single"
+        params = {"client": "gtx", "sl": "auto", "tl": "en", "dt": "t", "q": text}
+        resp = await client.get(url, params=params, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data and data[0]:
+                translated = "".join(part[0] for part in data[0] if part[0])
+                return translated.strip()
+    except Exception as e:
+        logger.debug(f"Translation failed: {e}")
+    return text  # Return original if translation fails
+
+
 # ── RSS sources ───────────────────────────────────────────────────────────────
 RSS_SOURCES = [
     # ── Tier 1: India — Markets & Economy ──────────────────────────────────────
@@ -30,7 +53,8 @@ RSS_SOURCES = [
     {"url": "https://www.livemint.com/rss/industry",                        "name": "LiveMint",      "region": "IN"},
     {"url": "https://www.moneycontrol.com/rss/business.xml",                "name": "MoneyControl",  "region": "IN"},
     # India — Policy & Semiconductor
-    {"url": "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3",      "name": "PIB India",     "region": "IN"},
+    {"url": "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3",      "name": "PIB India",     "region": "IN"},  # Hindi — will be translated
+    {"url": "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=2&Regid=3",      "name": "PIB India",     "region": "IN"},  # English
     {"url": "https://www.electronicsb2b.com/feed/",                         "name": "ElectronicsB2B", "region": "IN"},
 
     # ── Tier 1: US / Global — Macro ────────────────────────────────────────────
@@ -717,7 +741,7 @@ def _infer_sentiment(title: str) -> str:
     return "NEUTRAL"
 
 
-def _parse_rss_xml(xml_text: str, source_name: str, region: str) -> list[dict]:
+def _parse_rss_xml(xml_text: str, source_name: str, region: str, source_url: str = "") -> list[dict]:
     """Simple RSS XML parser (no external deps).
 
     Also refines region detection:
@@ -765,6 +789,14 @@ def _parse_rss_xml(xml_text: str, source_name: str, region: str) -> list[dict]:
 
             # Clean HTML tags from desc
             desc = re.sub(r'<[^>]+>', '', desc).strip()[:500]
+
+            # Ensure source URL is absolute (fix 404 on relative URLs)
+            if link and not link.startswith(("http://", "https://")):
+                from urllib.parse import urlparse
+                parsed_source = urlparse(source_url)
+                base_url = f"{parsed_source.scheme}://{parsed_source.netloc}" if parsed_source.netloc else ""
+                if base_url:
+                    link = base_url + ("/" if not link.startswith("/") else "") + link
 
             if not title or len(title) < 20:
                 continue
@@ -1078,7 +1110,7 @@ class NewsIngestor:
             logger.warning(f"HTTP fetch failed for {source['url']}: {e}")
             return 0
 
-        articles = _parse_rss_xml(xml_text, source["name"], source["region"])
+        articles = _parse_rss_xml(xml_text, source["name"], source["region"], source_url=source["url"])
         count = 0
 
         for art in articles:
@@ -1092,6 +1124,12 @@ class NewsIngestor:
             )
             if existing.scalar_one_or_none():
                 continue
+
+            # Translate non-English (Hindi) articles to English
+            if _is_non_english(art["headline"]):
+                art["headline"] = await _translate_text(art["headline"], client)
+            if art["description"] and _is_non_english(art["description"]):
+                art["description"] = await _translate_text(art["description"], client)
 
             tickers = _extract_tickers(art["headline"], art["description"])
             sentiment = _infer_sentiment(art["headline"])
