@@ -144,6 +144,8 @@ RSS_SOURCES = [
     {"url": "https://www.theregister.com/headlines.atom",                   "name": "The Register",  "region": "GLOBAL"},
     {"url": "https://www.servethehome.com/feed/",                           "name": "ServeTheHome",  "region": "GLOBAL"},
     {"url": "https://www.theinformation.com/feed",                          "name": "The Information", "region": "US"},
+    # Techmeme — top tech news aggregator
+    {"url": "https://www.techmeme.com/feed.xml",                            "name": "Techmeme",      "region": "GLOBAL"},
 
     # ── Tier 4: Policy — Geopolitics & Think Tanks ────────────────────────────
     {"url": "https://www.csis.org/analysis/feed",                           "name": "CSIS",          "region": "GLOBAL"},

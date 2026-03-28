@@ -85,7 +85,7 @@ const SOURCES = [
   'SemiAnalysis', 'DigiTimes', 'EE Times', 'Semiconductor Engineering', 'IEEE Spectrum', 'Evertiq', 'SEMI',
   'Yahoo Tech Semis', 'Yahoo Data Center',
   // Hyperscaler / AI Infra
-  'The Register', 'ServeTheHome', 'The Information',
+  'The Register', 'ServeTheHome', 'The Information', 'Techmeme',
   // Policy & Geopolitics
   'CSIS', 'Brookings',
 ] as const;
