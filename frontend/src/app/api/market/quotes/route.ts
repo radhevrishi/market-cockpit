@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { fetchNifty50, fetchNiftyNext50, fetchGainers, fetchLosers, NIFTY50_SECTORS } from '@/lib/nse';
+import { fetchNifty50, fetchNiftyNext50, NIFTY50_SECTORS } from '@/lib/nse';
 import { fetchQuotesWithFallback, US_TOP } from '@/lib/yahoo';
 
 export const dynamic = 'force-dynamic';
@@ -38,12 +38,10 @@ export async function GET(request: Request) {
 }
 
 async function fetchIndianData() {
-  // Fetch NIFTY 50 and NIFTY Next 50 to get ~100 stocks, plus gainers/losers
-  const [nifty50Data, niftyNext50Data, gainersData, losersData] = await Promise.all([
+  // Fetch NIFTY 50 and NIFTY Next 50 to get ~100 stocks
+  const [nifty50Data, niftyNext50Data] = await Promise.all([
     fetchNifty50(),
     fetchNiftyNext50(),
-    fetchGainers(),
-    fetchLosers(),
   ]);
 
   let stocks: any[] = [];
@@ -117,53 +115,18 @@ async function fetchIndianData() {
     }).filter(s => s.price > 0);
   }
 
-  // Use NSE gainers/losers data if available, otherwise sort from stocks
+  // Always derive gainers/losers from the complete stocks array
+  // This ensures we always have both lists with full data (price, change, volume)
+  // The dedicated NSE gainers/losers API is unreliable after market hours
   let gainers: any[] = [];
   let losers: any[] = [];
 
-  if (gainersData && gainersData.NIFTY?.data) {
-    gainers = gainersData.NIFTY.data.map((item: any) => {
-      // netPrice is the PERCENTAGE change, calculate absolute change
-      const percentChange = item.netPrice || item.perChange || item.pChange || 0;
-      const ltp = item.ltp || item.lastPrice || 0;
-      const absoluteChange = (ltp * percentChange) / 100;
-
-      return {
-        ticker: item.symbol,
-        company: item.symbol,
-        sector: NIFTY50_SECTORS[item.symbol] || 'Other',
-        price: ltp,
-        change: absoluteChange,
-        changePercent: percentChange,
-        volume: item.tradedQuantity || item.qty || item.totalTradedVolume || 0,
-      };
-    });
-  }
-
-  if (losersData && losersData.NIFTY?.data) {
-    losers = losersData.NIFTY.data.map((item: any) => {
-      // netPrice is the PERCENTAGE change, calculate absolute change
-      const percentChange = item.netPrice || item.perChange || item.pChange || 0;
-      const ltp = item.ltp || item.lastPrice || 0;
-      const absoluteChange = (ltp * percentChange) / 100;
-
-      return {
-        ticker: item.symbol,
-        company: item.symbol,
-        sector: NIFTY50_SECTORS[item.symbol] || 'Other',
-        price: ltp,
-        change: absoluteChange,
-        changePercent: percentChange,
-        volume: item.tradedQuantity || item.qty || item.totalTradedVolume || 0,
-      };
-    });
-  }
-
-  // If NSE gainers/losers not available, derive from stocks
-  if (gainers.length === 0 && stocks.length > 0) {
+  if (stocks.length > 0) {
     const sorted = [...stocks].sort((a, b) => b.changePercent - a.changePercent);
-    gainers = sorted.filter(s => s.changePercent > 0).slice(0, 25);
-    losers = sorted.filter(s => s.changePercent < 0).reverse().slice(0, 25);
+    gainers = sorted.filter((s: any) => s.changePercent > 0).slice(0, 25);
+    losers = sorted.filter((s: any) => s.changePercent < 0).slice(0, 25); // already sorted worst first by reverse order
+    // Re-sort losers so worst is first
+    losers = [...stocks].sort((a, b) => a.changePercent - b.changePercent).filter((s: any) => s.changePercent < 0).slice(0, 25);
   }
 
   const validStocks = stocks.filter(s => s.price > 0);
