@@ -110,6 +110,31 @@ async def _seed_initial_data():
     except Exception as e:
         logger.warning(f"Hindi article cleanup failed (non-fatal): {e}")
 
+    # Fix IST timezone issue: Indian RSS feeds returned timestamps in IST (+05:30)
+    # but they were stored as naive UTC, making them sort ~5.5h ahead of actual time.
+    # Subtract 5h30m from Indian-source articles to normalize to actual UTC.
+    try:
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import text
+            indian_sources_list = (
+                "'ET Markets','ET Economy','ET Industry','MoneyControl','MoneyControl Economy',"
+                "'LiveMint','Business Standard','IBEF','Yahoo Finance IN','PIB India','ElectronicsB2B'"
+            )
+            result = await db.execute(
+                text(f"""
+                    UPDATE news_articles
+                    SET published_at = published_at - INTERVAL '5 hours 30 minutes'
+                    WHERE source_name IN ({indian_sources_list})
+                    AND published_at > NOW()
+                """)
+            )
+            fixed_tz = result.rowcount
+            if fixed_tz:
+                await db.commit()
+                logger.info(f"Fixed {fixed_tz} Indian articles with IST timestamps (converted to UTC)")
+    except Exception as e:
+        logger.warning(f"IST timezone fix failed (non-fatal): {e}")
+
     try:
         async with AsyncSessionLocal() as db:
             from app.services.news_ingestor import NewsIngestor

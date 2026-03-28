@@ -4,7 +4,7 @@ News ingestor — fetches from RSS feeds, scores importance, tags tickers.
 import logging
 import hashlib
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -932,17 +932,22 @@ def _parse_rss_xml(xml_text: str, source_name: str, region: str, source_url: str
                 continue
 
             # Parse date (RFC 2822 for RSS, ISO 8601 for Atom)
+            # IMPORTANT: Always normalize to UTC before stripping tzinfo,
+            # otherwise IST (+0530) timestamps sort incorrectly vs UTC timestamps.
             published_at = datetime.utcnow()
             if date_m:
                 date_str = (date_m.group(1) or (date_m.group(2) if date_m.lastindex and date_m.lastindex >= 2 else None) or "").strip()
                 if date_str:
                     try:
                         from email.utils import parsedate_to_datetime
-                        published_at = parsedate_to_datetime(date_str).replace(tzinfo=None)
+                        dt = parsedate_to_datetime(date_str)
+                        # Convert to UTC then strip tzinfo for consistent DB storage
+                        published_at = dt.astimezone(timezone.utc).replace(tzinfo=None)
                     except Exception:
                         try:
                             # Try ISO 8601 (Atom feeds)
-                            published_at = datetime.fromisoformat(date_str.replace("Z", "+00:00")).replace(tzinfo=None)
+                            dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+                            published_at = dt.astimezone(timezone.utc).replace(tzinfo=None)
                         except Exception:
                             pass
 
