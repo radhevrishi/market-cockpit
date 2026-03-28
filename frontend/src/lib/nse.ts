@@ -238,8 +238,34 @@ export async function fetchCorporateAnnouncements(symbol: string) {
 
 // Fetch corporate announcements filtered by category (Board Meetings with Financial Results)
 export async function fetchBoardMeetingAnnouncements(index: string = 'equities') {
-  // NSE corporate-announcements endpoint with board meeting filter
+  // NSE corporate-announcements endpoint - default returns latest 20
   return nseApiFetch(`/api/corporate-announcements?index=${encodeURIComponent(index)}`, 600000); // 10 min cache
+}
+
+// Fetch corporate announcements with pagination - NSE returns pages of results
+// from_date/to_date in DD-MM-YYYY format
+export async function fetchCorporateAnnouncementsPaginated(fromDate: string, toDate: string, pages: number = 5): Promise<any[]> {
+  const allResults: any[] = [];
+
+  for (let page = 0; page < pages; page++) {
+    const data = await nseApiFetch(
+      `/api/corporate-announcements?index=equities&from_date=${fromDate}&to_date=${toDate}&page=${page}`,
+      600000
+    );
+    if (!data) break;
+    const arr = Array.isArray(data) ? data : (data?.data || []);
+    if (arr.length === 0) break;
+    allResults.push(...arr);
+    // If we got fewer than 20, likely no more pages
+    if (arr.length < 20) break;
+  }
+
+  return allResults;
+}
+
+// Fetch board meetings for specific date range
+export async function fetchBoardMeetingsForDateRange(fromDate: string, toDate: string) {
+  return nseApiFetch(`/api/corporate-board-meetings?index=equities&from_date=${fromDate}&to_date=${toDate}`, 600000);
 }
 
 // Fetch from BSE corporate announcements for cross-validation
