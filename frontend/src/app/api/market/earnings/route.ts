@@ -192,6 +192,9 @@ export async function GET(request: Request) {
       fetchNiftySmallcap250().catch(() => null),
     ]);
 
+    // Debug mode: return raw data structure for debugging
+    const debug = searchParams.get('debug') === 'true';
+
     // Debug: log what we got
     console.log('Earnings API sources:', {
       boardMeetings: boardMeetings ? 'ok' : 'null',
@@ -203,6 +206,30 @@ export async function GET(request: Request) {
       midcap250: midcap250Data?.data?.length || 0,
       smallcap250: smallcap250Data?.data?.length || 0,
     });
+
+    if (debug) {
+      // Return raw samples for debugging
+      const bmSample = boardMeetings ? (Array.isArray(boardMeetings) ? boardMeetings.slice(0, 3) :
+        boardMeetings.data ? boardMeetings.data.slice(0, 3) :
+        Object.keys(boardMeetings).slice(0, 5).reduce((acc: any, k: string) => { acc[k] = typeof boardMeetings[k] === 'object' ? 'object' : boardMeetings[k]; return acc; }, {})) : null;
+      const annSample = announcements ? (Array.isArray(announcements) ? announcements.slice(0, 3) :
+        announcements.data ? announcements.data.slice(0, 3) :
+        Object.keys(announcements).slice(0, 5).reduce((acc: any, k: string) => { acc[k] = typeof announcements[k] === 'object' ? 'object' : announcements[k]; return acc; }, {})) : null;
+      const frSample = financialResults ? (Array.isArray(financialResults) ? financialResults.slice(0, 3) :
+        financialResults.data ? financialResults.data.slice(0, 3) :
+        Object.keys(financialResults).slice(0, 5).reduce((acc: any, k: string) => { acc[k] = typeof financialResults[k] === 'object' ? 'object' : financialResults[k]; return acc; }, {})) : null;
+
+      return NextResponse.json({
+        debug: true,
+        dateRange: { from: fromDate.toISOString(), to: toDate.toISOString() },
+        rawStructure: {
+          boardMeetings: boardMeetings ? { type: typeof boardMeetings, isArray: Array.isArray(boardMeetings), keys: typeof boardMeetings === 'object' && !Array.isArray(boardMeetings) ? Object.keys(boardMeetings) : null, length: Array.isArray(boardMeetings) ? boardMeetings.length : boardMeetings?.data?.length } : null,
+          announcements: announcements ? { type: typeof announcements, isArray: Array.isArray(announcements), keys: typeof announcements === 'object' && !Array.isArray(announcements) ? Object.keys(announcements) : null, length: Array.isArray(announcements) ? announcements.length : announcements?.data?.length } : null,
+          financialResults: financialResults ? { type: typeof financialResults, isArray: Array.isArray(financialResults), keys: typeof financialResults === 'object' && !Array.isArray(financialResults) ? Object.keys(financialResults) : null } : null,
+        },
+        samples: { boardMeetings: bmSample, announcements: annSample, financialResults: frSample },
+      });
+    }
 
     // ============================================
     // STEP 2: Build index membership lookup
