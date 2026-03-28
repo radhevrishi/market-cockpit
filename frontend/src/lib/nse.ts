@@ -124,6 +124,21 @@ export async function fetchNifty200() {
   return nseApiFetch('/api/equity-stockIndices?index=NIFTY%20200', 60000);
 }
 
+// Fetch NIFTY 500 stocks (broad market)
+export async function fetchNifty500() {
+  return nseApiFetch('/api/equity-stockIndices?index=NIFTY%20500', 60000);
+}
+
+// Fetch NIFTY Midcap 250
+export async function fetchNiftyMidcap250() {
+  return nseApiFetch('/api/equity-stockIndices?index=NIFTY%20MIDCAP%20250', 60000);
+}
+
+// Fetch NIFTY Smallcap 250
+export async function fetchNiftySmallcap250() {
+  return nseApiFetch('/api/equity-stockIndices?index=NIFTY%20SMALLCAP%20250', 60000);
+}
+
 // Fetch all indices
 export async function fetchAllIndices() {
   return nseApiFetch('/api/allIndices', 60000);
@@ -191,11 +206,6 @@ export async function fetchFinancialResults(fromDate: string, toDate: string) {
   return nseApiFetch(`/api/corporates-financial-results?index=equities&period=Quarterly&from_date=${fromDate}&to_date=${toDate}`, 3600000);
 }
 
-// Fetch NIFTY 500 stocks (broad market)
-export async function fetchNifty500() {
-  return nseApiFetch('/api/equity-stockIndices?index=NIFTY%20500', 60000);
-}
-
 // Fetch individual stock detailed quote
 export async function fetchStockQuote(symbol: string) {
   return nseApiFetch(`/api/quote-equity?symbol=${encodeURIComponent(symbol)}`, 300000);
@@ -211,6 +221,60 @@ export async function fetchCorporateAnnouncements(symbol: string) {
   return nseApiFetch(`/api/corporates-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`, 1800000);
 }
 
+// ======= SECTOR NORMALIZATION =======
+
+// Normalize granular NSE industry names to broad sectors
+export function normalizeSector(industry: string | undefined): string {
+  if (!industry) return 'Other';
+  const i = industry.toLowerCase();
+  
+  // Banking & Finance
+  if (i.includes('bank') || i.includes('housing finance') || i.includes('nbfc') || i.includes('micro finance')) return 'Banking';
+  if (i.includes('insurance')) return 'Insurance';
+  if (i.includes('asset management') || i.includes('stock exchange') || i.includes('exchange and data') || i.includes('fintech') || i.includes('financial') || i.includes('capital market')) return 'Financial Services';
+  
+  // Technology
+  if (i.includes('it ') || i.includes('software') || i.includes('computer') || i.includes('digital') || i.includes('technology') || i === 'it') return 'IT';
+  if (i.includes('telecom') || i.includes('communication')) return 'Telecom';
+  
+  // Healthcare & Pharma  
+  if (i.includes('pharma') || i.includes('drug') || i.includes('healthcare') || i.includes('hospital') || i.includes('diagnostic') || i.includes('medical')) return 'Healthcare';
+  
+  // Energy & Power
+  if (i.includes('oil') || i.includes('gas') || i.includes('refiner') || i.includes('petroleum') || i.includes('lng')) return 'Energy';
+  if (i.includes('power') || i.includes('electric') || i.includes('renewable') || i.includes('solar') || i.includes('wind') || i.includes('energy')) return 'Power';
+  
+  // Materials & Metals
+  if (i.includes('steel') || i.includes('metal') || i.includes('iron') || i.includes('aluminium') || i.includes('copper') || i.includes('zinc') || i.includes('mining') || i.includes('coal')) return 'Metals & Mining';
+  if (i.includes('cement') || i.includes('building material') || i.includes('construction material')) return 'Cement';
+  if (i.includes('chemical') || i.includes('fertilizer') || i.includes('pesticide') || i.includes('agrochemical') || i.includes('petrochemical')) return 'Chemicals';
+  
+  // Consumer
+  if (i.includes('fmcg') || i.includes('food') || i.includes('beverage') || i.includes('personal care') || i.includes('tobacco') || i.includes('consumer food')) return 'FMCG';
+  if (i.includes('retail') || i.includes('e-commerce') || i.includes('e-retail') || i.includes('departmental')) return 'Retail';
+  if (i.includes('textile') || i.includes('apparel') || i.includes('readymade') || i.includes('footwear')) return 'Textiles';
+  if (i.includes('hotel') || i.includes('restaurant') || i.includes('tourism') || i.includes('hospitality')) return 'Hospitality';
+  if (i.includes('media') || i.includes('entertainment') || i.includes('broadcasting') || i.includes('printing') || i.includes('film')) return 'Media';
+  
+  // Auto & Transport
+  if (i.includes('auto') || i.includes('car') || i.includes('vehicle') || i.includes('tyre') || i.includes('tire') || i.includes('tractor')) return 'Auto';
+  if (i.includes('railway') || i.includes('logistics') || i.includes('shipping') || i.includes('transport') || i.includes('airline') || i.includes('port')) return 'Transport & Logistics';
+  
+  // Industrial  
+  if (i.includes('capital good') || i.includes('engineering') || i.includes('industrial') || i.includes('compressor') || i.includes('bearing') || i.includes('electrode') || i.includes('abrasive')) return 'Capital Goods';
+  if (i.includes('infra') || i.includes('construction') || i.includes('road') || i.includes('civil')) return 'Infrastructure';
+  if (i.includes('defence') || i.includes('defense') || i.includes('aerospace') || i.includes('ship building')) return 'Defence';
+  
+  // Real Estate
+  if (i.includes('real estate') || i.includes('realty') || i.includes('housing') && !i.includes('finance')) return 'Real Estate';
+  
+  // Diversified/Conglomerate
+  if (i.includes('diversified') || i.includes('conglomerate') || i.includes('holding')) return 'Diversified';
+  
+  // If none matched, return original but capitalized
+  return 'Other';
+}
+
 // ======= DYNAMIC SECTOR MAPPING =======
 
 // Build sector mapping dynamically from NSE sector indices
@@ -218,9 +282,9 @@ const sectorIndexMap: Record<string, string> = {
   'NIFTY IT': 'IT',
   'NIFTY BANK': 'Banking',
   'NIFTY FINANCIAL SERVICES': 'Financial Services',
-  'NIFTY PHARMA': 'Pharma',
+  'NIFTY PHARMA': 'Healthcare',
   'NIFTY AUTO': 'Auto',
-  'NIFTY METAL': 'Metals',
+  'NIFTY METAL': 'Metals & Mining',
   'NIFTY ENERGY': 'Energy',
   'NIFTY FMCG': 'FMCG',
   'NIFTY REALTY': 'Real Estate',
@@ -370,7 +434,7 @@ export const NIFTY50_SECTORS: Record<string, string> = {
   'AXISBANK': 'Banking',
   'ASIANPAINT': 'Consumer Durables',
   'MARUTI': 'Auto',
-  'SUNPHARMA': 'Pharma',
+  'SUNPHARMA': 'Healthcare',
   'TITAN': 'Consumer Durables',
   'BAJFINANCE': 'Financial Services',
   'DMART': 'Retail',
@@ -380,18 +444,18 @@ export const NIFTY50_SECTORS: Record<string, string> = {
   'NESTLEIND': 'FMCG',
   'WIPRO': 'IT',
   'M&M': 'Auto',
-  'JSWSTEEL': 'Metals',
+  'JSWSTEEL': 'Metals & Mining',
   'POWERGRID': 'Power',
-  'TATASTEEL': 'Metals',
+  'TATASTEEL': 'Metals & Mining',
   'TATAMOTORS': 'Auto',
   'ADANIENT': 'Diversified',
   'ADANIPORTS': 'Infrastructure',
-  'DIVISLAB': 'Pharma',
-  'COALINDIA': 'Mining',
+  'DIVISLAB': 'Healthcare',
+  'COALINDIA': 'Metals & Mining',
   'BAJAJFINSV': 'Financial Services',
   'TECHM': 'IT',
-  'DRREDDY': 'Pharma',
-  'CIPLA': 'Pharma',
+  'DRREDDY': 'Healthcare',
+  'CIPLA': 'Healthcare',
   'BRITANNIA': 'FMCG',
   'APOLLOHOSP': 'Healthcare',
   'EICHERMOT': 'Auto',
@@ -403,7 +467,7 @@ export const NIFTY50_SECTORS: Record<string, string> = {
   'SBILIFE': 'Insurance',
   'HDFCLIFE': 'Insurance',
   'BAJAJ-AUTO': 'Auto',
-  'HINDALCO': 'Metals',
+  'HINDALCO': 'Metals & Mining',
   'SHRIRAMFIN': 'Financial Services',
   // NIFTY Next 50 and other extended stocks
   'ADANIGREEN': 'Energy',
@@ -423,12 +487,12 @@ export const NIFTY50_SECTORS: Record<string, string> = {
   'IDFC': 'Financial Services',
   'INDHOTEL': 'Hospitality',
   'IOC': 'Energy',
-  'IRCTC': 'Transportation',
-  'JINDALSTEL': 'Metals',
+  'IRCTC': 'Transport & Logistics',
+  'JINDALSTEL': 'Metals & Mining',
   'LICHSGFIN': 'Financial Services',
   'LICI': 'Insurance',
   'LODHA': 'Real Estate',
-  'LUPIN': 'Pharma',
+  'LUPIN': 'Healthcare',
   'MARICO': 'FMCG',
   'MOTHERSON': 'Auto',
   'NAUKRI': 'IT',
@@ -444,23 +508,23 @@ export const NIFTY50_SECTORS: Record<string, string> = {
   'SRF': 'Chemicals',
   'TATACOMM': 'Telecom',
   'TATAPOWER': 'Power',
-  'TORNTPHARM': 'Pharma',
+  'TORNTPHARM': 'Healthcare',
   'TRENT': 'Retail',
   'UNIONBANK': 'Banking',
   'UNITDSPR': 'FMCG',
-  'VEDL': 'Metals',
+  'VEDL': 'Metals & Mining',
   'ZOMATO': 'Consumer Services',
-  'ZYDUSLIFE': 'Pharma',
+  'ZYDUSLIFE': 'Healthcare',
   'ABB': 'Capital Goods',
   'ACC': 'Cement',
   'ATGL': 'Energy',
-  'AUROPHARMA': 'Pharma',
+  'AUROPHARMA': 'Healthcare',
   'BHEL': 'Capital Goods',
-  'BIOCON': 'Pharma',
+  'BIOCON': 'Healthcare',
   'CGPOWER': 'Capital Goods',
-  'CONCOR': 'Logistics',
+  'CONCOR': 'Transport & Logistics',
   'CUMMINSIND': 'Capital Goods',
-  'DELHIVERY': 'Logistics',
+  'DELHIVERY': 'Transport & Logistics',
   'ESCORTS': 'Auto',
   'GAIL': 'Energy',
   'GMRINFRA': 'Infrastructure',
@@ -468,7 +532,7 @@ export const NIFTY50_SECTORS: Record<string, string> = {
   'ICICIGI': 'Insurance',
   'IDEA': 'Telecom',
   'IGL': 'Energy',
-  'IPCALAB': 'Pharma',
+  'IPCALAB': 'Healthcare',
   'IRFC': 'Financial Services',
   'JIOFIN': 'Financial Services',
   'MAXHEALTH': 'Healthcare',
@@ -477,7 +541,7 @@ export const NIFTY50_SECTORS: Record<string, string> = {
   'PAGEIND': 'Textiles',
   'PIIND': 'Chemicals',
   'RECLTD': 'Financial Services',
-  'SAIL': 'Metals',
+  'SAIL': 'Metals & Mining',
   'SIEMENS': 'Capital Goods',
   'SJVN': 'Power',
   'SOLARINDS': 'Chemicals',

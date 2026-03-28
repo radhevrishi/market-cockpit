@@ -80,6 +80,10 @@ export async function GET(request: Request) {
       includeMovement ? fetchNifty500().catch(() => fetchNifty50()) : Promise.resolve(null),
     ]);
 
+    // Debug logging
+    console.log('Board meetings raw:', boardMeetings ? (typeof boardMeetings === 'object' ? Object.keys(boardMeetings) : 'array') : 'null');
+    console.log('Financial results raw:', financialResults ? (typeof financialResults === 'object' ? Object.keys(financialResults) : 'array') : 'null');
+
     // Build a price lookup from current stocks data
     const priceLookup: Record<string, { price: number; change: number; changePercent: number; volume: number }> = {};
     if (stocksData && stocksData.data) {
@@ -98,9 +102,13 @@ export async function GET(request: Request) {
     const results: any[] = [];
     const seenTickers = new Set<string>();
 
-    // Process financial results (actual reported earnings)
-    if (financialResults && Array.isArray(financialResults)) {
-      for (const result of financialResults) {
+    // Process financial results - handle both array and {data: []} formats
+    const financialResultsArray = Array.isArray(financialResults) 
+      ? financialResults 
+      : (financialResults?.data || financialResults?.results || []);
+    
+    if (financialResultsArray && Array.isArray(financialResultsArray)) {
+      for (const result of financialResultsArray) {
         const ticker = result.symbol || '';
         if (!ticker || seenTickers.has(ticker)) continue;
         seenTickers.add(ticker);
@@ -163,9 +171,13 @@ export async function GET(request: Request) {
       }
     }
 
-    // Process board meetings (upcoming earnings that haven't been reported yet)
-    if (boardMeetings && Array.isArray(boardMeetings)) {
-      for (const meeting of boardMeetings) {
+    // Process board meetings - handle both array and {data: []} formats
+    const boardMeetingsArray = Array.isArray(boardMeetings)
+      ? boardMeetings
+      : (boardMeetings?.data || boardMeetings?.results || []);
+
+    if (boardMeetingsArray && Array.isArray(boardMeetingsArray)) {
+      for (const meeting of boardMeetingsArray) {
         const ticker = meeting.bm_symbol || meeting.symbol || '';
         if (!ticker || seenTickers.has(ticker)) continue;
 
