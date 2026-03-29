@@ -9,7 +9,6 @@ import {
   fetchBoardMeetingsForDateRange,
   fetchFinancialResults,
   fetchLatestFinancialResults,
-  fetchCompanyFinancialResults,
   normalizeSector,
 } from '@/lib/nse';
 
@@ -602,69 +601,74 @@ export async function GET(request: Request) {
     }
 
     // ============================================
-    // STEP 7: Enrich quality with actual financial data
+    // STEP 7: Enrich quality via Render proxy (NSE financial results)
     // ============================================
-    // Fetch per-company financial results to determine Good/Weak
+    // NSE financial results API doesn't work from Vercel — route through Render
     const confirmedTickers = Array.from(eventsMap.entries())
-      .filter(([, e]) => e.quality !== 'Upcoming' && e.source === 'NSE')
+      .filter(([, e]) => e.quality !== 'Upcoming')
       .map(([ticker]) => ticker);
 
+    let qualityEnrichedCount = 0;
     if (confirmedTickers.length > 0 && confirmedTickers.length <= 30) {
-      // Batch fetch in parallel (5 at a time to avoid rate limiting)
-      const batchSize = 5;
-      for (let i = 0; i < confirmedTickers.length; i += batchSize) {
-        const batch = confirmedTickers.slice(i, i + batchSize);
-        const results = await Promise.all(
-          batch.map(ticker =>
-            fetchCompanyFinancialResults(ticker)
-              .then(data => ({ ticker, data }))
-              .catch(() => ({ ticker, data: null }))
-          )
+      try {
+        const symbolsStr = confirmedTickers.join(',');
+        const frRes = await fetch(
+          `https://mc-pulse-bots.onrender.com/api/nse/financial-results?symbols=${encodeURIComponent(symbolsStr)}`,
+          { signal: AbortSignal.timeout(15000) } // 15s timeout for per-company fetching
         );
 
-        for (const { ticker, data } of results) {
-          if (!data) continue;
-          const frArr = toArray(data);
-          if (frArr.length === 0) continue;
+        if (frRes.ok) {
+          const frData = await frRes.json();
+          const resultsBySymbol: Record<string, any[]> = frData.results || {};
 
-          // Get the most recent quarterly result
-          const latest = frArr[0];
-          const event = eventsMap.get(ticker);
-          if (!event || event.quality === 'Upcoming') continue;
+          for (const [ticker, frArr] of Object.entries(resultsBySymbol)) {
+            if (!Array.isArray(frArr) || frArr.length === 0) continue;
+            const event = eventsMap.get(ticker);
+            if (!event || event.quality === 'Upcoming') continue;
 
-          // Extract financial metrics
-          const revenue = parseFloat(String(latest.re_revenue || latest.revenue || latest.income || latest.totalIncome || '0').replace(/,/g, ''));
-          const profit = parseFloat(String(latest.re_netProfit || latest.netProfit || latest.re_proLossAftTax || latest.proLossAftTax || '0').replace(/,/g, ''));
-          const eps = parseFloat(String(latest.re_dilEPS || latest.dilutedEPS || latest.re_basicEPS || latest.basicEPS || '0').replace(/,/g, ''));
+            const latest = frArr[0];
 
-          // Previous quarter data (if available) for growth comparison
-          const prev = frArr.length > 1 ? frArr[1] : null;
-          let revenueGrowth = 0;
-          let profitGrowth = 0;
+            // Extract financial metrics
+            const profit = parseFloat(
+              String(latest.re_netProfit || latest.netProfit || latest.re_proLossAftTax || latest.proLossAftTax || '0').replace(/,/g, '')
+            );
+            const revenue = parseFloat(
+              String(latest.re_revenue || latest.revenue || latest.income || latest.totalIncome || '0').replace(/,/g, '')
+            );
 
-          if (prev) {
-            const prevRevenue = parseFloat(String(prev.re_revenue || prev.revenue || prev.income || prev.totalIncome || '0').replace(/,/g, ''));
-            const prevProfit = parseFloat(String(prev.re_netProfit || prev.netProfit || prev.re_proLossAftTax || prev.proLossAftTax || '0').replace(/,/g, ''));
+            // Previous quarter for growth comparison
+            const prev = frArr.length > 1 ? frArr[1] : null;
+            let revenueGrowth = 0;
+            let profitGrowth = 0;
 
-            if (prevRevenue > 0 && revenue > 0) revenueGrowth = ((revenue - prevRevenue) / prevRevenue) * 100;
-            if (prevProfit !== 0 && profit !== 0) profitGrowth = prevProfit > 0 ? ((profit - prevProfit) / prevProfit) * 100 : (profit > 0 ? 100 : -100);
+            if (prev) {
+              const prevRevenue = parseFloat(
+                String(prev.re_revenue || prev.revenue || prev.income || prev.totalIncome || '0').replace(/,/g, '')
+              );
+              const prevProfit = parseFloat(
+                String(prev.re_netProfit || prev.netProfit || prev.re_proLossAftTax || prev.proLossAftTax || '0').replace(/,/g, '')
+              );
+
+              if (prevRevenue > 0 && revenue > 0) revenueGrowth = ((revenue - prevRevenue) / prevRevenue) * 100;
+              if (prevProfit !== 0 && profit !== 0) {
+                profitGrowth = prevProfit > 0 ? ((profit - prevProfit) / prevProfit) * 100 : (profit > 0 ? 100 : -100);
+              }
+            }
+
+            // Quality: Good if profitable with growth, Weak if loss or decline
+            let quality: 'Good' | 'Weak' = 'Good';
+            if (profit < 0) {
+              quality = 'Weak';
+            } else if (prev && revenueGrowth < 0 && profitGrowth < 0) {
+              quality = 'Weak';
+            }
+
+            event.quality = quality;
+            qualityEnrichedCount++;
           }
-
-          // Quality assessment:
-          // Good: profit > 0 AND (revenue growth > 0 OR profit growth > 0)
-          // Weak: profit < 0 OR (revenue decline AND profit decline)
-          let quality: 'Good' | 'Weak' = 'Good';
-
-          if (profit < 0) {
-            quality = 'Weak';
-          } else if (prev && revenueGrowth < -10 && profitGrowth < -10) {
-            quality = 'Weak';
-          } else if (prev && revenueGrowth < 0 && profitGrowth < 0) {
-            quality = 'Weak';
-          }
-
-          event.quality = quality;
         }
+      } catch (frErr) {
+        console.log('Quality proxy unavailable:', String(frErr));
       }
     }
 
@@ -676,13 +680,13 @@ export async function GET(request: Request) {
       confirmedOutcomes: confirmedOutcomes.size,
       financialResults: frResultsByTicker.size,
       bseResults: bseResultsCount,
-      qualityEnriched: confirmedTickers.length,
+      qualityEnriched: qualityEnrichedCount,
       expectedQuarter,
       finalEvents: eventsMap.size,
     });
 
     // ============================================
-    // STEP 7: Filter and sort
+    // STEP 8: Filter and sort
     // ============================================
     let results = Array.from(eventsMap.values());
 
@@ -717,7 +721,7 @@ export async function GET(request: Request) {
           confirmedOutcomes: confirmedOutcomes.size,
           financialResults: frResultsByTicker.size,
           bseResults: bseResultsCount,
-          qualityEnriched: confirmedTickers.length,
+          qualityEnriched: qualityEnrichedCount,
           finalEvents: eventsMap.size,
         },
         results,
