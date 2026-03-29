@@ -1,3 +1,4 @@
+import { NextResponse } from 'next/server';
 import { nseApiFetch } from '@/lib/nse';
 
 export const dynamic = 'force-dynamic';
@@ -129,7 +130,7 @@ function parseDate(dateStr: string): Date {
   return new Date(dateStr);
 }
 
-export async function GET(): Promise<Response> {
+export async function GET() {
   try {
     // Fetch both bulk and block deals from NSE
     const [bulkData, blockData] = await Promise.all([
@@ -158,10 +159,10 @@ export async function GET(): Promise<Response> {
       summary,
     };
 
-    return Response.json(response);
+    return NextResponse.json(response);
   } catch (error) {
     console.error('Smart money API error:', error);
-    return Response.json(
+    return NextResponse.json(
       {
         deals: [],
         summary: { total: 0, bulk: 0, block: 0, institutional: 0, retail: 0 },
