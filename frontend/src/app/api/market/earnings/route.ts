@@ -180,11 +180,23 @@ function isBoardMeetingForResults(meeting: any): boolean {
   if (desc.includes('inter alia') && (desc.includes('result') || desc.includes('financial'))) return true;
   if (desc.includes('inter-alia') && (desc.includes('result') || desc.includes('financial'))) return true;
 
-  // "to consider Dividend" — often comes with results
-  if (purpose.includes('dividend') && desc.includes('result')) return true;
+  // "Financial Results/Dividend" — only if "result" is explicitly in purpose
+  if (purpose.includes('dividend') && purpose.includes('result')) return true;
 
-  // Don't include pure dividend meetings without results mention
+  // Don't include pure dividend meetings without explicit "result" in purpose
   return false;
+}
+
+// Get the last N valid fiscal quarters relative to a date
+// Used to filter out backlogged filings
+function getRecentQuarters(date: Date, count: number): string[] {
+  const quarters: string[] = [];
+  const d = new Date(date);
+  for (let i = 0; i < count; i++) {
+    quarters.push(getFiscalQuarter(d));
+    d.setMonth(d.getMonth() - 3);
+  }
+  return quarters;
 }
 
 // Market cap category
@@ -355,10 +367,21 @@ export async function GET(request: Request) {
 
       const attText = ann.attchmntText || '';
       const quarter = getResultsQuarter(annDate, attText);
+
+      // CRITICAL: Only accept results for RECENT quarters
+      // Filter out backlogged filings (e.g. company submitting Q1 2021 results in March 2026)
+      // Only accept quarters within the last 3 fiscal quarters of the announcement date
+      const validQuarters = getRecentQuarters(annDate, 3);
+      if (!validQuarters.includes(quarter)) continue;
+
       const key = `${ticker}:${quarter}`;
 
-      // Skip duplicates — keep the first (most recent) one
+      // Skip duplicates — keep the first (most recent) one per ticker
+      // Also skip if we already have this ticker with ANY quarter
       if (eventsMap.has(key)) continue;
+      // Only keep ONE result per ticker (the most recent quarter)
+      const existingForTicker = Array.from(eventsMap.values()).find(e => e.ticker === ticker);
+      if (existingForTicker) continue;
 
       const stockInfo = priceLookup[ticker];
       const marketCapCr = (stockInfo?.marketCap || 0) / 10000000;
@@ -427,48 +450,32 @@ export async function GET(request: Request) {
       const key = `${ticker}:${quarter}`;
 
       if (eventsMap.has(key)) continue; // Already have confirmed result
+      // Skip if we already have any result for this ticker
+      const existingForTicker2 = Array.from(eventsMap.values()).find(e => e.ticker === ticker);
+      if (existingForTicker2) continue;
 
-      if (meetingDate < today) {
-        // Past meeting without confirmed result — this means results were likely declared
-        // but we missed the announcement. Include it but mark based on price data.
-        const stockInfo = priceLookup[ticker];
-        const marketCapCr = (stockInfo?.marketCap || 0) / 10000000;
-        const cmp = stockInfo?.price || null;
+      // ONLY include FUTURE meetings as "Upcoming"
+      // Past meetings without a confirmed announcement are EXCLUDED
+      // (earningspulse only shows confirmed results + upcoming, never inferred past)
+      if (meetingDate < today) continue;
 
-        eventsMap.set(key, {
-          ticker,
-          company: meeting.bm_companyName || meeting.sm_name || meeting.companyName || ticker,
-          resultDate: meetingDate.toISOString().split('T')[0],
-          quarter,
-          quality: 'Good', // Default past unconfirmed to Good
-          sector: normalizeSector(stockInfo?.industry) || 'Other',
-          industry: stockInfo?.industry || '',
-          marketCap: getCapCategory(marketCapCr),
-          edp: null,
-          cmp,
-          priceMove: null,
-          source: 'NSE',
-        });
-      } else {
-        // Future meeting — Upcoming
-        const stockInfo = priceLookup[ticker];
-        const marketCapCr = (stockInfo?.marketCap || 0) / 10000000;
+      const stockInfo = priceLookup[ticker];
+      const marketCapCr = (stockInfo?.marketCap || 0) / 10000000;
 
-        eventsMap.set(key, {
-          ticker,
-          company: meeting.bm_companyName || meeting.sm_name || meeting.companyName || ticker,
-          resultDate: meetingDate.toISOString().split('T')[0],
-          quarter,
-          quality: 'Upcoming',
-          sector: normalizeSector(stockInfo?.industry) || 'Other',
-          industry: stockInfo?.industry || '',
-          marketCap: getCapCategory(marketCapCr),
-          edp: null,
-          cmp: stockInfo?.price || null,
-          priceMove: null,
-          source: 'NSE',
-        });
-      }
+      eventsMap.set(key, {
+        ticker,
+        company: meeting.bm_companyName || meeting.sm_name || meeting.companyName || ticker,
+        resultDate: meetingDate.toISOString().split('T')[0],
+        quarter,
+        quality: 'Upcoming',
+        sector: normalizeSector(stockInfo?.industry) || 'Other',
+        industry: stockInfo?.industry || '',
+        marketCap: getCapCategory(marketCapCr),
+        edp: null,
+        cmp: stockInfo?.price || null,
+        priceMove: null,
+        source: 'NSE',
+      });
     }
 
     console.log('Earnings processing:', {
