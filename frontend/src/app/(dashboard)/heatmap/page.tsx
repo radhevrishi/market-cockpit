@@ -15,22 +15,6 @@ interface Stock {
   previousClose: number;
 }
 
-interface EarningsEvent {
-  ticker: string;
-  company: string;
-  resultDate: string;
-  quarter: string;
-  quality: 'Good' | 'Weak' | 'Upcoming' | 'Preview';
-  sector: string;
-  industry: string;
-  marketCap: string;
-  edp: number | null;
-  cmp: number | null;
-  priceMove: number | null;
-  timing: string;
-  source: string;
-}
-
 interface ApiResponse {
   stocks: Stock[];
   gainers: Stock[];
@@ -42,19 +26,6 @@ interface ApiResponse {
     avgChange: number;
     sectors: number;
   };
-  updatedAt: string;
-}
-
-interface EarningsResponse {
-  results: EarningsEvent[];
-  summary: {
-    total: number;
-    good: number;
-    weak: number;
-    upcoming: number;
-  };
-  quarter: string;
-  dateRange: { from: string; to: string };
   updatedAt: string;
 }
 
@@ -93,9 +64,7 @@ interface Filters {
 
 export default function HeatmapPage() {
   const [market, setMarket] = useState<'india' | 'us'>('india');
-  const [mode, setMode] = useState<'daily' | 'earnings'>('daily');
   const [data, setData] = useState<ApiResponse | null>(null);
-  const [earningsData, setEarningsData] = useState<EarningsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -112,33 +81,15 @@ export default function HeatmapPage() {
     try {
       setError(null);
       setIsRefreshing(true);
+      const response = await fetch(`/api/market/quotes?market=${market}`);
 
-      if (mode === 'earnings') {
-        const now = new Date();
-        const year = now.getFullYear();
-        const month = String(now.getMonth() + 1).padStart(2, '0');
-        const monthStr = `${year}-${month}`;
-
-        const response = await fetch(`/api/market/earnings?month=${monthStr}`);
-
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status}`);
-        }
-
-        const json = await response.json();
-        setEarningsData(json);
-        setLastUpdated(new Date());
-      } else {
-        const response = await fetch(`/api/market/quotes?market=${market}`);
-
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status}`);
-        }
-
-        const json = await response.json();
-        setData(json);
-        setLastUpdated(new Date());
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
       }
+
+      const json = await response.json();
+      setData(json);
+      setLastUpdated(new Date());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch data');
     } finally {
@@ -149,7 +100,7 @@ export default function HeatmapPage() {
 
   useEffect(() => {
     fetchData();
-  }, [mode, market]);
+  }, [market]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -157,7 +108,7 @@ export default function HeatmapPage() {
     }, 60000);
 
     return () => clearInterval(interval);
-  }, [mode, market]);
+  }, [market]);
 
   const getColor = (stock: Stock): string => {
     const change = stock.changePercent;
@@ -168,18 +119,6 @@ export default function HeatmapPage() {
     if (change >= -1) return '#FB923C';
     if (change >= -3) return '#F97316';
     if (change >= -5) return '#EF4444';
-    return '#DC2626';
-  };
-
-  const getEarningsColor = (priceMove: number | null): string => {
-    if (priceMove === null) return '#4B5563';
-    if (priceMove >= 10) return '#0D9488';
-    if (priceMove >= 5) return '#10B981';
-    if (priceMove >= 2) return '#34D399';
-    if (priceMove >= 0) return '#6EE7B7';
-    if (priceMove >= -2) return '#FB923C';
-    if (priceMove >= -5) return '#F97316';
-    if (priceMove >= -10) return '#EF4444';
     return '#DC2626';
   };
 
@@ -207,31 +146,6 @@ export default function HeatmapPage() {
 
     return { grouped: { 'All Stocks': stocks }, all: stocks };
   }, [data, filters.sortBy, filters.groupBy]);
-
-  const processEarnings = useMemo(() => {
-    if (!earningsData) return { grouped: {}, all: [] };
-
-    let events = [...earningsData.results];
-
-    // Filter to only reported results (not upcoming)
-    events = events.filter(e => e.quality !== 'Upcoming');
-
-    // Sort by price move
-    events.sort((a, b) => (b.priceMove ?? 0) - (a.priceMove ?? 0));
-
-    if (filters.groupBy === 'sector') {
-      const grouped: { [key: string]: EarningsEvent[] } = {};
-      events.forEach((event) => {
-        if (!grouped[event.sector]) {
-          grouped[event.sector] = [];
-        }
-        grouped[event.sector].push(event);
-      });
-      return { grouped, all: events };
-    }
-
-    return { grouped: { 'All Results': events }, all: events };
-  }, [earningsData, filters.groupBy]);
 
   const calculateTreemap = (stocks: Stock[], width: number, height: number): TreemapRect[] => {
     if (stocks.length === 0) return [];
@@ -312,59 +226,28 @@ export default function HeatmapPage() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
           <h1 style={{ fontSize: '32px', fontWeight: 'bold', margin: 0 }}>Market Heatmap</h1>
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-            {/* Mode Toggle */}
+            {/* Market Toggle */}
             <div style={{ display: 'flex', gap: '8px', backgroundColor: THEME.card, padding: '4px', borderRadius: '8px', border: `1px solid ${THEME.border}` }}>
-              {[
-                { value: 'daily', label: 'Daily Changes' },
-                { value: 'earnings', label: 'Earnings Moves' },
-              ].map((m) => (
+              {(['india', 'us'] as const).map((m) => (
                 <button
-                  key={m.value}
-                  onClick={() => {
-                    setMode(m.value as 'daily' | 'earnings');
-                    setLoading(true);
-                  }}
+                  key={m}
+                  onClick={() => setMarket(m)}
                   style={{
                     padding: '8px 16px',
                     borderRadius: '6px',
                     border: 'none',
-                    backgroundColor: mode === m.value ? THEME.accent : 'transparent',
-                    color: mode === m.value ? '#FFFFFF' : THEME.textSecondary,
+                    backgroundColor: market === m ? THEME.accent : 'transparent',
+                    color: market === m ? '#FFFFFF' : THEME.textSecondary,
                     cursor: 'pointer',
                     fontSize: '14px',
                     fontWeight: '500',
                     transition: 'all 0.3s ease',
                   }}
                 >
-                  {m.label}
+                  {m.toUpperCase()}
                 </button>
               ))}
             </div>
-
-            {/* Market Toggle (only show for daily mode) */}
-            {mode === 'daily' && (
-              <div style={{ display: 'flex', gap: '8px', backgroundColor: THEME.card, padding: '4px', borderRadius: '8px', border: `1px solid ${THEME.border}` }}>
-                {(['india', 'us'] as const).map((m) => (
-                  <button
-                    key={m}
-                    onClick={() => setMarket(m)}
-                    style={{
-                      padding: '8px 16px',
-                      borderRadius: '6px',
-                      border: 'none',
-                      backgroundColor: market === m ? THEME.accent : 'transparent',
-                      color: market === m ? '#FFFFFF' : THEME.textSecondary,
-                      cursor: 'pointer',
-                      fontSize: '14px',
-                      fontWeight: '500',
-                      transition: 'all 0.3s ease',
-                    }}
-                  >
-                    {m.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-            )}
 
             {/* Refresh Button */}
             <button
@@ -403,8 +286,8 @@ export default function HeatmapPage() {
           </div>
         </div>
 
-        {/* Summary Stats - Daily Mode */}
-        {mode === 'daily' && data && !loading && (
+        {/* Summary Stats */}
+        {data && !loading && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px' }}>
             <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px' }}>
               <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>Total</div>
@@ -433,50 +316,6 @@ export default function HeatmapPage() {
                 {(() => {
                   const worst = data?.stocks?.length ? [...data.stocks].sort((a, b) => a.changePercent - b.changePercent)[0] : null;
                   return worst ? worst.ticker : 'N/A';
-                })()}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Summary Stats - Earnings Mode */}
-        {mode === 'earnings' && earningsData && !loading && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px' }}>
-            <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px' }}>
-              <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>Results</div>
-              <div style={{ fontSize: '20px', fontWeight: 'bold', color: THEME.accent }}>{earningsData.summary.total}</div>
-            </div>
-            <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px' }}>
-              <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>Gainers</div>
-              <div style={{ fontSize: '20px', fontWeight: 'bold', color: THEME.green }}>
-                {processEarnings.all.filter(e => (e.priceMove ?? 0) > 0).length}
-              </div>
-            </div>
-            <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px' }}>
-              <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>Losers</div>
-              <div style={{ fontSize: '20px', fontWeight: 'bold', color: THEME.red }}>
-                {processEarnings.all.filter(e => (e.priceMove ?? 0) < 0).length}
-              </div>
-            </div>
-            <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px' }}>
-              <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>Avg Move</div>
-              <div style={{ fontSize: '20px', fontWeight: 'bold', color: THEME.textPrimary }}>
-                {(() => {
-                  const avg = processEarnings.all.length > 0
-                    ? processEarnings.all.reduce((sum, e) => sum + (e.priceMove ?? 0), 0) / processEarnings.all.length
-                    : 0;
-                  return `${avg > 0 ? '+' : ''}${avg.toFixed(2)}%`;
-                })()}
-              </div>
-            </div>
-            <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px' }}>
-              <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>Best Move</div>
-              <div style={{ fontSize: '20px', fontWeight: 'bold', color: THEME.green }}>
-                {(() => {
-                  const best = processEarnings.all.length > 0
-                    ? processEarnings.all.reduce((max, e) => (e.priceMove ?? 0) > (max.priceMove ?? 0) ? e : max)
-                    : null;
-                  return best ? `${best.ticker} +${(best.priceMove ?? 0).toFixed(2)}%` : 'N/A';
                 })()}
               </div>
             </div>
@@ -517,8 +356,8 @@ export default function HeatmapPage() {
         </div>
       )}
 
-      {/* Controls - Only for Daily Mode */}
-      {mode === 'daily' && data && !loading && (
+      {/* Controls */}
+      {data && !loading && (
         <div style={{
           backgroundColor: THEME.card,
           border: `1px solid ${THEME.border}`,
@@ -611,63 +450,8 @@ export default function HeatmapPage() {
         </div>
       )}
 
-      {/* Earnings Grid */}
-      {mode === 'earnings' && earningsData && !loading && (
-        <div>
-          {Object.entries(processEarnings.grouped).map(([groupName, events]) => (
-            <div key={groupName} style={{ marginBottom: '32px' }}>
-              {filters.groupBy === 'sector' && (
-                <h2 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '12px', color: THEME.textSecondary }}>
-                  {groupName}
-                </h2>
-              )}
-
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
-                  gap: '12px',
-                  marginBottom: '24px',
-                }}
-              >
-                {events.map((event) => (
-                  <div
-                    key={event.ticker}
-                    onMouseEnter={() => setHoveredTicker(event.ticker)}
-                    onMouseLeave={() => setHoveredTicker(null)}
-                    style={{
-                      backgroundColor: getEarningsColor(event.priceMove),
-                      border: hoveredTicker === event.ticker ? `2px solid ${THEME.accent}` : `1px solid ${THEME.border}`,
-                      borderRadius: '8px',
-                      padding: '12px',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                      opacity: hoveredTicker === event.ticker ? 1 : 0.85,
-                      transform: hoveredTicker === event.ticker ? 'scale(1.05)' : 'scale(1)',
-                    }}
-                  >
-                    <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#FFFFFF', marginBottom: '4px' }}>
-                      {event.ticker}
-                    </div>
-                    <div style={{ fontSize: '11px', color: 'rgba(255, 255, 255, 0.8)', marginBottom: '6px' }}>
-                      {event.company.substring(0, 18)}
-                    </div>
-                    <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#FFFFFF', marginBottom: '4px' }}>
-                      {(event.priceMove ?? 0) > 0 ? '+' : ''}{(event.priceMove ?? 0).toFixed(2)}%
-                    </div>
-                    <div style={{ fontSize: '9px', color: 'rgba(255, 255, 255, 0.7)' }}>
-                      {event.quality}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Treemap - Daily Mode */}
-      {mode === 'daily' && data && !loading && (
+      {/* Treemap */}
+      {data && !loading && (
         <div>
           {Object.entries(processStocks.grouped).map(([groupName, groupStocks]) => {
             const rects = calculateTreemap(groupStocks, 1200, 400);
@@ -791,11 +575,9 @@ export default function HeatmapPage() {
       {/* Color Legend */}
       {!loading && (
         <div style={{ marginTop: '32px', padding: '16px', backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '12px' }}>
-          <h3 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px', color: THEME.textSecondary }}>
-            {mode === 'daily' ? 'Daily Change' : 'Price Move'} Color Scale
-          </h3>
+          <h3 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px', color: THEME.textSecondary }}>Color Scale</h3>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            {mode === 'daily' ? [
+            {[
               { label: '>5%', color: '#0D9488' },
               { label: '3-5%', color: '#10B981' },
               { label: '1-3%', color: '#34D399' },
@@ -804,15 +586,6 @@ export default function HeatmapPage() {
               { label: '-3 to -1%', color: '#F97316' },
               { label: '-5 to -3%', color: '#EF4444' },
               { label: '<-5%', color: '#DC2626' },
-            ] : [
-              { label: '>10%', color: '#0D9488' },
-              { label: '5-10%', color: '#10B981' },
-              { label: '2-5%', color: '#34D399' },
-              { label: '0-2%', color: '#6EE7B7' },
-              { label: '-2-0%', color: '#FB923C' },
-              { label: '-5 to -2%', color: '#F97316' },
-              { label: '-10 to -5%', color: '#EF4444' },
-              { label: '<-10%', color: '#DC2626' },
             ].map((item) => (
               <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <div
