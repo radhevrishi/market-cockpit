@@ -216,11 +216,15 @@ HIGH_IMPORTANCE = [
     "earnings", "quarterly results", "q1", "q2", "q3", "q4", "profit", "revenue",
     "beat", "miss", "guidance", "merger", "acquisition", "buyout", "ceo", "resign",
     "fda", "sebi", "rbi", "fed", "rate cut", "rate hike", "interest rate",
-    "bankruptcy", "fraud", "investigation", "lawsuit", "contract win", "order win",
+    "bankruptcy", "fraud", "investigation", "contract win", "order win",
     "record high", "record low", "all-time", "billion", "crore", "trillion",
     "fii", "foreign investor", "dii", "institutional", "block deal",
     "gdp", "inflation", "cpi", "pmi", "unemployment",
     "tariff", "sanction", "trade war", "geopolitical",
+    # Geopolitical / military — oil-disruption signals
+    "hormuz blockade", "strait of hormuz", "iran lng halt", "iran oil",
+    "us meu deployment", "carrier strike group", "f-22 ovda",
+    "oil embargo", "energy sanctions", "oil supply disruption",
 ]
 MEDIUM_IMPORTANCE = [
     "upgrade", "downgrade", "target price", "buy", "sell", "hold", "overweight",
@@ -248,7 +252,7 @@ BOTTLENECK_KEYWORDS = {
     ],
     "HBM_MEMORY": [
         "hbm shortage", "hbm supply", "hbm bottleneck", "hbm capacity", "hbm constraint",
-        "hbm3", "hbm3e", "hbm4", "high bandwidth memory", "memory bottleneck",
+        "hbm3", "hbm3e", "hbm4", "hbm4 mass prod", "high bandwidth memory", "memory bottleneck",
         "dram shortage", "dram supply constraint", "dram bottleneck", "memory supply crunch",
         "memory capacity constraint", "ai memory demand",
         "memory supply shortage", "memory production capacity",
@@ -283,6 +287,7 @@ BOTTLENECK_KEYWORDS = {
         "thermal management bottleneck", "heat dissipation constraint",
         "data center capacity shortage", "data center capacity constraint",
         "ai factory campus", "data center buildout",
+        "data center cooling", "ai fab india",
     ],
     "RARE_EARTH": [
         "rare earth shortage", "rare earth supply", "rare earth bottleneck",
@@ -449,6 +454,21 @@ LOW_QUALITY_KEYWORDS = [
     "gold price", "silver price", "weather", "astrology", "zodiac",
     "horoscope", "lottery", "game", "gaming", "fashion",
     "beauty", "health tips", "home remedies", "recipe",
+    # Retail tips / penny stock noise
+    "penny stock", "stocks to buy on monday", "stocks to buy today",
+    "stocks to buy under", "under ₹100", "under ₹10", "under rs",
+    "three stocks to buy", "two stocks to buy", "five stocks to buy",
+    "stock to watch on monday", "here's why you should buy",
+    "jewellery stock to watch", "recommends three stocks",
+    # Lifestyle / trivia
+    "pokémon", "pokemon", "logan paul", "viral food trend",
+    "hidden cost of viral", "collectible", "celebrity gossip",
+    # Calendar-only
+    "bank holiday", "bank holidays",
+    # Listicle investing clickbait
+    "ultra-high-yielding dividend", "supercharged growth stock",
+    "unstoppable ai stock", "soars 318%", "soars 141%",
+    "better space stock",
 ]
 
 

@@ -333,6 +333,28 @@ const JUNK_HEADLINE_PATTERNS = [
   /\b(self-fulfilling prophecy|overestimate risk|underestimate opportunity)\b/i,
   // Generic Warren Buffett clickbait
   /\bwarren buffett\b.*\b(buying|selling|loaded up|dumped|poured)\b/i,
+
+  // Retail tips / penny stock noise (India-specific)
+  /\b(under ₹|under rs\.?\s*)\d+/i,
+  /\bpenny stock/i,
+  /\bstocks? to (buy|sell|watch) (on|this) (monday|tuesday|wednesday|thursday|friday)/i,
+  /\bjewellery stock to watch/i,
+  /\brecommends? (three|two|five|3|2|5) stocks?\b/i,
+  /\b(buy or sell):?\s/i,
+
+  // Listicle investing clickbait with specific % claims
+  /\b(soars?|surge|jump)\s+\d{2,}%/i,
+  /\b\d+ (supercharged|unstoppable|incredible|explosive) .* stock/i,
+  /\bultra-high-yielding dividend/i,
+  /\bload up on these \d/i,
+  /\bbetter (space|tech|ai) stock:/i,
+
+  // Bank holidays / calendar filler
+  /\bbank holiday/i,
+
+  // Lifestyle / trivia
+  /\b(pokémon|pokemon|logan paul)\b/i,
+  /\bviral food trend/i,
 ];
 
 const JUNK_SOURCE_PATTERNS = [
