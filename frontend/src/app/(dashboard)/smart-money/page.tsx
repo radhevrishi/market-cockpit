@@ -22,9 +22,15 @@ interface Summary {
   retail: number;
 }
 
+interface MarketStatus {
+  open: boolean;
+  lastTradingDay: string;
+}
+
 interface ApiResponse {
   deals: Deal[];
   summary: Summary;
+  marketStatus?: MarketStatus;
 }
 
 const THEME = {
@@ -445,7 +451,21 @@ export default function SmartMoneyPage() {
                 color: THEME.textSecondary,
               }}
             >
-              No deals found matching your filters.
+              {data.summary.total === 0 && data.marketStatus ? (
+                <div>
+                  <div style={{ fontSize: '48px', marginBottom: '16px' }}>📊</div>
+                  <div style={{ fontSize: '18px', fontWeight: '600', color: THEME.textPrimary, marginBottom: '8px' }}>
+                    {data.marketStatus.open ? 'No Deals Yet Today' : 'Market Closed'}
+                  </div>
+                  <div style={{ fontSize: '14px', color: THEME.textSecondary, maxWidth: '400px', margin: '0 auto' }}>
+                    {data.marketStatus.open
+                      ? 'Bulk and block deals will appear here as they are reported during market hours (9:15 AM – 3:30 PM IST).'
+                      : `Last trading session: ${data.marketStatus.lastTradingDay}. Deals from the last session are shown during market hours only — NSE clears deal data after close.`}
+                  </div>
+                </div>
+              ) : (
+                'No deals found matching your filters.'
+              )}
             </div>
           ) : (
             <div style={{ overflowX: 'auto' }}>
