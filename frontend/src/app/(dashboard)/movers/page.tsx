@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { RefreshCw, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { RefreshCw, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, ChevronUp, ChevronDown } from 'lucide-react';
 
 interface Stock {
   ticker: string;
@@ -20,6 +20,10 @@ type CapFilter = 'All' | 'Large' | 'Mid' | 'Small' | 'Mid & Small';
 
 // Move filter tokens — multiple can be active simultaneously
 type MoveToken = '+2%' | '+4%' | '+6%' | '-2%' | '-4%' | '-6%';
+
+type SortKey = 'ticker' | 'sector' | 'cap' | 'price' | 'changePercent' | 'volume';
+type SortDir = 'asc' | 'desc';
+interface SortState { key: SortKey; dir: SortDir }
 
 const BG = '#0A0E1A', CARD = '#0D1623', BORDER = '#1A2840', ACCENT = '#0F7ABF';
 const GREEN = '#10B981', RED = '#EF4444', TEXT1 = '#F5F7FA', TEXT2 = '#8A95A3', TEXT3 = '#4A5B6C';
@@ -77,6 +81,19 @@ export default function MoversPage() {
   const [capFilter, setCapFilter] = useState<CapFilter>('All');
   const [sectorFilter, setSectorFilter] = useState<string>('All');
   const [moveTokens, setMoveTokens] = useState<Set<MoveToken>>(new Set());
+  const [gainerSort, setGainerSort] = useState<SortState>({ key: 'changePercent', dir: 'desc' });
+  const [loserSort, setLoserSort] = useState<SortState>({ key: 'changePercent', dir: 'asc' });
+
+  const toggleSort = useCallback((table: 'gainer' | 'loser', key: SortKey) => {
+    const setter = table === 'gainer' ? setGainerSort : setLoserSort;
+    const defaultDir = table === 'gainer' ? 'desc' : 'asc';
+    setter(prev => {
+      if (prev.key === key) return { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' };
+      // New column — default desc for numbers, asc for text
+      const dir = key === 'ticker' || key === 'sector' || key === 'cap' ? 'asc' : defaultDir;
+      return { key, dir };
+    });
+  }, []);
 
   const toggleMove = useCallback((token: MoveToken) => {
     setMoveTokens(prev => {
@@ -142,15 +159,35 @@ export default function MoversPage() {
     });
   }, [allStocks, capFilter, sectorFilter, moveTokens]);
 
-  const gainers = useMemo(() =>
-    [...filtered].filter(s => s.changePercent > 0).sort((a, b) => b.changePercent - a.changePercent).slice(0, 25),
-    [filtered]
-  );
+  const sortStocks = useCallback((stocks: Stock[], sort: SortState): Stock[] => {
+    const mult = sort.dir === 'asc' ? 1 : -1;
+    return [...stocks].sort((a, b) => {
+      let cmp = 0;
+      switch (sort.key) {
+        case 'ticker': cmp = a.ticker.localeCompare(b.ticker); break;
+        case 'sector': cmp = a.sector.localeCompare(b.sector); break;
+        case 'cap': {
+          const order: Record<string, number> = { Large: 0, Mid: 1, Small: 2 };
+          cmp = (order[a.cap] ?? 3) - (order[b.cap] ?? 3);
+          break;
+        }
+        case 'price': cmp = a.price - b.price; break;
+        case 'changePercent': cmp = a.changePercent - b.changePercent; break;
+        case 'volume': cmp = a.volume - b.volume; break;
+      }
+      return cmp * mult;
+    });
+  }, []);
 
-  const losers = useMemo(() =>
-    [...filtered].filter(s => s.changePercent < 0).sort((a, b) => a.changePercent - b.changePercent).slice(0, 25),
-    [filtered]
-  );
+  const gainers = useMemo(() => {
+    const base = filtered.filter(s => s.changePercent > 0);
+    return sortStocks(base, gainerSort).slice(0, 25);
+  }, [filtered, gainerSort, sortStocks]);
+
+  const losers = useMemo(() => {
+    const base = filtered.filter(s => s.changePercent < 0);
+    return sortStocks(base, loserSort).slice(0, 25);
+  }, [filtered, loserSort, sortStocks]);
 
   const sectors = useMemo(() => {
     const sectorSet = new Set(allStocks.map(s => s.sector));
@@ -251,8 +288,36 @@ export default function MoversPage() {
     </tr>
   );
 
-  const TH = ['#', 'Stock', 'Sector', 'Cap', 'Price', 'Change', 'Vol'];
-  const thAlign = (h: string) => h === 'Price' || h === 'Change' || h === 'Vol' ? 'right' as const : h === 'Cap' ? 'center' as const : 'left' as const;
+  const columns: { label: string; key: SortKey | null; align: 'left' | 'center' | 'right' }[] = [
+    { label: '#', key: null, align: 'left' },
+    { label: 'Stock', key: 'ticker', align: 'left' },
+    { label: 'Sector', key: 'sector', align: 'left' },
+    { label: 'Cap', key: 'cap', align: 'center' },
+    { label: 'Price', key: 'price', align: 'right' },
+    { label: 'Change', key: 'changePercent', align: 'right' },
+    { label: 'Vol', key: 'volume', align: 'right' },
+  ];
+
+  const SortableHeader = ({ col, sort, table }: { col: typeof columns[0]; sort: SortState; table: 'gainer' | 'loser' }) => {
+    const active = col.key !== null && sort.key === col.key;
+    return (
+      <th
+        onClick={col.key ? () => toggleSort(table, col.key!) : undefined}
+        style={{
+          padding: '8px', textAlign: col.align, fontSize: '10px', color: active ? ACCENT : TEXT3,
+          fontWeight: active ? '700' : '500', textTransform: 'uppercase', letterSpacing: '0.5px',
+          position: 'sticky', top: 0, backgroundColor: BG, zIndex: 1,
+          cursor: col.key ? 'pointer' : 'default', userSelect: 'none', whiteSpace: 'nowrap',
+          transition: 'color 0.15s',
+        }}
+      >
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
+          {col.label}
+          {active && (sort.dir === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />)}
+        </span>
+      </th>
+    );
+  };
 
   return (
     <div style={{ backgroundColor: BG, color: TEXT1, minHeight: '100vh', padding: '16px 20px' }}>
@@ -411,7 +476,7 @@ export default function MoversPage() {
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ backgroundColor: BG }}>
-                    {TH.map(h => <th key={h} style={{ padding: '8px', textAlign: thAlign(h), fontSize: '10px', color: TEXT3, fontWeight: '500', textTransform: 'uppercase', letterSpacing: '0.5px', position: 'sticky', top: 0, backgroundColor: BG, zIndex: 1 }}>{h}</th>)}
+                    {columns.map(col => <SortableHeader key={col.label} col={col} sort={gainerSort} table="gainer" />)}
                   </tr>
                 </thead>
                 <tbody>
@@ -433,7 +498,7 @@ export default function MoversPage() {
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ backgroundColor: BG }}>
-                    {TH.map(h => <th key={h} style={{ padding: '8px', textAlign: thAlign(h), fontSize: '10px', color: TEXT3, fontWeight: '500', textTransform: 'uppercase', letterSpacing: '0.5px', position: 'sticky', top: 0, backgroundColor: BG, zIndex: 1 }}>{h}</th>)}
+                    {columns.map(col => <SortableHeader key={col.label} col={col} sort={loserSort} table="loser" />)}
                   </tr>
                 </thead>
                 <tbody>
