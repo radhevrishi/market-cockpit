@@ -134,10 +134,10 @@ function getSubTextOpacity(pct: number): number {
   return 0.75;
 }
 
-type HeatmapTab = 'midcap150' | 'smallcap150';
+type HeatmapTab = 'nifty50' | 'midcap150' | 'smallcap150';
 
 export default function HeatmapPage() {
-  const [tab, setTab] = useState<HeatmapTab>('midcap150');
+  const [tab, setTab] = useState<HeatmapTab>('nifty50');
   const [dataMap, setDataMap] = useState<Record<string, ApiResponse>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -147,18 +147,20 @@ export default function HeatmapPage() {
   const [containerSize, setContainerSize] = useState({ w: 1200, h: 680 });
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const fetchBoth = useCallback(async () => {
+  const fetchAll = useCallback(async () => {
     try {
       setError(null);
       setIsRefreshing(true);
-      const [mcRes, scRes] = await Promise.all([
+      const [n50Res, mcRes, scRes] = await Promise.all([
+        fetch('/api/market/quotes?market=india&index=nifty50'),
         fetch('/api/market/quotes?market=india&index=midcap150'),
         fetch('/api/market/quotes?market=india&index=smallcap150'),
       ]);
+      if (!n50Res.ok) throw new Error(`NIFTY 50 API: ${n50Res.status}`);
       if (!mcRes.ok) throw new Error(`Midcap API: ${mcRes.status}`);
       if (!scRes.ok) throw new Error(`Smallcap API: ${scRes.status}`);
-      const [mcJson, scJson] = await Promise.all([mcRes.json(), scRes.json()]);
-      setDataMap({ midcap150: mcJson, smallcap150: scJson });
+      const [n50Json, mcJson, scJson] = await Promise.all([n50Res.json(), mcRes.json(), scRes.json()]);
+      setDataMap({ nifty50: n50Json, midcap150: mcJson, smallcap150: scJson });
       setLastUpdated(new Date());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch');
@@ -168,8 +170,8 @@ export default function HeatmapPage() {
     }
   }, []);
 
-  useEffect(() => { fetchBoth(); }, [fetchBoth]);
-  useEffect(() => { const i = setInterval(fetchBoth, 60000); return () => clearInterval(i); }, [fetchBoth]);
+  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => { const i = setInterval(fetchAll, 60000); return () => clearInterval(i); }, [fetchAll]);
 
   // Responsive
   useEffect(() => {
@@ -248,6 +250,7 @@ export default function HeatmapPage() {
           {/* Tab Toggle */}
           <div style={{ display: 'flex', backgroundColor: CARD, borderRadius: '8px', border: `1px solid ${BORDER}`, padding: '3px' }}>
             {([
+              { key: 'nifty50' as HeatmapTab, label: 'NIFTY 50' },
               { key: 'midcap150' as HeatmapTab, label: 'Midcap 150' },
               { key: 'smallcap150' as HeatmapTab, label: 'Smallcap 150' },
             ]).map(t => (
@@ -278,7 +281,7 @@ export default function HeatmapPage() {
               </span>
             </div>
           )}
-          <button onClick={fetchBoth} disabled={isRefreshing} style={{
+          <button onClick={fetchAll} disabled={isRefreshing} style={{
             padding: '6px 10px', borderRadius: '6px', border: `1px solid ${BORDER}`, backgroundColor: CARD,
             color: ACCENT, cursor: isRefreshing ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center',
             opacity: isRefreshing ? 0.5 : 1, transition: 'all 0.2s',
@@ -326,10 +329,10 @@ export default function HeatmapPage() {
               const isHov = hoveredTicker === r.stock.ticker;
               const pct = r.stock.changePercent;
               const minD = Math.min(r.w, r.h);
-              const showTicker = minD > 26;
-              const showPct = minD > 38;
-              const showPrice = r.w > 70 && r.h > 55;
-              const fs = Math.min(13, Math.max(8, minD / 4.5));
+              const showTicker = minD > 18;
+              const showPct = minD > 30;
+              const showPrice = r.w > 60 && r.h > 46;
+              const fs = Math.min(12, Math.max(7, minD / 4));
 
               return (
                 <g key={r.stock.ticker}>

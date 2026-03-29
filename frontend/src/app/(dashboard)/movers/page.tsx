@@ -30,7 +30,7 @@ interface ApiResponse {
   updatedAt: string;
 }
 
-type CapFilter = 'All' | 'Midcap' | 'Smallcap';
+type CapFilter = 'All' | 'Large' | 'Mid' | 'Small';
 type MoveFilter = 'All' | '2%+' | '4%+' | '6%+';
 
 export default function MoversPage() {
@@ -48,32 +48,19 @@ export default function MoversPage() {
     try {
       setError(null);
       setIsRefreshing(true);
-      const [midRes, smallRes] = await Promise.all([
-        fetch('/api/market/quotes?market=india&index=midsmall50'),
-        fetch('/api/market/quotes?market=india&index=smallcap150'),
-      ]);
+      // Fetch full Indian market data (NIFTY 500 + Midcap 250 + Smallcap 250)
+      const res = await fetch('/api/market/quotes?market=india');
+      if (!res.ok) throw new Error(`API error: ${res.status}`);
+      const json = await res.json();
 
-      if (!midRes.ok) throw new Error(`API error: ${midRes.status}`);
-      if (!smallRes.ok) throw new Error(`API error: ${smallRes.status}`);
-
-      const midJson = await midRes.json();
-      const smallJson = await smallRes.json();
-
-      const tickerSet = new Set<string>();
-      const allStocks: Stock[] = [];
-
-      for (const s of (midJson.stocks || [])) {
-        if (!tickerSet.has(s.ticker)) {
-          tickerSet.add(s.ticker);
-          allStocks.push({ ...s, indexGroup: (s.indexGroup || '').includes('Midcap') ? 'Midcap' : 'Smallcap' });
-        }
-      }
-      for (const s of (smallJson.stocks || [])) {
-        if (!tickerSet.has(s.ticker)) {
-          tickerSet.add(s.ticker);
-          allStocks.push({ ...s, indexGroup: 'Smallcap' });
-        }
-      }
+      const allStocks: Stock[] = (json.stocks || []).map((s: any) => {
+        // Tag by market cap: Large (>50k Cr), Mid (10k-50k), Small (<10k)
+        const mcap = s.marketCap || 0;
+        let cap = 'Small';
+        if (mcap > 500000) cap = 'Large';
+        else if (mcap > 100000) cap = 'Mid';
+        return { ...s, indexGroup: cap };
+      });
 
       const gainers = [...allStocks].sort((a, b) => b.changePercent - a.changePercent).filter(s => s.changePercent > 0);
       const losers = [...allStocks].sort((a, b) => a.changePercent - b.changePercent).filter(s => s.changePercent < 0);
@@ -107,11 +94,7 @@ export default function MoversPage() {
   }, [data]);
 
   const applyFilters = (stocks: Stock[]) => stocks.filter(s => {
-    if (capFilter !== 'All') {
-      const g = (s.indexGroup || '').toLowerCase();
-      if (capFilter === 'Midcap' && !g.includes('midcap')) return false;
-      if (capFilter === 'Smallcap' && !g.includes('smallcap')) return false;
-    }
+    if (capFilter !== 'All' && s.indexGroup !== capFilter) return false;
     if (sectorFilter !== 'All' && s.sector !== sectorFilter) return false;
     const a = Math.abs(s.changePercent);
     if (moveFilter === '2%+' && a < 2) return false;
@@ -160,9 +143,9 @@ export default function MoversPage() {
       <td style={{ padding: '10px 8px', textAlign: 'center' }}>
         <span style={{
           fontSize: '9px', fontWeight: '600', padding: '2px 6px', borderRadius: '3px',
-          backgroundColor: (stock.indexGroup || '').includes('Midcap') ? 'rgba(59,130,246,0.15)' : 'rgba(234,179,8,0.15)',
-          color: (stock.indexGroup || '').includes('Midcap') ? '#60A5FA' : '#FBBF24',
-        }}>{(stock.indexGroup || '').includes('Midcap') ? 'MID' : 'SML'}</span>
+          backgroundColor: stock.indexGroup === 'Large' ? 'rgba(99,102,241,0.15)' : stock.indexGroup === 'Mid' ? 'rgba(59,130,246,0.15)' : 'rgba(234,179,8,0.15)',
+          color: stock.indexGroup === 'Large' ? '#818CF8' : stock.indexGroup === 'Mid' ? '#60A5FA' : '#FBBF24',
+        }}>{stock.indexGroup === 'Large' ? 'LRG' : stock.indexGroup === 'Mid' ? 'MID' : 'SML'}</span>
       </td>
       <td style={{ padding: '10px 8px', textAlign: 'right', fontSize: '13px', color: TEXT1, fontWeight: '500', fontVariantNumeric: 'tabular-nums' }}>
         {'\u20B9'}{stock.price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
@@ -185,7 +168,7 @@ export default function MoversPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
         <div>
           <h1 style={{ fontSize: '22px', fontWeight: '700', margin: 0, letterSpacing: '-0.3px' }}>Market Movers</h1>
-          <p style={{ fontSize: '11px', color: TEXT3, margin: '2px 0 0' }}>Mid & Small Cap — Live from NSE</p>
+          <p style={{ fontSize: '11px', color: TEXT3, margin: '2px 0 0' }}>NIFTY 500 + Midcap 250 + Smallcap 250 — Live from NSE</p>
         </div>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
           <button onClick={fetchData} disabled={isRefreshing} style={{
@@ -222,7 +205,7 @@ export default function MoversPage() {
       {!loading && (
         <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
           <div style={{ display: 'flex', gap: '2px', backgroundColor: CARD, padding: '3px', borderRadius: '8px', border: `1px solid ${BORDER}` }}>
-            {(['All', 'Midcap', 'Smallcap'] as CapFilter[]).map(f => <Pill key={f} label={f} active={capFilter === f} onClick={() => setCapFilter(f)} />)}
+            {(['All', 'Large', 'Mid', 'Small'] as CapFilter[]).map(f => <Pill key={f} label={f} active={capFilter === f} onClick={() => setCapFilter(f)} />)}
           </div>
           <div style={{ display: 'flex', gap: '2px', backgroundColor: CARD, padding: '3px', borderRadius: '8px', border: `1px solid ${BORDER}` }}>
             {(['All', '2%+', '4%+', '6%+'] as MoveFilter[]).map(f => <Pill key={f} label={f} active={moveFilter === f} onClick={() => setMoveFilter(f)} />)}

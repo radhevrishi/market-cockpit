@@ -20,6 +20,9 @@ export async function GET(request: Request) {
       if (index === 'midcap150') {
         return await fetchMidcap150Data();
       }
+      if (index === 'nifty50') {
+        return await fetchNifty50Data();
+      }
       return await fetchIndianData();
     } else {
       return await fetchUSData();
@@ -231,6 +234,63 @@ async function fetchMidcap150Data() {
       sectors: [...new Set(validStocks.map(s => s.sector))].length,
     },
     source: 'NSE India (Midcap 150)',
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+async function fetchNifty50Data() {
+  const [sectorMap, n50Data] = await Promise.all([
+    buildDynamicSectorMap(),
+    fetchNifty50().catch(() => null),
+  ]);
+
+  const stocks: any[] = [];
+  const tickerSet = new Set<string>();
+
+  const mapStock = (item: any) => {
+    const symbol = item.symbol || '';
+    const sector = sectorMap[symbol] || normalizeSector(item.meta?.industry || item.industry) || NIFTY50_SECTORS[symbol] || 'Other';
+    const ffmc = item.ffmc || item.freeFloatMktCap || 0;
+    return {
+      ticker: symbol,
+      company: item.meta?.companyName || item.identifier || symbol,
+      sector,
+      price: item.lastPrice || item.ltP || 0,
+      change: typeof item.change === 'number' ? item.change : 0,
+      changePercent: item.pChange || 0,
+      volume: item.totalTradedVolume || item.trdVol || 0,
+      marketCap: ffmc > 0 ? ffmc : Math.round((item.lastPrice || 0) * (item.totalTradedVolume || 1) / 10000),
+      previousClose: item.previousClose || item.prevClose || 0,
+      indexGroup: 'NIFTY 50',
+    };
+  };
+
+  if (n50Data && n50Data.data) {
+    for (const item of n50Data.data) {
+      const mapped = mapStock(item);
+      if (mapped.ticker && mapped.price > 0 && !tickerSet.has(mapped.ticker)) {
+        stocks.push(mapped);
+        tickerSet.add(mapped.ticker);
+      }
+    }
+  }
+
+  const validStocks = stocks.filter(s => s.price > 0);
+  const gainers = [...validStocks].sort((a, b) => b.changePercent - a.changePercent).filter(s => s.changePercent > 0).slice(0, 30);
+  const losers = [...validStocks].sort((a, b) => a.changePercent - b.changePercent).filter(s => s.changePercent < 0).slice(0, 30);
+
+  return NextResponse.json({
+    stocks: validStocks,
+    gainers,
+    losers,
+    summary: {
+      total: validStocks.length,
+      gainersCount: validStocks.filter(s => s.changePercent > 0).length,
+      losersCount: validStocks.filter(s => s.changePercent < 0).length,
+      avgChange: validStocks.length > 0 ? validStocks.reduce((sum, s) => sum + s.changePercent, 0) / validStocks.length : 0,
+      sectors: [...new Set(validStocks.map(s => s.sector))].length,
+    },
+    source: 'NSE India (NIFTY 50)',
     updatedAt: new Date().toISOString(),
   });
 }
