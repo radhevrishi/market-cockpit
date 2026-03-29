@@ -248,6 +248,81 @@ const timeAgo = (iso: string) => {
   } catch { return ''; }
 };
 
+// ── Junk Filter ─────────────────────────────────────────────────────────────
+// Filter out personal finance advice, political fluff, lifestyle, and clickbait
+// that adds no value to an institutional-grade market dashboard.
+
+const JUNK_HEADLINE_PATTERNS = [
+  // Personal finance / advice columns / family money
+  /\bmy (friend|wife|husband|partner|adviser|advisor|dad|mom|brother|sister|boss|relative|daughter|son|parent)\b/i,
+  /\b(should i|can i trust|is it worth|how much should|how to save|retirement plan|nest egg)\b/i,
+  /\b(feels slimy|i'm worried|dear moneyist|ask an expert|money etiquette|who'?s right)\b/i,
+  /\b(personal finance|side hustle|budgeting tip|credit score|credit card reward|savings account)\b/i,
+  /\b(financial adviser|financial advisor|financial planner)\b/i,
+  /\b(social security|medicare|medicaid) (benefit|check|payment|tip)/i,
+  /\b(best (credit card|savings|cd rate|mortgage|insurance))\b/i,
+  /\b(an? older relative|give my (daughter|son)|said no\. who)/i,
+  /\b(top .* analysts? like these dividend)\b/i,
+  /\b(like these dividend stocks|solid returns)\b/i,
+  // Political fluff not market-related
+  /\b(state rep|congressman|senator|governor|mayor)\s+(talk|speak|say|slam|push|defend)/i,
+  /\bstaying disciplined on the issues\b/i,
+  /\b(campaign trail|election rally|political rally|town hall meeting)\b/i,
+  /\b(democrat|republican|gop|liberal|conservative)\s+(slam|attack|defend|push)/i,
+  // Lifestyle / celebrity / sports
+  /\b(celebrity|kardashian|oscars|grammy|super bowl|nfl draft|bachelor|bachelorette)\b/i,
+  /\b(recipe|cooking tip|travel destination|vacation spot|weight loss|diet plan)\b/i,
+  // Clickbait / hindsight / hypothetical returns
+  /\b(you won't believe|shocking truth|one weird trick|doctors hate|this changes everything)\b/i,
+  /\b(\d+ (things|ways|tips|reasons|secrets|mistakes))\s+(you|to|that|about)/i,
+  /\b(ridiculously easy|simple trick|beat the .* experts?)\b/i,
+  /\b(if you('d| had| would have)? (bought|invested))\b/i,
+  /\b(would have made|could have made|you'd have made|you'd have today)\b/i,
+  /\b(return you would|gains you missed|wish you had bought)\b/i,
+  /\b(massive upside|still has massive|has massive upside)\b/i,
+  /\b(this .* etf is up \d+%.*still has)\b/i,
+  /\b(it might make you cry|spoiler:)\b/i,
+  /\bhere'?s how much you'?d have\b/i,
+  // Parenting / lifestyle / self-help disguised as news
+  /\b(i've studied over \d+ kids|skill parents|parenting tip|teach kids)\b/i,
+  /\b(no\.?\s*1 skill|number one skill|top skill)\s*(parents|kids|children)/i,
+  /\b(can't look away|the case against social media)\b/i,
+  /\b(work-life balance|quiet quitting|hustle culture|morning routine)\b/i,
+];
+
+const JUNK_SOURCE_PATTERNS = [
+  /moneyist/i,
+  /yahoo finance us financials/i, // personal finance section, not market news
+];
+
+function isMarketRelevant(article: NewsArticle): boolean {
+  const title = (article.title || article.headline || '').toLowerCase();
+  const source = (article.source_name || article.source || '').toLowerCase();
+
+  // Always keep articles with tickers — they reference specific securities
+  const hasTickers = (article.ticker_symbols?.length || 0) > 0 ||
+    (article.tickers?.length || 0) > 0;
+
+  // Always keep high-importance or actionable articles
+  if (article.importance_score >= 4) return true;
+  if (article.investment_tier === 1) return true;
+
+  // Always keep non-GENERAL articles (EARNINGS, MACRO, BOTTLENECK, etc.)
+  if (article.article_type && article.article_type !== 'GENERAL') return true;
+
+  // For GENERAL articles without tickers, check for junk patterns
+  if (!hasTickers) {
+    for (const pattern of JUNK_HEADLINE_PATTERNS) {
+      if (pattern.test(title)) return false;
+    }
+    for (const pattern of JUNK_SOURCE_PATTERNS) {
+      if (pattern.test(source)) return false;
+    }
+  }
+
+  return true;
+}
+
 // ── Components ────────────────────────────────────────────────────────────────
 
 function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: NewsArticle) => void }) {
@@ -682,8 +757,12 @@ export default function NewsFeedPage() {
   const [selectedArticle, setSelectedArticle] = useState<NewsArticle | null>(null);
   const [isRefreshing, setIsRefreshing]   = useState(false);
 
-  const { data: articles, isLoading, error, refetch } = useNews(region, articleType, minImportance, search, sourceName);
-  const { data: inPlay, isLoading: inPlayLoading, refetch: refetchInPlay } = useInPlay();
+  const { data: rawArticles, isLoading, error, refetch } = useNews(region, articleType, minImportance, search, sourceName);
+  const { data: rawInPlay, isLoading: inPlayLoading, refetch: refetchInPlay } = useInPlay();
+
+  // Filter out irrelevant articles (personal finance, political fluff, clickbait)
+  const articles = (rawArticles || []).filter(isMarketRelevant);
+  const inPlay = (rawInPlay || []).filter(isMarketRelevant);
   const { data: bnDashboard, isLoading: bnLoading, refetch: refetchBn } = useBottleneckDashboard(articleType === 'BOTTLENECK', region);
   const showBottleneckDashboard = articleType === 'BOTTLENECK';
 

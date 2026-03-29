@@ -17,7 +17,9 @@ interface Stock {
 }
 
 type CapFilter = 'All' | 'Large' | 'Mid' | 'Small' | 'Mid & Small';
-type MoveFilter = 'All' | '2%+' | '4%+' | '6%+' | '-2%' | '-4%' | '-6%';
+
+// Move filter tokens — multiple can be active simultaneously
+type MoveToken = '+2%' | '+4%' | '+6%' | '-2%' | '-4%' | '-6%';
 
 const BG = '#0A0E1A', CARD = '#0D1623', BORDER = '#1A2840', ACCENT = '#0F7ABF';
 const GREEN = '#10B981', RED = '#EF4444', TEXT1 = '#F5F7FA', TEXT2 = '#8A95A3', TEXT3 = '#4A5B6C';
@@ -34,9 +36,7 @@ function formatTime(d: Date | null): string {
 }
 
 function classifyCap(s: { indexGroup?: string; marketCap?: number }): string {
-  // Prefer server-side classification from index membership
   if (s.indexGroup === 'Large' || s.indexGroup === 'Mid' || s.indexGroup === 'Small') return s.indexGroup;
-  // Fallback: market cap thresholds (raw rupees from NSE ffmc)
   const mcap = s.marketCap || 0;
   if (mcap > 500_000_000_000) return 'Large';
   if (mcap > 100_000_000_000) return 'Mid';
@@ -45,10 +45,26 @@ function classifyCap(s: { indexGroup?: string; marketCap?: number }): string {
 
 function isValidStock(s: { ticker?: string; price?: number }): boolean {
   const t = s.ticker || '';
-  // Filter out index rows (NIFTY 500, NIFTY MIDCAP 250, etc.)
   if (t.includes(' ') || t.startsWith('NIFTY') || t.startsWith('NIFTY_')) return false;
   if (!t || (s.price || 0) <= 0) return false;
   return true;
+}
+
+// Check if a stock's change% passes any of the active move filters
+function passesMoveFiler(pct: number, active: Set<MoveToken>): boolean {
+  if (active.size === 0) return true; // no move filters = show all
+  // Stock passes if it matches ANY active token
+  for (const token of active) {
+    switch (token) {
+      case '+2%': if (pct >= 2) return true; break;
+      case '+4%': if (pct >= 4) return true; break;
+      case '+6%': if (pct >= 6) return true; break;
+      case '-2%': if (pct <= -2) return true; break;
+      case '-4%': if (pct <= -4) return true; break;
+      case '-6%': if (pct <= -6) return true; break;
+    }
+  }
+  return false;
 }
 
 export default function MoversPage() {
@@ -60,7 +76,24 @@ export default function MoversPage() {
 
   const [capFilter, setCapFilter] = useState<CapFilter>('All');
   const [sectorFilter, setSectorFilter] = useState<string>('All');
-  const [moveFilter, setMoveFilter] = useState<MoveFilter>('All');
+  const [moveTokens, setMoveTokens] = useState<Set<MoveToken>>(new Set());
+
+  const toggleMove = useCallback((token: MoveToken) => {
+    setMoveTokens(prev => {
+      const next = new Set(prev);
+      if (next.has(token)) next.delete(token);
+      else next.add(token);
+      return next;
+    });
+  }, []);
+
+  const clearAllFilters = useCallback(() => {
+    setCapFilter('All');
+    setSectorFilter('All');
+    setMoveTokens(new Set());
+  }, []);
+
+  const hasActiveFilters = capFilter !== 'All' || sectorFilter !== 'All' || moveTokens.size > 0;
 
   const fetchData = useCallback(async () => {
     try {
@@ -98,24 +131,16 @@ export default function MoversPage() {
   useEffect(() => { fetchData(); }, [fetchData]);
   useEffect(() => { const i = setInterval(fetchData, 60000); return () => clearInterval(i); }, [fetchData]);
 
-  // Derived data — all memos depend on filters
+  // Filtered stocks
   const filtered = useMemo(() => {
     return allStocks.filter(s => {
       if (capFilter === 'Mid & Small' && s.cap === 'Large') return false;
       if (capFilter !== 'All' && capFilter !== 'Mid & Small' && s.cap !== capFilter) return false;
       if (sectorFilter !== 'All' && s.sector !== sectorFilter) return false;
-      const pct = s.changePercent;
-      // Positive filters: absolute move >= threshold
-      if (moveFilter === '2%+' && Math.abs(pct) < 2) return false;
-      if (moveFilter === '4%+' && Math.abs(pct) < 4) return false;
-      if (moveFilter === '6%+' && Math.abs(pct) < 6) return false;
-      // Negative filters: only stocks down by at least this much
-      if (moveFilter === '-2%' && pct > -2) return false;
-      if (moveFilter === '-4%' && pct > -4) return false;
-      if (moveFilter === '-6%' && pct > -6) return false;
+      if (!passesMoveFiler(s.changePercent, moveTokens)) return false;
       return true;
     });
-  }, [allStocks, capFilter, sectorFilter, moveFilter]);
+  }, [allStocks, capFilter, sectorFilter, moveTokens]);
 
   const gainers = useMemo(() =>
     [...filtered].filter(s => s.changePercent > 0).sort((a, b) => b.changePercent - a.changePercent).slice(0, 25),
@@ -132,7 +157,7 @@ export default function MoversPage() {
     return ['All', ...[...sectorSet].sort()];
   }, [allStocks]);
 
-  // Sector performance — responds to cap filter only (not sector filter)
+  // Sector performance — responds to cap filter
   const sectorPerf = useMemo(() => {
     const base = capFilter === 'All' ? allStocks
       : capFilter === 'Mid & Small' ? allStocks.filter(s => s.cap !== 'Large')
@@ -149,7 +174,6 @@ export default function MoversPage() {
       .sort((a, b) => b.avg - a.avg);
   }, [allStocks, capFilter]);
 
-  // Summary stats — reflect current filters
   const summary = useMemo(() => {
     const total = filtered.length;
     const gCount = filtered.filter(s => s.changePercent > 0).length;
@@ -159,7 +183,6 @@ export default function MoversPage() {
     return { total, gainersCount: gCount, losersCount: lCount, avgChange: avg, sectors: sectorCount };
   }, [filtered]);
 
-  // Cap distribution for info
   const capCounts = useMemo(() => {
     const large = allStocks.filter(s => s.cap === 'Large').length;
     const mid = allStocks.filter(s => s.cap === 'Mid').length;
@@ -167,17 +190,36 @@ export default function MoversPage() {
     return { large, mid, small };
   }, [allStocks]);
 
-  const Pill = ({ label, active, onClick, count }: { label: string; active: boolean; onClick: () => void; count?: number }) => (
-    <button onClick={onClick} style={{
+  // --- UI Components ---
+
+  const CapPill = ({ label, value, count }: { label: string; value: CapFilter; count: number }) => (
+    <button onClick={() => setCapFilter(value)} style={{
       padding: '5px 12px', borderRadius: '6px', border: 'none', fontSize: '11px', fontWeight: '500',
-      backgroundColor: active ? ACCENT : 'transparent', color: active ? '#fff' : TEXT2,
+      backgroundColor: capFilter === value ? ACCENT : 'transparent', color: capFilter === value ? '#fff' : TEXT2,
       cursor: 'pointer', transition: 'all 0.15s', whiteSpace: 'nowrap',
       display: 'flex', alignItems: 'center', gap: '4px',
     }}>
       {label}
-      {count !== undefined && <span style={{ fontSize: '9px', opacity: 0.7 }}>({count})</span>}
+      <span style={{ fontSize: '9px', opacity: 0.7 }}>({count})</span>
     </button>
   );
+
+  // Toggle chip — can be on/off independently
+  const MoveChip = ({ token, label, color }: { token: MoveToken; label: string; color: string }) => {
+    const active = moveTokens.has(token);
+    return (
+      <button onClick={() => toggleMove(token)} style={{
+        padding: '4px 10px', borderRadius: '5px', fontSize: '11px', fontWeight: '600',
+        border: active ? `1.5px solid ${color}` : `1px solid ${BORDER}`,
+        backgroundColor: active ? `${color}18` : 'transparent',
+        color: active ? color : TEXT3,
+        cursor: 'pointer', transition: 'all 0.15s', whiteSpace: 'nowrap',
+        letterSpacing: '0.3px',
+      }}>
+        {label}
+      </button>
+    );
+  };
 
   const Row = ({ stock, rank, up }: { stock: Stock; rank: number; up: boolean }) => (
     <tr style={{ borderBottom: `1px solid ${BORDER}`, cursor: 'pointer' }}
@@ -240,7 +282,7 @@ export default function MoversPage() {
         </div>
       </div>
 
-      {/* Summary Cards — reflect active filters */}
+      {/* Summary Cards */}
       {!loading && allStocks.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '10px', marginBottom: '16px' }}>
           {[
@@ -261,34 +303,66 @@ export default function MoversPage() {
       {/* Filters */}
       {!loading && (
         <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
+          {/* Cap filter — single select */}
           <div style={{ display: 'flex', gap: '2px', backgroundColor: CARD, padding: '3px', borderRadius: '8px', border: `1px solid ${BORDER}` }}>
-            <Pill label="All" active={capFilter === 'All'} onClick={() => setCapFilter('All')} count={allStocks.length} />
-            <Pill label="Large" active={capFilter === 'Large'} onClick={() => setCapFilter('Large')} count={capCounts.large} />
-            <Pill label="Mid" active={capFilter === 'Mid'} onClick={() => setCapFilter('Mid')} count={capCounts.mid} />
-            <Pill label="Small" active={capFilter === 'Small'} onClick={() => setCapFilter('Small')} count={capCounts.small} />
-            <Pill label="Mid & Small" active={capFilter === 'Mid & Small'} onClick={() => setCapFilter('Mid & Small')} count={capCounts.mid + capCounts.small} />
+            <CapPill label="All" value="All" count={allStocks.length} />
+            <CapPill label="Large" value="Large" count={capCounts.large} />
+            <CapPill label="Mid" value="Mid" count={capCounts.mid} />
+            <CapPill label="Small" value="Small" count={capCounts.small} />
+            <CapPill label="Mid & Small" value="Mid & Small" count={capCounts.mid + capCounts.small} />
           </div>
-          <div style={{ display: 'flex', gap: '2px', backgroundColor: CARD, padding: '3px', borderRadius: '8px', border: `1px solid ${BORDER}` }}>
-            {(['All', '2%+', '4%+', '6%+'] as MoveFilter[]).map(f => <Pill key={f} label={f} active={moveFilter === f} onClick={() => setMoveFilter(f)} />)}
+
+          {/* Separator */}
+          <div style={{ width: '1px', height: '28px', backgroundColor: BORDER }} />
+
+          {/* Move filters — multi-select toggle chips */}
+          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+            <span style={{ fontSize: '10px', color: TEXT3, fontWeight: '500', textTransform: 'uppercase', letterSpacing: '0.5px', marginRight: '2px' }}>Up</span>
+            <MoveChip token="+2%" label="+2%" color={GREEN} />
+            <MoveChip token="+4%" label="+4%" color={GREEN} />
+            <MoveChip token="+6%" label="+6%" color={GREEN} />
           </div>
-          <div style={{ display: 'flex', gap: '2px', backgroundColor: CARD, padding: '3px', borderRadius: '8px', border: `1px solid ${BORDER}` }}>
-            {(['-2%', '-4%', '-6%'] as MoveFilter[]).map(f => <Pill key={f} label={f} active={moveFilter === f} onClick={() => setMoveFilter(f)} />)}
+
+          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+            <span style={{ fontSize: '10px', color: TEXT3, fontWeight: '500', textTransform: 'uppercase', letterSpacing: '0.5px', marginRight: '2px' }}>Down</span>
+            <MoveChip token="-2%" label="-2%" color={RED} />
+            <MoveChip token="-4%" label="-4%" color={RED} />
+            <MoveChip token="-6%" label="-6%" color={RED} />
           </div>
+
+          {/* Sector dropdown */}
           <select value={sectorFilter} onChange={e => setSectorFilter(e.target.value)} style={{
             padding: '5px 10px', backgroundColor: CARD, color: TEXT2, border: `1px solid ${BORDER}`, borderRadius: '8px', fontSize: '11px', outline: 'none', cursor: 'pointer',
           }}>
             {sectors.map(s => <option key={s} value={s}>{s === 'All' ? 'All Sectors' : s}</option>)}
           </select>
-          {(capFilter !== 'All' || sectorFilter !== 'All' || moveFilter !== 'All') && (
-            <button onClick={() => { setCapFilter('All'); setSectorFilter('All'); setMoveFilter('All'); }} style={{
-              padding: '5px 12px', borderRadius: '6px', border: `1px solid ${BORDER}`, backgroundColor: 'rgba(239,68,68,0.08)',
-              color: RED, fontSize: '11px', cursor: 'pointer',
-            }}>Clear Filters</button>
+
+          {/* Active filter tags + clear */}
+          {hasActiveFilters && (
+            <>
+              {moveTokens.size > 0 && (
+                <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
+                  {[...moveTokens].map(t => (
+                    <span key={t} onClick={() => toggleMove(t)} style={{
+                      fontSize: '10px', fontWeight: '600', padding: '3px 8px', borderRadius: '4px', cursor: 'pointer',
+                      backgroundColor: t.startsWith('+') ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
+                      color: t.startsWith('+') ? GREEN : RED,
+                    }}>
+                      {t} ×
+                    </span>
+                  ))}
+                </div>
+              )}
+              <button onClick={clearAllFilters} style={{
+                padding: '5px 12px', borderRadius: '6px', border: `1px solid ${BORDER}`, backgroundColor: 'rgba(239,68,68,0.08)',
+                color: RED, fontSize: '11px', cursor: 'pointer', fontWeight: '500',
+              }}>Clear All</button>
+            </>
           )}
         </div>
       )}
 
-      {/* Sector Heatbar — responds to cap filter */}
+      {/* Sector Heatbar */}
       {!loading && sectorPerf.length > 0 && (
         <div style={{ marginBottom: '16px' }}>
           <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }} className="scrollbar-hide">
