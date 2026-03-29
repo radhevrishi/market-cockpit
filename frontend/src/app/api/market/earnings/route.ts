@@ -576,10 +576,35 @@ export async function GET(request: Request) {
     //    These do NOT create standalone events (too many false positives).
     //    They're already used via isConfirmed() in Step A above.
 
-    // C) Confirmed outcomes — also ONLY used as confirmation for board meetings
-    //    Same rationale: "Outcome of Board Meeting" announcements confirm that
-    //    a board meeting DID discuss results, but the board meeting itself is
-    //    the primary source for the event date.
+    // C) Confirmed outcomes — these ARE strong enough to create standalone events
+    //    because isOutcomeForResults() is very strict (requires "Outcome of Board Meeting"
+    //    + "financial result" + period reference + blocklist checks)
+    for (const [ticker, ann] of confirmedOutcomes) {
+      if (eventsMap.has(ticker)) continue;
+
+      const annDate = ann._annDate as Date;
+      const attText = ann.attchmntText || '';
+      const quarter = getResultsQuarter(annDate, attText);
+      if (quarter !== expectedQuarter) continue;
+
+      const stockInfo = priceLookup[ticker];
+      const marketCapCr = (stockInfo?.marketCap || 0) / 10000000;
+
+      eventsMap.set(ticker, {
+        ticker,
+        company: ann.sm_name || ticker,
+        resultDate: annDate.toISOString().split('T')[0],
+        quarter,
+        quality: stockInfo && stockInfo.changePercent < -5 ? 'Weak' : 'Good',
+        sector: normalizeSector(stockInfo?.industry) || '',
+        industry: stockInfo?.industry || '',
+        marketCap: getCapCategory(marketCapCr),
+        edp: null,
+        cmp: stockInfo?.price || null,
+        priceMove: null,
+        source: 'NSE',
+      });
+    }
 
     // D) Financial Results API entries not yet in eventsMap
     for (const [ticker, fr] of frResultsByTicker) {
