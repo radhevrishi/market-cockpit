@@ -89,19 +89,47 @@ export default function ScreenerPage() {
     setLoading(true);
     setError(null);
     try {
+      // Fetch current and previous month to ensure we have data
       const now = new Date();
       const monthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      const response = await fetch(`/api/market/earnings?month=${monthStr}`);
-      if (!response.ok) throw new Error('Failed to fetch earnings');
-      const result = await response.json();
-      // Map earnings API results to the Earning interface
+      const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const prevMonthStr = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`;
+
+      const [currentRes, prevRes] = await Promise.all([
+        fetch(`/api/market/earnings?month=${monthStr}`).then(r => r.ok ? r.json() : null).catch(() => null),
+        fetch(`/api/market/earnings?month=${prevMonthStr}`).then(r => r.ok ? r.json() : null).catch(() => null),
+      ]);
+
+      const allResults: any[] = [];
+      const seen = new Set<string>();
+
+      for (const result of [currentRes, prevRes]) {
+        if (!result) continue;
+        const items = result.results || result.earnings || [];
+        for (const r of items) {
+          const sym = r.ticker || r.symbol || '';
+          if (sym && !seen.has(sym)) {
+            seen.add(sym);
+            allResults.push(r);
+          }
+        }
+      }
+
       const mapped: EarningsData = {
-        earnings: (result.results || []).map((r: any) => ({
-          symbol: r.ticker, company: r.company, quality: r.quality, quarter: r.quarter,
-          sector: r.sector || 'Other', marketCap: r.marketCap || '-', edp: r.edp || null,
-          timing: r.timing || '-', price: r.cmp || 0, movePercent: r.priceMove || 0,
+        earnings: allResults.map((r: any) => ({
+          symbol: r.ticker || r.symbol || '',
+          company: r.company || r.companyName || r.symbol || '',
+          quality: r.quality || r.rating || '-',
+          quarter: r.quarter || r.period || '-',
+          sector: r.sector || 'Other',
+          marketCap: r.marketCap || r.cap || '-',
+          edp: r.edp || r.eps || null,
+          timing: r.timing || r.resultDate || '-',
+          price: r.cmp || r.currentPrice || r.price || 0,
+          movePercent: r.priceMove || r.movePercent || r.priceChange || 0,
         })),
-        source: result.source || 'NSE', updatedAt: result.updatedAt || new Date().toISOString(),
+        source: currentRes?.source || 'NSE',
+        updatedAt: currentRes?.updatedAt || new Date().toISOString(),
       };
       setEarningsData(mapped);
       setCurrentPage(1);
@@ -378,14 +406,24 @@ export default function ScreenerPage() {
           </div>
 
           {/* Results Count */}
-          <div style={{ marginTop: '16px', fontSize: '12px', color: THEME.textSecondary }}>
-            Showing {screenerMode === 'stocks' ? (displayedQuotes.length > 0 ? startIndex + 1 : 0) : (displayedEarnings.length > 0 ? startIndex + 1 : 0)} - {Math.min(startIndex + itemsPerPage, screenerMode === 'stocks' ? filteredQuotes.length : filteredEarnings.length)} of {screenerMode === 'stocks' ? filteredQuotes.length : filteredEarnings.length} results
-          </div>
+          {!loading && (
+            <div style={{ marginTop: '16px', fontSize: '12px', color: THEME.textSecondary }}>
+              Showing {screenerMode === 'stocks' ? (displayedQuotes.length > 0 ? startIndex + 1 : 0) : (displayedEarnings.length > 0 ? startIndex + 1 : 0)} - {Math.min(startIndex + itemsPerPage, screenerMode === 'stocks' ? filteredQuotes.length : filteredEarnings.length)} of {screenerMode === 'stocks' ? filteredQuotes.length : filteredEarnings.length} results
+            </div>
+          )}
         </div>
 
         {loading ? (
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>
             <Loader size={40} color={THEME.accent} style={{ animation: 'spin 1s linear infinite' }} />
+          </div>
+        ) : !loading && screenerMode === 'stocks' && !data ? (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px', color: THEME.textSecondary }}>
+            No stock data available. Try refreshing the page.
+          </div>
+        ) : !loading && screenerMode === 'earnings' && !earningsData ? (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px', color: THEME.textSecondary }}>
+            No earnings data available. Try refreshing the page.
           </div>
         ) : screenerMode === 'stocks' && data ? (
           <>

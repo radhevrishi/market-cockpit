@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { RefreshCw, Filter, X, ExternalLink, AlertCircle, Zap, ChevronDown, ChevronRight } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
@@ -118,14 +118,13 @@ const TICKER_ALIASES: Record<string, string[]> = {
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
 
-function useNews(region: string, type: string, minImportance: number, search: string, sourceName: string) {
+// Fetch ALL articles once — region, type, source, importance filtered CLIENT-SIDE for instant switching.
+// Only search goes to server (requires ILIKE queries).
+function useNews(search: string) {
   return useQuery<NewsArticle[]>({
-    queryKey: ['news', region, type, minImportance, search, sourceName],
+    queryKey: ['news', 'all', search],
     queryFn: async () => {
-      const params = new URLSearchParams({ limit: '500', importance_min: String(minImportance) });
-      if (region !== 'ALL') params.set('region', region);
-      if (type   !== 'ALL') params.set('article_type', type);
-      if (sourceName !== 'ALL') params.set('source_name', sourceName);
+      const params = new URLSearchParams({ limit: '500', importance_min: '1' });
 
       // Expand ticker search: if user types a ticker like "NVDA", also search for "nvidia"
       let expandedSearch = search;
@@ -144,6 +143,23 @@ function useNews(region: string, type: string, minImportance: number, search: st
     refetchInterval: 90_000,
     staleTime: 60_000,
     retry: 1,
+  });
+}
+
+// Client-side filter for instant filter switching
+function filterArticles(
+  articles: NewsArticle[],
+  region: string, type: string, minImportance: number, sourceName: string,
+): NewsArticle[] {
+  return articles.filter(a => {
+    if (region !== 'ALL' && a.region !== region && a.region !== 'GLOBAL') return false;
+    if (type !== 'ALL' && a.article_type !== type) return false;
+    if (minImportance > 1 && a.importance_score < minImportance) return false;
+    if (sourceName !== 'ALL') {
+      const src = a.source_name || a.source || '';
+      if (src !== sourceName) return false;
+    }
+    return true;
   });
 }
 
@@ -398,18 +414,27 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
     } catch { return false; }
   })();
 
+  const handleCardClick = (e: React.MouseEvent) => {
+    // If clicking inner buttons, don't navigate
+    if ((e.target as HTMLElement).closest('button')) return;
+    if (url && url !== '#') {
+      // Use <a> navigation below, don't handle here
+      return;
+    }
+    onSelect(article);
+  };
+
+  const CardWrapper = url && url !== '#' ? 'a' : 'div';
+  const cardProps = url && url !== '#'
+    ? { href: url, target: '_blank' as const, rel: 'noopener noreferrer' }
+    : {};
+
   return (
-    <div
+    <CardWrapper
+      {...cardProps}
       className="news-card"
-      style={{ backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '14px', padding: '16px', cursor: 'pointer', transition: 'border-color 0.15s, background-color 0.15s', opacity: isStale ? 0.55 : 1 }}
-      onClick={() => {
-        // Open the original article URL directly in a new tab
-        if (url && url !== '#') {
-          window.open(url, '_blank', 'noopener,noreferrer');
-        } else {
-          onSelect(article);
-        }
-      }}
+      style={{ display: 'block', backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '14px', padding: '16px', cursor: 'pointer', transition: 'border-color 0.15s, background-color 0.15s', opacity: isStale ? 0.55 : 1, textDecoration: 'none', color: 'inherit' }}
+      onClick={handleCardClick}
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
         <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: importanceDot(article.importance_score), flexShrink: 0, marginTop: '7px' }} />
@@ -482,7 +507,7 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
           <ChevronRight style={{ width: '14px', height: '14px' }} />
         </button>
       </div>
-    </div>
+    </CardWrapper>
   );
 }
 
@@ -731,18 +756,22 @@ function BottleneckDashboard({ dashboard, isLoading }: { dashboard?: BnDashboard
                       >
                         <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: bucket.severity_color, flexShrink: 0, marginTop: '6px' }} />
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <p
-                            style={{ fontSize: '13px', fontWeight: '600', color: '#E8EDF2', margin: '0 0 4px', lineHeight: '1.4', cursor: signal.articles?.[0]?.source_url ? 'pointer' : 'default' }}
-                            onClick={(e) => {
-                              if (signal.articles?.[0]?.source_url) {
-                                e.stopPropagation();
-                                window.open(signal.articles[0].source_url, '_blank', 'noopener,noreferrer');
-                              }
-                            }}
-                          >
-                            {decodeHtml(signal.headline)}
-                            {signal.articles?.[0]?.source_url && <ExternalLink style={{ width: '10px', height: '10px', color: '#3A4B5C', marginLeft: '6px', display: 'inline' }} />}
-                          </p>
+                          {signal.articles?.[0]?.source_url ? (
+                            <a
+                              href={signal.articles[0].source_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              style={{ fontSize: '13px', fontWeight: '600', color: '#E8EDF2', margin: '0 0 4px', lineHeight: '1.4', display: 'block', textDecoration: 'none' }}
+                            >
+                              {decodeHtml(signal.headline)}
+                              <ExternalLink style={{ width: '10px', height: '10px', color: '#3A4B5C', marginLeft: '6px', display: 'inline' }} />
+                            </a>
+                          ) : (
+                            <p style={{ fontSize: '13px', fontWeight: '600', color: '#E8EDF2', margin: '0 0 4px', lineHeight: '1.4' }}>
+                              {decodeHtml(signal.headline)}
+                            </p>
+                          )}
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                             <span style={{ fontSize: '10px', color: '#4A5B6C' }}>
                               {signal.sources.join(', ')}
@@ -813,15 +842,37 @@ export default function NewsFeedPage() {
   const [showFilters,   setShowFilters]   = useState(false);
   const [selectedArticle, setSelectedArticle] = useState<NewsArticle | null>(null);
   const [isRefreshing, setIsRefreshing]   = useState(false);
+  const filterPanelRef = useRef<HTMLDivElement>(null);
 
-  const { data: rawArticles, isLoading, error, refetch } = useNews(region, articleType, minImportance, search, sourceName);
+  // ESC key closes filter panel
+  useEffect(() => {
+    if (!showFilters) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowFilters(false); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [showFilters]);
+
+  // Outside click closes filter panel
+  useEffect(() => {
+    if (!showFilters) return;
+    const handler = (e: MouseEvent) => {
+      if (filterPanelRef.current && !filterPanelRef.current.contains(e.target as Node)) {
+        setShowFilters(false);
+      }
+    };
+    // Delay to avoid the click that opened the panel from immediately closing it
+    const timer = setTimeout(() => document.addEventListener('mousedown', handler), 50);
+    return () => { clearTimeout(timer); document.removeEventListener('mousedown', handler); };
+  }, [showFilters]);
+
+  // Fetch ALL articles once — filters applied client-side for instant switching
+  const { data: allArticles, isLoading, error, refetch } = useNews(search);
   const { data: rawInPlay, isLoading: inPlayLoading, refetch: refetchInPlay } = useInPlay();
 
-  // Filter out irrelevant articles (personal finance, political fluff, clickbait)
-  // Also filter stale content (>48h) when high importance is selected
+  // Client-side filter chain: server filters → junk filter → stale filter
   const now = Date.now();
   const STALE_MS = 48 * 60 * 60 * 1000; // 48 hours
-  const articles = (rawArticles || []).filter(a => {
+  const articles = filterArticles(allArticles || [], region, articleType, minImportance, sourceName).filter(a => {
     if (!isMarketRelevant(a)) return false;
     // When high importance (4) selected, exclude stale articles
     if (minImportance >= 4) {
@@ -866,10 +917,12 @@ export default function NewsFeedPage() {
             inPlay!.map(art => {
               const syms = getTickerSymbols(art);
               return (
-                <span
+                <a
                   key={art.id}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', marginRight: '12px', cursor: 'pointer', verticalAlign: 'middle', flexShrink: 0 }}
-                  onClick={() => getUrl(art) !== '#' && window.open(getUrl(art), '_blank')}
+                  href={getUrl(art) !== '#' ? getUrl(art) : undefined}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', marginRight: '12px', cursor: 'pointer', verticalAlign: 'middle', flexShrink: 0, textDecoration: 'none', color: 'inherit' }}
                 >
                   {syms[0] && (
                     <span style={{ fontSize: '10px', fontWeight: '700', backgroundColor: '#EF444420', color: '#EF4444', padding: '1px 5px', borderRadius: '4px', border: '1px solid #EF444440' }}>
@@ -880,7 +933,7 @@ export default function NewsFeedPage() {
                     {getTitle(art).slice(0, 70)}{getTitle(art).length > 70 ? '…' : ''}
                   </span>
                   <span style={{ fontSize: '10px', color: '#4A5B6C' }}>{getSource(art)}</span>
-                </span>
+                </a>
               );
             })
           ) : (
@@ -950,7 +1003,15 @@ export default function NewsFeedPage() {
 
       {/* ── Filter panel ─────────────────────────────────────────────── */}
       {showFilters && (
-        <div style={{ backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '14px', padding: '14px', marginBottom: '12px' }}>
+        <div ref={filterPanelRef} style={{ backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '14px', padding: '14px', marginBottom: '12px', position: 'relative' }}>
+          {/* Close button */}
+          <button
+            onClick={() => setShowFilters(false)}
+            style={{ position: 'absolute', top: '10px', right: '10px', background: 'none', border: 'none', color: '#4A5B6C', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            title="Close filters (Esc)"
+          >
+            <X style={{ width: '14px', height: '14px' }} />
+          </button>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
             <div>
               <p style={{ fontSize: '10px', fontWeight: '600', color: '#4A5B6C', margin: '0 0 8px', letterSpacing: '0.5px' }}>REGION</p>
