@@ -7,13 +7,14 @@ interface EarningsResult {
   company: string;
   resultDate: string;
   quarter: string;
-  quality: 'Good' | 'Weak' | 'Upcoming';
+  quality: 'Good' | 'Weak' | 'Upcoming' | 'Preview';
   sector: string;
   industry: string;
   marketCap: string;
   edp: number | null;
   cmp: number | null;
   priceMove: number | null;
+  timing: string;
   source: string;
 }
 
@@ -302,7 +303,7 @@ export default function CalendarPage() {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                   <thead>
                     <tr style={{ borderBottom: `2px solid ${THEME.border}` }}>
-                      {['DATE', 'SYMBOL', 'SECTOR', 'QUALITY', 'QUARTER', 'CAP', 'EDP', 'CMP', 'MOVE'].map(h => (
+                      {['DATE', 'SYMBOL', 'SECTOR', 'QUALITY', 'QUARTER', 'CAP', 'EDP', 'CMP', 'MOVE', 'TIMING'].map(h => (
                         <th key={h} style={{ padding: '12px 10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '700', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px', whiteSpace: 'nowrap' }}>{h}</th>
                       ))}
                     </tr>
@@ -335,6 +336,9 @@ export default function CalendarPage() {
                         </td>
                         <td style={{ padding: '12px 10px', fontWeight: '700', fontSize: '12px', color: r.priceMove !== null ? (r.priceMove >= 0 ? THEME.green : THEME.red) : THEME.textSecondary }}>
                           {r.priceMove !== null ? `${r.priceMove >= 0 ? '+' : ''}${r.priceMove.toFixed(1)}%` : '—'}
+                        </td>
+                        <td style={{ padding: '12px 10px', fontSize: '14px', textAlign: 'center' }}>
+                          {r.timing === 'pre' ? '🌙' : r.timing === 'post' ? '☀️' : '—'}
                         </td>
                       </tr>
                     ))}

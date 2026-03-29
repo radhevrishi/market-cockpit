@@ -77,6 +77,18 @@ const NON_RESULT_BLOCKLIST = [
   'reg 30',
   'credit rating',
   'rating action',
+  'cirp',
+  'insolvency',
+  'resolution plan',
+  'nclt',
+  'liquidation',
+  'winding up',
+  'suspended',
+  'trading halt',
+  'recommencement',
+  'regularization',
+  'regularisation',
+  'delayed',
 ];
 
 // These are OK *only if* "financial result" also appears
@@ -206,7 +218,7 @@ function getCapCategory(marketCapCr: number): string {
 // ════════════════════════════════════
 
 // Is this "Outcome of Board Meeting" announcement specifically about quarterly results?
-function isOutcomeForResults(ann: any): boolean {
+function isOutcomeForResults(ann: any, expectedQtr?: string): boolean {
   const attText = (ann.attchmntText || '').toLowerCase();
   const desc = (ann.desc || '').toLowerCase();
 
@@ -230,24 +242,19 @@ function isOutcomeForResults(ann: any): boolean {
 
   // HARD EXCLUDE: non-result terms (absolute blocklist)
   if (containsBlockedTerm(attText)) return false;
+  if (containsBlockedTerm(desc)) return false;
+
+  // QUARTER VALIDATION: If we can extract the period, verify it matches expected quarter
+  if (expectedQtr) {
+    const annDate = parseDate(ann.sort_date || ann.an_dt || '');
+    if (annDate) {
+      const extractedQtr = getResultsQuarter(annDate, attText);
+      if (extractedQtr !== expectedQtr) return false;
+    }
+  }
 
   // CONDITIONAL EXCLUDE: dividend/buyback/AGM etc.
-  // Only blocked if "financial result" isn't the PRIMARY topic
   if (containsConditionalBlock(attText)) {
-    // If the text STARTS with or primarily discusses the non-result topic, exclude
-    // Heuristic: if "financial result" appears AFTER the conditional term, it's secondary
-    const frIdx = attText.indexOf('financial result');
-    for (const term of CONDITIONAL_BLOCKLIST) {
-      const termIdx = attText.indexOf(term);
-      if (termIdx >= 0 && termIdx < frIdx) {
-        // Non-result term appears before "financial result" — likely primary topic is non-result
-        // But allow if it's clearly "Financial Results and Dividend" pattern
-        if (!attText.includes('financial result') || attText.indexOf(term) < 10) {
-          // Term is right at the start — primary topic
-        }
-      }
-    }
-    // More robust: check if the text is MAINLY about non-results
     const mainlyDividend = (attText.includes('dividend') || attText.includes('buyback') || attText.includes('buy back')) &&
       !attText.match(/approved.*financial result|financial result.*approved|consider.*financial result/);
     if (mainlyDividend) return false;
@@ -320,6 +327,27 @@ function isResultsFiling(ann: any): boolean {
 }
 
 // ════════════════════════════════════
+// TIMING — determine if result was declared before or after market hours
+// ════════════════════════════════════
+
+function getResultTiming(ann: any): string {
+  // NSE announcements have a time field (exchdisstime or an_dt)
+  const timeStr = ann.exchdisstime || ann.an_dt || ann.sort_date || '';
+  // If time available, check if before 9:15 AM or after 3:30 PM IST → pre-market (🌙)
+  // Otherwise post-market (☀️)
+  if (timeStr) {
+    const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})/);
+    if (timeMatch) {
+      const hour = parseInt(timeMatch[1]);
+      if (hour >= 15 || hour < 9) return 'pre'; // After market or before market → next day pre-market
+      return 'post'; // During market hours
+    }
+  }
+  // Default: if the meeting date is a weekday and results filed same day → post market (🌙)
+  return 'pre'; // Default to pre-market (most results are announced after hours)
+}
+
+// ════════════════════════════════════
 // TYPES
 // ════════════════════════════════════
 
@@ -328,13 +356,14 @@ interface EarningsEvent {
   company: string;
   resultDate: string;
   quarter: string;
-  quality: 'Good' | 'Weak' | 'Upcoming';
+  quality: 'Good' | 'Weak' | 'Upcoming' | 'Preview';
   sector: string;
   industry: string;
   marketCap: string;
   edp: number | null;
   cmp: number | null;
   priceMove: number | null;
+  timing: string; // 'pre' (🌙) or 'post' (☀️)
   source: string;
 }
 
@@ -488,7 +517,7 @@ export async function GET(request: Request) {
       const ticker = ann.symbol || ann.sm_symbol || '';
       if (!ticker) continue;
 
-      if (!isOutcomeForResults(ann)) {
+      if (!isOutcomeForResults(ann, expectedQuarter)) {
         const desc = (ann.desc || '').toLowerCase();
         if (desc.includes('outcome')) outcomeFilteredCount++;
         continue;
@@ -556,6 +585,10 @@ export async function GET(request: Request) {
       const stockInfo = priceLookup[ticker];
       const marketCapCr = (stockInfo?.marketCap || 0) / 10000000;
 
+      // Determine timing from the confirmed outcome announcement
+      const outcomeAnn = confirmedOutcomes.get(ticker);
+      const timing = outcomeAnn ? getResultTiming(outcomeAnn) : 'pre';
+
       eventsMap.set(ticker, {
         ticker,
         company: meeting.bm_companyName || meeting.sm_name || ticker,
@@ -568,6 +601,7 @@ export async function GET(request: Request) {
         edp: null,
         cmp: stockInfo?.price || null,
         priceMove: null,
+        timing,
         source: 'NSE',
       });
     }
@@ -578,7 +612,7 @@ export async function GET(request: Request) {
 
     // C) Confirmed outcomes — these ARE strong enough to create standalone events
     //    because isOutcomeForResults() is very strict (requires "Outcome of Board Meeting"
-    //    + "financial result" + period reference + blocklist checks)
+    //    + "financial result" + period reference + quarter validation + blocklist checks)
     for (const [ticker, ann] of confirmedOutcomes) {
       if (eventsMap.has(ticker)) continue;
 
@@ -602,6 +636,7 @@ export async function GET(request: Request) {
         edp: null,
         cmp: stockInfo?.price || null,
         priceMove: null,
+        timing: getResultTiming(ann),
         source: 'NSE',
       });
     }
@@ -636,6 +671,7 @@ export async function GET(request: Request) {
         edp: null,
         cmp: stockInfo?.price || null,
         priceMove: null,
+        timing: 'pre',
         source: 'NSE',
       });
     }
@@ -674,7 +710,7 @@ export async function GET(request: Request) {
             resultDate: resultDate.toISOString().split('T')[0],
             quarter: expectedQuarter, quality: 'Good',
             sector: '', industry: '', marketCap: '',
-            edp: null, cmp: null, priceMove: null, source: 'BSE',
+            edp: null, cmp: null, priceMove: null, timing: 'pre', source: 'BSE',
           });
           bseResultsCount++;
         }
@@ -693,7 +729,7 @@ export async function GET(request: Request) {
             resultDate: meetingDate.toISOString().split('T')[0],
             quarter: expectedQuarter, quality: 'Upcoming',
             sector: '', industry: '', marketCap: '',
-            edp: null, cmp: null, priceMove: null, source: 'BSE',
+            edp: null, cmp: null, priceMove: null, timing: '', source: 'BSE',
           });
           bseResultsCount++;
         }
@@ -713,7 +749,7 @@ export async function GET(request: Request) {
     if (tickersNeedingQuotes.length > 0) {
       // Fetch up to 15 quotes in parallel (rate limit friendly)
       const batchSize = 5;
-      for (let i = 0; i < Math.min(tickersNeedingQuotes.length, 15); i += batchSize) {
+      for (let i = 0; i < Math.min(tickersNeedingQuotes.length, 30); i += batchSize) {
         const batch = tickersNeedingQuotes.slice(i, i + batchSize);
         const quoteResults = await Promise.all(
           batch.map(ticker => fetchStockQuote(ticker).catch(() => null))
@@ -818,6 +854,43 @@ export async function GET(request: Request) {
         }
       } catch (frErr) {
         console.log('Quality proxy unavailable:', String(frErr));
+      }
+    }
+
+    // ═══════════════════════════════════════════
+    // STEP 7.5: Calculate EDP and priceMove for all events
+    // ═══════════════════════════════════════════
+    // EDP = Earnings Day Price (close price on the day results were declared)
+    // For recent results, we use previousClose as approximation
+    // priceMove = ((CMP - EDP) / EDP) * 100
+    for (const [ticker, event] of eventsMap) {
+      if (event.quality === 'Upcoming' || event.quality === 'Preview') continue;
+      const stockInfo = priceLookup[ticker];
+      if (!stockInfo || !event.cmp) continue;
+
+      // Use previousClose as EDP approximation for most recent result
+      // For results declared today/yesterday, previousClose ~ EDP
+      const resultDate = new Date(event.resultDate);
+      const daysSinceResult = Math.floor((today.getTime() - resultDate.getTime()) / (1000 * 60 * 60 * 24));
+
+      if (daysSinceResult <= 1) {
+        // Result was today/yesterday — previousClose is close to EDP
+        event.edp = stockInfo.previousClose || null;
+      } else {
+        // Older results — estimate EDP from CMP and daily change history
+        // Best approximation: CMP / (1 + cumulative change since result)
+        // Since we don't have historical data, use CMP as-is and set edp = null
+        // except if we have the quote's previousClose
+        event.edp = stockInfo.previousClose || null;
+      }
+
+      if (event.edp && event.cmp && event.edp > 0) {
+        event.priceMove = parseFloat((((event.cmp - event.edp) / event.edp) * 100).toFixed(1));
+
+        // Use priceMove for better quality assessment
+        if (event.priceMove < -10) {
+          event.quality = 'Weak';
+        }
       }
     }
 
