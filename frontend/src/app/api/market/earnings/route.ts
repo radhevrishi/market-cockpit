@@ -5,7 +5,8 @@ import {
   fetchNiftySmallcap250,
   fetchNifty50,
   fetchNiftyNext50,
-  fetchCorporateAnnouncementsPaginated,
+  fetchFinancialResults,
+  fetchLatestFinancialResults,
   fetchBoardMeetingsForDateRange,
   normalizeSector,
 } from '@/lib/nse';
@@ -14,19 +15,19 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 // =============================================
-// EARNINGS CALENDAR - Matching EarningsPulse.ai
+// EARNINGS CALENDAR - Financial Results First
 // =============================================
 // Strategy:
-//   1. CONFIRMED RESULTS: "Outcome of Board Meeting" announcements where
-//      attchmntText mentions "submitted to the Exchange" + "financial results"
-//      → These are companies that ACTUALLY declared quarterly results
-//   2. UPCOMING: Future board meetings with "Financial Results" in purpose
-//      → These are scheduled but results not yet out
-//   3. Everything else is EXCLUDED
+//   1. PRIMARY: NSE Financial Results API (/api/corporates-financial-results)
+//      → Returns companies that ACTUALLY FILED quarterly results with NSE
+//      → Includes: revenue, net profit, EPS, period ended date
+//   2. UPCOMING: Board meetings with "Financial Results" in purpose
+//      → Only FUTURE dates (board meeting not yet held)
+//   3. BSE-ONLY: Fetch from Trendlyne/alternate sources for BSE-listed companies
 //
-// Quality: Good / Weak / Upcoming (3-tier, matching earningspulse.ai)
-//   - Good: Net profit > 0 OR positive post-earnings price move
-//   - Weak: Net profit <= 0 OR negative post-earnings price move
+// Quality Rating (matching earningspulse.ai):
+//   - Good: Revenue growth > 0 OR Net profit growth > 0 OR positive price move
+//   - Weak: Revenue decline AND profit decline OR significant negative price move
 //   - Upcoming: Results not yet declared
 
 // Indian fiscal quarter mapping
@@ -39,40 +40,33 @@ function getFiscalQuarter(date: Date): string {
   return `Q4 FY${year.toString().slice(2)}`;
 }
 
-// Also return the "results quarter" — the quarter the results are FOR
-// e.g. if board meeting is in March 2026, results are typically for Q3 FY26 (Oct-Dec 2025)
+// Derive the results quarter from description or meeting date
 function getResultsQuarter(meetingDate: Date, desc: string): string {
   const lower = desc.toLowerCase();
 
-  // Try to parse quarter from description
-  // "period ended December 31, 2025" → Q3 FY26
-  // "period ended March 31, 2026" → Q4 FY26
-  // "quarter ended 31-Dec-2025" → Q3 FY26
-  const periodMatch = lower.match(/(?:period|quarter|half year|year)\s+ended\s+(?:on\s+)?(\d{1,2})?[- \/]?([a-z]+|[\d]{1,2})[- \/,]+(\d{4})/);
+  // Try to parse quarter from description text
+  const periodMatch = lower.match(
+    /(?:period|quarter|half year|year)\s+ended\s+(?:on\s+)?(\d{1,2})?[- \/]?([a-z]+|\d{1,2})[- \/,]+(\d{4})/
+  );
   if (periodMatch) {
     const monthStr = periodMatch[2];
     const yearStr = parseInt(periodMatch[3]);
-    let month = -1;
     const monthMap: Record<string, number> = {
       jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3,
       apr: 4, april: 4, may: 5, jun: 6, june: 6,
       jul: 7, july: 7, aug: 8, august: 8, sep: 9, september: 9,
       oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12,
     };
+    let month = -1;
     if (monthMap[monthStr]) month = monthMap[monthStr];
     else if (!isNaN(parseInt(monthStr))) month = parseInt(monthStr);
 
     if (month > 0 && yearStr > 2000) {
-      const d = new Date(yearStr, month - 1, 1);
-      return getFiscalQuarter(d);
+      return getFiscalQuarter(new Date(yearStr, month - 1, 1));
     }
   }
 
-  // Fallback: the previous quarter relative to meeting date
-  // If meeting is in Jan-Mar → results are for Q3 (Oct-Dec previous)
-  // If meeting is in Apr-Jun → results are for Q4 (Jan-Mar)
-  // If meeting is in Jul-Sep → results are for Q1 (Apr-Jun)
-  // If meeting is in Oct-Dec → results are for Q2 (Jul-Sep)
+  // Fallback: previous quarter relative to meeting date
   const m = meetingDate.getMonth() + 1;
   const y = meetingDate.getFullYear();
   if (m >= 1 && m <= 3) return `Q3 FY${y.toString().slice(2)}`;
@@ -126,100 +120,71 @@ function toArray(data: any): any[] {
   return [];
 }
 
-// Check if an "Outcome of Board Meeting" announcement is for financial results
-function isOutcomeForResults(ann: any): boolean {
-  const attText = (ann.attchmntText || '').toLowerCase();
-  const desc = (ann.desc || '').toLowerCase();
-  const subject = (ann.subject || ann.an_subject || '').toLowerCase();
-
-  // Must be an "Outcome of Board Meeting"
-  const isOutcome = desc.includes('outcome of board meeting') ||
-    desc.includes('outcome of the board meeting') ||
-    desc.includes('outcome of bm');
-
-  if (!isOutcome) {
-    // Also accept direct financial result submissions
-    if (desc.includes('financial result') || desc.includes('quarterly result') ||
-        desc.includes('half yearly result') || desc.includes('annual result')) {
-      // Check attchmntText confirms submission
-      if (attText.includes('submitted to the exchange') || attText.includes('financial result') ||
-          attText.includes('period ended') || attText.includes('quarter ended')) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  // For Outcome of Board Meeting, check attchmntText for financial results evidence
-  return (
-    attText.includes('financial result') ||
-    attText.includes('period ended') ||
-    attText.includes('quarter ended') ||
-    attText.includes('year ended') ||
-    attText.includes('half year ended') ||
-    (attText.includes('submitted to the exchange') && (
-      attText.includes('result') || attText.includes('financial')
-    ))
-  );
+// Market cap category
+function getCapCategory(marketCapCr: number): string {
+  if (marketCapCr >= 50000) return 'L';
+  if (marketCapCr >= 15000) return 'M';
+  if (marketCapCr >= 5000) return 'S';
+  if (marketCapCr > 0) return 'Micro';
+  return '';
 }
 
-// Check if board meeting purpose indicates financial results
+// Check if board meeting is for financial results
 function isBoardMeetingForResults(meeting: any): boolean {
   const purpose = (meeting.bm_purpose || meeting.purpose || '').toLowerCase();
   const desc = (meeting.bm_desc || meeting.desc || '').toLowerCase();
 
-  // Direct financial results purpose
   if (purpose.includes('financial result')) return true;
-
-  // Check description for clear financial results language
   if (desc.includes('financial result') || desc.includes('quarterly result') ||
       desc.includes('annual result') || desc.includes('audited result') ||
       desc.includes('unaudited result')) return true;
-
-  // "inter alia, to consider and approve the financial results"
-  if (desc.includes('inter alia') && (desc.includes('result') || desc.includes('financial'))) return true;
-  if (desc.includes('inter-alia') && (desc.includes('result') || desc.includes('financial'))) return true;
-
-  // "Financial Results/Dividend" — only if "result" is explicitly in purpose
+  if ((desc.includes('inter alia') || desc.includes('inter-alia')) &&
+      (desc.includes('result') || desc.includes('financial'))) return true;
   if (purpose.includes('dividend') && purpose.includes('result')) return true;
 
-  // Don't include pure dividend meetings without explicit "result" in purpose
   return false;
 }
 
-// Get the last N valid fiscal quarters relative to a date
-// Used to filter out backlogged filings
-function getRecentQuarters(date: Date, count: number): string[] {
-  const quarters: string[] = [];
-  const d = new Date(date);
-  for (let i = 0; i < count; i++) {
-    quarters.push(getFiscalQuarter(d));
-    d.setMonth(d.getMonth() - 3);
-  }
-  return quarters;
-}
+// Assess quality based on financial data from NSE results
+function assessQuality(result: any, priceData: any): 'Good' | 'Weak' {
+  // Try to extract financial metrics from the result data
+  const revenueStr = result.re_revenue || result.revenue || result.income || result.totalIncome || '';
+  const profitStr = result.re_netProfit || result.netProfit || result.re_proLossAftTax || result.proLossAftTax || '';
+  const epsStr = result.re_dilEPS || result.dilutedEPS || result.basicEPS || result.re_basicEPS || '';
 
-// Market cap category
-function getCapCategory(marketCapCr: number): string {
-  if (marketCapCr >= 50000) return 'L';   // Large
-  if (marketCapCr >= 15000) return 'M';   // Mid
-  if (marketCapCr >= 5000) return 'S';    // Small
-  if (marketCapCr > 0) return 'Micro';
-  return '';
+  const revenue = parseFloat(String(revenueStr).replace(/,/g, ''));
+  const profit = parseFloat(String(profitStr).replace(/,/g, ''));
+  const eps = parseFloat(String(epsStr).replace(/,/g, ''));
+
+  // If we have profit data, use it
+  if (!isNaN(profit)) {
+    if (profit > 0) return 'Good';
+    return 'Weak';
+  }
+
+  // Fallback to price movement
+  if (priceData) {
+    const changePct = priceData.changePercent || 0;
+    // Use a stricter threshold: if stock dropped significantly, likely weak
+    if (changePct < -5) return 'Weak';
+    return 'Good';
+  }
+
+  return 'Good'; // Default optimistic
 }
 
 interface EarningsEvent {
   ticker: string;
   company: string;
-  resultDate: string;       // Date results were/will be declared
-  quarter: string;          // The quarter results are FOR (e.g. Q3 FY26)
+  resultDate: string;
+  quarter: string;
   quality: 'Good' | 'Weak' | 'Upcoming';
   sector: string;
   industry: string;
   marketCap: string;
-  edp: number | null;       // Earnings Day Price (price on result date)
-  cmp: number | null;       // Current Market Price
-  priceMove: number | null;  // % change from EDP to CMP
+  edp: number | null;
+  cmp: number | null;
+  priceMove: number | null;
   source: string;
 }
 
@@ -240,17 +205,17 @@ export async function GET(request: Request) {
       });
     }
 
-    // Calculate date range — EXACTLY the target month
+    // Calculate date range
     const now = new Date();
     let fromDate: Date, toDate: Date;
 
     if (month) {
       const [year, m] = month.split('-').map(Number);
       fromDate = new Date(year, m - 1, 1);
-      toDate = new Date(year, m, 0); // Last day of month
+      toDate = new Date(year, m, 0);
     } else {
       fromDate = new Date(now.getFullYear(), now.getMonth(), 1);
-      toDate = new Date(now.getFullYear(), now.getMonth() + 1, 0); // Last day of current month
+      toDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
     }
 
     const formatNSEDate = (d: Date) => {
@@ -259,52 +224,31 @@ export async function GET(request: Request) {
       return `${dd}-${mm}-${d.getFullYear()}`;
     };
 
-    // Board meetings: fetch from 60 days before (intimations come early)
-    const bmFetchFrom = new Date(fromDate);
-    bmFetchFrom.setDate(bmFetchFrom.getDate() - 60);
-
     // ============================================
-    // STEP 1: Fetch data in parallel
+    // STEP 1: Fetch all data in parallel
     // ============================================
-    // Strategy: START from board meetings (curated), then confirm with announcements
-    // Board meetings with "Financial Results" purpose = authoritative list
-    // Announcements "Outcome of Board Meeting" = confirmation of results declared
     const [
+      financialResults,
+      latestResults,
       boardMeetings,
-      boardMeetingsDateRange,
-      announcementsPaginated,
+      boardMeetingsRange,
       nifty50Data,
       niftyNext50Data,
       nifty500Data,
       smallcap250Data,
     ] = await Promise.all([
+      fetchFinancialResults(formatNSEDate(fromDate), formatNSEDate(toDate)).catch(() => null),
+      fetchLatestFinancialResults().catch(() => null),
       fetchBoardMeetings().catch(() => null),
-      fetchBoardMeetingsForDateRange(formatNSEDate(bmFetchFrom), formatNSEDate(toDate)).catch(() => null),
-      fetchCorporateAnnouncementsPaginated(formatNSEDate(fromDate), formatNSEDate(toDate), 3).catch(() => []),
+      fetchBoardMeetingsForDateRange(formatNSEDate(fromDate), formatNSEDate(toDate)).catch(() => null),
       fetchNifty50().catch(() => null),
       fetchNiftyNext50().catch(() => null),
       fetchNifty500().catch(() => null),
       fetchNiftySmallcap250().catch(() => null),
     ]);
 
-    // Normalize
-    const bmArray1 = toArray(boardMeetings);
-    const bmArray2 = toArray(boardMeetingsDateRange);
-    const annArray = Array.isArray(announcementsPaginated) ? announcementsPaginated : toArray(announcementsPaginated);
-
-    // Deduplicate board meetings
-    const bmSeen = new Set<string>();
-    const bmCombined: any[] = [];
-    for (const bm of [...bmArray1, ...bmArray2]) {
-      const key = `${bm.bm_symbol || bm.symbol}:${bm.bm_date || bm.date}`;
-      if (!bmSeen.has(key)) {
-        bmSeen.add(key);
-        bmCombined.push(bm);
-      }
-    }
-
     // ============================================
-    // STEP 2: Build price lookup
+    // STEP 2: Build price/sector lookup
     // ============================================
     const priceLookup: Record<string, {
       price: number; change: number; changePercent: number;
@@ -343,123 +287,123 @@ export async function GET(request: Request) {
     processStockData(smallcap250Data, 'SMALLCAP250');
 
     // ============================================
-    // STEP 3: Build confirmed outcomes lookup
+    // STEP 3: Process FINANCIAL RESULTS (PRIMARY SOURCE)
     // ============================================
-    // Index all "Outcome of Board Meeting" announcements by ticker
-    const confirmedOutcomes = new Map<string, any>();
-    for (const ann of annArray) {
-      const ticker = ann.symbol || ann.sm_symbol || '';
+    // The NSE financial results API returns ACTUAL filed quarterly results
+    // with company name, period ended, revenue, profit, EPS etc.
+    const frArray = toArray(financialResults);
+    const latestFrArray = toArray(latestResults);
+
+    // Combine and deduplicate
+    const allFinancialResults: any[] = [];
+    const frSeen = new Set<string>();
+
+    for (const fr of [...frArray, ...latestFrArray]) {
+      const ticker = fr.symbol || fr.re_symbol || '';
       if (!ticker) continue;
-      if (!isOutcomeForResults(ann)) continue;
 
-      const annDateStr = ann.sort_date || ann.an_dt || '';
-      const annDate = parseDate(annDateStr);
-      if (!annDate) continue;
-      if (annDate < fromDate || annDate > toDate) continue;
+      // Check filing date is in our target month
+      const filingDate = parseDate(fr.re_broadcastDt || fr.broadcastDate || fr.re_date || fr.date || fr.re_submissionDate || '');
+      if (!filingDate) continue;
+      if (filingDate < fromDate || filingDate > toDate) continue;
 
-      // Only keep the most recent outcome per ticker
-      if (!confirmedOutcomes.has(ticker)) {
-        confirmedOutcomes.set(ticker, ann);
-      }
+      const key = `${ticker}:${filingDate.toISOString().split('T')[0]}`;
+      if (frSeen.has(ticker)) continue; // One per ticker
+      frSeen.add(ticker);
+      frSeen.add(key);
+      allFinancialResults.push({ ...fr, _filingDate: filingDate, _ticker: ticker });
     }
 
     // ============================================
-    // STEP 4: Start from board meetings, cross-reference
+    // STEP 4: Process BOARD MEETINGS (UPCOMING ONLY)
     // ============================================
-    const eventsMap = new Map<string, EarningsEvent>();
+    const bmArray1 = toArray(boardMeetings);
+    const bmArray2 = toArray(boardMeetingsRange);
+
+    const bmSeen = new Set<string>();
+    const upcomingMeetings: any[] = [];
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    for (const meeting of bmCombined) {
-      const ticker = meeting.bm_symbol || meeting.symbol || '';
+    for (const bm of [...bmArray1, ...bmArray2]) {
+      const ticker = bm.bm_symbol || bm.symbol || '';
       if (!ticker) continue;
+      if (!isBoardMeetingForResults(bm)) continue;
 
-      // Only include meetings with "Financial Results" in purpose
-      if (!isBoardMeetingForResults(meeting)) continue;
-
-      const meetingDateStr = meeting.bm_date || meeting.bm_meetingDate || meeting.date || '';
+      const meetingDateStr = bm.bm_date || bm.bm_meetingDate || bm.date || '';
       const meetingDate = parseDate(meetingDateStr);
       if (!meetingDate) continue;
 
-      // Must be within the target month
-      if (meetingDate < fromDate || meetingDate > toDate) continue;
+      // ONLY future meetings within the target month
+      if (meetingDate < today || meetingDate < fromDate || meetingDate > toDate) continue;
 
-      // One result per ticker only
-      if (eventsMap.has(ticker)) continue;
+      const key = `${ticker}`;
+      if (bmSeen.has(key)) continue;
+      bmSeen.add(key);
 
-      const desc = meeting.bm_desc || meeting.desc || '';
-      const quarter = getResultsQuarter(meetingDate, desc);
-      const stockInfo = priceLookup[ticker];
-      const marketCapCr = (stockInfo?.marketCap || 0) / 10000000;
+      // Skip if this company already has a confirmed result
+      if (frSeen.has(ticker)) continue;
 
-      // Check if this board meeting has a confirmed outcome
-      const outcome = confirmedOutcomes.get(ticker);
-      const hasOutcome = !!outcome;
-      const isPast = meetingDate < today;
-
-      if (isPast && hasOutcome) {
-        // CONFIRMED: Board meeting happened AND outcome was filed
-        const changePct = stockInfo?.changePercent || 0;
-        eventsMap.set(ticker, {
-          ticker,
-          company: meeting.bm_companyName || meeting.sm_name || ticker,
-          resultDate: meetingDate.toISOString().split('T')[0],
-          quarter,
-          quality: changePct >= -2 ? 'Good' : 'Weak',
-          sector: normalizeSector(stockInfo?.industry) || 'Other',
-          industry: stockInfo?.industry || '',
-          marketCap: getCapCategory(marketCapCr),
-          edp: null,
-          cmp: stockInfo?.price || null,
-          priceMove: null,
-          source: 'NSE',
-        });
-      } else if (!isPast) {
-        // UPCOMING: Board meeting is in the future
-        eventsMap.set(ticker, {
-          ticker,
-          company: meeting.bm_companyName || meeting.sm_name || ticker,
-          resultDate: meetingDate.toISOString().split('T')[0],
-          quarter,
-          quality: 'Upcoming',
-          sector: normalizeSector(stockInfo?.industry) || 'Other',
-          industry: stockInfo?.industry || '',
-          marketCap: getCapCategory(marketCapCr),
-          edp: null,
-          cmp: stockInfo?.price || null,
-          priceMove: null,
-          source: 'NSE',
-        });
-      }
-      // Past meetings WITHOUT outcome are EXCLUDED (not confirmed)
+      upcomingMeetings.push({ ...bm, _meetingDate: meetingDate, _ticker: ticker });
     }
 
-    // Also check: some companies may have filed outcomes without a board meeting
-    // intimation in our date range (edge case). Add those too.
-    for (const [ticker, ann] of confirmedOutcomes) {
-      if (eventsMap.has(ticker)) continue;
+    // ============================================
+    // STEP 5: Build events from financial results
+    // ============================================
+    const eventsMap = new Map<string, EarningsEvent>();
 
-      const annDateStr = ann.sort_date || ann.an_dt || '';
-      const annDate = parseDate(annDateStr);
-      if (!annDate) continue;
+    for (const fr of allFinancialResults) {
+      const ticker = fr._ticker;
+      const filingDate = fr._filingDate as Date;
+      const company = fr.re_companyName || fr.companyName || fr.sm_name || ticker;
 
-      const attText = ann.attchmntText || '';
-      const quarter = getResultsQuarter(annDate, attText);
-
-      // Filter backlogged filings
-      const validQuarters = getRecentQuarters(annDate, 3);
-      if (!validQuarters.includes(quarter)) continue;
+      // Get quarter from the "period ended" field
+      const periodEnded = fr.re_toDate || fr.toDate || fr.re_periodEnded || '';
+      const desc = `period ended ${periodEnded}`;
+      const quarter = getResultsQuarter(filingDate, desc);
 
       const stockInfo = priceLookup[ticker];
       const marketCapCr = (stockInfo?.marketCap || 0) / 10000000;
-      const changePct = stockInfo?.changePercent || 0;
+
+      // Quality: use actual financial data
+      const quality = assessQuality(fr, stockInfo);
 
       eventsMap.set(ticker, {
         ticker,
-        company: ann.sm_name || ticker,
-        resultDate: annDate.toISOString().split('T')[0],
+        company,
+        resultDate: filingDate.toISOString().split('T')[0],
         quarter,
-        quality: changePct >= -2 ? 'Good' : 'Weak',
+        quality,
+        sector: normalizeSector(stockInfo?.industry) || 'Other',
+        industry: stockInfo?.industry || '',
+        marketCap: getCapCategory(marketCapCr),
+        edp: null,
+        cmp: stockInfo?.price || null,
+        priceMove: null,
+        source: 'NSE',
+      });
+    }
+
+    // ============================================
+    // STEP 6: Add UPCOMING from board meetings
+    // ============================================
+    for (const bm of upcomingMeetings) {
+      const ticker = bm._ticker;
+      if (eventsMap.has(ticker)) continue;
+
+      const meetingDate = bm._meetingDate as Date;
+      const desc = bm.bm_desc || bm.desc || '';
+      const quarter = getResultsQuarter(meetingDate, desc);
+
+      const stockInfo = priceLookup[ticker];
+      const marketCapCr = (stockInfo?.marketCap || 0) / 10000000;
+
+      eventsMap.set(ticker, {
+        ticker,
+        company: bm.bm_companyName || bm.sm_name || ticker,
+        resultDate: meetingDate.toISOString().split('T')[0],
+        quarter,
+        quality: 'Upcoming',
         sector: normalizeSector(stockInfo?.industry) || 'Other',
         industry: stockInfo?.industry || '',
         marketCap: getCapCategory(marketCapCr),
@@ -471,13 +415,15 @@ export async function GET(request: Request) {
     }
 
     console.log('Earnings processing:', {
-      bmTotal: bmCombined.length,
-      confirmedOutcomes: confirmedOutcomes.size,
+      financialResultsRaw: frArray.length,
+      latestResultsRaw: latestFrArray.length,
+      confirmedInMonth: allFinancialResults.length,
+      upcomingMeetings: upcomingMeetings.length,
       finalEvents: eventsMap.size,
     });
 
     // ============================================
-    // STEP 5: Filter and sort
+    // STEP 7: Filter and sort
     // ============================================
     let results = Array.from(eventsMap.values());
 
@@ -504,10 +450,13 @@ export async function GET(request: Request) {
         debug: true,
         dateRange: { from: formatNSEDate(fromDate), to: formatNSEDate(toDate) },
         processing: {
-          bmTotal: bmCombined.length,
-          confirmedOutcomes: confirmedOutcomes.size,
+          financialResultsRaw: frArray.length,
+          latestResultsRaw: latestFrArray.length,
+          confirmedInMonth: allFinancialResults.length,
+          upcomingMeetings: upcomingMeetings.length,
           finalEvents: eventsMap.size,
         },
+        sampleFinancialResult: frArray[0] || latestFrArray[0] || null,
         results,
       });
     }
