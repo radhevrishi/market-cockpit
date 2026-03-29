@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { fetchNifty50, fetchNiftyNext50, fetchNifty500, fetchNifty200, fetchNiftyMidcap250, fetchNiftySmallcap250, buildDynamicSectorMap, normalizeSector, NIFTY50_SECTORS } from '@/lib/nse';
+import { fetchNifty50, fetchNiftyNext50, fetchNifty500, fetchNifty200, fetchNiftyMidcap250, fetchNiftySmallcap250, fetchNiftyMicrocap250, fetchNiftyTotalMarket, fetchGainers, fetchLosers, buildDynamicSectorMap, normalizeSector, NIFTY50_SECTORS } from '@/lib/nse';
 import { fetchQuotesWithFallback, US_TOP } from '@/lib/yahoo';
 
 export const dynamic = 'force-dynamic';
@@ -22,11 +22,15 @@ export async function GET(request: Request) {
 
 async function fetchIndianData() {
   // Build dynamic sector map in parallel with stock data
-  const [sectorMap, nifty500Data, midcap250Data, smallcap250Data] = await Promise.all([
+  const [sectorMap, nifty500Data, midcap250Data, smallcap250Data, microcap250Data, totalMarketData, nseGainers, nseLosers] = await Promise.all([
     buildDynamicSectorMap(),
     fetchNifty500().catch(() => null),
     fetchNiftyMidcap250().catch(() => null),
     fetchNiftySmallcap250().catch(() => null),
+    fetchNiftyMicrocap250().catch(() => null),
+    fetchNiftyTotalMarket().catch(() => null),
+    fetchGainers().catch(() => null),
+    fetchLosers().catch(() => null),
   ]);
 
   let stocks: any[] = [];
@@ -89,6 +93,43 @@ async function fetchIndianData() {
       }
     }
   }
+
+  // Add unique stocks from Microcap 250
+  if (microcap250Data && microcap250Data.data) {
+    for (const item of microcap250Data.data) {
+      const mapped = mapStock(item);
+      if (mapped.ticker && mapped.price > 0 && !tickerSet.has(mapped.ticker)) {
+        stocks.push(mapped);
+        tickerSet.add(mapped.ticker);
+      }
+    }
+  }
+
+  // Add unique stocks from NIFTY Total Market
+  if (totalMarketData && totalMarketData.data) {
+    for (const item of totalMarketData.data) {
+      const mapped = mapStock(item);
+      if (mapped.ticker && mapped.price > 0 && !tickerSet.has(mapped.ticker)) {
+        stocks.push(mapped);
+        tickerSet.add(mapped.ticker);
+      }
+    }
+  }
+
+  // Add unique stocks from NSE live gainers/losers (covers ALL NSE equities)
+  const addLiveAnalysis = (liveData: any) => {
+    if (!liveData || !liveData.NIFTY) return;
+    const allItems = [...(liveData.NIFTY?.data || []), ...(liveData.allSec?.data || [])];
+    for (const item of allItems) {
+      const mapped = mapStock(item);
+      if (mapped.ticker && mapped.price > 0 && !tickerSet.has(mapped.ticker)) {
+        stocks.push(mapped);
+        tickerSet.add(mapped.ticker);
+      }
+    }
+  };
+  addLiveAnalysis(nseGainers);
+  addLiveAnalysis(nseLosers);
 
   // If no broad index data, try NIFTY 50 + Next 50 as fallback
   if (stocks.length < 50) {

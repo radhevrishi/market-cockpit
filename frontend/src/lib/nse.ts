@@ -139,6 +139,16 @@ export async function fetchNiftySmallcap250() {
   return nseApiFetch('/api/equity-stockIndices?index=NIFTY%20SMALLCAP%20250', 60000);
 }
 
+// Fetch NIFTY Microcap 250
+export async function fetchNiftyMicrocap250() {
+  return nseApiFetch('/api/equity-stockIndices?index=NIFTY%20MICROCAP%20250', 60000);
+}
+
+// Fetch NIFTY Total Market
+export async function fetchNiftyTotalMarket() {
+  return nseApiFetch('/api/equity-stockIndices?index=NIFTY%20TOTAL%20MARKET', 60000);
+}
+
 // Fetch all indices
 export async function fetchAllIndices() {
   return nseApiFetch('/api/allIndices', 60000);

@@ -18,9 +18,10 @@ interface Earning {
   company: string;
   quality: string;
   quarter: string;
-  revenue: number;
-  netProfit: number;
-  eps: number;
+  sector: string;
+  marketCap: string;
+  edp: number | null;
+  timing: string;
   price: number;
   movePercent: number;
 }
@@ -97,7 +98,8 @@ export default function ScreenerPage() {
       const mapped: EarningsData = {
         earnings: (result.results || []).map((r: any) => ({
           symbol: r.ticker, company: r.company, quality: r.quality, quarter: r.quarter,
-          revenue: 0, netProfit: 0, eps: 0, price: r.cmp || 0, movePercent: r.priceMove || 0,
+          sector: r.sector || 'Other', marketCap: r.marketCap || '-', edp: r.edp || null,
+          timing: r.timing || '-', price: r.cmp || 0, movePercent: r.priceMove || 0,
         })),
         source: result.source || 'NSE', updatedAt: result.updatedAt || new Date().toISOString(),
       };
@@ -590,14 +592,14 @@ export default function ScreenerPage() {
                       <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary }}>
                         Quarter
                       </th>
-                      <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary }}>
-                        Revenue
+                      <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary }}>
+                        Sector
+                      </th>
+                      <th style={{ padding: '12px 16px', textAlign: 'center', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary }}>
+                        Cap
                       </th>
                       <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary }}>
-                        Net Profit
-                      </th>
-                      <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary }}>
-                        EPS
+                        EDP
                       </th>
                       <th
                         onClick={() => handleSortClick('Price')}
@@ -660,20 +662,32 @@ export default function ScreenerPage() {
                           <td style={{ padding: '12px 16px', fontSize: '12px', color: THEME.accent, fontWeight: '600' }}>
                             {earning.symbol}
                           </td>
-                          <td style={{ padding: '12px 16px', fontSize: '12px', color: THEME.textSecondary }}>
-                            {earning.quality}
+                          <td style={{ padding: '12px 16px', fontSize: '12px' }}>
+                            <span style={{
+                              padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600',
+                              backgroundColor: earning.quality === 'Good' ? 'rgba(16,185,129,0.2)' : earning.quality === 'Weak' ? 'rgba(239,68,68,0.2)' : 'rgba(251,191,36,0.2)',
+                              color: earning.quality === 'Good' ? '#6ee7b7' : earning.quality === 'Weak' ? '#fca5a5' : '#fbbf24',
+                            }}>
+                              {earning.quality}
+                            </span>
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '12px', color: THEME.textSecondary }}>
                             {earning.quarter}
                           </td>
-                          <td style={{ padding: '12px 16px', fontSize: '12px', textAlign: 'right', color: THEME.textPrimary }}>
-                            {formatNumber(earning.revenue)}
+                          <td style={{ padding: '12px 16px', fontSize: '12px', textAlign: 'left', color: THEME.textSecondary }}>
+                            {earning.sector}
                           </td>
-                          <td style={{ padding: '12px 16px', fontSize: '12px', textAlign: 'right', color: THEME.textPrimary }}>
-                            {formatNumber(earning.netProfit)}
+                          <td style={{ padding: '12px 16px', fontSize: '12px', textAlign: 'center', color: THEME.textSecondary }}>
+                            <span style={{
+                              padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600',
+                              backgroundColor: earning.marketCap === 'Large' ? 'rgba(15,122,191,0.2)' : earning.marketCap === 'Mid' ? 'rgba(16,185,129,0.2)' : earning.marketCap === 'Small' ? 'rgba(251,191,36,0.2)' : 'rgba(139,92,246,0.2)',
+                              color: earning.marketCap === 'Large' ? '#60a5fa' : earning.marketCap === 'Mid' ? '#6ee7b7' : earning.marketCap === 'Small' ? '#fbbf24' : '#c4b5fd',
+                            }}>
+                              {earning.marketCap}
+                            </span>
                           </td>
-                          <td style={{ padding: '12px 16px', fontSize: '12px', textAlign: 'right', color: THEME.textPrimary, fontWeight: '500' }}>
-                            {earning.eps.toFixed(2)}
+                          <td style={{ padding: '12px 16px', fontSize: '12px', textAlign: 'right', color: THEME.textSecondary }}>
+                            {earning.edp ? `₹${earning.edp.toFixed(2)}` : '-'}
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '12px', textAlign: 'right', color: THEME.textPrimary, fontWeight: '500' }}>
                             {earning.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
