@@ -9,7 +9,7 @@ interface EarningsResult {
   eventDate: string;
   announcedDate: string | null;
   quarter: string;
-  quality: 'Good' | 'Weak' | 'Upcoming';
+  quality: string;
   revenue: number | null;
   operatingProfit: number | null;
   opm: string | null;
@@ -26,7 +26,7 @@ interface EarningsResult {
 
 interface EarningsResponse {
   results: EarningsResult[];
-  summary: { total: number; good: number; weak: number; upcoming: number };
+  summary: { total: number; excellent: number; great: number; good: number; ok: number; weak: number; upcoming: number };
   quarter: string;
   dateRange: { from: string; to: string };
   sources: { boardMeetings: number; financialResults: number; announcements: number; bseMeetings: number };
@@ -50,9 +50,12 @@ const THEME = {
 };
 
 const qualityColors: Record<string, string> = {
+  Excellent: '#22C55E',
+  Great: '#10B981',
   Good: THEME.green,
+  Ok: THEME.orange,
   Weak: THEME.red,
-  Upcoming: THEME.orange,
+  Upcoming: '#6366F1',
 };
 
 export default function CalendarPage() {
@@ -133,9 +136,12 @@ export default function CalendarPage() {
         <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>
           {[
             { label: 'Total', value: data.summary.total, color: THEME.textPrimary },
+            { label: 'Excellent', value: data.summary.excellent || 0, color: '#22C55E' },
+            { label: 'Great', value: data.summary.great || 0, color: '#10B981' },
             { label: 'Good', value: data.summary.good, color: THEME.green },
+            { label: 'Ok', value: data.summary.ok || 0, color: THEME.orange },
             { label: 'Weak', value: data.summary.weak, color: THEME.red },
-            { label: 'Upcoming', value: data.summary.upcoming, color: THEME.orange },
+            { label: 'Upcoming', value: data.summary.upcoming, color: '#6366F1' },
             { label: 'Quarter', value: data.quarter, color: THEME.purple, isText: true },
           ].map(item => (
             <div key={item.label} style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px 20px', minWidth: '90px' }}>
@@ -149,7 +155,7 @@ export default function CalendarPage() {
             <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px 20px', marginLeft: 'auto' }}>
               <div style={{ fontSize: '10px', color: THEME.textSecondary, marginBottom: '2px', fontWeight: '600', textTransform: 'uppercase' }}>Sources</div>
               <div style={{ fontSize: '11px', color: THEME.textSecondary, lineHeight: '1.4' }}>
-                BM: {data.sources.boardMeetings} • FR: {data.sources.financialResults} • Ann: {data.sources.announcements}
+                NSE: {(data.sources.boardMeetings || 0) + (data.sources.financialResults || 0)} • BSE: {((data.sources as any).bseBoardMeetings || 0) + ((data.sources as any).bseResults || 0)}
               </div>
             </div>
           )}
@@ -187,7 +193,7 @@ export default function CalendarPage() {
 
           {/* Quality Filter */}
           <div style={{ display: 'flex', gap: '4px', backgroundColor: THEME.card, padding: '4px', borderRadius: '8px', border: `1px solid ${THEME.border}` }}>
-            {['All', 'Good', 'Weak', 'Upcoming'].map(q => (
+            {['All', 'Excellent', 'Great', 'Good', 'Ok', 'Weak', 'Upcoming'].map(q => (
               <button key={q} onClick={() => setQualityFilter(q)} style={{
                 padding: '6px 12px', borderRadius: '5px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: '600',
                 backgroundColor: qualityFilter === q ? (qualityColors[q] || THEME.accent) : 'transparent',
@@ -232,8 +238,8 @@ export default function CalendarPage() {
                 const dayResults = resultsByDate[cell.dateStr] || [];
                 const isToday = cell.dateStr === todayStr;
                 const hasResults = dayResults.length > 0;
-                const goodCount = dayResults.filter(r => r.quality === 'Good').length;
-                const weakCount = dayResults.filter(r => r.quality === 'Weak').length;
+                const positiveCount = dayResults.filter(r => ['Excellent', 'Great', 'Good'].includes(r.quality)).length;
+                const negativeCount = dayResults.filter(r => ['Ok', 'Weak'].includes(r.quality)).length;
                 const upcomingCount = dayResults.filter(r => r.quality === 'Upcoming').length;
 
                 return (
@@ -251,9 +257,9 @@ export default function CalendarPage() {
                       </span>
                       {hasResults && (
                         <div style={{ display: 'flex', gap: '2px' }}>
-                          {goodCount > 0 && <span style={{ fontSize: '9px', backgroundColor: `${THEME.green}30`, color: THEME.green, padding: '1px 4px', borderRadius: '3px', fontWeight: '700' }}>{goodCount}</span>}
-                          {weakCount > 0 && <span style={{ fontSize: '9px', backgroundColor: `${THEME.red}30`, color: THEME.red, padding: '1px 4px', borderRadius: '3px', fontWeight: '700' }}>{weakCount}</span>}
-                          {upcomingCount > 0 && <span style={{ fontSize: '9px', backgroundColor: `${THEME.orange}30`, color: THEME.orange, padding: '1px 4px', borderRadius: '3px', fontWeight: '700' }}>{upcomingCount}</span>}
+                          {positiveCount > 0 && <span style={{ fontSize: '9px', backgroundColor: `${THEME.green}30`, color: THEME.green, padding: '1px 4px', borderRadius: '3px', fontWeight: '700' }}>{positiveCount}</span>}
+                          {negativeCount > 0 && <span style={{ fontSize: '9px', backgroundColor: `${THEME.red}30`, color: THEME.red, padding: '1px 4px', borderRadius: '3px', fontWeight: '700' }}>{negativeCount}</span>}
+                          {upcomingCount > 0 && <span style={{ fontSize: '9px', backgroundColor: `#6366F130`, color: '#6366F1', padding: '1px 4px', borderRadius: '3px', fontWeight: '700' }}>{upcomingCount}</span>}
                         </div>
                       )}
                     </div>

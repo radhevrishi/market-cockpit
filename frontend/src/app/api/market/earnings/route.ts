@@ -11,6 +11,11 @@ import {
   fetchCorporateAnnouncementsPaginated,
   fetchBoardMeetingsForDateRange,
   fetchEventCalendar,
+  fetchBseBoardMeetings,
+  fetchBseResults,
+  fetchBseForthcomingResults,
+  fetchBseBoardMeetingsDateRange,
+  fetchBseResultsDateRange,
   normalizeSector,
 } from '@/lib/nse';
 
@@ -201,30 +206,40 @@ function isBoardMeetingEarningsRelated(meeting: any): boolean {
   return false;
 }
 
-// Assess quality based on financial metrics
-function assessQuality(result: any): 'Good' | 'Weak' | 'Upcoming' {
+// Assess quality based on financial metrics (5-level scale)
+function assessQuality(result: any): string {
   if (!result.revenue && !result.netProfit && !result.eps) return 'Upcoming';
 
   const netProfit = result.netProfit || 0;
   const eps = result.eps || 0;
   const opm = result.opm || 0;
+  const revenue = result.revenue || 0;
 
-  const hasProfit = netProfit > 0;
-  const hasHealthyOPM = opm > 5;
-  const hasPositiveEPS = eps > 0;
+  let score = 0;
+  if (netProfit > 0) score++;
+  if (eps > 0) score++;
+  if (opm > 10) score++;
+  if (opm > 5) score++;
+  if (eps > 20) score++;
+  if (revenue > 0) score++;
 
-  if (hasProfit && (hasHealthyOPM || hasPositiveEPS)) return 'Good';
+  if (score >= 5) return 'Excellent';
+  if (score === 4) return 'Great';
+  if (score === 3) return 'Good';
+  if (score === 2) return 'Ok';
   return 'Weak';
 }
 
-// Assess quality based on post-earnings price reaction
+// Assess quality based on post-earnings price reaction (5-level scale)
 // This is a fallback when financial metrics aren't available
-// Logic: if stock moved up significantly after earnings, likely "Good"; down = "Weak"
-function assessQualityFromPriceReaction(priceChangePercent: number | null): 'Good' | 'Weak' | 'Upcoming' {
+// Logic: if stock moved up significantly after earnings, likely "Excellent"; down = "Weak"
+function assessQualityFromPriceReaction(priceChangePercent: number | null): string {
   if (priceChangePercent === null || priceChangePercent === undefined) return 'Upcoming';
-  // Positive reaction usually indicates good results
-  if (priceChangePercent >= -2) return 'Good'; // Flat to positive = Good
-  return 'Weak'; // Significant decline = Weak
+  if (priceChangePercent >= 5) return 'Excellent';
+  if (priceChangePercent >= 2) return 'Great';
+  if (priceChangePercent >= -2) return 'Good';
+  if (priceChangePercent >= -5) return 'Ok';
+  return 'Weak';
 }
 
 // Market cap category
@@ -253,7 +268,7 @@ interface EarningsEvent {
   announcedDate: string | null;
   eventDate: string;
   quarter: string;
-  quality: 'Good' | 'Weak' | 'Upcoming';
+  quality: string;
   revenue: number | null;
   operatingProfit: number | null;
   opm: string | null;
@@ -265,6 +280,8 @@ interface EarningsEvent {
   currentPrice: number | null;
   priceChange: number | null;
   volume: number | null;
+  edp: number | null;
+  priceMove: number | null;
   source: string;
 }
 
@@ -279,7 +296,7 @@ export async function GET(request: Request) {
     if (market !== 'india') {
       return NextResponse.json({
         results: [],
-        summary: { total: 0, good: 0, weak: 0, upcoming: 0 },
+        summary: { total: 0, excellent: 0, great: 0, good: 0, ok: 0, weak: 0, upcoming: 0 },
         source: 'Not Available',
         message: 'US earnings calendar coming soon',
       });
@@ -321,6 +338,9 @@ export async function GET(request: Request) {
       announcements,
       announcementsPaginated,
       eventCalendar,
+      bseBoardMeetingsData,
+      bseResultsData,
+      bseForthcomingData,
       nifty50Data,
       niftyNext50Data,
       nifty500Data,
@@ -333,6 +353,9 @@ export async function GET(request: Request) {
       fetchBoardMeetingAnnouncements().catch(() => null),
       fetchCorporateAnnouncementsPaginated(formatNSEDate(fromDate), formatNSEDate(toDate), 3).catch(() => []),
       fetchEventCalendar().catch(() => null),
+      fetchBseBoardMeetings().catch(() => null),
+      fetchBseResults().catch(() => null),
+      fetchBseForthcomingResults().catch(() => null),
       fetchNifty50().catch(() => null),
       fetchNiftyNext50().catch(() => null),
       fetchNifty500().catch(() => null),
@@ -347,6 +370,16 @@ export async function GET(request: Request) {
     const annArray1 = toArray(announcements);
     const annArray2 = Array.isArray(announcementsPaginated) ? announcementsPaginated : toArray(announcementsPaginated);
     const eventCalArray = toArray(eventCalendar);
+
+    const bseBmArray = toArray(bseBoardMeetingsData);
+    const bseResultsArray = toArray(bseResultsData);
+    const bseForthArray = toArray(bseForthcomingData);
+
+    console.log('BSE sources:', {
+      bseBoardMeetings: bseBmArray.length,
+      bseResults: bseResultsArray.length,
+      bseForthcoming: bseForthArray.length,
+    });
 
     // Combine and deduplicate board meetings
     const bmSeen = new Set<string>();
@@ -493,6 +526,8 @@ export async function GET(request: Request) {
         indexMembership: getIndexMembership(ticker, indexMembers),
         currentPrice: stockInfo?.price || null,
         priceChange: null,
+        edp: null,
+        priceMove: null,
         volume: stockInfo?.volume || null,
         source: 'NSE Board Meeting',
       };
@@ -542,6 +577,8 @@ export async function GET(request: Request) {
         indexMembership: getIndexMembership(ticker, indexMembers),
         currentPrice: stockInfo?.price || null,
         priceChange: null,
+        edp: null,
+        priceMove: null,
         volume: stockInfo?.volume || null,
         source: 'NSE Financial Results',
       };
@@ -575,7 +612,7 @@ export async function GET(request: Request) {
 
       // For declared results, use price reaction to estimate quality
       const isPast = annDate < now;
-      let annQuality: 'Good' | 'Weak' | 'Upcoming' = 'Upcoming';
+      let annQuality: string = 'Upcoming';
       if (isOutcome && isPast && stockInfo) {
         // Use daily price change as proxy for post-earnings reaction
         annQuality = assessQualityFromPriceReaction(stockInfo.changePercent);
@@ -599,6 +636,8 @@ export async function GET(request: Request) {
         indexMembership: getIndexMembership(ticker, indexMembers),
         currentPrice: stockInfo?.price || null,
         priceChange: null,
+        edp: null,
+        priceMove: null,
         volume: stockInfo?.volume || null,
         source: 'NSE Announcement',
       };
@@ -646,6 +685,8 @@ export async function GET(request: Request) {
         indexMembership: getIndexMembership(ticker, indexMembers),
         currentPrice: stockInfo?.price || null,
         priceChange: null,
+        edp: null,
+        priceMove: null,
         volume: stockInfo?.volume || null,
         source: 'NSE Latest Results',
       });
@@ -691,8 +732,145 @@ export async function GET(request: Request) {
         indexMembership: getIndexMembership(ticker, indexMembers),
         currentPrice: stockInfo?.price || null,
         priceChange: null,
+        edp: null,
+        priceMove: null,
         volume: stockInfo?.volume || null,
         source: 'NSE Event Calendar',
+      });
+    }
+
+    // --- Source 6: BSE Board Meetings ---
+    for (const bm of bseBmArray) {
+      const ticker = (bm.SCRIP_CD || bm.scrip_code || bm.NSESYMBOL || bm.nse_symbol || '').toString().trim();
+      const nseTicker = bm.NSESYMBOL || bm.nse_symbol || ticker;
+      if (!nseTicker) continue;
+
+      // Check BSE purpose/description for earnings relevance
+      const purpose = (bm.SLONGNAME || bm.PURPOSE || bm.headline || bm.NEWS_SUBJECT || '').toLowerCase();
+      const desc = (bm.NEWSSUB || bm.NEWS_BODY || bm.desc || bm.attchmntText || '').toLowerCase();
+      const combined = purpose + ' ' + desc;
+
+      const isEarnings = combined.includes('financial result') || combined.includes('quarterly result') ||
+        combined.includes('half yearly result') || combined.includes('annual result') ||
+        combined.includes('audited result') || combined.includes('unaudited result') ||
+        combined.includes('results for') || combined.includes('consider the financial') ||
+        combined.includes('approve the financial') || combined.includes('financial statements') ||
+        combined.includes('profit and loss') || combined.includes('profit & loss') ||
+        combined.includes('inter alia') || combined.includes('inter-alia') ||
+        combined.includes('quarter ended') || combined.includes('period ended') ||
+        combined.includes('year ended') || combined.includes('half year ended') ||
+        combined.includes('dividend') || combined.includes('result');
+      if (!isEarnings) continue;
+
+      const dateStr = bm.NEWS_DT || bm.DT_TM || bm.MEETING_DT || bm.date || '';
+      const meetingDate = parseDate(dateStr);
+      if (!meetingDate) continue;
+      if (meetingDate < fromDate || meetingDate > toDate) continue;
+
+      const quarter = getFiscalQuarter(meetingDate);
+      const key = `${nseTicker}:${quarter}`;
+      if (eventsMap.has(key)) continue; // NSE data takes priority
+
+      const stockInfo = priceLookup[nseTicker];
+      const marketCapCr = (stockInfo?.marketCap || 0) / 10000000;
+
+      eventsMap.set(key, {
+        ticker: nseTicker,
+        company: bm.SLONGNAME || bm.COMPANY_NAME || bm.LongName || nseTicker,
+        eventType: 'BOARD_MEETING',
+        announcedDate: null,
+        eventDate: meetingDate.toISOString().split('T')[0],
+        quarter,
+        quality: 'Upcoming',
+        revenue: null, operatingProfit: null, opm: null, netProfit: null, eps: null,
+        sector: getSector(nseTicker, stockInfo?.industry),
+        marketCap: getCapCategory(marketCapCr),
+        indexMembership: getIndexMembership(nseTicker, indexMembers),
+        currentPrice: stockInfo?.price || null,
+        priceChange: null,
+        edp: null,
+        priceMove: null,
+        volume: stockInfo?.volume || null,
+        source: 'BSE Board Meeting',
+      });
+    }
+
+    // --- Source 7: BSE Results Announcements ---
+    for (const res of bseResultsArray) {
+      const ticker = (res.NSESYMBOL || res.nse_symbol || res.SCRIP_CD || '').toString().trim();
+      if (!ticker) continue;
+
+      const dateStr = res.NEWS_DT || res.DT_TM || res.date || '';
+      const resultDate = parseDate(dateStr);
+      if (!resultDate) continue;
+      if (resultDate < fromDate || resultDate > toDate) continue;
+
+      const quarter = getFiscalQuarter(resultDate);
+      const key = `${ticker}:${quarter}`;
+
+      // Don't override NSE financial results (they have actual metrics)
+      if (eventsMap.has(key) && eventsMap.get(key)!.source.includes('NSE Financial')) continue;
+
+      const stockInfo = priceLookup[ticker];
+      const marketCapCr = (stockInfo?.marketCap || 0) / 10000000;
+      const isPast = resultDate < now;
+
+      eventsMap.set(key, {
+        ticker,
+        company: res.SLONGNAME || res.COMPANY_NAME || res.LongName || ticker,
+        eventType: 'RESULTS_DECLARED',
+        announcedDate: resultDate.toISOString().split('T')[0],
+        eventDate: resultDate.toISOString().split('T')[0],
+        quarter,
+        quality: isPast && stockInfo ? assessQualityFromPriceReaction(stockInfo.changePercent) : 'Upcoming',
+        revenue: null, operatingProfit: null, opm: null, netProfit: null, eps: null,
+        sector: getSector(ticker, stockInfo?.industry),
+        marketCap: getCapCategory(marketCapCr),
+        indexMembership: getIndexMembership(ticker, indexMembers),
+        currentPrice: stockInfo?.price || null,
+        priceChange: stockInfo?.changePercent || null,
+        edp: null,
+        priceMove: null,
+        volume: stockInfo?.volume || null,
+        source: 'BSE Results',
+      });
+    }
+
+    // --- Source 8: BSE Forthcoming Results ---
+    for (const fr of bseForthArray) {
+      const ticker = (fr.NSESYMBOL || fr.nse_symbol || fr.scrip_code || fr.SCRIP_CD || '').toString().trim();
+      if (!ticker) continue;
+
+      const dateStr = fr.MEETING_DT || fr.Result_Date || fr.date || '';
+      const resultDate = parseDate(dateStr);
+      if (!resultDate) continue;
+      if (resultDate < fromDate || resultDate > toDate) continue;
+
+      const quarter = getFiscalQuarter(resultDate);
+      const key = `${ticker}:${quarter}`;
+      if (eventsMap.has(key)) continue; // Any existing source takes priority
+
+      const stockInfo = priceLookup[ticker];
+      const marketCapCr = (stockInfo?.marketCap || 0) / 10000000;
+
+      eventsMap.set(key, {
+        ticker,
+        company: fr.SLONGNAME || fr.COMPANY_NAME || fr.LongName || ticker,
+        eventType: 'BOARD_MEETING',
+        announcedDate: null,
+        eventDate: resultDate.toISOString().split('T')[0],
+        quarter,
+        quality: 'Upcoming',
+        revenue: null, operatingProfit: null, opm: null, netProfit: null, eps: null,
+        sector: getSector(ticker, stockInfo?.industry),
+        marketCap: getCapCategory(marketCapCr),
+        indexMembership: getIndexMembership(ticker, indexMembers),
+        currentPrice: stockInfo?.price || null,
+        priceChange: null,
+        edp: null,
+        priceMove: null,
+        volume: stockInfo?.volume || null,
+        source: 'BSE Forthcoming',
       });
     }
 
@@ -721,11 +899,11 @@ export async function GET(request: Request) {
           // The daily change isn't perfect but gives a reasonable distribution
           const stockInfo = priceLookup[event.ticker];
           if (stockInfo) {
-            // Use change percent — positive = likely good results, negative = likely weak
-            event.quality = stockInfo.changePercent >= 0 ? 'Good' : 'Weak';
+            // Use change percent with 5-level assessment
+            event.quality = assessQualityFromPriceReaction(stockInfo.changePercent);
           } else {
-            // No price data — default to "Good" for past results
-            event.quality = 'Good';
+            // No price data — default to "Ok" for past results
+            event.quality = 'Ok';
           }
         }
       }
@@ -756,7 +934,10 @@ export async function GET(request: Request) {
       return dateA - dateB;
     });
 
+    const excellentCount = results.filter(r => r.quality === 'Excellent').length;
+    const greatCount = results.filter(r => r.quality === 'Great').length;
     const goodCount = results.filter(r => r.quality === 'Good').length;
+    const okCount = results.filter(r => r.quality === 'Ok').length;
     const weakCount = results.filter(r => r.quality === 'Weak').length;
     const upcomingCount = results.filter(r => r.quality === 'Upcoming').length;
 
@@ -764,7 +945,10 @@ export async function GET(request: Request) {
       results,
       summary: {
         total: results.length,
+        excellent: excellentCount,
+        great: greatCount,
         good: goodCount,
+        ok: okCount,
         weak: weakCount,
         upcoming: upcomingCount,
       },
@@ -779,6 +963,9 @@ export async function GET(request: Request) {
         latestResults: latestFrArray.length,
         earningsAnnouncements: annCombined.length,
         eventCalendar: eventCalArray.length,
+        bseBoardMeetings: bseBmArray.length,
+        bseResults: bseResultsArray.length,
+        bseForthcoming: bseForthArray.length,
       },
       stockUniverse: {
         nifty50: indexMembers['NIFTY50'].size,
@@ -786,14 +973,14 @@ export async function GET(request: Request) {
         smallcap250: indexMembers['SMALLCAP250'].size,
         totalWithPrices: Object.keys(priceLookup).length,
       },
-      source: 'NSE India + BSE',
+      source: 'NSE India + BSE India (Live)',
       updatedAt: new Date().toISOString(),
     });
   } catch (error) {
     console.error('Earnings API error:', error);
     return NextResponse.json({
       results: [],
-      summary: { total: 0, good: 0, weak: 0, upcoming: 0 },
+      summary: { total: 0, excellent: 0, great: 0, good: 0, ok: 0, weak: 0, upcoming: 0 },
       source: 'Error',
       error: String(error),
     }, { status: 500 });

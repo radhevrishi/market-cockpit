@@ -41,9 +41,22 @@ const THEME = {
   red: '#EF4444',
 };
 
+interface EarningsResult {
+  ticker: string;
+  company: string;
+  quality: string;
+  eventDate: string;
+  quarter: string;
+  sector: string;
+  marketCap: string;
+  currentPrice: number | null;
+  priceChange: number | null;
+}
+
 export default function MoversPage() {
   const [market, setMarket] = useState<'india' | 'us'>('india');
   const [data, setData] = useState<ApiResponse | null>(null);
+  const [earningsData, setEarningsData] = useState<EarningsResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -54,15 +67,27 @@ export default function MoversPage() {
     try {
       setError(null);
       setIsRefreshing(true);
-      const response = await fetch(`/api/market/quotes?market=${market}`);
+      const [quotesRes, earningsRes] = await Promise.all([
+        fetch(`/api/market/quotes?market=${market}`),
+        fetch(`/api/market/earnings?market=india`).catch(() => null),
+      ]);
 
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
+      if (!quotesRes.ok) {
+        throw new Error(`API error: ${quotesRes.status}`);
       }
 
-      const json = await response.json();
+      const json = await quotesRes.json();
       setData(json);
       setLastUpdated(new Date());
+
+      // Parse earnings movers
+      if (earningsRes && earningsRes.ok) {
+        const earningsJson = await earningsRes.json();
+        const results: EarningsResult[] = (earningsJson.results || [])
+          .filter((r: any) => r.quality !== 'Upcoming' && r.priceChange !== null)
+          .sort((a: any, b: any) => Math.abs(b.priceChange || 0) - Math.abs(a.priceChange || 0));
+        setEarningsData(results);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch data');
     } finally {
@@ -559,6 +584,105 @@ export default function MoversPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Earnings Movers Section */}
+      {earningsData.length > 0 && !loading && (
+        <div style={{ marginTop: '32px' }}>
+          <h2 style={{ fontSize: '20px', fontWeight: '600', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            Earnings Movers — Post-Result Price Moves
+            <span style={{ fontSize: '11px', fontWeight: '500', color: THEME.textSecondary, backgroundColor: THEME.card, padding: '4px 10px', borderRadius: '4px', border: `1px solid ${THEME.border}` }}>
+              {earningsData.length} results this month
+            </span>
+          </h2>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+            {/* Earnings Gainers */}
+            <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '12px', overflow: 'hidden' }}>
+              <div style={{ padding: '16px', borderBottom: `1px solid ${THEME.border}`, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <h3 style={{ fontSize: '18px', fontWeight: '600', margin: 0 }}>Post-Earnings Gainers</h3>
+                <div style={{ display: 'inline-flex', backgroundColor: THEME.green, color: '#FFFFFF', padding: '4px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold' }}>EARNINGS</div>
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: THEME.background, borderBottom: `1px solid ${THEME.border}` }}>
+                      <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Ticker</th>
+                      <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Company</th>
+                      <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Quality</th>
+                      <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Date</th>
+                      <th style={{ padding: '10px', textAlign: 'right', color: THEME.textSecondary, fontWeight: '500' }}>Price</th>
+                      <th style={{ padding: '10px', textAlign: 'right', color: THEME.textSecondary, fontWeight: '500' }}>Move</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {earningsData
+                      .filter(r => (r.priceChange || 0) > 0)
+                      .slice(0, 20)
+                      .map((r) => (
+                        <tr key={r.ticker} style={{ borderBottom: `1px solid ${THEME.border}`, backgroundColor: THEME.card }}>
+                          <td style={{ padding: '10px', color: THEME.accent, fontWeight: '600' }}>{r.ticker}</td>
+                          <td style={{ padding: '10px', color: THEME.textPrimary, maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
+                          <td style={{ padding: '10px' }}>
+                            <span style={{
+                              fontSize: '10px', fontWeight: '600', padding: '2px 6px', borderRadius: '4px',
+                              backgroundColor: r.quality === 'Excellent' ? '#22C55E20' : r.quality === 'Great' ? '#10B98120' : r.quality === 'Good' ? '#10B98120' : r.quality === 'Ok' ? '#F59E0B20' : '#EF444420',
+                              color: r.quality === 'Excellent' ? '#22C55E' : r.quality === 'Great' ? '#10B981' : r.quality === 'Good' ? '#10B981' : r.quality === 'Ok' ? '#F59E0B' : '#EF4444',
+                            }}>{r.quality}</span>
+                          </td>
+                          <td style={{ padding: '10px', color: THEME.textSecondary, fontSize: '12px' }}>{r.eventDate}</td>
+                          <td style={{ padding: '10px', textAlign: 'right', color: THEME.textPrimary }}>₹{(r.currentPrice || 0).toFixed(0)}</td>
+                          <td style={{ padding: '10px', textAlign: 'right', color: THEME.green, fontWeight: '600' }}>+{(r.priceChange || 0).toFixed(1)}%</td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Earnings Losers */}
+            <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '12px', overflow: 'hidden' }}>
+              <div style={{ padding: '16px', borderBottom: `1px solid ${THEME.border}`, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <h3 style={{ fontSize: '18px', fontWeight: '600', margin: 0 }}>Post-Earnings Losers</h3>
+                <div style={{ display: 'inline-flex', backgroundColor: THEME.red, color: '#FFFFFF', padding: '4px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold' }}>EARNINGS</div>
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: THEME.background, borderBottom: `1px solid ${THEME.border}` }}>
+                      <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Ticker</th>
+                      <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Company</th>
+                      <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Quality</th>
+                      <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Date</th>
+                      <th style={{ padding: '10px', textAlign: 'right', color: THEME.textSecondary, fontWeight: '500' }}>Price</th>
+                      <th style={{ padding: '10px', textAlign: 'right', color: THEME.textSecondary, fontWeight: '500' }}>Move</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {earningsData
+                      .filter(r => (r.priceChange || 0) < 0)
+                      .slice(0, 20)
+                      .map((r) => (
+                        <tr key={r.ticker} style={{ borderBottom: `1px solid ${THEME.border}`, backgroundColor: THEME.card }}>
+                          <td style={{ padding: '10px', color: THEME.accent, fontWeight: '600' }}>{r.ticker}</td>
+                          <td style={{ padding: '10px', color: THEME.textPrimary, maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
+                          <td style={{ padding: '10px' }}>
+                            <span style={{
+                              fontSize: '10px', fontWeight: '600', padding: '2px 6px', borderRadius: '4px',
+                              backgroundColor: r.quality === 'Excellent' ? '#22C55E20' : r.quality === 'Great' ? '#10B98120' : r.quality === 'Good' ? '#10B98120' : r.quality === 'Ok' ? '#F59E0B20' : '#EF444420',
+                              color: r.quality === 'Excellent' ? '#22C55E' : r.quality === 'Great' ? '#10B981' : r.quality === 'Good' ? '#10B981' : r.quality === 'Ok' ? '#F59E0B' : '#EF4444',
+                            }}>{r.quality}</span>
+                          </td>
+                          <td style={{ padding: '10px', color: THEME.textSecondary, fontSize: '12px' }}>{r.eventDate}</td>
+                          <td style={{ padding: '10px', textAlign: 'right', color: THEME.textPrimary }}>₹{(r.currentPrice || 0).toFixed(0)}</td>
+                          <td style={{ padding: '10px', textAlign: 'right', color: THEME.red, fontWeight: '600' }}>{(r.priceChange || 0).toFixed(1)}%</td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>

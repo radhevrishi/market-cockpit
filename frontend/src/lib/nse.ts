@@ -320,6 +320,26 @@ export async function fetchBseBoardMeetings() {
   }
 }
 
+// BSE Results Announcements (companies that have declared results)
+export async function fetchBseResults() {
+  return bseApiFetch('/AnnGetData/w?strCat=Result&strPrevDate=&strScrip=&strSearch=P&strToDate=&strType=C', 600000);
+}
+
+// BSE Forthcoming Results (upcoming results calendar)
+export async function fetchBseForthcomingResults() {
+  return bseApiFetch('/Forth_Results/GetForthData?flag=0', 600000);
+}
+
+// BSE Board Meetings with date range
+export async function fetchBseBoardMeetingsDateRange(fromDate: string, toDate: string) {
+  return bseApiFetch(`/AnnGetData/w?strCat=Board+Meeting&strPrevDate=${encodeURIComponent(fromDate)}&strScrip=&strSearch=P&strToDate=${encodeURIComponent(toDate)}&strType=C`, 600000);
+}
+
+// BSE Corporate Announcements - Results category with date range
+export async function fetchBseResultsDateRange(fromDate: string, toDate: string) {
+  return bseApiFetch(`/AnnGetData/w?strCat=Result&strPrevDate=${encodeURIComponent(fromDate)}&strScrip=&strSearch=P&strToDate=${encodeURIComponent(toDate)}&strType=C`, 600000);
+}
+
 // ======= SECTOR NORMALIZATION =======
 
 // Normalize granular NSE industry names to ~12 broad sectors
