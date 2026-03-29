@@ -320,6 +320,19 @@ const JUNK_HEADLINE_PATTERNS = [
 
   // Generic "3 big things" / roundups
   /\b\d+ big things we'?re watching\b/i,
+
+  // "Investment opportunities in X" — generic filler
+  /\binvestment opportunities in\b/i,
+  // Restoration/trust in Congress — political
+  /\brestore trust.*congress\b/i,
+  /\bdecision making here in congress\b/i,
+  // Visa vs Mastercard type comparison articles
+  /\bvisa vs\.?\s*mastercard\b/i,
+  /\b(which one to own|here'?s which one)\b/i,
+  // "Thinking Small" motivational / Jeff Bezos quotes
+  /\b(self-fulfilling prophecy|overestimate risk|underestimate opportunity)\b/i,
+  // Generic Warren Buffett clickbait
+  /\bwarren buffett\b.*\b(buying|selling|loaded up|dumped|poured)\b/i,
 ];
 
 const JUNK_SOURCE_PATTERNS = [
@@ -332,10 +345,7 @@ function isMarketRelevant(article: NewsArticle): boolean {
   const title = (article.title || article.headline || '');
   const source = (article.source_name || article.source || '');
 
-  // Junk patterns apply to ALL articles — no bypasses for type, tickers, or importance
-  // Only investment_tier 1 gets a pass (real-time actionable alerts from the system)
-  if (article.investment_tier === 1) return true;
-
+  // Junk patterns apply to ALL articles — NO bypasses whatsoever
   // Check headline against junk patterns
   for (const pattern of JUNK_HEADLINE_PATTERNS) {
     if (pattern.test(title)) return false;
