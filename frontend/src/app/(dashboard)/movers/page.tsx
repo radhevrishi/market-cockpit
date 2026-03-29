@@ -16,8 +16,8 @@ interface Stock {
   cap: string; // 'Large' | 'Mid' | 'Small'
 }
 
-type CapFilter = 'All' | 'Large' | 'Mid' | 'Small';
-type MoveFilter = 'All' | '2%+' | '4%+' | '6%+';
+type CapFilter = 'All' | 'Large' | 'Mid' | 'Small' | 'Mid & Small';
+type MoveFilter = 'All' | '2%+' | '4%+' | '6%+' | '-2%' | '-4%' | '-6%';
 
 const BG = '#0A0E1A', CARD = '#0D1623', BORDER = '#1A2840', ACCENT = '#0F7ABF';
 const GREEN = '#10B981', RED = '#EF4444', TEXT1 = '#F5F7FA', TEXT2 = '#8A95A3', TEXT3 = '#4A5B6C';
@@ -101,12 +101,18 @@ export default function MoversPage() {
   // Derived data — all memos depend on filters
   const filtered = useMemo(() => {
     return allStocks.filter(s => {
-      if (capFilter !== 'All' && s.cap !== capFilter) return false;
+      if (capFilter === 'Mid & Small' && s.cap === 'Large') return false;
+      if (capFilter !== 'All' && capFilter !== 'Mid & Small' && s.cap !== capFilter) return false;
       if (sectorFilter !== 'All' && s.sector !== sectorFilter) return false;
-      const a = Math.abs(s.changePercent);
-      if (moveFilter === '2%+' && a < 2) return false;
-      if (moveFilter === '4%+' && a < 4) return false;
-      if (moveFilter === '6%+' && a < 6) return false;
+      const pct = s.changePercent;
+      // Positive filters: absolute move >= threshold
+      if (moveFilter === '2%+' && Math.abs(pct) < 2) return false;
+      if (moveFilter === '4%+' && Math.abs(pct) < 4) return false;
+      if (moveFilter === '6%+' && Math.abs(pct) < 6) return false;
+      // Negative filters: only stocks down by at least this much
+      if (moveFilter === '-2%' && pct > -2) return false;
+      if (moveFilter === '-4%' && pct > -4) return false;
+      if (moveFilter === '-6%' && pct > -6) return false;
       return true;
     });
   }, [allStocks, capFilter, sectorFilter, moveFilter]);
@@ -128,7 +134,9 @@ export default function MoversPage() {
 
   // Sector performance — responds to cap filter only (not sector filter)
   const sectorPerf = useMemo(() => {
-    const base = capFilter === 'All' ? allStocks : allStocks.filter(s => s.cap === capFilter);
+    const base = capFilter === 'All' ? allStocks
+      : capFilter === 'Mid & Small' ? allStocks.filter(s => s.cap !== 'Large')
+      : allStocks.filter(s => s.cap === capFilter);
     const map = new Map<string, { total: number; count: number }>();
     for (const s of base) {
       const e = map.get(s.sector) || { total: 0, count: 0 };
@@ -258,9 +266,13 @@ export default function MoversPage() {
             <Pill label="Large" active={capFilter === 'Large'} onClick={() => setCapFilter('Large')} count={capCounts.large} />
             <Pill label="Mid" active={capFilter === 'Mid'} onClick={() => setCapFilter('Mid')} count={capCounts.mid} />
             <Pill label="Small" active={capFilter === 'Small'} onClick={() => setCapFilter('Small')} count={capCounts.small} />
+            <Pill label="Mid & Small" active={capFilter === 'Mid & Small'} onClick={() => setCapFilter('Mid & Small')} count={capCounts.mid + capCounts.small} />
           </div>
           <div style={{ display: 'flex', gap: '2px', backgroundColor: CARD, padding: '3px', borderRadius: '8px', border: `1px solid ${BORDER}` }}>
             {(['All', '2%+', '4%+', '6%+'] as MoveFilter[]).map(f => <Pill key={f} label={f} active={moveFilter === f} onClick={() => setMoveFilter(f)} />)}
+          </div>
+          <div style={{ display: 'flex', gap: '2px', backgroundColor: CARD, padding: '3px', borderRadius: '8px', border: `1px solid ${BORDER}` }}>
+            {(['-2%', '-4%', '-6%'] as MoveFilter[]).map(f => <Pill key={f} label={f} active={moveFilter === f} onClick={() => setMoveFilter(f)} />)}
           </div>
           <select value={sectorFilter} onChange={e => setSectorFilter(e.target.value)} style={{
             padding: '5px 10px', backgroundColor: CARD, color: TEXT2, border: `1px solid ${BORDER}`, borderRadius: '8px', fontSize: '11px', outline: 'none', cursor: 'pointer',
