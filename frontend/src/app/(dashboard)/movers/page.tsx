@@ -85,7 +85,7 @@ export default function MoversPage() {
       if (earningsRes && earningsRes.ok) {
         const earningsJson = await earningsRes.json();
         const results: EarningsResult[] = (earningsJson.results || [])
-          .filter((r: any) => r.quality !== 'Upcoming' && r.cmp !== null);
+          .filter((r: any) => r.quality !== 'Upcoming');
         setEarningsData(results);
       }
     } catch (err) {
@@ -628,7 +628,7 @@ export default function MoversPage() {
                       </td>
                       <td style={{ padding: '10px', color: THEME.textSecondary, fontSize: '12px' }}>{r.quarter}</td>
                       <td style={{ padding: '10px', color: THEME.textSecondary, fontSize: '12px' }}>{r.sector}</td>
-                      <td style={{ padding: '10px', textAlign: 'right', color: THEME.textPrimary }}>₹{(r.cmp || 0).toFixed(0)}</td>
+                      <td style={{ padding: '10px', textAlign: 'right', color: THEME.textPrimary }}>{r.cmp ? `₹${r.cmp.toFixed(0)}` : '—'}</td>
                       <td style={{ padding: '10px', textAlign: 'right', color: THEME.textSecondary, fontSize: '12px' }}>{r.marketCap || '—'}</td>
                     </tr>
                   ))}
