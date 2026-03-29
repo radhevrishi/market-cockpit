@@ -171,6 +171,45 @@ async def _seed_initial_data():
     except Exception as e:
         logger.warning(f"RATING_CHANGE cleanup failed (non-fatal): {e}")
 
+    # ── Re-classify signal scores on ALL articles ─────────────────────────────
+    try:
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import select
+            from app.models.news import NewsArticle
+            from app.services.news_relevance import classify_investment_relevance
+
+            result = await db.execute(select(NewsArticle))
+            all_articles = result.scalars().all()
+            reclassified = 0
+
+            for art in all_articles:
+                # Extract ticker symbols
+                ticker_symbols = []
+                for t in (art.tickers or []):
+                    if isinstance(t, str):
+                        ticker_symbols.append(t)
+                    elif isinstance(t, dict) and t.get("ticker"):
+                        ticker_symbols.append(t["ticker"])
+
+                relevance = classify_investment_relevance(
+                    headline=art.headline,
+                    summary=art.summary or "",
+                    tickers=ticker_symbols,
+                    importance_score=art.importance_score,
+                    article_type=art.article_type,
+                )
+
+                if art.investment_tier != relevance["tier"] or art.relevance_tags != relevance.get("relevance_tags", []):
+                    art.investment_tier = relevance["tier"]
+                    art.relevance_tags = relevance.get("relevance_tags", [])
+                    reclassified += 1
+
+            if reclassified:
+                await db.commit()
+                logger.info(f"Re-classified signal scores on {reclassified}/{len(all_articles)} articles")
+    except Exception as e:
+        logger.warning(f"Signal reclassification failed (non-fatal): {e}")
+
     # Fix India Bottleneck cross-contamination: correct regions + re-run detection
     # Non-India articles (Tesla, ICE, etc.) that were incorrectly tagged with INDIA_* themes
     # will be stripped of those themes and possibly demoted from BOTTLENECK

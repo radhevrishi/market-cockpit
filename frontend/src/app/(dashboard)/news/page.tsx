@@ -90,7 +90,34 @@ const SOURCES = [
   // Policy & Geopolitics
   'CSIS', 'Brookings',
 ] as const;
-const IMPORTANCE_LABELS: Record<number, string> = { 1: 'All', 2: 'Low+', 3: 'Medium+', 4: 'High' };
+// Signal filter: maps to investment_tier (1=HIGH, 2=MEDIUM, 3=NOISE)
+const SIGNAL_FILTERS = [
+  { value: 'ALL', label: 'All Signals', icon: '' },
+  { value: 'HIGH', label: '🔴 High', icon: '🔴' },
+  { value: 'MEDIUM', label: '🟡 Medium', icon: '🟡' },
+] as const;
+
+// Layer classification for institutional hierarchy
+type FeedLayer = 'MACRO_REGIME' | 'STRUCTURAL' | 'COMPANY_ALPHA' | 'GENERAL';
+const LAYER_CONFIG: Record<FeedLayer, { label: string; color: string; description: string }> = {
+  MACRO_REGIME: { label: 'MACRO REGIME', color: '#DC2626', description: 'Liquidity, rates, commodities, geopolitical' },
+  STRUCTURAL: { label: 'STRUCTURAL THEMES', color: '#8B5CF6', description: 'AI infrastructure, defense, energy, semiconductors' },
+  COMPANY_ALPHA: { label: 'COMPANY ALPHA', color: '#0F7ABF', description: 'Earnings, contracts, guidance, M&A' },
+  GENERAL: { label: 'MARKET INTEL', color: '#4A5B6C', description: 'Industry news & analysis' },
+};
+
+function getArticleLayer(article: NewsArticle): FeedLayer {
+  const type = article.article_type;
+  if (type === 'MACRO' || type === 'GEOPOLITICAL' || type === 'TARIFF') return 'MACRO_REGIME';
+  if (type === 'BOTTLENECK') return 'STRUCTURAL';
+  if (type === 'EARNINGS' || type === 'RATING_CHANGE' || type === 'CORPORATE') return 'COMPANY_ALPHA';
+  // For GENERAL articles, check if they have structural theme indicators
+  const text = (article.title || article.headline || '').toLowerCase();
+  if (/\b(semiconductor|chip|gpu|hbm|data center|ai infrastructure|defense|energy transition)\b/.test(text)) return 'STRUCTURAL';
+  if (/\b(earnings|revenue|profit|guidance|quarterly|q[1-4])\b/.test(text)) return 'COMPANY_ALPHA';
+  if (/\b(oil|crude|fed|rbi|inflation|gdp|rate cut|rate hike|tariff|sanction|war|iran)\b/.test(text)) return 'MACRO_REGIME';
+  return 'GENERAL';
+}
 
 // Ticker alias map for search expansion (ticker → company name keywords)
 const TICKER_ALIASES: Record<string, string[]> = {
@@ -149,12 +176,18 @@ function useNews(search: string) {
 // Client-side filter for instant filter switching
 function filterArticles(
   articles: NewsArticle[],
-  region: string, type: string, minImportance: number, sourceName: string,
+  region: string, type: string, signalFilter: string, sourceName: string,
 ): NewsArticle[] {
   return articles.filter(a => {
     if (region !== 'ALL' && a.region !== region && a.region !== 'GLOBAL') return false;
     if (type !== 'ALL' && a.article_type !== type) return false;
-    if (minImportance > 1 && a.importance_score < minImportance) return false;
+    // Signal filter: ALL = show HIGH+MEDIUM (hide noise), HIGH = only tier 1, MEDIUM = only tier 2
+    if (signalFilter === 'HIGH' && (a.investment_tier || 0) !== 1) return false;
+    if (signalFilter === 'MEDIUM' && (a.investment_tier || 0) !== 2) return false;
+    if (signalFilter === 'ALL') {
+      // Default: hide noise (tier 3) unless no tier assigned (legacy articles)
+      if ((a.investment_tier || 0) === 3) return false;
+    }
     if (sourceName !== 'ALL') {
       const src = a.source_name || a.source || '';
       if (src !== sourceName) return false;
@@ -233,9 +266,9 @@ const cleanUrl = (raw: string): string => {
 const importanceDot = (s: number) =>
   s >= 5 ? '#EF4444' : s >= 4 ? '#F59E0B' : s >= 3 ? '#0F7ABF' : '#4A5B6C';
 const tierBadge = (tier?: number) => {
-  if (tier === 1) return { label: 'ACTIONABLE', bg: '#10B98115', color: '#10B981', border: '#10B98130' };
-  if (tier === 2) return { label: 'DIGEST', bg: '#F59E0B10', color: '#F59E0B', border: '#F59E0B25' };
-  return null;
+  if (tier === 1) return { label: '🔴 HIGH', bg: '#EF444418', color: '#EF4444', border: '#EF444440' };
+  if (tier === 2) return { label: '🟡 MEDIUM', bg: '#F59E0B12', color: '#F59E0B', border: '#F59E0B30' };
+  return null; // Tier 3 = NOISE, no badge shown
 };
 const typeColor = (t: string) =>
   ({ BOTTLENECK: '#EF4444', EARNINGS: '#10B981', RATING_CHANGE: '#F59E0B', MACRO: '#8B5CF6', GEOPOLITICAL: '#DC2626', TARIFF: '#EA580C', CORPORATE: '#06B6D4', GENERAL: '#4A5B6C' })[t] ?? '#4A5B6C';
@@ -837,11 +870,12 @@ export default function NewsFeedPage() {
   const [region,        setRegion]        = useState<'ALL' | 'IN' | 'US'>('ALL');
   const [articleType,   setArticleType]   = useState<string>('ALL');
   const [sourceName,    setSourceName]    = useState<string>('ALL');
-  const [minImportance, setMinImportance] = useState(1);
+  const [signalFilter,  setSignalFilter]  = useState<string>('ALL'); // 'ALL' = HIGH+MEDIUM (hides noise), 'HIGH' = only high, 'MEDIUM' = only medium
   const [search,        setSearch]        = useState('');
   const [showFilters,   setShowFilters]   = useState(false);
   const [selectedArticle, setSelectedArticle] = useState<NewsArticle | null>(null);
   const [isRefreshing, setIsRefreshing]   = useState(false);
+  const [groupByLayer,  setGroupByLayer]  = useState(true); // Group articles by layer
   const filterPanelRef = useRef<HTMLDivElement>(null);
 
   // ESC key closes filter panel
@@ -869,13 +903,13 @@ export default function NewsFeedPage() {
   const { data: allArticles, isLoading, error, refetch } = useNews(search);
   const { data: rawInPlay, isLoading: inPlayLoading, refetch: refetchInPlay } = useInPlay();
 
-  // Client-side filter chain: server filters → junk filter → stale filter
+  // Client-side filter chain: server filters → signal filter → junk filter → stale filter
   const now = Date.now();
   const STALE_MS = 48 * 60 * 60 * 1000; // 48 hours
-  const articles = filterArticles(allArticles || [], region, articleType, minImportance, sourceName).filter(a => {
+  const articles = filterArticles(allArticles || [], region, articleType, signalFilter, sourceName).filter(a => {
     if (!isMarketRelevant(a)) return false;
-    // When high importance (4) selected, exclude stale articles
-    if (minImportance >= 4) {
+    // When HIGH signal selected, exclude stale articles
+    if (signalFilter === 'HIGH') {
       const pubTime = new Date(a.published_at || a.ingested_at || 0).getTime();
       if (now - pubTime > STALE_MS) return false;
     }
@@ -986,7 +1020,7 @@ export default function NewsFeedPage() {
             style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: showFilters ? '#0F7ABF' : '#111B35', border: `1px solid ${showFilters ? '#0F7ABF' : '#1E2D45'}`, borderRadius: '8px', padding: '7px 12px', color: '#F5F7FA', fontSize: '12px', cursor: 'pointer', flexShrink: 0, minHeight: '36px' }}
           >
             <Filter style={{ width: '12px', height: '12px' }} /> Filters
-            {(region !== 'ALL' || articleType !== 'ALL' || minImportance > 1 || sourceName !== 'ALL' || search) && (
+            {(region !== 'ALL' || articleType !== 'ALL' || signalFilter !== 'ALL' || sourceName !== 'ALL' || search) && (
               <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#F59E0B', display: 'inline-block', marginLeft: '2px' }} />
             )}
           </button>
@@ -1036,12 +1070,12 @@ export default function NewsFeedPage() {
               </div>
             </div>
             <div>
-              <p style={{ fontSize: '10px', fontWeight: '600', color: '#4A5B6C', margin: '0 0 8px', letterSpacing: '0.5px' }}>IMPORTANCE</p>
+              <p style={{ fontSize: '10px', fontWeight: '600', color: '#4A5B6C', margin: '0 0 8px', letterSpacing: '0.5px' }}>SIGNAL STRENGTH</p>
               <div style={{ display: 'flex', gap: '6px' }}>
-                {([1, 2, 3, 4] as const).map(n => (
-                  <button key={n} onClick={() => setMinImportance(n)}
-                    style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', border: `1px solid ${minImportance === n ? '#0F7ABF' : '#1E2D45'}`, backgroundColor: minImportance === n ? '#0F7ABF20' : 'transparent', color: minImportance === n ? '#0F7ABF' : '#8A95A3' }}>
-                    {IMPORTANCE_LABELS[n]}
+                {SIGNAL_FILTERS.map(s => (
+                  <button key={s.value} onClick={() => setSignalFilter(s.value)}
+                    style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', border: `1px solid ${signalFilter === s.value ? '#0F7ABF' : '#1E2D45'}`, backgroundColor: signalFilter === s.value ? '#0F7ABF20' : 'transparent', color: signalFilter === s.value ? '#0F7ABF' : '#8A95A3' }}>
+                    {s.label}
                   </button>
                 ))}
               </div>
@@ -1059,7 +1093,7 @@ export default function NewsFeedPage() {
             </div>
           </div>
           <button
-            onClick={() => { setRegion('ALL'); setArticleType('ALL'); setSourceName('ALL'); setMinImportance(1); setSearch(''); }}
+            onClick={() => { setRegion('ALL'); setArticleType('ALL'); setSourceName('ALL'); setSignalFilter('ALL'); setSearch(''); }}
             style={{ marginTop: '12px', fontSize: '11px', color: '#4A5B6C', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
           >
             <X style={{ width: '10px', height: '10px' }} /> Clear filters
@@ -1080,6 +1114,29 @@ export default function NewsFeedPage() {
       {showBottleneckDashboard && (
         <div style={{ marginBottom: '16px' }}>
           <BottleneckDashboard dashboard={bnDashboard} isLoading={bnLoading} />
+        </div>
+      )}
+
+      {/* ── Signal summary bar ─────────────────────────────────────── */}
+      {!isLoading && articles?.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px', padding: '8px 12px', backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '10px', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '10px', fontWeight: '700', color: '#6A7B8C', letterSpacing: '0.5px' }}>SIGNALS</span>
+          <span style={{ fontSize: '11px', color: '#EF4444', fontWeight: '600' }}>
+            🔴 {articles.filter(a => (a.investment_tier || 0) === 1).length} High
+          </span>
+          <span style={{ fontSize: '11px', color: '#F59E0B', fontWeight: '600' }}>
+            🟡 {articles.filter(a => (a.investment_tier || 0) === 2).length} Medium
+          </span>
+          <span style={{ fontSize: '11px', color: '#4A5B6C' }}>
+            {articles.length} total
+          </span>
+          {/* Layer grouping toggle */}
+          <button
+            onClick={() => setGroupByLayer(g => !g)}
+            style={{ marginLeft: 'auto', fontSize: '10px', fontWeight: '600', color: groupByLayer ? '#0F7ABF' : '#4A5B6C', background: 'none', border: `1px solid ${groupByLayer ? '#0F7ABF40' : '#1E2D45'}`, borderRadius: '6px', padding: '3px 8px', cursor: 'pointer' }}
+          >
+            {groupByLayer ? 'Grouped' : 'Timeline'}
+          </button>
         </div>
       )}
 
@@ -1112,7 +1169,31 @@ export default function NewsFeedPage() {
               {isRefreshing ? 'Fetching news…' : 'Refresh Now'}
             </button>
           </div>
+        ) : groupByLayer && !showBottleneckDashboard && articleType === 'ALL' ? (
+          // ── Layered view: group articles by institutional hierarchy ──
+          <>
+            {(['MACRO_REGIME', 'STRUCTURAL', 'COMPANY_ALPHA', 'GENERAL'] as FeedLayer[]).map(layer => {
+              const layerArticles = articles.filter(a => getArticleLayer(a) === layer);
+              if (layerArticles.length === 0) return null;
+              const config = LAYER_CONFIG[layer];
+              return (
+                <div key={layer}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', marginTop: '12px', paddingBottom: '6px', borderBottom: `1px solid ${config.color}30` }}>
+                    <div style={{ width: '3px', height: '16px', borderRadius: '2px', backgroundColor: config.color }} />
+                    <span style={{ fontSize: '11px', fontWeight: '700', color: config.color, letterSpacing: '0.8px' }}>{config.label}</span>
+                    <span style={{ fontSize: '10px', color: '#4A5B6C' }}>{config.description}</span>
+                    <span style={{ fontSize: '10px', color: '#4A5B6C', marginLeft: 'auto' }}>{layerArticles.length}</span>
+                  </div>
+                  {layerArticles.map(art => <NewsCard key={art.id} article={art} onSelect={setSelectedArticle} />)}
+                </div>
+              );
+            })}
+            <div style={{ textAlign: 'center', padding: '16px 0 8px', fontSize: '12px', color: '#4A5B6C' }}>
+              Showing {articles.length} articles across {(['MACRO_REGIME', 'STRUCTURAL', 'COMPANY_ALPHA', 'GENERAL'] as FeedLayer[]).filter(l => articles.some(a => getArticleLayer(a) === l)).length} layers
+            </div>
+          </>
         ) : (
+          // ── Timeline view: chronological ──
           <>
             {articles.map(art => <NewsCard key={art.id} article={art} onSelect={setSelectedArticle} />)}
             <div style={{ textAlign: 'center', padding: '16px 0 8px', fontSize: '12px', color: '#4A5B6C' }}>
