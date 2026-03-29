@@ -310,13 +310,36 @@ async function fetchIndianData() {
 
   let stocks: any[] = [];
   const tickerSet = new Set<string>();
+  // Track which cap category each ticker belongs to (first match wins)
+  const tickerCapMap = new Map<string, string>();
+
+  // Build cap membership from index data (most reliable classification)
+  // Nifty 50 + Next 50 = Large, Midcap 250 = Mid, Smallcap 250 + Microcap = Small
+  const buildCapMap = (data: any, cap: string) => {
+    if (!data?.data) return;
+    for (const item of data.data) {
+      const sym = item.symbol || '';
+      if (sym && !sym.includes(' ') && !tickerCapMap.has(sym)) {
+        tickerCapMap.set(sym, cap);
+      }
+    }
+  };
+
+  // Set cap from specific indices (order matters — midcap/smallcap override nifty500)
+  buildCapMap(midcap250Data, 'Mid');
+  buildCapMap(smallcap250Data, 'Small');
+  buildCapMap(microcap250Data, 'Small');
 
   const mapStock = (item: any) => {
     const symbol = item.symbol || '';
+    // Skip index header rows
+    if (!symbol || symbol.includes(' ')) return null;
     // Priority: dynamic sector map > normalized industry > static map
     const sector = sectorMap[symbol] || normalizeSector(item.meta?.industry || item.industry) || NIFTY50_SECTORS[symbol] || 'Other';
     const ffmc = item.ffmc || item.freeFloatMktCap || 0;
     const estimatedMcap = ffmc > 0 ? ffmc : Math.round((item.lastPrice || 0) * (item.totalTradedVolume || 1) / 10000);
+    // Cap classification: use index membership first, then market cap thresholds
+    const cap = tickerCapMap.get(symbol) || (ffmc > 500_000_000_000 ? 'Large' : ffmc > 100_000_000_000 ? 'Mid' : 'Large');
 
     return {
       ticker: symbol,
@@ -333,63 +356,27 @@ async function fetchIndianData() {
       dayLow: item.dayLow || 0,
       yearHigh: item.yearHigh || 0,
       yearLow: item.yearLow || 0,
+      indexGroup: cap,
     };
   };
 
-  // Process NIFTY 500 first (largest coverage)
-  if (nifty500Data && nifty500Data.data) {
-    for (const item of nifty500Data.data) {
+  const addStocks = (data: any) => {
+    if (!data?.data) return;
+    for (const item of data.data) {
       const mapped = mapStock(item);
-      if (mapped.ticker && mapped.price > 0 && !tickerSet.has(mapped.ticker)) {
+      if (mapped && mapped.price > 0 && !tickerSet.has(mapped.ticker)) {
         stocks.push(mapped);
         tickerSet.add(mapped.ticker);
       }
     }
-  }
+  };
 
-  // Add unique stocks from Midcap 250
-  if (midcap250Data && midcap250Data.data) {
-    for (const item of midcap250Data.data) {
-      const mapped = mapStock(item);
-      if (mapped.ticker && mapped.price > 0 && !tickerSet.has(mapped.ticker)) {
-        stocks.push(mapped);
-        tickerSet.add(mapped.ticker);
-      }
-    }
-  }
-
-  // Add unique stocks from Smallcap 250
-  if (smallcap250Data && smallcap250Data.data) {
-    for (const item of smallcap250Data.data) {
-      const mapped = mapStock(item);
-      if (mapped.ticker && mapped.price > 0 && !tickerSet.has(mapped.ticker)) {
-        stocks.push(mapped);
-        tickerSet.add(mapped.ticker);
-      }
-    }
-  }
-
-  // Add unique stocks from Microcap 250
-  if (microcap250Data && microcap250Data.data) {
-    for (const item of microcap250Data.data) {
-      const mapped = mapStock(item);
-      if (mapped.ticker && mapped.price > 0 && !tickerSet.has(mapped.ticker)) {
-        stocks.push(mapped);
-        tickerSet.add(mapped.ticker);
-      }
-    }
-  }
-
-  // Add unique stocks from NIFTY Total Market
-  if (totalMarketData && totalMarketData.data) {
-    for (const item of totalMarketData.data) {
-      const mapped = mapStock(item);
-      if (mapped.ticker && mapped.price > 0 && !tickerSet.has(mapped.ticker)) {
-        stocks.push(mapped);
-        tickerSet.add(mapped.ticker);
-      }
-    }
-  }
+  // Process all index data
+  addStocks(nifty500Data);
+  addStocks(midcap250Data);
+  addStocks(smallcap250Data);
+  addStocks(microcap250Data);
+  addStocks(totalMarketData);
 
   // Add unique stocks from NSE live gainers/losers (covers ALL NSE equities)
   const addLiveAnalysis = (liveData: any) => {
@@ -397,7 +384,7 @@ async function fetchIndianData() {
     const allItems = [...(liveData.NIFTY?.data || []), ...(liveData.allSec?.data || [])];
     for (const item of allItems) {
       const mapped = mapStock(item);
-      if (mapped.ticker && mapped.price > 0 && !tickerSet.has(mapped.ticker)) {
+      if (mapped && mapped.price > 0 && !tickerSet.has(mapped.ticker)) {
         stocks.push(mapped);
         tickerSet.add(mapped.ticker);
       }
@@ -415,18 +402,8 @@ async function fetchIndianData() {
 
     stocks = [];
     tickerSet.clear();
-    if (nifty50Data && nifty50Data.data) {
-      for (const item of nifty50Data.data) {
-        const mapped = mapStock(item);
-        if (mapped.ticker && mapped.price > 0) { stocks.push(mapped); tickerSet.add(mapped.ticker); }
-      }
-    }
-    if (niftyNext50Data && niftyNext50Data.data) {
-      for (const item of niftyNext50Data.data) {
-        const mapped = mapStock(item);
-        if (mapped.ticker && mapped.price > 0 && !tickerSet.has(mapped.ticker)) { stocks.push(mapped); tickerSet.add(mapped.ticker); }
-      }
-    }
+    addStocks(nifty50Data);
+    addStocks(niftyNext50Data);
   }
 
   // Yahoo Finance as last resort
