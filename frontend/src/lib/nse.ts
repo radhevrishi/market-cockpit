@@ -119,6 +119,11 @@ export async function fetchNiftyMidcap50() {
   return nseApiFetch('/api/equity-stockIndices?index=NIFTY%20MIDCAP%2050', 60000);
 }
 
+// Fetch NIFTY Midcap 100
+export async function fetchNiftyMidcap100() {
+  return nseApiFetch('/api/equity-stockIndices?index=NIFTY%20MIDCAP%20100', 60000);
+}
+
 // Fetch NIFTY 200
 export async function fetchNifty200() {
   return nseApiFetch('/api/equity-stockIndices?index=NIFTY%20200', 60000);
