@@ -9,10 +9,10 @@ import {
   fetchBoardMeetingsForDateRange,
   fetchFinancialResults,
   fetchLatestFinancialResults,
+  fetchStockQuote,
   normalizeSector,
+  nseApiFetch,
 } from '@/lib/nse';
-// New: fetch results-specific corporate filings from NSE
-import { nseApiFetch } from '@/lib/nse';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -572,61 +572,14 @@ export async function GET(request: Request) {
       });
     }
 
-    // B) Results-specific filings (companies not already from board meetings)
-    for (const [ticker, rf] of resultsFilingsByTicker) {
-      if (eventsMap.has(ticker)) continue;
+    // B) Results-specific filings — ONLY used as confirmation for board meetings
+    //    These do NOT create standalone events (too many false positives).
+    //    They're already used via isConfirmed() in Step A above.
 
-      const filingDate = rf._filingDate as Date;
-      const attText = rf.attchmntText || '';
-      const quarter = getResultsQuarter(filingDate, attText);
-      if (quarter !== expectedQuarter) continue;
-
-      const stockInfo = priceLookup[ticker];
-      const marketCapCr = (stockInfo?.marketCap || 0) / 10000000;
-
-      eventsMap.set(ticker, {
-        ticker,
-        company: rf.sm_name || ticker,
-        resultDate: filingDate.toISOString().split('T')[0],
-        quarter,
-        quality: stockInfo && stockInfo.changePercent < -5 ? 'Weak' : 'Good',
-        sector: normalizeSector(stockInfo?.industry) || '',
-        industry: stockInfo?.industry || '',
-        marketCap: getCapCategory(marketCapCr),
-        edp: null,
-        cmp: stockInfo?.price || null,
-        priceMove: null,
-        source: 'NSE',
-      });
-    }
-
-    // C) Confirmed outcomes not yet in eventsMap
-    for (const [ticker, ann] of confirmedOutcomes) {
-      if (eventsMap.has(ticker)) continue;
-
-      const annDate = ann._annDate as Date;
-      const attText = ann.attchmntText || '';
-      const quarter = getResultsQuarter(annDate, attText);
-      if (quarter !== expectedQuarter) continue;
-
-      const stockInfo = priceLookup[ticker];
-      const marketCapCr = (stockInfo?.marketCap || 0) / 10000000;
-
-      eventsMap.set(ticker, {
-        ticker,
-        company: ann.sm_name || ticker,
-        resultDate: annDate.toISOString().split('T')[0],
-        quarter,
-        quality: stockInfo && stockInfo.changePercent < -5 ? 'Weak' : 'Good',
-        sector: normalizeSector(stockInfo?.industry) || '',
-        industry: stockInfo?.industry || '',
-        marketCap: getCapCategory(marketCapCr),
-        edp: null,
-        cmp: stockInfo?.price || null,
-        priceMove: null,
-        source: 'NSE',
-      });
-    }
+    // C) Confirmed outcomes — also ONLY used as confirmation for board meetings
+    //    Same rationale: "Outcome of Board Meeting" announcements confirm that
+    //    a board meeting DID discuss results, but the board meeting itself is
+    //    the primary source for the event date.
 
     // D) Financial Results API entries not yet in eventsMap
     for (const [ticker, fr] of frResultsByTicker) {
@@ -725,6 +678,75 @@ export async function GET(request: Request) {
     }
 
     // ═══════════════════════════════════════════
+    // STEP 6.5: Enrich missing price/sector/cap via individual stock quotes
+    // ═══════════════════════════════════════════
+    const tickersNeedingQuotes = Array.from(eventsMap.entries())
+      .filter(([, e]) => e.cmp === null && e.source === 'NSE')
+      .map(([ticker]) => ticker);
+
+    let quotesEnrichedCount = 0;
+    if (tickersNeedingQuotes.length > 0) {
+      // Fetch up to 15 quotes in parallel (rate limit friendly)
+      const batchSize = 5;
+      for (let i = 0; i < Math.min(tickersNeedingQuotes.length, 15); i += batchSize) {
+        const batch = tickersNeedingQuotes.slice(i, i + batchSize);
+        const quoteResults = await Promise.all(
+          batch.map(ticker => fetchStockQuote(ticker).catch(() => null))
+        );
+        for (let j = 0; j < batch.length; j++) {
+          const ticker = batch[j];
+          const quote = quoteResults[j];
+          if (!quote) continue;
+
+          const priceInfo = quote.priceInfo || {};
+          const info = quote.info || {};
+          const metadata = quote.metadata || {};
+          const securityInfo = quote.securityInfo || {};
+
+          const lastPrice = priceInfo.lastPrice || priceInfo.close || 0;
+          const previousClose = priceInfo.previousClose || 0;
+          const change = priceInfo.change || 0;
+          const pChange = priceInfo.pChange || 0;
+          const industry = info.industry || metadata.industry || '';
+          const isin = info.isin || '';
+          const ffmc = securityInfo.issuedSize
+            ? (securityInfo.issuedSize * lastPrice) / 10000000 // Approx market cap in Cr
+            : 0;
+
+          const event = eventsMap.get(ticker);
+          if (event) {
+            event.cmp = lastPrice || null;
+            event.sector = normalizeSector(industry) || event.sector;
+            event.industry = industry || event.industry;
+            event.marketCap = getCapCategory(ffmc) || event.marketCap;
+            // Better quality heuristic with actual price data
+            if (event.quality !== 'Upcoming' && pChange < -5) {
+              event.quality = 'Weak';
+            }
+            quotesEnrichedCount++;
+          }
+
+          // Also update priceLookup for any later use
+          if (lastPrice > 0) {
+            priceLookup[ticker] = {
+              price: lastPrice,
+              change,
+              changePercent: pChange,
+              volume: 0,
+              marketCap: ffmc * 10000000,
+              industry,
+              previousClose,
+            };
+          }
+        }
+        // Small delay between batches for rate limiting
+        if (i + batchSize < tickersNeedingQuotes.length) {
+          await new Promise(r => setTimeout(r, 300));
+        }
+      }
+    }
+
+    // ═══════════════════════════════════════════
     // STEP 7: Quality enrichment via Render proxy
     // ═══════════════════════════════════════════
     const confirmedTickers = Array.from(eventsMap.entries())
@@ -807,6 +829,7 @@ export async function GET(request: Request) {
       confirmedOutcomes: confirmedOutcomes.size,
       financialResults: frResultsByTicker.size,
       bseResults: bseResultsCount,
+      quotesEnriched: quotesEnrichedCount,
       qualityEnriched: qualityEnrichedCount,
       expectedQuarter,
       finalEvents: eventsMap.size,
