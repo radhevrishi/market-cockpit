@@ -515,6 +515,91 @@ export async function GET(request: Request) {
       });
     }
 
+    // ============================================
+    // STEP 6.5: Fetch BSE-only results via proxy
+    // ============================================
+    // BSE API is blocked from Vercel — use mc-pulse-bots Render service as proxy
+    let bseResultsCount = 0;
+    try {
+      const monthStr = `${fromDate.getFullYear()}-${String(fromDate.getMonth() + 1).padStart(2, '0')}`;
+      const bseRes = await fetch(
+        `https://mc-pulse-bots.onrender.com/api/bse/earnings?month=${monthStr}`,
+        { signal: AbortSignal.timeout(8000) } // 8s timeout — don't block if Render is sleeping
+      );
+
+      if (bseRes.ok) {
+        const bseData = await bseRes.json();
+
+        // Add BSE-only results (companies not already in our NSE results)
+        for (const r of (bseData.results || [])) {
+          const nseSymbol = r.nseSymbol || '';
+          const company = r.company || '';
+          const headline = (r.headline || '').toLowerCase();
+
+          // Skip if already have this company from NSE
+          if (nseSymbol && eventsMap.has(nseSymbol)) continue;
+
+          // Must be about financial results
+          if (!headline.includes('financial result') && !headline.includes('quarterly result')) continue;
+
+          // Parse the result date
+          const resultDate = parseDate(r.date);
+          if (!resultDate || resultDate < fromDate || resultDate > toDate) continue;
+
+          // Use scrip code or company name as ticker for BSE-only companies
+          const ticker = nseSymbol || r.scripCode || company.split(' ')[0].toUpperCase();
+          if (eventsMap.has(ticker)) continue;
+
+          eventsMap.set(ticker, {
+            ticker,
+            company,
+            resultDate: resultDate.toISOString().split('T')[0],
+            quarter: expectedQuarter,
+            quality: 'Good', // Default — will refine later
+            sector: '',
+            industry: '',
+            marketCap: '',
+            edp: null,
+            cmp: null,
+            priceMove: null,
+            source: 'BSE',
+          });
+          bseResultsCount++;
+        }
+
+        // Add BSE upcoming board meetings
+        for (const bm of (bseData.upcoming || [])) {
+          const nseSymbol = bm.nseSymbol || '';
+          const company = bm.company || '';
+          const ticker = nseSymbol || bm.scripCode || company.split(' ')[0].toUpperCase();
+          if (eventsMap.has(ticker)) continue;
+          if (nseSymbol && eventsMap.has(nseSymbol)) continue;
+
+          const meetingDate = parseDate(bm.date);
+          if (!meetingDate || meetingDate < today || meetingDate > toDate) continue;
+
+          eventsMap.set(ticker, {
+            ticker,
+            company,
+            resultDate: meetingDate.toISOString().split('T')[0],
+            quarter: expectedQuarter,
+            quality: 'Upcoming',
+            sector: '',
+            industry: '',
+            marketCap: '',
+            edp: null,
+            cmp: null,
+            priceMove: null,
+            source: 'BSE',
+          });
+          bseResultsCount++;
+        }
+      }
+    } catch (bseErr) {
+      // BSE proxy failed (Render sleeping, timeout, etc.) — continue with NSE data only
+      console.log('BSE proxy unavailable:', String(bseErr));
+    }
+
     console.log('Earnings processing:', {
       bmTotal: bmCombined.length,
       announcementsTotal: annArray.length,
@@ -522,6 +607,7 @@ export async function GET(request: Request) {
       outcomeFiltered: outcomeFilteredCount,
       confirmedOutcomes: confirmedOutcomes.size,
       financialResults: frResultsByTicker.size,
+      bseResults: bseResultsCount,
       expectedQuarter,
       finalEvents: eventsMap.size,
     });
@@ -561,6 +647,7 @@ export async function GET(request: Request) {
           outcomeFiltered: outcomeFilteredCount,
           confirmedOutcomes: confirmedOutcomes.size,
           financialResults: frResultsByTicker.size,
+          bseResults: bseResultsCount,
           finalEvents: eventsMap.size,
         },
         results,
@@ -581,7 +668,7 @@ export async function GET(request: Request) {
         to: toDate.toISOString().split('T')[0],
       },
       stockUniverse: Object.keys(priceLookup).length,
-      source: 'NSE India (Live)',
+      source: bseResultsCount > 0 ? 'NSE + BSE India (Live)' : 'NSE India (Live)',
       updatedAt: new Date().toISOString(),
     });
   } catch (error) {
