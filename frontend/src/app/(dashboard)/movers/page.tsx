@@ -54,11 +54,12 @@ export default function MoversPage() {
       const json = await res.json();
 
       const allStocks: Stock[] = (json.stocks || []).map((s: any) => {
-        // Tag by market cap: Large (>50k Cr), Mid (10k-50k), Small (<10k)
+        // Tag by market cap (values in raw rupees from NSE ffmc field)
+        // Large: >₹50,000 Cr (5×10¹¹), Mid: ₹10,000-50,000 Cr, Small: <₹10,000 Cr
         const mcap = s.marketCap || 0;
         let cap = 'Small';
-        if (mcap > 500000) cap = 'Large';
-        else if (mcap > 100000) cap = 'Mid';
+        if (mcap > 500000000000) cap = 'Large';
+        else if (mcap > 100000000000) cap = 'Mid';
         return { ...s, indexGroup: cap };
       });
 
