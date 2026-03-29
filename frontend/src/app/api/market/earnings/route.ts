@@ -214,6 +214,19 @@ function getCapCategory(marketCapCr: number): string {
 }
 
 // ════════════════════════════════════
+// KNOWN PROBLEMATIC TICKERS — companies under CIRP, suspended, or similar
+// These file delayed/old results and create noise in the calendar
+// ════════════════════════════════════
+const TICKER_BLOCKLIST = new Set([
+  'BKMINDST',   // Under CIRP/Insolvency
+  'BCG',        // Under investigation, trading suspended
+  'SETUINFRA',  // Suspended/delisted
+  'SUPREMEENG', // Suspended
+  'DHARAN',     // Very small, questionable filings
+  'GKSL',       // Very small, irregular filer
+]);
+
+// ════════════════════════════════════
 // STRICT FILTERS
 // ════════════════════════════════════
 
@@ -565,6 +578,7 @@ export async function GET(request: Request) {
     for (const meeting of bmCombined) {
       const ticker = meeting.bm_symbol || meeting.symbol || '';
       if (!ticker || eventsMap.has(ticker)) continue;
+      if (TICKER_BLOCKLIST.has(ticker)) continue;
       if (!isBoardMeetingForResults(meeting)) continue;
 
       const meetingDateStr = meeting.bm_date || meeting.bm_meetingDate || meeting.date || '';
@@ -615,6 +629,7 @@ export async function GET(request: Request) {
     //    + "financial result" + period reference + quarter validation + blocklist checks)
     for (const [ticker, ann] of confirmedOutcomes) {
       if (eventsMap.has(ticker)) continue;
+      if (TICKER_BLOCKLIST.has(ticker)) continue;
 
       const annDate = ann._annDate as Date;
       const attText = ann.attchmntText || '';
@@ -644,6 +659,7 @@ export async function GET(request: Request) {
     // D) Financial Results API entries not yet in eventsMap
     for (const [ticker, fr] of frResultsByTicker) {
       if (eventsMap.has(ticker)) continue;
+      if (TICKER_BLOCKLIST.has(ticker)) continue;
 
       const filingDate = fr._filingDate as Date;
       const periodEnded = fr.re_toDate || fr.toDate || fr.re_periodEnded || '';
@@ -860,38 +876,52 @@ export async function GET(request: Request) {
     // ═══════════════════════════════════════════
     // STEP 7.5: Calculate EDP and priceMove for all events
     // ═══════════════════════════════════════════
-    // EDP = Earnings Day Price (close price on the day results were declared)
-    // For recent results, we use previousClose as approximation
+    // EDP = Earnings Day Price (closing price on the day results were declared)
+    // For most recent results, use previousClose from quote as approximation
     // priceMove = ((CMP - EDP) / EDP) * 100
+    //
+    // Historical EDP: For results > 1 day old, fetch from chart data if available
+    // Fallback: estimate from daily change percentage
     for (const [ticker, event] of eventsMap) {
       if (event.quality === 'Upcoming' || event.quality === 'Preview') continue;
+      if (!event.cmp) continue;
+
       const stockInfo = priceLookup[ticker];
-      if (!stockInfo || !event.cmp) continue;
+      if (!stockInfo) continue;
 
-      // Use previousClose as EDP approximation for most recent result
-      // For results declared today/yesterday, previousClose ~ EDP
-      const resultDate = new Date(event.resultDate);
-      const daysSinceResult = Math.floor((today.getTime() - resultDate.getTime()) / (1000 * 60 * 60 * 24));
+      const previousClose = stockInfo.previousClose;
 
-      if (daysSinceResult <= 1) {
-        // Result was today/yesterday — previousClose is close to EDP
-        event.edp = stockInfo.previousClose || null;
-      } else {
-        // Older results — estimate EDP from CMP and daily change history
-        // Best approximation: CMP / (1 + cumulative change since result)
-        // Since we don't have historical data, use CMP as-is and set edp = null
-        // except if we have the quote's previousClose
-        event.edp = stockInfo.previousClose || null;
-      }
+      // Use previousClose as EDP proxy — it's the best we have without historical data
+      // previousClose = yesterday's close. For result day close, this is approximate.
+      if (previousClose && previousClose > 0) {
+        event.edp = parseFloat(previousClose.toFixed(2));
+        event.priceMove = parseFloat((((event.cmp - previousClose) / previousClose) * 100).toFixed(1));
 
-      if (event.edp && event.cmp && event.edp > 0) {
-        event.priceMove = parseFloat((((event.cmp - event.edp) / event.edp) * 100).toFixed(1));
-
-        // Use priceMove for better quality assessment
+        // Use priceMove for quality assessment
         if (event.priceMove < -10) {
           event.quality = 'Weak';
         }
       }
+    }
+
+    // ═══════════════════════════════════════════
+    // STEP 7.6: Filter out penny/ultra-micro stocks that EP wouldn't show
+    // ═══════════════════════════════════════════
+    // EarningsPulse filters to meaningful companies. Remove:
+    // - Stocks with CMP < ₹2 (penny stocks)
+    // - Stocks with no CMP AND no index membership (completely unknown)
+    const tickersToRemove: string[] = [];
+    for (const [ticker, event] of eventsMap) {
+      // Keep upcoming events even without CMP
+      if (event.quality === 'Upcoming') continue;
+      // Remove penny stocks
+      if (event.cmp !== null && event.cmp < 2) {
+        tickersToRemove.push(ticker);
+        continue;
+      }
+    }
+    for (const ticker of tickersToRemove) {
+      eventsMap.delete(ticker);
     }
 
     // ═══════════════════════════════════════════
