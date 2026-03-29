@@ -14,15 +14,19 @@ interface Quote {
 }
 
 interface Earning {
-  symbol: string;
+  ticker: string;
   company: string;
+  resultDate: string;
   quality: string;
   quarter: string;
-  revenue: number;
-  netProfit: number;
-  eps: number;
-  price: number;
-  movePercent: number;
+  sector: string;
+  industry: string;
+  marketCap: string;
+  edp: number | null;
+  cmp: number | null;
+  priceMove: number | null;
+  timing: string;
+  source: string;
 }
 
 interface QuotesData {
@@ -32,7 +36,8 @@ interface QuotesData {
 }
 
 interface EarningsData {
-  earnings: Earning[];
+  results: Earning[];
+  summary: { total: number; good: number; weak: number; upcoming: number };
   source: string;
   updatedAt: string;
 }
@@ -84,11 +89,15 @@ export default function ScreenerPage() {
     }
   }, [market]);
 
+  const [qualityFilter, setQualityFilter] = useState<'All' | 'Good' | 'Weak' | 'Upcoming'>('All');
+
   const fetchEarningsData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/market/earnings?includeMovement=true`);
+      const now = new Date();
+      const monthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const response = await fetch(`/api/market/earnings?month=${monthStr}`);
       if (!response.ok) throw new Error('Failed to fetch earnings');
       const result: EarningsData = await response.json();
       setEarningsData(result);
@@ -156,23 +165,32 @@ export default function ScreenerPage() {
   const filteredEarnings = React.useMemo(() => {
     if (!earningsData) return [];
 
-    let filtered = (earningsData.earnings || []).filter((earning) => {
-      const matchesSearch = earning.symbol.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    let filtered = (earningsData.results || []).filter((earning) => {
+      const matchesSearch = earning.ticker.toLowerCase().includes(searchTerm.toLowerCase()) ||
         earning.company.toLowerCase().includes(searchTerm.toLowerCase());
-      return matchesSearch;
+      const matchesQuality = qualityFilter === 'All' || earning.quality === qualityFilter;
+      const matchesSector = selectedSector === 'All' || earning.sector === selectedSector;
+      return matchesSearch && matchesQuality && matchesSector;
     });
 
-    // Basic sort by company name or symbol
     if (sortBy === 'Name') {
       filtered.sort((a, b) => sortAscending ? a.company.localeCompare(b.company) : b.company.localeCompare(a.company));
     } else if (sortBy === 'Change%') {
-      filtered.sort((a, b) => sortAscending ? a.movePercent - b.movePercent : b.movePercent - a.movePercent);
+      filtered.sort((a, b) => {
+        const aMove = a.priceMove ?? 0;
+        const bMove = b.priceMove ?? 0;
+        return sortAscending ? aMove - bMove : bMove - aMove;
+      });
     } else if (sortBy === 'Price') {
-      filtered.sort((a, b) => sortAscending ? a.price - b.price : b.price - a.price);
+      filtered.sort((a, b) => {
+        const aPrice = a.cmp ?? 0;
+        const bPrice = b.cmp ?? 0;
+        return sortAscending ? aPrice - bPrice : bPrice - aPrice;
+      });
     }
 
     return filtered;
-  }, [earningsData, searchTerm, sortBy, sortAscending]);
+  }, [earningsData, searchTerm, qualityFilter, selectedSector, sortBy, sortAscending]);
 
   const totalPages = Math.ceil((screenerMode === 'stocks' ? filteredQuotes : filteredEarnings).length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
@@ -247,6 +265,37 @@ export default function ScreenerPage() {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
+            {/* Quality Filter - Only for Earnings Screener */}
+            {screenerMode === 'earnings' && (
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary, marginBottom: '8px', textTransform: 'uppercase' }}>
+                  Quality
+                </label>
+                <div style={{ display: 'flex', gap: '8px', background: THEME.background, padding: '6px', borderRadius: '8px', border: `1px solid ${THEME.border}` }}>
+                  {(['All', 'Good', 'Weak', 'Upcoming'] as const).map((q) => (
+                    <button
+                      key={q}
+                      onClick={() => { setQualityFilter(q); setCurrentPage(1); }}
+                      style={{
+                        flex: 1,
+                        padding: '8px 8px',
+                        background: qualityFilter === q ? (q === 'Good' ? THEME.green : q === 'Weak' ? THEME.red : q === 'Upcoming' ? THEME.accent : THEME.accent) : 'transparent',
+                        color: qualityFilter === q ? '#fff' : THEME.textSecondary,
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '11px',
+                        fontWeight: '600',
+                        transition: 'all 0.2s',
+                      }}
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Market Toggle - Only for Stock Screener */}
             {screenerMode === 'stocks' && (
               <div>
@@ -278,8 +327,8 @@ export default function ScreenerPage() {
               </div>
             )}
 
-            {/* Sector Filter - Only for Stock Screener */}
-            {screenerMode === 'stocks' && (
+            {/* Sector Filter */}
+            {(screenerMode === 'stocks' || screenerMode === 'earnings') && (
               <div>
                 <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary, marginBottom: '8px', textTransform: 'uppercase' }}>
                   Sector
@@ -550,73 +599,44 @@ export default function ScreenerPage() {
           </>
         ) : screenerMode === 'earnings' && earningsData ? (
           <>
+            {/* Earnings Summary Bar */}
+            {earningsData?.summary && (
+              <div style={{ display: 'flex', gap: '16px', marginBottom: '16px', flexWrap: 'wrap' }}>
+                {[
+                  { label: 'Total', value: earningsData.summary.total, color: THEME.textPrimary },
+                  { label: 'Good', value: earningsData.summary.good, color: THEME.green },
+                  { label: 'Weak', value: earningsData.summary.weak, color: THEME.red },
+                  { label: 'Upcoming', value: earningsData.summary.upcoming, color: THEME.accent },
+                ].map(s => (
+                  <div key={s.label} style={{ background: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px 20px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '20px', fontWeight: '700', color: s.color }}>{s.value}</div>
+                    <div style={{ fontSize: '11px', color: THEME.textSecondary, marginTop: '2px' }}>{s.label}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Earnings Screener Table */}
             <div style={{ background: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '12px', overflow: 'hidden', marginBottom: '24px' }}>
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: THEME.background, borderBottom: `1px solid ${THEME.border}` }}>
-                      <th
-                        onClick={() => handleSortClick('Name')}
-                        style={{
-                          padding: '12px 16px',
-                          textAlign: 'left',
-                          fontSize: '12px',
-                          fontWeight: '600',
-                          color: sortBy === 'Name' ? THEME.accent : THEME.textSecondary,
-                          cursor: 'pointer',
-                          userSelect: 'none',
-                          transition: 'color 0.2s',
-                        }}
-                      >
+                      <th onClick={() => handleSortClick('Name')} style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: sortBy === 'Name' ? THEME.accent : THEME.textSecondary, cursor: 'pointer', userSelect: 'none' }}>
                         Company {sortBy === 'Name' && (sortAscending ? '↑' : '↓')}
                       </th>
-                      <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary }}>
-                        Symbol
+                      <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary }}>Ticker</th>
+                      <th style={{ padding: '12px 16px', textAlign: 'center', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary }}>Quality</th>
+                      <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary }}>Date</th>
+                      <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary }}>Quarter</th>
+                      <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary }}>Sector</th>
+                      <th style={{ padding: '12px 16px', textAlign: 'center', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary }}>Cap</th>
+                      <th style={{ padding: '12px 16px', textAlign: 'center', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary }}>Timing</th>
+                      <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary }}>EDP</th>
+                      <th onClick={() => handleSortClick('Price')} style={{ padding: '12px 16px', textAlign: 'right', fontSize: '12px', fontWeight: '600', color: sortBy === 'Price' ? THEME.accent : THEME.textSecondary, cursor: 'pointer', userSelect: 'none' }}>
+                        CMP {sortBy === 'Price' && (sortAscending ? '↑' : '↓')}
                       </th>
-                      <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary }}>
-                        Quality
-                      </th>
-                      <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary }}>
-                        Quarter
-                      </th>
-                      <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary }}>
-                        Revenue
-                      </th>
-                      <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary }}>
-                        Net Profit
-                      </th>
-                      <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary }}>
-                        EPS
-                      </th>
-                      <th
-                        onClick={() => handleSortClick('Price')}
-                        style={{
-                          padding: '12px 16px',
-                          textAlign: 'right',
-                          fontSize: '12px',
-                          fontWeight: '600',
-                          color: sortBy === 'Price' ? THEME.accent : THEME.textSecondary,
-                          cursor: 'pointer',
-                          userSelect: 'none',
-                          transition: 'color 0.2s',
-                        }}
-                      >
-                        Price {sortBy === 'Price' && (sortAscending ? '↑' : '↓')}
-                      </th>
-                      <th
-                        onClick={() => handleSortClick('Change%')}
-                        style={{
-                          padding: '12px 16px',
-                          textAlign: 'right',
-                          fontSize: '12px',
-                          fontWeight: '600',
-                          color: sortBy === 'Change%' ? THEME.accent : THEME.textSecondary,
-                          cursor: 'pointer',
-                          userSelect: 'none',
-                          transition: 'color 0.2s',
-                        }}
-                      >
+                      <th onClick={() => handleSortClick('Change%')} style={{ padding: '12px 16px', textAlign: 'right', fontSize: '12px', fontWeight: '600', color: sortBy === 'Change%' ? THEME.accent : THEME.textSecondary, cursor: 'pointer', userSelect: 'none' }}>
                         Move% {sortBy === 'Change%' && (sortAscending ? '↑' : '↓')}
                       </th>
                     </tr>
@@ -624,61 +644,62 @@ export default function ScreenerPage() {
                   <tbody>
                     {displayedEarnings.length === 0 ? (
                       <tr>
-                        <td colSpan={10} style={{ padding: '32px 16px', textAlign: 'center', color: THEME.textSecondary }}>
+                        <td colSpan={11} style={{ padding: '32px 16px', textAlign: 'center', color: THEME.textSecondary }}>
                           No earnings data found
                         </td>
                       </tr>
                     ) : (
                       displayedEarnings.map((earning) => (
                         <tr
-                          key={earning.symbol}
-                          style={{
-                            borderBottom: `1px solid ${THEME.border}`,
-                            transition: 'background 0.2s',
-                            cursor: 'pointer',
-                          }}
-                          onMouseEnter={(e) => {
-                            (e.currentTarget as HTMLElement).style.background = THEME.cardHover;
-                          }}
-                          onMouseLeave={(e) => {
-                            (e.currentTarget as HTMLElement).style.background = 'transparent';
-                          }}
+                          key={earning.ticker}
+                          style={{ borderBottom: `1px solid ${THEME.border}`, transition: 'background 0.2s', cursor: 'pointer' }}
+                          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = THEME.cardHover; }}
+                          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
                         >
-                          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: THEME.textPrimary }}>
+                          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: THEME.textPrimary, maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {earning.company}
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '12px', color: THEME.accent, fontWeight: '600' }}>
-                            {earning.symbol}
+                            {earning.ticker}
+                          </td>
+                          <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                            <span style={{
+                              padding: '3px 10px',
+                              borderRadius: '12px',
+                              fontSize: '11px',
+                              fontWeight: '600',
+                              background: earning.quality === 'Good' ? `${THEME.green}22` : earning.quality === 'Weak' ? `${THEME.red}22` : `${THEME.accent}22`,
+                              color: earning.quality === 'Good' ? THEME.green : earning.quality === 'Weak' ? THEME.red : THEME.accent,
+                            }}>
+                              {earning.quality}
+                            </span>
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '12px', color: THEME.textSecondary }}>
-                            {earning.quality}
+                            {earning.resultDate}
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '12px', color: THEME.textSecondary }}>
                             {earning.quarter}
                           </td>
-                          <td style={{ padding: '12px 16px', fontSize: '12px', textAlign: 'right', color: THEME.textPrimary }}>
-                            {formatNumber(earning.revenue)}
+                          <td style={{ padding: '12px 16px', fontSize: '12px', color: THEME.textSecondary }}>
+                            {earning.sector || '—'}
+                          </td>
+                          <td style={{ padding: '12px 16px', fontSize: '11px', textAlign: 'center', color: THEME.textSecondary }}>
+                            {earning.marketCap || '—'}
+                          </td>
+                          <td style={{ padding: '12px 16px', fontSize: '14px', textAlign: 'center' }}>
+                            {earning.timing === 'pre' ? '🌙' : earning.timing === 'post' ? '☀️' : '—'}
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '12px', textAlign: 'right', color: THEME.textPrimary }}>
-                            {formatNumber(earning.netProfit)}
+                            {earning.edp ? earning.edp.toFixed(2) : '—'}
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '12px', textAlign: 'right', color: THEME.textPrimary, fontWeight: '500' }}>
-                            {earning.eps.toFixed(2)}
+                            {earning.cmp ? earning.cmp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}
                           </td>
-                          <td style={{ padding: '12px 16px', fontSize: '12px', textAlign: 'right', color: THEME.textPrimary, fontWeight: '500' }}>
-                            {earning.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </td>
-                          <td
-                            style={{
-                              padding: '12px 16px',
-                              fontSize: '12px',
-                              textAlign: 'right',
-                              color: earning.movePercent >= 0 ? THEME.green : THEME.red,
-                              fontWeight: '600',
-                            }}
-                          >
-                            {earning.movePercent > 0 ? '+' : ''}
-                            {earning.movePercent.toFixed(2)}%
+                          <td style={{
+                            padding: '12px 16px', fontSize: '12px', textAlign: 'right', fontWeight: '600',
+                            color: earning.priceMove !== null ? (earning.priceMove >= 0 ? THEME.green : THEME.red) : THEME.textSecondary,
+                          }}>
+                            {earning.priceMove !== null ? `${earning.priceMove > 0 ? '+' : ''}${earning.priceMove.toFixed(1)}%` : '—'}
                           </td>
                         </tr>
                       ))
