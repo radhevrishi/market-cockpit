@@ -513,16 +513,16 @@ def _headlines_similar(h1: str, h2: str) -> bool:
     overall_sim = len(all_inter) / len(all_union)
 
     # High similarity — likely the same article syndicated
-    if overall_sim >= 0.70:
+    if overall_sim >= 0.60:
         return True
 
     # Medium similarity — only match if entity words (non-template) overlap well
-    if overall_sim >= 0.40 and ent1 and ent2:
+    if overall_sim >= 0.35 and ent1 and ent2:
         ent_inter = ent1 & ent2
         ent_union = ent1 | ent2
         ent_sim = len(ent_inter) / len(ent_union) if ent_union else 0
-        # Require at least 50% entity overlap AND at least 2 shared entity words
-        if ent_sim >= 0.50 and len(ent_inter) >= 2:
+        # Require at least 40% entity overlap AND at least 2 shared entity words
+        if ent_sim >= 0.40 and len(ent_inter) >= 2:
             return True
 
     return False
@@ -689,13 +689,19 @@ def _extract_tickers(title: str, description: str) -> list[str]:
     found = []
 
     # Tickers that match common English words and need stricter matching
-    ambiguous_tickers = {"BAC", "META", "V", "MA", "IT", "HAL", "BEL", "CAT", "ALL", "ON", "A"}
+    ambiguous_tickers = {"BAC", "META", "V", "MA", "HAL", "BEL", "CAT"}
+
+    # These tickers are SO common as English words that matching the symbol itself
+    # causes massive false positives. Only match via alias (company name).
+    alias_only_tickers = {"ON", "A", "IT", "ALL"}
 
     for ticker, aliases in TICKER_MAP.items():
         matched = False
 
-        # Check ticker symbol itself with word boundaries
-        if re.search(r'\b' + re.escape(ticker.lower()) + r'\b', full_text):
+        # Skip ticker-symbol matching entirely for alias-only tickers
+        if ticker in alias_only_tickers:
+            pass  # fall through to alias matching below
+        elif re.search(r'\b' + re.escape(ticker.lower()) + r'\b', full_text):
             # For ambiguous tickers, only match if in headline
             if ticker in ambiguous_tickers:
                 if re.search(r'\b' + re.escape(ticker.lower()) + r'\b', title_lower):
@@ -968,23 +974,47 @@ def _parse_rss_xml(xml_text: str, source_name: str, region: str, source_url: str
             if published_at > now_utc:
                 published_at = now_utc
 
-            # Refine region detection
+            # Refine region detection using both keywords AND ticker-based signals
             final_region = region
             combined_text = (title + " " + desc).lower()
             india_keywords = ["india", "indian", "nse", "bse", "sensex", "nifty", "rupee", "rbi",
-                            "modi", "sebi", "adani", "reliance", "tata", "infosys", "wipro"]
+                            "modi", "sebi", "adani", "reliance", "tata", "infosys", "wipro",
+                            "crore", "lakh"]
+            us_keywords = ["us ", "america", "washington", "silicon valley", "wall street",
+                          "nasdaq", "s&p 500", "dow jones", "nyse", "fed ", "federal reserve",
+                          "sec ", "ftc "]
+
+            # Ticker-based region: extract tickers and check if they're Indian or US
+            _tickers_found = _extract_tickers(title, desc)
+            _in_tickers = {"RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "WIPRO",
+                          "BAJFINANCE", "TATAMOTORS", "SUNPHARMA", "ADANIENT", "HCLTECH",
+                          "LTIM", "AXISBANK", "KOTAKBANK", "SBIN", "MARUTI", "HAL", "BEL",
+                          "ONGC", "NTPC"}
+            _us_tickers = {"AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AMD",
+                          "INTC", "NFLX", "JPM", "BAC", "ORCL", "TSM", "MU", "AVGO", "MRVL",
+                          "COHR", "LITE", "ANET", "ON", "LRCX", "AMAT", "ASML", "KLAC",
+                          "WOLF", "MP", "LAC", "ALB", "VRT", "EQIX", "DLR"}
+            has_in_ticker = any(t in _in_tickers for t in _tickers_found)
+            has_us_ticker = any(t in _us_tickers for t in _tickers_found)
+            has_india_kw = any(keyword in combined_text for keyword in india_keywords)
+            has_us_kw = any(keyword in combined_text for keyword in us_keywords)
+
             if source_name in indian_sources:
-                final_region = "IN"
+                # Indian source but content is clearly about US stocks
+                if has_us_ticker and not has_in_ticker and not has_india_kw:
+                    final_region = "US"
+                else:
+                    final_region = "IN"
             elif source_name in us_sources:
-                if any(keyword in combined_text for keyword in india_keywords):
+                if has_india_kw or (has_in_ticker and not has_us_ticker):
                     final_region = "IN"
                 else:
                     final_region = "US"
             elif source_name in global_sources:
                 # Global/tech sources: check for India or US signals
-                if any(keyword in combined_text for keyword in india_keywords):
+                if has_india_kw or (has_in_ticker and not has_us_ticker):
                     final_region = "IN"
-                elif any(keyword in combined_text for keyword in ["us ", "america", "washington", "silicon valley", "wall street"]):
+                elif has_us_kw or has_us_ticker:
                     final_region = "US"
                 else:
                     final_region = "GLOBAL"

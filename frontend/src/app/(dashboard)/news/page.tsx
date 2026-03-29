@@ -17,6 +17,7 @@ interface NewsArticle {
   source_url: string;
   url: string;
   published_at: string;
+  ingested_at?: string;
   importance_score: number;
   tickers: Array<{ ticker: string; exchange: string; confidence?: number } | string>;
   ticker_symbols: string[];
@@ -184,12 +185,18 @@ const decodeHtml = (html: string): string => {
   return doc.documentElement.textContent || html;
 };
 
+// Tickers that are almost always false positives from NLP extraction
+const JUNK_TICKERS = new Set(['ON', 'A', 'IT', 'ALL', 'AN', 'IS', 'ARE', 'OR', 'SO', 'GO', 'DO', 'HE', 'WE', 'AI']);
+
 // Works whether the schema sent ticker_symbols (preferred) or raw tickers dicts
 function getTickerSymbols(article: NewsArticle): string[] {
-  if (article.ticker_symbols?.length) return article.ticker_symbols;
-  return (article.tickers ?? []).map(t =>
-    typeof t === 'string' ? t : (t as { ticker: string }).ticker ?? ''
-  ).filter(Boolean);
+  const raw = article.ticker_symbols?.length
+    ? article.ticker_symbols
+    : (article.tickers ?? []).map(t =>
+        typeof t === 'string' ? t : (t as { ticker: string }).ticker ?? ''
+      ).filter(Boolean);
+  // Strip known false-positive tickers
+  return raw.filter(t => !JUNK_TICKERS.has(t.toUpperCase()));
 }
 
 // Prefer the alias `title`, fall back to `headline` — also decode HTML entities
@@ -255,23 +262,46 @@ const timeAgo = (iso: string) => {
 const JUNK_HEADLINE_PATTERNS = [
   // Personal finance / advice columns / family money
   /\bmy (friend|wife|husband|partner|adviser|advisor|dad|mom|brother|sister|boss|relative|daughter|son|parent)\b/i,
-  /\b(should i|can i trust|is it worth|how much should|how to save|retirement plan|nest egg)\b/i,
+  /\b(should i buy|can i trust|is it worth|how much should|how to save|retirement plan|nest egg)\b/i,
   /\b(feels slimy|i'm worried|dear moneyist|ask an expert|money etiquette|who'?s right)\b/i,
   /\b(personal finance|side hustle|budgeting tip|credit score|credit card reward|savings account)\b/i,
   /\b(financial adviser|financial advisor|financial planner)\b/i,
-  /\b(social security|medicare|medicaid) (benefit|check|payment|tip)/i,
+  /\b(social security|medicare|medicaid)\s+(benefit|check|payment|tip|stolen)/i,
+  /\bhas congress.*(stolen|raided).*social security/i,
   /\b(best (credit card|savings|cd rate|mortgage|insurance))\b/i,
   /\b(an? older relative|give my (daughter|son)|said no\. who)/i,
+
+  // Stock-picking clickbait / promotion
   /\b(top .* analysts? like these dividend)\b/i,
   /\b(like these dividend stocks|solid returns)\b/i,
+  /\bgot \$[\d,]+\?.*stocks?\b/i,                          // "Got $5,000? 2 Stocks..."
+  /\bwall street is sleeping on\b/i,                        // "Wall Street Is Sleeping on This $13 Stock"
+  /\bthe only stock .* (buying|selling)\b/i,                // "The Only Stock Buffett Is Buying"
+  /\bcould handily outperform\b/i,
+  /\bbuy it now\.?\s*$/i,                                   // headlines ending with "Buy It Now."
+  /\b(is|are) built to profit\b/i,                          // "These 3 Energy Stocks Are Built to Profit"
+  /\band that'?s your opportunity\b/i,                      // "and That's Your Opportunity"
+  /\b(actually worth holding|worth holding\??)\b/i,         // "Is Vanguard's VOT Actually Worth Holding?"
+  /\b(it'?s not too late to buy)\b/i,
+
+  // ETF / fund promotion
+  /\bthis .* etf is up \d+%/i,                             // "This Vanguard ETF Is up 33% YTD"
+  /\b(massive upside|still has massive|has massive upside)\b/i,
+  /\b\$[\d.]+ billion in assets and a [\d.]+% fee\b/i,     // "$31.7 Billion in Assets and a 0.05% Fee"
+  /\bvanguard'?s (vo[a-z]|vt[a-z]|vf[a-z]|vs[a-z])\b/i,  // Vanguard ETF tickers like VOT, VTI etc.
+
   // Political fluff not market-related
   /\b(state rep|congressman|senator|governor|mayor)\s+(talk|speak|say|slam|push|defend)/i,
   /\bstaying disciplined on the issues\b/i,
   /\b(campaign trail|election rally|political rally|town hall meeting)\b/i,
   /\b(democrat|republican|gop|liberal|conservative)\s+(slam|attack|defend|push)/i,
-  // Lifestyle / celebrity / sports
+
+  // Non-market news — science, NASA, lifestyle, sports
+  /\bnasa\s+(prepares?|launches?|announces?|plans?)\b/i,
   /\b(celebrity|kardashian|oscars|grammy|super bowl|nfl draft|bachelor|bachelorette)\b/i,
   /\b(recipe|cooking tip|travel destination|vacation spot|weight loss|diet plan)\b/i,
+  /\b(vibe coding|coding bootcamp|learn to code)\b/i,
+
   // Clickbait / hindsight / hypothetical returns
   /\b(you won't believe|shocking truth|one weird trick|doctors hate|this changes everything)\b/i,
   /\b(\d+ (things|ways|tips|reasons|secrets|mistakes))\s+(you|to|that|about)/i,
@@ -279,45 +309,40 @@ const JUNK_HEADLINE_PATTERNS = [
   /\b(if you('d| had| would have)? (bought|invested))\b/i,
   /\b(would have made|could have made|you'd have made|you'd have today)\b/i,
   /\b(return you would|gains you missed|wish you had bought)\b/i,
-  /\b(massive upside|still has massive|has massive upside)\b/i,
-  /\b(this .* etf is up \d+%.*still has)\b/i,
   /\b(it might make you cry|spoiler:)\b/i,
   /\bhere'?s how much you'?d have\b/i,
+
   // Parenting / lifestyle / self-help disguised as news
   /\b(i've studied over \d+ kids|skill parents|parenting tip|teach kids)\b/i,
   /\b(no\.?\s*1 skill|number one skill|top skill)\s*(parents|kids|children)/i,
   /\b(can't look away|the case against social media)\b/i,
   /\b(work-life balance|quiet quitting|hustle culture|morning routine)\b/i,
+
+  // Generic "3 big things" / roundups
+  /\b\d+ big things we'?re watching\b/i,
 ];
 
 const JUNK_SOURCE_PATTERNS = [
   /moneyist/i,
-  /yahoo finance us financials/i, // personal finance section, not market news
+  /yahoo finance us financials/i,
+  /yahoo tech semis/i,           // often clickbait disguised as tech/semi news
 ];
 
 function isMarketRelevant(article: NewsArticle): boolean {
-  const title = (article.title || article.headline || '').toLowerCase();
-  const source = (article.source_name || article.source || '').toLowerCase();
+  const title = (article.title || article.headline || '');
+  const source = (article.source_name || article.source || '');
 
-  // Always keep articles with tickers — they reference specific securities
-  const hasTickers = (article.ticker_symbols?.length || 0) > 0 ||
-    (article.tickers?.length || 0) > 0;
-
-  // Always keep high-importance or actionable articles
-  if (article.importance_score >= 4) return true;
+  // Junk patterns apply to ALL articles — no bypasses for type, tickers, or importance
+  // Only investment_tier 1 gets a pass (real-time actionable alerts from the system)
   if (article.investment_tier === 1) return true;
 
-  // Always keep non-GENERAL articles (EARNINGS, MACRO, BOTTLENECK, etc.)
-  if (article.article_type && article.article_type !== 'GENERAL') return true;
-
-  // For GENERAL articles without tickers, check for junk patterns
-  if (!hasTickers) {
-    for (const pattern of JUNK_HEADLINE_PATTERNS) {
-      if (pattern.test(title)) return false;
-    }
-    for (const pattern of JUNK_SOURCE_PATTERNS) {
-      if (pattern.test(source)) return false;
-    }
+  // Check headline against junk patterns
+  for (const pattern of JUNK_HEADLINE_PATTERNS) {
+    if (pattern.test(title)) return false;
+  }
+  // Check source against junk source patterns
+  for (const pattern of JUNK_SOURCE_PATTERNS) {
+    if (pattern.test(source)) return false;
   }
 
   return true;
@@ -761,7 +786,18 @@ export default function NewsFeedPage() {
   const { data: rawInPlay, isLoading: inPlayLoading, refetch: refetchInPlay } = useInPlay();
 
   // Filter out irrelevant articles (personal finance, political fluff, clickbait)
-  const articles = (rawArticles || []).filter(isMarketRelevant);
+  // Also filter stale content (>48h) when high importance is selected
+  const now = Date.now();
+  const STALE_MS = 48 * 60 * 60 * 1000; // 48 hours
+  const articles = (rawArticles || []).filter(a => {
+    if (!isMarketRelevant(a)) return false;
+    // When high importance (4) selected, exclude stale articles
+    if (minImportance >= 4) {
+      const pubTime = new Date(a.published_at || a.ingested_at || 0).getTime();
+      if (now - pubTime > STALE_MS) return false;
+    }
+    return true;
+  });
   const inPlay = (rawInPlay || []).filter(isMarketRelevant);
   const { data: bnDashboard, isLoading: bnLoading, refetch: refetchBn } = useBottleneckDashboard(articleType === 'BOTTLENECK', region);
   const showBottleneckDashboard = articleType === 'BOTTLENECK';
