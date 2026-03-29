@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { RefreshCw, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 
 interface Stock {
   ticker: string;
@@ -13,6 +13,7 @@ interface Stock {
   volume: number;
   marketCap: number;
   previousClose: number;
+  indexGroup?: string;
 }
 
 interface ApiResponse {
@@ -29,65 +30,66 @@ interface ApiResponse {
   updatedAt: string;
 }
 
-const THEME = {
-  background: '#0A0E1A',
-  card: '#111B35',
-  cardHover: '#162040',
-  border: '#1A2840',
-  textPrimary: '#F5F7FA',
-  textSecondary: '#8A95A3',
-  accent: '#0F7ABF',
-  green: '#10B981',
-  red: '#EF4444',
-};
-
-interface EarningsResult {
-  ticker: string;
-  company: string;
-  quality: string;
-  resultDate: string;
-  quarter: string;
-  sector: string;
-  marketCap: string;
-  cmp: number | null;
-  priceMove: number | null;
-  edp: number | null;
-}
+type CapFilter = 'All' | 'Midcap' | 'Smallcap';
+type MoveFilter = 'All' | '2%+' | '4%+' | '6%+';
 
 export default function MoversPage() {
-  const [market, setMarket] = useState<'india' | 'us'>('india');
   const [data, setData] = useState<ApiResponse | null>(null);
-  const [earningsData, setEarningsData] = useState<EarningsResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [filterLargeMovers, setFilterLargeMovers] = useState(false);
+
+  const [capFilter, setCapFilter] = useState<CapFilter>('All');
+  const [sectorFilter, setSectorFilter] = useState<string>('All');
+  const [moveFilter, setMoveFilter] = useState<MoveFilter>('All');
 
   const fetchData = async () => {
     try {
       setError(null);
       setIsRefreshing(true);
-      const [quotesRes, earningsRes] = await Promise.all([
-        fetch(`/api/market/quotes?market=${market}`),
-        fetch(`/api/market/earnings?market=india`).catch(() => null),
+      const [midRes, smallRes] = await Promise.all([
+        fetch('/api/market/quotes?market=india&index=midsmall50'),
+        fetch('/api/market/quotes?market=india&index=smallcap150'),
       ]);
 
-      if (!quotesRes.ok) {
-        throw new Error(`API error: ${quotesRes.status}`);
+      if (!midRes.ok) throw new Error(`API error: ${midRes.status}`);
+      if (!smallRes.ok) throw new Error(`API error: ${smallRes.status}`);
+
+      const midJson = await midRes.json();
+      const smallJson = await smallRes.json();
+
+      const tickerSet = new Set<string>();
+      const allStocks: Stock[] = [];
+
+      for (const s of (midJson.stocks || [])) {
+        if (!tickerSet.has(s.ticker)) {
+          tickerSet.add(s.ticker);
+          allStocks.push({ ...s, indexGroup: (s.indexGroup || '').includes('Midcap') ? 'Midcap' : 'Smallcap' });
+        }
+      }
+      for (const s of (smallJson.stocks || [])) {
+        if (!tickerSet.has(s.ticker)) {
+          tickerSet.add(s.ticker);
+          allStocks.push({ ...s, indexGroup: 'Smallcap' });
+        }
       }
 
-      const json = await quotesRes.json();
-      setData(json);
+      const gainers = [...allStocks].sort((a, b) => b.changePercent - a.changePercent).filter(s => s.changePercent > 0);
+      const losers = [...allStocks].sort((a, b) => a.changePercent - b.changePercent).filter(s => s.changePercent < 0);
+
+      setData({
+        stocks: allStocks, gainers, losers,
+        summary: {
+          total: allStocks.length,
+          gainersCount: gainers.length,
+          losersCount: losers.length,
+          avgChange: allStocks.length > 0 ? allStocks.reduce((s, st) => s + st.changePercent, 0) / allStocks.length : 0,
+          sectors: [...new Set(allStocks.map(s => s.sector))].length,
+        },
+        updatedAt: new Date().toISOString(),
+      });
       setLastUpdated(new Date());
-
-      // Parse earnings movers
-      if (earningsRes && earningsRes.ok) {
-        const earningsJson = await earningsRes.json();
-        const results: EarningsResult[] = (earningsJson.results || [])
-          .filter((r: any) => r.quality !== 'Upcoming');
-        setEarningsData(results);
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch data');
     } finally {
@@ -96,542 +98,216 @@ export default function MoversPage() {
     }
   };
 
-  useEffect(() => {
-    fetchData();
-  }, [market]);
+  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { const i = setInterval(fetchData, 60000); return () => clearInterval(i); }, []);
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      fetchData();
-    }, 60000);
+  const sectors = useMemo(() => {
+    if (!data) return [];
+    return ['All', ...[...new Set(data.stocks.map(s => s.sector))].sort()];
+  }, [data]);
 
-    return () => clearInterval(interval);
-  }, [market]);
+  const applyFilters = (stocks: Stock[]) => stocks.filter(s => {
+    if (capFilter !== 'All') {
+      const g = (s.indexGroup || '').toLowerCase();
+      if (capFilter === 'Midcap' && !g.includes('midcap')) return false;
+      if (capFilter === 'Smallcap' && !g.includes('smallcap')) return false;
+    }
+    if (sectorFilter !== 'All' && s.sector !== sectorFilter) return false;
+    const a = Math.abs(s.changePercent);
+    if (moveFilter === '2%+' && a < 2) return false;
+    if (moveFilter === '4%+' && a < 4) return false;
+    if (moveFilter === '6%+' && a < 6) return false;
+    return true;
+  });
 
-  const getSectorData = () => {
-    if (!data) return {};
+  const filteredGainers = useMemo(() => data ? applyFilters(data.gainers).slice(0, 25) : [], [data, capFilter, sectorFilter, moveFilter]);
+  const filteredLosers = useMemo(() => data ? applyFilters(data.losers).slice(0, 25) : [], [data, capFilter, sectorFilter, moveFilter]);
 
-    const sectorMap: { [key: string]: { stocks: Stock[]; totalChange: number } } = {};
+  const sectorPerf = useMemo(() => {
+    if (!data) return [];
+    const map = new Map<string, { total: number; count: number }>();
+    for (const s of data.stocks) {
+      const e = map.get(s.sector) || { total: 0, count: 0 };
+      e.total += s.changePercent; e.count += 1; map.set(s.sector, e);
+    }
+    return [...map.entries()].map(([sector, { total, count }]) => ({ sector, avg: total / count, count })).sort((a, b) => b.avg - a.avg);
+  }, [data]);
 
-    data.stocks.forEach((stock) => {
-      if (!sectorMap[stock.sector]) {
-        sectorMap[stock.sector] = { stocks: [], totalChange: 0 };
-      }
-      sectorMap[stock.sector].stocks.push(stock);
-      sectorMap[stock.sector].totalChange += stock.changePercent;
-    });
+  const formatTime = (d: Date | null) => d ? d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '--:--';
+  const formatVol = (v: number) => v >= 1e7 ? (v / 1e7).toFixed(1) + 'Cr' : v >= 1e5 ? (v / 1e5).toFixed(1) + 'L' : v >= 1e3 ? (v / 1e3).toFixed(0) + 'K' : String(v);
 
-    Object.keys(sectorMap).forEach((sector) => {
-      sectorMap[sector].totalChange =
-        sectorMap[sector].totalChange / sectorMap[sector].stocks.length;
-    });
+  const BG = '#0A0E1A', CARD = '#0D1623', BORDER = '#1A2840', ACCENT = '#0F7ABF';
+  const GREEN = '#10B981', RED = '#EF4444', TEXT1 = '#F5F7FA', TEXT2 = '#8A95A3', TEXT3 = '#4A5B6C';
 
-    return sectorMap;
-  };
+  const Pill = ({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) => (
+    <button onClick={onClick} style={{
+      padding: '5px 12px', borderRadius: '6px', border: 'none', fontSize: '11px', fontWeight: '500',
+      backgroundColor: active ? ACCENT : 'transparent', color: active ? '#fff' : TEXT2,
+      cursor: 'pointer', transition: 'all 0.15s', whiteSpace: 'nowrap',
+    }}>{label}</button>
+  );
 
-  const getSectorColor = (changePercent: number) => {
-    if (changePercent > 1) return THEME.green;
-    if (changePercent > 0.5) return '#1EA76D';
-    if (changePercent > 0) return '#2DB888';
-    if (changePercent > -0.5) return '#F97316';
-    if (changePercent > -1) return '#EF5350';
-    return THEME.red;
-  };
+  const Row = ({ stock, rank, up }: { stock: Stock; rank: number; up: boolean }) => (
+    <tr style={{ borderBottom: `1px solid ${BORDER}`, cursor: 'pointer' }}
+      onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#111B35')}
+      onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}>
+      <td style={{ padding: '10px 12px', color: TEXT3, fontSize: '12px', width: '36px' }}>{rank}</td>
+      <td style={{ padding: '10px 8px' }}>
+        <div style={{ fontWeight: '600', fontSize: '13px', color: ACCENT }}>{stock.ticker}</div>
+        <div style={{ fontSize: '10px', color: TEXT3, maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{stock.company}</div>
+      </td>
+      <td style={{ padding: '10px 8px', fontSize: '12px', color: TEXT2 }}>{stock.sector}</td>
+      <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+        <span style={{
+          fontSize: '9px', fontWeight: '600', padding: '2px 6px', borderRadius: '3px',
+          backgroundColor: (stock.indexGroup || '').includes('Midcap') ? 'rgba(59,130,246,0.15)' : 'rgba(234,179,8,0.15)',
+          color: (stock.indexGroup || '').includes('Midcap') ? '#60A5FA' : '#FBBF24',
+        }}>{(stock.indexGroup || '').includes('Midcap') ? 'MID' : 'SML'}</span>
+      </td>
+      <td style={{ padding: '10px 8px', textAlign: 'right', fontSize: '13px', color: TEXT1, fontWeight: '500', fontVariantNumeric: 'tabular-nums' }}>
+        {'\u20B9'}{stock.price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+      </td>
+      <td style={{ padding: '10px 8px', textAlign: 'right' }}>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '13px', fontWeight: '700', color: up ? GREEN : RED, fontVariantNumeric: 'tabular-nums' }}>
+          {up ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
+          {stock.changePercent > 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
+        </div>
+      </td>
+      <td style={{ padding: '10px 8px', textAlign: 'right', fontSize: '12px', color: TEXT3, fontVariantNumeric: 'tabular-nums' }}>{formatVol(stock.volume)}</td>
+    </tr>
+  );
 
-  const sectorData = getSectorData();
-  
-  // Filter gainers and losers based on toggle
-  let gainers = data?.gainers?.slice(0, 30) || [];
-  let losers = data?.losers?.slice(0, 30) || [];
-  
-  if (filterLargeMovers) {
-    gainers = gainers.filter(stock => stock.changePercent >= 4);
-    losers = losers.filter(stock => stock.changePercent <= -4);
-  }
-
-  const formatNumber = (num: number) => {
-    if (num >= 1e7) return (num / 1e7).toFixed(2) + 'Cr';
-    if (num >= 1e5) return (num / 1e5).toFixed(2) + 'L';
-    return num.toLocaleString('en-IN', { maximumFractionDigits: 0 });
-  };
-
-  const formatTime = (date: Date | null) => {
-    if (!date) return 'Never';
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    const seconds = String(date.getSeconds()).padStart(2, '0');
-    return `${hours}:${minutes}:${seconds}`;
-  };
+  const TH = ['#', 'Stock', 'Sector', 'Cap', 'Price', 'Change', 'Vol'];
+  const thAlign = (h: string) => h === 'Price' || h === 'Change' || h === 'Vol' ? 'right' as const : h === 'Cap' ? 'center' as const : 'left' as const;
 
   return (
-    <div style={{ backgroundColor: THEME.background, color: THEME.textPrimary, minHeight: '100vh', padding: '24px' }}>
-      {/* Header */}
-      <div style={{ marginBottom: '32px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-          <h1 style={{ fontSize: '32px', fontWeight: 'bold', margin: 0 }}>Market Movers</h1>
-          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-            {/* Market Toggle */}
-            <div style={{ display: 'flex', gap: '8px', backgroundColor: THEME.card, padding: '4px', borderRadius: '8px', border: `1px solid ${THEME.border}` }}>
-              {(['india', 'us'] as const).map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setMarket(m)}
-                  style={{
-                    padding: '8px 16px',
-                    borderRadius: '6px',
-                    border: 'none',
-                    backgroundColor: market === m ? THEME.accent : 'transparent',
-                    color: market === m ? '#FFFFFF' : THEME.textSecondary,
-                    cursor: 'pointer',
-                    fontSize: '14px',
-                    fontWeight: '500',
-                    transition: 'all 0.3s ease',
-                  }}
-                >
-                  {m.toUpperCase()}
-                </button>
-              ))}
-            </div>
-
-            {/* Refresh Button */}
-            <button
-              onClick={fetchData}
-              disabled={isRefreshing}
-              style={{
-                padding: '8px 16px',
-                borderRadius: '8px',
-                border: `1px solid ${THEME.border}`,
-                backgroundColor: THEME.card,
-                color: THEME.accent,
-                cursor: isRefreshing ? 'not-allowed' : 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                fontSize: '14px',
-                fontWeight: '500',
-                transition: 'all 0.3s ease',
-                opacity: isRefreshing ? 0.6 : 1,
-              }}
-            >
-              <RefreshCw size={16} style={{ animation: isRefreshing ? 'spin 1s linear infinite' : 'none' }} />
-              Refresh
-            </button>
-
-            {/* Last Updated */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: THEME.textSecondary }}>
-              <div style={{
-                width: '8px',
-                height: '8px',
-                borderRadius: '50%',
-                backgroundColor: THEME.green,
-                animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-              }} />
-              Last: {formatTime(lastUpdated)}
-            </div>
-          </div>
+    <div style={{ backgroundColor: BG, color: TEXT1, minHeight: '100vh', padding: '16px 20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+        <div>
+          <h1 style={{ fontSize: '22px', fontWeight: '700', margin: 0, letterSpacing: '-0.3px' }}>Market Movers</h1>
+          <p style={{ fontSize: '11px', color: TEXT3, margin: '2px 0 0' }}>Mid & Small Cap — Live from NSE</p>
         </div>
-
-        {/* Summary Stats */}
-        {data && !loading && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px', marginBottom: '20px' }}>
-            <div style={{
-              backgroundColor: THEME.card,
-              border: `1px solid ${THEME.border}`,
-              borderRadius: '12px',
-              padding: '16px',
-            }}>
-              <div style={{ color: THEME.textSecondary, fontSize: '12px', marginBottom: '8px' }}>Total Stocks</div>
-              <div style={{ fontSize: '28px', fontWeight: 'bold', color: THEME.textPrimary }}>{data.summary.total}+</div>
-            </div>
-            <div style={{
-              backgroundColor: THEME.card,
-              border: `1px solid ${THEME.border}`,
-              borderRadius: '12px',
-              padding: '16px',
-            }}>
-              <div style={{ color: THEME.textSecondary, fontSize: '12px', marginBottom: '8px' }}>Gainers</div>
-              <div style={{ fontSize: '28px', fontWeight: 'bold', color: THEME.green }}>{data.summary.gainersCount}</div>
-            </div>
-            <div style={{
-              backgroundColor: THEME.card,
-              border: `1px solid ${THEME.border}`,
-              borderRadius: '12px',
-              padding: '16px',
-            }}>
-              <div style={{ color: THEME.textSecondary, fontSize: '12px', marginBottom: '8px' }}>Losers</div>
-              <div style={{ fontSize: '28px', fontWeight: 'bold', color: THEME.red }}>{data.summary.losersCount}</div>
-            </div>
-            <div style={{
-              backgroundColor: THEME.card,
-              border: `1px solid ${THEME.border}`,
-              borderRadius: '12px',
-              padding: '16px',
-            }}>
-              <div style={{ color: THEME.textSecondary, fontSize: '12px', marginBottom: '8px' }}>Avg Change</div>
-              <div style={{
-                fontSize: '28px',
-                fontWeight: 'bold',
-                color: data.summary.avgChange > 0 ? THEME.green : THEME.red,
-              }}>
-                {data.summary.avgChange > 0 ? '+' : ''}{data.summary.avgChange.toFixed(2)}%
-              </div>
-            </div>
-            <div style={{
-              backgroundColor: THEME.card,
-              border: `1px solid ${THEME.border}`,
-              borderRadius: '12px',
-              padding: '16px',
-            }}>
-              <div style={{ color: THEME.textSecondary, fontSize: '12px', marginBottom: '8px' }}>Sectors</div>
-              <div style={{ fontSize: '28px', fontWeight: 'bold', color: THEME.textPrimary }}>{data.summary.sectors}</div>
-            </div>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <button onClick={fetchData} disabled={isRefreshing} style={{
+            padding: '6px 12px', borderRadius: '6px', border: `1px solid ${BORDER}`, backgroundColor: CARD, color: ACCENT,
+            cursor: isRefreshing ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px',
+            opacity: isRefreshing ? 0.5 : 1, transition: 'all 0.2s',
+          }}>
+            <RefreshCw size={13} style={{ animation: isRefreshing ? 'spin 1s linear infinite' : 'none' }} />
+          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: TEXT3 }}>
+            <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: GREEN, animation: 'pulse 2s ease infinite' }} />
+            {formatTime(lastUpdated)}
           </div>
-        )}
-
-        {/* Filter Toggle */}
-        <div style={{ display: 'flex', gap: '8px', backgroundColor: THEME.card, padding: '6px', borderRadius: '8px', border: `1px solid ${THEME.border}`, width: 'fit-content' }}>
-          <button
-            onClick={() => setFilterLargeMovers(false)}
-            style={{
-              padding: '8px 16px',
-              borderRadius: '6px',
-              border: 'none',
-              backgroundColor: !filterLargeMovers ? THEME.accent : 'transparent',
-              color: !filterLargeMovers ? '#FFFFFF' : THEME.textSecondary,
-              cursor: 'pointer',
-              fontSize: '13px',
-              fontWeight: '500',
-              transition: 'all 0.3s ease',
-            }}
-          >
-            All Movers
-          </button>
-          <button
-            onClick={() => setFilterLargeMovers(true)}
-            style={{
-              padding: '8px 16px',
-              borderRadius: '6px',
-              border: 'none',
-              backgroundColor: filterLargeMovers ? THEME.accent : 'transparent',
-              color: filterLargeMovers ? '#FFFFFF' : THEME.textSecondary,
-              cursor: 'pointer',
-              fontSize: '13px',
-              fontWeight: '500',
-              transition: 'all 0.3s ease',
-            }}
-          >
-            4%+ Movers
-          </button>
         </div>
       </div>
 
-      {/* Loading State */}
-      {loading && (
-        <div style={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          minHeight: '400px',
-        }}>
-          <div style={{
-            width: '48px',
-            height: '48px',
-            border: `3px solid ${THEME.border}`,
-            borderTop: `3px solid ${THEME.accent}`,
-            borderRadius: '50%',
-            animation: 'spin 1s linear infinite',
-          }} />
-        </div>
-      )}
-
-      {/* Error State */}
-      {error && !loading && (
-        <div style={{
-          backgroundColor: 'rgba(239, 68, 68, 0.1)',
-          border: `1px solid ${THEME.red}`,
-          borderRadius: '12px',
-          padding: '16px',
-          color: THEME.red,
-          marginBottom: '24px',
-        }}>
-          Error loading data: {error}
-        </div>
-      )}
-
-      {/* Sector Heatmap */}
-      {data && !loading && Object.keys(sectorData).length > 0 && (
-        <div style={{ marginBottom: '32px' }}>
-          <h2 style={{ fontSize: '20px', fontWeight: '600', marginBottom: '16px' }}>Sector Performance</h2>
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
-            gap: '12px',
-          }}>
-            {Object.entries(sectorData)
-              .sort((a, b) => b[1].totalChange - a[1].totalChange)
-              .map(([sector, info]) => (
-                <div
-                  key={sector}
-                  style={{
-                    backgroundColor: getSectorColor(info.totalChange),
-                    borderRadius: '12px',
-                    padding: '16px',
-                    textAlign: 'center',
-                    cursor: 'pointer',
-                    transition: 'all 0.3s ease',
-                    opacity: 0.8,
-                    transform: 'scale(1)',
-                  }}
-                  onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLDivElement).style.opacity = '1';
-                    (e.currentTarget as HTMLDivElement).style.transform = 'scale(1.05)';
-                  }}
-                  onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLDivElement).style.opacity = '0.8';
-                    (e.currentTarget as HTMLDivElement).style.transform = 'scale(1)';
-                  }}
-                >
-                  <div style={{ fontSize: '13px', fontWeight: '600', marginBottom: '8px', color: '#FFFFFF', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {sector}
-                  </div>
-                  <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#FFFFFF' }}>
-                    {info.totalChange > 0 ? '+' : ''}{info.totalChange.toFixed(2)}%
-                  </div>
-                  <div style={{ fontSize: '12px', color: 'rgba(255, 255, 255, 0.7)', marginTop: '8px' }}>
-                    {info.stocks.length} stocks
-                  </div>
-                </div>
-              ))}
-          </div>
-        </div>
-      )}
-
-      {/* Tables Container */}
       {data && !loading && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
-          {/* Top Gainers Table */}
-          <div style={{
-            backgroundColor: THEME.card,
-            border: `1px solid ${THEME.border}`,
-            borderRadius: '12px',
-            overflow: 'hidden',
-          }}>
-            <div style={{
-              padding: '16px',
-              borderBottom: `1px solid ${THEME.border}`,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-            }}>
-              <h3 style={{ fontSize: '18px', fontWeight: '600', margin: 0 }}>Top Gainers</h3>
-              <div style={{
-                display: 'inline-flex',
-                backgroundColor: THEME.green,
-                color: '#FFFFFF',
-                padding: '4px 8px',
-                borderRadius: '4px',
-                fontSize: '10px',
-                fontWeight: 'bold',
-              }}>
-                LIVE
-              </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '10px', marginBottom: '16px' }}>
+          {[
+            { l: 'Total', v: data.summary.total, c: TEXT1 },
+            { l: 'Gainers', v: data.summary.gainersCount, c: GREEN },
+            { l: 'Losers', v: data.summary.losersCount, c: RED },
+            { l: 'Avg Change', v: `${data.summary.avgChange > 0 ? '+' : ''}${data.summary.avgChange.toFixed(2)}%`, c: data.summary.avgChange >= 0 ? GREEN : RED },
+            { l: 'Sectors', v: data.summary.sectors, c: ACCENT },
+          ].map((card, i) => (
+            <div key={i} style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '12px' }}>
+              <div style={{ fontSize: '10px', color: TEXT3, marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{card.l}</div>
+              <div style={{ fontSize: '22px', fontWeight: '700', color: card.c, fontVariantNumeric: 'tabular-nums' }}>{card.v}</div>
             </div>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{
-                width: '100%',
-                borderCollapse: 'collapse',
-                fontSize: '13px',
-              }}>
-                <thead>
-                  <tr style={{ backgroundColor: THEME.background, borderBottom: `1px solid ${THEME.border}` }}>
-                    <th style={{ padding: '12px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Rank</th>
-                    <th style={{ padding: '12px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Ticker</th>
-                    <th style={{ padding: '12px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Company</th>
-                    <th style={{ padding: '12px', textAlign: 'right', color: THEME.textSecondary, fontWeight: '500' }}>Price</th>
-                    <th style={{ padding: '12px', textAlign: 'right', color: THEME.textSecondary, fontWeight: '500' }}>Change</th>
-                    <th style={{ padding: '12px', textAlign: 'right', color: THEME.textSecondary, fontWeight: '500' }}>%</th>
-                    <th style={{ padding: '12px', textAlign: 'right', color: THEME.textSecondary, fontWeight: '500' }}>Volume</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {gainers.map((stock, idx) => (
-                    <tr
-                      key={stock.ticker}
-                      style={{
-                        borderBottom: `1px solid ${THEME.border}`,
-                        backgroundColor: THEME.card,
-                        transition: 'all 0.2s ease',
-                        cursor: 'pointer',
-                      }}
-                      onMouseEnter={(e) => {
-                        (e.currentTarget as HTMLTableRowElement).style.backgroundColor = THEME.cardHover;
-                      }}
-                      onMouseLeave={(e) => {
-                        (e.currentTarget as HTMLTableRowElement).style.backgroundColor = THEME.card;
-                      }}
-                    >
-                      <td style={{ padding: '12px', color: THEME.textSecondary }}>{idx + 1}</td>
-                      <td style={{ padding: '12px', color: THEME.accent, fontWeight: '600' }}>{stock.ticker}</td>
-                      <td style={{ padding: '12px', color: THEME.textPrimary }}>{stock.company}</td>
-                      <td style={{ padding: '12px', textAlign: 'right', color: THEME.textPrimary }}>₹{stock.price.toFixed(2)}</td>
-                      <td style={{
-                        padding: '12px',
-                        textAlign: 'right',
-                        color: stock.change > 0 ? THEME.green : THEME.red,
-                        fontWeight: '500',
-                      }}>
-                        {stock.change > 0 ? '+' : ''}{stock.change.toFixed(2)}
-                      </td>
-                      <td style={{
-                        padding: '12px',
-                        textAlign: 'right',
-                        color: stock.changePercent > 0 ? THEME.green : THEME.red,
-                        fontWeight: '600',
-                      }}>
-                        {stock.changePercent > 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
-                      </td>
-                      <td style={{ padding: '12px', textAlign: 'right', color: THEME.textSecondary }}>{formatNumber(stock.volume)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          ))}
+        </div>
+      )}
 
-          {/* Top Losers Table */}
-          <div style={{
-            backgroundColor: THEME.card,
-            border: `1px solid ${THEME.border}`,
-            borderRadius: '12px',
-            overflow: 'hidden',
+      {!loading && (
+        <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '2px', backgroundColor: CARD, padding: '3px', borderRadius: '8px', border: `1px solid ${BORDER}` }}>
+            {(['All', 'Midcap', 'Smallcap'] as CapFilter[]).map(f => <Pill key={f} label={f} active={capFilter === f} onClick={() => setCapFilter(f)} />)}
+          </div>
+          <div style={{ display: 'flex', gap: '2px', backgroundColor: CARD, padding: '3px', borderRadius: '8px', border: `1px solid ${BORDER}` }}>
+            {(['All', '2%+', '4%+', '6%+'] as MoveFilter[]).map(f => <Pill key={f} label={f} active={moveFilter === f} onClick={() => setMoveFilter(f)} />)}
+          </div>
+          <select value={sectorFilter} onChange={e => setSectorFilter(e.target.value)} style={{
+            padding: '5px 10px', backgroundColor: CARD, color: TEXT2, border: `1px solid ${BORDER}`, borderRadius: '8px', fontSize: '11px', outline: 'none', cursor: 'pointer',
           }}>
-            <div style={{
-              padding: '16px',
-              borderBottom: `1px solid ${THEME.border}`,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-            }}>
-              <h3 style={{ fontSize: '18px', fontWeight: '600', margin: 0 }}>Top Losers</h3>
-              <div style={{
-                display: 'inline-flex',
-                backgroundColor: THEME.red,
-                color: '#FFFFFF',
-                padding: '4px 8px',
-                borderRadius: '4px',
-                fontSize: '10px',
-                fontWeight: 'bold',
+            {sectors.map(s => <option key={s} value={s}>{s === 'All' ? 'All Sectors' : s}</option>)}
+          </select>
+        </div>
+      )}
+
+      {data && !loading && sectorPerf.length > 0 && (
+        <div style={{ marginBottom: '16px' }}>
+          <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }} className="scrollbar-hide">
+            {sectorPerf.map(sp => (
+              <button key={sp.sector} onClick={() => setSectorFilter(sectorFilter === sp.sector ? 'All' : sp.sector)} style={{
+                flexShrink: 0, padding: '8px 14px', borderRadius: '8px', border: 'none',
+                backgroundColor: sp.avg >= 0
+                  ? `rgba(16,185,129,${Math.min(0.35, Math.abs(sp.avg) * 0.06 + 0.08)})`
+                  : `rgba(239,68,68,${Math.min(0.35, Math.abs(sp.avg) * 0.06 + 0.08)})`,
+                cursor: 'pointer', transition: 'all 0.15s',
+                outline: sectorFilter === sp.sector ? `2px solid ${ACCENT}` : 'none', outlineOffset: '1px',
               }}>
-                LIVE
-              </div>
-            </div>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{
-                width: '100%',
-                borderCollapse: 'collapse',
-                fontSize: '13px',
-              }}>
-                <thead>
-                  <tr style={{ backgroundColor: THEME.background, borderBottom: `1px solid ${THEME.border}` }}>
-                    <th style={{ padding: '12px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Rank</th>
-                    <th style={{ padding: '12px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Ticker</th>
-                    <th style={{ padding: '12px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Company</th>
-                    <th style={{ padding: '12px', textAlign: 'right', color: THEME.textSecondary, fontWeight: '500' }}>Price</th>
-                    <th style={{ padding: '12px', textAlign: 'right', color: THEME.textSecondary, fontWeight: '500' }}>Change</th>
-                    <th style={{ padding: '12px', textAlign: 'right', color: THEME.textSecondary, fontWeight: '500' }}>%</th>
-                    <th style={{ padding: '12px', textAlign: 'right', color: THEME.textSecondary, fontWeight: '500' }}>Volume</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {losers.map((stock, idx) => (
-                    <tr
-                      key={stock.ticker}
-                      style={{
-                        borderBottom: `1px solid ${THEME.border}`,
-                        backgroundColor: THEME.card,
-                        transition: 'all 0.2s ease',
-                        cursor: 'pointer',
-                      }}
-                      onMouseEnter={(e) => {
-                        (e.currentTarget as HTMLTableRowElement).style.backgroundColor = THEME.cardHover;
-                      }}
-                      onMouseLeave={(e) => {
-                        (e.currentTarget as HTMLTableRowElement).style.backgroundColor = THEME.card;
-                      }}
-                    >
-                      <td style={{ padding: '12px', color: THEME.textSecondary }}>{idx + 1}</td>
-                      <td style={{ padding: '12px', color: THEME.accent, fontWeight: '600' }}>{stock.ticker}</td>
-                      <td style={{ padding: '12px', color: THEME.textPrimary }}>{stock.company}</td>
-                      <td style={{ padding: '12px', textAlign: 'right', color: THEME.textPrimary }}>₹{stock.price.toFixed(2)}</td>
-                      <td style={{
-                        padding: '12px',
-                        textAlign: 'right',
-                        color: stock.change > 0 ? THEME.green : THEME.red,
-                        fontWeight: '500',
-                      }}>
-                        {stock.change > 0 ? '+' : ''}{stock.change.toFixed(2)}
-                      </td>
-                      <td style={{
-                        padding: '12px',
-                        textAlign: 'right',
-                        color: stock.changePercent > 0 ? THEME.green : THEME.red,
-                        fontWeight: '600',
-                      }}>
-                        {stock.changePercent > 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
-                      </td>
-                      <td style={{ padding: '12px', textAlign: 'right', color: THEME.textSecondary }}>{formatNumber(stock.volume)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                <div style={{ fontSize: '11px', fontWeight: '600', color: TEXT1, whiteSpace: 'nowrap', marginBottom: '2px' }}>{sp.sector}</div>
+                <div style={{ fontSize: '13px', fontWeight: '700', color: sp.avg >= 0 ? GREEN : RED }}>{sp.avg > 0 ? '+' : ''}{sp.avg.toFixed(1)}%</div>
+                <div style={{ fontSize: '9px', color: TEXT3 }}>{sp.count} stocks</div>
+              </button>
+            ))}
           </div>
         </div>
       )}
 
-      {/* Earnings Movers Section */}
-      {earningsData.length > 0 && !loading && (
-        <div style={{ marginTop: '32px' }}>
-          <h2 style={{ fontSize: '20px', fontWeight: '600', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-            Earnings Movers — Post-Result Price Moves
-            <span style={{ fontSize: '11px', fontWeight: '500', color: THEME.textSecondary, backgroundColor: THEME.card, padding: '4px 10px', borderRadius: '4px', border: `1px solid ${THEME.border}` }}>
-              {earningsData.length} results this month
-            </span>
-          </h2>
-          <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '12px', overflow: 'hidden' }}>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+      {loading && (
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>
+          <div style={{ width: '40px', height: '40px', border: '3px solid #1A2840', borderTop: `3px solid ${ACCENT}`, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+        </div>
+      )}
+
+      {error && !loading && (
+        <div style={{ backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', padding: '14px', color: RED, fontSize: '13px', marginBottom: '16px' }}>{error}</div>
+      )}
+
+      {data && !loading && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+          {/* Gainers */}
+          <div style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: '8px', overflow: 'hidden' }}>
+            <div style={{ padding: '12px 16px', borderBottom: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <TrendingUp size={16} color={GREEN} />
+              <span style={{ fontSize: '14px', fontWeight: '600' }}>Top Gainers</span>
+              <span style={{ fontSize: '10px', color: GREEN, backgroundColor: 'rgba(16,185,129,0.12)', padding: '2px 6px', borderRadius: '3px', fontWeight: '600' }}>{filteredGainers.length}</span>
+              <span style={{ marginLeft: 'auto', fontSize: '9px', color: GREEN, fontWeight: '700', backgroundColor: 'rgba(16,185,129,0.15)', padding: '2px 8px', borderRadius: '3px' }}>LIVE</span>
+            </div>
+            <div style={{ overflowX: 'auto', maxHeight: '600px', overflowY: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
-                  <tr style={{ backgroundColor: THEME.background, borderBottom: `1px solid ${THEME.border}` }}>
-                    <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Date</th>
-                    <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Ticker</th>
-                    <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Company</th>
-                    <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Quality</th>
-                    <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Quarter</th>
-                    <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Sector</th>
-                    <th style={{ padding: '10px', textAlign: 'right', color: THEME.textSecondary, fontWeight: '500' }}>CMP</th>
-                    <th style={{ padding: '10px', textAlign: 'right', color: THEME.textSecondary, fontWeight: '500' }}>Cap</th>
+                  <tr style={{ backgroundColor: BG }}>
+                    {TH.map(h => <th key={h} style={{ padding: '8px', textAlign: thAlign(h), fontSize: '10px', color: TEXT3, fontWeight: '500', textTransform: 'uppercase', letterSpacing: '0.5px', position: 'sticky', top: 0, backgroundColor: BG, zIndex: 1 }}>{h}</th>)}
                   </tr>
                 </thead>
                 <tbody>
-                  {earningsData.map((r) => (
-                    <tr key={r.ticker} style={{ borderBottom: `1px solid ${THEME.border}`, backgroundColor: THEME.card }}>
-                      <td style={{ padding: '10px', color: THEME.textSecondary, fontSize: '12px' }}>{r.resultDate}</td>
-                      <td style={{ padding: '10px', color: THEME.accent, fontWeight: '600' }}>{r.ticker}</td>
-                      <td style={{ padding: '10px', color: THEME.textPrimary, maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
-                      <td style={{ padding: '10px' }}>
-                        <span style={{
-                          fontSize: '10px', fontWeight: '600', padding: '2px 6px', borderRadius: '4px',
-                          backgroundColor: r.quality === 'Good' ? '#10B98120' : '#EF444420',
-                          color: r.quality === 'Good' ? '#10B981' : '#EF4444',
-                        }}>{r.quality}</span>
-                      </td>
-                      <td style={{ padding: '10px', color: THEME.textSecondary, fontSize: '12px' }}>{r.quarter}</td>
-                      <td style={{ padding: '10px', color: THEME.textSecondary, fontSize: '12px' }}>{r.sector}</td>
-                      <td style={{ padding: '10px', textAlign: 'right', color: THEME.textPrimary }}>{r.cmp ? `₹${r.cmp.toFixed(0)}` : '—'}</td>
-                      <td style={{ padding: '10px', textAlign: 'right', color: THEME.textSecondary, fontSize: '12px' }}>{r.marketCap || '—'}</td>
-                    </tr>
-                  ))}
+                  {filteredGainers.map((s, i) => <Row key={s.ticker} stock={s} rank={i + 1} up={true} />)}
+                  {filteredGainers.length === 0 && <tr><td colSpan={7} style={{ padding: '32px', textAlign: 'center', color: TEXT3, fontSize: '13px' }}>No gainers match filters</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          {/* Losers */}
+          <div style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: '8px', overflow: 'hidden' }}>
+            <div style={{ padding: '12px 16px', borderBottom: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <TrendingDown size={16} color={RED} />
+              <span style={{ fontSize: '14px', fontWeight: '600' }}>Top Losers</span>
+              <span style={{ fontSize: '10px', color: RED, backgroundColor: 'rgba(239,68,68,0.12)', padding: '2px 6px', borderRadius: '3px', fontWeight: '600' }}>{filteredLosers.length}</span>
+              <span style={{ marginLeft: 'auto', fontSize: '9px', color: RED, fontWeight: '700', backgroundColor: 'rgba(239,68,68,0.15)', padding: '2px 8px', borderRadius: '3px' }}>LIVE</span>
+            </div>
+            <div style={{ overflowX: 'auto', maxHeight: '600px', overflowY: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ backgroundColor: BG }}>
+                    {TH.map(h => <th key={h} style={{ padding: '8px', textAlign: thAlign(h), fontSize: '10px', color: TEXT3, fontWeight: '500', textTransform: 'uppercase', letterSpacing: '0.5px', position: 'sticky', top: 0, backgroundColor: BG, zIndex: 1 }}>{h}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredLosers.map((s, i) => <Row key={s.ticker} stock={s} rank={i + 1} up={false} />)}
+                  {filteredLosers.length === 0 && <tr><td colSpan={7} style={{ padding: '32px', textAlign: 'center', color: TEXT3, fontSize: '13px' }}>No losers match filters</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -640,14 +316,8 @@ export default function MoversPage() {
       )}
 
       <style>{`
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
       `}</style>
     </div>
   );

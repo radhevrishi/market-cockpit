@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { RefreshCw } from 'lucide-react';
 
 interface Stock {
@@ -29,79 +29,153 @@ interface ApiResponse {
   updatedAt: string;
 }
 
-const THEME = {
-  background: '#0A0E1A',
-  card: '#111B35',
-  cardHover: '#162040',
-  border: '#1A2840',
-  textPrimary: '#F5F7FA',
-  textSecondary: '#8A95A3',
-  accent: '#0F7ABF',
-  green: '#10B981',
-  red: '#EF4444',
-};
-
-interface EarningsEvent {
-  ticker: string;
-  company: string;
-  resultDate: string;
-  quality: string;
-  sector: string;
-  marketCap: string;
-  cmp: number | null;
-  edp: number | null;
-  priceMove: number | null;
-}
-
-interface TreemapRect {
-  stock: Stock;
+interface TreeNode {
+  stock?: Stock;
+  sector?: string;
+  children?: TreeNode[];
+  value: number;
   x: number;
   y: number;
-  width: number;
-  height: number;
-  area: number;
+  w: number;
+  h: number;
 }
 
-type HeatmapMode = 'daily' | 'earnings';
-type ColorBy = 'changePercent' | 'marketCap';
-type GroupBy = 'sector' | 'none';
-type SizeBy = 'marketCap' | 'equal';
-type SortBy = 'changePercent' | 'alphabetical';
+// ── Squarified Treemap Algorithm ────────────────────────────────────────
+function squarify(
+  items: { value: number; data: any }[],
+  x: number, y: number, w: number, h: number
+): { x: number; y: number; w: number; h: number; data: any }[] {
+  if (items.length === 0) return [];
+  if (items.length === 1) {
+    return [{ x, y, w, h, data: items[0].data }];
+  }
 
-interface Filters {
-  colorBy: ColorBy;
-  groupBy: GroupBy;
-  sizeBy: SizeBy;
-  sortBy: SortBy;
+  const totalValue = items.reduce((s, i) => s + i.value, 0);
+  if (totalValue <= 0) return [];
+
+  const sorted = [...items].sort((a, b) => b.value - a.value);
+  const results: { x: number; y: number; w: number; h: number; data: any }[] = [];
+
+  let remaining = [...sorted];
+  let cx = x, cy = y, cw = w, ch = h;
+
+  while (remaining.length > 0) {
+    const remTotal = remaining.reduce((s, i) => s + i.value, 0);
+    const isWide = cw >= ch;
+    const side = isWide ? ch : cw;
+
+    if (remaining.length === 1) {
+      results.push({ x: cx, y: cy, w: cw, h: ch, data: remaining[0].data });
+      break;
+    }
+
+    // Find best row
+    let row: typeof remaining = [remaining[0]];
+    let bestRatio = Infinity;
+
+    for (let i = 1; i < remaining.length; i++) {
+      const candidate = [...row, remaining[i]];
+      const rowSum = candidate.reduce((s, it) => s + it.value, 0);
+      const rowFraction = rowSum / remTotal;
+      const rowLength = isWide ? cw * rowFraction : ch * rowFraction;
+
+      let worstRatio = 0;
+      for (const item of candidate) {
+        const itemFraction = item.value / rowSum;
+        const itemW = isWide ? rowLength : side * itemFraction;
+        const itemH = isWide ? side * itemFraction : rowLength;
+        const ratio = Math.max(itemW / itemH, itemH / itemW);
+        worstRatio = Math.max(worstRatio, ratio);
+      }
+
+      // Check previous row's ratio
+      const prevRowSum = row.reduce((s, it) => s + it.value, 0);
+      const prevFraction = prevRowSum / remTotal;
+      const prevLength = isWide ? cw * prevFraction : ch * prevFraction;
+      let prevWorst = 0;
+      for (const item of row) {
+        const itemFraction = item.value / prevRowSum;
+        const itemW = isWide ? prevLength : side * itemFraction;
+        const itemH = isWide ? side * itemFraction : prevLength;
+        const ratio = Math.max(itemW / itemH, itemH / itemW);
+        prevWorst = Math.max(prevWorst, ratio);
+      }
+
+      if (worstRatio <= prevWorst) {
+        row = candidate;
+        bestRatio = worstRatio;
+      } else {
+        break;
+      }
+    }
+
+    // Layout the row
+    const rowSum = row.reduce((s, it) => s + it.value, 0);
+    const rowFraction = rowSum / remTotal;
+    const rowLength = isWide ? cw * rowFraction : ch * rowFraction;
+
+    let rx = cx, ry = cy;
+    for (const item of row) {
+      const itemFraction = item.value / rowSum;
+      if (isWide) {
+        const itemH = ch * itemFraction;
+        results.push({ x: rx, y: ry, w: rowLength, h: itemH, data: item.data });
+        ry += itemH;
+      } else {
+        const itemW = cw * itemFraction;
+        results.push({ x: rx, y: ry, w: itemW, h: rowLength, data: item.data });
+        rx += itemW;
+      }
+    }
+
+    // Update remaining area
+    if (isWide) {
+      cx += rowLength;
+      cw -= rowLength;
+    } else {
+      cy += rowLength;
+      ch -= rowLength;
+    }
+
+    remaining = remaining.slice(row.length);
+  }
+
+  return results;
+}
+
+// ── Color Helpers ──────────────────────────────────────────────────────
+function getChangeColor(pct: number): string {
+  if (pct >= 4)  return '#00897B';
+  if (pct >= 2)  return '#26A69A';
+  if (pct >= 0.5) return '#4DB6AC';
+  if (pct >= 0)  return '#263238';
+  if (pct >= -0.5) return '#37474F';
+  if (pct >= -2) return '#E57373';
+  if (pct >= -4) return '#EF5350';
+  return '#D32F2F';
+}
+
+function getTextColor(pct: number): string {
+  if (Math.abs(pct) < 0.5) return '#90A4AE';
+  return '#FFFFFF';
 }
 
 export default function HeatmapPage() {
-  const [mode, setMode] = useState<HeatmapMode>('daily');
-  const [market, setMarket] = useState<'india' | 'us'>('india');
   const [data, setData] = useState<ApiResponse | null>(null);
-  const [earningsData, setEarningsData] = useState<EarningsEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [hoveredTicker, setHoveredTicker] = useState<string | null>(null);
-  const [filters, setFilters] = useState<Filters>({
-    colorBy: 'changePercent',
-    groupBy: 'sector',
-    sizeBy: 'marketCap',
-    sortBy: 'changePercent',
-  });
+  const [containerSize, setContainerSize] = useState({ w: 1200, h: 700 });
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       setError(null);
       setIsRefreshing(true);
-      const response = await fetch(`/api/market/quotes?market=${market}&index=midsmall50`);
-
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
-      }
-
+      const response = await fetch('/api/market/quotes?market=india&index=smallcap150');
+      if (!response.ok) throw new Error(`API error: ${response.status}`);
       const json = await response.json();
       setData(json);
       setLastUpdated(new Date());
@@ -111,615 +185,301 @@ export default function HeatmapPage() {
       setLoading(false);
       setIsRefreshing(false);
     }
-  };
+  }, []);
 
-  const fetchEarnings = async () => {
-    try {
-      setError(null);
-      setIsRefreshing(true);
-      const now = new Date();
-      const monthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      const response = await fetch(`/api/market/earnings?month=${monthStr}`);
-      if (!response.ok) throw new Error(`Earnings API error: ${response.status}`);
-      const json = await response.json();
-      setEarningsData(json.results || []);
-      setLastUpdated(new Date());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch earnings');
-    } finally {
-      setLoading(false);
-      setIsRefreshing(false);
-    }
-  };
-
+  useEffect(() => { fetchData(); }, [fetchData]);
   useEffect(() => {
-    if (mode === 'daily') fetchData();
-    else fetchEarnings();
-  }, [market, mode]);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (mode === 'daily') fetchData();
-      else fetchEarnings();
-    }, 60000);
-
+    const interval = setInterval(fetchData, 60000);
     return () => clearInterval(interval);
-  }, [market, mode]);
+  }, [fetchData]);
 
-  const getColor = (stock: Stock): string => {
-    const change = stock.changePercent;
-    if (change >= 5) return '#0D9488';
-    if (change >= 3) return '#10B981';
-    if (change >= 1) return '#34D399';
-    if (change >= 0) return '#6EE7B7';
-    if (change >= -1) return '#FB923C';
-    if (change >= -3) return '#F97316';
-    if (change >= -5) return '#EF4444';
-    return '#DC2626';
-  };
-
-  const processStocks = useMemo(() => {
-    if (!data) return { grouped: {}, all: [] };
-
-    let stocks = [...data.stocks];
-
-    if (filters.sortBy === 'alphabetical') {
-      stocks.sort((a, b) => a.ticker.localeCompare(b.ticker));
-    } else {
-      stocks.sort((a, b) => b.changePercent - a.changePercent);
-    }
-
-    if (filters.groupBy === 'sector') {
-      const grouped: { [key: string]: Stock[] } = {};
-      stocks.forEach((stock) => {
-        if (!grouped[stock.sector]) {
-          grouped[stock.sector] = [];
-        }
-        grouped[stock.sector].push(stock);
-      });
-      return { grouped, all: stocks };
-    }
-
-    return { grouped: { 'All Stocks': stocks }, all: stocks };
-  }, [data, filters.sortBy, filters.groupBy]);
-
-  const calculateTreemap = (stocks: Stock[], width: number, height: number): TreemapRect[] => {
-    if (stocks.length === 0) return [];
-
-    const areas = stocks.map((stock) => {
-      if (filters.sizeBy === 'marketCap') {
-        // Use market cap if available, otherwise use volume as proxy, otherwise equal
-        return Math.max(stock.marketCap || stock.volume || 10000, 10000);
+  // Responsive container
+  useEffect(() => {
+    const measure = () => {
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        setContainerSize({ w: rect.width, h: Math.max(500, window.innerHeight - 260) });
       }
-      return 100;
-    });
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [loading]);
 
-    const totalArea = areas.reduce((a, b) => a + b, 0);
-    const rects: TreemapRect[] = stocks.map((stock, idx) => ({
-      stock,
-      x: 0,
-      y: 0,
-      width: 0,
-      height: 0,
-      area: (areas[idx] / totalArea) * (width * height),
+  // Build sector-grouped treemap data
+  const treemapRects = useMemo((): { rects: { x: number; y: number; w: number; h: number; stock: Stock; sector: string }[]; sectorRects: { x: number; y: number; w: number; h: number; data: any }[] } | null => {
+    if (!data || !data.stocks.length) return null;
+
+    // Group by sector
+    const sectorMap = new Map<string, Stock[]>();
+    for (const s of data.stocks) {
+      const arr = sectorMap.get(s.sector) || [];
+      arr.push(s);
+      sectorMap.set(s.sector, arr);
+    }
+
+    // Build sector items for outer treemap
+    const sectorItems = [...sectorMap.entries()].map(([sector, stocks]) => ({
+      value: stocks.reduce((s, st) => s + Math.max(st.marketCap, 1000), 0),
+      data: { sector, stocks },
     }));
 
-    let x = 0;
-    let y = 0;
-    let rowWidth = width;
-    let currentRowRects: TreemapRect[] = [];
-    let currentRowHeight = 0;
+    // Layout sectors
+    const { w, h } = containerSize;
+    const sectorRects = squarify(sectorItems, 0, 0, w, h);
 
-    rects.forEach((rect) => {
-      const rectWidth = (rect.area / currentRowHeight || rowWidth);
+    // Now layout stocks within each sector
+    const allRects: { x: number; y: number; w: number; h: number; stock: Stock; sector: string }[] = [];
 
-      if (x + rectWidth > width && currentRowRects.length > 0) {
-        let currentX = 0;
-        currentRowRects.forEach((r) => {
-          r.x = currentX;
-          r.y = y;
-          r.width = (r.area / currentRowHeight);
-          r.height = currentRowHeight;
-          currentX += r.width;
-        });
-        y += currentRowHeight;
-        x = 0;
-        currentRowRects = [];
-        currentRowHeight = 0;
+    for (const sr of sectorRects) {
+      const { sector, stocks } = sr.data;
+      const pad = 1; // gap between sectors
+      const stockItems = stocks.map((st: Stock) => ({
+        value: Math.max(st.marketCap, 1000),
+        data: st,
+      }));
+
+      const innerRects = squarify(
+        stockItems,
+        sr.x + pad, sr.y + pad,
+        sr.w - pad * 2, sr.h - pad * 2
+      );
+
+      for (const ir of innerRects) {
+        allRects.push({ ...ir, stock: ir.data, sector });
       }
-
-      currentRowHeight = Math.max(currentRowHeight, rect.area / rowWidth);
-      currentRowRects.push(rect);
-      x += rectWidth;
-    });
-
-    if (currentRowRects.length > 0) {
-      let currentX = 0;
-      currentRowRects.forEach((r) => {
-        r.x = currentX;
-        r.y = y;
-        r.width = (r.area / currentRowHeight);
-        r.height = currentRowHeight;
-        currentX += r.width;
-      });
     }
 
-    return rects;
-  };
+    return { rects: allRects, sectorRects };
+  }, [data, containerSize]);
 
   const formatTime = (date: Date | null) => {
-    if (!date) return 'Never';
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    const seconds = String(date.getSeconds()).padStart(2, '0');
-    return `${hours}:${minutes}:${seconds}`;
+    if (!date) return '--:--';
+    return date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
   };
 
+  const hoveredStock = hoveredTicker && data ? data.stocks.find(s => s.ticker === hoveredTicker) : null;
+
   return (
-    <div style={{ backgroundColor: THEME.background, color: THEME.textPrimary, minHeight: '100vh', padding: '24px' }}>
+    <div style={{ backgroundColor: '#0A0E1A', color: '#F5F7FA', minHeight: '100vh', padding: '16px 20px' }}>
       {/* Header */}
-      <div style={{ marginBottom: '32px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            <h1 style={{ fontSize: '32px', fontWeight: 'bold', margin: 0 }}>Market Heatmap</h1>
-            {/* Mode Toggle */}
-            <div style={{ display: 'flex', gap: '4px', backgroundColor: THEME.card, padding: '4px', borderRadius: '8px', border: `1px solid ${THEME.border}` }}>
-              {([{ v: 'daily', l: 'Daily Changes' }, { v: 'earnings', l: 'Earnings Moves' }] as const).map((m) => (
-                <button
-                  key={m.v}
-                  onClick={() => { setMode(m.v as HeatmapMode); setLoading(true); }}
-                  style={{
-                    padding: '6px 14px', borderRadius: '6px', border: 'none',
-                    backgroundColor: mode === m.v ? THEME.accent : 'transparent',
-                    color: mode === m.v ? '#FFFFFF' : THEME.textSecondary,
-                    cursor: 'pointer', fontSize: '12px', fontWeight: '600', transition: 'all 0.2s',
-                  }}
-                >{m.l}</button>
-              ))}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <h1 style={{ fontSize: '22px', fontWeight: '700', margin: 0, letterSpacing: '-0.3px' }}>
+            Smallcap 150 Heatmap
+          </h1>
+          <span style={{ fontSize: '11px', color: '#4A5B6C', padding: '3px 8px', backgroundColor: '#111B35', borderRadius: '4px', border: '1px solid #1A2840' }}>
+            NIFTY Smallcap 50 + 100
+          </span>
+        </div>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          {data && (
+            <div style={{ display: 'flex', gap: '16px', fontSize: '12px', color: '#8A95A3' }}>
+              <span>{data.summary.total} stocks</span>
+              <span style={{ color: '#10B981' }}>{data.summary.gainersCount} up</span>
+              <span style={{ color: '#EF4444' }}>{data.summary.losersCount} down</span>
             </div>
-          </div>
-          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-            {/* Market Toggle (daily mode only) */}
-            {mode === 'daily' && <div style={{ display: 'flex', gap: '8px', backgroundColor: THEME.card, padding: '4px', borderRadius: '8px', border: `1px solid ${THEME.border}` }}>
-              {(['india', 'us'] as const).map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setMarket(m)}
-                  style={{
-                    padding: '8px 16px',
-                    borderRadius: '6px',
-                    border: 'none',
-                    backgroundColor: market === m ? THEME.accent : 'transparent',
-                    color: market === m ? '#FFFFFF' : THEME.textSecondary,
-                    cursor: 'pointer',
-                    fontSize: '14px',
-                    fontWeight: '500',
-                    transition: 'all 0.3s ease',
-                  }}
-                >
-                  {m.toUpperCase()}
-                </button>
-              ))}
-            </div>}
-
-            {/* Refresh Button */}
-            <button
-              onClick={fetchData}
-              disabled={isRefreshing}
-              style={{
-                padding: '8px 16px',
-                borderRadius: '8px',
-                border: `1px solid ${THEME.border}`,
-                backgroundColor: THEME.card,
-                color: THEME.accent,
-                cursor: isRefreshing ? 'not-allowed' : 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                fontSize: '14px',
-                fontWeight: '500',
-                transition: 'all 0.3s ease',
-                opacity: isRefreshing ? 0.6 : 1,
-              }}
-            >
-              <RefreshCw size={16} style={{ animation: isRefreshing ? 'spin 1s linear infinite' : 'none' }} />
-            </button>
-
-            {/* Last Updated */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: THEME.textSecondary }}>
-              <div style={{
-                width: '8px',
-                height: '8px',
-                borderRadius: '50%',
-                backgroundColor: THEME.green,
-                animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-              }} />
-              {formatTime(lastUpdated)}
-            </div>
+          )}
+          <button
+            onClick={fetchData}
+            disabled={isRefreshing}
+            style={{
+              padding: '6px 12px', borderRadius: '6px', border: '1px solid #1A2840',
+              backgroundColor: '#111B35', color: '#0F7ABF', cursor: isRefreshing ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '500',
+              opacity: isRefreshing ? 0.5 : 1, transition: 'all 0.2s',
+            }}
+          >
+            <RefreshCw size={13} style={{ animation: isRefreshing ? 'spin 1s linear infinite' : 'none' }} />
+          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#4A5B6C' }}>
+            <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#10B981', animation: 'pulse 2s ease infinite' }} />
+            {formatTime(lastUpdated)}
           </div>
         </div>
-
-        {/* Earnings Mode Summary + Grid */}
-        {mode === 'earnings' && !loading && earningsData.length > 0 && (
-          <div style={{ marginBottom: '24px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px', marginBottom: '24px' }}>
-              <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px' }}>
-                <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>Results</div>
-                <div style={{ fontSize: '20px', fontWeight: 'bold', color: THEME.accent }}>{earningsData.length}</div>
-              </div>
-              <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px' }}>
-                <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>Gainers</div>
-                <div style={{ fontSize: '20px', fontWeight: 'bold', color: THEME.green }}>{earningsData.filter(e => (e.priceMove || 0) > 0).length}</div>
-              </div>
-              <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px' }}>
-                <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>Losers</div>
-                <div style={{ fontSize: '20px', fontWeight: 'bold', color: THEME.red }}>{earningsData.filter(e => (e.priceMove || 0) < 0).length}</div>
-              </div>
-              <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px' }}>
-                <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>Avg Move</div>
-                <div style={{ fontSize: '20px', fontWeight: 'bold', color: THEME.textPrimary }}>
-                  {(earningsData.filter(e => e.priceMove !== null).reduce((sum, e) => sum + (e.priceMove || 0), 0) / Math.max(1, earningsData.filter(e => e.priceMove !== null).length)).toFixed(1)}%
-                </div>
-              </div>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '8px' }}>
-              {earningsData.filter(e => e.quality !== 'Upcoming').sort((a, b) => (b.priceMove || 0) - (a.priceMove || 0)).map(e => {
-                const move = e.priceMove || 0;
-                const bg = move > 5 ? '#065f46' : move > 2 ? '#047857' : move > 0 ? '#064e3b'
-                  : move > -2 ? '#4c1d1d' : move > -5 ? '#7f1d1d' : '#991b1b';
-                return (
-                  <div key={e.ticker} style={{
-                    backgroundColor: bg, borderRadius: '8px', padding: '10px',
-                    border: `1px solid ${THEME.border}`, cursor: 'pointer', transition: 'transform 0.15s',
-                  }}>
-                    <div style={{ fontWeight: '700', fontSize: '13px', color: '#fff' }}>{e.ticker}</div>
-                    <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {e.company.length > 20 ? e.company.substring(0, 20) + '...' : e.company}
-                    </div>
-                    <div style={{ fontSize: '14px', fontWeight: '700', color: '#fff', marginTop: '4px' }}>
-                      {move > 0 ? '+' : ''}{move.toFixed(1)}%
-                    </div>
-                    <div style={{
-                      display: 'inline-block', marginTop: '4px', fontSize: '10px', fontWeight: '600', padding: '2px 6px', borderRadius: '4px',
-                      backgroundColor: e.quality === 'Excellent' ? 'rgba(16,185,129,0.4)' : e.quality === 'Great' ? 'rgba(16,185,129,0.3)' : e.quality === 'Good' ? 'rgba(59,130,246,0.3)' : e.quality === 'OK' ? 'rgba(251,191,36,0.3)' : 'rgba(239,68,68,0.3)',
-                      color: e.quality === 'Excellent' ? '#34d399' : e.quality === 'Great' ? '#6ee7b7' : e.quality === 'Good' ? '#93c5fd' : e.quality === 'OK' ? '#fbbf24' : '#fca5a5',
-                    }}>
-                      {e.quality}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Summary Stats */}
-        {mode === 'daily' && data && !loading && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px' }}>
-            <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px' }}>
-              <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>Total</div>
-              <div style={{ fontSize: '20px', fontWeight: 'bold', color: THEME.accent }}>{data.summary.total}</div>
-            </div>
-            <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px' }}>
-              <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>Gainers</div>
-              <div style={{ fontSize: '20px', fontWeight: 'bold', color: THEME.green }}>{data.summary.gainersCount}</div>
-            </div>
-            <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px' }}>
-              <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>Losers</div>
-              <div style={{ fontSize: '20px', fontWeight: 'bold', color: THEME.red }}>{data.summary.losersCount}</div>
-            </div>
-            <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px' }}>
-              <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>Best</div>
-              <div style={{ fontSize: '20px', fontWeight: 'bold', color: THEME.green }}>
-                {(() => {
-                  const best = data?.stocks?.length ? [...data.stocks].sort((a, b) => b.changePercent - a.changePercent)[0] : null;
-                  return best ? best.ticker : 'N/A';
-                })()}
-              </div>
-            </div>
-            <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px' }}>
-              <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>Worst</div>
-              <div style={{ fontSize: '20px', fontWeight: 'bold', color: THEME.red }}>
-                {(() => {
-                  const worst = data?.stocks?.length ? [...data.stocks].sort((a, b) => a.changePercent - b.changePercent)[0] : null;
-                  return worst ? worst.ticker : 'N/A';
-                })()}
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
-      {/* Loading State */}
+      {/* Loading */}
       {loading && (
-        <div style={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          minHeight: '400px',
-        }}>
-          <div style={{
-            width: '48px',
-            height: '48px',
-            border: `3px solid ${THEME.border}`,
-            borderTop: `3px solid ${THEME.accent}`,
-            borderRadius: '50%',
-            animation: 'spin 1s linear infinite',
-          }} />
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '500px' }}>
+          <div style={{ width: '40px', height: '40px', border: '3px solid #1A2840', borderTop: '3px solid #0F7ABF', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
         </div>
       )}
 
-      {/* Error State */}
+      {/* Error */}
       {error && !loading && (
-        <div style={{
-          backgroundColor: 'rgba(239, 68, 68, 0.1)',
-          border: `1px solid ${THEME.red}`,
-          borderRadius: '12px',
-          padding: '16px',
-          color: THEME.red,
-          marginBottom: '24px',
-        }}>
-          Error loading data: {error}
+        <div style={{ backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', padding: '14px', color: '#EF4444', fontSize: '13px', marginBottom: '16px' }}>
+          {error}
         </div>
       )}
 
-      {/* Controls (daily mode only) */}
-      {mode === 'daily' && data && !loading && (
-        <div style={{
-          backgroundColor: THEME.card,
-          border: `1px solid ${THEME.border}`,
-          borderRadius: '12px',
-          padding: '16px',
-          marginBottom: '24px',
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-          gap: '16px',
-        }}>
-          <div>
-            <label style={{ color: THEME.textSecondary, fontSize: '12px', display: 'block', marginBottom: '6px' }}>Color by</label>
-            <select
-              value={filters.colorBy}
-              onChange={(e) => setFilters({ ...filters, colorBy: e.target.value as ColorBy })}
-              style={{
-                width: '100%',
-                padding: '8px',
-                backgroundColor: THEME.background,
-                color: THEME.textPrimary,
-                border: `1px solid ${THEME.border}`,
-                borderRadius: '6px',
-                fontSize: '12px',
-              }}
-            >
-              <option value="changePercent">Change %</option>
-              <option value="marketCap">Market Cap</option>
-            </select>
-          </div>
+      {/* Treemap */}
+      {data && !loading && treemapRects !== null && (
+        <div
+          ref={containerRef}
+          style={{
+            position: 'relative',
+            width: '100%',
+            height: `${containerSize.h}px`,
+            backgroundColor: '#080C16',
+            borderRadius: '8px',
+            overflow: 'hidden',
+            border: '1px solid #1A2840',
+          }}
+        >
+          <svg
+            width={containerSize.w}
+            height={containerSize.h}
+            viewBox={`0 0 ${containerSize.w} ${containerSize.h}`}
+            style={{ display: 'block', width: '100%', height: '100%' }}
+          >
+            {/* Stock cells */}
+            {treemapRects.rects.map((r: any) => {
+              const isHovered = hoveredTicker === r.stock.ticker;
+              const pct = r.stock.changePercent;
+              const minDim = Math.min(r.w, r.h);
+              const showTicker = minDim > 28;
+              const showPct = minDim > 40;
+              const fontSize = Math.min(12, Math.max(8, minDim / 5));
 
-          <div>
-            <label style={{ color: THEME.textSecondary, fontSize: '12px', display: 'block', marginBottom: '6px' }}>Group by</label>
-            <select
-              value={filters.groupBy}
-              onChange={(e) => setFilters({ ...filters, groupBy: e.target.value as GroupBy })}
-              style={{
-                width: '100%',
-                padding: '8px',
-                backgroundColor: THEME.background,
-                color: THEME.textPrimary,
-                border: `1px solid ${THEME.border}`,
-                borderRadius: '6px',
-                fontSize: '12px',
-              }}
-            >
-              <option value="sector">Sector</option>
-              <option value="none">None</option>
-            </select>
-          </div>
-
-          <div>
-            <label style={{ color: THEME.textSecondary, fontSize: '12px', display: 'block', marginBottom: '6px' }}>Size by</label>
-            <select
-              value={filters.sizeBy}
-              onChange={(e) => setFilters({ ...filters, sizeBy: e.target.value as SizeBy })}
-              style={{
-                width: '100%',
-                padding: '8px',
-                backgroundColor: THEME.background,
-                color: THEME.textPrimary,
-                border: `1px solid ${THEME.border}`,
-                borderRadius: '6px',
-                fontSize: '12px',
-              }}
-            >
-              <option value="marketCap">Market Cap</option>
-              <option value="equal">Equal</option>
-            </select>
-          </div>
-
-          <div>
-            <label style={{ color: THEME.textSecondary, fontSize: '12px', display: 'block', marginBottom: '6px' }}>Sort by</label>
-            <select
-              value={filters.sortBy}
-              onChange={(e) => setFilters({ ...filters, sortBy: e.target.value as SortBy })}
-              style={{
-                width: '100%',
-                padding: '8px',
-                backgroundColor: THEME.background,
-                color: THEME.textPrimary,
-                border: `1px solid ${THEME.border}`,
-                borderRadius: '6px',
-                fontSize: '12px',
-              }}
-            >
-              <option value="changePercent">Change %</option>
-              <option value="alphabetical">Alphabetical</option>
-            </select>
-          </div>
-        </div>
-      )}
-
-      {/* Treemap (daily mode only) */}
-      {mode === 'daily' && data && !loading && (
-        <div>
-          {Object.entries(processStocks.grouped).map(([groupName, groupStocks]) => {
-            const rects = calculateTreemap(groupStocks, 1200, 400);
-
-            return (
-              <div key={groupName} style={{ marginBottom: '32px' }}>
-                {filters.groupBy === 'sector' && (
-                  <h2 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '12px', color: THEME.textSecondary }}>
-                    {groupName}
-                  </h2>
-                )}
-
-                <div
-                  style={{
-                    position: 'relative',
-                    width: '100%',
-                    height: '400px',
-                    backgroundColor: THEME.card,
-                    border: `1px solid ${THEME.border}`,
-                    borderRadius: '12px',
-                    overflow: 'hidden',
-                  }}
-                >
-                  <svg width="100%" height="100%" style={{ position: 'absolute', top: 0, left: 0 }}>
-                    {rects.map((rect) => (
-                      <g key={rect.stock.ticker}>
-                        <rect
-                          x={rect.x}
-                          y={rect.y}
-                          width={rect.width}
-                          height={rect.height}
-                          fill={getColor(rect.stock)}
-                          opacity={hoveredTicker === rect.stock.ticker ? 1 : 0.8}
-                          style={{
-                            stroke: THEME.border,
-                            strokeWidth: 1,
-                            cursor: 'pointer',
-                            transition: 'all 0.2s ease',
-                          }}
-                          onMouseEnter={() => setHoveredTicker(rect.stock.ticker)}
-                          onMouseLeave={() => setHoveredTicker(null)}
-                        />
-                        <text
-                          x={rect.x + rect.width / 2}
-                          y={rect.y + rect.height / 2 - 6}
-                          textAnchor="middle"
-                          fill="#FFFFFF"
-                          fontSize={Math.min(14, rect.width / 4)}
-                          fontWeight="bold"
-                          pointerEvents="none"
-                        >
-                          {rect.stock.ticker}
-                        </text>
-                        <text
-                          x={rect.x + rect.width / 2}
-                          y={rect.y + rect.height / 2 + 10}
-                          textAnchor="middle"
-                          fill="#FFFFFF"
-                          fontSize={Math.min(12, rect.width / 6)}
-                          pointerEvents="none"
-                        >
-                          {rect.stock.changePercent > 0 ? '+' : ''}{rect.stock.changePercent.toFixed(2)}%
-                        </text>
-                      </g>
-                    ))}
-                  </svg>
-
-                  {/* Tooltip */}
-                  {hoveredTicker && processStocks.all.find((s) => s.ticker === hoveredTicker) && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        top: '12px',
-                        right: '12px',
-                        backgroundColor: THEME.background,
-                        border: `1px solid ${THEME.accent}`,
-                        borderRadius: '8px',
-                        padding: '12px',
-                        maxWidth: '280px',
-                        zIndex: 10,
-                        fontSize: '12px',
-                      }}
+              return (
+                <g key={r.stock.ticker}>
+                  <rect
+                    x={r.x + 0.5}
+                    y={r.y + 0.5}
+                    width={Math.max(0, r.w - 1)}
+                    height={Math.max(0, r.h - 1)}
+                    fill={getChangeColor(pct)}
+                    opacity={isHovered ? 1 : 0.88}
+                    rx={2}
+                    style={{ cursor: 'pointer', transition: 'opacity 0.15s' }}
+                    onMouseEnter={() => setHoveredTicker(r.stock.ticker)}
+                    onMouseLeave={() => setHoveredTicker(null)}
+                  />
+                  {showTicker && (
+                    <text
+                      x={r.x + r.w / 2}
+                      y={r.y + r.h / 2 + (showPct ? -fontSize * 0.35 : fontSize * 0.35)}
+                      textAnchor="middle"
+                      fill={getTextColor(pct)}
+                      fontSize={fontSize}
+                      fontWeight="700"
+                      fontFamily="system-ui, -apple-system, sans-serif"
+                      pointerEvents="none"
                     >
-                      {(() => {
-                        const stock = processStocks.all.find((s) => s.ticker === hoveredTicker);
-                        if (!stock) return null;
-                        return (
-                          <>
-                            <div style={{ fontWeight: 'bold', color: THEME.accent, marginBottom: '6px' }}>
-                              {stock.ticker}
-                            </div>
-                            <div style={{ color: THEME.textSecondary, marginBottom: '4px' }}>
-                              {stock.company}
-                            </div>
-                            <div style={{ color: THEME.textSecondary, marginBottom: '4px' }}>
-                              Sector: {stock.sector}
-                            </div>
-                            <div style={{ color: THEME.textPrimary, marginBottom: '4px' }}>
-                              Price: ₹{stock.price.toFixed(2)}
-                            </div>
-                            <div
-                              style={{
-                                color: stock.changePercent > 0 ? THEME.green : THEME.red,
-                                fontWeight: 'bold',
-                              }}
-                            >
-                              {stock.changePercent > 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
-                            </div>
-                          </>
-                        );
-                      })()}
-                    </div>
+                      {r.stock.ticker}
+                    </text>
                   )}
-                </div>
+                  {showPct && (
+                    <text
+                      x={r.x + r.w / 2}
+                      y={r.y + r.h / 2 + fontSize * 0.9}
+                      textAnchor="middle"
+                      fill={getTextColor(pct)}
+                      fontSize={fontSize * 0.85}
+                      fontWeight="500"
+                      fontFamily="system-ui, -apple-system, sans-serif"
+                      opacity={0.85}
+                      pointerEvents="none"
+                    >
+                      {pct > 0 ? '+' : ''}{pct.toFixed(1)}%
+                    </text>
+                  )}
+                </g>
+              );
+            })}
+
+            {/* Sector borders */}
+            {treemapRects.sectorRects.map((sr: any) => (
+              <g key={sr.data.sector}>
+                <rect
+                  x={sr.x}
+                  y={sr.y}
+                  width={sr.w}
+                  height={sr.h}
+                  fill="none"
+                  stroke="#0A0E1A"
+                  strokeWidth={2}
+                  pointerEvents="none"
+                />
+                {sr.w > 80 && sr.h > 20 && (
+                  <text
+                    x={sr.x + 5}
+                    y={sr.y + 13}
+                    fill="rgba(255,255,255,0.5)"
+                    fontSize="10"
+                    fontWeight="600"
+                    fontFamily="system-ui, -apple-system, sans-serif"
+                    pointerEvents="none"
+                  >
+                    {sr.data.sector}
+                  </text>
+                )}
+              </g>
+            ))}
+          </svg>
+
+          {/* Hover Tooltip */}
+          {hoveredStock && (
+            <div style={{
+              position: 'absolute', top: '12px', right: '12px',
+              backgroundColor: 'rgba(13,22,35,0.96)', backdropFilter: 'blur(8px)',
+              border: '1px solid #1A2840', borderRadius: '8px', padding: '12px 16px',
+              minWidth: '200px', zIndex: 10, boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <span style={{ fontWeight: '700', fontSize: '14px', color: '#0F7ABF' }}>{hoveredStock.ticker}</span>
+                <span style={{
+                  fontSize: '13px', fontWeight: '700',
+                  color: hoveredStock.changePercent >= 0 ? '#10B981' : '#EF4444',
+                }}>
+                  {hoveredStock.changePercent > 0 ? '+' : ''}{hoveredStock.changePercent.toFixed(2)}%
+                </span>
               </div>
-            );
-          })}
+              <div style={{ fontSize: '11px', color: '#8A95A3', marginBottom: '8px', lineHeight: '1.3' }}>{hoveredStock.company}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', fontSize: '11px' }}>
+                <span style={{ color: '#4A5B6C' }}>Price</span>
+                <span style={{ color: '#F5F7FA', textAlign: 'right' }}>{'\u20B9'}{hoveredStock.price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+                <span style={{ color: '#4A5B6C' }}>Change</span>
+                <span style={{ color: hoveredStock.change >= 0 ? '#10B981' : '#EF4444', textAlign: 'right' }}>
+                  {hoveredStock.change > 0 ? '+' : ''}{hoveredStock.change.toFixed(2)}
+                </span>
+                <span style={{ color: '#4A5B6C' }}>Sector</span>
+                <span style={{ color: '#C9D4E0', textAlign: 'right' }}>{hoveredStock.sector}</span>
+                <span style={{ color: '#4A5B6C' }}>Volume</span>
+                <span style={{ color: '#C9D4E0', textAlign: 'right' }}>{(hoveredStock.volume / 1e5).toFixed(1)}L</span>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
       {/* Color Legend */}
       {!loading && (
-        <div style={{ marginTop: '32px', padding: '16px', backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '12px' }}>
-          <h3 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px', color: THEME.textSecondary }}>Color Scale</h3>
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            {[
-              { label: '>5%', color: '#0D9488' },
-              { label: '3-5%', color: '#10B981' },
-              { label: '1-3%', color: '#34D399' },
-              { label: '0-1%', color: '#6EE7B7' },
-              { label: '-1-0%', color: '#FB923C' },
-              { label: '-3 to -1%', color: '#F97316' },
-              { label: '-5 to -3%', color: '#EF4444' },
-              { label: '<-5%', color: '#DC2626' },
-            ].map((item) => (
-              <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <div
-                  style={{
-                    width: '20px',
-                    height: '20px',
-                    backgroundColor: item.color,
-                    borderRadius: '4px',
-                    border: `1px solid ${THEME.border}`,
-                  }}
-                />
-                <span style={{ fontSize: '12px', color: THEME.textSecondary }}>{item.label}</span>
-              </div>
-            ))}
-          </div>
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px',
+          marginTop: '10px', padding: '8px 0',
+        }}>
+          {[
+            { label: '<-4%', color: '#D32F2F' },
+            { label: '-2%', color: '#EF5350' },
+            { label: '-0.5%', color: '#E57373' },
+            { label: '0%', color: '#37474F' },
+            { label: '+0.5%', color: '#4DB6AC' },
+            { label: '+2%', color: '#26A69A' },
+            { label: '>+4%', color: '#00897B' },
+          ].map((item, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <div style={{ width: '28px', height: '10px', backgroundColor: item.color, borderRadius: '2px' }} />
+              <span style={{ fontSize: '10px', color: '#4A5B6C', minWidth: '32px' }}>{item.label}</span>
+            </div>
+          ))}
         </div>
       )}
 
       <style>{`
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
       `}</style>
     </div>
   );
