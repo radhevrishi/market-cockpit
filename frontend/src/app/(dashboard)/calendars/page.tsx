@@ -7,7 +7,7 @@ interface EarningsResult {
   company: string;
   resultDate: string;
   quarter: string;
-  quality: 'Good' | 'Weak' | 'Upcoming' | 'Preview';
+  quality: 'Excellent' | 'Great' | 'Good' | 'OK' | 'Weak' | 'Upcoming' | 'Preview';
   sector: string;
   industry: string;
   marketCap: string;
@@ -20,7 +20,7 @@ interface EarningsResult {
 
 interface EarningsResponse {
   results: EarningsResult[];
-  summary: { total: number; good: number; weak: number; upcoming: number };
+  summary: { total: number; excellent?: number; great?: number; good: number; ok?: number; weak: number; upcoming: number };
   quarter: string;
   dateRange: { from: string; to: string };
   stockUniverse: number;
@@ -43,9 +43,13 @@ const THEME = {
 };
 
 const qualityColors: Record<string, string> = {
-  Good: THEME.green,
+  Excellent: '#10B981',
+  Great: '#34D399',
+  Good: '#3B82F6',
+  OK: '#F59E0B',
   Weak: THEME.red,
   Upcoming: '#6366F1',
+  Preview: '#8B5CF6',
 };
 
 export default function CalendarPage() {
@@ -135,26 +139,22 @@ export default function CalendarPage() {
             {data.summary.total} <span style={{ fontSize: '12px', color: THEME.textSecondary, fontWeight: '500' }}>RESULTS</span>
           </div>
           <div style={{ width: '1px', height: '24px', backgroundColor: THEME.border }} />
-          <div style={{ fontSize: '13px' }}>
-            <span style={{ color: THEME.green, fontWeight: '600' }}>Good: {data.summary.good}</span>
-          </div>
-          <div style={{ fontSize: '13px' }}>
-            <span style={{ color: THEME.red, fontWeight: '600' }}>Weak: {data.summary.weak}</span>
-          </div>
-          <div style={{ fontSize: '13px' }}>
-            <span style={{ color: '#6366F1', fontWeight: '600' }}>Upcoming: {data.summary.upcoming}</span>
-          </div>
+          {(data.summary.excellent || 0) > 0 && <div style={{ fontSize: '12px' }}><span style={{ color: '#10B981', fontWeight: '600' }}>Excellent: {data.summary.excellent}</span></div>}
+          {(data.summary.great || 0) > 0 && <div style={{ fontSize: '12px' }}><span style={{ color: '#34D399', fontWeight: '600' }}>Great: {data.summary.great}</span></div>}
+          <div style={{ fontSize: '12px' }}><span style={{ color: '#3B82F6', fontWeight: '600' }}>Good: {data.summary.good}</span></div>
+          {(data.summary.ok || 0) > 0 && <div style={{ fontSize: '12px' }}><span style={{ color: '#F59E0B', fontWeight: '600' }}>OK: {data.summary.ok}</span></div>}
+          <div style={{ fontSize: '12px' }}><span style={{ color: THEME.red, fontWeight: '600' }}>Weak: {data.summary.weak}</span></div>
+          {data.summary.upcoming > 0 && <div style={{ fontSize: '12px' }}><span style={{ color: '#6366F1', fontWeight: '600' }}>Upcoming: {data.summary.upcoming}</span></div>}
           <div style={{ width: '1px', height: '24px', backgroundColor: THEME.border }} />
           <div style={{ fontSize: '13px', color: THEME.purple, fontWeight: '600' }}>{data.quarter}</div>
 
           {/* Quality bar */}
           <div style={{ flex: 1, height: '6px', backgroundColor: THEME.border, borderRadius: '3px', overflow: 'hidden', display: 'flex' }}>
-            {data.summary.good > 0 && (
-              <div style={{ width: `${(data.summary.good / data.summary.total) * 100}%`, backgroundColor: THEME.green, height: '100%' }} />
-            )}
-            {data.summary.weak > 0 && (
-              <div style={{ width: `${(data.summary.weak / data.summary.total) * 100}%`, backgroundColor: THEME.red, height: '100%' }} />
-            )}
+            {(data.summary.excellent || 0) > 0 && <div style={{ width: `${((data.summary.excellent || 0) / data.summary.total) * 100}%`, backgroundColor: '#10B981', height: '100%' }} />}
+            {(data.summary.great || 0) > 0 && <div style={{ width: `${((data.summary.great || 0) / data.summary.total) * 100}%`, backgroundColor: '#34D399', height: '100%' }} />}
+            {data.summary.good > 0 && <div style={{ width: `${(data.summary.good / data.summary.total) * 100}%`, backgroundColor: '#3B82F6', height: '100%' }} />}
+            {(data.summary.ok || 0) > 0 && <div style={{ width: `${((data.summary.ok || 0) / data.summary.total) * 100}%`, backgroundColor: '#F59E0B', height: '100%' }} />}
+            {data.summary.weak > 0 && <div style={{ width: `${(data.summary.weak / data.summary.total) * 100}%`, backgroundColor: THEME.red, height: '100%' }} />}
           </div>
         </div>
       )}
@@ -186,7 +186,7 @@ export default function CalendarPage() {
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           {/* Quality Filter */}
           <div style={{ display: 'flex', gap: '4px', backgroundColor: THEME.card, padding: '4px', borderRadius: '8px', border: `1px solid ${THEME.border}` }}>
-            {['All', 'Good', 'Weak', 'Upcoming'].map(q => (
+            {['All', 'Excellent', 'Great', 'Good', 'OK', 'Weak', 'Upcoming'].map(q => (
               <button key={q} onClick={() => setQualityFilter(q)} style={{
                 padding: '6px 12px', borderRadius: '5px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: '600',
                 backgroundColor: qualityFilter === q ? (qualityColors[q] || THEME.accent) : 'transparent',
@@ -246,8 +246,8 @@ export default function CalendarPage() {
                   const dayResults = resultsByDate[cell.dateStr] || [];
                   const isToday = cell.dateStr === todayStr;
                   const hasResults = dayResults.length > 0;
-                  const goodCount = dayResults.filter(r => r.quality === 'Good').length;
-                  const weakCount = dayResults.filter(r => r.quality === 'Weak').length;
+                  const goodCount = dayResults.filter(r => ['Excellent', 'Great', 'Good'].includes(r.quality)).length;
+                  const weakCount = dayResults.filter(r => ['Weak', 'OK'].includes(r.quality)).length;
                   const upCount = dayResults.filter(r => r.quality === 'Upcoming').length;
 
                   return (

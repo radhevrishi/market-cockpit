@@ -369,7 +369,7 @@ interface EarningsEvent {
   company: string;
   resultDate: string;
   quarter: string;
-  quality: 'Good' | 'Weak' | 'Upcoming' | 'Preview';
+  quality: 'Excellent' | 'Great' | 'Good' | 'OK' | 'Weak' | 'Upcoming' | 'Preview';
   sector: string;
   industry: string;
   marketCap: string;
@@ -378,6 +378,23 @@ interface EarningsEvent {
   priceMove: number | null;
   timing: string; // 'pre' (🌙) or 'post' (☀️)
   source: string;
+}
+
+// ════════════════════════════════════
+// QUALITY RATING — 5-tier matching EarningsPulse
+// Excellent: Strong beat across metrics (revenue+profit growth >20%)
+// Great: Solid beat (revenue+profit growth >10%)
+// Good: Positive results (revenue+profit growth >0%)
+// OK: Mixed results, slight misses
+// Weak: Losses, major declines, or severe market reaction
+// ════════════════════════════════════
+
+function rateQualityFromPriceMove(changePercent: number): EarningsEvent['quality'] {
+  if (changePercent > 5) return 'Excellent';
+  if (changePercent > 2) return 'Great';
+  if (changePercent > -2) return 'Good';
+  if (changePercent > -5) return 'OK';
+  return 'Weak';
 }
 
 // ════════════════════════════════════
@@ -608,7 +625,7 @@ export async function GET(request: Request) {
         company: meeting.bm_companyName || meeting.sm_name || ticker,
         resultDate: meetingDate.toISOString().split('T')[0],
         quarter,
-        quality: isPast ? (stockInfo && stockInfo.changePercent < -5 ? 'Weak' : 'Good') : 'Upcoming',
+        quality: isPast ? rateQualityFromPriceMove(stockInfo?.changePercent || 0) : 'Upcoming',
         sector: normalizeSector(stockInfo?.industry) || '',
         industry: stockInfo?.industry || '',
         marketCap: getCapCategory(marketCapCr),
@@ -644,7 +661,7 @@ export async function GET(request: Request) {
         company: ann.sm_name || ticker,
         resultDate: annDate.toISOString().split('T')[0],
         quarter,
-        quality: stockInfo && stockInfo.changePercent < -5 ? 'Weak' : 'Good',
+        quality: rateQualityFromPriceMove(stockInfo?.changePercent || 0),
         sector: normalizeSector(stockInfo?.industry) || '',
         industry: stockInfo?.industry || '',
         marketCap: getCapCategory(marketCapCr),
@@ -671,9 +688,8 @@ export async function GET(request: Request) {
 
       const profitStr = fr.re_netProfit || fr.netProfit || fr.re_proLossAftTax || '';
       const profit = parseFloat(String(profitStr).replace(/,/g, ''));
-      let quality: 'Good' | 'Weak' = 'Good';
+      let quality: EarningsEvent['quality'] = rateQualityFromPriceMove(stockInfo?.changePercent || 0);
       if (!isNaN(profit) && profit < 0) quality = 'Weak';
-      else if (stockInfo && stockInfo.changePercent < -5) quality = 'Weak';
 
       eventsMap.set(ticker, {
         ticker,
@@ -796,9 +812,9 @@ export async function GET(request: Request) {
             event.sector = normalizeSector(industry) || event.sector;
             event.industry = industry || event.industry;
             event.marketCap = getCapCategory(ffmc) || event.marketCap;
-            // Better quality heuristic with actual price data
-            if (event.quality !== 'Upcoming' && pChange < -5) {
-              event.quality = 'Weak';
+            // Refine quality with actual price data
+            if (event.quality !== 'Upcoming' && event.quality !== 'Preview') {
+              event.quality = rateQualityFromPriceMove(pChange);
             }
             quotesEnrichedCount++;
           }
@@ -860,9 +876,18 @@ export async function GET(request: Request) {
               if (prevProfit !== 0 && profit !== 0) profitGrowth = prevProfit > 0 ? ((profit - prevProfit) / prevProfit) * 100 : (profit > 0 ? 100 : -100);
             }
 
-            let quality: 'Good' | 'Weak' = 'Good';
-            if (profit < 0) quality = 'Weak';
-            else if (prev && revenueGrowth < 0 && profitGrowth < 0) quality = 'Weak';
+            // 5-tier quality: Excellent > Great > Good > OK > Weak
+            // Based on revenue growth, profit growth, and profitability
+            let quality: EarningsEvent['quality'] = 'Good';
+            if (profit < 0) {
+              quality = 'Weak';
+            } else if (prev) {
+              if (revenueGrowth > 20 && profitGrowth > 20) quality = 'Excellent';
+              else if (revenueGrowth > 10 && profitGrowth > 10) quality = 'Great';
+              else if (revenueGrowth > 0 && profitGrowth > 0) quality = 'Good';
+              else if (revenueGrowth > -5 || profitGrowth > -5) quality = 'OK';
+              else quality = 'Weak';
+            }
 
             event.quality = quality;
             qualityEnrichedCount++;
@@ -897,9 +922,11 @@ export async function GET(request: Request) {
         event.edp = parseFloat(previousClose.toFixed(2));
         event.priceMove = parseFloat((((event.cmp - previousClose) / previousClose) * 100).toFixed(1));
 
-        // Use priceMove for quality assessment
-        if (event.priceMove < -10) {
-          event.quality = 'Weak';
+        // Refine quality using priceMove (market reaction to results)
+        // Only downgrade, never upgrade from proxy-enriched quality
+        if (event.priceMove !== null) {
+          if (event.priceMove < -10) event.quality = 'Weak';
+          else if (event.priceMove < -5 && event.quality !== 'Weak') event.quality = 'OK';
         }
       }
     }
@@ -943,7 +970,10 @@ export async function GET(request: Request) {
 
     results.sort((a, b) => new Date(b.resultDate).getTime() - new Date(a.resultDate).getTime());
 
+    const excellentCount = results.filter(r => r.quality === 'Excellent').length;
+    const greatCount = results.filter(r => r.quality === 'Great').length;
     const goodCount = results.filter(r => r.quality === 'Good').length;
+    const okCount = results.filter(r => r.quality === 'OK').length;
     const weakCount = results.filter(r => r.quality === 'Weak').length;
     const upcomingCount = results.filter(r => r.quality === 'Upcoming').length;
 
@@ -971,7 +1001,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       results,
-      summary: { total: results.length, good: goodCount, weak: weakCount, upcoming: upcomingCount },
+      summary: { total: results.length, excellent: excellentCount, great: greatCount, good: goodCount, ok: okCount, weak: weakCount, upcoming: upcomingCount },
       quarter: expectedQuarter,
       dateRange: { from: fromDate.toISOString().split('T')[0], to: toDate.toISOString().split('T')[0] },
       stockUniverse: Object.keys(priceLookup).length,

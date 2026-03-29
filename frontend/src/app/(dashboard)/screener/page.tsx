@@ -665,8 +665,8 @@ export default function ScreenerPage() {
                           <td style={{ padding: '12px 16px', fontSize: '12px' }}>
                             <span style={{
                               padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600',
-                              backgroundColor: earning.quality === 'Good' ? 'rgba(16,185,129,0.2)' : earning.quality === 'Weak' ? 'rgba(239,68,68,0.2)' : 'rgba(251,191,36,0.2)',
-                              color: earning.quality === 'Good' ? '#6ee7b7' : earning.quality === 'Weak' ? '#fca5a5' : '#fbbf24',
+                              backgroundColor: earning.quality === 'Excellent' ? 'rgba(16,185,129,0.3)' : earning.quality === 'Great' ? 'rgba(16,185,129,0.2)' : earning.quality === 'Good' ? 'rgba(59,130,246,0.2)' : earning.quality === 'OK' ? 'rgba(251,191,36,0.2)' : 'rgba(239,68,68,0.2)',
+                              color: earning.quality === 'Excellent' ? '#34d399' : earning.quality === 'Great' ? '#6ee7b7' : earning.quality === 'Good' ? '#93c5fd' : earning.quality === 'OK' ? '#fbbf24' : '#fca5a5',
                             }}>
                               {earning.quality}
                             </span>

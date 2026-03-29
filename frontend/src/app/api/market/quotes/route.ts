@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { fetchNifty50, fetchNiftyNext50, fetchNifty500, fetchNifty200, fetchNiftyMidcap250, fetchNiftySmallcap250, fetchNiftyMicrocap250, fetchNiftyTotalMarket, fetchGainers, fetchLosers, buildDynamicSectorMap, normalizeSector, NIFTY50_SECTORS } from '@/lib/nse';
+import { fetchNifty50, fetchNiftyNext50, fetchNifty500, fetchNifty200, fetchNiftyMidcap50, fetchNiftyMidcap250, fetchNiftySmallcap50, fetchNiftySmallcap250, fetchNiftyMicrocap250, fetchNiftyTotalMarket, fetchGainers, fetchLosers, buildDynamicSectorMap, normalizeSector, NIFTY50_SECTORS } from '@/lib/nse';
 import { fetchQuotesWithFallback, US_TOP } from '@/lib/yahoo';
 
 export const dynamic = 'force-dynamic';
@@ -7,9 +7,13 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const market = searchParams.get('market') || 'india';
+  const index = searchParams.get('index'); // Optional: 'midsmall50' for heatmap
 
   try {
     if (market === 'india') {
+      if (index === 'midsmall50') {
+        return await fetchMidSmall50Data();
+      }
       return await fetchIndianData();
     } else {
       return await fetchUSData();
@@ -18,6 +22,75 @@ export async function GET(request: Request) {
     console.error('Market quotes error:', error);
     return NextResponse.json({ error: 'Failed to fetch market data', stocks: [], gainers: [], losers: [], summary: { total: 0, gainersCount: 0, losersCount: 0, avgChange: 0, sectors: 0 } }, { status: 500 });
   }
+}
+
+// Lightweight endpoint for heatmap: only NIFTY Midcap 50 + Smallcap 50
+async function fetchMidSmall50Data() {
+  const [sectorMap, midcap50Data, smallcap50Data] = await Promise.all([
+    buildDynamicSectorMap(),
+    fetchNiftyMidcap50().catch(() => null),
+    fetchNiftySmallcap50().catch(() => null),
+  ]);
+
+  const stocks: any[] = [];
+  const tickerSet = new Set<string>();
+
+  const mapStock = (item: any, indexLabel: string) => {
+    const symbol = item.symbol || '';
+    const sector = sectorMap[symbol] || normalizeSector(item.meta?.industry || item.industry) || NIFTY50_SECTORS[symbol] || 'Other';
+    const ffmc = item.ffmc || item.freeFloatMktCap || 0;
+    return {
+      ticker: symbol,
+      company: item.meta?.companyName || item.identifier || symbol,
+      sector,
+      price: item.lastPrice || item.ltP || 0,
+      change: typeof item.change === 'number' ? item.change : 0,
+      changePercent: item.pChange || 0,
+      volume: item.totalTradedVolume || item.trdVol || 0,
+      marketCap: ffmc > 0 ? ffmc : Math.round((item.lastPrice || 0) * (item.totalTradedVolume || 1) / 10000),
+      previousClose: item.previousClose || item.prevClose || 0,
+      indexGroup: indexLabel,
+    };
+  };
+
+  if (midcap50Data && midcap50Data.data) {
+    for (const item of midcap50Data.data) {
+      const mapped = mapStock(item, 'Midcap 50');
+      if (mapped.ticker && mapped.price > 0 && !tickerSet.has(mapped.ticker)) {
+        stocks.push(mapped);
+        tickerSet.add(mapped.ticker);
+      }
+    }
+  }
+
+  if (smallcap50Data && smallcap50Data.data) {
+    for (const item of smallcap50Data.data) {
+      const mapped = mapStock(item, 'Smallcap 50');
+      if (mapped.ticker && mapped.price > 0 && !tickerSet.has(mapped.ticker)) {
+        stocks.push(mapped);
+        tickerSet.add(mapped.ticker);
+      }
+    }
+  }
+
+  const validStocks = stocks.filter(s => s.price > 0);
+  const gainers = [...validStocks].sort((a, b) => b.changePercent - a.changePercent).filter(s => s.changePercent > 0).slice(0, 30);
+  const losers = [...validStocks].sort((a, b) => a.changePercent - b.changePercent).filter(s => s.changePercent < 0).slice(0, 30);
+
+  return NextResponse.json({
+    stocks: validStocks,
+    gainers,
+    losers,
+    summary: {
+      total: validStocks.length,
+      gainersCount: validStocks.filter(s => s.changePercent > 0).length,
+      losersCount: validStocks.filter(s => s.changePercent < 0).length,
+      avgChange: validStocks.length > 0 ? validStocks.reduce((sum, s) => sum + s.changePercent, 0) / validStocks.length : 0,
+      sectors: [...new Set(validStocks.map(s => s.sector))].length,
+    },
+    source: 'NSE India (Midcap 50 + Smallcap 50)',
+    updatedAt: new Date().toISOString(),
+  });
 }
 
 async function fetchIndianData() {

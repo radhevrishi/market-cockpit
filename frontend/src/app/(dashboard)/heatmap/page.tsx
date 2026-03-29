@@ -96,7 +96,7 @@ export default function HeatmapPage() {
     try {
       setError(null);
       setIsRefreshing(true);
-      const response = await fetch(`/api/market/quotes?market=${market}`);
+      const response = await fetch(`/api/market/quotes?market=${market}&index=midsmall50`);
 
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`);
@@ -381,8 +381,8 @@ export default function HeatmapPage() {
                     </div>
                     <div style={{
                       display: 'inline-block', marginTop: '4px', fontSize: '10px', fontWeight: '600', padding: '2px 6px', borderRadius: '4px',
-                      backgroundColor: e.quality === 'Good' ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)',
-                      color: e.quality === 'Good' ? '#6ee7b7' : '#fca5a5',
+                      backgroundColor: e.quality === 'Excellent' ? 'rgba(16,185,129,0.4)' : e.quality === 'Great' ? 'rgba(16,185,129,0.3)' : e.quality === 'Good' ? 'rgba(59,130,246,0.3)' : e.quality === 'OK' ? 'rgba(251,191,36,0.3)' : 'rgba(239,68,68,0.3)',
+                      color: e.quality === 'Excellent' ? '#34d399' : e.quality === 'Great' ? '#6ee7b7' : e.quality === 'Good' ? '#93c5fd' : e.quality === 'OK' ? '#fbbf24' : '#fca5a5',
                     }}>
                       {e.quality}
                     </div>
