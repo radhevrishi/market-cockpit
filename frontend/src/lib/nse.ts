@@ -56,7 +56,7 @@ async function refreshCookies(): Promise<string> {
 }
 
 // Generic NSE API fetch with cookie handling
-async function nseApiFetch(path: string, cacheTtl = 60000): Promise<any> {
+export async function nseApiFetch(path: string, cacheTtl = 60000): Promise<any> {
   const cacheKey = `nse:${path}`;
   const cached = getCached(cacheKey, cacheTtl);
   if (cached) return cached;
