@@ -45,12 +45,13 @@ interface EarningsResult {
   ticker: string;
   company: string;
   quality: string;
-  eventDate: string;
+  resultDate: string;
   quarter: string;
   sector: string;
   marketCap: string;
-  currentPrice: number | null;
-  priceChange: number | null;
+  cmp: number | null;
+  priceMove: number | null;
+  edp: number | null;
 }
 
 export default function MoversPage() {
@@ -84,8 +85,7 @@ export default function MoversPage() {
       if (earningsRes && earningsRes.ok) {
         const earningsJson = await earningsRes.json();
         const results: EarningsResult[] = (earningsJson.results || [])
-          .filter((r: any) => r.quality !== 'Upcoming' && r.priceChange !== null)
-          .sort((a: any, b: any) => Math.abs(b.priceChange || 0) - Math.abs(a.priceChange || 0));
+          .filter((r: any) => r.quality !== 'Upcoming' && r.cmp !== null);
         setEarningsData(results);
       }
     } catch (err) {
@@ -598,91 +598,42 @@ export default function MoversPage() {
               {earningsData.length} results this month
             </span>
           </h2>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
-            {/* Earnings Gainers */}
-            <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '12px', overflow: 'hidden' }}>
-              <div style={{ padding: '16px', borderBottom: `1px solid ${THEME.border}`, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <h3 style={{ fontSize: '18px', fontWeight: '600', margin: 0 }}>Post-Earnings Gainers</h3>
-                <div style={{ display: 'inline-flex', backgroundColor: THEME.green, color: '#FFFFFF', padding: '4px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold' }}>EARNINGS</div>
-              </div>
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-                  <thead>
-                    <tr style={{ backgroundColor: THEME.background, borderBottom: `1px solid ${THEME.border}` }}>
-                      <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Ticker</th>
-                      <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Company</th>
-                      <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Quality</th>
-                      <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Date</th>
-                      <th style={{ padding: '10px', textAlign: 'right', color: THEME.textSecondary, fontWeight: '500' }}>Price</th>
-                      <th style={{ padding: '10px', textAlign: 'right', color: THEME.textSecondary, fontWeight: '500' }}>Move</th>
+          <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '12px', overflow: 'hidden' }}>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                <thead>
+                  <tr style={{ backgroundColor: THEME.background, borderBottom: `1px solid ${THEME.border}` }}>
+                    <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Date</th>
+                    <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Ticker</th>
+                    <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Company</th>
+                    <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Quality</th>
+                    <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Quarter</th>
+                    <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Sector</th>
+                    <th style={{ padding: '10px', textAlign: 'right', color: THEME.textSecondary, fontWeight: '500' }}>CMP</th>
+                    <th style={{ padding: '10px', textAlign: 'right', color: THEME.textSecondary, fontWeight: '500' }}>Cap</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {earningsData.map((r) => (
+                    <tr key={r.ticker} style={{ borderBottom: `1px solid ${THEME.border}`, backgroundColor: THEME.card }}>
+                      <td style={{ padding: '10px', color: THEME.textSecondary, fontSize: '12px' }}>{r.resultDate}</td>
+                      <td style={{ padding: '10px', color: THEME.accent, fontWeight: '600' }}>{r.ticker}</td>
+                      <td style={{ padding: '10px', color: THEME.textPrimary, maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
+                      <td style={{ padding: '10px' }}>
+                        <span style={{
+                          fontSize: '10px', fontWeight: '600', padding: '2px 6px', borderRadius: '4px',
+                          backgroundColor: r.quality === 'Good' ? '#10B98120' : '#EF444420',
+                          color: r.quality === 'Good' ? '#10B981' : '#EF4444',
+                        }}>{r.quality}</span>
+                      </td>
+                      <td style={{ padding: '10px', color: THEME.textSecondary, fontSize: '12px' }}>{r.quarter}</td>
+                      <td style={{ padding: '10px', color: THEME.textSecondary, fontSize: '12px' }}>{r.sector}</td>
+                      <td style={{ padding: '10px', textAlign: 'right', color: THEME.textPrimary }}>₹{(r.cmp || 0).toFixed(0)}</td>
+                      <td style={{ padding: '10px', textAlign: 'right', color: THEME.textSecondary, fontSize: '12px' }}>{r.marketCap || '—'}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {earningsData
-                      .filter(r => (r.priceChange || 0) > 0)
-                      .slice(0, 20)
-                      .map((r) => (
-                        <tr key={r.ticker} style={{ borderBottom: `1px solid ${THEME.border}`, backgroundColor: THEME.card }}>
-                          <td style={{ padding: '10px', color: THEME.accent, fontWeight: '600' }}>{r.ticker}</td>
-                          <td style={{ padding: '10px', color: THEME.textPrimary, maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
-                          <td style={{ padding: '10px' }}>
-                            <span style={{
-                              fontSize: '10px', fontWeight: '600', padding: '2px 6px', borderRadius: '4px',
-                              backgroundColor: r.quality === 'Excellent' ? '#22C55E20' : r.quality === 'Great' ? '#10B98120' : r.quality === 'Good' ? '#10B98120' : r.quality === 'Ok' ? '#F59E0B20' : '#EF444420',
-                              color: r.quality === 'Excellent' ? '#22C55E' : r.quality === 'Great' ? '#10B981' : r.quality === 'Good' ? '#10B981' : r.quality === 'Ok' ? '#F59E0B' : '#EF4444',
-                            }}>{r.quality}</span>
-                          </td>
-                          <td style={{ padding: '10px', color: THEME.textSecondary, fontSize: '12px' }}>{r.eventDate}</td>
-                          <td style={{ padding: '10px', textAlign: 'right', color: THEME.textPrimary }}>₹{(r.currentPrice || 0).toFixed(0)}</td>
-                          <td style={{ padding: '10px', textAlign: 'right', color: THEME.green, fontWeight: '600' }}>+{(r.priceChange || 0).toFixed(1)}%</td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Earnings Losers */}
-            <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '12px', overflow: 'hidden' }}>
-              <div style={{ padding: '16px', borderBottom: `1px solid ${THEME.border}`, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <h3 style={{ fontSize: '18px', fontWeight: '600', margin: 0 }}>Post-Earnings Losers</h3>
-                <div style={{ display: 'inline-flex', backgroundColor: THEME.red, color: '#FFFFFF', padding: '4px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold' }}>EARNINGS</div>
-              </div>
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-                  <thead>
-                    <tr style={{ backgroundColor: THEME.background, borderBottom: `1px solid ${THEME.border}` }}>
-                      <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Ticker</th>
-                      <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Company</th>
-                      <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Quality</th>
-                      <th style={{ padding: '10px', textAlign: 'left', color: THEME.textSecondary, fontWeight: '500' }}>Date</th>
-                      <th style={{ padding: '10px', textAlign: 'right', color: THEME.textSecondary, fontWeight: '500' }}>Price</th>
-                      <th style={{ padding: '10px', textAlign: 'right', color: THEME.textSecondary, fontWeight: '500' }}>Move</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {earningsData
-                      .filter(r => (r.priceChange || 0) < 0)
-                      .slice(0, 20)
-                      .map((r) => (
-                        <tr key={r.ticker} style={{ borderBottom: `1px solid ${THEME.border}`, backgroundColor: THEME.card }}>
-                          <td style={{ padding: '10px', color: THEME.accent, fontWeight: '600' }}>{r.ticker}</td>
-                          <td style={{ padding: '10px', color: THEME.textPrimary, maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
-                          <td style={{ padding: '10px' }}>
-                            <span style={{
-                              fontSize: '10px', fontWeight: '600', padding: '2px 6px', borderRadius: '4px',
-                              backgroundColor: r.quality === 'Excellent' ? '#22C55E20' : r.quality === 'Great' ? '#10B98120' : r.quality === 'Good' ? '#10B98120' : r.quality === 'Ok' ? '#F59E0B20' : '#EF444420',
-                              color: r.quality === 'Excellent' ? '#22C55E' : r.quality === 'Great' ? '#10B981' : r.quality === 'Good' ? '#10B981' : r.quality === 'Ok' ? '#F59E0B' : '#EF4444',
-                            }}>{r.quality}</span>
-                          </td>
-                          <td style={{ padding: '10px', color: THEME.textSecondary, fontSize: '12px' }}>{r.eventDate}</td>
-                          <td style={{ padding: '10px', textAlign: 'right', color: THEME.textPrimary }}>₹{(r.currentPrice || 0).toFixed(0)}</td>
-                          <td style={{ padding: '10px', textAlign: 'right', color: THEME.red, fontWeight: '600' }}>{(r.priceChange || 0).toFixed(1)}%</td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              </div>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
