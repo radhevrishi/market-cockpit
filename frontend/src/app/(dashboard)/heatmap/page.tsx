@@ -41,6 +41,18 @@ const THEME = {
   red: '#EF4444',
 };
 
+interface EarningsEvent {
+  ticker: string;
+  company: string;
+  resultDate: string;
+  quality: string;
+  sector: string;
+  marketCap: string;
+  cmp: number | null;
+  edp: number | null;
+  priceMove: number | null;
+}
+
 interface TreemapRect {
   stock: Stock;
   x: number;
@@ -50,6 +62,7 @@ interface TreemapRect {
   area: number;
 }
 
+type HeatmapMode = 'daily' | 'earnings';
 type ColorBy = 'changePercent' | 'marketCap';
 type GroupBy = 'sector' | 'none';
 type SizeBy = 'marketCap' | 'equal';
@@ -63,8 +76,10 @@ interface Filters {
 }
 
 export default function HeatmapPage() {
+  const [mode, setMode] = useState<HeatmapMode>('daily');
   const [market, setMarket] = useState<'india' | 'us'>('india');
   const [data, setData] = useState<ApiResponse | null>(null);
+  const [earningsData, setEarningsData] = useState<EarningsEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -98,17 +113,38 @@ export default function HeatmapPage() {
     }
   };
 
+  const fetchEarnings = async () => {
+    try {
+      setError(null);
+      setIsRefreshing(true);
+      const now = new Date();
+      const monthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const response = await fetch(`/api/market/earnings?month=${monthStr}`);
+      if (!response.ok) throw new Error(`Earnings API error: ${response.status}`);
+      const json = await response.json();
+      setEarningsData(json.results || []);
+      setLastUpdated(new Date());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch earnings');
+    } finally {
+      setLoading(false);
+      setIsRefreshing(false);
+    }
+  };
+
   useEffect(() => {
-    fetchData();
-  }, [market]);
+    if (mode === 'daily') fetchData();
+    else fetchEarnings();
+  }, [market, mode]);
 
   useEffect(() => {
     const interval = setInterval(() => {
-      fetchData();
+      if (mode === 'daily') fetchData();
+      else fetchEarnings();
     }, 60000);
 
     return () => clearInterval(interval);
-  }, [market]);
+  }, [market, mode]);
 
   const getColor = (stock: Stock): string => {
     const change = stock.changePercent;
@@ -224,10 +260,27 @@ export default function HeatmapPage() {
       {/* Header */}
       <div style={{ marginBottom: '32px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-          <h1 style={{ fontSize: '32px', fontWeight: 'bold', margin: 0 }}>Market Heatmap</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <h1 style={{ fontSize: '32px', fontWeight: 'bold', margin: 0 }}>Market Heatmap</h1>
+            {/* Mode Toggle */}
+            <div style={{ display: 'flex', gap: '4px', backgroundColor: THEME.card, padding: '4px', borderRadius: '8px', border: `1px solid ${THEME.border}` }}>
+              {([{ v: 'daily', l: 'Daily Changes' }, { v: 'earnings', l: 'Earnings Moves' }] as const).map((m) => (
+                <button
+                  key={m.v}
+                  onClick={() => { setMode(m.v as HeatmapMode); setLoading(true); }}
+                  style={{
+                    padding: '6px 14px', borderRadius: '6px', border: 'none',
+                    backgroundColor: mode === m.v ? THEME.accent : 'transparent',
+                    color: mode === m.v ? '#FFFFFF' : THEME.textSecondary,
+                    cursor: 'pointer', fontSize: '12px', fontWeight: '600', transition: 'all 0.2s',
+                  }}
+                >{m.l}</button>
+              ))}
+            </div>
+          </div>
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-            {/* Market Toggle */}
-            <div style={{ display: 'flex', gap: '8px', backgroundColor: THEME.card, padding: '4px', borderRadius: '8px', border: `1px solid ${THEME.border}` }}>
+            {/* Market Toggle (daily mode only) */}
+            {mode === 'daily' && <div style={{ display: 'flex', gap: '8px', backgroundColor: THEME.card, padding: '4px', borderRadius: '8px', border: `1px solid ${THEME.border}` }}>
               {(['india', 'us'] as const).map((m) => (
                 <button
                   key={m}
@@ -247,7 +300,7 @@ export default function HeatmapPage() {
                   {m.toUpperCase()}
                 </button>
               ))}
-            </div>
+            </div>}
 
             {/* Refresh Button */}
             <button
@@ -286,8 +339,62 @@ export default function HeatmapPage() {
           </div>
         </div>
 
+        {/* Earnings Mode Summary + Grid */}
+        {mode === 'earnings' && !loading && earningsData.length > 0 && (
+          <div style={{ marginBottom: '24px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px', marginBottom: '24px' }}>
+              <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px' }}>
+                <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>Results</div>
+                <div style={{ fontSize: '20px', fontWeight: 'bold', color: THEME.accent }}>{earningsData.length}</div>
+              </div>
+              <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px' }}>
+                <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>Gainers</div>
+                <div style={{ fontSize: '20px', fontWeight: 'bold', color: THEME.green }}>{earningsData.filter(e => (e.priceMove || 0) > 0).length}</div>
+              </div>
+              <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px' }}>
+                <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>Losers</div>
+                <div style={{ fontSize: '20px', fontWeight: 'bold', color: THEME.red }}>{earningsData.filter(e => (e.priceMove || 0) < 0).length}</div>
+              </div>
+              <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px' }}>
+                <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>Avg Move</div>
+                <div style={{ fontSize: '20px', fontWeight: 'bold', color: THEME.textPrimary }}>
+                  {(earningsData.filter(e => e.priceMove !== null).reduce((sum, e) => sum + (e.priceMove || 0), 0) / Math.max(1, earningsData.filter(e => e.priceMove !== null).length)).toFixed(1)}%
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '8px' }}>
+              {earningsData.filter(e => e.quality !== 'Upcoming').sort((a, b) => (b.priceMove || 0) - (a.priceMove || 0)).map(e => {
+                const move = e.priceMove || 0;
+                const bg = move > 5 ? '#065f46' : move > 2 ? '#047857' : move > 0 ? '#064e3b'
+                  : move > -2 ? '#4c1d1d' : move > -5 ? '#7f1d1d' : '#991b1b';
+                return (
+                  <div key={e.ticker} style={{
+                    backgroundColor: bg, borderRadius: '8px', padding: '10px',
+                    border: `1px solid ${THEME.border}`, cursor: 'pointer', transition: 'transform 0.15s',
+                  }}>
+                    <div style={{ fontWeight: '700', fontSize: '13px', color: '#fff' }}>{e.ticker}</div>
+                    <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {e.company.length > 20 ? e.company.substring(0, 20) + '...' : e.company}
+                    </div>
+                    <div style={{ fontSize: '14px', fontWeight: '700', color: '#fff', marginTop: '4px' }}>
+                      {move > 0 ? '+' : ''}{move.toFixed(1)}%
+                    </div>
+                    <div style={{
+                      display: 'inline-block', marginTop: '4px', fontSize: '10px', fontWeight: '600', padding: '2px 6px', borderRadius: '4px',
+                      backgroundColor: e.quality === 'Good' ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)',
+                      color: e.quality === 'Good' ? '#6ee7b7' : '#fca5a5',
+                    }}>
+                      {e.quality}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Summary Stats */}
-        {data && !loading && (
+        {mode === 'daily' && data && !loading && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px' }}>
             <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.border}`, borderRadius: '8px', padding: '12px' }}>
               <div style={{ color: THEME.textSecondary, fontSize: '11px', marginBottom: '4px' }}>Total</div>
@@ -356,8 +463,8 @@ export default function HeatmapPage() {
         </div>
       )}
 
-      {/* Controls */}
-      {data && !loading && (
+      {/* Controls (daily mode only) */}
+      {mode === 'daily' && data && !loading && (
         <div style={{
           backgroundColor: THEME.card,
           border: `1px solid ${THEME.border}`,
@@ -450,8 +557,8 @@ export default function HeatmapPage() {
         </div>
       )}
 
-      {/* Treemap */}
-      {data && !loading && (
+      {/* Treemap (daily mode only) */}
+      {mode === 'daily' && data && !loading && (
         <div>
           {Object.entries(processStocks.grouped).map(([groupName, groupStocks]) => {
             const rects = calculateTreemap(groupStocks, 1200, 400);

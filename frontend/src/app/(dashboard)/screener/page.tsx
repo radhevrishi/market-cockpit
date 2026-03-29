@@ -88,10 +88,20 @@ export default function ScreenerPage() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/market/earnings?includeMovement=true`);
+      const now = new Date();
+      const monthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const response = await fetch(`/api/market/earnings?month=${monthStr}`);
       if (!response.ok) throw new Error('Failed to fetch earnings');
-      const result: EarningsData = await response.json();
-      setEarningsData(result);
+      const result = await response.json();
+      // Map earnings API results to the Earning interface
+      const mapped: EarningsData = {
+        earnings: (result.results || []).map((r: any) => ({
+          symbol: r.ticker, company: r.company, quality: r.quality, quarter: r.quarter,
+          revenue: 0, netProfit: 0, eps: 0, price: r.cmp || 0, movePercent: r.priceMove || 0,
+        })),
+        source: result.source || 'NSE', updatedAt: result.updatedAt || new Date().toISOString(),
+      };
+      setEarningsData(mapped);
       setCurrentPage(1);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
