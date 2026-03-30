@@ -559,28 +559,22 @@ export async function GET(request: Request) {
 
     console.log(`[Earnings Scan] Scanning ${symbols.length} symbols: ${symbols.join(', ')}`);
 
-    // Fetch in batches of 5 (optimized for 55s Vercel timeout)
+    // Fetch ALL symbols in parallel for maximum speed within 55s Vercel limit
     const cards: EarningsScanCard[] = [];
     const failed: string[] = [];
-    const batchSize = 5;
 
-    for (let i = 0; i < symbols.length; i += batchSize) {
-      const batch = symbols.slice(i, i + batchSize);
-      const results = await Promise.all(
-        batch.map(sym => buildEarningsCard(sym).catch(() => null))
-      );
+    const results = await Promise.all(
+      symbols.map(sym => buildEarningsCard(sym).catch((err) => {
+        console.warn(`[Earnings Scan] ${sym} failed:`, err);
+        return null;
+      }))
+    );
 
-      for (let j = 0; j < batch.length; j++) {
-        if (results[j]) {
-          cards.push(results[j]!);
-        } else {
-          failed.push(batch[j]);
-        }
-      }
-
-      // Rate limit: 300ms between batches
-      if (i + batchSize < symbols.length) {
-        await new Promise(r => setTimeout(r, 300));
+    for (let j = 0; j < symbols.length; j++) {
+      if (results[j]) {
+        cards.push(results[j]!);
+      } else {
+        failed.push(symbols[j]);
       }
     }
 
