@@ -46,12 +46,14 @@ async function fetchMidSmall50Data() {
 
   const mapStock = (item: any, indexLabel: string) => {
     const symbol = item.symbol || '';
-    const sector = sectorMap[symbol] || normalizeSector(item.meta?.industry || item.industry) || NIFTY50_SECTORS[symbol] || 'Other';
+    const rawIndustry = item.meta?.industry || item.industry || '';
+    const sector = sectorMap[symbol] || normalizeSector(rawIndustry) || NIFTY50_SECTORS[symbol] || 'Other';
     const ffmc = item.ffmc || item.freeFloatMktCap || 0;
     return {
       ticker: symbol,
       company: item.meta?.companyName || item.identifier || symbol,
       sector,
+      industry: rawIndustry,
       price: item.lastPrice || item.ltP || 0,
       change: typeof item.change === 'number' ? item.change : 0,
       changePercent: item.pChange || 0,
@@ -114,12 +116,14 @@ async function fetchSmallcap150Data() {
 
   const mapStock = (item: any, indexLabel: string) => {
     const symbol = item.symbol || '';
-    const sector = sectorMap[symbol] || normalizeSector(item.meta?.industry || item.industry) || NIFTY50_SECTORS[symbol] || 'Other';
+    const rawIndustry = item.meta?.industry || item.industry || '';
+    const sector = sectorMap[symbol] || normalizeSector(rawIndustry) || NIFTY50_SECTORS[symbol] || 'Other';
     const ffmc = item.ffmc || item.freeFloatMktCap || 0;
     return {
       ticker: symbol,
       company: item.meta?.companyName || item.identifier || symbol,
       sector,
+      industry: rawIndustry,
       price: item.lastPrice || item.ltP || 0,
       change: typeof item.change === 'number' ? item.change : 0,
       changePercent: item.pChange || 0,
@@ -182,12 +186,14 @@ async function fetchMidcap150Data() {
 
   const mapStock = (item: any, indexLabel: string) => {
     const symbol = item.symbol || '';
-    const sector = sectorMap[symbol] || normalizeSector(item.meta?.industry || item.industry) || NIFTY50_SECTORS[symbol] || 'Other';
+    const rawIndustry = item.meta?.industry || item.industry || '';
+    const sector = sectorMap[symbol] || normalizeSector(rawIndustry) || NIFTY50_SECTORS[symbol] || 'Other';
     const ffmc = item.ffmc || item.freeFloatMktCap || 0;
     return {
       ticker: symbol,
       company: item.meta?.companyName || item.identifier || symbol,
       sector,
+      industry: rawIndustry,
       price: item.lastPrice || item.ltP || 0,
       change: typeof item.change === 'number' ? item.change : 0,
       changePercent: item.pChange || 0,
@@ -249,12 +255,14 @@ async function fetchNifty50Data() {
 
   const mapStock = (item: any) => {
     const symbol = item.symbol || '';
-    const sector = sectorMap[symbol] || normalizeSector(item.meta?.industry || item.industry) || NIFTY50_SECTORS[symbol] || 'Other';
+    const rawIndustry = item.meta?.industry || item.industry || '';
+    const sector = sectorMap[symbol] || normalizeSector(rawIndustry) || NIFTY50_SECTORS[symbol] || 'Other';
     const ffmc = item.ffmc || item.freeFloatMktCap || 0;
     return {
       ticker: symbol,
       company: item.meta?.companyName || item.identifier || symbol,
       sector,
+      industry: rawIndustry,
       price: item.lastPrice || item.ltP || 0,
       change: typeof item.change === 'number' ? item.change : 0,
       changePercent: item.pChange || 0,
@@ -335,7 +343,8 @@ async function fetchIndianData() {
     // Skip index header rows
     if (!symbol || symbol.includes(' ')) return null;
     // Priority: dynamic sector map > normalized industry > static map
-    const sector = sectorMap[symbol] || normalizeSector(item.meta?.industry || item.industry) || NIFTY50_SECTORS[symbol] || 'Other';
+    const rawIndustry = item.meta?.industry || item.industry || '';
+    const sector = sectorMap[symbol] || normalizeSector(rawIndustry) || NIFTY50_SECTORS[symbol] || 'Other';
     const ffmc = item.ffmc || item.freeFloatMktCap || 0;
     const estimatedMcap = ffmc > 0 ? ffmc : Math.round((item.lastPrice || 0) * (item.totalTradedVolume || 1) / 10000);
     // Cap classification: use index membership first, then market cap thresholds
@@ -345,6 +354,7 @@ async function fetchIndianData() {
       ticker: symbol,
       company: item.meta?.companyName || item.identifier || symbol,
       sector,
+      industry: rawIndustry,
       price: item.lastPrice || item.ltP || 0,
       change: typeof item.change === 'number' ? item.change : 0,
       changePercent: item.pChange || 0,

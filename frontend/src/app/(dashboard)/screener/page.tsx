@@ -89,23 +89,18 @@ export default function ScreenerPage() {
     setLoading(true);
     setError(null);
     try {
-      // Fetch current and previous month to ensure we have data
+      // Fetch current month first — only use previous month as fallback if no results
       const now = new Date();
       const monthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const prevMonthStr = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`;
 
-      const [currentRes, prevRes] = await Promise.all([
-        fetch(`/api/market/earnings?month=${monthStr}`).then(r => r.ok ? r.json() : null).catch(() => null),
-        fetch(`/api/market/earnings?month=${prevMonthStr}`).then(r => r.ok ? r.json() : null).catch(() => null),
-      ]);
+      const currentRes = await fetch(`/api/market/earnings?month=${monthStr}`).then(r => r.ok ? r.json() : null).catch(() => null);
 
-      const allResults: any[] = [];
+      let allResults: any[] = [];
       const seen = new Set<string>();
 
-      for (const result of [currentRes, prevRes]) {
-        if (!result) continue;
-        const items = result.results || result.earnings || [];
+      // Add current month results
+      if (currentRes) {
+        const items = currentRes.results || currentRes.earnings || [];
         for (const r of items) {
           const sym = r.ticker || r.symbol || '';
           if (sym && !seen.has(sym)) {
@@ -114,6 +109,30 @@ export default function ScreenerPage() {
           }
         }
       }
+
+      // Only fetch previous month if current month has very few results
+      if (allResults.length < 5) {
+        const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const prevMonthStr = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`;
+        const prevRes = await fetch(`/api/market/earnings?month=${prevMonthStr}`).then(r => r.ok ? r.json() : null).catch(() => null);
+        if (prevRes) {
+          const items = prevRes.results || prevRes.earnings || [];
+          for (const r of items) {
+            const sym = r.ticker || r.symbol || '';
+            if (sym && !seen.has(sym)) {
+              seen.add(sym);
+              allResults.push(r);
+            }
+          }
+        }
+      }
+
+      // Sort by filing date descending (most recent first)
+      allResults.sort((a, b) => {
+        const dateA = a.resultDate || a.filingDate || a.timing || '';
+        const dateB = b.resultDate || b.filingDate || b.timing || '';
+        return dateB.localeCompare(dateA);
+      });
 
       const mapped: EarningsData = {
         earnings: allResults.map((r: any) => ({

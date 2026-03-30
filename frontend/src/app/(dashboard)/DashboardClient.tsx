@@ -16,14 +16,16 @@ import MarketHours from '@/components/MarketHours';
 interface NavItem { href: string; label: string; icon: ReactNode; }
 
 const NAV: NavItem[] = [
-  { href: '/news',        label: 'News Feed',       icon: <Newspaper className="w-5 h-5" /> },
-  { href: '/heatmap',     label: 'Heatmap',         icon: <Grid3X3 className="w-5 h-5" /> },
-  { href: '/movers',      label: 'Movers',          icon: <TrendingUp className="w-5 h-5" /> },
-  { href: '/rrg',         label: 'RRG',             icon: <RefreshCw className="w-5 h-5" /> },
-  { href: '/screener',    label: 'Screener',        icon: <Filter className="w-5 h-5" /> },
-  { href: '/ipos',        label: 'IPOs',            icon: <Rocket className="w-5 h-5" /> },
-  { href: '/macro-maps',  label: 'Macro Maps',      icon: <Globe className="w-5 h-5" /> },
-  { href: '/calendars',   label: 'Calendar',        icon: <Calendar className="w-5 h-5" /> },
+  { href: '/news',          label: 'News Feed',       icon: <Newspaper className="w-5 h-5" /> },
+  { href: '/heatmap',       label: 'Heatmap',         icon: <Grid3X3 className="w-5 h-5" /> },
+  { href: '/movers',        label: 'Movers',          icon: <TrendingUp className="w-5 h-5" /> },
+  { href: '/watchlists',    label: 'Watchlist',       icon: <BookMarked className="w-5 h-5" /> },
+  { href: '/company-news',  label: 'Company News',    icon: <FileText className="w-5 h-5" /> },
+  { href: '/rrg',           label: 'RRG',             icon: <RefreshCw className="w-5 h-5" /> },
+  { href: '/screener',      label: 'Screener',        icon: <Filter className="w-5 h-5" /> },
+  { href: '/ipos',          label: 'IPOs',            icon: <Rocket className="w-5 h-5" /> },
+  { href: '/macro-maps',    label: 'Macro Maps',      icon: <Globe className="w-5 h-5" /> },
+  { href: '/calendars',     label: 'Calendar',        icon: <Calendar className="w-5 h-5" /> },
 ];
 
 // Static fallback shown while live data loads
