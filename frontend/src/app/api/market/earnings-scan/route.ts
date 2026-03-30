@@ -18,6 +18,21 @@ const DEFAULT_WATCHLIST = [
   'ITC', 'MARUTI', 'TITAN', 'AXISBANK', 'SUNPHARMA',
 ];
 
+// NSE symbol → screener.in symbol mapping (where they differ)
+// Discovered via screener.in search API: /api/company/search/?q=XXX
+const SCREENER_SYMBOL_MAP: Record<string, string> = {
+  'TATAMOTORS': 'TMCV',
+  'M&M': 'MM',
+  'M&MFIN': 'MMFIN',
+  'L&TFH': 'LTFH',
+  'BAJAJ-AUTO': 'BAJAJ_AUTO',
+};
+
+/** Get screener.in symbol for a given NSE symbol */
+function getScreenerSymbol(nseSymbol: string): string {
+  return SCREENER_SYMBOL_MAP[nseSymbol] || nseSymbol;
+}
+
 // In-memory cache: symbol -> { data, fetchedAt }
 const cache = new Map<string, { data: ScreenerData; fetchedAt: number }>();
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
@@ -97,22 +112,52 @@ interface EarningsScanCard {
  * Returns raw HTML from whichever source works.
  */
 async function fetchFinancialPageHTML(symbol: string, type: 'consolidated' | 'standalone'): Promise<{ html: string; source: string } | null> {
+  const screenerSym = getScreenerSymbol(symbol);
   const headers = {
     'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml',
     'Accept-Language': 'en-US,en;q=0.9',
   };
 
-  // Source 1: screener.in
+  // Source 1: screener.in (use mapped symbol)
   try {
     const suffix = type === 'consolidated' ? 'consolidated/' : '';
-    const url = `https://www.screener.in/company/${symbol}/${suffix}`;
+    const url = `https://www.screener.in/company/${screenerSym}/${suffix}`;
     const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
     if (res.ok) {
       const html = await res.text();
       if (html.includes('Quarterly Results') || html.includes('id="quarters"')) {
         console.log(`[Earnings Scan] ${symbol}: screener.in OK (${type})`);
         return { html, source: 'screener.in' };
+      }
+    }
+
+    // If 404, try discovering via screener.in search API
+    if (res.status === 404 || !res.ok) {
+      try {
+        const searchUrl = `https://www.screener.in/api/company/search/?q=${encodeURIComponent(symbol)}&v=3&fts=1`;
+        const searchRes = await fetch(searchUrl, { headers, signal: AbortSignal.timeout(5000) });
+        if (searchRes.ok) {
+          const results = await searchRes.json();
+          const match = Array.isArray(results) ? results.find((r: any) => r.url && r.name && !r.name.includes('DVR') && r.id) : null;
+          if (match?.url) {
+            const discoveredSym = match.url.replace('/company/', '').replace('/consolidated/', '').replace('/', '');
+            console.log(`[Earnings Scan] ${symbol}: discovered screener symbol = ${discoveredSym}`);
+            // Add to map for future use
+            SCREENER_SYMBOL_MAP[symbol] = discoveredSym;
+            const discoverUrl = `https://www.screener.in${match.url}${match.url.includes('consolidated') ? '' : (suffix || '')}`;
+            const discoverRes = await fetch(discoverUrl, { headers, signal: AbortSignal.timeout(10000) });
+            if (discoverRes.ok) {
+              const discoverHtml = await discoverRes.text();
+              if (discoverHtml.includes('Quarterly Results') || discoverHtml.includes('id="quarters"')) {
+                console.log(`[Earnings Scan] ${symbol}: screener.in discovered OK (${type})`);
+                return { html: discoverHtml, source: 'screener.in' };
+              }
+            }
+          }
+        }
+      } catch (searchErr) {
+        console.warn(`[Earnings Scan] screener.in search fallback failed for ${symbol}:`, (searchErr as Error).message);
       }
     }
   } catch (err) {
