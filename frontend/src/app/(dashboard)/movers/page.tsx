@@ -17,10 +17,7 @@ interface Stock {
 }
 
 type CapFilter = 'All' | 'Large' | 'Mid' | 'Small' | 'Mid & Small';
-
-// Move filter tokens — multiple can be active simultaneously
 type MoveToken = '+2%' | '+4%' | '+6%' | '-2%' | '-4%' | '-6%';
-
 type SortKey = 'ticker' | 'sector' | 'cap' | 'price' | 'changePercent' | 'volume';
 type SortDir = 'asc' | 'desc';
 interface SortState { key: SortKey; dir: SortDir }
@@ -54,10 +51,8 @@ function isValidStock(s: { ticker?: string; price?: number }): boolean {
   return true;
 }
 
-// Check if a stock's change% passes any of the active move filters
 function passesMoveFiler(pct: number, active: Set<MoveToken>): boolean {
-  if (active.size === 0) return true; // no move filters = show all
-  // Stock passes if it matches ANY active token
+  if (active.size === 0) return true;
   for (const token of active) {
     switch (token) {
       case '+2%': if (pct >= 2) return true; break;
@@ -69,6 +64,19 @@ function passesMoveFiler(pct: number, active: Set<MoveToken>): boolean {
     }
   }
   return false;
+}
+
+// ── Responsive hook ──────────────────────────────────────────────────────
+function useWindowWidth() {
+  const [width, setWidth] = useState<number>(
+    typeof window !== 'undefined' ? window.innerWidth : 1024
+  );
+  useEffect(() => {
+    const handler = () => setWidth(window.innerWidth);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return width;
 }
 
 export default function MoversPage() {
@@ -84,12 +92,15 @@ export default function MoversPage() {
   const [gainerSort, setGainerSort] = useState<SortState>({ key: 'changePercent', dir: 'desc' });
   const [loserSort, setLoserSort] = useState<SortState>({ key: 'changePercent', dir: 'asc' });
 
+  const windowWidth = useWindowWidth();
+  const isMobile = windowWidth < 640;
+  const isTablet = windowWidth >= 640 && windowWidth < 1024;
+
   const toggleSort = useCallback((table: 'gainer' | 'loser', key: SortKey) => {
     const setter = table === 'gainer' ? setGainerSort : setLoserSort;
     const defaultDir = table === 'gainer' ? 'desc' : 'asc';
     setter(prev => {
       if (prev.key === key) return { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' };
-      // New column — default desc for numbers, asc for text
       const dir = key === 'ticker' || key === 'sector' || key === 'cap' ? 'asc' : defaultDir;
       return { key, dir };
     });
@@ -148,7 +159,6 @@ export default function MoversPage() {
   useEffect(() => { fetchData(); }, [fetchData]);
   useEffect(() => { const i = setInterval(fetchData, 60000); return () => clearInterval(i); }, [fetchData]);
 
-  // Filtered stocks
   const filtered = useMemo(() => {
     return allStocks.filter(s => {
       if (capFilter === 'Mid & Small' && s.cap === 'Large') return false;
@@ -194,7 +204,6 @@ export default function MoversPage() {
     return ['All', ...[...sectorSet].sort()];
   }, [allStocks]);
 
-  // Sector performance — responds to cap filter
   const sectorPerf = useMemo(() => {
     const base = capFilter === 'All' ? allStocks
       : capFilter === 'Mid & Small' ? allStocks.filter(s => s.cap !== 'Large')
@@ -231,22 +240,24 @@ export default function MoversPage() {
 
   const CapPill = ({ label, value, count }: { label: string; value: CapFilter; count: number }) => (
     <button onClick={() => setCapFilter(value)} style={{
-      padding: '5px 12px', borderRadius: '6px', border: 'none', fontSize: '11px', fontWeight: '500',
-      backgroundColor: capFilter === value ? ACCENT : 'transparent', color: capFilter === value ? '#fff' : TEXT2,
+      padding: isMobile ? '5px 9px' : '5px 12px',
+      borderRadius: '6px', border: 'none',
+      fontSize: isMobile ? '10px' : '11px', fontWeight: '500',
+      backgroundColor: capFilter === value ? ACCENT : 'transparent',
+      color: capFilter === value ? '#fff' : TEXT2,
       cursor: 'pointer', transition: 'all 0.15s', whiteSpace: 'nowrap',
-      display: 'flex', alignItems: 'center', gap: '4px',
+      display: 'flex', alignItems: 'center', gap: '3px',
     }}>
       {label}
-      <span style={{ fontSize: '9px', opacity: 0.7 }}>({count})</span>
+      {!isMobile && <span style={{ fontSize: '9px', opacity: 0.7 }}>({count})</span>}
     </button>
   );
 
-  // Toggle chip — can be on/off independently
   const MoveChip = ({ token, label, color }: { token: MoveToken; label: string; color: string }) => {
     const active = moveTokens.has(token);
     return (
       <button onClick={() => toggleMove(token)} style={{
-        padding: '4px 10px', borderRadius: '5px', fontSize: '11px', fontWeight: '600',
+        padding: '4px 9px', borderRadius: '5px', fontSize: '11px', fontWeight: '600',
         border: active ? `1.5px solid ${color}` : `1px solid ${BORDER}`,
         backgroundColor: active ? `${color}18` : 'transparent',
         color: active ? color : TEXT3,
@@ -258,6 +269,34 @@ export default function MoversPage() {
     );
   };
 
+  // Mobile card row — compact, no Sector/Vol columns
+  const MobileRow = ({ stock, rank, up }: { stock: Stock; rank: number; up: boolean }) => (
+    <tr style={{ borderBottom: `1px solid ${BORDER}` }}>
+      <td style={{ padding: '8px 6px', color: TEXT3, fontSize: '11px', width: '24px' }}>{rank}</td>
+      <td style={{ padding: '8px 4px' }}>
+        <div style={{ fontWeight: '700', fontSize: '12px', color: ACCENT }}>{stock.ticker}</div>
+        <div style={{ fontSize: '9px', color: TEXT3, maxWidth: '110px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{stock.company}</div>
+      </td>
+      <td style={{ padding: '8px 4px', textAlign: 'right', fontSize: '12px', color: TEXT1, fontWeight: '500', fontVariantNumeric: 'tabular-nums' }}>
+        ₹{stock.price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+      </td>
+      <td style={{ padding: '8px 6px', textAlign: 'right' }}>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '2px', fontSize: '12px', fontWeight: '700', color: up ? GREEN : RED, fontVariantNumeric: 'tabular-nums' }}>
+          {up ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
+          {stock.changePercent > 0 ? '+' : ''}{stock.changePercent.toFixed(1)}%
+        </div>
+        <div style={{ fontSize: '9px', color: TEXT3, textAlign: 'right', marginTop: '1px' }}>
+          <span style={{
+            fontSize: '8px', fontWeight: '600', padding: '1px 4px', borderRadius: '2px',
+            backgroundColor: stock.cap === 'Large' ? 'rgba(99,102,241,0.15)' : stock.cap === 'Mid' ? 'rgba(59,130,246,0.15)' : 'rgba(234,179,8,0.15)',
+            color: stock.cap === 'Large' ? '#818CF8' : stock.cap === 'Mid' ? '#60A5FA' : '#FBBF24',
+          }}>{stock.cap === 'Large' ? 'LRG' : stock.cap === 'Mid' ? 'MID' : 'SML'}</span>
+        </div>
+      </td>
+    </tr>
+  );
+
+  // Desktop full row
   const Row = ({ stock, rank, up }: { stock: Stock; rank: number; up: boolean }) => (
     <tr style={{ borderBottom: `1px solid ${BORDER}`, cursor: 'pointer' }}
       onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#111B35')}
@@ -267,7 +306,7 @@ export default function MoversPage() {
         <div style={{ fontWeight: '600', fontSize: '13px', color: ACCENT }}>{stock.ticker}</div>
         <div style={{ fontSize: '10px', color: TEXT3, maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{stock.company}</div>
       </td>
-      <td style={{ padding: '10px 8px', fontSize: '12px', color: TEXT2 }}>{stock.sector}</td>
+      {!isTablet && <td style={{ padding: '10px 8px', fontSize: '12px', color: TEXT2 }}>{stock.sector}</td>}
       <td style={{ padding: '10px 8px', textAlign: 'center' }}>
         <span style={{
           fontSize: '9px', fontWeight: '600', padding: '2px 6px', borderRadius: '3px',
@@ -276,7 +315,7 @@ export default function MoversPage() {
         }}>{stock.cap === 'Large' ? 'LRG' : stock.cap === 'Mid' ? 'MID' : 'SML'}</span>
       </td>
       <td style={{ padding: '10px 8px', textAlign: 'right', fontSize: '13px', color: TEXT1, fontWeight: '500', fontVariantNumeric: 'tabular-nums' }}>
-        {'\u20B9'}{stock.price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+        ₹{stock.price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
       </td>
       <td style={{ padding: '10px 8px', textAlign: 'right' }}>
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '13px', fontWeight: '700', color: up ? GREEN : RED, fontVariantNumeric: 'tabular-nums' }}>
@@ -284,19 +323,30 @@ export default function MoversPage() {
           {stock.changePercent > 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
         </div>
       </td>
-      <td style={{ padding: '10px 8px', textAlign: 'right', fontSize: '12px', color: TEXT3, fontVariantNumeric: 'tabular-nums' }}>{formatVol(stock.volume)}</td>
+      {!isTablet && <td style={{ padding: '10px 8px', textAlign: 'right', fontSize: '12px', color: TEXT3, fontVariantNumeric: 'tabular-nums' }}>{formatVol(stock.volume)}</td>}
     </tr>
   );
 
-  const columns: { label: string; key: SortKey | null; align: 'left' | 'center' | 'right' }[] = [
+  // Desktop column definitions
+  const desktopColumns: { label: string; key: SortKey | null; align: 'left' | 'center' | 'right' }[] = [
     { label: '#', key: null, align: 'left' },
     { label: 'Stock', key: 'ticker', align: 'left' },
-    { label: 'Sector', key: 'sector', align: 'left' },
+    ...(!isTablet ? [{ label: 'Sector', key: 'sector' as SortKey, align: 'left' as const }] : []),
     { label: 'Cap', key: 'cap', align: 'center' },
     { label: 'Price', key: 'price', align: 'right' },
     { label: 'Change', key: 'changePercent', align: 'right' },
-    { label: 'Vol', key: 'volume', align: 'right' },
+    ...(!isTablet ? [{ label: 'Vol', key: 'volume' as SortKey, align: 'right' as const }] : []),
   ];
+
+  // Mobile column definitions (no sector/vol)
+  const mobileColumns: { label: string; key: SortKey | null; align: 'left' | 'center' | 'right' }[] = [
+    { label: '#', key: null, align: 'left' },
+    { label: 'Stock', key: 'ticker', align: 'left' },
+    { label: 'Price', key: 'price', align: 'right' },
+    { label: 'Chg%', key: 'changePercent', align: 'right' },
+  ];
+
+  const columns = isMobile ? mobileColumns : desktopColumns;
 
   const SortableHeader = ({ col, sort, table }: { col: typeof columns[0]; sort: SortState; table: 'gainer' | 'loser' }) => {
     const active = col.key !== null && sort.key === col.key;
@@ -304,7 +354,10 @@ export default function MoversPage() {
       <th
         onClick={col.key ? () => toggleSort(table, col.key!) : undefined}
         style={{
-          padding: '8px', textAlign: col.align, fontSize: '10px', color: active ? ACCENT : TEXT3,
+          padding: isMobile ? '6px 4px' : '8px',
+          textAlign: col.align,
+          fontSize: isMobile ? '9px' : '10px',
+          color: active ? ACCENT : TEXT3,
           fontWeight: active ? '700' : '500', textTransform: 'uppercase', letterSpacing: '0.5px',
           position: 'sticky', top: 0, backgroundColor: BG, zIndex: 1,
           cursor: col.key ? 'pointer' : 'default', userSelect: 'none', whiteSpace: 'nowrap',
@@ -319,26 +372,46 @@ export default function MoversPage() {
     );
   };
 
+  const px = isMobile ? '10px 12px' : '16px 20px';
+
   return (
-    <div style={{ backgroundColor: BG, color: TEXT1, minHeight: '100vh', padding: '16px 20px' }}>
+    <div style={{ backgroundColor: BG, color: TEXT1, minHeight: '100vh', padding: px }}>
+
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+      <div style={{
+        display: 'flex',
+        flexDirection: isMobile ? 'column' : 'row',
+        justifyContent: 'space-between',
+        alignItems: isMobile ? 'flex-start' : 'center',
+        gap: isMobile ? '8px' : '0',
+        marginBottom: '14px',
+      }}>
         <div>
-          <h1 style={{ fontSize: '22px', fontWeight: '700', margin: 0, letterSpacing: '-0.3px' }}>Market Movers</h1>
+          <h1 style={{ fontSize: isMobile ? '18px' : '22px', fontWeight: '700', margin: 0, letterSpacing: '-0.3px' }}>
+            Market Movers
+          </h1>
           <p style={{ fontSize: '11px', color: TEXT3, margin: '2px 0 0' }}>
             NIFTY 500 + Midcap 250 + Smallcap 250 — Live from NSE
-            {allStocks.length > 0 && <span style={{ marginLeft: '8px', color: TEXT2 }}>
-              ({capCounts.large} Large · {capCounts.mid} Mid · {capCounts.small} Small)
-            </span>}
+            {!isMobile && allStocks.length > 0 && (
+              <span style={{ marginLeft: '8px', color: TEXT2 }}>
+                ({capCounts.large} Large · {capCounts.mid} Mid · {capCounts.small} Small)
+              </span>
+            )}
           </p>
         </div>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          {isMobile && allStocks.length > 0 && (
+            <span style={{ fontSize: '10px', color: TEXT3 }}>
+              {capCounts.large}L · {capCounts.mid}M · {capCounts.small}S
+            </span>
+          )}
           <button onClick={fetchData} disabled={isRefreshing} style={{
             padding: '6px 12px', borderRadius: '6px', border: `1px solid ${BORDER}`, backgroundColor: CARD, color: ACCENT,
             cursor: isRefreshing ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px',
             opacity: isRefreshing ? 0.5 : 1, transition: 'all 0.2s',
           }}>
             <RefreshCw size={13} style={{ animation: isRefreshing ? 'spin 1s linear infinite' : 'none' }} />
+            {!isMobile && 'Refresh'}
           </button>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: TEXT3 }}>
             <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: GREEN, animation: 'pulse 2s ease infinite' }} />
@@ -347,102 +420,110 @@ export default function MoversPage() {
         </div>
       </div>
 
-      {/* Summary Cards */}
+      {/* Summary Cards — 3 cols on mobile, 5 on desktop */}
       {!loading && allStocks.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '10px', marginBottom: '16px' }}>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: isMobile ? 'repeat(3, 1fr)' : 'repeat(5, 1fr)',
+          gap: isMobile ? '6px' : '10px',
+          marginBottom: '14px',
+        }}>
           {[
             { l: 'Total', v: summary.total, c: TEXT1 },
             { l: 'Gainers', v: summary.gainersCount, c: GREEN },
             { l: 'Losers', v: summary.losersCount, c: RED },
-            { l: 'Avg Change', v: `${summary.avgChange > 0 ? '+' : ''}${summary.avgChange.toFixed(2)}%`, c: summary.avgChange >= 0 ? GREEN : RED },
+            { l: 'Avg', v: `${summary.avgChange > 0 ? '+' : ''}${summary.avgChange.toFixed(2)}%`, c: summary.avgChange >= 0 ? GREEN : RED },
             { l: 'Sectors', v: summary.sectors, c: ACCENT },
           ].map((card, i) => (
-            <div key={i} style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '12px' }}>
-              <div style={{ fontSize: '10px', color: TEXT3, marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{card.l}</div>
-              <div style={{ fontSize: '22px', fontWeight: '700', color: card.c, fontVariantNumeric: 'tabular-nums' }}>{card.v}</div>
+            <div key={i} style={{
+              backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: '8px',
+              padding: isMobile ? '8px 10px' : '12px',
+              // On mobile, last card wraps to next row spanning full width? No — just show all 5 in 3+2 layout
+              // Actually we'll let the last two flow naturally at 3-col
+            }}>
+              <div style={{ fontSize: isMobile ? '9px' : '10px', color: TEXT3, marginBottom: '3px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{card.l}</div>
+              <div style={{ fontSize: isMobile ? '18px' : '22px', fontWeight: '700', color: card.c, fontVariantNumeric: 'tabular-nums' }}>{card.v}</div>
             </div>
           ))}
         </div>
       )}
 
-      {/* Filters */}
+      {/* Filters — scrollable row on mobile */}
       {!loading && (
-        <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
-          {/* Cap filter — single select */}
-          <div style={{ display: 'flex', gap: '2px', backgroundColor: CARD, padding: '3px', borderRadius: '8px', border: `1px solid ${BORDER}` }}>
-            <CapPill label="All" value="All" count={allStocks.length} />
-            <CapPill label="Large" value="Large" count={capCounts.large} />
-            <CapPill label="Mid" value="Mid" count={capCounts.mid} />
-            <CapPill label="Small" value="Small" count={capCounts.small} />
-            <CapPill label="Mid & Small" value="Mid & Small" count={capCounts.mid + capCounts.small} />
-          </div>
+        <div style={{ marginBottom: '12px' }}>
+          <div style={{
+            display: 'flex', gap: '8px', alignItems: 'center',
+            overflowX: 'auto', paddingBottom: '4px',
+            // Hide scrollbar visually
+            msOverflowStyle: 'none', scrollbarWidth: 'none',
+          }} className="scrollbar-hide">
+            {/* Cap filter */}
+            <div style={{
+              display: 'flex', gap: '2px', backgroundColor: CARD, padding: '3px',
+              borderRadius: '8px', border: `1px solid ${BORDER}`, flexShrink: 0,
+            }}>
+              <CapPill label="All" value="All" count={allStocks.length} />
+              <CapPill label="Large" value="Large" count={capCounts.large} />
+              <CapPill label="Mid" value="Mid" count={capCounts.mid} />
+              <CapPill label="Small" value="Small" count={capCounts.small} />
+              {!isMobile && <CapPill label="Mid & Small" value="Mid & Small" count={capCounts.mid + capCounts.small} />}
+            </div>
 
-          {/* Separator */}
-          <div style={{ width: '1px', height: '28px', backgroundColor: BORDER }} />
+            <div style={{ width: '1px', height: '24px', backgroundColor: BORDER, flexShrink: 0 }} />
 
-          {/* Move filters — multi-select toggle chips */}
-          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-            <span style={{ fontSize: '10px', color: TEXT3, fontWeight: '500', textTransform: 'uppercase', letterSpacing: '0.5px', marginRight: '2px' }}>Up</span>
-            <MoveChip token="+2%" label="+2%" color={GREEN} />
-            <MoveChip token="+4%" label="+4%" color={GREEN} />
-            <MoveChip token="+6%" label="+6%" color={GREEN} />
-          </div>
+            {/* Move filters */}
+            <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexShrink: 0 }}>
+              <span style={{ fontSize: '9px', color: TEXT3, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Up</span>
+              <MoveChip token="+2%" label="+2%" color={GREEN} />
+              <MoveChip token="+4%" label="+4%" color={GREEN} />
+              {!isMobile && <MoveChip token="+6%" label="+6%" color={GREEN} />}
+            </div>
+            <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexShrink: 0 }}>
+              <span style={{ fontSize: '9px', color: TEXT3, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Dn</span>
+              <MoveChip token="-2%" label="-2%" color={RED} />
+              <MoveChip token="-4%" label="-4%" color={RED} />
+              {!isMobile && <MoveChip token="-6%" label="-6%" color={RED} />}
+            </div>
 
-          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-            <span style={{ fontSize: '10px', color: TEXT3, fontWeight: '500', textTransform: 'uppercase', letterSpacing: '0.5px', marginRight: '2px' }}>Down</span>
-            <MoveChip token="-2%" label="-2%" color={RED} />
-            <MoveChip token="-4%" label="-4%" color={RED} />
-            <MoveChip token="-6%" label="-6%" color={RED} />
-          </div>
+            {/* Sector dropdown */}
+            <select value={sectorFilter} onChange={e => setSectorFilter(e.target.value)} style={{
+              padding: '5px 8px', backgroundColor: CARD, color: TEXT2, border: `1px solid ${BORDER}`,
+              borderRadius: '8px', fontSize: '11px', outline: 'none', cursor: 'pointer', flexShrink: 0,
+              maxWidth: isMobile ? '130px' : 'none',
+            }}>
+              {sectors.map(s => <option key={s} value={s}>{s === 'All' ? 'All Sectors' : s}</option>)}
+            </select>
 
-          {/* Sector dropdown */}
-          <select value={sectorFilter} onChange={e => setSectorFilter(e.target.value)} style={{
-            padding: '5px 10px', backgroundColor: CARD, color: TEXT2, border: `1px solid ${BORDER}`, borderRadius: '8px', fontSize: '11px', outline: 'none', cursor: 'pointer',
-          }}>
-            {sectors.map(s => <option key={s} value={s}>{s === 'All' ? 'All Sectors' : s}</option>)}
-          </select>
-
-          {/* Active filter tags + clear */}
-          {hasActiveFilters && (
-            <>
-              {moveTokens.size > 0 && (
-                <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
-                  {[...moveTokens].map(t => (
-                    <span key={t} onClick={() => toggleMove(t)} style={{
-                      fontSize: '10px', fontWeight: '600', padding: '3px 8px', borderRadius: '4px', cursor: 'pointer',
-                      backgroundColor: t.startsWith('+') ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
-                      color: t.startsWith('+') ? GREEN : RED,
-                    }}>
-                      {t} ×
-                    </span>
-                  ))}
-                </div>
-              )}
+            {/* Clear button */}
+            {hasActiveFilters && (
               <button onClick={clearAllFilters} style={{
-                padding: '5px 12px', borderRadius: '6px', border: `1px solid ${BORDER}`, backgroundColor: 'rgba(239,68,68,0.08)',
-                color: RED, fontSize: '11px', cursor: 'pointer', fontWeight: '500',
-              }}>Clear All</button>
-            </>
-          )}
+                padding: '5px 10px', borderRadius: '6px', border: `1px solid ${BORDER}`,
+                backgroundColor: 'rgba(239,68,68,0.08)', color: RED, fontSize: '11px',
+                cursor: 'pointer', fontWeight: '500', flexShrink: 0, whiteSpace: 'nowrap',
+              }}>Clear</button>
+            )}
+          </div>
         </div>
       )}
 
       {/* Sector Heatbar */}
       {!loading && sectorPerf.length > 0 && (
-        <div style={{ marginBottom: '16px' }}>
+        <div style={{ marginBottom: '14px' }}>
           <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }} className="scrollbar-hide">
             {sectorPerf.map(sp => (
               <button key={sp.sector} onClick={() => setSectorFilter(sectorFilter === sp.sector ? 'All' : sp.sector)} style={{
-                flexShrink: 0, padding: '8px 14px', borderRadius: '8px', border: 'none',
+                flexShrink: 0,
+                padding: isMobile ? '6px 10px' : '8px 14px',
+                borderRadius: '8px', border: 'none',
                 backgroundColor: sp.avg >= 0
                   ? `rgba(16,185,129,${Math.min(0.35, Math.abs(sp.avg) * 0.06 + 0.08)})`
                   : `rgba(239,68,68,${Math.min(0.35, Math.abs(sp.avg) * 0.06 + 0.08)})`,
                 cursor: 'pointer', transition: 'all 0.15s',
                 outline: sectorFilter === sp.sector ? `2px solid ${ACCENT}` : 'none', outlineOffset: '1px',
               }}>
-                <div style={{ fontSize: '11px', fontWeight: '600', color: TEXT1, whiteSpace: 'nowrap', marginBottom: '2px' }}>{sp.sector}</div>
-                <div style={{ fontSize: '13px', fontWeight: '700', color: sp.avg >= 0 ? GREEN : RED }}>{sp.avg > 0 ? '+' : ''}{sp.avg.toFixed(1)}%</div>
-                <div style={{ fontSize: '9px', color: TEXT3 }}>{sp.count} stocks</div>
+                <div style={{ fontSize: isMobile ? '10px' : '11px', fontWeight: '600', color: TEXT1, whiteSpace: 'nowrap', marginBottom: '2px' }}>{sp.sector}</div>
+                <div style={{ fontSize: isMobile ? '11px' : '13px', fontWeight: '700', color: sp.avg >= 0 ? GREEN : RED }}>{sp.avg > 0 ? '+' : ''}{sp.avg.toFixed(1)}%</div>
+                {!isMobile && <div style={{ fontSize: '9px', color: TEXT3 }}>{sp.count} stocks</div>}
               </button>
             ))}
           </div>
@@ -451,28 +532,33 @@ export default function MoversPage() {
 
       {/* Loading */}
       {loading && (
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>
-          <div style={{ width: '40px', height: '40px', border: '3px solid #1A2840', borderTop: `3px solid ${ACCENT}`, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '300px' }}>
+          <div style={{ width: '36px', height: '36px', border: '3px solid #1A2840', borderTop: `3px solid ${ACCENT}`, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
         </div>
       )}
 
       {/* Error */}
       {error && !loading && (
-        <div style={{ backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', padding: '14px', color: RED, fontSize: '13px', marginBottom: '16px' }}>{error}</div>
+        <div style={{ backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', padding: '12px', color: RED, fontSize: '13px', marginBottom: '14px' }}>{error}</div>
       )}
 
-      {/* Tables */}
+      {/* Gainers / Losers tables */}
       {!loading && allStocks.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+        <div style={{
+          display: 'grid',
+          // Stack vertically on mobile and tablet
+          gridTemplateColumns: isMobile ? '1fr' : isTablet ? '1fr' : '1fr 1fr',
+          gap: '14px',
+        }}>
           {/* Gainers */}
           <div style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: '8px', overflow: 'hidden' }}>
-            <div style={{ padding: '12px 16px', borderBottom: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <TrendingUp size={16} color={GREEN} />
-              <span style={{ fontSize: '14px', fontWeight: '600' }}>Top Gainers</span>
+            <div style={{ padding: '10px 14px', borderBottom: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <TrendingUp size={15} color={GREEN} />
+              <span style={{ fontSize: isMobile ? '13px' : '14px', fontWeight: '600' }}>Top Gainers</span>
               <span style={{ fontSize: '10px', color: GREEN, backgroundColor: 'rgba(16,185,129,0.12)', padding: '2px 6px', borderRadius: '3px', fontWeight: '600' }}>{gainers.length}</span>
               <span style={{ marginLeft: 'auto', fontSize: '9px', color: GREEN, fontWeight: '700', backgroundColor: 'rgba(16,185,129,0.15)', padding: '2px 8px', borderRadius: '3px' }}>LIVE</span>
             </div>
-            <div style={{ overflowX: 'auto', maxHeight: '600px', overflowY: 'auto' }}>
+            <div style={{ overflowX: 'auto', maxHeight: isMobile ? '400px' : '550px', overflowY: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ backgroundColor: BG }}>
@@ -480,21 +566,25 @@ export default function MoversPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {gainers.map((s, i) => <Row key={s.ticker} stock={s} rank={i + 1} up={true} />)}
-                  {gainers.length === 0 && <tr><td colSpan={7} style={{ padding: '32px', textAlign: 'center', color: TEXT3, fontSize: '13px' }}>No gainers match filters</td></tr>}
+                  {gainers.map((s, i) => isMobile
+                    ? <MobileRow key={s.ticker} stock={s} rank={i + 1} up={true} />
+                    : <Row key={s.ticker} stock={s} rank={i + 1} up={true} />
+                  )}
+                  {gainers.length === 0 && <tr><td colSpan={columns.length} style={{ padding: '28px', textAlign: 'center', color: TEXT3, fontSize: '13px' }}>No gainers match filters</td></tr>}
                 </tbody>
               </table>
             </div>
           </div>
+
           {/* Losers */}
           <div style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: '8px', overflow: 'hidden' }}>
-            <div style={{ padding: '12px 16px', borderBottom: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <TrendingDown size={16} color={RED} />
-              <span style={{ fontSize: '14px', fontWeight: '600' }}>Top Losers</span>
+            <div style={{ padding: '10px 14px', borderBottom: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <TrendingDown size={15} color={RED} />
+              <span style={{ fontSize: isMobile ? '13px' : '14px', fontWeight: '600' }}>Top Losers</span>
               <span style={{ fontSize: '10px', color: RED, backgroundColor: 'rgba(239,68,68,0.12)', padding: '2px 6px', borderRadius: '3px', fontWeight: '600' }}>{losers.length}</span>
               <span style={{ marginLeft: 'auto', fontSize: '9px', color: RED, fontWeight: '700', backgroundColor: 'rgba(239,68,68,0.15)', padding: '2px 8px', borderRadius: '3px' }}>LIVE</span>
             </div>
-            <div style={{ overflowX: 'auto', maxHeight: '600px', overflowY: 'auto' }}>
+            <div style={{ overflowX: 'auto', maxHeight: isMobile ? '400px' : '550px', overflowY: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ backgroundColor: BG }}>
@@ -502,8 +592,11 @@ export default function MoversPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {losers.map((s, i) => <Row key={s.ticker} stock={s} rank={i + 1} up={false} />)}
-                  {losers.length === 0 && <tr><td colSpan={7} style={{ padding: '32px', textAlign: 'center', color: TEXT3, fontSize: '13px' }}>No losers match filters</td></tr>}
+                  {losers.map((s, i) => isMobile
+                    ? <MobileRow key={s.ticker} stock={s} rank={i + 1} up={false} />
+                    : <Row key={s.ticker} stock={s} rank={i + 1} up={false} />
+                  )}
+                  {losers.length === 0 && <tr><td colSpan={columns.length} style={{ padding: '28px', textAlign: 'center', color: TEXT3, fontSize: '13px' }}>No losers match filters</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -514,6 +607,8 @@ export default function MoversPage() {
       <style>{`
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
       `}</style>
     </div>
   );
