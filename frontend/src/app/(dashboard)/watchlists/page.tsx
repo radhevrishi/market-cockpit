@@ -263,10 +263,34 @@ export default function WatchlistsPage() {
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Initialize tickers from localStorage
+  // Initialize tickers from localStorage and sync with API
   useEffect(() => {
-    const stored = getStoredTickers();
-    setTickers(stored);
+    const initTickers = async () => {
+      const stored = getStoredTickers();
+
+      // Try to sync with shared watchlist
+      try {
+        const syncRes = await fetch('/api/watchlist?chatId=5057319640');
+        if (syncRes.ok) {
+          const syncData = await syncRes.json();
+          if (syncData.watchlist && syncData.watchlist.length > 0) {
+            // Merge: union of local and remote
+            const merged = [...new Set([...stored, ...syncData.watchlist])];
+            setTickers(merged);
+            if (merged.length !== stored.length) {
+              setStoredTickers(merged);
+            }
+            return;
+          }
+        }
+      } catch (e) {
+        console.error('Failed to sync watchlist:', e);
+      }
+
+      setTickers(stored);
+    };
+
+    initTickers();
   }, []);
 
   // Fetch quotes
@@ -363,6 +387,18 @@ export default function WatchlistsPage() {
     setTickerInput('');
     toast.success(`${ticker} added to watchlist`);
 
+    // Sync to shared API
+    fetch('/api/watchlist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chatId: '5057319640',
+        action: 'add',
+        symbols: [ticker],
+        secret: 'mc-bot-2026',
+      }),
+    }).catch((e) => console.error('Failed to sync add:', e));
+
     // Refetch to get new ticker data
     setTimeout(() => fetchData(), 500);
   }, [tickerInput, tickers, fetchData]);
@@ -373,6 +409,18 @@ export default function WatchlistsPage() {
     setTickers(newTickers);
     setStoredTickers(newTickers);
     toast.success(`${ticker} removed from watchlist`);
+
+    // Sync to shared API
+    fetch('/api/watchlist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chatId: '5057319640',
+        action: 'remove',
+        symbols: [ticker],
+        secret: 'mc-bot-2026',
+      }),
+    }).catch((e) => console.error('Failed to sync remove:', e));
   }, [tickers]);
 
   // Handle sort

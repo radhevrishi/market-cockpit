@@ -16,9 +16,11 @@ export const dynamic = 'force-dynamic';
  */
 
 interface NewsItem {
-  symbol: string;
+  id: string;
+  ticker: string;
   company: string;
   headline: string;
+  description: string;
   category: string;
   date: string;
   importance: 'high' | 'medium' | 'low';
@@ -28,9 +30,9 @@ interface NewsItem {
 interface AnnouncementData {
   news: NewsItem[];
   summary: {
-    total: number;
-    companies: number;
-    categories: Record<string, number>;
+    totalItems: number;
+    companiesCovered: number;
+    topCategories: string[];
   };
   updatedAt: string;
 }
@@ -139,7 +141,7 @@ async function fetchSymbolAnnouncements(
   daysBack: number
 ): Promise<NewsItem[]> {
   try {
-    const path = `/api/corporate-announcements?index=equities&symbol=${symbol}`;
+    const path = `/api/corporates-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`;
     const data = await nseApiFetch(path, 300000); // 5 min cache
 
     if (!data || !data.data || !Array.isArray(data.data)) {
@@ -151,14 +153,14 @@ async function fetchSymbolAnnouncements(
     cutoffDate.setDate(cutoffDate.getDate() - daysBack);
 
     const news: NewsItem[] = [];
-    const companyName = data.companyName || symbol;
 
     for (const item of data.data) {
       if (news.length >= limit) break;
 
-      const headline = item.newHeadline || item.subject || '';
-      const description = item.newContent || item.description || '';
-      const dateStr = item.newDate || item.date || '';
+      const headline = item.sub || item.desc || '';
+      const description = item.desc || item.attchmntText || '';
+      const dateStr = item.an_dt || item.dt || '';
+      const companyName = item.company || symbol;
 
       if (!headline || !dateStr) continue;
 
@@ -185,10 +187,14 @@ async function fetchSymbolAnnouncements(
       const category = categorizeAnnouncement(headline, description);
       const importance = scoreImportance(headline, category, description);
 
+      const id = `${symbol}-${itemDate.toISOString().split('T')[0]}-${news.length}`;
+
       news.push({
-        symbol,
+        id,
+        ticker: symbol,
         company: companyName,
         headline,
+        description,
         category,
         date: itemDate.toISOString().split('T')[0],
         importance,
@@ -261,11 +267,14 @@ async function fetchAllEquitiesNews(limit: number, daysBack: number): Promise<Ne
 
       const category = 'Board Meeting';
       const importance = 'medium' as const;
+      const id = `${symbol}-${itemDate.toISOString().split('T')[0]}-${news.length}`;
 
       news.push({
-        symbol,
+        id,
+        ticker: symbol,
         company: companyName,
         headline,
+        description: '',
         category,
         date: itemDate.toISOString().split('T')[0],
         importance,
@@ -340,7 +349,7 @@ export async function GET(request: Request): Promise<NextResponse<AnnouncementDa
     // Aggregate by company
     const newsByCompany = new Map<string, NewsItem[]>();
     for (const item of allNews) {
-      const key = item.symbol;
+      const key = item.ticker;
       if (!newsByCompany.has(key)) {
         newsByCompany.set(key, []);
       }
@@ -370,23 +379,21 @@ export async function GET(request: Request): Promise<NextResponse<AnnouncementDa
     // Sort categories by count
     const sortedCategories = Object.entries(categoryCounts)
       .sort((a, b) => b[1] - a[1])
-      .reduce((acc, [cat, count]) => {
-        acc[cat] = count;
-        return acc;
-      }, {} as Record<string, number>);
+      .slice(0, 5)
+      .map(([cat]) => cat);
 
     const response: AnnouncementData = {
       news: limitedNews,
       summary: {
-        total: limitedNews.length,
-        companies: newsByCompany.size,
-        categories: sortedCategories,
+        totalItems: limitedNews.length,
+        companiesCovered: newsByCompany.size,
+        topCategories: sortedCategories,
       },
       updatedAt: new Date().toISOString(),
     };
 
     const duration = Date.now() - startTime;
-    console.log(`[Company News] Success: ${response.news.length} items from ${response.summary.companies} companies in ${duration}ms`);
+    console.log(`[Company News] Success: ${response.news.length} items from ${response.summary.companiesCovered} companies in ${duration}ms`);
 
     return NextResponse.json(response);
   } catch (error) {
@@ -398,9 +405,9 @@ export async function GET(request: Request): Promise<NextResponse<AnnouncementDa
       {
         news: [],
         summary: {
-          total: 0,
-          companies: 0,
-          categories: {},
+          totalItems: 0,
+          companiesCovered: 0,
+          topCategories: [],
         },
         updatedAt: new Date().toISOString(),
       },
@@ -424,7 +431,7 @@ export async function POST(request: Request): Promise<NextResponse<AnnouncementD
       return NextResponse.json(
         {
           news: [],
-          summary: { total: 0, companies: 0, categories: {} },
+          summary: { totalItems: 0, companiesCovered: 0, topCategories: [] },
           updatedAt: new Date().toISOString(),
         },
         { status: 400 }
@@ -460,7 +467,7 @@ export async function POST(request: Request): Promise<NextResponse<AnnouncementD
     // Aggregate and limit
     const newsByCompany = new Map<string, NewsItem[]>();
     for (const item of allNews) {
-      const key = item.symbol;
+      const key = item.ticker;
       if (!newsByCompany.has(key)) {
         newsByCompany.set(key, []);
       }
@@ -486,17 +493,15 @@ export async function POST(request: Request): Promise<NextResponse<AnnouncementD
 
     const sortedCategories = Object.entries(categoryCounts)
       .sort((a, b) => b[1] - a[1])
-      .reduce((acc, [cat, count]) => {
-        acc[cat] = count;
-        return acc;
-      }, {} as Record<string, number>);
+      .slice(0, 5)
+      .map(([cat]) => cat);
 
     const response: AnnouncementData = {
       news: limitedNews,
       summary: {
-        total: limitedNews.length,
-        companies: newsByCompany.size,
-        categories: sortedCategories,
+        totalItems: limitedNews.length,
+        companiesCovered: newsByCompany.size,
+        topCategories: sortedCategories,
       },
       updatedAt: new Date().toISOString(),
     };
@@ -512,7 +517,7 @@ export async function POST(request: Request): Promise<NextResponse<AnnouncementD
     return NextResponse.json(
       {
         news: [],
-        summary: { total: 0, companies: 0, categories: {} },
+        summary: { totalItems: 0, companiesCovered: 0, topCategories: [] },
         updatedAt: new Date().toISOString(),
       },
       { status: 500 }

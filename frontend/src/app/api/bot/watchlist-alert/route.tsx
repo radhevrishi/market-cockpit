@@ -530,6 +530,14 @@ export async function POST(request: Request) {
         const before = current.length;
         const updated = [...new Set([...current, ...toAdd])];
         setWatchlist(chatId, updated);
+
+        // Sync to shared API
+        fetch(`${API_BASE}/api/watchlist`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chatId, watchlist: updated, secret: BOT_SECRET }),
+        }).catch(() => {});
+
         const added = updated.length - before;
         await sendTelegramTo(chatId,
           `✅ <b>Watchlist Updated</b>\n\n➕ Added: <code>${toAdd.join(', ')}</code>\n📊 Total stocks: <b>${updated.length}</b>\n\n<i>Your watchlist will be used for alerts and reports.</i>`
@@ -546,6 +554,14 @@ export async function POST(request: Request) {
           await sendTelegramTo(chatId, `❌ <b>${toRemove}</b> not found in your watchlist.`);
         } else {
           setWatchlist(chatId, updated);
+
+          // Sync to shared API
+          fetch(`${API_BASE}/api/watchlist`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chatId, watchlist: updated, secret: BOT_SECRET }),
+          }).catch(() => {});
+
           await sendTelegramTo(chatId,
             `✅ <b>Removed</b>\n\n➖ Removed: <code>${toRemove}</code>\n📊 Total stocks: <b>${updated.length}</b>`
           );
