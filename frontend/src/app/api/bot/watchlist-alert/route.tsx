@@ -51,10 +51,31 @@ interface Watchlist {
   addedAt: number;
 }
 
-// ── In-Memory Watchlist Storage ─────────────────────────────────────────
+// ── In-Memory Watchlist Storage (with API sync) ────────────────────────
 const watchlistStorage: Record<string, Watchlist> = {};
+let apiSyncDone: Record<string, boolean> = {};
 
-function getWatchlist(chatId: string): string[] {
+async function getWatchlist(chatId: string): Promise<string[]> {
+  // Try to load from shared API on first access (survives cold starts)
+  if (!apiSyncDone[chatId]) {
+    apiSyncDone[chatId] = true;
+    try {
+      const res = await fetch(`${API_BASE}/api/watchlist?chatId=${chatId}`, {
+        signal: AbortSignal.timeout(3000),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.watchlist && Array.isArray(data.watchlist) && data.watchlist.length > 0) {
+          watchlistStorage[chatId] = { stocks: data.watchlist, addedAt: Date.now() };
+          console.log(`[WATCHLIST] Loaded ${data.watchlist.length} stocks from API for ${chatId}`);
+          return data.watchlist;
+        }
+      }
+    } catch (e) {
+      console.warn('[WATCHLIST] API sync failed, using local:', e);
+    }
+  }
+
   if (!watchlistStorage[chatId]) {
     watchlistStorage[chatId] = {
       stocks: [...DEFAULT_WATCHLIST],
@@ -65,8 +86,9 @@ function getWatchlist(chatId: string): string[] {
 }
 
 function setWatchlist(chatId: string, stocks: string[]): void {
+  const unique = [...new Set(stocks.map(s => s.trim().toUpperCase()).filter(s => s.length > 0 && s.length < 30))];
   watchlistStorage[chatId] = {
-    stocks: [...new Set(stocks)],
+    stocks: unique,
     addedAt: Date.now(),
   };
 }
@@ -511,22 +533,34 @@ export async function POST(request: Request) {
         `❓ <b>MC Watchlist Pulse — Help</b>\n\n<b>Commands:</b>\n/start — Welcome &amp; setup\n/watch SYMBOL — Add stocks (space-separated, e.g. /watch TCS INFY)\n/unwatch SYMBOL — Remove single stock\n/list — Show your current watchlist\n/pulse — Generate performance card for your stocks\n/news — Get latest news for watchlist stocks\n/status — Bot status &amp; diagnostics\n/help — This help message\n\n<b>Examples:</b>\n<code>/watch BAJAJFINSV BHARTIARTL</code> — Add two stocks\n<code>/unwatch TATAMOTORS</code> — Remove one\n<code>/list</code> — See all tracked stocks\n\n<b>Scheduled Alerts:</b>\n⏰ Twice daily: 10:05 AM &amp; 3:05 PM IST\n📸 Watchlist performance card\n📰 Relevant news\n\n🌐 <a href="https://market-cockpit.vercel.app">View Dashboard</a>\n<i>Powered by Market Cockpit</i>`
       );
     } else if (text === '/list') {
-      const watchlist = getWatchlist(chatId);
-      const lines = [`<b>Your Watchlist</b>  <i>(${watchlist.length} stocks)</i>\n`];
-      for (let i = 0; i < watchlist.length; i++) {
-        lines.push(`${i + 1}. <code>${watchlist[i]}</code>`);
+      const watchlist = await getWatchlist(chatId);
+      const total = watchlist.length;
+      const lines = [`📊 <b>Your Watchlist</b>  (${total} stocks)\n`];
+
+      if (total <= 20) {
+        // Short list: numbered format
+        for (let i = 0; i < total; i++) {
+          lines.push(`${i + 1}. <code>${watchlist[i]}</code>`);
+        }
+      } else {
+        // Large list: compact grid format (5 per row)
+        for (let i = 0; i < total; i += 5) {
+          const row = watchlist.slice(i, i + 5).map(s => `<code>${s}</code>`).join('  ');
+          lines.push(row);
+        }
       }
       lines.push('');
-      lines.push(`<i>/watch SYMBOL — Add stocks</i>`);
-      lines.push(`<i>/unwatch SYMBOL — Remove stock</i>`);
-      lines.push(`<i>/pulse — Get performance card</i>`);
+      lines.push(`💡 /watch SYMBOL — Add stocks`);
+      lines.push(`➖ /unwatch SYMBOL — Remove stock`);
+      lines.push(`📸 /pulse — Performance card`);
       await sendTelegramTo(chatId, lines.join('\n'));
     } else if (text.startsWith('/watch ')) {
-      const toAdd = text.slice(7).trim().split(/\s+/).map((t: string) => t.toUpperCase()).filter((t: string) => t.length > 0);
+      // Support both comma and space separators: /watch TCS INFY or /watch TCS,INFY,WIPRO
+      const toAdd = text.slice(7).trim().split(/[\s,]+/).map((t: string) => t.toUpperCase()).filter((t: string) => t.length > 0 && t.length < 30);
       if (toAdd.length === 0) {
-        await sendTelegramTo(chatId, '❌ Please provide stock symbols. Example: <code>/watch TCS INFY</code>');
+        await sendTelegramTo(chatId, '❌ Please provide stock symbols. Example: <code>/watch TCS INFY</code> or <code>/watch TCS,INFY,WIPRO</code>');
       } else {
-        const current = getWatchlist(chatId);
+        const current = await getWatchlist(chatId);
         const before = current.length;
         const updated = [...new Set([...current, ...toAdd])];
         setWatchlist(chatId, updated);
@@ -548,7 +582,7 @@ export async function POST(request: Request) {
       if (!toRemove) {
         await sendTelegramTo(chatId, '❌ Please provide a symbol. Example: <code>/unwatch RELIANCE</code>');
       } else {
-        const current = getWatchlist(chatId);
+        const current = await getWatchlist(chatId);
         const updated = current.filter(t => t !== toRemove);
         if (updated.length === current.length) {
           await sendTelegramTo(chatId, `❌ <b>${toRemove}</b> not found in your watchlist.`);
@@ -569,7 +603,7 @@ export async function POST(request: Request) {
       }
     } else if (text === '/pulse') {
       await sendTelegramTo(chatId, '⏳ <i>Generating watchlist pulse card...</i>');
-      const watchlist = getWatchlist(chatId);
+      const watchlist = await getWatchlist(chatId);
       const stocks = await fetchWatchlistStocks(watchlist);
       if (stocks.length === 0) {
         await sendTelegramTo(chatId, '📊 No watchlist data available. Market may be closed or symbols not found.');
@@ -593,7 +627,7 @@ export async function POST(request: Request) {
       }
     } else if (text === '/news') {
       await sendTelegramTo(chatId, '⏳ <i>Fetching latest news...</i>');
-      const watchlist = getWatchlist(chatId);
+      const watchlist = await getWatchlist(chatId);
       const news = await fetchWatchlistNews(watchlist);
       if (news.length === 0) {
         await sendTelegramTo(chatId, '📰 No recent news for your watchlist stocks.');
@@ -612,10 +646,10 @@ export async function POST(request: Request) {
       const day = ist.getDay();
       const isMarketDay = day >= 1 && day <= 5;
       const isMarketHours = h >= 9 && h < 16;
-      const watchlist = getWatchlist(chatId);
+      const watchlist = await getWatchlist(chatId);
 
       await sendTelegramTo(chatId,
-        `⚙️ <b>MC Watchlist Pulse — Status</b>\n\n✅ Bot: Online\n🕒 IST: ${ist.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}\n${isMarketDay && isMarketHours ? '🟢 Market: Open' : '🔴 Market: Closed'}\n📊 Watchlist: <b>${watchlist.length}</b> stocks\n⏰ Alerts: 10:05 AM &amp; 3:05 PM IST (Mon–Fri)\n\n<i>Session-based watchlist. Changes reset when session expires.</i>`
+        `⚙️ <b>MC Watchlist Pulse — Status</b>\n\n✅ Bot: Online\n🕒 IST: ${ist.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}\n${isMarketDay && isMarketHours ? '🟢 Market: Open' : '🔴 Market: Closed'}\n📊 Watchlist: <b>${watchlist.length}</b> stocks\n⏰ Alerts: 10:05 AM &amp; 3:05 PM IST (Mon–Fri)\n\n<i>Watchlist synced to cloud — persists across sessions.</i>`
       );
     }
 
