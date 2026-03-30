@@ -315,76 +315,110 @@ export async function GET(request: Request) {
       });
     }
 
-    console.log(`[Earnings Cards] Found ${confirmedTickers.size} companies with results`);
+    // Filter to only companies in our price universe (known stocks)
+    const knownTickers = new Map<string, { company: string; date: Date; quarter: string; source: string }>();
+    for (const [sym, info] of confirmedTickers) {
+      if (priceLookup[sym] && priceLookup[sym].price >= 2) {
+        knownTickers.set(sym, info);
+      }
+    }
+    console.log(`[Earnings Cards] ${confirmedTickers.size} total → ${knownTickers.size} in price universe`);
 
     // ═══════════════════════════════════════════
-    // STEP 4: Fetch P&L data from Render proxy
+    // STEP 4: Fetch P&L data — per-symbol from NSE + Render proxy
     // ═══════════════════════════════════════════
-    const symbols = [...confirmedTickers.keys()];
+    const symbols = [...knownTickers.keys()];
+
+    // Strategy A: Render proxy (batch) — fast if warmed up
     let renderResults: Record<string, any[]> = {};
     let renderWorked = false;
-
     if (symbols.length > 0) {
       try {
-        const symbolsStr = symbols.slice(0, 40).join(',');
+        const symbolsStr = symbols.slice(0, 30).join(',');
         const frRes = await fetch(
           `https://mc-pulse-bots.onrender.com/api/nse/financial-results?symbols=${encodeURIComponent(symbolsStr)}`,
-          { signal: AbortSignal.timeout(12000) }
+          { signal: AbortSignal.timeout(15000) }
         );
         if (frRes.ok) {
           const frData = await frRes.json();
           renderResults = frData.results || {};
           renderWorked = Object.keys(renderResults).length > 0;
-          console.log(`[Earnings Cards] Render: ${Object.keys(renderResults).length} companies enriched`);
+          console.log(`[Earnings Cards] Render: ${Object.keys(renderResults).length} companies`);
         }
       } catch (e) {
         console.log('[Earnings Cards] Render unavailable:', String(e));
       }
     }
 
+    // Strategy B: Per-symbol NSE financial results (for companies not in Render)
+    const needsNSE = symbols.filter(s => !renderResults[s]).slice(0, 20);
+    const nsePerSymbol: Record<string, any[]> = {};
+    let nseEnriched = 0;
+
+    if (needsNSE.length > 0) {
+      const batchSize = 5;
+      for (let i = 0; i < needsNSE.length; i += batchSize) {
+        const batch = needsNSE.slice(i, i + batchSize);
+        const results = await Promise.all(
+          batch.map(sym =>
+            nseApiFetch(`/api/corporates-financial-results?index=equities&symbol=${encodeURIComponent(sym)}`, 300000)
+              .catch(() => null)
+          )
+        );
+        for (let j = 0; j < batch.length; j++) {
+          const data = results[j];
+          if (!data) continue;
+          const arr = toArray(data);
+          if (arr.length > 0) {
+            nsePerSymbol[batch[j]] = arr;
+            nseEnriched++;
+          }
+        }
+        if (i + batchSize < needsNSE.length) await new Promise(r => setTimeout(r, 200));
+      }
+      console.log(`[Earnings Cards] NSE per-symbol: ${nseEnriched} companies enriched`);
+    }
+
     // ═══════════════════════════════════════════
     // STEP 5: Build cards
     // ═══════════════════════════════════════════
+
+    const parseFR = (r: any): FinancialQuarter => {
+      const rev = parseNum(r.re_revenue || r.revenue || r.totalIncome || r.income || r.re_incomeFromOperations);
+      const exp = parseNum(r.re_expenditure || r.expenditure || r.totalExpenditure);
+      const op = parseNum(r.re_operProfit || r.operatingProfit || r.re_profitBeforeTax) || (rev > 0 && exp > 0 ? rev - exp : 0);
+      const pat = parseNum(r.re_netProfit || r.netProfit || r.re_proLossAftTax || r.proLossAftTax);
+      const eps = parseNum(r.re_eps || r.eps || r.re_dilutedEps || r.dilutedEps);
+      const toDate = r.re_toDate || r.toDate || r.re_periodEnded || '';
+      return {
+        revenue: rev, operatingProfit: op,
+        opm: marginCalc(op, rev), pat, npm: marginCalc(pat, rev), eps,
+        period: formatPeriod(toDate),
+      };
+    };
+
     const cards: EarningsCard[] = [];
 
-    for (const [symbol, info] of confirmedTickers) {
-      // Skip penny stocks
+    for (const [symbol, info] of knownTickers) {
       const stock = priceLookup[symbol];
-      if (stock && stock.price < 2) continue;
 
-      // Parse financial results from Render proxy
-      const frArr = renderResults[symbol] || [];
+      // Get financial results from either source
+      const frArr = renderResults[symbol] || nsePerSymbol[symbol] || [];
       let current: FinancialQuarter;
       let prevQ: FinancialQuarter | null = null;
       let yoyQ: FinancialQuarter | null = null;
       let reportType = 'Standalone';
       let xbrlLink: string | null = null;
 
-      const parseFR = (r: any): FinancialQuarter => {
-        const rev = parseNum(r.re_revenue || r.revenue || r.totalIncome || r.income || r.re_incomeFromOperations);
-        const exp = parseNum(r.re_expenditure || r.expenditure || r.totalExpenditure);
-        const op = parseNum(r.re_operProfit || r.operatingProfit || r.re_profitBeforeTax) || (rev > 0 && exp > 0 ? rev - exp : 0);
-        const pat = parseNum(r.re_netProfit || r.netProfit || r.re_proLossAftTax || r.proLossAftTax);
-        const eps = parseNum(r.re_eps || r.eps || r.re_dilutedEps || r.dilutedEps);
-        const toDate = r.re_toDate || r.toDate || r.re_periodEnded || '';
-        return {
-          revenue: rev, operatingProfit: op,
-          opm: marginCalc(op, rev), pat, npm: marginCalc(pat, rev), eps,
-          period: formatPeriod(toDate),
-        };
-      };
-
       if (frArr.length > 0) {
         current = parseFR(frArr[0]);
         if (frArr.length > 1) prevQ = parseFR(frArr[1]);
-        // YoY = 4 quarters back (same quarter last year)
         if (frArr.length > 4) yoyQ = parseFR(frArr[4]);
         else if (frArr.length > 3) yoyQ = parseFR(frArr[3]);
-
         reportType = (frArr[0].re_xbrl || '').toLowerCase().includes('consol') ? 'Consolidated' : 'Standalone';
         xbrlLink = frArr[0].re_xbrl || null;
       } else {
-        // No financial data — create empty card (will show as "Data pending")
+        // No financial data yet — show card with price data only
         current = { revenue: 0, operatingProfit: 0, opm: 0, pat: 0, npm: 0, eps: 0, period: '' };
       }
 
@@ -488,13 +522,11 @@ export async function GET(request: Request) {
       ...(debug ? {
         debug: true,
         confirmedTickers: confirmedTickers.size,
+        knownTickers: knownTickers.size,
         renderSymbols: Object.keys(renderResults).length,
+        nsePerSymbolEnriched: nseEnriched,
         priceUniverse: Object.keys(priceLookup).length,
-        frDirect: toArray(financialResults).length,
-        frLatest: toArray(latestResults).length,
-        bmTotal: toArray(boardMeetings).length + toArray(boardMeetingsRange).length,
-        annTotal: (Array.isArray(announcements) ? announcements : toArray(announcements)).length,
-        resultsFilingsTotal: toArray(resultsFilings).length,
+        cardsWithFinData: cards.filter(c => c.current.revenue > 0 || c.current.pat !== 0).length,
       } : {}),
     });
 
