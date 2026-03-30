@@ -107,7 +107,7 @@ async function fetchFinancialPageHTML(symbol: string, type: 'consolidated' | 'st
   try {
     const suffix = type === 'consolidated' ? 'consolidated/' : '';
     const url = `https://www.screener.in/company/${symbol}/${suffix}`;
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(6000) });
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
     if (res.ok) {
       const html = await res.text();
       if (html.includes('Quarterly Results') || html.includes('id="quarters"')) {
@@ -122,7 +122,7 @@ async function fetchFinancialPageHTML(symbol: string, type: 'consolidated' | 'st
   // Source 2: trendlyne.com
   try {
     const url = `https://trendlyne.com/fundamentals/quarterly-results/${symbol}/`;
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(6000) });
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
     if (res.ok) {
       const html = await res.text();
       if (html.includes('Sales') || html.includes('Revenue') || html.includes('quarterly')) {
@@ -137,7 +137,7 @@ async function fetchFinancialPageHTML(symbol: string, type: 'consolidated' | 'st
   // Source 3: tickertape.in
   try {
     const url = `https://www.tickertape.in/stocks/${symbol.toLowerCase()}`;
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(6000) });
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
     if (res.ok) {
       const html = await res.text();
       if (html.length > 5000) {
@@ -276,9 +276,11 @@ function parseQuarterlyResults(html: string): {
     const values = cells.slice(1).map(c => parseNumber(c));
 
     // Map row labels to our keys
-    if (rowLabel.match(/^Sales/i)) rows['sales'] = values;
-    else if (rowLabel.match(/^Operating Profit/i)) rows['operatingProfit'] = values;
-    else if (rowLabel.match(/^OPM/i)) rows['opm'] = values;
+    // Banking companies use: Revenue (not Sales), Financing Profit (not Operating Profit),
+    // Financing Margin (not OPM), EPS in Rs (not EPS)
+    if (rowLabel.match(/^Sales/i) || rowLabel.match(/^Revenue/i)) rows['sales'] = values;
+    else if (rowLabel.match(/^Operating Profit/i) || rowLabel.match(/^Financing Profit/i)) rows['operatingProfit'] = values;
+    else if (rowLabel.match(/^OPM/i) || rowLabel.match(/^Financing Margin/i) || rowLabel.match(/^Operating Margin/i)) rows['opm'] = values;
     else if (rowLabel.match(/^Net Profit/i) || rowLabel.match(/^Profit after tax/i)) rows['pat'] = values;
     else if (rowLabel.match(/^EPS/i)) rows['eps'] = values;
   }
@@ -559,23 +561,53 @@ export async function GET(request: Request) {
 
     console.log(`[Earnings Scan] Scanning ${symbols.length} symbols: ${symbols.join(', ')}`);
 
-    // Fetch ALL symbols in parallel for maximum speed within 55s Vercel limit
+    // Fetch in batches of 5 with 500ms delay between batches to avoid rate-limiting
     const cards: EarningsScanCard[] = [];
     const failed: string[] = [];
+    const BATCH_SIZE = 5;
 
-    const results = await Promise.all(
-      symbols.map(sym => buildEarningsCard(sym).catch((err) => {
-        console.warn(`[Earnings Scan] ${sym} failed:`, err);
-        return null;
-      }))
-    );
+    for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
+      const batch = symbols.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.all(
+        batch.map(sym => buildEarningsCard(sym).catch((err) => {
+          console.warn(`[Earnings Scan] ${sym} failed:`, err);
+          return null;
+        }))
+      );
 
-    for (let j = 0; j < symbols.length; j++) {
-      if (results[j]) {
-        cards.push(results[j]!);
-      } else {
-        failed.push(symbols[j]);
+      for (let j = 0; j < batch.length; j++) {
+        if (batchResults[j]) {
+          cards.push(batchResults[j]!);
+        } else {
+          failed.push(batch[j]);
+        }
       }
+
+      // Delay between batches to avoid screener.in rate-limiting
+      if (i + BATCH_SIZE < symbols.length) {
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
+
+    // Retry failed symbols one at a time with higher timeout
+    if (failed.length > 0) {
+      console.log(`[Earnings Scan] Retrying ${failed.length} failed symbols: ${failed.join(', ')}`);
+      const retryFailed: string[] = [];
+      for (const sym of failed) {
+        await new Promise(r => setTimeout(r, 300));
+        try {
+          const card = await buildEarningsCard(sym);
+          if (card) {
+            cards.push(card);
+          } else {
+            retryFailed.push(sym);
+          }
+        } catch {
+          retryFailed.push(sym);
+        }
+      }
+      failed.length = 0;
+      failed.push(...retryFailed);
     }
 
     // Sort by totalScore descending
