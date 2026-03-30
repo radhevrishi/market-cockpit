@@ -107,7 +107,7 @@ async function fetchFinancialPageHTML(symbol: string, type: 'consolidated' | 'st
   try {
     const suffix = type === 'consolidated' ? 'consolidated/' : '';
     const url = `https://www.screener.in/company/${symbol}/${suffix}`;
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(6000) });
     if (res.ok) {
       const html = await res.text();
       if (html.includes('Quarterly Results') || html.includes('id="quarters"')) {
@@ -122,7 +122,7 @@ async function fetchFinancialPageHTML(symbol: string, type: 'consolidated' | 'st
   // Source 2: trendlyne.com
   try {
     const url = `https://trendlyne.com/fundamentals/quarterly-results/${symbol}/`;
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(6000) });
     if (res.ok) {
       const html = await res.text();
       if (html.includes('Sales') || html.includes('Revenue') || html.includes('quarterly')) {
@@ -137,7 +137,7 @@ async function fetchFinancialPageHTML(symbol: string, type: 'consolidated' | 'st
   // Source 3: tickertape.in
   try {
     const url = `https://www.tickertape.in/stocks/${symbol.toLowerCase()}`;
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(6000) });
     if (res.ok) {
       const html = await res.text();
       if (html.length > 5000) {
@@ -407,10 +407,9 @@ async function buildEarningsCard(symbol: string): Promise<EarningsScanCard | nul
     return buildCardFromData(cached.data);
   }
 
-  // Fetch from screener.in
+  // Fetch from screener.in — only consolidated (skip standalone to save time)
   console.log(`[Earnings Scan] Fetching ${symbol} from screener.in`);
 
-  // Try consolidated first, then standalone
   let html = await fetchScreenerData(symbol, 'consolidated');
   let reportType: 'Consolidated' | 'Standalone' = 'Consolidated';
 
@@ -431,26 +430,16 @@ async function buildEarningsCard(symbol: string): Promise<EarningsScanCard | nul
     return null;
   }
 
-  // Also try standalone for comparison
-  let standaloneQuarters: QuarterFinancials[] = [];
-  if (reportType === 'Consolidated') {
-    const saHtml = await fetchScreenerData(symbol, 'standalone');
-    if (saHtml) {
-      const saParsed = parseQuarterlyResults(saHtml);
-      standaloneQuarters = saParsed.quarters;
-    }
-  }
-
   const data: ScreenerData = {
     symbol,
     companyName: parsed.companyName || symbol,
     consolidated: reportType === 'Consolidated' ? parsed.quarters : [],
-    standalone: reportType === 'Standalone' ? parsed.quarters : standaloneQuarters,
+    standalone: reportType === 'Standalone' ? parsed.quarters : [],
     mcap: parsed.mcap,
     pe: parsed.pe,
     currentPrice: parsed.currentPrice,
     bookValue: parsed.bookValue,
-    sector: '', // Will be enriched later if needed
+    sector: '',
   };
 
   cache.set(symbol, { data, fetchedAt: Date.now() });
@@ -570,10 +559,10 @@ export async function GET(request: Request) {
 
     console.log(`[Earnings Scan] Scanning ${symbols.length} symbols: ${symbols.join(', ')}`);
 
-    // Fetch in batches of 3 (rate limit screener.in)
+    // Fetch in batches of 5 (optimized for 55s Vercel timeout)
     const cards: EarningsScanCard[] = [];
     const failed: string[] = [];
-    const batchSize = 3;
+    const batchSize = 5;
 
     for (let i = 0; i < symbols.length; i += batchSize) {
       const batch = symbols.slice(i, i + batchSize);
@@ -589,9 +578,9 @@ export async function GET(request: Request) {
         }
       }
 
-      // Rate limit: 500ms between batches
+      // Rate limit: 300ms between batches
       if (i + batchSize < symbols.length) {
-        await new Promise(r => setTimeout(r, 500));
+        await new Promise(r => setTimeout(r, 300));
       }
     }
 
