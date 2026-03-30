@@ -522,7 +522,7 @@ export async function POST(request: Request) {
       lines.push(`<i>/pulse — Get performance card</i>`);
       await sendTelegramTo(chatId, lines.join('\n'));
     } else if (text.startsWith('/watch ')) {
-      const toAdd = text.slice(7).trim().split(/\s+/).map(t => t.toUpperCase()).filter(t => t.length > 0);
+      const toAdd = text.slice(7).trim().split(/\s+/).map((t: string) => t.toUpperCase()).filter((t: string) => t.length > 0);
       if (toAdd.length === 0) {
         await sendTelegramTo(chatId, '❌ Please provide stock symbols. Example: <code>/watch TCS INFY</code>');
       } else {

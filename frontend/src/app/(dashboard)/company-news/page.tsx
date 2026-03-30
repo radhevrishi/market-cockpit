@@ -93,12 +93,12 @@ export default function CompanyNewsPage() {
       setLoading(true);
       let tickersToFetch = tickers;
 
-      if (!tickersToFetch) {
+      if (!tickersToFetch || tickersToFetch.length === 0) {
         const stored = localStorage.getItem('mc_watchlist_tickers');
         tickersToFetch = stored ? JSON.parse(stored) : DEFAULT_TICKERS;
       }
 
-      const symbolsParam = tickersToFetch.join(',');
+      const symbolsParam = (tickersToFetch || DEFAULT_TICKERS).join(',');
       const response = await fetch(
         `/api/market/company-news?symbols=${symbolsParam}&days=${selectedDays}&limit=10`
       );
