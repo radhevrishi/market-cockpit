@@ -363,35 +363,67 @@ export async function GET(request: Request): Promise<NextResponse<AnnouncementDa
     let allNews: NewsItem[] = [];
 
     if (symbols.length > 0) {
-      // Per-symbol fetch is primary strategy when watchlist is specified
-      // Bulk NSE endpoints return random recent filings, rarely matching specific stocks
+      // Multi-source strategy for watchlist companies:
+      // 1. Per-symbol corporate announcements
+      // 2. Board meetings (filtered to watchlist)
+      // 3. Financial results (filtered to watchlist)
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - days);
+      const symbolSet = new Set(symbols);
 
-      // Fetch per-symbol announcements for up to 10 watchlist stocks
+      // Source 1: Per-symbol announcements — try multiple endpoint variants
       const batchSize = 3;
       for (let i = 0; i < Math.min(symbols.length, 10); i += batchSize) {
         const batch = symbols.slice(i, i + batchSize);
         const results = await Promise.all(
           batch.map(async (symbol) => {
             try {
-              const data = await nseApiFetch(
+              // Try both endpoint variants (corporates vs corporate)
+              const endpoints = [
                 `/api/corporates-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`,
-                300000
-              );
-              if (!data) return [];
-              const items = Array.isArray(data) ? data : (data?.data || []);
-              const processed: NewsItem[] = [];
-              let idx = allNews.length + processed.length;
-              for (const item of items.slice(0, 15)) {
-                const p = processAnnouncement(item, idx++);
-                if (!p) continue;
-                const itemDate = new Date(p.date);
-                if (itemDate < cutoffDate) continue;
-                processed.push(p);
+                `/api/corporate-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`,
+              ];
+
+              for (const endpoint of endpoints) {
+                const data = await nseApiFetch(endpoint, 300000);
+                if (!data) continue;
+
+                // Handle many possible response structures
+                let items: any[] = [];
+                if (Array.isArray(data)) {
+                  items = data;
+                } else if (data?.data && Array.isArray(data.data)) {
+                  items = data.data;
+                } else if (data?.result && Array.isArray(data.result)) {
+                  items = data.result;
+                } else {
+                  // Try all array-valued properties
+                  for (const key of Object.keys(data || {})) {
+                    if (Array.isArray(data[key]) && data[key].length > 0) {
+                      items = data[key];
+                      break;
+                    }
+                  }
+                }
+
+                if (items.length === 0) continue;
+
+                console.log(`[Company News] ${symbol}: ${items.length} items from ${endpoint}, keys: ${Object.keys(items[0] || {}).join(',')}`);
+
+                const processed: NewsItem[] = [];
+                let idx = allNews.length + processed.length;
+                for (const item of items.slice(0, 15)) {
+                  const p = processAnnouncement(item, idx++);
+                  if (!p) continue;
+                  const itemDate = new Date(p.date);
+                  if (itemDate < cutoffDate) continue;
+                  processed.push(p);
+                }
+                if (processed.length > 0) return processed;
               }
-              return processed;
-            } catch {
+              return [];
+            } catch (err) {
+              console.warn(`[Company News] Per-symbol error for ${symbol}:`, err);
               return [];
             }
           })
@@ -402,9 +434,68 @@ export async function GET(request: Request): Promise<NextResponse<AnnouncementDa
 
       console.log(`[Company News] Per-symbol fetch: ${allNews.length} items for ${symbols.length} symbols`);
 
-      // If per-symbol gave nothing, try bulk as fallback (without symbol filter)
+      // Source 2: Board meetings (reliable endpoint, filter to watchlist)
+      try {
+        const bmData = await nseApiFetch('/api/corporate-board-meetings?index=equities', 300000);
+        if (bmData) {
+          const items = Array.isArray(bmData) ? bmData : (bmData?.data || bmData?.result || []);
+          let idx = allNews.length;
+          for (const item of items) {
+            const sym = item.symbol || '';
+            if (!symbolSet.has(sym)) continue;
+            const p = processAnnouncement(item, idx++);
+            if (!p) continue;
+            const itemDate = new Date(p.date);
+            if (itemDate < cutoffDate) continue;
+            allNews.push(p);
+          }
+          console.log(`[Company News] Board meetings: added items, total now ${allNews.length}`);
+        }
+      } catch (e) {
+        console.warn('[Company News] Board meetings error:', e);
+      }
+
+      // Source 3: Financial results (filter to watchlist)
+      try {
+        const frData = await nseApiFetch('/api/corporates-financial-results?index=equities', 300000);
+        if (frData) {
+          const items = Array.isArray(frData) ? frData : (frData?.data || frData?.result || []);
+          let idx = allNews.length;
+          for (const item of items) {
+            const sym = item.symbol || '';
+            if (!symbolSet.has(sym)) continue;
+            // Create a news item from financial result
+            const headline = `${sym} — ${item.relatingTo || 'Quarterly Results'} (${item.xbrl || ''})`;
+            const dateStr = item.broadcastDtTime || item.datepicker || '';
+            const parsed = parseNSEDate(dateStr);
+            if (!parsed || parsed < cutoffDate) continue;
+            allNews.push({
+              id: `${sym}-fr-${idx++}`,
+              ticker: sym,
+              company: item.companyName || sym,
+              headline,
+              description: `Period: ${item.relatingTo || 'N/A'}`,
+              category: 'Financial Results',
+              date: parsed.toISOString().split('T')[0],
+              importance: 'high',
+              source: 'NSE',
+            });
+          }
+          console.log(`[Company News] Financial results: total now ${allNews.length}`);
+        }
+      } catch (e) {
+        console.warn('[Company News] Financial results error:', e);
+      }
+
+      // Source 4: If still nothing, try bulk with watchlist filter
       if (allNews.length === 0) {
-        console.log(`[Company News] Per-symbol empty, falling back to bulk (unfiltered)`);
+        console.log(`[Company News] All sources empty, trying bulk with watchlist filter`);
+        allNews = await fetchBulkAnnouncements(symbolSet, days, maxItems);
+      }
+
+      // Source 5: Last resort — bulk without filter so page isn't empty
+      if (allNews.length === 0) {
+        console.log(`[Company News] Still empty, falling back to bulk (unfiltered)`);
         allNews = await fetchBulkAnnouncements(null, days, maxItems);
       }
     } else {

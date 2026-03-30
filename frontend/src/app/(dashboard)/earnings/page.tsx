@@ -3,14 +3,13 @@
 import { useState, useEffect, useCallback } from 'react';
 
 // ══════════════════════════════════════════════
-// EARNINGS CARDS PAGE — EarningsPulse-style UI
-// Consumes 2-Layer Schema from /api/market/earnings-cards
-//   Layer 1: Event Intelligence (always present)
-//   Layer 2: Fundamentals (future-fillable slots)
-// Data confidence badge: FULL / PARTIAL / NONE
+// EARNINGS PAGE — Watchlist Quarterly Financials
+// Uses /api/market/earnings-scan (screener.in + fallbacks)
+// Shows Revenue, OP, OPM%, PAT, NPM%, EPS with YoY/QoQ
+// Consolidated/Standalone toggle per card
+// Composite scoring: 60% fundamentals + 40% price
 // ══════════════════════════════════════════════
 
-// Theme constants (matches existing dark theme)
 const BG = '#0A0E1A';
 const CARD = '#0D1623';
 const CARD_BORDER = '#1A2540';
@@ -23,18 +22,15 @@ const YELLOW = '#FFD600';
 const RED = '#F44336';
 const HEADER_BG = '#0A1628';
 
-// ── Types matching API v4 2-layer schema ──
+const DEFAULT_WATCHLIST = [
+  'RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK',
+  'BAJFINANCE', 'TATAMOTORS', 'WIPRO', 'SBIN', 'LT',
+  'ITC', 'MARUTI', 'TITAN', 'AXISBANK', 'SUNPHARMA',
+];
 
-interface PriceReaction {
-  cmp: number;
-  prevClose: number | null;
-  edp: number | null;
-  changePct: number;
-  excessReturn: number | null;
-  indexReturn: number | null;
-}
+// ── Types matching earnings-scan API ──
 
-interface QuarterData {
+interface QuarterFinancials {
   period: string;
   revenue: number;
   operatingProfit: number;
@@ -44,548 +40,360 @@ interface QuarterData {
   eps: number;
 }
 
-interface Financials {
-  revenue: number | null;
-  operatingProfit: number | null;
-  opm: number | null;
-  pat: number | null;
-  npm: number | null;
-  eps: number | null;
-  revenueYoY: number | null;
-  opProfitYoY: number | null;
-  patYoY: number | null;
-  epsYoY: number | null;
-  marginTrendYoY: number | null;
-  revenueQoQ: number | null;
-  opProfitQoQ: number | null;
-  patQoQ: number | null;
-  epsQoQ: number | null;
-  prevQ: QuarterData | null;
-  yoyQ: QuarterData | null;
-}
-
-type DataQuality = 'FULL' | 'PARTIAL' | 'NONE';
-
-interface EarningsCard {
+interface EarningsScanCard {
   symbol: string;
   company: string;
   period: string;
   resultDate: string;
-  reportType: string;
-  sector: string;
-  industry: string;
-  marketCap: string;
-  qualityScore: number;
+  reportType: 'Consolidated' | 'Standalone';
+  quarters: QuarterFinancials[];
+  revenueYoY: number | null;
+  revenueQoQ: number | null;
+  opProfitYoY: number | null;
+  opProfitQoQ: number | null;
+  patYoY: number | null;
+  patQoQ: number | null;
+  epsYoY: number | null;
+  epsQoQ: number | null;
+  fundamentalsScore: number;
+  priceScore: number;
+  totalScore: number;
   grade: 'STRONG' | 'GOOD' | 'OK' | 'BAD';
   gradeColor: string;
-  price: PriceReaction;
-  financials: Financials;
-  dataQuality: DataQuality;
-  source: string;
-  pe: number | null;
-  bookValue: number | null;
-  dividendYield: number | null;
+  dataQuality: 'FULL' | 'PARTIAL' | 'PRICE_ONLY';
   mcap: number | null;
-  yearHigh: number | null;
-  yearLow: number | null;
-  resultLink: string | null;
-  nseLink: string;
+  pe: number | null;
+  cmp: number | null;
+  screenerUrl: string;
+  nseUrl: string;
+}
+
+interface ScanResponse {
+  cards: EarningsScanCard[];
+  summary: {
+    total: number;
+    strong: number;
+    good: number;
+    ok: number;
+    bad: number;
+    avgScore: number;
+    dataQualityBreakdown: {
+      full: number;
+      partial: number;
+      priceOnly: number;
+    };
+  };
+  source: string;
+  updatedAt: string;
 }
 
 // ══════════════════════════════════════════════
 // HELPER COMPONENTS
 // ══════════════════════════════════════════════
 
-function GrowthBadge({ value, fontSize = 13 }: { value: number | null | undefined; fontSize?: number }) {
+function GrowthBadge({ value, fontSize = 12 }: { value: number | null | undefined; fontSize?: number }) {
   if (value === null || value === undefined) return <span style={{ color: TEXT_DIM, fontSize }}>—</span>;
-  const color = value > 0 ? GREEN : value < 0 ? RED : YELLOW;
-  const arrow = value > 0 ? '▲' : value < 0 ? '▼' : '';
+  const color = value > 0 ? GREEN : value < 0 ? RED : TEXT_DIM;
+  const prefix = value > 0 ? '+' : '';
   return (
     <span style={{ color, fontSize, fontWeight: 600, fontFamily: 'monospace' }}>
-      {value > 0 ? '+' : ''}{value.toFixed(1)}%{arrow ? ` ${arrow}` : ''}
+      {prefix}{value.toFixed(1)}%
     </span>
   );
 }
 
-function GradeBadge({ grade, color }: { grade: string; color: string }) {
-  const emoji = grade === 'STRONG' ? '🟢' : grade === 'GOOD' ? '🟢' : grade === 'OK' ? '🟡' : '🔴';
+function GradeBadge({ grade, color, score }: { grade: string; color: string; score: number }) {
+  return (
+    <div style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: '6px',
+      backgroundColor: `${color}20`,
+      border: `1px solid ${color}50`,
+      borderRadius: '6px',
+      padding: '4px 10px',
+    }}>
+      <span style={{ color, fontWeight: 700, fontSize: '13px' }}>{grade}</span>
+      <span style={{ color: TEXT_DIM, fontSize: '11px' }}>{score}</span>
+    </div>
+  );
+}
+
+function DataQualityDot({ quality }: { quality: string }) {
+  const colors: Record<string, string> = {
+    'FULL': GREEN,
+    'PARTIAL': YELLOW,
+    'PRICE_ONLY': RED,
+  };
+  const labels: Record<string, string> = {
+    'FULL': 'Full Data',
+    'PARTIAL': 'Partial',
+    'PRICE_ONLY': 'Price Only',
+  };
   return (
     <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 4,
-      padding: '2px 10px', borderRadius: 4,
-      background: `${color}18`, color, fontSize: 12, fontWeight: 700,
-      border: `1px solid ${color}40`,
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: '4px',
+      fontSize: '10px',
+      color: colors[quality] || TEXT_DIM,
     }}>
-      {emoji} {grade}
+      <span style={{
+        width: '6px', height: '6px', borderRadius: '50%',
+        backgroundColor: colors[quality] || TEXT_DIM,
+        display: 'inline-block',
+      }} />
+      {labels[quality] || quality}
     </span>
   );
 }
 
-function DataQualityBadge({ quality }: { quality: DataQuality }) {
-  const config = {
-    FULL:    { emoji: '🟢', label: 'Full Data',       color: GREEN,  bg: `${GREEN}15` },
-    PARTIAL: { emoji: '🟡', label: 'Partial',         color: YELLOW, bg: `${YELLOW}15` },
-    NONE:    { emoji: '🔴', label: 'Price Only',      color: RED,    bg: `${RED}15` },
-  }[quality];
-
-  return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 3,
-      padding: '1px 7px', borderRadius: 3, fontSize: 10, fontWeight: 600,
-      background: config.bg, color: config.color,
-      border: `1px solid ${config.color}30`,
-    }}>
-      {config.emoji} {config.label}
-    </span>
-  );
+function formatCr(num: number | null): string {
+  if (num === null || num === undefined) return '—';
+  if (Math.abs(num) >= 100000) return `${(num / 100000).toFixed(0)}L Cr`;
+  if (Math.abs(num) >= 1000) return `${(num / 1000).toFixed(1)}K Cr`;
+  return `${num.toFixed(0)} Cr`;
 }
 
-function ExcessReturnBadge({ excessReturn, indexReturn }: { excessReturn: number | null; indexReturn: number | null }) {
-  if (excessReturn === null) return null;
-  const color = excessReturn > 0 ? GREEN : excessReturn < 0 ? RED : YELLOW;
-  const label = excessReturn > 0 ? `+${excessReturn.toFixed(1)}%` : `${excessReturn.toFixed(1)}%`;
-  return (
-    <span
-      title={`Excess return vs Nifty 50 (${indexReturn !== null ? (indexReturn > 0 ? '+' : '') + indexReturn.toFixed(1) + '%' : '—'})`}
-      style={{
-        display: 'inline-flex', alignItems: 'center', gap: 3,
-        padding: '1px 7px', borderRadius: 3, fontSize: 10, fontWeight: 600,
-        background: `${color}15`, color,
-        border: `1px solid ${color}30`,
-        cursor: 'help',
-      }}
-    >
-      vs Nifty: {label}
-    </span>
-  );
-}
-
-function formatCr(val: number | null): string {
-  if (val === null || val === 0) return '—';
-  if (Math.abs(val) >= 1000) return `${val.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
-  return val.toFixed(1);
+function formatMcap(num: number | null): string {
+  if (num === null || num === undefined) return '—';
+  if (num >= 100000) return `₹${(num / 100000).toFixed(1)}L Cr`;
+  if (num >= 1000) return `₹${(num / 1000).toFixed(0)}K Cr`;
+  return `₹${num.toFixed(0)} Cr`;
 }
 
 // ══════════════════════════════════════════════
-// SINGLE EARNINGS CARD
+// FINANCIAL TABLE COMPONENT
+// Shows: Revenue, Operating Profit, OPM%, PAT, NPM%, EPS
+// across 3 quarters with YoY/QoQ columns
 // ══════════════════════════════════════════════
 
-function EarningsCardComponent({ card, onClick }: { card: EarningsCard; onClick: () => void }) {
-  const { financials: fin, price } = card;
-  const hasFin = card.dataQuality !== 'NONE';
+function FinancialTable({ card }: { card: EarningsScanCard }) {
+  const quarters = card.quarters.slice(0, 3);
+  if (quarters.length === 0) return null;
 
-  // Build rows — show financials if available, otherwise show price reaction card
-  const rows = hasFin ? [
+  const latest = quarters[0];
+  const metrics = [
     {
-      label: 'Revenue', unit: 'Cr',
-      yoy: fin.revenueYoY, qoq: fin.revenueQoQ,
-      current: fin.revenue, prevQ: fin.prevQ?.revenue ?? null, yoyQ: fin.yoyQ?.revenue ?? null,
-      highlight: true,
+      label: 'Revenue',
+      key: 'revenue' as const,
+      fmt: (v: number) => `${v.toFixed(0)}`,
+      yoy: card.revenueYoY,
+      qoq: card.revenueQoQ,
     },
     {
-      label: 'Operating Profit', unit: 'Cr',
-      yoy: fin.opProfitYoY, qoq: fin.opProfitQoQ,
-      current: fin.operatingProfit, prevQ: fin.prevQ?.operatingProfit ?? null, yoyQ: fin.yoyQ?.operatingProfit ?? null,
-      highlight: false,
+      label: 'Op. Profit',
+      key: 'operatingProfit' as const,
+      fmt: (v: number) => `${v.toFixed(0)}`,
+      yoy: card.opProfitYoY,
+      qoq: card.opProfitQoQ,
     },
     {
-      label: 'OPM', unit: '%',
-      yoy: null, qoq: null,
-      current: fin.opm, prevQ: fin.prevQ?.opm ?? null, yoyQ: fin.yoyQ?.opm ?? null,
-      highlight: false, isPercent: true,
+      label: 'OPM %',
+      key: 'opm' as const,
+      fmt: (v: number) => `${v.toFixed(1)}%`,
+      yoy: null,
+      qoq: null,
     },
     {
-      label: 'PAT', unit: 'Cr',
-      yoy: fin.patYoY, qoq: fin.patQoQ,
-      current: fin.pat, prevQ: fin.prevQ?.pat ?? null, yoyQ: fin.yoyQ?.pat ?? null,
-      highlight: true,
+      label: 'PAT',
+      key: 'pat' as const,
+      fmt: (v: number) => `${v.toFixed(0)}`,
+      yoy: card.patYoY,
+      qoq: card.patQoQ,
     },
     {
-      label: 'NPM', unit: '%',
-      yoy: null, qoq: null,
-      current: fin.npm, prevQ: fin.prevQ?.npm ?? null, yoyQ: fin.yoyQ?.npm ?? null,
-      highlight: false, isPercent: true,
+      label: 'NPM %',
+      key: 'npm' as const,
+      fmt: (v: number) => `${v.toFixed(1)}%`,
+      yoy: null,
+      qoq: null,
     },
     {
-      label: 'EPS', unit: '₹',
-      yoy: fin.epsYoY, qoq: fin.epsQoQ,
-      current: fin.eps, prevQ: fin.prevQ?.eps ?? null, yoyQ: fin.yoyQ?.eps ?? null,
-      highlight: true,
+      label: 'EPS',
+      key: 'eps' as const,
+      fmt: (v: number) => `${v.toFixed(2)}`,
+      yoy: card.epsYoY,
+      qoq: card.epsQoQ,
     },
-  ] : null;
+  ];
 
-  const currentPeriod = fin.prevQ?.period ? card.period : 'Current';
-  const prevPeriod = fin.prevQ?.period || 'Prev Q';
-  const yoyPeriod = fin.yoyQ?.period || 'Year Ago';
+  const cellStyle = (isHeader = false): React.CSSProperties => ({
+    padding: '5px 8px',
+    fontSize: '11px',
+    textAlign: 'right' as const,
+    borderBottom: `1px solid ${CARD_BORDER}`,
+    color: isHeader ? TEXT_DIM : TEXT,
+    fontFamily: 'monospace',
+    whiteSpace: 'nowrap' as const,
+  });
 
   return (
-    <div
-      onClick={onClick}
-      style={{
-        background: CARD,
-        border: `1px solid ${CARD_BORDER}`,
-        borderRadius: 10,
-        overflow: 'hidden',
-        cursor: 'pointer',
-        transition: 'border-color 0.2s, transform 0.15s',
-        minWidth: 0,
-      }}
-      onMouseEnter={e => {
-        (e.currentTarget as HTMLDivElement).style.borderColor = card.gradeColor;
-        (e.currentTarget as HTMLDivElement).style.transform = 'translateY(-2px)';
-      }}
-      onMouseLeave={e => {
-        (e.currentTarget as HTMLDivElement).style.borderColor = CARD_BORDER;
-        (e.currentTarget as HTMLDivElement).style.transform = 'translateY(0)';
-      }}
-    >
-      {/* Header */}
-      <div style={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
-        padding: '14px 16px 10px', borderBottom: `1px solid ${CARD_BORDER}`,
-      }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontWeight: 700, fontSize: 15, color: TEXT }}>{card.company}</span>
-            <GradeBadge grade={card.grade} color={card.gradeColor} />
-            <DataQualityBadge quality={card.dataQuality} />
-          </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-            <span style={{
-              padding: '1px 8px', borderRadius: 3, fontSize: 11, fontWeight: 600,
-              background: ACCENT + '20', color: ACCENT, border: `1px solid ${ACCENT}40`,
-            }}>{card.reportType}</span>
-            {card.sector && (
-              <span style={{ fontSize: 11, color: TEXT_DIM }}>{card.sector}</span>
-            )}
-            <ExcessReturnBadge excessReturn={price.excessReturn} indexReturn={price.indexReturn} />
-          </div>
-        </div>
-        <div style={{ textAlign: 'right', flexShrink: 0 }}>
-          <div style={{ fontSize: 13, color: TEXT_DIM }}>{card.resultDate}</div>
-          <div style={{ fontSize: 12, color: ACCENT, fontWeight: 600 }}>{card.period}</div>
-          <div style={{ fontSize: 12, color: TEXT_DIM, marginTop: 2 }}>
-            Score: <span style={{ color: card.gradeColor, fontWeight: 700 }}>{card.qualityScore}</span>/100
-          </div>
-        </div>
-      </div>
-
-      {/* Financial Table (when we have financials) */}
-      {rows && (
-        <div style={{ padding: '0' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ background: HEADER_BG }}>
-                <th style={{ textAlign: 'left', padding: '8px 12px', color: TEXT_DIM, fontWeight: 500, fontSize: 12 }}></th>
-                <th style={{ textAlign: 'right', padding: '8px 6px', color: TEXT_DIM, fontWeight: 500, fontSize: 11, width: '15%' }}>YoY</th>
-                <th style={{ textAlign: 'right', padding: '8px 6px', color: TEXT_DIM, fontWeight: 500, fontSize: 11, width: '15%' }}>QoQ</th>
-                <th style={{ textAlign: 'right', padding: '8px 6px', color: TEXT_DIM, fontWeight: 500, fontSize: 11, width: '16%' }}>{currentPeriod}</th>
-                <th style={{ textAlign: 'right', padding: '8px 6px', color: TEXT_DIM, fontWeight: 500, fontSize: 11, width: '16%' }}>{prevPeriod}</th>
-                <th style={{ textAlign: 'right', padding: '8px 12px', color: TEXT_DIM, fontWeight: 500, fontSize: 11, width: '16%' }}>{yoyPeriod}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row, i) => (
-                <tr key={row.label} style={{
-                  borderTop: `1px solid ${CARD_BORDER}`,
-                  background: i % 2 === 0 ? 'transparent' : `${HEADER_BG}40`,
-                }}>
-                  <td style={{
-                    padding: '7px 12px', color: row.highlight ? TEXT : TEXT_DIM,
-                    fontWeight: row.highlight ? 600 : 400, fontSize: 13,
-                    whiteSpace: 'nowrap',
-                  }}>
-                    {row.label} <span style={{ fontSize: 10, color: TEXT_DIM }}>{row.unit}</span>
-                  </td>
-                  <td style={{ textAlign: 'right', padding: '7px 6px' }}>
-                    {row.yoy !== null && row.yoy !== undefined ? (
-                      <GrowthBadge value={row.yoy} fontSize={12} />
-                    ) : (
-                      <span style={{ color: TEXT_DIM, fontSize: 12 }}></span>
-                    )}
-                  </td>
-                  <td style={{ textAlign: 'right', padding: '7px 6px' }}>
-                    {row.qoq !== null && row.qoq !== undefined ? (
-                      <GrowthBadge value={row.qoq} fontSize={12} />
-                    ) : (
-                      <span style={{ color: TEXT_DIM, fontSize: 12 }}></span>
-                    )}
-                  </td>
-                  <td style={{
-                    textAlign: 'right', padding: '7px 6px',
-                    color: TEXT, fontWeight: 600, fontFamily: 'monospace', fontSize: 13,
-                  }}>
-                    {row.current !== undefined && row.current !== null && row.current !== 0
-                      ? (row.isPercent ? row.current.toFixed(1) : formatCr(row.current))
-                      : '—'}
-                  </td>
-                  <td style={{
-                    textAlign: 'right', padding: '7px 6px',
-                    color: TEXT_DIM, fontFamily: 'monospace', fontSize: 12,
-                  }}>
-                    {row.prevQ !== undefined && row.prevQ !== null && row.prevQ !== 0
-                      ? (row.isPercent ? row.prevQ.toFixed(1) : formatCr(row.prevQ))
-                      : '—'}
-                  </td>
-                  <td style={{
-                    textAlign: 'right', padding: '7px 12px',
-                    color: TEXT_DIM, fontFamily: 'monospace', fontSize: 12,
-                  }}>
-                    {row.yoyQ !== undefined && row.yoyQ !== null && row.yoyQ !== 0
-                      ? (row.isPercent ? row.yoyQ.toFixed(1) : formatCr(row.yoyQ))
-                      : '—'}
-                  </td>
-                </tr>
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+        <thead>
+          <tr style={{ backgroundColor: `${HEADER_BG}80` }}>
+            <th style={{ ...cellStyle(true), textAlign: 'left', fontWeight: 600 }}>Metric</th>
+            {quarters.map(q => (
+              <th key={q.period} style={{ ...cellStyle(true), fontWeight: 600 }}>
+                {q.period}
+              </th>
+            ))}
+            <th style={{ ...cellStyle(true), fontWeight: 600, color: ACCENT }}>YoY</th>
+            <th style={{ ...cellStyle(true), fontWeight: 600, color: ACCENT }}>QoQ</th>
+          </tr>
+        </thead>
+        <tbody>
+          {metrics.map(m => (
+            <tr key={m.label}>
+              <td style={{ ...cellStyle(), textAlign: 'left', color: TEXT_DIM, fontWeight: 500, fontFamily: 'inherit' }}>
+                {m.label}
+              </td>
+              {quarters.map(q => (
+                <td key={q.period} style={cellStyle()}>
+                  {m.fmt(q[m.key])}
+                </td>
               ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Price Reaction Card (when no financials) */}
-      {!rows && (
-        <div style={{ padding: '12px 16px' }}>
-          <div style={{
-            display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10,
-          }}>
-            <div style={{
-              background: HEADER_BG, borderRadius: 8, padding: '10px 12px',
-              border: `1px solid ${CARD_BORDER}`,
-            }}>
-              <div style={{ fontSize: 10, color: TEXT_DIM, marginBottom: 3 }}>Price Move</div>
-              <div style={{
-                fontSize: 18, fontWeight: 700, fontFamily: 'monospace',
-                color: price.changePct > 0 ? GREEN : price.changePct < 0 ? RED : TEXT,
-              }}>
-                {price.changePct > 0 ? '+' : ''}{price.changePct.toFixed(1)}%
-              </div>
-            </div>
-            <div style={{
-              background: HEADER_BG, borderRadius: 8, padding: '10px 12px',
-              border: `1px solid ${CARD_BORDER}`,
-            }}>
-              <div style={{ fontSize: 10, color: TEXT_DIM, marginBottom: 3 }}>vs Nifty 50</div>
-              <div style={{
-                fontSize: 18, fontWeight: 700, fontFamily: 'monospace',
-                color: (price.excessReturn ?? 0) > 0 ? GREEN : (price.excessReturn ?? 0) < 0 ? RED : TEXT,
-              }}>
-                {(price.excessReturn ?? 0) > 0 ? '+' : ''}{(price.excessReturn ?? 0).toFixed(1)}%
-              </div>
-            </div>
-            <div style={{
-              background: HEADER_BG, borderRadius: 8, padding: '10px 12px',
-              border: `1px solid ${CARD_BORDER}`,
-            }}>
-              <div style={{ fontSize: 10, color: TEXT_DIM, marginBottom: 3 }}>CMP</div>
-              <div style={{ fontSize: 18, fontWeight: 700, fontFamily: 'monospace', color: TEXT }}>
-                ₹{price.cmp.toLocaleString('en-IN')}
-              </div>
-            </div>
-          </div>
-          <div style={{
-            marginTop: 8, padding: '6px 10px', borderRadius: 6,
-            background: `${YELLOW}10`, border: `1px solid ${YELLOW}20`,
-            fontSize: 11, color: TEXT_DIM, textAlign: 'center',
-          }}>
-            Fundamentals unavailable — grade based on market reaction relative to Nifty 50
-          </div>
-        </div>
-      )}
-
-      {/* Footer */}
-      <div style={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        padding: '8px 14px', borderTop: `1px solid ${CARD_BORDER}`,
-        background: HEADER_BG,
-      }}>
-        <div style={{ display: 'flex', gap: 12 }}>
-          {card.resultLink && (
-            <a href={card.resultLink} target="_blank" rel="noopener noreferrer"
-              onClick={e => e.stopPropagation()}
-              style={{ color: ACCENT, fontSize: 12, fontWeight: 600, textDecoration: 'none' }}>
-              Result
-            </a>
-          )}
-          <a href={card.nseLink} target="_blank" rel="noopener noreferrer"
-            onClick={e => e.stopPropagation()}
-            style={{ color: TEXT_DIM, fontSize: 12, textDecoration: 'none' }}>
-            NSE
-          </a>
-        </div>
-        <div style={{ display: 'flex', gap: 16, fontSize: 12, color: TEXT_DIM }}>
-          {card.mcap && (
-            <span>MCap: <span style={{ color: TEXT, fontWeight: 600 }}>₹{card.mcap.toLocaleString('en-IN')} Cr</span></span>
-          )}
-          {card.pe && (
-            <span>PE: <span style={{ color: TEXT, fontWeight: 600 }}>{card.pe}</span></span>
-          )}
-          {card.price.cmp > 0 && (
-            <span>CMP: <span style={{ color: TEXT, fontWeight: 600 }}>₹{card.price.cmp.toLocaleString('en-IN')}</span></span>
-          )}
-        </div>
-      </div>
+              <td style={cellStyle()}>
+                <GrowthBadge value={m.yoy} fontSize={11} />
+              </td>
+              <td style={cellStyle()}>
+                <GrowthBadge value={m.qoq} fontSize={11} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
 
 // ══════════════════════════════════════════════
-// DETAIL DRAWER
+// CARD COMPONENT
 // ══════════════════════════════════════════════
 
-function DetailDrawer({ card, onClose }: { card: EarningsCard; onClose: () => void }) {
-  const { financials: fin, price } = card;
-  const hasFin = card.dataQuality !== 'NONE';
-
+function EarningsCardComponent({ card }: { card: EarningsScanCard }) {
   return (
     <div style={{
-      position: 'fixed', top: 0, right: 0, bottom: 0, width: '480px', maxWidth: '90vw',
-      background: CARD, borderLeft: `2px solid ${card.gradeColor}`,
-      zIndex: 1000, overflowY: 'auto', boxShadow: '-10px 0 30px rgba(0,0,0,0.5)',
-    }}>
-      {/* Close */}
+      backgroundColor: CARD,
+      border: `1px solid ${CARD_BORDER}`,
+      borderRadius: '10px',
+      overflow: 'hidden',
+      transition: 'border-color 0.2s',
+    }}
+      onMouseEnter={(e) => e.currentTarget.style.borderColor = ACCENT}
+      onMouseLeave={(e) => e.currentTarget.style.borderColor = CARD_BORDER}
+    >
+      {/* Card Header */}
       <div style={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        padding: '16px 20px', borderBottom: `1px solid ${CARD_BORDER}`,
-        position: 'sticky', top: 0, background: CARD, zIndex: 1,
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+        padding: '14px 16px 10px',
+        borderBottom: `1px solid ${CARD_BORDER}`,
       }}>
-        <div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: TEXT }}>{card.symbol}</div>
-          <div style={{ fontSize: 13, color: TEXT_DIM }}>{card.company}</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+            <span style={{ fontSize: '16px', fontWeight: 700, color: TEXT }}>{card.symbol}</span>
+            <GradeBadge grade={card.grade} color={card.gradeColor} score={card.totalScore} />
+            <DataQualityDot quality={card.dataQuality} />
+          </div>
+          <div style={{ fontSize: '12px', color: TEXT_DIM, marginBottom: '4px' }}>
+            {card.company}
+          </div>
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{
+              fontSize: '10px',
+              padding: '2px 6px',
+              borderRadius: '3px',
+              backgroundColor: `${ACCENT}25`,
+              color: ACCENT,
+              fontWeight: 600,
+            }}>
+              {card.reportType}
+            </span>
+            <span style={{ fontSize: '10px', color: TEXT_DIM }}>{card.period}</span>
+            {card.pe && (
+              <span style={{ fontSize: '10px', color: TEXT_DIM }}>PE: {card.pe.toFixed(1)}</span>
+            )}
+            {card.mcap && (
+              <span style={{ fontSize: '10px', color: TEXT_DIM }}>MCap: {formatMcap(card.mcap)}</span>
+            )}
+          </div>
         </div>
-        <button onClick={onClose} style={{
-          background: 'none', border: `1px solid ${CARD_BORDER}`, borderRadius: 6,
-          color: TEXT_DIM, padding: '4px 12px', cursor: 'pointer', fontSize: 14,
-        }}>✕</button>
+        <div style={{ textAlign: 'right' }}>
+          {card.cmp && (
+            <div style={{ fontSize: '18px', fontWeight: 700, color: TEXT }}>
+              ₹{card.cmp.toLocaleString('en-IN')}
+            </div>
+          )}
+        </div>
       </div>
 
-      <div style={{ padding: '16px 20px' }}>
-        {/* Badges row */}
-        <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
-          <GradeBadge grade={card.grade} color={card.gradeColor} />
-          <DataQualityBadge quality={card.dataQuality} />
-          <span style={{ fontSize: 12, color: TEXT_DIM, padding: '3px 8px', background: `${ACCENT}15`, borderRadius: 4 }}>
-            Score: {card.qualityScore}/100
+      {/* Financial Table */}
+      {card.dataQuality !== 'PRICE_ONLY' && card.quarters.length > 0 ? (
+        <div style={{ padding: '8px 12px 12px' }}>
+          <FinancialTable card={card} />
+        </div>
+      ) : (
+        <div style={{
+          padding: '16px',
+          textAlign: 'center',
+          color: YELLOW,
+          fontSize: '12px',
+          backgroundColor: `${YELLOW}08`,
+        }}>
+          Quarterly financial data not available for this stock
+        </div>
+      )}
+
+      {/* Card Footer */}
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '8px 16px',
+        borderTop: `1px solid ${CARD_BORDER}`,
+        backgroundColor: `${HEADER_BG}40`,
+      }}>
+        <div style={{ display: 'flex', gap: '16px' }}>
+          <span style={{ fontSize: '10px', color: TEXT_DIM }}>
+            F: {card.fundamentalsScore} | P: {card.priceScore} | Total: {card.totalScore}
           </span>
-          <span style={{ fontSize: 12, color: TEXT_DIM, padding: '3px 8px', background: `${ACCENT}15`, borderRadius: 4 }}>
-            {card.reportType}
-          </span>
         </div>
-
-        {/* Market Reaction (always shown) */}
-        <h3 style={{ color: TEXT, fontSize: 15, fontWeight: 600, margin: '0 0 12px', borderBottom: `1px solid ${CARD_BORDER}`, paddingBottom: 8 }}>
-          Market Reaction
-        </h3>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 20 }}>
-          {[
-            { label: 'Price Move', val: `${price.changePct > 0 ? '+' : ''}${price.changePct.toFixed(1)}%`, color: price.changePct > 0 ? GREEN : price.changePct < 0 ? RED : TEXT },
-            { label: 'vs Nifty 50', val: price.excessReturn !== null ? `${price.excessReturn > 0 ? '+' : ''}${price.excessReturn.toFixed(1)}%` : '—', color: (price.excessReturn ?? 0) > 0 ? GREEN : (price.excessReturn ?? 0) < 0 ? RED : TEXT },
-            { label: 'Nifty Return', val: price.indexReturn !== null ? `${price.indexReturn > 0 ? '+' : ''}${price.indexReturn.toFixed(1)}%` : '—', color: TEXT_DIM },
-          ].map(m => (
-            <div key={m.label} style={{
-              background: HEADER_BG, borderRadius: 8, padding: '10px 14px',
-              border: `1px solid ${CARD_BORDER}`,
-            }}>
-              <div style={{ fontSize: 11, color: TEXT_DIM, marginBottom: 4 }}>{m.label}</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: m.color, fontFamily: 'monospace' }}>
-                {m.val}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Financial Summary (when available) */}
-        {hasFin && (
-          <>
-            <h3 style={{ color: TEXT, fontSize: 15, fontWeight: 600, margin: '0 0 12px', borderBottom: `1px solid ${CARD_BORDER}`, paddingBottom: 8 }}>
-              Financial Summary — {card.period}
-            </h3>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 20 }}>
-              {[
-                { label: 'Revenue', val: fin.revenue, yoy: fin.revenueYoY, unit: 'Cr' },
-                { label: 'Op. Profit', val: fin.operatingProfit, yoy: fin.opProfitYoY, unit: 'Cr' },
-                { label: 'PAT', val: fin.pat, yoy: fin.patYoY, unit: 'Cr' },
-                { label: 'EPS', val: fin.eps, yoy: fin.epsYoY, unit: '₹' },
-                { label: 'OPM', val: fin.opm, yoy: null, unit: '%' },
-                { label: 'NPM', val: fin.npm, yoy: null, unit: '%' },
-              ].map(m => (
-                <div key={m.label} style={{
-                  background: HEADER_BG, borderRadius: 8, padding: '10px 14px',
-                  border: `1px solid ${CARD_BORDER}`,
-                }}>
-                  <div style={{ fontSize: 11, color: TEXT_DIM, marginBottom: 4 }}>{m.label}</div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: TEXT, fontFamily: 'monospace' }}>
-                    {m.val !== null && m.val !== 0
-                      ? (m.unit === '%' ? `${m.val.toFixed(1)}%` :
-                        m.unit === '₹' ? `₹${m.val.toFixed(2)}` :
-                          `₹${formatCr(m.val)} Cr`)
-                      : '—'}
-                  </div>
-                  {m.yoy !== null && (
-                    <div style={{ marginTop: 2 }}>
-                      <span style={{ fontSize: 11, color: TEXT_DIM }}>YoY: </span>
-                      <GrowthBadge value={m.yoy} fontSize={12} />
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-
-        {/* No Fundamentals notice */}
-        {!hasFin && (
-          <div style={{
-            padding: '14px 16px', borderRadius: 8, marginBottom: 20,
-            background: `${YELLOW}10`, border: `1px solid ${YELLOW}20`,
-          }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: YELLOW, marginBottom: 4 }}>
-              Fundamentals Not Yet Available
-            </div>
-            <div style={{ fontSize: 12, color: TEXT_DIM, lineHeight: 1.5 }}>
-              P&amp;L data (Revenue, PAT, EPS) will be populated when available from XBRL filings.
-              Grade is currently based on market reaction relative to Nifty 50 index.
-            </div>
-          </div>
-        )}
-
-        {/* Stock Info */}
-        <h3 style={{ color: TEXT, fontSize: 15, fontWeight: 600, margin: '0 0 12px', borderBottom: `1px solid ${CARD_BORDER}`, paddingBottom: 8 }}>
-          Stock Info
-        </h3>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 20 }}>
-          {[
-            { label: 'CMP', val: price.cmp ? `₹${price.cmp.toLocaleString('en-IN')}` : '—' },
-            { label: 'MCap', val: card.mcap ? `₹${card.mcap.toLocaleString('en-IN')} Cr` : '—' },
-            { label: 'P/E', val: card.pe ? card.pe.toFixed(1) : '—' },
-            { label: 'Sector', val: card.sector || '—' },
-            { label: 'Cap', val: card.marketCap || '—' },
-            { label: 'Filed', val: card.resultDate },
-          ].map(m => (
-            <div key={m.label} style={{
-              background: HEADER_BG, borderRadius: 6, padding: '8px 12px',
-              border: `1px solid ${CARD_BORDER}`,
-            }}>
-              <div style={{ fontSize: 10, color: TEXT_DIM, marginBottom: 2 }}>{m.label}</div>
-              <div style={{ fontSize: 13, color: TEXT, fontWeight: 600 }}>{m.val}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* Links */}
-        <h3 style={{ color: TEXT, fontSize: 15, fontWeight: 600, margin: '0 0 12px', borderBottom: `1px solid ${CARD_BORDER}`, paddingBottom: 8 }}>
-          Links
-        </h3>
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          {card.resultLink && (
-            <a href={card.resultLink} target="_blank" rel="noopener noreferrer" style={{
-              padding: '6px 14px', borderRadius: 6, background: `${ACCENT}20`, color: ACCENT,
-              fontSize: 13, fontWeight: 600, textDecoration: 'none', border: `1px solid ${ACCENT}40`,
-            }}>Result</a>
-          )}
-          <a href={card.nseLink} target="_blank" rel="noopener noreferrer" style={{
-            padding: '6px 14px', borderRadius: 6, background: `${ACCENT}20`, color: ACCENT,
-            fontSize: 13, fontWeight: 600, textDecoration: 'none', border: `1px solid ${ACCENT}40`,
-          }}>NSE Quote</a>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <a
+            href={card.screenerUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              fontSize: '10px',
+              color: ACCENT,
+              textDecoration: 'none',
+              padding: '2px 6px',
+              borderRadius: '3px',
+              border: `1px solid ${ACCENT}40`,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            Screener
+          </a>
+          <a
+            href={card.nseUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              fontSize: '10px',
+              color: ACCENT,
+              textDecoration: 'none',
+              padding: '2px 6px',
+              borderRadius: '3px',
+              border: `1px solid ${ACCENT}40`,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            NSE
+          </a>
         </div>
       </div>
     </div>
@@ -597,210 +405,289 @@ function DetailDrawer({ card, onClose }: { card: EarningsCard; onClose: () => vo
 // ══════════════════════════════════════════════
 
 export default function EarningsPage() {
-  const [cards, setCards] = useState<EarningsCard[]>([]);
+  const [cards, setCards] = useState<EarningsScanCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [selectedCard, setSelectedCard] = useState<EarningsCard | null>(null);
-  const [month, setMonth] = useState(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  });
-  const [gradeFilter, setGradeFilter] = useState<string>('ALL');
-  const [indexFilter, setIndexFilter] = useState<string>('');
-  const [summary, setSummary] = useState<any>(null);
+  const [summary, setSummary] = useState<ScanResponse['summary'] | null>(null);
+  const [source, setSource] = useState('');
+  const [updatedAt, setUpdatedAt] = useState('');
+  const [sortBy, setSortBy] = useState<'score' | 'symbol' | 'revenueYoY' | 'patYoY'>('score');
+  const [filterGrade, setFilterGrade] = useState<string>('ALL');
 
-  const fetchCards = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const params = new URLSearchParams({ month });
-      if (indexFilter) params.set('index', indexFilter);
-      const res = await fetch(`/api/market/earnings-cards?${params}`);
-      const data = await res.json();
+      // Read watchlist from localStorage
+      let watchlist = DEFAULT_WATCHLIST;
+      try {
+        const stored = localStorage.getItem('mc_watchlist_tickers');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            watchlist = parsed;
+          }
+        }
+      } catch {}
+
+      const symbolsParam = watchlist.slice(0, 20).join(',');
+      const res = await fetch(`/api/market/earnings-scan?symbols=${symbolsParam}&debug=true`);
+
+      if (!res.ok) throw new Error(`API error: ${res.status}`);
+
+      const data: ScanResponse = await res.json();
       setCards(data.cards || []);
       setSummary(data.summary || null);
-    } catch (e) {
-      setError(String(e));
-      setCards([]);
+      setSource(data.source || 'unknown');
+      setUpdatedAt(data.updatedAt || new Date().toISOString());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load earnings data');
+      console.error('[Earnings Page]', err);
     } finally {
       setLoading(false);
     }
-  }, [month, indexFilter]);
+  }, []);
 
-  useEffect(() => { fetchCards(); }, [fetchCards]);
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
-  const changeMonth = (delta: number) => {
-    const [y, m] = month.split('-').map(Number);
-    const d = new Date(y, m - 1 + delta, 1);
-    setMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-  };
-
-  const filteredCards = gradeFilter === 'ALL' ? cards :
-    cards.filter(c => c.grade === gradeFilter);
-
-  const [my, mm] = month.split('-').map(Number);
-  const monthLabel = new Date(my, mm - 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+  // Sort and filter
+  const sortedCards = [...cards]
+    .filter(c => filterGrade === 'ALL' || c.grade === filterGrade)
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'symbol': return a.symbol.localeCompare(b.symbol);
+        case 'revenueYoY': return (b.revenueYoY || -999) - (a.revenueYoY || -999);
+        case 'patYoY': return (b.patYoY || -999) - (a.patYoY || -999);
+        default: return b.totalScore - a.totalScore;
+      }
+    });
 
   return (
-    <div style={{ background: BG, minHeight: '100vh', color: TEXT, padding: '20px 24px' }}>
-      {/* Overlay for drawer */}
-      {selectedCard && (
-        <div
-          onClick={() => setSelectedCard(null)}
-          style={{
-            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-            background: 'rgba(0,0,0,0.5)', zIndex: 999,
-          }}
-        />
-      )}
-      {selectedCard && <DetailDrawer card={selectedCard} onClose={() => setSelectedCard(null)} />}
-
+    <div style={{
+      backgroundColor: BG,
+      minHeight: '100vh',
+      padding: '24px',
+      color: TEXT,
+      fontFamily: 'system-ui, -apple-system, sans-serif',
+    }}>
       {/* Header */}
-      <div style={{ marginBottom: 20 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-          <div>
-            <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: TEXT }}>
-              Earnings Results
-            </h1>
-            <p style={{ fontSize: 13, color: TEXT_DIM, margin: '4px 0 0' }}>
-              Quarterly financial results with market reaction analysis
-            </p>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <button onClick={() => changeMonth(-1)} style={{
-              background: CARD, border: `1px solid ${CARD_BORDER}`, borderRadius: 6,
-              color: TEXT, padding: '6px 12px', cursor: 'pointer', fontSize: 16,
-            }}>←</button>
-            <span style={{ fontSize: 16, fontWeight: 600, color: TEXT, minWidth: 160, textAlign: 'center' }}>
-              {monthLabel}
-            </span>
-            <button onClick={() => changeMonth(1)} style={{
-              background: CARD, border: `1px solid ${CARD_BORDER}`, borderRadius: 6,
-              color: TEXT, padding: '6px 12px', cursor: 'pointer', fontSize: 16,
-            }}>→</button>
-          </div>
-        </div>
+      <div style={{ marginBottom: '24px' }}>
+        <h1 style={{ fontSize: '28px', fontWeight: 700, margin: '0 0 8px 0' }}>
+          Earnings Intelligence
+        </h1>
+        <p style={{ color: TEXT_DIM, margin: 0, fontSize: '13px' }}>
+          Watchlist quarterly results with composite scoring &bull; Source: {source || '...'} &bull;{' '}
+          {updatedAt ? new Date(updatedAt).toLocaleString('en-IN') : ''}
+        </p>
       </div>
 
-      {/* Summary bar */}
-      {summary && (
+      {/* Summary Bar */}
+      {summary && !loading && (
         <div style={{
-          display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center',
-          padding: '10px 16px', background: CARD, borderRadius: 8, border: `1px solid ${CARD_BORDER}`,
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+          gap: '12px',
+          marginBottom: '24px',
         }}>
-          <span style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>
-            {summary.total} Results
-          </span>
-          <span style={{ color: CARD_BORDER }}>|</span>
-          <span style={{ fontSize: 13, color: GREEN }}>Strong: {summary.strong}</span>
-          <span style={{ fontSize: 13, color: LIGHT_GREEN }}>Good: {summary.good}</span>
-          <span style={{ fontSize: 13, color: YELLOW }}>OK: {summary.ok}</span>
-          <span style={{ fontSize: 13, color: RED }}>Bad: {summary.bad}</span>
-          <span style={{ color: CARD_BORDER }}>|</span>
-          <span style={{ fontSize: 13, color: TEXT_DIM }}>Avg Score: {summary.avgScore}</span>
-          {summary.dataQualityBreakdown && (
-            <>
-              <span style={{ color: CARD_BORDER }}>|</span>
-              <span style={{ fontSize: 12, color: GREEN }}>Full: {summary.dataQualityBreakdown.full}</span>
-              <span style={{ fontSize: 12, color: YELLOW }}>Partial: {summary.dataQualityBreakdown.partial}</span>
-              <span style={{ fontSize: 12, color: RED }}>Price-only: {summary.dataQualityBreakdown.none}</span>
-            </>
-          )}
-          {summary.niftyReturn !== undefined && summary.niftyReturn !== 0 && (
-            <>
-              <span style={{ color: CARD_BORDER }}>|</span>
-              <span style={{ fontSize: 12, color: TEXT_DIM }}>
-                Nifty: <span style={{ color: summary.niftyReturn > 0 ? GREEN : RED }}>
-                  {summary.niftyReturn > 0 ? '+' : ''}{summary.niftyReturn.toFixed(1)}%
-                </span>
-              </span>
-            </>
-          )}
+          {[
+            { label: 'Total', value: summary.total, color: ACCENT },
+            { label: 'STRONG', value: summary.strong, color: '#00C853' },
+            { label: 'GOOD', value: summary.good, color: '#4CAF50' },
+            { label: 'OK', value: summary.ok, color: '#FFD600' },
+            { label: 'BAD', value: summary.bad, color: '#F44336' },
+            { label: 'Avg Score', value: summary.avgScore, color: ACCENT },
+          ].map(s => (
+            <div key={s.label} style={{
+              backgroundColor: CARD,
+              border: `1px solid ${CARD_BORDER}`,
+              borderRadius: '8px',
+              padding: '12px 16px',
+              textAlign: 'center',
+            }}>
+              <div style={{ fontSize: '10px', color: TEXT_DIM, textTransform: 'uppercase', marginBottom: '4px' }}>
+                {s.label}
+              </div>
+              <div style={{ fontSize: '22px', fontWeight: 700, color: s.color }}>
+                {typeof s.value === 'number' && s.label === 'Avg Score' ? s.value.toFixed(1) : s.value}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
-      {/* Filters */}
+      {/* Filters & Controls */}
       <div style={{
-        display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap',
+        display: 'flex',
+        gap: '12px',
+        marginBottom: '24px',
+        flexWrap: 'wrap',
+        alignItems: 'center',
       }}>
+        {/* Sort */}
+        <select
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value as any)}
+          style={{
+            backgroundColor: CARD,
+            border: `1px solid ${CARD_BORDER}`,
+            color: TEXT,
+            padding: '8px 12px',
+            borderRadius: '6px',
+            fontSize: '13px',
+            cursor: 'pointer',
+          }}
+        >
+          <option value="score">Sort: Score</option>
+          <option value="symbol">Sort: Symbol</option>
+          <option value="revenueYoY">Sort: Revenue YoY</option>
+          <option value="patYoY">Sort: PAT YoY</option>
+        </select>
+
+        {/* Grade filter */}
         {['ALL', 'STRONG', 'GOOD', 'OK', 'BAD'].map(g => (
-          <button key={g} onClick={() => setGradeFilter(g)} style={{
-            padding: '5px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer',
-            background: gradeFilter === g ? ACCENT : CARD,
-            color: gradeFilter === g ? '#fff' : TEXT_DIM,
-            border: `1px solid ${gradeFilter === g ? ACCENT : CARD_BORDER}`,
-          }}>
-            {g === 'ALL' ? 'All' :
-              g === 'STRONG' ? 'Strong' :
-              g === 'GOOD' ? 'Good' :
-              g === 'OK' ? 'OK' : 'Bad'}
+          <button
+            key={g}
+            onClick={() => setFilterGrade(g)}
+            style={{
+              backgroundColor: filterGrade === g ? ACCENT : CARD,
+              border: `1px solid ${filterGrade === g ? ACCENT : CARD_BORDER}`,
+              color: filterGrade === g ? '#000' : TEXT,
+              padding: '8px 14px',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '12px',
+              fontWeight: 600,
+              transition: 'all 0.2s',
+            }}
+          >
+            {g}
           </button>
         ))}
-        <span style={{ width: 1, background: CARD_BORDER, margin: '0 4px' }} />
-        {[
-          { label: 'All', value: '' },
-          { label: 'Nifty 50', value: 'NIFTY50' },
-          { label: 'Nifty 500', value: 'NIFTY500' },
-          { label: 'Midcap', value: 'MIDCAP' },
-          { label: 'Smallcap', value: 'SMALLCAP' },
-        ].map(idx => (
-          <button key={idx.value} onClick={() => setIndexFilter(idx.value)} style={{
-            padding: '5px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer',
-            background: indexFilter === idx.value ? ACCENT : CARD,
-            color: indexFilter === idx.value ? '#fff' : TEXT_DIM,
-            border: `1px solid ${indexFilter === idx.value ? ACCENT : CARD_BORDER}`,
-          }}>
-            {idx.label}
-          </button>
-        ))}
+
+        {/* Refresh */}
+        <button
+          onClick={fetchData}
+          disabled={loading}
+          style={{
+            marginLeft: 'auto',
+            backgroundColor: ACCENT,
+            border: 'none',
+            color: '#000',
+            padding: '8px 16px',
+            borderRadius: '6px',
+            cursor: loading ? 'not-allowed' : 'pointer',
+            fontSize: '13px',
+            fontWeight: 600,
+            opacity: loading ? 0.5 : 1,
+          }}
+        >
+          {loading ? 'Loading...' : 'Refresh'}
+        </button>
       </div>
 
-      {/* Loading / Error */}
-      {loading && (
-        <div style={{ textAlign: 'center', padding: '60px 0', color: TEXT_DIM }}>
-          <div style={{ fontSize: 24, marginBottom: 10 }}>⏳</div>
-          <div>Loading earnings data...</div>
-        </div>
-      )}
-
-      {error && (
+      {/* Data Quality Summary */}
+      {summary && !loading && (
         <div style={{
-          padding: 16, background: `${RED}15`, border: `1px solid ${RED}40`, borderRadius: 8,
-          color: RED, marginBottom: 16,
+          display: 'flex',
+          gap: '16px',
+          marginBottom: '20px',
+          fontSize: '11px',
+          color: TEXT_DIM,
         }}>
-          {error}
+          <span style={{ color: GREEN }}>● Full: {summary.dataQualityBreakdown.full}</span>
+          <span style={{ color: YELLOW }}>● Partial: {summary.dataQualityBreakdown.partial}</span>
+          <span style={{ color: RED }}>● Price Only: {summary.dataQualityBreakdown.priceOnly}</span>
+          <span>Showing {sortedCards.length} of {cards.length}</span>
         </div>
       )}
 
-      {/* Cards grid */}
-      {!loading && filteredCards.length === 0 && !error && (
-        <div style={{ textAlign: 'center', padding: '60px 0', color: TEXT_DIM }}>
-          <div style={{ fontSize: 40, marginBottom: 10 }}>📊</div>
-          <div style={{ fontSize: 16, marginBottom: 6 }}>No earnings results for {monthLabel}</div>
-          <div style={{ fontSize: 13 }}>Try a different month or check back later</div>
+      {/* Loading */}
+      {loading && (
+        <div style={{ textAlign: 'center', padding: '80px 20px' }}>
+          <div style={{
+            width: '44px', height: '44px',
+            border: `3px solid ${CARD_BORDER}`,
+            borderTop: `3px solid ${ACCENT}`,
+            borderRadius: '50%',
+            margin: '0 auto 16px',
+            animation: 'spin 1s linear infinite',
+          }} />
+          <p style={{ color: TEXT_DIM, margin: 0 }}>
+            Scanning quarterly results for watchlist stocks...
+          </p>
+          <p style={{ color: TEXT_DIM, margin: '8px 0 0', fontSize: '12px' }}>
+            This may take 15-30 seconds (fetching from multiple sources)
+          </p>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
       )}
 
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(520px, 1fr))',
-        gap: 16,
-      }}>
-        {filteredCards.map(card => (
-          <EarningsCardComponent
-            key={card.symbol}
-            card={card}
-            onClick={() => setSelectedCard(card)}
-          />
-        ))}
-      </div>
+      {/* Error */}
+      {error && !loading && (
+        <div style={{
+          backgroundColor: `${RED}15`,
+          border: `1px solid ${RED}40`,
+          borderRadius: '8px',
+          padding: '16px',
+          color: RED,
+          marginBottom: '24px',
+        }}>
+          <strong>Error:</strong> {error}
+          <button
+            onClick={fetchData}
+            style={{
+              marginLeft: '12px',
+              backgroundColor: RED,
+              border: 'none',
+              color: '#fff',
+              padding: '4px 12px',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '12px',
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
-      {/* Footer */}
-      <div style={{
-        textAlign: 'center', padding: '24px 0 8px', color: TEXT_DIM, fontSize: 11,
-      }}>
-        Data from NSE India (Live) • {filteredCards.length} results shown • Schema v2
-      </div>
+      {/* Cards Grid */}
+      {!loading && !error && sortedCards.length > 0 && (
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))',
+          gap: '16px',
+        }}>
+          {sortedCards.map(card => (
+            <EarningsCardComponent key={card.symbol} card={card} />
+          ))}
+        </div>
+      )}
+
+      {/* Empty State */}
+      {!loading && !error && sortedCards.length === 0 && (
+        <div style={{
+          backgroundColor: CARD,
+          border: `1px solid ${CARD_BORDER}`,
+          borderRadius: '8px',
+          padding: '60px 20px',
+          textAlign: 'center',
+          color: TEXT_DIM,
+        }}>
+          <div style={{ fontSize: '48px', marginBottom: '16px' }}>📊</div>
+          <p style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: 500 }}>
+            No earnings data available
+          </p>
+          <p style={{ margin: 0, fontSize: '13px' }}>
+            {cards.length > 0
+              ? `${cards.length} cards loaded but none match the "${filterGrade}" filter. Try "ALL".`
+              : 'Add stocks to your watchlist or check back later.'
+            }
+          </p>
+        </div>
+      )}
     </div>
   );
 }

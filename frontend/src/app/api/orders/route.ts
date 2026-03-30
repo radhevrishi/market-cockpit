@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { nseApiFetch, fetchNifty50, fetchNiftyMidcap50, fetchNiftyMidcap100, fetchNiftySmallcap250 } from '@/lib/nse';
+import { nseApiFetch, fetchNifty50, fetchNiftyMidcap50, fetchNiftyMidcap100, fetchNiftySmallcap250, fetchStockQuote } from '@/lib/nse';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
@@ -217,8 +217,10 @@ export async function GET(request: Request): Promise<NextResponse<OrdersResponse
     // 5. Build groups with strict priority deduplication
     const seen = new Set<string>();
 
-    // Group 1: Watchlist
+    // Group 1: Watchlist — fetch individual quotes for stocks not in any index
     const watchlistTickers: OrdersTicker[] = [];
+    const missingSymbols: string[] = [];
+
     for (const sym of watchlist) {
       if (seen.has(sym)) continue;
       seen.add(sym);
@@ -230,23 +232,50 @@ export async function GET(request: Request): Promise<NextResponse<OrdersResponse
         ticker.hasHighSignal = ticker.ordersCount > 0 || Math.abs(ticker.changePct) > 3;
         watchlistTickers.push(ticker);
       } else {
-        // Watchlist stock not in any index — add with minimal data
-        watchlistTickers.push({
-          symbol: sym,
-          company: sym,
-          sector: '',
-          price: 0,
-          changePct: 0,
-          change: 0,
-          volume: 0,
-          volumeAvgRatio: 0,
-          ordersCount: dealCounts.get(sym) || 0,
-          newsCount: 0,
-          hasHighSignal: false,
-          dayHigh: 0,
-          dayLow: 0,
-          previousClose: 0,
-        });
+        missingSymbols.push(sym);
+      }
+    }
+
+    // Fetch individual quotes for watchlist stocks not in any index
+    if (missingSymbols.length > 0) {
+      console.log(`[Orders] Fetching individual quotes for ${missingSymbols.length} missing watchlist stocks: ${missingSymbols.join(',')}`);
+      const quoteBatchSize = 3;
+      for (let i = 0; i < missingSymbols.length; i += quoteBatchSize) {
+        const batch = missingSymbols.slice(i, i + quoteBatchSize);
+        const results = await Promise.all(
+          batch.map(async (sym) => {
+            try {
+              const quoteData = await fetchStockQuote(sym);
+              if (quoteData?.priceInfo) {
+                const pi = quoteData.priceInfo;
+                const info = quoteData.info || {};
+                return {
+                  symbol: sym,
+                  company: info.companyName || quoteData.metadata?.companyName || sym,
+                  sector: info.industry || quoteData.metadata?.industry || '',
+                  price: pi.lastPrice || pi.close || 0,
+                  changePct: pi.pChange || 0,
+                  change: pi.change || 0,
+                  volume: quoteData.securityWiseDP?.quantityTraded || quoteData.preOpenMarket?.totalTradedVolume || 0,
+                  volumeAvgRatio: 0,
+                  ordersCount: dealCounts.get(sym) || 0,
+                  newsCount: 0,
+                  hasHighSignal: (dealCounts.get(sym) || 0) > 0 || Math.abs(pi.pChange || 0) > 3,
+                  dayHigh: pi.intraDayHighLow?.max || 0,
+                  dayLow: pi.intraDayHighLow?.min || 0,
+                  previousClose: pi.previousClose || 0,
+                } as OrdersTicker;
+              }
+              return null;
+            } catch {
+              return null;
+            }
+          })
+        );
+        for (const r of results) {
+          if (r) watchlistTickers.push(r);
+        }
+        if (i + quoteBatchSize < missingSymbols.length) await new Promise(r => setTimeout(r, 200));
       }
     }
 

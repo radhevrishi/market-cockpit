@@ -140,16 +140,11 @@ export default function OrdersPage() {
         }
       }
 
-      if (allOrders.length > 0) {
-        setOrders(allOrders);
-      } else {
-        // Fallback: use mock data if API returned nothing
-        setOrders(generateMockOrders());
-      }
+      setOrders(allOrders);
       setLastUpdated(new Date().toLocaleTimeString());
     } catch (error) {
       console.error('Error fetching orders:', error);
-      setOrders(generateMockOrders());
+      setOrders([]);
       setLastUpdated(new Date().toLocaleTimeString());
     }
     setLoading(false);
@@ -184,10 +179,7 @@ export default function OrdersPage() {
       });
     } catch (error) {
       console.error('Error fetching detail:', error);
-      const mockOrder = orders.find(o => o.ticker === ticker);
-      if (mockOrder) {
-        setDetailData(generateMockDetail(mockOrder));
-      }
+      setDetailData(null);
     }
     setDetailLoading(false);
   }, [orders]);
