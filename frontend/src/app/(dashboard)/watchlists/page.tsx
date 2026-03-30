@@ -310,14 +310,14 @@ export default function WatchlistsPage() {
     }
   }, []);
 
-  // Initial load
+  // Fetch data whenever tickers change (fixes race condition with async init)
   useEffect(() => {
     if (tickers.length > 0) {
       fetchData();
     } else {
       setLoading(false);
     }
-  }, []);
+  }, [tickers, fetchData]);
 
   // Auto-refresh every 60 seconds
   useEffect(() => {

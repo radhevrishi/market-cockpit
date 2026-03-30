@@ -2,18 +2,7 @@ import { NextResponse } from 'next/server';
 import { nseApiFetch } from '@/lib/nse';
 
 export const dynamic = 'force-dynamic';
-
-/**
- * Company News API Endpoint
- * Scrapes and aggregates corporate announcements from NSE India
- *
- * Query Parameters:
- * - symbols: comma-separated ticker symbols (e.g., 'RELIANCE,TCS,INFY')
- * - days: number of days to look back (default: 30, max: 90)
- * - limit: max results per company (default: 10)
- *
- * Returns: Aggregated and categorized news with importance scoring
- */
+export const maxDuration = 55;
 
 interface NewsItem {
   id: string;
@@ -133,160 +122,175 @@ function scoreImportance(
 }
 
 /**
- * Fetch announcements for a specific symbol
+ * Parse NSE date format - handles multiple formats
  */
-async function fetchSymbolAnnouncements(
-  symbol: string,
-  limit: number,
-  daysBack: number
+function parseNSEDate(dateStr: string): Date | null {
+  if (!dateStr) return null;
+  // Try standard JS date parsing first (handles ISO, "28-Mar-2026 17:30:00", etc.)
+  let date = new Date(dateStr);
+  if (!isNaN(date.getTime())) return date;
+  // Try DD-MM-YYYY
+  const ddmmyyyy = dateStr.match(/^(\d{2})-(\d{2})-(\d{4})/);
+  if (ddmmyyyy) {
+    date = new Date(`${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}`);
+    if (!isNaN(date.getTime())) return date;
+  }
+  return null;
+}
+
+/**
+ * Format date as DD-Mon-YYYY for NSE API
+ */
+function formatNSEDate(d: Date): string {
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${String(d.getDate()).padStart(2, '0')}-${months[d.getMonth()]}-${d.getFullYear()}`;
+}
+
+/**
+ * Process a raw NSE announcement item into a NewsItem
+ */
+function processAnnouncement(item: any, idx: number): NewsItem | null {
+  // NSE corporate-announcements fields: sub, desc, an_dt, dt, symbol, company, attchmntText, cat
+  // NSE board-meetings fields: symbol, companyName, meetingInfo, purpose, meetingDate
+  const symbol = item.symbol || item.companySymbol || '';
+  const companyName = item.company || item.companyName || symbol;
+  const headline = item.sub || item.desc || item.meetingInfo || item.purpose || '';
+  const description = item.desc || item.attchmntText || '';
+  const dateStr = item.an_dt || item.dt || item.meetingDate || item.date || '';
+
+  if (!symbol || !headline) return null;
+
+  const itemDate = parseNSEDate(dateStr);
+  if (!itemDate) return null;
+
+  if (isNoise(headline, description)) return null;
+
+  const category = categorizeAnnouncement(headline, description);
+  const importance = scoreImportance(headline, category, description);
+  const id = `${symbol}-${itemDate.toISOString().split('T')[0]}-${idx}`;
+
+  return {
+    id,
+    ticker: symbol,
+    company: companyName,
+    headline: headline.length > 300 ? headline.slice(0, 300) + '...' : headline,
+    description: description.length > 500 ? description.slice(0, 500) + '...' : description,
+    category,
+    date: itemDate.toISOString().split('T')[0],
+    importance,
+    source: 'NSE',
+  };
+}
+
+/**
+ * Fetch bulk corporate announcements from NSE (paginated)
+ * This is more reliable than per-symbol fetching
+ */
+async function fetchBulkAnnouncements(
+  symbolsFilter: Set<string> | null,
+  daysBack: number,
+  maxItems: number
 ): Promise<NewsItem[]> {
-  try {
-    const path = `/api/corporates-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`;
-    const data = await nseApiFetch(path, 300000); // 5 min cache
+  const news: NewsItem[] = [];
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - daysBack);
 
-    if (!data || !data.data || !Array.isArray(data.data)) {
-      console.warn(`No announcement data for ${symbol}`);
-      return [];
+  const fromDate = formatNSEDate(cutoffDate);
+  const toDate = formatNSEDate(new Date());
+
+  console.log(`[Company News] Fetching bulk announcements from ${fromDate} to ${toDate}`);
+
+  // Strategy: Try multiple endpoints for maximum coverage
+  const endpoints = [
+    // 1. Corporate announcements with date range (most data)
+    `/api/corporate-announcements?index=equities&from_date=${fromDate}&to_date=${toDate}`,
+    // 2. Latest corporate announcements (no date filter, returns recent 20-50)
+    `/api/corporate-announcements?index=equities`,
+    // 3. Board meetings (earnings, results)
+    `/api/corporate-board-meetings?index=equities`,
+  ];
+
+  const seenIds = new Set<string>();
+
+  for (const endpoint of endpoints) {
+    if (news.length >= maxItems) break;
+
+    try {
+      // Fetch up to 3 pages from paginated endpoint
+      const maxPages = endpoint.includes('from_date') ? 3 : 1;
+
+      for (let page = 0; page < maxPages; page++) {
+        const pageSuffix = endpoint.includes('from_date') ? `&page=${page}` : '';
+        const data = await nseApiFetch(`${endpoint}${pageSuffix}`, 300000);
+
+        if (!data) {
+          console.warn(`[Company News] No data from ${endpoint} page ${page}`);
+          break;
+        }
+
+        // Handle different response structures
+        const items = Array.isArray(data) ? data : (data?.data || []);
+        if (!Array.isArray(items) || items.length === 0) {
+          console.warn(`[Company News] Empty items from ${endpoint} page ${page}`);
+          break;
+        }
+
+        console.log(`[Company News] Got ${items.length} items from ${endpoint} page ${page}`);
+
+        let idx = news.length;
+        for (const item of items) {
+          const processed = processAnnouncement(item, idx++);
+          if (!processed) continue;
+
+          // Date filter
+          const itemDate = new Date(processed.date);
+          if (itemDate < cutoffDate) continue;
+
+          // Symbol filter (if specified)
+          if (symbolsFilter && !symbolsFilter.has(processed.ticker)) continue;
+
+          // Dedup
+          const dedupKey = `${processed.ticker}-${processed.headline.slice(0, 50)}-${processed.date}`;
+          if (seenIds.has(dedupKey)) continue;
+          seenIds.add(dedupKey);
+
+          news.push(processed);
+        }
+
+        // If fewer than 20 items, likely no more pages
+        if (items.length < 20) break;
+      }
+    } catch (error) {
+      console.error(`[Company News] Error fetching ${endpoint}:`, error);
     }
+  }
 
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - daysBack);
+  // If we still got nothing from bulk endpoints, try per-symbol as last resort
+  if (news.length === 0 && symbolsFilter && symbolsFilter.size <= 10) {
+    console.log(`[Company News] Bulk failed, trying per-symbol for ${symbolsFilter.size} symbols`);
+    const symbols = [...symbolsFilter];
 
-    const news: NewsItem[] = [];
-
-    for (const item of data.data) {
-      if (news.length >= limit) break;
-
-      const headline = item.sub || item.desc || '';
-      const description = item.desc || item.attchmntText || '';
-      const dateStr = item.an_dt || item.dt || '';
-      const companyName = item.company || symbol;
-
-      if (!headline || !dateStr) continue;
-
-      // Parse date
-      let itemDate: Date;
+    for (const symbol of symbols.slice(0, 5)) {
       try {
-        // Try DD-MMM-YYYY format first
-        itemDate = parseNSEDate(dateStr);
-      } catch {
-        continue;
-      }
-
-      // Filter by date
-      if (itemDate < cutoffDate) {
-        continue;
-      }
-
-      // Filter noise
-      if (isNoise(headline, description)) {
-        continue;
-      }
-
-      // Categorize and score
-      const category = categorizeAnnouncement(headline, description);
-      const importance = scoreImportance(headline, category, description);
-
-      const id = `${symbol}-${itemDate.toISOString().split('T')[0]}-${news.length}`;
-
-      news.push({
-        id,
-        ticker: symbol,
-        company: companyName,
-        headline,
-        description,
-        category,
-        date: itemDate.toISOString().split('T')[0],
-        importance,
-        source: 'NSE',
-      });
+        const data = await nseApiFetch(
+          `/api/corporates-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`,
+          300000
+        );
+        if (!data) continue;
+        const items = Array.isArray(data) ? data : (data?.data || []);
+        let idx = news.length;
+        for (const item of items.slice(0, 10)) {
+          const processed = processAnnouncement(item, idx++);
+          if (!processed) continue;
+          const itemDate = new Date(processed.date);
+          if (itemDate < cutoffDate) continue;
+          news.push(processed);
+        }
+      } catch {}
     }
-
-    return news;
-  } catch (error) {
-    console.error(`Error fetching announcements for ${symbol}:`, error);
-    return [];
   }
-}
 
-/**
- * Parse NSE date format (DD-MMM-YYYY)
- */
-function parseNSEDate(dateStr: string): Date {
-  const date = new Date(dateStr);
-  if (isNaN(date.getTime())) {
-    throw new Error(`Invalid date: ${dateStr}`);
-  }
-  return date;
-}
-
-/**
- * Fetch all tracked equities (fallback for empty symbols)
- */
-async function fetchAllEquitiesNews(limit: number, daysBack: number): Promise<NewsItem[]> {
-  try {
-    const path = '/api/corporate-board-meetings?index=equities';
-    const data = await nseApiFetch(path, 300000); // 5 min cache
-
-    if (!data || !data.data || !Array.isArray(data.data)) {
-      console.warn('No board meetings data available');
-      return [];
-    }
-
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - daysBack);
-
-    const news: NewsItem[] = [];
-
-    // Limit to recent 50 board meetings when no symbols specified
-    for (let i = 0; i < Math.min(50, data.data.length); i++) {
-      if (news.length >= limit * 5) break; // Reasonable upper limit
-
-      const item = data.data[i];
-      const symbol = item.symbol || item.companySymbol || '';
-      const companyName = item.companyName || symbol;
-      const headline = item.meetingInfo || item.purpose || 'Board Meeting';
-      const dateStr = item.meetingDate || item.date || '';
-
-      if (!symbol || !dateStr) continue;
-
-      let itemDate: Date;
-      try {
-        itemDate = parseNSEDate(dateStr);
-      } catch {
-        continue;
-      }
-
-      if (itemDate < cutoffDate) {
-        continue;
-      }
-
-      if (isNoise(headline)) {
-        continue;
-      }
-
-      const category = 'Board Meeting';
-      const importance = 'medium' as const;
-      const id = `${symbol}-${itemDate.toISOString().split('T')[0]}-${news.length}`;
-
-      news.push({
-        id,
-        ticker: symbol,
-        company: companyName,
-        headline,
-        description: '',
-        category,
-        date: itemDate.toISOString().split('T')[0],
-        importance,
-        source: 'NSE',
-      });
-    }
-
-    return news;
-  } catch (error) {
-    console.error('Error fetching all equities announcements:', error);
-    return [];
-  }
+  return news;
 }
 
 /**
@@ -324,27 +328,11 @@ export async function GET(request: Request): Promise<NextResponse<AnnouncementDa
 
     console.log(`[Company News] Query: symbols=${symbols.length > 0 ? symbols.join(',') : 'ALL'}, days=${days}, limit=${limit}`);
 
-    let allNews: NewsItem[] = [];
+    // Fetch all announcements in bulk, optionally filtering by symbols
+    const symbolsFilter = symbols.length > 0 ? new Set(symbols) : null;
+    const maxItems = symbols.length > 0 ? symbols.length * limit : 200;
 
-    if (symbols.length === 0) {
-      // Fetch for all equities (recent 50)
-      console.log('[Company News] Fetching news for all tracked equities');
-      allNews = await fetchAllEquitiesNews(limit, days);
-    } else {
-      // Fetch for specific symbols
-      console.log(`[Company News] Fetching news for ${symbols.length} specific symbols`);
-
-      const newsPromises = symbols.map(symbol =>
-        fetchSymbolAnnouncements(symbol, limit, days)
-          .catch(error => {
-            console.error(`Error processing ${symbol}:`, error);
-            return [];
-          })
-      );
-
-      const results = await Promise.all(newsPromises);
-      allNews = results.flat();
-    }
+    let allNews = await fetchBulkAnnouncements(symbolsFilter, days, maxItems);
 
     // Aggregate by company
     const newsByCompany = new Map<string, NewsItem[]>();
@@ -400,7 +388,6 @@ export async function GET(request: Request): Promise<NextResponse<AnnouncementDa
     const duration = Date.now() - startTime;
     console.error(`[Company News] Fatal error after ${duration}ms:`, error);
 
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json(
       {
         news: [],
@@ -417,110 +404,53 @@ export async function GET(request: Request): Promise<NextResponse<AnnouncementDa
 }
 
 /**
- * Optional POST handler for batch requests
+ * POST handler for batch requests
  * Body: { symbols: string[], days?: number, limit?: number }
  */
 export async function POST(request: Request): Promise<NextResponse<AnnouncementData>> {
-  const startTime = Date.now();
-
   try {
     const body = await request.json();
     const { symbols = [], days = 30, limit = 10 } = body;
-
-    if (!Array.isArray(symbols)) {
-      return NextResponse.json(
-        {
-          news: [],
-          summary: { totalItems: 0, companiesCovered: 0, topCategories: [] },
-          updatedAt: new Date().toISOString(),
-        },
-        { status: 400 }
-      );
-    }
-
-    const validSymbols = symbols
-      .map((s: string) => (typeof s === 'string' ? s.trim().toUpperCase() : ''))
-      .filter(s => /^[A-Z0-9&-]+$/.test(s));
-
+    const validSymbols = (Array.isArray(symbols) ? symbols : [])
+      .map((s: string) => String(s).trim().toUpperCase())
+      .filter((s: string) => /^[A-Z0-9&-]+$/.test(s));
     const validDays = Math.min(Math.max(parseInt(String(days)) || 30, 1), 90);
     const validLimit = Math.min(Math.max(parseInt(String(limit)) || 10, 1), 50);
 
-    console.log(`[Company News POST] Query: symbols=${validSymbols.join(',')}, days=${validDays}, limit=${validLimit}`);
+    const symbolsFilter = validSymbols.length > 0 ? new Set(validSymbols) : null;
+    const allNews = await fetchBulkAnnouncements(symbolsFilter, validDays, validSymbols.length * validLimit || 200);
 
-    let allNews: NewsItem[] = [];
-
-    if (validSymbols.length === 0) {
-      allNews = await fetchAllEquitiesNews(validLimit, validDays);
-    } else {
-      const newsPromises = validSymbols.map(symbol =>
-        fetchSymbolAnnouncements(symbol, validLimit, validDays)
-          .catch(error => {
-            console.error(`Error processing ${symbol}:`, error);
-            return [];
-          })
-      );
-
-      const results = await Promise.all(newsPromises);
-      allNews = results.flat();
-    }
-
-    // Aggregate and limit
+    // Aggregate, limit, sort
     const newsByCompany = new Map<string, NewsItem[]>();
     for (const item of allNews) {
-      const key = item.ticker;
-      if (!newsByCompany.has(key)) {
-        newsByCompany.set(key, []);
-      }
-      newsByCompany.get(key)!.push(item);
+      if (!newsByCompany.has(item.ticker)) newsByCompany.set(item.ticker, []);
+      newsByCompany.get(item.ticker)!.push(item);
     }
-
     const limitedNews: NewsItem[] = [];
     for (const companyNews of newsByCompany.values()) {
-      const sorted = companyNews.sort((a, b) =>
-        new Date(b.date).getTime() - new Date(a.date).getTime()
-      );
-      limitedNews.push(...sorted.slice(0, validLimit));
+      companyNews.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      limitedNews.push(...companyNews.slice(0, validLimit));
     }
-
-    limitedNews.sort((a, b) =>
-      new Date(b.date).getTime() - new Date(a.date).getTime()
-    );
+    limitedNews.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     const categoryCounts: Record<string, number> = {};
-    for (const item of limitedNews) {
-      categoryCounts[item.category] = (categoryCounts[item.category] || 0) + 1;
-    }
+    for (const item of limitedNews) categoryCounts[item.category] = (categoryCounts[item.category] || 0) + 1;
 
-    const sortedCategories = Object.entries(categoryCounts)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
-      .map(([cat]) => cat);
-
-    const response: AnnouncementData = {
+    return NextResponse.json({
       news: limitedNews,
       summary: {
         totalItems: limitedNews.length,
         companiesCovered: newsByCompany.size,
-        topCategories: sortedCategories,
+        topCategories: Object.entries(categoryCounts).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([c]) => c),
       },
       updatedAt: new Date().toISOString(),
-    };
-
-    const duration = Date.now() - startTime;
-    console.log(`[Company News POST] Success: ${response.news.length} items in ${duration}ms`);
-
-    return NextResponse.json(response);
+    });
   } catch (error) {
-    const duration = Date.now() - startTime;
-    console.error(`[Company News POST] Fatal error after ${duration}ms:`, error);
-
-    return NextResponse.json(
-      {
-        news: [],
-        summary: { totalItems: 0, companiesCovered: 0, topCategories: [] },
-        updatedAt: new Date().toISOString(),
-      },
-      { status: 500 }
-    );
+    console.error('[Company News POST] Error:', error);
+    return NextResponse.json({
+      news: [],
+      summary: { totalItems: 0, companiesCovered: 0, topCategories: [] },
+      updatedAt: new Date().toISOString(),
+    }, { status: 500 });
   }
 }
