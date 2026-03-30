@@ -355,11 +355,62 @@ export async function GET(request: Request): Promise<NextResponse<AnnouncementDa
 
     console.log(`[Company News] Query: symbols=${symbols.length > 0 ? symbols.join(',') : 'ALL'}, days=${days}, limit=${limit}`);
 
-    // Fetch all announcements in bulk, optionally filtering by symbols
+    // Strategy: If specific symbols requested, fetch per-symbol FIRST (more reliable),
+    // then fill remaining from bulk. If no symbols, just use bulk (all companies).
     const symbolsFilter = symbols.length > 0 ? new Set(symbols) : null;
     const maxItems = symbols.length > 0 ? symbols.length * limit : 200;
 
-    let allNews = await fetchBulkAnnouncements(symbolsFilter, days, maxItems);
+    let allNews: NewsItem[] = [];
+
+    if (symbols.length > 0) {
+      // Per-symbol fetch is primary strategy when watchlist is specified
+      // Bulk NSE endpoints return random recent filings, rarely matching specific stocks
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - days);
+
+      // Fetch per-symbol announcements for up to 10 watchlist stocks
+      const batchSize = 3;
+      for (let i = 0; i < Math.min(symbols.length, 10); i += batchSize) {
+        const batch = symbols.slice(i, i + batchSize);
+        const results = await Promise.all(
+          batch.map(async (symbol) => {
+            try {
+              const data = await nseApiFetch(
+                `/api/corporates-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`,
+                300000
+              );
+              if (!data) return [];
+              const items = Array.isArray(data) ? data : (data?.data || []);
+              const processed: NewsItem[] = [];
+              let idx = allNews.length + processed.length;
+              for (const item of items.slice(0, 15)) {
+                const p = processAnnouncement(item, idx++);
+                if (!p) continue;
+                const itemDate = new Date(p.date);
+                if (itemDate < cutoffDate) continue;
+                processed.push(p);
+              }
+              return processed;
+            } catch {
+              return [];
+            }
+          })
+        );
+        allNews.push(...results.flat());
+        if (i + batchSize < symbols.length) await new Promise(r => setTimeout(r, 200));
+      }
+
+      console.log(`[Company News] Per-symbol fetch: ${allNews.length} items for ${symbols.length} symbols`);
+
+      // If per-symbol gave nothing, try bulk as fallback (without symbol filter)
+      if (allNews.length === 0) {
+        console.log(`[Company News] Per-symbol empty, falling back to bulk (unfiltered)`);
+        allNews = await fetchBulkAnnouncements(null, days, maxItems);
+      }
+    } else {
+      // No symbols specified — fetch all corporate news in bulk
+      allNews = await fetchBulkAnnouncements(null, days, maxItems);
+    }
 
     // Aggregate by company
     const newsByCompany = new Map<string, NewsItem[]>();
