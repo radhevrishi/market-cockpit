@@ -150,13 +150,15 @@ function formatNSEDate(d: Date): string {
  * Process a raw NSE announcement item into a NewsItem
  */
 function processAnnouncement(item: any, idx: number): NewsItem | null {
-  // NSE corporate-announcements fields: sub, desc, an_dt, dt, symbol, company, attchmntText, cat
-  // NSE board-meetings fields: symbol, companyName, meetingInfo, purpose, meetingDate
-  const symbol = item.symbol || item.companySymbol || '';
-  const companyName = item.company || item.companyName || symbol;
-  const headline = item.sub || item.desc || item.meetingInfo || item.purpose || '';
-  const description = item.desc || item.attchmntText || '';
-  const dateStr = item.an_dt || item.dt || item.meetingDate || item.date || '';
+  // NSE has many different response formats across endpoints:
+  // corporate-announcements: sub, desc, an_dt, dt, symbol, company, attchmntText, cat
+  // board-meetings: symbol, companyName, bm_purpose, bm_desc, bm_date, purpose, meetingDate
+  // financial-results: symbol, companyName, relatingTo, broadcastDtTime, xbrl
+  const symbol = item.symbol || item.companySymbol || item.SYMBOL || '';
+  const companyName = item.company || item.companyName || item.COMPANY || symbol;
+  const headline = item.sub || item.desc || item.bm_purpose || item.bm_desc || item.meetingInfo || item.purpose || item.relatingTo || item.subject || '';
+  const description = item.desc || item.attchmntText || item.bm_desc || item.description || '';
+  const dateStr = item.an_dt || item.dt || item.bm_date || item.meetingDate || item.broadcastDtTime || item.date || '';
 
   if (!symbol || !headline) return null;
 
@@ -202,12 +204,14 @@ async function fetchBulkAnnouncements(
 
   // Strategy: Try multiple endpoints for maximum coverage
   const endpoints = [
-    // 1. Corporate announcements with date range (most data)
-    `/api/corporate-announcements?index=equities&from_date=${fromDate}&to_date=${toDate}`,
-    // 2. Latest corporate announcements (no date filter, returns recent 20-50)
-    `/api/corporate-announcements?index=equities`,
-    // 3. Board meetings (earnings, results)
+    // 1. Board meetings - most reliable, returns meeting dates & purposes
     `/api/corporate-board-meetings?index=equities`,
+    // 2. Latest corporate announcements (no date filter)
+    `/api/corporate-announcements?index=equities`,
+    // 3. Corporate announcements with date range
+    `/api/corporate-announcements?index=equities&from_date=${fromDate}&to_date=${toDate}`,
+    // 4. Financial results
+    `/api/corporates-financial-results?index=equities`,
   ];
 
   const seenIds = new Set<string>();
@@ -228,12 +232,35 @@ async function fetchBulkAnnouncements(
           break;
         }
 
-        // Handle different response structures
-        const items = Array.isArray(data) ? data : (data?.data || []);
-        if (!Array.isArray(items) || items.length === 0) {
+        // Handle many possible response structures from NSE
+        let items: any[] = [];
+        if (Array.isArray(data)) {
+          items = data;
+        } else if (data?.data && Array.isArray(data.data)) {
+          items = data.data;
+        } else if (data?.result && Array.isArray(data.result)) {
+          items = data.result;
+        } else {
+          // Log the actual keys we received for debugging
+          const keys = Object.keys(data || {}).join(',');
+          console.warn(`[Company News] Unknown structure from ${endpoint}: keys=[${keys}], type=${typeof data}`);
+          // Try all array-valued properties
+          for (const key of Object.keys(data || {})) {
+            if (Array.isArray(data[key]) && data[key].length > 0) {
+              items = data[key];
+              console.log(`[Company News] Found items in key '${key}': ${items.length} items`);
+              break;
+            }
+          }
+        }
+
+        if (items.length === 0) {
           console.warn(`[Company News] Empty items from ${endpoint} page ${page}`);
           break;
         }
+
+        console.log(`[Company News] Got ${items.length} items from ${endpoint} page ${page}, first item keys: ${Object.keys(items[0] || {}).join(',')}`);
+
 
         console.log(`[Company News] Got ${items.length} items from ${endpoint} page ${page}`);
 
