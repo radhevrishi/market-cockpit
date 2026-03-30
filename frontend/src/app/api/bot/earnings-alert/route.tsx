@@ -6,7 +6,8 @@ export const maxDuration = 55;
 
 // ══════════════════════════════════════════════
 // EARNINGS ALERT BOT — Telegram Image Cards
-// Sends earnings results as formatted image cards
+// SINGLE SOURCE OF TRUTH: Consumes /api/market/earnings-cards (same as UI)
+// Never uses a different data pipeline than the earnings page.
 // ══════════════════════════════════════════════
 
 const BOT_TOKEN = '8681784264:AAG7OV3ibS4r89Lbrta50NkWnJSCTrtoS80';
@@ -14,49 +15,60 @@ const API_BASE = process.env.VERCEL_URL
   ? `https://${process.env.VERCEL_URL}`
   : 'https://market-cockpit.vercel.app';
 
-// Chat IDs for different channels
-const WATCHLIST_CHAT_ID = '5057319640'; // User's watchlist chat
-const INDEX_CHAT_ID = '5057319640';     // Index earnings (same user for now)
+const WATCHLIST_CHAT_ID = '5057319640';
+const INDEX_CHAT_ID = '5057319640';
 
-// Dedup: track sent earnings
 const sentEarnings = new Set<string>();
+
+// ── Types (must match /api/market/earnings-cards v4 schema) ──
+
+type DataQuality = 'FULL' | 'PARTIAL' | 'NONE';
+
+interface CardFromAPI {
+  symbol: string;
+  company: string;
+  period: string;
+  resultDate: string;
+  reportType: string;
+  sector: string;
+  marketCap: string;
+  qualityScore: number;
+  grade: 'STRONG' | 'GOOD' | 'OK' | 'BAD';
+  gradeColor: string;
+  price: {
+    cmp: number;
+    prevClose: number | null;
+    changePct: number;
+    excessReturn: number | null;
+    indexReturn: number | null;
+  };
+  financials: {
+    revenue: number | null;
+    operatingProfit: number | null;
+    opm: number | null;
+    pat: number | null;
+    npm: number | null;
+    eps: number | null;
+    revenueYoY: number | null;
+    opProfitYoY: number | null;
+    patYoY: number | null;
+    epsYoY: number | null;
+    revenueQoQ: number | null;
+    opProfitQoQ: number | null;
+    patQoQ: number | null;
+    epsQoQ: number | null;
+  };
+  dataQuality: DataQuality;
+  mcap: number | null;
+  pe: number | null;
+  resultLink: string | null;
+  nseLink: string;
+  source: string;
+}
 
 // ══════════════════════════════════════════════
 // GENERATE EARNINGS IMAGE CARD
 // ══════════════════════════════════════════════
-
-interface CardData {
-  symbol: string;
-  company: string;
-  resultDate: string;
-  quarter: string;
-  reportType: string;
-  revenueYoY: number | null;
-  revenueQoQ: number | null;
-  opProfitYoY: number | null;
-  opProfitQoQ: number | null;
-  patYoY: number | null;
-  patQoQ: number | null;
-  epsYoY: number | null;
-  epsQoQ: number | null;
-  revenue: number;
-  operatingProfit: number;
-  opm: number;
-  pat: number;
-  npm: number;
-  eps: number;
-  mcap: number | null;
-  pe: number | null;
-  grade: string;
-  gradeColor: string;
-  signalScore: number;
-}
-
-function fmtNum(n: number): string {
-  if (n === 0) return '—';
-  if (Math.abs(n) >= 1000) return n.toLocaleString('en-IN', { maximumFractionDigits: 0 });
-  return n.toFixed(1);
-}
 
 function pctStr(val: number | null): string {
   if (val === null || val === undefined) return '—';
@@ -70,17 +82,36 @@ function pctColor(val: number | null): string {
   return '#FFD600';
 }
 
-async function generateEarningsImage(card: CardData): Promise<ArrayBuffer> {
-  const rows = [
-    { label: 'Revenue Cr', yoy: card.revenueYoY, qoq: card.revenueQoQ, val: card.revenue },
-    { label: 'Op. Profit Cr', yoy: card.opProfitYoY, qoq: card.opProfitQoQ, val: card.operatingProfit },
-    { label: 'OPM %', yoy: null, qoq: null, val: card.opm, isPercent: true },
-    { label: 'PAT Cr', yoy: card.patYoY, qoq: card.patQoQ, val: card.pat },
-    { label: 'NPM %', yoy: null, qoq: null, val: card.npm, isPercent: true },
-    { label: 'EPS ₹', yoy: card.epsYoY, qoq: card.epsQoQ, val: card.eps },
-  ];
+function fmtNum(n: number | null): string {
+  if (n === null || n === 0) return '—';
+  if (Math.abs(n) >= 1000) return n.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+  return n.toFixed(1);
+}
 
+const DATA_QUALITY_LABEL: Record<DataQuality, { emoji: string; text: string }> = {
+  FULL: { emoji: '🟢', text: 'Full Data' },
+  PARTIAL: { emoji: '🟡', text: 'Partial' },
+  NONE: { emoji: '🔴', text: 'Price Only' },
+};
+
+async function generateEarningsImage(card: CardFromAPI): Promise<ArrayBuffer> {
+  const hasFin = card.dataQuality !== 'NONE';
+  const fin = card.financials;
+  const dq = DATA_QUALITY_LABEL[card.dataQuality];
   const gradeEmoji = card.grade === 'STRONG' ? '🟢' : card.grade === 'GOOD' ? '🟢' : card.grade === 'OK' ? '🟡' : '🔴';
+  const exRet = card.price.excessReturn;
+
+  // Build rows for the financial table
+  const rows = hasFin ? [
+    { label: 'Revenue Cr', yoy: fin.revenueYoY, qoq: fin.revenueQoQ, val: fin.revenue },
+    { label: 'Op. Profit Cr', yoy: fin.opProfitYoY, qoq: fin.opProfitQoQ, val: fin.operatingProfit },
+    { label: 'OPM %', yoy: null, qoq: null, val: fin.opm, isPercent: true },
+    { label: 'PAT Cr', yoy: fin.patYoY, qoq: fin.patQoQ, val: fin.pat },
+    { label: 'NPM %', yoy: null, qoq: null, val: fin.npm, isPercent: true },
+    { label: 'EPS ₹', yoy: fin.epsYoY, qoq: fin.epsQoQ, val: fin.eps },
+  ] : null;
+
+  const cardHeight = hasFin ? 340 : 240;
 
   const img = new ImageResponse(
     (
@@ -93,70 +124,119 @@ async function generateEarningsImage(card: CardData): Promise<ArrayBuffer> {
         {/* Header */}
         <div style={{
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          padding: '16px 20px', borderBottom: '1px solid #1A2540',
+          padding: '14px 20px', borderBottom: '1px solid #1A2540',
         }}>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '18px', fontWeight: 700 }}>{card.company}</span>
+              <span style={{ fontSize: '17px', fontWeight: 700 }}>{card.company}</span>
               <span style={{
-                padding: '2px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 700,
+                padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700,
                 background: `${card.gradeColor}25`, color: card.gradeColor,
                 border: `1px solid ${card.gradeColor}60`,
               }}>{gradeEmoji} {card.grade}</span>
+              <span style={{
+                padding: '2px 6px', borderRadius: '3px', fontSize: '10px', fontWeight: 600,
+                background: card.dataQuality === 'FULL' ? '#00C85315' : card.dataQuality === 'PARTIAL' ? '#FFD60015' : '#F4433615',
+                color: card.dataQuality === 'FULL' ? '#00C853' : card.dataQuality === 'PARTIAL' ? '#FFD600' : '#F44336',
+              }}>{dq.emoji} {dq.text}</span>
             </div>
-            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '4px', alignItems: 'center' }}>
               <span style={{
                 padding: '1px 6px', borderRadius: '3px', fontSize: '11px',
                 background: '#0F7ABF20', color: '#0F7ABF',
               }}>{card.reportType}</span>
-              <span style={{ fontSize: '11px', color: '#8899AA' }}>{card.quarter}</span>
+              <span style={{ fontSize: '11px', color: '#8899AA' }}>{card.period}</span>
+              {exRet !== null && (
+                <span style={{
+                  padding: '1px 6px', borderRadius: '3px', fontSize: '10px',
+                  background: exRet > 0 ? '#00C85315' : exRet < 0 ? '#F4433615' : '#FFD60015',
+                  color: exRet > 0 ? '#00C853' : exRet < 0 ? '#F44336' : '#FFD600',
+                }}>vs Nifty: {exRet > 0 ? '+' : ''}{exRet.toFixed(1)}%</span>
+              )}
             </div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
             <span style={{ fontSize: '13px', color: '#8899AA' }}>{card.resultDate}</span>
-            <span style={{ fontSize: '11px', color: '#0F7ABF' }}>Score: {card.signalScore}/100</span>
+            <span style={{ fontSize: '11px', color: '#0F7ABF' }}>Score: {card.qualityScore}/100</span>
           </div>
         </div>
 
-        {/* Table header */}
-        <div style={{
-          display: 'flex', padding: '8px 20px', background: '#0A1628',
-          fontSize: '11px', color: '#8899AA', fontWeight: 500,
-        }}>
-          <span style={{ flex: '1' }}></span>
-          <span style={{ width: '80px', textAlign: 'right' }}>YoY</span>
-          <span style={{ width: '80px', textAlign: 'right' }}>QoQ</span>
-          <span style={{ width: '80px', textAlign: 'right' }}>Value</span>
-        </div>
+        {/* Financial Table (when available) */}
+        {rows && (
+          <>
+            <div style={{
+              display: 'flex', padding: '8px 20px', background: '#0A1628',
+              fontSize: '11px', color: '#8899AA', fontWeight: 500,
+            }}>
+              <span style={{ flex: '1' }}></span>
+              <span style={{ width: '80px', textAlign: 'right' }}>YoY</span>
+              <span style={{ width: '80px', textAlign: 'right' }}>QoQ</span>
+              <span style={{ width: '80px', textAlign: 'right' }}>Value</span>
+            </div>
+            {rows.map((row, i) => (
+              <div key={i} style={{
+                display: 'flex', padding: '8px 20px', alignItems: 'center',
+                borderTop: '1px solid #1A2540',
+                background: i % 2 === 0 ? 'transparent' : '#0A162810',
+              }}>
+                <span style={{ flex: '1', fontSize: '13px', fontWeight: 500 }}>{row.label}</span>
+                <span style={{
+                  width: '80px', textAlign: 'right', fontSize: '13px', fontWeight: 600,
+                  color: pctColor(row.yoy),
+                }}>{pctStr(row.yoy)}</span>
+                <span style={{
+                  width: '80px', textAlign: 'right', fontSize: '13px', fontWeight: 600,
+                  color: pctColor(row.qoq),
+                }}>{pctStr(row.qoq)}</span>
+                <span style={{
+                  width: '80px', textAlign: 'right', fontSize: '13px', fontWeight: 600,
+                  color: '#E8ECF1',
+                }}>
+                  {row.isPercent
+                    ? (row.val !== null ? `${row.val.toFixed(1)}%` : '—')
+                    : fmtNum(row.val)}
+                </span>
+              </div>
+            ))}
+          </>
+        )}
 
-        {/* Rows */}
-        {rows.map((row, i) => (
-          <div key={i} style={{
-            display: 'flex', padding: '8px 20px', alignItems: 'center',
-            borderTop: '1px solid #1A2540',
-            background: i % 2 === 0 ? 'transparent' : '#0A162810',
+        {/* Price Reaction (when no financials) */}
+        {!rows && (
+          <div style={{
+            display: 'flex', padding: '16px 20px', gap: '12px',
           }}>
-            <span style={{ flex: '1', fontSize: '13px', fontWeight: 500 }}>{row.label}</span>
-            <span style={{
-              width: '80px', textAlign: 'right', fontSize: '13px', fontWeight: 600,
-              color: pctColor(row.yoy),
+            <div style={{
+              flex: 1, background: '#0A1628', borderRadius: '8px', padding: '12px',
+              border: '1px solid #1A2540', textAlign: 'center',
             }}>
-              {pctStr(row.yoy)}
-            </span>
-            <span style={{
-              width: '80px', textAlign: 'right', fontSize: '13px', fontWeight: 600,
-              color: pctColor(row.qoq),
+              <div style={{ fontSize: '11px', color: '#8899AA', marginBottom: '4px' }}>Price Move</div>
+              <div style={{
+                fontSize: '22px', fontWeight: 700,
+                color: card.price.changePct > 0 ? '#00C853' : card.price.changePct < 0 ? '#F44336' : '#E8ECF1',
+              }}>{card.price.changePct > 0 ? '+' : ''}{card.price.changePct.toFixed(1)}%</div>
+            </div>
+            <div style={{
+              flex: 1, background: '#0A1628', borderRadius: '8px', padding: '12px',
+              border: '1px solid #1A2540', textAlign: 'center',
             }}>
-              {pctStr(row.qoq)}
-            </span>
-            <span style={{
-              width: '80px', textAlign: 'right', fontSize: '13px', fontWeight: 600,
-              color: '#E8ECF1',
+              <div style={{ fontSize: '11px', color: '#8899AA', marginBottom: '4px' }}>vs Nifty 50</div>
+              <div style={{
+                fontSize: '22px', fontWeight: 700,
+                color: (exRet ?? 0) > 0 ? '#00C853' : (exRet ?? 0) < 0 ? '#F44336' : '#E8ECF1',
+              }}>{(exRet ?? 0) > 0 ? '+' : ''}{(exRet ?? 0).toFixed(1)}%</div>
+            </div>
+            <div style={{
+              flex: 1, background: '#0A1628', borderRadius: '8px', padding: '12px',
+              border: '1px solid #1A2540', textAlign: 'center',
             }}>
-              {row.isPercent ? `${row.val.toFixed(1)}%` : fmtNum(row.val)}
-            </span>
+              <div style={{ fontSize: '11px', color: '#8899AA', marginBottom: '4px' }}>CMP</div>
+              <div style={{ fontSize: '20px', fontWeight: 700, color: '#E8ECF1' }}>
+                ₹{card.price.cmp.toLocaleString('en-IN')}
+              </div>
+            </div>
           </div>
-        ))}
+        )}
 
         {/* Footer */}
         <div style={{
@@ -172,7 +252,7 @@ async function generateEarningsImage(card: CardData): Promise<ArrayBuffer> {
         </div>
       </div>
     ),
-    { width: 600, height: 340 }
+    { width: 600, height: cardHeight }
   );
 
   return img.arrayBuffer();
@@ -206,28 +286,43 @@ async function sendTelegramText(chatId: string, text: string) {
 }
 
 // ══════════════════════════════════════════════
-// FORMAT TEXT ALERT (fallback for image failures)
+// FORMAT TEXT ALERT (fallback + same data pipeline)
 // ══════════════════════════════════════════════
 
-function formatEarningsText(card: CardData): string {
+function formatEarningsText(card: CardFromAPI): string {
   const gradeEmoji = card.grade === 'STRONG' ? '🟢' : card.grade === 'GOOD' ? '🟢' : card.grade === 'OK' ? '🟡' : '🔴';
+  const dq = DATA_QUALITY_LABEL[card.dataQuality];
   const p = (v: number | null) => v === null ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(1)}%`;
+  const fin = card.financials;
+  const exRet = card.price.excessReturn;
 
-  return `<b>${card.company} – ${card.quarter}</b>
+  let text = `<b>${card.company} – ${card.period}</b>\n`;
+  text += `${dq.emoji} ${dq.text}\n\n`;
 
-Revenue: ${p(card.revenueYoY)} YoY | ${p(card.revenueQoQ)} QoQ
-Op. Profit: ${p(card.opProfitYoY)} YoY | ${p(card.opProfitQoQ)} QoQ
-PAT: ${p(card.patYoY)} YoY | ${p(card.patQoQ)} QoQ
-EPS: ${p(card.epsYoY)} YoY | ${p(card.epsQoQ)} QoQ
+  if (card.dataQuality !== 'NONE') {
+    text += `Revenue: ${p(fin.revenueYoY)} YoY | ${p(fin.revenueQoQ)} QoQ\n`;
+    text += `Op. Profit: ${p(fin.opProfitYoY)} YoY | ${p(fin.opProfitQoQ)} QoQ\n`;
+    text += `PAT: ${p(fin.patYoY)} YoY | ${p(fin.patQoQ)} QoQ\n`;
+    text += `EPS: ${p(fin.epsYoY)} YoY | ${p(fin.epsQoQ)} QoQ\n`;
+    if (fin.opm !== null) text += `\nOPM: ${fin.opm.toFixed(1)}%`;
+    if (fin.npm !== null) text += ` | NPM: ${fin.npm.toFixed(1)}%`;
+    text += '\n';
+  } else {
+    text += `Price Move: ${p(card.price.changePct)}\n`;
+    if (exRet !== null) text += `vs Nifty 50: ${p(exRet)}\n`;
+    text += `CMP: ₹${card.price.cmp.toLocaleString('en-IN')}\n`;
+  }
 
-OPM: ${card.opm.toFixed(1)}% | NPM: ${card.npm.toFixed(1)}%
-${card.mcap ? `MCap: ₹${card.mcap.toLocaleString('en-IN')} Cr` : ''}${card.pe ? ` | PE: ${card.pe}` : ''}
+  if (card.mcap) text += `\nMCap: ₹${card.mcap.toLocaleString('en-IN')} Cr`;
+  if (card.pe) text += ` | PE: ${card.pe}`;
 
-Grade: ${gradeEmoji} <b>${card.grade}</b> (Score: ${card.signalScore}/100)`;
+  text += `\n\nGrade: ${gradeEmoji} <b>${card.grade}</b> (Score: ${card.qualityScore}/100)`;
+
+  return text;
 }
 
 // ══════════════════════════════════════════════
-// CRON HANDLER — Fetch earnings and send alerts
+// CRON HANDLER — Fetch from SAME pipeline as UI
 // ══════════════════════════════════════════════
 
 export async function GET(request: Request) {
@@ -236,13 +331,12 @@ export async function GET(request: Request) {
   const forceSymbol = searchParams.get('symbol');
   const testMode = searchParams.get('test') === 'true';
 
-  // Security check
   if (secret !== 'mc-bot-2026' && !testMode) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
-    // Fetch earnings cards from our API
+    // Fetch from the SAME canonical pipeline the UI uses
     const now = new Date();
     const monthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     const res = await fetch(`${API_BASE}/api/market/earnings-cards?month=${monthStr}`, {
@@ -254,7 +348,7 @@ export async function GET(request: Request) {
     }
 
     const data = await res.json();
-    const cards = data.cards || [];
+    const cards: CardFromAPI[] = data.cards || [];
 
     if (cards.length === 0) {
       return NextResponse.json({ status: 'no_earnings', message: 'No earnings data available' });
@@ -274,61 +368,27 @@ export async function GET(request: Request) {
     const failed: string[] = [];
 
     for (const card of cards) {
-      // Filter: only send if not already sent
-      const dedupKey = `${card.symbol}-${card.quarter}-${card.resultDate}`;
+      const dedupKey = `${card.symbol}-${card.period}-${card.resultDate}`;
       if (sentEarnings.has(dedupKey) && !testMode) continue;
-
-      // Filter: only send for specific symbol if requested
       if (forceSymbol && card.symbol !== forceSymbol.toUpperCase()) continue;
 
-      // Determine which channel
       const isWatchlist = watchlistSymbols.has(card.symbol);
 
       // Only send if grade is STRONG/GOOD or it's a watchlist stock, or test mode
       if (!testMode && !isWatchlist && card.grade !== 'STRONG' && card.grade !== 'GOOD') continue;
 
-      // Build card data for image
-      const cardData: CardData = {
-        symbol: card.symbol,
-        company: card.company,
-        resultDate: card.resultDate,
-        quarter: card.quarter,
-        reportType: card.reportType || 'Standalone',
-        revenueYoY: card.revenueYoY,
-        revenueQoQ: card.revenueQoQ,
-        opProfitYoY: card.opProfitYoY,
-        opProfitQoQ: card.opProfitQoQ,
-        patYoY: card.patYoY,
-        patQoQ: card.patQoQ,
-        epsYoY: card.epsYoY,
-        epsQoQ: card.epsQoQ,
-        revenue: card.current?.revenue || 0,
-        operatingProfit: card.current?.operatingProfit || 0,
-        opm: card.current?.opm || 0,
-        pat: card.current?.pat || 0,
-        npm: card.current?.npm || 0,
-        eps: card.current?.eps || 0,
-        mcap: card.mcap,
-        pe: card.pe,
-        grade: card.grade,
-        gradeColor: card.gradeColor,
-        signalScore: card.signalScore,
-      };
-
       const chatId = isWatchlist ? WATCHLIST_CHAT_ID : INDEX_CHAT_ID;
       const prefix = isWatchlist ? '⭐ WATCHLIST EARNINGS' : '📊 INDEX EARNINGS';
-      const caption = `${prefix}\n\n${formatEarningsText(cardData)}\n\n🔗 market-cockpit.vercel.app/earnings`;
+      const caption = `${prefix}\n\n${formatEarningsText(card)}\n\n🔗 market-cockpit.vercel.app/earnings`;
 
       try {
-        // Try image card first
-        const imageBuffer = await generateEarningsImage(cardData);
+        const imageBuffer = await generateEarningsImage(card);
         const result = await sendTelegramPhoto(chatId, imageBuffer, caption);
 
         if (result.ok) {
           sentEarnings.add(dedupKey);
           sent.push(card.symbol);
         } else {
-          // Fallback to text
           const textResult = await sendTelegramText(chatId, caption);
           if (textResult.ok) {
             sentEarnings.add(dedupKey);
@@ -338,7 +398,6 @@ export async function GET(request: Request) {
           }
         }
       } catch (err) {
-        // Fallback to text on image generation error
         try {
           const textResult = await sendTelegramText(chatId, caption);
           if (textResult.ok) {
@@ -352,7 +411,6 @@ export async function GET(request: Request) {
         }
       }
 
-      // Rate limit: 100ms between sends
       await new Promise(r => setTimeout(r, 100));
     }
 
@@ -364,6 +422,7 @@ export async function GET(request: Request) {
       failed: failed.length,
       failedSymbols: failed,
       watchlistSize: watchlistSymbols.size,
+      schemaVersion: 2,
     });
 
   } catch (error) {
@@ -374,6 +433,7 @@ export async function GET(request: Request) {
 
 // ══════════════════════════════════════════════
 // IMAGE CARD ENDPOINT — Generate standalone image
+// Accepts a card object matching the canonical schema
 // ══════════════════════════════════════════════
 
 export async function POST(request: Request) {
