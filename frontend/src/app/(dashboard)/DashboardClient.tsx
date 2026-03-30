@@ -6,7 +6,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   BarChart3, Newspaper, Calendar, Briefcase, Compass, Bell, Settings, LogOut, ChevronDown, BookMarked, Search,
-  TrendingUp, Grid3X3, RefreshCw, Filter, Globe, Rocket, FileText, PackageCheck,
+  TrendingUp, Grid3X3, RefreshCw, Filter, Globe, Rocket, FileText, PackageCheck, LineChart,
 } from 'lucide-react';
 import api from '@/lib/api';
 import TickerDrawer from '@/components/TickerDrawer';
@@ -27,6 +27,7 @@ const NAV: NavItem[] = [
   { href: '/ipos',          label: 'IPOs',            icon: <Rocket className="w-5 h-5" /> },
   { href: '/macro-maps',    label: 'Macro Maps',      icon: <Globe className="w-5 h-5" /> },
   { href: '/calendars',     label: 'Calendar',        icon: <Calendar className="w-5 h-5" /> },
+  { href: '/earnings',      label: 'Earnings',        icon: <LineChart className="w-5 h-5" /> },
 ];
 
 // Static fallback shown while live data loads
