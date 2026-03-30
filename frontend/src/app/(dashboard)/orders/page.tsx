@@ -107,30 +107,48 @@ export default function OrdersPage() {
     setLoading(true);
     try {
       const watchlistStr = localStorage.getItem('mc_watchlist_tickers') || '[]';
-      const watchlist = JSON.parse(watchlistStr);
+      const watchlist: string[] = JSON.parse(watchlistStr);
+      const watchlistParam = watchlist.length > 0 ? `&watchlist=${watchlist.join(',')}` : '';
 
-      const response = await fetch(`/api/orders?days=${daysFilter}`);
+      const response = await fetch(`/api/orders?days=${daysFilter}${watchlistParam}`);
       const data = await response.json();
 
-      // Mock data structure if needed
-      const enrichedOrders: Order[] = (data.orders || []).map((order: any) => ({
-        ticker: order.ticker,
-        companyName: order.companyName,
-        ltp: order.ltp,
-        changePercent: order.changePercent,
-        volume: order.volume,
-        ordersCount: order.ordersCount || 0,
-        hasHighSignal: order.hasHighSignal || false,
-        group: watchlist.includes(order.ticker)
-          ? 'watchlist'
-          : order.group || 'nifty50',
-      }));
+      // API returns { groups: [{ name, label, tickers: [...] }], deals: {...}, summary: {...} }
+      const allOrders: Order[] = [];
+      const groupNameMap: Record<string, Order['group']> = {
+        watchlist: 'watchlist',
+        nifty50: 'nifty50',
+        midcap150: 'niftymidcap150',
+        smallcap250: 'niftysmallcap250',
+      };
 
-      setOrders(enrichedOrders);
+      if (data.groups && Array.isArray(data.groups)) {
+        for (const group of data.groups) {
+          const groupKey = groupNameMap[group.name] || 'nifty50';
+          for (const ticker of (group.tickers || [])) {
+            allOrders.push({
+              ticker: ticker.symbol || '',
+              companyName: ticker.company || ticker.symbol || '',
+              ltp: ticker.price || 0,
+              changePercent: ticker.changePct || 0,
+              volume: ticker.volume || 0,
+              ordersCount: ticker.ordersCount || 0,
+              hasHighSignal: ticker.hasHighSignal || false,
+              group: groupKey,
+            });
+          }
+        }
+      }
+
+      if (allOrders.length > 0) {
+        setOrders(allOrders);
+      } else {
+        // Fallback: use mock data if API returned nothing
+        setOrders(generateMockOrders());
+      }
       setLastUpdated(new Date().toLocaleTimeString());
     } catch (error) {
       console.error('Error fetching orders:', error);
-      // Use mock data on error
       setOrders(generateMockOrders());
       setLastUpdated(new Date().toLocaleTimeString());
     }
@@ -143,10 +161,29 @@ export default function OrdersPage() {
     try {
       const response = await fetch(`/api/orders/${ticker}`);
       const data = await response.json();
-      setDetailData(data);
+      // API returns { symbol, orders: [...], news: [...] }
+      const order = orders.find(o => o.ticker === ticker);
+      setDetailData({
+        ticker: data.symbol || ticker,
+        companyName: order?.companyName || ticker,
+        ltp: order?.ltp || 0,
+        changePercent: order?.changePercent || 0,
+        timeline: (data.orders || []).map((d: any, i: number) => ({
+          id: `deal-${i}`,
+          date: d.dealDate || '',
+          description: `${d.type || 'Deal'}: ${d.clientName || 'Unknown'} — ${d.buyOrSell || ''}`,
+          quantity: d.quantity || 0,
+          price: d.tradePrice || 0,
+        })),
+        news: (data.news || []).map((n: any, i: number) => ({
+          id: `news-${i}`,
+          title: n.headline || '',
+          date: n.date || '',
+          source: n.category || 'NSE',
+        })),
+      });
     } catch (error) {
       console.error('Error fetching detail:', error);
-      // Use mock detail data on error
       const mockOrder = orders.find(o => o.ticker === ticker);
       if (mockOrder) {
         setDetailData(generateMockDetail(mockOrder));
