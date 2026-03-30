@@ -4,10 +4,11 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
 
 // ── Config ──────────────────────────────────────────────────────────────
-const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8401991707:AAGpZj1UgW4sJdLm7FLhedC2nBwxUtgXFIc';
-const TG_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '5057319640';
-const BOT_SECRET = process.env.BOT_SECRET || 'mc-bot-2026';
-const API_BASE = process.env.NEXT_PUBLIC_SITE_URL || 'https://market-cockpit.vercel.app';
+// MC Street Pulse bot (@mc_street_pulse_bot)
+const TG_TOKEN = '8763736180:AAFZ96g_IMunKzwdkVacWLrfjl8fms1BdvY';
+const TG_CHAT_ID = '5057319640'; // Radhev Rishi
+const BOT_SECRET = 'mc-bot-2026';
+const API_BASE = 'https://market-cockpit.vercel.app';
 
 // ── NSE Direct Fetch ────────────────────────────────────────────────────
 const NSE_BASE = 'https://www.nseindia.com';
@@ -272,7 +273,101 @@ async function sendTelegram(text: string): Promise<{ ok: boolean; telegramRespon
   }
 }
 
-// ── API Handler ─────────────────────────────────────────────────────────
+// ── Telegram Webhook Handler (commands) ─────────────────────────────────
+export async function POST(request: Request) {
+  try {
+    const body = await request.json();
+    const message = body?.message;
+    if (!message?.text || !message?.chat?.id) {
+      return NextResponse.json({ ok: true });
+    }
+
+    const chatId = String(message.chat.id);
+    const text = message.text.trim();
+    const firstName = message.chat.first_name || 'there';
+
+    // Handle commands
+    if (text === '/start') {
+      await sendTelegramTo(chatId,
+        `\u{1F680} *MC Street Pulse — Connected!*\n\nWelcome ${firstName}! Your market intelligence bot is live.\n\n\u{1F4CA} *What you'll receive:*\n\u{2022} Mid & small cap movers (gainers/losers)\n\u{2022} Earnings pulse (top quality results)\n\u{2022} Big movers alerts (4%+ moves)\n\u{2022} Market mood indicator\n\n\u{23F0} *Schedule:* 10:05 AM & 3:05 PM IST (Mon-Fri)\n\n\u{1F4A1} *Commands:*\n/pulse \u{2014} Get live pulse right now\n/gainers \u{2014} Top gainers only\n/losers \u{2014} Top losers only\n/status \u{2014} Bot status & next alert\n/help \u{2014} Show all commands\n\n\u{1F310} [View Dashboard](https://market-cockpit.vercel.app/movers)\n_Powered by Market Cockpit_`
+      );
+    } else if (text === '/help') {
+      await sendTelegramTo(chatId,
+        `\u{2753} *MC Street Pulse \u{2014} Help*\n\n*Available Commands:*\n/start \u{2014} Welcome message & setup\n/pulse \u{2014} Full market pulse (movers + earnings)\n/gainers \u{2014} Top mid & small cap gainers\n/losers \u{2014} Top mid & small cap losers\n/status \u{2014} Bot status & next scheduled alert\n/help \u{2014} This help message\n\n*Automatic Alerts:*\n\u{23F0} 10:05 AM IST \u{2014} Morning pulse\n\u{23F0} 3:05 PM IST \u{2014} Afternoon pulse\n\n\u{1F310} [View Full Dashboard](https://market-cockpit.vercel.app/movers)\n_Powered by Market Cockpit_`
+      );
+    } else if (text === '/pulse') {
+      await sendTelegramTo(chatId, '\u{23F3} _Fetching live market data..._');
+      const [movers, earnings] = await Promise.all([fetchMovers(), fetchEarningsPulse()]);
+      if (movers.total === 0) {
+        await sendTelegramTo(chatId, '\u{1F4CA} Market is closed or data unavailable. Try during market hours (9:15 AM - 3:30 PM IST).');
+      } else {
+        const msg = buildMessage(movers, earnings);
+        await sendTelegramTo(chatId, msg);
+      }
+    } else if (text === '/gainers') {
+      await sendTelegramTo(chatId, '\u{23F3} _Fetching gainers..._');
+      const movers = await fetchMovers();
+      if (movers.gainers.length === 0) {
+        await sendTelegramTo(chatId, '\u{1F4CA} No gainers data available. Market may be closed.');
+      } else {
+        const lines = [`\u{1F680} *TOP MID & SMALL CAP GAINERS*\n`, '```'];
+        for (let i = 0; i < Math.min(15, movers.gainers.length); i++) {
+          const g = movers.gainers[i];
+          lines.push(`${String(i + 1).padStart(2)}. ${g.ticker.padEnd(14)} +${g.changePercent.toFixed(1)}%  \u{20B9}${g.price.toLocaleString('en-IN', { maximumFractionDigits: 0 }).padStart(8)} [${g.cap}]`);
+        }
+        lines.push('```');
+        lines.push(`\n\u{1F310} [View Dashboard](https://market-cockpit.vercel.app/movers)`);
+        await sendTelegramTo(chatId, lines.join('\n'));
+      }
+    } else if (text === '/losers') {
+      await sendTelegramTo(chatId, '\u{23F3} _Fetching losers..._');
+      const movers = await fetchMovers();
+      if (movers.losers.length === 0) {
+        await sendTelegramTo(chatId, '\u{1F4CA} No losers data available. Market may be closed.');
+      } else {
+        const lines = [`\u{1F4C9} *TOP MID & SMALL CAP LOSERS*\n`, '```'];
+        for (let i = 0; i < Math.min(15, movers.losers.length); i++) {
+          const l = movers.losers[i];
+          lines.push(`${String(i + 1).padStart(2)}. ${l.ticker.padEnd(14)} ${l.changePercent.toFixed(1)}%  \u{20B9}${l.price.toLocaleString('en-IN', { maximumFractionDigits: 0 }).padStart(8)} [${l.cap}]`);
+        }
+        lines.push('```');
+        lines.push(`\n\u{1F310} [View Dashboard](https://market-cockpit.vercel.app/movers)`);
+        await sendTelegramTo(chatId, lines.join('\n'));
+      }
+    } else if (text === '/status') {
+      const now = new Date();
+      const ist = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
+      const h = ist.getHours();
+      const day = ist.getDay();
+      const isMarketDay = day >= 1 && day <= 5;
+      const isMarketHours = h >= 9 && h < 16;
+      const nextAlert = h < 10 ? '10:05 AM' : h < 15 ? '3:05 PM' : 'Tomorrow 10:05 AM';
+
+      await sendTelegramTo(chatId,
+        `\u{2699}\u{FE0F} *MC Street Pulse \u{2014} Status*\n\n\u{2705} Bot: Online\n\u{1F552} IST: ${ist.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}\n${isMarketDay && isMarketHours ? '\u{1F7E2} Market: Open' : '\u{1F534} Market: Closed'}\n\u{23F0} Next Alert: ${isMarketDay ? nextAlert : 'Monday 10:05 AM'}\n\n_Alerts run Mon-Fri at 10:05 AM & 3:05 PM IST_`
+      );
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    console.error('[BOT] Webhook error:', e);
+    return NextResponse.json({ ok: true }); // Always return 200 to Telegram
+  }
+}
+
+async function sendTelegramTo(chatId: string, text: string): Promise<void> {
+  try {
+    await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown', disable_web_page_preview: true }),
+    });
+  } catch (e) {
+    console.error(`[BOT] sendTelegramTo ${chatId} failed:`, e);
+  }
+}
+
+// ── Scheduled Alert Handler (GET) ───────────────────────────────────────
 export async function GET(request: Request) {
   const startTime = Date.now();
   const diagnostics: Record<string, any> = { timestamp: new Date().toISOString(), steps: [] };
