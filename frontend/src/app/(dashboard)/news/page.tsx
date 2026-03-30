@@ -923,15 +923,22 @@ export default function NewsFeedPage() {
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
-      // Give backend up to 90s to fetch all RSS feeds (22+ sources)
-      await api.post('/news/refresh', {}, { timeout: 90_000 });
+      // Backend kicks off ingestion in background and returns immediately
+      await api.post('/news/refresh', {}, { timeout: 15_000 });
     } catch (e) {
-      // Even if refresh fails (e.g. no internet / timeout), still refetch cached data
-      console.warn('News refresh failed:', e);
+      console.warn('News refresh trigger failed:', e);
     }
-    // Refetch all queries to show new data
+    // Poll for new data: immediate refetch + delayed refetch after ingestion completes
     await Promise.all([refetch(), refetchInPlay(), ...(showBottleneckDashboard ? [refetchBn()] : [])]);
-    setIsRefreshing(false);
+    // Second refetch after 8s to catch articles ingested in the background
+    setTimeout(async () => {
+      await Promise.all([refetch(), refetchInPlay(), ...(showBottleneckDashboard ? [refetchBn()] : [])]);
+    }, 8_000);
+    // Third refetch after 20s for slower RSS sources
+    setTimeout(async () => {
+      await Promise.all([refetch(), refetchInPlay(), ...(showBottleneckDashboard ? [refetchBn()] : [])]);
+      setIsRefreshing(false);
+    }, 20_000);
   };
 
   return (

@@ -257,14 +257,29 @@ async def refresh_news(
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Manually trigger news ingestion."""
-    try:
-        from app.services.news_ingestor import NewsIngestor
-        ingestor = NewsIngestor()
-        count = await ingestor.ingest_all_sources(db)
-        return {"success": True, "articles_added": count}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+    """Manually trigger news ingestion.
+
+    Kicks off ingestion in a background task so the response returns
+    immediately (~200 ms) instead of blocking for 60-90 s while all RSS
+    feeds are fetched.  The frontend then polls GET /news to pick up
+    any newly ingested articles.
+    """
+    import asyncio
+
+    async def _do_refresh():
+        try:
+            from app.core.database import AsyncSessionLocal
+            from app.services.news_ingestor import NewsIngestor
+            async with AsyncSessionLocal() as bg_db:
+                ingestor = NewsIngestor()
+                count = await ingestor.ingest_all_sources(bg_db)
+                await bg_db.commit()
+                logger.info(f"Manual refresh ingested {count} articles")
+        except Exception as e:
+            logger.warning(f"Manual refresh failed: {e}")
+
+    asyncio.create_task(_do_refresh())
+    return {"success": True, "message": "Refresh started in background"}
 
 
 @router.post("/reclassify-bottlenecks", tags=["news"])
