@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
 
 // ── Config ──────────────────────────────────────────────────────────────
-const TG_TOKEN = '8681784264:AAG70V3ibS4r89Lbrta50NkWnJSCTrtoS80';
+const TG_TOKEN = '8681784264:AAG7OV3ibS4r89Lbrta50NkWnJSCTrtoS80';
 const TG_CHAT_ID = '5057319640';
 const BOT_SECRET = 'mc-bot-2026';
 const API_BASE = 'https://market-cockpit.vercel.app';
