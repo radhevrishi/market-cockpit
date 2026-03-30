@@ -61,17 +61,21 @@ async function fetchNseIndex(indexName: string, cookies: string): Promise<any[]>
 }
 
 async function fetchMovers(): Promise<{ total: number; gainers: Stock[]; losers: Stock[]; avgChange: number }> {
-  // Try our own API first
+  // Try our own API first (self-referencing on Vercel — this is fine)
   const allStocks: Stock[] = [];
   const seen = new Set<string>();
 
   for (const idx of ['midsmall50', 'smallcap150', 'midcap150']) {
     try {
-      const r = await fetch(`${API_BASE}/api/market/quotes?market=india&index=${idx}`, {
+      const url = `${API_BASE}/api/market/quotes?market=india&index=${idx}`;
+      console.log(`[BOT] Fetching movers: ${url}`);
+      const r = await fetch(url, {
         headers: { 'User-Agent': 'MarketCockpit-Bot/1.0' },
       });
+      console.log(`[BOT] Movers ${idx}: HTTP ${r.status}`);
       if (r.ok) {
         const data = await r.json();
+        console.log(`[BOT] Movers ${idx}: ${(data.stocks || []).length} stocks`);
         for (const s of data.stocks || []) {
           const tk = s.ticker || '';
           if (tk && !seen.has(tk)) {
@@ -239,10 +243,11 @@ function buildMessage(movers: Awaited<ReturnType<typeof fetchMovers>>, earnings:
   return lines.join('\n');
 }
 
-async function sendTelegram(text: string): Promise<boolean> {
+async function sendTelegram(text: string): Promise<{ ok: boolean; telegramResponse?: any; error?: string }> {
+  const tgUrl = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
+  console.log(`[BOT] Sending to Telegram chat=${TG_CHAT_ID}, token ends=...${TG_TOKEN.slice(-6)}, msg length=${text.length}`);
   try {
-    const url = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
-    const r = await fetch(url, {
+    const r = await fetch(tgUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -252,59 +257,121 @@ async function sendTelegram(text: string): Promise<boolean> {
         disable_web_page_preview: true,
       }),
     });
-    const result = await r.json();
+    const responseText = await r.text();
+    console.log(`[BOT] Telegram HTTP ${r.status}: ${responseText.slice(0, 500)}`);
+    let result: any;
+    try { result = JSON.parse(responseText); } catch { result = { ok: false, raw: responseText }; }
     if (!result.ok) {
-      console.error('Telegram error:', result);
-      return false;
+      return { ok: false, telegramResponse: result, error: `Telegram returned ok=false: ${result.description || responseText.slice(0, 200)}` };
     }
-    return true;
-  } catch (e) {
-    console.error('Telegram send failed:', e);
-    return false;
+    return { ok: true, telegramResponse: { ok: true, message_id: result.result?.message_id } };
+  } catch (e: any) {
+    const errMsg = e?.message || String(e);
+    console.error(`[BOT] Telegram send EXCEPTION: ${errMsg}`);
+    return { ok: false, error: `Fetch exception: ${errMsg}` };
   }
 }
 
 // ── API Handler ─────────────────────────────────────────────────────────
 export async function GET(request: Request) {
+  const startTime = Date.now();
+  const diagnostics: Record<string, any> = { timestamp: new Date().toISOString(), steps: [] };
+
   const { searchParams } = new URL(request.url);
   const secret = searchParams.get('secret');
 
+  console.log(`[BOT] Incoming request: mode=${searchParams.get('mode')}, secret=${secret ? 'provided' : 'missing'}`);
+  diagnostics.steps.push('request_received');
+
   // Auth check
   if (secret !== BOT_SECRET) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    console.log(`[BOT] Auth failed: expected=${BOT_SECRET}, got=${secret}`);
+    return NextResponse.json({ error: 'Unauthorized', hint: 'Add ?secret=mc-bot-2026 to the URL' }, { status: 401 });
   }
+  diagnostics.steps.push('auth_passed');
 
-  const mode = searchParams.get('mode') || 'full'; // full | test
+  const mode = searchParams.get('mode') || 'full'; // full | test | diag
+
+  // Diagnostic mode — just checks connectivity, no Telegram send
+  if (mode === 'diag') {
+    diagnostics.config = {
+      tokenSet: !!TG_TOKEN && TG_TOKEN.length > 10,
+      tokenEnds: TG_TOKEN.slice(-6),
+      chatId: TG_CHAT_ID,
+      apiBase: API_BASE,
+    };
+    return NextResponse.json({ ok: true, mode: 'diag', diagnostics, elapsed: Date.now() - startTime });
+  }
 
   if (mode === 'test') {
-    const ok = await sendTelegram(
+    diagnostics.steps.push('sending_test_message');
+    const result = await sendTelegram(
       '\u{2705} *Market Cockpit Bot Connected*\n\nAlerts are working! You\'ll receive mid & small cap movers + earnings pulse twice daily during market hours.\n\n\u{1F310} [View Dashboard](https://market-cockpit.vercel.app/movers)'
     );
-    return NextResponse.json({ ok, mode: 'test' });
+    diagnostics.steps.push(result.ok ? 'test_sent_ok' : 'test_send_failed');
+    return NextResponse.json({
+      ok: result.ok,
+      mode: 'test',
+      telegramResponse: result.telegramResponse,
+      error: result.error,
+      diagnostics,
+      elapsed: Date.now() - startTime,
+    });
   }
 
-  // Fetch data in parallel
+  // ── Full mode: fetch data + send ──
+  console.log('[BOT] Full mode: fetching movers + earnings...');
+  diagnostics.steps.push('fetching_data');
+
   const [movers, earnings] = await Promise.all([
-    fetchMovers(),
-    fetchEarningsPulse(),
+    fetchMovers().catch(e => {
+      console.error('[BOT] fetchMovers failed:', e);
+      diagnostics.moversError = String(e);
+      return { total: 0, gainers: [] as Stock[], losers: [] as Stock[], avgChange: 0 };
+    }),
+    fetchEarningsPulse().catch(e => {
+      console.error('[BOT] fetchEarningsPulse failed:', e);
+      diagnostics.earningsError = String(e);
+      return [] as Earning[];
+    }),
   ]);
 
+  diagnostics.steps.push('data_fetched');
+  diagnostics.data = { moversTotal: movers.total, gainers: movers.gainers.length, losers: movers.losers.length, earnings: earnings.length };
+  console.log(`[BOT] Data: ${movers.total} movers, ${movers.gainers.length} gainers, ${movers.losers.length} losers, ${earnings.length} earnings`);
+
   if (movers.total === 0 && earnings.length === 0) {
-    const ok = await sendTelegram(
+    diagnostics.steps.push('no_data_sending_closed_msg');
+    const result = await sendTelegram(
       '\u{1F4CA} *Market Cockpit*\n\nMarket is closed or data unavailable.\n\n_Next alert during market hours._'
     );
-    return NextResponse.json({ ok, movers: 0, earnings: 0, status: 'no-data' });
+    return NextResponse.json({
+      ok: result.ok,
+      status: 'no-data',
+      telegramResponse: result.telegramResponse,
+      error: result.error,
+      diagnostics,
+      elapsed: Date.now() - startTime,
+    });
   }
 
   const msg = buildMessage(movers, earnings);
-  const ok = await sendTelegram(msg);
+  diagnostics.steps.push('message_built');
+  diagnostics.messageLength = msg.length;
+
+  const result = await sendTelegram(msg);
+  diagnostics.steps.push(result.ok ? 'telegram_sent_ok' : 'telegram_send_failed');
 
   return NextResponse.json({
-    ok,
+    ok: result.ok,
     movers: movers.total,
     gainers: movers.gainers.length,
     losers: movers.losers.length,
     earnings: earnings.length,
     avgChange: movers.avgChange,
+    telegramResponse: result.telegramResponse,
+    error: result.error,
+    diagnostics,
+    elapsed: Date.now() - startTime,
   });
 }
