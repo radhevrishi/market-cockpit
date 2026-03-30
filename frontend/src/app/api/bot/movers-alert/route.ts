@@ -14,8 +14,9 @@ const API_BASE = 'https://market-cockpit.vercel.app';
 const NSE_BASE = 'https://www.nseindia.com';
 const NSE_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  Accept: 'application/json',
+  Accept: 'application/json, text/plain, */*',
   Referer: 'https://www.nseindia.com/',
+  'Accept-Language': 'en-US,en;q=0.9',
 };
 
 interface Stock {
@@ -35,6 +36,22 @@ interface Earning {
   sector: string;
   price: number;
   movePercent: number;
+}
+
+interface IndexData {
+  name: string;
+  shortName: string;
+  level: number;
+  change: number;
+  changePercent: number;
+}
+
+interface Breadth {
+  advancing: number;
+  declining: number;
+  unchanged: number;
+  mid: { adv: number; dec: number };
+  small: { adv: number; dec: number };
 }
 
 async function getNseCookies(): Promise<string> {
@@ -61,7 +78,52 @@ async function fetchNseIndex(indexName: string, cookies: string): Promise<any[]>
   return [];
 }
 
-async function fetchMovers(): Promise<{ total: number; gainers: Stock[]; losers: Stock[]; avgChange: number }> {
+// ── Fetch Index Snapshot (NIFTY, BANKNIFTY, MIDCAP, SMALLCAP, VIX) ──────
+async function fetchIndexSnapshot(): Promise<IndexData[]> {
+  const targetMap: Record<string, string> = {
+    'NIFTY 50': 'NIFTY',
+    'NIFTY BANK': 'BANKNIFTY',
+    'NIFTY MIDCAP 100': 'MIDCAP100',
+    'NIFTY SMLCAP 100': 'SMALLCAP',
+    'INDIA VIX': 'VIX',
+  };
+  try {
+    const cookies = await getNseCookies();
+    const url = `${NSE_BASE}/api/allIndices`;
+    const r = await fetch(url, { headers: { ...NSE_HEADERS, Cookie: cookies } });
+    if (r.ok) {
+      const json = await r.json();
+      const data = json?.data || [];
+      const results: IndexData[] = [];
+      for (const item of data) {
+        const name = (item.indexSymbol || item.index || '').trim();
+        if (targetMap[name]) {
+          results.push({
+            name,
+            shortName: targetMap[name],
+            level: Math.round((item.last || item.current || 0) * 100) / 100,
+            change: Math.round((item.variation || item.change || 0) * 100) / 100,
+            changePercent: Math.round((item.percentChange || item.pChange || 0) * 100) / 100,
+          });
+        }
+      }
+      const order = ['NIFTY', 'BANKNIFTY', 'MIDCAP100', 'SMALLCAP', 'VIX'];
+      return results.sort((a, b) => order.indexOf(a.shortName) - order.indexOf(b.shortName));
+    }
+  } catch (e) {
+    console.error('[BOT] fetchIndexSnapshot failed:', e);
+  }
+  return [];
+}
+
+// ── Fetch Movers + Breadth ───────────────────────────────────────────────
+async function fetchMovers(): Promise<{
+  total: number;
+  gainers: Stock[];
+  losers: Stock[];
+  avgChange: number;
+  breadth: Breadth;
+}> {
   const allStocks: Stock[] = [];
   const seen = new Set<string>();
 
@@ -82,7 +144,7 @@ async function fetchMovers(): Promise<{ total: number; gainers: Stock[]; losers:
     });
   }
 
-  // ── Step 1: Fetch full market (all stocks) — same endpoint the dashboard uses ──
+  // Step 1: Full market
   try {
     const url = `${API_BASE}/api/market/quotes?market=india`;
     console.log(`[BOT] Fetching ALL stocks: ${url}`);
@@ -98,12 +160,11 @@ async function fetchMovers(): Promise<{ total: number; gainers: Stock[]; losers:
     console.error('[BOT] Full market fetch failed:', e);
   }
 
-  // ── Step 2: If full fetch returned too few, top-up from specific indices ──
+  // Step 2: Supplemental indices if needed
   if (allStocks.length < 50) {
     for (const idx of ['midsmall50', 'midcap150', 'smallcap150', 'nifty500']) {
       try {
         const url = `${API_BASE}/api/market/quotes?market=india&index=${idx}`;
-        console.log(`[BOT] Top-up fetch: ${url}`);
         const r = await fetch(url, { headers: { 'User-Agent': 'MarketCockpit-Bot/1.0' } });
         if (r.ok) {
           const data = await r.json();
@@ -115,7 +176,7 @@ async function fetchMovers(): Promise<{ total: number; gainers: Stock[]; losers:
     }
   }
 
-  // ── Step 3: NSE direct fallback if API returned nothing ──
+  // Step 3: NSE direct fallback
   if (allStocks.length === 0) {
     const cookies = await getNseCookies();
     if (cookies) {
@@ -131,7 +192,27 @@ async function fetchMovers(): Promise<{ total: number; gainers: Stock[]; losers:
     }
   }
 
-  // Sort gainers descending (biggest % gain first), losers ascending (biggest % loss first)
+  // Compute breadth
+  const breadth: Breadth = {
+    advancing: 0, declining: 0, unchanged: 0,
+    mid: { adv: 0, dec: 0 },
+    small: { adv: 0, dec: 0 },
+  };
+  for (const s of allStocks) {
+    const upDown = s.changePercent > 0.05 ? 'up' : s.changePercent < -0.05 ? 'down' : 'flat';
+    if (upDown === 'up') {
+      breadth.advancing++;
+      if (s.cap === 'Mid') breadth.mid.adv++;
+      else if (s.cap === 'Sml') breadth.small.adv++;
+    } else if (upDown === 'down') {
+      breadth.declining++;
+      if (s.cap === 'Mid') breadth.mid.dec++;
+      else if (s.cap === 'Sml') breadth.small.dec++;
+    } else {
+      breadth.unchanged++;
+    }
+  }
+
   const gainers = allStocks
     .filter(s => s.changePercent > 0)
     .sort((a, b) => b.changePercent - a.changePercent);
@@ -144,8 +225,13 @@ async function fetchMovers(): Promise<{ total: number; gainers: Stock[]; losers:
 
   console.log(`[BOT] Final: ${allStocks.length} stocks, top gainer ${gainers[0]?.ticker} +${gainers[0]?.changePercent}%, top loser ${losers[0]?.ticker} ${losers[0]?.changePercent}%`);
 
-  // Return top 20 of each so buildMessage has full coverage
-  return { total: allStocks.length, gainers: gainers.slice(0, 20), losers: losers.slice(0, 20), avgChange: avg };
+  return {
+    total: allStocks.length,
+    gainers: gainers.slice(0, 20),
+    losers: losers.slice(0, 20),
+    avgChange: avg,
+    breadth,
+  };
 }
 
 async function fetchEarningsPulse(): Promise<Earning[]> {
@@ -177,111 +263,162 @@ async function fetchEarningsPulse(): Promise<Earning[]> {
   return [];
 }
 
-// HTML-escape helper — required for HTML parse mode
+// ── Helpers ──────────────────────────────────────────────────────────────
 function esc(s: string): string {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function buildMessage(movers: Awaited<ReturnType<typeof fetchMovers>>, earnings: Earning[]): string {
+function pct(v: number, decimals = 2): string {
+  return `${v >= 0 ? '+' : ''}${v.toFixed(decimals)}%`;
+}
+
+function idxLine(idx: IndexData): string {
+  const isVix = idx.shortName === 'VIX';
+  // VIX rising = fear (bad), VIX falling = calm (good)
+  const emoji = isVix
+    ? (idx.changePercent > 0 ? '😨' : '😎')
+    : (idx.changePercent >= 0 ? '🟢' : '🔴');
+  const lvl = isVix
+    ? idx.level.toFixed(2)
+    : idx.level.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+  const chgSign = idx.changePercent >= 0 ? '+' : '';
+  return `${emoji} <b>${esc(idx.shortName)}</b>  ${lvl}  <b>${chgSign}${idx.changePercent.toFixed(2)}%</b>`;
+}
+
+// ── Build two-part Telegram message ──────────────────────────────────────
+function buildMessages(
+  movers: Awaited<ReturnType<typeof fetchMovers>>,
+  earnings: Earning[],
+  indices: IndexData[]
+): [string, string] {
   const now = new Date();
-  // IST = UTC+5:30
   const ist = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
   const dateStr = ist.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
   const timeStr = ist.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
 
-  const { total, gainers, losers, avgChange } = movers;
-  const mood = avgChange > 0.5 ? 'BULLISH' : avgChange < -0.5 ? 'BEARISH' : 'MIXED';
-  const moodEmoji = mood === 'BULLISH' ? '\u{1F680}' : mood === 'BEARISH' ? '\u{1F327}' : '\u2696\uFE0F';
-  const avgEmoji = avgChange >= 0 ? '\u{1F7E2}' : '\u{1F534}';
-  const DIV = '\u2500'.repeat(24);
+  const { total, gainers, losers, avgChange, breadth } = movers;
+  const mood = avgChange > 0.5 ? 'BULLISH 🚀' : avgChange < -0.5 ? 'BEARISH 🌧' : 'MIXED ⚖️';
+  const avgEmoji = avgChange >= 0 ? '🟢' : '🔴';
+  const DIV = '─'.repeat(22);
+  const adRatio = breadth.declining > 0
+    ? (breadth.advancing / breadth.declining).toFixed(2)
+    : breadth.advancing > 0 ? '∞' : '0';
 
-  const lines: string[] = [];
+  // ══════════════════════════════════════════════════════════
+  // MESSAGE 1: Header + Index Snapshot + Breadth + Gainers
+  // ══════════════════════════════════════════════════════════
+  const m1: string[] = [];
 
-  // ── Header ──
-  lines.push(`\u{1F4CA} <b>Market Cockpit</b>`);
-  lines.push(`<b>Mid &amp; Small Cap Pulse</b>`);
-  lines.push(`\u{1F4C5} ${esc(dateStr)}   \u{1F552} ${timeStr} IST`);
-  lines.push('');
+  m1.push(`📊 <b>Market Cockpit Pulse — Part 1/2</b>`);
+  m1.push(`📅 ${esc(dateStr)}   🕒 ${timeStr} IST`);
+  m1.push('');
 
-  // ── Mood ──
-  lines.push(`${moodEmoji} <b>Market: ${mood}</b>`);
-  lines.push(`${avgEmoji} Avg <b>${avgChange > 0 ? '+' : ''}${avgChange}%</b>   \u{1F4C8} <b>${total}</b> stocks tracked`);
+  // ── Index Snapshot ──
+  if (indices.length > 0) {
+    m1.push(DIV);
+    m1.push(`📈 <b>INDEX SNAPSHOT</b>`);
+    m1.push('');
+    for (const idx of indices) {
+      m1.push(idxLine(idx));
+    }
+  }
 
-  // ── Gainers ── (top 13, sorted biggest % gain first)
+  // ── Market Overview ──
+  m1.push('');
+  m1.push(DIV);
+  m1.push('');
+  m1.push(`<b>Market: ${mood}</b>`);
+  m1.push(`${avgEmoji} Avg Move <b>${pct(avgChange)}</b>   📦 <b>${total}</b> stocks tracked`);
+  m1.push('');
+  m1.push(`📊 <b>BREADTH</b>  ↑<b>${breadth.advancing}</b>  ↓<b>${breadth.declining}</b>  →${breadth.unchanged}`);
+  m1.push(`   A/D Ratio: <b>${adRatio}x</b>`);
+  if (breadth.mid.adv + breadth.mid.dec > 0 || breadth.small.adv + breadth.small.dec > 0) {
+    m1.push(`   Mid: ↑${breadth.mid.adv} ↓${breadth.mid.dec}   Sml: ↑${breadth.small.adv} ↓${breadth.small.dec}`);
+  }
+
+  // ── Gainers (all 20) ──
   if (gainers.length > 0) {
-    lines.push('');
-    lines.push(DIV);
-    lines.push('');
-    lines.push(`\u{1F4C8} <b>TOP GAINERS</b>  <i>(by % gain)</i>`);
-    lines.push('');
-    for (let i = 0; i < Math.min(13, gainers.length); i++) {
+    m1.push('');
+    m1.push(DIV);
+    m1.push('');
+    m1.push(`📈 <b>TOP ${gainers.length} GAINERS</b>  <i>(by % gain)</i>`);
+    m1.push('');
+    for (let i = 0; i < gainers.length; i++) {
       const g = gainers[i];
-      const price = g.price > 0 ? `\u20B9${g.price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '';
-      const capLabel = esc(g.cap === 'Large' ? 'Lrg' : g.cap === 'Mid' ? 'Mid' : 'Sml');
-      lines.push(`  ${i + 1}. <b>${esc(g.ticker)}</b>   <b>+${g.changePercent.toFixed(1)}%</b>   ${price}   <i>${capLabel}</i>`);
+      const price = g.price > 0 ? `₹${g.price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '';
+      const cap = g.cap === 'Large' ? 'Lrg' : g.cap === 'Mid' ? 'Mid' : 'Sml';
+      m1.push(`  ${i + 1}. <b>${esc(g.ticker)}</b>  <b>+${g.changePercent.toFixed(1)}%</b>  ${price}  <i>${cap}</i>`);
     }
   }
 
-  // ── Losers ── (top 13, sorted biggest % loss first)
+  // ══════════════════════════════════════════════════════════
+  // MESSAGE 2: Losers + Circuit Breakers + Earnings + Footer
+  // ══════════════════════════════════════════════════════════
+  const m2: string[] = [];
+
+  m2.push(`📊 <b>Market Cockpit Pulse — Part 2/2</b>`);
+  m2.push('');
+
+  // ── Losers (all 20) ──
   if (losers.length > 0) {
-    lines.push('');
-    lines.push(DIV);
-    lines.push('');
-    lines.push(`\u{1F4C9} <b>TOP LOSERS</b>  <i>(by % loss)</i>`);
-    lines.push('');
-    for (let i = 0; i < Math.min(13, losers.length); i++) {
+    m2.push(DIV);
+    m2.push('');
+    m2.push(`📉 <b>TOP ${losers.length} LOSERS</b>  <i>(by % loss)</i>`);
+    m2.push('');
+    for (let i = 0; i < losers.length; i++) {
       const l = losers[i];
-      const price = l.price > 0 ? `\u20B9${l.price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '';
-      const capLabel = esc(l.cap === 'Large' ? 'Lrg' : l.cap === 'Mid' ? 'Mid' : 'Sml');
-      lines.push(`  ${i + 1}. <b>${esc(l.ticker)}</b>   <b>${l.changePercent.toFixed(1)}%</b>   ${price}   <i>${capLabel}</i>`);
+      const price = l.price > 0 ? `₹${l.price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '';
+      const cap = l.cap === 'Large' ? 'Lrg' : l.cap === 'Mid' ? 'Mid' : 'Sml';
+      m2.push(`  ${i + 1}. <b>${esc(l.ticker)}</b>  <b>${l.changePercent.toFixed(1)}%</b>  ${price}  <i>${cap}</i>`);
     }
   }
 
-  // ── Extreme Movers (≥8%) ── highlight any stock with outsized move
+  // ── Circuit Breakers (≥8%) ──
   const extremeUp = gainers.filter(g => g.changePercent >= 8);
   const extremeDown = losers.filter(l => l.changePercent <= -8);
   if (extremeUp.length > 0 || extremeDown.length > 0) {
-    lines.push('');
-    lines.push(DIV);
-    lines.push('');
-    lines.push(`\u{1F525} <b>CIRCUIT BREAKERS  (\u22658%)</b>`);
-    lines.push('');
+    m2.push('');
+    m2.push(DIV);
+    m2.push('');
+    m2.push(`🔥 <b>CIRCUIT BREAKERS  (≥8%)</b>`);
+    m2.push('');
     for (const s of extremeUp) {
-      lines.push(`  \u{1F7E2} <b>${esc(s.ticker)}</b>  <b>+${s.changePercent.toFixed(1)}%</b>  \u20B9${s.price > 0 ? s.price.toLocaleString('en-IN', { maximumFractionDigits: 0 }) : ''}  <i>${esc(s.cap)}</i>`);
+      const price = s.price > 0 ? `₹${s.price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '';
+      m2.push(`  🟢 <b>${esc(s.ticker)}</b>  <b>+${s.changePercent.toFixed(1)}%</b>  ${price}  <i>${esc(s.cap)}</i>`);
     }
     for (const s of extremeDown) {
-      lines.push(`  \u{1F534} <b>${esc(s.ticker)}</b>  <b>${s.changePercent.toFixed(1)}%</b>  \u20B9${s.price > 0 ? s.price.toLocaleString('en-IN', { maximumFractionDigits: 0 }) : ''}  <i>${esc(s.cap)}</i>`);
+      const price = s.price > 0 ? `₹${s.price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '';
+      m2.push(`  🔴 <b>${esc(s.ticker)}</b>  <b>${s.changePercent.toFixed(1)}%</b>  ${price}  <i>${esc(s.cap)}</i>`);
     }
   }
 
   // ── Earnings Pulse ──
   if (earnings.length > 0) {
-    lines.push('');
-    lines.push(DIV);
-    lines.push('');
-    lines.push(`\u{1F4B0} <b>EARNINGS PULSE</b>`);
-    lines.push(`<i>Top Quality Results This Month</i>`);
-    lines.push('');
+    m2.push('');
+    m2.push(DIV);
+    m2.push('');
+    m2.push(`💰 <b>EARNINGS PULSE</b>  <i>Top Quality Results This Month</i>`);
+    m2.push('');
     for (const e of earnings.slice(0, 8)) {
-      const qualEmoji = e.quality === 'Excellent' ? '\u2B50' : '\u2705';
+      const qualEmoji = e.quality === 'Excellent' ? '⭐' : '✅';
       const mv = e.movePercent !== 0 ? `   <b>${e.movePercent > 0 ? '+' : ''}${e.movePercent.toFixed(1)}%</b>` : '';
-      lines.push(`  ${qualEmoji} <b>${esc(e.symbol)}</b>  ${esc(e.quality)}  <i>${esc(e.quarter)}</i>${mv}`);
+      m2.push(`  ${qualEmoji} <b>${esc(e.symbol)}</b>  ${esc(e.quality)}  <i>${esc(e.quarter)}</i>${mv}`);
     }
   }
 
   // ── Footer ──
-  lines.push('');
-  lines.push(DIV);
-  lines.push('');
-  lines.push(`\u{1F310} <a href="https://market-cockpit.vercel.app/movers">Open Dashboard</a>`);
-  lines.push(`<i>Powered by Market Cockpit</i>`);
+  m2.push('');
+  m2.push(DIV);
+  m2.push('');
+  m2.push(`🌐 <a href="https://market-cockpit.vercel.app/movers">Open Dashboard</a>`);
+  m2.push(`<i>Powered by Market Cockpit</i>`);
 
-  return lines.join('\n');
+  return [m1.join('\n'), m2.join('\n')];
 }
 
 async function sendTelegram(text: string): Promise<{ ok: boolean; telegramResponse?: any; error?: string }> {
   const tgUrl = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
-  console.log(`[BOT] Sending to Telegram chat=${TG_CHAT_ID}, token ends=...${TG_TOKEN.slice(-6)}, msg length=${text.length}`);
+  console.log(`[BOT] Sending to Telegram chat=${TG_CHAT_ID}, msg length=${text.length}`);
   try {
     const r = await fetch(tgUrl, {
       method: 'POST',
@@ -321,32 +458,49 @@ export async function POST(request: Request) {
     const text = message.text.trim();
     const firstName = message.chat.first_name || 'there';
 
-    // Handle commands (all using HTML parse mode)
     if (text === '/start') {
       await sendTelegramTo(chatId,
-        `🚀 <b>MC Street Pulse — Connected!</b>\n\nWelcome ${esc(firstName)}! Your market intelligence bot is live.\n\n📊 <b>What you'll receive:</b>\n• Mid &amp; small cap movers (gainers/losers)\n• Earnings pulse (top quality results)\n• Big movers alerts (4%+ moves)\n• Market mood indicator\n\n⏰ <b>Schedule:</b> 10:05 AM &amp; 3:05 PM IST (Mon–Fri)\n\n💡 <b>Commands:</b>\n/pulse — Get live pulse right now\n/gainers — Top gainers only\n/losers — Top losers only\n/status — Bot status &amp; next alert\n/help — Show all commands\n\n🌐 <a href="https://market-cockpit.vercel.app/movers">View Dashboard</a>\n<i>Powered by Market Cockpit</i>`
+        `🚀 <b>MC Street Pulse — Connected!</b>\n\nWelcome ${esc(firstName)}! Your market intelligence bot is live.\n\n📊 <b>What you'll receive:</b>\n• NIFTY, MIDCAP, SMALLCAP &amp; VIX snapshot\n• Market breadth (advance/decline ratio)\n• All top 20 mid &amp; small cap movers (gainers/losers)\n• Earnings pulse (top quality results)\n• Circuit breaker alerts (8%+ moves)\n\n⏰ <b>Schedule:</b> 10:05 AM &amp; 3:05 PM IST (Mon–Fri)\n\n💡 <b>Commands:</b>\n/pulse — Get live pulse right now\n/gainers — Top 20 gainers only\n/losers — Top 20 losers only\n/indices — Index snapshot + breadth\n/status — Bot status &amp; next alert\n/help — Show all commands\n\n🌐 <a href="https://market-cockpit.vercel.app/movers">View Dashboard</a>\n<i>Powered by Market Cockpit</i>`
       );
     } else if (text === '/help') {
       await sendTelegramTo(chatId,
-        `❓ <b>MC Street Pulse — Help</b>\n\n<b>Commands:</b>\n/start — Welcome message &amp; setup\n/pulse — Full market pulse (movers + earnings)\n/gainers — Top mid &amp; small cap gainers\n/losers — Top mid &amp; small cap losers\n/status — Bot status &amp; next scheduled alert\n/help — This help message\n\n<b>Automatic Alerts:</b>\n⏰ 10:05 AM IST — Morning pulse\n⏰ 3:05 PM IST — Afternoon pulse\n\n🌐 <a href="https://market-cockpit.vercel.app/movers">View Full Dashboard</a>\n<i>Powered by Market Cockpit</i>`
+        `❓ <b>MC Street Pulse — Help</b>\n\n<b>Commands:</b>\n/start — Welcome message &amp; setup\n/pulse — Full market pulse (2 messages)\n/gainers — Top 20 mid &amp; small cap gainers\n/losers — Top 20 mid &amp; small cap losers\n/indices — NIFTY/MIDCAP/SMALLCAP/VIX snapshot\n/status — Bot status &amp; next scheduled alert\n/help — This help message\n\n<b>Automatic Alerts:</b>\n⏰ 10:05 AM IST — Morning pulse\n⏰ 3:05 PM IST — Afternoon pulse\n\n🌐 <a href="https://market-cockpit.vercel.app/movers">View Full Dashboard</a>\n<i>Powered by Market Cockpit</i>`
       );
     } else if (text === '/pulse') {
       await sendTelegramTo(chatId, '⏳ <i>Fetching live market data...</i>');
-      const [movers, earnings] = await Promise.all([fetchMovers(), fetchEarningsPulse()]);
+      const [movers, earnings, indices] = await Promise.all([fetchMovers(), fetchEarningsPulse(), fetchIndexSnapshot()]);
       if (movers.total === 0) {
         await sendTelegramTo(chatId, '📊 Market is closed or data unavailable. Try during market hours (9:15 AM – 3:30 PM IST).');
       } else {
-        const msg = buildMessage(movers, earnings);
-        await sendTelegramTo(chatId, msg);
+        const [msg1, msg2] = buildMessages(movers, earnings, indices);
+        await sendTelegramTo(chatId, msg1);
+        await sendTelegramTo(chatId, msg2);
       }
+    } else if (text === '/indices') {
+      await sendTelegramTo(chatId, '⏳ <i>Fetching index data...</i>');
+      const [indices, movers] = await Promise.all([fetchIndexSnapshot(), fetchMovers()]);
+      const DIV = '─'.repeat(22);
+      const adRatio = movers.breadth.declining > 0
+        ? (movers.breadth.advancing / movers.breadth.declining).toFixed(2)
+        : '∞';
+      const lines = [`📈 <b>INDEX SNAPSHOT</b>\n`];
+      for (const idx of indices) lines.push(idxLine(idx));
+      lines.push('');
+      lines.push(DIV);
+      lines.push('');
+      lines.push(`📊 <b>MARKET BREADTH</b>`);
+      lines.push(`↑<b>${movers.breadth.advancing}</b> advancing  ↓<b>${movers.breadth.declining}</b> declining  →${movers.breadth.unchanged} flat`);
+      lines.push(`A/D Ratio: <b>${adRatio}x</b>`);
+      lines.push(`Mid: ↑${movers.breadth.mid.adv} ↓${movers.breadth.mid.dec}   Sml: ↑${movers.breadth.small.adv} ↓${movers.breadth.small.dec}`);
+      await sendTelegramTo(chatId, lines.join('\n'));
     } else if (text === '/gainers') {
       await sendTelegramTo(chatId, '⏳ <i>Fetching gainers...</i>');
       const movers = await fetchMovers();
       if (movers.gainers.length === 0) {
         await sendTelegramTo(chatId, '📊 No gainers data available. Market may be closed.');
       } else {
-        const lines = [`📈 <b>TOP MID &amp; SMALL CAP GAINERS</b>\n`];
-        for (let i = 0; i < Math.min(15, movers.gainers.length); i++) {
+        const lines = [`📈 <b>TOP ${movers.gainers.length} MID &amp; SMALL CAP GAINERS</b>\n`];
+        for (let i = 0; i < movers.gainers.length; i++) {
           const g = movers.gainers[i];
           const price = g.price > 0 ? `₹${g.price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '';
           lines.push(`  ${i + 1}. <b>${esc(g.ticker)}</b>   <b>+${g.changePercent.toFixed(1)}%</b>   ${price}   <i>${g.cap === 'Mid' ? 'Mid' : 'Sml'}</i>`);
@@ -360,8 +514,8 @@ export async function POST(request: Request) {
       if (movers.losers.length === 0) {
         await sendTelegramTo(chatId, '📊 No losers data available. Market may be closed.');
       } else {
-        const lines = [`📉 <b>TOP MID &amp; SMALL CAP LOSERS</b>\n`];
-        for (let i = 0; i < Math.min(15, movers.losers.length); i++) {
+        const lines = [`📉 <b>TOP ${movers.losers.length} MID &amp; SMALL CAP LOSERS</b>\n`];
+        for (let i = 0; i < movers.losers.length; i++) {
           const l = movers.losers[i];
           const price = l.price > 0 ? `₹${l.price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '';
           lines.push(`  ${i + 1}. <b>${esc(l.ticker)}</b>   <b>${l.changePercent.toFixed(1)}%</b>   ${price}   <i>${l.cap === 'Mid' ? 'Mid' : 'Sml'}</i>`);
@@ -386,7 +540,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   } catch (e) {
     console.error('[BOT] Webhook error:', e);
-    return NextResponse.json({ ok: true }); // Always return 200 to Telegram
+    return NextResponse.json({ ok: true });
   }
 }
 
@@ -413,16 +567,13 @@ export async function GET(request: Request) {
   console.log(`[BOT] Incoming request: mode=${searchParams.get('mode')}, secret=${secret ? 'provided' : 'missing'}`);
   diagnostics.steps.push('request_received');
 
-  // Auth check
   if (secret !== BOT_SECRET) {
-    console.log(`[BOT] Auth failed: expected=${BOT_SECRET}, got=${secret}`);
     return NextResponse.json({ error: 'Unauthorized', hint: 'Add ?secret=mc-bot-2026 to the URL' }, { status: 401 });
   }
   diagnostics.steps.push('auth_passed');
 
-  const mode = searchParams.get('mode') || 'full'; // full | test | diag
+  const mode = searchParams.get('mode') || 'full';
 
-  // Diagnostic mode — just checks connectivity, no Telegram send
   if (mode === 'diag') {
     diagnostics.config = {
       tokenSet: !!TG_TOKEN && TG_TOKEN.length > 10,
@@ -436,71 +587,76 @@ export async function GET(request: Request) {
   if (mode === 'test') {
     diagnostics.steps.push('sending_test_message');
     const result = await sendTelegram(
-      '\u{2705} *Market Cockpit Bot Connected*\n\nAlerts are working! You\'ll receive mid & small cap movers + earnings pulse twice daily during market hours.\n\n\u{1F310} [View Dashboard](https://market-cockpit.vercel.app/movers)'
+      '✅ <b>Market Cockpit Bot Connected</b>\n\nAlerts are working! You\'ll receive index snapshot, market breadth, and top 20 mid &amp; small cap movers twice daily.\n\n🌐 <a href="https://market-cockpit.vercel.app/movers">View Dashboard</a>'
     );
     diagnostics.steps.push(result.ok ? 'test_sent_ok' : 'test_send_failed');
-    return NextResponse.json({
-      ok: result.ok,
-      mode: 'test',
-      telegramResponse: result.telegramResponse,
-      error: result.error,
-      diagnostics,
-      elapsed: Date.now() - startTime,
-    });
+    return NextResponse.json({ ok: result.ok, mode: 'test', telegramResponse: result.telegramResponse, error: result.error, diagnostics, elapsed: Date.now() - startTime });
   }
 
-  // ── Full mode: fetch data + send ──
-  console.log('[BOT] Full mode: fetching movers + earnings...');
+  // ── Full mode: fetch data + send two-part message ──
+  console.log('[BOT] Full mode: fetching movers + earnings + indices...');
   diagnostics.steps.push('fetching_data');
 
-  const [movers, earnings] = await Promise.all([
+  const [movers, earnings, indices] = await Promise.all([
     fetchMovers().catch(e => {
       console.error('[BOT] fetchMovers failed:', e);
       diagnostics.moversError = String(e);
-      return { total: 0, gainers: [] as Stock[], losers: [] as Stock[], avgChange: 0 };
+      return { total: 0, gainers: [] as Stock[], losers: [] as Stock[], avgChange: 0, breadth: { advancing: 0, declining: 0, unchanged: 0, mid: { adv: 0, dec: 0 }, small: { adv: 0, dec: 0 } } };
     }),
     fetchEarningsPulse().catch(e => {
       console.error('[BOT] fetchEarningsPulse failed:', e);
       diagnostics.earningsError = String(e);
       return [] as Earning[];
     }),
+    fetchIndexSnapshot().catch(e => {
+      console.error('[BOT] fetchIndexSnapshot failed:', e);
+      diagnostics.indicesError = String(e);
+      return [] as IndexData[];
+    }),
   ]);
 
   diagnostics.steps.push('data_fetched');
-  diagnostics.data = { moversTotal: movers.total, gainers: movers.gainers.length, losers: movers.losers.length, earnings: earnings.length };
-  console.log(`[BOT] Data: ${movers.total} movers, ${movers.gainers.length} gainers, ${movers.losers.length} losers, ${earnings.length} earnings`);
+  diagnostics.data = {
+    moversTotal: movers.total,
+    gainers: movers.gainers.length,
+    losers: movers.losers.length,
+    earnings: earnings.length,
+    indices: indices.length,
+  };
 
   if (movers.total === 0 && earnings.length === 0) {
     diagnostics.steps.push('no_data_sending_closed_msg');
     const result = await sendTelegram(
-      '\u{1F4CA} *Market Cockpit*\n\nMarket is closed or data unavailable.\n\n_Next alert during market hours._'
+      '📊 <b>Market Cockpit</b>\n\nMarket is closed or data unavailable.\n\n<i>Next alert during market hours.</i>'
     );
-    return NextResponse.json({
-      ok: result.ok,
-      status: 'no-data',
-      telegramResponse: result.telegramResponse,
-      error: result.error,
-      diagnostics,
-      elapsed: Date.now() - startTime,
-    });
+    return NextResponse.json({ ok: result.ok, status: 'no-data', telegramResponse: result.telegramResponse, error: result.error, diagnostics, elapsed: Date.now() - startTime });
   }
 
-  const msg = buildMessage(movers, earnings);
-  diagnostics.steps.push('message_built');
-  diagnostics.messageLength = msg.length;
+  const [msg1, msg2] = buildMessages(movers, earnings, indices);
+  diagnostics.steps.push('messages_built');
+  diagnostics.msg1Length = msg1.length;
+  diagnostics.msg2Length = msg2.length;
 
-  const result = await sendTelegram(msg);
-  diagnostics.steps.push(result.ok ? 'telegram_sent_ok' : 'telegram_send_failed');
+  // Send part 1
+  const result1 = await sendTelegram(msg1);
+  diagnostics.steps.push(result1.ok ? 'msg1_sent_ok' : 'msg1_send_failed');
+
+  // Send part 2 (even if part 1 failed — give partial data)
+  const result2 = await sendTelegram(msg2);
+  diagnostics.steps.push(result2.ok ? 'msg2_sent_ok' : 'msg2_send_failed');
+  diagnostics.steps.push('telegram_sent_ok');
 
   return NextResponse.json({
-    ok: result.ok,
+    ok: result1.ok && result2.ok,
     movers: movers.total,
     gainers: movers.gainers.length,
     losers: movers.losers.length,
     earnings: earnings.length,
+    indices: indices.length,
     avgChange: movers.avgChange,
-    telegramResponse: result.telegramResponse,
-    error: result.error,
+    breadth: movers.breadth,
+    telegramResponse: { part1: result1.telegramResponse, part2: result2.telegramResponse },
+    error: result1.error || result2.error,
     diagnostics,
     elapsed: Date.now() - startTime,
   });
