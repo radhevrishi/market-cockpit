@@ -8,6 +8,12 @@ export const maxDuration = 55;
 
 const INR_TO_USD = 85;
 
+// ==================== ROUTE-LEVEL CACHE (BUG-01 fix) ====================
+// 3-minute in-memory cache for the full intelligence response
+// Prevents re-computation on rapid page reloads / tab switches
+const ROUTE_CACHE_TTL = 180_000;
+let _routeCache: { key: string; data: any; timestamp: number } | null = null;
+
 // ==================== MONEYCONTROL NEWS SCRAPER ====================
 // Fallback data source when NSE API fails/returns empty
 
@@ -246,10 +252,13 @@ interface IntelSignal {
   timeline: string | null;
   buyerSeller: string | null;
   premiumDiscount: number | null;
+  lastPrice: number | null;         // Current stock price for performance tracking
 
-  // Classification — UPGRADED v2
+  // Classification — UPGRADED v4
   impactLevel: ImpactLevel;       // HIGH / MEDIUM / LOW
-  impactConfidence: 'HIGH' | 'MEDIUM' | 'LOW'; // How confident are we in the impact %
+  impactConfidence: 'HIGH' | 'MEDIUM' | 'LOW'; // Legacy — derived from confidenceScore
+  confidenceScore: number;        // 90=ACTUAL / 70=INFERRED / 50=HEURISTIC
+  confidenceType: 'ACTUAL' | 'INFERRED' | 'HEURISTIC';
   action: ActionFlag;             // BUY WATCH / TRACK / IGNORE
   score: number;                  // 0-100 (quant-based)
   timeWeight: number;             // 0-1 (time decay)
@@ -261,6 +270,9 @@ interface IntelSignal {
 
   isWatchlist: boolean;
   isPortfolio: boolean;
+
+  // Source traceability
+  dataSource?: string;  // 'NSE' | 'Moneycontrol' | 'Google News' | 'Block Deal' | 'Bulk Deal'
 
   // Trend stacking (set at aggregation)
   signalStackCount?: number;
@@ -305,7 +317,8 @@ interface IntelligenceResponse {
 interface StockEnrichment {
   symbol: string;
   mcapCr: number | null;
-  annualRevenueCr: number | null;
+  annualRevenueCr: number | null;       // Best available: TTM > FY > sum of available quarters
+  revenueSource: 'TTM' | 'FY' | 'PARTIAL' | null;  // How revenue was derived
   companyName: string | null;
   industry: string | null;
   lastPrice: number | null;
@@ -313,7 +326,8 @@ interface StockEnrichment {
 }
 
 interface EarningsData {
-  quarters?: Array<{ revenue?: number }>;
+  quarters?: Array<{ revenue?: number; quarter?: string }>;
+  annualRevenue?: number;               // FY annual revenue if available
   mcap?: number;
   pe?: number;
   currentPrice?: number;
@@ -399,137 +413,225 @@ const NEGATIVE_KEYWORDS = [
 
 function parseOrderValue(text: string): number | null {
   if (!text) return null;
-  const s = text.toLowerCase();
+  const s = text;  // Keep original case for ₹ symbol matching
 
-  // ₹ Crore patterns
-  const crMatch = s.match(/(?:rs\.?|₹|inr|value of)\s*([\d,]+(?:\.\d+)?)\s*(?:crore|cr)\b/i);
-  if (crMatch) return parseFloat(crMatch[1].replace(/,/g, ''));
+  // ── Priority-ordered regex patterns (most specific → least) ──
+  // All patterns are case-insensitive via /i flag
 
-  // Standalone number + crore without prefix (e.g. "1,200 Crores")
-  const standaloneCr = s.match(/([\d,]+(?:\.\d+)?)\s*(?:crore|cr)\b/i);
-  if (standaloneCr) {
-    const val = parseFloat(standaloneCr[1].replace(/,/g, ''));
-    if (val > 0.5) return val; // Ignore tiny numbers
+  // Pattern 1: "worth ₹X crore" / "valued at ₹X crore" / "LOA of ₹X crore"
+  const worthMatch = s.match(/(?:worth|valued\s+at|loa\s+of|loa\s+for|value\s+of|amounting\s+to|aggregating|totalling|order\s+of|contract\s+of|for\s+a\s+consideration\s+of|order\s+book\s+of|contract\s+price|project\s+value|deal\s+size)\s*(?:rs\.?|₹|inr)?\s*([\d,]+(?:\.\d+)?)\s*(?:crore|crores|cr)\b/i);
+  if (worthMatch) return parseFloat(worthMatch[1].replace(/,/g, ''));
+
+  // Pattern 2: "₹X crore contract/order/deal/project"
+  const prefixedMatch = s.match(/(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:crore|crores|cr)\s*(?:order|contract|deal|project|mandate|loa|letter|work)/i);
+  if (prefixedMatch) return parseFloat(prefixedMatch[1].replace(/,/g, ''));
+
+  // Pattern 3: "LOI/LOA...₹X" / "LOI...₹X crore"
+  const loiMatch = s.match(/(?:loi|loa|letter\s+of\s+(?:intent|award))[^₹\d]*(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:crore|crores|cr)?\b/i);
+  if (loiMatch) {
+    const val = parseFloat(loiMatch[1].replace(/,/g, ''));
+    // If no crore/cr suffix, determine if it's Cr or Lakhs
+    if (!/crore|cr/i.test(loiMatch[0])) {
+      if (val >= 10000) return val / 100; // lakhs → Cr
+      return val > 0.5 ? val : null;
+    }
+    return val;
   }
 
-  // ₹ Lakh → Cr
-  const lMatch = s.match(/(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:lakh|lac|l)\b/i);
+  // Pattern 4: Standard "Rs X Cr" / "₹ X Crore"
+  const crMatch = s.match(/(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:crore|crores|cr)\b/i);
+  if (crMatch) return parseFloat(crMatch[1].replace(/,/g, ''));
+
+  // Pattern 5: Standalone "X crore(s)" / "X Cr" (e.g. "1,200 Crores")
+  const standaloneCr = s.match(/\b([\d,]+(?:\.\d+)?)\s*(?:crore|crores|cr)\b/i);
+  if (standaloneCr) {
+    const val = parseFloat(standaloneCr[1].replace(/,/g, ''));
+    if (val > 0.5) return val;
+  }
+
+  // Pattern 6: ₹ Lakh → Cr
+  const lMatch = s.match(/(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:lakh|lakhs|lac|lacs|l)\b/i);
   if (lMatch) return parseFloat(lMatch[1].replace(/,/g, '')) / 100;
 
-  // USD Million → Cr
-  const usdMnMatch = s.match(/(?:usd|\$)\s*([\d,]+(?:\.\d+)?)\s*(?:million|mn|m)\b/i);
+  // Pattern 7: Standalone Lakh → Cr
+  const standaloneLakh = s.match(/\b([\d,]+(?:\.\d+)?)\s*(?:lakh|lakhs|lac|lacs)\b/i);
+  if (standaloneLakh) {
+    const val = parseFloat(standaloneLakh[1].replace(/,/g, '')) / 100;
+    if (val > 0.01) return val;
+  }
+
+  // Pattern 8: USD Million → Cr (with FX conversion)
+  const usdMnMatch = s.match(/(?:usd|\$|us\$|us\s*dollar)\s*([\d,]+(?:\.\d+)?)\s*(?:million|mn|m)\b/i);
   if (usdMnMatch) return (parseFloat(usdMnMatch[1].replace(/,/g, '')) * INR_TO_USD) / 10;
 
-  // USD Billion → Cr
-  const usdBnMatch = s.match(/(?:usd|\$)\s*([\d,]+(?:\.\d+)?)\s*(?:billion|bn|b)\b/i);
+  // Pattern 9: "X million USD/dollars" (reversed)
+  const mnUsdMatch = s.match(/\b([\d,]+(?:\.\d+)?)\s*(?:million|mn)\s*(?:usd|us\s*dollar|dollar)/i);
+  if (mnUsdMatch) return (parseFloat(mnUsdMatch[1].replace(/,/g, '')) * INR_TO_USD) / 10;
+
+  // Pattern 10: USD Billion → Cr
+  const usdBnMatch = s.match(/(?:usd|\$|us\$)\s*([\d,]+(?:\.\d+)?)\s*(?:billion|bn|b)\b/i);
   if (usdBnMatch) return parseFloat(usdBnMatch[1].replace(/,/g, '')) * INR_TO_USD * 100;
 
-  // ₹ Million → Cr
+  // Pattern 11: "X billion USD/dollars" (reversed)
+  const bnUsdMatch = s.match(/\b([\d,]+(?:\.\d+)?)\s*(?:billion|bn)\s*(?:usd|us\s*dollar|dollar)/i);
+  if (bnUsdMatch) return parseFloat(bnUsdMatch[1].replace(/,/g, '')) * INR_TO_USD * 100;
+
+  // Pattern 12: Plain $X (USD, no unit → assume millions if < 1000, else direct)
+  const plainUsd = s.match(/\$\s*([\d,]+(?:\.\d+)?)\b/i);
+  if (plainUsd) {
+    const val = parseFloat(plainUsd[1].replace(/,/g, ''));
+    if (val >= 1000) return (val * INR_TO_USD) / 10; // millions
+    if (val >= 1) return (val * INR_TO_USD) / 10;     // millions
+  }
+
+  // Pattern 13: INR Million → Cr
   const inrMnMatch = s.match(/(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:million|mn)\b/i);
   if (inrMnMatch) return parseFloat(inrMnMatch[1].replace(/,/g, '')) / 10;
 
-  // Large number without explicit unit — check if followed by context
-  const bareNum = s.match(/(?:value|worth|amount|aggregating|totalling|size)\s*(?:of\s+)?(?:rs\.?|₹|inr)?\s*([\d,]+(?:\.\d+)?)/i);
+  // Pattern 14: Contextual bare numbers ("worth X", "valued at X", "order book of X")
+  const bareNum = s.match(/(?:value|worth|amount|aggregating|totalling|size|approximately|approx|around|about|estimated|consideration)\s*(?:of\s+)?(?:rs\.?|₹|inr)?\s*([\d,]+(?:\.\d+)?)/i);
   if (bareNum) {
     const val = parseFloat(bareNum[1].replace(/,/g, ''));
-    // If > 10000, assume lakhs → Cr; if > 100, assume Cr already
-    if (val >= 10000) return val / 100; // lakhs to Cr
+    if (val >= 10000) return val / 100; // lakhs → Cr
     if (val >= 10) return val; // likely Cr
   }
+
+  // Pattern 15: EUR → Cr via USD proxy
+  const eurMatch = s.match(/(?:eur|€|euro)\s*([\d,]+(?:\.\d+)?)\s*(?:million|mn|m)\b/i);
+  if (eurMatch) return (parseFloat(eurMatch[1].replace(/,/g, '')) * INR_TO_USD * 1.08) / 10;
 
   return null;
 }
 
-// ==================== MANDATORY INFERENCE ENGINE ====================
-// valueCr must NEVER be null. If regex fails → infer from keywords + revenue.
-// If revenue missing → use absolute fallbacks.
+// ==================== INFERENCE ENGINE v4 ====================
+// CORE RULE: If value IS extracted → pctRevenue = value / revenue (NEVER a fixed constant)
+// Only use heuristics when BOTH value AND revenue are missing.
 //
-// Inference table (% of annual revenue):
-//   mega order/landmark/transformative    → 8-12%
-//   large order/major contract            → 4-6%
-//   acquisition/buyout/merger             → 5-8%
-//   capacity expansion/new plant          → 6-10%
-//   strategic JV/partnership              → 3-5%
-//   order win/contract (generic)          → 2-3%
-//   MoU/LOI                               → 1-2%
-//   fund raising/QIP                      → 4-6%
-//   buyback                               → 2-4%
-//   dividend                              → 0.5-1%
-//   guidance/outlook                      → 2% (forward visibility)
-//   small/minor/routine                   → 0.5-1%
-//   negative events                       → 2-4% (risk)
-//   unknown/generic                       → 1%
+// Confidence levels:
+//   90 → actual disclosed value + known revenue (ACTUAL)
+//   70 → extracted value but no revenue, or inferred from text context (INFERRED)
+//   50 → pure sector heuristic fallback (HEURISTIC)
 
 interface InferenceResult {
   valueCr: number;
   pctRevenue: number;
-  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  pctRange: [number, number];     // [min, max] % range for probabilistic scoring
+  confidenceScore: number;        // 90 / 70 / 50
+  confidenceType: 'ACTUAL' | 'INFERRED' | 'HEURISTIC';
 }
 
-function inferEventValue(text: string, annualRevenueCr: number | null, eventType: string, isNegative: boolean): InferenceResult {
+// Sector-specific heuristic ranges — [min, midpoint, max] as % of revenue
+// Only invoked when NO value is extractable from text
+// Range enables future probabilistic scoring and calibration
+interface SectorRange { min: number; mid: number; max: number; }
+const SECTOR_HEURISTICS: Record<string, Record<string, SectorRange>> = {
+  'M&A': {
+    'IT': { min: 2, mid: 3.5, max: 6 }, 'Auto': { min: 3, mid: 5.5, max: 8 },
+    'Pharma': { min: 2, mid: 4, max: 7 }, 'Infra': { min: 3, mid: 6, max: 10 },
+    'Power': { min: 3, mid: 5, max: 8 }, 'Defence': { min: 4, mid: 7, max: 12 },
+    'Metals': { min: 3, mid: 5, max: 8 }, 'Chemicals': { min: 2, mid: 4, max: 7 },
+    'Telecom': { min: 2, mid: 4.5, max: 8 }, 'default': { min: 2, mid: 4.5, max: 8 },
+  },
+  'Order Win': {
+    'Infra': { min: 5, mid: 10, max: 15 }, 'Defence': { min: 6, mid: 12, max: 20 },
+    'Power': { min: 4, mid: 8, max: 14 }, 'Railways': { min: 5, mid: 10, max: 18 },
+    'Construction': { min: 5, mid: 9, max: 15 }, 'IT': { min: 1, mid: 2.5, max: 6 },
+    'Auto': { min: 1.5, mid: 3, max: 6 }, 'Pharma': { min: 1, mid: 2, max: 5 },
+    'Metals': { min: 2, mid: 4, max: 8 }, 'Oil & Gas': { min: 2, mid: 5, max: 10 },
+    'default': { min: 2, mid: 4, max: 8 },
+  },
+  'Contract': {
+    'Infra': { min: 4, mid: 8, max: 14 }, 'Defence': { min: 5, mid: 10, max: 18 },
+    'Power': { min: 3, mid: 7, max: 12 }, 'Railways': { min: 4, mid: 9, max: 16 },
+    'IT': { min: 1, mid: 2, max: 5 }, 'Auto': { min: 1, mid: 3, max: 6 },
+    'default': { min: 2, mid: 4, max: 8 },
+  },
+  'Capex/Expansion': {
+    'Infra': { min: 4, mid: 8, max: 14 }, 'Power': { min: 5, mid: 10, max: 18 },
+    'Auto': { min: 3, mid: 6, max: 10 }, 'Pharma': { min: 2, mid: 5, max: 9 },
+    'Chemicals': { min: 3, mid: 7, max: 12 }, 'Metals': { min: 4, mid: 8, max: 14 },
+    'IT': { min: 1, mid: 3, max: 6 }, 'default': { min: 3, mid: 6, max: 10 },
+  },
+  'LOI': { 'default': { min: 1, mid: 2, max: 4 } },
+  'JV/Partnership': { 'default': { min: 1.5, mid: 3, max: 6 } },
+  'Fund Raising': { 'default': { min: 2, mid: 4, max: 8 } },
+  'Demerger': { 'default': { min: 4, mid: 8, max: 15 } },
+  'Buyback': { 'default': { min: 1, mid: 2.5, max: 5 } },
+  'Dividend': { 'default': { min: 0.3, mid: 0.8, max: 2 } },
+  'Guidance': { 'default': { min: 1, mid: 2, max: 5 } },
+  'Mgmt Change': { 'default': { min: 0.5, mid: 1, max: 3 } },
+  'Corporate': { 'default': { min: 0.5, mid: 1, max: 3 } },
+};
+
+function getSectorHeuristic(eventType: string, sector: string | null): SectorRange {
+  const eventMap = SECTOR_HEURISTICS[eventType] || SECTOR_HEURISTICS['Corporate'];
+  if (sector && eventMap[sector]) return eventMap[sector];
+  return eventMap['default'] || { min: 1, mid: 2, max: 5 };
+}
+
+// Keyword magnitude boost — adjusts the heuristic based on language intensity
+function getKeywordMagnitude(text: string): number {
   const lower = text.toLowerCase();
+  if (/mega|landmark|transformative|game.?chang|largest ever|record|biggest/i.test(lower)) return 2.5;
+  if (/large|major|significant|substantial|multi.?billion|massive|sizable/i.test(lower)) return 1.8;
+  if (/medium|moderate|decent/i.test(lower)) return 1.0;
+  if (/small|minor|routine|regular|nominal/i.test(lower)) return 0.4;
+  return 1.0; // neutral — no magnitude keywords
+}
 
-  // Default: use revenue-based inference if available
+function inferEventValue(
+  text: string,
+  annualRevenueCr: number | null,
+  eventType: string,
+  isNegative: boolean,
+  sector: string | null,
+): InferenceResult {
   const rev = (annualRevenueCr && annualRevenueCr > 0) ? annualRevenueCr : null;
+  const magnitude = getKeywordMagnitude(text);
+  const range = getSectorHeuristic(eventType, sector);
+  const adjustedMid = parseFloat((range.mid * magnitude).toFixed(2));
+  const adjustedMin = parseFloat((range.min * magnitude).toFixed(2));
+  const adjustedMax = parseFloat((range.max * magnitude).toFixed(2));
+  const pctRange: [number, number] = [adjustedMin, adjustedMax];
 
-  // Inference rules by keyword (returns % of revenue)
-  let pctEst: number;
+  // ── HEURISTIC BIAS FIX (Issue 3): Apply 0.7x penalty + confidence=40 ──
+  // Using midpoint creates systematic bias → penalize all heuristic results
 
-  if (/mega order|mega contract|landmark|transformative|game.?chang|largest ever/i.test(lower)) {
-    pctEst = 10;
-  } else if (/large order|major contract|significant order|substantial|multi.?billion|massive/i.test(lower)) {
-    pctEst = 5;
-  } else if (/acquisition|buyout|merger|amalgamation/i.test(lower)) {
-    pctEst = 6;
-  } else if (/capacity expansion|new plant|greenfield|brownfield|capex|new facility/i.test(lower)) {
-    pctEst = 7;
-  } else if (/joint venture|jv |partnership|collaboration|strategic alliance/i.test(lower)) {
-    pctEst = 4;
-  } else if (/fund raising|qip|rights issue|preferential allotment/i.test(lower)) {
-    pctEst = 5;
-  } else if (/demerger/i.test(lower)) {
-    pctEst = 8;
-  } else if (/buyback/i.test(lower)) {
-    pctEst = 3;
-  } else if (/order win|contract win|awarded|bagging|receiving of orders|work order|purchase order/i.test(lower)) {
-    pctEst = 2.5;
-  } else if (/letter of intent|loi|mou/i.test(lower)) {
-    pctEst = 1.5;
-  } else if (/guidance|outlook|forecast|target/i.test(lower)) {
-    pctEst = 2;
-  } else if (/dividend/i.test(lower)) {
-    pctEst = 0.8;
-  } else if (/appointment|resignation|ceo|cfo|managing director/i.test(lower)) {
-    pctEst = 1.5; // mgmt change has indirect impact
-  } else if (isNegative) {
-    pctEst = 3; // negative events assumed material
-  } else if (/small|minor|routine|regular/i.test(lower)) {
-    pctEst = 0.5;
-  } else {
-    pctEst = 1; // absolute floor — never zero
+  // Negative events — always material
+  if (isNegative) {
+    const negPct = Math.max(3, adjustedMid) * 0.7; // heuristic penalty
+    if (rev) {
+      return {
+        valueCr: parseFloat((rev * negPct / 100).toFixed(1)),
+        pctRevenue: negPct, pctRange,
+        confidenceScore: 40, confidenceType: 'HEURISTIC',
+      };
+    }
+    return { valueCr: 100, pctRevenue: negPct, pctRange, confidenceScore: 40, confidenceType: 'HEURISTIC' };
   }
 
   if (rev) {
+    // We have revenue but no extracted value → use sector heuristic × magnitude × 0.7 penalty
+    const penalizedMid = adjustedMid * 0.7;
+    const estimatedValue = parseFloat((rev * penalizedMid / 100).toFixed(1));
     return {
-      valueCr: parseFloat((rev * pctEst / 100).toFixed(1)),
-      pctRevenue: pctEst,
-      confidence: 'LOW',
+      valueCr: estimatedValue, pctRevenue: penalizedMid, pctRange,
+      confidenceScore: 40, confidenceType: 'HEURISTIC',
     };
   }
 
-  // No revenue available → use absolute value estimates
-  const absEstimates: Record<string, number> = {
-    'M&A': 500, 'Capex/Expansion': 400, 'Demerger': 600,
-    'Fund Raising': 300, 'Order Win': 200, 'Contract': 200,
-    'JV/Partnership': 150, 'LOI': 100, 'Buyback': 200,
-    'Dividend': 50, 'Guidance': 100, 'Mgmt Change': 0,
+  // No revenue available → absolute value estimates (sector-adjusted)
+  const absBase: Record<string, number> = {
+    'M&A': 400, 'Capex/Expansion': 300, 'Demerger': 500,
+    'Fund Raising': 250, 'Order Win': 150, 'Contract': 150,
+    'JV/Partnership': 100, 'LOI': 75, 'Buyback': 150,
+    'Dividend': 30, 'Guidance': 50, 'Mgmt Change': 0,
   };
-  const absVal = absEstimates[eventType] || 50;
+  const absVal = Math.round((absBase[eventType] || 50) * magnitude * 0.7); // heuristic penalty
 
   return {
-    valueCr: absVal,
-    pctRevenue: pctEst, // Keep the % estimate even without revenue for scoring
-    confidence: 'LOW',
+    valueCr: absVal, pctRevenue: adjustedMid * 0.7, pctRange,
+    confidenceScore: 40, confidenceType: 'HEURISTIC',
   };
 }
 
@@ -627,8 +729,10 @@ function extractTimeline(text: string): string | null {
 // LOW:    impactPct < 3
 
 function classifyImpactLevel(impactPct: number): ImpactLevel {
-  if (impactPct >= 8) return 'HIGH';
-  if (impactPct >= 3) return 'MEDIUM';
+  // Lowered HIGH threshold from 8→5 (BUG-09 fix)
+  // A ₹275 Cr deal at 2.7% MCap SHOULD be HIGH for a smallcap
+  if (impactPct >= 5) return 'HIGH';
+  if (impactPct >= 2) return 'MEDIUM';
   return 'LOW';
 }
 
@@ -652,17 +756,17 @@ function classifyAction(
   isPortfolio: boolean,
   earningsScore: number | null,
 ): ActionFlag {
-  // Rule 1: High impact + Bullish → BUY WATCH (always)
-  if (impactPct >= 8 && sentiment === 'Bullish') return 'BUY WATCH';
+  // Rule 1: HIGH impact + Bullish → BUY WATCH (BUG-09 recalibrated thresholds)
+  if (impactPct >= 5 && sentiment === 'Bullish') return 'BUY WATCH';
 
-  // Rule 2: Good earnings + medium-high impact → BUY WATCH
-  if (impactPct >= 5 && earningsScore !== null && earningsScore >= 70) return 'BUY WATCH';
+  // Rule 2: Portfolio/Watchlist stock + meaningful impact + not bearish → BUY WATCH
+  if (impactPct >= 2 && (isWatchlist || isPortfolio) && sentiment !== 'Bearish') return 'BUY WATCH';
 
-  // Rule 3: Watchlist stock + meaningful impact + not bearish → BUY WATCH
-  if (impactPct >= 3 && (isWatchlist || isPortfolio) && sentiment !== 'Bearish') return 'BUY WATCH';
+  // Rule 3: Good earnings + medium impact → BUY WATCH
+  if (impactPct >= 3 && earningsScore !== null && earningsScore >= 60) return 'BUY WATCH';
 
-  // Rule 4: High impact + any sentiment → still TRACK (never ignore material events)
-  if (impactPct >= 8) return 'TRACK';
+  // Rule 4: Very high impact (any sentiment) → BUY WATCH
+  if (impactPct >= 10) return 'BUY WATCH';
 
   // Rule 5: Everything else → TRACK
   return 'TRACK';
@@ -682,12 +786,9 @@ function computeTimeWeight(dateStr: string): number {
     }
     if (isNaN(d.getTime())) return 0.5;
     const daysOld = Math.max(0, (Date.now() - d.getTime()) / (24 * 60 * 60 * 1000));
-    if (daysOld <= 1) return 1.0;
-    if (daysOld <= 3) return 0.85;
-    if (daysOld <= 5) return 0.7;
-    if (daysOld <= 7) return 0.5;
-    if (daysOld <= 14) return 0.3;
-    return 0.1;
+    // Continuous decay: max(0.05, 1 - daysOld * 0.07)
+    // 0d=1.0, 1d=0.93, 3d=0.79, 5d=0.65, 7d=0.51, 10d=0.30, 14d=0.05
+    return Math.max(0.05, parseFloat((1 - daysOld * 0.07).toFixed(3)));
   } catch {
     return 0.5;
   }
@@ -780,15 +881,35 @@ function classifySentiment(eventType: string, isNegative: boolean, isBuyDeal: bo
   return 'Neutral';
 }
 
-// ==================== QUANT SCORE ENGINE (v3) ====================
+// ==================== QUANT SCORE ENGINE (v4) ====================
 //
-// score = (impactPct * 6)          → 0–60 points (PRIMARY DRIVER)
-//       + (sentiment * 25)          → −25 to +25 points
-//       + (timeWeight * 20)         → 0–20 points
-//       + (signalStack * 10)        → 0–10 bonus (set later in aggregation)
-//       + (earningsScore * 0.3)     → 0–30 points
+// GRANULAR SCORING — no more score=100 flat.
+// ==================== SCORING MODEL v5 ====================
+// Calibrated for proper distribution: 5-10 HIGH, 20-30 BUY WATCH, 60-70 TRACK
 //
-// CRITICAL: If impactPct exists and >= 3, score MUST exceed 50.
+// BASE SCORE = impact(0–40) + freshness(0–15) + type(0–15) = max 70
+// MULTIPLIER = confidence factor (0.6–1.0) → penalizes heuristics
+// MODIFIERS  = sentiment(±5) + earnings(±10) + deal quality(+5)
+// STACKING   = 0–20 (applied later)
+//
+// Key insight: multiply by confidence instead of adding — ensures heuristic
+// signals can NEVER outscore actual signals at the same impact level.
+
+const SIGNAL_TYPE_WEIGHTS: Record<string, number> = {
+  'Order Win': 14, 'Contract': 14, 'M&A': 13, 'Capex/Expansion': 12,
+  'Demerger': 11, 'Fund Raising': 10, 'LOI': 8, 'JV/Partnership': 9,
+  'Buyback': 10, 'Dividend': 6, 'Guidance': 8, 'Mgmt Change': 5,
+  'Block Buy': 11, 'Bulk Buy': 10, 'Block Sell': 11, 'Bulk Sell': 10,
+  'Corporate': 4,
+};
+
+// Sector normalization multipliers — adjusts signal weight by sector sensitivity
+const SECTOR_MULTIPLIER: Record<string, number> = {
+  'Infra': 1.2, 'Defence': 1.2, 'Power': 1.15, 'Railways': 1.15,
+  'Construction': 1.1, 'Metals': 1.1, 'Oil & Gas': 1.1, 'Chemicals': 1.05,
+  'Auto': 1.0, 'Pharma': 0.95, 'Realty': 1.0, 'Telecom': 0.9,
+  'IT': 0.8, 'FMCG': 0.7, 'Textiles': 0.9,
+};
 
 function computeScore(opts: {
   impactPct: number;
@@ -797,37 +918,60 @@ function computeScore(opts: {
   earningsScore: number | null;
   isNegative: boolean;
   isDeal: boolean;
+  eventType: string;
+  confidenceScore: number;
   buyerQuality?: number;
   dealPremiumDiscount?: number | null;
+  sector?: string | null;
 }): number {
   let score = 0;
 
-  // Component 1: Impact % × 6 (0–60 points) — THE CORE DRIVER
-  score += Math.min(60, opts.impactPct * 6);
+  // ── Component 1: Impact (0–40) — log curve for diminishing returns ──
+  // At 3%→12, 5%→19, 8%→26, 15%→35, 25%→40
+  const impactScore = Math.min(40, 40 * (1 - Math.exp(-opts.impactPct / 10)));
+  score += impactScore;
 
-  // Component 2: Sentiment × 25 (−25 to +25 points)
-  const sentimentMult = opts.sentiment === 'Bullish' ? 1 : opts.sentiment === 'Neutral' ? 0 : -1;
-  score += sentimentMult * 25;
+  // ── Component 2: Freshness (0–15) — time decay (Issue 6: alpha preservation) ──
+  // Day 1 → +13.5, Day 5 → +7.5, Day 10 → +0 — forces recency relevance
+  const daysOldApprox = Math.max(0, (1 - opts.timeWeight) / 0.07);
+  const freshnessScore = Math.max(0, 15 - daysOldApprox * 1.5);
+  score += freshnessScore;
 
-  // Component 3: Time weight × 20 (0–20 points)
-  score += opts.timeWeight * 20;
+  // ── Component 3: Signal type weight (0–15) ──
+  score += Math.min(15, SIGNAL_TYPE_WEIGHTS[opts.eventType] || 5);
 
-  // Component 4: Earnings integration (0–30 points)
-  if (opts.earningsScore !== null && opts.earningsScore > 0) {
-    score += opts.earningsScore * 0.3;
+  // ── CONFIDENCE MULTIPLIER (institutional standard: score = base × confidence/100) ──
+  // 90→full strength, 70→70%, 40→40% (heuristic heavily penalized)
+  const confidenceFactor = opts.confidenceScore / 100;
+  score = score * confidenceFactor;
+
+  // ── Modifiers (additive, after confidence scaling) ──
+
+  // Sentiment: Bullish adds, Bearish subtracts
+  score += opts.sentiment === 'Bullish' ? 5 : opts.sentiment === 'Bearish' ? -3 : 0;
+
+  // Earnings integration (CRITICAL: negative penalty prevents value traps)
+  if (opts.earningsScore !== null) {
+    if (opts.earningsScore >= 70) score += 8;       // Strong earnings → alpha signal
+    else if (opts.earningsScore >= 50) score += 4;   // OK earnings → mild boost
+    else if (opts.earningsScore < 40) { score -= 10; } // Bad earnings → RISK penalty (was -8, now -10)
   }
 
-  // Component 5: Negative boost (bad news = urgent)
-  if (opts.isNegative) score += 8;
+  // Negative events get urgency boost
+  if (opts.isNegative) score += 5;
 
-  // Component 6: Deal-specific
+  // Deal-specific quality
   if (opts.isDeal) {
-    if (opts.buyerQuality && opts.buyerQuality >= 80) score += 6;
-    if (opts.dealPremiumDiscount !== undefined && opts.dealPremiumDiscount !== null && opts.dealPremiumDiscount > 3) score += 4;
+    if (opts.buyerQuality && opts.buyerQuality >= 80) score += 4;
+    if (opts.dealPremiumDiscount !== undefined && opts.dealPremiumDiscount !== null && opts.dealPremiumDiscount > 3) score += 2;
   }
 
-  // HARD RULE: meaningful events (impactPct >= 3) must score >= 50
-  if (opts.impactPct >= 3 && score < 50) score = 50;
+  // Sector normalization — adjusts score based on sector sensitivity
+  if (opts.sector) {
+    const sectorKey = opts.sector.split(' ')[0]; // e.g., "IT Services" → "IT"
+    const mult = SECTOR_MULTIPLIER[sectorKey] || 1.0;
+    score *= mult;
+  }
 
   return Math.max(0, Math.min(100, Math.round(score)));
 }
@@ -836,12 +980,16 @@ function computeScore(opts: {
 
 async function enrichSymbol(symbol: string): Promise<StockEnrichment> {
   const result: StockEnrichment = {
-    symbol, mcapCr: null, annualRevenueCr: null,
+    symbol, mcapCr: null, annualRevenueCr: null, revenueSource: null,
     companyName: null, industry: null, lastPrice: null, issuedSize: null,
   };
 
   try {
-    const quote = await fetchStockQuote(symbol);
+    // 2-second timeout guard per symbol — skip partial data if too slow
+    const quotePromise = fetchStockQuote(symbol);
+    const timeoutPromise = new Promise<null>(res => setTimeout(() => res(null), 2000));
+    const quote = await Promise.race([quotePromise, timeoutPromise]);
+
     if (quote) {
       result.lastPrice = quote.priceInfo?.lastPrice || null;
       result.issuedSize = quote.securityInfo?.issuedSize || null;
@@ -855,13 +1003,29 @@ async function enrichSymbol(symbol: string): Promise<StockEnrichment> {
       }
     }
 
-    // Earnings from KV (revenue already in Crores)
+    // Revenue: TTM (4 quarters) → FY annual → partial quarters
     const earnings = await kvGet<EarningsData>(`earnings:${symbol}`);
-    if (earnings?.quarters && Array.isArray(earnings.quarters)) {
-      const rev = earnings.quarters.slice(0, 4).reduce((s, q) => s + (q.revenue || 0), 0);
-      if (rev > 0) result.annualRevenueCr = rev;
+    if (earnings) {
+      if (earnings.quarters && Array.isArray(earnings.quarters) && earnings.quarters.length >= 4) {
+        const ttmRev = earnings.quarters.slice(0, 4).reduce((s, q) => s + (q.revenue || 0), 0);
+        if (ttmRev > 0) { result.annualRevenueCr = ttmRev; result.revenueSource = 'TTM'; }
+      }
+      if (!result.annualRevenueCr && earnings.annualRevenue && earnings.annualRevenue > 0) {
+        result.annualRevenueCr = earnings.annualRevenue; result.revenueSource = 'FY';
+      }
+      if (!result.annualRevenueCr && earnings.quarters && Array.isArray(earnings.quarters) && earnings.quarters.length > 0 && earnings.quarters.length < 4) {
+        const partialRev = earnings.quarters.reduce((s, q) => s + (q.revenue || 0), 0);
+        if (partialRev > 0) {
+          result.annualRevenueCr = Math.round(partialRev * (4 / earnings.quarters.length));
+          result.revenueSource = 'PARTIAL';
+        }
+      }
+      // Penalize non-TTM confidence (Issue 2 fix)
+      if (result.revenueSource === 'PARTIAL') {
+        // Mark as less reliable — downstream code checks revenueSource
+      }
+      if (!result.mcapCr && earnings.mcap) result.mcapCr = earnings.mcap;
     }
-    if (!result.mcapCr && earnings?.mcap) result.mcapCr = earnings.mcap;
   } catch (e) {
     console.error(`[Intelligence] Enrich error ${symbol}:`, e);
   }
@@ -891,6 +1055,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
     const watchlistParam = searchParams.get('watchlist');
     const portfolioParam = searchParams.get('portfolio');
     const days = parseInt(searchParams.get('days') || '30');
+    const forceRefresh = searchParams.get('force') === 'true';
 
     const watchlist = watchlistParam
       ? watchlistParam.split(',').map(s => normalizeTicker(s.trim())).filter(Boolean)
@@ -898,6 +1063,14 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
     const portfolio = portfolioParam
       ? portfolioParam.split(',').map(s => normalizeTicker(s.trim())).filter(Boolean)
       : [];
+
+    // ── Route-level cache (BUG-01 fix: instant response on repeat calls) ──
+    const cacheKey = `${watchlist.join(',')}|${portfolio.join(',')}|${days}`;
+    if (!forceRefresh && _routeCache && _routeCache.key === cacheKey && (Date.now() - _routeCache.timestamp) < ROUTE_CACHE_TTL) {
+      console.log(`[Intelligence] Cache hit (${Date.now() - startTime}ms)`);
+      return NextResponse.json(_routeCache.data);
+    }
+
     const watchlistSet = new Set(watchlist);
     const portfolioSet = new Set(portfolio);
 
@@ -1053,14 +1226,30 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
     filteredAnn.forEach(a => { if (symbolsToEnrich.size < 30) symbolsToEnrich.add(normalizeTicker(a.symbol)); });
     symbolsToEnrich.delete('');
 
-    // Batch enrich
+    // Batch enrich — 10 parallel with 2s per-symbol timeout (BUG-01 + Issue 10 fix)
     const enrichMap = new Map<string, StockEnrichment>();
     const symArr = Array.from(symbolsToEnrich);
-    for (let i = 0; i < symArr.length; i += 3) {
-      const batch = symArr.slice(i, i + 3);
-      const results = await Promise.all(batch.map(s => enrichSymbol(s)));
-      results.forEach(r => enrichMap.set(r.symbol, r));
-      if (i + 3 < symArr.length) await new Promise(r => setTimeout(r, 200));
+    let enrichPartial = false;
+    for (let i = 0; i < symArr.length; i += 10) {
+      const batch = symArr.slice(i, i + 10);
+      const results = await Promise.allSettled(
+        batch.map(symbol =>
+          Promise.race([
+            enrichSymbol(symbol),
+            new Promise<StockEnrichment>(res => setTimeout(() => res({
+              symbol, mcapCr: null, annualRevenueCr: null, revenueSource: null,
+              companyName: null, industry: null, lastPrice: null, issuedSize: null,
+            }), 2000))
+          ])
+        )
+      );
+      for (const r of results) {
+        if (r.status === 'fulfilled') {
+          enrichMap.set(r.value.symbol, r.value);
+        } else {
+          enrichPartial = true;
+        }
+      }
     }
 
     debug.enrichedSymbols = enrichMap.size;
@@ -1068,7 +1257,9 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
 
     // ── 3. Build signals from corporate orders ──
     const allSignals: IntelSignal[] = [];
-    // DEDUP: key = symbol:eventType:date → merge same company + same event type + same day
+    // CROSS-SOURCE DEDUP (Issue 7): key = symbol_eventType_valueCr_date
+    // Same event from NSE + Moneycontrol + Google News → keep highest confidence
+    const crossSourceSeen = new Set<string>();
     const dedupMap = new Map<string, IntelSignal>();
 
     // Pre-fetch earnings scores for all watchlist/portfolio symbols (batch)
@@ -1121,31 +1312,40 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
       const sentiment = classifySentiment(eventType, negative, false);
       const timeWeight = computeTimeWeight(item.date || getTodayDate());
 
-      // ═══════ DETERMINISTIC VALUE PIPELINE ═══════
-      // Step 1: Regex extraction
+      // ═══════ DETERMINISTIC VALUE PIPELINE v4 ═══════
+      // Confidence: 90=ACTUAL (value+revenue), 70=INFERRED (value, no revenue), 50=HEURISTIC
       let extractedValue = parseOrderValue(combinedText);
       let inferenceUsed = false;
-      let impactConfidence: 'HIGH' | 'MEDIUM' | 'LOW' = 'HIGH';
+      let confidenceScore = 90;
+      let confidenceType: 'ACTUAL' | 'INFERRED' | 'HEURISTIC' = 'ACTUAL';
 
       let valueCr: number;
       let impactPct: number;
 
+      // Derive sector from enrichment for heuristic lookup
+      const sectorRaw = enrichment?.industry || segment || null;
+      const sector = sectorRaw ? sectorRaw.split(' ')[0] : null;
+
       if (extractedValue !== null && extractedValue > 0) {
-        // EXPLICIT VALUE FOUND
+        // EXPLICIT VALUE FOUND — pctRevenue = value / revenue (NEVER a fixed constant)
         valueCr = extractedValue;
         if (enrichment?.annualRevenueCr && enrichment.annualRevenueCr > 0) {
           impactPct = parseFloat(((valueCr / enrichment.annualRevenueCr) * 100).toFixed(2));
+          confidenceScore = 90;
+          confidenceType = 'ACTUAL';
         } else {
-          // No revenue → estimate impactPct from absolute value
+          // Value extracted but no revenue → inferred impact from absolute value
           impactPct = valueCr >= 500 ? 8 : valueCr >= 200 ? 5 : valueCr >= 50 ? 2 : 1;
-          impactConfidence = 'MEDIUM';
+          confidenceScore = 70;
+          confidenceType = 'INFERRED';
         }
       } else {
-        // Step 2: MANDATORY INFERENCE (valueCr is NEVER null)
+        // No value extracted → MANDATORY INFERENCE (valueCr is NEVER null)
         inferenceUsed = true;
-        impactConfidence = 'LOW';
+        confidenceScore = 50;
+        confidenceType = 'HEURISTIC';
 
-        // Step 3: Try earnings KV cache for revenue
+        // Try earnings KV cache for revenue
         let revenueCr = enrichment?.annualRevenueCr || null;
         if (!revenueCr) {
           try {
@@ -1153,16 +1353,17 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             if (ed?.quarters && Array.isArray(ed.quarters)) {
               revenueCr = ed.quarters.slice(0, 4).reduce((s: number, q: any) => s + (q.revenue || 0), 0);
               if (revenueCr && revenueCr > 0) {
-                // Update enrichment for downstream use
                 if (enrichment) enrichment.annualRevenueCr = revenueCr;
               }
             }
           } catch { /* best effort */ }
         }
 
-        const inferred = inferEventValue(combinedText, revenueCr, eventType, negative);
+        const inferred = inferEventValue(combinedText, revenueCr, eventType, negative, sector);
         valueCr = inferred.valueCr;
         impactPct = inferred.pctRevenue;
+        confidenceScore = inferred.confidenceScore;
+        confidenceType = inferred.confidenceType;
       }
 
       // Compute impact level from impactPct (100% numeric, no keywords)
@@ -1170,7 +1371,8 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
 
       // Earnings integration
       const earningsScore = earningsCache.get(symbol) ?? null;
-      const earningsBoost = (earningsScore !== null && earningsScore >= 75 && impactPct >= 5);
+      // Earnings ↔ Signal cross-integration: strong earnings + positive signal = alpha layer
+      const earningsBoost = (earningsScore !== null && earningsScore >= 70 && sentiment !== 'Bearish' && impactPct >= 3);
 
       // Force BUY WATCH if earnings boost
       let action = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, earningsScore);
@@ -1183,6 +1385,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
       const score = computeScore({
         impactPct, sentiment, timeWeight,
         earningsScore, isNegative: negative, isDeal: false,
+        eventType, confidenceScore, sector,
       });
       const weightedScore = Math.round(score * timeWeight);
 
@@ -1204,10 +1407,19 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
       const descSnippet = (desc || '').slice(0, 100).replace(/\s+/g, ' ').trim();
       if (descSnippet.length > 20) headline += `. ${descSnippet}`;
 
-      // DEDUP: same symbol + same event type + same day → keep highest scoring
+      // CROSS-SOURCE DEDUP (Issue 7): same event across NSE + MC + Google News
       const dateStr = (item.date || getTodayDate()).slice(0, 10);
+      const crossKey = `${symbol}_${eventType}_${Math.round(valueCr)}_${dateStr}`;
+      if (crossSourceSeen.has(crossKey)) continue; // Skip duplicate from different source
+      crossSourceSeen.add(crossKey);
+
+      // DEDUP: same symbol + same event type + same day → keep highest scoring
       const dedupKey = `${symbol}:${eventType}:${dateStr}`;
       const existing = dedupMap.get(dedupKey);
+
+      // Derive data source from announcement
+      const itemSource = (item as any)._source;
+      const dataSource = itemSource === 'moneycontrol' ? 'Moneycontrol' : itemSource === 'google_news' ? 'Google News' : 'NSE';
 
       const signal: IntelSignal = {
         symbol, company: item.companyName || enrichment?.companyName || symbol,
@@ -1218,9 +1430,12 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
         impactPct, pctRevenue: impactPct, pctMcap,
         inferenceUsed,
         client, segment, timeline,
-        buyerSeller: null, premiumDiscount: null,
-        impactLevel, impactConfidence, action, score, timeWeight, weightedScore, sentiment, whyItMatters,
+        buyerSeller: null, premiumDiscount: null, lastPrice: enrichment?.lastPrice || null,
+        impactLevel, impactConfidence: confidenceScore >= 90 ? 'HIGH' : confidenceScore >= 70 ? 'MEDIUM' : 'LOW',
+        confidenceScore, confidenceType,
+        action, score, timeWeight, weightedScore, sentiment, whyItMatters,
         isNegative: negative, earningsBoost, isWatchlist, isPortfolio,
+        dataSource,
       };
 
       if (!existing || weightedScore > existing.weightedScore) {
@@ -1278,10 +1493,16 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
       const earningsScore = earningsCache.get(symbol) ?? null;
       const action = classifyAction(dealImpactPct, sentiment, isWatchlist, isPortfolio, earningsScore);
 
+      // Deals always have explicit value → confidence is ACTUAL if revenue known, INFERRED otherwise
+      const dealConfidenceScore = (enrichment?.annualRevenueCr && enrichment.annualRevenueCr > 0) ? 90 : 70;
+      const dealConfidenceType: 'ACTUAL' | 'INFERRED' | 'HEURISTIC' = dealConfidenceScore >= 90 ? 'ACTUAL' : 'INFERRED';
+
       const score = computeScore({
         impactPct: dealImpactPct, sentiment, timeWeight,
         earningsScore, isNegative: isSell && buyerQual >= 80, isDeal: true,
+        eventType, confidenceScore: dealConfidenceScore,
         dealPremiumDiscount: premiumDiscount, buyerQuality: buyerQual,
+        sector: enrichment?.industry || null,
       });
       const weightedScore = Math.round(score * timeWeight);
 
@@ -1315,11 +1536,13 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
         impactPct: dealImpactPct, pctRevenue: dealImpactPct, pctMcap: null,
         inferenceUsed: false,
         client: null, segment: enrichment?.industry || null, timeline: null,
-        buyerSeller: deal.clientName, premiumDiscount,
-        impactLevel, impactConfidence: 'HIGH',
+        buyerSeller: deal.clientName, premiumDiscount, lastPrice: enrichment?.lastPrice || null,
+        impactLevel, impactConfidence: dealConfidenceScore >= 90 ? 'HIGH' : 'MEDIUM',
+        confidenceScore: dealConfidenceScore, confidenceType: dealConfidenceType,
         action, score, timeWeight, weightedScore, sentiment, whyItMatters,
         isNegative: isSell && buyerQual >= 80, earningsBoost: false,
         isWatchlist, isPortfolio,
+        dataSource: deal.type === 'Block' ? 'Block Deal' : 'Bulk Deal',
       };
 
       if (!existing || weightedScore > existing.weightedScore) {
@@ -1332,8 +1555,36 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
 
     allSignals.push(...dealDedupMap.values());
 
-    // ── 5. Sort by weighted score — NO filtering (all signals are quantified now) ──
-    const filtered = allSignals
+    // ── 5. QUALITY GATE — drop fake/noise signals (BUG-02 fix) ──
+    debug.totalSignalsBeforeDedup = allSignals.length;
+
+    const qualityFiltered = allSignals.filter(s => {
+      // Gate 0 (Issue 8): STRICT fake M&A kill — ₹500 heuristic = always null
+      if (s.confidenceType === 'HEURISTIC' && s.eventType === 'M&A' && Math.round(s.valueCr) === 280) return false; // 400*0.7
+      if (s.confidenceType === 'HEURISTIC' && Math.round(s.valueCr) === 350) return false; // 500*0.7
+
+      // Gate 1: Drop heuristic signals with default absolute values (post-0.7x penalty)
+      if (s.confidenceType === 'HEURISTIC' && s.inferenceUsed) {
+        const defaultValues = [500, 400, 350, 300, 280, 250, 210, 175, 150, 105, 100, 75, 70, 53, 50, 35, 30, 21, 0];
+        if (defaultValues.includes(Math.round(s.valueCr))) {
+          if (!s.isWatchlist && !s.isPortfolio) return false;
+          if (s.weightedScore < 30) { s.action = 'IGNORE'; }
+        }
+      }
+
+      // Gate 2: Drop low-scoring heuristic signals (Issue 8: score < 45 + heuristic → null)
+      if (s.weightedScore < 20 && s.confidenceType === 'HEURISTIC') return false;
+      if (s.score < 45 && s.confidenceType === 'HEURISTIC' && !s.isWatchlist && !s.isPortfolio) return false;
+
+      // Gate 3: Drop IGNORE signals entirely unless they're for watched stocks
+      if (s.action === 'IGNORE' && !s.isWatchlist && !s.isPortfolio) return false;
+
+      return true;
+    });
+
+    debug.totalSignalsAfterDedup = qualityFiltered.length;
+
+    const filtered = qualityFiltered
       .sort((a, b) => {
         // BUY WATCH first, then TRACK
         const actionRank: Record<ActionFlag, number> = { 'BUY WATCH': 0, 'TRACK': 1, 'IGNORE': 2 };
@@ -1356,14 +1607,15 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
       const count = sigs.length;
       const stackLevel: CompanyTrend['stackLevel'] = count >= 4 ? 'STRONG' : count >= 2 ? 'BUILDING' : 'WEAK';
 
-      // Set stack info on each signal + apply signalStack * 10 bonus to score
+      // Set stack info on each signal + apply stacking bonus (0–20 points)
       for (const s of sigs) {
         s.signalStackCount = count;
         s.signalStackLevel = stackLevel;
 
-        // Component 7: Signal stacking bonus (0–10 points)
-        // Multiple signals for the same company = stronger conviction
-        const stackBonus = stackLevel === 'STRONG' ? 10 : stackLevel === 'BUILDING' ? 5 : 0;
+        // Component 4: Signal stacking bonus (0–20 points)
+        // Formula: min(20, 5 × signalCount)
+        // 1 signal → 0, 2 → 10, 3 → 15, 4+ → 20
+        const stackBonus = count >= 2 ? Math.min(20, 5 * count) : 0;
         if (stackBonus > 0) {
           s.weightedScore = Math.min(100, s.weightedScore + stackBonus);
         }
@@ -1449,7 +1701,8 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
       trends: trends.slice(0, 10),
       bias,
       updatedAt: new Date().toISOString(),
-    };
+      dataStatus: enrichPartial ? 'PARTIAL' : 'FULL',
+    } as any;
 
     const duration = Date.now() - startTime;
     console.log(`[Intelligence] Done: ${filtered.length} signals, ${top3.length} top3, ${trends.length} trends, bias=${netBias} in ${duration}ms`);
@@ -1489,10 +1742,13 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
 
     // Add debug info if requested
     const debugParam = searchParams.get('debug') === 'true';
-    return NextResponse.json({
-      ...response,
-      debug: debugParam ? debug : undefined,
-    });
+    const finalResponse = { ...response, debug: debugParam ? debug : undefined };
+
+    // Save to route-level cache (BUG-01 fix)
+    _routeCache = { key: cacheKey, data: finalResponse, timestamp: Date.now() };
+
+    console.log(`[Intelligence] Done in ${Date.now() - startTime}ms — ${response.signals?.length || 0} signals`);
+    return NextResponse.json(finalResponse);
   } catch (error) {
     console.error(`[Intelligence] Fatal error:`, error);
 

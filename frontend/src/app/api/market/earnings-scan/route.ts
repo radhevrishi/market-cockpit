@@ -1171,10 +1171,10 @@ function parseGuidanceSentiment(html: string): GuidanceData | null {
   // Clamp to [-1, 1]
   const sentimentScore = Math.max(-1, Math.min(1, totalScore));
 
-  // Classify guidance
+  // Classify guidance (recalibrated thresholds — was too strict, compressing all into Neutral)
   let guidance: GuidanceData['guidance'];
-  if (sentimentScore > 0.15) guidance = 'Positive';
-  else if (sentimentScore < -0.15) guidance = 'Negative';
+  if (sentimentScore > 0.1) guidance = 'Positive';
+  else if (sentimentScore < -0.1) guidance = 'Negative';
   else guidance = 'Neutral';
 
   // Revenue outlook

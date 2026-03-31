@@ -5,19 +5,35 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    // Fetch from NSE APIs in parallel
+    // Fetch from NSE APIs in parallel (catch individually — NSE IPO APIs are unreliable)
     const [currentData, upcomingData, pastData] = await Promise.all([
-      fetchCurrentIPOs(),
-      fetchUpcomingIPOs(),
-      fetchPastIPOs(),
+      fetchCurrentIPOs().catch(() => null),
+      fetchUpcomingIPOs().catch(() => null),
+      fetchPastIPOs().catch(() => null),
     ]);
+
+    // NSE returns data in nested formats: { data: [...] } or just [...]
+    const extractArray = (d: any): any[] => {
+      if (!d) return [];
+      if (Array.isArray(d)) return d;
+      if (d.data && Array.isArray(d.data)) return d.data;
+      if (d.currentIssue && Array.isArray(d.currentIssue)) return d.currentIssue;
+      if (d.upcomingIssue && Array.isArray(d.upcomingIssue)) return d.upcomingIssue;
+      if (d.pastIssue && Array.isArray(d.pastIssue)) return d.pastIssue;
+      // Try first array-like property
+      for (const key of Object.keys(d)) {
+        if (Array.isArray(d[key])) return d[key];
+      }
+      return [];
+    };
 
     const ipos: any[] = [];
     let source = 'NSE India';
 
     // Parse current/open IPOs from NSE
-    if (currentData && Array.isArray(currentData)) {
-      for (const ipo of currentData) {
+    const currentArr = extractArray(currentData);
+    if (currentArr.length > 0) {
+      for (const ipo of currentArr) {
         ipos.push({
           id: ipos.length + 1,
           company: ipo.companyName || ipo.symbol || 'Unknown',
@@ -46,8 +62,9 @@ export async function GET() {
     }
 
     // Parse upcoming IPOs from NSE
-    if (upcomingData && Array.isArray(upcomingData)) {
-      for (const ipo of upcomingData) {
+    const upcomingArr = extractArray(upcomingData);
+    if (upcomingArr.length > 0) {
+      for (const ipo of upcomingArr) {
         ipos.push({
           id: ipos.length + 1,
           company: ipo.companyName || ipo.symbol || 'Unknown',
@@ -71,8 +88,9 @@ export async function GET() {
     }
 
     // Parse past/recently listed IPOs from NSE
-    if (pastData && Array.isArray(pastData)) {
-      for (const ipo of pastData.slice(0, 10)) {
+    const pastArr = extractArray(pastData);
+    if (pastArr.length > 0) {
+      for (const ipo of pastArr.slice(0, 10)) {
         ipos.push({
           id: ipos.length + 1,
           company: ipo.companyName || ipo.symbol || 'Unknown',

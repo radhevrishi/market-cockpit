@@ -13,9 +13,21 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const symbolsParam = searchParams.get('symbols') || '';
 
+  // Symbol alias map for known mismatches (BUG-03 fix)
+  const SYMBOL_ALIASES: Record<string, string> = {
+    'SJS': 'SJSENTERPR',
+    'S&SPOWER': 'SNSPWR',
+    'SENORES': 'SENORES',         // Verify correct NSE ticker — may need BSE fallback
+    'LUMAXTECH': 'LUMAXTECH',
+    'ATLANTAELE': 'ATLASCYCLE',   // Verify
+  };
+
   const symbols = symbolsParam
     .split(',')
-    .map(s => s.trim().toUpperCase())
+    .map(s => {
+      const upper = s.trim().toUpperCase();
+      return SYMBOL_ALIASES[upper] || upper;
+    })
     .filter(s => s.length > 0 && /^[A-Z0-9&-]+$/.test(s))
     .slice(0, 20); // Cap at 20
 

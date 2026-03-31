@@ -28,9 +28,11 @@ interface WatchlistItem {
   changePercent: number;
   dayHigh: number;
   dayLow: number;
+  marketCap?: number | null; // For weighted averages
+  flag?: string | null;      // 🟢 🟠 🔴 or null
 }
 
-type SortField = 'ticker' | 'company' | 'sector' | 'price' | 'changePercent' | 'dayHigh' | 'dayLow';
+type SortField = 'ticker' | 'company' | 'sector' | 'price' | 'changePercent' | 'dayHigh' | 'dayLow' | 'flag';
 type SortOrder = 'asc' | 'desc';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -167,12 +169,14 @@ function WatchlistTable({
   sortOrder,
   onSort,
   onRemove,
+  onToggleFlag,
 }: {
   items: WatchlistItem[];
   sortField: SortField;
   sortOrder: SortOrder;
   onSort: (field: SortField) => void;
   onRemove: (ticker: string) => void;
+  onToggleFlag?: (ticker: string) => void;
 }) {
   const SortIcon = ({ field }: { field: SortField }) => {
     if (sortField !== field) return <ArrowUpDown style={{ width: '12px', height: '12px', opacity: 0.4 }} />;
@@ -192,6 +196,11 @@ function WatchlistTable({
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
         <thead>
           <tr style={{ borderBottom: '1px solid #2A3B4C', backgroundColor: '#0D1B2E' }}>
+            <th style={{ padding: '12px 8px', textAlign: 'center', fontSize: '10px', fontWeight: '700', color: '#8BA3C1', letterSpacing: '0.5px', cursor: 'pointer', width: '40px' }} onClick={() => onSort('flag')}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center' }}>
+                Flag <SortIcon field="flag" />
+              </div>
+            </th>
             <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '10px', fontWeight: '700', color: '#8BA3C1', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('ticker')}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 Ticker <SortIcon field="ticker" />
@@ -237,6 +246,15 @@ function WatchlistTable({
             const isPositive = item.changePercent >= 0;
             return (
               <tr key={item.ticker} style={{ borderBottom: idx < items.length - 1 ? '1px solid #1A2B3C' : 'none', backgroundColor: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
+                <td style={{ padding: '8px 8px', textAlign: 'center', width: '40px' }}>
+                  <button
+                    onClick={() => onToggleFlag?.(item.ticker)}
+                    title={`Flag: ${item.flag || 'None'} (click to cycle)`}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', padding: '2px 4px', borderRadius: '4px', lineHeight: 1 }}
+                  >
+                    {item.flag || '⚪'}
+                  </button>
+                </td>
                 <td style={{ padding: '12px 16px', color: '#3B82F6', fontWeight: '700' }}>{item.ticker}</td>
                 <td style={{ padding: '12px 16px', color: '#F5F7FA', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {item.company}
@@ -288,6 +306,24 @@ export default function WatchlistsPage() {
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [watchlistFlags, setWatchlistFlags] = useState<Record<string, string>>({});
+
+  // Flag cycle: ⚪ → 🟢 → 🟠 → 🔴 → ⚪
+  const handleToggleFlag = useCallback(async (ticker: string) => {
+    const cycle = ['', '🟢', '🟠', '🔴'];
+    const current = watchlistFlags[ticker] || '';
+    const idx = cycle.indexOf(current);
+    const next = cycle[(idx + 1) % cycle.length];
+    setWatchlistFlags(prev => ({ ...prev, [ticker]: next }));
+    // Persist to API
+    try {
+      await fetch('/api/watchlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chatId: '5057319640', action: 'set-flag', symbol: ticker, flag: next }),
+      });
+    } catch {}
+  }, [watchlistFlags]);
 
   // Initialize tickers from API first, fallback to localStorage
   useEffect(() => {
@@ -301,6 +337,8 @@ export default function WatchlistsPage() {
             // Remote wins: use it as the authoritative source
             setTickers(syncData.watchlist);
             setStoredTickers(syncData.watchlist);
+            // Load flags from API
+            if (syncData.flags) setWatchlistFlags(syncData.flags);
             return;
           }
         }
@@ -380,9 +418,10 @@ export default function WatchlistsPage() {
         changePercent: quote?.changePercent || 0,
         dayHigh: quote?.dayHigh || 0,
         dayLow: quote?.dayLow || 0,
+        flag: watchlistFlags[ticker] || null,
       };
     });
-  }, [tickers, quotes]);
+  }, [tickers, quotes, watchlistFlags]);
 
   // Sort items
   const sortedItems = useMemo(() => {
@@ -697,6 +736,7 @@ export default function WatchlistsPage() {
             sortOrder={sortOrder}
             onSort={handleSort}
             onRemove={handleRemoveTicker}
+            onToggleFlag={handleToggleFlag}
           />
         </div>
       )}

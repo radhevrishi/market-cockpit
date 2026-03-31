@@ -23,6 +23,10 @@ const HEADER_BG = '#0A1628';
 
 const CHAT_ID = '5057319640';
 
+// Tab cache: avoid refetching on every tab switch
+const EARNINGS_CACHE_TTL = 180000; // 3 min
+let _earningsCache: { data: any; timestamp: number } | null = null;
+
 // ── Types matching earnings-scan API ──
 
 interface QuarterFinancials {
@@ -567,7 +571,19 @@ export default function EarningsPage() {
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>([]);
   const [failedSymbols, setFailedSymbols] = useState<string[]>([]);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (forceRefresh = false) => {
+    // Tab cache check
+    if (!forceRefresh && _earningsCache && (Date.now() - _earningsCache.timestamp) < EARNINGS_CACHE_TTL) {
+      const c = _earningsCache.data;
+      setCards(c.cards || []);
+      setFailedSymbols(c.failedSymbols || []);
+      setSummary(c.summary);
+      setSource(c.source || '');
+      setUpdatedAt(c.updatedAt || '');
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setError('');
     setFailedSymbols([]);
@@ -603,6 +619,12 @@ export default function EarningsPage() {
       setPortfolioSymbols(portfolio);
       setWatchlistSymbols(watchlist);
 
+      // Normalize symbols BEFORE passing to earnings pipeline (BUG-04 fix)
+      // Ensures consistent mapping between portfolio store and earnings engine
+      const normalizeSymbol = (s: string) => s.trim().toUpperCase().replace(/\s+/g, '');
+      portfolio = portfolio.map(normalizeSymbol).filter(s => s.length > 0);
+      watchlist = watchlist.map(normalizeSymbol).filter(s => s.length > 0);
+
       // Determine which symbols to scan
       let symbols: string[] = [];
       const portfolioSet = new Set(portfolio);
@@ -616,6 +638,8 @@ export default function EarningsPage() {
         // Both — deduplicated union
         symbols = [...new Set([...portfolio, ...watchlist])];
       }
+
+      console.log(`[Earnings] Universe: ${viewMode}, symbols: ${symbols.length}, portfolio: ${portfolio.length}, watchlist: ${watchlist.length}`);
 
       if (symbols.length === 0) {
         setCards([]);
@@ -634,7 +658,9 @@ export default function EarningsPage() {
 
       for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
         const batch = symbols.slice(i, i + BATCH_SIZE);
-        const res = await fetch(`/api/market/earnings-scan?symbols=${batch.join(',')}&debug=true`);
+        // URL-encode symbols to handle & in tickers like M&M, S&SPOWER (BUG-04 fix)
+        const encodedSymbols = batch.map(s => encodeURIComponent(s)).join(',');
+        const res = await fetch(`/api/market/earnings-scan?symbols=${encodedSymbols}&debug=true`);
         if (!res.ok) { console.error(`Batch ${i / BATCH_SIZE + 1} failed`); continue; }
         const data: ScanResponse = await res.json();
         allCards = [...allCards, ...(data.cards || [])];
@@ -734,6 +760,12 @@ export default function EarningsPage() {
       setSummary(lastSummary);
       setSource(lastSource);
       setUpdatedAt(lastUpdatedAt);
+
+      // Cache for tab switching
+      _earningsCache = {
+        data: { cards: allCards, failedSymbols: allFailed, summary: lastSummary, source: lastSource, updatedAt: lastUpdatedAt },
+        timestamp: Date.now(),
+      };
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load earnings data');
     } finally {
@@ -1000,7 +1032,7 @@ export default function EarningsPage() {
               <Download style={{ width: '14px', height: '14px' }} /> PDF
             </button>
           )}
-          <button onClick={fetchData} disabled={loading} style={{
+          <button onClick={() => fetchData(true)} disabled={loading} style={{
             backgroundColor: ACCENT, border: 'none', color: '#000',
             padding: '8px 16px', borderRadius: '6px', cursor: loading ? 'not-allowed' : 'pointer',
             fontSize: '13px', fontWeight: 600, opacity: loading ? 0.5 : 1,
@@ -1062,13 +1094,25 @@ export default function EarningsPage() {
         </div>
       )}
 
-      {/* Data Quality */}
+      {/* Data Quality + Completeness Gate */}
       {summary && !loading && (
-        <div style={{ display: 'flex', gap: '16px', marginBottom: '20px', fontSize: '11px', color: TEXT_DIM }}>
+        <div style={{ display: 'flex', gap: '16px', marginBottom: '20px', fontSize: '11px', color: TEXT_DIM, flexWrap: 'wrap', alignItems: 'center' }}>
           <span style={{ color: GREEN }}>● Full: {summary.dataQualityBreakdown.full}</span>
           <span style={{ color: YELLOW }}>● Partial: {summary.dataQualityBreakdown.partial}</span>
           <span style={{ color: RED }}>● Price Only: {summary.dataQualityBreakdown.priceOnly}</span>
           <span>Showing {sortedCards.length} of {cards.length}</span>
+          {/* Data completeness ratio */}
+          {(() => {
+            const totalRequested = viewMode === 'portfolio' ? portfolioSymbols.length : viewMode === 'watchlist' ? watchlistSymbols.length : new Set([...portfolioSymbols, ...watchlistSymbols]).size;
+            const ratio = totalRequested > 0 ? (cards.length / totalRequested) * 100 : 0;
+            const color = ratio >= 80 ? GREEN : ratio >= 60 ? YELLOW : RED;
+            const label = ratio >= 80 ? 'HIGH' : ratio >= 60 ? 'MEDIUM' : 'LOW';
+            return (
+              <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 700, backgroundColor: `${color}15`, border: `1px solid ${color}40`, color }}>
+                Data Quality: {ratio.toFixed(0)}% ({label}) · {cards.length}/{totalRequested} resolved
+              </span>
+            );
+          })()}
         </div>
       )}
 
@@ -1086,7 +1130,7 @@ export default function EarningsPage() {
       {error && !loading && (
         <div style={{ backgroundColor: `${RED}15`, border: `1px solid ${RED}40`, borderRadius: '8px', padding: '16px', color: RED, marginBottom: '24px' }}>
           <strong>Error:</strong> {error}
-          <button onClick={fetchData} style={{ marginLeft: '12px', backgroundColor: RED, border: 'none', color: '#fff', padding: '4px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>Retry</button>
+          <button onClick={() => fetchData(true)} style={{ marginLeft: '12px', backgroundColor: RED, border: 'none', color: '#fff', padding: '4px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>Retry</button>
         </div>
       )}
 

@@ -18,6 +18,12 @@ const TEXT1 = '#E2E8F0';
 const TEXT2 = '#94A3B8';
 const TEXT3 = '#64748B';
 
+// ── Tab cache: Avoid refetching on every tab switch ──
+// Module-level cache persists across component remounts (tab switches)
+// Only refetches on explicit refresh or after CACHE_TTL expires
+const CACHE_TTL = 120000; // 2 min
+let _cache: { data: any; timestamp: number } | null = null;
+
 // ── Types ──
 type ActionFlag = 'BUY WATCH' | 'TRACK' | 'IGNORE';
 type ImpactLevel = 'HIGH' | 'MEDIUM' | 'LOW';
@@ -44,6 +50,8 @@ interface Signal {
   premiumDiscount: number | null;
   impactLevel: ImpactLevel;
   impactConfidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  confidenceScore?: number;        // 90=ACTUAL / 70=INFERRED / 50=HEURISTIC
+  confidenceType?: 'ACTUAL' | 'INFERRED' | 'HEURISTIC';
   action: ActionFlag;
   score: number;
   timeWeight: number;
@@ -54,6 +62,8 @@ interface Signal {
   earningsBoost: boolean;
   isWatchlist: boolean;
   isPortfolio: boolean;
+  lastPrice?: number | null;       // Current stock price for performance tracking
+  dataSource?: string;             // 'NSE' | 'Moneycontrol' | 'Google News' | 'Block Deal' | 'Bulk Deal'
   signalStackCount?: number;
   signalStackLevel?: 'STRONG' | 'BUILDING' | 'WEAK';
 }
@@ -145,8 +155,26 @@ export default function CompanyIntelligencePage() {
   const [debugInfo, setDebugInfo] = useState<any>(null);
   const [isStale, setIsStale] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
+  const [watchlistFlags, setWatchlistFlags] = useState<Record<string, string>>({});
+  const [addedPrices, setAddedPrices] = useState<Record<string, number>>({});
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (forceRefresh = false) => {
+    // Tab cache: if data was fetched recently and not forcing refresh, use cached data
+    if (!forceRefresh && _cache && (Date.now() - _cache.timestamp) < CACHE_TTL) {
+      const data = _cache.data;
+      setTop3(data.top3 || []);
+      setSignals(data.signals || []);
+      setTrends(data.trends || []);
+      setBias(data.bias || null);
+      if (data.debug) setDebugInfo(data.debug);
+      if (data.flags) setWatchlistFlags(data.flags);
+      if (data.addedPrices) setAddedPrices(data.addedPrices);
+      setIsStale(!!data.stale);
+      setLastUpdated(data.lastUpdated || '');
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     try {
       let watchlist: string[] = [];
@@ -161,7 +189,9 @@ export default function CompanyIntelligencePage() {
         }
       } catch {}
 
-      // Fetch watchlist
+      // Fetch watchlist + flags + prices
+      let flags: Record<string, string> = {};
+      let prices: Record<string, number> = {};
       try {
         const wlRes = await fetch(`/api/watchlist?chatId=${CHAT_ID}`);
         const wlData = await wlRes.json();
@@ -169,6 +199,8 @@ export default function CompanyIntelligencePage() {
           watchlist = wlData.watchlist;
           localStorage.setItem('mc_watchlist_tickers', JSON.stringify(watchlist));
         }
+        if (wlData.flags) { flags = wlData.flags; setWatchlistFlags(flags); }
+        if (wlData.addedPrices) { prices = wlData.addedPrices; setAddedPrices(prices); }
       } catch {
         const s = localStorage.getItem('mc_watchlist_tickers') || '[]';
         watchlist = JSON.parse(s);
@@ -185,7 +217,11 @@ export default function CompanyIntelligencePage() {
       setBias(data.bias || null);
       if (data.debug) setDebugInfo(data.debug);
       setIsStale(!!data.stale);
-      setLastUpdated(new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }));
+      const ts = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+      setLastUpdated(ts);
+
+      // Cache for tab switching
+      _cache = { data: { ...data, flags, addedPrices: prices, lastUpdated: ts }, timestamp: Date.now() };
     } catch (err) {
       console.error('[Intelligence] Error:', err);
     }
@@ -194,9 +230,34 @@ export default function CompanyIntelligencePage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
   useEffect(() => {
-    const iv = setInterval(fetchData, 120000);
+    // Auto-refresh forces fresh data every 2 min
+    const iv = setInterval(() => fetchData(true), 120000);
     return () => clearInterval(iv);
   }, [fetchData]);
+
+  // Toggle watchlist flag (Green → Orange → Red → None → Green...)
+  const toggleFlag = useCallback(async (symbol: string) => {
+    const current = watchlistFlags[symbol] || null;
+    const cycle: (string | null)[] = [null, 'GREEN', 'ORANGE', 'RED'];
+    const nextIdx = (cycle.indexOf(current) + 1) % cycle.length;
+    const nextFlag = cycle[nextIdx];
+    setWatchlistFlags(prev => {
+      const updated = { ...prev };
+      if (nextFlag) updated[symbol] = nextFlag;
+      else delete updated[symbol];
+      return updated;
+    });
+    try {
+      await fetch('/api/watchlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chatId: CHAT_ID, action: 'set-flag', symbol, flag: nextFlag }),
+      });
+    } catch {}
+  }, [watchlistFlags]);
+
+  const flagColors: Record<string, string> = { GREEN: '#10B981', ORANGE: '#F97316', RED: '#EF4444' };
+  const flagEmoji: Record<string, string> = { GREEN: '🟢', ORANGE: '🟠', RED: '🔴' };
 
   // Filter signals
   const filteredSignals = useMemo(() => {
@@ -242,7 +303,7 @@ export default function CompanyIntelligencePage() {
               color: daysFilter === d ? ACCENT : TEXT3,
             }}>{d}D</button>
           ))}
-          <button onClick={fetchData} style={{
+          <button onClick={() => fetchData(true)} style={{
             background: 'none', border: `1px solid ${BORDER}`, borderRadius: '5px',
             padding: '4px 8px', cursor: 'pointer', color: TEXT3,
           }}>
@@ -470,6 +531,15 @@ export default function CompanyIntelligencePage() {
                       ⚡ EARNINGS BOOST
                     </span>
                   )}
+                  {s.confidenceType && (
+                    <span style={{
+                      fontSize: '9px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px',
+                      backgroundColor: s.confidenceType === 'ACTUAL' ? 'rgba(16,185,129,0.15)' : s.confidenceType === 'INFERRED' ? 'rgba(251,191,36,0.15)' : 'rgba(100,116,139,0.12)',
+                      color: s.confidenceType === 'ACTUAL' ? GREEN : s.confidenceType === 'INFERRED' ? YELLOW : TEXT3,
+                    }}>
+                      {s.confidenceType === 'ACTUAL' ? '✓ ACTUAL' : s.confidenceType === 'INFERRED' ? '~ INFERRED' : '? HEURISTIC'}
+                    </span>
+                  )}
                 </div>
 
                 {/* Row 3: WHY IT MATTERS — the institutional insight */}
@@ -561,9 +631,32 @@ export default function CompanyIntelligencePage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                   <span style={{ fontSize: '12px' }}>{eventTypeIcon(s.eventType)}</span>
                   <span style={{ fontSize: '14px', fontWeight: 700, color: '#3B82F6', minWidth: '80px' }}>{s.symbol}</span>
+                  {/* Watchlist flag — clickable to cycle */}
+                  {(s.isWatchlist || s.isPortfolio) && (
+                    <button onClick={(e) => { e.stopPropagation(); toggleFlag(s.symbol); }} style={{
+                      fontSize: '10px', cursor: 'pointer', padding: '0 2px', border: 'none', background: 'none',
+                      opacity: watchlistFlags[s.symbol] ? 1 : 0.3,
+                    }} title={`Flag: ${watchlistFlags[s.symbol] || 'None'} (click to cycle)`}>
+                      {watchlistFlags[s.symbol] ? flagEmoji[watchlistFlags[s.symbol]] : '⚪'}
+                    </button>
+                  )}
                   {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600 }}>PF</span>}
                   {s.isWatchlist && !s.isPortfolio && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600 }}>WL</span>}
                   {s.isNegative && <span style={{ fontSize: '9px', color: RED, fontWeight: 700 }}>⚠</span>}
+                  {/* Price performance since added to watchlist */}
+                  {s.lastPrice && addedPrices[s.symbol] && addedPrices[s.symbol] > 0 && (() => {
+                    const pctChange = ((s.lastPrice! - addedPrices[s.symbol]) / addedPrices[s.symbol]) * 100;
+                    return (
+                      <span style={{
+                        fontSize: '10px', fontWeight: 700,
+                        color: pctChange >= 0 ? GREEN : RED,
+                        padding: '1px 4px', borderRadius: '3px',
+                        backgroundColor: pctChange >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+                      }}>
+                        {pctChange >= 0 ? '+' : ''}{pctChange.toFixed(1)}%
+                      </span>
+                    );
+                  })()}
                   <span style={{
                     fontSize: '10px', fontWeight: 600, color: ACCENT,
                     padding: '1px 6px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.1)',
@@ -629,6 +722,25 @@ export default function CompanyIntelligencePage() {
                   {s.signalStackLevel && s.signalStackLevel !== 'WEAK' && (
                     <span style={{ fontSize: '9px', color: s.signalStackLevel === 'STRONG' ? GREEN : YELLOW }}>
                       ⚡{s.signalStackCount}
+                    </span>
+                  )}
+                  {s.confidenceType && (
+                    <span style={{
+                      fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
+                      backgroundColor: s.confidenceType === 'ACTUAL' ? 'rgba(16,185,129,0.15)' : s.confidenceType === 'INFERRED' ? 'rgba(251,191,36,0.15)' : 'rgba(100,116,139,0.12)',
+                      color: s.confidenceType === 'ACTUAL' ? GREEN : s.confidenceType === 'INFERRED' ? YELLOW : TEXT3,
+                    }}>
+                      {s.confidenceType === 'ACTUAL' ? '✓' : s.confidenceType === 'INFERRED' ? '~' : '?'}
+                    </span>
+                  )}
+                  {s.dataSource && (
+                    <span style={{ fontSize: '8px', color: TEXT3, padding: '1px 4px', borderRadius: '3px', backgroundColor: 'rgba(100,116,139,0.08)' }}>
+                      {s.dataSource}
+                    </span>
+                  )}
+                  {s.confidenceScore !== undefined && s.confidenceScore <= 50 && (
+                    <span style={{ fontSize: '8px', color: ORANGE, fontWeight: 600 }}>
+                      low conf.
                     </span>
                   )}
                   <span style={{ fontSize: '10px', color: TEXT3, marginLeft: 'auto' }}>

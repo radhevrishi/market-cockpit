@@ -52,6 +52,10 @@ const qualityColors: Record<string, string> = {
   Preview: '#8B5CF6',
 };
 
+// Tab cache for calendar data (5 min TTL per month)
+const CALENDAR_CACHE_TTL = 300_000;
+const _calendarCache = new Map<string, { data: EarningsResponse; ts: number }>();
+
 export default function CalendarPage() {
   const [data, setData] = useState<EarningsResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -67,6 +71,13 @@ export default function CalendarPage() {
   const monthLabel = viewMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
   const fetchData = async () => {
+    const cacheKey = `${monthStr}_${indexFilter}`;
+    const cached = _calendarCache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < CALENDAR_CACHE_TTL) {
+      setData(cached.data);
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
       const indexParam = indexFilter !== 'All' ? `&index=${indexFilter}` : '';
@@ -74,6 +85,7 @@ export default function CalendarPage() {
       if (!res.ok) throw new Error('Failed to fetch earnings data');
       const json: EarningsResponse = await res.json();
       setData(json);
+      _calendarCache.set(cacheKey, { data: json, ts: Date.now() });
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');

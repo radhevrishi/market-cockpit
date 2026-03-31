@@ -17,6 +17,10 @@ import {
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
+// ── In-memory cache per month (5 min TTL) ──
+const EARNINGS_ROUTE_CACHE_TTL = 300_000;
+const _earningsRouteCache = new Map<string, { data: any; ts: number }>();
+
 // =============================================
 // EARNINGS CALENDAR v4 — Strict, Accurate
 // =============================================
@@ -407,6 +411,13 @@ export async function GET(request: Request) {
   const month = searchParams.get('month');
   const indexFilter = searchParams.get('index');
   const debug = searchParams.get('debug') === 'true';
+
+  // Route-level cache check (5 min TTL per month+index combo)
+  const cacheKey = `${market}_${month || 'current'}_${indexFilter || 'all'}`;
+  const cached = _earningsRouteCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < EARNINGS_ROUTE_CACHE_TTL) {
+    return NextResponse.json(cached.data);
+  }
 
   try {
     if (market !== 'india') {
@@ -999,7 +1010,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ debug: true, dateRange: { from: fmt(fromDate), to: fmt(toDate) }, ...processing, results });
     }
 
-    return NextResponse.json({
+    const responseData = {
       results,
       summary: { total: results.length, excellent: excellentCount, great: greatCount, good: goodCount, ok: okCount, weak: weakCount, upcoming: upcomingCount },
       quarter: expectedQuarter,
@@ -1007,7 +1018,12 @@ export async function GET(request: Request) {
       stockUniverse: Object.keys(priceLookup).length,
       source: bseResultsCount > 0 ? 'NSE + BSE India (Live)' : 'NSE India (Live)',
       updatedAt: new Date().toISOString(),
-    });
+    };
+
+    // Save to route cache
+    _earningsRouteCache.set(cacheKey, { data: responseData, ts: Date.now() });
+
+    return NextResponse.json(responseData);
   } catch (error) {
     console.error('Earnings API error:', error);
     return NextResponse.json({

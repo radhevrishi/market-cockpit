@@ -553,7 +553,9 @@ export default function PortfolioPage() {
               <tbody>
                 {sortedRows.map((r, idx) => {
                   const pnlColor = r.pnl >= 0 ? '#10B981' : '#EF4444';
-                  const dayColor = r.changePercent >= 0 ? '#10B981' : '#EF4444';
+                  // BUG-03 fix: null/undefined changePercent should be neutral grey, not green/red
+                  const hasQuote = r.cmp > 0 && r.changePercent != null;
+                  const dayColor = hasQuote ? (r.changePercent >= 0 ? '#10B981' : '#EF4444') : '#64748B';
                   return (
                     <tr key={r.symbol} style={{ borderBottom: idx < sortedRows.length - 1 ? '1px solid #1A2B3C' : 'none', backgroundColor: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
                       <td style={{ padding: '10px 12px', color: '#3B82F6', fontWeight: '700' }}>{r.symbol}</td>
@@ -592,10 +594,13 @@ export default function PortfolioPage() {
                       <td style={{ padding: '10px 12px', textAlign: 'right' }}>
                         <span style={{
                           display: 'inline-block', padding: '3px 6px', borderRadius: '4px', fontSize: '11px', fontWeight: '600',
-                          backgroundColor: r.changePercent >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+                          backgroundColor: hasQuote
+                            ? (r.changePercent >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)')
+                            : 'rgba(100,116,139,0.1)',
                           color: dayColor, fontVariantNumeric: 'tabular-nums',
-                        }}>
-                          {r.cmp > 0 ? fmtPct(r.changePercent) : '—'}
+                        }}
+                        title={!hasQuote ? 'Quote unavailable' : undefined}>
+                          {hasQuote ? fmtPct(r.changePercent) : '—'}
                         </span>
                       </td>
                       <td style={{ padding: '10px 12px', textAlign: 'right' }}>

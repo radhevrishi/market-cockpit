@@ -385,9 +385,13 @@ export function normalizeSector(industry: string | undefined): string {
   // Energy (oil, gas, power, renewables)
   if (i.includes('oil') || i.includes('gas') || i.includes('refiner') || i.includes('petroleum') || i.includes('lng') || i.includes('power') || i.includes('electric') || i.includes('renewable') || i.includes('solar') || i.includes('wind') || i.includes('energy')) return 'Energy';
 
-  // Metals & Mining (steel, metals, cement, chemicals)
+  // Chemicals (BUG-11 fix: separate from Metals & Mining)
+  if (i.includes('specialty chemical') || i.includes('agrochemical') || i.includes('fertilizer') || i.includes('pesticide')) return 'Chemicals';
+  if (i.includes('chemical') && !i.includes('petro')) return 'Chemicals';
+  if (i.includes('petrochemical')) return 'Energy';
+
+  // Metals & Mining (steel, metals, cement)
   if (i.includes('steel') || i.includes('metal') || i.includes('iron') || i.includes('aluminium') || i.includes('copper') || i.includes('zinc') || i.includes('mining') || i.includes('coal') || i.includes('cement') || i.includes('building material') || i.includes('construction material')) return 'Metals & Mining';
-  if (i.includes('chemical') || i.includes('fertilizer') || i.includes('pesticide') || i.includes('agrochemical') || i.includes('petrochemical')) return 'Metals & Mining';
 
   // FMCG (food, beverages, personal care, consumer staples)
   if (i.includes('fmcg') || i.includes('food') || i.includes('beverage') || i.includes('personal care') || i.includes('tobacco') || i.includes('consumer food')) return 'FMCG';
@@ -587,8 +591,8 @@ export const NIFTY50_SECTORS: Record<string, string> = {
   'LODHA': 'Infrastructure', 'LUPIN': 'Healthcare', 'MARICO': 'FMCG',
   'MOTHERSON': 'Auto', 'NAUKRI': 'IT', 'NHPC': 'Energy',
   'OBEROIRLTY': 'Infrastructure', 'OFSS': 'IT', 'PEL': 'Banking & Finance',
-  'PERSISTENT': 'IT', 'PETRONET': 'Energy', 'PIDILITIND': 'Metals & Mining',
-  'PNB': 'Banking & Finance', 'POLYCAB': 'Consumer', 'SRF': 'Metals & Mining',
+  'PERSISTENT': 'IT', 'PETRONET': 'Energy',
+  'PNB': 'Banking & Finance', 'POLYCAB': 'Consumer',
   'TATACOMM': 'Media & Telecom', 'TATAPOWER': 'Energy', 'TORNTPHARM': 'Healthcare',
   'TRENT': 'Consumer', 'UNIONBANK': 'Banking & Finance', 'UNITDSPR': 'FMCG',
   'VEDL': 'Metals & Mining', 'ZOMATO': 'Consumer', 'ZYDUSLIFE': 'Healthcare',
@@ -600,8 +604,14 @@ export const NIFTY50_SECTORS: Record<string, string> = {
   'IDEA': 'Media & Telecom', 'IGL': 'Energy', 'IPCALAB': 'Healthcare',
   'IRFC': 'Banking & Finance', 'JIOFIN': 'Banking & Finance', 'MAXHEALTH': 'Healthcare',
   'MPHASIS': 'IT', 'MUTHOOTFIN': 'Banking & Finance', 'PAGEIND': 'Consumer',
-  'PIIND': 'Metals & Mining', 'RECLTD': 'Banking & Finance', 'SAIL': 'Metals & Mining',
+  'RECLTD': 'Banking & Finance', 'SAIL': 'Metals & Mining',
   'SIEMENS': 'Capital Goods', 'SJVN': 'Energy', 'SOLARINDS': 'Metals & Mining',
   'SUPREMEIND': 'Metals & Mining', 'TATAELXSI': 'IT', 'TIINDIA': 'Auto',
-  'TORNTPOWER': 'Energy', 'UPL': 'Metals & Mining', 'VOLTAS': 'Consumer',
+  'TORNTPOWER': 'Energy', 'UPL': 'Chemicals', 'VOLTAS': 'Consumer',
+  // BUG-11: Sector overrides for known misclassifications
+  'AETHER': 'Chemicals', 'AARTI': 'Chemicals', 'DEEPAKNTR': 'Chemicals',
+  'CLEAN': 'Chemicals', 'ANURAS': 'Chemicals', 'FINEORG': 'Chemicals',
+  'PIDILITIND': 'Chemicals', 'PIIND': 'Chemicals', 'SRF': 'Chemicals',
+  'ATLANTAELE': 'Capital Goods',
+  'SJSENTERPR': 'Auto', 'LUMAXTECH': 'Auto',
 };

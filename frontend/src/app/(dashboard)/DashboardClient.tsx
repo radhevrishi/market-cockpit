@@ -113,12 +113,33 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
   }, []);
 
   // Live market indices — refresh every 60 s
+  // Tries FastAPI backend first, falls back to Next.js /api/market/indices route
   const { data: liveIndices, isLoading, error } = useQuery<MarketIndex[]>({
     queryKey: ['market', 'indices'],
     queryFn: async () => {
-      const { data } = await api.get('/market/indices');
+      // Try 1: FastAPI backend (works when backend is running)
+      try {
+        const { data } = await api.get('/market/indices');
+        if (Array.isArray(data) && data.length > 0) {
+          setShowLoadingSkeleton(false);
+          return data;
+        }
+      } catch {}
+
+      // Try 2: Next.js API route (direct NSE fetch — always available on Vercel)
+      try {
+        const res = await fetch('/api/market/indices');
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            setShowLoadingSkeleton(false);
+            return data;
+          }
+        }
+      } catch {}
+
       setShowLoadingSkeleton(false);
-      return Array.isArray(data) ? data : [];
+      return [];
     },
     staleTime: 60_000,
     refetchInterval: 60_000,
