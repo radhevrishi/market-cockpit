@@ -367,34 +367,53 @@ export default function WatchlistsPage() {
     return sorted;
   }, [watchlistItems, sortField, sortOrder]);
 
-  // Handle add ticker
+  // Handle add ticker — supports comma/space separated, strips exchange prefixes
   const handleAddTicker = useCallback(() => {
-    const ticker = tickerInput.trim().toUpperCase();
-    if (!ticker) return;
+    const raw = tickerInput.trim().toUpperCase();
+    if (!raw) return;
 
-    if (tickers.includes(ticker)) {
-      toast.error('Ticker already in watchlist');
+    // Split by comma, space, newline — handle "NSE:CCL", "BOM:532067" prefixes
+    const parsed = raw
+      .split(/[\s,;]+/)
+      .map(t => t.replace(/^(NSE|BSE|BOM|MCX):/, '').trim())
+      .filter(t => t.length > 0 && t.length < 30 && /^[A-Z0-9&-]+$/.test(t));
+
+    if (parsed.length === 0) {
+      toast.error('No valid ticker symbols found');
       setTickerInput('');
       return;
     }
 
-    const newTickers = [...tickers, ticker];
+    // Deduplicate against existing
+    const existing = new Set(tickers);
+    const toAdd = parsed.filter(t => !existing.has(t));
+
+    if (toAdd.length === 0) {
+      toast.error(parsed.length === 1 ? 'Ticker already in watchlist' : 'All tickers already in watchlist');
+      setTickerInput('');
+      return;
+    }
+
+    const newTickers = [...tickers, ...toAdd];
     setTickers(newTickers);
     setStoredTickers(newTickers);
     setTickerInput('');
-    toast.success(`${ticker} added to watchlist`);
+    toast.success(`${toAdd.length} ticker${toAdd.length > 1 ? 's' : ''} added: ${toAdd.slice(0, 5).join(', ')}${toAdd.length > 5 ? '...' : ''}`);
 
-    // Sync to shared API
+    // Sync FULL list to shared API (not incremental — avoids race conditions)
     fetch('/api/watchlist', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chatId: '5057319640',
-        action: 'add',
-        symbols: [ticker],
+        watchlist: newTickers,
         secret: 'mc-bot-2026',
       }),
-    }).catch((e) => console.error('Failed to sync add:', e));
+    })
+      .then(res => {
+        if (!res.ok) console.error('Watchlist sync failed:', res.status);
+      })
+      .catch((e) => console.error('Failed to sync add:', e));
 
     // Refetch to get new ticker data
     setTimeout(() => fetchData(), 500);
@@ -407,14 +426,13 @@ export default function WatchlistsPage() {
     setStoredTickers(newTickers);
     toast.success(`${ticker} removed from watchlist`);
 
-    // Sync to shared API
+    // Sync FULL list to shared API
     fetch('/api/watchlist', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chatId: '5057319640',
-        action: 'remove',
-        symbols: [ticker],
+        watchlist: newTickers,
         secret: 'mc-bot-2026',
       }),
     }).catch((e) => console.error('Failed to sync remove:', e));
