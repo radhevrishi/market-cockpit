@@ -1,0 +1,560 @@
+'use client';
+
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Plus, Trash2, TrendingUp, TrendingDown, RefreshCw, Download, ArrowUpDown, Edit3, Check, X } from 'lucide-react';
+import toast from 'react-hot-toast';
+
+/* ── Types ──────────────────────────────────────────────────────────── */
+
+interface StockQuote {
+  ticker: string;
+  company: string;
+  sector: string;
+  industry: string;
+  price: number;
+  change: number;
+  changePercent: number;
+  dayHigh: number;
+  dayLow: number;
+}
+
+interface PortfolioHolding {
+  symbol: string;
+  entryPrice: number;
+  quantity: number;
+  weight: number;
+  addedAt: string;
+  notes?: string;
+}
+
+interface PortfolioRow {
+  symbol: string;
+  company: string;
+  sector: string;
+  entryPrice: number;
+  quantity: number;
+  weight: number;
+  cmp: number;
+  change: number;
+  changePercent: number;
+  investedValue: number;
+  currentValue: number;
+  pnl: number;
+  pnlPercent: number;
+  dayPnl: number;
+  notes?: string;
+}
+
+type SortField = 'symbol' | 'cmp' | 'changePercent' | 'pnlPercent' | 'weight' | 'investedValue' | 'currentValue';
+type SortOrder = 'asc' | 'desc';
+
+/* ── Constants ─────────────────────────────────────────────────────── */
+
+const CHAT_ID = '5057319640';
+const SECRET = 'mc-bot-2026';
+const STORAGE_KEY = 'mc_portfolio_holdings';
+
+/* ── Helpers ───────────────────────────────────────────────────────── */
+
+const getStoredHoldings = (): PortfolioHolding[] => {
+  if (typeof window === 'undefined') return [];
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return stored ? JSON.parse(stored) : [];
+  } catch { return []; }
+};
+
+const setStoredHoldings = (h: PortfolioHolding[]) => {
+  if (typeof window === 'undefined') return;
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(h)); } catch {}
+};
+
+const fetchStockQuotes = async (): Promise<StockQuote[]> => {
+  try {
+    const res = await fetch('/api/market/quotes?market=india');
+    if (!res.ok) throw new Error('Failed');
+    const data = await res.json();
+    return (data.stocks || []).map((s: any) => ({
+      ticker: s.ticker, company: s.company || s.ticker, sector: s.sector || '—',
+      industry: s.industry || '—', price: s.price || 0, change: s.change || 0,
+      changePercent: s.changePercent || 0, dayHigh: s.dayHigh || s.price || 0,
+      dayLow: s.dayLow || s.price || 0,
+    }));
+  } catch { return []; }
+};
+
+const fmt = (n: number) => n >= 10000000 ? `${(n / 10000000).toFixed(2)} Cr` : n >= 100000 ? `${(n / 100000).toFixed(2)} L` : `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+const fmtPct = (n: number) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
+
+/* ── Summary Cards ─────────────────────────────────────────────────── */
+
+function PortfolioSummary({ rows }: { rows: PortfolioRow[] }) {
+  if (rows.length === 0) return null;
+
+  const totalInvested = rows.reduce((s, r) => s + r.investedValue, 0);
+  const totalCurrent = rows.reduce((s, r) => s + r.currentValue, 0);
+  const totalPnl = totalCurrent - totalInvested;
+  const totalPnlPct = totalInvested > 0 ? (totalPnl / totalInvested) * 100 : 0;
+  const dayPnl = rows.reduce((s, r) => s + r.dayPnl, 0);
+  const gainers = rows.filter(r => r.pnl > 0).length;
+  const losers = rows.filter(r => r.pnl < 0).length;
+
+  const cards = [
+    { label: 'INVESTED VALUE', value: fmt(totalInvested), color: '#F5F7FA' },
+    { label: 'CURRENT VALUE', value: fmt(totalCurrent), color: '#F5F7FA' },
+    { label: 'TOTAL P&L', value: `${fmt(Math.abs(totalPnl))} (${fmtPct(totalPnlPct)})`, color: totalPnl >= 0 ? '#10B981' : '#EF4444' },
+    { label: 'DAY P&L', value: fmt(Math.abs(dayPnl)), color: dayPnl >= 0 ? '#10B981' : '#EF4444' },
+    { label: 'HOLDINGS', value: `${rows.length}`, sub: `${gainers} ↑  ${losers} ↓`, color: '#F5F7FA' },
+  ];
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+      {cards.map(c => (
+        <div key={c.label} style={{ backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '12px', padding: '16px' }}>
+          <div style={{ fontSize: '10px', color: '#8BA3C1', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.5px' }}>{c.label}</div>
+          <div style={{ fontSize: '20px', fontWeight: '700', color: c.color }}>{c.value}</div>
+          {c.sub && <div style={{ fontSize: '11px', color: '#64748B', marginTop: '2px' }}>{c.sub}</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── Add Holding Modal ─────────────────────────────────────────────── */
+
+function AddHoldingForm({ onAdd, onCancel }: { onAdd: (h: PortfolioHolding) => void; onCancel: () => void }) {
+  const [symbol, setSymbol] = useState('');
+  const [entryPrice, setEntryPrice] = useState('');
+  const [quantity, setQuantity] = useState('');
+  const [notes, setNotes] = useState('');
+
+  const handleSubmit = () => {
+    const sym = symbol.trim().toUpperCase().replace(/^(NSE|BSE|BOM|MCX):/, '');
+    if (!sym || !/^[A-Z0-9&-]+$/.test(sym)) { toast.error('Invalid symbol'); return; }
+    if (!entryPrice || Number(entryPrice) <= 0) { toast.error('Enter valid entry price'); return; }
+    if (!quantity || Number(quantity) <= 0) { toast.error('Enter valid quantity'); return; }
+
+    onAdd({
+      symbol: sym,
+      entryPrice: Number(entryPrice),
+      quantity: Number(quantity),
+      weight: 0,
+      addedAt: new Date().toISOString(),
+      notes: notes.trim() || undefined,
+    });
+  };
+
+  const inputStyle = {
+    backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '8px',
+    padding: '10px 14px', color: '#F5F7FA', fontSize: '14px', outline: 'none', width: '100%',
+    boxSizing: 'border-box' as const,
+  };
+
+  return (
+    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #2A3B4C', borderRadius: '12px', padding: '20px', marginBottom: '20px' }}>
+      <div style={{ fontSize: '14px', fontWeight: '700', color: '#F5F7FA', marginBottom: '16px' }}>Add Holding</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginBottom: '12px' }}>
+        <div>
+          <label style={{ fontSize: '11px', color: '#8BA3C1', fontWeight: '600', display: 'block', marginBottom: '4px' }}>SYMBOL</label>
+          <input value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase())} placeholder="RELIANCE" style={inputStyle}
+            onKeyDown={e => e.key === 'Enter' && handleSubmit()} />
+        </div>
+        <div>
+          <label style={{ fontSize: '11px', color: '#8BA3C1', fontWeight: '600', display: 'block', marginBottom: '4px' }}>ENTRY PRICE (₹)</label>
+          <input type="number" value={entryPrice} onChange={e => setEntryPrice(e.target.value)} placeholder="1250.00" style={inputStyle}
+            onKeyDown={e => e.key === 'Enter' && handleSubmit()} />
+        </div>
+        <div>
+          <label style={{ fontSize: '11px', color: '#8BA3C1', fontWeight: '600', display: 'block', marginBottom: '4px' }}>QUANTITY</label>
+          <input type="number" value={quantity} onChange={e => setQuantity(e.target.value)} placeholder="100" style={inputStyle}
+            onKeyDown={e => e.key === 'Enter' && handleSubmit()} />
+        </div>
+        <div>
+          <label style={{ fontSize: '11px', color: '#8BA3C1', fontWeight: '600', display: 'block', marginBottom: '4px' }}>NOTES (optional)</label>
+          <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Long-term hold" style={inputStyle}
+            onKeyDown={e => e.key === 'Enter' && handleSubmit()} />
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+        <button onClick={onCancel} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #2A3B4C', backgroundColor: 'transparent', color: '#8BA3C1', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>Cancel</button>
+        <button onClick={handleSubmit} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', backgroundColor: '#10B981', color: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>Add to Portfolio</button>
+      </div>
+    </div>
+  );
+}
+
+/* ── Inline Edit Cell ──────────────────────────────────────────────── */
+
+function EditableCell({ value, onSave, type = 'number' }: { value: number; onSave: (v: number) => void; type?: string }) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(String(value));
+
+  if (!editing) {
+    return (
+      <span style={{ cursor: 'pointer', borderBottom: '1px dashed #4A5B6C' }} onClick={() => { setVal(String(value)); setEditing(true); }}>
+        {type === 'number' ? `₹${value.toFixed(2)}` : String(value)}
+      </span>
+    );
+  }
+
+  return (
+    <span style={{ display: 'inline-flex', gap: '2px', alignItems: 'center' }}>
+      <input type="number" value={val} onChange={e => setVal(e.target.value)}
+        style={{ width: '80px', padding: '2px 6px', backgroundColor: '#1A2B3C', border: '1px solid #3B82F6', borderRadius: '4px', color: '#F5F7FA', fontSize: '12px', outline: 'none' }}
+        onKeyDown={e => { if (e.key === 'Enter') { onSave(Number(val)); setEditing(false); } if (e.key === 'Escape') setEditing(false); }}
+        autoFocus
+      />
+      <button onClick={() => { onSave(Number(val)); setEditing(false); }} style={{ background: 'none', border: 'none', color: '#10B981', cursor: 'pointer', padding: '2px' }}>
+        <Check style={{ width: '12px', height: '12px' }} />
+      </button>
+      <button onClick={() => setEditing(false)} style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', padding: '2px' }}>
+        <X style={{ width: '12px', height: '12px' }} />
+      </button>
+    </span>
+  );
+}
+
+/* ── Main Page ─────────────────────────────────────────────────────── */
+
+export default function PortfolioPage() {
+  const [holdings, setHoldings] = useState<PortfolioHolding[]>([]);
+  const [quotes, setQuotes] = useState<StockQuote[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
+  const [sortField, setSortField] = useState<SortField>('weight');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Init: load from API, fallback to localStorage
+  useEffect(() => {
+    const init = async () => {
+      try {
+        const res = await fetch(`/api/portfolio?chatId=${CHAT_ID}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.holdings && data.holdings.length > 0) {
+            setHoldings(data.holdings);
+            setStoredHoldings(data.holdings);
+            return;
+          }
+        }
+      } catch (e) { console.error('Portfolio API fetch failed:', e); }
+      setHoldings(getStoredHoldings());
+    };
+    init();
+  }, []);
+
+  // Fetch live quotes
+  const fetchData = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      const data = await fetchStockQuotes();
+      setQuotes(data);
+      setLastRefresh(new Date());
+      setLoading(false);
+    } catch { setLoading(false); }
+    finally { setIsRefreshing(false); }
+  }, []);
+
+  useEffect(() => { if (holdings.length > 0) fetchData(); else setLoading(false); }, [holdings.length, fetchData]);
+
+  // Auto-refresh every 60s
+  useEffect(() => {
+    if (holdings.length === 0) return;
+    const i = setInterval(fetchData, 60000);
+    return () => clearInterval(i);
+  }, [holdings.length, fetchData]);
+
+  // Sync holdings to API
+  const syncToAPI = useCallback((h: PortfolioHolding[]) => {
+    setStoredHoldings(h);
+    fetch('/api/portfolio', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chatId: CHAT_ID, secret: SECRET, action: 'set', holdings: h }),
+    }).then(r => { if (!r.ok) console.error('Portfolio sync failed'); }).catch(console.error);
+  }, []);
+
+  // Build portfolio rows with P&L
+  const rows = useMemo((): PortfolioRow[] => {
+    const totalInvested = holdings.reduce((s, h) => s + h.entryPrice * h.quantity, 0);
+
+    return holdings.map(h => {
+      const quote = quotes.find(q => q.ticker === h.symbol);
+      const cmp = quote?.price || 0;
+      const change = quote?.change || 0;
+      const changePercent = quote?.changePercent || 0;
+      const investedValue = h.entryPrice * h.quantity;
+      const currentValue = cmp * h.quantity;
+      const pnl = currentValue - investedValue;
+      const pnlPercent = investedValue > 0 ? (pnl / investedValue) * 100 : 0;
+      const dayPnl = change * h.quantity;
+      const weight = totalInvested > 0 ? (investedValue / totalInvested) * 100 : 0;
+
+      return {
+        symbol: h.symbol,
+        company: quote?.company || h.symbol,
+        sector: quote?.sector || '—',
+        entryPrice: h.entryPrice,
+        quantity: h.quantity,
+        weight: h.weight || weight,
+        cmp, change, changePercent,
+        investedValue, currentValue,
+        pnl, pnlPercent, dayPnl,
+        notes: h.notes,
+      };
+    });
+  }, [holdings, quotes]);
+
+  // Sorted rows
+  const sortedRows = useMemo(() => {
+    const sorted = [...rows];
+    sorted.sort((a, b) => {
+      const aVal = a[sortField] as number;
+      const bVal = b[sortField] as number;
+      if (typeof aVal === 'string') return sortOrder === 'asc' ? (aVal as string).localeCompare(bVal as unknown as string) : (bVal as unknown as string).localeCompare(aVal as string);
+      return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
+    });
+    return sorted;
+  }, [rows, sortField, sortOrder]);
+
+  // Handlers
+  const handleAdd = (h: PortfolioHolding) => {
+    const exists = holdings.find(x => x.symbol === h.symbol);
+    if (exists) {
+      // Average in
+      const totalQty = exists.quantity + h.quantity;
+      const avgPrice = ((exists.entryPrice * exists.quantity) + (h.entryPrice * h.quantity)) / totalQty;
+      const updated = holdings.map(x => x.symbol === h.symbol ? { ...x, entryPrice: avgPrice, quantity: totalQty } : x);
+      setHoldings(updated);
+      syncToAPI(updated);
+      toast.success(`${h.symbol} averaged in — ${totalQty} shares @ ₹${avgPrice.toFixed(2)}`);
+    } else {
+      const updated = [...holdings, h];
+      setHoldings(updated);
+      syncToAPI(updated);
+      toast.success(`${h.symbol} added to portfolio`);
+    }
+    setShowAdd(false);
+    setTimeout(fetchData, 500);
+  };
+
+  const handleRemove = (symbol: string) => {
+    const updated = holdings.filter(h => h.symbol !== symbol);
+    setHoldings(updated);
+    syncToAPI(updated);
+    toast.success(`${symbol} removed from portfolio`);
+  };
+
+  const handleUpdateField = (symbol: string, field: 'entryPrice' | 'quantity', value: number) => {
+    if (value <= 0) return;
+    const updated = holdings.map(h => h.symbol === symbol ? { ...h, [field]: value } : h);
+    setHoldings(updated);
+    syncToAPI(updated);
+    toast.success(`${symbol} ${field === 'entryPrice' ? 'entry price' : 'quantity'} updated`);
+  };
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) setSortOrder(o => o === 'asc' ? 'desc' : 'asc');
+    else { setSortField(field); setSortOrder('desc'); }
+  };
+
+  const handleExportCSV = () => {
+    if (sortedRows.length === 0) return;
+    const header = 'Symbol,Company,Sector,Entry Price,Qty,Weight%,CMP,Change%,Invested,Current,P&L,P&L%\n';
+    const csv = header + sortedRows.map(r =>
+      `${r.symbol},"${r.company}","${r.sector}",${r.entryPrice.toFixed(2)},${r.quantity},${r.weight.toFixed(1)},${r.cmp.toFixed(2)},${r.changePercent.toFixed(2)},${r.investedValue.toFixed(0)},${r.currentValue.toFixed(0)},${r.pnl.toFixed(0)},${r.pnlPercent.toFixed(2)}`
+    ).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `portfolio_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    toast.success('Exported to CSV');
+  };
+
+  const SortIcon = ({ field }: { field: SortField }) => {
+    if (sortField !== field) return <ArrowUpDown style={{ width: '10px', height: '10px', opacity: 0.4 }} />;
+    return sortOrder === 'asc' ? <TrendingUp style={{ width: '10px', height: '10px' }} /> : <TrendingDown style={{ width: '10px', height: '10px' }} />;
+  };
+
+  return (
+    <div style={{ padding: '24px', maxWidth: '1400px', margin: '0 auto' }}>
+      {/* ── Header ──────────────────────────────────────────────────── */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
+        <div>
+          <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#F5F7FA', margin: '0 0 4px' }}>Portfolio</h1>
+          <p style={{ fontSize: '12px', color: '#8BA3C1', margin: 0 }}>Active holdings · Capital deployed · P&L tracking</p>
+        </div>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button onClick={() => setShowAdd(!showAdd)} style={{
+            display: 'inline-flex', alignItems: 'center', gap: '6px',
+            backgroundColor: '#10B981', border: 'none', borderRadius: '10px',
+            padding: '10px 16px', color: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: '600',
+          }}>
+            <Plus style={{ width: '14px', height: '14px' }} /> Add Holding
+          </button>
+          <button onClick={fetchData} disabled={isRefreshing} style={{
+            display: 'inline-flex', alignItems: 'center', gap: '6px',
+            backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '10px',
+            padding: '10px 14px', color: '#8BA3C1', cursor: isRefreshing ? 'not-allowed' : 'pointer',
+            fontSize: '13px', fontWeight: '600', opacity: isRefreshing ? 0.6 : 1,
+          }}>
+            <RefreshCw style={{ width: '14px', height: '14px' }} /> Refresh
+          </button>
+          <button onClick={handleExportCSV} disabled={sortedRows.length === 0} style={{
+            display: 'inline-flex', alignItems: 'center', gap: '6px',
+            backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '10px',
+            padding: '10px 14px', color: '#8BA3C1', cursor: sortedRows.length === 0 ? 'not-allowed' : 'pointer',
+            fontSize: '13px', fontWeight: '600', opacity: sortedRows.length === 0 ? 0.4 : 1,
+          }}>
+            <Download style={{ width: '14px', height: '14px' }} /> Export
+          </button>
+        </div>
+      </div>
+
+      {/* ── Add Form ────────────────────────────────────────────────── */}
+      {showAdd && <AddHoldingForm onAdd={handleAdd} onCancel={() => setShowAdd(false)} />}
+
+      {/* ── Summary ─────────────────────────────────────────────────── */}
+      <PortfolioSummary rows={sortedRows} />
+
+      {/* ── Loading ─────────────────────────────────────────────────── */}
+      {loading && holdings.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {[1, 2, 3, 4, 5].map(i => (
+            <div key={i} style={{ height: '48px', backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '10px', animation: 'pulse 2s cubic-bezier(0.4,0,0.6,1) infinite' }} />
+          ))}
+        </div>
+      )}
+
+      {/* ── Table ───────────────────────────────────────────────────── */}
+      {!loading && holdings.length > 0 && (
+        <>
+          <div style={{ marginBottom: '12px' }}>
+            <p style={{ fontSize: '12px', color: '#8BA3C1', margin: 0 }}>
+              {sortedRows.length} holdings · Last refreshed: {lastRefresh ? lastRefresh.toLocaleTimeString() : '—'}
+            </p>
+          </div>
+          <div style={{ overflowX: 'auto', border: '1px solid #2A3B4C', borderRadius: '12px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #2A3B4C', backgroundColor: '#0D1B2E' }}>
+                  {[
+                    { key: 'symbol' as SortField, label: 'SYMBOL', align: 'left' },
+                    { key: 'symbol' as SortField, label: 'COMPANY', align: 'left', noSort: true },
+                    { key: 'cmp' as SortField, label: 'CMP (₹)', align: 'right' },
+                    { key: 'symbol' as SortField, label: 'ENTRY (₹)', align: 'right', noSort: true },
+                    { key: 'symbol' as SortField, label: 'QTY', align: 'right', noSort: true },
+                    { key: 'weight' as SortField, label: 'WEIGHT%', align: 'right' },
+                    { key: 'investedValue' as SortField, label: 'INVESTED', align: 'right' },
+                    { key: 'currentValue' as SortField, label: 'CURRENT', align: 'right' },
+                    { key: 'pnlPercent' as SortField, label: 'P&L', align: 'right' },
+                    { key: 'changePercent' as SortField, label: 'DAY%', align: 'right' },
+                    { key: 'symbol' as SortField, label: '', align: 'right', noSort: true },
+                  ].map((col, i) => (
+                    <th key={i} onClick={() => !col.noSort && handleSort(col.key)} style={{
+                      padding: '10px 12px', textAlign: col.align as any, fontSize: '10px', fontWeight: '700',
+                      color: '#8BA3C1', letterSpacing: '0.5px', cursor: col.noSort ? 'default' : 'pointer', whiteSpace: 'nowrap',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: col.align === 'right' ? 'flex-end' : 'flex-start', gap: '4px' }}>
+                        {col.label} {!col.noSort && <SortIcon field={col.key} />}
+                      </div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sortedRows.map((r, idx) => {
+                  const pnlColor = r.pnl >= 0 ? '#10B981' : '#EF4444';
+                  const dayColor = r.changePercent >= 0 ? '#10B981' : '#EF4444';
+                  return (
+                    <tr key={r.symbol} style={{ borderBottom: idx < sortedRows.length - 1 ? '1px solid #1A2B3C' : 'none', backgroundColor: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
+                      <td style={{ padding: '10px 12px', color: '#3B82F6', fontWeight: '700' }}>{r.symbol}</td>
+                      <td style={{ padding: '10px 12px', color: '#F5F7FA', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right', color: '#F5F7FA', fontVariantNumeric: 'tabular-nums' }}>
+                        {r.cmp > 0 ? `₹${r.cmp.toFixed(2)}` : '—'}
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right', color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>
+                        <EditableCell value={r.entryPrice} onSave={v => handleUpdateField(r.symbol, 'entryPrice', v)} />
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right', color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>
+                        <EditableCell value={r.quantity} onSave={v => handleUpdateField(r.symbol, 'quantity', v)} />
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right', color: '#8BA3C1', fontVariantNumeric: 'tabular-nums' }}>
+                        {r.weight.toFixed(1)}%
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right', color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>
+                        {fmt(r.investedValue)}
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right', color: '#F5F7FA', fontVariantNumeric: 'tabular-nums' }}>
+                        {r.cmp > 0 ? fmt(r.currentValue) : '—'}
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {r.cmp > 0 ? (
+                          <div>
+                            <span style={{ color: pnlColor, fontWeight: '600', fontVariantNumeric: 'tabular-nums' }}>
+                              {r.pnl >= 0 ? '+' : ''}{fmt(Math.abs(r.pnl))}
+                            </span>
+                            <div style={{ fontSize: '10px', color: pnlColor, fontVariantNumeric: 'tabular-nums' }}>
+                              {fmtPct(r.pnlPercent)}
+                            </div>
+                          </div>
+                        ) : '—'}
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        <span style={{
+                          display: 'inline-block', padding: '3px 6px', borderRadius: '4px', fontSize: '11px', fontWeight: '600',
+                          backgroundColor: r.changePercent >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+                          color: dayColor, fontVariantNumeric: 'tabular-nums',
+                        }}>
+                          {r.cmp > 0 ? fmtPct(r.changePercent) : '—'}
+                        </span>
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        <button onClick={() => handleRemove(r.symbol)} title="Remove from portfolio"
+                          style={{ background: 'none', border: 'none', color: '#4A5B6C', cursor: 'pointer', padding: '4px', borderRadius: '4px' }}
+                          onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.1)'; e.currentTarget.style.color = '#EF4444'; }}
+                          onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = '#4A5B6C'; }}>
+                          <Trash2 style={{ width: '14px', height: '14px' }} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {/* ── Empty State ─────────────────────────────────────────────── */}
+      {!loading && holdings.length === 0 && (
+        <div style={{ textAlign: 'center', padding: '60px 20px' }}>
+          <div style={{ fontSize: '48px', marginBottom: '16px' }}>💼</div>
+          <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#F5F7FA', margin: '0 0 8px' }}>Your portfolio is empty</h2>
+          <p style={{ fontSize: '14px', color: '#8BA3C1', margin: '0 0 24px' }}>Add your holdings with entry price and quantity to track P&L in real-time.</p>
+          <button onClick={() => setShowAdd(true)} style={{
+            display: 'inline-flex', alignItems: 'center', gap: '6px',
+            backgroundColor: '#10B981', border: 'none', borderRadius: '10px',
+            padding: '12px 24px', color: 'white', cursor: 'pointer', fontSize: '14px', fontWeight: '600',
+          }}>
+            <Plus style={{ width: '16px', height: '16px' }} /> Add Your First Holding
+          </button>
+        </div>
+      )}
+
+      {/* ── Sync Info ───────────────────────────────────────────────── */}
+      {holdings.length > 0 && (
+        <div style={{ marginTop: '24px', padding: '16px', backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '10px', textAlign: 'center' }}>
+          <p style={{ fontSize: '12px', color: '#8BA3C1', margin: 0 }}>
+            💼 Portfolio syncs via Redis · Entry price & quantity are editable inline (click to edit)
+          </p>
+        </div>
+      )}
+
+      <style>{`@keyframes pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }`}</style>
+    </div>
+  );
+}

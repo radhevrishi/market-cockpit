@@ -495,7 +495,7 @@ export default function WatchlistsPage() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#F5F7FA', margin: '0 0 4px' }}>Watchlist</h1>
-          <p style={{ fontSize: '12px', color: '#8BA3C1', margin: 0 }}>Track your preferred Indian stocks in real-time</p>
+          <p style={{ fontSize: '12px', color: '#8BA3C1', margin: 0 }}>Tracking universe · Observation only · No P&L</p>
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
           <button
