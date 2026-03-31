@@ -500,20 +500,27 @@ export default function EarningsPage() {
       // Enrich cards with live CMP/MCap data from quotes APIs
       try {
         const cardSymbols = allCards.map(c => c.symbol);
-        const quoteMap = new Map<string, { price: number; marketCap: number | null }>();
+        // quoteMap stores: price, mcapCr (market cap in Crores)
+        const quoteMap = new Map<string, { price: number; mcapCr: number | null }>();
 
         // 1) Try bulk quotes (fast, covers index stocks)
+        //    Bulk API returns marketCap in lakhs → convert to Cr by dividing by 100
         try {
           const quotesRes = await fetch('/api/market/quotes');
           if (quotesRes.ok) {
             const quotesData = await quotesRes.json();
             (quotesData.stocks || []).forEach((q: any) => {
-              quoteMap.set(q.ticker, { price: q.price || 0, marketCap: q.marketCap || null });
+              const mcapLakhs = q.marketCap || 0;
+              quoteMap.set(q.ticker, {
+                price: q.price || 0,
+                mcapCr: mcapLakhs > 0 ? Math.round(mcapLakhs / 100) : null,
+              });
             });
           }
         } catch {}
 
         // 2) Fetch individual quotes for symbols not in bulk (small/micro-cap)
+        //    Individual API returns marketCap already in Cr
         const missingFromBulk = cardSymbols.filter(s => !quoteMap.has(s));
         if (missingFromBulk.length > 0) {
           for (let i = 0; i < missingFromBulk.length; i += 20) {
@@ -522,23 +529,22 @@ export default function EarningsPage() {
               const iqRes = await fetch(`/api/market/quote?symbols=${batch.join(',')}`);
               if (iqRes.ok) {
                 const iqData = await iqRes.json();
-                // Individual quote API returns marketCap already in Cr
                 (iqData.quotes || []).forEach((q: any) => {
-                  quoteMap.set(q.ticker, { price: q.price || 0, marketCap: q.marketCap || null });
+                  quoteMap.set(q.ticker, { price: q.price || 0, mcapCr: q.marketCap || null });
                 });
               }
             } catch {}
           }
         }
 
-        // 3) Merge live data into cards
+        // 3) Merge live data into cards (mcap stored in Cr)
         allCards = allCards.map(c => {
           const q = quoteMap.get(c.symbol);
           if (q) {
             return {
               ...c,
               cmp: q.price > 0 ? q.price : c.cmp,
-              mcap: c.mcap || q.marketCap || null,
+              mcap: c.mcap || q.mcapCr || null,
             };
           }
           return c;
