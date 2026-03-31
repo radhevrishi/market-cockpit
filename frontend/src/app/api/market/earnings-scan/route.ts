@@ -27,6 +27,10 @@ const SCREENER_SYMBOL_MAP: Record<string, string> = {
   'M&MFIN': 'MMFIN',
   'L&TFH': 'LTFH',
   'BAJAJ-AUTO': 'BAJAJ_AUTO',
+  // BSE numeric codes → screener.in names
+  '532067': 'BLACKBIO',
+  // Ampersand tickers — screener.in uses without ampersand
+  'S&SPOWER': 'SSPOWER',
 };
 
 /** Get screener.in symbol for a given NSE symbol */

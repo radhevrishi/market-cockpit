@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Download } from 'lucide-react';
+import { Download, AlertTriangle } from 'lucide-react';
 
 // ══════════════════════════════════════════════
 // EARNINGS PAGE — Custom Universe Only
@@ -79,6 +79,8 @@ interface ScanResponse {
   };
   source: string;
   updatedAt: string;
+  failed?: string[];
+  requestedSymbols?: string[];
 }
 
 type ViewMode = 'portfolio' | 'watchlist' | 'both';
@@ -408,10 +410,12 @@ export default function EarningsPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('watchlist');
   const [portfolioSymbols, setPortfolioSymbols] = useState<string[]>([]);
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>([]);
+  const [failedSymbols, setFailedSymbols] = useState<string[]>([]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError('');
+    setFailedSymbols([]);
     try {
       // Always fetch both portfolio and watchlist
       let portfolio: string[] = [];
@@ -468,6 +472,7 @@ export default function EarningsPage() {
       // Batch symbols into groups of 30
       const BATCH_SIZE = 30;
       let allCards: EarningsScanCard[] = [];
+      let allFailed: string[] = [];
       let lastSummary: any = null;
       let lastSource = 'unknown';
       let lastUpdatedAt = new Date().toISOString();
@@ -478,6 +483,7 @@ export default function EarningsPage() {
         if (!res.ok) { console.error(`Batch ${i / BATCH_SIZE + 1} failed`); continue; }
         const data: ScanResponse = await res.json();
         allCards = [...allCards, ...(data.cards || [])];
+        if (data.failed) allFailed = [...allFailed, ...data.failed];
         if (data.summary) lastSummary = data.summary;
         if (data.source) lastSource = data.source;
         if (data.updatedAt) lastUpdatedAt = data.updatedAt;
@@ -490,6 +496,54 @@ export default function EarningsPage() {
           : portfolioSet.has(c.symbol) ? 'portfolio'
           : 'watchlist',
       }));
+
+      // Enrich cards with live CMP/MCap data from quotes APIs
+      try {
+        const cardSymbols = allCards.map(c => c.symbol);
+        const quoteMap = new Map<string, { price: number; marketCap: number | null }>();
+
+        // 1) Try bulk quotes (fast, covers index stocks)
+        try {
+          const quotesRes = await fetch('/api/market/quotes');
+          if (quotesRes.ok) {
+            const quotesData = await quotesRes.json();
+            (quotesData.stocks || []).forEach((q: any) => {
+              quoteMap.set(q.ticker, { price: q.price || 0, marketCap: q.marketCap || null });
+            });
+          }
+        } catch {}
+
+        // 2) Fetch individual quotes for symbols not in bulk (small/micro-cap)
+        const missingFromBulk = cardSymbols.filter(s => !quoteMap.has(s));
+        if (missingFromBulk.length > 0) {
+          for (let i = 0; i < missingFromBulk.length; i += 20) {
+            const batch = missingFromBulk.slice(i, i + 20);
+            try {
+              const iqRes = await fetch(`/api/market/quote?symbols=${batch.join(',')}`);
+              if (iqRes.ok) {
+                const iqData = await iqRes.json();
+                // Individual quote API returns marketCap already in Cr
+                (iqData.quotes || []).forEach((q: any) => {
+                  quoteMap.set(q.ticker, { price: q.price || 0, marketCap: q.marketCap || null });
+                });
+              }
+            } catch {}
+          }
+        }
+
+        // 3) Merge live data into cards
+        allCards = allCards.map(c => {
+          const q = quoteMap.get(c.symbol);
+          if (q) {
+            return {
+              ...c,
+              cmp: q.price > 0 ? q.price : c.cmp,
+              mcap: c.mcap || q.marketCap || null,
+            };
+          }
+          return c;
+        });
+      } catch (e) { console.error('Quote enrichment failed:', e); }
 
       // Recompute summary across all cards
       if (allCards.length > 0) {
@@ -506,6 +560,7 @@ export default function EarningsPage() {
       }
 
       setCards(allCards);
+      setFailedSymbols(allFailed);
       setSummary(lastSummary);
       setSource(lastSource);
       setUpdatedAt(lastUpdatedAt);
@@ -562,95 +617,145 @@ export default function EarningsPage() {
     const autoTable = (await import('jspdf-autotable')).default;
 
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.width;
     const now = new Date().toLocaleString('en-IN');
-    const title = `Earnings Results — ${viewMode === 'both' ? 'Portfolio + Watchlist' : viewMode === 'portfolio' ? 'Portfolio' : 'Watchlist'}`;
+    const modeLabel = viewMode === 'both' ? 'Portfolio + Watchlist' : viewMode === 'portfolio' ? 'Portfolio' : 'Watchlist';
 
-    // Title
-    doc.setFontSize(16);
+    // ── Header bar ──
+    doc.setFillColor(10, 14, 26);
+    doc.rect(0, 0, pageW, 18, 'F');
+    doc.setFontSize(14);
     doc.setFont('helvetica', 'bold');
-    doc.text(title, 14, 15);
-    doc.setFontSize(9);
+    doc.setTextColor(245, 247, 250);
+    doc.text(`Market Cockpit — Earnings Intelligence`, 14, 11);
+    doc.setFontSize(8);
     doc.setFont('helvetica', 'normal');
-    doc.text(`Generated: ${now} · ${sortedCards.length} companies · Source: ${source || 'screener.in'}`, 14, 22);
+    doc.setTextColor(180);
+    doc.text(`${modeLabel} · ${sortedCards.length} companies · ${now}`, pageW - 14, 11, { align: 'right' });
 
-    // Summary row
+    // ── Summary bar ──
+    doc.setTextColor(60);
+    let summaryY = 24;
     if (summary) {
-      doc.setFontSize(10);
-      doc.text(`Total: ${summary.total} | STRONG: ${summary.strong} | GOOD: ${summary.good} | OK: ${summary.ok} | BAD: ${summary.bad} | Avg Score: ${summary.avgScore.toFixed(1)}`, 14, 28);
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'bold');
+      const summaryParts = [
+        `Total: ${summary.total}`,
+        `STRONG: ${summary.strong}`,
+        `GOOD: ${summary.good}`,
+        `OK: ${summary.ok}`,
+        `BAD: ${summary.bad}`,
+        `Avg Score: ${summary.avgScore.toFixed(1)}`,
+      ];
+      doc.text(summaryParts.join('  |  '), 14, summaryY);
+      summaryY += 6;
     }
 
-    // Table
-    const headers = [['#', 'Symbol', 'Company', 'Grade', 'Score', 'Period', 'Revenue', 'Rev YoY%', 'OP', 'OP YoY%', 'OPM%', 'PAT', 'PAT YoY%', 'NPM%', 'EPS', 'EPS YoY%', 'CMP', 'MCap Cr', 'P/E']];
+    // Helper: format number in lakhs/crores for compact display
+    const fmtCr = (v: number) => {
+      if (v >= 100000) return `${(v / 100000).toFixed(1)}L Cr`;
+      if (v >= 1000) return `${(v / 1000).toFixed(1)}K Cr`;
+      return `${v.toLocaleString('en-IN')} Cr`;
+    };
+
+    // ── Table ──
+    const headers = [['#', 'Symbol', 'Company', 'Grade', 'Score', 'Period', 'Rev Cr', 'Rev YoY', 'OP Cr', 'OP YoY', 'OPM%', 'PAT Cr', 'PAT YoY', 'EPS', 'EPS YoY', 'CMP', 'MCap Cr', 'P/E']];
     const body = sortedCards.map((c, i) => {
-      const q = c.quarters[0]; // Latest quarter
+      const q = c.quarters[0];
+      const fmtPct = (v: number | null) => v != null ? `${v >= 0 ? '+' : ''}${v.toFixed(1)}%` : '—';
       return [
         i + 1,
         c.symbol,
-        c.company.length > 22 ? c.company.slice(0, 20) + '..' : c.company,
+        c.company.length > 24 ? c.company.slice(0, 22) + '..' : c.company,
         c.grade,
         c.totalScore.toFixed(0),
         c.period || q?.period || '—',
-        q ? `${(q.revenue / 100).toFixed(0)}` : '—', // Cr
-        c.revenueYoY != null ? `${c.revenueYoY.toFixed(1)}%` : '—',
-        q ? `${(q.operatingProfit / 100).toFixed(0)}` : '—',
-        c.opProfitYoY != null ? `${c.opProfitYoY.toFixed(1)}%` : '—',
+        q ? q.revenue.toLocaleString('en-IN') : '—',
+        fmtPct(c.revenueYoY),
+        q ? q.operatingProfit.toLocaleString('en-IN') : '—',
+        fmtPct(c.opProfitYoY),
         q ? `${q.opm.toFixed(1)}%` : '—',
-        q ? `${(q.pat / 100).toFixed(0)}` : '—',
-        c.patYoY != null ? `${c.patYoY.toFixed(1)}%` : '—',
-        q ? `${q.npm.toFixed(1)}%` : '—',
+        q ? q.pat.toLocaleString('en-IN') : '—',
+        fmtPct(c.patYoY),
         q ? q.eps.toFixed(2) : '—',
-        c.epsYoY != null ? `${c.epsYoY.toFixed(1)}%` : '—',
-        c.cmp ? `₹${c.cmp.toFixed(0)}` : '—',
-        c.mcap ? `${c.mcap.toLocaleString('en-IN')}` : '—',
+        fmtPct(c.epsYoY),
+        c.cmp ? `${c.cmp.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '—',
+        c.mcap ? fmtCr(c.mcap) : '—',
         c.pe ? c.pe.toFixed(1) : '—',
       ];
     });
 
     autoTable(doc, {
-      startY: summary ? 33 : 28,
+      startY: summaryY + 1,
       head: headers,
       body,
-      theme: 'grid',
-      styles: { fontSize: 7, cellPadding: 1.5, overflow: 'linebreak' },
-      headStyles: { fillColor: [15, 122, 191], textColor: 255, fontSize: 7, fontStyle: 'bold' },
-      alternateRowStyles: { fillColor: [245, 247, 250] },
+      theme: 'striped',
+      styles: { fontSize: 6.5, cellPadding: 1.2, overflow: 'linebreak', textColor: [40, 40, 40] },
+      headStyles: { fillColor: [15, 122, 191], textColor: 255, fontSize: 6.5, fontStyle: 'bold', halign: 'center' },
+      alternateRowStyles: { fillColor: [245, 248, 252] },
       columnStyles: {
-        0: { cellWidth: 7 },   // #
-        1: { cellWidth: 18 },  // Symbol
-        2: { cellWidth: 32 },  // Company
-        3: { cellWidth: 14 },  // Grade
-        4: { cellWidth: 12 },  // Score
+        0: { cellWidth: 6, halign: 'center' },
+        1: { cellWidth: 16, fontStyle: 'bold' },
+        2: { cellWidth: 30 },
+        3: { cellWidth: 12, halign: 'center', fontStyle: 'bold' },
+        4: { cellWidth: 10, halign: 'center' },
+        5: { cellWidth: 16 },
+        6: { cellWidth: 14, halign: 'right' },
+        7: { cellWidth: 14, halign: 'right' },
+        8: { cellWidth: 12, halign: 'right' },
+        9: { cellWidth: 14, halign: 'right' },
+        10: { cellWidth: 10, halign: 'right' },
+        11: { cellWidth: 12, halign: 'right' },
+        12: { cellWidth: 14, halign: 'right' },
+        13: { cellWidth: 10, halign: 'right' },
+        14: { cellWidth: 14, halign: 'right' },
+        15: { cellWidth: 14, halign: 'right' },
+        16: { cellWidth: 16, halign: 'right' },
+        17: { cellWidth: 10, halign: 'right' },
       },
       didParseCell: (data: any) => {
+        if (data.section !== 'body') return;
         // Color grade cells
-        if (data.section === 'body' && data.column.index === 3) {
+        if (data.column.index === 3) {
           const grade = data.cell.raw;
-          if (grade === 'STRONG') data.cell.styles.textColor = [0, 200, 83];
-          else if (grade === 'GOOD') data.cell.styles.textColor = [76, 175, 80];
-          else if (grade === 'OK') data.cell.styles.textColor = [255, 152, 0];
-          else if (grade === 'BAD') data.cell.styles.textColor = [244, 67, 54];
+          if (grade === 'STRONG') data.cell.styles.textColor = [0, 160, 60];
+          else if (grade === 'GOOD') data.cell.styles.textColor = [50, 140, 50];
+          else if (grade === 'OK') data.cell.styles.textColor = [200, 130, 0];
+          else if (grade === 'BAD') data.cell.styles.textColor = [220, 40, 40];
         }
-        // Color YoY% cells
-        if (data.section === 'body' && [7, 9, 12, 15].includes(data.column.index)) {
+        // Color YoY/growth % cells (indices 7,9,12,14)
+        if ([7, 9, 12, 14].includes(data.column.index)) {
           const val = parseFloat(data.cell.raw);
           if (!isNaN(val)) {
-            data.cell.styles.textColor = val >= 0 ? [0, 128, 0] : [220, 0, 0];
+            data.cell.styles.textColor = val >= 0 ? [0, 120, 40] : [200, 20, 20];
+            data.cell.styles.fontStyle = 'bold';
           }
         }
       },
     });
 
-    // Footer
+    // ── Failed symbols note ──
+    if (failedSymbols.length > 0) {
+      const lastPage = doc.getNumberOfPages();
+      doc.setPage(lastPage);
+      const finalY = (doc as any).lastAutoTable?.finalY || 180;
+      doc.setFontSize(7);
+      doc.setTextColor(180, 80, 80);
+      doc.text(`Earnings data unavailable for: ${failedSymbols.join(', ')}`, 14, finalY + 6);
+    }
+
+    // ── Footer ──
     const pageCount = doc.getNumberOfPages();
     for (let p = 1; p <= pageCount; p++) {
       doc.setPage(p);
       doc.setFontSize(7);
-      doc.setTextColor(150);
+      doc.setTextColor(140);
       doc.text(`Market Cockpit · ${now} · Page ${p}/${pageCount}`, 14, doc.internal.pageSize.height - 5);
+      doc.text('Source: screener.in + NSE', pageW - 14, doc.internal.pageSize.height - 5, { align: 'right' });
     }
 
     doc.save(`earnings-${viewMode}-${new Date().toISOString().slice(0, 10)}.pdf`);
-  }, [sortedCards, viewMode, summary, source]);
+  }, [sortedCards, viewMode, summary, source, failedSymbols]);
 
   return (
     <div style={{ backgroundColor: BG, minHeight: '100vh', padding: '24px', color: TEXT, fontFamily: 'system-ui, -apple-system, sans-serif' }}>
@@ -791,6 +896,25 @@ export default function EarningsPage() {
           <p style={{ margin: 0, fontSize: '13px' }}>
             {cards.length > 0 ? 'Try selecting "ALL" grade filter.' : `Add stocks to your ${viewMode === 'portfolio' ? 'portfolio' : 'watchlist'} first.`}
           </p>
+        </div>
+      )}
+
+      {/* Failed Symbols Warning */}
+      {!loading && failedSymbols.length > 0 && (
+        <div style={{
+          backgroundColor: '#1A1A0D', border: '1px solid #3D3D00', borderRadius: '10px',
+          padding: '14px 18px', marginBottom: '16px', display: 'flex', alignItems: 'flex-start', gap: '10px',
+        }}>
+          <AlertTriangle style={{ width: '16px', height: '16px', color: YELLOW, flexShrink: 0, marginTop: '2px' }} />
+          <div>
+            <div style={{ fontSize: '12px', fontWeight: 600, color: YELLOW, marginBottom: '4px' }}>
+              {failedSymbols.length} ticker{failedSymbols.length > 1 ? 's' : ''} could not be scanned
+            </div>
+            <div style={{ fontSize: '11px', color: TEXT_DIM, lineHeight: 1.5 }}>
+              No earnings data on screener.in for: <span style={{ color: TEXT, fontWeight: 500 }}>{failedSymbols.join(', ')}</span>
+              <br/>These may be BSE-only codes, very new listings, or tickers with different screener.in names.
+            </div>
+          </div>
         </div>
       )}
 
