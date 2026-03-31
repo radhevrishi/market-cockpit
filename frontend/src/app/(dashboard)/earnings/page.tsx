@@ -537,14 +537,15 @@ export default function EarningsPage() {
           }
         }
 
-        // 3) Merge live data into cards (mcap stored in Cr)
+        // 3) Merge live data into cards (mcap in Cr, cmp = live price)
+        //    Always prefer live quote price. For mcap: prefer live if available, else keep screener's
         allCards = allCards.map(c => {
           const q = quoteMap.get(c.symbol);
           if (q) {
             return {
               ...c,
               cmp: q.price > 0 ? q.price : c.cmp,
-              mcap: c.mcap || q.mcapCr || null,
+              mcap: q.mcapCr && q.mcapCr > 0 ? q.mcapCr : c.mcap,
             };
           }
           return c;
