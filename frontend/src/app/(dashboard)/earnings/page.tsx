@@ -565,7 +565,7 @@ export default function EarningsPage() {
   const [source, setSource] = useState('');
   const [updatedAt, setUpdatedAt] = useState('');
   const [sortBy, setSortBy] = useState<'score' | 'symbol' | 'revenueYoY' | 'patYoY'>('score');
-  const [filterGrade, setFilterGrade] = useState<string>('ALL');
+  const [filterGrades, setFilterGrades] = useState<string[]>(['ALL']);
   const [viewMode, setViewMode] = useState<ViewMode>('watchlist');
   const [portfolioSymbols, setPortfolioSymbols] = useState<string[]>([]);
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>([]);
@@ -625,21 +625,12 @@ export default function EarningsPage() {
       portfolio = portfolio.map(normalizeSymbol).filter(s => s.length > 0);
       watchlist = watchlist.map(normalizeSymbol).filter(s => s.length > 0);
 
-      // Determine which symbols to scan
-      let symbols: string[] = [];
+      // Always scan ALL symbols (union) regardless of viewMode — display filters later
       const portfolioSet = new Set(portfolio);
       const watchlistSet = new Set(watchlist);
+      const symbols = [...new Set([...portfolio, ...watchlist])];
 
-      if (viewMode === 'portfolio') {
-        symbols = portfolio;
-      } else if (viewMode === 'watchlist') {
-        symbols = watchlist;
-      } else {
-        // Both — deduplicated union
-        symbols = [...new Set([...portfolio, ...watchlist])];
-      }
-
-      console.log(`[Earnings] Universe: ${viewMode}, symbols: ${symbols.length}, portfolio: ${portfolio.length}, watchlist: ${watchlist.length}`);
+      console.log(`[Earnings] Scanning ALL symbols: ${symbols.length} (portfolio: ${portfolio.length}, watchlist: ${watchlist.length})`);
 
       if (symbols.length === 0) {
         setCards([]);
@@ -771,14 +762,21 @@ export default function EarningsPage() {
     } finally {
       setLoading(false);
     }
-  }, [viewMode]);
+  }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
   // Sort and filter
   const sortedCards = useMemo(() =>
     [...cards]
-      .filter(c => filterGrade === 'ALL' || c.grade === filterGrade)
+      .filter(c => {
+        // Filter by viewMode (universe membership)
+        if (viewMode === 'portfolio' && c.universeTag !== 'portfolio' && c.universeTag !== 'both') return false;
+        if (viewMode === 'watchlist' && c.universeTag !== 'watchlist' && c.universeTag !== 'both') return false;
+        // Filter by grade
+        if (!filterGrades.includes('ALL') && !filterGrades.includes(c.grade)) return false;
+        return true;
+      })
       .sort((a, b) => {
         switch (sortBy) {
           case 'symbol': return a.symbol.localeCompare(b.symbol);
@@ -787,7 +785,7 @@ export default function EarningsPage() {
           default: return b.totalScore - a.totalScore;
         }
       }),
-    [cards, filterGrade, sortBy]
+    [cards, filterGrades, sortBy, viewMode]
   );
 
   // Compute aggregations
@@ -1012,14 +1010,31 @@ export default function EarningsPage() {
           <option value="patYoY">Sort: PAT YoY</option>
         </select>
 
-        {['ALL', 'EXCELLENT', 'STRONG', 'GOOD', 'OK', 'BAD'].map(g => (
-          <button key={g} onClick={() => setFilterGrade(g)} style={{
-            backgroundColor: filterGrade === g ? ACCENT : CARD,
-            border: `1px solid ${filterGrade === g ? ACCENT : CARD_BORDER}`,
-            color: filterGrade === g ? '#000' : TEXT,
-            padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600,
-          }}>{g}</button>
-        ))}
+        {['ALL', 'EXCELLENT', 'STRONG', 'GOOD', 'OK', 'BAD'].map(g => {
+          const isActive = filterGrades.includes(g);
+          return (
+            <button key={g} onClick={() => {
+              if (g === 'ALL') {
+                setFilterGrades(['ALL']);
+              } else {
+                setFilterGrades(prev => {
+                  const withoutAll = prev.filter(x => x !== 'ALL');
+                  if (withoutAll.includes(g)) {
+                    const next = withoutAll.filter(x => x !== g);
+                    return next.length === 0 ? ['ALL'] : next;
+                  } else {
+                    return [...withoutAll, g];
+                  }
+                });
+              }
+            }} style={{
+              backgroundColor: isActive ? ACCENT : CARD,
+              border: `1px solid ${isActive ? ACCENT : CARD_BORDER}`,
+              color: isActive ? '#000' : TEXT,
+              padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600,
+            }}>{g}</button>
+          );
+        })}
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
           {cards.length > 0 && (
@@ -1165,7 +1180,7 @@ export default function EarningsPage() {
         <div style={{ backgroundColor: CARD, border: `1px solid ${CARD_BORDER}`, borderRadius: '8px', padding: '60px 20px', textAlign: 'center', color: TEXT_DIM }}>
           <div style={{ fontSize: '48px', marginBottom: '16px' }}>📊</div>
           <p style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: 500 }}>
-            {cards.length > 0 ? `${cards.length} cards loaded but none match "${filterGrade}" filter` : viewMode === 'portfolio' ? 'No portfolio holdings found' : 'No watchlist stocks found'}
+            {cards.length > 0 ? `${cards.length} cards loaded but none match "${filterGrades.join(', ')}" filter` : viewMode === 'portfolio' ? 'No portfolio holdings found' : 'No watchlist stocks found'}
           </p>
           <p style={{ margin: 0, fontSize: '13px' }}>
             {cards.length > 0 ? 'Try selecting "ALL" grade filter.' : `Add stocks to your ${viewMode === 'portfolio' ? 'portfolio' : 'watchlist'} first.`}
