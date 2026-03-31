@@ -31,6 +31,37 @@ const TEXT1 = '#F5F7FA';
 const TEXT2 = '#8A95A3';
 const TEXT3 = '#4A5B6C';
 
+// Helper: robust date parser for NSE dates (DD-Mon-YYYY, DD-MM-YYYY, YYYY-MM-DD, etc.)
+const parseNSEDate = (dateStr: string): Date | null => {
+  if (!dateStr) return null;
+  // Try ISO format first (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss)
+  if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) {
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) return d;
+  }
+  // DD-Mon-YYYY or DD-Mon-YYYY HH:mm (e.g. "31-Mar-2026 09:15")
+  const monMatch = dateStr.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})/);
+  if (monMatch) {
+    const d = new Date(`${monMatch[2]} ${monMatch[1]}, ${monMatch[3]}`);
+    if (!isNaN(d.getTime())) return d;
+  }
+  // DD-MM-YYYY
+  const ddmmyyyy = dateStr.match(/^(\d{1,2})-(\d{1,2})-(\d{4})/);
+  if (ddmmyyyy) {
+    const d = new Date(Number(ddmmyyyy[3]), Number(ddmmyyyy[2]) - 1, Number(ddmmyyyy[1]));
+    if (!isNaN(d.getTime())) return d;
+  }
+  // Last resort
+  const d = new Date(dateStr);
+  return isNaN(d.getTime()) ? null : d;
+};
+
+const formatOrderDate = (dateStr: string): string => {
+  const d = parseNSEDate(dateStr);
+  if (!d) return dateStr || '—';
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+};
+
 // Helper functions
 const formatNumber = (num: number): string => {
   if (num >= 10000000) {
@@ -191,7 +222,8 @@ export default function OrdersPage() {
       const watchlist: string[] = JSON.parse(watchlistStr);
       const watchlistParam = watchlist.length > 0 ? `?watchlist=${watchlist.join(',')}` : '';
 
-      const response = await fetch(`/api/market/corporate-orders${watchlistParam}&days=${daysFilter}`);
+      const sep = watchlistParam ? '&' : '?';
+      const response = await fetch(`/api/market/corporate-orders${watchlistParam}${sep}days=${daysFilter}`);
       const data = await response.json();
 
       setCorporateOrders(data.orders || []);
@@ -281,12 +313,13 @@ export default function OrdersPage() {
     }
   }, [selectedOrder, fetchDetailData]);
 
-  // Group and filter orders
+  // Group and filter orders — only show stocks with actual deals (ordersCount > 0 or hasHighSignal)
   const groupedOrders = useMemo(() => {
     const filtered = orders.filter(
       order =>
-        order.ticker.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        order.companyName.toLowerCase().includes(searchQuery.toLowerCase())
+        (order.ordersCount > 0 || order.hasHighSignal) &&
+        (order.ticker.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        order.companyName.toLowerCase().includes(searchQuery.toLowerCase()))
     );
 
     return {
@@ -1011,12 +1044,12 @@ export default function OrdersPage() {
 
                       {/* Date */}
                       <div style={{ fontSize: '12px', color: TEXT3, whiteSpace: 'nowrap' }}>
-                        {new Date(order.date.includes('T') ? order.date : order.date.split('-').reverse().join('-')).toLocaleDateString('en-IN')}
+                        {formatOrderDate(order.date)}
                       </div>
                     </div>
                   </div>
 
-                  {/* Subject line */}
+                  {/* Subject line — fallback to description if subject is empty */}
                   <div
                     style={{
                       fontSize: '14px',
@@ -1026,11 +1059,11 @@ export default function OrdersPage() {
                       lineHeight: '1.4',
                     }}
                   >
-                    {order.subject}
+                    {order.subject || order.description || 'Corporate Announcement'}
                   </div>
 
-                  {/* Description (truncated) */}
-                  {order.description && (
+                  {/* Description (truncated) — only show if different from subject */}
+                  {order.description && order.subject && order.description !== order.subject && (
                     <div
                       style={{
                         fontSize: '13px',

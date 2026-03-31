@@ -413,34 +413,44 @@ export default function EarningsPage() {
   const [updatedAt, setUpdatedAt] = useState('');
   const [sortBy, setSortBy] = useState<'score' | 'symbol' | 'revenueYoY' | 'patYoY'>('score');
   const [filterGrade, setFilterGrade] = useState<string>('ALL');
+  const [watchlistTickers, setWatchlistTickers] = useState<string[]>([]);
+  const [watchlistSource, setWatchlistSource] = useState<string>('');
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      // Try to fetch watchlist from API first (remote is source of truth)
+      // Try to fetch watchlist from API first (remote is source of truth — synced via Telegram bot)
       let watchlist = DEFAULT_WATCHLIST;
+      let wlSource = 'default';
       try {
         const apiRes = await fetch('/api/watchlist?chatId=5057319640');
         if (apiRes.ok) {
           const apiData = await apiRes.json();
           if (apiData.watchlist && Array.isArray(apiData.watchlist) && apiData.watchlist.length > 0) {
             watchlist = apiData.watchlist;
+            wlSource = apiData.source || 'api';
           }
         }
       } catch (e) {
         console.error('Failed to fetch from API, falling back to localStorage:', e);
-        // Fallback to localStorage if API fetch fails
         try {
           const stored = localStorage.getItem('mc_watchlist_tickers');
           if (stored) {
             const parsed = JSON.parse(stored);
             if (Array.isArray(parsed) && parsed.length > 0) {
               watchlist = parsed;
+              wlSource = 'local';
             }
           }
         } catch {}
       }
+
+      setWatchlistTickers(watchlist);
+      setWatchlistSource(wlSource);
+
+      // Also sync to localStorage so other pages have latest
+      try { localStorage.setItem('mc_watchlist_tickers', JSON.stringify(watchlist)); } catch {}
 
       const symbolsParam = watchlist.slice(0, 20).join(',');
       const res = await fetch(`/api/market/earnings-scan?symbols=${symbolsParam}&debug=true`);
@@ -489,10 +499,27 @@ export default function EarningsPage() {
         <h1 style={{ fontSize: '28px', fontWeight: 700, margin: '0 0 8px 0' }}>
           Earnings Intelligence
         </h1>
-        <p style={{ color: TEXT_DIM, margin: 0, fontSize: '13px' }}>
-          Watchlist quarterly results with composite scoring &bull; Source: {source || '...'} &bull;{' '}
-          {updatedAt ? new Date(updatedAt).toLocaleString('en-IN') : ''}
-        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <p style={{ color: TEXT_DIM, margin: 0, fontSize: '13px' }}>
+            Watchlist quarterly results with composite scoring &bull; Source: {source || '...'} &bull;{' '}
+            {updatedAt ? new Date(updatedAt).toLocaleString('en-IN') : ''}
+          </p>
+          <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px',
+            backgroundColor: `${ACCENT}20`,
+            border: `1px solid ${ACCENT}50`,
+            borderRadius: '20px',
+            padding: '4px 12px',
+            fontSize: '11px',
+            fontWeight: 600,
+            color: ACCENT,
+          }}>
+            📋 Watchlist Only — {watchlistTickers.length} stocks
+            {watchlistSource === 'telegram' && <span style={{ color: GREEN }}>● synced</span>}
+          </span>
+        </div>
       </div>
 
       {/* Summary Bar */}

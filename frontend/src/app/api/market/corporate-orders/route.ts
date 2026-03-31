@@ -63,6 +63,30 @@ function getTodayDate(): string {
   return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
 }
 
+/** Robust date parser for NSE dates (DD-Mon-YYYY, DD-MM-YYYY, YYYY-MM-DD, etc.) */
+function parseNSEDate(dateStr: string): Date | null {
+  if (!dateStr) return null;
+  // ISO: YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) {
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) return d;
+  }
+  // DD-Mon-YYYY (e.g. "31-Mar-2026 09:15")
+  const monMatch = dateStr.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})/);
+  if (monMatch) {
+    const d = new Date(`${monMatch[2]} ${monMatch[1]}, ${monMatch[3]}`);
+    if (!isNaN(d.getTime())) return d;
+  }
+  // DD-MM-YYYY
+  const ddmmyyyy = dateStr.match(/^(\d{1,2})-(\d{1,2})-(\d{4})/);
+  if (ddmmyyyy) {
+    const d = new Date(Number(ddmmyyyy[3]), Number(ddmmyyyy[2]) - 1, Number(ddmmyyyy[1]));
+    if (!isNaN(d.getTime())) return d;
+  }
+  const d = new Date(dateStr);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 /**
  * Classify announcement based on keywords
  */
@@ -207,7 +231,7 @@ export async function GET(request: Request): Promise<NextResponse<CorporateOrder
     const uniqueOrders: CorporateOrder[] = [];
 
     for (const order of orders) {
-      const key = `${order.symbol}:${order.subject}:${order.date}`;
+      const key = `${order.symbol}:${order.subject || order.description}:${order.date}`;
       if (!seen.has(key)) {
         seen.add(key);
         order.isWatchlist = watchlist.includes(order.symbol);
@@ -220,14 +244,9 @@ export async function GET(request: Request): Promise<NextResponse<CorporateOrder
       if (a.isWatchlist !== b.isWatchlist) {
         return a.isWatchlist ? -1 : 1;
       }
-      // Parse dates (format: DD-MM-YYYY or ISO)
-      const dateA = new Date(a.date.includes('-') && !a.date.includes('T')
-        ? a.date.split('-').reverse().join('-')
-        : a.date);
-      const dateB = new Date(b.date.includes('-') && !b.date.includes('T')
-        ? b.date.split('-').reverse().join('-')
-        : b.date);
-      return dateB.getTime() - dateA.getTime();
+      const dateA = parseNSEDate(a.date);
+      const dateB = parseNSEDate(b.date);
+      return (dateB?.getTime() || 0) - (dateA?.getTime() || 0);
     });
 
     // 6. Calculate summary
