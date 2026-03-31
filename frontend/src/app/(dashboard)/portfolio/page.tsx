@@ -83,6 +83,26 @@ const fetchStockQuotes = async (): Promise<StockQuote[]> => {
   } catch { return []; }
 };
 
+const fetchIndividualQuotes = async (symbols: string[]): Promise<StockQuote[]> => {
+  if (symbols.length === 0) return [];
+  try {
+    const results: StockQuote[] = [];
+    for (let i = 0; i < symbols.length; i += 20) {
+      const batch = symbols.slice(i, i + 20);
+      const res = await fetch(`/api/market/quote?symbols=${batch.join(',')}`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      results.push(...(data.stocks || []).map((s: any) => ({
+        ticker: s.ticker, company: s.company || s.ticker, sector: s.sector || '—',
+        industry: s.industry || '—', price: s.price || 0, change: s.change || 0,
+        changePercent: s.changePercent || 0, dayHigh: s.dayHigh || s.price || 0,
+        dayLow: s.dayLow || s.price || 0,
+      })));
+    }
+    return results;
+  } catch { return []; }
+};
+
 const fmt = (n: number) => n >= 10000000 ? `${(n / 10000000).toFixed(2)} Cr` : n >= 100000 ? `${(n / 100000).toFixed(2)} L` : `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
 const fmtPct = (n: number) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
 
@@ -245,19 +265,29 @@ export default function PortfolioPage() {
     init();
   }, []);
 
-  // Fetch live quotes
+  // Fetch live quotes — bulk first, then individual for missing
   const fetchData = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      const data = await fetchStockQuotes();
-      setQuotes(data);
+      const bulkQuotes = await fetchStockQuotes();
+      const bulkTickers = new Set(bulkQuotes.map(q => q.ticker));
+      const holdingSymbols = holdings.map(h => h.symbol);
+      const missing = holdingSymbols.filter(s => !bulkTickers.has(s));
+
+      let allQuotes = bulkQuotes;
+      if (missing.length > 0) {
+        const individual = await fetchIndividualQuotes(missing);
+        allQuotes = [...bulkQuotes, ...individual];
+      }
+
+      setQuotes(allQuotes);
       setLastRefresh(new Date());
       setLoading(false);
     } catch { setLoading(false); }
     finally { setIsRefreshing(false); }
-  }, []);
+  }, [holdings]);
 
-  useEffect(() => { if (holdings.length > 0) fetchData(); else setLoading(false); }, [holdings.length, fetchData]);
+  useEffect(() => { if (holdings.length > 0) fetchData(); else setLoading(false); }, [holdings, fetchData]);
 
   // Auto-refresh every 60s
   useEffect(() => {

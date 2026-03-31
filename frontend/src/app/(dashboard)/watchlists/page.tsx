@@ -82,6 +82,36 @@ const fetchStockQuotes = async (market: string = 'india'): Promise<StockQuote[]>
   }
 };
 
+// Fetch individual quotes for tickers not in any index (small/micro-cap)
+const fetchIndividualQuotes = async (symbols: string[]): Promise<StockQuote[]> => {
+  if (symbols.length === 0) return [];
+  try {
+    // Batch in groups of 20 (API cap)
+    const results: StockQuote[] = [];
+    for (let i = 0; i < symbols.length; i += 20) {
+      const batch = symbols.slice(i, i + 20);
+      const res = await fetch(`/api/market/quote?symbols=${batch.join(',')}`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      results.push(...(data.stocks || []).map((stock: any) => ({
+        ticker: stock.ticker,
+        company: stock.company || stock.ticker,
+        sector: stock.sector || '—',
+        industry: stock.industry || '—',
+        price: stock.price || 0,
+        change: stock.change || 0,
+        changePercent: stock.changePercent || 0,
+        dayHigh: stock.dayHigh || stock.price || 0,
+        dayLow: stock.dayLow || stock.price || 0,
+      })));
+    }
+    return results;
+  } catch (error) {
+    console.error('Error fetching individual quotes:', error);
+    return [];
+  }
+};
+
 // ── Summary Component ──────────────────────────────────────────────────────────
 
 function SummaryBar({ items }: { items: WatchlistItem[] }) {
@@ -291,12 +321,26 @@ export default function WatchlistsPage() {
     initTickers();
   }, []);
 
-  // Fetch quotes
+  // Fetch quotes — bulk first, then individual for missing tickers
   const fetchData = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      const data = await fetchStockQuotes('india');
-      setQuotes(data);
+      // Step 1: Get bulk index quotes
+      const bulkQuotes = await fetchStockQuotes('india');
+
+      // Step 2: Find tickers NOT in bulk response
+      const bulkTickers = new Set(bulkQuotes.map(q => q.ticker));
+      const missingTickers = tickers.filter(t => !bulkTickers.has(t));
+
+      // Step 3: Fetch individual quotes for missing tickers (small/micro-cap)
+      let allQuotes = bulkQuotes;
+      if (missingTickers.length > 0) {
+        console.log(`[Watchlist] Fetching ${missingTickers.length} individual quotes: ${missingTickers.join(', ')}`);
+        const individualQuotes = await fetchIndividualQuotes(missingTickers);
+        allQuotes = [...bulkQuotes, ...individualQuotes];
+      }
+
+      setQuotes(allQuotes);
       setLastRefresh(new Date());
       setLoading(false);
     } catch (error) {
@@ -306,7 +350,7 @@ export default function WatchlistsPage() {
     } finally {
       setIsRefreshing(false);
     }
-  }, []);
+  }, [tickers]);
 
   // Fetch data whenever tickers change (fixes race condition with async init)
   useEffect(() => {
