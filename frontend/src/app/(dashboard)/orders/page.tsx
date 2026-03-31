@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { Shield, RefreshCw, TrendingUp, TrendingDown, Minus, Eye, Filter, Zap, Building2, DollarSign } from 'lucide-react';
+import { Shield, RefreshCw, TrendingUp, TrendingDown, Minus, Eye, Filter, Zap, AlertTriangle } from 'lucide-react';
 
 // Theme
 const BG = '#0A0E1A';
@@ -19,8 +19,8 @@ const TEXT2 = '#94A3B8';
 const TEXT3 = '#64748B';
 
 // ── Types ──
-type ActionFlag = 'BUY WATCH' | 'HOLD CONTEXT' | 'IGNORE';
-type ImpactType = 'Revenue Impact' | 'Margin Impact' | 'Sentiment Only' | 'Noise';
+type ActionFlag = 'BUY WATCH' | 'TRACK' | 'IGNORE';
+type ImpactLevel = 'HIGH' | 'MEDIUM' | 'LOW';
 
 interface Signal {
   symbol: string;
@@ -40,11 +40,29 @@ interface Signal {
   timeline: string | null;
   buyerSeller: string | null;
   premiumDiscount: number | null;
-  impactType: ImpactType;
+  impactLevel: ImpactLevel;
   action: ActionFlag;
   score: number;
+  timeWeight: number;
+  weightedScore: number;
   sentiment: 'Bullish' | 'Neutral' | 'Bearish';
+  whyItMatters: string;
+  isNegative: boolean;
   isWatchlist: boolean;
+  isPortfolio: boolean;
+  signalStackCount?: number;
+  signalStackLevel?: 'STRONG' | 'BUILDING' | 'WEAK';
+}
+
+interface CompanyTrend {
+  symbol: string;
+  company: string;
+  signalCount: number;
+  stackLevel: 'STRONG' | 'BUILDING' | 'WEAK';
+  topAction: ActionFlag;
+  topImpact: ImpactLevel;
+  netSentiment: 'Bullish' | 'Neutral' | 'Bearish';
+  avgScore: number;
 }
 
 interface DailyBias {
@@ -52,18 +70,23 @@ interface DailyBias {
   highImpactCount: number;
   activeSectors: string[];
   buyWatchCount: number;
+  trackCount: number;
   totalSignals: number;
   totalOrderValueCr: number;
   totalDealValueCr: number;
+  portfolioAlerts: number;
+  negativeSignals: number;
   summary: string;
 }
 
 // ── Helpers ──
-const actionColor = (a: ActionFlag) => a === 'BUY WATCH' ? GREEN : a === 'HOLD CONTEXT' ? YELLOW : TEXT3;
-const actionBg = (a: ActionFlag) => a === 'BUY WATCH' ? 'rgba(16,185,129,0.12)' : a === 'HOLD CONTEXT' ? 'rgba(251,191,36,0.10)' : 'rgba(100,116,139,0.08)';
-const impactColor = (t: ImpactType) => t === 'Revenue Impact' ? GREEN : t === 'Margin Impact' ? CYAN : TEXT3;
+const actionColor = (a: ActionFlag) => a === 'BUY WATCH' ? GREEN : a === 'TRACK' ? ACCENT : TEXT3;
+const actionBg = (a: ActionFlag) => a === 'BUY WATCH' ? 'rgba(16,185,129,0.12)' : a === 'TRACK' ? 'rgba(15,122,191,0.10)' : 'rgba(100,116,139,0.08)';
+const impactColor = (l: ImpactLevel) => l === 'HIGH' ? GREEN : l === 'MEDIUM' ? YELLOW : TEXT3;
+const impactBg = (l: ImpactLevel) => l === 'HIGH' ? 'rgba(16,185,129,0.12)' : l === 'MEDIUM' ? 'rgba(251,191,36,0.10)' : 'rgba(100,116,139,0.06)';
 const biasColor = (b: string) => b === 'Bullish' ? GREEN : b === 'Bearish' ? RED : YELLOW;
 const biasIcon = (b: string) => b === 'Bullish' ? <TrendingUp size={16} /> : b === 'Bearish' ? <TrendingDown size={16} /> : <Minus size={16} />;
+const sentimentColor = (s: string) => s === 'Bullish' ? GREEN : s === 'Bearish' ? RED : TEXT3;
 
 const fmtCr = (v: number | null): string => {
   if (v === null || v === undefined) return '—';
@@ -74,6 +97,12 @@ const fmtCr = (v: number | null): string => {
 
 const fmtDate = (d: string) => {
   try {
+    // Handle DD-MM-YYYY format
+    if (d.length === 10 && d[2] === '-') {
+      const [dd, mm, yyyy] = d.split('-');
+      const dt = new Date(`${yyyy}-${mm}-${dd}`);
+      if (!isNaN(dt.getTime())) return dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+    }
     const dt = new Date(d);
     if (isNaN(dt.getTime())) return d;
     return dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
@@ -94,24 +123,40 @@ const eventTypeIcon = (t: string) => {
   return '📌';
 };
 
-type FilterType = 'ALL' | 'ORDERS' | 'CAPEX' | 'DEALS' | 'STRATEGIC';
+type FilterType = 'ALL' | 'BUY_WATCH' | 'ORDERS' | 'CAPEX' | 'DEALS' | 'STRATEGIC' | 'NEGATIVE';
+type UniverseFilter = 'ALL' | 'PORTFOLIO' | 'WATCHLIST';
+
+const CHAT_ID = '5057319640';
 
 export default function CompanyIntelligencePage() {
   const [top3, setTop3] = useState<Signal[]>([]);
   const [signals, setSignals] = useState<Signal[]>([]);
+  const [trends, setTrends] = useState<CompanyTrend[]>([]);
   const [bias, setBias] = useState<DailyBias | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState('');
   const [daysFilter, setDaysFilter] = useState(7);
   const [typeFilter, setTypeFilter] = useState<FilterType>('ALL');
-  const [showWatchlistOnly, setShowWatchlistOnly] = useState(false);
+  const [universeFilter, setUniverseFilter] = useState<UniverseFilter>('ALL');
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       let watchlist: string[] = [];
+      let portfolio: string[] = [];
+
+      // Fetch portfolio
       try {
-        const wlRes = await fetch('/api/watchlist?chatId=5057319640');
+        const pRes = await fetch(`/api/portfolio?chatId=${CHAT_ID}`);
+        if (pRes.ok) {
+          const pData = await pRes.json();
+          portfolio = (pData.holdings || []).map((h: any) => h.symbol);
+        }
+      } catch {}
+
+      // Fetch watchlist
+      try {
+        const wlRes = await fetch(`/api/watchlist?chatId=${CHAT_ID}`);
         const wlData = await wlRes.json();
         if (wlData.watchlist?.length) {
           watchlist = wlData.watchlist;
@@ -123,11 +168,13 @@ export default function CompanyIntelligencePage() {
       }
 
       const wlParam = watchlist.length > 0 ? `&watchlist=${watchlist.join(',')}` : '';
-      const res = await fetch(`/api/market/intelligence?days=${daysFilter}${wlParam}`);
+      const pfParam = portfolio.length > 0 ? `&portfolio=${portfolio.join(',')}` : '';
+      const res = await fetch(`/api/market/intelligence?days=${daysFilter}${wlParam}${pfParam}`);
       const data = await res.json();
 
       setTop3(data.top3 || []);
       setSignals(data.signals || []);
+      setTrends(data.trends || []);
       setBias(data.bias || null);
       setLastUpdated(new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }));
     } catch (err) {
@@ -145,19 +192,24 @@ export default function CompanyIntelligencePage() {
   // Filter signals
   const filteredSignals = useMemo(() => {
     let list = signals;
-    if (showWatchlistOnly) list = list.filter(s => s.isWatchlist);
+    // Universe filter
+    if (universeFilter === 'PORTFOLIO') list = list.filter(s => s.isPortfolio);
+    if (universeFilter === 'WATCHLIST') list = list.filter(s => s.isWatchlist);
+    // Type filter
+    if (typeFilter === 'BUY_WATCH') list = list.filter(s => s.action === 'BUY WATCH');
     if (typeFilter === 'ORDERS') list = list.filter(s => ['Order Win', 'Contract', 'LOI'].includes(s.eventType));
     if (typeFilter === 'CAPEX') list = list.filter(s => ['Capex/Expansion', 'Fund Raising', 'Guidance'].includes(s.eventType));
     if (typeFilter === 'DEALS') list = list.filter(s => s.source === 'deal');
     if (typeFilter === 'STRATEGIC') list = list.filter(s => ['M&A', 'Demerger', 'JV/Partnership', 'Buyback'].includes(s.eventType));
+    if (typeFilter === 'NEGATIVE') list = list.filter(s => s.isNegative);
     return list;
-  }, [signals, typeFilter, showWatchlistOnly]);
+  }, [signals, typeFilter, universeFilter]);
 
   // Stats
-  const orderSignals = signals.filter(s => ['Order Win', 'Contract', 'LOI'].includes(s.eventType));
-  const capexSignals = signals.filter(s => ['Capex/Expansion', 'Fund Raising'].includes(s.eventType));
-  const dealSignals = signals.filter(s => s.source === 'deal');
-  const watchlistSignals = signals.filter(s => s.isWatchlist);
+  const buyWatchSignals = signals.filter(s => s.action === 'BUY WATCH');
+  const negativeCount = signals.filter(s => s.isNegative).length;
+  const portfolioCount = signals.filter(s => s.isPortfolio).length;
+  const watchlistCount = signals.filter(s => s.isWatchlist).length;
 
   return (
     <div style={{ backgroundColor: BG, color: TEXT1, minHeight: '100vh', padding: '16px 20px' }}>
@@ -168,7 +220,7 @@ export default function CompanyIntelligencePage() {
           <div>
             <h1 style={{ fontSize: '20px', fontWeight: 700, margin: 0, color: TEXT1 }}>Company Intelligence</h1>
             <p style={{ fontSize: '11px', color: TEXT3, margin: 0 }}>
-              Material events · Orders · Capex · Deals · Institutional-grade signals
+              Decision-ready signals · Impact-ranked · Time-weighted · Deduped
             </p>
           </div>
         </div>
@@ -191,7 +243,7 @@ export default function CompanyIntelligencePage() {
         </div>
       </div>
 
-      {/* ── DAILY MARKET BIAS PANEL ── */}
+      {/* ── DAILY DECISION SUMMARY ── */}
       {bias && (
         <div style={{
           backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: '10px',
@@ -204,19 +256,19 @@ export default function CompanyIntelligencePage() {
                 fontSize: '16px', fontWeight: 700,
               }}>
                 {biasIcon(bias.netBias)}
-                {bias.netBias}
+                Market Bias: {bias.netBias}
               </div>
-              <span style={{ fontSize: '12px', color: TEXT2 }}>{bias.summary}</span>
             </div>
 
-            {/* Stats row */}
+            {/* Decision-ready stats */}
             <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
               {[
+                { label: 'High Impact', value: bias.highImpactCount, color: GREEN },
                 { label: 'BUY WATCH', value: bias.buyWatchCount, color: GREEN },
-                { label: 'High Impact', value: bias.highImpactCount, color: ACCENT },
-                { label: 'Total Signals', value: bias.totalSignals, color: CYAN },
-                ...(bias.totalOrderValueCr > 0 ? [{ label: 'Order Value', value: fmtCr(bias.totalOrderValueCr), color: PURPLE }] : []),
-                ...(bias.totalDealValueCr > 0 ? [{ label: 'Deal Value', value: fmtCr(bias.totalDealValueCr), color: ORANGE }] : []),
+                { label: 'TRACK', value: bias.trackCount, color: ACCENT },
+                { label: 'Portfolio Alerts', value: bias.portfolioAlerts, color: PURPLE },
+                ...(bias.negativeSignals > 0 ? [{ label: '⚠ Negative', value: bias.negativeSignals, color: RED }] : []),
+                ...(bias.totalOrderValueCr > 0 ? [{ label: 'Order Value', value: fmtCr(bias.totalOrderValueCr) as any, color: CYAN }] : []),
               ].map(s => (
                 <div key={s.label} style={{ textAlign: 'center' }}>
                   <div style={{ fontSize: '18px', fontWeight: 700, color: s.color }}>{s.value}</div>
@@ -224,6 +276,11 @@ export default function CompanyIntelligencePage() {
                 </div>
               ))}
             </div>
+          </div>
+
+          {/* Summary text */}
+          <div style={{ marginTop: '8px', fontSize: '12px', color: TEXT2, lineHeight: 1.5 }}>
+            {bias.summary}
           </div>
 
           {bias.activeSectors.length > 0 && (
@@ -250,6 +307,45 @@ export default function CompanyIntelligencePage() {
         </div>
       )}
 
+      {/* ── TREND LAYER (Signal Stacking) ── */}
+      {trends.length > 0 && (
+        <div style={{ marginBottom: '16px' }}>
+          <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '1.5px' }}>
+            SIGNAL STACKING — MULTI-EVENT COMPANIES
+          </div>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {trends.map(t => {
+              const stackColor = t.stackLevel === 'STRONG' ? GREEN : t.stackLevel === 'BUILDING' ? YELLOW : TEXT3;
+              return (
+                <div key={t.symbol} style={{
+                  backgroundColor: CARD, border: `1px solid ${stackColor}30`, borderLeft: `3px solid ${stackColor}`,
+                  borderRadius: '8px', padding: '10px 14px', minWidth: '200px',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                    <span style={{ fontSize: '14px', fontWeight: 700, color: '#3B82F6' }}>{t.symbol}</span>
+                    <span style={{
+                      fontSize: '9px', fontWeight: 700, color: stackColor,
+                      padding: '1px 5px', borderRadius: '3px', backgroundColor: `${stackColor}15`,
+                    }}>{t.stackLevel}</span>
+                    <span style={{
+                      fontSize: '9px', fontWeight: 600, color: actionColor(t.topAction),
+                      padding: '1px 5px', borderRadius: '3px', backgroundColor: actionBg(t.topAction),
+                    }}>{t.topAction}</span>
+                  </div>
+                  <div style={{ fontSize: '11px', color: TEXT2, marginBottom: '2px' }}>{t.company}</div>
+                  <div style={{ display: 'flex', gap: '10px', fontSize: '10px' }}>
+                    <span style={{ color: stackColor }}>{t.signalCount} signals</span>
+                    <span style={{ color: sentimentColor(t.netSentiment) }}>{t.netSentiment}</span>
+                    <span style={{ color: impactColor(t.topImpact) }}>{t.topImpact}</span>
+                    <span style={{ color: TEXT3 }}>Score: {t.avgScore}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* ── TOP ACTIONABLE SIGNALS ── */}
       {top3.length > 0 && (
         <div style={{ marginBottom: '20px' }}>
@@ -260,25 +356,38 @@ export default function CompanyIntelligencePage() {
             {top3.map((s, i) => (
               <div key={`top-${i}`} style={{
                 backgroundColor: CARD,
-                border: `1px solid ${actionColor(s.action)}30`,
-                borderLeft: `4px solid ${actionColor(s.action)}`,
+                border: `1px solid ${s.isNegative ? `${RED}40` : `${actionColor(s.action)}30`}`,
+                borderLeft: `4px solid ${s.isNegative ? RED : actionColor(s.action)}`,
                 borderRadius: '10px',
                 padding: '14px 18px',
               }}>
-                {/* Row 1: Symbol, Action, Value, Materiality */}
+                {/* Row 1: Symbol, Action, Impact, Value */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '8px' }}>
                   <span style={{ fontSize: '13px' }}>{eventTypeIcon(s.eventType)}</span>
                   <span style={{ fontSize: '16px', fontWeight: 700, color: '#3B82F6' }}>{s.symbol}</span>
+                  {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(139,92,246,0.15)' }}>PF</span>}
                   {s.isWatchlist && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.15)' }}>WL</span>}
+                  {s.isNegative && <span style={{ fontSize: '9px', color: RED, fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(239,68,68,0.12)' }}>⚠ NEGATIVE</span>}
                   <span style={{
                     fontSize: '11px', fontWeight: 700, color: actionColor(s.action),
                     padding: '2px 8px', borderRadius: '4px', backgroundColor: actionBg(s.action),
                   }}>{s.action}</span>
+                  <span style={{
+                    fontSize: '10px', fontWeight: 700, color: impactColor(s.impactLevel),
+                    padding: '2px 6px', borderRadius: '4px', backgroundColor: impactBg(s.impactLevel),
+                  }}>{s.impactLevel} IMPACT</span>
                   <span style={{ fontSize: '11px', fontWeight: 600, color: ACCENT, padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(15,122,191,0.1)' }}>{s.eventType}</span>
                   {s.valueCr !== null && s.valueCr > 0 && (
                     <span style={{ fontSize: '13px', fontWeight: 700, color: CYAN }}>{fmtCr(s.valueCr)}</span>
                   )}
-                  <span style={{ fontSize: '11px', color: TEXT3, marginLeft: 'auto' }}>Score: {s.score}</span>
+                  {s.signalStackLevel && s.signalStackLevel !== 'WEAK' && (
+                    <span style={{ fontSize: '9px', color: s.signalStackLevel === 'STRONG' ? GREEN : YELLOW, fontWeight: 600 }}>
+                      ⚡{s.signalStackCount} signals
+                    </span>
+                  )}
+                  <span style={{ fontSize: '10px', color: TEXT3, marginLeft: 'auto' }}>
+                    {s.weightedScore} ({Math.round(s.timeWeight * 100)}% fresh)
+                  </span>
                 </div>
 
                 {/* Row 2: Materiality badges */}
@@ -299,19 +408,29 @@ export default function CompanyIntelligencePage() {
                   )}
                   {s.mcapCr && <span style={{ fontSize: '11px', color: TEXT3 }}>MCap: {fmtCr(s.mcapCr)}</span>}
                   {s.revenueCr && <span style={{ fontSize: '11px', color: TEXT3 }}>Rev: {fmtCr(s.revenueCr)}</span>}
-                  <span style={{ fontSize: '11px', color: impactColor(s.impactType), fontWeight: 600 }}>{s.impactType}</span>
                 </div>
 
-                {/* Row 3: Headline / context */}
-                <div style={{ fontSize: '12px', color: TEXT2, lineHeight: 1.6, paddingLeft: '2px' }}>
+                {/* Row 3: WHY IT MATTERS — the institutional insight */}
+                <div style={{
+                  fontSize: '12px', color: s.isNegative ? RED : GREEN, fontWeight: 600, lineHeight: 1.5,
+                  padding: '6px 10px', marginBottom: '6px', borderRadius: '6px',
+                  backgroundColor: s.isNegative ? 'rgba(239,68,68,0.06)' : 'rgba(16,185,129,0.06)',
+                  borderLeft: `3px solid ${s.isNegative ? RED : GREEN}`,
+                }}>
+                  💡 {s.whyItMatters}
+                </div>
+
+                {/* Row 4: Headline / context */}
+                <div style={{ fontSize: '11px', color: TEXT2, lineHeight: 1.5, paddingLeft: '2px' }}>
                   {s.headline.length > 200 ? s.headline.slice(0, 200) + '...' : s.headline}
                 </div>
 
-                {/* Row 4: Meta */}
+                {/* Row 5: Meta */}
                 <div style={{ display: 'flex', gap: '12px', marginTop: '6px', paddingLeft: '2px' }}>
                   {s.client && <span style={{ fontSize: '10px', color: PURPLE }}>Client: {s.client}</span>}
                   {s.segment && <span style={{ fontSize: '10px', color: ACCENT }}>Sector: {s.segment}</span>}
                   {s.timeline && <span style={{ fontSize: '10px', color: ORANGE }}>Timeline: {s.timeline}</span>}
+                  <span style={{ fontSize: '10px', color: sentimentColor(s.sentiment) }}>{s.sentiment}</span>
                   <span style={{ fontSize: '10px', color: TEXT3 }}>{fmtDate(s.date)}</span>
                 </div>
               </div>
@@ -324,26 +443,40 @@ export default function CompanyIntelligencePage() {
       {signals.length > 0 && (
         <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', flexWrap: 'wrap', alignItems: 'center' }}>
           <Filter size={13} color={TEXT3} />
+
+          {/* Universe filter */}
           {([
-            { key: 'ALL' as FilterType, label: 'All', count: signals.length },
-            { key: 'ORDERS' as FilterType, label: 'Orders', count: orderSignals.length },
-            { key: 'CAPEX' as FilterType, label: 'Capex/Growth', count: capexSignals.length },
-            { key: 'DEALS' as FilterType, label: 'Block/Bulk', count: dealSignals.length },
-            { key: 'STRATEGIC' as FilterType, label: 'Strategic', count: signals.filter(s => ['M&A', 'Demerger', 'JV/Partnership', 'Buyback'].includes(s.eventType)).length },
+            { key: 'ALL' as UniverseFilter, label: 'All', count: signals.length },
+            { key: 'PORTFOLIO' as UniverseFilter, label: 'Portfolio', count: portfolioCount },
+            { key: 'WATCHLIST' as UniverseFilter, label: 'Watchlist', count: watchlistCount },
+          ]).map(f => (
+            <button key={f.key} onClick={() => setUniverseFilter(f.key)} style={{
+              padding: '4px 10px', borderRadius: '5px', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
+              border: `1px solid ${universeFilter === f.key ? PURPLE : BORDER}`,
+              background: universeFilter === f.key ? 'rgba(139,92,246,0.15)' : 'transparent',
+              color: universeFilter === f.key ? PURPLE : TEXT3,
+            }}>{f.label} ({f.count})</button>
+          ))}
+
+          <span style={{ width: '1px', height: '16px', backgroundColor: BORDER, margin: '0 4px' }} />
+
+          {/* Type filter */}
+          {([
+            { key: 'ALL' as FilterType, label: 'All' },
+            { key: 'BUY_WATCH' as FilterType, label: `🎯 BUY WATCH (${buyWatchSignals.length})` },
+            { key: 'ORDERS' as FilterType, label: 'Orders' },
+            { key: 'CAPEX' as FilterType, label: 'Capex' },
+            { key: 'DEALS' as FilterType, label: 'Deals' },
+            { key: 'STRATEGIC' as FilterType, label: 'Strategic' },
+            ...(negativeCount > 0 ? [{ key: 'NEGATIVE' as FilterType, label: `⚠ Negative (${negativeCount})` }] : []),
           ]).map(f => (
             <button key={f.key} onClick={() => setTypeFilter(f.key)} style={{
               padding: '4px 10px', borderRadius: '5px', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
               border: `1px solid ${typeFilter === f.key ? ACCENT : BORDER}`,
               background: typeFilter === f.key ? 'rgba(15,122,191,0.15)' : 'transparent',
               color: typeFilter === f.key ? ACCENT : TEXT3,
-            }}>{f.label} ({f.count})</button>
+            }}>{f.label}</button>
           ))}
-          <button onClick={() => setShowWatchlistOnly(!showWatchlistOnly)} style={{
-            padding: '4px 10px', borderRadius: '5px', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
-            border: `1px solid ${showWatchlistOnly ? GREEN : BORDER}`,
-            background: showWatchlistOnly ? 'rgba(16,185,129,0.15)' : 'transparent',
-            color: showWatchlistOnly ? GREEN : TEXT3, marginLeft: 'auto',
-          }}>WL Only ({watchlistSignals.length})</button>
         </div>
       )}
 
@@ -351,14 +484,14 @@ export default function CompanyIntelligencePage() {
       {filteredSignals.length > 0 && (
         <div>
           <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '1.5px' }}>
-            {typeFilter === 'ALL' ? 'ALL SIGNALS' : typeFilter} ({filteredSignals.length})
+            {typeFilter === 'ALL' ? 'ALL SIGNALS' : typeFilter.replace('_', ' ')} ({filteredSignals.length})
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             {filteredSignals.map((s, i) => (
               <div key={`sig-${i}`} style={{
                 backgroundColor: CARD,
-                border: `1px solid ${s.isWatchlist ? `${ACCENT}40` : BORDER}`,
+                border: `1px solid ${s.isNegative ? `${RED}30` : s.isPortfolio ? `${PURPLE}40` : s.isWatchlist ? `${ACCENT}30` : BORDER}`,
                 borderRadius: '8px',
                 padding: '12px 16px',
               }}>
@@ -366,7 +499,9 @@ export default function CompanyIntelligencePage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                   <span style={{ fontSize: '12px' }}>{eventTypeIcon(s.eventType)}</span>
                   <span style={{ fontSize: '14px', fontWeight: 700, color: '#3B82F6', minWidth: '80px' }}>{s.symbol}</span>
-                  {s.isWatchlist && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600 }}>WL</span>}
+                  {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600 }}>PF</span>}
+                  {s.isWatchlist && !s.isPortfolio && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600 }}>WL</span>}
+                  {s.isNegative && <span style={{ fontSize: '9px', color: RED, fontWeight: 700 }}>⚠</span>}
                   <span style={{
                     fontSize: '10px', fontWeight: 600, color: ACCENT,
                     padding: '1px 6px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.1)',
@@ -402,7 +537,10 @@ export default function CompanyIntelligencePage() {
 
                   {/* Impact + Action */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto' }}>
-                    <span style={{ fontSize: '10px', color: impactColor(s.impactType) }}>{s.impactType.replace(' Impact', '')}</span>
+                    <span style={{
+                      fontSize: '9px', fontWeight: 700, color: impactColor(s.impactLevel),
+                      padding: '1px 5px', borderRadius: '3px', backgroundColor: impactBg(s.impactLevel),
+                    }}>{s.impactLevel}</span>
                     <span style={{
                       fontWeight: 700, fontSize: '10px',
                       color: actionColor(s.action),
@@ -412,20 +550,31 @@ export default function CompanyIntelligencePage() {
                   </div>
                 </div>
 
-                {/* Row 2: Headline */}
-                <div style={{ fontSize: '11px', color: TEXT2, marginTop: '5px', lineHeight: 1.5, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any }}>
+                {/* Row 2: Why It Matters */}
+                <div style={{ fontSize: '11px', color: s.isNegative ? '#F87171' : '#6EE7B7', marginTop: '5px', lineHeight: 1.4, fontWeight: 500 }}>
+                  💡 {s.whyItMatters}
+                </div>
+
+                {/* Row 3: Headline */}
+                <div style={{ fontSize: '11px', color: TEXT2, marginTop: '3px', lineHeight: 1.5, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any }}>
                   {s.headline.length > 250 ? s.headline.slice(0, 250) + '...' : s.headline}
                 </div>
 
-                {/* Row 3: Meta tags */}
-                {(s.client || s.segment || s.timeline) && (
-                  <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
-                    {s.client && <span style={{ fontSize: '10px', color: PURPLE }}>Client: {s.client}</span>}
-                    {s.segment && <span style={{ fontSize: '10px', color: ACCENT }}>{s.segment}</span>}
-                    {s.timeline && <span style={{ fontSize: '10px', color: ORANGE }}>{s.timeline}</span>}
-                    <span style={{ fontSize: '10px', color: TEXT3, marginLeft: 'auto' }}>{fmtDate(s.date)}</span>
-                  </div>
-                )}
+                {/* Row 4: Meta tags */}
+                <div style={{ display: 'flex', gap: '10px', marginTop: '4px', alignItems: 'center' }}>
+                  {s.client && <span style={{ fontSize: '10px', color: PURPLE }}>Client: {s.client}</span>}
+                  {s.segment && <span style={{ fontSize: '10px', color: ACCENT }}>{s.segment}</span>}
+                  {s.timeline && <span style={{ fontSize: '10px', color: ORANGE }}>{s.timeline}</span>}
+                  <span style={{ fontSize: '10px', color: sentimentColor(s.sentiment) }}>{s.sentiment}</span>
+                  {s.signalStackLevel && s.signalStackLevel !== 'WEAK' && (
+                    <span style={{ fontSize: '9px', color: s.signalStackLevel === 'STRONG' ? GREEN : YELLOW }}>
+                      ⚡{s.signalStackCount}
+                    </span>
+                  )}
+                  <span style={{ fontSize: '10px', color: TEXT3, marginLeft: 'auto' }}>
+                    {fmtDate(s.date)} · {Math.round(s.timeWeight * 100)}%
+                  </span>
+                </div>
               </div>
             ))}
           </div>

@@ -40,6 +40,20 @@ function getScreenerSymbol(nseSymbol: string): string {
 
 // ── Global Data Persistence Store ───────────────
 
+interface GuidanceData {
+  guidance: 'Positive' | 'Neutral' | 'Negative';
+  sentimentScore: number;        // -1 to +1
+  revenueOutlook: 'Up' | 'Flat' | 'Down' | 'Unknown';
+  marginOutlook: 'Expanding' | 'Stable' | 'Contracting' | 'Unknown';
+  capexSignal: 'Expanding' | 'Stable' | 'Reducing' | 'Unknown';
+  demandSignal: 'Strong' | 'Moderate' | 'Weak' | 'Unknown';
+  keyPhrasesPositive: string[];
+  keyPhrasesNegative: string[];
+  prosText: string;              // Raw Pros section text
+  consText: string;              // Raw Cons section text
+  divergence: 'StrongEarnings_WeakGuidance' | 'WeakEarnings_StrongGuidance' | 'None';
+}
+
 interface StoredEarnings {
   symbol: string;
   quarters: QuarterFinancials[];
@@ -52,6 +66,7 @@ interface StoredEarnings {
   source: 'nse' | 'screener.in' | 'trendlyne';
   fetchedAt: number;
   validatedAt: number;
+  guidance?: GuidanceData;       // Forward-looking sentiment from screener.in Pros/Cons
 }
 
 // Initialize global store if not present
@@ -168,6 +183,17 @@ interface EarningsScanCard {
 
   // Banking flag
   isBanking: boolean;
+
+  // Guidance & Sentiment (forward-looking)
+  guidance?: 'Positive' | 'Neutral' | 'Negative';
+  sentimentScore?: number;        // -1 to +1
+  revenueOutlook?: 'Up' | 'Flat' | 'Down' | 'Unknown';
+  marginOutlook?: 'Expanding' | 'Stable' | 'Contracting' | 'Unknown';
+  capexSignal?: 'Expanding' | 'Stable' | 'Reducing' | 'Unknown';
+  demandSignal?: 'Strong' | 'Moderate' | 'Weak' | 'Unknown';
+  keyPhrasesPositive?: string[];
+  keyPhrasesNegative?: string[];
+  divergence?: 'StrongEarnings_WeakGuidance' | 'WeakEarnings_StrongGuidance' | 'None';
 
   // Links
   screenerUrl: string;
@@ -507,6 +533,241 @@ function parseQuarterlyResults(html: string): {
   return { quarters, companyName, mcap, pe, currentPrice, bookValue, isBanking };
 }
 
+// ── Guidance & Sentiment Extraction ─────────
+// Extracts forward-looking management sentiment from screener.in Pros/Cons sections
+// Uses keyword-based scoring model: -1 (very negative) to +1 (very positive)
+
+const POSITIVE_KEYWORDS: [string, number][] = [
+  // Revenue/Growth
+  ['strong growth', 0.15], ['revenue growth', 0.12], ['order book', 0.12], ['order inflow', 0.12],
+  ['strong demand', 0.12], ['growing demand', 0.10], ['market share gain', 0.12], ['market leadership', 0.10],
+  ['new orders', 0.10], ['record revenue', 0.15], ['record order', 0.14], ['healthy pipeline', 0.10],
+  ['robust growth', 0.14], ['high growth', 0.12], ['double digit growth', 0.14],
+  ['volume growth', 0.10], ['improving demand', 0.10], ['strong traction', 0.10],
+  // Margin/Profitability
+  ['margin expansion', 0.14], ['improving margin', 0.12], ['margin improvement', 0.12],
+  ['operating leverage', 0.12], ['cost efficiency', 0.10], ['cost reduction', 0.08],
+  ['ebitda margin', 0.06], ['margin recovery', 0.10], ['pricing power', 0.12],
+  // Capex/Expansion
+  ['capacity expansion', 0.12], ['capex', 0.06], ['new plant', 0.08], ['capacity addition', 0.10],
+  ['greenfield', 0.08], ['brownfield', 0.06], ['commissioning', 0.08], ['ramp up', 0.08],
+  // Strategic
+  ['debt reduction', 0.12], ['debt free', 0.14], ['deleveraging', 0.10], ['cash rich', 0.10],
+  ['dividend increase', 0.08], ['promoter buying', 0.08], ['gaining market share', 0.12],
+  ['competitive advantage', 0.10], ['strong brand', 0.08], ['export growth', 0.10],
+  ['new product', 0.08], ['innovation', 0.06], ['technology leadership', 0.08],
+  // Guidance-specific
+  ['guided for', 0.10], ['guidance of', 0.10], ['expects growth', 0.12],
+  ['positive outlook', 0.14], ['optimistic', 0.10], ['strong pipeline', 0.12],
+  ['well positioned', 0.08], ['secular growth', 0.10], ['tailwind', 0.10],
+];
+
+const NEGATIVE_KEYWORDS: [string, number][] = [
+  // Revenue/Demand
+  ['revenue decline', -0.15], ['declining revenue', -0.14], ['weak demand', -0.12],
+  ['demand slowdown', -0.12], ['order cancellation', -0.14], ['pricing pressure', -0.12],
+  ['market share loss', -0.14], ['loss of market', -0.12], ['muted demand', -0.10],
+  ['subdued demand', -0.10], ['volume decline', -0.10], ['top line pressure', -0.10],
+  // Margin/Cost
+  ['margin compression', -0.14], ['margin contraction', -0.14], ['declining margin', -0.12],
+  ['cost pressure', -0.10], ['input cost', -0.08], ['raw material cost', -0.08],
+  ['employee cost', -0.06], ['margin erosion', -0.12], ['negative operating leverage', -0.12],
+  ['pricing headwind', -0.10],
+  // Risk
+  ['high debt', -0.14], ['rising debt', -0.12], ['debt concern', -0.12], ['overleveraged', -0.14],
+  ['cash burn', -0.14], ['negative cash flow', -0.14], ['working capital issue', -0.10],
+  ['contingent liab', -0.10], ['regulatory risk', -0.08], ['compliance issue', -0.08],
+  // Guidance-specific
+  ['cautious outlook', -0.12], ['challenging environment', -0.10], ['headwind', -0.10],
+  ['uncertainty', -0.08], ['downgrade', -0.14], ['negative outlook', -0.14],
+  ['guided lower', -0.14], ['muted outlook', -0.12], ['slower growth', -0.10],
+  ['pressure on growth', -0.10], ['risk of slowdown', -0.10],
+  // Strategic
+  ['promoter selling', -0.10], ['promoter pledge', -0.12], ['corporate governance', -0.10],
+  ['audit concern', -0.12], ['qualified opinion', -0.14], ['related party', -0.08],
+  ['management concern', -0.10], ['key managerial', -0.06],
+];
+
+function parseGuidanceSentiment(html: string): GuidanceData | null {
+  let prosText = '';
+  let consText = '';
+
+  // Screener.in patterns — try multiple approaches
+  // Pattern 1: <div class="company-pros"> / <div class="company-cons"> (screener.in specific)
+  const companyPros = html.match(/class="[^"]*company-pros[^"]*"[^>]*>([\s\S]*?)(?=<div[^>]*class="[^"]*company-cons|<\/section|<section)/i);
+  const companyCons = html.match(/class="[^"]*company-cons[^"]*"[^>]*>([\s\S]*?)(?=<\/section|<section|<div[^>]*id=)/i);
+
+  // Pattern 2: <section with "Pros" or "Cons" text inside p/h tags
+  const sectionPros = html.match(/<(?:p|h\d|div)[^>]*>\s*Pros\s*<\/(?:p|h\d|div)>\s*<ul[^>]*>([\s\S]*?)<\/ul>/i);
+  const sectionCons = html.match(/<(?:p|h\d|div)[^>]*>\s*Cons\s*<\/(?:p|h\d|div)>\s*<ul[^>]*>([\s\S]*?)<\/ul>/i);
+
+  // Pattern 3: Any "Pros" text followed by <ul> with <li> items within 200 chars
+  const loosePros = html.match(/>\s*Pros\s*<[\s\S]{0,200}?<ul[^>]*>([\s\S]*?)<\/ul>/i);
+  const looseCons = html.match(/>\s*Cons\s*<[\s\S]{0,200}?<ul[^>]*>([\s\S]*?)<\/ul>/i);
+
+  // Pattern 4: data attribute based (some versions)
+  const dataPros = html.match(/data-section="pros"[^>]*>([\s\S]*?)<\/(?:section|div)>/i);
+  const dataCons = html.match(/data-section="cons"[^>]*>([\s\S]*?)<\/(?:section|div)>/i);
+
+  // Pattern 5: Broad — look for "Pros" heading followed by list items until "Cons"
+  const broadMatch = html.match(/>\s*Pros\s*<\/[^>]+>([\s\S]*?)(?=>\s*Cons\s*<\/)/i);
+
+  // Extract Pros
+  if (companyPros) prosText = companyPros[1];
+  else if (sectionPros) prosText = sectionPros[1];
+  else if (loosePros) prosText = loosePros[1];
+  else if (dataPros) prosText = dataPros[1];
+  else if (broadMatch) prosText = broadMatch[1];
+
+  // Extract Cons
+  if (companyCons) consText = companyCons[1];
+  else if (sectionCons) consText = sectionCons[1];
+  else if (looseCons) consText = looseCons[1];
+  else if (dataCons) consText = dataCons[1];
+  else {
+    // Fallback: after "Cons" heading, grab next <ul>...</ul>
+    const consFallback = html.match(/>\s*Cons\s*<\/[^>]+>[\s\S]*?<ul[^>]*>([\s\S]*?)<\/ul>/i);
+    if (consFallback) consText = consFallback[1];
+  }
+
+  // Clean HTML tags
+  prosText = prosText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  consText = consText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+  // If neither Pros nor Cons found, try one more approach: extract all <li> items
+  // from the page that look like fundamental analysis points
+  if (!prosText && !consText) {
+    // Last resort: look for any li items near "strength" or "weakness" keywords
+    const allLis = html.match(/<li[^>]*>([\s\S]*?)<\/li>/gi) || [];
+    const fundamentalLis = allLis
+      .map(li => li.replace(/<[^>]+>/g, '').trim())
+      .filter(text => text.length > 20 && text.length < 300)
+      .filter(text => /growth|margin|revenue|profit|debt|order|capex|market share|roe|roce|cash flow|expansion|decline/i.test(text));
+
+    if (fundamentalLis.length >= 2) {
+      // Split into positive and negative based on keywords
+      const posLis = fundamentalLis.filter(t => /growth|increase|improve|strong|high|good|expand|gain|healthy/i.test(t));
+      const negLis = fundamentalLis.filter(t => /decline|decrease|weak|low|poor|contract|loss|debt|concern|risk/i.test(t));
+      prosText = posLis.join(' ');
+      consText = negLis.join(' ');
+    }
+  }
+
+  if (!prosText && !consText) {
+    return null;
+  }
+
+  const fullText = `${prosText} ${consText}`.toLowerCase();
+  const prosLower = prosText.toLowerCase();
+  const consLower = consText.toLowerCase();
+
+  // Score calculation
+  let totalScore = 0;
+  const keyPhrasesPositive: string[] = [];
+  const keyPhrasesNegative: string[] = [];
+
+  for (const [keyword, weight] of POSITIVE_KEYWORDS) {
+    const kw = keyword.toLowerCase();
+    // Check in Pros (full weight) and Cons (reduced — might be comparing negatively)
+    if (prosLower.includes(kw)) {
+      totalScore += weight;
+      keyPhrasesPositive.push(keyword);
+    } else if (consLower.includes(kw)) {
+      // Positive keyword in Cons section: could be "despite strong growth, margins fell"
+      // Give reduced positive weight
+      totalScore += weight * 0.3;
+    }
+  }
+
+  for (const [keyword, weight] of NEGATIVE_KEYWORDS) {
+    const kw = keyword.toLowerCase();
+    if (consLower.includes(kw)) {
+      totalScore += weight; // weight is already negative
+      keyPhrasesNegative.push(keyword);
+    } else if (prosLower.includes(kw)) {
+      // Negative keyword in Pros: could be "despite debt, company is growing"
+      totalScore += weight * 0.3;
+    }
+  }
+
+  // Clamp to [-1, 1]
+  const sentimentScore = Math.max(-1, Math.min(1, totalScore));
+
+  // Classify guidance
+  let guidance: GuidanceData['guidance'];
+  if (sentimentScore > 0.15) guidance = 'Positive';
+  else if (sentimentScore < -0.15) guidance = 'Negative';
+  else guidance = 'Neutral';
+
+  // Revenue outlook
+  let revenueOutlook: GuidanceData['revenueOutlook'] = 'Unknown';
+  if (/revenue growth|strong growth|top.?line growth|sales growth|record revenue|double digit growth/i.test(prosLower)) {
+    revenueOutlook = 'Up';
+  } else if (/revenue decline|declining revenue|top line pressure|muted demand|weak demand/i.test(fullText)) {
+    revenueOutlook = 'Down';
+  } else if (/steady|stable|flat/i.test(fullText) && /revenue|sales/i.test(fullText)) {
+    revenueOutlook = 'Flat';
+  }
+
+  // Margin outlook
+  let marginOutlook: GuidanceData['marginOutlook'] = 'Unknown';
+  if (/margin expansion|improving margin|margin improvement|operating leverage|cost efficiency/i.test(prosLower)) {
+    marginOutlook = 'Expanding';
+  } else if (/margin compression|margin contraction|declining margin|margin erosion|cost pressure/i.test(fullText)) {
+    marginOutlook = 'Contracting';
+  } else if (/stable margin|maintained margin|margin sustain/i.test(fullText)) {
+    marginOutlook = 'Stable';
+  }
+
+  // Capex signal
+  let capexSignal: GuidanceData['capexSignal'] = 'Unknown';
+  if (/capacity expansion|capex|new plant|capacity addition|greenfield|brownfield|commissioning|ramp up/i.test(prosLower)) {
+    capexSignal = 'Expanding';
+  } else if (/capex reduction|reducing capex|lower capex|no capex/i.test(fullText)) {
+    capexSignal = 'Reducing';
+  }
+
+  // Demand signal
+  let demandSignal: GuidanceData['demandSignal'] = 'Unknown';
+  if (/strong demand|growing demand|record order|order inflow|healthy pipeline|robust growth|strong traction/i.test(prosLower)) {
+    demandSignal = 'Strong';
+  } else if (/weak demand|demand slowdown|muted demand|subdued demand/i.test(fullText)) {
+    demandSignal = 'Weak';
+  } else if (/moderate demand|steady demand/i.test(fullText)) {
+    demandSignal = 'Moderate';
+  }
+
+  return {
+    guidance,
+    sentimentScore: parseFloat(sentimentScore.toFixed(3)),
+    revenueOutlook,
+    marginOutlook,
+    capexSignal,
+    demandSignal,
+    keyPhrasesPositive: keyPhrasesPositive.slice(0, 5),
+    keyPhrasesNegative: keyPhrasesNegative.slice(0, 5),
+    prosText: prosText.slice(0, 500),  // Cap to avoid huge storage
+    consText: consText.slice(0, 500),
+    divergence: 'None',  // Set by caller after checking earnings performance
+  };
+}
+
+/** Detect divergence between reported earnings and forward guidance */
+function detectDivergence(
+  fundamentalsScore: number,
+  guidanceData: GuidanceData
+): GuidanceData['divergence'] {
+  // Strong earnings (score >= 70) + Negative guidance = alpha signal
+  if (fundamentalsScore >= 70 && guidanceData.guidance === 'Negative') {
+    return 'StrongEarnings_WeakGuidance';
+  }
+  // Weak earnings (score < 45) + Positive guidance = potential turnaround
+  if (fundamentalsScore < 45 && guidanceData.guidance === 'Positive') {
+    return 'WeakEarnings_StrongGuidance';
+  }
+  return 'None';
+}
+
 // ── Growth Calculations ─────────────────────
 
 function pctChange(current: number, previous: number): number | null {
@@ -583,16 +844,29 @@ function computePriceScore(pct: number): number {
   return 20;
 }
 
-function gradeFromScore(score: number, card?: { revenueYoY: number | null; patYoY: number | null; epsYoY: number | null; opmCurrent: number; opmPrevYear: number; isBanking?: boolean }): { grade: EarningsScanCard['grade']; color: string } {
-  // EXCELLENT: Score >= 85 AND all key metrics strongly positive
-  // This represents companies firing on all cylinders — revenue, profit, EPS all growing strongly with margin expansion
-  if (score >= 85 && card) {
-    const revOk = card.revenueYoY !== null && card.revenueYoY > 15;
-    const patOk = card.patYoY !== null && card.patYoY > 20;
-    const epsOk = card.epsYoY !== null && card.epsYoY > 15;
-    const marginOk = card.isBanking || (card.opmCurrent - card.opmPrevYear) >= 0; // At least stable margins
+function gradeFromScore(score: number, card?: { revenueYoY: number | null; patYoY: number | null; epsYoY: number | null; opmCurrent: number; opmPrevYear: number; isBanking?: boolean }, guidanceData?: GuidanceData | null): { grade: EarningsScanCard['grade']; color: string } {
+  // EXCELLENT: Strong fundamentals + positive forward guidance
+  // Two paths to EXCELLENT:
+  // Path 1 (with guidance): score >= 78, strong metrics, guidance = Positive
+  // Path 2 (exceptional numbers): score >= 80, ALL metrics very strong, guidance at least Neutral/unavailable
+  // CRITICAL: Guidance makes it easier to reach EXCELLENT, not impossible without it
+  if (score >= 78 && card) {
+    const revOk = card.revenueYoY !== null && card.revenueYoY > 10;
+    const patOk = card.patYoY !== null && card.patYoY > 15;
+    const epsOk = card.epsYoY !== null && card.epsYoY > 10;
+    const marginOk = card.isBanking || (card.opmCurrent - card.opmPrevYear) >= -1; // Allow tiny contraction
+
     if (revOk && patOk && epsOk && marginOk) {
-      return { grade: 'EXCELLENT', color: '#7C3AED' }; // Purple — stands out
+      // Path 1: Has guidance and it's positive → EXCELLENT at score 78+
+      if (guidanceData && guidanceData.guidance === 'Positive') {
+        return { grade: 'EXCELLENT', color: '#7C3AED' };
+      }
+      // Path 2: Exceptional numbers even without guidance → EXCELLENT at score 82+
+      // (Rev > 20%, PAT > 25%, EPS > 20%)
+      if (score >= 82 && card.revenueYoY !== null && card.revenueYoY > 20 &&
+          card.patYoY !== null && card.patYoY > 25 && card.epsYoY !== null && card.epsYoY > 20) {
+        return { grade: 'EXCELLENT', color: '#7C3AED' };
+      }
     }
   }
   if (score >= 75) return { grade: 'STRONG', color: '#00C853' };
@@ -728,6 +1002,17 @@ async function buildEarningsCard(symbol: string): Promise<EarningsScanCard | nul
     }
   }
 
+  // Step 4.5: Extract guidance & sentiment from Pros/Cons sections
+  let guidanceData: GuidanceData | null = null;
+  try {
+    guidanceData = parseGuidanceSentiment(html);
+    if (guidanceData) {
+      console.log(`[Earnings Scan] ${symbol}: Guidance=${guidanceData.guidance} Score=${guidanceData.sentimentScore} (+${guidanceData.keyPhrasesPositive.length}/-${guidanceData.keyPhrasesNegative.length} phrases)`);
+    }
+  } catch (err) {
+    console.warn(`[Earnings Scan] ${symbol}: Guidance parsing failed:`, (err as Error).message);
+  }
+
   // Store in persistent cache (KV + in-memory)
   const storedData: StoredEarnings = {
     symbol,
@@ -741,6 +1026,7 @@ async function buildEarningsCard(symbol: string): Promise<EarningsScanCard | nul
     source: 'screener.in',
     fetchedAt: Date.now(),
     validatedAt: Date.now(),
+    guidance: guidanceData || undefined,
   };
   await kvSaveEarnings(symbol, storedData);
 
@@ -760,10 +1046,10 @@ function buildCardFromStoredData(data: StoredEarnings): EarningsScanCard | null 
     bookValue: null,
     sector: data.sector,
     isBanking: data.isBanking,
-  });
+  }, data.guidance || null);
 }
 
-function buildCardFromData(data: ScreenerData): EarningsScanCard | null {
+function buildCardFromData(data: ScreenerData, guidanceData?: GuidanceData | null): EarningsScanCard | null {
   // Use consolidated if available, else standalone
   const quarters = data.consolidated.length > 0 ? data.consolidated : data.standalone;
   const reportType: 'Consolidated' | 'Standalone' = data.consolidated.length > 0 ? 'Consolidated' : 'Standalone';
@@ -816,11 +1102,16 @@ function buildCardFromData(data: ScreenerData): EarningsScanCard | null {
     ? Math.round(0.6 * fundamentalsScore + 0.4 * priceScore)
     : priceScore;
 
+  // Detect divergence between reported performance and forward guidance
+  if (guidanceData) {
+    guidanceData.divergence = detectDivergence(fundamentalsScore, guidanceData);
+  }
+
   const { grade, color: gradeColor } = gradeFromScore(totalScore, {
     revenueYoY, patYoY, epsYoY,
     opmCurrent: latest.opm, opmPrevYear: yoyQ?.opm || latest.opm,
     isBanking: data.isBanking,
-  });
+  }, guidanceData);
 
   // Take last 3 quarters for display + year-ago quarter
   const displayQuarters = quarters.slice(0, 3);
@@ -849,6 +1140,16 @@ function buildCardFromData(data: ScreenerData): EarningsScanCard | null {
     pe: data.pe,
     cmp: data.currentPrice,
     isBanking: data.isBanking || false,
+    // Guidance & Sentiment fields
+    guidance: guidanceData?.guidance,
+    sentimentScore: guidanceData?.sentimentScore,
+    revenueOutlook: guidanceData?.revenueOutlook,
+    marginOutlook: guidanceData?.marginOutlook,
+    capexSignal: guidanceData?.capexSignal,
+    demandSignal: guidanceData?.demandSignal,
+    keyPhrasesPositive: guidanceData?.keyPhrasesPositive,
+    keyPhrasesNegative: guidanceData?.keyPhrasesNegative,
+    divergence: guidanceData?.divergence || 'None',
     screenerUrl: `https://www.screener.in/company/${data.symbol}/consolidated/`,
     nseUrl: `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(data.symbol)}`,
   };
@@ -934,8 +1235,10 @@ export async function GET(request: Request) {
     // Sort by totalScore descending
     cards.sort((a, b) => b.totalScore - a.totalScore);
 
+    const cardsWithGuidance = cards.filter(c => c.guidance);
     const summary = {
       total: cards.length,
+      excellent: cards.filter(c => c.grade === 'EXCELLENT').length,
       strong: cards.filter(c => c.grade === 'STRONG').length,
       good: cards.filter(c => c.grade === 'GOOD').length,
       ok: cards.filter(c => c.grade === 'OK').length,
@@ -943,6 +1246,15 @@ export async function GET(request: Request) {
       avgScore: cards.length > 0
         ? parseFloat((cards.reduce((s, c) => s + c.totalScore, 0) / cards.length).toFixed(1))
         : 0,
+      // Guidance aggregation
+      guidanceCoverage: cardsWithGuidance.length,
+      guidancePositive: cardsWithGuidance.filter(c => c.guidance === 'Positive').length,
+      guidanceNeutral: cardsWithGuidance.filter(c => c.guidance === 'Neutral').length,
+      guidanceNegative: cardsWithGuidance.filter(c => c.guidance === 'Negative').length,
+      avgSentiment: cardsWithGuidance.length > 0
+        ? parseFloat((cardsWithGuidance.reduce((s, c) => s + (c.sentimentScore || 0), 0) / cardsWithGuidance.length).toFixed(3))
+        : 0,
+      divergences: cards.filter(c => c.divergence && c.divergence !== 'None').length,
       dataQualityBreakdown: {
         full: cards.filter(c => c.dataQuality === 'FULL').length,
         partial: cards.filter(c => c.dataQuality === 'PARTIAL').length,
@@ -970,7 +1282,7 @@ export async function GET(request: Request) {
     console.error('[Earnings Scan] Error:', error);
     return NextResponse.json({
       cards: [],
-      summary: { total: 0, strong: 0, good: 0, ok: 0, bad: 0, avgScore: 0, dataQualityBreakdown: { full: 0, partial: 0, priceOnly: 0 }, dataAgeBreakdown: { fresh: 0, stale: 0, missing: 0 } },
+      summary: { total: 0, excellent: 0, strong: 0, good: 0, ok: 0, bad: 0, avgScore: 0, guidanceCoverage: 0, guidancePositive: 0, guidanceNeutral: 0, guidanceNegative: 0, avgSentiment: 0, divergences: 0, dataQualityBreakdown: { full: 0, partial: 0, priceOnly: 0 }, dataAgeBreakdown: { fresh: 0, stale: 0, missing: 0 } },
       error: String(error),
     }, { status: 500 });
   }

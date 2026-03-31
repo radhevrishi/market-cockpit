@@ -60,6 +60,16 @@ interface EarningsScanCard {
   pe: number | null;
   cmp: number | null;
   isBanking: boolean;
+  // Guidance & Sentiment
+  guidance?: 'Positive' | 'Neutral' | 'Negative';
+  sentimentScore?: number;
+  revenueOutlook?: 'Up' | 'Flat' | 'Down' | 'Unknown';
+  marginOutlook?: 'Expanding' | 'Stable' | 'Contracting' | 'Unknown';
+  capexSignal?: 'Expanding' | 'Stable' | 'Reducing' | 'Unknown';
+  demandSignal?: 'Strong' | 'Moderate' | 'Weak' | 'Unknown';
+  keyPhrasesPositive?: string[];
+  keyPhrasesNegative?: string[];
+  divergence?: 'StrongEarnings_WeakGuidance' | 'WeakEarnings_StrongGuidance' | 'None';
   screenerUrl: string;
   nseUrl: string;
   // Extended: which universe the stock belongs to
@@ -76,6 +86,12 @@ interface ScanResponse {
     ok: number;
     bad: number;
     avgScore: number;
+    guidanceCoverage?: number;
+    guidancePositive?: number;
+    guidanceNeutral?: number;
+    guidanceNegative?: number;
+    avgSentiment?: number;
+    divergences?: number;
     dataQualityBreakdown: { full: number; partial: number; priceOnly: number };
   };
   source: string;
@@ -136,6 +152,56 @@ function DataQualityDot({ quality }: { quality: string }) {
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '10px', color: colors[quality] || TEXT_DIM }}>
       <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: colors[quality] || TEXT_DIM, display: 'inline-block' }} />
       {labels[quality] || quality}
+    </span>
+  );
+}
+
+function GuidanceBadge({ guidance, score }: { guidance?: string; score?: number }) {
+  if (!guidance) return null;
+  const cfg: Record<string, { color: string; icon: string }> = {
+    'Positive': { color: '#10B981', icon: '▲' },
+    'Neutral': { color: '#F59E0B', icon: '●' },
+    'Negative': { color: '#EF4444', icon: '▼' },
+  };
+  const c = cfg[guidance] || cfg['Neutral'];
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '10px',
+      padding: '2px 7px', borderRadius: '4px',
+      backgroundColor: `${c.color}18`, border: `1px solid ${c.color}40`, color: c.color, fontWeight: 600,
+    }}>
+      {c.icon} {guidance}{score !== undefined ? ` (${score > 0 ? '+' : ''}${score.toFixed(2)})` : ''}
+    </span>
+  );
+}
+
+function DivergenceBadge({ divergence }: { divergence?: string }) {
+  if (!divergence || divergence === 'None') return null;
+  const isStrongWeak = divergence === 'StrongEarnings_WeakGuidance';
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '9px',
+      padding: '2px 6px', borderRadius: '4px',
+      backgroundColor: isStrongWeak ? '#EF444418' : '#10B98118',
+      border: `1px solid ${isStrongWeak ? '#EF444440' : '#10B98140'}`,
+      color: isStrongWeak ? '#EF4444' : '#10B981', fontWeight: 700, letterSpacing: '0.3px',
+    }}>
+      ⚡ {isStrongWeak ? 'DIVERGENCE: Strong Earnings + Weak Guidance' : 'DIVERGENCE: Weak Earnings + Strong Guidance'}
+    </span>
+  );
+}
+
+function OutlookPill({ label, value }: { label: string; value?: string }) {
+  if (!value || value === 'Unknown') return null;
+  const colorMap: Record<string, string> = {
+    'Up': '#10B981', 'Expanding': '#10B981', 'Strong': '#10B981',
+    'Flat': '#F59E0B', 'Stable': '#F59E0B', 'Moderate': '#F59E0B',
+    'Down': '#EF4444', 'Contracting': '#EF4444', 'Weak': '#EF4444', 'Reducing': '#EF4444',
+  };
+  const color = colorMap[value] || TEXT_DIM;
+  return (
+    <span style={{ fontSize: '9px', color, fontWeight: 600 }}>
+      {label}: {value}
     </span>
   );
 }
@@ -340,6 +406,33 @@ function EarningsCardComponent({ card }: { card: EarningsScanCard }) {
       ) : (
         <div style={{ padding: '16px', textAlign: 'center', color: YELLOW, fontSize: '12px', backgroundColor: `${YELLOW}08` }}>
           Quarterly financial data not available for this stock
+        </div>
+      )}
+
+      {/* Guidance & Sentiment Section */}
+      {card.guidance && (
+        <div style={{ padding: '8px 16px 10px', borderTop: `1px solid ${CARD_BORDER}`, backgroundColor: `${HEADER_BG}30` }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' }}>
+            <span style={{ fontSize: '10px', color: TEXT_DIM, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px' }}>Guidance</span>
+            <GuidanceBadge guidance={card.guidance} score={card.sentimentScore} />
+            <DivergenceBadge divergence={card.divergence} />
+          </div>
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '4px' }}>
+            <OutlookPill label="Revenue" value={card.revenueOutlook} />
+            <OutlookPill label="Margins" value={card.marginOutlook} />
+            <OutlookPill label="Capex" value={card.capexSignal} />
+            <OutlookPill label="Demand" value={card.demandSignal} />
+          </div>
+          {((card.keyPhrasesPositive && card.keyPhrasesPositive.length > 0) || (card.keyPhrasesNegative && card.keyPhrasesNegative.length > 0)) && (
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '4px' }}>
+              {(card.keyPhrasesPositive || []).map((p, i) => (
+                <span key={`p${i}`} style={{ fontSize: '8px', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#10B98115', color: '#10B981', border: '1px solid #10B98130' }}>{p}</span>
+              ))}
+              {(card.keyPhrasesNegative || []).map((p, i) => (
+                <span key={`n${i}`} style={{ fontSize: '8px', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#EF444415', color: '#EF4444', border: '1px solid #EF444430' }}>{p}</span>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -565,8 +658,15 @@ export default function EarningsPage() {
         const full = allCards.filter(c => c.dataQuality === 'FULL').length;
         const partial = allCards.filter(c => c.dataQuality === 'PARTIAL').length;
         const priceOnly = allCards.filter(c => c.dataQuality === 'PRICE_ONLY').length;
+        const withGuidance = allCards.filter(c => c.guidance);
+        const guidanceCoverage = withGuidance.length;
+        const guidancePositive = withGuidance.filter(c => c.guidance === 'Positive').length;
+        const guidanceNeutral = withGuidance.filter(c => c.guidance === 'Neutral').length;
+        const guidanceNegative = withGuidance.filter(c => c.guidance === 'Negative').length;
+        const avgSentiment = guidanceCoverage > 0 ? withGuidance.reduce((s, c) => s + (c.sentimentScore || 0), 0) / guidanceCoverage : 0;
+        const divergences = allCards.filter(c => c.divergence && c.divergence !== 'None').length;
 
-        lastSummary = { total: allCards.length, excellent, strong, good, ok, bad, avgScore, dataQualityBreakdown: { full, partial, priceOnly } };
+        lastSummary = { total: allCards.length, excellent, strong, good, ok, bad, avgScore, guidanceCoverage, guidancePositive, guidanceNeutral, guidanceNegative, avgSentiment, divergences, dataQualityBreakdown: { full, partial, priceOnly } };
       }
 
       setCards(allCards);
@@ -877,6 +977,28 @@ export default function EarningsPage() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Guidance Sentiment Aggregation */}
+      {summary && !loading && (summary.guidanceCoverage || 0) > 0 && (
+        <div style={{
+          display: 'flex', gap: '16px', marginBottom: '16px', alignItems: 'center', flexWrap: 'wrap',
+          backgroundColor: CARD, border: `1px solid ${CARD_BORDER}`, borderRadius: '8px', padding: '10px 16px',
+        }}>
+          <span style={{ fontSize: '10px', color: TEXT_DIM, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Forward Guidance</span>
+          <span style={{ fontSize: '12px', color: TEXT_DIM }}>{summary.guidanceCoverage} of {summary.total} covered</span>
+          <span style={{ fontSize: '12px', color: '#10B981', fontWeight: 600 }}>▲ Positive: {summary.guidancePositive}</span>
+          <span style={{ fontSize: '12px', color: '#F59E0B', fontWeight: 600 }}>● Neutral: {summary.guidanceNeutral}</span>
+          <span style={{ fontSize: '12px', color: '#EF4444', fontWeight: 600 }}>▼ Negative: {summary.guidanceNegative}</span>
+          <span style={{ fontSize: '12px', color: (summary.avgSentiment || 0) > 0 ? '#10B981' : (summary.avgSentiment || 0) < 0 ? '#EF4444' : TEXT_DIM, fontWeight: 700 }}>
+            Avg Sentiment: {(summary.avgSentiment || 0) > 0 ? '+' : ''}{(summary.avgSentiment || 0).toFixed(3)}
+          </span>
+          {(summary.divergences || 0) > 0 && (
+            <span style={{ fontSize: '11px', color: '#F59E0B', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '3px' }}>
+              ⚡ {summary.divergences} Divergence{(summary.divergences || 0) > 1 ? 's' : ''}
+            </span>
+          )}
         </div>
       )}
 

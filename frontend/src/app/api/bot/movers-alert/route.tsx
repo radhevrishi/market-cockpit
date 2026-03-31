@@ -397,19 +397,19 @@ async function generateMoversImage(
           <span style={{ width: '140px', fontWeight: 700, color: '#1a202c', fontSize: '14px' }}>
             {truncate(s.ticker, 14)}
           </span>
-          <span style={{ width: '200px', color: '#4a5568', fontSize: '13px' }}>
+          <span style={{ width: '200px', color: '#2d3748', fontSize: '13px' }}>
             {truncate(s.sector, 20)}
           </span>
-          <span style={{ width: '220px', color: '#4a5568', fontSize: '13px' }}>
+          <span style={{ width: '220px', color: '#2d3748', fontSize: '13px' }}>
             {truncate(s.industry, 22)}
           </span>
           <span style={{ width: '100px', textAlign: 'right', fontWeight: 700, color: pctColor, fontSize: '15px' }}>
             {isGainers ? '+' : ''}{s.changePercent.toFixed(1)}%
           </span>
-          <span style={{ width: '100px', textAlign: 'right', color: '#4a5568', fontSize: '13px' }}>
+          <span style={{ width: '100px', textAlign: 'right', color: '#2d3748', fontSize: '13px' }}>
             ₹{s.price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
           </span>
-          <span style={{ width: '50px', textAlign: 'center', color: '#a0aec0', fontSize: '13px', fontWeight: 600 }}>
+          <span style={{ width: '50px', textAlign: 'center', color: '#2d3748', fontSize: '13px', fontWeight: 600 }}>
             {s.cap}
           </span>
         </div>

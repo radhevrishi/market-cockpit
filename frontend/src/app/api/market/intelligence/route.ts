@@ -10,8 +10,9 @@ const INR_TO_USD = 85;
 
 // ==================== TYPES ====================
 
-type ActionFlag = 'BUY WATCH' | 'HOLD CONTEXT' | 'IGNORE';
-type ImpactType = 'Revenue Impact' | 'Margin Impact' | 'Sentiment Only' | 'Noise';
+type ActionFlag = 'BUY WATCH' | 'TRACK' | 'IGNORE';
+type ImpactLevel = 'HIGH' | 'MEDIUM' | 'LOW';
+type SignalSentiment = 'Bullish' | 'Neutral' | 'Bearish';
 
 interface IntelSignal {
   symbol: string;
@@ -20,31 +21,51 @@ interface IntelSignal {
   source: 'order' | 'deal';
 
   // Event
-  eventType: string;       // Order Win, Contract, Block Buy, Bulk Sell, M&A, etc.
-  headline: string;        // 1-line: "LT ₹4,200Cr Infra order from NHAI | 3.2% Rev"
+  eventType: string;
+  headline: string;
 
   // Quantified
   valueCr: number | null;
   valueUsd: string | null;
   mcapCr: number | null;
   revenueCr: number | null;
-  pctRevenue: number | null;   // THE key metric
+  pctRevenue: number | null;
   pctMcap: number | null;
 
   // Context
   client: string | null;
   segment: string | null;
   timeline: string | null;
-  buyerSeller: string | null;  // For deals
-  premiumDiscount: number | null; // For deals
+  buyerSeller: string | null;
+  premiumDiscount: number | null;
 
-  // Classification
-  impactType: ImpactType;
-  action: ActionFlag;
-  score: number;           // 0-100, for sorting
-  sentiment: 'Bullish' | 'Neutral' | 'Bearish';
+  // Classification — UPGRADED
+  impactLevel: ImpactLevel;       // HIGH / MEDIUM / LOW
+  action: ActionFlag;             // BUY WATCH / TRACK / IGNORE
+  score: number;                  // 0-100
+  timeWeight: number;             // 0-1 (time decay)
+  weightedScore: number;          // score * timeWeight
+  sentiment: SignalSentiment;
+  whyItMatters: string;           // 1-line: "Improves backward integration → margin expansion likely"
+  isNegative: boolean;            // Negative signal flag
 
   isWatchlist: boolean;
+  isPortfolio: boolean;
+
+  // Trend stacking (set at aggregation)
+  signalStackCount?: number;
+  signalStackLevel?: 'STRONG' | 'BUILDING' | 'WEAK';
+}
+
+interface CompanyTrend {
+  symbol: string;
+  company: string;
+  signalCount: number;
+  stackLevel: 'STRONG' | 'BUILDING' | 'WEAK';
+  topAction: ActionFlag;
+  topImpact: ImpactLevel;
+  netSentiment: SignalSentiment;
+  avgScore: number;
 }
 
 interface DailyBias {
@@ -52,15 +73,19 @@ interface DailyBias {
   highImpactCount: number;
   activeSectors: string[];
   buyWatchCount: number;
+  trackCount: number;
   totalSignals: number;
   totalOrderValueCr: number;
   totalDealValueCr: number;
-  summary: string; // "3 High Impact signals in Infra, Capital Goods. Net: Bullish"
+  portfolioAlerts: number;
+  negativeSignals: number;
+  summary: string;
 }
 
 interface IntelligenceResponse {
-  top3: IntelSignal[];          // THE hero section
-  signals: IntelSignal[];       // Full filtered table
+  top3: IntelSignal[];
+  signals: IntelSignal[];
+  trends: CompanyTrend[];       // Signal stacking per company
   bias: DailyBias;
   updatedAt: string;
 }
@@ -144,6 +169,22 @@ const NOISE_PATTERNS = [
   'outcome of board', 'schedule of analyst', 'press release',
   'change in management', 'independent director',
   'postal ballot', 'notice of', 'proceedings of',
+];
+
+// Negative signal keywords — bearish events the market cares about
+const NEGATIVE_KEYWORDS = [
+  'order cancellation', 'cancelled', 'revoked', 'terminated',
+  'margin warning', 'margin pressure', 'margin decline',
+  'promoter selling', 'promoter pledge', 'pledge of shares', 'invocation of pledge',
+  'debt increase', 'debt raise', 'downgrade', 'credit downgrade',
+  'forensic audit', 'fraud', 'investigation', 'sebi order', 'penalty',
+  'loss', 'net loss', 'operating loss', 'winding up', 'insolvency',
+  'default', 'npa', 'non-performing', 'write-off', 'write off',
+  'resignation of', 'key managerial', 'auditor resignation',
+  'qualified opinion', 'disclaimer of opinion', 'adverse opinion',
+  'demand notice', 'tax demand', 'show cause',
+  'strike', 'lockout', 'force majeure', 'fire', 'accident',
+  'delisting', 'suspension',
 ];
 
 function parseOrderValue(text: string): number | null {
@@ -265,64 +306,178 @@ function extractTimeline(text: string): string | null {
   return null;
 }
 
-// ==================== IMPACT & ACTION CLASSIFICATION ====================
+// ==================== ECONOMIC IMPACT ENGINE ====================
+// Impact % = Event Value / Annual Revenue → HIGH / MEDIUM / LOW
 
-function classifyImpact(pctRevenue: number | null, pctMcap: number | null, valueCr: number | null, eventType: string): ImpactType {
-  // If we have % revenue, use it — this is the gold standard
+function classifyImpactLevel(pctRevenue: number | null, pctMcap: number | null, valueCr: number | null, eventType: string): ImpactLevel {
+  // Gold standard: % of annual revenue
   if (pctRevenue !== null) {
-    if (pctRevenue >= 3) return 'Revenue Impact';
-    if (pctRevenue >= 1) return 'Revenue Impact';
-    if (pctRevenue >= 0.5) return 'Margin Impact';
-    return 'Sentiment Only';
+    if (pctRevenue >= 5) return 'HIGH';
+    if (pctRevenue >= 1) return 'MEDIUM';
+    return 'LOW';
   }
-
-  // % of MCap — for capex/M&A where revenue impact isn't relevant
+  // Secondary: % of market cap (for capex, M&A)
   if (pctMcap !== null) {
-    if (pctMcap >= 5) return 'Revenue Impact';
-    if (pctMcap >= 1) return 'Margin Impact';
-    return 'Sentiment Only';
+    if (pctMcap >= 5) return 'HIGH';
+    if (pctMcap >= 1) return 'MEDIUM';
+    return 'LOW';
   }
-
-  // No percentage data — use absolute value + event type
+  // Absolute value fallback
   if (valueCr !== null) {
-    if (valueCr >= 500) return 'Revenue Impact';
-    if (valueCr >= 100) return 'Margin Impact';
-    return 'Sentiment Only';
+    if (valueCr >= 500) return 'HIGH';
+    if (valueCr >= 100) return 'MEDIUM';
+    return 'LOW';
   }
-
-  // No value at all — use event type heuristic
-  if (['M&A', 'Capex/Expansion', 'Fund Raising', 'Demerger'].includes(eventType)) return 'Margin Impact';
-  if (['Buyback', 'JV/Partnership', 'Guidance'].includes(eventType)) return 'Margin Impact';
-  if (['Mgmt Change', 'Dividend'].includes(eventType)) return 'Sentiment Only';
-
-  return 'Sentiment Only';
+  // Event type heuristic when no value available
+  if (['M&A', 'Capex/Expansion', 'Demerger'].includes(eventType)) return 'MEDIUM';
+  if (['Order Win', 'Contract', 'Fund Raising'].includes(eventType)) return 'MEDIUM';
+  return 'LOW';
 }
 
-function classifyAction(impactType: ImpactType, pctRevenue: number | null, pctMcap: number | null, eventType: string, isWatchlist: boolean): ActionFlag {
-  if (impactType === 'Revenue Impact') {
-    if (pctRevenue !== null && pctRevenue >= 3) return 'BUY WATCH';
-    if (pctMcap !== null && pctMcap >= 5) return 'BUY WATCH';
-    return 'HOLD CONTEXT';
-  }
-  if (impactType === 'Margin Impact') {
-    if (['Capex/Expansion', 'M&A', 'Demerger'].includes(eventType)) return 'HOLD CONTEXT';
-    if (['Guidance'].includes(eventType)) return 'HOLD CONTEXT';
-    return 'HOLD CONTEXT';
-  }
-  // Sentiment Only — still worth watching if on watchlist
-  if (isWatchlist) return 'HOLD CONTEXT';
+// ==================== FORCE ACTION ENGINE ====================
+// Replaces HOLD CONTEXT — every signal gets a DECISION
+
+function classifyAction(impactLevel: ImpactLevel, sentiment: SignalSentiment, isWatchlist: boolean, isPortfolio: boolean, eventType: string): ActionFlag {
+  // HIGH impact + Bullish/Neutral → BUY WATCH
+  if (impactLevel === 'HIGH' && sentiment !== 'Bearish') return 'BUY WATCH';
+  // HIGH impact + Bearish → still TRACK (you need to know)
+  if (impactLevel === 'HIGH' && sentiment === 'Bearish') return 'TRACK';
+  // MEDIUM impact + portfolio/watchlist → TRACK
+  if (impactLevel === 'MEDIUM' && (isWatchlist || isPortfolio)) return 'TRACK';
+  // MEDIUM impact + Bullish → TRACK (potential opportunity)
+  if (impactLevel === 'MEDIUM' && sentiment === 'Bullish') return 'TRACK';
+  // MEDIUM impact + strategic events → TRACK
+  if (impactLevel === 'MEDIUM' && ['M&A', 'Capex/Expansion', 'Demerger', 'Fund Raising'].includes(eventType)) return 'TRACK';
+  // Everything else MEDIUM → IGNORE
+  if (impactLevel === 'MEDIUM') return 'IGNORE';
+  // LOW impact — only track if portfolio stock
+  if (impactLevel === 'LOW' && isPortfolio) return 'TRACK';
   return 'IGNORE';
+}
+
+// ==================== TIME DECAY ====================
+
+function computeTimeWeight(dateStr: string): number {
+  try {
+    // Parse date — handle both "DD-MM-YYYY" and ISO formats
+    let d: Date;
+    if (dateStr.includes('-') && dateStr.length === 10 && dateStr[2] === '-') {
+      const [dd, mm, yyyy] = dateStr.split('-');
+      d = new Date(`${yyyy}-${mm}-${dd}`);
+    } else {
+      d = new Date(dateStr);
+    }
+    if (isNaN(d.getTime())) return 0.5;
+    const daysOld = Math.max(0, (Date.now() - d.getTime()) / (24 * 60 * 60 * 1000));
+    if (daysOld <= 1) return 1.0;
+    if (daysOld <= 3) return 0.85;
+    if (daysOld <= 5) return 0.7;
+    if (daysOld <= 7) return 0.5;
+    if (daysOld <= 14) return 0.3;
+    return 0.1;
+  } catch {
+    return 0.5;
+  }
+}
+
+// ==================== WHY IT MATTERS ====================
+
+function generateWhyItMatters(opts: {
+  eventType: string;
+  impactLevel: ImpactLevel;
+  pctRevenue: number | null;
+  pctMcap: number | null;
+  valueCr: number | null;
+  client: string | null;
+  segment: string | null;
+  isNegative: boolean;
+  sentiment: SignalSentiment;
+  buyerSeller: string | null;
+  premiumDiscount: number | null;
+}): string {
+  const { eventType, impactLevel, pctRevenue, pctMcap, valueCr, client, segment, isNegative, buyerSeller, premiumDiscount } = opts;
+
+  if (isNegative) {
+    if (eventType.includes('cancellation') || eventType.includes('terminated')) return 'Revenue loss risk — check order book concentration';
+    if (eventType.includes('pledge') || eventType.includes('Promoter')) return 'Promoter stress signal — watch for forced selling pressure';
+    if (eventType.includes('downgrade')) return 'Credit deterioration — higher cost of capital, margin pressure';
+    if (eventType.includes('loss')) return 'Profitability under stress — assess if temporary or structural';
+    if (eventType.includes('audit') || eventType.includes('fraud')) return 'Governance red flag — potential restatement risk';
+    if (eventType.includes('resignation')) return 'Key person risk — continuity and strategy execution at risk';
+    return 'Negative development — monitor for further deterioration';
+  }
+
+  // Positive / neutral events
+  if (eventType === 'Order Win' || eventType === 'Contract' || eventType === 'LOI') {
+    if (pctRevenue !== null && pctRevenue >= 5) return `${pctRevenue.toFixed(0)}% of revenue — material order, direct top-line accretion`;
+    if (pctRevenue !== null && pctRevenue >= 1) return `Meaningful order at ${pctRevenue.toFixed(1)}% of revenue — revenue visibility improves`;
+    if (client) return `New order from ${client} — client diversification + execution track record`;
+    if (segment === 'Defence' || segment === 'Railways') return `Govt order in ${segment} — long cycle, stable margin profile`;
+    return 'New order win — improves revenue pipeline visibility';
+  }
+
+  if (eventType === 'Capex/Expansion') {
+    if (pctMcap !== null && pctMcap >= 5) return `Large capex at ${pctMcap.toFixed(1)}% of MCap — operating leverage play, watch execution`;
+    return 'Capacity expansion — forward revenue visibility, watch ROI timeline';
+  }
+
+  if (eventType === 'M&A') {
+    if (pctRevenue !== null && pctRevenue >= 10) return 'Transformative acquisition — changes revenue mix significantly';
+    if (pctMcap !== null && pctMcap >= 5) return `Material M&A at ${pctMcap.toFixed(1)}% MCap — integration risk but growth potential`;
+    return 'Strategic acquisition — improves market position or backward integration';
+  }
+
+  if (eventType === 'Demerger') return 'Value unlock — sum-of-parts may exceed current market cap';
+  if (eventType === 'Fund Raising') return 'Capital raise — fuels growth but watch dilution impact';
+  if (eventType === 'Buyback') return 'Management conviction in undervaluation — capital return signal';
+  if (eventType === 'Dividend') return 'Cash return to shareholders — signals healthy cash flow';
+  if (eventType === 'JV/Partnership') return 'Strategic partnership — technology or market access play';
+  if (eventType === 'Guidance') return 'Management outlook update — forward visibility signal';
+  if (eventType === 'Mgmt Change') return 'Leadership transition — watch for strategy continuity';
+
+  if (eventType.includes('Block Buy') || eventType.includes('Bulk Buy')) {
+    if (buyerSeller && /mutual fund|fii|institutional/i.test(buyerSeller)) return 'Institutional buying — smart money accumulation signal';
+    if (premiumDiscount !== null && premiumDiscount > 2) return `Premium deal at +${premiumDiscount.toFixed(1)}% — buyer conviction strong`;
+    return 'Block/bulk buying — institutional interest building';
+  }
+
+  if (eventType.includes('Block Sell') || eventType.includes('Bulk Sell')) {
+    if (premiumDiscount !== null && premiumDiscount < -2) return `Discount exit at ${premiumDiscount.toFixed(1)}% — urgency to sell, watch supply pressure`;
+    return 'Institutional selling — check if rebalancing or conviction change';
+  }
+
+  return impactLevel === 'HIGH' ? 'High impact corporate event — direct business impact' :
+         impactLevel === 'MEDIUM' ? 'Moderate impact — worth tracking for pattern changes' :
+         'Low impact — informational only';
+}
+
+// ==================== NEGATIVE SIGNAL DETECTION ====================
+
+function isNegativeSignal(subject: string, desc: string): boolean {
+  const combined = `${subject} ${desc}`.toLowerCase();
+  return NEGATIVE_KEYWORDS.some(kw => combined.includes(kw));
+}
+
+function classifySentiment(eventType: string, isNegative: boolean, isBuyDeal: boolean): SignalSentiment {
+  if (isNegative) return 'Bearish';
+  if (['Order Win', 'Contract', 'LOI', 'Capex/Expansion', 'Buyback', 'Guidance'].includes(eventType)) return 'Bullish';
+  if (['M&A', 'Demerger', 'Fund Raising', 'JV/Partnership'].includes(eventType)) return 'Bullish';
+  if (eventType.includes('Buy')) return isBuyDeal ? 'Bullish' : 'Neutral';
+  if (eventType.includes('Sell')) return 'Bearish';
+  return 'Neutral';
 }
 
 function computeScore(opts: {
   pctRevenue: number | null;
   valueCr: number | null;
-  impactType: ImpactType;
+  impactLevel: ImpactLevel;
   eventType: string;
   client: string | null;
   segment: string | null;
   isWatchlist: boolean;
+  isPortfolio: boolean;
   isDeal: boolean;
+  isNegative: boolean;
   dealPremiumDiscount?: number | null;
   buyerQuality?: number;
 }): number {
@@ -337,7 +492,6 @@ function computeScore(opts: {
     else if (opts.pctRevenue >= 0.5) score += 12;
     else score += 5;
   } else if (opts.valueCr !== null) {
-    // Absolute value without revenue context
     if (opts.valueCr >= 1000) score += 30;
     else if (opts.valueCr >= 500) score += 25;
     else if (opts.valueCr >= 100) score += 18;
@@ -359,14 +513,18 @@ function computeScore(opts: {
   if (opts.segment && ['Defence', 'Railways', 'Infra', 'Power'].includes(opts.segment)) score += 7;
   else if (opts.segment) score += 4;
 
-  // Watchlist bonus (0-10)
-  if (opts.isWatchlist) score += 10;
+  // Portfolio bonus (0-15) — higher than watchlist
+  if (opts.isPortfolio) score += 15;
+  else if (opts.isWatchlist) score += 10;
+
+  // Negative signals get boosted — bad news moves faster
+  if (opts.isNegative) score += 10;
 
   // Deal-specific
   if (opts.isDeal) {
     if (opts.buyerQuality && opts.buyerQuality >= 80) score += 10;
     if (opts.dealPremiumDiscount !== undefined && opts.dealPremiumDiscount !== null) {
-      if (opts.dealPremiumDiscount > 3) score += 8; // Big premium = conviction
+      if (opts.dealPremiumDiscount > 3) score += 8;
       else if (opts.dealPremiumDiscount > 0) score += 4;
     }
   }
@@ -431,14 +589,19 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
   try {
     const { searchParams } = new URL(request.url);
     const watchlistParam = searchParams.get('watchlist');
+    const portfolioParam = searchParams.get('portfolio');
     const days = parseInt(searchParams.get('days') || '30');
 
     const watchlist = watchlistParam
       ? watchlistParam.split(',').map(s => normalizeTicker(s.trim())).filter(Boolean)
       : [];
+    const portfolio = portfolioParam
+      ? portfolioParam.split(',').map(s => normalizeTicker(s.trim())).filter(Boolean)
+      : [];
     const watchlistSet = new Set(watchlist);
+    const portfolioSet = new Set(portfolio);
 
-    console.log(`[Intelligence] Starting: ${watchlist.length} watchlist, ${days} days`);
+    console.log(`[Intelligence] Starting: ${watchlist.length} watchlist, ${portfolio.length} portfolio, ${days} days`);
 
     // ── 1. Fetch data in parallel ──
     const fromDate = getDateDaysAgo(days);
@@ -482,22 +645,25 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
       }))
       .filter((d: any) => d.quantity > 0 && d.tradePrice > 0 && d.symbol);
 
-    // Filter announcements for material events
+    // Filter announcements for material events (positive + negative)
     const filteredAnn = announcements.filter(item => {
       if (!item.symbol || (!item.desc && !item.subject)) return false;
       const combined = `${item.subject || ''} ${item.desc || ''}`.toLowerCase();
       // Skip noise
       if (NOISE_PATTERNS.some(p => combined.includes(p))) return false;
-      return ORDER_KEYWORDS.some(k => combined.includes(k));
+      // Include positive/neutral keywords OR negative keywords
+      return ORDER_KEYWORDS.some(k => combined.includes(k)) ||
+             NEGATIVE_KEYWORDS.some(k => combined.includes(k));
     });
 
     console.log(`[Intelligence] ${announcements.length} announcements → ${filteredAnn.length} material | ${blockDeals.length} block, ${bulkDeals.length} bulk deals`);
 
-    // ── 2. Collect symbols for enrichment (capped at 25) ──
+    // ── 2. Collect symbols for enrichment (capped at 30) ──
     const symbolsToEnrich = new Set<string>();
+    portfolio.forEach(s => symbolsToEnrich.add(s));
     watchlist.forEach(s => symbolsToEnrich.add(s));
     [...blockDeals, ...bulkDeals].forEach(d => symbolsToEnrich.add(normalizeTicker(d.symbol)));
-    filteredAnn.forEach(a => { if (symbolsToEnrich.size < 25) symbolsToEnrich.add(normalizeTicker(a.symbol)); });
+    filteredAnn.forEach(a => { if (symbolsToEnrich.size < 30) symbolsToEnrich.add(normalizeTicker(a.symbol)); });
     symbolsToEnrich.delete('');
 
     // Batch enrich
@@ -514,17 +680,14 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
 
     // ── 3. Build signals from corporate orders ──
     const allSignals: IntelSignal[] = [];
-    const seenKeys = new Set<string>();
+    // DEDUP: key = symbol:eventType:date → merge same company + same event type + same day
+    const dedupMap = new Map<string, IntelSignal>();
 
     for (const item of filteredAnn) {
       const subject = item.subject || '';
       const desc = item.desc || '';
       const symbol = normalizeTicker(item.symbol || '');
       if (!symbol) continue;
-
-      const key = `${symbol}:${(subject + desc).slice(0, 60)}`;
-      if (seenKeys.has(key)) continue;
-      seenKeys.add(key);
 
       const enrichment = enrichMap.get(symbol);
       const combinedText = `${subject} ${desc}`;
@@ -534,6 +697,8 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
       const segment = extractSegment(combinedText) || (enrichment?.industry ? enrichment.industry.split(' ')[0] : null);
       const timeline = extractTimeline(combinedText);
       const isWatchlist = watchlistSet.has(symbol);
+      const isPortfolio = portfolioSet.has(symbol);
+      const negative = isNegativeSignal(subject, desc);
 
       const pctRevenue = (enrichment?.annualRevenueCr && valueCr)
         ? Math.round((valueCr / enrichment.annualRevenueCr) * 10000) / 100
@@ -542,39 +707,46 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
         ? Math.round((valueCr / enrichment.mcapCr) * 10000) / 100
         : null;
 
-      const impactType = classifyImpact(pctRevenue, pctMcap, valueCr, eventType);
-      const action = classifyAction(impactType, pctRevenue, pctMcap, eventType, isWatchlist);
+      const impactLevel = classifyImpactLevel(pctRevenue, pctMcap, valueCr, eventType);
+      const sentiment = classifySentiment(eventType, negative, false);
+      const action = classifyAction(impactLevel, sentiment, isWatchlist, isPortfolio, eventType);
+      const timeWeight = computeTimeWeight(item.date || getTodayDate());
       const score = computeScore({
-        pctRevenue, valueCr, impactType, eventType,
-        client, segment, isWatchlist, isDeal: false,
+        pctRevenue, valueCr, impactLevel, eventType,
+        client, segment, isWatchlist, isPortfolio, isDeal: false, isNegative: negative,
+      });
+      const weightedScore = Math.round(score * timeWeight);
+
+      const whyItMatters = generateWhyItMatters({
+        eventType, impactLevel, pctRevenue, pctMcap, valueCr,
+        client, segment, isNegative: negative, sentiment, buyerSeller: null, premiumDiscount: null,
       });
 
-      // Build institutional-grade headline: WHY this matters
+      // Build headline
       let headline = '';
-      // Lead with event + value
       if (valueCr && valueCr > 0) {
         headline = `${fmtCr(valueCr)} ${eventType}`;
       } else {
-        headline = eventType;
+        headline = negative ? `⚠ ${eventType}` : eventType;
       }
       if (client) headline += ` from ${client}`;
-      // Materiality context — the key institutional metric
       const matParts: string[] = [];
       if (pctRevenue !== null && pctRevenue > 0) matParts.push(`${pctRevenue.toFixed(1)}% of annual revenue`);
       if (pctMcap !== null && pctMcap > 0) matParts.push(`${pctMcap.toFixed(1)}% of MCap`);
       if (segment) matParts.push(segment);
       if (timeline) matParts.push(timeline);
       if (matParts.length > 0) headline += ` — ${matParts.join(' · ')}`;
-      // Add source context from desc
       const descSnippet = (desc || '').slice(0, 120).replace(/\s+/g, ' ').trim();
       if (descSnippet && descSnippet.length > 20 && !headline.includes(descSnippet.slice(0, 30))) {
         headline += `. ${descSnippet}`;
       }
 
-      const sentiment = action === 'BUY WATCH' ? 'Bullish' as const :
-                        action === 'IGNORE' ? 'Neutral' as const : 'Neutral' as const;
+      // DEDUP: same symbol + same event type + same day → keep highest scoring
+      const dateStr = (item.date || getTodayDate()).slice(0, 10);
+      const dedupKey = `${symbol}:${eventType}:${dateStr}`;
+      const existing = dedupMap.get(dedupKey);
 
-      allSignals.push({
+      const signal: IntelSignal = {
         symbol, company: item.companyName || enrichment?.companyName || symbol,
         date: item.date || getTodayDate(), source: 'order',
         eventType, headline,
@@ -583,18 +755,28 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
         pctRevenue, pctMcap,
         client, segment, timeline,
         buyerSeller: null, premiumDiscount: null,
-        impactType, action, score, sentiment, isWatchlist,
-      });
+        impactLevel, action, score, timeWeight, weightedScore, sentiment, whyItMatters,
+        isNegative: negative, isWatchlist, isPortfolio,
+      };
+
+      if (!existing || weightedScore > existing.weightedScore) {
+        // If merging, keep higher value
+        if (existing && existing.valueCr && signal.valueCr && existing.valueCr > signal.valueCr) {
+          signal.valueCr = existing.valueCr;
+        }
+        dedupMap.set(dedupKey, signal);
+      }
     }
 
+    // Collect deduped order signals
+    allSignals.push(...dedupMap.values());
+
     // ── 4. Build signals from deals ──
+    const dealDedupMap = new Map<string, IntelSignal>();
+
     for (const deal of [...blockDeals, ...bulkDeals]) {
       const symbol = normalizeTicker(deal.symbol);
       if (!symbol) continue;
-
-      const dealKey = `${symbol}:${deal.type}:${deal.clientName}:${deal.buySell}`;
-      if (seenKeys.has(dealKey)) continue;
-      seenKeys.add(dealKey);
 
       const enrichment = enrichMap.get(symbol);
       const isBuy = deal.buySell.toLowerCase().includes('buy');
@@ -610,21 +792,30 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
       const eventType = `${deal.type} ${isBuy ? 'Buy' : 'Sell'}`;
       const buyerQual = scoreBuyerQuality(deal.clientName);
       const isWatchlist = watchlistSet.has(symbol);
+      const isPortfolio = portfolioSet.has(symbol);
+      const isSell = !isBuy;
+      const sentiment = classifySentiment(eventType, isSell && buyerQual >= 80, isBuy);
 
-      // For deals, impact is about institutional conviction, not revenue
-      const impactType: ImpactType = buyerQual >= 80 ? 'Revenue Impact' :
-                                     buyerQual >= 60 ? 'Margin Impact' : 'Sentiment Only';
-      const action: ActionFlag = (buyerQual >= 80 && isBuy && dealValueCr >= 1) ? 'BUY WATCH' :
-                                 (buyerQual >= 60 || isWatchlist) ? 'HOLD CONTEXT' : 'IGNORE';
+      // For deals, use buyer quality to determine impact level
+      const impactLevel: ImpactLevel = buyerQual >= 80 && dealValueCr >= 5 ? 'HIGH' :
+                                       buyerQual >= 60 || dealValueCr >= 1 ? 'MEDIUM' : 'LOW';
+      const action = classifyAction(impactLevel, sentiment, isWatchlist, isPortfolio, eventType);
+      const timeWeight = computeTimeWeight(deal.dealDate || getTodayDate());
 
       const score = computeScore({
-        pctRevenue: null, valueCr: dealValueCr, impactType, eventType,
-        client: null, segment: null, isWatchlist, isDeal: true,
+        pctRevenue: null, valueCr: dealValueCr, impactLevel, eventType,
+        client: null, segment: null, isWatchlist, isPortfolio, isDeal: true, isNegative: isSell && buyerQual >= 80,
         dealPremiumDiscount: premiumDiscount, buyerQuality: buyerQual,
+      });
+      const weightedScore = Math.round(score * timeWeight);
+
+      const whyItMatters = generateWhyItMatters({
+        eventType, impactLevel, pctRevenue: null, pctMcap: null, valueCr: dealValueCr,
+        client: null, segment: null, isNegative: isSell, sentiment, buyerSeller: deal.clientName, premiumDiscount,
       });
 
       // Headline
-      let headline = `${symbol} ${deal.type} ${isBuy ? '▲' : '▼'} ${fmtCr(dealValueCr)}`;
+      let headline = `${deal.type} ${isBuy ? '▲' : '▼'} ${fmtCr(dealValueCr)}`;
       headline += ` | ${deal.clientName.slice(0, 30)}`;
       if (premiumDiscount !== null) {
         headline += ` | ${premiumDiscount > 0 ? '+' : ''}${premiumDiscount.toFixed(1)}%`;
@@ -633,7 +824,12 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
         headline += ` | ${pctEquity.toFixed(2)}% eq`;
       }
 
-      allSignals.push({
+      // DEDUP: same symbol + same deal type + same direction + same day
+      const dateStr = (deal.dealDate || getTodayDate()).slice(0, 10);
+      const dedupKey = `${symbol}:${eventType}:${dateStr}`;
+      const existing = dealDedupMap.get(dedupKey);
+
+      const signal: IntelSignal = {
         symbol, company: enrichment?.companyName || symbol,
         date: deal.dealDate || getTodayDate(), source: 'deal',
         eventType, headline,
@@ -642,26 +838,71 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
         pctRevenue: null, pctMcap: null,
         client: null, segment: enrichment?.industry || null, timeline: null,
         buyerSeller: deal.clientName, premiumDiscount,
-        impactType, action, score,
-        sentiment: isBuy ? 'Bullish' as const : 'Bearish' as const,
-        isWatchlist,
-      });
+        impactLevel, action, score, timeWeight, weightedScore, sentiment, whyItMatters,
+        isNegative: isSell && buyerQual >= 80,
+        isWatchlist, isPortfolio,
+      };
+
+      if (!existing || weightedScore > existing.weightedScore) {
+        if (existing && existing.valueCr && signal.valueCr && existing.valueCr > signal.valueCr) {
+          signal.valueCr = existing.valueCr;
+        }
+        dealDedupMap.set(dedupKey, signal);
+      }
     }
 
-    // ── 5. Filter, sort, classify ──
-    // Remove IGNORE unless it's watchlist
+    allSignals.push(...dealDedupMap.values());
+
+    // ── 5. Filter, sort by weighted score ──
     const filtered = allSignals
-      .filter(s => s.action !== 'IGNORE' || s.isWatchlist)
+      .filter(s => s.action !== 'IGNORE' || s.isWatchlist || s.isPortfolio)
       .sort((a, b) => {
-        // BUY WATCH first, then HOLD, then IGNORE
-        const actionRank = { 'BUY WATCH': 0, 'HOLD CONTEXT': 1, 'IGNORE': 2 };
+        // BUY WATCH first, then TRACK, then IGNORE
+        const actionRank: Record<ActionFlag, number> = { 'BUY WATCH': 0, 'TRACK': 1, 'IGNORE': 2 };
         const ar = actionRank[a.action] - actionRank[b.action];
         if (ar !== 0) return ar;
-        // Then by score
-        return b.score - a.score;
+        // Then by weighted score (time-decayed)
+        return b.weightedScore - a.weightedScore;
       });
 
-    // Top 3 = highest scoring non-IGNORE signals
+    // ── 5.5 Build trend layer (signal stacking per company) ──
+    const companySignalMap = new Map<string, IntelSignal[]>();
+    for (const s of filtered) {
+      const arr = companySignalMap.get(s.symbol) || [];
+      arr.push(s);
+      companySignalMap.set(s.symbol, arr);
+    }
+
+    const trends: CompanyTrend[] = [];
+    for (const [sym, sigs] of companySignalMap) {
+      const count = sigs.length;
+      const stackLevel: CompanyTrend['stackLevel'] = count >= 4 ? 'STRONG' : count >= 2 ? 'BUILDING' : 'WEAK';
+
+      // Set stack info on each signal
+      for (const s of sigs) {
+        s.signalStackCount = count;
+        s.signalStackLevel = stackLevel;
+      }
+
+      const bullish = sigs.filter(s => s.sentiment === 'Bullish').length;
+      const bearish = sigs.filter(s => s.sentiment === 'Bearish').length;
+
+      if (count >= 2) {
+        trends.push({
+          symbol: sym,
+          company: sigs[0].company,
+          signalCount: count,
+          stackLevel,
+          topAction: sigs[0].action,
+          topImpact: sigs[0].impactLevel,
+          netSentiment: bullish > bearish ? 'Bullish' : bearish > bullish ? 'Bearish' : 'Neutral',
+          avgScore: Math.round(sigs.reduce((s, x) => s + x.weightedScore, 0) / count),
+        });
+      }
+    }
+    trends.sort((a, b) => b.avgScore - a.avgScore);
+
+    // Top 3 = highest weighted-scoring non-IGNORE signals
     const top3 = filtered.filter(s => s.action !== 'IGNORE').slice(0, 3);
 
     // ── 6. Build daily bias ──
@@ -669,45 +910,57 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
     let totalOrderValueCr = 0;
     let totalDealValueCr = 0;
     let buyWatchCount = 0;
+    let trackCount = 0;
     let highImpactCount = 0;
     let bullishCount = 0;
     let bearishCount = 0;
+    let portfolioAlerts = 0;
+    let negativeSignals = 0;
 
     for (const s of filtered) {
       if (s.segment) sectorSet.add(s.segment);
       if (s.source === 'order' && s.valueCr) totalOrderValueCr += s.valueCr;
       if (s.source === 'deal' && s.valueCr) totalDealValueCr += s.valueCr;
       if (s.action === 'BUY WATCH') buyWatchCount++;
-      if (s.impactType === 'Revenue Impact') highImpactCount++;
+      if (s.action === 'TRACK') trackCount++;
+      if (s.impactLevel === 'HIGH') highImpactCount++;
       if (s.sentiment === 'Bullish') bullishCount++;
       if (s.sentiment === 'Bearish') bearishCount++;
+      if (s.isPortfolio && s.action !== 'IGNORE') portfolioAlerts++;
+      if (s.isNegative) negativeSignals++;
     }
 
     const netBias: DailyBias['netBias'] = bullishCount > bearishCount + 2 ? 'Bullish' :
                                            bearishCount > bullishCount + 2 ? 'Bearish' : 'Neutral';
     const activeSectors = Array.from(sectorSet).slice(0, 5);
 
-    const biasStr = highImpactCount > 0
-      ? `${highImpactCount} High Impact signal${highImpactCount > 1 ? 's' : ''} in ${activeSectors.slice(0, 3).join(', ')}. Net: ${netBias}`
-      : `${filtered.length} signals. Sectors: ${activeSectors.slice(0, 3).join(', ') || 'Mixed'}. Net: ${netBias}`;
+    const biasParts: string[] = [];
+    if (highImpactCount > 0) biasParts.push(`${highImpactCount} High Impact`);
+    if (buyWatchCount > 0) biasParts.push(`${buyWatchCount} BUY WATCH`);
+    if (negativeSignals > 0) biasParts.push(`${negativeSignals} ⚠ Negative`);
+    if (portfolioAlerts > 0) biasParts.push(`${portfolioAlerts} Portfolio Alert${portfolioAlerts > 1 ? 's' : ''}`);
+    biasParts.push(`Net: ${netBias}`);
+    const biasStr = biasParts.join(' · ');
 
     const bias: DailyBias = {
-      netBias, highImpactCount, activeSectors, buyWatchCount,
+      netBias, highImpactCount, activeSectors, buyWatchCount, trackCount,
       totalSignals: filtered.length,
       totalOrderValueCr: Math.round(totalOrderValueCr),
       totalDealValueCr: Math.round(totalDealValueCr),
+      portfolioAlerts, negativeSignals,
       summary: biasStr,
     };
 
     const response: IntelligenceResponse = {
       top3,
-      signals: filtered.slice(0, 15), // Max 15
+      signals: filtered.slice(0, 25), // Increased from 15 to 25
+      trends: trends.slice(0, 10),
       bias,
       updatedAt: new Date().toISOString(),
     };
 
     const duration = Date.now() - startTime;
-    console.log(`[Intelligence] Done: ${filtered.length} signals, ${top3.length} top3, bias=${netBias} in ${duration}ms`);
+    console.log(`[Intelligence] Done: ${filtered.length} signals (deduped from ${announcements.length}), ${top3.length} top3, ${trends.length} trends, bias=${netBias} in ${duration}ms`);
 
     return NextResponse.json(response);
   } catch (error) {
@@ -715,10 +968,12 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
     return NextResponse.json({
       top3: [],
       signals: [],
+      trends: [],
       bias: {
         netBias: 'Neutral' as const,
-        highImpactCount: 0, activeSectors: [], buyWatchCount: 0,
+        highImpactCount: 0, activeSectors: [], buyWatchCount: 0, trackCount: 0,
         totalSignals: 0, totalOrderValueCr: 0, totalDealValueCr: 0,
+        portfolioAlerts: 0, negativeSignals: 0,
         summary: 'Error fetching intelligence',
       },
       updatedAt: new Date().toISOString(),
