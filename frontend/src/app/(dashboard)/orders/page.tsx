@@ -29,18 +29,21 @@ interface Signal {
   source: 'order' | 'deal';
   eventType: string;
   headline: string;
-  valueCr: number | null;
+  valueCr: number;               // NEVER null — always populated
   valueUsd: string | null;
   mcapCr: number | null;
   revenueCr: number | null;
-  pctRevenue: number | null;
+  impactPct: number;             // Core metric: (valueCr / revenueCr) * 100
+  pctRevenue: number | null;     // Legacy alias for impactPct
   pctMcap: number | null;
+  inferenceUsed: boolean;        // True if value was inferred
   client: string | null;
   segment: string | null;
   timeline: string | null;
   buyerSeller: string | null;
   premiumDiscount: number | null;
   impactLevel: ImpactLevel;
+  impactConfidence: 'HIGH' | 'MEDIUM' | 'LOW';
   action: ActionFlag;
   score: number;
   timeWeight: number;
@@ -48,6 +51,7 @@ interface Signal {
   sentiment: 'Bullish' | 'Neutral' | 'Bearish';
   whyItMatters: string;
   isNegative: boolean;
+  earningsBoost: boolean;
   isWatchlist: boolean;
   isPortfolio: boolean;
   signalStackCount?: number;
@@ -138,6 +142,9 @@ export default function CompanyIntelligencePage() {
   const [daysFilter, setDaysFilter] = useState(7);
   const [typeFilter, setTypeFilter] = useState<FilterType>('ALL');
   const [universeFilter, setUniverseFilter] = useState<UniverseFilter>('ALL');
+  const [debugInfo, setDebugInfo] = useState<any>(null);
+  const [isStale, setIsStale] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -169,13 +176,15 @@ export default function CompanyIntelligencePage() {
 
       const wlParam = watchlist.length > 0 ? `&watchlist=${watchlist.join(',')}` : '';
       const pfParam = portfolio.length > 0 ? `&portfolio=${portfolio.join(',')}` : '';
-      const res = await fetch(`/api/market/intelligence?days=${daysFilter}${wlParam}${pfParam}`);
+      const res = await fetch(`/api/market/intelligence?days=${daysFilter}${wlParam}${pfParam}&debug=true`);
       const data = await res.json();
 
       setTop3(data.top3 || []);
       setSignals(data.signals || []);
       setTrends(data.trends || []);
       setBias(data.bias || null);
+      if (data.debug) setDebugInfo(data.debug);
+      setIsStale(!!data.stale);
       setLastUpdated(new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }));
     } catch (err) {
       console.error('[Intelligence] Error:', err);
@@ -298,6 +307,45 @@ export default function CompanyIntelligencePage() {
         </div>
       )}
 
+      {/* ── STALE DATA WARNING ── */}
+      {isStale && (
+        <div style={{
+          backgroundColor: 'rgba(255,152,0,0.08)', border: '1px solid rgba(255,152,0,0.3)', borderRadius: '8px',
+          padding: '10px 14px', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px',
+        }}>
+          <span style={{ fontSize: '16px' }}>⚠️</span>
+          <span style={{ fontSize: '12px', color: '#FFB74D' }}>
+            Showing cached signals — live data sources unavailable. Scores may be decayed.
+          </span>
+        </div>
+      )}
+
+      {/* ── DEBUG PANEL ── */}
+      {debugInfo && (
+        <div style={{ marginBottom: '12px' }}>
+          <button onClick={() => setShowDebug(!showDebug)} style={{
+            fontSize: '11px', color: TEXT3, background: 'none', border: 'none', cursor: 'pointer',
+            textDecoration: 'underline', padding: 0,
+          }}>
+            {showDebug ? 'Hide' : 'Show'} Data Sources
+          </button>
+          {showDebug && (
+            <div style={{
+              backgroundColor: 'rgba(15,122,191,0.05)', border: `1px solid ${BORDER}`, borderRadius: '8px',
+              padding: '10px 14px', marginTop: '6px', fontSize: '11px', color: TEXT2, lineHeight: 1.6,
+            }}>
+              <div><strong style={{ color: TEXT1 }}>Sources:</strong> {(debugInfo.dataSources || []).join(', ') || 'None'}</div>
+              <div>NSE: {debugInfo.nseAnnouncements || 0} raw → {debugInfo.nseMaterial || 0} material | MC: {debugInfo.mcNewsItems || 0} → {debugInfo.mcMaterial || 0} | Google: {debugInfo.googleNewsItems || 0} → {debugInfo.googleMaterial || 0}</div>
+              <div>Deals: {debugInfo.nseBlockDeals || 0} block, {debugInfo.nseBulkDeals || 0} bulk | Enriched: {debugInfo.enrichedSymbols || 0} symbols | Earnings cache: {debugInfo.earningsCacheHits || 0}</div>
+              <div>Signals: {debugInfo.totalSignalsAfterDedup || 0} after dedup{debugInfo.cachedSignals > 0 ? ` | Cached: ${debugInfo.cachedSignals}` : ''}</div>
+              {debugInfo.errors?.length > 0 && (
+                <div style={{ color: '#FF8A80', marginTop: '4px' }}>{debugInfo.errors.join(' | ')}</div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Loading */}
       {loading && top3.length === 0 && (
         <div style={{ textAlign: 'center', padding: '50px 0' }}>
@@ -390,24 +438,38 @@ export default function CompanyIntelligencePage() {
                   </span>
                 </div>
 
-                {/* Row 2: Materiality badges */}
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '6px', paddingLeft: '2px' }}>
-                  {s.pctRevenue !== null && s.pctRevenue > 0 && (
-                    <span style={{
-                      fontSize: '12px', fontWeight: 700, padding: '3px 10px', borderRadius: '6px',
-                      backgroundColor: s.pctRevenue >= 5 ? 'rgba(16,185,129,0.15)' : s.pctRevenue >= 1 ? 'rgba(251,191,36,0.12)' : 'rgba(100,116,139,0.1)',
-                      color: s.pctRevenue >= 5 ? GREEN : s.pctRevenue >= 1 ? YELLOW : TEXT2,
-                    }}>{s.pctRevenue.toFixed(1)}% of Revenue</span>
+                {/* Row 2: QUANT DATA — Event Value | Revenue | Impact % */}
+                <div style={{
+                  display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '6px', padding: '6px 8px',
+                  backgroundColor: 'rgba(6,182,212,0.05)', borderRadius: '6px', border: '1px solid rgba(6,182,212,0.1)',
+                }}>
+                  <span style={{ fontSize: '12px', color: TEXT2 }}>
+                    Event: <span style={{ fontWeight: 700, color: CYAN }}>{fmtCr(s.valueCr)}</span>
+                    {s.inferenceUsed && <span style={{ fontSize: '9px', color: TEXT3, marginLeft: '3px' }}>(est.)</span>}
+                  </span>
+                  {s.revenueCr && s.revenueCr > 0 && (
+                    <span style={{ fontSize: '12px', color: TEXT2 }}>
+                      Rev: <span style={{ fontWeight: 700, color: TEXT1 }}>{fmtCr(s.revenueCr)}</span>
+                    </span>
                   )}
+                  <span style={{
+                    fontSize: '13px', fontWeight: 800, padding: '2px 10px', borderRadius: '6px',
+                    backgroundColor: s.impactPct >= 8 ? 'rgba(16,185,129,0.2)' : s.impactPct >= 3 ? 'rgba(251,191,36,0.15)' : 'rgba(100,116,139,0.1)',
+                    color: s.impactPct >= 8 ? GREEN : s.impactPct >= 3 ? YELLOW : TEXT2,
+                  }}>Impact: {s.impactPct.toFixed(1)}% {s.impactPct >= 8 ? '→ HIGH' : s.impactPct >= 3 ? '→ MEDIUM' : '→ LOW'}
+                    {s.inferenceUsed && ' (est.)'}
+                  </span>
                   {s.pctMcap !== null && s.pctMcap > 0 && (
                     <span style={{
-                      fontSize: '12px', fontWeight: 700, padding: '3px 10px', borderRadius: '6px',
-                      backgroundColor: s.pctMcap >= 5 ? 'rgba(16,185,129,0.15)' : 'rgba(6,182,212,0.12)',
-                      color: s.pctMcap >= 5 ? GREEN : CYAN,
-                    }}>{s.pctMcap.toFixed(1)}% of MCap</span>
+                      fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '6px',
+                      backgroundColor: 'rgba(6,182,212,0.12)', color: CYAN,
+                    }}>{s.pctMcap.toFixed(1)}% MCap</span>
                   )}
-                  {s.mcapCr && <span style={{ fontSize: '11px', color: TEXT3 }}>MCap: {fmtCr(s.mcapCr)}</span>}
-                  {s.revenueCr && <span style={{ fontSize: '11px', color: TEXT3 }}>Rev: {fmtCr(s.revenueCr)}</span>}
+                  {s.earningsBoost && (
+                    <span style={{ fontSize: '10px', fontWeight: 700, color: GREEN, padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(16,185,129,0.12)' }}>
+                      ⚡ EARNINGS BOOST
+                    </span>
+                  )}
                 </div>
 
                 {/* Row 3: WHY IT MATTERS — the institutional insight */}
@@ -507,18 +569,16 @@ export default function CompanyIntelligencePage() {
                     padding: '1px 6px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.1)',
                   }}>{s.eventType}</span>
 
-                  {/* Value */}
-                  {s.valueCr !== null && s.valueCr > 0 && (
-                    <span style={{ fontSize: '12px', fontWeight: 700, color: CYAN }}>{fmtCr(s.valueCr)}</span>
-                  )}
+                  {/* Value — always shown */}
+                  <span style={{ fontSize: '12px', fontWeight: 700, color: CYAN }}>
+                    {fmtCr(s.valueCr)}{s.inferenceUsed ? '*' : ''}
+                  </span>
 
-                  {/* Materiality */}
-                  {s.pctRevenue !== null && s.pctRevenue > 0 && (
-                    <span style={{
-                      fontSize: '11px', fontWeight: 700,
-                      color: s.pctRevenue >= 5 ? GREEN : s.pctRevenue >= 1 ? YELLOW : TEXT2,
-                    }}>{s.pctRevenue.toFixed(1)}% Rev</span>
-                  )}
+                  {/* Impact % — always shown */}
+                  <span style={{
+                    fontSize: '11px', fontWeight: 700,
+                    color: s.impactPct >= 8 ? GREEN : s.impactPct >= 3 ? YELLOW : TEXT2,
+                  }}>{s.impactPct.toFixed(1)}%</span>
                   {s.pctMcap !== null && s.pctMcap > 0 && (
                     <span style={{ fontSize: '11px', fontWeight: 700, color: CYAN }}>
                       {s.pctMcap.toFixed(1)}% MCap

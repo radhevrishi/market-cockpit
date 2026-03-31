@@ -22,15 +22,70 @@ const DEFAULT_WATCHLIST: string[] = [];
 // NSE symbol → screener.in symbol mapping (where they differ)
 // Discovered via screener.in search API: /api/company/search/?q=XXX
 const SCREENER_SYMBOL_MAP: Record<string, string> = {
-  'TATAMOTORS': 'TMCV',
+  // Ampersand / special char tickers → screener.in names
   'M&M': 'MM',
   'M&MFIN': 'MMFIN',
   'L&TFH': 'LTFH',
-  'BAJAJ-AUTO': 'BAJAJ_AUTO',
+  'L&T': 'LT',
+  'S&SPOWER': 'SSPOWER',
+  // Hyphenated tickers
+  'BAJAJ-AUTO': 'BAJAJAUTO',
+  // Known mismatches between NSE and Screener
+  'TATAMOTORS': 'TATAMOTORS',
+  'HDFCBANK': 'HDFCBANK',
+  'ICICIBANK': 'ICICIBANK',
+  'SBIN': 'SBIN',
+  'RELIANCE': 'RELIANCE',
+  'TCS': 'TCS',
+  'INFY': 'INFY',
+  'HINDUNILVR': 'HINDUNILVR',
+  'ITC': 'ITC',
+  'KOTAKBANK': 'KOTAKBANK',
+  'AXISBANK': 'AXISBANK',
+  'MARUTI': 'MARUTI',
+  'SUNPHARMA': 'SUNPHARMA',
+  'TITAN': 'TITAN',
+  'ASIANPAINT': 'ASIANPAINT',
+  'WIPRO': 'WIPRO',
+  'HCLTECH': 'HCLTECH',
+  'ADANIENT': 'ADANIENT',
+  'ADANIPORTS': 'ADANIPORTS',
+  'ULTRACEMCO': 'ULTRACEMCO',
+  'JSWSTEEL': 'JSWSTEEL',
+  'TATASTEEL': 'TATASTEEL',
+  'POWERGRID': 'POWERGRID',
+  'NTPC': 'NTPC',
+  'ONGC': 'ONGC',
+  'COALINDIA': 'COALINDIA',
+  'BAJFINANCE': 'BAJFINANCE',
+  'BAJAJFINSV': 'BAJAJFINSV',
+  'DRREDDY': 'DRREDDY',
+  'CIPLA': 'CIPLA',
+  'DIVISLAB': 'DIVISLAB',
+  'BHARTIARTL': 'BHARTIARTL',
+  'TECHM': 'TECHM',
+  'NESTLEIND': 'NESTLEIND',
+  'BRITANNIA': 'BRITANNIA',
+  'HEROMOTOCO': 'HEROMOTOCO',
+  'EICHERMOT': 'EICHERMOT',
+  'INDUSINDBK': 'INDUSINDBK',
+  'SBILIFE': 'SBILIFE',
+  'HDFCLIFE': 'HDFCLIFE',
+  'GRASIM': 'GRASIM',
+  'TATACONSUM': 'TATACONSUM',
+  'APOLLOHOSP': 'APOLLOHOSP',
+  'LTIM': 'LTIM',
+  'VEDL': 'VEDL',
+  'HAL': 'HAL',
+  'BEL': 'BEL',
+  'BHEL': 'BHEL',
+  'IRCTC': 'IRCTC',
+  'ZOMATO': 'ZOMATO',
+  'PAYTM': 'ONEPAYTM',
+  'DMART': 'DMART',
+  'TRENT': 'TRENT',
   // BSE numeric codes → screener.in names
   '532067': 'BLACKBIO',
-  // Ampersand tickers — screener.in uses without ampersand
-  'S&SPOWER': 'SSPOWER',
 };
 
 /** Get screener.in symbol for a given NSE symbol */
@@ -63,7 +118,10 @@ interface StoredEarnings {
   currentPrice: number | null;
   sector: string;
   isBanking: boolean; // Flag for banking/NBFC companies
-  source: 'nse' | 'screener.in' | 'trendlyne';
+  source: 'nse' | 'screener.in' | 'trendlyne' | 'moneycontrol';
+  sourceConfidence: number;      // 0-100 confidence in data quality
+  dataStatus: 'FULL' | 'PARTIAL' | 'ESTIMATED' | 'MISSING';
+  failureReasons?: string[];     // Why other sources failed
   fetchedAt: number;
   validatedAt: number;
   guidance?: GuidanceData;       // Forward-looking sentiment from screener.in Pros/Cons
@@ -195,6 +253,12 @@ interface EarningsScanCard {
   keyPhrasesNegative?: string[];
   divergence?: 'StrongEarnings_WeakGuidance' | 'WeakEarnings_StrongGuidance' | 'None';
 
+  // Source attribution
+  source: 'nse' | 'screener.in' | 'trendlyne' | 'moneycontrol' | 'none';
+  sourceConfidence: number;      // 0-100
+  dataStatus: 'FULL' | 'PARTIAL' | 'ESTIMATED' | 'MISSING';
+  failureReasons?: string[];
+
   // Links
   screenerUrl: string;
   nseUrl: string;
@@ -203,8 +267,8 @@ interface EarningsScanCard {
 // ── Data Validation ─────────────────────────
 
 function validateQuarterlyData(quarters: QuarterFinancials[], symbol: string): { valid: boolean; reason?: string } {
-  if (!quarters || quarters.length < 2) {
-    return { valid: false, reason: `${symbol}: Less than 2 quarters of data` };
+  if (!quarters || quarters.length === 0) {
+    return { valid: false, reason: `${symbol}: No quarters of data` };
   }
 
   const hasPositiveRevenue = quarters.some(q => q.revenue > 0);
@@ -224,27 +288,441 @@ function validateQuarterlyData(quarters: QuarterFinancials[], symbol: string): {
   return { valid: true };
 }
 
-// ── Helper: Fetch NSE Financials ─────────────
+// ── Symbol Resolution Engine ──────────────────
+// Resolves NSE symbols to symbols used by other sources (screener.in, moneycontrol)
+// Uses fuzzy matching + search API + cached resolved mappings
 
-async function fetchNSEFinancials(symbol: string): Promise<QuarterFinancials[] | null> {
+const SYMBOL_RESOLUTION_CACHE = new Map<string, { screener: string; mcSlug: string; resolved: number }>();
+
+/** Normalize symbol for matching: remove special chars, lowercase */
+function normalizeSymbol(s: string): string {
+  return s.replace(/[&\-_.\s]/g, '').toLowerCase();
+}
+
+/** Fuzzy match: checks if normalized versions are similar enough */
+function fuzzyMatch(a: string, b: string): boolean {
+  const na = normalizeSymbol(a);
+  const nb = normalizeSymbol(b);
+  if (na === nb) return true;
+  // Check if one contains the other
+  if (na.includes(nb) || nb.includes(na)) return true;
+  // Levenshtein distance <= 2 for short symbols
+  if (na.length <= 8 && nb.length <= 8) {
+    let dist = 0;
+    const longer = na.length >= nb.length ? na : nb;
+    const shorter = na.length >= nb.length ? nb : na;
+    for (let i = 0; i < longer.length; i++) {
+      if (shorter[i] !== longer[i]) dist++;
+    }
+    return dist <= 2;
+  }
+  return false;
+}
+
+/** Resolve screener.in symbol via search API (cached) */
+async function resolveScreenerSymbol(nseSymbol: string): Promise<string | null> {
+  const cached = SYMBOL_RESOLUTION_CACHE.get(nseSymbol);
+  if (cached && Date.now() - cached.resolved < 24 * 60 * 60 * 1000) {
+    return cached.screener || null;
+  }
+
+  // Check static map first
+  if (SCREENER_SYMBOL_MAP[nseSymbol]) {
+    return SCREENER_SYMBOL_MAP[nseSymbol];
+  }
+
+  // Try screener.in search API
+  try {
+    const searchUrl = `https://www.screener.in/api/company/search/?q=${encodeURIComponent(nseSymbol)}&v=3&fts=1`;
+    const res = await fetch(searchUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.ok) {
+      const results = await res.json();
+      if (Array.isArray(results) && results.length > 0) {
+        // Find best match: exact NSE symbol match first, then fuzzy
+        const exact = results.find((r: any) => r.url && normalizeSymbol(r.url.replace('/company/', '').replace('/consolidated/', '').replace('/', '')) === normalizeSymbol(nseSymbol));
+        const fuzzy = results.find((r: any) => r.url && fuzzyMatch(r.url.replace('/company/', '').replace('/consolidated/', '').replace('/', ''), nseSymbol));
+        const match = exact || fuzzy || results[0];
+        if (match?.url) {
+          const resolved = match.url.replace('/company/', '').replace('/consolidated/', '').replace('/', '');
+          // Cache the resolution
+          const existing = SYMBOL_RESOLUTION_CACHE.get(nseSymbol) || { screener: '', mcSlug: '', resolved: 0 };
+          existing.screener = resolved;
+          existing.resolved = Date.now();
+          SYMBOL_RESOLUTION_CACHE.set(nseSymbol, existing);
+          SCREENER_SYMBOL_MAP[nseSymbol] = resolved;
+          console.log(`[Symbol Resolve] ${nseSymbol} → screener:${resolved}`);
+          return resolved;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn(`[Symbol Resolve] screener search failed for ${nseSymbol}:`, (e as Error).message);
+  }
+  return null;
+}
+
+// ── Source Confidence Scores ─────────────────
+// Moneycontrol = primary (structured quarterly P&L)
+// Screener = secondary (HTML scraping + guidance + metadata)
+// NSE = metadata only (filing dates, not reliable P&L)
+const SOURCE_CONFIDENCE: Record<string, number> = {
+  'moneycontrol': 90,
+  'screener.in': 82,
+  'nse': 60,          // Low — NSE returns filing metadata, NOT structured P&L
+  'trendlyne': 70,
+  'none': 0,
+};
+
+// ── Helper: Fetch NSE Financials (REAL PARSER) ──
+
+async function fetchNSEFinancials(symbol: string): Promise<{ quarters: QuarterFinancials[]; companyName: string; isBanking: boolean } | null> {
   try {
     const data = await fetchCompanyFinancialResults(symbol);
     if (!data) return null;
 
-    // NSE financial results API returns filing metadata
-    // Try to extract quarterly data from response if available
-    // The structure may vary, so be flexible in parsing
-    // Return null if no usable quarterly data found
-    // Note: NSE API may not have full P&L tables, so this is best-effort
+    // NSE returns array or object with financial results
+    // Possible structures:
+    // 1. Array of result objects directly
+    // 2. { data: [...] } wrapper
+    // 3. { results: [...] } wrapper
+    const results = Array.isArray(data) ? data : (data?.data || data?.results || data?.content || []);
+    if (!Array.isArray(results) || results.length === 0) {
+      console.log(`[NSE Parser] ${symbol}: No results array in response (keys: ${Object.keys(data || {}).join(',')})`);
+      // Try to parse single-object response
+      if (data && typeof data === 'object' && (data.re_sales || data.re_revenue || data.SAL || data.sales)) {
+        return parseNSESingleResult(data, symbol);
+      }
+      return null;
+    }
 
-    console.log(`[Earnings Scan] NSE financials for ${symbol}: attempt to parse`);
-    // Placeholder: actual parsing depends on NSE API response format
-    // For now, return null to fall through to screener.in
-    return null;
+    console.log(`[NSE Parser] ${symbol}: Got ${results.length} results, first keys: ${Object.keys(results[0] || {}).slice(0, 10).join(',')}`);
+
+    // Parse quarterly results from NSE format
+    // NSE fields vary, but commonly include:
+    // re_symbol, re_companyName, re_broadCast, re_xbrl, re_ind_auditedUnAudited
+    // Financial fields may be in: SAL/re_sales, OPR/re_operatingProfit, NET/re_netProfit, EPS/re_eps
+    // Or in nested xbrl object with standardized field names
+    const quarters: QuarterFinancials[] = [];
+    let companyName = symbol;
+    let isBanking = false;
+
+    for (const row of results.slice(0, 8)) { // Last 8 quarters max
+      // Detect company name
+      if (row.re_companyName || row.companyName || row.company) {
+        companyName = row.re_companyName || row.companyName || row.company;
+      }
+
+      // Detect banking
+      if (row.re_ind || row.industry || row.sector) {
+        const ind = (row.re_ind || row.industry || row.sector || '').toLowerCase();
+        if (ind.includes('bank') || ind.includes('financ') || ind.includes('nbfc') || ind.includes('insurance')) {
+          isBanking = true;
+        }
+      }
+
+      // Extract period
+      let period = '';
+      if (row.re_broadCast || row.broadcastDate || row.resultDate) {
+        const dateStr = row.re_broadCast || row.broadcastDate || row.resultDate || '';
+        period = extractPeriodFromDate(dateStr);
+      }
+      if (!period && (row.re_toDate || row.toDate || row.period)) {
+        period = extractPeriodFromDate(row.re_toDate || row.toDate || row.period || '');
+      }
+      if (!period && row.quarterEnded) {
+        period = extractPeriodFromDate(row.quarterEnded);
+      }
+
+      if (!period) continue;
+
+      // Extract financials — try multiple field name patterns
+      const revenue = pickNumber(row, ['re_sales', 'SAL', 'sales', 'revenue', 'totalIncome', 'total_income', 'incomeFromOperations']);
+      const operatingProfit = pickNumber(row, ['re_operatingProfit', 'OPR', 'operatingProfit', 'pbit', 'ebit']);
+      const pat = pickNumber(row, ['re_netProfit', 'NET', 'netProfit', 'pat', 'profitAfterTax', 'net_profit']);
+      const eps = pickNumber(row, ['re_eps', 'EPS', 'eps', 'earningsPerShare', 'dilutedEPS', 'basicEPS']);
+
+      // Skip if no meaningful data
+      if (revenue === 0 && pat === 0 && eps === 0) continue;
+
+      const opm = revenue > 0 ? parseFloat(((operatingProfit / revenue) * 100).toFixed(1)) : 0;
+      const npm = revenue > 0 ? parseFloat(((pat / revenue) * 100).toFixed(1)) : 0;
+
+      quarters.push({ period, revenue, operatingProfit, opm, pat, npm, eps });
+    }
+
+    if (quarters.length === 0) {
+      console.log(`[NSE Parser] ${symbol}: No quarters could be parsed`);
+      return null;
+    }
+
+    // Sort by period (latest first) — parse "Mon YYYY" to comparable value
+    quarters.sort((a, b) => periodToNum(b.period) - periodToNum(a.period));
+
+    // Deduplicate same periods (keep first = latest filing)
+    const seen = new Set<string>();
+    const deduped = quarters.filter(q => {
+      if (seen.has(q.period)) return false;
+      seen.add(q.period);
+      return true;
+    });
+
+    console.log(`[NSE Parser] ${symbol}: Parsed ${deduped.length} quarters: ${deduped.map(q => q.period).join(', ')}`);
+    return { quarters: deduped, companyName, isBanking };
   } catch (err) {
-    console.warn(`[Earnings Scan] NSE financials failed for ${symbol}:`, (err as Error).message);
+    console.warn(`[NSE Parser] ${symbol} failed:`, (err as Error).message);
     return null;
   }
+}
+
+/** Parse a single NSE result object (non-array response) */
+function parseNSESingleResult(data: any, symbol: string): { quarters: QuarterFinancials[]; companyName: string; isBanking: boolean } | null {
+  const revenue = pickNumber(data, ['re_sales', 'SAL', 'sales', 'revenue']);
+  const pat = pickNumber(data, ['re_netProfit', 'NET', 'netProfit', 'pat']);
+  const eps = pickNumber(data, ['re_eps', 'EPS', 'eps']);
+  if (revenue === 0 && pat === 0) return null;
+  const operatingProfit = pickNumber(data, ['re_operatingProfit', 'OPR', 'operatingProfit']);
+  const opm = revenue > 0 ? parseFloat(((operatingProfit / revenue) * 100).toFixed(1)) : 0;
+  const npm = revenue > 0 ? parseFloat(((pat / revenue) * 100).toFixed(1)) : 0;
+  const period = extractPeriodFromDate(data.re_toDate || data.toDate || data.period || new Date().toISOString());
+  return {
+    quarters: [{ period: period || 'Unknown', revenue, operatingProfit, opm, pat, npm, eps }],
+    companyName: data.re_companyName || data.companyName || symbol,
+    isBanking: false,
+  };
+}
+
+/** Pick a number from an object trying multiple field names */
+function pickNumber(obj: any, fields: string[]): number {
+  for (const f of fields) {
+    if (obj[f] !== undefined && obj[f] !== null && obj[f] !== '' && obj[f] !== '-') {
+      const n = typeof obj[f] === 'number' ? obj[f] : parseFloat(String(obj[f]).replace(/,/g, ''));
+      if (!isNaN(n)) return n;
+    }
+  }
+  return 0;
+}
+
+/** Convert a date string to "Mon YYYY" period label */
+function extractPeriodFromDate(dateStr: string): string {
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  // Try ISO: 2025-12-31
+  let m = dateStr.match(/(\d{4})-(\d{2})/);
+  if (m) return `${months[parseInt(m[2], 10) - 1]} ${m[1]}`;
+  // Try DD-MM-YYYY or DD-Mon-YYYY
+  m = dateStr.match(/(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+  if (m) return `${months[parseInt(m[2], 10) - 1]} ${m[3]}`;
+  m = dateStr.match(/(\d{1,2})[/-]([A-Za-z]{3})[/-](\d{4})/);
+  if (m) {
+    const mi = months.findIndex(mn => mn.toLowerCase() === m![2].toLowerCase());
+    if (mi >= 0) return `${months[mi]} ${m[3]}`;
+  }
+  // Try "31 Dec 2025" or "Dec 31, 2025"
+  m = dateStr.match(/([A-Za-z]{3})\w*\s+\d{1,2},?\s+(\d{4})/);
+  if (m) {
+    const mi = months.findIndex(mn => mn.toLowerCase() === m![1].toLowerCase().slice(0, 3));
+    if (mi >= 0) return `${months[mi]} ${m[2]}`;
+  }
+  m = dateStr.match(/\d{1,2}\s+([A-Za-z]{3})\w*\s+(\d{4})/);
+  if (m) {
+    const mi = months.findIndex(mn => mn.toLowerCase() === m![1].toLowerCase().slice(0, 3));
+    if (mi >= 0) return `${months[mi]} ${m[2]}`;
+  }
+  return '';
+}
+
+/** Convert "Mon YYYY" to sortable number (e.g., "Dec 2025" → 202512) */
+function periodToNum(period: string): number {
+  const months: Record<string, number> = { Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6, Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12 };
+  const parts = period.split(' ');
+  if (parts.length !== 2) return 0;
+  return (parseInt(parts[1]) || 0) * 100 + (months[parts[0]] || 0);
+}
+
+// ── Helper: Fetch Moneycontrol Financials ────
+
+/** Moneycontrol symbol mapping cache — maps NSE symbol → MC page slug */
+const MC_SLUG_CACHE = new Map<string, string>();
+
+async function resolveMoneycontrolSlug(symbol: string): Promise<string | null> {
+  if (MC_SLUG_CACHE.has(symbol)) return MC_SLUG_CACHE.get(symbol)!;
+
+  try {
+    // Search Moneycontrol for the company via their search suggest API
+    const searchUrl = `https://www.moneycontrol.com/mccode/common/autosuggestion_solr.php?classic=true&query=${encodeURIComponent(symbol)}&type=1&format=json&callback=`;
+    const res = await fetch(searchUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Referer': 'https://www.moneycontrol.com/',
+      },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+
+    const text = await res.text();
+    // Response might be JSONP or plain JSON
+    const jsonStr = text.replace(/^[^[{]*/, '').replace(/[^}\]]*$/, '');
+    const data = JSON.parse(jsonStr);
+
+    // Find matching stock (NSE listed)
+    const results = Array.isArray(data) ? data : (data?.data || []);
+    for (const item of results) {
+      const nseCode = item.nse_symbol || item.sc_id || '';
+      const link = item.link_src || item.pclassid || '';
+      if (normalizeSymbol(nseCode) === normalizeSymbol(symbol) || fuzzyMatch(nseCode, symbol)) {
+        const slug = item.sc_id || link;
+        if (slug) {
+          MC_SLUG_CACHE.set(symbol, slug);
+          console.log(`[MC Resolve] ${symbol} → mc:${slug}`);
+          return slug;
+        }
+      }
+    }
+    // Fallback: use first NSE-listed result (more aggressive matching)
+    if (results.length >= 1) {
+      const nseResult = results.find((item: any) => {
+        const hasNSE = item.nse_symbol || (item.exchange && /nse/i.test(item.exchange));
+        return hasNSE && item.sc_id;
+      }) || results[0];
+      if (nseResult?.sc_id) {
+        MC_SLUG_CACHE.set(symbol, nseResult.sc_id);
+        console.log(`[MC Resolve] ${symbol} → mc:${nseResult.sc_id} (fallback match)`);
+        return nseResult.sc_id;
+      }
+    }
+  } catch (e) {
+    console.warn(`[MC Resolve] Failed for ${symbol}:`, (e as Error).message);
+  }
+  return null;
+}
+
+async function fetchMoneycontrolFinancials(symbol: string): Promise<{ quarters: QuarterFinancials[]; companyName: string; isBanking: boolean } | null> {
+  try {
+    const scId = await resolveMoneycontrolSlug(symbol);
+    if (!scId) {
+      console.log(`[MC Parser] ${symbol}: Could not resolve MC slug`);
+      return null;
+    }
+
+    // Fetch quarterly income statement
+    const url = `https://www.moneycontrol.com/mc/widget/mcfinancials/getFinancialData?scId=${encodeURIComponent(scId)}&frequency=3&requestType=Q&classic=true&referenceId=income`;
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'Accept': '*/*',
+        'Referer': 'https://www.moneycontrol.com/',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (!res.ok) {
+      console.log(`[MC Parser] ${symbol}: HTTP ${res.status}`);
+      return null;
+    }
+
+    const html = await res.text();
+    if (!html || html.length < 100) return null;
+
+    // MC returns HTML table with quarterly data
+    // Parse the table rows for: Net Sales, Operating Profit, OPM, PAT, EPS
+    return parseMoneycontrolHTML(html, symbol);
+  } catch (err) {
+    console.warn(`[MC Parser] ${symbol} failed:`, (err as Error).message);
+    return null;
+  }
+}
+
+function parseMoneycontrolHTML(html: string, symbol: string): { quarters: QuarterFinancials[]; companyName: string; isBanking: boolean } | null {
+  const quarters: QuarterFinancials[] = [];
+  let isBanking = false;
+
+  // Check for banking indicators
+  if (/net interest income|NII|interest earned|financing profit/i.test(html)) {
+    isBanking = true;
+  }
+
+  // Extract column headers (quarter periods)
+  // MC format: "Dec 2025", "Sep 2025", etc. in <th> or header cells
+  const columnLabels: string[] = [];
+  const headerMatch = html.match(/<thead[\s\S]*?<\/thead>/i) || html.match(/<tr[^>]*class="[^"]*head[^"]*"[^>]*>[\s\S]*?<\/tr>/i);
+  if (headerMatch) {
+    const thRegex = /<t[hd][^>]*>([\s\S]*?)<\/t[hd]>/gi;
+    let thMatch;
+    while ((thMatch = thRegex.exec(headerMatch[0])) !== null) {
+      const label = thMatch[1].replace(/<[^>]+>/g, '').trim();
+      if (/^[A-Z][a-z]{2}\s+\d{4}$/.test(label)) {
+        columnLabels.push(label);
+      }
+    }
+  }
+
+  // If no headers found, try to find period patterns in the whole HTML
+  if (columnLabels.length === 0) {
+    const qtrPattern = /(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}/g;
+    const text = html.replace(/<[^>]+>/g, ' ');
+    const matches = text.match(qtrPattern);
+    if (matches) {
+      const seen = new Set<string>();
+      for (const q of matches) {
+        if (!seen.has(q)) { columnLabels.push(q); seen.add(q); }
+      }
+    }
+  }
+
+  if (columnLabels.length === 0) {
+    console.log(`[MC Parser] ${symbol}: No quarter columns found`);
+    return null;
+  }
+
+  // Extract row data
+  const rows: Record<string, number[]> = {};
+  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  let rowMatch;
+
+  while ((rowMatch = rowRegex.exec(html)) !== null) {
+    const rowHtml = rowMatch[1];
+    const cells: string[] = [];
+    const cellRegex = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi;
+    let cellMatch;
+    while ((cellMatch = cellRegex.exec(rowHtml)) !== null) {
+      cells.push(cellMatch[1].replace(/<[^>]+>/g, '').trim());
+    }
+    if (cells.length < 2) continue;
+    const label = cells[0].replace(/[+\u00a0]/g, '').trim();
+    const values = cells.slice(1).map(c => parseNumber(c));
+
+    if (/^(?:Net )?Sales|Revenue|Income from Operations/i.test(label)) rows['sales'] = values;
+    else if (/^Operating Profit|EBIT|PBIT|Financing Profit/i.test(label)) rows['operatingProfit'] = values;
+    else if (/^OPM|Operating.?Margin|Financing Margin/i.test(label)) rows['opm'] = values;
+    else if (/^(?:Net )?Profit|PAT|Profit After Tax/i.test(label)) rows['pat'] = values;
+    else if (/^EPS|Earning/i.test(label)) rows['eps'] = values;
+    else if (/^Net Interest Income|NII/i.test(label)) rows['nii'] = values;
+  }
+
+  // Build quarter objects
+  const numQ = Math.min(columnLabels.length, 6);
+  for (let i = 0; i < numQ; i++) {
+    const revenue = rows['sales']?.[i] || 0;
+    const operatingProfit = rows['operatingProfit']?.[i] || 0;
+    const pat = rows['pat']?.[i] || 0;
+    const eps = rows['eps']?.[i] || 0;
+    const opmRaw = rows['opm']?.[i];
+    const opm = opmRaw || (revenue > 0 ? parseFloat(((operatingProfit / revenue) * 100).toFixed(1)) : 0);
+    const npm = revenue > 0 ? parseFloat(((pat / revenue) * 100).toFixed(1)) : 0;
+
+    if (revenue === 0 && pat === 0 && eps === 0) continue;
+
+    quarters.push({ period: columnLabels[i], revenue, operatingProfit, opm, pat, npm, eps });
+  }
+
+  if (quarters.length === 0) return null;
+
+  console.log(`[MC Parser] ${symbol}: Parsed ${quarters.length} quarters: ${quarters.map(q => q.period).join(', ')}`);
+  return { quarters, companyName: symbol, isBanking };
 }
 
 // ── Multi-Source Data Fetcher ────────────────
@@ -877,9 +1355,94 @@ function gradeFromScore(score: number, card?: { revenueYoY: number | null; patYo
 
 // ── Fetch & Build Card for a Symbol ─────────
 
-async function buildEarningsCard(symbol: string): Promise<EarningsScanCard | null> {
+// ── Cross-Source Validation ────────────────────
+interface SourceResult {
+  source: 'moneycontrol' | 'screener.in' | 'nse';
+  quarters: QuarterFinancials[];
+  companyName: string;
+  isBanking: boolean;
+  mcap?: number | null;
+  pe?: number | null;
+  currentPrice?: number | null;
+  html?: string; // For guidance extraction from screener
+}
+
+/** Compare two source results — flag mismatch if revenue/PAT deviation > 10% */
+function crossValidate(primary: SourceResult, secondary: SourceResult): { valid: boolean; discrepancy?: string } {
+  if (primary.quarters.length === 0 || secondary.quarters.length === 0) return { valid: true };
+
+  const pQ = primary.quarters[0]; // Latest quarter
+  const sQ = secondary.quarters[0];
+
+  // Match by period
+  if (pQ.period !== sQ.period) {
+    // Different periods — can't compare
+    return { valid: true };
+  }
+
+  // Revenue deviation
+  if (pQ.revenue > 0 && sQ.revenue > 0) {
+    const revDev = Math.abs(pQ.revenue - sQ.revenue) / Math.max(pQ.revenue, sQ.revenue) * 100;
+    if (revDev > 10) {
+      return { valid: false, discrepancy: `Revenue mismatch: ${primary.source}=${pQ.revenue} vs ${secondary.source}=${sQ.revenue} (${revDev.toFixed(1)}% deviation)` };
+    }
+  }
+
+  // PAT deviation
+  if (pQ.pat !== 0 && sQ.pat !== 0) {
+    const patDev = Math.abs(pQ.pat - sQ.pat) / Math.max(Math.abs(pQ.pat), Math.abs(sQ.pat)) * 100;
+    if (patDev > 15) {
+      return { valid: false, discrepancy: `PAT mismatch: ${primary.source}=${pQ.pat} vs ${secondary.source}=${sQ.pat} (${patDev.toFixed(1)}% deviation)` };
+    }
+  }
+
+  return { valid: true };
+}
+
+/** Pick the best source when both have data — prefer higher confidence, more quarters */
+function pickBestSource(a: SourceResult, b: SourceResult): SourceResult {
+  const confA = SOURCE_CONFIDENCE[a.source] || 0;
+  const confB = SOURCE_CONFIDENCE[b.source] || 0;
+
+  // Screener gets metadata bonus (mcap, pe, price) even if confidence is lower
+  // But Moneycontrol is more reliable for numbers
+  if (a.quarters.length >= b.quarters.length + 2) return a; // Significantly more data wins
+  if (b.quarters.length >= a.quarters.length + 2) return b;
+  if (confA > confB) return a;
+  if (confB > confA) return b;
+  return a.quarters.length >= b.quarters.length ? a : b;
+}
+
+// ── Data Freshness Layer ──────────────────────
+/** Compute confidence penalty based on data age */
+function freshnessPenalty(fetchedAt: number): number {
+  const ageMs = Date.now() - fetchedAt;
+  const ageHours = ageMs / (60 * 60 * 1000);
+  if (ageHours < 24) return 0;       // < 1 day: no penalty
+  if (ageHours < 72) return -5;      // 1-3 days: -5
+  if (ageHours < 168) return -10;    // 3-7 days: -10
+  return -15;                         // > 7 days: -15
+}
+
+// ── Partial Data Scoring ──────────────────────
+/** Compute penalty for missing fields */
+function partialDataPenalty(quarters: QuarterFinancials[]): number {
+  if (quarters.length === 0) return -30;
+  const latest = quarters[0];
+  let penalty = 0;
+  if (latest.revenue === 0) penalty -= 10;   // Missing revenue
+  if (latest.pat === 0) penalty -= 10;       // Missing PAT
+  if (latest.eps === 0) penalty -= 5;        // Missing EPS
+  if (quarters.length < 4) penalty -= 5;     // Less than 4 quarters (no YoY possible)
+  if (quarters.length < 2) penalty -= 10;    // Less than 2 quarters (no QoQ possible)
+  return Math.max(-30, penalty);
+}
+
+/** Build earnings card — NEVER returns null. All symbols get a card. */
+async function buildEarningsCard(symbol: string): Promise<EarningsScanCard> {
   const store = getGlobalStore();
   let dataAge: 'fresh' | 'stale' | 'missing' = 'missing';
+  const failureReasons: string[] = [];
 
   // Step 0: Check in-memory store first (fastest)
   let stored = store.get(symbol) || null;
@@ -898,7 +1461,6 @@ async function buildEarningsCard(symbol: string): Promise<EarningsScanCard | nul
     const kvData = await kvLoadEarnings(symbol);
     if (kvData && isDataFresh(kvData.fetchedAt)) {
       console.log(`[Earnings Scan] ${symbol}: Using fresh KV cache (${Math.round((Date.now() - kvData.fetchedAt) / 60000)}min old)`);
-      // Hydrate in-memory store from KV
       store.set(symbol, kvData);
       stored = kvData;
       dataAge = 'fresh';
@@ -908,134 +1470,221 @@ async function buildEarningsCard(symbol: string): Promise<EarningsScanCard | nul
         return card;
       }
     } else if (kvData) {
-      // KV has stale data — keep as fallback
       stored = kvData;
       store.set(symbol, kvData);
     }
   }
 
-  // Step 2: Try NSE financial results API
-  console.log(`[Earnings Scan] Fetching ${symbol}: trying NSE`);
-  let nseQuarters = await fetchNSEFinancials(symbol);
-  if (nseQuarters && nseQuarters.length > 0) {
-    const validation = validateQuarterlyData(nseQuarters, symbol);
-    if (validation.valid) {
-      console.log(`[Earnings Scan] ${symbol}: NSE data valid, storing`);
-      const storedData: StoredEarnings = {
-        symbol,
-        quarters: nseQuarters,
-        companyName: symbol,
-        mcap: null,
-        pe: null,
-        currentPrice: null,
-        sector: '',
-        isBanking: false,
-        source: 'nse',
-        fetchedAt: Date.now(),
-        validatedAt: Date.now(),
+  // ═══════════════════════════════════════════════════
+  // MULTI-SOURCE PIPELINE (CORRECT PRIORITY)
+  // 1. Moneycontrol — PRIMARY (structured financial data)
+  // 2. Screener.in — SECONDARY (financial data + guidance)
+  // 3. NSE — METADATA ONLY (validation, company name, dates)
+  //
+  // Cross-validation: if 2+ sources return data, compare them
+  // ═══════════════════════════════════════════════════
+
+  console.log(`[Earnings Scan] ${symbol}: Starting multi-source fetch`);
+
+  // Resolve symbols for each source in parallel
+  const screenerSym = await resolveScreenerSymbol(symbol) || getScreenerSymbol(symbol);
+
+  // Run ALL sources in parallel — pick best result after
+  const [mcResult, scrResult, nseResult] = await Promise.allSettled([
+    fetchMoneycontrolFinancials(symbol).catch(e => { failureReasons.push(`MC: ${(e as Error).message}`); return null; }),
+    (async () => {
+      // Screener: try consolidated, then standalone, then original symbol
+      let html = await fetchScreenerData(screenerSym, 'consolidated');
+      if (!html && screenerSym !== symbol) html = await fetchScreenerData(symbol, 'consolidated');
+      if (!html) html = await fetchScreenerData(screenerSym, 'standalone');
+      if (!html && screenerSym !== symbol) html = await fetchScreenerData(symbol, 'standalone');
+      if (!html) return null;
+      const parsed = parseQuarterlyResults(html);
+      if (parsed.quarters.length === 0) return null;
+      return {
+        quarters: parsed.quarters,
+        companyName: parsed.companyName,
+        isBanking: parsed.isBanking,
+        mcap: parsed.mcap,
+        pe: parsed.pe,
+        currentPrice: parsed.currentPrice,
+        html,
       };
-      await kvSaveEarnings(symbol, storedData);
-      const card = buildCardFromStoredData(storedData);
-      if (card) {
-        card.dataAge = 'fresh';
-        return card;
+    })().catch(e => { failureReasons.push(`Screener: ${(e as Error).message}`); return null; }),
+    fetchNSEFinancials(symbol).catch(e => { failureReasons.push(`NSE: ${(e as Error).message}`); return null; }),
+  ]);
+
+  const mcData = mcResult.status === 'fulfilled' ? mcResult.value : null;
+  const scrData = scrResult.status === 'fulfilled' ? scrResult.value : null;
+  const nseData = nseResult.status === 'fulfilled' ? nseResult.value : null;
+
+  if (mcResult.status === 'rejected') failureReasons.push(`MC: rejected — ${mcResult.reason}`);
+  if (scrResult.status === 'rejected') failureReasons.push(`Screener: rejected — ${scrResult.reason}`);
+  if (nseResult.status === 'rejected') failureReasons.push(`NSE: rejected — ${nseResult.reason}`);
+
+  // Collect valid source results
+  const validSources: SourceResult[] = [];
+
+  if (mcData && mcData.quarters.length >= 1) {
+    const v = validateQuarterlyData(mcData.quarters, symbol);
+    if (v.valid) {
+      validSources.push({ source: 'moneycontrol', quarters: mcData.quarters, companyName: mcData.companyName, isBanking: mcData.isBanking });
+      console.log(`[Earnings Scan] ${symbol}: ✓ MC valid (${mcData.quarters.length}Q)`);
+    } else {
+      failureReasons.push(`MC: validation failed — ${v.reason}`);
+    }
+  } else {
+    failureReasons.push(mcData ? `MC: insufficient quarters (${mcData.quarters.length})` : 'MC: no data returned');
+  }
+
+  if (scrData && scrData.quarters.length >= 1) {
+    const v = validateQuarterlyData(scrData.quarters, symbol);
+    if (v.valid || scrData.quarters.length >= 1) {
+      validSources.push({
+        source: 'screener.in', quarters: scrData.quarters, companyName: scrData.companyName,
+        isBanking: scrData.isBanking, mcap: scrData.mcap, pe: scrData.pe, currentPrice: scrData.currentPrice,
+        html: scrData.html,
+      });
+      console.log(`[Earnings Scan] ${symbol}: ✓ Screener valid (${scrData.quarters.length}Q)`);
+    } else {
+      failureReasons.push(`Screener: validation failed — ${v.reason}`);
+    }
+  } else {
+    failureReasons.push(scrData ? `Screener: insufficient quarters (${scrData.quarters.length})` : 'Screener: no data returned');
+  }
+
+  // NSE is metadata only — only use if MC + Screener both failed
+  if (nseData && nseData.quarters.length >= 1) {
+    const v = validateQuarterlyData(nseData.quarters, symbol);
+    if (v.valid) {
+      validSources.push({ source: 'nse', quarters: nseData.quarters, companyName: nseData.companyName, isBanking: nseData.isBanking });
+      console.log(`[Earnings Scan] ${symbol}: ✓ NSE valid (${nseData.quarters.length}Q) [metadata-grade]`);
+    } else {
+      failureReasons.push(`NSE: validation failed — ${v.reason}`);
+    }
+  } else {
+    failureReasons.push(nseData ? `NSE: insufficient quarters (${nseData.quarters.length})` : 'NSE: no data returned');
+  }
+
+  // ── Pick winner + cross-validate ──
+  if (validSources.length > 0) {
+    // Sort by priority: MC > Screener > NSE
+    const priorityOrder: Record<string, number> = { 'moneycontrol': 1, 'screener.in': 2, 'nse': 3 };
+    validSources.sort((a, b) => (priorityOrder[a.source] || 9) - (priorityOrder[b.source] || 9));
+
+    let winner = validSources[0];
+
+    // Cross-validate if 2+ sources available
+    if (validSources.length >= 2) {
+      const xv = crossValidate(validSources[0], validSources[1]);
+      if (!xv.valid) {
+        console.warn(`[Earnings Scan] ${symbol}: ⚠ CROSS-VALIDATION MISMATCH: ${xv.discrepancy}`);
+        failureReasons.push(`Cross-validation: ${xv.discrepancy}`);
+        // Pick the higher-priority source (MC > Screener > NSE)
+        winner = validSources[0]; // Already sorted by priority
+      } else {
+        console.log(`[Earnings Scan] ${symbol}: ✓ Cross-validation passed between ${validSources[0].source} and ${validSources[1].source}`);
       }
     }
-  }
 
-  // Step 3: Fallback to screener.in scraping
-  console.log(`[Earnings Scan] Fetching ${symbol}: trying screener.in`);
-
-  let html = await fetchScreenerData(symbol, 'consolidated');
-  let reportType: 'Consolidated' | 'Standalone' = 'Consolidated';
-
-  if (!html) {
-    html = await fetchScreenerData(symbol, 'standalone');
-    reportType = 'Standalone';
-  }
-
-  if (!html) {
-    // Step 5: Circuit breaker — return stale cached data if available
-    if (stored) {
-      console.warn(`[Earnings Scan] ${symbol}: No fresh data, using stale cache (${Math.round((Date.now() - stored.fetchedAt) / 60000)}min old)`);
-      dataAge = 'stale';
-      const card = buildCardFromStoredData(stored);
-      if (card) {
-        card.dataAge = dataAge;
-        return card;
-      }
+    // Extract guidance from screener HTML if available (even if screener isn't the winner)
+    let guidanceData: GuidanceData | null = null;
+    const screenerSource = validSources.find(s => s.source === 'screener.in' && s.html);
+    if (screenerSource?.html) {
+      try {
+        guidanceData = parseGuidanceSentiment(screenerSource.html);
+        if (guidanceData) {
+          console.log(`[Earnings Scan] ${symbol}: Guidance=${guidanceData.guidance} Score=${guidanceData.sentimentScore}`);
+        }
+      } catch { /* guidance is best-effort */ }
     }
-    console.warn(`[Earnings Scan] No data for ${symbol}`);
-    return null;
-  }
 
-  const parsed = parseQuarterlyResults(html);
+    // Merge metadata from screener (mcap, pe, price) even if MC is the financial data winner
+    const screenerMeta = validSources.find(s => s.source === 'screener.in');
+    const mcap = screenerMeta?.mcap || null;
+    const pe = screenerMeta?.pe || null;
+    const currentPrice = screenerMeta?.currentPrice || null;
 
-  if (parsed.quarters.length === 0) {
-    // Step 5: Circuit breaker — return stale cached data if available
-    if (stored) {
-      console.warn(`[Earnings Scan] ${symbol}: No quarters parsed, using stale cache`);
-      dataAge = 'stale';
-      const card = buildCardFromStoredData(stored);
-      if (card) {
-        card.dataAge = dataAge;
-        return card;
-      }
-    }
-    console.warn(`[Earnings Scan] No quarterly data parsed for ${symbol}`);
-    return null;
-  }
+    // Compute data status
+    const qLen = winner.quarters.length;
+    const hasAllFields = winner.quarters[0]?.revenue > 0 && winner.quarters[0]?.pat !== 0 && winner.quarters[0]?.eps !== 0;
+    const dataStatus: StoredEarnings['dataStatus'] = (qLen >= 4 && hasAllFields) ? 'FULL' : (qLen >= 2) ? 'PARTIAL' : 'ESTIMATED';
 
-  // Step 4: Validate parsed data
-  const validation = validateQuarterlyData(parsed.quarters, symbol);
-  if (!validation.valid) {
-    console.warn(`[Earnings Scan] Data validation failed: ${validation.reason}`);
-    // Still try to use it with a warning, but mark as stale if available
-    if (stored) {
-      console.warn(`[Earnings Scan] ${symbol}: Validation failed, using stale cache`);
-      dataAge = 'stale';
-      const card = buildCardFromStoredData(stored);
-      if (card) {
-        card.dataAge = dataAge;
-        return card;
-      }
+    // Compute confidence with freshness (data just fetched = 0 penalty)
+    const baseConfidence = SOURCE_CONFIDENCE[winner.source] || 70;
+    const partialPenalty = partialDataPenalty(winner.quarters);
+    const finalConfidence = Math.max(10, baseConfidence + partialPenalty);
+
+    const storedData: StoredEarnings = {
+      symbol,
+      quarters: winner.quarters,
+      companyName: winner.companyName || screenerMeta?.companyName || symbol,
+      mcap, pe, currentPrice,
+      sector: '', isBanking: winner.isBanking,
+      source: winner.source,
+      sourceConfidence: finalConfidence,
+      dataStatus,
+      failureReasons: failureReasons.length > 0 ? failureReasons : undefined,
+      fetchedAt: Date.now(), validatedAt: Date.now(),
+      guidance: guidanceData || undefined,
+    };
+    await kvSaveEarnings(symbol, storedData);
+    const card = buildCardFromStoredData(storedData);
+    if (card) {
+      card.dataAge = 'fresh';
+      return card;
     }
   }
 
-  // Step 4.5: Extract guidance & sentiment from Pros/Cons sections
-  let guidanceData: GuidanceData | null = null;
-  try {
-    guidanceData = parseGuidanceSentiment(html);
-    if (guidanceData) {
-      console.log(`[Earnings Scan] ${symbol}: Guidance=${guidanceData.guidance} Score=${guidanceData.sentimentScore} (+${guidanceData.keyPhrasesPositive.length}/-${guidanceData.keyPhrasesNegative.length} phrases)`);
+  // ── Stale cache fallback ──
+  if (stored) {
+    console.warn(`[Earnings Scan] ${symbol}: All sources failed, using stale cache (${Math.round((Date.now() - stored.fetchedAt) / 60000)}min old)`);
+    const card = buildCardFromStoredData(stored);
+    if (card) {
+      card.dataAge = 'stale';
+      card.failureReasons = failureReasons;
+      // Apply freshness penalty to stale data
+      const fp = freshnessPenalty(stored.fetchedAt);
+      card.sourceConfidence = Math.max(5, (card.sourceConfidence || 50) + fp);
+      return card;
     }
-  } catch (err) {
-    console.warn(`[Earnings Scan] ${symbol}: Guidance parsing failed:`, (err as Error).message);
   }
 
-  // Store in persistent cache (KV + in-memory)
-  const storedData: StoredEarnings = {
+  // ── LAST RESORT: Return DATA_MISSING placeholder — NEVER drop a company ──
+  console.warn(`[Earnings Scan] ${symbol}: ALL SOURCES FAILED — returning DATA_MISSING placeholder`);
+  return buildMissingCard(symbol, failureReasons);
+}
+
+/** Build a DATA_MISSING placeholder card — ensures every symbol appears in results */
+function buildMissingCard(symbol: string, failureReasons: string[]): EarningsScanCard {
+  return {
     symbol,
-    quarters: parsed.quarters,
-    companyName: parsed.companyName || symbol,
-    mcap: parsed.mcap,
-    pe: parsed.pe,
-    currentPrice: parsed.currentPrice,
-    sector: '',
-    isBanking: parsed.isBanking,
-    source: 'screener.in',
-    fetchedAt: Date.now(),
-    validatedAt: Date.now(),
-    guidance: guidanceData || undefined,
+    company: symbol,
+    period: 'N/A',
+    resultDate: 'N/A',
+    reportType: 'Consolidated',
+    quarters: [],
+    revenueYoY: null, revenueQoQ: null,
+    opProfitYoY: null, opProfitQoQ: null,
+    patYoY: null, patQoQ: null,
+    epsYoY: null, epsQoQ: null,
+    fundamentalsScore: 0, priceScore: 0, totalScore: 0,
+    grade: 'BAD', gradeColor: '#F44336',
+    dataQuality: 'PRICE_ONLY',
+    dataAge: 'missing',
+    mcap: null, pe: null, cmp: null,
+    isBanking: false,
+    source: 'none',
+    sourceConfidence: 0,
+    dataStatus: 'MISSING',
+    failureReasons,
+    screenerUrl: `https://www.screener.in/company/${symbol}/consolidated/`,
+    nseUrl: `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(symbol)}`,
   };
-  await kvSaveEarnings(symbol, storedData);
-
-  dataAge = 'fresh';
-  return buildCardFromStoredData(storedData);
 }
 
 function buildCardFromStoredData(data: StoredEarnings): EarningsScanCard | null {
-  return buildCardFromData({
+  const card = buildCardFromData({
     symbol: data.symbol,
     companyName: data.companyName,
     consolidated: data.quarters,
@@ -1047,6 +1696,14 @@ function buildCardFromStoredData(data: StoredEarnings): EarningsScanCard | null 
     sector: data.sector,
     isBanking: data.isBanking,
   }, data.guidance || null);
+
+  if (card) {
+    card.source = data.source;
+    card.sourceConfidence = data.sourceConfidence || SOURCE_CONFIDENCE[data.source] || 0;
+    card.dataStatus = data.dataStatus || (data.quarters.length >= 4 ? 'FULL' : data.quarters.length > 0 ? 'PARTIAL' : 'MISSING');
+    card.failureReasons = data.failureReasons;
+  }
+  return card;
 }
 
 function buildCardFromData(data: ScreenerData, guidanceData?: GuidanceData | null): EarningsScanCard | null {
@@ -1098,9 +1755,12 @@ function buildCardFromData(data: ScreenerData, guidanceData?: GuidanceData | nul
   const priceScore = 50;
 
   // Composite: 60% fundamentals + 40% price
-  const totalScore = dataQuality !== 'PRICE_ONLY'
+  // Apply partial data penalty when fields are missing
+  const pdPenalty = partialDataPenalty(quarters);
+  const rawScore = dataQuality !== 'PRICE_ONLY'
     ? Math.round(0.6 * fundamentalsScore + 0.4 * priceScore)
     : priceScore;
+  const totalScore = Math.max(0, Math.min(100, rawScore + pdPenalty));
 
   // Detect divergence between reported performance and forward guidance
   if (guidanceData) {
@@ -1150,6 +1810,10 @@ function buildCardFromData(data: ScreenerData, guidanceData?: GuidanceData | nul
     keyPhrasesPositive: guidanceData?.keyPhrasesPositive,
     keyPhrasesNegative: guidanceData?.keyPhrasesNegative,
     divergence: guidanceData?.divergence || 'None',
+    // Source attribution (defaults — overridden by caller)
+    source: 'screener.in',
+    sourceConfidence: SOURCE_CONFIDENCE['screener.in'],
+    dataStatus: (hasRevenue && hasPAT && hasEPS && quarters.length >= 4) ? 'FULL' : (hasRevenue || hasPAT) ? 'PARTIAL' : 'MISSING',
     screenerUrl: `https://www.screener.in/company/${data.symbol}/consolidated/`,
     nseUrl: `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(data.symbol)}`,
   };
@@ -1183,68 +1847,64 @@ export async function GET(request: Request) {
 
     console.log(`[Earnings Scan] Scanning ${symbols.length} symbols: ${symbols.join(', ')}`);
 
-    // Fetch in batches of 5 with 500ms delay between batches to avoid rate-limiting
+    // Fetch in batches of 8 with 200ms delay between batches
+    // buildEarningsCard() NEVER returns null — every symbol gets a card
     const cards: EarningsScanCard[] = [];
-    const failed: string[] = [];
-    const BATCH_SIZE = 5;
+    const BATCH_SIZE = 8;
 
     for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
       const batch = symbols.slice(i, i + BATCH_SIZE);
       const batchResults = await Promise.all(
-        batch.map(sym => buildEarningsCard(sym).catch((err) => {
-          console.warn(`[Earnings Scan] ${sym} failed:`, err);
-          return null;
-        }))
+        batch.map(sym =>
+          Promise.race([
+            buildEarningsCard(sym),
+            // Per-symbol timeout: 12s max — prevents one slow symbol from blocking the batch
+            new Promise<EarningsScanCard>((_, reject) => setTimeout(() => reject(new Error('Timeout (12s)')), 12000)),
+          ]).catch((err) => {
+            console.warn(`[Earnings Scan] ${sym} crashed/timed out:`, err);
+            // Even on crash, return a DATA_MISSING card
+            return buildMissingCard(sym, [`Crash: ${(err as Error).message}`]);
+          })
+        )
       );
 
-      for (let j = 0; j < batch.length; j++) {
-        if (batchResults[j]) {
-          cards.push(batchResults[j]!);
-        } else {
-          failed.push(batch[j]);
-        }
-      }
+      cards.push(...batchResults);
 
-      // Delay between batches to avoid screener.in rate-limiting
+      // Shorter delay between batches
       if (i + BATCH_SIZE < symbols.length) {
-        await new Promise(r => setTimeout(r, 500));
+        await new Promise(r => setTimeout(r, 200));
       }
-    }
-
-    // Retry failed symbols one at a time with higher timeout
-    if (failed.length > 0) {
-      console.log(`[Earnings Scan] Retrying ${failed.length} failed symbols: ${failed.join(', ')}`);
-      const retryFailed: string[] = [];
-      for (const sym of failed) {
-        await new Promise(r => setTimeout(r, 300));
-        try {
-          const card = await buildEarningsCard(sym);
-          if (card) {
-            cards.push(card);
-          } else {
-            retryFailed.push(sym);
-          }
-        } catch {
-          retryFailed.push(sym);
-        }
-      }
-      failed.length = 0;
-      failed.push(...retryFailed);
     }
 
     // Sort by totalScore descending
     cards.sort((a, b) => b.totalScore - a.totalScore);
 
     const cardsWithGuidance = cards.filter(c => c.guidance);
+    const cardsWithData = cards.filter(c => c.dataStatus !== 'MISSING');
+    const missingCards = cards.filter(c => c.dataStatus === 'MISSING');
+
     const summary = {
       total: cards.length,
+      withData: cardsWithData.length,
+      missing: missingCards.length,
       excellent: cards.filter(c => c.grade === 'EXCELLENT').length,
       strong: cards.filter(c => c.grade === 'STRONG').length,
       good: cards.filter(c => c.grade === 'GOOD').length,
       ok: cards.filter(c => c.grade === 'OK').length,
       bad: cards.filter(c => c.grade === 'BAD').length,
-      avgScore: cards.length > 0
-        ? parseFloat((cards.reduce((s, c) => s + c.totalScore, 0) / cards.length).toFixed(1))
+      avgScore: cardsWithData.length > 0
+        ? parseFloat((cardsWithData.reduce((s, c) => s + c.totalScore, 0) / cardsWithData.length).toFixed(1))
+        : 0,
+      // Source attribution
+      sourceBreakdown: {
+        nse: cards.filter(c => c.source === 'nse').length,
+        moneycontrol: cards.filter(c => c.source === 'moneycontrol').length,
+        screener: cards.filter(c => c.source === 'screener.in').length,
+        trendlyne: cards.filter(c => c.source === 'trendlyne').length,
+        none: cards.filter(c => c.source === 'none').length,
+      },
+      avgConfidence: cardsWithData.length > 0
+        ? parseFloat((cardsWithData.reduce((s, c) => s + c.sourceConfidence, 0) / cardsWithData.length).toFixed(1))
         : 0,
       // Guidance aggregation
       guidanceCoverage: cardsWithGuidance.length,
@@ -1265,17 +1925,26 @@ export async function GET(request: Request) {
         stale: cards.filter(c => c.dataAge === 'stale').length,
         missing: cards.filter(c => c.dataAge === 'missing').length,
       },
+      dataStatusBreakdown: {
+        full: cards.filter(c => c.dataStatus === 'FULL').length,
+        partial: cards.filter(c => c.dataStatus === 'PARTIAL').length,
+        estimated: cards.filter(c => c.dataStatus === 'ESTIMATED').length,
+        missing: cards.filter(c => c.dataStatus === 'MISSING').length,
+      },
     };
 
-    console.log(`[Earnings Scan] ${cards.length} cards built, ${failed.length} failed`);
+    console.log(`[Earnings Scan] ${cards.length} cards built (${cardsWithData.length} with data, ${missingCards.length} missing)`);
+    if (missingCards.length > 0) {
+      console.log(`[Earnings Scan] Missing symbols: ${missingCards.map(c => c.symbol).join(', ')}`);
+    }
 
     return NextResponse.json({
       cards,
       summary,
-      source: 'nse + screener.in + cache',
+      source: 'multi-source: nse + moneycontrol + screener.in + cache',
       cacheBackend: isRedisAvailable() ? 'redis' : 'memory',
       updatedAt: new Date().toISOString(),
-      ...(debug ? { debug: true, requestedSymbols: symbols, failed } : {}),
+      ...(debug ? { debug: true, requestedSymbols: symbols, missingSymbols: missingCards.map(c => ({ symbol: c.symbol, reasons: c.failureReasons })) } : {}),
     });
 
   } catch (error) {

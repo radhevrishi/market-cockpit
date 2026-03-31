@@ -70,6 +70,12 @@ interface EarningsScanCard {
   keyPhrasesPositive?: string[];
   keyPhrasesNegative?: string[];
   divergence?: 'StrongEarnings_WeakGuidance' | 'WeakEarnings_StrongGuidance' | 'None';
+  // Source attribution
+  source?: 'nse' | 'screener.in' | 'trendlyne' | 'moneycontrol' | 'none';
+  sourceConfidence?: number;
+  dataStatus?: 'FULL' | 'PARTIAL' | 'ESTIMATED' | 'MISSING';
+  dataAge?: 'fresh' | 'stale' | 'missing';
+  failureReasons?: string[];
   screenerUrl: string;
   nseUrl: string;
   // Extended: which universe the stock belongs to
@@ -80,12 +86,16 @@ interface ScanResponse {
   cards: EarningsScanCard[];
   summary: {
     total: number;
+    withData?: number;
+    missing?: number;
     excellent: number;
     strong: number;
     good: number;
     ok: number;
     bad: number;
     avgScore: number;
+    sourceBreakdown?: { nse: number; moneycontrol: number; screener: number; trendlyne: number; none: number };
+    avgConfidence?: number;
     guidanceCoverage?: number;
     guidancePositive?: number;
     guidanceNeutral?: number;
@@ -93,6 +103,8 @@ interface ScanResponse {
     avgSentiment?: number;
     divergences?: number;
     dataQualityBreakdown: { full: number; partial: number; priceOnly: number };
+    dataStatusBreakdown?: { full: number; partial: number; estimated: number; missing: number };
+    dataAgeBreakdown?: { fresh: number; stale: number; missing: number };
   };
   source: string;
   updatedAt: string;
@@ -152,6 +164,25 @@ function DataQualityDot({ quality }: { quality: string }) {
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '10px', color: colors[quality] || TEXT_DIM }}>
       <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: colors[quality] || TEXT_DIM, display: 'inline-block' }} />
       {labels[quality] || quality}
+    </span>
+  );
+}
+
+function SourceBadge({ source, confidence }: { source?: string; confidence?: number }) {
+  if (!source || source === 'none') return null;
+  const colors: Record<string, string> = {
+    'nse': '#0F7ABF', 'moneycontrol': '#2E7D32', 'screener.in': '#F57C00', 'trendlyne': '#7B1FA2',
+  };
+  const labels: Record<string, string> = {
+    'nse': 'NSE', 'moneycontrol': 'MC', 'screener.in': 'SCR', 'trendlyne': 'TL',
+  };
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '9px',
+      color: colors[source] || TEXT_DIM, backgroundColor: `${colors[source] || TEXT_DIM}15`,
+      border: `1px solid ${colors[source] || TEXT_DIM}40`, borderRadius: '3px', padding: '1px 5px',
+    }}>
+      {labels[source] || source}{confidence ? ` ${confidence}%` : ''}
     </span>
   );
 }
@@ -363,6 +394,34 @@ function EarningsCardComponent({ card }: { card: EarningsScanCard }) {
   const tagColor = card.universeTag === 'portfolio' ? '#10B981' : card.universeTag === 'both' ? '#8B5CF6' : ACCENT;
   const tagLabel = card.universeTag === 'portfolio' ? 'PORTFOLIO' : card.universeTag === 'both' ? 'BOTH' : 'WATCHLIST';
 
+  // DATA_MISSING: show a minimal card with failure reasons
+  if (card.dataStatus === 'MISSING') {
+    return (
+      <div style={{
+        backgroundColor: CARD, border: `1px solid #F4433650`, borderRadius: '10px',
+        overflow: 'hidden', opacity: 0.7,
+      }}>
+        <div style={{ padding: '14px 16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '16px', fontWeight: 700, color: TEXT }}>{card.symbol}</span>
+            <span style={{ fontSize: '9px', padding: '2px 6px', borderRadius: '3px', backgroundColor: '#F4433620', border: '1px solid #F4433650', color: '#F44336', fontWeight: 700 }}>DATA MISSING</span>
+            <span style={{ fontSize: '8px', padding: '2px 6px', borderRadius: '3px', backgroundColor: `${tagColor}20`, border: `1px solid ${tagColor}50`, color: tagColor, fontWeight: 700, letterSpacing: '0.5px' }}>{tagLabel}</span>
+          </div>
+          <div style={{ fontSize: '11px', color: TEXT_DIM, marginBottom: '6px' }}>All data sources failed for this symbol</div>
+          {card.failureReasons && card.failureReasons.length > 0 && (
+            <div style={{ fontSize: '10px', color: '#F4433690', lineHeight: '1.5' }}>
+              {card.failureReasons.slice(0, 3).map((r, i) => <div key={i}>• {r}</div>)}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
+            <a href={card.nseUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '10px', color: ACCENT, textDecoration: 'none' }}>NSE ↗</a>
+            <a href={card.screenerUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '10px', color: ACCENT, textDecoration: 'none' }}>Screener ↗</a>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{
       backgroundColor: CARD, border: `1px solid ${CARD_BORDER}`, borderRadius: '10px',
@@ -386,6 +445,7 @@ function EarningsCardComponent({ card }: { card: EarningsScanCard }) {
               <span style={{ fontSize: '9px', padding: '2px 6px', borderRadius: '3px', backgroundColor: '#FF980020', border: '1px solid #FF980050', color: '#FF9800', fontWeight: 700 }}>BANK</span>
             )}
             <DataQualityDot quality={card.dataQuality} />
+            <SourceBadge source={card.source} confidence={card.sourceConfidence} />
           </div>
           <div style={{ fontSize: '12px', color: TEXT_DIM, marginBottom: '4px' }}>{card.company}</div>
           <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
