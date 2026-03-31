@@ -24,6 +24,8 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const chatId = searchParams.get('chatId') || 'default';
 
+  // Return the stored watchlist or DEFAULT_WATCHLIST as fallback
+  // The store persists within the same serverless instance, but cold starts will fall back to DEFAULT
   const watchlist = STORE.get(chatId) || DEFAULT_WATCHLIST;
 
   return NextResponse.json({

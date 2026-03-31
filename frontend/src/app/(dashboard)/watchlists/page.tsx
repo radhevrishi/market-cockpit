@@ -263,23 +263,18 @@ export default function WatchlistsPage() {
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Initialize tickers from localStorage and sync with API
+  // Initialize tickers from API first, fallback to localStorage
   useEffect(() => {
     const initTickers = async () => {
-      const stored = getStoredTickers();
-
-      // Try to sync with shared watchlist
+      // Try to sync with shared watchlist (remote is source of truth)
       try {
         const syncRes = await fetch('/api/watchlist?chatId=5057319640');
         if (syncRes.ok) {
           const syncData = await syncRes.json();
           if (syncData.watchlist && syncData.watchlist.length > 0) {
-            // Merge: union of local and remote
-            const merged = [...new Set([...stored, ...syncData.watchlist])];
-            setTickers(merged);
-            if (merged.length !== stored.length) {
-              setStoredTickers(merged);
-            }
+            // Remote wins: use it as the authoritative source
+            setTickers(syncData.watchlist);
+            setStoredTickers(syncData.watchlist);
             return;
           }
         }
@@ -287,6 +282,8 @@ export default function WatchlistsPage() {
         console.error('Failed to sync watchlist:', e);
       }
 
+      // Fallback to localStorage if remote fetch failed or returned empty
+      const stored = getStoredTickers();
       setTickers(stored);
     };
 

@@ -418,17 +418,29 @@ export default function EarningsPage() {
     setLoading(true);
     setError('');
     try {
-      // Read watchlist from localStorage
+      // Try to fetch watchlist from API first (remote is source of truth)
       let watchlist = DEFAULT_WATCHLIST;
       try {
-        const stored = localStorage.getItem('mc_watchlist_tickers');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            watchlist = parsed;
+        const apiRes = await fetch('/api/watchlist?chatId=5057319640');
+        if (apiRes.ok) {
+          const apiData = await apiRes.json();
+          if (apiData.watchlist && Array.isArray(apiData.watchlist) && apiData.watchlist.length > 0) {
+            watchlist = apiData.watchlist;
           }
         }
-      } catch {}
+      } catch (e) {
+        console.error('Failed to fetch from API, falling back to localStorage:', e);
+        // Fallback to localStorage if API fetch fails
+        try {
+          const stored = localStorage.getItem('mc_watchlist_tickers');
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              watchlist = parsed;
+            }
+          }
+        } catch {}
+      }
 
       const symbolsParam = watchlist.slice(0, 20).join(',');
       const res = await fetch(`/api/market/earnings-scan?symbols=${symbolsParam}&debug=true`);
