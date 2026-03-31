@@ -22,11 +22,8 @@ const YELLOW = '#FFD600';
 const RED = '#F44336';
 const HEADER_BG = '#0A1628';
 
-const DEFAULT_WATCHLIST = [
-  'RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK',
-  'BAJFINANCE', 'TATAMOTORS', 'WIPRO', 'SBIN', 'LT',
-  'ITC', 'MARUTI', 'TITAN', 'AXISBANK', 'SUNPHARMA',
-];
+// No hardcoded default — always fetch from API/localStorage
+const DEFAULT_WATCHLIST: string[] = [];
 
 // ── Types matching earnings-scan API ──
 

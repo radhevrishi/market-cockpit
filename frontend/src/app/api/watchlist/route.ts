@@ -3,11 +3,8 @@ import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 
 export const dynamic = 'force-dynamic';
 
-const DEFAULT_WATCHLIST = [
-  'RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK',
-  'BAJFINANCE', 'TATAMOTORS', 'LT', 'SBIN', 'AXISBANK',
-  'SUNPHARMA', 'TITAN', 'WIPRO', 'MARUTI', 'HCLTECH',
-];
+// No hardcoded default — user's watchlist is the single source of truth (from Telegram bot or UI)
+const DEFAULT_WATCHLIST: string[] = [];
 
 const BOT_SECRET = 'mc-bot-2026';
 

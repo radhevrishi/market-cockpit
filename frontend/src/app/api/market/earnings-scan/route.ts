@@ -16,11 +16,8 @@ export const maxDuration = 55;
 // Banking stock detection & special handling included
 // ══════════════════════════════════════════════
 
-const DEFAULT_WATCHLIST = [
-  'RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK',
-  'BAJFINANCE', 'TATAMOTORS', 'WIPRO', 'SBIN', 'LT',
-  'ITC', 'MARUTI', 'TITAN', 'AXISBANK', 'SUNPHARMA',
-];
+// No hardcoded default — symbols must come from the request (frontend sends from API/localStorage watchlist)
+const DEFAULT_WATCHLIST: string[] = [];
 
 // NSE symbol → screener.in symbol mapping (where they differ)
 // Discovered via screener.in search API: /api/company/search/?q=XXX

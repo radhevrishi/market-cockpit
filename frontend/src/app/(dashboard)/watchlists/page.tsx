@@ -34,7 +34,8 @@ type SortOrder = 'asc' | 'desc';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const DEFAULT_TICKERS = ['RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK', 'BAJFINANCE', 'TATAMOTORS', 'WIPRO', 'SBIN', 'LT', 'ITC', 'MARUTI', 'TITAN', 'AXISBANK', 'SUNPHARMA'];
+// No hardcoded default — watchlist comes from Redis API (synced via Telegram bot or UI)
+const DEFAULT_TICKERS: string[] = [];
 
 const STORAGE_KEY = 'mc_watchlist_tickers';
 
