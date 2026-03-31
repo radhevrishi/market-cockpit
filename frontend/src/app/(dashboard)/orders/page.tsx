@@ -313,11 +313,11 @@ export default function OrdersPage() {
     }
   }, [selectedOrder, fetchDetailData]);
 
-  // Group and filter orders — only show stocks with actual deals (ordersCount > 0 or hasHighSignal)
+  // Group and filter orders — only show stocks with actual block/bulk deals
   const groupedOrders = useMemo(() => {
     const filtered = orders.filter(
       order =>
-        (order.ordersCount > 0 || order.hasHighSignal) &&
+        order.ordersCount > 0 &&
         (order.ticker.toLowerCase().includes(searchQuery.toLowerCase()) ||
         order.companyName.toLowerCase().includes(searchQuery.toLowerCase()))
     );
