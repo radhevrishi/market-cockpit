@@ -557,17 +557,34 @@ export default function EarningsPage() {
         setWatchlistSource(wlSource);
       }
 
-      // Cap at 20 symbols for earnings scan (API scraping constraint)
-      const symbolsParam = symbols.slice(0, 20).join(',');
-      const res = await fetch(`/api/market/earnings-scan?symbols=${symbolsParam}&debug=true`);
+      // Batch symbols into groups of 30 for API calls (KV cache makes this fast)
+      const BATCH_SIZE = 30;
+      let allCards: any[] = [];
+      let lastSummary: any = null;
+      let lastSource = 'unknown';
+      let lastUpdatedAt = new Date().toISOString();
 
-      if (!res.ok) throw new Error(`API error: ${res.status}`);
+      for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
+        const batch = symbols.slice(i, i + BATCH_SIZE);
+        const symbolsParam = batch.join(',');
+        const res = await fetch(`/api/market/earnings-scan?symbols=${symbolsParam}&debug=true`);
 
-      const data: ScanResponse = await res.json();
-      setCards(data.cards || []);
-      setSummary(data.summary || null);
-      setSource(data.source || 'unknown');
-      setUpdatedAt(data.updatedAt || new Date().toISOString());
+        if (!res.ok) {
+          console.error(`[Earnings] Batch ${i / BATCH_SIZE + 1} failed: ${res.status}`);
+          continue;
+        }
+
+        const data: ScanResponse = await res.json();
+        allCards = [...allCards, ...(data.cards || [])];
+        if (data.summary) lastSummary = data.summary;
+        if (data.source) lastSource = data.source;
+        if (data.updatedAt) lastUpdatedAt = data.updatedAt;
+      }
+
+      setCards(allCards);
+      setSummary(lastSummary);
+      setSource(lastSource);
+      setUpdatedAt(lastUpdatedAt);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load earnings data');
       console.error('[Earnings Page]', err);

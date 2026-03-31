@@ -328,24 +328,21 @@ export default function WatchlistsPage() {
     return () => clearInterval(interval);
   }, [tickers, fetchData]);
 
-  // Build watchlist items by matching tickers with quotes
+  // Build watchlist items — show ALL tickers, even without live quotes
   const watchlistItems = useMemo(() => {
-    return tickers
-      .map(ticker => {
-        const quote = quotes.find(q => q.ticker === ticker);
-        if (!quote) return null;
-        return {
-          ticker: quote.ticker,
-          company: quote.company,
-          sector: quote.sector,
-          price: quote.price,
-          change: quote.change,
-          changePercent: quote.changePercent,
-          dayHigh: quote.dayHigh,
-          dayLow: quote.dayLow,
-        };
-      })
-      .filter((item): item is WatchlistItem => item !== null);
+    return tickers.map(ticker => {
+      const quote = quotes.find(q => q.ticker === ticker);
+      return {
+        ticker,
+        company: quote?.company || ticker,
+        sector: quote?.sector || '—',
+        price: quote?.price || 0,
+        change: quote?.change || 0,
+        changePercent: quote?.changePercent || 0,
+        dayHigh: quote?.dayHigh || 0,
+        dayLow: quote?.dayLow || 0,
+      };
+    });
   }, [tickers, quotes]);
 
   // Sort items
@@ -368,14 +365,15 @@ export default function WatchlistsPage() {
     return sorted;
   }, [watchlistItems, sortField, sortOrder]);
 
-  // Handle add ticker — supports comma/space separated, strips exchange prefixes
+  // Handle add ticker — supports comma/space separated, strips exchange prefixes, bulk paste
   const handleAddTicker = useCallback(() => {
-    const raw = tickerInput.trim().toUpperCase();
+    const raw = tickerInput.trim();
     if (!raw) return;
 
-    // Split by comma, space, newline — handle "NSE:CCL", "BOM:532067" prefixes
+    // Split by comma, space, newline, semicolon — handle "NSE:CCL", "BOM:532067" prefixes
     const parsed = raw
-      .split(/[\s,;]+/)
+      .toUpperCase()
+      .split(/[\s,;\n\r]+/)
       .map(t => t.replace(/^(NSE|BSE|BOM|MCX):/, '').trim())
       .filter(t => t.length > 0 && t.length < 30 && /^[A-Z0-9&-]+$/.test(t));
 
@@ -385,12 +383,23 @@ export default function WatchlistsPage() {
       return;
     }
 
-    // Deduplicate against existing
+    // Deduplicate against existing AND within the input itself
     const existing = new Set(tickers);
-    const toAdd = parsed.filter(t => !existing.has(t));
+    const seen = new Set<string>();
+    const toAdd: string[] = [];
+    const skipped: string[] = [];
+
+    for (const t of parsed) {
+      if (existing.has(t) || seen.has(t)) {
+        skipped.push(t);
+      } else {
+        toAdd.push(t);
+        seen.add(t);
+      }
+    }
 
     if (toAdd.length === 0) {
-      toast.error(parsed.length === 1 ? 'Ticker already in watchlist' : 'All tickers already in watchlist');
+      toast.error(`All ${parsed.length} tickers already in watchlist`);
       setTickerInput('');
       return;
     }
@@ -399,7 +408,11 @@ export default function WatchlistsPage() {
     setTickers(newTickers);
     setStoredTickers(newTickers);
     setTickerInput('');
-    toast.success(`${toAdd.length} ticker${toAdd.length > 1 ? 's' : ''} added: ${toAdd.slice(0, 5).join(', ')}${toAdd.length > 5 ? '...' : ''}`);
+
+    const msg = skipped.length > 0
+      ? `Added ${toAdd.length}, skipped ${skipped.length} (already in list). Total: ${newTickers.length}`
+      : `${toAdd.length} ticker${toAdd.length > 1 ? 's' : ''} added. Total: ${newTickers.length}`;
+    toast.success(msg);
 
     // Sync FULL list to shared API (not incremental — avoids race conditions)
     fetch('/api/watchlist', {
@@ -413,6 +426,7 @@ export default function WatchlistsPage() {
     })
       .then(res => {
         if (!res.ok) console.error('Watchlist sync failed:', res.status);
+        else console.log(`[Watchlist] Synced ${newTickers.length} tickers to Redis`);
       })
       .catch((e) => console.error('Failed to sync add:', e));
 
@@ -540,12 +554,12 @@ export default function WatchlistsPage() {
       {/* ── Add Ticker Input ────────────────────────────────────────────────── */}
       <div style={{ marginBottom: '24px' }}>
         <div style={{ display: 'flex', gap: '10px' }}>
-          <input
-            type="text"
+          <textarea
             value={tickerInput}
             onChange={e => setTickerInput(e.target.value.toUpperCase())}
-            onKeyDown={e => e.key === 'Enter' && handleAddTicker()}
-            placeholder="Enter ticker symbol (e.g., INFY, TCS)"
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAddTicker(); } }}
+            placeholder="Paste tickers: INFY, TCS, RELIANCE (comma or space separated, bulk paste supported)"
+            rows={tickerInput.includes(',') || tickerInput.length > 40 ? 3 : 1}
             style={{
               flex: 1,
               backgroundColor: '#1A2B3C',
@@ -557,6 +571,9 @@ export default function WatchlistsPage() {
               outline: 'none',
               transition: 'all 0.2s',
               boxSizing: 'border-box',
+              resize: 'vertical',
+              fontFamily: 'inherit',
+              minHeight: '44px',
             }}
             onFocus={e => (e.currentTarget.style.borderColor = '#3B82F6')}
             onBlur={e => (e.currentTarget.style.borderColor = '#2A3B4C')}

@@ -858,8 +858,8 @@ export async function GET(request: Request) {
       symbols = DEFAULT_WATCHLIST;
     }
 
-    // Cap at 20 symbols to stay within Vercel timeout
-    symbols = symbols.slice(0, 20);
+    // Cap at 50 symbols — cached ones return instantly from KV, only uncached trigger scraping
+    symbols = symbols.slice(0, 50);
 
     console.log(`[Earnings Scan] Scanning ${symbols.length} symbols: ${symbols.join(', ')}`);
 
