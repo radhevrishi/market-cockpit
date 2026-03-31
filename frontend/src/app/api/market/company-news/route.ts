@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { nseApiFetch } from '@/lib/nse';
+import { normalizeTicker } from '@/lib/tickers';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
@@ -13,7 +14,12 @@ interface NewsItem {
   category: string;
   date: string;
   importance: 'high' | 'medium' | 'low';
+  materialityScore: number; // 0-100 — higher = more actionable
   source: string;
+  // Enriched fields
+  eventSummary: string;     // 1-line summary (<80 chars)
+  sentiment: 'Positive' | 'Neutral' | 'Negative';
+  actionability: 'Actionable' | 'Track' | 'Noise';
 }
 
 interface AnnouncementData {
@@ -22,6 +28,7 @@ interface AnnouncementData {
     totalItems: number;
     companiesCovered: number;
     topCategories: string[];
+    suppressed: number; // Count of noise items filtered out
   };
   updatedAt: string;
 }
@@ -39,17 +46,42 @@ const CATEGORY_KEYWORDS: Record<string, string[]> = {
   'Corporate Action': ['stock split', 'bonus', 'sub-division', 'share split', 'stock bonus'],
 };
 
+// STRICT noise filter — suppress these entirely (zero alpha)
 const NOISE_KEYWORDS = [
   'trading window',
   'lodr',
   'regulatory filing',
-  'investor presentation',
   'compliance',
   'notice',
-  'information',
   'reminder',
   'intimation',
   'announcement of meeting',
+  'general updates',
+  'general update',
+  'newspaper publication',
+  'copy of newspaper',
+  'shareholder meeting',
+  'agm',
+  'egm',
+  'annual general meeting',
+  'record date',
+  'book closure',
+  'action(s) taken',
+  'action(s) initiated',
+  'regulation 30',
+  'regulation 33',
+  'investor presentation',
+  'analyst meet',
+  'spurt in volume',
+  'esop',
+  'esps',
+  'employee stock',
+  'change in director',     // Minor board changes
+  'cessation',              // Unless CEO/CFO — handled separately
+  'certificate',
+  'updation',
+  'prior intimation',
+  'outcome of meeting',     // Unless financial results
 ];
 
 const IMPORTANCE_HIGH_KEYWORDS = [
@@ -88,37 +120,142 @@ function isNoise(headline: string, description: string = ''): boolean {
 }
 
 /**
- * Score importance of announcement
+ * MATERIALITY SCORING (0-100)
+ * Institutional-grade: only material events score > 50
+ *
+ * Scoring layers:
+ *   Category weight: 0-40 pts
+ *   Amount/value:    0-30 pts
+ *   Keywords:        0-20 pts
+ *   Noise penalty:   -10 to -30 pts
  */
-function scoreImportance(
+function scoreMateriality(
   headline: string,
   category: string,
   description: string = ''
-): 'high' | 'medium' | 'low' {
+): { importance: 'high' | 'medium' | 'low'; score: number; actionability: 'Actionable' | 'Track' | 'Noise' } {
   const text = (headline + ' ' + description).toLowerCase();
+  let score = 0;
 
-  // High importance categories
-  if (['Financial Results', 'M&A', 'Orders & Contracts'].includes(category)) {
-    return 'high';
+  // ── Layer 1: Category Weight (0-40) ──
+  const categoryScores: Record<string, number> = {
+    'Financial Results': 35,
+    'M&A': 40,
+    'Orders & Contracts': 35,
+    'Fund Raising': 30,
+    'Buyback': 30,
+    'Dividend': 20,
+    'Management Change': 25,
+    'Credit Rating': 25,
+    'Corporate Action': 15,
+    'Board Meeting': 10,
+    'Corporate Update': 5,
+  };
+  score += categoryScores[category] || 5;
+
+  // ── Layer 2: Amount/Value (0-30) ──
+  const amountMatch = text.match(/(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:crore|cr)/i);
+  if (amountMatch) {
+    const amount = parseFloat(amountMatch[1].replace(/,/g, ''));
+    if (amount >= 1000) score += 30;
+    else if (amount >= 500) score += 25;
+    else if (amount >= 100) score += 20;
+    else if (amount >= 10) score += 10;
+    else score += 5;
   }
 
-  // Check for large fund raising amounts
-  if (category === 'Fund Raising') {
-    const amountMatch = text.match(/₹[\s]?([\d,]+)\s*(cr|crore|lakh)/i);
-    if (amountMatch) {
-      const amount = parseInt(amountMatch[1].replace(/,/g, ''));
-      if (amount >= 100) return 'high';
-    }
-    return 'medium';
+  // USD amounts
+  const usdMatch = text.match(/(?:usd|\$)\s*([\d,]+(?:\.\d+)?)\s*(?:million|mn|billion|bn)/i);
+  if (usdMatch) {
+    score += 25; // Any USD amount is significant
   }
 
-  // Medium importance categories
-  if (['Dividend', 'Buyback', 'Management Change', 'Credit Rating'].includes(category)) {
-    return 'medium';
+  // ── Layer 3: Strategic Keywords (0-20) ──
+  const highKeywords = [
+    'acquisition', 'merger', 'takeover', 'demerger', 'amalgamation',
+    'rights issue', 'qip', 'preferential allotment',
+    'buyback', 'special dividend',
+    'ceo', 'cfo', 'managing director', 'chief executive',
+    'rating upgrade', 'rating downgrade',
+    'strategic', 'defence order', 'government order',
+    'multi-year', 'billion',
+  ];
+  for (const kw of highKeywords) {
+    if (text.includes(kw)) { score += 8; break; } // Only first match
   }
 
-  // Default to low
-  return 'low';
+  const mediumKeywords = [
+    'order', 'contract', 'awarded', 'secured',
+    'partnership', 'joint venture', 'collaboration',
+    'dividend', 'bonus',
+    'interim dividend', 'final dividend',
+    'appointment', 'resignation',
+    'stake', 'investment',
+  ];
+  for (const kw of mediumKeywords) {
+    if (text.includes(kw)) { score += 4; break; }
+  }
+
+  // ── Layer 4: Noise Penalty ──
+  const noisePenalties: [string, number][] = [
+    ['regulation 30', -15],
+    ['regulation 33', -10],
+    ['general update', -20],
+    ['newspaper', -20],
+    ['compliance', -10],
+    ['certificate', -10],
+    ['outcome of meeting', -5],
+    ['record date', -8],
+  ];
+  for (const [kw, penalty] of noisePenalties) {
+    if (text.includes(kw)) score += penalty;
+  }
+
+  // CEO/CFO changes override "cessation" noise penalty
+  if ((text.includes('ceo') || text.includes('cfo') || text.includes('managing director')) &&
+      (text.includes('appointment') || text.includes('resignation'))) {
+    score = Math.max(score, 60); // Always material
+  }
+
+  // Clamp
+  score = Math.max(0, Math.min(100, score));
+
+  // Classification
+  const importance: 'high' | 'medium' | 'low' = score >= 60 ? 'high' : score >= 30 ? 'medium' : 'low';
+  const actionability: 'Actionable' | 'Track' | 'Noise' = score >= 60 ? 'Actionable' : score >= 30 ? 'Track' : 'Noise';
+
+  return { importance, score, actionability };
+}
+
+/** Generate a concise event summary (<80 chars) */
+function generateNewsSummary(headline: string, category: string, ticker: string): string {
+  // Clean up raw NSE headline
+  let clean = headline
+    .replace(/^(Updates?|Outcome of)\s*[-:\s]*/i, '')
+    .replace(/\s*-\s*Regulation \d+.*$/i, '')
+    .replace(/\s*\(.*LODR.*\).*$/i, '')
+    .trim();
+
+  if (clean.length > 80) clean = clean.slice(0, 77) + '...';
+  if (clean.length < 5) clean = `${ticker} — ${category}`;
+
+  return clean;
+}
+
+/** Determine sentiment from category + content */
+function assessNewsSentiment(category: string, headline: string): 'Positive' | 'Neutral' | 'Negative' {
+  const text = headline.toLowerCase();
+
+  // Positive signals
+  if (['Orders & Contracts', 'Buyback'].includes(category)) return 'Positive';
+  if (text.includes('upgrade') || text.includes('awarded') || text.includes('profit')) return 'Positive';
+  if (text.includes('dividend') && !text.includes('no dividend')) return 'Positive';
+
+  // Negative signals
+  if (text.includes('downgrade') || text.includes('loss') || text.includes('penalty')) return 'Negative';
+  if (text.includes('resignation') && (text.includes('ceo') || text.includes('cfo'))) return 'Negative';
+
+  return 'Neutral';
 }
 
 /**
@@ -150,11 +287,9 @@ function formatNSEDate(d: Date): string {
  * Process a raw NSE announcement item into a NewsItem
  */
 function processAnnouncement(item: any, idx: number): NewsItem | null {
-  // NSE has many different response formats across endpoints:
-  // corporate-announcements: sub, desc, an_dt, dt, symbol, company, attchmntText, cat
-  // board-meetings: symbol, companyName, bm_purpose, bm_desc, bm_date, purpose, meetingDate
-  // financial-results: symbol, companyName, relatingTo, broadcastDtTime, xbrl
-  const symbol = item.symbol || item.companySymbol || item.SYMBOL || '';
+  // NSE has many different response formats across endpoints
+  const rawSymbol = item.symbol || item.companySymbol || item.SYMBOL || '';
+  const symbol = normalizeTicker(rawSymbol);
   const companyName = item.company || item.companyName || item.COMPANY || symbol;
   const headline = item.sub || item.desc || item.bm_purpose || item.bm_desc || item.meetingInfo || item.purpose || item.relatingTo || item.subject || '';
   const description = item.desc || item.attchmntText || item.bm_desc || item.description || '';
@@ -165,10 +300,16 @@ function processAnnouncement(item: any, idx: number): NewsItem | null {
   const itemDate = parseNSEDate(dateStr);
   if (!itemDate) return null;
 
+  // STRICT noise filter
   if (isNoise(headline, description)) return null;
 
   const category = categorizeAnnouncement(headline, description);
-  const importance = scoreImportance(headline, category, description);
+  const { importance, score: materialityScore, actionability } = scoreMateriality(headline, category, description);
+
+  // Generate enriched fields
+  const eventSummary = generateNewsSummary(headline, category, symbol);
+  const sentiment = assessNewsSentiment(category, headline);
+
   const id = `${symbol}-${itemDate.toISOString().split('T')[0]}-${idx}`;
 
   return {
@@ -180,7 +321,11 @@ function processAnnouncement(item: any, idx: number): NewsItem | null {
     category,
     date: itemDate.toISOString().split('T')[0],
     importance,
+    materialityScore,
     source: 'NSE',
+    eventSummary,
+    sentiment,
+    actionability,
   };
 }
 
@@ -478,7 +623,11 @@ export async function GET(request: Request): Promise<NextResponse<AnnouncementDa
               category: 'Financial Results',
               date: parsed.toISOString().split('T')[0],
               importance: 'high',
+              materialityScore: 75,
               source: 'NSE',
+              eventSummary: `${sym} — Financial Results`,
+              sentiment: 'Neutral',
+              actionability: 'Track',
             });
           }
           console.log(`[Company News] Financial results: total now ${allNews.length}`);
@@ -503,9 +652,16 @@ export async function GET(request: Request): Promise<NextResponse<AnnouncementDa
       allNews = await fetchBulkAnnouncements(null, days, maxItems);
     }
 
+    // SUPPRESS noise items (actionability === 'Noise')
+    const totalBeforeFilter = allNews.length;
+    const materialNews = allNews.filter(item => item.actionability !== 'Noise');
+    const suppressed = totalBeforeFilter - materialNews.length;
+
+    console.log(`[Company News] Suppressed ${suppressed} noise items (${totalBeforeFilter} → ${materialNews.length})`);
+
     // Aggregate by company
     const newsByCompany = new Map<string, NewsItem[]>();
-    for (const item of allNews) {
+    for (const item of materialNews) {
       const key = item.ticker;
       if (!newsByCompany.has(key)) {
         newsByCompany.set(key, []);
@@ -513,38 +669,44 @@ export async function GET(request: Request): Promise<NextResponse<AnnouncementDa
       newsByCompany.get(key)!.push(item);
     }
 
-    // Limit per company and sort by date
+    // Limit per company, sort by materiality score then date
     const limitedNews: NewsItem[] = [];
     for (const companyNews of newsByCompany.values()) {
-      const sorted = companyNews.sort((a, b) =>
-        new Date(b.date).getTime() - new Date(a.date).getTime()
-      );
+      const sorted = companyNews.sort((a, b) => {
+        // Sort by materiality score first, then date
+        if (b.materialityScore !== a.materialityScore) return b.materialityScore - a.materialityScore;
+        return new Date(b.date).getTime() - new Date(a.date).getTime();
+      });
       limitedNews.push(...sorted.slice(0, limit));
     }
 
-    // Final sort by date (most recent first)
-    limitedNews.sort((a, b) =>
-      new Date(b.date).getTime() - new Date(a.date).getTime()
-    );
+    // Final sort by materiality score then date (most impactful first)
+    limitedNews.sort((a, b) => {
+      if (b.materialityScore !== a.materialityScore) return b.materialityScore - a.materialityScore;
+      return new Date(b.date).getTime() - new Date(a.date).getTime();
+    });
+
+    // Cap at 10 items per day (max signal, zero noise)
+    const finalNews = limitedNews.slice(0, Math.max(10, limit));
 
     // Build category summary
     const categoryCounts: Record<string, number> = {};
-    for (const item of limitedNews) {
+    for (const item of finalNews) {
       categoryCounts[item.category] = (categoryCounts[item.category] || 0) + 1;
     }
 
-    // Sort categories by count
     const sortedCategories = Object.entries(categoryCounts)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5)
       .map(([cat]) => cat);
 
     const response: AnnouncementData = {
-      news: limitedNews,
+      news: finalNews,
       summary: {
-        totalItems: limitedNews.length,
+        totalItems: finalNews.length,
         companiesCovered: newsByCompany.size,
         topCategories: sortedCategories,
+        suppressed,
       },
       updatedAt: new Date().toISOString(),
     };
@@ -564,6 +726,7 @@ export async function GET(request: Request): Promise<NextResponse<AnnouncementDa
           totalItems: 0,
           companiesCovered: 0,
           topCategories: [],
+          suppressed: 0,
         },
         updatedAt: new Date().toISOString(),
       },
@@ -611,6 +774,7 @@ export async function POST(request: Request): Promise<NextResponse<AnnouncementD
         totalItems: limitedNews.length,
         companiesCovered: newsByCompany.size,
         topCategories: Object.entries(categoryCounts).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([c]) => c),
+        suppressed: 0,
       },
       updatedAt: new Date().toISOString(),
     });
@@ -618,7 +782,7 @@ export async function POST(request: Request): Promise<NextResponse<AnnouncementD
     console.error('[Company News POST] Error:', error);
     return NextResponse.json({
       news: [],
-      summary: { totalItems: 0, companiesCovered: 0, topCategories: [] },
+      summary: { totalItems: 0, companiesCovered: 0, topCategories: [], suppressed: 0 },
       updatedAt: new Date().toISOString(),
     }, { status: 500 });
   }

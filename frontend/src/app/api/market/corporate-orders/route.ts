@@ -1,31 +1,27 @@
 import { NextResponse } from 'next/server';
 import { nseApiFetch } from '@/lib/nse';
+import { normalizeTicker } from '@/lib/tickers';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
 
-// Order keywords to detect business orders and contracts
+// Keywords to detect material corporate events (orders, deals, M&A, fund raising, mgmt changes)
 const ORDER_KEYWORDS = [
-  'order',
-  'contract',
-  'awarded',
-  'loi',
-  'letter of intent',
-  'agreement',
-  'deal value',
-  'capex',
-  'joint venture',
-  'jv',
-  'partnership',
-  'mou',
-  'memorandum',
-  'supply agreement',
-  'work order',
-  'purchase order',
-  'mandate',
-  'issued',
-  'obtained',
-  'signed',
+  // Orders & Contracts
+  'order', 'contract', 'awarded', 'loi', 'letter of intent',
+  'deal value', 'capex', 'work order', 'purchase order', 'mandate',
+  'supply agreement', 'signed', 'obtained', 'bagging',
+  // Strategic
+  'joint venture', 'jv', 'partnership', 'mou', 'memorandum',
+  'strategic', 'exclusive',
+  // M&A
+  'acquisition', 'merger', 'amalgamation', 'stake', 'buyout',
+  // Fund Raising
+  'fund raising', 'qip', 'rights issue', 'capital raising', 'preferential allotment',
+  // Management
+  'appointment', 'resignation', 'ceo', 'cfo', 'managing director',
+  // Financial
+  'dividend', 'buyback',
 ];
 
 interface CorporateOrder {
@@ -34,21 +30,38 @@ interface CorporateOrder {
   subject: string;
   description: string;
   date: string;
-  orderType: 'Order Win' | 'Contract' | 'Partnership/JV' | 'Capex' | 'LOI' | 'Other';
+  orderType: 'Order Win' | 'Contract' | 'Partnership/JV' | 'Capex' | 'LOI' | 'M&A' | 'Fund Raising' | 'Management Change' | 'Other';
   importance: 'HIGH' | 'MEDIUM' | 'LOW';
+  importanceScore: number; // Raw points score for ranking
   orderValue: number | null; // in Crores, if parseable
   isWatchlist: boolean;
   nseUrl: string;
+
+  // ── Enriched Analysis Fields ──
+  analysis: {
+    eventSummary: string;       // 1-line human-readable summary (<80 chars)
+    client: string | null;      // Extracted client/counterparty name
+    segment: string | null;     // Business segment (Infrastructure, IT, Defence, etc.)
+    timeline: string | null;    // Execution period if mentioned
+    revenueImpact: 'High' | 'Medium' | 'Low' | null;
+    marginImpact: 'Accretive' | 'Dilutive' | 'Neutral' | null;
+    strategicNote: string | null; // Why it matters (1 line)
+    sentiment: 'Positive' | 'Neutral' | 'Negative';
+    confidence: 'High' | 'Medium' | 'Low';
+  };
 }
 
 interface CorporateOrdersResponse {
   orders: CorporateOrder[];
   summary: {
     total: number;
+    high: number;
+    medium: number;
     orderWins: number;
     contracts: number;
     partnerships: number;
     watchlistHits: number;
+    totalOrderValue: number; // Sum of all parsed order values (Cr)
   };
   updatedAt: string;
 }
@@ -268,6 +281,249 @@ function calculateImportance(subject: string, description: string): 'HIGH' | 'ME
   return 'LOW';
 }
 
+/** Same as calculateImportance but also returns the raw score for ranking */
+function calculateImportanceWithScore(subject: string, description: string): { importance: 'HIGH' | 'MEDIUM' | 'LOW'; score: number } {
+  const combined = `${subject} ${description}`.toLowerCase();
+  let score = 0;
+
+  const orderValue = parseOrderValue(combined);
+  if (orderValue !== null) {
+    if (orderValue >= 500) score += 50;
+    else if (orderValue >= 100) score += 40;
+    else if (orderValue >= 50) score += 30;
+    else if (orderValue >= 10) score += 20;
+    else score += 5;
+  }
+
+  const strategicHigh: [string, number][] = [
+    ['strategic', 15], ['multi-year', 15], ['multi year', 15],
+    ['defence', 15], ['defense', 15], ['exclusive', 12],
+    ['large order', 12], ['bagging/receiving of orders', 12],
+    ['awarded', 10], ['secured', 10], ['won', 8],
+    ['government', 10], ['railway', 10], ['export order', 10],
+    ['international', 8], ['acquisition', 10], ['repeat order', 8],
+    ['follow-on', 8], ['rate contract', 8],
+  ];
+  let strategicScore = 0;
+  for (const [keyword, points] of strategicHigh) {
+    if (combined.includes(keyword)) strategicScore += points;
+  }
+  score += Math.min(strategicScore, 30);
+
+  const businessKeywords: [string, number][] = [
+    ['order', 8], ['contract', 8], ['loi', 6], ['letter of intent', 6],
+    ['partnership', 6], ['jv', 5], ['joint venture', 6], ['supply', 5],
+    ['mandate', 5], ['work order', 8], ['purchase order', 8], ['deal', 6],
+  ];
+  let businessScore = 0;
+  for (const [keyword, points] of businessKeywords) {
+    if (combined.includes(keyword)) businessScore += points;
+  }
+  score += Math.min(businessScore, 20);
+
+  const noiseKeywords: [string, number][] = [
+    ['rumour verification', -15], ['regulation 30', -10],
+    ['action(s) taken', -8], ['action(s) initiated', -8],
+    ['clarification', -5], ['disclosure', -3], ['update', -2],
+    ['amendment', -3], ['addendum', -3],
+  ];
+  for (const [keyword, penalty] of noiseKeywords) {
+    if (combined.includes(keyword)) score += penalty;
+  }
+
+  if (orderValue === null) {
+    if (combined.includes('undisclosed') || combined.includes('significant')) score += 8;
+    if (combined.includes('crore') || combined.includes('million') || combined.includes('billion')) score += 5;
+  }
+
+  const importance: 'HIGH' | 'MEDIUM' | 'LOW' = score >= 40 ? 'HIGH' : score >= 20 ? 'MEDIUM' : 'LOW';
+  return { importance, score };
+}
+
+// ── Enrichment: Extract structured analysis from raw text ──
+
+function extractClient(text: string): string | null {
+  const lower = text.toLowerCase();
+  // Look for "from <client>", "by <client>", "with <client>", "client: <x>"
+  const patterns = [
+    /(?:from|by|with|client[:\s]+|awarded by|received from)\s+(?:m\/s\.?\s+)?([A-Z][A-Za-z &.,()]+(?:Ltd|Limited|Corp|Inc|Government|Ministry|Authority|Council|Board|Department|Railway|Defence|NHPC|NTPC|ONGC|BPCL|IOCL|GAIL|SAIL|HAL|BEL|BHEL|NHAI|AAI)[A-Za-z .,()]*)/i,
+    /(?:govt\.?\s+of|government of|ministry of)\s+([A-Za-z ]+)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) {
+      let client = match[1].trim();
+      // Clean up trailing punctuation
+      client = client.replace(/[.,;:]+$/, '').trim();
+      if (client.length > 3 && client.length < 100) return client;
+    }
+  }
+
+  // Check for known entities
+  const knownEntities = [
+    ['NHAI', 'NHAI (National Highways Authority)'],
+    ['Indian Railways', 'Indian Railways'],
+    ['Ministry of Defence', 'Ministry of Defence'],
+    ['NTPC', 'NTPC Limited'],
+    ['ONGC', 'ONGC'],
+    ['IOCL', 'Indian Oil Corporation'],
+    ['GAIL', 'GAIL India'],
+    ['BPCL', 'Bharat Petroleum'],
+    ['HAL', 'Hindustan Aeronautics'],
+    ['BEL', 'Bharat Electronics'],
+    ['BHEL', 'BHEL'],
+    ['Coal India', 'Coal India Limited'],
+    ['Power Grid', 'Power Grid Corporation'],
+    ['NHPC', 'NHPC Limited'],
+    ['SAIL', 'SAIL'],
+  ];
+
+  for (const [keyword, label] of knownEntities) {
+    if (lower.includes(keyword.toLowerCase())) return label;
+  }
+
+  return null;
+}
+
+function extractSegment(text: string): string | null {
+  const lower = text.toLowerCase();
+  const segmentMap: [string[], string][] = [
+    [['defence', 'defense', 'military', 'naval', 'army', 'air force'], 'Defence'],
+    [['railway', 'rail', 'metro', 'train'], 'Railways'],
+    [['infrastructure', 'road', 'highway', 'bridge', 'tunnel'], 'Infrastructure'],
+    [['power', 'energy', 'solar', 'wind', 'renewable', 'transmission'], 'Power & Energy'],
+    [['water', 'sewage', 'irrigation', 'desalination'], 'Water Infrastructure'],
+    [['oil', 'gas', 'petroleum', 'refinery', 'pipeline'], 'Oil & Gas'],
+    [['mining', 'coal', 'mineral', 'steel'], 'Mining & Metals'],
+    [['telecom', 'network', '5g', 'fiber', 'broadband'], 'Telecom'],
+    [['it ', 'software', 'digital', 'cloud', 'ai ', 'data center'], 'IT & Digital'],
+    [['pharma', 'drug', 'api ', 'formulation', 'healthcare'], 'Pharma & Healthcare'],
+    [['real estate', 'housing', 'residential', 'commercial building'], 'Real Estate'],
+    [['auto', 'vehicle', 'ev ', 'electric vehicle', 'battery'], 'Automotive'],
+    [['chemical', 'specialty chemical'], 'Chemicals'],
+    [['cement', 'construction material'], 'Cement & Building'],
+    [['textile', 'garment', 'apparel'], 'Textiles'],
+    [['export', 'international', 'overseas', 'global'], 'Exports'],
+  ];
+
+  for (const [keywords, segment] of segmentMap) {
+    if (keywords.some(k => lower.includes(k))) return segment;
+  }
+  return null;
+}
+
+function extractTimeline(text: string): string | null {
+  const patterns = [
+    /(\d+)\s*(?:months?|yrs?|years?)\s*(?:period|timeline|execution|completion|duration)/i,
+    /(?:period|timeline|execution|completion|duration)\s*(?:of\s+)?(\d+)\s*(?:months?|yrs?|years?)/i,
+    /(?:complete|deliver|execute)\s*(?:within|in|over)\s*(\d+)\s*(?:months?|yrs?|years?)/i,
+    /(\d+)\s*(?:-|to)\s*(\d+)\s*(?:months?|yrs?|years?)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) {
+      if (match[2]) return `${match[1]}-${match[2]} months`;
+      const num = parseInt(match[1]);
+      if (text.toLowerCase().includes('year')) return `${num} year${num > 1 ? 's' : ''}`;
+      return `${num} month${num > 1 ? 's' : ''}`;
+    }
+  }
+
+  // Look for "multi-year", "long-term"
+  if (/multi.?year/i.test(text)) return 'Multi-year';
+  if (/long.?term/i.test(text)) return 'Long-term';
+
+  return null;
+}
+
+function generateEventSummary(order: { symbol: string; orderType: string; orderValue: number | null; subject: string; client: string | null; segment: string | null }): string {
+  const valuePart = order.orderValue ? `₹${order.orderValue >= 1000 ? `${(order.orderValue / 1000).toFixed(1)}K` : order.orderValue.toFixed(0)} Cr` : '';
+  const clientPart = order.client ? ` from ${order.client}` : '';
+  const segPart = order.segment ? ` (${order.segment})` : '';
+
+  switch (order.orderType) {
+    case 'Order Win':
+      return `${order.symbol} wins ${valuePart} order${clientPart}${segPart}`.trim();
+    case 'Contract':
+      return `${order.symbol} bags ${valuePart} contract${clientPart}${segPart}`.trim();
+    case 'Partnership/JV':
+      return `${order.symbol} enters partnership${clientPart}${segPart}`.trim();
+    case 'M&A':
+      return `${order.symbol} announces ${valuePart} acquisition${clientPart}`.trim();
+    case 'Fund Raising':
+      return `${order.symbol} raises ${valuePart} capital`.trim();
+    case 'Management Change':
+      return `${order.symbol} management change${clientPart}`.trim();
+    default:
+      return order.subject.length > 80 ? order.subject.slice(0, 77) + '...' : order.subject;
+  }
+}
+
+function assessRevenueImpact(orderValue: number | null, text: string): 'High' | 'Medium' | 'Low' | null {
+  if (orderValue === null) return null;
+  // Without knowing company revenue, use absolute thresholds
+  if (orderValue >= 500) return 'High';
+  if (orderValue >= 100) return 'Medium';
+  return 'Low';
+}
+
+function assessMarginImpact(text: string): 'Accretive' | 'Dilutive' | 'Neutral' | null {
+  const lower = text.toLowerCase();
+  if (/margin.?accretive|higher.?margin|premium|profit/i.test(lower)) return 'Accretive';
+  if (/margin.?dilutive|loss.?making|low.?margin|competitive.?bid/i.test(lower)) return 'Dilutive';
+  if (/margin.?neutral|normal.?margin/i.test(lower)) return 'Neutral';
+  return null; // Unknown
+}
+
+function assessSentiment(importance: string, orderType: string): 'Positive' | 'Neutral' | 'Negative' {
+  if (importance === 'HIGH') return 'Positive';
+  if (['Order Win', 'Contract', 'Partnership/JV'].includes(orderType)) return 'Positive';
+  return 'Neutral';
+}
+
+function assessConfidence(orderValue: number | null, text: string): 'High' | 'Medium' | 'Low' {
+  // High confidence: has specific value + known client + clear deal type
+  if (orderValue !== null && orderValue > 0) return 'High';
+  if (/awarded|secured|signed|executed|confirmed/i.test(text)) return 'High';
+  if (/loi|letter of intent|proposed|expected|likely/i.test(text)) return 'Low';
+  return 'Medium';
+}
+
+function generateStrategicNote(orderType: string, orderValue: number | null, segment: string | null, text: string): string | null {
+  const lower = text.toLowerCase();
+  const notes: string[] = [];
+
+  if (orderValue && orderValue >= 500) notes.push('Large-cap order boosts revenue visibility');
+  if (/repeat|follow.on|additional/i.test(lower)) notes.push('Repeat order signals client satisfaction');
+  if (/government|govt|psu|ministry/i.test(lower)) notes.push('Government order — high execution certainty');
+  if (/defence|defense|military/i.test(lower)) notes.push('Defence order — long execution, strong margins');
+  if (/export|international|global/i.test(lower)) notes.push('Export order — forex revenue diversification');
+  if (/multi.year|long.term/i.test(lower)) notes.push('Multi-year visibility — steady revenue pipeline');
+  if (/strategic|exclusive|sole/i.test(lower)) notes.push('Strategic deal — competitive moat');
+
+  return notes.length > 0 ? notes[0] : null;
+}
+
+/**
+ * Expanded classification for institutional-grade events
+ */
+function classifyOrderTypeV2(subject: string, description: string): CorporateOrder['orderType'] {
+  const combined = `${subject} ${description}`.toLowerCase();
+
+  if (combined.includes('acquisition') || combined.includes('merger') || combined.includes('amalgamation')) return 'M&A';
+  if (combined.includes('fund raising') || combined.includes('qip') || combined.includes('rights issue') || combined.includes('capital raising')) return 'Fund Raising';
+  if (combined.includes('appointment') || combined.includes('resignation') || combined.includes('ceo') || combined.includes('cfo') || combined.includes('managing director')) return 'Management Change';
+  if (combined.includes('letter of intent') || combined.includes('loi')) return 'LOI';
+  if (combined.includes('joint venture') || combined.includes('jv') || combined.includes('partnership')) return 'Partnership/JV';
+  if (combined.includes('capex') || combined.includes('capital expenditure')) return 'Capex';
+  if (combined.includes('contract')) return 'Contract';
+  if (combined.includes('order') || combined.includes('awarded') || combined.includes('secured') || combined.includes('bagging')) return 'Order Win';
+
+  return 'Other';
+}
+
 /**
  * Filter announcements for order-related keywords
  */
@@ -284,19 +540,41 @@ function filterForOrders(announcements: any[]): CorporateOrder[] {
     .map(item => {
       const subject = item.subject || item.newName || '';
       const description = item.desc || item.attachmentname || '';
+      const symbol = normalizeTicker(item.symbol || '');
 
       const combinedText = `${subject} ${description}`;
+      const orderValue = parseOrderValue(combinedText);
+      const orderType = classifyOrderTypeV2(subject, description);
+      const { importance, score: importanceScore } = calculateImportanceWithScore(subject, description);
+
+      // Extract enrichment fields
+      const client = extractClient(combinedText);
+      const segment = extractSegment(combinedText);
+      const timeline = extractTimeline(combinedText);
+
       return {
-        symbol: item.symbol || '',
-        company: item.companyName || item.company || item.symbol || '',
-        subject: subject,
-        description: description,
+        symbol,
+        company: item.companyName || item.company || symbol || '',
+        subject,
+        description,
         date: item.date || item.exDate || item.expiryDate || new Date().toISOString().split('T')[0],
-        orderType: classifyOrderType(subject, description),
-        importance: calculateImportance(subject, description),
-        orderValue: parseOrderValue(combinedText),
+        orderType,
+        importance,
+        importanceScore,
+        orderValue,
         isWatchlist: false, // Will be set after
-        nseUrl: `https://www.nseindia.com/corporate/announcements.jsp?symbol=${encodeURIComponent(item.symbol || '')}`,
+        nseUrl: `https://www.nseindia.com/corporate/announcements.jsp?symbol=${encodeURIComponent(symbol)}`,
+        analysis: {
+          eventSummary: generateEventSummary({ symbol, orderType, orderValue, subject, client, segment }),
+          client,
+          segment,
+          timeline,
+          revenueImpact: assessRevenueImpact(orderValue, combinedText),
+          marginImpact: assessMarginImpact(combinedText),
+          strategicNote: generateStrategicNote(orderType, orderValue, segment, combinedText),
+          sentiment: assessSentiment(importance, orderType),
+          confidence: assessConfidence(orderValue, combinedText),
+        },
       };
     });
 }
@@ -382,37 +660,47 @@ export async function GET(request: Request): Promise<NextResponse<CorporateOrder
     const orders = filterForOrders(allAnnouncements);
     const seen = new Set<string>();
     const uniqueOrders: CorporateOrder[] = [];
+    const watchlistSet = new Set(watchlist.map(s => normalizeTicker(s)));
 
     for (const order of orders) {
-      const key = `${order.symbol}:${order.subject || order.description}:${order.date}`;
+      const key = `${order.symbol}:${(order.subject || order.description).slice(0, 60)}:${order.date}`;
       if (!seen.has(key)) {
         seen.add(key);
-        order.isWatchlist = watchlist.includes(order.symbol);
+        order.isWatchlist = watchlistSet.has(normalizeTicker(order.symbol));
         uniqueOrders.push(order);
       }
     }
 
-    // 5. Sort by: watchlist first, then by date desc
-    uniqueOrders.sort((a, b) => {
-      if (a.isWatchlist !== b.isWatchlist) {
-        return a.isWatchlist ? -1 : 1;
-      }
+    // 5. SUPPRESS LOW importance items (noise) — only show HIGH and MEDIUM
+    const filteredOrders = uniqueOrders.filter(o => o.importance !== 'LOW');
+
+    // 6. Sort by: watchlist first → importance score desc → date desc
+    filteredOrders.sort((a, b) => {
+      // Watchlist priority
+      if (a.isWatchlist !== b.isWatchlist) return a.isWatchlist ? -1 : 1;
+      // Then by importance score (higher = more important)
+      if (a.importanceScore !== b.importanceScore) return b.importanceScore - a.importanceScore;
+      // Then by date
       const dateA = parseNSEDate(a.date);
       const dateB = parseNSEDate(b.date);
       return (dateB?.getTime() || 0) - (dateA?.getTime() || 0);
     });
 
-    // 6. Calculate summary
+    // 7. Calculate summary
+    const totalOrderValue = filteredOrders.reduce((sum, o) => sum + (o.orderValue || 0), 0);
     const summary = {
-      total: uniqueOrders.length,
-      orderWins: uniqueOrders.filter(o => o.orderType === 'Order Win').length,
-      contracts: uniqueOrders.filter(o => o.orderType === 'Contract').length,
-      partnerships: uniqueOrders.filter(o => o.orderType === 'Partnership/JV').length,
-      watchlistHits: uniqueOrders.filter(o => o.isWatchlist).length,
+      total: filteredOrders.length,
+      high: filteredOrders.filter(o => o.importance === 'HIGH').length,
+      medium: filteredOrders.filter(o => o.importance === 'MEDIUM').length,
+      orderWins: filteredOrders.filter(o => o.orderType === 'Order Win').length,
+      contracts: filteredOrders.filter(o => o.orderType === 'Contract').length,
+      partnerships: filteredOrders.filter(o => o.orderType === 'Partnership/JV').length,
+      watchlistHits: filteredOrders.filter(o => o.isWatchlist).length,
+      totalOrderValue: Math.round(totalOrderValue),
     };
 
     const response: CorporateOrdersResponse = {
-      orders: uniqueOrders.slice(0, 100), // Limit to 100 orders
+      orders: filteredOrders.slice(0, 50), // Max 50 high-signal items
       summary,
       updatedAt: new Date().toISOString(),
     };
@@ -427,7 +715,7 @@ export async function GET(request: Request): Promise<NextResponse<CorporateOrder
 
     return NextResponse.json({
       orders: [],
-      summary: { total: 0, orderWins: 0, contracts: 0, partnerships: 0, watchlistHits: 0 },
+      summary: { total: 0, high: 0, medium: 0, orderWins: 0, contracts: 0, partnerships: 0, watchlistHits: 0, totalOrderValue: 0 },
       updatedAt: new Date().toISOString(),
     }, { status: 500 });
   }

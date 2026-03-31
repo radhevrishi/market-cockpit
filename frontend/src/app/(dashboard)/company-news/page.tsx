@@ -12,7 +12,11 @@ interface CompanyNews {
   headline: string;
   category: string;
   importance: 'high' | 'medium' | 'low';
+  materialityScore?: number;
   description?: string;
+  eventSummary?: string;
+  sentiment?: 'Positive' | 'Neutral' | 'Negative';
+  actionability?: 'Actionable' | 'Track' | 'Noise';
 }
 
 interface NewsResponse {
@@ -640,113 +644,137 @@ export default function CompanyNewsPage() {
                       e.currentTarget.style.borderColor = THEME.border;
                     }}
                   >
-                    {/* Main Row */}
+                    {/* Intelligence Card Layout */}
                     <div style={{
-                      display: 'flex',
-                      alignItems: 'flex-start',
-                      gap: '12px',
+                      borderLeft: `4px solid ${item.importance === 'high' ? THEME.green : item.importance === 'medium' ? THEME.yellow : THEME.border}`,
+                      paddingLeft: '12px',
                     }}>
-                      {/* Importance Indicator */}
+                      {/* Event Summary (clean 1-liner) */}
+                      <h3 style={{
+                        margin: '0 0 8px 0',
+                        fontSize: '15px',
+                        fontWeight: '700',
+                        color: THEME.textPrimary,
+                        lineHeight: '1.4',
+                      }}>
+                        {item.eventSummary || item.headline}
+                      </h3>
+
+                      {/* Badges Row */}
                       <div style={{
-                        width: '8px',
-                        height: '8px',
-                        borderRadius: '50%',
-                        backgroundColor: getImportanceColor(item.importance),
-                        marginTop: '8px',
-                        flexShrink: 0,
-                      }} />
-
-                      {/* Content */}
-                      <div style={{ flex: 1 }}>
-                        {/* Header with Company Badge and Time */}
-                        <div style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '12px',
-                          marginBottom: '8px',
-                          flexWrap: 'wrap',
-                        }}>
-                          <span style={{
-                            backgroundColor: THEME.border,
-                            color: THEME.textPrimary,
-                            padding: '4px 10px',
-                            borderRadius: '4px',
-                            fontSize: '12px',
-                            fontWeight: 'bold',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                          }}>
-                            <Building2 size={12} />
-                            {item.ticker}
-                          </span>
-                          <span style={{
-                            backgroundColor: getCategoryColor(item.category),
-                            color: THEME.background,
-                            padding: '4px 10px',
-                            borderRadius: '4px',
-                            fontSize: '11px',
-                            fontWeight: 'bold',
-                          }}>
-                            {item.category}
-                          </span>
-                          <span style={{
-                            color: THEME.textSecondary,
-                            fontSize: '11px',
-                            marginLeft: 'auto',
-                          }}>
-                            {formatTime(item.date)}
-                          </span>
-                        </div>
-
-                        {/* Headline */}
-                        <h3 style={{
-                          margin: '0 0 12px 0',
-                          fontSize: '14px',
-                          fontWeight: '600',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        marginBottom: '10px',
+                        flexWrap: 'wrap',
+                      }}>
+                        <span style={{
+                          backgroundColor: THEME.border,
                           color: THEME.textPrimary,
-                          lineHeight: '1.5',
+                          padding: '3px 8px',
+                          borderRadius: '3px',
+                          fontSize: '11px',
+                          fontWeight: 'bold',
+                          fontFamily: 'monospace',
                         }}>
-                          {item.headline}
-                        </h3>
-
-                        {/* Expanded Content */}
-                        {expandedItems.has(item.id) && item.description && (
-                          <div style={{
-                            backgroundColor: THEME.background,
-                            padding: '12px',
-                            borderRadius: '6px',
-                            fontSize: '13px',
-                            color: THEME.textSecondary,
-                            lineHeight: '1.6',
-                            marginTop: '12px',
+                          {item.ticker}
+                        </span>
+                        <span style={{
+                          backgroundColor: getCategoryColor(item.category),
+                          color: THEME.background,
+                          padding: '3px 8px',
+                          borderRadius: '3px',
+                          fontSize: '10px',
+                          fontWeight: 'bold',
+                        }}>
+                          {item.category}
+                        </span>
+                        {/* Sentiment Badge */}
+                        {item.sentiment && (
+                          <span style={{
+                            backgroundColor: item.sentiment === 'Positive' ? `${THEME.green}20` : item.sentiment === 'Negative' ? `${THEME.red}20` : `${THEME.gray}20`,
+                            border: `1px solid ${item.sentiment === 'Positive' ? THEME.green : item.sentiment === 'Negative' ? THEME.red : THEME.gray}50`,
+                            color: item.sentiment === 'Positive' ? THEME.green : item.sentiment === 'Negative' ? THEME.red : THEME.textSecondary,
+                            padding: '2px 8px',
+                            borderRadius: '3px',
+                            fontSize: '10px',
+                            fontWeight: 600,
                           }}>
-                            {item.description}
-                          </div>
+                            {item.sentiment}
+                          </span>
                         )}
-
-                        {/* Footer */}
-                        {item.description && (
-                          <div style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            marginTop: '8px',
-                            color: THEME.textSecondary,
-                            fontSize: '12px',
+                        {/* Actionability Badge */}
+                        {item.actionability && item.actionability !== 'Noise' && (
+                          <span style={{
+                            backgroundColor: item.actionability === 'Actionable' ? `${THEME.red}15` : `${THEME.yellow}15`,
+                            border: `1px solid ${item.actionability === 'Actionable' ? THEME.red : THEME.yellow}40`,
+                            color: item.actionability === 'Actionable' ? THEME.red : THEME.yellow,
+                            padding: '2px 8px',
+                            borderRadius: '3px',
+                            fontSize: '10px',
+                            fontWeight: 700,
                           }}>
-                            {expandedItems.has(item.id) ? (
-                              <>
-                                <ChevronDown size={14} />
-                                Hide details
-                              </>
-                            ) : (
-                              <>
-                                <ChevronRight size={14} />
-                                View details
-                              </>
-                            )}
-                          </div>
+                            {item.actionability === 'Actionable' ? 'ACTION' : 'TRACK'}
+                          </span>
+                        )}
+                        {/* Materiality Score */}
+                        {item.materialityScore !== undefined && item.materialityScore > 0 && (
+                          <span style={{
+                            color: THEME.textSecondary,
+                            fontSize: '10px',
+                            fontFamily: 'monospace',
+                          }}>
+                            Score: {item.materialityScore}
+                          </span>
+                        )}
+                        <span style={{
+                          color: THEME.textSecondary,
+                          fontSize: '11px',
+                          marginLeft: 'auto',
+                        }}>
+                          {formatTime(item.date)}
+                        </span>
+                      </div>
+
+                      {/* Expanded: Raw headline + description */}
+                      {expandedItems.has(item.id) && (
+                        <div style={{
+                          backgroundColor: THEME.background,
+                          padding: '12px',
+                          borderRadius: '6px',
+                          fontSize: '13px',
+                          color: THEME.textSecondary,
+                          lineHeight: '1.6',
+                          marginTop: '8px',
+                        }}>
+                          {item.headline !== item.eventSummary && (
+                            <div style={{ marginBottom: '8px', fontWeight: 600, color: THEME.textPrimary }}>
+                              {item.headline}
+                            </div>
+                          )}
+                          {item.description && <div>{item.description}</div>}
+                        </div>
+                      )}
+
+                      {/* Expand toggle */}
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        marginTop: '6px',
+                        color: THEME.textSecondary,
+                        fontSize: '11px',
+                      }}>
+                        {expandedItems.has(item.id) ? (
+                          <>
+                            <ChevronDown size={14} />
+                            Hide raw filing
+                          </>
+                        ) : (
+                          <>
+                            <ChevronRight size={14} />
+                            View raw filing
+                          </>
                         )}
                       </div>
                     </div>

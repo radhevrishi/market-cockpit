@@ -124,19 +124,34 @@ interface CorporateOrder {
   subject: string;
   description: string;
   date: string;
-  orderType: 'Order Win' | 'Contract' | 'Partnership/JV' | 'Capex' | 'LOI' | 'Other';
+  orderType: string;
   importance: 'HIGH' | 'MEDIUM' | 'LOW';
+  importanceScore: number;
   orderValue: number | null;
   isWatchlist: boolean;
   nseUrl: string;
+  analysis: {
+    eventSummary: string;
+    client: string | null;
+    segment: string | null;
+    timeline: string | null;
+    revenueImpact: string | null;
+    marginImpact: string | null;
+    strategicNote: string | null;
+    sentiment: 'Positive' | 'Neutral' | 'Negative';
+    confidence: 'High' | 'Medium' | 'Low';
+  };
 }
 
 interface CorporateOrdersSummary {
   total: number;
+  high: number;
+  medium: number;
   orderWins: number;
   contracts: number;
   partnerships: number;
   watchlistHits: number;
+  totalOrderValue: number;
 }
 
 export default function OrdersPage() {
@@ -160,10 +175,13 @@ export default function OrdersPage() {
   const [corporateOrders, setCorporateOrders] = useState<CorporateOrder[]>([]);
   const [corporateSummary, setCorporateSummary] = useState<CorporateOrdersSummary>({
     total: 0,
+    high: 0,
+    medium: 0,
     orderWins: 0,
     contracts: 0,
     partnerships: 0,
     watchlistHits: 0,
+    totalOrderValue: 0,
   });
   const [corporateLoading, setCorporateLoading] = useState(false);
 
@@ -230,20 +248,26 @@ export default function OrdersPage() {
       setCorporateOrders(data.orders || []);
       setCorporateSummary(data.summary || {
         total: 0,
+        high: 0,
+        medium: 0,
         orderWins: 0,
         contracts: 0,
         partnerships: 0,
         watchlistHits: 0,
+        totalOrderValue: 0,
       });
     } catch (error) {
       console.error('Error fetching corporate orders:', error);
       setCorporateOrders([]);
       setCorporateSummary({
         total: 0,
+        high: 0,
+        medium: 0,
         orderWins: 0,
         contracts: 0,
         partnerships: 0,
         watchlistHits: 0,
+        totalOrderValue: 0,
       });
     }
     setCorporateLoading(false);
@@ -554,11 +578,11 @@ export default function OrdersPage() {
           }}
         >
           {[
-            { label: 'Total Orders', value: corporateSummary.total, color: ACCENT },
-            { label: 'Order Wins', value: corporateSummary.orderWins, color: GREEN },
-            { label: 'Contracts', value: corporateSummary.contracts, color: ACCENT },
-            { label: 'Partnerships', value: corporateSummary.partnerships, color: PURPLE },
-            { label: 'Watchlist Hits', value: corporateSummary.watchlistHits, color: YELLOW },
+            { label: 'Material Events', value: corporateSummary.total, color: ACCENT },
+            { label: 'HIGH Signal', value: corporateSummary.high, color: RED },
+            { label: 'MEDIUM Signal', value: corporateSummary.medium, color: YELLOW },
+            { label: 'Total Value', value: corporateSummary.totalOrderValue > 0 ? `₹${(corporateSummary.totalOrderValue / 1000).toFixed(0)}K Cr` : '—', color: GREEN, isString: true },
+            { label: 'Watchlist Hits', value: corporateSummary.watchlistHits, color: CYAN },
           ].map(card => (
             <div
               key={card.label}
@@ -581,8 +605,8 @@ export default function OrdersPage() {
               <div style={{ fontSize: '12px', color: TEXT3, marginBottom: '8px', textTransform: 'uppercase' }}>
                 {card.label}
               </div>
-              <div style={{ fontSize: '32px', fontWeight: 700, color: card.color }}>
-                {card.value.toLocaleString()}
+              <div style={{ fontSize: '28px', fontWeight: 700, color: card.color }}>
+                {typeof card.value === 'string' ? card.value : card.value.toLocaleString()}
               </div>
             </div>
           ))}
@@ -955,147 +979,153 @@ export default function OrdersPage() {
             </div>
           ) : corporateOrders.length > 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {corporateOrders.map((order, idx) => (
-                <div
-                  key={`${order.symbol}-${order.date}-${idx}`}
-                  style={{
-                    backgroundColor: CARD,
-                    border: `1px solid ${BORDER}`,
-                    borderRadius: '8px',
-                    padding: '16px',
-                    transition: 'all 0.2s',
-                    cursor: 'pointer',
-                  }}
-                  onMouseEnter={e => {
-                    (e.currentTarget as HTMLDivElement).style.backgroundColor = CARD_HOVER;
-                    (e.currentTarget as HTMLDivElement).style.borderColor = ACCENT;
-                  }}
-                  onMouseLeave={e => {
-                    (e.currentTarget as HTMLDivElement).style.backgroundColor = CARD;
-                    (e.currentTarget as HTMLDivElement).style.borderColor = BORDER;
-                  }}
-                >
-                  {/* Header row: Symbol, Type badge, Date, Importance */}
+              {corporateOrders.map((order, idx) => {
+                const sentimentColor = order.analysis?.sentiment === 'Positive' ? GREEN : order.analysis?.sentiment === 'Negative' ? RED : TEXT2;
+                const borderColor = order.importance === 'HIGH' ? GREEN : order.importance === 'MEDIUM' ? YELLOW : BORDER;
+
+                return (
                   <div
+                    key={`${order.symbol}-${order.date}-${idx}`}
                     style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'flex-start',
-                      marginBottom: '12px',
-                      gap: '12px',
+                      backgroundColor: CARD,
+                      border: `1px solid ${BORDER}`,
+                      borderLeft: `4px solid ${borderColor}`,
+                      borderRadius: '8px',
+                      padding: '16px',
+                      transition: 'all 0.2s',
+                    }}
+                    onMouseEnter={e => {
+                      (e.currentTarget as HTMLDivElement).style.backgroundColor = CARD_HOVER;
+                    }}
+                    onMouseLeave={e => {
+                      (e.currentTarget as HTMLDivElement).style.backgroundColor = CARD;
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
-                      {order.isWatchlist && (
-                        <Star size={16} fill={YELLOW} color={YELLOW} />
-                      )}
-                      <div>
-                        <div
-                          style={{
-                            fontSize: '14px',
-                            fontWeight: 700,
-                            color: ACCENT,
-                            fontFamily: 'monospace',
-                          }}
-                        >
-                          {order.symbol}
-                        </div>
-                        <div
-                          style={{
-                            fontSize: '12px',
-                            color: TEXT2,
-                            marginTop: '2px',
-                          }}
-                        >
-                          {order.company}
-                        </div>
-                      </div>
+                    {/* Row 1: Event Summary (the readable 1-liner) */}
+                    <div style={{
+                      fontSize: '15px',
+                      fontWeight: 700,
+                      color: TEXT1,
+                      marginBottom: '10px',
+                      lineHeight: '1.4',
+                    }}>
+                      {order.analysis?.eventSummary || order.subject || 'Corporate Announcement'}
                     </div>
 
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                      {/* Order Type Badge */}
-                      <div
-                        style={{
-                          backgroundColor: getOrderTypeColor(order.orderType),
-                          color: order.orderType === 'Order Win' ? '#000' : (order.orderType === 'Capex' ? '#000' : TEXT1),
-                          padding: '4px 10px',
-                          borderRadius: '4px',
-                          fontSize: '11px',
-                          fontWeight: 600,
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {order.orderType}
-                      </div>
-
-                      {/* Importance Badge */}
-                      <div
-                        style={{
-                          backgroundColor: getImportanceColor(order.importance),
-                          color: order.importance === 'HIGH' ? '#fff' : (order.importance === 'MEDIUM' ? '#000' : TEXT2),
-                          padding: '4px 10px',
-                          borderRadius: '4px',
-                          fontSize: '11px',
-                          fontWeight: 600,
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {order.importance}
-                      </div>
-
-                      {/* Order Value */}
+                    {/* Row 2: Badges — Symbol, Type, Importance, Value, Date */}
+                    <div style={{
+                      display: 'flex',
+                      gap: '8px',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      marginBottom: '12px',
+                    }}>
+                      {order.isWatchlist && (
+                        <Star size={14} fill={YELLOW} color={YELLOW} />
+                      )}
+                      <span style={{
+                        fontSize: '12px', fontWeight: 700, color: ACCENT, fontFamily: 'monospace',
+                      }}>{order.symbol}</span>
+                      <span style={{
+                        backgroundColor: getOrderTypeColor(order.orderType),
+                        color: ['Order Win', 'Capex'].includes(order.orderType) ? '#000' : TEXT1,
+                        padding: '2px 8px', borderRadius: '3px', fontSize: '10px', fontWeight: 600,
+                      }}>{order.orderType}</span>
+                      <span style={{
+                        backgroundColor: `${getImportanceColor(order.importance)}20`,
+                        border: `1px solid ${getImportanceColor(order.importance)}50`,
+                        color: getImportanceColor(order.importance),
+                        padding: '2px 8px', borderRadius: '3px', fontSize: '10px', fontWeight: 700,
+                      }}>{order.importance}</span>
                       {order.orderValue && order.orderValue > 0 && (
-                        <div style={{
-                          backgroundColor: `${GREEN}20`,
+                        <span style={{
+                          backgroundColor: `${GREEN}15`,
                           border: `1px solid ${GREEN}40`,
-                          padding: '3px 8px',
-                          borderRadius: '4px',
-                          fontSize: '11px',
-                          fontWeight: 700,
                           color: GREEN,
-                          whiteSpace: 'nowrap',
+                          padding: '2px 8px', borderRadius: '3px', fontSize: '11px', fontWeight: 700,
                         }}>
                           ₹{order.orderValue >= 1000 ? `${(order.orderValue / 1000).toFixed(1)}K` : order.orderValue.toFixed(0)} Cr
-                        </div>
+                        </span>
                       )}
-
-                      {/* Date */}
-                      <div style={{ fontSize: '12px', color: TEXT3, whiteSpace: 'nowrap' }}>
+                      <span style={{ fontSize: '11px', color: TEXT3, marginLeft: 'auto' }}>
                         {formatOrderDate(order.date)}
+                      </span>
+                    </div>
+
+                    {/* Row 3: Analysis Details Grid */}
+                    {order.analysis && (
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+                        gap: '8px',
+                        padding: '10px 12px',
+                        backgroundColor: `${BG}80`,
+                        borderRadius: '6px',
+                        fontSize: '11px',
+                      }}>
+                        {order.analysis.client && (
+                          <div>
+                            <span style={{ color: TEXT3, display: 'block' }}>Client</span>
+                            <span style={{ color: TEXT1, fontWeight: 600 }}>{order.analysis.client}</span>
+                          </div>
+                        )}
+                        {order.analysis.segment && (
+                          <div>
+                            <span style={{ color: TEXT3, display: 'block' }}>Segment</span>
+                            <span style={{ color: TEXT1, fontWeight: 600 }}>{order.analysis.segment}</span>
+                          </div>
+                        )}
+                        {order.analysis.timeline && (
+                          <div>
+                            <span style={{ color: TEXT3, display: 'block' }}>Timeline</span>
+                            <span style={{ color: TEXT1, fontWeight: 600 }}>{order.analysis.timeline}</span>
+                          </div>
+                        )}
+                        {order.analysis.revenueImpact && (
+                          <div>
+                            <span style={{ color: TEXT3, display: 'block' }}>Revenue Impact</span>
+                            <span style={{
+                              color: order.analysis.revenueImpact === 'High' ? GREEN : order.analysis.revenueImpact === 'Medium' ? YELLOW : TEXT2,
+                              fontWeight: 600,
+                            }}>{order.analysis.revenueImpact}</span>
+                          </div>
+                        )}
+                        {order.analysis.marginImpact && (
+                          <div>
+                            <span style={{ color: TEXT3, display: 'block' }}>Margin Impact</span>
+                            <span style={{
+                              color: order.analysis.marginImpact === 'Accretive' ? GREEN : order.analysis.marginImpact === 'Dilutive' ? RED : TEXT2,
+                              fontWeight: 600,
+                            }}>{order.analysis.marginImpact}</span>
+                          </div>
+                        )}
+                        <div>
+                          <span style={{ color: TEXT3, display: 'block' }}>Sentiment</span>
+                          <span style={{ color: sentimentColor, fontWeight: 600 }}>{order.analysis.sentiment}</span>
+                        </div>
+                        <div>
+                          <span style={{ color: TEXT3, display: 'block' }}>Confidence</span>
+                          <span style={{ color: TEXT1, fontWeight: 600 }}>{order.analysis.confidence}</span>
+                        </div>
                       </div>
-                    </div>
-                  </div>
+                    )}
 
-                  {/* Subject line — fallback to description if subject is empty */}
-                  <div
-                    style={{
-                      fontSize: '14px',
-                      fontWeight: 600,
-                      color: TEXT1,
-                      marginBottom: '8px',
-                      lineHeight: '1.4',
-                    }}
-                  >
-                    {order.subject || order.description || 'Corporate Announcement'}
+                    {/* Row 4: Strategic Note (if available) */}
+                    {order.analysis?.strategicNote && (
+                      <div style={{
+                        marginTop: '8px',
+                        fontSize: '12px',
+                        color: ACCENT,
+                        fontStyle: 'italic',
+                        paddingLeft: '8px',
+                        borderLeft: `2px solid ${ACCENT}40`,
+                      }}>
+                        {order.analysis.strategicNote}
+                      </div>
+                    )}
                   </div>
-
-                  {/* Description (truncated) — only show if different from subject */}
-                  {order.description && order.subject && order.description !== order.subject && (
-                    <div
-                      style={{
-                        fontSize: '13px',
-                        color: TEXT2,
-                        lineHeight: '1.4',
-                        maxHeight: '60px',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                      }}
-                    >
-                      {order.description}
-                    </div>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div
