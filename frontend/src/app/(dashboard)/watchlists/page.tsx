@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Plus, Trash2, TrendingUp, TrendingDown, RefreshCw, Download, ArrowUpDown } from 'lucide-react';
 import toast from 'react-hot-toast';
+import TickerSearch, { type TickerSuggestion } from '@/components/TickerSearch';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -478,6 +479,60 @@ export default function WatchlistsPage() {
     setTimeout(() => fetchData(), 500);
   }, [tickerInput, tickers, fetchData]);
 
+  // Handle ticker search selection (single ticker from autocomplete)
+  const handleSearchSelect = useCallback((rawTicker: string, suggestion?: TickerSuggestion) => {
+    // If it looks like bulk paste (has commas), delegate to bulk handler
+    if (rawTicker.includes(',') || rawTicker.includes(' ') || rawTicker.includes('\n')) {
+      setTickerInput(rawTicker);
+      // Trigger bulk add after state update
+      setTimeout(() => {
+        const parsed = rawTicker.toUpperCase().split(/[\s,;\n\r]+/)
+          .map(t => t.replace(/^(NSE|BSE|BOM|MCX):/, '').trim())
+          .filter(t => t.length > 0 && t.length < 30 && /^[A-Z0-9&-]+$/.test(t));
+        const existing = new Set(tickers);
+        const toAdd = parsed.filter(t => !existing.has(t));
+        if (toAdd.length === 0) { toast.error('All tickers already in watchlist'); return; }
+        const newTickers = [...tickers, ...toAdd];
+        setTickers(newTickers);
+        setStoredTickers(newTickers);
+        toast.success(`${toAdd.length} ticker${toAdd.length > 1 ? 's' : ''} added. Total: ${newTickers.length}`);
+        fetch('/api/watchlist', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chatId: '5057319640', watchlist: newTickers, secret: 'mc-bot-2026' }),
+        }).catch(console.error);
+        setTimeout(() => fetchData(), 500);
+      }, 0);
+      return;
+    }
+
+    // Single ticker add
+    const symbol = rawTicker.toUpperCase().replace(/^(NSE|BSE|BOM|MCX):/, '').trim();
+    if (!symbol || !/^[A-Z0-9&-]+$/.test(symbol)) { toast.error('Invalid ticker'); return; }
+    if (tickers.includes(symbol)) { toast.error(`${symbol} already in watchlist`); return; }
+
+    const newTickers = [...tickers, symbol];
+    setTickers(newTickers);
+    setStoredTickers(newTickers);
+    toast.success(`${symbol} added to watchlist. Total: ${newTickers.length}`);
+
+    fetch('/api/watchlist', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chatId: '5057319640', watchlist: newTickers, secret: 'mc-bot-2026' }),
+    }).catch(console.error);
+    setTimeout(() => fetchData(), 500);
+  }, [tickers, fetchData]);
+
+  // Build suggestions from quotes for autocomplete
+  const searchSuggestions = useMemo((): TickerSuggestion[] => {
+    return quotes.map(q => ({
+      ticker: q.ticker,
+      company: q.company || q.ticker,
+      sector: q.sector || '—',
+      price: q.price || 0,
+      changePercent: q.changePercent || 0,
+    }));
+  }, [quotes]);
+
   // Handle remove ticker
   const handleRemoveTicker = useCallback((ticker: string) => {
     const newTickers = tickers.filter(t => t !== ticker);
@@ -595,57 +650,17 @@ export default function WatchlistsPage() {
         </div>
       </div>
 
-      {/* ── Add Ticker Input ────────────────────────────────────────────────── */}
+      {/* ── Add Ticker Search ──────────────────────────────────────────────── */}
       <div style={{ marginBottom: '24px' }}>
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <textarea
-            value={tickerInput}
-            onChange={e => setTickerInput(e.target.value.toUpperCase())}
-            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAddTicker(); } }}
-            placeholder="Paste tickers: INFY, TCS, RELIANCE (comma or space separated, bulk paste supported)"
-            rows={tickerInput.includes(',') || tickerInput.length > 40 ? 3 : 1}
-            style={{
-              flex: 1,
-              backgroundColor: '#1A2B3C',
-              border: '1px solid #2A3B4C',
-              borderRadius: '10px',
-              padding: '12px 16px',
-              color: '#F5F7FA',
-              fontSize: '14px',
-              outline: 'none',
-              transition: 'all 0.2s',
-              boxSizing: 'border-box',
-              resize: 'vertical',
-              fontFamily: 'inherit',
-              minHeight: '44px',
-            }}
-            onFocus={e => (e.currentTarget.style.borderColor = '#3B82F6')}
-            onBlur={e => (e.currentTarget.style.borderColor = '#2A3B4C')}
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+          <TickerSearch
+            onSelect={handleSearchSelect}
+            quotes={searchSuggestions}
+            existingTickers={tickers}
+            placeholder="Search company name or ticker... (or paste bulk: INFY, TCS, RELIANCE)"
+            allowBulk={true}
+            clearOnSelect={true}
           />
-          <button
-            onClick={handleAddTicker}
-            disabled={!tickerInput.trim()}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              backgroundColor: '#3B82F6',
-              border: 'none',
-              borderRadius: '10px',
-              padding: '12px 20px',
-              color: 'white',
-              cursor: !tickerInput.trim() ? 'not-allowed' : 'pointer',
-              fontSize: '14px',
-              fontWeight: '600',
-              transition: 'all 0.2s',
-              opacity: !tickerInput.trim() ? 0.5 : 1,
-            }}
-            onMouseEnter={e => tickerInput.trim() && (e.currentTarget.style.backgroundColor = '#2563EB')}
-            onMouseLeave={e => (e.currentTarget.style.backgroundColor = '#3B82F6')}
-          >
-            <Plus style={{ width: '16px', height: '16px' }} />
-            Add Ticker
-          </button>
         </div>
       </div>
 

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Plus, Trash2, TrendingUp, TrendingDown, RefreshCw, Download, ArrowUpDown, Edit3, Check, X } from 'lucide-react';
 import toast from 'react-hot-toast';
+import TickerSearch, { type TickerSuggestion } from '@/components/TickerSearch';
 
 /* ── Types ──────────────────────────────────────────────────────────── */
 
@@ -142,8 +143,9 @@ function PortfolioSummary({ rows }: { rows: PortfolioRow[] }) {
 
 /* ── Add Holding Modal ─────────────────────────────────────────────── */
 
-function AddHoldingForm({ onAdd, onCancel }: { onAdd: (h: PortfolioHolding) => void; onCancel: () => void }) {
+function AddHoldingForm({ onAdd, onCancel, quotes }: { onAdd: (h: PortfolioHolding) => void; onCancel: () => void; quotes: StockQuote[] }) {
   const [symbol, setSymbol] = useState('');
+  const [company, setCompany] = useState('');
   const [entryPrice, setEntryPrice] = useState('');
   const [quantity, setQuantity] = useState('');
   const [notes, setNotes] = useState('');
@@ -164,6 +166,11 @@ function AddHoldingForm({ onAdd, onCancel }: { onAdd: (h: PortfolioHolding) => v
     });
   };
 
+  const searchSuggestions = useMemo((): TickerSuggestion[] =>
+    quotes.map(q => ({ ticker: q.ticker, company: q.company || q.ticker, sector: q.sector || '—', price: q.price || 0, changePercent: q.changePercent || 0 })),
+    [quotes]
+  );
+
   const inputStyle = {
     backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '8px',
     padding: '10px 14px', color: '#F5F7FA', fontSize: '14px', outline: 'none', width: '100%',
@@ -173,12 +180,27 @@ function AddHoldingForm({ onAdd, onCancel }: { onAdd: (h: PortfolioHolding) => v
   return (
     <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #2A3B4C', borderRadius: '12px', padding: '20px', marginBottom: '20px' }}>
       <div style={{ fontSize: '14px', fontWeight: '700', color: '#F5F7FA', marginBottom: '16px' }}>Add Holding</div>
+      <div style={{ marginBottom: '12px' }}>
+        <label style={{ fontSize: '11px', color: '#8BA3C1', fontWeight: '600', display: 'block', marginBottom: '4px' }}>SEARCH STOCK</label>
+        <TickerSearch
+          onSelect={(ticker, sug) => {
+            setSymbol(ticker);
+            if (sug) {
+              setCompany(sug.company);
+              if (sug.price > 0 && !entryPrice) setEntryPrice(sug.price.toFixed(2));
+            }
+          }}
+          quotes={searchSuggestions}
+          placeholder="Search by company name or ticker..."
+          clearOnSelect={false}
+        />
+        {symbol && (
+          <div style={{ marginTop: '6px', fontSize: '12px', color: '#10B981', fontWeight: 600 }}>
+            Selected: {symbol} {company && company !== symbol ? `— ${company}` : ''}
+          </div>
+        )}
+      </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginBottom: '12px' }}>
-        <div>
-          <label style={{ fontSize: '11px', color: '#8BA3C1', fontWeight: '600', display: 'block', marginBottom: '4px' }}>SYMBOL</label>
-          <input value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase())} placeholder="RELIANCE" style={inputStyle}
-            onKeyDown={e => e.key === 'Enter' && handleSubmit()} />
-        </div>
         <div>
           <label style={{ fontSize: '11px', color: '#8BA3C1', fontWeight: '600', display: 'block', marginBottom: '4px' }}>ENTRY PRICE (₹)</label>
           <input type="number" value={entryPrice} onChange={e => setEntryPrice(e.target.value)} placeholder="1250.00" style={inputStyle}
@@ -445,7 +467,7 @@ export default function PortfolioPage() {
       </div>
 
       {/* ── Add Form ────────────────────────────────────────────────── */}
-      {showAdd && <AddHoldingForm onAdd={handleAdd} onCancel={() => setShowAdd(false)} />}
+      {showAdd && <AddHoldingForm onAdd={handleAdd} onCancel={() => setShowAdd(false)} quotes={quotes} />}
 
       {/* ── Summary ─────────────────────────────────────────────────── */}
       <PortfolioSummary rows={sortedRows} />
