@@ -771,7 +771,24 @@ export default function EarningsPage() {
       <div style={{ marginBottom: '24px' }}>
         <h1 style={{ fontSize: '28px', fontWeight: 700, margin: '0 0 8px 0' }}>Earnings Intelligence</h1>
         <p style={{ color: TEXT_DIM, margin: 0, fontSize: '13px' }}>
-          Custom universe quarterly results · Portfolio + Watchlist only · Source: {source || '...'} · {updatedAt ? new Date(updatedAt).toLocaleString('en-IN') : ''}
+          Custom universe quarterly results · Portfolio + Watchlist only · Source: {source || '...'}
+          {updatedAt && (
+            <span style={{ marginLeft: '8px', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 600,
+              backgroundColor: (() => {
+                const mins = Math.floor((Date.now() - new Date(updatedAt).getTime()) / 60000);
+                return mins < 5 ? 'rgba(16,185,129,0.15)' : mins < 30 ? 'rgba(255,214,0,0.15)' : 'rgba(239,68,68,0.15)';
+              })(),
+              color: (() => {
+                const mins = Math.floor((Date.now() - new Date(updatedAt).getTime()) / 60000);
+                return mins < 5 ? '#10B981' : mins < 30 ? '#FFD600' : '#EF4444';
+              })(),
+            }}>
+              {(() => {
+                const mins = Math.floor((Date.now() - new Date(updatedAt).getTime()) / 60000);
+                return mins < 1 ? 'Just now' : mins < 60 ? `${mins}m ago` : `${Math.floor(mins / 60)}h ago`;
+              })()}
+            </span>
+          )}
         </p>
       </div>
 
@@ -887,6 +904,25 @@ export default function EarningsPage() {
         </div>
       )}
 
+      {/* Failed Symbols Warning — shown above cards so user sees it first */}
+      {!loading && failedSymbols.length > 0 && (
+        <div style={{
+          backgroundColor: '#1A1A0D', border: '1px solid #3D3D00', borderRadius: '10px',
+          padding: '14px 18px', marginBottom: '16px', display: 'flex', alignItems: 'flex-start', gap: '10px',
+        }}>
+          <AlertTriangle style={{ width: '16px', height: '16px', color: YELLOW, flexShrink: 0, marginTop: '2px' }} />
+          <div>
+            <div style={{ fontSize: '12px', fontWeight: 600, color: YELLOW, marginBottom: '4px' }}>
+              {failedSymbols.length} ticker{failedSymbols.length > 1 ? 's' : ''} could not be scanned
+            </div>
+            <div style={{ fontSize: '11px', color: TEXT_DIM, lineHeight: 1.5 }}>
+              No earnings data on screener.in for: <span style={{ color: TEXT, fontWeight: 500 }}>{failedSymbols.join(', ')}</span>
+              <br/>These may be BSE-only codes, very new listings, or tickers with different screener.in names.
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Cards Grid */}
       {!loading && !error && sortedCards.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: '16px' }}>
@@ -904,25 +940,6 @@ export default function EarningsPage() {
           <p style={{ margin: 0, fontSize: '13px' }}>
             {cards.length > 0 ? 'Try selecting "ALL" grade filter.' : `Add stocks to your ${viewMode === 'portfolio' ? 'portfolio' : 'watchlist'} first.`}
           </p>
-        </div>
-      )}
-
-      {/* Failed Symbols Warning */}
-      {!loading && failedSymbols.length > 0 && (
-        <div style={{
-          backgroundColor: '#1A1A0D', border: '1px solid #3D3D00', borderRadius: '10px',
-          padding: '14px 18px', marginBottom: '16px', display: 'flex', alignItems: 'flex-start', gap: '10px',
-        }}>
-          <AlertTriangle style={{ width: '16px', height: '16px', color: YELLOW, flexShrink: 0, marginTop: '2px' }} />
-          <div>
-            <div style={{ fontSize: '12px', fontWeight: 600, color: YELLOW, marginBottom: '4px' }}>
-              {failedSymbols.length} ticker{failedSymbols.length > 1 ? 's' : ''} could not be scanned
-            </div>
-            <div style={{ fontSize: '11px', color: TEXT_DIM, lineHeight: 1.5 }}>
-              No earnings data on screener.in for: <span style={{ color: TEXT, fontWeight: 500 }}>{failedSymbols.join(', ')}</span>
-              <br/>These may be BSE-only codes, very new listings, or tickers with different screener.in names.
-            </div>
-          </div>
         </div>
       )}
 

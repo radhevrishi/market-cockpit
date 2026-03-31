@@ -30,7 +30,7 @@ interface WatchlistItem {
   dayLow: number;
 }
 
-type SortField = 'ticker' | 'price' | 'changePercent' | 'dayHigh' | 'dayLow';
+type SortField = 'ticker' | 'company' | 'sector' | 'price' | 'changePercent' | 'dayHigh' | 'dayLow';
 type SortOrder = 'asc' | 'desc';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -174,16 +174,6 @@ function WatchlistTable({
   onSort: (field: SortField) => void;
   onRemove: (ticker: string) => void;
 }) {
-  const headers: { key: SortField; label: string }[] = [
-    { key: 'ticker', label: 'Ticker' },
-    { key: 'ticker', label: 'Company' },
-    { key: 'ticker', label: 'Sector' },
-    { key: 'price', label: 'CMP (₹)' },
-    { key: 'changePercent', label: 'Change%' },
-    { key: 'dayHigh', label: 'Day High' },
-    { key: 'dayLow', label: 'Day Low' },
-  ];
-
   const SortIcon = ({ field }: { field: SortField }) => {
     if (sortField !== field) return <ArrowUpDown style={{ width: '12px', height: '12px', opacity: 0.4 }} />;
     return sortOrder === 'asc' ? (
@@ -207,11 +197,15 @@ function WatchlistTable({
                 Ticker <SortIcon field="ticker" />
               </div>
             </th>
-            <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '10px', fontWeight: '700', color: '#8BA3C1', letterSpacing: '0.5px' }}>
-              Company
+            <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '10px', fontWeight: '700', color: '#8BA3C1', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('company')}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                Company <SortIcon field="company" />
+              </div>
             </th>
-            <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '10px', fontWeight: '700', color: '#8BA3C1', letterSpacing: '0.5px' }}>
-              Sector
+            <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '10px', fontWeight: '700', color: '#8BA3C1', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('sector')}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                Sector <SortIcon field="sector" />
+              </div>
             </th>
             <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '10px', fontWeight: '700', color: '#8BA3C1', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort('price')}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>

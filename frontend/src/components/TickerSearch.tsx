@@ -47,6 +47,7 @@ export default function TickerSearch({
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const existingSet = useMemo(() => new Set(existingTickers), [existingTickers]);
 
@@ -105,9 +106,13 @@ export default function TickerSearch({
     if (localMatches.length < 3 && term.length >= 2) {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(async () => {
+        // Abort any in-flight request to prevent stale results overwriting fresh ones
+        if (abortRef.current) abortRef.current.abort();
+        const controller = new AbortController();
+        abortRef.current = controller;
         setSearching(true);
         try {
-          const res = await fetch(`/api/market/quote?symbols=${encodeURIComponent(term)}`);
+          const res = await fetch(`/api/market/quote?symbols=${encodeURIComponent(term)}`, { signal: controller.signal });
           if (res.ok) {
             const data = await res.json();
             const apiSugs: TickerSuggestion[] = (data.stocks || []).map((s: any) => ({
@@ -126,7 +131,9 @@ export default function TickerSearch({
             setSuggestions(newMerged.slice(0, 10));
             if (newMerged.length > 0) setShowDropdown(true);
           }
-        } catch {} finally { setSearching(false); }
+        } catch (e: any) {
+          if (e?.name !== 'AbortError') console.error('Search API error:', e);
+        } finally { setSearching(false); }
       }, 400);
     }
   }, [quotes, apiResults, allowBulk]);

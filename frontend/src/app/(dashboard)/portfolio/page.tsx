@@ -46,7 +46,7 @@ interface PortfolioRow {
   notes?: string;
 }
 
-type SortField = 'symbol' | 'cmp' | 'changePercent' | 'pnlPercent' | 'weight' | 'investedValue' | 'currentValue';
+type SortField = 'symbol' | 'company' | 'sector' | 'entryPrice' | 'quantity' | 'cmp' | 'changePercent' | 'pnlPercent' | 'weight' | 'investedValue' | 'currentValue';
 type SortOrder = 'asc' | 'desc';
 
 /* ── Constants ─────────────────────────────────────────────────────── */
@@ -120,12 +120,17 @@ function PortfolioSummary({ rows }: { rows: PortfolioRow[] }) {
   const gainers = rows.filter(r => r.pnl > 0).length;
   const losers = rows.filter(r => r.pnl < 0).length;
 
+  const best = rows.length > 0 ? rows.reduce((a, b) => a.pnlPercent > b.pnlPercent ? a : b) : null;
+  const worst = rows.length > 0 ? rows.reduce((a, b) => a.pnlPercent < b.pnlPercent ? a : b) : null;
+
   const cards = [
     { label: 'INVESTED VALUE', value: fmt(totalInvested), color: '#F5F7FA' },
     { label: 'CURRENT VALUE', value: fmt(totalCurrent), color: '#F5F7FA' },
     { label: 'TOTAL P&L', value: `${fmt(Math.abs(totalPnl))} (${fmtPct(totalPnlPct)})`, color: totalPnl >= 0 ? '#10B981' : '#EF4444' },
     { label: 'DAY P&L', value: fmt(Math.abs(dayPnl)), color: dayPnl >= 0 ? '#10B981' : '#EF4444' },
     { label: 'HOLDINGS', value: `${rows.length}`, sub: `${gainers} ↑  ${losers} ↓`, color: '#F5F7FA' },
+    ...(best ? [{ label: 'BEST PERFORMER', value: best.symbol, sub: fmtPct(best.pnlPercent), color: '#10B981' }] : []),
+    ...(worst ? [{ label: 'WORST PERFORMER', value: worst.symbol, sub: fmtPct(worst.pnlPercent), color: '#EF4444' }] : []),
   ];
 
   return (
@@ -330,43 +335,36 @@ export default function PortfolioPage() {
 
   // Build portfolio rows with P&L
   const rows = useMemo((): PortfolioRow[] => {
-    const totalInvested = holdings.reduce((s, h) => s + h.entryPrice * h.quantity, 0);
-
-    return holdings.map(h => {
+    // First pass: compute currentValue for each holding
+    const rawRows = holdings.map(h => {
       const quote = quotes.find(q => q.ticker === h.symbol);
       const cmp = quote?.price || 0;
       const change = quote?.change || 0;
       const changePercent = quote?.changePercent || 0;
       const investedValue = h.entryPrice * h.quantity;
-      const currentValue = cmp * h.quantity;
+      const currentValue = cmp > 0 ? cmp * h.quantity : investedValue; // fallback to invested if no live price
       const pnl = currentValue - investedValue;
       const pnlPercent = investedValue > 0 ? (pnl / investedValue) * 100 : 0;
       const dayPnl = change * h.quantity;
-      const weight = totalInvested > 0 ? (investedValue / totalInvested) * 100 : 0;
-
-      return {
-        symbol: h.symbol,
-        company: quote?.company || h.symbol,
-        sector: quote?.sector || '—',
-        entryPrice: h.entryPrice,
-        quantity: h.quantity,
-        weight: h.weight || weight,
-        cmp, change, changePercent,
-        investedValue, currentValue,
-        pnl, pnlPercent, dayPnl,
-        notes: h.notes,
-      };
+      return { symbol: h.symbol, company: quote?.company || h.symbol, sector: quote?.sector || '—',
+        entryPrice: h.entryPrice, quantity: h.quantity, cmp, change, changePercent,
+        investedValue, currentValue, pnl, pnlPercent, dayPnl, notes: h.notes, weight: 0 };
     });
+    // Second pass: weight by current value (proper risk weighting)
+    const totalCurrent = rawRows.reduce((s, r) => s + r.currentValue, 0);
+    return rawRows.map(r => ({ ...r, weight: totalCurrent > 0 ? (r.currentValue / totalCurrent) * 100 : 0 }));
   }, [holdings, quotes]);
 
   // Sorted rows
   const sortedRows = useMemo(() => {
     const sorted = [...rows];
     sorted.sort((a, b) => {
-      const aVal = a[sortField] as number;
-      const bVal = b[sortField] as number;
-      if (typeof aVal === 'string') return sortOrder === 'asc' ? (aVal as string).localeCompare(bVal as unknown as string) : (bVal as unknown as string).localeCompare(aVal as string);
-      return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
+      const aVal = a[sortField];
+      const bVal = b[sortField];
+      if (typeof aVal === 'string' && typeof bVal === 'string') {
+        return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+      }
+      return sortOrder === 'asc' ? (aVal as number) - (bVal as number) : (bVal as number) - (aVal as number);
     });
     return sorted;
   }, [rows, sortField, sortOrder]);
@@ -393,6 +391,7 @@ export default function PortfolioPage() {
   };
 
   const handleRemove = (symbol: string) => {
+    if (!confirm(`Remove ${symbol} from portfolio? This cannot be undone.`)) return;
     const updated = holdings.filter(h => h.symbol !== symbol);
     setHoldings(updated);
     syncToAPI(updated);
@@ -528,10 +527,11 @@ export default function PortfolioPage() {
                 <tr style={{ borderBottom: '1px solid #2A3B4C', backgroundColor: '#0D1B2E' }}>
                   {[
                     { key: 'symbol' as SortField, label: 'SYMBOL', align: 'left' },
-                    { key: 'symbol' as SortField, label: 'COMPANY', align: 'left', noSort: true },
+                    { key: 'company' as SortField, label: 'COMPANY', align: 'left' },
+                    { key: 'sector' as SortField, label: 'SECTOR', align: 'left' },
                     { key: 'cmp' as SortField, label: 'CMP (₹)', align: 'right' },
-                    { key: 'symbol' as SortField, label: 'ENTRY (₹)', align: 'right', noSort: true },
-                    { key: 'symbol' as SortField, label: 'QTY', align: 'right', noSort: true },
+                    { key: 'entryPrice' as SortField, label: 'ENTRY (₹)', align: 'right' },
+                    { key: 'quantity' as SortField, label: 'QTY', align: 'right' },
                     { key: 'weight' as SortField, label: 'WEIGHT%', align: 'right' },
                     { key: 'investedValue' as SortField, label: 'INVESTED', align: 'right' },
                     { key: 'currentValue' as SortField, label: 'CURRENT', align: 'right' },
@@ -558,6 +558,7 @@ export default function PortfolioPage() {
                     <tr key={r.symbol} style={{ borderBottom: idx < sortedRows.length - 1 ? '1px solid #1A2B3C' : 'none', backgroundColor: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
                       <td style={{ padding: '10px 12px', color: '#3B82F6', fontWeight: '700' }}>{r.symbol}</td>
                       <td style={{ padding: '10px 12px', color: '#F5F7FA', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
+                      <td style={{ padding: '10px 12px', color: '#8BA3C1', fontSize: '11px', maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.sector}</td>
                       <td style={{ padding: '10px 12px', textAlign: 'right', color: '#F5F7FA', fontVariantNumeric: 'tabular-nums' }}>
                         {r.cmp > 0 ? `₹${r.cmp.toFixed(2)}` : '—'}
                       </td>
