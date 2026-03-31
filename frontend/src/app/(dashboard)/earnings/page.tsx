@@ -53,7 +53,7 @@ interface EarningsScanCard {
   fundamentalsScore: number;
   priceScore: number;
   totalScore: number;
-  grade: 'STRONG' | 'GOOD' | 'OK' | 'BAD';
+  grade: 'EXCELLENT' | 'STRONG' | 'GOOD' | 'OK' | 'BAD';
   gradeColor: string;
   dataQuality: 'FULL' | 'PARTIAL' | 'PRICE_ONLY';
   mcap: number | null;
@@ -70,6 +70,7 @@ interface ScanResponse {
   cards: EarningsScanCard[];
   summary: {
     total: number;
+    excellent: number;
     strong: number;
     good: number;
     ok: number;
@@ -555,6 +556,7 @@ export default function EarningsPage() {
 
       // Recompute summary across all cards
       if (allCards.length > 0) {
+        const excellent = allCards.filter(c => c.grade === 'EXCELLENT').length;
         const strong = allCards.filter(c => c.grade === 'STRONG').length;
         const good = allCards.filter(c => c.grade === 'GOOD').length;
         const ok = allCards.filter(c => c.grade === 'OK').length;
@@ -564,7 +566,7 @@ export default function EarningsPage() {
         const partial = allCards.filter(c => c.dataQuality === 'PARTIAL').length;
         const priceOnly = allCards.filter(c => c.dataQuality === 'PRICE_ONLY').length;
 
-        lastSummary = { total: allCards.length, strong, good, ok, bad, avgScore, dataQualityBreakdown: { full, partial, priceOnly } };
+        lastSummary = { total: allCards.length, excellent, strong, good, ok, bad, avgScore, dataQualityBreakdown: { full, partial, priceOnly } };
       }
 
       setCards(allCards);
@@ -726,7 +728,8 @@ export default function EarningsPage() {
         // Color grade cells
         if (data.column.index === 3) {
           const grade = data.cell.raw;
-          if (grade === 'STRONG') data.cell.styles.textColor = [0, 160, 60];
+          if (grade === 'EXCELLENT') data.cell.styles.textColor = [124, 58, 237];
+          else if (grade === 'STRONG') data.cell.styles.textColor = [0, 160, 60];
           else if (grade === 'GOOD') data.cell.styles.textColor = [50, 140, 50];
           else if (grade === 'OK') data.cell.styles.textColor = [200, 130, 0];
           else if (grade === 'BAD') data.cell.styles.textColor = [220, 40, 40];
@@ -817,7 +820,7 @@ export default function EarningsPage() {
           <option value="patYoY">Sort: PAT YoY</option>
         </select>
 
-        {['ALL', 'STRONG', 'GOOD', 'OK', 'BAD'].map(g => (
+        {['ALL', 'EXCELLENT', 'STRONG', 'GOOD', 'OK', 'BAD'].map(g => (
           <button key={g} onClick={() => setFilterGrade(g)} style={{
             backgroundColor: filterGrade === g ? ACCENT : CARD,
             border: `1px solid ${filterGrade === g ? ACCENT : CARD_BORDER}`,
@@ -860,6 +863,7 @@ export default function EarningsPage() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '12px', marginBottom: '24px' }}>
           {[
             { label: 'Total', value: summary.total, color: ACCENT },
+            { label: 'EXCELLENT', value: summary.excellent || 0, color: '#7C3AED' },
             { label: 'STRONG', value: summary.strong, color: '#00C853' },
             { label: 'GOOD', value: summary.good, color: '#4CAF50' },
             { label: 'OK', value: summary.ok, color: '#FFD600' },

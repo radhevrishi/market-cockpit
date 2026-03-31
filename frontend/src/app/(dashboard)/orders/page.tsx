@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
-import { Shield, RefreshCw, TrendingUp, TrendingDown, Minus, Eye, ArrowUpRight } from 'lucide-react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
+import { Shield, RefreshCw, TrendingUp, TrendingDown, Minus, Eye, Filter, Zap, Building2, DollarSign } from 'lucide-react';
 
-// Theme — darker text for readability
+// Theme
 const BG = '#0A0E1A';
 const CARD = '#0D1623';
 const BORDER = '#1A2840';
@@ -14,9 +14,9 @@ const YELLOW = '#FBBF24';
 const PURPLE = '#8B5CF6';
 const CYAN = '#06B6D4';
 const ORANGE = '#F97316';
-const TEXT1 = '#E2E8F0'; // Primary text
-const TEXT2 = '#94A3B8'; // Secondary
-const TEXT3 = '#64748B'; // Muted
+const TEXT1 = '#E2E8F0';
+const TEXT2 = '#94A3B8';
+const TEXT3 = '#64748B';
 
 // ── Types ──
 type ActionFlag = 'BUY WATCH' | 'HOLD CONTEXT' | 'IGNORE';
@@ -64,7 +64,6 @@ const actionBg = (a: ActionFlag) => a === 'BUY WATCH' ? 'rgba(16,185,129,0.12)' 
 const impactColor = (t: ImpactType) => t === 'Revenue Impact' ? GREEN : t === 'Margin Impact' ? CYAN : TEXT3;
 const biasColor = (b: string) => b === 'Bullish' ? GREEN : b === 'Bearish' ? RED : YELLOW;
 const biasIcon = (b: string) => b === 'Bullish' ? <TrendingUp size={16} /> : b === 'Bearish' ? <TrendingDown size={16} /> : <Minus size={16} />;
-const sentimentColor = (s: string) => s === 'Bullish' ? GREEN : s === 'Bearish' ? RED : TEXT3;
 
 const fmtCr = (v: number | null): string => {
   if (v === null || v === undefined) return '—';
@@ -81,6 +80,22 @@ const fmtDate = (d: string) => {
   } catch { return d; }
 };
 
+const eventTypeIcon = (t: string) => {
+  if (t.includes('Order') || t.includes('Contract') || t.includes('LOI')) return '📋';
+  if (t.includes('Capex') || t.includes('Expansion')) return '🏗️';
+  if (t.includes('M&A') || t.includes('Demerger')) return '🤝';
+  if (t.includes('JV') || t.includes('Partnership')) return '🔗';
+  if (t.includes('Fund') || t.includes('QIP')) return '💰';
+  if (t.includes('Buyback')) return '🔄';
+  if (t.includes('Dividend')) return '💵';
+  if (t.includes('Guidance')) return '🎯';
+  if (t.includes('Mgmt')) return '👤';
+  if (t.includes('Block') || t.includes('Bulk')) return '📊';
+  return '📌';
+};
+
+type FilterType = 'ALL' | 'ORDERS' | 'CAPEX' | 'DEALS' | 'STRATEGIC';
+
 export default function CompanyIntelligencePage() {
   const [top3, setTop3] = useState<Signal[]>([]);
   const [signals, setSignals] = useState<Signal[]>([]);
@@ -88,11 +103,12 @@ export default function CompanyIntelligencePage() {
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState('');
   const [daysFilter, setDaysFilter] = useState(7);
+  const [typeFilter, setTypeFilter] = useState<FilterType>('ALL');
+  const [showWatchlistOnly, setShowWatchlistOnly] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      // Get watchlist from Redis API
       let watchlist: string[] = [];
       try {
         const wlRes = await fetch('/api/watchlist?chatId=5057319640');
@@ -126,13 +142,35 @@ export default function CompanyIntelligencePage() {
     return () => clearInterval(iv);
   }, [fetchData]);
 
+  // Filter signals
+  const filteredSignals = useMemo(() => {
+    let list = signals;
+    if (showWatchlistOnly) list = list.filter(s => s.isWatchlist);
+    if (typeFilter === 'ORDERS') list = list.filter(s => ['Order Win', 'Contract', 'LOI'].includes(s.eventType));
+    if (typeFilter === 'CAPEX') list = list.filter(s => ['Capex/Expansion', 'Fund Raising', 'Guidance'].includes(s.eventType));
+    if (typeFilter === 'DEALS') list = list.filter(s => s.source === 'deal');
+    if (typeFilter === 'STRATEGIC') list = list.filter(s => ['M&A', 'Demerger', 'JV/Partnership', 'Buyback'].includes(s.eventType));
+    return list;
+  }, [signals, typeFilter, showWatchlistOnly]);
+
+  // Stats
+  const orderSignals = signals.filter(s => ['Order Win', 'Contract', 'LOI'].includes(s.eventType));
+  const capexSignals = signals.filter(s => ['Capex/Expansion', 'Fund Raising'].includes(s.eventType));
+  const dealSignals = signals.filter(s => s.source === 'deal');
+  const watchlistSignals = signals.filter(s => s.isWatchlist);
+
   return (
     <div style={{ backgroundColor: BG, color: TEXT1, minHeight: '100vh', padding: '16px 20px' }}>
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Shield size={22} color={ACCENT} />
-          <h1 style={{ fontSize: '20px', fontWeight: 700, margin: 0, color: TEXT1 }}>Company Intelligence</h1>
+          <div>
+            <h1 style={{ fontSize: '20px', fontWeight: 700, margin: 0, color: TEXT1 }}>Company Intelligence</h1>
+            <p style={{ fontSize: '11px', color: TEXT3, margin: 0 }}>
+              Material events · Orders · Capex · Deals · Institutional-grade signals
+            </p>
+          </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           {[3, 7, 14, 30].map(d => (
@@ -160,7 +198,6 @@ export default function CompanyIntelligencePage() {
           padding: '14px 18px', marginBottom: '16px',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
-            {/* Net Bias */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <div style={{
                 display: 'flex', alignItems: 'center', gap: '5px', color: biasColor(bias.netBias),
@@ -173,35 +210,22 @@ export default function CompanyIntelligencePage() {
             </div>
 
             {/* Stats row */}
-            <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '18px', fontWeight: 700, color: GREEN }}>{bias.buyWatchCount}</div>
-                <div style={{ fontSize: '10px', color: TEXT3 }}>BUY WATCH</div>
-              </div>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '18px', fontWeight: 700, color: ACCENT }}>{bias.highImpactCount}</div>
-                <div style={{ fontSize: '10px', color: TEXT3 }}>High Impact</div>
-              </div>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '18px', fontWeight: 700, color: CYAN }}>{bias.totalSignals}</div>
-                <div style={{ fontSize: '10px', color: TEXT3 }}>Signals</div>
-              </div>
-              {bias.totalOrderValueCr > 0 && (
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: '18px', fontWeight: 700, color: PURPLE }}>{fmtCr(bias.totalOrderValueCr)}</div>
-                  <div style={{ fontSize: '10px', color: TEXT3 }}>Orders</div>
+            <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+              {[
+                { label: 'BUY WATCH', value: bias.buyWatchCount, color: GREEN },
+                { label: 'High Impact', value: bias.highImpactCount, color: ACCENT },
+                { label: 'Total Signals', value: bias.totalSignals, color: CYAN },
+                ...(bias.totalOrderValueCr > 0 ? [{ label: 'Order Value', value: fmtCr(bias.totalOrderValueCr), color: PURPLE }] : []),
+                ...(bias.totalDealValueCr > 0 ? [{ label: 'Deal Value', value: fmtCr(bias.totalDealValueCr), color: ORANGE }] : []),
+              ].map(s => (
+                <div key={s.label} style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: '18px', fontWeight: 700, color: s.color }}>{s.value}</div>
+                  <div style={{ fontSize: '10px', color: TEXT3 }}>{s.label}</div>
                 </div>
-              )}
-              {bias.totalDealValueCr > 0 && (
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: '18px', fontWeight: 700, color: ORANGE }}>{fmtCr(bias.totalDealValueCr)}</div>
-                  <div style={{ fontSize: '10px', color: TEXT3 }}>Deals</div>
-                </div>
-              )}
+              ))}
             </div>
           </div>
 
-          {/* Active sectors */}
           {bias.activeSectors.length > 0 && (
             <div style={{ marginTop: '8px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
               <span style={{ fontSize: '11px', color: TEXT3 }}>Active:</span>
@@ -221,65 +245,74 @@ export default function CompanyIntelligencePage() {
       {loading && top3.length === 0 && (
         <div style={{ textAlign: 'center', padding: '50px 0' }}>
           <div style={{ width: '28px', height: '28px', border: '3px solid #1A2840', borderTopColor: ACCENT, borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 10px' }} />
-          <p style={{ color: TEXT3, fontSize: '13px' }}>Scanning market signals...</p>
+          <p style={{ color: TEXT3, fontSize: '13px' }}>Scanning corporate announcements, block deals, bulk deals...</p>
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
       )}
 
-      {/* ── TOP 3 ACTIONABLE SIGNALS ── */}
+      {/* ── TOP ACTIONABLE SIGNALS ── */}
       {top3.length > 0 && (
         <div style={{ marginBottom: '20px' }}>
           <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '1.5px' }}>
             TOP ACTIONABLE SIGNALS
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {top3.map((s, i) => (
               <div key={`top-${i}`} style={{
                 backgroundColor: CARD,
                 border: `1px solid ${actionColor(s.action)}30`,
                 borderLeft: `4px solid ${actionColor(s.action)}`,
-                borderRadius: '8px',
-                padding: '12px 16px',
+                borderRadius: '10px',
+                padding: '14px 18px',
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                  {/* Rank */}
-                  <span style={{
-                    fontSize: '14px', fontWeight: 800, color: actionColor(s.action),
-                    width: '22px', textAlign: 'center',
-                  }}>{i + 1}</span>
-
-                  {/* Symbol */}
-                  <span style={{ fontSize: '15px', fontWeight: 700, color: TEXT1 }}>{s.symbol}</span>
-
-                  {/* Action badge */}
+                {/* Row 1: Symbol, Action, Value, Materiality */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '13px' }}>{eventTypeIcon(s.eventType)}</span>
+                  <span style={{ fontSize: '16px', fontWeight: 700, color: '#3B82F6' }}>{s.symbol}</span>
+                  {s.isWatchlist && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.15)' }}>WL</span>}
                   <span style={{
                     fontSize: '11px', fontWeight: 700, color: actionColor(s.action),
                     padding: '2px 8px', borderRadius: '4px', backgroundColor: actionBg(s.action),
                   }}>{s.action}</span>
-
-                  {/* Value */}
+                  <span style={{ fontSize: '11px', fontWeight: 600, color: ACCENT, padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(15,122,191,0.1)' }}>{s.eventType}</span>
                   {s.valueCr !== null && s.valueCr > 0 && (
                     <span style={{ fontSize: '13px', fontWeight: 700, color: CYAN }}>{fmtCr(s.valueCr)}</span>
                   )}
-
-                  {/* % Revenue */}
-                  {s.pctRevenue !== null && (
-                    <span style={{
-                      fontSize: '12px', fontWeight: 700,
-                      color: s.pctRevenue >= 5 ? GREEN : s.pctRevenue >= 1 ? YELLOW : TEXT2,
-                    }}>{s.pctRevenue.toFixed(1)}% Rev</span>
-                  )}
-
-                  {/* Impact type */}
-                  <span style={{ fontSize: '11px', color: impactColor(s.impactType) }}>{s.impactType}</span>
-
-                  {/* Score */}
                   <span style={{ fontSize: '11px', color: TEXT3, marginLeft: 'auto' }}>Score: {s.score}</span>
                 </div>
 
-                {/* Headline */}
-                <div style={{ fontSize: '12px', color: TEXT2, marginTop: '4px', paddingLeft: '32px' }}>
-                  {s.headline}
+                {/* Row 2: Materiality badges */}
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '6px', paddingLeft: '2px' }}>
+                  {s.pctRevenue !== null && s.pctRevenue > 0 && (
+                    <span style={{
+                      fontSize: '12px', fontWeight: 700, padding: '3px 10px', borderRadius: '6px',
+                      backgroundColor: s.pctRevenue >= 5 ? 'rgba(16,185,129,0.15)' : s.pctRevenue >= 1 ? 'rgba(251,191,36,0.12)' : 'rgba(100,116,139,0.1)',
+                      color: s.pctRevenue >= 5 ? GREEN : s.pctRevenue >= 1 ? YELLOW : TEXT2,
+                    }}>{s.pctRevenue.toFixed(1)}% of Revenue</span>
+                  )}
+                  {s.pctMcap !== null && s.pctMcap > 0 && (
+                    <span style={{
+                      fontSize: '12px', fontWeight: 700, padding: '3px 10px', borderRadius: '6px',
+                      backgroundColor: s.pctMcap >= 5 ? 'rgba(16,185,129,0.15)' : 'rgba(6,182,212,0.12)',
+                      color: s.pctMcap >= 5 ? GREEN : CYAN,
+                    }}>{s.pctMcap.toFixed(1)}% of MCap</span>
+                  )}
+                  {s.mcapCr && <span style={{ fontSize: '11px', color: TEXT3 }}>MCap: {fmtCr(s.mcapCr)}</span>}
+                  {s.revenueCr && <span style={{ fontSize: '11px', color: TEXT3 }}>Rev: {fmtCr(s.revenueCr)}</span>}
+                  <span style={{ fontSize: '11px', color: impactColor(s.impactType), fontWeight: 600 }}>{s.impactType}</span>
+                </div>
+
+                {/* Row 3: Headline / context */}
+                <div style={{ fontSize: '12px', color: TEXT2, lineHeight: 1.6, paddingLeft: '2px' }}>
+                  {s.headline.length > 200 ? s.headline.slice(0, 200) + '...' : s.headline}
+                </div>
+
+                {/* Row 4: Meta */}
+                <div style={{ display: 'flex', gap: '12px', marginTop: '6px', paddingLeft: '2px' }}>
+                  {s.client && <span style={{ fontSize: '10px', color: PURPLE }}>Client: {s.client}</span>}
+                  {s.segment && <span style={{ fontSize: '10px', color: ACCENT }}>Sector: {s.segment}</span>}
+                  {s.timeline && <span style={{ fontSize: '10px', color: ORANGE }}>Timeline: {s.timeline}</span>}
+                  <span style={{ fontSize: '10px', color: TEXT3 }}>{fmtDate(s.date)}</span>
                 </div>
               </div>
             ))}
@@ -287,95 +320,112 @@ export default function CompanyIntelligencePage() {
         </div>
       )}
 
-      {/* ── SIGNAL TABLE ── */}
+      {/* ── FILTER BAR ── */}
       {signals.length > 0 && (
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <Filter size={13} color={TEXT3} />
+          {([
+            { key: 'ALL' as FilterType, label: 'All', count: signals.length },
+            { key: 'ORDERS' as FilterType, label: 'Orders', count: orderSignals.length },
+            { key: 'CAPEX' as FilterType, label: 'Capex/Growth', count: capexSignals.length },
+            { key: 'DEALS' as FilterType, label: 'Block/Bulk', count: dealSignals.length },
+            { key: 'STRATEGIC' as FilterType, label: 'Strategic', count: signals.filter(s => ['M&A', 'Demerger', 'JV/Partnership', 'Buyback'].includes(s.eventType)).length },
+          ]).map(f => (
+            <button key={f.key} onClick={() => setTypeFilter(f.key)} style={{
+              padding: '4px 10px', borderRadius: '5px', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
+              border: `1px solid ${typeFilter === f.key ? ACCENT : BORDER}`,
+              background: typeFilter === f.key ? 'rgba(15,122,191,0.15)' : 'transparent',
+              color: typeFilter === f.key ? ACCENT : TEXT3,
+            }}>{f.label} ({f.count})</button>
+          ))}
+          <button onClick={() => setShowWatchlistOnly(!showWatchlistOnly)} style={{
+            padding: '4px 10px', borderRadius: '5px', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
+            border: `1px solid ${showWatchlistOnly ? GREEN : BORDER}`,
+            background: showWatchlistOnly ? 'rgba(16,185,129,0.15)' : 'transparent',
+            color: showWatchlistOnly ? GREEN : TEXT3, marginLeft: 'auto',
+          }}>WL Only ({watchlistSignals.length})</button>
+        </div>
+      )}
+
+      {/* ── ALL SIGNALS ── */}
+      {filteredSignals.length > 0 && (
         <div>
           <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '1.5px' }}>
-            ALL SIGNALS ({signals.length})
+            {typeFilter === 'ALL' ? 'ALL SIGNALS' : typeFilter} ({filteredSignals.length})
           </div>
 
-          {/* Table header */}
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: '100px 1fr 100px 80px 80px 90px',
-            gap: '8px', padding: '6px 12px', marginBottom: '2px',
-            fontSize: '10px', fontWeight: 600, color: TEXT3, textTransform: 'uppercase', letterSpacing: '0.5px',
-          }}>
-            <div>Company</div>
-            <div>Event</div>
-            <div>Impact</div>
-            <div>% Rev</div>
-            <div>Value</div>
-            <div>Action</div>
-          </div>
-
-          {/* Signal rows */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-            {signals.map((s, i) => (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            {filteredSignals.map((s, i) => (
               <div key={`sig-${i}`} style={{
-                display: 'grid',
-                gridTemplateColumns: '100px 1fr 100px 80px 80px 90px',
-                gap: '8px', padding: '10px 12px',
                 backgroundColor: CARD,
                 border: `1px solid ${s.isWatchlist ? `${ACCENT}40` : BORDER}`,
-                borderRadius: '6px',
-                alignItems: 'center',
-                fontSize: '12px',
+                borderRadius: '8px',
+                padding: '12px 16px',
               }}>
-                {/* Company */}
-                <div>
-                  <div style={{ fontWeight: 700, color: TEXT1, fontSize: '13px' }}>{s.symbol}</div>
+                {/* Row 1: Core info */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '12px' }}>{eventTypeIcon(s.eventType)}</span>
+                  <span style={{ fontSize: '14px', fontWeight: 700, color: '#3B82F6', minWidth: '80px' }}>{s.symbol}</span>
                   {s.isWatchlist && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600 }}>WL</span>}
-                </div>
-
-                {/* Event */}
-                <div style={{ color: TEXT2, fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   <span style={{
-                    color: s.source === 'deal'
-                      ? (s.sentiment === 'Bullish' ? GREEN : RED)
-                      : ACCENT,
-                    fontWeight: 600, marginRight: '6px',
+                    fontSize: '10px', fontWeight: 600, color: ACCENT,
+                    padding: '1px 6px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.1)',
                   }}>{s.eventType}</span>
-                  {s.client && <span style={{ color: TEXT3 }}>from {s.client} </span>}
-                  {s.segment && <span style={{ color: PURPLE }}>• {s.segment} </span>}
-                  {s.buyerSeller && <span style={{ color: TEXT3 }}>{s.buyerSeller.slice(0, 25)} </span>}
+
+                  {/* Value */}
+                  {s.valueCr !== null && s.valueCr > 0 && (
+                    <span style={{ fontSize: '12px', fontWeight: 700, color: CYAN }}>{fmtCr(s.valueCr)}</span>
+                  )}
+
+                  {/* Materiality */}
+                  {s.pctRevenue !== null && s.pctRevenue > 0 && (
+                    <span style={{
+                      fontSize: '11px', fontWeight: 700,
+                      color: s.pctRevenue >= 5 ? GREEN : s.pctRevenue >= 1 ? YELLOW : TEXT2,
+                    }}>{s.pctRevenue.toFixed(1)}% Rev</span>
+                  )}
+                  {s.pctMcap !== null && s.pctMcap > 0 && (
+                    <span style={{ fontSize: '11px', fontWeight: 700, color: CYAN }}>
+                      {s.pctMcap.toFixed(1)}% MCap
+                    </span>
+                  )}
+
+                  {/* For deals: buyer/seller + premium */}
+                  {s.buyerSeller && (
+                    <span style={{ fontSize: '11px', color: TEXT3 }}>{s.buyerSeller.slice(0, 30)}</span>
+                  )}
                   {s.premiumDiscount !== null && (
-                    <span style={{ color: s.premiumDiscount >= 0 ? GREEN : RED }}>
+                    <span style={{ color: s.premiumDiscount >= 0 ? GREEN : RED, fontSize: '11px', fontWeight: 600 }}>
                       {s.premiumDiscount > 0 ? '+' : ''}{s.premiumDiscount.toFixed(1)}%
                     </span>
                   )}
+
+                  {/* Impact + Action */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto' }}>
+                    <span style={{ fontSize: '10px', color: impactColor(s.impactType) }}>{s.impactType.replace(' Impact', '')}</span>
+                    <span style={{
+                      fontWeight: 700, fontSize: '10px',
+                      color: actionColor(s.action),
+                      padding: '2px 6px', borderRadius: '4px',
+                      backgroundColor: actionBg(s.action),
+                    }}>{s.action}</span>
+                  </div>
                 </div>
 
-                {/* Impact */}
-                <div style={{ color: impactColor(s.impactType), fontSize: '11px', fontWeight: 600 }}>
-                  {s.impactType.replace(' Impact', '')}
+                {/* Row 2: Headline */}
+                <div style={{ fontSize: '11px', color: TEXT2, marginTop: '5px', lineHeight: 1.5, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any }}>
+                  {s.headline.length > 250 ? s.headline.slice(0, 250) + '...' : s.headline}
                 </div>
 
-                {/* % Revenue */}
-                <div style={{
-                  fontWeight: 700, fontSize: '12px',
-                  color: s.pctRevenue !== null
-                    ? (s.pctRevenue >= 5 ? GREEN : s.pctRevenue >= 1 ? YELLOW : TEXT3)
-                    : TEXT3,
-                }}>
-                  {s.pctRevenue !== null ? `${s.pctRevenue.toFixed(1)}%` : '—'}
-                </div>
-
-                {/* Value */}
-                <div style={{ color: s.valueCr && s.valueCr > 0 ? CYAN : TEXT3, fontWeight: 600 }}>
-                  {s.valueCr && s.valueCr > 0 ? fmtCr(s.valueCr) : '—'}
-                </div>
-
-                {/* Action */}
-                <div style={{
-                  fontWeight: 700, fontSize: '11px',
-                  color: actionColor(s.action),
-                  padding: '2px 6px', borderRadius: '4px',
-                  backgroundColor: actionBg(s.action),
-                  textAlign: 'center',
-                }}>
-                  {s.action}
-                </div>
+                {/* Row 3: Meta tags */}
+                {(s.client || s.segment || s.timeline) && (
+                  <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
+                    {s.client && <span style={{ fontSize: '10px', color: PURPLE }}>Client: {s.client}</span>}
+                    {s.segment && <span style={{ fontSize: '10px', color: ACCENT }}>{s.segment}</span>}
+                    {s.timeline && <span style={{ fontSize: '10px', color: ORANGE }}>{s.timeline}</span>}
+                    <span style={{ fontSize: '10px', color: TEXT3, marginLeft: 'auto' }}>{fmtDate(s.date)}</span>
+                  </div>
+                )}
               </div>
             ))}
           </div>

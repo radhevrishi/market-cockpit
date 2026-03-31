@@ -106,14 +106,24 @@ function fmtCr(v: number): string {
 // ==================== PARSING ====================
 
 const ORDER_KEYWORDS = [
+  // Order/Contract wins (HIGH VALUE — institutional favorite)
   'order', 'contract', 'awarded', 'loi', 'letter of intent',
   'work order', 'purchase order', 'mandate', 'supply agreement',
   'signed', 'obtained', 'bagging', 'receiving of orders',
-  'joint venture', 'jv', 'partnership', 'mou',
-  'acquisition', 'merger', 'amalgamation', 'stake', 'buyout',
-  'fund raising', 'qip', 'rights issue', 'capital raising',
+  // Capex / Expansion (institutional catalyst)
+  'capex', 'capital expenditure', 'expansion', 'new plant', 'new facility',
+  'greenfield', 'brownfield', 'capacity addition', 'capacity expansion',
+  // Strategic moves
+  'joint venture', 'jv', 'partnership', 'mou', 'collaboration',
+  'acquisition', 'merger', 'amalgamation', 'buyout', 'demerger',
+  // Capital raises
+  'fund raising', 'qip', 'rights issue', 'capital raising', 'preferential allotment',
+  // Key leadership
   'appointment', 'resignation', 'ceo', 'cfo', 'managing director',
+  // Shareholder returns
   'dividend', 'buyback',
+  // Guidance / Outlook
+  'guidance', 'outlook', 'forecast', 'target', 'revenue guidance',
 ];
 
 // Noise patterns — these make an event ignorable
@@ -123,6 +133,17 @@ const NOISE_PATTERNS = [
   'loss of share certificate', 'duplicate share', 'certificate',
   'investor meet', 'investor call', 'analyst meet',
   'board meeting intimation', 'record date',
+  'compliance certificate', 'annual report', 'annual return',
+  'disclosure under', 'credit rating', 'rating rationale',
+  'closure of trading window', 'trading window', 'code of conduct',
+  'secretarial audit', 'related party', 'composition of',
+  'book closure', 'register of members', 'agm', 'general meeting',
+  'interest payment', 'coupon payment', 'debenture',
+  'listing of shares', 'allotment of shares', 'esop', 'esos',
+  'change in address', 'change in directorate', 'cessation',
+  'outcome of board', 'schedule of analyst', 'press release',
+  'change in management', 'independent director',
+  'postal ballot', 'notice of', 'proceedings of',
 ];
 
 function parseOrderValue(text: string): number | null {
@@ -161,15 +182,26 @@ function parseOrderValue(text: string): number | null {
 
 function classifyOrderType(subject: string, desc: string): string {
   const c = `${subject} ${desc}`.toLowerCase();
-  if (c.includes('acquisition') || c.includes('merger')) return 'M&A';
-  if (c.includes('fund raising') || c.includes('qip') || c.includes('rights issue')) return 'Fund Raising';
-  if (c.includes('appointment') || c.includes('resignation') || c.includes('ceo') || c.includes('cfo') || c.includes('managing director')) return 'Mgmt Change';
-  if (c.includes('dividend')) return 'Dividend';
-  if (c.includes('buyback')) return 'Buyback';
+  // Most valuable first: Orders/Contracts with quantified value
+  if (c.includes('order win') || c.includes('order received') || c.includes('awarded') || c.includes('bagging')) return 'Order Win';
+  if (c.includes('work order') || c.includes('purchase order')) return 'Order Win';
+  if (c.includes('contract') && !c.includes('employment contract') && !c.includes('service contract for director')) return 'Contract';
   if (c.includes('letter of intent') || c.includes('loi')) return 'LOI';
-  if (c.includes('joint venture') || c.includes('jv') || c.includes('partnership')) return 'JV/Partnership';
-  if (c.includes('contract')) return 'Contract';
-  if (c.includes('order') || c.includes('awarded') || c.includes('bagging')) return 'Order Win';
+  // Capex / Expansion
+  if (c.includes('capex') || c.includes('capital expenditure') || c.includes('expansion') || c.includes('new plant') || c.includes('new facility') || c.includes('capacity addition') || c.includes('greenfield') || c.includes('brownfield')) return 'Capex/Expansion';
+  // Strategic — only real M&A, not just "acquisition of shares"
+  if ((c.includes('acquisition') || c.includes('merger') || c.includes('amalgamation') || c.includes('buyout')) &&
+      !c.includes('acquisition of shares by') && !c.includes('esop')) return 'M&A';
+  if (c.includes('demerger')) return 'Demerger';
+  if (c.includes('joint venture') || c.includes('jv') || c.includes('partnership') || c.includes('collaboration') || c.includes('mou')) return 'JV/Partnership';
+  // Capital
+  if (c.includes('fund raising') || c.includes('qip') || c.includes('rights issue') || c.includes('preferential allotment')) return 'Fund Raising';
+  if (c.includes('buyback')) return 'Buyback';
+  if (c.includes('dividend')) return 'Dividend';
+  // Guidance
+  if (c.includes('guidance') || c.includes('outlook') || c.includes('forecast')) return 'Guidance';
+  // People
+  if (c.includes('appointment') || c.includes('resignation') || c.includes('ceo') || c.includes('cfo') || c.includes('managing director')) return 'Mgmt Change';
   return 'Corporate';
 }
 
@@ -235,38 +267,46 @@ function extractTimeline(text: string): string | null {
 
 // ==================== IMPACT & ACTION CLASSIFICATION ====================
 
-function classifyImpact(pctRevenue: number | null, valueCr: number | null, eventType: string): ImpactType {
+function classifyImpact(pctRevenue: number | null, pctMcap: number | null, valueCr: number | null, eventType: string): ImpactType {
   // If we have % revenue, use it — this is the gold standard
   if (pctRevenue !== null) {
-    if (pctRevenue >= 5) return 'Revenue Impact';
+    if (pctRevenue >= 3) return 'Revenue Impact';
     if (pctRevenue >= 1) return 'Revenue Impact';
     if (pctRevenue >= 0.5) return 'Margin Impact';
     return 'Sentiment Only';
   }
 
-  // No revenue data — use absolute value + event type
+  // % of MCap — for capex/M&A where revenue impact isn't relevant
+  if (pctMcap !== null) {
+    if (pctMcap >= 5) return 'Revenue Impact';
+    if (pctMcap >= 1) return 'Margin Impact';
+    return 'Sentiment Only';
+  }
+
+  // No percentage data — use absolute value + event type
   if (valueCr !== null) {
     if (valueCr >= 500) return 'Revenue Impact';
     if (valueCr >= 100) return 'Margin Impact';
     return 'Sentiment Only';
   }
 
-  // No value at all
-  if (['M&A', 'Fund Raising', 'Buyback'].includes(eventType)) return 'Margin Impact';
-  if (['Mgmt Change'].includes(eventType)) return 'Sentiment Only';
-  if (['Dividend'].includes(eventType)) return 'Sentiment Only';
+  // No value at all — use event type heuristic
+  if (['M&A', 'Capex/Expansion', 'Fund Raising', 'Demerger'].includes(eventType)) return 'Margin Impact';
+  if (['Buyback', 'JV/Partnership', 'Guidance'].includes(eventType)) return 'Margin Impact';
+  if (['Mgmt Change', 'Dividend'].includes(eventType)) return 'Sentiment Only';
 
   return 'Sentiment Only';
 }
 
-function classifyAction(impactType: ImpactType, pctRevenue: number | null, eventType: string, isWatchlist: boolean): ActionFlag {
+function classifyAction(impactType: ImpactType, pctRevenue: number | null, pctMcap: number | null, eventType: string, isWatchlist: boolean): ActionFlag {
   if (impactType === 'Revenue Impact') {
-    if (pctRevenue !== null && pctRevenue >= 5) return 'BUY WATCH';
-    if (pctRevenue !== null && pctRevenue >= 2) return 'BUY WATCH';
+    if (pctRevenue !== null && pctRevenue >= 3) return 'BUY WATCH';
+    if (pctMcap !== null && pctMcap >= 5) return 'BUY WATCH';
     return 'HOLD CONTEXT';
   }
   if (impactType === 'Margin Impact') {
-    if (['M&A', 'Fund Raising'].includes(eventType)) return 'HOLD CONTEXT';
+    if (['Capex/Expansion', 'M&A', 'Demerger'].includes(eventType)) return 'HOLD CONTEXT';
+    if (['Guidance'].includes(eventType)) return 'HOLD CONTEXT';
     return 'HOLD CONTEXT';
   }
   // Sentiment Only — still worth watching if on watchlist
@@ -307,9 +347,9 @@ function computeScore(opts: {
 
   // Event type weight (0-25)
   const typeScores: Record<string, number> = {
-    'Order Win': 20, 'Contract': 20, 'M&A': 25, 'Fund Raising': 15,
-    'JV/Partnership': 18, 'LOI': 12, 'Buyback': 10, 'Dividend': 5,
-    'Mgmt Change': 8, 'Corporate': 3,
+    'Order Win': 22, 'Contract': 22, 'Capex/Expansion': 25, 'M&A': 25,
+    'Demerger': 20, 'Fund Raising': 15, 'JV/Partnership': 18, 'LOI': 12,
+    'Buyback': 10, 'Dividend': 5, 'Guidance': 20, 'Mgmt Change': 8, 'Corporate': 3,
     'Block Buy': 22, 'Block Sell': 18, 'Bulk Buy': 15, 'Bulk Sell': 12,
   };
   score += typeScores[opts.eventType] || 5;
@@ -502,21 +542,34 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
         ? Math.round((valueCr / enrichment.mcapCr) * 10000) / 100
         : null;
 
-      const impactType = classifyImpact(pctRevenue, valueCr, eventType);
-      const action = classifyAction(impactType, pctRevenue, eventType, isWatchlist);
+      const impactType = classifyImpact(pctRevenue, pctMcap, valueCr, eventType);
+      const action = classifyAction(impactType, pctRevenue, pctMcap, eventType, isWatchlist);
       const score = computeScore({
         pctRevenue, valueCr, impactType, eventType,
         client, segment, isWatchlist, isDeal: false,
       });
 
-      // Build headline
-      let headline = symbol;
-      if (valueCr) headline += ` ${fmtCr(valueCr)}`;
-      headline += ` ${eventType}`;
+      // Build institutional-grade headline: WHY this matters
+      let headline = '';
+      // Lead with event + value
+      if (valueCr && valueCr > 0) {
+        headline = `${fmtCr(valueCr)} ${eventType}`;
+      } else {
+        headline = eventType;
+      }
       if (client) headline += ` from ${client}`;
-      if (segment) headline += ` | ${segment}`;
-      if (pctRevenue !== null) headline += ` | ${pctRevenue.toFixed(1)}% Rev`;
-      else if (pctMcap !== null) headline += ` | ${pctMcap.toFixed(2)}% MCap`;
+      // Materiality context — the key institutional metric
+      const matParts: string[] = [];
+      if (pctRevenue !== null && pctRevenue > 0) matParts.push(`${pctRevenue.toFixed(1)}% of annual revenue`);
+      if (pctMcap !== null && pctMcap > 0) matParts.push(`${pctMcap.toFixed(1)}% of MCap`);
+      if (segment) matParts.push(segment);
+      if (timeline) matParts.push(timeline);
+      if (matParts.length > 0) headline += ` — ${matParts.join(' · ')}`;
+      // Add source context from desc
+      const descSnippet = (desc || '').slice(0, 120).replace(/\s+/g, ' ').trim();
+      if (descSnippet && descSnippet.length > 20 && !headline.includes(descSnippet.slice(0, 30))) {
+        headline += `. ${descSnippet}`;
+      }
 
       const sentiment = action === 'BUY WATCH' ? 'Bullish' as const :
                         action === 'IGNORE' ? 'Neutral' as const : 'Neutral' as const;

@@ -156,7 +156,7 @@ interface EarningsScanCard {
   fundamentalsScore: number;
   priceScore: number;
   totalScore: number;
-  grade: 'STRONG' | 'GOOD' | 'OK' | 'BAD';
+  grade: 'EXCELLENT' | 'STRONG' | 'GOOD' | 'OK' | 'BAD';
   gradeColor: string;
   dataQuality: 'FULL' | 'PARTIAL' | 'PRICE_ONLY';
   dataAge: 'fresh' | 'stale' | 'missing';
@@ -583,7 +583,18 @@ function computePriceScore(pct: number): number {
   return 20;
 }
 
-function gradeFromScore(score: number): { grade: EarningsScanCard['grade']; color: string } {
+function gradeFromScore(score: number, card?: { revenueYoY: number | null; patYoY: number | null; epsYoY: number | null; opmCurrent: number; opmPrevYear: number; isBanking?: boolean }): { grade: EarningsScanCard['grade']; color: string } {
+  // EXCELLENT: Score >= 85 AND all key metrics strongly positive
+  // This represents companies firing on all cylinders — revenue, profit, EPS all growing strongly with margin expansion
+  if (score >= 85 && card) {
+    const revOk = card.revenueYoY !== null && card.revenueYoY > 15;
+    const patOk = card.patYoY !== null && card.patYoY > 20;
+    const epsOk = card.epsYoY !== null && card.epsYoY > 15;
+    const marginOk = card.isBanking || (card.opmCurrent - card.opmPrevYear) >= 0; // At least stable margins
+    if (revOk && patOk && epsOk && marginOk) {
+      return { grade: 'EXCELLENT', color: '#7C3AED' }; // Purple — stands out
+    }
+  }
   if (score >= 75) return { grade: 'STRONG', color: '#00C853' };
   if (score >= 60) return { grade: 'GOOD', color: '#4CAF50' };
   if (score >= 40) return { grade: 'OK', color: '#FFD600' };
@@ -805,7 +816,11 @@ function buildCardFromData(data: ScreenerData): EarningsScanCard | null {
     ? Math.round(0.6 * fundamentalsScore + 0.4 * priceScore)
     : priceScore;
 
-  const { grade, color: gradeColor } = gradeFromScore(totalScore);
+  const { grade, color: gradeColor } = gradeFromScore(totalScore, {
+    revenueYoY, patYoY, epsYoY,
+    opmCurrent: latest.opm, opmPrevYear: yoyQ?.opm || latest.opm,
+    isBanking: data.isBanking,
+  });
 
   // Take last 3 quarters for display + year-ago quarter
   const displayQuarters = quarters.slice(0, 3);
