@@ -6,75 +6,66 @@ import { kvGet } from '@/lib/kv';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
 
-// Constants
 const INR_TO_USD = 85;
-const ORDER_KEYWORDS = [
-  'order', 'contract', 'awarded', 'loi', 'letter of intent',
-  'deal value', 'capex', 'work order', 'purchase order', 'mandate',
-  'supply agreement', 'signed', 'obtained', 'bagging',
-  'joint venture', 'jv', 'partnership', 'mou', 'memorandum',
-  'strategic', 'exclusive',
-  'acquisition', 'merger', 'amalgamation', 'stake', 'buyout',
-  'fund raising', 'qip', 'rights issue', 'capital raising', 'preferential allotment',
-  'appointment', 'resignation', 'ceo', 'cfo', 'managing director',
-  'dividend', 'buyback',
-];
 
 // ==================== TYPES ====================
 
-interface EnrichedOrder {
+type ActionFlag = 'BUY WATCH' | 'HOLD CONTEXT' | 'IGNORE';
+type ImpactType = 'Revenue Impact' | 'Margin Impact' | 'Sentiment Only' | 'Noise';
+
+interface IntelSignal {
   symbol: string;
   company: string;
   date: string;
-  orderType: 'Order Win' | 'Contract' | 'Partnership/JV' | 'M&A' | 'Fund Raising' | 'Management Change' | 'LOI' | 'Capex' | 'Other';
-  orderValueCr: number | null;
-  orderValueUsd: string | null;
+  source: 'order' | 'deal';
+
+  // Event
+  eventType: string;       // Order Win, Contract, Block Buy, Bulk Sell, M&A, etc.
+  headline: string;        // 1-line: "LT ₹4,200Cr Infra order from NHAI | 3.2% Rev"
+
+  // Quantified
+  valueCr: number | null;
+  valueUsd: string | null;
   mcapCr: number | null;
-  pctOfMcap: number | null;
-  annualRevenueCr: number | null;
-  pctOfRevenue: number | null;
+  revenueCr: number | null;
+  pctRevenue: number | null;   // THE key metric
+  pctMcap: number | null;
+
+  // Context
   client: string | null;
   segment: string | null;
   timeline: string | null;
-  impactScore: number;
-  signal: 'HIGH' | 'MEDIUM' | 'HIDE';
-  sentiment: 'Positive' | 'Neutral' | 'Negative';
-  eventSummary: string;
+  buyerSeller: string | null;  // For deals
+  premiumDiscount: number | null; // For deals
+
+  // Classification
+  impactType: ImpactType;
+  action: ActionFlag;
+  score: number;           // 0-100, for sorting
+  sentiment: 'Bullish' | 'Neutral' | 'Bearish';
+
   isWatchlist: boolean;
 }
 
-interface EnrichedDeal {
-  symbol: string;
-  company: string;
-  dealDate: string;
-  dealType: 'Block' | 'Bulk';
-  clientName: string;
-  buyOrSell: 'Buy' | 'Sell';
-  quantity: number;
-  tradePrice: number;
-  dealValueCr: number;
-  cmp: number | null;
-  premiumDiscount: number | null;
-  pctEquity: number | null;
-  volumeVsAvg: number | null;
-  dealScore: number;
-  signal: 'HIGH' | 'MEDIUM' | 'HIDE';
-  isWatchlist: boolean;
+interface DailyBias {
+  netBias: 'Bullish' | 'Neutral' | 'Bearish';
+  highImpactCount: number;
+  activeSectors: string[];
+  buyWatchCount: number;
+  totalSignals: number;
+  totalOrderValueCr: number;
+  totalDealValueCr: number;
+  summary: string; // "3 High Impact signals in Infra, Capital Goods. Net: Bullish"
 }
 
 interface IntelligenceResponse {
-  corporateOrders: EnrichedOrder[];
-  deals: EnrichedDeal[];
-  summary: {
-    totalOrders: number;
-    totalDeals: number;
-    highSignalOrders: number;
-    highSignalDeals: number;
-    totalOrderValueCr: number;
-    totalDealValueCr: number;
-  };
+  top3: IntelSignal[];          // THE hero section
+  signals: IntelSignal[];       // Full filtered table
+  bias: DailyBias;
   updatedAt: string;
 }
+
+// ==================== ENRICHMENT DATA ====================
 
 interface StockEnrichment {
   symbol: string;
@@ -93,7 +84,7 @@ interface EarningsData {
   currentPrice?: number;
 }
 
-// ==================== UTILITY FUNCTIONS ====================
+// ==================== UTILITY ====================
 
 function getDateDaysAgo(days: number): string {
   const d = new Date();
@@ -106,472 +97,290 @@ function getTodayDate(): string {
   return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
 }
 
-function parseNSEDate(dateStr: string): Date | null {
-  if (!dateStr) return null;
-  if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) {
-    const d = new Date(dateStr);
-    if (!isNaN(d.getTime())) return d;
-  }
-  const monMatch = dateStr.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})/);
-  if (monMatch) {
-    const d = new Date(`${monMatch[2]} ${monMatch[1]}, ${monMatch[3]}`);
-    if (!isNaN(d.getTime())) return d;
-  }
-  const ddmmyyyy = dateStr.match(/^(\d{1,2})-(\d{1,2})-(\d{4})/);
-  if (ddmmyyyy) {
-    const d = new Date(Number(ddmmyyyy[3]), Number(ddmmyyyy[2]) - 1, Number(ddmmyyyy[1]));
-    if (!isNaN(d.getTime())) return d;
-  }
-  const d = new Date(dateStr);
-  return isNaN(d.getTime()) ? null : d;
+function fmtCr(v: number): string {
+  if (v >= 1000) return `₹${(v / 1000).toFixed(1)}K Cr`;
+  if (v >= 1) return `₹${Math.round(v)} Cr`;
+  return `₹${Math.round(v * 100)}L`;
 }
+
+// ==================== PARSING ====================
+
+const ORDER_KEYWORDS = [
+  'order', 'contract', 'awarded', 'loi', 'letter of intent',
+  'work order', 'purchase order', 'mandate', 'supply agreement',
+  'signed', 'obtained', 'bagging', 'receiving of orders',
+  'joint venture', 'jv', 'partnership', 'mou',
+  'acquisition', 'merger', 'amalgamation', 'stake', 'buyout',
+  'fund raising', 'qip', 'rights issue', 'capital raising',
+  'appointment', 'resignation', 'ceo', 'cfo', 'managing director',
+  'dividend', 'buyback',
+];
+
+// Noise patterns — these make an event ignorable
+const NOISE_PATTERNS = [
+  'rumour verification', 'clarification on', 'regulation 30',
+  'action(s) taken', 'action(s) initiated', 'newspaper publication',
+  'loss of share certificate', 'duplicate share', 'certificate',
+  'investor meet', 'investor call', 'analyst meet',
+  'board meeting intimation', 'record date',
+];
 
 function parseOrderValue(text: string): number | null {
   if (!text) return null;
-  const combined = text.toLowerCase();
+  const s = text.toLowerCase();
 
-  // ₹ Crore
-  const crMatch = combined.match(/(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:crore|cr)/i);
+  // ₹ Crore patterns
+  const crMatch = s.match(/(?:rs\.?|₹|inr|value of)\s*([\d,]+(?:\.\d+)?)\s*(?:crore|cr)\b/i);
   if (crMatch) return parseFloat(crMatch[1].replace(/,/g, ''));
 
+  // Standalone number + crore without prefix (e.g. "1,200 Crores")
+  const standaloneCr = s.match(/([\d,]+(?:\.\d+)?)\s*(?:crore|cr)\b/i);
+  if (standaloneCr) {
+    const val = parseFloat(standaloneCr[1].replace(/,/g, ''));
+    if (val > 0.5) return val; // Ignore tiny numbers
+  }
+
   // ₹ Lakh → Cr
-  const lMatch = combined.match(/(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:lakh|lac|l)\b/i);
+  const lMatch = s.match(/(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:lakh|lac|l)\b/i);
   if (lMatch) return parseFloat(lMatch[1].replace(/,/g, '')) / 100;
 
   // USD Million → Cr
-  const usdMnMatch = combined.match(/(?:usd|\$)\s*([\d,]+(?:\.\d+)?)\s*(?:million|mn|m)\b/i);
-  if (usdMnMatch) {
-    const val = parseFloat(usdMnMatch[1].replace(/,/g, ''));
-    return (val * INR_TO_USD) / 10;
-  }
-
-  // ₹ Million → Cr
-  const inrMnMatch = combined.match(/(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:million|mn|m)\b/i);
-  if (inrMnMatch) {
-    const val = parseFloat(inrMnMatch[1].replace(/,/g, ''));
-    return val / 10;
-  }
+  const usdMnMatch = s.match(/(?:usd|\$)\s*([\d,]+(?:\.\d+)?)\s*(?:million|mn|m)\b/i);
+  if (usdMnMatch) return (parseFloat(usdMnMatch[1].replace(/,/g, '')) * INR_TO_USD) / 10;
 
   // USD Billion → Cr
-  const usdBnMatch = combined.match(/(?:usd|\$)\s*([\d,]+(?:\.\d+)?)\s*(?:billion|bn|b)\b/i);
-  if (usdBnMatch) {
-    const val = parseFloat(usdBnMatch[1].replace(/,/g, ''));
-    return (val * INR_TO_USD * 100);
-  }
+  const usdBnMatch = s.match(/(?:usd|\$)\s*([\d,]+(?:\.\d+)?)\s*(?:billion|bn|b)\b/i);
+  if (usdBnMatch) return parseFloat(usdBnMatch[1].replace(/,/g, '')) * INR_TO_USD * 100;
 
-  // ₹ Billion → Cr
-  const inrBnMatch = combined.match(/(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:billion|bn|b)\b/i);
-  if (inrBnMatch) {
-    const val = parseFloat(inrBnMatch[1].replace(/,/g, ''));
-    return val * 100;
-  }
+  // ₹ Million → Cr
+  const inrMnMatch = s.match(/(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:million|mn)\b/i);
+  if (inrMnMatch) return parseFloat(inrMnMatch[1].replace(/,/g, '')) / 10;
 
   return null;
 }
 
-function classifyOrderType(subject: string, description: string): EnrichedOrder['orderType'] {
-  const combined = `${subject} ${description}`.toLowerCase();
-
-  if (combined.includes('acquisition') || combined.includes('merger') || combined.includes('amalgamation')) return 'M&A';
-  if (combined.includes('fund raising') || combined.includes('qip') || combined.includes('rights issue')) return 'Fund Raising';
-  if (combined.includes('appointment') || combined.includes('resignation') || combined.includes('ceo') || combined.includes('cfo')) return 'Management Change';
-  if (combined.includes('letter of intent') || combined.includes('loi')) return 'LOI';
-  if (combined.includes('joint venture') || combined.includes('jv') || combined.includes('partnership')) return 'Partnership/JV';
-  if (combined.includes('capex') || combined.includes('capital expenditure')) return 'Capex';
-  if (combined.includes('contract')) return 'Contract';
-  if (combined.includes('order') || combined.includes('awarded')) return 'Order Win';
-
-  return 'Other';
+function classifyOrderType(subject: string, desc: string): string {
+  const c = `${subject} ${desc}`.toLowerCase();
+  if (c.includes('acquisition') || c.includes('merger')) return 'M&A';
+  if (c.includes('fund raising') || c.includes('qip') || c.includes('rights issue')) return 'Fund Raising';
+  if (c.includes('appointment') || c.includes('resignation') || c.includes('ceo') || c.includes('cfo') || c.includes('managing director')) return 'Mgmt Change';
+  if (c.includes('dividend')) return 'Dividend';
+  if (c.includes('buyback')) return 'Buyback';
+  if (c.includes('letter of intent') || c.includes('loi')) return 'LOI';
+  if (c.includes('joint venture') || c.includes('jv') || c.includes('partnership')) return 'JV/Partnership';
+  if (c.includes('contract')) return 'Contract';
+  if (c.includes('order') || c.includes('awarded') || c.includes('bagging')) return 'Order Win';
+  return 'Corporate';
 }
 
 function extractClient(text: string): string | null {
+  const entities: [string, string][] = [
+    ['NHAI', 'NHAI'], ['Indian Railways', 'Indian Railways'],
+    ['Ministry of Defence', 'Min. of Defence'], ['NTPC', 'NTPC'],
+    ['ONGC', 'ONGC'], ['IOCL', 'IOCL'], ['GAIL', 'GAIL'],
+    ['HAL', 'HAL'], ['BEL', 'BEL'], ['BHEL', 'BHEL'],
+    ['Coal India', 'Coal India'], ['Power Grid', 'Power Grid'],
+    ['NHPC', 'NHPC'], ['SAIL', 'SAIL'], ['BPCL', 'BPCL'],
+    ['Government', 'Govt'], ['Govt', 'Govt'],
+  ];
   const lower = text.toLowerCase();
-  const patterns = [
-    /(?:from|by|with|client[:\s]+|awarded by|received from)\s+(?:m\/s\.?\s+)?([A-Z][A-Za-z &.,()]+(?:Ltd|Limited|Corp|Inc|Government|Ministry|Authority|Council|Board|Department|Railway|Defence|NHPC|NTPC|ONGC|BPCL|IOCL|GAIL|SAIL|HAL|BEL|BHEL|NHAI|AAI)[A-Za-z .,()]*)/i,
-    /(?:govt\.?\s+of|government of|ministry of)\s+([A-Za-z ]+)/i,
-  ];
-
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match) {
-      let client = match[1].trim();
-      client = client.replace(/[.,;:]+$/, '').trim();
-      if (client.length > 3 && client.length < 100) return client;
-    }
-  }
-
-  const knownEntities = [
-    ['NHAI', 'NHAI'],
-    ['Indian Railways', 'Indian Railways'],
-    ['Ministry of Defence', 'Ministry of Defence'],
-    ['NTPC', 'NTPC'],
-    ['ONGC', 'ONGC'],
-    ['IOCL', 'IOCL'],
-    ['GAIL', 'GAIL'],
-    ['HAL', 'HAL'],
-    ['BEL', 'BEL'],
-    ['BHEL', 'BHEL'],
-    ['Coal India', 'Coal India'],
-    ['Power Grid', 'Power Grid'],
-    ['NHPC', 'NHPC'],
-    ['SAIL', 'SAIL'],
-  ];
-
-  for (const [keyword, label] of knownEntities) {
+  for (const [keyword, label] of entities) {
     if (lower.includes(keyword.toLowerCase())) return label;
   }
 
+  // Pattern match
+  const m = text.match(/(?:from|by|with|awarded by|received from)\s+(?:M\/s\.?\s+)?([A-Z][A-Za-z &.()]+(?:Ltd|Limited|Corp|Inc))/);
+  if (m) {
+    const c = m[1].trim().replace(/[.,;:]+$/, '');
+    if (c.length > 3 && c.length < 60) return c;
+  }
   return null;
 }
 
 function extractSegment(text: string): string | null {
   const lower = text.toLowerCase();
-  const segmentMap: [string[], string][] = [
-    [['defence', 'defense', 'military', 'naval', 'army', 'air force'], 'Defence'],
-    [['railway', 'rail', 'metro', 'train'], 'Railways'],
-    [['infrastructure', 'road', 'highway', 'bridge', 'tunnel'], 'Infrastructure'],
-    [['power', 'energy', 'solar', 'wind', 'renewable'], 'Power & Energy'],
+  const map: [string[], string][] = [
+    [['defence', 'defense', 'military', 'naval'], 'Defence'],
+    [['railway', 'rail', 'metro'], 'Railways'],
+    [['infrastructure', 'road', 'highway', 'bridge'], 'Infra'],
+    [['power', 'energy', 'solar', 'wind', 'renewable', 'transmission'], 'Power'],
     [['water', 'sewage', 'irrigation'], 'Water'],
     [['oil', 'gas', 'petroleum', 'refinery'], 'Oil & Gas'],
-    [['mining', 'coal', 'mineral', 'steel'], 'Mining & Metals'],
-    [['telecom', 'network', '5g', 'fiber'], 'Telecom'],
-    [['it ', 'software', 'digital', 'cloud', 'ai '], 'IT'],
-    [['pharma', 'drug', 'api ', 'healthcare'], 'Pharma'],
+    [['mining', 'coal', 'steel'], 'Metals'],
+    [['telecom', '5g', 'fiber'], 'Telecom'],
+    [['it ', 'software', 'digital', 'cloud'], 'IT'],
+    [['pharma', 'drug', 'healthcare'], 'Pharma'],
+    [['auto', 'vehicle', 'ev '], 'Auto'],
+    [['chemical', 'specialty'], 'Chemicals'],
+    [['cement', 'construction'], 'Construction'],
+    [['textile', 'garment'], 'Textiles'],
+    [['real estate', 'housing'], 'Realty'],
   ];
-
-  for (const [keywords, segment] of segmentMap) {
+  for (const [keywords, segment] of map) {
     if (keywords.some(k => lower.includes(k))) return segment;
   }
   return null;
 }
 
 function extractTimeline(text: string): string | null {
-  const patterns = [
-    /(\d+)\s*(?:months?|yrs?|years?)\s*(?:period|timeline|execution|completion)/i,
-    /(?:period|timeline|execution|completion)\s*(?:of\s+)?(\d+)\s*(?:months?|yrs?|years?)/i,
-  ];
-
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match) {
-      const num = parseInt(match[1]);
-      if (text.toLowerCase().includes('year')) return `${num} year${num > 1 ? 's' : ''}`;
-      return `${num} month${num > 1 ? 's' : ''}`;
-    }
+  const m1 = text.match(/(\d+)\s*(?:months?|yrs?|years?)/i);
+  if (m1) {
+    const n = parseInt(m1[1]);
+    if (/year/i.test(m1[0])) return `${n}Y`;
+    return `${n}M`;
   }
-
-  if (/multi.?year/i.test(text)) return 'Multi-year';
-  if (/long.?term/i.test(text)) return 'Long-term';
-
+  if (/multi.?year/i.test(text)) return 'Multi-yr';
   return null;
 }
 
-function generateEventSummary(order: EnrichedOrder): string {
-  const valuePart = order.orderValueCr ? `₹${order.orderValueCr >= 1000 ? `${(order.orderValueCr / 1000).toFixed(1)}K` : order.orderValueCr.toFixed(0)} Cr` : '';
-  const clientPart = order.client ? ` from ${order.client}` : '';
-  const segPart = order.segment ? ` (${order.segment})` : '';
+// ==================== IMPACT & ACTION CLASSIFICATION ====================
 
-  switch (order.orderType) {
-    case 'Order Win':
-      return `${order.symbol} wins ${valuePart} order${clientPart}${segPart}`.trim().slice(0, 80);
-    case 'Contract':
-      return `${order.symbol} bags ${valuePart} contract${clientPart}${segPart}`.trim().slice(0, 80);
-    case 'Partnership/JV':
-      return `${order.symbol} partnership${clientPart}${segPart}`.trim().slice(0, 80);
-    case 'M&A':
-      return `${order.symbol} announces ${valuePart} acquisition${clientPart}`.trim().slice(0, 80);
-    case 'Fund Raising':
-      return `${order.symbol} raises ${valuePart} capital`.trim().slice(0, 80);
-    default:
-      return `${order.symbol} ${order.orderType}`.slice(0, 80);
+function classifyImpact(pctRevenue: number | null, valueCr: number | null, eventType: string): ImpactType {
+  // If we have % revenue, use it — this is the gold standard
+  if (pctRevenue !== null) {
+    if (pctRevenue >= 5) return 'Revenue Impact';
+    if (pctRevenue >= 1) return 'Revenue Impact';
+    if (pctRevenue >= 0.5) return 'Margin Impact';
+    return 'Sentiment Only';
   }
+
+  // No revenue data — use absolute value + event type
+  if (valueCr !== null) {
+    if (valueCr >= 500) return 'Revenue Impact';
+    if (valueCr >= 100) return 'Margin Impact';
+    return 'Sentiment Only';
+  }
+
+  // No value at all
+  if (['M&A', 'Fund Raising', 'Buyback'].includes(eventType)) return 'Margin Impact';
+  if (['Mgmt Change'].includes(eventType)) return 'Sentiment Only';
+  if (['Dividend'].includes(eventType)) return 'Sentiment Only';
+
+  return 'Sentiment Only';
 }
 
-function assessSentiment(orderType: string): 'Positive' | 'Neutral' | 'Negative' {
-  if (['Order Win', 'Contract', 'Partnership/JV', 'Fund Raising'].includes(orderType)) return 'Positive';
-  return 'Neutral';
+function classifyAction(impactType: ImpactType, pctRevenue: number | null, eventType: string, isWatchlist: boolean): ActionFlag {
+  if (impactType === 'Revenue Impact') {
+    if (pctRevenue !== null && pctRevenue >= 5) return 'BUY WATCH';
+    if (pctRevenue !== null && pctRevenue >= 2) return 'BUY WATCH';
+    return 'HOLD CONTEXT';
+  }
+  if (impactType === 'Margin Impact') {
+    if (['M&A', 'Fund Raising'].includes(eventType)) return 'HOLD CONTEXT';
+    return 'HOLD CONTEXT';
+  }
+  // Sentiment Only — still worth watching if on watchlist
+  if (isWatchlist) return 'HOLD CONTEXT';
+  return 'IGNORE';
 }
 
-function calculateOrderImpactScore(order: {
-  orderValueCr: number | null;
-  annualRevenueCr: number | null;
-  orderType: string;
+function computeScore(opts: {
+  pctRevenue: number | null;
+  valueCr: number | null;
+  impactType: ImpactType;
+  eventType: string;
   client: string | null;
   segment: string | null;
+  isWatchlist: boolean;
+  isDeal: boolean;
+  dealPremiumDiscount?: number | null;
+  buyerQuality?: number;
 }): number {
-  let orderSizePctRevenue = 40; // Default higher — most orders are material if they pass keyword filter
-  let strategicValue = 50;
-  let marginImpact = 50;
-  let executionCertainty = 60;
+  let score = 0;
 
-  // Order size % of revenue
-  if (order.annualRevenueCr && order.orderValueCr) {
-    const pct = (order.orderValueCr / order.annualRevenueCr) * 100;
-    if (pct > 10) orderSizePctRevenue = 100;
-    else if (pct >= 5) orderSizePctRevenue = 80;
-    else if (pct >= 2) orderSizePctRevenue = 60;
-    else if (pct >= 1) orderSizePctRevenue = 45;
-    else orderSizePctRevenue = 30;
-  } else if (order.orderValueCr) {
-    // No revenue data — use absolute order value
-    if (order.orderValueCr >= 500) orderSizePctRevenue = 90;
-    else if (order.orderValueCr >= 100) orderSizePctRevenue = 70;
-    else if (order.orderValueCr >= 50) orderSizePctRevenue = 55;
-    else if (order.orderValueCr >= 10) orderSizePctRevenue = 45;
-    else orderSizePctRevenue = 35;
+  // Revenue impact (0-40)
+  if (opts.pctRevenue !== null) {
+    if (opts.pctRevenue >= 10) score += 40;
+    else if (opts.pctRevenue >= 5) score += 35;
+    else if (opts.pctRevenue >= 2) score += 28;
+    else if (opts.pctRevenue >= 1) score += 20;
+    else if (opts.pctRevenue >= 0.5) score += 12;
+    else score += 5;
+  } else if (opts.valueCr !== null) {
+    // Absolute value without revenue context
+    if (opts.valueCr >= 1000) score += 30;
+    else if (opts.valueCr >= 500) score += 25;
+    else if (opts.valueCr >= 100) score += 18;
+    else if (opts.valueCr >= 50) score += 12;
+    else score += 5;
   }
 
-  // Strategic value
-  if (order.client && (order.client.toLowerCase().includes('govt') || order.client.toLowerCase().includes('defence'))) {
-    strategicValue = 90;
-  } else if (order.segment === 'Defence' || order.segment === 'Railways') {
-    strategicValue = 85;
-  } else if (order.segment === 'Infrastructure' || order.segment === 'Power & Energy') {
-    strategicValue = 70;
-  } else if (order.client) {
-    strategicValue = 60; // Known client = better
-  } else {
-    strategicValue = 50;
+  // Event type weight (0-25)
+  const typeScores: Record<string, number> = {
+    'Order Win': 20, 'Contract': 20, 'M&A': 25, 'Fund Raising': 15,
+    'JV/Partnership': 18, 'LOI': 12, 'Buyback': 10, 'Dividend': 5,
+    'Mgmt Change': 8, 'Corporate': 3,
+    'Block Buy': 22, 'Block Sell': 18, 'Bulk Buy': 15, 'Bulk Sell': 12,
+  };
+  score += typeScores[opts.eventType] || 5;
+
+  // Strategic context (0-15)
+  if (opts.client) score += 8;
+  if (opts.segment && ['Defence', 'Railways', 'Infra', 'Power'].includes(opts.segment)) score += 7;
+  else if (opts.segment) score += 4;
+
+  // Watchlist bonus (0-10)
+  if (opts.isWatchlist) score += 10;
+
+  // Deal-specific
+  if (opts.isDeal) {
+    if (opts.buyerQuality && opts.buyerQuality >= 80) score += 10;
+    if (opts.dealPremiumDiscount !== undefined && opts.dealPremiumDiscount !== null) {
+      if (opts.dealPremiumDiscount > 3) score += 8; // Big premium = conviction
+      else if (opts.dealPremiumDiscount > 0) score += 4;
+    }
   }
 
-  // Execution certainty based on order type
-  if (order.orderType === 'Order Win' || order.orderType === 'Contract') {
-    executionCertainty = 85;
-  } else if (order.orderType === 'M&A') {
-    executionCertainty = 75;
-  } else if (order.orderType === 'Partnership/JV') {
-    executionCertainty = 70;
-  } else if (order.orderType === 'LOI') {
-    executionCertainty = 55;
-  } else if (order.orderType === 'Fund Raising') {
-    executionCertainty = 65;
-  }
-
-  // Formula: (0.35 × orderSizePctRevenue) + (0.25 × strategicValue) + (0.20 × marginImpact) + (0.20 × executionCertainty)
-  const score = (0.35 * orderSizePctRevenue) + (0.25 * strategicValue) + (0.20 * marginImpact) + (0.20 * executionCertainty);
-  return Math.round(score);
-}
-
-function calculateDealScore(deal: {
-  clientName: string;
-  pctEquity: number | null;
-  premiumDiscount: number | null;
-}): number {
-  let buyerQuality = 30;
-  let dealSizePctEquity = 20;
-  let pricePremium = 50;
-
-  // Buyer quality — detect institutional patterns
-  const buyerLower = deal.clientName.toLowerCase();
-  if (/\b(mutual fund|mf|amc|sbi mf|hdfc mf|icici pru|axis mf|kotak mf|nippon|dsp|uti)\b/.test(buyerLower)) {
-    buyerQuality = 90;
-  } else if (/\b(fii|foreign|dii|institutional|capital group|blackrock|vanguard|goldman|morgan|jp morgan|citadel)\b/.test(buyerLower)) {
-    buyerQuality = 90;
-  } else if (/\b(promoter|founder|director|chairman|managing)\b/.test(buyerLower)) {
-    buyerQuality = 85;
-  } else if (/\b(insurance|lic|life insurance|general insurance)\b/.test(buyerLower)) {
-    buyerQuality = 75;
-  } else if (/\b(pvt|private|ltd|limited|capital|invest|fund|trust|advisors|wealth|asset)\b/.test(buyerLower)) {
-    buyerQuality = 60; // Likely institutional/HNI
-  } else {
-    buyerQuality = 50;
-  }
-
-  // Deal size % equity
-  if (deal.pctEquity) {
-    if (deal.pctEquity > 1) dealSizePctEquity = 100;
-    else if (deal.pctEquity >= 0.5) dealSizePctEquity = 70;
-    else if (deal.pctEquity >= 0.1) dealSizePctEquity = 40;
-    else dealSizePctEquity = 20;
-  }
-
-  // Price premium/discount
-  if (deal.premiumDiscount) {
-    if (deal.premiumDiscount > 2) pricePremium = 80;
-    else if (deal.premiumDiscount >= 0) pricePremium = 60;
-    else if (deal.premiumDiscount >= -2) pricePremium = 40;
-    else pricePremium = 20;
-  }
-
-  // Formula: (0.40 × buyerQuality) + (0.30 × dealSizePctEquity) + (0.30 × pricePremium)
-  const score = (0.40 * buyerQuality) + (0.30 * dealSizePctEquity) + (0.30 * pricePremium);
-  return Math.round(score);
+  return Math.min(score, 100);
 }
 
 // ==================== ENRICHMENT ====================
 
-async function enrichStockData(symbol: string): Promise<StockEnrichment> {
+async function enrichSymbol(symbol: string): Promise<StockEnrichment> {
   const result: StockEnrichment = {
-    symbol,
-    mcapCr: null,
-    annualRevenueCr: null,
-    companyName: null,
-    industry: null,
-    lastPrice: null,
-    issuedSize: null,
+    symbol, mcapCr: null, annualRevenueCr: null,
+    companyName: null, industry: null, lastPrice: null, issuedSize: null,
   };
 
   try {
-    // Fetch stock quote for MCap and basic info
     const quote = await fetchStockQuote(symbol);
     if (quote) {
-      // Extract lastPrice
-      if (quote.priceInfo?.lastPrice) {
-        result.lastPrice = quote.priceInfo.lastPrice;
-      }
+      result.lastPrice = quote.priceInfo?.lastPrice || null;
+      result.issuedSize = quote.securityInfo?.issuedSize || null;
+      result.companyName = quote.info?.companyName || null;
+      result.industry = quote.info?.industry || null;
 
-      // Extract issued size
-      if (quote.securityInfo?.issuedSize) {
-        result.issuedSize = quote.securityInfo.issuedSize;
-      }
-
-      // Calculate or extract MCap
       if (quote.priceInfo?.totalMarketCap) {
-        result.mcapCr = quote.priceInfo.totalMarketCap / 10000000; // Convert to Crores
+        result.mcapCr = quote.priceInfo.totalMarketCap / 10000000;
       } else if (result.lastPrice && result.issuedSize) {
         result.mcapCr = (result.lastPrice * result.issuedSize) / 10000000;
       }
-
-      // Extract company info
-      result.companyName = quote.info?.companyName || null;
-      result.industry = quote.info?.industry || null;
     }
 
-    // Fetch earnings data for annual revenue (revenue is already in Crores from screener.in)
-    const earningsKey = `earnings:${symbol}`;
-    const earnings = await kvGet<EarningsData>(earningsKey);
+    // Earnings from KV (revenue already in Crores)
+    const earnings = await kvGet<EarningsData>(`earnings:${symbol}`);
     if (earnings?.quarters && Array.isArray(earnings.quarters)) {
-      const annualRevenue = earnings.quarters
-        .slice(0, 4)
-        .reduce((sum, q) => sum + (q.revenue || 0), 0);
-      if (annualRevenue > 0) {
-        result.annualRevenueCr = annualRevenue; // Already in Crores
-      }
+      const rev = earnings.quarters.slice(0, 4).reduce((s, q) => s + (q.revenue || 0), 0);
+      if (rev > 0) result.annualRevenueCr = rev;
     }
-    // Fallback: use earnings cache mcap if NSE quote didn't provide it
-    if (!result.mcapCr && earnings?.mcap) {
-      result.mcapCr = earnings.mcap; // Already in Crores from screener
-    }
+    if (!result.mcapCr && earnings?.mcap) result.mcapCr = earnings.mcap;
   } catch (e) {
-    console.error(`[Intelligence] Error enriching ${symbol}:`, e);
+    console.error(`[Intelligence] Enrich error ${symbol}:`, e);
   }
 
   return result;
 }
 
-// ==================== FILTERING & PROCESSING ====================
+// ==================== BUYER QUALITY ====================
 
-function filterForOrders(announcements: any[]): any[] {
-  if (!announcements?.length) return [];
-
-  return announcements.filter(item => {
-    if (!item.symbol || (!item.desc && !item.subject)) return false;
-    const combined = `${item.subject || ''} ${item.desc || ''}`.toLowerCase();
-    return ORDER_KEYWORDS.some(keyword => combined.includes(keyword));
-  });
-}
-
-async function enrichCorporateOrders(filteredAnnouncements: any[], enrichmentMap: Map<string, StockEnrichment>, watchlistSet: Set<string>): Promise<EnrichedOrder[]> {
-  return filteredAnnouncements
-    .map(item => {
-      const subject = item.subject || '';
-      const description = item.desc || '';
-      const symbol = normalizeTicker(item.symbol || '');
-      const enrichment = enrichmentMap.get(symbol);
-
-      const orderValueCr = parseOrderValue(`${subject} ${description}`);
-      const orderType = classifyOrderType(subject, description);
-      const client = extractClient(`${subject} ${description}`);
-      const segment = extractSegment(`${subject} ${description}`);
-      const timeline = extractTimeline(`${subject} ${description}`);
-
-      const pctOfMcap = enrichment?.mcapCr && orderValueCr ? (orderValueCr / enrichment.mcapCr) * 100 : null;
-      const pctOfRevenue = enrichment?.annualRevenueCr && orderValueCr ? (orderValueCr / enrichment.annualRevenueCr) * 100 : null;
-
-      const impactScore = calculateOrderImpactScore({
-        orderValueCr,
-        annualRevenueCr: enrichment?.annualRevenueCr || null,
-        orderType,
-        client,
-        segment,
-      });
-
-      const signal: 'HIGH' | 'MEDIUM' | 'HIDE' = impactScore >= 70 ? 'HIGH' : impactScore >= 40 ? 'MEDIUM' : 'HIDE';
-
-      const order: EnrichedOrder = {
-        symbol,
-        company: item.companyName || enrichment?.companyName || symbol,
-        date: item.date || getTodayDate(),
-        orderType,
-        orderValueCr,
-        orderValueUsd: orderValueCr ? `$${(orderValueCr * 10000000 / INR_TO_USD / 1000000).toFixed(1)}M` : null,
-        mcapCr: enrichment?.mcapCr || null,
-        pctOfMcap: pctOfMcap ? Math.round(pctOfMcap * 100) / 100 : null,
-        annualRevenueCr: enrichment?.annualRevenueCr || null,
-        pctOfRevenue: pctOfRevenue ? Math.round(pctOfRevenue * 100) / 100 : null,
-        client,
-        segment,
-        timeline,
-        impactScore,
-        signal,
-        sentiment: assessSentiment(orderType),
-        eventSummary: generateEventSummary({} as EnrichedOrder) || `${symbol} ${orderType}`,
-        isWatchlist: watchlistSet.has(symbol),
-      };
-
-      order.eventSummary = generateEventSummary(order);
-
-      return order;
-    })
-    .filter(order => order.signal !== 'HIDE');
-}
-
-async function enrichBlockBulkDeals(deals: any[], enrichmentMap: Map<string, StockEnrichment>, watchlistSet: Set<string>, dealType: 'Block' | 'Bulk'): Promise<EnrichedDeal[]> {
-  return deals
-    .map(item => {
-      const symbol = normalizeTicker(item.symbol);
-      const enrichment = enrichmentMap.get(symbol);
-
-      // Data is already normalized from the fetch step
-      const quantity = item.quantity;
-      const tradePrice = item.tradePrice;
-      const dealValueCr = (quantity * tradePrice) / 10000000;
-
-      const cmp = enrichment?.lastPrice || null;
-      const premiumDiscount = cmp && tradePrice ? ((tradePrice - cmp) / cmp) * 100 : null;
-      const pctEquity = enrichment?.issuedSize && quantity ? (quantity / enrichment.issuedSize) * 100 : null;
-
-      const clientName = item.clientName || 'Unknown';
-      const buyOrSell = (item.buySell || '').toLowerCase().includes('buy') ? 'Buy' : 'Sell';
-
-      const dealScore = calculateDealScore({
-        clientName,
-        pctEquity: pctEquity || null,
-        premiumDiscount: premiumDiscount || null,
-      });
-
-      const signal: 'HIGH' | 'MEDIUM' | 'HIDE' = dealScore >= 70 ? 'HIGH' : dealScore >= 40 ? 'MEDIUM' : 'HIDE';
-
-      return {
-        symbol,
-        company: enrichment?.companyName || symbol,
-        dealDate: item.dealDate || getTodayDate(),
-        dealType,
-        clientName,
-        buyOrSell,
-        quantity,
-        tradePrice,
-        dealValueCr: Math.round(dealValueCr * 100) / 100,
-        cmp,
-        premiumDiscount: premiumDiscount ? Math.round(premiumDiscount * 100) / 100 : null,
-        pctEquity: pctEquity ? Math.round(pctEquity * 10000) / 10000 : null,
-        volumeVsAvg: null,
-        dealScore,
-        signal,
-        isWatchlist: watchlistSet.has(symbol),
-      } as EnrichedDeal;
-    })
-    .filter(deal => deal.signal !== 'HIDE');
+function scoreBuyerQuality(name: string): number {
+  const l = name.toLowerCase();
+  if (/\b(mutual fund|mf|amc|sbi mf|hdfc mf|icici pru|axis mf|kotak mf|nippon|dsp|uti)\b/.test(l)) return 90;
+  if (/\b(fii|foreign|dii|institutional|blackrock|vanguard|goldman|morgan|jp morgan|citadel|capital group)\b/.test(l)) return 90;
+  if (/\b(promoter|founder|director|chairman|managing)\b/.test(l)) return 85;
+  if (/\b(insurance|lic|life insurance)\b/.test(l)) return 75;
+  if (/\b(pvt|private|ltd|limited|capital|invest|fund|trust|advisors|wealth|asset)\b/.test(l)) return 60;
+  return 40;
 }
 
 // ==================== MAIN HANDLER ====================
@@ -589,198 +398,275 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
       : [];
     const watchlistSet = new Set(watchlist);
 
-    console.log(`[Intelligence] Fetching corporate announcements for ${watchlist.length} watchlist stocks, last ${days} days`);
+    console.log(`[Intelligence] Starting: ${watchlist.length} watchlist, ${days} days`);
 
-    // 1. Fetch corporate announcements
+    // ── 1. Fetch data in parallel ──
     const fromDate = getDateDaysAgo(days);
     const toDate = getTodayDate();
 
-    let allAnnouncements: any[] = [];
+    const [announcementsRaw, blockRaw, bulkRaw] = await Promise.all([
+      nseApiFetch(`/api/corporate-announcements?index=equities&from_date=${fromDate}&to_date=${toDate}`, 300000)
+        .catch(() => null),
+      nseApiFetch('/api/block-deal', 300000).catch(() => null),
+      nseApiFetch('/api/bulk-deal', 300000).catch(() => null),
+    ]);
 
-    try {
-      const generalData = await nseApiFetch(
-        `/api/corporate-announcements?index=equities&from_date=${fromDate}&to_date=${toDate}`,
-        300000
-      );
-
-      if (generalData) {
-        const arr = Array.isArray(generalData) ? generalData : (generalData?.data || []);
-        allAnnouncements.push(...arr);
-      }
-    } catch (e) {
-      console.log('[Intelligence] Could not fetch general announcements:', e);
+    // Parse announcements
+    let announcements: any[] = [];
+    if (announcementsRaw) {
+      announcements = Array.isArray(announcementsRaw) ? announcementsRaw : (announcementsRaw?.data || []);
     }
 
-    // 2. Fetch block and bulk deals — normalize to flat objects
-    let blockDeals: any[] = [];
-    let bulkDeals: any[] = [];
+    // Normalize deals
+    const blockDeals = (Array.isArray(blockRaw) ? blockRaw : (blockRaw?.data || []))
+      .map((d: any) => ({
+        symbol: d.symbol || d.BD_SYMBOL || '',
+        clientName: d.clientName || d.BD_CLIENT_NAME || '',
+        quantity: parseInt(d.quantity || d.BD_QTY_TRD || '0'),
+        tradePrice: parseFloat(d.tradePrice || d.BD_TP_WATP || '0'),
+        buySell: (d.buySell || d.BD_BUY_SELL || '').trim(),
+        dealDate: d.dealDate || d.BD_DT_DATE || '',
+        type: 'Block' as const,
+      }))
+      .filter((d: any) => d.quantity > 0 && d.tradePrice > 0 && d.symbol);
 
-    try {
-      const blockData = await nseApiFetch('/api/block-deal', 300000);
-      if (blockData) {
-        const raw = Array.isArray(blockData) ? blockData : (blockData?.data || []);
-        blockDeals = raw.map((d: any) => ({
-          symbol: d.symbol || d.BD_SYMBOL || '',
-          clientName: d.clientName || d.BD_CLIENT_NAME || '',
-          quantity: parseInt(d.quantity || d.BD_QTY_TRD || '0'),
-          tradePrice: parseFloat(d.tradePrice || d.BD_TP_WATP || '0'),
-          buySell: (d.buySell || d.BD_BUY_SELL || '').trim(),
-          dealDate: d.dealDate || d.BD_DT_DATE || '',
-        }));
-      }
-    } catch (e) {
-      console.log('[Intelligence] Could not fetch block deals:', e);
-    }
+    const bulkDeals = (Array.isArray(bulkRaw) ? bulkRaw : (bulkRaw?.data || []))
+      .map((d: any) => ({
+        symbol: d.symbol || d.BD_SYMBOL || '',
+        clientName: d.clientName || d.BD_CLIENT_NAME || '',
+        quantity: parseInt(d.quantity || d.BD_QTY_TRD || '0'),
+        tradePrice: parseFloat(d.tradePrice || d.BD_TP_WATP || '0'),
+        buySell: (d.buySell || d.BD_BUY_SELL || '').trim(),
+        dealDate: d.dealDate || d.BD_DT_DATE || '',
+        type: 'Bulk' as const,
+      }))
+      .filter((d: any) => d.quantity > 0 && d.tradePrice > 0 && d.symbol);
 
-    try {
-      const bulkData = await nseApiFetch('/api/bulk-deal', 300000);
-      if (bulkData) {
-        const raw = Array.isArray(bulkData) ? bulkData : (bulkData?.data || []);
-        bulkDeals = raw.map((d: any) => ({
-          symbol: d.symbol || d.BD_SYMBOL || '',
-          clientName: d.clientName || d.BD_CLIENT_NAME || '',
-          quantity: parseInt(d.quantity || d.BD_QTY_TRD || '0'),
-          tradePrice: parseFloat(d.tradePrice || d.BD_TP_WATP || '0'),
-          buySell: (d.buySell || d.BD_BUY_SELL || '').trim(),
-          dealDate: d.dealDate || d.BD_DT_DATE || '',
-        }));
-      }
-    } catch (e) {
-      console.log('[Intelligence] Could not fetch bulk deals:', e);
-    }
-
-    // Filter out deals with zero quantity/price
-    blockDeals = blockDeals.filter(d => d.quantity > 0 && d.tradePrice > 0);
-    bulkDeals = bulkDeals.filter(d => d.quantity > 0 && d.tradePrice > 0);
-
-    console.log(`[Intelligence] Raw deals: ${blockDeals.length} block, ${bulkDeals.length} bulk`);
-    if (blockDeals.length > 0) console.log(`[Intelligence] Sample block deal:`, JSON.stringify(blockDeals[0]));
-
-    // 3. Filter for orders and deals
-    const filteredOrders = filterForOrders(allAnnouncements);
-
-    console.log(`[Intelligence] Found ${allAnnouncements.length} total announcements, ${filteredOrders.length} order-related`);
-    if (filteredOrders.length > 0) {
-      console.log(`[Intelligence] Sample order:`, JSON.stringify({
-        symbol: filteredOrders[0].symbol,
-        subject: (filteredOrders[0].subject || '').slice(0, 120),
-        desc: (filteredOrders[0].desc || '').slice(0, 120),
-      }));
-    }
-
-    // 4. Collect unique symbols for enrichment — prioritize watchlist + deal symbols, cap at 25
-    const prioritySymbols = new Set<string>();
-    // Watchlist first
-    watchlist.forEach(s => prioritySymbols.add(s));
-    // Then deal symbols (fewer, more important)
-    blockDeals.forEach(d => prioritySymbols.add(normalizeTicker(d.symbol || d.BD_SYMBOL || '')));
-    bulkDeals.forEach(d => prioritySymbols.add(normalizeTicker(d.symbol || d.BD_SYMBOL || '')));
-    // Then order symbols (only if still under limit)
-    filteredOrders.forEach(o => {
-      if (prioritySymbols.size < 25) prioritySymbols.add(normalizeTicker(o.symbol || ''));
+    // Filter announcements for material events
+    const filteredAnn = announcements.filter(item => {
+      if (!item.symbol || (!item.desc && !item.subject)) return false;
+      const combined = `${item.subject || ''} ${item.desc || ''}`.toLowerCase();
+      // Skip noise
+      if (NOISE_PATTERNS.some(p => combined.includes(p))) return false;
+      return ORDER_KEYWORDS.some(k => combined.includes(k));
     });
 
-    // Remove empty strings
-    prioritySymbols.delete('');
+    console.log(`[Intelligence] ${announcements.length} announcements → ${filteredAnn.length} material | ${blockDeals.length} block, ${bulkDeals.length} bulk deals`);
 
-    console.log(`[Intelligence] Enriching ${prioritySymbols.size} unique symbols (capped at 25)`);
+    // ── 2. Collect symbols for enrichment (capped at 25) ──
+    const symbolsToEnrich = new Set<string>();
+    watchlist.forEach(s => symbolsToEnrich.add(s));
+    [...blockDeals, ...bulkDeals].forEach(d => symbolsToEnrich.add(normalizeTicker(d.symbol)));
+    filteredAnn.forEach(a => { if (symbolsToEnrich.size < 25) symbolsToEnrich.add(normalizeTicker(a.symbol)); });
+    symbolsToEnrich.delete('');
 
-    // 5. Batch fetch enrichment data with rate limiting
-    const enrichmentMap = new Map<string, StockEnrichment>();
-    const symbolArray = Array.from(prioritySymbols);
-    const batchSize = 3;
-    const delayMs = 200;
-
-    for (let i = 0; i < symbolArray.length; i += batchSize) {
-      const batch = symbolArray.slice(i, i + batchSize);
-
-      const results = await Promise.all(
-        batch.map(sym => enrichStockData(sym))
-      );
-
-      for (const result of results) {
-        enrichmentMap.set(result.symbol, result);
-      }
-
-      if (i + batchSize < symbolArray.length) {
-        await new Promise(r => setTimeout(r, delayMs));
-      }
+    // Batch enrich
+    const enrichMap = new Map<string, StockEnrichment>();
+    const symArr = Array.from(symbolsToEnrich);
+    for (let i = 0; i < symArr.length; i += 3) {
+      const batch = symArr.slice(i, i + 3);
+      const results = await Promise.all(batch.map(s => enrichSymbol(s)));
+      results.forEach(r => enrichMap.set(r.symbol, r));
+      if (i + 3 < symArr.length) await new Promise(r => setTimeout(r, 200));
     }
 
-    // 6. Enrich orders and deals
-    const enrichedOrders = await enrichCorporateOrders(filteredOrders, enrichmentMap, watchlistSet);
-    const enrichedBlockDeals = await enrichBlockBulkDeals(blockDeals, enrichmentMap, watchlistSet, 'Block');
-    const enrichedBulkDeals = await enrichBlockBulkDeals(bulkDeals, enrichmentMap, watchlistSet, 'Bulk');
+    console.log(`[Intelligence] Enriched ${enrichMap.size} symbols`);
 
-    // 7. Deduplicate and sort
-    const seenOrders = new Set<string>();
-    const uniqueOrders: EnrichedOrder[] = [];
+    // ── 3. Build signals from corporate orders ──
+    const allSignals: IntelSignal[] = [];
+    const seenKeys = new Set<string>();
 
-    for (const order of enrichedOrders) {
-      const key = `${order.symbol}:${order.date}:${order.orderType}`;
-      if (!seenOrders.has(key)) {
-        seenOrders.add(key);
-        uniqueOrders.push(order);
-      }
+    for (const item of filteredAnn) {
+      const subject = item.subject || '';
+      const desc = item.desc || '';
+      const symbol = normalizeTicker(item.symbol || '');
+      if (!symbol) continue;
+
+      const key = `${symbol}:${(subject + desc).slice(0, 60)}`;
+      if (seenKeys.has(key)) continue;
+      seenKeys.add(key);
+
+      const enrichment = enrichMap.get(symbol);
+      const combinedText = `${subject} ${desc}`;
+      const valueCr = parseOrderValue(combinedText);
+      const eventType = classifyOrderType(subject, desc);
+      const client = extractClient(combinedText);
+      const segment = extractSegment(combinedText) || (enrichment?.industry ? enrichment.industry.split(' ')[0] : null);
+      const timeline = extractTimeline(combinedText);
+      const isWatchlist = watchlistSet.has(symbol);
+
+      const pctRevenue = (enrichment?.annualRevenueCr && valueCr)
+        ? Math.round((valueCr / enrichment.annualRevenueCr) * 10000) / 100
+        : null;
+      const pctMcap = (enrichment?.mcapCr && valueCr)
+        ? Math.round((valueCr / enrichment.mcapCr) * 10000) / 100
+        : null;
+
+      const impactType = classifyImpact(pctRevenue, valueCr, eventType);
+      const action = classifyAction(impactType, pctRevenue, eventType, isWatchlist);
+      const score = computeScore({
+        pctRevenue, valueCr, impactType, eventType,
+        client, segment, isWatchlist, isDeal: false,
+      });
+
+      // Build headline
+      let headline = symbol;
+      if (valueCr) headline += ` ${fmtCr(valueCr)}`;
+      headline += ` ${eventType}`;
+      if (client) headline += ` from ${client}`;
+      if (segment) headline += ` | ${segment}`;
+      if (pctRevenue !== null) headline += ` | ${pctRevenue.toFixed(1)}% Rev`;
+      else if (pctMcap !== null) headline += ` | ${pctMcap.toFixed(2)}% MCap`;
+
+      const sentiment = action === 'BUY WATCH' ? 'Bullish' as const :
+                        action === 'IGNORE' ? 'Neutral' as const : 'Neutral' as const;
+
+      allSignals.push({
+        symbol, company: item.companyName || enrichment?.companyName || symbol,
+        date: item.date || getTodayDate(), source: 'order',
+        eventType, headline,
+        valueCr, valueUsd: valueCr ? `$${((valueCr * 10000000) / INR_TO_USD / 1000000).toFixed(1)}M` : null,
+        mcapCr: enrichment?.mcapCr || null, revenueCr: enrichment?.annualRevenueCr || null,
+        pctRevenue, pctMcap,
+        client, segment, timeline,
+        buyerSeller: null, premiumDiscount: null,
+        impactType, action, score, sentiment, isWatchlist,
+      });
     }
 
-    uniqueOrders.sort((a, b) => {
-      if (a.isWatchlist !== b.isWatchlist) return a.isWatchlist ? -1 : 1;
-      return b.impactScore - a.impactScore;
-    });
+    // ── 4. Build signals from deals ──
+    for (const deal of [...blockDeals, ...bulkDeals]) {
+      const symbol = normalizeTicker(deal.symbol);
+      if (!symbol) continue;
 
-    const seenDeals = new Set<string>();
-    const uniqueDeals: EnrichedDeal[] = [];
+      const dealKey = `${symbol}:${deal.type}:${deal.clientName}:${deal.buySell}`;
+      if (seenKeys.has(dealKey)) continue;
+      seenKeys.add(dealKey);
 
-    for (const deal of [...enrichedBlockDeals, ...enrichedBulkDeals]) {
-      const key = `${deal.symbol}:${deal.dealDate}:${deal.dealType}:${deal.clientName}:${deal.buyOrSell}`;
-      if (!seenDeals.has(key)) {
-        seenDeals.add(key);
-        uniqueDeals.push(deal);
+      const enrichment = enrichMap.get(symbol);
+      const isBuy = deal.buySell.toLowerCase().includes('buy');
+      const dealValueCr = Math.round((deal.quantity * deal.tradePrice) / 10000000 * 100) / 100;
+      const cmp = enrichment?.lastPrice || null;
+      const premiumDiscount = cmp && deal.tradePrice
+        ? Math.round(((deal.tradePrice - cmp) / cmp) * 10000) / 100
+        : null;
+      const pctEquity = enrichment?.issuedSize
+        ? Math.round((deal.quantity / enrichment.issuedSize) * 10000) / 100
+        : null;
+
+      const eventType = `${deal.type} ${isBuy ? 'Buy' : 'Sell'}`;
+      const buyerQual = scoreBuyerQuality(deal.clientName);
+      const isWatchlist = watchlistSet.has(symbol);
+
+      // For deals, impact is about institutional conviction, not revenue
+      const impactType: ImpactType = buyerQual >= 80 ? 'Revenue Impact' :
+                                     buyerQual >= 60 ? 'Margin Impact' : 'Sentiment Only';
+      const action: ActionFlag = (buyerQual >= 80 && isBuy && dealValueCr >= 1) ? 'BUY WATCH' :
+                                 (buyerQual >= 60 || isWatchlist) ? 'HOLD CONTEXT' : 'IGNORE';
+
+      const score = computeScore({
+        pctRevenue: null, valueCr: dealValueCr, impactType, eventType,
+        client: null, segment: null, isWatchlist, isDeal: true,
+        dealPremiumDiscount: premiumDiscount, buyerQuality: buyerQual,
+      });
+
+      // Headline
+      let headline = `${symbol} ${deal.type} ${isBuy ? '▲' : '▼'} ${fmtCr(dealValueCr)}`;
+      headline += ` | ${deal.clientName.slice(0, 30)}`;
+      if (premiumDiscount !== null) {
+        headline += ` | ${premiumDiscount > 0 ? '+' : ''}${premiumDiscount.toFixed(1)}%`;
       }
+      if (pctEquity !== null && pctEquity > 0.01) {
+        headline += ` | ${pctEquity.toFixed(2)}% eq`;
+      }
+
+      allSignals.push({
+        symbol, company: enrichment?.companyName || symbol,
+        date: deal.dealDate || getTodayDate(), source: 'deal',
+        eventType, headline,
+        valueCr: dealValueCr, valueUsd: null,
+        mcapCr: enrichment?.mcapCr || null, revenueCr: enrichment?.annualRevenueCr || null,
+        pctRevenue: null, pctMcap: null,
+        client: null, segment: enrichment?.industry || null, timeline: null,
+        buyerSeller: deal.clientName, premiumDiscount,
+        impactType, action, score,
+        sentiment: isBuy ? 'Bullish' as const : 'Bearish' as const,
+        isWatchlist,
+      });
     }
 
-    uniqueDeals.sort((a, b) => {
-      if (a.isWatchlist !== b.isWatchlist) return a.isWatchlist ? -1 : 1;
-      return b.dealScore - a.dealScore;
-    });
+    // ── 5. Filter, sort, classify ──
+    // Remove IGNORE unless it's watchlist
+    const filtered = allSignals
+      .filter(s => s.action !== 'IGNORE' || s.isWatchlist)
+      .sort((a, b) => {
+        // BUY WATCH first, then HOLD, then IGNORE
+        const actionRank = { 'BUY WATCH': 0, 'HOLD CONTEXT': 1, 'IGNORE': 2 };
+        const ar = actionRank[a.action] - actionRank[b.action];
+        if (ar !== 0) return ar;
+        // Then by score
+        return b.score - a.score;
+      });
 
-    // 8. Calculate summary
-    const totalOrderValueCr = enrichedOrders.reduce((sum, o) => sum + (o.orderValueCr || 0), 0);
-    const totalDealValueCr = uniqueDeals.reduce((sum, d) => sum + d.dealValueCr, 0);
+    // Top 3 = highest scoring non-IGNORE signals
+    const top3 = filtered.filter(s => s.action !== 'IGNORE').slice(0, 3);
+
+    // ── 6. Build daily bias ──
+    const sectorSet = new Set<string>();
+    let totalOrderValueCr = 0;
+    let totalDealValueCr = 0;
+    let buyWatchCount = 0;
+    let highImpactCount = 0;
+    let bullishCount = 0;
+    let bearishCount = 0;
+
+    for (const s of filtered) {
+      if (s.segment) sectorSet.add(s.segment);
+      if (s.source === 'order' && s.valueCr) totalOrderValueCr += s.valueCr;
+      if (s.source === 'deal' && s.valueCr) totalDealValueCr += s.valueCr;
+      if (s.action === 'BUY WATCH') buyWatchCount++;
+      if (s.impactType === 'Revenue Impact') highImpactCount++;
+      if (s.sentiment === 'Bullish') bullishCount++;
+      if (s.sentiment === 'Bearish') bearishCount++;
+    }
+
+    const netBias: DailyBias['netBias'] = bullishCount > bearishCount + 2 ? 'Bullish' :
+                                           bearishCount > bullishCount + 2 ? 'Bearish' : 'Neutral';
+    const activeSectors = Array.from(sectorSet).slice(0, 5);
+
+    const biasStr = highImpactCount > 0
+      ? `${highImpactCount} High Impact signal${highImpactCount > 1 ? 's' : ''} in ${activeSectors.slice(0, 3).join(', ')}. Net: ${netBias}`
+      : `${filtered.length} signals. Sectors: ${activeSectors.slice(0, 3).join(', ') || 'Mixed'}. Net: ${netBias}`;
+
+    const bias: DailyBias = {
+      netBias, highImpactCount, activeSectors, buyWatchCount,
+      totalSignals: filtered.length,
+      totalOrderValueCr: Math.round(totalOrderValueCr),
+      totalDealValueCr: Math.round(totalDealValueCr),
+      summary: biasStr,
+    };
 
     const response: IntelligenceResponse = {
-      corporateOrders: uniqueOrders.slice(0, 10),
-      deals: uniqueDeals.slice(0, 10),
-      summary: {
-        totalOrders: uniqueOrders.length,
-        totalDeals: uniqueDeals.length,
-        highSignalOrders: uniqueOrders.filter(o => o.signal === 'HIGH').length,
-        highSignalDeals: uniqueDeals.filter(d => d.signal === 'HIGH').length,
-        totalOrderValueCr: Math.round(totalOrderValueCr),
-        totalDealValueCr: Math.round(totalDealValueCr),
-      },
+      top3,
+      signals: filtered.slice(0, 15), // Max 15
+      bias,
       updatedAt: new Date().toISOString(),
     };
 
     const duration = Date.now() - startTime;
-    console.log(`[Intelligence] Success: ${uniqueOrders.length} orders, ${uniqueDeals.length} deals in ${duration}ms`);
+    console.log(`[Intelligence] Done: ${filtered.length} signals, ${top3.length} top3, bias=${netBias} in ${duration}ms`);
 
     return NextResponse.json(response);
   } catch (error) {
-    const duration = Date.now() - startTime;
-    console.error(`[Intelligence] Fatal error after ${duration}ms:`, error);
-
+    console.error(`[Intelligence] Fatal error:`, error);
     return NextResponse.json({
-      corporateOrders: [],
-      deals: [],
-      summary: {
-        totalOrders: 0,
-        totalDeals: 0,
-        highSignalOrders: 0,
-        highSignalDeals: 0,
-        totalOrderValueCr: 0,
-        totalDealValueCr: 0,
+      top3: [],
+      signals: [],
+      bias: {
+        netBias: 'Neutral' as const,
+        highImpactCount: 0, activeSectors: [], buyWatchCount: 0,
+        totalSignals: 0, totalOrderValueCr: 0, totalDealValueCr: 0,
+        summary: 'Error fetching intelligence',
       },
       updatedAt: new Date().toISOString(),
     }, { status: 500 });
