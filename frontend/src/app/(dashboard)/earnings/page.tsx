@@ -140,9 +140,10 @@ function DataQualityDot({ quality }: { quality: string }) {
 }
 
 function formatMcap(num: number | null): string {
-  if (num === null || num === undefined) return '—';
-  if (num >= 100000) return `₹${(num / 100000).toFixed(1)}L Cr`;
-  if (num >= 1000) return `₹${(num / 1000).toFixed(0)}K Cr`;
+  if (num === null || num === undefined || num <= 0) return '—';
+  // num is in Cr
+  if (num >= 100000) return `₹${(num / 100000).toFixed(1)}L Cr`;  // lakh crore
+  if (num >= 1000) return `₹${Math.round(num).toLocaleString('en-IN')} Cr`;
   return `₹${num.toFixed(0)} Cr`;
 }
 
@@ -504,16 +505,16 @@ export default function EarningsPage() {
         const quoteMap = new Map<string, { price: number; mcapCr: number | null }>();
 
         // 1) Try bulk quotes (fast, covers index stocks)
-        //    Bulk API returns marketCap in lakhs → convert to Cr by dividing by 100
+        //    Bulk API returns marketCap in raw rupees → convert to Cr by dividing by 1,00,00,000
         try {
           const quotesRes = await fetch('/api/market/quotes');
           if (quotesRes.ok) {
             const quotesData = await quotesRes.json();
             (quotesData.stocks || []).forEach((q: any) => {
-              const mcapLakhs = q.marketCap || 0;
+              const mcapRaw = q.marketCap || 0;
               quoteMap.set(q.ticker, {
                 price: q.price || 0,
-                mcapCr: mcapLakhs > 0 ? Math.round(mcapLakhs / 100) : null,
+                mcapCr: mcapRaw > 0 ? Math.round(mcapRaw / 10000000) : null,
               });
             });
           }
