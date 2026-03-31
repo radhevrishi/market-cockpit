@@ -131,8 +131,20 @@ export default function CompanyIntelligencePage() {
   const fetchIntelligence = useCallback(async () => {
     setLoading(true);
     try {
-      const watchlistStr = localStorage.getItem('mc_watchlist_tickers') || '[]';
-      const watchlist: string[] = JSON.parse(watchlistStr);
+      // Fetch watchlist from API (synced from Telegram via Redis) — fallback to localStorage
+      let watchlist: string[] = [];
+      try {
+        const wlRes = await fetch('/api/watchlist?chatId=5057319640');
+        const wlData = await wlRes.json();
+        if (wlData.watchlist && Array.isArray(wlData.watchlist)) {
+          watchlist = wlData.watchlist;
+          // Also sync to localStorage for other pages
+          localStorage.setItem('mc_watchlist_tickers', JSON.stringify(watchlist));
+        }
+      } catch {
+        const watchlistStr = localStorage.getItem('mc_watchlist_tickers') || '[]';
+        watchlist = JSON.parse(watchlistStr);
+      }
       const wlParam = watchlist.length > 0 ? `&watchlist=${watchlist.join(',')}` : '';
 
       const res = await fetch(`/api/market/intelligence?days=${daysFilter}${wlParam}`);

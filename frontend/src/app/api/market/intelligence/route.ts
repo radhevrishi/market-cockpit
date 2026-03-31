@@ -299,39 +299,52 @@ function calculateOrderImpactScore(order: {
   client: string | null;
   segment: string | null;
 }): number {
-  let orderSizePctRevenue = 10;
-  let strategicValue = 40;
+  let orderSizePctRevenue = 40; // Default higher — most orders are material if they pass keyword filter
+  let strategicValue = 50;
   let marginImpact = 50;
-  let executionCertainty = 50;
+  let executionCertainty = 60;
 
   // Order size % of revenue
   if (order.annualRevenueCr && order.orderValueCr) {
     const pct = (order.orderValueCr / order.annualRevenueCr) * 100;
     if (pct > 10) orderSizePctRevenue = 100;
-    else if (pct >= 5) orderSizePctRevenue = 70;
-    else if (pct >= 2) orderSizePctRevenue = 50;
-    else if (pct >= 1) orderSizePctRevenue = 30;
-    else orderSizePctRevenue = 10;
-  } else if (order.orderValueCr && order.orderValueCr > 500) {
-    orderSizePctRevenue = 70;
+    else if (pct >= 5) orderSizePctRevenue = 80;
+    else if (pct >= 2) orderSizePctRevenue = 60;
+    else if (pct >= 1) orderSizePctRevenue = 45;
+    else orderSizePctRevenue = 30;
+  } else if (order.orderValueCr) {
+    // No revenue data — use absolute order value
+    if (order.orderValueCr >= 500) orderSizePctRevenue = 90;
+    else if (order.orderValueCr >= 100) orderSizePctRevenue = 70;
+    else if (order.orderValueCr >= 50) orderSizePctRevenue = 55;
+    else if (order.orderValueCr >= 10) orderSizePctRevenue = 45;
+    else orderSizePctRevenue = 35;
   }
 
   // Strategic value
   if (order.client && (order.client.toLowerCase().includes('govt') || order.client.toLowerCase().includes('defence'))) {
     strategicValue = 90;
   } else if (order.segment === 'Defence' || order.segment === 'Railways') {
-    strategicValue = 80;
+    strategicValue = 85;
+  } else if (order.segment === 'Infrastructure' || order.segment === 'Power & Energy') {
+    strategicValue = 70;
+  } else if (order.client) {
+    strategicValue = 60; // Known client = better
   } else {
     strategicValue = 50;
   }
 
   // Execution certainty based on order type
   if (order.orderType === 'Order Win' || order.orderType === 'Contract') {
-    executionCertainty = 80;
-  } else if (order.orderType === 'LOI') {
-    executionCertainty = 50;
+    executionCertainty = 85;
+  } else if (order.orderType === 'M&A') {
+    executionCertainty = 75;
   } else if (order.orderType === 'Partnership/JV') {
     executionCertainty = 70;
+  } else if (order.orderType === 'LOI') {
+    executionCertainty = 55;
+  } else if (order.orderType === 'Fund Raising') {
+    executionCertainty = 65;
   }
 
   // Formula: (0.35 × orderSizePctRevenue) + (0.25 × strategicValue) + (0.20 × marginImpact) + (0.20 × executionCertainty)
@@ -348,14 +361,18 @@ function calculateDealScore(deal: {
   let dealSizePctEquity = 20;
   let pricePremium = 50;
 
-  // Buyer quality
+  // Buyer quality — detect institutional patterns
   const buyerLower = deal.clientName.toLowerCase();
-  if (buyerLower.includes('mf') || buyerLower.includes('fii') || buyerLower.includes('mutual fund')) {
+  if (/\b(mutual fund|mf|amc|sbi mf|hdfc mf|icici pru|axis mf|kotak mf|nippon|dsp|uti)\b/.test(buyerLower)) {
     buyerQuality = 90;
-  } else if (buyerLower.includes('promoter') || buyerLower.includes('founder')) {
-    buyerQuality = 80;
-  } else if (buyerLower.includes('insurance')) {
-    buyerQuality = 70;
+  } else if (/\b(fii|foreign|dii|institutional|capital group|blackrock|vanguard|goldman|morgan|jp morgan|citadel)\b/.test(buyerLower)) {
+    buyerQuality = 90;
+  } else if (/\b(promoter|founder|director|chairman|managing)\b/.test(buyerLower)) {
+    buyerQuality = 85;
+  } else if (/\b(insurance|lic|life insurance|general insurance)\b/.test(buyerLower)) {
+    buyerQuality = 75;
+  } else if (/\b(pvt|private|ltd|limited|capital|invest|fund|trust|advisors|wealth|asset)\b/.test(buyerLower)) {
+    buyerQuality = 60; // Likely institutional/HNI
   } else {
     buyerQuality = 50;
   }
@@ -420,7 +437,7 @@ async function enrichStockData(symbol: string): Promise<StockEnrichment> {
       result.industry = quote.info?.industry || null;
     }
 
-    // Fetch earnings data for annual revenue
+    // Fetch earnings data for annual revenue (revenue is already in Crores from screener.in)
     const earningsKey = `earnings:${symbol}`;
     const earnings = await kvGet<EarningsData>(earningsKey);
     if (earnings?.quarters && Array.isArray(earnings.quarters)) {
@@ -428,8 +445,12 @@ async function enrichStockData(symbol: string): Promise<StockEnrichment> {
         .slice(0, 4)
         .reduce((sum, q) => sum + (q.revenue || 0), 0);
       if (annualRevenue > 0) {
-        result.annualRevenueCr = annualRevenue / 10000000; // Convert to Crores
+        result.annualRevenueCr = annualRevenue; // Already in Crores
       }
+    }
+    // Fallback: use earnings cache mcap if NSE quote didn't provide it
+    if (!result.mcapCr && earnings?.mcap) {
+      result.mcapCr = earnings.mcap; // Already in Crores from screener
     }
   } catch (e) {
     console.error(`[Intelligence] Error enriching ${symbol}:`, e);
@@ -508,19 +529,20 @@ async function enrichCorporateOrders(filteredAnnouncements: any[], enrichmentMap
 async function enrichBlockBulkDeals(deals: any[], enrichmentMap: Map<string, StockEnrichment>, watchlistSet: Set<string>, dealType: 'Block' | 'Bulk'): Promise<EnrichedDeal[]> {
   return deals
     .map(item => {
-      const symbol = normalizeTicker(item.symbol || '');
+      const symbol = normalizeTicker(item.symbol);
       const enrichment = enrichmentMap.get(symbol);
 
-      const quantity = item.qty || item.quantity || 0;
-      const tradePrice = item.price || item.tradePrice || 0;
+      // Data is already normalized from the fetch step
+      const quantity = item.quantity;
+      const tradePrice = item.tradePrice;
       const dealValueCr = (quantity * tradePrice) / 10000000;
 
       const cmp = enrichment?.lastPrice || null;
       const premiumDiscount = cmp && tradePrice ? ((tradePrice - cmp) / cmp) * 100 : null;
       const pctEquity = enrichment?.issuedSize && quantity ? (quantity / enrichment.issuedSize) * 100 : null;
 
-      const clientName = item.clientName || item.client || item.counterparty || 'Unknown';
-      const buyOrSell = (item.buyOrSell || item.side || '').toLowerCase().includes('buy') ? 'Buy' : 'Sell';
+      const clientName = item.clientName || 'Unknown';
+      const buyOrSell = (item.buySell || '').toLowerCase().includes('buy') ? 'Buy' : 'Sell';
 
       const dealScore = calculateDealScore({
         clientName,
@@ -533,13 +555,13 @@ async function enrichBlockBulkDeals(deals: any[], enrichmentMap: Map<string, Sto
       return {
         symbol,
         company: enrichment?.companyName || symbol,
-        dealDate: item.date || getTodayDate(),
+        dealDate: item.dealDate || getTodayDate(),
         dealType,
         clientName,
         buyOrSell,
         quantity,
         tradePrice,
-        dealValueCr,
+        dealValueCr: Math.round(dealValueCr * 100) / 100,
         cmp,
         premiumDiscount: premiumDiscount ? Math.round(premiumDiscount * 100) / 100 : null,
         pctEquity: pctEquity ? Math.round(pctEquity * 10000) / 10000 : null,
@@ -589,14 +611,22 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
       console.log('[Intelligence] Could not fetch general announcements:', e);
     }
 
-    // 2. Fetch block and bulk deals
+    // 2. Fetch block and bulk deals — normalize to flat objects
     let blockDeals: any[] = [];
     let bulkDeals: any[] = [];
 
     try {
       const blockData = await nseApiFetch('/api/block-deal', 300000);
       if (blockData) {
-        blockDeals = Array.isArray(blockData) ? blockData : (blockData?.data || []);
+        const raw = Array.isArray(blockData) ? blockData : (blockData?.data || []);
+        blockDeals = raw.map((d: any) => ({
+          symbol: d.symbol || d.BD_SYMBOL || '',
+          clientName: d.clientName || d.BD_CLIENT_NAME || '',
+          quantity: parseInt(d.quantity || d.BD_QTY_TRD || '0'),
+          tradePrice: parseFloat(d.tradePrice || d.BD_TP_WATP || '0'),
+          buySell: (d.buySell || d.BD_BUY_SELL || '').trim(),
+          dealDate: d.dealDate || d.BD_DT_DATE || '',
+        }));
       }
     } catch (e) {
       console.log('[Intelligence] Could not fetch block deals:', e);
@@ -605,28 +635,59 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
     try {
       const bulkData = await nseApiFetch('/api/bulk-deal', 300000);
       if (bulkData) {
-        bulkDeals = Array.isArray(bulkData) ? bulkData : (bulkData?.data || []);
+        const raw = Array.isArray(bulkData) ? bulkData : (bulkData?.data || []);
+        bulkDeals = raw.map((d: any) => ({
+          symbol: d.symbol || d.BD_SYMBOL || '',
+          clientName: d.clientName || d.BD_CLIENT_NAME || '',
+          quantity: parseInt(d.quantity || d.BD_QTY_TRD || '0'),
+          tradePrice: parseFloat(d.tradePrice || d.BD_TP_WATP || '0'),
+          buySell: (d.buySell || d.BD_BUY_SELL || '').trim(),
+          dealDate: d.dealDate || d.BD_DT_DATE || '',
+        }));
       }
     } catch (e) {
       console.log('[Intelligence] Could not fetch bulk deals:', e);
     }
 
+    // Filter out deals with zero quantity/price
+    blockDeals = blockDeals.filter(d => d.quantity > 0 && d.tradePrice > 0);
+    bulkDeals = bulkDeals.filter(d => d.quantity > 0 && d.tradePrice > 0);
+
+    console.log(`[Intelligence] Raw deals: ${blockDeals.length} block, ${bulkDeals.length} bulk`);
+    if (blockDeals.length > 0) console.log(`[Intelligence] Sample block deal:`, JSON.stringify(blockDeals[0]));
+
     // 3. Filter for orders and deals
     const filteredOrders = filterForOrders(allAnnouncements);
 
-    console.log(`[Intelligence] Found ${filteredOrders.length} orders and ${blockDeals.length + bulkDeals.length} deals`);
+    console.log(`[Intelligence] Found ${allAnnouncements.length} total announcements, ${filteredOrders.length} order-related`);
+    if (filteredOrders.length > 0) {
+      console.log(`[Intelligence] Sample order:`, JSON.stringify({
+        symbol: filteredOrders[0].symbol,
+        subject: (filteredOrders[0].subject || '').slice(0, 120),
+        desc: (filteredOrders[0].desc || '').slice(0, 120),
+      }));
+    }
 
-    // 4. Collect unique symbols for enrichment
-    const symbolsToEnrich = new Set<string>();
-    filteredOrders.forEach(o => symbolsToEnrich.add(normalizeTicker(o.symbol || '')));
-    blockDeals.forEach(d => symbolsToEnrich.add(normalizeTicker(d.symbol || '')));
-    bulkDeals.forEach(d => symbolsToEnrich.add(normalizeTicker(d.symbol || '')));
+    // 4. Collect unique symbols for enrichment — prioritize watchlist + deal symbols, cap at 25
+    const prioritySymbols = new Set<string>();
+    // Watchlist first
+    watchlist.forEach(s => prioritySymbols.add(s));
+    // Then deal symbols (fewer, more important)
+    blockDeals.forEach(d => prioritySymbols.add(normalizeTicker(d.symbol || d.BD_SYMBOL || '')));
+    bulkDeals.forEach(d => prioritySymbols.add(normalizeTicker(d.symbol || d.BD_SYMBOL || '')));
+    // Then order symbols (only if still under limit)
+    filteredOrders.forEach(o => {
+      if (prioritySymbols.size < 25) prioritySymbols.add(normalizeTicker(o.symbol || ''));
+    });
 
-    console.log(`[Intelligence] Enriching ${symbolsToEnrich.size} unique symbols`);
+    // Remove empty strings
+    prioritySymbols.delete('');
+
+    console.log(`[Intelligence] Enriching ${prioritySymbols.size} unique symbols (capped at 25)`);
 
     // 5. Batch fetch enrichment data with rate limiting
     const enrichmentMap = new Map<string, StockEnrichment>();
-    const symbolArray = Array.from(symbolsToEnrich);
+    const symbolArray = Array.from(prioritySymbols);
     const batchSize = 3;
     const delayMs = 200;
 
@@ -672,7 +733,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
     const uniqueDeals: EnrichedDeal[] = [];
 
     for (const deal of [...enrichedBlockDeals, ...enrichedBulkDeals]) {
-      const key = `${deal.symbol}:${deal.dealDate}:${deal.dealType}`;
+      const key = `${deal.symbol}:${deal.dealDate}:${deal.dealType}:${deal.clientName}:${deal.buyOrSell}`;
       if (!seenDeals.has(key)) {
         seenDeals.add(key);
         uniqueDeals.push(deal);
