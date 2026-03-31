@@ -64,6 +64,7 @@ interface EarningsScanCard {
   mcap: number | null;
   pe: number | null;
   cmp: number | null;
+  isBanking: boolean;
   screenerUrl: string;
   nseUrl: string;
 }
@@ -173,50 +174,82 @@ function FinancialTable({ card }: { card: EarningsScanCard }) {
   if (quarters.length === 0) return null;
 
   const latest = quarters[0];
-  const metrics = [
-    {
-      label: 'Revenue',
-      key: 'revenue' as const,
-      fmt: (v: number) => `${v.toFixed(0)}`,
-      yoy: card.revenueYoY,
-      qoq: card.revenueQoQ,
-    },
-    {
-      label: 'Op. Profit',
-      key: 'operatingProfit' as const,
-      fmt: (v: number) => `${v.toFixed(0)}`,
-      yoy: card.opProfitYoY,
-      qoq: card.opProfitQoQ,
-    },
-    {
-      label: 'OPM %',
-      key: 'opm' as const,
-      fmt: (v: number) => `${v.toFixed(1)}%`,
-      yoy: null,
-      qoq: null,
-    },
-    {
-      label: 'PAT',
-      key: 'pat' as const,
-      fmt: (v: number) => `${v.toFixed(0)}`,
-      yoy: card.patYoY,
-      qoq: card.patQoQ,
-    },
-    {
-      label: 'NPM %',
-      key: 'npm' as const,
-      fmt: (v: number) => `${v.toFixed(1)}%`,
-      yoy: null,
-      qoq: null,
-    },
-    {
-      label: 'EPS',
-      key: 'eps' as const,
-      fmt: (v: number) => `${v.toFixed(2)}`,
-      yoy: card.epsYoY,
-      qoq: card.epsQoQ,
-    },
-  ];
+  // For banking stocks: hide Op. Profit and OPM% (misleading), show PAT/NPM/EPS prominently
+  const metrics = card.isBanking
+    ? [
+        {
+          label: 'Revenue',
+          key: 'revenue' as const,
+          fmt: (v: number) => `${v.toFixed(0)}`,
+          yoy: card.revenueYoY,
+          qoq: card.revenueQoQ,
+        },
+        {
+          label: 'PAT',
+          key: 'pat' as const,
+          fmt: (v: number) => `${v.toFixed(0)}`,
+          yoy: card.patYoY,
+          qoq: card.patQoQ,
+        },
+        {
+          label: 'NPM %',
+          key: 'npm' as const,
+          fmt: (v: number) => `${v.toFixed(1)}%`,
+          yoy: null,
+          qoq: null,
+        },
+        {
+          label: 'EPS',
+          key: 'eps' as const,
+          fmt: (v: number) => `${v.toFixed(2)}`,
+          yoy: card.epsYoY,
+          qoq: card.epsQoQ,
+        },
+      ]
+    : [
+        {
+          label: 'Revenue',
+          key: 'revenue' as const,
+          fmt: (v: number) => `${v.toFixed(0)}`,
+          yoy: card.revenueYoY,
+          qoq: card.revenueQoQ,
+        },
+        {
+          label: 'Op. Profit',
+          key: 'operatingProfit' as const,
+          fmt: (v: number) => `${v.toFixed(0)}`,
+          yoy: card.opProfitYoY,
+          qoq: card.opProfitQoQ,
+        },
+        {
+          label: 'OPM %',
+          key: 'opm' as const,
+          fmt: (v: number) => `${v.toFixed(1)}%`,
+          yoy: null,
+          qoq: null,
+        },
+        {
+          label: 'PAT',
+          key: 'pat' as const,
+          fmt: (v: number) => `${v.toFixed(0)}`,
+          yoy: card.patYoY,
+          qoq: card.patQoQ,
+        },
+        {
+          label: 'NPM %',
+          key: 'npm' as const,
+          fmt: (v: number) => `${v.toFixed(1)}%`,
+          yoy: null,
+          qoq: null,
+        },
+        {
+          label: 'EPS',
+          key: 'eps' as const,
+          fmt: (v: number) => `${v.toFixed(2)}`,
+          yoy: card.epsYoY,
+          qoq: card.epsQoQ,
+        },
+      ];
 
   const cellStyle = (isHeader = false): React.CSSProperties => ({
     padding: '5px 8px',
@@ -296,6 +329,18 @@ function EarningsCardComponent({ card }: { card: EarningsScanCard }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
             <span style={{ fontSize: '16px', fontWeight: 700, color: TEXT }}>{card.symbol}</span>
             <GradeBadge grade={card.grade} color={card.gradeColor} score={card.totalScore} />
+            {card.isBanking && (
+              <span style={{
+                fontSize: '9px',
+                padding: '2px 6px',
+                borderRadius: '3px',
+                backgroundColor: '#FF980020',
+                border: '1px solid #FF980050',
+                color: '#FF9800',
+                fontWeight: 700,
+                letterSpacing: '0.5px',
+              }}>BANK</span>
+            )}
             <DataQualityDot quality={card.dataQuality} />
           </div>
           <div style={{ fontSize: '12px', color: TEXT_DIM, marginBottom: '4px' }}>
@@ -413,46 +458,110 @@ export default function EarningsPage() {
   const [updatedAt, setUpdatedAt] = useState('');
   const [sortBy, setSortBy] = useState<'score' | 'symbol' | 'revenueYoY' | 'patYoY'>('score');
   const [filterGrade, setFilterGrade] = useState<string>('ALL');
+  const [viewMode, setViewMode] = useState<'watchlist' | 'nifty50' | 'midcap150' | 'smallcap250'>('watchlist');
   const [watchlistTickers, setWatchlistTickers] = useState<string[]>([]);
   const [watchlistSource, setWatchlistSource] = useState<string>('');
+
+  // Universe definitions — fetched live from /api/market/quotes which uses NSE index API
+  // These are fallback static lists; the actual fetch uses the API dynamically
+  const UNIVERSE_CONFIG: Record<string, { label: string; emoji: string; apiIndex?: string; fallbackTickers: string[] }> = {
+    watchlist: { label: 'Watchlist', emoji: '📋', fallbackTickers: DEFAULT_WATCHLIST },
+    nifty50: {
+      label: 'Nifty 50', emoji: '📊',
+      apiIndex: 'NIFTY 50',
+      fallbackTickers: [
+        'RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK', 'HINDUNILVR', 'ITC',
+        'BHARTIARTL', 'SBIN', 'LT', 'BAJFINANCE', 'KOTAKBANK', 'AXISBANK',
+        'MARUTI', 'TITAN', 'SUNPHARMA', 'WIPRO', 'HCLTECH', 'NESTLEIND', 'M&M',
+      ],
+    },
+    midcap150: {
+      label: 'Midcap 150', emoji: '🏢',
+      apiIndex: 'NIFTY MIDCAP 150',
+      fallbackTickers: [
+        'POLYCAB', 'PERSISTENT', 'COFORGE', 'MPHASIS', 'TRENT',
+        'OBEROI', 'CUMMINSIND', 'GODREJCP', 'VOLTAS', 'ESCORTS',
+        'MFSL', 'PIIND', 'ATUL', 'METROPOLIS', 'LALPATHLAB',
+        'IDFCFIRSTB', 'FEDERALBNK', 'BHEL', 'PNB', 'SAIL',
+      ],
+    },
+    smallcap250: {
+      label: 'Smallcap 250', emoji: '🔬',
+      apiIndex: 'NIFTY SMALLCAP 250',
+      fallbackTickers: [
+        'KPITTECH', 'ROUTE', 'HAPPSTMNDS', 'TANLA', 'BSOFT',
+        'DATAPATTNS', 'GRINDWELL', 'CLEAN', 'AFFLE', 'LATENTVIEW',
+        'SAPPHIRE', 'GLAND', 'MEDPLUS', 'RAINBOW', 'DEVYANI',
+        'BIKAJI', 'CAMPUS', 'ETHOS', 'KAYNES', 'NETWEB',
+      ],
+    },
+  };
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      // Try to fetch watchlist from API first (remote is source of truth — synced via Telegram bot)
-      let watchlist = DEFAULT_WATCHLIST;
+      let symbols: string[] = [];
       let wlSource = 'default';
-      try {
-        const apiRes = await fetch('/api/watchlist?chatId=5057319640');
-        if (apiRes.ok) {
-          const apiData = await apiRes.json();
-          if (apiData.watchlist && Array.isArray(apiData.watchlist) && apiData.watchlist.length > 0) {
-            watchlist = apiData.watchlist;
-            wlSource = apiData.source || 'api';
-          }
-        }
-      } catch (e) {
-        console.error('Failed to fetch from API, falling back to localStorage:', e);
+      const config = UNIVERSE_CONFIG[viewMode];
+
+      if (viewMode === 'watchlist') {
+        // Try to fetch watchlist from API first (remote is source of truth — synced via Telegram bot)
+        let watchlist = DEFAULT_WATCHLIST;
         try {
-          const stored = localStorage.getItem('mc_watchlist_tickers');
-          if (stored) {
-            const parsed = JSON.parse(stored);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              watchlist = parsed;
-              wlSource = 'local';
+          const apiRes = await fetch('/api/watchlist?chatId=5057319640');
+          if (apiRes.ok) {
+            const apiData = await apiRes.json();
+            if (apiData.watchlist && Array.isArray(apiData.watchlist) && apiData.watchlist.length > 0) {
+              watchlist = apiData.watchlist;
+              wlSource = apiData.source || 'api';
             }
           }
-        } catch {}
+        } catch (e) {
+          console.error('Failed to fetch from API, falling back to localStorage:', e);
+          try {
+            const stored = localStorage.getItem('mc_watchlist_tickers');
+            if (stored) {
+              const parsed = JSON.parse(stored);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                watchlist = parsed;
+                wlSource = 'local';
+              }
+            }
+          } catch {}
+        }
+        symbols = watchlist;
+        setWatchlistTickers(watchlist);
+        setWatchlistSource(wlSource);
+        // Also sync to localStorage so other pages have latest
+        try { localStorage.setItem('mc_watchlist_tickers', JSON.stringify(watchlist)); } catch {}
+      } else {
+        // Index-based mode (Nifty50/Midcap150/Smallcap250)
+        // Try live fetch from quotes API to get current constituents
+        let indexSymbols: string[] = [];
+        if (config.apiIndex) {
+          try {
+            const quotesRes = await fetch(`/api/market/quotes`);
+            if (quotesRes.ok) {
+              const quotesData = await quotesRes.json();
+              if (quotesData.stocks && Array.isArray(quotesData.stocks)) {
+                // Extract symbols from quotes response
+                indexSymbols = quotesData.stocks.map((s: any) => s.symbol).filter(Boolean);
+              }
+            }
+          } catch (e) {
+            console.warn(`Failed to fetch live index data for ${viewMode}, using fallback`);
+          }
+        }
+
+        symbols = indexSymbols.length > 0 ? indexSymbols : config.fallbackTickers;
+        wlSource = viewMode;
+        setWatchlistTickers(symbols);
+        setWatchlistSource(wlSource);
       }
 
-      setWatchlistTickers(watchlist);
-      setWatchlistSource(wlSource);
-
-      // Also sync to localStorage so other pages have latest
-      try { localStorage.setItem('mc_watchlist_tickers', JSON.stringify(watchlist)); } catch {}
-
-      const symbolsParam = watchlist.slice(0, 20).join(',');
+      // Cap at 20 symbols for earnings scan (API scraping constraint)
+      const symbolsParam = symbols.slice(0, 20).join(',');
       const res = await fetch(`/api/market/earnings-scan?symbols=${symbolsParam}&debug=true`);
 
       if (!res.ok) throw new Error(`API error: ${res.status}`);
@@ -468,7 +577,7 @@ export default function EarningsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [viewMode]);
 
   useEffect(() => {
     fetchData();
@@ -516,8 +625,10 @@ export default function EarningsPage() {
             fontWeight: 600,
             color: ACCENT,
           }}>
-            📋 Watchlist Only — {watchlistTickers.length} stocks
-            {watchlistSource === 'telegram' && <span style={{ color: GREEN }}>● synced</span>}
+            {UNIVERSE_CONFIG[viewMode]?.emoji} {UNIVERSE_CONFIG[viewMode]?.label} — {watchlistTickers.length} stocks
+            {watchlistSource === 'redis' && <span style={{ color: GREEN }}>● synced</span>}
+            {watchlistSource === 'memory' && <span style={{ color: YELLOW }}>● memory</span>}
+            {watchlistSource === 'default' && <span style={{ color: TEXT_DIM }}>● default</span>}
           </span>
         </div>
       </div>
@@ -564,6 +675,34 @@ export default function EarningsPage() {
         flexWrap: 'wrap',
         alignItems: 'center',
       }}>
+        {/* View Mode Toggle */}
+        <div style={{
+          display: 'flex',
+          borderRadius: '6px',
+          overflow: 'hidden',
+          border: `1px solid ${CARD_BORDER}`,
+        }}>
+          {(Object.entries(UNIVERSE_CONFIG) as [string, typeof UNIVERSE_CONFIG[string]][]).map(([key, cfg]) => (
+            <button
+              key={key}
+              onClick={() => setViewMode(key as any)}
+              style={{
+                backgroundColor: viewMode === key ? ACCENT : CARD,
+                border: 'none',
+                color: viewMode === key ? '#000' : TEXT,
+                padding: '8px 14px',
+                cursor: 'pointer',
+                fontSize: '11px',
+                fontWeight: 600,
+                transition: 'all 0.2s',
+                borderRight: `1px solid ${CARD_BORDER}`,
+              }}
+            >
+              {cfg.emoji} {cfg.label}
+            </button>
+          ))}
+        </div>
+
         {/* Sort */}
         <select
           value={sortBy}

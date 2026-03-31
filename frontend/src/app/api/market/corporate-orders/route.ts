@@ -36,6 +36,7 @@ interface CorporateOrder {
   date: string;
   orderType: 'Order Win' | 'Contract' | 'Partnership/JV' | 'Capex' | 'LOI' | 'Other';
   importance: 'HIGH' | 'MEDIUM' | 'LOW';
+  orderValue: number | null; // in Crores, if parseable
   isWatchlist: boolean;
   nseUrl: string;
 }
@@ -103,17 +104,167 @@ function classifyOrderType(subject: string, description: string): 'Order Win' | 
 }
 
 /**
- * Calculate importance based on keyword quality
+ * Parse order value from description (in Crores)
+ * Looks for patterns like "Rs. 500 crore", "₹1,200 Cr", "INR 50 Mn" etc.
+ */
+function parseOrderValue(text: string): number | null {
+  if (!text) return null;
+  const combined = text.toLowerCase();
+
+  // Pattern: Rs/₹/INR followed by number and unit
+  const crMatch = combined.match(/(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:crore|cr)/i);
+  if (crMatch) return parseFloat(crMatch[1].replace(/,/g, ''));
+
+  const lMatch = combined.match(/(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:lakh|lac|l)\b/i);
+  if (lMatch) return parseFloat(lMatch[1].replace(/,/g, '')) / 100; // Convert lakh to Cr
+
+  // USD million — e.g. "USD 100M deal", "$50 million"
+  const usdMnMatch = combined.match(/(?:usd|\$)\s*([\d,]+(?:\.\d+)?)\s*(?:million|mn|m)\b/i);
+  if (usdMnMatch) {
+    const val = parseFloat(usdMnMatch[1].replace(/,/g, ''));
+    return val * 8.5; // ~85 INR/USD, then /10 for Cr
+  }
+
+  // INR million — e.g. "Rs. 500 million"
+  const inrMnMatch = combined.match(/(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:million|mn|m)\b/i);
+  if (inrMnMatch) {
+    const val = parseFloat(inrMnMatch[1].replace(/,/g, ''));
+    return val / 10; // INR million to Cr
+  }
+
+  // USD billion — e.g. "USD 2 Bn"
+  const usdBnMatch = combined.match(/(?:usd|\$)\s*([\d,]+(?:\.\d+)?)\s*(?:billion|bn|b)\b/i);
+  if (usdBnMatch) {
+    const val = parseFloat(usdBnMatch[1].replace(/,/g, ''));
+    return val * 8500; // ~85 INR/USD * 100 for Cr
+  }
+
+  // INR billion — e.g. "Rs. 10 Bn"
+  const inrBnMatch = combined.match(/(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:billion|bn|b)\b/i);
+  if (inrBnMatch) {
+    const val = parseFloat(inrBnMatch[1].replace(/,/g, ''));
+    return val * 100; // INR billion to Cr
+  }
+
+  // Plain USD with no unit — e.g. "USD 500" (assume millions if > 1)
+  const plainUsdMatch = combined.match(/(?:usd|\$)\s*([\d,]+(?:\.\d+)?)\b/i);
+  if (plainUsdMatch) {
+    const val = parseFloat(plainUsdMatch[1].replace(/,/g, ''));
+    if (val >= 1000) return val * 0.085; // Likely in millions already (USD to Cr)
+  }
+
+  return null;
+}
+
+/**
+ * HYBRID IMPORTANCE SCORING
+ * Score = f(value, keywords, deal characteristics)
+ * Uses a points-based system for nuanced classification:
+ *   - Order value (if parseable): 0-50 points
+ *   - Strategic keywords: 0-30 points
+ *   - Business keywords: 0-20 points
+ *   - Noise keywords: negative points
+ *
+ * Final: HIGH ≥ 40pts, MEDIUM ≥ 20pts, LOW < 20pts
  */
 function calculateImportance(subject: string, description: string): 'HIGH' | 'MEDIUM' | 'LOW' {
   const combined = `${subject} ${description}`.toLowerCase();
+  let score = 0;
 
-  // HIGH: multiple relevant keywords or specific order mentions
-  const highKeywords = ['order', 'contract', 'awarded', 'loi', 'letter of intent', 'partnership', 'jv'];
-  const highMatches = highKeywords.filter(k => combined.includes(k)).length;
+  // ── Layer 1: Order Value (0-50 points) ──
+  const orderValue = parseOrderValue(combined);
+  if (orderValue !== null) {
+    if (orderValue >= 500) score += 50;       // ₹500 Cr+ = massive
+    else if (orderValue >= 100) score += 40;  // ₹100 Cr+ = large
+    else if (orderValue >= 50) score += 30;   // ₹50 Cr+
+    else if (orderValue >= 10) score += 20;   // ₹10 Cr+
+    else score += 5;                           // Small but quantified
+  }
 
-  if (highMatches >= 2) return 'HIGH';
-  if (highMatches === 1) return 'MEDIUM';
+  // ── Layer 2: Strategic Keywords (0-30 points) ──
+  const strategicHigh: [string, number][] = [
+    ['strategic', 15],
+    ['multi-year', 15],
+    ['multi year', 15],
+    ['defence', 15],
+    ['defense', 15],
+    ['exclusive', 12],
+    ['large order', 12],
+    ['bagging/receiving of orders', 12],
+    ['awarded', 10],
+    ['secured', 10],
+    ['won', 8],
+    ['government', 10],
+    ['railway', 10],
+    ['export order', 10],
+    ['international', 8],
+    ['acquisition', 10],
+    ['repeat order', 8],
+    ['follow-on', 8],
+    ['rate contract', 8],
+  ];
+
+  let strategicScore = 0;
+  for (const [keyword, points] of strategicHigh) {
+    if (combined.includes(keyword)) {
+      strategicScore += points;
+    }
+  }
+  score += Math.min(strategicScore, 30); // Cap at 30
+
+  // ── Layer 3: Business Keywords (0-20 points) ──
+  const businessKeywords: [string, number][] = [
+    ['order', 8],
+    ['contract', 8],
+    ['loi', 6],
+    ['letter of intent', 6],
+    ['partnership', 6],
+    ['jv', 5],
+    ['joint venture', 6],
+    ['supply', 5],
+    ['mandate', 5],
+    ['work order', 8],
+    ['purchase order', 8],
+    ['deal', 6],
+  ];
+
+  let businessScore = 0;
+  for (const [keyword, points] of businessKeywords) {
+    if (combined.includes(keyword)) {
+      businessScore += points;
+    }
+  }
+  score += Math.min(businessScore, 20); // Cap at 20
+
+  // ── Layer 4: Noise / Negative Signals ──
+  const noiseKeywords: [string, number][] = [
+    ['rumour verification', -15],
+    ['regulation 30', -10],
+    ['action(s) taken', -8],
+    ['action(s) initiated', -8],
+    ['clarification', -5],
+    ['disclosure', -3],
+    ['update', -2],
+    ['amendment', -3],
+    ['addendum', -3],
+  ];
+
+  for (const [keyword, penalty] of noiseKeywords) {
+    if (combined.includes(keyword)) {
+      score += penalty; // negative
+    }
+  }
+
+  // ── Layer 5: Undisclosed value signals ──
+  // If no numeric value found but strong contextual clues
+  if (orderValue === null) {
+    if (combined.includes('undisclosed') || combined.includes('significant')) score += 8;
+    if (combined.includes('crore') || combined.includes('million') || combined.includes('billion')) score += 5;
+  }
+
+  // ── Final Classification ──
+  if (score >= 40) return 'HIGH';
+  if (score >= 20) return 'MEDIUM';
   return 'LOW';
 }
 
@@ -134,6 +285,7 @@ function filterForOrders(announcements: any[]): CorporateOrder[] {
       const subject = item.subject || item.newName || '';
       const description = item.desc || item.attachmentname || '';
 
+      const combinedText = `${subject} ${description}`;
       return {
         symbol: item.symbol || '',
         company: item.companyName || item.company || item.symbol || '',
@@ -142,6 +294,7 @@ function filterForOrders(announcements: any[]): CorporateOrder[] {
         date: item.date || item.exDate || item.expiryDate || new Date().toISOString().split('T')[0],
         orderType: classifyOrderType(subject, description),
         importance: calculateImportance(subject, description),
+        orderValue: parseOrderValue(combinedText),
         isWatchlist: false, // Will be set after
         nseUrl: `https://www.nseindia.com/corporate/announcements.jsp?symbol=${encodeURIComponent(item.symbol || '')}`,
       };

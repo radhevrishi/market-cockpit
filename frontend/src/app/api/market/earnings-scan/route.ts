@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { fetchCompanyFinancialResults, fetchStockQuote } from '@/lib/nse';
+import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
@@ -61,9 +62,42 @@ function getGlobalStore(): Map<string, StoredEarnings> {
 }
 
 const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
+const KV_CACHE_TTL_SECONDS = 6 * 60 * 60; // 6 hours in Redis (slightly longer than memory TTL)
 
 function isDataFresh(fetchedAt: number): boolean {
   return Date.now() - fetchedAt < CACHE_TTL_MS;
+}
+
+/** KV key for earnings cache */
+function earningsKvKey(symbol: string): string {
+  return `earnings:${symbol}`;
+}
+
+/** Try to load earnings data from KV store (Redis) */
+async function kvLoadEarnings(symbol: string): Promise<StoredEarnings | null> {
+  try {
+    const data = await kvGet<StoredEarnings>(earningsKvKey(symbol));
+    if (data && data.symbol && data.quarters && data.quarters.length > 0) {
+      return data;
+    }
+  } catch (e) {
+    console.warn(`[Earnings Cache] KV load failed for ${symbol}:`, e);
+  }
+  return null;
+}
+
+/** Save earnings data to KV store (Redis) + in-memory */
+async function kvSaveEarnings(symbol: string, data: StoredEarnings): Promise<void> {
+  // Always save to in-memory
+  const store = getGlobalStore();
+  store.set(symbol, data);
+
+  // Also persist to KV (Redis) with TTL
+  try {
+    await kvSet(earningsKvKey(symbol), data, KV_CACHE_TTL_SECONDS);
+  } catch (e) {
+    console.warn(`[Earnings Cache] KV save failed for ${symbol}:`, e);
+  }
 }
 
 // ── Types ────────────────────────────────────
@@ -130,6 +164,9 @@ interface EarningsScanCard {
   mcap: number | null;
   pe: number | null;
   cmp: number | null;
+
+  // Banking flag
+  isBanking: boolean;
 
   // Links
   screenerUrl: string;
@@ -558,15 +595,36 @@ async function buildEarningsCard(symbol: string): Promise<EarningsScanCard | nul
   const store = getGlobalStore();
   let dataAge: 'fresh' | 'stale' | 'missing' = 'missing';
 
-  // Step 1: Check persistent store for fresh data
-  const stored = store.get(symbol);
+  // Step 0: Check in-memory store first (fastest)
+  let stored = store.get(symbol) || null;
   if (stored && isDataFresh(stored.fetchedAt)) {
-    console.log(`[Earnings Scan] ${symbol}: Using fresh cached data (${Math.round((Date.now() - stored.fetchedAt) / 60000)}min old)`);
+    console.log(`[Earnings Scan] ${symbol}: Using fresh in-memory cache (${Math.round((Date.now() - stored.fetchedAt) / 60000)}min old)`);
     dataAge = 'fresh';
     const card = buildCardFromStoredData(stored);
     if (card) {
       card.dataAge = dataAge;
       return card;
+    }
+  }
+
+  // Step 0.5: Check KV store (Redis) — survives cold starts
+  if (!stored || !isDataFresh(stored?.fetchedAt || 0)) {
+    const kvData = await kvLoadEarnings(symbol);
+    if (kvData && isDataFresh(kvData.fetchedAt)) {
+      console.log(`[Earnings Scan] ${symbol}: Using fresh KV cache (${Math.round((Date.now() - kvData.fetchedAt) / 60000)}min old)`);
+      // Hydrate in-memory store from KV
+      store.set(symbol, kvData);
+      stored = kvData;
+      dataAge = 'fresh';
+      const card = buildCardFromStoredData(kvData);
+      if (card) {
+        card.dataAge = dataAge;
+        return card;
+      }
+    } else if (kvData) {
+      // KV has stale data — keep as fallback
+      stored = kvData;
+      store.set(symbol, kvData);
     }
   }
 
@@ -590,7 +648,7 @@ async function buildEarningsCard(symbol: string): Promise<EarningsScanCard | nul
         fetchedAt: Date.now(),
         validatedAt: Date.now(),
       };
-      store.set(symbol, storedData);
+      await kvSaveEarnings(symbol, storedData);
       const card = buildCardFromStoredData(storedData);
       if (card) {
         card.dataAge = 'fresh';
@@ -658,7 +716,7 @@ async function buildEarningsCard(symbol: string): Promise<EarningsScanCard | nul
     }
   }
 
-  // Store in persistent cache
+  // Store in persistent cache (KV + in-memory)
   const storedData: StoredEarnings = {
     symbol,
     quarters: parsed.quarters,
@@ -672,7 +730,7 @@ async function buildEarningsCard(symbol: string): Promise<EarningsScanCard | nul
     fetchedAt: Date.now(),
     validatedAt: Date.now(),
   };
-  store.set(symbol, storedData);
+  await kvSaveEarnings(symbol, storedData);
 
   dataAge = 'fresh';
   return buildCardFromStoredData(storedData);
@@ -774,6 +832,7 @@ function buildCardFromData(data: ScreenerData): EarningsScanCard | null {
     mcap: data.mcap,
     pe: data.pe,
     cmp: data.currentPrice,
+    isBanking: data.isBanking || false,
     screenerUrl: `https://www.screener.in/company/${data.symbol}/consolidated/`,
     nseUrl: `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(data.symbol)}`,
   };
@@ -886,6 +945,7 @@ export async function GET(request: Request) {
       cards,
       summary,
       source: 'nse + screener.in + cache',
+      cacheBackend: isRedisAvailable() ? 'redis' : 'memory',
       updatedAt: new Date().toISOString(),
       ...(debug ? { debug: true, requestedSymbols: symbols, failed } : {}),
     });

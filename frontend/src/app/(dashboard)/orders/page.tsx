@@ -126,6 +126,7 @@ interface CorporateOrder {
   date: string;
   orderType: 'Order Win' | 'Contract' | 'Partnership/JV' | 'Capex' | 'LOI' | 'Other';
   importance: 'HIGH' | 'MEDIUM' | 'LOW';
+  orderValue: number | null;
   isWatchlist: boolean;
   nseUrl: string;
 }
@@ -1041,6 +1042,22 @@ export default function OrdersPage() {
                       >
                         {order.importance}
                       </div>
+
+                      {/* Order Value */}
+                      {order.orderValue && order.orderValue > 0 && (
+                        <div style={{
+                          backgroundColor: `${GREEN}20`,
+                          border: `1px solid ${GREEN}40`,
+                          padding: '3px 8px',
+                          borderRadius: '4px',
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          color: GREEN,
+                          whiteSpace: 'nowrap',
+                        }}>
+                          ₹{order.orderValue >= 1000 ? `${(order.orderValue / 1000).toFixed(1)}K` : order.orderValue.toFixed(0)} Cr
+                        </div>
+                      )}
 
                       {/* Date */}
                       <div style={{ fontSize: '12px', color: TEXT3, whiteSpace: 'nowrap' }}>
