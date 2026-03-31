@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Download } from 'lucide-react';
 
 // ══════════════════════════════════════════════
 // EARNINGS PAGE — Custom Universe Only
@@ -543,11 +544,113 @@ export default function EarningsPage() {
     [cards]
   );
 
-  const VIEW_TABS: { key: ViewMode; label: string; emoji: string; count: number }[] = [
-    { key: 'portfolio', label: 'Portfolio', emoji: '💼', count: portfolioSymbols.length },
-    { key: 'watchlist', label: 'Watchlist', emoji: '📋', count: watchlistSymbols.length },
-    { key: 'both', label: 'Both', emoji: '🔗', count: new Set([...portfolioSymbols, ...watchlistSymbols]).size },
+  // Show actual card count (with data) vs total requested symbols
+  const portfolioCardCount = cards.filter(c => c.universeTag === 'portfolio' || c.universeTag === 'both').length;
+  const watchlistCardCount = cards.filter(c => c.universeTag === 'watchlist' || c.universeTag === 'both').length;
+  const bothCardCount = cards.length;
+
+  const VIEW_TABS: { key: ViewMode; label: string; emoji: string; count: number; total: number }[] = [
+    { key: 'portfolio', label: 'Portfolio', emoji: '💼', count: portfolioCardCount, total: portfolioSymbols.length },
+    { key: 'watchlist', label: 'Watchlist', emoji: '📋', count: watchlistCardCount, total: watchlistSymbols.length },
+    { key: 'both', label: 'Both', emoji: '🔗', count: bothCardCount, total: new Set([...portfolioSymbols, ...watchlistSymbols]).size },
   ];
+
+  // ── PDF Download ──
+  const handleDownloadPDF = useCallback(async () => {
+    if (sortedCards.length === 0) return;
+    const { default: jsPDF } = await import('jspdf');
+    const autoTable = (await import('jspdf-autotable')).default;
+
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const now = new Date().toLocaleString('en-IN');
+    const title = `Earnings Results — ${viewMode === 'both' ? 'Portfolio + Watchlist' : viewMode === 'portfolio' ? 'Portfolio' : 'Watchlist'}`;
+
+    // Title
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text(title, 14, 15);
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Generated: ${now} · ${sortedCards.length} companies · Source: ${source || 'screener.in'}`, 14, 22);
+
+    // Summary row
+    if (summary) {
+      doc.setFontSize(10);
+      doc.text(`Total: ${summary.total} | STRONG: ${summary.strong} | GOOD: ${summary.good} | OK: ${summary.ok} | BAD: ${summary.bad} | Avg Score: ${summary.avgScore.toFixed(1)}`, 14, 28);
+    }
+
+    // Table
+    const headers = [['#', 'Symbol', 'Company', 'Grade', 'Score', 'Period', 'Revenue', 'Rev YoY%', 'OP', 'OP YoY%', 'OPM%', 'PAT', 'PAT YoY%', 'NPM%', 'EPS', 'EPS YoY%', 'CMP', 'MCap Cr', 'P/E']];
+    const body = sortedCards.map((c, i) => {
+      const q = c.quarters[0]; // Latest quarter
+      return [
+        i + 1,
+        c.symbol,
+        c.company.length > 22 ? c.company.slice(0, 20) + '..' : c.company,
+        c.grade,
+        c.totalScore.toFixed(0),
+        c.period || q?.period || '—',
+        q ? `${(q.revenue / 100).toFixed(0)}` : '—', // Cr
+        c.revenueYoY != null ? `${c.revenueYoY.toFixed(1)}%` : '—',
+        q ? `${(q.operatingProfit / 100).toFixed(0)}` : '—',
+        c.opProfitYoY != null ? `${c.opProfitYoY.toFixed(1)}%` : '—',
+        q ? `${q.opm.toFixed(1)}%` : '—',
+        q ? `${(q.pat / 100).toFixed(0)}` : '—',
+        c.patYoY != null ? `${c.patYoY.toFixed(1)}%` : '—',
+        q ? `${q.npm.toFixed(1)}%` : '—',
+        q ? q.eps.toFixed(2) : '—',
+        c.epsYoY != null ? `${c.epsYoY.toFixed(1)}%` : '—',
+        c.cmp ? `₹${c.cmp.toFixed(0)}` : '—',
+        c.mcap ? `${c.mcap.toLocaleString('en-IN')}` : '—',
+        c.pe ? c.pe.toFixed(1) : '—',
+      ];
+    });
+
+    autoTable(doc, {
+      startY: summary ? 33 : 28,
+      head: headers,
+      body,
+      theme: 'grid',
+      styles: { fontSize: 7, cellPadding: 1.5, overflow: 'linebreak' },
+      headStyles: { fillColor: [15, 122, 191], textColor: 255, fontSize: 7, fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [245, 247, 250] },
+      columnStyles: {
+        0: { cellWidth: 7 },   // #
+        1: { cellWidth: 18 },  // Symbol
+        2: { cellWidth: 32 },  // Company
+        3: { cellWidth: 14 },  // Grade
+        4: { cellWidth: 12 },  // Score
+      },
+      didParseCell: (data: any) => {
+        // Color grade cells
+        if (data.section === 'body' && data.column.index === 3) {
+          const grade = data.cell.raw;
+          if (grade === 'STRONG') data.cell.styles.textColor = [0, 200, 83];
+          else if (grade === 'GOOD') data.cell.styles.textColor = [76, 175, 80];
+          else if (grade === 'OK') data.cell.styles.textColor = [255, 152, 0];
+          else if (grade === 'BAD') data.cell.styles.textColor = [244, 67, 54];
+        }
+        // Color YoY% cells
+        if (data.section === 'body' && [7, 9, 12, 15].includes(data.column.index)) {
+          const val = parseFloat(data.cell.raw);
+          if (!isNaN(val)) {
+            data.cell.styles.textColor = val >= 0 ? [0, 128, 0] : [220, 0, 0];
+          }
+        }
+      },
+    });
+
+    // Footer
+    const pageCount = doc.getNumberOfPages();
+    for (let p = 1; p <= pageCount; p++) {
+      doc.setPage(p);
+      doc.setFontSize(7);
+      doc.setTextColor(150);
+      doc.text(`Market Cockpit · ${now} · Page ${p}/${pageCount}`, 14, doc.internal.pageSize.height - 5);
+    }
+
+    doc.save(`earnings-${viewMode}-${new Date().toISOString().slice(0, 10)}.pdf`);
+  }, [sortedCards, viewMode, summary, source]);
 
   return (
     <div style={{ backgroundColor: BG, minHeight: '100vh', padding: '24px', color: TEXT, fontFamily: 'system-ui, -apple-system, sans-serif' }}>
@@ -569,7 +672,7 @@ export default function EarningsPage() {
               padding: '10px 18px', cursor: 'pointer', fontSize: '12px', fontWeight: 600,
               transition: 'all 0.2s', borderRight: `1px solid ${CARD_BORDER}`,
             }}>
-              {tab.emoji} {tab.label} ({tab.count})
+              {tab.emoji} {tab.label} ({loading ? '...' : tab.count === tab.total ? tab.count : `${tab.count}/${tab.total}`})
             </button>
           ))}
         </div>
@@ -593,13 +696,25 @@ export default function EarningsPage() {
           }}>{g}</button>
         ))}
 
-        <button onClick={fetchData} disabled={loading} style={{
-          marginLeft: 'auto', backgroundColor: ACCENT, border: 'none', color: '#000',
-          padding: '8px 16px', borderRadius: '6px', cursor: loading ? 'not-allowed' : 'pointer',
-          fontSize: '13px', fontWeight: 600, opacity: loading ? 0.5 : 1,
-        }}>
-          {loading ? 'Loading...' : 'Refresh'}
-        </button>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
+          {cards.length > 0 && (
+            <button onClick={handleDownloadPDF} style={{
+              display: 'inline-flex', alignItems: 'center', gap: '6px',
+              backgroundColor: '#1A2540', border: `1px solid ${CARD_BORDER}`, color: TEXT,
+              padding: '8px 14px', borderRadius: '6px', cursor: 'pointer',
+              fontSize: '12px', fontWeight: 600, transition: 'all 0.2s',
+            }}>
+              <Download style={{ width: '14px', height: '14px' }} /> PDF
+            </button>
+          )}
+          <button onClick={fetchData} disabled={loading} style={{
+            backgroundColor: ACCENT, border: 'none', color: '#000',
+            padding: '8px 16px', borderRadius: '6px', cursor: loading ? 'not-allowed' : 'pointer',
+            fontSize: '13px', fontWeight: 600, opacity: loading ? 0.5 : 1,
+          }}>
+            {loading ? 'Loading...' : 'Refresh'}
+          </button>
+        </div>
       </div>
 
       {/* Aggregation Panels */}

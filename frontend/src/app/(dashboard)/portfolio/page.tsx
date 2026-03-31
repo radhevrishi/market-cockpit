@@ -412,18 +412,51 @@ export default function PortfolioPage() {
     else { setSortField(field); setSortOrder('desc'); }
   };
 
-  const handleExportCSV = () => {
+  const handleExportXLSX = async () => {
     if (sortedRows.length === 0) return;
-    const header = 'Symbol,Company,Sector,Entry Price,Qty,Weight%,CMP,Change%,Invested,Current,P&L,P&L%\n';
-    const csv = header + sortedRows.map(r =>
-      `${r.symbol},"${r.company}","${r.sector}",${r.entryPrice.toFixed(2)},${r.quantity},${r.weight.toFixed(1)},${r.cmp.toFixed(2)},${r.changePercent.toFixed(2)},${r.investedValue.toFixed(0)},${r.currentValue.toFixed(0)},${r.pnl.toFixed(0)},${r.pnlPercent.toFixed(2)}`
-    ).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `portfolio_${new Date().toISOString().split('T')[0]}.csv`;
-    document.body.appendChild(link); link.click(); document.body.removeChild(link);
-    toast.success('Exported to CSV');
+    const XLSX = await import('xlsx');
+
+    const data = sortedRows.map((r, i) => ({
+      '#': i + 1,
+      'Symbol': r.symbol,
+      'Company': r.company,
+      'Sector': r.sector,
+      'Entry Price': r.entryPrice,
+      'Qty': r.quantity,
+      'Weight %': parseFloat(r.weight.toFixed(1)),
+      'CMP': r.cmp,
+      'Day Change %': parseFloat(r.changePercent.toFixed(2)),
+      'Invested': Math.round(r.investedValue),
+      'Current Value': Math.round(r.currentValue),
+      'P&L': Math.round(r.pnl),
+      'P&L %': parseFloat(r.pnlPercent.toFixed(2)),
+    }));
+
+    // Add summary row
+    const totalInvested = sortedRows.reduce((s, r) => s + r.investedValue, 0);
+    const totalCurrent = sortedRows.reduce((s, r) => s + r.currentValue, 0);
+    const totalPnl = totalCurrent - totalInvested;
+    data.push({
+      '#': 0, 'Symbol': '', 'Company': 'TOTAL', 'Sector': '',
+      'Entry Price': 0, 'Qty': 0, 'Weight %': 100,
+      'CMP': 0, 'Day Change %': 0,
+      'Invested': Math.round(totalInvested),
+      'Current Value': Math.round(totalCurrent),
+      'P&L': Math.round(totalPnl),
+      'P&L %': totalInvested > 0 ? parseFloat(((totalPnl / totalInvested) * 100).toFixed(2)) : 0,
+    });
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    // Column widths
+    ws['!cols'] = [
+      { wch: 4 }, { wch: 14 }, { wch: 28 }, { wch: 16 },
+      { wch: 12 }, { wch: 8 }, { wch: 10 }, { wch: 12 },
+      { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 10 },
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Portfolio');
+    XLSX.writeFile(wb, `portfolio_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    toast.success('Exported portfolio to XLSX');
   };
 
   const SortIcon = ({ field }: { field: SortField }) => {
@@ -455,7 +488,7 @@ export default function PortfolioPage() {
           }}>
             <RefreshCw style={{ width: '14px', height: '14px' }} /> Refresh
           </button>
-          <button onClick={handleExportCSV} disabled={sortedRows.length === 0} style={{
+          <button onClick={handleExportXLSX} disabled={sortedRows.length === 0} style={{
             display: 'inline-flex', alignItems: 'center', gap: '6px',
             backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '10px',
             padding: '10px 14px', color: '#8BA3C1', cursor: sortedRows.length === 0 ? 'not-allowed' : 'pointer',

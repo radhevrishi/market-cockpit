@@ -562,30 +562,34 @@ export default function WatchlistsPage() {
     }
   }, [sortField, sortOrder]);
 
-  // Handle export CSV
-  const handleExportCSV = useCallback(() => {
+  // Handle export XLSX
+  const handleExportXLSX = useCallback(async () => {
     if (sortedItems.length === 0) {
       toast.error('No items to export');
       return;
     }
+    const XLSX = await import('xlsx');
 
-    const header = 'Ticker,Company,Sector,CMP (₹),Change%,Day High,Day Low\n';
-    const rows = sortedItems
-      .map(item => `${item.ticker},"${item.company}","${item.sector}",${item.price.toFixed(2)},${item.changePercent.toFixed(2)},${item.dayHigh.toFixed(2)},${item.dayLow.toFixed(2)}`)
-      .join('\n');
-    const csv = header + rows;
+    const data = sortedItems.map((item, i) => ({
+      '#': i + 1,
+      'Ticker': item.ticker,
+      'Company': item.company,
+      'Sector': item.sector,
+      'CMP (₹)': item.price,
+      'Change %': parseFloat(item.changePercent.toFixed(2)),
+      'Day High': item.dayHigh,
+      'Day Low': item.dayLow,
+    }));
 
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `watchlist_${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-
-    toast.success('Exported to CSV');
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws['!cols'] = [
+      { wch: 4 }, { wch: 14 }, { wch: 28 }, { wch: 16 },
+      { wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 12 },
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Watchlist');
+    XLSX.writeFile(wb, `watchlist_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    toast.success('Exported watchlist to XLSX');
   }, [sortedItems]);
 
   return (
@@ -623,9 +627,9 @@ export default function WatchlistsPage() {
             Refresh
           </button>
           <button
-            onClick={handleExportCSV}
+            onClick={handleExportXLSX}
             disabled={sortedItems.length === 0}
-            title="Export to CSV"
+            title="Export to XLSX"
             style={{
               display: 'inline-flex',
               alignItems: 'center',
