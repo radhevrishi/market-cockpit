@@ -1446,6 +1446,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     trends: trends.slice(0, 10),
     bias,
     updatedAt: new Date().toISOString(),
+    _debug: debug,
   };
 }
 
@@ -1508,7 +1509,7 @@ async function runLockedCompute(watchlist: string[], portfolio: string[]): Promi
     }, STORE_TTL);
 
     console.log(`[Compute] Done: ${response.signals.length} signals stored atomically`);
-    return { ok: true, signalCount: response.signals.length, computedAt: new Date().toISOString() };
+    return { ok: true, signalCount: response.signals.length, computedAt: new Date().toISOString(), _debug: response._debug };
   } catch (error) {
     console.error('[Compute] Pipeline error:', error);
     return { ok: false, signalCount: 0, computedAt: new Date().toISOString(), error: (error as Error).message };
@@ -1518,12 +1519,65 @@ async function runLockedCompute(watchlist: string[], portfolio: string[]): Promi
   }
 }
 
+// ==================== AUTO-LOAD SYMBOLS ====================
+
+const DEFAULT_CHAT_ID = '5057319640';
+
+// Fallback symbols if Redis portfolio/watchlist are empty
+const DEFAULT_TRACKED_SYMBOLS = [
+  'RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK',
+  'HINDUNILVR', 'BHARTIARTL', 'ITC', 'KOTAKBANK', 'LT',
+  'SBIN', 'AXISBANK', 'BAJFINANCE', 'MARUTI', 'HCLTECH',
+  'SUNPHARMA', 'TATAMOTORS', 'TITAN', 'NTPC', 'POWERGRID',
+  'WIPRO', 'ADANIENT', 'ULTRACEMCO', 'JSWSTEEL', 'TATASTEEL',
+  'ONGC', 'COALINDIA', 'BAJAJFINSV', 'TECHM', 'DRREDDY',
+];
+
+async function autoLoadSymbols(): Promise<{ watchlist: string[]; portfolio: string[] }> {
+  let watchlist: string[] = [];
+  let portfolio: string[] = [];
+
+  try {
+    // Try loading from Redis (same keys the frontend uses)
+    const wlData = await kvGet<any>(`watchlist:${DEFAULT_CHAT_ID}`);
+    if (wlData) {
+      if (Array.isArray(wlData)) {
+        watchlist = wlData.map((s: string) => normalizeTicker(s)).filter(Boolean);
+      } else if (wlData.watchlist && Array.isArray(wlData.watchlist)) {
+        watchlist = wlData.watchlist.map((s: string) => normalizeTicker(s)).filter(Boolean);
+      }
+    }
+  } catch (e) {
+    console.warn('[Compute] Failed to load watchlist from Redis:', (e as Error).message);
+  }
+
+  try {
+    const pfData = await kvGet<any>(`portfolio:${DEFAULT_CHAT_ID}`);
+    if (pfData?.holdings && Array.isArray(pfData.holdings)) {
+      portfolio = pfData.holdings.map((h: any) => normalizeTicker(h.symbol || h)).filter(Boolean);
+    }
+  } catch (e) {
+    console.warn('[Compute] Failed to load portfolio from Redis:', (e as Error).message);
+  }
+
+  // If both are empty, use defaults so MC/Google News fallback can kick in
+  if (watchlist.length === 0 && portfolio.length === 0) {
+    console.log('[Compute] No portfolio/watchlist in Redis — using default Nifty 30 symbols');
+    watchlist = [...DEFAULT_TRACKED_SYMBOLS];
+  }
+
+  console.log(`[Compute] Auto-loaded: ${watchlist.length} watchlist, ${portfolio.length} portfolio`);
+  return { watchlist, portfolio };
+}
+
 // ==================== ROUTE HANDLERS ====================
 
 export async function GET(request: Request) {
   console.log('[Compute] GET triggered (cron)');
   try {
-    const result = await runLockedCompute([], []);
+    // Auto-load portfolio + watchlist from Redis (or use defaults)
+    const { watchlist, portfolio } = await autoLoadSymbols();
+    const result = await runLockedCompute(watchlist, portfolio);
     return NextResponse.json(result);
   } catch (error) {
     console.error('[Compute] Error:', error);
