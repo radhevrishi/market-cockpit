@@ -1392,6 +1392,141 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
 
   allSignals.push(...dealDedupMap.values());
 
+  // ── GUIDANCE → SIGNAL CONVERSION ENGINE ──
+  // Read pre-computed guidance events from Redis and convert qualifying ones into signals
+  try {
+    const guidanceData = await kvGet<any>('guidance:events');
+    const guidanceEvents: any[] = guidanceData?.events || guidanceData || [];
+    if (Array.isArray(guidanceEvents) && guidanceEvents.length > 0) {
+      let guidanceConverted = 0;
+      for (const ge of guidanceEvents) {
+        if (!ge.symbol || ge.confidenceScore < 50) continue;
+        const symbol = normalizeTicker(ge.symbol);
+        if (!symbol) continue;
+
+        const isWatchlist = watchlistSet.has(symbol);
+        const isPortfolio = portfolioSet.has(symbol);
+        const enrichment = enrichMap.get(symbol);
+
+        // ── Scoring Rules ──
+        let signalScore = 0;
+        let signalAction: ActionFlag = 'TRACK';
+        let sentiment: SignalSentiment = 'Neutral';
+        const scoreParts: string[] = [];
+
+        // Rule 1: Revenue growth
+        const revG = ge.revenueGrowth;
+        if (revG !== null && revG !== undefined) {
+          if (revG >= 15) { signalScore += 30; scoreParts.push(`Rev+${revG.toFixed(0)}%(High)`); sentiment = 'Bullish'; }
+          else if (revG >= 8) { signalScore += 20; scoreParts.push(`Rev+${revG.toFixed(0)}%(Med)`); sentiment = 'Bullish'; }
+          else if (revG >= 0) { signalScore += 5; scoreParts.push(`Rev+${revG.toFixed(0)}%`); }
+          else { signalScore -= 15; scoreParts.push(`Rev${revG.toFixed(0)}%`); sentiment = 'Bearish'; }
+        }
+
+        // Rule 2: Margin change (bps)
+        const marginBps = ge.marginChange !== null && ge.marginChange !== undefined ? ge.marginChange * 100 : null;
+        if (marginBps !== null) {
+          if (marginBps >= 100) { signalScore += 25; scoreParts.push(`Margin+${Math.round(marginBps)}bps`); }
+          else if (marginBps >= 0) { signalScore += 10; scoreParts.push(`Margin+${Math.round(marginBps)}bps`); }
+          else { signalScore -= 10; scoreParts.push(`Margin${Math.round(marginBps)}bps`); if (sentiment !== 'Bearish') sentiment = 'Neutral'; }
+        }
+
+        // Rule 3: Capex
+        const capex = ge.guidanceCapex;
+        const rev = enrichment?.annualRevenueCr || null;
+        if (capex !== null && capex > 0 && rev && rev > 0) {
+          const capexPct = (capex / rev) * 100;
+          if (capexPct >= 10) { signalScore += 20; scoreParts.push(`Capex ${capexPct.toFixed(0)}%rev`); }
+          else if (capexPct >= 3) { signalScore += 10; scoreParts.push(`Capex ${capexPct.toFixed(0)}%rev`); }
+          // <3% capex = ignore
+        }
+
+        // Rule 4: Sentiment from guidance text
+        if (ge.grade === 'STRONG') signalScore += 15;
+        else if (ge.grade === 'POSITIVE') signalScore += 10;
+        else if (ge.grade === 'NEGATIVE') { signalScore -= 10; sentiment = 'Bearish'; }
+        else if (ge.grade === 'WEAK') { signalScore -= 20; sentiment = 'Bearish'; }
+
+        // Rule 5: Operating leverage / deleveraging / order book growth
+        if (ge.operatingLeverage) { signalScore += 8; scoreParts.push('OpLev'); }
+        if (ge.deleveraging) { signalScore += 5; scoreParts.push('Delev'); }
+        if (ge.orderBookGrowth) { signalScore += 8; scoreParts.push('OrdBook↑'); }
+
+        // Normalize to 0-100
+        signalScore = Math.max(0, Math.min(100, signalScore));
+
+        // Discard if below threshold
+        if (signalScore < 20 && ge.confidenceScore < 60) continue;
+
+        // Map to action bucket
+        if (signalScore > 70) signalAction = 'BUY WATCH';
+        else if (signalScore >= 40) signalAction = 'TRACK';
+        else signalAction = 'TRACK';
+
+        // Override for negative signals
+        const isNeg = ge.grade === 'NEGATIVE' || ge.grade === 'WEAK' || (ge.sentimentScore < 30);
+
+        const timeWeight = computeTimeWeight(ge.eventDate || getTodayDate());
+        const weightedScore = Math.round(signalScore * timeWeight);
+
+        const headline = `Guidance: ${scoreParts.join(' · ')} | ${ge.grade} (${ge.confidenceScore}% conf)`;
+        const impactPct = Math.abs(revG || 0);
+
+        const guidanceSignal: IntelSignal = {
+          symbol,
+          company: ge.companyName || enrichment?.companyName || symbol,
+          date: ge.eventDate || getTodayDate(),
+          source: 'order',
+          eventType: 'Guidance',
+          headline,
+          valueCr: capex || 0,
+          valueUsd: capex ? `$${((capex * 10000000) / INR_TO_USD / 1000000).toFixed(1)}M` : null,
+          mcapCr: enrichment?.mcapCr || null,
+          revenueCr: enrichment?.annualRevenueCr || null,
+          impactPct,
+          pctRevenue: revG || null,
+          pctMcap: null,
+          inferenceUsed: false,
+          client: null,
+          segment: enrichment?.industry?.split(' ')[0] || null,
+          timeline: null,
+          buyerSeller: null,
+          premiumDiscount: null,
+          lastPrice: enrichment?.lastPrice || null,
+          impactLevel: signalScore >= 70 ? 'HIGH' : signalScore >= 40 ? 'MEDIUM' : 'LOW',
+          impactConfidence: ge.confidenceScore >= 70 ? 'HIGH' : ge.confidenceScore >= 50 ? 'MEDIUM' : 'LOW',
+          confidenceScore: ge.confidenceScore,
+          confidenceType: ge.confidenceScore >= 70 ? 'ACTUAL' : 'INFERRED',
+          valueSource: capex ? 'EXACT' : 'HEURISTIC',
+          action: signalAction,
+          score: signalScore,
+          timeWeight,
+          weightedScore,
+          sentiment,
+          whyItMatters: `Guidance signal: ${scoreParts.join(', ')}. ${ge.grade} outlook with ${ge.confidenceScore}% confidence.`,
+          isNegative: isNeg,
+          earningsBoost: false,
+          isWatchlist,
+          isPortfolio,
+          dataSource: 'Guidance',
+        };
+
+        // Dedup against existing signals for same symbol
+        const guidanceDedupKey = `${symbol}:Guidance:${(ge.eventDate || '').slice(0, 10)}`;
+        if (!dedupMap.has(guidanceDedupKey)) {
+          allSignals.push(guidanceSignal);
+          guidanceConverted++;
+        }
+      }
+      if (guidanceConverted > 0) {
+        console.log(`[Compute] Converted ${guidanceConverted} guidance events → intelligence signals`);
+        debug.dataSources.push('Guidance');
+      }
+    }
+  } catch (e) {
+    console.warn('[Compute] Guidance→Signal conversion error:', (e as Error).message);
+  }
+
   // ── Materiality filter: remove noise signals that don't meet thresholds ──
   const materialSignals = allSignals.filter(s => {
     // Always keep portfolio and watchlist signals
