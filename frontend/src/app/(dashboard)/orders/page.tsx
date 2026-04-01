@@ -104,6 +104,7 @@ interface CompanyTrend {
   topImpact: ImpactLevel;
   netSentiment: 'Bullish' | 'Neutral' | 'Bearish';
   avgScore: number;
+  maxScore?: number;
 }
 
 interface DailyBias {
@@ -149,6 +150,12 @@ const fmtCr = (v: number | null): string => {
   if (v >= 1000) return `₹${(v / 1000).toFixed(1)}K Cr`;
   if (v >= 1) return `₹${Math.round(v)} Cr`;
   return `₹${Math.round(v * 100)}L`;
+};
+
+const fmtPrice = (v: number | null | undefined): string => {
+  if (v === null || v === undefined || v === 0) return 'N/A';
+  if (v >= 1000) return `₹${(v / 1000).toFixed(1)}K`;
+  return `₹${v.toFixed(2)}`;
 };
 
 const fmtDate = (d: string) => {
@@ -520,7 +527,8 @@ export default function CompanyIntelligencePage() {
                     <span style={{ color: stackColor }}>{t.signalCount} signals</span>
                     <span style={{ color: sentimentColor(t.netSentiment) }}>{t.netSentiment}</span>
                     <span style={{ color: impactColor(t.topImpact) }}>{t.topImpact}</span>
-                    <span style={{ color: TEXT3 }}>Score: {t.avgScore}</span>
+                    <span style={{ color: TEXT3 }}>Top: {t.maxScore ?? t.avgScore}</span>
+                    <span style={{ color: TEXT3 }}>Avg: {t.avgScore}</span>
                   </div>
                 </div>
               );
@@ -548,6 +556,17 @@ export default function CompanyIntelligencePage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '8px' }}>
                   <span style={{ fontSize: '13px' }}>{eventTypeIcon(s.eventType)}</span>
                   <span style={{ fontSize: '16px', fontWeight: 700, color: '#3B82F6' }}>{s.symbol}</span>
+                  {/* Current price with confidence indicator */}
+                  <span style={{
+                    fontSize: '11px', fontWeight: 600,
+                    color: (s.lastPrice && s.lastPrice > 0) ? TEXT1 : TEXT3,
+                    padding: '2px 6px', borderRadius: '3px',
+                    backgroundColor: (s.lastPrice && s.lastPrice > 0) ? 'rgba(226,232,240,0.08)' : 'rgba(100,116,139,0.06)',
+                    display: 'flex', alignItems: 'center', gap: '3px'
+                  }}>
+                    {fmtPrice(s.lastPrice)}
+                    {s.dataConfidence === 'LOW' && <span style={{ fontSize: '10px', color: ORANGE }}>!</span>}
+                  </span>
                   {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(139,92,246,0.15)' }}>PF</span>}
                   {s.isWatchlist && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.15)' }}>WL</span>}
                   {s.isNegative && <span style={{ fontSize: '9px', color: RED, fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(239,68,68,0.12)' }}>⚠ NEGATIVE</span>}
@@ -801,6 +820,17 @@ export default function CompanyIntelligencePage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                   <span style={{ fontSize: '12px' }}>{eventTypeIcon(s.eventType)}</span>
                   <span style={{ fontSize: '14px', fontWeight: 700, color: '#3B82F6', minWidth: '80px' }}>{s.symbol}</span>
+                  {/* Current price with confidence indicator */}
+                  <span style={{
+                    fontSize: '11px', fontWeight: 600,
+                    color: (s.lastPrice && s.lastPrice > 0) ? TEXT1 : TEXT3,
+                    padding: '2px 6px', borderRadius: '3px',
+                    backgroundColor: (s.lastPrice && s.lastPrice > 0) ? 'rgba(226,232,240,0.08)' : 'rgba(100,116,139,0.06)',
+                    display: 'flex', alignItems: 'center', gap: '3px'
+                  }}>
+                    {fmtPrice(s.lastPrice)}
+                    {s.dataConfidence === 'LOW' && <span style={{ fontSize: '10px', color: ORANGE }}>!</span>}
+                  </span>
                   {/* Watchlist flag — clickable to cycle */}
                   {(s.isWatchlist || s.isPortfolio) && (
                     <button onClick={(e) => { e.stopPropagation(); toggleFlag(s.symbol); }} style={{
@@ -967,6 +997,17 @@ export default function CompanyIntelligencePage() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                         <span style={{ fontSize: '12px' }}>{eventTypeIcon(s.eventType)}</span>
                         <span style={{ fontSize: '14px', fontWeight: 700, color: '#3B82F6', minWidth: '80px' }}>{s.symbol}</span>
+                        {/* Current price with confidence indicator */}
+                        <span style={{
+                          fontSize: '11px', fontWeight: 600,
+                          color: (s.lastPrice && s.lastPrice > 0) ? TEXT1 : TEXT3,
+                          padding: '2px 6px', borderRadius: '3px',
+                          backgroundColor: (s.lastPrice && s.lastPrice > 0) ? 'rgba(226,232,240,0.08)' : 'rgba(100,116,139,0.06)',
+                          display: 'flex', alignItems: 'center', gap: '3px'
+                        }}>
+                          {fmtPrice(s.lastPrice)}
+                          {s.dataConfidence === 'LOW' && <span style={{ fontSize: '10px', color: ORANGE }}>!</span>}
+                        </span>
                         {(s.isWatchlist || s.isPortfolio) && (
                           <button onClick={(e) => { e.stopPropagation(); toggleFlag(s.symbol); }} style={{
                             fontSize: '10px', cursor: 'pointer', padding: '0 2px', border: 'none', background: 'none',
@@ -1120,6 +1161,17 @@ export default function CompanyIntelligencePage() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                         <span style={{ fontSize: '12px' }}>{eventTypeIcon(s.eventType)}</span>
                         <span style={{ fontSize: '14px', fontWeight: 700, color: '#3B82F6', minWidth: '80px' }}>{s.symbol}</span>
+                        {/* Current price with confidence indicator */}
+                        <span style={{
+                          fontSize: '11px', fontWeight: 600,
+                          color: (s.lastPrice && s.lastPrice > 0) ? TEXT1 : TEXT3,
+                          padding: '2px 6px', borderRadius: '3px',
+                          backgroundColor: (s.lastPrice && s.lastPrice > 0) ? 'rgba(226,232,240,0.08)' : 'rgba(100,116,139,0.06)',
+                          display: 'flex', alignItems: 'center', gap: '3px'
+                        }}>
+                          {fmtPrice(s.lastPrice)}
+                          {s.dataConfidence === 'LOW' && <span style={{ fontSize: '10px', color: ORANGE }}>!</span>}
+                        </span>
                         {(s.isWatchlist || s.isPortfolio) && (
                           <button onClick={(e) => { e.stopPropagation(); toggleFlag(s.symbol); }} style={{
                             fontSize: '10px', cursor: 'pointer', padding: '0 2px', border: 'none', background: 'none',

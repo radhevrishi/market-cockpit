@@ -282,6 +282,7 @@ interface CompanyTrend {
   topImpact: ImpactLevel;
   netSentiment: SignalSentiment;
   avgScore: number;
+  maxScore: number;
 }
 
 interface DailyBias {
@@ -674,26 +675,28 @@ function classifyAction(
 
   // ── ADD conditions (portfolio only) ──
   if (isPortfolio && sentiment !== 'Bearish' && !isNegative) {
-    if (weightedScore >= 50) return 'ADD';
+    if (weightedScore >= 55 && signalCount >= 2) return 'ADD';
     if (impactPct >= 3 && earningsScore !== null && earningsScore >= 60) return 'ADD';
   }
 
   // ── TRIM conditions ──
+  if (isPortfolio && weightedScore < 35) return 'TRIM';
   if (isPortfolio && isNegative && impactPct < 10) return 'TRIM';
   if (isPortfolio && sentiment === 'Bearish' && weightedScore < 40) return 'TRIM';
 
   // ── AVOID conditions ──
-  if (weightedScore < 40 && signalCount <= 1) return 'AVOID';
+  if (weightedScore < 45 && signalCount <= 1) return 'AVOID';
+  if (signalCount === 1 && impactPct < 2 && !isPortfolio && !isWatchlist) return 'AVOID';
   if (sentiment === 'Bearish' && !isPortfolio && !isWatchlist) return 'AVOID';
 
   // ── HOLD (default for portfolio with stable signals) ──
-  if (isPortfolio) return 'HOLD';
+  if (isPortfolio && weightedScore >= 35) return 'HOLD';
 
   // ── HOLD for watchlist with decent signals ──
-  if (isWatchlist && weightedScore >= 40) return 'HOLD';
+  if (isWatchlist && weightedScore >= 45) return 'HOLD';
 
   // ── Default: HOLD for decent, AVOID for weak ──
-  if (weightedScore >= 40) return 'HOLD';
+  if (weightedScore >= 45) return 'HOLD';
   return 'AVOID';
 }
 
@@ -929,13 +932,16 @@ function computeScore(opts: {
 // ==================== ENRICHMENT ====================
 
 async function enrichSymbol(symbol: string): Promise<StockEnrichment> {
+  // Normalize symbol first to ensure consistent lookups
+  const normalizedSymbol = normalizeTicker(symbol);
   const result: StockEnrichment = {
-    symbol, mcapCr: null, annualRevenueCr: null, revenueSource: null,
+    symbol: normalizedSymbol, mcapCr: null, annualRevenueCr: null, revenueSource: null,
     companyName: null, industry: null, lastPrice: null, issuedSize: null,
   };
 
   try {
-    const quotePromise = fetchStockQuote(symbol);
+    // Fetch stock quote using normalized symbol
+    const quotePromise = fetchStockQuote(normalizedSymbol);
     const timeoutPromise = new Promise<null>(res => setTimeout(() => res(null), 2000));
     const quote = await Promise.race([quotePromise, timeoutPromise]);
 
@@ -952,7 +958,15 @@ async function enrichSymbol(symbol: string): Promise<StockEnrichment> {
       }
     }
 
-    const earnings = await kvGet<EarningsData>(`earnings:${symbol}`);
+    // Fallback: try Redis cache if price is still missing
+    if (!result.lastPrice) {
+      try {
+        const cachedPrice = await kvGet<number>(`price:${normalizedSymbol}`);
+        if (cachedPrice) result.lastPrice = cachedPrice;
+      } catch {}
+    }
+
+    const earnings = await kvGet<EarningsData>(`earnings:${normalizedSymbol}`);
     if (earnings) {
       if (earnings.quarters && Array.isArray(earnings.quarters) && earnings.quarters.length >= 4) {
         const ttmRev = earnings.quarters.slice(0, 4).reduce((s, q) => s + (q.revenue || 0), 0);
@@ -971,7 +985,7 @@ async function enrichSymbol(symbol: string): Promise<StockEnrichment> {
       if (!result.mcapCr && earnings.mcap) result.mcapCr = earnings.mcap;
     }
   } catch (e) {
-    console.error(`[Compute] Enrich error ${symbol}:`, e);
+    console.error(`[Compute] Enrich error ${normalizedSymbol}:`, e);
   }
 
   return result;
@@ -1155,8 +1169,8 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   console.log(`[Compute] Sources: NSE=${debug.nseAnnouncements}→${debug.nseMaterial} | MC=${debug.mcNewsItems}→${debug.mcMaterial} | Google=${debug.googleNewsItems}→${debug.googleMaterial}`);
 
   const symbolsToEnrich = new Set<string>();
-  portfolio.forEach(s => symbolsToEnrich.add(s));
-  watchlist.forEach(s => symbolsToEnrich.add(s));
+  portfolio.forEach(s => symbolsToEnrich.add(normalizeTicker(s)));
+  watchlist.forEach(s => symbolsToEnrich.add(normalizeTicker(s)));
   [...blockDeals, ...bulkDeals].forEach(d => symbolsToEnrich.add(normalizeTicker(d.symbol)));
   filteredAnn.forEach(a => { if (symbolsToEnrich.size < 15) symbolsToEnrich.add(normalizeTicker(a.symbol)); });
   symbolsToEnrich.delete('');
@@ -1171,15 +1185,16 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   for (let i = 0; i < symArr.length && (Date.now() - startTime) < 40000; i += 10) {
     const batch = symArr.slice(i, i + 10);
     const results = await Promise.allSettled(
-      batch.map(symbol =>
-        Promise.race([
-          enrichSymbol(symbol),
+      batch.map(symbol => {
+        const normalizedSym = normalizeTicker(symbol);
+        return Promise.race([
+          enrichSymbol(normalizedSym),
           new Promise<StockEnrichment>(res => setTimeout(() => res({
-            symbol, mcapCr: null, annualRevenueCr: null, revenueSource: null,
+            symbol: normalizedSym, mcapCr: null, annualRevenueCr: null, revenueSource: null,
             companyName: null, industry: null, lastPrice: null, issuedSize: null,
           }), 2000))
-        ])
-      )
+        ]);
+      })
     );
     for (const r of results) {
       if (r.status === 'fulfilled') {
@@ -1367,6 +1382,14 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     const itemSource = (item as any)._source;
     const dataSource = itemSource === 'moneycontrol' ? 'Moneycontrol' : itemSource === 'google_news' ? 'Google News' : 'NSE';
 
+    let lastPrice = enrichment?.lastPrice || null;
+    if (!lastPrice) {
+      try {
+        const cachedPrice = await kvGet<number>(`price:${symbol}`);
+        if (cachedPrice) lastPrice = cachedPrice;
+      } catch {}
+    }
+
     const signal: IntelSignal = {
       symbol, company: item.companyName || enrichment?.companyName || symbol,
       date: item.date || getTodayDate(), source: 'order',
@@ -1376,7 +1399,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       impactPct, pctRevenue: impactPct, pctMcap,
       inferenceUsed,
       client, segment, timeline,
-      buyerSeller: null, premiumDiscount: null, lastPrice: enrichment?.lastPrice || null,
+      buyerSeller: null, premiumDiscount: null, lastPrice,
       impactLevel, impactConfidence: confidenceScore >= 90 ? 'HIGH' : confidenceScore >= 70 ? 'MEDIUM' : 'LOW',
       confidenceScore, confidenceType,
       valueSource,
@@ -1467,6 +1490,14 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
 
     const dealHeadline = `${fmtCr(dealValueCr)} ${eventType} — ${deal.clientName}${pctEquity !== null ? ` (${pctEquity.toFixed(2)}% equity)` : ''}${premiumDiscount !== null ? ` @${premiumDiscount > 0 ? '+' : ''}${premiumDiscount.toFixed(1)}%` : ''}`;
 
+    let dealLastPrice = enrichment?.lastPrice || null;
+    if (!dealLastPrice) {
+      try {
+        const cachedPrice = await kvGet<number>(`price:${symbol}`);
+        if (cachedPrice) dealLastPrice = cachedPrice;
+      } catch {}
+    }
+
     const dealSignal: IntelSignal = {
       symbol, company: enrichment?.companyName || symbol,
       date: deal.dealDate || getTodayDate(), source: 'deal',
@@ -1477,7 +1508,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       impactPct: dealImpactPct, pctRevenue: null, pctMcap: enrichment?.mcapCr ? parseFloat(((dealValueCr / enrichment.mcapCr) * 100).toFixed(2)) : null,
       inferenceUsed: false,
       client: null, segment: null, timeline: null,
-      buyerSeller: deal.clientName, premiumDiscount, lastPrice: enrichment?.lastPrice || null,
+      buyerSeller: deal.clientName, premiumDiscount, lastPrice: dealLastPrice,
       impactLevel, impactConfidence: 'HIGH',
       confidenceScore: 85, confidenceType: 'ACTUAL',
       valueSource: 'EXACT',
@@ -1582,6 +1613,14 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
 
         const headline = `Guidance: ${scoreParts.join(' · ')} | ${ge.grade} (${ge.confidenceScore}% conf)`;
 
+        let guidanceLastPrice = enrichment?.lastPrice || null;
+        if (!guidanceLastPrice) {
+          try {
+            const cachedPrice = await kvGet<number>(`price:${symbol}`);
+            if (cachedPrice) guidanceLastPrice = cachedPrice;
+          } catch {}
+        }
+
         const guidanceSignal: IntelSignal = {
           symbol,
           company: ge.companyName || enrichment?.companyName || symbol,
@@ -1602,7 +1641,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
           timeline: null,
           buyerSeller: null,
           premiumDiscount: null,
-          lastPrice: enrichment?.lastPrice || null,
+          lastPrice: guidanceLastPrice,
           impactLevel: signalScore >= 70 ? 'HIGH' : signalScore >= 40 ? 'MEDIUM' : 'LOW',
           impactConfidence: ge.confidenceScore >= 70 ? 'HIGH' : ge.confidenceScore >= 50 ? 'MEDIUM' : 'LOW',
           confidenceScore: ge.confidenceScore,
@@ -1695,6 +1734,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         topImpact: sigs[0].impactLevel,
         netSentiment: bullish > bearish ? 'Bullish' : bearish > bullish ? 'Bearish' : 'Neutral',
         avgScore: Math.round(sigs.reduce((s, x) => s + x.weightedScore, 0) / count),
+        maxScore: Math.round(Math.max(...sigs.map(x => x.weightedScore))),
       });
     }
   }

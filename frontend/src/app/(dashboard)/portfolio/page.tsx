@@ -28,6 +28,13 @@ interface PortfolioHolding {
   notes?: string;
 }
 
+interface Signal {
+  symbol: string;
+  weightedScore: number;
+  action: string; // BUY | ADD | HOLD | TRIM | EXIT | AVOID
+  sectorTrend: string; // Bullish | Neutral | Bearish
+}
+
 interface PortfolioRow {
   symbol: string;
   company: string;
@@ -44,9 +51,12 @@ interface PortfolioRow {
   pnlPercent: number;
   dayPnl: number;
   notes?: string;
+  score?: number;
+  sectorTrend?: string;
+  decision?: string;
 }
 
-type SortField = 'symbol' | 'company' | 'sector' | 'entryPrice' | 'quantity' | 'cmp' | 'changePercent' | 'pnlPercent' | 'weight' | 'investedValue' | 'currentValue';
+type SortField = 'symbol' | 'company' | 'sector' | 'entryPrice' | 'quantity' | 'cmp' | 'changePercent' | 'pnlPercent' | 'weight' | 'investedValue' | 'currentValue' | 'score' | 'decision';
 type SortOrder = 'asc' | 'desc';
 
 /* ── Constants ─────────────────────────────────────────────────────── */
@@ -232,14 +242,14 @@ function AddHoldingForm({ onAdd, onCancel, quotes }: { onAdd: (h: PortfolioHoldi
 
 /* ── Inline Edit Cell ──────────────────────────────────────────────── */
 
-function EditableCell({ value, onSave, type = 'number' }: { value: number; onSave: (v: number) => void; type?: string }) {
+function EditableCell({ value, onSave, type = 'price' }: { value: number; onSave: (v: number) => void; type?: 'price' | 'qty' }) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(String(value));
 
   if (!editing) {
     return (
       <span style={{ cursor: 'pointer', borderBottom: '1px dashed #4A5B6C' }} onClick={() => { setVal(String(value)); setEditing(true); }}>
-        {type === 'number' ? `₹${value.toFixed(2)}` : String(value)}
+        {type === 'price' ? `₹${value.toFixed(2)}` : String(Math.round(value))}
       </span>
     );
   }
@@ -266,6 +276,7 @@ function EditableCell({ value, onSave, type = 'number' }: { value: number; onSav
 export default function PortfolioPage() {
   const [holdings, setHoldings] = useState<PortfolioHolding[]>([]);
   const [quotes, setQuotes] = useState<StockQuote[]>([]);
+  const [intelligence, setIntelligence] = useState<Map<string, Signal>>(new Map());
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [sortField, setSortField] = useState<SortField>('weight');
@@ -308,6 +319,25 @@ export default function PortfolioPage() {
       }
 
       setQuotes(allQuotes);
+
+      // Fetch intelligence signals
+      try {
+        const intelRes = await fetch('/api/market/intelligence/compute');
+        if (intelRes.ok) {
+          const intelData = await intelRes.json();
+          const signalMap = new Map<string, Signal>();
+          if (intelData.signals && Array.isArray(intelData.signals)) {
+            // Build map from first/highest-scored signal per symbol
+            for (const signal of intelData.signals) {
+              if (!signalMap.has(signal.symbol)) {
+                signalMap.set(signal.symbol, signal);
+              }
+            }
+          }
+          setIntelligence(signalMap);
+        }
+      } catch (e) { console.error('Intelligence fetch failed:', e); }
+
       setLastRefresh(new Date());
       setLoading(false);
     } catch { setLoading(false); }
@@ -333,7 +363,7 @@ export default function PortfolioPage() {
     }).then(r => { if (!r.ok) console.error('Portfolio sync failed'); }).catch(console.error);
   }, []);
 
-  // Build portfolio rows with P&L
+  // Build portfolio rows with P&L and intelligence
   const rows = useMemo((): PortfolioRow[] => {
     // First pass: compute currentValue for each holding
     const rawRows = holdings.map(h => {
@@ -346,14 +376,16 @@ export default function PortfolioPage() {
       const pnl = currentValue - investedValue;
       const pnlPercent = investedValue > 0 ? (pnl / investedValue) * 100 : 0;
       const dayPnl = change * h.quantity;
+      const signal = intelligence.get(h.symbol);
       return { symbol: h.symbol, company: quote?.company || h.symbol, sector: quote?.sector || '—',
         entryPrice: h.entryPrice, quantity: h.quantity, cmp, change, changePercent,
-        investedValue, currentValue, pnl, pnlPercent, dayPnl, notes: h.notes, weight: 0 };
+        investedValue, currentValue, pnl, pnlPercent, dayPnl, notes: h.notes, weight: 0,
+        score: signal?.weightedScore, sectorTrend: signal?.sectorTrend, decision: signal?.action };
     });
     // Second pass: weight by current value (proper risk weighting)
     const totalCurrent = rawRows.reduce((s, r) => s + r.currentValue, 0);
     return rawRows.map(r => ({ ...r, weight: totalCurrent > 0 ? (r.currentValue / totalCurrent) * 100 : 0 }));
-  }, [holdings, quotes]);
+  }, [holdings, quotes, intelligence]);
 
   // Sorted rows
   const sortedRows = useMemo(() => {
@@ -429,6 +461,9 @@ export default function PortfolioPage() {
       'Current Value': Math.round(r.currentValue),
       'P&L': Math.round(r.pnl),
       'P&L %': parseFloat(r.pnlPercent.toFixed(2)),
+      'Score': r.score !== undefined ? parseFloat(r.score.toFixed(0)) : '',
+      'Trend': r.sectorTrend || '',
+      'Decision': r.decision || '',
     }));
 
     // Add summary row
@@ -443,6 +478,7 @@ export default function PortfolioPage() {
       'Current Value': Math.round(totalCurrent),
       'P&L': Math.round(totalPnl),
       'P&L %': totalInvested > 0 ? parseFloat(((totalPnl / totalInvested) * 100).toFixed(2)) : 0,
+      'Score': '', 'Trend': '', 'Decision': '',
     });
 
     const ws = XLSX.utils.json_to_sheet(data);
@@ -451,6 +487,7 @@ export default function PortfolioPage() {
       { wch: 4 }, { wch: 14 }, { wch: 28 }, { wch: 16 },
       { wch: 12 }, { wch: 8 }, { wch: 10 }, { wch: 12 },
       { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 10 },
+      { wch: 8 }, { wch: 12 }, { wch: 12 },
     ];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Portfolio');
@@ -536,6 +573,9 @@ export default function PortfolioPage() {
                     { key: 'investedValue' as SortField, label: 'INVESTED', align: 'right' },
                     { key: 'currentValue' as SortField, label: 'CURRENT', align: 'right' },
                     { key: 'pnlPercent' as SortField, label: 'P&L', align: 'right' },
+                    { key: 'score' as SortField, label: 'SCORE', align: 'right' },
+                    { key: 'symbol' as SortField, label: 'TREND', align: 'right', noSort: true },
+                    { key: 'decision' as SortField, label: 'DECISION', align: 'right' },
                     { key: 'changePercent' as SortField, label: 'DAY%', align: 'right' },
                     { key: 'symbol' as SortField, label: '', align: 'right', noSort: true },
                   ].map((col, i) => (
@@ -568,7 +608,7 @@ export default function PortfolioPage() {
                         <EditableCell value={r.entryPrice} onSave={v => handleUpdateField(r.symbol, 'entryPrice', v)} />
                       </td>
                       <td style={{ padding: '10px 12px', textAlign: 'right', color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>
-                        <EditableCell value={r.quantity} onSave={v => handleUpdateField(r.symbol, 'quantity', v)} />
+                        <EditableCell value={r.quantity} onSave={v => handleUpdateField(r.symbol, 'quantity', v)} type="qty" />
                       </td>
                       <td style={{ padding: '10px 12px', textAlign: 'right', color: '#8BA3C1', fontVariantNumeric: 'tabular-nums' }}>
                         {r.weight.toFixed(1)}%
@@ -589,6 +629,43 @@ export default function PortfolioPage() {
                               {fmtPct(r.pnlPercent)}
                             </div>
                           </div>
+                        ) : '—'}
+                      </td>
+                      {/* Score */}
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {r.score !== undefined ? (
+                          <span style={{
+                            display: 'inline-block', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600',
+                            backgroundColor: r.score >= 70 ? 'rgba(16,185,129,0.1)' : r.score >= 40 ? 'rgba(251,191,36,0.1)' : 'rgba(100,116,139,0.1)',
+                            color: r.score >= 70 ? '#10B981' : r.score >= 40 ? '#FBBF24' : '#64748B',
+                            fontVariantNumeric: 'tabular-nums',
+                          }}>
+                            {r.score.toFixed(0)}
+                          </span>
+                        ) : '—'}
+                      </td>
+                      {/* Trend */}
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {r.sectorTrend ? (
+                          <span style={{
+                            display: 'inline-block', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600',
+                            backgroundColor: r.sectorTrend === 'Bullish' ? 'rgba(16,185,129,0.1)' : r.sectorTrend === 'Bearish' ? 'rgba(239,68,68,0.1)' : 'rgba(251,191,36,0.1)',
+                            color: r.sectorTrend === 'Bullish' ? '#10B981' : r.sectorTrend === 'Bearish' ? '#EF4444' : '#FBBF24',
+                          }}>
+                            {r.sectorTrend}
+                          </span>
+                        ) : '—'}
+                      </td>
+                      {/* Decision */}
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {r.decision ? (
+                          <span style={{
+                            display: 'inline-block', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600',
+                            backgroundColor: r.decision === 'BUY' ? 'rgba(16,185,129,0.15)' : r.decision === 'ADD' ? 'rgba(5,150,105,0.15)' : r.decision === 'HOLD' ? 'rgba(251,191,36,0.15)' : r.decision === 'TRIM' ? 'rgba(249,115,22,0.15)' : r.decision === 'EXIT' ? 'rgba(239,68,68,0.15)' : 'rgba(100,116,139,0.15)',
+                            color: r.decision === 'BUY' ? '#10B981' : r.decision === 'ADD' ? '#059669' : r.decision === 'HOLD' ? '#FBBF24' : r.decision === 'TRIM' ? '#F97316' : r.decision === 'EXIT' ? '#EF4444' : '#64748B',
+                          }}>
+                            {r.decision}
+                          </span>
                         ) : '—'}
                       </td>
                       <td style={{ padding: '10px 12px', textAlign: 'right' }}>
