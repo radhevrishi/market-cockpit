@@ -4,7 +4,20 @@ import { fetchQuotesWithFallback, MACRO_INDICES, MACRO_CURRENCIES, MACRO_COMMODI
 
 export const dynamic = 'force-dynamic';
 
+// Response-level cache (avoids re-assembly on rapid polls)
+const responseCache = new Map<string, { data: any; ts: number }>();
+const RESPONSE_TTL = 60_000; // 60s cache for macro data (changes less frequently)
+
 export async function GET() {
+  // Cache key for macro data (single endpoint)
+  const cacheKey = 'macro';
+
+  // Check response cache
+  const cached = responseCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < RESPONSE_TTL) {
+    return NextResponse.json(cached.data);
+  }
+
   try {
     // Fetch NSE indices (for Indian data) and Yahoo Finance (for global data) in parallel
     const [nseIndices, yfQuotes] = await Promise.all([
@@ -167,16 +180,22 @@ export async function GET() {
         };
       }).filter(i => i.value > 0);
 
-    return NextResponse.json({
+    const responseData = {
       indices: indices.filter(i => i.value > 0),
       currencies: mapYfData(MACRO_CURRENCIES),
       commodities: mapYfData(MACRO_COMMODITIES),
       bonds: mapYfData(MACRO_BONDS),
       source: nseIndices?.data ? 'NSE India + Yahoo Finance' : 'Yahoo Finance',
       updatedAt: new Date().toISOString(),
-    });
+    };
+
+    // Cache the response before returning
+    responseCache.set(cacheKey, { data: responseData, ts: Date.now() });
+
+    return NextResponse.json(responseData);
   } catch (error) {
     console.error('Macro data error:', error);
-    return NextResponse.json({ error: 'Failed to fetch macro data', indices: [], currencies: [], commodities: [], bonds: [] }, { status: 500 });
+    const errorResponse = { error: 'Failed to fetch macro data', indices: [], currencies: [], commodities: [], bonds: [] };
+    return NextResponse.json(errorResponse, { status: 500 });
   }
 }

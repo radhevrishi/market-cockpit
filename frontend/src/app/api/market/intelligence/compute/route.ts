@@ -31,6 +31,35 @@ export const maxDuration = 55;
 
 const INR_TO_USD = 85;
 
+// ==================== FETCH RESILIENCE HELPERS ====================
+
+/**
+ * Wraps an async function with retry logic
+ * @param fn - async function to execute
+ * @param retries - number of retries on failure (default: 1)
+ * @param delayMs - delay between retries in ms (default: 200)
+ * @returns the result or null if all attempts fail
+ */
+async function fetchWithRetry<T>(
+  fn: () => Promise<T>,
+  retries: number = 1,
+  delayMs: number = 200
+): Promise<T | null> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err as Error;
+      if (attempt < retries) {
+        await new Promise(r => setTimeout(r, delayMs));
+      }
+    }
+  }
+  console.warn(`[Fetch Retry] Failed after ${retries + 1} attempts:`, lastError?.message);
+  return null;
+}
+
 // ==================== ROUTE-LEVEL CACHE (BUG-01 fix) ====================
 const ROUTE_CACHE_TTL = 180_000;
 let _routeCache: { key: string; data: any; timestamp: number } | null = null;

@@ -146,7 +146,7 @@ const biasIcon = (b: string) => b === 'Bullish' ? <TrendingUp size={16} /> : b =
 const sentimentColor = (s: string) => s === 'Bullish' ? GREEN : s === 'Bearish' ? RED : TEXT3;
 
 const fmtCr = (v: number | null): string => {
-  if (v === null || v === undefined) return '—';
+  if (v === null || v === undefined || v === 0) return '—';
   if (v >= 1000) return `₹${(v / 1000).toFixed(1)}K Cr`;
   if (v >= 1) return `₹${Math.round(v)} Cr`;
   return `₹${Math.round(v * 100)}L`;
@@ -598,10 +598,14 @@ export default function CompanyIntelligencePage() {
                   display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '6px', padding: '6px 8px',
                   backgroundColor: 'rgba(6,182,212,0.05)', borderRadius: '6px', border: '1px solid rgba(6,182,212,0.1)',
                 }}>
-                  <span style={{ fontSize: '12px', color: TEXT2 }}>
-                    Event: <span style={{ fontWeight: 700, color: CYAN }}>{fmtCr(s.valueCr)}</span>
-                    {s.inferenceUsed && <span style={{ fontSize: '9px', color: TEXT3, marginLeft: '3px' }}>(est.)</span>}
-                  </span>
+                  {s.valueCr !== null && s.valueCr > 0 ? (
+                    <span style={{ fontSize: '12px', color: TEXT2 }}>
+                      Event: <span style={{ fontWeight: 700, color: CYAN }}>{fmtCr(s.valueCr)}</span>
+                      {s.inferenceUsed && <span style={{ fontSize: '9px', color: TEXT3, marginLeft: '3px' }}>(est.)</span>}
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: '12px', color: TEXT3, fontStyle: 'italic' }}>Guidance signal</span>
+                  )}
                   {s.revenueCr && s.revenueCr > 0 && (
                     <span style={{ fontSize: '12px', color: TEXT2 }}>
                       Rev: <span style={{ fontWeight: 700, color: TEXT1 }}>{fmtCr(s.revenueCr)}</span>

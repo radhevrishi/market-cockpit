@@ -3,6 +3,10 @@ import { fetchStockQuote } from '@/lib/nse';
 
 export const dynamic = 'force-dynamic';
 
+// Response-level cache (avoids re-assembly on rapid polls)
+const responseCache = new Map<string, { data: any; ts: number }>();
+const RESPONSE_TTL = 30_000; // 30s cache for assembled response
+
 /**
  * GET /api/market/quote?symbols=AEROFLEX,CEINSYS,MACPOWER
  * Fetches individual stock quotes from NSE for tickers not in any index.
@@ -12,6 +16,15 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const symbolsParam = searchParams.get('symbols') || '';
+
+  // Build cache key based on symbols param
+  const cacheKey = `quote:${symbolsParam}`;
+
+  // Check response cache
+  const cached = responseCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < RESPONSE_TTL) {
+    return NextResponse.json(cached.data);
+  }
 
   // Symbol alias map for known mismatches (BUG-03 fix)
   const SYMBOL_ALIASES: Record<string, string> = {
@@ -23,6 +36,13 @@ export async function GET(request: Request) {
     'GVT&D': 'GVTD',
     'SAVERA': 'SAVERAHOTL',
     'DYNACONS': 'DYNACONS',
+    'BORANA': 'BORANAIND',
+    'DATAPATTNS': 'DATAPATTNS',
+    'MACPOWER': 'MACPOWER',
+    'SMLMAH': 'SMLMAH',
+    'IZMO': 'IZMO',
+    'POWERMECH': 'POWERMECH',
+    'UTLSOLAR': 'UTLSOLAR',
   };
 
   const symbols = symbolsParam
@@ -35,7 +55,9 @@ export async function GET(request: Request) {
     .slice(0, 20); // Cap at 20
 
   if (symbols.length === 0) {
-    return NextResponse.json({ stocks: [], error: 'No valid symbols provided' }, { status: 400 });
+    const responseData = { stocks: [], error: 'No valid symbols provided' };
+    responseCache.set(cacheKey, { data: responseData, ts: Date.now() });
+    return NextResponse.json(responseData, { status: 400 });
   }
 
   const results: any[] = [];
@@ -83,12 +105,22 @@ export async function GET(request: Request) {
     results.push(...batchResults.filter(Boolean));
   }
 
-  return NextResponse.json({
+  const responseData = {
     stocks: results,
     count: results.length,
     requested: symbols.length,
     errors: errors.length > 0 ? errors : undefined,
     source: 'nse-individual',
     updatedAt: new Date().toISOString(),
-  });
+  };
+
+  // Cache the response before returning
+  responseCache.set(cacheKey, { data: responseData, ts: Date.now() });
+  // Evict old entries if cache grows too large
+  if (responseCache.size > 20) {
+    const oldest = [...responseCache.entries()].sort((a, b) => a[1].ts - b[1].ts)[0];
+    responseCache.delete(oldest[0]);
+  }
+
+  return NextResponse.json(responseData);
 }

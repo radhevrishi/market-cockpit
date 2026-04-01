@@ -143,6 +143,45 @@ function getGlobalStore(): Map<string, StoredEarnings> {
 const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
 const KV_CACHE_TTL_SECONDS = 6 * 60 * 60; // 6 hours in Redis (slightly longer than memory TTL)
 
+// ══════════════════════════════════════════════
+// FETCH RESILIENCE HELPERS
+// ══════════════════════════════════════════════
+
+/**
+ * Wraps a fetch call with a timeout and optional retry logic
+ * @param fn - async function that returns a Promise
+ * @param timeoutMs - abort timeout in milliseconds (default: 6000)
+ * @param retries - number of retries on failure (default: 1)
+ * @returns the result of the function, or null if all attempts fail
+ */
+async function fetchWithTimeout<T>(
+  fn: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number = 6000,
+  retries: number = 1
+): Promise<T | null> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const result = await fn(controller.signal);
+        clearTimeout(timeoutId);
+        return result;
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    } catch (err) {
+      lastError = err as Error;
+      if (attempt < retries) {
+        await new Promise(r => setTimeout(r, 200)); // brief delay before retry
+      }
+    }
+  }
+  console.warn(`[Fetch Timeout] Failed after ${retries + 1} attempts:`, lastError?.message);
+  return null;
+}
+
 function isDataFresh(fetchedAt: number): boolean {
   return Date.now() - fetchedAt < CACHE_TTL_MS;
 }

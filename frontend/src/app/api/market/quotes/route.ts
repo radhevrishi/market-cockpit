@@ -4,29 +4,52 @@ import { fetchQuotesWithFallback, US_TOP } from '@/lib/yahoo';
 
 export const dynamic = 'force-dynamic';
 
+// Response-level cache (avoids re-assembly on rapid polls)
+const responseCache = new Map<string, { data: any; ts: number }>();
+const RESPONSE_TTL = 30_000; // 30s cache for assembled response
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const market = searchParams.get('market') || 'india';
   const index = searchParams.get('index'); // Optional: 'midsmall50' for heatmap
 
+  // Build cache key based on market and index
+  const cacheKey = `quotes:${market}:${index || 'all'}`;
+
+  // Check response cache
+  const cached = responseCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < RESPONSE_TTL) {
+    return NextResponse.json(cached.data);
+  }
+
   try {
+    let responseData: any;
+
     if (market === 'india') {
       if (index === 'midsmall50') {
-        return await fetchMidSmall50Data();
+        responseData = await fetchMidSmall50DataWithCache();
+      } else if (index === 'smallcap150') {
+        responseData = await fetchSmallcap150DataWithCache();
+      } else if (index === 'midcap150') {
+        responseData = await fetchMidcap150DataWithCache();
+      } else if (index === 'nifty50') {
+        responseData = await fetchNifty50DataWithCache();
+      } else {
+        responseData = await fetchIndianDataWithCache();
       }
-      if (index === 'smallcap150') {
-        return await fetchSmallcap150Data();
-      }
-      if (index === 'midcap150') {
-        return await fetchMidcap150Data();
-      }
-      if (index === 'nifty50') {
-        return await fetchNifty50Data();
-      }
-      return await fetchIndianData();
     } else {
-      return await fetchUSData();
+      responseData = await fetchUSDataWithCache();
     }
+
+    // Cache the response before returning
+    responseCache.set(cacheKey, { data: responseData, ts: Date.now() });
+    // Evict old entries if cache grows too large
+    if (responseCache.size > 20) {
+      const oldest = [...responseCache.entries()].sort((a, b) => a[1].ts - b[1].ts)[0];
+      responseCache.delete(oldest[0]);
+    }
+
+    return NextResponse.json(responseData);
   } catch (error) {
     console.error('Market quotes error:', error);
     return NextResponse.json({ error: 'Failed to fetch market data', stocks: [], gainers: [], losers: [], summary: { total: 0, gainersCount: 0, losersCount: 0, avgChange: 0, sectors: 0 } }, { status: 500 });
@@ -34,7 +57,7 @@ export async function GET(request: Request) {
 }
 
 // Lightweight endpoint for heatmap: only NIFTY Midcap 50 + Smallcap 50
-async function fetchMidSmall50Data() {
+async function fetchMidSmall50DataWithCache() {
   const [sectorMap, midcap50Data, smallcap50Data] = await Promise.all([
     buildDynamicSectorMap(),
     fetchNiftyMidcap50().catch(() => null),
@@ -88,7 +111,7 @@ async function fetchMidSmall50Data() {
   const gainers = [...validStocks].sort((a, b) => b.changePercent - a.changePercent).filter(s => s.changePercent > 0).slice(0, 30);
   const losers = [...validStocks].sort((a, b) => a.changePercent - b.changePercent).filter(s => s.changePercent < 0).slice(0, 30);
 
-  return NextResponse.json({
+  return {
     stocks: validStocks,
     gainers,
     losers,
@@ -101,10 +124,10 @@ async function fetchMidSmall50Data() {
     },
     source: 'NSE India (Midcap 50 + Smallcap 50)',
     updatedAt: new Date().toISOString(),
-  });
+  };
 }
 
-async function fetchSmallcap150Data() {
+async function fetchSmallcap150DataWithCache() {
   const [sectorMap, sc50Data, sc100Data] = await Promise.all([
     buildDynamicSectorMap(),
     fetchNiftySmallcap50().catch(() => null),
@@ -158,7 +181,7 @@ async function fetchSmallcap150Data() {
   const gainers = [...validStocks].sort((a, b) => b.changePercent - a.changePercent).filter(s => s.changePercent > 0).slice(0, 30);
   const losers = [...validStocks].sort((a, b) => a.changePercent - b.changePercent).filter(s => s.changePercent < 0).slice(0, 30);
 
-  return NextResponse.json({
+  return {
     stocks: validStocks,
     gainers,
     losers,
@@ -171,10 +194,10 @@ async function fetchSmallcap150Data() {
     },
     source: 'NSE India (Smallcap 150)',
     updatedAt: new Date().toISOString(),
-  });
+  };
 }
 
-async function fetchMidcap150Data() {
+async function fetchMidcap150DataWithCache() {
   const [sectorMap, mc50Data, mc100Data] = await Promise.all([
     buildDynamicSectorMap(),
     fetchNiftyMidcap50().catch(() => null),
@@ -228,7 +251,7 @@ async function fetchMidcap150Data() {
   const gainers = [...validStocks].sort((a, b) => b.changePercent - a.changePercent).filter(s => s.changePercent > 0).slice(0, 30);
   const losers = [...validStocks].sort((a, b) => a.changePercent - b.changePercent).filter(s => s.changePercent < 0).slice(0, 30);
 
-  return NextResponse.json({
+  return {
     stocks: validStocks,
     gainers,
     losers,
@@ -241,10 +264,10 @@ async function fetchMidcap150Data() {
     },
     source: 'NSE India (Midcap 150)',
     updatedAt: new Date().toISOString(),
-  });
+  };
 }
 
-async function fetchNifty50Data() {
+async function fetchNifty50DataWithCache() {
   const [sectorMap, n50Data] = await Promise.all([
     buildDynamicSectorMap(),
     fetchNifty50().catch(() => null),
@@ -287,7 +310,7 @@ async function fetchNifty50Data() {
   const gainers = [...validStocks].sort((a, b) => b.changePercent - a.changePercent).filter(s => s.changePercent > 0).slice(0, 30);
   const losers = [...validStocks].sort((a, b) => a.changePercent - b.changePercent).filter(s => s.changePercent < 0).slice(0, 30);
 
-  return NextResponse.json({
+  return {
     stocks: validStocks,
     gainers,
     losers,
@@ -300,10 +323,10 @@ async function fetchNifty50Data() {
     },
     source: 'NSE India (NIFTY 50)',
     updatedAt: new Date().toISOString(),
-  });
+  };
 }
 
-async function fetchIndianData() {
+async function fetchIndianDataWithCache() {
   // Build dynamic sector map in parallel with stock data
   const [sectorMap, nifty500Data, midcap250Data, smallcap250Data, microcap250Data, totalMarketData, nseGainers, nseLosers] = await Promise.all([
     buildDynamicSectorMap(),
@@ -447,7 +470,7 @@ async function fetchIndianData() {
 
   const validStocks = stocks.filter(s => s.price > 0);
 
-  return NextResponse.json({
+  return {
     stocks: validStocks,
     gainers,
     losers,
@@ -460,10 +483,10 @@ async function fetchIndianData() {
     },
     source: nifty500Data?.data ? 'NSE India' : 'Yahoo Finance',
     updatedAt: new Date().toISOString(),
-  });
+  };
 }
 
-async function fetchUSData() {
+async function fetchUSDataWithCache() {
   const symbols = US_TOP.map(s => s.ticker);
   const quotes = await fetchQuotesWithFallback(symbols);
 
@@ -486,7 +509,7 @@ async function fetchUSData() {
   const gainers = sorted.filter(s => s.changePercent > 0);
   const losers = sorted.filter(s => s.changePercent < 0).reverse();
 
-  return NextResponse.json({
+  return {
     stocks,
     gainers,
     losers,
@@ -499,5 +522,5 @@ async function fetchUSData() {
     },
     source: 'Yahoo Finance',
     updatedAt: new Date().toISOString(),
-  });
+  };
 }

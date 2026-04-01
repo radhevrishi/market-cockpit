@@ -70,6 +70,13 @@ const TICKER_ALIASES: Record<string, string> = {
   'GVT&D': 'GVTD',
   'SAVERA': 'SAVERAHOTL',
   'DYNACONS': 'DYNACONS',  // Verify this is correct NSE ticker
+  'BORANA': 'BORANAIND',      // Borana Industries → NSE: BORANAIND (verify)
+  'DATAPATTNS': 'DATAPATTNS', // Data Patterns India — correct NSE ticker
+  'MACPOWER': 'MACPOWER',     // Mac Power CNC — correct NSE ticker
+  'SMLMAH': 'SMLMAH',         // SMLMAH (verify this is correct)
+  'IZMO': 'IZMO',             // IZMO Ltd — correct NSE ticker
+  'POWERMECH': 'POWERMECH',   // Power Mech Projects — correct NSE ticker
+  'UTLSOLAR': 'UTLSOLAR',     // UTL Solar — may need BSE fallback
 };
 
 /**
