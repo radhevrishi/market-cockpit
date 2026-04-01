@@ -301,6 +301,11 @@ interface IntelSignal {
   decision?: ActionFlag;
   decisionReason?: string;
   tag?: string;  // e.g. 'TRANSITION PHASE', 'DATA_MISSING'
+
+  // 3-Axis Normalized Scores (0-100 each)
+  fundamentalScore?: number;     // Revenue/Margin/EPS delta
+  signalStrengthScore?: number;  // Trend + direction + event type weight
+  dataConfidenceScore?: number;  // Source reliability score
 }
 
 interface CompanyTrend {
@@ -863,7 +868,7 @@ function classifySentiment(eventType: string, isNegative: boolean, isBuyDeal: bo
 // ==================== QUANT SCORE ENGINE ====================
 
 const SIGNAL_TYPE_WEIGHTS: Record<string, number> = {
-  'Order Win': 14, 'Contract': 14, 'M&A': 13, 'Capex/Expansion': 12,
+  'Order Win': 14, 'Contract': 14, 'M&A': 13, 'Capex/Expansion': 15,
   'Demerger': 11, 'Fund Raising': 10, 'LOI': 8, 'JV/Partnership': 9,
   'Buyback': 10, 'Dividend': 6, 'Guidance': 8, 'Mgmt Change': 5,
   'Block Buy': 11, 'Bulk Buy': 10, 'Block Sell': 11, 'Bulk Sell': 10,
@@ -954,6 +959,110 @@ function computeScore(opts: {
   }
 
   return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+// ==================== 3-AXIS NORMALIZED SCORE ENGINE ====================
+
+function computeThreeAxisScore(opts: {
+  impactPct: number;
+  revenueGrowth: number | null;
+  marginChange: number | null;
+  epsGrowth: number | null;
+  eventType: string;
+  sentiment: SignalSentiment;
+  timeWeight: number;
+  signalCount: number;
+  confidenceScore: number;
+  confidenceType: 'ACTUAL' | 'INFERRED' | 'HEURISTIC';
+  valueSource: 'EXACT' | 'AGGREGATED' | 'HEURISTIC';
+  isNegative: boolean;
+  sector: string | null;
+  earningsScore: number | null;
+  isCapex: boolean;
+}): { fundamental: number; signalStrength: number; dataConfidence: number; composite: number } {
+  // ── Axis 1: Fundamental Delta Score (0-100) ──
+  // Measures actual business metric changes
+  let fundamental = 50; // neutral baseline
+  if (opts.revenueGrowth !== null) {
+    if (opts.revenueGrowth >= 20) fundamental += 25;
+    else if (opts.revenueGrowth >= 10) fundamental += 15;
+    else if (opts.revenueGrowth >= 0) fundamental += 5;
+    else if (opts.revenueGrowth >= -10) fundamental -= 10;
+    else fundamental -= 20;
+  }
+  if (opts.marginChange !== null) {
+    const mPct = opts.marginChange / 100; // bps to %
+    if (mPct >= 2) fundamental += 15;
+    else if (mPct >= 0) fundamental += 5;
+    else if (mPct >= -2) fundamental -= 5;
+    else fundamental -= 15;
+  }
+  if (opts.epsGrowth !== null) {
+    if (opts.epsGrowth >= 20) fundamental += 10;
+    else if (opts.epsGrowth >= 0) fundamental += 3;
+    else fundamental -= 10;
+  }
+  if (opts.earningsScore !== null) {
+    if (opts.earningsScore >= 70) fundamental += 8;
+    else if (opts.earningsScore >= 50) fundamental += 3;
+    else if (opts.earningsScore < 40) fundamental -= 8;
+  }
+  // Capex = leading indicator bonus
+  if (opts.isCapex && opts.impactPct >= 5) fundamental += 12;
+  else if (opts.isCapex && opts.impactPct >= 2) fundamental += 6;
+  fundamental = Math.max(0, Math.min(100, Math.round(fundamental)));
+
+  // ── Axis 2: Signal Strength Score (0-100) ──
+  // Measures the quality/magnitude of the signal itself
+  let strength = 0;
+  // Impact magnitude (capped at 30)
+  strength += Math.min(30, 30 * (1 - Math.exp(-opts.impactPct / 8)));
+  // Event type weight (capped at 20)
+  const typeWeight = SIGNAL_TYPE_WEIGHTS[opts.eventType] || 5;
+  strength += Math.min(20, typeWeight * 1.4);
+  // Sentiment (up to ±10)
+  strength += opts.sentiment === 'Bullish' ? 10 : opts.sentiment === 'Bearish' ? -5 : 0;
+  // Time decay
+  strength *= Math.max(0.3, opts.timeWeight);
+  // Sector multiplier
+  if (opts.sector) {
+    const sKey = opts.sector.split(' ')[0];
+    const mult = SECTOR_MULTIPLIER[sKey] || 1.0;
+    strength *= mult;
+  }
+  // Signal stacking bonus
+  if (opts.signalCount >= 3) strength += 15;
+  else if (opts.signalCount >= 2) strength += 8;
+  // Negative signals are still "strong" signals
+  if (opts.isNegative) strength += 5;
+  // Capex leading indicator boost
+  if (opts.isCapex) strength += 10;
+  strength = Math.max(0, Math.min(100, Math.round(strength)));
+
+  // ── Axis 3: Data Confidence Score (0-100) ──
+  // Measures source reliability
+  let dataConf = opts.confidenceScore;
+  // Source quality adjustments
+  if (opts.confidenceType === 'ACTUAL' && opts.valueSource === 'EXACT') {
+    dataConf = Math.max(dataConf, 85);
+  } else if (opts.confidenceType === 'ACTUAL') {
+    dataConf = Math.max(dataConf, 75);
+  } else if (opts.confidenceType === 'INFERRED') {
+    dataConf = Math.min(Math.max(dataConf, 50), 75);
+  } else {
+    dataConf = Math.min(dataConf, 55);
+  }
+  // Penalize high impact claims with low confidence
+  if (opts.impactPct > 20 && opts.confidenceType === 'HEURISTIC') {
+    dataConf = Math.round(dataConf * 0.7);
+  }
+  dataConf = Math.max(0, Math.min(100, Math.round(dataConf)));
+
+  // ── Composite Score (weighted average, 0-100) ──
+  // Weights: Fundamental 40%, Signal Strength 35%, Data Confidence 25%
+  const composite = Math.round(0.40 * fundamental + 0.35 * strength + 0.25 * dataConf);
+
+  return { fundamental, signalStrength: strength, dataConfidence: dataConf, composite };
 }
 
 // ==================== ENRICHMENT ====================
@@ -1390,7 +1499,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     if (inferenceUsed) headline += ' (est.)';
     if (client) headline += ` from ${client}`;
     const matParts: string[] = [];
-    matParts.push(`${impactPct.toFixed(1)}% of revenue`);
+    matParts.push(`${Math.min(100, impactPct).toFixed(1)}% of revenue`);
     if (pctMcap !== null && pctMcap > 0) matParts.push(`${pctMcap.toFixed(1)}% MCap`);
     if (segment) matParts.push(segment);
     if (timeline) matParts.push(timeline);
@@ -1423,7 +1532,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       eventType, headline,
       valueCr, valueUsd: `$${((valueCr * 10000000) / INR_TO_USD / 1000000).toFixed(1)}M`,
       mcapCr: enrichment?.mcapCr || null, revenueCr: enrichment?.annualRevenueCr || null,
-      impactPct, pctRevenue: impactPct, pctMcap,
+      impactPct: Math.min(100, impactPct), pctRevenue: Math.min(100, impactPct), pctMcap,
       inferenceUsed,
       client, segment, timeline,
       buyerSeller: null, premiumDiscount: null, lastPrice,
@@ -1437,6 +1546,20 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       scoreClassification: classifyScore(weightedScore),
       decision: action,
     };
+
+    // Compute 3-axis normalized scores
+    const threeAxis = computeThreeAxisScore({
+      impactPct: Math.min(100, impactPct), revenueGrowth: null, marginChange: null, epsGrowth: null,
+      eventType, sentiment, timeWeight, signalCount: 1,
+      confidenceScore, confidenceType, valueSource, isNegative: negative,
+      sector, earningsScore, isCapex: eventType === 'Capex/Expansion',
+    });
+    signal.fundamentalScore = threeAxis.fundamental;
+    signal.signalStrengthScore = threeAxis.signalStrength;
+    signal.dataConfidenceScore = threeAxis.dataConfidence;
+    // Use composite as the new normalized weightedScore
+    signal.weightedScore = threeAxis.composite;
+    signal.score = threeAxis.composite;
 
     if (existing) {
       const existDate = new Date(existing.date).getTime();
@@ -1552,9 +1675,23 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       decision: action,
     };
 
+    // Compute 3-axis scores for deals
+    const dealAxis = computeThreeAxisScore({
+      impactPct: dealImpactPct, revenueGrowth: null, marginChange: null, epsGrowth: null,
+      eventType, sentiment, timeWeight, signalCount: 1,
+      confidenceScore: 85, confidenceType: 'ACTUAL', valueSource: 'EXACT',
+      isNegative: isSell, sector: null, earningsScore,
+      isCapex: false,
+    });
+    dealSignal.fundamentalScore = dealAxis.fundamental;
+    dealSignal.signalStrengthScore = dealAxis.signalStrength;
+    dealSignal.dataConfidenceScore = dealAxis.dataConfidence;
+    dealSignal.weightedScore = dealAxis.composite;
+    dealSignal.score = dealAxis.composite;
+
     const dealDedupKey = `${symbol}:${eventType}:${(deal.dealDate || getTodayDate()).slice(0, 10)}`;
     const existingDeal = dealDedupMap.get(dealDedupKey);
-    if (!existingDeal || weightedScore > existingDeal.weightedScore) {
+    if (!existingDeal || dealSignal.weightedScore > existingDeal.weightedScore) {
       dealDedupMap.set(dealDedupKey, dealSignal);
     }
   }
@@ -1717,6 +1854,21 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
           decision: signalAction,
         };
 
+        // Compute 3-axis scores for guidance
+        const guidAxis = computeThreeAxisScore({
+          impactPct, revenueGrowth: revG || null, marginChange: marginBps || null, epsGrowth: ge.epsGrowth || null,
+          eventType: 'Guidance', sentiment, timeWeight, signalCount: 1,
+          confidenceScore: ge.confidenceScore, confidenceType: ge.confidenceScore >= 70 ? 'ACTUAL' : 'INFERRED',
+          valueSource: capex ? 'EXACT' : 'HEURISTIC',
+          isNegative: isNeg, sector: enrichment?.industry?.split(' ')[0] || null,
+          earningsScore: null, isCapex: capex !== null && capex > 0,
+        });
+        guidanceSignal.fundamentalScore = guidAxis.fundamental;
+        guidanceSignal.signalStrengthScore = guidAxis.signalStrength;
+        guidanceSignal.dataConfidenceScore = guidAxis.dataConfidence;
+        guidanceSignal.weightedScore = guidAxis.composite;
+        guidanceSignal.score = guidAxis.composite;
+
         // Dedup against existing signals for same symbol
         const guidanceDedupKey = `${symbol}:Guidance:${(ge.eventDate || '').slice(0, 10)}`;
         if (!dedupMap.has(guidanceDedupKey)) {
@@ -1761,8 +1913,45 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     return true;
   });
 
+  // ── GUIDANCE CAP: max 1 guidance signal per company per cycle ──
+  const guidanceByCompany = new Map<string, IntelSignal[]>();
+  const nonGuidanceSignals: IntelSignal[] = [];
+  for (const s of validatedSignals) {
+    if (s.eventType === 'Guidance') {
+      const arr = guidanceByCompany.get(s.symbol) || [];
+      arr.push(s);
+      guidanceByCompany.set(s.symbol, arr);
+    } else {
+      nonGuidanceSignals.push(s);
+    }
+  }
+  // Keep only the highest-scoring guidance signal per company
+  const cappedGuidance: IntelSignal[] = [];
+  for (const [, gSigs] of guidanceByCompany) {
+    gSigs.sort((a, b) => b.weightedScore - a.weightedScore);
+    cappedGuidance.push(gSigs[0]); // Keep best only
+  }
+  // Replace validatedSignals with capped version
+  const guidanceCappedSignals = [...nonGuidanceSignals, ...cappedGuidance];
+
+  // ── GUIDANCE DIVERSITY: auto-downweight if guidance > 45% of signals ──
+  const totalSigs = guidanceCappedSignals.length;
+  const guidanceCount = guidanceCappedSignals.filter(s => s.eventType === 'Guidance').length;
+  if (totalSigs > 0 && (guidanceCount / totalSigs) > 0.45) {
+    const downweightFactor = 0.45 / (guidanceCount / totalSigs); // bring to 45% effective weight
+    for (const s of guidanceCappedSignals) {
+      if (s.eventType === 'Guidance') {
+        s.weightedScore = Math.round(s.weightedScore * downweightFactor);
+        s.score = Math.round(s.score * downweightFactor);
+        if (s.fundamentalScore) s.fundamentalScore = Math.round(s.fundamentalScore * downweightFactor);
+        if (s.signalStrengthScore) s.signalStrengthScore = Math.round(s.signalStrengthScore * downweightFactor);
+      }
+    }
+    console.log(`[Compute] Guidance diversity: ${guidanceCount}/${totalSigs} (${(guidanceCount/totalSigs*100).toFixed(0)}%) → downweighted by ${downweightFactor.toFixed(2)}`);
+  }
+
   // ── Materiality filter: remove noise signals that don't meet thresholds ──
-  const materialSignals = validatedSignals.filter(s => {
+  const materialSignals = guidanceCappedSignals.filter(s => {
     // Always keep portfolio and watchlist signals
     if (s.isPortfolio || s.isWatchlist) return true;
     // Always keep negative signals (risk management)
@@ -1846,6 +2035,22 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
 
     const bullish = sigs.filter(s => s.sentiment === 'Bullish').length;
     const bearish = sigs.filter(s => s.sentiment === 'Bearish').length;
+
+    // ── WATCH Subtype Classification ──
+    for (const s of sigs) {
+      if (s.action === 'WATCH' || s.decision === 'WATCH') {
+        if (s.tag === 'DATA INSUFFICIENT' || s.tag === 'DATA_INSUFFICIENT') {
+          // Already tagged as data watch
+        } else if (s.isNegative || s.sentiment === 'Bearish' || (s.earningsBoost === false && s.weightedScore < 35)) {
+          s.tag = s.tag || 'RISK-WATCH';
+          s.decisionReason = s.decisionReason || 'Potential downside risk — reduce exposure if confirmed';
+        } else if (s.confidenceType === 'HEURISTIC' && s.weightedScore < 40) {
+          s.tag = s.tag || 'DATA-WATCH';
+          s.decisionReason = s.decisionReason || 'Insufficient data — ignore until data arrives';
+        }
+        // else: plain WATCH = neutral monitoring, no tag needed
+      }
+    }
 
     if (count >= 2) {
       trends.push({

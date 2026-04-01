@@ -95,6 +95,11 @@ interface Signal {
   decision?: ActionFlag;
   decisionReason?: string;
   tag?: string;
+
+  // 3-Axis Normalized Scores (0-100 each)
+  fundamentalScore?: number;     // 0-100 Fundamental Delta
+  signalStrengthScore?: number;  // 0-100 Signal Strength
+  dataConfidenceScore?: number;  // 0-100 Data Confidence
 }
 
 interface CompanyTrend {
@@ -589,7 +594,15 @@ export default function CompanyIntelligencePage() {
                   </span>
                   {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(139,92,246,0.15)' }}>PF</span>}
                   {s.isWatchlist && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.15)' }}>WL</span>}
-                  {s.tag && <span style={{ fontSize: '9px', color: '#A78BFA', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.25)' }}>{s.tag}</span>}
+                  {s.tag && <span style={{ 
+  fontSize: '9px', 
+  fontWeight: 700, 
+  padding: '1px 5px', 
+  borderRadius: '3px', 
+  color: s.tag === 'RISK-WATCH' ? '#EF4444' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? '#F59E0B' : '#A78BFA',
+  backgroundColor: s.tag === 'RISK-WATCH' ? 'rgba(239,68,68,0.12)' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? 'rgba(245,158,11,0.12)' : 'rgba(167,139,250,0.12)',
+  border: `1px solid ${s.tag === 'RISK-WATCH' ? 'rgba(239,68,68,0.25)' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? 'rgba(245,158,11,0.25)' : 'rgba(167,139,250,0.25)'}`,
+}}>{s.tag}</span>}
                   {s.isNegative && <span style={{ fontSize: '9px', color: RED, fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(239,68,68,0.12)' }}>⚠ NEGATIVE</span>}
                   <span style={{
                     fontSize: '11px', fontWeight: 700, color: actionColor(s.action),
@@ -612,6 +625,39 @@ export default function CompanyIntelligencePage() {
                     {s.weightedScore} ({Math.round(s.timeWeight * 100)}% fresh)
                   </span>
                 </div>
+
+                {/* 3-Axis Score Bars */}
+                {(s.fundamentalScore !== undefined || s.signalStrengthScore !== undefined || s.dataConfidenceScore !== undefined) && (
+                  <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+                    {s.fundamentalScore !== undefined && (
+                      <div style={{ flex: 1, textAlign: 'center' }}>
+                        <div style={{ fontSize: '9px', color: TEXT3 }}>Fund</div>
+                        <div style={{ height: '3px', backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: '2px', overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${s.fundamentalScore}%`, backgroundColor: s.fundamentalScore >= 60 ? GREEN : s.fundamentalScore >= 40 ? ACCENT : RED, borderRadius: '2px', transition: 'width 0.3s' }} />
+                        </div>
+                        <div style={{ fontSize: '9px', color: s.fundamentalScore >= 60 ? GREEN : s.fundamentalScore >= 40 ? ACCENT : RED }}>{s.fundamentalScore}</div>
+                      </div>
+                    )}
+                    {s.signalStrengthScore !== undefined && (
+                      <div style={{ flex: 1, textAlign: 'center' }}>
+                        <div style={{ fontSize: '9px', color: TEXT3 }}>Signal</div>
+                        <div style={{ height: '3px', backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: '2px', overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${s.signalStrengthScore}%`, backgroundColor: s.signalStrengthScore >= 60 ? GREEN : s.signalStrengthScore >= 40 ? ACCENT : RED, borderRadius: '2px', transition: 'width 0.3s' }} />
+                        </div>
+                        <div style={{ fontSize: '9px', color: s.signalStrengthScore >= 60 ? GREEN : s.signalStrengthScore >= 40 ? ACCENT : RED }}>{s.signalStrengthScore}</div>
+                      </div>
+                    )}
+                    {s.dataConfidenceScore !== undefined && (
+                      <div style={{ flex: 1, textAlign: 'center' }}>
+                        <div style={{ fontSize: '9px', color: TEXT3 }}>Conf</div>
+                        <div style={{ height: '3px', backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: '2px', overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${s.dataConfidenceScore}%`, backgroundColor: s.dataConfidenceScore >= 70 ? GREEN : s.dataConfidenceScore >= 45 ? ACCENT : RED, borderRadius: '2px', transition: 'width 0.3s' }} />
+                        </div>
+                        <div style={{ fontSize: '9px', color: s.dataConfidenceScore >= 70 ? GREEN : s.dataConfidenceScore >= 45 ? ACCENT : RED }}>{s.dataConfidenceScore}</div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Row 2: QUANT DATA — Event Value | Revenue | Impact % */}
                 <div style={{
@@ -869,7 +915,15 @@ export default function CompanyIntelligencePage() {
                   )}
                   {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600 }}>PF</span>}
                   {s.isWatchlist && !s.isPortfolio && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600 }}>WL</span>}
-                  {s.tag && <span style={{ fontSize: '9px', color: '#A78BFA', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.25)' }}>{s.tag}</span>}
+                  {s.tag && <span style={{ 
+  fontSize: '9px', 
+  fontWeight: 700, 
+  padding: '1px 5px', 
+  borderRadius: '3px', 
+  color: s.tag === 'RISK-WATCH' ? '#EF4444' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? '#F59E0B' : '#A78BFA',
+  backgroundColor: s.tag === 'RISK-WATCH' ? 'rgba(239,68,68,0.12)' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? 'rgba(245,158,11,0.12)' : 'rgba(167,139,250,0.12)',
+  border: `1px solid ${s.tag === 'RISK-WATCH' ? 'rgba(239,68,68,0.25)' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? 'rgba(245,158,11,0.25)' : 'rgba(167,139,250,0.25)'}`,
+}}>{s.tag}</span>}
                   {s.isNegative && <span style={{ fontSize: '9px', color: RED, fontWeight: 700 }}>⚠</span>}
                   {/* Price performance since added to watchlist */}
                   {s.lastPrice && addedPrices[s.symbol] && addedPrices[s.symbol] > 0 && (() => {
@@ -1048,7 +1102,15 @@ export default function CompanyIntelligencePage() {
                         )}
                         {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600 }}>PF</span>}
                         {s.isWatchlist && !s.isPortfolio && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600 }}>WL</span>}
-                        {s.tag && <span style={{ fontSize: '9px', color: '#A78BFA', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.25)' }}>{s.tag}</span>}
+                        {s.tag && <span style={{ 
+  fontSize: '9px', 
+  fontWeight: 700, 
+  padding: '1px 5px', 
+  borderRadius: '3px', 
+  color: s.tag === 'RISK-WATCH' ? '#EF4444' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? '#F59E0B' : '#A78BFA',
+  backgroundColor: s.tag === 'RISK-WATCH' ? 'rgba(239,68,68,0.12)' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? 'rgba(245,158,11,0.12)' : 'rgba(167,139,250,0.12)',
+  border: `1px solid ${s.tag === 'RISK-WATCH' ? 'rgba(239,68,68,0.25)' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? 'rgba(245,158,11,0.25)' : 'rgba(167,139,250,0.25)'}`,
+}}>{s.tag}</span>}
                         {s.isNegative && <span style={{ fontSize: '9px', color: RED, fontWeight: 700 }}>⚠</span>}
                         {s.lastPrice && addedPrices[s.symbol] && addedPrices[s.symbol] > 0 && (() => {
                           const pctChange = ((s.lastPrice! - addedPrices[s.symbol]) / addedPrices[s.symbol]) * 100;
@@ -1215,7 +1277,15 @@ export default function CompanyIntelligencePage() {
                         )}
                         {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600 }}>PF</span>}
                         {s.isWatchlist && !s.isPortfolio && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600 }}>WL</span>}
-                        {s.tag && <span style={{ fontSize: '9px', color: '#A78BFA', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.25)' }}>{s.tag}</span>}
+                        {s.tag && <span style={{ 
+  fontSize: '9px', 
+  fontWeight: 700, 
+  padding: '1px 5px', 
+  borderRadius: '3px', 
+  color: s.tag === 'RISK-WATCH' ? '#EF4444' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? '#F59E0B' : '#A78BFA',
+  backgroundColor: s.tag === 'RISK-WATCH' ? 'rgba(239,68,68,0.12)' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? 'rgba(245,158,11,0.12)' : 'rgba(167,139,250,0.12)',
+  border: `1px solid ${s.tag === 'RISK-WATCH' ? 'rgba(239,68,68,0.25)' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? 'rgba(245,158,11,0.25)' : 'rgba(167,139,250,0.25)'}`,
+}}>{s.tag}</span>}
                         {s.isNegative && <span style={{ fontSize: '9px', color: RED, fontWeight: 700 }}>⚠</span>}
                         {s.lastPrice && addedPrices[s.symbol] && addedPrices[s.symbol] > 0 && (() => {
                           const pctChange = ((s.lastPrice! - addedPrices[s.symbol]) / addedPrices[s.symbol]) * 100;
