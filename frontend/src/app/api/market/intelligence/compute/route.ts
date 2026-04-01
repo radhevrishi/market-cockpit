@@ -1566,11 +1566,19 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         }
 
         // Rule 2: Margin change (bps)
-        const marginBps = ge.marginChange !== null && ge.marginChange !== undefined ? ge.marginChange * 100 : null;
+        const marginBps = ge.marginChange !== null && ge.marginChange !== undefined ? ge.marginChange : null;
         if (marginBps !== null) {
-          if (marginBps >= 100) { signalScore += 25; scoreParts.push(`Margin+${Math.round(marginBps)}bps`); }
-          else if (marginBps >= 0) { signalScore += 10; scoreParts.push(`Margin+${Math.round(marginBps)}bps`); }
-          else { signalScore -= 10; scoreParts.push(`Margin${Math.round(marginBps)}bps`); if (sentiment !== 'Bearish') sentiment = 'Neutral'; }
+          // Cap display at 5000 bps and show qualitatively if too high
+          if (Math.abs(marginBps) > 5000) {
+            signalScore += (marginBps > 0 ? 25 : -15);
+            scoreParts.push(marginBps > 0 ? 'Margin: Strong expansion' : 'Margin: Severe contraction');
+            if (marginBps <= 0 && sentiment !== 'Bearish') sentiment = 'Neutral';
+          } else {
+            const marginPct = marginBps / 100; // Convert bps to %
+            if (marginBps >= 100) { signalScore += 25; scoreParts.push(`Margin+${marginPct.toFixed(1)}%`); }
+            else if (marginBps >= 0) { signalScore += 10; scoreParts.push(`Margin+${marginPct.toFixed(1)}%`); }
+            else { signalScore -= 10; scoreParts.push(`Margin${marginPct.toFixed(1)}%`); if (sentiment !== 'Bearish') sentiment = 'Neutral'; }
+          }
         }
 
         // Rule 3: Capex
@@ -1718,6 +1726,32 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       const stackBonus = count >= 2 ? Math.min(20, 5 * count) : 0;
       if (stackBonus > 0) {
         s.weightedScore = Math.min(100, s.weightedScore + stackBonus);
+      }
+    }
+
+    // Re-classify actions after stacking bonus is applied
+    for (const s of sigs) {
+      if (s.signalStackCount && s.signalStackCount >= 2) {
+        const newAction = classifyAction(
+          s.impactPct,
+          s.sentiment,
+          s.isWatchlist,
+          s.isPortfolio,
+          null, // earningsScore
+          s.weightedScore, // Updated with stack bonus
+          s.isNegative,
+          s.signalStackCount // Pass actual stack count
+        );
+        // Promote ADD to BUY if re-classification suggests it
+        if (newAction === 'BUY' || (newAction === 'ADD' && s.action !== 'BUY')) {
+          s.action = newAction;
+          s.decision = newAction;
+        }
+      }
+      // Post-stacking promotion rule: if score > 80 AND bullish AND signalCount >= 3 → force BUY
+      if (s.signalStackCount && s.signalStackCount >= 3 && s.weightedScore > 80 && s.sentiment === 'Bullish' && !s.isNegative) {
+        s.action = 'BUY';
+        s.decision = 'BUY';
       }
     }
 

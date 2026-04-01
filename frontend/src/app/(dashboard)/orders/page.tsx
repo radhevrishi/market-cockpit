@@ -358,6 +358,7 @@ export default function CompanyIntelligencePage() {
   const negativeCount = signals.filter(s => s.isNegative).length;
   const portfolioCount = signals.filter(s => s.isPortfolio).length;
   const watchlistCount = signals.filter(s => s.isWatchlist).length;
+  const totalSignalValue = signals.filter(s => s.valueCr > 0).reduce((sum, s) => sum + s.valueCr, 0);
 
   return (
     <div style={{ backgroundColor: BG, color: TEXT1, minHeight: '100vh', padding: '16px 20px' }}>
@@ -419,7 +420,7 @@ export default function CompanyIntelligencePage() {
                 ...(bias.trimExitCount !== undefined && bias.trimExitCount > 0 ? [{ label: 'TRIM/EXIT', value: bias.trimExitCount, color: ORANGE }] : []),
                 { label: 'Portfolio Alerts', value: bias.portfolioAlerts, color: PURPLE },
                 ...(bias.negativeSignals > 0 ? [{ label: '⚠ Negative', value: bias.negativeSignals, color: RED }] : []),
-                ...(bias.totalOrderValueCr > 0 ? [{ label: 'Order Value', value: fmtCr(bias.totalOrderValueCr) as any, color: CYAN }] : []),
+                ...(totalSignalValue > 0 ? [{ label: 'Signal Value (est.)', value: fmtCr(totalSignalValue) as any, color: CYAN }] : []),
               ].map(s => (
                 <div key={s.label} style={{ textAlign: 'center' }}>
                   <div style={{ fontSize: '18px', fontWeight: 700, color: s.color }}>{s.value}</div>

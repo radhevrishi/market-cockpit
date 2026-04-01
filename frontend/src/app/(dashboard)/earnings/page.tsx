@@ -226,6 +226,20 @@ function DivergenceBadge({ divergence }: { divergence?: string }) {
   );
 }
 
+function StaleBadge({ quarterStr }: { quarterStr: string }) {
+  if (!isDataStale(quarterStr, 6)) return null;
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '9px',
+      padding: '2px 6px', borderRadius: '4px',
+      backgroundColor: '#EF444415', border: '1px solid #EF444440',
+      color: '#EF4444', fontWeight: 700, letterSpacing: '0.3px',
+    }}>
+      ⚠ STALE
+    </span>
+  );
+}
+
 function OutlookPill({ label, value }: { label: string; value?: string }) {
   if (!value || value === 'Unknown') return null;
   const colorMap: Record<string, string> = {
@@ -247,6 +261,36 @@ function formatMcap(num: number | null): string {
   if (num >= 100000) return `₹${(num / 100000).toFixed(1)}L Cr`;  // lakh crore
   if (num >= 1000) return `₹${Math.round(num).toLocaleString('en-IN')} Cr`;
   return `₹${num.toFixed(0)} Cr`;
+}
+
+function parseQuarterDate(quarterStr: string): Date | null {
+  if (!quarterStr || quarterStr === 'N/A' || quarterStr === '-') return null;
+  // Parse "Mar 2023" or "December 2024" format
+  const parts = quarterStr.trim().split(/\s+/);
+  if (parts.length < 2) return null;
+  const monthStr = parts[0];
+  const year = parseInt(parts[parts.length - 1]);
+  if (isNaN(year)) return null;
+
+  const months: Record<string, number> = {
+    'January': 0, 'February': 1, 'March': 2, 'April': 3, 'May': 4, 'June': 5,
+    'July': 6, 'August': 7, 'September': 8, 'October': 9, 'November': 10, 'December': 11,
+    'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'Jun': 5,
+    'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11,
+  };
+
+  const month = months[monthStr];
+  if (month === undefined) return null;
+  return new Date(year, month, 1);
+}
+
+function isDataStale(quarterStr: string, maxMonths: number = 6): boolean {
+  const quarterDate = parseQuarterDate(quarterStr);
+  if (!quarterDate) return true;
+
+  const now = new Date();
+  const monthsAgo = (now.getFullYear() - quarterDate.getFullYear()) * 12 + (now.getMonth() - quarterDate.getMonth());
+  return monthsAgo > maxMonths;
 }
 
 // ══════════════════════════════════════════════
@@ -398,6 +442,11 @@ function EarningsCardComponent({ card }: { card: EarningsScanCard }) {
   const tagColor = card.universeTag === 'portfolio' ? '#10B981' : card.universeTag === 'both' ? '#8B5CF6' : ACCENT;
   const tagLabel = card.universeTag === 'portfolio' ? 'PORTFOLIO' : card.universeTag === 'both' ? 'BOTH' : 'WATCHLIST';
 
+  // Check if data is stale (>6 months old) and cap score at 40 if >4 quarters old
+  const staleData = isDataStale(card.period, 6);
+  const veryOldData = isDataStale(card.period, 120); // >10 years old
+  const displayScore = staleData && veryOldData ? Math.min(40, card.totalScore) : card.totalScore;
+
   // DATA_MISSING: show a minimal card with failure reasons
   if (card.dataStatus === 'MISSING') {
     return (
@@ -439,7 +488,7 @@ function EarningsCardComponent({ card }: { card: EarningsScanCard }) {
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '16px', fontWeight: 700, color: TEXT }}>{card.symbol}</span>
-            <GradeBadge grade={card.grade} color={card.gradeColor} score={card.totalScore} />
+            <GradeBadge grade={card.grade} color={card.gradeColor} score={displayScore} />
             <span style={{
               fontSize: '8px', padding: '2px 6px', borderRadius: '3px',
               backgroundColor: `${tagColor}20`, border: `1px solid ${tagColor}50`,
@@ -450,6 +499,7 @@ function EarningsCardComponent({ card }: { card: EarningsScanCard }) {
             )}
             <DataQualityDot quality={card.dataQuality} />
             <SourceBadge source={card.source} confidence={card.sourceConfidence} />
+            <StaleBadge quarterStr={card.period} />
           </div>
           <div style={{ fontSize: '12px', color: TEXT_DIM, marginBottom: '4px' }}>{card.company}</div>
           <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>

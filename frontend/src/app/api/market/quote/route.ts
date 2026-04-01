@@ -21,7 +21,8 @@ export async function GET(request: Request) {
     'LUMAXTECH': 'LUMAXTECH',
     'ATLANTAELE': 'ATLASCYCLE',   // Verify
     'GVT&D': 'GVTD',
-    'SAVERA': 'SAVERAIND',
+    'SAVERA': 'SAVERAHOTL',
+    'DYNACONS': 'DYNACONS',
   };
 
   const symbols = symbolsParam

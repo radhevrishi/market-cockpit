@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Plus, Trash2, TrendingUp, TrendingDown, RefreshCw, Download, ArrowUpDown, Edit3, Check, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import TickerSearch, { type TickerSuggestion } from '@/components/TickerSearch';
+import { normalizeTicker } from '@/lib/tickers';
 
 /* ── Types ──────────────────────────────────────────────────────────── */
 
@@ -100,7 +101,9 @@ const fetchIndividualQuotes = async (symbols: string[]): Promise<StockQuote[]> =
     const results: StockQuote[] = [];
     for (let i = 0; i < symbols.length; i += 20) {
       const batch = symbols.slice(i, i + 20);
-      const res = await fetch(`/api/market/quote?symbols=${batch.join(',')}`);
+      // Normalize tickers and URL-encode them to handle special chars like &
+      const normalizedBatch = batch.map(s => encodeURIComponent(normalizeTicker(s)));
+      const res = await fetch(`/api/market/quote?symbols=${normalizedBatch.join(',')}`);
       if (!res.ok) continue;
       const data = await res.json();
       results.push(...(data.stocks || []).map((s: any) => ({
@@ -127,8 +130,9 @@ function PortfolioSummary({ rows }: { rows: PortfolioRow[] }) {
   const totalPnl = totalCurrent - totalInvested;
   const totalPnlPct = totalInvested > 0 ? (totalPnl / totalInvested) * 100 : 0;
   const dayPnl = rows.reduce((s, r) => s + r.dayPnl, 0);
-  const gainers = rows.filter(r => r.pnl > 0).length;
-  const losers = rows.filter(r => r.pnl < 0).length;
+  const gainers = rows.filter(r => r.cmp > 0 && r.pnl > 0).length;
+  const losers = rows.filter(r => r.cmp > 0 && r.pnl < 0).length;
+  const noData = rows.filter(r => r.cmp === 0).length;
 
   const best = rows.length > 0 ? rows.reduce((a, b) => a.pnlPercent > b.pnlPercent ? a : b) : null;
   const worst = rows.length > 0 ? rows.reduce((a, b) => a.pnlPercent < b.pnlPercent ? a : b) : null;
@@ -138,7 +142,7 @@ function PortfolioSummary({ rows }: { rows: PortfolioRow[] }) {
     { label: 'CURRENT VALUE', value: fmt(totalCurrent), color: '#F5F7FA' },
     { label: 'TOTAL P&L', value: `${fmt(Math.abs(totalPnl))} (${fmtPct(totalPnlPct)})`, color: totalPnl >= 0 ? '#10B981' : '#EF4444' },
     { label: 'DAY P&L', value: fmt(Math.abs(dayPnl)), color: dayPnl >= 0 ? '#10B981' : '#EF4444' },
-    { label: 'HOLDINGS', value: `${rows.length}`, sub: `${gainers} ↑  ${losers} ↓`, color: '#F5F7FA' },
+    { label: 'HOLDINGS', value: `${rows.length}`, sub: `${gainers} ↑  ${losers} ↓${noData > 0 ? `  ${noData} N/A` : ''}`, color: '#F5F7FA' },
     ...(best ? [{ label: 'BEST PERFORMER', value: best.symbol, sub: fmtPct(best.pnlPercent), color: '#10B981' }] : []),
     ...(worst ? [{ label: 'WORST PERFORMER', value: worst.symbol, sub: fmtPct(worst.pnlPercent), color: '#EF4444' }] : []),
   ];
@@ -602,7 +606,11 @@ export default function PortfolioPage() {
                       <td style={{ padding: '10px 12px', color: '#F5F7FA', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</td>
                       <td style={{ padding: '10px 12px', color: '#8BA3C1', fontSize: '11px', maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.sector}</td>
                       <td style={{ padding: '10px 12px', textAlign: 'right', color: '#F5F7FA', fontVariantNumeric: 'tabular-nums' }}>
-                        {r.cmp > 0 ? `₹${r.cmp.toFixed(2)}` : '—'}
+                        {r.cmp > 0 ? `₹${r.cmp.toFixed(2)}` : (
+                          <span style={{ display: 'inline-block', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '600', backgroundColor: 'rgba(251,191,36,0.1)', color: '#FBBF24' }}>
+                            N/A
+                          </span>
+                        )}
                       </td>
                       <td style={{ padding: '10px 12px', textAlign: 'right', color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>
                         <EditableCell value={r.entryPrice} onSave={v => handleUpdateField(r.symbol, 'entryPrice', v)} />

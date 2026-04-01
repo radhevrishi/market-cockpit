@@ -626,16 +626,18 @@ async function ingestFromEarningsScan(): Promise<{
 
           if (yoyQuarter && yoyQuarter.revenue > 0) {
             revenueGrowth = Math.round(((latest.revenue - yoyQuarter.revenue) / yoyQuarter.revenue) * 100 * 10) / 10;
-            if (Math.abs(revenueGrowth) > 200) revenueGrowth = Math.sign(revenueGrowth) * 200;
           }
           if (yoyQuarter && Math.abs(yoyQuarter.pat) > 0.1) {
             profitGrowth = Math.round(((latest.pat - yoyQuarter.pat) / Math.abs(yoyQuarter.pat)) * 100 * 10) / 10;
-            if (Math.abs(profitGrowth) > 200) profitGrowth = Math.sign(profitGrowth) * 200;
           }
 
           let marginChange: number | null = null;
           if (previous && latest.opm > 0 && previous.opm > 0) {
             marginChange = Math.round((latest.opm - previous.opm) * 100);
+            // Cap margin change display at 5000 bps (50%) to catch data anomalies
+            if (Math.abs(marginChange) > 5000) {
+              marginChange = marginChange > 0 ? 5000 : -5000;
+            }
           }
 
           let resultScore = 50;

@@ -698,3 +698,30 @@ export const NIFTY50_SECTORS: Record<string, string> = {
   'ATLANTAELE': 'Capital Goods',
   'SJSENTERPR': 'Auto', 'LUMAXTECH': 'Auto',
 };
+
+// ======= PRICE SANITY CHECKS =======
+
+// Known penny stocks that legitimately trade below ₹1
+const KNOWN_PENNY_STOCKS = new Set([
+  'RELCAPITAL', 'ORIENTEXP', 'LLOYDSINSUR', 'TATAGLOBAL',
+  // Add more if discovered
+]);
+
+/**
+ * Check if a stock price is suspect (possibly incorrect or stale)
+ * Returns true if price appears to be invalid or unreliable
+ */
+export function isPriceSuspect(symbol: string, price: number, prevClose?: number): boolean {
+  // Price is zero or negative
+  if (price <= 0) return true;
+
+  // Price < ₹1 but not a known penny stock
+  if (price < 1 && !KNOWN_PENNY_STOCKS.has(symbol)) return true;
+
+  // Price differs wildly from previous close (>50% jump)
+  if (prevClose && prevClose > 10 && Math.abs(price - prevClose) / prevClose > 0.5) {
+    return true;
+  }
+
+  return false;
+}

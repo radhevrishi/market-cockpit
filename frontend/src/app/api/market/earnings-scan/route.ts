@@ -1224,6 +1224,18 @@ function parseGuidanceSentiment(html: string): GuidanceData | null {
     demandSignal = 'Moderate';
   }
 
+  // Post-process to remove contradictory debt tags
+  let positivePhrases = keyPhrasesPositive.slice(0, 5);
+  let negativePhrases = keyPhrasesNegative.slice(0, 5);
+
+  const hasFreeOrLow = positivePhrases.some(p => /debt.?free|low.*debt|deleveraging/i.test(p));
+  const hasHighDebt = negativePhrases.some(p => /high.*debt|rising.*debt|overleveraged/i.test(p));
+
+  if (hasFreeOrLow && hasHighDebt) {
+    // Remove high debt from negative phrases (keep debt free signal)
+    negativePhrases = negativePhrases.filter(p => !/high.*debt|rising.*debt|overleveraged/i.test(p));
+  }
+
   return {
     guidance,
     sentimentScore: parseFloat(sentimentScore.toFixed(3)),
@@ -1231,8 +1243,8 @@ function parseGuidanceSentiment(html: string): GuidanceData | null {
     marginOutlook,
     capexSignal,
     demandSignal,
-    keyPhrasesPositive: keyPhrasesPositive.slice(0, 5),
-    keyPhrasesNegative: keyPhrasesNegative.slice(0, 5),
+    keyPhrasesPositive: positivePhrases,
+    keyPhrasesNegative: negativePhrases,
     prosText: prosText.slice(0, 500),  // Cap to avoid huge storage
     consText: consText.slice(0, 500),
     divergence: 'None',  // Set by caller after checking earnings performance
@@ -1259,13 +1271,40 @@ function detectDivergence(
 
 function pctChange(current: number, previous: number): number | null {
   if (previous === 0) {
-    if (current > 0) return 200; // Cap at 200%
-    if (current < 0) return -200;
+    if (current > 0) return 999.9;  // Signal "from zero base"
+    if (current < 0) return -999.9;
     return null;
   }
   const pct = ((current - previous) / Math.abs(previous)) * 100;
-  // Cap extreme values at ±200% to prevent data contamination from outliers
-  return parseFloat(Math.max(-200, Math.min(200, pct)).toFixed(1));
+  return parseFloat(pct.toFixed(1));
+}
+
+/** Check if two quarters are exactly 3 months apart (consecutive quarters) */
+function areConsecutiveQuarters(period1: string, period2: string): boolean {
+  // periods should be like "Dec 2025", "Sep 2025"
+  const months: Record<string, number> = {
+    'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+    'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12,
+  };
+
+  const parts1 = period1.trim().split(/\s+/);
+  const parts2 = period2.trim().split(/\s+/);
+
+  if (parts1.length < 2 || parts2.length < 2) return false;
+
+  const month1 = months[parts1[0]];
+  const year1 = parseInt(parts1[parts1.length - 1]);
+  const month2 = months[parts2[0]];
+  const year2 = parseInt(parts2[parts2.length - 1]);
+
+  if (!month1 || !month2 || isNaN(year1) || isNaN(year2)) return false;
+
+  // Convert to absolute month count
+  const absoluteMonth1 = year1 * 12 + month1;
+  const absoluteMonth2 = year2 * 12 + month2;
+
+  // Consecutive quarters are 3 months apart
+  return Math.abs(absoluteMonth1 - absoluteMonth2) === 3;
 }
 
 // ── Scoring Engine ──────────────────────────
@@ -1750,13 +1789,14 @@ function buildCardFromData(data: ScreenerData, guidanceData?: GuidanceData | nul
 
   // Compute YoY and QoQ
   const revenueYoY = yoyQ ? pctChange(latest.revenue, yoyQ.revenue) : null;
-  const revenueQoQ = prevQ ? pctChange(latest.revenue, prevQ.revenue) : null;
+  // Only compute QoQ if quarters are consecutive (exactly 3 months apart)
+  const revenueQoQ = prevQ && areConsecutiveQuarters(latest.period, prevQ.period) ? pctChange(latest.revenue, prevQ.revenue) : null;
   const opProfitYoY = yoyQ ? pctChange(latest.operatingProfit, yoyQ.operatingProfit) : null;
-  const opProfitQoQ = prevQ ? pctChange(latest.operatingProfit, prevQ.operatingProfit) : null;
+  const opProfitQoQ = prevQ && areConsecutiveQuarters(latest.period, prevQ.period) ? pctChange(latest.operatingProfit, prevQ.operatingProfit) : null;
   const patYoY = yoyQ ? pctChange(latest.pat, yoyQ.pat) : null;
-  const patQoQ = prevQ ? pctChange(latest.pat, prevQ.pat) : null;
+  const patQoQ = prevQ && areConsecutiveQuarters(latest.period, prevQ.period) ? pctChange(latest.pat, prevQ.pat) : null;
   const epsYoY = yoyQ ? pctChange(latest.eps, yoyQ.eps) : null;
-  const epsQoQ = prevQ ? pctChange(latest.eps, prevQ.eps) : null;
+  const epsQoQ = prevQ && areConsecutiveQuarters(latest.period, prevQ.period) ? pctChange(latest.eps, prevQ.eps) : null;
 
   // Data quality
   const hasRevenue = latest.revenue > 0;
@@ -1801,6 +1841,8 @@ function buildCardFromData(data: ScreenerData, guidanceData?: GuidanceData | nul
   if (yoyQ && !displayQuarters.find(q => q.period === yoyQ.period)) {
     displayQuarters.push(yoyQ); // Add year-ago if not already in display
   }
+  // Sort chronologically for display (oldest → newest, left to right)
+  displayQuarters.sort((a, b) => periodToNum(a.period) - periodToNum(b.period));
 
   return {
     symbol: data.symbol,

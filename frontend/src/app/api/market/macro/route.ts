@@ -141,11 +141,21 @@ export async function GET() {
     const mapYfData = (items: typeof MACRO_CURRENCIES) =>
       items.map(item => {
         const q = yfQuotes.find((quote: any) => quote.symbol === item.symbol);
+        let changePercent = q?.regularMarketChangePercent || 0;
+
+        // Fallback calculation if Yahoo Finance doesn't provide changePercent
+        if (!changePercent && q?.regularMarketChange !== undefined && q?.regularMarketPrice) {
+          const change = q.regularMarketChange;
+          const value = q.regularMarketPrice;
+          changePercent = change !== 0 && value !== 0 ? (change / (value - change)) * 100 : 0;
+          changePercent = Math.round(changePercent * 100) / 100; // Round to 2 decimal places
+        }
+
         return {
           ...item,
           value: q?.regularMarketPrice || 0,
           change: q?.regularMarketChange || 0,
-          changePercent: q?.regularMarketChangePercent || 0,
+          changePercent,
           previousClose: q?.regularMarketPreviousClose || 0,
         };
       }).filter(i => i.value > 0);

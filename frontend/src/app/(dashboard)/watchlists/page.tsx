@@ -1,9 +1,11 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Plus, Trash2, TrendingUp, TrendingDown, RefreshCw, Download, ArrowUpDown } from 'lucide-react';
+import { Plus, Trash2, TrendingUp, TrendingDown, RefreshCw, Download, ArrowUpDown, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import TickerSearch, { type TickerSuggestion } from '@/components/TickerSearch';
+import { normalizeTicker } from '@/lib/tickers';
+import { isPriceSuspect } from '@/lib/nse';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -93,7 +95,9 @@ const fetchIndividualQuotes = async (symbols: string[]): Promise<StockQuote[]> =
     const results: StockQuote[] = [];
     for (let i = 0; i < symbols.length; i += 20) {
       const batch = symbols.slice(i, i + 20);
-      const res = await fetch(`/api/market/quote?symbols=${batch.join(',')}`);
+      // Normalize tickers and URL-encode them to handle special chars like &
+      const normalizedBatch = batch.map(s => encodeURIComponent(normalizeTicker(s)));
+      const res = await fetch(`/api/market/quote?symbols=${normalizedBatch.join(',')}`);
       if (!res.ok) continue;
       const data = await res.json();
       results.push(...(data.stocks || []).map((stock: any) => ({
@@ -261,7 +265,14 @@ function WatchlistTable({
                 </td>
                 <td style={{ padding: '12px 16px', color: '#8BA3C1', fontSize: '12px' }}>{item.sector}</td>
                 <td style={{ padding: '12px 16px', textAlign: 'right', color: '#F5F7FA', fontVariantNumeric: 'tabular-nums' }}>
-                  ₹{item.price.toFixed(2)}
+                  {isPriceSuspect(item.ticker, item.price) ? (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#FBBF24' }} title="Suspect price - may be incorrect or stale">
+                      <AlertTriangle style={{ width: '12px', height: '12px' }} />
+                      ₹{item.price.toFixed(2)}
+                    </span>
+                  ) : (
+                    `₹${item.price.toFixed(2)}`
+                  )}
                 </td>
                 <td style={{ padding: '12px 16px', textAlign: 'right' }}>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 8px', borderRadius: '6px', backgroundColor: isPositive ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)', color: isPositive ? '#10B981' : '#EF4444', fontWeight: '600', fontVariantNumeric: 'tabular-nums', fontSize: '12px' }}>

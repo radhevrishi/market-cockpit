@@ -68,7 +68,8 @@ const TICKER_ALIASES: Record<string, string> = {
   'SJS': 'SJSENTERPR',
   'S&SPOWER': 'SNSPWR',
   'GVT&D': 'GVTD',
-  'SAVERA': 'SAVERAIND',
+  'SAVERA': 'SAVERAHOTL',
+  'DYNACONS': 'DYNACONS',  // Verify this is correct NSE ticker
 };
 
 /**

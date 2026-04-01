@@ -88,35 +88,26 @@ export default function ScreenerPage() {
   const fetchEarningsData = useCallback(async () => {
     setLoading(true);
     setError(null);
+
+    // 15-second timeout for earnings data
+    const timeoutPromise = new Promise<void>((_, reject) =>
+      setTimeout(() => reject(new Error('Could not load earnings data. Try refreshing.')), 15000)
+    );
+
     try {
-      // Fetch current month first — only use previous month as fallback if no results
-      const now = new Date();
-      const monthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const fetchPromise = (async () => {
+        // Fetch current month first — only use previous month as fallback if no results
+        const now = new Date();
+        const monthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
-      const currentRes = await fetch(`/api/market/earnings?month=${monthStr}`).then(r => r.ok ? r.json() : null).catch(() => null);
+        const currentRes = await fetch(`/api/market/earnings?month=${monthStr}`).then(r => r.ok ? r.json() : null).catch(() => null);
 
-      let allResults: any[] = [];
-      const seen = new Set<string>();
+        let allResults: any[] = [];
+        const seen = new Set<string>();
 
-      // Add current month results
-      if (currentRes) {
-        const items = currentRes.results || currentRes.earnings || [];
-        for (const r of items) {
-          const sym = r.ticker || r.symbol || '';
-          if (sym && !seen.has(sym)) {
-            seen.add(sym);
-            allResults.push(r);
-          }
-        }
-      }
-
-      // Only fetch previous month if current month has very few results
-      if (allResults.length < 5) {
-        const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        const prevMonthStr = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`;
-        const prevRes = await fetch(`/api/market/earnings?month=${prevMonthStr}`).then(r => r.ok ? r.json() : null).catch(() => null);
-        if (prevRes) {
-          const items = prevRes.results || prevRes.earnings || [];
+        // Add current month results
+        if (currentRes) {
+          const items = currentRes.results || currentRes.earnings || [];
           for (const r of items) {
             const sym = r.ticker || r.symbol || '';
             if (sym && !seen.has(sym)) {
@@ -125,33 +116,52 @@ export default function ScreenerPage() {
             }
           }
         }
-      }
 
-      // Sort by filing date descending (most recent first)
-      allResults.sort((a, b) => {
-        const dateA = a.resultDate || a.filingDate || a.timing || '';
-        const dateB = b.resultDate || b.filingDate || b.timing || '';
-        return dateB.localeCompare(dateA);
-      });
+        // Only fetch previous month if current month has very few results
+        if (allResults.length < 5) {
+          const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+          const prevMonthStr = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`;
+          const prevRes = await fetch(`/api/market/earnings?month=${prevMonthStr}`).then(r => r.ok ? r.json() : null).catch(() => null);
+          if (prevRes) {
+            const items = prevRes.results || prevRes.earnings || [];
+            for (const r of items) {
+              const sym = r.ticker || r.symbol || '';
+              if (sym && !seen.has(sym)) {
+                seen.add(sym);
+                allResults.push(r);
+              }
+            }
+          }
+        }
 
-      const mapped: EarningsData = {
-        earnings: allResults.map((r: any) => ({
-          symbol: r.ticker || r.symbol || '',
-          company: r.company || r.companyName || r.symbol || '',
-          quality: r.quality || r.rating || '-',
-          quarter: r.quarter || r.period || '-',
-          sector: r.sector || 'Other',
-          marketCap: r.marketCap || r.cap || '-',
-          edp: r.edp || r.eps || null,
-          timing: r.timing || r.resultDate || '-',
-          price: r.cmp || r.currentPrice || r.price || 0,
-          movePercent: r.priceMove || r.movePercent || r.priceChange || 0,
-        })),
-        source: currentRes?.source || 'NSE',
-        updatedAt: currentRes?.updatedAt || new Date().toISOString(),
-      };
-      setEarningsData(mapped);
-      setCurrentPage(1);
+        // Sort by filing date descending (most recent first)
+        allResults.sort((a, b) => {
+          const dateA = a.resultDate || a.filingDate || a.timing || '';
+          const dateB = b.resultDate || b.filingDate || b.timing || '';
+          return dateB.localeCompare(dateA);
+        });
+
+        const mapped: EarningsData = {
+          earnings: allResults.map((r: any) => ({
+            symbol: r.ticker || r.symbol || '',
+            company: r.company || r.companyName || r.symbol || '',
+            quality: r.quality || r.rating || '-',
+            quarter: r.quarter || r.period || '-',
+            sector: r.sector || 'Other',
+            marketCap: r.marketCap || r.cap || '-',
+            edp: r.edp || r.eps || null,
+            timing: r.timing || r.resultDate || '-',
+            price: r.cmp || r.currentPrice || r.price || 0,
+            movePercent: r.priceMove || r.movePercent || r.priceChange || 0,
+          })),
+          source: currentRes?.source || 'NSE',
+          updatedAt: currentRes?.updatedAt || new Date().toISOString(),
+        };
+        setEarningsData(mapped);
+        setCurrentPage(1);
+      })();
+
+      await Promise.race([fetchPromise, timeoutPromise]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
