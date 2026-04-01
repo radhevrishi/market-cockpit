@@ -5,20 +5,12 @@
       "schedule": "35 4 * * 1-5"
     },
     {
-      "path": "/api/bot/movers-alert?secret=mc-bot-2026&mode=full",
-      "schedule": "35 9 * * 1-5"
-    },
-    {
       "path": "/api/bot/watchlist-alert?secret=mc-bot-2026&mode=full",
       "schedule": "50 4 * * 1-5"
     },
     {
-      "path": "/api/bot/watchlist-alert?secret=mc-bot-2026&mode=full",
-      "schedule": "50 9 * * 1-5"
-    },
-    {
       "path": "/api/market/intelligence/compute",
-      "schedule": "0 4,9,14 * * 1-5"
+      "schedule": "0 4 * * 1-5"
     },
     {
       "path": "/api/market/earnings-guidance/ingest",
