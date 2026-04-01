@@ -52,6 +52,7 @@ interface Signal {
   impactConfidence: 'HIGH' | 'MEDIUM' | 'LOW';
   confidenceScore?: number;        // 90=ACTUAL / 70=INFERRED / 50=HEURISTIC
   confidenceType?: 'ACTUAL' | 'INFERRED' | 'HEURISTIC';
+  dataConfidence?: 'VERIFIED' | 'ESTIMATED' | 'LOW';  // Data quality indicator
   action: ActionFlag;
   score: number;
   timeWeight: number;
@@ -66,6 +67,7 @@ interface Signal {
   dataSource?: string;             // 'NSE' | 'Moneycontrol' | 'Google News' | 'Block Deal' | 'Bulk Deal'
   signalStackCount?: number;
   signalStackLevel?: 'STRONG' | 'BUILDING' | 'WEAK';
+  portfolioImpactScore?: number;   // Score for portfolio impact ranking
 }
 
 interface CompanyTrend {
@@ -318,7 +320,7 @@ export default function CompanyIntelligencePage() {
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {[3, 7, 14, 30].map(d => (
+          {[3, 7, 14, 30, 90].map(d => (
             <button key={d} onClick={() => setDaysFilter(d)} style={{
               padding: '4px 10px', borderRadius: '5px', fontSize: '12px', fontWeight: 600, cursor: 'pointer',
               border: `1px solid ${daysFilter === d ? ACCENT : BORDER}`,
@@ -563,6 +565,14 @@ export default function CompanyIntelligencePage() {
                       {s.confidenceType === 'ACTUAL' ? '✓ ACTUAL' : s.confidenceType === 'INFERRED' ? '~ INFERRED' : '? HEURISTIC'}
                     </span>
                   )}
+                  {s.dataConfidence && (
+                    <span style={{
+                      fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '3px', marginLeft: '4px',
+                      color: s.dataConfidence === 'VERIFIED' ? GREEN : s.dataConfidence === 'ESTIMATED' ? YELLOW : TEXT3,
+                    }}>
+                      {s.dataConfidence}
+                    </span>
+                  )}
                 </div>
 
                 {/* Row 3: WHY IT MATTERS — the institutional insight */}
@@ -638,19 +648,62 @@ export default function CompanyIntelligencePage() {
       {/* ── ALL SIGNALS ── */}
       {filteredSignals.length > 0 && (
         <div>
+          {/* Portfolio Critical Events */}
+          {filteredSignals.filter(s => s.isPortfolio).length > 0 && (
+            <div style={{ marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', paddingLeft: '4px' }}>
+                <span style={{ fontSize: '14px', fontWeight: 700, color: ORANGE, letterSpacing: '1px' }}>🔥 PORTFOLIO CRITICAL EVENTS</span>
+                <span style={{ fontSize: '11px', color: TEXT3 }}>Sorted by impact × position</span>
+              </div>
+              {filteredSignals
+                .filter(s => s.isPortfolio)
+                .sort((a, b) => (b.portfolioImpactScore || b.weightedScore) - (a.portfolioImpactScore || a.weightedScore))
+                .slice(0, 5)
+                .map((signal, idx) => (
+                  <div key={`pf-${signal.symbol}-${idx}`} style={{
+                    background: 'linear-gradient(135deg, #1a1a2e 0%, #0D1623 100%)',
+                    border: `1px solid ${ORANGE}33`,
+                    borderRadius: '8px', padding: '10px 14px', marginBottom: '6px',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontWeight: 700, color: TEXT1, fontSize: '13px' }}>{signal.symbol}</span>
+                        <span style={{ fontSize: '10px', color: ORANGE, fontWeight: 600, padding: '1px 6px', background: `${ORANGE}22`, borderRadius: '4px' }}>PF</span>
+                        <span style={{ fontSize: '11px', color: signal.sentiment === 'Bullish' ? GREEN : signal.sentiment === 'Bearish' ? RED : TEXT2 }}>{signal.eventType}</span>
+                      </div>
+                      <div style={{ fontSize: '11px', color: TEXT2, marginTop: '2px' }}>{signal.headline.slice(0, 100)}</div>
+                    </div>
+                    <div style={{ textAlign: 'right', minWidth: '80px' }}>
+                      <div style={{ fontSize: '13px', fontWeight: 700, color: signal.isNegative ? RED : GREEN }}>{signal.valueCr >= 1000 ? `₹${(signal.valueCr/1000).toFixed(1)}K Cr` : `₹${Math.round(signal.valueCr)} Cr`}</div>
+                      <div style={{ fontSize: '10px', color: TEXT3 }}>Score: {signal.weightedScore}</div>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
+
           <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '1.5px' }}>
             {typeFilter === 'ALL' ? 'ALL SIGNALS' : typeFilter.replace('_', ' ')} ({filteredSignals.length})
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            {filteredSignals.map((s, i) => (
-              <div key={`sig-${i}`} style={{
-                backgroundColor: CARD,
-                border: `1px solid ${s.isNegative ? `${RED}30` : s.isPortfolio ? `${PURPLE}40` : s.isWatchlist ? `${ACCENT}30` : BORDER}`,
-                borderRadius: '8px',
-                padding: '12px 16px',
-              }}>
-                {/* Row 1: Core info */}
+            {/* High Conviction Signals */}
+            {filteredSignals.filter(s => s.weightedScore > 70).length > 0 && (
+              <>
+                <div style={{ fontSize: '10px', fontWeight: 700, color: GREEN, marginTop: '8px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  {'✓ HIGH CONVICTION (Score > 70)'}
+                </div>
+                {filteredSignals
+                  .filter(s => s.weightedScore > 70)
+                  .map((s, i) => (
+                    <div key={`sig-hc-${i}`} style={{
+                      backgroundColor: CARD,
+                      border: `1px solid ${s.isNegative ? `${RED}30` : s.isPortfolio ? `${PURPLE}40` : s.isWatchlist ? `${ACCENT}30` : BORDER}`,
+                      borderRadius: '8px',
+                      padding: '12px 16px',
+                    }}>
+                      {/* Row 1: Core info */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                   <span style={{ fontSize: '12px' }}>{eventTypeIcon(s.eventType)}</span>
                   <span style={{ fontSize: '14px', fontWeight: 700, color: '#3B82F6', minWidth: '80px' }}>{s.symbol}</span>
@@ -756,6 +809,14 @@ export default function CompanyIntelligencePage() {
                       {s.confidenceType === 'ACTUAL' ? '✓' : s.confidenceType === 'INFERRED' ? '~' : '?'}
                     </span>
                   )}
+                  {s.dataConfidence && (
+                    <span style={{
+                      fontSize: '8px', fontWeight: 600, padding: '1px 4px', borderRadius: '3px',
+                      color: s.dataConfidence === 'VERIFIED' ? GREEN : s.dataConfidence === 'ESTIMATED' ? YELLOW : TEXT3,
+                    }}>
+                      {s.dataConfidence}
+                    </span>
+                  )}
                   {s.dataSource && (
                     <span style={{ fontSize: '8px', color: TEXT3, padding: '1px 4px', borderRadius: '3px', backgroundColor: 'rgba(100,116,139,0.08)' }}>
                       {s.dataSource}
@@ -771,7 +832,279 @@ export default function CompanyIntelligencePage() {
                   </span>
                 </div>
               </div>
-            ))}
+                    ))}
+              </>
+            )}
+
+            {/* Emerging Signals */}
+            {filteredSignals.filter(s => s.weightedScore >= 40 && s.weightedScore <= 70).length > 0 && (
+              <>
+                <div style={{ fontSize: '10px', fontWeight: 700, color: YELLOW, marginTop: '8px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  {'→ EMERGING SIGNALS (Score 40-70)'}
+                </div>
+                {filteredSignals
+                  .filter(s => s.weightedScore >= 40 && s.weightedScore <= 70)
+                  .map((s, i) => (
+                    <div key={`sig-em-${i}`} style={{
+                      backgroundColor: CARD,
+                      border: `1px solid ${s.isNegative ? `${RED}30` : s.isPortfolio ? `${PURPLE}40` : s.isWatchlist ? `${ACCENT}30` : BORDER}`,
+                      borderRadius: '8px',
+                      padding: '12px 16px',
+                    }}>
+                      {/* Row 1: Core info */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '12px' }}>{eventTypeIcon(s.eventType)}</span>
+                        <span style={{ fontSize: '14px', fontWeight: 700, color: '#3B82F6', minWidth: '80px' }}>{s.symbol}</span>
+                        {(s.isWatchlist || s.isPortfolio) && (
+                          <button onClick={(e) => { e.stopPropagation(); toggleFlag(s.symbol); }} style={{
+                            fontSize: '10px', cursor: 'pointer', padding: '0 2px', border: 'none', background: 'none',
+                            opacity: watchlistFlags[s.symbol] ? 1 : 0.3,
+                          }} title={`Flag: ${watchlistFlags[s.symbol] || 'None'} (click to cycle)`}>
+                            {watchlistFlags[s.symbol] ? flagEmoji[watchlistFlags[s.symbol]] : '⚪'}
+                          </button>
+                        )}
+                        {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600 }}>PF</span>}
+                        {s.isWatchlist && !s.isPortfolio && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600 }}>WL</span>}
+                        {s.isNegative && <span style={{ fontSize: '9px', color: RED, fontWeight: 700 }}>⚠</span>}
+                        {s.lastPrice && addedPrices[s.symbol] && addedPrices[s.symbol] > 0 && (() => {
+                          const pctChange = ((s.lastPrice! - addedPrices[s.symbol]) / addedPrices[s.symbol]) * 100;
+                          return (
+                            <span style={{
+                              fontSize: '10px', fontWeight: 700,
+                              color: pctChange >= 0 ? GREEN : RED,
+                              padding: '1px 4px', borderRadius: '3px',
+                              backgroundColor: pctChange >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+                            }}>
+                              {pctChange >= 0 ? '+' : ''}{pctChange.toFixed(1)}%
+                            </span>
+                          );
+                        })()}
+                        <span style={{
+                          fontSize: '10px', fontWeight: 600, color: ACCENT,
+                          padding: '1px 6px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.1)',
+                        }}>{s.eventType}</span>
+                        <span style={{ fontSize: '12px', fontWeight: 700, color: CYAN }}>
+                          {fmtCr(s.valueCr)}{s.inferenceUsed ? '*' : ''}
+                        </span>
+                        <span style={{
+                          fontSize: '11px', fontWeight: 700,
+                          color: s.impactPct >= 8 ? GREEN : s.impactPct >= 3 ? YELLOW : TEXT2,
+                        }}>{s.impactPct.toFixed(1)}%</span>
+                        {s.pctMcap !== null && s.pctMcap > 0 && (
+                          <span style={{ fontSize: '11px', fontWeight: 700, color: CYAN }}>
+                            {s.pctMcap.toFixed(1)}% MCap
+                          </span>
+                        )}
+                        {s.buyerSeller && (
+                          <span style={{ fontSize: '11px', color: TEXT3 }}>{s.buyerSeller.slice(0, 30)}</span>
+                        )}
+                        {s.premiumDiscount !== null && (
+                          <span style={{ color: s.premiumDiscount >= 0 ? GREEN : RED, fontSize: '11px', fontWeight: 600 }}>
+                            {s.premiumDiscount > 0 ? '+' : ''}{s.premiumDiscount.toFixed(1)}%
+                          </span>
+                        )}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto' }}>
+                          <span style={{
+                            fontSize: '9px', fontWeight: 700, color: impactColor(s.impactLevel),
+                            padding: '1px 5px', borderRadius: '3px', backgroundColor: impactBg(s.impactLevel),
+                          }}>{s.impactLevel}</span>
+                          <span style={{
+                            fontWeight: 700, fontSize: '10px',
+                            color: actionColor(s.action),
+                            padding: '2px 6px', borderRadius: '4px',
+                            backgroundColor: actionBg(s.action),
+                          }}>{s.action}</span>
+                        </div>
+                      </div>
+                      {/* Row 2: Why It Matters */}
+                      <div style={{ fontSize: '11px', color: s.isNegative ? '#F87171' : '#6EE7B7', marginTop: '5px', lineHeight: 1.4, fontWeight: 500 }}>
+                        💡 {s.whyItMatters}
+                      </div>
+                      {/* Row 3: Headline */}
+                      <div style={{ fontSize: '11px', color: TEXT2, marginTop: '3px', lineHeight: 1.5, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any }}>
+                        {s.headline.length > 250 ? s.headline.slice(0, 250) + '...' : s.headline}
+                      </div>
+                      {/* Row 4: Meta tags */}
+                      <div style={{ display: 'flex', gap: '10px', marginTop: '4px', alignItems: 'center' }}>
+                        {s.client && <span style={{ fontSize: '10px', color: PURPLE }}>Client: {s.client}</span>}
+                        {s.segment && <span style={{ fontSize: '10px', color: ACCENT }}>{s.segment}</span>}
+                        {s.timeline && <span style={{ fontSize: '10px', color: ORANGE }}>{s.timeline}</span>}
+                        <span style={{ fontSize: '10px', color: sentimentColor(s.sentiment) }}>{s.sentiment}</span>
+                        {s.signalStackLevel && s.signalStackLevel !== 'WEAK' && (
+                          <span style={{ fontSize: '9px', color: s.signalStackLevel === 'STRONG' ? GREEN : YELLOW }}>
+                            ⚡{s.signalStackCount}
+                          </span>
+                        )}
+                        {s.confidenceType && (
+                          <span style={{
+                            fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
+                            backgroundColor: s.confidenceType === 'ACTUAL' ? 'rgba(16,185,129,0.15)' : s.confidenceType === 'INFERRED' ? 'rgba(251,191,36,0.15)' : 'rgba(100,116,139,0.12)',
+                            color: s.confidenceType === 'ACTUAL' ? GREEN : s.confidenceType === 'INFERRED' ? YELLOW : TEXT3,
+                          }}>
+                            {s.confidenceType === 'ACTUAL' ? '✓' : s.confidenceType === 'INFERRED' ? '~' : '?'}
+                          </span>
+                        )}
+                        {s.dataConfidence && (
+                          <span style={{
+                            fontSize: '8px', fontWeight: 600, padding: '1px 4px', borderRadius: '3px',
+                            color: s.dataConfidence === 'VERIFIED' ? GREEN : s.dataConfidence === 'ESTIMATED' ? YELLOW : TEXT3,
+                          }}>
+                            {s.dataConfidence}
+                          </span>
+                        )}
+                        {s.dataSource && (
+                          <span style={{ fontSize: '8px', color: TEXT3, padding: '1px 4px', borderRadius: '3px', backgroundColor: 'rgba(100,116,139,0.08)' }}>
+                            {s.dataSource}
+                          </span>
+                        )}
+                        {s.confidenceScore !== undefined && s.confidenceScore <= 50 && (
+                          <span style={{ fontSize: '8px', color: ORANGE, fontWeight: 600 }}>
+                            low conf.
+                          </span>
+                        )}
+                        <span style={{ fontSize: '10px', color: TEXT3, marginLeft: 'auto' }}>
+                          {fmtDate(s.date)} · {Math.round(s.timeWeight * 100)}%
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+              </>
+            )}
+
+            {/* Noise */}
+            {filteredSignals.filter(s => s.weightedScore < 40).length > 0 && (
+              <>
+                <div style={{ fontSize: '10px', fontWeight: 700, color: TEXT3, marginTop: '8px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  {'◇ NOISE (Score < 40)'}
+                </div>
+                {filteredSignals
+                  .filter(s => s.weightedScore < 40)
+                  .map((s, i) => (
+                    <div key={`sig-no-${i}`} style={{
+                      backgroundColor: CARD,
+                      border: `1px solid ${s.isNegative ? `${RED}30` : s.isPortfolio ? `${PURPLE}40` : s.isWatchlist ? `${ACCENT}30` : BORDER}`,
+                      borderRadius: '8px',
+                      padding: '12px 16px',
+                    }}>
+                      {/* Row 1: Core info */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '12px' }}>{eventTypeIcon(s.eventType)}</span>
+                        <span style={{ fontSize: '14px', fontWeight: 700, color: '#3B82F6', minWidth: '80px' }}>{s.symbol}</span>
+                        {(s.isWatchlist || s.isPortfolio) && (
+                          <button onClick={(e) => { e.stopPropagation(); toggleFlag(s.symbol); }} style={{
+                            fontSize: '10px', cursor: 'pointer', padding: '0 2px', border: 'none', background: 'none',
+                            opacity: watchlistFlags[s.symbol] ? 1 : 0.3,
+                          }} title={`Flag: ${watchlistFlags[s.symbol] || 'None'} (click to cycle)`}>
+                            {watchlistFlags[s.symbol] ? flagEmoji[watchlistFlags[s.symbol]] : '⚪'}
+                          </button>
+                        )}
+                        {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600 }}>PF</span>}
+                        {s.isWatchlist && !s.isPortfolio && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600 }}>WL</span>}
+                        {s.isNegative && <span style={{ fontSize: '9px', color: RED, fontWeight: 700 }}>⚠</span>}
+                        {s.lastPrice && addedPrices[s.symbol] && addedPrices[s.symbol] > 0 && (() => {
+                          const pctChange = ((s.lastPrice! - addedPrices[s.symbol]) / addedPrices[s.symbol]) * 100;
+                          return (
+                            <span style={{
+                              fontSize: '10px', fontWeight: 700,
+                              color: pctChange >= 0 ? GREEN : RED,
+                              padding: '1px 4px', borderRadius: '3px',
+                              backgroundColor: pctChange >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+                            }}>
+                              {pctChange >= 0 ? '+' : ''}{pctChange.toFixed(1)}%
+                            </span>
+                          );
+                        })()}
+                        <span style={{
+                          fontSize: '10px', fontWeight: 600, color: ACCENT,
+                          padding: '1px 6px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.1)',
+                        }}>{s.eventType}</span>
+                        <span style={{ fontSize: '12px', fontWeight: 700, color: CYAN }}>
+                          {fmtCr(s.valueCr)}{s.inferenceUsed ? '*' : ''}
+                        </span>
+                        <span style={{
+                          fontSize: '11px', fontWeight: 700,
+                          color: s.impactPct >= 8 ? GREEN : s.impactPct >= 3 ? YELLOW : TEXT2,
+                        }}>{s.impactPct.toFixed(1)}%</span>
+                        {s.pctMcap !== null && s.pctMcap > 0 && (
+                          <span style={{ fontSize: '11px', fontWeight: 700, color: CYAN }}>
+                            {s.pctMcap.toFixed(1)}% MCap
+                          </span>
+                        )}
+                        {s.buyerSeller && (
+                          <span style={{ fontSize: '11px', color: TEXT3 }}>{s.buyerSeller.slice(0, 30)}</span>
+                        )}
+                        {s.premiumDiscount !== null && (
+                          <span style={{ color: s.premiumDiscount >= 0 ? GREEN : RED, fontSize: '11px', fontWeight: 600 }}>
+                            {s.premiumDiscount > 0 ? '+' : ''}{s.premiumDiscount.toFixed(1)}%
+                          </span>
+                        )}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto' }}>
+                          <span style={{
+                            fontSize: '9px', fontWeight: 700, color: impactColor(s.impactLevel),
+                            padding: '1px 5px', borderRadius: '3px', backgroundColor: impactBg(s.impactLevel),
+                          }}>{s.impactLevel}</span>
+                          <span style={{
+                            fontWeight: 700, fontSize: '10px',
+                            color: actionColor(s.action),
+                            padding: '2px 6px', borderRadius: '4px',
+                            backgroundColor: actionBg(s.action),
+                          }}>{s.action}</span>
+                        </div>
+                      </div>
+                      {/* Row 2: Why It Matters */}
+                      <div style={{ fontSize: '11px', color: s.isNegative ? '#F87171' : '#6EE7B7', marginTop: '5px', lineHeight: 1.4, fontWeight: 500 }}>
+                        💡 {s.whyItMatters}
+                      </div>
+                      {/* Row 3: Headline */}
+                      <div style={{ fontSize: '11px', color: TEXT2, marginTop: '3px', lineHeight: 1.5, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any }}>
+                        {s.headline.length > 250 ? s.headline.slice(0, 250) + '...' : s.headline}
+                      </div>
+                      {/* Row 4: Meta tags */}
+                      <div style={{ display: 'flex', gap: '10px', marginTop: '4px', alignItems: 'center' }}>
+                        {s.client && <span style={{ fontSize: '10px', color: PURPLE }}>Client: {s.client}</span>}
+                        {s.segment && <span style={{ fontSize: '10px', color: ACCENT }}>{s.segment}</span>}
+                        {s.timeline && <span style={{ fontSize: '10px', color: ORANGE }}>{s.timeline}</span>}
+                        <span style={{ fontSize: '10px', color: sentimentColor(s.sentiment) }}>{s.sentiment}</span>
+                        {s.signalStackLevel && s.signalStackLevel !== 'WEAK' && (
+                          <span style={{ fontSize: '9px', color: s.signalStackLevel === 'STRONG' ? GREEN : YELLOW }}>
+                            ⚡{s.signalStackCount}
+                          </span>
+                        )}
+                        {s.confidenceType && (
+                          <span style={{
+                            fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
+                            backgroundColor: s.confidenceType === 'ACTUAL' ? 'rgba(16,185,129,0.15)' : s.confidenceType === 'INFERRED' ? 'rgba(251,191,36,0.15)' : 'rgba(100,116,139,0.12)',
+                            color: s.confidenceType === 'ACTUAL' ? GREEN : s.confidenceType === 'INFERRED' ? YELLOW : TEXT3,
+                          }}>
+                            {s.confidenceType === 'ACTUAL' ? '✓' : s.confidenceType === 'INFERRED' ? '~' : '?'}
+                          </span>
+                        )}
+                        {s.dataConfidence && (
+                          <span style={{
+                            fontSize: '8px', fontWeight: 600, padding: '1px 4px', borderRadius: '3px',
+                            color: s.dataConfidence === 'VERIFIED' ? GREEN : s.dataConfidence === 'ESTIMATED' ? YELLOW : TEXT3,
+                          }}>
+                            {s.dataConfidence}
+                          </span>
+                        )}
+                        {s.dataSource && (
+                          <span style={{ fontSize: '8px', color: TEXT3, padding: '1px 4px', borderRadius: '3px', backgroundColor: 'rgba(100,116,139,0.08)' }}>
+                            {s.dataSource}
+                          </span>
+                        )}
+                        {s.confidenceScore !== undefined && s.confidenceScore <= 50 && (
+                          <span style={{ fontSize: '8px', color: ORANGE, fontWeight: 600 }}>
+                            low conf.
+                          </span>
+                        )}
+                        <span style={{ fontSize: '10px', color: TEXT3, marginLeft: 'auto' }}>
+                          {fmtDate(s.date)} · {Math.round(s.timeWeight * 100)}%
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+              </>
+            )}
           </div>
         </div>
       )}

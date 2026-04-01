@@ -23,7 +23,6 @@ const NAV: NavItem[] = [
   { href: '/watchlists',    label: 'Watchlist',       icon: <BookMarked className="w-5 h-5" /> },
   { href: '/orders',        label: 'Intelligence',    icon: <Shield className="w-5 h-5" /> },
   { href: '/earnings',      label: 'Earnings',        icon: <LineChart className="w-5 h-5" /> },
-  { href: '/earnings-guidance', label: 'Guidance',    icon: <Compass className="w-5 h-5" /> },
   { href: '/rrg',           label: 'RRG',             icon: <RefreshCw className="w-5 h-5" /> },
   { href: '/screener',      label: 'Screener',        icon: <Filter className="w-5 h-5" /> },
   { href: '/ipos',          label: 'IPOs',            icon: <Rocket className="w-5 h-5" /> },

@@ -259,6 +259,8 @@ interface IntelSignal {
 
   signalStackCount?: number;
   signalStackLevel?: 'STRONG' | 'BUILDING' | 'WEAK';
+  portfolioImpactScore?: number;
+  dataConfidence?: 'VERIFIED' | 'ESTIMATED' | 'LOW';
 }
 
 interface CompanyTrend {
@@ -660,7 +662,7 @@ function computeTimeWeight(dateStr: string): number {
     }
     if (isNaN(d.getTime())) return 0.5;
     const daysOld = Math.max(0, (Date.now() - d.getTime()) / (24 * 60 * 60 * 1000));
-    return Math.max(0.05, parseFloat((1 - daysOld * 0.07).toFixed(3)));
+    return Math.max(0.05, parseFloat(Math.exp(-daysOld / 7).toFixed(3)));
   } catch {
     return 0.5;
   }
@@ -911,7 +913,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     signalsBySource: { nse: 0, moneycontrol: 0, google_news: 0, deal: 0 } as Record<string, number>,
   };
 
-  const days = 30;
+  const days = 90;
   const fromDate = getDateDaysAgo(days);
   const toDate = getTodayDate();
   const allTracked = [...new Set([...watchlist, ...portfolio])];
@@ -1390,7 +1392,25 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
 
   allSignals.push(...dealDedupMap.values());
 
-  const filtered = allSignals.sort((a, b) => b.weightedScore - a.weightedScore).slice(0, 200);
+  // ── Materiality filter: remove noise signals that don't meet thresholds ──
+  const materialSignals = allSignals.filter(s => {
+    // Always keep portfolio and watchlist signals
+    if (s.isPortfolio || s.isWatchlist) return true;
+    // Always keep negative signals (risk management)
+    if (s.isNegative) return true;
+    // Drop orders below 2% revenue (immaterial)
+    if (s.source === 'order' && s.pctRevenue !== null && s.pctRevenue < 2 && s.confidenceType !== 'ACTUAL') return false;
+    // Drop management changes without CEO/CFO
+    if (s.eventType === 'Management Change') {
+      const headline = s.headline.toLowerCase();
+      if (!headline.includes('ceo') && !headline.includes('cfo') && !headline.includes('managing director') && !headline.includes('chairman')) return false;
+    }
+    // Drop capex below 5% revenue
+    if (s.eventType === 'Capex/Expansion' && s.pctRevenue !== null && s.pctRevenue < 5 && s.confidenceType !== 'ACTUAL') return false;
+    return true;
+  });
+
+  const filtered = materialSignals.sort((a, b) => b.weightedScore - a.weightedScore).slice(0, 200);
 
   const companySignalMap = new Map<string, IntelSignal[]>();
   for (const s of filtered) {
@@ -1431,6 +1451,24 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     }
   }
   trends.sort((a, b) => b.avgScore - a.avgScore);
+
+  // ── Portfolio Impact Scoring: (positionWeight) × (signalScore) ──
+  // positionWeight defaults to equal-weight (1/portfolioSize) when position sizes unavailable
+  const pfSize = portfolio.length || 1;
+  for (const s of filtered) {
+    if (s.isPortfolio) {
+      const posWeight = 1 / pfSize; // Equal weight fallback
+      s.portfolioImpactScore = Math.round(s.weightedScore * posWeight * 100);
+    }
+    // Data confidence flag
+    if (s.confidenceType === 'ACTUAL' && s.valueSource === 'EXACT') {
+      s.dataConfidence = 'VERIFIED';
+    } else if (s.confidenceType === 'INFERRED') {
+      s.dataConfidence = 'ESTIMATED';
+    } else {
+      s.dataConfidence = 'LOW';
+    }
+  }
 
   const top3 = filtered.filter(s => s.action !== 'IGNORE').slice(0, 3);
 
