@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Activity, Filter, ChevronDown, ChevronUp } from 'lucide-react';
 
 // ══════════════════════════════════════════════
@@ -76,59 +76,76 @@ export default function EarningsGuidancePage() {
   const [data, setData] = useState<GuidanceResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  // ingesting state removed — no UI-triggered compute
+  const [computing, setComputing] = useState(false);
+  const [pollCount, setPollCount] = useState(0);
   const [filterMode, setFilterMode] = useState<FilterMode>('ALL');
   const [showOpLeverage, setShowOpLeverage] = useState(false);
   const [showCapexHeavy, setShowCapexHeavy] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'cards' | 'timeline'>('cards');
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      // Fetch portfolio + watchlist symbols
-      let symbols: string[] = [];
-      try {
-        const [pRes, wRes] = await Promise.all([
-          fetch(`/api/portfolio?chatId=${CHAT_ID}`),
-          fetch(`/api/watchlist?chatId=${CHAT_ID}`),
-        ]);
-        if (pRes.ok) {
-          const pd = await pRes.json();
-          symbols.push(...(pd.holdings || []).map((h: any) => h.symbol));
-        }
-        if (wRes.ok) {
-          const wd = await wRes.json();
-          symbols.push(...(wd.watchlist || []));
-        }
-      } catch {}
+  const symbolsRef = useRef<string[]>([]);
 
-      symbols = [...new Set(symbols.map(s => s.trim().toUpperCase()).filter(s => s.length > 0))];
+  const fetchData = useCallback(async (isPolling = false) => {
+    if (!isPolling) { setLoading(true); setError(''); }
+    try {
+      // Fetch portfolio + watchlist symbols (cache them for polling)
+      let symbols = symbolsRef.current;
+      if (!isPolling || symbols.length === 0) {
+        const newSymbols: string[] = [];
+        try {
+          const [pRes, wRes] = await Promise.all([
+            fetch(`/api/portfolio?chatId=${CHAT_ID}`),
+            fetch(`/api/watchlist?chatId=${CHAT_ID}`),
+          ]);
+          if (pRes.ok) {
+            const pd = await pRes.json();
+            newSymbols.push(...(pd.holdings || []).map((h: any) => h.symbol));
+          }
+          if (wRes.ok) {
+            const wd = await wRes.json();
+            newSymbols.push(...(wd.watchlist || []));
+          }
+        } catch {}
+        symbols = [...new Set(newSymbols.map(s => s.trim().toUpperCase()).filter(s => s.length > 0))];
+        symbolsRef.current = symbols;
+      }
 
       if (symbols.length === 0) {
         setData({ events: [], summary: { total: 0, positive: 0, negative: 0, neutral: 0, operatingLeverage: 0, capexHeavy: 0 }, source: 'none', updatedAt: new Date().toISOString() });
         setLoading(false);
+        setComputing(false);
         return;
       }
 
       const res = await fetch(`/api/market/earnings-guidance?symbols=${symbols.join(',')}&days=45`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json: GuidanceResponse = await res.json();
+      const json = await res.json();
 
-      // Strict read-only: never trigger compute from UI
-      // If empty, show empty state — background cron will populate
+      const isComputing = !!(json as any)._meta?.computing || json.source === 'computing';
+      setComputing(isComputing);
       setData(json);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load guidance data');
     } finally {
-      setLoading(false);
+      if (!isPolling) setLoading(false);
     }
   }, []);
 
-  // No manual ingest — data is populated by background cron only
-
+  // Initial fetch
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Auto-poll every 20s when computing, up to 15 attempts (~5 min)
+  useEffect(() => {
+    if (!computing) { setPollCount(0); return; }
+    if (pollCount >= 15) return; // Give up after 5 min
+
+    const timer = setTimeout(async () => {
+      setPollCount(p => p + 1);
+      await fetchData(true);
+    }, 20000);
+    return () => clearTimeout(timer);
+  }, [computing, pollCount, fetchData]);
 
   // Filtered events
   const filteredEvents = useMemo(() => {
@@ -171,6 +188,11 @@ export default function EarningsGuidancePage() {
         </div>
         <p style={{ margin: 0, fontSize: '13px', color: TEXT_DIM }}>
           Last 45 days · Portfolio + Watchlist · Source: {data?.source || '...'}
+          {computing && (
+            <span style={{ marginLeft: '12px', color: ACCENT, fontSize: '12px' }}>
+              ⟳ Computing data... auto-refreshing
+            </span>
+          )}
         </p>
       </div>
 
@@ -243,13 +265,32 @@ export default function EarningsGuidancePage() {
       {/* Empty */}
       {!loading && !error && filteredEvents.length === 0 && (
         <div style={{ backgroundColor: CARD, border: `1px solid ${CARD_BORDER}`, borderRadius: '8px', padding: '60px 20px', textAlign: 'center', color: TEXT_DIM }}>
-          <div style={{ fontSize: '48px', marginBottom: '16px' }}>📊</div>
-          <p style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: 500 }}>
-            {data?.events?.length ? 'No events match your filters' : 'No guidance events found'}
+          <div style={{ fontSize: '48px', marginBottom: '16px' }}>{computing ? '⟳' : '📊'}</div>
+          <p style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: 500, color: computing ? ACCENT : TEXT_DIM }}>
+            {data?.events?.length
+              ? 'No events match your filters'
+              : computing
+              ? 'Fetching earnings data from screener.in...'
+              : 'No guidance events found'}
           </p>
           <p style={{ margin: 0, fontSize: '13px' }}>
-            {data?.events?.length ? 'Try adjusting filters' : 'Data refreshes automatically via background pipeline. Check back shortly.'}
+            {data?.events?.length
+              ? 'Try adjusting filters'
+              : computing
+              ? `Auto-refreshing in 20 seconds (attempt ${pollCount + 1}/15). First run may take up to 3 minutes.`
+              : 'Data refreshes automatically via background pipeline. Check back shortly.'}
           </p>
+          {computing && (
+            <div style={{ marginTop: '20px' }}>
+              <div style={{ width: '200px', height: '4px', backgroundColor: '#1A2540', borderRadius: '2px', margin: '0 auto', overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%', backgroundColor: ACCENT, borderRadius: '2px',
+                  animation: 'progress-bar 2s linear infinite',
+                  width: '40%',
+                }} />
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -299,7 +340,10 @@ export default function EarningsGuidancePage() {
         </div>
       )}
 
-      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+      <style>{`
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes progress-bar { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }
+      `}</style>
     </div>
   );
 }

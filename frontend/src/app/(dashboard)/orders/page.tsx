@@ -157,6 +157,8 @@ export default function CompanyIntelligencePage() {
   const [showDebug, setShowDebug] = useState(false);
   const [watchlistFlags, setWatchlistFlags] = useState<Record<string, string>>({});
   const [addedPrices, setAddedPrices] = useState<Record<string, number>>({});
+  const [computing, setComputing] = useState(false);
+  const [computePollCount, setComputePollCount] = useState(0);
 
   const fetchData = useCallback(async (forceRefresh = false) => {
     // Tab cache: if data was fetched recently and not forcing refresh, use cached data
@@ -220,8 +222,15 @@ export default function CompanyIntelligencePage() {
       const ts = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
       setLastUpdated(ts);
 
-      // Cache for tab switching
-      _cache = { data: { ...data, flags, addedPrices: prices, lastUpdated: ts }, timestamp: Date.now() };
+      // Detect computing state
+      const isComputing = data._meta?.computing === true || data._meta?.source === 'skeleton';
+      setComputing(isComputing);
+      if (!isComputing) setComputePollCount(0);
+
+      // Cache for tab switching (only cache real data, not skeletons)
+      if (!isComputing) {
+        _cache = { data: { ...data, flags, addedPrices: prices, lastUpdated: ts }, timestamp: Date.now() };
+      }
     } catch (err) {
       console.error('[Intelligence] Error:', err);
     }
@@ -229,11 +238,24 @@ export default function CompanyIntelligencePage() {
   }, [daysFilter]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Auto-poll every 20s when computing (up to 15 attempts = ~5 min)
   useEffect(() => {
-    // Auto-refresh forces fresh data every 2 min
+    if (!computing) return;
+    if (computePollCount >= 15) return;
+    const timer = setTimeout(() => {
+      setComputePollCount(p => p + 1);
+      fetchData(true);
+    }, 20000);
+    return () => clearTimeout(timer);
+  }, [computing, computePollCount, fetchData]);
+
+  useEffect(() => {
+    // Regular auto-refresh every 2 min when NOT computing
+    if (computing) return;
     const iv = setInterval(() => fetchData(true), 120000);
     return () => clearInterval(iv);
-  }, [fetchData]);
+  }, [fetchData, computing]);
 
   // Toggle watchlist flag (Green → Orange → Red → None → Green...)
   const toggleFlag = useCallback(async (symbol: string) => {
@@ -291,6 +313,7 @@ export default function CompanyIntelligencePage() {
             <h1 style={{ fontSize: '20px', fontWeight: 700, margin: 0, color: TEXT1 }}>Company Intelligence</h1>
             <p style={{ fontSize: '11px', color: TEXT3, margin: 0 }}>
               Decision-ready signals · Impact-ranked · Time-weighted · Deduped
+              {computing && <span style={{ marginLeft: '8px', color: ACCENT }}>⟳ Computing...</span>}
             </p>
           </div>
         </div>
@@ -753,14 +776,30 @@ export default function CompanyIntelligencePage() {
         </div>
       )}
 
-      {/* Empty state */}
+      {/* Empty / Computing state */}
       {!loading && signals.length === 0 && (
         <div style={{ textAlign: 'center', padding: '50px 0' }}>
-          <Eye size={40} color={TEXT3} style={{ margin: '0 auto 12px', display: 'block' }} />
-          <p style={{ color: TEXT2, fontSize: '14px', fontWeight: 600 }}>No actionable signals</p>
-          <p style={{ color: TEXT3, fontSize: '12px' }}>Try a wider date range or check during market hours</p>
+          {computing ? (
+            <>
+              <Zap size={40} color={ACCENT} style={{ margin: '0 auto 12px', display: 'block' }} />
+              <p style={{ color: ACCENT, fontSize: '14px', fontWeight: 600 }}>Computing intelligence signals...</p>
+              <p style={{ color: TEXT3, fontSize: '12px' }}>
+                Fetching from NSE + Moneycontrol. Auto-refresh in 20s (attempt {computePollCount + 1}/15).
+              </p>
+              <div style={{ width: '200px', height: '3px', backgroundColor: BORDER, borderRadius: '2px', margin: '16px auto 0', overflow: 'hidden' }}>
+                <div style={{ height: '100%', backgroundColor: ACCENT, borderRadius: '2px', width: '35%', animation: 'progress-bar 2s linear infinite' }} />
+              </div>
+            </>
+          ) : (
+            <>
+              <Eye size={40} color={TEXT3} style={{ margin: '0 auto 12px', display: 'block' }} />
+              <p style={{ color: TEXT2, fontSize: '14px', fontWeight: 600 }}>No actionable signals</p>
+              <p style={{ color: TEXT3, fontSize: '12px' }}>Try a wider date range or check during market hours</p>
+            </>
+          )}
         </div>
       )}
+      <style>{`@keyframes progress-bar { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }`}</style>
     </div>
   );
 }

@@ -61,6 +61,9 @@ interface GuidanceResponse {
 const ROUTE_CACHE_TTL = 300_000; // 5 minutes
 let _routeCache: { key: string; data: GuidanceResponse; timestamp: number } | null = null;
 
+// Track when we last triggered a background ingest to avoid hammering it
+let _lastIngestTrigger = 0;
+
 // ==================== HELPER FUNCTIONS ====================
 
 /**
@@ -179,20 +182,36 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     // Load guidance events from KV store
     const allEvents = await kvGet<GuidanceEvent[]>('guidance:events');
+
+    // If empty — trigger background ingest (fire-and-forget, max once per 5 min)
+    let computing = false;
+    if (!allEvents || allEvents.length === 0) {
+      const now = Date.now();
+      if (now - _lastIngestTrigger > 300_000) {
+        _lastIngestTrigger = now;
+        try {
+          const ingestUrl = new URL('/api/market/earnings-guidance/ingest', request.url);
+          fetch(ingestUrl.toString(), {
+            method: 'GET',
+            signal: AbortSignal.timeout(3000),
+          }).catch(() => {});
+          console.log('[earnings-guidance] Triggered background ingest (Redis empty)');
+        } catch {}
+      }
+      computing = true;
+    }
+
     const events = filterEvents(allEvents || [], symbols, days);
-
-    // Compute summary
     const summary = computeSummary(events);
-
-    // Sort events by date (most recent first)
     events.sort((a, b) => new Date(b.eventDate).getTime() - new Date(a.eventDate).getTime());
 
     const response: GuidanceResponse = {
       events,
       summary,
-      source: 'cache',
+      source: computing ? 'computing' : 'cache',
       updatedAt: new Date().toISOString(),
-    };
+      ...(computing ? { _meta: { computing: true } } : {}),
+    } as any;
 
     // Cache the response
     _routeCache = {

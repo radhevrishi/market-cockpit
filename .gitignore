@@ -41,3 +41,5 @@ frontend.log
 
 # Docker
 docker-compose.override.yml
+.vercel
+.env*.local
