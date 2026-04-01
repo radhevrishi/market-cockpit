@@ -916,15 +916,42 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   const toDate = getTodayDate();
   const allTracked = [...new Set([...watchlist, ...portfolio])];
 
-  // NSE timeouts: 15s each (must fit within 55s Vercel limit)
-  const [announcementsRaw, blockRaw, bulkRaw] = await Promise.all([
-    nseApiFetch(`/api/corporate-announcements?index=equities&from_date=${fromDate}&to_date=${toDate}`, 15000)
-      .catch((e: any) => { debug.errors.push(`NSE announcements: ${(e as Error).message}`); return null; }),
-    nseApiFetch('/api/block-deal', 15000)
-      .catch((e: any) => { debug.errors.push(`NSE block deals: ${(e as Error).message}`); return null; }),
-    nseApiFetch('/api/bulk-deal', 15000)
-      .catch((e: any) => { debug.errors.push(`NSE bulk deals: ${(e as Error).message}`); return null; }),
+  // NSE + MC/Google run in parallel with aggressive 12s overall timeout for NSE
+  // NSE India blocks Vercel IPs, so we must not waste time waiting
+  const nsePromise = Promise.race([
+    Promise.all([
+      nseApiFetch(`/api/corporate-announcements?index=equities&from_date=${fromDate}&to_date=${toDate}`, 15000)
+        .catch((e: any) => { debug.errors.push(`NSE announcements: ${(e as Error).message}`); return null; }),
+      nseApiFetch('/api/block-deal', 15000)
+        .catch((e: any) => { debug.errors.push(`NSE block deals: ${(e as Error).message}`); return null; }),
+      nseApiFetch('/api/bulk-deal', 15000)
+        .catch((e: any) => { debug.errors.push(`NSE bulk deals: ${(e as Error).message}`); return null; }),
+    ]),
+    new Promise<[null, null, null]>(res => setTimeout(() => {
+      debug.errors.push('NSE: overall 12s timeout — skipped');
+      res([null, null, null]);
+    }, 12000)),
   ]);
+
+  // Start MC/Google in parallel with NSE (don't wait for NSE to fail first)
+  const mcGooglePromise = (allTracked.length > 0) ? Promise.all([
+    fetchMoneycontrolNews(allTracked.slice(0, 5)).catch((e: any) => {
+      debug.errors.push(`MC news: ${(e as Error).message}`);
+      return [] as MCNewsItem[];
+    }),
+    fetchGoogleNewsRSS(allTracked.slice(0, 3)).catch((e: any) => {
+      debug.errors.push(`Google news: ${(e as Error).message}`);
+      return [] as MCNewsItem[];
+    }),
+  ]) : Promise.resolve([[] as MCNewsItem[], [] as MCNewsItem[]]);
+
+  // Wait for both to complete
+  const [[announcementsRaw, blockRaw, bulkRaw], [mcNews, gNews]] = await Promise.all([
+    nsePromise,
+    mcGooglePromise,
+  ]);
+
+  console.log(`[Compute] Phase 1 done in ${Date.now() - startTime}ms`);
 
   let announcements: any[] = [];
   if (announcementsRaw) {
@@ -962,27 +989,14 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     if (!debug.dataSources.includes('NSE')) debug.dataSources.push('NSE Deals');
   }
 
+  // MC/Google results already fetched in parallel
   let mcNewsAnnouncements: any[] = [];
   let googleNewsAnnouncements: any[] = [];
 
-  const elapsedSoFar = Date.now() - startTime;
-  if (announcements.length < 5 && allTracked.length > 0 && elapsedSoFar < 25000) {
-    console.log(`[Compute] NSE returned ${announcements.length} announcements — activating fallback (${elapsedSoFar}ms elapsed)`);
-
-    // Keep scope small to fit within Vercel 55s limit
-    const [mcNews, gNews] = await Promise.all([
-      fetchMoneycontrolNews(allTracked.slice(0, 8)).catch((e: any) => {
-        debug.errors.push(`MC news: ${(e as Error).message}`);
-        return [] as MCNewsItem[];
-      }),
-      fetchGoogleNewsRSS(allTracked.slice(0, 5)).catch((e: any) => {
-        debug.errors.push(`Google news: ${(e as Error).message}`);
-        return [] as MCNewsItem[];
-      }),
-    ]);
-
-    debug.mcNewsItems = mcNews.length;
-    debug.googleNewsItems = gNews.length;
+  debug.mcNewsItems = mcNews.length;
+  debug.googleNewsItems = gNews.length;
+  if (mcNews.length > 0 || gNews.length > 0) {
+    console.log(`[Compute] Fallback sources: MC=${mcNews.length}, Google=${gNews.length}`);
 
     mcNewsAnnouncements = mcNews.map(n => ({
       symbol: n.symbol,
