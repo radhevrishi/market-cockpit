@@ -1020,11 +1020,11 @@ def _parse_rss_xml(xml_text: str, source_name: str, region: str, source_url: str
             has_us_kw = any(keyword in combined_text for keyword in us_keywords)
 
             if source_name in indian_sources:
-                # Indian source but content is clearly about US stocks
-                if has_us_ticker and not has_in_ticker and not has_india_kw:
-                    final_region = "US"
-                else:
-                    final_region = "IN"
+                # IMPORTANT: Keep Indian sources as region="IN" for bottleneck detection
+                # Even if they mention US tickers, they are India-context articles
+                # (e.g. Indian semiconductor articles may reference Intel)
+                # Never downgrade Indian sources to US region
+                final_region = "IN"
             elif source_name in us_sources:
                 if has_india_kw or (has_in_ticker and not has_us_ticker):
                     final_region = "IN"
@@ -1205,9 +1205,14 @@ class NewsIngestor:
 
             Uses strong/weak India signal detection (same logic as _detect_bottleneck)
             to prevent false positives like 'tata' in 'Terafab' context.
+
+            IMPORTANT: Indian sources are ALWAYS treated as region="IN"
+            to ensure INDIA_* bottleneck themes are properly detected and mapped.
             """
             sn = art.source_name or ""
             if sn in indian_sources:
+                # Keep Indian sources as region="IN" — even if they mention US tickers
+                # (e.g. Indian semiconductor articles may reference Intel INTC)
                 return "IN"
             if sn in us_sources:
                 # Check if article actually discusses India using strong/weak signals
