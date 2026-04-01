@@ -361,21 +361,19 @@ async function ingestGuidanceEvents(symbols: string[]): Promise<IngestResponse> 
 
     console.log(`[earnings-guidance/ingest] Fetching announcements from ${fromDate} to ${toDate}`);
 
-    // Fetch from NSE API
-    const announcements = await nseApiFetch(`/api/corporate-announcements?index=equities`, 600000);
-
-    if (!announcements) {
-      console.log('[earnings-guidance/ingest] No announcements fetched from NSE');
-      return {
-        ingested: 0,
-        total: existingEvents?.length || 0,
-        events: existingEvents || [],
-        message: 'Failed to fetch announcements from NSE',
-      };
+    // ── Source 1: NSE Corporate Announcements ──
+    let announcementsArray: any[] = [];
+    try {
+      const announcements = await nseApiFetch(`/api/corporate-announcements?index=equities`, 600000);
+      if (announcements) {
+        announcementsArray = Array.isArray(announcements) ? announcements : announcements.data || [];
+      }
+    } catch (e) {
+      console.warn('[earnings-guidance/ingest] NSE fetch failed:', (e as Error).message);
     }
 
-    // Parse announcements
-    const announcementsArray = Array.isArray(announcements) ? announcements : announcements.data || [];
+    console.log(`[earnings-guidance/ingest] NSE returned ${announcementsArray.length} announcements`);
+
     const newEvents: GuidanceEvent[] = [];
 
     for (const announcement of announcementsArray) {
@@ -390,6 +388,49 @@ async function ingestGuidanceEvents(symbols: string[]): Promise<IngestResponse> 
       if (event) {
         storedEventsMap.set(event.dedupKey, event);
         newEvents.push(event);
+      }
+    }
+
+    // ── Source 2: Earnings Cache (screener.in guidance data) ──
+    // If NSE returned nothing or few events, enrich from earnings cache
+    if (symbols.length > 0) {
+      for (const sym of symbols.slice(0, 50)) {
+        try {
+          const cached = await kvGet<any>(`earnings:${sym}`);
+          if (cached?.guidance && cached.guidance.guidance !== 'Neutral') {
+            const dedupKey = `${sym}_GUIDANCE_earnings`;
+            if (storedEventsMap.has(dedupKey)) continue;
+
+            const g = cached.guidance;
+            const event: GuidanceEvent = {
+              id: `${sym}-earnings-${Date.now()}`,
+              symbol: sym,
+              companyName: cached.companyName || sym,
+              eventDate: cached.fetchedAt ? new Date(cached.fetchedAt).toISOString() : new Date().toISOString(),
+              source: 'Screener',
+              eventType: 'GUIDANCE',
+              revenueGrowth: null,
+              profitGrowth: null,
+              marginChange: null,
+              guidanceRevenue: g.revenueOutlook !== 'Unknown' ? g.revenueOutlook : null,
+              guidanceMargin: g.marginOutlook !== 'Unknown' ? g.marginOutlook : null,
+              guidanceCapex: null,
+              guidanceDemand: g.demandSignal !== 'Unknown' ? g.demandSignal : null,
+              operatingLeverage: false,
+              deleveraging: false,
+              orderBookGrowth: false,
+              rawText: `${g.prosText || ''} ${g.consText || ''}`.trim().slice(0, 1000),
+              sentimentScore: Math.round((g.sentimentScore + 1) * 50), // -1..1 → 0..100
+              confidenceScore: 65,
+              dedupKey,
+              createdAt: new Date().toISOString(),
+              grade: g.guidance === 'Positive' ? 'POSITIVE' : 'NEGATIVE',
+              gradeColor: g.guidance === 'Positive' ? '#70AD47' : '#FF6B35',
+            };
+            storedEventsMap.set(dedupKey, event);
+            newEvents.push(event);
+          }
+        } catch {}
       }
     }
 

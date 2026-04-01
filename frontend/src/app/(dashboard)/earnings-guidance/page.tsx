@@ -115,6 +115,30 @@ export default function EarningsGuidancePage() {
       const res = await fetch(`/api/market/earnings-guidance?symbols=${symbols.join(',')}&days=45`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json: GuidanceResponse = await res.json();
+
+      // Auto-ingest if no events found (first visit or stale store)
+      if (json.events.length === 0 && !ingesting) {
+        setIngesting(true);
+        try {
+          const ingestRes = await fetch('/api/market/earnings-guidance/ingest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbols, chatId: CHAT_ID }),
+          });
+          if (ingestRes.ok) {
+            // Re-fetch after ingestion
+            const res2 = await fetch(`/api/market/earnings-guidance?symbols=${symbols.join(',')}&days=45`);
+            if (res2.ok) {
+              const json2: GuidanceResponse = await res2.json();
+              setData(json2);
+              setIngesting(false);
+              setLoading(false);
+              return;
+            }
+          }
+        } catch {} finally { setIngesting(false); }
+      }
+
       setData(json);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load guidance data');

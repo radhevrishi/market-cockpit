@@ -1030,6 +1030,64 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
       ? portfolioParam.split(',').map(s => normalizeTicker(s.trim())).filter(Boolean)
       : [];
 
+    // ── STEP 1: Try precomputed Redis store first ──
+    // Serves instant response from Redis. Falls back to inline compute only if Redis is empty.
+    if (!forceRefresh) {
+      try {
+        const stored = await kvGet<any>('intelligence:signals');
+        const meta = await kvGet<any>('intelligence:meta');
+
+        if (stored && meta) {
+          const ageMs = Date.now() - new Date(meta.computedAt).getTime();
+          const isStale = ageMs > 15 * 60 * 1000; // 15 min
+
+          console.log(`[Intelligence] Precomputed read: ${isStale ? 'STALE' : 'FRESH'} (${Math.round(ageMs / 1000)}s old, v${meta.version})`);
+
+          if (isStale) {
+            // Trigger background recompute (fire-and-forget)
+            try {
+              const url = new URL('/api/market/intelligence/compute', request.url);
+              fetch(url.toString(), {
+                method: 'GET',
+                signal: AbortSignal.timeout(2000),
+              }).catch(() => {}); // fire and forget
+            } catch {}
+          }
+
+          // If custom watchlist/portfolio, filter signals to only matching symbols
+          let responseData = stored;
+          if (watchlist.length > 0 || portfolio.length > 0) {
+            const wSet = new Set(watchlist.map((s: string) => s.toUpperCase()));
+            const pSet = new Set(portfolio.map((s: string) => s.toUpperCase()));
+            const allUserSymbols = new Set([...wSet, ...pSet]);
+            if (stored.signals && Array.isArray(stored.signals)) {
+              responseData = {
+                ...stored,
+                signals: stored.signals.map((s: any) => ({
+                  ...s,
+                  isWatchlist: wSet.has(s.symbol),
+                  isPortfolio: pSet.has(s.symbol),
+                })),
+              };
+            }
+          }
+
+          return NextResponse.json({
+            ...responseData,
+            _meta: {
+              source: 'precomputed',
+              computedAt: meta.computedAt,
+              stale: isStale,
+              ageMinutes: Math.round(ageMs / 60000),
+              version: meta.version,
+            }
+          });
+        }
+      } catch (e) {
+        console.warn('[Intelligence] Precomputed store read failed:', e);
+      }
+    }
+
     // ── Route-level cache (BUG-01 fix: instant response on repeat calls) ──
     const cacheKey = `${watchlist.join(',')}|${portfolio.join(',')}|${days}`;
     if (!forceRefresh && _routeCache && _routeCache.key === cacheKey && (Date.now() - _routeCache.timestamp) < ROUTE_CACHE_TTL) {
@@ -1715,6 +1773,26 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
     // ── Cache signals for stale fallback ──
     if (filtered.length > 0) {
       cacheSignals(response).catch(() => {});
+    }
+
+    // ── Store in precomputed Redis (for fast reads on subsequent requests) ──
+    if (filtered.length > 0) {
+      try {
+        await kvSet('intelligence:signals', response, 3600);
+        // Event versioning: hash signals to detect data changes for cache invalidation
+        const signalHash = filtered.slice(0, 10).map((s: any) => `${s.symbol}:${s.valueCr}:${s.score}`).join('|');
+        const version = Array.from(signalHash).reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0);
+        await kvSet('intelligence:meta', {
+          computedAt: new Date().toISOString(),
+          signalCount: filtered.length,
+          version,
+          signalHash: signalHash.slice(0, 200),
+          ttl: 3600,
+        }, 3600);
+        console.log(`[Intelligence] Stored ${filtered.length} signals to Redis`);
+      } catch (e) {
+        console.error('[Intelligence] Failed to store to Redis:', e);
+      }
     }
 
     // ── If 0 signals from live sources → try stale cache ──
