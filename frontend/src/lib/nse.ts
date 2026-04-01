@@ -44,6 +44,7 @@ async function refreshCookies(): Promise<string> {
         'Accept': 'text/html,application/xhtml+xml',
       },
       redirect: 'follow',
+      signal: AbortSignal.timeout(8000), // 8s timeout for cookie fetch
     });
 
     const cookies = res.headers.getSetCookie?.() || [];
@@ -69,6 +70,7 @@ export async function nseApiFetch(path: string, cacheTtl = 60000): Promise<any> 
         ...HEADERS,
         Cookie: cookies,
       },
+      signal: AbortSignal.timeout(10000), // 10s timeout per API call
     });
 
     if (!res.ok) {
@@ -79,6 +81,7 @@ export async function nseApiFetch(path: string, cacheTtl = 60000): Promise<any> 
         const newCookies = await refreshCookies();
         const retry = await fetch(`${NSE_BASE}${path}`, {
           headers: { ...HEADERS, Cookie: newCookies },
+          signal: AbortSignal.timeout(10000),
         });
         if (retry.ok) {
           const data = await retry.json();
