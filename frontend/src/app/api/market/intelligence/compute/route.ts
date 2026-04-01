@@ -708,27 +708,26 @@ function classifyAction(
   if (isPortfolio && weightedScore < 45 && isNegative && sentiment === 'Bearish') return 'TRIM';
   if (isPortfolio && weightedScore < 45 && isNegative && earningsScore !== null && earningsScore < 40) return 'TRIM';
 
-  // ── BUY: score >= 70 with confirmation ──
-  if (weightedScore >= 70 && signalCount >= 2 && !isNegative) return 'BUY';
-  if (weightedScore >= 70 && sentiment === 'Bullish' && !isNegative) return 'BUY';
+  // ── BUY: score >= 62 with confirmation ──
+  // (Calibrated for 3-axis composite which has tighter range than old scoring)
+  if (weightedScore >= 62 && signalCount >= 2 && !isNegative) return 'BUY';
+  if (weightedScore >= 62 && sentiment === 'Bullish' && !isNegative) return 'BUY';
   // Strong guidance + strong earnings override
   if (guidanceStrong && earningsScore !== null && earningsScore >= 70 && !isNegative) return 'BUY';
 
-  // ── ADD: 55-69 score range ──
-  if (weightedScore >= 55 && weightedScore < 70 && !isNegative) return 'ADD';
+  // ── ADD: 48-61 score range ──
+  if (weightedScore >= 48 && !isNegative) return 'ADD';
   // Divergence: strong guidance + weak earnings = ADD (transition phase)
-  if (guidanceStrong && sentiment === 'Bullish' && !isNegative && weightedScore >= 45) return 'ADD';
+  if (guidanceStrong && sentiment === 'Bullish' && !isNegative && weightedScore >= 40) return 'ADD';
 
-  // ── HOLD: 45-54 score range ──
-  if (weightedScore >= 45 && weightedScore < 55) return 'HOLD';
+  // ── HOLD: 38-47 score range ──
+  if (weightedScore >= 38 && weightedScore < 48) return 'HOLD';
 
-  // ── WATCH: 35-44 score range (NOT TRIM) ──
-  if (weightedScore >= 35 && weightedScore < 45) return 'WATCH';
+  // ── WATCH: 28-37 score range ──
+  if (weightedScore >= 28 && weightedScore < 38) return 'WATCH';
 
-  // ── Below 35: check data quality before classifying ──
-  // If signal has low score due to missing data (not due to negative signals),
-  // use WATCH instead of AVOID
-  if (!isNegative && sentiment !== 'Bearish') return 'WATCH';
+  // ── Below 28: insufficient signal quality ──
+  if (!isNegative && sentiment !== 'Bearish' && weightedScore >= 20) return 'WATCH';
   return 'AVOID';
 }
 
@@ -1014,7 +1013,8 @@ function computeThreeAxisScore(opts: {
 
   // ── Axis 2: Signal Strength Score (0-100) ──
   // Measures the quality/magnitude of the signal itself
-  let strength = 0;
+  // Baseline 15: every valid signal has inherent strength (existence = information)
+  let strength = 15;
   // Impact magnitude (capped at 30)
   strength += Math.min(30, 30 * (1 - Math.exp(-opts.impactPct / 8)));
   // Event type weight (capped at 20)
@@ -1560,6 +1560,11 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     // Use composite as the new normalized weightedScore
     signal.weightedScore = threeAxis.composite;
     signal.score = threeAxis.composite;
+    // Re-classify action using 3-axis composite (critical: old score was pre-normalization)
+    signal.action = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, earningsScore, threeAxis.composite, negative, 1, false);
+    if (earningsBoost && signal.action !== 'BUY') signal.action = 'ADD';
+    signal.decision = signal.action;
+    signal.scoreClassification = classifyScore(threeAxis.composite);
 
     if (existing) {
       const existDate = new Date(existing.date).getTime();
@@ -1688,6 +1693,10 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     dealSignal.dataConfidenceScore = dealAxis.dataConfidence;
     dealSignal.weightedScore = dealAxis.composite;
     dealSignal.score = dealAxis.composite;
+    // Re-classify using 3-axis composite
+    dealSignal.action = classifyAction(dealImpactPct, sentiment, isWatchlist, isPortfolio, earningsScore, dealAxis.composite, isSell, 1, false);
+    dealSignal.decision = dealSignal.action;
+    dealSignal.scoreClassification = classifyScore(dealAxis.composite);
 
     const dealDedupKey = `${symbol}:${eventType}:${(deal.dealDate || getTodayDate()).slice(0, 10)}`;
     const existingDeal = dealDedupMap.get(dealDedupKey);
@@ -1868,6 +1877,10 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         guidanceSignal.dataConfidenceScore = guidAxis.dataConfidence;
         guidanceSignal.weightedScore = guidAxis.composite;
         guidanceSignal.score = guidAxis.composite;
+        // Re-classify using 3-axis composite
+        guidanceSignal.action = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, null, guidAxis.composite, isNeg, 1, guidanceStrong);
+        guidanceSignal.decision = guidanceSignal.action;
+        guidanceSignal.scoreClassification = classifyScore(guidAxis.composite);
 
         // Dedup against existing signals for same symbol
         const guidanceDedupKey = `${symbol}:Guidance:${(ge.eventDate || '').slice(0, 10)}`;
