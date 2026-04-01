@@ -209,7 +209,9 @@ async function fetchGoogleNewsRSS(symbols: string[]): Promise<MCNewsItem[]> {
 
 // ==================== TYPES ====================
 
-type ActionFlag = 'BUY WATCH' | 'TRACK' | 'IGNORE';
+type ActionFlag = 'BUY' | 'ADD' | 'HOLD' | 'TRIM' | 'EXIT' | 'AVOID';
+type ScoreClassification = 'HIGH_CONVICTION' | 'STRONG' | 'BUILDING' | 'WEAK' | 'NOISE';
+type FreshnessLabel = 'FRESH' | 'RECENT' | 'AGING' | 'STALE';
 type ImpactLevel = 'HIGH' | 'MEDIUM' | 'LOW';
 type SignalSentiment = 'Bullish' | 'Neutral' | 'Bearish';
 
@@ -261,6 +263,14 @@ interface IntelSignal {
   signalStackLevel?: 'STRONG' | 'BUILDING' | 'WEAK';
   portfolioImpactScore?: number;
   dataConfidence?: 'VERIFIED' | 'ESTIMATED' | 'LOW';
+
+  scoreDelta?: number;
+  scoreClassification?: ScoreClassification;
+  freshness?: FreshnessLabel;
+  sectorScore?: number;
+  sectorTrend?: 'Bullish' | 'Neutral' | 'Bearish';
+  decision?: ActionFlag;
+  decisionReason?: string;
 }
 
 interface CompanyTrend {
@@ -278,8 +288,10 @@ interface DailyBias {
   netBias: 'Bullish' | 'Neutral' | 'Bearish';
   highImpactCount: number;
   activeSectors: string[];
-  buyWatchCount: number;
-  trackCount: number;
+  buyCount: number;
+  addCount: number;
+  holdCount: number;
+  trimExitCount: number;
   totalSignals: number;
   totalOrderValueCr: number;
   totalDealValueCr: number;
@@ -309,6 +321,8 @@ interface StockEnrichment {
   industry: string | null;
   lastPrice: number | null;
   issuedSize: number | null;
+  dataStatus?: 'LIVE' | 'STALE' | 'UNAVAILABLE';
+  priceSource?: string;
 }
 
 interface EarningsData {
@@ -641,12 +655,46 @@ function classifyAction(
   isWatchlist: boolean,
   isPortfolio: boolean,
   earningsScore: number | null,
+  weightedScore: number = 0,
+  isNegative: boolean = false,
+  signalCount: number = 1,
 ): ActionFlag {
-  if (impactPct >= 5 && sentiment === 'Bullish') return 'BUY WATCH';
-  if (impactPct >= 2 && (isWatchlist || isPortfolio) && sentiment !== 'Bearish') return 'BUY WATCH';
-  if (impactPct >= 3 && earningsScore !== null && earningsScore >= 60) return 'BUY WATCH';
-  if (impactPct >= 10) return 'BUY WATCH';
-  return 'TRACK';
+  // ── CRITICAL OVERRIDE: Always dominates ──
+  // Insolvency, defaults, regulatory action → EXIT
+  if (isNegative && impactPct >= 10) return 'EXIT';
+
+  // ── EXIT conditions ──
+  if (weightedScore < 30 && isNegative) return 'EXIT';
+
+  // ── BUY conditions ──
+  // Score > 75 AND ≥2 independent bullish signals AND no negative
+  if (weightedScore > 75 && signalCount >= 2 && sentiment === 'Bullish' && !isNegative) return 'BUY';
+  // High impact bullish with strong earnings
+  if (impactPct >= 5 && sentiment === 'Bullish' && earningsScore !== null && earningsScore >= 70 && !isNegative) return 'BUY';
+
+  // ── ADD conditions (portfolio only) ──
+  if (isPortfolio && sentiment !== 'Bearish' && !isNegative) {
+    if (weightedScore >= 50) return 'ADD';
+    if (impactPct >= 3 && earningsScore !== null && earningsScore >= 60) return 'ADD';
+  }
+
+  // ── TRIM conditions ──
+  if (isPortfolio && isNegative && impactPct < 10) return 'TRIM';
+  if (isPortfolio && sentiment === 'Bearish' && weightedScore < 40) return 'TRIM';
+
+  // ── AVOID conditions ──
+  if (weightedScore < 40 && signalCount <= 1) return 'AVOID';
+  if (sentiment === 'Bearish' && !isPortfolio && !isWatchlist) return 'AVOID';
+
+  // ── HOLD (default for portfolio with stable signals) ──
+  if (isPortfolio) return 'HOLD';
+
+  // ── HOLD for watchlist with decent signals ──
+  if (isWatchlist && weightedScore >= 40) return 'HOLD';
+
+  // ── Default: HOLD for decent, AVOID for weak ──
+  if (weightedScore >= 40) return 'HOLD';
+  return 'AVOID';
 }
 
 // ==================== TIME DECAY ====================
@@ -666,6 +714,34 @@ function computeTimeWeight(dateStr: string): number {
   } catch {
     return 0.5;
   }
+}
+
+function computeFreshness(dateStr: string): FreshnessLabel {
+  try {
+    let d: Date;
+    if (dateStr.includes('-') && dateStr.length === 10 && dateStr[2] === '-') {
+      const [dd, mm, yyyy] = dateStr.split('-');
+      d = new Date(`${yyyy}-${mm}-${dd}`);
+    } else {
+      d = new Date(dateStr);
+    }
+    if (isNaN(d.getTime())) return 'STALE';
+    const daysOld = Math.max(0, (Date.now() - d.getTime()) / (24 * 60 * 60 * 1000));
+    if (daysOld <= 3) return 'FRESH';
+    if (daysOld <= 7) return 'RECENT';
+    if (daysOld <= 14) return 'AGING';
+    return 'STALE';
+  } catch {
+    return 'STALE';
+  }
+}
+
+function classifyScore(score: number): ScoreClassification {
+  if (score > 80) return 'HIGH_CONVICTION';
+  if (score >= 60) return 'STRONG';
+  if (score >= 40) return 'BUILDING';
+  if (score >= 20) return 'WEAK';
+  return 'NOISE';
 }
 
 // ==================== WHY IT MATTERS ====================
@@ -784,35 +860,63 @@ function computeScore(opts: {
   dealPremiumDiscount?: number | null;
   sector?: string | null;
 }): number {
+  // Source weight mapping
+  const sourceWeightMap: Record<string, number> = {
+    'exchange': 1.0,
+    'guidance': 0.9,
+    'verified_media': 0.7,
+    'rumor': 0.3,
+  };
+
+  // Confidence value mapping
+  const confidenceMap = (type: string): number => {
+    if (type === 'ACTUAL') return 1.0;
+    if (type === 'ESTIMATED') return 0.6;
+    if (type === 'LOW') return 0.4;
+    return 0.5;
+  };
+
   let score = 0;
 
+  // ── Formula: Total Score = Σ (Magnitude × Confidence × Time Weight × Source Weight) ──
+  // Magnitude (impact)
   const impactScore = Math.min(40, 40 * (1 - Math.exp(-opts.impactPct / 10)));
-  score += impactScore;
 
-  const daysOldApprox = Math.max(0, (1 - opts.timeWeight) / 0.07);
-  const freshnessScore = Math.max(0, 15 - daysOldApprox * 1.5);
-  score += freshnessScore;
+  // Confidence (from opts.confidenceScore, which is 0-100)
+  const confFactor = opts.confidenceScore / 100;
 
-  score += Math.min(15, SIGNAL_TYPE_WEIGHTS[opts.eventType] || 5);
+  // Time weight (decay)
+  const timeDecay = opts.timeWeight;
 
-  const confidenceFactor = opts.confidenceScore / 100;
-  score = score * confidenceFactor;
+  // Source weight (default to 1.0 for exchange/internal)
+  const sourceWeight = 1.0;
 
+  // Base score from impact × confidence × timeWeight × source
+  score = impactScore * confFactor * timeDecay * sourceWeight;
+
+  // Event type weighting
+  score += Math.min(15, (SIGNAL_TYPE_WEIGHTS[opts.eventType] || 5) * confFactor);
+
+  // Sentiment adjustment
   score += opts.sentiment === 'Bullish' ? 5 : opts.sentiment === 'Bearish' ? -3 : 0;
 
+  // Earnings boost
   if (opts.earningsScore !== null) {
     if (opts.earningsScore >= 70) score += 8;
     else if (opts.earningsScore >= 50) score += 4;
     else if (opts.earningsScore < 40) { score -= 10; }
   }
 
+  // Negative signal boost
   if (opts.isNegative) score += 5;
 
+  // Deal-specific adjustments
   if (opts.isDeal) {
     if (opts.buyerQuality && opts.buyerQuality >= 80) score += 4;
     if (opts.dealPremiumDiscount !== undefined && opts.dealPremiumDiscount !== null && opts.dealPremiumDiscount > 3) score += 2;
   }
 
+  // Sector multiplier
   if (opts.sector) {
     const sectorKey = opts.sector.split(' ')[0];
     const mult = SECTOR_MULTIPLIER[sectorKey] || 1.0;
@@ -1221,19 +1325,19 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     const earningsScore = earningsCache.get(symbol) ?? null;
     const earningsBoost = (earningsScore !== null && earningsScore >= 70 && sentiment !== 'Bearish' && impactPct >= 3);
 
-    let action = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, earningsScore);
-    if (earningsBoost) action = 'BUY WATCH';
-
-    const pctMcap = (enrichment?.mcapCr && valueCr > 0)
-      ? parseFloat(((valueCr / enrichment.mcapCr) * 100).toFixed(2))
-      : null;
-
     const score = computeScore({
       impactPct, sentiment, timeWeight,
       earningsScore, isNegative: negative, isDeal: false,
       eventType, confidenceScore, sector,
     });
     const weightedScore = Math.round(score * timeWeight);
+
+    let action = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, earningsScore, weightedScore, negative, 1);
+    if (earningsBoost && action !== 'BUY') action = 'ADD';
+
+    const pctMcap = (enrichment?.mcapCr && valueCr > 0)
+      ? parseFloat(((valueCr / enrichment.mcapCr) * 100).toFixed(2))
+      : null;
 
     const whyItMatters = generateWhyItMatters({
       eventType, impactLevel, pctRevenue: impactPct, pctMcap, valueCr,
@@ -1279,6 +1383,9 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       action, score, timeWeight, weightedScore, sentiment, whyItMatters,
       isNegative: negative, earningsBoost, isWatchlist, isPortfolio,
       dataSource,
+      freshness: computeFreshness(item.date || getTodayDate()),
+      scoreClassification: classifyScore(weightedScore),
+      decision: action,
     };
 
     if (existing) {
@@ -1347,7 +1454,6 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
 
     const impactLevel = classifyImpactLevel(dealImpactPct);
     const earningsScore = earningsCache.get(symbol) ?? null;
-    const action = classifyAction(dealImpactPct, sentiment, isWatchlist, isPortfolio, earningsScore);
 
     const score = computeScore({
       impactPct: dealImpactPct, sentiment, timeWeight,
@@ -1356,6 +1462,8 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       dealPremiumDiscount: premiumDiscount,
     });
     const weightedScore = Math.round(score * timeWeight);
+
+    const action = classifyAction(dealImpactPct, sentiment, isWatchlist, isPortfolio, earningsScore, weightedScore, isSell, 1);
 
     const dealHeadline = `${fmtCr(dealValueCr)} ${eventType} — ${deal.clientName}${pctEquity !== null ? ` (${pctEquity.toFixed(2)}% equity)` : ''}${premiumDiscount !== null ? ` @${premiumDiscount > 0 ? '+' : ''}${premiumDiscount.toFixed(1)}%` : ''}`;
 
@@ -1381,6 +1489,9 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       }),
       isNegative: isSell, earningsBoost: false, isWatchlist, isPortfolio,
       dataSource: 'NSE',
+      freshness: computeFreshness(deal.dealDate || getTodayDate()),
+      scoreClassification: classifyScore(weightedScore),
+      decision: action,
     };
 
     const dealDedupKey = `${symbol}:${eventType}:${(deal.dealDate || getTodayDate()).slice(0, 10)}`;
@@ -1410,7 +1521,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
 
         // ── Scoring Rules ──
         let signalScore = 0;
-        let signalAction: ActionFlag = 'TRACK';
+        let signalAction: ActionFlag = 'HOLD';
         let sentiment: SignalSentiment = 'Neutral';
         const scoreParts: string[] = [];
 
@@ -1458,19 +1569,18 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         // Discard if below threshold
         if (signalScore < 20 && ge.confidenceScore < 60) continue;
 
-        // Map to action bucket
-        if (signalScore > 70) signalAction = 'BUY WATCH';
-        else if (signalScore >= 40) signalAction = 'TRACK';
-        else signalAction = 'TRACK';
-
         // Override for negative signals
         const isNeg = ge.grade === 'NEGATIVE' || ge.grade === 'WEAK' || (ge.sentimentScore < 30);
+
+        const impactPct = Math.abs(revG || 0);
 
         const timeWeight = computeTimeWeight(ge.eventDate || getTodayDate());
         const weightedScore = Math.round(signalScore * timeWeight);
 
+        // Map to action bucket using new classifyAction
+        signalAction = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, null, weightedScore, isNeg, 1);
+
         const headline = `Guidance: ${scoreParts.join(' · ')} | ${ge.grade} (${ge.confidenceScore}% conf)`;
-        const impactPct = Math.abs(revG || 0);
 
         const guidanceSignal: IntelSignal = {
           symbol,
@@ -1509,6 +1619,9 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
           isWatchlist,
           isPortfolio,
           dataSource: 'Guidance',
+          freshness: computeFreshness(ge.eventDate || getTodayDate()),
+          scoreClassification: classifyScore(weightedScore),
+          decision: signalAction,
         };
 
         // Dedup against existing signals for same symbol
@@ -1605,13 +1718,18 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     }
   }
 
-  const top3 = filtered.filter(s => s.action !== 'IGNORE').slice(0, 3);
+  let top3 = filtered.filter(s => s.action === 'BUY' || s.action === 'ADD').slice(0, 3);
+  if (top3.length === 0) {
+    top3.push(...filtered.filter(s => s.action !== 'AVOID' && s.action !== 'EXIT').slice(0, 3));
+  }
 
   const sectorSet = new Set<string>();
   let totalOrderValueCr = 0;
   let totalDealValueCr = 0;
-  let buyWatchCount = 0;
-  let trackCount = 0;
+  let buyCount = 0;
+  let addCount = 0;
+  let holdCount = 0;
+  let trimExitCount = 0;
   let highImpactCount = 0;
   let bullishCount = 0;
   let bearishCount = 0;
@@ -1622,12 +1740,14 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     if (s.segment) sectorSet.add(s.segment);
     if (s.source === 'order' && s.valueCr) totalOrderValueCr += s.valueCr;
     if (s.source === 'deal' && s.valueCr) totalDealValueCr += s.valueCr;
-    if (s.action === 'BUY WATCH') buyWatchCount++;
-    if (s.action === 'TRACK') trackCount++;
+    if (s.action === 'BUY') buyCount++;
+    if (s.action === 'ADD') addCount++;
+    if (s.action === 'HOLD') holdCount++;
+    if (s.action === 'TRIM' || s.action === 'EXIT') trimExitCount++;
     if (s.impactLevel === 'HIGH') highImpactCount++;
     if (s.sentiment === 'Bullish') bullishCount++;
     if (s.sentiment === 'Bearish') bearishCount++;
-    if (s.isPortfolio && s.action !== 'IGNORE') portfolioAlerts++;
+    if (s.isPortfolio && s.action !== 'AVOID' && s.action !== 'EXIT') portfolioAlerts++;
     if (s.isNegative) negativeSignals++;
   }
 
@@ -1637,14 +1757,15 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
 
   const biasParts: string[] = [];
   if (highImpactCount > 0) biasParts.push(`${highImpactCount} High Impact`);
-  if (buyWatchCount > 0) biasParts.push(`${buyWatchCount} BUY WATCH`);
+  if (buyCount > 0) biasParts.push(`${buyCount} BUY`);
+  if (addCount > 0) biasParts.push(`${addCount} ADD`);
   if (negativeSignals > 0) biasParts.push(`${negativeSignals} ⚠ Negative`);
   if (portfolioAlerts > 0) biasParts.push(`${portfolioAlerts} Portfolio Alert${portfolioAlerts > 1 ? 's' : ''}`);
   biasParts.push(`Net: ${netBias}`);
   const biasStr = biasParts.join(' · ');
 
   const bias: DailyBias = {
-    netBias, highImpactCount, activeSectors, buyWatchCount, trackCount,
+    netBias, highImpactCount, activeSectors, buyCount, addCount, holdCount, trimExitCount,
     totalSignals: filtered.length,
     totalOrderValueCr: Math.round(totalOrderValueCr),
     totalDealValueCr: Math.round(totalDealValueCr),
@@ -1657,6 +1778,41 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     else debug.signalsBySource.nse++;
   }
   debug.totalSignalsAfterDedup = filtered.length;
+
+  // ── Score Momentum: compare with previous run ──
+  try {
+    const prevSignals = await kvGet<IntelligenceResponse>(PROD_SIGNALS_KEY);
+    if (prevSignals?.signals) {
+      const prevScoreMap = new Map<string, number>();
+      for (const ps of prevSignals.signals) {
+        prevScoreMap.set(ps.symbol, ps.weightedScore);
+      }
+      for (const s of filtered) {
+        const prev = prevScoreMap.get(s.symbol);
+        if (prev !== undefined) {
+          s.scoreDelta = s.weightedScore - prev;
+        }
+      }
+    }
+  } catch { /* best effort */ }
+
+  // ── Sector Intelligence Layer ──
+  const sectorScoreMap = new Map<string, { total: number; count: number }>();
+  for (const s of filtered) {
+    const sector = s.segment || 'Other';
+    const existing = sectorScoreMap.get(sector) || { total: 0, count: 0 };
+    existing.total += s.weightedScore;
+    existing.count++;
+    sectorScoreMap.set(sector, existing);
+  }
+  for (const s of filtered) {
+    const sector = s.segment || 'Other';
+    const sectorData = sectorScoreMap.get(sector);
+    if (sectorData && sectorData.count > 0) {
+      s.sectorScore = Math.round(sectorData.total / sectorData.count);
+      s.sectorTrend = s.sectorScore >= 60 ? 'Bullish' : s.sectorScore >= 40 ? 'Neutral' : 'Bearish';
+    }
+  }
 
   const duration = Date.now() - startTime;
   console.log(`[Compute] Done: ${filtered.length} signals, ${top3.length} top3, ${trends.length} trends in ${duration}ms`);

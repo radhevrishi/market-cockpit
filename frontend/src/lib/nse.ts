@@ -282,6 +282,86 @@ export async function fetchStockQuote(symbol: string) {
   return nseApiFetch(`/api/quote-equity?symbol=${encodeURIComponent(symbol)}`, 300000);
 }
 
+/**
+ * Fetch stock price with multi-source fallback chain.
+ * NSE → BSE → MoneyControl → Redis cache (max 15 min)
+ */
+export async function fetchPriceWithFallback(symbol: string): Promise<{
+  price: number | null;
+  source: string;
+  stale: boolean;
+}> {
+  // 1. Try NSE
+  try {
+    const quote = await fetchStockQuote(symbol);
+    if (quote?.priceInfo?.lastPrice) {
+      // Cache in Redis
+      try {
+        const { kvSet } = await import('./kv');
+        await kvSet(`price:${symbol}`, { price: quote.priceInfo.lastPrice, source: 'NSE', ts: Date.now() }, 900).catch(() => {});
+      } catch {}
+      return { price: quote.priceInfo.lastPrice, source: 'NSE', stale: false };
+    }
+  } catch {}
+
+  // 2. Try BSE
+  try {
+    const bseUrl = `https://api.bseindia.com/BseIndiaAPI/api/StockReachGraph/w?scripcode=&flag=0&fromdate=&todate=&seriesid=&scripcode2=${encodeURIComponent(symbol)}`;
+    const res = await fetch(bseUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.bseindia.com/' },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const price = parseFloat(data?.CurrValue || data?.Curvalue || '0');
+      if (price > 0) {
+        try {
+          const { kvSet } = await import('./kv');
+          await kvSet(`price:${symbol}`, { price, source: 'BSE', ts: Date.now() }, 900).catch(() => {});
+        } catch {}
+        return { price, source: 'BSE', stale: false };
+      }
+    }
+  } catch {}
+
+  // 3. Try MoneyControl search
+  try {
+    const mcUrl = `https://www.moneycontrol.com/mccode/common/autosuggestion_solr.php?classic=true&query=${encodeURIComponent(symbol)}&type=1&format=json&callback=`;
+    const res = await fetch(mcUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.moneycontrol.com/' },
+      signal: AbortSignal.timeout(4000),
+    });
+    if (res.ok) {
+      const text = await res.text();
+      const jsonStr = text.replace(/^[^[{]*/, '').replace(/[^}\]]*$/, '');
+      const data = JSON.parse(jsonStr);
+      const results = Array.isArray(data) ? data : (data?.data || []);
+      const match = results.find((r: any) => (r.nse_symbol || '').toUpperCase() === symbol.toUpperCase());
+      if (match?.current_price) {
+        const price = parseFloat(match.current_price);
+        if (price > 0) {
+          try {
+            const { kvSet } = await import('./kv');
+            await kvSet(`price:${symbol}`, { price, source: 'MC', ts: Date.now() }, 900).catch(() => {});
+          } catch {}
+          return { price, source: 'MC', stale: false };
+        }
+      }
+    }
+  } catch {}
+
+  // 4. Redis cache fallback (max 15 min stale)
+  try {
+    const { kvGet } = await import('./kv');
+    const cached = await kvGet<{ price: number; source: string; ts: number }>(`price:${symbol}`);
+    if (cached?.price && (Date.now() - cached.ts) < 900000) {
+      return { price: cached.price, source: `${cached.source} (cached)`, stale: true };
+    }
+  } catch {}
+
+  return { price: null, source: 'UNAVAILABLE', stale: true };
+}
+
 // Fetch stock chart data for historical prices
 export async function fetchStockChart(symbol: string) {
   return nseApiFetch(`/api/chart-databyindex?index=${encodeURIComponent(symbol)}EQN`, 300000);

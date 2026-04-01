@@ -63,6 +63,12 @@ const TICKER_ALIASES: Record<string, string> = {
   'SUNPHARM': 'SUNPHARMA',
   'MARUTI': 'MARUTI',
   'MARUTISUZUKI': 'MARUTI',
+
+  // Known problem stocks (BUG-04 fix)
+  'SJS': 'SJSENTERPR',
+  'S&SPOWER': 'SNSPWR',
+  'GVT&D': 'GVTD',
+  'SAVERA': 'SAVERAIND',
 };
 
 /**

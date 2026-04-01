@@ -18,6 +18,22 @@ const TEXT1 = '#E2E8F0';
 const TEXT2 = '#94A3B8';
 const TEXT3 = '#64748B';
 
+const DECISION_COLORS: Record<ActionFlag, string> = {
+  'BUY': '#10B981',      // Green
+  'ADD': '#059669',      // Dark Green
+  'HOLD': '#FBBF24',     // Yellow
+  'TRIM': '#F97316',     // Orange
+  'EXIT': '#EF4444',     // Red
+  'AVOID': '#64748B',    // Grey
+};
+
+const FRESHNESS_COLORS: Record<string, string> = {
+  'FRESH': '#10B981',
+  'RECENT': '#06B6D4',
+  'AGING': '#FBBF24',
+  'STALE': '#64748B',
+};
+
 // ── Tab cache: Avoid refetching on every tab switch ──
 // Module-level cache persists across component remounts (tab switches)
 // Only refetches on explicit refresh or after CACHE_TTL expires
@@ -25,7 +41,9 @@ const CACHE_TTL = 120000; // 2 min
 let _cache: { data: any; timestamp: number } | null = null;
 
 // ── Types ──
-type ActionFlag = 'BUY WATCH' | 'TRACK' | 'IGNORE';
+type ActionFlag = 'BUY' | 'ADD' | 'HOLD' | 'TRIM' | 'EXIT' | 'AVOID';
+type ScoreClassification = 'HIGH_CONVICTION' | 'STRONG' | 'BUILDING' | 'WEAK' | 'NOISE';
+type FreshnessLabel = 'FRESH' | 'RECENT' | 'AGING' | 'STALE';
 type ImpactLevel = 'HIGH' | 'MEDIUM' | 'LOW';
 
 interface Signal {
@@ -68,6 +86,13 @@ interface Signal {
   signalStackCount?: number;
   signalStackLevel?: 'STRONG' | 'BUILDING' | 'WEAK';
   portfolioImpactScore?: number;   // Score for portfolio impact ranking
+  scoreDelta?: number;
+  scoreClassification?: ScoreClassification;
+  freshness?: FreshnessLabel;
+  sectorScore?: number;
+  sectorTrend?: 'Bullish' | 'Neutral' | 'Bearish';
+  decision?: ActionFlag;
+  decisionReason?: string;
 }
 
 interface CompanyTrend {
@@ -85,19 +110,34 @@ interface DailyBias {
   netBias: 'Bullish' | 'Neutral' | 'Bearish';
   highImpactCount: number;
   activeSectors: string[];
-  buyWatchCount: number;
-  trackCount: number;
+  buyCount: number;
+  addCount?: number;
+  holdCount: number;
+  trimExitCount?: number;
   totalSignals: number;
   totalOrderValueCr: number;
   totalDealValueCr: number;
   portfolioAlerts: number;
   negativeSignals: number;
   summary: string;
+  // Legacy fields for backwards compatibility
+  buyWatchCount?: number;
+  trackCount?: number;
 }
 
 // ── Helpers ──
-const actionColor = (a: ActionFlag) => a === 'BUY WATCH' ? GREEN : a === 'TRACK' ? ACCENT : TEXT3;
-const actionBg = (a: ActionFlag) => a === 'BUY WATCH' ? 'rgba(16,185,129,0.12)' : a === 'TRACK' ? 'rgba(15,122,191,0.10)' : 'rgba(100,116,139,0.08)';
+const actionColor = (a: ActionFlag) => DECISION_COLORS[a] || TEXT3;
+const actionBg = (a: ActionFlag) => {
+  const colorMap: Record<ActionFlag, string> = {
+    'BUY': 'rgba(16,185,129,0.12)',
+    'ADD': 'rgba(5,150,105,0.12)',
+    'HOLD': 'rgba(251,191,36,0.12)',
+    'TRIM': 'rgba(249,115,22,0.12)',
+    'EXIT': 'rgba(239,68,68,0.12)',
+    'AVOID': 'rgba(100,116,139,0.08)',
+  };
+  return colorMap[a] || 'rgba(100,116,139,0.08)';
+};
 const impactColor = (l: ImpactLevel) => l === 'HIGH' ? GREEN : l === 'MEDIUM' ? YELLOW : TEXT3;
 const impactBg = (l: ImpactLevel) => l === 'HIGH' ? 'rgba(16,185,129,0.12)' : l === 'MEDIUM' ? 'rgba(251,191,36,0.10)' : 'rgba(100,116,139,0.06)';
 const biasColor = (b: string) => b === 'Bullish' ? GREEN : b === 'Bearish' ? RED : YELLOW;
@@ -139,7 +179,7 @@ const eventTypeIcon = (t: string) => {
   return '📌';
 };
 
-type FilterType = 'ALL' | 'BUY_WATCH' | 'ORDERS' | 'CAPEX' | 'DEALS' | 'STRATEGIC' | 'NEGATIVE';
+type FilterType = 'ALL' | 'BUY' | 'ADD' | 'HOLD' | 'ORDERS' | 'CAPEX' | 'DEALS' | 'STRATEGIC' | 'NEGATIVE';
 type UniverseFilter = 'ALL' | 'PORTFOLIO' | 'WATCHLIST';
 
 const CHAT_ID = '5057319640';
@@ -161,6 +201,7 @@ export default function CompanyIntelligencePage() {
   const [addedPrices, setAddedPrices] = useState<Record<string, number>>({});
   const [computing, setComputing] = useState(false);
   const [computePollCount, setComputePollCount] = useState(0);
+  const [showNoise, setShowNoise] = useState(false);
 
   const fetchData = useCallback(async (forceRefresh = false) => {
     // Tab cache: if data was fetched recently and not forcing refresh, use cached data
@@ -290,17 +331,23 @@ export default function CompanyIntelligencePage() {
     if (universeFilter === 'PORTFOLIO') list = list.filter(s => s.isPortfolio);
     if (universeFilter === 'WATCHLIST') list = list.filter(s => s.isWatchlist);
     // Type filter
-    if (typeFilter === 'BUY_WATCH') list = list.filter(s => s.action === 'BUY WATCH');
+    if (typeFilter === 'BUY') list = list.filter(s => s.action === 'BUY');
+    if (typeFilter === 'ADD') list = list.filter(s => s.action === 'ADD');
+    if (typeFilter === 'HOLD') list = list.filter(s => s.action === 'HOLD');
     if (typeFilter === 'ORDERS') list = list.filter(s => ['Order Win', 'Contract', 'LOI'].includes(s.eventType));
     if (typeFilter === 'CAPEX') list = list.filter(s => ['Capex/Expansion', 'Fund Raising', 'Guidance'].includes(s.eventType));
     if (typeFilter === 'DEALS') list = list.filter(s => s.source === 'deal');
     if (typeFilter === 'STRATEGIC') list = list.filter(s => ['M&A', 'Demerger', 'JV/Partnership', 'Buyback'].includes(s.eventType));
     if (typeFilter === 'NEGATIVE') list = list.filter(s => s.isNegative);
+    // Noise filter — filter out NOISE classification by default unless showNoise is true
+    if (!showNoise) list = list.filter(s => s.scoreClassification !== 'NOISE');
     return list;
-  }, [signals, typeFilter, universeFilter]);
+  }, [signals, typeFilter, universeFilter, showNoise]);
 
   // Stats
-  const buyWatchSignals = signals.filter(s => s.action === 'BUY WATCH');
+  const buySignals = signals.filter(s => s.action === 'BUY');
+  const addSignals = signals.filter(s => s.action === 'ADD');
+  const holdSignals = signals.filter(s => s.action === 'HOLD');
   const negativeCount = signals.filter(s => s.isNegative).length;
   const portfolioCount = signals.filter(s => s.isPortfolio).length;
   const watchlistCount = signals.filter(s => s.isWatchlist).length;
@@ -359,8 +406,10 @@ export default function CompanyIntelligencePage() {
             <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
               {[
                 { label: 'High Impact', value: bias.highImpactCount, color: GREEN },
-                { label: 'BUY WATCH', value: bias.buyWatchCount, color: GREEN },
-                { label: 'TRACK', value: bias.trackCount, color: ACCENT },
+                { label: 'BUY', value: bias.buyCount || bias.buyWatchCount || 0, color: GREEN },
+                ...(bias.addCount !== undefined ? [{ label: 'ADD', value: bias.addCount, color: '#059669' }] : []),
+                { label: 'HOLD', value: bias.holdCount || bias.trackCount || 0, color: ACCENT },
+                ...(bias.trimExitCount !== undefined && bias.trimExitCount > 0 ? [{ label: 'TRIM/EXIT', value: bias.trimExitCount, color: ORANGE }] : []),
                 { label: 'Portfolio Alerts', value: bias.portfolioAlerts, color: PURPLE },
                 ...(bias.negativeSignals > 0 ? [{ label: '⚠ Negative', value: bias.negativeSignals, color: RED }] : []),
                 ...(bias.totalOrderValueCr > 0 ? [{ label: 'Order Value', value: fmtCr(bias.totalOrderValueCr) as any, color: CYAN }] : []),
@@ -591,12 +640,22 @@ export default function CompanyIntelligencePage() {
                 </div>
 
                 {/* Row 5: Meta */}
-                <div style={{ display: 'flex', gap: '12px', marginTop: '6px', paddingLeft: '2px' }}>
+                <div style={{ display: 'flex', gap: '12px', marginTop: '6px', paddingLeft: '2px', alignItems: 'center', flexWrap: 'wrap' }}>
                   {s.client && <span style={{ fontSize: '10px', color: PURPLE }}>Client: {s.client}</span>}
                   {s.segment && <span style={{ fontSize: '10px', color: ACCENT }}>Sector: {s.segment}</span>}
                   {s.timeline && <span style={{ fontSize: '10px', color: ORANGE }}>Timeline: {s.timeline}</span>}
                   <span style={{ fontSize: '10px', color: sentimentColor(s.sentiment) }}>{s.sentiment}</span>
                   <span style={{ fontSize: '10px', color: TEXT3 }}>{fmtDate(s.date)}</span>
+                  {s.freshness && (
+                    <span style={{
+                      fontSize: '9px',
+                      fontWeight: 600,
+                      color: FRESHNESS_COLORS[s.freshness] || TEXT3,
+                      marginLeft: 'auto',
+                    }}>
+                      {s.freshness}
+                    </span>
+                  )}
                 </div>
               </div>
             ))}
@@ -628,7 +687,9 @@ export default function CompanyIntelligencePage() {
           {/* Type filter */}
           {([
             { key: 'ALL' as FilterType, label: 'All' },
-            { key: 'BUY_WATCH' as FilterType, label: `🎯 BUY WATCH (${buyWatchSignals.length})` },
+            { key: 'BUY' as FilterType, label: `🎯 BUY (${buySignals.length})` },
+            { key: 'ADD' as FilterType, label: `ADD (${addSignals.length})` },
+            { key: 'HOLD' as FilterType, label: `HOLD (${holdSignals.length})` },
             { key: 'ORDERS' as FilterType, label: 'Orders' },
             { key: 'CAPEX' as FilterType, label: 'Capex' },
             { key: 'DEALS' as FilterType, label: 'Deals' },
@@ -642,6 +703,20 @@ export default function CompanyIntelligencePage() {
               color: typeFilter === f.key ? ACCENT : TEXT3,
             }}>{f.label}</button>
           ))}
+
+          <span style={{ width: '1px', height: '16px', backgroundColor: BORDER, margin: '0 4px' }} />
+
+          {/* Noise toggle */}
+          <button
+            onClick={() => setShowNoise(!showNoise)}
+            style={{
+              fontSize: '10', padding: '3px 8px', borderRadius: 4,
+              background: showNoise ? `${TEXT3}33` : 'transparent',
+              color: TEXT3, border: `1px solid ${TEXT3}33`, cursor: 'pointer',
+            }}
+          >
+            {showNoise ? 'Hide Noise' : 'Show Noise'}
+          </button>
         </div>
       )}
 
@@ -667,10 +742,29 @@ export default function CompanyIntelligencePage() {
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   }}>
                     <div style={{ flex: 1 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                         <span style={{ fontWeight: 700, color: TEXT1, fontSize: '13px' }}>{signal.symbol}</span>
                         <span style={{ fontSize: '10px', color: ORANGE, fontWeight: 600, padding: '1px 6px', background: `${ORANGE}22`, borderRadius: '4px' }}>PF</span>
                         <span style={{ fontSize: '11px', color: signal.sentiment === 'Bullish' ? GREEN : signal.sentiment === 'Bearish' ? RED : TEXT2 }}>{signal.eventType}</span>
+                        <span style={{
+                          fontSize: '10px',
+                          fontWeight: 700,
+                          padding: '2px 8px',
+                          borderRadius: 4,
+                          color: '#fff',
+                          backgroundColor: DECISION_COLORS[signal.action] || TEXT3,
+                        }}>
+                          {signal.action}
+                        </span>
+                        {signal.scoreDelta !== undefined && signal.scoreDelta !== 0 && (
+                          <span style={{
+                            fontSize: '10px',
+                            color: signal.scoreDelta > 0 ? GREEN : RED,
+                            marginLeft: '4px',
+                          }}>
+                            {signal.scoreDelta > 0 ? '↑' : '↓'}{Math.abs(signal.scoreDelta)}
+                          </span>
+                        )}
                       </div>
                       <div style={{ fontSize: '11px', color: TEXT2, marginTop: '2px' }}>{signal.headline.slice(0, 100)}</div>
                     </div>
@@ -827,6 +921,24 @@ export default function CompanyIntelligencePage() {
                       low conf.
                     </span>
                   )}
+                  {s.scoreDelta !== undefined && s.scoreDelta !== 0 && (
+                    <span style={{
+                      fontSize: '10px',
+                      color: s.scoreDelta > 0 ? GREEN : RED,
+                      marginLeft: 'auto',
+                    }}>
+                      {s.scoreDelta > 0 ? '↑' : '↓'}{Math.abs(s.scoreDelta)}
+                    </span>
+                  )}
+                  {s.freshness && (
+                    <span style={{
+                      fontSize: '9px',
+                      fontWeight: 600,
+                      color: FRESHNESS_COLORS[s.freshness] || TEXT3,
+                    }}>
+                      {s.freshness}
+                    </span>
+                  )}
                   <span style={{ fontSize: '10px', color: TEXT3, marginLeft: 'auto' }}>
                     {fmtDate(s.date)} · {Math.round(s.timeWeight * 100)}%
                   </span>
@@ -962,6 +1074,24 @@ export default function CompanyIntelligencePage() {
                             low conf.
                           </span>
                         )}
+                        {s.scoreDelta !== undefined && s.scoreDelta !== 0 && (
+                          <span style={{
+                            fontSize: '10px',
+                            color: s.scoreDelta > 0 ? GREEN : RED,
+                            marginLeft: 'auto',
+                          }}>
+                            {s.scoreDelta > 0 ? '↑' : '↓'}{Math.abs(s.scoreDelta)}
+                          </span>
+                        )}
+                        {s.freshness && (
+                          <span style={{
+                            fontSize: '9px',
+                            fontWeight: 600,
+                            color: FRESHNESS_COLORS[s.freshness] || TEXT3,
+                          }}>
+                            {s.freshness}
+                          </span>
+                        )}
                         <span style={{ fontSize: '10px', color: TEXT3, marginLeft: 'auto' }}>
                           {fmtDate(s.date)} · {Math.round(s.timeWeight * 100)}%
                         </span>
@@ -1095,6 +1225,24 @@ export default function CompanyIntelligencePage() {
                         {s.confidenceScore !== undefined && s.confidenceScore <= 50 && (
                           <span style={{ fontSize: '8px', color: ORANGE, fontWeight: 600 }}>
                             low conf.
+                          </span>
+                        )}
+                        {s.scoreDelta !== undefined && s.scoreDelta !== 0 && (
+                          <span style={{
+                            fontSize: '10px',
+                            color: s.scoreDelta > 0 ? GREEN : RED,
+                            marginLeft: 'auto',
+                          }}>
+                            {s.scoreDelta > 0 ? '↑' : '↓'}{Math.abs(s.scoreDelta)}
+                          </span>
+                        )}
+                        {s.freshness && (
+                          <span style={{
+                            fontSize: '9px',
+                            fontWeight: 600,
+                            color: FRESHNESS_COLORS[s.freshness] || TEXT3,
+                          }}>
+                            {s.freshness}
                           </span>
                         )}
                         <span style={{ fontSize: '10px', color: TEXT3, marginLeft: 'auto' }}>

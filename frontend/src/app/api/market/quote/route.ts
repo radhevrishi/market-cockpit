@@ -20,6 +20,8 @@ export async function GET(request: Request) {
     'SENORES': 'SENORES',         // Verify correct NSE ticker — may need BSE fallback
     'LUMAXTECH': 'LUMAXTECH',
     'ATLANTAELE': 'ATLASCYCLE',   // Verify
+    'GVT&D': 'GVTD',
+    'SAVERA': 'SAVERAIND',
   };
 
   const symbols = symbolsParam
