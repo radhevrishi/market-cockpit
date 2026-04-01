@@ -238,7 +238,7 @@ async function fetchGoogleNewsRSS(symbols: string[]): Promise<MCNewsItem[]> {
 
 // ==================== TYPES ====================
 
-type ActionFlag = 'BUY' | 'ADD' | 'HOLD' | 'TRIM' | 'EXIT' | 'AVOID';
+type ActionFlag = 'BUY' | 'ADD' | 'HOLD' | 'WATCH' | 'TRIM' | 'EXIT' | 'AVOID';
 type ScoreClassification = 'HIGH_CONVICTION' | 'STRONG' | 'BUILDING' | 'WEAK' | 'NOISE';
 type FreshnessLabel = 'FRESH' | 'RECENT' | 'AGING' | 'STALE';
 type ImpactLevel = 'HIGH' | 'MEDIUM' | 'LOW';
@@ -300,6 +300,7 @@ interface IntelSignal {
   sectorTrend?: 'Bullish' | 'Neutral' | 'Bearish';
   decision?: ActionFlag;
   decisionReason?: string;
+  tag?: string;  // e.g. 'TRANSITION PHASE', 'DATA_MISSING'
 }
 
 interface CompanyTrend {
@@ -321,6 +322,7 @@ interface DailyBias {
   buyCount: number;
   addCount: number;
   holdCount: number;
+  watchCount: number;
   trimExitCount: number;
   totalSignals: number;
   totalOrderValueCr: number;
@@ -688,44 +690,37 @@ function classifyAction(
   weightedScore: number = 0,
   isNegative: boolean = false,
   signalCount: number = 1,
+  guidanceStrong: boolean = false,
 ): ActionFlag {
-  // ── CRITICAL OVERRIDE: Always dominates ──
-  // Insolvency, defaults, regulatory action → EXIT
+  // ── CRITICAL OVERRIDE: Insolvency, defaults, regulatory action → EXIT ──
   if (isNegative && impactPct >= 10) return 'EXIT';
 
-  // ── EXIT conditions ──
-  if (weightedScore < 30 && isNegative) return 'EXIT';
+  // ── EXIT: only portfolio stocks with severe negative signals ──
+  if (isPortfolio && weightedScore < 25 && isNegative) return 'EXIT';
 
-  // ── BUY conditions ──
-  // Score > 75 AND ≥2 independent bullish signals AND no negative
-  if (weightedScore > 75 && signalCount >= 2 && sentiment === 'Bullish' && !isNegative) return 'BUY';
-  // High impact bullish with strong earnings
-  if (impactPct >= 5 && sentiment === 'Bullish' && earningsScore !== null && earningsScore >= 70 && !isNegative) return 'BUY';
+  // ── TRIM: ONLY for portfolio stocks with multiple negative conditions ──
+  // Requires: score < 45 AND negative earnings AND (negative guidance OR bearish sentiment)
+  if (isPortfolio && weightedScore < 45 && isNegative && sentiment === 'Bearish') return 'TRIM';
+  if (isPortfolio && weightedScore < 45 && isNegative && earningsScore !== null && earningsScore < 40) return 'TRIM';
 
-  // ── ADD conditions (portfolio only) ──
-  if (isPortfolio && sentiment !== 'Bearish' && !isNegative) {
-    if (weightedScore >= 55 && signalCount >= 2) return 'ADD';
-    if (impactPct >= 3 && earningsScore !== null && earningsScore >= 60) return 'ADD';
-  }
+  // ── BUY: score >= 70 with confirmation ──
+  if (weightedScore >= 70 && signalCount >= 2 && !isNegative) return 'BUY';
+  if (weightedScore >= 70 && sentiment === 'Bullish' && !isNegative) return 'BUY';
+  // Strong guidance + strong earnings override
+  if (guidanceStrong && earningsScore !== null && earningsScore >= 70 && !isNegative) return 'BUY';
 
-  // ── TRIM conditions ──
-  if (isPortfolio && weightedScore < 35) return 'TRIM';
-  if (isPortfolio && isNegative && impactPct < 10) return 'TRIM';
-  if (isPortfolio && sentiment === 'Bearish' && weightedScore < 40) return 'TRIM';
+  // ── ADD: 55-69 score range ──
+  if (weightedScore >= 55 && weightedScore < 70 && !isNegative) return 'ADD';
+  // Divergence: strong guidance + weak earnings = ADD (transition phase)
+  if (guidanceStrong && sentiment === 'Bullish' && !isNegative && weightedScore >= 45) return 'ADD';
 
-  // ── AVOID conditions ──
-  if (weightedScore < 45 && signalCount <= 1) return 'AVOID';
-  if (signalCount === 1 && impactPct < 2 && !isPortfolio && !isWatchlist) return 'AVOID';
-  if (sentiment === 'Bearish' && !isPortfolio && !isWatchlist) return 'AVOID';
+  // ── HOLD: 45-54 score range ──
+  if (weightedScore >= 45 && weightedScore < 55) return 'HOLD';
 
-  // ── HOLD (default for portfolio with stable signals) ──
-  if (isPortfolio && weightedScore >= 35) return 'HOLD';
+  // ── WATCH: 35-44 score range (NOT TRIM) ──
+  if (weightedScore >= 35 && weightedScore < 45) return 'WATCH';
 
-  // ── HOLD for watchlist with decent signals ──
-  if (isWatchlist && weightedScore >= 45) return 'HOLD';
-
-  // ── Default: HOLD for decent, AVOID for weak ──
-  if (weightedScore >= 45) return 'HOLD';
+  // ── Below 35: AVOID (not TRIM unless portfolio conditions above met) ──
   return 'AVOID';
 }
 
@@ -1376,7 +1371,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     });
     const weightedScore = Math.round(score * timeWeight);
 
-    let action = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, earningsScore, weightedScore, negative, 1);
+    let action = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, earningsScore, weightedScore, negative, 1, false);
     if (earningsBoost && action !== 'BUY') action = 'ADD';
 
     const pctMcap = (enrichment?.mcapCr && valueCr > 0)
@@ -1515,7 +1510,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     });
     const weightedScore = Math.round(score * timeWeight);
 
-    const action = classifyAction(dealImpactPct, sentiment, isWatchlist, isPortfolio, earningsScore, weightedScore, isSell, 1);
+    const action = classifyAction(dealImpactPct, sentiment, isWatchlist, isPortfolio, earningsScore, weightedScore, isSell, 1, false);
 
     const dealHeadline = `${fmtCr(dealValueCr)} ${eventType} — ${deal.clientName}${pctEquity !== null ? ` (${pctEquity.toFixed(2)}% equity)` : ''}${premiumDiscount !== null ? ` @${premiumDiscount > 0 ? '+' : ''}${premiumDiscount.toFixed(1)}%` : ''}`;
 
@@ -1645,8 +1640,11 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         const timeWeight = computeTimeWeight(ge.eventDate || getTodayDate());
         const weightedScore = Math.round(signalScore * timeWeight);
 
+        // Determine if guidance is strong
+        const guidanceStrong = (ge.grade === 'STRONG' || ge.grade === 'VERY_STRONG');
+
         // Map to action bucket using new classifyAction
-        signalAction = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, null, weightedScore, isNeg, 1);
+        signalAction = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, null, weightedScore, isNeg, 1, guidanceStrong);
 
         const headline = `Guidance: ${scoreParts.join(' · ')} | ${ge.grade} (${ge.confidenceScore}% conf)`;
 
@@ -1784,6 +1782,21 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       }
     }
 
+    // ── Divergence detection: strong guidance + weak earnings = Transition Phase ──
+    const hasStrongGuidance = sigs.some(s => s.dataSource === 'Guidance' && s.weightedScore >= 55);
+    const hasWeakEarnings = sigs.some(s => s.earningsBoost === false && s.weightedScore < 40 && s.dataSource !== 'Guidance');
+    if (hasStrongGuidance && hasWeakEarnings) {
+      for (const s of sigs) {
+        s.tag = 'TRANSITION PHASE';
+        // Promote WATCH/AVOID to ADD for transition companies
+        if (s.action === 'WATCH' || s.action === 'AVOID' || s.action === 'HOLD') {
+          s.action = 'ADD';
+          s.decision = 'ADD';
+          s.decisionReason = 'Strong guidance overrides weak recent earnings (transition phase)';
+        }
+      }
+    }
+
     const bullish = sigs.filter(s => s.sentiment === 'Bullish').length;
     const bearish = sigs.filter(s => s.sentiment === 'Bearish').length;
 
@@ -1832,6 +1845,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   let buyCount = 0;
   let addCount = 0;
   let holdCount = 0;
+  let watchCount = 0;
   let trimExitCount = 0;
   let highImpactCount = 0;
   let bullishCount = 0;
@@ -1846,6 +1860,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     if (s.action === 'BUY') buyCount++;
     if (s.action === 'ADD') addCount++;
     if (s.action === 'HOLD') holdCount++;
+    if (s.action === 'WATCH') watchCount++;
     if (s.action === 'TRIM' || s.action === 'EXIT') trimExitCount++;
     if (s.impactLevel === 'HIGH') highImpactCount++;
     if (s.sentiment === 'Bullish') bullishCount++;
@@ -1868,7 +1883,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   const biasStr = biasParts.join(' · ');
 
   const bias: DailyBias = {
-    netBias, highImpactCount, activeSectors, buyCount, addCount, holdCount, trimExitCount,
+    netBias, highImpactCount, activeSectors, buyCount, addCount, holdCount, watchCount, trimExitCount,
     totalSignals: filtered.length,
     totalOrderValueCr: Math.round(totalOrderValueCr),
     totalDealValueCr: Math.round(totalDealValueCr),

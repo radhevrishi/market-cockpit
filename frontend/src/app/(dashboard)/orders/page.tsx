@@ -22,6 +22,7 @@ const DECISION_COLORS: Record<ActionFlag, string> = {
   'BUY': '#10B981',      // Green
   'ADD': '#059669',      // Dark Green
   'HOLD': '#FBBF24',     // Yellow
+  'WATCH': '#A78BFA',    // Purple
   'TRIM': '#F97316',     // Orange
   'EXIT': '#EF4444',     // Red
   'AVOID': '#64748B',    // Grey
@@ -41,7 +42,7 @@ const CACHE_TTL = 120000; // 2 min
 let _cache: { data: any; timestamp: number } | null = null;
 
 // ── Types ──
-type ActionFlag = 'BUY' | 'ADD' | 'HOLD' | 'TRIM' | 'EXIT' | 'AVOID';
+type ActionFlag = 'BUY' | 'ADD' | 'HOLD' | 'WATCH' | 'TRIM' | 'EXIT' | 'AVOID';
 type ScoreClassification = 'HIGH_CONVICTION' | 'STRONG' | 'BUILDING' | 'WEAK' | 'NOISE';
 type FreshnessLabel = 'FRESH' | 'RECENT' | 'AGING' | 'STALE';
 type ImpactLevel = 'HIGH' | 'MEDIUM' | 'LOW';
@@ -93,6 +94,7 @@ interface Signal {
   sectorTrend?: 'Bullish' | 'Neutral' | 'Bearish';
   decision?: ActionFlag;
   decisionReason?: string;
+  tag?: string;
 }
 
 interface CompanyTrend {
@@ -114,6 +116,7 @@ interface DailyBias {
   buyCount: number;
   addCount?: number;
   holdCount: number;
+  watchCount?: number;
   trimExitCount?: number;
   totalSignals: number;
   totalOrderValueCr: number;
@@ -133,6 +136,7 @@ const actionBg = (a: ActionFlag) => {
     'BUY': 'rgba(16,185,129,0.12)',
     'ADD': 'rgba(5,150,105,0.12)',
     'HOLD': 'rgba(251,191,36,0.12)',
+    'WATCH': 'rgba(167,139,250,0.12)',
     'TRIM': 'rgba(249,115,22,0.12)',
     'EXIT': 'rgba(239,68,68,0.12)',
     'AVOID': 'rgba(100,116,139,0.08)',
@@ -186,7 +190,7 @@ const eventTypeIcon = (t: string) => {
   return '📌';
 };
 
-type FilterType = 'ALL' | 'BUY' | 'ADD' | 'HOLD' | 'ORDERS' | 'CAPEX' | 'DEALS' | 'STRATEGIC' | 'NEGATIVE';
+type FilterType = 'ALL' | 'BUY' | 'ADD' | 'HOLD' | 'WATCH' | 'TRIM' | 'ORDERS' | 'CAPEX' | 'DEALS' | 'STRATEGIC' | 'NEGATIVE';
 type UniverseFilter = 'ALL' | 'PORTFOLIO' | 'WATCHLIST';
 
 const CHAT_ID = '5057319640';
@@ -341,6 +345,8 @@ export default function CompanyIntelligencePage() {
     if (typeFilter === 'BUY') list = list.filter(s => s.action === 'BUY');
     if (typeFilter === 'ADD') list = list.filter(s => s.action === 'ADD');
     if (typeFilter === 'HOLD') list = list.filter(s => s.action === 'HOLD');
+    if (typeFilter === 'WATCH') list = list.filter(s => s.action === 'WATCH');
+    if (typeFilter === 'TRIM') list = list.filter(s => s.action === 'TRIM' || s.action === 'EXIT');
     if (typeFilter === 'ORDERS') list = list.filter(s => ['Order Win', 'Contract', 'LOI'].includes(s.eventType));
     if (typeFilter === 'CAPEX') list = list.filter(s => ['Capex/Expansion', 'Fund Raising', 'Guidance'].includes(s.eventType));
     if (typeFilter === 'DEALS') list = list.filter(s => s.source === 'deal');
@@ -355,6 +361,8 @@ export default function CompanyIntelligencePage() {
   const buySignals = signals.filter(s => s.action === 'BUY');
   const addSignals = signals.filter(s => s.action === 'ADD');
   const holdSignals = signals.filter(s => s.action === 'HOLD');
+  const watchSignals = signals.filter(s => s.action === 'WATCH');
+  const trimSignals = signals.filter(s => s.action === 'TRIM' || s.action === 'EXIT');
   const negativeCount = signals.filter(s => s.isNegative).length;
   const portfolioCount = signals.filter(s => s.isPortfolio).length;
   const watchlistCount = signals.filter(s => s.isWatchlist).length;
@@ -413,16 +421,27 @@ export default function CompanyIntelligencePage() {
             {/* Decision-ready stats */}
             <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
               {[
-                { label: 'High Impact', value: bias.highImpactCount, color: GREEN },
-                { label: 'BUY', value: bias.buyCount || bias.buyWatchCount || 0, color: GREEN },
-                ...(bias.addCount !== undefined ? [{ label: 'ADD', value: bias.addCount, color: '#059669' }] : []),
-                { label: 'HOLD', value: bias.holdCount || bias.trackCount || 0, color: ACCENT },
-                ...(bias.trimExitCount !== undefined && bias.trimExitCount > 0 ? [{ label: 'TRIM/EXIT', value: bias.trimExitCount, color: ORANGE }] : []),
-                { label: 'Portfolio Alerts', value: bias.portfolioAlerts, color: PURPLE },
-                ...(bias.negativeSignals > 0 ? [{ label: '⚠ Negative', value: bias.negativeSignals, color: RED }] : []),
-                ...(totalSignalValue > 0 ? [{ label: 'Signal Value (est.)', value: fmtCr(totalSignalValue) as any, color: CYAN }] : []),
+                { label: 'High Impact', value: bias.highImpactCount, color: GREEN, filter: null as FilterType | null },
+                { label: 'BUY', value: bias.buyCount || 0, color: GREEN, filter: 'BUY' as FilterType | null },
+                ...(bias.addCount !== undefined ? [{ label: 'ADD', value: bias.addCount, color: '#059669', filter: 'ADD' as FilterType | null }] : []),
+                { label: 'HOLD', value: bias.holdCount || 0, color: ACCENT, filter: 'HOLD' as FilterType | null },
+                ...(bias.watchCount !== undefined && bias.watchCount > 0 ? [{ label: 'WATCH', value: bias.watchCount, color: '#A78BFA', filter: 'WATCH' as FilterType | null }] : []),
+                ...(bias.trimExitCount !== undefined && bias.trimExitCount > 0 ? [{ label: 'TRIM/EXIT', value: bias.trimExitCount, color: ORANGE, filter: 'TRIM' as FilterType | null }] : []),
+                { label: 'Portfolio Alerts', value: bias.portfolioAlerts, color: PURPLE, filter: null as FilterType | null },
+                ...(bias.negativeSignals > 0 ? [{ label: '⚠ Negative', value: bias.negativeSignals, color: RED, filter: 'NEGATIVE' as FilterType | null }] : []),
+                ...(totalSignalValue > 0 ? [{ label: 'Signal Value (est.)', value: fmtCr(totalSignalValue) as any, color: CYAN, filter: null as FilterType | null }] : []),
               ].map(s => (
-                <div key={s.label} style={{ textAlign: 'center' }}>
+                <div key={s.label}
+                  onClick={() => s.filter && setTypeFilter(s.filter === typeFilter ? 'ALL' : s.filter)}
+                  style={{
+                    textAlign: 'center',
+                    cursor: s.filter ? 'pointer' : 'default',
+                    padding: '4px 8px',
+                    borderRadius: '6px',
+                    backgroundColor: s.filter && s.filter === typeFilter ? `${s.color}20` : 'transparent',
+                    border: s.filter && s.filter === typeFilter ? `1px solid ${s.color}40` : '1px solid transparent',
+                    transition: 'all 0.15s ease',
+                  }}>
                   <div style={{ fontSize: '18px', fontWeight: 700, color: s.color }}>{s.value}</div>
                   <div style={{ fontSize: '10px', color: TEXT3 }}>{s.label}</div>
                 </div>
@@ -570,6 +589,7 @@ export default function CompanyIntelligencePage() {
                   </span>
                   {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(139,92,246,0.15)' }}>PF</span>}
                   {s.isWatchlist && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.15)' }}>WL</span>}
+                  {s.tag && <span style={{ fontSize: '9px', color: '#A78BFA', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.25)' }}>{s.tag}</span>}
                   {s.isNegative && <span style={{ fontSize: '9px', color: RED, fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(239,68,68,0.12)' }}>⚠ NEGATIVE</span>}
                   <span style={{
                     fontSize: '11px', fontWeight: 700, color: actionColor(s.action),
@@ -680,6 +700,8 @@ export default function CompanyIntelligencePage() {
                       {s.freshness}
                     </span>
                   )}
+                  {s.confidenceType && <span style={{ fontSize: '10px', color: s.confidenceType === 'ACTUAL' ? GREEN : s.confidenceType === 'INFERRED' ? YELLOW : TEXT3, marginLeft: '4px' }}>✓ {s.confidenceType}</span>}
+                  {s.dataSource && <span style={{ fontSize: '10px', color: TEXT3, marginLeft: '4px' }}>· {s.dataSource}</span>}
                 </div>
               </div>
             ))}
@@ -847,6 +869,7 @@ export default function CompanyIntelligencePage() {
                   )}
                   {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600 }}>PF</span>}
                   {s.isWatchlist && !s.isPortfolio && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600 }}>WL</span>}
+                  {s.tag && <span style={{ fontSize: '9px', color: '#A78BFA', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.25)' }}>{s.tag}</span>}
                   {s.isNegative && <span style={{ fontSize: '9px', color: RED, fontWeight: 700 }}>⚠</span>}
                   {/* Price performance since added to watchlist */}
                   {s.lastPrice && addedPrices[s.symbol] && addedPrices[s.symbol] > 0 && (() => {
@@ -974,6 +997,8 @@ export default function CompanyIntelligencePage() {
                       {s.freshness}
                     </span>
                   )}
+                  {s.confidenceType && <span style={{ fontSize: '10px', color: s.confidenceType === 'ACTUAL' ? GREEN : s.confidenceType === 'INFERRED' ? YELLOW : TEXT3, marginLeft: '4px' }}>✓ {s.confidenceType}</span>}
+                  {s.dataSource && <span style={{ fontSize: '10px', color: TEXT3, marginLeft: '4px' }}>· {s.dataSource}</span>}
                   <span style={{ fontSize: '10px', color: TEXT3, marginLeft: 'auto' }}>
                     {fmtDate(s.date)} · {Math.round(s.timeWeight * 100)}%
                   </span>
@@ -1023,6 +1048,7 @@ export default function CompanyIntelligencePage() {
                         )}
                         {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600 }}>PF</span>}
                         {s.isWatchlist && !s.isPortfolio && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600 }}>WL</span>}
+                        {s.tag && <span style={{ fontSize: '9px', color: '#A78BFA', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.25)' }}>{s.tag}</span>}
                         {s.isNegative && <span style={{ fontSize: '9px', color: RED, fontWeight: 700 }}>⚠</span>}
                         {s.lastPrice && addedPrices[s.symbol] && addedPrices[s.symbol] > 0 && (() => {
                           const pctChange = ((s.lastPrice! - addedPrices[s.symbol]) / addedPrices[s.symbol]) * 100;
@@ -1138,6 +1164,8 @@ export default function CompanyIntelligencePage() {
                             {s.freshness}
                           </span>
                         )}
+                        {s.confidenceType && <span style={{ fontSize: '10px', color: s.confidenceType === 'ACTUAL' ? GREEN : s.confidenceType === 'INFERRED' ? YELLOW : TEXT3, marginLeft: '4px' }}>✓ {s.confidenceType}</span>}
+                        {s.dataSource && <span style={{ fontSize: '10px', color: TEXT3, marginLeft: '4px' }}>· {s.dataSource}</span>}
                         <span style={{ fontSize: '10px', color: TEXT3, marginLeft: 'auto' }}>
                           {fmtDate(s.date)} · {Math.round(s.timeWeight * 100)}%
                         </span>
@@ -1187,6 +1215,7 @@ export default function CompanyIntelligencePage() {
                         )}
                         {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600 }}>PF</span>}
                         {s.isWatchlist && !s.isPortfolio && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600 }}>WL</span>}
+                        {s.tag && <span style={{ fontSize: '9px', color: '#A78BFA', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.25)' }}>{s.tag}</span>}
                         {s.isNegative && <span style={{ fontSize: '9px', color: RED, fontWeight: 700 }}>⚠</span>}
                         {s.lastPrice && addedPrices[s.symbol] && addedPrices[s.symbol] > 0 && (() => {
                           const pctChange = ((s.lastPrice! - addedPrices[s.symbol]) / addedPrices[s.symbol]) * 100;
@@ -1302,6 +1331,8 @@ export default function CompanyIntelligencePage() {
                             {s.freshness}
                           </span>
                         )}
+                        {s.confidenceType && <span style={{ fontSize: '10px', color: s.confidenceType === 'ACTUAL' ? GREEN : s.confidenceType === 'INFERRED' ? YELLOW : TEXT3, marginLeft: '4px' }}>✓ {s.confidenceType}</span>}
+                        {s.dataSource && <span style={{ fontSize: '10px', color: TEXT3, marginLeft: '4px' }}>· {s.dataSource}</span>}
                         <span style={{ fontSize: '10px', color: TEXT3, marginLeft: 'auto' }}>
                           {fmtDate(s.date)} · {Math.round(s.timeWeight * 100)}%
                         </span>
