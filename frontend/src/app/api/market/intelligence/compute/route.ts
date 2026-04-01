@@ -1459,6 +1459,7 @@ async function runLockedCompute(watchlist: string[], portfolio: string[]): Promi
   computedAt: string;
   skipped?: boolean;
   error?: string;
+  _debug?: any;
 }> {
   // 1. Acquire distributed lock
   const lockAcquired = await kvSetNX(LOCK_KEY, `pid:${Date.now()}`, LOCK_TTL);
