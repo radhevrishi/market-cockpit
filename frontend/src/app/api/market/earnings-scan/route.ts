@@ -1173,8 +1173,8 @@ function parseGuidanceSentiment(html: string): GuidanceData | null {
 
   // Classify guidance (recalibrated thresholds — was too strict, compressing all into Neutral)
   let guidance: GuidanceData['guidance'];
-  if (sentimentScore > 0.1) guidance = 'Positive';
-  else if (sentimentScore < -0.1) guidance = 'Negative';
+  if (sentimentScore > 0.05) guidance = 'Positive';
+  else if (sentimentScore < -0.05) guidance = 'Negative';
   else guidance = 'Neutral';
 
   // Revenue outlook
@@ -1250,13 +1250,13 @@ function detectDivergence(
 
 function pctChange(current: number, previous: number): number | null {
   if (previous === 0) {
-    if (current > 0) return 999.9; // Cap at 999.9%
-    if (current < 0) return -999.9;
+    if (current > 0) return 200; // Cap at 200%
+    if (current < 0) return -200;
     return null;
   }
   const pct = ((current - previous) / Math.abs(previous)) * 100;
-  // Cap extreme values
-  return parseFloat(Math.max(-999.9, Math.min(999.9, pct)).toFixed(1));
+  // Cap extreme values at ±200% to prevent data contamination from outliers
+  return parseFloat(Math.max(-200, Math.min(200, pct)).toFixed(1));
 }
 
 // ── Scoring Engine ──────────────────────────
@@ -1708,8 +1708,22 @@ function buildCardFromStoredData(data: StoredEarnings): EarningsScanCard | null 
 
 function buildCardFromData(data: ScreenerData, guidanceData?: GuidanceData | null): EarningsScanCard | null {
   // Use consolidated if available, else standalone
-  const quarters = data.consolidated.length > 0 ? data.consolidated : data.standalone;
+  let quarters = data.consolidated.length > 0 ? data.consolidated : data.standalone;
   const reportType: 'Consolidated' | 'Standalone' = data.consolidated.length > 0 ? 'Consolidated' : 'Standalone';
+
+  if (quarters.length === 0) return null;
+
+  // Filter out stale quarters (>3 years old) to prevent data contamination
+  const currentYear = new Date().getFullYear();
+  const currentMonth = new Date().getMonth(); // 0-based
+  quarters = quarters.filter(q => {
+    const parts = q.period.split(' ');
+    if (parts.length !== 2) return true; // keep if unparseable
+    const year = parseInt(parts[1]);
+    if (isNaN(year)) return true;
+    // Reject if more than 3 years old
+    return (currentYear - year) <= 3;
+  });
 
   if (quarters.length === 0) return null;
 

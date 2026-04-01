@@ -271,6 +271,9 @@ interface IntelSignal {
   isWatchlist: boolean;
   isPortfolio: boolean;
 
+  // Value source transparency
+  valueSource?: 'EXACT' | 'AGGREGATED' | 'HEURISTIC';
+
   // Source traceability
   dataSource?: string;  // 'NSE' | 'Moneycontrol' | 'Google News' | 'Block Deal' | 'Bulk Deal'
 
@@ -411,96 +414,59 @@ const NEGATIVE_KEYWORDS = [
   'delisting', 'suspension',
 ];
 
+/** Extract ALL monetary values from text, normalize to Crores, and return the MAX.
+ *  This prevents partial extraction (e.g. picking ₹165 Cr from a ₹580 Cr filing). */
+function parseAllValues(text: string): number[] {
+  if (!text) return [];
+  const values: number[] = [];
+  const s = text;
+
+  // ── Extract all ₹/Rs/INR + Crore values ──
+  const croreMatches = s.matchAll(/(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:crore|crores|cr)\b/gi);
+  for (const m of croreMatches) values.push(parseFloat(m[1].replace(/,/g, '')));
+
+  // Standalone "X crore" without ₹ prefix
+  const standaloneCr = s.matchAll(/\b([\d,]+(?:\.\d+)?)\s*(?:crore|crores|cr)\b/gi);
+  for (const m of standaloneCr) {
+    const val = parseFloat(m[1].replace(/,/g, ''));
+    if (val > 0.5) values.push(val);
+  }
+
+  // Lakh → Cr
+  const lakhMatches = s.matchAll(/(?:rs\.?|₹|inr)?\s*([\d,]+(?:\.\d+)?)\s*(?:lakh|lakhs|lac|lacs)\b/gi);
+  for (const m of lakhMatches) {
+    const val = parseFloat(m[1].replace(/,/g, '')) / 100;
+    if (val > 0.01) values.push(val);
+  }
+
+  // USD Million → Cr
+  const usdMnMatches = s.matchAll(/(?:usd|\$|us\$|us\s*dollar)\s*([\d,]+(?:\.\d+)?)\s*(?:million|mn|m)\b/gi);
+  for (const m of usdMnMatches) values.push((parseFloat(m[1].replace(/,/g, '')) * INR_TO_USD) / 10);
+
+  // "X million USD"
+  const mnUsdMatches = s.matchAll(/\b([\d,]+(?:\.\d+)?)\s*(?:million|mn)\s*(?:usd|us\s*dollar|dollar)/gi);
+  for (const m of mnUsdMatches) values.push((parseFloat(m[1].replace(/,/g, '')) * INR_TO_USD) / 10);
+
+  // USD Billion → Cr
+  const usdBnMatches = s.matchAll(/(?:usd|\$|us\$)\s*([\d,]+(?:\.\d+)?)\s*(?:billion|bn|b)\b/gi);
+  for (const m of usdBnMatches) values.push(parseFloat(m[1].replace(/,/g, '')) * INR_TO_USD * 100);
+
+  // INR Million → Cr
+  const inrMnMatches = s.matchAll(/(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:million|mn)\b/gi);
+  for (const m of inrMnMatches) values.push(parseFloat(m[1].replace(/,/g, '')) / 10);
+
+  // EUR Million → Cr
+  const eurMatches = s.matchAll(/(?:eur|€|euro)\s*([\d,]+(?:\.\d+)?)\s*(?:million|mn|m)\b/gi);
+  for (const m of eurMatches) values.push((parseFloat(m[1].replace(/,/g, '')) * INR_TO_USD * 1.08) / 10);
+
+  return values.filter(v => v > 0 && isFinite(v));
+}
+
 function parseOrderValue(text: string): number | null {
-  if (!text) return null;
-  const s = text;  // Keep original case for ₹ symbol matching
-
-  // ── Priority-ordered regex patterns (most specific → least) ──
-  // All patterns are case-insensitive via /i flag
-
-  // Pattern 1: "worth ₹X crore" / "valued at ₹X crore" / "LOA of ₹X crore"
-  const worthMatch = s.match(/(?:worth|valued\s+at|loa\s+of|loa\s+for|value\s+of|amounting\s+to|aggregating|totalling|order\s+of|contract\s+of|for\s+a\s+consideration\s+of|order\s+book\s+of|contract\s+price|project\s+value|deal\s+size)\s*(?:rs\.?|₹|inr)?\s*([\d,]+(?:\.\d+)?)\s*(?:crore|crores|cr)\b/i);
-  if (worthMatch) return parseFloat(worthMatch[1].replace(/,/g, ''));
-
-  // Pattern 2: "₹X crore contract/order/deal/project"
-  const prefixedMatch = s.match(/(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:crore|crores|cr)\s*(?:order|contract|deal|project|mandate|loa|letter|work)/i);
-  if (prefixedMatch) return parseFloat(prefixedMatch[1].replace(/,/g, ''));
-
-  // Pattern 3: "LOI/LOA...₹X" / "LOI...₹X crore"
-  const loiMatch = s.match(/(?:loi|loa|letter\s+of\s+(?:intent|award))[^₹\d]*(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:crore|crores|cr)?\b/i);
-  if (loiMatch) {
-    const val = parseFloat(loiMatch[1].replace(/,/g, ''));
-    // If no crore/cr suffix, determine if it's Cr or Lakhs
-    if (!/crore|cr/i.test(loiMatch[0])) {
-      if (val >= 10000) return val / 100; // lakhs → Cr
-      return val > 0.5 ? val : null;
-    }
-    return val;
-  }
-
-  // Pattern 4: Standard "Rs X Cr" / "₹ X Crore"
-  const crMatch = s.match(/(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:crore|crores|cr)\b/i);
-  if (crMatch) return parseFloat(crMatch[1].replace(/,/g, ''));
-
-  // Pattern 5: Standalone "X crore(s)" / "X Cr" (e.g. "1,200 Crores")
-  const standaloneCr = s.match(/\b([\d,]+(?:\.\d+)?)\s*(?:crore|crores|cr)\b/i);
-  if (standaloneCr) {
-    const val = parseFloat(standaloneCr[1].replace(/,/g, ''));
-    if (val > 0.5) return val;
-  }
-
-  // Pattern 6: ₹ Lakh → Cr
-  const lMatch = s.match(/(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:lakh|lakhs|lac|lacs|l)\b/i);
-  if (lMatch) return parseFloat(lMatch[1].replace(/,/g, '')) / 100;
-
-  // Pattern 7: Standalone Lakh → Cr
-  const standaloneLakh = s.match(/\b([\d,]+(?:\.\d+)?)\s*(?:lakh|lakhs|lac|lacs)\b/i);
-  if (standaloneLakh) {
-    const val = parseFloat(standaloneLakh[1].replace(/,/g, '')) / 100;
-    if (val > 0.01) return val;
-  }
-
-  // Pattern 8: USD Million → Cr (with FX conversion)
-  const usdMnMatch = s.match(/(?:usd|\$|us\$|us\s*dollar)\s*([\d,]+(?:\.\d+)?)\s*(?:million|mn|m)\b/i);
-  if (usdMnMatch) return (parseFloat(usdMnMatch[1].replace(/,/g, '')) * INR_TO_USD) / 10;
-
-  // Pattern 9: "X million USD/dollars" (reversed)
-  const mnUsdMatch = s.match(/\b([\d,]+(?:\.\d+)?)\s*(?:million|mn)\s*(?:usd|us\s*dollar|dollar)/i);
-  if (mnUsdMatch) return (parseFloat(mnUsdMatch[1].replace(/,/g, '')) * INR_TO_USD) / 10;
-
-  // Pattern 10: USD Billion → Cr
-  const usdBnMatch = s.match(/(?:usd|\$|us\$)\s*([\d,]+(?:\.\d+)?)\s*(?:billion|bn|b)\b/i);
-  if (usdBnMatch) return parseFloat(usdBnMatch[1].replace(/,/g, '')) * INR_TO_USD * 100;
-
-  // Pattern 11: "X billion USD/dollars" (reversed)
-  const bnUsdMatch = s.match(/\b([\d,]+(?:\.\d+)?)\s*(?:billion|bn)\s*(?:usd|us\s*dollar|dollar)/i);
-  if (bnUsdMatch) return parseFloat(bnUsdMatch[1].replace(/,/g, '')) * INR_TO_USD * 100;
-
-  // Pattern 12: Plain $X (USD, no unit → assume millions if < 1000, else direct)
-  const plainUsd = s.match(/\$\s*([\d,]+(?:\.\d+)?)\b/i);
-  if (plainUsd) {
-    const val = parseFloat(plainUsd[1].replace(/,/g, ''));
-    if (val >= 1000) return (val * INR_TO_USD) / 10; // millions
-    if (val >= 1) return (val * INR_TO_USD) / 10;     // millions
-  }
-
-  // Pattern 13: INR Million → Cr
-  const inrMnMatch = s.match(/(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d+)?)\s*(?:million|mn)\b/i);
-  if (inrMnMatch) return parseFloat(inrMnMatch[1].replace(/,/g, '')) / 10;
-
-  // Pattern 14: Contextual bare numbers ("worth X", "valued at X", "order book of X")
-  const bareNum = s.match(/(?:value|worth|amount|aggregating|totalling|size|approximately|approx|around|about|estimated|consideration)\s*(?:of\s+)?(?:rs\.?|₹|inr)?\s*([\d,]+(?:\.\d+)?)/i);
-  if (bareNum) {
-    const val = parseFloat(bareNum[1].replace(/,/g, ''));
-    if (val >= 10000) return val / 100; // lakhs → Cr
-    if (val >= 10) return val; // likely Cr
-  }
-
-  // Pattern 15: EUR → Cr via USD proxy
-  const eurMatch = s.match(/(?:eur|€|euro)\s*([\d,]+(?:\.\d+)?)\s*(?:million|mn|m)\b/i);
-  if (eurMatch) return (parseFloat(eurMatch[1].replace(/,/g, '')) * INR_TO_USD * 1.08) / 10;
-
-  return null;
+  const values = parseAllValues(text);
+  if (values.length === 0) return null;
+  // Return MAX value — prevents picking partial/truncated amounts
+  return Math.max(...values);
 }
 
 // ==================== INFERENCE ENGINE v4 ====================
@@ -1326,11 +1292,19 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
       const sectorRaw = enrichment?.industry || segment || null;
       const sector = sectorRaw ? sectorRaw.split(' ')[0] : null;
 
+      // Track value source for UI transparency badge
+      let valueSource: 'EXACT' | 'AGGREGATED' | 'HEURISTIC' = 'HEURISTIC';
+
       if (extractedValue !== null && extractedValue > 0) {
         // EXPLICIT VALUE FOUND — pctRevenue = value / revenue (NEVER a fixed constant)
         valueCr = extractedValue;
+        valueSource = 'EXACT';
         if (enrichment?.annualRevenueCr && enrichment.annualRevenueCr > 0) {
           impactPct = parseFloat(((valueCr / enrichment.annualRevenueCr) * 100).toFixed(2));
+          // Guardrail: reject if pctRevenue > 100% (likely wrong revenue denominator)
+          if (impactPct > 100) {
+            impactPct = Math.min(impactPct, 100);
+          }
           confidenceScore = 90;
           confidenceType = 'ACTUAL';
         } else {
@@ -1364,6 +1338,12 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
         impactPct = inferred.pctRevenue;
         confidenceScore = inferred.confidenceScore;
         confidenceType = inferred.confidenceType;
+      }
+
+      // EVENT INTEGRITY GATE: If value is HEURISTIC and impactPct > 10%, suppress confidence
+      // Prevents fake high-impact signals from heuristic estimation
+      if (valueSource === 'HEURISTIC' && impactPct > 10) {
+        confidenceScore = Math.round(confidenceScore * 0.6);
       }
 
       // Compute impact level from impactPct (100% numeric, no keywords)
@@ -1433,15 +1413,40 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
         buyerSeller: null, premiumDiscount: null, lastPrice: enrichment?.lastPrice || null,
         impactLevel, impactConfidence: confidenceScore >= 90 ? 'HIGH' : confidenceScore >= 70 ? 'MEDIUM' : 'LOW',
         confidenceScore, confidenceType,
+        valueSource,
         action, score, timeWeight, weightedScore, sentiment, whyItMatters,
         isNegative: negative, earningsBoost, isWatchlist, isPortfolio,
         dataSource,
       };
 
-      if (!existing || weightedScore > existing.weightedScore) {
-        if (existing && existing.valueCr > signal.valueCr) {
-          signal.valueCr = existing.valueCr;
+      // MULTI-EVENT AGGREGATION: When same symbol + eventType within 3-day window,
+      // SUM values (for order clusters like QPOWER ₹18+₹34+₹57+₹146 = ₹255 Cr)
+      if (existing) {
+        // Check if dates within 3 days of each other
+        const existDate = new Date(existing.date).getTime();
+        const newDate = new Date(signal.date).getTime();
+        const daysDiff = Math.abs(existDate - newDate) / (1000 * 60 * 60 * 24);
+
+        if (daysDiff <= 3 && valueSource === 'EXACT' && existing.valueSource === 'EXACT') {
+          // Aggregate: sum values for order clusters
+          existing.valueCr += signal.valueCr;
+          existing.valueSource = 'AGGREGATED';
+          // Recalculate impact
+          if (enrichment?.annualRevenueCr && enrichment.annualRevenueCr > 0) {
+            existing.impactPct = parseFloat(((existing.valueCr / enrichment.annualRevenueCr) * 100).toFixed(2));
+            existing.pctRevenue = existing.impactPct;
+          }
+          existing.impactLevel = classifyImpactLevel(existing.impactPct);
+          existing.headline = `${fmtCr(existing.valueCr)} ${eventType} (aggregated)`;
+          if (existing.impactPct > 0) existing.headline += ` — ${existing.impactPct.toFixed(1)}% of revenue`;
+        } else if (weightedScore > existing.weightedScore) {
+          // Keep higher scoring signal, but preserve MAX value
+          if (existing.valueCr > signal.valueCr) {
+            signal.valueCr = existing.valueCr;
+          }
+          dedupMap.set(dedupKey, signal);
         }
+      } else {
         dedupMap.set(dedupKey, signal);
       }
     }
