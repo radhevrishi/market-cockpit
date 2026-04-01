@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { fetchCompanyFinancialResults, fetchStockQuote } from '@/lib/nse';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
+import { resolveScreenerSymbol as masterResolveScreenerSymbol } from '@/lib/symbolMaster';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
@@ -88,8 +89,12 @@ const SCREENER_SYMBOL_MAP: Record<string, string> = {
   '532067': 'BLACKBIO',
 };
 
-/** Get screener.in symbol for a given NSE symbol */
+/** Get screener.in symbol for a given NSE symbol — delegates to SymbolMaster, falls back to local map */
 function getScreenerSymbol(nseSymbol: string): string {
+  // Use the master resolver first (handles all known overrides)
+  const masterResult = masterResolveScreenerSymbol(nseSymbol);
+  if (masterResult !== nseSymbol) return masterResult;
+  // Fall back to local map (for identity mappings and route-specific overrides)
   return SCREENER_SYMBOL_MAP[nseSymbol] || nseSymbol;
 }
 
@@ -326,7 +331,11 @@ async function resolveScreenerSymbol(nseSymbol: string): Promise<string | null> 
     return cached.screener || null;
   }
 
-  // Check static map first
+  // Check master resolver first (single source of truth)
+  const masterResult = masterResolveScreenerSymbol(nseSymbol);
+  if (masterResult !== nseSymbol) return masterResult;
+
+  // Check local static map
   if (SCREENER_SYMBOL_MAP[nseSymbol]) {
     return SCREENER_SYMBOL_MAP[nseSymbol];
   }

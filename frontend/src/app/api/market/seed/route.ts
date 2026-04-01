@@ -14,6 +14,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { refreshSymbolMaster } from '@/lib/symbolMaster';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
@@ -82,10 +83,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'No valid pipeline specified', only }, { status: 400 });
   }
 
-  // Run all jobs in parallel
-  const results = await Promise.all(
-    jobs.map(job => triggerPipeline(job.url, job.label, job.timeoutMs))
-  );
+  // Refresh SymbolMaster catalog in parallel with pipeline triggers
+  const symbolMasterPromise = refreshSymbolMaster().catch(e => ({
+    lastRefresh: Date.now(),
+    symbolCount: 0,
+    source: 'fallback' as const,
+    error: e?.message || 'Unknown error',
+  }));
+
+  // Run all jobs in parallel (including SymbolMaster)
+  const [pipelineResults, symbolMeta] = await Promise.all([
+    Promise.all(jobs.map(job => triggerPipeline(job.url, job.label, job.timeoutMs))),
+    symbolMasterPromise,
+  ]);
+  const results = pipelineResults;
 
   const elapsed = Date.now() - startTime;
   const allSuccess = results.every(r => r.status === 'success' || r.status === 'timeout');
@@ -96,6 +107,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       ? `Seed complete in ${elapsed}ms. Intelligence + Guidance pipelines ran.`
       : 'Some pipelines failed — check details',
     pipelines: results,
+    symbolMaster: symbolMeta,
     elapsedMs: elapsed,
     note: 'Timeout status means the pipeline was triggered and is running in background. Check Redis for results.',
   });
