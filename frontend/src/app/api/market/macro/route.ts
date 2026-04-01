@@ -127,11 +127,18 @@ export async function GET() {
     for (const item of globalIndicesList) {
       const q = yfQuotes.find((quote: any) => quote.symbol === item.symbol);
       if (q && q.regularMarketPrice) {
+        const val = q.regularMarketPrice || 0;
+        const chg = q.regularMarketChange || 0;
+        let chgPct = q.regularMarketChangePercent || 0;
+        // Fallback: compute change% from change and value if API returns 0
+        if (!chgPct && chg !== 0 && val !== 0) {
+          chgPct = Math.round((chg / (val - chg)) * 10000) / 100;
+        }
         indices.push({
           ...item,
-          value: q.regularMarketPrice || 0,
-          change: q.regularMarketChange || 0,
-          changePercent: q.regularMarketChangePercent || 0,
+          value: val,
+          change: chg,
+          changePercent: chgPct,
           previousClose: q.regularMarketPreviousClose || 0,
         });
       }
