@@ -1119,12 +1119,18 @@ export default function EarningsPage() {
           {/* Data completeness ratio */}
           {(() => {
             const totalRequested = viewMode === 'portfolio' ? portfolioSymbols.length : viewMode === 'watchlist' ? watchlistSymbols.length : new Set([...portfolioSymbols, ...watchlistSymbols]).size;
-            const ratio = totalRequested > 0 ? (cards.length / totalRequested) * 100 : 0;
+            // Count cards that match current viewMode (not grade-filtered sortedCards, not total cards)
+            const viewCards = cards.filter(c => {
+              if (viewMode === 'portfolio') return c.universeTag === 'portfolio' || c.universeTag === 'both';
+              if (viewMode === 'watchlist') return c.universeTag === 'watchlist' || c.universeTag === 'both';
+              return true; // 'both' mode
+            }).length;
+            const ratio = totalRequested > 0 ? (viewCards / totalRequested) * 100 : 0;
             const color = ratio >= 80 ? GREEN : ratio >= 60 ? YELLOW : RED;
             const label = ratio >= 80 ? 'HIGH' : ratio >= 60 ? 'MEDIUM' : 'LOW';
             return (
               <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 700, backgroundColor: `${color}15`, border: `1px solid ${color}40`, color }}>
-                Data Quality: {ratio.toFixed(0)}% ({label}) · {cards.length}/{totalRequested} resolved
+                Data Quality: {ratio.toFixed(0)}% ({label}) · {viewCards}/{totalRequested} resolved
               </span>
             );
           })()}
