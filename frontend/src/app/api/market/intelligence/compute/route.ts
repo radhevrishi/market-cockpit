@@ -293,6 +293,7 @@ interface IntelligenceResponse {
   bias: DailyBias;
   updatedAt: string;
   dataStatus?: string;
+  _debug?: any;
 }
 
 // ==================== ENRICHMENT DATA ====================
