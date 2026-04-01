@@ -322,7 +322,7 @@ export default function PortfolioPage() {
 
       // Fetch intelligence signals
       try {
-        const intelRes = await fetch('/api/market/intelligence/compute');
+        const intelRes = await fetch('/api/market/intelligence?days=90');
         if (intelRes.ok) {
           const intelData = await intelRes.json();
           const signalMap = new Map<string, Signal>();
