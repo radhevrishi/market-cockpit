@@ -1791,7 +1791,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         // Override for negative signals
         const isNeg = ge.grade === 'NEGATIVE' || ge.grade === 'WEAK' || (ge.sentimentScore < 30);
 
-        const impactPct = Math.abs(revG || 0);
+        const impactPct = Math.min(100, Math.abs(revG || 0));
 
         const timeWeight = computeTimeWeight(ge.eventDate || getTodayDate());
         const weightedScore = Math.round(signalScore * timeWeight);

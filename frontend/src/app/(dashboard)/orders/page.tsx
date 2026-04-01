@@ -358,7 +358,8 @@ export default function CompanyIntelligencePage() {
     if (typeFilter === 'STRATEGIC') list = list.filter(s => ['M&A', 'Demerger', 'JV/Partnership', 'Buyback'].includes(s.eventType));
     if (typeFilter === 'NEGATIVE') list = list.filter(s => s.isNegative);
     // Noise filter — filter out NOISE classification by default unless showNoise is true
-    if (!showNoise) list = list.filter(s => s.scoreClassification !== 'NOISE');
+    // ALWAYS show results for NEGATIVE and TRIM filters (risk signals should never be hidden)
+    if (!showNoise && typeFilter !== 'NEGATIVE' && typeFilter !== 'TRIM') list = list.filter(s => s.scoreClassification !== 'NOISE');
     return list;
   }, [signals, typeFilter, universeFilter, showNoise]);
 
