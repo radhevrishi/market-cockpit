@@ -20,7 +20,7 @@ import { normalizeTicker } from '@/lib/tickers';
 import { kvGet, kvSet, kvSetNX, kvSwap, kvDel } from '@/lib/kv';
 
 const LOCK_KEY = 'lock:intelligence:compute';
-const LOCK_TTL = 600; // 10 minutes
+const LOCK_TTL = 120; // 2 minutes (short — Vercel may kill function without running finally block)
 const TEMP_SIGNALS_KEY = 'intelligence:signals:temp';
 const PROD_SIGNALS_KEY = 'intelligence:signals';
 const META_KEY = 'intelligence:meta';
@@ -50,7 +50,7 @@ async function resolveMCSlug(symbol: string): Promise<string | null> {
   if (MC_SLUG_CACHE.has(symbol)) return MC_SLUG_CACHE.get(symbol)!;
   try {
     const url = `https://www.moneycontrol.com/mccode/common/autosuggestion_solr.php?classic=true&query=${encodeURIComponent(symbol)}&type=1&format=json&callback=`;
-    const res = await fetch(url, { headers: MC_HEADERS, signal: AbortSignal.timeout(5000) });
+    const res = await fetch(url, { headers: MC_HEADERS, signal: AbortSignal.timeout(3000) });
     if (!res.ok) return null;
     const text = await res.text();
     const jsonStr = text.replace(/^[^[{]*/, '').replace(/[^}\]]*$/, '');
@@ -95,7 +95,7 @@ async function fetchMoneycontrolNews(symbols: string[]): Promise<MCNewsItem[]> {
         const newsUrl = `https://www.moneycontrol.com/stocks/company_info/stock_news.php?sc_id=${encodeURIComponent(slug)}&scat=&pageno=1&next=0&duression=latest&search_type=`;
         const res = await fetch(newsUrl, {
           headers: MC_HEADERS,
-          signal: AbortSignal.timeout(8000),
+          signal: AbortSignal.timeout(4000),
         });
         if (!res.ok) return [];
         const html = await res.text();
@@ -916,12 +916,13 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   const toDate = getTodayDate();
   const allTracked = [...new Set([...watchlist, ...portfolio])];
 
+  // NSE timeouts: 15s each (must fit within 55s Vercel limit)
   const [announcementsRaw, blockRaw, bulkRaw] = await Promise.all([
-    nseApiFetch(`/api/corporate-announcements?index=equities&from_date=${fromDate}&to_date=${toDate}`, 300000)
+    nseApiFetch(`/api/corporate-announcements?index=equities&from_date=${fromDate}&to_date=${toDate}`, 15000)
       .catch((e: any) => { debug.errors.push(`NSE announcements: ${(e as Error).message}`); return null; }),
-    nseApiFetch('/api/block-deal', 300000)
+    nseApiFetch('/api/block-deal', 15000)
       .catch((e: any) => { debug.errors.push(`NSE block deals: ${(e as Error).message}`); return null; }),
-    nseApiFetch('/api/bulk-deal', 300000)
+    nseApiFetch('/api/bulk-deal', 15000)
       .catch((e: any) => { debug.errors.push(`NSE bulk deals: ${(e as Error).message}`); return null; }),
   ]);
 
@@ -964,15 +965,17 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   let mcNewsAnnouncements: any[] = [];
   let googleNewsAnnouncements: any[] = [];
 
-  if (announcements.length < 5 && allTracked.length > 0) {
-    console.log(`[Compute] NSE returned ${announcements.length} announcements — activating fallback`);
+  const elapsedSoFar = Date.now() - startTime;
+  if (announcements.length < 5 && allTracked.length > 0 && elapsedSoFar < 25000) {
+    console.log(`[Compute] NSE returned ${announcements.length} announcements — activating fallback (${elapsedSoFar}ms elapsed)`);
 
+    // Keep scope small to fit within Vercel 55s limit
     const [mcNews, gNews] = await Promise.all([
-      fetchMoneycontrolNews(allTracked.slice(0, 20)).catch((e: any) => {
+      fetchMoneycontrolNews(allTracked.slice(0, 8)).catch((e: any) => {
         debug.errors.push(`MC news: ${(e as Error).message}`);
         return [] as MCNewsItem[];
       }),
-      fetchGoogleNewsRSS(allTracked.slice(0, 15)).catch((e: any) => {
+      fetchGoogleNewsRSS(allTracked.slice(0, 5)).catch((e: any) => {
         debug.errors.push(`Google news: ${(e as Error).message}`);
         return [] as MCNewsItem[];
       }),
@@ -1027,13 +1030,17 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   portfolio.forEach(s => symbolsToEnrich.add(s));
   watchlist.forEach(s => symbolsToEnrich.add(s));
   [...blockDeals, ...bulkDeals].forEach(d => symbolsToEnrich.add(normalizeTicker(d.symbol)));
-  filteredAnn.forEach(a => { if (symbolsToEnrich.size < 30) symbolsToEnrich.add(normalizeTicker(a.symbol)); });
+  filteredAnn.forEach(a => { if (symbolsToEnrich.size < 15) symbolsToEnrich.add(normalizeTicker(a.symbol)); });
   symbolsToEnrich.delete('');
 
   const enrichMap = new Map<string, StockEnrichment>();
-  const symArr = Array.from(symbolsToEnrich);
+  const symArr = Array.from(symbolsToEnrich).slice(0, 15); // Cap at 15 to save time
   let enrichPartial = false;
-  for (let i = 0; i < symArr.length; i += 10) {
+  const enrichBudget = 45000 - (Date.now() - startTime); // time left before 45s safety margin
+  if (enrichBudget < 5000) {
+    console.warn(`[Compute] Skipping enrichment — only ${enrichBudget}ms left`);
+  }
+  for (let i = 0; i < symArr.length && (Date.now() - startTime) < 40000; i += 10) {
     const batch = symArr.slice(i, i + 10);
     const results = await Promise.allSettled(
       batch.map(symbol =>
