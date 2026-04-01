@@ -720,7 +720,10 @@ function classifyAction(
   // ── WATCH: 35-44 score range (NOT TRIM) ──
   if (weightedScore >= 35 && weightedScore < 45) return 'WATCH';
 
-  // ── Below 35: AVOID (not TRIM unless portfolio conditions above met) ──
+  // ── Below 35: check data quality before classifying ──
+  // If signal has low score due to missing data (not due to negative signals),
+  // use WATCH instead of AVOID
+  if (!isNegative && sentiment !== 'Bearish') return 'WATCH';
   return 'AVOID';
 }
 
@@ -1570,6 +1573,22 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         const symbol = normalizeTicker(ge.symbol);
         if (!symbol) continue;
 
+        // ── VALIDATION: Reject empty/corrupt guidance (no hallucinated signals) ──
+        const hasRevenue = ge.revenueGrowth !== null && ge.revenueGrowth !== undefined;
+        const hasMargin = ge.marginChange !== null && ge.marginChange !== undefined;
+        const hasCapex = ge.guidanceCapex !== null && ge.guidanceCapex !== undefined && ge.guidanceCapex > 0;
+        const hasGrade = ge.grade && ge.grade !== '' && ge.grade !== 'UNKNOWN';
+        const hasEps = ge.epsGrowth !== null && ge.epsGrowth !== undefined;
+
+        // Must have at least ONE concrete metric — no empty signals allowed
+        if (!hasRevenue && !hasMargin && !hasCapex && !hasEps) {
+          continue; // Skip: DATA_INSUFFICIENT — not a valid signal
+        }
+        // Must have a valid grade
+        if (!hasGrade) {
+          continue; // Skip: no classification possible without grade
+        }
+
         const isWatchlist = watchlistSet.has(symbol);
         const isPortfolio = portfolioSet.has(symbol);
         const enrichment = enrichMap.get(symbol);
@@ -1622,8 +1641,8 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         else if (ge.grade === 'WEAK') { signalScore -= 20; sentiment = 'Bearish'; }
 
         // Rule 5: Operating leverage / deleveraging / order book growth
-        if (ge.operatingLeverage) { signalScore += 8; scoreParts.push('OpLev'); }
-        if (ge.deleveraging) { signalScore += 5; scoreParts.push('Delev'); }
+        if (ge.operatingLeverage) { signalScore += 8; scoreParts.push('OpLev↑'); }
+        if (ge.deleveraging) { signalScore += 5; scoreParts.push('Debt↓'); }
         if (ge.orderBookGrowth) { signalScore += 8; scoreParts.push('OrdBook↑'); }
 
         // Normalize to 0-100
@@ -1714,8 +1733,36 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     console.warn('[Compute] Guidance→Signal conversion error:', (e as Error).message);
   }
 
+  // ── SIGNAL SCHEMA VALIDATION: Reject invalid signals before scoring ──
+  const validatedSignals = allSignals.filter(s => {
+    // Must have a valid symbol
+    if (!s.symbol || s.symbol.trim() === '') return false;
+    // Must have a non-zero score (zero = no data was processed)
+    if (s.score === 0 && s.weightedScore === 0) return false;
+    // Reject signals with empty/placeholder headlines
+    if (s.headline && (s.headline === 'Guidance: ' || s.headline === 'Guidance:  | undefined (undefined% conf)')) return false;
+    // Reject guidance signals where scoreParts resulted in only "Delev" with no other metrics
+    if (s.eventType === 'Guidance' && s.headline) {
+      const h = s.headline.toLowerCase();
+      // If headline ONLY contains delev/oplev with no revenue/margin data, it's insufficient
+      if ((h.includes('delev') || h.includes('oplev') || h.includes('ordbook'))
+          && !h.includes('rev') && !h.includes('margin') && !h.includes('capex')) {
+        // Tag as data insufficient instead of removing if portfolio/watchlist
+        if (s.isPortfolio || s.isWatchlist) {
+          s.action = 'WATCH';
+          s.decision = 'WATCH';
+          s.tag = 'DATA INSUFFICIENT';
+          s.decisionReason = 'Guidance data incomplete — only secondary metrics available';
+          return true; // Keep but reclassify
+        }
+        return false; // Remove non-portfolio/watchlist insufficient signals
+      }
+    }
+    return true;
+  });
+
   // ── Materiality filter: remove noise signals that don't meet thresholds ──
-  const materialSignals = allSignals.filter(s => {
+  const materialSignals = validatedSignals.filter(s => {
     // Always keep portfolio and watchlist signals
     if (s.isPortfolio || s.isWatchlist) return true;
     // Always keep negative signals (risk management)
