@@ -66,7 +66,7 @@ const TICKER_ALIASES: Record<string, string> = {
 
   // Known problem stocks (BUG-04 fix)
   'SJS': 'SJSENTERPR',
-  'S&SPOWER': 'SNSPWR',
+  'S&SPOWER': 'S&SPOWER',    // NSE uses S&SPOWER; URL encoding handled in fetchStockQuote
   'GVT&D': 'GVTD',
   'SAVERA': 'SAVERAHOTL',
   'DYNACONS': 'DYNACONS',  // Verify this is correct NSE ticker

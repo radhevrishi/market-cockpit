@@ -314,7 +314,7 @@ export default function PortfolioPage() {
       const bulkQuotes = await fetchStockQuotes();
       const bulkTickers = new Set(bulkQuotes.map(q => q.ticker));
       const holdingSymbols = holdings.map(h => h.symbol);
-      const missing = holdingSymbols.filter(s => !bulkTickers.has(s));
+      const missing = holdingSymbols.filter(s => !bulkTickers.has(s) && !bulkTickers.has(normalizeTicker(s)));
 
       let allQuotes = bulkQuotes;
       if (missing.length > 0) {
@@ -371,7 +371,8 @@ export default function PortfolioPage() {
   const rows = useMemo((): PortfolioRow[] => {
     // First pass: compute currentValue for each holding
     const rawRows = holdings.map(h => {
-      const quote = quotes.find(q => q.ticker === h.symbol);
+      const normalized = normalizeTicker(h.symbol);
+      const quote = quotes.find(q => q.ticker === h.symbol || q.ticker === normalized);
       const cmp = quote?.price || 0;
       const change = quote?.change || 0;
       const changePercent = quote?.changePercent || 0;
@@ -380,7 +381,7 @@ export default function PortfolioPage() {
       const pnl = currentValue - investedValue;
       const pnlPercent = investedValue > 0 ? (pnl / investedValue) * 100 : 0;
       const dayPnl = change * h.quantity;
-      const signal = intelligence.get(h.symbol);
+      const signal = intelligence.get(h.symbol) || intelligence.get(normalized);
       return { symbol: h.symbol, company: quote?.company || h.symbol, sector: quote?.sector || '—',
         entryPrice: h.entryPrice, quantity: h.quantity, cmp, change, changePercent,
         investedValue, currentValue, pnl, pnlPercent, dayPnl, notes: h.notes, weight: 0,

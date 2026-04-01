@@ -16,7 +16,7 @@ export async function GET(request: Request) {
   // Symbol alias map for known mismatches (BUG-03 fix)
   const SYMBOL_ALIASES: Record<string, string> = {
     'SJS': 'SJSENTERPR',
-    'S&SPOWER': 'SNSPWR',
+    'S&SPOWER': 'S&SPOWER',    // NSE uses S&SPOWER; fetchStockQuote handles URL encoding
     'SENORES': 'SENORES',         // Verify correct NSE ticker — may need BSE fallback
     'LUMAXTECH': 'LUMAXTECH',
     'ATLANTAELE': 'ATLASCYCLE',   // Verify
