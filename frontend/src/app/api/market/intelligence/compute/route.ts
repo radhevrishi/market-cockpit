@@ -1026,13 +1026,21 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     ...googleNewsAnnouncements,
   ];
 
-  const filteredAnn = allAnnouncements.filter(item => {
+  // Filter announcements, then cap at 100 most recent to stay within 55s Vercel limit
+  const filteredAnnAll = allAnnouncements.filter(item => {
     if (!item.symbol || (!item.desc && !item.subject)) return false;
     const combined = `${item.subject || ''} ${item.desc || ''}`.toLowerCase();
     if (NOISE_PATTERNS.some(p => combined.includes(p))) return false;
     return ORDER_KEYWORDS.some(k => combined.includes(k)) ||
            NEGATIVE_KEYWORDS.some(k => combined.includes(k));
   });
+  // Sort by date descending and cap at 100 to avoid timeout
+  const filteredAnn = filteredAnnAll
+    .sort((a, b) => new Date(b.date || '').getTime() - new Date(a.date || '').getTime())
+    .slice(0, 100);
+  if (filteredAnnAll.length > 100) {
+    console.log(`[Compute] Capped announcements: ${filteredAnnAll.length} → 100 (most recent)`);
+  }
 
   debug.nseMaterial = filteredAnn.filter(a => a._source === 'nse').length;
   debug.mcMaterial = filteredAnn.filter(a => a._source === 'moneycontrol').length;
@@ -1083,32 +1091,50 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   const crossSourceSeen = new Set<string>();
   const dedupMap = new Map<string, IntelSignal>();
 
-  const earningsCache = new Map<string, number | null>();
-  const allTrackedSymbols = [...new Set([...watchlist, ...portfolio])];
-  for (let i = 0; i < allTrackedSymbols.length; i += 5) {
-    const batch = allTrackedSymbols.slice(i, i + 5);
+  // Pre-fetch ALL earnings data for tracked + announcement symbols (avoids per-item Redis calls)
+  const earningsDataCache = new Map<string, any>();
+  const allSymbolsNeedingEarnings = new Set<string>();
+  [...watchlist, ...portfolio].forEach(s => allSymbolsNeedingEarnings.add(s));
+  filteredAnn.forEach(a => { if (a.symbol) allSymbolsNeedingEarnings.add(normalizeTicker(a.symbol)); });
+  allSymbolsNeedingEarnings.delete('');
+
+  // Batch fetch earnings from Redis (10 at a time)
+  const earningsSymArr = Array.from(allSymbolsNeedingEarnings);
+  for (let i = 0; i < earningsSymArr.length && (Date.now() - startTime) < 35000; i += 10) {
+    const batch = earningsSymArr.slice(i, i + 10);
     await Promise.all(batch.map(async (sym) => {
       try {
         const ed = await kvGet<any>(`earnings:${sym}`);
-        if (ed?.quarters && Array.isArray(ed.quarters) && ed.quarters.length >= 2) {
-          const q0 = ed.quarters[0];
-          const q1 = ed.quarters.find((q: any) => {
-            const m0 = q0.period?.split(' ')[0];
-            const y0 = parseInt(q0.period?.split(' ')[1] || '0');
-            const m1 = q.period?.split(' ')[0];
-            const y1 = parseInt(q.period?.split(' ')[1] || '0');
-            return m0 === m1 && y1 === y0 - 1;
-          });
-          if (q1 && q1.revenue > 0) {
-            const revG = ((q0.revenue - q1.revenue) / q1.revenue) * 100;
-            const patG = q1.pat !== 0 ? ((q0.pat - q1.pat) / Math.abs(q1.pat)) * 100 : 0;
-            earningsCache.set(sym, Math.min(100, Math.max(0, 50 + (revG > 10 ? 15 : revG > 0 ? 5 : -10) + (patG > 15 ? 15 : patG > 0 ? 5 : -10))));
-          } else {
-            earningsCache.set(sym, null);
-          }
-        }
-      } catch { earningsCache.set(sym, null); }
+        if (ed) earningsDataCache.set(sym, ed);
+      } catch {}
     }));
+  }
+  console.log(`[Compute] Pre-fetched earnings for ${earningsDataCache.size}/${earningsSymArr.length} symbols in ${Date.now() - startTime}ms`);
+
+  const earningsCache = new Map<string, number | null>();
+  const allTrackedSymbols = [...new Set([...watchlist, ...portfolio])];
+  // Compute earnings scores from pre-fetched data (no more Redis calls)
+  for (const sym of allTrackedSymbols) {
+    try {
+      const ed = earningsDataCache.get(sym);
+      if (ed?.quarters && Array.isArray(ed.quarters) && ed.quarters.length >= 2) {
+        const q0 = ed.quarters[0];
+        const q1 = ed.quarters.find((q: any) => {
+          const m0 = q0.period?.split(' ')[0];
+          const y0 = parseInt(q0.period?.split(' ')[1] || '0');
+          const m1 = q.period?.split(' ')[0];
+          const y1 = parseInt(q.period?.split(' ')[1] || '0');
+          return m0 === m1 && y1 === y0 - 1;
+        });
+        if (q1 && q1.revenue > 0) {
+          const revG = ((q0.revenue - q1.revenue) / q1.revenue) * 100;
+          const patG = q1.pat !== 0 ? ((q0.pat - q1.pat) / Math.abs(q1.pat)) * 100 : 0;
+          earningsCache.set(sym, Math.min(100, Math.max(0, 50 + (revG > 10 ? 15 : revG > 0 ? 5 : -10) + (patG > 15 ? 15 : patG > 0 ? 5 : -10))));
+        } else {
+          earningsCache.set(sym, null);
+        }
+      }
+    } catch { earningsCache.set(sym, null); }
   }
 
   debug.earningsCacheHits = [...earningsCache.values()].filter(v => v !== null).length;
@@ -1167,7 +1193,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       let revenueCr = enrichment?.annualRevenueCr || null;
       if (!revenueCr) {
         try {
-          const ed = await kvGet<any>(`earnings:${symbol}`);
+          const ed = earningsDataCache.get(symbol);
           if (ed?.quarters && Array.isArray(ed.quarters)) {
             revenueCr = ed.quarters.slice(0, 4).reduce((s: number, q: any) => s + (q.revenue || 0), 0);
             if (revenueCr && revenueCr > 0) {
