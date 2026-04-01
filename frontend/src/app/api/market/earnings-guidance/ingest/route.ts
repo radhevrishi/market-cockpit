@@ -1,9 +1,34 @@
+/**
+ * Earnings Guidance Ingest — Background Compute Pipeline
+ *
+ * Sources guidance data from the earnings-scan API (which uses screener.in Pros/Cons)
+ * and stores precomputed guidance events in Redis.
+ *
+ * Architecture:
+ * - Distributed lock prevents concurrent ingestion runs
+ * - Atomic write: compute → temp key → swap to production key
+ * - NEVER triggered from UI — only via cron or manual POST
+ * - Idempotent: safe to call multiple times
+ *
+ * Triggered by:
+ * 1. Vercel cron (daily at 4:15 AM UTC, weekdays)
+ * 2. Manual POST for re-ingestion
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
-import { nseApiFetch } from '@/lib/nse';
-import { kvGet, kvSet } from '@/lib/kv';
+import { kvGet, kvSet, kvSetNX, kvSwap, kvDel } from '@/lib/kv';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
+
+const LOCK_KEY = 'lock:guidance:ingest';
+const LOCK_TTL = 300; // 5 minutes
+const TEMP_KEY = 'guidance:events:temp';
+const PROD_KEY = 'guidance:events';
+const META_KEY = 'guidance:meta';
+const STORE_TTL = 86400; // 24 hours
+
+const CHAT_ID = '5057319640';
 
 // ==================== TYPE DEFINITIONS ====================
 
@@ -12,519 +37,375 @@ interface GuidanceEvent {
   symbol: string;
   companyName: string;
   eventDate: string;
-  source: 'NSE' | 'BSE' | 'Screener' | 'Moneycontrol';
+  source: string;
   eventType: 'RESULT' | 'GUIDANCE' | 'COMMENTARY';
-
-  // Extracted signals
   revenueGrowth: number | null;
   profitGrowth: number | null;
   marginChange: number | null;
-
-  // Guidance-specific
   guidanceRevenue: string | null;
   guidanceMargin: string | null;
   guidanceCapex: number | null;
   guidanceDemand: string | null;
-
-  // Advanced signals
   operatingLeverage: boolean;
   deleveraging: boolean;
   orderBookGrowth: boolean;
-
   rawText: string;
   sentimentScore: number;
   confidenceScore: number;
   dedupKey: string;
   createdAt: string;
-
-  // Computed
   grade: 'STRONG' | 'POSITIVE' | 'NEUTRAL' | 'NEGATIVE' | 'WEAK';
   gradeColor: string;
 }
 
-interface IngestRequest {
-  symbols?: string[];
-  chatId?: string;
+interface GuidanceMeta {
+  computedAt: string;
+  eventCount: number;
+  symbolCount: number;
+  version: number;
+  source: string;
 }
 
-interface IngestResponse {
-  ingested: number;
-  total: number;
-  events: GuidanceEvent[];
-  message: string;
-}
+// ==================== HELPERS ====================
 
-// ==================== EXTRACTION HELPERS ====================
-
-/**
- * Extract revenue growth percentage from text
- */
-function extractRevenueGrowth(text: string): number | null {
-  const match = text.match(/revenue.{0,50}(?:grew|growth|increase|rose).{0,50}(\d+)\s*%/i);
-  if (match && match[1]) {
-    return Math.min(100, parseInt(match[1], 10));
-  }
-  return null;
-}
-
-/**
- * Extract margin change percentage from text
- */
-function extractMarginChange(text: string): number | null {
-  const match = text.match(/margin.{0,50}(?:expand|improve|contract|compress|narrow).{0,50}(\d+)\s*(?:bps|basis point)/i);
-  if (match && match[1]) {
-    return parseInt(match[1], 10);
-  }
-  return null;
-}
-
-/**
- * Extract profit/PAT growth from text
- */
-function extractProfitGrowth(text: string): number | null {
-  const match = text.match(/(?:profit|pat|net profit).{0,50}(?:grew|growth|increase|rose).{0,50}(\d+)\s*%/i);
-  if (match && match[1]) {
-    return Math.min(100, parseInt(match[1], 10));
-  }
-  return null;
-}
-
-/**
- * Extract capex guidance from text
- */
-function extractCapex(text: string): number | null {
-  const match = text.match(/capex.{0,30}(?:₹|rs\.?)\s*(\d+(?:,\d{3})*(?:\.\d{1,2})?)\s*(?:cr|crore)?/i);
-  if (match && match[1]) {
-    const num = parseFloat(match[1].replace(/,/g, ''));
-    return isNaN(num) ? null : num;
-  }
-  return null;
-}
-
-/**
- * Score demand sentiment from text keywords
- */
-function scoreDemandSentiment(text: string): { sentiment: string | null; score: number } {
-  const lowerText = text.toLowerCase();
-
-  // Positive signals
-  const positiveKeywords = [
-    'strong demand',
-    'robust pipeline',
-    'order backlog',
-    'capacity expansion',
-    'growth momentum',
-    'accelerating demand',
-    'market leadership',
-  ];
-  const positiveMatches = positiveKeywords.filter((kw) => lowerText.includes(kw)).length;
-
-  // Negative signals
-  const negativeKeywords = [
-    'weak demand',
-    'slowdown',
-    'muted demand',
-    'margin pressure',
-    'competition',
-    'pricing pressure',
-    'demand concerns',
-  ];
-  const negativeMatches = negativeKeywords.filter((kw) => lowerText.includes(kw)).length;
-
-  const netScore = positiveMatches - negativeMatches;
-  if (netScore > 0) return { sentiment: 'strong', score: 15 };
-  if (netScore < 0) return { sentiment: 'weak', score: 0 };
-  return { sentiment: null, score: 7 };
-}
-
-/**
- * Detect operating leverage signal
- */
-function detectOperatingLeverage(text: string): boolean {
-  const keywords = [
-    'fixed cost',
-    'operational efficiency',
-    'scale benefits',
-    'leverage',
-    'margin expansion',
-    'higher throughput',
-    'capacity utilization',
-  ];
-  return keywords.some((kw) => text.toLowerCase().includes(kw));
-}
-
-/**
- * Detect deleveraging signal
- */
-function detectDeleveraging(text: string): boolean {
-  const keywords = ['debt reduction', 'deleveraging', 'balance sheet strengthening', 'net cash'];
-  return keywords.some((kw) => text.toLowerCase().includes(kw));
-}
-
-/**
- * Detect order book growth signal
- */
-function detectOrderBookGrowth(text: string): boolean {
-  const keywords = ['order book', 'pipeline', 'backlog', 'order inflow'];
-  return keywords.some((kw) => text.toLowerCase().includes(kw));
-}
-
-/**
- * Compute sentiment score (0-100 scale)
- */
-function computeSentimentScore(
-  revenueGrowth: number | null,
-  marginChange: number | null,
-  profitGrowth: number | null,
-  demandScore: number,
-  capex: number | null,
-  operatingLeverage: boolean
-): number {
-  let score = 0;
-
-  // Revenue signal (0-20)
-  if (revenueGrowth !== null) {
-    score += Math.min(20, revenueGrowth / 5);
-  }
-
-  // Margin signal (0-20)
-  if (marginChange !== null) {
-    score += Math.min(20, Math.max(0, marginChange / 5));
-  }
-
-  // Profit signal (0-25)
-  if (profitGrowth !== null) {
-    score += Math.min(25, profitGrowth / 4);
-  }
-
-  // Demand signal (0-15)
-  score += demandScore;
-
-  // Capex signal (0-10)
-  if (capex !== null && capex > 0) {
-    score += Math.min(10, 5);
-  }
-
-  // Operating leverage bonus (0-10)
-  if (operatingLeverage) {
-    score += 10;
-  }
-
-  return Math.min(100, Math.round(score));
-}
-
-/**
- * Grade events based on sentiment score
- */
-function gradeEvent(sentimentScore: number): { grade: 'STRONG' | 'POSITIVE' | 'NEUTRAL' | 'NEGATIVE' | 'WEAK'; color: string } {
-  if (sentimentScore >= 80) return { grade: 'STRONG', color: '#00B050' };
-  if (sentimentScore >= 60) return { grade: 'POSITIVE', color: '#70AD47' };
-  if (sentimentScore >= 40) return { grade: 'NEUTRAL', color: '#FFC000' };
-  if (sentimentScore >= 20) return { grade: 'NEGATIVE', color: '#FF6B35' };
+function gradeFromScore(score: number): { grade: GuidanceEvent['grade']; color: string } {
+  if (score >= 75) return { grade: 'STRONG', color: '#7C3AED' };
+  if (score >= 55) return { grade: 'POSITIVE', color: '#00C853' };
+  if (score >= 35) return { grade: 'NEUTRAL', color: '#FFD600' };
+  if (score >= 15) return { grade: 'NEGATIVE', color: '#FF6B35' };
   return { grade: 'WEAK', color: '#C00000' };
 }
 
-/**
- * Parse announcement and extract GuidanceEvent
- */
-async function parseAnnouncement(
-  announcement: any,
-  storedEvents: Map<string, GuidanceEvent>
-): Promise<GuidanceEvent | null> {
-  try {
-    const symbol = announcement.symbol?.toUpperCase() || '';
-    const companyName = announcement.company || announcement.companyName || '';
-    const subject = announcement.subject || announcement.title || '';
-    const description = announcement.desc || announcement.description || '';
-    const dateStr = announcement.announcement_date || announcement.date || new Date().toISOString();
+function detectSignals(text: string): {
+  operatingLeverage: boolean;
+  deleveraging: boolean;
+  orderBookGrowth: boolean;
+  capex: number | null;
+  demand: string | null;
+} {
+  const lower = text.toLowerCase();
 
-    // Filter by keywords
-    const contentToSearch = `${subject} ${description}`.toLowerCase();
-    const hasRelevantKeywords = [
-      'financial results',
-      'quarterly results',
-      'revenue',
-      'guidance',
-      'outlook',
-      'capex',
-      'order book',
-      'margin',
-      'profit',
-    ].some((kw) => contentToSearch.includes(kw));
+  const operatingLeverage = ['fixed cost', 'operational efficiency', 'scale benefits',
+    'margin expansion', 'higher throughput', 'capacity utilization', 'operating leverage']
+    .some(kw => lower.includes(kw));
 
-    if (!hasRelevantKeywords) {
-      return null;
-    }
+  const deleveraging = ['debt reduction', 'deleveraging', 'balance sheet strengthening', 'net cash', 'debt free', 'reduced debt']
+    .some(kw => lower.includes(kw));
 
-    // Determine event type
-    let eventType: 'RESULT' | 'GUIDANCE' | 'COMMENTARY' = 'COMMENTARY';
-    if (contentToSearch.includes('result') || contentToSearch.includes('earnings')) {
-      eventType = 'RESULT';
-    } else if (contentToSearch.includes('guidance') || contentToSearch.includes('outlook')) {
-      eventType = 'GUIDANCE';
-    }
+  const orderBookGrowth = ['order book', 'pipeline', 'backlog', 'order inflow', 'order win']
+    .some(kw => lower.includes(kw));
 
-    // Extract signals
-    const revenueGrowth = extractRevenueGrowth(description);
-    const profitGrowth = extractProfitGrowth(description);
-    const marginChange = extractMarginChange(description);
-    const capex = extractCapex(description);
-    const { sentiment: guidanceDemand, score: demandScore } = scoreDemandSentiment(description);
-    const operatingLeverage = detectOperatingLeverage(description);
-    const deleveraging = detectDeleveraging(description);
-    const orderBookGrowth = detectOrderBookGrowth(description);
-
-    // Compute sentiment and grade
-    const sentimentScore = computeSentimentScore(
-      revenueGrowth,
-      marginChange,
-      profitGrowth,
-      demandScore,
-      capex,
-      operatingLeverage
-    );
-    const { grade, color: gradeColor } = gradeEvent(sentimentScore);
-
-    // Create dedup key
-    const dateObj = new Date(dateStr);
-    const dateStr2 = dateObj.toISOString().split('T')[0];
-    const dedupKey = `${symbol}_${eventType}_${dateStr2}`;
-
-    // Check if already stored
-    if (storedEvents.has(dedupKey)) {
-      return null;
-    }
-
-    // Create event ID
-    const id = `${symbol}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-
-    const event: GuidanceEvent = {
-      id,
-      symbol,
-      companyName,
-      eventDate: dateStr,
-      source: 'NSE',
-      eventType,
-      revenueGrowth,
-      profitGrowth,
-      marginChange,
-      guidanceRevenue: null, // Could be extracted if format available
-      guidanceMargin: null,
-      guidanceCapex: capex,
-      guidanceDemand,
-      operatingLeverage,
-      deleveraging,
-      orderBookGrowth,
-      rawText: `${subject}. ${description}`.substring(0, 1000),
-      sentimentScore,
-      confidenceScore: Math.min(100, 70 + (operatingLeverage ? 20 : 0)),
-      dedupKey,
-      createdAt: new Date().toISOString(),
-      grade,
-      gradeColor,
-    };
-
-    return event;
-  } catch (error) {
-    console.error('[earnings-guidance/ingest] Error parsing announcement:', error);
-    return null;
+  // Capex extraction
+  let capex: number | null = null;
+  const capexMatch = text.match(/capex.{0,30}(?:₹|rs\.?)\s*(\d+(?:,\d{3})*(?:\.\d{1,2})?)\s*(?:cr|crore)?/i);
+  if (capexMatch?.[1]) {
+    capex = parseFloat(capexMatch[1].replace(/,/g, ''));
+    if (isNaN(capex)) capex = null;
   }
+
+  // Demand
+  const positiveDemand = ['strong demand', 'robust pipeline', 'accelerating demand', 'growth momentum', 'capacity expansion']
+    .filter(kw => lower.includes(kw)).length;
+  const negativeDemand = ['weak demand', 'slowdown', 'muted demand', 'margin pressure', 'pricing pressure']
+    .filter(kw => lower.includes(kw)).length;
+  const demand = positiveDemand > negativeDemand ? 'Strong' : negativeDemand > positiveDemand ? 'Weak' : null;
+
+  return { operatingLeverage, deleveraging, orderBookGrowth, capex, demand };
 }
 
-// ==================== INGESTION LOGIC ====================
+// ==================== CORE INGESTION ====================
 
-async function ingestGuidanceEvents(symbols: string[]): Promise<IngestResponse> {
+async function ingestFromEarningsScan(): Promise<{
+  events: GuidanceEvent[];
+  symbolCount: number;
+  error: string | null;
+}> {
+  const events: GuidanceEvent[] = [];
+  const seenDedup = new Set<string>();
+
   try {
-    // Load existing events
-    const existingEvents = await kvGet<GuidanceEvent[]>('guidance:events');
-    const storedEventsMap = new Map<string, GuidanceEvent>();
-
-    if (existingEvents && Array.isArray(existingEvents)) {
-      for (const event of existingEvents) {
-        storedEventsMap.set(event.dedupKey, event);
-      }
-    }
-
-    // Fetch NSE corporate announcements for last 45 days
-    const now = new Date();
-    const from45DaysAgo = new Date(now.getTime() - 45 * 24 * 60 * 60 * 1000);
-
-    const formatDate = (d: Date): string => {
-      const day = String(d.getDate()).padStart(2, '0');
-      const month = String(d.getMonth() + 1).padStart(2, '0');
-      const year = d.getFullYear();
-      return `${day}-${month}-${year}`;
-    };
-
-    const fromDate = formatDate(from45DaysAgo);
-    const toDate = formatDate(now);
-
-    console.log(`[earnings-guidance/ingest] Fetching announcements from ${fromDate} to ${toDate}`);
-
-    // ── Source 1: NSE Corporate Announcements ──
-    let announcementsArray: any[] = [];
+    // 1. Get symbols from portfolio + watchlist
+    let symbols: string[] = [];
     try {
-      const announcements = await nseApiFetch(`/api/corporate-announcements?index=equities`, 600000);
-      if (announcements) {
-        announcementsArray = Array.isArray(announcements) ? announcements : announcements.data || [];
+      const baseUrl = process.env.VERCEL_URL
+        ? `https://${process.env.VERCEL_URL}`
+        : process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+
+      const [pRes, wRes] = await Promise.all([
+        fetch(`${baseUrl}/api/portfolio?chatId=${CHAT_ID}`, { signal: AbortSignal.timeout(10000) }).catch(() => null),
+        fetch(`${baseUrl}/api/watchlist?chatId=${CHAT_ID}`, { signal: AbortSignal.timeout(10000) }).catch(() => null),
+      ]);
+
+      if (pRes?.ok) {
+        const pd = await pRes.json();
+        symbols.push(...(pd.holdings || []).map((h: any) => h.symbol));
+      }
+      if (wRes?.ok) {
+        const wd = await wRes.json();
+        symbols.push(...(wd.watchlist || []));
       }
     } catch (e) {
-      console.warn('[earnings-guidance/ingest] NSE fetch failed:', (e as Error).message);
+      console.warn('[guidance/ingest] Failed to fetch symbols:', (e as Error).message);
     }
 
-    console.log(`[earnings-guidance/ingest] NSE returned ${announcementsArray.length} announcements`);
+    symbols = [...new Set(symbols.map(s => s.trim().toUpperCase()).filter(s => s.length > 0))];
 
-    const newEvents: GuidanceEvent[] = [];
+    if (symbols.length === 0) {
+      return { events: [], symbolCount: 0, error: 'No symbols in portfolio/watchlist' };
+    }
 
-    for (const announcement of announcementsArray) {
-      // Filter by symbols if provided
-      if (symbols.length > 0 && announcement.symbol) {
-        if (!symbols.includes(announcement.symbol.toUpperCase())) {
-          continue;
+    console.log(`[guidance/ingest] Processing ${symbols.length} symbols`);
+
+    // 2. For each symbol, check earnings cache (which has guidance from screener.in)
+    let processedCount = 0;
+    for (const sym of symbols) {
+      try {
+        const cached = await kvGet<any>(`earnings:${sym}`);
+        if (!cached) continue;
+
+        processedCount++;
+        const companyName = cached.companyName || sym;
+        const fetchedDate = cached.fetchedAt ? new Date(cached.fetchedAt).toISOString() : new Date().toISOString();
+
+        // Source A: Guidance data from screener.in Pros/Cons
+        if (cached.guidance) {
+          const g = cached.guidance;
+          const hasSignal = g.guidance !== 'Neutral' || g.prosText || g.consText;
+
+          if (hasSignal) {
+            const rawText = `${g.prosText || ''} ${g.consText || ''}`.trim();
+            const signals = detectSignals(rawText);
+
+            // Convert screener sentiment (-1 to +1) to 0-100 scale
+            const sentimentRaw = typeof g.sentimentScore === 'number' ? g.sentimentScore : 0;
+            const sentimentScore = Math.round((sentimentRaw + 1) * 50);
+            const { grade, color } = gradeFromScore(sentimentScore);
+
+            const dedupKey = `${sym}_GUIDANCE_screener`;
+            if (!seenDedup.has(dedupKey)) {
+              seenDedup.add(dedupKey);
+              events.push({
+                id: `${sym}-guid-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+                symbol: sym,
+                companyName,
+                eventDate: fetchedDate,
+                source: 'Screener',
+                eventType: 'GUIDANCE',
+                revenueGrowth: null,
+                profitGrowth: null,
+                marginChange: null,
+                guidanceRevenue: g.revenueOutlook !== 'Unknown' ? g.revenueOutlook : null,
+                guidanceMargin: g.marginOutlook !== 'Unknown' ? g.marginOutlook : null,
+                guidanceCapex: signals.capex,
+                guidanceDemand: g.demandSignal !== 'Unknown' ? g.demandSignal : (signals.demand || null),
+                operatingLeverage: signals.operatingLeverage,
+                deleveraging: signals.deleveraging,
+                orderBookGrowth: signals.orderBookGrowth,
+                rawText: rawText.slice(0, 1000),
+                sentimentScore,
+                confidenceScore: Math.min(100, 60 + (signals.operatingLeverage ? 15 : 0) + (signals.orderBookGrowth ? 10 : 0)),
+                dedupKey,
+                createdAt: new Date().toISOString(),
+                grade,
+                gradeColor: color,
+              });
+            }
+          }
         }
-      }
 
-      const event = await parseAnnouncement(announcement, storedEventsMap);
-      if (event) {
-        storedEventsMap.set(event.dedupKey, event);
-        newEvents.push(event);
-      }
-    }
+        // Source B: Quarterly results data — compute earnings event
+        if (cached.quarters && Array.isArray(cached.quarters) && cached.quarters.length > 0) {
+          const latest = cached.quarters[0];
+          const previous = cached.quarters.length > 1 ? cached.quarters[1] : null;
+          const yoyQuarter = cached.quarters.length >= 4 ? cached.quarters[3] : (cached.quarters.length >= 3 ? cached.quarters[2] : null);
 
-    // ── Source 2: Earnings Cache (screener.in guidance data) ──
-    // If NSE returned nothing or few events, enrich from earnings cache
-    if (symbols.length > 0) {
-      for (const sym of symbols.slice(0, 50)) {
-        try {
-          const cached = await kvGet<any>(`earnings:${sym}`);
-          if (cached?.guidance && cached.guidance.guidance !== 'Neutral') {
-            const dedupKey = `${sym}_GUIDANCE_earnings`;
-            if (storedEventsMap.has(dedupKey)) continue;
+          // Compute YoY growth
+          let revenueGrowth: number | null = null;
+          let profitGrowth: number | null = null;
 
-            const g = cached.guidance;
-            const event: GuidanceEvent = {
-              id: `${sym}-earnings-${Date.now()}`,
+          if (yoyQuarter && yoyQuarter.revenue > 0) {
+            revenueGrowth = Math.round(((latest.revenue - yoyQuarter.revenue) / yoyQuarter.revenue) * 100 * 10) / 10;
+            if (Math.abs(revenueGrowth) > 200) revenueGrowth = Math.sign(revenueGrowth) * 200;
+          }
+          if (yoyQuarter && Math.abs(yoyQuarter.pat) > 0.1) {
+            profitGrowth = Math.round(((latest.pat - yoyQuarter.pat) / Math.abs(yoyQuarter.pat)) * 100 * 10) / 10;
+            if (Math.abs(profitGrowth) > 200) profitGrowth = Math.sign(profitGrowth) * 200;
+          }
+
+          // Margin change (QoQ)
+          let marginChange: number | null = null;
+          if (previous && latest.opm > 0 && previous.opm > 0) {
+            marginChange = Math.round((latest.opm - previous.opm) * 100); // basis points
+          }
+
+          // Compute result sentiment score
+          let resultScore = 50; // baseline
+          if (revenueGrowth !== null) resultScore += Math.min(15, Math.max(-15, revenueGrowth / 3));
+          if (profitGrowth !== null) resultScore += Math.min(20, Math.max(-20, profitGrowth / 4));
+          if (marginChange !== null) resultScore += Math.min(10, Math.max(-10, marginChange / 50));
+          resultScore = Math.max(0, Math.min(100, Math.round(resultScore)));
+
+          const { grade, color } = gradeFromScore(resultScore);
+          const dedupKey = `${sym}_RESULT_${latest.period.replace(/\s+/g, '_')}`;
+
+          if (!seenDedup.has(dedupKey)) {
+            seenDedup.add(dedupKey);
+            events.push({
+              id: `${sym}-res-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
               symbol: sym,
-              companyName: cached.companyName || sym,
-              eventDate: cached.fetchedAt ? new Date(cached.fetchedAt).toISOString() : new Date().toISOString(),
+              companyName,
+              eventDate: fetchedDate,
               source: 'Screener',
-              eventType: 'GUIDANCE',
-              revenueGrowth: null,
-              profitGrowth: null,
-              marginChange: null,
-              guidanceRevenue: g.revenueOutlook !== 'Unknown' ? g.revenueOutlook : null,
-              guidanceMargin: g.marginOutlook !== 'Unknown' ? g.marginOutlook : null,
+              eventType: 'RESULT',
+              revenueGrowth,
+              profitGrowth,
+              marginChange,
+              guidanceRevenue: null,
+              guidanceMargin: null,
               guidanceCapex: null,
-              guidanceDemand: g.demandSignal !== 'Unknown' ? g.demandSignal : null,
+              guidanceDemand: null,
               operatingLeverage: false,
               deleveraging: false,
               orderBookGrowth: false,
-              rawText: `${g.prosText || ''} ${g.consText || ''}`.trim().slice(0, 1000),
-              sentimentScore: Math.round((g.sentimentScore + 1) * 50), // -1..1 → 0..100
-              confidenceScore: 65,
+              rawText: `${latest.period}: Revenue ₹${latest.revenue}Cr, OPM ${latest.opm}%, PAT ₹${latest.pat}Cr, EPS ₹${latest.eps}`,
+              sentimentScore: resultScore,
+              confidenceScore: 80,
               dedupKey,
               createdAt: new Date().toISOString(),
-              grade: g.guidance === 'Positive' ? 'POSITIVE' : 'NEGATIVE',
-              gradeColor: g.guidance === 'Positive' ? '#70AD47' : '#FF6B35',
-            };
-            storedEventsMap.set(dedupKey, event);
-            newEvents.push(event);
+              grade,
+              gradeColor: color,
+            });
           }
-        } catch {}
+        }
+      } catch (e) {
+        console.warn(`[guidance/ingest] Error processing ${sym}:`, (e as Error).message);
       }
     }
 
-    // Combine and limit to max 500 events
-    const allEvents = Array.from(storedEventsMap.values())
-      .sort((a, b) => new Date(b.eventDate).getTime() - new Date(a.eventDate).getTime())
-      .slice(0, 500);
+    // Sort by sentiment score descending
+    events.sort((a, b) => b.sentimentScore - a.sentimentScore);
 
-    // Store in KV
-    await kvSet('guidance:events', allEvents, 86400); // 24 hour TTL
+    console.log(`[guidance/ingest] Generated ${events.length} events from ${processedCount}/${symbols.length} symbols`);
+    return { events, symbolCount: symbols.length, error: null };
+  } catch (e) {
+    console.error('[guidance/ingest] Fatal error:', e);
+    return { events: [], symbolCount: 0, error: (e as Error).message };
+  }
+}
 
-    console.log(
-      `[earnings-guidance/ingest] Ingested ${newEvents.length} new events, total: ${allEvents.length}`
-    );
+// ==================== LOCKED PIPELINE ====================
 
-    return {
-      ingested: newEvents.length,
-      total: allEvents.length,
-      events: newEvents,
-      message: `Successfully ingested ${newEvents.length} new guidance events`,
+async function runLockedPipeline(): Promise<{
+  success: boolean;
+  ingested: number;
+  total: number;
+  message: string;
+  skipped?: boolean;
+}> {
+  // 1. Acquire distributed lock
+  const lockAcquired = await kvSetNX(LOCK_KEY, `pid:${Date.now()}`, LOCK_TTL);
+  if (!lockAcquired) {
+    console.log('[guidance/ingest] Lock exists — another ingestion is running. Skipping.');
+    return { success: true, ingested: 0, total: 0, message: 'Skipped — another ingestion in progress', skipped: true };
+  }
+
+  try {
+    // 2. Run ingestion
+    const { events, symbolCount, error } = await ingestFromEarningsScan();
+
+    if (error && events.length === 0) {
+      return { success: false, ingested: 0, total: 0, message: `Ingestion error: ${error}` };
+    }
+
+    if (events.length === 0) {
+      // Don't overwrite good data with empty — keep existing
+      const existing = await kvGet<GuidanceEvent[]>(PROD_KEY);
+      return {
+        success: true,
+        ingested: 0,
+        total: existing?.length || 0,
+        message: 'No new events found. Existing data preserved.',
+      };
+    }
+
+    // 3. Atomic write: temp → swap
+    // Write to temp key first
+    await kvSet(TEMP_KEY, events, STORE_TTL);
+
+    // Swap temp → production
+    const swapped = await kvSwap(TEMP_KEY, PROD_KEY, STORE_TTL);
+    if (!swapped) {
+      // Fallback: direct write if swap fails
+      await kvSet(PROD_KEY, events, STORE_TTL);
+      console.warn('[guidance/ingest] Swap failed, used direct write fallback');
+    }
+
+    // 4. Update metadata
+    const meta: GuidanceMeta = {
+      computedAt: new Date().toISOString(),
+      eventCount: events.length,
+      symbolCount,
+      version: Date.now(),
+      source: 'earnings-cache',
     };
-  } catch (error) {
-    console.error('[earnings-guidance/ingest]', error);
-    const existingEvents = await kvGet<GuidanceEvent[]>('guidance:events');
+    await kvSet(META_KEY, meta, STORE_TTL);
+
+    console.log(`[guidance/ingest] Pipeline complete: ${events.length} events stored`);
     return {
-      ingested: 0,
-      total: existingEvents?.length || 0,
-      events: [],
-      message: `Error during ingestion: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      success: true,
+      ingested: events.length,
+      total: events.length,
+      message: `Successfully ingested ${events.length} guidance events from ${symbolCount} symbols`,
     };
+  } finally {
+    // 5. Release lock
+    await kvDel(LOCK_KEY);
   }
 }
 
 // ==================== ROUTE HANDLERS ====================
 
 /**
- * GET: Trigger ingestion for given symbols (can be called by cron)
+ * GET: Cron-triggered ingestion
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
+    // Validate cron secret if present
     const { searchParams } = new URL(request.url);
-    const symbolsParam = searchParams.get('symbols');
+    const secret = searchParams.get('secret');
+    if (secret && secret !== 'mc-bot-2026') {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
 
-    const symbols = symbolsParam
-      ? symbolsParam
-          .split(',')
-          .map((s) => s.trim().toUpperCase())
-          .filter((s) => s.length > 0)
-      : [];
-
-    const result = await ingestGuidanceEvents(symbols);
-    return NextResponse.json(result);
+    const result = await runLockedPipeline();
+    return NextResponse.json({
+      ...result,
+      eventsCount: result.total,
+      sampleEvent: null,
+    });
   } catch (error) {
-    console.error('[earnings-guidance/ingest/GET]', error);
+    console.error('[guidance/ingest/GET]', error);
     return NextResponse.json(
-      {
-        ingested: 0,
-        total: 0,
-        events: [],
-        message: `Failed to ingest: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      },
+      { success: false, ingested: 0, total: 0, message: `Failed: ${(error as Error).message}` },
       { status: 500 }
     );
   }
 }
 
 /**
- * POST: Same as GET but with body { symbols, chatId }
+ * POST: Manual re-ingestion trigger (NOT from UI — only admin/debug)
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    let body: IngestRequest = {};
-    try {
-      body = await request.json();
-    } catch {
-      // Body might be empty
-    }
-
-    const symbols = body.symbols ? body.symbols.map((s) => s.toUpperCase()) : [];
-    const chatId = body.chatId || 'manual';
-
-    console.log(`[earnings-guidance/ingest/POST] chatId=${chatId}, symbols=${symbols.join(',')}`);
-
-    const result = await ingestGuidanceEvents(symbols);
-    return NextResponse.json(result);
+    const result = await runLockedPipeline();
+    return NextResponse.json({
+      ...result,
+      eventsCount: result.total,
+    });
   } catch (error) {
-    console.error('[earnings-guidance/ingest/POST]', error);
+    console.error('[guidance/ingest/POST]', error);
     return NextResponse.json(
-      {
-        ingested: 0,
-        total: 0,
-        events: [],
-        message: `Failed to ingest: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      },
+      { success: false, ingested: 0, total: 0, message: `Failed: ${(error as Error).message}` },
       { status: 500 }
     );
   }

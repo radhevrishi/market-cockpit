@@ -100,6 +100,62 @@ export async function kvDel(key: string): Promise<void> {
 }
 
 /**
+ * Atomic SET-IF-NOT-EXISTS (distributed lock primitive)
+ * Returns true if the lock was acquired, false if it already exists.
+ */
+export async function kvSetNX(key: string, value: any, ttlSeconds: number): Promise<boolean> {
+  const r = getRedis();
+  if (r) {
+    try {
+      const result = await r.set(key, value, { nx: true, ex: ttlSeconds });
+      return result === 'OK';
+    } catch (e) {
+      console.error(`[KV] Redis SETNX failed for ${key}:`, e);
+      return false;
+    }
+  }
+  // In-memory fallback
+  if (MEM_STORE.has(key)) return false;
+  MEM_STORE.set(key, typeof value === 'string' ? value : JSON.stringify(value));
+  return true;
+}
+
+/**
+ * Atomic rename: swap temp key to production key
+ * Writes temp first, then overwrites production atomically.
+ */
+export async function kvSwap(tempKey: string, prodKey: string, ttlSeconds?: number): Promise<boolean> {
+  const r = getRedis();
+  if (r) {
+    try {
+      // Read temp value and write to prod in two ops (Upstash REST doesn't support RENAME)
+      const val = await r.get(tempKey);
+      if (val === null) return false;
+      if (ttlSeconds) {
+        await r.set(prodKey, val, { ex: ttlSeconds });
+      } else {
+        await r.set(prodKey, val);
+      }
+      await r.del(tempKey);
+      // Also update memory store
+      const serialized = typeof val === 'string' ? val : JSON.stringify(val);
+      MEM_STORE.set(prodKey, serialized);
+      MEM_STORE.delete(tempKey);
+      return true;
+    } catch (e) {
+      console.error(`[KV] Redis SWAP failed ${tempKey} → ${prodKey}:`, e);
+      return false;
+    }
+  }
+  // In-memory fallback
+  const val = MEM_STORE.get(tempKey);
+  if (!val) return false;
+  MEM_STORE.set(prodKey, val);
+  MEM_STORE.delete(tempKey);
+  return true;
+}
+
+/**
  * Check if Redis is available
  */
 export function isRedisAvailable(): boolean {

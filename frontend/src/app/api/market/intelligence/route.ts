@@ -1088,9 +1088,34 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
       }
     }
 
-    // ── Route-level cache (BUG-01 fix: instant response on repeat calls) ──
+    // ── Precomputed store is EMPTY — trigger background compute, return skeleton ──
+    // Strict read-only path: never block the UI with inline compute
+    if (!forceRefresh) {
+      console.log('[Intelligence] No precomputed data — triggering background compute, returning skeleton');
+      try {
+        const computeUrl = new URL('/api/market/intelligence/compute', request.url);
+        fetch(computeUrl.toString(), { method: 'GET', signal: AbortSignal.timeout(3000) }).catch(() => {});
+      } catch {}
+      return NextResponse.json({
+        top3: [],
+        signals: [],
+        trends: [],
+        bias: {
+          netBias: 'Neutral' as const,
+          highImpactCount: 0, activeSectors: [], buyWatchCount: 0, trackCount: 0,
+          totalSignals: 0, totalOrderValueCr: 0, totalDealValueCr: 0,
+          portfolioAlerts: 0, negativeSignals: 0,
+          summary: 'Computing intelligence... refresh in 30 seconds',
+        },
+        updatedAt: new Date().toISOString(),
+        _meta: { source: 'skeleton', computing: true },
+      });
+    }
+
+    // ── Inline compute ONLY when force=true (admin/debug) ──
+    // Route-level cache (BUG-01 fix: instant response on repeat calls)
     const cacheKey = `${watchlist.join(',')}|${portfolio.join(',')}|${days}`;
-    if (!forceRefresh && _routeCache && _routeCache.key === cacheKey && (Date.now() - _routeCache.timestamp) < ROUTE_CACHE_TTL) {
+    if (_routeCache && _routeCache.key === cacheKey && (Date.now() - _routeCache.timestamp) < ROUTE_CACHE_TTL) {
       console.log(`[Intelligence] Cache hit (${Date.now() - startTime}ms)`);
       return NextResponse.json(_routeCache.data);
     }

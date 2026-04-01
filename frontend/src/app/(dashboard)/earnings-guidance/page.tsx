@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { TrendingUp, TrendingDown, Activity, Filter, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
+import { Activity, Filter, ChevronDown, ChevronUp } from 'lucide-react';
 
 // ══════════════════════════════════════════════
 // EARNINGS GUIDANCE TAB — Historical + Real-time Guidance Intelligence
@@ -76,7 +76,7 @@ export default function EarningsGuidancePage() {
   const [data, setData] = useState<GuidanceResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [ingesting, setIngesting] = useState(false);
+  // ingesting state removed — no UI-triggered compute
   const [filterMode, setFilterMode] = useState<FilterMode>('ALL');
   const [showOpLeverage, setShowOpLeverage] = useState(false);
   const [showCapexHeavy, setShowCapexHeavy] = useState(false);
@@ -116,29 +116,8 @@ export default function EarningsGuidancePage() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json: GuidanceResponse = await res.json();
 
-      // Auto-ingest if no events found (first visit or stale store)
-      if (json.events.length === 0 && !ingesting) {
-        setIngesting(true);
-        try {
-          const ingestRes = await fetch('/api/market/earnings-guidance/ingest', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ symbols, chatId: CHAT_ID }),
-          });
-          if (ingestRes.ok) {
-            // Re-fetch after ingestion
-            const res2 = await fetch(`/api/market/earnings-guidance?symbols=${symbols.join(',')}&days=45`);
-            if (res2.ok) {
-              const json2: GuidanceResponse = await res2.json();
-              setData(json2);
-              setIngesting(false);
-              setLoading(false);
-              return;
-            }
-          }
-        } catch {} finally { setIngesting(false); }
-      }
-
+      // Strict read-only: never trigger compute from UI
+      // If empty, show empty state — background cron will populate
       setData(json);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load guidance data');
@@ -147,16 +126,7 @@ export default function EarningsGuidancePage() {
     }
   }, []);
 
-  const handleIngest = useCallback(async () => {
-    setIngesting(true);
-    try {
-      const res = await fetch('/api/market/earnings-guidance/ingest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chatId: CHAT_ID }) });
-      if (res.ok) {
-        // After ingestion, refresh data
-        await fetchData();
-      }
-    } catch {} finally { setIngesting(false); }
-  }, [fetchData]);
+  // No manual ingest — data is populated by background cron only
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -191,24 +161,13 @@ export default function EarningsGuidancePage() {
       <div style={{ marginBottom: '24px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
           <h1 style={{ fontSize: '20px', fontWeight: 700, margin: 0 }}>Earnings Guidance Intelligence</h1>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={handleIngest} disabled={ingesting} style={{
-              display: 'flex', alignItems: 'center', gap: '6px',
-              backgroundColor: '#1A2540', border: `1px solid ${CARD_BORDER}`, color: TEXT,
-              padding: '8px 14px', borderRadius: '6px', cursor: ingesting ? 'not-allowed' : 'pointer',
-              fontSize: '12px', fontWeight: 600, opacity: ingesting ? 0.5 : 1,
-            }}>
-              <RefreshCw style={{ width: '14px', height: '14px', animation: ingesting ? 'spin 1s linear infinite' : 'none' }} />
-              {ingesting ? 'Ingesting...' : 'Ingest New'}
-            </button>
-            <button onClick={() => fetchData()} disabled={loading} style={{
-              backgroundColor: ACCENT, border: 'none', color: '#000',
-              padding: '8px 16px', borderRadius: '6px', cursor: loading ? 'not-allowed' : 'pointer',
-              fontSize: '13px', fontWeight: 600, opacity: loading ? 0.5 : 1,
-            }}>
-              {loading ? 'Loading...' : 'Refresh'}
-            </button>
-          </div>
+          <button onClick={() => fetchData()} disabled={loading} style={{
+            backgroundColor: ACCENT, border: 'none', color: '#000',
+            padding: '8px 16px', borderRadius: '6px', cursor: loading ? 'not-allowed' : 'pointer',
+            fontSize: '13px', fontWeight: 600, opacity: loading ? 0.5 : 1,
+          }}>
+            {loading ? 'Loading...' : 'Refresh'}
+          </button>
         </div>
         <p style={{ margin: 0, fontSize: '13px', color: TEXT_DIM }}>
           Last 45 days · Portfolio + Watchlist · Source: {data?.source || '...'}
@@ -289,7 +248,7 @@ export default function EarningsGuidancePage() {
             {data?.events?.length ? 'No events match your filters' : 'No guidance events found'}
           </p>
           <p style={{ margin: 0, fontSize: '13px' }}>
-            {data?.events?.length ? 'Try adjusting filters' : 'Click "Ingest New" to fetch latest filings from NSE'}
+            {data?.events?.length ? 'Try adjusting filters' : 'Data refreshes automatically via background pipeline. Check back shortly.'}
           </p>
         </div>
       )}

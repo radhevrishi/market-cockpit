@@ -17,7 +17,14 @@
 import { NextResponse } from 'next/server';
 import { nseApiFetch, fetchStockQuote } from '@/lib/nse';
 import { normalizeTicker } from '@/lib/tickers';
-import { kvGet, kvSet } from '@/lib/kv';
+import { kvGet, kvSet, kvSetNX, kvSwap, kvDel } from '@/lib/kv';
+
+const LOCK_KEY = 'lock:intelligence:compute';
+const LOCK_TTL = 600; // 10 minutes
+const TEMP_SIGNALS_KEY = 'intelligence:signals:temp';
+const PROD_SIGNALS_KEY = 'intelligence:signals';
+const META_KEY = 'intelligence:meta';
+const STORE_TTL = 3600;
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
@@ -1442,20 +1449,82 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   };
 }
 
+// ==================== LOCKED COMPUTE PIPELINE ====================
+
+async function runLockedCompute(watchlist: string[], portfolio: string[]): Promise<{
+  ok: boolean;
+  signalCount: number;
+  computedAt: string;
+  skipped?: boolean;
+  error?: string;
+}> {
+  // 1. Acquire distributed lock
+  const lockAcquired = await kvSetNX(LOCK_KEY, `pid:${Date.now()}`, LOCK_TTL);
+  if (!lockAcquired) {
+    console.log('[Compute] Lock exists — another compute is running. Skipping.');
+    const meta = await kvGet<any>(META_KEY);
+    return {
+      ok: true,
+      signalCount: meta?.signalCount || 0,
+      computedAt: meta?.computedAt || new Date().toISOString(),
+      skipped: true,
+    };
+  }
+
+  try {
+    // 2. Perform compute
+    const response = await performComputeLogic(watchlist, portfolio);
+
+    if (!response || !response.signals || response.signals.length === 0) {
+      // Don't overwrite good data with empty
+      const existing = await kvGet<any>(PROD_SIGNALS_KEY);
+      if (existing) {
+        console.log('[Compute] Empty result — preserving existing data');
+        return { ok: true, signalCount: existing.signals?.length || 0, computedAt: new Date().toISOString() };
+      }
+    }
+
+    // 3. Atomic write: temp → swap
+    await kvSet(TEMP_SIGNALS_KEY, response, STORE_TTL);
+    const swapped = await kvSwap(TEMP_SIGNALS_KEY, PROD_SIGNALS_KEY, STORE_TTL);
+    if (!swapped) {
+      // Fallback: direct write
+      await kvSet(PROD_SIGNALS_KEY, response, STORE_TTL);
+      console.warn('[Compute] Swap failed, used direct write');
+    }
+
+    // 4. Update metadata with version hash
+    const signalHash = response.signals.slice(0, 10)
+      .map((s: any) => `${s.symbol}:${s.valueCr}:${s.score}`)
+      .join('|');
+    const version = Array.from(signalHash).reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0);
+
+    await kvSet(META_KEY, {
+      computedAt: new Date().toISOString(),
+      signalCount: response.signals.length,
+      version,
+      signalHash,
+      ttl: STORE_TTL,
+    }, STORE_TTL);
+
+    console.log(`[Compute] Done: ${response.signals.length} signals stored atomically`);
+    return { ok: true, signalCount: response.signals.length, computedAt: new Date().toISOString() };
+  } catch (error) {
+    console.error('[Compute] Pipeline error:', error);
+    return { ok: false, signalCount: 0, computedAt: new Date().toISOString(), error: (error as Error).message };
+  } finally {
+    // 5. Release lock
+    await kvDel(LOCK_KEY);
+  }
+}
+
 // ==================== ROUTE HANDLERS ====================
 
 export async function GET(request: Request) {
-  console.log('[Compute] GET triggered');
+  console.log('[Compute] GET triggered (cron)');
   try {
-    const response = await performComputeLogic([], []);
-    await kvSet('intelligence:signals', response, 3600);
-    await kvSet('intelligence:meta', {
-      computedAt: new Date().toISOString(),
-      signalCount: response.signals.length,
-      version: 1,
-      ttl: 3600,
-    }, 3600);
-    return NextResponse.json({ ok: true, signalCount: response.signals.length, computedAt: new Date().toISOString() });
+    const result = await runLockedCompute([], []);
+    return NextResponse.json(result);
   } catch (error) {
     console.error('[Compute] Error:', error);
     return NextResponse.json({ ok: false, error: (error as Error).message }, { status: 500 });
@@ -1469,15 +1538,8 @@ export async function POST(request: Request) {
     const watchlist = (body.watchlist || []).map((s: string) => normalizeTicker(s)).filter(Boolean);
     const portfolio = (body.portfolio || []).map((s: string) => normalizeTicker(s)).filter(Boolean);
 
-    const response = await performComputeLogic(watchlist, portfolio);
-    await kvSet('intelligence:signals', response, 3600);
-    await kvSet('intelligence:meta', {
-      computedAt: new Date().toISOString(),
-      signalCount: response.signals.length,
-      version: 1,
-      ttl: 3600,
-    }, 3600);
-    return NextResponse.json({ ok: true, signalCount: response.signals.length, computedAt: new Date().toISOString() });
+    const result = await runLockedCompute(watchlist, portfolio);
+    return NextResponse.json(result);
   } catch (error) {
     console.error('[Compute] Error:', error);
     return NextResponse.json({ ok: false, error: (error as Error).message }, { status: 500 });

@@ -1678,8 +1678,8 @@ function buildMissingCard(symbol: string, failureReasons: string[]): EarningsSca
     sourceConfidence: 0,
     dataStatus: 'MISSING',
     failureReasons,
-    screenerUrl: `https://www.screener.in/company/${symbol}/consolidated/`,
-    nseUrl: `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(symbol)}`,
+    screenerUrl: `https://www.screener.in/company/${symbol}/consolidated/#quarters`,
+    nseUrl: `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(symbol)}`,
   };
 }
 
@@ -1828,8 +1828,8 @@ function buildCardFromData(data: ScreenerData, guidanceData?: GuidanceData | nul
     source: 'screener.in',
     sourceConfidence: SOURCE_CONFIDENCE['screener.in'],
     dataStatus: (hasRevenue && hasPAT && hasEPS && quarters.length >= 4) ? 'FULL' : (hasRevenue || hasPAT) ? 'PARTIAL' : 'MISSING',
-    screenerUrl: `https://www.screener.in/company/${data.symbol}/consolidated/`,
-    nseUrl: `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(data.symbol)}`,
+    screenerUrl: `https://www.screener.in/company/${data.symbol}/consolidated/#quarters`,
+    nseUrl: `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(data.symbol)}`,
   };
 }
 
