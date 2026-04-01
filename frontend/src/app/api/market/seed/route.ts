@@ -56,9 +56,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   const only = searchParams.get('only');
-  const baseUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : process.env.NEXT_PUBLIC_BASE_URL || new URL(request.url).origin;
+  // CRITICAL: Use request origin (production alias) NOT VERCEL_URL
+  // VERCEL_URL points to deployment-specific URL which is blocked by Deployment Protection (401)
+  const baseUrl = new URL(request.url).origin;
 
   const jobs: Array<{ label: string; url: string; timeoutMs: number }> = [];
 

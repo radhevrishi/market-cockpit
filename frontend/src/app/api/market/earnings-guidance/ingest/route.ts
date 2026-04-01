@@ -492,9 +492,8 @@ async function ingestFromEarningsScan(): Promise<{
     // 1. Get symbols from portfolio + watchlist
     let symbols: string[] = [];
     try {
-      const baseUrl = process.env.VERCEL_URL
-        ? `https://${process.env.VERCEL_URL}`
-        : process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+      // CRITICAL: Use production URL, NOT VERCEL_URL (blocked by Deployment Protection)
+      const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://market-cockpit.vercel.app';
 
       const [pRes, wRes] = await Promise.all([
         fetch(`${baseUrl}/api/portfolio?chatId=${CHAT_ID}`, { signal: AbortSignal.timeout(10000) }).catch(() => null),

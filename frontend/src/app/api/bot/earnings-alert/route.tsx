@@ -11,9 +11,8 @@ export const maxDuration = 55;
 // ══════════════════════════════════════════════
 
 const BOT_TOKEN = '8681784264:AAG7OV3ibS4r89Lbrta50NkWnJSCTrtoS80';
-const API_BASE = process.env.VERCEL_URL
-  ? `https://${process.env.VERCEL_URL}`
-  : 'https://market-cockpit.vercel.app';
+// Use production alias directly — VERCEL_URL is blocked by Deployment Protection (401)
+const API_BASE = 'https://market-cockpit.vercel.app';
 
 const WATCHLIST_CHAT_ID = '5057319640';
 const INDEX_CHAT_ID = '5057319640';
