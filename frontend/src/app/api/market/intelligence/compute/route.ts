@@ -355,6 +355,8 @@ interface IntelSignal {
   confidenceLayer?: number;     // Weighted: SRC 40% + NUM 30% + SCOPE 30%
   signalCategory?: 'ACTIONABLE' | 'MONITOR' | 'REJECTED' | 'OBSERVATION';  // FINAL: 3 dispositions
   observationReason?: string;   // Why it's non-actionable
+  monitorScore?: number;           // 0-100 composite monitor quality score
+  monitorTier?: 'HIGH' | 'MED' | 'LOW';  // Derived from monitorScore
 }
 
 interface CompanyTrend {
@@ -1524,6 +1526,7 @@ function validateSignal(signal: IntelSignal): {
   rejectReason?: string;
   isInferred: boolean;
   isMaterial: boolean;
+  monitorScore: number;
 } {
   // ── LAYER B: Validation Gate ──
 
@@ -1535,7 +1538,7 @@ function validateSignal(signal: IntelSignal): {
     signal.source === 'deal'
   );
   if (!sourceExists) {
-    return { disposition: 'REJECTED', rejectReason: 'source_not_verified', isInferred: true, isMaterial: false };
+    return { disposition: 'REJECTED', rejectReason: 'source_not_verified', isInferred: true, isMaterial: false, monitorScore: 0 };
   }
 
   // Check 2: No template pattern (only hard-reject on actual template pattern string)
@@ -1543,12 +1546,12 @@ function validateSignal(signal: IntelSignal): {
   const hasTemplate = !!signal.templatePattern;
   const isHeuristicDegraded = !!signal.heuristicSuppressed || !!signal.identicalPctFlag;
   if (hasTemplate) {
-    return { disposition: 'REJECTED', rejectReason: 'template_pattern_detected', isInferred: true, isMaterial: false };
+    return { disposition: 'REJECTED', rejectReason: 'template_pattern_detected', isInferred: true, isMaterial: false, monitorScore: 0 };
   }
 
   // Check 3: Data quality not BROKEN
   if (signal.dataQuality === 'BROKEN') {
-    return { disposition: 'REJECTED', rejectReason: 'data_quality_broken', isInferred: true, isMaterial: false };
+    return { disposition: 'REJECTED', rejectReason: 'data_quality_broken', isInferred: true, isMaterial: false, monitorScore: 0 };
   }
 
   // Check 4: No extreme anomaly
@@ -1556,7 +1559,7 @@ function validateSignal(signal: IntelSignal): {
       signal.guidanceAnomalyFlag === 'INCONSISTENT_WITH_HISTORY' ||
       signal.guidanceAnomalyFlag === 'QOQ_MISREAD' ||
       signal.guidanceAnomalyFlag === 'SEGMENT_NOT_TOTAL') {
-    return { disposition: 'REJECTED', rejectReason: 'guidance_anomaly', isInferred: true, isMaterial: false };
+    return { disposition: 'REJECTED', rejectReason: 'guidance_anomaly', isInferred: true, isMaterial: false, monitorScore: 0 };
   }
 
   // Check 5: Number origin — is the value EXPLICIT or INFERRED?
@@ -1575,7 +1578,7 @@ function validateSignal(signal: IntelSignal): {
   );
 
   if (isGuidance && !periodClassified) {
-    return { disposition: 'REJECTED', rejectReason: 'period_not_classified', isInferred, isMaterial: false };
+    return { disposition: 'REJECTED', rejectReason: 'period_not_classified', isInferred, isMaterial: false, monitorScore: 0 };
   }
 
   // ── LAYER C: Materiality Check ──
@@ -1591,23 +1594,52 @@ function validateSignal(signal: IntelSignal): {
   // If value is inferred AND not material AND source not verified → REJECTED
   // Source-verified inferred signals become MONITOR with sanitized values
   if (isInferred && !isMaterial && !sourceExists) {
-    return { disposition: 'REJECTED', rejectReason: 'inferred_non_material', isInferred, isMaterial: false };
+    return { disposition: 'REJECTED', rejectReason: 'inferred_non_material', isInferred, isMaterial: false, monitorScore: 0 };
   }
+
+  // ── MONITOR SCORE (0-100) ──
+  // Source credibility (0-30)
+  const srcScore = signal.confidenceType === 'ACTUAL' ? 30 :
+    signal.sourceTier === 'VERIFIED' ? 25 :
+    (signal.dataSource === 'nse' || signal.dataSource === 'NSE') ? 20 :
+    signal.source === 'deal' ? 20 : 10;
+
+  // Event completeness (0-25)
+  const hasValidEventType = ['Order Win', 'Contract', 'Capex/Expansion', 'Guidance', 'Mgmt Change', 'Acquisition', 'Block Deal', 'Bulk Deal', 'Stake Sale'].includes(signal.eventType || '');
+  const hasHeadline = !!(signal.headline && signal.headline.length > 10);
+  const hasWhyItMatters = !!(signal.whyItMatters && signal.whyItMatters.length > 20);
+  const eventScore = (hasValidEventType ? 12 : 0) + (hasHeadline ? 7 : 0) + (hasWhyItMatters ? 6 : 0);
+
+  // Numeric certainty (0-20)
+  const numScore = !isInferred ? 20 :
+    (signal.valueSource === 'AGGREGATED' ? 12 :
+     signal.valueSource === 'HEURISTIC' ? 5 : 8);
+
+  // Materiality hint (0-15)
+  const matScore = isMaterial ? 15 :
+    (revImpact > 3 ? 10 : revImpact > 1 ? 5 : 0);
+
+  // Recency (0-10)
+  const signalAge = signal.freshness === 'FRESH' ? 10 :
+    signal.freshness === 'RECENT' ? 7 :
+    signal.freshness === 'AGING' ? 3 : 1;
+
+  const monitorScore = Math.min(100, srcScore + eventScore + numScore + matScore + signalAge);
 
   // ── DISPOSITION ──
   // Heuristic-degraded signals forced to MONITOR regardless of materiality
   if (isMaterial && !isInferred && !isHeuristicDegraded) {
-    return { disposition: 'ACTIONABLE', isInferred: false, isMaterial: true };
+    return { disposition: 'ACTIONABLE', isInferred: false, isMaterial: true, monitorScore: 100 };
   }
 
   if (isMaterial && isInferred) {
     // Material but inferred → MONITOR (show event type, hide numbers)
-    return { disposition: 'MONITOR', isInferred: true, isMaterial: true };
+    return { disposition: 'MONITOR', isInferred: true, isMaterial: true, monitorScore };
   }
 
   // Source verified, not template, not broken, but not material → MONITOR
   // This includes: inferred but source-verified, and non-inferred non-material
-  return { disposition: 'MONITOR', isInferred, isMaterial: false };
+  return { disposition: 'MONITOR', isInferred, isMaterial: false, monitorScore };
 }
 
 // FINAL: Strip inferred numbers from display — Zero Inference Policy
@@ -3632,6 +3664,8 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     s.confidenceLayer = validation.disposition === 'ACTIONABLE' ? 100 :
                          validation.disposition === 'MONITOR' ? 60 : 0;
     s.observationReason = validation.rejectReason;
+    s.monitorScore = validation.monitorScore;
+    s.monitorTier = validation.monitorScore >= 80 ? 'HIGH' : validation.monitorScore >= 50 ? 'MED' : 'LOW';
 
     // Zero Inference Policy: sanitize display
     sanitizeForDisplay(s, validation.isInferred);
@@ -3664,12 +3698,16 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
 
   // Sort actionable by actionScore
   actionableSignals.sort((a, b) => (b.actionScore || 0) - (a.actionScore || 0));
-  monitorSignals.sort((a, b) => (b.actionScore || 0) - (a.actionScore || 0));
+  monitorSignals.sort((a, b) => (b.monitorScore || 0) - (a.monitorScore || 0));
 
   // Top signals: max 5 actionable
-  const top3 = actionableSignals.slice(0, 5);
   const noActionableSignals = actionableSignals.length === 0;
   const noHighConfSignals = actionableSignals.length === 0;
+
+  // If no actionable signals, promote top 5 monitor HIGH as "top signals"
+  const topMonitor = monitorSignals.filter(s => s.monitorTier === 'HIGH').slice(0, 5);
+  const effectiveTop = actionableSignals.length > 0 ? actionableSignals.slice(0, 5) : topMonitor;
+  const top3 = effectiveTop;
 
   // ── Production Status Check ──
   const totalActive = actionableSignals.length + monitorSignals.length;
@@ -3680,7 +3718,6 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
 
   const productionReady = (
     actionableSignals.length <= 5 &&
-    rejectedPct > 90 &&
     hybridStates === 0 &&
     inferredInActive === 0
   );

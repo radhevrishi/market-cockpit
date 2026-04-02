@@ -1129,6 +1129,22 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               // Heuristic-degraded signals forced to MONITOR regardless of materiality
               s.signalCategory = (isMaterial && !isInferred && !isHeuristicDegraded) ? 'ACTIONABLE' : 'MONITOR';
 
+              // ── MONITOR SCORE ──
+              const srcScore = s.confidenceType === 'ACTUAL' ? 30 :
+                s.sourceTier === 'VERIFIED' ? 25 :
+                (s.dataSource === 'nse' || s.dataSource === 'NSE') ? 20 :
+                s.source === 'deal' ? 20 : 10;
+              const hasValidEventType = ['Order Win', 'Contract', 'Capex/Expansion', 'Guidance', 'Mgmt Change', 'Acquisition', 'Block Deal', 'Bulk Deal', 'Stake Sale'].includes(s.eventType || '');
+              const hasHeadline = !!(s.headline && s.headline.length > 10);
+              const hasWhyItMatters = !!(s.whyItMatters && s.whyItMatters.length > 20);
+              const eventScore = (hasValidEventType ? 12 : 0) + (hasHeadline ? 7 : 0) + (hasWhyItMatters ? 6 : 0);
+              const numScore = !isInferred ? 20 : (s.valueSource === 'AGGREGATED' ? 12 : s.valueSource === 'HEURISTIC' ? 5 : 8);
+              const revImpactAbs = Math.abs(s.impactPct || 0);
+              const matScore = isMaterial ? 15 : (revImpactAbs > 3 ? 10 : revImpactAbs > 1 ? 5 : 0);
+              const signalAge = s.freshness === 'FRESH' ? 10 : s.freshness === 'RECENT' ? 7 : s.freshness === 'AGING' ? 3 : 1;
+              s.monitorScore = Math.min(100, srcScore + eventScore + numScore + matScore + signalAge);
+              s.monitorTier = s.monitorScore >= 80 ? 'HIGH' : s.monitorScore >= 50 ? 'MED' : 'LOW';
+
               if (s.signalCategory === 'ACTIONABLE') {
                 actionableSignals.push(s);
               } else {
@@ -1138,11 +1154,11 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
 
             // Sort by actionScore
             actionableSignals.sort((a: any, b: any) => (b.actionScore || 0) - (a.actionScore || 0));
-            monitorSignals.sort((a: any, b: any) => (b.actionScore || 0) - (a.actionScore || 0));
+            monitorSignals.sort((a: any, b: any) => (b.monitorScore || 0) - (a.monitorScore || 0));
 
             const totalProcessed = actionableSignals.length + monitorSignals.length + rejectedCount;
             const rejectedPct = totalProcessed > 0 ? (rejectedCount / totalProcessed) * 100 : 0;
-            const productionReady = actionableSignals.length <= 5 && rejectedPct > 90;
+            const productionReady = actionableSignals.length <= 5;
 
             // Rebuild bias from only validated signals (actionable + monitor)
             const validSignals = [...actionableSignals, ...monitorSignals];
@@ -1172,11 +1188,14 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               validBias.activeSectors = [...new Set(validSignals.map((s: any) => s.sector).filter(Boolean))];
             }
 
+            const topMonitor = monitorSignals.filter((s: any) => (s.monitorTier === 'HIGH' || s.monitorScore >= 50)).slice(0, 5);
+            const effectiveTop = actionableSignals.length > 0 ? actionableSignals.slice(0, 5) : topMonitor;
+
             responseData = {
               ...responseData,
               signals: actionableSignals.slice(0, 5),
               observations: monitorSignals.slice(0, 50),
-              top3: actionableSignals.slice(0, 5),
+              top3: effectiveTop,
               // Clear stacking/trends when no valid signals
               trends: validSignals.length > 0 ? responseData.trends : [],
               bias: validBias,

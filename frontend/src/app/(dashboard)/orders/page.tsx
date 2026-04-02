@@ -635,7 +635,7 @@ export default function CompanyIntelligencePage() {
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '13px', color: GREEN, fontWeight: 600 }}>
-              No actionable signals — system functioning correctly
+              No actionable signals{monitorList.length > 0 ? ` — showing top ${Math.min(monitorList.length, 5)} monitor signals` : ' — system functioning correctly'}
             </span>
           </div>
           {productionStatus && (
@@ -648,14 +648,14 @@ export default function CompanyIntelligencePage() {
       {top3.length > 0 && (
         <div style={{ marginBottom: '20px' }}>
           <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, letterSpacing: '0.05em', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {noActionableSignals ? 'NO ACTIONABLE SIGNALS' : `ACTIONABLE SIGNALS (${signals.filter(s => s.signalCategory === 'ACTIONABLE').length})`}
+            {noActionableSignals ? (top3.length > 0 ? 'TOP MONITOR SIGNALS' : 'NO ACTIONABLE SIGNALS') : `ACTIONABLE SIGNALS (${signals.filter(s => s.signalCategory === 'ACTIONABLE').length})`}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {top3.map((s, i) => (
               <div key={`top-${i}`} style={{
                 backgroundColor: CARD,
-                border: `1px solid ${s.isNegative ? `${RED}40` : `${actionColor(s.action)}30`}`,
-                borderLeft: `4px solid ${s.isNegative ? RED : actionColor(s.action)}`,
+                border: `1px solid ${noActionableSignals ? 'rgba(167,139,250,0.3)' : (s.isNegative ? `${RED}40` : `${actionColor(s.action)}30`)}`,
+                borderLeft: `4px solid ${noActionableSignals ? '#A78BFA' : (s.isNegative ? RED : actionColor(s.action))}`,
                 borderRadius: '10px',
                 padding: '14px 18px',
               }}>
@@ -1687,31 +1687,45 @@ export default function CompanyIntelligencePage() {
           <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, letterSpacing: '0.05em', marginBottom: '12px' }}>
             MONITOR LIST ({monitorList.length})
             <span style={{ fontSize: '9px', fontWeight: 400, color: TEXT3, letterSpacing: 'normal', marginLeft: '8px' }}>
-              Clean events — pending materiality confirmation
+              Ranked by signal quality score
             </span>
           </div>
-          {monitorList.slice(0, 30).map((s, i) => (
-            <div key={`mon-${i}`} style={{
-              padding: '6px 12px', marginBottom: '4px', borderRadius: '6px',
-              backgroundColor: 'rgba(100,116,139,0.03)',
-              border: '1px solid rgba(100,116,139,0.08)',
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ fontSize: '11px', fontWeight: 700, color: TEXT1 }}>{s.symbol}</span>
-                  <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(100,116,139,0.1)', color: TEXT3 }}>
-                    {s.eventType}
-                  </span>
-                  {s.headline && (
-                    <span style={{ fontSize: '10px', color: TEXT3 }}>
-                      {s.headline.substring(0, 80)}{s.headline.length > 80 ? '...' : ''}
+          {monitorList.slice(0, 30).map((s, i) => {
+            const mScore = (s as any).monitorScore || 0;
+            const mTier = (s as any).monitorTier || (mScore >= 80 ? 'HIGH' : mScore >= 50 ? 'MED' : 'LOW');
+            const tierColor = mTier === 'HIGH' ? GREEN : mTier === 'MED' ? YELLOW : TEXT3;
+            const tierBg = mTier === 'HIGH' ? 'rgba(16,185,129,0.06)' : mTier === 'MED' ? 'rgba(234,179,8,0.06)' : 'rgba(100,116,139,0.03)';
+            const tierBorder = mTier === 'HIGH' ? 'rgba(16,185,129,0.15)' : mTier === 'MED' ? 'rgba(234,179,8,0.15)' : 'rgba(100,116,139,0.08)';
+            return (
+              <div key={`mon-${i}`} style={{
+                padding: '8px 12px', marginBottom: '4px', borderRadius: '6px',
+                backgroundColor: tierBg,
+                border: `1px solid ${tierBorder}`,
+                borderLeft: `3px solid ${tierColor}`,
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 700, color: TEXT1 }}>{s.symbol}</span>
+                    <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(100,116,139,0.1)', color: TEXT3 }}>
+                      {s.eventType}
                     </span>
-                  )}
+                    {s.headline && (
+                      <span style={{ fontSize: '10px', color: TEXT2 }}>
+                        {s.headline.substring(0, 80)}{s.headline.length > 80 ? '...' : ''}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '9px', fontWeight: 600, color: tierColor,
+                      padding: '1px 6px', borderRadius: '3px', backgroundColor: `${tierColor}15` }}>
+                      {mTier}
+                    </span>
+                    <span style={{ fontSize: '9px', color: TEXT3 }}>{mScore}</span>
+                  </div>
                 </div>
-                <span style={{ fontSize: '9px', color: TEXT3 }}>MONITOR</span>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
