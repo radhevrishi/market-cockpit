@@ -763,7 +763,12 @@ export default function CompanyIntelligencePage() {
                       {s.inferenceUsed && <span style={{ fontSize: '9px', color: TEXT3, marginLeft: '3px' }}>(est.)</span>}
                     </span>
                   ) : (
-                    <span style={{ fontSize: '12px', color: TEXT3, fontStyle: 'italic' }}>Guidance signal</span>
+                    <span style={{ fontSize: '12px', color: TEXT3, fontStyle: 'italic' }}>{
+                      s.signalClass === 'GOVERNANCE' ? 'Governance event' :
+                      s.signalClass === 'STRATEGIC' ? 'Strategic event' :
+                      s.eventType === 'Guidance' ? 'Guidance signal' :
+                      'Corporate event'
+                    }</span>
                   )}
                   {s.revenueCr && s.revenueCr > 0 && (
                     <span style={{ fontSize: '12px', color: TEXT2 }}>
