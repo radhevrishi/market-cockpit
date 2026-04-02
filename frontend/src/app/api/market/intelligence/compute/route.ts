@@ -347,6 +347,14 @@ interface IntelSignal {
   guidanceRangeLow?: number;                              // Range-aware: low bound
   guidanceRangeHigh?: number;                             // Range-aware: high bound
   guidanceRangeConfPenalty?: number;                       // Confidence penalty from wide range
+  // v5: 3-flag verification model + signal/observation separation
+  srcVerified?: boolean;        // Document exists & authentic
+  numValidated?: boolean;       // Number extracted correctly (no mismatch)
+  scopeValidated?: boolean;     // Correct period classification (FY/Q/segment)
+  verified?: boolean;           // = srcVerified AND numValidated AND scopeValidated
+  confidenceLayer?: number;     // Weighted: SRC 40% + NUM 30% + SCOPE 30%
+  signalCategory?: 'ACTIONABLE' | 'OBSERVATION';  // Strict separation
+  observationReason?: string;   // Why it's non-actionable
 }
 
 interface CompanyTrend {
@@ -365,26 +373,33 @@ interface DailyBias {
   netBias: 'Bullish' | 'Neutral' | 'Bearish';
   highImpactCount: number;
   activeSectors: string[];
-  buyCount: number;
-  addCount: number;
+  buyWatchCount: number;   // renamed from buyCount (legacy compat)
   holdCount: number;
-  watchCount: number;
-  trimExitCount: number;
+  monitorCount: number;    // new: replaces watchCount
+  reduceExitCount: number; // renamed from trimExitCount
   totalSignals: number;
+  totalObservations: number;  // v5
   totalOrderValueCr: number;
   totalDealValueCr: number;
   portfolioAlerts: number;
   negativeSignals: number;
   summary: string;
+  // Legacy compat
+  buyCount?: number;
+  addCount?: number;
+  watchCount?: number;
+  trimExitCount?: number;
 }
 
 interface IntelligenceResponse {
   top3: IntelSignal[];
-  signals: IntelSignal[];
+  signals: IntelSignal[];            // ACTIONABLE only (validated)
+  observations: IntelSignal[];       // Non-actionable (broken, unknown scope, etc.)
   trends: CompanyTrend[];
   bias: DailyBias;
   updatedAt: string;
   noHighConfSignals?: boolean;
+  noActionableSignals?: boolean;     // v5: true when zero actionable exist
   dataStatus?: string;
   _debug?: any;
 }
@@ -1202,6 +1217,15 @@ function applyGuidanceSanityBound(
 
   const absGrowth = Math.abs(revenueGrowth);
 
+  // v5 Rule 0: UNKNOWN scope + numeric delta = DISCARD (don't compute %)
+  if (scope === 'UNKNOWN' && revenueGrowth !== null && Math.abs(revenueGrowth) > 5) {
+    return {
+      dataQuality: 'BROKEN',
+      forceWatch: true,
+      reason: `scope=UNKNOWN with ${revenueGrowth > 0 ? '+' : ''}${revenueGrowth.toFixed(0)}% delta — period unknown, cannot validate`,
+    };
+  }
+
   // Rule 1: Extreme + not company-wide = BROKEN
   if (absGrowth > 30 && scope !== 'COMPANY') {
     return {
@@ -1480,6 +1504,95 @@ function detectExtremeValue(revenueGrowth: number | null, impactPct: number): st
     return `EXTREME_IMPACT_${impactPct.toFixed(0)}%: likely data error`;
   }
   return undefined;
+}
+
+// ══════════════════════════════════════════════════════════════
+// ── v5: 3-FLAG VERIFICATION MODEL ──
+// SRC_VERIFIED: document exists & authentic
+// NUM_VALIDATED: extracted correctly (no mismatch, within historical range)
+// SCOPE_VALIDATED: correct period classification (FY/Q/segment known)
+// VERIFIED = all three true
+// ══════════════════════════════════════════════════════════════
+
+function computeV5Flags(signal: IntelSignal): {
+  srcVerified: boolean;
+  numValidated: boolean;
+  scopeValidated: boolean;
+  verified: boolean;
+  confidenceLayer: number;
+  signalCategory: 'ACTIONABLE' | 'OBSERVATION';
+  observationReason?: string;
+} {
+  // SRC_VERIFIED: Was the source document real and from a known provider?
+  const srcVerified = (
+    signal.sourceTier === 'VERIFIED' ||
+    signal.confidenceType === 'ACTUAL' ||
+    signal.dataSource === 'nse' || signal.dataSource === 'NSE' ||
+    signal.source === 'deal'
+  );
+
+  // NUM_VALIDATED: Was the number parsed correctly? Not anomalous?
+  const hasBrokenData = signal.dataQuality === 'BROKEN';
+  const hasTemplatePattern = !!signal.templatePattern || !!signal.heuristicSuppressed;
+  const hasExtremeAnomaly = signal.guidanceAnomalyFlag === 'EXTREME_UNVERIFIED' ||
+    signal.guidanceAnomalyFlag === 'INCONSISTENT_WITH_HISTORY';
+  const numValidated = !hasBrokenData && !hasTemplatePattern && !hasExtremeAnomaly &&
+    signal.dataQuality !== 'LOW';
+
+  // SCOPE_VALIDATED: Is the period classification known and correct?
+  const scopeKnown = signal.guidanceScope !== undefined && signal.guidanceScope !== 'UNKNOWN';
+  const periodKnown = signal.guidancePeriod !== undefined && signal.guidancePeriod !== 'UNKNOWN';
+  // For non-guidance signals (deals, announcements), scope is inherently validated
+  const isNonGuidance = signal.eventType !== 'Guidance' && !signal.headline?.toLowerCase().includes('guidance');
+  const scopeValidated = isNonGuidance || (scopeKnown && periodKnown);
+
+  const verified = srcVerified && numValidated && scopeValidated;
+
+  // Confidence layer: SRC 40% + NUM 30% + SCOPE 30%
+  const confidenceLayer = Math.round(
+    (srcVerified ? 40 : 0) +
+    (numValidated ? 30 : 0) +
+    (scopeValidated ? 30 : 0)
+  );
+
+  // Signal category determination
+  let signalCategory: 'ACTIONABLE' | 'OBSERVATION' = 'OBSERVATION';
+  let observationReason: string | undefined;
+
+  if (hasBrokenData) {
+    observationReason = 'Data quality broken: parsing failure or template artifact';
+  } else if (hasExtremeAnomaly) {
+    observationReason = 'Extreme anomaly: unverified or inconsistent with history';
+  } else if (hasTemplatePattern) {
+    observationReason = 'Template pattern detected: likely upstream artifact';
+  } else if (!scopeValidated && signal.eventType === 'Guidance') {
+    observationReason = 'Scope/period unknown: cannot validate % change';
+  } else if (!srcVerified) {
+    observationReason = 'Source unverified: document authenticity not confirmed';
+  } else if (verified) {
+    signalCategory = 'ACTIONABLE';
+  } else if (srcVerified && !numValidated) {
+    observationReason = 'Number not validated: extraction may be incorrect';
+  } else {
+    // srcVerified but scope not validated on guidance
+    observationReason = 'Incomplete validation: scope or period unclear';
+  }
+
+  return { srcVerified, numValidated, scopeValidated, verified, confidenceLayer, signalCategory, observationReason };
+}
+
+// v5: Map old action labels to new severity-based labels
+function mapActionToV5(action: ActionFlag, verified: boolean, dataQuality?: string): ActionFlag {
+  if (!verified || dataQuality === 'BROKEN') return 'WATCH'; // MONITOR mapped to WATCH for compat
+  // Keep EXIT and TRIM as-is (high severity)
+  if (action === 'EXIT') return 'EXIT';
+  if (action === 'TRIM') return 'TRIM';
+  // HOLD stays HOLD
+  if (action === 'HOLD') return 'HOLD';
+  // BUY/ADD → HOLD (downgrade: we don't issue BUY in strict mode without full validation chain)
+  if (action === 'BUY' || action === 'ADD') return 'HOLD';
+  // WATCH/AVOID stay
+  return action;
 }
 
 function computeScore(opts: {
@@ -2675,16 +2788,21 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
           guidanceSignal.riskFactors.push(guidanceValidation.reason || 'Extreme guidance value — verify');
         }
 
-        // ── v4: BROKEN DATA QUALITY HARD GATE ──
-        // IF dataQuality == BROKEN → NEVER allow HOLD/ADD/EXIT/TRIM → ONLY WATCH (PASSIVE)
+        // ── v5: BROKEN DATA QUALITY HARD GATE ──
+        // IF dataQuality == BROKEN → categorize as OBSERVATION, mark with WATCH
         if (guidanceSignal.dataQuality === 'BROKEN') {
-          if (guidanceSignal.action !== 'WATCH') {
-            guidanceSignal.action = 'WATCH';
-            guidanceSignal.decision = 'WATCH';
-          }
+          guidanceSignal.action = 'WATCH';
+          guidanceSignal.signalCategory = 'OBSERVATION';
+          guidanceSignal.observationReason =
+            `Data quality BROKEN: ${guidanceSignal.guidanceAnomalyFlag || 'parsing failure'}`;
           guidanceSignal.watchSubtype = 'PASSIVE';
-          guidanceSignal.conflictResolution = (guidanceSignal.conflictResolution ? guidanceSignal.conflictResolution + ' · ' : '') +
-            'Data quality BROKEN: forced WATCH-PASSIVE';
+          guidanceSignal.tag = guidanceSignal.tag || 'RISK-WATCH';
+          if (guidanceSignal.whyItMatters) {
+            guidanceSignal.whyItMatters =
+              'Insufficient conviction — monitor for confirmation · ' +
+              `Sanity bound: ${(guidanceSignal.conflictResolution || 'parsing anomaly')} · ` +
+              `Data quality BROKEN: excluded from actionable signals`;
+          }
         }
 
         // Guidance without supporting signals → note it, but don't double-penalize
@@ -3463,44 +3581,57 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     if (!s.actionScore) {
       s.actionScore = computeActionScore(s.weightedScore, s.sourceTier!, s.dataQuality!);
     }
+
+    // v5: Compute 3-flag verification and categorize
+    const v5 = computeV5Flags(s);
+    s.srcVerified = v5.srcVerified;
+    s.numValidated = v5.numValidated;
+    s.scopeValidated = v5.scopeValidated;
+    s.verified = v5.verified;
+    s.confidenceLayer = v5.confidenceLayer;
+    s.signalCategory = v5.signalCategory;
+    s.observationReason = v5.observationReason;
+
+    // v5: Remap action for non-verified signals
+    if (!v5.verified && s.dataQuality === 'BROKEN') {
+      s.action = 'WATCH';
+      s.signalCategory = 'OBSERVATION';
+    }
   }
 
-  // ── v4: TOP ACTIONABLE RANKING (evidence-weighted, not just score-sorted) ──
-  // actionScore = signalScore × evidenceWeight × dataQualityWeight
-  // Hard Rule: Top Actionable must contain ≥50% VERIFIED signals
-  const actionablePool = filtered
-    .filter(s => (s.action === 'BUY' || s.action === 'ADD' || s.action === 'HOLD') && s.dataQuality !== 'BROKEN')
+  // ── v5: SEPARATE ACTIONABLE vs OBSERVATIONS ──
+  const actionableSignals = filtered.filter(s => s.signalCategory === 'ACTIONABLE' && s.verified);
+  const observationSignals = filtered.filter(s => s.signalCategory === 'OBSERVATION' || !s.verified);
+
+  // ── v5: TOP ACTIONABLE RANKING (strict: only verified + validated) ──
+  const actionablePool = actionableSignals
+    .filter(s => s.action !== 'WATCH' && s.action !== 'AVOID')
     .sort((a, b) => (b.actionScore || 0) - (a.actionScore || 0));
 
   let top3 = actionablePool.slice(0, 3);
-  // Enforce ≥50% verified in top 3
-  const verifiedInTop3 = top3.filter(s => s.sourceTier === 'VERIFIED').length;
-  if (top3.length > 0 && verifiedInTop3 < Math.ceil(top3.length / 2)) {
-    // Swap in verified signals from pool
-    const verifiedPool = actionablePool.filter(s => s.sourceTier === 'VERIFIED');
-    top3 = [
-      ...verifiedPool.slice(0, Math.min(2, verifiedPool.length)),
-      ...actionablePool.filter(s => s.sourceTier !== 'VERIFIED').slice(0, 1),
-    ].slice(0, 3);
-  }
+
+  // If no actionable signals, show top verified observations as "under review"
+  const noActionableSignals = actionablePool.length === 0;
   if (top3.length === 0) {
-    top3.push(...filtered.filter(s => s.action !== 'AVOID' && s.action !== 'EXIT' && s.dataQuality !== 'BROKEN').slice(0, 3));
+    // Show top observations but clearly marked
+    top3 = observationSignals
+      .filter(s => s.action !== 'AVOID')
+      .sort((a, b) => (b.confidenceLayer || 0) - (a.confidenceLayer || 0))
+      .slice(0, 3);
   }
 
-  // v4: Check if we have any high-confidence actionable signals
-  const highConfActionable = filtered.filter(s =>
-    (s.action === 'BUY' || s.action === 'ADD') && s.sourceTier === 'VERIFIED' && s.dataQuality !== 'BROKEN'
+  // v5: Check for high-confidence actionable
+  const highConfActionable = actionableSignals.filter(s =>
+    s.verified && s.action !== 'WATCH' && s.action !== 'AVOID'
   );
   const noHighConfSignals = highConfActionable.length === 0;
 
   const sectorSet = new Set<string>();
   let totalOrderValueCr = 0;
   let totalDealValueCr = 0;
-  let buyCount = 0;
-  let addCount = 0;
   let holdCount = 0;
-  let watchCount = 0;
-  let trimExitCount = 0;
+  let monitorCount = 0;
+  let reduceExitCount = 0;
   let highImpactCount = 0;
   let bullishCount = 0;
   let bearishCount = 0;
@@ -3511,15 +3642,13 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     if (s.segment) sectorSet.add(s.segment);
     if (s.source === 'order' && s.valueCr) totalOrderValueCr += s.valueCr;
     if (s.source === 'deal' && s.valueCr) totalDealValueCr += s.valueCr;
-    if (s.action === 'BUY') buyCount++;
-    if (s.action === 'ADD') addCount++;
     if (s.action === 'HOLD') holdCount++;
-    if (s.action === 'WATCH') watchCount++;
-    if (s.action === 'TRIM' || s.action === 'EXIT') trimExitCount++;
+    if (s.action === 'WATCH') monitorCount++;
+    if (s.action === 'TRIM' || s.action === 'EXIT') reduceExitCount++;
     if (s.impactLevel === 'HIGH') highImpactCount++;
     if (s.sentiment === 'Bullish') bullishCount++;
     if (s.sentiment === 'Bearish') bearishCount++;
-    if (s.isPortfolio && s.action !== 'AVOID' && s.action !== 'EXIT') portfolioAlerts++;
+    if (s.isPortfolio && s.signalCategory === 'ACTIONABLE') portfolioAlerts++;
     if (s.isNegative) negativeSignals++;
   }
 
@@ -3529,20 +3658,24 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
 
   const biasParts: string[] = [];
   if (highImpactCount > 0) biasParts.push(`${highImpactCount} High Impact`);
-  if (buyCount > 0) biasParts.push(`${buyCount} BUY`);
-  if (addCount > 0) biasParts.push(`${addCount} ADD`);
+  if (actionableSignals.length > 0) biasParts.push(`${actionableSignals.length} Actionable`);
+  if (observationSignals.length > 0) biasParts.push(`${observationSignals.length} Observations`);
   if (negativeSignals > 0) biasParts.push(`${negativeSignals} ⚠ Negative`);
   if (portfolioAlerts > 0) biasParts.push(`${portfolioAlerts} Portfolio Alert${portfolioAlerts > 1 ? 's' : ''}`);
   biasParts.push(`Net: ${netBias}`);
   const biasStr = biasParts.join(' · ');
 
   const bias: DailyBias = {
-    netBias, highImpactCount, activeSectors, buyCount, addCount, holdCount, watchCount, trimExitCount,
-    totalSignals: filtered.length,
+    netBias, highImpactCount, activeSectors,
+    buyWatchCount: 0, holdCount, monitorCount, reduceExitCount,
+    totalSignals: actionableSignals.length,
+    totalObservations: observationSignals.length,
     totalOrderValueCr: Math.round(totalOrderValueCr),
     totalDealValueCr: Math.round(totalDealValueCr),
     portfolioAlerts, negativeSignals,
     summary: biasStr,
+    // Legacy compat
+    buyCount: 0, addCount: 0, watchCount: monitorCount, trimExitCount: reduceExitCount,
   };
 
   for (const s of filtered) {
@@ -3591,11 +3724,13 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
 
   return {
     top3,
-    signals: filtered.slice(0, 100),
+    signals: actionableSignals.slice(0, 100),
+    observations: observationSignals.slice(0, 100),
     trends: trends.slice(0, 10),
     bias,
     updatedAt: new Date().toISOString(),
     noHighConfSignals,
+    noActionableSignals,
     _debug: debug,
   };
 }

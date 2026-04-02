@@ -138,6 +138,15 @@ interface Signal {
   guidanceRangeLow?: number;
   guidanceRangeHigh?: number;
   guidanceRangeConfPenalty?: number;
+
+  // v5 fields
+  srcVerified?: boolean;
+  numValidated?: boolean;
+  scopeValidated?: boolean;
+  verified?: boolean;
+  confidenceLayer?: number;
+  signalCategory?: 'ACTIONABLE' | 'OBSERVATION';
+  observationReason?: string;
 }
 
 interface CompanyTrend {
@@ -257,6 +266,8 @@ export default function CompanyIntelligencePage() {
   const [computePollCount, setComputePollCount] = useState(0);
   const [showNoise, setShowNoise] = useState(false);
   const [noHighConfSignals, setNoHighConfSignals] = useState(false);
+  const [noActionableSignals, setNoActionableSignals] = useState(false);
+  const [observations, setObservations] = useState<Signal[]>([]);
 
   const fetchData = useCallback(async (forceRefresh = false) => {
     // Tab cache: if data was fetched recently and not forcing refresh, use cached data
@@ -316,6 +327,8 @@ export default function CompanyIntelligencePage() {
       setTrends(data.trends || []);
       setBias(data.bias || null);
       setNoHighConfSignals(!!data.noHighConfSignals);
+      setNoActionableSignals(!!data.noActionableSignals);
+      setObservations(data.observations || []);
       if (data.debug) setDebugInfo(data.debug);
       setIsStale(!!data.stale);
       const ts = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
@@ -470,11 +483,10 @@ export default function CompanyIntelligencePage() {
             <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
               {[
                 { label: 'High Impact', value: bias.highImpactCount, color: GREEN, filter: null as FilterType | null },
-                { label: 'BUY', value: bias.buyCount || 0, color: GREEN, filter: 'BUY' as FilterType | null },
-                ...(bias.addCount !== undefined ? [{ label: 'ADD', value: bias.addCount, color: '#059669', filter: 'ADD' as FilterType | null }] : []),
+                { label: 'Actionable', value: bias.buyCount || 0, color: GREEN, filter: 'BUY' as FilterType | null },
                 { label: 'HOLD', value: bias.holdCount || 0, color: ACCENT, filter: 'HOLD' as FilterType | null },
-                ...(bias.watchCount !== undefined && bias.watchCount > 0 ? [{ label: 'WATCH', value: bias.watchCount, color: '#A78BFA', filter: 'WATCH' as FilterType | null }] : []),
-                ...(bias.trimExitCount !== undefined && bias.trimExitCount > 0 ? [{ label: 'TRIM/EXIT', value: bias.trimExitCount, color: ORANGE, filter: 'TRIM' as FilterType | null }] : []),
+                ...(bias.watchCount !== undefined && bias.watchCount > 0 ? [{ label: 'Monitor', value: bias.watchCount, color: '#A78BFA', filter: 'WATCH' as FilterType | null }] : []),
+                ...(bias.trimExitCount !== undefined && bias.trimExitCount > 0 ? [{ label: 'Reduce/Exit', value: bias.trimExitCount, color: ORANGE, filter: 'TRIM' as FilterType | null }] : []),
                 { label: 'Portfolio Alerts', value: bias.portfolioAlerts, color: PURPLE, filter: null as FilterType | null },
                 ...(bias.negativeSignals > 0 ? [{ label: '⚠ Negative', value: bias.negativeSignals, color: RED, filter: 'NEGATIVE' as FilterType | null }] : []),
                 ...(totalSignalValue > 0 ? [{ label: 'Signal Value (est.)', value: fmtCr(totalSignalValue) as any, color: CYAN, filter: null as FilterType | null }] : []),
@@ -605,25 +617,27 @@ export default function CompanyIntelligencePage() {
         </div>
       )}
 
-      {/* v4: No high-confidence signals banner */}
-      {noHighConfSignals && !loading && (
+      {(noHighConfSignals || noActionableSignals) && !loading && (
         <div style={{
           padding: '10px 16px', marginBottom: '12px', borderRadius: '8px',
-          backgroundColor: 'rgba(249,115,22,0.08)', border: `1px solid ${ORANGE}40`,
+          backgroundColor: noActionableSignals ? 'rgba(239,68,68,0.08)' : 'rgba(249,115,22,0.08)',
+          border: `1px solid ${noActionableSignals ? 'rgba(239,68,68,0.25)' : ORANGE + '40'}`,
           display: 'flex', alignItems: 'center', gap: '8px',
         }}>
-          <AlertTriangle size={16} color={ORANGE} />
-          <span style={{ fontSize: '12px', color: ORANGE, fontWeight: 600 }}>
-            No high-confidence actionable signals today. All signals below are estimated or unverified.
+          <AlertTriangle size={16} color={noActionableSignals ? RED : ORANGE} />
+          <span style={{ fontSize: '12px', color: noActionableSignals ? RED : ORANGE, fontWeight: 600 }}>
+            {noActionableSignals
+              ? 'No validated actionable signals today. All items below are observations under review.'
+              : 'No high-confidence actionable signals today. All signals below require additional validation.'}
           </span>
         </div>
       )}
 
-      {/* ── TOP ACTIONABLE SIGNALS ── */}
+      {/* ── TOP SIGNALS ── */}
       {top3.length > 0 && (
         <div style={{ marginBottom: '20px' }}>
-          <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '1.5px' }}>
-            TOP ACTIONABLE SIGNALS
+          <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, letterSpacing: '0.05em', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {noActionableSignals ? 'SIGNALS UNDER REVIEW (NON-ACTIONABLE)' : 'TOP ACTIONABLE SIGNALS'}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {top3.map((s, i) => (
@@ -752,27 +766,30 @@ export default function CompanyIntelligencePage() {
                       ⚡ EARNINGS BOOST
                     </span>
                   )}
-                  {/* v4: Split Source + Data Quality display */}
-                  {s.sourceTier && (
-                    <span style={{
-                      fontSize: '9px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px',
-                      backgroundColor: s.sourceTier === 'VERIFIED' ? 'rgba(16,185,129,0.15)' : s.sourceTier === 'INFERRED' ? 'rgba(251,191,36,0.15)' : 'rgba(100,116,139,0.12)',
-                      color: s.sourceTier === 'VERIFIED' ? GREEN : s.sourceTier === 'INFERRED' ? YELLOW : TEXT3,
-                    }}>
-                      Src: {s.sourceTier}
+                  {/* v5: Confidence layer bar */}
+                  {s.confidenceLayer !== undefined && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <div style={{ width: '50px', height: '6px', borderRadius: '3px', backgroundColor: 'rgba(100,116,139,0.2)', overflow: 'hidden' }}>
+                        <div style={{
+                          width: `${s.confidenceLayer}%`, height: '100%', borderRadius: '3px',
+                          backgroundColor: s.confidenceLayer >= 100 ? GREEN : s.confidenceLayer >= 70 ? YELLOW : ORANGE,
+                        }} />
+                      </div>
+                      <span style={{ fontSize: '9px', color: TEXT3 }}>{s.confidenceLayer}%</span>
+                    </div>
+                  )}
+                  {s.verified && (
+                    <span style={{ fontSize: '9px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(16,185,129,0.15)', color: GREEN }}>
+                      ✓ VERIFIED
                     </span>
                   )}
-                  {s.dataQuality && (
-                    <span style={{
-                      fontSize: '9px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px',
-                      backgroundColor: s.dataQuality === 'HIGH' ? 'rgba(16,185,129,0.15)' : s.dataQuality === 'BROKEN' ? 'rgba(239,68,68,0.15)' : s.dataQuality === 'LOW' ? 'rgba(249,115,22,0.15)' : 'rgba(251,191,36,0.15)',
-                      color: s.dataQuality === 'HIGH' ? GREEN : s.dataQuality === 'BROKEN' ? RED : s.dataQuality === 'LOW' ? ORANGE : YELLOW,
-                    }}>
-                      Data: {s.dataQuality}
+                  {!s.verified && s.signalCategory === 'OBSERVATION' && (
+                    <span style={{ fontSize: '9px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(249,115,22,0.12)', color: ORANGE }}>
+                      OBSERVATION
                     </span>
                   )}
                   {s.guidanceScope && s.guidanceScope !== 'UNKNOWN' && s.guidanceScope !== 'COMPANY' && (
-                    <span style={{ fontSize: '9px', fontWeight: 600, padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(249,115,22,0.12)', color: ORANGE }}>
+                    <span style={{ fontSize: '9px', fontWeight: 600, padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(251,191,36,0.12)', color: YELLOW }}>
                       {s.guidanceScope}-level
                     </span>
                   )}
@@ -1209,22 +1226,18 @@ export default function CompanyIntelligencePage() {
                       ⚡{s.signalStackCount}
                     </span>
                   )}
-                  {/* v4: Compact Source + Data badges */}
-                  {s.sourceTier && (
+                  {s.verified !== undefined && (
                     <span style={{
                       fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
-                      backgroundColor: s.sourceTier === 'VERIFIED' ? 'rgba(16,185,129,0.15)' : s.sourceTier === 'INFERRED' ? 'rgba(251,191,36,0.15)' : 'rgba(100,116,139,0.12)',
-                      color: s.sourceTier === 'VERIFIED' ? GREEN : s.sourceTier === 'INFERRED' ? YELLOW : TEXT3,
+                      backgroundColor: s.verified ? 'rgba(16,185,129,0.12)' : 'rgba(100,116,139,0.08)',
+                      color: s.verified ? GREEN : TEXT3,
                     }}>
-                      S:{s.sourceTier === 'VERIFIED' ? '✓' : s.sourceTier === 'INFERRED' ? '~' : '?'}
+                      {s.verified ? '✓' : 'OBS'}
                     </span>
                   )}
-                  {s.dataQuality && (
-                    <span style={{
-                      fontSize: '8px', fontWeight: 600, padding: '1px 4px', borderRadius: '3px',
-                      color: s.dataQuality === 'HIGH' ? GREEN : s.dataQuality === 'BROKEN' ? RED : s.dataQuality === 'LOW' ? ORANGE : YELLOW,
-                    }}>
-                      D:{s.dataQuality === 'HIGH' ? '✓' : s.dataQuality === 'BROKEN' ? '✗' : s.dataQuality}
+                  {s.confidenceLayer !== undefined && (
+                    <span style={{ fontSize: '8px', color: TEXT3 }}>
+                      {s.confidenceLayer}%
                     </span>
                   )}
                   {s.dataSource && (
@@ -1694,6 +1707,58 @@ export default function CompanyIntelligencePage() {
               </>
             )}
           </div>
+        </div>
+      )}
+
+      {/* ── NON-ACTIONABLE OBSERVATIONS ── */}
+      {observations.length > 0 && (
+        <div style={{ marginTop: '24px' }}>
+          <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, letterSpacing: '0.05em', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            NON-ACTIONABLE OBSERVATIONS ({observations.length})
+            <span style={{ fontSize: '9px', fontWeight: 400, color: TEXT3, letterSpacing: 'normal' }}>
+              Excluded from rankings — data quality or scope issues
+            </span>
+          </div>
+          {observations.slice(0, 20).map((s, i) => (
+            <div key={`obs-${i}`} style={{
+              padding: '8px 12px', marginBottom: '6px', borderRadius: '8px',
+              backgroundColor: 'rgba(100,116,139,0.04)',
+              border: '1px solid rgba(100,116,139,0.1)',
+              opacity: 0.7,
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 700, color: TEXT1 }}>{s.symbol}</span>
+                  <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(100,116,139,0.12)', color: TEXT3 }}>
+                    {s.eventType}
+                  </span>
+                  {s.observationReason && (
+                    <span style={{ fontSize: '9px', color: ORANGE }}>
+                      {s.observationReason}
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {s.confidenceLayer !== undefined && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                      <div style={{ width: '30px', height: '4px', borderRadius: '2px', backgroundColor: 'rgba(100,116,139,0.2)', overflow: 'hidden' }}>
+                        <div style={{ width: `${s.confidenceLayer}%`, height: '100%', borderRadius: '2px', backgroundColor: s.confidenceLayer >= 70 ? YELLOW : ORANGE }} />
+                      </div>
+                      <span style={{ fontSize: '8px', color: TEXT3 }}>{s.confidenceLayer}%</span>
+                    </div>
+                  )}
+                  <span style={{ fontSize: '9px', color: TEXT3 }}>
+                    [DATA QUALITY: {s.dataQuality || 'UNKNOWN'}]
+                  </span>
+                </div>
+              </div>
+              {s.headline && (
+                <div style={{ fontSize: '10px', color: TEXT3, marginTop: '4px', lineHeight: '1.4' }}>
+                  {s.headline.substring(0, 120)}{s.headline.length > 120 ? '...' : ''}
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
 
