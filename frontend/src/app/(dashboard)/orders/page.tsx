@@ -26,6 +26,7 @@ const DECISION_COLORS: Record<ActionFlag, string> = {
   'TRIM': '#F97316',     // Orange
   'EXIT': '#EF4444',     // Red
   'AVOID': '#64748B',    // Grey
+  'MONITOR': '#0F7ABF',  // Cyan (Accent)
 };
 
 const FRESHNESS_COLORS: Record<string, string> = {
@@ -42,7 +43,7 @@ const CACHE_TTL = 120000; // 2 min
 let _cache: { data: any; timestamp: number } | null = null;
 
 // ── Types ──
-type ActionFlag = 'BUY' | 'ADD' | 'HOLD' | 'WATCH' | 'TRIM' | 'EXIT' | 'AVOID';
+type ActionFlag = 'BUY' | 'ADD' | 'HOLD' | 'WATCH' | 'TRIM' | 'EXIT' | 'AVOID' | 'MONITOR';
 type ScoreClassification = 'HIGH_CONVICTION' | 'STRONG' | 'BUILDING' | 'WEAK' | 'NOISE';
 type FreshnessLabel = 'FRESH' | 'RECENT' | 'AGING' | 'STALE';
 type ImpactLevel = 'HIGH' | 'MEDIUM' | 'LOW';
@@ -182,6 +183,10 @@ interface DailyBias {
 }
 
 // ── Helpers ──
+const remapActionLabel = (a: ActionFlag): ActionFlag => {
+  if (a === 'BUY' || a === 'ADD') return 'MONITOR';
+  return a;
+};
 const actionColor = (a: ActionFlag) => DECISION_COLORS[a] || TEXT3;
 const actionBg = (a: ActionFlag) => {
   const colorMap: Record<ActionFlag, string> = {
@@ -192,6 +197,7 @@ const actionBg = (a: ActionFlag) => {
     'TRIM': 'rgba(249,115,22,0.12)',
     'EXIT': 'rgba(239,68,68,0.12)',
     'AVOID': 'rgba(100,116,139,0.08)',
+    'MONITOR': 'rgba(15,122,191,0.12)',
   };
   return colorMap[a] || 'rgba(100,116,139,0.08)';
 };
@@ -330,8 +336,8 @@ export default function CompanyIntelligencePage() {
       setNoHighConfSignals(!!data.noHighConfSignals);
       setNoActionableSignals(!!data.noActionableSignals);
       setMonitorList(data.observations || []);
-      setProductionStatus(data._productionStatus || data._stats ?
-        `${data._stats?.actionable || 0} actionable · ${data._stats?.monitor || 0} monitor · ${data._stats?.rejected || 0} rejected` : '');
+      setProductionStatus(data._stats ?
+        `${data._stats.actionable || 0} actionable · ${data._stats.monitor || 0} monitor · ${data._stats.rejected || 0} rejected` : (data._productionStatus || ''));
       if (data.debug) setDebugInfo(data.debug);
       setIsStale(!!data.stale);
       const ts = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
@@ -601,9 +607,9 @@ export default function CompanyIntelligencePage() {
                       padding: '1px 5px', borderRadius: '3px', backgroundColor: `${stackColor}15`,
                     }}>{t.stackLevel}</span>
                     <span style={{
-                      fontSize: '9px', fontWeight: 600, color: actionColor(t.topAction),
-                      padding: '1px 5px', borderRadius: '3px', backgroundColor: actionBg(t.topAction),
-                    }}>{t.topAction}</span>
+                      fontSize: '9px', fontWeight: 600, color: actionColor(remapActionLabel(t.topAction)),
+                      padding: '1px 5px', borderRadius: '3px', backgroundColor: actionBg(remapActionLabel(t.topAction)),
+                    }}>{remapActionLabel(t.topAction)}</span>
                   </div>
                   <div style={{ fontSize: '11px', color: TEXT2, marginBottom: '2px' }}>{t.company}</div>
                   <div style={{ display: 'flex', gap: '10px', fontSize: '10px' }}>
@@ -1710,7 +1716,7 @@ export default function CompanyIntelligencePage() {
       )}
 
       {/* Empty / Computing state */}
-      {!loading && signals.length === 0 && (
+      {!loading && signals.length === 0 && monitorList.length === 0 && (
         <div style={{ textAlign: 'center', padding: '50px 0' }}>
           {computing ? (
             <>
