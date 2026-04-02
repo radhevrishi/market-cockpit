@@ -1163,21 +1163,30 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               }
 
               const stripFinText = (txt: string) => txt
-                .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)\s*(?:\(est\.?\))?/gi, '')
+                .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh|K\s*Cr|L|K)\s*(?:\(est\.?\))?/gi, '')
+                .replace(/₹[\d,.]+/g, '')  // catch any remaining bare ₹ numbers
                 .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact|growth)\s*(?:\(est\.?\))?/gi, '')
                 .replace(/\[UNVERIFIED AMOUNT\]/g, '').replace(/\[UNVERIFIED %\]/g, '')
                 .replace(/\[UNVERIFIED\]\s*/g, '')
-                .replace(/\s*—\s*$/g, '').replace(/\s{2,}/g, ' ').trim();
+                .replace(/\(est\.?\)/g, '')  // strip standalone (est.) markers
+                .replace(/\s*—\s*$/g, '').replace(/\s*·\s*$/g, '').replace(/\s{2,}/g, ' ').trim();
 
               if (isNonFinancial) {
                 s.valueCr = 0; s.impactPct = 0; s.pctRevenue = null; s.pctMcap = null;
                 s.inferenceUsed = false; s.confidenceType = 'ACTUAL';
+                s.signalTier = 'TIER1_VERIFIED';  // Event itself is real
+                s.valueSource = 'EXACT';
+                s.heuristicSuppressed = false;  // Not relevant for non-financial
+                s.impactLevel = 'LOW';
                 s.whyItMatters = stripFinText(s.whyItMatters || '');
                 if (!s.whyItMatters || s.whyItMatters.length < 10) {
                   s.whyItMatters = (s.eventType || 'Corporate event') + ' — watch for strategy continuity';
                 }
                 if (s.headline) s.headline = stripFinText(s.headline);
-                if (s.sourceExtract) s.sourceExtract = stripFinText(s.sourceExtract);
+                if (s.sourceExtract) {
+                  s.sourceExtract = stripFinText(s.sourceExtract);
+                  if (!s.sourceExtract || s.sourceExtract.length < 5) s.sourceExtract = undefined;
+                }
                 if (s.whyAction) s.whyAction = stripFinText(s.whyAction);
                 if (!s.whyAction || s.whyAction.length < 5) {
                   s.whyAction = 'Monitor for strategic impact';

@@ -634,40 +634,29 @@ function sanitizeByEventClass(signal: any): void {
     signal.confidenceType = 'ACTUAL';  // The event itself is real, just no numbers
     signal.valueSource = 'EXACT';       // No value to be inexact about
     signal.inferenceUsed = false;
-    // Clean the whyItMatters text — remove any ₹ or % references
-    signal.whyItMatters = (signal.whyItMatters || '')
-      .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)/gi, '')
-      .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact|growth)/gi, '')
-      .replace(/\s*—\s*$/g, '')
-      .replace(/\s{2,}/g, ' ')
-      .trim();
-    // Set clean headline-style description
+    signal.signalTier = 'TIER1_VERIFIED';
+    signal.valueSource = 'EXACT';
+    signal.impactLevel = 'LOW';
+    // Aggressive text cleaning helper for non-financial events
+    const stripFin = (t: string) => t
+      .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh|K\s*Cr|L|K)\s*(?:\(est\.?\))?/gi, '')
+      .replace(/₹[\d,.]+/g, '')
+      .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact|growth)\s*(?:\(est\.?\))?/gi, '')
+      .replace(/\[UNVERIFIED AMOUNT\]/g, '').replace(/\[UNVERIFIED %\]/g, '').replace(/\[UNVERIFIED\]\s*/g, '')
+      .replace(/\(est\.?\)/g, '')
+      .replace(/\s*—\s*$/g, '').replace(/\s*·\s*$/g, '').replace(/\s{2,}/g, ' ').trim();
+    signal.whyItMatters = stripFin(signal.whyItMatters || '');
     if (!signal.whyItMatters || signal.whyItMatters.length < 10) {
       signal.whyItMatters = `${signal.eventType} — watch for strategy continuity`;
     }
-    // Clean headline too
-    if (signal.headline) {
-      signal.headline = signal.headline
-        .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)/gi, '')
-        .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact|growth)/gi, '')
-        .replace(/\s{2,}/g, ' ')
-        .trim();
-    }
-    // Clean sourceExtract and whyAction too
+    if (signal.headline) signal.headline = stripFin(signal.headline);
     if (signal.sourceExtract) {
-      signal.sourceExtract = signal.sourceExtract
-        .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)\s*(?:\(est\.?\))?/gi, '')
-        .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact|growth)\s*(?:\(est\.?\))?/gi, '')
-        .replace(/\s{2,}/g, ' ').trim();
+      signal.sourceExtract = stripFin(signal.sourceExtract);
+      if (!signal.sourceExtract || signal.sourceExtract.length < 5) signal.sourceExtract = undefined;
     }
     if (signal.whyAction) {
-      signal.whyAction = signal.whyAction
-        .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)\s*(?:\(est\.?\))?/gi, '')
-        .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact|growth)\s*(?:\(est\.?\))?/gi, '')
-        .replace(/\s{2,}/g, ' ').trim();
-      if (!signal.whyAction || signal.whyAction.length < 5) {
-        signal.whyAction = 'Monitor for strategic impact';
-      }
+      signal.whyAction = stripFin(signal.whyAction);
+      if (!signal.whyAction || signal.whyAction.length < 5) signal.whyAction = 'Monitor for strategic impact';
     }
   } else if (eventClass === 'STRATEGIC') {
     // Strategic events: only keep numbers if they were ACTUAL (not heuristic)
