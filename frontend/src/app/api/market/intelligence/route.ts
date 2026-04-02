@@ -1135,11 +1135,35 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             const rejectedPct = totalProcessed > 0 ? (rejectedCount / totalProcessed) * 100 : 0;
             const productionReady = actionableSignals.length <= 5 && rejectedPct > 90;
 
+            // Rebuild bias from only validated signals (actionable + monitor)
+            const validSignals = [...actionableSignals, ...monitorSignals];
+            const validBias = responseData.bias ? { ...responseData.bias } : {} as any;
+            if (validSignals.length === 0) {
+              // All rejected — clean bias to reflect reality
+              validBias.totalSignals = 0;
+              validBias.highImpactCount = 0;
+              validBias.buyWatchCount = 0;
+              validBias.monitorCount = 0;
+              validBias.reduceExitCount = 0;
+              validBias.negativeSignals = 0;
+              validBias.portfolioAlerts = 0;
+              validBias.totalObservations = 0;
+              validBias.activeSectors = [];
+              validBias.summary = `All ${rejectedCount} signals rejected by validation gate. System functioning correctly.`;
+              validBias.netBias = 'Neutral';
+            } else {
+              validBias.totalSignals = validSignals.length;
+              validBias.activeSectors = [...new Set(validSignals.map((s: any) => s.sector).filter(Boolean))];
+            }
+
             responseData = {
               ...responseData,
               signals: actionableSignals.slice(0, 5),
               observations: monitorSignals.slice(0, 50),
               top3: actionableSignals.slice(0, 5),
+              // Clear stacking/trends when no valid signals
+              trends: validSignals.length > 0 ? responseData.trends : [],
+              bias: validBias,
               noActionableSignals: actionableSignals.length === 0,
               noHighConfSignals: actionableSignals.length === 0,
               _productionStatus: productionReady ? 'PRODUCTION_READY' : 'REFINEMENT_REQUIRED',
