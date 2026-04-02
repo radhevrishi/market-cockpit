@@ -113,6 +113,12 @@ interface Signal {
   conflictResolution?: string;
   sectorCyclical?: boolean;
   priceReactionNote?: string;
+  evidenceTier?: 'TIER_A' | 'TIER_B' | 'TIER_C';
+  timeHorizon?: 'SHORT' | 'MEDIUM' | 'LONG';
+  watchSubtype?: 'ACTIVE' | 'PASSIVE';
+  eventNovelty?: 'NEW' | 'REPEAT' | 'STALE';
+  heuristicSuppressed?: boolean;
+  extremeValueFlag?: string;
 }
 
 interface CompanyTrend {
@@ -1094,6 +1100,36 @@ export default function CompanyIntelligencePage() {
                       {s.catalystStrength === 'STRONG' ? '⚡ STRONG' : s.catalystStrength === 'MODERATE' ? '◆ MOD' : '○ WEAK'}
                     </span>
                   )}
+                  {/* Evidence tier badge */}
+                  {s.evidenceTier && (
+                    <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px',
+                      color: s.evidenceTier === 'TIER_A' ? '#059669' : s.evidenceTier === 'TIER_B' ? '#D97706' : '#DC2626',
+                      backgroundColor: s.evidenceTier === 'TIER_A' ? 'rgba(5,150,105,0.08)' : s.evidenceTier === 'TIER_B' ? 'rgba(217,119,6,0.08)' : 'rgba(220,38,38,0.08)',
+                    }}>
+                      {s.evidenceTier === 'TIER_A' ? 'A' : s.evidenceTier === 'TIER_B' ? 'B' : 'C'}
+                    </span>
+                  )}
+                  {/* Time horizon badge */}
+                  {s.timeHorizon && (
+                    <span style={{ fontSize: '7px', fontWeight: 600, padding: '1px 3px', borderRadius: '2px', color: '#6366F1', backgroundColor: 'rgba(99,102,241,0.06)' }}>
+                      {s.timeHorizon === 'SHORT' ? 'S' : s.timeHorizon === 'MEDIUM' ? 'M' : 'L'}
+                    </span>
+                  )}
+                  {/* Watch subtype */}
+                  {s.watchSubtype && (
+                    <span style={{ fontSize: '7px', fontWeight: 600, padding: '1px 3px', borderRadius: '2px',
+                      color: s.watchSubtype === 'ACTIVE' ? '#059669' : '#94A3B8',
+                      backgroundColor: s.watchSubtype === 'ACTIVE' ? 'rgba(5,150,105,0.06)' : 'rgba(148,163,184,0.06)',
+                    }}>
+                      {s.watchSubtype === 'ACTIVE' ? 'ACTIVE' : 'PASSIVE'}
+                    </span>
+                  )}
+                  {/* Heuristic suppression warning */}
+                  {s.heuristicSuppressed && (
+                    <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px', color: '#DC2626', backgroundColor: 'rgba(220,38,38,0.06)' }}>
+                      TEMPLATE
+                    </span>
+                  )}
                   {s.client && <span style={{ fontSize: '10px', color: PURPLE }}>Client: {s.client}</span>}
                   {s.segment && <span style={{ fontSize: '10px', color: ACCENT }}>{s.segment}</span>}
                   {s.timeline && <span style={{ fontSize: '10px', color: ORANGE }}>{s.timeline}</span>}
@@ -1307,6 +1343,31 @@ export default function CompanyIntelligencePage() {
                             {s.catalystStrength === 'STRONG' ? '⚡ STRONG' : s.catalystStrength === 'MODERATE' ? '◆ MOD' : '○ WEAK'}
                           </span>
                         )}
+                        {s.evidenceTier && (
+                          <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px',
+                            color: s.evidenceTier === 'TIER_A' ? '#059669' : s.evidenceTier === 'TIER_B' ? '#D97706' : '#DC2626',
+                            backgroundColor: s.evidenceTier === 'TIER_A' ? 'rgba(5,150,105,0.08)' : s.evidenceTier === 'TIER_B' ? 'rgba(217,119,6,0.08)' : 'rgba(220,38,38,0.08)',
+                          }}>
+                            {s.evidenceTier === 'TIER_A' ? 'A' : s.evidenceTier === 'TIER_B' ? 'B' : 'C'}
+                          </span>
+                        )}
+                        {s.timeHorizon && (
+                          <span style={{ fontSize: '7px', fontWeight: 600, padding: '1px 3px', borderRadius: '2px', color: '#6366F1', backgroundColor: 'rgba(99,102,241,0.06)' }}>
+                            {s.timeHorizon === 'SHORT' ? 'S' : s.timeHorizon === 'MEDIUM' ? 'M' : 'L'}
+                          </span>
+                        )}
+                        {s.watchSubtype && (
+                          <span style={{ fontSize: '7px', fontWeight: 600, padding: '1px 3px', borderRadius: '2px',
+                            color: s.watchSubtype === 'ACTIVE' ? '#059669' : '#94A3B8',
+                          }}>
+                            {s.watchSubtype === 'ACTIVE' ? 'ACTIVE' : 'PASSIVE'}
+                          </span>
+                        )}
+                        {s.heuristicSuppressed && (
+                          <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px', color: '#DC2626', backgroundColor: 'rgba(220,38,38,0.06)' }}>
+                            TEMPLATE
+                          </span>
+                        )}
                         {s.client && <span style={{ fontSize: '10px', color: PURPLE }}>Client: {s.client}</span>}
                         {s.segment && <span style={{ fontSize: '10px', color: ACCENT }}>{s.segment}</span>}
                         {s.timeline && <span style={{ fontSize: '10px', color: ORANGE }}>{s.timeline}</span>}
@@ -1494,6 +1555,31 @@ export default function CompanyIntelligencePage() {
                             backgroundColor: s.catalystStrength === 'STRONG' ? 'rgba(16,185,129,0.1)' : s.catalystStrength === 'MODERATE' ? 'rgba(245,158,11,0.1)' : 'rgba(100,116,139,0.06)',
                           }}>
                             {s.catalystStrength === 'STRONG' ? '⚡ STRONG' : s.catalystStrength === 'MODERATE' ? '◆ MOD' : '○ WEAK'}
+                          </span>
+                        )}
+                        {s.evidenceTier && (
+                          <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px',
+                            color: s.evidenceTier === 'TIER_A' ? '#059669' : s.evidenceTier === 'TIER_B' ? '#D97706' : '#DC2626',
+                            backgroundColor: s.evidenceTier === 'TIER_A' ? 'rgba(5,150,105,0.08)' : s.evidenceTier === 'TIER_B' ? 'rgba(217,119,6,0.08)' : 'rgba(220,38,38,0.08)',
+                          }}>
+                            {s.evidenceTier === 'TIER_A' ? 'A' : s.evidenceTier === 'TIER_B' ? 'B' : 'C'}
+                          </span>
+                        )}
+                        {s.timeHorizon && (
+                          <span style={{ fontSize: '7px', fontWeight: 600, padding: '1px 3px', borderRadius: '2px', color: '#6366F1', backgroundColor: 'rgba(99,102,241,0.06)' }}>
+                            {s.timeHorizon === 'SHORT' ? 'S' : s.timeHorizon === 'MEDIUM' ? 'M' : 'L'}
+                          </span>
+                        )}
+                        {s.watchSubtype && (
+                          <span style={{ fontSize: '7px', fontWeight: 600, padding: '1px 3px', borderRadius: '2px',
+                            color: s.watchSubtype === 'ACTIVE' ? '#059669' : '#94A3B8',
+                          }}>
+                            {s.watchSubtype === 'ACTIVE' ? 'ACTIVE' : 'PASSIVE'}
+                          </span>
+                        )}
+                        {s.heuristicSuppressed && (
+                          <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px', color: '#DC2626', backgroundColor: 'rgba(220,38,38,0.06)' }}>
+                            TEMPLATE
                           </span>
                         )}
                         {s.client && <span style={{ fontSize: '10px', color: PURPLE }}>Client: {s.client}</span>}

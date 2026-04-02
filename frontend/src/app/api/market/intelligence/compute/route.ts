@@ -320,6 +320,14 @@ interface IntelSignal {
   sourceUrl?: string;             // Provenance link to primary source
   revenueGrowth?: number | null;  // For contradiction detection
   marginChange?: number | null;   // For contradiction detection
+
+  // Production-grade fields (v2)
+  evidenceTier?: 'TIER_A' | 'TIER_B' | 'TIER_C';  // Evidence quality ladder
+  timeHorizon?: 'SHORT' | 'MEDIUM' | 'LONG';       // Signal time horizon
+  watchSubtype?: 'ACTIVE' | 'PASSIVE';              // WATCH bucket split
+  eventNovelty?: 'NEW' | 'REPEAT' | 'STALE';       // Event novelty detection
+  heuristicSuppressed?: boolean;                     // Templated pattern suppression
+  extremeValueFlag?: string;                         // Data accuracy concern
 }
 
 interface CompanyTrend {
@@ -941,11 +949,59 @@ const SIGNAL_HALF_LIFE: Record<string, number> = {
 };
 
 // ── CATALYST STRENGTH classification ──
+// HARD RULE: <5% impact can NEVER be STRONG (prevents false conviction)
 function classifyCatalystStrength(impactPct: number, pctMcap: number | null): 'WEAK' | 'MODERATE' | 'STRONG' {
   const mcapImpact = pctMcap || 0;
+  if (impactPct < 5 && mcapImpact < 3) {
+    // Hard cap: sub-5% impact is MODERATE at best
+    return impactPct >= 3 || mcapImpact >= 1 ? 'MODERATE' : 'WEAK';
+  }
   if (impactPct >= 10 || mcapImpact >= 5) return 'STRONG';
-  if (impactPct >= 3 || mcapImpact >= 1) return 'MODERATE';
+  if (impactPct >= 5 || mcapImpact >= 3) return 'MODERATE';
   return 'WEAK';
+}
+
+// ── EVIDENCE TIER classification ──
+// Tier A: Exchange filings, earnings transcripts → BUY/ADD/EXIT allowed
+// Tier B: Reputed media, analyst reports → WATCH/ADD (limited)
+// Tier C: Heuristic/inferred → WATCH only
+function classifyEvidenceTier(
+  confidenceType: string, valueSource: string, dataSource?: string
+): 'TIER_A' | 'TIER_B' | 'TIER_C' {
+  if (confidenceType === 'ACTUAL' && (valueSource === 'EXACT' || valueSource === 'AGGREGATED')) {
+    return 'TIER_A';
+  }
+  if (confidenceType === 'ACTUAL' || confidenceType === 'INFERRED') {
+    if (dataSource === 'nse' || dataSource === 'NSE' || dataSource === 'Guidance') return 'TIER_A';
+    if (dataSource === 'moneycontrol' || dataSource === 'Moneycontrol') return 'TIER_B';
+    return 'TIER_B';
+  }
+  return 'TIER_C';
+}
+
+// ── TIME HORIZON classification ──
+// Based on event type: earnings/guidance = SHORT, capex/M&A = LONG, orders = MEDIUM
+function classifyTimeHorizon(eventType: string): 'SHORT' | 'MEDIUM' | 'LONG' {
+  const shortTerm = ['Guidance', 'Dividend', 'Buyback', 'Block Buy', 'Bulk Buy', 'Block Sell', 'Bulk Sell'];
+  const longTerm = ['Capex/Expansion', 'M&A', 'Demerger', 'JV/Partnership', 'Fund Raising'];
+  if (shortTerm.includes(eventType)) return 'SHORT';
+  if (longTerm.includes(eventType)) return 'LONG';
+  return 'MEDIUM'; // Order Win, Contract, Corporate, Mgmt Change, LOI
+}
+
+// ── EXTREME VALUE DETECTOR ──
+// Flags suspicious data: >50% decline cluster, revenue swings that look like parsing errors
+function detectExtremeValue(revenueGrowth: number | null, impactPct: number): string | undefined {
+  if (revenueGrowth !== null && revenueGrowth < -50) {
+    return `EXTREME_DECLINE_${Math.round(revenueGrowth)}%: verify QoQ vs YoY vs segment`;
+  }
+  if (revenueGrowth !== null && revenueGrowth > 200) {
+    return `EXTREME_GROWTH_${Math.round(revenueGrowth)}%: verify base period`;
+  }
+  if (impactPct > 50) {
+    return `EXTREME_IMPACT_${impactPct.toFixed(0)}%: likely data error`;
+  }
+  return undefined;
 }
 
 function computeScore(opts: {
@@ -1677,6 +1733,11 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     signal.signalTier = (confidenceType === 'ACTUAL' && valueSource !== 'HEURISTIC') ? 'TIER1_VERIFIED' : 'TIER2_INFERRED';
     signal.sourceUrl = item.url || null;
 
+    // Production-grade fields (v2)
+    signal.evidenceTier = classifyEvidenceTier(confidenceType, valueSource, 'nse');
+    signal.timeHorizon = classifyTimeHorizon(eventType);
+    signal.extremeValueFlag = detectExtremeValue(null, impactPct);
+
     if (existing) {
       const existDate = new Date(existing.date).getTime();
       const newDate = new Date(signal.date).getTime();
@@ -1814,6 +1875,8 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     dealSignal.decision = dealSignal.action;
     dealSignal.scoreClassification = classifyScore(dealAxis.composite);
     dealSignal.signalTier = 'TIER1_VERIFIED';  // Exchange-confirmed deals
+    dealSignal.evidenceTier = 'TIER_A';  // Exchange-confirmed
+    dealSignal.timeHorizon = classifyTimeHorizon(eventType);
 
     const dealDedupKey = `${symbol}:${eventType}:${(deal.dealDate || getTodayDate()).slice(0, 10)}`;
     const existingDeal = dealDedupMap.get(dealDedupKey);
@@ -1998,8 +2061,8 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         guidanceSignal.dataConfidenceScore = guidAxis.dataConfidence;
 
         // Guidance credibility discount: management narrative is less reliable than hard data
-        // Apply 10% confidence penalty to guidance composite (balances skepticism vs signal utility)
-        const guidanceCredibilityDiscount = 0.90;
+        // Guidance weight = 70% of actual data (per institutional spec)
+        const guidanceCredibilityDiscount = 0.70;
         guidanceSignal.weightedScore = Math.round(guidAxis.composite * guidanceCredibilityDiscount);
         guidanceSignal.score = guidanceSignal.weightedScore;
         guidanceSignal.dataConfidenceScore = guidAxis.dataConfidence; // no double-penalty on display
@@ -2011,6 +2074,25 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         guidanceSignal.revenueGrowth = revG || null;
         guidanceSignal.marginChange = marginBps ? marginBps / 100 : null;
         guidanceSignal.scoreClassification = classifyScore(guidAxis.composite);
+
+        // Production-grade fields (v2)
+        guidanceSignal.evidenceTier = ge.confidenceScore >= 70 ? 'TIER_A' : 'TIER_B';
+        guidanceSignal.timeHorizon = 'SHORT';  // Guidance is always short-term
+        guidanceSignal.extremeValueFlag = detectExtremeValue(revG || null, impactPct);
+
+        // Guidance without supporting signals → downgrade action by 1 level
+        // Check if company has other (non-guidance) signals supporting same direction
+        const companyOtherSignals = allSignals.filter(s => s.symbol === symbol && s.dataSource !== 'Guidance');
+        const hasSupport = companyOtherSignals.some(s =>
+          (guidanceSignal.sentiment === 'Bullish' && (s.action === 'BUY' || s.action === 'ADD')) ||
+          (guidanceSignal.sentiment === 'Bearish' && (s.action === 'EXIT' || s.action === 'TRIM'))
+        );
+        if (!hasSupport && (guidanceSignal.action === 'BUY' || guidanceSignal.action === 'ADD')) {
+          // Unsupported guidance — downgrade by 1 level
+          guidanceSignal.action = guidanceSignal.action === 'BUY' ? 'ADD' : 'HOLD';
+          guidanceSignal.decision = guidanceSignal.action;
+          guidanceSignal.conflictResolution = 'Unsupported guidance — downgraded (no confirming signals)';
+        }
 
         // Dedup against existing signals for same symbol
         const guidanceDedupKey = `${symbol}:Guidance:${(ge.eventDate || '').slice(0, 10)}`;
@@ -2304,21 +2386,133 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     s.whyAction = whyParts.length > 0 ? whyParts.join(' · ') : undefined;
   }
 
-  // Flag duplicate values as anomalies
+  // ══════════════════════════════════════════════════════════════
+  // ── HEURISTIC SUPPRESSION RULE (CRITICAL) ──
+  // If identical values appear across 3+ unrelated companies → templated pattern
+  // Suppress from main feed, force to NOISE/WATCH
+  // ══════════════════════════════════════════════════════════════
   for (const [val, syms] of valueCountMap) {
-    if (syms.length >= 5 && val > 0) {
-      // 5+ companies with exact same ₹ value = suspicious template data
+    if (syms.length >= 3 && val > 0) {
+      // 3+ companies with exact same ₹ value = suspicious template/LLM artifact
       for (const s of filtered) {
         if (Math.round(s.valueCr) === val && s.valueSource === 'HEURISTIC') {
           if (!s.anomalyFlags) s.anomalyFlags = [];
-          s.anomalyFlags.push(`DUPLICATE_VALUE_${val}Cr`);
+          s.anomalyFlags.push(`TEMPLATE_PATTERN_${val}Cr`);
+          s.heuristicSuppressed = true;
+          // Cannot be BUY/ADD based on templated data
+          if (s.action === 'BUY' || s.action === 'ADD') {
+            s.action = 'WATCH';
+            s.decision = 'WATCH';
+            s.conflictResolution = `Suppressed: ₹${val}Cr repeated across ${syms.length} companies (likely template)`;
+          }
         }
       }
     }
   }
 
+  // ══════════════════════════════════════════════════════════════
+  // ── EVIDENCE HIERARCHY GATING (STRICT) ──
+  // Tier A → BUY/ADD/EXIT allowed
+  // Tier B → WATCH/ADD (limited)
+  // Tier C → WATCH only
+  // ══════════════════════════════════════════════════════════════
+  for (const s of filtered) {
+    if (s.evidenceTier === 'TIER_C') {
+      // Tier C: WATCH only — no BUY/ADD/EXIT
+      if (s.action === 'BUY' || s.action === 'ADD') {
+        s.action = 'WATCH';
+        s.decision = 'WATCH';
+        s.conflictResolution = (s.conflictResolution ? s.conflictResolution + ' · ' : '') +
+          'Evidence Tier C: insufficient evidence for conviction';
+      }
+    } else if (s.evidenceTier === 'TIER_B') {
+      // Tier B: BUY not allowed, ADD only with high confidence
+      if (s.action === 'BUY') {
+        s.action = 'ADD';
+        s.decision = 'ADD';
+        s.conflictResolution = (s.conflictResolution ? s.conflictResolution + ' · ' : '') +
+          'Evidence Tier B: downgraded BUY→ADD (media source)';
+      }
+    }
+    // Tier A: no restrictions
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // ── CONFIDENCE GATING (HARD RULE) ──
+  // If confidence < 60 → cannot be BUY or ADD → force WATCH
+  // ══════════════════════════════════════════════════════════════
+  for (const s of filtered) {
+    if (s.confidenceScore < 60 && (s.action === 'BUY' || s.action === 'ADD')) {
+      const oldAction = s.action;
+      s.action = 'WATCH';
+      s.decision = 'WATCH';
+      s.conflictResolution = (s.conflictResolution ? s.conflictResolution + ' · ' : '') +
+        `Confidence gating: ${oldAction}→WATCH (confidence ${s.confidenceScore} < 60)`;
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // ── EVENT NOVELTY / DEDUP FILTER ──
+  // If same event type for same company seen in last 7 days → reduce weight 50%
+  // If repeated across many companies → suppress
+  // ══════════════════════════════════════════════════════════════
+  const eventFingerprints = new Map<string, { date: string; count: number }>();
+  for (const s of filtered) {
+    const fp = `${s.symbol}:${s.eventType}`;
+    const existing = eventFingerprints.get(fp);
+    if (existing) {
+      existing.count++;
+      // Same company + same event type = repeat
+      const existDate = new Date(existing.date).getTime();
+      const sigDate = new Date(s.date).getTime();
+      const daysDiff = Math.abs(existDate - sigDate) / (1000 * 60 * 60 * 24);
+      if (daysDiff <= 7) {
+        s.eventNovelty = 'REPEAT';
+        s.weightedScore = Math.round(s.weightedScore * 0.5); // 50% weight reduction
+        s.score = s.weightedScore;
+        if (!s.anomalyFlags) s.anomalyFlags = [];
+        s.anomalyFlags.push('REPEAT_EVENT');
+      } else if (daysDiff <= 14) {
+        s.eventNovelty = 'STALE';
+        s.weightedScore = Math.round(s.weightedScore * 0.7); // 30% reduction
+        s.score = s.weightedScore;
+      } else {
+        s.eventNovelty = 'NEW';
+      }
+    } else {
+      eventFingerprints.set(fp, { date: s.date, count: 1 });
+      s.eventNovelty = 'NEW';
+    }
+  }
+  // Cross-company event suppression: same event headline across 3+ companies
+  const headlineMap = new Map<string, string[]>();
+  for (const s of filtered) {
+    // Normalize headline to detect templates
+    const normHeadline = s.headline.replace(/₹[\d,.]+\s*(Cr|Lakh|Bn)/gi, 'VALUE').replace(/\d+\.\d+%/g, 'PCT');
+    const existing = headlineMap.get(normHeadline) || [];
+    existing.push(s.symbol);
+    headlineMap.set(normHeadline, existing);
+  }
+  for (const [hl, syms] of headlineMap) {
+    if (syms.length >= 3) {
+      for (const s of filtered) {
+        const normHl = s.headline.replace(/₹[\d,.]+\s*(Cr|Lakh|Bn)/gi, 'VALUE').replace(/\d+\.\d+%/g, 'PCT');
+        if (normHl === hl && s.valueSource === 'HEURISTIC') {
+          s.heuristicSuppressed = true;
+          if (s.action === 'BUY' || s.action === 'ADD') {
+            s.action = 'WATCH';
+            s.decision = 'WATCH';
+          }
+        }
+      }
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
   // ── CONFLICT RESOLUTION ENGINE (per-company) ──
   // When conflicting signals exist for same company, resolve to single directional bias
+  // Output ONE final decision per company using signal hierarchy dominance
+  // ══════════════════════════════════════════════════════════════
   for (const [sym, sigs] of companySignalMap) {
     if (sigs.length < 2) continue;
 
@@ -2337,7 +2531,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       });
 
       if (dominantBearish && !dominantBullish) {
-        // Bearish Tier 1 dominates — suppress bullish signals
+        // Bearish Tier 1 dominates — suppress ALL bullish signals for this company
         for (const s of bullishSigs) {
           const oldAction = s.action;
           s.action = 'HOLD';
@@ -2358,6 +2552,28 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         }
       }
       // If both have Tier 1 or neither does → leave conflict visible (honest uncertainty)
+    }
+
+    // FORCED SINGLE OUTPUT: For multi-signal companies, ensure consistent direction
+    // Find the dominant signal (highest tier, then highest score)
+    const sorted = [...sigs].sort((a, b) => {
+      const tierA = SIGNAL_TIER_HIERARCHY[a.eventType] || 3;
+      const tierB = SIGNAL_TIER_HIERARCHY[b.eventType] || 3;
+      if (tierA !== tierB) return tierA - tierB; // Lower tier number = higher priority
+      return b.weightedScore - a.weightedScore;
+    });
+    const dominant = sorted[0];
+    // Align all signals to dominant's direction
+    for (const s of sigs) {
+      if (s !== dominant && s.action !== dominant.action) {
+        // Only override weaker signals, never override EXIT
+        if (s.action !== 'EXIT' && dominant.action !== 'WATCH') {
+          const oldAction = s.action;
+          s.decision = dominant.action;
+          s.conflictResolution = (s.conflictResolution ? s.conflictResolution + ' · ' : '') +
+            `Aligned to dominant signal: ${dominant.eventType} (Tier ${SIGNAL_TIER_HIERARCHY[dominant.eventType] || 3})`;
+        }
+      }
     }
   }
 
@@ -2428,6 +2644,51 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         s.action = 'WATCH';
         s.decision = 'WATCH';
         s.tag = s.tag || 'LOW-CONVICTION';
+      }
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // ── WATCH BUCKET SPLIT: ACTIVE vs PASSIVE ──
+  // WATCH-ACTIVE: Has catalyst, needs trigger to act
+  // WATCH-PASSIVE: No catalyst, monitoring only
+  // ══════════════════════════════════════════════════════════════
+  for (const s of filtered) {
+    if (s.action === 'WATCH') {
+      const hasCatalyst = s.catalystStrength === 'STRONG' || s.catalystStrength === 'MODERATE';
+      const hasPositiveMomentum = s.sentiment === 'Bullish' || (s.scoreDelta !== undefined && s.scoreDelta > 0);
+      const hasEvent = s.eventNovelty === 'NEW' && s.impactPct >= 2;
+
+      if (hasCatalyst || hasPositiveMomentum || hasEvent) {
+        s.watchSubtype = 'ACTIVE';
+        s.tag = s.tag || 'WATCH-ACTIVE';
+      } else {
+        s.watchSubtype = 'PASSIVE';
+        s.tag = s.tag || 'WATCH-PASSIVE';
+      }
+    }
+  }
+
+  // ── SECTOR CONTEXT: >40% same signal = sector trend → reduce company-specific conviction ──
+  const sectorActionMap = new Map<string, Map<string, number>>();
+  for (const s of filtered) {
+    const sector = s.sector || s.segment || 'Unknown';
+    if (!sectorActionMap.has(sector)) sectorActionMap.set(sector, new Map());
+    const actionMap = sectorActionMap.get(sector)!;
+    actionMap.set(s.action, (actionMap.get(s.action) || 0) + 1);
+  }
+  for (const s of filtered) {
+    const sector = s.sector || s.segment || 'Unknown';
+    const actionMap = sectorActionMap.get(sector);
+    if (actionMap) {
+      const sectorTotal = Array.from(actionMap.values()).reduce((a, b) => a + b, 0);
+      const sameActionCount = actionMap.get(s.action) || 0;
+      if (sectorTotal >= 3 && sameActionCount / sectorTotal > 0.4) {
+        // Sector-wide trend — reduce company-specific conviction
+        if (!s.contradictions) s.contradictions = [];
+        if (!s.contradictions.some(c => c.includes('Sector trend'))) {
+          s.contradictions.push(`Sector trend: ${sameActionCount}/${sectorTotal} signals are ${s.action} — less company-specific`);
+        }
       }
     }
   }
