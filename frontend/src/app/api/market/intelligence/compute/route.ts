@@ -2091,18 +2091,18 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         guidanceSignal.timeHorizon = 'SHORT';  // Guidance is always short-term
         guidanceSignal.extremeValueFlag = detectExtremeValue(revG || null, impactPct);
 
-        // Guidance without supporting signals → downgrade action by 1 level
-        // Check if company has other (non-guidance) signals supporting same direction
+        // Guidance without supporting signals → note it, but don't double-penalize
+        // (70% discount already accounts for guidance unreliability)
         const companyOtherSignals = allSignals.filter(s => s.symbol === symbol && s.dataSource !== 'Guidance');
         const hasSupport = companyOtherSignals.some(s =>
           (guidanceSignal.sentiment === 'Bullish' && (s.action === 'BUY' || s.action === 'ADD')) ||
           (guidanceSignal.sentiment === 'Bearish' && (s.action === 'EXIT' || s.action === 'TRIM'))
         );
-        if (!hasSupport && (guidanceSignal.action === 'BUY' || guidanceSignal.action === 'ADD')) {
-          // Unsupported guidance — downgrade by 1 level
-          guidanceSignal.action = guidanceSignal.action === 'BUY' ? 'ADD' : 'HOLD';
-          guidanceSignal.decision = guidanceSignal.action;
-          guidanceSignal.conflictResolution = 'Unsupported guidance — downgraded (no confirming signals)';
+        if (!hasSupport && guidanceSignal.action === 'BUY') {
+          // Unsupported BUY from guidance alone → cap at ADD (one level, not two)
+          guidanceSignal.action = 'ADD';
+          guidanceSignal.decision = 'ADD';
+          guidanceSignal.conflictResolution = 'Guidance-only BUY → ADD (no confirming signals)';
         }
 
         // Dedup against existing signals for same symbol
@@ -2453,7 +2453,8 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   // If confidence < 60 → cannot be BUY or ADD → force WATCH
   // ══════════════════════════════════════════════════════════════
   for (const s of filtered) {
-    if (s.confidenceScore < 60 && (s.action === 'BUY' || s.action === 'ADD')) {
+    // ACTUAL confidence type is inherently trusted — don't gate it
+    if (s.confidenceType !== 'ACTUAL' && s.confidenceScore < 60 && (s.action === 'BUY' || s.action === 'ADD')) {
       const oldAction = s.action;
       s.action = 'WATCH';
       s.decision = 'WATCH';
