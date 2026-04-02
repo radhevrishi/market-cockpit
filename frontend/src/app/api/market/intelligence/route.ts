@@ -1156,28 +1156,37 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 !['Order Win','Contract','LOI','Capex/Expansion','Fund Raising','Guidance','M&A','Demerger','Buyback','Dividend','Block Deal','Bulk Deal','Stake Sale'].includes(s.eventType) &&
                 (s.confidenceType === 'HEURISTIC' || s.inferenceUsed);
 
+              // ALWAYS neutralize watchSubtype and clean action for ALL signals
+              s.watchSubtype = undefined;
+              if (s.action && (s.action as string).includes('-')) {
+                s.action = (s.action as string).split('-')[0] as any; // WATCH-ACTIVE → WATCH
+              }
+
+              const stripFinText = (txt: string) => txt
+                .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)\s*(?:\(est\.?\))?/gi, '')
+                .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact|growth)\s*(?:\(est\.?\))?/gi, '')
+                .replace(/\[UNVERIFIED AMOUNT\]/g, '').replace(/\[UNVERIFIED %\]/g, '')
+                .replace(/\[UNVERIFIED\]\s*/g, '')
+                .replace(/\s*—\s*$/g, '').replace(/\s{2,}/g, ' ').trim();
+
               if (isNonFinancial) {
                 s.valueCr = 0; s.impactPct = 0; s.pctRevenue = null; s.pctMcap = null;
                 s.inferenceUsed = false; s.confidenceType = 'ACTUAL';
-                s.whyItMatters = (s.whyItMatters || '')
-                  .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)\s*(?:\(est\.?\))?/gi, '')
-                  .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact|growth)\s*(?:\(est\.?\))?/gi, '')
-                  .replace(/\[UNVERIFIED AMOUNT\]/g, '').replace(/\[UNVERIFIED %\]/g, '')
-                  .replace(/\s*—\s*$/g, '').replace(/\s{2,}/g, ' ').trim();
+                s.whyItMatters = stripFinText(s.whyItMatters || '');
                 if (!s.whyItMatters || s.whyItMatters.length < 10) {
                   s.whyItMatters = (s.eventType || 'Corporate event') + ' — watch for strategy continuity';
                 }
-                if (s.headline) {
-                  s.headline = s.headline.replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)\s*(?:\(est\.?\))?/gi, '')
-                    .replace(/\[UNVERIFIED\]\s*/g, '').replace(/\s{2,}/g, ' ').trim();
+                if (s.headline) s.headline = stripFinText(s.headline);
+                if (s.sourceExtract) s.sourceExtract = stripFinText(s.sourceExtract);
+                if (s.whyAction) s.whyAction = stripFinText(s.whyAction);
+                if (!s.whyAction || s.whyAction.length < 5) {
+                  s.whyAction = 'Monitor for strategic impact';
                 }
               } else if (isStrategicInferred) {
                 s.valueCr = 0; s.impactPct = 0; s.pctRevenue = null; s.pctMcap = null;
-                s.whyItMatters = (s.whyItMatters || '')
-                  .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)\s*(?:\(est\.?\))?/gi, '')
-                  .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact|growth)\s*(?:\(est\.?\))?/gi, '')
-                  .replace(/\[UNVERIFIED AMOUNT\]/g, '').replace(/\[UNVERIFIED %\]/g, '')
-                  .replace(/\s*—\s*$/g, '').replace(/\s{2,}/g, ' ').trim();
+                s.whyItMatters = stripFinText(s.whyItMatters || '');
+                if (s.sourceExtract) s.sourceExtract = stripFinText(s.sourceExtract);
+                if (s.whyAction) s.whyAction = stripFinText(s.whyAction);
               }
 
               if (s.signalCategory === 'ACTIONABLE') {

@@ -653,6 +653,22 @@ function sanitizeByEventClass(signal: any): void {
         .replace(/\s{2,}/g, ' ')
         .trim();
     }
+    // Clean sourceExtract and whyAction too
+    if (signal.sourceExtract) {
+      signal.sourceExtract = signal.sourceExtract
+        .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)\s*(?:\(est\.?\))?/gi, '')
+        .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact|growth)\s*(?:\(est\.?\))?/gi, '')
+        .replace(/\s{2,}/g, ' ').trim();
+    }
+    if (signal.whyAction) {
+      signal.whyAction = signal.whyAction
+        .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)\s*(?:\(est\.?\))?/gi, '')
+        .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact|growth)\s*(?:\(est\.?\))?/gi, '')
+        .replace(/\s{2,}/g, ' ').trim();
+      if (!signal.whyAction || signal.whyAction.length < 5) {
+        signal.whyAction = 'Monitor for strategic impact';
+      }
+    }
   } else if (eventClass === 'STRATEGIC') {
     // Strategic events: only keep numbers if they were ACTUAL (not heuristic)
     if (signal.confidenceType === 'HEURISTIC' || signal.inferenceUsed) {
@@ -673,6 +689,18 @@ function sanitizeByEventClass(signal: any): void {
           .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)\s*(?:\(est\.?\))?/gi, '')
           .replace(/\s{2,}/g, ' ')
           .trim();
+      }
+      if (signal.sourceExtract) {
+        signal.sourceExtract = signal.sourceExtract
+          .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)\s*(?:\(est\.?\))?/gi, '')
+          .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact|growth)\s*(?:\(est\.?\))?/gi, '')
+          .replace(/\s{2,}/g, ' ').trim();
+      }
+      if (signal.whyAction) {
+        signal.whyAction = signal.whyAction
+          .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)\s*(?:\(est\.?\))?/gi, '')
+          .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact|growth)\s*(?:\(est\.?\))?/gi, '')
+          .replace(/\s{2,}/g, ' ').trim();
       }
     }
   }
