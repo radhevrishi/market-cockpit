@@ -357,6 +357,10 @@ interface IntelSignal {
   observationReason?: string;   // Why it's non-actionable
   monitorScore?: number;           // 0-100 composite monitor quality score
   monitorTier?: 'HIGH' | 'MED' | 'LOW';  // Derived from monitorScore
+  // v6: Decision Engine — Signal Class + Materiality
+  signalClass?: 'ECONOMIC' | 'STRATEGIC' | 'GOVERNANCE' | 'COMPLIANCE';
+  materialityScore?: number;  // 0-100 primary ranking metric
+  managementRole?: string;    // Extracted role: CEO, CFO, MD, Chairman, etc.
 }
 
 interface CompanyTrend {
@@ -592,110 +596,313 @@ const SECTOR_HEURISTICS: Record<string, Record<string, SectorRange>> = {
   'Corporate': { 'default': { min: 0.5, mid: 1, max: 3 } },
 };
 
-// ── EVENT CLASSIFICATION: Allowed enrichment schema per event class ──
-// FINANCIAL events: can have sourced ₹ values and % impacts
-// NON-FINANCIAL events: NEVER have synthetic numbers
-// STRATEGIC events: qualitative only unless numbers explicitly stated
+// ══════════════════════════════════════════════════════════════
+// ── SIGNAL CLASS + MATERIALITY ENGINE (v6) ──
+// Replaces simple FINANCIAL/NON_FINANCIAL with 4-class system
+// ══════════════════════════════════════════════════════════════
 
-const FINANCIAL_EVENT_TYPES = new Set([
+type SignalClass = 'ECONOMIC' | 'STRATEGIC' | 'GOVERNANCE' | 'COMPLIANCE';
+
+// Event Type → Signal Class mapping
+const ECONOMIC_EVENTS = new Set([
   'Order Win', 'Contract', 'LOI', 'Capex/Expansion', 'Fund Raising',
-  'Guidance', 'M&A', 'Demerger', 'Buyback', 'Dividend', 'Block Deal',
-  'Bulk Deal', 'Stake Sale', 'QIP', 'Rights Issue', 'Bonus',
+  'Guidance', 'Earnings', 'M&A', 'Demerger', 'Buyback', 'Dividend',
+  'Block Deal', 'Bulk Deal', 'Stake Sale', 'QIP', 'Rights Issue', 'Bonus',
 ]);
 
-const NON_FINANCIAL_EVENT_TYPES = new Set([
-  'Mgmt Change', 'Board Appointment', 'CEO Exit', 'CFO Exit',
-  'Leadership Transition', 'Regulatory', 'Compliance',
+const STRATEGIC_EVENTS = new Set([
+  'CEO Change', 'CFO Change', 'MD Change', 'Chairman Change',
+  'Leadership Transition',
 ]);
 
-// Returns 'FINANCIAL' | 'NON_FINANCIAL' | 'STRATEGIC'
-function classifyEventType(eventType: string): 'FINANCIAL' | 'NON_FINANCIAL' | 'STRATEGIC' {
-  if (FINANCIAL_EVENT_TYPES.has(eventType)) return 'FINANCIAL';
-  if (NON_FINANCIAL_EVENT_TYPES.has(eventType)) return 'NON_FINANCIAL';
-  // Check for management-related keywords
+const GOVERNANCE_EVENTS = new Set([
+  'Mgmt Change', 'Board Appointment', 'Board Meeting',
+]);
+
+const COMPLIANCE_EVENTS = new Set([
+  'Compliance', 'Regulatory', 'Filing', 'AGM', 'EGM',
+]);
+
+// Senior roles that make governance signals investable
+const SENIOR_ROLES = new Set(['CEO', 'CFO', 'MD', 'Chairman', 'Managing Director', 'Chief Executive', 'Chief Financial']);
+
+function classifySignalClass(eventType: string, headline?: string, description?: string): SignalClass {
+  if (ECONOMIC_EVENTS.has(eventType)) return 'ECONOMIC';
+  if (STRATEGIC_EVENTS.has(eventType)) return 'STRATEGIC';
+  if (COMPLIANCE_EVENTS.has(eventType)) return 'COMPLIANCE';
+  if (GOVERNANCE_EVENTS.has(eventType)) return 'GOVERNANCE';
+
+  // Keyword fallback
   const lower = (eventType || '').toLowerCase();
+  const textLower = ((headline || '') + ' ' + (description || '')).toLowerCase();
+
+  // Check if this is really an economic event misclassified
+  if (lower.includes('order') || lower.includes('contract') || lower.includes('capex') ||
+      lower.includes('guidance') || lower.includes('earnings') || lower.includes('revenue')) return 'ECONOMIC';
+
+  // Check for senior leadership changes → STRATEGIC
+  if ((lower.includes('ceo') || lower.includes('cfo') || lower.includes('md ') || lower.includes('chairman')) &&
+      (lower.includes('change') || lower.includes('exit') || lower.includes('appoint'))) return 'STRATEGIC';
+
+  // Check for management keywords → GOVERNANCE
   if (lower.includes('mgmt') || lower.includes('management') || lower.includes('board') ||
-      lower.includes('appointment') || lower.includes('resignation') || lower.includes('ceo') ||
-      lower.includes('cfo') || lower.includes('director')) return 'NON_FINANCIAL';
-  return 'STRATEGIC';
+      lower.includes('appointment') || lower.includes('resignation') || lower.includes('director')) return 'GOVERNANCE';
+
+  // Default: if no clear category, treat as COMPLIANCE (hidden)
+  return 'COMPLIANCE';
 }
 
-// Strip all synthetic numeric fields from non-financial events
-function sanitizeByEventClass(signal: any): void {
-  const eventClass = classifyEventType(signal.eventType);
+// Extract management role from headline/description
+function extractManagementRole(headline?: string, description?: string): string {
+  const text = ((headline || '') + ' ' + (description || '')).toLowerCase();
+  if (text.includes('ceo') || text.includes('chief executive')) return 'CEO';
+  if (text.includes('cfo') || text.includes('chief financial')) return 'CFO';
+  if (text.includes('managing director') || /\bmd\b/.test(text)) return 'MD';
+  if (text.includes('chairman') || text.includes('chairperson')) return 'Chairman';
+  if (text.includes('coo') || text.includes('chief operating')) return 'COO';
+  if (text.includes('cto') || text.includes('chief technology')) return 'CTO';
+  if (text.includes('whole-time director') || text.includes('whole time director')) return 'Director';
+  if (text.includes('independent director')) return 'Independent Director';
+  if (text.includes('director')) return 'Director';
+  if (text.includes('vp') || text.includes('vice president')) return 'VP';
+  if (text.includes('president')) return 'President';
+  return 'Other';
+}
 
-  if (eventClass === 'NON_FINANCIAL') {
-    // Hard strip ALL numeric enrichment — these were never in the source
-    signal.valueCr = 0;
-    signal.impactPct = 0;
-    signal.pctRevenue = null;
-    signal.pctMcap = null;
+// Event type weights for materiality scoring
+const EVENT_TYPE_WEIGHTS: Record<string, number> = {
+  'Guidance': 100, 'Earnings': 90, 'Capex/Expansion': 75, 'Order Win': 70, 'Contract': 70,
+  'M&A': 65, 'Demerger': 60, 'Fund Raising': 55, 'LOI': 50,
+  'Block Deal': 45, 'Bulk Deal': 45, 'Stake Sale': 40, 'QIP': 40,
+  'Buyback': 35, 'Dividend': 30, 'Rights Issue': 30, 'Bonus': 25,
+  'CEO Change': 50, 'CFO Change': 45, 'MD Change': 45, 'Chairman Change': 40,
+  'Leadership Transition': 35,
+  'Mgmt Change': 10, 'Board Appointment': 10, 'Board Meeting': 5,
+  'Compliance': 0, 'Regulatory': 5, 'Filing': 0, 'AGM': 0, 'EGM': 0,
+};
+
+// Management importance scores
+const MGMT_IMPORTANCE: Record<string, number> = {
+  'CEO': 100, 'CFO': 90, 'MD': 90, 'Chairman': 85, 'Managing Director': 90,
+  'COO': 70, 'CTO': 65, 'President': 75, 'Director': 30,
+  'Whole-Time Director': 30, 'Independent Director': 15, 'VP': 20, 'Other': 10,
+};
+
+// ── MATERIALITY SCORE: Primary ranking metric ──
+// materialityScore = economicImpact(40%) + eventTypeWeight(25%) + confidence(15%) + managementImportance(10%) + recency(10%)
+function computeMaterialityScore(signal: any): number {
+  const signalClass: SignalClass = signal.signalClass || 'COMPLIANCE';
+
+  // Component 1: Economic Impact (0-40)
+  let economicImpact = 0;
+  if (signalClass === 'ECONOMIC') {
+    const revPct = Math.abs(signal.impactPct || 0);
+    const valRatio = signal.revenueCr ? (signal.valueCr / signal.revenueCr) * 100 : 0;
+    economicImpact = Math.min(40, (revPct * 3) + (valRatio * 2));
+    // Bonus for actual (non-inferred) numbers
+    if (signal.confidenceType === 'ACTUAL' && signal.valueCr > 0) economicImpact = Math.min(40, economicImpact + 10);
+  }
+
+  // Component 2: Event Type Weight (0-25)
+  const evtWeight = EVENT_TYPE_WEIGHTS[signal.eventType] || 0;
+  const eventComponent = (evtWeight / 100) * 25;
+
+  // Component 3: Confidence (0-15)
+  let confidence = 5; // baseline
+  if (signal.confidenceType === 'ACTUAL') confidence = 15;
+  else if (signal.sourceTier === 'VERIFIED') confidence = 12;
+  else if (signal.dataSource === 'nse' || signal.dataSource === 'NSE') confidence = 10;
+  else if (signal.confidenceType === 'INFERRED') confidence = 5;
+  else if (signal.confidenceType === 'HEURISTIC') confidence = 3;
+
+  // Component 4: Management Importance (0-10) — only for GOVERNANCE/STRATEGIC
+  let mgmtComponent = 0;
+  if (signalClass === 'GOVERNANCE' || signalClass === 'STRATEGIC') {
+    const role = signal.managementRole || 'Other';
+    const roleScore = MGMT_IMPORTANCE[role] || 10;
+    mgmtComponent = (roleScore / 100) * 10;
+  }
+
+  // Component 5: Recency (0-10)
+  let recency = 3;
+  if (signal.freshness === 'FRESH') recency = 10;
+  else if (signal.freshness === 'RECENT') recency = 7;
+  else if (signal.freshness === 'AGING') recency = 3;
+  else recency = 1;
+
+  return Math.min(100, Math.round(economicImpact + eventComponent + confidence + mgmtComponent + recency));
+}
+
+// ── VISIBILITY FILTER ──
+// COMPLIANCE = always HIDDEN
+// GOVERNANCE = HIDDEN unless senior role (CEO/CFO/MD/Chairman)
+// STRATEGIC/ECONOMIC = VISIBLE
+function determineVisibility(signal: any): 'VISIBLE' | 'DIMMED' | 'HIDDEN' {
+  const signalClass: SignalClass = signal.signalClass || 'COMPLIANCE';
+
+  if (signalClass === 'COMPLIANCE') return 'HIDDEN';
+
+  if (signalClass === 'GOVERNANCE') {
+    const role = signal.managementRole || 'Other';
+    if (SENIOR_ROLES.has(role)) return 'VISIBLE';
+    return 'HIDDEN';  // Non-senior governance = hidden
+  }
+
+  // ECONOMIC and STRATEGIC are always visible
+  return 'VISIBLE';
+}
+
+// ── ACTION FROM MATERIALITY ──
+function actionFromMateriality(signal: any): ActionFlag {
+  const ms = signal.materialityScore || 0;
+  const signalClass: SignalClass = signal.signalClass || 'COMPLIANCE';
+
+  // Zero-impact non-economic signals → IGNORE (display as MONITOR)
+  if (ms === 0 || signalClass === 'COMPLIANCE') return 'WATCH';  // Will be hidden anyway
+
+  // GOVERNANCE/STRATEGIC with no economic impact
+  if ((signalClass === 'GOVERNANCE' || signalClass === 'STRATEGIC') && (signal.impactPct || 0) === 0) {
+    if (ms >= 45) return 'HOLD';  // Senior CEO/CFO change worth monitoring
+    return 'WATCH';  // Low importance, just watch
+  }
+
+  // Materiality-driven action (primarily ECONOMIC signals)
+  if (ms >= 75) return signal.isNegative ? 'TRIM' : 'BUY';
+  if (ms >= 60) return signal.isNegative ? 'HOLD' : 'ADD';
+  if (ms >= 45) return 'HOLD';
+  return 'WATCH';
+}
+
+// ── WHY THIS MATTERS: Mandatory field ──
+function buildWhyThisMatters(signal: any): string {
+  const signalClass: SignalClass = signal.signalClass || 'COMPLIANCE';
+
+  if (signalClass === 'ECONOMIC') {
+    const parts: string[] = [];
+    if (signal.impactPct && signal.impactPct !== 0) parts.push(`Revenue impact ${signal.impactPct > 0 ? '+' : ''}${signal.impactPct.toFixed(1)}%`);
+    if (signal.valueCr && signal.valueCr > 0) {
+      if (signal.revenueCr && signal.revenueCr > 0) {
+        parts.push(`Order size ${((signal.valueCr / signal.revenueCr) * 100).toFixed(1)}% of revenue`);
+      } else {
+        parts.push(`Value ₹${Math.round(signal.valueCr)} Cr`);
+      }
+    }
+    if (signal.catalystStrength === 'STRONG') parts.push('Strong catalyst');
+    if (parts.length === 0) parts.push(signal.eventType + ' event detected');
+    return parts.join(' · ');
+  }
+
+  if (signalClass === 'STRATEGIC') {
+    const role = signal.managementRole || 'Leadership';
+    return `${role} change — potential strategy shift · Watch for execution impact`;
+  }
+
+  if (signalClass === 'GOVERNANCE') {
+    const role = signal.managementRole || 'Management';
+    if (SENIOR_ROLES.has(role)) {
+      return `${role} change at leadership level — monitor for strategy continuity`;
+    }
+    return `${signal.eventType} — routine governance event`;
+  }
+
+  return 'Compliance disclosure — no investment action required';
+}
+
+// Aggressive text cleaning helper (reused from old sanitizeByEventClass)
+const stripFinancialText = (t: string) => t
+  .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh|K\s*Cr|L|K)\s*(?:\(est\.?\))?/gi, '')
+  .replace(/₹[\d,.]+/g, '')
+  .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact|growth)\s*(?:\(est\.?\))?/gi, '')
+  .replace(/\[UNVERIFIED AMOUNT\]/g, '').replace(/\[UNVERIFIED %\]/g, '').replace(/\[UNVERIFIED\]\s*/g, '')
+  .replace(/\(est\.?\)/g, '')
+  .replace(/\s*—\s*$/g, '').replace(/\s*·\s*$/g, '').replace(/\s{2,}/g, ' ').trim();
+
+// ── SANITIZE BY EVENT CLASS (updated for v6) ──
+function sanitizeByEventClass(signal: any): void {
+  const signalClass: SignalClass = signal.signalClass || classifySignalClass(signal.eventType);
+  signal.signalClass = signalClass;
+
+  if (signalClass === 'GOVERNANCE' || signalClass === 'COMPLIANCE') {
+    // Hard strip ALL numeric enrichment
+    signal.valueCr = 0; signal.impactPct = 0; signal.pctRevenue = null; signal.pctMcap = null;
     signal.impactLevel = 'LOW';
-    signal.confidenceType = 'ACTUAL';  // The event itself is real, just no numbers
-    signal.valueSource = 'EXACT';       // No value to be inexact about
+    signal.confidenceType = 'ACTUAL';
+    signal.valueSource = 'EXACT';
     signal.inferenceUsed = false;
     signal.signalTier = 'TIER1_VERIFIED';
-    signal.valueSource = 'EXACT';
     signal.heuristicSuppressed = false;
     signal.anomalyFlags = [];
-    signal.impactLevel = 'LOW';
-    // Aggressive text cleaning helper for non-financial events
-    const stripFin = (t: string) => t
-      .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh|K\s*Cr|L|K)\s*(?:\(est\.?\))?/gi, '')
-      .replace(/₹[\d,.]+/g, '')
-      .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact|growth)\s*(?:\(est\.?\))?/gi, '')
-      .replace(/\[UNVERIFIED AMOUNT\]/g, '').replace(/\[UNVERIFIED %\]/g, '').replace(/\[UNVERIFIED\]\s*/g, '')
-      .replace(/\(est\.?\)/g, '')
-      .replace(/\s*—\s*$/g, '').replace(/\s*·\s*$/g, '').replace(/\s{2,}/g, ' ').trim();
-    signal.whyItMatters = stripFin(signal.whyItMatters || '');
+    // Clean all text fields
+    signal.whyItMatters = stripFinancialText(signal.whyItMatters || '');
     if (!signal.whyItMatters || signal.whyItMatters.length < 10) {
-      signal.whyItMatters = `${signal.eventType} — watch for strategy continuity`;
+      signal.whyItMatters = buildWhyThisMatters(signal);
     }
-    if (signal.headline) signal.headline = stripFin(signal.headline);
+    if (signal.headline) signal.headline = stripFinancialText(signal.headline);
     if (signal.sourceExtract) {
-      signal.sourceExtract = stripFin(signal.sourceExtract);
+      signal.sourceExtract = stripFinancialText(signal.sourceExtract);
       if (!signal.sourceExtract || signal.sourceExtract.length < 5) signal.sourceExtract = undefined;
     }
     if (signal.whyAction) {
-      signal.whyAction = stripFin(signal.whyAction);
+      signal.whyAction = stripFinancialText(signal.whyAction);
       if (!signal.whyAction || signal.whyAction.length < 5) signal.whyAction = 'Monitor for strategic impact';
     }
-  } else if (eventClass === 'STRATEGIC') {
-    // Strategic events: only keep numbers if they were ACTUAL (not heuristic)
+  } else if (signalClass === 'STRATEGIC') {
+    // Strategic: strip numbers only if inferred
     if (signal.confidenceType === 'HEURISTIC' || signal.inferenceUsed) {
-      signal.valueCr = 0;
-      signal.impactPct = 0;
-      signal.pctRevenue = null;
-      signal.pctMcap = null;
+      signal.valueCr = 0; signal.impactPct = 0; signal.pctRevenue = null; signal.pctMcap = null;
       signal.inferenceUsed = false;
-      // Clean whyItMatters of synthetic numbers
-      signal.whyItMatters = (signal.whyItMatters || '')
-        .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)\s*(?:\(est\.?\))?/gi, '')
-        .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact|growth)\s*(?:\(est\.?\))?/gi, '')
-        .replace(/\s*—\s*$/g, '')
-        .replace(/\s{2,}/g, ' ')
-        .trim();
-      if (signal.headline) {
-        signal.headline = signal.headline
-          .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)\s*(?:\(est\.?\))?/gi, '')
-          .replace(/\s{2,}/g, ' ')
-          .trim();
-      }
+      signal.whyItMatters = stripFinancialText(signal.whyItMatters || '');
+      if (signal.headline) signal.headline = stripFinancialText(signal.headline);
       if (signal.sourceExtract) {
-        signal.sourceExtract = signal.sourceExtract
-          .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)\s*(?:\(est\.?\))?/gi, '')
-          .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact|growth)\s*(?:\(est\.?\))?/gi, '')
-          .replace(/\s{2,}/g, ' ').trim();
+        signal.sourceExtract = stripFinancialText(signal.sourceExtract);
+        if (!signal.sourceExtract || signal.sourceExtract.length < 5) signal.sourceExtract = undefined;
       }
       if (signal.whyAction) {
-        signal.whyAction = signal.whyAction
-          .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)\s*(?:\(est\.?\))?/gi, '')
-          .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact|growth)\s*(?:\(est\.?\))?/gi, '')
-          .replace(/\s{2,}/g, ' ').trim();
+        signal.whyAction = stripFinancialText(signal.whyAction);
+        if (!signal.whyAction || signal.whyAction.length < 5) signal.whyAction = buildWhyThisMatters(signal);
       }
     }
+    signal.heuristicSuppressed = false;
+    signal.anomalyFlags = [];
   }
-  // FINANCIAL events: keep numbers as-is (they may still be heuristic but that's the zero-inference policy's job)
+  // ECONOMIC: keep numbers as-is (zero-inference policy handles display)
+}
+
+// ── FEED COMPOSITION ENFORCEMENT ──
+// Max 10 visible signals, ≥60% ECONOMIC, ≤20% GOVERNANCE, 0% COMPLIANCE
+function enforceFeedComposition(signals: any[]): any[] {
+  const MAX_FEED = 10;
+
+  // Separate by class
+  const economic = signals.filter(s => s.signalClass === 'ECONOMIC');
+  const strategic = signals.filter(s => s.signalClass === 'STRATEGIC');
+  const governance = signals.filter(s => s.signalClass === 'GOVERNANCE' && s.visibility === 'VISIBLE');
+  // COMPLIANCE is never included
+
+  // Sort each by materialityScore descending
+  economic.sort((a, b) => (b.materialityScore || 0) - (a.materialityScore || 0));
+  strategic.sort((a, b) => (b.materialityScore || 0) - (a.materialityScore || 0));
+  governance.sort((a, b) => (b.materialityScore || 0) - (a.materialityScore || 0));
+
+  // Allocate slots: min 60% ECONOMIC, max 20% GOVERNANCE
+  const ecoSlots = Math.max(6, Math.min(MAX_FEED, economic.length));  // At least 6 (60%)
+  const govSlots = Math.min(2, governance.length);  // Max 2 (20%)
+  const stratSlots = Math.min(MAX_FEED - ecoSlots - govSlots, strategic.length);
+
+  const feed: any[] = [];
+  feed.push(...economic.slice(0, ecoSlots));
+  feed.push(...strategic.slice(0, stratSlots));
+  feed.push(...governance.slice(0, govSlots));
+
+  // If we have fewer than MAX_FEED, backfill from economic
+  if (feed.length < MAX_FEED && economic.length > ecoSlots) {
+    feed.push(...economic.slice(ecoSlots, ecoSlots + (MAX_FEED - feed.length)));
+  }
+
+  // Final sort by materialityScore
+  feed.sort((a, b) => (b.materialityScore || 0) - (a.materialityScore || 0));
+
+  return feed.slice(0, MAX_FEED);
 }
 
 function getSectorHeuristic(eventType: string, sector: string | null): SectorRange {
@@ -720,8 +927,9 @@ function inferEventValue(
   isNegative: boolean,
   sector: string | null,
 ): InferenceResult {
-  // NON-FINANCIAL events: never generate synthetic values
-  if (classifyEventType(eventType) === 'NON_FINANCIAL') {
+  // Non-ECONOMIC events: never generate synthetic values
+  const signalClass = classifySignalClass(eventType);
+  if (signalClass !== 'ECONOMIC') {
     return { valueCr: 0, pctRevenue: 0, pctRange: [0, 0], confidenceScore: 80, confidenceType: 'ACTUAL' };
   }
 
@@ -3784,8 +3992,39 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     // EVENT CLASS SANITIZATION: strip synthetic numbers from non-financial events
     sanitizeByEventClass(s);
 
-    // FINAL: If REJECTED → will be dropped from output entirely
-    // If MONITOR with inferred numbers → numbers stripped
+    // ── v6: DECISION ENGINE ──
+    // 1. Classify signal
+    s.signalClass = s.signalClass || classifySignalClass(s.eventType, s.headline, s.whyItMatters);
+    s.managementRole = extractManagementRole(s.headline, s.whyItMatters);
+
+    // 2. Compute materiality score (replaces monitorScore as primary rank)
+    s.materialityScore = computeMaterialityScore(s);
+
+    // 3. Determine visibility
+    s.visibility = determineVisibility(s);
+
+    // 4. Override action from materiality
+    if (s.signalCategory !== 'REJECTED') {
+      s.action = actionFromMateriality(s);
+    }
+
+    // 5. Override whyItMatters with structured text
+    const newWhy = buildWhyThisMatters(s);
+    if (newWhy && newWhy.length > 10) {
+      s.whyItMatters = newWhy;
+    }
+
+    // 6. Kill template scoring for Mgmt Change
+    if (s.signalClass === 'GOVERNANCE') {
+      s.monitorScore = Math.round((s.monitorScore || 0) * 0.3);
+      s.monitorTier = s.monitorScore >= 80 ? 'HIGH' : s.monitorScore >= 50 ? 'MED' : 'LOW';
+      s.catalystStrength = 'WEAK';
+    }
+
+    // 7. HIDDEN signals get pushed to REJECTED
+    if (s.visibility === 'HIDDEN') {
+      s.signalCategory = 'REJECTED';
+    }
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -3810,18 +4049,19 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     }
   }
 
-  // Sort actionable by actionScore
-  actionableSignals.sort((a, b) => (b.actionScore || 0) - (a.actionScore || 0));
-  monitorSignals.sort((a, b) => (b.monitorScore || 0) - (a.monitorScore || 0));
+  // Sort ALL by materialityScore (primary ranking metric)
+  actionableSignals.sort((a, b) => (b.materialityScore || 0) - (a.materialityScore || 0));
+  monitorSignals.sort((a, b) => (b.materialityScore || 0) - (a.materialityScore || 0));
 
-  // Top signals: max 5 actionable
+  // ── FEED COMPOSITION: max 10 visible, balanced by signal class ──
+  const allVisible = [...actionableSignals, ...monitorSignals];
+  const composedFeed = enforceFeedComposition(allVisible);
+
   const noActionableSignals = actionableSignals.length === 0;
   const noHighConfSignals = actionableSignals.length === 0;
 
-  // If no actionable signals, promote top 5 monitor HIGH as "top signals"
-  const topMonitor = monitorSignals.filter(s => s.monitorTier === 'HIGH').slice(0, 5);
-  const effectiveTop = actionableSignals.length > 0 ? actionableSignals.slice(0, 5) : topMonitor;
-  const top3 = effectiveTop;
+  // Top signals from composed feed (max 5 for hero cards)
+  const top3 = composedFeed.slice(0, 5);
 
   // ── Production Status Check ──
   const totalActive = actionableSignals.length + monitorSignals.length;

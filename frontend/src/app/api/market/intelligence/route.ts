@@ -14,6 +14,52 @@ const INR_TO_USD = 85;
 const ROUTE_CACHE_TTL = 180_000;
 let _routeCache: { key: string; data: any; timestamp: number } | null = null;
 
+// ==================== v6: SIGNAL CLASS + MATERIALITY (mirrors compute route) ====================
+type SignalClass = 'ECONOMIC' | 'STRATEGIC' | 'GOVERNANCE' | 'COMPLIANCE';
+
+const ECONOMIC_EVENTS = new Set([
+  'Order Win', 'Contract', 'LOI', 'Capex/Expansion', 'Fund Raising',
+  'Guidance', 'Earnings', 'M&A', 'Demerger', 'Buyback', 'Dividend',
+  'Block Deal', 'Bulk Deal', 'Stake Sale', 'QIP', 'Rights Issue', 'Bonus',
+]);
+const STRATEGIC_EVENTS = new Set(['CEO Change', 'CFO Change', 'MD Change', 'Chairman Change', 'Leadership Transition']);
+const GOVERNANCE_EVENTS = new Set(['Mgmt Change', 'Board Appointment', 'Board Meeting']);
+const COMPLIANCE_EVENTS = new Set(['Compliance', 'Regulatory', 'Filing', 'AGM', 'EGM']);
+const SENIOR_ROLES = new Set(['CEO', 'CFO', 'MD', 'Chairman', 'Managing Director', 'Chief Executive', 'Chief Financial']);
+
+function classifySignalClass(eventType: string, headline?: string, desc?: string): SignalClass {
+  if (ECONOMIC_EVENTS.has(eventType)) return 'ECONOMIC';
+  if (STRATEGIC_EVENTS.has(eventType)) return 'STRATEGIC';
+  if (COMPLIANCE_EVENTS.has(eventType)) return 'COMPLIANCE';
+  if (GOVERNANCE_EVENTS.has(eventType)) return 'GOVERNANCE';
+  const lower = (eventType || '').toLowerCase();
+  if (lower.includes('order') || lower.includes('contract') || lower.includes('capex') || lower.includes('guidance') || lower.includes('earnings')) return 'ECONOMIC';
+  if ((lower.includes('ceo') || lower.includes('cfo') || lower.includes('chairman')) && (lower.includes('change') || lower.includes('exit'))) return 'STRATEGIC';
+  if (lower.includes('mgmt') || lower.includes('management') || lower.includes('board') || lower.includes('appointment') || lower.includes('director')) return 'GOVERNANCE';
+  return 'COMPLIANCE';
+}
+
+function extractMgmtRole(headline?: string, desc?: string): string {
+  const text = ((headline || '') + ' ' + (desc || '')).toLowerCase();
+  if (text.includes('ceo') || text.includes('chief executive')) return 'CEO';
+  if (text.includes('cfo') || text.includes('chief financial')) return 'CFO';
+  if (text.includes('managing director') || /\bmd\b/.test(text)) return 'MD';
+  if (text.includes('chairman') || text.includes('chairperson')) return 'Chairman';
+  if (text.includes('director')) return 'Director';
+  return 'Other';
+}
+
+const EVT_WEIGHTS: Record<string, number> = {
+  'Guidance': 100, 'Earnings': 90, 'Capex/Expansion': 75, 'Order Win': 70, 'Contract': 70,
+  'M&A': 65, 'Demerger': 60, 'Fund Raising': 55, 'LOI': 50,
+  'Block Deal': 45, 'Bulk Deal': 45, 'Stake Sale': 40,
+  'CEO Change': 50, 'CFO Change': 45, 'MD Change': 45,
+  'Mgmt Change': 10, 'Board Appointment': 10,
+};
+const ROLE_SCORES: Record<string, number> = {
+  'CEO': 100, 'CFO': 90, 'MD': 90, 'Chairman': 85, 'Director': 30, 'Other': 10,
+};
+
 // ==================== MONEYCONTROL NEWS SCRAPER ====================
 // Fallback data source when NSE API fails/returns empty
 
@@ -1199,6 +1245,65 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 if (s.whyAction) s.whyAction = stripFinText(s.whyAction);
               }
 
+              // ── v6: DECISION ENGINE ──
+              s.signalClass = s.signalClass || classifySignalClass(s.eventType, s.headline, s.whyItMatters);
+              s.managementRole = s.managementRole || extractMgmtRole(s.headline, s.whyItMatters);
+
+              // Materiality score
+              let ecoImpact = 0;
+              if (s.signalClass === 'ECONOMIC') {
+                const revPct = Math.abs(s.impactPct || 0);
+                const valRatio = s.revenueCr ? (s.valueCr / s.revenueCr) * 100 : 0;
+                ecoImpact = Math.min(40, (revPct * 3) + (valRatio * 2));
+                if (s.confidenceType === 'ACTUAL' && s.valueCr > 0) ecoImpact = Math.min(40, ecoImpact + 10);
+              }
+              const evtW = (EVT_WEIGHTS[s.eventType] || 0) / 100 * 25;
+              const confW = s.confidenceType === 'ACTUAL' ? 15 : s.sourceTier === 'VERIFIED' ? 12 : 5;
+              let mgmtW = 0;
+              if (s.signalClass === 'GOVERNANCE' || s.signalClass === 'STRATEGIC') {
+                mgmtW = (ROLE_SCORES[s.managementRole] || 10) / 100 * 10;
+              }
+              const recW = s.freshness === 'FRESH' ? 10 : s.freshness === 'RECENT' ? 7 : 3;
+              s.materialityScore = Math.min(100, Math.round(ecoImpact + evtW + confW + mgmtW + recW));
+
+              // Visibility
+              if (s.signalClass === 'COMPLIANCE') {
+                s.visibility = 'HIDDEN';
+              } else if (s.signalClass === 'GOVERNANCE') {
+                s.visibility = SENIOR_ROLES.has(s.managementRole) ? 'VISIBLE' : 'HIDDEN';
+              } else {
+                s.visibility = 'VISIBLE';
+              }
+
+              // Action from materiality
+              if (s.visibility !== 'HIDDEN') {
+                const ms = s.materialityScore || 0;
+                if ((s.signalClass === 'GOVERNANCE' || s.signalClass === 'STRATEGIC') && (s.impactPct || 0) === 0) {
+                  s.action = ms >= 45 ? 'HOLD' : 'WATCH';
+                } else if (ms >= 75) {
+                  s.action = s.isNegative ? 'TRIM' : 'BUY';
+                } else if (ms >= 60) {
+                  s.action = s.isNegative ? 'HOLD' : 'ADD';
+                } else if (ms >= 45) {
+                  s.action = 'HOLD';
+                } else {
+                  s.action = 'WATCH';
+                }
+              }
+
+              // Kill governance scoring
+              if (s.signalClass === 'GOVERNANCE') {
+                s.monitorScore = Math.round((s.monitorScore || 0) * 0.3);
+                s.monitorTier = s.monitorScore >= 80 ? 'HIGH' : s.monitorScore >= 50 ? 'MED' : 'LOW';
+                s.catalystStrength = 'WEAK';
+              }
+
+              // HIDDEN → REJECTED
+              if (s.visibility === 'HIDDEN') {
+                rejectedCount++;
+                continue;  // Skip adding to actionable/monitor
+              }
+
               if (s.signalCategory === 'ACTIONABLE') {
                 actionableSignals.push(s);
               } else {
@@ -1242,21 +1347,40 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               validBias.activeSectors = [...new Set(validSignals.map((s: any) => s.sector).filter(Boolean))];
             }
 
-            const topMonitor = monitorSignals.filter((s: any) => (s.monitorTier === 'HIGH' || s.monitorScore >= 50)).slice(0, 5);
-            const effectiveTop = actionableSignals.length > 0 ? actionableSignals.slice(0, 5) : topMonitor;
+            // ── v6: Feed composition — max 10, balanced ──
+            const allVisibleSignals = [...actionableSignals, ...monitorSignals];
+            allVisibleSignals.sort((a: any, b: any) => (b.materialityScore || 0) - (a.materialityScore || 0));
+
+            const ecoSigs = allVisibleSignals.filter((s: any) => s.signalClass === 'ECONOMIC');
+            const stratSigs = allVisibleSignals.filter((s: any) => s.signalClass === 'STRATEGIC');
+            const govSigs = allVisibleSignals.filter((s: any) => s.signalClass === 'GOVERNANCE');
+
+            const feedEco = ecoSigs.slice(0, 6);
+            const feedGov = govSigs.slice(0, 2);
+            const feedStrat = stratSigs.slice(0, Math.max(0, 10 - feedEco.length - feedGov.length));
+            let composedFeed = [...feedEco, ...feedStrat, ...feedGov];
+            // Backfill with economic if under 10
+            if (composedFeed.length < 10 && ecoSigs.length > 6) {
+              composedFeed.push(...ecoSigs.slice(6, 6 + (10 - composedFeed.length)));
+            }
+            composedFeed.sort((a: any, b: any) => (b.materialityScore || 0) - (a.materialityScore || 0));
+            composedFeed = composedFeed.slice(0, 10);
+
+            const composedActionable = composedFeed.filter((s: any) => s.signalCategory === 'ACTIONABLE');
+            const composedMonitor = composedFeed.filter((s: any) => s.signalCategory === 'MONITOR');
 
             responseData = {
               ...responseData,
-              signals: actionableSignals.slice(0, 5),
-              observations: monitorSignals.slice(0, 50),
-              top3: effectiveTop,
+              signals: composedActionable,
+              observations: composedMonitor,
+              top3: composedFeed.slice(0, 5),
               // Clear stacking/trends when no valid signals
               trends: validSignals.length > 0 ? responseData.trends : [],
               bias: validBias,
-              noActionableSignals: actionableSignals.length === 0,
-              noHighConfSignals: actionableSignals.length === 0,
+              noActionableSignals: composedActionable.length === 0,
+              noHighConfSignals: composedActionable.length === 0,
               _productionStatus: productionReady ? 'PRODUCTION_READY' : 'REFINEMENT_REQUIRED',
-              _stats: { actionable: actionableSignals.length, monitor: monitorSignals.length, rejected: rejectedCount, rejectedPct: Math.round(rejectedPct) },
+              _stats: { actionable: composedActionable.length, monitor: composedMonitor.length, rejected: rejectedCount, rejectedPct: Math.round(rejectedPct) },
             };
           }
 

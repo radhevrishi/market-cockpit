@@ -148,6 +148,11 @@ interface Signal {
   confidenceLayer?: number;
   signalCategory?: 'ACTIONABLE' | 'OBSERVATION';
   observationReason?: string;
+
+  // Decision engine fields
+  signalClass?: 'ECONOMIC' | 'STRATEGIC' | 'GOVERNANCE' | 'COMPLIANCE';
+  materialityScore?: number;
+  managementRole?: string;
 }
 
 interface CompanyTrend {
@@ -635,7 +640,7 @@ export default function CompanyIntelligencePage() {
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '13px', color: GREEN, fontWeight: 600 }}>
-              No actionable signals{monitorList.length > 0 ? ` — showing top ${Math.min(monitorList.length, 5)} monitor signals` : ' — system functioning correctly'}
+              No actionable signals{monitorList.length > 0 ? ` — showing top ${Math.min(monitorList.length, 10)} monitor signals` : ' — system functioning correctly'}
             </span>
           </div>
           {productionStatus && (
@@ -686,6 +691,12 @@ export default function CompanyIntelligencePage() {
   border: `1px solid ${s.tag === 'RISK-WATCH' ? 'rgba(239,68,68,0.25)' : s.tag === 'DATA-WATCH' || s.tag === 'DATA INSUFFICIENT' ? 'rgba(245,158,11,0.25)' : 'rgba(167,139,250,0.25)'}`,
 }}>{s.tag}</span>}
                   {s.isNegative && <span style={{ fontSize: '9px', color: RED, fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(239,68,68,0.12)' }}>⚠ NEGATIVE</span>}
+                  {s.signalClass && s.signalClass !== 'COMPLIANCE' && (
+                    <span style={{ fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '2px',
+                      color: s.signalClass === 'ECONOMIC' ? '#10B981' : s.signalClass === 'STRATEGIC' ? '#8B5CF6' : '#F59E0B',
+                      backgroundColor: s.signalClass === 'ECONOMIC' ? 'rgba(16,185,129,0.1)' : s.signalClass === 'STRATEGIC' ? 'rgba(139,92,246,0.1)' : 'rgba(245,158,11,0.1)',
+                    }}>{s.signalClass}</span>
+                  )}
                   <span style={{
                     fontSize: '11px', fontWeight: 700, color: actionColor(s.action),
                     padding: '2px 8px', borderRadius: '4px', backgroundColor: actionBg(s.action),
@@ -1707,11 +1718,12 @@ export default function CompanyIntelligencePage() {
             </span>
           </div>
           {monitorList.slice(0, 30).map((s, i) => {
-            const mScore = (s as any).monitorScore || 0;
-            const mTier = (s as any).monitorTier || (mScore >= 80 ? 'HIGH' : mScore >= 50 ? 'MED' : 'LOW');
-            const tierColor = mTier === 'HIGH' ? GREEN : mTier === 'MED' ? YELLOW : TEXT3;
-            const tierBg = mTier === 'HIGH' ? 'rgba(16,185,129,0.06)' : mTier === 'MED' ? 'rgba(234,179,8,0.06)' : 'rgba(100,116,139,0.03)';
-            const tierBorder = mTier === 'HIGH' ? 'rgba(16,185,129,0.15)' : mTier === 'MED' ? 'rgba(234,179,8,0.15)' : 'rgba(100,116,139,0.08)';
+            const mScore = s.materialityScore || 0;
+            // Tier color coding based on materialityScore thresholds: ≥75: GREEN, ≥60: BLUE, ≥45: AMBER, <45: GRAY
+            const mTier = mScore >= 75 ? 'HIGH' : mScore >= 60 ? 'MEDIUM' : mScore >= 45 ? 'WATCH' : 'LOW';
+            const tierColor = mScore >= 75 ? GREEN : mScore >= 60 ? '#3B82F6' : mScore >= 45 ? '#F59E0B' : TEXT3;
+            const tierBg = mScore >= 75 ? 'rgba(16,185,129,0.06)' : mScore >= 60 ? 'rgba(59,130,246,0.06)' : mScore >= 45 ? 'rgba(245,158,11,0.06)' : 'rgba(100,116,139,0.03)';
+            const tierBorder = mScore >= 75 ? 'rgba(16,185,129,0.15)' : mScore >= 60 ? 'rgba(59,130,246,0.15)' : mScore >= 45 ? 'rgba(245,158,11,0.15)' : 'rgba(100,116,139,0.08)';
             return (
               <div key={`mon-${i}`} style={{
                 padding: '8px 12px', marginBottom: '4px', borderRadius: '6px',
@@ -1743,9 +1755,8 @@ export default function CompanyIntelligencePage() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <span style={{ fontSize: '9px', fontWeight: 600, color: tierColor,
                       padding: '1px 6px', borderRadius: '3px', backgroundColor: `${tierColor}15` }}>
-                      {mTier}
+                      {mScore}
                     </span>
-                    <span style={{ fontSize: '9px', color: TEXT3 }}>{mScore}</span>
                   </div>
                 </div>
               </div>
