@@ -1159,6 +1159,8 @@ export default function CompanyIntelligencePage() {
                       border: `1px solid ${s.isNegative ? `${RED}30` : s.isPortfolio ? `${PURPLE}40` : s.isWatchlist ? `${ACCENT}30` : BORDER}`,
                       borderRadius: '8px',
                       padding: '12px 16px',
+                      borderLeft: `3px solid ${s.signalTier === 'TIER1_VERIFIED' ? '#10B981' : s.isNegative ? '#EF4444' : '#475569'}`,
+                      opacity: s.signalTier === 'TIER2_INFERRED' ? 0.85 : 1,
                     }}>
                       {/* Row 1: Core info */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
@@ -1336,6 +1338,8 @@ export default function CompanyIntelligencePage() {
                       border: `1px solid ${s.isNegative ? `${RED}30` : s.isPortfolio ? `${PURPLE}40` : s.isWatchlist ? `${ACCENT}30` : BORDER}`,
                       borderRadius: '8px',
                       padding: '12px 16px',
+                      borderLeft: `3px solid ${s.signalTier === 'TIER1_VERIFIED' ? '#10B981' : s.isNegative ? '#EF4444' : '#475569'}`,
+                      opacity: s.signalTier === 'TIER2_INFERRED' ? 0.85 : 1,
                     }}>
                       {/* Row 1: Core info */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
