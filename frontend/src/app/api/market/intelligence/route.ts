@@ -1084,6 +1084,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             const monitorSignals: any[] = [];
             let rejectedCount = 0;
 
+            const _debugRejects: any[] = [];
             for (const s of rawSignals) {
               // ── Validation Gate ──
               const sourceExists = s.confidenceType === 'ACTUAL' || s.sourceTier === 'VERIFIED' ||
@@ -1099,7 +1100,16 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 s.guidancePeriod && s.guidancePeriod !== 'UNKNOWN');
 
               // Hard rejection checks
-              if (!sourceExists || hasTemplate || isBroken || hasAnomaly) { rejectedCount++; continue; }
+              if (!sourceExists || hasTemplate || isBroken || hasAnomaly) {
+                rejectedCount++;
+                if (_debugRejects.length < 5) _debugRejects.push({
+                  ticker: s.ticker || s.symbol, reason: !sourceExists ? 'NO_SOURCE' : hasTemplate ? 'TEMPLATE' : isBroken ? 'BROKEN' : 'ANOMALY',
+                  confidenceType: s.confidenceType, sourceTier: s.sourceTier, dataSource: s.dataSource, source: s.source,
+                  templatePattern: s.templatePattern, heuristicSuppressed: s.heuristicSuppressed, identicalPctFlag: s.identicalPctFlag,
+                  dataQuality: s.dataQuality, guidanceAnomalyFlag: s.guidanceAnomalyFlag
+                });
+                continue;
+              }
               if (isGuidance && !periodOk) { rejectedCount++; continue; }
 
               // Materiality
@@ -1175,6 +1185,8 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               noHighConfSignals: actionableSignals.length === 0,
               _productionStatus: productionReady ? 'PRODUCTION_READY' : 'REFINEMENT_REQUIRED',
               _stats: { actionable: actionableSignals.length, monitor: monitorSignals.length, rejected: rejectedCount, rejectedPct: Math.round(rejectedPct) },
+              _debugRejects,
+              _debugRawCount: rawSignals.length,
             };
           }
 
