@@ -1146,6 +1146,9 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             const actionableSignals: any[] = [];
             const monitorSignals: any[] = [];
             let rejectedCount = 0;
+            // Debug: track rejection reasons
+            const _rejectReasons: Record<string, number> = {};
+            const _rejectSamples: any[] = [];
 
             for (const s of rawSignals) {
               // ── Validation Gate ──
@@ -1166,10 +1169,13 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
 
               // Hard rejection checks
               if (!sourceExists || hasTemplate || isBroken || hasAnomaly) {
+                const reason = !sourceExists ? 'no_source' : hasTemplate ? 'template' : isBroken ? 'broken' : 'anomaly';
+                _rejectReasons[reason] = (_rejectReasons[reason] || 0) + 1;
+                if (_rejectSamples.length < 5) _rejectSamples.push({ ticker: s.ticker || s.symbol, reason, dataSource: s.dataSource, confidenceType: s.confidenceType, sourceTier: s.sourceTier, source: s.source, dataQuality: s.dataQuality, templatePattern: s.templatePattern, eventType: s.eventType });
                 rejectedCount++;
                 continue;
               }
-              if (isGuidance && !periodOk) { rejectedCount++; continue; }
+              if (isGuidance && !periodOk) { _rejectReasons['guidance_period'] = (_rejectReasons['guidance_period'] || 0) + 1; rejectedCount++; continue; }
 
               // Materiality
               const revImpact = Math.abs(s.impactPct || 0);
@@ -1352,6 +1358,8 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
 
               // HIDDEN → rejected
               if (s.visibility === 'HIDDEN') {
+                _rejectReasons['hidden_v61'] = (_rejectReasons['hidden_v61'] || 0) + 1;
+                if (_rejectSamples.length < 10) _rejectSamples.push({ ticker: s.ticker || s.symbol, reason: 'hidden_v61', signalClass: s.signalClass, managementRole: s.managementRole, materialityScore: s.materialityScore, eventType: s.eventType });
                 rejectedCount++;
                 continue;
               }
@@ -1485,7 +1493,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               noActionableSignals: composedActionable.length === 0,
               noHighConfSignals: composedActionable.length === 0,
               _productionStatus: productionReady ? 'PRODUCTION_READY' : 'REFINEMENT_REQUIRED',
-              _stats: { actionable: composedActionable.length, monitor: composedMonitor.length, rejected: rejectedCount, rejectedPct: Math.round(rejectedPct) },
+              _stats: { actionable: composedActionable.length, monitor: composedMonitor.length, rejected: rejectedCount, rejectedPct: Math.round(rejectedPct), rawCount: rawSignals.length, _rejectReasons, _rejectSamples },
             };
           }
 
