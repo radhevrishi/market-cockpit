@@ -2762,6 +2762,29 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   }
 
   // ══════════════════════════════════════════════════════════════
+  // ── GUIDANCE ANOMALY GATE ──
+  // EXTREME_UNVERIFIED guidance cannot drive EXIT/TRIM — likely parsing error
+  // (e.g. AEROFLEX -47%, CCL -55%, DIXON -55% cluster from QoQ/segment misread)
+  // ══════════════════════════════════════════════════════════════
+  for (const s of filtered) {
+    if (s.guidanceAnomalyFlag && (s.action === 'EXIT' || s.action === 'TRIM')) {
+      const oldAction = s.action;
+      s.action = 'WATCH';
+      s.decision = 'WATCH';
+      s.conflictResolution = (s.conflictResolution ? s.conflictResolution + ' · ' : '') +
+        `Anomaly gate: ${oldAction}→WATCH (guidance ${s.guidanceAnomalyFlag} — needs second source verification)`;
+    }
+    // EXTREME_UNVERIFIED guidance with HOLD should also be WATCH
+    if (s.guidanceAnomalyFlag === 'EXTREME_UNVERIFIED' && s.eventType === 'Guidance' && s.action === 'HOLD') {
+      s.action = 'WATCH';
+      s.decision = 'WATCH';
+      s.watchSubtype = 'ACTIVE';
+      s.conflictResolution = (s.conflictResolution ? s.conflictResolution + ' · ' : '') +
+        'Extreme guidance → WATCH-ACTIVE (verify before acting)';
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
   // ── EVENT NOVELTY / DEDUP FILTER ──
   // If same event type for same company seen in last 7 days → reduce weight 50%
   // If repeated across many companies → suppress
