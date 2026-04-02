@@ -1341,8 +1341,43 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               validBias.summary = `All ${rejectedCount} signals rejected by validation gate. System functioning correctly.`;
               validBias.netBias = 'Neutral';
             } else {
-              validBias.totalSignals = validSignals.length;
-              validBias.activeSectors = [...new Set(validSignals.map((s: any) => s.sector).filter(Boolean))];
+              // Recount ALL bias fields from validated signals
+              let hCount = 0, wCount = 0, bCount = 0, tCount = 0, hiCount = 0, pAlerts = 0, negCount = 0;
+              let bullish = 0, bearish = 0, totOrd = 0, totDeal = 0;
+              for (const vs of validSignals) {
+                if (vs.action === 'HOLD') hCount++;
+                else if (vs.action === 'WATCH') wCount++;
+                else if (vs.action === 'BUY' || vs.action === 'ADD') bCount++;
+                if (vs.action === 'TRIM' || vs.action === 'EXIT') tCount++;
+                if (vs.impactLevel === 'HIGH') hiCount++;
+                if (vs.isPortfolio && vs.signalCategory === 'ACTIONABLE') pAlerts++;
+                if (vs.isNegative) negCount++;
+                if (vs.sentiment === 'Bullish') bullish++;
+                if (vs.sentiment === 'Bearish') bearish++;
+                if (vs.source === 'order' && vs.valueCr) totOrd += vs.valueCr;
+                if (vs.source === 'deal' && vs.valueCr) totDeal += vs.valueCr;
+              }
+              validBias.totalSignals = actionableSignals.length;
+              validBias.totalObservations = monitorSignals.length;
+              validBias.holdCount = hCount;
+              validBias.watchCount = wCount;
+              validBias.monitorCount = monitorSignals.length;
+              validBias.buyCount = bCount; validBias.addCount = 0;
+              validBias.buyWatchCount = 0;
+              validBias.trimExitCount = tCount; validBias.reduceExitCount = tCount;
+              validBias.highImpactCount = hiCount;
+              validBias.portfolioAlerts = pAlerts;
+              validBias.negativeSignals = negCount;
+              validBias.totalOrderValueCr = Math.round(totOrd);
+              validBias.totalDealValueCr = Math.round(totDeal);
+              validBias.netBias = bullish > bearish + 2 ? 'Bullish' : bearish > bullish + 2 ? 'Bearish' : 'Neutral';
+              validBias.activeSectors = [...new Set(validSignals.map((s: any) => s.sector || s.segment).filter(Boolean))];
+              const biasParts: string[] = [];
+              if (actionableSignals.length > 0) biasParts.push(`${actionableSignals.length} Actionable`);
+              biasParts.push(`${monitorSignals.length} Monitor`);
+              biasParts.push(`${rejectedCount} Rejected`);
+              biasParts.push(`Net: ${validBias.netBias}`);
+              validBias.summary = biasParts.join(' · ');
             }
 
             // ── v6: Feed composition — max 10, prefer ECONOMIC, backfill with best available ──
