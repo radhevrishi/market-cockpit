@@ -2202,6 +2202,13 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       if (s.isNegative) whyParts.push('Negative catalyst detected');
     } else if (s.action === 'HOLD') {
       whyParts.push('Mixed signals — maintain position, monitor closely');
+      if (s.impactPct >= 3) whyParts.push(`${s.impactPct.toFixed(1)}% revenue impact`);
+    } else if (s.action === 'WATCH') {
+      whyParts.push('Insufficient conviction — monitor for confirmation');
+      if (s.confidenceType === 'HEURISTIC') whyParts.push('Low data confidence');
+      if (s.impactPct < 2) whyParts.push('Low revenue impact');
+    } else if (s.action === 'AVOID') {
+      whyParts.push('Weak signal quality — skip');
     }
     s.whyAction = whyParts.length > 0 ? whyParts.join(' · ') : undefined;
   }
