@@ -1354,6 +1354,21 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 s.action = 'WATCH';
               }
 
+              // WhyItMatters override for governance/strategic
+              if (s.signalClass === 'GOVERNANCE') {
+                const role = s.managementRole || 'Management';
+                const isSenior = SENIOR_ROLES.has(role);
+                s.whyItMatters = isSenior
+                  ? `${role} change at leadership level — monitor for strategy continuity`
+                  : `${s.eventType || 'Mgmt Change'} — routine governance event`;
+                s.whyAction = isSenior
+                  ? 'Monitor for strategic impact'
+                  : 'Low materiality governance event';
+              } else if (s.signalClass === 'STRATEGIC') {
+                const role = s.managementRole || 'Leadership';
+                s.whyItMatters = `${role} change — potential strategy shift · Watch for execution impact`;
+              }
+
               // Governance scoring penalty
               if (s.signalClass === 'GOVERNANCE') {
                 s.monitorScore = Math.round((s.monitorScore || 0) * 0.5);
