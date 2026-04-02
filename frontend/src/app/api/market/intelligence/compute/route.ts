@@ -3762,7 +3762,9 @@ async function runLockedCompute(watchlist: string[], portfolio: string[]): Promi
     // 2. Perform compute
     const response = await performComputeLogic(watchlist, portfolio);
 
-    if (!response || !response.signals || response.signals.length === 0) {
+    // v5: Check both signals (actionable) and observations for emptiness
+    const totalOutput = (response?.signals?.length || 0) + (response?.observations?.length || 0);
+    if (!response || totalOutput === 0) {
       // Don't overwrite good data with empty
       const existing = await kvGet<any>(PROD_SIGNALS_KEY);
       if (existing) {
@@ -3794,8 +3796,9 @@ async function runLockedCompute(watchlist: string[], portfolio: string[]): Promi
       ttl: STORE_TTL,
     }, STORE_TTL);
 
-    console.log(`[Compute] Done: ${response.signals.length} signals stored atomically`);
-    return { ok: true, signalCount: response.signals.length, computedAt: new Date().toISOString(), _debug: response._debug };
+    const totalStored = (response.signals?.length || 0) + (response.observations?.length || 0);
+    console.log(`[Compute] Done: ${response.signals.length} actionable + ${response.observations?.length || 0} observations stored atomically`);
+    return { ok: true, signalCount: totalStored, computedAt: new Date().toISOString(), _debug: response._debug };
   } catch (error) {
     console.error('[Compute] Pipeline error:', error);
     return { ok: false, signalCount: 0, computedAt: new Date().toISOString(), error: (error as Error).message };
