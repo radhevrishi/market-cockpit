@@ -100,6 +100,15 @@ interface Signal {
   fundamentalScore?: number;     // 0-100 Fundamental Delta
   signalStrengthScore?: number;  // 0-100 Signal Strength
   dataConfidenceScore?: number;  // 0-100 Data Confidence
+
+  // Institutional-grade fields
+  signalTier?: 'TIER1_VERIFIED' | 'TIER2_INFERRED';
+  contradictions?: string[];
+  whyAction?: string;
+  anomalyFlags?: string[];
+  sourceUrl?: string;
+  revenueGrowth?: number | null;
+  marginChange?: number | null;
 }
 
 interface CompanyTrend {
@@ -716,14 +725,37 @@ export default function CompanyIntelligencePage() {
                 </div>
 
                 {/* Row 3: WHY IT MATTERS — the institutional insight */}
-                <div style={{
-                  fontSize: '12px', color: s.isNegative ? RED : GREEN, fontWeight: 600, lineHeight: 1.5,
-                  padding: '6px 10px', marginBottom: '6px', borderRadius: '6px',
-                  backgroundColor: s.isNegative ? 'rgba(239,68,68,0.06)' : 'rgba(16,185,129,0.06)',
-                  borderLeft: `3px solid ${s.isNegative ? RED : GREEN}`,
-                }}>
-                  💡 {s.whyItMatters}
-                </div>
+                {/* Contradiction warnings */}
+                {s.contradictions && s.contradictions.length > 0 && (
+                  <div style={{
+                    fontSize: '11px', color: '#FF6B6B', fontWeight: 600, lineHeight: 1.4,
+                    padding: '4px 10px', marginBottom: '4px', borderRadius: '5px',
+                    backgroundColor: 'rgba(255,107,107,0.08)', borderLeft: '3px solid #FF6B6B',
+                  }}>
+                    ⚠ {s.contradictions.join(' · ')}
+                  </div>
+                )}
+
+                {/* WHY explanation */}
+                {s.whyAction ? (
+                  <div style={{
+                    fontSize: '12px', color: s.isNegative ? RED : GREEN, fontWeight: 600, lineHeight: 1.5,
+                    padding: '6px 10px', marginBottom: '6px', borderRadius: '6px',
+                    backgroundColor: s.isNegative ? 'rgba(239,68,68,0.06)' : 'rgba(16,185,129,0.06)',
+                    borderLeft: `3px solid ${s.isNegative ? RED : GREEN}`,
+                  }}>
+                    {s.action}: {s.whyAction}
+                  </div>
+                ) : (
+                  <div style={{
+                    fontSize: '12px', color: s.isNegative ? RED : GREEN, fontWeight: 600, lineHeight: 1.5,
+                    padding: '6px 10px', marginBottom: '6px', borderRadius: '6px',
+                    backgroundColor: s.isNegative ? 'rgba(239,68,68,0.06)' : 'rgba(16,185,129,0.06)',
+                    borderLeft: `3px solid ${s.isNegative ? RED : GREEN}`,
+                  }}>
+                    {s.whyItMatters}
+                  </div>
+                )}
 
                 {/* Row 4: Headline / context */}
                 <div style={{ fontSize: '11px', color: TEXT2, lineHeight: 1.5, paddingLeft: '2px' }}>
@@ -732,6 +764,27 @@ export default function CompanyIntelligencePage() {
 
                 {/* Row 5: Meta */}
                 <div style={{ display: 'flex', gap: '12px', marginTop: '6px', paddingLeft: '2px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  {/* Signal tier badge */}
+                  {s.signalTier && (
+                    <span style={{
+                      fontSize: '9px', fontWeight: 700, padding: '1px 6px', borderRadius: '3px',
+                      color: s.signalTier === 'TIER1_VERIFIED' ? '#10B981' : '#94A3B8',
+                      backgroundColor: s.signalTier === 'TIER1_VERIFIED' ? 'rgba(16,185,129,0.12)' : 'rgba(100,116,139,0.08)',
+                      border: `1px solid ${s.signalTier === 'TIER1_VERIFIED' ? 'rgba(16,185,129,0.3)' : 'rgba(100,116,139,0.2)'}`,
+                    }}>
+                      {s.signalTier === 'TIER1_VERIFIED' ? '✓ VERIFIED' : '~ INFERRED'}
+                    </span>
+                  )}
+                  {/* Anomaly flags */}
+                  {s.anomalyFlags && s.anomalyFlags.map((flag, i) => (
+                    <span key={i} style={{
+                      fontSize: '9px', fontWeight: 600, padding: '1px 5px', borderRadius: '3px',
+                      color: '#FF6B6B', backgroundColor: 'rgba(255,107,107,0.08)',
+                      border: '1px solid rgba(255,107,107,0.2)',
+                    }}>
+                      ⚠ {flag.replace(/_/g, ' ')}
+                    </span>
+                  ))}
                   {s.client && <span style={{ fontSize: '10px', color: PURPLE }}>Client: {s.client}</span>}
                   {s.segment && <span style={{ fontSize: '10px', color: ACCENT }}>Sector: {s.segment}</span>}
                   {s.timeline && <span style={{ fontSize: '10px', color: ORANGE }}>Timeline: {s.timeline}</span>}
@@ -862,7 +915,7 @@ export default function CompanyIntelligencePage() {
                       <div style={{ fontSize: '11px', color: TEXT2, marginTop: '2px' }}>{signal.headline.slice(0, 100)}</div>
                     </div>
                     <div style={{ textAlign: 'right', minWidth: '80px' }}>
-                      <div style={{ fontSize: '13px', fontWeight: 700, color: signal.isNegative ? RED : GREEN }}>{signal.valueCr >= 1000 ? `₹${(signal.valueCr/1000).toFixed(1)}K Cr` : `₹${Math.round(signal.valueCr)} Cr`}</div>
+                      <div style={{ fontSize: '13px', fontWeight: 700, color: signal.isNegative ? RED : GREEN }}>{fmtCr(signal.valueCr)}</div>
                       <div style={{ fontSize: '10px', color: TEXT3 }}>Score: {signal.weightedScore}</div>
                     </div>
                   </div>
@@ -889,6 +942,8 @@ export default function CompanyIntelligencePage() {
                       border: `1px solid ${s.isNegative ? `${RED}30` : s.isPortfolio ? `${PURPLE}40` : s.isWatchlist ? `${ACCENT}30` : BORDER}`,
                       borderRadius: '8px',
                       padding: '12px 16px',
+                      borderLeft: `3px solid ${s.signalTier === 'TIER1_VERIFIED' ? '#10B981' : s.isNegative ? '#EF4444' : '#475569'}`,
+                      opacity: s.signalTier === 'TIER2_INFERRED' ? 0.85 : 1,
                     }}>
                       {/* Row 1: Core info */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
@@ -986,9 +1041,20 @@ export default function CompanyIntelligencePage() {
                   </div>
                 </div>
 
-                {/* Row 2: Why It Matters */}
+                {/* Contradiction warnings */}
+                {s.contradictions && s.contradictions.length > 0 && (
+                  <div style={{
+                    fontSize: '10px', color: '#FF6B6B', fontWeight: 600, lineHeight: 1.3,
+                    padding: '3px 8px', marginTop: '4px', borderRadius: '4px',
+                    backgroundColor: 'rgba(255,107,107,0.06)', borderLeft: '2px solid #FF6B6B',
+                  }}>
+                    ⚠ {s.contradictions.join(' · ')}
+                  </div>
+                )}
+
+                {/* Row 2: WHY explanation (institutional-grade) */}
                 <div style={{ fontSize: '11px', color: s.isNegative ? '#F87171' : '#6EE7B7', marginTop: '5px', lineHeight: 1.4, fontWeight: 500 }}>
-                  💡 {s.whyItMatters}
+                  {s.whyAction || s.whyItMatters}
                 </div>
 
                 {/* Row 3: Headline */}
@@ -998,6 +1064,22 @@ export default function CompanyIntelligencePage() {
 
                 {/* Row 4: Meta tags */}
                 <div style={{ display: 'flex', gap: '10px', marginTop: '4px', alignItems: 'center' }}>
+                  {/* Signal tier */}
+                  {s.signalTier && (
+                    <span style={{
+                      fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
+                      color: s.signalTier === 'TIER1_VERIFIED' ? '#10B981' : '#64748B',
+                      backgroundColor: s.signalTier === 'TIER1_VERIFIED' ? 'rgba(16,185,129,0.1)' : 'rgba(100,116,139,0.06)',
+                    }}>
+                      {s.signalTier === 'TIER1_VERIFIED' ? '✓ VERIFIED' : '~ INFERRED'}
+                    </span>
+                  )}
+                  {/* Anomaly flags */}
+                  {s.anomalyFlags && s.anomalyFlags.length > 0 && (
+                    <span style={{ fontSize: '8px', fontWeight: 600, color: '#FF6B6B', padding: '1px 4px', borderRadius: '3px', backgroundColor: 'rgba(255,107,107,0.06)' }}>
+                      ⚠ {s.anomalyFlags.length} issue{s.anomalyFlags.length > 1 ? 's' : ''}
+                    </span>
+                  )}
                   {s.client && <span style={{ fontSize: '10px', color: PURPLE }}>Client: {s.client}</span>}
                   {s.segment && <span style={{ fontSize: '10px', color: ACCENT }}>{s.segment}</span>}
                   {s.timeline && <span style={{ fontSize: '10px', color: ORANGE }}>{s.timeline}</span>}

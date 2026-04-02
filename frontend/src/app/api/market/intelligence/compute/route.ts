@@ -306,6 +306,15 @@ interface IntelSignal {
   fundamentalScore?: number;     // Revenue/Margin/EPS delta
   signalStrengthScore?: number;  // Trend + direction + event type weight
   dataConfidenceScore?: number;  // Source reliability score
+
+  // Institutional-grade fields
+  signalTier?: 'TIER1_VERIFIED' | 'TIER2_INFERRED';  // Signal class separation
+  contradictions?: string[];      // Detected contradictions (e.g. "Revenue decline + BUY")
+  whyAction?: string;             // Explanation: "BUY despite margin decline due to..."
+  anomalyFlags?: string[];        // QA flags (e.g. "DUPLICATE_VALUE", "ZERO_IMPACT")
+  sourceUrl?: string;             // Provenance link to primary source
+  revenueGrowth?: number | null;  // For contradiction detection
+  marginChange?: number | null;   // For contradiction detection
 }
 
 interface CompanyTrend {
@@ -696,6 +705,7 @@ function classifyAction(
   isNegative: boolean = false,
   signalCount: number = 1,
   guidanceStrong: boolean = false,
+  fundamentalScore: number = 50,  // 3-axis fundamental score for veto logic
 ): ActionFlag {
   // ── CRITICAL OVERRIDE: Insolvency, defaults, regulatory action → EXIT ──
   if (isNegative && impactPct >= 10) return 'EXIT';
@@ -704,20 +714,22 @@ function classifyAction(
   if (isPortfolio && weightedScore < 25 && isNegative) return 'EXIT';
 
   // ── TRIM: ONLY for portfolio stocks with multiple negative conditions ──
-  // Requires: score < 45 AND negative earnings AND (negative guidance OR bearish sentiment)
   if (isPortfolio && weightedScore < 45 && isNegative && sentiment === 'Bearish') return 'TRIM';
   if (isPortfolio && weightedScore < 45 && isNegative && earningsScore !== null && earningsScore < 40) return 'TRIM';
 
-  // ── BUY: score >= 62 with confirmation ──
-  // (Calibrated for 3-axis composite which has tighter range than old scoring)
-  if (weightedScore >= 62 && signalCount >= 2 && !isNegative) return 'BUY';
-  if (weightedScore >= 62 && sentiment === 'Bullish' && !isNegative) return 'BUY';
-  // Strong guidance + strong earnings override
-  if (guidanceStrong && earningsScore !== null && earningsScore >= 70 && !isNegative) return 'BUY';
+  // ── FUNDAMENTAL VETO: declining fundamentals cap at ADD ──
+  // Revenue decline OR severe margin compression → cannot be BUY
+  const fundamentalWeak = fundamentalScore < 40;
+
+  // ── BUY: score >= 62 with confirmation AND no fundamental veto ──
+  if (!fundamentalWeak) {
+    if (weightedScore >= 62 && signalCount >= 2 && !isNegative) return 'BUY';
+    if (weightedScore >= 62 && sentiment === 'Bullish' && !isNegative) return 'BUY';
+    if (guidanceStrong && earningsScore !== null && earningsScore >= 70 && !isNegative) return 'BUY';
+  }
 
   // ── ADD: 48-61 score range ──
   if (weightedScore >= 48 && !isNegative) return 'ADD';
-  // Divergence: strong guidance + weak earnings = ADD (transition phase)
   if (guidanceStrong && sentiment === 'Bullish' && !isNegative && weightedScore >= 40) return 'ADD';
 
   // ── HOLD: 38-47 score range ──
@@ -1561,10 +1573,13 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     signal.weightedScore = threeAxis.composite;
     signal.score = threeAxis.composite;
     // Re-classify action using 3-axis composite (critical: old score was pre-normalization)
-    signal.action = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, earningsScore, threeAxis.composite, negative, 1, false);
+    signal.action = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, earningsScore, threeAxis.composite, negative, 1, false, threeAxis.fundamental);
     if (earningsBoost && signal.action !== 'BUY') signal.action = 'ADD';
     signal.decision = signal.action;
     signal.scoreClassification = classifyScore(threeAxis.composite);
+    // Institutional fields: signal tier, provenance
+    signal.signalTier = (confidenceType === 'ACTUAL' && valueSource !== 'HEURISTIC') ? 'TIER1_VERIFIED' : 'TIER2_INFERRED';
+    signal.sourceUrl = item.url || null;
 
     if (existing) {
       const existDate = new Date(existing.date).getTime();
@@ -1694,9 +1709,10 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     dealSignal.weightedScore = dealAxis.composite;
     dealSignal.score = dealAxis.composite;
     // Re-classify using 3-axis composite
-    dealSignal.action = classifyAction(dealImpactPct, sentiment, isWatchlist, isPortfolio, earningsScore, dealAxis.composite, isSell, 1, false);
+    dealSignal.action = classifyAction(dealImpactPct, sentiment, isWatchlist, isPortfolio, earningsScore, dealAxis.composite, isSell, 1, false, dealAxis.fundamental);
     dealSignal.decision = dealSignal.action;
     dealSignal.scoreClassification = classifyScore(dealAxis.composite);
+    dealSignal.signalTier = 'TIER1_VERIFIED';  // Exchange-confirmed deals
 
     const dealDedupKey = `${symbol}:${eventType}:${(deal.dealDate || getTodayDate()).slice(0, 10)}`;
     const existingDeal = dealDedupMap.get(dealDedupKey);
@@ -1878,8 +1894,11 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         guidanceSignal.weightedScore = guidAxis.composite;
         guidanceSignal.score = guidAxis.composite;
         // Re-classify using 3-axis composite
-        guidanceSignal.action = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, null, guidAxis.composite, isNeg, 1, guidanceStrong);
+        guidanceSignal.action = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, null, guidAxis.composite, isNeg, 1, guidanceStrong, guidAxis.fundamental);
         guidanceSignal.decision = guidanceSignal.action;
+        guidanceSignal.signalTier = ge.confidenceScore >= 70 ? 'TIER1_VERIFIED' : 'TIER2_INFERRED';
+        guidanceSignal.revenueGrowth = revG || null;
+        guidanceSignal.marginChange = marginBps ? marginBps / 100 : null;
         guidanceSignal.scoreClassification = classifyScore(guidAxis.composite);
 
         // Dedup against existing signals for same symbol
@@ -2016,7 +2035,9 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
           null, // earningsScore
           s.weightedScore, // Updated with stack bonus
           s.isNegative,
-          s.signalStackCount // Pass actual stack count
+          s.signalStackCount, // Pass actual stack count
+          false, // guidanceStrong
+          s.fundamentalScore || 50 // Pass fundamental for veto
         );
         // Promote ADD to BUY if re-classification suggests it
         if (newAction === 'BUY' || (newAction === 'ADD' && s.action !== 'BUY')) {
@@ -2080,6 +2101,84 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     }
   }
   trends.sort((a, b) => b.avgScore - a.avgScore);
+
+  // ── CONTRADICTION DETECTION & WHY EXPLANATION ENGINE ──
+  // Scan every signal for logical inconsistencies and generate explanations
+  const valueCountMap = new Map<number, string[]>(); // Track duplicate values
+  for (const s of filtered) {
+    // Track duplicate values for anomaly detection
+    if (s.valueCr > 0) {
+      const key = Math.round(s.valueCr);
+      if (!valueCountMap.has(key)) valueCountMap.set(key, []);
+      valueCountMap.get(key)!.push(s.symbol);
+    }
+
+    const contradictions: string[] = [];
+    const anomalyFlags: string[] = [];
+
+    // Contradiction: Revenue decline + positive action
+    if (s.revenueGrowth !== undefined && s.revenueGrowth !== null && s.revenueGrowth < -5 && (s.action === 'BUY' || s.action === 'ADD')) {
+      contradictions.push(`Revenue ${s.revenueGrowth.toFixed(0)}% decline conflicts with ${s.action}`);
+    }
+    // Contradiction: Margin decline + positive action
+    if (s.marginChange !== undefined && s.marginChange !== null && s.marginChange < -2 && (s.action === 'BUY' || s.action === 'ADD')) {
+      contradictions.push(`Margin ${s.marginChange.toFixed(1)}% compression with ${s.action}`);
+    }
+    // Contradiction: Bearish sentiment + BUY
+    if (s.sentiment === 'Bearish' && s.action === 'BUY') {
+      contradictions.push('Bearish sentiment conflicts with BUY');
+    }
+    // Anomaly: Zero value
+    if (s.valueCr === 0 && s.eventType !== 'Guidance' && s.eventType !== 'Mgmt Change') {
+      anomalyFlags.push('ZERO_VALUE');
+    }
+    // Anomaly: Zero impact
+    if (s.impactPct === 0 && s.impactLevel !== 'LOW') {
+      anomalyFlags.push('ZERO_IMPACT');
+    }
+    // Anomaly: Heuristic treated as high confidence
+    if (s.valueSource === 'HEURISTIC' && s.confidenceScore >= 70) {
+      anomalyFlags.push('HEURISTIC_HIGH_CONF');
+    }
+
+    s.contradictions = contradictions.length > 0 ? contradictions : undefined;
+    s.anomalyFlags = anomalyFlags.length > 0 ? anomalyFlags : undefined;
+
+    // Generate WHY explanation
+    const whyParts: string[] = [];
+    if (s.action === 'BUY' || s.action === 'ADD') {
+      if (s.revenueGrowth && s.revenueGrowth > 15) whyParts.push(`Strong revenue growth (+${s.revenueGrowth.toFixed(0)}%)`);
+      if (s.marginChange && s.marginChange > 0) whyParts.push(`Margin expansion (+${s.marginChange.toFixed(1)}%)`);
+      if (s.signalStackCount && s.signalStackCount >= 2) whyParts.push(`${s.signalStackCount} confirming signals`);
+      if (s.impactPct >= 5) whyParts.push(`${s.impactPct.toFixed(1)}% revenue impact`);
+      if (s.earningsBoost) whyParts.push('Strong earnings beat');
+      if (contradictions.length > 0) {
+        whyParts.push(`Despite: ${contradictions.join('; ')}`);
+        if (s.revenueGrowth && s.revenueGrowth > 10) whyParts.push('Revenue growth offsets margin weakness');
+        if (s.signalStackCount && s.signalStackCount >= 2) whyParts.push('Multiple signal confirmation overrides single negative');
+      }
+    } else if (s.action === 'EXIT' || s.action === 'TRIM') {
+      if (s.revenueGrowth && s.revenueGrowth < -10) whyParts.push(`Severe revenue decline (${s.revenueGrowth.toFixed(0)}%)`);
+      if (s.marginChange && s.marginChange < -2) whyParts.push(`Margin compression (${s.marginChange.toFixed(1)}%)`);
+      if (s.isNegative) whyParts.push('Negative catalyst detected');
+    } else if (s.action === 'HOLD') {
+      whyParts.push('Mixed signals — maintain position, monitor closely');
+    }
+    s.whyAction = whyParts.length > 0 ? whyParts.join(' · ') : undefined;
+  }
+
+  // Flag duplicate values as anomalies
+  for (const [val, syms] of valueCountMap) {
+    if (syms.length >= 5 && val > 0) {
+      // 5+ companies with exact same ₹ value = suspicious template data
+      for (const s of filtered) {
+        if (Math.round(s.valueCr) === val && s.valueSource === 'HEURISTIC') {
+          if (!s.anomalyFlags) s.anomalyFlags = [];
+          s.anomalyFlags.push(`DUPLICATE_VALUE_${val}Cr`);
+        }
+      }
+    }
+  }
 
   // ── Portfolio Impact Scoring: (positionWeight) × (signalScore) ──
   // positionWeight defaults to equal-weight (1/portfolioSize) when position sizes unavailable
