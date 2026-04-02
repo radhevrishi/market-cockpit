@@ -267,7 +267,8 @@ export default function CompanyIntelligencePage() {
   const [showNoise, setShowNoise] = useState(false);
   const [noHighConfSignals, setNoHighConfSignals] = useState(false);
   const [noActionableSignals, setNoActionableSignals] = useState(false);
-  const [observations, setObservations] = useState<Signal[]>([]);
+  const [monitorList, setMonitorList] = useState<Signal[]>([]);
+  const [productionStatus, setProductionStatus] = useState<string>('');
 
   const fetchData = useCallback(async (forceRefresh = false) => {
     // Tab cache: if data was fetched recently and not forcing refresh, use cached data
@@ -328,7 +329,9 @@ export default function CompanyIntelligencePage() {
       setBias(data.bias || null);
       setNoHighConfSignals(!!data.noHighConfSignals);
       setNoActionableSignals(!!data.noActionableSignals);
-      setObservations(data.observations || []);
+      setMonitorList(data.observations || []);
+      setProductionStatus(data._productionStatus || data._stats ?
+        `${data._stats?.actionable || 0} actionable · ${data._stats?.monitor || 0} monitor · ${data._stats?.rejected || 0} rejected` : '');
       if (data.debug) setDebugInfo(data.debug);
       setIsStale(!!data.stale);
       const ts = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
@@ -617,19 +620,21 @@ export default function CompanyIntelligencePage() {
         </div>
       )}
 
-      {(noHighConfSignals || noActionableSignals) && !loading && (
+      {noActionableSignals && !loading && (
         <div style={{
-          padding: '10px 16px', marginBottom: '12px', borderRadius: '8px',
-          backgroundColor: noActionableSignals ? 'rgba(239,68,68,0.08)' : 'rgba(249,115,22,0.08)',
-          border: `1px solid ${noActionableSignals ? 'rgba(239,68,68,0.25)' : ORANGE + '40'}`,
-          display: 'flex', alignItems: 'center', gap: '8px',
+          padding: '12px 16px', marginBottom: '16px', borderRadius: '8px',
+          backgroundColor: 'rgba(16,185,129,0.06)',
+          border: '1px solid rgba(16,185,129,0.2)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         }}>
-          <AlertTriangle size={16} color={noActionableSignals ? RED : ORANGE} />
-          <span style={{ fontSize: '12px', color: noActionableSignals ? RED : ORANGE, fontWeight: 600 }}>
-            {noActionableSignals
-              ? 'No validated actionable signals today. All items below are observations under review.'
-              : 'No high-confidence actionable signals today. All signals below require additional validation.'}
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '13px', color: GREEN, fontWeight: 600 }}>
+              No actionable signals — system functioning correctly
+            </span>
+          </div>
+          {productionStatus && (
+            <span style={{ fontSize: '10px', color: TEXT3 }}>{productionStatus}</span>
+          )}
         </div>
       )}
 
@@ -637,7 +642,7 @@ export default function CompanyIntelligencePage() {
       {top3.length > 0 && (
         <div style={{ marginBottom: '20px' }}>
           <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, letterSpacing: '0.05em', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {noActionableSignals ? 'SIGNALS UNDER REVIEW (NON-ACTIONABLE)' : 'TOP ACTIONABLE SIGNALS'}
+            {noActionableSignals ? 'NO ACTIONABLE SIGNALS' : `ACTIONABLE SIGNALS (${signals.filter(s => s.signalCategory === 'ACTIONABLE').length})`}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {top3.map((s, i) => (
@@ -766,31 +771,9 @@ export default function CompanyIntelligencePage() {
                       ⚡ EARNINGS BOOST
                     </span>
                   )}
-                  {/* v5: Confidence layer bar */}
-                  {s.confidenceLayer !== undefined && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <div style={{ width: '50px', height: '6px', borderRadius: '3px', backgroundColor: 'rgba(100,116,139,0.2)', overflow: 'hidden' }}>
-                        <div style={{
-                          width: `${s.confidenceLayer}%`, height: '100%', borderRadius: '3px',
-                          backgroundColor: s.confidenceLayer >= 100 ? GREEN : s.confidenceLayer >= 70 ? YELLOW : ORANGE,
-                        }} />
-                      </div>
-                      <span style={{ fontSize: '9px', color: TEXT3 }}>{s.confidenceLayer}%</span>
-                    </div>
-                  )}
                   {s.verified && (
                     <span style={{ fontSize: '9px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(16,185,129,0.15)', color: GREEN }}>
                       ✓ VERIFIED
-                    </span>
-                  )}
-                  {!s.verified && s.signalCategory === 'OBSERVATION' && (
-                    <span style={{ fontSize: '9px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(249,115,22,0.12)', color: ORANGE }}>
-                      OBSERVATION
-                    </span>
-                  )}
-                  {s.guidanceScope && s.guidanceScope !== 'UNKNOWN' && s.guidanceScope !== 'COMPANY' && (
-                    <span style={{ fontSize: '9px', fontWeight: 600, padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(251,191,36,0.12)', color: YELLOW }}>
-                      {s.guidanceScope}-level
                     </span>
                   )}
                 </div>
@@ -1226,29 +1209,11 @@ export default function CompanyIntelligencePage() {
                       ⚡{s.signalStackCount}
                     </span>
                   )}
-                  {s.verified !== undefined && (
+                  {s.verified && (
                     <span style={{
                       fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
-                      backgroundColor: s.verified ? 'rgba(16,185,129,0.12)' : 'rgba(100,116,139,0.08)',
-                      color: s.verified ? GREEN : TEXT3,
-                    }}>
-                      {s.verified ? '✓' : 'OBS'}
-                    </span>
-                  )}
-                  {s.confidenceLayer !== undefined && (
-                    <span style={{ fontSize: '8px', color: TEXT3 }}>
-                      {s.confidenceLayer}%
-                    </span>
-                  )}
-                  {s.dataSource && (
-                    <span style={{ fontSize: '8px', color: TEXT3, padding: '1px 4px', borderRadius: '3px', backgroundColor: 'rgba(100,116,139,0.08)' }}>
-                      {s.dataSource}
-                    </span>
-                  )}
-                  {s.confidenceScore !== undefined && s.confidenceScore <= 50 && (
-                    <span style={{ fontSize: '8px', color: ORANGE, fontWeight: 600 }}>
-                      low conf.
-                    </span>
+                      backgroundColor: 'rgba(16,185,129,0.12)', color: GREEN,
+                    }}>✓</span>
                   )}
                   {s.scoreDelta !== undefined && s.scoreDelta !== 0 && (
                     <span style={{
@@ -1710,53 +1675,35 @@ export default function CompanyIntelligencePage() {
         </div>
       )}
 
-      {/* ── NON-ACTIONABLE OBSERVATIONS ── */}
-      {observations.length > 0 && (
+      {/* ── MONITOR LIST ── */}
+      {monitorList.length > 0 && (
         <div style={{ marginTop: '24px' }}>
-          <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, letterSpacing: '0.05em', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            NON-ACTIONABLE OBSERVATIONS ({observations.length})
-            <span style={{ fontSize: '9px', fontWeight: 400, color: TEXT3, letterSpacing: 'normal' }}>
-              Excluded from rankings — data quality or scope issues
+          <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, letterSpacing: '0.05em', marginBottom: '12px' }}>
+            MONITOR LIST ({monitorList.length})
+            <span style={{ fontSize: '9px', fontWeight: 400, color: TEXT3, letterSpacing: 'normal', marginLeft: '8px' }}>
+              Clean events — pending materiality confirmation
             </span>
           </div>
-          {observations.slice(0, 20).map((s, i) => (
-            <div key={`obs-${i}`} style={{
-              padding: '8px 12px', marginBottom: '6px', borderRadius: '8px',
-              backgroundColor: 'rgba(100,116,139,0.04)',
-              border: '1px solid rgba(100,116,139,0.1)',
-              opacity: 0.7,
+          {monitorList.slice(0, 30).map((s, i) => (
+            <div key={`mon-${i}`} style={{
+              padding: '6px 12px', marginBottom: '4px', borderRadius: '6px',
+              backgroundColor: 'rgba(100,116,139,0.03)',
+              border: '1px solid rgba(100,116,139,0.08)',
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ fontSize: '12px', fontWeight: 700, color: TEXT1 }}>{s.symbol}</span>
-                  <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(100,116,139,0.12)', color: TEXT3 }}>
+                  <span style={{ fontSize: '11px', fontWeight: 700, color: TEXT1 }}>{s.symbol}</span>
+                  <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(100,116,139,0.1)', color: TEXT3 }}>
                     {s.eventType}
                   </span>
-                  {s.observationReason && (
-                    <span style={{ fontSize: '9px', color: ORANGE }}>
-                      {s.observationReason}
+                  {s.headline && (
+                    <span style={{ fontSize: '10px', color: TEXT3 }}>
+                      {s.headline.substring(0, 80)}{s.headline.length > 80 ? '...' : ''}
                     </span>
                   )}
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  {s.confidenceLayer !== undefined && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-                      <div style={{ width: '30px', height: '4px', borderRadius: '2px', backgroundColor: 'rgba(100,116,139,0.2)', overflow: 'hidden' }}>
-                        <div style={{ width: `${s.confidenceLayer}%`, height: '100%', borderRadius: '2px', backgroundColor: s.confidenceLayer >= 70 ? YELLOW : ORANGE }} />
-                      </div>
-                      <span style={{ fontSize: '8px', color: TEXT3 }}>{s.confidenceLayer}%</span>
-                    </div>
-                  )}
-                  <span style={{ fontSize: '9px', color: TEXT3 }}>
-                    [DATA QUALITY: {s.dataQuality || 'UNKNOWN'}]
-                  </span>
-                </div>
+                <span style={{ fontSize: '9px', color: TEXT3 }}>MONITOR</span>
               </div>
-              {s.headline && (
-                <div style={{ fontSize: '10px', color: TEXT3, marginTop: '4px', lineHeight: '1.4' }}>
-                  {s.headline.substring(0, 120)}{s.headline.length > 120 ? '...' : ''}
-                </div>
-              )}
             </div>
           ))}
         </div>

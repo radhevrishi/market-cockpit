@@ -1072,70 +1072,73 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             }
           }
 
-          // v5: Apply 3-flag verification post-processing if fields are missing
-          if (responseData.signals && Array.isArray(responseData.signals) && responseData.signals.length > 0 && !responseData.signals[0].verified) {
+          // FINAL: Apply 3-layer validation gate to cached data
+          if (responseData.signals && Array.isArray(responseData.signals)) {
+            const rawSignals = responseData.signals;
             const actionableSignals: any[] = [];
-            const observationSignals: any[] = [];
+            const monitorSignals: any[] = [];
+            let rejectedCount = 0;
 
-            for (const s of responseData.signals) {
-              // SRC_VERIFIED
-              const srcVerified = (
-                s.sourceTier === 'VERIFIED' ||
-                s.confidenceType === 'ACTUAL' ||
-                s.dataSource === 'nse' || s.dataSource === 'NSE' ||
-                s.source === 'deal'
-              );
-              // NUM_VALIDATED
-              const hasBrokenData = s.dataQuality === 'BROKEN';
-              const hasTemplatePattern = !!s.templatePattern || !!s.heuristicSuppressed;
-              const hasExtremeAnomaly = s.guidanceAnomalyFlag === 'EXTREME_UNVERIFIED' || s.guidanceAnomalyFlag === 'INCONSISTENT_WITH_HISTORY';
-              const numValidated = !hasBrokenData && !hasTemplatePattern && !hasExtremeAnomaly && s.dataQuality !== 'LOW';
-              // SCOPE_VALIDATED
-              const isNonGuidance = s.eventType !== 'Guidance' && !(s.headline || '').toLowerCase().includes('guidance');
-              const scopeKnown = s.guidanceScope && s.guidanceScope !== 'UNKNOWN';
-              const periodKnown = s.guidancePeriod && s.guidancePeriod !== 'UNKNOWN';
-              const scopeValidated = isNonGuidance || (scopeKnown && periodKnown);
+            for (const s of rawSignals) {
+              // ── Validation Gate ──
+              const sourceExists = s.confidenceType === 'ACTUAL' || s.sourceTier === 'VERIFIED' ||
+                s.dataSource === 'nse' || s.dataSource === 'NSE' || s.source === 'deal';
+              const hasTemplate = !!s.templatePattern || !!s.heuristicSuppressed || !!s.identicalPctFlag;
+              const isBroken = s.dataQuality === 'BROKEN';
+              const hasAnomaly = s.guidanceAnomalyFlag === 'EXTREME_UNVERIFIED' ||
+                s.guidanceAnomalyFlag === 'INCONSISTENT_WITH_HISTORY';
+              const isInferred = s.confidenceType === 'HEURISTIC' || s.confidenceType === 'INFERRED' ||
+                s.valueSource === 'HEURISTIC' || s.inferenceUsed;
+              const isGuidance = s.eventType === 'Guidance' || (s.headline || '').toLowerCase().includes('guidance');
+              const periodOk = !isGuidance || (s.guidanceScope && s.guidanceScope !== 'UNKNOWN' &&
+                s.guidancePeriod && s.guidancePeriod !== 'UNKNOWN');
 
-              const verified = srcVerified && numValidated && scopeValidated;
-              const confidenceLayer = Math.round((srcVerified ? 40 : 0) + (numValidated ? 30 : 0) + (scopeValidated ? 30 : 0));
+              // Hard rejection checks
+              if (!sourceExists || hasTemplate || isBroken || hasAnomaly) { rejectedCount++; continue; }
+              if (isGuidance && !periodOk) { rejectedCount++; continue; }
 
-              let signalCategory = 'OBSERVATION';
-              let observationReason: string | undefined;
+              // Materiality
+              const revImpact = Math.abs(s.impactPct || 0);
+              const isMaterial = (isGuidance && periodOk && !isInferred) ||
+                (s.source === 'deal' && s.valueCr > 0) ||
+                (revImpact > 5 && s.confidenceType === 'ACTUAL');
 
-              if (hasBrokenData) {
-                observationReason = 'Data quality broken: parsing failure or template artifact';
-              } else if (hasExtremeAnomaly) {
-                observationReason = 'Extreme anomaly: unverified or inconsistent';
-              } else if (!scopeValidated && !isNonGuidance) {
-                observationReason = 'Scope/period unknown: cannot validate % change';
-              } else if (verified) {
-                signalCategory = 'ACTIONABLE';
-              } else if (!numValidated) {
-                observationReason = 'Number not validated: extraction may be incorrect';
-              } else {
-                observationReason = 'Incomplete validation';
+              if (isInferred && !isMaterial) { rejectedCount++; continue; }
+
+              // Zero Inference Policy: sanitize inferred numbers
+              if (isInferred) {
+                s.whyItMatters = (s.whyItMatters || '').replace(/₹[\d,.]+\s*(?:Cr|crore|cr)/gi, '[UNVERIFIED AMOUNT]')
+                  .replace(/\d+\.?\d*%\s*(?:impact|revenue|of revenue|of mcap)/gi, '[UNVERIFIED %]');
               }
 
-              s.srcVerified = srcVerified;
-              s.numValidated = numValidated;
-              s.scopeValidated = scopeValidated;
-              s.verified = verified;
-              s.confidenceLayer = confidenceLayer;
-              s.signalCategory = signalCategory;
-              s.observationReason = observationReason;
+              s.verified = !isInferred && isMaterial;
+              s.confidenceLayer = s.verified ? 100 : (isMaterial ? 60 : 40);
+              s.signalCategory = (isMaterial && !isInferred) ? 'ACTIONABLE' : 'MONITOR';
 
-              if (signalCategory === 'ACTIONABLE') {
+              if (s.signalCategory === 'ACTIONABLE') {
                 actionableSignals.push(s);
               } else {
-                observationSignals.push(s);
+                monitorSignals.push(s);
               }
             }
 
+            // Sort by actionScore
+            actionableSignals.sort((a: any, b: any) => (b.actionScore || 0) - (a.actionScore || 0));
+            monitorSignals.sort((a: any, b: any) => (b.actionScore || 0) - (a.actionScore || 0));
+
+            const totalProcessed = actionableSignals.length + monitorSignals.length + rejectedCount;
+            const rejectedPct = totalProcessed > 0 ? (rejectedCount / totalProcessed) * 100 : 0;
+            const productionReady = actionableSignals.length <= 5 && rejectedPct > 90;
+
             responseData = {
               ...responseData,
-              signals: actionableSignals,
-              observations: observationSignals,
-              noActionableSignals: actionableSignals.filter((s: any) => s.action !== 'WATCH' && s.action !== 'AVOID').length === 0,
+              signals: actionableSignals.slice(0, 5),
+              observations: monitorSignals.slice(0, 50),
+              top3: actionableSignals.slice(0, 5),
+              noActionableSignals: actionableSignals.length === 0,
+              noHighConfSignals: actionableSignals.length === 0,
+              _productionStatus: productionReady ? 'PRODUCTION_READY' : 'REFINEMENT_REQUIRED',
+              _stats: { actionable: actionableSignals.length, monitor: monitorSignals.length, rejected: rejectedCount, rejectedPct: Math.round(rejectedPct) },
             };
           }
 

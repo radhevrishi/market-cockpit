@@ -353,7 +353,7 @@ interface IntelSignal {
   scopeValidated?: boolean;     // Correct period classification (FY/Q/segment)
   verified?: boolean;           // = srcVerified AND numValidated AND scopeValidated
   confidenceLayer?: number;     // Weighted: SRC 40% + NUM 30% + SCOPE 30%
-  signalCategory?: 'ACTIONABLE' | 'OBSERVATION';  // Strict separation
+  signalCategory?: 'ACTIONABLE' | 'MONITOR' | 'REJECTED' | 'OBSERVATION';  // FINAL: 3 dispositions
   observationReason?: string;   // Why it's non-actionable
 }
 
@@ -1507,78 +1507,119 @@ function detectExtremeValue(revenueGrowth: number | null, impactPct: number): st
 }
 
 // ══════════════════════════════════════════════════════════════
-// ── v5: 3-FLAG VERIFICATION MODEL ──
-// SRC_VERIFIED: document exists & authentic
-// NUM_VALIDATED: extracted correctly (no mismatch, within historical range)
-// SCOPE_VALIDATED: correct period classification (FY/Q/segment known)
-// VERIFIED = all three true
+// ── FINAL: 3-LAYER VALIDATION GATE ──
+// LAYER A: Ingest (raw data, no decisions)
+// LAYER B: Validation Gate (strict filter — pass or DROP)
+// LAYER C: Decision Engine (only clean input)
+//
+// VALID EVENT = source_exists AND period_classified AND
+//               number_origin==EXPLICIT AND no_template_pattern
+// If ANY fail → DROP completely (not observe, not watch, not downgrade)
 // ══════════════════════════════════════════════════════════════
 
-function computeV5Flags(signal: IntelSignal): {
-  srcVerified: boolean;
-  numValidated: boolean;
-  scopeValidated: boolean;
-  verified: boolean;
-  confidenceLayer: number;
-  signalCategory: 'ACTIONABLE' | 'OBSERVATION';
-  observationReason?: string;
+type SignalDisposition = 'ACTIONABLE' | 'MONITOR' | 'REJECTED';
+
+function validateSignal(signal: IntelSignal): {
+  disposition: SignalDisposition;
+  rejectReason?: string;
+  isInferred: boolean;
+  isMaterial: boolean;
 } {
-  // SRC_VERIFIED: Was the source document real and from a known provider?
-  const srcVerified = (
-    signal.sourceTier === 'VERIFIED' ||
+  // ── LAYER B: Validation Gate ──
+
+  // Check 1: Source exists and is real
+  const sourceExists = (
     signal.confidenceType === 'ACTUAL' ||
+    signal.sourceTier === 'VERIFIED' ||
     signal.dataSource === 'nse' || signal.dataSource === 'NSE' ||
     signal.source === 'deal'
   );
-
-  // NUM_VALIDATED: Was the number parsed correctly? Not anomalous?
-  const hasBrokenData = signal.dataQuality === 'BROKEN';
-  const hasTemplatePattern = !!signal.templatePattern || !!signal.heuristicSuppressed;
-  const hasExtremeAnomaly = signal.guidanceAnomalyFlag === 'EXTREME_UNVERIFIED' ||
-    signal.guidanceAnomalyFlag === 'INCONSISTENT_WITH_HISTORY';
-  const numValidated = !hasBrokenData && !hasTemplatePattern && !hasExtremeAnomaly &&
-    signal.dataQuality !== 'LOW';
-
-  // SCOPE_VALIDATED: Is the period classification known and correct?
-  const scopeKnown = signal.guidanceScope !== undefined && signal.guidanceScope !== 'UNKNOWN';
-  const periodKnown = signal.guidancePeriod !== undefined && signal.guidancePeriod !== 'UNKNOWN';
-  // For non-guidance signals (deals, announcements), scope is inherently validated
-  const isNonGuidance = signal.eventType !== 'Guidance' && !signal.headline?.toLowerCase().includes('guidance');
-  const scopeValidated = isNonGuidance || (scopeKnown && periodKnown);
-
-  const verified = srcVerified && numValidated && scopeValidated;
-
-  // Confidence layer: SRC 40% + NUM 30% + SCOPE 30%
-  const confidenceLayer = Math.round(
-    (srcVerified ? 40 : 0) +
-    (numValidated ? 30 : 0) +
-    (scopeValidated ? 30 : 0)
-  );
-
-  // Signal category determination
-  let signalCategory: 'ACTIONABLE' | 'OBSERVATION' = 'OBSERVATION';
-  let observationReason: string | undefined;
-
-  if (hasBrokenData) {
-    observationReason = 'Data quality broken: parsing failure or template artifact';
-  } else if (hasExtremeAnomaly) {
-    observationReason = 'Extreme anomaly: unverified or inconsistent with history';
-  } else if (hasTemplatePattern) {
-    observationReason = 'Template pattern detected: likely upstream artifact';
-  } else if (!scopeValidated && signal.eventType === 'Guidance') {
-    observationReason = 'Scope/period unknown: cannot validate % change';
-  } else if (!srcVerified) {
-    observationReason = 'Source unverified: document authenticity not confirmed';
-  } else if (verified) {
-    signalCategory = 'ACTIONABLE';
-  } else if (srcVerified && !numValidated) {
-    observationReason = 'Number not validated: extraction may be incorrect';
-  } else {
-    // srcVerified but scope not validated on guidance
-    observationReason = 'Incomplete validation: scope or period unclear';
+  if (!sourceExists) {
+    return { disposition: 'REJECTED', rejectReason: 'source_not_verified', isInferred: true, isMaterial: false };
   }
 
-  return { srcVerified, numValidated, scopeValidated, verified, confidenceLayer, signalCategory, observationReason };
+  // Check 2: No template pattern
+  const hasTemplate = !!signal.templatePattern || !!signal.heuristicSuppressed || !!signal.identicalPctFlag;
+  if (hasTemplate) {
+    return { disposition: 'REJECTED', rejectReason: 'template_pattern_detected', isInferred: true, isMaterial: false };
+  }
+
+  // Check 3: Data quality not BROKEN
+  if (signal.dataQuality === 'BROKEN') {
+    return { disposition: 'REJECTED', rejectReason: 'data_quality_broken', isInferred: true, isMaterial: false };
+  }
+
+  // Check 4: No extreme anomaly
+  if (signal.guidanceAnomalyFlag === 'EXTREME_UNVERIFIED' ||
+      signal.guidanceAnomalyFlag === 'INCONSISTENT_WITH_HISTORY' ||
+      signal.guidanceAnomalyFlag === 'QOQ_MISREAD' ||
+      signal.guidanceAnomalyFlag === 'SEGMENT_NOT_TOTAL') {
+    return { disposition: 'REJECTED', rejectReason: 'guidance_anomaly', isInferred: true, isMaterial: false };
+  }
+
+  // Check 5: Number origin — is the value EXPLICIT or INFERRED?
+  const isInferred = (
+    signal.confidenceType === 'HEURISTIC' ||
+    signal.confidenceType === 'INFERRED' ||
+    signal.valueSource === 'HEURISTIC' ||
+    signal.inferenceUsed === true
+  );
+
+  // Check 6: Period classified (for guidance signals)
+  const isGuidance = signal.eventType === 'Guidance' || (signal.headline || '').toLowerCase().includes('guidance');
+  const periodClassified = !isGuidance || (
+    signal.guidanceScope !== undefined && signal.guidanceScope !== 'UNKNOWN' &&
+    signal.guidancePeriod !== undefined && signal.guidancePeriod !== 'UNKNOWN'
+  );
+
+  if (isGuidance && !periodClassified) {
+    return { disposition: 'REJECTED', rejectReason: 'period_not_classified', isInferred, isMaterial: false };
+  }
+
+  // ── LAYER C: Materiality Check ──
+  // Material if: revenue impact >5% confirmed, OR explicit guidance, OR material order/contract, OR margin change quantified
+  const revImpact = Math.abs(signal.impactPct || 0);
+  const hasExplicitGuidance = isGuidance && periodClassified && !isInferred;
+  const hasMaterialOrder = (signal.eventType === 'Order Win' || signal.eventType === 'Contract') && revImpact > 5 && !isInferred;
+  const hasMaterialDeal = signal.source === 'deal' && signal.valueCr > 0;
+  const hasQuantifiedImpact = revImpact > 5 && signal.confidenceType === 'ACTUAL';
+
+  const isMaterial = hasExplicitGuidance || hasMaterialOrder || hasMaterialDeal || hasQuantifiedImpact;
+
+  // If value is inferred AND not material by other criteria → REJECTED
+  if (isInferred && !isMaterial) {
+    return { disposition: 'REJECTED', rejectReason: 'inferred_non_material', isInferred, isMaterial: false };
+  }
+
+  // ── DISPOSITION ──
+  if (isMaterial && !isInferred) {
+    return { disposition: 'ACTIONABLE', isInferred: false, isMaterial: true };
+  }
+
+  if (isMaterial && isInferred) {
+    // Material but inferred → MONITOR (show event type, hide numbers)
+    return { disposition: 'MONITOR', isInferred: true, isMaterial: true };
+  }
+
+  // Source verified, not template, not broken, but not material
+  if (!isInferred) {
+    return { disposition: 'MONITOR', isInferred: false, isMaterial: false };
+  }
+
+  return { disposition: 'REJECTED', rejectReason: 'insufficient_validation', isInferred, isMaterial: false };
+}
+
+// FINAL: Strip inferred numbers from display — Zero Inference Policy
+function sanitizeForDisplay(signal: IntelSignal, isInferred: boolean): void {
+  if (isInferred) {
+    // Don't show precise numbers for inferred values
+    signal.whyItMatters = signal.whyItMatters?.replace(/₹[\d,.]+\s*(?:Cr|crore|cr)/gi, '[UNVERIFIED AMOUNT]')
+      .replace(/\d+\.?\d*%\s*(?:impact|revenue|of revenue|of mcap)/gi, '[UNVERIFIED %]') || '';
+    // Keep the event type visible but mark amounts as unverified
+    if (signal.inferenceUsed) {
+      signal.headline = signal.headline?.replace(/₹[\d,.]+\s*(?:Cr|crore|cr)/gi, '[UNVERIFIED]') || signal.headline;
+    }
+  }
 }
 
 // v5: Map old action labels to new severity-based labels
@@ -3582,55 +3623,72 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       s.actionScore = computeActionScore(s.weightedScore, s.sourceTier!, s.dataQuality!);
     }
 
-    // v5: Compute 3-flag verification and categorize
-    const v5 = computeV5Flags(s);
-    s.srcVerified = v5.srcVerified;
-    s.numValidated = v5.numValidated;
-    s.scopeValidated = v5.scopeValidated;
-    s.verified = v5.verified;
-    s.confidenceLayer = v5.confidenceLayer;
-    s.signalCategory = v5.signalCategory;
-    s.observationReason = v5.observationReason;
+    // FINAL: Apply 3-layer validation gate
+    const validation = validateSignal(s);
+    s.signalCategory = validation.disposition === 'ACTIONABLE' ? 'ACTIONABLE' :
+                        validation.disposition === 'MONITOR' ? 'MONITOR' : 'REJECTED';
+    s.verified = validation.disposition === 'ACTIONABLE';
+    s.confidenceLayer = validation.disposition === 'ACTIONABLE' ? 100 :
+                         validation.disposition === 'MONITOR' ? 60 : 0;
+    s.observationReason = validation.rejectReason;
 
-    // v5: Remap action for non-verified signals
-    if (!v5.verified && s.dataQuality === 'BROKEN') {
-      s.action = 'WATCH';
-      s.signalCategory = 'OBSERVATION';
+    // Zero Inference Policy: sanitize display
+    sanitizeForDisplay(s, validation.isInferred);
+
+    // FINAL: If REJECTED → will be dropped from output entirely
+    // If MONITOR with inferred numbers → numbers stripped
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // ── FINAL: 3-LAYER OUTPUT ──
+  // ACTIONABLE: fully validated, material, explicit numbers
+  // MONITOR: clean but non-material or inferred
+  // REJECTED: dropped entirely — never in output
+  // ══════════════════════════════════════════════════════════════
+
+  const actionableSignals: IntelSignal[] = [];
+  const monitorSignals: IntelSignal[] = [];
+  let rejectedCount = 0;
+
+  for (const s of filtered) {
+    if (s.signalCategory === 'ACTIONABLE') {
+      actionableSignals.push(s);
+    } else if (s.signalCategory === 'MONITOR') {
+      monitorSignals.push(s);
+    } else {
+      rejectedCount++;
+      // REJECTED = hard drop. Does not exist in output.
     }
   }
 
-  // ── v5: SEPARATE ACTIONABLE vs OBSERVATIONS ──
-  const actionableSignals = filtered.filter(s => s.signalCategory === 'ACTIONABLE' && s.verified);
-  const observationSignals = filtered.filter(s => s.signalCategory === 'OBSERVATION' || !s.verified);
+  // Sort actionable by actionScore
+  actionableSignals.sort((a, b) => (b.actionScore || 0) - (a.actionScore || 0));
+  monitorSignals.sort((a, b) => (b.actionScore || 0) - (a.actionScore || 0));
 
-  // ── v5: TOP ACTIONABLE RANKING (strict: only verified + validated) ──
-  const actionablePool = actionableSignals
-    .filter(s => s.action !== 'WATCH' && s.action !== 'AVOID')
-    .sort((a, b) => (b.actionScore || 0) - (a.actionScore || 0));
+  // Top signals: max 5 actionable
+  const top3 = actionableSignals.slice(0, 5);
+  const noActionableSignals = actionableSignals.length === 0;
+  const noHighConfSignals = actionableSignals.length === 0;
 
-  let top3 = actionablePool.slice(0, 3);
+  // ── Production Status Check ──
+  const totalActive = actionableSignals.length + monitorSignals.length;
+  const totalProcessed = totalActive + rejectedCount;
+  const rejectedPct = totalProcessed > 0 ? (rejectedCount / totalProcessed) * 100 : 0;
+  const hybridStates = 0; // We eliminated all hybrid states
+  const inferredInActive = actionableSignals.filter(s => s.inferenceUsed).length;
 
-  // If no actionable signals, show top verified observations as "under review"
-  const noActionableSignals = actionablePool.length === 0;
-  if (top3.length === 0) {
-    // Show top observations but clearly marked
-    top3 = observationSignals
-      .filter(s => s.action !== 'AVOID')
-      .sort((a, b) => (b.confidenceLayer || 0) - (a.confidenceLayer || 0))
-      .slice(0, 3);
-  }
-
-  // v5: Check for high-confidence actionable
-  const highConfActionable = actionableSignals.filter(s =>
-    s.verified && s.action !== 'WATCH' && s.action !== 'AVOID'
+  const productionReady = (
+    actionableSignals.length <= 5 &&
+    rejectedPct > 90 &&
+    hybridStates === 0 &&
+    inferredInActive === 0
   );
-  const noHighConfSignals = highConfActionable.length === 0;
 
   const sectorSet = new Set<string>();
   let totalOrderValueCr = 0;
   let totalDealValueCr = 0;
   let holdCount = 0;
-  let monitorCount = 0;
+  let monitorCount = monitorSignals.length;
   let reduceExitCount = 0;
   let highImpactCount = 0;
   let bullishCount = 0;
@@ -3638,12 +3696,11 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   let portfolioAlerts = 0;
   let negativeSignals = 0;
 
-  for (const s of filtered) {
+  for (const s of [...actionableSignals, ...monitorSignals]) {
     if (s.segment) sectorSet.add(s.segment);
     if (s.source === 'order' && s.valueCr) totalOrderValueCr += s.valueCr;
     if (s.source === 'deal' && s.valueCr) totalDealValueCr += s.valueCr;
     if (s.action === 'HOLD') holdCount++;
-    if (s.action === 'WATCH') monitorCount++;
     if (s.action === 'TRIM' || s.action === 'EXIT') reduceExitCount++;
     if (s.impactLevel === 'HIGH') highImpactCount++;
     if (s.sentiment === 'Bullish') bullishCount++;
@@ -3657,11 +3714,9 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   const activeSectors = Array.from(sectorSet).slice(0, 5);
 
   const biasParts: string[] = [];
-  if (highImpactCount > 0) biasParts.push(`${highImpactCount} High Impact`);
   if (actionableSignals.length > 0) biasParts.push(`${actionableSignals.length} Actionable`);
-  if (observationSignals.length > 0) biasParts.push(`${observationSignals.length} Observations`);
-  if (negativeSignals > 0) biasParts.push(`${negativeSignals} ⚠ Negative`);
-  if (portfolioAlerts > 0) biasParts.push(`${portfolioAlerts} Portfolio Alert${portfolioAlerts > 1 ? 's' : ''}`);
+  if (monitorSignals.length > 0) biasParts.push(`${monitorSignals.length} Monitor`);
+  biasParts.push(`${rejectedCount} Rejected`);
   biasParts.push(`Net: ${netBias}`);
   const biasStr = biasParts.join(' · ');
 
@@ -3669,12 +3724,11 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     netBias, highImpactCount, activeSectors,
     buyWatchCount: 0, holdCount, monitorCount, reduceExitCount,
     totalSignals: actionableSignals.length,
-    totalObservations: observationSignals.length,
+    totalObservations: monitorSignals.length,
     totalOrderValueCr: Math.round(totalOrderValueCr),
     totalDealValueCr: Math.round(totalDealValueCr),
     portfolioAlerts, negativeSignals,
     summary: biasStr,
-    // Legacy compat
     buyCount: 0, addCount: 0, watchCount: monitorCount, trimExitCount: reduceExitCount,
   };
 
@@ -3692,7 +3746,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       for (const ps of prevSignals.signals) {
         prevScoreMap.set(ps.symbol, ps.weightedScore);
       }
-      for (const s of filtered) {
+      for (const s of [...actionableSignals, ...monitorSignals]) {
         const prev = prevScoreMap.get(s.symbol);
         if (prev !== undefined) {
           s.scoreDelta = s.weightedScore - prev;
@@ -3703,14 +3757,14 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
 
   // ── Sector Intelligence Layer ──
   const sectorScoreMap = new Map<string, { total: number; count: number }>();
-  for (const s of filtered) {
+  for (const s of [...actionableSignals, ...monitorSignals]) {
     const sector = s.segment || 'Other';
     const existing = sectorScoreMap.get(sector) || { total: 0, count: 0 };
     existing.total += s.weightedScore;
     existing.count++;
     sectorScoreMap.set(sector, existing);
   }
-  for (const s of filtered) {
+  for (const s of [...actionableSignals, ...monitorSignals]) {
     const sector = s.segment || 'Other';
     const sectorData = sectorScoreMap.get(sector);
     if (sectorData && sectorData.count > 0) {
@@ -3720,18 +3774,18 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   }
 
   const duration = Date.now() - startTime;
-  console.log(`[Compute] Done: ${filtered.length} signals, ${top3.length} top3, ${trends.length} trends in ${duration}ms`);
+  console.log(`[Compute] FINAL: ${actionableSignals.length} actionable, ${monitorSignals.length} monitor, ${rejectedCount} rejected (${rejectedPct.toFixed(0)}%) in ${duration}ms | STATUS=${productionReady ? 'PRODUCTION_READY' : 'REFINEMENT_REQUIRED'}`);
 
   return {
     top3,
-    signals: actionableSignals.slice(0, 100),
-    observations: observationSignals.slice(0, 100),
+    signals: actionableSignals.slice(0, 5),
+    observations: monitorSignals.slice(0, 50),
     trends: trends.slice(0, 10),
     bias,
     updatedAt: new Date().toISOString(),
     noHighConfSignals,
     noActionableSignals,
-    _debug: debug,
+    _debug: { ...debug, rejectedCount, rejectedPct: Math.round(rejectedPct), productionReady, status: productionReady ? 'PRODUCTION_READY' : 'REFINEMENT_REQUIRED' },
   };
 }
 
