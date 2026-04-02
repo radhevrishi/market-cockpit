@@ -729,6 +729,8 @@ function classifyAction(
   }
 
   // ── ADD: 52-61 score range (narrowed from 48 to reduce pile-up) ──
+  // Extended veto: fundamentalWeak blocks ADD too → cap at HOLD
+  if (fundamentalWeak && !isNegative && weightedScore >= 52) return 'HOLD';
   if (weightedScore >= 52 && !isNegative) return 'ADD';
   if (guidanceStrong && sentiment === 'Bullish' && !isNegative && weightedScore >= 45) return 'ADD';
 
