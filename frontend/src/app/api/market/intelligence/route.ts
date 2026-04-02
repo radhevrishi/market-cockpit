@@ -60,6 +60,23 @@ const ROLE_SCORES: Record<string, number> = {
   'CEO': 100, 'CFO': 90, 'MD': 90, 'Chairman': 85, 'Director': 30, 'Other': 10,
 };
 
+// Governance materiality ladder
+function governanceMateriality(role: string): 'HIGH' | 'MEDIUM' | 'LOW' | 'VERY_LOW' {
+  if (['CEO', 'CFO', 'MD', 'Chairman', 'Managing Director', 'COO', 'CTO', 'President', 'Promoter'].includes(role)) return 'HIGH';
+  if (['Director', 'Whole-Time Director', 'Independent Director'].includes(role)) return 'MEDIUM';
+  if (['VP', 'Company Secretary', 'Auditor', 'Other'].includes(role)) return 'LOW';
+  return 'VERY_LOW';
+}
+
+// False classification guard
+function isRealMgmtChange(headline?: string, desc?: string): boolean {
+  const text = ((headline || '') + ' ' + (desc || '')).toLowerCase();
+  if (text.includes('no change in management') || text.includes('no change in control') || text.includes('no material change')) return false;
+  const hasChangeKw = /appoint|resign|step.?down|relinquish|cessation|retire|join|elevat|promot|succeed|replac|interim|addition|designat|re-?appoint/.test(text);
+  if (!hasChangeKw && text.length > 20) return false;
+  return true;
+}
+
 // ==================== MONEYCONTROL NEWS SCRAPER ====================
 // Fallback data source when NSE API fails/returns empty
 
@@ -1245,9 +1262,14 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 if (s.whyAction) s.whyAction = stripFinText(s.whyAction);
               }
 
-              // ── v6: DECISION ENGINE ──
+              // ── v6.1: DECISION ENGINE (materiality ladder, unverified cap, verified recovery) ──
               s.signalClass = s.signalClass || classifySignalClass(s.eventType, s.headline, s.whyItMatters);
               s.managementRole = s.managementRole || extractMgmtRole(s.headline, s.whyItMatters);
+
+              // False classification guard
+              if (s.signalClass === 'GOVERNANCE' && !isRealMgmtChange(s.headline, s.whyItMatters)) {
+                s.signalClass = 'COMPLIANCE';
+              }
 
               // Materiality score
               let ecoImpact = 0;
@@ -1266,37 +1288,69 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               const recW = s.freshness === 'FRESH' ? 10 : s.freshness === 'RECENT' ? 7 : 3;
               s.materialityScore = Math.min(100, Math.round(ecoImpact + evtW + confW + mgmtW + recW));
 
-              // Visibility: COMPLIANCE=HIDDEN, GOVERNANCE=DIMMED (unless senior), ECONOMIC/STRATEGIC=VISIBLE
-              if (s.signalClass === 'COMPLIANCE') {
+              // Governance materiality ladder
+              if (s.signalClass === 'GOVERNANCE') {
+                const govLevel = governanceMateriality(s.managementRole || 'Other');
+                if (govLevel === 'LOW' || govLevel === 'VERY_LOW') {
+                  s.materialityScore = Math.round(s.materialityScore * 0.3);
+                  s.visibility = 'HIDDEN';
+                } else if (govLevel === 'MEDIUM') {
+                  s.materialityScore = Math.round(s.materialityScore * 0.6);
+                  s.visibility = 'DIMMED';
+                } else {
+                  s.visibility = 'VISIBLE';
+                }
+              } else if (s.signalClass === 'COMPLIANCE') {
                 s.visibility = 'HIDDEN';
-              } else if (s.signalClass === 'GOVERNANCE') {
-                s.visibility = SENIOR_ROLES.has(s.managementRole) ? 'VISIBLE' : 'DIMMED';
               } else {
                 s.visibility = 'VISIBLE';
               }
 
-              // Action from materiality — works for ALL visible/dimmed signals
-              const ms = s.materialityScore || 0;
+              // Verified signal recovery
+              const isVerifiedSrc = s.confidenceType === 'ACTUAL' || s.sourceTier === 'VERIFIED' ||
+                s.dataSource === 'nse' || s.dataSource === 'NSE';
+              const isKeyEvt = ['Guidance', 'Earnings', 'Order Win', 'Contract', 'Capex/Expansion', 'M&A'].includes(s.eventType);
+              if (isVerifiedSrc && isKeyEvt) {
+                s.materialityScore = Math.max(s.materialityScore, 55);
+                s.visibility = 'VISIBLE';
+                const hasImpact = Math.abs(s.impactPct || 0) > 10;
+                const strongCat = s.catalystStrength === 'STRONG' || s.catalystStrength === 'MODERATE';
+                if ((s.confidenceScore >= 70 && hasImpact) || (isVerifiedSrc && strongCat)) {
+                  s.signalCategory = 'ACTIONABLE';
+                }
+              }
+
+              // Unverified ranking cap
+              const confSc = s.dataConfidenceScore || s.confidenceScore || 50;
+              if (confSc < 40) {
+                s.visibility = s.visibility === 'VISIBLE' ? 'DIMMED' : s.visibility;
+                s.materialityScore = Math.min(s.materialityScore, 40);
+              } else if (confSc < 50) {
+                s.materialityScore = Math.min(s.materialityScore, 55);
+              }
+
+              // Action from materiality
+              const mscore = s.materialityScore || 0;
               if ((s.signalClass === 'GOVERNANCE' || s.signalClass === 'STRATEGIC') && (s.impactPct || 0) === 0) {
-                s.action = ms >= 45 ? 'HOLD' : 'WATCH';
-              } else if (ms >= 75) {
+                s.action = mscore >= 45 ? 'HOLD' : 'WATCH';
+              } else if (mscore >= 75) {
                 s.action = s.isNegative ? 'TRIM' : 'BUY';
-              } else if (ms >= 60) {
+              } else if (mscore >= 60) {
                 s.action = s.isNegative ? 'HOLD' : 'ADD';
-              } else if (ms >= 45) {
+              } else if (mscore >= 45) {
                 s.action = 'HOLD';
               } else {
                 s.action = 'WATCH';
               }
 
-              // Governance scoring penalty (but don't kill entirely)
+              // Governance scoring penalty
               if (s.signalClass === 'GOVERNANCE') {
                 s.monitorScore = Math.round((s.monitorScore || 0) * 0.5);
                 s.monitorTier = s.monitorScore >= 80 ? 'HIGH' : s.monitorScore >= 50 ? 'MED' : 'LOW';
                 s.catalystStrength = 'WEAK';
               }
 
-              // Only hard-reject COMPLIANCE (truly zero-value)
+              // HIDDEN → rejected
               if (s.visibility === 'HIDDEN') {
                 rejectedCount++;
                 continue;
@@ -1408,7 +1462,13 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               const uniqueGov = govSigs.filter((s: any) => !usedSymbols.has(s.symbol));
               composedFeed.push(...uniqueGov);
             }
-            composedFeed.sort((a: any, b: any) => (b.materialityScore || 0) - (a.materialityScore || 0));
+            // Quality sort: verified first, then by materialityScore
+            composedFeed.sort((a: any, b: any) => {
+              const aV = (a.confidenceType === 'ACTUAL' || a.sourceTier === 'VERIFIED') ? 1 : 0;
+              const bV = (b.confidenceType === 'ACTUAL' || b.sourceTier === 'VERIFIED') ? 1 : 0;
+              if (aV !== bV) return bV - aV;
+              return (b.materialityScore || 0) - (a.materialityScore || 0);
+            });
             composedFeed = composedFeed.slice(0, 10);
 
             const composedActionable = composedFeed.filter((s: any) => s.signalCategory === 'ACTIONABLE');

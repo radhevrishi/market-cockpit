@@ -669,6 +669,27 @@ function extractManagementRole(headline?: string, description?: string): string 
   return 'Other';
 }
 
+// Governance materiality ladder — determines real impact of mgmt changes
+function governanceMateriality(role: string): 'HIGH' | 'MEDIUM' | 'LOW' | 'VERY_LOW' {
+  if (['CEO', 'CFO', 'MD', 'Chairman', 'Managing Director'].includes(role)) return 'HIGH';
+  if (['COO', 'CTO', 'President', 'Promoter'].includes(role)) return 'HIGH';
+  if (['Director', 'Whole-Time Director', 'Independent Director'].includes(role)) return 'MEDIUM';
+  if (['VP', 'Company Secretary', 'Auditor', 'Other'].includes(role)) return 'LOW';
+  return 'VERY_LOW';
+}
+
+// False classification guard — reject fake mgmt change signals
+function isRealMgmtChange(headline?: string, description?: string): boolean {
+  const text = ((headline || '') + ' ' + (description || '')).toLowerCase();
+  // Explicit contradictions
+  if (text.includes('no change in management') || text.includes('no change in control') ||
+      text.includes('no material change')) return false;
+  // Must have appointment/change keywords
+  const hasChangeKeywords = /appoint|resign|step.?down|relinquish|cessation|retire|join|elevat|promot|succeed|replac|interim|addition|designat|re-?appoint/.test(text);
+  if (!hasChangeKeywords && text.length > 20) return false;  // Long text with no change keywords = not mgmt change
+  return true;
+}
+
 // Event type weights for materiality scoring
 const EVENT_TYPE_WEIGHTS: Record<string, number> = {
   'Guidance': 100, 'Earnings': 90, 'Capex/Expansion': 75, 'Order Win': 70, 'Contract': 70,
@@ -877,7 +898,6 @@ function enforceFeedComposition(signals: any[]): any[] {
   const economic = signals.filter(s => s.signalClass === 'ECONOMIC');
   const strategic = signals.filter(s => s.signalClass === 'STRATEGIC');
   const governance = signals.filter(s => s.signalClass === 'GOVERNANCE');
-  // COMPLIANCE is never included (already filtered out)
 
   // Sort each by materialityScore descending
   economic.sort((a, b) => (b.materialityScore || 0) - (a.materialityScore || 0));
@@ -887,7 +907,7 @@ function enforceFeedComposition(signals: any[]): any[] {
   let feed: any[] = [];
 
   if (economic.length >= 6) {
-    // Rich data: enforce composition rules (60% eco, 20% gov max)
+    // Rich data: enforce composition (60% eco, max 2 gov)
     feed.push(...economic.slice(0, 6));
     feed.push(...governance.slice(0, 2));
     feed.push(...strategic.slice(0, Math.max(0, MAX_FEED - feed.length)));
@@ -895,7 +915,7 @@ function enforceFeedComposition(signals: any[]): any[] {
       feed.push(...economic.slice(6, 6 + (MAX_FEED - feed.length)));
     }
   } else {
-    // Sparse data: show best available signals, deduplicated by company
+    // Sparse data: show best available, deduplicated by company
     feed.push(...economic);
     feed.push(...strategic);
     const usedSymbols = new Set(feed.map(s => s.symbol));
@@ -903,8 +923,34 @@ function enforceFeedComposition(signals: any[]): any[] {
     feed.push(...uniqueGov);
   }
 
-  // Final sort by materialityScore
-  feed.sort((a, b) => (b.materialityScore || 0) - (a.materialityScore || 0));
+  // Quality enforcement: ensure verified signals rank above unverified
+  feed.sort((a, b) => {
+    // Primary: verified source gets priority
+    const aVerified = (a.confidenceType === 'ACTUAL' || a.sourceTier === 'VERIFIED') ? 1 : 0;
+    const bVerified = (b.confidenceType === 'ACTUAL' || b.sourceTier === 'VERIFIED') ? 1 : 0;
+    if (aVerified !== bVerified) return bVerified - aVerified;
+    // Secondary: materialityScore
+    return (b.materialityScore || 0) - (a.materialityScore || 0);
+  });
+
+  // Cap governance at max 2 in top 5
+  const top5Gov = feed.slice(0, 5).filter(s => s.signalClass === 'GOVERNANCE');
+  if (top5Gov.length > 2) {
+    // Move excess governance down
+    let govCount = 0;
+    const reordered: any[] = [];
+    const deferred: any[] = [];
+    for (const s of feed) {
+      if (s.signalClass === 'GOVERNANCE') {
+        govCount++;
+        if (govCount <= 2) reordered.push(s);
+        else deferred.push(s);
+      } else {
+        reordered.push(s);
+      }
+    }
+    feed = [...reordered, ...deferred];
+  }
 
   return feed.slice(0, MAX_FEED);
 }
@@ -3996,36 +4042,83 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     // EVENT CLASS SANITIZATION: strip synthetic numbers from non-financial events
     sanitizeByEventClass(s);
 
-    // ── v6: DECISION ENGINE ──
-    // 1. Classify signal
+    // ── v6: DECISION ENGINE (v6.1 — materiality ladder, unverified cap, verified recovery) ──
+    // 1. Classify signal + extract role
     s.signalClass = s.signalClass || classifySignalClass(s.eventType, s.headline, s.whyItMatters);
     s.managementRole = extractManagementRole(s.headline, s.whyItMatters);
 
-    // 2. Compute materiality score (replaces monitorScore as primary rank)
-    s.materialityScore = computeMaterialityScore(s);
+    // 2. False classification guard: reject fake mgmt changes
+    if (s.signalClass === 'GOVERNANCE' && !isRealMgmtChange(s.headline, s.whyItMatters)) {
+      s.signalClass = 'COMPLIANCE';  // Demote to compliance (hidden)
+    }
 
-    // 3. Determine visibility
-    s.visibility = determineVisibility(s);
+    // 3. Governance materiality ladder
+    if (s.signalClass === 'GOVERNANCE') {
+      const govLevel = governanceMateriality(s.managementRole || 'Other');
+      if (govLevel === 'LOW' || govLevel === 'VERY_LOW') {
+        s.materialityScore = Math.round((s.materialityScore || 0) * 0.3);
+        s.visibility = 'HIDDEN';  // Auditor/VP/HR/Secretary = hide
+      } else if (govLevel === 'MEDIUM') {
+        s.materialityScore = Math.round((s.materialityScore || 0) * 0.6);
+        s.visibility = 'DIMMED';
+      } else {
+        s.visibility = 'VISIBLE';  // CEO/CFO/MD = show
+      }
+    }
 
-    // 4. Override action from materiality
+    // 4. Compute materiality score (replaces monitorScore as primary rank)
+    s.materialityScore = s.materialityScore || computeMaterialityScore(s);
+
+    // 5. Determine visibility (if not already set by governance ladder)
+    if (!s.visibility) {
+      s.visibility = determineVisibility(s);
+    }
+
+    // 6. Verified signal recovery: VERIFIED source + key event types get boosted
+    const isVerifiedSource = s.confidenceType === 'ACTUAL' || s.sourceTier === 'VERIFIED' ||
+      s.dataSource === 'nse' || s.dataSource === 'NSE';
+    const isKeyEventType = ['Guidance', 'Earnings', 'Order Win', 'Contract', 'Capex/Expansion', 'M&A'].includes(s.eventType);
+    if (isVerifiedSource && isKeyEventType) {
+      s.materialityScore = Math.max(s.materialityScore || 0, 55);  // Floor at 55
+      s.visibility = 'VISIBLE';  // Force visible
+      if (s.signalCategory === 'MONITOR') {
+        // Check relaxed actionable threshold
+        const hasImpact = Math.abs(s.impactPct || 0) > 10;
+        const strongCatalyst = s.catalystStrength === 'STRONG' || s.catalystStrength === 'MODERATE';
+        if ((s.confidenceScore >= 70 && hasImpact) || (isVerifiedSource && strongCatalyst)) {
+          s.signalCategory = 'ACTIONABLE';
+        }
+      }
+    }
+
+    // 7. Unverified ranking cap: low confidence can't lead the feed
+    const confScore = s.dataConfidenceScore || s.confidenceScore || 50;
+    if (confScore < 40) {
+      s.visibility = s.visibility === 'VISIBLE' ? 'DIMMED' : s.visibility;  // Below fold
+      s.materialityScore = Math.min(s.materialityScore || 0, 40);  // Cap at 40
+    } else if (confScore < 50) {
+      s.materialityScore = Math.min(s.materialityScore || 0, 55);  // Can't be top 3
+    }
+
+    // 8. Override action from materiality
     if (s.signalCategory !== 'REJECTED') {
       s.action = actionFromMateriality(s);
     }
 
-    // 5. Override whyItMatters with structured text
+    // 9. Override whyItMatters with structured text
     const newWhy = buildWhyThisMatters(s);
     if (newWhy && newWhy.length > 10) {
       s.whyItMatters = newWhy;
     }
 
-    // 6. Penalize template scoring for Mgmt Change (but don't kill entirely)
+    // 10. Governance scoring penalty
     if (s.signalClass === 'GOVERNANCE') {
       s.monitorScore = Math.round((s.monitorScore || 0) * 0.5);
       s.monitorTier = s.monitorScore >= 80 ? 'HIGH' : s.monitorScore >= 50 ? 'MED' : 'LOW';
       s.catalystStrength = 'WEAK';
     }
 
-    // 7. HIDDEN signals get pushed to REJECTED
+    // 11. HIDDEN signals get pushed to REJECTED
     if (s.visibility === 'HIDDEN') {
       s.signalCategory = 'REJECTED';
     }
