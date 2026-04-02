@@ -952,30 +952,41 @@ const SIGNAL_HALF_LIFE: Record<string, number> = {
 // HARD RULE: <5% impact can NEVER be STRONG (prevents false conviction)
 function classifyCatalystStrength(impactPct: number, pctMcap: number | null): 'WEAK' | 'MODERATE' | 'STRONG' {
   const mcapImpact = pctMcap || 0;
-  if (impactPct < 5 && mcapImpact < 3) {
-    // Hard cap: sub-5% impact is MODERATE at best
-    return impactPct >= 3 || mcapImpact >= 1 ? 'MODERATE' : 'WEAK';
+  // Hard cap: if BOTH revenue impact <5% AND mcap impact <5% → cannot be STRONG
+  if (impactPct < 5 && mcapImpact < 5) {
+    return (impactPct >= 3 || mcapImpact >= 1) ? 'MODERATE' : 'WEAK';
   }
-  if (impactPct >= 10 || mcapImpact >= 5) return 'STRONG';
-  if (impactPct >= 5 || mcapImpact >= 3) return 'MODERATE';
+  if (impactPct >= 10 || mcapImpact >= 10) return 'STRONG';
+  if (impactPct >= 5 || mcapImpact >= 5) return 'MODERATE';
   return 'WEAK';
 }
 
 // ── EVIDENCE TIER classification ──
 // Tier A: Exchange filings, earnings transcripts → BUY/ADD/EXIT allowed
-// Tier B: Reputed media, analyst reports → WATCH/ADD (limited)
-// Tier C: Heuristic/inferred → WATCH only
+// Tier B: Reputed media, analyst reports, exchange filings with heuristic values → WATCH/ADD
+// Tier C: Pure heuristic from non-exchange source → WATCH only
 function classifyEvidenceTier(
   confidenceType: string, valueSource: string, dataSource?: string
 ): 'TIER_A' | 'TIER_B' | 'TIER_C' {
+  // Exchange source (NSE) is always at least TIER_B — the SOURCE is authoritative
+  const isExchange = dataSource === 'nse' || dataSource === 'NSE';
+  const isGuidance = dataSource === 'Guidance';
+
   if (confidenceType === 'ACTUAL' && (valueSource === 'EXACT' || valueSource === 'AGGREGATED')) {
     return 'TIER_A';
   }
-  if (confidenceType === 'ACTUAL' || confidenceType === 'INFERRED') {
-    if (dataSource === 'nse' || dataSource === 'NSE' || dataSource === 'Guidance') return 'TIER_A';
-    if (dataSource === 'moneycontrol' || dataSource === 'Moneycontrol') return 'TIER_B';
-    return 'TIER_B';
-  }
+  // Exchange filings with any confidence type → TIER_A (source is authoritative)
+  if (isExchange && confidenceType === 'ACTUAL') return 'TIER_A';
+  // Exchange with heuristic value → TIER_B (source good, value uncertain)
+  if (isExchange) return 'TIER_B';
+  // Guidance with high confidence → TIER_A
+  if (isGuidance && confidenceType === 'ACTUAL') return 'TIER_A';
+  if (isGuidance) return 'TIER_B';
+  // Reputed media → TIER_B
+  if (dataSource === 'moneycontrol' || dataSource === 'Moneycontrol') return 'TIER_B';
+  // Inferred from known sources → TIER_B
+  if (confidenceType === 'INFERRED') return 'TIER_B';
+  // Everything else → TIER_C
   return 'TIER_C';
 }
 
@@ -2392,17 +2403,17 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   // Suppress from main feed, force to NOISE/WATCH
   // ══════════════════════════════════════════════════════════════
   for (const [val, syms] of valueCountMap) {
-    if (syms.length >= 3 && val > 0) {
-      // 3+ companies with exact same ₹ value = suspicious template/LLM artifact
+    if (syms.length >= 4 && val > 0) {
+      // 4+ companies with exact same ₹ value = suspicious template/LLM artifact
       for (const s of filtered) {
         if (Math.round(s.valueCr) === val && s.valueSource === 'HEURISTIC') {
           if (!s.anomalyFlags) s.anomalyFlags = [];
           s.anomalyFlags.push(`TEMPLATE_PATTERN_${val}Cr`);
           s.heuristicSuppressed = true;
-          // Cannot be BUY/ADD based on templated data
+          // Cannot be BUY/ADD based on templated data — cap at HOLD
           if (s.action === 'BUY' || s.action === 'ADD') {
-            s.action = 'WATCH';
-            s.decision = 'WATCH';
+            s.action = 'HOLD';
+            s.decision = 'HOLD';
             s.conflictResolution = `Suppressed: ₹${val}Cr repeated across ${syms.length} companies (likely template)`;
           }
         }
@@ -2418,10 +2429,10 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   // ══════════════════════════════════════════════════════════════
   for (const s of filtered) {
     if (s.evidenceTier === 'TIER_C') {
-      // Tier C: WATCH only — no BUY/ADD/EXIT
+      // Tier C: cap at HOLD — no BUY/ADD
       if (s.action === 'BUY' || s.action === 'ADD') {
-        s.action = 'WATCH';
-        s.decision = 'WATCH';
+        s.action = 'HOLD';
+        s.decision = 'HOLD';
         s.conflictResolution = (s.conflictResolution ? s.conflictResolution + ' · ' : '') +
           'Evidence Tier C: insufficient evidence for conviction';
       }
