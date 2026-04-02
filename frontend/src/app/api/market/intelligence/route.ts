@@ -1073,8 +1073,13 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
           }
 
           // FINAL: Apply 3-layer validation gate to cached data
-          if (responseData.signals && Array.isArray(responseData.signals)) {
-            const rawSignals = responseData.signals;
+          // Merge signals + observations from v5 cache (v5 split them; we need ALL for reprocessing)
+          const allCachedSignals = [
+            ...(Array.isArray(responseData.signals) ? responseData.signals : []),
+            ...(Array.isArray(responseData.observations) ? responseData.observations : []),
+          ];
+          if (allCachedSignals.length > 0) {
+            const rawSignals = allCachedSignals;
             const actionableSignals: any[] = [];
             const monitorSignals: any[] = [];
             let rejectedCount = 0;
