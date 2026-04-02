@@ -287,6 +287,11 @@ interface IntelSignal {
 
   valueSource?: 'EXACT' | 'AGGREGATED' | 'HEURISTIC';
   dataSource?: string;
+  catalystStrength?: 'WEAK' | 'MODERATE' | 'STRONG';
+  conflictResolution?: string;
+  sectorCyclical?: boolean;
+  priceReactionNote?: string;
+  sector?: string;
 
   signalStackCount?: number;
   signalStackLevel?: 'STRONG' | 'BUILDING' | 'WEAK';
@@ -706,6 +711,8 @@ function classifyAction(
   signalCount: number = 1,
   guidanceStrong: boolean = false,
   fundamentalScore: number = 50,  // 3-axis fundamental score for veto logic
+  revenueGrowth: number | null = null,  // NEW
+  marginChange: number | null = null,    // NEW
 ): ActionFlag {
   // ── CRITICAL OVERRIDE: Insolvency, defaults, regulatory action → EXIT ──
   if (isNegative && impactPct >= 10) return 'EXIT';
@@ -717,24 +724,36 @@ function classifyAction(
   if (isPortfolio && weightedScore < 45 && isNegative && sentiment === 'Bearish') return 'TRIM';
   if (isPortfolio && weightedScore < 45 && isNegative && earningsScore !== null && earningsScore < 40) return 'TRIM';
 
+  // ── ISSUE 1: REVENUE COLLAPSE OVERRIDE (>25% decline forces EXIT/AVOID) ──
+  // Revenue collapse is a dominant Tier 1 variable — overrides all bullish signals
+  if (revenueGrowth !== null && revenueGrowth < -25) {
+    if (isPortfolio) return 'EXIT';
+    return 'AVOID';
+  }
+
   // ── FUNDAMENTAL VETO: declining fundamentals cap at ADD ──
-  // Revenue decline OR severe margin compression → cannot be BUY
   const fundamentalWeak = fundamentalScore < 40;
 
-  // ── BUY: score >= 62 with confirmation AND no fundamental veto ──
-  if (!fundamentalWeak) {
+  // ── ISSUE 4: MARGIN-REVENUE CONSTRAINT ──
+  // Revenue decline > 15% requires margin expansion > 2x decline magnitude to allow ADD
+  const revDeclineSevere = revenueGrowth !== null && revenueGrowth < -15;
+  const marginOffsets = marginChange !== null && marginChange > 0 && Math.abs(marginChange) > 2 * Math.abs(revenueGrowth || 0) / 100;
+  const revenueVeto = revDeclineSevere && !marginOffsets;
+
+  // ── BUY: score >= 62 with confirmation AND no fundamental veto AND no revenue collapse ──
+  if (!fundamentalWeak && !revenueVeto) {
     if (weightedScore >= 62 && signalCount >= 2 && !isNegative) return 'BUY';
     if (weightedScore >= 62 && sentiment === 'Bullish' && !isNegative) return 'BUY';
     if (guidanceStrong && earningsScore !== null && earningsScore >= 70 && !isNegative) return 'BUY';
   }
 
-  // ── ADD: 52-61 score range (narrowed from 48 to reduce pile-up) ──
-  // Extended veto: fundamentalWeak blocks ADD too → cap at HOLD
-  if (fundamentalWeak && !isNegative && weightedScore >= 52) return 'HOLD';
+  // ── ADD: 52-61 score range ──
+  // Extended veto: fundamentalWeak OR revenueVeto blocks ADD → cap at HOLD
+  if ((fundamentalWeak || revenueVeto) && !isNegative && weightedScore >= 52) return 'HOLD';
   if (weightedScore >= 52 && !isNegative) return 'ADD';
   if (guidanceStrong && sentiment === 'Bullish' && !isNegative && weightedScore >= 45) return 'ADD';
 
-  // ── HOLD: 38-51 score range (widened from 38-47 for better distribution) ──
+  // ── HOLD: 38-51 score range ──
   if (weightedScore >= 38 && weightedScore < 52) return 'HOLD';
 
   // ── WATCH: 28-37 score range ──
@@ -747,7 +766,7 @@ function classifyAction(
 
 // ==================== TIME DECAY ====================
 
-function computeTimeWeight(dateStr: string): number {
+function computeTimeWeight(dateStr: string, eventType?: string): number {
   try {
     let d: Date;
     if (dateStr.includes('-') && dateStr.length === 10 && dateStr[2] === '-') {
@@ -758,7 +777,10 @@ function computeTimeWeight(dateStr: string): number {
     }
     if (isNaN(d.getTime())) return 0.5;
     const daysOld = Math.max(0, (Date.now() - d.getTime()) / (24 * 60 * 60 * 1000));
-    return Math.max(0.05, parseFloat(Math.exp(-daysOld / 7).toFixed(3)));
+    // Use signal-type-specific half-life instead of fixed 7-day decay
+    const halfLife = (eventType && SIGNAL_HALF_LIFE[eventType]) || 7;
+    const decayRate = Math.LN2 / halfLife; // ln(2)/halfLife
+    return Math.max(0.05, parseFloat(Math.exp(-decayRate * daysOld).toFixed(3)));
   } catch {
     return 0.5;
   }
@@ -894,6 +916,37 @@ const SECTOR_MULTIPLIER: Record<string, number> = {
   'Auto': 1.0, 'Pharma': 0.95, 'Realty': 1.0, 'Telecom': 0.9,
   'IT': 0.8, 'FMCG': 0.7, 'Textiles': 0.9,
 };
+
+// ── SIGNAL HIERARCHY TIERS ──
+// Tier 1 (dominant): revenue, demand, order backlog
+// Tier 2 (modifier): margin, capex, M&A
+// Tier 3 (weak): mgmt commentary, guidance narrative, minor events
+const SIGNAL_TIER_HIERARCHY: Record<string, 1 | 2 | 3> = {
+  'Order Win': 1, 'Contract': 1,
+  'M&A': 2, 'Capex/Expansion': 2, 'Demerger': 2, 'Fund Raising': 2,
+  'LOI': 3, 'JV/Partnership': 2, 'Buyback': 3, 'Dividend': 3,
+  'Guidance': 3, 'Mgmt Change': 3,
+  'Block Buy': 2, 'Bulk Buy': 2, 'Block Sell': 2, 'Bulk Sell': 2,
+  'Corporate': 3,
+};
+
+// ── SIGNAL HALF-LIFE (days) — different decay per event type ──
+const SIGNAL_HALF_LIFE: Record<string, number> = {
+  'Order Win': 14, 'Contract': 14,
+  'M&A': 30, 'Capex/Expansion': 30, 'Demerger': 21,
+  'Fund Raising': 14, 'LOI': 7, 'JV/Partnership': 14,
+  'Buyback': 10, 'Dividend': 5, 'Guidance': 5, 'Mgmt Change': 7,
+  'Block Buy': 7, 'Bulk Buy': 7, 'Block Sell': 7, 'Bulk Sell': 7,
+  'Corporate': 5,
+};
+
+// ── CATALYST STRENGTH classification ──
+function classifyCatalystStrength(impactPct: number, pctMcap: number | null): 'WEAK' | 'MODERATE' | 'STRONG' {
+  const mcapImpact = pctMcap || 0;
+  if (impactPct >= 10 || mcapImpact >= 5) return 'STRONG';
+  if (impactPct >= 3 || mcapImpact >= 1) return 'MODERATE';
+  return 'WEAK';
+}
 
 function computeScore(opts: {
   impactPct: number;
@@ -1464,7 +1517,6 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     const isPortfolio = portfolioSet.has(symbol);
     const negative = isNegativeSignal(subject, desc);
     const sentiment = classifySentiment(eventType, negative, false);
-    const timeWeight = computeTimeWeight(item.date || getTodayDate());
 
     let extractedValue = parseOrderValue(combinedText);
     let inferenceUsed = false;
@@ -1528,6 +1580,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     const earningsScore = earningsCache.get(symbol) ?? null;
     const earningsBoost = (earningsScore !== null && earningsScore >= 70 && sentiment !== 'Bearish' && impactPct >= 3);
 
+    const timeWeight = computeTimeWeight(item.date || getTodayDate(), eventType);
     const score = computeScore({
       impactPct, sentiment, timeWeight,
       earningsScore, isNegative: negative, isDeal: false,
@@ -1535,7 +1588,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     });
     const weightedScore = Math.round(score * timeWeight);
 
-    let action = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, earningsScore, weightedScore, negative, 1, false);
+    let action = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, earningsScore, weightedScore, negative, 1, false, 50, null, null);
     if (earningsBoost && action !== 'BUY') action = 'ADD';
 
     const pctMcap = (enrichment?.mcapCr && valueCr > 0)
@@ -1599,6 +1652,9 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       decision: action,
     };
 
+    // Add catalyst strength
+    signal.catalystStrength = classifyCatalystStrength(impactPct, pctMcap);
+
     // Compute 3-axis normalized scores
     const threeAxis = computeThreeAxisScore({
       impactPct: Math.min(100, impactPct), revenueGrowth: null, marginChange: null, epsGrowth: null,
@@ -1613,7 +1669,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     signal.weightedScore = threeAxis.composite;
     signal.score = threeAxis.composite;
     // Re-classify action using 3-axis composite (critical: old score was pre-normalization)
-    signal.action = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, earningsScore, threeAxis.composite, negative, 1, false, threeAxis.fundamental);
+    signal.action = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, earningsScore, threeAxis.composite, negative, 1, false, threeAxis.fundamental, null, null);
     if (earningsBoost && signal.action !== 'BUY') signal.action = 'ADD';
     signal.decision = signal.action;
     signal.scoreClassification = classifyScore(threeAxis.composite);
@@ -1672,7 +1728,8 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     const isPortfolio = portfolioSet.has(symbol);
     const isSell = !isBuy;
     const sentiment = classifySentiment(eventType, isSell && buyerQual >= 80, isBuy);
-    const timeWeight = computeTimeWeight(deal.dealDate || getTodayDate());
+    const dealEventType = deal.type === 'Block' ? 'Block Buy' : 'Bulk Buy';
+    const timeWeight = computeTimeWeight(deal.dealDate || getTodayDate(), dealEventType);
 
     let dealImpactPct: number;
     if (enrichment?.annualRevenueCr && enrichment.annualRevenueCr > 0) {
@@ -1696,7 +1753,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     });
     const weightedScore = Math.round(score * timeWeight);
 
-    const action = classifyAction(dealImpactPct, sentiment, isWatchlist, isPortfolio, earningsScore, weightedScore, isSell, 1, false);
+    const action = classifyAction(dealImpactPct, sentiment, isWatchlist, isPortfolio, earningsScore, weightedScore, isSell, 1, false, 50, null, null);
 
     const dealHeadline = `${fmtCr(dealValueCr)} ${eventType} — ${deal.clientName}${pctEquity !== null ? ` (${pctEquity.toFixed(2)}% equity)` : ''}${premiumDiscount !== null ? ` @${premiumDiscount > 0 ? '+' : ''}${premiumDiscount.toFixed(1)}%` : ''}`;
 
@@ -1708,6 +1765,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       } catch {}
     }
 
+    const dealPctMcap = enrichment?.mcapCr ? parseFloat(((dealValueCr / enrichment.mcapCr) * 100).toFixed(2)) : null;
     const dealSignal: IntelSignal = {
       symbol, company: resolveCompanyName(symbol, enrichment?.companyName),
       date: deal.dealDate || getTodayDate(), source: 'deal',
@@ -1715,7 +1773,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       valueCr: dealValueCr,
       valueUsd: `$${((dealValueCr * 10000000) / INR_TO_USD / 1000000).toFixed(1)}M`,
       mcapCr: enrichment?.mcapCr || null, revenueCr: enrichment?.annualRevenueCr || null,
-      impactPct: dealImpactPct, pctRevenue: null, pctMcap: enrichment?.mcapCr ? parseFloat(((dealValueCr / enrichment.mcapCr) * 100).toFixed(2)) : null,
+      impactPct: dealImpactPct, pctRevenue: null, pctMcap: dealPctMcap,
       inferenceUsed: false,
       client: null, segment: null, timeline: null,
       buyerSeller: deal.clientName, premiumDiscount, lastPrice: dealLastPrice,
@@ -1724,7 +1782,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       valueSource: 'EXACT',
       action, score, timeWeight, weightedScore, sentiment,
       whyItMatters: generateWhyItMatters({
-        eventType, impactLevel, pctRevenue: null, pctMcap: enrichment?.mcapCr ? parseFloat(((dealValueCr / enrichment.mcapCr) * 100).toFixed(2)) : null,
+        eventType, impactLevel, pctRevenue: null, pctMcap: dealPctMcap,
         valueCr: dealValueCr, client: null, segment: null,
         isNegative: isSell, sentiment, buyerSeller: deal.clientName, premiumDiscount,
       }),
@@ -1734,6 +1792,9 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       scoreClassification: classifyScore(weightedScore),
       decision: action,
     };
+
+    // Add catalyst strength
+    dealSignal.catalystStrength = classifyCatalystStrength(dealImpactPct, dealPctMcap);
 
     // Compute 3-axis scores for deals
     const dealAxis = computeThreeAxisScore({
@@ -1749,7 +1810,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     dealSignal.weightedScore = dealAxis.composite;
     dealSignal.score = dealAxis.composite;
     // Re-classify using 3-axis composite
-    dealSignal.action = classifyAction(dealImpactPct, sentiment, isWatchlist, isPortfolio, earningsScore, dealAxis.composite, isSell, 1, false, dealAxis.fundamental);
+    dealSignal.action = classifyAction(dealImpactPct, sentiment, isWatchlist, isPortfolio, earningsScore, dealAxis.composite, isSell, 1, false, dealAxis.fundamental, null, null);
     dealSignal.decision = dealSignal.action;
     dealSignal.scoreClassification = classifyScore(dealAxis.composite);
     dealSignal.signalTier = 'TIER1_VERIFIED';  // Exchange-confirmed deals
@@ -1858,14 +1919,14 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
 
         const impactPct = Math.min(100, Math.abs(revG || 0));
 
-        const timeWeight = computeTimeWeight(ge.eventDate || getTodayDate());
+        const timeWeight = computeTimeWeight(ge.eventDate || getTodayDate(), 'Guidance');
         const weightedScore = Math.round(signalScore * timeWeight);
 
         // Determine if guidance is strong
         const guidanceStrong = (ge.grade === 'STRONG' || ge.grade === 'VERY_STRONG');
 
         // Map to action bucket using new classifyAction
-        signalAction = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, null, weightedScore, isNeg, 1, guidanceStrong);
+        signalAction = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, null, weightedScore, isNeg, 1, guidanceStrong, 50, revG || null, marginBps ? marginBps / 100 : null);
 
         const headline = `Guidance: ${scoreParts.join(' · ')} | ${ge.grade} (${ge.confidenceScore}% conf)`;
 
@@ -1919,6 +1980,9 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
           decision: signalAction,
         };
 
+        // Add catalyst strength
+        guidanceSignal.catalystStrength = classifyCatalystStrength(impactPct, null);
+
         // Compute 3-axis scores for guidance
         const guidAxis = computeThreeAxisScore({
           impactPct, revenueGrowth: revG || null, marginChange: marginBps || null, epsGrowth: ge.epsGrowth || null,
@@ -1931,10 +1995,16 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         guidanceSignal.fundamentalScore = guidAxis.fundamental;
         guidanceSignal.signalStrengthScore = guidAxis.signalStrength;
         guidanceSignal.dataConfidenceScore = guidAxis.dataConfidence;
-        guidanceSignal.weightedScore = guidAxis.composite;
-        guidanceSignal.score = guidAxis.composite;
-        // Re-classify using 3-axis composite
-        guidanceSignal.action = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, null, guidAxis.composite, isNeg, 1, guidanceStrong, guidAxis.fundamental);
+
+        // Guidance credibility discount: management narrative is less reliable than hard data
+        // Apply 20% confidence penalty to all guidance (small/mid caps especially unreliable)
+        const guidanceCredibilityDiscount = 0.80;
+        guidanceSignal.weightedScore = Math.round(guidAxis.composite * guidanceCredibilityDiscount);
+        guidanceSignal.score = guidanceSignal.weightedScore;
+        guidanceSignal.dataConfidenceScore = Math.round((guidAxis.dataConfidence || 50) * guidanceCredibilityDiscount);
+
+        // Re-classify using 3-axis composite with credibility discount
+        guidanceSignal.action = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, null, guidanceSignal.weightedScore, isNeg, 1, guidanceStrong, guidAxis.fundamental, revG || null, marginBps ? marginBps / 100 : null);
         guidanceSignal.decision = guidanceSignal.action;
         guidanceSignal.signalTier = ge.confidenceScore >= 70 ? 'TIER1_VERIFIED' : 'TIER2_INFERRED';
         guidanceSignal.revenueGrowth = revG || null;
@@ -2077,7 +2147,9 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
           s.isNegative,
           s.signalStackCount, // Pass actual stack count
           false, // guidanceStrong
-          s.fundamentalScore || 50 // Pass fundamental for veto
+          s.fundamentalScore || 50, // Pass fundamental for veto
+          s.revenueGrowth || null, // NEW
+          s.marginChange || null   // NEW
         );
         // Promote ADD to BUY if re-classification suggests it
         if (newAction === 'BUY' || (newAction === 'ADD' && s.action !== 'BUY')) {
@@ -2212,6 +2284,22 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     } else if (s.action === 'AVOID') {
       whyParts.push('Weak signal quality — skip');
     }
+    // Add conflict resolution note
+    if (s.conflictResolution) {
+      whyParts.push(s.conflictResolution);
+    }
+    // Add sector cyclical note
+    if (s.sectorCyclical) {
+      whyParts.push('Sector-wide pressure (cyclical, not structural)');
+    }
+    // Add price reaction note
+    if (s.priceReactionNote) {
+      whyParts.push(s.priceReactionNote);
+    }
+    // Add catalyst strength
+    if (s.catalystStrength) {
+      whyParts.push(`Catalyst: ${s.catalystStrength}`);
+    }
     s.whyAction = whyParts.length > 0 ? whyParts.join(' · ') : undefined;
   }
 
@@ -2228,6 +2316,121 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     }
   }
 
+  // ── CONFLICT RESOLUTION ENGINE (per-company) ──
+  // When conflicting signals exist for same company, resolve to single directional bias
+  for (const [sym, sigs] of companySignalMap) {
+    if (sigs.length < 2) continue;
+
+    const bullishSigs = sigs.filter(s => s.action === 'BUY' || s.action === 'ADD');
+    const bearishSigs = sigs.filter(s => s.action === 'EXIT' || s.action === 'TRIM' || s.action === 'AVOID');
+
+    if (bullishSigs.length > 0 && bearishSigs.length > 0) {
+      // Conflict exists — resolve using signal hierarchy
+      const dominantBearish = bearishSigs.some(s => {
+        const tier = SIGNAL_TIER_HIERARCHY[s.eventType] || 3;
+        return tier === 1 || (s.revenueGrowth !== null && s.revenueGrowth !== undefined && s.revenueGrowth < -15);
+      });
+      const dominantBullish = bullishSigs.some(s => {
+        const tier = SIGNAL_TIER_HIERARCHY[s.eventType] || 3;
+        return tier === 1 && s.impactPct >= 5;
+      });
+
+      if (dominantBearish && !dominantBullish) {
+        // Bearish Tier 1 dominates — suppress bullish signals
+        for (const s of bullishSigs) {
+          const oldAction = s.action;
+          s.action = 'HOLD';
+          s.decision = 'HOLD';
+          s.conflictResolution = `Downgraded from ${oldAction}: revenue/demand decline dominates`;
+          if (!s.contradictions) s.contradictions = [];
+          s.contradictions.push(`Overridden: ${oldAction}→HOLD due to Tier 1 bearish signal on ${sym}`);
+        }
+      } else if (dominantBullish && !dominantBearish) {
+        // Bullish Tier 1 dominates — suppress bearish noise
+        for (const s of bearishSigs) {
+          if (s.action !== 'EXIT') { // Never suppress EXIT
+            const oldAction = s.action;
+            s.action = 'HOLD';
+            s.decision = 'HOLD';
+            s.conflictResolution = `Upgraded from ${oldAction}: strong order/demand signal dominates`;
+          }
+        }
+      }
+      // If both have Tier 1 or neither does → leave conflict visible (honest uncertainty)
+    }
+  }
+
+  // ── SECTOR-RELATIVE SCORING ──
+  // If >50% of sector shows revenue decline, classify as cyclical pressure
+  const sectorRevDecline = new Map<string, { decline: number; total: number }>();
+  for (const s of filtered) {
+    const sector = s.sector || 'Unknown';
+    const entry = sectorRevDecline.get(sector) || { decline: 0, total: 0 };
+    entry.total++;
+    if (s.revenueGrowth !== null && s.revenueGrowth !== undefined && s.revenueGrowth < -5) {
+      entry.decline++;
+    }
+    sectorRevDecline.set(sector, entry);
+  }
+  for (const s of filtered) {
+    const sector = s.sector || 'Unknown';
+    const entry = sectorRevDecline.get(sector);
+    if (entry && entry.total >= 3 && entry.decline / entry.total > 0.5) {
+      // Sector-wide decline — downgrade severity
+      if (s.revenueGrowth !== null && s.revenueGrowth !== undefined && s.revenueGrowth < -5) {
+        s.sectorCyclical = true;
+        if (!s.contradictions) s.contradictions = [];
+        // Only add once
+        if (!s.contradictions.some(c => c.includes('Sector-wide'))) {
+          s.contradictions.push(`Sector-wide decline (${entry.decline}/${entry.total}) — cyclical pressure, not idiosyncratic`);
+        }
+        // If EXIT due to sector cyclical, soften to HOLD
+        if (s.action === 'EXIT' && !s.isNegative) {
+          s.action = 'HOLD';
+          s.decision = 'HOLD';
+        }
+      }
+    }
+  }
+
+  // ── PRICE REACTION LAYER ──
+  // Check if negative news is already priced in
+  for (const s of filtered) {
+    if (s.lastPrice && s.lastPrice > 0 && s.revenueGrowth !== null && s.revenueGrowth !== undefined) {
+      // We need price change data — check if addedPrices are available via portfolio
+      // For now, use a heuristic: if fundamentalScore < 40 but the signal is fresh,
+      // the market may not have fully reacted yet
+      if (s.freshness === 'FRESH' && s.action === 'EXIT') {
+        // Fresh negative signal — upgrade urgency
+        s.priceReactionNote = 'FRESH negative — market may not have reacted yet';
+      } else if (s.freshness === 'STALE' && (s.action === 'EXIT' || s.action === 'TRIM')) {
+        // Stale negative signal — likely priced in
+        s.priceReactionNote = 'Stale signal — likely already priced in';
+        if (s.action === 'EXIT' && !s.isNegative) {
+          s.action = 'HOLD';
+          s.decision = 'HOLD';
+        }
+      }
+    }
+  }
+
+  // ── HOLD BUCKET TIGHTENING ──
+  // Cap HOLD at ~25% of total. Excess low-confidence HOLDs → downgrade to WATCH
+  const holdSignals = filtered.filter(s => s.action === 'HOLD');
+  const maxHold = Math.ceil(filtered.length * 0.25);
+  if (holdSignals.length > maxHold) {
+    // Sort HOLD signals by confidence — lowest confidence gets downgraded first
+    const sortedHolds = holdSignals.sort((a, b) => (a.confidenceScore || 0) - (b.confidenceScore || 0));
+    const toDowngrade = sortedHolds.slice(0, holdSignals.length - maxHold);
+    for (const s of toDowngrade) {
+      if (s.confidenceScore !== undefined && s.confidenceScore < 60) {
+        s.action = 'WATCH';
+        s.decision = 'WATCH';
+        s.tag = s.tag || 'LOW-CONVICTION';
+      }
+    }
+  }
+
   // ── Portfolio Impact Scoring: (positionWeight) × (signalScore) ──
   // positionWeight defaults to equal-weight (1/portfolioSize) when position sizes unavailable
   const pfSize = portfolio.length || 1;
@@ -2235,6 +2438,16 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     if (s.isPortfolio) {
       const posWeight = 1 / pfSize; // Equal weight fallback
       s.portfolioImpactScore = Math.round(s.weightedScore * posWeight * 100);
+      // Portfolio context: lower tolerance for negative signals on larger positions
+      // High position weight + negative signal = urgently flag
+      if (s.isNegative && posWeight >= 0.1) {
+        // Large position with negative signal — upgrade urgency
+        if (s.action === 'HOLD') {
+          s.action = 'TRIM';
+          s.decision = 'TRIM';
+          s.decisionReason = `Portfolio position (${(posWeight*100).toFixed(0)}% weight) — negative signal demands action`;
+        }
+      }
     }
     // Data confidence flag
     if (s.confidenceType === 'ACTUAL' && s.valueSource === 'EXACT') {

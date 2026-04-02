@@ -109,6 +109,10 @@ interface Signal {
   sourceUrl?: string;
   revenueGrowth?: number | null;
   marginChange?: number | null;
+  catalystStrength?: 'WEAK' | 'MODERATE' | 'STRONG';
+  conflictResolution?: string;
+  sectorCyclical?: boolean;
+  priceReactionNote?: string;
 }
 
 interface CompanyTrend {
@@ -1080,6 +1084,16 @@ export default function CompanyIntelligencePage() {
                       ⚠ {s.anomalyFlags.length} issue{s.anomalyFlags.length > 1 ? 's' : ''}
                     </span>
                   )}
+                  {/* Catalyst strength */}
+                  {s.catalystStrength && (
+                    <span style={{
+                      fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
+                      color: s.catalystStrength === 'STRONG' ? '#10B981' : s.catalystStrength === 'MODERATE' ? '#F59E0B' : '#64748B',
+                      backgroundColor: s.catalystStrength === 'STRONG' ? 'rgba(16,185,129,0.1)' : s.catalystStrength === 'MODERATE' ? 'rgba(245,158,11,0.1)' : 'rgba(100,116,139,0.06)',
+                    }}>
+                      {s.catalystStrength === 'STRONG' ? '⚡ STRONG' : s.catalystStrength === 'MODERATE' ? '◆ MOD' : '○ WEAK'}
+                    </span>
+                  )}
                   {s.client && <span style={{ fontSize: '10px', color: PURPLE }}>Client: {s.client}</span>}
                   {s.segment && <span style={{ fontSize: '10px', color: ACCENT }}>{s.segment}</span>}
                   {s.timeline && <span style={{ fontSize: '10px', color: ORANGE }}>{s.timeline}</span>}
@@ -1283,6 +1297,16 @@ export default function CompanyIntelligencePage() {
                             ⚠ {s.anomalyFlags.length} issue{s.anomalyFlags.length > 1 ? 's' : ''}
                           </span>
                         )}
+                        {/* Catalyst strength */}
+                        {s.catalystStrength && (
+                          <span style={{
+                            fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
+                            color: s.catalystStrength === 'STRONG' ? '#10B981' : s.catalystStrength === 'MODERATE' ? '#F59E0B' : '#64748B',
+                            backgroundColor: s.catalystStrength === 'STRONG' ? 'rgba(16,185,129,0.1)' : s.catalystStrength === 'MODERATE' ? 'rgba(245,158,11,0.1)' : 'rgba(100,116,139,0.06)',
+                          }}>
+                            {s.catalystStrength === 'STRONG' ? '⚡ STRONG' : s.catalystStrength === 'MODERATE' ? '◆ MOD' : '○ WEAK'}
+                          </span>
+                        )}
                         {s.client && <span style={{ fontSize: '10px', color: PURPLE }}>Client: {s.client}</span>}
                         {s.segment && <span style={{ fontSize: '10px', color: ACCENT }}>{s.segment}</span>}
                         {s.timeline && <span style={{ fontSize: '10px', color: ORANGE }}>{s.timeline}</span>}
@@ -1460,6 +1484,16 @@ export default function CompanyIntelligencePage() {
                         {s.anomalyFlags && s.anomalyFlags.length > 0 && (
                           <span style={{ fontSize: '8px', fontWeight: 600, color: '#FF6B6B', padding: '1px 4px', borderRadius: '3px', backgroundColor: 'rgba(255,107,107,0.06)' }}>
                             ⚠ {s.anomalyFlags.length} issue{s.anomalyFlags.length > 1 ? 's' : ''}
+                          </span>
+                        )}
+                        {/* Catalyst strength */}
+                        {s.catalystStrength && (
+                          <span style={{
+                            fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
+                            color: s.catalystStrength === 'STRONG' ? '#10B981' : s.catalystStrength === 'MODERATE' ? '#F59E0B' : '#64748B',
+                            backgroundColor: s.catalystStrength === 'STRONG' ? 'rgba(16,185,129,0.1)' : s.catalystStrength === 'MODERATE' ? 'rgba(245,158,11,0.1)' : 'rgba(100,116,139,0.06)',
+                          }}>
+                            {s.catalystStrength === 'STRONG' ? '⚡ STRONG' : s.catalystStrength === 'MODERATE' ? '◆ MOD' : '○ WEAK'}
                           </span>
                         )}
                         {s.client && <span style={{ fontSize: '10px', color: PURPLE }}>Client: {s.client}</span>}
