@@ -1266,42 +1266,40 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               const recW = s.freshness === 'FRESH' ? 10 : s.freshness === 'RECENT' ? 7 : 3;
               s.materialityScore = Math.min(100, Math.round(ecoImpact + evtW + confW + mgmtW + recW));
 
-              // Visibility
+              // Visibility: COMPLIANCE=HIDDEN, GOVERNANCE=DIMMED (unless senior), ECONOMIC/STRATEGIC=VISIBLE
               if (s.signalClass === 'COMPLIANCE') {
                 s.visibility = 'HIDDEN';
               } else if (s.signalClass === 'GOVERNANCE') {
-                s.visibility = SENIOR_ROLES.has(s.managementRole) ? 'VISIBLE' : 'HIDDEN';
+                s.visibility = SENIOR_ROLES.has(s.managementRole) ? 'VISIBLE' : 'DIMMED';
               } else {
                 s.visibility = 'VISIBLE';
               }
 
-              // Action from materiality
-              if (s.visibility !== 'HIDDEN') {
-                const ms = s.materialityScore || 0;
-                if ((s.signalClass === 'GOVERNANCE' || s.signalClass === 'STRATEGIC') && (s.impactPct || 0) === 0) {
-                  s.action = ms >= 45 ? 'HOLD' : 'WATCH';
-                } else if (ms >= 75) {
-                  s.action = s.isNegative ? 'TRIM' : 'BUY';
-                } else if (ms >= 60) {
-                  s.action = s.isNegative ? 'HOLD' : 'ADD';
-                } else if (ms >= 45) {
-                  s.action = 'HOLD';
-                } else {
-                  s.action = 'WATCH';
-                }
+              // Action from materiality — works for ALL visible/dimmed signals
+              const ms = s.materialityScore || 0;
+              if ((s.signalClass === 'GOVERNANCE' || s.signalClass === 'STRATEGIC') && (s.impactPct || 0) === 0) {
+                s.action = ms >= 45 ? 'HOLD' : 'WATCH';
+              } else if (ms >= 75) {
+                s.action = s.isNegative ? 'TRIM' : 'BUY';
+              } else if (ms >= 60) {
+                s.action = s.isNegative ? 'HOLD' : 'ADD';
+              } else if (ms >= 45) {
+                s.action = 'HOLD';
+              } else {
+                s.action = 'WATCH';
               }
 
-              // Kill governance scoring
+              // Governance scoring penalty (but don't kill entirely)
               if (s.signalClass === 'GOVERNANCE') {
-                s.monitorScore = Math.round((s.monitorScore || 0) * 0.3);
+                s.monitorScore = Math.round((s.monitorScore || 0) * 0.5);
                 s.monitorTier = s.monitorScore >= 80 ? 'HIGH' : s.monitorScore >= 50 ? 'MED' : 'LOW';
                 s.catalystStrength = 'WEAK';
               }
 
-              // HIDDEN → REJECTED
+              // Only hard-reject COMPLIANCE (truly zero-value)
               if (s.visibility === 'HIDDEN') {
                 rejectedCount++;
-                continue;  // Skip adding to actionable/monitor
+                continue;
               }
 
               if (s.signalCategory === 'ACTIONABLE') {
@@ -1347,7 +1345,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               validBias.activeSectors = [...new Set(validSignals.map((s: any) => s.sector).filter(Boolean))];
             }
 
-            // ── v6: Feed composition — max 10, balanced ──
+            // ── v6: Feed composition — max 10, prefer ECONOMIC, backfill with best available ──
             const allVisibleSignals = [...actionableSignals, ...monitorSignals];
             allVisibleSignals.sort((a: any, b: any) => (b.materialityScore || 0) - (a.materialityScore || 0));
 
@@ -1355,13 +1353,25 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             const stratSigs = allVisibleSignals.filter((s: any) => s.signalClass === 'STRATEGIC');
             const govSigs = allVisibleSignals.filter((s: any) => s.signalClass === 'GOVERNANCE');
 
-            const feedEco = ecoSigs.slice(0, 6);
-            const feedGov = govSigs.slice(0, 2);
-            const feedStrat = stratSigs.slice(0, Math.max(0, 10 - feedEco.length - feedGov.length));
-            let composedFeed = [...feedEco, ...feedStrat, ...feedGov];
-            // Backfill with economic if under 10
-            if (composedFeed.length < 10 && ecoSigs.length > 6) {
-              composedFeed.push(...ecoSigs.slice(6, 6 + (10 - composedFeed.length)));
+            let composedFeed: any[] = [];
+
+            if (ecoSigs.length >= 6) {
+              // Rich data: enforce composition rules
+              composedFeed.push(...ecoSigs.slice(0, 6));
+              composedFeed.push(...govSigs.slice(0, 2));
+              composedFeed.push(...stratSigs.slice(0, Math.max(0, 10 - composedFeed.length)));
+              if (composedFeed.length < 10 && ecoSigs.length > 6) {
+                composedFeed.push(...ecoSigs.slice(6, 6 + (10 - composedFeed.length)));
+              }
+            } else {
+              // Sparse data: show best available signals regardless of class
+              // Priority: all ECONOMIC first, then STRATEGIC, then top GOVERNANCE
+              composedFeed.push(...ecoSigs);
+              composedFeed.push(...stratSigs);
+              // Backfill with governance (sorted by materialityScore, deduplicated by company)
+              const usedSymbols = new Set(composedFeed.map((s: any) => s.symbol));
+              const uniqueGov = govSigs.filter((s: any) => !usedSymbols.has(s.symbol));
+              composedFeed.push(...uniqueGov);
             }
             composedFeed.sort((a: any, b: any) => (b.materialityScore || 0) - (a.materialityScore || 0));
             composedFeed = composedFeed.slice(0, 10);

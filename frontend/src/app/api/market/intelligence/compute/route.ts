@@ -745,7 +745,7 @@ function determineVisibility(signal: any): 'VISIBLE' | 'DIMMED' | 'HIDDEN' {
   if (signalClass === 'GOVERNANCE') {
     const role = signal.managementRole || 'Other';
     if (SENIOR_ROLES.has(role)) return 'VISIBLE';
-    return 'HIDDEN';  // Non-senior governance = hidden
+    return 'DIMMED';  // Non-senior governance = dimmed (available for backfill)
   }
 
   // ECONOMIC and STRATEGIC are always visible
@@ -873,30 +873,34 @@ function sanitizeByEventClass(signal: any): void {
 function enforceFeedComposition(signals: any[]): any[] {
   const MAX_FEED = 10;
 
-  // Separate by class
+  // Separate by class (include DIMMED governance for backfill)
   const economic = signals.filter(s => s.signalClass === 'ECONOMIC');
   const strategic = signals.filter(s => s.signalClass === 'STRATEGIC');
-  const governance = signals.filter(s => s.signalClass === 'GOVERNANCE' && s.visibility === 'VISIBLE');
-  // COMPLIANCE is never included
+  const governance = signals.filter(s => s.signalClass === 'GOVERNANCE');
+  // COMPLIANCE is never included (already filtered out)
 
   // Sort each by materialityScore descending
   economic.sort((a, b) => (b.materialityScore || 0) - (a.materialityScore || 0));
   strategic.sort((a, b) => (b.materialityScore || 0) - (a.materialityScore || 0));
   governance.sort((a, b) => (b.materialityScore || 0) - (a.materialityScore || 0));
 
-  // Allocate slots: min 60% ECONOMIC, max 20% GOVERNANCE
-  const ecoSlots = Math.max(6, Math.min(MAX_FEED, economic.length));  // At least 6 (60%)
-  const govSlots = Math.min(2, governance.length);  // Max 2 (20%)
-  const stratSlots = Math.min(MAX_FEED - ecoSlots - govSlots, strategic.length);
+  let feed: any[] = [];
 
-  const feed: any[] = [];
-  feed.push(...economic.slice(0, ecoSlots));
-  feed.push(...strategic.slice(0, stratSlots));
-  feed.push(...governance.slice(0, govSlots));
-
-  // If we have fewer than MAX_FEED, backfill from economic
-  if (feed.length < MAX_FEED && economic.length > ecoSlots) {
-    feed.push(...economic.slice(ecoSlots, ecoSlots + (MAX_FEED - feed.length)));
+  if (economic.length >= 6) {
+    // Rich data: enforce composition rules (60% eco, 20% gov max)
+    feed.push(...economic.slice(0, 6));
+    feed.push(...governance.slice(0, 2));
+    feed.push(...strategic.slice(0, Math.max(0, MAX_FEED - feed.length)));
+    if (feed.length < MAX_FEED && economic.length > 6) {
+      feed.push(...economic.slice(6, 6 + (MAX_FEED - feed.length)));
+    }
+  } else {
+    // Sparse data: show best available signals, deduplicated by company
+    feed.push(...economic);
+    feed.push(...strategic);
+    const usedSymbols = new Set(feed.map(s => s.symbol));
+    const uniqueGov = governance.filter(s => !usedSymbols.has(s.symbol));
+    feed.push(...uniqueGov);
   }
 
   // Final sort by materialityScore
@@ -4014,9 +4018,9 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       s.whyItMatters = newWhy;
     }
 
-    // 6. Kill template scoring for Mgmt Change
+    // 6. Penalize template scoring for Mgmt Change (but don't kill entirely)
     if (s.signalClass === 'GOVERNANCE') {
-      s.monitorScore = Math.round((s.monitorScore || 0) * 0.3);
+      s.monitorScore = Math.round((s.monitorScore || 0) * 0.5);
       s.monitorTier = s.monitorScore >= 80 ? 'HIGH' : s.monitorScore >= 50 ? 'MED' : 'LOW';
       s.catalystStrength = 'WEAK';
     }
