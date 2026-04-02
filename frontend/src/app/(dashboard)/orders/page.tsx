@@ -1245,9 +1245,19 @@ export default function CompanyIntelligencePage() {
                           }}>{s.action}</span>
                         </div>
                       </div>
-                      {/* Row 2: Why It Matters */}
+                      {/* Contradiction warnings */}
+                      {s.contradictions && s.contradictions.length > 0 && (
+                        <div style={{
+                          fontSize: '10px', color: '#FF6B6B', fontWeight: 600, lineHeight: 1.3,
+                          padding: '3px 8px', marginTop: '4px', borderRadius: '4px',
+                          backgroundColor: 'rgba(255,107,107,0.06)', borderLeft: '2px solid #FF6B6B',
+                        }}>
+                          ⚠ {s.contradictions.join(' · ')}
+                        </div>
+                      )}
+                      {/* Row 2: WHY explanation */}
                       <div style={{ fontSize: '11px', color: s.isNegative ? '#F87171' : '#6EE7B7', marginTop: '5px', lineHeight: 1.4, fontWeight: 500 }}>
-                        💡 {s.whyItMatters}
+                        {s.whyAction || s.whyItMatters}
                       </div>
                       {/* Row 3: Headline */}
                       <div style={{ fontSize: '11px', color: TEXT2, marginTop: '3px', lineHeight: 1.5, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any }}>
@@ -1255,6 +1265,22 @@ export default function CompanyIntelligencePage() {
                       </div>
                       {/* Row 4: Meta tags */}
                       <div style={{ display: 'flex', gap: '10px', marginTop: '4px', alignItems: 'center' }}>
+                        {/* Signal tier */}
+                        {s.signalTier && (
+                          <span style={{
+                            fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
+                            color: s.signalTier === 'TIER1_VERIFIED' ? '#10B981' : '#64748B',
+                            backgroundColor: s.signalTier === 'TIER1_VERIFIED' ? 'rgba(16,185,129,0.1)' : 'rgba(100,116,139,0.06)',
+                          }}>
+                            {s.signalTier === 'TIER1_VERIFIED' ? '✓ VERIFIED' : '~ INFERRED'}
+                          </span>
+                        )}
+                        {/* Anomaly flags */}
+                        {s.anomalyFlags && s.anomalyFlags.length > 0 && (
+                          <span style={{ fontSize: '8px', fontWeight: 600, color: '#FF6B6B', padding: '1px 4px', borderRadius: '3px', backgroundColor: 'rgba(255,107,107,0.06)' }}>
+                            ⚠ {s.anomalyFlags.length} issue{s.anomalyFlags.length > 1 ? 's' : ''}
+                          </span>
+                        )}
                         {s.client && <span style={{ fontSize: '10px', color: PURPLE }}>Client: {s.client}</span>}
                         {s.segment && <span style={{ fontSize: '10px', color: ACCENT }}>{s.segment}</span>}
                         {s.timeline && <span style={{ fontSize: '10px', color: ORANGE }}>{s.timeline}</span>}
@@ -1262,28 +1288,6 @@ export default function CompanyIntelligencePage() {
                         {s.signalStackLevel && s.signalStackLevel !== 'WEAK' && (
                           <span style={{ fontSize: '9px', color: s.signalStackLevel === 'STRONG' ? GREEN : YELLOW }}>
                             ⚡{s.signalStackCount}
-                          </span>
-                        )}
-                        {s.confidenceType && (
-                          <span style={{
-                            fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
-                            backgroundColor: s.confidenceType === 'ACTUAL' ? 'rgba(16,185,129,0.15)' : s.confidenceType === 'INFERRED' ? 'rgba(251,191,36,0.15)' : 'rgba(100,116,139,0.12)',
-                            color: s.confidenceType === 'ACTUAL' ? GREEN : s.confidenceType === 'INFERRED' ? YELLOW : TEXT3,
-                          }}>
-                            {s.confidenceType === 'ACTUAL' ? '✓' : s.confidenceType === 'INFERRED' ? '~' : '?'}
-                          </span>
-                        )}
-                        {s.dataConfidence && (
-                          <span style={{
-                            fontSize: '8px', fontWeight: 600, padding: '1px 4px', borderRadius: '3px',
-                            color: s.dataConfidence === 'VERIFIED' ? GREEN : s.dataConfidence === 'ESTIMATED' ? YELLOW : TEXT3,
-                          }}>
-                            {s.dataConfidence}
-                          </span>
-                        )}
-                        {s.dataSource && (
-                          <span style={{ fontSize: '8px', color: TEXT3, padding: '1px 4px', borderRadius: '3px', backgroundColor: 'rgba(100,116,139,0.08)' }}>
-                            {s.dataSource}
                           </span>
                         )}
                         {s.confidenceScore !== undefined && s.confidenceScore <= 50 && (
@@ -1309,8 +1313,6 @@ export default function CompanyIntelligencePage() {
                             {s.freshness}
                           </span>
                         )}
-                        {s.confidenceType && <span style={{ fontSize: '10px', color: s.confidenceType === 'ACTUAL' ? GREEN : s.confidenceType === 'INFERRED' ? YELLOW : TEXT3, marginLeft: '4px' }}>✓ {s.confidenceType}</span>}
-                        {s.dataSource && <span style={{ fontSize: '10px', color: TEXT3, marginLeft: '4px' }}>· {s.dataSource}</span>}
                         <span style={{ fontSize: '10px', color: TEXT3, marginLeft: 'auto' }}>
                           {fmtDate(s.date)} · {Math.round(s.timeWeight * 100)}%
                         </span>
@@ -1420,9 +1422,19 @@ export default function CompanyIntelligencePage() {
                           }}>{s.action}</span>
                         </div>
                       </div>
-                      {/* Row 2: Why It Matters */}
+                      {/* Contradiction warnings */}
+                      {s.contradictions && s.contradictions.length > 0 && (
+                        <div style={{
+                          fontSize: '10px', color: '#FF6B6B', fontWeight: 600, lineHeight: 1.3,
+                          padding: '3px 8px', marginTop: '4px', borderRadius: '4px',
+                          backgroundColor: 'rgba(255,107,107,0.06)', borderLeft: '2px solid #FF6B6B',
+                        }}>
+                          ⚠ {s.contradictions.join(' · ')}
+                        </div>
+                      )}
+                      {/* Row 2: WHY explanation */}
                       <div style={{ fontSize: '11px', color: s.isNegative ? '#F87171' : '#6EE7B7', marginTop: '5px', lineHeight: 1.4, fontWeight: 500 }}>
-                        💡 {s.whyItMatters}
+                        {s.whyAction || s.whyItMatters}
                       </div>
                       {/* Row 3: Headline */}
                       <div style={{ fontSize: '11px', color: TEXT2, marginTop: '3px', lineHeight: 1.5, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any }}>
@@ -1430,6 +1442,22 @@ export default function CompanyIntelligencePage() {
                       </div>
                       {/* Row 4: Meta tags */}
                       <div style={{ display: 'flex', gap: '10px', marginTop: '4px', alignItems: 'center' }}>
+                        {/* Signal tier */}
+                        {s.signalTier && (
+                          <span style={{
+                            fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
+                            color: s.signalTier === 'TIER1_VERIFIED' ? '#10B981' : '#64748B',
+                            backgroundColor: s.signalTier === 'TIER1_VERIFIED' ? 'rgba(16,185,129,0.1)' : 'rgba(100,116,139,0.06)',
+                          }}>
+                            {s.signalTier === 'TIER1_VERIFIED' ? '✓ VERIFIED' : '~ INFERRED'}
+                          </span>
+                        )}
+                        {/* Anomaly flags */}
+                        {s.anomalyFlags && s.anomalyFlags.length > 0 && (
+                          <span style={{ fontSize: '8px', fontWeight: 600, color: '#FF6B6B', padding: '1px 4px', borderRadius: '3px', backgroundColor: 'rgba(255,107,107,0.06)' }}>
+                            ⚠ {s.anomalyFlags.length} issue{s.anomalyFlags.length > 1 ? 's' : ''}
+                          </span>
+                        )}
                         {s.client && <span style={{ fontSize: '10px', color: PURPLE }}>Client: {s.client}</span>}
                         {s.segment && <span style={{ fontSize: '10px', color: ACCENT }}>{s.segment}</span>}
                         {s.timeline && <span style={{ fontSize: '10px', color: ORANGE }}>{s.timeline}</span>}
@@ -1437,28 +1465,6 @@ export default function CompanyIntelligencePage() {
                         {s.signalStackLevel && s.signalStackLevel !== 'WEAK' && (
                           <span style={{ fontSize: '9px', color: s.signalStackLevel === 'STRONG' ? GREEN : YELLOW }}>
                             ⚡{s.signalStackCount}
-                          </span>
-                        )}
-                        {s.confidenceType && (
-                          <span style={{
-                            fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
-                            backgroundColor: s.confidenceType === 'ACTUAL' ? 'rgba(16,185,129,0.15)' : s.confidenceType === 'INFERRED' ? 'rgba(251,191,36,0.15)' : 'rgba(100,116,139,0.12)',
-                            color: s.confidenceType === 'ACTUAL' ? GREEN : s.confidenceType === 'INFERRED' ? YELLOW : TEXT3,
-                          }}>
-                            {s.confidenceType === 'ACTUAL' ? '✓' : s.confidenceType === 'INFERRED' ? '~' : '?'}
-                          </span>
-                        )}
-                        {s.dataConfidence && (
-                          <span style={{
-                            fontSize: '8px', fontWeight: 600, padding: '1px 4px', borderRadius: '3px',
-                            color: s.dataConfidence === 'VERIFIED' ? GREEN : s.dataConfidence === 'ESTIMATED' ? YELLOW : TEXT3,
-                          }}>
-                            {s.dataConfidence}
-                          </span>
-                        )}
-                        {s.dataSource && (
-                          <span style={{ fontSize: '8px', color: TEXT3, padding: '1px 4px', borderRadius: '3px', backgroundColor: 'rgba(100,116,139,0.08)' }}>
-                            {s.dataSource}
                           </span>
                         )}
                         {s.confidenceScore !== undefined && s.confidenceScore <= 50 && (
@@ -1484,8 +1490,6 @@ export default function CompanyIntelligencePage() {
                             {s.freshness}
                           </span>
                         )}
-                        {s.confidenceType && <span style={{ fontSize: '10px', color: s.confidenceType === 'ACTUAL' ? GREEN : s.confidenceType === 'INFERRED' ? YELLOW : TEXT3, marginLeft: '4px' }}>✓ {s.confidenceType}</span>}
-                        {s.dataSource && <span style={{ fontSize: '10px', color: TEXT3, marginLeft: '4px' }}>· {s.dataSource}</span>}
                         <span style={{ fontSize: '10px', color: TEXT3, marginLeft: 'auto' }}>
                           {fmtDate(s.date)} · {Math.round(s.timeWeight * 100)}%
                         </span>

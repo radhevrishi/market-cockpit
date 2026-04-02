@@ -728,12 +728,12 @@ function classifyAction(
     if (guidanceStrong && earningsScore !== null && earningsScore >= 70 && !isNegative) return 'BUY';
   }
 
-  // ── ADD: 48-61 score range ──
-  if (weightedScore >= 48 && !isNegative) return 'ADD';
-  if (guidanceStrong && sentiment === 'Bullish' && !isNegative && weightedScore >= 40) return 'ADD';
+  // ── ADD: 52-61 score range (narrowed from 48 to reduce pile-up) ──
+  if (weightedScore >= 52 && !isNegative) return 'ADD';
+  if (guidanceStrong && sentiment === 'Bullish' && !isNegative && weightedScore >= 45) return 'ADD';
 
-  // ── HOLD: 38-47 score range ──
-  if (weightedScore >= 38 && weightedScore < 48) return 'HOLD';
+  // ── HOLD: 38-51 score range (widened from 38-47 for better distribution) ──
+  if (weightedScore >= 38 && weightedScore < 52) return 'HOLD';
 
   // ── WATCH: 28-37 score range ──
   if (weightedScore >= 28 && weightedScore < 38) return 'WATCH';
@@ -1356,6 +1356,44 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   debug.enrichedSymbols = enrichMap.size;
   console.log(`[Compute] Enriched ${enrichMap.size} symbols`);
 
+  // Build comprehensive company name map from ALL available data sources
+  // This prevents 32+ signals from showing ticker as company name
+  const companyNameMap = new Map<string, string>();
+  // Source 1: enrichment data (most reliable — from NSE quote API)
+  for (const [sym, data] of enrichMap) {
+    if (data.companyName) companyNameMap.set(sym, data.companyName);
+  }
+  // Source 2: NSE announcement raw data (sm_name field)
+  for (const ann of (filteredAnn || [])) {
+    const sym = normalizeTicker(ann.symbol || '');
+    if (sym && !companyNameMap.has(sym)) {
+      const name = ann.sm_name || ann.companyName || ann.company_name || ann.smName || '';
+      if (name && name !== sym) companyNameMap.set(sym, name);
+    }
+  }
+  // Source 3: MC news items
+  for (const n of mcNews) {
+    const sym = normalizeTicker(n.symbol);
+    if (sym && !companyNameMap.has(sym) && n.companyName && n.companyName !== sym) {
+      companyNameMap.set(sym, n.companyName);
+    }
+  }
+  // Source 4: Google news items
+  for (const n of gNews) {
+    const sym = normalizeTicker(n.symbol);
+    if (sym && !companyNameMap.has(sym) && n.companyName && n.companyName !== sym) {
+      companyNameMap.set(sym, n.companyName);
+    }
+  }
+  // Helper to resolve company name with all available sources
+  const resolveCompanyName = (symbol: string, ...fallbacks: (string | null | undefined)[]): string => {
+    for (const fb of fallbacks) {
+      if (fb && fb !== symbol && fb.length > 1) return fb;
+    }
+    return companyNameMap.get(symbol) || symbol;
+  };
+  console.log(`[Compute] Company name map: ${companyNameMap.size} entries`);
+
   const allSignals: IntelSignal[] = [];
   const crossSourceSeen = new Set<string>();
   const dedupMap = new Map<string, IntelSignal>();
@@ -1539,7 +1577,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     }
 
     const signal: IntelSignal = {
-      symbol, company: item.companyName || enrichment?.companyName || symbol,
+      symbol, company: resolveCompanyName(symbol, item.companyName, enrichment?.companyName),
       date: item.date || getTodayDate(), source: 'order',
       eventType, headline,
       valueCr, valueUsd: `$${((valueCr * 10000000) / INR_TO_USD / 1000000).toFixed(1)}M`,
@@ -1669,7 +1707,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     }
 
     const dealSignal: IntelSignal = {
-      symbol, company: enrichment?.companyName || symbol,
+      symbol, company: resolveCompanyName(symbol, enrichment?.companyName),
       date: deal.dealDate || getTodayDate(), source: 'deal',
       eventType, headline: dealHeadline,
       valueCr: dealValueCr,
@@ -1839,7 +1877,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
 
         const guidanceSignal: IntelSignal = {
           symbol,
-          company: ge.companyName || enrichment?.companyName || symbol,
+          company: resolveCompanyName(symbol, ge.companyName, enrichment?.companyName),
           date: ge.eventDate || getTodayDate(),
           source: 'order',
           eventType: 'Guidance',
@@ -2136,8 +2174,9 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     if (s.impactPct === 0 && s.impactLevel !== 'LOW') {
       anomalyFlags.push('ZERO_IMPACT');
     }
-    // Anomaly: Heuristic treated as high confidence
-    if (s.valueSource === 'HEURISTIC' && s.confidenceScore >= 70) {
+    // Anomaly: Heuristic treated as high confidence — only flag if NOT TIER1_VERIFIED
+    // TIER1 guidance signals can have heuristic value estimates but verified signal quality
+    if (s.valueSource === 'HEURISTIC' && s.confidenceScore >= 70 && s.signalTier !== 'TIER1_VERIFIED') {
       anomalyFlags.push('HEURISTIC_HIGH_CONF');
     }
 
