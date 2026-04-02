@@ -129,6 +129,15 @@ interface Signal {
   conflictBadge?: string;
   riskFactors?: string[];
   sourceExtract?: string;
+  // v4 fields
+  sourceTier?: 'VERIFIED' | 'HEURISTIC' | 'INFERRED';
+  dataQuality?: 'HIGH' | 'MEDIUM' | 'LOW' | 'BROKEN';
+  guidanceScope?: 'COMPANY' | 'SEGMENT' | 'PRODUCT' | 'REGION' | 'UNKNOWN';
+  guidancePeriod?: 'FY' | 'Q' | 'RUN_RATE' | 'UNKNOWN';
+  actionScore?: number;
+  guidanceRangeLow?: number;
+  guidanceRangeHigh?: number;
+  guidanceRangeConfPenalty?: number;
 }
 
 interface CompanyTrend {
@@ -247,6 +256,7 @@ export default function CompanyIntelligencePage() {
   const [computing, setComputing] = useState(false);
   const [computePollCount, setComputePollCount] = useState(0);
   const [showNoise, setShowNoise] = useState(false);
+  const [noHighConfSignals, setNoHighConfSignals] = useState(false);
 
   const fetchData = useCallback(async (forceRefresh = false) => {
     // Tab cache: if data was fetched recently and not forcing refresh, use cached data
@@ -305,6 +315,7 @@ export default function CompanyIntelligencePage() {
       setSignals(data.signals || []);
       setTrends(data.trends || []);
       setBias(data.bias || null);
+      setNoHighConfSignals(!!data.noHighConfSignals);
       if (data.debug) setDebugInfo(data.debug);
       setIsStale(!!data.stale);
       const ts = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
@@ -594,6 +605,20 @@ export default function CompanyIntelligencePage() {
         </div>
       )}
 
+      {/* v4: No high-confidence signals banner */}
+      {noHighConfSignals && !loading && (
+        <div style={{
+          padding: '10px 16px', marginBottom: '12px', borderRadius: '8px',
+          backgroundColor: 'rgba(249,115,22,0.08)', border: `1px solid ${ORANGE}40`,
+          display: 'flex', alignItems: 'center', gap: '8px',
+        }}>
+          <AlertTriangle size={16} color={ORANGE} />
+          <span style={{ fontSize: '12px', color: ORANGE, fontWeight: 600 }}>
+            No high-confidence actionable signals today. All signals below are estimated or unverified.
+          </span>
+        </div>
+      )}
+
       {/* ── TOP ACTIONABLE SIGNALS ── */}
       {top3.length > 0 && (
         <div style={{ marginBottom: '20px' }}>
@@ -727,21 +752,28 @@ export default function CompanyIntelligencePage() {
                       ⚡ EARNINGS BOOST
                     </span>
                   )}
-                  {s.confidenceType && (
+                  {/* v4: Split Source + Data Quality display */}
+                  {s.sourceTier && (
                     <span style={{
                       fontSize: '9px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px',
-                      backgroundColor: s.confidenceType === 'ACTUAL' ? 'rgba(16,185,129,0.15)' : s.confidenceType === 'INFERRED' ? 'rgba(251,191,36,0.15)' : 'rgba(100,116,139,0.12)',
-                      color: s.confidenceType === 'ACTUAL' ? GREEN : s.confidenceType === 'INFERRED' ? YELLOW : TEXT3,
+                      backgroundColor: s.sourceTier === 'VERIFIED' ? 'rgba(16,185,129,0.15)' : s.sourceTier === 'INFERRED' ? 'rgba(251,191,36,0.15)' : 'rgba(100,116,139,0.12)',
+                      color: s.sourceTier === 'VERIFIED' ? GREEN : s.sourceTier === 'INFERRED' ? YELLOW : TEXT3,
                     }}>
-                      {s.confidenceType === 'ACTUAL' ? '✓ ACTUAL' : s.confidenceType === 'INFERRED' ? '~ INFERRED' : '? HEURISTIC'}
+                      Src: {s.sourceTier}
                     </span>
                   )}
-                  {s.dataConfidence && (
+                  {s.dataQuality && (
                     <span style={{
-                      fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '3px', marginLeft: '4px',
-                      color: s.dataConfidence === 'VERIFIED' ? GREEN : s.dataConfidence === 'ESTIMATED' ? YELLOW : TEXT3,
+                      fontSize: '9px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px',
+                      backgroundColor: s.dataQuality === 'HIGH' ? 'rgba(16,185,129,0.15)' : s.dataQuality === 'BROKEN' ? 'rgba(239,68,68,0.15)' : s.dataQuality === 'LOW' ? 'rgba(249,115,22,0.15)' : 'rgba(251,191,36,0.15)',
+                      color: s.dataQuality === 'HIGH' ? GREEN : s.dataQuality === 'BROKEN' ? RED : s.dataQuality === 'LOW' ? ORANGE : YELLOW,
                     }}>
-                      {s.dataConfidence}
+                      Data: {s.dataQuality}
+                    </span>
+                  )}
+                  {s.guidanceScope && s.guidanceScope !== 'UNKNOWN' && s.guidanceScope !== 'COMPANY' && (
+                    <span style={{ fontSize: '9px', fontWeight: 600, padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(249,115,22,0.12)', color: ORANGE }}>
+                      {s.guidanceScope}-level
                     </span>
                   )}
                 </div>
@@ -1177,21 +1209,22 @@ export default function CompanyIntelligencePage() {
                       ⚡{s.signalStackCount}
                     </span>
                   )}
-                  {s.confidenceType && (
+                  {/* v4: Compact Source + Data badges */}
+                  {s.sourceTier && (
                     <span style={{
                       fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px',
-                      backgroundColor: s.confidenceType === 'ACTUAL' ? 'rgba(16,185,129,0.15)' : s.confidenceType === 'INFERRED' ? 'rgba(251,191,36,0.15)' : 'rgba(100,116,139,0.12)',
-                      color: s.confidenceType === 'ACTUAL' ? GREEN : s.confidenceType === 'INFERRED' ? YELLOW : TEXT3,
+                      backgroundColor: s.sourceTier === 'VERIFIED' ? 'rgba(16,185,129,0.15)' : s.sourceTier === 'INFERRED' ? 'rgba(251,191,36,0.15)' : 'rgba(100,116,139,0.12)',
+                      color: s.sourceTier === 'VERIFIED' ? GREEN : s.sourceTier === 'INFERRED' ? YELLOW : TEXT3,
                     }}>
-                      {s.confidenceType === 'ACTUAL' ? '✓' : s.confidenceType === 'INFERRED' ? '~' : '?'}
+                      S:{s.sourceTier === 'VERIFIED' ? '✓' : s.sourceTier === 'INFERRED' ? '~' : '?'}
                     </span>
                   )}
-                  {s.dataConfidence && (
+                  {s.dataQuality && (
                     <span style={{
                       fontSize: '8px', fontWeight: 600, padding: '1px 4px', borderRadius: '3px',
-                      color: s.dataConfidence === 'VERIFIED' ? GREEN : s.dataConfidence === 'ESTIMATED' ? YELLOW : TEXT3,
+                      color: s.dataQuality === 'HIGH' ? GREEN : s.dataQuality === 'BROKEN' ? RED : s.dataQuality === 'LOW' ? ORANGE : YELLOW,
                     }}>
-                      {s.dataConfidence}
+                      D:{s.dataQuality === 'HIGH' ? '✓' : s.dataQuality === 'BROKEN' ? '✗' : s.dataQuality}
                     </span>
                   )}
                   {s.dataSource && (

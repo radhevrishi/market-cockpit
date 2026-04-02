@@ -338,6 +338,15 @@ interface IntelSignal {
   conflictBadge?: string;                            // e.g. "⚠ Conflicting: Guidance vs Capex"
   riskFactors?: string[];                            // Risk list for WHY panel
   sourceExtract?: string;                            // Extracted sentence from source
+  // v4: Production audit v2 — orthogonal axes, guidance hardening
+  sourceTier?: 'VERIFIED' | 'HEURISTIC' | 'INFERRED';   // Source authenticity axis
+  dataQuality?: 'HIGH' | 'MEDIUM' | 'LOW' | 'BROKEN';   // Extraction correctness axis
+  guidanceScope?: 'COMPANY' | 'SEGMENT' | 'PRODUCT' | 'REGION' | 'UNKNOWN'; // Guidance scope tag
+  guidancePeriod?: 'FY' | 'Q' | 'RUN_RATE' | 'UNKNOWN'; // Guidance period tag
+  actionScore?: number;                                   // Weighted ranking score for Top Actionable
+  guidanceRangeLow?: number;                              // Range-aware: low bound
+  guidanceRangeHigh?: number;                             // Range-aware: high bound
+  guidanceRangeConfPenalty?: number;                       // Confidence penalty from wide range
 }
 
 interface CompanyTrend {
@@ -375,6 +384,7 @@ interface IntelligenceResponse {
   trends: CompanyTrend[];
   bias: DailyBias;
   updatedAt: string;
+  noHighConfSignals?: boolean;
   dataStatus?: string;
   _debug?: any;
 }
@@ -1150,6 +1160,265 @@ function validateGuidance(
   }
 
   return { valid: true };
+}
+
+// ══════════════════════════════════════════════════════════════
+// ── v4: GUIDANCE SCOPE & PERIOD EXTRACTION ──
+// Detects whether guidance applies to company-wide or segment/product
+// ══════════════════════════════════════════════════════════════
+
+function extractGuidanceScope(headline: string): 'COMPANY' | 'SEGMENT' | 'PRODUCT' | 'REGION' | 'UNKNOWN' {
+  const lower = headline.toLowerCase();
+  if (/\b(segment|division|vertical|business unit|biz unit)\b/.test(lower)) return 'SEGMENT';
+  if (/\b(product line|product category|sku|brand)\b/.test(lower)) return 'PRODUCT';
+  if (/\b(region|geography|domestic|international|export|india|overseas)\b/.test(lower)) return 'REGION';
+  if (/\b(company|consolidated|overall|group|entity|firm-wide|company-wide|total revenue)\b/.test(lower)) return 'COMPANY';
+  // If no explicit scope markers, check if it mentions specific sub-units
+  if (/\b(smartphone|handset|ev |electric vehicle|solar|wind|pharma api|formulation)\b/.test(lower)) return 'SEGMENT';
+  return 'UNKNOWN';
+}
+
+function extractGuidancePeriod(headline: string): 'FY' | 'Q' | 'RUN_RATE' | 'UNKNOWN' {
+  const lower = headline.toLowerCase();
+  if (/\b(fy\d{2}|fy \d{2}|full year|annual|yearly)\b/.test(lower)) return 'FY';
+  if (/\b(q[1-4]|quarter|qoq|q-o-q|sequential|quarterly)\b/.test(lower)) return 'Q';
+  if (/\b(run.?rate|annualized|trailing)\b/.test(lower)) return 'RUN_RATE';
+  return 'UNKNOWN';
+}
+
+// ══════════════════════════════════════════════════════════════
+// ── v4: GUIDANCE SANITY BOUND (CRITICAL RULE) ──
+// IF abs(revenue_change) > 30% AND source != explicit company-wide guidance
+// THEN: dataQuality = BROKEN, action = FORCE_WATCH, suppress % display
+// ══════════════════════════════════════════════════════════════
+
+function applyGuidanceSanityBound(
+  revenueGrowth: number | null,
+  scope: 'COMPANY' | 'SEGMENT' | 'PRODUCT' | 'REGION' | 'UNKNOWN',
+  period: 'FY' | 'Q' | 'RUN_RATE' | 'UNKNOWN',
+  confidenceScore: number,
+): { dataQuality: 'HIGH' | 'MEDIUM' | 'LOW' | 'BROKEN'; forceWatch: boolean; reason?: string } {
+  if (revenueGrowth === null) return { dataQuality: 'MEDIUM', forceWatch: false };
+
+  const absGrowth = Math.abs(revenueGrowth);
+
+  // Rule 1: Extreme + not company-wide = BROKEN
+  if (absGrowth > 30 && scope !== 'COMPANY') {
+    return {
+      dataQuality: 'BROKEN',
+      forceWatch: true,
+      reason: `Extreme ${revenueGrowth > 0 ? '+' : ''}${revenueGrowth.toFixed(0)}% with scope=${scope} — likely segment/QoQ misread`,
+    };
+  }
+
+  // Rule 2: Extreme + QoQ period = BROKEN (QoQ numbers misread as YoY)
+  if (absGrowth > 30 && period === 'Q') {
+    return {
+      dataQuality: 'BROKEN',
+      forceWatch: true,
+      reason: `Extreme ${revenueGrowth > 0 ? '+' : ''}${revenueGrowth.toFixed(0)}% with period=Q — likely QoQ not YoY`,
+    };
+  }
+
+  // Rule 3: Extreme + low confidence = BROKEN
+  if (absGrowth > 30 && confidenceScore < 65) {
+    return {
+      dataQuality: 'BROKEN',
+      forceWatch: true,
+      reason: `Extreme ${revenueGrowth > 0 ? '+' : ''}${revenueGrowth.toFixed(0)}% with low confidence (${confidenceScore}) — unverifiable`,
+    };
+  }
+
+  // Rule 4: Moderate extreme with company scope = LOW (flag but don't break)
+  if (absGrowth > 30 && scope === 'COMPANY') {
+    return {
+      dataQuality: 'LOW',
+      forceWatch: false,
+      reason: `Company-wide ${revenueGrowth > 0 ? '+' : ''}${revenueGrowth.toFixed(0)}% — extreme but scoped correctly`,
+    };
+  }
+
+  // Normal bounds
+  if (absGrowth <= 15 && confidenceScore >= 70) return { dataQuality: 'HIGH', forceWatch: false };
+  if (absGrowth <= 30) return { dataQuality: 'MEDIUM', forceWatch: false };
+  return { dataQuality: 'LOW', forceWatch: false };
+}
+
+// ══════════════════════════════════════════════════════════════
+// ── v4: RANGE-AWARE PARSING ──
+// Uses midpoint of range + applies confidence penalty for wide ranges
+// ══════════════════════════════════════════════════════════════
+
+function parseGuidanceRange(headline: string): { low: number | null; high: number | null; midpoint: number | null; widthPct: number } {
+  // Match patterns like "4000-4100 Cr", "₹4,000 - ₹4,100 crore", "4000 to 4100"
+  const rangeMatch = headline.match(/(?:₹|Rs\.?\s*)?(\d[\d,.]*)\s*(?:[-–—]|to)\s*(?:₹|Rs\.?\s*)?(\d[\d,.]*)\s*(?:Cr|crore|cr)/i);
+  if (rangeMatch) {
+    const low = parseFloat(rangeMatch[1].replace(/,/g, ''));
+    const high = parseFloat(rangeMatch[2].replace(/,/g, ''));
+    if (low > 0 && high > 0 && high >= low) {
+      const midpoint = (low + high) / 2;
+      const widthPct = ((high - low) / midpoint) * 100;
+      return { low, high, midpoint, widthPct };
+    }
+  }
+
+  // Match % range patterns like "15-20% growth", "mid-teens"
+  const pctRangeMatch = headline.match(/(\d+)\s*(?:[-–—]|to)\s*(\d+)\s*%/);
+  if (pctRangeMatch) {
+    const low = parseFloat(pctRangeMatch[1]);
+    const high = parseFloat(pctRangeMatch[2]);
+    if (low >= 0 && high >= low) {
+      const midpoint = (low + high) / 2;
+      const widthPct = high > 0 ? ((high - low) / ((low + high) / 2)) * 100 : 0;
+      return { low, high, midpoint, widthPct };
+    }
+  }
+
+  return { low: null, high: null, midpoint: null, widthPct: 0 };
+}
+
+function computeRangeConfidencePenalty(widthPct: number): number {
+  // Wide range = low confidence. >10% width = penalty
+  if (widthPct <= 5) return 1.0;   // Tight range, no penalty
+  if (widthPct <= 10) return 0.9;  // Moderate range
+  if (widthPct <= 20) return 0.75; // Wide range
+  if (widthPct <= 50) return 0.5;  // Very wide
+  return 0.3;                       // Extremely wide — near useless
+}
+
+// ══════════════════════════════════════════════════════════════
+// ── v4: SOURCE/DATA QUALITY CLASSIFICATION (orthogonal) ──
+// sourceTier: Was the document real? (VERIFIED / HEURISTIC / INFERRED)
+// dataQuality: Was the number parsed correctly? (HIGH / MEDIUM / LOW / BROKEN)
+// ══════════════════════════════════════════════════════════════
+
+function classifySourceTier(
+  confidenceType: string, valueSource: string, dataSource?: string
+): 'VERIFIED' | 'HEURISTIC' | 'INFERRED' {
+  if (confidenceType === 'ACTUAL' && (valueSource === 'EXACT' || valueSource === 'AGGREGATED')) return 'VERIFIED';
+  const isExchange = dataSource === 'nse' || dataSource === 'NSE';
+  const isGuidance = dataSource === 'Guidance';
+  if (isExchange || isGuidance) return 'VERIFIED';
+  if (dataSource === 'moneycontrol' || dataSource === 'Moneycontrol') return 'VERIFIED';
+  if (confidenceType === 'INFERRED') return 'INFERRED';
+  return 'HEURISTIC';
+}
+
+function classifyDataQuality(
+  confidenceType: string, valueSource: string, confidenceScore: number,
+  impactPct: number, isTemplateDetected: boolean, guidanceAnomalyFlag?: string
+): 'HIGH' | 'MEDIUM' | 'LOW' | 'BROKEN' {
+  if (isTemplateDetected) return 'BROKEN';
+  if (guidanceAnomalyFlag === 'EXTREME_UNVERIFIED' || guidanceAnomalyFlag === 'INCONSISTENT_WITH_HISTORY') return 'BROKEN';
+  if (guidanceAnomalyFlag === 'QOQ_MISREAD' || guidanceAnomalyFlag === 'SEGMENT_NOT_TOTAL') return 'BROKEN';
+  if (confidenceType === 'ACTUAL' && (valueSource === 'EXACT' || valueSource === 'AGGREGATED')) return 'HIGH';
+  if (confidenceScore >= 70 && impactPct <= 30) return 'MEDIUM';
+  if (confidenceType === 'HEURISTIC' && impactPct > 20) return 'LOW';
+  if (confidenceScore < 50) return 'LOW';
+  return 'MEDIUM';
+}
+
+// ══════════════════════════════════════════════════════════════
+// ── v4: ACTION SCORE FOR TOP ACTIONABLE RANKING ──
+// actionScore = signalScore × evidenceWeight × dataQualityWeight
+// Hard Rule: Top Actionable must contain ≥50% VERIFIED signals
+// ══════════════════════════════════════════════════════════════
+
+const EVIDENCE_WEIGHTS: Record<string, number> = {
+  'VERIFIED': 1.0,
+  'HEURISTIC': 0.6,
+  'INFERRED': 0.3,
+};
+
+const DATA_QUALITY_WEIGHTS: Record<string, number> = {
+  'HIGH': 1.0,
+  'MEDIUM': 0.7,
+  'LOW': 0.5,
+  'BROKEN': 0.1,
+};
+
+function computeActionScore(
+  weightedScore: number,
+  sourceTier: 'VERIFIED' | 'HEURISTIC' | 'INFERRED',
+  dataQuality: 'HIGH' | 'MEDIUM' | 'LOW' | 'BROKEN',
+): number {
+  const evidenceW = EVIDENCE_WEIGHTS[sourceTier] || 0.3;
+  const dqW = DATA_QUALITY_WEIGHTS[dataQuality] || 0.5;
+  return Math.round(weightedScore * evidenceW * dqW);
+}
+
+// ══════════════════════════════════════════════════════════════
+// ── v4: SOURCE SENTENCE QUALITY CHECK ──
+// Enforce minimum 8-word source extraction
+// ══════════════════════════════════════════════════════════════
+
+function extractSourceSentence(desc: string, headline: string): { sentence: string; quality: 'HIGH' | 'MEDIUM' | 'LOW' } {
+  // Try to find a meaningful sentence from description
+  const sentences = (desc || '').split(/[.!?;]+/).map(s => s.trim()).filter(s => s.length > 10);
+
+  // Find the most informative sentence (contains numbers or guidance keywords)
+  const guidanceKeywords = /\b(guidance|outlook|expects?|target|forecast|growth|revenue|margin|capex|order|contract|acquisition)\b/i;
+  let best = sentences.find(s => guidanceKeywords.test(s) && s.split(/\s+/).length >= 8);
+  if (!best) best = sentences.find(s => s.split(/\s+/).length >= 8);
+  if (!best) best = sentences[0] || '';
+
+  const wordCount = best.split(/\s+/).filter(w => w.length > 0).length;
+
+  if (wordCount >= 12) return { sentence: best.slice(0, 200), quality: 'HIGH' };
+  if (wordCount >= 8) return { sentence: best.slice(0, 200), quality: 'MEDIUM' };
+
+  // Fallback: use headline if desc is too short
+  const hlWords = (headline || '').split(/\s+/).filter(w => w.length > 0).length;
+  if (hlWords >= 8) return { sentence: headline.slice(0, 200), quality: 'MEDIUM' };
+
+  return { sentence: best.slice(0, 120) || headline.slice(0, 120), quality: 'LOW' };
+}
+
+// ══════════════════════════════════════════════════════════════
+// ── v4: UPSTREAM TEMPLATE BATCH DETECTION ──
+// Kill template signals BEFORE compute (not just mask after)
+// IF multiple companies share same value ±1% AND same % impact ±0.2% AND same timestamp window
+// THEN mark as TEMPLATE_BATCH → drop before signal processing
+// ══════════════════════════════════════════════════════════════
+
+function detectUpstreamTemplateBatch(
+  items: Array<{ symbol: string; valueCr: number; impactPct: number; date: string; valueSource: string }>
+): Set<string> {
+  const dropSet = new Set<string>();
+
+  // Group by approximate value (within 1%)
+  const valueGroups = new Map<number, typeof items>();
+  for (const item of items) {
+    if (item.valueSource !== 'HEURISTIC' || item.valueCr <= 0) continue;
+    const bucket = Math.round(item.valueCr); // Round to nearest integer
+    let found = false;
+    for (const [key, group] of valueGroups) {
+      if (Math.abs(key - bucket) / Math.max(key, 1) <= 0.01) {
+        group.push(item);
+        found = true;
+        break;
+      }
+    }
+    if (!found) valueGroups.set(bucket, [item]);
+  }
+
+  for (const [val, group] of valueGroups) {
+    if (group.length < 5) continue; // Need 5+ companies for template detection
+
+    // Check if % impacts are also similar (±0.2%)
+    const impacts = group.map(g => g.impactPct);
+    const avgImpact = impacts.reduce((a, b) => a + b, 0) / impacts.length;
+    const similarImpact = impacts.filter(i => Math.abs(i - avgImpact) <= 0.2).length;
+
+    if (similarImpact >= 4) {
+      // Template batch detected — mark all for dropping
+      for (const item of group) {
+        dropSet.add(`${item.symbol}:${Math.round(item.valueCr)}`);
+      }
+    }
+  }
+
+  return dropSet;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1946,8 +2215,24 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     signal.evidenceTier = classifyEvidenceTier(confidenceType, valueSource, dataSource, confidenceScore, false);
     signal.timeHorizon = classifyTimeHorizon(eventType);
     signal.extremeValueFlag = detectExtremeValue(null, impactPct);
-    // Extract source sentence for provenance
-    signal.sourceExtract = (desc || '').slice(0, 120).replace(/\s+/g, ' ').trim() || undefined;
+    // v4: Source sentence extraction (upgraded — min 8 words)
+    const srcExtraction = extractSourceSentence(desc || '', signal.headline);
+    signal.sourceExtract = srcExtraction.sentence || undefined;
+    // If source extraction is LOW quality, downgrade data confidence
+    if (srcExtraction.quality === 'LOW' && signal.confidenceType === 'HEURISTIC') {
+      signal.confidenceScore = Math.min(signal.confidenceScore, 45);
+    }
+
+    // v4: Orthogonal axes — sourceTier + dataQuality
+    signal.sourceTier = classifySourceTier(confidenceType, valueSource, dataSource);
+    signal.dataQuality = classifyDataQuality(
+      confidenceType, valueSource, signal.confidenceScore, impactPct, false
+    );
+    // v4: Scope/period (for non-guidance signals: COMPANY by default)
+    signal.guidanceScope = 'COMPANY';
+    signal.guidancePeriod = 'UNKNOWN';
+    // v4: Action score for ranking
+    signal.actionScore = computeActionScore(signal.weightedScore, signal.sourceTier, signal.dataQuality);
 
     if (existing) {
       const existDate = new Date(existing.date).getTime();
@@ -2088,6 +2373,12 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     dealSignal.signalTier = 'TIER1_VERIFIED';  // Exchange-confirmed deals
     dealSignal.evidenceTier = 'TIER_A';  // Exchange-confirmed
     dealSignal.timeHorizon = classifyTimeHorizon(eventType);
+    // v4: Deals are always VERIFIED + HIGH quality (exchange-confirmed)
+    dealSignal.sourceTier = 'VERIFIED';
+    dealSignal.dataQuality = 'HIGH';
+    dealSignal.guidanceScope = 'COMPANY';
+    dealSignal.guidancePeriod = 'UNKNOWN';
+    dealSignal.actionScore = computeActionScore(dealSignal.weightedScore, 'VERIFIED', 'HIGH');
 
     const dealDedupKey = `${symbol}:${eventType}:${(deal.dealDate || getTodayDate()).slice(0, 10)}`;
     const existingDeal = dealDedupMap.get(dealDedupKey);
@@ -2291,6 +2582,70 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         guidanceSignal.timeHorizon = 'SHORT';  // Guidance is always short-term
         guidanceSignal.extremeValueFlag = detectExtremeValue(revG || null, impactPct);
 
+        // ── v4: SCOPE + PERIOD TAGGING (mandatory for all guidance) ──
+        const guidanceText = ge.headline || ge.description || headline || '';
+        guidanceSignal.guidanceScope = extractGuidanceScope(guidanceText);
+        guidanceSignal.guidancePeriod = extractGuidancePeriod(guidanceText);
+
+        // ── v4: RANGE-AWARE PARSING ──
+        const rangeResult = parseGuidanceRange(guidanceText);
+        if (rangeResult.midpoint !== null) {
+          guidanceSignal.guidanceRangeLow = rangeResult.low!;
+          guidanceSignal.guidanceRangeHigh = rangeResult.high!;
+          const rangePenalty = computeRangeConfidencePenalty(rangeResult.widthPct);
+          guidanceSignal.guidanceRangeConfPenalty = rangePenalty;
+          // Apply penalty to confidence score
+          guidanceSignal.confidenceScore = Math.round(guidanceSignal.confidenceScore * rangePenalty);
+        }
+
+        // ── v4: GUIDANCE SANITY BOUND (CRITICAL) ──
+        const sanityResult = applyGuidanceSanityBound(
+          revG || null,
+          guidanceSignal.guidanceScope!,
+          guidanceSignal.guidancePeriod!,
+          guidanceSignal.confidenceScore,
+        );
+        guidanceSignal.dataQuality = sanityResult.dataQuality;
+        if (sanityResult.forceWatch) {
+          guidanceSignal.action = 'WATCH';
+          guidanceSignal.decision = 'WATCH';
+          guidanceSignal.watchSubtype = 'PASSIVE';
+          guidanceSignal.conflictResolution = (guidanceSignal.conflictResolution ? guidanceSignal.conflictResolution + ' · ' : '') +
+            `Sanity bound: ${sanityResult.reason}`;
+          if (!guidanceSignal.riskFactors) guidanceSignal.riskFactors = [];
+          guidanceSignal.riskFactors.push(sanityResult.reason || 'Guidance sanity bound triggered');
+        }
+
+        // ── v4: SOURCE TIER (orthogonal) ──
+        guidanceSignal.sourceTier = ge.confidenceScore >= 70 ? 'VERIFIED' : 'INFERRED';
+
+        // ── v4: SCOPE ENFORCEMENT ──
+        // IF scope != COMPANY → DO NOT compute headline % impact → Show "Segment-level signal"
+        if (guidanceSignal.guidanceScope !== 'COMPANY' && guidanceSignal.guidanceScope !== 'UNKNOWN') {
+          // Don't use segment data to drive company-level actions
+          if (guidanceSignal.action === 'BUY' || guidanceSignal.action === 'ADD' || guidanceSignal.action === 'EXIT') {
+            guidanceSignal.action = 'WATCH';
+            guidanceSignal.decision = 'WATCH';
+            guidanceSignal.conflictResolution = (guidanceSignal.conflictResolution ? guidanceSignal.conflictResolution + ' · ' : '') +
+              `Scope gate: ${guidanceSignal.guidanceScope}-level signal cannot drive ${guidanceSignal.action}`;
+          }
+        }
+
+        // ── v4: SOURCE SENTENCE QUALITY CHECK ──
+        const guidanceSrcExtraction = extractSourceSentence(ge.headline || ge.description || '', headline);
+        guidanceSignal.sourceExtract = guidanceSrcExtraction.sentence || undefined;
+        if (guidanceSrcExtraction.quality === 'LOW') {
+          guidanceSignal.dataQuality = guidanceSignal.dataQuality === 'HIGH' ? 'MEDIUM' :
+            guidanceSignal.dataQuality === 'MEDIUM' ? 'LOW' : guidanceSignal.dataQuality;
+        }
+
+        // ── v4: ACTION SCORE FOR RANKING ──
+        guidanceSignal.actionScore = computeActionScore(
+          guidanceSignal.weightedScore,
+          guidanceSignal.sourceTier!,
+          guidanceSignal.dataQuality!,
+        );
+
         // ── GUIDANCE VALIDATION (v3): Catch QoQ/segment misreads, extreme values ──
         const previousGrowthForSymbol = earningsCache.get(symbol);
         const prevGrowth = previousGrowthForSymbol !== null && previousGrowthForSymbol !== undefined
@@ -2311,11 +2666,25 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
             (guidanceValidation.reason || 'Guidance anomaly detected');
           if (!guidanceSignal.riskFactors) guidanceSignal.riskFactors = [];
           guidanceSignal.riskFactors.push(guidanceValidation.reason || 'Anomaly in guidance data');
+          // v4: BROKEN data quality for invalid guidance
+          guidanceSignal.dataQuality = 'BROKEN';
         } else if (guidanceValidation.anomalyType) {
           // Valid but flagged for review
           guidanceSignal.guidanceAnomalyFlag = guidanceValidation.anomalyType;
           if (!guidanceSignal.riskFactors) guidanceSignal.riskFactors = [];
           guidanceSignal.riskFactors.push(guidanceValidation.reason || 'Extreme guidance value — verify');
+        }
+
+        // ── v4: BROKEN DATA QUALITY HARD GATE ──
+        // IF dataQuality == BROKEN → NEVER allow HOLD/ADD/EXIT/TRIM → ONLY WATCH (PASSIVE)
+        if (guidanceSignal.dataQuality === 'BROKEN') {
+          if (guidanceSignal.action !== 'WATCH') {
+            guidanceSignal.action = 'WATCH';
+            guidanceSignal.decision = 'WATCH';
+          }
+          guidanceSignal.watchSubtype = 'PASSIVE';
+          guidanceSignal.conflictResolution = (guidanceSignal.conflictResolution ? guidanceSignal.conflictResolution + ' · ' : '') +
+            'Data quality BROKEN: forced WATCH-PASSIVE';
         }
 
         // Guidance without supporting signals → note it, but don't double-penalize
@@ -3073,7 +3442,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         }
       }
     }
-    // Data confidence flag
+    // Data confidence flag (legacy) + v4 orthogonal axes if not yet set
     if (s.confidenceType === 'ACTUAL' && s.valueSource === 'EXACT') {
       s.dataConfidence = 'VERIFIED';
     } else if (s.confidenceType === 'INFERRED') {
@@ -3081,12 +3450,48 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     } else {
       s.dataConfidence = 'LOW';
     }
+    // v4: Ensure sourceTier/dataQuality are set for all signals
+    if (!s.sourceTier) {
+      s.sourceTier = classifySourceTier(s.confidenceType || 'HEURISTIC', s.valueSource || 'HEURISTIC', s.dataSource);
+    }
+    if (!s.dataQuality) {
+      s.dataQuality = classifyDataQuality(
+        s.confidenceType || 'HEURISTIC', s.valueSource || 'HEURISTIC',
+        s.confidenceScore || 50, s.impactPct, !!s.heuristicSuppressed, s.guidanceAnomalyFlag
+      );
+    }
+    if (!s.actionScore) {
+      s.actionScore = computeActionScore(s.weightedScore, s.sourceTier!, s.dataQuality!);
+    }
   }
 
-  let top3 = filtered.filter(s => s.action === 'BUY' || s.action === 'ADD').slice(0, 3);
-  if (top3.length === 0) {
-    top3.push(...filtered.filter(s => s.action !== 'AVOID' && s.action !== 'EXIT').slice(0, 3));
+  // ── v4: TOP ACTIONABLE RANKING (evidence-weighted, not just score-sorted) ──
+  // actionScore = signalScore × evidenceWeight × dataQualityWeight
+  // Hard Rule: Top Actionable must contain ≥50% VERIFIED signals
+  const actionablePool = filtered
+    .filter(s => (s.action === 'BUY' || s.action === 'ADD' || s.action === 'HOLD') && s.dataQuality !== 'BROKEN')
+    .sort((a, b) => (b.actionScore || 0) - (a.actionScore || 0));
+
+  let top3 = actionablePool.slice(0, 3);
+  // Enforce ≥50% verified in top 3
+  const verifiedInTop3 = top3.filter(s => s.sourceTier === 'VERIFIED').length;
+  if (top3.length > 0 && verifiedInTop3 < Math.ceil(top3.length / 2)) {
+    // Swap in verified signals from pool
+    const verifiedPool = actionablePool.filter(s => s.sourceTier === 'VERIFIED');
+    top3 = [
+      ...verifiedPool.slice(0, Math.min(2, verifiedPool.length)),
+      ...actionablePool.filter(s => s.sourceTier !== 'VERIFIED').slice(0, 1),
+    ].slice(0, 3);
   }
+  if (top3.length === 0) {
+    top3.push(...filtered.filter(s => s.action !== 'AVOID' && s.action !== 'EXIT' && s.dataQuality !== 'BROKEN').slice(0, 3));
+  }
+
+  // v4: Check if we have any high-confidence actionable signals
+  const highConfActionable = filtered.filter(s =>
+    (s.action === 'BUY' || s.action === 'ADD') && s.sourceTier === 'VERIFIED' && s.dataQuality !== 'BROKEN'
+  );
+  const noHighConfSignals = highConfActionable.length === 0;
 
   const sectorSet = new Set<string>();
   let totalOrderValueCr = 0;
@@ -3190,6 +3595,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     trends: trends.slice(0, 10),
     bias,
     updatedAt: new Date().toISOString(),
+    noHighConfSignals,
     _debug: debug,
   };
 }
