@@ -674,19 +674,23 @@ function governanceMateriality(role: string): 'HIGH' | 'MEDIUM' | 'LOW' | 'VERY_
   if (['CEO', 'CFO', 'MD', 'Chairman', 'Managing Director'].includes(role)) return 'HIGH';
   if (['COO', 'CTO', 'President', 'Promoter'].includes(role)) return 'HIGH';
   if (['Director', 'Whole-Time Director', 'Independent Director'].includes(role)) return 'MEDIUM';
-  if (['VP', 'Company Secretary', 'Auditor', 'Other'].includes(role)) return 'LOW';
-  return 'VERY_LOW';
+  if (['VP', 'Company Secretary', 'Auditor'].includes(role)) return 'LOW';
+  // 'Other' / unknown = MEDIUM (not LOW) — NSE filings often lack role detail
+  return 'MEDIUM';
 }
 
-// False classification guard — reject fake mgmt change signals
-function isRealMgmtChange(headline?: string, description?: string): boolean {
+// False classification guard — checks if a mgmt change signal is actually real
+// NSE-sourced signals default to real (corporate filings are authoritative)
+function isRealMgmtChange(headline?: string, description?: string, dataSource?: string): boolean {
   const text = ((headline || '') + ' ' + (description || '')).toLowerCase();
   // Explicit contradictions
   if (text.includes('no change in management') || text.includes('no change in control') ||
       text.includes('no material change')) return false;
-  // Must have appointment/change keywords
-  const hasChangeKeywords = /appoint|resign|step.?down|relinquish|cessation|retire|join|elevat|promot|succeed|replac|interim|addition|designat|re-?appoint/.test(text);
-  if (!hasChangeKeywords && text.length > 20) return false;  // Long text with no change keywords = not mgmt change
+  // NSE corporate filings about mgmt changes are inherently real events
+  if (dataSource === 'nse' || dataSource === 'NSE') return true;
+  // Must have appointment/change keywords for non-NSE sources
+  const hasChangeKeywords = /appoint|resign|step.?down|relinquish|cessation|retire|join|elevat|promot|succeed|replac|interim|addition|designat|re-?appoint|change|director|board|committee/.test(text);
+  if (!hasChangeKeywords && text.length > 20) return false;
   return true;
 }
 
@@ -755,13 +759,13 @@ function computeMaterialityScore(signal: any): number {
 }
 
 // ── VISIBILITY FILTER ──
-// COMPLIANCE = always HIDDEN
-// GOVERNANCE = HIDDEN unless senior role (CEO/CFO/MD/Chairman)
+// COMPLIANCE = DIMMED (available for sparse backfill, not hard-hidden)
+// GOVERNANCE = DIMMED unless senior role (CEO/CFO/MD/Chairman)
 // STRATEGIC/ECONOMIC = VISIBLE
 function determineVisibility(signal: any): 'VISIBLE' | 'DIMMED' | 'HIDDEN' {
   const signalClass: SignalClass = signal.signalClass || 'COMPLIANCE';
 
-  if (signalClass === 'COMPLIANCE') return 'HIDDEN';
+  if (signalClass === 'COMPLIANCE') return 'DIMMED';
 
   if (signalClass === 'GOVERNANCE') {
     const role = signal.managementRole || 'Other';
@@ -4048,8 +4052,8 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     s.managementRole = extractManagementRole(s.headline, s.whyItMatters);
 
     // 2. False classification guard: reject fake mgmt changes
-    if (s.signalClass === 'GOVERNANCE' && !isRealMgmtChange(s.headline, s.whyItMatters)) {
-      s.signalClass = 'COMPLIANCE';  // Demote to compliance (hidden)
+    if (s.signalClass === 'GOVERNANCE' && !isRealMgmtChange(s.headline, s.whyItMatters, s.dataSource)) {
+      s.signalClass = 'COMPLIANCE';  // Demote to compliance (dimmed)
     }
 
     // 3. Governance materiality ladder
@@ -4057,7 +4061,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       const govLevel = governanceMateriality(s.managementRole || 'Other');
       if (govLevel === 'LOW' || govLevel === 'VERY_LOW') {
         s.materialityScore = Math.round((s.materialityScore || 0) * 0.3);
-        s.visibility = 'HIDDEN';  // Auditor/VP/HR/Secretary = hide
+        s.visibility = 'DIMMED';  // Dimmed, not hidden — available for sparse backfill
       } else if (govLevel === 'MEDIUM') {
         s.materialityScore = Math.round((s.materialityScore || 0) * 0.6);
         s.visibility = 'DIMMED';

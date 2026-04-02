@@ -64,15 +64,20 @@ const ROLE_SCORES: Record<string, number> = {
 function governanceMateriality(role: string): 'HIGH' | 'MEDIUM' | 'LOW' | 'VERY_LOW' {
   if (['CEO', 'CFO', 'MD', 'Chairman', 'Managing Director', 'COO', 'CTO', 'President', 'Promoter'].includes(role)) return 'HIGH';
   if (['Director', 'Whole-Time Director', 'Independent Director'].includes(role)) return 'MEDIUM';
-  if (['VP', 'Company Secretary', 'Auditor', 'Other'].includes(role)) return 'LOW';
-  return 'VERY_LOW';
+  if (['VP', 'Company Secretary', 'Auditor'].includes(role)) return 'LOW';
+  // 'Other' / unknown = MEDIUM (not LOW) — NSE filings often lack role detail
+  return 'MEDIUM';
 }
 
-// False classification guard
-function isRealMgmtChange(headline?: string, desc?: string): boolean {
+// False classification guard — checks if a mgmt change signal is actually real
+// NSE-sourced signals default to real (corporate filings are authoritative)
+function isRealMgmtChange(headline?: string, desc?: string, dataSource?: string): boolean {
   const text = ((headline || '') + ' ' + (desc || '')).toLowerCase();
+  // Explicit "no change" negations → not a real change
   if (text.includes('no change in management') || text.includes('no change in control') || text.includes('no material change')) return false;
-  const hasChangeKw = /appoint|resign|step.?down|relinquish|cessation|retire|join|elevat|promot|succeed|replac|interim|addition|designat|re-?appoint/.test(text);
+  // NSE corporate filings about mgmt changes are inherently real events
+  if (dataSource === 'nse' || dataSource === 'NSE') return true;
+  const hasChangeKw = /appoint|resign|step.?down|relinquish|cessation|retire|join|elevat|promot|succeed|replac|interim|addition|designat|re-?appoint|change|director|board|committee/.test(text);
   if (!hasChangeKw && text.length > 20) return false;
   return true;
 }
@@ -1273,7 +1278,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               s.managementRole = s.managementRole || extractMgmtRole(s.headline, s.whyItMatters);
 
               // False classification guard
-              if (s.signalClass === 'GOVERNANCE' && !isRealMgmtChange(s.headline, s.whyItMatters)) {
+              if (s.signalClass === 'GOVERNANCE' && !isRealMgmtChange(s.headline, s.whyItMatters, s.dataSource)) {
                 s.signalClass = 'COMPLIANCE';
               }
 
@@ -1299,7 +1304,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 const govLevel = governanceMateriality(s.managementRole || 'Other');
                 if (govLevel === 'LOW' || govLevel === 'VERY_LOW') {
                   s.materialityScore = Math.round(s.materialityScore * 0.3);
-                  s.visibility = 'HIDDEN';
+                  s.visibility = 'DIMMED';  // Dimmed, not hidden — available for sparse backfill
                 } else if (govLevel === 'MEDIUM') {
                   s.materialityScore = Math.round(s.materialityScore * 0.6);
                   s.visibility = 'DIMMED';
@@ -1307,7 +1312,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                   s.visibility = 'VISIBLE';
                 }
               } else if (s.signalClass === 'COMPLIANCE') {
-                s.visibility = 'HIDDEN';
+                s.visibility = 'DIMMED';  // Available for sparse backfill, not hard-hidden
               } else {
                 s.visibility = 'VISIBLE';
               }
