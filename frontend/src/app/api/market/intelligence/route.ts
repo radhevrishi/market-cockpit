@@ -1072,6 +1072,73 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             }
           }
 
+          // v5: Apply 3-flag verification post-processing if fields are missing
+          if (responseData.signals && Array.isArray(responseData.signals) && responseData.signals.length > 0 && !responseData.signals[0].verified) {
+            const actionableSignals: any[] = [];
+            const observationSignals: any[] = [];
+
+            for (const s of responseData.signals) {
+              // SRC_VERIFIED
+              const srcVerified = (
+                s.sourceTier === 'VERIFIED' ||
+                s.confidenceType === 'ACTUAL' ||
+                s.dataSource === 'nse' || s.dataSource === 'NSE' ||
+                s.source === 'deal'
+              );
+              // NUM_VALIDATED
+              const hasBrokenData = s.dataQuality === 'BROKEN';
+              const hasTemplatePattern = !!s.templatePattern || !!s.heuristicSuppressed;
+              const hasExtremeAnomaly = s.guidanceAnomalyFlag === 'EXTREME_UNVERIFIED' || s.guidanceAnomalyFlag === 'INCONSISTENT_WITH_HISTORY';
+              const numValidated = !hasBrokenData && !hasTemplatePattern && !hasExtremeAnomaly && s.dataQuality !== 'LOW';
+              // SCOPE_VALIDATED
+              const isNonGuidance = s.eventType !== 'Guidance' && !(s.headline || '').toLowerCase().includes('guidance');
+              const scopeKnown = s.guidanceScope && s.guidanceScope !== 'UNKNOWN';
+              const periodKnown = s.guidancePeriod && s.guidancePeriod !== 'UNKNOWN';
+              const scopeValidated = isNonGuidance || (scopeKnown && periodKnown);
+
+              const verified = srcVerified && numValidated && scopeValidated;
+              const confidenceLayer = Math.round((srcVerified ? 40 : 0) + (numValidated ? 30 : 0) + (scopeValidated ? 30 : 0));
+
+              let signalCategory = 'OBSERVATION';
+              let observationReason: string | undefined;
+
+              if (hasBrokenData) {
+                observationReason = 'Data quality broken: parsing failure or template artifact';
+              } else if (hasExtremeAnomaly) {
+                observationReason = 'Extreme anomaly: unverified or inconsistent';
+              } else if (!scopeValidated && !isNonGuidance) {
+                observationReason = 'Scope/period unknown: cannot validate % change';
+              } else if (verified) {
+                signalCategory = 'ACTIONABLE';
+              } else if (!numValidated) {
+                observationReason = 'Number not validated: extraction may be incorrect';
+              } else {
+                observationReason = 'Incomplete validation';
+              }
+
+              s.srcVerified = srcVerified;
+              s.numValidated = numValidated;
+              s.scopeValidated = scopeValidated;
+              s.verified = verified;
+              s.confidenceLayer = confidenceLayer;
+              s.signalCategory = signalCategory;
+              s.observationReason = observationReason;
+
+              if (signalCategory === 'ACTIONABLE') {
+                actionableSignals.push(s);
+              } else {
+                observationSignals.push(s);
+              }
+            }
+
+            responseData = {
+              ...responseData,
+              signals: actionableSignals,
+              observations: observationSignals,
+              noActionableSignals: actionableSignals.filter((s: any) => s.action !== 'WATCH' && s.action !== 'AVOID').length === 0,
+            };
+          }
+
           return NextResponse.json({
             ...responseData,
             _meta: {
