@@ -695,7 +695,7 @@ export default function CompanyIntelligencePage() {
                     padding: '2px 6px', borderRadius: '4px', backgroundColor: impactBg(s.impactLevel),
                   }}>{s.impactLevel} IMPACT</span>
                   <span style={{ fontSize: '11px', fontWeight: 600, color: ACCENT, padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(15,122,191,0.1)' }}>{s.eventType}</span>
-                  {s.valueCr !== null && s.valueCr > 0 && (
+                  {s.valueCr && s.valueCr > 0 && (
                     <span style={{ fontSize: '13px', fontWeight: 700, color: CYAN }}>{fmtCr(s.valueCr)}</span>
                   )}
                   {s.signalStackLevel && s.signalStackLevel !== 'WEAK' && (
@@ -746,7 +746,7 @@ export default function CompanyIntelligencePage() {
                   display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '6px', padding: '6px 8px',
                   backgroundColor: 'rgba(6,182,212,0.05)', borderRadius: '6px', border: '1px solid rgba(6,182,212,0.1)',
                 }}>
-                  {s.valueCr !== null && s.valueCr > 0 ? (
+                  {s.valueCr && s.valueCr > 0 ? (
                     <span style={{ fontSize: '12px', color: TEXT2 }}>
                       Event: <span style={{ fontWeight: 700, color: CYAN }}>{fmtCr(s.valueCr)}</span>
                       {s.inferenceUsed && <span style={{ fontSize: '9px', color: TEXT3, marginLeft: '3px' }}>(est.)</span>}
@@ -759,13 +759,15 @@ export default function CompanyIntelligencePage() {
                       Rev: <span style={{ fontWeight: 700, color: TEXT1 }}>{fmtCr(s.revenueCr)}</span>
                     </span>
                   )}
-                  <span style={{
-                    fontSize: '13px', fontWeight: 800, padding: '2px 10px', borderRadius: '6px',
-                    backgroundColor: s.impactPct >= 8 ? 'rgba(16,185,129,0.2)' : s.impactPct >= 3 ? 'rgba(251,191,36,0.15)' : 'rgba(100,116,139,0.1)',
-                    color: s.impactPct >= 8 ? GREEN : s.impactPct >= 3 ? YELLOW : TEXT2,
-                  }}>Impact: {s.impactPct.toFixed(1)}% {s.impactPct >= 8 ? '→ HIGH' : s.impactPct >= 3 ? '→ MEDIUM' : '→ LOW'}
-                    {s.inferenceUsed && ' (est.)'}
-                  </span>
+                  {s.impactPct > 0 && (
+                    <span style={{
+                      fontSize: '13px', fontWeight: 800, padding: '2px 10px', borderRadius: '6px',
+                      backgroundColor: s.impactPct >= 8 ? 'rgba(16,185,129,0.2)' : s.impactPct >= 3 ? 'rgba(251,191,36,0.15)' : 'rgba(100,116,139,0.1)',
+                      color: s.impactPct >= 8 ? GREEN : s.impactPct >= 3 ? YELLOW : TEXT2,
+                    }}>Impact: {s.impactPct.toFixed(1)}% {s.impactPct >= 8 ? '→ HIGH' : s.impactPct >= 3 ? '→ MEDIUM' : '→ LOW'}
+                      {s.inferenceUsed && ' (est.)'}
+                    </span>
+                  )}
                   {s.pctMcap !== null && s.pctMcap > 0 && (
                     <span style={{
                       fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '6px',
@@ -1075,16 +1077,20 @@ export default function CompanyIntelligencePage() {
                     padding: '1px 6px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.1)',
                   }}>{s.eventType}</span>
 
-                  {/* Value — always shown */}
-                  <span style={{ fontSize: '12px', fontWeight: 700, color: CYAN }}>
-                    {fmtCr(s.valueCr)}{s.inferenceUsed ? '*' : ''}
-                  </span>
+                  {/* Value — only shown if > 0 */}
+                  {s.valueCr > 0 && (
+                    <span style={{ fontSize: '12px', fontWeight: 700, color: CYAN }}>
+                      {fmtCr(s.valueCr)}{s.inferenceUsed ? '*' : ''}
+                    </span>
+                  )}
 
-                  {/* Impact % — always shown */}
-                  <span style={{
-                    fontSize: '11px', fontWeight: 700,
-                    color: s.impactPct >= 8 ? GREEN : s.impactPct >= 3 ? YELLOW : TEXT2,
-                  }}>{s.impactPct.toFixed(1)}%</span>
+                  {/* Impact % — only shown if > 0 */}
+                  {s.impactPct > 0 && (
+                    <span style={{
+                      fontSize: '11px', fontWeight: 700,
+                      color: s.impactPct >= 8 ? GREEN : s.impactPct >= 3 ? YELLOW : TEXT2,
+                    }}>{s.impactPct.toFixed(1)}%</span>
+                  )}
                   {s.pctMcap !== null && s.pctMcap > 0 && (
                     <span style={{ fontSize: '11px', fontWeight: 700, color: CYAN }}>
                       {s.pctMcap.toFixed(1)}% MCap
@@ -1183,10 +1189,10 @@ export default function CompanyIntelligencePage() {
                   {/* Watch subtype */}
                   {s.watchSubtype && (
                     <span style={{ fontSize: '7px', fontWeight: 600, padding: '1px 3px', borderRadius: '2px',
-                      color: s.watchSubtype === 'ACTIVE' ? '#059669' : '#94A3B8',
-                      backgroundColor: s.watchSubtype === 'ACTIVE' ? 'rgba(5,150,105,0.06)' : 'rgba(148,163,184,0.06)',
+                      color: '#6366F1',
+                      backgroundColor: 'rgba(99,102,241,0.08)',
                     }}>
-                      {s.watchSubtype === 'ACTIVE' ? 'ACTIVE' : 'PASSIVE'}
+                      MONITOR
                     </span>
                   )}
                   {/* Heuristic suppression warning */}
@@ -1319,13 +1325,17 @@ export default function CompanyIntelligencePage() {
                           fontSize: '10px', fontWeight: 600, color: ACCENT,
                           padding: '1px 6px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.1)',
                         }}>{s.eventType}</span>
-                        <span style={{ fontSize: '12px', fontWeight: 700, color: CYAN }}>
-                          {fmtCr(s.valueCr)}{s.inferenceUsed ? '*' : ''}
-                        </span>
-                        <span style={{
-                          fontSize: '11px', fontWeight: 700,
-                          color: s.impactPct >= 8 ? GREEN : s.impactPct >= 3 ? YELLOW : TEXT2,
-                        }}>{s.impactPct.toFixed(1)}%</span>
+                        {s.valueCr > 0 && (
+                          <span style={{ fontSize: '12px', fontWeight: 700, color: CYAN }}>
+                            {fmtCr(s.valueCr)}{s.inferenceUsed ? '*' : ''}
+                          </span>
+                        )}
+                        {s.impactPct > 0 && (
+                          <span style={{
+                            fontSize: '11px', fontWeight: 700,
+                            color: s.impactPct >= 8 ? GREEN : s.impactPct >= 3 ? YELLOW : TEXT2,
+                          }}>{s.impactPct.toFixed(1)}%</span>
+                        )}
                         {s.pctMcap !== null && s.pctMcap > 0 && (
                           <span style={{ fontSize: '11px', fontWeight: 700, color: CYAN }}>
                             {s.pctMcap.toFixed(1)}% MCap
@@ -1413,9 +1423,10 @@ export default function CompanyIntelligencePage() {
                         )}
                         {s.watchSubtype && (
                           <span style={{ fontSize: '7px', fontWeight: 600, padding: '1px 3px', borderRadius: '2px',
-                            color: s.watchSubtype === 'ACTIVE' ? '#059669' : '#94A3B8',
+                            color: '#6366F1',
+                            backgroundColor: 'rgba(99,102,241,0.08)',
                           }}>
-                            {s.watchSubtype === 'ACTIVE' ? 'ACTIVE' : 'PASSIVE'}
+                            MONITOR
                           </span>
                         )}
                         {s.heuristicSuppressed && (
@@ -1533,13 +1544,17 @@ export default function CompanyIntelligencePage() {
                           fontSize: '10px', fontWeight: 600, color: ACCENT,
                           padding: '1px 6px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.1)',
                         }}>{s.eventType}</span>
-                        <span style={{ fontSize: '12px', fontWeight: 700, color: CYAN }}>
-                          {fmtCr(s.valueCr)}{s.inferenceUsed ? '*' : ''}
-                        </span>
-                        <span style={{
-                          fontSize: '11px', fontWeight: 700,
-                          color: s.impactPct >= 8 ? GREEN : s.impactPct >= 3 ? YELLOW : TEXT2,
-                        }}>{s.impactPct.toFixed(1)}%</span>
+                        {s.valueCr > 0 && (
+                          <span style={{ fontSize: '12px', fontWeight: 700, color: CYAN }}>
+                            {fmtCr(s.valueCr)}{s.inferenceUsed ? '*' : ''}
+                          </span>
+                        )}
+                        {s.impactPct > 0 && (
+                          <span style={{
+                            fontSize: '11px', fontWeight: 700,
+                            color: s.impactPct >= 8 ? GREEN : s.impactPct >= 3 ? YELLOW : TEXT2,
+                          }}>{s.impactPct.toFixed(1)}%</span>
+                        )}
                         {s.pctMcap !== null && s.pctMcap > 0 && (
                           <span style={{ fontSize: '11px', fontWeight: 700, color: CYAN }}>
                             {s.pctMcap.toFixed(1)}% MCap
@@ -1627,9 +1642,10 @@ export default function CompanyIntelligencePage() {
                         )}
                         {s.watchSubtype && (
                           <span style={{ fontSize: '7px', fontWeight: 600, padding: '1px 3px', borderRadius: '2px',
-                            color: s.watchSubtype === 'ACTIVE' ? '#059669' : '#94A3B8',
+                            color: '#6366F1',
+                            backgroundColor: 'rgba(99,102,241,0.08)',
                           }}>
-                            {s.watchSubtype === 'ACTIVE' ? 'ACTIVE' : 'PASSIVE'}
+                            MONITOR
                           </span>
                         )}
                         {s.heuristicSuppressed && (
@@ -1711,7 +1727,16 @@ export default function CompanyIntelligencePage() {
                     </span>
                     {s.headline && (
                       <span style={{ fontSize: '10px', color: TEXT2 }}>
-                        {s.headline.substring(0, 80)}{s.headline.length > 80 ? '...' : ''}
+                        {(() => {
+                          const nonFinTypes = ['Mgmt Change', 'Board Appointment', 'CEO Exit', 'CFO Exit', 'Leadership Transition', 'Regulatory'];
+                          let h = s.headline;
+                          if (nonFinTypes.includes(s.eventType)) {
+                            h = h.replace(/\[UNVERIFIED\]\s*/g, '').replace(/₹[\d,.]+\s*(?:Cr|crore|cr)/gi, '')
+                              .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact)/gi, '')
+                              .replace(/\(est\.?\)/g, '').replace(/\s*—\s*$/g, '').replace(/\s{2,}/g, ' ').trim();
+                          }
+                          return h.substring(0, 80) + (h.length > 80 ? '...' : '');
+                        })()}
                       </span>
                     )}
                   </div>

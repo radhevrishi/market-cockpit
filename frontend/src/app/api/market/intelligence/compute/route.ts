@@ -592,6 +592,93 @@ const SECTOR_HEURISTICS: Record<string, Record<string, SectorRange>> = {
   'Corporate': { 'default': { min: 0.5, mid: 1, max: 3 } },
 };
 
+// ── EVENT CLASSIFICATION: Allowed enrichment schema per event class ──
+// FINANCIAL events: can have sourced ₹ values and % impacts
+// NON-FINANCIAL events: NEVER have synthetic numbers
+// STRATEGIC events: qualitative only unless numbers explicitly stated
+
+const FINANCIAL_EVENT_TYPES = new Set([
+  'Order Win', 'Contract', 'LOI', 'Capex/Expansion', 'Fund Raising',
+  'Guidance', 'M&A', 'Demerger', 'Buyback', 'Dividend', 'Block Deal',
+  'Bulk Deal', 'Stake Sale', 'QIP', 'Rights Issue', 'Bonus',
+]);
+
+const NON_FINANCIAL_EVENT_TYPES = new Set([
+  'Mgmt Change', 'Board Appointment', 'CEO Exit', 'CFO Exit',
+  'Leadership Transition', 'Regulatory', 'Compliance',
+]);
+
+// Returns 'FINANCIAL' | 'NON_FINANCIAL' | 'STRATEGIC'
+function classifyEventType(eventType: string): 'FINANCIAL' | 'NON_FINANCIAL' | 'STRATEGIC' {
+  if (FINANCIAL_EVENT_TYPES.has(eventType)) return 'FINANCIAL';
+  if (NON_FINANCIAL_EVENT_TYPES.has(eventType)) return 'NON_FINANCIAL';
+  // Check for management-related keywords
+  const lower = (eventType || '').toLowerCase();
+  if (lower.includes('mgmt') || lower.includes('management') || lower.includes('board') ||
+      lower.includes('appointment') || lower.includes('resignation') || lower.includes('ceo') ||
+      lower.includes('cfo') || lower.includes('director')) return 'NON_FINANCIAL';
+  return 'STRATEGIC';
+}
+
+// Strip all synthetic numeric fields from non-financial events
+function sanitizeByEventClass(signal: any): void {
+  const eventClass = classifyEventType(signal.eventType);
+
+  if (eventClass === 'NON_FINANCIAL') {
+    // Hard strip ALL numeric enrichment — these were never in the source
+    signal.valueCr = 0;
+    signal.impactPct = 0;
+    signal.pctRevenue = null;
+    signal.pctMcap = null;
+    signal.impactLevel = 'LOW';
+    signal.confidenceType = 'ACTUAL';  // The event itself is real, just no numbers
+    signal.valueSource = 'EXACT';       // No value to be inexact about
+    signal.inferenceUsed = false;
+    // Clean the whyItMatters text — remove any ₹ or % references
+    signal.whyItMatters = (signal.whyItMatters || '')
+      .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)/gi, '')
+      .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact|growth)/gi, '')
+      .replace(/\s*—\s*$/g, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    // Set clean headline-style description
+    if (!signal.whyItMatters || signal.whyItMatters.length < 10) {
+      signal.whyItMatters = `${signal.eventType} — watch for strategy continuity`;
+    }
+    // Clean headline too
+    if (signal.headline) {
+      signal.headline = signal.headline
+        .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)/gi, '')
+        .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact|growth)/gi, '')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+    }
+  } else if (eventClass === 'STRATEGIC') {
+    // Strategic events: only keep numbers if they were ACTUAL (not heuristic)
+    if (signal.confidenceType === 'HEURISTIC' || signal.inferenceUsed) {
+      signal.valueCr = 0;
+      signal.impactPct = 0;
+      signal.pctRevenue = null;
+      signal.pctMcap = null;
+      signal.inferenceUsed = false;
+      // Clean whyItMatters of synthetic numbers
+      signal.whyItMatters = (signal.whyItMatters || '')
+        .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)\s*(?:\(est\.?\))?/gi, '')
+        .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact|growth)\s*(?:\(est\.?\))?/gi, '')
+        .replace(/\s*—\s*$/g, '')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+      if (signal.headline) {
+        signal.headline = signal.headline
+          .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)\s*(?:\(est\.?\))?/gi, '')
+          .replace(/\s{2,}/g, ' ')
+          .trim();
+      }
+    }
+  }
+  // FINANCIAL events: keep numbers as-is (they may still be heuristic but that's the zero-inference policy's job)
+}
+
 function getSectorHeuristic(eventType: string, sector: string | null): SectorRange {
   const eventMap = SECTOR_HEURISTICS[eventType] || SECTOR_HEURISTICS['Corporate'];
   if (sector && eventMap[sector]) return eventMap[sector];
@@ -614,6 +701,11 @@ function inferEventValue(
   isNegative: boolean,
   sector: string | null,
 ): InferenceResult {
+  // NON-FINANCIAL events: never generate synthetic values
+  if (classifyEventType(eventType) === 'NON_FINANCIAL') {
+    return { valueCr: 0, pctRevenue: 0, pctRange: [0, 0], confidenceScore: 80, confidenceType: 'ACTUAL' };
+  }
+
   const rev = (annualRevenueCr && annualRevenueCr > 0) ? annualRevenueCr : null;
   const magnitude = getKeywordMagnitude(text);
   const range = getSectorHeuristic(eventType, sector);
@@ -2796,7 +2888,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         if (sanityResult.forceWatch) {
           guidanceSignal.action = 'WATCH';
           guidanceSignal.decision = 'WATCH';
-          guidanceSignal.watchSubtype = 'PASSIVE';
+          guidanceSignal.watchSubtype = undefined;
           guidanceSignal.conflictResolution = (guidanceSignal.conflictResolution ? guidanceSignal.conflictResolution + ' · ' : '') +
             `Sanity bound: ${sanityResult.reason}`;
           if (!guidanceSignal.riskFactors) guidanceSignal.riskFactors = [];
@@ -2869,7 +2961,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
           guidanceSignal.signalCategory = 'OBSERVATION';
           guidanceSignal.observationReason =
             `Data quality BROKEN: ${guidanceSignal.guidanceAnomalyFlag || 'parsing failure'}`;
-          guidanceSignal.watchSubtype = 'PASSIVE';
+          guidanceSignal.watchSubtype = undefined;
           guidanceSignal.tag = guidanceSignal.tag || 'RISK-WATCH';
           if (guidanceSignal.whyItMatters) {
             guidanceSignal.whyItMatters =
@@ -3339,9 +3431,9 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     if (s.guidanceAnomalyFlag === 'EXTREME_UNVERIFIED' && s.eventType === 'Guidance' && s.action === 'HOLD') {
       s.action = 'WATCH';
       s.decision = 'WATCH';
-      s.watchSubtype = 'ACTIVE';
+      s.watchSubtype = undefined;
       s.conflictResolution = (s.conflictResolution ? s.conflictResolution + ' · ' : '') +
-        'Extreme guidance → WATCH-ACTIVE (verify before acting)';
+        'Extreme guidance → WATCH (verify before acting)';
     }
   }
 
@@ -3583,11 +3675,11 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       const hasEvent = s.eventNovelty === 'NEW' && s.impactPct >= 2;
 
       if (hasCatalyst || hasPositiveMomentum || hasEvent) {
-        s.watchSubtype = 'ACTIVE';
-        s.tag = s.tag || 'WATCH-ACTIVE';
+        s.watchSubtype = undefined;
+        s.tag = s.tag || 'WATCH';
       } else {
-        s.watchSubtype = 'PASSIVE';
-        s.tag = s.tag || 'WATCH-PASSIVE';
+        s.watchSubtype = undefined;
+        s.tag = s.tag || 'WATCH';
       }
     }
   }
@@ -3669,6 +3761,9 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
 
     // Zero Inference Policy: sanitize display
     sanitizeForDisplay(s, validation.isInferred);
+
+    // EVENT CLASS SANITIZATION: strip synthetic numbers from non-financial events
+    sanitizeByEventClass(s);
 
     // FINAL: If REJECTED → will be dropped from output entirely
     // If MONITOR with inferred numbers → numbers stripped

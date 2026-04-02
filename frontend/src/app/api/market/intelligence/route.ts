@@ -1145,6 +1145,41 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               s.monitorScore = Math.min(100, srcScore + eventScore + numScore + matScore + signalAge);
               s.monitorTier = s.monitorScore >= 80 ? 'HIGH' : s.monitorScore >= 50 ? 'MED' : 'LOW';
 
+              // EVENT CLASS SANITIZATION: strip synthetic numbers from non-financial events
+              const NON_FIN_TYPES = new Set(['Mgmt Change', 'Board Appointment', 'CEO Exit', 'CFO Exit', 'Leadership Transition', 'Regulatory', 'Compliance']);
+              const eventLower = (s.eventType || '').toLowerCase();
+              const isNonFinancial = NON_FIN_TYPES.has(s.eventType) ||
+                eventLower.includes('mgmt') || eventLower.includes('management') ||
+                eventLower.includes('board') || eventLower.includes('appointment') ||
+                eventLower.includes('resignation');
+              const isStrategicInferred = !NON_FIN_TYPES.has(s.eventType) &&
+                !['Order Win','Contract','LOI','Capex/Expansion','Fund Raising','Guidance','M&A','Demerger','Buyback','Dividend','Block Deal','Bulk Deal','Stake Sale'].includes(s.eventType) &&
+                (s.confidenceType === 'HEURISTIC' || s.inferenceUsed);
+
+              if (isNonFinancial) {
+                s.valueCr = 0; s.impactPct = 0; s.pctRevenue = null; s.pctMcap = null;
+                s.inferenceUsed = false; s.confidenceType = 'ACTUAL';
+                s.whyItMatters = (s.whyItMatters || '')
+                  .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)\s*(?:\(est\.?\))?/gi, '')
+                  .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact|growth)\s*(?:\(est\.?\))?/gi, '')
+                  .replace(/\[UNVERIFIED AMOUNT\]/g, '').replace(/\[UNVERIFIED %\]/g, '')
+                  .replace(/\s*—\s*$/g, '').replace(/\s{2,}/g, ' ').trim();
+                if (!s.whyItMatters || s.whyItMatters.length < 10) {
+                  s.whyItMatters = (s.eventType || 'Corporate event') + ' — watch for strategy continuity';
+                }
+                if (s.headline) {
+                  s.headline = s.headline.replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)\s*(?:\(est\.?\))?/gi, '')
+                    .replace(/\[UNVERIFIED\]\s*/g, '').replace(/\s{2,}/g, ' ').trim();
+                }
+              } else if (isStrategicInferred) {
+                s.valueCr = 0; s.impactPct = 0; s.pctRevenue = null; s.pctMcap = null;
+                s.whyItMatters = (s.whyItMatters || '')
+                  .replace(/₹[\d,.]+\s*(?:Cr|crore|cr|Lakh|lakh)\s*(?:\(est\.?\))?/gi, '')
+                  .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact|growth)\s*(?:\(est\.?\))?/gi, '')
+                  .replace(/\[UNVERIFIED AMOUNT\]/g, '').replace(/\[UNVERIFIED %\]/g, '')
+                  .replace(/\s*—\s*$/g, '').replace(/\s{2,}/g, ' ').trim();
+              }
+
               if (s.signalCategory === 'ACTIONABLE') {
                 actionableSignals.push(s);
               } else {
