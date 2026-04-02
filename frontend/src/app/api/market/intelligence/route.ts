@@ -1139,15 +1139,22 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             const validSignals = [...actionableSignals, ...monitorSignals];
             const validBias = responseData.bias ? { ...responseData.bias } : {} as any;
             if (validSignals.length === 0) {
-              // All rejected — clean bias to reflect reality
+              // All rejected — zero EVERY bias field to prevent stale data leaking
               validBias.totalSignals = 0;
               validBias.highImpactCount = 0;
               validBias.buyWatchCount = 0;
+              validBias.buyCount = 0;
+              validBias.holdCount = 0;
+              validBias.watchCount = 0;
+              validBias.trackCount = 0;
               validBias.monitorCount = 0;
+              validBias.trimExitCount = 0;
               validBias.reduceExitCount = 0;
               validBias.negativeSignals = 0;
               validBias.portfolioAlerts = 0;
               validBias.totalObservations = 0;
+              validBias.totalOrderValueCr = 0;
+              validBias.totalDealValueCr = 0;
               validBias.activeSectors = [];
               validBias.summary = `All ${rejectedCount} signals rejected by validation gate. System functioning correctly.`;
               validBias.netBias = 'Neutral';
