@@ -1089,7 +1089,10 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               // ── Validation Gate ──
               const sourceExists = s.confidenceType === 'ACTUAL' || s.sourceTier === 'VERIFIED' ||
                 s.dataSource === 'nse' || s.dataSource === 'NSE' || s.source === 'deal';
-              const hasTemplate = !!s.templatePattern || !!s.heuristicSuppressed || !!s.identicalPctFlag;
+              // Only hard-reject on actual template pattern (₹105Cr×11 companies, etc.)
+              // heuristicSuppressed/identicalPctFlag degrade to MONITOR, not hard reject
+              const hasTemplate = !!s.templatePattern;
+              const isHeuristicDegraded = !!s.heuristicSuppressed || !!s.identicalPctFlag;
               const isBroken = s.dataQuality === 'BROKEN';
               const hasAnomaly = s.guidanceAnomalyFlag === 'EXTREME_UNVERIFIED' ||
                 s.guidanceAnomalyFlag === 'INCONSISTENT_WITH_HISTORY';
@@ -1118,7 +1121,9 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 (s.source === 'deal' && s.valueCr > 0) ||
                 (revImpact > 5 && s.confidenceType === 'ACTUAL');
 
-              if (isInferred && !isMaterial) { rejectedCount++; continue; }
+              // Inferred + non-material + no verified source → reject
+              // But if source is verified (NSE, deal), keep as MONITOR with sanitized values
+              if (isInferred && !isMaterial && !sourceExists) { rejectedCount++; continue; }
 
               // Zero Inference Policy: sanitize inferred numbers
               if (isInferred) {
@@ -1126,9 +1131,10 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                   .replace(/\d+\.?\d*%\s*(?:impact|revenue|of revenue|of mcap)/gi, '[UNVERIFIED %]');
               }
 
-              s.verified = !isInferred && isMaterial;
+              s.verified = !isInferred && !isHeuristicDegraded && isMaterial;
               s.confidenceLayer = s.verified ? 100 : (isMaterial ? 60 : 40);
-              s.signalCategory = (isMaterial && !isInferred) ? 'ACTIONABLE' : 'MONITOR';
+              // Heuristic-degraded signals forced to MONITOR regardless of materiality
+              s.signalCategory = (isMaterial && !isInferred && !isHeuristicDegraded) ? 'ACTIONABLE' : 'MONITOR';
 
               if (s.signalCategory === 'ACTIONABLE') {
                 actionableSignals.push(s);

@@ -1538,8 +1538,10 @@ function validateSignal(signal: IntelSignal): {
     return { disposition: 'REJECTED', rejectReason: 'source_not_verified', isInferred: true, isMaterial: false };
   }
 
-  // Check 2: No template pattern
-  const hasTemplate = !!signal.templatePattern || !!signal.heuristicSuppressed || !!signal.identicalPctFlag;
+  // Check 2: No template pattern (only hard-reject on actual template pattern string)
+  // heuristicSuppressed/identicalPctFlag degrade to MONITOR, not hard reject
+  const hasTemplate = !!signal.templatePattern;
+  const isHeuristicDegraded = !!signal.heuristicSuppressed || !!signal.identicalPctFlag;
   if (hasTemplate) {
     return { disposition: 'REJECTED', rejectReason: 'template_pattern_detected', isInferred: true, isMaterial: false };
   }
@@ -1586,13 +1588,15 @@ function validateSignal(signal: IntelSignal): {
 
   const isMaterial = hasExplicitGuidance || hasMaterialOrder || hasMaterialDeal || hasQuantifiedImpact;
 
-  // If value is inferred AND not material by other criteria → REJECTED
-  if (isInferred && !isMaterial) {
+  // If value is inferred AND not material AND source not verified → REJECTED
+  // Source-verified inferred signals become MONITOR with sanitized values
+  if (isInferred && !isMaterial && !sourceExists) {
     return { disposition: 'REJECTED', rejectReason: 'inferred_non_material', isInferred, isMaterial: false };
   }
 
   // ── DISPOSITION ──
-  if (isMaterial && !isInferred) {
+  // Heuristic-degraded signals forced to MONITOR regardless of materiality
+  if (isMaterial && !isInferred && !isHeuristicDegraded) {
     return { disposition: 'ACTIONABLE', isInferred: false, isMaterial: true };
   }
 
@@ -1601,12 +1605,9 @@ function validateSignal(signal: IntelSignal): {
     return { disposition: 'MONITOR', isInferred: true, isMaterial: true };
   }
 
-  // Source verified, not template, not broken, but not material
-  if (!isInferred) {
-    return { disposition: 'MONITOR', isInferred: false, isMaterial: false };
-  }
-
-  return { disposition: 'REJECTED', rejectReason: 'insufficient_validation', isInferred, isMaterial: false };
+  // Source verified, not template, not broken, but not material → MONITOR
+  // This includes: inferred but source-verified, and non-inferred non-material
+  return { disposition: 'MONITOR', isInferred, isMaterial: false };
 }
 
 // FINAL: Strip inferred numbers from display — Zero Inference Policy
