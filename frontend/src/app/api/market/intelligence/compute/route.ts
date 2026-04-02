@@ -322,12 +322,22 @@ interface IntelSignal {
   marginChange?: number | null;   // For contradiction detection
 
   // Production-grade fields (v2)
-  evidenceTier?: 'TIER_A' | 'TIER_B' | 'TIER_C';  // Evidence quality ladder
+  evidenceTier?: 'TIER_A' | 'TIER_B' | 'TIER_C' | 'TIER_D';  // Evidence quality ladder (D=template/suppressed)
   timeHorizon?: 'SHORT' | 'MEDIUM' | 'LONG';       // Signal time horizon
   watchSubtype?: 'ACTIVE' | 'PASSIVE';              // WATCH bucket split
   eventNovelty?: 'NEW' | 'REPEAT' | 'STALE';       // Event novelty detection
   heuristicSuppressed?: boolean;                     // Templated pattern suppression
   extremeValueFlag?: string;                         // Data accuracy concern
+  // v3: Production audit fields
+  templatePattern?: string;                          // e.g. "₹280Cr×19 companies"
+  identicalPctFlag?: boolean;                        // Same % impact across companies
+  sourceMismatch?: string;                           // Extracted vs known value mismatch
+  guidanceAnomalyFlag?: string;                      // Extreme/inconsistent guidance
+  visibility?: 'VISIBLE' | 'DIMMED' | 'HIDDEN';     // UI visibility control
+  netSignalScore?: number;                           // Weighted net score from conflict model
+  conflictBadge?: string;                            // e.g. "⚠ Conflicting: Guidance vs Capex"
+  riskFactors?: string[];                            // Risk list for WHY panel
+  sourceExtract?: string;                            // Extracted sentence from source
 }
 
 interface CompanyTrend {
@@ -961,33 +971,221 @@ function classifyCatalystStrength(impactPct: number, pctMcap: number | null): 'W
   return 'WEAK';
 }
 
-// ── EVIDENCE TIER classification ──
-// Tier A: Exchange filings, earnings transcripts → BUY/ADD/EXIT allowed
-// Tier B: Reputed media, analyst reports, exchange filings with heuristic values → WATCH/ADD
-// Tier C: Pure heuristic from non-exchange source → WATCH only
+// ══════════════════════════════════════════════════════════════
+// ── 4-TIER EVIDENCE HIERARCHY (HARD GATE) ──
+// Tier A (PRIMARY VERIFIED): Exchange filing + exact/aggregated value → BUY/ADD/TRIM/EXIT
+// Tier B (SECONDARY VERIFIED): Reputed media, exchange + heuristic → HOLD/WATCH-ACTIVE
+// Tier C (INFERRED): NLP extraction without explicit confirmation → Monitor only, NEVER BUY/EXIT/HOLD
+// Tier D (TEMPLATE/LOW CONF): Repeated patterns, missing source, conf<50 → AUTO-SUPPRESS
+// ══════════════════════════════════════════════════════════════
 function classifyEvidenceTier(
-  confidenceType: string, valueSource: string, dataSource?: string
-): 'TIER_A' | 'TIER_B' | 'TIER_C' {
-  // Exchange source (NSE) is always at least TIER_B — the SOURCE is authoritative
+  confidenceType: string, valueSource: string, dataSource?: string,
+  confidenceScore?: number, isHeuristicSuppressed?: boolean
+): 'TIER_A' | 'TIER_B' | 'TIER_C' | 'TIER_D' {
+  // Tier D: template patterns or very low confidence → auto-suppress
+  if (isHeuristicSuppressed) return 'TIER_D';
+  if (confidenceScore !== undefined && confidenceScore < 50 && confidenceType === 'HEURISTIC') return 'TIER_D';
+
   const isExchange = dataSource === 'nse' || dataSource === 'NSE';
   const isGuidance = dataSource === 'Guidance';
 
+  // Tier A: Exchange filing with ACTUAL confidence and EXACT/AGGREGATED value
   if (confidenceType === 'ACTUAL' && (valueSource === 'EXACT' || valueSource === 'AGGREGATED')) {
     return 'TIER_A';
   }
-  // Exchange filings with any confidence type → TIER_A (source is authoritative)
   if (isExchange && confidenceType === 'ACTUAL') return 'TIER_A';
-  // Exchange with heuristic value → TIER_B (source good, value uncertain)
-  if (isExchange) return 'TIER_B';
-  // Guidance with high confidence → TIER_A
   if (isGuidance && confidenceType === 'ACTUAL') return 'TIER_A';
+
+  // Tier B: Exchange source with heuristic value, or reputed media
+  if (isExchange) return 'TIER_B';
   if (isGuidance) return 'TIER_B';
-  // Reputed media → TIER_B
   if (dataSource === 'moneycontrol' || dataSource === 'Moneycontrol') return 'TIER_B';
-  // Inferred from known sources → TIER_B
   if (confidenceType === 'INFERRED') return 'TIER_B';
-  // Everything else → TIER_C
+
+  // Tier C: Pure heuristic / NLP inference without source confirmation
   return 'TIER_C';
+}
+
+// ══════════════════════════════════════════════════════════════
+// ── TEMPLATE DETECTION ENGINE ──
+// Rule-based filter to detect heuristic contamination
+// ══════════════════════════════════════════════════════════════
+
+interface TemplateDetectionResult {
+  isTemplate: boolean;
+  pattern?: string;
+  identicalPct: boolean;
+  missingSource: boolean;
+  confidence: number; // Reduced confidence
+}
+
+function detectTemplatePatterns(
+  signals: IntelSignal[],
+): Map<string, TemplateDetectionResult> {
+  const results = new Map<string, TemplateDetectionResult>();
+
+  // Rule 1: Repetition Check — same value across 5+ unrelated companies
+  const valueCountMap = new Map<number, string[]>();
+  for (const s of signals) {
+    if (s.valueCr > 0 && s.valueSource === 'HEURISTIC') {
+      const key = Math.round(s.valueCr);
+      if (!valueCountMap.has(key)) valueCountMap.set(key, []);
+      valueCountMap.get(key)!.push(s.symbol);
+    }
+  }
+
+  // Rule 2: Identical % Impact across companies
+  const pctCountMap = new Map<string, string[]>();
+  for (const s of signals) {
+    if (s.valueSource === 'HEURISTIC' && s.impactPct > 0) {
+      const pctKey = s.impactPct.toFixed(1);
+      if (!pctCountMap.has(pctKey)) pctCountMap.set(pctKey, []);
+      pctCountMap.get(pctKey)!.push(s.symbol);
+    }
+  }
+
+  for (const s of signals) {
+    const sigKey = `${s.symbol}:${s.eventType}:${s.date}`;
+    const result: TemplateDetectionResult = {
+      isTemplate: false,
+      identicalPct: false,
+      missingSource: false,
+      confidence: s.confidenceScore,
+    };
+
+    // Rule 1 check
+    if (s.valueSource === 'HEURISTIC' && s.valueCr > 0) {
+      const roundedVal = Math.round(s.valueCr);
+      const syms = valueCountMap.get(roundedVal) || [];
+      if (syms.length >= 5) {
+        result.isTemplate = true;
+        result.pattern = `₹${roundedVal}Cr×${syms.length} companies`;
+        result.confidence = Math.min(result.confidence, 20);
+      }
+    }
+
+    // Rule 2 check
+    if (s.valueSource === 'HEURISTIC' && s.impactPct > 0) {
+      const pctKey = s.impactPct.toFixed(1);
+      const syms = pctCountMap.get(pctKey) || [];
+      if (syms.length >= 5) {
+        result.identicalPct = true;
+        result.confidence = Math.min(result.confidence, 25);
+      }
+    }
+
+    // Rule 3: Missing Source — no URL or filing reference
+    if (!s.sourceUrl && s.valueSource === 'HEURISTIC') {
+      result.missingSource = true;
+      // Only downgrade if combined with other issues
+      if (result.isTemplate || result.identicalPct) {
+        result.confidence = Math.min(result.confidence, 15);
+      }
+    }
+
+    if (result.isTemplate || result.identicalPct) {
+      results.set(sigKey, result);
+    }
+  }
+
+  return results;
+}
+
+// ══════════════════════════════════════════════════════════════
+// ── GUIDANCE VALIDATION ENGINE ──
+// Catches QoQ vs YoY misreads, segment vs total confusion, extreme values
+// ══════════════════════════════════════════════════════════════
+
+interface GuidanceValidation {
+  valid: boolean;
+  anomalyType?: string;
+  adjustedAction?: ActionFlag;
+  reason?: string;
+}
+
+function validateGuidance(
+  revenueGrowth: number | null,
+  marginChange: number | null,
+  previousGrowth: number | null, // from earnings cache
+  confidenceScore: number,
+  headline: string,
+): GuidanceValidation {
+  // Rule 1: Extreme Threshold — revenue change > ±30% requires second confirmation
+  if (revenueGrowth !== null && Math.abs(revenueGrowth) > 30) {
+    // Check for QoQ/segment context words
+    const lower = headline.toLowerCase();
+    const hasQoQ = /quarter|qoq|q-o-q|sequential/.test(lower);
+    const hasSegment = /segment|division|vertical|product line/.test(lower);
+    const hasTemporary = /temporary|one-time|one time|exceptional|extraordinary/.test(lower);
+
+    if (hasQoQ || hasSegment || hasTemporary) {
+      return {
+        valid: false,
+        anomalyType: hasQoQ ? 'QOQ_MISREAD' : hasSegment ? 'SEGMENT_NOT_TOTAL' : 'TEMPORARY_ADJUSTMENT',
+        adjustedAction: 'WATCH',
+        reason: `Extreme ${revenueGrowth > 0 ? '+' : ''}${revenueGrowth?.toFixed(0)}% likely ${hasQoQ ? 'QoQ not YoY' : hasSegment ? 'segment-specific' : 'temporary'} — needs verification`,
+      };
+    }
+
+    // Rule 3: Consistency Check — compare with last reported growth
+    if (previousGrowth !== null) {
+      const delta = Math.abs((revenueGrowth || 0) - previousGrowth);
+      // If previous was +20% and now parsed as -47%, that's a 67% swing — highly suspicious
+      if (delta > 40 && previousGrowth > 0 && (revenueGrowth || 0) < -20) {
+        return {
+          valid: false,
+          anomalyType: 'INCONSISTENT_WITH_HISTORY',
+          adjustedAction: 'WATCH',
+          reason: `Parsed ${revenueGrowth?.toFixed(0)}% conflicts with prior ${previousGrowth.toFixed(0)}% — anomaly detected`,
+        };
+      }
+    }
+
+    // Even if no context, flag extreme values for review
+    return {
+      valid: true,
+      anomalyType: 'EXTREME_UNVERIFIED',
+      reason: `${revenueGrowth > 0 ? '+' : ''}${revenueGrowth?.toFixed(0)}% is extreme — verify with second source`,
+    };
+  }
+
+  return { valid: true };
+}
+
+// ══════════════════════════════════════════════════════════════
+// ── NET SIGNAL MODEL (Conflict Resolution v2) ──
+// Formula: Net Score = Σ (Signal Score × Weight × Confidence × Freshness)
+// ══════════════════════════════════════════════════════════════
+
+const CONFLICT_WEIGHTS: Record<string, number> = {
+  'Guidance': 1.0,
+  'Order Win': 0.6, 'Contract': 0.6,
+  'M&A': 0.7, 'Capex/Expansion': 0.5,
+  'Demerger': 0.5, 'Fund Raising': 0.4,
+  'JV/Partnership': 0.4, 'LOI': 0.3,
+  'Buyback': 0.3, 'Dividend': 0.2,
+  'Block Buy': 0.4, 'Bulk Buy': 0.3,
+  'Block Sell': 0.4, 'Bulk Sell': 0.3,
+  'Mgmt Change': 0.2, 'Corporate': 0.1,
+};
+
+function computeNetSignalScore(signals: IntelSignal[]): number {
+  let totalWeighted = 0;
+  let totalWeight = 0;
+
+  for (const s of signals) {
+    const typeWeight = CONFLICT_WEIGHTS[s.eventType] || 0.2;
+    const confFactor = (s.confidenceScore || 50) / 100;
+    const freshnessWeight = s.freshness === 'FRESH' ? 1.0 : s.freshness === 'RECENT' ? 0.8 : s.freshness === 'AGING' ? 0.5 : 0.3;
+    const directionSign = s.isNegative ? -1 : 1;
+    const heuristicPenalty = s.valueSource === 'HEURISTIC' ? 0.2 : 1.0;
+
+    const weight = typeWeight * confFactor * freshnessWeight * heuristicPenalty;
+    totalWeighted += (s.weightedScore || 0) * directionSign * weight;
+    totalWeight += weight;
+  }
+
+  return totalWeight > 0 ? Math.round(totalWeighted / totalWeight) : 0;
 }
 
 // ── TIME HORIZON classification ──
@@ -1744,10 +1942,12 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     signal.signalTier = (confidenceType === 'ACTUAL' && valueSource !== 'HEURISTIC') ? 'TIER1_VERIFIED' : 'TIER2_INFERRED';
     signal.sourceUrl = item.url || null;
 
-    // Production-grade fields (v2)
-    signal.evidenceTier = classifyEvidenceTier(confidenceType, valueSource, 'nse');
+    // Production-grade fields (v2) — initial classification (may be updated by template detection)
+    signal.evidenceTier = classifyEvidenceTier(confidenceType, valueSource, dataSource, confidenceScore, false);
     signal.timeHorizon = classifyTimeHorizon(eventType);
     signal.extremeValueFlag = detectExtremeValue(null, impactPct);
+    // Extract source sentence for provenance
+    signal.sourceExtract = (desc || '').slice(0, 120).replace(/\s+/g, ' ').trim() || undefined;
 
     if (existing) {
       const existDate = new Date(existing.date).getTime();
@@ -2091,6 +2291,33 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         guidanceSignal.timeHorizon = 'SHORT';  // Guidance is always short-term
         guidanceSignal.extremeValueFlag = detectExtremeValue(revG || null, impactPct);
 
+        // ── GUIDANCE VALIDATION (v3): Catch QoQ/segment misreads, extreme values ──
+        const previousGrowthForSymbol = earningsCache.get(symbol);
+        const prevGrowth = previousGrowthForSymbol !== null && previousGrowthForSymbol !== undefined
+          ? (previousGrowthForSymbol - 50) * 2 // Convert 0-100 score back to approximate growth %
+          : null;
+        const guidanceValidation = validateGuidance(
+          revG || null,
+          marginBps ? marginBps / 100 : null,
+          prevGrowth,
+          ge.confidenceScore,
+          headline,
+        );
+        if (!guidanceValidation.valid) {
+          guidanceSignal.guidanceAnomalyFlag = guidanceValidation.anomalyType;
+          guidanceSignal.action = guidanceValidation.adjustedAction || 'WATCH';
+          guidanceSignal.decision = guidanceSignal.action;
+          guidanceSignal.conflictResolution = (guidanceSignal.conflictResolution ? guidanceSignal.conflictResolution + ' · ' : '') +
+            (guidanceValidation.reason || 'Guidance anomaly detected');
+          if (!guidanceSignal.riskFactors) guidanceSignal.riskFactors = [];
+          guidanceSignal.riskFactors.push(guidanceValidation.reason || 'Anomaly in guidance data');
+        } else if (guidanceValidation.anomalyType) {
+          // Valid but flagged for review
+          guidanceSignal.guidanceAnomalyFlag = guidanceValidation.anomalyType;
+          if (!guidanceSignal.riskFactors) guidanceSignal.riskFactors = [];
+          guidanceSignal.riskFactors.push(guidanceValidation.reason || 'Extreme guidance value — verify');
+        }
+
         // Guidance without supporting signals → note it, but don't double-penalize
         // (70% discount already accounts for guidance unreliability)
         const companyOtherSignals = allSignals.filter(s => s.symbol === symbol && s.dataSource !== 'Guidance');
@@ -2394,66 +2621,137 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     if (s.catalystStrength) {
       whyParts.push(`Catalyst: ${s.catalystStrength}`);
     }
+    // Add guidance anomaly flag
+    if (s.guidanceAnomalyFlag) {
+      whyParts.push(`⚠ Guidance anomaly: ${s.guidanceAnomalyFlag}`);
+    }
+    // Add template suppression note
+    if (s.heuristicSuppressed && s.templatePattern) {
+      whyParts.push(`⚠ Template: ${s.templatePattern}`);
+    }
     s.whyAction = whyParts.length > 0 ? whyParts.join(' · ') : undefined;
+
+    // Build risk factors list
+    if (!s.riskFactors) s.riskFactors = [];
+    if (s.isNegative) s.riskFactors.push('Negative catalyst detected');
+    if (s.revenueGrowth !== null && s.revenueGrowth !== undefined && s.revenueGrowth < -10) {
+      s.riskFactors.push(`Revenue decline: ${s.revenueGrowth.toFixed(0)}%`);
+    }
+    if (s.marginChange !== null && s.marginChange !== undefined && s.marginChange < -2) {
+      s.riskFactors.push(`Margin pressure: ${s.marginChange.toFixed(1)}%`);
+    }
+    if (s.sectorCyclical) s.riskFactors.push('Sector-wide cyclical pressure');
+    if (s.heuristicSuppressed) s.riskFactors.push('Data from unverified pattern');
+    if (s.evidenceTier === 'TIER_C' || s.evidenceTier === 'TIER_D') {
+      s.riskFactors.push('Low evidence quality');
+    }
+    if (s.extremeValueFlag) s.riskFactors.push(s.extremeValueFlag);
+    // Remove empty risk factors
+    if (s.riskFactors.length === 0) s.riskFactors = undefined as any;
   }
 
   // ══════════════════════════════════════════════════════════════
-  // ── HEURISTIC SUPPRESSION RULE (CRITICAL) ──
-  // If identical values appear across 3+ unrelated companies → templated pattern
-  // Suppress from main feed, force to NOISE/WATCH
+  // ── TEMPLATE DETECTION ENGINE (COMPREHENSIVE) ──
+  // Rule 1: Repetition check (same value across 5+ companies)
+  // Rule 2: Identical % impact across companies
+  // Rule 3: Missing source reference
+  // Rule 4: Cross-verification failure
   // ══════════════════════════════════════════════════════════════
-  for (const [val, syms] of valueCountMap) {
-    if (syms.length >= 4 && val > 0) {
-      // 4+ companies with exact same ₹ value = suspicious template/LLM artifact
-      for (const s of filtered) {
-        if (Math.round(s.valueCr) === val && s.valueSource === 'HEURISTIC') {
-          if (!s.anomalyFlags) s.anomalyFlags = [];
-          s.anomalyFlags.push(`TEMPLATE_PATTERN_${val}Cr`);
-          s.heuristicSuppressed = true;
-          // Cannot be BUY/ADD based on templated data — cap at HOLD
-          if (s.action === 'BUY' || s.action === 'ADD') {
-            s.action = 'HOLD';
-            s.decision = 'HOLD';
-            s.conflictResolution = `Suppressed: ₹${val}Cr repeated across ${syms.length} companies (likely template)`;
-          }
-        }
+  const templateResults = detectTemplatePatterns(filtered);
+
+  // Apply template detection results
+  for (const s of filtered) {
+    const sigKey = `${s.symbol}:${s.eventType}:${s.date}`;
+    const tmpl = templateResults.get(sigKey);
+
+    // Also catch with old value count map
+    const roundedVal = Math.round(s.valueCr);
+    const syms = valueCountMap.get(roundedVal) || [];
+
+    if (tmpl?.isTemplate || (syms.length >= 4 && s.valueSource === 'HEURISTIC' && roundedVal > 0)) {
+      if (!s.anomalyFlags) s.anomalyFlags = [];
+      s.anomalyFlags.push(`TEMPLATE_PATTERN_${roundedVal}Cr`);
+      s.heuristicSuppressed = true;
+      s.templatePattern = tmpl?.pattern || `₹${roundedVal}Cr×${syms.length} companies`;
+      s.confidenceScore = Math.min(s.confidenceScore, 20);
+      s.visibility = 'HIDDEN'; // Hidden by default (Tier D behavior)
+      s.evidenceTier = 'TIER_D';
+      // Cannot be BUY/ADD/HOLD/EXIT based on templated data → force WATCH
+      if (s.action === 'BUY' || s.action === 'ADD' || s.action === 'HOLD') {
+        s.action = 'WATCH';
+        s.decision = 'WATCH';
+        s.conflictResolution = `Template suppressed: ${s.templatePattern} (unconfirmed pattern)`;
+      }
+    }
+
+    // Rule 2: Identical % impact flag
+    if (tmpl?.identicalPct) {
+      s.identicalPctFlag = true;
+      if (!s.anomalyFlags) s.anomalyFlags = [];
+      s.anomalyFlags.push('IDENTICAL_PCT_IMPACT');
+    }
+
+    // Rule 3: Missing source
+    if (tmpl?.missingSource && s.valueSource === 'HEURISTIC') {
+      if (s.evidenceTier !== 'TIER_D') {
+        s.evidenceTier = 'TIER_C'; // Downgrade to inferred
       }
     }
   }
 
   // ══════════════════════════════════════════════════════════════
-  // ── EVIDENCE HIERARCHY GATING (STRICT) ──
-  // Tier A → BUY/ADD/EXIT allowed
-  // Tier B → WATCH/ADD (limited)
-  // Tier C → WATCH only
+  // ── 4-TIER EVIDENCE HIERARCHY GATING (STRICT HARD GATE) ──
+  // Tier A (PRIMARY VERIFIED)  → BUY/ADD/TRIM/EXIT allowed
+  // Tier B (SECONDARY VERIFIED)→ HOLD/WATCH-ACTIVE max
+  // Tier C (INFERRED)          → WATCH only ("Monitor" / "Unconfirmed signal")
+  // Tier D (TEMPLATE/LOW CONF) → AUTO-SUPPRESS (hidden by default)
   // ══════════════════════════════════════════════════════════════
   for (const s of filtered) {
-    if (s.evidenceTier === 'TIER_C') {
-      // Tier C: cap at HOLD — no BUY/ADD
-      if (s.action === 'BUY' || s.action === 'ADD') {
-        s.action = 'HOLD';
-        s.decision = 'HOLD';
+    if (s.evidenceTier === 'TIER_D') {
+      // Tier D: auto-suppress — force WATCH, hidden visibility
+      if (s.action !== 'EXIT') { // Never suppress genuine EXIT
+        s.action = 'WATCH';
+        s.decision = 'WATCH';
+        s.visibility = 'HIDDEN';
         s.conflictResolution = (s.conflictResolution ? s.conflictResolution + ' · ' : '') +
-          'Evidence Tier C: insufficient evidence for conviction';
+          'Tier D: auto-suppressed (template/low confidence pattern)';
+      }
+    } else if (s.evidenceTier === 'TIER_C') {
+      // Tier C: WATCH only — no BUY/ADD/HOLD/EXIT
+      if (s.action === 'BUY' || s.action === 'ADD' || s.action === 'HOLD') {
+        s.action = 'WATCH';
+        s.decision = 'WATCH';
+        s.visibility = 'DIMMED';
+        s.conflictResolution = (s.conflictResolution ? s.conflictResolution + ' · ' : '') +
+          'Tier C: inferred signal — monitor only, unconfirmed';
+      }
+      if (s.action === 'EXIT' && !s.isNegative) {
+        s.action = 'WATCH';
+        s.decision = 'WATCH';
+        s.conflictResolution = (s.conflictResolution ? s.conflictResolution + ' · ' : '') +
+          'Tier C: inferred EXIT downgraded — needs verification';
       }
     } else if (s.evidenceTier === 'TIER_B') {
-      // Tier B: BUY not allowed, ADD only with high confidence
+      // Tier B: HOLD/WATCH-ACTIVE max — no BUY
       if (s.action === 'BUY') {
         s.action = 'ADD';
         s.decision = 'ADD';
         s.conflictResolution = (s.conflictResolution ? s.conflictResolution + ' · ' : '') +
-          'Evidence Tier B: downgraded BUY→ADD (media source)';
+          'Tier B: secondary source → BUY downgraded to ADD';
       }
+      s.visibility = 'VISIBLE';
+    } else {
+      // Tier A: no restrictions
+      s.visibility = 'VISIBLE';
     }
-    // Tier A: no restrictions
   }
 
   // ══════════════════════════════════════════════════════════════
   // ── CONFIDENCE GATING (HARD RULE) ──
   // If confidence < 60 → cannot be BUY or ADD → force WATCH
+  // ACTUAL confidence type is inherently trusted — skip gating
   // ══════════════════════════════════════════════════════════════
   for (const s of filtered) {
-    // ACTUAL confidence type is inherently trusted — don't gate it
     if (s.confidenceType !== 'ACTUAL' && s.confidenceScore < 60 && (s.action === 'BUY' || s.action === 'ADD')) {
       const oldAction = s.action;
       s.action = 'WATCH';
@@ -2521,66 +2819,95 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   }
 
   // ══════════════════════════════════════════════════════════════
-  // ── CONFLICT RESOLUTION ENGINE (per-company) ──
-  // When conflicting signals exist for same company, resolve to single directional bias
-  // Output ONE final decision per company using signal hierarchy dominance
+  // ── NET SIGNAL CONFLICT RESOLUTION ENGINE (v2) ──
+  // Uses weighted formula: Net Score = Σ (Score × TypeWeight × Confidence × Freshness)
+  // Override Rule: Verified Guidance overrides ALL inferred signals
+  // Produces conflict badges and net signal scores for each company
   // ══════════════════════════════════════════════════════════════
   for (const [sym, sigs] of companySignalMap) {
+    // Compute net signal score for this company
+    const netScore = computeNetSignalScore(sigs);
+    for (const s of sigs) {
+      s.netSignalScore = netScore;
+    }
+
     if (sigs.length < 2) continue;
 
     const bullishSigs = sigs.filter(s => s.action === 'BUY' || s.action === 'ADD');
     const bearishSigs = sigs.filter(s => s.action === 'EXIT' || s.action === 'TRIM' || s.action === 'AVOID');
 
-    if (bullishSigs.length > 0 && bearishSigs.length > 0) {
-      // Conflict exists — resolve using signal hierarchy
-      const dominantBearish = bearishSigs.some(s => {
-        const tier = SIGNAL_TIER_HIERARCHY[s.eventType] || 3;
-        return tier === 1 || (s.revenueGrowth !== null && s.revenueGrowth !== undefined && s.revenueGrowth < -15);
-      });
-      const dominantBullish = bullishSigs.some(s => {
-        const tier = SIGNAL_TIER_HIERARCHY[s.eventType] || 3;
-        return tier === 1 && s.impactPct >= 5;
-      });
+    // Check for verified guidance override
+    const verifiedGuidance = sigs.find(s =>
+      s.eventType === 'Guidance' && s.evidenceTier === 'TIER_A' && !s.guidanceAnomalyFlag
+    );
 
-      if (dominantBearish && !dominantBullish) {
-        // Bearish Tier 1 dominates — suppress ALL bullish signals for this company
-        for (const s of bullishSigs) {
-          const oldAction = s.action;
-          s.action = 'HOLD';
-          s.decision = 'HOLD';
-          s.conflictResolution = `Downgraded from ${oldAction}: revenue/demand decline dominates`;
-          if (!s.contradictions) s.contradictions = [];
-          s.contradictions.push(`Overridden: ${oldAction}→HOLD due to Tier 1 bearish signal on ${sym}`);
+    if (bullishSigs.length > 0 && bearishSigs.length > 0) {
+      // Generate conflict badge
+      const bullTypes = [...new Set(bullishSigs.map(s => s.eventType))].join(', ');
+      const bearTypes = [...new Set(bearishSigs.map(s => s.eventType))].join(', ');
+      const badge = `Conflicting: ${bullTypes} vs ${bearTypes}`;
+      for (const s of sigs) {
+        s.conflictBadge = badge;
+      }
+
+      // Override Rule: Verified Guidance dominates ALL inferred signals
+      if (verifiedGuidance) {
+        for (const s of sigs) {
+          if (s !== verifiedGuidance && s.valueSource === 'HEURISTIC') {
+            const oldAction = s.action;
+            s.action = verifiedGuidance.action;
+            s.decision = verifiedGuidance.action;
+            s.conflictResolution = (s.conflictResolution ? s.conflictResolution + ' · ' : '') +
+              `Verified guidance overrides inferred ${s.eventType}: ${oldAction}→${verifiedGuidance.action}`;
+          }
         }
-      } else if (dominantBullish && !dominantBearish) {
-        // Bullish Tier 1 dominates — suppress bearish noise
-        for (const s of bearishSigs) {
-          if (s.action !== 'EXIT') { // Never suppress EXIT
+      } else {
+        // Standard hierarchy resolution
+        const dominantBearish = bearishSigs.some(s => {
+          const tier = SIGNAL_TIER_HIERARCHY[s.eventType] || 3;
+          return tier === 1 || (s.revenueGrowth !== null && s.revenueGrowth !== undefined && s.revenueGrowth < -15);
+        });
+        const dominantBullish = bullishSigs.some(s => {
+          const tier = SIGNAL_TIER_HIERARCHY[s.eventType] || 3;
+          return tier === 1 && s.impactPct >= 5;
+        });
+
+        if (dominantBearish && !dominantBullish) {
+          for (const s of bullishSigs) {
             const oldAction = s.action;
             s.action = 'HOLD';
             s.decision = 'HOLD';
-            s.conflictResolution = `Upgraded from ${oldAction}: strong order/demand signal dominates`;
+            s.conflictResolution = `Downgraded from ${oldAction}: revenue/demand decline dominates`;
+            if (!s.contradictions) s.contradictions = [];
+            s.contradictions.push(`Overridden: ${oldAction}→HOLD due to Tier 1 bearish signal on ${sym}`);
+          }
+        } else if (dominantBullish && !dominantBearish) {
+          for (const s of bearishSigs) {
+            if (s.action !== 'EXIT') {
+              const oldAction = s.action;
+              s.action = 'HOLD';
+              s.decision = 'HOLD';
+              s.conflictResolution = `Upgraded from ${oldAction}: strong order/demand signal dominates`;
+            }
           }
         }
       }
-      // If both have Tier 1 or neither does → leave conflict visible (honest uncertainty)
     }
 
     // FORCED SINGLE OUTPUT: For multi-signal companies, ensure consistent direction
-    // Find the dominant signal (highest tier, then highest score)
     const sorted = [...sigs].sort((a, b) => {
+      // Verified guidance always first
+      if (a.eventType === 'Guidance' && a.evidenceTier === 'TIER_A') return -1;
+      if (b.eventType === 'Guidance' && b.evidenceTier === 'TIER_A') return 1;
       const tierA = SIGNAL_TIER_HIERARCHY[a.eventType] || 3;
       const tierB = SIGNAL_TIER_HIERARCHY[b.eventType] || 3;
-      if (tierA !== tierB) return tierA - tierB; // Lower tier number = higher priority
+      if (tierA !== tierB) return tierA - tierB;
       return b.weightedScore - a.weightedScore;
     });
     const dominant = sorted[0];
-    // Align all signals to dominant's direction
     for (const s of sigs) {
       if (s !== dominant && s.action !== dominant.action) {
-        // Only override weaker signals, never override EXIT
         if (s.action !== 'EXIT' && dominant.action !== 'WATCH') {
-          const oldAction = s.action;
           s.decision = dominant.action;
           s.conflictResolution = (s.conflictResolution ? s.conflictResolution + ' · ' : '') +
             `Aligned to dominant signal: ${dominant.eventType} (Tier ${SIGNAL_TIER_HIERARCHY[dominant.eventType] || 3})`;

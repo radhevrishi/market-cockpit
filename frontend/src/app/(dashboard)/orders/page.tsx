@@ -113,12 +113,22 @@ interface Signal {
   conflictResolution?: string;
   sectorCyclical?: boolean;
   priceReactionNote?: string;
-  evidenceTier?: 'TIER_A' | 'TIER_B' | 'TIER_C';
+  evidenceTier?: 'TIER_A' | 'TIER_B' | 'TIER_C' | 'TIER_D';
   timeHorizon?: 'SHORT' | 'MEDIUM' | 'LONG';
   watchSubtype?: 'ACTIVE' | 'PASSIVE';
   eventNovelty?: 'NEW' | 'REPEAT' | 'STALE';
   heuristicSuppressed?: boolean;
   extremeValueFlag?: string;
+  // v3 fields
+  templatePattern?: string;
+  identicalPctFlag?: boolean;
+  sourceMismatch?: string;
+  guidanceAnomalyFlag?: string;
+  visibility?: 'VISIBLE' | 'DIMMED' | 'HIDDEN';
+  netSignalScore?: number;
+  conflictBadge?: string;
+  riskFactors?: string[];
+  sourceExtract?: string;
 }
 
 interface CompanyTrend {
@@ -379,6 +389,8 @@ export default function CompanyIntelligencePage() {
     // Noise filter — filter out NOISE classification by default unless showNoise is true
     // ALWAYS show results for NEGATIVE and TRIM filters (risk signals should never be hidden)
     if (!showNoise && typeFilter !== 'NEGATIVE' && typeFilter !== 'TRIM') list = list.filter(s => s.scoreClassification !== 'NOISE');
+    // Hide TIER_D (template/auto-suppressed) signals by default unless showNoise is enabled
+    if (!showNoise) list = list.filter(s => s.visibility !== 'HIDDEN');
     return list;
   }, [signals, typeFilter, universeFilter, showNoise]);
 
@@ -746,11 +758,11 @@ export default function CompanyIntelligencePage() {
                   </div>
                 )}
 
-                {/* WHY explanation */}
+                {/* WHY explanation with risk/reason */}
                 {s.whyAction ? (
                   <div style={{
                     fontSize: '12px', color: s.isNegative ? RED : GREEN, fontWeight: 600, lineHeight: 1.5,
-                    padding: '6px 10px', marginBottom: '6px', borderRadius: '6px',
+                    padding: '6px 10px', marginBottom: '4px', borderRadius: '6px',
                     backgroundColor: s.isNegative ? 'rgba(239,68,68,0.06)' : 'rgba(16,185,129,0.06)',
                     borderLeft: `3px solid ${s.isNegative ? RED : GREEN}`,
                   }}>
@@ -759,11 +771,20 @@ export default function CompanyIntelligencePage() {
                 ) : (
                   <div style={{
                     fontSize: '12px', color: s.isNegative ? RED : GREEN, fontWeight: 600, lineHeight: 1.5,
-                    padding: '6px 10px', marginBottom: '6px', borderRadius: '6px',
+                    padding: '6px 10px', marginBottom: '4px', borderRadius: '6px',
                     backgroundColor: s.isNegative ? 'rgba(239,68,68,0.06)' : 'rgba(16,185,129,0.06)',
                     borderLeft: `3px solid ${s.isNegative ? RED : GREEN}`,
                   }}>
                     {s.whyItMatters}
+                  </div>
+                )}
+                {/* Risk factors panel */}
+                {s.riskFactors && s.riskFactors.length > 0 && (
+                  <div style={{
+                    fontSize: '10px', color: '#F59E0B', lineHeight: 1.4, padding: '3px 10px',
+                    marginBottom: '4px', borderLeft: '2px solid rgba(245,158,11,0.3)',
+                  }}>
+                    Risk: {s.riskFactors.slice(0, 3).join(' · ')}
                   </div>
                 )}
 
@@ -771,6 +792,12 @@ export default function CompanyIntelligencePage() {
                 <div style={{ fontSize: '11px', color: TEXT2, lineHeight: 1.5, paddingLeft: '2px' }}>
                   {s.headline.length > 200 ? s.headline.slice(0, 200) + '...' : s.headline}
                 </div>
+                {/* Source panel */}
+                {s.sourceExtract && (
+                  <div style={{ fontSize: '9px', color: TEXT3, lineHeight: 1.3, paddingLeft: '2px', marginTop: '2px', fontStyle: 'italic' }}>
+                    Source: &quot;{s.sourceExtract.slice(0, 100)}{s.sourceExtract.length > 100 ? '...' : ''}&quot;
+                  </div>
+                )}
 
                 {/* Row 5: Meta */}
                 <div style={{ display: 'flex', gap: '12px', marginTop: '6px', paddingLeft: '2px', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -1103,10 +1130,10 @@ export default function CompanyIntelligencePage() {
                   {/* Evidence tier badge */}
                   {s.evidenceTier && (
                     <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px',
-                      color: s.evidenceTier === 'TIER_A' ? '#059669' : s.evidenceTier === 'TIER_B' ? '#D97706' : '#DC2626',
-                      backgroundColor: s.evidenceTier === 'TIER_A' ? 'rgba(5,150,105,0.08)' : s.evidenceTier === 'TIER_B' ? 'rgba(217,119,6,0.08)' : 'rgba(220,38,38,0.08)',
+                      color: s.evidenceTier === 'TIER_A' ? '#059669' : s.evidenceTier === 'TIER_B' ? '#D97706' : s.evidenceTier === 'TIER_D' ? '#6B7280' : '#DC2626',
+                      backgroundColor: s.evidenceTier === 'TIER_A' ? 'rgba(5,150,105,0.08)' : s.evidenceTier === 'TIER_B' ? 'rgba(217,119,6,0.08)' : s.evidenceTier === 'TIER_D' ? 'rgba(107,114,128,0.08)' : 'rgba(220,38,38,0.08)',
                     }}>
-                      {s.evidenceTier === 'TIER_A' ? 'A' : s.evidenceTier === 'TIER_B' ? 'B' : 'C'}
+                      {s.evidenceTier === 'TIER_A' ? 'A' : s.evidenceTier === 'TIER_B' ? 'B' : s.evidenceTier === 'TIER_D' ? 'D' : 'C'}
                     </span>
                   )}
                   {/* Time horizon badge */}
@@ -1126,8 +1153,19 @@ export default function CompanyIntelligencePage() {
                   )}
                   {/* Heuristic suppression warning */}
                   {s.heuristicSuppressed && (
-                    <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px', color: '#DC2626', backgroundColor: 'rgba(220,38,38,0.06)' }}>
-                      TEMPLATE
+                    <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px', color: '#DC2626', backgroundColor: 'rgba(220,38,38,0.08)', letterSpacing: '0.3px' }}
+                      title={s.templatePattern || 'Unverified pattern detected'}>
+                      ⚠ LOW-CONF PATTERN
+                    </span>
+                  )}
+                  {s.conflictBadge && (
+                    <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px', color: ORANGE, backgroundColor: 'rgba(249,115,22,0.08)' }}>
+                      ⚠ {s.conflictBadge}
+                    </span>
+                  )}
+                  {s.guidanceAnomalyFlag && (
+                    <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px', color: YELLOW, backgroundColor: 'rgba(251,191,36,0.08)' }}>
+                      ⚠ {s.guidanceAnomalyFlag}
                     </span>
                   )}
                   {s.client && <span style={{ fontSize: '10px', color: PURPLE }}>Client: {s.client}</span>}
