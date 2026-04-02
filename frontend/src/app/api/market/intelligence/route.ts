@@ -1177,6 +1177,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 s.signalTier = 'TIER1_VERIFIED';  // Event itself is real
                 s.valueSource = 'EXACT';
                 s.heuristicSuppressed = false;  // Not relevant for non-financial
+                s.anomalyFlags = [];  // Clear anomaly flags for non-financial events
                 s.impactLevel = 'LOW';
                 s.whyItMatters = stripFinText(s.whyItMatters || '');
                 if (!s.whyItMatters || s.whyItMatters.length < 10) {

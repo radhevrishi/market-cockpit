@@ -636,6 +636,8 @@ function sanitizeByEventClass(signal: any): void {
     signal.inferenceUsed = false;
     signal.signalTier = 'TIER1_VERIFIED';
     signal.valueSource = 'EXACT';
+    signal.heuristicSuppressed = false;
+    signal.anomalyFlags = [];
     signal.impactLevel = 'LOW';
     // Aggressive text cleaning helper for non-financial events
     const stripFin = (t: string) => t
