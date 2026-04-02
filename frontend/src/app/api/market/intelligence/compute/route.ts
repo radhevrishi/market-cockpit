@@ -1984,27 +1984,28 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         guidanceSignal.catalystStrength = classifyCatalystStrength(impactPct, null);
 
         // Compute 3-axis scores for guidance
+        const guidEarningsScore = earningsCache.get(symbol) ?? null;
         const guidAxis = computeThreeAxisScore({
           impactPct, revenueGrowth: revG || null, marginChange: marginBps || null, epsGrowth: ge.epsGrowth || null,
           eventType: 'Guidance', sentiment, timeWeight, signalCount: 1,
           confidenceScore: ge.confidenceScore, confidenceType: ge.confidenceScore >= 70 ? 'ACTUAL' : 'INFERRED',
           valueSource: capex ? 'EXACT' : 'HEURISTIC',
           isNegative: isNeg, sector: enrichment?.industry?.split(' ')[0] || null,
-          earningsScore: null, isCapex: capex !== null && capex > 0,
+          earningsScore: guidEarningsScore, isCapex: capex !== null && capex > 0,
         });
         guidanceSignal.fundamentalScore = guidAxis.fundamental;
         guidanceSignal.signalStrengthScore = guidAxis.signalStrength;
         guidanceSignal.dataConfidenceScore = guidAxis.dataConfidence;
 
         // Guidance credibility discount: management narrative is less reliable than hard data
-        // Apply 20% confidence penalty to all guidance (small/mid caps especially unreliable)
-        const guidanceCredibilityDiscount = 0.80;
+        // Apply 10% confidence penalty to guidance composite (balances skepticism vs signal utility)
+        const guidanceCredibilityDiscount = 0.90;
         guidanceSignal.weightedScore = Math.round(guidAxis.composite * guidanceCredibilityDiscount);
         guidanceSignal.score = guidanceSignal.weightedScore;
-        guidanceSignal.dataConfidenceScore = Math.round((guidAxis.dataConfidence || 50) * guidanceCredibilityDiscount);
+        guidanceSignal.dataConfidenceScore = guidAxis.dataConfidence; // no double-penalty on display
 
         // Re-classify using 3-axis composite with credibility discount
-        guidanceSignal.action = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, null, guidanceSignal.weightedScore, isNeg, 1, guidanceStrong, guidAxis.fundamental, revG || null, marginBps ? marginBps / 100 : null);
+        guidanceSignal.action = classifyAction(impactPct, sentiment, isWatchlist, isPortfolio, guidEarningsScore, guidanceSignal.weightedScore, isNeg, 1, guidanceStrong, guidAxis.fundamental, revG || null, marginBps ? marginBps / 100 : null);
         guidanceSignal.decision = guidanceSignal.action;
         guidanceSignal.signalTier = ge.confidenceScore >= 70 ? 'TIER1_VERIFIED' : 'TIER2_INFERRED';
         guidanceSignal.revenueGrowth = revG || null;
