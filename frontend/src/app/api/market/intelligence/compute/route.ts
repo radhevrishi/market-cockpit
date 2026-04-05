@@ -4715,14 +4715,28 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     // 4. GOVERNANCE HARD BLOCK (v8 — ABSOLUTE, no exceptions)
     // ALL non-CEO/CFO/MD/Chairman governance signals → HIDDEN
     // This is a hard block: even if there's thematic context, routine governance is noise
-    const HARD_SENIOR_ROLES = new Set(['CEO', 'CFO', 'MD', 'Chairman', 'Managing Director', 'Chief Executive', 'Chief Financial']);
+    const HARD_SENIOR_ROLES = new Set(['CEO', 'CFO', 'MD', 'Chairman', 'Managing Director', 'Chief Executive', 'Chief Financial', 'Executive Director', 'Whole Time Director']);
+    // Non-senior role terms — also catches Corporate eventType with CS/Compliance Officer in headline
+    const NON_SENIOR_TERMS_COMPUTE = [
+      'company secretary', 'compliance officer', 'statutory auditor', 'company auditor',
+      'cost auditor', 'secretarial auditor', 'internal auditor', 'registrar',
+      'transfer agent', 'share transfer agent', 'kmp change',
+    ];
     for (const s of filtered) {
-      if (s.signalClass === 'GOVERNANCE' || s.eventType === 'Mgmt Change' || s.eventType === 'Board Appointment') {
+      // Layer 1: role-based block
+      if (s.signalClass === 'GOVERNANCE' || s.signalClass === 'COMPLIANCE' || s.eventType === 'Mgmt Change' || s.eventType === 'Board Appointment' || s.eventType === 'Board Change') {
         const role = s.managementRole || 'Other';
-        if (!HARD_SENIOR_ROLES.has(role)) {
+        const isSenior = Array.from(HARD_SENIOR_ROLES).some(sr => role.toLowerCase().includes(sr.toLowerCase()));
+        if (!isSenior) {
           s.visibility = 'HIDDEN';
           s.signalCategory = 'REJECTED';
         }
+      }
+      // Layer 2: headline text block (catches Corporate event type with non-senior role)
+      const txt = `${s.headline || ''} ${s.whyItMatters || ''} ${s.sourceExtract || ''}`.toLowerCase();
+      if (NON_SENIOR_TERMS_COMPUTE.some(t => txt.includes(t))) {
+        s.visibility = 'HIDDEN';
+        s.signalCategory = 'REJECTED';
       }
     }
   }

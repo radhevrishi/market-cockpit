@@ -1274,6 +1274,27 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             };
           }
 
+          // ── DATE FILTER: filter cached signals to the requested time window ──
+          // The compute job stores signals for its full default window (3-7 days).
+          // When the user selects 7D/14D/30D/90D we filter client-side from the cache.
+          const daysWindow = days <= 0 ? 90 : days; // 0 means no filter
+          const cutoffMs = daysWindow < 90 ? Date.now() - daysWindow * 24 * 60 * 60 * 1000 : 0;
+          const withinWindow = (sig: any): boolean => {
+            if (cutoffMs === 0) return true;
+            const d = sig.date || sig.publishedAt || sig.eventDate || sig.createdAt;
+            if (!d) return true; // no date → include by default
+            try { return new Date(d).getTime() >= cutoffMs; } catch { return true; }
+          };
+          if (cutoffMs > 0 && shouldFilterCached) {
+            responseData = {
+              ...responseData,
+              signals: (responseData.signals || []).filter(withinWindow),
+              notable: (responseData.notable || []).filter(withinWindow),
+              observations: (responseData.observations || []).filter(withinWindow),
+              top3: (responseData.top3 || []).filter(withinWindow),
+            };
+          }
+
           // FINAL: Apply 3-layer validation gate to cached data
           // Merge signals + observations from v5 cache (v5 split them; we need ALL for reprocessing)
           const allCachedSignals = [
@@ -1417,15 +1438,28 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               }
 
               // ── v8: GOVERNANCE ABSOLUTE HARD BLOCK ──
-              // Non-senior governance signals are ALWAYS hidden — no exceptions
+              // Non-senior governance/compliance signals are ALWAYS hidden — no exceptions
+              // Layer 1: role-based block (checks managementRole field)
               const HARD_SENIOR_ROLES_GET = new Set(['CEO','CFO','MD','Chairman','Managing Director','Chief Executive','Chief Financial','Executive Director','Whole Time Director','Whole-Time Director']);
-              if (s.signalClass === 'GOVERNANCE' || s.eventType === 'Mgmt Change' || s.eventType === 'Board Appointment' || s.eventType === 'Board Change') {
+              if (s.signalClass === 'GOVERNANCE' || s.signalClass === 'COMPLIANCE' || s.eventType === 'Mgmt Change' || s.eventType === 'Board Appointment' || s.eventType === 'Board Change') {
                 const role = (s.managementRole || '').trim();
                 const isSeniorRole = Array.from(HARD_SENIOR_ROLES_GET).some(sr => role.toLowerCase().includes(sr.toLowerCase()));
                 if (!isSeniorRole) {
                   s.visibility = 'HIDDEN';
                   s.signalCategory = 'REJECTED';
                 }
+              }
+              // Layer 2: headline text block — catches Corporate events with non-senior roles
+              // (these bypass Layer 1 because eventType is 'Corporate', not 'Mgmt Change' etc.)
+              const NON_SENIOR_TERMS = [
+                'company secretary', 'compliance officer', 'statutory auditor', 'company auditor',
+                'cost auditor', 'secretarial auditor', 'internal auditor', 'registrar',
+                'transfer agent', 'share transfer agent', 'kmp change', 'company auditor change',
+              ];
+              const fullText_gov = `${s.headline || ''} ${s.whyItMatters || ''} ${s.sourceExtract || ''}`.toLowerCase();
+              if (NON_SENIOR_TERMS.some(t => fullText_gov.includes(t))) {
+                s.visibility = 'HIDDEN';
+                s.signalCategory = 'REJECTED';
               }
 
               // Materiality score
