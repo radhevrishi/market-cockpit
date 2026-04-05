@@ -15,6 +15,19 @@ import { NextRequest, NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
 
+// ── Safe formatting helpers ───────────────────────────────────────────────────
+function safeFixed(v: unknown, decimals = 2, fallback = 'N/A'): string {
+  return typeof v === 'number' && Number.isFinite(v) ? v.toFixed(decimals) : fallback;
+}
+function safePct(v: unknown, decimals = 1, fallback = 'N/A'): string {
+  return typeof v === 'number' && Number.isFinite(v) ? `${v.toFixed(decimals)}%` : fallback;
+}
+function safeCurrency(v: unknown, fallback = 'N/A'): string {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0
+    ? `₹${new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(v)}`
+    : fallback;
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Signal = 'STRONG_BUY' | 'BUY' | 'NEUTRAL' | 'CAUTION' | 'AVOID';
 type Grade  = 'A+' | 'A' | 'B+' | 'B' | 'C' | 'D' | 'NR';
@@ -292,7 +305,7 @@ function validateData(
 
   // Hard-fail conditions
   if (!symbol || symbol.length < 2) return { valid: false, reason: 'Invalid symbol', coveragePct: 0, confidence: 'VERY_LOW', source: 'none', fetchedAt: new Date().toISOString(), staleness: 'UNKNOWN' };
-  if (sector === 'Unknown' || sector === '' || sector === 'S') return { valid: false, reason: 'Symbol did not resolve to a company', coveragePct, confidence: 'VERY_LOW', source: 'none', fetchedAt: new Date().toISOString(), staleness: 'UNKNOWN' };
+  if (!sector || sector.length < 3 || sector === 'Unknown') return { valid: false, reason: 'Symbol did not resolve to a company', coveragePct, confidence: 'VERY_LOW', source: 'none', fetchedAt: new Date().toISOString(), staleness: 'UNKNOWN' };
   if (!nse.lastPrice || nse.lastPrice <= 0) return { valid: false, reason: 'Invalid or zero price — symbol may be delisted or mapping error', coveragePct, confidence: 'VERY_LOW', source: screenerOk ? 'partial' : 'none', fetchedAt: new Date().toISOString(), staleness: 'UNKNOWN' };
 
   const source: DataQuality['source'] = screenerOk && nseOk ? 'screener.in + NSE' : nseOk ? 'NSE only' : screenerOk ? 'partial' : 'none';
@@ -356,15 +369,15 @@ function detectRedFlags(screener: Record<string, any>, nse: Record<string, any>)
   const flags: RedFlag[] = [];
 
   if (screener.de !== null && screener.de > 3.0) {
-    flags.push({ id: 'extreme_debt', label: 'Extreme Leverage', severity: 'CRITICAL', detail: `D/E ratio ${screener.de.toFixed(2)} — extreme debt load; bankruptcy risk in downturn` });
+    flags.push({ id: 'extreme_debt', label: 'Extreme Leverage', severity: 'CRITICAL', detail: `D/E ratio ${safeFixed(screener.de, 2)} — extreme debt load; bankruptcy risk in downturn` });
   } else if (screener.de !== null && screener.de > 2.0) {
-    flags.push({ id: 'high_debt', label: 'High Debt', severity: 'HIGH', detail: `D/E ratio ${screener.de.toFixed(2)} — debt level significantly limits compounding potential` });
+    flags.push({ id: 'high_debt', label: 'High Debt', severity: 'HIGH', detail: `D/E ratio ${safeFixed(screener.de, 2)} — debt level significantly limits compounding potential` });
   }
 
   if (screener.pledgedPct !== null && screener.pledgedPct > 50) {
-    flags.push({ id: 'high_pledge', label: 'Critical Pledge Level', severity: 'CRITICAL', detail: `${screener.pledgedPct.toFixed(1)}% of promoter shares pledged — forced selling risk` });
+    flags.push({ id: 'high_pledge', label: 'Critical Pledge Level', severity: 'CRITICAL', detail: `${safeFixed(screener.pledgedPct, 1)}% of promoter shares pledged — forced selling risk` });
   } else if (screener.pledgedPct !== null && screener.pledgedPct > 25) {
-    flags.push({ id: 'moderate_pledge', label: 'Elevated Pledging', severity: 'HIGH', detail: `${screener.pledgedPct.toFixed(1)}% promoter shares pledged — watch for escalation` });
+    flags.push({ id: 'moderate_pledge', label: 'Elevated Pledging', severity: 'HIGH', detail: `${safeFixed(screener.pledgedPct, 1)}% promoter shares pledged — watch for escalation` });
   }
 
   if (screener.cfoPositive === false) {
@@ -372,23 +385,23 @@ function detectRedFlags(screener: Record<string, any>, nse: Record<string, any>)
   }
 
   if (screener.promoterPct !== null && screener.promoterPct < 20) {
-    flags.push({ id: 'low_promoter', label: 'Very Low Promoter Holding', severity: 'HIGH', detail: `Only ${screener.promoterPct.toFixed(1)}% promoter holding — misaligned incentives` });
+    flags.push({ id: 'low_promoter', label: 'Very Low Promoter Holding', severity: 'HIGH', detail: `Only ${safeFixed(screener.promoterPct, 1)}% promoter holding — misaligned incentives` });
   }
 
   if (screener.roce !== null && screener.roce < 0) {
-    flags.push({ id: 'negative_roce', label: 'Negative ROCE', severity: 'CRITICAL', detail: `ROCE ${screener.roce.toFixed(1)}% — destroying capital, not creating it` });
+    flags.push({ id: 'negative_roce', label: 'Negative ROCE', severity: 'CRITICAL', detail: `ROCE ${safeFixed(screener.roce, 1)}% — destroying capital, not creating it` });
   }
 
   if (screener.pe !== null && screener.pe > 150) {
-    flags.push({ id: 'extreme_pe', label: 'Extreme Valuation', severity: 'MEDIUM', detail: `P/E of ${screener.pe.toFixed(0)}x — requires exceptional multi-year growth to justify` });
+    flags.push({ id: 'extreme_pe', label: 'Extreme Valuation', severity: 'MEDIUM', detail: `P/E of ${safeFixed(screener.pe, 0)}x — requires exceptional multi-year growth to justify` });
   }
 
   if (screener.interestCoverage !== null && screener.interestCoverage < 1.5) {
-    flags.push({ id: 'low_icr', label: 'Weak Interest Coverage', severity: 'HIGH', detail: `ICR ${screener.interestCoverage.toFixed(1)}x — earnings barely cover interest; distress risk` });
+    flags.push({ id: 'low_icr', label: 'Weak Interest Coverage', severity: 'HIGH', detail: `ICR ${safeFixed(screener.interestCoverage, 1)}x — earnings barely cover interest; distress risk` });
   }
 
   if (nse.pctFrom52H !== null && nse.pctFrom52H < -60) {
-    flags.push({ id: 'deep_drawdown', label: 'Deep Drawdown', severity: 'MEDIUM', detail: `${Math.abs(nse.pctFrom52H).toFixed(0)}% below 52W high — investigate fundamental reason` });
+    flags.push({ id: 'deep_drawdown', label: 'Deep Drawdown', severity: 'MEDIUM', detail: `${safeFixed(Math.abs(nse.pctFrom52H), 0)}% below 52W high — investigate fundamental reason` });
   }
 
   return flags;
@@ -440,7 +453,7 @@ function buildCriteria(
   const roce = screener.roce;
   if (roce !== null) {
     const s = peerNormalize(roce, benchmarks.roce);
-    c('roce', 'ROCE', 'QUALITY', roce, `${roce.toFixed(1)}%`, s, peerPercentile(roce, benchmarks.roce), 10,
+    c('roce', 'ROCE', 'QUALITY', roce, `${safePct(roce, 1)}`, s, peerPercentile(roce, benchmarks.roce), 10,
       roce >= benchmarks.roce[2] ? `Excellent — top quartile ROCE for ${sectorGroup}` : roce >= benchmarks.roce[1] ? 'Good capital efficiency' : roce >= benchmarks.roce[0] ? 'Below sector median — room to improve' : 'Poor ROCE — capital destruction risk');
   } else {
     c('roce', 'ROCE', 'QUALITY', null, 'N/A', 45, null, 10, 'ROCE data unavailable — confidence reduced');
@@ -450,7 +463,7 @@ function buildCriteria(
   if (roe !== null) {
     const bm = [benchmarks.roce[0] * 0.9, benchmarks.roce[1] * 0.85, benchmarks.roce[2] * 0.8];
     const s = peerNormalize(roe, bm);
-    c('roe', 'ROE', 'QUALITY', roe, `${roe.toFixed(1)}%`, s, peerPercentile(roe, bm), 8,
+    c('roe', 'ROE', 'QUALITY', roe, `${safePct(roe, 1)}`, s, peerPercentile(roe, bm), 8,
       roe >= 20 ? 'Strong shareholder returns' : roe >= 12 ? 'Adequate ROE' : 'ROE below acceptable — watch reinvestment');
   } else {
     c('roe', 'ROE', 'QUALITY', null, 'N/A', 45, null, 8, 'ROE unavailable');
@@ -459,7 +472,7 @@ function buildCriteria(
   const opm = screener.opm;
   if (opm !== null) {
     const s = peerNormalize(opm, benchmarks.opm);
-    c('opm', 'Operating Margin', 'QUALITY', opm, `${opm.toFixed(1)}%`, s, peerPercentile(opm, benchmarks.opm), 8,
+    c('opm', 'Operating Margin', 'QUALITY', opm, `${safePct(opm, 1)}`, s, peerPercentile(opm, benchmarks.opm), 8,
       opm >= benchmarks.opm[2] ? 'Exceptional margins — pricing power moat' : opm >= benchmarks.opm[1] ? 'Strong operating leverage' : opm >= benchmarks.opm[0] ? 'Sector-average margins' : 'Thin margins vs sector — competitive pressure');
   } else {
     c('opm', 'Operating Margin', 'QUALITY', null, 'N/A', 45, null, 8, 'OPM unavailable');
@@ -478,14 +491,14 @@ function buildCriteria(
     const cfoContrib  = cfoPos === true ? 25 : cfoPos === false ? 5 : 12;
     capAllocScore = roceContrib + deContrib + cfoContrib;
   } else { capAllocScore = 45; }
-  c('capital_alloc', 'Capital Allocation', 'QUALITY', null, `ROCE ${roce?.toFixed(0) ?? 'N/A'}% · D/E ${screener.de?.toFixed(2) ?? 'N/A'} · CFO ${cfoPos === true ? '✓' : cfoPos === false ? '✗' : '?'}`, capAllocScore, null, 9,
+  c('capital_alloc', 'Capital Allocation', 'QUALITY', null, `ROCE ${safeFixed(roce, 0)}% · D/E ${safeFixed(screener.de, 2)} · CFO ${cfoPos === true ? '✓' : cfoPos === false ? '✗' : '?'}`, capAllocScore, null, 9,
     capAllocScore >= 78 ? 'Exemplary capital allocators — rare institutional quality' : capAllocScore >= 63 ? 'Good capital discipline' : 'Capital allocation needs improvement');
 
   // ── GROWTH PILLAR ─────────────────────────────────────────────────────────
   const revCagr = screener.salesCagr5yr;
   if (revCagr !== null) {
     const s = peerNormalize(revCagr, benchmarks.revenueGrowth);
-    c('rev_cagr', 'Revenue CAGR (5yr)', 'GROWTH', revCagr, `${revCagr.toFixed(1)}%`, s, peerPercentile(revCagr, benchmarks.revenueGrowth), 9,
+    c('rev_cagr', 'Revenue CAGR (5yr)', 'GROWTH', revCagr, `${safePct(revCagr, 1)}`, s, peerPercentile(revCagr, benchmarks.revenueGrowth), 9,
       revCagr >= benchmarks.revenueGrowth[2] ? 'Exceptional revenue momentum — market share gains likely' : revCagr >= benchmarks.revenueGrowth[1] ? 'Strong growth — outpacing sector' : revCagr >= benchmarks.revenueGrowth[0] ? 'Sector-average growth' : 'Below-sector growth — needs catalysts');
   } else {
     c('rev_cagr', 'Revenue CAGR (5yr)', 'GROWTH', null, 'N/A', 40, null, 9, '5yr revenue CAGR unavailable — key growth metric missing');
@@ -495,7 +508,7 @@ function buildCriteria(
   if (profCagr !== null) {
     const profBm = [benchmarks.revenueGrowth[0] * 1.3, benchmarks.revenueGrowth[1] * 1.4, benchmarks.revenueGrowth[2] * 1.5];
     const s = peerNormalize(profCagr, profBm);
-    c('profit_cagr', 'Profit CAGR (5yr)', 'GROWTH', profCagr, `${profCagr.toFixed(1)}%`, s, peerPercentile(profCagr, profBm), 10,
+    c('profit_cagr', 'Profit CAGR (5yr)', 'GROWTH', profCagr, `${safePct(profCagr, 1)}`, s, peerPercentile(profCagr, profBm), 10,
       profCagr >= profBm[2] ? 'Exceptional profit compounding — operating leverage confirmed' : profCagr >= profBm[1] ? 'Profit growing faster than sector' : profCagr >= profBm[0] ? 'Moderate profit growth' : profCagr < 0 ? 'Profit declining — earnings reversal risk' : 'Profit growth lagging sector');
   } else {
     c('profit_cagr', 'Profit CAGR (5yr)', 'GROWTH', null, 'N/A', 40, null, 10, '5yr profit CAGR unavailable — growth quality unknown');
@@ -505,7 +518,7 @@ function buildCriteria(
   const yoyRev = screener.revenueGrowthYoY;
   if (yoyRev !== null) {
     const yoyScore = yoyRev >= 20 ? 82 : yoyRev >= 12 ? 68 : yoyRev >= 5 ? 54 : yoyRev >= 0 ? 40 : 22;
-    c('rev_visibility', 'Revenue Visibility (YoY)', 'GROWTH', yoyRev, `${yoyRev.toFixed(1)}% YoY`, yoyScore, null, 6,
+    c('rev_visibility', 'Revenue Visibility (YoY)', 'GROWTH', yoyRev, `${safeFixed(yoyRev, 1)}% YoY`, yoyScore, null, 6,
       yoyRev >= 12 ? 'Consistent demand — predictable revenue base' : yoyRev >= 0 ? 'Modest growth — assess order book' : 'Revenue contracting — high risk');
   } else {
     c('rev_visibility', 'Revenue Visibility (YoY)', 'GROWTH', null, 'N/A', 42, null, 6, 'Quarterly comparison data unavailable');
@@ -516,7 +529,7 @@ function buildCriteria(
   if (de !== null) {
     // Lower D/E = better, so inverted. Thresholds: [comfortable, moderate, stretched]
     const s = peerNormalize(de, [0.5, 1.2, 2.5], true);
-    c('de_ratio', 'Debt-to-Equity', 'FIN_STRENGTH', de, `${de.toFixed(2)}x`, s, null, 10,
+    c('de_ratio', 'Debt-to-Equity', 'FIN_STRENGTH', de, `${safeFixed(de, 2)}x`, s, null, 10,
       de <= 0.3 ? 'Near debt-free — financial fortress' : de <= 0.7 ? 'Conservative leverage' : de <= 1.5 ? 'Manageable debt — monitor trend' : de <= 3 ? 'High debt — limits compounding' : 'Dangerous leverage — restructuring risk');
   } else {
     c('de_ratio', 'Debt-to-Equity', 'FIN_STRENGTH', null, 'N/A', 45, null, 10, 'Debt data unavailable');
@@ -525,7 +538,7 @@ function buildCriteria(
   const promoter = screener.promoterPct;
   if (promoter !== null) {
     const s = peerNormalize(promoter, [35, 50, 65]);
-    c('promoter', 'Promoter Holding', 'FIN_STRENGTH', promoter, `${promoter.toFixed(1)}%`, s, null, 8,
+    c('promoter', 'Promoter Holding', 'FIN_STRENGTH', promoter, `${safePct(promoter, 1)}`, s, null, 8,
       promoter >= 65 ? 'High conviction — founder-led with skin in the game' : promoter >= 50 ? 'Adequate promoter alignment' : promoter >= 35 ? 'Moderate holding — watch for dilution' : 'Low promoter holding — governance concern');
   } else {
     c('promoter', 'Promoter Holding', 'FIN_STRENGTH', null, 'N/A', 45, null, 8, 'Shareholding data unavailable');
@@ -533,13 +546,13 @@ function buildCriteria(
 
   const pledged = screener.pledgedPct ?? 0;
   const pledgeScore = pledged <= 3 ? 90 : pledged <= 10 ? 76 : pledged <= 25 ? 55 : pledged <= 50 ? 30 : 8;
-  c('pledge', 'Promoter Pledge %', 'FIN_STRENGTH', pledged, `${pledged.toFixed(1)}%`, pledgeScore, null, 8,
+  c('pledge', 'Promoter Pledge %', 'FIN_STRENGTH', pledged, `${safePct(pledged, 1)}`, pledgeScore, null, 8,
     pledged <= 3 ? 'Zero/minimal pledging — no distress risk' : pledged <= 10 ? 'Low pledging — acceptable' : pledged <= 25 ? 'Moderate pledge — watch for increase' : 'High pledge — forced selling risk');
 
   const icr = screener.interestCoverage;
   if (icr !== null) {
     const icrScore = icr >= 8 ? 88 : icr >= 4 ? 72 : icr >= 2 ? 52 : icr >= 1 ? 32 : 10;
-    c('icr', 'Interest Coverage', 'FIN_STRENGTH', icr, `${icr.toFixed(1)}x`, icrScore, null, 7,
+    c('icr', 'Interest Coverage', 'FIN_STRENGTH', icr, `${safeFixed(icr, 1)}x`, icrScore, null, 7,
       icr >= 8 ? 'Earnings comfortably cover interest — financial resilience' : icr >= 4 ? 'Adequate coverage' : icr >= 2 ? 'Thin coverage — limited buffer' : 'Interest coverage critical');
   } else {
     c('icr', 'Interest Coverage', 'FIN_STRENGTH', null, 'N/A', 50, null, 7, 'Interest coverage ratio unavailable');
@@ -557,8 +570,8 @@ function buildCriteria(
     else if (pe > bm[2] && pe <= bm[2] * 1.5) peScore = 52;       // expensive
     else if (pe > bm[2] * 1.5) peScore = 32;                       // very expensive
     else peScore = 40;
-    c('pe', 'P/E vs Sector', 'VALUATION', pe, `${pe.toFixed(1)}x (sector median ${bm[0]}x)`, peScore, null, 9,
-      pe <= bm[1] && pe >= bm[0] * 0.6 ? 'Fair to reasonable valuation for sector' : pe > bm[2] ? `Premium valuation — ${((pe / bm[0] - 1) * 100).toFixed(0)}% above sector median` : pe < bm[0] * 0.6 ? 'Discounted vs sector — check if value trap' : 'Moderate premium');
+    c('pe', 'P/E vs Sector', 'VALUATION', pe, `${safeFixed(pe, 1)}x (sector median ${bm[0]}x)`, peScore, null, 9,
+      pe <= bm[1] && pe >= bm[0] * 0.6 ? 'Fair to reasonable valuation for sector' : pe > bm[2] ? `Premium valuation — ${safeFixed((pe / bm[0] - 1) * 100, 0)}% above sector median` : pe < bm[0] * 0.6 ? 'Discounted vs sector — check if value trap' : 'Moderate premium');
   } else {
     c('pe', 'P/E vs Sector', 'VALUATION', null, 'N/A', 45, null, 9, 'P/E unavailable — valuation pillar weakened');
   }
@@ -566,7 +579,7 @@ function buildCriteria(
   const pb = screener.priceToBook;
   if (pb !== null) {
     const pbScore = pb >= 1 && pb <= 4 ? 72 : pb > 4 && pb <= 8 ? 58 : pb < 1 && pb > 0.3 ? 62 : pb > 8 ? 38 : 45;
-    c('pb', 'Price-to-Book', 'VALUATION', pb, `${pb.toFixed(2)}x`, pbScore, null, 6,
+    c('pb', 'Price-to-Book', 'VALUATION', pb, `${safeFixed(pb, 2)}x`, pbScore, null, 6,
       pb >= 1 && pb <= 4 ? 'Reasonable P/B — quality at fair price' : pb > 8 ? 'Very expensive vs book' : 'Discounted to book — assess asset quality');
   } else {
     c('pb', 'Price-to-Book', 'VALUATION', null, 'N/A', 45, null, 6, 'P/B unavailable');
@@ -584,7 +597,7 @@ function buildCriteria(
   const mcap = screener.marketCapCr ?? nse.marketCapCr;
   if (mcap && mcap > 0) {
     const mcapScore = (mcap >= 500 && mcap <= 15000) ? 82 : (mcap > 15000 && mcap <= 50000) ? 65 : (mcap < 500 && mcap >= 100) ? 72 : (mcap < 100) ? 50 : 48;
-    c('mcap', 'Market Cap Zone', 'VALUATION', mcap, `₹${(mcap / 100).toFixed(0)}B`, mcapScore, null, 5,
+    c('mcap', 'Market Cap Zone', 'VALUATION', mcap, `₹${safeFixed(mcap / 100, 0)}B`, mcapScore, null, 5,
       mcap >= 500 && mcap <= 15000 ? 'Sweet spot — large enough to execute, small enough for 5x+' : mcap > 50000 ? 'Large cap — steady compounder, not a multibagger' : mcap < 100 ? 'Micro cap — high risk, liquidity concern' : 'Reasonable size');
   } else {
     c('mcap', 'Market Cap Zone', 'VALUATION', null, 'Data unavailable', 42, null, 5, 'Market cap missing — cannot assess size risk');
@@ -595,7 +608,7 @@ function buildCriteria(
   if (pctH !== null) {
     const below = Math.abs(Math.min(0, pctH));
     const momScore = below <= 8 ? 84 : below <= 20 ? 70 : below <= 35 ? 55 : below <= 55 ? 38 : 22;
-    c('momentum', '52W Momentum', 'MARKET', pctH, `${Math.abs(pctH).toFixed(1)}% from 52W high`, momScore, null, 7,
+    c('momentum', '52W Momentum', 'MARKET', pctH, `${safeFixed(Math.abs(pctH), 1)}% from 52W high`, momScore, null, 7,
       below <= 8 ? 'Near 52W high — institutional accumulation confirmed' : below <= 20 ? 'Modest pull-back — healthy consolidation' : below <= 40 ? 'Meaningful correction — assess fundamental cause' : 'Deep drawdown — high conviction needed');
   } else {
     c('momentum', '52W Momentum', 'MARKET', null, 'N/A', 45, null, 7, 'Price data unavailable from NSE');
@@ -627,8 +640,10 @@ function buildPillars(criteria: CriterionDetail[]): PillarScore[] {
     const items = criteria.filter(c => c.pillar === p.filter);
     const totalW = items.reduce((a, c) => a + c.weight, 0);
     const weighted = items.reduce((a, c) => a + c.score * c.weight, 0);
-    const score = totalW > 0 ? Math.round(weighted / totalW) : 50;
+    let score = totalW > 0 ? Math.round(weighted / totalW) : 0;
     const coverage = items.length > 0 ? items.filter(c => c.dataAvailable).length / items.length : 0;
+    // If no data available for this pillar, set score to 0
+    if (coverage === 0) score = 0;
     const sorted = [...items].sort((a, b) => b.score - a.score);
     return {
       id: p.id,
@@ -722,10 +737,21 @@ export async function GET(request: NextRequest) {
 
           // Score
           const criteria   = buildCriteria(screener, nse, sectorGroup, benchmarks);
+
+          // Eligibility gate: don't assign meaningful grade with insufficient data
+          const availableCount = criteria.filter(c => c.dataAvailable).length;
+          const coverageRatio = criteria.length > 0 ? availableCount / criteria.length : 0;
+
           const pillars     = buildPillars(criteria);
-          const rawScore    = compositeScore(pillars);
+          let rawScore    = compositeScore(pillars);
           const redFlags    = detectRedFlags(screener, nse);
-          const grade       = computeGrade(rawScore, redFlags);
+          let grade       = computeGrade(rawScore, redFlags);
+
+          // If coverage is too low, cap the grade to NR
+          if (coverageRatio < 0.5) {
+            grade = 'NR';
+            errors.push(`Insufficient data coverage (${Math.round(coverageRatio * 100)}%) — grade set to NR`);
+          }
           const mcap        = (screener.marketCapCr && screener.marketCapCr > 0) ? screener.marketCapCr
                             : (nse.marketCapCr && nse.marketCapCr > 0 ? nse.marketCapCr : null);
           const confPenalty = quality.confidence === 'LOW' ? 5 : quality.confidence === 'VERY_LOW' ? 12 : 0;

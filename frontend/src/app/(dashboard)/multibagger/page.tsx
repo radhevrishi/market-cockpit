@@ -264,6 +264,8 @@ export default function MultibaggerPage() {
   const [gradeFilter, setGradeFilter] = useState<string>('all');
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [showMethodology, setShowMethodology] = useState(false);
+  const [eligibleOnly, setEligibleOnly] = useState(true);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -305,14 +307,19 @@ export default function MultibaggerPage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const filtered = (data?.results || []).filter(r => {
-    if (!r.quality.valid) return false; // hide invalid rows by default
+  const allResults = data?.results || [];
+  const validResults = allResults.filter(r => r.quality.valid);
+  const invalidResults = allResults.filter(r => !r.quality.valid);
+  const eligibleResults = validResults.filter(r => r.quality.coveragePct >= 50 && r.grade !== 'NR');
+  const ineligibleResults = validResults.filter(r => r.quality.coveragePct < 50 || r.grade === 'NR');
+  const isDegraded = validResults.length > 0 && eligibleResults.length < validResults.length * 0.5;
+
+  const filtered = (eligibleOnly ? eligibleResults : validResults).filter(r => {
     if (filter === 'portfolio' && !r.isPortfolio) return false;
     if (filter === 'watchlist' && !r.isWatchlist) return false;
     if (gradeFilter !== 'all' && r.grade !== gradeFilter) return false;
     return true;
   });
-  const invalid = (data?.results || []).filter(r => !r.quality.valid);
 
   const GRADES: Grade[] = ['A+', 'A', 'B+', 'B', 'C', 'D'];
 
@@ -352,6 +359,48 @@ export default function MultibaggerPage() {
           )}
         </div>
 
+        {/* Degraded mode banner */}
+        {!loading && isDegraded && (
+          <div style={{ marginBottom: 12, padding: '10px 14px', background: `${ORANGE}10`, border: `1px solid ${ORANGE}30`, borderRadius: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 18 }}>⚠️</span>
+            <div>
+              <div style={{ fontSize: 12, color: ORANGE, fontWeight: 700 }}>DEGRADED DATA MODE</div>
+              <div style={{ fontSize: 10, color: MUTED }}>
+                {ineligibleResults.length} of {validResults.length} companies have insufficient data for reliable scoring.
+                {eligibleOnly ? ' Showing eligible only.' : ' Showing all — low-confidence scores visible.'}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Diagnostics panel */}
+        {!loading && data?.meta && (
+          <div style={{ marginBottom: 12 }}>
+            <button onClick={() => setShowDiagnostics(s => !s)} style={{ fontSize: 10, color: MUTED, background: 'none', border: `1px solid ${BORDER}`, borderRadius: 6, padding: '3px 10px', cursor: 'pointer', marginBottom: showDiagnostics ? 8 : 0 }}>
+              {showDiagnostics ? '▲' : '▼'} System Health
+            </button>
+            {showDiagnostics && (
+              <div style={{ padding: '10px 14px', background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 8, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+                {[
+                  { label: 'Total Universe', value: allResults.length, color: MUTED },
+                  { label: 'Eligible Ranked', value: eligibleResults.length, color: GREEN },
+                  { label: 'Insufficient Data', value: ineligibleResults.length, color: ORANGE },
+                  { label: 'Validation Failures', value: invalidResults.length, color: RED },
+                  { label: 'Top Picks (A/A+)', value: data.meta.topPicks, color: GREEN },
+                  { label: 'Avg Coverage', value: validResults.length > 0 ? `${Math.round(validResults.reduce((a, r) => a + r.quality.coveragePct, 0) / validResults.length)}%` : '0%', color: YELLOW },
+                  { label: 'High Confidence', value: validResults.filter(r => r.quality.confidence === 'HIGH').length, color: GREEN },
+                  { label: 'Last Refresh', value: lastRefresh ? lastRefresh.toLocaleTimeString() : '—', color: MUTED },
+                ].map(({ label, value, color }) => (
+                  <div key={label} style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: 14, fontWeight: 800, color }}>{value}</div>
+                    <div style={{ fontSize: 9, color: MUTED }}>{label}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Filters */}
         <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
           {(['all', 'portfolio', 'watchlist'] as const).map(f => (
@@ -359,6 +408,10 @@ export default function MultibaggerPage() {
               {f === 'portfolio' ? '💼 Portfolio' : f === 'watchlist' ? '👁 Watchlist' : 'All'}
             </button>
           ))}
+          <div style={{ width: 1, background: BORDER }} />
+          <button onClick={() => setEligibleOnly(e => !e)} style={{ fontSize: 10, fontWeight: 700, padding: '4px 11px', borderRadius: 8, border: `1px solid ${eligibleOnly ? GREEN : BORDER}`, background: eligibleOnly ? `${GREEN}15` : 'transparent', color: eligibleOnly ? GREEN : MUTED, cursor: 'pointer' }}>
+            {eligibleOnly ? '✓ Eligible Only' : 'Show All'}
+          </button>
           <div style={{ width: 1, background: BORDER }} />
           {(['all', ...GRADES] as const).map(g => (
             <button key={g} onClick={() => setGradeFilter(g)} style={{ fontSize: 10, fontWeight: 700, padding: '4px 10px', borderRadius: 8, border: `1px solid ${gradeFilter === g ? (GRADE_COLOR[g as Grade] || PURPLE) : BORDER}`, background: gradeFilter === g ? `${GRADE_COLOR[g as Grade] || PURPLE}18` : 'transparent', color: gradeFilter === g ? (GRADE_COLOR[g as Grade] || PURPLE) : MUTED, cursor: 'pointer' }}>
@@ -407,10 +460,10 @@ export default function MultibaggerPage() {
         {!loading && filtered.map((r, i) => <CompanyCard key={r.symbol} r={r} defaultOpen={i === 0} />)}
 
         {/* Invalid symbols */}
-        {!loading && invalid.length > 0 && (
+        {!loading && invalidResults.length > 0 && (
           <div style={{ marginTop: 16, padding: '10px 14px', background: CARD_BG, borderRadius: 8, border: `1px solid ${BORDER}` }}>
-            <div style={{ fontSize: 10, color: MUTED, fontWeight: 700, marginBottom: 6 }}>DATA VALIDATION FAILURES ({invalid.length})</div>
-            {invalid.map(r => (
+            <div style={{ fontSize: 10, color: MUTED, fontWeight: 700, marginBottom: 6 }}>DATA VALIDATION FAILURES ({invalidResults.length})</div>
+            {invalidResults.map((r: any) => (
               <div key={r.symbol} style={{ fontSize: 11, color: MUTED, padding: '3px 0', display: 'flex', gap: 10 }}>
                 <span style={{ fontWeight: 700, color: TEXT, minWidth: 80 }}>{r.symbol}</span>
                 <span>{r.quality.reason}</span>

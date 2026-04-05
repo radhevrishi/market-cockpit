@@ -671,21 +671,42 @@ export default function CompanyIntelligencePage() {
 
       {noActionableSignals && !loading && (
         <div style={{
-          padding: '12px 16px', marginBottom: '16px', borderRadius: '8px',
-          backgroundColor: 'rgba(15,122,191,0.06)',
-          border: '1px solid rgba(15,122,191,0.2)',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '14px 16px', marginBottom: '16px', borderRadius: '10px',
+          backgroundColor: 'rgba(15,122,191,0.04)',
+          border: '1px solid rgba(15,122,191,0.15)',
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '13px', color: ACCENT, fontWeight: 600 }}>
-              NO HIGH-CONFIDENCE ACTIONABLE SIGNALS TODAY
-            </span>
-            <span style={{ fontSize: '11px', color: TEXT3 }}>
-              {notableSignals.length > 0 ? `${notableSignals.length} Notable · ` : ''}{monitorList.length > 0 ? `${Math.min(monitorList.length, 10)} Monitor` : 'System functioning correctly'}
-            </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+            <span style={{ fontSize: '16px' }}>📊</span>
+            <div>
+              <span style={{ fontSize: '13px', color: ACCENT, fontWeight: 700 }}>
+                NO MATERIAL SIGNALS TODAY
+              </span>
+              <div style={{ fontSize: '10px', color: TEXT3, marginTop: '2px' }}>
+                Markets quiet for your portfolio/watchlist — no investment-grade events detected
+              </div>
+            </div>
           </div>
-          {productionStatus && (
-            <span style={{ fontSize: '10px', color: TEXT3 }}>{productionStatus}</span>
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: notableSignals.length > 0 || monitorList.length > 0 ? '8px' : '0' }}>
+            {notableSignals.length > 0 && (
+              <div style={{ fontSize: '11px', color: YELLOW, background: `${YELLOW}12`, padding: '3px 10px', borderRadius: '6px' }}>
+                {notableSignals.length} Notable (low materiality)
+              </div>
+            )}
+            {monitorList.length > 0 && (
+              <div style={{ fontSize: '11px', color: TEXT3, background: 'rgba(255,255,255,0.04)', padding: '3px 10px', borderRadius: '6px' }}>
+                {Math.min(monitorList.length, 10)} Background events
+              </div>
+            )}
+            {productionStatus && (
+              <div style={{ fontSize: '10px', color: TEXT3, padding: '3px 10px', borderRadius: '6px', marginLeft: 'auto' }}>
+                {productionStatus}
+              </div>
+            )}
+          </div>
+          {notableSignals.length === 0 && monitorList.length === 0 && thematicIdeas.length === 0 && (
+            <div style={{ fontSize: '10px', color: TEXT3, fontStyle: 'italic', marginTop: '4px' }}>
+              Your watchlist has no active filings or announcements in this period. Check back tomorrow or expand your date range.
+            </div>
           )}
         </div>
       )}

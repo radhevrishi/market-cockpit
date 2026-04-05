@@ -1584,6 +1584,16 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 s.whyItMatters = `${role} change — potential strategy shift · Watch for execution impact`;
               }
 
+              // ── NARRATIVE QUALITY GATE ──
+              // If surfaced signal has empty or too-short narrative, demote to MONITOR
+              if (s.signalTierV7 === 'NOTABLE' || s.signalTierV7 === 'ACTIONABLE') {
+                const narrative = (s.whyItMatters || '').trim();
+                if (narrative.length < 20 || narrative === 'Monitor for strategic impact' || narrative.includes('[UNVERIFIED')) {
+                  s.signalTierV7 = 'MONITOR';
+                  if (s.signalCategory === 'ACTIONABLE') s.signalCategory = 'MONITOR';
+                }
+              }
+
               // Governance scoring penalty
               if (s.signalClass === 'GOVERNANCE') {
                 s.monitorScore = Math.round((s.monitorScore || 0) * 0.5);
@@ -1600,6 +1610,19 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 s.signalTierV7 = 'MONITOR';
               }
 
+              // ── T3 EVENT GATE: compliance/routine events cannot be NOTABLE without corroboration ──
+              const T3_EVENTS = new Set(['Corporate', 'Compliance', 'Regulatory', 'Filing Update', 'Routine Disclosure']);
+              const T3_HEADLINE_TERMS = ['company secretary', 'compliance officer', 'disclosure', 'intimation', 'routine', 'annual return', 'agm', 'egm'];
+              const isT3Event = T3_EVENTS.has(s.eventType) ||
+                T3_HEADLINE_TERMS.some(t => (s.headline || '').toLowerCase().includes(t));
+              if (isT3Event && s.signalTierV7 === 'NOTABLE') {
+                // T3 events need corroboration to be notable: price-volume signal or multiple filings
+                const hasCorroboration = (s.impactPct && Math.abs(s.impactPct) > 2) || (s.materialityScore >= 70);
+                if (!hasCorroboration) {
+                  s.signalTierV7 = 'MONITOR'; // demote back to monitor
+                }
+              }
+
               // HIDDEN → rejected
               if (s.visibility === 'HIDDEN') {
                 _rejectReasons['hidden_v7'] = (_rejectReasons['hidden_v7'] || 0) + 1;
@@ -1614,6 +1637,38 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 monitorSignals.push(s);
               }
             }
+
+            // ── SEMANTIC DEDUPE: collapse duplicate company+event pairs ──
+            // Same company + same event type + same day = one signal (keep highest scoring)
+            const dedupeKey = (s: any) => {
+              const sym = (s.ticker || s.symbol || '').toUpperCase();
+              const evt = (s.eventType || 'unknown').toLowerCase();
+              const day = (s.date || '').slice(0, 10);
+              return `${sym}|${evt}|${day}`;
+            };
+            const dedupeActionable = new Map<string, any>();
+            for (const s of actionableSignals) {
+              const k = dedupeKey(s);
+              const existing = dedupeActionable.get(k);
+              if (!existing || (s.v7RankScore || 0) > (existing.v7RankScore || 0)) {
+                dedupeActionable.set(k, s);
+              }
+            }
+            const dedupeMonitor = new Map<string, any>();
+            for (const s of monitorSignals) {
+              const k = dedupeKey(s);
+              // Also check if this key was already in actionable — skip if so
+              if (dedupeActionable.has(k)) continue;
+              const existing = dedupeMonitor.get(k);
+              if (!existing || (s.v7RankScore || 0) > (existing.v7RankScore || 0)) {
+                dedupeMonitor.set(k, s);
+              }
+            }
+            // Replace arrays with deduped versions
+            actionableSignals.length = 0;
+            actionableSignals.push(...dedupeActionable.values());
+            monitorSignals.length = 0;
+            monitorSignals.push(...dedupeMonitor.values());
 
             // ── v7: Sort by composite rank score ──
             actionableSignals.sort((a: any, b: any) => (b.v7RankScore || 0) - (a.v7RankScore || 0));
