@@ -208,7 +208,7 @@ export async function GET(request: Request) {
     }
   } catch (error) {
     console.error('RRG error:', error);
-    return NextResponse.json({ error: 'Failed to fetch RRG data', sectors: [], benchmark: {} }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to fetch RRG data', sectors: [], benchmark: {}, market: 'india', timeframe: '3m', source: 'error', updatedAt: new Date().toISOString() }, { status: 500 });
   }
 }
 
@@ -219,7 +219,7 @@ async function fetchIndiaRRG(timeframe: string) {
   const benchmarkChart = await fetchChart('^NSEI', range, interval);
   if (!benchmarkChart || !benchmarkChart.closes || benchmarkChart.closes.length < 4) {
     // Fallback to NSE allIndices daily data
-    return await fetchIndiaRRGFallback();
+    return await fetchIndiaRRGFallback(timeframe);
   }
 
   // Resample to weekly if daily data
@@ -302,7 +302,7 @@ async function fetchIndiaRRG(timeframe: string) {
 }
 
 // Fallback using NSE daily data when Yahoo historical data is unavailable
-async function fetchIndiaRRGFallback() {
+async function fetchIndiaRRGFallback(timeframe: string = '3m') {
   const allIndices = await fetchAllIndices();
   const sectors: any[] = [];
   let benchmarkChange = 0;
@@ -351,6 +351,7 @@ async function fetchIndiaRRGFallback() {
       changePercent: benchmarkChange,
     },
     market: 'india',
+    timeframe,
     source: 'NSE India (Daily Fallback)',
     updatedAt: new Date().toISOString(),
   });
@@ -366,6 +367,7 @@ async function fetchUSRRG(timeframe: string) {
       sectors: [],
       benchmark: { symbol: '^GSPC', name: 'S&P 500', price: 0, changePercent: 0 },
       market: 'us',
+      timeframe,
       error: 'Unable to fetch benchmark data',
     });
   }

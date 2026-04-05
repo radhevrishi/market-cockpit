@@ -1285,7 +1285,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             if (!d) return true; // no date → include by default
             try { return new Date(d).getTime() >= cutoffMs; } catch { return true; }
           };
-          if (cutoffMs > 0 && shouldFilterCached) {
+          if (cutoffMs > 0) {
             responseData = {
               ...responseData,
               signals: (responseData.signals || []).filter(withinWindow),

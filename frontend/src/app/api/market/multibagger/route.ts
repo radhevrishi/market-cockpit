@@ -169,6 +169,7 @@ function parseScreenerHTML(html: string, symbol: string): Record<string, any> {
   // Extract from #top-ratios section (standard screener layout)
   const ratioSection = html.match(/<section[^>]*id="top-ratios"[^>]*>([\s\S]*?)<\/section>/i)?.[1] || html;
 
+  // Pattern 1: <li><span class="name">Label</span><span class="number">Value</span></li>
   const ratioRe = /<li[^>]*>[\s\S]*?<span[^>]*class="[^"]*name[^"]*"[^>]*>([\s\S]*?)<\/span>[\s\S]*?<span[^>]*class="[^"]*number[^"]*"[^>]*>([\s\S]*?)<\/span>/gi;
   let m: RegExpExecArray | null;
   const ratios: Record<string, number | null> = {};
@@ -176,6 +177,22 @@ function parseScreenerHTML(html: string, symbol: string): Record<string, any> {
     const label = m[1].replace(/<[^>]+>/g, '').trim().toLowerCase();
     const val   = num(m[2].replace(/<[^>]+>/g, '').trim());
     if (label && val !== null) ratios[label] = val;
+  }
+
+  // Pattern 2: data-source or newer screener.in layout with <span class="name">...<span class="value">
+  const altRe = /<span[^>]*class="[^"]*name[^"]*"[^>]*>([\s\S]*?)<\/span>[\s\S]{0,200}?<span[^>]*class="[^"]*(?:number|value|nowrap)[^"]*"[^>]*>([\s\S]*?)<\/span>/gi;
+  while ((m = altRe.exec(html)) !== null) {
+    const label = m[1].replace(/<[^>]+>/g, '').trim().toLowerCase();
+    const val   = num(m[2].replace(/<[^>]+>/g, '').trim());
+    if (label && val !== null && !ratios[label]) ratios[label] = val;
+  }
+
+  // Pattern 3: "Label\n  Value" in <td> format (screener's ratio table)
+  const tdRe = /<td[^>]*>\s*([\w\s\/&]+?)\s*<\/td>\s*<td[^>]*>\s*([\d,.%-]+)\s*<\/td>/gi;
+  while ((m = tdRe.exec(html)) !== null) {
+    const label = m[1].trim().toLowerCase();
+    const val   = num(m[2].trim());
+    if (label && val !== null && !ratios[label]) ratios[label] = val;
   }
 
   // Map labels to our fields
@@ -187,19 +204,19 @@ function parseScreenerHTML(html: string, symbol: string): Record<string, any> {
     return null;
   };
 
-  d.pe           = get('stock p/e', 'p/e', 'pe ratio');
+  d.pe           = get('stock p/e', 'p/e', 'pe ratio', 'price to earning');
   d.roe          = get('return on equity', 'roe');
   d.roce         = get('roce', 'return on capital');
-  d.de           = get('debt to equity', 'd/e');
+  d.de           = get('debt to equity', 'd/e', 'debt / equity');
   d.bookValue    = get('book value');
-  d.eps          = get('eps', 'earning per');
-  d.dividendYield= get('dividend yield');
-  d.opm          = get('opm', 'operating profit margin');
-  d.priceToBook  = get('price to book', 'p/b');
-  d.marketCapCr  = get('market cap');
-  d.salesGrowth  = get('sales growth');
+  d.eps          = get('eps', 'earning per', 'earnings per share');
+  d.dividendYield= get('dividend yield', 'div yield');
+  d.opm          = get('opm', 'operating profit margin', 'operating margin');
+  d.priceToBook  = get('price to book', 'p/b', 'pb ratio');
+  d.marketCapCr  = get('market cap', 'market capitalization');
+  d.salesGrowth  = get('sales growth', 'revenue growth');
   d.currentRatio = get('current ratio');
-  d.interestCoverage = get('interest coverage');
+  d.interestCoverage = get('interest coverage', 'icr');
 
   // Promoter holding — from shareholding section
   const promoterRe = /Promoters?[\s\S]{0,300}?(\d{1,3}\.?\d*)\s*%/i;
@@ -211,14 +228,24 @@ function parseScreenerHTML(html: string, symbol: string): Record<string, any> {
   const plm = html.match(pledgeRe);
   d.pledgedPct = plm ? num(plm[1]) : null;
 
-  // 5-yr CAGR: look for CAGR tables
-  const salesCagrRe = /[Ss]ales\s*CAGR[\s\S]{0,100}?(\d{1,3}\.?\d*)/;
+  // 5-yr CAGR: look for CAGR tables — multiple patterns
+  const salesCagrRe = /(?:[Ss]ales|[Rr]evenue)\s*(?:growth\s*)?CAGR[\s\S]{0,150}?(-?\d{1,3}\.?\d*)/;
   const scm = html.match(salesCagrRe);
   d.salesCagr5yr = scm ? num(scm[1]) : null;
+  // Alt pattern: "Compounded Sales Growth" in screener tables
+  if (d.salesCagr5yr === null) {
+    const altSales = html.match(/[Cc]ompounded\s+[Ss]ales\s+[Gg]rowth[\s\S]{0,200}?(-?\d{1,3}\.?\d*)\s*%/);
+    if (altSales) d.salesCagr5yr = num(altSales[1]);
+  }
 
-  const profitCagrRe = /[Pp]rofit\s*CAGR[\s\S]{0,100}?(\d{1,3}\.?\d*)/;
+  const profitCagrRe = /[Pp]rofit\s*(?:growth\s*)?CAGR[\s\S]{0,150}?(-?\d{1,3}\.?\d*)/;
   const pcm = html.match(profitCagrRe);
   d.profitCagr5yr = pcm ? num(pcm[1]) : null;
+  // Alt pattern: "Compounded Profit Growth"
+  if (d.profitCagr5yr === null) {
+    const altProfit = html.match(/[Cc]ompounded\s+[Pp]rofit\s+[Gg]rowth[\s\S]{0,200}?(-?\d{1,3}\.?\d*)\s*%/);
+    if (altProfit) d.profitCagr5yr = num(altProfit[1]);
+  }
 
   // Cash flow from operations
   const cfoRe = /Cash from [Oo]perat[\s\S]{0,60}?([+-]?\s*[\d,]+)/;
