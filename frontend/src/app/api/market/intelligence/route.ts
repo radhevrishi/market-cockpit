@@ -1246,22 +1246,32 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             } catch {}
           }
 
-          // If custom watchlist/portfolio, filter signals to only matching symbols
+          // ── PF+WL ONLY: Filter cached signals to only tracked companies ──
           let responseData = stored;
-          if (watchlist.length > 0 || portfolio.length > 0) {
-            const wSet = new Set(watchlist.map((s: string) => s.toUpperCase()));
-            const pSet = new Set(portfolio.map((s: string) => s.toUpperCase()));
-            const allUserSymbols = new Set([...wSet, ...pSet]);
-            if (stored.signals && Array.isArray(stored.signals)) {
-              responseData = {
-                ...stored,
-                signals: stored.signals.map((s: any) => ({
+          const wSet = new Set(watchlist.map((s: string) => s.toUpperCase()));
+          const pSet = new Set(portfolio.map((s: string) => s.toUpperCase()));
+          const allUserTracked = new Set([...wSet, ...pSet]);
+          const shouldFilterCached = allUserTracked.size > 0;
+
+          if (shouldFilterCached) {
+            const filterToTracked = (arr: any[]) => arr
+              ? arr.filter((s: any) => {
+                  const sym = (s.symbol || '').toUpperCase();
+                  return allUserTracked.has(sym);
+                }).map((s: any) => ({
                   ...s,
                   isWatchlist: wSet.has(s.symbol),
                   isPortfolio: pSet.has(s.symbol),
-                })),
-              };
-            }
+                }))
+              : [];
+            responseData = {
+              ...stored,
+              signals: filterToTracked(stored.signals || []),
+              notable: filterToTracked(stored.notable || []),
+              observations: filterToTracked(stored.observations || []),
+              top3: filterToTracked(stored.top3 || []),
+              thematicIdeas: (stored.thematicIdeas || []).filter((t: any) => allUserTracked.has((t.symbol || '').toUpperCase())),
+            };
           }
 
           // FINAL: Apply 3-layer validation gate to cached data
@@ -1404,6 +1414,18 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               // False classification guard
               if (s.signalClass === 'GOVERNANCE' && !isRealMgmtChange(s.headline, s.whyItMatters, s.dataSource)) {
                 s.signalClass = 'COMPLIANCE';
+              }
+
+              // ── v8: GOVERNANCE ABSOLUTE HARD BLOCK ──
+              // Non-senior governance signals are ALWAYS hidden — no exceptions
+              const HARD_SENIOR_ROLES_GET = new Set(['CEO','CFO','MD','Chairman','Managing Director','Chief Executive','Chief Financial','Executive Director','Whole Time Director','Whole-Time Director']);
+              if (s.signalClass === 'GOVERNANCE' || s.eventType === 'Mgmt Change' || s.eventType === 'Board Appointment' || s.eventType === 'Board Change') {
+                const role = (s.managementRole || '').trim();
+                const isSeniorRole = Array.from(HARD_SENIOR_ROLES_GET).some(sr => role.toLowerCase().includes(sr.toLowerCase()));
+                if (!isSeniorRole) {
+                  s.visibility = 'HIDDEN';
+                  s.signalCategory = 'REJECTED';
+                }
               }
 
               // Materiality score
@@ -1634,18 +1656,96 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             allVisibleSignals.sort((a: any, b: any) => (b.v7RankScore || 0) - (a.v7RankScore || 0));
             const composedFeed = allVisibleSignals.slice(0, 10);
 
+            // ── v8: Generate Thematic Ideas from validSignals (GET route) ──
+            const SECTOR_THEME_MAP_GET: Record<string, { tag: string; label: string }> = {
+              'IT': { tag: 'TECH_TRANSITION', label: 'Tech Transition Play' },
+              'Technology': { tag: 'TECH_TRANSITION', label: 'Tech Transition Play' },
+              'Defence': { tag: 'SUNRISE_SECTOR', label: 'Defence / Sunrise Sector' },
+              'Defense': { tag: 'SUNRISE_SECTOR', label: 'Defence / Sunrise Sector' },
+              'Renewable Energy': { tag: 'SUNRISE_SECTOR', label: 'Energy Transition' },
+              'Pharma': { tag: 'GLOBAL_SCALING', label: 'Global Pharma Scaling' },
+              'Pharmaceuticals': { tag: 'GLOBAL_SCALING', label: 'Global Pharma Scaling' },
+              'Capital Goods': { tag: 'STRATEGIC_CAPEX', label: 'Strategic Capex Cycle' },
+              'Infrastructure': { tag: 'STRATEGIC_CAPEX', label: 'Infrastructure Build-out' },
+              'FMCG': { tag: 'OPERATING_LEVERAGE', label: 'FMCG Operating Leverage' },
+              'Financials': { tag: 'POLICY_TAILWIND', label: 'Credit Cycle / Policy Tailwind' },
+              'Banking': { tag: 'POLICY_TAILWIND', label: 'Credit Cycle / Policy Tailwind' },
+              'Consumer': { tag: 'OPERATING_LEVERAGE', label: 'Consumer Recovery Leverage' },
+              'Chemicals': { tag: 'GLOBAL_SCALING', label: 'Specialty Chemicals Export' },
+            };
+            const companyGroupGet = new Map<string, any[]>();
+            for (const vs of validSignals) {
+              const sym = (vs.ticker || vs.symbol || '').toUpperCase();
+              if (!sym) continue;
+              if (!companyGroupGet.has(sym)) companyGroupGet.set(sym, []);
+              companyGroupGet.get(sym)!.push(vs);
+            }
+            const getThematicIdeas: any[] = [];
+            for (const [sym, sigs] of companyGroupGet.entries()) {
+              const rep = sigs[0];
+              const sector = rep.sector || rep.segment || '';
+              const themeEntry = SECTOR_THEME_MAP_GET[sector];
+              if (!themeEntry && sigs.length < 2) continue; // skip single-signal non-sector stocks
+              const tag = themeEntry?.tag || (sigs.length >= 3 ? 'MULTI_SIGNAL' : 'OPERATING_LEVERAGE');
+              const label = themeEntry?.label || (sigs.length >= 3 ? 'Multi-Signal Convergence' : 'Momentum Build');
+              const avgScore = Math.round(sigs.reduce((acc: number, s: any) => acc + (s.materialityScore || 40), 0) / sigs.length);
+              const confidence: 'HIGH' | 'MEDIUM' | 'LOW' = avgScore >= 65 ? 'HIGH' : avgScore >= 45 ? 'MEDIUM' : 'LOW';
+              const narrative = sigs.length >= 3
+                ? `${sigs.length} converging signals — ${label.toLowerCase()} thesis strengthening`
+                : themeEntry
+                ? `${sector} sector momentum — ${label.toLowerCase()} thesis`
+                : `${sigs.length} signals detected — monitor for confirmation`;
+              getThematicIdeas.push({
+                symbol: sym,
+                company: rep.company || rep.ticker || sym,
+                theme: { tag, label, score: Math.min(95, avgScore + sigs.length * 5), confidence, narrative },
+                signals: sigs.length,
+                isPortfolio: !!(rep.isPortfolio),
+                isWatchlist: !!(rep.isWatchlist),
+                lastPrice: rep.lastPrice || null,
+                segment: sector || null,
+              });
+            }
+            // Sort: portfolio first, then by theme score desc
+            getThematicIdeas.sort((a: any, b: any) => {
+              if (a.isPortfolio && !b.isPortfolio) return -1;
+              if (!a.isPortfolio && b.isPortfolio) return 1;
+              if (a.isWatchlist && !b.isWatchlist) return -1;
+              if (!a.isWatchlist && b.isWatchlist) return 1;
+              return (b.theme.score || 0) - (a.theme.score || 0);
+            });
+            // Merge with any stored thematic ideas (prefer computed over derived)
+            const storedThematicIds = new Set((responseData.thematicIdeas || []).map((t: any) => (t.symbol || '').toUpperCase()));
+            const mergedThematic = [
+              ...(responseData.thematicIdeas || []),
+              ...getThematicIdeas.filter((t: any) => !storedThematicIds.has((t.symbol || '').toUpperCase())),
+            ].slice(0, 6);
+
+            // ── Empty fallback: if 0 actionable + 0 notable → promote top thematic ──
+            let finalActionable = actionableSignals.slice(0, MAX_ACTIONABLE);
+            let finalNotable = notableSignals.slice(0, MAX_NOTABLE);
+            if (finalActionable.length === 0 && finalNotable.length === 0 && regularMonitor.length > 0) {
+              // Promote top monitor signals with thematic context to notable
+              const promotable = regularMonitor
+                .filter((s: any) => s.alphaTheme || (s.materialityScore || 0) >= 40)
+                .sort((a: any, b: any) => (b.materialityScore || 0) - (a.materialityScore || 0))
+                .slice(0, 3);
+              finalNotable = promotable;
+            }
+
             responseData = {
               ...responseData,
-              signals: actionableSignals.slice(0, MAX_ACTIONABLE),
-              notable: notableSignals.slice(0, MAX_NOTABLE),
+              signals: finalActionable,
+              notable: finalNotable,
               observations: regularMonitor.slice(0, MAX_MONITOR),
               top3: composedFeed.slice(0, 5),
               trends: validSignals.length > 0 ? responseData.trends : [],
               bias: validBias,
-              noActionableSignals: actionableSignals.length === 0,
-              noHighConfSignals: actionableSignals.length === 0,
+              thematicIdeas: mergedThematic,
+              noActionableSignals: finalActionable.length === 0,
+              noHighConfSignals: finalActionable.length === 0,
               _productionStatus: productionReady ? 'PRODUCTION_READY' : 'REFINEMENT_REQUIRED',
-              _stats: { actionable: actionableSignals.length, notable: notableSignals.length, monitor: regularMonitor.length, rejected: rejectedCount, rejectedPct: Math.round(rejectedPct), rawCount: rawSignals.length, _rejectReasons, _rejectSamples },
+              _stats: { actionable: finalActionable.length, notable: finalNotable.length, monitor: regularMonitor.length, rejected: rejectedCount, rejectedPct: Math.round(rejectedPct), rawCount: rawSignals.length, _rejectReasons, _rejectSamples },
             };
           }
 

@@ -2862,9 +2862,20 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     ...googleNewsAnnouncements,
   ];
 
+  // ── PF+WL ONLY FILTER: Intelligence is exclusively for tracked companies ──
+  // When portfolio/watchlist are populated, restrict to those symbols only
+  // This eliminates market-wide noise (Company Secretary filings etc. from random companies)
+  const trackedSet = new Set(allTracked.map(s => s.toUpperCase().trim()));
+  const shouldFilterToTracked = allTracked.length > 0;
+
   // Filter announcements, then cap at 100 most recent to stay within 55s Vercel limit
   const filteredAnnAll = allAnnouncements.filter(item => {
     if (!item.symbol || (!item.desc && !item.subject)) return false;
+    // PF+WL filter: skip companies not in portfolio or watchlist
+    if (shouldFilterToTracked) {
+      const sym = (item.symbol || '').toUpperCase().trim();
+      if (!trackedSet.has(sym)) return false;
+    }
     const combined = `${item.subject || ''} ${item.desc || ''}`.toLowerCase();
     if (NOISE_PATTERNS.some(p => combined.includes(p))) return false;
     return ORDER_KEYWORDS.some(k => combined.includes(k)) ||
