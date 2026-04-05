@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 // No hardcoded default — user's watchlist is the single source of truth (from Telegram bot or UI)
 const DEFAULT_WATCHLIST: string[] = [];
 
-const BOT_SECRET = 'mc-bot-2026';
+const BOT_SECRET = process.env.MC_BOT_SECRET || 'mc-bot-2026';
 
 type WatchlistFlag = 'GREEN' | 'ORANGE' | 'RED' | null;
 interface WatchlistFlags { [symbol: string]: WatchlistFlag; }

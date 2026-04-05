@@ -3,7 +3,7 @@ import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 
 export const dynamic = 'force-dynamic';
 
-const BOT_SECRET = 'mc-bot-2026';
+const BOT_SECRET = process.env.MC_BOT_SECRET || 'mc-bot-2026';
 
 /* ── Types ─────────────────────────────────────────────── */
 export interface PortfolioHolding {

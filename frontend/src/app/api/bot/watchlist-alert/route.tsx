@@ -8,7 +8,7 @@ export const maxDuration = 55;
 // ── Config ──────────────────────────────────────────────────────────────
 const TG_TOKEN = '8681784264:AAG7OV3ibS4r89Lbrta50NkWnJSCTrtoS80';
 const TG_CHAT_ID = '5057319640';
-const BOT_SECRET = 'mc-bot-2026';
+const BOT_SECRET = process.env.MC_BOT_SECRET || 'mc-bot-2026';
 const API_BASE = 'https://market-cockpit.vercel.app';
 
 // ── Default Watchlist ───────────────────────────────────────────────────
