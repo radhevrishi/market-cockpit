@@ -337,6 +337,15 @@ type ActionFlag = 'BUY WATCH' | 'TRACK' | 'IGNORE';
 type ImpactLevel = 'HIGH' | 'MEDIUM' | 'LOW';
 type SignalSentiment = 'Bullish' | 'Neutral' | 'Bearish';
 
+// ── v8: Alpha Theme (mirrors compute route) ──
+interface AlphaTheme {
+  tag: string;
+  label: string;
+  score: number;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  narrative: string;
+}
+
 interface IntelSignal {
   symbol: string;
   company: string;
@@ -391,6 +400,9 @@ interface IntelSignal {
   // Trend stacking (set at aggregation)
   signalStackCount?: number;
   signalStackLevel?: 'STRONG' | 'BUILDING' | 'WEAK';
+
+  // v8: Thematic Alpha Engine
+  alphaTheme?: AlphaTheme;
 }
 
 interface CompanyTrend {

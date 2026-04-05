@@ -240,6 +240,15 @@ async function fetchGoogleNewsRSS(symbols: string[]): Promise<MCNewsItem[]> {
 
 type ActionFlag = 'BUY' | 'ADD' | 'HOLD' | 'WATCH' | 'TRIM' | 'EXIT' | 'AVOID';
 type ScoreClassification = 'HIGH_CONVICTION' | 'STRONG' | 'BUILDING' | 'WEAK' | 'NOISE';
+
+// ── v8: Alpha Theme type ──
+interface AlphaTheme {
+  tag: string;           // e.g. 'STRATEGIC_CAPEX', 'TURNAROUND'
+  label: string;         // Human readable: 'Strategic Capex + Data Center Exposure'
+  score: number;         // 0-100
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  narrative: string;     // Short thematic narrative for display
+}
 type FreshnessLabel = 'FRESH' | 'RECENT' | 'AGING' | 'STALE';
 type ImpactLevel = 'HIGH' | 'MEDIUM' | 'LOW';
 type SignalSentiment = 'Bullish' | 'Neutral' | 'Bearish';
@@ -366,6 +375,9 @@ interface IntelSignal {
   portfolioCritical?: boolean;
   v7RankScore?: number;
   signalTierV7?: 'ACTIONABLE' | 'NOTABLE' | 'MONITOR';
+
+  // v8: Thematic Alpha Engine
+  alphaTheme?: AlphaTheme;
 }
 
 interface CompanyTrend {
@@ -911,6 +923,163 @@ function computeV7RankScore(signal: any): number {
     * freshnessWeight
     * verifiedBonus
   );
+}
+
+// ==================== v8: THEMATIC ALPHA ENGINE ====================
+
+const ALPHA_SCENARIO_KEYWORDS: Record<string, { headline: string[]; event: string[]; segment: string[] }> = {
+  TURNAROUND: {
+    headline: ['back to profit', 'return to profitability', 'turnaround', 'loss to profit', 'consecutive quarter', 'qoq improvement', 'profit after loss'],
+    event: ['Turnaround', 'Earnings', 'Guidance'],
+    segment: [],
+  },
+  STRATEGIC_CAPEX: {
+    headline: ['capex', 'capital expenditure', 'new plant', 'expansion', 'greenfield', 'brownfield', 'data center', 'ai infrastructure', 'semiconductor fab', 'ev battery', 'cooling system'],
+    event: ['Capex/Expansion', 'Order Win', 'Contract'],
+    segment: ['Defence', 'EV', 'Solar', 'Semiconductor', 'Data Center', 'Electronics'],
+  },
+  OPERATING_LEVERAGE: {
+    headline: ['operating leverage', 'margin expansion', 'ebitda improvement', 'utilization', 'operating profit', 'fixed cost absorption'],
+    event: ['Earnings', 'Guidance', 'Capex/Expansion'],
+    segment: [],
+  },
+  SUNRISE_SECTOR: {
+    headline: ['pli', 'production linked', 'defence', 'defense', 'railway', 'solar', 'ev ', 'semiconductor', 'nuclear', 'space tech', 'data center', 'logistics park'],
+    event: ['Order Win', 'Contract', 'Policy Opening', 'Regulatory Approval'],
+    segment: ['Defence', 'EV', 'Solar', 'Semiconductor', 'Railways', 'Nuclear', 'Space', 'Data Center', 'Logistics'],
+  },
+  POLICY_TAILWIND: {
+    headline: ['pli', 'policy', 'government scheme', 'budget allocation', 'noc obtained', 'regulatory approval', 'spectrum', 'license obtained', 'clearance', 'tender award'],
+    event: ['Policy Opening', 'Regulatory Approval', 'Order Win'],
+    segment: [],
+  },
+  TECH_TRANSITION: {
+    headline: ['ai ', 'artificial intelligence', 'platform', 'digital transformation', 'saas', 'cloud', 'automation', 'technology upgrade', 'ai platform', 'genai', 'copilot'],
+    event: ['Technology Transition', 'M&A', 'Guidance', 'Order Win'],
+    segment: ['IT'],
+  },
+  DEMERGER_VALUE_UNLOCK: {
+    headline: ['demerger', 'spinoff', 'hive off', 'spin off', 'separate listing', 'value unlock', 'subsidiary listing'],
+    event: ['Demerger', 'Spinoff', 'M&A'],
+    segment: [],
+  },
+  ROLLUP: {
+    headline: ['acquisition', 'merger', 'buyout', 'strategic acquisition', 'inorganic', 'market share', 'consolidation', 'category leader', 'market leadership'],
+    event: ['M&A', 'Open Offer', 'Takeover'],
+    segment: [],
+  },
+  GLOBAL_SCALING: {
+    headline: ['export order', 'global expansion', 'international market', 'overseas', 'us market', 'europe', 'middle east', 'new market entry', 'foreign client'],
+    event: ['Order Win', 'Contract', 'M&A', 'JV/Partnership'],
+    segment: [],
+  },
+};
+
+const SCENARIO_LABELS: Record<string, string> = {
+  TURNAROUND: 'Business Turnaround',
+  STRATEGIC_CAPEX: 'Strategic Capex + Capacity Expansion',
+  OPERATING_LEVERAGE: 'Operating Leverage Play',
+  SUNRISE_SECTOR: 'Sunrise Sector Exposure',
+  POLICY_TAILWIND: 'Policy Tailwind',
+  TECH_TRANSITION: 'AI / Tech Platform Transition',
+  DEMERGER_VALUE_UNLOCK: 'Demerger / Value Unlock',
+  ROLLUP: 'Rollup / Consolidation Play',
+  GLOBAL_SCALING: 'Global Scaling',
+};
+
+function buildThematicNarrative(scenario: string, signals: IntelSignal[]): string {
+  const company = signals[0]?.company || signals[0]?.symbol || '';
+  const values = signals.filter(s => s.valueCr > 0).map(s => s.valueCr);
+  const totalValue = values.reduce((a, b) => a + b, 0);
+  const valueStr = totalValue > 0 ? ` ₹${totalValue >= 1000 ? (totalValue / 1000).toFixed(1) + 'K' : Math.round(totalValue)} Cr` : '';
+  const segment = signals.find(s => s.segment)?.segment || '';
+
+  switch (scenario) {
+    case 'TURNAROUND':
+      return `${company} showing sustained financial recovery — consecutive improvement signals re-rating potential`;
+    case 'STRATEGIC_CAPEX':
+      return `${company} deploying${valueStr} in ${segment || 'strategic'} capacity — operating leverage to follow post-commissioning`;
+    case 'OPERATING_LEVERAGE':
+      return `${company} scaling on fixed cost base — margin expansion likely as utilization rises`;
+    case 'SUNRISE_SECTOR':
+      return `${company} in ${segment || 'sunrise'} sector — structural tailwinds from policy + order pipeline`;
+    case 'POLICY_TAILWIND':
+      return `${company} benefiting from policy cycle — PLI / regulatory approval unlocks growth runway`;
+    case 'TECH_TRANSITION':
+      return `${company} pivoting to AI/platform model — addressable market expansion + margin re-rating`;
+    case 'DEMERGER_VALUE_UNLOCK':
+      return `${company} corporate restructuring — subsidiary/division unlocking hidden value`;
+    case 'ROLLUP':
+      return `${company} inorganic growth via acquisitions — building market leadership + pricing power`;
+    case 'GLOBAL_SCALING':
+      return `${company} penetrating international markets — export + global expansion diversifies revenue`;
+    default:
+      return `${company} showing multi-signal thematic strength`;
+  }
+}
+
+function detectAlphaScenarios(signals: IntelSignal[]): AlphaTheme[] {
+  if (!signals || signals.length === 0) return [];
+
+  const themes: AlphaTheme[] = [];
+  const combinedText = signals
+    .map(s => `${s.headline || ''} ${s.whyItMatters || ''} ${s.segment || ''} ${s.client || ''}`)
+    .join(' ')
+    .toLowerCase();
+  const eventTypes = new Set(signals.map(s => s.eventType));
+  const segments = new Set(signals.map(s => s.segment).filter(Boolean));
+
+  for (const [scenario, config] of Object.entries(ALPHA_SCENARIO_KEYWORDS)) {
+    let score = 0;
+    let matchCount = 0;
+
+    // Headline keyword matches (primary — 15pts each, max 3)
+    for (const kw of config.headline) {
+      if (combinedText.includes(kw)) {
+        score += 15;
+        matchCount++;
+        if (matchCount >= 3) break;
+      }
+    }
+
+    // Event type match (secondary — 20pts, max once)
+    for (const evt of config.event) {
+      if (eventTypes.has(evt)) {
+        score += 20;
+        break;
+      }
+    }
+
+    // Segment match (tertiary — 10pts, max once)
+    for (const seg of config.segment) {
+      if (segments.has(seg)) {
+        score += 10;
+        break;
+      }
+    }
+
+    // Multi-signal conviction bonus
+    if (signals.length >= 3) score += 10;
+    if (signals.length >= 5) score += 10;
+
+    // Recency bonus — at least one fresh signal
+    const hasFresh = signals.some(s => s.freshness === 'FRESH' || s.freshness === 'RECENT');
+    if (hasFresh) score += 10;
+
+    if (score >= 25) {
+      const confidence: 'HIGH' | 'MEDIUM' | 'LOW' =
+        score >= 60 ? 'HIGH' : score >= 40 ? 'MEDIUM' : 'LOW';
+      themes.push({
+        tag: scenario,
+        label: SCENARIO_LABELS[scenario] || scenario,
+        score: Math.min(100, score),
+        confidence,
+        narrative: buildThematicNarrative(scenario, signals),
+      });
+    }
+  }
+
+  return themes.sort((a, b) => b.score - a.score);
 }
 
 // Aggressive text cleaning helper (reused from old sanitizeByEventClass)
@@ -4326,6 +4495,80 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   }
 
   // ══════════════════════════════════════════════════════════════
+  // ── v8: THEMATIC ALPHA ENGINE — Company-level scenario detection ──
+  // Runs AFTER individual signal scoring to detect multi-event narratives.
+  // Groups signals by company, detects 9 scenario types, applies thematic
+  // boost to v7RankScore and updates governance hard filter.
+  // Formula: finalScore = eventScore(40%) + confScore(20%) + thematicScore(40%)
+  // ══════════════════════════════════════════════════════════════
+  {
+    // 1. Group signals by company symbol
+    const companySignalMap = new Map<string, IntelSignal[]>();
+    for (const s of filtered) {
+      const existing = companySignalMap.get(s.symbol) || [];
+      existing.push(s);
+      companySignalMap.set(s.symbol, existing);
+    }
+
+    // 2. Detect themes per company
+    const companyThemeMap = new Map<string, AlphaTheme[]>();
+    for (const [symbol, companySignals] of companySignalMap) {
+      const themes = detectAlphaScenarios(companySignals);
+      if (themes.length > 0) {
+        companyThemeMap.set(symbol, themes);
+        // Apply best theme to all signals of this company
+        for (const s of companySignals) {
+          s.alphaTheme = themes[0];
+          // Update tag with thematic label for high-confidence themes
+          if (themes[0].confidence === 'HIGH' && themes[0].score >= 60) {
+            s.tag = themes[0].label;
+          }
+        }
+      }
+    }
+
+    // 3. v8 scoring pass: boost v7RankScore using thematic component
+    for (const s of filtered) {
+      const eventScore = (V7_EVENT_WEIGHTS[s.eventType] || 0.1) * 100;  // 0-100
+      const confScore = s.dataConfidenceScore || s.confidenceScore || 50; // 0-100
+      const themes = companyThemeMap.get(s.symbol) || [];
+      const thematicScore = themes.length > 0 ? themes[0].score : 0;    // 0-100
+
+      // v8 formula: 40% event + 20% confidence + 40% thematic
+      const v8Score = Math.round(
+        (eventScore * 0.4) + (confScore * 0.2) + (thematicScore * 0.4)
+      );
+
+      // Only boost (never penalize) signals that have thematic support
+      if (thematicScore >= 40) {
+        s.v7RankScore = Math.max(s.v7RankScore || 0, v8Score);
+        // Thematic boost to materialityScore — allows notable-tier promotion
+        if (thematicScore >= 60 && (s.materialityScore || 0) < 55) {
+          s.materialityScore = Math.min(55, (s.materialityScore || 0) + Math.round(thematicScore * 0.15));
+        }
+        // Promote MONITOR → NOTABLE if strong thematic signal
+        if (thematicScore >= 70 && s.signalCategory === 'MONITOR') {
+          s.signalTierV7 = 'NOTABLE';
+        }
+      }
+    }
+
+    // 4. Governance hard filter (v8 upgrade from DIMMED → HIDDEN)
+    // Non-senior Mgmt Change + no thematic impact → completely removed from feed
+    for (const s of filtered) {
+      if (s.signalClass === 'GOVERNANCE') {
+        const role = s.managementRole || 'Other';
+        const isNonSenior = !SENIOR_ROLES.has(role);
+        const hasThematic = (companyThemeMap.get(s.symbol) || []).length > 0;
+        if (isNonSenior && !hasThematic) {
+          s.visibility = 'HIDDEN';
+          s.signalCategory = 'REJECTED';
+        }
+      }
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
   // ── FINAL: 4-LAYER OUTPUT (v7) ──
   // ACTIONABLE: verified, high-confidence, real impact (max 3)
   // NOTABLE: medium impact, some uncertainty (max 5)
@@ -4368,6 +4611,26 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   }
   if (notableSignals.length > MAX_NOTABLE) {
     monitorSignals.unshift(...notableSignals.splice(MAX_NOTABLE));
+  }
+
+  // ── v8: Empty actionable fallback → surface top thematic signals as Notable ──
+  // Ensures the feed always has something meaningful even on quiet days
+  if (actionableSignals.length === 0 && notableSignals.length === 0) {
+    const thematicFallbacks = monitorSignals
+      .filter(s => s.alphaTheme && s.alphaTheme.score >= 40)
+      .sort((a, b) => (b.alphaTheme?.score || 0) - (a.alphaTheme?.score || 0))
+      .slice(0, 3);
+    if (thematicFallbacks.length > 0) {
+      for (const s of thematicFallbacks) {
+        s.signalTierV7 = 'NOTABLE';
+      }
+      notableSignals.push(...thematicFallbacks);
+      const promotedKeys = new Set(thematicFallbacks.map(s => `${s.symbol}:${s.date}`));
+      const remainingMonitor = monitorSignals.filter(s => !promotedKeys.has(`${s.symbol}:${s.date}`));
+      monitorSignals.length = 0;
+      monitorSignals.push(...remainingMonitor);
+      console.log(`[v8] Empty feed fallback: promoted ${thematicFallbacks.length} thematic signals to NOTABLE`);
+    }
   }
 
   // ── FEED COMPOSITION: max 10 visible, balanced by signal class ──
