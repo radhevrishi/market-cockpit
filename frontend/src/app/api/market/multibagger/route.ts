@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
 
 // ── Multibagger criteria definitions ──────────────────────────────────────────
-export interface MultibaggerCriterion {
+interface MultibaggerCriterion {
   id: string;
   label: string;
   description: string;
@@ -22,7 +22,7 @@ export interface MultibaggerCriterion {
   insight: string; // 1-line interpretation
 }
 
-export interface MultibaggerResult {
+interface MultibaggerResult {
   symbol: string;
   company: string;
   sector: string;
@@ -38,14 +38,6 @@ export interface MultibaggerResult {
   errors: string[];
 }
 
-// Signal → color mapping for UI
-export const SIGNAL_COLOR: Record<string, string> = {
-  STRONG_BUY: '#10b981',  // emerald
-  BUY: '#34d399',
-  NEUTRAL: '#f59e0b',
-  CAUTION: '#f97316',
-  AVOID: '#ef4444',
-};
 
 // ── Screener.in HTML scraper ──────────────────────────────────────────────────
 async function fetchScreenerData(symbol: string): Promise<Record<string, any>> {
