@@ -82,6 +82,49 @@ function isRealMgmtChange(headline?: string, desc?: string, dataSource?: string)
   return true;
 }
 
+// ── v7 EVENT WEIGHTS (normalized 0-1) — kept in sync with compute route ──
+const V7_EVENT_WEIGHTS: Record<string, number> = {
+  'Guidance': 1.0, 'Earnings': 0.9,
+  'Open Offer': 0.9, 'Takeover': 0.9,
+  'Turnaround': 0.85,
+  'Capex/Expansion': 0.8, 'M&A': 0.8,
+  'Demerger': 0.8, 'Spinoff': 0.8,
+  'Policy Opening': 0.75, 'Regulatory Approval': 0.75,
+  'Technology Transition': 0.7,
+  'Order Win': 0.7, 'Contract': 0.7,
+  'CEO Change': 0.65, 'CFO Change': 0.6, 'MD Change': 0.6,
+  'Fund Raising': 0.6, 'QIP': 0.55, 'LOI': 0.5,
+  'JV/Partnership': 0.55,
+  'Block Deal': 0.5, 'Bulk Deal': 0.5, 'Stake Sale': 0.5,
+  'Rights Issue': 0.45, 'Buyback': 0.45, 'Dividend': 0.3,
+  'Mgmt Change': 0.2, 'Board Appointment': 0.2,
+  'Compliance': 0.05, 'Regulatory': 0.1, 'Filing': 0.05,
+};
+
+function classifyMgmtChangeType(signal: any): 'STRATEGIC' | 'ROUTINE' {
+  const role = signal.managementRole || 'Other';
+  if (['CEO', 'CFO', 'MD', 'Chairman', 'Managing Director', 'COO', 'CTO', 'President', 'Promoter'].includes(role)) return 'STRATEGIC';
+  const text = ((signal.headline || '') + ' ' + (signal.whyItMatters || '')).toLowerCase();
+  if (text.includes('ai') || text.includes('business unit head') || text.includes('strategy') || text.includes('restructur')) return 'STRATEGIC';
+  return 'ROUTINE';
+}
+
+function computeV7RankScore(signal: any): number {
+  const confScore = signal.dataConfidenceScore || signal.confidenceScore || 50;
+  const confidenceWeight = confScore / 100;
+  let eventWeight = V7_EVENT_WEIGHTS[signal.eventType] || 0.1;
+  if (signal.eventType === 'Mgmt Change' || signal.eventType === 'Board Appointment') {
+    eventWeight = classifyMgmtChangeType(signal) === 'STRATEGIC' ? 0.6 : 0.2;
+  }
+  const impactPct = Math.abs(signal.impactPct || 0);
+  const materialityWeight = impactPct > 0 ? Math.min(impactPct / 5, 1.0) : 0.1;
+  const freshnessWeight = signal.freshness === 'FRESH' ? 1.0 : signal.freshness === 'RECENT' ? 0.8 : signal.freshness === 'AGING' ? 0.5 : 0.3;
+  const verifiedBonus = (signal.confidenceType === 'ACTUAL' && !signal.inferenceUsed) ? 1.2 : 1.0;
+  return Math.round(
+    (signal.materialityScore || 30) * confidenceWeight * eventWeight * materialityWeight * freshnessWeight * verifiedBonus
+  );
+}
+
 // ==================== MONEYCONTROL NEWS SCRAPER ====================
 // Fallback data source when NSE API fails/returns empty
 
@@ -843,7 +886,11 @@ function generateWhyItMatters(opts: {
   buyerSeller: string | null;
   premiumDiscount: number | null;
 }): string {
-  const { eventType, impactLevel, pctRevenue, pctMcap, valueCr, client, segment, isNegative, buyerSeller, premiumDiscount } = opts;
+  const { eventType, impactLevel, pctRevenue, pctMcap, valueCr, client, segment, isNegative, sentiment, buyerSeller, premiumDiscount } = opts;
+
+  // ── SUNSHINE SECTORS: Strategic India themes ──
+  const SUNSHINE_SECTORS = new Set(['Defence', 'EV', 'Solar', 'Semiconductor', 'Railways', 'Infra', 'Electronics', 'PLI', 'Renewables', 'Nuclear', 'Space', 'Data Center', 'Logistics']);
+  const isSunshineSector = segment && SUNSHINE_SECTORS.has(segment);
 
   if (isNegative) {
     if (eventType.includes('cancellation') || eventType.includes('terminated')) return 'Revenue loss risk — check order book concentration';
@@ -859,43 +906,91 @@ function generateWhyItMatters(opts: {
   if (eventType === 'Order Win' || eventType === 'Contract' || eventType === 'LOI') {
     if (pctRevenue !== null && pctRevenue >= 5) return `${pctRevenue.toFixed(0)}% of revenue — material order, direct top-line accretion`;
     if (pctRevenue !== null && pctRevenue >= 1) return `Meaningful order at ${pctRevenue.toFixed(1)}% of revenue — revenue visibility improves`;
+    if (client && /global|international|export|us\b|europe|gcc|uae|germany|france|japan/i.test(client)) {
+      return `Export/global order from ${client} — global scalability signal, FX revenue hedge`;
+    }
     if (client) return `New order from ${client} — client diversification + execution track record`;
+    if (isSunshineSector) return `Govt order in ${segment} — strategic India chokepoint, long-cycle stable margins`;
     if (segment === 'Defence' || segment === 'Railways') return `Govt order in ${segment} — long cycle, stable margin profile`;
     return 'New order win — improves revenue pipeline visibility';
   }
 
   if (eventType === 'Capex/Expansion') {
+    if (isSunshineSector) return `Capacity build in strategic ${segment} sector — PLI/policy tailwind, operating leverage on ramp`;
+    if (pctMcap !== null && pctMcap >= 10) return `Transformative capex at ${pctMcap.toFixed(1)}% MCap — high operating leverage on utilization ramp`;
     if (pctMcap !== null && pctMcap >= 5) return `Large capex at ${pctMcap.toFixed(1)}% of MCap — operating leverage play, watch execution`;
     return 'Capacity expansion — forward revenue visibility, watch ROI timeline';
   }
 
   if (eventType === 'M&A') {
-    if (pctRevenue !== null && pctRevenue >= 10) return 'Transformative acquisition — changes revenue mix significantly';
-    if (pctMcap !== null && pctMcap >= 5) return `Material M&A at ${pctMcap.toFixed(1)}% MCap — integration risk but growth potential`;
-    return 'Strategic acquisition — improves market position or backward integration';
+    if (pctRevenue !== null && pctRevenue >= 20) return 'Transformative acquisition — rollup strategy, fragmented industry consolidation play';
+    if (pctRevenue !== null && pctRevenue >= 10) return 'Material acquisition — changes revenue mix; check for synergy vs integration risk';
+    if (pctMcap !== null && pctMcap >= 5) return `M&A at ${pctMcap.toFixed(1)}% MCap — accretive if integration succeeds; watch for category leadership`;
+    return 'Strategic acquisition — improves market position or technology capability';
   }
 
-  if (eventType === 'Demerger') return 'Value unlock — sum-of-parts may exceed current market cap';
-  if (eventType === 'Fund Raising') return 'Capital raise — fuels growth but watch dilution impact';
-  if (eventType === 'Buyback') return 'Management conviction in undervaluation — capital return signal';
-  if (eventType === 'Dividend') return 'Cash return to shareholders — signals healthy cash flow';
-  if (eventType === 'JV/Partnership') return 'Strategic partnership — technology or market access play';
-  if (eventType === 'Guidance') return 'Management outlook update — forward visibility signal';
+  if (eventType === 'Demerger' || eventType === 'Spinoff') {
+    return 'Value unlock via demerger — separate listing likely re-rates individual businesses; sum-of-parts > whole';
+  }
+
+  if (eventType === 'Open Offer' || eventType === 'Takeover') {
+    return 'Open offer / takeover — mandatory at premium to market; creates floor price, exit opportunity';
+  }
+
+  if (eventType === 'Fund Raising' || eventType === 'QIP') return 'Capital raise — balance sheet strengthening fuels next growth phase; watch dilution impact';
+  if (eventType === 'Rights Issue') return 'Rights issue — promoter-led capital raise at discount; signals near-term growth plans';
+  if (eventType === 'Buyback') return 'Buyback at premium — management conviction in undervaluation, reduces float, EPS-accretive';
+  if (eventType === 'Dividend') return 'Cash dividend — signals strong FCF generation and board confidence in earnings visibility';
+
+  if (eventType === 'JV/Partnership') {
+    if (client && /global|international|export|us\b|europe|japan|korea/i.test(client)) {
+      return `Global JV with ${client} — technology access + international market entry platform`;
+    }
+    return 'Strategic partnership — technology, market access, or platform transition play';
+  }
+
+  if (eventType === 'Guidance') {
+    if (sentiment === 'Bullish') return 'Management raised guidance — earnings upgrade cycle potential; institutional buy trigger';
+    if (sentiment === 'Bearish') return 'Guidance cut — earnings downgrade risk; assess if temporary headwind or structural';
+    return 'Management outlook update — forward visibility signal, watch earnings revision trend';
+  }
+
+  if (eventType === 'Earnings') {
+    return sentiment === 'Bullish' ? 'Beat on earnings — operating leverage kicking in; potential re-rating catalyst' :
+           sentiment === 'Bearish' ? 'Earnings miss — margin pressure or volume weakness; assess recovery timeline' :
+           'Earnings in line — stability signal; watch guidance for next quarter';
+  }
+
+  if (eventType === 'Turnaround') {
+    return 'Post-loss recovery — operating metrics improving; watch for consecutive profitable quarters as re-rating trigger';
+  }
+
+  if (eventType === 'Policy Opening' || eventType === 'Regulatory Approval') {
+    return `Policy/regulatory tailwind — addressable market expands; first-mover advantage in newly opened sector`;
+  }
+
+  if (eventType === 'Technology Transition') {
+    return 'Platform/technology upgrade — unit economics improve at scale; incumbent moat strengthens';
+  }
+
   if (eventType === 'Mgmt Change') return 'Leadership transition — watch for strategy continuity';
+  if (eventType === 'CEO Change' || eventType === 'CFO Change' || eventType === 'MD Change') {
+    return `${eventType} — key decision-maker change; monitor for strategy shift, guidance revision`;
+  }
 
   if (eventType.includes('Block Buy') || eventType.includes('Bulk Buy')) {
-    if (buyerSeller && /mutual fund|fii|institutional/i.test(buyerSeller)) return 'Institutional buying — smart money accumulation signal';
-    if (premiumDiscount !== null && premiumDiscount > 2) return `Premium deal at +${premiumDiscount.toFixed(1)}% — buyer conviction strong`;
-    return 'Block/bulk buying — institutional interest building';
+    if (buyerSeller && /mutual fund|fii|institutional|foreign/i.test(buyerSeller)) return 'Institutional accumulation — smart money building position; supply absorption signal';
+    if (premiumDiscount !== null && premiumDiscount > 3) return `Premium block at +${premiumDiscount.toFixed(1)}% — strong buyer conviction, directional signal`;
+    return 'Block/bulk buying — institutional interest building, watch follow-through';
   }
 
   if (eventType.includes('Block Sell') || eventType.includes('Bulk Sell')) {
-    if (premiumDiscount !== null && premiumDiscount < -2) return `Discount exit at ${premiumDiscount.toFixed(1)}% — urgency to sell, watch supply pressure`;
-    return 'Institutional selling — check if rebalancing or conviction change';
+    if (premiumDiscount !== null && premiumDiscount < -3) return `Steep discount exit at ${premiumDiscount.toFixed(1)}% — urgency to exit, supply overhang risk`;
+    return 'Institutional selling — check if portfolio rebalancing or conviction change';
   }
 
-  return impactLevel === 'HIGH' ? 'High impact corporate event — direct business impact' :
-         impactLevel === 'MEDIUM' ? 'Moderate impact — worth tracking for pattern changes' :
+  return impactLevel === 'HIGH' ? 'High impact corporate event — direct business impact expected' :
+         impactLevel === 'MEDIUM' ? 'Moderate impact — worth tracking for pattern development' :
          'Low impact — informational only';
 }
 
@@ -908,8 +1003,13 @@ function isNegativeSignal(subject: string, desc: string): boolean {
 
 function classifySentiment(eventType: string, isNegative: boolean, isBuyDeal: boolean): SignalSentiment {
   if (isNegative) return 'Bearish';
-  if (['Order Win', 'Contract', 'LOI', 'Capex/Expansion', 'Buyback', 'Guidance'].includes(eventType)) return 'Bullish';
-  if (['M&A', 'Demerger', 'Fund Raising', 'JV/Partnership'].includes(eventType)) return 'Bullish';
+  const bullishEvents = [
+    'Order Win', 'Contract', 'LOI', 'Capex/Expansion', 'Buyback', 'Guidance',
+    'M&A', 'Demerger', 'Spinoff', 'Fund Raising', 'JV/Partnership',
+    'Open Offer', 'Takeover', 'Turnaround',
+    'Policy Opening', 'Regulatory Approval', 'Technology Transition',
+  ];
+  if (bullishEvents.includes(eventType)) return 'Bullish';
   if (eventType.includes('Buy')) return isBuyDeal ? 'Bullish' : 'Neutral';
   if (eventType.includes('Sell')) return 'Bearish';
   return 'Neutral';
@@ -1273,7 +1373,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 if (s.whyAction) s.whyAction = stripFinText(s.whyAction);
               }
 
-              // ── v6.1: DECISION ENGINE (materiality ladder, unverified cap, verified recovery) ──
+              // ── v7: PRODUCTION DECISION ENGINE ──
               s.signalClass = s.signalClass || classifySignalClass(s.eventType, s.headline, s.whyItMatters);
               s.managementRole = s.managementRole || extractMgmtRole(s.headline, s.whyItMatters);
 
@@ -1299,12 +1399,16 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               const recW = s.freshness === 'FRESH' ? 10 : s.freshness === 'RECENT' ? 7 : 3;
               s.materialityScore = Math.min(100, Math.round(ecoImpact + evtW + confW + mgmtW + recW));
 
-              // Governance materiality ladder
+              // Governance materiality ladder (with strategic vs routine classification)
               if (s.signalClass === 'GOVERNANCE') {
                 const govLevel = governanceMateriality(s.managementRole || 'Other');
-                if (govLevel === 'LOW' || govLevel === 'VERY_LOW') {
+                const mgmtType = classifyMgmtChangeType(s);
+                if (mgmtType === 'ROUTINE') {
                   s.materialityScore = Math.round(s.materialityScore * 0.3);
-                  s.visibility = 'DIMMED';  // Dimmed, not hidden — available for sparse backfill
+                  s.visibility = 'DIMMED';
+                } else if (govLevel === 'LOW' || govLevel === 'VERY_LOW') {
+                  s.materialityScore = Math.round(s.materialityScore * 0.3);
+                  s.visibility = 'DIMMED';
                 } else if (govLevel === 'MEDIUM') {
                   s.materialityScore = Math.round(s.materialityScore * 0.6);
                   s.visibility = 'DIMMED';
@@ -1312,33 +1416,66 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                   s.visibility = 'VISIBLE';
                 }
               } else if (s.signalClass === 'COMPLIANCE') {
-                s.visibility = 'DIMMED';  // Available for sparse backfill, not hard-hidden
+                s.visibility = 'DIMMED';
               } else {
                 s.visibility = 'VISIBLE';
               }
 
-              // Verified signal recovery
-              const isVerifiedSrc = s.confidenceType === 'ACTUAL' || s.sourceTier === 'VERIFIED' ||
-                s.dataSource === 'nse' || s.dataSource === 'NSE';
+              // ★ HARD GATING ★
+              const confSc = s.dataConfidenceScore || s.confidenceScore || 50;
+              const isInferredSignal = s.inferenceUsed || s.confidenceType === 'HEURISTIC' || s.confidenceType === 'INFERRED';
+              const isVerifiedSrc = s.confidenceType === 'ACTUAL' || s.sourceTier === 'VERIFIED';
+
+              // RULE 1: confidence < 60 → CANNOT be ACTIONABLE
+              if (confSc < 60) {
+                s.signalCategory = 'MONITOR';
+                s.portfolioCritical = false;
+              }
+              // RULE 2: inferred + confidence < 70 → max MONITOR
+              if (isInferredSignal && confSc < 70) {
+                s.signalCategory = 'MONITOR';
+                s.portfolioCritical = false;
+              }
+              // RULE 3: Unverified CAPEX/M&A/ORDER — cap materiality
+              if (['Capex/Expansion', 'M&A', 'Order Win', 'Contract'].includes(s.eventType) && !isVerifiedSrc) {
+                s.materialityScore = Math.min(s.materialityScore, 55);
+              }
+              // RULE 4: No impact % on ECONOMIC → not actionable
+              if ((s.impactPct || 0) === 0 && s.signalClass === 'ECONOMIC') {
+                s.signalCategory = 'MONITOR';
+                s.materialityScore = Math.min(s.materialityScore, 50);
+              }
+
+              // Verified signal recovery (strict: non-inferred + high confidence)
               const isKeyEvt = ['Guidance', 'Earnings', 'Order Win', 'Contract', 'Capex/Expansion', 'M&A'].includes(s.eventType);
-              if (isVerifiedSrc && isKeyEvt) {
+              if (isVerifiedSrc && isKeyEvt && !isInferredSignal) {
                 s.materialityScore = Math.max(s.materialityScore, 55);
                 s.visibility = 'VISIBLE';
-                const hasImpact = Math.abs(s.impactPct || 0) > 10;
-                const strongCat = s.catalystStrength === 'STRONG' || s.catalystStrength === 'MODERATE';
-                if ((s.confidenceScore >= 70 && hasImpact) || (isVerifiedSrc && strongCat)) {
+                if (confSc >= 70 && Math.abs(s.impactPct || 0) > 3) {
                   s.signalCategory = 'ACTIONABLE';
                 }
               }
 
+              // Portfolio critical filter
+              if (s.isPortfolio) {
+                s.portfolioCritical = (
+                  confSc >= 70 && !isInferredSignal &&
+                  (Math.abs(s.impactPct || 0) >= 3 || ['Guidance', 'Earnings', 'CEO Change', 'CFO Change', 'MD Change'].includes(s.eventType))
+                );
+              } else {
+                s.portfolioCritical = false;
+              }
+
               // Unverified ranking cap
-              const confSc = s.dataConfidenceScore || s.confidenceScore || 50;
               if (confSc < 40) {
                 s.visibility = s.visibility === 'VISIBLE' ? 'DIMMED' : s.visibility;
                 s.materialityScore = Math.min(s.materialityScore, 40);
               } else if (confSc < 50) {
                 s.materialityScore = Math.min(s.materialityScore, 55);
               }
+
+              // v7 composite rank score
+              s.v7RankScore = computeV7RankScore(s);
 
               // Action from materiality
               const mscore = s.materialityScore || 0;
@@ -1361,9 +1498,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 s.whyItMatters = isSenior
                   ? `${role} change at leadership level — monitor for strategy continuity`
                   : `${s.eventType || 'Mgmt Change'} — routine governance event`;
-                s.whyAction = isSenior
-                  ? 'Monitor for strategic impact'
-                  : 'Low materiality governance event';
+                s.whyAction = isSenior ? 'Monitor for strategic impact' : 'Low materiality governance event';
               } else if (s.signalClass === 'STRATEGIC') {
                 const role = s.managementRole || 'Leadership';
                 s.whyItMatters = `${role} change — potential strategy shift · Watch for execution impact`;
@@ -1376,10 +1511,19 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 s.catalystStrength = 'WEAK';
               }
 
+              // Signal tier classification
+              if (s.signalCategory === 'MONITOR' && s.materialityScore >= 50 && confSc >= 50) {
+                s.signalTierV7 = 'NOTABLE';
+              } else if (s.signalCategory === 'ACTIONABLE') {
+                s.signalTierV7 = 'ACTIONABLE';
+              } else {
+                s.signalTierV7 = 'MONITOR';
+              }
+
               // HIDDEN → rejected
               if (s.visibility === 'HIDDEN') {
-                _rejectReasons['hidden_v61'] = (_rejectReasons['hidden_v61'] || 0) + 1;
-                if (_rejectSamples.length < 10) _rejectSamples.push({ ticker: s.ticker || s.symbol, reason: 'hidden_v61', signalClass: s.signalClass, managementRole: s.managementRole, materialityScore: s.materialityScore, eventType: s.eventType });
+                _rejectReasons['hidden_v7'] = (_rejectReasons['hidden_v7'] || 0) + 1;
+                if (_rejectSamples.length < 5) _rejectSamples.push({ ticker: s.ticker || s.symbol, reason: 'hidden_v7', signalClass: s.signalClass, eventType: s.eventType });
                 rejectedCount++;
                 continue;
               }
@@ -1391,39 +1535,40 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               }
             }
 
-            // Sort by actionScore
-            actionableSignals.sort((a: any, b: any) => (b.actionScore || 0) - (a.actionScore || 0));
-            monitorSignals.sort((a: any, b: any) => (b.monitorScore || 0) - (a.monitorScore || 0));
+            // ── v7: Sort by composite rank score ──
+            actionableSignals.sort((a: any, b: any) => (b.v7RankScore || 0) - (a.v7RankScore || 0));
+            monitorSignals.sort((a: any, b: any) => (b.v7RankScore || 0) - (a.v7RankScore || 0));
 
-            const totalProcessed = actionableSignals.length + monitorSignals.length + rejectedCount;
+            // Enforce output constraints + separate notable tier
+            const MAX_ACTIONABLE = 3;
+            const MAX_NOTABLE = 5;
+            const MAX_MONITOR = 10;
+
+            const notableSignals = monitorSignals.filter((s: any) => s.signalTierV7 === 'NOTABLE');
+            const regularMonitor = monitorSignals.filter((s: any) => s.signalTierV7 !== 'NOTABLE');
+
+            // Overflow: excess actionable → notable
+            if (actionableSignals.length > MAX_ACTIONABLE) {
+              notableSignals.unshift(...actionableSignals.splice(MAX_ACTIONABLE));
+            }
+
+            const totalProcessed = actionableSignals.length + notableSignals.length + regularMonitor.length + rejectedCount;
             const rejectedPct = totalProcessed > 0 ? (rejectedCount / totalProcessed) * 100 : 0;
-            const productionReady = actionableSignals.length <= 5;
+            const productionReady = actionableSignals.length <= MAX_ACTIONABLE;
 
-            // Rebuild bias from only validated signals (actionable + monitor)
-            const validSignals = [...actionableSignals, ...monitorSignals];
+            // Rebuild bias from all valid signals
+            const validSignals = [...actionableSignals, ...notableSignals, ...regularMonitor];
             const validBias = responseData.bias ? { ...responseData.bias } : {} as any;
             if (validSignals.length === 0) {
-              // All rejected — zero EVERY bias field to prevent stale data leaking
-              validBias.totalSignals = 0;
-              validBias.highImpactCount = 0;
-              validBias.buyWatchCount = 0;
-              validBias.buyCount = 0;
-              validBias.holdCount = 0;
-              validBias.watchCount = 0;
-              validBias.trackCount = 0;
-              validBias.monitorCount = 0;
-              validBias.trimExitCount = 0;
-              validBias.reduceExitCount = 0;
-              validBias.negativeSignals = 0;
-              validBias.portfolioAlerts = 0;
-              validBias.totalObservations = 0;
-              validBias.totalOrderValueCr = 0;
-              validBias.totalDealValueCr = 0;
+              validBias.totalSignals = 0; validBias.highImpactCount = 0; validBias.buyWatchCount = 0;
+              validBias.buyCount = 0; validBias.holdCount = 0; validBias.watchCount = 0;
+              validBias.trackCount = 0; validBias.monitorCount = 0; validBias.trimExitCount = 0;
+              validBias.reduceExitCount = 0; validBias.negativeSignals = 0; validBias.portfolioAlerts = 0;
+              validBias.totalObservations = 0; validBias.totalOrderValueCr = 0; validBias.totalDealValueCr = 0;
               validBias.activeSectors = [];
-              validBias.summary = `All ${rejectedCount} signals rejected by validation gate. System functioning correctly.`;
+              validBias.summary = `0 Actionable · 0 Notable · ${rejectedCount} Rejected — No high-confidence signals today`;
               validBias.netBias = 'Neutral';
             } else {
-              // Recount ALL bias fields from validated signals
               let hCount = 0, wCount = 0, bCount = 0, tCount = 0, hiCount = 0, pAlerts = 0, negCount = 0;
               let bullish = 0, bearish = 0, totOrd = 0, totDeal = 0;
               for (const vs of validSignals) {
@@ -1432,7 +1577,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 else if (vs.action === 'BUY' || vs.action === 'ADD') bCount++;
                 if (vs.action === 'TRIM' || vs.action === 'EXIT') tCount++;
                 if (vs.impactLevel === 'HIGH') hiCount++;
-                if (vs.isPortfolio && vs.signalCategory === 'ACTIONABLE') pAlerts++;
+                if (vs.isPortfolio && vs.portfolioCritical) pAlerts++;
                 if (vs.isNegative) negCount++;
                 if (vs.sentiment === 'Bullish') bullish++;
                 if (vs.sentiment === 'Bearish') bearish++;
@@ -1440,15 +1585,12 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 if (vs.source === 'deal' && vs.valueCr) totDeal += vs.valueCr;
               }
               validBias.totalSignals = actionableSignals.length;
-              validBias.totalObservations = monitorSignals.length;
-              validBias.holdCount = hCount;
-              validBias.watchCount = wCount;
-              validBias.monitorCount = monitorSignals.length;
-              validBias.buyCount = bCount; validBias.addCount = 0;
-              validBias.buyWatchCount = 0;
+              validBias.totalObservations = notableSignals.length + regularMonitor.length;
+              validBias.holdCount = hCount; validBias.watchCount = wCount;
+              validBias.monitorCount = notableSignals.length + regularMonitor.length;
+              validBias.buyCount = bCount; validBias.addCount = 0; validBias.buyWatchCount = 0;
               validBias.trimExitCount = tCount; validBias.reduceExitCount = tCount;
-              validBias.highImpactCount = hiCount;
-              validBias.portfolioAlerts = pAlerts;
+              validBias.highImpactCount = hiCount; validBias.portfolioAlerts = pAlerts;
               validBias.negativeSignals = negCount;
               validBias.totalOrderValueCr = Math.round(totOrd);
               validBias.totalDealValueCr = Math.round(totDeal);
@@ -1456,64 +1598,30 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               validBias.activeSectors = [...new Set(validSignals.map((s: any) => s.sector || s.segment).filter(Boolean))];
               const biasParts: string[] = [];
               if (actionableSignals.length > 0) biasParts.push(`${actionableSignals.length} Actionable`);
-              biasParts.push(`${monitorSignals.length} Monitor`);
+              if (notableSignals.length > 0) biasParts.push(`${notableSignals.length} Notable`);
+              biasParts.push(`${regularMonitor.length} Monitor`);
               biasParts.push(`${rejectedCount} Rejected`);
               biasParts.push(`Net: ${validBias.netBias}`);
               validBias.summary = biasParts.join(' · ');
             }
 
-            // ── v6: Feed composition — max 10, prefer ECONOMIC, backfill with best available ──
-            const allVisibleSignals = [...actionableSignals, ...monitorSignals];
-            allVisibleSignals.sort((a: any, b: any) => (b.materialityScore || 0) - (a.materialityScore || 0));
-
-            const ecoSigs = allVisibleSignals.filter((s: any) => s.signalClass === 'ECONOMIC');
-            const stratSigs = allVisibleSignals.filter((s: any) => s.signalClass === 'STRATEGIC');
-            const govSigs = allVisibleSignals.filter((s: any) => s.signalClass === 'GOVERNANCE');
-
-            let composedFeed: any[] = [];
-
-            if (ecoSigs.length >= 6) {
-              // Rich data: enforce composition rules
-              composedFeed.push(...ecoSigs.slice(0, 6));
-              composedFeed.push(...govSigs.slice(0, 2));
-              composedFeed.push(...stratSigs.slice(0, Math.max(0, 10 - composedFeed.length)));
-              if (composedFeed.length < 10 && ecoSigs.length > 6) {
-                composedFeed.push(...ecoSigs.slice(6, 6 + (10 - composedFeed.length)));
-              }
-            } else {
-              // Sparse data: show best available signals regardless of class
-              // Priority: all ECONOMIC first, then STRATEGIC, then top GOVERNANCE
-              composedFeed.push(...ecoSigs);
-              composedFeed.push(...stratSigs);
-              // Backfill with governance (sorted by materialityScore, deduplicated by company)
-              const usedSymbols = new Set(composedFeed.map((s: any) => s.symbol));
-              const uniqueGov = govSigs.filter((s: any) => !usedSymbols.has(s.symbol));
-              composedFeed.push(...uniqueGov);
-            }
-            // Quality sort: verified first, then by materialityScore
-            composedFeed.sort((a: any, b: any) => {
-              const aV = (a.confidenceType === 'ACTUAL' || a.sourceTier === 'VERIFIED') ? 1 : 0;
-              const bV = (b.confidenceType === 'ACTUAL' || b.sourceTier === 'VERIFIED') ? 1 : 0;
-              if (aV !== bV) return bV - aV;
-              return (b.materialityScore || 0) - (a.materialityScore || 0);
-            });
-            composedFeed = composedFeed.slice(0, 10);
-
-            const composedActionable = composedFeed.filter((s: any) => s.signalCategory === 'ACTIONABLE');
-            const composedMonitor = composedFeed.filter((s: any) => s.signalCategory === 'MONITOR');
+            // ── v7: Feed composition — v7RankScore sorted, ECONOMIC first ──
+            const allVisibleSignals = [...actionableSignals, ...notableSignals, ...regularMonitor];
+            allVisibleSignals.sort((a: any, b: any) => (b.v7RankScore || 0) - (a.v7RankScore || 0));
+            const composedFeed = allVisibleSignals.slice(0, 10);
 
             responseData = {
               ...responseData,
-              signals: composedActionable,
-              observations: composedMonitor,
+              signals: actionableSignals.slice(0, MAX_ACTIONABLE),
+              notable: notableSignals.slice(0, MAX_NOTABLE),
+              observations: regularMonitor.slice(0, MAX_MONITOR),
               top3: composedFeed.slice(0, 5),
-              // Clear stacking/trends when no valid signals
               trends: validSignals.length > 0 ? responseData.trends : [],
               bias: validBias,
-              noActionableSignals: composedActionable.length === 0,
-              noHighConfSignals: composedActionable.length === 0,
+              noActionableSignals: actionableSignals.length === 0,
+              noHighConfSignals: actionableSignals.length === 0,
               _productionStatus: productionReady ? 'PRODUCTION_READY' : 'REFINEMENT_REQUIRED',
-              _stats: { actionable: composedActionable.length, monitor: composedMonitor.length, rejected: rejectedCount, rejectedPct: Math.round(rejectedPct), rawCount: rawSignals.length, _rejectReasons, _rejectSamples },
+              _stats: { actionable: actionableSignals.length, notable: notableSignals.length, monitor: regularMonitor.length, rejected: rejectedCount, rejectedPct: Math.round(rejectedPct), rawCount: rawSignals.length, _rejectReasons, _rejectSamples },
             };
           }
 

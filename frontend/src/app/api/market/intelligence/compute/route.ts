@@ -361,6 +361,11 @@ interface IntelSignal {
   signalClass?: 'ECONOMIC' | 'STRATEGIC' | 'GOVERNANCE' | 'COMPLIANCE';
   materialityScore?: number;  // 0-100 primary ranking metric
   managementRole?: string;    // Extracted role: CEO, CFO, MD, Chairman, etc.
+
+  // v7: Production Decision Engine
+  portfolioCritical?: boolean;
+  v7RankScore?: number;
+  signalTierV7?: 'ACTIONABLE' | 'NOTABLE' | 'MONITOR';
 }
 
 interface CompanyTrend {
@@ -400,6 +405,7 @@ interface DailyBias {
 interface IntelligenceResponse {
   top3: IntelSignal[];
   signals: IntelSignal[];            // ACTIONABLE only (validated)
+  notable?: IntelSignal[];           // v7: Notable tier (materialityScore 50-70, conf>=50)
   observations: IntelSignal[];       // Non-actionable (broken, unknown scope, etc.)
   trends: CompanyTrend[];
   bias: DailyBias;
@@ -461,11 +467,18 @@ const ORDER_KEYWORDS = [
   'capex', 'capital expenditure', 'expansion', 'new plant', 'new facility',
   'greenfield', 'brownfield', 'capacity addition', 'capacity expansion',
   'joint venture', 'jv', 'partnership', 'mou', 'collaboration',
-  'acquisition', 'merger', 'amalgamation', 'buyout', 'demerger',
+  'acquisition', 'merger', 'amalgamation', 'buyout', 'demerger', 'spinoff', 'hive off', 'spin off',
+  'open offer', 'takeover', 'delisting offer', 'preferential acquisition',
   'fund raising', 'qip', 'rights issue', 'capital raising', 'preferential allotment',
   'appointment', 'resignation', 'ceo', 'cfo', 'managing director',
   'dividend', 'buyback',
   'guidance', 'outlook', 'forecast', 'target', 'revenue guidance',
+  'turnaround', 'back to profit', 'return to profitability', 'profit after loss',
+  'pli', 'production linked incentive', 'regulatory approval', 'noc obtained',
+  'license obtained', 'spectrum', 'regulatory clearance',
+  'platform launch', 'technology upgrade', 'digital transformation',
+  'global expansion', 'international market', 'export order',
+  'market share gain', 'category leader', 'market leadership',
 ];
 
 const NOISE_PATTERNS = [
@@ -606,8 +619,10 @@ type SignalClass = 'ECONOMIC' | 'STRATEGIC' | 'GOVERNANCE' | 'COMPLIANCE';
 // Event Type → Signal Class mapping
 const ECONOMIC_EVENTS = new Set([
   'Order Win', 'Contract', 'LOI', 'Capex/Expansion', 'Fund Raising',
-  'Guidance', 'Earnings', 'M&A', 'Demerger', 'Buyback', 'Dividend',
-  'Block Deal', 'Bulk Deal', 'Stake Sale', 'QIP', 'Rights Issue', 'Bonus',
+  'Guidance', 'Earnings', 'M&A', 'Demerger', 'Spinoff', 'Buyback', 'Dividend',
+  'Open Offer', 'Takeover', 'Rights Issue', 'QIP',
+  'Turnaround', 'Policy Opening', 'Regulatory Approval', 'Technology Transition',
+  'Block Deal', 'Bulk Deal', 'Stake Sale', 'Bonus',
 ]);
 
 const STRATEGIC_EVENTS = new Set([
@@ -696,10 +711,16 @@ function isRealMgmtChange(headline?: string, description?: string, dataSource?: 
 
 // Event type weights for materiality scoring
 const EVENT_TYPE_WEIGHTS: Record<string, number> = {
-  'Guidance': 100, 'Earnings': 90, 'Capex/Expansion': 75, 'Order Win': 70, 'Contract': 70,
-  'M&A': 65, 'Demerger': 60, 'Fund Raising': 55, 'LOI': 50,
+  'Guidance': 100, 'Earnings': 90,
+  'Open Offer': 88, 'Takeover': 88,           // Mandatory offer = hard floor price catalyst
+  'Turnaround': 85,                             // Powerful re-rating signal
+  'Capex/Expansion': 75, 'Order Win': 70, 'Contract': 70,
+  'M&A': 68, 'Demerger': 65, 'Spinoff': 65,
+  'Policy Opening': 62, 'Regulatory Approval': 60,
+  'Technology Transition': 58,
+  'Fund Raising': 55, 'LOI': 50, 'JV/Partnership': 50,
   'Block Deal': 45, 'Bulk Deal': 45, 'Stake Sale': 40, 'QIP': 40,
-  'Buyback': 35, 'Dividend': 30, 'Rights Issue': 30, 'Bonus': 25,
+  'Rights Issue': 35, 'Buyback': 35, 'Dividend': 30, 'Bonus': 25,
   'CEO Change': 50, 'CFO Change': 45, 'MD Change': 45, 'Chairman Change': 40,
   'Leadership Transition': 35,
   'Mgmt Change': 10, 'Board Appointment': 10, 'Board Meeting': 5,
@@ -831,6 +852,65 @@ function buildWhyThisMatters(signal: any): string {
   }
 
   return 'Compliance disclosure — no investment action required';
+}
+
+// ── v7 EVENT WEIGHTS (normalized 0-1) ──
+const V7_EVENT_WEIGHTS: Record<string, number> = {
+  'Guidance': 1.0, 'Earnings': 0.9,
+  'Open Offer': 0.9, 'Takeover': 0.9,           // Takeover premium = floor price
+  'Turnaround': 0.85,                             // Post-loss recovery = re-rating
+  'Capex/Expansion': 0.8, 'M&A': 0.8,
+  'Demerger': 0.8, 'Spinoff': 0.8,               // Value unlock events
+  'Policy Opening': 0.75, 'Regulatory Approval': 0.75,
+  'Technology Transition': 0.7,
+  'Order Win': 0.7, 'Contract': 0.7,
+  'CEO Change': 0.65, 'CFO Change': 0.6, 'MD Change': 0.6,
+  'Fund Raising': 0.6, 'QIP': 0.55, 'LOI': 0.5,
+  'JV/Partnership': 0.55,
+  'Block Deal': 0.5, 'Bulk Deal': 0.5, 'Stake Sale': 0.5,
+  'Rights Issue': 0.45, 'Buyback': 0.45, 'Dividend': 0.3,
+  'Mgmt Change': 0.2, 'Board Appointment': 0.2,
+  'Compliance': 0.05, 'Regulatory': 0.1, 'Filing': 0.05,
+};
+
+// Classify mgmt change as STRATEGIC vs ROUTINE
+function classifyMgmtChangeType(signal: any): 'STRATEGIC' | 'ROUTINE' {
+  const role = signal.managementRole || 'Other';
+  if (['CEO', 'CFO', 'MD', 'Chairman', 'Managing Director', 'COO', 'CTO', 'President', 'Promoter'].includes(role)) return 'STRATEGIC';
+  const text = ((signal.headline || '') + ' ' + (signal.whyItMatters || '')).toLowerCase();
+  if (text.includes('ai') || text.includes('business unit head') || text.includes('strategy') || text.includes('restructur')) return 'STRATEGIC';
+  return 'ROUTINE';
+}
+
+// v7 composite ranking score
+function computeV7RankScore(signal: any): number {
+  const confScore = signal.dataConfidenceScore || signal.confidenceScore || 50;
+  const confidenceWeight = confScore / 100;
+
+  // Event weight — routine mgmt changes get 0.2, strategic get 0.6
+  let eventWeight = V7_EVENT_WEIGHTS[signal.eventType] || 0.1;
+  if (signal.eventType === 'Mgmt Change' || signal.eventType === 'Board Appointment') {
+    eventWeight = classifyMgmtChangeType(signal) === 'STRATEGIC' ? 0.6 : 0.2;
+  }
+
+  // Materiality weight — capped at 1.0, based on impact%
+  const impactPct = Math.abs(signal.impactPct || 0);
+  const materialityWeight = impactPct > 0 ? Math.min(impactPct / 5, 1.0) : 0.1;
+
+  // Freshness weight
+  const freshnessWeight = signal.freshness === 'FRESH' ? 1.0 : signal.freshness === 'RECENT' ? 0.8 : signal.freshness === 'AGING' ? 0.5 : 0.3;
+
+  // Verification bonus
+  const verifiedBonus = (signal.confidenceType === 'ACTUAL' && !signal.inferenceUsed) ? 1.2 : 1.0;
+
+  return Math.round(
+    (signal.materialityScore || 30)
+    * confidenceWeight
+    * eventWeight
+    * materialityWeight
+    * freshnessWeight
+    * verifiedBonus
+  );
 }
 
 // Aggressive text cleaning helper (reused from old sanitizeByEventClass)
@@ -1247,7 +1327,11 @@ function generateWhyItMatters(opts: {
   buyerSeller: string | null;
   premiumDiscount: number | null;
 }): string {
-  const { eventType, impactLevel, pctRevenue, pctMcap, valueCr, client, segment, isNegative, buyerSeller, premiumDiscount } = opts;
+  const { eventType, impactLevel, pctRevenue, pctMcap, valueCr, client, segment, isNegative, sentiment, buyerSeller, premiumDiscount } = opts;
+
+  // ── SUNSHINE SECTORS: Strategic India themes ──
+  const SUNSHINE_SECTORS = new Set(['Defence', 'EV', 'Solar', 'Semiconductor', 'Railways', 'Infra', 'Electronics', 'PLI', 'Renewables', 'Nuclear', 'Space', 'Data Center', 'Logistics']);
+  const isSunshineSector = segment && SUNSHINE_SECTORS.has(segment);
 
   if (isNegative) {
     if (eventType.includes('cancellation') || eventType.includes('terminated')) return 'Revenue loss risk — check order book concentration';
@@ -1262,43 +1346,92 @@ function generateWhyItMatters(opts: {
   if (eventType === 'Order Win' || eventType === 'Contract' || eventType === 'LOI') {
     if (pctRevenue !== null && pctRevenue >= 5) return `${pctRevenue.toFixed(0)}% of revenue — material order, direct top-line accretion`;
     if (pctRevenue !== null && pctRevenue >= 1) return `Meaningful order at ${pctRevenue.toFixed(1)}% of revenue — revenue visibility improves`;
+    if (client && /global|international|export|us\b|europe|gcc|uae|germany|france|japan/i.test(client)) {
+      return `Export/global order from ${client} — global scalability signal, FX revenue hedge`;
+    }
     if (client) return `New order from ${client} — client diversification + execution track record`;
+    if (isSunshineSector) return `Govt order in ${segment} — strategic India chokepoint, long-cycle stable margins`;
     if (segment === 'Defence' || segment === 'Railways') return `Govt order in ${segment} — long cycle, stable margin profile`;
     return 'New order win — improves revenue pipeline visibility';
   }
 
   if (eventType === 'Capex/Expansion') {
+    if (isSunshineSector) return `Capacity build in strategic ${segment} sector — PLI/policy tailwind, operating leverage on ramp`;
+    if (pctMcap !== null && pctMcap >= 10) return `Transformative capex at ${pctMcap.toFixed(1)}% MCap — high operating leverage on utilization ramp`;
     if (pctMcap !== null && pctMcap >= 5) return `Large capex at ${pctMcap.toFixed(1)}% of MCap — operating leverage play, watch execution`;
     return 'Capacity expansion — forward revenue visibility, watch ROI timeline';
   }
 
   if (eventType === 'M&A') {
-    if (pctRevenue !== null && pctRevenue >= 10) return 'Transformative acquisition — changes revenue mix significantly';
-    if (pctMcap !== null && pctMcap >= 5) return `Material M&A at ${pctMcap.toFixed(1)}% MCap — integration risk but growth potential`;
-    return 'Strategic acquisition — improves market position or backward integration';
+    if (pctRevenue !== null && pctRevenue >= 20) return 'Transformative acquisition — rollup strategy, fragmented industry consolidation play';
+    if (pctRevenue !== null && pctRevenue >= 10) return 'Material acquisition — changes revenue mix; check for synergy vs integration risk';
+    if (pctMcap !== null && pctMcap >= 5) return `M&A at ${pctMcap.toFixed(1)}% MCap — accretive if integration succeeds; watch for category leadership`;
+    return 'Strategic acquisition — improves market position or technology capability';
   }
 
-  if (eventType === 'Demerger') return 'Value unlock — sum-of-parts may exceed current market cap';
-  if (eventType === 'Fund Raising') return 'Capital raise — fuels growth but watch dilution impact';
-  if (eventType === 'Buyback') return 'Management conviction in undervaluation — capital return signal';
-  if (eventType === 'Dividend') return 'Cash return to shareholders — signals healthy cash flow';
-  if (eventType === 'JV/Partnership') return 'Strategic partnership — technology or market access play';
-  if (eventType === 'Guidance') return 'Management outlook update — forward visibility signal';
+  if (eventType === 'Demerger' || eventType === 'Spinoff') {
+    return 'Value unlock via demerger — separate listing likely re-rates individual businesses; sum-of-parts > whole';
+  }
+
+  if (eventType === 'Open Offer' || eventType === 'Takeover') {
+    if (pctMcap !== null && pctMcap >= 0) return 'Open offer / takeover — mandatory at premium to market; creates floor price, exit opportunity';
+    return 'Open offer triggered — acquirer conviction signal, price floor established';
+  }
+
+  if (eventType === 'Fund Raising' || eventType === 'QIP') return 'Capital raise — balance sheet strengthening fuels next growth phase; watch dilution impact';
+  if (eventType === 'Rights Issue') return 'Rights issue — promoter-led capital raise at discount; signals near-term growth plans';
+  if (eventType === 'Buyback') return 'Buyback at premium — management conviction in undervaluation, reduces float, EPS-accretive';
+  if (eventType === 'Dividend') return 'Cash dividend — signals strong FCF generation and board confidence in earnings visibility';
+
+  if (eventType === 'JV/Partnership') {
+    if (client && /global|international|export|us\b|europe|japan|korea/i.test(client)) {
+      return `Global JV with ${client} — technology access + international market entry platform`;
+    }
+    return 'Strategic partnership — technology, market access, or platform transition play';
+  }
+
+  if (eventType === 'Guidance') {
+    if (sentiment === 'Bullish') return 'Management raised guidance — earnings upgrade cycle potential; institutional buy trigger';
+    if (sentiment === 'Bearish') return 'Guidance cut — earnings downgrade risk; assess if temporary headwind or structural';
+    return 'Management outlook update — forward visibility signal, watch earnings revision trend';
+  }
+
+  if (eventType === 'Earnings') {
+    return sentiment === 'Bullish' ? 'Beat on earnings — operating leverage kicking in; potential re-rating catalyst' :
+           sentiment === 'Bearish' ? 'Earnings miss — margin pressure or volume weakness; assess recovery timeline' :
+           'Earnings in line — stability signal; watch guidance for next quarter';
+  }
+
+  if (eventType === 'Turnaround') {
+    return 'Post-loss recovery — operating metrics improving; watch for consecutive profitable quarters as re-rating trigger';
+  }
+
+  if (eventType === 'Policy Opening' || eventType === 'Regulatory Approval') {
+    return `Policy/regulatory tailwind — addressable market expands; first-mover advantage in newly opened sector`;
+  }
+
+  if (eventType === 'Technology Transition') {
+    return 'Platform/technology upgrade — unit economics improve at scale; incumbent moat strengthens';
+  }
+
   if (eventType === 'Mgmt Change') return 'Leadership transition — watch for strategy continuity';
+  if (eventType === 'CEO Change' || eventType === 'CFO Change' || eventType === 'MD Change') {
+    return `${eventType} — key decision-maker change; monitor for strategy shift, guidance revision`;
+  }
 
   if (eventType.includes('Block Buy') || eventType.includes('Bulk Buy')) {
-    if (buyerSeller && /mutual fund|fii|institutional/i.test(buyerSeller)) return 'Institutional buying — smart money accumulation signal';
-    if (premiumDiscount !== null && premiumDiscount > 2) return `Premium deal at +${premiumDiscount.toFixed(1)}% — buyer conviction strong`;
-    return 'Block/bulk buying — institutional interest building';
+    if (buyerSeller && /mutual fund|fii|institutional|foreign/i.test(buyerSeller)) return 'Institutional accumulation — smart money building position; supply absorption signal';
+    if (premiumDiscount !== null && premiumDiscount > 3) return `Premium block at +${premiumDiscount.toFixed(1)}% — strong buyer conviction, directional signal`;
+    return 'Block/bulk buying — institutional interest building, watch follow-through';
   }
 
   if (eventType.includes('Block Sell') || eventType.includes('Bulk Sell')) {
-    if (premiumDiscount !== null && premiumDiscount < -2) return `Discount exit at ${premiumDiscount.toFixed(1)}% — urgency to sell, watch supply pressure`;
-    return 'Institutional selling — check if rebalancing or conviction change';
+    if (premiumDiscount !== null && premiumDiscount < -3) return `Steep discount exit at ${premiumDiscount.toFixed(1)}% — urgency to exit, supply overhang risk`;
+    return 'Institutional selling — check if portfolio rebalancing or conviction change';
   }
 
-  return impactLevel === 'HIGH' ? 'High impact corporate event — direct business impact' :
-         impactLevel === 'MEDIUM' ? 'Moderate impact — worth tracking for pattern changes' :
+  return impactLevel === 'HIGH' ? 'High impact corporate event — direct business impact expected' :
+         impactLevel === 'MEDIUM' ? 'Moderate impact — worth tracking for pattern development' :
          'Low impact — informational only';
 }
 
@@ -1311,8 +1444,13 @@ function isNegativeSignal(subject: string, desc: string): boolean {
 
 function classifySentiment(eventType: string, isNegative: boolean, isBuyDeal: boolean): SignalSentiment {
   if (isNegative) return 'Bearish';
-  if (['Order Win', 'Contract', 'LOI', 'Capex/Expansion', 'Buyback', 'Guidance'].includes(eventType)) return 'Bullish';
-  if (['M&A', 'Demerger', 'Fund Raising', 'JV/Partnership'].includes(eventType)) return 'Bullish';
+  const bullishEvents = [
+    'Order Win', 'Contract', 'LOI', 'Capex/Expansion', 'Buyback', 'Guidance',
+    'M&A', 'Demerger', 'Spinoff', 'Fund Raising', 'JV/Partnership',
+    'Open Offer', 'Takeover', 'Turnaround',
+    'Policy Opening', 'Regulatory Approval', 'Technology Transition',
+  ];
+  if (bullishEvents.includes(eventType)) return 'Bullish';
   if (eventType.includes('Buy')) return isBuyDeal ? 'Bullish' : 'Neutral';
   if (eventType.includes('Sell')) return 'Bearish';
   return 'Neutral';
@@ -1321,15 +1459,23 @@ function classifySentiment(eventType: string, isNegative: boolean, isBuyDeal: bo
 // ==================== QUANT SCORE ENGINE ====================
 
 const SIGNAL_TYPE_WEIGHTS: Record<string, number> = {
+  'Open Offer': 18, 'Takeover': 18,         // Hard price floor
+  'Turnaround': 16,                           // Biggest re-rating
   'Order Win': 14, 'Contract': 14, 'M&A': 13, 'Capex/Expansion': 15,
-  'Demerger': 11, 'Fund Raising': 10, 'LOI': 8, 'JV/Partnership': 9,
-  'Buyback': 10, 'Dividend': 6, 'Guidance': 8, 'Mgmt Change': 5,
+  'Demerger': 14, 'Spinoff': 14, 'Fund Raising': 10, 'LOI': 8, 'JV/Partnership': 9,
+  'Policy Opening': 12, 'Regulatory Approval': 11, 'Technology Transition': 10,
+  'Buyback': 10, 'Rights Issue': 8, 'Dividend': 6, 'Guidance': 8, 'Mgmt Change': 5,
   'Block Buy': 11, 'Bulk Buy': 10, 'Block Sell': 11, 'Bulk Sell': 10,
   'Corporate': 4,
 };
 
 const SECTOR_MULTIPLIER: Record<string, number> = {
-  'Infra': 1.2, 'Defence': 1.2, 'Power': 1.15, 'Railways': 1.15,
+  // Strategic India sunshine sectors — boosted multipliers
+  'Defence': 1.3, 'Railways': 1.25, 'Solar': 1.25, 'EV': 1.2, 'Semiconductor': 1.25,
+  'Electronics': 1.2, 'PLI': 1.2, 'Renewables': 1.2, 'Nuclear': 1.2, 'Space': 1.2,
+  'Data Center': 1.15, 'Logistics': 1.1,
+  // Core infrastructure
+  'Infra': 1.2, 'Power': 1.15,
   'Construction': 1.1, 'Metals': 1.1, 'Oil & Gas': 1.1, 'Chemicals': 1.05,
   'Auto': 1.0, 'Pharma': 0.95, 'Realty': 1.0, 'Telecom': 0.9,
   'IT': 0.8, 'FMCG': 0.7, 'Textiles': 0.9,
@@ -4046,116 +4192,186 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     // EVENT CLASS SANITIZATION: strip synthetic numbers from non-financial events
     sanitizeByEventClass(s);
 
-    // ── v6: DECISION ENGINE (v6.1 — materiality ladder, unverified cap, verified recovery) ──
+    // ── v7: PRODUCTION DECISION ENGINE ──
     // 1. Classify signal + extract role
     s.signalClass = s.signalClass || classifySignalClass(s.eventType, s.headline, s.whyItMatters);
     s.managementRole = extractManagementRole(s.headline, s.whyItMatters);
 
-    // 2. False classification guard: reject fake mgmt changes
+    // 2. False classification guard
     if (s.signalClass === 'GOVERNANCE' && !isRealMgmtChange(s.headline, s.whyItMatters, s.dataSource)) {
-      s.signalClass = 'COMPLIANCE';  // Demote to compliance (dimmed)
+      s.signalClass = 'COMPLIANCE';
     }
 
     // 3. Governance materiality ladder
     if (s.signalClass === 'GOVERNANCE') {
       const govLevel = governanceMateriality(s.managementRole || 'Other');
-      if (govLevel === 'LOW' || govLevel === 'VERY_LOW') {
+      const mgmtType = classifyMgmtChangeType(s);
+      if (mgmtType === 'ROUTINE') {
         s.materialityScore = Math.round((s.materialityScore || 0) * 0.3);
-        s.visibility = 'DIMMED';  // Dimmed, not hidden — available for sparse backfill
+        s.visibility = 'DIMMED';
+      } else if (govLevel === 'LOW' || govLevel === 'VERY_LOW') {
+        s.materialityScore = Math.round((s.materialityScore || 0) * 0.3);
+        s.visibility = 'DIMMED';
       } else if (govLevel === 'MEDIUM') {
         s.materialityScore = Math.round((s.materialityScore || 0) * 0.6);
         s.visibility = 'DIMMED';
       } else {
-        s.visibility = 'VISIBLE';  // CEO/CFO/MD = show
+        s.visibility = 'VISIBLE';
       }
     }
 
-    // 4. Compute materiality score (replaces monitorScore as primary rank)
+    // 4. Compute materiality score
     s.materialityScore = s.materialityScore || computeMaterialityScore(s);
 
-    // 5. Determine visibility (if not already set by governance ladder)
+    // 5. Determine visibility
     if (!s.visibility) {
       s.visibility = determineVisibility(s);
     }
 
-    // 6. Verified signal recovery: VERIFIED source + key event types get boosted
-    const isVerifiedSource = s.confidenceType === 'ACTUAL' || s.sourceTier === 'VERIFIED' ||
-      s.dataSource === 'nse' || s.dataSource === 'NSE';
-    const isKeyEventType = ['Guidance', 'Earnings', 'Order Win', 'Contract', 'Capex/Expansion', 'M&A'].includes(s.eventType);
-    if (isVerifiedSource && isKeyEventType) {
-      s.materialityScore = Math.max(s.materialityScore || 0, 55);  // Floor at 55
-      s.visibility = 'VISIBLE';  // Force visible
-      if (s.signalCategory === 'MONITOR') {
-        // Check relaxed actionable threshold
-        const hasImpact = Math.abs(s.impactPct || 0) > 10;
-        const strongCatalyst = s.catalystStrength === 'STRONG' || s.catalystStrength === 'MODERATE';
-        if ((s.confidenceScore >= 70 && hasImpact) || (isVerifiedSource && strongCatalyst)) {
-          s.signalCategory = 'ACTIONABLE';
-        }
+    // 6. ★ HARD GATING: Confidence-based promotion limits ★
+    const confScore = s.dataConfidenceScore || s.confidenceScore || 50;
+    const isInferredSignal = s.inferenceUsed || s.confidenceType === 'HEURISTIC' || s.confidenceType === 'INFERRED';
+    const isVerifiedSource = s.confidenceType === 'ACTUAL' || s.sourceTier === 'VERIFIED';
+
+    // RULE 1: confidence < 60 → CANNOT be ACTIONABLE or PORTFOLIO_CRITICAL
+    if (confScore < 60) {
+      if (s.signalCategory === 'ACTIONABLE') s.signalCategory = 'MONITOR';
+      s.portfolioCritical = false;
+    }
+
+    // RULE 2: inferred + confidence < 70 → max level MONITOR
+    if (isInferredSignal && confScore < 70) {
+      if (s.signalCategory === 'ACTIONABLE') s.signalCategory = 'MONITOR';
+      s.portfolioCritical = false;
+    }
+
+    // RULE 3: Economic signals (CAPEX/M&A/ORDER) need verification
+    if (['Capex/Expansion', 'M&A', 'Order Win', 'Contract'].includes(s.eventType)) {
+      if (!isVerifiedSource) {
+        s.materialityScore = Math.min(s.materialityScore || 0, 55);
       }
     }
 
-    // 7. Unverified ranking cap: low confidence can't lead the feed
-    const confScore = s.dataConfidenceScore || s.confidenceScore || 50;
-    if (confScore < 40) {
-      s.visibility = s.visibility === 'VISIBLE' ? 'DIMMED' : s.visibility;  // Below fold
-      s.materialityScore = Math.min(s.materialityScore || 0, 40);  // Cap at 40
-    } else if (confScore < 50) {
-      s.materialityScore = Math.min(s.materialityScore || 0, 55);  // Can't be top 3
+    // RULE 4: No impact % → cannot be actionable
+    if ((s.impactPct || 0) === 0 && s.signalClass === 'ECONOMIC') {
+      if (s.signalCategory === 'ACTIONABLE') s.signalCategory = 'MONITOR';
+      s.materialityScore = Math.min(s.materialityScore || 0, 50);
     }
 
-    // 8. Override action from materiality
+    // 7. Verified signal recovery (only for HIGH confidence verified)
+    const isKeyEventType = ['Guidance', 'Earnings', 'Order Win', 'Contract', 'Capex/Expansion', 'M&A'].includes(s.eventType);
+    if (isVerifiedSource && isKeyEventType && !isInferredSignal) {
+      s.materialityScore = Math.max(s.materialityScore || 0, 55);
+      s.visibility = 'VISIBLE';
+      // Only promote to ACTIONABLE if confidence >= 70 AND has real impact
+      if (confScore >= 70 && Math.abs(s.impactPct || 0) > 3) {
+        s.signalCategory = 'ACTIONABLE';
+      }
+    }
+
+    // 8. ★ PORTFOLIO CRITICAL FILTER ★
+    if (s.isPortfolio) {
+      s.portfolioCritical = (
+        confScore >= 70 &&
+        !isInferredSignal &&
+        (Math.abs(s.impactPct || 0) >= 3 || ['Guidance', 'Earnings', 'CEO Change', 'CFO Change', 'MD Change'].includes(s.eventType))
+      );
+    } else {
+      s.portfolioCritical = false;
+    }
+
+    // 9. Unverified ranking cap
+    if (confScore < 40) {
+      s.visibility = s.visibility === 'VISIBLE' ? 'DIMMED' : s.visibility;
+      s.materialityScore = Math.min(s.materialityScore || 0, 40);
+    } else if (confScore < 50) {
+      s.materialityScore = Math.min(s.materialityScore || 0, 55);
+    }
+
+    // 10. ★ v7 COMPOSITE RANK SCORE ★
+    s.v7RankScore = computeV7RankScore(s);
+
+    // 11. Action from materiality (with hard gating enforced)
     if (s.signalCategory !== 'REJECTED') {
       s.action = actionFromMateriality(s);
     }
 
-    // 9. Override whyItMatters with structured text
+    // 12. Override whyItMatters
     const newWhy = buildWhyThisMatters(s);
     if (newWhy && newWhy.length > 10) {
       s.whyItMatters = newWhy;
     }
 
-    // 10. Governance scoring penalty
+    // 13. Governance scoring penalty
     if (s.signalClass === 'GOVERNANCE') {
       s.monitorScore = Math.round((s.monitorScore || 0) * 0.5);
       s.monitorTier = s.monitorScore >= 80 ? 'HIGH' : s.monitorScore >= 50 ? 'MED' : 'LOW';
       s.catalystStrength = 'WEAK';
     }
 
-    // 11. HIDDEN signals get pushed to REJECTED
+    // 14. ★ SIGNAL TIER CLASSIFICATION (ACTIONABLE / NOTABLE / MONITOR) ★
+    // Notable = score 50-70, confidence >= 50, not rejected
+    if (s.signalCategory === 'MONITOR' && s.materialityScore >= 50 && confScore >= 50) {
+      s.signalTierV7 = 'NOTABLE';
+    } else if (s.signalCategory === 'ACTIONABLE') {
+      s.signalTierV7 = 'ACTIONABLE';
+    } else {
+      s.signalTierV7 = 'MONITOR';
+    }
+
+    // 15. HIDDEN signals → REJECTED
     if (s.visibility === 'HIDDEN') {
       s.signalCategory = 'REJECTED';
     }
   }
 
   // ══════════════════════════════════════════════════════════════
-  // ── FINAL: 3-LAYER OUTPUT ──
-  // ACTIONABLE: fully validated, material, explicit numbers
-  // MONITOR: clean but non-material or inferred
-  // REJECTED: dropped entirely — never in output
+  // ── FINAL: 4-LAYER OUTPUT (v7) ──
+  // ACTIONABLE: verified, high-confidence, real impact (max 3)
+  // NOTABLE: medium impact, some uncertainty (max 5)
+  // MONITOR: low-impact, routine governance (max 10)
+  // REJECTED: dropped entirely
   // ══════════════════════════════════════════════════════════════
 
   const actionableSignals: IntelSignal[] = [];
+  const notableSignals: IntelSignal[] = [];
   const monitorSignals: IntelSignal[] = [];
   let rejectedCount = 0;
 
   for (const s of filtered) {
-    if (s.signalCategory === 'ACTIONABLE') {
+    if (s.signalCategory === 'REJECTED' || s.visibility === 'HIDDEN') {
+      rejectedCount++;
+    } else if (s.signalCategory === 'ACTIONABLE') {
       actionableSignals.push(s);
+    } else if (s.signalTierV7 === 'NOTABLE') {
+      notableSignals.push(s);
     } else if (s.signalCategory === 'MONITOR') {
       monitorSignals.push(s);
     } else {
       rejectedCount++;
-      // REJECTED = hard drop. Does not exist in output.
     }
   }
 
-  // Sort ALL by materialityScore (primary ranking metric)
-  actionableSignals.sort((a, b) => (b.materialityScore || 0) - (a.materialityScore || 0));
-  monitorSignals.sort((a, b) => (b.materialityScore || 0) - (a.materialityScore || 0));
+  // Sort ALL by v7RankScore (composite ranking)
+  actionableSignals.sort((a, b) => (b.v7RankScore || 0) - (a.v7RankScore || 0));
+  notableSignals.sort((a, b) => (b.v7RankScore || 0) - (a.v7RankScore || 0));
+  monitorSignals.sort((a, b) => (b.v7RankScore || 0) - (a.v7RankScore || 0));
+
+  // Enforce output constraints
+  const MAX_ACTIONABLE = 3;
+  const MAX_NOTABLE = 5;
+  const MAX_MONITOR = 10;
+
+  // Overflow: excess actionable → notable, excess notable → monitor
+  if (actionableSignals.length > MAX_ACTIONABLE) {
+    notableSignals.unshift(...actionableSignals.splice(MAX_ACTIONABLE));
+  }
+  if (notableSignals.length > MAX_NOTABLE) {
+    monitorSignals.unshift(...notableSignals.splice(MAX_NOTABLE));
+  }
 
   // ── FEED COMPOSITION: max 10 visible, balanced by signal class ──
-  const allVisible = [...actionableSignals, ...monitorSignals];
+  const allVisible = [...actionableSignals, ...notableSignals, ...monitorSignals.slice(0, MAX_MONITOR)];
   const composedFeed = enforceFeedComposition(allVisible);
 
   const noActionableSignals = actionableSignals.length === 0;
@@ -4165,14 +4381,14 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   const top3 = composedFeed.slice(0, 5);
 
   // ── Production Status Check ──
-  const totalActive = actionableSignals.length + monitorSignals.length;
+  const totalActive = actionableSignals.length + notableSignals.length + monitorSignals.length;
   const totalProcessed = totalActive + rejectedCount;
   const rejectedPct = totalProcessed > 0 ? (rejectedCount / totalProcessed) * 100 : 0;
-  const hybridStates = 0; // We eliminated all hybrid states
+  const hybridStates = 0;
   const inferredInActive = actionableSignals.filter(s => s.inferenceUsed).length;
 
   const productionReady = (
-    actionableSignals.length <= 5 &&
+    actionableSignals.length <= MAX_ACTIONABLE &&
     hybridStates === 0 &&
     inferredInActive === 0
   );
@@ -4181,7 +4397,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   let totalOrderValueCr = 0;
   let totalDealValueCr = 0;
   let holdCount = 0;
-  let monitorCount = monitorSignals.length;
+  let monitorCount = notableSignals.length + monitorSignals.length;
   let reduceExitCount = 0;
   let highImpactCount = 0;
   let bullishCount = 0;
@@ -4189,7 +4405,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   let portfolioAlerts = 0;
   let negativeSignals = 0;
 
-  for (const s of [...actionableSignals, ...monitorSignals]) {
+  for (const s of [...actionableSignals, ...notableSignals, ...monitorSignals]) {
     if (s.segment) sectorSet.add(s.segment);
     if (s.source === 'order' && s.valueCr) totalOrderValueCr += s.valueCr;
     if (s.source === 'deal' && s.valueCr) totalDealValueCr += s.valueCr;
@@ -4208,6 +4424,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
 
   const biasParts: string[] = [];
   if (actionableSignals.length > 0) biasParts.push(`${actionableSignals.length} Actionable`);
+  if (notableSignals.length > 0) biasParts.push(`${notableSignals.length} Notable`);
   if (monitorSignals.length > 0) biasParts.push(`${monitorSignals.length} Monitor`);
   biasParts.push(`${rejectedCount} Rejected`);
   biasParts.push(`Net: ${netBias}`);
@@ -4217,7 +4434,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     netBias, highImpactCount, activeSectors,
     buyWatchCount: 0, holdCount, monitorCount, reduceExitCount,
     totalSignals: actionableSignals.length,
-    totalObservations: monitorSignals.length,
+    totalObservations: notableSignals.length + monitorSignals.length,
     totalOrderValueCr: Math.round(totalOrderValueCr),
     totalDealValueCr: Math.round(totalDealValueCr),
     portfolioAlerts, negativeSignals,
@@ -4271,8 +4488,9 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
 
   return {
     top3,
-    signals: actionableSignals.slice(0, 5),
-    observations: monitorSignals.slice(0, 50),
+    signals: actionableSignals.slice(0, MAX_ACTIONABLE),
+    notable: notableSignals.slice(0, MAX_NOTABLE),
+    observations: monitorSignals.slice(0, MAX_MONITOR),
     trends: trends.slice(0, 10),
     bias,
     updatedAt: new Date().toISOString(),
