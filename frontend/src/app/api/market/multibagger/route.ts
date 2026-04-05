@@ -301,23 +301,45 @@ function validateData(
   return { valid: true, reason: null, coveragePct, confidence, source, fetchedAt: new Date().toISOString(), staleness: 'FRESH' };
 }
 
-// ── Peer normalization ────────────────────────────────────────────────────────
-// Scores a raw metric value relative to sector benchmarks [median, good, excellent]
-// Returns 0-100 where 50=sector median, 75=good, 90=excellent
-function peerNormalize(value: number, benchmarks: number[], inverted = false): number {
-  const [median, good, excellent] = benchmarks;
-  const v = inverted ? -value : value;
-  const bm = inverted ? [-median, -good, -excellent] : benchmarks;
-  if (v >= bm[2]) return Math.min(100, 88 + Math.min(12, (v - bm[2]) * 0.5));
-  if (v >= bm[1]) return 72 + ((v - bm[1]) / (bm[2] - bm[1])) * 16;
-  if (v >= bm[0]) return 50 + ((v - bm[0]) / (bm[1] - bm[0])) * 22;
-  if (v >= bm[0] * 0.6) return 30 + ((v - bm[0] * 0.6) / (bm[0] * 0.4)) * 20;
-  return Math.max(0, 15 + (v / (bm[0] * 0.6)) * 15);
+// ── Safe arithmetic helpers ───────────────────────────────────────────────────
+function safeNum(v: unknown, fallback = 0): number {
+  if (typeof v !== 'number' || !isFinite(v) || isNaN(v)) return fallback;
+  return v;
+}
+function clamp(v: number, lo = 0, hi = 100): number {
+  return Math.max(lo, Math.min(hi, isFinite(v) ? v : lo));
 }
 
-function peerPercentile(value: number, benchmarks: number[], inverted = false): number {
-  const score = peerNormalize(value, benchmarks, inverted);
-  return Math.round(score);
+// ── Peer normalization ────────────────────────────────────────────────────────
+// Scores a raw metric relative to sector benchmarks [low_threshold, mid_threshold, high_threshold].
+// For normal metrics (higher = better): low=25th pct, mid=50th, high=75th.
+// For inverted metrics (lower = better, like D/E): pass the same LOW/MID/HIGH thresholds
+//   and set inverted=true — internally we flip the comparison so low D/E → high score.
+// Returns 0-100 where ≤20 = poor, 50 = sector median, 75 = good, 90+ = excellent.
+function peerNormalize(value: number, thresholds: number[], inverted = false): number {
+  if (!isFinite(value) || isNaN(value)) return 50; // missing data → neutral
+  const [lo, mid, hi] = thresholds.map(safeNum);
+  if (lo === mid || mid === hi) return 50; // degenerate benchmarks
+
+  if (!inverted) {
+    // Higher value = better score
+    if (value >= hi)  return clamp(88 + Math.min(12, (value - hi) * 0.5));
+    if (value >= mid) return clamp(72 + ((value - mid) / (hi - mid)) * 16);
+    if (value >= lo)  return clamp(50 + ((value - lo) / (mid - lo)) * 22);
+    if (value >= lo * 0.5) return clamp(28 + ((value - lo * 0.5) / (lo * 0.5)) * 22);
+    return clamp(Math.max(0, (value / (lo * 0.5)) * 28));
+  } else {
+    // Lower value = better score (D/E, pledging, drawdown etc.)
+    // Thresholds given as [comfortable, moderate, tight] meaning [low danger, moderate danger, high danger]
+    if (value <= lo)  return clamp(88 + Math.min(12, (lo - value) * 2));
+    if (value <= mid) return clamp(72 - ((value - lo) / (mid - lo)) * 22);
+    if (value <= hi)  return clamp(50 - ((value - mid) / (hi - mid)) * 22);
+    return clamp(Math.max(0, 28 - ((value - hi) / hi) * 28));
+  }
+}
+
+function peerPercentile(value: number, thresholds: number[], inverted = false): number {
+  return Math.round(clamp(peerNormalize(value, thresholds, inverted)));
 }
 
 // Signal from score
@@ -407,8 +429,11 @@ function buildCriteria(
     weight: number,
     insight: string
   ): void => {
-    const score = scoreRaw !== null ? Math.round(Math.min(100, Math.max(0, scoreRaw))) : 50;
-    criteria.push({ id, label, pillar, rawValue, rawDisplay, sectorPercentile, score, signal: sig(score), weight, insight, dataAvailable: rawValue !== null });
+    // Sanitize: NaN / Infinity → neutral 50 to avoid JSON serialization issues
+    const rawScore = scoreRaw !== null && isFinite(scoreRaw) && !isNaN(scoreRaw) ? scoreRaw : 50;
+    const score = Math.round(clamp(rawScore));
+    const pct = sectorPercentile !== null && isFinite(sectorPercentile) ? Math.round(clamp(sectorPercentile)) : null;
+    criteria.push({ id, label, pillar, rawValue, rawDisplay, sectorPercentile: pct, score, signal: sig(score), weight, insight, dataAvailable: rawValue !== null });
   };
 
   // ── QUALITY PILLAR ────────────────────────────────────────────────────────
@@ -449,7 +474,7 @@ function buildCriteria(
   let capAllocScore: number;
   if (roce !== null || screener.de !== null) {
     const roceContrib = roce !== null ? peerNormalize(roce, benchmarks.roce) * 0.4 : 22;
-    const deContrib   = screener.de !== null ? peerNormalize(screener.de, [1.5, 0.7, 0.2], true) * 0.35 : 17;
+    const deContrib   = screener.de !== null ? peerNormalize(screener.de, [0.5, 1.2, 2.5], true) * 0.35 : 17;
     const cfoContrib  = cfoPos === true ? 25 : cfoPos === false ? 5 : 12;
     capAllocScore = roceContrib + deContrib + cfoContrib;
   } else { capAllocScore = 45; }
@@ -489,8 +514,8 @@ function buildCriteria(
   // ── FINANCIAL STRENGTH PILLAR ─────────────────────────────────────────────
   const de = screener.de;
   if (de !== null) {
-    // Lower D/E = better, so inverted
-    const s = peerNormalize(de, [1.5, 0.7, 0.2], true);
+    // Lower D/E = better, so inverted. Thresholds: [comfortable, moderate, stretched]
+    const s = peerNormalize(de, [0.5, 1.2, 2.5], true);
     c('de_ratio', 'Debt-to-Equity', 'FIN_STRENGTH', de, `${de.toFixed(2)}x`, s, null, 10,
       de <= 0.3 ? 'Near debt-free — financial fortress' : de <= 0.7 ? 'Conservative leverage' : de <= 1.5 ? 'Manageable debt — monitor trend' : de <= 3 ? 'High debt — limits compounding' : 'Dangerous leverage — restructuring risk');
   } else {
@@ -623,129 +648,162 @@ function compositeScore(pillars: PillarScore[]): number {
   return Math.round(total);
 }
 
+// ── Sanitize output to ensure no NaN/Infinity in JSON ───────────────────────
+function sanitizeForJSON(obj: unknown): unknown {
+  if (typeof obj === 'number') return isFinite(obj) && !isNaN(obj) ? obj : null;
+  if (Array.isArray(obj)) return obj.map(sanitizeForJSON);
+  if (obj && typeof obj === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      out[k] = sanitizeForJSON(v);
+    }
+    return out;
+  }
+  return obj;
+}
+
 // ── Main GET handler ──────────────────────────────────────────────────────────
 export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const portfolioRaw = searchParams.get('portfolio') || '';
-  const watchlistRaw = searchParams.get('watchlist') || '';
-  const debug = searchParams.get('debug') === '1';
-  const debugSymbol = (searchParams.get('debugSymbol') || '').toUpperCase();
+  try {
+    const { searchParams } = new URL(request.url);
+    const portfolioRaw = searchParams.get('portfolio') || '';
+    const watchlistRaw = searchParams.get('watchlist') || '';
+    const debug = searchParams.get('debug') === '1';
+    const debugSymbol = (searchParams.get('debugSymbol') || '').toUpperCase();
 
-  const portfolio = portfolioRaw ? portfolioRaw.split(',').map(s => s.trim().toUpperCase()).filter(s => s.length >= 2) : [];
-  const watchlist = watchlistRaw ? watchlistRaw.split(',').map(s => s.trim().toUpperCase()).filter(s => s.length >= 2) : [];
-  const allSymbols = Array.from(new Set([...portfolio, ...watchlist]));
+    const portfolio = portfolioRaw ? portfolioRaw.split(',').map(s => s.trim().toUpperCase()).filter(s => s.length >= 2) : [];
+    const watchlist = watchlistRaw ? watchlistRaw.split(',').map(s => s.trim().toUpperCase()).filter(s => s.length >= 2) : [];
+    const allSymbols = Array.from(new Set([...portfolio, ...watchlist]));
 
-  if (allSymbols.length === 0) {
-    return NextResponse.json({ results: [], message: 'Add companies to your portfolio or watchlist to see multibagger analysis.' });
-  }
-
-  const results: MultibaggerResult[] = [];
-
-  // Process in batches of 3 to avoid rate limits
-  const BATCH = 3;
-  for (let i = 0; i < allSymbols.length; i += BATCH) {
-    const batch = allSymbols.slice(i, i + BATCH);
-    const batchOut = await Promise.all(batch.map(async (symbol) => {
-      const errors: string[] = [];
-
-      const [scrResult, nseResult] = await Promise.all([
-        fetchScreenerData(symbol).catch((): { data: Record<string, any>; ok: boolean; url: string } => ({ data: {}, ok: false, url: '' })),
-        fetchNSEData(symbol).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
-      ]);
-
-      const screener: Record<string, any> = scrResult.data;
-      const nse: Record<string, any>      = nseResult.data;
-
-      // Resolve company name and sector
-      const company = nse.companyName || screener.companyName || symbol;
-      const rawSector = nse.sector || screener.sector || '';
-      const sector = rawSector || 'Unknown';
-
-      // Data quality gate
-      const quality = validateData(symbol, company, sector, screener, nse, scrResult.ok, nseResult.ok);
-      if (!quality.valid) {
-        return {
-          symbol, company, sector,
-          sectorGroup: 'UNKNOWN',
-          lastPrice: null, marketCapCr: null,
-          overallScore: 0, grade: 'NR' as Grade,
-          pillars: [], criteria: [],
-          redFlags: [{ id: 'data_fail', label: 'Data Validation Failed', severity: 'CRITICAL' as const, detail: quality.reason || 'Could not resolve company data' }],
-          quality, isPortfolio: portfolio.includes(symbol), isWatchlist: watchlist.includes(symbol),
-          errors: [quality.reason || 'Data validation failed'],
-        } satisfies MultibaggerResult;
-      }
-
-      const sectorGroup = getSectorGroup(sector);
-      const benchmarks  = SECTOR_BENCHMARKS[sectorGroup] || SECTOR_BENCHMARKS.OTHER;
-
-      // Score
-      const criteria = buildCriteria(screener, nse, sectorGroup, benchmarks);
-      const pillars   = buildPillars(criteria);
-      const rawScore  = compositeScore(pillars);
-      const redFlags  = detectRedFlags(screener, nse);
-      const grade     = computeGrade(rawScore, redFlags);
-      const mcap      = (screener.marketCapCr && screener.marketCapCr > 0) ? screener.marketCapCr : (nse.marketCapCr && nse.marketCapCr > 0 ? nse.marketCapCr : null);
-
-      // Apply confidence penalty to score
-      const confPenalty = quality.confidence === 'LOW' ? 5 : quality.confidence === 'VERY_LOW' ? 12 : 0;
-      const overallScore = Math.max(0, rawScore - confPenalty);
-
-      // Debug output for one symbol
-      const debugOut = (debug || symbol === debugSymbol) ? {
-        rawMetrics: { ...screener, ...nse },
-        sectorGroup, benchmarks,
-        criteriaScores: criteria.map(c => ({ id: c.id, pillar: c.pillar, rawValue: c.rawValue, percentile: c.sectorPercentile, score: c.score })),
-        pillarScores: pillars.map(p => ({ id: p.id, score: p.score, weight: p.weight, coverage: p.coverage })),
-        rawComposite: rawScore, confPenalty, overallScore, redFlagCount: redFlags.length,
-      } : undefined;
-
-      return {
-        symbol,
-        company,
-        sector,
-        sectorGroup,
-        lastPrice: nse.lastPrice ?? null,
-        marketCapCr: mcap,
-        overallScore,
-        grade,
-        pillars,
-        criteria,
-        redFlags,
-        quality,
-        isPortfolio: portfolio.includes(symbol),
-        isWatchlist: watchlist.includes(symbol),
-        ...(debugOut ? { _debug: debugOut } : {}),
-        errors,
-      } satisfies MultibaggerResult;
-    }));
-    results.push(...batchOut);
-  }
-
-  // Sort: valid first, then portfolio, then by score
-  results.sort((a, b) => {
-    if (a.quality.valid !== b.quality.valid) return a.quality.valid ? -1 : 1;
-    if (a.isPortfolio && !b.isPortfolio) return -1;
-    if (!a.isPortfolio && b.isPortfolio) return 1;
-    return b.overallScore - a.overallScore;
-  });
-
-  const validResults = results.filter(r => r.quality.valid);
-  const topScore = validResults[0]?.overallScore ?? 0;
-  const avgScore = validResults.length > 0 ? Math.round(validResults.reduce((a, r) => a + r.overallScore, 0) / validResults.length) : 0;
-
-  return NextResponse.json({
-    results,
-    meta: {
-      total: results.length,
-      valid: validResults.length,
-      portfolio: portfolio.length,
-      watchlist: watchlist.length,
-      topScore,
-      avgScore,
-      topPicks: validResults.filter(r => r.grade === 'A+' || r.grade === 'A').length,
-      computedAt: new Date().toISOString(),
-      methodology: '5-Pillar: Quality(30%) · Growth(25%) · FinStrength(20%) · Valuation(15%) · Market(10%) · Peer-normalized by sector',
+    if (allSymbols.length === 0) {
+      return NextResponse.json({ results: [], message: 'Add companies to your portfolio or watchlist to see multibagger analysis.' });
     }
-  });
+
+    const results: MultibaggerResult[] = [];
+
+    // Process in batches of 3 to avoid rate limits
+    const BATCH = 3;
+    for (let i = 0; i < allSymbols.length; i += BATCH) {
+      const batch = allSymbols.slice(i, i + BATCH);
+      const batchOut = await Promise.all(batch.map(async (symbol): Promise<MultibaggerResult> => {
+        try {
+          const errors: string[] = [];
+
+          const [scrResult, nseResult] = await Promise.all([
+            fetchScreenerData(symbol).catch((): { data: Record<string, any>; ok: boolean; url: string } => ({ data: {}, ok: false, url: '' })),
+            fetchNSEData(symbol).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
+          ]);
+
+          const screener: Record<string, any> = scrResult.data || {};
+          const nse: Record<string, any>      = nseResult.data || {};
+
+          // Resolve company name and sector
+          const company   = String(nse.companyName || screener.companyName || symbol);
+          const rawSector = String(nse.sector || screener.sector || '');
+          const sector    = rawSector || 'Unknown';
+
+          // Data quality gate
+          const quality = validateData(symbol, company, sector, screener, nse, scrResult.ok, nseResult.ok);
+          if (!quality.valid) {
+            return {
+              symbol, company, sector,
+              sectorGroup: 'UNKNOWN',
+              lastPrice: null, marketCapCr: null,
+              overallScore: 0, grade: 'NR' as Grade,
+              pillars: [], criteria: [],
+              redFlags: [{ id: 'data_fail', label: 'Data Validation Failed', severity: 'CRITICAL', detail: quality.reason || 'Could not resolve company data' }],
+              quality, isPortfolio: portfolio.includes(symbol), isWatchlist: watchlist.includes(symbol),
+              errors: [quality.reason || 'Data validation failed'],
+            };
+          }
+
+          const sectorGroup = getSectorGroup(sector);
+          const benchmarks  = SECTOR_BENCHMARKS[sectorGroup] || SECTOR_BENCHMARKS.OTHER;
+
+          // Score
+          const criteria   = buildCriteria(screener, nse, sectorGroup, benchmarks);
+          const pillars     = buildPillars(criteria);
+          const rawScore    = compositeScore(pillars);
+          const redFlags    = detectRedFlags(screener, nse);
+          const grade       = computeGrade(rawScore, redFlags);
+          const mcap        = (screener.marketCapCr && screener.marketCapCr > 0) ? screener.marketCapCr
+                            : (nse.marketCapCr && nse.marketCapCr > 0 ? nse.marketCapCr : null);
+          const confPenalty = quality.confidence === 'LOW' ? 5 : quality.confidence === 'VERY_LOW' ? 12 : 0;
+          const overallScore = Math.max(0, isFinite(rawScore) ? rawScore - confPenalty : 0);
+          const lastPrice   = (nse.lastPrice && isFinite(nse.lastPrice)) ? nse.lastPrice : null;
+
+          const debugOut = (debug || symbol === debugSymbol) ? {
+            sectorGroup, benchmarks,
+            criteriaScores: criteria.map(c => ({ id: c.id, pillar: c.pillar, rawValue: c.rawValue, percentile: c.sectorPercentile, score: c.score })),
+            pillarScores: pillars.map(p => ({ id: p.id, score: p.score, weight: p.weight, coverage: p.coverage })),
+            rawComposite: rawScore, confPenalty, overallScore, redFlagCount: redFlags.length,
+          } : undefined;
+
+          return {
+            symbol, company, sector, sectorGroup,
+            lastPrice, marketCapCr: mcap,
+            overallScore, grade,
+            pillars, criteria, redFlags, quality,
+            isPortfolio: portfolio.includes(symbol),
+            isWatchlist: watchlist.includes(symbol),
+            ...(debugOut ? { _debug: debugOut } : {}),
+            errors,
+          };
+        } catch (symbolErr: unknown) {
+          // Per-symbol error — return degraded result instead of crashing
+          const errMsg = symbolErr instanceof Error ? symbolErr.message : String(symbolErr);
+          return {
+            symbol, company: symbol, sector: 'Unknown', sectorGroup: 'UNKNOWN',
+            lastPrice: null, marketCapCr: null,
+            overallScore: 0, grade: 'NR' as Grade,
+            pillars: [], criteria: [],
+            redFlags: [{ id: 'symbol_error', label: 'Processing Error', severity: 'CRITICAL', detail: errMsg }],
+            quality: { valid: false, reason: `Error: ${errMsg}`, coveragePct: 0, confidence: 'VERY_LOW', source: 'none', fetchedAt: new Date().toISOString(), staleness: 'UNKNOWN' },
+            isPortfolio: portfolio.includes(symbol), isWatchlist: watchlist.includes(symbol),
+            errors: [errMsg],
+          };
+        }
+      }));
+      results.push(...batchOut);
+    }
+
+    // Sort: valid first, then portfolio, then by score
+    results.sort((a, b) => {
+      if (a.quality.valid !== b.quality.valid) return a.quality.valid ? -1 : 1;
+      if (a.isPortfolio && !b.isPortfolio) return -1;
+      if (!a.isPortfolio && b.isPortfolio) return 1;
+      return b.overallScore - a.overallScore;
+    });
+
+    const validResults = results.filter(r => r.quality.valid);
+    const topScore = validResults[0]?.overallScore ?? 0;
+    const avgScore = validResults.length > 0
+      ? Math.round(validResults.reduce((a, r) => a + (isFinite(r.overallScore) ? r.overallScore : 0), 0) / validResults.length)
+      : 0;
+
+    const payload = {
+      results,
+      meta: {
+        total: results.length,
+        valid: validResults.length,
+        portfolio: portfolio.length,
+        watchlist: watchlist.length,
+        topScore, avgScore,
+        topPicks: validResults.filter(r => r.grade === 'A+' || r.grade === 'A').length,
+        computedAt: new Date().toISOString(),
+        methodology: '5-Pillar: Quality(30%) · Growth(25%) · FinStrength(20%) · Valuation(15%) · Market(10%) · Peer-normalized by sector',
+      }
+    };
+
+    // Sanitize to ensure no NaN/Infinity escapes into JSON
+    return NextResponse.json(sanitizeForJSON(payload));
+
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[Multibagger] Fatal error:', msg);
+    return NextResponse.json(
+      { results: [], error: msg, message: 'Internal error — please retry' },
+      { status: 500 }
+    );
+  }
 }
