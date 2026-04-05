@@ -11,6 +11,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { fetchStockQuote, fetchCompanyFinancialResults, fetchPriceWithFallback } from '@/lib/nse';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
@@ -254,37 +255,179 @@ function parseScreenerHTML(html: string, symbol: string): Record<string, any> {
   return d;
 }
 
-// ── NSE Quote fetcher ─────────────────────────────────────────────────────────
+// ── NSE Quote fetcher (cookie-based via nse.ts library) ───────────────────────
 async function fetchNSEData(symbol: string): Promise<{ data: Record<string, any>; ok: boolean }> {
   try {
-    // Try NSE equity quote
-    const resp = await fetch(`https://www.nseindia.com/api/quote-equity?symbol=${encodeURIComponent(symbol)}`, {
-      headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json', 'Referer': 'https://www.nseindia.com/' },
-      signal: AbortSignal.timeout(7000),
+    // Primary: NSE cookie-based fetch (handles cookie refresh + retry)
+    const json = await fetchStockQuote(symbol);
+    if (json) {
+      const info = json?.priceInfo || {};
+      const meta = json?.metadata || {};
+      const secInfo = json?.securityInfo || {};
+      const h52  = info?.weekHighLow?.max ?? info['52WeekHigh'];
+      const l52  = info?.weekHighLow?.min ?? info['52WeekLow'];
+      const lp   = info.lastPrice;
+      if (lp && lp > 0) {
+        return {
+          ok: true,
+          data: {
+            lastPrice:   lp,
+            high52:      h52 ?? null,
+            low52:       l52 ?? null,
+            pctFrom52H:  (h52 && lp) ? ((lp / h52) - 1) * 100 : null,
+            pctFrom52L:  (l52 && lp) ? ((lp - l52) / l52) * 100 : null,
+            pChange:     info.pChange ?? null,
+            volume:      info.totalTradedVolume ?? null,
+            sector:      meta.industry ?? meta.sector ?? null,
+            companyName: meta.companyName ?? null,
+            series:      meta.series ?? null,
+            marketCapCr: secInfo.issuedSize && lp ? Math.round((secInfo.issuedSize * lp) / 10000000) : null,
+            pe:          json?.priceInfo?.pe ?? null,
+            faceValue:   secInfo.faceValue ?? null,
+          }
+        };
+      }
+    }
+  } catch {}
+
+  // Fallback: fetchPriceWithFallback (NSE → BSE → MoneyControl → Redis)
+  try {
+    const priceData = await fetchPriceWithFallback(symbol);
+    if (priceData.price && priceData.price > 0) {
+      return {
+        ok: true,
+        data: {
+          lastPrice: priceData.price,
+          high52: null, low52: null,
+          pctFrom52H: null, pctFrom52L: null,
+          pChange: null, volume: null,
+          sector: null, companyName: null,
+          series: null, marketCapCr: null,
+          _priceSource: priceData.source,
+        }
+      };
+    }
+  } catch {}
+
+  return { data: {}, ok: false };
+}
+
+// ── NSE Financial Results fetcher — fundamental data fallback ─────────────────
+async function fetchNSEFinancials(symbol: string): Promise<Record<string, any>> {
+  try {
+    const results = await fetchCompanyFinancialResults(symbol);
+    if (!results) return {};
+    // Financial results come as array of quarterly results
+    const rows = Array.isArray(results) ? results : results?.results || results?.data || [];
+    if (!rows.length) return {};
+    // Sort by date descending, take latest
+    const sorted = rows.sort((a: any, b: any) => {
+      const da = new Date(a.re_broadcastDate || a.broadcastDate || a.period || '').getTime();
+      const db = new Date(b.re_broadcastDate || b.broadcastDate || b.period || '').getTime();
+      return (isNaN(db) ? 0 : db) - (isNaN(da) ? 0 : da);
+    });
+    const latest = sorted[0] || {};
+    const prev = sorted[1] || {};
+
+    const revenue = parseFloat(latest.income || latest.turnover || '0');
+    const profit  = parseFloat(latest.netProfit || latest.proLossAftTax || '0');
+    const eps     = parseFloat(latest.reDilEPS || latest.dilutedEps || latest.eps || '0');
+    const prevRev = parseFloat(prev.income || prev.turnover || '0');
+    const prevProfit = parseFloat(prev.netProfit || prev.proLossAftTax || '0');
+
+    const d: Record<string, any> = {};
+    if (revenue > 0 && prevRev > 0) {
+      d.revenueGrowthQoQ = ((revenue - prevRev) / prevRev) * 100;
+    }
+    if (profit > 0 && revenue > 0) {
+      d.npm = (profit / revenue) * 100;
+    }
+    if (eps > 0) d.eps = eps;
+    if (profit > 0 && prevProfit > 0) {
+      d.profitGrowthQoQ = ((profit - prevProfit) / prevProfit) * 100;
+    }
+    // Also store raw values for reference
+    d._revenue = revenue;
+    d._netProfit = profit;
+    d._quarter = latest.period || latest.broadcastDate || '';
+    return d;
+  } catch { return {}; }
+}
+
+// ── Yahoo Finance fallback for fundamental data ──────────────────────────────
+async function fetchYahooData(symbol: string): Promise<{ data: Record<string, any>; ok: boolean }> {
+  try {
+    // Yahoo uses .NS suffix for NSE symbols
+    const yahooSymbol = `${symbol}.NS`;
+    const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(yahooSymbol)}?modules=defaultKeyStatistics,financialData,summaryDetail,price`;
+    const resp = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MarketCockpit/2.0)' },
+      signal: AbortSignal.timeout(8000),
     });
     if (!resp.ok) return { data: {}, ok: false };
     const json = await resp.json();
-    const info = json?.priceInfo || {};
-    const meta = json?.metadata || {};
-    const h52  = info['52WeekHigh'] as number | undefined;
-    const l52  = info['52WeekLow'] as number | undefined;
-    const lp   = info.lastPrice as number | undefined;
-    return {
-      ok: true,
-      data: {
-        lastPrice:   lp ?? null,
-        high52:      h52 ?? null,
-        low52:       l52 ?? null,
-        pctFrom52H:  (h52 && lp) ? ((lp / h52) - 1) * 100 : null,   // negative = below high
-        pctFrom52L:  (l52 && lp) ? ((lp - l52) / l52) * 100 : null,
-        pChange:     info.pChange ?? null,
-        volume:      info.totalTradedVolume ?? null,
-        sector:      meta.industry ?? meta.sector ?? null,
-        companyName: meta.companyName ?? null,
-        series:      meta.series ?? null,
-        marketCapCr: meta.marketCap ?? null,
-      }
-    };
+    const result = json?.quoteSummary?.result?.[0];
+    if (!result) return { data: {}, ok: false };
+
+    const keyStats = result.defaultKeyStatistics || {};
+    const fin = result.financialData || {};
+    const summary = result.summaryDetail || {};
+    const price = result.price || {};
+
+    const d: Record<string, any> = {};
+    d.pe = summary.trailingPE?.raw ?? null;
+    d.roe = fin.returnOnEquity?.raw ? fin.returnOnEquity.raw * 100 : null;
+    d.de = fin.debtToEquity?.raw ? fin.debtToEquity.raw / 100 : null; // Yahoo returns as %, we need ratio
+    d.currentRatio = fin.currentRatio?.raw ?? null;
+    d.opm = fin.operatingMargins?.raw ? fin.operatingMargins.raw * 100 : null;
+    d.npm = fin.profitMargins?.raw ? fin.profitMargins.raw * 100 : null;
+    d.bookValue = keyStats.bookValue?.raw ?? null;
+    d.priceToBook = keyStats.priceToBook?.raw ?? summary.priceToBook?.raw ?? null;
+    d.eps = keyStats.trailingEps?.raw ?? null;
+    d.dividendYield = summary.dividendYield?.raw ? summary.dividendYield.raw * 100 : null;
+    d.marketCapCr = price.marketCap?.raw ? Math.round(price.marketCap.raw / 10000000) : null;
+    d.revenueGrowthYoY = fin.revenueGrowth?.raw ? fin.revenueGrowth.raw * 100 : null;
+    d.sector = price.sector || null;
+    d.companyName = price.longName || price.shortName || null;
+    // Beta as proxy for momentum
+    d.beta = keyStats.beta?.raw ?? null;
+    d._source = 'yahoo';
+
+    return { data: d, ok: true };
+  } catch { return { data: {}, ok: false }; }
+}
+
+// ── Google Finance fallback for basic data ───────────────────────────────────
+async function fetchGoogleFinanceData(symbol: string): Promise<{ data: Record<string, any>; ok: boolean }> {
+  try {
+    const url = `https://www.google.com/finance/quote/${encodeURIComponent(symbol)}:NSE`;
+    const resp = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36', 'Accept': 'text/html' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!resp.ok) return { data: {}, ok: false };
+    const html = await resp.text();
+    if (html.length < 2000) return { data: {}, ok: false };
+
+    const d: Record<string, any> = {};
+    // Extract P/E from Google Finance page
+    const peMatch = html.match(/P\/E ratio[\s\S]{0,200}?>([\d.]+)</);
+    if (peMatch) d.pe = parseFloat(peMatch[1]) || null;
+    // Market cap
+    const mcapMatch = html.match(/Market cap[\s\S]{0,200}?>([\d,.]+[TBMK]?)</);
+    if (mcapMatch) {
+      const raw = mcapMatch[1].replace(/,/g, '');
+      let val = parseFloat(raw);
+      if (raw.endsWith('T')) val *= 100000; // T in INR = lakh Cr → Cr
+      else if (raw.endsWith('B')) val *= 100; // Billion INR → Cr
+      d.marketCapCr = val > 0 ? Math.round(val) : null;
+    }
+    // Dividend yield
+    const divMatch = html.match(/Dividend yield[\s\S]{0,200}?>([\d.]+)%/);
+    if (divMatch) d.dividendYield = parseFloat(divMatch[1]) || null;
+
+    d._source = 'google';
+    return { data: d, ok: Object.keys(d).filter(k => !k.startsWith('_')).length > 0 };
   } catch { return { data: {}, ok: false }; }
 }
 
@@ -305,10 +448,14 @@ function validateData(
 
   // Hard-fail conditions
   if (!symbol || symbol.length < 2) return { valid: false, reason: 'Invalid symbol', coveragePct: 0, confidence: 'VERY_LOW', source: 'none', fetchedAt: new Date().toISOString(), staleness: 'UNKNOWN' };
-  if (!sector || sector.length < 3 || sector === 'Unknown') return { valid: false, reason: 'Symbol did not resolve to a company', coveragePct, confidence: 'VERY_LOW', source: 'none', fetchedAt: new Date().toISOString(), staleness: 'UNKNOWN' };
+  // Sector check: warn but don't hard-fail if we have a price (Yahoo/Google may provide sector later)
+  if ((!sector || sector.length < 3 || sector === 'Unknown') && (!nse.lastPrice || nse.lastPrice <= 0)) {
+    return { valid: false, reason: 'Symbol did not resolve to a company', coveragePct, confidence: 'VERY_LOW', source: 'none', fetchedAt: new Date().toISOString(), staleness: 'UNKNOWN' };
+  }
   if (!nse.lastPrice || nse.lastPrice <= 0) return { valid: false, reason: 'Invalid or zero price — symbol may be delisted or mapping error', coveragePct, confidence: 'VERY_LOW', source: screenerOk ? 'partial' : 'none', fetchedAt: new Date().toISOString(), staleness: 'UNKNOWN' };
 
   const source: DataQuality['source'] = screenerOk && nseOk ? 'screener.in + NSE' : nseOk ? 'NSE only' : screenerOk ? 'partial' : 'none';
+  // Note: screenerOk here means "any fundamental source" (screener.in OR Yahoo OR NSE financials)
   const confidence: DataQuality['confidence'] = coveragePct >= 75 ? 'HIGH' : coveragePct >= 50 ? 'MEDIUM' : coveragePct >= 30 ? 'LOW' : 'VERY_LOW';
 
   return { valid: true, reason: null, coveragePct, confidence, source, fetchedAt: new Date().toISOString(), staleness: 'FRESH' };
@@ -704,21 +851,69 @@ export async function GET(request: NextRequest) {
         try {
           const errors: string[] = [];
 
-          const [scrResult, nseResult] = await Promise.all([
+          // ── Multi-source data fetching with fallback chain ──
+          // Priority: screener.in → Yahoo Finance → Google Finance for fundamentals
+          // Priority: NSE (cookie) → BSE → MoneyControl for quotes
+          // Priority: NSE Financial Results for quarterly data
+          const [scrResult, nseResult, yahooResult, nseFinResult, googleResult] = await Promise.all([
             fetchScreenerData(symbol).catch((): { data: Record<string, any>; ok: boolean; url: string } => ({ data: {}, ok: false, url: '' })),
             fetchNSEData(symbol).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
+            fetchYahooData(symbol).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
+            fetchNSEFinancials(symbol).catch((): Record<string, any> => ({})),
+            fetchGoogleFinanceData(symbol).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
           ]);
 
+          // Merge data: screener is primary, Yahoo is secondary, Google tertiary, NSE financials quaternary
           const screener: Record<string, any> = scrResult.data || {};
           const nse: Record<string, any>      = nseResult.data || {};
+          const yahoo: Record<string, any>    = yahooResult.data || {};
+          const nseFin: Record<string, any>   = nseFinResult || {};
+          const google: Record<string, any>   = googleResult.data || {};
+
+          // Fill screener gaps with Yahoo data
+          if (!scrResult.ok && yahooResult.ok) {
+            const yahooKeys = ['pe', 'roe', 'de', 'opm', 'npm', 'bookValue', 'priceToBook', 'eps',
+              'dividendYield', 'currentRatio', 'marketCapCr', 'revenueGrowthYoY'];
+            for (const k of yahooKeys) {
+              if ((screener[k] === null || screener[k] === undefined) && yahoo[k] !== null && yahoo[k] !== undefined) {
+                screener[k] = yahoo[k];
+              }
+            }
+          }
+
+          // Fill gaps with Google Finance
+          if (googleResult.ok) {
+            if (!screener.pe && google.pe) screener.pe = google.pe;
+            if (!screener.marketCapCr && google.marketCapCr) screener.marketCapCr = google.marketCapCr;
+            if (!screener.dividendYield && google.dividendYield) screener.dividendYield = google.dividendYield;
+          }
+
+          // Fill remaining gaps with NSE financial results
+          if (nseFin.eps && !screener.eps) screener.eps = nseFin.eps;
+          if (nseFin.npm !== undefined && !screener.npm) screener.npm = nseFin.npm;
+          if (nseFin.revenueGrowthQoQ !== undefined && !screener.revenueGrowthQoQ) screener.revenueGrowthQoQ = nseFin.revenueGrowthQoQ;
+          if (nseFin.profitGrowthQoQ !== undefined && !screener.profitCagr5yr) {
+            // Use QoQ profit growth as a partial proxy
+            screener._profitGrowthQoQ = nseFin.profitGrowthQoQ;
+          }
+
+          // Fill NSE gaps with Yahoo (sector, company name)
+          if (!nse.sector && yahoo.sector) nse.sector = yahoo.sector;
+          if (!nse.companyName && yahoo.companyName) nse.companyName = yahoo.companyName;
+          if (!nse.marketCapCr && yahoo.marketCapCr) nse.marketCapCr = yahoo.marketCapCr;
+          if (!screener.marketCapCr && yahoo.marketCapCr) screener.marketCapCr = yahoo.marketCapCr;
+
+          // Use NSE P/E if screener didn't get it
+          if (!screener.pe && nse.pe) screener.pe = nse.pe;
 
           // Resolve company name and sector
-          const company   = String(nse.companyName || screener.companyName || symbol);
-          const rawSector = String(nse.sector || screener.sector || '');
+          const company   = String(nse.companyName || yahoo.companyName || screener.companyName || symbol);
+          const rawSector = String(nse.sector || yahoo.sector || screener.sector || '');
           const sector    = rawSector || 'Unknown';
 
-          // Data quality gate
-          const quality = validateData(symbol, company, sector, screener, nse, scrResult.ok, nseResult.ok);
+          // Data quality gate — any source counts as data
+          const anyFundamentalData = scrResult.ok || yahooResult.ok || googleResult.ok || Object.keys(nseFin).length > 0;
+          const quality = validateData(symbol, company, sector, screener, nse, anyFundamentalData, nseResult.ok);
           if (!quality.valid) {
             return {
               symbol, company, sector,

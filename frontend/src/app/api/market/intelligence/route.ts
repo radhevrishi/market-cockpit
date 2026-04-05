@@ -1480,7 +1480,8 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               s.materialityScore = Math.min(100, Math.round(ecoImpact + evtW + confW + mgmtW + recW));
 
               // Governance materiality ladder (with strategic vs routine classification)
-              if (s.signalClass === 'GOVERNANCE') {
+              // IMPORTANT: never override HIDDEN visibility set by governance hard block
+              if (s.signalClass === 'GOVERNANCE' && s.visibility !== 'HIDDEN') {
                 const govLevel = governanceMateriality(s.managementRole || 'Other');
                 const mgmtType = classifyMgmtChangeType(s);
                 if (mgmtType === 'ROUTINE') {
@@ -1496,9 +1497,9 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                   s.visibility = 'VISIBLE';
                 }
               } else if (s.signalClass === 'COMPLIANCE') {
-                s.visibility = 'DIMMED';
+                if (s.visibility !== 'HIDDEN') s.visibility = 'DIMMED';
               } else {
-                s.visibility = 'VISIBLE';
+                if (s.visibility !== 'HIDDEN') s.visibility = 'VISIBLE';
               }
 
               // ★ HARD GATING ★
@@ -1506,13 +1507,13 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               const isInferredSignal = s.inferenceUsed || s.confidenceType === 'HEURISTIC' || s.confidenceType === 'INFERRED';
               const isVerifiedSrc = s.confidenceType === 'ACTUAL' || s.sourceTier === 'VERIFIED';
 
-              // RULE 1: confidence < 60 → CANNOT be ACTIONABLE
-              if (confSc < 60) {
+              // RULE 1: confidence < 60 → CANNOT be ACTIONABLE (but never un-reject)
+              if (confSc < 60 && s.signalCategory !== 'REJECTED') {
                 s.signalCategory = 'MONITOR';
                 s.portfolioCritical = false;
               }
-              // RULE 2: inferred + confidence < 70 → max MONITOR
-              if (isInferredSignal && confSc < 70) {
+              // RULE 2: inferred + confidence < 70 → max MONITOR (but never un-reject)
+              if (isInferredSignal && confSc < 70 && s.signalCategory !== 'REJECTED') {
                 s.signalCategory = 'MONITOR';
                 s.portfolioCritical = false;
               }
@@ -1520,15 +1521,16 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               if (['Capex/Expansion', 'M&A', 'Order Win', 'Contract'].includes(s.eventType) && !isVerifiedSrc) {
                 s.materialityScore = Math.min(s.materialityScore, 55);
               }
-              // RULE 4: No impact % on ECONOMIC → not actionable
-              if ((s.impactPct || 0) === 0 && s.signalClass === 'ECONOMIC') {
+              // RULE 4: No impact % on ECONOMIC → not actionable (but never un-reject)
+              if ((s.impactPct || 0) === 0 && s.signalClass === 'ECONOMIC' && s.signalCategory !== 'REJECTED') {
                 s.signalCategory = 'MONITOR';
                 s.materialityScore = Math.min(s.materialityScore, 50);
               }
 
               // Verified signal recovery (strict: non-inferred + high confidence)
+              // NEVER recover HIDDEN/REJECTED signals — governance block is absolute
               const isKeyEvt = ['Guidance', 'Earnings', 'Order Win', 'Contract', 'Capex/Expansion', 'M&A'].includes(s.eventType);
-              if (isVerifiedSrc && isKeyEvt && !isInferredSignal) {
+              if (isVerifiedSrc && isKeyEvt && !isInferredSignal && s.visibility !== 'HIDDEN' && s.signalCategory !== 'REJECTED') {
                 s.materialityScore = Math.max(s.materialityScore, 55);
                 s.visibility = 'VISIBLE';
                 if (confSc >= 70 && Math.abs(s.impactPct || 0) > 3) {
