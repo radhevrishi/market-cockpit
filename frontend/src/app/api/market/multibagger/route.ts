@@ -439,6 +439,17 @@ async function fetchYahooData(symbol: string): Promise<{ data: Record<string, an
     d.dividendYield = summary.dividendYield?.raw ? summary.dividendYield.raw * 100 : null;
     d.marketCapCr = price.marketCap?.raw ? Math.round(price.marketCap.raw / 10000000) : null;
     d.revenueGrowthYoY = fin.revenueGrowth?.raw ? fin.revenueGrowth.raw * 100 : null;
+    // Derive ROCE: ROCE ≈ ROE * (1 - D/E / (1 + D/E)) ≈ ROA * (1 + D/E) simplified
+    // Better: use returnOnAssets if available
+    const roa = fin.returnOnAssets?.raw;
+    if (roa) {
+      d.roce = roa * 100; // ROA is a reasonable ROCE proxy
+    } else if (d.roe !== null && d.de !== null && d.de >= 0) {
+      // ROCE ≈ EBIT / Capital Employed ≈ ROE / (1 + D/E) * (1 + tax_adj)
+      d.roce = d.roe / (1 + d.de) * 1.3; // rough approximation with 30% tax adjustment
+    }
+    // Earnings growth from Yahoo
+    d.earningsGrowth = fin.earningsGrowth?.raw ? fin.earningsGrowth.raw * 100 : null;
     d.sector = price.sector || null;
     d.companyName = price.longName || price.shortName || null;
     // Beta as proxy for momentum
@@ -645,7 +656,10 @@ function buildCriteria(
     const rawScore = scoreRaw !== null && isFinite(scoreRaw) && !isNaN(scoreRaw) ? scoreRaw : 50;
     const score = Math.round(clamp(rawScore));
     const pct = sectorPercentile !== null && isFinite(sectorPercentile) ? Math.round(clamp(sectorPercentile)) : null;
-    criteria.push({ id, label, pillar, rawValue, rawDisplay, sectorPercentile: pct, score, signal: sig(score), weight, insight, dataAvailable: rawValue !== null });
+    // dataAvailable: true if rawValue is non-null, OR if we have a meaningful computed score (not a default/neutral value)
+    // Composite criteria (capital_alloc, fcf, sector_tail, moat, owner_op) pass null rawValue but still have real data
+    const hasData = rawValue !== null || (scoreRaw !== null && scoreRaw !== 45 && scoreRaw !== 50);
+    criteria.push({ id, label, pillar, rawValue, rawDisplay, sectorPercentile: pct, score, signal: sig(score), weight, insight, dataAvailable: hasData });
   };
 
   // ── QUALITY PILLAR ────────────────────────────────────────────────────────
@@ -738,7 +752,8 @@ function buildCriteria(
     const cfoContrib  = cfoPos === true ? 25 : cfoPos === false ? 5 : 12;
     capAllocScore = roceContrib + deContrib + cfoContrib;
   } else { capAllocScore = 45; }
-  c('capital_alloc', 'Capital Allocation', 'QUALITY', null, `ROCE ${safeFixed(roce, 0)}% · D/E ${safeFixed(screener.de, 2)} · CFO ${cfoPos === true ? '✓' : cfoPos === false ? '✗' : '?'}`, capAllocScore, null, 9,
+  const capAllocRaw = (roce !== null || screener.de !== null) ? capAllocScore : null;
+  c('capital_alloc', 'Capital Allocation', 'QUALITY', capAllocRaw, `ROCE ${safeFixed(roce, 0)}% · D/E ${safeFixed(screener.de, 2)} · CFO ${cfoPos === true ? '✓' : cfoPos === false ? '✗' : '?'}`, capAllocScore, null, 9,
     capAllocScore >= 78 ? 'Exemplary capital allocators — rare institutional quality' : capAllocScore >= 63 ? 'Good capital discipline' : 'Capital allocation needs improvement');
 
   // ── GROWTH PILLAR ─────────────────────────────────────────────────────────
@@ -867,7 +882,8 @@ function buildCriteria(
   if (cfoPos !== null && pe !== null) {
     fcfScore = cfoPos ? (pe <= benchmarks.pe[1] ? 80 : pe <= benchmarks.pe[2] ? 65 : 52) : 20;
   } else if (cfoPos === true) { fcfScore = 68; }
-  c('fcf', 'FCF Quality', 'VALUATION', null, cfoPos === true ? 'Positive' : cfoPos === false ? 'Negative' : 'N/A', fcfScore, null, 6,
+  const fcfRaw = (cfoPos !== null || pe !== null) ? fcfScore : null;
+  c('fcf', 'FCF Quality', 'VALUATION', fcfRaw, cfoPos === true ? 'Positive' : cfoPos === false ? 'Negative' : 'N/A', fcfScore, null, 6,
     fcfScore >= 75 ? 'Compounding engine confirmed — FCF supports valuation' : fcfScore <= 25 ? 'Cash-burning at current price — valuation risk elevated' : 'FCF quality moderate');
 
   // Market cap sweet spot (500Cr-15000Cr = highest multibagger probability)
@@ -895,7 +911,7 @@ function buildCriteria(
   const isSunrise = ['SUNRISE', 'TECHNOLOGY'].includes(sectorGroup);
   const isStable  = ['CONSUMER', 'PHARMA', 'BANKING_FIN'].includes(sectorGroup);
   const tailwindScore = isSunrise ? 86 : isStable ? 70 : 58;
-  c('sector_tail', 'Sector Tailwind', 'MARKET', null,
+  c('sector_tail', 'Sector Tailwind', 'MARKET', tailwindScore,
     isSunrise ? 'Sunrise/High-growth sector' : isStable ? 'Stable/Quality sector' : 'Cyclical/neutral sector',
     tailwindScore, null, 8,
     isSunrise ? 'Structural decade-long tailwind — policy and global demand behind this sector' : isStable ? 'Stable demand — consistent long-term compounder territory' : 'Sector-specific story — requires careful macro analysis');
@@ -1000,14 +1016,18 @@ export async function GET(request: NextRequest) {
           const nseFin: Record<string, any>   = nseFinResult || {};
           const google: Record<string, any>   = googleResult.data || {};
 
-          // Fill screener gaps with Yahoo data
-          if (!scrResult.ok && yahooResult.ok) {
+          // Fill screener gaps with Yahoo data (ALWAYS fill nulls, not just when screener fails)
+          if (yahooResult.ok) {
             const yahooKeys = ['pe', 'roe', 'de', 'opm', 'npm', 'bookValue', 'priceToBook', 'eps',
-              'dividendYield', 'currentRatio', 'marketCapCr', 'revenueGrowthYoY'];
+              'dividendYield', 'currentRatio', 'marketCapCr', 'revenueGrowthYoY', 'roce', 'earningsGrowth'];
             for (const k of yahooKeys) {
               if ((screener[k] === null || screener[k] === undefined) && yahoo[k] !== null && yahoo[k] !== undefined) {
                 screener[k] = yahoo[k];
               }
+            }
+            // Use Yahoo earningsGrowth as EPS growth proxy
+            if (!screener._epsGrowthYoY && yahoo.earningsGrowth) {
+              screener._epsGrowthYoY = yahoo.earningsGrowth;
             }
           }
 
