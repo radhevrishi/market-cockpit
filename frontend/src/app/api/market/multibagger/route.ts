@@ -82,6 +82,7 @@ interface MultibaggerResult {
   lastPrice: number | null;
   marketCapCr: number | null;
   overallScore: number;
+  scoreRange?: { low: number; high: number };
   grade: Grade;
   pillars: PillarScore[];
   criteria: CriterionDetail[];
@@ -320,36 +321,87 @@ async function fetchNSEFinancials(symbol: string): Promise<Record<string, any>> 
     // Financial results come as array of quarterly results
     const rows = Array.isArray(results) ? results : results?.results || results?.data || [];
     if (!rows.length) return {};
-    // Sort by date descending, take latest
+    // Sort by date descending
     const sorted = rows.sort((a: any, b: any) => {
       const da = new Date(a.re_broadcastDate || a.broadcastDate || a.period || '').getTime();
       const db = new Date(b.re_broadcastDate || b.broadcastDate || b.period || '').getTime();
       return (isNaN(db) ? 0 : db) - (isNaN(da) ? 0 : da);
     });
-    const latest = sorted[0] || {};
-    const prev = sorted[1] || {};
 
+    // Get at least 5 quarters for YoY analysis
+    const latest = sorted[0] || {};
+    const prev4q = sorted.length > 4 ? sorted[4] : (sorted.length > 1 ? sorted[sorted.length - 1] : {});
+
+    // Extract latest quarter metrics
     const revenue = parseFloat(latest.income || latest.turnover || '0');
     const profit  = parseFloat(latest.netProfit || latest.proLossAftTax || '0');
     const eps     = parseFloat(latest.reDilEPS || latest.dilutedEps || latest.eps || '0');
-    const prevRev = parseFloat(prev.income || prev.turnover || '0');
-    const prevProfit = parseFloat(prev.netProfit || prev.proLossAftTax || '0');
+    const expenditure = parseFloat(latest.expenditure || '0');
+
+    // Extract Q-1 metrics for QoQ
+    const prevQtr = sorted[1] || {};
+    const prevRev = parseFloat(prevQtr.income || prevQtr.turnover || '0');
+    const prevProfit = parseFloat(prevQtr.netProfit || prevQtr.proLossAftTax || '0');
+
+    // Extract Y-1 (4 quarters back) metrics for YoY
+    const prevYearRev = parseFloat(prev4q.income || prev4q.turnover || '0');
+    const prevYearProfit = parseFloat(prev4q.netProfit || prev4q.proLossAftTax || '0');
+    const prevYearEps = parseFloat(prev4q.reDilEPS || prev4q.dilutedEps || prev4q.eps || '0');
 
     const d: Record<string, any> = {};
+
+    // QoQ Growth
     if (revenue > 0 && prevRev > 0) {
       d.revenueGrowthQoQ = ((revenue - prevRev) / prevRev) * 100;
     }
-    if (profit > 0 && revenue > 0) {
-      d.npm = (profit / revenue) * 100;
-    }
-    if (eps > 0) d.eps = eps;
     if (profit > 0 && prevProfit > 0) {
       d.profitGrowthQoQ = ((profit - prevProfit) / prevProfit) * 100;
     }
+
+    // YoY Growth (same quarter, 1 year apart)
+    if (revenue > 0 && prevYearRev > 0) {
+      d._revenueGrowthYoY = ((revenue - prevYearRev) / prevYearRev) * 100;
+    }
+    if (profit > 0 && prevYearProfit > 0) {
+      d._profitGrowthYoY = ((profit - prevYearProfit) / prevYearProfit) * 100;
+    }
+    if (eps > 0 && prevYearEps > 0) {
+      d._epsGrowthYoY = ((eps - prevYearEps) / prevYearEps) * 100;
+    }
+
+    // Margins
+    if (profit > 0 && revenue > 0) {
+      d.npm = (profit / revenue) * 100;
+    }
+    if (expenditure > 0 && revenue > 0) {
+      d.opm = ((revenue - expenditure) / revenue) * 100;
+    }
+
+    // EPS
+    if (eps > 0) d.eps = eps;
+
+    // CAGR over available quarters (if 5+ quarters available)
+    if (sorted.length >= 5) {
+      const oldestQuarter = sorted[sorted.length - 1];
+      const oldestRev = parseFloat(oldestQuarter.income || oldestQuarter.turnover || '0');
+      const oldestProfit = parseFloat(oldestQuarter.netProfit || oldestQuarter.proLossAftTax || '0');
+
+      const periods = Math.min(sorted.length - 1, 4); // 4 quarters = 1 year
+      if (periods > 0 && oldestRev > 0 && revenue > 0) {
+        const revCagr = (Math.pow(revenue / oldestRev, 1 / periods) - 1) * 100;
+        d._revenueCagr5yr = revCagr;
+      }
+      if (periods > 0 && oldestProfit > 0 && profit > 0) {
+        const profitCagr = (Math.pow(profit / oldestProfit, 1 / periods) - 1) * 100;
+        d._profitCagr5yr = profitCagr;
+      }
+    }
+
     // Also store raw values for reference
     d._revenue = revenue;
     d._netProfit = profit;
     d._quarter = latest.period || latest.broadcastDate || '';
+    d._quarterCount = sorted.length;
     return d;
   } catch { return {}; }
 }
@@ -630,6 +682,54 @@ function buildCriteria(
   c('cfo', 'CFO Quality', 'QUALITY', cfoPos === null ? null : (cfoPos ? 1 : 0), cfoPos === true ? 'Positive' : cfoPos === false ? 'Negative ⚠️' : 'N/A', cfoScore, null, 9,
     cfoPos === true ? 'Real cash generator — earnings quality confirmed' : cfoPos === false ? 'Operations burn cash — earnings may be accounting-only' : 'Cash flow data unavailable');
 
+  // Economic Moat (combination of ROCE, OPM, and market cap)
+  let moatScore: number;
+  let moatLabel: string;
+  const mcapCr = screener.marketCapCr ?? nse.marketCapCr;
+  if ((roce !== null && roce > 15 && opm !== null && opm > 15 && mcapCr && mcapCr > 5000) ||
+      (roce !== null && roce > 18 && opm !== null && opm > 12)) {
+    moatScore = 88;
+    moatLabel = 'WIDE Moat';
+  } else if ((roce !== null && roce > 12) || (opm !== null && opm > 12) || (screener.pe !== null && screener.pe < 18)) {
+    moatScore = 65;
+    moatLabel = 'NARROW Moat';
+  } else if (roce !== null || opm !== null) {
+    moatScore = 35;
+    moatLabel = 'NO Moat';
+  } else {
+    moatScore = 45;
+    moatLabel = 'Unknown';
+  }
+  const moatRawValue = moatScore === 88 ? 1 : moatScore === 65 ? 0.5 : moatScore === 35 ? 0 : null;
+  c('moat', 'Economic Moat', 'QUALITY', moatRawValue, moatLabel, moatScore, null, 7,
+    moatScore === 88 ? 'Durable competitive advantage — sustainable excess returns likely' : moatScore === 65 ? 'Sustainable competitive edge — defensible market position' : moatScore === 35 ? 'Limited moat — commodity-like competition' : 'Moat strength unclear — insufficient data (Modelled)');
+
+  // Owner-Operator quality (promoter holding + pledge analysis)
+  const promoterOwn = screener.promoterPct;
+  const pledge = screener.pledgedPct ?? 0;
+  let ownerOpScore: number;
+  let ownerOpLabel: string;
+  if (promoterOwn !== null) {
+    if (promoterOwn > 50 && pledge === 0) {
+      ownerOpScore = 90;
+      ownerOpLabel = 'Strong Owner-Operator';
+    } else if (promoterOwn > 40 && pledge < 5) {
+      ownerOpScore = 72;
+      ownerOpLabel = 'Moderate Owner-Operator';
+    } else if (promoterOwn > 30) {
+      ownerOpScore = 55;
+      ownerOpLabel = 'Adequate Ownership';
+    } else {
+      ownerOpScore = 30;
+      ownerOpLabel = 'Weak Owner Alignment';
+    }
+  } else {
+    ownerOpScore = 45;
+    ownerOpLabel = 'Unknown';
+  }
+  c('owner_op', 'Owner-Operator', 'QUALITY', promoterOwn, ownerOpLabel + (promoterOwn !== null ? ` (${safePct(promoterOwn, 1)})` : ''), ownerOpScore, null, 7,
+    ownerOpScore >= 85 ? 'Founder-led with full skin in game — long-term aligned incentives' : ownerOpScore >= 70 ? 'Meaningful owner stake — aligned with minority shareholders' : ownerOpScore >= 50 ? 'Moderate owner holding — governance acceptable' : 'Weak owner alignment — watch for agency costs (Modelled)');
+
   // Capital allocation composite (ROCE + low D/E + positive CFO)
   let capAllocScore: number;
   if (roce !== null || screener.de !== null) {
@@ -669,6 +769,36 @@ function buildCriteria(
       yoyRev >= 12 ? 'Consistent demand — predictable revenue base' : yoyRev >= 0 ? 'Modest growth — assess order book' : 'Revenue contracting — high risk');
   } else {
     c('rev_visibility', 'Revenue Visibility (YoY)', 'GROWTH', null, 'N/A', 42, null, 6, 'Quarterly comparison data unavailable');
+  }
+
+  // Revenue Growth (recent YoY growth metric)
+  const revGrowthYoY = screener.revenueGrowthYoY || screener.salesGrowth || screener.salesCagr5yr;
+  if (revGrowthYoY !== null) {
+    let revGrowthScore: number;
+    if (revGrowthYoY >= 20) revGrowthScore = 88;
+    else if (revGrowthYoY >= 12) revGrowthScore = 75;
+    else if (revGrowthYoY >= 5) revGrowthScore = 62;
+    else if (revGrowthYoY >= 0) revGrowthScore = 50;
+    else revGrowthScore = 25;
+    c('rev_growth', 'Revenue Growth', 'GROWTH', revGrowthYoY, `${safeFixed(revGrowthYoY, 1)}% (Modelled)`, revGrowthScore, null, 8,
+      revGrowthYoY >= 20 ? 'Strong revenue momentum — capturing market opportunity' : revGrowthYoY >= 12 ? 'Healthy revenue growth trajectory' : revGrowthYoY >= 5 ? 'Modest growth — assess sustainability' : revGrowthYoY >= 0 ? 'Flat to minimal growth — maturity phase' : 'Revenue declining — assess turnaround risk');
+  } else {
+    c('rev_growth', 'Revenue Growth', 'GROWTH', null, 'N/A', 45, null, 8, 'Revenue growth data unavailable');
+  }
+
+  // EPS Growth (YoY earnings growth)
+  const epsGrowthYoY = screener._epsGrowthYoY ?? null;
+  if (epsGrowthYoY !== null) {
+    let epsGrowthScore: number;
+    if (epsGrowthYoY >= 25) epsGrowthScore = 90;
+    else if (epsGrowthYoY >= 15) epsGrowthScore = 78;
+    else if (epsGrowthYoY >= 5) epsGrowthScore = 65;
+    else if (epsGrowthYoY >= 0) epsGrowthScore = 50;
+    else epsGrowthScore = 22;
+    c('eps_growth', 'EPS Growth', 'GROWTH', epsGrowthYoY, `${safeFixed(epsGrowthYoY, 1)}% YoY (Modelled)`, epsGrowthScore, null, 8,
+      epsGrowthYoY >= 25 ? 'Exceptional EPS compounding — shareholder value creation' : epsGrowthYoY >= 15 ? 'Strong earnings momentum' : epsGrowthYoY >= 5 ? 'Moderate EPS growth' : epsGrowthYoY >= 0 ? 'Flat earnings — assess margin trends' : 'EPS declining — profit quality at risk');
+  } else {
+    c('eps_growth', 'EPS Growth', 'GROWTH', null, 'N/A', 45, null, 8, 'EPS growth data unavailable');
   }
 
   // ── FINANCIAL STRENGTH PILLAR ─────────────────────────────────────────────
@@ -891,11 +1021,21 @@ export async function GET(request: NextRequest) {
           // Fill remaining gaps with NSE financial results
           if (nseFin.eps && !screener.eps) screener.eps = nseFin.eps;
           if (nseFin.npm !== undefined && !screener.npm) screener.npm = nseFin.npm;
+          if (nseFin.opm !== undefined && !screener.opm) screener.opm = nseFin.opm;
           if (nseFin.revenueGrowthQoQ !== undefined && !screener.revenueGrowthQoQ) screener.revenueGrowthQoQ = nseFin.revenueGrowthQoQ;
           if (nseFin.profitGrowthQoQ !== undefined && !screener.profitCagr5yr) {
             // Use QoQ profit growth as a partial proxy
             screener._profitGrowthQoQ = nseFin.profitGrowthQoQ;
           }
+          // Fill YoY metrics from NSE financials
+          if (nseFin._revenueGrowthYoY !== undefined && !screener.revenueGrowthYoY) screener.revenueGrowthYoY = nseFin._revenueGrowthYoY;
+          if (nseFin._epsGrowthYoY !== undefined) screener._epsGrowthYoY = nseFin._epsGrowthYoY;
+          if (nseFin._profitGrowthYoY !== undefined) screener._profitGrowthYoY = nseFin._profitGrowthYoY;
+          // D/E ratio from NSE if available (though usually from screener)
+          if (nseFin._de !== undefined && !screener.de) screener.de = nseFin._de;
+          // Store computed sales CAGR if available
+          if (nseFin._revenueCagr5yr !== undefined && !screener.salesCagr5yr) screener.salesCagr5yr = nseFin._revenueCagr5yr;
+          if (nseFin._profitCagr5yr !== undefined && !screener.profitCagr5yr) screener.profitCagr5yr = nseFin._profitCagr5yr;
 
           // Fill NSE gaps with Yahoo (sector, company name)
           if (!nse.sector && yahoo.sector) nse.sector = yahoo.sector;
@@ -953,6 +1093,10 @@ export async function GET(request: NextRequest) {
           const overallScore = Math.max(0, isFinite(rawScore) ? rawScore - confPenalty : 0);
           const lastPrice   = (nse.lastPrice && isFinite(nse.lastPrice)) ? nse.lastPrice : null;
 
+          // Compute confidence range
+          const confMargin = quality.confidence === 'HIGH' ? 5 : quality.confidence === 'MEDIUM' ? 12 : quality.confidence === 'LOW' ? 20 : 30;
+          const scoreRange = { low: Math.max(0, overallScore - confMargin), high: Math.min(100, overallScore + confMargin) };
+
           const debugOut = (debug || symbol === debugSymbol) ? {
             sectorGroup, benchmarks,
             criteriaScores: criteria.map(c => ({ id: c.id, pillar: c.pillar, rawValue: c.rawValue, percentile: c.sectorPercentile, score: c.score })),
@@ -963,7 +1107,7 @@ export async function GET(request: NextRequest) {
           return {
             symbol, company, sector, sectorGroup,
             lastPrice, marketCapCr: mcap,
-            overallScore, grade,
+            overallScore, scoreRange, grade,
             pillars, criteria, redFlags, quality,
             isPortfolio: portfolio.includes(symbol),
             isWatchlist: watchlist.includes(symbol),

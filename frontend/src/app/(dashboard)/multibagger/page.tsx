@@ -41,7 +41,7 @@ interface DataQuality { valid: boolean; reason: string | null; coveragePct: numb
 interface MultibaggerResult {
   symbol: string; company: string; sector: string; sectorGroup: string;
   lastPrice: number | null; marketCapCr: number | null;
-  overallScore: number; grade: Grade;
+  overallScore: number; scoreRange?: { low: number; high: number }; grade: Grade;
   pillars: PillarScore[]; criteria: CriterionDetail[]; redFlags: RedFlag[];
   quality: DataQuality; isPortfolio: boolean; isWatchlist: boolean; errors: string[];
   _debug?: Record<string, any>;
@@ -127,7 +127,7 @@ function CriterionRow({ c }: { c: CriterionDetail }) {
 }
 
 // ── Company card ──────────────────────────────────────────────────────────────
-function CompanyCard({ r, defaultOpen }: { r: MultibaggerResult; defaultOpen: boolean }) {
+function CompanyCard({ r, defaultOpen, isDegraded }: { r: MultibaggerResult; defaultOpen: boolean; isDegraded?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
   const [showAll, setShowAll] = useState(false);
   const gradeColor = GRADE_COLOR[r.grade] || MUTED;
@@ -173,7 +173,9 @@ function CompanyCard({ r, defaultOpen }: { r: MultibaggerResult; defaultOpen: bo
             {r.marketCapCr && r.marketCapCr > 0 && <div style={{ fontSize: 9, color: MUTED }}>₹{(r.marketCapCr / 100).toFixed(0)}B MCap</div>}
           </div>}
           <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: 22, fontWeight: 900, color: scoreColor, lineHeight: 1 }}>{r.overallScore}</div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: scoreColor, lineHeight: 1 }}>
+              {isDegraded && r.scoreRange ? `${r.scoreRange.low}-${r.scoreRange.high}` : r.overallScore}
+            </div>
             <div style={{ fontSize: 8, color: MUTED }}>/ 100</div>
           </div>
           <span style={{ fontSize: 14, color: MUTED }}>{open ? '▲' : '▼'}</span>
@@ -364,7 +366,7 @@ export default function MultibaggerPage() {
           <div style={{ marginBottom: 12, padding: '10px 14px', background: `${ORANGE}10`, border: `1px solid ${ORANGE}30`, borderRadius: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
             <span style={{ fontSize: 18 }}>⚠️</span>
             <div>
-              <div style={{ fontSize: 12, color: ORANGE, fontWeight: 700 }}>DEGRADED DATA MODE</div>
+              <div style={{ fontSize: 12, color: ORANGE, fontWeight: 700 }}>⚠️ INSUFFICIENT DATA FOR SCORING — Rankings below are low-confidence estimates. Verify independently before any investment decision.</div>
               <div style={{ fontSize: 10, color: MUTED }}>
                 {ineligibleResults.length} of {validResults.length} companies have insufficient data for reliable scoring.
                 {eligibleOnly ? ' Showing eligible only.' : ' Showing all — low-confidence scores visible.'}
@@ -457,7 +459,15 @@ export default function MultibaggerPage() {
         )}
 
         {/* Results */}
-        {!loading && filtered.map((r, i) => <CompanyCard key={r.symbol} r={r} defaultOpen={i === 0} />)}
+        {!loading && eligibleOnly && filtered.length === 0 && eligibleResults.length === 0 && (
+          <div style={{ marginBottom: 12, padding: '12px 14px', background: `${YELLOW}10`, border: `1px solid ${YELLOW}30`, borderRadius: 8 }}>
+            <div style={{ fontSize: 11, color: YELLOW, fontWeight: 700, marginBottom: 4 }}>⊘ No eligible companies found</div>
+            <div style={{ fontSize: 10, color: MUTED }}>
+              No companies have sufficient data (≥50% coverage) for reliable scoring. Toggle 'Eligible Only' off to see low-confidence estimates, or add companies with better data coverage.
+            </div>
+          </div>
+        )}
+        {!loading && filtered.map((r, i) => <CompanyCard key={r.symbol} r={r} defaultOpen={i === 0} isDegraded={isDegraded} />)}
 
         {/* Invalid symbols */}
         {!loading && invalidResults.length > 0 && (
