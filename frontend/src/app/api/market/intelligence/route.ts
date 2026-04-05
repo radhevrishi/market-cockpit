@@ -346,6 +346,18 @@ interface AlphaTheme {
   narrative: string;
 }
 
+// ── v8: Thematic Idea (always-present alpha output layer) ──
+interface ThematicIdea {
+  symbol: string;
+  company: string;
+  theme: AlphaTheme;
+  signals: number;
+  isPortfolio: boolean;
+  isWatchlist: boolean;
+  lastPrice?: number | null;
+  segment?: string | null;
+}
+
 interface IntelSignal {
   symbol: string;
   company: string;

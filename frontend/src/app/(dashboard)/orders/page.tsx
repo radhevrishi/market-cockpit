@@ -158,6 +158,33 @@ interface Signal {
   portfolioCritical?: boolean;
   v7RankScore?: number;
   signalTierV7?: 'ACTIONABLE' | 'NOTABLE' | 'MONITOR';
+
+  // v8: Thematic alpha
+  alphaTheme?: {
+    tag: string;
+    label: string;
+    score: number;
+    confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+    narrative: string;
+  };
+}
+
+// ── v8: Thematic Idea for always-present alpha section ──
+interface ThematicIdea {
+  symbol: string;
+  company: string;
+  theme: {
+    tag: string;
+    label: string;
+    score: number;
+    confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+    narrative: string;
+  };
+  signals: number;
+  isPortfolio: boolean;
+  isWatchlist: boolean;
+  lastPrice?: number | null;
+  segment?: string | null;
 }
 
 interface CompanyTrend {
@@ -285,6 +312,7 @@ export default function CompanyIntelligencePage() {
   const [noActionableSignals, setNoActionableSignals] = useState(false);
   const [monitorList, setMonitorList] = useState<Signal[]>([]);
   const [notableSignals, setNotableSignals] = useState<Signal[]>([]);
+  const [thematicIdeas, setThematicIdeas] = useState<ThematicIdea[]>([]);
   const [productionStatus, setProductionStatus] = useState<string>('');
 
   const fetchData = useCallback(async (forceRefresh = false) => {
@@ -294,6 +322,7 @@ export default function CompanyIntelligencePage() {
       setTop3(data.top3 || []);
       setSignals(data.signals || []);
       setNotableSignals(data.notable || []);
+      setThematicIdeas(data.thematicIdeas || []);
       setTrends(data.trends || []);
       setBias(data.bias || null);
       if (data.debug) setDebugInfo(data.debug);
@@ -344,6 +373,7 @@ export default function CompanyIntelligencePage() {
       setTop3(data.top3 || []);
       setSignals(data.signals || []);
       setNotableSignals(data.notable || []);
+      setThematicIdeas(data.thematicIdeas || []);
       setTrends(data.trends || []);
       setBias(data.bias || null);
       setNoHighConfSignals(!!data.noHighConfSignals);
@@ -363,7 +393,7 @@ export default function CompanyIntelligencePage() {
 
       // Cache for tab switching (only cache real data, not skeletons)
       if (!isComputing) {
-        _cache = { data: { ...data, notable: data.notable || [], flags, addedPrices: prices, lastUpdated: ts }, timestamp: Date.now() };
+        _cache = { data: { ...data, notable: data.notable || [], thematicIdeas: data.thematicIdeas || [], flags, addedPrices: prices, lastUpdated: ts }, timestamp: Date.now() };
       }
     } catch (err) {
       console.error('[Intelligence] Error:', err);
@@ -657,6 +687,56 @@ export default function CompanyIntelligencePage() {
           {productionStatus && (
             <span style={{ fontSize: '10px', color: TEXT3 }}>{productionStatus}</span>
           )}
+        </div>
+      )}
+
+      {/* ── THEMATIC INTELLIGENCE (v8) — always shown when ideas available ── */}
+      {thematicIdeas.length > 0 && !loading && (
+        <div style={{ marginBottom: '20px' }}>
+          <div style={{ fontSize: '11px', fontWeight: 700, color: PURPLE, letterSpacing: '0.05em', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            🧠 THEMATIC INTELLIGENCE ({thematicIdeas.length})
+            <span style={{ fontSize: '9px', fontWeight: 400, color: TEXT3, letterSpacing: 'normal' }}>
+              Alpha signals · Multi-event narratives · Portfolio-first
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {thematicIdeas.map((idea, i) => {
+              const confColor = idea.theme.confidence === 'HIGH' ? GREEN : idea.theme.confidence === 'MEDIUM' ? YELLOW : TEXT3;
+              return (
+                <div key={`theme-${i}`} style={{
+                  backgroundColor: CARD,
+                  border: `1px solid ${idea.isPortfolio ? 'rgba(139,92,246,0.25)' : idea.isWatchlist ? 'rgba(15,122,191,0.2)' : 'rgba(167,139,250,0.15)'}`,
+                  borderLeft: `3px solid ${idea.isPortfolio ? PURPLE : idea.isWatchlist ? ACCENT : 'rgba(167,139,250,0.5)'}`,
+                  borderRadius: '8px',
+                  padding: '10px 14px',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '14px', fontWeight: 700, color: '#3B82F6' }}>{idea.symbol}</span>
+                    {idea.lastPrice && idea.lastPrice > 0 && (
+                      <span style={{ fontSize: '11px', color: TEXT2 }}>₹{idea.lastPrice.toLocaleString('en-IN')}</span>
+                    )}
+                    {idea.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(139,92,246,0.15)' }}>PF</span>}
+                    {idea.isWatchlist && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.15)' }}>WL</span>}
+                    {idea.segment && <span style={{ fontSize: '9px', color: TEXT3, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(100,116,139,0.08)' }}>{idea.segment}</span>}
+                    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontSize: '9px', fontWeight: 700, color: confColor, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(167,139,250,0.08)' }}>
+                        {idea.theme.confidence} · {Math.round(idea.theme.score)}
+                      </span>
+                      <span style={{ fontSize: '9px', color: TEXT3 }}>{idea.signals} signal{idea.signals !== 1 ? 's' : ''}</span>
+                    </div>
+                  </div>
+                  {/* Theme label */}
+                  <div style={{ fontSize: '12px', fontWeight: 600, color: PURPLE, marginTop: '4px' }}>
+                    → {idea.theme.label}
+                  </div>
+                  {/* Narrative */}
+                  <div style={{ fontSize: '11px', color: TEXT2, marginTop: '3px', lineHeight: 1.4 }}>
+                    {idea.theme.narrative}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

@@ -249,6 +249,18 @@ interface AlphaTheme {
   confidence: 'HIGH' | 'MEDIUM' | 'LOW';
   narrative: string;     // Short thematic narrative for display
 }
+
+// ── v8: Thematic Idea (always-present alpha output layer) ──
+interface ThematicIdea {
+  symbol: string;
+  company: string;
+  theme: AlphaTheme;
+  signals: number;          // Number of supporting signals
+  isPortfolio: boolean;
+  isWatchlist: boolean;
+  lastPrice?: number | null;
+  segment?: string | null;
+}
 type FreshnessLabel = 'FRESH' | 'RECENT' | 'AGING' | 'STALE';
 type ImpactLevel = 'HIGH' | 'MEDIUM' | 'LOW';
 type SignalSentiment = 'Bullish' | 'Neutral' | 'Bearish';
@@ -419,6 +431,7 @@ interface IntelligenceResponse {
   signals: IntelSignal[];            // ACTIONABLE only (validated)
   notable?: IntelSignal[];           // v7: Notable tier (materialityScore 50-70, conf>=50)
   observations: IntelSignal[];       // Non-actionable (broken, unknown scope, etc.)
+  thematicIdeas?: ThematicIdea[];    // v8: ALWAYS-present top-3 thematic alpha ideas
   trends: CompanyTrend[];
   bias: DailyBias;
   updatedAt: string;
@@ -1018,16 +1031,40 @@ function buildThematicNarrative(scenario: string, signals: IntelSignal[]): strin
   }
 }
 
+// Sector → best-fit thematic scenario mapping
+const SECTOR_SCENARIO_BOOST: Record<string, string> = {
+  'IT': 'TECH_TRANSITION',
+  'Defence': 'SUNRISE_SECTOR',
+  'EV': 'SUNRISE_SECTOR',
+  'Solar': 'SUNRISE_SECTOR',
+  'Semiconductor': 'SUNRISE_SECTOR',
+  'Railways': 'SUNRISE_SECTOR',
+  'Nuclear': 'SUNRISE_SECTOR',
+  'Space': 'SUNRISE_SECTOR',
+  'Data Center': 'STRATEGIC_CAPEX',
+  'Electronics': 'STRATEGIC_CAPEX',
+  'Infra': 'STRATEGIC_CAPEX',
+  'Power': 'SUNRISE_SECTOR',
+  'Pharma': 'OPERATING_LEVERAGE',
+  'Chemicals': 'OPERATING_LEVERAGE',
+  'Logistics': 'SUNRISE_SECTOR',
+};
+
 function detectAlphaScenarios(signals: IntelSignal[]): AlphaTheme[] {
   if (!signals || signals.length === 0) return [];
 
   const themes: AlphaTheme[] = [];
   const combinedText = signals
-    .map(s => `${s.headline || ''} ${s.whyItMatters || ''} ${s.segment || ''} ${s.client || ''}`)
+    .map(s => `${s.headline || ''} ${s.whyItMatters || ''} ${s.segment || ''} ${s.client || ''} ${s.eventType || ''}`)
     .join(' ')
     .toLowerCase();
   const eventTypes = new Set(signals.map(s => s.eventType));
-  const segments = new Set(signals.map(s => s.segment).filter(Boolean));
+  const segments = new Set(signals.map(s => s.segment).filter(Boolean) as string[]);
+  const stackCount = signals.length;
+  const hasFresh = signals.some(s => s.freshness === 'FRESH' || s.freshness === 'RECENT');
+
+  // Stacking mega-bonus: 2+ signals from same company = strong conviction signal
+  const stackingBonus = stackCount >= 5 ? 30 : stackCount >= 3 ? 20 : stackCount >= 2 ? 12 : 0;
 
   for (const [scenario, config] of Object.entries(ALPHA_SCENARIO_KEYWORDS)) {
     let score = 0;
@@ -1053,22 +1090,29 @@ function detectAlphaScenarios(signals: IntelSignal[]): AlphaTheme[] {
     // Segment match (tertiary — 10pts, max once)
     for (const seg of config.segment) {
       if (segments.has(seg)) {
-        score += 10;
+        score += 15;  // Raised from 10
         break;
       }
     }
 
-    // Multi-signal conviction bonus
-    if (signals.length >= 3) score += 10;
-    if (signals.length >= 5) score += 10;
+    // Sector → scenario affinity boost (20pts if segment maps to this scenario)
+    for (const seg of segments) {
+      if (SECTOR_SCENARIO_BOOST[seg] === scenario) {
+        score += 20;
+        break;
+      }
+    }
 
-    // Recency bonus — at least one fresh signal
-    const hasFresh = signals.some(s => s.freshness === 'FRESH' || s.freshness === 'RECENT');
+    // Stacking bonus (same company, multiple signals)
+    score += stackingBonus;
+
+    // Recency bonus
     if (hasFresh) score += 10;
 
-    if (score >= 25) {
+    // Lowered threshold: 20 (was 25) — governance-only companies can still generate themes
+    if (score >= 20) {
       const confidence: 'HIGH' | 'MEDIUM' | 'LOW' =
-        score >= 60 ? 'HIGH' : score >= 40 ? 'MEDIUM' : 'LOW';
+        score >= 60 ? 'HIGH' : score >= 35 ? 'MEDIUM' : 'LOW';
       themes.push({
         tag: scenario,
         label: SCENARIO_LABELS[scenario] || scenario,
@@ -1080,6 +1124,66 @@ function detectAlphaScenarios(signals: IntelSignal[]): AlphaTheme[] {
   }
 
   return themes.sort((a, b) => b.score - a.score);
+}
+
+// Sector list for minimum viable theme generation
+const SUNSHINE_SECTORS_LIST = ['Defence', 'EV', 'Solar', 'Semiconductor', 'Railways', 'Nuclear', 'Space', 'Data Center', 'Logistics', 'Electronics', 'PLI', 'Renewables'];
+
+// ── generateMinimumViableThemes: GUARANTEED ≥1 theme from any signal set ──
+// Called when detectAlphaScenarios returns empty. Infers themes from sector + stacking.
+function generateMinimumViableThemes(
+  companySignals: IntelSignal[],
+  isPortfolio: boolean,
+  isWatchlist: boolean,
+): AlphaTheme | null {
+  if (!companySignals || companySignals.length === 0) return null;
+
+  const stackCount = companySignals.length;
+  const company = companySignals[0]?.company || companySignals[0]?.symbol || '';
+  const segment = companySignals.find(s => s.segment)?.segment || null;
+  const eventTypes = companySignals.map(s => s.eventType);
+  const hasFresh = companySignals.some(s => s.freshness === 'FRESH' || s.freshness === 'RECENT');
+
+  // Infer scenario from sector
+  if (segment && SECTOR_SCENARIO_BOOST[segment]) {
+    const tag = SECTOR_SCENARIO_BOOST[segment];
+    const score = Math.min(70, 25 + (stackCount * 8) + (hasFresh ? 10 : 0) + (isPortfolio ? 10 : isWatchlist ? 5 : 0));
+    return {
+      tag,
+      label: SCENARIO_LABELS[tag] || tag,
+      score,
+      confidence: score >= 50 ? 'MEDIUM' : 'LOW',
+      narrative: buildThematicNarrative(tag, companySignals),
+    };
+  }
+
+  // Senior leadership change → STRATEGIC_SHIFT narrative
+  const hasLeadershipChange = eventTypes.some(e => ['CEO Change', 'CFO Change', 'MD Change', 'Chairman Change'].includes(e));
+  const hasMgmtChange = eventTypes.some(e => ['Mgmt Change', 'Board Appointment'].includes(e));
+  if (hasLeadershipChange || (hasMgmtChange && stackCount >= 2)) {
+    const score = Math.min(55, 25 + (stackCount * 8) + (hasLeadershipChange ? 15 : 0) + (hasFresh ? 10 : 0));
+    return {
+      tag: 'TECH_TRANSITION',
+      label: 'Leadership Transition — Strategy Watch',
+      score,
+      confidence: score >= 45 ? 'MEDIUM' : 'LOW',
+      narrative: `${company} management change — monitor for strategy shift and execution impact`,
+    };
+  }
+
+  // Multi-signal cluster (2+ signals, any type) → activity theme
+  if (stackCount >= 2) {
+    const score = Math.min(45, 20 + (stackCount * 5) + (hasFresh ? 10 : 0) + (isPortfolio ? 10 : isWatchlist ? 5 : 0));
+    return {
+      tag: 'MULTI_SIGNAL',
+      label: `${stackCount}-Signal Activity Cluster`,
+      score,
+      confidence: 'LOW',
+      narrative: `${company} generating ${stackCount} signals — watch for trend confirmation or catalyst`,
+    };
+  }
+
+  return null;
 }
 
 // Aggressive text cleaning helper (reused from old sanitizeByEventClass)
@@ -4499,8 +4603,11 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   // Runs AFTER individual signal scoring to detect multi-event narratives.
   // Groups signals by company, detects 9 scenario types, applies thematic
   // boost to v7RankScore and updates governance hard filter.
-  // Formula: finalScore = eventScore(40%) + confScore(20%) + thematicScore(40%)
+  // Formula: finalScore = eventScore(30%) + confScore(20%) + thematicScore(50%)
+  // Portfolio-first: PF=3x priority, WL=2x, Market=1x
   // ══════════════════════════════════════════════════════════════
+  const companyThemeMap = new Map<string, AlphaTheme[]>();
+  const thematicIdeas: ThematicIdea[] = [];
   {
     // 1. Group signals by company symbol
     const companySignalMap = new Map<string, IntelSignal[]>();
@@ -4510,57 +4617,98 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       companySignalMap.set(s.symbol, existing);
     }
 
-    // 2. Detect themes per company
-    const companyThemeMap = new Map<string, AlphaTheme[]>();
+    // 2. Detect themes per company (with minimum viable fallback)
     for (const [symbol, companySignals] of companySignalMap) {
-      const themes = detectAlphaScenarios(companySignals);
+      const isPF = companySignals[0]?.isPortfolio || false;
+      const isWL = companySignals[0]?.isWatchlist || false;
+
+      let themes = detectAlphaScenarios(companySignals);
+
+      // Fallback: if no theme detected, generate minimum viable theme
+      if (themes.length === 0) {
+        const mvt = generateMinimumViableThemes(companySignals, isPF, isWL);
+        if (mvt) themes = [mvt];
+      }
+
       if (themes.length > 0) {
         companyThemeMap.set(symbol, themes);
         // Apply best theme to all signals of this company
         for (const s of companySignals) {
           s.alphaTheme = themes[0];
-          // Update tag with thematic label for high-confidence themes
-          if (themes[0].confidence === 'HIGH' && themes[0].score >= 60) {
+          if (themes[0].confidence !== 'LOW' && themes[0].score >= 40) {
             s.tag = themes[0].label;
           }
         }
+
+        // Collect for thematic ideas output
+        const priorityMultiplier = isPF ? 3 : isWL ? 2 : 1;
+        thematicIdeas.push({
+          symbol,
+          company: companySignals[0]?.company || symbol,
+          theme: themes[0],
+          signals: companySignals.length,
+          isPortfolio: isPF,
+          isWatchlist: isWL,
+          lastPrice: companySignals[0]?.lastPrice ?? null,
+          segment: companySignals.find(s => s.segment)?.segment ?? null,
+          // Temporary priorityScore used for sorting (not in interface)
+          ...({ _priority: themes[0].score * priorityMultiplier } as any),
+        });
       }
     }
 
+    // Sort thematic ideas: PF first, then by score, take top 6
+    thematicIdeas.sort((a: any, b: any) => {
+      if (a.isPortfolio !== b.isPortfolio) return a.isPortfolio ? -1 : 1;
+      if (a.isWatchlist !== b.isWatchlist) return a.isWatchlist ? -1 : 1;
+      return (b._priority || 0) - (a._priority || 0);
+    });
+    // Remove internal sort key
+    for (const idea of thematicIdeas) {
+      delete (idea as any)._priority;
+    }
+    thematicIdeas.splice(6); // Keep top 6
+
     // 3. v8 scoring pass: boost v7RankScore using thematic component
+    // Formula: eventScore(30%) + confScore(20%) + thematicScore(50%)
     for (const s of filtered) {
       const eventScore = (V7_EVENT_WEIGHTS[s.eventType] || 0.1) * 100;  // 0-100
       const confScore = s.dataConfidenceScore || s.confidenceScore || 50; // 0-100
       const themes = companyThemeMap.get(s.symbol) || [];
       const thematicScore = themes.length > 0 ? themes[0].score : 0;    // 0-100
 
-      // v8 formula: 40% event + 20% confidence + 40% thematic
-      const v8Score = Math.round(
-        (eventScore * 0.4) + (confScore * 0.2) + (thematicScore * 0.4)
-      );
+      // v8 formula: 30% event + 20% confidence + 50% thematic
+      const rawV8Score = (eventScore * 0.3) + (confScore * 0.2) + (thematicScore * 0.5);
+
+      // Portfolio-first multiplier
+      const pfMultiplier = s.isPortfolio ? 1.5 : s.isWatchlist ? 1.2 : 1.0;
+      const v8Score = Math.round(rawV8Score * pfMultiplier);
 
       // Only boost (never penalize) signals that have thematic support
-      if (thematicScore >= 40) {
+      if (thematicScore >= 30) {
         s.v7RankScore = Math.max(s.v7RankScore || 0, v8Score);
         // Thematic boost to materialityScore — allows notable-tier promotion
-        if (thematicScore >= 60 && (s.materialityScore || 0) < 55) {
+        if (thematicScore >= 50 && (s.materialityScore || 0) < 55) {
           s.materialityScore = Math.min(55, (s.materialityScore || 0) + Math.round(thematicScore * 0.15));
         }
-        // Promote MONITOR → NOTABLE if strong thematic signal
+        // Promote MONITOR → NOTABLE if strong thematic + portfolio/watchlist
+        if (thematicScore >= 50 && s.signalCategory === 'MONITOR' && (s.isPortfolio || s.isWatchlist)) {
+          s.signalTierV7 = 'NOTABLE';
+        }
         if (thematicScore >= 70 && s.signalCategory === 'MONITOR') {
           s.signalTierV7 = 'NOTABLE';
         }
       }
     }
 
-    // 4. Governance hard filter (v8 upgrade from DIMMED → HIDDEN)
-    // Non-senior Mgmt Change + no thematic impact → completely removed from feed
+    // 4. GOVERNANCE HARD BLOCK (v8 — ABSOLUTE, no exceptions)
+    // ALL non-CEO/CFO/MD/Chairman governance signals → HIDDEN
+    // This is a hard block: even if there's thematic context, routine governance is noise
+    const HARD_SENIOR_ROLES = new Set(['CEO', 'CFO', 'MD', 'Chairman', 'Managing Director', 'Chief Executive', 'Chief Financial']);
     for (const s of filtered) {
-      if (s.signalClass === 'GOVERNANCE') {
+      if (s.signalClass === 'GOVERNANCE' || s.eventType === 'Mgmt Change' || s.eventType === 'Board Appointment') {
         const role = s.managementRole || 'Other';
-        const isNonSenior = !SENIOR_ROLES.has(role);
-        const hasThematic = (companyThemeMap.get(s.symbol) || []).length > 0;
-        if (isNonSenior && !hasThematic) {
+        if (!HARD_SENIOR_ROLES.has(role)) {
           s.visibility = 'HIDDEN';
           s.signalCategory = 'REJECTED';
         }
@@ -4747,19 +4895,20 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   }
 
   const duration = Date.now() - startTime;
-  console.log(`[Compute] FINAL: ${actionableSignals.length} actionable, ${monitorSignals.length} monitor, ${rejectedCount} rejected (${rejectedPct.toFixed(0)}%) in ${duration}ms | STATUS=${productionReady ? 'PRODUCTION_READY' : 'REFINEMENT_REQUIRED'}`);
+  console.log(`[Compute] FINAL: ${actionableSignals.length} actionable, ${notableSignals.length} notable, ${monitorSignals.length} monitor, ${rejectedCount} rejected (${rejectedPct.toFixed(0)}%) | themes:${thematicIdeas.length} in ${duration}ms | STATUS=${productionReady ? 'PRODUCTION_READY' : 'REFINEMENT_REQUIRED'}`);
 
   return {
     top3,
     signals: actionableSignals.slice(0, MAX_ACTIONABLE),
     notable: notableSignals.slice(0, MAX_NOTABLE),
     observations: monitorSignals.slice(0, MAX_MONITOR),
+    thematicIdeas: thematicIdeas.slice(0, 6),
     trends: trends.slice(0, 10),
     bias,
     updatedAt: new Date().toISOString(),
     noHighConfSignals,
     noActionableSignals,
-    _debug: { ...debug, rejectedCount, rejectedPct: Math.round(rejectedPct), productionReady, status: productionReady ? 'PRODUCTION_READY' : 'REFINEMENT_REQUIRED' },
+    _debug: { ...debug, rejectedCount, rejectedPct: Math.round(rejectedPct), productionReady, thematicCount: thematicIdeas.length, status: productionReady ? 'PRODUCTION_READY' : 'REFINEMENT_REQUIRED' },
   };
 }
 
