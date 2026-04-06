@@ -1674,7 +1674,8 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               }
 
               // ★ GATING (relaxed — show all important data) ★
-              const confSc = s.dataConfidenceScore || s.confidenceScore || 50;
+              // Use monitorScore (boosted) as primary confidence — it reflects corroboration/portfolio boosts
+              const confSc = s.monitorScore || s.dataConfidenceScore || s.confidenceScore || 50;
               const isInferredSignal = s.inferenceUsed || s.confidenceType === 'HEURISTIC' || s.confidenceType === 'INFERRED';
               const isVerifiedSrc = s.confidenceType === 'ACTUAL' || s.sourceTier === 'VERIFIED';
 
@@ -1740,13 +1741,18 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 s.portfolioCritical = false;
               }
 
-              // Unverified ranking cap
-              if (confSc < 40) {
+              // Unverified ranking cap — relaxed for tracked (portfolio/watchlist) companies
+              const isTrackedHere = s.isPortfolio || s.isWatchlist;
+              if (confSc < 40 && !isTrackedHere) {
                 s.visibility = s.visibility === 'VISIBLE' ? 'DIMMED' : s.visibility;
                 s.materialityScore = Math.min(s.materialityScore, 40);
-              } else if (confSc < 50) {
+              } else if (confSc < 40 && isTrackedHere) {
+                // Tracked companies: gentler cap — don't destroy materiality
+                s.materialityScore = Math.min(s.materialityScore, 60);
+              } else if (confSc < 50 && !isTrackedHere) {
                 s.materialityScore = Math.min(s.materialityScore, 55);
               }
+              // confSc >= 50 OR (confSc < 50 && tracked): no materiality cap
 
               // v7 composite rank score
               s.v7RankScore = computeV7RankScore(s);
@@ -1795,10 +1801,15 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               }
 
               // Signal tier classification
-              // NON-NEGOTIABLE: inferred signals with conf < 60 can NEVER be NOTABLE
+              // Inferred signals need conf >= 45 to reach NOTABLE (relaxed from 60)
               const isInferredHere = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
-              const inferredBlockedHere = isInferredHere && confSc < 60;
-              if (!inferredBlockedHere && s.signalCategory === 'MONITOR' && s.materialityScore >= 50 && confSc >= 50) {
+              const inferredBlockedHere = isInferredHere && confSc < 45;
+              // Allow pre-classifyTier ACTIONABLE for tracked signals with strong scores
+              const isTrackedForTier = s.isPortfolio || s.isWatchlist;
+              if (!inferredBlockedHere && isTrackedForTier && s.materialityScore >= 55 && confSc >= 55) {
+                s.signalTierV7 = 'ACTIONABLE';
+                s.signalCategory = 'ACTIONABLE';
+              } else if (!inferredBlockedHere && s.signalCategory === 'MONITOR' && s.materialityScore >= 50 && confSc >= 50) {
                 s.signalTierV7 = 'NOTABLE';
               } else if (s.signalCategory === 'ACTIONABLE') {
                 s.signalTierV7 = 'ACTIONABLE';
@@ -1985,6 +1996,26 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             }
 
             // ── MINIMUM OUTPUT GUARANTEES (anti-empty system) ──
+            // ACTIONABLE guarantee: if 0 actionable but notable has strong tracked signals, promote top 2
+            if (surfaceableActionable.length === 0 && notableSignals.length > 0) {
+              const actionableEligible = notableSignals.filter((s: any) => {
+                const conf = s.monitorScore || s.confidenceScore || s.dataConfidenceScore || 0;
+                const mat = s.materialityScore || 0;
+                const isTracked = s.isPortfolio || s.isWatchlist;
+                return isTracked && conf >= 50 && mat >= 45;
+              });
+              const toPromote = Math.min(2, actionableEligible.length);
+              for (let i = 0; i < toPromote; i++) {
+                const promoted = actionableEligible[i];
+                const idx = notableSignals.indexOf(promoted);
+                if (idx >= 0) notableSignals.splice(idx, 1);
+                promoted.signalTierV7 = 'ACTIONABLE';
+                promoted.signalCategory = 'ACTIONABLE';
+                promoted._promotedToActionable = true;
+                surfaceableActionable.push(promoted);
+              }
+            }
+
             // If monitor is empty but speculative has signals, promote top speculative to monitor
             if (regularMonitor.length < 3 && speculativeSignals.length > 0) {
               const needed = Math.min(5, 3 - regularMonitor.length, speculativeSignals.length);
@@ -2002,8 +2033,8 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             if (notableSignals.length === 0 && regularMonitor.length > 0) {
               const eligibleForNotable = regularMonitor.filter((s: any) => {
                 const isInf = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
-                const confVal = s.dataConfidenceScore || s.confidenceScore || 0;
-                return !(isInf && confVal < 60);
+                const confVal = s.monitorScore || s.dataConfidenceScore || s.confidenceScore || 0;
+                return !(isInf && confVal < 45);
               });
               const promotee = eligibleForNotable.length > 0 ? eligibleForNotable[0] : regularMonitor[0];
               if (promotee) {
