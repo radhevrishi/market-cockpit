@@ -1500,21 +1500,38 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               // Heuristic-degraded signals forced to MONITOR regardless of materiality
               s.signalCategory = (isMaterial && !isInferred && !isHeuristicDegraded) ? 'ACTIONABLE' : 'MONITOR';
 
-              // ── SIGNAL CONFIDENCE MODEL ──
-              const srcScore = s.confidenceType === 'ACTUAL' ? 20 :
-                s.sourceTier === 'VERIFIED' ? 15 :
-                (s.dataSource === 'nse' || s.dataSource === 'NSE') ? 15 :
-                s.source === 'deal' ? 15 : 5;
+              // ── INSTITUTIONAL SIGNAL CONFIDENCE MODEL ──
+              // Source reliability: NSE filings are verified regardless of value extraction quality
+              const isNSE = s.dataSource === 'nse' || s.dataSource === 'NSE' || s.source === 'nse';
+              const isDeal = s.source === 'deal' || s.eventType === 'Block Deal' || s.eventType === 'Bulk Deal';
+              const srcScore = s.confidenceType === 'ACTUAL' ? 25 :
+                isDeal ? 22 :
+                (isNSE || s.sourceTier === 'VERIFIED') ? 20 :
+                s.confidenceType === 'INFERRED' ? 12 : 8;
+
+              // Freshness: institutional weight — recent filings matter more
               const isFresh = s.freshness === 'FRESH';
-              const freshScore = isFresh ? 15 : s.freshness === 'RECENT' ? 10 : s.freshness === 'AGING' ? 4 : 1;
+              const freshScore = isFresh ? 18 : s.freshness === 'RECENT' ? 12 : s.freshness === 'AGING' ? 6 : 2;
+
+              // Materiality: revenue impact matters for institutions
+              const revImpactAbs = Math.abs(s.impactPct || s.pctRevenue || 0);
+              const matScore = revImpactAbs >= 10 ? 20 : revImpactAbs >= 5 ? 15 : revImpactAbs >= 2 ? 10 : revImpactAbs >= 1 ? 5 : 0;
+
+              // Signal stacking: multiple independent events on same company = high conviction
+              const stackCount = s.signalStackCount || 0;
+              const stackScore = stackCount >= 4 ? 15 : stackCount >= 3 ? 10 : stackCount >= 2 ? 5 : 0;
+
+              // Value verification: extracted vs heuristic
+              const valueScore = s.valueSource === 'EXACT' ? 10 :
+                s.valueSource === 'AGGREGATED' ? 7 :
+                (s.valueCr > 0 && s.confidenceType !== 'HEURISTIC') ? 5 : 0;
+
+              // Price/volume confirmation (when available)
               const hasPriceReaction = !!(s.priceChange && Math.abs(s.priceChange) > 1);
-              const priceScore = hasPriceReaction ? 20 : 0;
-              const hasVolumeSpike = !!(s.volumeRatio && s.volumeRatio > 2);
-              const volumeScore = hasVolumeSpike ? 15 : 0;
-              const hasMultipleSources = !!(s.corroborationCount && s.corroborationCount > 1);
-              const multiSourceScore = hasMultipleSources ? 15 : 0;
-              s.monitorScore = Math.min(100, srcScore + freshScore + priceScore + volumeScore + multiSourceScore);
-              s.monitorTier = s.monitorScore >= 75 ? 'HIGH' : s.monitorScore >= 55 ? 'MEDIUM' : 'LOW';
+              const priceScore = hasPriceReaction ? 12 : 0;
+
+              s.monitorScore = Math.min(100, srcScore + freshScore + matScore + stackScore + valueScore + priceScore);
+              s.monitorTier = s.monitorScore >= 65 ? 'HIGH' : s.monitorScore >= 45 ? 'MEDIUM' : 'LOW';
 
               // EVENT CLASS SANITIZATION: strip synthetic numbers from non-financial events
               const NON_FIN_TYPES = new Set(['Mgmt Change', 'Board Appointment', 'CEO Exit', 'CFO Exit', 'Leadership Transition', 'Regulatory', 'Compliance']);
@@ -1636,7 +1653,11 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 if (s.confidenceType === 'ACTUAL' && s.valueCr > 0) ecoImpact = Math.min(40, ecoImpact + 10);
               }
               const evtW = (EVT_WEIGHTS[s.eventType] || 0) / 100 * 25;
-              const confW = s.confidenceType === 'ACTUAL' ? 15 : s.sourceTier === 'VERIFIED' ? 12 : 5;
+              const isNSESource = s.dataSource === 'nse' || s.dataSource === 'NSE' || s.source === 'nse';
+              const isDealSource = s.source === 'deal' || s.eventType === 'Block Deal' || s.eventType === 'Bulk Deal';
+              const confW = s.confidenceType === 'ACTUAL' ? 15 :
+                isDealSource ? 14 :
+                (isNSESource || s.sourceTier === 'VERIFIED') ? 12 : 5;
               let mgmtW = 0;
               if (s.signalClass === 'GOVERNANCE' || s.signalClass === 'STRATEGIC') {
                 mgmtW = (ROLE_SCORES[s.managementRole] || 10) / 100 * 10;
@@ -1902,25 +1923,30 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               const conf = s.monitorScore || s.confidenceScore || s.dataConfidenceScore || 0;
               const mat = s.materialityScore || 0;
               const isVerified = s.confidenceType === 'ACTUAL' || s.verified;
-              const isInferred = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
+              // NSE/deal source = event is verified even if value is estimated
+              const isNSEsrc = s.dataSource === 'nse' || s.dataSource === 'NSE' || s.source === 'nse';
+              const isDealSrc = s.source === 'deal' || s.eventType === 'Block Deal' || s.eventType === 'Bulk Deal';
+              const isVerifiedSource = isVerified || isNSEsrc || isDealSrc || s.sourceTier === 'VERIFIED';
+              const isPureHeuristic = s.confidenceType === 'HEURISTIC' && !isNSEsrc && !isDealSrc;
               const corrobCount = countTrueCorroboration(s);
 
               // ── HARD REJECTION: only truly empty signals ──
               if (conf < 10 && mat < 10) return 'REJECTED';
 
-              // ── NON-NEGOTIABLE INFERRED GATE ──
-              // Inferred signals with conf < 60 can NEVER be ACTIONABLE or NOTABLE
-              const inferredBlocked = isInferred && conf < 60;
+              // ── INFERRED GATE: only blocks pure heuristic (no verified source) ──
+              // NSE-sourced signals with estimated values can still be ACTIONABLE/NOTABLE
+              const inferredBlocked = isPureHeuristic && conf < 55;
 
-              // Tier 1: ACTIONABLE — verified + strong confidence + material
-              if (!inferredBlocked && isVerified && conf >= 70 && mat >= 65) return 'ACTIONABLE';
+              // Tier 1: ACTIONABLE — verified source + strong confidence + material
+              if (!inferredBlocked && isVerifiedSource && conf >= 65) return 'ACTIONABLE';
 
-              // Tier 2: NOTABLE — verified + good confidence, or high-conf inferred with corroboration
-              if (!inferredBlocked && isVerified && conf >= 55 && mat >= 50) return 'NOTABLE';
-              if (!inferredBlocked && conf >= 55 && mat >= 50 && corrobCount >= 2) return 'NOTABLE';
+              // Tier 2: NOTABLE — verified source + good confidence, or stacking with corroboration
+              if (!inferredBlocked && isVerifiedSource && conf >= 50) return 'NOTABLE';
+              if (!inferredBlocked && conf >= 50 && corrobCount >= 2) return 'NOTABLE';
 
-              // Tier 3: MONITOR — reasonable signal
+              // Tier 3: MONITOR — reasonable signal from known source
               if (conf >= 35 || corrobCount >= 2) return 'MONITOR';
+              if (isVerifiedSource && conf >= 25) return 'MONITOR';
               if (mat >= 35) return 'MONITOR';
 
               // Tier 4: SPECULATIVE — any remaining signal with some data
