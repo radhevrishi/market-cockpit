@@ -524,7 +524,7 @@ export default function CompanyIntelligencePage() {
           <div>
             <h1 style={{ fontSize: '20px', fontWeight: 700, margin: 0, color: TEXT1 }}>Company Intelligence</h1>
             <p style={{ fontSize: '11px', color: TEXT3, margin: 0 }}>
-              Decision-ready signals · Impact-ranked · Time-weighted · Deduped
+              Materiality-ranked · Confidence-scored · Evidence-tiered · Deduped
               {computing && <span style={{ marginLeft: '8px', color: ACCENT }}>⟳ Computing...</span>}
             </p>
           </div>
@@ -570,7 +570,7 @@ export default function CompanyIntelligencePage() {
               {[
                 { label: 'High Impact', value: bias.highImpactCount, color: GREEN, filter: null as FilterType | null },
                 { label: 'Actionable', value: bias.buyCount || 0, color: GREEN, filter: 'BUY' as FilterType | null },
-                { label: 'HOLD', value: bias.holdCount || 0, color: ACCENT, filter: 'HOLD' as FilterType | null },
+                { label: 'Monitor', value: bias.holdCount || 0, color: ACCENT, filter: 'HOLD' as FilterType | null },
                 ...(bias.watchCount !== undefined && bias.watchCount > 0 ? [{ label: 'Monitor', value: bias.watchCount, color: '#A78BFA', filter: 'WATCH' as FilterType | null }] : []),
                 ...(bias.trimExitCount !== undefined && bias.trimExitCount > 0 ? [{ label: 'Reduce/Exit', value: bias.trimExitCount, color: ORANGE, filter: 'TRIM' as FilterType | null }] : []),
                 { label: 'Portfolio Alerts', value: bias.portfolioAlerts, color: PURPLE, filter: null as FilterType | null },
@@ -654,6 +654,30 @@ export default function CompanyIntelligencePage() {
         </div>
       )}
 
+      {/* ── SIGNAL PIPELINE STATUS BAR ── */}
+      {productionStatus && !loading && (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '6px 14px', marginBottom: '12px', borderRadius: '6px',
+          backgroundColor: 'rgba(15,122,191,0.04)', border: `1px solid rgba(15,122,191,0.12)`,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '10px', color: TEXT3, flexWrap: 'wrap' }}>
+            <span style={{ color: ACCENT, fontWeight: 700 }}>PIPELINE</span>
+            {productionStatus.split(' · ').map((part, i) => {
+              const isHighlight = part.includes('actionable') || part.includes('notable');
+              return (
+                <span key={i} style={{ color: isHighlight ? TEXT2 : TEXT3, fontWeight: isHighlight ? 600 : 400 }}>
+                  {part}
+                </span>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: '9px', color: TEXT3 }}>
+            NSE · MoneyControl · Google
+          </div>
+        </div>
+      )}
+
       {/* Loading */}
       {loading && top3.length === 0 && (
         <div style={{ textAlign: 'center', padding: '50px 0' }}>
@@ -686,6 +710,7 @@ export default function CompanyIntelligencePage() {
                     <span style={{
                       fontSize: '9px', fontWeight: 600, color: actionColor(remapActionLabel(t.topAction)),
                       padding: '1px 5px', borderRadius: '3px', backgroundColor: actionBg(remapActionLabel(t.topAction)),
+                      textTransform: 'uppercase',
                     }}>{remapActionLabel(t.topAction)}</span>
                   </div>
                   <div style={{ fontSize: '11px', color: TEXT2, marginBottom: '2px' }}>{t.company}</div>
@@ -705,41 +730,49 @@ export default function CompanyIntelligencePage() {
 
       {noActionableSignals && !loading && (
         <div style={{
-          padding: '14px 16px', marginBottom: '16px', borderRadius: '10px',
+          padding: '14px 18px', marginBottom: '16px', borderRadius: '10px',
           backgroundColor: 'rgba(15,122,191,0.04)',
-          border: '1px solid rgba(15,122,191,0.15)',
+          border: '1px solid rgba(15,122,191,0.12)',
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
-            <span style={{ fontSize: '16px' }}>📊</span>
-            <div>
-              <span style={{ fontSize: '13px', color: ACCENT, fontWeight: 700 }}>
-                NO HIGH-CONFIDENCE ACTIONABLE SIGNALS
-              </span>
-              <div style={{ fontSize: '10px', color: TEXT3, marginTop: '2px' }}>
-                No high-confidence actionable events for your portfolio/watchlist — check notable/monitor sections below
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+            <div style={{
+              width: '36px', height: '36px', borderRadius: '8px',
+              backgroundColor: 'rgba(15,122,191,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '18px', flexShrink: 0,
+            }}>📊</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: '13px', color: TEXT1, fontWeight: 700, marginBottom: '2px' }}>
+                Quiet Period — No Actionable Signals
+              </div>
+              <div style={{ fontSize: '11px', color: TEXT2, lineHeight: 1.4 }}>
+                {notableSignals.length > 0 || monitorList.length > 0
+                  ? `${notableSignals.length} notable and ${monitorList.length} monitor-level events detected. Review below for emerging opportunities.`
+                  : 'No material corporate events for your portfolio/watchlist in this period.'}
               </div>
             </div>
           </div>
-          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: notableSignals.length > 0 || monitorList.length > 0 ? '8px' : '0' }}>
-            {notableSignals.length > 0 && (
-              <div style={{ fontSize: '11px', color: YELLOW, background: `${YELLOW}12`, padding: '3px 10px', borderRadius: '6px' }}>
-                {notableSignals.length} Notable (low materiality)
-              </div>
-            )}
-            {monitorList.length > 0 && (
-              <div style={{ fontSize: '11px', color: TEXT3, background: 'rgba(255,255,255,0.04)', padding: '3px 10px', borderRadius: '6px' }}>
-                {Math.min(monitorList.length, 10)} Background events
-              </div>
-            )}
-            {productionStatus && (
-              <div style={{ fontSize: '10px', color: TEXT3, padding: '3px 10px', borderRadius: '6px', marginLeft: 'auto' }}>
-                {productionStatus}
-              </div>
-            )}
-          </div>
+          {(notableSignals.length > 0 || monitorList.length > 0) && (
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              {notableSignals.length > 0 && (
+                <div style={{ fontSize: '11px', color: YELLOW, background: 'rgba(251,191,36,0.08)', padding: '4px 12px', borderRadius: '6px', border: '1px solid rgba(251,191,36,0.15)' }}>
+                  {notableSignals.length} Notable
+                </div>
+              )}
+              {monitorList.length > 0 && (
+                <div style={{ fontSize: '11px', color: ACCENT, background: 'rgba(15,122,191,0.08)', padding: '4px 12px', borderRadius: '6px', border: '1px solid rgba(15,122,191,0.15)' }}>
+                  {monitorList.length} Monitor
+                </div>
+              )}
+              {thematicIdeas.length > 0 && (
+                <div style={{ fontSize: '11px', color: PURPLE, background: 'rgba(139,92,246,0.08)', padding: '4px 12px', borderRadius: '6px', border: '1px solid rgba(139,92,246,0.15)' }}>
+                  {thematicIdeas.length} Themes
+                </div>
+              )}
+            </div>
+          )}
           {notableSignals.length === 0 && monitorList.length === 0 && thematicIdeas.length === 0 && (
             <div style={{ fontSize: '10px', color: TEXT3, fontStyle: 'italic', marginTop: '4px' }}>
-              Your watchlist has no active filings or announcements in this period. Check back tomorrow or expand your date range.
+              Expand your date range (14D or 30D) or add more stocks to your watchlist.
             </div>
           )}
         </div>
@@ -2092,56 +2125,128 @@ export default function CompanyIntelligencePage() {
         </div>
       )}
 
-      {/* ── MONITOR LIST ── */}
+      {/* ── MONITOR LIST — Institutional Grade ── */}
       {monitorList.length > 0 && (
         <div style={{ marginTop: '24px' }}>
-          <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, letterSpacing: '0.05em', marginBottom: '12px' }}>
-            MONITOR LIST ({monitorList.length})
-            <span style={{ fontSize: '9px', fontWeight: 400, color: TEXT3, letterSpacing: 'normal', marginLeft: '8px' }}>
-              Ranked by signal quality score
-            </span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, letterSpacing: '0.05em' }}>
+              MONITOR LIST ({monitorList.length})
+              <span style={{ fontSize: '9px', fontWeight: 400, color: TEXT3, letterSpacing: 'normal', marginLeft: '8px' }}>
+                Ranked by materiality · confidence-weighted
+              </span>
+            </div>
+            {/* Data quality summary */}
+            {(() => {
+              const verified = monitorList.filter(s => s.confidenceType === 'ACTUAL' || s.dataType === 'FACT').length;
+              const inferred = monitorList.filter(s => s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC').length;
+              return (
+                <div style={{ display: 'flex', gap: '8px', fontSize: '9px' }}>
+                  {verified > 0 && <span style={{ color: GREEN, fontWeight: 600 }}>{verified} verified</span>}
+                  {inferred > 0 && <span style={{ color: TEXT3, fontWeight: 600 }}>{inferred} estimated</span>}
+                </div>
+              );
+            })()}
           </div>
           {monitorList.slice(0, 30).map((s, i) => {
             const mScore = s.materialityScore || 0;
-            // Tier color coding based on materialityScore thresholds: ≥75: GREEN, ≥60: BLUE, ≥45: AMBER, <45: GRAY
-            const mTier = mScore >= 75 ? 'HIGH' : mScore >= 60 ? 'MEDIUM' : mScore >= 45 ? 'WATCH' : 'LOW';
+            const confScore = s.monitorScore || s.dataConfidenceScore || s.confidenceScore || 0;
             const tierColor = mScore >= 75 ? GREEN : mScore >= 60 ? '#3B82F6' : mScore >= 45 ? '#F59E0B' : TEXT3;
             const tierBg = mScore >= 75 ? 'rgba(16,185,129,0.06)' : mScore >= 60 ? 'rgba(59,130,246,0.06)' : mScore >= 45 ? 'rgba(245,158,11,0.06)' : 'rgba(100,116,139,0.03)';
             const tierBorder = mScore >= 75 ? 'rgba(16,185,129,0.15)' : mScore >= 60 ? 'rgba(59,130,246,0.15)' : mScore >= 45 ? 'rgba(245,158,11,0.15)' : 'rgba(100,116,139,0.08)';
+            const isEstimated = s.inferenceUsed || s.confidenceType === 'HEURISTIC' || s.confidenceType === 'INFERRED';
             return (
               <div key={`mon-${i}`} style={{
-                padding: '8px 12px', marginBottom: '4px', borderRadius: '6px',
+                padding: '10px 14px', marginBottom: '5px', borderRadius: '8px',
                 backgroundColor: tierBg,
                 border: `1px solid ${tierBorder}`,
                 borderLeft: `3px solid ${tierColor}`,
               }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '11px', fontWeight: 700, color: TEXT1 }}>{s.symbol}</span>
-                    <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(100,116,139,0.1)', color: TEXT3 }}>
+                {/* Row 1: Symbol + Event + Value */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '12px' }}>{eventTypeIcon(s.eventType)}</span>
+                    <span style={{ fontSize: '13px', fontWeight: 700, color: '#3B82F6' }}>{s.symbol}</span>
+                    {s.company && s.company !== s.symbol && (
+                      <span style={{ fontSize: '10px', color: TEXT3 }}>{s.company.length > 25 ? s.company.substring(0, 25) + '...' : s.company}</span>
+                    )}
+                    {s.isPortfolio && <span style={{ fontSize: '8px', color: PURPLE, fontWeight: 700, padding: '1px 4px', borderRadius: '3px', backgroundColor: 'rgba(139,92,246,0.15)' }}>PF</span>}
+                    {s.isWatchlist && !s.isPortfolio && <span style={{ fontSize: '8px', color: ACCENT, fontWeight: 700, padding: '1px 4px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.15)' }}>WL</span>}
+                    <span style={{ fontSize: '9px', padding: '1px 6px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.08)', color: ACCENT, fontWeight: 600 }}>
                       {s.eventType}
                     </span>
-                    {s.headline && (
-                      <span style={{ fontSize: '10px', color: TEXT2 }}>
-                        {(() => {
-                          const nonFinTypes = ['Mgmt Change', 'Board Appointment', 'CEO Exit', 'CFO Exit', 'Leadership Transition', 'Regulatory'];
-                          let h = s.headline;
-                          if (nonFinTypes.includes(s.eventType)) {
-                            h = h.replace(/\[UNVERIFIED\]\s*/g, '').replace(/₹[\d,.]+\s*(?:Cr|crore|cr)/gi, '')
-                              .replace(/\d+\.?\d*%\s*(?:of\s+)?(?:revenue|mcap|impact)/gi, '')
-                              .replace(/\(est\.?\)/g, '').replace(/\s*—\s*$/g, '').replace(/\s{2,}/g, ' ').trim();
-                          }
-                          return h.substring(0, 80) + (h.length > 80 ? '...' : '');
-                        })()}
+                    {s.valueCr > 0 && (
+                      <span style={{ fontSize: '12px', fontWeight: 700, color: CYAN }}>
+                        {fmtCr(s.valueCr)}{isEstimated ? '*' : ''}
                       </span>
+                    )}
+                    {s.signalClass && s.signalClass !== 'COMPLIANCE' && (
+                      <span style={{ fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '2px',
+                        color: s.signalClass === 'ECONOMIC' ? '#10B981' : s.signalClass === 'STRATEGIC' ? '#8B5CF6' : '#F59E0B',
+                        backgroundColor: s.signalClass === 'ECONOMIC' ? 'rgba(16,185,129,0.1)' : s.signalClass === 'STRATEGIC' ? 'rgba(139,92,246,0.1)' : 'rgba(245,158,11,0.1)',
+                      }}>{s.signalClass}</span>
                     )}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ fontSize: '9px', fontWeight: 600, color: tierColor,
-                      padding: '1px 6px', borderRadius: '3px', backgroundColor: `${tierColor}15` }}>
+                    {confScore > 0 && (
+                      <span style={{ fontSize: '8px', fontWeight: 600, color: confScore >= 70 ? GREEN : confScore >= 50 ? YELLOW : TEXT3 }}>
+                        C:{Math.round(confScore)}
+                      </span>
+                    )}
+                    <span style={{ fontSize: '10px', fontWeight: 700, color: tierColor,
+                      padding: '2px 8px', borderRadius: '4px', backgroundColor: `${tierColor}15`,
+                      border: `1px solid ${tierColor}25`,
+                    }}>
                       {mScore}
                     </span>
+                    <span style={{ fontSize: '9px', color: TEXT3 }}>{fmtDate(s.date)}</span>
                   </div>
+                </div>
+                {/* Row 2: Insight */}
+                {(s.whyItMatters || s.whatHappened) && (
+                  <div style={{ fontSize: '11px', color: TEXT2, lineHeight: 1.4, marginTop: '2px' }}>
+                    {(() => {
+                      let text = s.whatHappened || s.whyItMatters || '';
+                      // Clean up template patterns that look repetitive
+                      text = text.replace(/\[UNVERIFIED\]\s*/g, '');
+                      return text.substring(0, 120) + (text.length > 120 ? '...' : '');
+                    })()}
+                  </div>
+                )}
+                {!s.whyItMatters && !s.whatHappened && s.headline && (
+                  <div style={{ fontSize: '10px', color: TEXT3, lineHeight: 1.4, marginTop: '2px' }}>
+                    {(() => {
+                      let h = s.headline;
+                      h = h.replace(/\[UNVERIFIED\]\s*/g, '').replace(/\(est\.?\)/g, '').replace(/\s{2,}/g, ' ').trim();
+                      return h.substring(0, 100) + (h.length > 100 ? '...' : '');
+                    })()}
+                  </div>
+                )}
+                {/* Row 3: Meta badges */}
+                <div style={{ display: 'flex', gap: '6px', marginTop: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  {s.impactPct > 0 && !isEstimated && (
+                    <span style={{ fontSize: '9px', fontWeight: 700, color: s.impactPct >= 8 ? GREEN : s.impactPct >= 3 ? YELLOW : TEXT3 }}>
+                      {s.impactPct.toFixed(1)}% rev
+                    </span>
+                  )}
+                  {s.pctMcap !== null && s.pctMcap > 0 && (
+                    <span style={{ fontSize: '9px', fontWeight: 600, color: CYAN }}>
+                      {s.pctMcap.toFixed(1)}% MCap
+                    </span>
+                  )}
+                  {s.segment && <span style={{ fontSize: '9px', color: TEXT3 }}>{s.segment}</span>}
+                  {s.evidenceTier && (
+                    <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 3px', borderRadius: '2px',
+                      color: s.evidenceTier === 'TIER_A' ? '#059669' : s.evidenceTier === 'TIER_B' ? '#D97706' : s.evidenceTier === 'TIER_C' ? '#DC2626' : '#6B7280',
+                      backgroundColor: s.evidenceTier === 'TIER_A' ? 'rgba(5,150,105,0.08)' : s.evidenceTier === 'TIER_B' ? 'rgba(217,119,6,0.08)' : s.evidenceTier === 'TIER_C' ? 'rgba(220,38,38,0.08)' : 'rgba(107,114,128,0.08)',
+                    }}>{s.evidenceTier.replace('TIER_', '')}</span>
+                  )}
+                  {isEstimated && (
+                    <span style={{ fontSize: '7px', fontWeight: 600, padding: '1px 4px', borderRadius: '2px', color: '#F59E0B', backgroundColor: 'rgba(245,158,11,0.08)' }}>EST</span>
+                  )}
+                  {s.dataType === 'FACT' && (
+                    <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 4px', borderRadius: '2px', color: GREEN, backgroundColor: 'rgba(16,185,129,0.08)' }}>CONFIRMED</span>
+                  )}
+                  <span style={{ fontSize: '9px', color: sentimentColor(s.sentiment), marginLeft: 'auto' }}>{s.sentiment}</span>
                 </div>
               </div>
             );
