@@ -155,9 +155,10 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 2, baseDelayMs = 
 
 // ── Screener.in HTML scraper ──────────────────────────────────────────────────
 async function fetchScreenerData(symbol: string): Promise<{ data: Record<string, any>; ok: boolean; url: string }> {
+  const encodedSymbol = encodeURIComponent(symbol);
   const urls = [
-    `https://www.screener.in/company/${symbol}/consolidated/`,
-    `https://www.screener.in/company/${symbol}/`,
+    `https://www.screener.in/company/${encodedSymbol}/consolidated/`,
+    `https://www.screener.in/company/${encodedSymbol}/`,
   ];
   for (const url of urls) {
     try {
@@ -556,11 +557,13 @@ function validateData(
 
   // Hard-fail conditions
   if (!symbol || symbol.length < 2) return { valid: false, reason: 'Invalid symbol', coveragePct: 0, confidence: 'VERY_LOW', source: 'none', fetchedAt: new Date().toISOString(), staleness: 'UNKNOWN' };
-  // Sector check: warn but don't hard-fail if we have a price (Yahoo/Google may provide sector later)
-  if ((!sector || sector.length < 3 || sector === 'Unknown') && (!nse.lastPrice || nse.lastPrice <= 0)) {
-    return { valid: false, reason: 'Symbol did not resolve to a company', coveragePct, confidence: 'VERY_LOW', source: 'none', fetchedAt: new Date().toISOString(), staleness: 'UNKNOWN' };
+  // Sector check: warn but don't hard-fail if we have any data at all
+  // Some symbols like S&SPOWER have special characters that cause fetch failures
+  const hasAnyPrice = (nse.lastPrice && nse.lastPrice > 0) || (screener.lastPrice && screener.lastPrice > 0);
+  if ((!sector || sector.length < 3 || sector === 'Unknown') && !hasAnyPrice && !screenerOk) {
+    return { valid: false, reason: `Symbol '${symbol}' did not resolve — may have special characters or be unlisted`, coveragePct, confidence: 'VERY_LOW', source: 'none', fetchedAt: new Date().toISOString(), staleness: 'UNKNOWN' };
   }
-  if (!nse.lastPrice || nse.lastPrice <= 0) return { valid: false, reason: 'Invalid or zero price — symbol may be delisted or mapping error', coveragePct, confidence: 'VERY_LOW', source: screenerOk ? 'partial' : 'none', fetchedAt: new Date().toISOString(), staleness: 'UNKNOWN' };
+  if (!hasAnyPrice) return { valid: false, reason: 'Invalid or zero price — symbol may be delisted or mapping error', coveragePct, confidence: 'VERY_LOW', source: screenerOk ? 'partial' : 'none', fetchedAt: new Date().toISOString(), staleness: 'UNKNOWN' };
 
   const source: DataQuality['source'] = screenerOk && nseOk ? 'screener.in + NSE' : nseOk ? 'NSE only' : screenerOk ? 'partial' : 'none';
   // Note: screenerOk here means "any fundamental source" (screener.in OR Yahoo OR NSE financials)

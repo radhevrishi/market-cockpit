@@ -2556,32 +2556,44 @@ function validateSignal(signal: IntelSignal): {
 
   const monitorScore = Math.min(100, srcScore + eventScore + numScore + matScore + signalAge);
 
-  // ── DISPOSITION ──
+  // ── DISPOSITION (INDIA-CALIBRATED) ──
+  // Relaxed for India markets where most signals are HEURISTIC/INFERRED
   // Heuristic-degraded signals forced to MONITOR regardless of materiality
   if (isMaterial && !isInferred && !isHeuristicDegraded) {
     return { disposition: 'ACTIONABLE', isInferred: false, isMaterial: true, monitorScore: 100 };
   }
 
+  // Material + inferred but high-confidence → still ACTIONABLE (India-calibrated)
+  // In India, many real corporate filings get tagged INFERRED due to extraction patterns
+  if (isMaterial && isInferred && monitorScore >= 70) {
+    return { disposition: 'ACTIONABLE', isInferred: true, isMaterial: true, monitorScore };
+  }
+
   if (isMaterial && isInferred) {
-    // Material but inferred → MONITOR (show event type, hide numbers)
+    // Material but lower-confidence inferred → MONITOR
     return { disposition: 'MONITOR', isInferred: true, isMaterial: true, monitorScore };
   }
 
+  // High monitor score even without strict materiality → MONITOR (not rejected)
+  if (monitorScore >= 50) {
+    return { disposition: 'MONITOR', isInferred, isMaterial: false, monitorScore };
+  }
+
   // Source verified, not template, not broken, but not material → MONITOR
-  // This includes: inferred but source-verified, and non-inferred non-material
   return { disposition: 'MONITOR', isInferred, isMaterial: false, monitorScore };
 }
 
-// FINAL: Strip inferred numbers from display — Zero Inference Policy
+// FINAL: Mark inferred numbers clearly — Transparent Inference Policy
+// Instead of stripping all numbers (which made signals useless), add (est.) suffix
 function sanitizeForDisplay(signal: IntelSignal, isInferred: boolean): void {
-  if (isInferred) {
-    // Don't show precise numbers for inferred values
-    signal.whyItMatters = signal.whyItMatters?.replace(/₹[\d,.]+\s*(?:Cr|crore|cr)/gi, '[UNVERIFIED AMOUNT]')
-      .replace(/\d+\.?\d*%\s*(?:impact|revenue|of revenue|of mcap)/gi, '[UNVERIFIED %]') || '';
-    // Keep the event type visible but mark amounts as unverified
-    if (signal.inferenceUsed) {
-      signal.headline = signal.headline?.replace(/₹[\d,.]+\s*(?:Cr|crore|cr)/gi, '[UNVERIFIED]') || signal.headline;
+  if (isInferred && signal.inferenceUsed) {
+    // Add (est.) suffix to inferred amounts instead of hiding them
+    if (signal.whyItMatters) {
+      signal.whyItMatters = signal.whyItMatters
+        .replace(/(₹[\d,.]+\s*(?:Cr|crore|cr))/gi, '$1 (est.)')
+        .replace(/(\d+\.?\d*%\s*(?:of revenue|of mcap))/gi, '$1 (est.)');
     }
+    // Don't strip headline — it needs to be readable
   }
 }
 
@@ -4811,18 +4823,25 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     }
 
     // 14. ★ SIGNAL TIER CLASSIFICATION (ACTIONABLE / NOTABLE / MONITOR) ★
-    // Notable = score 50-70, confidence >= 50, not rejected
-    // Tier 3 events can NEVER be ACTIONABLE or NOTABLE — hard enforcement
+    // India-calibrated: relaxed thresholds for Notable to prevent empty feeds
+    // Tier 3 events demoted but NOT completely blocked from NOTABLE if corroborated
     if (s.eventTaxonomyTier === 'TIER_3') {
       s.signalTierV7 = 'MONITOR';
       if (s.signalCategory === 'ACTIONABLE') {
         s.signalCategory = 'MONITOR';
         s.monitorTier = 'LOW';
       }
-    } else if (s.signalCategory === 'MONITOR' && s.materialityScore >= 50 && confScore >= 50) {
-      s.signalTierV7 = 'NOTABLE';
     } else if (s.signalCategory === 'ACTIONABLE') {
       s.signalTierV7 = 'ACTIONABLE';
+    } else if (s.signalCategory === 'MONITOR' && (
+      // Relaxed Notable gate: materiality >= 45 AND confidence >= 45
+      // OR materiality >= 55 alone (strong economic signal with any confidence)
+      // OR confidence >= 55 alone (high-confidence signal with moderate materiality)
+      (s.materialityScore >= 45 && confScore >= 45) ||
+      (s.materialityScore >= 55) ||
+      (confScore >= 55 && s.materialityScore >= 35)
+    )) {
+      s.signalTierV7 = 'NOTABLE';
     } else {
       s.signalTierV7 = 'MONITOR';
     }

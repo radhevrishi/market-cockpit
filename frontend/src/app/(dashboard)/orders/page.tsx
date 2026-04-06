@@ -1128,25 +1128,51 @@ export default function CompanyIntelligencePage() {
         </div>
       )}
 
-      {/* ── QUIET MARKET BANNER ── */}
+      {/* ── QUIET MARKET DASHBOARD ── */}
       {quietMarket && !loading && (
         <div style={{
           backgroundColor: 'rgba(100,116,139,0.08)',
           border: `1px solid rgba(100,116,139,0.2)`,
           borderRadius: '8px',
-          padding: '12px 16px',
+          padding: '16px',
           marginBottom: '16px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '10px',
         }}>
-          <span style={{ fontSize: '16px' }}>🌊</span>
-          <div>
-            <div style={{ fontSize: '13px', fontWeight: 700, color: TEXT2 }}>Quiet Market</div>
-            <div style={{ fontSize: '11px', color: TEXT3, marginTop: '2px' }}>
-              No actionable or notable signals detected in this time window. This is normal during weekends, holidays, or low-activity periods.
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+            <span style={{ fontSize: '16px' }}>🌊</span>
+            <div>
+              <div style={{ fontSize: '13px', fontWeight: 700, color: TEXT2 }}>Quiet Market</div>
+              <div style={{ fontSize: '11px', color: TEXT3, marginTop: '2px' }}>
+                No high-conviction signals. Showing monitor-worthy activity below.
+              </div>
             </div>
           </div>
+          {/* Show thematic developments on quiet days */}
+          {thematicIdeas.length > 0 && (
+            <div style={{ marginTop: '8px' }}>
+              <div style={{ fontSize: '10px', fontWeight: 700, color: PURPLE, marginBottom: '6px' }}>THEMATIC DEVELOPMENTS</div>
+              {thematicIdeas.slice(0, 3).map((t, i) => (
+                <div key={`qt-${i}`} style={{ fontSize: '11px', color: TEXT2, marginBottom: '4px', paddingLeft: '8px', borderLeft: `2px solid ${PURPLE}40` }}>
+                  <span style={{ fontWeight: 600, color: '#3B82F6' }}>{t.symbol}</span>
+                  {t.isPortfolio && <span style={{ fontSize: '8px', color: PURPLE, marginLeft: '4px' }}>PF</span>}
+                  {' — '}{t.theme.narrative}
+                </div>
+              ))}
+            </div>
+          )}
+          {/* Show monitor signals on quiet days */}
+          {monitorList.length > 0 && (
+            <div style={{ marginTop: '8px' }}>
+              <div style={{ fontSize: '10px', fontWeight: 700, color: ACCENT, marginBottom: '6px' }}>MONITORING ({monitorList.length})</div>
+              {monitorList.slice(0, 5).map((s, i) => (
+                <div key={`qm-${i}`} style={{ fontSize: '11px', color: TEXT2, marginBottom: '4px', paddingLeft: '8px', borderLeft: `2px solid ${ACCENT}40` }}>
+                  <span style={{ fontWeight: 600, color: '#3B82F6' }}>{s.symbol}</span>
+                  {s.isPortfolio && <span style={{ fontSize: '8px', color: PURPLE, marginLeft: '4px' }}>PF</span>}
+                  {' — '}{s.whatHappened || s.whyItMatters || s.eventType}
+                  <span style={{ fontSize: '9px', color: TEXT3, marginLeft: '6px' }}>{fmtDate(s.date)}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -1156,7 +1182,7 @@ export default function CompanyIntelligencePage() {
           <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, letterSpacing: '0.05em', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             🔍 SPECULATIVE ({speculativeSignals.length})
             <span style={{ fontSize: '9px', fontWeight: 400, color: TEXT3, letterSpacing: 'normal' }}>
-              Below confidence threshold · Not investment-grade
+              Early signal — requires confirmation before action
             </span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>

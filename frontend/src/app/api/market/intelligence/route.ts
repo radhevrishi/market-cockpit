@@ -1746,28 +1746,67 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             monitorSignals.length = 0;
             monitorSignals.push(...dedupeMonitor.values());
 
-            // ── SIGNAL ELIGIBILITY GATE (canSurface) ──
-            // Strict institutional-grade gating: heuristic/low-conf signals → speculative layer
-            const canSurface = (s: any): boolean => {
+            // ── ADAPTIVE SIGNAL TIERING (India-market calibrated) ──
+            // Compute universe-relative confidence for adaptive thresholds
+            const allConfs = [...actionableSignals, ...monitorSignals].map((s: any) => s.monitorScore || s.confidenceScore || s.dataConfidenceScore || 0);
+            const avgConf = allConfs.length > 0 ? allConfs.reduce((a, b) => a + b, 0) / allConfs.length : 50;
+            const sortedConfs = [...allConfs].sort((a, b) => b - a);
+            const p80Conf = sortedConfs[Math.floor(sortedConfs.length * 0.2)] || 50; // top 20% threshold
+
+            const classifyTier = (s: any): 'ACTIONABLE' | 'NOTABLE' | 'MONITOR' | 'SPECULATIVE' | 'REJECTED' => {
               const conf = s.monitorScore || s.confidenceScore || s.dataConfidenceScore || 0;
-              if (conf < 50 && s.materialityScore < 50) return false;
-              if (s.confidenceType === 'HEURISTIC' && conf < 60) return false;
-              if ((s.confidenceType === 'INFERRED' || s.inferenceUsed) && conf < 60) return false;
-              return true;
+              const mat = s.materialityScore || 0;
+              const isVerified = s.confidenceType === 'ACTUAL' || s.verified;
+              const corrobCount = s.corroborationCount || (s.signalStackCount >= 2 && (s as any)._stackIndependent ? 2 : 0);
+              // Relative confidence: signal in top 20% of universe gets 1-tier upgrade potential
+              const isTopConf = conf >= p80Conf && p80Conf > 0;
+
+              // Tier 1: ACTIONABLE — verified + strong confidence + material
+              if (isVerified && conf >= 70 && mat >= 65) return 'ACTIONABLE';
+              // Upgrade: top-confidence non-verified with strong materiality
+              if (isTopConf && conf >= 65 && mat >= 60) return 'ACTIONABLE';
+
+              // Tier 2: NOTABLE — good confidence + decent materiality, or corroborated inferred
+              if (conf >= 55 && mat >= 50) return 'NOTABLE';
+              if (conf >= 50 && mat >= 45 && corrobCount >= 2) return 'NOTABLE';
+              // Inferred but corroborated and material enough
+              if ((s.confidenceType === 'INFERRED' || s.inferenceUsed) && conf >= 50 && corrobCount >= 2) return 'NOTABLE';
+
+              // Tier 3: MONITOR — reasonable signal, not garbage
+              if (conf >= 40 || mat >= 40 || corrobCount >= 2) return 'MONITOR';
+
+              // Tier 4: SPECULATIVE — below threshold but exists
+              if (conf >= 25 || mat >= 25) return 'SPECULATIVE';
+
+              return 'REJECTED';
             };
 
-            // Separate speculative signals from surfaceable ones
+            // Separate signals into tiers
             const speculativeSignals: any[] = [];
             const surfaceableActionable: any[] = [];
             const surfaceableMonitor: any[] = [];
 
-            for (const s of actionableSignals) {
-              if (canSurface(s)) { surfaceableActionable.push(s); }
-              else { s._speculative = true; speculativeSignals.push(s); }
-            }
-            for (const s of monitorSignals) {
-              if (canSurface(s)) { surfaceableMonitor.push(s); }
-              else { s._speculative = true; speculativeSignals.push(s); }
+            for (const s of [...actionableSignals, ...monitorSignals]) {
+              const tier = classifyTier(s);
+              if (tier === 'ACTIONABLE') {
+                s.signalTierV7 = 'ACTIONABLE';
+                s.signalCategory = 'ACTIONABLE';
+                surfaceableActionable.push(s);
+              } else if (tier === 'NOTABLE') {
+                s.signalTierV7 = 'NOTABLE';
+                s.signalCategory = 'MONITOR';
+                surfaceableMonitor.push(s);
+              } else if (tier === 'MONITOR') {
+                s.signalTierV7 = 'MONITOR';
+                s.signalCategory = 'MONITOR';
+                surfaceableMonitor.push(s);
+              } else if (tier === 'SPECULATIVE') {
+                s._speculative = true;
+                speculativeSignals.push(s);
+              } else {
+                // REJECTED — already counted
+                rejectedCount++;
+              }
             }
 
             // ── v7: Sort by composite rank score ──
@@ -1787,6 +1826,27 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             // Overflow: excess actionable → notable
             if (surfaceableActionable.length > MAX_ACTIONABLE) {
               notableSignals.unshift(...surfaceableActionable.splice(MAX_ACTIONABLE));
+            }
+
+            // ── MINIMUM OUTPUT GUARANTEES (anti-empty system) ──
+            // If monitor is empty but speculative has signals, promote top speculative to monitor
+            if (regularMonitor.length < 3 && speculativeSignals.length > 0) {
+              const needed = Math.min(5, 3 - regularMonitor.length, speculativeSignals.length);
+              for (let i = 0; i < needed; i++) {
+                const promoted = speculativeSignals.shift()!;
+                promoted._speculative = false;
+                promoted._promotedFromSpeculative = true;
+                promoted.signalTierV7 = 'MONITOR';
+                promoted.signalCategory = 'MONITOR';
+                regularMonitor.push(promoted);
+              }
+            }
+            // If notable is empty but there are signals at all, promote top monitor to notable
+            if (notableSignals.length === 0 && regularMonitor.length > 0) {
+              const topMonitor = regularMonitor.shift()!;
+              topMonitor.signalTierV7 = 'NOTABLE';
+              topMonitor._promotedToNotable = true;
+              notableSignals.push(topMonitor);
             }
 
             const totalProcessed = surfaceableActionable.length + notableSignals.length + regularMonitor.length + speculativeSignals.length + rejectedCount;
@@ -1912,11 +1972,66 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               ...getThematicIdeas.filter((t: any) => !storedThematicIds.has((t.symbol || '').toUpperCase())),
             ].slice(0, 6);
 
-            // ── QUIET MARKET MODE: if 0 actionable + 0 notable, show quiet state ──
+            // ── THEMATIC → SIGNAL PIPELINE ──
+            // Convert strong thematic ideas into Notable signals when notable is sparse
+            if (notableSignals.length < 2 && mergedThematic.length > 0) {
+              for (const thematic of mergedThematic) {
+                if (notableSignals.length >= 3) break;
+                // Only convert if this company isn't already in notable/actionable
+                const alreadyShown = surfaceableActionable.some((s: any) => (s.symbol || '').toUpperCase() === thematic.symbol) ||
+                  notableSignals.some((s: any) => (s.symbol || '').toUpperCase() === thematic.symbol);
+                if (alreadyShown) continue;
+                // Create a derived signal from thematic idea
+                const derivedSignal: any = {
+                  symbol: thematic.symbol,
+                  company: thematic.company,
+                  date: new Date().toISOString().slice(0, 10),
+                  source: 'order',
+                  eventType: thematic.theme.tag === 'STRATEGIC_CAPEX' ? 'Capex/Expansion' : thematic.theme.tag === 'TURNAROUND' ? 'Turnaround' : 'Thematic',
+                  headline: `${thematic.company}: ${thematic.theme.narrative}`,
+                  valueCr: 0,
+                  impactPct: 0,
+                  pctRevenue: null,
+                  pctMcap: null,
+                  inferenceUsed: true,
+                  client: null,
+                  segment: thematic.segment,
+                  timeline: null,
+                  buyerSeller: null,
+                  premiumDiscount: null,
+                  impactLevel: 'MEDIUM' as any,
+                  impactConfidence: 'MEDIUM' as any,
+                  confidenceScore: thematic.theme.confidence === 'HIGH' ? 65 : thematic.theme.confidence === 'MEDIUM' ? 50 : 35,
+                  confidenceType: 'HEURISTIC',
+                  action: 'WATCH',
+                  score: thematic.theme.score || 50,
+                  timeWeight: 0.8,
+                  weightedScore: thematic.theme.score || 50,
+                  sentiment: 'Bullish' as any,
+                  whyItMatters: thematic.theme.narrative,
+                  whatHappened: `${thematic.company} has ${thematic.signals} converging signals in ${thematic.theme.label}`,
+                  isNegative: false,
+                  earningsBoost: false,
+                  isWatchlist: !!thematic.isWatchlist,
+                  isPortfolio: !!thematic.isPortfolio,
+                  lastPrice: thematic.lastPrice,
+                  materialityScore: thematic.theme.score || 50,
+                  signalTierV7: 'NOTABLE',
+                  signalCategory: 'MONITOR',
+                  signalClass: 'ECONOMIC',
+                  alphaTheme: thematic.theme,
+                  _derivedFromThematic: true,
+                  freshness: 'RECENT',
+                  decision: 'WATCH',
+                };
+                notableSignals.push(derivedSignal);
+              }
+            }
+
+            // ── QUIET MARKET MODE ──
             let finalActionable = surfaceableActionable.slice(0, MAX_ACTIONABLE);
             let finalNotable = notableSignals.slice(0, MAX_NOTABLE);
             const isQuietMarket = finalActionable.length === 0 && finalNotable.length === 0;
-            // Do NOT force weak signals into visibility — show quiet market instead
 
             // ── STRICT PF/WL FILTER: ensure no signals leak through if user has filtered portfolio ──
             // Final safety gate: all signals must pass the PF/WL filter if it was applied
@@ -1941,7 +2056,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               notable: enforceUserFilter(finalNotable),
               observations: enforceUserFilter(regularMonitor.slice(0, MAX_MONITOR)),
               speculative: enforceUserFilter(speculativeSignals.slice(0, MAX_SPECULATIVE)),
-              top3: enforceUserFilter(composedFeed.filter((s: any) => canSurface(s)).slice(0, 5)),
+              top3: enforceUserFilter(composedFeed.filter((s: any) => !s._speculative).slice(0, 5)),
               trends: validSignals.length > 0 ? responseData.trends : [],
               bias: validBias,
               thematicIdeas: mergedThematic,
