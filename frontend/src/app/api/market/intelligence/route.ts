@@ -1278,7 +1278,8 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
           // Critical: signals must be filtered and decay-weighted BEFORE scoring
           const nowMs = Date.now();
           const daysWindow = days <= 0 ? 90 : days;
-          const cutoffMs = daysWindow < 90 ? nowMs - daysWindow * 24 * 60 * 60 * 1000 : 0;
+          // ALWAYS apply date cutoff — never disable filtering
+          const cutoffMs = nowMs - daysWindow * 24 * 60 * 60 * 1000;
           const DECAY_LAMBDA = 0.05; // exponential decay factor (tunable)
 
           // Merge ALL raw signals FIRST, then filter by PF/WL at source level, then by date
@@ -1669,16 +1670,24 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 s.signalTierV7 = 'MONITOR';
               }
 
-              // ── T3 EVENT GATE: compliance/routine events cannot be NOTABLE without corroboration ──
-              const T3_EVENTS = new Set(['Corporate', 'Compliance', 'Regulatory', 'Filing Update', 'Routine Disclosure']);
+              // ── TIER 3 EVENT ENFORCEMENT ──
+              // Use eventTaxonomyTier from compute if available, else classify here
+              const T3_EVENTS_GET = new Set(['Corporate', 'Compliance', 'Regulatory', 'Filing Update', 'Routine Disclosure', 'Mgmt Change', 'Board Appointment', 'Board Meeting']);
               const T3_HEADLINE_TERMS = ['company secretary', 'compliance officer', 'disclosure', 'intimation', 'routine', 'annual return', 'agm', 'egm'];
-              const isT3Event = T3_EVENTS.has(s.eventType) ||
+              const isT3Event = s.eventTaxonomyTier === 'TIER_3' || T3_EVENTS_GET.has(s.eventType) ||
                 T3_HEADLINE_TERMS.some(t => (s.headline || '').toLowerCase().includes(t));
-              if (isT3Event && s.signalTierV7 === 'NOTABLE') {
-                // T3 events need corroboration to be notable: price-volume signal or multiple filings
-                const hasCorroboration = (s.impactPct && Math.abs(s.impactPct) > 2) || (s.materialityScore >= 70);
-                if (!hasCorroboration) {
-                  s.signalTierV7 = 'MONITOR'; // demote back to monitor
+              if (isT3Event) {
+                // Tier 3 events can NEVER be ACTIONABLE, and need corroboration to be NOTABLE
+                if (s.signalTierV7 === 'ACTIONABLE' || s.signalCategory === 'ACTIONABLE') {
+                  s.signalTierV7 = 'MONITOR';
+                  s.signalCategory = 'MONITOR';
+                  s.monitorTier = 'LOW';
+                }
+                if (s.signalTierV7 === 'NOTABLE') {
+                  const hasCorroboration = (s.impactPct && Math.abs(s.impactPct) > 2) || (s.materialityScore >= 70);
+                  if (!hasCorroboration) {
+                    s.signalTierV7 = 'MONITOR';
+                  }
                 }
               }
 
@@ -1737,29 +1746,55 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             monitorSignals.length = 0;
             monitorSignals.push(...dedupeMonitor.values());
 
+            // ── SIGNAL ELIGIBILITY GATE (canSurface) ──
+            // Strict institutional-grade gating: heuristic/low-conf signals → speculative layer
+            const canSurface = (s: any): boolean => {
+              const conf = s.monitorScore || s.confidenceScore || s.dataConfidenceScore || 0;
+              if (conf < 50 && s.materialityScore < 50) return false;
+              if (s.confidenceType === 'HEURISTIC' && conf < 60) return false;
+              if ((s.confidenceType === 'INFERRED' || s.inferenceUsed) && conf < 60) return false;
+              return true;
+            };
+
+            // Separate speculative signals from surfaceable ones
+            const speculativeSignals: any[] = [];
+            const surfaceableActionable: any[] = [];
+            const surfaceableMonitor: any[] = [];
+
+            for (const s of actionableSignals) {
+              if (canSurface(s)) { surfaceableActionable.push(s); }
+              else { s._speculative = true; speculativeSignals.push(s); }
+            }
+            for (const s of monitorSignals) {
+              if (canSurface(s)) { surfaceableMonitor.push(s); }
+              else { s._speculative = true; speculativeSignals.push(s); }
+            }
+
             // ── v7: Sort by composite rank score ──
-            actionableSignals.sort((a: any, b: any) => (b.v7RankScore || 0) - (a.v7RankScore || 0));
-            monitorSignals.sort((a: any, b: any) => (b.v7RankScore || 0) - (a.v7RankScore || 0));
+            surfaceableActionable.sort((a: any, b: any) => (b.v7RankScore || 0) - (a.v7RankScore || 0));
+            surfaceableMonitor.sort((a: any, b: any) => (b.v7RankScore || 0) - (a.v7RankScore || 0));
+            speculativeSignals.sort((a: any, b: any) => (b.v7RankScore || 0) - (a.v7RankScore || 0));
 
             // Enforce output constraints + separate notable tier
             const MAX_ACTIONABLE = 3;
             const MAX_NOTABLE = 5;
             const MAX_MONITOR = 10;
+            const MAX_SPECULATIVE = 5;
 
-            const notableSignals = monitorSignals.filter((s: any) => s.signalTierV7 === 'NOTABLE');
-            const regularMonitor = monitorSignals.filter((s: any) => s.signalTierV7 !== 'NOTABLE');
+            const notableSignals = surfaceableMonitor.filter((s: any) => s.signalTierV7 === 'NOTABLE');
+            const regularMonitor = surfaceableMonitor.filter((s: any) => s.signalTierV7 !== 'NOTABLE');
 
             // Overflow: excess actionable → notable
-            if (actionableSignals.length > MAX_ACTIONABLE) {
-              notableSignals.unshift(...actionableSignals.splice(MAX_ACTIONABLE));
+            if (surfaceableActionable.length > MAX_ACTIONABLE) {
+              notableSignals.unshift(...surfaceableActionable.splice(MAX_ACTIONABLE));
             }
 
-            const totalProcessed = actionableSignals.length + notableSignals.length + regularMonitor.length + rejectedCount;
+            const totalProcessed = surfaceableActionable.length + notableSignals.length + regularMonitor.length + speculativeSignals.length + rejectedCount;
             const rejectedPct = totalProcessed > 0 ? (rejectedCount / totalProcessed) * 100 : 0;
-            const productionReady = actionableSignals.length <= MAX_ACTIONABLE;
+            const productionReady = surfaceableActionable.length <= MAX_ACTIONABLE;
 
-            // Rebuild bias from all valid signals
-            const validSignals = [...actionableSignals, ...notableSignals, ...regularMonitor];
+            // Rebuild bias from all valid signals (including speculative for counts)
+            const validSignals = [...surfaceableActionable, ...notableSignals, ...regularMonitor];
             const validBias = responseData.bias ? { ...responseData.bias } : {} as any;
             if (validSignals.length === 0) {
               validBias.totalSignals = 0; validBias.highImpactCount = 0; validBias.buyWatchCount = 0;
@@ -1786,7 +1821,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 if (vs.source === 'order' && vs.valueCr) totOrd += vs.valueCr;
                 if (vs.source === 'deal' && vs.valueCr) totDeal += vs.valueCr;
               }
-              validBias.totalSignals = actionableSignals.length;
+              validBias.totalSignals = surfaceableActionable.length;
               validBias.totalObservations = notableSignals.length + regularMonitor.length;
               validBias.holdCount = hCount; validBias.watchCount = wCount;
               validBias.monitorCount = notableSignals.length + regularMonitor.length;
@@ -1799,7 +1834,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               validBias.netBias = bullish > bearish + 2 ? 'Bullish' : bearish > bullish + 2 ? 'Bearish' : 'Neutral';
               validBias.activeSectors = [...new Set(validSignals.map((s: any) => s.sector || s.segment).filter(Boolean))];
               const biasParts: string[] = [];
-              if (actionableSignals.length > 0) biasParts.push(`${actionableSignals.length} Actionable`);
+              if (surfaceableActionable.length > 0) biasParts.push(`${surfaceableActionable.length} Actionable`);
               if (notableSignals.length > 0) biasParts.push(`${notableSignals.length} Notable`);
               biasParts.push(`${regularMonitor.length} Monitor`);
               biasParts.push(`${rejectedCount} Rejected`);
@@ -1808,7 +1843,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             }
 
             // ── v7: Feed composition — v7RankScore sorted, ECONOMIC first ──
-            const allVisibleSignals = [...actionableSignals, ...notableSignals, ...regularMonitor];
+            const allVisibleSignals = [...surfaceableActionable, ...notableSignals, ...regularMonitor];
             allVisibleSignals.sort((a: any, b: any) => (b.v7RankScore || 0) - (a.v7RankScore || 0));
             const composedFeed = allVisibleSignals.slice(0, 10);
 
@@ -1877,17 +1912,11 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               ...getThematicIdeas.filter((t: any) => !storedThematicIds.has((t.symbol || '').toUpperCase())),
             ].slice(0, 6);
 
-            // ── Empty fallback: if 0 actionable + 0 notable → promote top thematic ──
-            let finalActionable = actionableSignals.slice(0, MAX_ACTIONABLE);
+            // ── QUIET MARKET MODE: if 0 actionable + 0 notable, show quiet state ──
+            let finalActionable = surfaceableActionable.slice(0, MAX_ACTIONABLE);
             let finalNotable = notableSignals.slice(0, MAX_NOTABLE);
-            if (finalActionable.length === 0 && finalNotable.length === 0 && regularMonitor.length > 0) {
-              // Promote top monitor signals with thematic context to notable
-              const promotable = regularMonitor
-                .filter((s: any) => s.alphaTheme || (s.materialityScore || 0) >= 40)
-                .sort((a: any, b: any) => (b.materialityScore || 0) - (a.materialityScore || 0))
-                .slice(0, 3);
-              finalNotable = promotable;
-            }
+            const isQuietMarket = finalActionable.length === 0 && finalNotable.length === 0;
+            // Do NOT force weak signals into visibility — show quiet market instead
 
             // ── STRICT PF/WL FILTER: ensure no signals leak through if user has filtered portfolio ──
             // Final safety gate: all signals must pass the PF/WL filter if it was applied
@@ -1911,14 +1940,21 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               signals: enforceUserFilter(finalActionable),
               notable: enforceUserFilter(finalNotable),
               observations: enforceUserFilter(regularMonitor.slice(0, MAX_MONITOR)),
-              top3: enforceUserFilter(composedFeed.slice(0, 5)),
+              speculative: enforceUserFilter(speculativeSignals.slice(0, MAX_SPECULATIVE)),
+              top3: enforceUserFilter(composedFeed.filter((s: any) => canSurface(s)).slice(0, 5)),
               trends: validSignals.length > 0 ? responseData.trends : [],
               bias: validBias,
               thematicIdeas: mergedThematic,
               noActionableSignals: finalActionable.length === 0 && finalNotable.length === 0,
               noHighConfSignals: finalActionable.length === 0,
+              quietMarket: isQuietMarket,
               _productionStatus: productionReady ? 'PRODUCTION_READY' : 'REFINEMENT_REQUIRED',
-              _stats: { actionable: finalActionable.length, notable: finalNotable.length, monitor: regularMonitor.length, rejected: rejectedCount, rejectedPct: Math.round(rejectedPct), rawCount: rawSignals.length, _rejectReasons, _rejectSamples },
+              _stats: {
+                actionable: finalActionable.length, notable: finalNotable.length,
+                monitor: regularMonitor.length, speculative: speculativeSignals.length,
+                rejected: rejectedCount, rejectedPct: Math.round(rejectedPct),
+                rawCount: rawSignals.length, _rejectReasons, _rejectSamples,
+              },
             });
           }
 
@@ -2548,17 +2584,21 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
     const trends: CompanyTrend[] = [];
     for (const [sym, sigs] of companySignalMap) {
       const count = sigs.length;
-      const stackLevel: CompanyTrend['stackLevel'] = count >= 4 ? 'STRONG' : count >= 2 ? 'BUILDING' : 'WEAK';
 
-      // Set stack info on each signal + apply stacking bonus (0–20 points)
+      // ── INDEPENDENCE VALIDATION ──
+      // Stacking bonus only if 2+ independent sources OR 2+ distinct event types
+      const uniqueSources = new Set(sigs.map(s => s.dataSource || s.source || 'unknown'));
+      const uniqueEventTypes = new Set(sigs.map(s => s.eventType || 'unknown'));
+      const isIndependent = uniqueSources.size >= 2 || uniqueEventTypes.size >= 2;
+      const effectiveCount = isIndependent ? count : 1;
+      const stackLevel: CompanyTrend['stackLevel'] = effectiveCount >= 4 ? 'STRONG' : effectiveCount >= 2 ? 'BUILDING' : 'WEAK';
+
+      // Set stack info on each signal + apply stacking bonus (0–20 points) only if independent
       for (const s of sigs) {
-        s.signalStackCount = count;
+        s.signalStackCount = effectiveCount;
         s.signalStackLevel = stackLevel;
 
-        // Component 4: Signal stacking bonus (0–20 points)
-        // Formula: min(20, 5 × signalCount)
-        // 1 signal → 0, 2 → 10, 3 → 15, 4+ → 20
-        const stackBonus = count >= 2 ? Math.min(20, 5 * count) : 0;
+        const stackBonus = (isIndependent && effectiveCount >= 2) ? Math.min(20, 5 * effectiveCount) : 0;
         if (stackBonus > 0) {
           s.weightedScore = Math.min(100, s.weightedScore + stackBonus);
         }

@@ -12,6 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchStockQuote, fetchCompanyFinancialResults, fetchPriceWithFallback } from '@/lib/nse';
+import { kvGet, kvSet } from '@/lib/kv';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
@@ -134,6 +135,23 @@ const SECTOR_BENCHMARKS: Record<string, { roce: number[]; opm: number[]; pe: num
   REALTY:       { roce: [10, 14, 20], opm: [20, 28, 38], pe: [18, 28, 42], revenueGrowth: [8,  16, 28] },
   OTHER:        { roce: [12, 18, 25], opm: [10, 15, 22], pe: [18, 28, 42], revenueGrowth: [8,  14, 22] },
 };
+
+// ── Retry with exponential backoff ───────────────────────────────────────────
+async function withRetry<T>(fn: () => Promise<T>, maxRetries = 2, baseDelayMs = 300): Promise<T> {
+  let lastErr: Error | null = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err as Error;
+      if (attempt < maxRetries) {
+        const delay = baseDelayMs * Math.pow(2, attempt); // 300, 600, 1200ms
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastErr;
+}
 
 // ── Screener.in HTML scraper ──────────────────────────────────────────────────
 async function fetchScreenerData(symbol: string): Promise<{ data: Record<string, any>; ok: boolean; url: string }> {
@@ -1046,12 +1064,13 @@ export async function GET(request: NextRequest) {
           // Priority: screener.in → Yahoo Finance → Google Finance for fundamentals
           // Priority: NSE (cookie) → BSE → MoneyControl for quotes
           // Priority: NSE Financial Results for quarterly data
+          // ── Multi-source fetching with exponential backoff retry ──
           const [scrResult, nseResult, yahooResult, nseFinResult, googleResult] = await Promise.all([
-            fetchScreenerData(symbol).catch((): { data: Record<string, any>; ok: boolean; url: string } => ({ data: {}, ok: false, url: '' })),
-            fetchNSEData(symbol).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
-            fetchYahooData(symbol).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
-            fetchNSEFinancials(symbol).catch((): Record<string, any> => ({})),
-            fetchGoogleFinanceData(symbol).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
+            withRetry(() => fetchScreenerData(symbol), 2, 300).catch((): { data: Record<string, any>; ok: boolean; url: string } => ({ data: {}, ok: false, url: '' })),
+            withRetry(() => fetchNSEData(symbol), 2, 300).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
+            withRetry(() => fetchYahooData(symbol), 1, 500).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
+            withRetry(() => fetchNSEFinancials(symbol), 2, 300).catch((): Record<string, any> => ({})),
+            withRetry(() => fetchGoogleFinanceData(symbol), 1, 500).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
           ]);
 
           // Merge data: screener is primary, Yahoo is secondary, Google tertiary, NSE financials quaternary
@@ -1267,11 +1286,36 @@ export async function GET(request: NextRequest) {
     };
 
     // Sanitize to ensure no NaN/Infinity escapes into JSON
-    return NextResponse.json(sanitizeForJSON(payload));
+    const sanitized = sanitizeForJSON(payload);
+
+    // Cache successful results for stale fallback (TTL: 6 hours)
+    if (validResults.length > 0) {
+      const cacheKey = `multibagger:${allSymbols.sort().join(',')}`;
+      try { await kvSet(cacheKey, sanitized, 21600); } catch { /* best effort cache */ }
+    }
+
+    return NextResponse.json(sanitized);
 
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[Multibagger] Fatal error:', msg);
+
+    // ── CACHED FALLBACK: serve stale data on total failure ──
+    try {
+      const { searchParams } = new URL(request.url);
+      const portfolioRaw = searchParams.get('portfolio') || '';
+      const watchlistRaw = searchParams.get('watchlist') || '';
+      const portfolio = portfolioRaw ? portfolioRaw.split(',').map(s => s.trim().toUpperCase()).filter(s => s.length >= 2) : [];
+      const watchlist = watchlistRaw ? watchlistRaw.split(',').map(s => s.trim().toUpperCase()).filter(s => s.length >= 2) : [];
+      const allSymbols = Array.from(new Set([...portfolio, ...watchlist]));
+      const cacheKey = `multibagger:${allSymbols.sort().join(',')}`;
+      const cached = await kvGet<any>(cacheKey);
+      if (cached && cached.results && cached.results.length > 0) {
+        console.log('[Multibagger] Serving stale cached results after fatal error');
+        return NextResponse.json({ ...cached, _stale: true, _staleFallbackReason: msg });
+      }
+    } catch { /* cache miss — return error */ }
+
     return NextResponse.json(
       { results: [], error: msg, message: 'Internal error — please retry' },
       { status: 500 }

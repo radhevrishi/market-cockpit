@@ -390,6 +390,23 @@ interface IntelSignal {
 
   // v8: Thematic Alpha Engine
   alphaTheme?: AlphaTheme;
+
+  // v9: Event Taxonomy + Multi-dimensional scoring
+  eventTaxonomyTier?: 'TIER_1' | 'TIER_2' | 'TIER_3';  // Tier 1 = hard catalysts, Tier 3 = routine/inferred
+  signalScoreBreakdown?: {
+    materiality: number;    // 0-100: economic impact relative to company size
+    confidence: number;     // 0-100: source quality + verification
+    freshness: number;      // 0-100: time decay
+    investability: number;  // 0-100: actionability for portfolio decisions
+  };
+  conflictRange?: { min: number; max: number; sources: string[] };  // When multiple sources disagree on values
+
+  // v9b: Institutional signal card format
+  whatHappened?: string;          // Factual: what occurred
+  economicImpact?: string;       // Quantified impact on company economics
+  evidence?: string;             // Source attribution and provenance
+  risks?: string[];              // Risk factors and caveats
+  nextConfirmation?: string;     // What to watch for to confirm/deny this signal
 }
 
 interface CompanyTrend {
@@ -852,7 +869,10 @@ function buildWhyThisMatters(signal: any): string {
     const parts: string[] = [];
     if (signal.impactPct && signal.impactPct !== 0) parts.push(`Revenue impact ${signal.impactPct > 0 ? '+' : ''}${signal.impactPct.toFixed(1)}%`);
     if (signal.valueCr && signal.valueCr > 0) {
-      if (signal.revenueCr && signal.revenueCr > 0) {
+      // Show conflict range if sources disagree on value
+      if (signal.conflictRange && signal.conflictRange.min !== signal.conflictRange.max) {
+        parts.push(`Value ₹${Math.round(signal.conflictRange.min)}–${Math.round(signal.conflictRange.max)} Cr (range due to source variance)`);
+      } else if (signal.revenueCr && signal.revenueCr > 0) {
         parts.push(`Order size ${((signal.valueCr / signal.revenueCr) * 100).toFixed(1)}% of revenue`);
       } else {
         parts.push(`Value ₹${Math.round(signal.valueCr)} Cr`);
@@ -905,6 +925,127 @@ function classifyMgmtChangeType(signal: any): 'STRATEGIC' | 'ROUTINE' {
   const text = ((signal.headline || '') + ' ' + (signal.whyItMatters || '')).toLowerCase();
   if (text.includes('ai') || text.includes('business unit head') || text.includes('strategy') || text.includes('restructur')) return 'STRATEGIC';
   return 'ROUTINE';
+}
+
+// ── EVENT TAXONOMY TIERS ──
+// Tier 1: Hard catalysts that directly move stock prices
+// Tier 2: Important but softer signals
+// Tier 3: Routine / inferred — NEVER drive top signals
+const TIER_1_EVENTS = new Set([
+  'Earnings', 'Order Win', 'Contract', 'Capex/Expansion', 'M&A',
+  'Guidance', 'Open Offer', 'Takeover', 'Demerger', 'Turnaround',
+  'Fund Raising', 'QIP', 'LOI', 'Buyback',
+]);
+const TIER_2_EVENTS = new Set([
+  'Block Deal', 'Bulk Deal', 'Stake Sale', 'CEO Change', 'CFO Change',
+  'MD Change', 'Chairman Change', 'Rights Issue', 'Bonus', 'Dividend',
+  'JV/Partnership', 'Technology Transition', 'Policy Opening',
+  'Regulatory Approval', 'Spinoff',
+]);
+// Everything else is Tier 3 (routine filings, inferred M&A, board appointments, etc.)
+
+function classifyEventTier(eventType: string, confidenceType?: string): 'TIER_1' | 'TIER_2' | 'TIER_3' {
+  if (TIER_1_EVENTS.has(eventType)) return 'TIER_1';
+  if (TIER_2_EVENTS.has(eventType)) return 'TIER_2';
+  // Inferred signals are always Tier 3 regardless of event type
+  if (confidenceType === 'INFERRED' || confidenceType === 'HEURISTIC') return 'TIER_3';
+  return 'TIER_3';
+}
+
+// ── MULTI-DIMENSIONAL SIGNAL SCORING ──
+function computeSignalScoreBreakdown(s: any): { materiality: number; confidence: number; freshness: number; investability: number } {
+  // Materiality: economic impact relative to company size
+  const materialityRaw = s.materialityScore || 30;
+  const materiality = Math.min(100, Math.max(0, materialityRaw));
+
+  // Confidence: source quality + verification status
+  const confRaw = s.dataConfidenceScore || s.confidenceScore || s.monitorScore || 50;
+  const srcBonus = s.confidenceType === 'ACTUAL' ? 20 : s.sourceTier === 'VERIFIED' ? 10 : 0;
+  const verifyBonus = s.verified ? 15 : (s.srcVerified ? 8 : 0);
+  const confidence = Math.min(100, Math.max(0, confRaw + srcBonus + verifyBonus));
+
+  // Freshness: time decay
+  const freshnessMap: Record<string, number> = { 'FRESH': 100, 'RECENT': 75, 'AGING': 40, 'STALE': 15 };
+  const freshness = freshnessMap[s.freshness] || 50;
+
+  // Investability: can you actually act on this?
+  let investability = 50;
+  const tier = classifyEventTier(s.eventType, s.confidenceType);
+  if (tier === 'TIER_1') investability += 30;
+  else if (tier === 'TIER_2') investability += 15;
+  else investability -= 10;
+  if (s.isPortfolio) investability += 10;
+  if (s.isWatchlist) investability += 5;
+  if (s.signalStackCount >= 2 && (s as any)._stackIndependent) investability += 10;
+  if (s.confidenceType === 'INFERRED') investability -= 15;
+  investability = Math.min(100, Math.max(0, investability));
+
+  return { materiality, confidence, freshness, investability };
+}
+
+// ── INSTITUTIONAL SIGNAL CARD BUILDER ──
+function buildSignalCard(s: any): { whatHappened: string; economicImpact: string; evidence: string; risks: string[]; nextConfirmation: string } {
+  // whatHappened: factual description of the event
+  const company = s.company || s.symbol;
+  let whatHappened = '';
+  if (s.eventType === 'Order Win' || s.eventType === 'Contract') {
+    whatHappened = `${company} received ${s.eventType.toLowerCase()}${s.client ? ` from ${s.client}` : ''}${s.valueCr > 0 ? ` worth ₹${Math.round(s.valueCr)} Cr` : ''}`;
+  } else if (s.eventType === 'Capex/Expansion') {
+    const valStr = s.conflictRange ? `₹${Math.round(s.conflictRange.min)}–${Math.round(s.conflictRange.max)} Cr` : (s.valueCr > 0 ? `₹${Math.round(s.valueCr)} Cr` : '');
+    whatHappened = `${company} announced capital expenditure${valStr ? ` of ${valStr}` : ''}${s.segment ? ` in ${s.segment}` : ''}`;
+  } else if (s.eventType === 'M&A' || s.eventType === 'Demerger') {
+    whatHappened = `${company} announced ${s.eventType.toLowerCase()}${s.valueCr > 0 ? ` valued at ₹${Math.round(s.valueCr)} Cr` : ''}`;
+  } else if (s.eventType === 'Guidance') {
+    whatHappened = `${company} issued forward guidance${s.segment ? ` for ${s.segment}` : ''}`;
+  } else if (s.signalClass === 'STRATEGIC' || s.signalClass === 'GOVERNANCE') {
+    whatHappened = `${company}: ${s.managementRole || 'leadership'} change announced`;
+  } else {
+    whatHappened = `${company}: ${s.eventType || 'corporate event'} disclosed`;
+  }
+
+  // economicImpact: quantified
+  let economicImpact = '';
+  if (s.impactPct && s.impactPct > 0) {
+    economicImpact = `${s.impactPct.toFixed(1)}% of annual revenue`;
+    if (s.pctMcap) economicImpact += `, ${s.pctMcap.toFixed(1)}% of market cap`;
+  } else {
+    economicImpact = 'Impact not yet quantifiable';
+  }
+
+  // evidence: source provenance
+  const srcParts: string[] = [];
+  if (s.dataSource) srcParts.push(s.dataSource);
+  if (s.confidenceType) srcParts.push(`confidence: ${s.confidenceType}`);
+  if (s.sourceUrl) srcParts.push('source document available');
+  if (s.conflictRange) srcParts.push(`value range: ₹${Math.round(s.conflictRange.min)}–${Math.round(s.conflictRange.max)} Cr across ${s.conflictRange.sources.length} sources`);
+  const evidence = srcParts.join(' · ') || 'No verified source';
+
+  // risks: caveats
+  const risks: string[] = [];
+  if (s.confidenceType === 'HEURISTIC') risks.push('Value estimated via heuristic — actual figures may differ');
+  if (s.confidenceType === 'INFERRED') risks.push('Event inferred from text patterns — not directly confirmed');
+  if (s.conflictRange) risks.push('Multiple sources report different values');
+  if (s.eventTaxonomyTier === 'TIER_3') risks.push('Routine/low-tier event — limited price catalyst potential');
+  if (s.isNegative) risks.push('Negative sentiment detected');
+  if (risks.length === 0) risks.push('Standard execution risk');
+
+  // nextConfirmation: what to watch
+  let nextConfirmation = '';
+  if (s.eventType === 'Order Win' || s.eventType === 'Contract') {
+    nextConfirmation = 'Watch for order execution timeline and revenue booking in next quarter results';
+  } else if (s.eventType === 'Capex/Expansion') {
+    nextConfirmation = 'Monitor commissioning timeline and capacity utilization ramp-up';
+  } else if (s.eventType === 'M&A') {
+    nextConfirmation = 'Track regulatory approvals and integration milestones';
+  } else if (s.eventType === 'Guidance') {
+    nextConfirmation = 'Compare next quarterly results against guidance targets';
+  } else if (s.signalClass === 'STRATEGIC') {
+    nextConfirmation = 'Watch for strategic direction changes in next 1-2 quarters';
+  } else {
+    nextConfirmation = 'Monitor next quarterly filing for impact confirmation';
+  }
+
+  return { whatHappened, economicImpact, evidence, risks, nextConfirmation };
 }
 
 // v7 composite ranking score
@@ -3232,6 +3373,22 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       const newDate = new Date(signal.date).getTime();
       const daysDiff = Math.abs(existDate - newDate) / (1000 * 60 * 60 * 24);
 
+      // ── CONFLICT RANGE TRACKING ──
+      // When multiple sources report different values for same event, build a range
+      if (existing.valueCr > 0 && signal.valueCr > 0 && Math.abs(existing.valueCr - signal.valueCr) > 0.5) {
+        const existingSources = existing.conflictRange?.sources || [existing.dataSource || 'unknown'];
+        const newSource = signal.dataSource || 'unknown';
+        const allValues = [existing.valueCr, signal.valueCr];
+        if (existing.conflictRange) {
+          allValues.push(existing.conflictRange.min, existing.conflictRange.max);
+        }
+        existing.conflictRange = {
+          min: Math.min(...allValues),
+          max: Math.max(...allValues),
+          sources: [...new Set([...existingSources, newSource])],
+        };
+      }
+
       if (daysDiff <= 3 && valueSource === 'EXACT' && existing.valueSource === 'EXACT') {
         existing.valueCr += signal.valueCr;
         existing.valueSource = 'AGGREGATED';
@@ -3243,10 +3400,15 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         existing.headline = `${fmtCr(existing.valueCr)} ${eventType} (aggregated)`;
         if (existing.impactPct > 0) existing.headline += ` — ${existing.impactPct.toFixed(1)}% of revenue`;
       } else if (weightedScore > existing.weightedScore) {
+        const conflictRange = existing.conflictRange;
         if (existing.valueCr > signal.valueCr) {
           signal.valueCr = existing.valueCr;
         }
         dedupMap.set(dedupKey, signal);
+        // Preserve conflict range on the winner
+        if (conflictRange) {
+          signal.conflictRange = conflictRange;
+        }
       }
     } else {
       dedupMap.set(dedupKey, signal);
@@ -3810,21 +3972,34 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   const trends: CompanyTrend[] = [];
   for (const [sym, sigs] of companySignalMap) {
     const count = sigs.length;
-    const stackLevel: CompanyTrend['stackLevel'] = count >= 4 ? 'STRONG' : count >= 2 ? 'BUILDING' : 'WEAK';
+
+    // ── INDEPENDENCE VALIDATION ──
+    // Stacking bonus only applies if signals are truly independent:
+    // 2+ distinct data sources OR 2+ distinct event types
+    const uniqueSources = new Set(sigs.map(s => s.dataSource || s.source || 'unknown'));
+    const uniqueEventTypes = new Set(sigs.map(s => s.eventType || 'unknown'));
+    const isIndependent = uniqueSources.size >= 2 || uniqueEventTypes.size >= 2;
+    // effectiveCount: if not independent, treat as single signal (no stacking bonus)
+    const effectiveCount = isIndependent ? count : 1;
+    const stackLevel: CompanyTrend['stackLevel'] = effectiveCount >= 4 ? 'STRONG' : effectiveCount >= 2 ? 'BUILDING' : 'WEAK';
 
     for (const s of sigs) {
-      s.signalStackCount = count;
+      s.signalStackCount = effectiveCount;
       s.signalStackLevel = stackLevel;
+      (s as any)._stackIndependent = isIndependent;
+      (s as any)._stackRawCount = count;
+      (s as any)._stackUniqueSources = uniqueSources.size;
+      (s as any)._stackUniqueEventTypes = uniqueEventTypes.size;
 
-      const stackBonus = count >= 2 ? Math.min(20, 5 * count) : 0;
+      const stackBonus = (isIndependent && effectiveCount >= 2) ? Math.min(20, 5 * effectiveCount) : 0;
       if (stackBonus > 0) {
         s.weightedScore = Math.min(100, s.weightedScore + stackBonus);
       }
     }
 
-    // Re-classify actions after stacking bonus is applied
+    // Re-classify actions after stacking bonus is applied (only if independent)
     for (const s of sigs) {
-      if (s.signalStackCount && s.signalStackCount >= 2) {
+      if (s.signalStackCount && s.signalStackCount >= 2 && (s as any)._stackIndependent) {
         const newAction = classifyAction(
           s.impactPct,
           s.sentiment,
@@ -3845,8 +4020,8 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
           s.decision = newAction;
         }
       }
-      // Post-stacking promotion rule: if score > 80 AND bullish AND signalCount >= 3 → force BUY
-      if (s.signalStackCount && s.signalStackCount >= 3 && s.weightedScore > 80 && s.sentiment === 'Bullish' && !s.isNegative) {
+      // Post-stacking promotion rule: if score > 80 AND bullish AND signalCount >= 3 AND independent → force BUY
+      if (s.signalStackCount && s.signalStackCount >= 3 && s.weightedScore > 80 && s.sentiment === 'Bullish' && !s.isNegative && (s as any)._stackIndependent) {
         s.action = 'BUY';
         s.decision = 'BUY';
       }
@@ -4596,6 +4771,27 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     // 10. ★ v7 COMPOSITE RANK SCORE ★
     s.v7RankScore = computeV7RankScore(s);
 
+    // 10a. ★ EVENT TAXONOMY TIER ★
+    s.eventTaxonomyTier = classifyEventTier(s.eventType, s.confidenceType);
+
+    // 10b. ★ MULTI-DIMENSIONAL SIGNAL SCORE BREAKDOWN ★
+    s.signalScoreBreakdown = computeSignalScoreBreakdown(s);
+
+    // 10c. ★ INSTITUTIONAL SIGNAL CARD ★
+    const card = buildSignalCard(s);
+    s.whatHappened = card.whatHappened;
+    s.economicImpact = card.economicImpact;
+    s.evidence = card.evidence;
+    s.risks = card.risks;
+    s.nextConfirmation = card.nextConfirmation;
+
+    // 10d. ★ TIER 3 ENFORCEMENT: never allow Tier 3 events into ACTIONABLE ★
+    if (s.eventTaxonomyTier === 'TIER_3' && s.signalCategory === 'ACTIONABLE') {
+      s.signalCategory = 'MONITOR';
+      s.monitorTier = 'LOW';
+      (s as any)._tier3Demoted = true;
+    }
+
     // 11. Action from materiality (with hard gating enforced)
     if (s.signalCategory !== 'REJECTED') {
       s.action = actionFromMateriality(s);
@@ -4616,7 +4812,14 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
 
     // 14. ★ SIGNAL TIER CLASSIFICATION (ACTIONABLE / NOTABLE / MONITOR) ★
     // Notable = score 50-70, confidence >= 50, not rejected
-    if (s.signalCategory === 'MONITOR' && s.materialityScore >= 50 && confScore >= 50) {
+    // Tier 3 events can NEVER be ACTIONABLE or NOTABLE — hard enforcement
+    if (s.eventTaxonomyTier === 'TIER_3') {
+      s.signalTierV7 = 'MONITOR';
+      if (s.signalCategory === 'ACTIONABLE') {
+        s.signalCategory = 'MONITOR';
+        s.monitorTier = 'LOW';
+      }
+    } else if (s.signalCategory === 'MONITOR' && s.materialityScore >= 50 && confScore >= 50) {
       s.signalTierV7 = 'NOTABLE';
     } else if (s.signalCategory === 'ACTIONABLE') {
       s.signalTierV7 = 'ACTIONABLE';
@@ -4744,8 +4947,13 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       'transfer agent', 'share transfer agent', 'kmp change',
     ];
     for (const s of filtered) {
-      // Layer 1: role-based block
-      if (s.signalClass === 'GOVERNANCE' || s.signalClass === 'COMPLIANCE' || s.eventType === 'Mgmt Change' || s.eventType === 'Board Appointment' || s.eventType === 'Board Change') {
+      // Layer 1: role-based block — ONLY for actual governance-classified signals
+      // Do NOT block economic signals (Order Win, Capex, M&A) that happen to have board-related eventTypes
+      const isGovernanceSignal = s.signalClass === 'GOVERNANCE' || s.signalClass === 'COMPLIANCE';
+      const isGovernanceEventType = s.eventType === 'Mgmt Change' || s.eventType === 'Board Appointment' || s.eventType === 'Board Change';
+      // Only apply governance block if signal is actually governance-classified
+      // OR if eventType is governance AND signalClass is NOT economic/strategic
+      if (isGovernanceSignal || (isGovernanceEventType && s.signalClass !== 'ECONOMIC' && s.signalClass !== 'STRATEGIC')) {
         const role = s.managementRole || 'Other';
         const isSenior = Array.from(HARD_SENIOR_ROLES).some(sr => role.toLowerCase().includes(sr.toLowerCase()));
         if (!isSenior) {
@@ -4753,11 +4961,13 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
           s.signalCategory = 'REJECTED';
         }
       }
-      // Layer 2: headline text block (catches Corporate event type with non-senior role)
-      const txt = `${s.headline || ''} ${s.whyItMatters || ''} ${s.sourceExtract || ''}`.toLowerCase();
-      if (NON_SENIOR_TERMS_COMPUTE.some(t => txt.includes(t))) {
-        s.visibility = 'HIDDEN';
-        s.signalCategory = 'REJECTED';
+      // Layer 2: headline text block — only for signals NOT already classified as economic
+      if (s.signalClass !== 'ECONOMIC' && s.signalClass !== 'STRATEGIC') {
+        const txt = `${s.headline || ''} ${s.whyItMatters || ''} ${s.sourceExtract || ''}`.toLowerCase();
+        if (NON_SENIOR_TERMS_COMPUTE.some(t => txt.includes(t))) {
+          s.visibility = 'HIDDEN';
+          s.signalCategory = 'REJECTED';
+        }
       }
     }
   }

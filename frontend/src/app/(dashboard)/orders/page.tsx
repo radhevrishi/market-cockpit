@@ -175,6 +175,24 @@ interface Signal {
     confidence: 'HIGH' | 'MEDIUM' | 'LOW';
     narrative: string;
   };
+
+  // v9: Event taxonomy + signal card format
+  eventTaxonomyTier?: 'TIER_1' | 'TIER_2' | 'TIER_3';
+  signalScoreBreakdown?: {
+    materiality: number;
+    confidence: number;
+    freshness: number;
+    investability: number;
+  };
+  conflictRange?: { min: number; max: number; sources: string[] };
+  whatHappened?: string;
+  economicImpact?: string;
+  evidence?: string;
+  risks?: string[];
+  nextConfirmation?: string;
+  _speculative?: boolean;
+  _stackIndependent?: boolean;
+  _stackRawCount?: number;
 }
 
 // ── v8: Thematic Idea for always-present alpha section ──
@@ -321,6 +339,8 @@ export default function CompanyIntelligencePage() {
   const [monitorList, setMonitorList] = useState<Signal[]>([]);
   const [notableSignals, setNotableSignals] = useState<Signal[]>([]);
   const [thematicIdeas, setThematicIdeas] = useState<ThematicIdea[]>([]);
+  const [speculativeSignals, setSpeculativeSignals] = useState<Signal[]>([]);
+  const [quietMarket, setQuietMarket] = useState(false);
   const [productionStatus, setProductionStatus] = useState<string>('');
 
   const fetchData = useCallback(async (forceRefresh = false) => {
@@ -330,6 +350,8 @@ export default function CompanyIntelligencePage() {
       setTop3(data.top3 || []);
       setSignals(data.signals || []);
       setNotableSignals(data.notable || []);
+      setSpeculativeSignals(data.speculative || []);
+      setQuietMarket(!!data.quietMarket);
       setThematicIdeas(data.thematicIdeas || []);
       setTrends(data.trends || []);
       setBias(data.bias || null);
@@ -381,6 +403,8 @@ export default function CompanyIntelligencePage() {
       setTop3(data.top3 || []);
       setSignals(data.signals || []);
       setNotableSignals(data.notable || []);
+      setSpeculativeSignals(data.speculative || []);
+      setQuietMarket(!!data.quietMarket);
       setThematicIdeas(data.thematicIdeas || []);
       setTrends(data.trends || []);
       setBias(data.bias || null);
@@ -388,7 +412,7 @@ export default function CompanyIntelligencePage() {
       setNoActionableSignals(!!data.noActionableSignals);
       setMonitorList(data.observations || []);
       const statsLine = data._stats ?
-        `${data._stats.actionable || 0} actionable · ${data._stats.notable || 0} notable · ${data._stats.monitor || 0} monitor · ${data._stats.rejected || 0} rejected` : '';
+        `${data._stats.actionable || 0} actionable · ${data._stats.notable || 0} notable · ${data._stats.monitor || 0} monitor · ${data._stats.speculative || 0} speculative · ${data._stats.rejected || 0} rejected` : '';
       const filterLine = data._meta?.filterRange ? ` · Filter: ${data._meta.filterRange} (${data._meta.totalSignalsBefore ?? '?'}→${data._meta.totalSignalsDateFiltered ?? data._meta.totalSignalsBefore ?? '?'}→${data._meta.totalSignalsAfter ?? '?'})` : '';
       setProductionStatus(statsLine + filterLine || (data._productionStatus || ''));
       if (data.debug) setDebugInfo(data.debug);
@@ -1104,6 +1128,77 @@ export default function CompanyIntelligencePage() {
         </div>
       )}
 
+      {/* ── QUIET MARKET BANNER ── */}
+      {quietMarket && !loading && (
+        <div style={{
+          backgroundColor: 'rgba(100,116,139,0.08)',
+          border: `1px solid rgba(100,116,139,0.2)`,
+          borderRadius: '8px',
+          padding: '12px 16px',
+          marginBottom: '16px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+        }}>
+          <span style={{ fontSize: '16px' }}>🌊</span>
+          <div>
+            <div style={{ fontSize: '13px', fontWeight: 700, color: TEXT2 }}>Quiet Market</div>
+            <div style={{ fontSize: '11px', color: TEXT3, marginTop: '2px' }}>
+              No actionable or notable signals detected in this time window. This is normal during weekends, holidays, or low-activity periods.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── SPECULATIVE SIGNALS (suppressed from main feed) ── */}
+      {speculativeSignals.length > 0 && (
+        <div style={{ marginBottom: '20px' }}>
+          <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, letterSpacing: '0.05em', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            🔍 SPECULATIVE ({speculativeSignals.length})
+            <span style={{ fontSize: '9px', fontWeight: 400, color: TEXT3, letterSpacing: 'normal' }}>
+              Below confidence threshold · Not investment-grade
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            {speculativeSignals.map((s, i) => {
+              const confScore = s.monitorScore || s.confidenceScore || s.dataConfidenceScore || 0;
+              return (
+                <div key={`spec-${i}`} style={{
+                  backgroundColor: CARD,
+                  border: `1px solid rgba(100,116,139,0.15)`,
+                  borderLeft: `3px solid ${TEXT3}`,
+                  borderRadius: '8px',
+                  padding: '8px 12px',
+                  opacity: 0.65,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '12px' }}>{eventTypeIcon(s.eventType)}</span>
+                    <span style={{ fontSize: '13px', fontWeight: 600, color: TEXT2 }}>{s.symbol}</span>
+                    <span style={{ fontSize: '10px', color: TEXT3 }}>{s.eventType}</span>
+                    {s.eventTaxonomyTier && (
+                      <span style={{ fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '2px',
+                        color: s.eventTaxonomyTier === 'TIER_1' ? GREEN : s.eventTaxonomyTier === 'TIER_2' ? YELLOW : TEXT3,
+                        backgroundColor: s.eventTaxonomyTier === 'TIER_1' ? 'rgba(16,185,129,0.08)' : s.eventTaxonomyTier === 'TIER_2' ? 'rgba(251,191,36,0.08)' : 'rgba(100,116,139,0.06)',
+                      }}>{s.eventTaxonomyTier}</span>
+                    )}
+                    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontSize: '8px', color: RED, fontWeight: 600 }}>Conf:{Math.round(confScore)} Mat:{s.materialityScore || 0}</span>
+                      <span style={{ fontSize: '10px', color: TEXT3 }}>{fmtDate(s.date)}</span>
+                    </div>
+                  </div>
+                  {s.whatHappened && (
+                    <div style={{ fontSize: '10px', color: TEXT3, marginTop: '4px' }}>{s.whatHappened}</div>
+                  )}
+                  {!s.whatHappened && s.whyItMatters && (
+                    <div style={{ fontSize: '10px', color: TEXT3, marginTop: '4px' }}>{s.whyItMatters}</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* ── FILTER BAR ── */}
       {signals.length > 0 && (
         <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -1351,10 +1446,64 @@ export default function CompanyIntelligencePage() {
                   </div>
                 )}
 
-                {/* Row 2: WHY explanation (institutional-grade) */}
-                <div style={{ fontSize: '11px', color: s.isNegative ? '#F87171' : '#6EE7B7', marginTop: '5px', lineHeight: 1.4, fontWeight: 500 }}>
-                  {s.whyAction || s.whyItMatters}
-                </div>
+                {/* Row 2: What Happened (institutional card) */}
+                {s.whatHappened ? (
+                  <div style={{ fontSize: '11px', color: TEXT1, marginTop: '5px', lineHeight: 1.4, fontWeight: 500 }}>
+                    {s.whatHappened}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: '11px', color: s.isNegative ? '#F87171' : '#6EE7B7', marginTop: '5px', lineHeight: 1.4, fontWeight: 500 }}>
+                    {s.whyAction || s.whyItMatters}
+                  </div>
+                )}
+
+                {/* Economic Impact + Evidence */}
+                {(s.economicImpact || s.evidence) && (
+                  <div style={{ fontSize: '10px', color: TEXT2, marginTop: '3px', lineHeight: 1.4 }}>
+                    {s.economicImpact && <span style={{ color: CYAN }}>{s.economicImpact}</span>}
+                    {s.economicImpact && s.evidence && <span style={{ color: TEXT3 }}> · </span>}
+                    {s.evidence && <span style={{ color: TEXT3 }}>{s.evidence}</span>}
+                  </div>
+                )}
+
+                {/* Conflict Range warning */}
+                {s.conflictRange && s.conflictRange.min !== s.conflictRange.max && (
+                  <div style={{ fontSize: '9px', color: ORANGE, marginTop: '2px', fontWeight: 600 }}>
+                    ⚠ Value range: {'\u20B9'}{Math.round(s.conflictRange.min)}–{Math.round(s.conflictRange.max)} Cr ({s.conflictRange.sources.length} sources)
+                  </div>
+                )}
+
+                {/* Signal Score Breakdown */}
+                {s.signalScoreBreakdown && (
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                    {(['materiality', 'confidence', 'freshness', 'investability'] as const).map(dim => {
+                      const val = s.signalScoreBreakdown![dim];
+                      const color = val >= 70 ? GREEN : val >= 50 ? YELLOW : val >= 30 ? ORANGE : RED;
+                      return (
+                        <span key={dim} style={{ fontSize: '8px', color, fontWeight: 600 }}>
+                          {dim.charAt(0).toUpperCase()}:{val}
+                        </span>
+                      );
+                    })}
+                    {s.eventTaxonomyTier && (
+                      <span style={{ fontSize: '8px', fontWeight: 700,
+                        color: s.eventTaxonomyTier === 'TIER_1' ? GREEN : s.eventTaxonomyTier === 'TIER_2' ? YELLOW : TEXT3,
+                      }}>{s.eventTaxonomyTier}</span>
+                    )}
+                    {s._stackIndependent === false && s._stackRawCount && s._stackRawCount >= 2 && (
+                      <span style={{ fontSize: '8px', color: ORANGE, fontWeight: 600 }}>
+                        ⚠ {s._stackRawCount} signals same source
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Risks + Next Confirmation (collapsed) */}
+                {s.nextConfirmation && (
+                  <div style={{ fontSize: '9px', color: TEXT3, marginTop: '3px', fontStyle: 'italic' }}>
+                    Next: {s.nextConfirmation}
+                  </div>
+                )}
 
                 {/* Row 3: Headline */}
                 <div style={{ fontSize: '11px', color: TEXT2, marginTop: '3px', lineHeight: 1.5, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any }}>
@@ -1975,7 +2124,7 @@ export default function CompanyIntelligencePage() {
       )}
 
       {/* Empty / Computing state — only show if truly no signals at all */}
-      {!loading && signals.length === 0 && monitorList.length === 0 && notableSignals.length === 0 && top3.length === 0 && (
+      {!loading && signals.length === 0 && monitorList.length === 0 && notableSignals.length === 0 && top3.length === 0 && speculativeSignals.length === 0 && (
         <div style={{ textAlign: 'center', padding: '50px 0' }}>
           {computing ? (
             <>
