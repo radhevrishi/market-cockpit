@@ -1472,8 +1472,20 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               // ── v7: PRODUCTION DECISION ENGINE ──
               // ALWAYS reclassify: cached signals may have wrong class from old compute logic
               // (old default was COMPLIANCE for all unknown events, causing mass governance-block)
+              const oldSignalClass = s.signalClass;
               s.signalClass = classifySignalClass(s.eventType, s.headline, s.whyItMatters);
               s.managementRole = s.managementRole || extractMgmtRole(s.headline, s.whyItMatters);
+
+              // ── CRITICAL: Reset stale visibility from cached compute data ──
+              // If signal was HIDDEN by old compute logic (when default was COMPLIANCE)
+              // but NOW reclassifies as ECONOMIC/STRATEGIC, it should NOT be hidden.
+              // Reset visibility and let downstream governance block re-evaluate.
+              if (s.visibility === 'HIDDEN' && s.signalCategory === 'REJECTED') {
+                if (s.signalClass === 'ECONOMIC' || s.signalClass === 'STRATEGIC') {
+                  s.visibility = 'VISIBLE';
+                  s.signalCategory = 'MONITOR'; // Let downstream logic re-tier properly
+                }
+              }
 
               // False classification guard
               if (s.signalClass === 'GOVERNANCE' && !isRealMgmtChange(s.headline, s.whyItMatters, s.dataSource)) {
