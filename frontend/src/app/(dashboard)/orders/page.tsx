@@ -213,6 +213,20 @@ interface ThematicIdea {
   segment?: string | null;
 }
 
+interface TrendSignalDetail {
+  headline: string;
+  eventType: string;
+  date: string;
+  sentiment: string;
+  action: string;
+  impactLevel: string;
+  weightedScore: number;
+  confidenceScore: number;
+  valueCr: number;
+  whyItMatters: string;
+  dataSource?: string;
+}
+
 interface CompanyTrend {
   symbol: string;
   company: string;
@@ -223,6 +237,7 @@ interface CompanyTrend {
   netSentiment: 'Bullish' | 'Neutral' | 'Bearish';
   avgScore: number;
   maxScore?: number;
+  signals?: TrendSignalDetail[];
 }
 
 interface DailyBias {
@@ -320,6 +335,7 @@ export default function CompanyIntelligencePage() {
   const [top3, setTop3] = useState<Signal[]>([]);
   const [signals, setSignals] = useState<Signal[]>([]);
   const [trends, setTrends] = useState<CompanyTrend[]>([]);
+  const [expandedTrends, setExpandedTrends] = useState<Set<string>>(new Set());
   const [bias, setBias] = useState<DailyBias | null>(null);
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -711,12 +727,21 @@ export default function CompanyIntelligencePage() {
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             {trends.map(t => {
               const stackColor = t.stackLevel === 'STRONG' ? GREEN : t.stackLevel === 'BUILDING' ? YELLOW : TEXT3;
+              const isExpanded = expandedTrends.has(t.symbol);
               return (
                 <div key={t.symbol} style={{
                   backgroundColor: CARD, border: `1px solid ${stackColor}30`, borderLeft: `3px solid ${stackColor}`,
-                  borderRadius: '8px', padding: '10px 14px', minWidth: '200px',
+                  borderRadius: '8px', padding: '10px 14px', minWidth: '200px', cursor: 'pointer',
+                  width: isExpanded ? '100%' : 'auto', transition: 'width 0.2s ease',
+                }} onClick={() => {
+                  setExpandedTrends(prev => {
+                    const next = new Set(prev);
+                    if (next.has(t.symbol)) next.delete(t.symbol); else next.add(t.symbol);
+                    return next;
+                  });
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                    <span style={{ fontSize: '10px', color: TEXT3, transition: 'transform 0.2s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
                     <span style={{ fontSize: '14px', fontWeight: 700, color: '#3B82F6' }}>{t.symbol}</span>
                     <span style={{
                       fontSize: '9px', fontWeight: 700, color: stackColor,
@@ -730,12 +755,56 @@ export default function CompanyIntelligencePage() {
                   </div>
                   <div style={{ fontSize: '11px', color: TEXT2, marginBottom: '2px', textTransform: 'capitalize' }}>{t.company}</div>
                   <div style={{ display: 'flex', gap: '10px', fontSize: '10px' }}>
-                    <span style={{ color: stackColor }}>{t.signalCount} signal{t.signalCount !== 1 ? 's' : ''}</span>
+                    <span style={{ color: stackColor }}>{t.signalCount} signal{t.signalCount !== 1 ? 's' : ''} {isExpanded ? '▾' : '▸ tap to expand'}</span>
                     <span style={{ color: sentimentColor(t.netSentiment) }}>{t.netSentiment}</span>
                     <span style={{ color: impactColor(t.topImpact) }}>{t.topImpact}</span>
                     <span style={{ color: TEXT3 }}>Top: {t.maxScore ?? t.avgScore}</span>
                     <span style={{ color: TEXT3 }}>Avg: {t.avgScore}</span>
                   </div>
+
+                  {/* ── Expanded: individual event details ── */}
+                  {isExpanded && t.signals && t.signals.length > 0 && (
+                    <div style={{ marginTop: '10px', borderTop: `1px solid ${stackColor}20`, paddingTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {t.signals.map((sig, idx) => {
+                        const sigSentColor = sig.sentiment === 'Bullish' ? GREEN : sig.sentiment === 'Bearish' ? RED : YELLOW;
+                        const sigImpColor = sig.impactLevel === 'HIGH' ? RED : sig.impactLevel === 'MEDIUM' ? YELLOW : TEXT3;
+                        return (
+                          <div key={`${t.symbol}-sig-${idx}`} style={{
+                            backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)',
+                            borderRadius: '6px', padding: '8px 10px',
+                          }} onClick={(e) => e.stopPropagation()}>
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', marginBottom: '4px' }}>
+                              <span style={{
+                                fontSize: '8px', fontWeight: 700, color: sigSentColor,
+                                padding: '1px 4px', borderRadius: '3px', backgroundColor: `${sigSentColor}15`,
+                                flexShrink: 0, marginTop: '2px',
+                              }}>{sig.sentiment}</span>
+                              <span style={{ fontSize: '11px', fontWeight: 600, color: TEXT1, lineHeight: 1.3 }}>{sig.headline}</span>
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', fontSize: '9px', marginBottom: '4px' }}>
+                              <span style={{ color: TEXT3 }}>{sig.date}</span>
+                              <span style={{ color: TEXT3, textTransform: 'uppercase' }}>{sig.eventType}</span>
+                              <span style={{ color: sigImpColor, fontWeight: 600 }}>{sig.impactLevel}</span>
+                              <span style={{ color: sig.weightedScore >= 60 ? GREEN : sig.weightedScore >= 40 ? YELLOW : TEXT3 }}>Score: {sig.weightedScore}</span>
+                              <span style={{ color: sig.confidenceScore >= 70 ? GREEN : sig.confidenceScore >= 50 ? YELLOW : TEXT3 }}>Conf: {sig.confidenceScore}</span>
+                              {sig.valueCr > 0 && <span style={{ color: ACCENT }}>₹{sig.valueCr.toLocaleString('en-IN')} Cr</span>}
+                              {sig.dataSource && <span style={{ color: TEXT3 }}>via {sig.dataSource}</span>}
+                            </div>
+                            {sig.whyItMatters && (
+                              <div style={{ fontSize: '10px', color: TEXT2, lineHeight: 1.4, fontStyle: 'italic' }}>
+                                {sig.whyItMatters}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {isExpanded && (!t.signals || t.signals.length === 0) && (
+                    <div style={{ marginTop: '8px', fontSize: '10px', color: TEXT3, fontStyle: 'italic' }}>
+                      Event details not available — signal data from older cache
+                    </div>
+                  )}
                 </div>
               );
             })}

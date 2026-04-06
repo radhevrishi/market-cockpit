@@ -434,6 +434,20 @@ interface CompanyTrend {
   topImpact: ImpactLevel;
   netSentiment: SignalSentiment;
   avgScore: number;
+  maxScore?: number;
+  signals: Array<{
+    headline: string;
+    eventType: string;
+    date: string;
+    sentiment: string;
+    action: string;
+    impactLevel: string;
+    weightedScore: number;
+    confidenceScore: number;
+    valueCr: number;
+    whyItMatters: string;
+    dataSource?: string;
+  }>;
 }
 
 interface DailyBias {
@@ -2863,6 +2877,20 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
           topImpact: sigs[0].impactLevel,
           netSentiment: bullish > bearish ? 'Bullish' : bearish > bullish ? 'Bearish' : 'Neutral',
           avgScore: Math.round(sigs.reduce((s, x) => s + x.weightedScore, 0) / count),
+          maxScore: Math.max(...sigs.map(x => x.weightedScore)),
+          signals: sigs.map(s => ({
+            headline: s.headline,
+            eventType: s.eventType,
+            date: s.date,
+            sentiment: s.sentiment,
+            action: s.action,
+            impactLevel: s.impactLevel,
+            weightedScore: s.weightedScore,
+            confidenceScore: s.confidenceScore,
+            valueCr: s.valueCr,
+            whyItMatters: s.whyItMatters,
+            dataSource: s.dataSource,
+          })),
         });
       }
     }
