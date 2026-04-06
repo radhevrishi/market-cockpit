@@ -160,18 +160,25 @@ async function fetchScreenerData(symbol: string): Promise<{ data: Record<string,
     `https://www.screener.in/company/${encodedSymbol}/consolidated/`,
     `https://www.screener.in/company/${encodedSymbol}/`,
   ];
+  // Try each URL with generous timeout + one retry on timeout
   for (const url of urls) {
-    try {
-      const resp = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MarketCockpit/2.0)', 'Accept': 'text/html' },
-        signal: AbortSignal.timeout(6000),
-      });
-      if (!resp.ok) continue;
-      const html = await resp.text();
-      // Quick validity check: screener shows 404 or empty pages with specific markers
-      if (html.includes('Page not found') || html.includes('No results found') || html.length < 5000) continue;
-      return { data: parseScreenerHTML(html, symbol), ok: true, url };
-    } catch { continue; }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const timeout = attempt === 0 ? 10000 : 12000; // 10s first, 12s retry
+        const resp = await fetch(url, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0', 'Accept': 'text/html,application/xhtml+xml' },
+          signal: AbortSignal.timeout(timeout),
+        });
+        if (!resp.ok) break; // 4xx/5xx → try next URL, don't retry
+        const html = await resp.text();
+        if (html.includes('Page not found') || html.includes('No results found')) break; // wrong symbol → next URL
+        if (html.length < 3000) continue; // too small → retry
+        return { data: parseScreenerHTML(html, symbol), ok: true, url };
+      } catch {
+        if (attempt === 0) await new Promise(r => setTimeout(r, 500)); // brief delay before retry
+        continue;
+      }
+    }
   }
   return { data: {}, ok: false, url: '' };
 }

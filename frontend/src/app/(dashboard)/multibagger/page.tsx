@@ -283,7 +283,7 @@ export default function MultibaggerPage() {
   const [filter, setFilter] = useState<'all' | 'portfolio' | 'watchlist'>('all');
   const [gradeFilter, setGradeFilter] = useState<string>('all');
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
-  const [showMethodology, setShowMethodology] = useState(false);
+  const [showMethodology, setShowMethodology] = useState(true);
   const [eligibleOnly, setEligibleOnly] = useState(true);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
 

@@ -321,6 +321,7 @@ export default function CompanyIntelligencePage() {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [trends, setTrends] = useState<CompanyTrend[]>([]);
   const [bias, setBias] = useState<DailyBias | null>(null);
+  const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState('');
   const [daysFilter, setDaysFilter] = useState(7);
@@ -355,6 +356,7 @@ export default function CompanyIntelligencePage() {
       setThematicIdeas(data.thematicIdeas || []);
       setTrends(data.trends || []);
       setBias(data.bias || null);
+      setStats(data._stats || null);
       if (data.debug) setDebugInfo(data.debug);
       if (data.flags) setWatchlistFlags(data.flags);
       if (data.addedPrices) setAddedPrices(data.addedPrices);
@@ -408,6 +410,7 @@ export default function CompanyIntelligencePage() {
       setThematicIdeas(data.thematicIdeas || []);
       setTrends(data.trends || []);
       setBias(data.bias || null);
+      setStats(data._stats || null);
       setNoHighConfSignals(!!data.noHighConfSignals);
       setNoActionableSignals(!!data.noActionableSignals);
       setMonitorList(data.observations || []);
@@ -580,8 +583,9 @@ export default function CompanyIntelligencePage() {
             <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
               {[
                 { label: 'High Impact', value: bias.highImpactCount, color: GREEN, filter: null as FilterType | null },
-                { label: 'Actionable', value: bias.buyCount || 0, color: GREEN, filter: 'BUY' as FilterType | null },
-                { label: 'Monitor', value: bias.holdCount || 0, color: ACCENT, filter: 'HOLD' as FilterType | null },
+                { label: 'Actionable', value: stats?.actionable ?? bias.buyCount ?? 0, color: GREEN, filter: 'BUY' as FilterType | null },
+                { label: 'Notable', value: stats?.notable ?? notableSignals.length ?? 0, color: '#3B82F6', filter: null as FilterType | null },
+                { label: 'Monitor', value: (stats?.monitor ?? 0) + (stats?.notable ?? 0), color: ACCENT, filter: 'HOLD' as FilterType | null },
                 ...(bias.watchCount !== undefined && bias.watchCount > 0 ? [{ label: 'Monitor', value: bias.watchCount, color: '#A78BFA', filter: 'WATCH' as FilterType | null }] : []),
                 ...(bias.trimExitCount !== undefined && bias.trimExitCount > 0 ? [{ label: 'Reduce/Exit', value: bias.trimExitCount, color: ORANGE, filter: 'TRIM' as FilterType | null }] : []),
                 { label: 'Portfolio Alerts', value: bias.portfolioAlerts, color: PURPLE, filter: null as FilterType | null },
