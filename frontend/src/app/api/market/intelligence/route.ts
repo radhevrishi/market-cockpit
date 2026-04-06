@@ -1897,11 +1897,21 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               }
             }
             // If notable is empty but there are signals at all, promote top monitor to notable
+            // NON-NEGOTIABLE: inferred signals with conf < 60 cannot be promoted to NOTABLE
             if (notableSignals.length === 0 && regularMonitor.length > 0) {
-              const topMonitor = regularMonitor.shift()!;
-              topMonitor.signalTierV7 = 'NOTABLE';
-              topMonitor._promotedToNotable = true;
-              notableSignals.push(topMonitor);
+              const eligibleForNotable = regularMonitor.filter((s: any) => {
+                const isInf = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
+                const confVal = s.dataConfidenceScore || s.confidenceScore || 0;
+                return !(isInf && confVal < 60);
+              });
+              const promotee = eligibleForNotable.length > 0 ? eligibleForNotable[0] : regularMonitor[0];
+              if (promotee) {
+                const idx = regularMonitor.indexOf(promotee);
+                if (idx >= 0) regularMonitor.splice(idx, 1);
+                promotee.signalTierV7 = 'NOTABLE';
+                promotee._promotedToNotable = true;
+                notableSignals.push(promotee);
+              }
             }
 
             const totalProcessed = surfaceableActionable.length + notableSignals.length + regularMonitor.length + speculativeSignals.length + rejectedCount;
