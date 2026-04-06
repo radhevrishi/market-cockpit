@@ -1120,16 +1120,29 @@ export async function GET(request: NextRequest) {
           const anyFundamentalData = scrResult.ok || yahooResult.ok || googleResult.ok || Object.keys(nseFin).length > 0;
           const quality = validateData(symbol, company, sector, screener, nse, anyFundamentalData, nseResult.ok);
           if (!quality.valid) {
-            return {
-              symbol, company, sector,
-              sectorGroup: 'UNKNOWN',
-              lastPrice: null, marketCapCr: null,
-              overallScore: 0, grade: 'NR' as Grade,
-              pillars: [], criteria: [],
-              redFlags: [{ id: 'data_fail', label: 'Data Validation Failed', severity: 'CRITICAL', detail: quality.reason || 'Could not resolve company data' }],
-              quality, isPortfolio: portfolio.includes(symbol), isWatchlist: watchlist.includes(symbol),
-              errors: [quality.reason || 'Data validation failed'],
-            };
+            // Fallback data layer: if we have at least a price, still attempt scoring
+            // with confidence = LOW instead of returning empty NR
+            const fallbackPrice = nse.lastPrice || yahoo.lastPrice || screener.lastPrice || 0;
+            if (fallbackPrice > 0 && (yahooResult.ok || Object.keys(nseFin).length > 0)) {
+              // We have SOME data — proceed with degraded scoring
+              nse.lastPrice = nse.lastPrice || fallbackPrice;
+              quality.valid = true;
+              quality.confidence = 'LOW';
+              quality.reason = null;
+              quality.source = yahooResult.ok ? 'partial' : 'NSE only';
+              errors.push(`Primary data source failed — using fallback (confidence: LOW)`);
+            } else {
+              return {
+                symbol, company, sector,
+                sectorGroup: 'UNKNOWN',
+                lastPrice: fallbackPrice > 0 ? fallbackPrice : null, marketCapCr: null,
+                overallScore: 0, grade: 'NR' as Grade,
+                pillars: [], criteria: [],
+                redFlags: [{ id: 'data_fail', label: 'Data Validation Failed', severity: 'CRITICAL', detail: quality.reason || 'Could not resolve company data' }],
+                quality, isPortfolio: portfolio.includes(symbol), isWatchlist: watchlist.includes(symbol),
+                errors: [quality.reason || 'Data validation failed'],
+              };
+            }
           }
 
           const sectorGroup = getSectorGroup(sector);
@@ -1147,11 +1160,16 @@ export async function GET(request: NextRequest) {
           const redFlags    = detectRedFlags(screener, nse);
           let grade       = computeGrade(rawScore, redFlags);
 
-          // If coverage is too low, mark as degraded but still show estimated score
-          const isDegradedCompany = coverageRatio < 0.5;
+          // Weighted confidence: scoreWeight = coverage% (no hard NR cutoff)
+          // Low coverage reduces score proportionally instead of hard-blocking
+          const isDegradedCompany = coverageRatio < 0.3; // Only truly broken data gets NR
           if (isDegradedCompany) {
             grade = 'NR';
-            errors.push(`Low data coverage (${Math.round(coverageRatio * 100)}%) — grade NR, score is estimated`);
+            errors.push(`Very low data coverage (${Math.round(coverageRatio * 100)}%) — grade NR, score is estimated`);
+          } else if (coverageRatio < 0.5) {
+            // Partial data: apply coverage weight penalty instead of hard NR
+            rawScore = Math.round(rawScore * coverageRatio);
+            errors.push(`Partial data (${Math.round(coverageRatio * 100)}%) — score weighted by coverage`);
           }
           const mcap        = (screener.marketCapCr && screener.marketCapCr > 0) ? screener.marketCapCr
                             : (nse.marketCapCr && nse.marketCapCr > 0 ? nse.marketCapCr : null);
@@ -1197,6 +1215,20 @@ export async function GET(request: NextRequest) {
       }));
       results.push(...batchOut);
     }
+
+    // ── SANITIZE ALL NUMBERS: NaN/Infinity → null ──
+    const sanitizeObj = (obj: any): any => {
+      if (obj === null || obj === undefined) return obj;
+      if (typeof obj === 'number') return isFinite(obj) ? obj : null;
+      if (Array.isArray(obj)) return obj.map(sanitizeObj);
+      if (typeof obj === 'object') {
+        for (const k of Object.keys(obj)) {
+          obj[k] = sanitizeObj(obj[k]);
+        }
+      }
+      return obj;
+    };
+    for (const r of results) { sanitizeObj(r); }
 
     // Sort: valid first, then portfolio, then by score
     results.sort((a, b) => {

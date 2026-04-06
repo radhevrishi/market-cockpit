@@ -1274,35 +1274,59 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             };
           }
 
-          // ── DATE FILTER: filter cached signals to the requested time window ──
-          // The compute job stores signals for its full default window (3-7 days).
-          // When the user selects 7D/14D/30D/90D we filter client-side from the cache.
-          const daysWindow = days <= 0 ? 90 : days; // 0 means no filter
-          const cutoffMs = daysWindow < 90 ? Date.now() - daysWindow * 24 * 60 * 60 * 1000 : 0;
-          const withinWindow = (sig: any): boolean => {
-            if (cutoffMs === 0) return true;
-            const d = sig.date || sig.publishedAt || sig.eventDate || sig.createdAt;
-            if (!d) return true; // no date → include by default
-            try { return new Date(d).getTime() >= cutoffMs; } catch { return true; }
-          };
-          if (cutoffMs > 0) {
-            responseData = {
-              ...responseData,
-              signals: (responseData.signals || []).filter(withinWindow),
-              notable: (responseData.notable || []).filter(withinWindow),
-              observations: (responseData.observations || []).filter(withinWindow),
-              top3: (responseData.top3 || []).filter(withinWindow),
-            };
-          }
+          // ── DATE FILTER + TIME DECAY: applied BEFORE aggregation ──
+          // Critical: signals must be filtered and decay-weighted BEFORE scoring
+          const nowMs = Date.now();
+          const daysWindow = days <= 0 ? 90 : days;
+          const cutoffMs = daysWindow < 90 ? nowMs - daysWindow * 24 * 60 * 60 * 1000 : 0;
+          const DECAY_LAMBDA = 0.05; // exponential decay factor (tunable)
 
-          // FINAL: Apply 3-layer validation gate to cached data
-          // Merge signals + observations from v5 cache (v5 split them; we need ALL for reprocessing)
-          const allCachedSignals = [
+          // Merge ALL raw signals FIRST, then filter by PF/WL at source level, then by date
+          let allCachedSignals = [
             ...(Array.isArray(responseData.signals) ? responseData.signals : []),
             ...(Array.isArray(responseData.observations) ? responseData.observations : []),
           ];
-          if (allCachedSignals.length > 0) {
-            const rawSignals = allCachedSignals;
+
+          // ── PF/WL SOURCE-LEVEL FILTER: applied BEFORE any processing ──
+          if (shouldFilterCached && allUserTracked.size > 0) {
+            allCachedSignals = allCachedSignals.filter((s: any) => {
+              const sym = (s.symbol || s.ticker || '').toUpperCase();
+              return allUserTracked.has(sym);
+            });
+            // Tag each signal with portfolio/watchlist membership
+            for (const s of allCachedSignals) {
+              const sym = (s.symbol || s.ticker || '').toUpperCase();
+              s.isPortfolio = pSet.has(sym);
+              s.isWatchlist = wSet.has(sym);
+            }
+          }
+
+          // Apply time decay weight to each signal
+          for (const sig of allCachedSignals) {
+            const d = sig.date || sig.publishedAt || sig.eventDate || sig.createdAt;
+            if (d) {
+              try {
+                const sigMs = new Date(d).getTime();
+                const daysSince = Math.max(0, (nowMs - sigMs) / 86400000);
+                sig._timeDecay = Math.exp(-DECAY_LAMBDA * daysSince);
+                sig._daysSince = Math.round(daysSince * 10) / 10;
+              } catch { sig._timeDecay = 0.5; sig._daysSince = 7; }
+            } else {
+              sig._timeDecay = 0.5; // unknown date → 50% weight
+              sig._daysSince = 7;
+            }
+          }
+
+          // Filter by date window BEFORE any aggregation/scoring
+          const dateFilteredSignals = cutoffMs > 0
+            ? allCachedSignals.filter((sig: any) => {
+                const d = sig.date || sig.publishedAt || sig.eventDate || sig.createdAt;
+                if (!d) return true;
+                try { return new Date(d).getTime() >= cutoffMs; } catch { return true; }
+              })
+            : allCachedSignals;
+          if (dateFilteredSignals.length > 0) {
+            const rawSignals = dateFilteredSignals;
             const actionableSignals: any[] = [];
             const monitorSignals: any[] = [];
             let rejectedCount = 0;
@@ -1327,13 +1351,20 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               const periodOk = !isGuidance || (s.guidanceScope && s.guidanceScope !== 'UNKNOWN' &&
                 s.guidancePeriod && s.guidancePeriod !== 'UNKNOWN');
 
-              // Hard rejection checks
-              if (!sourceExists || hasTemplate || isBroken || hasAnomaly) {
-                const reason = !sourceExists ? 'no_source' : hasTemplate ? 'template' : isBroken ? 'broken' : 'anomaly';
+              // Hard rejection checks — ONLY for template/broken/anomaly
+              // !sourceExists is NO LONGER a hard reject — it degrades to MONITOR instead
+              if (hasTemplate || isBroken || hasAnomaly) {
+                const reason = hasTemplate ? 'template' : isBroken ? 'broken' : 'anomaly';
                 _rejectReasons[reason] = (_rejectReasons[reason] || 0) + 1;
                 if (_rejectSamples.length < 5) _rejectSamples.push({ ticker: s.ticker || s.symbol, reason, dataSource: s.dataSource, confidenceType: s.confidenceType, sourceTier: s.sourceTier, source: s.source, dataQuality: s.dataQuality, templatePattern: s.templatePattern, eventType: s.eventType });
                 rejectedCount++;
                 continue;
+              }
+              // No verified source → degrade to MONITOR, don't reject
+              if (!sourceExists) {
+                s.signalCategory = 'MONITOR';
+                s.monitorTier = 'LOW';
+                s._degradedReason = 'no_verified_source';
               }
               if (isGuidance && !periodOk) { _rejectReasons['guidance_period'] = (_rejectReasons['guidance_period'] || 0) + 1; rejectedCount++; continue; }
 
@@ -1480,6 +1511,10 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               const recW = s.freshness === 'FRESH' ? 10 : s.freshness === 'RECENT' ? 7 : 3;
               s.materialityScore = Math.min(100, Math.round(ecoImpact + evtW + confW + mgmtW + recW));
 
+              // Apply exponential time decay to materiality score
+              // Newer signals weigh more: score = baseScore * exp(-lambda * daysSince)
+              s.materialityScore = Math.round(s.materialityScore * (s._timeDecay || 1));
+
               // Governance materiality ladder (with strategic vs routine classification)
               // IMPORTANT: never override HIDDEN visibility set by governance hard block
               if (s.signalClass === 'GOVERNANCE' && s.visibility !== 'HIDDEN') {
@@ -1518,9 +1553,30 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 s.signalCategory = 'MONITOR';
                 s.portfolioCritical = false;
               }
-              // RULE 3: Unverified CAPEX/M&A/ORDER — cap materiality
-              if (['Capex/Expansion', 'M&A', 'Order Win', 'Contract'].includes(s.eventType) && !isVerifiedSrc) {
-                s.materialityScore = Math.min(s.materialityScore, 55);
+              // RULE 3: CAPEX/M&A/ORDER — realistic scoring by value tier
+              if (['Capex/Expansion', 'M&A', 'Order Win', 'Contract'].includes(s.eventType)) {
+                const valCr = Math.abs(s.valueCr || 0);
+                if (!isVerifiedSrc) {
+                  // Unverified: tier by value — <₹200Cr→LOW(30-45), ₹200-500Cr→MEDIUM(45-65), >₹500Cr+funding→HIGH(65-80)
+                  if (valCr < 200) {
+                    s.materialityScore = Math.min(s.materialityScore, 45);
+                    s.monitorTier = 'LOW';
+                  } else if (valCr < 500) {
+                    s.materialityScore = Math.min(s.materialityScore, 65);
+                    s.monitorTier = 'MEDIUM';
+                  } else {
+                    s.materialityScore = Math.min(s.materialityScore, 80);
+                    s.monitorTier = 'HIGH';
+                  }
+                } else {
+                  // Verified but still tier-cap to avoid inflation
+                  if (valCr < 100) {
+                    s.materialityScore = Math.min(s.materialityScore, 60);
+                  } else if (valCr < 500) {
+                    s.materialityScore = Math.min(s.materialityScore, 80);
+                  }
+                  // >500Cr verified → uncapped
+                }
               }
               // RULE 4: No impact % on ECONOMIC → not actionable (but never un-reject)
               if ((s.impactPct || 0) === 0 && s.signalClass === 'ECONOMIC' && s.signalCategory !== 'REJECTED') {
@@ -1641,13 +1697,21 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               }
             }
 
-            // ── SEMANTIC DEDUPE: collapse duplicate company+event pairs ──
-            // Same company + same event type + same day = one signal (keep highest scoring)
+            // ── SEMANTIC DEDUPE: collapse duplicate company+event pairs within 3-day window ──
+            // Same company + same event type within 3 days = one signal (keep highest scoring)
             const dedupeKey = (s: any) => {
               const sym = (s.ticker || s.symbol || '').toUpperCase();
               const evt = (s.eventType || 'unknown').toLowerCase();
-              const day = (s.date || '').slice(0, 10);
-              return `${sym}|${evt}|${day}`;
+              const d = s.date || s.publishedAt || s.eventDate || '';
+              // Bucket into 3-day windows: floor(daysSinceEpoch / 3)
+              let bucket = '0';
+              if (d) {
+                try {
+                  const ms = new Date(d).getTime();
+                  bucket = String(Math.floor(ms / (86400000 * 3)));
+                } catch { bucket = '0'; }
+              }
+              return `${sym}|${evt}|${bucket}`;
             };
             const dedupeActionable = new Map<string, any>();
             for (const s of actionableSignals) {
@@ -1831,7 +1895,18 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               ? arr.filter((s: any) => allUserTracked.has((s.symbol || s.ticker || '').toUpperCase()))
               : arr;
 
-            responseData = {
+            // ── SANITIZE ALL NUMBERS: NaN/Infinity → null ──
+            const sanitizeNum = (obj: any): any => {
+              if (obj === null || obj === undefined) return obj;
+              if (typeof obj === 'number') return isFinite(obj) ? obj : null;
+              if (Array.isArray(obj)) return obj.map(sanitizeNum);
+              if (typeof obj === 'object') {
+                for (const k of Object.keys(obj)) { obj[k] = sanitizeNum(obj[k]); }
+              }
+              return obj;
+            };
+
+            responseData = sanitizeNum({
               ...responseData,
               signals: enforceUserFilter(finalActionable),
               notable: enforceUserFilter(finalNotable),
@@ -1844,7 +1919,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               noHighConfSignals: finalActionable.length === 0,
               _productionStatus: productionReady ? 'PRODUCTION_READY' : 'REFINEMENT_REQUIRED',
               _stats: { actionable: finalActionable.length, notable: finalNotable.length, monitor: regularMonitor.length, rejected: rejectedCount, rejectedPct: Math.round(rejectedPct), rawCount: rawSignals.length, _rejectReasons, _rejectSamples },
-            };
+            });
           }
 
           return NextResponse.json({
@@ -1856,6 +1931,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               ageMinutes: Math.round(ageMs / 60000),
               version: meta.version,
               totalSignalsBefore: allCachedSignals.length,
+              totalSignalsDateFiltered: dateFilteredSignals.length,
               totalSignalsAfter: (responseData.signals?.length || 0) + (responseData.notable?.length || 0) + (responseData.observations?.length || 0),
               filterRange: days + 'D',
               cutoffDate: cutoffMs > 0 ? new Date(cutoffMs).toISOString() : 'none',

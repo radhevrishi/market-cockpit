@@ -1011,11 +1011,11 @@ function buildThematicNarrative(scenario: string, signals: IntelSignal[]): strin
     case 'TURNAROUND':
       return `${company} showing sustained financial recovery — consecutive improvement signals re-rating potential`;
     case 'STRATEGIC_CAPEX':
-      return `${company} deploying${valueStr} in ${segment || 'strategic'} capacity — operating leverage to follow post-commissioning`;
+      return `${company} deploying${valueStr} in strategic capacity${segment ? ` (${segment} sector)` : ''} — operating leverage to follow post-commissioning`;
     case 'OPERATING_LEVERAGE':
       return `${company} scaling on fixed cost base — margin expansion likely as utilization rises`;
     case 'SUNRISE_SECTOR':
-      return `${company} in ${segment || 'sunrise'} sector — structural tailwinds from policy + order pipeline`;
+      return `${company} in sunrise sector${segment ? ` (${segment})` : ''} — structural tailwinds from policy + order pipeline`;
     case 'POLICY_TAILWIND':
       return `${company} benefiting from policy cycle — PLI / regulatory approval unlocks growth runway`;
     case 'TECH_TRANSITION':

@@ -389,7 +389,7 @@ export default function CompanyIntelligencePage() {
       setMonitorList(data.observations || []);
       const statsLine = data._stats ?
         `${data._stats.actionable || 0} actionable · ${data._stats.notable || 0} notable · ${data._stats.monitor || 0} monitor · ${data._stats.rejected || 0} rejected` : '';
-      const filterLine = data._meta?.filterRange ? ` · Filter: ${data._meta.filterRange} (${data._meta.totalSignalsBefore || '?'}→${data._meta.totalSignalsAfter || '?'})` : '';
+      const filterLine = data._meta?.filterRange ? ` · Filter: ${data._meta.filterRange} (${data._meta.totalSignalsBefore ?? '?'}→${data._meta.totalSignalsDateFiltered ?? data._meta.totalSignalsBefore ?? '?'}→${data._meta.totalSignalsAfter ?? '?'})` : '';
       setProductionStatus(statsLine + filterLine || (data._productionStatus || ''));
       if (data.debug) setDebugInfo(data.debug);
       setIsStale(!!data.stale);
@@ -1974,8 +1974,8 @@ export default function CompanyIntelligencePage() {
         </div>
       )}
 
-      {/* Empty / Computing state */}
-      {!loading && signals.length === 0 && monitorList.length === 0 && (
+      {/* Empty / Computing state — only show if truly no signals at all */}
+      {!loading && signals.length === 0 && monitorList.length === 0 && notableSignals.length === 0 && top3.length === 0 && (
         <div style={{ textAlign: 'center', padding: '50px 0' }}>
           {computing ? (
             <>
