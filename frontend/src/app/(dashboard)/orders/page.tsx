@@ -40,7 +40,7 @@ const FRESHNESS_COLORS: Record<string, string> = {
 // Module-level cache persists across component remounts (tab switches)
 // Only refetches on explicit refresh or after CACHE_TTL expires
 const CACHE_TTL = 120000; // 2 min
-let _cache: { data: any; timestamp: number } | null = null;
+let _cache: { data: any; timestamp: number; daysFilter: number } | null = null;
 
 // ── Types ──
 type ActionFlag = 'BUY' | 'ADD' | 'HOLD' | 'WATCH' | 'TRIM' | 'EXIT' | 'AVOID' | 'MONITOR';
@@ -362,7 +362,7 @@ export default function CompanyIntelligencePage() {
 
   const fetchData = useCallback(async (forceRefresh = false) => {
     // Tab cache: if data was fetched recently and not forcing refresh, use cached data
-    if (!forceRefresh && _cache && (Date.now() - _cache.timestamp) < CACHE_TTL) {
+    if (!forceRefresh && _cache && _cache.daysFilter === daysFilter && (Date.now() - _cache.timestamp) < CACHE_TTL) {
       const data = _cache.data;
       setTop3(data.top3 || []);
       setSignals(data.signals || []);
@@ -446,7 +446,7 @@ export default function CompanyIntelligencePage() {
 
       // Cache for tab switching (only cache real data, not skeletons)
       if (!isComputing) {
-        _cache = { data: { ...data, notable: data.notable || [], thematicIdeas: data.thematicIdeas || [], flags, addedPrices: prices, lastUpdated: ts }, timestamp: Date.now() };
+        _cache = { data: { ...data, notable: data.notable || [], thematicIdeas: data.thematicIdeas || [], flags, addedPrices: prices, lastUpdated: ts }, timestamp: Date.now(), daysFilter };
       }
     } catch (err) {
       console.error('[Intelligence] Error:', err);
