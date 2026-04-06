@@ -705,8 +705,16 @@ function classifySignalClass(eventType: string, headline?: string, description?:
   if (lower.includes('mgmt') || lower.includes('management') || lower.includes('board') ||
       lower.includes('appointment') || lower.includes('resignation') || lower.includes('director')) return 'GOVERNANCE';
 
-  // Default: if no clear category, treat as COMPLIANCE (hidden)
-  return 'COMPLIANCE';
+  // Check headline/description for economic keywords before defaulting
+  if (textLower.includes('order') || textLower.includes('contract') || textLower.includes('capex') ||
+      textLower.includes('expansion') || textLower.includes('acquisition') || textLower.includes('deal') ||
+      textLower.includes('revenue') || textLower.includes('profit') || textLower.includes('investment') ||
+      textLower.includes('fund') || textLower.includes('ipo') || textLower.includes('qip') ||
+      textLower.includes('stake') || textLower.includes('buyback') || textLower.includes('dividend')) return 'ECONOMIC';
+
+  // Default: ECONOMIC for unknown (most NSE corporate actions are economic events)
+  // COMPLIANCE default was causing ALL unknown signals to be governance-blocked
+  return 'ECONOMIC';
 }
 
 // Extract management role from headline/description

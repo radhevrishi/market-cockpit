@@ -1470,7 +1470,9 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               }
 
               // ── v7: PRODUCTION DECISION ENGINE ──
-              s.signalClass = s.signalClass || classifySignalClass(s.eventType, s.headline, s.whyItMatters);
+              // ALWAYS reclassify: cached signals may have wrong class from old compute logic
+              // (old default was COMPLIANCE for all unknown events, causing mass governance-block)
+              s.signalClass = classifySignalClass(s.eventType, s.headline, s.whyItMatters);
               s.managementRole = s.managementRole || extractMgmtRole(s.headline, s.whyItMatters);
 
               // False classification guard
