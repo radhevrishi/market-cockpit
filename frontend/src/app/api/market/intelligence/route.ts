@@ -925,9 +925,9 @@ function computeTimeWeight(dateStr: string): number {
     }
     if (isNaN(d.getTime())) return 0.5;
     const daysOld = Math.max(0, (Date.now() - d.getTime()) / (24 * 60 * 60 * 1000));
-    // Continuous decay: max(0.05, 1 - daysOld * 0.07)
-    // 0d=1.0, 1d=0.93, 3d=0.79, 5d=0.65, 7d=0.51, 10d=0.30, 14d=0.05
-    return Math.max(0.05, parseFloat((1 - daysOld * 0.07).toFixed(3)));
+    // Gentle decay: max(0.20, 1 - daysOld * 0.02) — show all 90-day data
+    // 0d=1.0, 7d=0.86, 14d=0.72, 30d=0.40, 60d=0.20, 90d=0.20
+    return Math.max(0.20, parseFloat((1 - daysOld * 0.02).toFixed(3)));
   } catch {
     return 0.5;
   }
@@ -1128,9 +1128,9 @@ function computeScore(opts: {
   score += impactScore;
 
   // ── Component 2: Freshness (0–15) — time decay (Issue 6: alpha preservation) ──
-  // Day 1 → +13.5, Day 5 → +7.5, Day 10 → +0 — forces recency relevance
-  const daysOldApprox = Math.max(0, (1 - opts.timeWeight) / 0.07);
-  const freshnessScore = Math.max(0, 15 - daysOldApprox * 1.5);
+  // Gentle freshness: Day 1 → +14, Day 30 → +6, Day 90 → +2
+  const daysOldApprox = Math.max(0, (1 - opts.timeWeight) / 0.02);
+  const freshnessScore = Math.max(2, 15 - daysOldApprox * 0.15);
   score += freshnessScore;
 
   // ── Component 3: Signal type weight (0–15) ──
@@ -1316,12 +1316,11 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
           }
 
           // ── DATE FILTER + TIME DECAY: applied BEFORE aggregation ──
-          // Critical: signals must be filtered and decay-weighted BEFORE scoring
+          // Show ALL data for last 90 days — ignore daysFilter param
           const nowMs = Date.now();
-          const daysWindow = days <= 0 ? 90 : days;
-          // ALWAYS apply date cutoff — never disable filtering
+          const daysWindow = 90; // ALWAYS 90 days — show all data for all companies
           const cutoffMs = nowMs - daysWindow * 24 * 60 * 60 * 1000;
-          const DECAY_LAMBDA = 0.05; // exponential decay factor (tunable)
+          const DECAY_LAMBDA = 0.015; // very gentle decay — keep older signals visible
 
           // Merge ALL raw signals FIRST, then filter by PF/WL at source level, then by date
           // PRIORITY: Use _allSignals if available (includes rejected signals for re-evaluation)
@@ -1363,10 +1362,10 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 sig._timeDecay = Math.exp(-DECAY_LAMBDA * daysSince);
                 sig._daysSince = Math.round(daysSince * 10) / 10;
               } else {
-                sig._timeDecay = 0.5; sig._daysSince = 7;
+                sig._timeDecay = 0.7; sig._daysSince = 7;
               }
             } else {
-              sig._timeDecay = 0.5; // unknown date → 50% weight
+              sig._timeDecay = 0.7; // unknown date → 70% weight (keep visible)
               sig._daysSince = 7;
             }
           }
@@ -1674,18 +1673,18 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 if (s.visibility !== 'HIDDEN') s.visibility = 'VISIBLE';
               }
 
-              // ★ HARD GATING ★
+              // ★ GATING (relaxed — show all important data) ★
               const confSc = s.dataConfidenceScore || s.confidenceScore || 50;
               const isInferredSignal = s.inferenceUsed || s.confidenceType === 'HEURISTIC' || s.confidenceType === 'INFERRED';
               const isVerifiedSrc = s.confidenceType === 'ACTUAL' || s.sourceTier === 'VERIFIED';
 
-              // RULE 1: confidence < 60 → CANNOT be ACTIONABLE (but never un-reject)
-              if (confSc < 60 && s.signalCategory !== 'REJECTED') {
+              // RULE 1: confidence < 40 → demote to MONITOR (was 60 — too aggressive)
+              if (confSc < 40 && s.signalCategory !== 'REJECTED') {
                 s.signalCategory = 'MONITOR';
                 s.portfolioCritical = false;
               }
-              // RULE 2: inferred + confidence < 70 → max MONITOR (but never un-reject)
-              if (isInferredSignal && confSc < 70 && s.signalCategory !== 'REJECTED') {
+              // RULE 2: inferred + confidence < 50 → max MONITOR (was 70 — too aggressive)
+              if (isInferredSignal && confSc < 50 && s.signalCategory !== 'REJECTED') {
                 s.signalCategory = 'MONITOR';
                 s.portfolioCritical = false;
               }
@@ -1714,10 +1713,10 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                   // >500Cr verified → uncapped
                 }
               }
-              // RULE 4: No impact % on ECONOMIC → not actionable (but never un-reject)
+              // RULE 4: No impact % on ECONOMIC → keep signal but note low materiality
+              // (Relaxed: don't demote to MONITOR just because impact% is missing)
               if ((s.impactPct || 0) === 0 && s.signalClass === 'ECONOMIC' && s.signalCategory !== 'REJECTED') {
-                s.signalCategory = 'MONITOR';
-                s.materialityScore = Math.min(s.materialityScore, 50);
+                s.materialityScore = Math.min(s.materialityScore, 65); // soft cap only
               }
 
               // Verified signal recovery (strict: non-inferred + high confidence)
@@ -1789,11 +1788,10 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 }
               }
 
-              // Governance scoring penalty
+              // Governance scoring penalty (mild — keep visible)
               if (s.signalClass === 'GOVERNANCE') {
-                s.monitorScore = Math.round((s.monitorScore || 0) * 0.5);
-                s.monitorTier = s.monitorScore >= 80 ? 'HIGH' : s.monitorScore >= 50 ? 'MED' : 'LOW';
-                s.catalystStrength = 'WEAK';
+                s.monitorScore = Math.round((s.monitorScore || 0) * 0.8);
+                s.monitorTier = s.monitorScore >= 60 ? 'HIGH' : s.monitorScore >= 40 ? 'MED' : 'LOW';
               }
 
               // Signal tier classification
@@ -1907,27 +1905,34 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               const isVerified = s.confidenceType === 'ACTUAL' || s.verified;
               const isInferred = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
               const corrobCount = countTrueCorroboration(s);
+              const isTracked = s.isPortfolio || s.isWatchlist;
 
-              // ── HARD REJECTION: conf < 35 OR mat < 40 → never surface ──
-              if (conf < 35 && mat < 40) return 'REJECTED';
+              // ── HARD REJECTION: very low conf AND mat → never surface ──
+              if (conf < 20 && mat < 25) return 'REJECTED';
 
-              // ── NON-NEGOTIABLE INFERRED GATE ──
-              // Inferred signals with conf < 60 can NEVER be ACTIONABLE or NOTABLE
-              const inferredBlocked = isInferred && conf < 60;
+              // ── INFERRED GATE (relaxed) ──
+              const inferredBlocked = isInferred && conf < 45;
 
-              // Tier 1: ACTIONABLE — verified + strong confidence + material
-              if (!inferredBlocked && isVerified && conf >= 75 && mat >= 70) return 'ACTIONABLE';
+              // Tier 1: ACTIONABLE — verified + good confidence + material
+              if (!inferredBlocked && isVerified && conf >= 65 && mat >= 60) return 'ACTIONABLE';
+              // Tracked companies get easier ACTIONABLE threshold
+              if (!inferredBlocked && isTracked && conf >= 55 && mat >= 50) return 'ACTIONABLE';
 
-              // Tier 2: NOTABLE — verified + good confidence, or high-conf inferred with corroboration
-              if (!inferredBlocked && isVerified && conf >= 60 && mat >= 55) return 'NOTABLE';
-              if (!inferredBlocked && conf >= 60 && mat >= 55 && corrobCount >= 2) return 'NOTABLE';
+              // Tier 2: NOTABLE — good signal worth watching
+              if (!inferredBlocked && isVerified && conf >= 50 && mat >= 45) return 'NOTABLE';
+              if (!inferredBlocked && conf >= 50 && mat >= 45) return 'NOTABLE';
+              // Tracked companies: lower NOTABLE bar
+              if (!inferredBlocked && isTracked && conf >= 40 && mat >= 35) return 'NOTABLE';
+              if (!inferredBlocked && corrobCount >= 2 && conf >= 40) return 'NOTABLE';
 
-              // Tier 3: MONITOR — reasonable signal
-              if (conf >= 45 || corrobCount >= 2) return 'MONITOR';
-              if (mat >= 45) return 'MONITOR';
+              // Tier 3: MONITOR — any reasonable signal
+              if (conf >= 30 || corrobCount >= 1) return 'MONITOR';
+              if (mat >= 30) return 'MONITOR';
+              // Tracked companies: surface even weak signals as MONITOR
+              if (isTracked && (conf >= 20 || mat >= 20)) return 'MONITOR';
 
-              // Tier 4: SPECULATIVE — exists but below threshold
-              if (conf >= 25 || mat >= 25) return 'SPECULATIVE';
+              // Tier 4: SPECULATIVE — exists
+              if (conf >= 15 || mat >= 15) return 'SPECULATIVE';
 
               return 'REJECTED';
             };
@@ -1966,10 +1971,10 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             speculativeSignals.sort((a: any, b: any) => (b.v7RankScore || 0) - (a.v7RankScore || 0));
 
             // Enforce output constraints + separate notable tier
-            const MAX_ACTIONABLE = 3;
-            const MAX_NOTABLE = 5;
-            const MAX_MONITOR = 10;
-            const MAX_SPECULATIVE = 5;
+            const MAX_ACTIONABLE = 10;
+            const MAX_NOTABLE = 15;
+            const MAX_MONITOR = 30;
+            const MAX_SPECULATIVE = 15;
 
             const notableSignals = surfaceableMonitor.filter((s: any) => s.signalTierV7 === 'NOTABLE');
             const regularMonitor = surfaceableMonitor.filter((s: any) => s.signalTierV7 !== 'NOTABLE');
@@ -2189,13 +2194,12 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               }
             }
 
-            // ── NON-NEGOTIABLE OUTPUT GATE: inferred + conf<60 can NEVER be in notable/top3 ──
-            // This is the final safety net — catches any promotion path that bypasses the gate
+            // ── OUTPUT GATE: very low confidence inferred signals demoted from notable ──
             const outputGateNotable = notableSignals.filter((s: any) => {
               const isInf = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
               const confVal = s.dataConfidenceScore || s.confidenceScore || 0;
-              if (isInf && confVal < 60) {
-                // Demote back to monitor
+              // Only demote if confidence is very low (< 35) — keep most signals visible
+              if (isInf && confVal < 35) {
                 s.signalTierV7 = 'MONITOR';
                 regularMonitor.unshift(s);
                 return false;
@@ -2236,10 +2240,10 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               top3: enforceUserFilter(composedFeed.filter((s: any) => {
                 const isInf = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
                 const confVal = s.dataConfidenceScore || s.confidenceScore || 0;
-                if (isInf && confVal < 60) return false;
-                return (s.signalTierV7 === 'ACTIONABLE' || s.signalTierV7 === 'NOTABLE') &&
+                if (isInf && confVal < 35) return false; // only reject very low conf
+                return (s.signalTierV7 === 'ACTIONABLE' || s.signalTierV7 === 'NOTABLE' || s.signalTierV7 === 'MONITOR') &&
                   !s._speculative && !s._derivedFromThematic;
-              }).slice(0, 5)),
+              }).slice(0, 10)),
               trends: validSignals.length > 0 ? responseData.trends : [],
               bias: validBias,
               thematicIdeas: mergedThematic,
@@ -2864,24 +2868,20 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
     debug.totalSignalsBeforeDedup = allSignals.length;
 
     const qualityFiltered = allSignals.filter(s => {
-      // Gate 0 (Issue 8): STRICT fake M&A kill — ₹500 heuristic = always null
-      if (s.confidenceType === 'HEURISTIC' && s.eventType === 'M&A' && Math.round(s.valueCr) === 280) return false; // 400*0.7
-      if (s.confidenceType === 'HEURISTIC' && Math.round(s.valueCr) === 350) return false; // 500*0.7
+      // Gate 0: STRICT fake M&A kill — known fake value patterns
+      if (s.confidenceType === 'HEURISTIC' && s.eventType === 'M&A' && Math.round(s.valueCr) === 280) return false;
+      if (s.confidenceType === 'HEURISTIC' && Math.round(s.valueCr) === 350) return false;
 
-      // Gate 1: Drop heuristic signals with default absolute values (post-0.7x penalty)
-      if (s.confidenceType === 'HEURISTIC' && s.inferenceUsed) {
-        const defaultValues = [500, 400, 350, 300, 280, 250, 210, 175, 150, 105, 100, 75, 70, 53, 50, 35, 30, 21, 0];
-        if (defaultValues.includes(Math.round(s.valueCr))) {
-          if (!s.isWatchlist && !s.isPortfolio) return false;
-          if (s.weightedScore < 30) { s.action = 'IGNORE'; }
-        }
+      // Gate 1: Drop only zero-value heuristic signals for non-tracked companies
+      if (s.confidenceType === 'HEURISTIC' && s.inferenceUsed && Math.round(s.valueCr) === 0) {
+        if (!s.isWatchlist && !s.isPortfolio) return false;
       }
 
-      // Gate 2: Drop low-scoring heuristic signals (Issue 8: score < 45 + heuristic → null)
-      if (s.weightedScore < 20 && s.confidenceType === 'HEURISTIC') return false;
-      if (s.score < 45 && s.confidenceType === 'HEURISTIC' && !s.isWatchlist && !s.isPortfolio) return false;
+      // Gate 2: Drop very low scoring heuristic signals (relaxed from 20→10, 45→30)
+      if (s.weightedScore < 10 && s.confidenceType === 'HEURISTIC') return false;
+      if (s.score < 30 && s.confidenceType === 'HEURISTIC' && !s.isWatchlist && !s.isPortfolio) return false;
 
-      // Gate 3: Drop IGNORE signals entirely unless they're for watched stocks
+      // Gate 3: Keep all signals for tracked companies, drop IGNORE for untracked
       if (s.action === 'IGNORE' && !s.isWatchlist && !s.isPortfolio) return false;
 
       return true;
