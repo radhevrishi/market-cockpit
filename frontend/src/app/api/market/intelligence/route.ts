@@ -1703,7 +1703,10 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               }
 
               // Signal tier classification
-              if (s.signalCategory === 'MONITOR' && s.materialityScore >= 50 && confSc >= 50) {
+              // NON-NEGOTIABLE: inferred signals with conf < 60 can NEVER be NOTABLE
+              const isInferredHere = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
+              const inferredBlockedHere = isInferredHere && confSc < 60;
+              if (!inferredBlockedHere && s.signalCategory === 'MONITOR' && s.materialityScore >= 50 && confSc >= 50) {
                 s.signalTierV7 = 'NOTABLE';
               } else if (s.signalCategory === 'ACTIONABLE') {
                 s.signalTierV7 = 'ACTIONABLE';
