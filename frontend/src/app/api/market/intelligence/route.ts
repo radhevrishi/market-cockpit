@@ -1674,8 +1674,8 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               }
 
               // ★ GATING (relaxed — show all important data) ★
-              // Use monitorScore (boosted) as primary confidence — it reflects corroboration/portfolio boosts
-              const confSc = s.monitorScore || s.dataConfidenceScore || s.confidenceScore || 50;
+              // Use MAX of all confidence fields — different routes compute different fields
+              const confSc = Math.max(s.monitorScore || 0, s.dataConfidenceScore || 0, s.confidenceScore || 0) || 50;
               const isInferredSignal = s.inferenceUsed || s.confidenceType === 'HEURISTIC' || s.confidenceType === 'INFERRED';
               const isVerifiedSrc = s.confidenceType === 'ACTUAL' || s.sourceTier === 'VERIFIED';
 
@@ -1902,7 +1902,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
 
             // ── ADAPTIVE SIGNAL TIERING (India-market calibrated) ──
             // Compute universe-relative confidence for adaptive thresholds
-            const allConfs = [...actionableSignals, ...monitorSignals].map((s: any) => s.monitorScore || s.confidenceScore || s.dataConfidenceScore || 0);
+            const allConfs = [...actionableSignals, ...monitorSignals].map((s: any) => Math.max(s.monitorScore || 0, s.confidenceScore || 0, s.dataConfidenceScore || 0));
             const avgConf = allConfs.length > 0 ? allConfs.reduce((a, b) => a + b, 0) / allConfs.length : 50;
             const sortedConfs = [...allConfs].sort((a, b) => b - a);
             const p80Conf = sortedConfs[Math.floor(sortedConfs.length * 0.2)] || 50; // top 20% threshold
@@ -1915,7 +1915,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             };
 
             const classifyTier = (s: any): 'ACTIONABLE' | 'NOTABLE' | 'MONITOR' | 'SPECULATIVE' | 'REJECTED' => {
-              const conf = s.monitorScore || s.confidenceScore || s.dataConfidenceScore || 0;
+              const conf = Math.max(s.monitorScore || 0, s.confidenceScore || 0, s.dataConfidenceScore || 0);
               const mat = s.materialityScore || 0;
               const isVerified = s.confidenceType === 'ACTUAL' || s.verified;
               const isInferred = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
@@ -2015,10 +2015,10 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               let promoted = 0;
               for (const s of trackedFirst) {
                 if (promoted >= needed) break;
-                const conf = s.monitorScore || s.confidenceScore || s.dataConfidenceScore || 0;
+                const conf = Math.max(s.monitorScore || 0, s.confidenceScore || 0, s.dataConfidenceScore || 0);
                 const mat = s.materialityScore || 0;
-                // Minimum bar: conf >= 40 AND mat >= 35 (institutional floor — not garbage)
-                if (conf < 40 || mat < 35) continue;
+                // Minimum bar: conf >= 30 AND mat >= 20 (institutional floor — surface any valid signal)
+                if (conf < 30 || mat < 20) continue;
                 // Remove from origin list
                 const nIdx = notableSignals.indexOf(s);
                 if (nIdx >= 0) notableSignals.splice(nIdx, 1);
@@ -2050,8 +2050,8 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               const eligibleForNotable = regularMonitor
                 .filter((s: any) => {
                   const isInf = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
-                  const confVal = s.monitorScore || s.dataConfidenceScore || s.confidenceScore || 0;
-                  return !(isInf && confVal < 40);
+                  const confVal = Math.max(s.monitorScore || 0, s.dataConfidenceScore || 0, s.confidenceScore || 0);
+                  return !(isInf && confVal < 30);
                 })
                 .sort((a: any, b: any) => (b.v7RankScore || 0) - (a.v7RankScore || 0));
               const toPromote = Math.min(notableNeeded, eligibleForNotable.length || 1);
@@ -2259,9 +2259,9 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             // ── OUTPUT GATE: very low confidence inferred signals demoted from notable ──
             const outputGateNotable = notableSignals.filter((s: any) => {
               const isInf = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
-              const confVal = s.dataConfidenceScore || s.confidenceScore || 0;
-              // Only demote if confidence is very low (< 35) — keep most signals visible
-              if (isInf && confVal < 35) {
+              const confVal = Math.max(s.monitorScore || 0, s.dataConfidenceScore || 0, s.confidenceScore || 0);
+              // Only demote if confidence is very low (< 25) — keep most signals visible
+              if (isInf && confVal < 25) {
                 s.signalTierV7 = 'MONITOR';
                 regularMonitor.unshift(s);
                 return false;
@@ -2301,8 +2301,8 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               // NON-NEGOTIABLE: inferred + conf<60 can never be in top3
               top3: enforceUserFilter(composedFeed.filter((s: any) => {
                 const isInf = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
-                const confVal = s.dataConfidenceScore || s.confidenceScore || 0;
-                if (isInf && confVal < 35) return false; // only reject very low conf
+                const confVal = Math.max(s.monitorScore || 0, s.dataConfidenceScore || 0, s.confidenceScore || 0);
+                if (isInf && confVal < 20) return false; // only reject very low conf
                 return (s.signalTierV7 === 'ACTIONABLE' || s.signalTierV7 === 'NOTABLE' || s.signalTierV7 === 'MONITOR') &&
                   !s._speculative && !s._derivedFromThematic;
               }).slice(0, 10)),
