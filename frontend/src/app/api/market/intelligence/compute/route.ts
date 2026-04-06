@@ -4273,6 +4273,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       s.confidenceScore = Math.min(s.confidenceScore, 20);
       s.visibility = 'HIDDEN'; // Hidden by default (Tier D behavior)
       s.evidenceTier = 'TIER_D';
+      (s as any)._hiddenReason = 'TEMPLATE_PATTERN';
       // Cannot be BUY/ADD/HOLD/EXIT based on templated data → force WATCH
       if (s.action === 'BUY' || s.action === 'ADD' || s.action === 'HOLD') {
         s.action = 'WATCH';
@@ -4310,6 +4311,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         s.action = 'WATCH';
         s.decision = 'WATCH';
         s.visibility = 'HIDDEN';
+        (s as any)._hiddenReason = (s as any)._hiddenReason || 'TIER_D_GATE';
         s.conflictResolution = (s.conflictResolution ? s.conflictResolution + ' · ' : '') +
           'Tier D: auto-suppressed (template/low confidence pattern)';
       }
@@ -4892,8 +4894,24 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     // 15. HIDDEN signals → REJECTED
     if (s.visibility === 'HIDDEN') {
       s.signalCategory = 'REJECTED';
+      // Track WHY signal is hidden (for debug)
+      if (!s._hiddenReason) s._hiddenReason = 'unknown_pre_gov_block';
     }
   }
+  // DEBUG: track hidden reasons before governance block
+  const _hiddenBeforeGov: Record<string, number> = {};
+  const _visDistBeforeGov: Record<string, number> = {};
+  const _tierDistBeforeGov: Record<string, number> = {};
+  for (const s of filtered) {
+    _visDistBeforeGov[s.visibility || 'UNDEFINED'] = (_visDistBeforeGov[s.visibility || 'UNDEFINED'] || 0) + 1;
+    _tierDistBeforeGov[s.evidenceTier || 'UNDEFINED'] = (_tierDistBeforeGov[s.evidenceTier || 'UNDEFINED'] || 0) + 1;
+    if (s.visibility === 'HIDDEN') {
+      _hiddenBeforeGov[(s as any)._hiddenReason || s.evidenceTier || 'unknown'] = (_hiddenBeforeGov[(s as any)._hiddenReason || s.evidenceTier || 'unknown'] || 0) + 1;
+    }
+  }
+  (debug as any).visDistBeforeGovBlock = _visDistBeforeGov;
+  (debug as any).tierDistBeforeGovBlock = _tierDistBeforeGov;
+  (debug as any).hiddenBeforeGovBlock = _hiddenBeforeGov;
 
   // ══════════════════════════════════════════════════════════════
   // ── v8: THEMATIC ALPHA ENGINE — Company-level scenario detection ──
@@ -5008,6 +5026,14 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       'cost auditor', 'secretarial auditor', 'internal auditor', 'registrar',
       'transfer agent', 'share transfer agent', 'kmp change',
     ];
+    // DEBUG: track signalClass distribution before governance block
+    const _classDistBefore: Record<string, number> = {};
+    for (const s of filtered) {
+      _classDistBefore[s.signalClass || 'UNDEFINED'] = (_classDistBefore[s.signalClass || 'UNDEFINED'] || 0) + 1;
+    }
+    (debug as any).signalClassDistBeforeGovBlock = _classDistBefore;
+
+    let _govBlockedLayer1 = 0, _govBlockedLayer2 = 0;
     for (const s of filtered) {
       // Layer 1: role-based block — ONLY for actual governance-classified signals
       // Do NOT block economic signals (Order Win, Capex, M&A) that happen to have board-related eventTypes
@@ -5021,6 +5047,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         if (!isSenior) {
           s.visibility = 'HIDDEN';
           s.signalCategory = 'REJECTED';
+          _govBlockedLayer1++;
         }
       }
       // Layer 2: headline text block — only for signals NOT already classified as economic
@@ -5029,9 +5056,12 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
         if (NON_SENIOR_TERMS_COMPUTE.some(t => txt.includes(t))) {
           s.visibility = 'HIDDEN';
           s.signalCategory = 'REJECTED';
+          _govBlockedLayer2++;
         }
       }
     }
+    (debug as any).govBlockedLayer1 = _govBlockedLayer1;
+    (debug as any).govBlockedLayer2 = _govBlockedLayer2;
   }
 
   // ══════════════════════════════════════════════════════════════
