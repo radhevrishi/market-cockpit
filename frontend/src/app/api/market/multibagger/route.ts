@@ -1182,8 +1182,8 @@ function compositeScore(pillars: PillarScore[], criteria: CriterionDetail[]): nu
   // Also cap total penalty at 25% — never destroy a stock's score just because data is sparse
   const penaltyMultiplier = Math.max(0.75, 1 - (missingRatio * 0.15));
   const penalized = rawTotal * penaltyMultiplier;
-  // Round to nearest 5 — remove fake precision
-  return Math.round(penalized / 5) * 5;
+  // Round to nearest integer — precision matters for grade boundaries (A ≥72, A+ ≥80)
+  return Math.round(penalized);
 }
 
 // ── Sanitize output to ensure no NaN/Infinity in JSON ───────────────────────
@@ -1536,6 +1536,10 @@ export async function GET(request: NextRequest) {
               if (staticData.de !== null) screener.de = staticData.de;
               if (staticData.promoterPct !== null) screener.promoterPct = staticData.promoterPct;
               screener.marketCapCr = staticData.marketCapCr;
+              // Derive ROCE from ROE and D/E if available
+              if (staticData.roe && staticData.de !== null && !screener.roce) {
+                screener.roce = staticData.roe / (1 + (staticData.de || 0));
+              }
               errors.push('Static fallback data used — prices may be stale');
             }
 
@@ -1543,10 +1547,20 @@ export async function GET(request: NextRequest) {
               // We have data — proceed with degraded scoring
               nse.lastPrice = nse.lastPrice || fallbackPrice;
               quality.valid = true;
-              quality.confidence = usedStatic ? 'VERY_LOW' : 'LOW';
               quality.reason = null;
               quality.source = (usedStatic ? 'Static' : fallbackSource === 'yahoo_v7' || fallbackSource === 'yahoo_bse' ? 'partial' : fallbackSource || 'partial') as any;
-              errors.push(`Fallback chain resolved — source: ${fallbackSource} (confidence: ${quality.confidence})`);
+              // Recalculate coverage after fallback chain filled data into screener/nse
+              const postFallbackPoints = [
+                screener.pe, screener.roce, screener.roe, screener.de,
+                screener.opm, screener.promoterPct, screener.marketCapCr ?? nse.marketCapCr,
+                screener.salesCagr5yr, screener.profitCagr5yr, screener.cfoPositive,
+                nse.lastPrice, nse.pctFrom52H, screener.pledgedPct,
+              ];
+              const postAvail = postFallbackPoints.filter(v => v !== null && v !== undefined).length;
+              quality.coveragePct = Math.round((postAvail / postFallbackPoints.length) * 100);
+              quality.confidence = quality.coveragePct >= 60 ? 'HIGH' : quality.coveragePct >= 40 ? 'MEDIUM' : quality.coveragePct >= 15 ? 'LOW' : 'VERY_LOW';
+              quality.staleness = usedStatic ? 'STALE' : 'FRESH';
+              errors.push(`Fallback chain resolved — source: ${fallbackSource} (coverage: ${quality.coveragePct}%, confidence: ${quality.confidence})`);
             } else {
               // Even static data not available — return NR but with company name from static if possible
               const sData = STATIC_FALLBACK[symbol];
@@ -1659,11 +1673,12 @@ export async function GET(request: NextRequest) {
     // Red flag overrides still apply (CRITICAL → max D, 2+ HIGH → max B).
     // assignForcedGrades(gradeable); // REMOVED — artificial grade distribution
 
-    // Sort: valid first, then portfolio, then by score
+    // Sort: valid first, then PURELY by score (best rank on top)
+    // PF/WL badges are shown on cards but don't affect ranking — institutional approach
     results.sort((a, b) => {
       if (a.quality.valid !== b.quality.valid) return a.quality.valid ? -1 : 1;
-      if (a.isPortfolio && !b.isPortfolio) return -1;
-      if (!a.isPortfolio && b.isPortfolio) return 1;
+      if (a.grade === 'NR' && b.grade !== 'NR') return 1;
+      if (a.grade !== 'NR' && b.grade === 'NR') return -1;
       return b.overallScore - a.overallScore;
     });
 

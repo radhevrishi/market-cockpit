@@ -1296,11 +1296,14 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               ? arr.filter((s: any) => {
                   const sym = (s.symbol || '').toUpperCase();
                   return allUserTracked.has(sym);
-                }).map((s: any) => ({
-                  ...s,
-                  isWatchlist: wSet.has(s.symbol),
-                  isPortfolio: pSet.has(s.symbol),
-                }))
+                }).map((s: any) => {
+                  const sym = (s.symbol || '').toUpperCase();
+                  return {
+                    ...s,
+                    isWatchlist: wSet.has(sym),
+                    isPortfolio: pSet.has(sym),
+                  };
+                })
               : [];
             responseData = {
               ...stored,
@@ -2213,13 +2216,16 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               }
             }
 
-            // ── NON-NEGOTIABLE OUTPUT GATE: inferred + conf<60 can NEVER be in notable/top3 ──
-            // This is the final safety net — catches any promotion path that bypasses the gate
+            // ── OUTPUT GATE: inferred signals need sufficient confidence for notable/top3 ──
+            // Uses monitorScore (institutional composite) for NSE/deal sources, raw conf otherwise
             const outputGateNotable = notableSignals.filter((s: any) => {
               const isInf = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
-              const confVal = s.dataConfidenceScore || s.confidenceScore || 0;
-              if (isInf && confVal < 60) {
-                // Demote back to monitor
+              const isNSESrc = s.dataSource === 'nse' || s.dataSource === 'NSE' || s.source === 'nse' || s.source === 'deal';
+              const confVal = isNSESrc
+                ? (s.monitorScore || s.dataConfidenceScore || s.confidenceScore || 0)
+                : (s.dataConfidenceScore || s.confidenceScore || 0);
+              if (isInf && confVal < 50) {
+                // Demote back to monitor — but only if truly low confidence
                 s.signalTierV7 = 'MONITOR';
                 regularMonitor.unshift(s);
                 return false;
@@ -2327,14 +2333,21 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
       }
     }
 
-    // ── Precomputed store is EMPTY — trigger background compute, return skeleton ──
-    // Strict read-only path: never block the UI with inline compute
+    // ── Precomputed store is EMPTY — fall through to inline compute ──
+    // On Vercel serverless, fire-and-forget background fetches die when the function returns.
+    // Instead of returning a skeleton and hoping the compute route runs separately,
+    // fall through to the inline compute path below (same as force=true).
+    // This adds ~15-30s to the first request but guarantees the user sees data.
     if (!forceRefresh) {
-      console.log('[Intelligence] No precomputed data — triggering background compute, returning skeleton');
+      console.log('[Intelligence] No precomputed data — falling through to inline compute');
+      // Also trigger compute route as backup (in case inline compute fails or is slow)
       try {
         const computeUrl = new URL('/api/market/intelligence/compute', request.url);
         fetch(computeUrl.toString(), { method: 'GET', signal: AbortSignal.timeout(3000) }).catch(() => {});
       } catch {}
+      // DON'T return skeleton — fall through to inline compute below
+    }
+    if (false) { // skeleton path disabled — inline compute handles empty cache
       return NextResponse.json({
         top3: [],
         signals: [],
@@ -2351,7 +2364,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
       });
     }
 
-    // ── Inline compute ONLY when force=true (admin/debug) ──
+    // ── Inline compute: runs when force=true OR when Redis cache is empty ──
     // Route-level cache (BUG-01 fix: instant response on repeat calls)
     const cacheKey = `${watchlist.join(',')}|${portfolio.join(',')}|${days}`;
     if (_routeCache && _routeCache.key === cacheKey && (Date.now() - _routeCache.timestamp) < ROUTE_CACHE_TTL) {
