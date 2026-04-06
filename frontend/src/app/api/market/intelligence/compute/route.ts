@@ -4774,9 +4774,12 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   const notableSignals: IntelSignal[] = [];
   const monitorSignals: IntelSignal[] = [];
   let rejectedCount = 0;
+  const _rejectBreakdown: Record<string, number> = {};
 
   for (const s of filtered) {
     if (s.signalCategory === 'REJECTED' || s.visibility === 'HIDDEN') {
+      const reason = s.visibility === 'HIDDEN' ? 'hidden_governance' : (s.observationReason || 'category_rejected');
+      _rejectBreakdown[reason] = (_rejectBreakdown[reason] || 0) + 1;
       rejectedCount++;
     } else if (s.signalCategory === 'ACTIONABLE') {
       actionableSignals.push(s);
@@ -4785,9 +4788,18 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     } else if (s.signalCategory === 'MONITOR') {
       monitorSignals.push(s);
     } else {
+      _rejectBreakdown['else_no_category'] = (_rejectBreakdown['else_no_category'] || 0) + 1;
       rejectedCount++;
     }
   }
+  (debug as any).rejectBreakdown = _rejectBreakdown;
+  (debug as any).filteredCount = filtered.length;
+  (debug as any).categoryBreakdown = {
+    actionable: actionableSignals.length,
+    notable: notableSignals.length,
+    monitor: monitorSignals.length,
+    rejected: rejectedCount,
+  };
 
   // Sort ALL by v7RankScore (composite ranking)
   actionableSignals.sort((a, b) => (b.v7RankScore || 0) - (a.v7RankScore || 0));
@@ -4996,14 +5008,14 @@ async function runLockedCompute(watchlist: string[], portfolio: string[]): Promi
     // 2. Perform compute
     const response = await performComputeLogic(watchlist, portfolio);
 
-    // v5: Check both signals (actionable) and observations for emptiness
-    const totalOutput = (response?.signals?.length || 0) + (response?.observations?.length || 0);
+    // v5: Check signals (actionable) + notable + observations for emptiness
+    const totalOutput = (response?.signals?.length || 0) + (response?.notable?.length || 0) + (response?.observations?.length || 0);
     if (!response || totalOutput === 0) {
       // Don't overwrite good data with empty
       const existing = await kvGet<any>(PROD_SIGNALS_KEY);
       if (existing) {
         console.log('[Compute] Empty result — preserving existing data');
-        return { ok: true, signalCount: existing.signals?.length || 0, computedAt: new Date().toISOString() };
+        return { ok: true, signalCount: existing.signals?.length || 0, computedAt: new Date().toISOString(), _debug: response?._debug };
       }
     }
 
