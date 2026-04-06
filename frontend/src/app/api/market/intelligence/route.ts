@@ -2093,9 +2093,23 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               }
             }
 
+            // ── NON-NEGOTIABLE OUTPUT GATE: inferred + conf<60 can NEVER be in notable/top3 ──
+            // This is the final safety net — catches any promotion path that bypasses the gate
+            const outputGateNotable = notableSignals.filter((s: any) => {
+              const isInf = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
+              const confVal = s.dataConfidenceScore || s.confidenceScore || 0;
+              if (isInf && confVal < 60) {
+                // Demote back to monitor
+                s.signalTierV7 = 'MONITOR';
+                regularMonitor.unshift(s);
+                return false;
+              }
+              return true;
+            });
+
             // ── QUIET MARKET MODE ──
             let finalActionable = surfaceableActionable.slice(0, MAX_ACTIONABLE);
-            let finalNotable = notableSignals.slice(0, MAX_NOTABLE);
+            let finalNotable = outputGateNotable.slice(0, MAX_NOTABLE);
             const isQuietMarket = finalActionable.length === 0 && finalNotable.length === 0;
 
             // ── STRICT PF/WL FILTER: ensure no signals leak through if user has filtered portfolio ──
@@ -2122,10 +2136,14 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               observations: enforceUserFilter(regularMonitor.slice(0, MAX_MONITOR)),
               speculative: enforceUserFilter(speculativeSignals.slice(0, MAX_SPECULATIVE)),
               // Top Signals: ONLY ACTIONABLE or NOTABLE tier — never monitor/speculative/inferred-low-conf
-              top3: enforceUserFilter(composedFeed.filter((s: any) =>
-                (s.signalTierV7 === 'ACTIONABLE' || s.signalTierV7 === 'NOTABLE') &&
-                !s._speculative && !s._derivedFromThematic
-              ).slice(0, 5)),
+              // NON-NEGOTIABLE: inferred + conf<60 can never be in top3
+              top3: enforceUserFilter(composedFeed.filter((s: any) => {
+                const isInf = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
+                const confVal = s.dataConfidenceScore || s.confidenceScore || 0;
+                if (isInf && confVal < 60) return false;
+                return (s.signalTierV7 === 'ACTIONABLE' || s.signalTierV7 === 'NOTABLE') &&
+                  !s._speculative && !s._derivedFromThematic;
+              }).slice(0, 5)),
               trends: validSignals.length > 0 ? responseData.trends : [],
               bias: validBias,
               thematicIdeas: mergedThematic,
