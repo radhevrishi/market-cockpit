@@ -1343,7 +1343,7 @@ export async function GET(request: NextRequest) {
     }
 
     const results: MultibaggerResult[] = [];
-    const DEADLINE = Date.now() + 35000; // 35s hard deadline (Vercel Hobby kills at ~50s with cold start overhead)
+    const DEADLINE = Date.now() + 25000; // 25s hard deadline — must leave 30s buffer for Vercel Hobby's 55s limit
 
     // Add skipped symbols as NR results
     for (const sym of skippedSymbols) {
@@ -1358,11 +1358,11 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // Process in batches of 6 (reduced from 8 — 23 symbols needs faster batches to fit in 35s)
-    const BATCH = 6;
+    // Process in batches of 4 (small batches = more frequent deadline checks)
+    const BATCH = 4;
     for (let i = 0; i < cleanSymbols.length; i += BATCH) {
-      // Check deadline before starting next batch
-      if (Date.now() > DEADLINE) {
+      // Check deadline before starting next batch — also check with 8s buffer for batch to complete
+      if (Date.now() > DEADLINE - 8000) {
         // Return partial results — use static fallback for symbols that have it
         const remaining = cleanSymbols.slice(i);
         for (const sym of remaining) {
@@ -1428,16 +1428,17 @@ export async function GET(request: NextRequest) {
           const yahooSym = alias.yahoo ? alias.yahoo.replace('.NS', '') : symbol; // fetchYahooData adds .NS
           const nseSym = alias.nse || symbol;
 
-          // ── Multi-source fetching with exponential backoff retry ──
+          // ── Multi-source fetching — reduced retries for large lists to stay within deadline ──
           // Use aliased symbols for each source to maximize resolution rate
+          const isLargeList = cleanSymbols.length > 8;
+          const maxRetries = isLargeList ? 1 : 2;
           const [scrResult, nseResult, yahooResult, nseFinResult, googleResult, yahooV7Result] = await Promise.all([
-            withRetry(() => fetchScreenerData(screenerSym), 2, 300).catch((): { data: Record<string, any>; ok: boolean; url: string } => ({ data: {}, ok: false, url: '' })),
-            withRetry(() => fetchNSEData(nseSym), 2, 300).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
-            withRetry(() => fetchYahooData(yahooSym), 1, 500).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
-            withRetry(() => fetchNSEFinancials(nseSym), 2, 300).catch((): Record<string, any> => ({})),
-            withRetry(() => fetchGoogleFinanceData(nseSym), 1, 500).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
+            withRetry(() => fetchScreenerData(screenerSym), maxRetries, 300).catch((): { data: Record<string, any>; ok: boolean; url: string } => ({ data: {}, ok: false, url: '' })),
+            withRetry(() => fetchNSEData(nseSym), maxRetries, 300).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
+            withRetry(() => fetchYahooData(yahooSym), isLargeList ? 0 : 1, 500).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
+            withRetry(() => fetchNSEFinancials(nseSym), maxRetries, 300).catch((): Record<string, any> => ({})),
+            withRetry(() => fetchGoogleFinanceData(nseSym), isLargeList ? 0 : 1, 500).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
             // Yahoo v7 is fast (4s timeout) and gives PE, EPS, bookValue, priceToBook, 52W data
-            // Fetching proactively instead of only in fallback chain saves a round-trip
             fetchYahooV7Quote(yahooSym).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
           ]);
 
