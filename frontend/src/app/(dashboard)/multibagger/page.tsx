@@ -47,7 +47,7 @@ interface MultibaggerResult {
   _debug?: Record<string, any>;
 }
 interface ApiMeta { total: number; valid: number; portfolio: number; watchlist: number; topScore: number; avgScore: number; topPicks: number; computedAt: string; methodology: string; }
-interface ApiResponse { results: MultibaggerResult[]; meta?: ApiMeta; message?: string; }
+interface ApiResponse { results: MultibaggerResult[]; meta?: ApiMeta; message?: string; degradedMode?: boolean; }
 
 const CHAT_ID = '5057319640';
 
@@ -297,7 +297,7 @@ export default function MultibaggerPage() {
       if (portfolio.length) params.set('portfolio', portfolio.join(','));
       if (watchlist.length) params.set('watchlist', watchlist.join(','));
       const resp = await fetch(`/api/market/multibagger?${params}`, { cache: 'no-store' });
-      if (!resp.ok) throw new Error(`API ${resp.status}`);
+      if (!resp.ok) throw new Error(resp.status === 504 ? 'Analysis timed out — large watchlist. Retry (results may be partial).' : `API ${resp.status}`);
       setData(await resp.json());
       setLastRefresh(new Date());
     } catch (e: any) {
@@ -314,9 +314,11 @@ export default function MultibaggerPage() {
   const invalidResults = allResults.filter(r => !r.quality.valid);
   const eligibleResults = validResults.filter(r => r.quality.coveragePct >= 50 && r.grade !== 'NR');
   const ineligibleResults = validResults.filter(r => r.quality.coveragePct < 50 || r.grade === 'NR');
-  const isDegraded = validResults.length > 0 && eligibleResults.length < validResults.length * 0.5;
+  const isDegraded = data?.degradedMode || (validResults.length > 0 && eligibleResults.length === 0);
 
-  const filtered = (eligibleOnly ? eligibleResults : validResults).filter(r => {
+  // In degraded mode, always show all valid results regardless of eligibleOnly toggle
+  const effectiveEligibleOnly = isDegraded ? false : eligibleOnly;
+  const filtered = (effectiveEligibleOnly ? eligibleResults : validResults).filter(r => {
     if (filter === 'portfolio' && !r.isPortfolio) return false;
     if (filter === 'watchlist' && !r.isWatchlist) return false;
     if (gradeFilter !== 'all' && r.grade !== gradeFilter) return false;
@@ -459,7 +461,7 @@ export default function MultibaggerPage() {
         )}
 
         {/* Results */}
-        {!loading && eligibleOnly && filtered.length === 0 && eligibleResults.length === 0 && (
+        {!loading && !error && data && !isDegraded && eligibleOnly && filtered.length === 0 && eligibleResults.length === 0 && (
           <div style={{ marginBottom: 12, padding: '12px 14px', background: `${YELLOW}10`, border: `1px solid ${YELLOW}30`, borderRadius: 8 }}>
             <div style={{ fontSize: 11, color: YELLOW, fontWeight: 700, marginBottom: 4 }}>⊘ No eligible companies found</div>
             <div style={{ fontSize: 10, color: MUTED }}>

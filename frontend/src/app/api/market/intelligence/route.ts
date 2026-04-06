@@ -1354,25 +1354,26 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               }
 
               s.verified = !isInferred && !isHeuristicDegraded && isMaterial;
+              s.dataType = isInferred ? 'INFERENCE' : 'FACT';
               s.confidenceLayer = s.verified ? 100 : (isMaterial ? 60 : 40);
               // Heuristic-degraded signals forced to MONITOR regardless of materiality
               s.signalCategory = (isMaterial && !isInferred && !isHeuristicDegraded) ? 'ACTIONABLE' : 'MONITOR';
 
-              // ── MONITOR SCORE ──
-              const srcScore = s.confidenceType === 'ACTUAL' ? 30 :
-                s.sourceTier === 'VERIFIED' ? 25 :
-                (s.dataSource === 'nse' || s.dataSource === 'NSE') ? 20 :
-                s.source === 'deal' ? 20 : 10;
-              const hasValidEventType = ['Order Win', 'Contract', 'Capex/Expansion', 'Guidance', 'Mgmt Change', 'Acquisition', 'Block Deal', 'Bulk Deal', 'Stake Sale'].includes(s.eventType || '');
-              const hasHeadline = !!(s.headline && s.headline.length > 10);
-              const hasWhyItMatters = !!(s.whyItMatters && s.whyItMatters.length > 20);
-              const eventScore = (hasValidEventType ? 12 : 0) + (hasHeadline ? 7 : 0) + (hasWhyItMatters ? 6 : 0);
-              const numScore = !isInferred ? 20 : (s.valueSource === 'AGGREGATED' ? 12 : s.valueSource === 'HEURISTIC' ? 5 : 8);
-              const revImpactAbs = Math.abs(s.impactPct || 0);
-              const matScore = isMaterial ? 15 : (revImpactAbs > 3 ? 10 : revImpactAbs > 1 ? 5 : 0);
-              const signalAge = s.freshness === 'FRESH' ? 10 : s.freshness === 'RECENT' ? 7 : s.freshness === 'AGING' ? 3 : 1;
-              s.monitorScore = Math.min(100, srcScore + eventScore + numScore + matScore + signalAge);
-              s.monitorTier = s.monitorScore >= 80 ? 'HIGH' : s.monitorScore >= 50 ? 'MED' : 'LOW';
+              // ── SIGNAL CONFIDENCE MODEL ──
+              const srcScore = s.confidenceType === 'ACTUAL' ? 20 :
+                s.sourceTier === 'VERIFIED' ? 15 :
+                (s.dataSource === 'nse' || s.dataSource === 'NSE') ? 15 :
+                s.source === 'deal' ? 15 : 5;
+              const isFresh = s.freshness === 'FRESH';
+              const freshScore = isFresh ? 15 : s.freshness === 'RECENT' ? 10 : s.freshness === 'AGING' ? 4 : 1;
+              const hasPriceReaction = !!(s.priceChange && Math.abs(s.priceChange) > 1);
+              const priceScore = hasPriceReaction ? 20 : 0;
+              const hasVolumeSpike = !!(s.volumeRatio && s.volumeRatio > 2);
+              const volumeScore = hasVolumeSpike ? 15 : 0;
+              const hasMultipleSources = !!(s.corroborationCount && s.corroborationCount > 1);
+              const multiSourceScore = hasMultipleSources ? 15 : 0;
+              s.monitorScore = Math.min(100, srcScore + freshScore + priceScore + volumeScore + multiSourceScore);
+              s.monitorTier = s.monitorScore >= 75 ? 'HIGH' : s.monitorScore >= 55 ? 'MEDIUM' : 'LOW';
 
               // EVENT CLASS SANITIZATION: strip synthetic numbers from non-financial events
               const NON_FIN_TYPES = new Set(['Mgmt Change', 'Board Appointment', 'CEO Exit', 'CFO Exit', 'Leadership Transition', 'Regulatory', 'Compliance']);
@@ -1824,16 +1825,22 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               finalNotable = promotable;
             }
 
+            // ── STRICT PF/WL FILTER: ensure no signals leak through if user has filtered portfolio ──
+            // Final safety gate: all signals must pass the PF/WL filter if it was applied
+            const enforceUserFilter = (arr: any[]) => shouldFilterCached
+              ? arr.filter((s: any) => allUserTracked.has((s.symbol || s.ticker || '').toUpperCase()))
+              : arr;
+
             responseData = {
               ...responseData,
-              signals: finalActionable,
-              notable: finalNotable,
-              observations: regularMonitor.slice(0, MAX_MONITOR),
-              top3: composedFeed.slice(0, 5),
+              signals: enforceUserFilter(finalActionable),
+              notable: enforceUserFilter(finalNotable),
+              observations: enforceUserFilter(regularMonitor.slice(0, MAX_MONITOR)),
+              top3: enforceUserFilter(composedFeed.slice(0, 5)),
               trends: validSignals.length > 0 ? responseData.trends : [],
               bias: validBias,
               thematicIdeas: mergedThematic,
-              noActionableSignals: finalActionable.length === 0,
+              noActionableSignals: finalActionable.length === 0 && finalNotable.length === 0,
               noHighConfSignals: finalActionable.length === 0,
               _productionStatus: productionReady ? 'PRODUCTION_READY' : 'REFINEMENT_REQUIRED',
               _stats: { actionable: finalActionable.length, notable: finalNotable.length, monitor: regularMonitor.length, rejected: rejectedCount, rejectedPct: Math.round(rejectedPct), rawCount: rawSignals.length, _rejectReasons, _rejectSamples },
@@ -1848,6 +1855,10 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               stale: isStale,
               ageMinutes: Math.round(ageMs / 60000),
               version: meta.version,
+              totalSignalsBefore: allCachedSignals.length,
+              totalSignalsAfter: (responseData.signals?.length || 0) + (responseData.notable?.length || 0) + (responseData.observations?.length || 0),
+              filterRange: days + 'D',
+              cutoffDate: cutoffMs > 0 ? new Date(cutoffMs).toISOString() : 'none',
             }
           });
         }

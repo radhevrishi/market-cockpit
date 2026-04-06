@@ -159,6 +159,14 @@ interface Signal {
   v7RankScore?: number;
   signalTierV7?: 'ACTIONABLE' | 'NOTABLE' | 'MONITOR';
 
+  // v9: Signal quality model
+  dataType?: 'FACT' | 'INFERENCE';
+  monitorScore?: number;
+  monitorTier?: 'HIGH' | 'MEDIUM' | 'LOW';
+  priceChange?: number;
+  volumeRatio?: number;
+  corroborationCount?: number;
+
   // v8: Thematic alpha
   alphaTheme?: {
     tag: string;
@@ -379,8 +387,10 @@ export default function CompanyIntelligencePage() {
       setNoHighConfSignals(!!data.noHighConfSignals);
       setNoActionableSignals(!!data.noActionableSignals);
       setMonitorList(data.observations || []);
-      setProductionStatus(data._stats ?
-        `${data._stats.actionable || 0} actionable · ${data._stats.notable || 0} notable · ${data._stats.monitor || 0} monitor · ${data._stats.rejected || 0} rejected` : (data._productionStatus || ''));
+      const statsLine = data._stats ?
+        `${data._stats.actionable || 0} actionable · ${data._stats.notable || 0} notable · ${data._stats.monitor || 0} monitor · ${data._stats.rejected || 0} rejected` : '';
+      const filterLine = data._meta?.filterRange ? ` · Filter: ${data._meta.filterRange} (${data._meta.totalSignalsBefore || '?'}→${data._meta.totalSignalsAfter || '?'})` : '';
+      setProductionStatus(statsLine + filterLine || (data._productionStatus || ''));
       if (data.debug) setDebugInfo(data.debug);
       setIsStale(!!data.stale);
       const ts = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
@@ -679,10 +689,10 @@ export default function CompanyIntelligencePage() {
             <span style={{ fontSize: '16px' }}>📊</span>
             <div>
               <span style={{ fontSize: '13px', color: ACCENT, fontWeight: 700 }}>
-                NO MATERIAL SIGNALS TODAY
+                NO HIGH-CONFIDENCE ACTIONABLE SIGNALS
               </span>
               <div style={{ fontSize: '10px', color: TEXT3, marginTop: '2px' }}>
-                Markets quiet for your portfolio/watchlist — no investment-grade events detected
+                No high-confidence actionable events for your portfolio/watchlist — check notable/monitor sections below
               </div>
             </div>
           </div>
@@ -765,7 +775,7 @@ export default function CompanyIntelligencePage() {
       {top3.length > 0 && (
         <div style={{ marginBottom: '20px' }}>
           <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, letterSpacing: '0.05em', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {noActionableSignals || signals.length === 0 ? (top3.length > 0 ? 'TOP MONITOR SIGNALS' : 'NO HIGH-CONFIDENCE ACTIONABLE SIGNALS TODAY') : `✅ ACTIONABLE SIGNALS (${signals.length})`}
+            {signals.length > 0 ? `✅ ACTIONABLE SIGNALS (${signals.length})` : noActionableSignals ? (top3.length > 0 ? 'TOP MONITOR SIGNALS' : 'NO HIGH-CONFIDENCE SIGNALS') : (top3.length > 0 ? 'TOP SIGNALS' : 'SIGNALS')}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {top3.map((s, i) => (
@@ -1005,6 +1015,8 @@ export default function CompanyIntelligencePage() {
                       {s.freshness}
                     </span>
                   )}
+                  {s.dataType && <span style={{ fontSize: '9px', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', color: s.dataType === 'FACT' ? '#10B981' : '#F59E0B', backgroundColor: s.dataType === 'FACT' ? 'rgba(16,185,129,0.1)' : 'rgba(245,158,11,0.1)', border: `1px solid ${s.dataType === 'FACT' ? 'rgba(16,185,129,0.25)' : 'rgba(245,158,11,0.25)'}` }}>{s.dataType === 'FACT' ? '✅ Confirmed' : '⚠️ Inferred'}</span>}
+                  {s.monitorScore !== undefined && <span style={{ fontSize: '9px', color: s.monitorTier === 'HIGH' ? GREEN : s.monitorTier === 'MEDIUM' ? YELLOW : TEXT3, fontWeight: 600 }}>Conf: {s.monitorScore}/100</span>}
                   {s.confidenceType && <span style={{ fontSize: '10px', color: s.confidenceType === 'ACTUAL' ? GREEN : s.confidenceType === 'INFERRED' ? YELLOW : TEXT3, marginLeft: '4px' }}>✓ {s.confidenceType}</span>}
                   {s.dataSource && <span style={{ fontSize: '10px', color: TEXT3, marginLeft: '4px' }}>· {s.dataSource}</span>}
                 </div>
@@ -1075,10 +1087,9 @@ export default function CompanyIntelligencePage() {
                         backgroundColor: s.signalTier === 'TIER1_VERIFIED' ? 'rgba(16,185,129,0.1)' : 'rgba(100,116,139,0.06)',
                       }}>{s.signalTier === 'TIER1_VERIFIED' ? '✓ VERIFIED' : '~ INFERRED'}</span>
                     )}
-                    {s.inferenceUsed && (
-                      <span style={{ fontSize: '8px', color: ORANGE, fontWeight: 600 }}>~INFERRED</span>
-                    )}
-                    {s.confidenceScore !== undefined && (
+                    {s.dataType && <span style={{ fontSize: '8px', fontWeight: 700, padding: '1px 4px', borderRadius: '3px', color: s.dataType === 'FACT' ? '#10B981' : '#F59E0B', backgroundColor: s.dataType === 'FACT' ? 'rgba(16,185,129,0.08)' : 'rgba(245,158,11,0.08)' }}>{s.dataType === 'FACT' ? '✅ Confirmed' : '⚠️ Inferred'}</span>}
+                    {s.monitorScore !== undefined && <span style={{ fontSize: '8px', color: s.monitorTier === 'HIGH' ? GREEN : s.monitorTier === 'MEDIUM' ? YELLOW : TEXT3, fontWeight: 600 }}>Conf:{s.monitorScore}</span>}
+                    {!s.monitorScore && s.confidenceScore !== undefined && (
                       <span style={{ fontSize: '8px', color: s.confidenceScore >= 70 ? GREEN : s.confidenceScore >= 60 ? YELLOW : TEXT3 }}>
                         Conf:{s.confidenceScore}
                       </span>

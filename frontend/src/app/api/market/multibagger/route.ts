@@ -145,7 +145,7 @@ async function fetchScreenerData(symbol: string): Promise<{ data: Record<string,
     try {
       const resp = await fetch(url, {
         headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MarketCockpit/2.0)', 'Accept': 'text/html' },
-        signal: AbortSignal.timeout(9000),
+        signal: AbortSignal.timeout(6000),
       });
       if (!resp.ok) continue;
       const html = await resp.text();
@@ -441,7 +441,7 @@ async function fetchYahooData(symbol: string): Promise<{ data: Record<string, an
     const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(yahooSymbol)}?modules=defaultKeyStatistics,financialData,summaryDetail,price`;
     const resp = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MarketCockpit/2.0)' },
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(5000),
     });
     if (!resp.ok) return { data: {}, ok: false };
     const json = await resp.json();
@@ -493,7 +493,7 @@ async function fetchGoogleFinanceData(symbol: string): Promise<{ data: Record<st
     const url = `https://www.google.com/finance/quote/${encodeURIComponent(symbol)}:NSE`;
     const resp = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36', 'Accept': 'text/html' },
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(5000),
     });
     if (!resp.ok) return { data: {}, ok: false };
     const html = await resp.text();
@@ -1015,10 +1015,28 @@ export async function GET(request: NextRequest) {
     }
 
     const results: MultibaggerResult[] = [];
+    const DEADLINE = Date.now() + 48000; // 48s hard deadline (Vercel Hobby = 55s)
 
-    // Process in batches of 3 to avoid rate limits
-    const BATCH = 3;
+    // Process in batches of 5 (all fetches within a symbol already run in parallel)
+    const BATCH = 5;
     for (let i = 0; i < allSymbols.length; i += BATCH) {
+      // Check deadline before starting next batch
+      if (Date.now() > DEADLINE) {
+        // Return partial results with remaining symbols as NR
+        const remaining = allSymbols.slice(i);
+        for (const sym of remaining) {
+          results.push({
+            symbol: sym, company: sym, sector: 'Unknown', sectorGroup: 'UNKNOWN',
+            lastPrice: null, marketCapCr: null, overallScore: 0, grade: 'NR' as Grade,
+            pillars: [], criteria: [],
+            redFlags: [{ id: 'timeout', label: 'Processing Timeout', severity: 'MEDIUM', detail: 'Server deadline reached — retry for full analysis' }],
+            quality: { valid: false, reason: 'Timeout — partial results', coveragePct: 0, confidence: 'VERY_LOW', source: 'none', fetchedAt: new Date().toISOString(), staleness: 'UNKNOWN' },
+            isPortfolio: portfolio.includes(sym), isWatchlist: watchlist.includes(sym),
+            errors: ['Processing deadline exceeded'],
+          });
+        }
+        break;
+      }
       const batch = allSymbols.slice(i, i + BATCH);
       const batchOut = await Promise.all(batch.map(async (symbol): Promise<MultibaggerResult> => {
         try {
@@ -1129,10 +1147,11 @@ export async function GET(request: NextRequest) {
           const redFlags    = detectRedFlags(screener, nse);
           let grade       = computeGrade(rawScore, redFlags);
 
-          // If coverage is too low, cap the grade to NR
-          if (coverageRatio < 0.5) {
+          // If coverage is too low, mark as degraded but still show estimated score
+          const isDegradedCompany = coverageRatio < 0.5;
+          if (isDegradedCompany) {
             grade = 'NR';
-            errors.push(`Insufficient data coverage (${Math.round(coverageRatio * 100)}%) — grade set to NR`);
+            errors.push(`Low data coverage (${Math.round(coverageRatio * 100)}%) — grade NR, score is estimated`);
           }
           const mcap        = (screener.marketCapCr && screener.marketCapCr > 0) ? screener.marketCapCr
                             : (nse.marketCapCr && nse.marketCapCr > 0 ? nse.marketCapCr : null);
@@ -1193,16 +1212,24 @@ export async function GET(request: NextRequest) {
       ? Math.round(validResults.reduce((a, r) => a + (isFinite(r.overallScore) ? r.overallScore : 0), 0) / validResults.length)
       : 0;
 
+    const degradedCount = results.filter(r => r.grade === 'NR' && r.quality.valid).length;
+    const eligibleCount = validResults.filter(r => r.grade !== 'NR').length;
     const payload = {
       results,
+      degradedMode: eligibleCount === 0 && results.length > 0,
       meta: {
         total: results.length,
         valid: validResults.length,
+        eligible: eligibleCount,
+        degraded: degradedCount,
         portfolio: portfolio.length,
         watchlist: watchlist.length,
         topScore, avgScore,
         topPicks: validResults.filter(r => r.grade === 'A+' || r.grade === 'A').length,
         computedAt: new Date().toISOString(),
+        dataConfidence: validResults.length > 0
+          ? Math.round(validResults.reduce((a, r) => a + r.quality.coveragePct, 0) / validResults.length) / 100
+          : 0,
         methodology: '5-Pillar: Quality(30%) · Growth(25%) · FinStrength(20%) · Valuation(15%) · Market(10%) · Peer-normalized by sector',
       }
     };
