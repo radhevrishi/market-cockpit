@@ -4270,15 +4270,31 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       s.anomalyFlags.push(`TEMPLATE_PATTERN_${roundedVal}Cr`);
       s.heuristicSuppressed = true;
       s.templatePattern = tmpl?.pattern || `₹${roundedVal}Cr×${syms.length} companies`;
-      s.confidenceScore = Math.min(s.confidenceScore, 20);
-      s.visibility = 'HIDDEN'; // Hidden by default (Tier D behavior)
-      s.evidenceTier = 'TIER_D';
-      (s as any)._hiddenReason = 'TEMPLATE_PATTERN';
-      // Cannot be BUY/ADD/HOLD/EXIT based on templated data → force WATCH
-      if (s.action === 'BUY' || s.action === 'ADD' || s.action === 'HOLD') {
-        s.action = 'WATCH';
-        s.decision = 'WATCH';
-        s.conflictResolution = `Template suppressed: ${s.templatePattern} (unconfirmed pattern)`;
+
+      // ECONOMIC signals: template suppression should DOWNGRADE, not HIDE
+      // The underlying event (Order Win, Capex, M&A) is real even if the value is estimated.
+      // Only fully suppress non-economic signals with template patterns.
+      if (s.signalClass === 'ECONOMIC' || s.signalClass === 'STRATEGIC') {
+        s.confidenceScore = Math.min(s.confidenceScore, 40); // Reduce confidence but don't kill it
+        s.evidenceTier = 'TIER_C'; // Downgrade to inferred, not suppress
+        s.visibility = 'DIMMED';
+        (s as any)._hiddenReason = 'TEMPLATE_ECONOMIC_DOWNGRADED';
+        if (s.action === 'BUY' || s.action === 'ADD' || s.action === 'HOLD') {
+          s.action = 'WATCH';
+          s.decision = 'WATCH';
+          s.conflictResolution = `Template value pattern — event confirmed, value unconfirmed: ${s.templatePattern}`;
+        }
+      } else {
+        s.confidenceScore = Math.min(s.confidenceScore, 20);
+        s.visibility = 'HIDDEN'; // Hidden by default (Tier D behavior)
+        s.evidenceTier = 'TIER_D';
+        (s as any)._hiddenReason = 'TEMPLATE_PATTERN';
+        // Cannot be BUY/ADD/HOLD/EXIT based on templated data → force WATCH
+        if (s.action === 'BUY' || s.action === 'ADD' || s.action === 'HOLD') {
+          s.action = 'WATCH';
+          s.decision = 'WATCH';
+          s.conflictResolution = `Template suppressed: ${s.templatePattern} (unconfirmed pattern)`;
+        }
       }
     }
 
