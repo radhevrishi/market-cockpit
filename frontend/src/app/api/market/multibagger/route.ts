@@ -589,6 +589,86 @@ async function fetchYahooV7Quote(symbol: string): Promise<{ data: Record<string,
   } catch { return { data: {}, ok: false }; }
 }
 
+// ── Yahoo v7 BATCH fetch — single HTTP call for ALL symbols ──────────────────
+async function fetchYahooV7Batch(symbols: string[]): Promise<Map<string, Record<string, any>>> {
+  const result = new Map<string, Record<string, any>>();
+  if (symbols.length === 0) return result;
+  // Yahoo v7 accepts comma-separated symbols, max ~50 per call
+  const chunks: string[][] = [];
+  for (let i = 0; i < symbols.length; i += 40) {
+    chunks.push(symbols.slice(i, i + 40));
+  }
+  for (const chunk of chunks) {
+    try {
+      const yahooSyms = chunk.map(s => `${s}.NS`).join(',');
+      const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(yahooSyms)}&fields=regularMarketPrice,regularMarketPreviousClose,marketCap,trailingPE,epsTrailingTwelveMonths,bookValue,priceToBook,fiftyTwoWeekHigh,fiftyTwoWeekLow,regularMarketChangePercent,longName,shortName,sector,industry`;
+      const resp = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MarketCockpit/2.0)' },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!resp.ok) continue;
+      const json = await resp.json();
+      const quotes = json?.quoteResponse?.result || [];
+      for (const q of quotes) {
+        if (!q || !q.regularMarketPrice) continue;
+        // Extract base symbol (remove .NS suffix)
+        const sym = (q.symbol || '').replace('.NS', '').replace('.BO', '');
+        if (!sym) continue;
+        result.set(sym, {
+          lastPrice: q.regularMarketPrice,
+          pe: q.trailingPE ?? null,
+          eps: q.epsTrailingTwelveMonths ?? null,
+          bookValue: q.bookValue ?? null,
+          priceToBook: q.priceToBook ?? null,
+          marketCapCr: q.marketCap ? Math.round(q.marketCap / 10000000) : null,
+          high52: q.fiftyTwoWeekHigh ?? null,
+          low52: q.fiftyTwoWeekLow ?? null,
+          pChange: q.regularMarketChangePercent ?? null,
+          companyName: q.longName || q.shortName || null,
+          sector: q.sector || null,
+          _source: 'yahoo_v7_batch',
+        });
+      }
+    } catch {}
+    // Also try BSE (.BO) for symbols that didn't resolve via NSE
+    const missing = chunk.filter(s => !result.has(s));
+    if (missing.length > 0) {
+      try {
+        const bseSyms = missing.map(s => `${s}.BO`).join(',');
+        const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(bseSyms)}&fields=regularMarketPrice,marketCap,trailingPE,epsTrailingTwelveMonths,bookValue,priceToBook,fiftyTwoWeekHigh,fiftyTwoWeekLow,regularMarketChangePercent,longName,shortName,sector,industry`;
+        const resp = await fetch(url, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MarketCockpit/2.0)' },
+          signal: AbortSignal.timeout(6000),
+        });
+        if (resp.ok) {
+          const json = await resp.json();
+          const quotes = json?.quoteResponse?.result || [];
+          for (const q of quotes) {
+            if (!q || !q.regularMarketPrice) continue;
+            const sym = (q.symbol || '').replace('.BO', '').replace('.NS', '');
+            if (!sym || result.has(sym)) continue;
+            result.set(sym, {
+              lastPrice: q.regularMarketPrice,
+              pe: q.trailingPE ?? null,
+              eps: q.epsTrailingTwelveMonths ?? null,
+              bookValue: q.bookValue ?? null,
+              priceToBook: q.priceToBook ?? null,
+              marketCapCr: q.marketCap ? Math.round(q.marketCap / 10000000) : null,
+              high52: q.fiftyTwoWeekHigh ?? null,
+              low52: q.fiftyTwoWeekLow ?? null,
+              pChange: q.regularMarketChangePercent ?? null,
+              companyName: q.longName || q.shortName || null,
+              sector: q.sector || null,
+              _source: 'yahoo_bse_batch',
+            });
+          }
+        }
+      } catch {}
+    }
+  }
+  return result;
+}
+
 // ── Yahoo v7 with BSE suffix (.BO) — fallback for NSE-missing symbols ──────
 async function fetchYahooBSEQuote(symbol: string): Promise<{ data: Record<string, any>; ok: boolean }> {
   try {
@@ -1233,6 +1313,7 @@ export async function GET(request: NextRequest) {
       'GARUDA': { company: 'Garuda Construction', sector: 'Construction', lastPrice: 110, marketCapCr: 1800, pe: 28, roe: 12, opm: 14, de: 0.5, promoterPct: 55 },
       'INOXWIND': { company: 'Inox Wind Limited', sector: 'Renewable Energy', lastPrice: 180, marketCapCr: 20500, pe: null, roe: 8, opm: 10, de: 0.8, promoterPct: 47 },
       'SAGILITY': { company: 'Sagility India', sector: 'IT Services', lastPrice: 38, marketCapCr: 17800, pe: 60, roe: 10, opm: 18, de: 0.2, promoterPct: 70 },
+      'SAGILITYWL': { company: 'Sagility India', sector: 'IT Services', lastPrice: 38, marketCapCr: 17800, pe: 60, roe: 10, opm: 18, de: 0.2, promoterPct: 70 },
       'POWERMECH': { company: 'Power Mech Projects', sector: 'Engineering', lastPrice: 1850, marketCapCr: 2900, pe: 18, roe: 16, opm: 10, de: 0.6, promoterPct: 52 },
       'ACMESOLAR': { company: 'Acme Solar Holdings', sector: 'Renewable Energy', lastPrice: 225, marketCapCr: 14500, pe: null, roe: 5, opm: 55, de: 3.5, promoterPct: 68 },
       'RUBICON': { company: 'Rubicon Research', sector: 'Pharma', lastPrice: 55, marketCapCr: 1200, pe: null, roe: null, opm: 8, de: 1.0, promoterPct: 60 },
@@ -1286,6 +1367,7 @@ export async function GET(request: NextRequest) {
       'GARUDA': { screener: 'GARUDA', yahoo: 'GARUDA.NS' },
       'INOXWIND': { screener: 'INOXWIND', yahoo: 'INOXWIND.NS' },
       'SAGILITY': { screener: 'SAGILITY', yahoo: 'SAGILITY.NS' },
+      'SAGILITYWL': { screener: 'SAGILITY', yahoo: 'SAGILITY.NS', nse: 'SAGILITY' },
       'POWERMECH': { screener: 'POWERMECH', yahoo: 'POWERMECH.NS' },
       'ACMESOLAR': { screener: 'ACMESOLAR', yahoo: 'ACMESOLAR.NS' },
       'RUBICON': { screener: 'RUBICON', yahoo: 'RUBICON.NS' },
@@ -1343,7 +1425,7 @@ export async function GET(request: NextRequest) {
     }
 
     const results: MultibaggerResult[] = [];
-    const DEADLINE = Date.now() + 25000; // 25s hard deadline — must leave 30s buffer for Vercel Hobby's 55s limit
+    const DEADLINE = Date.now() + 40000; // 40s hard deadline — 15s buffer for Vercel Hobby's 55s limit
 
     // Add skipped symbols as NR results
     for (const sym of skippedSymbols) {
@@ -1358,46 +1440,88 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // Process in batches of 4 (small batches = more frequent deadline checks)
-    const BATCH = 4;
-    for (let i = 0; i < cleanSymbols.length; i += BATCH) {
+    // ── PHASE 0: Check Redis cache for each symbol (4h TTL) ──
+    // Symbols with fresh cached results skip all fetching → instant response
+    const CACHE_TTL = 14400; // 4 hours in seconds
+    const uncachedSymbols: string[] = [];
+    const cachePromises = cleanSymbols.map(async (sym) => {
+      try {
+        const cached = await kvGet<MultibaggerResult>(`mb:${sym}`);
+        if (cached && cached.overallScore !== undefined && cached.quality?.staleness !== 'STALE') {
+          // Fresh cache hit — use directly
+          cached.isPortfolio = portfolio.includes(sym);
+          cached.isWatchlist = watchlist.includes(sym);
+          results.push(cached);
+          return true;
+        }
+      } catch {}
+      uncachedSymbols.push(sym);
+      return false;
+    });
+    await Promise.all(cachePromises);
+
+    // ── PHASE 1: Batch Yahoo v7 pre-fetch for ALL uncached symbols (single HTTP call) ──
+    // This gives us price + PE + EPS + bookValue + 52W for most symbols instantly
+    const yahooAliases = uncachedSymbols.map(s => (SYMBOL_ALIASES[s]?.yahoo || `${s}.NS`).replace('.NS', ''));
+    let yahooBatchData = new Map<string, Record<string, any>>();
+    if (uncachedSymbols.length > 0) {
+      try {
+        yahooBatchData = await fetchYahooV7Batch(yahooAliases);
+      } catch {}
+    }
+
+    // Process in batches of 6
+    const BATCH = 6;
+    for (let i = 0; i < uncachedSymbols.length; i += BATCH) {
       // Check deadline before starting next batch — also check with 8s buffer for batch to complete
       if (Date.now() > DEADLINE - 8000) {
-        // Return partial results — use static fallback for symbols that have it
-        const remaining = cleanSymbols.slice(i);
+        // Return partial results — use Yahoo batch data first, then static fallback
+        const remaining = uncachedSymbols.slice(i);
         for (const sym of remaining) {
           const aliasSym = SYMBOL_ALIASES[sym]?.nse || sym;
+          const yahooAlias = (SYMBOL_ALIASES[sym]?.yahoo || `${sym}.NS`).replace('.NS', '');
+          const batchD = yahooBatchData.get(yahooAlias) || yahooBatchData.get(sym) || yahooBatchData.get(aliasSym);
           const sData = STATIC_FALLBACK[sym] || STATIC_FALLBACK[aliasSym];
-          if (sData && sData.lastPrice && sData.lastPrice > 0) {
-            // Score using static data instead of returning NR
-            const sectorGrp = getSectorGroup(sData.sector || 'Unknown');
-            const staticRoe = sData.roe || 0;
-            const staticOpm = sData.opm || 0;
-            const staticDe = sData.de ?? 1;
-            const staticPe = sData.pe || 0;
-            const staticPromoter = sData.promoterPct || 0;
+          // Prefer Yahoo batch data (live prices) over static
+          const hasYahooBatch = batchD && batchD.lastPrice > 0;
+          const hasFallback = hasYahooBatch || (sData && sData.lastPrice && sData.lastPrice > 0);
+          if (hasFallback) {
+            // Score using best available data
+            const price = hasYahooBatch ? batchD!.lastPrice : sData!.lastPrice;
+            const company = (hasYahooBatch ? batchD!.companyName : null) || sData?.company || sym;
+            const sector = (hasYahooBatch ? batchD!.sector : null) || sData?.sector || 'Unknown';
+            const pe = (hasYahooBatch ? batchD!.pe : null) || sData?.pe || 0;
+            const mcapCr = (hasYahooBatch ? batchD!.marketCapCr : null) || sData?.marketCapCr || null;
+            const sectorGrp = getSectorGroup(sector);
+            const staticRoe = sData?.roe || 0;
+            const staticOpm = sData?.opm || 0;
+            const staticDe = sData?.de ?? 1;
+            const staticPromoter = sData?.promoterPct || 0;
             const staticRoce = staticRoe / (1 + staticDe);
-            // Simplified scoring for static data
+            // Simplified scoring
             const qualScore = Math.min(30, (staticRoe / 25 * 12) + (staticOpm / 20 * 10) + (staticRoce / 15 * 8));
-            const valScore = Math.min(15, staticPe > 0 && staticPe < 50 ? (1 - staticPe / 100) * 15 : 3);
+            const valScore = Math.min(15, pe > 0 && pe < 50 ? (1 - pe / 100) * 15 : 3);
             const mktScore = Math.min(10, (staticPromoter / 75 * 5) + 3);
-            const rawScore = Math.round(qualScore + valScore + mktScore + 10); // +10 base for growth/fin
-            const penalized = Math.round(Math.max(0, rawScore) * 0.85); // 15% penalty for static
+            const rawScore = Math.round(qualScore + valScore + mktScore + 10);
+            const penalty = hasYahooBatch ? 0.90 : 0.85; // 10% penalty for Yahoo batch, 15% for static
+            const penalized = Math.round(Math.max(0, rawScore) * penalty);
             const grade = penalized >= 72 ? 'A' : penalized >= 55 ? 'B' : penalized >= 35 ? 'C' : 'D';
+            const source = hasYahooBatch ? 'Yahoo batch' : 'Static';
+            const coverage = hasYahooBatch ? 35 : 25;
             results.push({
-              symbol: sym, company: sData.company || sym, sector: sData.sector || 'Unknown', sectorGroup: sectorGrp,
-              lastPrice: sData.lastPrice, marketCapCr: sData.marketCapCr,
+              symbol: sym, company: String(company), sector, sectorGroup: sectorGrp,
+              lastPrice: price, marketCapCr: mcapCr,
               overallScore: penalized, grade: grade as Grade,
               pillars: [
-                { id: 'quality', label: 'Quality', weight: 0.3, score: Math.round(qualScore), coverage: 0.5, topStrength: 'Static data', topRisk: 'Stale values' },
+                { id: 'quality', label: 'Quality', weight: 0.3, score: Math.round(qualScore), coverage: 0.5, topStrength: hasYahooBatch ? 'Live price' : 'Static data', topRisk: hasYahooBatch ? 'Limited fundamentals' : 'Stale values' },
                 { id: 'valuation', label: 'Valuation', weight: 0.15, score: Math.round(valScore), coverage: 0.5, topStrength: 'P/E available', topRisk: 'Limited data' },
                 { id: 'market', label: 'Market', weight: 0.10, score: Math.round(mktScore), coverage: 0.5, topStrength: 'Promoter holding', topRisk: 'No live data' },
               ],
               criteria: [],
-              redFlags: [{ id: 'static-data', label: 'Static Data', severity: 'MEDIUM', detail: 'Scored from cached data — live fetch timed out' }],
-              quality: { valid: true, reason: 'Static fallback — deadline reached', coveragePct: 25, confidence: 'LOW', source: 'Static', fetchedAt: new Date().toISOString(), staleness: 'STALE' },
+              redFlags: [{ id: 'deadline-data', label: hasYahooBatch ? 'Partial Data' : 'Static Data', severity: 'MEDIUM', detail: `Scored from ${source} — deadline reached` }],
+              quality: { valid: true, reason: `${source} — deadline reached`, coveragePct: coverage, confidence: hasYahooBatch ? 'MEDIUM' : 'LOW', source, fetchedAt: new Date().toISOString(), staleness: hasYahooBatch ? 'FRESH' : 'STALE' },
               isPortfolio: portfolio.includes(sym), isWatchlist: watchlist.includes(sym),
-              errors: ['Deadline reached — scored from static data'],
+              errors: [`Deadline reached — scored from ${source}`],
             });
           } else {
             results.push({
@@ -1413,7 +1537,7 @@ export async function GET(request: NextRequest) {
         }
         break;
       }
-      const batch = cleanSymbols.slice(i, i + BATCH);
+      const batch = uncachedSymbols.slice(i, i + BATCH);
       const batchOut = await Promise.all(batch.map(async (symbol): Promise<MultibaggerResult> => {
         try {
           const errors: string[] = [];
@@ -1428,9 +1552,12 @@ export async function GET(request: NextRequest) {
           const yahooSym = alias.yahoo ? alias.yahoo.replace('.NS', '') : symbol; // fetchYahooData adds .NS
           const nseSym = alias.nse || symbol;
 
+          // ── Pre-populate from Yahoo v7 batch data (already fetched in Phase 1) ──
+          const batchYahoo = yahooBatchData.get(yahooSym) || yahooBatchData.get(symbol) || yahooBatchData.get(nseSym);
+
           // ── Multi-source fetching — reduced retries for large lists to stay within deadline ──
           // Use aliased symbols for each source to maximize resolution rate
-          const isLargeList = cleanSymbols.length > 8;
+          const isLargeList = uncachedSymbols.length > 8;
           const maxRetries = isLargeList ? 1 : 2;
           const [scrResult, nseResult, yahooResult, nseFinResult, googleResult, yahooV7Result] = await Promise.all([
             withRetry(() => fetchScreenerData(screenerSym), maxRetries, 300).catch((): { data: Record<string, any>; ok: boolean; url: string } => ({ data: {}, ok: false, url: '' })),
@@ -1488,6 +1615,28 @@ export async function GET(request: NextRequest) {
             }
           }
 
+          // Fill gaps with Yahoo v7 BATCH data (pre-fetched in Phase 1)
+          if (batchYahoo) {
+            if (!screener.pe && batchYahoo.pe) screener.pe = batchYahoo.pe;
+            if (!screener.eps && batchYahoo.eps) screener.eps = batchYahoo.eps;
+            if (!screener.bookValue && batchYahoo.bookValue) screener.bookValue = batchYahoo.bookValue;
+            if (!screener.priceToBook && batchYahoo.priceToBook) screener.priceToBook = batchYahoo.priceToBook;
+            if (!screener.marketCapCr && batchYahoo.marketCapCr) screener.marketCapCr = batchYahoo.marketCapCr;
+            if (!nse.lastPrice && batchYahoo.lastPrice) nse.lastPrice = batchYahoo.lastPrice;
+            if (!nse.high52 && batchYahoo.high52) nse.high52 = batchYahoo.high52;
+            if (!nse.low52 && batchYahoo.low52) nse.low52 = batchYahoo.low52;
+            if (!nse.pChange && batchYahoo.pChange) nse.pChange = batchYahoo.pChange;
+            if (!nse.companyName && batchYahoo.companyName) nse.companyName = batchYahoo.companyName;
+            if (!nse.sector && batchYahoo.sector) nse.sector = batchYahoo.sector;
+            if (!nse.marketCapCr && batchYahoo.marketCapCr) nse.marketCapCr = batchYahoo.marketCapCr;
+            if (nse.high52 && nse.lastPrice && !nse.pctFrom52H) {
+              nse.pctFrom52H = ((nse.lastPrice / nse.high52) - 1) * 100;
+            }
+            if (nse.low52 && nse.lastPrice && !nse.pctFrom52L) {
+              nse.pctFrom52L = ((nse.lastPrice - nse.low52) / nse.low52) * 100;
+            }
+          }
+
           // Fill gaps with Google Finance
           if (googleResult.ok) {
             if (!screener.pe && google.pe) screener.pe = google.pe;
@@ -1528,11 +1677,25 @@ export async function GET(request: NextRequest) {
           const rawSector = String(nse.sector || yahoo.sector || screener.sector || '');
           const sector    = rawSector || 'Unknown';
 
-          // Data quality gate — any source counts as data
-          const anyFundamentalData = scrResult.ok || yahooResult.ok || yahooV7Result.ok || googleResult.ok || Object.keys(nseFin).length > 0;
+          // Data quality gate — any source counts as data (including batch Yahoo)
+          const hasBatchData = !!batchYahoo && batchYahoo.lastPrice > 0;
+          const anyFundamentalData = scrResult.ok || yahooResult.ok || yahooV7Result.ok || googleResult.ok || hasBatchData || Object.keys(nseFin).length > 0;
           const quality = validateData(symbol, company, sector, screener, nse, anyFundamentalData, nseResult.ok);
           if (!quality.valid) {
             // ── ENHANCED FALLBACK CHAIN ──
+            // Layer 0: Use batch Yahoo data (already pre-fetched)
+            if (batchYahoo && batchYahoo.lastPrice > 0 && !nse.lastPrice) {
+              nse.lastPrice = batchYahoo.lastPrice;
+              if (!nse.companyName && batchYahoo.companyName) nse.companyName = batchYahoo.companyName;
+              if (!nse.sector && batchYahoo.sector) nse.sector = batchYahoo.sector;
+              if (!nse.marketCapCr && batchYahoo.marketCapCr) nse.marketCapCr = batchYahoo.marketCapCr;
+              if (!screener.pe && batchYahoo.pe) screener.pe = batchYahoo.pe;
+              if (!screener.eps && batchYahoo.eps) screener.eps = batchYahoo.eps;
+              if (!screener.bookValue && batchYahoo.bookValue) screener.bookValue = batchYahoo.bookValue;
+              if (!screener.priceToBook && batchYahoo.priceToBook) screener.priceToBook = batchYahoo.priceToBook;
+              if (!screener.marketCapCr && batchYahoo.marketCapCr) screener.marketCapCr = batchYahoo.marketCapCr;
+              errors.push('Yahoo v7 batch data used as fallback');
+            }
             // Layer 1: Check if we already have a price from any source
             let fallbackPrice = nse.lastPrice || yahoo.lastPrice || screener.lastPrice || 0;
             let fallbackSource = yahooResult.ok ? 'partial' : nseResult.ok ? 'NSE only' : '';
@@ -1729,6 +1892,12 @@ export async function GET(request: NextRequest) {
         }
       }));
       results.push(...batchOut);
+      // Cache successful results in Redis (4h TTL) — skip caching errors/NR/static
+      for (const r of batchOut) {
+        if (r.quality?.valid && r.quality?.staleness !== 'STALE' && r.grade !== 'NR' && r.overallScore > 0) {
+          kvSet(`mb:${r.symbol}`, r, CACHE_TTL).catch(() => {}); // fire-and-forget
+        }
+      }
     }
 
     // ── SANITIZE ALL NUMBERS: NaN/Infinity → null ──
