@@ -250,7 +250,7 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
         flexDirection: 'column',
         width: '1100px',
         height: `${totalHeight}px`,
-        backgroundColor: '#ffffff',
+        backgroundColor: '#0A0E1A',
         fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
       }}
     >
@@ -272,17 +272,17 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
             width: '52px',
             height: '52px',
             borderRadius: '50%',
-            backgroundColor: '#1565c0',
+            backgroundColor: '#0F7ABF',
             fontSize: '28px',
           }}
         >
           👁️
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <span style={{ fontSize: '32px', fontWeight: 700, color: '#1565c0', letterSpacing: '-0.5px' }}>
+          <span style={{ fontSize: '32px', fontWeight: 700, color: '#3B82F6', letterSpacing: '-0.5px' }}>
             Watchlist Pulse
           </span>
-          <span style={{ fontSize: '15px', color: '#718096', marginTop: '2px' }}>
+          <span style={{ fontSize: '15px', color: '#94A3B8', marginTop: '2px' }}>
             Intraday  •  {displayStocks.length} stocks  •  {timestamp}
           </span>
         </div>
@@ -292,8 +292,8 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
       <div
         style={{
           display: 'flex',
-          backgroundColor: '#1565c0',
-          color: '#e2e8f0',
+          backgroundColor: '#0F7ABF',
+          color: '#ffffff',
           padding: '12px 32px',
           fontSize: '13px',
           fontWeight: 700,
@@ -310,7 +310,7 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
       {/* ── Data Rows ── */}
       {sorted.map((s, i) => {
         const isPositive = s.changePercent >= 0;
-        const pctColor = isPositive ? '#2e7d32' : '#c62828';
+        const pctColor = isPositive ? '#10B981' : '#EF4444';
         const rangeText = s.dayHigh && s.dayLow
           ? `${s.dayLow.toFixed(0)}–${s.dayHigh.toFixed(0)}`
           : '—';
@@ -321,25 +321,25 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
             style={{
               display: 'flex',
               padding: '10px 32px',
-              backgroundColor: i % 2 === 0 ? '#f7fafc' : '#ffffff',
+              backgroundColor: i % 2 === 0 ? '#0D1623' : '#0A0E1A',
               fontSize: '14px',
               alignItems: 'center',
-              borderBottom: '1px solid #edf2f7',
+              borderBottom: '1px solid #1A2840',
             }}
           >
-            <span style={{ width: '140px', fontWeight: 700, color: '#1a202c', fontSize: '14px' }}>
+            <span style={{ width: '140px', fontWeight: 700, color: '#E2E8F0', fontSize: '14px' }}>
               {truncate(s.ticker, 14)}
             </span>
-            <span style={{ width: '200px', color: '#2d3748', fontSize: '13px' }}>
+            <span style={{ width: '200px', color: '#94A3B8', fontSize: '13px' }}>
               {truncate(s.sector, 20)}
             </span>
             <span style={{ width: '110px', textAlign: 'right', fontWeight: 700, color: pctColor, fontSize: '15px' }}>
               {isPositive ? '+' : ''}{s.changePercent.toFixed(1)}%
             </span>
-            <span style={{ width: '110px', textAlign: 'right', color: '#2d3748', fontSize: '13px' }}>
+            <span style={{ width: '110px', textAlign: 'right', color: '#E2E8F0', fontSize: '13px' }}>
               ₹{s.price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
             </span>
-            <span style={{ width: '130px', textAlign: 'right', color: '#2d3748', fontSize: '13px' }}>
+            <span style={{ width: '130px', textAlign: 'right', color: '#94A3B8', fontSize: '13px' }}>
               {rangeText}
             </span>
           </div>
@@ -353,9 +353,10 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
           justifyContent: 'space-between',
           alignItems: 'center',
           padding: '12px 32px',
-          backgroundColor: '#edf2f7',
+          backgroundColor: '#0D1623',
           fontSize: '13px',
-          color: '#718096',
+          color: '#94A3B8',
+          borderTop: '1px solid #1A2840',
           marginTop: 'auto',
         }}
       >

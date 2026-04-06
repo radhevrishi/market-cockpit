@@ -284,7 +284,7 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
         flexDirection: 'column',
         width: '1100px',
         height: `${totalHeight}px`,
-        backgroundColor: '#ffffff',
+        backgroundColor: '#0A0E1A',
         fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
       }}
     >
@@ -313,10 +313,10 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
           💼
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <span style={{ fontSize: '32px', fontWeight: 700, color: '#7c3aed', letterSpacing: '-0.5px' }}>
+          <span style={{ fontSize: '32px', fontWeight: 700, color: '#a78bfa', letterSpacing: '-0.5px' }}>
             Portfolio Pulse
           </span>
-          <span style={{ fontSize: '15px', color: '#718096', marginTop: '2px' }}>
+          <span style={{ fontSize: '15px', color: '#94A3B8', marginTop: '2px' }}>
             Holdings  •  {displayStocks.length} stocks  •  {timestamp}
           </span>
         </div>
@@ -329,17 +329,17 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
           justifyContent: 'center',
           gap: '32px',
           padding: '10px 32px',
-          backgroundColor: '#f8fafc',
-          borderTop: '1px solid #e2e8f0',
-          borderBottom: '1px solid #e2e8f0',
+          backgroundColor: '#0D1623',
+          borderTop: '1px solid #1A2840',
+          borderBottom: '1px solid #1A2840',
         }}
       >
         <span style={{ fontSize: '14px', fontWeight: 700, color: moodColor }}>
           {moodText} ({avgChange >= 0 ? '+' : ''}{avgChange.toFixed(2)}%)
         </span>
-        <span style={{ fontSize: '13px', color: '#16a34a' }}>↑ {gainers} Gainers</span>
-        <span style={{ fontSize: '13px', color: '#dc2626' }}>↓ {losers} Losers</span>
-        <span style={{ fontSize: '13px', color: '#64748b' }}>{displayStocks.length} Holdings</span>
+        <span style={{ fontSize: '13px', color: '#10B981' }}>↑ {gainers} Gainers</span>
+        <span style={{ fontSize: '13px', color: '#EF4444' }}>↓ {losers} Losers</span>
+        <span style={{ fontSize: '13px', color: '#94A3B8' }}>{displayStocks.length} Holdings</span>
       </div>
 
       {/* ── Column Headers ── */}
@@ -347,7 +347,7 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
         style={{
           display: 'flex',
           backgroundColor: '#7c3aed',
-          color: '#e2e8f0',
+          color: '#ffffff',
           padding: '12px 32px',
           fontSize: '13px',
           fontWeight: 700,
@@ -364,7 +364,7 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
       {/* ── Data Rows ── */}
       {sorted.map((s, i) => {
         const isPositive = s.changePercent >= 0;
-        const pctColor = isPositive ? '#2e7d32' : '#c62828';
+        const pctColor = isPositive ? '#10B981' : '#EF4444';
         const rangeText = s.dayHigh && s.dayLow
           ? `${s.dayLow.toFixed(0)}–${s.dayHigh.toFixed(0)}`
           : '—';
@@ -375,25 +375,25 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
             style={{
               display: 'flex',
               padding: '10px 32px',
-              backgroundColor: i % 2 === 0 ? '#faf5ff' : '#ffffff',
+              backgroundColor: i % 2 === 0 ? '#0D1623' : '#0A0E1A',
               fontSize: '14px',
               alignItems: 'center',
-              borderBottom: '1px solid #f3e8ff',
+              borderBottom: '1px solid #1A2840',
             }}
           >
-            <span style={{ width: '140px', fontWeight: 700, color: '#1a202c', fontSize: '14px' }}>
+            <span style={{ width: '140px', fontWeight: 700, color: '#E2E8F0', fontSize: '14px' }}>
               {truncate(s.ticker, 14)}
             </span>
-            <span style={{ width: '200px', color: '#2d3748', fontSize: '13px' }}>
+            <span style={{ width: '200px', color: '#94A3B8', fontSize: '13px' }}>
               {truncate(s.sector, 20)}
             </span>
             <span style={{ width: '110px', textAlign: 'right', fontWeight: 700, color: pctColor, fontSize: '15px' }}>
               {isPositive ? '+' : ''}{s.changePercent.toFixed(1)}%
             </span>
-            <span style={{ width: '110px', textAlign: 'right', color: '#2d3748', fontSize: '13px' }}>
+            <span style={{ width: '110px', textAlign: 'right', color: '#E2E8F0', fontSize: '13px' }}>
               ₹{s.price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
             </span>
-            <span style={{ width: '130px', textAlign: 'right', color: '#2d3748', fontSize: '13px' }}>
+            <span style={{ width: '130px', textAlign: 'right', color: '#94A3B8', fontSize: '13px' }}>
               {rangeText}
             </span>
           </div>
@@ -407,9 +407,10 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
           justifyContent: 'space-between',
           alignItems: 'center',
           padding: '12px 32px',
-          backgroundColor: '#f3e8ff',
+          backgroundColor: '#0D1623',
           fontSize: '13px',
-          color: '#718096',
+          color: '#94A3B8',
+          borderTop: '1px solid #1A2840',
           marginTop: 'auto',
         }}
       >
@@ -705,12 +706,16 @@ export async function POST(request: Request) {
         const lines = [`<b>🧠 Portfolio Intelligence</b>\n`];
         for (let i = 0; i < signals.length; i++) {
           const s = signals[i];
-          const tier = s.signalTierV7 === 'ACTIONABLE' ? '🔴' : '🟡';
+          const tier = s.signalTierV7 === 'ACTIONABLE' ? '🔴' : s.signalTierV7 === 'NOTABLE' ? '🟡' : '⚪';
           const action = s.action || 'MONITOR';
           const name = s.symbol || s.ticker || s.primaryTicker || '???';
-          lines.push(`${tier} <b>${esc(name)}</b>  <code>${action}</code>`);
-          lines.push(`   ${esc(truncate(s.headline || s.narrative || '', 70))}`);
-          if (s.eventType) lines.push(`   <i>${s.eventType} · ${s.signalClass || ''}</i>`);
+          const company = s.company || s.companyName || '';
+          const impact = s.impactLevel ? ` · ${s.impactLevel}` : '';
+          const value = s.eventValueCr ? ` · ₹${s.eventValueCr} Cr` : '';
+          lines.push(`${tier} <b>${esc(name)}</b>${company ? ` (${esc(truncate(company, 25))})` : ''}  <code>${action}</code>`);
+          const desc = s.headline || s.narrative || s.summary || s.eventType || '';
+          if (desc) lines.push(`   ${esc(truncate(desc, 80))}`);
+          if (s.eventType) lines.push(`   <i>${s.eventType}${impact}${value}</i>`);
           lines.push('');
         }
         lines.push(`<i>Full analysis: <a href="https://market-cockpit.vercel.app/orders">Intelligence Dashboard</a></i>`);
@@ -837,11 +842,16 @@ export async function GET(request: Request) {
       if (signals.length > 0) {
         const lines = [`<b>🧠 Portfolio Intelligence</b>\n`];
         for (const s of signals.slice(0, 5)) {
-          const tier = s.signalTierV7 === 'ACTIONABLE' ? '🔴' : '🟡';
+          const tier = s.signalTierV7 === 'ACTIONABLE' ? '🔴' : s.signalTierV7 === 'NOTABLE' ? '🟡' : '⚪';
           const action = s.action || 'MONITOR';
           const name = s.symbol || s.ticker || s.primaryTicker || '???';
-          lines.push(`${tier} <b>${esc(name)}</b>  <code>${action}</code>`);
-          lines.push(`   ${esc(truncate(s.headline || s.narrative || '', 70))}`);
+          const company = s.company || s.companyName || '';
+          const impact = s.impactLevel ? ` · ${s.impactLevel}` : '';
+          const value = s.eventValueCr ? ` · ₹${s.eventValueCr} Cr` : '';
+          lines.push(`${tier} <b>${esc(name)}</b>${company ? ` (${esc(truncate(company, 25))})` : ''}  <code>${action}</code>`);
+          const desc = s.headline || s.narrative || s.summary || s.eventType || '';
+          if (desc) lines.push(`   ${esc(truncate(desc, 80))}`);
+          if (s.eventType) lines.push(`   <i>${s.eventType}${impact}${value}</i>`);
           lines.push('');
         }
         lines.push(`<a href="https://market-cockpit.vercel.app/orders">Full Intelligence →</a>`);
