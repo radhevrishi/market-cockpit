@@ -1343,7 +1343,7 @@ export async function GET(request: NextRequest) {
     }
 
     const results: MultibaggerResult[] = [];
-    const DEADLINE = Date.now() + 42000; // 42s hard deadline (Vercel Hobby = 55s, 13s buffer for response + cold start)
+    const DEADLINE = Date.now() + 35000; // 35s hard deadline (Vercel Hobby kills at ~50s with cold start overhead)
 
     // Add skipped symbols as NR results
     for (const sym of skippedSymbols) {
@@ -1358,9 +1358,8 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // Process in batches of 8 (balanced: enough parallelism without hitting rate limits)
-    // 12 was causing timeouts from NSE/screener rate limiting
-    const BATCH = 8;
+    // Process in batches of 6 (reduced from 8 — 23 symbols needs faster batches to fit in 35s)
+    const BATCH = 6;
     for (let i = 0; i < cleanSymbols.length; i += BATCH) {
       // Check deadline before starting next batch
       if (Date.now() > DEADLINE) {
