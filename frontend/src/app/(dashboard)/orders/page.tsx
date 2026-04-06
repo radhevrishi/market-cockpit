@@ -739,7 +739,7 @@ export default function CompanyIntelligencePage() {
       )}
 
       {/* ── TREND LAYER (Signal Stacking) ── */}
-      {trends.length > 0 && (
+      {trends.length > 0 && typeFilter === 'ALL' && (
         <div style={{ marginBottom: '16px' }}>
           <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '1.5px' }}>
             SIGNAL STACKING — MULTI-EVENT COMPANIES
@@ -832,7 +832,7 @@ export default function CompanyIntelligencePage() {
         </div>
       )}
 
-      {noActionableSignals && !loading && (
+      {noActionableSignals && !loading && typeFilter === 'ALL' && (
         <div style={{
           padding: '14px 18px', marginBottom: '16px', borderRadius: '10px',
           backgroundColor: 'rgba(15,122,191,0.04)',
@@ -883,7 +883,7 @@ export default function CompanyIntelligencePage() {
       )}
 
       {/* ── THEMATIC INTELLIGENCE (v8) — always shown when ideas available ── */}
-      {thematicIdeas.length > 0 && !loading && (
+      {thematicIdeas.length > 0 && !loading && typeFilter === 'ALL' && (
         <div style={{ marginBottom: '20px' }}>
           <div style={{ fontSize: '11px', fontWeight: 700, color: PURPLE, letterSpacing: '0.05em', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             🧠 THEMATIC INTELLIGENCE ({thematicIdeas.length})
@@ -933,7 +933,7 @@ export default function CompanyIntelligencePage() {
       )}
 
       {/* ── TOP SIGNALS ── */}
-      {top3.length > 0 && (
+      {top3.length > 0 && typeFilter === 'ALL' && (
         <div style={{ marginBottom: '20px' }}>
           <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, letterSpacing: '0.05em', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             {signals.length > 0 ? `✅ ACTIONABLE SIGNALS (${signals.length})` : noActionableSignals ? (top3.length > 0 ? 'TOP MONITOR SIGNALS' : 'NO HIGH-CONFIDENCE SIGNALS') : (top3.length > 0 ? 'TOP SIGNALS' : 'SIGNALS')}
@@ -1188,7 +1188,7 @@ export default function CompanyIntelligencePage() {
       )}
 
       {/* ── NOTABLE SIGNALS ── */}
-      {notableSignals.length > 0 && (
+      {notableSignals.length > 0 && typeFilter === 'ALL' && (
         <div style={{ marginBottom: '20px' }}>
           <div style={{ fontSize: '11px', fontWeight: 700, color: YELLOW, letterSpacing: '0.05em', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             ⭐ NOTABLE SIGNALS ({notableSignals.length})
@@ -2230,7 +2230,7 @@ export default function CompanyIntelligencePage() {
       )}
 
       {/* ── MONITOR LIST — Institutional Grade ── */}
-      {monitorList.length > 0 && (
+      {monitorList.length > 0 && typeFilter === 'ALL' && (
         <div style={{ marginTop: '24px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
             <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, letterSpacing: '0.05em' }}>
