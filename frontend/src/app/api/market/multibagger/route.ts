@@ -1245,6 +1245,13 @@ export async function GET(request: NextRequest) {
       'IZMO': { company: 'IZMO Limited', sector: 'IT Services', lastPrice: 85, marketCapCr: 350, pe: 15, roe: 12, opm: 10, de: 0.1, promoterPct: 50 },
       'LENSKART': { company: 'Lenskart Solutions', sector: 'Retail', lastPrice: 22, marketCapCr: 48000, pe: null, roe: null, opm: null, de: null, promoterPct: 30 },
       'S&SPOWER': { company: 'S&S Power Switchgear', sector: 'Capital Goods', lastPrice: 360, marketCapCr: 1100, pe: 40, roe: 15, opm: 12, de: 0.2, promoterPct: 60 },
+      // Symbols that frequently fail live data fetches
+      'SYRMA': { company: 'Syrma SGS Technology', sector: 'Industrial Products', lastPrice: 813, marketCapCr: 15700, pe: 65, roe: 12, opm: 8, de: 0.1, promoterPct: 55 },
+      'WAAREEENER': { company: 'Waaree Energies', sector: 'Renewable Energy', lastPrice: 3082, marketCapCr: 88700, pe: 80, roe: 30, opm: 18, de: 0.3, promoterPct: 68 },
+      'WELCORP': { company: 'Welspun Corp', sector: 'Steel', lastPrice: 865, marketCapCr: 22800, pe: 14, roe: 18, opm: 12, de: 0.5, promoterPct: 48 },
+      'SANSERA': { company: 'Sansera Engineering', sector: 'Auto Ancillaries', lastPrice: 2142, marketCapCr: 13300, pe: 42, roe: 14, opm: 15, de: 0.3, promoterPct: 53 },
+      'SAILIFE': { company: 'Sai Life Sciences', sector: 'Pharma', lastPrice: 945, marketCapCr: 20000, pe: 80, roe: 10, opm: 18, de: 0.4, promoterPct: 55 },
+      'SJS': { company: 'SJS Enterprises', sector: 'Auto Ancillaries', lastPrice: 1593, marketCapCr: 5100, pe: 55, roe: 12, opm: 20, de: 0.1, promoterPct: 58 },
     };
 
     // ── SYMBOL ALIAS MAP: NSE symbols that need alternate names on screener.in/Yahoo ──
@@ -1275,6 +1282,13 @@ export async function GET(request: NextRequest) {
       'BELRISE': { screener: 'BELRISE', yahoo: 'BELRISE.NS' },
       'IZMO': { screener: 'IZMO', yahoo: 'IZMO.NS' },
       'LENSKART': { screener: 'LENSKART', yahoo: 'LENSKART.NS' },
+      // Symbols that fail on screener.in — map to correct slugs
+      'SYRMA': { screener: 'SYRMASGP', yahoo: 'SYRMA.NS', nse: 'SYRMA' },
+      'WAAREEENER': { screener: 'WAAREEENER', yahoo: 'WAAREEENER.NS', nse: 'WAAREEENER' },
+      'WELCORP': { screener: 'WELCORP', yahoo: 'WELCORP.NS', nse: 'WELCORP' },
+      'SANSERA': { screener: 'SANSERA', yahoo: 'SANSERA.NS', nse: 'SANSERA' },
+      'SAILIFE': { screener: 'SAILIFE', yahoo: 'SAILIFE.NS', nse: 'SAILIFE' },
+      'SJS': { screener: 'SJSENTERPR', yahoo: 'SJS.NS', nse: 'SJS' },
       // Special character symbols — map to valid NSE names
       'S&SPOWER': { screener: 'SANDHYA', yahoo: 'S&SPOWER.NS', nse: 'S&SPOWER' },
     };
@@ -1300,7 +1314,7 @@ export async function GET(request: NextRequest) {
     }
 
     const results: MultibaggerResult[] = [];
-    const DEADLINE = Date.now() + 48000; // 48s hard deadline (Vercel Hobby = 55s)
+    const DEADLINE = Date.now() + 50000; // 50s hard deadline (Vercel Hobby = 55s, 5s buffer)
 
     // Add skipped symbols as NR results
     for (const sym of skippedSymbols) {
@@ -1315,9 +1329,9 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // Process in batches of 12 (all fetches within a symbol already run in parallel)
-    // Larger batches = fewer sequential rounds = more stocks processed before deadline
-    const BATCH = 12;
+    // Process in batches of 8 (balanced: enough parallelism without hitting rate limits)
+    // 12 was causing timeouts from NSE/screener rate limiting
+    const BATCH = 8;
     for (let i = 0; i < cleanSymbols.length; i += BATCH) {
       // Check deadline before starting next batch
       if (Date.now() > DEADLINE) {

@@ -2333,38 +2333,44 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
       }
     }
 
-    // ── Precomputed store is EMPTY — fall through to inline compute ──
-    // On Vercel serverless, fire-and-forget background fetches die when the function returns.
-    // Instead of returning a skeleton and hoping the compute route runs separately,
-    // fall through to the inline compute path below (same as force=true).
-    // This adds ~15-30s to the first request but guarantees the user sees data.
+    // ── Precomputed store is EMPTY — return skeleton + trigger full compute pipeline ──
+    // The inline compute path (below) has aggressive quality gates that produce very few signals.
+    // The compute route at /api/market/intelligence/compute has the full pipeline.
+    // On Vercel, each fetch() to another API route creates a NEW serverless function invocation
+    // that runs independently — aborting the client fetch does NOT kill the server function.
+    // Strategy: trigger compute, return skeleton immediately, frontend auto-polls every 20s.
     if (!forceRefresh) {
-      console.log('[Intelligence] No precomputed data — falling through to inline compute');
-      // Also trigger compute route as backup (in case inline compute fails or is slow)
+      console.log('[Intelligence] No precomputed data — triggering compute route, returning skeleton');
+      // Trigger compute route — no abort signal (let it run to completion on its own function)
       try {
         const computeUrl = new URL('/api/market/intelligence/compute', request.url);
-        fetch(computeUrl.toString(), { method: 'GET', signal: AbortSignal.timeout(3000) }).catch(() => {});
+        // Pass watchlist/portfolio so compute can prioritize tracked stocks
+        const params = new URLSearchParams();
+        if (watchlist.length) params.set('watchlist', watchlist.join(','));
+        if (portfolio.length) params.set('portfolio', portfolio.join(','));
+        const fullUrl = `${computeUrl.toString()}?${params.toString()}`;
+        fetch(fullUrl, { method: 'GET' }).catch(() => {});
       } catch {}
-      // DON'T return skeleton — fall through to inline compute below
-    }
-    if (false) { // skeleton path disabled — inline compute handles empty cache
       return NextResponse.json({
         top3: [],
         signals: [],
+        notable: [],
+        observations: [],
+        speculative: [],
         trends: [],
         bias: {
           netBias: 'Neutral' as const,
           highImpactCount: 0, activeSectors: [], buyWatchCount: 0, trackCount: 0,
           totalSignals: 0, totalOrderValueCr: 0, totalDealValueCr: 0,
           portfolioAlerts: 0, negativeSignals: 0,
-          summary: 'Computing intelligence... refresh in 30 seconds',
+          summary: 'Computing intelligence — auto-refreshing in 20 seconds...',
         },
         updatedAt: new Date().toISOString(),
         _meta: { source: 'skeleton', computing: true },
       });
     }
 
-    // ── Inline compute: runs when force=true OR when Redis cache is empty ──
+    // ── Inline compute ONLY when force=true (admin/debug) ──
     // Route-level cache (BUG-01 fix: instant response on repeat calls)
     const cacheKey = `${watchlist.join(',')}|${portfolio.join(',')}|${days}`;
     if (_routeCache && _routeCache.key === cacheKey && (Date.now() - _routeCache.timestamp) < ROUTE_CACHE_TTL) {
