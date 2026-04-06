@@ -326,7 +326,7 @@ const eventTypeIcon = (t: string) => {
   return '📌';
 };
 
-type FilterType = 'ALL' | 'BUY' | 'ADD' | 'HOLD' | 'WATCH' | 'TRIM' | 'ORDERS' | 'CAPEX' | 'DEALS' | 'STRATEGIC' | 'NEGATIVE';
+type FilterType = 'ALL' | 'BUY' | 'ADD' | 'HOLD' | 'WATCH' | 'TRIM' | 'ORDERS' | 'CAPEX' | 'DEALS' | 'STRATEGIC' | 'NEGATIVE' | 'HIGH_IMPACT' | 'NOTABLE';
 type UniverseFilter = 'ALL' | 'PORTFOLIO' | 'WATCHLIST';
 
 const CHAT_ID = '5057319640';
@@ -515,6 +515,10 @@ export default function CompanyIntelligencePage() {
     if (typeFilter === 'DEALS') list = list.filter(s => s.source === 'deal');
     if (typeFilter === 'STRATEGIC') list = list.filter(s => ['M&A', 'Demerger', 'JV/Partnership', 'Buyback'].includes(s.eventType));
     if (typeFilter === 'NEGATIVE') list = list.filter(s => s.isNegative);
+    if (typeFilter === 'HIGH_IMPACT') list = list.filter(s => s.impactLevel === 'HIGH');
+    if (typeFilter === 'NOTABLE') list = list.filter(s => s.signalTierV7 === 'NOTABLE');
+    // Hide Mgmt Change / GOVERNANCE signals — not useful for portfolio decisions
+    list = list.filter(s => !(s.signalClass === 'GOVERNANCE' && (s.eventType === 'Mgmt Change' || s.eventType === 'Board Appointment' || s.eventType === 'Board Meeting')));
     // Noise filter — filter out NOISE classification by default unless showNoise is true
     // ALWAYS show results for NEGATIVE and TRIM filters (risk signals should never be hidden)
     if (!showNoise && typeFilter !== 'NEGATIVE' && typeFilter !== 'TRIM') list = list.filter(s => s.scoreClassification !== 'NOISE');
@@ -598,9 +602,9 @@ export default function CompanyIntelligencePage() {
             {/* Decision-ready stats */}
             <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
               {[
-                { label: 'High Impact', value: bias.highImpactCount, color: GREEN, filter: null as FilterType | null },
+                { label: 'High Impact', value: bias.highImpactCount, color: GREEN, filter: 'HIGH_IMPACT' as FilterType | null },
                 { label: 'Actionable', value: stats?.actionable ?? bias.buyCount ?? 0, color: GREEN, filter: 'BUY' as FilterType | null },
-                { label: 'Notable', value: stats?.notable ?? notableSignals.length ?? 0, color: '#3B82F6', filter: null as FilterType | null },
+                { label: 'Notable', value: stats?.notable ?? notableSignals.length ?? 0, color: '#3B82F6', filter: 'NOTABLE' as FilterType | null },
                 { label: 'Monitor', value: (stats?.monitor ?? 0) + (stats?.notable ?? 0), color: ACCENT, filter: 'HOLD' as FilterType | null },
                 ...(bias.watchCount !== undefined && bias.watchCount > 0 ? [{ label: 'Monitor', value: bias.watchCount, color: '#A78BFA', filter: 'WATCH' as FilterType | null }] : []),
                 ...(bias.trimExitCount !== undefined && bias.trimExitCount > 0 ? [{ label: 'Reduce/Exit', value: bias.trimExitCount, color: ORANGE, filter: 'TRIM' as FilterType | null }] : []),
