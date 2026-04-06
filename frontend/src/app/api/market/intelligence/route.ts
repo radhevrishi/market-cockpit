@@ -1503,38 +1503,21 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               // Heuristic-degraded signals forced to MONITOR regardless of materiality
               s.signalCategory = (isMaterial && !isInferred && !isHeuristicDegraded) ? 'ACTIONABLE' : 'MONITOR';
 
-              // ── INSTITUTIONAL SIGNAL CONFIDENCE MODEL ──
-              // Source reliability: NSE filings are verified regardless of value extraction quality
-              const isNSE = s.dataSource === 'nse' || s.dataSource === 'NSE' || s.source === 'nse';
-              const isDeal = s.source === 'deal' || s.eventType === 'Block Deal' || s.eventType === 'Bulk Deal';
-              const srcScore = s.confidenceType === 'ACTUAL' ? 25 :
-                isDeal ? 22 :
-                (isNSE || s.sourceTier === 'VERIFIED') ? 20 :
-                s.confidenceType === 'INFERRED' ? 12 : 8;
-
-              // Freshness: institutional weight — recent filings matter more
+              // ── SIGNAL CONFIDENCE MODEL ──
+              const srcScore = s.confidenceType === 'ACTUAL' ? 20 :
+                s.sourceTier === 'VERIFIED' ? 15 :
+                (s.dataSource === 'nse' || s.dataSource === 'NSE') ? 15 :
+                s.source === 'deal' ? 15 : 5;
               const isFresh = s.freshness === 'FRESH';
-              const freshScore = isFresh ? 18 : s.freshness === 'RECENT' ? 12 : s.freshness === 'AGING' ? 6 : 2;
-
-              // Materiality: revenue impact matters for institutions
-              const revImpactAbs = Math.abs(s.impactPct || s.pctRevenue || 0);
-              const matScore = revImpactAbs >= 10 ? 20 : revImpactAbs >= 5 ? 15 : revImpactAbs >= 2 ? 10 : revImpactAbs >= 1 ? 5 : 0;
-
-              // Signal stacking: multiple independent events on same company = high conviction
-              const stackCount = s.signalStackCount || 0;
-              const stackScore = stackCount >= 4 ? 15 : stackCount >= 3 ? 10 : stackCount >= 2 ? 5 : 0;
-
-              // Value verification: extracted vs heuristic
-              const valueScore = s.valueSource === 'EXACT' ? 10 :
-                s.valueSource === 'AGGREGATED' ? 7 :
-                (s.valueCr > 0 && s.confidenceType !== 'HEURISTIC') ? 5 : 0;
-
-              // Price/volume confirmation (when available)
+              const freshScore = isFresh ? 15 : s.freshness === 'RECENT' ? 10 : s.freshness === 'AGING' ? 4 : 1;
               const hasPriceReaction = !!(s.priceChange && Math.abs(s.priceChange) > 1);
-              const priceScore = hasPriceReaction ? 12 : 0;
-
-              s.monitorScore = Math.min(100, srcScore + freshScore + matScore + stackScore + valueScore + priceScore);
-              s.monitorTier = s.monitorScore >= 65 ? 'HIGH' : s.monitorScore >= 45 ? 'MEDIUM' : 'LOW';
+              const priceScore = hasPriceReaction ? 20 : 0;
+              const hasVolumeSpike = !!(s.volumeRatio && s.volumeRatio > 2);
+              const volumeScore = hasVolumeSpike ? 15 : 0;
+              const hasMultipleSources = !!(s.corroborationCount && s.corroborationCount > 1);
+              const multiSourceScore = hasMultipleSources ? 15 : 0;
+              s.monitorScore = Math.min(100, srcScore + freshScore + priceScore + volumeScore + multiSourceScore);
+              s.monitorTier = s.monitorScore >= 75 ? 'HIGH' : s.monitorScore >= 55 ? 'MEDIUM' : 'LOW';
 
               // EVENT CLASS SANITIZATION: strip synthetic numbers from non-financial events
               const NON_FIN_TYPES = new Set(['Mgmt Change', 'Board Appointment', 'CEO Exit', 'CFO Exit', 'Leadership Transition', 'Regulatory', 'Compliance']);
@@ -1656,11 +1639,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 if (s.confidenceType === 'ACTUAL' && s.valueCr > 0) ecoImpact = Math.min(40, ecoImpact + 10);
               }
               const evtW = (EVT_WEIGHTS[s.eventType] || 0) / 100 * 25;
-              const isNSESource = s.dataSource === 'nse' || s.dataSource === 'NSE' || s.source === 'nse';
-              const isDealSource = s.source === 'deal' || s.eventType === 'Block Deal' || s.eventType === 'Bulk Deal';
-              const confW = s.confidenceType === 'ACTUAL' ? 15 :
-                isDealSource ? 14 :
-                (isNSESource || s.sourceTier === 'VERIFIED') ? 12 : 5;
+              const confW = s.confidenceType === 'ACTUAL' ? 15 : s.sourceTier === 'VERIFIED' ? 12 : 5;
               let mgmtW = 0;
               if (s.signalClass === 'GOVERNANCE' || s.signalClass === 'STRATEGIC') {
                 mgmtW = (ROLE_SCORES[s.managementRole] || 10) / 100 * 10;
@@ -1926,34 +1905,29 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               const conf = s.monitorScore || s.confidenceScore || s.dataConfidenceScore || 0;
               const mat = s.materialityScore || 0;
               const isVerified = s.confidenceType === 'ACTUAL' || s.verified;
-              // NSE/deal source = event is verified even if value is estimated
-              const isNSEsrc = s.dataSource === 'nse' || s.dataSource === 'NSE' || s.source === 'nse';
-              const isDealSrc = s.source === 'deal' || s.eventType === 'Block Deal' || s.eventType === 'Bulk Deal';
-              const isVerifiedSource = isVerified || isNSEsrc || isDealSrc || s.sourceTier === 'VERIFIED';
-              const isPureHeuristic = s.confidenceType === 'HEURISTIC' && !isNSEsrc && !isDealSrc;
+              const isInferred = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
               const corrobCount = countTrueCorroboration(s);
 
-              // ── HARD REJECTION: only truly empty signals ──
-              if (conf < 10 && mat < 10) return 'REJECTED';
+              // ── HARD REJECTION: conf < 35 OR mat < 40 → never surface ──
+              if (conf < 35 && mat < 40) return 'REJECTED';
 
-              // ── INFERRED GATE: only blocks pure heuristic (no verified source) ──
-              // NSE-sourced signals with estimated values can still be ACTIONABLE/NOTABLE
-              const inferredBlocked = isPureHeuristic && conf < 55;
+              // ── NON-NEGOTIABLE INFERRED GATE ──
+              // Inferred signals with conf < 60 can NEVER be ACTIONABLE or NOTABLE
+              const inferredBlocked = isInferred && conf < 60;
 
-              // Tier 1: ACTIONABLE — verified source + strong confidence + material
-              if (!inferredBlocked && isVerifiedSource && conf >= 65) return 'ACTIONABLE';
+              // Tier 1: ACTIONABLE — verified + strong confidence + material
+              if (!inferredBlocked && isVerified && conf >= 75 && mat >= 70) return 'ACTIONABLE';
 
-              // Tier 2: NOTABLE — verified source + good confidence, or stacking with corroboration
-              if (!inferredBlocked && isVerifiedSource && conf >= 50) return 'NOTABLE';
-              if (!inferredBlocked && conf >= 50 && corrobCount >= 2) return 'NOTABLE';
+              // Tier 2: NOTABLE — verified + good confidence, or high-conf inferred with corroboration
+              if (!inferredBlocked && isVerified && conf >= 60 && mat >= 55) return 'NOTABLE';
+              if (!inferredBlocked && conf >= 60 && mat >= 55 && corrobCount >= 2) return 'NOTABLE';
 
-              // Tier 3: MONITOR — reasonable signal from known source
-              if (conf >= 35 || corrobCount >= 2) return 'MONITOR';
-              if (isVerifiedSource && conf >= 25) return 'MONITOR';
-              if (mat >= 35) return 'MONITOR';
+              // Tier 3: MONITOR — reasonable signal
+              if (conf >= 45 || corrobCount >= 2) return 'MONITOR';
+              if (mat >= 45) return 'MONITOR';
 
-              // Tier 4: SPECULATIVE — any remaining signal with some data
-              if (conf >= 10 || mat >= 10) return 'SPECULATIVE';
+              // Tier 4: SPECULATIVE — exists but below threshold
+              if (conf >= 25 || mat >= 25) return 'SPECULATIVE';
 
               return 'REJECTED';
             };
@@ -1971,7 +1945,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 surfaceableActionable.push(s);
               } else if (tier === 'NOTABLE') {
                 s.signalTierV7 = 'NOTABLE';
-                s.signalCategory = 'NOTABLE';
+                s.signalCategory = 'MONITOR';
                 surfaceableMonitor.push(s);
               } else if (tier === 'MONITOR') {
                 s.signalTierV7 = 'MONITOR';
@@ -2023,8 +1997,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             if (notableSignals.length === 0 && regularMonitor.length > 0) {
               const eligibleForNotable = regularMonitor.filter((s: any) => {
                 const isInf = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
-                // Use monitorScore (institutional composite) not raw confidenceScore for promotion eligibility
-                const confVal = s.monitorScore || s.dataConfidenceScore || s.confidenceScore || 0;
+                const confVal = s.dataConfidenceScore || s.confidenceScore || 0;
                 return !(isInf && confVal < 60);
               });
               const promotee = eligibleForNotable.length > 0 ? eligibleForNotable[0] : regularMonitor[0];
@@ -2205,7 +2178,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                   lastPrice: thematic.lastPrice,
                   materialityScore: thematic.theme.score || 50,
                   signalTierV7: 'NOTABLE',
-                  signalCategory: 'NOTABLE',
+                  signalCategory: 'MONITOR',
                   signalClass: 'ECONOMIC',
                   alphaTheme: thematic.theme,
                   _derivedFromThematic: true,
@@ -2216,16 +2189,13 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               }
             }
 
-            // ── OUTPUT GATE: inferred signals need sufficient confidence for notable/top3 ──
-            // Uses monitorScore (institutional composite) for NSE/deal sources, raw conf otherwise
+            // ── NON-NEGOTIABLE OUTPUT GATE: inferred + conf<60 can NEVER be in notable/top3 ──
+            // This is the final safety net — catches any promotion path that bypasses the gate
             const outputGateNotable = notableSignals.filter((s: any) => {
               const isInf = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
-              const isNSESrc = s.dataSource === 'nse' || s.dataSource === 'NSE' || s.source === 'nse' || s.source === 'deal';
-              const confVal = isNSESrc
-                ? (s.monitorScore || s.dataConfidenceScore || s.confidenceScore || 0)
-                : (s.dataConfidenceScore || s.confidenceScore || 0);
-              if (isInf && confVal < 50) {
-                // Demote back to monitor — but only if truly low confidence
+              const confVal = s.dataConfidenceScore || s.confidenceScore || 0;
+              if (isInf && confVal < 60) {
+                // Demote back to monitor
                 s.signalTierV7 = 'MONITOR';
                 regularMonitor.unshift(s);
                 return false;
@@ -2265,9 +2235,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               // NON-NEGOTIABLE: inferred + conf<60 can never be in top3
               top3: enforceUserFilter(composedFeed.filter((s: any) => {
                 const isInf = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
-                // Use monitorScore (institutional composite) for NSE/deal sources, raw conf otherwise
-                const isNSESrc = s.dataSource === 'nse' || s.dataSource === 'NSE' || s.source === 'nse' || s.source === 'deal';
-                const confVal = isNSESrc ? (s.monitorScore || s.confidenceScore || 0) : (s.dataConfidenceScore || s.confidenceScore || 0);
+                const confVal = s.dataConfidenceScore || s.confidenceScore || 0;
                 if (isInf && confVal < 60) return false;
                 return (s.signalTierV7 === 'ACTIONABLE' || s.signalTierV7 === 'NOTABLE') &&
                   !s._speculative && !s._derivedFromThematic;
@@ -2333,23 +2301,14 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
       }
     }
 
-    // ── Precomputed store is EMPTY — return skeleton + trigger full compute pipeline ──
-    // The inline compute path (below) has aggressive quality gates that produce very few signals.
-    // The compute route at /api/market/intelligence/compute has the full pipeline.
-    // On Vercel, each fetch() to another API route creates a NEW serverless function invocation
-    // that runs independently — aborting the client fetch does NOT kill the server function.
-    // Strategy: trigger compute, return skeleton immediately, frontend auto-polls every 20s.
+    // ── Precomputed store is EMPTY — trigger background compute, return skeleton ──
+    // On Vercel, each fetch() creates a separate serverless function invocation.
+    // No AbortSignal — let the compute route run to completion independently.
     if (!forceRefresh) {
       console.log('[Intelligence] No precomputed data — triggering compute route, returning skeleton');
-      // Trigger compute route — no abort signal (let it run to completion on its own function)
       try {
         const computeUrl = new URL('/api/market/intelligence/compute', request.url);
-        // Pass watchlist/portfolio so compute can prioritize tracked stocks
-        const params = new URLSearchParams();
-        if (watchlist.length) params.set('watchlist', watchlist.join(','));
-        if (portfolio.length) params.set('portfolio', portfolio.join(','));
-        const fullUrl = `${computeUrl.toString()}?${params.toString()}`;
-        fetch(fullUrl, { method: 'GET' }).catch(() => {});
+        fetch(computeUrl.toString(), { method: 'GET' }).catch(() => {});
       } catch {}
       return NextResponse.json({
         top3: [],
