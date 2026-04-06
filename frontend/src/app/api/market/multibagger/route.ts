@@ -97,24 +97,65 @@ interface MultibaggerResult {
 
 // ── Sector groupings for peer normalization ───────────────────────────────────
 const SECTOR_GROUPS: Record<string, string> = {
+  // Technology
   'IT': 'TECHNOLOGY', 'Technology': 'TECHNOLOGY', 'Software': 'TECHNOLOGY',
+  'Computers - Software & Consulting': 'TECHNOLOGY', 'IT Enabled Services': 'TECHNOLOGY',
+  'Computers Hardware & Equipments': 'TECHNOLOGY', 'IT Services': 'TECHNOLOGY',
+  'Computer Software': 'TECHNOLOGY', 'Information Technology': 'TECHNOLOGY',
+  // Pharma & Healthcare
   'Pharmaceuticals': 'PHARMA', 'Pharma': 'PHARMA', 'Healthcare': 'PHARMA', 'Hospitals': 'PHARMA',
+  'Healthcare Services': 'PHARMA', 'Medical Devices': 'PHARMA',
+  // Banking & Finance
   'Banking': 'BANKING_FIN', 'Financial Services': 'BANKING_FIN', 'NBFC': 'BANKING_FIN', 'Insurance': 'BANKING_FIN',
+  'Banks': 'BANKING_FIN', 'Finance': 'BANKING_FIN',
+  // Industrials
   'Capital Goods': 'INDUSTRIALS', 'Engineering': 'INDUSTRIALS', 'Industrial Machinery': 'INDUSTRIALS',
+  'Industrial Products': 'INDUSTRIALS', 'Industrial Manufacturing': 'INDUSTRIALS',
+  'Other Industrial Products': 'INDUSTRIALS', 'Heavy Electrical Equipment': 'INDUSTRIALS',
+  'Compressors Pumps & Diesel Engines': 'INDUSTRIALS', 'Industrial Minerals': 'INDUSTRIALS',
+  'Other Electrical Equipment': 'INDUSTRIALS', 'Cables': 'INDUSTRIALS',
+  'Cables - Electricals': 'INDUSTRIALS', 'Dredging': 'INDUSTRIALS',
+  // Infra & Construction
   'Infrastructure': 'INFRA', 'Cement': 'INFRA', 'Construction': 'INFRA',
+  'Port & Port services': 'INFRA', 'Shipping': 'INFRA',
+  // Consumer
   'Consumer Goods': 'CONSUMER', 'FMCG': 'CONSUMER', 'Retail': 'CONSUMER', 'Food Processing': 'CONSUMER',
+  'Personal Care': 'CONSUMER', 'Consumer Durables': 'CONSUMER', 'Consumer Electronics': 'CONSUMER',
+  'Tea & Coffee': 'CONSUMER', 'Other Food Products': 'CONSUMER', 'Other Textile Products': 'CONSUMER',
+  // Auto
   'Automobile': 'AUTO', 'Auto Components': 'AUTO', 'Electric Vehicles': 'AUTO',
+  'Automobiles': 'AUTO', 'Auto Ancillaries': 'AUTO',
+  'Auto Components & Equipments': 'AUTO',
+  // Chemicals
   'Chemicals': 'CHEMICALS', 'Specialty Chemicals': 'CHEMICALS', 'Agrochemicals': 'CHEMICALS',
+  // Defence / Aerospace / Renewables (Sunrise)
   'Defence': 'SUNRISE', 'Defense': 'SUNRISE', 'Aerospace': 'SUNRISE',
+  'Aerospace & Defense': 'SUNRISE', 'Aerospace & Defence': 'SUNRISE',
   'Renewable Energy': 'SUNRISE', 'Clean Energy': 'SUNRISE', 'Solar': 'SUNRISE',
-  'Telecommunications': 'TELECOM', 'Telecom': 'TELECOM',
+  // Telecom
+  'Telecommunications': 'SUNRISE', 'Telecom': 'TELECOM',
+  'Telecom - Infrastructure': 'TELECOM',
+  // Metals
   'Metals': 'METALS', 'Steel': 'METALS', 'Mining': 'METALS',
+  'Iron & Steel Products': 'METALS',
+  // Energy & Power
   'Oil & Gas': 'ENERGY', 'Energy': 'ENERGY', 'Power': 'ENERGY',
+  // Realty
   'Real Estate': 'REALTY', 'Realty': 'REALTY',
+  // Water / Environment
+  'Water Supply & Management': 'INFRA',
 };
 
 function getSectorGroup(sector: string): string {
-  return SECTOR_GROUPS[sector] || 'OTHER';
+  // Direct match
+  if (SECTOR_GROUPS[sector]) return SECTOR_GROUPS[sector];
+  // Fuzzy match: check if any key is a substring of the sector or vice versa
+  const sLower = sector.toLowerCase();
+  for (const [key, group] of Object.entries(SECTOR_GROUPS)) {
+    const kLower = key.toLowerCase();
+    if (sLower.includes(kLower) || kLower.includes(sLower)) return group;
+  }
+  return 'OTHER';
 }
 
 // Sector-specific "fair" benchmarks: [median, good, excellent] for ROCE, OPM, PE etc.
@@ -492,14 +533,19 @@ async function fetchYahooData(symbol: string): Promise<{ data: Record<string, an
     d.dividendYield = summary.dividendYield?.raw ? summary.dividendYield.raw * 100 : null;
     d.marketCapCr = price.marketCap?.raw ? Math.round(price.marketCap.raw / 10000000) : null;
     d.revenueGrowthYoY = fin.revenueGrowth?.raw ? fin.revenueGrowth.raw * 100 : null;
-    // Derive ROCE: ROCE ≈ ROE * (1 - D/E / (1 + D/E)) ≈ ROA * (1 + D/E) simplified
-    // Better: use returnOnAssets if available
+    // Derive ROCE from available data
+    // ROCE = EBIT / Capital Employed. Best proxy chain:
+    // 1. ROA (if available) — close to ROCE for low-debt companies
+    // 2. EBIT margin * Asset turnover — if we have operating margins + revenue + assets
+    // 3. ROE adjusted for leverage — weakest proxy
     const roa = fin.returnOnAssets?.raw;
     if (roa) {
-      d.roce = roa * 100; // ROA is a reasonable ROCE proxy
+      // ROA is ~ROCE for companies with moderate debt. Scale up slightly for capital employed vs total assets.
+      d.roce = roa * 100 * 1.1; // 10% uplift: capital employed < total assets
     } else if (d.roe !== null && d.de !== null && d.de >= 0) {
-      // ROCE ≈ EBIT / Capital Employed ≈ ROE / (1 + D/E) * (1 + tax_adj)
-      d.roce = d.roe / (1 + d.de) * 1.3; // rough approximation with 30% tax adjustment
+      // ROCE ≈ ROE / (1 + D/E) — removes leverage effect from ROE
+      // No arbitrary multiplier — cleaner approximation
+      d.roce = d.roe / (1 + d.de);
     }
     // Earnings growth from Yahoo
     d.earningsGrowth = fin.earningsGrowth?.raw ? fin.earningsGrowth.raw * 100 : null;
@@ -632,9 +678,10 @@ function validateData(
   }
   if (!hasAnyPrice) return { valid: false, reason: 'Invalid or zero price — symbol may be delisted or mapping error', coveragePct, confidence: 'VERY_LOW', source: screenerOk ? 'partial' : 'none', fetchedAt: new Date().toISOString(), staleness: 'UNKNOWN' };
 
-  const source: DataQuality['source'] = screenerOk && nseOk ? 'screener.in + NSE' : nseOk ? 'NSE only' : screenerOk ? 'partial' : 'none';
-  // Note: screenerOk here means "any fundamental source" (screener.in OR Yahoo OR NSE financials)
-  const confidence: DataQuality['confidence'] = coveragePct >= 75 ? 'HIGH' : coveragePct >= 50 ? 'MEDIUM' : coveragePct >= 30 ? 'LOW' : 'VERY_LOW';
+  // screenerOk here means "any fundamental source" (screener.in OR Yahoo OR NSE financials OR Google)
+  const source: DataQuality['source'] = screenerOk && nseOk ? 'screener.in + NSE' : screenerOk ? 'Multi-source' : nseOk ? 'NSE + Yahoo' : 'partial';
+  // Relaxed thresholds: NSE-only stocks (23% data) should get LOW not VERY_LOW
+  const confidence: DataQuality['confidence'] = coveragePct >= 60 ? 'HIGH' : coveragePct >= 40 ? 'MEDIUM' : coveragePct >= 15 ? 'LOW' : 'VERY_LOW';
 
   return { valid: true, reason: null, coveragePct, confidence, source, fetchedAt: new Date().toISOString(), staleness: 'FRESH' };
 }
@@ -1125,12 +1172,15 @@ function buildPillars(criteria: CriterionDetail[]): PillarScore[] {
 // ── Final composite score with confidence penalty ────────────────────────────
 function compositeScore(pillars: PillarScore[], criteria: CriterionDetail[]): number {
   const rawTotal = pillars.reduce((a, p) => a + p.score * p.weight, 0);
-  // Confidence penalty: missing data reduces score proportionally
+  // Confidence penalty: missing data reduces score, but gently
+  // With 23% data (NSE only), old penalty was 0.4*0.77 = 30.8% reduction → score 40 for everything
+  // New: 15% max penalty per missing metric — lets available data speak louder
   const totalCriteria = criteria.length;
   const availableCriteria = criteria.filter(c => c.dataAvailable).length;
   const missingRatio = totalCriteria > 0 ? (totalCriteria - availableCriteria) / totalCriteria : 0;
-  // Penalty: each missing metric costs 40% of its share of the score
-  const penaltyMultiplier = 1 - (missingRatio * 0.4);
+  // Penalty: each missing metric costs 15% of its share (was 40%)
+  // Also cap total penalty at 25% — never destroy a stock's score just because data is sparse
+  const penaltyMultiplier = Math.max(0.75, 1 - (missingRatio * 0.15));
   const penalized = rawTotal * penaltyMultiplier;
   // Round to nearest 5 — remove fake precision
   return Math.round(penalized / 5) * 5;
@@ -1265,9 +1315,9 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // Process in batches of 8 (all fetches within a symbol already run in parallel)
+    // Process in batches of 12 (all fetches within a symbol already run in parallel)
     // Larger batches = fewer sequential rounds = more stocks processed before deadline
-    const BATCH = 8;
+    const BATCH = 12;
     for (let i = 0; i < cleanSymbols.length; i += BATCH) {
       // Check deadline before starting next batch
       if (Date.now() > DEADLINE) {
@@ -1303,12 +1353,15 @@ export async function GET(request: NextRequest) {
 
           // ── Multi-source fetching with exponential backoff retry ──
           // Use aliased symbols for each source to maximize resolution rate
-          const [scrResult, nseResult, yahooResult, nseFinResult, googleResult] = await Promise.all([
+          const [scrResult, nseResult, yahooResult, nseFinResult, googleResult, yahooV7Result] = await Promise.all([
             withRetry(() => fetchScreenerData(screenerSym), 2, 300).catch((): { data: Record<string, any>; ok: boolean; url: string } => ({ data: {}, ok: false, url: '' })),
             withRetry(() => fetchNSEData(nseSym), 2, 300).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
             withRetry(() => fetchYahooData(yahooSym), 1, 500).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
             withRetry(() => fetchNSEFinancials(nseSym), 2, 300).catch((): Record<string, any> => ({})),
             withRetry(() => fetchGoogleFinanceData(nseSym), 1, 500).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
+            // Yahoo v7 is fast (4s timeout) and gives PE, EPS, bookValue, priceToBook, 52W data
+            // Fetching proactively instead of only in fallback chain saves a round-trip
+            fetchYahooV7Quote(yahooSym).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
           ]);
 
           // Merge data: screener is primary, Yahoo is secondary, Google tertiary, NSE financials quaternary
@@ -1330,6 +1383,30 @@ export async function GET(request: NextRequest) {
             // Use Yahoo earningsGrowth as EPS growth proxy
             if (!screener._epsGrowthYoY && yahoo.earningsGrowth) {
               screener._epsGrowthYoY = yahoo.earningsGrowth;
+            }
+          }
+
+          // Fill gaps with Yahoo v7 (fast quote API — PE, EPS, bookValue, 52W, sector)
+          if (yahooV7Result.ok) {
+            const v7 = yahooV7Result.data;
+            if (!screener.pe && v7.pe) screener.pe = v7.pe;
+            if (!screener.eps && v7.eps) screener.eps = v7.eps;
+            if (!screener.bookValue && v7.bookValue) screener.bookValue = v7.bookValue;
+            if (!screener.priceToBook && v7.priceToBook) screener.priceToBook = v7.priceToBook;
+            if (!screener.marketCapCr && v7.marketCapCr) screener.marketCapCr = v7.marketCapCr;
+            if (!nse.lastPrice && v7.lastPrice) nse.lastPrice = v7.lastPrice;
+            if (!nse.high52 && v7.high52) nse.high52 = v7.high52;
+            if (!nse.low52 && v7.low52) nse.low52 = v7.low52;
+            if (!nse.pChange && v7.pChange) nse.pChange = v7.pChange;
+            if (!nse.companyName && v7.companyName) nse.companyName = v7.companyName;
+            if (!nse.sector && v7.sector) nse.sector = v7.sector;
+            if (!nse.marketCapCr && v7.marketCapCr) nse.marketCapCr = v7.marketCapCr;
+            // Recalculate 52W metrics if we now have them
+            if (nse.high52 && nse.lastPrice && !nse.pctFrom52H) {
+              nse.pctFrom52H = ((nse.lastPrice / nse.high52) - 1) * 100;
+            }
+            if (nse.low52 && nse.lastPrice && !nse.pctFrom52L) {
+              nse.pctFrom52L = ((nse.lastPrice - nse.low52) / nse.low52) * 100;
             }
           }
 
@@ -1374,7 +1451,7 @@ export async function GET(request: NextRequest) {
           const sector    = rawSector || 'Unknown';
 
           // Data quality gate — any source counts as data
-          const anyFundamentalData = scrResult.ok || yahooResult.ok || googleResult.ok || Object.keys(nseFin).length > 0;
+          const anyFundamentalData = scrResult.ok || yahooResult.ok || yahooV7Result.ok || googleResult.ok || Object.keys(nseFin).length > 0;
           const quality = validateData(symbol, company, sector, screener, nse, anyFundamentalData, nseResult.ok);
           if (!quality.valid) {
             // ── ENHANCED FALLBACK CHAIN ──
@@ -1501,9 +1578,10 @@ export async function GET(request: NextRequest) {
           const redFlags    = detectRedFlags(screener, nse);
 
           // NR gate uses SOURCE data coverage (validateData's coveragePct), not criteria coverage
-          // criteria coverage inflates because composite/derived criteria count as "available"
+          // Lowered from 40% to 15% — NSE-only stocks (23% data) should still get rated
+          // as they have price, 52W data, and sometimes PE which is enough for basic scoring
           const sourceCoverage = quality.coveragePct / 100; // 0-1
-          const isNR = sourceCoverage < 0.40; // <40% source data → NR (not rated)
+          const isNR = sourceCoverage < 0.15; // <15% source data → NR (not rated)
           let grade: Grade = isNR ? 'NR' : computeGradeAbsolute(rawScore, redFlags); // temporary; forced distribution applied later
           if (isNR) {
             errors.push(`Low source data coverage (${quality.coveragePct}%) — grade NR`);
@@ -1515,7 +1593,7 @@ export async function GET(request: NextRequest) {
                             : (nse.marketCapCr && nse.marketCapCr > 0 ? nse.marketCapCr : null);
 
           // Real confidence: dataCoverage*0.5 + sourceReliability*0.3 + dataRecency*0.2
-          const sourceScore = (scrResult.ok ? 40 : 0) + (nseResult.ok ? 30 : 0) + (yahooResult.ok ? 20 : 0) + (Object.keys(nseFin).length > 0 ? 10 : 0);
+          const sourceScore = (scrResult.ok ? 35 : 0) + (nseResult.ok ? 25 : 0) + (yahooResult.ok ? 20 : 0) + (yahooV7Result.ok ? 10 : 0) + (Object.keys(nseFin).length > 0 ? 10 : 0);
           const realConfidence = Math.round(coverageRatio * 50 + Math.min(100, sourceScore) * 0.3 + (quality.staleness === 'FRESH' ? 20 : quality.staleness === 'STALE' ? 10 : 5));
 
           // Score already has confidence penalty baked in via compositeScore
@@ -1575,9 +1653,11 @@ export async function GET(request: NextRequest) {
     };
     for (const r of results) { sanitizeObj(r); }
 
-    // ── FORCED GRADE DISTRIBUTION across all valid results ──
-    const gradeable = results.filter(r => r.quality.valid && r.grade !== 'NR') as Array<MultibaggerResult & { redFlags: RedFlag[]; criteria: CriterionDetail[] }>;
-    assignForcedGrades(gradeable);
+    // ── ABSOLUTE GRADING — no forced distribution ──
+    // Forced bell curve was hiding real quality differences.
+    // Absolute grades (A+ ≥80, A ≥72, etc.) let the data speak.
+    // Red flag overrides still apply (CRITICAL → max D, 2+ HIGH → max B).
+    // assignForcedGrades(gradeable); // REMOVED — artificial grade distribution
 
     // Sort: valid first, then portfolio, then by score
     results.sort((a, b) => {

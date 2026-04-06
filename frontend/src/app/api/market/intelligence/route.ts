@@ -1968,7 +1968,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 surfaceableActionable.push(s);
               } else if (tier === 'NOTABLE') {
                 s.signalTierV7 = 'NOTABLE';
-                s.signalCategory = 'MONITOR';
+                s.signalCategory = 'NOTABLE';
                 surfaceableMonitor.push(s);
               } else if (tier === 'MONITOR') {
                 s.signalTierV7 = 'MONITOR';
@@ -2020,7 +2020,8 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             if (notableSignals.length === 0 && regularMonitor.length > 0) {
               const eligibleForNotable = regularMonitor.filter((s: any) => {
                 const isInf = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
-                const confVal = s.dataConfidenceScore || s.confidenceScore || 0;
+                // Use monitorScore (institutional composite) not raw confidenceScore for promotion eligibility
+                const confVal = s.monitorScore || s.dataConfidenceScore || s.confidenceScore || 0;
                 return !(isInf && confVal < 60);
               });
               const promotee = eligibleForNotable.length > 0 ? eligibleForNotable[0] : regularMonitor[0];
@@ -2201,7 +2202,7 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                   lastPrice: thematic.lastPrice,
                   materialityScore: thematic.theme.score || 50,
                   signalTierV7: 'NOTABLE',
-                  signalCategory: 'MONITOR',
+                  signalCategory: 'NOTABLE',
                   signalClass: 'ECONOMIC',
                   alphaTheme: thematic.theme,
                   _derivedFromThematic: true,
@@ -2258,7 +2259,9 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               // NON-NEGOTIABLE: inferred + conf<60 can never be in top3
               top3: enforceUserFilter(composedFeed.filter((s: any) => {
                 const isInf = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
-                const confVal = s.dataConfidenceScore || s.confidenceScore || 0;
+                // Use monitorScore (institutional composite) for NSE/deal sources, raw conf otherwise
+                const isNSESrc = s.dataSource === 'nse' || s.dataSource === 'NSE' || s.source === 'nse' || s.source === 'deal';
+                const confVal = isNSESrc ? (s.monitorScore || s.confidenceScore || 0) : (s.dataConfidenceScore || s.confidenceScore || 0);
                 if (isInf && confVal < 60) return false;
                 return (s.signalTierV7 === 'ACTIONABLE' || s.signalTierV7 === 'NOTABLE') &&
                   !s._speculative && !s._derivedFromThematic;
