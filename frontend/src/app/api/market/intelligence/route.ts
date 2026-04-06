@@ -1380,6 +1380,52 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             : allCachedSignals;
           if (dateFilteredSignals.length > 0) {
             const rawSignals = dateFilteredSignals;
+
+            // ── Rebuild trends from date-filtered signals (cached trends may lack signals array or be stale) ──
+            const _trendMap = new Map<string, any[]>();
+            for (const s of rawSignals) {
+              const arr = _trendMap.get(s.symbol) || [];
+              arr.push(s);
+              _trendMap.set(s.symbol, arr);
+            }
+            const rebuiltTrends: any[] = [];
+            for (const [sym, sigs] of _trendMap) {
+              if (sigs.length < 2) continue;
+              const uniqueSources = new Set(sigs.map((s: any) => s.dataSource || s.source || 'unknown'));
+              const uniqueEventTypes = new Set(sigs.map((s: any) => s.eventType || 'unknown'));
+              const isIndep = uniqueSources.size >= 2 || uniqueEventTypes.size >= 2;
+              const effCount = isIndep ? sigs.length : 1;
+              const sLevel = effCount >= 4 ? 'STRONG' : effCount >= 2 ? 'BUILDING' : 'WEAK';
+              const bull = sigs.filter((s: any) => s.sentiment === 'Bullish').length;
+              const bear = sigs.filter((s: any) => s.sentiment === 'Bearish').length;
+              rebuiltTrends.push({
+                symbol: sym,
+                company: sigs[0].company,
+                signalCount: sigs.length,
+                stackLevel: sLevel,
+                topAction: sigs[0].action,
+                topImpact: sigs[0].impactLevel,
+                netSentiment: bull > bear ? 'Bullish' : bear > bull ? 'Bearish' : 'Neutral',
+                avgScore: Math.round(sigs.reduce((a: number, x: any) => a + (x.weightedScore || 0), 0) / sigs.length),
+                maxScore: Math.round(Math.max(...sigs.map((x: any) => x.weightedScore || 0))),
+                signals: sigs.map((s: any) => ({
+                  headline: s.headline || '',
+                  eventType: s.eventType || '',
+                  date: s.date || '',
+                  sentiment: s.sentiment || 'Neutral',
+                  action: s.action || 'WATCH',
+                  impactLevel: s.impactLevel || 'LOW',
+                  weightedScore: s.weightedScore || 0,
+                  confidenceScore: s.confidenceScore || 0,
+                  valueCr: s.valueCr || 0,
+                  whyItMatters: s.whyItMatters || '',
+                  dataSource: s.dataSource || '',
+                })),
+              });
+            }
+            rebuiltTrends.sort((a: any, b: any) => b.avgScore - a.avgScore);
+            responseData.trends = rebuiltTrends.slice(0, 10);
+
             const actionableSignals: any[] = [];
             const monitorSignals: any[] = [];
             let rejectedCount = 0;
