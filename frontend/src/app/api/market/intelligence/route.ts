@@ -487,6 +487,22 @@ function getDateDaysAgo(days: number): string {
   return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
 }
 
+/** Parse date string robustly — handles DD-MM-YYYY (NSE India), YYYY-MM-DD (ISO), and other formats */
+function parseSignalDateMs(dateStr: string): number {
+  if (!dateStr) return NaN;
+  // DD-MM-YYYY or DD/MM/YYYY (Indian/NSE format)
+  const ddmmyyyy = dateStr.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/);
+  if (ddmmyyyy) {
+    const day = parseInt(ddmmyyyy[1]), month = parseInt(ddmmyyyy[2]), year = parseInt(ddmmyyyy[3]);
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return new Date(year, month - 1, day).getTime();
+    }
+  }
+  // ISO / standard JS parseable format
+  const ms = new Date(dateStr).getTime();
+  return isNaN(ms) ? NaN : ms;
+}
+
 function getTodayDate(): string {
   const d = new Date();
   return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
@@ -1324,12 +1340,14 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
           for (const sig of allCachedSignals) {
             const d = sig.date || sig.publishedAt || sig.eventDate || sig.createdAt;
             if (d) {
-              try {
-                const sigMs = new Date(d).getTime();
+              const sigMs = parseSignalDateMs(d);
+              if (!isNaN(sigMs)) {
                 const daysSince = Math.max(0, (nowMs - sigMs) / 86400000);
                 sig._timeDecay = Math.exp(-DECAY_LAMBDA * daysSince);
                 sig._daysSince = Math.round(daysSince * 10) / 10;
-              } catch { sig._timeDecay = 0.5; sig._daysSince = 7; }
+              } else {
+                sig._timeDecay = 0.5; sig._daysSince = 7;
+              }
             } else {
               sig._timeDecay = 0.5; // unknown date → 50% weight
               sig._daysSince = 7;
@@ -1341,7 +1359,9 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             ? allCachedSignals.filter((sig: any) => {
                 const d = sig.date || sig.publishedAt || sig.eventDate || sig.createdAt;
                 if (!d) return true;
-                try { return new Date(d).getTime() >= cutoffMs; } catch { return true; }
+                const sigMs = parseSignalDateMs(d);
+                if (isNaN(sigMs)) return true; // unknown date → keep
+                return sigMs >= cutoffMs;
               })
             : allCachedSignals;
           if (dateFilteredSignals.length > 0) {
@@ -2599,8 +2619,8 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
       // SUM values (for order clusters like QPOWER ₹18+₹34+₹57+₹146 = ₹255 Cr)
       if (existing) {
         // Check if dates within 3 days of each other
-        const existDate = new Date(existing.date).getTime();
-        const newDate = new Date(signal.date).getTime();
+        const existDate = parseSignalDateMs(existing.date);
+        const newDate = parseSignalDateMs(signal.date);
         const daysDiff = Math.abs(existDate - newDate) / (1000 * 60 * 60 * 24);
 
         if (daysDiff <= 3 && valueSource === 'EXACT' && existing.valueSource === 'EXACT') {
