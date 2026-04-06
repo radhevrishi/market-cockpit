@@ -518,7 +518,13 @@ export default function CompanyIntelligencePage() {
     if (typeFilter === 'HIGH_IMPACT') list = list.filter(s => s.impactLevel === 'HIGH');
     if (typeFilter === 'NOTABLE') list = list.filter(s => s.signalTierV7 === 'NOTABLE');
     // Hide Mgmt Change / GOVERNANCE signals — not useful for portfolio decisions
-    list = list.filter(s => !(s.signalClass === 'GOVERNANCE' && (s.eventType === 'Mgmt Change' || s.eventType === 'Board Appointment' || s.eventType === 'Board Meeting')));
+    list = list.filter(s => {
+      const et = (s.eventType || '').toLowerCase();
+      const sc = (s.signalClass || '').toLowerCase();
+      if (et === 'mgmt change' || et === 'board appointment' || et === 'board meeting') return false;
+      if (sc === 'governance' && (et.includes('change') || et.includes('appointment') || et.includes('board'))) return false;
+      return true;
+    });
     // Noise filter — filter out NOISE classification by default unless showNoise is true
     // ALWAYS show results for NEGATIVE and TRIM filters (risk signals should never be hidden)
     if (!showNoise && typeFilter !== 'NEGATIVE' && typeFilter !== 'TRIM') list = list.filter(s => s.scoreClassification !== 'NOISE');
