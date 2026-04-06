@@ -1145,31 +1145,66 @@ function buildThematicNarrative(scenario: string, signals: IntelSignal[]): strin
   const company = signals[0]?.company || signals[0]?.symbol || '';
   const values = signals.filter(s => s.valueCr > 0).map(s => s.valueCr);
   const totalValue = values.reduce((a, b) => a + b, 0);
-  const valueStr = totalValue > 0 ? ` ₹${totalValue >= 1000 ? (totalValue / 1000).toFixed(1) + 'K' : Math.round(totalValue)} Cr` : '';
+  const valueStr = totalValue > 0 ? `₹${totalValue >= 1000 ? (totalValue / 1000).toFixed(1) + 'K' : Math.round(totalValue)} Cr` : '';
   const segment = signals.find(s => s.segment)?.segment || '';
+  const revenueCr = signals.find(s => s.revenueCr && s.revenueCr > 0)?.revenueCr;
+  const pctOfRev = revenueCr && totalValue > 0 ? `${((totalValue / revenueCr) * 100).toFixed(1)}% of FY revenue` : '';
+  const timeline = signals.find(s => s.timeline)?.timeline || '';
+  const client = signals.find(s => s.client)?.client || '';
+
+  // Build structured evidence-based narrative
+  const parts: string[] = [];
+  parts.push(company);
 
   switch (scenario) {
     case 'TURNAROUND':
-      return `${company} showing sustained financial recovery — consecutive improvement signals re-rating potential`;
+      parts.push('financial recovery');
+      parts.push(`${signals.length} signals confirm improving trend`);
+      break;
     case 'STRATEGIC_CAPEX':
-      return `${company} deploying${valueStr} in strategic capacity${segment ? ` (${segment} sector)` : ''} — operating leverage to follow post-commissioning`;
+      if (valueStr) parts.push(`capex ${valueStr}`);
+      if (pctOfRev) parts.push(pctOfRev);
+      if (timeline) parts.push(`timeline: ${timeline}`);
+      if (segment) parts.push(`sector: ${segment}`);
+      if (!pctOfRev) parts.push('revenue impact: not yet quantifiable');
+      break;
     case 'OPERATING_LEVERAGE':
-      return `${company} scaling on fixed cost base — margin expansion likely as utilization rises`;
+      parts.push('margin expansion signals');
+      if (pctOfRev) parts.push(`scale: ${pctOfRev}`);
+      break;
     case 'SUNRISE_SECTOR':
-      return `${company} in sunrise sector${segment ? ` (${segment})` : ''} — structural tailwinds from policy + order pipeline`;
+      parts.push(`sunrise sector${segment ? ` (${segment})` : ''}`);
+      parts.push(`${signals.length} policy/order signals`);
+      break;
     case 'POLICY_TAILWIND':
-      return `${company} benefiting from policy cycle — PLI / regulatory approval unlocks growth runway`;
+      parts.push('policy tailwind');
+      break;
     case 'TECH_TRANSITION':
-      return `${company} pivoting to AI/platform model — addressable market expansion + margin re-rating`;
+      parts.push('AI/tech platform transition');
+      break;
     case 'DEMERGER_VALUE_UNLOCK':
-      return `${company} corporate restructuring — subsidiary/division unlocking hidden value`;
+      parts.push('restructuring → value unlock');
+      if (valueStr) parts.push(valueStr);
+      break;
     case 'ROLLUP':
-      return `${company} inorganic growth via acquisitions — building market leadership + pricing power`;
+      parts.push('acquisition-led growth');
+      if (valueStr) parts.push(`deal value ${valueStr}`);
+      break;
     case 'GLOBAL_SCALING':
-      return `${company} penetrating international markets — export + global expansion diversifies revenue`;
+      parts.push('international expansion');
+      if (client) parts.push(`client: ${client}`);
+      break;
     default:
-      return `${company} showing multi-signal thematic strength`;
+      parts.push(`${signals.length} converging signals`);
   }
+
+  // Add risk caveat if mostly inferred
+  const inferredCount = signals.filter(s => s.inferenceUsed || s.confidenceType === 'HEURISTIC').length;
+  if (inferredCount > signals.length * 0.5) {
+    parts.push('risk: mostly estimated data');
+  }
+
+  return parts.join(' · ');
 }
 
 // Sector → best-fit thematic scenario mapping

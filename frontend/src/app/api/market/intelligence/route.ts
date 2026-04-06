@@ -1753,29 +1753,39 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
             const sortedConfs = [...allConfs].sort((a, b) => b - a);
             const p80Conf = sortedConfs[Math.floor(sortedConfs.length * 0.2)] || 50; // top 20% threshold
 
+            // True corroboration: count of distinct source types (not same-source duplicates)
+            const countTrueCorroboration = (s: any): number => {
+              if (!s.signalStackCount || s.signalStackCount < 2) return 0;
+              if (!(s as any)._stackIndependent) return 0;
+              return (s as any)._stackUniqueSources || 0;
+            };
+
             const classifyTier = (s: any): 'ACTIONABLE' | 'NOTABLE' | 'MONITOR' | 'SPECULATIVE' | 'REJECTED' => {
               const conf = s.monitorScore || s.confidenceScore || s.dataConfidenceScore || 0;
               const mat = s.materialityScore || 0;
               const isVerified = s.confidenceType === 'ACTUAL' || s.verified;
-              const corrobCount = s.corroborationCount || (s.signalStackCount >= 2 && (s as any)._stackIndependent ? 2 : 0);
-              // Relative confidence: signal in top 20% of universe gets 1-tier upgrade potential
-              const isTopConf = conf >= p80Conf && p80Conf > 0;
+              const isInferred = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
+              const corrobCount = countTrueCorroboration(s);
+
+              // ── HARD REJECTION: conf < 35 OR mat < 40 → never surface ──
+              if (conf < 35 && mat < 40) return 'REJECTED';
+
+              // ── NON-NEGOTIABLE INFERRED GATE ──
+              // Inferred signals with conf < 60 can NEVER be ACTIONABLE or NOTABLE
+              const inferredBlocked = isInferred && conf < 60;
 
               // Tier 1: ACTIONABLE — verified + strong confidence + material
-              if (isVerified && conf >= 70 && mat >= 65) return 'ACTIONABLE';
-              // Upgrade: top-confidence non-verified with strong materiality
-              if (isTopConf && conf >= 65 && mat >= 60) return 'ACTIONABLE';
+              if (!inferredBlocked && isVerified && conf >= 75 && mat >= 70) return 'ACTIONABLE';
 
-              // Tier 2: NOTABLE — good confidence + decent materiality, or corroborated inferred
-              if (conf >= 55 && mat >= 50) return 'NOTABLE';
-              if (conf >= 50 && mat >= 45 && corrobCount >= 2) return 'NOTABLE';
-              // Inferred but corroborated and material enough
-              if ((s.confidenceType === 'INFERRED' || s.inferenceUsed) && conf >= 50 && corrobCount >= 2) return 'NOTABLE';
+              // Tier 2: NOTABLE — verified + good confidence, or high-conf inferred with corroboration
+              if (!inferredBlocked && isVerified && conf >= 60 && mat >= 55) return 'NOTABLE';
+              if (!inferredBlocked && conf >= 60 && mat >= 55 && corrobCount >= 2) return 'NOTABLE';
 
-              // Tier 3: MONITOR — reasonable signal, not garbage
-              if (conf >= 40 || mat >= 40 || corrobCount >= 2) return 'MONITOR';
+              // Tier 3: MONITOR — reasonable signal
+              if (conf >= 45 || corrobCount >= 2) return 'MONITOR';
+              if (mat >= 45) return 'MONITOR';
 
-              // Tier 4: SPECULATIVE — below threshold but exists
+              // Tier 4: SPECULATIVE — exists but below threshold
               if (conf >= 25 || mat >= 25) return 'SPECULATIVE';
 
               return 'REJECTED';
@@ -2056,7 +2066,11 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               notable: enforceUserFilter(finalNotable),
               observations: enforceUserFilter(regularMonitor.slice(0, MAX_MONITOR)),
               speculative: enforceUserFilter(speculativeSignals.slice(0, MAX_SPECULATIVE)),
-              top3: enforceUserFilter(composedFeed.filter((s: any) => !s._speculative).slice(0, 5)),
+              // Top Signals: ONLY ACTIONABLE or NOTABLE tier — never monitor/speculative/inferred-low-conf
+              top3: enforceUserFilter(composedFeed.filter((s: any) =>
+                (s.signalTierV7 === 'ACTIONABLE' || s.signalTierV7 === 'NOTABLE') &&
+                !s._speculative && !s._derivedFromThematic
+              ).slice(0, 5)),
               trends: validSignals.length > 0 ? responseData.trends : [],
               bias: validBias,
               thematicIdeas: mergedThematic,

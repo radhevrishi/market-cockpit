@@ -855,9 +855,9 @@ export default function CompanyIntelligencePage() {
                   {s.valueCr && s.valueCr > 0 && (
                     <span style={{ fontSize: '13px', fontWeight: 700, color: CYAN }}>{fmtCr(s.valueCr)}</span>
                   )}
-                  {s.signalStackLevel && s.signalStackLevel !== 'WEAK' && (
+                  {s.signalStackLevel && s.signalStackLevel !== 'WEAK' && s._stackIndependent && (
                     <span style={{ fontSize: '9px', color: s.signalStackLevel === 'STRONG' ? GREEN : YELLOW, fontWeight: 600 }}>
-                      ⚡{s.signalStackCount} signals
+                      ⚡{s.signalStackCount} independent signals
                     </span>
                   )}
                   <span style={{ fontSize: '10px', color: TEXT3, marginLeft: 'auto' }}>
