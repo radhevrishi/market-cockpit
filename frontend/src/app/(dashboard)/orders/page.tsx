@@ -713,7 +713,7 @@ export default function CompanyIntelligencePage() {
                       textTransform: 'uppercase',
                     }}>{remapActionLabel(t.topAction)}</span>
                   </div>
-                  <div style={{ fontSize: '11px', color: TEXT2, marginBottom: '2px' }}>{t.company}</div>
+                  <div style={{ fontSize: '11px', color: TEXT2, marginBottom: '2px', textTransform: 'capitalize' }}>{t.company}</div>
                   <div style={{ display: 'flex', gap: '10px', fontSize: '10px' }}>
                     <span style={{ color: stackColor }}>{t.signalCount} signals</span>
                     <span style={{ color: sentimentColor(t.netSentiment) }}>{t.netSentiment}</span>
