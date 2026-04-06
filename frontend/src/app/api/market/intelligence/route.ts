@@ -2178,6 +2178,30 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 rawCount: rawSignals.length, _rejectReasons, _rejectSamples,
               },
             });
+          } else {
+            // Date filter removed ALL signals — return empty feed for this time window
+            responseData = {
+              ...responseData,
+              signals: [],
+              notable: [],
+              observations: [],
+              top3: [],
+              speculative: [],
+              thematicIdeas: [],
+              trends: [],
+              noActionableSignals: true,
+              noHighConfSignals: true,
+              quietMarket: true,
+              bias: {
+                ...(responseData.bias || {}),
+                totalSignals: 0, highImpactCount: 0, portfolioAlerts: 0,
+                totalObservations: 0, monitorCount: 0,
+                netBias: 'Neutral' as const,
+                summary: `No signals in ${daysWindow}D window — ${allCachedSignals.length} signals outside range`,
+                activeSectors: [],
+              },
+              _stats: { actionable: 0, notable: 0, monitor: 0, speculative: 0, rejected: 0, rejectedPct: 0, rawCount: 0 },
+            };
           }
 
           return NextResponse.json({
