@@ -1905,26 +1905,26 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               const isInferred = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
               const corrobCount = countTrueCorroboration(s);
 
-              // ── HARD REJECTION: conf < 35 OR mat < 40 → never surface ──
-              if (conf < 35 && mat < 40) return 'REJECTED';
+              // ── HARD REJECTION: only truly empty signals ──
+              if (conf < 10 && mat < 10) return 'REJECTED';
 
               // ── NON-NEGOTIABLE INFERRED GATE ──
               // Inferred signals with conf < 60 can NEVER be ACTIONABLE or NOTABLE
               const inferredBlocked = isInferred && conf < 60;
 
               // Tier 1: ACTIONABLE — verified + strong confidence + material
-              if (!inferredBlocked && isVerified && conf >= 75 && mat >= 70) return 'ACTIONABLE';
+              if (!inferredBlocked && isVerified && conf >= 70 && mat >= 65) return 'ACTIONABLE';
 
               // Tier 2: NOTABLE — verified + good confidence, or high-conf inferred with corroboration
-              if (!inferredBlocked && isVerified && conf >= 60 && mat >= 55) return 'NOTABLE';
-              if (!inferredBlocked && conf >= 60 && mat >= 55 && corrobCount >= 2) return 'NOTABLE';
+              if (!inferredBlocked && isVerified && conf >= 55 && mat >= 50) return 'NOTABLE';
+              if (!inferredBlocked && conf >= 55 && mat >= 50 && corrobCount >= 2) return 'NOTABLE';
 
               // Tier 3: MONITOR — reasonable signal
-              if (conf >= 45 || corrobCount >= 2) return 'MONITOR';
-              if (mat >= 45) return 'MONITOR';
+              if (conf >= 35 || corrobCount >= 2) return 'MONITOR';
+              if (mat >= 35) return 'MONITOR';
 
-              // Tier 4: SPECULATIVE — exists but below threshold
-              if (conf >= 25 || mat >= 25) return 'SPECULATIVE';
+              // Tier 4: SPECULATIVE — any remaining signal with some data
+              if (conf >= 10 || mat >= 10) return 'SPECULATIVE';
 
               return 'REJECTED';
             };
