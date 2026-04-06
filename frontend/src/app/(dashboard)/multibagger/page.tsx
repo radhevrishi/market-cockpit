@@ -132,7 +132,8 @@ function CompanyCard({ r, defaultOpen, isDegraded }: { r: MultibaggerResult; def
   const [showAll, setShowAll] = useState(false);
   const gradeColor = GRADE_COLOR[r.grade] || MUTED;
   const scoreColor = r.overallScore >= 72 ? GREEN : r.overallScore >= 54 ? YELLOW : RED;
-  const borderColor = r.isPortfolio ? 'rgba(167,139,250,0.35)' : r.isWatchlist ? 'rgba(56,189,248,0.2)' : BORDER;
+  const isStatic = r.quality.source === 'Static';
+  const borderColor = isStatic ? `${ORANGE}40` : r.isPortfolio ? 'rgba(167,139,250,0.35)' : r.isWatchlist ? 'rgba(56,189,248,0.2)' : BORDER;
 
   if (!r.quality.valid) {
     return (
@@ -164,7 +165,10 @@ function CompanyCard({ r, defaultOpen, isDegraded }: { r: MultibaggerResult; def
               <ConfBadge conf={r.quality.confidence} />
             </div>
             <div style={{ fontSize: 10, color: MUTED }}>{r.company.length > 30 ? r.company.slice(0, 30) + '…' : r.company} · {r.sector}</div>
-            <div style={{ fontSize: 10, color: MUTED, marginTop: 2 }}>📊 {r.quality.coveragePct}% data · {r.quality.source} · {strongPositive}✓ {atRisk}⚠</div>
+            <div style={{ fontSize: 10, color: MUTED, marginTop: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
+              📊 {r.quality.coveragePct}% data · <span style={{ color: r.quality.source === 'Static' ? ORANGE : r.quality.source.includes('partial') ? YELLOW : MUTED }}>{r.quality.source}</span> · {strongPositive}✓ {atRisk}⚠
+              {r.quality.source === 'Static' && <span style={{ fontSize: 8, color: ORANGE, fontWeight: 700, padding: '1px 4px', borderRadius: 3, background: `${ORANGE}15`, marginLeft: 2 }}>STALE DATA</span>}
+            </div>
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
@@ -201,11 +205,25 @@ function CompanyCard({ r, defaultOpen, isDegraded }: { r: MultibaggerResult; def
           )}
 
           {/* Score spectrum visualization */}
-          <div style={{ display: 'flex', gap: 3, marginBottom: 14 }}>
-            {r.criteria.map(c => (
-              <div key={c.id} title={`${c.label}: ${c.score}`}
-                style={{ flex: 1, height: 7, background: SIG_COLOR[c.signal], borderRadius: 3, opacity: c.dataAvailable ? 0.85 : 0.25 }} />
-            ))}
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+              <span style={{ fontSize: 9, color: MUTED }}>Score spectrum ({r.criteria.length} criteria)</span>
+              <span style={{ fontSize: 9, color: MUTED }}>
+                <span style={{ color: SIG_COLOR.STRONG_BUY }}>■</span> Strong
+                <span style={{ color: SIG_COLOR.BUY, marginLeft: 4 }}>■</span> Buy
+                <span style={{ color: SIG_COLOR.NEUTRAL, marginLeft: 4 }}>■</span> Neutral
+                <span style={{ color: SIG_COLOR.CAUTION, marginLeft: 4 }}>■</span> Caution
+                <span style={{ color: SIG_COLOR.AVOID, marginLeft: 4 }}>■</span> Avoid
+                {r.criteria.some(c => !c.dataAvailable) && <span style={{ opacity: 0.4, marginLeft: 4 }}>□</span>}
+                {r.criteria.some(c => !c.dataAvailable) && ' N/A'}
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: 3 }}>
+              {r.criteria.map(c => (
+                <div key={c.id} title={`${c.label}: ${c.score} (${c.signal.replace('_',' ')})${!c.dataAvailable ? ' — No data' : ''}`}
+                  style={{ flex: 1, height: 7, background: SIG_COLOR[c.signal], borderRadius: 3, opacity: c.dataAvailable ? 0.85 : 0.25 }} />
+              ))}
+            </div>
           </div>
 
           {/* Strengths / risks */}

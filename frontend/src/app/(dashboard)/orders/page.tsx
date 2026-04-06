@@ -548,6 +548,17 @@ export default function CompanyIntelligencePage() {
         </div>
       </div>
 
+      {/* ── SCORING LEGEND (inline, compact) ── */}
+      <div style={{
+        display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'center',
+        padding: '4px 14px', marginBottom: '8px', fontSize: '9px', color: TEXT3,
+      }}>
+        <span>Materiality: <span style={{ color: GREEN }}>■75+</span> <span style={{ color: '#3B82F6' }}>■60</span> <span style={{ color: '#F59E0B' }}>■45</span> <span style={{ color: TEXT3 }}>■&lt;45</span></span>
+        <span>Conf: <span style={{ color: GREEN }}>70+</span> <span style={{ color: YELLOW }}>50+</span> <span style={{ color: ORANGE }}>&lt;50</span></span>
+        <span>Evidence: <span style={{ color: '#059669' }}>A</span>=Filed <span style={{ color: '#D97706' }}>B</span>=Likely <span style={{ color: '#DC2626' }}>C</span>=Probable <span style={{ color: '#6B7280' }}>D</span>=Weak</span>
+        <span><span style={{ color: PURPLE }}>PF</span>=Portfolio <span style={{ color: ACCENT }}>WL</span>=Watchlist <span style={{ color: '#F59E0B' }}>EST</span>=Estimated</span>
+      </div>
+
       {/* ── DAILY DECISION SUMMARY ── */}
       {bias && (
         <div style={{
@@ -715,7 +726,7 @@ export default function CompanyIntelligencePage() {
                   </div>
                   <div style={{ fontSize: '11px', color: TEXT2, marginBottom: '2px', textTransform: 'capitalize' }}>{t.company}</div>
                   <div style={{ display: 'flex', gap: '10px', fontSize: '10px' }}>
-                    <span style={{ color: stackColor }}>{t.signalCount} signals</span>
+                    <span style={{ color: stackColor }}>{t.signalCount} signal{t.signalCount !== 1 ? 's' : ''}</span>
                     <span style={{ color: sentimentColor(t.netSentiment) }}>{t.netSentiment}</span>
                     <span style={{ color: impactColor(t.topImpact) }}>{t.topImpact}</span>
                     <span style={{ color: TEXT3 }}>Top: {t.maxScore ?? t.avgScore}</span>
@@ -772,7 +783,7 @@ export default function CompanyIntelligencePage() {
           )}
           {notableSignals.length === 0 && monitorList.length === 0 && thematicIdeas.length === 0 && (
             <div style={{ fontSize: '10px', color: TEXT3, fontStyle: 'italic', marginTop: '4px' }}>
-              Expand your date range (14D or 30D) or add more stocks to your watchlist.
+              {daysFilter <= 7 ? `No events in ${daysFilter}D. Try 14D or 30D for wider coverage.` : 'Add more stocks to your watchlist for broader coverage.'}
             </div>
           )}
         </div>
@@ -2160,6 +2171,7 @@ export default function CompanyIntelligencePage() {
                 backgroundColor: tierBg,
                 border: `1px solid ${tierBorder}`,
                 borderLeft: `3px solid ${tierColor}`,
+                opacity: isEstimated ? 0.85 : 1,
               }}>
                 {/* Row 1: Symbol + Event + Value */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
@@ -2187,11 +2199,14 @@ export default function CompanyIntelligencePage() {
                     )}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    {confScore > 0 && (
-                      <span style={{ fontSize: '8px', fontWeight: 600, color: confScore >= 70 ? GREEN : confScore >= 50 ? YELLOW : TEXT3 }}>
-                        C:{Math.round(confScore)}
-                      </span>
-                    )}
+                    <span style={{
+                      fontSize: '9px', fontWeight: 600,
+                      color: confScore >= 70 ? GREEN : confScore >= 50 ? YELLOW : confScore >= 35 ? ORANGE : RED,
+                      padding: '1px 4px', borderRadius: '3px',
+                      backgroundColor: confScore >= 70 ? 'rgba(16,185,129,0.08)' : confScore >= 50 ? 'rgba(251,191,36,0.08)' : 'rgba(239,68,68,0.06)',
+                    }}>
+                      C:{Math.round(confScore)}
+                    </span>
                     <span style={{ fontSize: '10px', fontWeight: 700, color: tierColor,
                       padding: '2px 8px', borderRadius: '4px', backgroundColor: `${tierColor}15`,
                       border: `1px solid ${tierColor}25`,
@@ -2271,8 +2286,10 @@ export default function CompanyIntelligencePage() {
           ) : (
             <>
               <Eye size={40} color={TEXT3} style={{ margin: '0 auto 12px', display: 'block' }} />
-              <p style={{ color: TEXT2, fontSize: '14px', fontWeight: 600 }}>No actionable signals</p>
-              <p style={{ color: TEXT3, fontSize: '12px' }}>Try a wider date range or check during market hours</p>
+              <p style={{ color: TEXT2, fontSize: '14px', fontWeight: 600 }}>No signals in {daysFilter}D window</p>
+              <p style={{ color: TEXT3, fontSize: '12px' }}>
+                {daysFilter <= 7 ? `Try 14D or 30D for a wider view` : 'Check during market hours or add more stocks to your watchlist'}
+              </p>
             </>
           )}
         </div>
