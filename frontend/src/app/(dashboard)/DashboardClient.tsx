@@ -188,7 +188,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
       : MARKETS_FALLBACK;
 
   const isActive = (href: string) =>
-    href === '/news' ? (pathname === '/' || pathname === '/news' || pathname.startsWith('/news')) : pathname.startsWith(href);
+    href === '/news' ? (pathname === '/' || pathname === '/news' || pathname?.startsWith('/news')) : pathname?.startsWith(href);
 
   function handleSignOut() {
     localStorage.removeItem('token');
@@ -438,7 +438,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
             gap: '2px',
             padding: '6px 12px',
             textDecoration: 'none',
-            color: pathname.startsWith('/settings') ? '#0F7ABF' : '#6B7A8D',
+            color: pathname?.startsWith('/settings') ? '#0F7ABF' : '#6B7A8D',
             fontSize: '10px',
             minWidth: '56px',
             minHeight: '44px',

@@ -3061,7 +3061,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   }
 
   const allAnnouncements = [
-    ...announcements.map(a => ({ ...a, _source: 'nse' })),
+    ...announcements.map(a => ({ ...a, _source: 'nse', date: a.date || a.an_dt || a.exchdisstime || a.sort_date || '' })),
     ...mcNewsAnnouncements,
     ...googleNewsAnnouncements,
   ];
@@ -3305,10 +3305,13 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
 
     const impactLevel = classifyImpactLevel(impactPct);
 
+    // NSE announcements use 'an_dt' or 'exchdisstime' for date; MC/Google use 'date'
+    const rawDate = item.date || item.an_dt || item.exchdisstime || item.sort_date || '';
+
     const earningsScore = earningsCache.get(symbol) ?? null;
     const earningsBoost = (earningsScore !== null && earningsScore >= 70 && sentiment !== 'Bearish' && impactPct >= 3);
 
-    const timeWeight = computeTimeWeight(item.date || getTodayDate(), eventType);
+    const timeWeight = computeTimeWeight(rawDate || getTodayDate(), eventType);
     const score = computeScore({
       impactPct, sentiment, timeWeight,
       earningsScore, isNegative: negative, isDeal: false,
@@ -3340,7 +3343,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     const descSnippet = (desc || '').slice(0, 100).replace(/\s+/g, ' ').trim();
     if (descSnippet.length > 20) headline += `. ${descSnippet}`;
 
-    const dateStr = (item.date || getTodayDate()).slice(0, 10);
+    const dateStr = (rawDate || getTodayDate()).slice(0, 10);
     // 3-day dedup bucket: floor(daysSinceEpoch / 3) groups nearby dates
     let dateBucket = dateStr;
     try {
@@ -3367,7 +3370,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
 
     const signal: IntelSignal = {
       symbol, company: resolveCompanyName(symbol, item.companyName, enrichment?.companyName),
-      date: item.date || getTodayDate(), source: 'order',
+      date: rawDate || getTodayDate(), source: 'order',
       eventType, headline,
       valueCr, valueUsd: `$${((valueCr * 10000000) / INR_TO_USD / 1000000).toFixed(1)}M`,
       mcapCr: enrichment?.mcapCr || null, revenueCr: enrichment?.annualRevenueCr || null,
@@ -3381,7 +3384,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       action, score, timeWeight, weightedScore, sentiment, whyItMatters,
       isNegative: negative, earningsBoost, isWatchlist, isPortfolio,
       dataSource,
-      freshness: computeFreshness(item.date || getTodayDate()),
+      freshness: computeFreshness(rawDate || getTodayDate()),
       scoreClassification: classifyScore(weightedScore),
       decision: action,
     };
