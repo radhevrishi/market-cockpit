@@ -5289,11 +5289,23 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     return obj;
   };
 
+  // Store ALL filtered signals (including rejected) so the GET route can re-evaluate
+  // with its own classification logic. This prevents data loss from over-aggressive
+  // template/TIER_D suppression in the compute pipeline.
+  const _allSignals = filtered.map(s => ({
+    ...s,
+    _computeVisibility: s.visibility,
+    _computeCategory: s.signalCategory,
+    _computeTier: s.signalTierV7,
+    _computeEvidenceTier: s.evidenceTier,
+  }));
+
   return sanitizeNum({
     top3,
     signals: actionableSignals.slice(0, MAX_ACTIONABLE),
     notable: notableSignals.slice(0, MAX_NOTABLE),
     observations: monitorSignals.slice(0, MAX_MONITOR),
+    _allSignals,
     thematicIdeas: thematicIdeas.slice(0, 6),
     trends: trends.slice(0, 10),
     bias,

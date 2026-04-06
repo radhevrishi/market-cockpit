@@ -1291,10 +1291,21 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
           const DECAY_LAMBDA = 0.05; // exponential decay factor (tunable)
 
           // Merge ALL raw signals FIRST, then filter by PF/WL at source level, then by date
-          let allCachedSignals = [
-            ...(Array.isArray(responseData.signals) ? responseData.signals : []),
-            ...(Array.isArray(responseData.observations) ? responseData.observations : []),
-          ];
+          // PRIORITY: Use _allSignals if available (includes rejected signals for re-evaluation)
+          // The compute route may over-reject via TIER_D/template suppression; the GET route
+          // re-classifies signalClass and can rescue economic signals that were incorrectly hidden.
+          let allCachedSignals: any[] = [];
+          if (Array.isArray(responseData._allSignals) && responseData._allSignals.length > 0) {
+            allCachedSignals = responseData._allSignals;
+            (debug as any).usedAllSignals = true;
+            (debug as any).allSignalsCount = responseData._allSignals.length;
+          } else {
+            allCachedSignals = [
+              ...(Array.isArray(responseData.signals) ? responseData.signals : []),
+              ...(Array.isArray(responseData.observations) ? responseData.observations : []),
+            ];
+            (debug as any).usedAllSignals = false;
+          }
 
           // ── PF/WL SOURCE-LEVEL FILTER: applied BEFORE any processing ──
           if (shouldFilterCached && allUserTracked.size > 0) {
