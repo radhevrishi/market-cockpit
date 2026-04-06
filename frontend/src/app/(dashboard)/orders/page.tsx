@@ -331,6 +331,16 @@ type UniverseFilter = 'ALL' | 'PORTFOLIO' | 'WATCHLIST';
 
 const CHAT_ID = '5057319640';
 
+/** Filter out GOVERNANCE / Mgmt Change signals — not useful for portfolio decisions */
+const _filterGovNoise = (list: any[]) =>
+  list.filter(s => {
+    const et = (s.eventType || '').toLowerCase();
+    if (et === 'mgmt change' || et === 'board appointment' || et === 'board meeting') return false;
+    const sc = (s.signalClass || '').toLowerCase();
+    if (sc === 'governance' && (et.includes('change') || et.includes('appointment') || et.includes('board'))) return false;
+    return true;
+  });
+
 export default function CompanyIntelligencePage() {
   const [top3, setTop3] = useState<Signal[]>([]);
   const [signals, setSignals] = useState<Signal[]>([]);
@@ -366,7 +376,7 @@ export default function CompanyIntelligencePage() {
       const data = _cache.data;
       setTop3(data.top3 || []);
       setSignals(data.signals || []);
-      setNotableSignals(data.notable || []);
+      setNotableSignals(_filterGovNoise(data.notable || []));
       setSpeculativeSignals(data.speculative || []);
       setQuietMarket(!!data.quietMarket);
       setThematicIdeas(data.thematicIdeas || []);
@@ -420,7 +430,7 @@ export default function CompanyIntelligencePage() {
 
       setTop3(data.top3 || []);
       setSignals(data.signals || []);
-      setNotableSignals(data.notable || []);
+      setNotableSignals(_filterGovNoise(data.notable || []));
       setSpeculativeSignals(data.speculative || []);
       setQuietMarket(!!data.quietMarket);
       setThematicIdeas(data.thematicIdeas || []);
@@ -429,7 +439,7 @@ export default function CompanyIntelligencePage() {
       setStats(data._stats || null);
       setNoHighConfSignals(!!data.noHighConfSignals);
       setNoActionableSignals(!!data.noActionableSignals);
-      setMonitorList(data.observations || []);
+      setMonitorList(_filterGovNoise(data.observations || []));
       const statsLine = data._stats ?
         `${data._stats.actionable || 0} actionable · ${data._stats.notable || 0} notable · ${data._stats.monitor || 0} monitor · ${data._stats.speculative || 0} speculative · ${data._stats.rejected || 0} rejected` : '';
       const filterLine = data._meta?.filterRange ? ` · Filter: ${data._meta.filterRange} (${data._meta.totalSignalsBefore ?? '?'}→${data._meta.totalSignalsDateFiltered ?? data._meta.totalSignalsBefore ?? '?'}→${data._meta.totalSignalsAfter ?? '?'})` : '';
