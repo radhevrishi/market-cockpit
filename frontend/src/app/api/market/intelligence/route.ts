@@ -1684,8 +1684,14 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 s.signalCategory = 'MONITOR';
                 s.portfolioCritical = false;
               }
-              // RULE 2: inferred + confidence < 50 → max MONITOR (was 70 — too aggressive)
-              if (isInferredSignal && confSc < 50 && s.signalCategory !== 'REJECTED') {
+              // RULE 2: inferred + low confidence → max MONITOR (tracked stocks get lower bar)
+              const isTrackedR2 = s.isPortfolio || s.isWatchlist;
+              if (isInferredSignal && !isTrackedR2 && confSc < 45 && s.signalCategory !== 'REJECTED') {
+                s.signalCategory = 'MONITOR';
+                s.portfolioCritical = false;
+              }
+              // Tracked inferred: only demote if truly low confidence
+              if (isInferredSignal && isTrackedR2 && confSc < 30 && s.signalCategory !== 'REJECTED') {
                 s.signalCategory = 'MONITOR';
                 s.portfolioCritical = false;
               }
@@ -1807,15 +1813,15 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               }
 
               // Signal tier classification
-              // Inferred signals need conf >= 45 to reach NOTABLE (relaxed from 60)
+              // Inferred signals: tracked need conf >= 30, non-tracked need conf >= 40
               const isInferredHere = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
-              const inferredBlockedHere = isInferredHere && confSc < 45;
-              // Allow pre-classifyTier ACTIONABLE for tracked signals with strong scores
+              const inferredBlockedHere = isInferredHere && (isTrackedForTier ? confSc < 30 : confSc < 40);
+              // Allow pre-classifyTier ACTIONABLE for tracked signals with decent scores
               const isTrackedForTier = s.isPortfolio || s.isWatchlist;
-              if (!inferredBlockedHere && isTrackedForTier && s.materialityScore >= 55 && confSc >= 55) {
+              if (!inferredBlockedHere && isTrackedForTier && s.materialityScore >= 45 && confSc >= 40) {
                 s.signalTierV7 = 'ACTIONABLE';
                 s.signalCategory = 'ACTIONABLE';
-              } else if (!inferredBlockedHere && s.signalCategory === 'MONITOR' && s.materialityScore >= 50 && confSc >= 50) {
+              } else if (!inferredBlockedHere && s.signalCategory === 'MONITOR' && s.materialityScore >= 35 && confSc >= 40) {
                 s.signalTierV7 = 'NOTABLE';
               } else if (s.signalCategory === 'ACTIONABLE') {
                 s.signalTierV7 = 'ACTIONABLE';
@@ -1925,20 +1931,23 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               // ── HARD REJECTION: very low conf AND mat → never surface ──
               if (conf < 20 && mat < 25) return 'REJECTED';
 
-              // ── INFERRED GATE (relaxed) ──
-              const inferredBlocked = isInferred && conf < 45;
+              // ── INFERRED GATE (relaxed for institutional use) ──
+              // Tracked companies: conf >= 30 is enough. Non-tracked: conf >= 40
+              const inferredBlocked = isInferred && (isTracked ? conf < 30 : conf < 40);
 
               // Tier 1: ACTIONABLE — verified + good confidence + material
-              if (!inferredBlocked && isVerified && conf >= 65 && mat >= 60) return 'ACTIONABLE';
+              if (!inferredBlocked && isVerified && conf >= 60 && mat >= 50) return 'ACTIONABLE';
               // Tracked companies get easier ACTIONABLE threshold
-              if (!inferredBlocked && isTracked && conf >= 55 && mat >= 50) return 'ACTIONABLE';
+              if (!inferredBlocked && isTracked && conf >= 40 && mat >= 45) return 'ACTIONABLE';
+              // High materiality at tracked companies — even lower conf bar
+              if (!inferredBlocked && isTracked && mat >= 50 && conf >= 35) return 'ACTIONABLE';
 
               // Tier 2: NOTABLE — good signal worth watching
-              if (!inferredBlocked && isVerified && conf >= 50 && mat >= 45) return 'NOTABLE';
-              if (!inferredBlocked && conf >= 50 && mat >= 45) return 'NOTABLE';
+              if (!inferredBlocked && isVerified && conf >= 45 && mat >= 35) return 'NOTABLE';
+              if (!inferredBlocked && conf >= 40 && mat >= 35) return 'NOTABLE';
               // Tracked companies: lower NOTABLE bar
-              if (!inferredBlocked && isTracked && conf >= 40 && mat >= 35) return 'NOTABLE';
-              if (!inferredBlocked && corrobCount >= 2 && conf >= 40) return 'NOTABLE';
+              if (!inferredBlocked && isTracked && conf >= 30 && mat >= 25) return 'NOTABLE';
+              if (!inferredBlocked && corrobCount >= 2 && conf >= 30) return 'NOTABLE';
 
               // Tier 3: MONITOR — any reasonable signal
               if (conf >= 30 || corrobCount >= 1) return 'MONITOR';
