@@ -1222,7 +1222,6 @@ export async function GET(request: NextRequest) {
       'APARINDS': { company: 'Apar Industries', sector: 'Cables', lastPrice: 7800, marketCapCr: 31200, pe: 38, roe: 28, opm: 10, de: 0.5, promoterPct: 55 },
       'APARIND': { company: 'Apar Industries', sector: 'Cables', lastPrice: 7800, marketCapCr: 31200, pe: 38, roe: 28, opm: 10, de: 0.5, promoterPct: 55 },
       'PRICOLLTD': { company: 'Pricol Limited', sector: 'Auto Ancillaries', lastPrice: 430, marketCapCr: 5200, pe: 28, roe: 18, opm: 12, de: 0.3, promoterPct: 48 },
-      'PRICOL': { company: 'Pricol Limited', sector: 'Auto Ancillaries', lastPrice: 430, marketCapCr: 5200, pe: 28, roe: 18, opm: 12, de: 0.3, promoterPct: 48 },
       'TDPOWERSYS': { company: 'TD Power Systems', sector: 'Capital Goods', lastPrice: 420, marketCapCr: 6800, pe: 45, roe: 15, opm: 14, de: 0.1, promoterPct: 58 },
       'ENGINERSIN': { company: 'Engineers India Ltd', sector: 'Engineering', lastPrice: 185, marketCapCr: 10400, pe: 22, roe: 14, opm: 12, de: 0.0, promoterPct: 51 },
       'ECLERX': { company: 'eClerx Services', sector: 'IT Services', lastPrice: 2600, marketCapCr: 11200, pe: 24, roe: 30, opm: 28, de: 0.0, promoterPct: 50 },
@@ -1245,6 +1244,7 @@ export async function GET(request: NextRequest) {
       'IZMO': { company: 'IZMO Limited', sector: 'IT Services', lastPrice: 85, marketCapCr: 350, pe: 15, roe: 12, opm: 10, de: 0.1, promoterPct: 50 },
       'LENSKART': { company: 'Lenskart Solutions', sector: 'Retail', lastPrice: 22, marketCapCr: 48000, pe: null, roe: null, opm: null, de: null, promoterPct: 30 },
       'S&SPOWER': { company: 'S&S Power Switchgear', sector: 'Capital Goods', lastPrice: 360, marketCapCr: 1100, pe: 40, roe: 15, opm: 12, de: 0.2, promoterPct: 60 },
+      'SIGMA': { company: 'Sigma Solve Limited', sector: 'IT Services', lastPrice: 450, marketCapCr: 750, pe: 30, roe: 18, opm: 14, de: 0.1, promoterPct: 55 },
       // Symbols that frequently fail live data fetches
       'SYRMA': { company: 'Syrma SGS Technology', sector: 'Industrial Products', lastPrice: 813, marketCapCr: 15700, pe: 65, roe: 12, opm: 8, de: 0.1, promoterPct: 55 },
       'WAAREEENER': { company: 'Waaree Energies', sector: 'Renewable Energy', lastPrice: 3082, marketCapCr: 88700, pe: 80, roe: 30, opm: 18, de: 0.3, promoterPct: 68 },
@@ -1261,7 +1261,7 @@ export async function GET(request: NextRequest) {
       'HBLENGINE': { screener: 'HBLPOWER', yahoo: 'HBLPOWER.NS', nse: 'HBLPOWER' },
       'APARINDS': { screener: 'APARIND', yahoo: 'APARIND.NS', nse: 'APARIND' },
       'ENGINERSIN': { screener: 'ENGINERSIN', yahoo: 'ENGINERSIN.NS' },
-      'PRICOLLTD': { screener: 'PRICOL', yahoo: 'PRICOL.NS', nse: 'PRICOL' },
+      'PRICOLLTD': { screener: 'PRICOLLTD', yahoo: 'PRICOLLTD.NS', nse: 'PRICOLLTD' },
       'TDPOWERSYS': { screener: 'TDPOWERSYS', yahoo: 'TDPOWERSYS.NS' },
       'ECLERX': { screener: 'ECLERX', yahoo: 'ECLERX.NS' },
       'JAMNAAUTO': { screener: 'JAMNAAUTO', yahoo: 'JAMNAAUTO.NS' },
@@ -1289,6 +1289,7 @@ export async function GET(request: NextRequest) {
       'SANSERA': { screener: 'SANSERA', yahoo: 'SANSERA.NS', nse: 'SANSERA' },
       'SAILIFE': { screener: 'SAILIFE', yahoo: 'SAILIFE.NS', nse: 'SAILIFE' },
       'SJS': { screener: 'SJSENTERPR', yahoo: 'SJS.NS', nse: 'SJS' },
+      'SIGMA': { screener: 'SIGMA', yahoo: 'SIGMA.NS', nse: 'SIGMA' },
       // Special character symbols — map to valid NSE names
       'S&SPOWER': { screener: 'SANDHYA', yahoo: 'S&SPOWER.NS', nse: 'S&SPOWER' },
     };
@@ -1335,18 +1336,53 @@ export async function GET(request: NextRequest) {
     for (let i = 0; i < cleanSymbols.length; i += BATCH) {
       // Check deadline before starting next batch
       if (Date.now() > DEADLINE) {
-        // Return partial results with remaining symbols as NR
+        // Return partial results — use static fallback for symbols that have it
         const remaining = cleanSymbols.slice(i);
         for (const sym of remaining) {
-          results.push({
-            symbol: sym, company: sym, sector: 'Unknown', sectorGroup: 'UNKNOWN',
-            lastPrice: null, marketCapCr: null, overallScore: 0, grade: 'NR' as Grade,
-            pillars: [], criteria: [],
-            redFlags: [{ id: 'timeout', label: 'Processing Timeout', severity: 'MEDIUM', detail: 'Server deadline reached — retry for full analysis' }],
-            quality: { valid: false, reason: 'Timeout — partial results', coveragePct: 0, confidence: 'VERY_LOW', source: 'none', fetchedAt: new Date().toISOString(), staleness: 'UNKNOWN' },
-            isPortfolio: portfolio.includes(sym), isWatchlist: watchlist.includes(sym),
-            errors: ['Processing deadline exceeded'],
-          });
+          const aliasSym = SYMBOL_ALIASES[sym]?.nse || sym;
+          const sData = STATIC_FALLBACK[sym] || STATIC_FALLBACK[aliasSym];
+          if (sData && sData.lastPrice && sData.lastPrice > 0) {
+            // Score using static data instead of returning NR
+            const sectorGrp = getSectorGroup(sData.sector || 'Unknown');
+            const staticRoe = sData.roe || 0;
+            const staticOpm = sData.opm || 0;
+            const staticDe = sData.de ?? 1;
+            const staticPe = sData.pe || 0;
+            const staticPromoter = sData.promoterPct || 0;
+            const staticRoce = staticRoe / (1 + staticDe);
+            // Simplified scoring for static data
+            const qualScore = Math.min(30, (staticRoe / 25 * 12) + (staticOpm / 20 * 10) + (staticRoce / 15 * 8));
+            const valScore = Math.min(15, staticPe > 0 && staticPe < 50 ? (1 - staticPe / 100) * 15 : 3);
+            const mktScore = Math.min(10, (staticPromoter / 75 * 5) + 3);
+            const rawScore = Math.round(qualScore + valScore + mktScore + 10); // +10 base for growth/fin
+            const penalized = Math.round(Math.max(0, rawScore) * 0.85); // 15% penalty for static
+            const grade = penalized >= 72 ? 'A' : penalized >= 55 ? 'B' : penalized >= 35 ? 'C' : 'D';
+            results.push({
+              symbol: sym, company: sData.company || sym, sector: sData.sector || 'Unknown', sectorGroup: sectorGrp,
+              lastPrice: sData.lastPrice, marketCapCr: sData.marketCapCr,
+              overallScore: penalized, grade: grade as Grade,
+              pillars: [
+                { id: 'quality', label: 'Quality', weight: 0.3, score: Math.round(qualScore), coverage: 0.5, topStrength: 'Static data', topRisk: 'Stale values' },
+                { id: 'valuation', label: 'Valuation', weight: 0.15, score: Math.round(valScore), coverage: 0.5, topStrength: 'P/E available', topRisk: 'Limited data' },
+                { id: 'market', label: 'Market', weight: 0.10, score: Math.round(mktScore), coverage: 0.5, topStrength: 'Promoter holding', topRisk: 'No live data' },
+              ],
+              criteria: [],
+              redFlags: [{ id: 'static-data', label: 'Static Data', severity: 'MEDIUM', detail: 'Scored from cached data — live fetch timed out' }],
+              quality: { valid: true, reason: 'Static fallback — deadline reached', coveragePct: 25, confidence: 'LOW', source: 'Static', fetchedAt: new Date().toISOString(), staleness: 'STALE' },
+              isPortfolio: portfolio.includes(sym), isWatchlist: watchlist.includes(sym),
+              errors: ['Deadline reached — scored from static data'],
+            });
+          } else {
+            results.push({
+              symbol: sym, company: sData?.company || sym, sector: sData?.sector || 'Unknown', sectorGroup: 'UNKNOWN',
+              lastPrice: null, marketCapCr: sData?.marketCapCr || null, overallScore: 0, grade: 'NR' as Grade,
+              pillars: [], criteria: [],
+              redFlags: [{ id: 'timeout', label: 'Processing Timeout', severity: 'MEDIUM', detail: 'Server deadline reached — retry for full analysis' }],
+              quality: { valid: false, reason: 'Timeout — partial results', coveragePct: 0, confidence: 'VERY_LOW', source: 'none', fetchedAt: new Date().toISOString(), staleness: 'UNKNOWN' },
+              isPortfolio: portfolio.includes(sym), isWatchlist: watchlist.includes(sym),
+              errors: ['Processing deadline exceeded'],
+            });
+          }
         }
         break;
       }
