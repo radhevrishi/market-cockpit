@@ -4895,7 +4895,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     if (s.visibility === 'HIDDEN') {
       s.signalCategory = 'REJECTED';
       // Track WHY signal is hidden (for debug)
-      if (!s._hiddenReason) s._hiddenReason = 'unknown_pre_gov_block';
+      if (!(s as any)._hiddenReason) (s as any)._hiddenReason = 'unknown_pre_gov_block';
     }
   }
   // DEBUG: track hidden reasons before governance block

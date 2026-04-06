@@ -1295,16 +1295,15 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
           // The compute route may over-reject via TIER_D/template suppression; the GET route
           // re-classifies signalClass and can rescue economic signals that were incorrectly hidden.
           let allCachedSignals: any[] = [];
+          let _usedAllSignals = false;
           if (Array.isArray(responseData._allSignals) && responseData._allSignals.length > 0) {
             allCachedSignals = responseData._allSignals;
-            (debug as any).usedAllSignals = true;
-            (debug as any).allSignalsCount = responseData._allSignals.length;
+            _usedAllSignals = true;
           } else {
             allCachedSignals = [
               ...(Array.isArray(responseData.signals) ? responseData.signals : []),
               ...(Array.isArray(responseData.observations) ? responseData.observations : []),
             ];
-            (debug as any).usedAllSignals = false;
           }
 
           // ── PF/WL SOURCE-LEVEL FILTER: applied BEFORE any processing ──
