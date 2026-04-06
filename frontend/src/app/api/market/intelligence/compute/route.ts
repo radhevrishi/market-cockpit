@@ -1983,13 +1983,24 @@ function classifyCatalystStrength(impactPct: number, pctMcap: number | null): 'W
 // ══════════════════════════════════════════════════════════════
 function classifyEvidenceTier(
   confidenceType: string, valueSource: string, dataSource?: string,
-  confidenceScore?: number, isHeuristicSuppressed?: boolean
+  confidenceScore?: number, isHeuristicSuppressed?: boolean,
+  signalClass?: string
 ): 'TIER_A' | 'TIER_B' | 'TIER_C' | 'TIER_D' {
   // Tier D: template patterns or very low confidence → auto-suppress
+  // EXCEPTION: ECONOMIC signals from exchange sources should NOT be auto-suppressed
+  // just because their value estimate is heuristic. The underlying event (Order Win,
+  // Capex, M&A) is confirmed by the exchange filing; only the value is estimated.
   if (isHeuristicSuppressed) return 'TIER_D';
-  if (confidenceScore !== undefined && confidenceScore < 50 && confidenceType === 'HEURISTIC') return 'TIER_D';
-
   const isExchange = dataSource === 'nse' || dataSource === 'NSE';
+  const isEconomic = signalClass === 'ECONOMIC' || signalClass === 'STRATEGIC';
+  if (confidenceScore !== undefined && confidenceScore < 50 && confidenceType === 'HEURISTIC') {
+    if (isExchange && isEconomic) {
+      // Exchange-sourced economic signal: downgrade to TIER_C (inferred), not TIER_D (hidden)
+      return 'TIER_C';
+    }
+    return 'TIER_D';
+  }
+
   const isGuidance = dataSource === 'Guidance';
 
   // Tier A: Exchange filing with ACTUAL confidence and EXACT/AGGREGATED value
@@ -3401,7 +3412,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     signal.sourceUrl = item.url || null;
 
     // Production-grade fields (v2) — initial classification (may be updated by template detection)
-    signal.evidenceTier = classifyEvidenceTier(confidenceType, valueSource, dataSource, confidenceScore, false);
+    signal.evidenceTier = classifyEvidenceTier(confidenceType, valueSource, dataSource, confidenceScore, false, classifySignalClass(eventType, desc, signal.headline));
     signal.timeHorizon = classifyTimeHorizon(eventType);
     signal.extremeValueFlag = detectExtremeValue(null, impactPct);
     // v4: Source sentence extraction (upgraded — min 8 words)
