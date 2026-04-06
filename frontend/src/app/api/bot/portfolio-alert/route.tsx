@@ -707,7 +707,8 @@ export async function POST(request: Request) {
           const s = signals[i];
           const tier = s.signalTierV7 === 'ACTIONABLE' ? '🔴' : '🟡';
           const action = s.action || 'MONITOR';
-          lines.push(`${tier} <b>${esc(s.ticker)}</b>  <code>${action}</code>`);
+          const name = s.symbol || s.ticker || s.primaryTicker || '???';
+          lines.push(`${tier} <b>${esc(name)}</b>  <code>${action}</code>`);
           lines.push(`   ${esc(truncate(s.headline || s.narrative || '', 70))}`);
           if (s.eventType) lines.push(`   <i>${s.eventType} · ${s.signalClass || ''}</i>`);
           lines.push('');
@@ -838,7 +839,8 @@ export async function GET(request: Request) {
         for (const s of signals.slice(0, 5)) {
           const tier = s.signalTierV7 === 'ACTIONABLE' ? '🔴' : '🟡';
           const action = s.action || 'MONITOR';
-          lines.push(`${tier} <b>${esc(s.ticker)}</b>  <code>${action}</code>`);
+          const name = s.symbol || s.ticker || s.primaryTicker || '???';
+          lines.push(`${tier} <b>${esc(name)}</b>  <code>${action}</code>`);
           lines.push(`   ${esc(truncate(s.headline || s.narrative || '', 70))}`);
           lines.push('');
         }
