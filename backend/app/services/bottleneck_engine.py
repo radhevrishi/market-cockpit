@@ -66,6 +66,7 @@ MACRO_BUCKETS = {
             "INDIA_SEMICONDUCTOR_FAB", "INDIA_POWER_GRID", "INDIA_PORT_LOGISTICS",
             "INDIA_TELECOM_FIBER", "INDIA_UPI_PAYMENTS", "INDIA_EV_CHARGING",
             "INDIA_DATA_CENTER", "INDIA_WATER_INFRA", "INDIA_HOUSING_INFRA",
+            "INDIA_NUCLEAR_POWER", "INDIA_TRANSMISSION_GRID", "INDIA_SEMICONDUCTOR_MATERIALS",
         ],
         "base_severity": 3,
         "description": "India-specific infrastructure bottlenecks across sectors",
