@@ -1450,14 +1450,21 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               const periodOk = !isGuidance || (s.guidanceScope && s.guidanceScope !== 'UNKNOWN' &&
                 s.guidancePeriod && s.guidancePeriod !== 'UNKNOWN');
 
-              // Hard rejection checks — ONLY for template/broken/anomaly
-              // !sourceExists is NO LONGER a hard reject — it degrades to MONITOR instead
-              if (hasTemplate || isBroken || hasAnomaly) {
-                const reason = hasTemplate ? 'template' : isBroken ? 'broken' : 'anomaly';
+              // Template/broken/anomaly: only hard-reject BROKEN and EXTREME anomalies
+              // Template signals are degraded to MONITOR instead of rejected
+              if (isBroken || hasAnomaly) {
+                const reason = isBroken ? 'broken' : 'anomaly';
                 _rejectReasons[reason] = (_rejectReasons[reason] || 0) + 1;
                 if (_rejectSamples.length < 5) _rejectSamples.push({ ticker: s.ticker || s.symbol, reason, dataSource: s.dataSource, confidenceType: s.confidenceType, sourceTier: s.sourceTier, source: s.source, dataQuality: s.dataQuality, templatePattern: s.templatePattern, eventType: s.eventType });
                 rejectedCount++;
                 continue;
+              }
+              if (hasTemplate) {
+                // Degrade template signals to MONITOR instead of hard rejecting
+                s.signalCategory = 'MONITOR';
+                s.monitorTier = 'LOW';
+                s._degradedReason = 'template_pattern';
+                _rejectReasons['template_degraded'] = (_rejectReasons['template_degraded'] || 0) + 1;
               }
               // No verified source → degrade to MONITOR, don't reject
               if (!sourceExists) {
@@ -1473,9 +1480,13 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 (s.source === 'deal' && s.valueCr > 0) ||
                 (revImpact > 5 && s.confidenceType === 'ACTUAL');
 
-              // Inferred + non-material + no verified source → reject
-              // But if source is verified (NSE, deal), keep as MONITOR with sanitized values
-              if (isInferred && !isMaterial && !sourceExists) { rejectedCount++; continue; }
+              // Inferred + non-material + no verified source → degrade to SPECULATIVE instead of rejecting
+              if (isInferred && !isMaterial && !sourceExists) {
+                s.signalCategory = 'SPECULATIVE';
+                s.monitorTier = 'LOW';
+                s._degradedReason = 'inferred_non_material';
+                _rejectReasons['inferred_degraded'] = (_rejectReasons['inferred_degraded'] || 0) + 1;
+              }
 
               // Zero Inference Policy: sanitize inferred numbers
               if (isInferred) {
@@ -1815,13 +1826,15 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 }
               }
 
-              // HIDDEN → rejected
+              // HIDDEN visibility: degrade to MONITOR instead of hard-rejecting
+              // These are often routine governance events but still worth showing in the feed
               if (s.visibility === 'HIDDEN') {
-                const hiddenReason = s.signalCategory === 'REJECTED' ? 'hidden_governance' : 'hidden_other';
+                s.signalCategory = 'MONITOR';
+                s.signalTierV7 = 'MONITOR';
+                s.monitorTier = 'LOW';
+                s._degradedReason = 'hidden_visibility';
+                const hiddenReason = s.signalClass === 'GOVERNANCE' ? 'governance_degraded' : 'hidden_degraded';
                 _rejectReasons[hiddenReason] = (_rejectReasons[hiddenReason] || 0) + 1;
-                if (_rejectSamples.length < 10) _rejectSamples.push({ ticker: s.ticker || s.symbol, reason: hiddenReason, signalClass: s.signalClass, eventType: s.eventType, managementRole: s.managementRole });
-                rejectedCount++;
-                continue;
               }
 
               if (s.signalCategory === 'ACTIONABLE') {
