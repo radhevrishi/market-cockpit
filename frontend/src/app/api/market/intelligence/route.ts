@@ -1815,9 +1815,9 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               // Signal tier classification
               // Inferred signals: tracked need conf >= 30, non-tracked need conf >= 40
               const isInferredHere = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
+              const isTrackedForTier = s.isPortfolio || s.isWatchlist;
               const inferredBlockedHere = isInferredHere && (isTrackedForTier ? confSc < 30 : confSc < 40);
               // Allow pre-classifyTier ACTIONABLE for tracked signals with decent scores
-              const isTrackedForTier = s.isPortfolio || s.isWatchlist;
               if (!inferredBlockedHere && isTrackedForTier && s.materialityScore >= 45 && confSc >= 40) {
                 s.signalTierV7 = 'ACTIONABLE';
                 s.signalCategory = 'ACTIONABLE';
