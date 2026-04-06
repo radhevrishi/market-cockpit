@@ -1245,6 +1245,20 @@ export async function GET(request: NextRequest) {
       'LENSKART': { company: 'Lenskart Solutions', sector: 'Retail', lastPrice: 22, marketCapCr: 48000, pe: null, roe: null, opm: null, de: null, promoterPct: 30 },
       'S&SPOWER': { company: 'S&S Power Switchgear', sector: 'Capital Goods', lastPrice: 360, marketCapCr: 1100, pe: 40, roe: 15, opm: 12, de: 0.2, promoterPct: 60 },
       'SIGMA': { company: 'Sigma Solve Limited', sector: 'IT Services', lastPrice: 450, marketCapCr: 750, pe: 30, roe: 18, opm: 14, de: 0.1, promoterPct: 55 },
+      // Portfolio stocks — ensure scoring even under timeout
+      'HFCL': { company: 'HFCL Limited', sector: 'Telecom Equipment', lastPrice: 110, marketCapCr: 15800, pe: 38, roe: 14, opm: 16, de: 0.3, promoterPct: 38 },
+      'GRAVITA': { company: 'Gravita India', sector: 'Non-Ferrous Metals', lastPrice: 2100, marketCapCr: 14500, pe: 42, roe: 28, opm: 10, de: 0.4, promoterPct: 55 },
+      'CEINSYS': { company: 'Ceinsys Tech', sector: 'IT Services', lastPrice: 995, marketCapCr: 2500, pe: 55, roe: 18, opm: 15, de: 0.2, promoterPct: 52 },
+      'AEROFLEX': { company: 'Aeroflex Industries', sector: 'Industrial Products', lastPrice: 255, marketCapCr: 3400, pe: 45, roe: 16, opm: 18, de: 0.3, promoterPct: 60 },
+      'CPPLUS': { company: 'CP Plus (Aditya Infotech)', sector: 'Electronics', lastPrice: 680, marketCapCr: 5000, pe: 35, roe: 15, opm: 10, de: 0.2, promoterPct: 48 },
+      'DIXON': { company: 'Dixon Technologies', sector: 'Consumer Electronics', lastPrice: 15500, marketCapCr: 93000, pe: 120, roe: 25, opm: 5, de: 0.2, promoterPct: 34 },
+      'IKS': { company: 'IKS Health', sector: 'Healthcare IT', lastPrice: 580, marketCapCr: 4800, pe: 60, roe: 12, opm: 20, de: 0.1, promoterPct: 55 },
+      'PARAS': { company: 'Paras Defence', sector: 'Defence', lastPrice: 1050, marketCapCr: 4200, pe: 65, roe: 12, opm: 22, de: 0.2, promoterPct: 58 },
+      'QPOWER': { company: 'Quality Power Electrical', sector: 'Capital Goods', lastPrice: 470, marketCapCr: 5200, pe: 40, roe: 18, opm: 14, de: 0.4, promoterPct: 50 },
+      'JSWINFRA': { company: 'JSW Infrastructure', sector: 'Infrastructure', lastPrice: 300, marketCapCr: 63000, pe: 55, roe: 10, opm: 45, de: 0.6, promoterPct: 86 },
+      'DEEDEV': { company: 'Dee Development Engineers', sector: 'Engineering', lastPrice: 310, marketCapCr: 2200, pe: 32, roe: 15, opm: 12, de: 0.5, promoterPct: 52 },
+      'LUMAXTECH': { company: 'Lumax Auto Technologies', sector: 'Auto Ancillaries', lastPrice: 510, marketCapCr: 3500, pe: 28, roe: 18, opm: 9, de: 0.2, promoterPct: 53 },
+      'MTARTECH': { company: 'Mtar Technologies', sector: 'Defence/Aerospace', lastPrice: 1650, marketCapCr: 5100, pe: 70, roe: 10, opm: 22, de: 0.1, promoterPct: 52 },
       // Symbols that frequently fail live data fetches
       'SYRMA': { company: 'Syrma SGS Technology', sector: 'Industrial Products', lastPrice: 813, marketCapCr: 15700, pe: 65, roe: 12, opm: 8, de: 0.1, promoterPct: 55 },
       'WAAREEENER': { company: 'Waaree Energies', sector: 'Renewable Energy', lastPrice: 3082, marketCapCr: 88700, pe: 80, roe: 30, opm: 18, de: 0.3, promoterPct: 68 },
@@ -1290,6 +1304,20 @@ export async function GET(request: NextRequest) {
       'SAILIFE': { screener: 'SAILIFE', yahoo: 'SAILIFE.NS', nse: 'SAILIFE' },
       'SJS': { screener: 'SJSENTERPR', yahoo: 'SJS.NS', nse: 'SJS' },
       'SIGMA': { screener: 'SIGMA', yahoo: 'SIGMA.NS', nse: 'SIGMA' },
+      // Portfolio stocks
+      'HFCL': { screener: 'HFCL', yahoo: 'HFCL.NS', nse: 'HFCL' },
+      'GRAVITA': { screener: 'GRAVITA', yahoo: 'GRAVITA.NS', nse: 'GRAVITA' },
+      'CEINSYS': { screener: 'CEINSYS', yahoo: 'CEINSYS.NS', nse: 'CEINSYS' },
+      'AEROFLEX': { screener: 'AEROFLEX', yahoo: 'AEROFLEX.NS', nse: 'AEROFLEX' },
+      'CPPLUS': { screener: 'ADITYA', yahoo: 'CPPLUS.NS', nse: 'CPPLUS' },
+      'DIXON': { screener: 'DIXON', yahoo: 'DIXON.NS', nse: 'DIXON' },
+      'IKS': { screener: 'IKSHEALTH', yahoo: 'IKS.NS', nse: 'IKS' },
+      'PARAS': { screener: 'PARAS', yahoo: 'PARAS.NS', nse: 'PARAS' },
+      'QPOWER': { screener: 'QPOWER', yahoo: 'QPOWER.NS', nse: 'QPOWER' },
+      'JSWINFRA': { screener: 'JSWINFRA', yahoo: 'JSWINFRA.NS', nse: 'JSWINFRA' },
+      'DEEDEV': { screener: 'DEEDEV', yahoo: 'DEEDEV.NS', nse: 'DEEDEV' },
+      'LUMAXTECH': { screener: 'LUMAXTECH', yahoo: 'LUMAXTECH.NS', nse: 'LUMAXTECH' },
+      'MTARTECH': { screener: 'MTARTECH', yahoo: 'MTARTECH.NS', nse: 'MTARTECH' },
       // Special character symbols — map to valid NSE names
       'S&SPOWER': { screener: 'SANDHYA', yahoo: 'S&SPOWER.NS', nse: 'S&SPOWER' },
     };
@@ -1315,7 +1343,7 @@ export async function GET(request: NextRequest) {
     }
 
     const results: MultibaggerResult[] = [];
-    const DEADLINE = Date.now() + 50000; // 50s hard deadline (Vercel Hobby = 55s, 5s buffer)
+    const DEADLINE = Date.now() + 42000; // 42s hard deadline (Vercel Hobby = 55s, 13s buffer for response + cold start)
 
     // Add skipped symbols as NR results
     for (const sym of skippedSymbols) {
