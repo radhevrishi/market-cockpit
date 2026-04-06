@@ -34,9 +34,17 @@ function classifySignalClass(eventType: string, headline?: string, desc?: string
   if (GOVERNANCE_EVENTS.has(eventType)) return 'GOVERNANCE';
   const lower = (eventType || '').toLowerCase();
   if (lower.includes('order') || lower.includes('contract') || lower.includes('capex') || lower.includes('guidance') || lower.includes('earnings')) return 'ECONOMIC';
+  if (lower.includes('deal') || lower.includes('acquisition') || lower.includes('merger') || lower.includes('fund') || lower.includes('stake') || lower.includes('buyback')) return 'ECONOMIC';
   if ((lower.includes('ceo') || lower.includes('cfo') || lower.includes('chairman')) && (lower.includes('change') || lower.includes('exit'))) return 'STRATEGIC';
   if (lower.includes('mgmt') || lower.includes('management') || lower.includes('board') || lower.includes('appointment') || lower.includes('director')) return 'GOVERNANCE';
-  return 'COMPLIANCE';
+  // Check headline/desc for economic keywords before defaulting
+  const fullText = `${headline || ''} ${desc || ''}`.toLowerCase();
+  if (fullText.includes('order') || fullText.includes('contract') || fullText.includes('capex') || fullText.includes('expansion') ||
+      fullText.includes('acquisition') || fullText.includes('deal') || fullText.includes('revenue') || fullText.includes('profit') ||
+      fullText.includes('investment') || fullText.includes('fund') || fullText.includes('ipo') || fullText.includes('qip')) return 'ECONOMIC';
+  // Default: ECONOMIC for unknown (most NSE corporate actions are economic events)
+  // COMPLIANCE was causing ALL unknown signals to be governance-blocked
+  return 'ECONOMIC';
 }
 
 function extractMgmtRole(headline?: string, desc?: string): string {
@@ -1472,9 +1480,19 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
 
               // ── v8: GOVERNANCE ABSOLUTE HARD BLOCK ──
               // Non-senior governance/compliance signals are ALWAYS hidden — no exceptions
-              // Layer 1: role-based block (checks managementRole field)
+              // IMPORTANT: Only applies to ACTUAL governance events, NOT to economic/strategic signals
+              // that happened to fall through to COMPLIANCE default in classifySignalClass
               const HARD_SENIOR_ROLES_GET = new Set(['CEO','CFO','MD','Chairman','Managing Director','Chief Executive','Chief Financial','Executive Director','Whole Time Director','Whole-Time Director']);
-              if (s.signalClass === 'GOVERNANCE' || s.signalClass === 'COMPLIANCE' || s.eventType === 'Mgmt Change' || s.eventType === 'Board Appointment' || s.eventType === 'Board Change') {
+              const isActualGovernanceEvent = s.signalClass === 'GOVERNANCE' ||
+                GOVERNANCE_EVENTS.has(s.eventType) || COMPLIANCE_EVENTS.has(s.eventType) ||
+                s.eventType === 'Mgmt Change' || s.eventType === 'Board Appointment' || s.eventType === 'Board Change' ||
+                s.eventType === 'Board Meeting' || s.eventType === 'AGM' || s.eventType === 'EGM';
+              // COMPLIANCE class from fallback (not in COMPLIANCE_EVENTS set) = NOT a governance event
+              const isComplianceFallback = s.signalClass === 'COMPLIANCE' && !COMPLIANCE_EVENTS.has(s.eventType) &&
+                !GOVERNANCE_EVENTS.has(s.eventType);
+
+              if (isActualGovernanceEvent && !isComplianceFallback) {
+                // Layer 1: role-based block
                 const role = (s.managementRole || '').trim();
                 const isSeniorRole = Array.from(HARD_SENIOR_ROLES_GET).some(sr => role.toLowerCase().includes(sr.toLowerCase()));
                 if (!isSeniorRole) {
@@ -1483,7 +1501,6 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 }
               }
               // Layer 2: headline text block — catches Corporate events with non-senior roles
-              // (these bypass Layer 1 because eventType is 'Corporate', not 'Mgmt Change' etc.)
               const NON_SENIOR_TERMS = [
                 'company secretary', 'compliance officer', 'statutory auditor', 'company auditor',
                 'cost auditor', 'secretarial auditor', 'internal auditor', 'registrar',
@@ -1693,8 +1710,9 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
 
               // HIDDEN → rejected
               if (s.visibility === 'HIDDEN') {
-                _rejectReasons['hidden_v7'] = (_rejectReasons['hidden_v7'] || 0) + 1;
-                if (_rejectSamples.length < 5) _rejectSamples.push({ ticker: s.ticker || s.symbol, reason: 'hidden_v7', signalClass: s.signalClass, eventType: s.eventType });
+                const hiddenReason = s.signalCategory === 'REJECTED' ? 'hidden_governance' : 'hidden_other';
+                _rejectReasons[hiddenReason] = (_rejectReasons[hiddenReason] || 0) + 1;
+                if (_rejectSamples.length < 10) _rejectSamples.push({ ticker: s.ticker || s.symbol, reason: hiddenReason, signalClass: s.signalClass, eventType: s.eventType, managementRole: s.managementRole });
                 rejectedCount++;
                 continue;
               }

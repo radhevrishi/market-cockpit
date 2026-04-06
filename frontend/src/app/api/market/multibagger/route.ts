@@ -1121,8 +1121,9 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // Process in batches of 5 (all fetches within a symbol already run in parallel)
-    const BATCH = 5;
+    // Process in batches of 8 (all fetches within a symbol already run in parallel)
+    // Larger batches = fewer sequential rounds = more stocks processed before deadline
+    const BATCH = 8;
     for (let i = 0; i < cleanSymbols.length; i += BATCH) {
       // Check deadline before starting next batch
       if (Date.now() > DEADLINE) {
@@ -1264,13 +1265,15 @@ export async function GET(request: NextRequest) {
           let rawScore    = compositeScore(pillars, criteria);
           const redFlags    = detectRedFlags(screener, nse);
 
-          // 75% coverage gate: below → NR (not rated)
-          const isNR = coverageRatio < 0.25; // Hard NR for <25% (very broken)
+          // NR gate uses SOURCE data coverage (validateData's coveragePct), not criteria coverage
+          // criteria coverage inflates because composite/derived criteria count as "available"
+          const sourceCoverage = quality.coveragePct / 100; // 0-1
+          const isNR = sourceCoverage < 0.40; // <40% source data → NR (not rated)
           let grade: Grade = isNR ? 'NR' : computeGradeAbsolute(rawScore, redFlags); // temporary; forced distribution applied later
           if (isNR) {
-            errors.push(`Very low data coverage (${Math.round(coverageRatio * 100)}%) — grade NR`);
-          } else if (coverageRatio < 0.75) {
-            errors.push(`Partial data (${Math.round(coverageRatio * 100)}%) — confidence penalty applied`);
+            errors.push(`Low source data coverage (${quality.coveragePct}%) — grade NR`);
+          } else if (sourceCoverage < 0.75) {
+            errors.push(`Partial data (${quality.coveragePct}%) — confidence penalty applied`);
           }
 
           const mcap        = (screener.marketCapCr && screener.marketCapCr > 0) ? screener.marketCapCr
