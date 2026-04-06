@@ -1714,10 +1714,14 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                   // >500Cr verified → uncapped
                 }
               }
-              // RULE 4: No impact % on ECONOMIC → keep signal but note low materiality
-              // (Relaxed: don't demote to MONITOR just because impact% is missing)
+              // RULE 4: No impact % on ECONOMIC — mild cap for non-tracked only
+              // Tracked stocks keep full materiality even without impactPct (institutional approach)
               if ((s.impactPct || 0) === 0 && s.signalClass === 'ECONOMIC' && s.signalCategory !== 'REJECTED') {
-                s.materialityScore = Math.min(s.materialityScore, 65); // soft cap only
+                const isTrackedR4 = s.isPortfolio || s.isWatchlist;
+                if (!isTrackedR4) {
+                  s.materialityScore = Math.min(s.materialityScore, 70); // soft cap only
+                }
+                // Tracked: no cap — missing impactPct is data limitation, not signal weakness
               }
 
               // Verified signal recovery (strict: non-inferred + high confidence)
@@ -1731,11 +1735,13 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 }
               }
 
-              // Portfolio critical filter
+              // Portfolio critical filter — institutional: alert on any significant signal at portfolio companies
               if (s.isPortfolio) {
                 s.portfolioCritical = (
-                  confSc >= 70 && !isInferredSignal &&
-                  (Math.abs(s.impactPct || 0) >= 3 || ['Guidance', 'Earnings', 'CEO Change', 'CFO Change', 'MD Change'].includes(s.eventType))
+                  (confSc >= 55 && s.materialityScore >= 50) ||
+                  (confSc >= 70 && !isInferredSignal) ||
+                  (Math.abs(s.impactPct || 0) >= 3) ||
+                  ['Guidance', 'Earnings', 'CEO Change', 'CFO Change', 'MD Change', 'Order Win', 'Contract', 'M&A'].includes(s.eventType)
                 );
               } else {
                 s.portfolioCritical = false;
@@ -1785,18 +1791,18 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               }
 
               // ── NARRATIVE QUALITY GATE ──
-              // If surfaced signal has empty or too-short narrative, demote to MONITOR
+              // Only demote if narrative is truly empty — don't block valid signals
               if (s.signalTierV7 === 'NOTABLE' || s.signalTierV7 === 'ACTIONABLE') {
                 const narrative = (s.whyItMatters || '').trim();
-                if (narrative.length < 20 || narrative === 'Monitor for strategic impact' || narrative.includes('[UNVERIFIED')) {
+                if (narrative.length < 10) {
                   s.signalTierV7 = 'MONITOR';
                   if (s.signalCategory === 'ACTIONABLE') s.signalCategory = 'MONITOR';
                 }
               }
 
-              // Governance scoring penalty (mild — keep visible)
-              if (s.signalClass === 'GOVERNANCE') {
-                s.monitorScore = Math.round((s.monitorScore || 0) * 0.8);
+              // Governance scoring penalty — skip for tracked stocks (institutions care about board changes at their holdings)
+              if (s.signalClass === 'GOVERNANCE' && !isTrackedHere) {
+                s.monitorScore = Math.round((s.monitorScore || 0) * 0.85);
                 s.monitorTier = s.monitorScore >= 60 ? 'HIGH' : s.monitorScore >= 40 ? 'MED' : 'LOW';
               }
 
@@ -1818,23 +1824,21 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               }
 
               // ── TIER 3 EVENT ENFORCEMENT ──
-              // Use eventTaxonomyTier from compute if available, else classify here
-              const T3_EVENTS_GET = new Set(['Corporate', 'Compliance', 'Regulatory', 'Filing Update', 'Routine Disclosure', 'Mgmt Change', 'Board Appointment', 'Board Meeting']);
+              // Routine filings and low-value governance get capped — BUT tracked companies get a pass
+              // Institutions monitor board changes and governance at their holdings
+              const T3_EVENTS_GET = new Set(['Compliance', 'Filing Update', 'Routine Disclosure']);
               const T3_HEADLINE_TERMS = ['company secretary', 'compliance officer', 'disclosure', 'intimation', 'routine', 'annual return', 'agm', 'egm'];
-              const isT3Event = s.eventTaxonomyTier === 'TIER_3' || T3_EVENTS_GET.has(s.eventType) ||
+              const isRealT3 = T3_EVENTS_GET.has(s.eventType) ||
                 T3_HEADLINE_TERMS.some(t => (s.headline || '').toLowerCase().includes(t));
-              if (isT3Event) {
-                // Tier 3 events can NEVER be ACTIONABLE, and need corroboration to be NOTABLE
+              if (isRealT3 && !isTrackedHere) {
+                // True routine events at non-tracked companies → cap at MONITOR
                 if (s.signalTierV7 === 'ACTIONABLE' || s.signalCategory === 'ACTIONABLE') {
                   s.signalTierV7 = 'MONITOR';
                   s.signalCategory = 'MONITOR';
                   s.monitorTier = 'LOW';
                 }
-                if (s.signalTierV7 === 'NOTABLE') {
-                  const hasCorroboration = (s.impactPct && Math.abs(s.impactPct) > 2) || (s.materialityScore >= 70);
-                  if (!hasCorroboration) {
-                    s.signalTierV7 = 'MONITOR';
-                  }
+                if (s.signalTierV7 === 'NOTABLE' && s.materialityScore < 70) {
+                  s.signalTierV7 = 'MONITOR';
                 }
               }
 
@@ -1995,24 +1999,36 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
               notableSignals.unshift(...surfaceableActionable.splice(MAX_ACTIONABLE));
             }
 
-            // ── MINIMUM OUTPUT GUARANTEES (anti-empty system) ──
-            // ACTIONABLE guarantee: if 0 actionable but notable has strong tracked signals, promote top 2
-            if (surfaceableActionable.length === 0 && notableSignals.length > 0) {
-              const actionableEligible = notableSignals.filter((s: any) => {
+            // ── MINIMUM OUTPUT GUARANTEES (institutional-grade) ──
+            // ACTIONABLE guarantee: if < 3 actionable, promote top signals by v7RankScore
+            // An institutional dashboard should always show the top 3-5 signals requiring attention
+            if (surfaceableActionable.length < 3) {
+              const needed = 3 - surfaceableActionable.length;
+              // Pool: notable + top monitor signals, sorted by v7RankScore
+              const promotionPool = [...notableSignals, ...regularMonitor]
+                .sort((a: any, b: any) => (b.v7RankScore || 0) - (a.v7RankScore || 0));
+              // Prefer tracked stocks, then highest rank
+              const trackedFirst = [
+                ...promotionPool.filter((s: any) => s.isPortfolio || s.isWatchlist),
+                ...promotionPool.filter((s: any) => !s.isPortfolio && !s.isWatchlist),
+              ];
+              let promoted = 0;
+              for (const s of trackedFirst) {
+                if (promoted >= needed) break;
                 const conf = s.monitorScore || s.confidenceScore || s.dataConfidenceScore || 0;
                 const mat = s.materialityScore || 0;
-                const isTracked = s.isPortfolio || s.isWatchlist;
-                return isTracked && conf >= 50 && mat >= 45;
-              });
-              const toPromote = Math.min(2, actionableEligible.length);
-              for (let i = 0; i < toPromote; i++) {
-                const promoted = actionableEligible[i];
-                const idx = notableSignals.indexOf(promoted);
-                if (idx >= 0) notableSignals.splice(idx, 1);
-                promoted.signalTierV7 = 'ACTIONABLE';
-                promoted.signalCategory = 'ACTIONABLE';
-                promoted._promotedToActionable = true;
-                surfaceableActionable.push(promoted);
+                // Minimum bar: conf >= 40 AND mat >= 35 (institutional floor — not garbage)
+                if (conf < 40 || mat < 35) continue;
+                // Remove from origin list
+                const nIdx = notableSignals.indexOf(s);
+                if (nIdx >= 0) notableSignals.splice(nIdx, 1);
+                const mIdx = regularMonitor.indexOf(s);
+                if (mIdx >= 0) regularMonitor.splice(mIdx, 1);
+                s.signalTierV7 = 'ACTIONABLE';
+                s.signalCategory = 'ACTIONABLE';
+                s._promotedToActionable = true;
+                surfaceableActionable.push(s);
+                promoted++;
               }
             }
 
@@ -2028,16 +2044,20 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 regularMonitor.push(promoted);
               }
             }
-            // If notable is empty but there are signals at all, promote top monitor to notable
-            // NON-NEGOTIABLE: inferred signals with conf < 60 cannot be promoted to NOTABLE
-            if (notableSignals.length === 0 && regularMonitor.length > 0) {
-              const eligibleForNotable = regularMonitor.filter((s: any) => {
-                const isInf = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
-                const confVal = s.monitorScore || s.dataConfidenceScore || s.confidenceScore || 0;
-                return !(isInf && confVal < 45);
-              });
-              const promotee = eligibleForNotable.length > 0 ? eligibleForNotable[0] : regularMonitor[0];
-              if (promotee) {
+            // Notable guarantee: always show at least 3 notable signals (institutional feed depth)
+            if (notableSignals.length < 3 && regularMonitor.length > 0) {
+              const notableNeeded = 3 - notableSignals.length;
+              const eligibleForNotable = regularMonitor
+                .filter((s: any) => {
+                  const isInf = s.confidenceType === 'INFERRED' || s.confidenceType === 'HEURISTIC' || s.inferenceUsed;
+                  const confVal = s.monitorScore || s.dataConfidenceScore || s.confidenceScore || 0;
+                  return !(isInf && confVal < 40);
+                })
+                .sort((a: any, b: any) => (b.v7RankScore || 0) - (a.v7RankScore || 0));
+              const toPromote = Math.min(notableNeeded, eligibleForNotable.length || 1);
+              const pool = eligibleForNotable.length > 0 ? eligibleForNotable : regularMonitor;
+              for (let ni = 0; ni < toPromote && ni < pool.length; ni++) {
+                const promotee = pool[ni];
                 const idx = regularMonitor.indexOf(promotee);
                 if (idx >= 0) regularMonitor.splice(idx, 1);
                 promotee.signalTierV7 = 'NOTABLE';
@@ -2070,7 +2090,18 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
                 else if (vs.action === 'WATCH') wCount++;
                 else if (vs.action === 'BUY' || vs.action === 'ADD') bCount++;
                 if (vs.action === 'TRIM' || vs.action === 'EXIT') tCount++;
-                if (vs.impactLevel === 'HIGH') hiCount++;
+                // Institutional High Impact: impactPct>=3% OR materialityScore>=70 OR ACTIONABLE tier
+                // OR tracked stock with materiality>=60 OR large deal value >=500Cr
+                const isHighImpact = vs.impactLevel === 'HIGH'
+                  || (vs.materialityScore >= 70)
+                  || vs.signalTierV7 === 'ACTIONABLE'
+                  || ((vs.isPortfolio || vs.isWatchlist) && vs.materialityScore >= 60)
+                  || (Math.abs(vs.impactPct || 0) >= 3)
+                  || (Math.abs(vs.valueCr || 0) >= 500);
+                if (isHighImpact) {
+                  hiCount++;
+                  vs.impactLevel = 'HIGH'; // upgrade for UI display
+                }
                 if (vs.isPortfolio && vs.portfolioCritical) pAlerts++;
                 if (vs.isNegative) negCount++;
                 if (vs.sentiment === 'Bullish') bullish++;
