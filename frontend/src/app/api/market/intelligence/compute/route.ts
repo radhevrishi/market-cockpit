@@ -2329,9 +2329,8 @@ function validateSignal(signal: IntelSignal): {
     signal.dataSource === 'nse' || signal.dataSource === 'NSE' ||
     signal.source === 'deal'
   );
-  if (!sourceExists) {
-    return { disposition: 'REJECTED', rejectReason: 'source_not_verified', isInferred: true, isMaterial: false, monitorScore: 0 };
-  }
+  // !sourceExists → degrade to MONITOR, NOT hard reject
+  // This prevents over-filtering when NSE signals lack explicit ACTUAL/VERIFIED tags
 
   // Check 2: No template pattern (only hard-reject on actual template pattern string)
   // heuristicSuppressed/identicalPctFlag degrade to MONITOR, not hard reject
@@ -2383,11 +2382,9 @@ function validateSignal(signal: IntelSignal): {
 
   const isMaterial = hasExplicitGuidance || hasMaterialOrder || hasMaterialDeal || hasQuantifiedImpact;
 
-  // If value is inferred AND not material AND source not verified → REJECTED
+  // If value is inferred AND not material AND source not verified → MONITOR (degraded)
+  // Previously was REJECTED, but that over-filters; degrade to low-confidence MONITOR instead
   // Source-verified inferred signals become MONITOR with sanitized values
-  if (isInferred && !isMaterial && !sourceExists) {
-    return { disposition: 'REJECTED', rejectReason: 'inferred_non_material', isInferred, isMaterial: false, monitorScore: 0 };
-  }
 
   // ── MONITOR SCORE (0-100) ──
   // Source credibility (0-30)
@@ -3137,11 +3134,17 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     if (descSnippet.length > 20) headline += `. ${descSnippet}`;
 
     const dateStr = (item.date || getTodayDate()).slice(0, 10);
-    const crossKey = `${symbol}_${eventType}_${Math.round(valueCr)}_${dateStr}`;
+    // 3-day dedup bucket: floor(daysSinceEpoch / 3) groups nearby dates
+    let dateBucket = dateStr;
+    try {
+      const ms = new Date(dateStr).getTime();
+      dateBucket = String(Math.floor(ms / (86400000 * 3)));
+    } catch { /* keep dateStr */ }
+    const crossKey = `${symbol}_${eventType}_${Math.round(valueCr)}_${dateBucket}`;
     if (crossSourceSeen.has(crossKey)) continue;
     crossSourceSeen.add(crossKey);
 
-    const dedupKey = `${symbol}:${eventType}:${dateStr}`;
+    const dedupKey = `${symbol}:${eventType}:${dateBucket}`;
     const existing = dedupMap.get(dedupKey);
 
     const itemSource = (item as any)._source;
@@ -4529,10 +4532,28 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       s.portfolioCritical = false;
     }
 
-    // RULE 3: Economic signals (CAPEX/M&A/ORDER) need verification
+    // RULE 3: CAPEX/M&A/ORDER — realistic scoring by value tier
     if (['Capex/Expansion', 'M&A', 'Order Win', 'Contract'].includes(s.eventType)) {
+      const valCr = Math.abs(s.valueCr || 0);
       if (!isVerifiedSource) {
-        s.materialityScore = Math.min(s.materialityScore || 0, 55);
+        // Unverified: tier by value — <₹200Cr→LOW(30-45), ₹200-500Cr→MEDIUM(45-65), >₹500Cr→HIGH(65-80)
+        if (valCr < 200) {
+          s.materialityScore = Math.min(s.materialityScore || 0, 45);
+          s.monitorTier = 'LOW';
+        } else if (valCr < 500) {
+          s.materialityScore = Math.min(s.materialityScore || 0, 65);
+          s.monitorTier = 'MED';
+        } else {
+          s.materialityScore = Math.min(s.materialityScore || 0, 80);
+          s.monitorTier = 'HIGH';
+        }
+      } else {
+        // Verified but still tier-cap to avoid inflation
+        if (valCr < 100) {
+          s.materialityScore = Math.min(s.materialityScore || 0, 60);
+        } else if (valCr < 500) {
+          s.materialityScore = Math.min(s.materialityScore || 0, 80);
+        }
       }
     }
 
@@ -4922,7 +4943,18 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   const duration = Date.now() - startTime;
   console.log(`[Compute] FINAL: ${actionableSignals.length} actionable, ${notableSignals.length} notable, ${monitorSignals.length} monitor, ${rejectedCount} rejected (${rejectedPct.toFixed(0)}%) | themes:${thematicIdeas.length} in ${duration}ms | STATUS=${productionReady ? 'PRODUCTION_READY' : 'REFINEMENT_REQUIRED'}`);
 
-  return {
+  // ── SANITIZE ALL NUMBERS: NaN/Infinity → null ──
+  const sanitizeNum = (obj: any): any => {
+    if (obj === null || obj === undefined) return obj;
+    if (typeof obj === 'number') return isFinite(obj) ? obj : null;
+    if (Array.isArray(obj)) return obj.map(sanitizeNum);
+    if (typeof obj === 'object') {
+      for (const k of Object.keys(obj)) { obj[k] = sanitizeNum(obj[k]); }
+    }
+    return obj;
+  };
+
+  return sanitizeNum({
     top3,
     signals: actionableSignals.slice(0, MAX_ACTIONABLE),
     notable: notableSignals.slice(0, MAX_NOTABLE),
@@ -4934,7 +4966,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     noHighConfSignals,
     noActionableSignals,
     _debug: { ...debug, rejectedCount, rejectedPct: Math.round(rejectedPct), productionReady, thematicCount: thematicIdeas.length, status: productionReady ? 'PRODUCTION_READY' : 'REFINEMENT_REQUIRED' },
-  };
+  });
 }
 
 // ==================== LOCKED COMPUTE PIPELINE ====================
