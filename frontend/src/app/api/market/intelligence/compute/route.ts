@@ -2749,21 +2749,21 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   const toDate = getTodayDate();
   const allTracked = [...new Set([...watchlist, ...portfolio])];
 
-  // NSE + MC/Google run in parallel with aggressive 12s overall timeout for NSE
-  // NSE India blocks Vercel IPs, so we must not waste time waiting
+  // NSE + MC/Google run in parallel with 25s overall timeout for NSE
+  // NSE India can be slow — 25s allows enough time while staying within Vercel 55s limit
   const nsePromise = Promise.race([
     Promise.all([
-      nseApiFetch(`/api/corporate-announcements?index=equities&from_date=${fromDate}&to_date=${toDate}`, 15000)
+      nseApiFetch(`/api/corporate-announcements?index=equities&from_date=${fromDate}&to_date=${toDate}`, 20000)
         .catch((e: any) => { debug.errors.push(`NSE announcements: ${(e as Error).message}`); return null; }),
-      nseApiFetch('/api/block-deal', 15000)
+      nseApiFetch('/api/block-deal', 20000)
         .catch((e: any) => { debug.errors.push(`NSE block deals: ${(e as Error).message}`); return null; }),
-      nseApiFetch('/api/bulk-deal', 15000)
+      nseApiFetch('/api/bulk-deal', 20000)
         .catch((e: any) => { debug.errors.push(`NSE bulk deals: ${(e as Error).message}`); return null; }),
     ]),
     new Promise<[null, null, null]>(res => setTimeout(() => {
-      debug.errors.push('NSE: overall 12s timeout — skipped');
+      debug.errors.push('NSE: overall 25s timeout — skipped');
       res([null, null, null]);
-    }, 12000)),
+    }, 25000)),
   ]);
 
   // Start MC/Google in parallel with NSE (don't wait for NSE to fail first)
@@ -4800,6 +4800,27 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     monitor: monitorSignals.length,
     rejected: rejectedCount,
   };
+
+  // ── SAFETY VALVE: if 100% rejected → promote best signals to MONITOR ──
+  // On quiet market days (weekends, holidays), all signals may be governance.
+  // Better to show dimmed monitor signals than an empty feed.
+  if (actionableSignals.length === 0 && notableSignals.length === 0 && monitorSignals.length === 0 && filtered.length > 0) {
+    console.log(`[Compute] Safety valve: 100% signals rejected (${rejectedCount}/${filtered.length}). Promoting top signals to MONITOR.`);
+    // Sort rejected signals by v7RankScore and promote top 5 to MONITOR
+    const rescuable = filtered
+      .filter(s => s.visibility === 'HIDDEN' || s.signalCategory === 'REJECTED')
+      .sort((a, b) => (b.v7RankScore || 0) - (a.v7RankScore || 0))
+      .slice(0, 5);
+    for (const s of rescuable) {
+      s.visibility = 'DIMMED';
+      s.signalCategory = 'MONITOR';
+      s.signalTierV7 = 'MONITOR';
+      (s as any)._rescued = true;
+      monitorSignals.push(s);
+      rejectedCount--;
+    }
+    (debug as any).rescuedCount = rescuable.length;
+  }
 
   // Sort ALL by v7RankScore (composite ranking)
   actionableSignals.sort((a, b) => (b.v7RankScore || 0) - (a.v7RankScore || 0));
