@@ -87,372 +87,6 @@ function setWatchlist(chatId: string, stocks: string[]): void {
   };
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// CATALYST ENGINE — Institutional-grade, evidence-backed stock reasons
-// ══════════════════════════════════════════════════════════════════════════
-
-// Allowed catalyst patterns — ONLY these may appear as labels
-const CATALYST_PATTERNS: [RegExp, string, string][] = [
-  [/order\s*win|order\s*bag|new\s*order|bags?\s*order|order\s*worth/i, 'Order Win', 'Filing'],
-  [/block\s*deal/i, 'Block Deal', 'Deal'],
-  [/bulk\s*deal/i, 'Bulk Deal', 'Deal'],
-  [/result.*beat|profit\s*(up|surge|jump|rise|grow)|revenue\s*(up|surge|jump|rise|grow)|net\s*profit\s*(up|surge)|PAT\s*(up|surge|rise)|strong\s*result|earning.*beat|Q[1-4].*beat/i, 'Results Beat', 'Filing'],
-  [/result.*miss|profit\s*(fall|drop|decline|slip)|revenue\s*(fall|drop|decline)|weak\s*result|earning.*miss|PAT\s*(fall|drop|decline)/i, 'Results Miss', 'Filing'],
-  [/promoter.*buy|promoter.*acqui|insider\s*buy/i, 'Promoter Buy', 'Filing'],
-  [/promoter.*sell|insider\s*sell|promoter.*pledge/i, 'Promoter Sell', 'Filing'],
-  [/stake\s*(sale|sell|dilut|offload)|OFS/i, 'Stake Sale', 'Deal'],
-  [/stake\s*(buy|acquire|hike|increase)/i, 'Stake Hike', 'Deal'],
-  [/upgrade|target\s*raise|outperform|overweight|price\s*target.*rais/i, 'Upgrade', 'News'],
-  [/downgrade|underperform|underweight|target\s*cut|price\s*target.*cut/i, 'Downgrade', 'News'],
-  [/acquisition|acquire|takeover|buyout|merger|amalgam/i, 'Acquisition', 'News'],
-  [/contract\s*(win|award|bag|secure|worth)|wins?\s*contract/i, 'Contract Award', 'Filing'],
-  [/regulatory.*action|SEBI.*action|penalty|fine.*impos|ban\s/i, 'Regulatory Action', 'Filing'],
-  [/margin\s*(pressure|squeeze|compress|contract)/i, 'Margin Pressure', 'Filing'],
-  [/export\s*(order|deal|contract)|international.*order/i, 'Export Order', 'Filing'],
-  [/capex|new\s*plant|capacity\s*expan|greenfield|brownfield/i, 'Capex Plan', 'Filing'],
-  [/nuclear|reactor|atomic\s*energy/i, 'Nuclear Order', 'News'],
-  [/defence\s*(order|contract)|military\s*(order|contract)|army.*order|navy.*order|missile/i, 'Defence Order', 'Filing'],
-  [/buyback|buy\s*back/i, 'Buyback', 'Filing'],
-  [/dividend/i, 'Dividend', 'Filing'],
-  [/bonus\s*issue|stock\s*split/i, 'Bonus/Split', 'Filing'],
-  [/demerger|demerge|spin-?off/i, 'Demerger', 'Filing'],
-  [/QIP|preferential\s*allot|right\s*issue|fund\s*rais/i, 'Fund Raise', 'Filing'],
-  [/FII.*buy|FPI.*buy|DII.*buy|institutional.*buy/i, 'FII/DII Buy', 'Deal'],
-  [/FII.*sell|FPI.*sell|institutional.*sell/i, 'FII Sell', 'Deal'],
-  [/rating.*upgrade|CRISIL.*upgrade|ICRA.*upgrade|CARE.*upgrade/i, 'Rating Upgrade', 'News'],
-  [/rating.*downgrade|CRISIL.*downgrade|ICRA.*downgrade/i, 'Rating Downgrade', 'News'],
-  [/partnership|tie-?up|JV\b|joint\s*venture|MOU\b|pact\b|collaborat/i, 'New Partnership', 'Filing'],
-  [/new\s*product\s*launch|product\s*launch|new\s*launch/i, 'Product Launch', 'News'],
-  [/short\s*cover|short\s*squeeze/i, 'Short Cover', 'Deal'],
-  [/debt\s*reduc|debt\s*free|repay/i, 'Debt Reduction', 'Filing'],
-  [/management\s*change|CEO\s*appoint|MD\s*appoint|new\s*CEO/i, 'Mgmt Change', 'Filing'],
-];
-
-const EVENT_TYPE_MAP: Record<string, string> = {
-  'ORDER_WIN': 'Order Win', 'BLOCK_DEAL': 'Block Deal', 'BULK_DEAL': 'Bulk Deal',
-  'RESULTS_BEAT': 'Results Beat', 'RESULTS_MISS': 'Results Miss',
-  'PROMOTER_BUY': 'Promoter Buy', 'PROMOTER_SELL': 'Promoter Sell',
-  'STAKE_SALE': 'Stake Sale', 'STAKE_BUY': 'Stake Hike',
-  'UPGRADE': 'Upgrade', 'DOWNGRADE': 'Downgrade',
-  'ACQUISITION': 'Acquisition', 'CONTRACT_WIN': 'Contract Award',
-  'REGULATORY': 'Regulatory Action', 'CAPEX': 'Capex Plan',
-  'DEFENCE_ORDER': 'Defence Order', 'NUCLEAR': 'Nuclear Order',
-  'BUYBACK': 'Buyback', 'DIVIDEND': 'Dividend', 'BONUS_SPLIT': 'Bonus/Split',
-  'DEMERGER': 'Demerger', 'FUND_RAISE': 'Fund Raise', 'QIP': 'Fund Raise',
-  'FII_BUY': 'FII/DII Buy', 'FII_SELL': 'FII Sell',
-  'PARTNERSHIP': 'New Partnership', 'PRODUCT_LAUNCH': 'Product Launch',
-  'DEBT_REDUCTION': 'Debt Reduction', 'MGMT_CHANGE': 'Mgmt Change',
-};
-
-function matchCatalyst(text: string): { label: string; sourceType: string } | null {
-  if (!text) return null;
-  for (const [regex, label, srcType] of CATALYST_PATTERNS) {
-    if (regex.test(text)) return { label, sourceType: srcType };
-  }
-  return null;
-}
-
-function extractHeadlineSummary(headline: string, symbol: string): string | null {
-  const h = headline.toLowerCase();
-  const sym = symbol.toLowerCase();
-  // Must mention the symbol or a close variant
-  if (!h.includes(sym) && !h.includes(sym.replace(/tech$|ener$|infra$/, ''))) return null;
-
-  // Strong action words indicate a real catalyst in the headline
-  const actionPatterns: [RegExp, string][] = [
-    [/surge|soar|rocket|skyrocket|zoom/i, 'Shares Surge'],
-    [/crash|tank|plunge|tumble|sink/i, 'Shares Crash'],
-    [/jump|rally|gain|climb|rise/i, 'Shares Rally'],
-    [/fall|drop|slip|decline|slide/i, 'Shares Fall'],
-    [/hit.*high|52.*week.*high|all.*time.*high|new.*high/i, '52W High'],
-    [/hit.*low|52.*week.*low|new.*low/i, '52W Low'],
-    [/target.*price|price.*target|brokerage/i, 'Broker Target'],
-    [/circuit|upper.*circuit/i, 'Upper Circuit'],
-    [/lower.*circuit/i, 'Lower Circuit'],
-    [/volume.*spike|heavy.*volume|volume.*surge/i, 'Volume Spike'],
-  ];
-
-  for (const [regex, label] of actionPatterns) {
-    if (regex.test(headline)) return label;
-  }
-  return null;
-}
-
-function getHoursAgo(dateStr: string): number {
-  try {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return 999;
-    return Math.max(0, Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60)));
-  } catch { return 999; }
-}
-
-function formatTimeAgo(hours: number): string {
-  if (hours <= 0 || hours >= 999) return '';
-  if (hours < 1) return '<1h';
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  return days === 1 ? '1d' : `${days}d`;
-}
-
-const NO_TRIGGER: StockCatalyst = { label: 'No clear trigger', sourceType: '', confidence: 'LOW', timeAgo: '' };
-
-async function fetchStockCatalysts(stocks: Stock[]): Promise<Map<string, StockCatalyst>> {
-  const catalysts = new Map<string, StockCatalyst>();
-  const tickers = stocks.map(s => s.ticker);
-  const tickerSet = new Set(tickers.map(t => t.toUpperCase()));
-
-  // ── Phase 1: Intelligence signals from Redis (highest priority, pre-validated) ──
-  try {
-    const intel = await kvGet<any>('intelligence:signals');
-    if (intel) {
-      const allSignals = [...(intel.top3 || []), ...(intel.signals || []), ...(intel.notable || [])];
-      for (const sig of allSignals) {
-        const sym = (sig.symbol || '').toUpperCase();
-        if (!tickerSet.has(sym) || catalysts.has(sym)) continue;
-
-        const headline = sig.headline || '';
-        const whyItMatters = sig.whyItMatters || '';
-        const eventType = (sig.eventType || '').toUpperCase();
-
-        // Try eventType mapping first
-        let matched = eventType && EVENT_TYPE_MAP[eventType]
-          ? { label: EVENT_TYPE_MAP[eventType], sourceType: 'Intel' }
-          : null;
-
-        // Then try headline/whyItMatters patterns
-        if (!matched) {
-          matched = matchCatalyst(headline) || matchCatalyst(whyItMatters);
-          if (matched) matched.sourceType = 'Intel';
-        }
-
-        // If we have ANY intel signal for this ticker with a non-empty headline, USE IT
-        if (matched && (headline || whyItMatters || eventType)) {
-          const hoursAgo = getHoursAgo(sig.date || sig.timestamp || '');
-          // Extended freshness: 168h (7 days) for intel signals
-          if (hoursAgo > 168) continue;
-
-          catalysts.set(sym, {
-            label: matched.label,
-            sourceType: 'Intel',
-            confidence: 'MEDIUM',
-            timeAgo: formatTimeAgo(hoursAgo),
-          });
-        }
-      }
-    }
-  } catch (e) {
-    console.warn('[CATALYST] Intel signals fetch failed:', e);
-  }
-
-  // ── Phase 2: NSE corporate announcements (filings — highest reliability) ──
-  const needPhase2 = tickers.filter(t => !catalysts.has(t.toUpperCase())).slice(0, 12);
-  if (needPhase2.length > 0) {
-    try {
-      const results = await Promise.allSettled(
-        needPhase2.map(async (symbol) => {
-          const data = await nseApiFetch(`/api/corporates-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`, 30000);
-          const items = (Array.isArray(data) ? data : data?.data || []).slice(0, 3);
-          for (const item of items) {
-            const desc = item.desc || item.subject || '';
-            const matched = matchCatalyst(desc);
-            if (matched) {
-              const hoursAgo = getHoursAgo(item.an_dt || item.date || '');
-              if (hoursAgo > 72) continue;
-              return {
-                symbol: symbol.toUpperCase(),
-                catalyst: {
-                  label: matched.label,
-                  sourceType: 'Filing',
-                  confidence: (hoursAgo < 24 ? 'HIGH' : 'MEDIUM') as 'HIGH' | 'MEDIUM',
-                  timeAgo: formatTimeAgo(hoursAgo),
-                } as StockCatalyst,
-              };
-            }
-
-            // If no pattern match but recent filing, show the subject
-            const hoursAgo = getHoursAgo(item.an_dt || item.date || '');
-            if (hoursAgo < 48 && desc) {
-              return {
-                symbol: symbol.toUpperCase(),
-                catalyst: {
-                  label: truncate(desc, 14),
-                  sourceType: 'Filing',
-                  confidence: 'MEDIUM' as const,
-                  timeAgo: formatTimeAgo(hoursAgo),
-                } as StockCatalyst,
-              };
-            }
-          }
-          return null;
-        })
-      );
-      for (const r of results) {
-        if (r.status === 'fulfilled' && r.value) {
-          catalysts.set(r.value.symbol, r.value.catalyst);
-        }
-      }
-    } catch (e) {
-      console.warn('[CATALYST] NSE filings fetch failed:', e);
-    }
-  }
-
-  // ── Phase 3: Google News RSS for stocks still without catalysts ──
-  const needPhase3 = tickers.filter(t => !catalysts.has(t.toUpperCase())).slice(0, 10);
-  if (needPhase3.length > 0) {
-    try {
-      const rssResults = await Promise.allSettled(
-        needPhase3.map(async (symbol) => {
-          const query = encodeURIComponent(`${symbol} share price`);
-          const url = `https://news.google.com/rss/search?q=${query}&hl=en-IN&gl=IN&ceid=IN:en`;
-          const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
-          if (!r.ok) return null;
-          const xml = await r.text();
-          // Check first 10 headlines
-          const itemRegex = /<item[^>]*>[\s\S]*?<title[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>[\s\S]*?<pubDate>([\s\S]*?)<\/pubDate>/g;
-          let match;
-          let count = 0;
-          while ((match = itemRegex.exec(xml)) !== null && count < 10) {
-            count++;
-            const headline = (match[1] || '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
-            const pubDate = (match[2] || '').trim();
-
-            // First try explicit pattern match
-            const matched = matchCatalyst(headline);
-            if (matched) {
-              const hoursAgo = getHoursAgo(pubDate);
-              if (hoursAgo > 72) continue;
-              return {
-                symbol: symbol.toUpperCase(),
-                catalyst: {
-                  label: matched.label,
-                  sourceType: 'News',
-                  confidence: 'MEDIUM' as const,
-                  timeAgo: formatTimeAgo(hoursAgo),
-                } as StockCatalyst,
-              };
-            }
-
-            // Try headline summary for news about the stock
-            const summary = extractHeadlineSummary(headline, symbol);
-            if (summary) {
-              const hoursAgo = getHoursAgo(pubDate);
-              if (hoursAgo > 72) continue;
-              return {
-                symbol: symbol.toUpperCase(),
-                catalyst: {
-                  label: summary,
-                  sourceType: 'News',
-                  confidence: 'MEDIUM' as const,
-                  timeAgo: formatTimeAgo(hoursAgo),
-                } as StockCatalyst,
-              };
-            }
-          }
-          return null;
-        })
-      );
-      for (const r of rssResults) {
-        if (r.status === 'fulfilled' && r.value) {
-          catalysts.set(r.value.symbol, r.value.catalyst);
-        }
-      }
-    } catch (e) {
-      console.warn('[CATALYST] Google News fetch failed:', e);
-    }
-  }
-
-  // ── Phase 4: Company name search for big movers still without catalysts ──
-  const needPhase4 = stocks
-    .filter(s => !catalysts.has(s.ticker.toUpperCase()) && Math.abs(s.changePercent) > 3)
-    .slice(0, 5);
-  if (needPhase4.length > 0) {
-    try {
-      const phase4Results = await Promise.allSettled(
-        needPhase4.map(async (stock) => {
-          const query = encodeURIComponent(`${stock.company} stock`);
-          const url = `https://news.google.com/rss/search?q=${query}&hl=en-IN&gl=IN&ceid=IN:en`;
-          const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
-          if (!r.ok) return null;
-          const xml = await r.text();
-          // Check first 10 headlines
-          const itemRegex = /<item[^>]*>[\s\S]*?<title[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>[\s\S]*?<pubDate>([\s\S]*?)<\/pubDate>/g;
-          let match;
-          let count = 0;
-          while ((match = itemRegex.exec(xml)) !== null && count < 10) {
-            count++;
-            const headline = (match[1] || '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
-            const pubDate = (match[2] || '').trim();
-
-            const matched = matchCatalyst(headline);
-            if (matched) {
-              const hoursAgo = getHoursAgo(pubDate);
-              if (hoursAgo > 72) continue;
-              return {
-                symbol: stock.ticker.toUpperCase(),
-                catalyst: {
-                  label: matched.label,
-                  sourceType: 'News',
-                  confidence: 'MEDIUM' as const,
-                  timeAgo: formatTimeAgo(hoursAgo),
-                } as StockCatalyst,
-              };
-            }
-
-            const summary = extractHeadlineSummary(headline, stock.ticker);
-            if (summary) {
-              const hoursAgo = getHoursAgo(pubDate);
-              if (hoursAgo > 72) continue;
-              return {
-                symbol: stock.ticker.toUpperCase(),
-                catalyst: {
-                  label: summary,
-                  sourceType: 'News',
-                  confidence: 'MEDIUM' as const,
-                  timeAgo: formatTimeAgo(hoursAgo),
-                } as StockCatalyst,
-              };
-            }
-          }
-          return null;
-        })
-      );
-      for (const r of phase4Results) {
-        if (r.status === 'fulfilled' && r.value) {
-          catalysts.set(r.value.symbol, r.value.catalyst);
-        }
-      }
-    } catch (e) {
-      console.warn('[CATALYST] Company news fetch failed:', e);
-    }
-  }
-
-  // ── Fill remaining with "No clear trigger" ──
-  for (const t of tickers) {
-    if (!catalysts.has(t.toUpperCase())) {
-      catalysts.set(t.toUpperCase(), { ...NO_TRIGGER });
-    }
-  }
-
-  return catalysts;
-}
-
-// ── Watchlist Drivers — top thematic narratives ──
-function getWatchlistDrivers(stocks: Stock[], catalysts: Map<string, StockCatalyst>): string[] {
-  const labelGroups = new Map<string, string[]>();
-  for (const s of stocks) {
-    const cat = catalysts.get(s.ticker.toUpperCase());
-    if (cat && cat.label !== 'No clear trigger' && cat.confidence !== 'LOW') {
-      const group = labelGroups.get(cat.label) || [];
-      group.push(s.ticker);
-      labelGroups.set(cat.label, group);
-    }
-  }
-  return [...labelGroups.entries()]
-    .sort((a, b) => b[1].length - a[1].length)
-    .slice(0, 3)
-    .map(([label, syms]) => `${label} -> ${syms.slice(0, 3).join(', ')}${syms.length > 3 ? ' +' + (syms.length - 3) : ''}`);
-}
-
 // NSE helpers removed — using @/lib/nse directly (shared cookies, caching, retry)
 
 // ── Fetch Watchlist Stocks (DIRECT NSE LIB — zero self-referencing calls) ──
@@ -670,10 +304,7 @@ function getISTTimestamp(): string {
 }
 
 // Generates MULTIPLE images (max 14 rows per panel per image)
-async function generateWatchlistImages(
-  stocks: Stock[],
-  catalysts: Map<string, StockCatalyst>,
-): Promise<ArrayBuffer[]> {
+async function generateWatchlistImages(stocks: Stock[]): Promise<ArrayBuffer[]> {
   const displayStocks = stocks.slice(0, 100);
   const timestamp = getISTTimestamp();
   const W = 1200;
@@ -688,7 +319,6 @@ async function generateWatchlistImages(
   const avgChange = displayStocks.length > 0
     ? Math.round(displayStocks.reduce((a, b) => a + b.changePercent, 0) / displayStocks.length * 100) / 100
     : 0;
-  const drivers = getWatchlistDrivers(displayStocks, catalysts);
 
   // Chunk into images
   const maxSide = Math.max(allWinners.length, allLosers.length);
@@ -705,24 +335,11 @@ async function generateWatchlistImages(
     return '#FF1744';
   };
 
-  const getConfColor = (c: string): string => {
-    if (c === 'HIGH') return '#00E676';
-    if (c === 'MEDIUM') return '#FFD740';
-    return '#78909C';
-  };
-
-  const getConfBg = (c: string): string => {
-    if (c === 'HIGH') return '#052E16';
-    if (c === 'MEDIUM') return '#2A2000';
-    return '#1A1A2E';
-  };
-
   for (let imgIdx = 0; imgIdx < numImages; imgIdx++) {
     const wStart = imgIdx * MAX_ROWS;
     const lStart = imgIdx * MAX_ROWS;
     const winners = allWinners.slice(wStart, wStart + MAX_ROWS);
     const losers = allLosers.slice(lStart, lStart + MAX_ROWS);
-    const isFirst = imgIdx === 0;
     const pageRows = Math.max(winners.length, losers.length);
     if (pageRows === 0) continue;
 
@@ -730,22 +347,35 @@ async function generateWatchlistImages(
     const ACCENT_H = 4;
     const HEADER_H = 74;
     const METRICS_H = 56;
-    const DRIVERS_H = isFirst && drivers.length > 0 ? 52 : 0;
     const COL_HEADER_H = 36;
     const ROW_H = 54;
     const FOOTER_H = 34;
     const COL_GAP = 4;
     const HALF_W = (W - COL_GAP) / 2;
 
-    const totalHeight = ACCENT_H + HEADER_H + METRICS_H + DRIVERS_H + COL_HEADER_H + (pageRows * ROW_H) + FOOTER_H;
+    const totalHeight = ACCENT_H + HEADER_H + METRICS_H + COL_HEADER_H + (pageRows * ROW_H) + FOOTER_H;
 
     // Row renderer
     const renderRow = (s: Stock, idx: number, globalIdx: number, side: string) => {
       const pctColor = getPctColor(s.changePercent);
       const rowBg = idx % 2 === 0 ? '#0C1322' : '#111B30';
       const sign = s.changePercent >= 0 ? '+' : '';
-      const cat = catalysts.get(s.ticker.toUpperCase()) || NO_TRIGGER;
       const isTopMover = globalIdx < 5;
+
+      // Calculate % from 52W HIGH
+      const pctFrom52 = s.weekHigh52 && s.weekHigh52 > 0
+        ? ((s.price / s.weekHigh52) - 1) * 100
+        : 0;
+      const from52Color = pctFrom52 >= 0 ? '#00E676' : '#FF1744';
+
+      // Calculate 52W Range Position (institutional 200 DMA proxy)
+      const rangePct = s.weekHigh52 && s.weekLow52 && s.weekHigh52 > s.weekLow52
+        ? ((s.price - s.weekLow52) / (s.weekHigh52 - s.weekLow52)) * 100
+        : 50;
+      let dotColor = '#334155';
+      if (rangePct < 25) dotColor = '#FF1744';
+      else if (rangePct < 50) dotColor = '#FF9100';
+      else if (rangePct >= 75) dotColor = '#00E676';
 
       return (
         <div key={`${side}-${idx}`} style={{
@@ -757,6 +387,12 @@ async function generateWatchlistImages(
           <div style={{ display: 'flex', width: '24px', color: '#475569', fontSize: '13px', fontWeight: 700, justifyContent: 'flex-end', marginRight: '5px' }}>
             {globalIdx + 1}
           </div>
+          {/* 200 DMA proxy warning dot */}
+          <div style={{
+            display: 'flex', width: '10px', height: '10px', borderRadius: '5px',
+            backgroundColor: dotColor,
+            marginRight: '4px',
+          }} />
           {/* SYMBOL */}
           <div style={{ display: 'flex', width: '105px', fontWeight: 900, color: '#F1F5F9', fontSize: isTopMover ? '18px' : '17px' }}>
             {truncate(s.ticker, 10)}
@@ -773,27 +409,14 @@ async function generateWatchlistImages(
           <div style={{ display: 'flex', width: '60px', justifyContent: 'flex-end', color: pctColor, fontSize: '14px', fontWeight: 600, marginLeft: '2px' }}>
             <span style={{ display: 'flex' }}>{sign}{s.change.toFixed(1)}</span>
           </div>
-          {/* WHY — largest column, 2 lines */}
-          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, marginLeft: '8px', justifyContent: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center' }}>
-              <span style={{ display: 'flex', fontSize: isTopMover ? '15px' : '14px', fontWeight: 700, color: cat.label === 'No clear trigger' ? '#64748B' : '#F1F5F9' }}>
-                {truncate(cat.label, 16)}
-              </span>
-              {cat.confidence !== 'LOW' && (
-                <span style={{
-                  display: 'flex', marginLeft: '4px', fontSize: '11px', fontWeight: 800,
-                  color: getConfColor(cat.confidence),
-                  backgroundColor: getConfBg(cat.confidence),
-                  paddingLeft: '3px', paddingRight: '3px', paddingTop: '1px', paddingBottom: '1px',
-                  borderRadius: '2px',
-                }}>
-                  {cat.confidence}
-                </span>
-              )}
-            </div>
-            {cat.sourceType && (
-              <span style={{ display: 'flex', fontSize: '12px', color: '#64748B', fontWeight: 600, marginTop: '1px' }}>
-                {cat.sourceType}{cat.timeAgo ? ` . ${cat.timeAgo} ago` : ''}
+          {/* 52W HIGH — replaces WHY */}
+          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, marginLeft: '8px', justifyContent: 'center', alignItems: 'flex-end' }}>
+            <span style={{ display: 'flex', fontSize: '14px', fontWeight: 700, color: '#CBD5E1' }}>
+              52W H: {s.weekHigh52 ? s.weekHigh52.toLocaleString('en-IN', { maximumFractionDigits: 0 }) : '--'}
+            </span>
+            {s.weekHigh52 && s.weekHigh52 > 0 && (
+              <span style={{ display: 'flex', fontSize: '12px', fontWeight: 700, color: from52Color, marginTop: '1px' }}>
+                {pctFrom52 >= 0 ? '+' : ''}{pctFrom52.toFixed(1)}%
               </span>
             )}
           </div>
@@ -859,23 +482,12 @@ async function generateWatchlistImages(
               {avgChange >= 0 ? '+' : ''}{avgChange.toFixed(2)}%
             </span>
           </span>
+          <span style={{ display: 'flex', marginLeft: '20px' }}>
+            <span style={{ display: 'flex', width: '8px', height: '8px', borderRadius: '4px', backgroundColor: '#FF1744', marginRight: '3px' }} />
+            <span style={{ display: 'flex', color: '#94A3B8', fontSize: '12px' }}>Below 200 DMA</span>
+          </span>
         </div>
 
-        {/* Drivers block — first image only */}
-        {isFirst && drivers.length > 0 && (
-          <div style={{
-            display: 'flex', alignItems: 'center', paddingLeft: '20px', paddingRight: '20px',
-            height: `${DRIVERS_H}px`, backgroundColor: '#0D1526',
-            borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1E293B',
-          }}>
-            <span style={{ display: 'flex', fontSize: '11px', fontWeight: 800, color: '#FFD740', marginRight: '8px', letterSpacing: '1px' }}>
-              DRIVERS
-            </span>
-            <span style={{ display: 'flex', fontSize: '11px', fontWeight: 600, color: '#94A3B8' }}>
-              {drivers.join('  |  ')}
-            </span>
-          </div>
-        )}
 
         {/* Two-column body */}
         <div style={{ display: 'flex', flex: 1 }}>
@@ -887,13 +499,14 @@ async function generateWatchlistImages(
               borderBottomWidth: '2px', borderBottomStyle: 'solid', borderBottomColor: '#00C853',
             }}>
               <div style={{ display: 'flex', width: '24px', marginRight: '5px' }} />
+              <div style={{ display: 'flex', width: '10px', marginRight: '4px' }} />
               <div style={{ display: 'flex', width: '105px', fontSize: '12px', fontWeight: 900, color: '#00E676', letterSpacing: '1px' }}>
                 WINNERS{contLabel} ({winnersN})
               </div>
               <div style={{ display: 'flex', width: '72px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#475569' }}>%CHG</div>
               <div style={{ display: 'flex', width: '80px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#475569', marginLeft: '4px' }}>PRICE</div>
               <div style={{ display: 'flex', width: '60px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#475569', marginLeft: '2px' }}>CHG</div>
-              <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#475569', marginLeft: '8px' }}>WHY</div>
+              <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', fontSize: '12px', fontWeight: 800, color: '#475569', marginLeft: '8px' }}>52W H</div>
             </div>
             {winners.map((s, i) => renderRow(s, i, wStart + i, 'w'))}
             {winners.length < pageRows && renderFillers(pageRows - winners.length, 'w')}
@@ -910,13 +523,14 @@ async function generateWatchlistImages(
               borderBottomWidth: '2px', borderBottomStyle: 'solid', borderBottomColor: '#D50000',
             }}>
               <div style={{ display: 'flex', width: '24px', marginRight: '5px' }} />
+              <div style={{ display: 'flex', width: '10px', marginRight: '4px' }} />
               <div style={{ display: 'flex', width: '105px', fontSize: '12px', fontWeight: 900, color: '#FF1744', letterSpacing: '1px' }}>
                 LOSERS{contLabel} ({losersN})
               </div>
               <div style={{ display: 'flex', width: '72px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#475569' }}>%CHG</div>
               <div style={{ display: 'flex', width: '80px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#475569', marginLeft: '4px' }}>PRICE</div>
               <div style={{ display: 'flex', width: '60px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#475569', marginLeft: '2px' }}>CHG</div>
-              <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#475569', marginLeft: '8px' }}>WHY</div>
+              <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', fontSize: '12px', fontWeight: 800, color: '#475569', marginLeft: '8px' }}>52W H</div>
             </div>
             {losers.map((s, i) => renderRow(s, i, lStart + i, 'l'))}
             {losers.length < pageRows && renderFillers(pageRows - losers.length, 'l')}
@@ -1204,8 +818,7 @@ export async function POST(request: Request) {
         await sendTelegramTo(chatId, 'No watchlist data available. Market may be closed or symbols not found.');
       } else {
         try {
-          const catalysts = await fetchStockCatalysts(stocks);
-          const imgs = await generateWatchlistImages(stocks, catalysts);
+          const imgs = await generateWatchlistImages(stocks);
           const gainers = stocks.filter(s => s.changePercent > 0).length;
           const losers = stocks.filter(s => s.changePercent < 0).length;
           await sendTelegramMediaGroup(imgs, `<b>${stocks.length} stocks</b> • Gainers: ${gainers} | Losers: ${losers} — <a href="https://market-cockpit.vercel.app">Dashboard</a>`, chatId);
@@ -1340,8 +953,7 @@ export async function GET(request: Request) {
   diagnostics.steps.push('sending_watchlist_image');
   let imageError: string | undefined;
   try {
-    const catalysts = await fetchStockCatalysts(stocks);
-    const imgs = await generateWatchlistImages(stocks, catalysts);
+    const imgs = await generateWatchlistImages(stocks);
     const gainers = stocks.filter(s => s.changePercent > 0).length;
     const losers = stocks.filter(s => s.changePercent < 0).length;
     const caption = `<b>Watchlist Pulse</b>\n${stocks.length} stocks • Gainers: ${gainers} | Losers: ${losers}\n<a href="https://market-cockpit.vercel.app">Dashboard</a>`;
