@@ -301,22 +301,19 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
   const W = 1200;
 
   // Dimensions — match Portfolio Pulse exactly
-  const ACCENT_H = 3;
-  const HEADER_H = 58;
-  const METRICS_H = 44;
-  const COL_HEADER_H = 32;
-  const ROW_H = 34;
-  const FOOTER_H = 28;
-  const COL_GAP = 8;
+  const ACCENT_H = 4;
+  const HEADER_H = 64;
+  const METRICS_H = 48;
+  const COL_HEADER_H = 34;
+  const ROW_H = 32;
+  const FOOTER_H = 30;
+  const COL_GAP = 6;
   const HALF_W = (W - COL_GAP) / 2;
 
   // Sort by change percent descending
   const sorted = [...displayStocks].sort((a, b) => b.changePercent - a.changePercent);
-
-  // Split: winners LEFT, losers RIGHT
   const winners = sorted.filter(s => s.changePercent >= 0);
   const losers = sorted.filter(s => s.changePercent < 0).reverse();
-
   const winnersN = winners.length;
   const losersN = losers.length;
   const avgChange = displayStocks.length > 0
@@ -326,58 +323,95 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
   const maxRows = Math.max(winners.length, losers.length);
   const totalHeight = ACCENT_H + HEADER_H + METRICS_H + COL_HEADER_H + (maxRows * ROW_H) + FOOTER_H;
 
-  // Color helper — no Unicode arrows, just +/- signs
+  // High-contrast color palette
   const getPctColor = (pct: number): string => {
-    if (pct >= 3) return '#22C55E';
-    if (pct >= 0.5) return '#4ADE80';
-    if (pct >= 0) return '#86EFAC';
-    if (pct > -0.5) return '#FCA5A5';
-    if (pct > -3) return '#F87171';
-    return '#EF4444';
+    if (pct >= 3) return '#00E676';
+    if (pct >= 0.5) return '#69F0AE';
+    if (pct >= 0) return '#A5D6A7';
+    if (pct > -0.5) return '#EF9A9A';
+    if (pct > -3) return '#EF5350';
+    return '#FF1744';
   };
 
-  // Render a single stock row (used for both sides)
+  // Short reason tag based on sector, cap, and % move
+  const getReasonTag = (s: Stock): string => {
+    const sector = (s.sector || '').toLowerCase();
+    const pct = Math.abs(s.changePercent);
+    if (pct >= 5) return pct >= 5 && s.changePercent > 0 ? 'Rally' : 'Selloff';
+    if (sector.includes('bank') || sector.includes('financ')) return 'Banking';
+    if (sector.includes('pharma') || sector.includes('health')) return 'Pharma';
+    if (sector.includes('auto')) return 'Auto';
+    if (sector.includes('it') || sector.includes('tech') || sector.includes('software') || sector.includes('computer')) return 'IT';
+    if (sector.includes('metal') || sector.includes('mining') || sector.includes('steel')) return 'Metals';
+    if (sector.includes('energy') || sector.includes('oil') || sector.includes('gas') || sector.includes('power')) return 'Energy';
+    if (sector.includes('cement') || sector.includes('construct') || sector.includes('infra')) return 'Infra';
+    if (sector.includes('fmcg') || sector.includes('consumer')) return 'FMCG';
+    if (sector.includes('chemical')) return 'Chem';
+    if (sector.includes('telecom') || sector.includes('media')) return 'Telecom';
+    if (sector.includes('realty') || sector.includes('real estate')) return 'Realty';
+    if (sector.includes('agri') || sector.includes('fertiliz')) return 'Agri';
+    if (sector.includes('defence') || sector.includes('aero')) return 'Defence';
+    if (sector.includes('textile') || sector.includes('apparel')) return 'Textile';
+    if (s.cap === 'L') return 'Large Cap';
+    if (s.cap === 'M') return 'Mid Cap';
+    if (s.cap === 'S') return 'Small Cap';
+    return sector ? truncate(sector.charAt(0).toUpperCase() + sector.slice(1), 10) : '';
+  };
+
+  // Render a single stock row
   const renderRow = (s: Stock, idx: number, side: string) => {
     const pctColor = getPctColor(s.changePercent);
-    const rowBg = idx % 2 === 0 ? '#0F172A' : '#141C2F';
+    const rowBg = idx % 2 === 0 ? '#101828' : '#161F33';
     const sign = s.changePercent >= 0 ? '+' : '';
+    const reason = getReasonTag(s);
 
     return (
       <div key={`${side}-${idx}`} style={{
         display: 'flex', alignItems: 'center', height: `${ROW_H}px`,
-        backgroundColor: rowBg, paddingLeft: '10px', paddingRight: '10px',
+        backgroundColor: rowBg, paddingLeft: '8px', paddingRight: '8px',
         borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1E293B',
       }}>
-        {/* # */}
-        <div style={{ display: 'flex', width: '24px', color: '#4B5563', fontSize: '11px', fontWeight: 600, justifyContent: 'flex-end', marginRight: '8px' }}>
+        <div style={{ display: 'flex', width: '22px', color: '#64748B', fontSize: '11px', fontWeight: 700, justifyContent: 'flex-end', marginRight: '6px' }}>
           {idx + 1}
         </div>
-        {/* Symbol */}
-        <div style={{ display: 'flex', width: '110px', fontWeight: 800, color: '#FFFFFF', fontSize: '15px' }}>
-          {truncate(s.ticker, 11)}
+        <div style={{ display: 'flex', width: '100px', fontWeight: 900, color: '#F8FAFC', fontSize: '14px' }}>
+          {truncate(s.ticker, 10)}
         </div>
-        {/* Price */}
-        <div style={{ display: 'flex', width: '90px', justifyContent: 'flex-end', color: '#E5E7EB', fontSize: '14px', fontWeight: 700 }}>
+        <div style={{ display: 'flex', width: '80px', justifyContent: 'flex-end', color: '#E2E8F0', fontSize: '13px', fontWeight: 700 }}>
           <span style={{ display: 'flex' }}>{s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}</span>
         </div>
-        {/* Change (absolute) */}
-        <div style={{ display: 'flex', width: '70px', justifyContent: 'flex-end', color: pctColor, fontSize: '13px', fontWeight: 700, marginLeft: '6px' }}>
+        <div style={{ display: 'flex', width: '58px', justifyContent: 'flex-end', color: pctColor, fontSize: '12px', fontWeight: 700, marginLeft: '4px' }}>
           <span style={{ display: 'flex' }}>{sign}{s.change.toFixed(1)}</span>
         </div>
-        {/* %Change */}
-        <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', color: pctColor, fontWeight: 800, fontSize: '15px' }}>
+        <div style={{ display: 'flex', width: '62px', justifyContent: 'flex-end', color: pctColor, fontWeight: 900, fontSize: '14px', marginLeft: '2px' }}>
           <span style={{ display: 'flex' }}>{sign}{s.changePercent.toFixed(1)}%</span>
+        </div>
+        <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', marginLeft: '6px' }}>
+          {reason ? (
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              backgroundColor: s.changePercent >= 0 ? '#052E16' : '#2D0A0A',
+              borderWidth: '1px', borderStyle: 'solid',
+              borderColor: s.changePercent >= 0 ? '#166534' : '#7F1D1D',
+              borderRadius: '4px', paddingLeft: '5px', paddingRight: '5px',
+              paddingTop: '1px', paddingBottom: '1px',
+            }}>
+              <span style={{ display: 'flex', fontSize: '10px', fontWeight: 700, color: s.changePercent >= 0 ? '#86EFAC' : '#FCA5A5' }}>
+                {reason}
+              </span>
+            </div>
+          ) : <span style={{ display: 'flex' }} />}
         </div>
       </div>
     );
   };
 
-  // Filler rows for the shorter column
+  // Filler rows
   const renderFillers = (count: number, side: string) => {
     const out = [];
     for (let i = 0; i < count; i++) {
       out.push(
-        <div key={`fill-${side}-${i}`} style={{ display: 'flex', height: `${ROW_H}px`, backgroundColor: '#0F172A', borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1E293B' }} />
+        <div key={`fill-${side}-${i}`} style={{ display: 'flex', height: `${ROW_H}px`, backgroundColor: '#101828', borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1E293B' }} />
       );
     }
     return out;
@@ -386,44 +420,44 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
   const element = (
     <div style={{
       display: 'flex', flexDirection: 'column', width: `${W}px`, height: `${totalHeight}px`,
-      backgroundColor: '#0F172A', fontFamily: 'sans-serif',
+      backgroundColor: '#0B1120', fontFamily: 'sans-serif',
     }}>
       {/* Accent bar */}
-      <div style={{ display: 'flex', width: '100%', height: `${ACCENT_H}px`, background: 'linear-gradient(90deg, #22C55E 0%, #3B82F6 50%, #EF4444 100%)' }} />
+      <div style={{ display: 'flex', width: '100%', height: `${ACCENT_H}px`, background: 'linear-gradient(90deg, #00E676 0%, #2979FF 50%, #FF1744 100%)' }} />
 
       {/* Header */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         paddingLeft: '24px', paddingRight: '24px', height: `${HEADER_H}px`,
-        backgroundColor: '#111827', borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1F2937',
+        backgroundColor: '#0D1526', borderBottomWidth: '2px', borderBottomStyle: 'solid', borderBottomColor: '#1E3A5F',
       }}>
-        <span style={{ display: 'flex', fontSize: '26px', fontWeight: 800, color: '#FFFFFF', letterSpacing: '2px' }}>
+        <span style={{ display: 'flex', fontSize: '28px', fontWeight: 900, color: '#FFFFFF', letterSpacing: '2px' }}>
           WATCHLIST PULSE
         </span>
-        <span style={{ display: 'flex', fontSize: '13px', color: '#9CA3AF', fontWeight: 600 }}>{timestamp}</span>
+        <span style={{ display: 'flex', fontSize: '14px', color: '#94A3B8', fontWeight: 700 }}>{timestamp}</span>
       </div>
 
       {/* KPI Strip */}
       <div style={{
         display: 'flex', alignItems: 'center', paddingLeft: '24px', paddingRight: '24px',
-        height: `${METRICS_H}px`, backgroundColor: '#0F172A', fontSize: '16px', fontWeight: 700,
-        borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1F2937',
+        height: `${METRICS_H}px`, backgroundColor: '#0F1729', fontSize: '17px', fontWeight: 700,
+        borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1E293B',
       }}>
-        <span style={{ display: 'flex', marginRight: '28px' }}>
-          <span style={{ display: 'flex', color: '#FFFFFF', fontWeight: 800 }}>{displayStocks.length}</span>
-          <span style={{ display: 'flex', marginLeft: '5px', color: '#6B7280' }}>Stocks</span>
+        <span style={{ display: 'flex', marginRight: '32px' }}>
+          <span style={{ display: 'flex', color: '#FFFFFF', fontWeight: 900, fontSize: '20px' }}>{displayStocks.length}</span>
+          <span style={{ display: 'flex', marginLeft: '6px', color: '#94A3B8' }}>Stocks</span>
         </span>
-        <span style={{ display: 'flex', marginRight: '28px' }}>
-          <span style={{ display: 'flex', color: '#22C55E', fontWeight: 800 }}>{winnersN}</span>
-          <span style={{ display: 'flex', marginLeft: '5px', color: '#6B7280' }}>Up</span>
+        <span style={{ display: 'flex', marginRight: '32px' }}>
+          <span style={{ display: 'flex', color: '#00E676', fontWeight: 900, fontSize: '20px' }}>{winnersN}</span>
+          <span style={{ display: 'flex', marginLeft: '6px', color: '#94A3B8' }}>Up</span>
         </span>
-        <span style={{ display: 'flex', marginRight: '28px' }}>
-          <span style={{ display: 'flex', color: '#EF4444', fontWeight: 800 }}>{losersN}</span>
-          <span style={{ display: 'flex', marginLeft: '5px', color: '#6B7280' }}>Down</span>
+        <span style={{ display: 'flex', marginRight: '32px' }}>
+          <span style={{ display: 'flex', color: '#FF1744', fontWeight: 900, fontSize: '20px' }}>{losersN}</span>
+          <span style={{ display: 'flex', marginLeft: '6px', color: '#94A3B8' }}>Down</span>
         </span>
         <span style={{ display: 'flex' }}>
-          <span style={{ display: 'flex', marginRight: '5px', color: '#6B7280' }}>Avg</span>
-          <span style={{ display: 'flex', color: avgChange >= 0 ? '#22C55E' : '#EF4444', fontWeight: 800 }}>
+          <span style={{ display: 'flex', marginRight: '6px', color: '#94A3B8' }}>Avg</span>
+          <span style={{ display: 'flex', color: avgChange >= 0 ? '#00E676' : '#FF1744', fontWeight: 900, fontSize: '20px' }}>
             {avgChange >= 0 ? '+' : ''}{avgChange.toFixed(2)}%
           </span>
         </span>
@@ -433,42 +467,42 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
       <div style={{ display: 'flex', flex: 1 }}>
         {/* LEFT — WINNERS */}
         <div style={{ display: 'flex', flexDirection: 'column', width: `${HALF_W}px` }}>
-          {/* Column header */}
           <div style={{
             display: 'flex', alignItems: 'center', height: `${COL_HEADER_H}px`,
-            backgroundColor: '#0A1A0A', paddingLeft: '10px', paddingRight: '10px',
-            borderBottomWidth: '2px', borderBottomStyle: 'solid', borderBottomColor: '#16A34A',
+            backgroundColor: '#071A0B', paddingLeft: '8px', paddingRight: '8px',
+            borderBottomWidth: '2px', borderBottomStyle: 'solid', borderBottomColor: '#00C853',
           }}>
-            <div style={{ display: 'flex', width: '24px', marginRight: '8px' }} />
-            <div style={{ display: 'flex', width: '110px', fontSize: '11px', fontWeight: 800, color: '#22C55E', letterSpacing: '1px' }}>
+            <div style={{ display: 'flex', width: '22px', marginRight: '6px' }} />
+            <div style={{ display: 'flex', width: '100px', fontSize: '12px', fontWeight: 900, color: '#00E676', letterSpacing: '1px' }}>
               WINNERS ({winnersN})
             </div>
-            <div style={{ display: 'flex', width: '90px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 700, color: '#4B5563' }}>PRICE</div>
-            <div style={{ display: 'flex', width: '70px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 700, color: '#4B5563', marginLeft: '6px' }}>CHG</div>
-            <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', fontSize: '10px', fontWeight: 700, color: '#4B5563' }}>%CHG</div>
+            <div style={{ display: 'flex', width: '80px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#64748B' }}>PRICE</div>
+            <div style={{ display: 'flex', width: '58px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#64748B', marginLeft: '4px' }}>CHG</div>
+            <div style={{ display: 'flex', width: '62px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#64748B', marginLeft: '2px' }}>%CHG</div>
+            <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#64748B', marginLeft: '6px' }}>WHY</div>
           </div>
           {winners.map((s, i) => renderRow(s, i, 'w'))}
           {winners.length < maxRows && renderFillers(maxRows - winners.length, 'w')}
         </div>
 
         {/* Divider */}
-        <div style={{ display: 'flex', width: `${COL_GAP}px`, backgroundColor: '#1E293B' }} />
+        <div style={{ display: 'flex', width: `${COL_GAP}px`, backgroundColor: '#1E3A5F' }} />
 
         {/* RIGHT — LOSERS */}
         <div style={{ display: 'flex', flexDirection: 'column', width: `${HALF_W}px` }}>
-          {/* Column header */}
           <div style={{
             display: 'flex', alignItems: 'center', height: `${COL_HEADER_H}px`,
-            backgroundColor: '#1A0A0A', paddingLeft: '10px', paddingRight: '10px',
-            borderBottomWidth: '2px', borderBottomStyle: 'solid', borderBottomColor: '#DC2626',
+            backgroundColor: '#1A0808', paddingLeft: '8px', paddingRight: '8px',
+            borderBottomWidth: '2px', borderBottomStyle: 'solid', borderBottomColor: '#D50000',
           }}>
-            <div style={{ display: 'flex', width: '24px', marginRight: '8px' }} />
-            <div style={{ display: 'flex', width: '110px', fontSize: '11px', fontWeight: 800, color: '#EF4444', letterSpacing: '1px' }}>
+            <div style={{ display: 'flex', width: '22px', marginRight: '6px' }} />
+            <div style={{ display: 'flex', width: '100px', fontSize: '12px', fontWeight: 900, color: '#FF1744', letterSpacing: '1px' }}>
               LOSERS ({losersN})
             </div>
-            <div style={{ display: 'flex', width: '90px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 700, color: '#4B5563' }}>PRICE</div>
-            <div style={{ display: 'flex', width: '70px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 700, color: '#4B5563', marginLeft: '6px' }}>CHG</div>
-            <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', fontSize: '10px', fontWeight: 700, color: '#4B5563' }}>%CHG</div>
+            <div style={{ display: 'flex', width: '80px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#64748B' }}>PRICE</div>
+            <div style={{ display: 'flex', width: '58px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#64748B', marginLeft: '4px' }}>CHG</div>
+            <div style={{ display: 'flex', width: '62px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#64748B', marginLeft: '2px' }}>%CHG</div>
+            <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#64748B', marginLeft: '6px' }}>WHY</div>
           </div>
           {losers.map((s, i) => renderRow(s, i, 'l'))}
           {losers.length < maxRows && renderFillers(maxRows - losers.length, 'l')}
@@ -479,8 +513,8 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
       <div style={{
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         paddingLeft: '24px', paddingRight: '24px', height: `${FOOTER_H}px`,
-        backgroundColor: '#0F172A', borderTopWidth: '1px', borderTopStyle: 'solid', borderTopColor: '#1F2937',
-        fontSize: '11px', color: '#4B5563',
+        backgroundColor: '#0B1120', borderTopWidth: '1px', borderTopStyle: 'solid', borderTopColor: '#1E293B',
+        fontSize: '12px', color: '#64748B', fontWeight: 600,
       }}>
         <span style={{ display: 'flex' }}>market-cockpit.vercel.app</span>
         <span style={{ display: 'flex' }}>{timestamp}</span>
