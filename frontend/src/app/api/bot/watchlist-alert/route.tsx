@@ -118,7 +118,7 @@ async function fetchNseIndex(indexName: string, cookies: string): Promise<any[]>
   return [];
 }
 
-// ── Fetch Watchlist Stocks ──────────────────────────────────────────────
+// ── Fetch Watchlist Stocks (FULLY PARALLEL) ────────────────────────────
 async function fetchWatchlistStocks(watchlist: string[]): Promise<Stock[]> {
   const watchlistSet = new Set(watchlist.map(t => t.toUpperCase()));
   const allStocks: Stock[] = [];
@@ -144,50 +144,123 @@ async function fetchWatchlistStocks(watchlist: string[]): Promise<Stock[]> {
     });
   }
 
-  // Step 1: Full market from API
-  try {
-    const url = `${API_BASE}/api/market/quotes?market=india`;
-    console.log(`[WATCHLIST] Fetching ALL stocks: ${url}`);
-    const r = await fetch(url, { headers: { 'User-Agent': 'MarketCockpit-Bot/1.0' } });
-    if (r.ok) {
-      const data = await r.json();
-      const stocks = data.stocks || [];
-      console.log(`[WATCHLIST] All stocks: ${stocks.length} returned, filtering for watchlist`);
-      for (const s of stocks) addStock(s);
-    }
-  } catch (e) {
-    console.error('[WATCHLIST] Full market fetch failed:', e);
+  function addNseItem(item: any) {
+    const tk = (item.symbol || '').trim().toUpperCase();
+    if (!tk || !watchlistSet.has(tk) || seen.has(tk)) return;
+    if ((item.lastPrice || 0) <= 0) return;
+    seen.add(tk);
+    allStocks.push({
+      ticker: tk,
+      company: item.meta?.companyName || item.identifier || tk,
+      price: item.lastPrice || 0,
+      changePercent: Math.round((item.pChange || 0) * 100) / 100,
+      change: Math.round((item.change || 0) * 100) / 100,
+      cap: 'M',
+      sector: item.meta?.industry || item.industry || '',
+      dayHigh: item.dayHigh || undefined,
+      dayLow: item.dayLow || undefined,
+      weekHigh52: item.yearHigh || undefined,
+      weekLow52: item.yearLow || undefined,
+    });
   }
 
-  // Step 2: NSE fallback for missing stocks
-  if (seen.size < watchlist.length) {
+  // Get cookies ONCE upfront
+  const cookies = await getNseCookies();
+  console.log(`[WATCHLIST] Cookies: ${cookies ? 'OK' : 'FAILED'}, watchlist: ${watchlist.length} stocks`);
+
+  // ── PHASE 1: Fire ALL data sources in PARALLEL ──
+  const phase1Start = Date.now();
+  const results = await Promise.allSettled([
+    // Source 0: Market quotes API (10s timeout)
+    fetch(`${API_BASE}/api/market/quotes?market=india`, {
+      headers: { 'User-Agent': 'MarketCockpit-Bot/1.0' },
+      signal: AbortSignal.timeout(10000),
+    }).then(r => r.ok ? r.json() : null).catch(() => null),
+    // Source 1-5: Direct NSE index fetches (all parallel)
+    cookies ? fetchNseIndex('NIFTY 500', cookies) : Promise.resolve([]),
+    cookies ? fetchNseIndex('NIFTY MIDCAP 150', cookies) : Promise.resolve([]),
+    cookies ? fetchNseIndex('NIFTY SMLCAP 250', cookies) : Promise.resolve([]),
+    cookies ? fetchNseIndex('NIFTY MICROCAP 250', cookies) : Promise.resolve([]),
+    cookies ? fetchNseIndex('NIFTY TOTAL MARKET', cookies) : Promise.resolve([]),
+  ]);
+  console.log(`[WATCHLIST] Phase 1 (parallel) done in ${Date.now() - phase1Start}ms`);
+
+  // Process market quotes API response
+  const marketResult = results[0];
+  if (marketResult.status === 'fulfilled' && marketResult.value?.stocks) {
+    for (const s of marketResult.value.stocks) addStock(s);
+  }
+
+  // Process all NSE index data
+  for (let i = 1; i <= 5; i++) {
+    const r = results[i];
+    if (r.status === 'fulfilled' && Array.isArray(r.value)) {
+      for (const item of r.value) addNseItem(item);
+    }
+  }
+  console.log(`[WATCHLIST] After Phase 1: ${seen.size}/${watchlist.length} found`);
+
+  // ── PHASE 2: Individual NSE fetches for missing stocks — ALL PARALLEL ──
+  if (seen.size < watchlist.length && cookies) {
     const missing = [...watchlistSet].filter(t => !seen.has(t));
-    console.log(`[WATCHLIST] ${missing.length} stocks still missing, trying NSE...`);
-    const cookies = await getNseCookies();
-    if (cookies) {
-      const indices = [
-        { name: 'NIFTY 500', label: '' },
-        { name: 'NIFTY MIDCAP 150', label: '' },
-        { name: 'NIFTY SMLCAP 250', label: '' },
-        { name: 'NIFTY MICROCAP 250', label: '' },
-        { name: 'NIFTY TOTAL MARKET', label: '' },
-      ];
-      for (const { name } of indices) {
-        const data = await fetchNseIndex(name, cookies);
-        for (const item of data) addStock(item);
-        if (seen.size === watchlist.length) break;
-      }
-    }
+    console.log(`[WATCHLIST] Phase 2: fetching ${missing.length} missing stocks individually...`);
+    const phase2Start = Date.now();
+
+    await Promise.allSettled(
+      missing.map(async (symbol) => {
+        try {
+          const cleanSymbol = symbol.replace(/^NSE:/i, '').replace(/^BOM:/i, '').replace(/^\d+$/, '');
+          if (!cleanSymbol) return;
+          const url = `${NSE_BASE}/api/quote-equity?symbol=${encodeURIComponent(cleanSymbol)}`;
+          const r = await fetch(url, {
+            headers: { ...NSE_HEADERS, Cookie: cookies },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (r.ok) {
+            const data = await r.json();
+            const pd = data?.priceInfo || {};
+            const info = data?.info || {};
+            if (pd.lastPrice > 0) {
+              const tk = (info.symbol || cleanSymbol).toUpperCase();
+              if (!seen.has(tk) && (watchlistSet.has(tk) || watchlistSet.has(symbol))) {
+                seen.add(tk);
+                seen.add(symbol);
+                allStocks.push({
+                  ticker: tk,
+                  company: info.companyName || tk,
+                  price: pd.lastPrice,
+                  changePercent: Math.round((pd.pChange || 0) * 100) / 100,
+                  change: Math.round((pd.change || 0) * 100) / 100,
+                  cap: 'S',
+                  sector: info.industry || '',
+                  dayHigh: pd.intraDayHighLow?.max,
+                  dayLow: pd.intraDayHighLow?.min,
+                  weekHigh52: pd.weekHighLow?.max,
+                  weekLow52: pd.weekHighLow?.min,
+                });
+              }
+            }
+          }
+        } catch {}
+      })
+    );
+    console.log(`[WATCHLIST] Phase 2 done in ${Date.now() - phase2Start}ms, total: ${allStocks.length}`);
   }
 
-  console.log(`[WATCHLIST] Final: ${allStocks.length} watchlist stocks fetched`);
+  const stillMissing = [...watchlistSet].filter(t => !seen.has(t));
+  if (stillMissing.length > 0) {
+    console.warn(`[WATCHLIST] STILL MISSING ${stillMissing.length}: ${stillMissing.join(', ')}`);
+  }
+  console.log(`[WATCHLIST] Final: ${allStocks.length}/${watchlist.length} stocks fetched`);
   return allStocks;
 }
 
 // ── Fetch News for Watchlist ────────────────────────────────────────────
 async function fetchWatchlistNews(watchlist: string[]): Promise<NewsItem[]> {
+  const watchlistSet = new Set(watchlist.map(t => t.toUpperCase()));
+
+  // Try intelligence API first
   try {
-    // Use intelligence API as news source (the /api/v1/news endpoint doesn't exist)
     const wl = watchlist.join(',');
     const url = `${API_BASE}/api/market/intelligence?days=7&portfolio=${wl}`;
     console.log(`[WATCHLIST] Fetching news/intelligence from ${url}`);
@@ -196,8 +269,8 @@ async function fetchWatchlistNews(watchlist: string[]): Promise<NewsItem[]> {
       const data = await r.json();
       const allSignals = data.signals || [];
 
-      const watchlistSet = new Set(watchlist.map(t => t.toUpperCase()));
-      const newsItems: NewsItem[] = allSignals
+      // Try watchlist-specific signals first
+      let newsItems: NewsItem[] = allSignals
         .filter((s: any) => {
           const sym = (s.symbol || s.ticker || s.primaryTicker || '').toUpperCase();
           return s.isPortfolio || watchlistSet.has(sym);
@@ -209,34 +282,61 @@ async function fetchWatchlistNews(watchlist: string[]): Promise<NewsItem[]> {
           timestamp: s.date || s.timestamp,
         }));
 
-      return newsItems;
+      // If no watchlist-specific news, return top general signals
+      if (newsItems.length === 0 && allSignals.length > 0) {
+        newsItems = allSignals.slice(0, 10).map((s: any) => ({
+          title: s.headline || s.narrative || s.summary || `${s.symbol || s.ticker}: ${s.eventType || 'Update'}`,
+          source: s.eventType || s.signalClass || 'Market Intel',
+          timestamp: s.date || s.timestamp,
+        }));
+      }
+
+      if (newsItems.length > 0) return newsItems;
     }
   } catch (e) {
     console.error('[WATCHLIST] News/intelligence fetch failed:', e);
   }
 
-  // Fallback: Try NSE corporate announcements
+  // Fallback: unfiltered intelligence
+  try {
+    const url = `${API_BASE}/api/market/intelligence?days=7`;
+    const r = await fetch(url, { headers: { 'User-Agent': 'MarketCockpit-Bot/1.0' }, signal: AbortSignal.timeout(10000) });
+    if (r.ok) {
+      const data = await r.json();
+      const allSignals = data.signals || [];
+      if (allSignals.length > 0) {
+        return allSignals.slice(0, 10).map((s: any) => ({
+          title: s.headline || s.narrative || s.summary || `${s.symbol || s.ticker}: ${s.eventType || 'Update'}`,
+          source: s.eventType || s.signalClass || 'Market Intel',
+          timestamp: s.date || s.timestamp,
+        }));
+      }
+    }
+  } catch {}
+
+  // Fallback 2: NSE corporate announcements (PARALLEL)
   try {
     const cookies = await getNseCookies();
     if (cookies) {
-      const announcements: NewsItem[] = [];
-      for (const symbol of watchlist.slice(0, 5)) {
-        try {
+      const results = await Promise.allSettled(
+        watchlist.slice(0, 10).map(async (symbol) => {
           const url = `${NSE_BASE}/api/corporates-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`;
           const r = await fetch(url, { headers: { ...NSE_HEADERS, Cookie: cookies }, signal: AbortSignal.timeout(5000) });
           if (r.ok) {
             const data = await r.json();
-            const items = (Array.isArray(data) ? data : data?.data || []).slice(0, 3);
-            for (const item of items) {
-              announcements.push({
-                title: `${symbol}: ${item.desc || item.subject || 'Corporate Announcement'}`,
-                source: 'NSE Filing',
-                timestamp: item.an_dt || item.date,
-              });
-            }
+            const items = (Array.isArray(data) ? data : data?.data || []).slice(0, 2);
+            return items.map((item: any) => ({
+              title: `${symbol}: ${item.desc || item.subject || 'Corporate Announcement'}`,
+              source: 'NSE Filing',
+              timestamp: item.an_dt || item.date,
+            }));
           }
-        } catch {}
-      }
+          return [];
+        })
+      );
+      const announcements: NewsItem[] = results
+        .filter((r): r is PromiseFulfilledResult<NewsItem[]> => r.status === 'fulfilled')
+        .flatMap(r => r.value);
       if (announcements.length > 0) return announcements.slice(0, 10);
     }
   } catch {}

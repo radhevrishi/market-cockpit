@@ -117,7 +117,7 @@ async function fetchNseIndex(indexName: string, cookies: string): Promise<any[]>
   return [];
 }
 
-// ── Fetch Portfolio Stocks ──────────────────────────────────────────────
+// ── Fetch Portfolio Stocks (FULLY PARALLEL — no sequential bottlenecks) ─
 async function fetchPortfolioStocks(portfolio: string[]): Promise<Stock[]> {
   const portfolioSet = new Set(portfolio.map(t => t.toUpperCase()));
   const allStocks: Stock[] = [];
@@ -143,103 +143,130 @@ async function fetchPortfolioStocks(portfolio: string[]): Promise<Stock[]> {
     });
   }
 
-  // Step 1: Full market from API
-  try {
-    const url = `${API_BASE}/api/market/quotes?market=india`;
-    console.log(`[PORTFOLIO] Fetching ALL stocks: ${url}`);
-    const r = await fetch(url, { headers: { 'User-Agent': 'MarketCockpit-Bot/1.0' } });
-    if (r.ok) {
-      const data = await r.json();
-      const stocks = data.stocks || [];
-      console.log(`[PORTFOLIO] All stocks: ${stocks.length} returned, filtering for portfolio`);
-      for (const s of stocks) addStock(s);
-    }
-  } catch (e) {
-    console.error('[PORTFOLIO] Full market fetch failed:', e);
+  function addNseItem(item: any) {
+    const tk = (item.symbol || '').trim().toUpperCase();
+    if (!tk || !portfolioSet.has(tk) || seen.has(tk)) return;
+    if ((item.lastPrice || 0) <= 0) return;
+    seen.add(tk);
+    allStocks.push({
+      ticker: tk,
+      company: item.meta?.companyName || item.identifier || tk,
+      price: item.lastPrice || 0,
+      changePercent: Math.round((item.pChange || 0) * 100) / 100,
+      change: Math.round((item.change || 0) * 100) / 100,
+      cap: 'M',
+      sector: item.meta?.industry || item.industry || '',
+      dayHigh: item.dayHigh || undefined,
+      dayLow: item.dayLow || undefined,
+      weekHigh52: item.yearHigh || undefined,
+      weekLow52: item.yearLow || undefined,
+    });
   }
 
-  // Step 2: NSE index fallback for missing stocks
-  if (seen.size < portfolio.length) {
-    const missing1 = [...portfolioSet].filter(t => !seen.has(t));
-    console.log(`[PORTFOLIO] ${missing1.length} stocks still missing, trying NSE indices...`);
-    const cookies = await getNseCookies();
-    if (cookies) {
-      const indices = [
-        'NIFTY 500',
-        'NIFTY MIDCAP 150',
-        'NIFTY SMLCAP 250',
-        'NIFTY MICROCAP 250',
-        'NIFTY TOTAL MARKET',
-      ];
-      for (const name of indices) {
-        const data = await fetchNseIndex(name, cookies);
-        for (const item of data) addStock(item);
-        if (seen.size >= portfolio.length) break;
-      }
-    }
+  // Get cookies ONCE upfront
+  const cookies = await getNseCookies();
+  console.log(`[PORTFOLIO] Cookies: ${cookies ? 'OK' : 'FAILED'}, portfolio: ${portfolio.length} stocks`);
+
+  // ── PHASE 1: Fire ALL data sources in PARALLEL ──
+  // Market quotes API (self-call) + 5 NSE indices — ALL at once, no waiting
+  const phase1Start = Date.now();
+  const results = await Promise.allSettled([
+    // Source 0: Market quotes API (10s timeout — don't let self-call block everything)
+    fetch(`${API_BASE}/api/market/quotes?market=india`, {
+      headers: { 'User-Agent': 'MarketCockpit-Bot/1.0' },
+      signal: AbortSignal.timeout(10000),
+    }).then(r => r.ok ? r.json() : null).catch(() => null),
+    // Source 1-5: Direct NSE index fetches (parallel, not sequential!)
+    cookies ? fetchNseIndex('NIFTY 500', cookies) : Promise.resolve([]),
+    cookies ? fetchNseIndex('NIFTY MIDCAP 150', cookies) : Promise.resolve([]),
+    cookies ? fetchNseIndex('NIFTY SMLCAP 250', cookies) : Promise.resolve([]),
+    cookies ? fetchNseIndex('NIFTY MICROCAP 250', cookies) : Promise.resolve([]),
+    cookies ? fetchNseIndex('NIFTY TOTAL MARKET', cookies) : Promise.resolve([]),
+  ]);
+  console.log(`[PORTFOLIO] Phase 1 (parallel) done in ${Date.now() - phase1Start}ms`);
+
+  // Process market quotes API response
+  const marketResult = results[0];
+  if (marketResult.status === 'fulfilled' && marketResult.value?.stocks) {
+    const stocks = marketResult.value.stocks;
+    console.log(`[PORTFOLIO] Market API returned ${stocks.length} stocks`);
+    for (const s of stocks) addStock(s);
+  } else {
+    console.warn(`[PORTFOLIO] Market API failed or empty`);
   }
 
-  // Step 3: Individual NSE quote fetch for any STILL missing stocks
-  if (seen.size < portfolio.length) {
-    const missing2 = [...portfolioSet].filter(t => !seen.has(t));
-    console.log(`[PORTFOLIO] ${missing2.length} stocks still missing after indices, fetching individually...`);
-    const cookies = await getNseCookies();
-    if (cookies) {
-      // Batch in groups of 5 to avoid hammering NSE
-      for (let i = 0; i < missing2.length; i += 5) {
-        const batch = missing2.slice(i, i + 5);
-        const results = await Promise.allSettled(
-          batch.map(async (symbol) => {
-            try {
-              // Clean up symbol: remove NSE: prefix, BOM: prefix
-              const cleanSymbol = symbol.replace(/^NSE:/i, '').replace(/^BOM:/i, '').replace(/^\d+$/, '');
-              if (!cleanSymbol) return;
-              const url = `${NSE_BASE}/api/quote-equity?symbol=${encodeURIComponent(cleanSymbol)}`;
-              const r = await fetch(url, { headers: { ...NSE_HEADERS, Cookie: cookies }, signal: AbortSignal.timeout(5000) });
-              if (r.ok) {
-                const data = await r.json();
-                const pd = data?.priceInfo || {};
-                const info = data?.info || {};
-                if (pd.lastPrice > 0) {
-                  const tk = (info.symbol || cleanSymbol).toUpperCase();
-                  if (!seen.has(tk) && (portfolioSet.has(tk) || portfolioSet.has(symbol))) {
-                    seen.add(tk);
-                    // Also add original symbol to seen in case of NSE: prefix
-                    seen.add(symbol);
-                    allStocks.push({
-                      ticker: tk,
-                      company: info.companyName || tk,
-                      price: pd.lastPrice,
-                      changePercent: Math.round((pd.pChange || 0) * 100) / 100,
-                      change: Math.round((pd.change || 0) * 100) / 100,
-                      cap: 'S',
-                      sector: info.industry || '',
-                      dayHigh: pd.intraDayHighLow?.max,
-                      dayLow: pd.intraDayHighLow?.min,
-                      weekHigh52: pd.weekHighLow?.max,
-                      weekLow52: pd.weekHighLow?.min,
-                    });
-                  }
-                }
+  // Process all NSE index data
+  for (let i = 1; i <= 5; i++) {
+    const r = results[i];
+    if (r.status === 'fulfilled' && Array.isArray(r.value)) {
+      for (const item of r.value) addNseItem(item);
+    }
+  }
+  console.log(`[PORTFOLIO] After Phase 1: ${seen.size}/${portfolio.length} found`);
+
+  // ── PHASE 2: Individual NSE fetches for ALL remaining missing stocks — ALL PARALLEL ──
+  if (seen.size < portfolio.length && cookies) {
+    const missing = [...portfolioSet].filter(t => !seen.has(t));
+    console.log(`[PORTFOLIO] Phase 2: fetching ${missing.length} missing stocks individually (ALL parallel)...`);
+    const phase2Start = Date.now();
+
+    await Promise.allSettled(
+      missing.map(async (symbol) => {
+        try {
+          const cleanSymbol = symbol.replace(/^NSE:/i, '').replace(/^BOM:/i, '').replace(/^\d+$/, '');
+          if (!cleanSymbol) return;
+          const url = `${NSE_BASE}/api/quote-equity?symbol=${encodeURIComponent(cleanSymbol)}`;
+          const r = await fetch(url, {
+            headers: { ...NSE_HEADERS, Cookie: cookies },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (r.ok) {
+            const data = await r.json();
+            const pd = data?.priceInfo || {};
+            const info = data?.info || {};
+            if (pd.lastPrice > 0) {
+              const tk = (info.symbol || cleanSymbol).toUpperCase();
+              if (!seen.has(tk) && (portfolioSet.has(tk) || portfolioSet.has(symbol))) {
+                seen.add(tk);
+                seen.add(symbol);
+                allStocks.push({
+                  ticker: tk,
+                  company: info.companyName || tk,
+                  price: pd.lastPrice,
+                  changePercent: Math.round((pd.pChange || 0) * 100) / 100,
+                  change: Math.round((pd.change || 0) * 100) / 100,
+                  cap: 'S',
+                  sector: info.industry || '',
+                  dayHigh: pd.intraDayHighLow?.max,
+                  dayLow: pd.intraDayHighLow?.min,
+                  weekHigh52: pd.weekHighLow?.max,
+                  weekLow52: pd.weekHighLow?.min,
+                });
               }
-            } catch (e) {
-              console.warn(`[PORTFOLIO] Individual fetch ${symbol} failed:`, e);
             }
-          })
-        );
-      }
-      console.log(`[PORTFOLIO] After individual fetch: ${allStocks.length} stocks total`);
-    }
+          }
+        } catch (e) {
+          console.warn(`[PORTFOLIO] Individual fetch ${symbol} failed:`, e);
+        }
+      })
+    );
+    console.log(`[PORTFOLIO] Phase 2 done in ${Date.now() - phase2Start}ms, total: ${allStocks.length}`);
   }
 
-  console.log(`[PORTFOLIO] Final: ${allStocks.length} portfolio stocks fetched out of ${portfolio.length}`);
+  const stillMissing = [...portfolioSet].filter(t => !seen.has(t));
+  if (stillMissing.length > 0) {
+    console.warn(`[PORTFOLIO] STILL MISSING ${stillMissing.length}: ${stillMissing.join(', ')}`);
+  }
+  console.log(`[PORTFOLIO] Final: ${allStocks.length}/${portfolio.length} stocks fetched`);
   return allStocks;
 }
 
 // ── Fetch News for Portfolio ────────────────────────────────────────────
 async function fetchPortfolioNews(portfolio: string[]): Promise<NewsItem[]> {
+  const portfolioSet = new Set(portfolio.map(t => t.toUpperCase()));
+
+  // Try intelligence API first (with portfolio filter)
   try {
-    // Use intelligence API as news source (the /api/v1/news endpoint doesn't exist)
     const pf = portfolio.join(',');
     const url = `${API_BASE}/api/market/intelligence?days=7&portfolio=${pf}`;
     console.log(`[PORTFOLIO] Fetching news/intelligence from ${url}`);
@@ -248,11 +275,9 @@ async function fetchPortfolioNews(portfolio: string[]): Promise<NewsItem[]> {
       const data = await r.json();
       const allSignals = data.signals || [];
 
-      // Convert intelligence signals to news items
-      const newsItems: NewsItem[] = allSignals
-        .filter((s: any) => s.isPortfolio || portfolio.some(t =>
-          (s.symbol || s.ticker || s.primaryTicker || '').toUpperCase() === t.toUpperCase()
-        ))
+      // Try portfolio-specific signals first
+      let newsItems: NewsItem[] = allSignals
+        .filter((s: any) => s.isPortfolio || portfolioSet.has((s.symbol || s.ticker || s.primaryTicker || '').toUpperCase()))
         .slice(0, 15)
         .map((s: any) => ({
           title: s.headline || s.narrative || s.summary || `${s.symbol || s.ticker}: ${s.eventType || 'Update'}`,
@@ -260,34 +285,67 @@ async function fetchPortfolioNews(portfolio: string[]): Promise<NewsItem[]> {
           timestamp: s.date || s.timestamp,
         }));
 
-      return newsItems;
+      // If no portfolio-specific news, return TOP general market signals
+      if (newsItems.length === 0 && allSignals.length > 0) {
+        console.log(`[PORTFOLIO] No portfolio-specific news, using top ${Math.min(10, allSignals.length)} general signals`);
+        newsItems = allSignals
+          .slice(0, 10)
+          .map((s: any) => ({
+            title: s.headline || s.narrative || s.summary || `${s.symbol || s.ticker}: ${s.eventType || 'Update'}`,
+            source: s.eventType || s.signalClass || 'Market Intel',
+            timestamp: s.date || s.timestamp,
+          }));
+      }
+
+      if (newsItems.length > 0) return newsItems;
     }
   } catch (e) {
     console.error('[PORTFOLIO] News/intelligence fetch failed:', e);
   }
 
-  // Fallback: Try NSE corporate announcements
+  // Fallback: Try UNFILTERED intelligence (no portfolio param — get ALL signals)
+  try {
+    const url = `${API_BASE}/api/market/intelligence?days=7`;
+    console.log(`[PORTFOLIO] Trying unfiltered intelligence...`);
+    const r = await fetch(url, { headers: { 'User-Agent': 'MarketCockpit-Bot/1.0' }, signal: AbortSignal.timeout(10000) });
+    if (r.ok) {
+      const data = await r.json();
+      const allSignals = data.signals || [];
+      if (allSignals.length > 0) {
+        return allSignals.slice(0, 10).map((s: any) => ({
+          title: s.headline || s.narrative || s.summary || `${s.symbol || s.ticker}: ${s.eventType || 'Update'}`,
+          source: s.eventType || s.signalClass || 'Market Intel',
+          timestamp: s.date || s.timestamp,
+        }));
+      }
+    }
+  } catch (e) {
+    console.error('[PORTFOLIO] Unfiltered intelligence fetch failed:', e);
+  }
+
+  // Fallback 2: NSE corporate announcements (PARALLEL, not sequential)
   try {
     const cookies = await getNseCookies();
     if (cookies) {
-      const announcements: NewsItem[] = [];
-      for (const symbol of portfolio.slice(0, 5)) {
-        try {
+      const results = await Promise.allSettled(
+        portfolio.slice(0, 10).map(async (symbol) => {
           const url = `${NSE_BASE}/api/corporates-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`;
           const r = await fetch(url, { headers: { ...NSE_HEADERS, Cookie: cookies }, signal: AbortSignal.timeout(5000) });
           if (r.ok) {
             const data = await r.json();
-            const items = (Array.isArray(data) ? data : data?.data || []).slice(0, 3);
-            for (const item of items) {
-              announcements.push({
-                title: `${symbol}: ${item.desc || item.subject || 'Corporate Announcement'}`,
-                source: 'NSE Filing',
-                timestamp: item.an_dt || item.date,
-              });
-            }
+            const items = (Array.isArray(data) ? data : data?.data || []).slice(0, 2);
+            return items.map((item: any) => ({
+              title: `${symbol}: ${item.desc || item.subject || 'Corporate Announcement'}`,
+              source: 'NSE Filing',
+              timestamp: item.an_dt || item.date,
+            }));
           }
-        } catch {}
-      }
+          return [];
+        })
+      );
+      const announcements: NewsItem[] = results
+        .filter((r): r is PromiseFulfilledResult<NewsItem[]> => r.status === 'fulfilled')
+        .flatMap(r => r.value);
       if (announcements.length > 0) return announcements.slice(0, 10);
     }
   } catch {}
@@ -297,6 +355,8 @@ async function fetchPortfolioNews(portfolio: string[]): Promise<NewsItem[]> {
 
 // ── Fetch Intelligence Signals for Portfolio ────────────────────────────
 async function fetchPortfolioIntelligence(portfolio: string[]): Promise<any[]> {
+  const portfolioSet = new Set(portfolio.map(t => t.toUpperCase()));
+
   try {
     const pf = portfolio.join(',');
     const url = `${API_BASE}/api/market/intelligence?days=7&portfolio=${pf}`;
@@ -305,15 +365,41 @@ async function fetchPortfolioIntelligence(portfolio: string[]): Promise<any[]> {
     if (r.ok) {
       const data = await r.json();
       const allSignals = data.signals || [];
-      // Filter for portfolio stocks and ACTIONABLE/NOTABLE
-      return allSignals.filter((s: any) =>
-        s.isPortfolio &&
+
+      // Try portfolio-specific ACTIONABLE/NOTABLE first
+      let filtered = allSignals.filter((s: any) =>
+        (s.isPortfolio || portfolioSet.has((s.symbol || s.ticker || '').toUpperCase())) &&
         (s.signalTierV7 === 'ACTIONABLE' || s.signalTierV7 === 'NOTABLE')
       ).slice(0, 10);
+
+      // If no portfolio-specific actionable signals, return top general signals
+      if (filtered.length === 0 && allSignals.length > 0) {
+        console.log(`[PORTFOLIO] No portfolio intel, using top ${Math.min(8, allSignals.length)} general signals`);
+        filtered = allSignals
+          .filter((s: any) => s.signalTierV7 === 'ACTIONABLE' || s.signalTierV7 === 'NOTABLE')
+          .slice(0, 8);
+        // If still nothing, just return top signals regardless of tier
+        if (filtered.length === 0) {
+          filtered = allSignals.slice(0, 8);
+        }
+      }
+
+      return filtered;
     }
   } catch (e) {
     console.error('[PORTFOLIO] Intelligence fetch failed:', e);
   }
+
+  // Fallback: unfiltered intelligence
+  try {
+    const url = `${API_BASE}/api/market/intelligence?days=7`;
+    const r = await fetch(url, { headers: { 'User-Agent': 'MarketCockpit-Bot/1.0' }, signal: AbortSignal.timeout(10000) });
+    if (r.ok) {
+      const data = await r.json();
+      return (data.signals || []).slice(0, 8);
+    }
+  } catch {}
+
   return [];
 }
 
@@ -348,76 +434,85 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
 
   // Dimensions
   const ACCENT_H = 3;
-  const HEADER_H = 60;
-  const METRICS_H = 48;
-  const COL_HEADER_H = 38;
-  const ROW_H = 38;
-  const FOOTER_H = 32;
-  const COL_GAP = 10;
+  const HEADER_H = 58;
+  const METRICS_H = 44;
+  const COL_HEADER_H = 32;
+  const ROW_H = 34;
+  const FOOTER_H = 28;
+  const COL_GAP = 8;
   const HALF_W = (W - COL_GAP) / 2;
 
   // Sort by change percent descending
   const sorted = [...displayStocks].sort((a, b) => b.changePercent - a.changePercent);
 
-  // Split into winners (left) and losers (right)
+  // Split: winners LEFT, losers RIGHT
   const winners = sorted.filter(s => s.changePercent >= 0);
-  const losers = sorted.filter(s => s.changePercent < 0).reverse(); // worst losers first
+  const losers = sorted.filter(s => s.changePercent < 0).reverse();
 
-  const gainersCount = winners.length;
-  const losersCount = losers.length;
-  const avgChange = displayStocks.length > 0 ? displayStocks.reduce((a, b) => a + b.changePercent, 0) / displayStocks.length : 0;
+  const winnersN = winners.length;
+  const losersN = losers.length;
+  const avgChange = displayStocks.length > 0
+    ? Math.round(displayStocks.reduce((a, b) => a + b.changePercent, 0) / displayStocks.length * 100) / 100
+    : 0;
 
-  // Height = max of both columns
   const maxRows = Math.max(winners.length, losers.length);
-  const bodyH = maxRows * ROW_H;
-  const totalHeight = ACCENT_H + HEADER_H + METRICS_H + COL_HEADER_H + bodyH + FOOTER_H;
+  const totalHeight = ACCENT_H + HEADER_H + METRICS_H + COL_HEADER_H + (maxRows * ROW_H) + FOOTER_H;
 
-  // Helper: get color for change percent
-  const getPctColor = (pct: number) => {
+  // Color helper
+  const getPctColor = (pct: number): string => {
     if (pct >= 3) return '#22C55E';
     if (pct >= 0.5) return '#4ADE80';
-    if (pct >= 0) return '#6EE7B7';
+    if (pct >= 0) return '#86EFAC';
+    if (pct > -0.5) return '#FCA5A5';
     if (pct > -3) return '#F87171';
     return '#EF4444';
   };
 
-  // Helper to render a stock row
-  const renderRow = (s: Stock, idx: number, side: 'left' | 'right') => {
-    const arrow = s.changePercent > 0 ? '▲' : s.changePercent < 0 ? '▼' : '−';
+  // Render a single stock row (used for both sides)
+  const renderRow = (s: Stock, idx: number, side: string) => {
     const pctColor = getPctColor(s.changePercent);
-    const rowBg = idx % 2 === 0 ? '#0F172A' : '#131B2E';
+    const rowBg = idx % 2 === 0 ? '#0F172A' : '#141C2F';
+    const sign = s.changePercent >= 0 ? '+' : '';
 
     return (
-      <div key={`row-${side}-${idx}`} style={{
+      <div key={`${side}-${idx}`} style={{
         display: 'flex', alignItems: 'center', height: `${ROW_H}px`,
-        backgroundColor: rowBg, paddingLeft: '12px', paddingRight: '12px',
+        backgroundColor: rowBg, paddingLeft: '10px', paddingRight: '10px',
         borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1E293B',
       }}>
-        <div style={{ display: 'flex', width: '130px', fontWeight: 800, color: '#FFFFFF', fontSize: '17px' }}>
-          {truncate(s.ticker, 12)}
+        {/* # */}
+        <div style={{ display: 'flex', width: '24px', color: '#4B5563', fontSize: '11px', fontWeight: 600, justifyContent: 'flex-end', marginRight: '8px' }}>
+          {idx + 1}
         </div>
-        <div style={{ display: 'flex', width: '110px', justifyContent: 'flex-end', color: '#E5E7EB', fontSize: '16px', fontWeight: 700 }}>
+        {/* Symbol */}
+        <div style={{ display: 'flex', width: '110px', fontWeight: 800, color: '#FFFFFF', fontSize: '15px' }}>
+          {truncate(s.ticker, 11)}
+        </div>
+        {/* Price */}
+        <div style={{ display: 'flex', width: '90px', justifyContent: 'flex-end', color: '#E5E7EB', fontSize: '14px', fontWeight: 700 }}>
           <span style={{ display: 'flex' }}>{s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}</span>
         </div>
-        <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', color: pctColor, fontWeight: 800, fontSize: '17px' }}>
-          <span style={{ display: 'flex' }}>{arrow} {s.changePercent >= 0 ? '+' : ''}{s.changePercent.toFixed(1)}%</span>
+        {/* Change (absolute) */}
+        <div style={{ display: 'flex', width: '70px', justifyContent: 'flex-end', color: pctColor, fontSize: '13px', fontWeight: 700, marginLeft: '6px' }}>
+          <span style={{ display: 'flex' }}>{sign}{s.change.toFixed(1)}</span>
+        </div>
+        {/* %Change */}
+        <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', color: pctColor, fontWeight: 800, fontSize: '15px' }}>
+          <span style={{ display: 'flex' }}>{sign}{s.changePercent.toFixed(1)}%</span>
         </div>
       </div>
     );
   };
 
-  // Render empty filler rows if one column is shorter
+  // Filler rows for the shorter column
   const renderFillers = (count: number, side: string) => {
-    const fillers = [];
+    const out = [];
     for (let i = 0; i < count; i++) {
-      fillers.push(
-        <div key={`filler-${side}-${i}`} style={{
-          display: 'flex', height: `${ROW_H}px`, backgroundColor: '#0F172A',
-          borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1E293B',
-        }} />
+      out.push(
+        <div key={`fill-${side}-${i}`} style={{ display: 'flex', height: `${ROW_H}px`, backgroundColor: '#0F172A', borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1E293B' }} />
       );
     }
-    return fillers;
+    return out;
   };
 
   const element = (
@@ -425,97 +520,99 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
       display: 'flex', flexDirection: 'column', width: `${W}px`, height: `${totalHeight}px`,
       backgroundColor: '#0F172A', fontFamily: 'sans-serif',
     }}>
-      {/* ── Top accent ── */}
+      {/* Accent bar */}
       <div style={{ display: 'flex', width: '100%', height: `${ACCENT_H}px`, background: 'linear-gradient(90deg, #22C55E 0%, #3B82F6 50%, #EF4444 100%)' }} />
 
-      {/* ── Header ── */}
+      {/* Header */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         paddingLeft: '24px', paddingRight: '24px', height: `${HEADER_H}px`,
         backgroundColor: '#111827', borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1F2937',
       }}>
-        <span style={{ display: 'flex', fontSize: '28px', fontWeight: 800, color: '#FFFFFF', letterSpacing: '2px', textTransform: 'uppercase' as const }}>
-          Portfolio Pulse
+        <span style={{ display: 'flex', fontSize: '26px', fontWeight: 800, color: '#FFFFFF', letterSpacing: '2px' }}>
+          PORTFOLIO PULSE
         </span>
-        <span style={{ display: 'flex', fontSize: '14px', color: '#9CA3AF' }}>{timestamp}</span>
+        <span style={{ display: 'flex', fontSize: '13px', color: '#9CA3AF', fontWeight: 600 }}>{timestamp}</span>
       </div>
 
-      {/* ── KPI Strip ── */}
+      {/* KPI Strip */}
       <div style={{
         display: 'flex', alignItems: 'center', paddingLeft: '24px', paddingRight: '24px',
-        height: `${METRICS_H}px`, backgroundColor: '#0F172A', fontSize: '17px', fontWeight: 700,
+        height: `${METRICS_H}px`, backgroundColor: '#0F172A', fontSize: '16px', fontWeight: 700,
         borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1F2937',
       }}>
-        <span style={{ display: 'flex', marginRight: '32px' }}>
+        <span style={{ display: 'flex', marginRight: '28px' }}>
           <span style={{ display: 'flex', color: '#FFFFFF', fontWeight: 800 }}>{displayStocks.length}</span>
-          <span style={{ display: 'flex', marginLeft: '6px', color: '#9CA3AF' }}>Holdings</span>
+          <span style={{ display: 'flex', marginLeft: '5px', color: '#6B7280' }}>Holdings</span>
         </span>
-        <span style={{ display: 'flex', marginRight: '32px' }}>
-          <span style={{ display: 'flex', color: '#22C55E', fontWeight: 800 }}>{gainersCount}</span>
-          <span style={{ display: 'flex', marginLeft: '6px', color: '#9CA3AF' }}>Winners</span>
+        <span style={{ display: 'flex', marginRight: '28px' }}>
+          <span style={{ display: 'flex', color: '#22C55E', fontWeight: 800 }}>{winnersN}</span>
+          <span style={{ display: 'flex', marginLeft: '5px', color: '#6B7280' }}>Up</span>
         </span>
-        <span style={{ display: 'flex', marginRight: '32px' }}>
-          <span style={{ display: 'flex', color: '#EF4444', fontWeight: 800 }}>{losersCount}</span>
-          <span style={{ display: 'flex', marginLeft: '6px', color: '#9CA3AF' }}>Losers</span>
+        <span style={{ display: 'flex', marginRight: '28px' }}>
+          <span style={{ display: 'flex', color: '#EF4444', fontWeight: 800 }}>{losersN}</span>
+          <span style={{ display: 'flex', marginLeft: '5px', color: '#6B7280' }}>Down</span>
         </span>
         <span style={{ display: 'flex' }}>
+          <span style={{ display: 'flex', marginRight: '5px', color: '#6B7280' }}>Avg</span>
           <span style={{ display: 'flex', color: avgChange >= 0 ? '#22C55E' : '#EF4444', fontWeight: 800 }}>
             {avgChange >= 0 ? '+' : ''}{avgChange.toFixed(2)}%
           </span>
-          <span style={{ display: 'flex', marginLeft: '6px', color: '#9CA3AF' }}>Avg</span>
         </span>
       </div>
 
-      {/* ── Two-column body: WINNERS (left) | LOSERS (right) ── */}
+      {/* Two-column body */}
       <div style={{ display: 'flex', flex: 1 }}>
-        {/* LEFT COLUMN — WINNERS */}
+        {/* LEFT — WINNERS */}
         <div style={{ display: 'flex', flexDirection: 'column', width: `${HALF_W}px` }}>
+          {/* Column header */}
           <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            height: `${COL_HEADER_H}px`, backgroundColor: '#0B1A0B',
-            paddingLeft: '12px', paddingRight: '12px',
-            borderBottomWidth: '2px', borderBottomStyle: 'solid', borderBottomColor: '#22C55E',
+            display: 'flex', alignItems: 'center', height: `${COL_HEADER_H}px`,
+            backgroundColor: '#0A1A0A', paddingLeft: '10px', paddingRight: '10px',
+            borderBottomWidth: '2px', borderBottomStyle: 'solid', borderBottomColor: '#16A34A',
           }}>
-            <span style={{ display: 'flex', fontSize: '16px', fontWeight: 800, color: '#22C55E', letterSpacing: '1.5px', textTransform: 'uppercase' as const }}>
-              WINNERS ({gainersCount})
-            </span>
-            <span style={{ display: 'flex', fontSize: '12px', fontWeight: 700, color: '#4B5563' }}>
-              SYMBOL | PRICE | %CHG
-            </span>
+            <div style={{ display: 'flex', width: '24px', marginRight: '8px' }} />
+            <div style={{ display: 'flex', width: '110px', fontSize: '11px', fontWeight: 800, color: '#22C55E', letterSpacing: '1px' }}>
+              WINNERS ({winnersN})
+            </div>
+            <div style={{ display: 'flex', width: '90px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 700, color: '#4B5563' }}>PRICE</div>
+            <div style={{ display: 'flex', width: '70px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 700, color: '#4B5563', marginLeft: '6px' }}>CHG</div>
+            <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', fontSize: '10px', fontWeight: 700, color: '#4B5563' }}>%CHG</div>
           </div>
-          {winners.map((s, i) => renderRow(s, i, 'left'))}
-          {winners.length < maxRows && renderFillers(maxRows - winners.length, 'left')}
+          {winners.map((s, i) => renderRow(s, i, 'w'))}
+          {winners.length < maxRows && renderFillers(maxRows - winners.length, 'w')}
         </div>
 
-        {/* GAP */}
+        {/* Divider */}
         <div style={{ display: 'flex', width: `${COL_GAP}px`, backgroundColor: '#1E293B' }} />
 
-        {/* RIGHT COLUMN — LOSERS */}
+        {/* RIGHT — LOSERS */}
         <div style={{ display: 'flex', flexDirection: 'column', width: `${HALF_W}px` }}>
+          {/* Column header */}
           <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            height: `${COL_HEADER_H}px`, backgroundColor: '#1A0B0B',
-            paddingLeft: '12px', paddingRight: '12px',
-            borderBottomWidth: '2px', borderBottomStyle: 'solid', borderBottomColor: '#EF4444',
+            display: 'flex', alignItems: 'center', height: `${COL_HEADER_H}px`,
+            backgroundColor: '#1A0A0A', paddingLeft: '10px', paddingRight: '10px',
+            borderBottomWidth: '2px', borderBottomStyle: 'solid', borderBottomColor: '#DC2626',
           }}>
-            <span style={{ display: 'flex', fontSize: '16px', fontWeight: 800, color: '#EF4444', letterSpacing: '1.5px', textTransform: 'uppercase' as const }}>
-              LOSERS ({losersCount})
-            </span>
-            <span style={{ display: 'flex', fontSize: '12px', fontWeight: 700, color: '#4B5563' }}>
-              SYMBOL | PRICE | %CHG
-            </span>
+            <div style={{ display: 'flex', width: '24px', marginRight: '8px' }} />
+            <div style={{ display: 'flex', width: '110px', fontSize: '11px', fontWeight: 800, color: '#EF4444', letterSpacing: '1px' }}>
+              LOSERS ({losersN})
+            </div>
+            <div style={{ display: 'flex', width: '90px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 700, color: '#4B5563' }}>PRICE</div>
+            <div style={{ display: 'flex', width: '70px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 700, color: '#4B5563', marginLeft: '6px' }}>CHG</div>
+            <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', fontSize: '10px', fontWeight: 700, color: '#4B5563' }}>%CHG</div>
           </div>
-          {losers.map((s, i) => renderRow(s, i, 'right'))}
-          {losers.length < maxRows && renderFillers(maxRows - losers.length, 'right')}
+          {losers.map((s, i) => renderRow(s, i, 'l'))}
+          {losers.length < maxRows && renderFillers(maxRows - losers.length, 'l')}
         </div>
       </div>
 
-      {/* ── Footer ── */}
+      {/* Footer */}
       <div style={{
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         paddingLeft: '24px', paddingRight: '24px', height: `${FOOTER_H}px`,
         backgroundColor: '#0F172A', borderTopWidth: '1px', borderTopStyle: 'solid', borderTopColor: '#1F2937',
-        fontSize: '12px', color: '#64748B',
+        fontSize: '11px', color: '#4B5563',
       }}>
         <span style={{ display: 'flex' }}>market-cockpit.vercel.app</span>
         <span style={{ display: 'flex' }}>{timestamp}</span>
@@ -523,10 +620,8 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
     </div>
   );
 
-  const response = new ImageResponse(element, { width: W, height: totalHeight });
-  return response.arrayBuffer();
+  return (new ImageResponse(element, { width: W, height: totalHeight })).arrayBuffer();
 }
-
 
 // ── Telegram Send Functions ─────────────────────────────────────────────
 async function sendTelegram(text: string, chatId?: string): Promise<{ ok: boolean; telegramResponse?: any; error?: string }> {
