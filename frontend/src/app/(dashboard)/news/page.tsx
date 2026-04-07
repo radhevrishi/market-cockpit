@@ -1112,7 +1112,7 @@ export default function NewsFeedPage() {
       {error && !isLoading && (
         <div style={{ backgroundColor: '#1a0a0a', border: '1px solid #7f1d1d', borderRadius: '12px', padding: '14px 16px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
           <AlertCircle style={{ width: '16px', height: '16px', color: '#EF4444' }} />
-          <span style={{ fontSize: '13px', color: '#fca5a5' }}>Could not load news — check that the backend is running</span>
+          <span style={{ fontSize: '13px', color: '#fca5a5' }}>News temporarily unavailable — retrying automatically</span>
           <button onClick={handleRefresh} disabled={isRefreshing} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#EF4444', cursor: isRefreshing ? 'wait' : 'pointer', fontSize: '12px' }}>{isRefreshing ? 'Refreshing…' : 'Retry'}</button>
         </div>
       )}

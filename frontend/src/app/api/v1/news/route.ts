@@ -1,0 +1,183 @@
+import { NextResponse } from 'next/server';
+import { kvGet, kvSet } from '@/lib/kv';
+
+export const dynamic = 'force-dynamic';
+export const maxDuration = 30;
+
+// ── RSS Feed Sources ──────────────────────────────────────────────────
+const RSS_FEEDS = [
+  { name: 'ET Markets', url: 'https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms', region: 'IN' },
+  { name: 'ET Industry', url: 'https://economictimes.indiatimes.com/industry/rssfeeds/13352306.cms', region: 'IN' },
+  { name: 'Livemint Markets', url: 'https://www.livemint.com/rss/markets', region: 'IN' },
+  { name: 'Livemint Companies', url: 'https://www.livemint.com/rss/companies', region: 'IN' },
+  { name: 'Business Standard', url: 'https://www.business-standard.com/rss/markets-106.rss', region: 'IN' },
+  { name: 'BS Companies', url: 'https://www.business-standard.com/rss/companies-101.rss', region: 'IN' },
+  { name: 'NDTV Profit', url: 'https://feeds.feedburner.com/ndtvprofit-latest', region: 'IN' },
+  { name: 'Mint Economy', url: 'https://www.livemint.com/rss/economy', region: 'IN' },
+  { name: 'Reuters India', url: 'https://feeds.reuters.com/reuters/INbusinessNews', region: 'GLOBAL' },
+];
+
+const CACHE_KEY = 'news:articles:v1';
+const CACHE_TTL = 300; // 5 min
+
+// ── Type Classification ──────────────────────────────────────────────
+function classifyArticle(title: string, desc: string): { article_type: string; investment_tier: number } {
+  const text = (title + ' ' + desc).toLowerCase();
+
+  if (/bottleneck|supply chain|shortage|disruption|capacity constraint/i.test(text))
+    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+  if (/earnings|quarterly|q[1-4]\s?(fy|20)|profit|revenue|results/i.test(text))
+    return { article_type: 'EARNINGS', investment_tier: 1 };
+  if (/upgrade|downgrade|rating|target price|buy|sell|hold|outperform|underperform/i.test(text))
+    return { article_type: 'RATING_CHANGE', investment_tier: 1 };
+  if (/rbi|fed|inflation|gdp|rate cut|rate hike|monetary|fiscal|trade deficit|current account/i.test(text))
+    return { article_type: 'MACRO', investment_tier: 1 };
+  if (/tariff|sanction|ban|restrict|trade war|import duty|custom duty/i.test(text))
+    return { article_type: 'TARIFF', investment_tier: 1 };
+  if (/geopolit|war|conflict|china|taiwan|iran|russia|military|defence/i.test(text))
+    return { article_type: 'GEOPOLITICAL', investment_tier: 2 };
+  if (/merger|acquisition|takeover|buyback|demerger|stake|fundraise|ipo|ofs|qip/i.test(text))
+    return { article_type: 'CORPORATE', investment_tier: 2 };
+
+  // Noise filter
+  if (/multibagger|penny stock|should you buy|stock(s)? to buy|hot stock|best (stock|pick)|free tips/i.test(text))
+    return { article_type: 'GENERAL', investment_tier: 3 };
+
+  return { article_type: 'GENERAL', investment_tier: 2 };
+}
+
+// ── Ticker extraction ────────────────────────────────────────────────
+const JUNK_TICKERS = new Set(['ON', 'A', 'IT', 'ALL', 'AN', 'IS', 'ARE', 'OR', 'SO', 'GO', 'DO', 'HE', 'WE', 'AI', 'IN', 'AT', 'TO', 'BY', 'US']);
+
+function extractTickers(title: string): string[] {
+  // Look for NSE-style tickers in title: ALL CAPS words 2-15 chars
+  const words = title.match(/\b[A-Z]{2,15}\b/g) || [];
+  return words.filter(w => !JUNK_TICKERS.has(w) && w.length >= 2).slice(0, 3);
+}
+
+// ── Region detection ─────────────────────────────────────────────────
+function detectRegion(title: string, desc: string, feedRegion: string): string {
+  if (feedRegion === 'US') return 'US';
+  const text = (title + ' ' + desc).toLowerCase();
+  if (/\b(nifty|sensex|bse|nse|rbi|india|rupee|inr|sebi)\b/.test(text)) return 'IN';
+  if (/\b(nasdaq|s&p|dow|fed|wall street|nyse|usd|us market)\b/.test(text)) return 'US';
+  return feedRegion || 'IN';
+}
+
+// ── Fetch all RSS feeds ──────────────────────────────────────────────
+async function fetchAllNews(): Promise<any[]> {
+  const articles: any[] = [];
+
+  const feedResults = await Promise.allSettled(
+    RSS_FEEDS.map(async (feed) => {
+      const items: any[] = [];
+      try {
+        const res = await fetch(feed.url, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!res.ok) return items;
+        const xml = await res.text();
+
+        const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+        let match;
+        let count = 0;
+        while ((match = itemRegex.exec(xml)) !== null && count < 30) {
+          count++;
+          const content = match[1];
+          const title = content.match(/<title>([\s\S]*?)<\/title>/)?.[1]
+            ?.replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim() || '';
+          const pubDate = content.match(/<pubDate>([\s\S]*?)<\/pubDate>/)?.[1]?.trim() || '';
+          const link = content.match(/<link>([\s\S]*?)<\/link>/)?.[1]?.trim() || '';
+          const desc = content.match(/<description>([\s\S]*?)<\/description>/)?.[1]
+            ?.replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').replace(/<[^>]*>/g, '').trim() || '';
+
+          if (!title || title.length < 10) continue;
+
+          const { article_type, investment_tier } = classifyArticle(title, desc);
+          const tickers = extractTickers(title);
+          const region = detectRegion(title, desc, feed.region);
+
+          items.push({
+            id: `rss-${Buffer.from(link || title).toString('base64').slice(0, 20)}`,
+            title,
+            headline: title,
+            summary: desc.slice(0, 300),
+            source_name: feed.name,
+            source: feed.name,
+            source_url: link,
+            published_at: pubDate || new Date().toISOString(),
+            region,
+            article_type,
+            investment_tier,
+            tickers: tickers,
+            primary_ticker: tickers[0] || null,
+            sentiment: null,
+            importance_score: investment_tier === 1 ? 0.8 : investment_tier === 2 ? 0.5 : 0.2,
+          });
+        }
+      } catch { /* skip failed feeds */ }
+      return items;
+    })
+  );
+
+  for (const result of feedResults) {
+    if (result.status === 'fulfilled') {
+      articles.push(...result.value);
+    }
+  }
+
+  // Sort by date descending
+  articles.sort((a, b) => {
+    const da = new Date(a.published_at).getTime() || 0;
+    const db = new Date(b.published_at).getTime() || 0;
+    return db - da;
+  });
+
+  // Dedup by title similarity
+  const seen = new Set<string>();
+  return articles.filter(a => {
+    const key = a.title.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 50);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 200);
+}
+
+export async function GET(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const region = searchParams.get('region') || 'ALL';
+    const search = searchParams.get('search') || '';
+
+    // Try cache first
+    let articles: any[] | null = null;
+    try {
+      articles = await kvGet<any[]>(CACHE_KEY);
+    } catch {}
+
+    if (!articles || articles.length === 0) {
+      articles = await fetchAllNews();
+      // Cache the results
+      try { await kvSet(CACHE_KEY, articles, CACHE_TTL); } catch {}
+    }
+
+    // Apply filters
+    let filtered = articles;
+    if (region && region !== 'ALL') {
+      filtered = filtered.filter(a => a.region === region || a.region === 'GLOBAL');
+    }
+    if (search) {
+      const terms = search.toLowerCase().split('|');
+      filtered = filtered.filter(a => {
+        const text = (a.title + ' ' + a.summary + ' ' + (a.tickers || []).join(' ')).toLowerCase();
+        return terms.some(t => text.includes(t));
+      });
+    }
+
+    return NextResponse.json(filtered);
+  } catch (error) {
+    console.error('[News API] Error:', error);
+    return NextResponse.json([], { status: 200 }); // Return empty array, not error
+  }
+}
