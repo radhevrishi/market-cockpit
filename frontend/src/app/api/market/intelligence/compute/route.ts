@@ -236,6 +236,109 @@ async function fetchGoogleNewsRSS(symbols: string[]): Promise<MCNewsItem[]> {
   return allNews;
 }
 
+async function fetchRSSNews(symbols: string[]): Promise<MCNewsItem[]> {
+  const allNews: MCNewsItem[] = [];
+
+  // Major India financial news RSS feeds
+  const RSS_FEEDS = [
+    { name: 'ET Markets', url: 'https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms' },
+    { name: 'ET Industry', url: 'https://economictimes.indiatimes.com/industry/rssfeeds/13352306.cms' },
+    { name: 'Livemint Markets', url: 'https://www.livemint.com/rss/markets' },
+    { name: 'Livemint Companies', url: 'https://www.livemint.com/rss/companies' },
+    { name: 'Business Standard Markets', url: 'https://www.business-standard.com/rss/markets-106.rss' },
+    { name: 'Business Standard Companies', url: 'https://www.business-standard.com/rss/companies-101.rss' },
+    { name: 'NDTV Profit', url: 'https://feeds.feedburner.com/ndtvprofit-latest' },
+    { name: 'Reuters India', url: 'https://feeds.reuters.com/reuters/INbusinessNews' },
+    { name: 'Mint Economy', url: 'https://www.livemint.com/rss/economy' },
+  ];
+
+  const symbolSet = new Set(symbols.map(s => s.toUpperCase()));
+
+  for (const feed of RSS_FEEDS) {
+    try {
+      const res = await fetch(feed.url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) continue;
+      const xml = await res.text();
+
+      const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+      let match;
+      while ((match = itemRegex.exec(xml)) !== null) {
+        const content = match[1];
+        const title = content.match(/<title>([\s\S]*?)<\/title>/)?.[1]?.replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim() || '';
+        const pubDate = content.match(/<pubDate>([\s\S]*?)<\/pubDate>/)?.[1]?.trim() || '';
+        const link = content.match(/<link>([\s\S]*?)<\/link>/)?.[1]?.trim() || '';
+        const desc = content.match(/<description>([\s\S]*?)<\/description>/)?.[1]?.replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').replace(/<[^>]*>/g, '').trim() || '';
+
+        if (!title || title.length < 10) continue;
+
+        // Match against portfolio/watchlist symbols
+        const matchedSymbol = symbols.find(s => {
+          const upper = title.toUpperCase() + ' ' + desc.toUpperCase();
+          return upper.includes(s.toUpperCase());
+        });
+
+        if (matchedSymbol) {
+          allNews.push({
+            symbol: matchedSymbol,
+            companyName: matchedSymbol,
+            subject: title,
+            desc: desc || title,
+            date: pubDate || new Date().toISOString(),
+            source: feed.name.toLowerCase().replace(/\s+/g, '_'),
+            url: link,
+          });
+        }
+      }
+    } catch (e) {
+      // Silently skip failed feeds
+    }
+  }
+
+  return allNews;
+}
+
+function filterRetailNoise(news: MCNewsItem[]): MCNewsItem[] {
+  const NOISE_PATTERNS = [
+    /multibagger/i,
+    /should you buy/i,
+    /top \d+ (stocks?|tips|picks|shares)/i,
+    /can (give|deliver) .*(return|profit)/i,
+    /stock(s)? (to|you should) buy/i,
+    /penny stock/i,
+    /expert (says|recommends|picks)/i,
+    /target price .*\d+/i,
+    /buy or sell/i,
+    /invest in this/i,
+    /wealth creator/i,
+    /double your money/i,
+    /stock jumps \d+%/i,
+    /shares (rally|surge|jump|soar) \d+%/i,
+    /what (should|could) investors/i,
+    /hot stock/i,
+    /best (stock|share|pick)/i,
+    /this stock (could|can|will|may)/i,
+    /must.?buy/i,
+    /portfolio (tips|picks|ideas)/i,
+    /trading (tips|strategy|call)/i,
+    /intraday (tips|calls|pick)/i,
+    /free tips/i,
+    /\d+% return in \d+/i,
+    /market crash|market correction.*buy/i,
+    /small.?cap.*invest/i,
+    /mid.?cap.*invest/i,
+    /SIP.*invest/i,
+    /mutual fund.*(best|top|buy)/i,
+  ];
+
+  return news.filter(item => {
+    const text = `${item.subject} ${item.desc}`;
+    return !NOISE_PATTERNS.some(pattern => pattern.test(text));
+  });
+}
+
 // ==================== TYPES ====================
 
 type ActionFlag = 'BUY' | 'ADD' | 'HOLD' | 'WATCH' | 'TRIM' | 'EXIT' | 'AVOID';
@@ -2986,7 +3089,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     }, 25000)),
   ]);
 
-  // Start MC/Google in parallel with NSE (don't wait for NSE to fail first)
+  // Start MC/Google/RSS in parallel with NSE (don't wait for NSE to fail first)
   const mcGooglePromise = (allTracked.length > 0) ? Promise.all([
     fetchMoneycontrolNews(allTracked.slice(0, 5)).catch((e: any) => {
       debug.errors.push(`MC news: ${(e as Error).message}`);
@@ -2996,10 +3099,14 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       debug.errors.push(`Google news: ${(e as Error).message}`);
       return [] as MCNewsItem[];
     }),
-  ]) : Promise.resolve([[] as MCNewsItem[], [] as MCNewsItem[]]);
+    fetchRSSNews(allTracked.slice(0, 10)).catch((e: any) => {
+      debug.errors.push(`RSS news: ${(e as Error).message}`);
+      return [] as MCNewsItem[];
+    }),
+  ]) : Promise.resolve([[] as MCNewsItem[], [] as MCNewsItem[], [] as MCNewsItem[]]);
 
   // Wait for both to complete
-  const [[announcementsRaw, blockRaw, bulkRaw], [mcNews, gNews]] = await Promise.all([
+  const [[announcementsRaw, blockRaw, bulkRaw], [mcNews, gNews, rssNews]] = await Promise.all([
     nsePromise,
     mcGooglePromise,
   ]);
@@ -3042,16 +3149,23 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
     if (!debug.dataSources.includes('NSE')) debug.dataSources.push('NSE Deals');
   }
 
-  // MC/Google results already fetched in parallel
+  // MC/Google/RSS results already fetched in parallel
   let mcNewsAnnouncements: any[] = [];
   let googleNewsAnnouncements: any[] = [];
+  let rssNewsAnnouncements: any[] = [];
 
-  debug.mcNewsItems = mcNews.length;
-  debug.googleNewsItems = gNews.length;
-  if (mcNews.length > 0 || gNews.length > 0) {
-    console.log(`[Compute] Fallback sources: MC=${mcNews.length}, Google=${gNews.length}`);
+  // Apply retail noise filter to all external news sources
+  const filteredMcNews = filterRetailNoise(mcNews);
+  const filteredGNews = filterRetailNoise(gNews);
+  const filteredRssNews = filterRetailNoise(rssNews);
 
-    mcNewsAnnouncements = mcNews.map(n => ({
+  debug.mcNewsItems = filteredMcNews.length;
+  debug.googleNewsItems = filteredGNews.length;
+  const debug_rssNewsItems = filteredRssNews.length;
+  if (filteredMcNews.length > 0 || filteredGNews.length > 0 || filteredRssNews.length > 0) {
+    console.log(`[Compute] Fallback sources: MC=${filteredMcNews.length}, Google=${filteredGNews.length}, RSS=${debug_rssNewsItems}`);
+
+    mcNewsAnnouncements = filteredMcNews.map(n => ({
       symbol: n.symbol,
       companyName: n.companyName,
       subject: n.subject,
@@ -3060,7 +3174,7 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       _source: 'moneycontrol',
     }));
 
-    googleNewsAnnouncements = gNews.map(n => ({
+    googleNewsAnnouncements = filteredGNews.map(n => ({
       symbol: n.symbol,
       companyName: n.companyName,
       subject: n.subject,
@@ -3069,14 +3183,25 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
       _source: 'google_news',
     }));
 
-    if (mcNews.length > 0) debug.dataSources.push('Moneycontrol');
-    if (gNews.length > 0) debug.dataSources.push('Google News');
+    rssNewsAnnouncements = filteredRssNews.map(n => ({
+      symbol: n.symbol,
+      companyName: n.companyName,
+      subject: n.subject,
+      desc: n.desc,
+      date: n.date,
+      _source: 'rss_news',
+    }));
+
+    if (filteredMcNews.length > 0) debug.dataSources.push('Moneycontrol');
+    if (filteredGNews.length > 0) debug.dataSources.push('Google News');
+    if (filteredRssNews.length > 0) debug.dataSources.push('RSS News');
   }
 
   const allAnnouncements = [
     ...announcements.map(a => ({ ...a, _source: 'nse', date: a.date || a.an_dt || a.exchdisstime || a.sort_date || '' })),
     ...mcNewsAnnouncements,
     ...googleNewsAnnouncements,
+    ...rssNewsAnnouncements,
   ];
 
   // ── PF+WL ONLY FILTER: Intelligence is exclusively for tracked companies ──
@@ -3109,8 +3234,9 @@ async function performComputeLogic(watchlist: string[], portfolio: string[]): Pr
   debug.nseMaterial = filteredAnn.filter(a => a._source === 'nse').length;
   debug.mcMaterial = filteredAnn.filter(a => a._source === 'moneycontrol').length;
   debug.googleMaterial = filteredAnn.filter(a => a._source === 'google_news').length;
+  const rssMaterial = filteredAnn.filter(a => a._source === 'rss_news').length;
 
-  console.log(`[Compute] Sources: NSE=${debug.nseAnnouncements}→${debug.nseMaterial} | MC=${debug.mcNewsItems}→${debug.mcMaterial} | Google=${debug.googleNewsItems}→${debug.googleMaterial}`);
+  console.log(`[Compute] Sources: NSE=${debug.nseAnnouncements}→${debug.nseMaterial} | MC=${debug.mcNewsItems}→${debug.mcMaterial} | Google=${debug.googleNewsItems}→${debug.googleMaterial} | RSS=${debug_rssNewsItems}→${rssMaterial}`);
 
   const symbolsToEnrich = new Set<string>();
   portfolio.forEach(s => symbolsToEnrich.add(normalizeTicker(s)));
