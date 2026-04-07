@@ -241,15 +241,28 @@ async function fetchRSSNews(symbols: string[]): Promise<MCNewsItem[]> {
 
   // Major India financial news RSS feeds
   const RSS_FEEDS = [
-    { name: 'ET Markets', url: 'https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms' },
-    { name: 'ET Industry', url: 'https://economictimes.indiatimes.com/industry/rssfeeds/13352306.cms' },
-    { name: 'Livemint Markets', url: 'https://www.livemint.com/rss/markets' },
-    { name: 'Livemint Companies', url: 'https://www.livemint.com/rss/companies' },
-    { name: 'Business Standard Markets', url: 'https://www.business-standard.com/rss/markets-106.rss' },
-    { name: 'Business Standard Companies', url: 'https://www.business-standard.com/rss/companies-101.rss' },
-    { name: 'NDTV Profit', url: 'https://feeds.feedburner.com/ndtvprofit-latest' },
-    { name: 'Reuters India', url: 'https://feeds.reuters.com/reuters/INbusinessNews' },
-    { name: 'Mint Economy', url: 'https://www.livemint.com/rss/economy' },
+    // ── India Feeds ──
+    { name: 'ET Markets', url: 'https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms', region: 'IN' },
+    { name: 'ET Industry', url: 'https://economictimes.indiatimes.com/industry/rssfeeds/13352306.cms', region: 'IN' },
+    { name: 'Livemint Markets', url: 'https://www.livemint.com/rss/markets', region: 'IN' },
+    { name: 'Livemint Companies', url: 'https://www.livemint.com/rss/companies', region: 'IN' },
+    { name: 'Business Standard Markets', url: 'https://www.business-standard.com/rss/markets-106.rss', region: 'IN' },
+    { name: 'Business Standard Companies', url: 'https://www.business-standard.com/rss/companies-101.rss', region: 'IN' },
+    { name: 'NDTV Profit', url: 'https://feeds.feedburner.com/ndtvprofit-latest', region: 'IN' },
+    { name: 'Mint Economy', url: 'https://www.livemint.com/rss/economy', region: 'IN' },
+    // ── US / Global Feeds ──
+    { name: 'CNBC Top News', url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114', region: 'US' },
+    { name: 'CNBC World', url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100727362', region: 'US' },
+    { name: 'CNBC Finance', url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664', region: 'US' },
+    { name: 'CNBC Technology', url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19854910', region: 'US' },
+    { name: 'MarketWatch Top Stories', url: 'https://feeds.marketwatch.com/marketwatch/topstories/', region: 'US' },
+    { name: 'MarketWatch Markets', url: 'https://feeds.marketwatch.com/marketwatch/marketpulse/', region: 'US' },
+    { name: 'Yahoo Finance', url: 'https://finance.yahoo.com/news/rssindex', region: 'US' },
+    { name: 'Reuters Business', url: 'https://feeds.reuters.com/reuters/businessNews', region: 'US' },
+    { name: 'Reuters Technology', url: 'https://feeds.reuters.com/reuters/technologyNews', region: 'US' },
+    { name: 'Reuters India', url: 'https://feeds.reuters.com/reuters/INbusinessNews', region: 'GLOBAL' },
+    { name: 'Investing.com News', url: 'https://www.investing.com/rss/news.rss', region: 'US' },
+    { name: 'Seeking Alpha Market News', url: 'https://seekingalpha.com/market_currents.xml', region: 'US' },
   ];
 
   // Fetch ALL feeds in parallel (not sequential) to avoid 9×5s=45s timeout

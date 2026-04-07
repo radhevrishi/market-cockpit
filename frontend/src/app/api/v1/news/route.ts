@@ -6,6 +6,7 @@ export const maxDuration = 30;
 
 // ── RSS Feed Sources ──────────────────────────────────────────────────
 const RSS_FEEDS = [
+  // ── India Feeds ──
   { name: 'ET Markets', url: 'https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms', region: 'IN' },
   { name: 'ET Industry', url: 'https://economictimes.indiatimes.com/industry/rssfeeds/13352306.cms', region: 'IN' },
   { name: 'Livemint Markets', url: 'https://www.livemint.com/rss/markets', region: 'IN' },
@@ -14,7 +15,19 @@ const RSS_FEEDS = [
   { name: 'BS Companies', url: 'https://www.business-standard.com/rss/companies-101.rss', region: 'IN' },
   { name: 'NDTV Profit', url: 'https://feeds.feedburner.com/ndtvprofit-latest', region: 'IN' },
   { name: 'Mint Economy', url: 'https://www.livemint.com/rss/economy', region: 'IN' },
+  // ── US / Global Feeds ──
+  { name: 'CNBC Top News', url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114', region: 'US' },
+  { name: 'CNBC World', url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100727362', region: 'US' },
+  { name: 'CNBC Finance', url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664', region: 'US' },
+  { name: 'CNBC Technology', url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19854910', region: 'US' },
+  { name: 'MarketWatch Top Stories', url: 'https://feeds.marketwatch.com/marketwatch/topstories/', region: 'US' },
+  { name: 'MarketWatch Markets', url: 'https://feeds.marketwatch.com/marketwatch/marketpulse/', region: 'US' },
+  { name: 'Yahoo Finance', url: 'https://finance.yahoo.com/news/rssindex', region: 'US' },
+  { name: 'Reuters Business', url: 'https://feeds.reuters.com/reuters/businessNews', region: 'US' },
+  { name: 'Reuters Technology', url: 'https://feeds.reuters.com/reuters/technologyNews', region: 'US' },
   { name: 'Reuters India', url: 'https://feeds.reuters.com/reuters/INbusinessNews', region: 'GLOBAL' },
+  { name: 'Investing.com News', url: 'https://www.investing.com/rss/news.rss', region: 'US' },
+  { name: 'Seeking Alpha Market News', url: 'https://seekingalpha.com/market_currents.xml', region: 'US' },
 ];
 
 const CACHE_KEY = 'news:articles:v1';
@@ -24,7 +37,7 @@ const CACHE_TTL = 300; // 5 min
 function classifyArticle(title: string, desc: string): { article_type: string; investment_tier: number } {
   const text = (title + ' ' + desc).toLowerCase();
 
-  if (/bottleneck|supply chain|shortage|disruption|capacity constraint/i.test(text))
+  if (/bottleneck|supply chain|shortage|disruption|capacity constraint|chip shortage|semiconductor|tariff|trade war|sanction|embargo|fed rate|rate hike|rate cut|inflation|crude oil|opec|energy crisis/i.test(text))
     return { article_type: 'BOTTLENECK', investment_tier: 1 };
   if (/earnings|quarterly|q[1-4]\s?(fy|20)|profit|revenue|results/i.test(text))
     return { article_type: 'EARNINGS', investment_tier: 1 };
