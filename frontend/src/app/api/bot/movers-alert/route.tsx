@@ -386,14 +386,14 @@ async function generateMoversImage(
           {displayStocks.length} Stocks
         </span>
         {topGainer && (
-          <>
+          <div style={{ display: 'flex' }}>
             <span style={{ color: '#9CA3AF', marginRight: '24px' }}>
               Top: {topGainer.ticker}
             </span>
             <span style={{ color: accentColor, fontWeight: 700, marginRight: '24px' }}>
               {isGainers ? '+' : ''}{topGainer.changePercent.toFixed(1)}%
             </span>
-          </>
+          </div>
         )}
         <span style={{ color: '#9CA3AF', marginRight: '24px' }}>
           Avg: {isGainers ? '+' : ''}{avgChg.toFixed(2)}%
@@ -672,9 +672,9 @@ async function generateStreetPulseCard(
           />
         </div>
         {/* Text info */}
-        <span style={{ color: '#9CA3AF', fontSize: '11px' }}>
-          Advancers: <span style={{ color: '#16A34A', fontWeight: 700 }}>{breadth.advancing}</span> | Decliners:{' '}
-          <span style={{ color: '#DC2626', fontWeight: 700 }}>{breadth.declining}</span> | Unchanged:{' '}
+        <span style={{ display: 'flex', color: '#9CA3AF', fontSize: '11px' }}>
+          <span>Advancers: </span><span style={{ color: '#16A34A', fontWeight: 700 }}>{breadth.advancing}</span><span> | Decliners: </span>
+          <span style={{ color: '#DC2626', fontWeight: 700 }}>{breadth.declining}</span><span> | Unchanged: </span>
           <span style={{ color: '#9CA3AF', fontWeight: 700 }}>{breadth.unchanged}</span>
         </span>
       </div>

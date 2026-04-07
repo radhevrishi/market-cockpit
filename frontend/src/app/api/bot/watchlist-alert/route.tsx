@@ -368,27 +368,27 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
           borderBottomColor: '#1F2937',
         }}
       >
-        <span style={{ fontSize: '16px', color: '#E5E7EB', marginRight: '24px', fontWeight: 600 }}>
+        <span style={{ display: 'flex', fontSize: '16px', color: '#E5E7EB', marginRight: '24px', fontWeight: 600 }}>
           <span style={{ color: '#9CA3AF', marginRight: '6px' }}>Total:</span>
           <span>{stocks.length}</span>
         </span>
-        <span style={{ fontSize: '16px', color: '#16A34A', marginRight: '24px', fontWeight: 600 }}>
+        <span style={{ display: 'flex', fontSize: '16px', color: '#16A34A', marginRight: '24px', fontWeight: 600 }}>
           <span style={{ color: '#9CA3AF', marginRight: '4px' }}>Up:</span>
-          {gainers}
+          <span>{gainers}</span>
         </span>
-        <span style={{ fontSize: '16px', color: '#DC2626', marginRight: '24px', fontWeight: 600 }}>
+        <span style={{ display: 'flex', fontSize: '16px', color: '#DC2626', marginRight: '24px', fontWeight: 600 }}>
           <span style={{ color: '#9CA3AF', marginRight: '4px' }}>Down:</span>
-          {losers}
+          <span>{losers}</span>
         </span>
         {flatCount > 0 && (
-          <span style={{ fontSize: '16px', color: '#9CA3AF', marginRight: '24px', fontWeight: 600 }}>
+          <span style={{ display: 'flex', fontSize: '16px', color: '#9CA3AF', marginRight: '24px', fontWeight: 600 }}>
             <span style={{ color: '#9CA3AF', marginRight: '4px' }}>Flat:</span>
-            {flatCount}
+            <span>{flatCount}</span>
           </span>
         )}
-        <span style={{ fontSize: '16px', color: avgChange >= 0 ? '#16A34A' : '#DC2626', fontWeight: 600 }}>
+        <span style={{ display: 'flex', fontSize: '16px', color: avgChange >= 0 ? '#16A34A' : '#DC2626', fontWeight: 600 }}>
           <span style={{ color: '#9CA3AF', marginRight: '4px' }}>Avg:</span>
-          {avgChange >= 0 ? '+' : ''}{avgChange.toFixed(2)}%
+          <span>{avgChange >= 0 ? '+' : ''}{avgChange.toFixed(2)}%</span>
         </span>
       </div>
 

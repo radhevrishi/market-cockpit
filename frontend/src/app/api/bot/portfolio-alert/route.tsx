@@ -391,23 +391,23 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
           borderBottomColor: '#1F2937',
         }}
       >
-        <span style={{ marginRight: '24px' }}>
+        <span style={{ display: 'flex', marginRight: '24px' }}>
           <span style={{ color: '#9CA3AF' }}>{displayStocks.length}</span>
           <span style={{ marginLeft: '4px', color: '#9CA3AF' }}>Stocks</span>
         </span>
-        <span style={{ marginRight: '24px' }}>
+        <span style={{ display: 'flex', marginRight: '24px' }}>
           <span style={{ color: '#16A34A', fontWeight: 700 }}>{gainers}</span>
           <span style={{ marginLeft: '4px', color: '#9CA3AF' }}>Up</span>
         </span>
-        <span style={{ marginRight: '24px' }}>
+        <span style={{ display: 'flex', marginRight: '24px' }}>
           <span style={{ color: '#DC2626', fontWeight: 700 }}>{losers}</span>
           <span style={{ marginLeft: '4px', color: '#9CA3AF' }}>Down</span>
         </span>
-        <span style={{ marginRight: '24px' }}>
+        <span style={{ display: 'flex', marginRight: '24px' }}>
           <span style={{ color: '#9CA3AF', fontWeight: 700 }}>{unchanged}</span>
           <span style={{ marginLeft: '4px', color: '#9CA3AF' }}>Flat</span>
         </span>
-        <span style={{ marginRight: '0px' }}>
+        <span style={{ display: 'flex', marginRight: '0px' }}>
           <span style={{ color: avgChange >= 0 ? '#16A34A' : '#DC2626', fontWeight: 700 }}>
             {avgChange >= 0 ? '+' : ''}{avgChange.toFixed(2)}%
           </span>
