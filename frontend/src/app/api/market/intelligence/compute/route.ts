@@ -1032,20 +1032,24 @@ function buildWhyThisMatters(signal: any): string {
 }
 
 // ── v7 EVENT WEIGHTS (normalized 0-1) ──
+// v7.1 — Boosted weights: hard catalysts (order wins, buybacks, bulk deals)
+// get higher priority per user spec. Exchange filings > order wins > policy > bottlenecks > generic.
 const V7_EVENT_WEIGHTS: Record<string, number> = {
-  'Guidance': 1.0, 'Earnings': 0.9,
-  'Open Offer': 0.9, 'Takeover': 0.9,           // Takeover premium = floor price
-  'Turnaround': 0.85,                             // Post-loss recovery = re-rating
-  'Capex/Expansion': 0.8, 'M&A': 0.8,
-  'Demerger': 0.8, 'Spinoff': 0.8,               // Value unlock events
+  'Guidance': 1.0, 'Earnings': 0.95,
+  'Open Offer': 0.95, 'Takeover': 0.95,          // Takeover premium = floor price
+  'Turnaround': 0.9,                              // Post-loss recovery = re-rating
+  'Order Win': 0.88, 'Contract': 0.88,            // BOOSTED: hard catalyst, directly actionable
+  'Capex/Expansion': 0.85, 'M&A': 0.85,
+  'Demerger': 0.85, 'Spinoff': 0.85,             // Value unlock events
+  'Buyback': 0.82,                                 // BOOSTED: price floor signal
+  'Block Deal': 0.80, 'Bulk Deal': 0.80,          // BOOSTED: institutional flow signal
+  'Stake Sale': 0.78,                              // BOOSTED: ownership change
   'Policy Opening': 0.75, 'Regulatory Approval': 0.75,
-  'Technology Transition': 0.7,
-  'Order Win': 0.7, 'Contract': 0.7,
+  'Technology Transition': 0.72,
   'CEO Change': 0.65, 'CFO Change': 0.6, 'MD Change': 0.6,
-  'Fund Raising': 0.6, 'QIP': 0.55, 'LOI': 0.5,
+  'Fund Raising': 0.6, 'QIP': 0.58, 'LOI': 0.55,
   'JV/Partnership': 0.55,
-  'Block Deal': 0.5, 'Bulk Deal': 0.5, 'Stake Sale': 0.5,
-  'Rights Issue': 0.45, 'Buyback': 0.45, 'Dividend': 0.3,
+  'Rights Issue': 0.45, 'Dividend': 0.3,
   'Mgmt Change': 0.2, 'Board Appointment': 0.2,
   'Compliance': 0.05, 'Regulatory': 0.1, 'Filing': 0.05,
 };

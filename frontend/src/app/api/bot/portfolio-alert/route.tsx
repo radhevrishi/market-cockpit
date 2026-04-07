@@ -419,25 +419,19 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
     const FOOTER_H = 28;
     const COL_GAP = 4;
     const HALF_W = (W - COL_GAP) / 2;
-    const fontSize = maxRows > 30 ? { sym: 14, pct: 14, price: 12, chg: 11, w52: 11, sec: 9, rng: 11, w52pct: 10, num: 11 }
-      : maxRows > 20 ? { sym: 15, pct: 15, price: 13, chg: 12, w52: 12, sec: 10, rng: 12, w52pct: 10, num: 12 }
-      : { sym: 17, pct: 17, price: 14, chg: 13, w52: 13, sec: 11, rng: 13, w52pct: 11, num: 13 };
+    const fontSize = maxRows > 30 ? { sym: 13, pct: 13, price: 12, chg: 11, w52: 11, sec: 10, rng: 11, num: 10 }
+      : maxRows > 20 ? { sym: 14, pct: 14, price: 13, chg: 12, w52: 12, sec: 11, rng: 12, num: 11 }
+      : { sym: 16, pct: 16, price: 14, chg: 13, w52: 13, sec: 12, rng: 13, num: 12 };
 
     const totalHeight = ACCENT_H + HEADER_H + METRICS_H + COL_HEADER_H + (maxRows * ROW_H) + FOOTER_H;
 
-    // Row renderer
+    // Row renderer — clean single-line layout, no redundant % from 52W
     const renderRow = (s: Stock, idx: number, side: string) => {
       const pctColor = getPctColor(s.changePercent);
       const rowBg = idx % 2 === 0 ? '#0C1322' : '#111B30';
       const sign = s.changePercent >= 0 ? '+' : '';
 
-      // Calculate % from 52W HIGH
-      const pctFrom52 = s.weekHigh52 && s.weekHigh52 > 0
-        ? ((s.price / s.weekHigh52) - 1) * 100
-        : 0;
-      const from52Color = pctFrom52 >= 0 ? '#00E676' : '#FF1744';
-
-      // Calculate 52W Range Position (institutional 200 DMA proxy)
+      // 52W Range Position (200 DMA proxy)
       const rangePct = s.weekHigh52 && s.weekLow52 && s.weekHigh52 > s.weekLow52
         ? ((s.price - s.weekLow52) / (s.weekHigh52 - s.weekLow52)) * 100
         : 50;
@@ -449,52 +443,41 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
       return (
         <div key={`${side}-${idx}`} style={{
           display: 'flex', alignItems: 'center', height: `${ROW_H}px`,
-          backgroundColor: rowBg, paddingLeft: '6px', paddingRight: '6px',
+          backgroundColor: rowBg, paddingLeft: '4px', paddingRight: '4px',
           borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1E293B',
         }}>
           {/* # */}
-          <div style={{ display: 'flex', width: '18px', color: '#475569', fontSize: `${fontSize.num}px`, fontWeight: 700, justifyContent: 'flex-end', marginRight: '2px' }}>
+          <div style={{ display: 'flex', width: '16px', color: '#475569', fontSize: `${fontSize.num}px`, fontWeight: 700, justifyContent: 'flex-end', marginRight: '1px' }}>
             {idx + 1}
           </div>
-          {/* 200 DMA proxy warning dot */}
-          <div style={{
-            display: 'flex', width: '8px', height: '8px', borderRadius: '4px',
-            backgroundColor: dotColor,
-            marginRight: '2px',
-          }} />
+          {/* 200 DMA warning dot */}
+          <div style={{ display: 'flex', width: '7px', height: '7px', borderRadius: '4px', backgroundColor: dotColor, marginRight: '2px' }} />
           {/* SYMBOL */}
-          <div style={{ display: 'flex', width: '82px', fontWeight: 900, color: '#F1F5F9', fontSize: `${fontSize.sym}px` }}>
+          <div style={{ display: 'flex', width: '78px', fontWeight: 900, color: '#F1F5F9', fontSize: `${fontSize.sym}px` }}>
             {truncate(s.ticker, 10)}
           </div>
           {/* %CHG */}
-          <div style={{ display: 'flex', width: '58px', justifyContent: 'flex-end', color: pctColor, fontWeight: 900, fontSize: `${fontSize.pct}px` }}>
+          <div style={{ display: 'flex', width: '52px', justifyContent: 'flex-end', color: pctColor, fontWeight: 900, fontSize: `${fontSize.pct}px` }}>
             <span style={{ display: 'flex' }}>{sign}{s.changePercent.toFixed(1)}%</span>
           </div>
-          {/* CHG — right next to %CHG */}
-          <div style={{ display: 'flex', width: '50px', justifyContent: 'flex-end', color: pctColor, fontSize: `${fontSize.chg}px`, fontWeight: 600, marginLeft: '2px' }}>
+          {/* CHG */}
+          <div style={{ display: 'flex', width: '48px', justifyContent: 'flex-end', color: pctColor, fontSize: `${fontSize.chg}px`, fontWeight: 600, marginLeft: '1px' }}>
             <span style={{ display: 'flex' }}>{sign}{s.change.toFixed(1)}</span>
           </div>
           {/* PRICE */}
-          <div style={{ display: 'flex', width: '68px', justifyContent: 'flex-end', color: '#CBD5E1', fontSize: `${fontSize.price}px`, fontWeight: 600, marginLeft: '3px' }}>
+          <div style={{ display: 'flex', width: '62px', justifyContent: 'flex-end', color: '#CBD5E1', fontSize: `${fontSize.price}px`, fontWeight: 600, marginLeft: '2px' }}>
             <span style={{ display: 'flex' }}>{s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}</span>
           </div>
-          {/* SECTOR — fills the gap */}
+          {/* SECTOR — flex fills remaining space */}
           <div style={{ display: 'flex', flex: 1, color: '#64748B', fontSize: `${fontSize.sec}px`, fontWeight: 600, marginLeft: '4px', overflow: 'hidden' }}>
-            <span style={{ display: 'flex' }}>{truncate(s.sector || '--', 14)}</span>
+            <span style={{ display: 'flex' }}>{truncate(s.sector || '--', 16)}</span>
           </div>
-          {/* 52W HIGH + % from high */}
-          <div style={{ display: 'flex', flexDirection: 'column', width: '62px', marginLeft: '3px', justifyContent: 'center', alignItems: 'flex-end' }}>
-            <span style={{ display: 'flex', fontSize: `${fontSize.w52}px`, fontWeight: 700, color: '#CBD5E1' }}>
-              {s.weekHigh52 ? s.weekHigh52.toLocaleString('en-IN', { maximumFractionDigits: 0 }) : '--'}
-            </span>
-            {s.weekHigh52 && s.weekHigh52 > 0 && (
-              <span style={{ display: 'flex', fontSize: `${fontSize.w52pct}px`, fontWeight: 700, color: from52Color, marginTop: '1px' }}>
-                {pctFrom52 >= 0 ? '+' : ''}{pctFrom52.toFixed(1)}%
-              </span>
-            )}
+          {/* 52W HIGH — single line, no % */}
+          <div style={{ display: 'flex', width: '56px', justifyContent: 'flex-end', color: '#78909C', fontSize: `${fontSize.w52}px`, fontWeight: 600, marginLeft: '2px' }}>
+            <span style={{ display: 'flex' }}>{s.weekHigh52 ? s.weekHigh52.toLocaleString('en-IN', { maximumFractionDigits: 0 }) : '--'}</span>
           </div>
-          {/* RNG% — 52W Range Position (200 DMA proxy) */}
-          <div style={{ display: 'flex', width: '42px', justifyContent: 'flex-end', marginLeft: '2px' }}>
+          {/* RNG% */}
+          <div style={{ display: 'flex', width: '38px', justifyContent: 'flex-end', marginLeft: '2px' }}>
             <span style={{ display: 'flex', fontSize: `${fontSize.rng}px`, fontWeight: 800, color: rangePct >= 75 ? '#00E676' : rangePct >= 50 ? '#FDD835' : rangePct >= 25 ? '#FF9100' : '#FF1744' }}>
               {Math.round(rangePct)}%
             </span>
@@ -573,20 +556,20 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
           <div style={{ display: 'flex', flexDirection: 'column', width: `${HALF_W}px` }}>
             <div style={{
               display: 'flex', alignItems: 'center', height: `${COL_HEADER_H}px`,
-              backgroundColor: '#061208', paddingLeft: '6px', paddingRight: '6px',
+              backgroundColor: '#061208', paddingLeft: '4px', paddingRight: '4px',
               borderBottomWidth: '2px', borderBottomStyle: 'solid', borderBottomColor: '#00C853',
             }}>
-              <div style={{ display: 'flex', width: '20px', marginRight: '4px' }} />
-              <div style={{ display: 'flex', width: '10px', marginRight: '2px' }} />
-              <div style={{ display: 'flex', width: '82px', fontSize: '12px', fontWeight: 900, color: '#00E676', letterSpacing: '1px' }}>
+              <div style={{ display: 'flex', width: '16px', marginRight: '1px' }} />
+              <div style={{ display: 'flex', width: '7px', marginRight: '2px' }} />
+              <div style={{ display: 'flex', width: '78px', fontSize: '12px', fontWeight: 900, color: '#00E676', letterSpacing: '1px' }}>
                 WINNERS ({winnersN})
               </div>
-              <div style={{ display: 'flex', width: '58px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#475569' }}>%CHG</div>
-              <div style={{ display: 'flex', width: '50px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#475569', marginLeft: '2px' }}>CHG</div>
-              <div style={{ display: 'flex', width: '68px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#475569', marginLeft: '3px' }}>PRICE</div>
+              <div style={{ display: 'flex', width: '52px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#475569' }}>%CHG</div>
+              <div style={{ display: 'flex', width: '48px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#475569', marginLeft: '1px' }}>CHG</div>
+              <div style={{ display: 'flex', width: '62px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#475569', marginLeft: '2px' }}>PRICE</div>
               <div style={{ display: 'flex', flex: 1, fontSize: '11px', fontWeight: 800, color: '#64748B', marginLeft: '4px' }}>SECTOR</div>
-              <div style={{ display: 'flex', width: '62px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#475569', marginLeft: '3px' }}>52W H</div>
-              <div style={{ display: 'flex', width: '42px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#FDD835', marginLeft: '2px' }}>RNG%</div>
+              <div style={{ display: 'flex', width: '56px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#475569', marginLeft: '2px' }}>52W H</div>
+              <div style={{ display: 'flex', width: '38px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#FDD835', marginLeft: '2px' }}>RNG%</div>
             </div>
             {winners.map((s, i) => renderRow(s, i, 'w'))}
             {winners.length < maxRows && renderFillers(maxRows - winners.length, 'w')}
@@ -599,20 +582,20 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
           <div style={{ display: 'flex', flexDirection: 'column', width: `${HALF_W}px` }}>
             <div style={{
               display: 'flex', alignItems: 'center', height: `${COL_HEADER_H}px`,
-              backgroundColor: '#120606', paddingLeft: '6px', paddingRight: '6px',
+              backgroundColor: '#120606', paddingLeft: '4px', paddingRight: '4px',
               borderBottomWidth: '2px', borderBottomStyle: 'solid', borderBottomColor: '#D50000',
             }}>
-              <div style={{ display: 'flex', width: '20px', marginRight: '4px' }} />
-              <div style={{ display: 'flex', width: '10px', marginRight: '2px' }} />
-              <div style={{ display: 'flex', width: '82px', fontSize: '12px', fontWeight: 900, color: '#FF1744', letterSpacing: '1px' }}>
+              <div style={{ display: 'flex', width: '16px', marginRight: '1px' }} />
+              <div style={{ display: 'flex', width: '7px', marginRight: '2px' }} />
+              <div style={{ display: 'flex', width: '78px', fontSize: '12px', fontWeight: 900, color: '#FF1744', letterSpacing: '1px' }}>
                 LOSERS ({losersN})
               </div>
-              <div style={{ display: 'flex', width: '58px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#475569' }}>%CHG</div>
-              <div style={{ display: 'flex', width: '50px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#475569', marginLeft: '2px' }}>CHG</div>
-              <div style={{ display: 'flex', width: '68px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#475569', marginLeft: '3px' }}>PRICE</div>
+              <div style={{ display: 'flex', width: '52px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#475569' }}>%CHG</div>
+              <div style={{ display: 'flex', width: '48px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#475569', marginLeft: '1px' }}>CHG</div>
+              <div style={{ display: 'flex', width: '62px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#475569', marginLeft: '2px' }}>PRICE</div>
               <div style={{ display: 'flex', flex: 1, fontSize: '11px', fontWeight: 800, color: '#64748B', marginLeft: '4px' }}>SECTOR</div>
-              <div style={{ display: 'flex', width: '62px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#475569', marginLeft: '3px' }}>52W H</div>
-              <div style={{ display: 'flex', width: '42px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#FDD835', marginLeft: '2px' }}>RNG%</div>
+              <div style={{ display: 'flex', width: '56px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#475569', marginLeft: '2px' }}>52W H</div>
+              <div style={{ display: 'flex', width: '38px', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 800, color: '#FDD835', marginLeft: '2px' }}>RNG%</div>
             </div>
             {losers.map((s, i) => renderRow(s, i, 'l'))}
             {losers.length < maxRows && renderFillers(maxRows - losers.length, 'l')}
