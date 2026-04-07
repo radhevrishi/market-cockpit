@@ -35,6 +35,13 @@ interface Stock {
   weekLow52?: number;
 }
 
+interface StockCatalyst {
+  label: string;        // "Nuclear Order" or "No clear trigger"
+  sourceType: string;   // "Filing" | "News" | "Intel" | "Deal" | ""
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  timeAgo: string;      // "2h" | "1d" | ""
+}
+
 interface NewsItem {
   title: string;
   source?: string;
@@ -78,6 +85,225 @@ function setWatchlist(chatId: string, stocks: string[]): void {
     stocks: unique,
     addedAt: Date.now(),
   };
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// CATALYST ENGINE — Institutional-grade, evidence-backed stock reasons
+// ══════════════════════════════════════════════════════════════════════════
+
+// Allowed catalyst patterns — ONLY these may appear as labels
+const CATALYST_PATTERNS: [RegExp, string, string][] = [
+  [/order\s*win|order\s*bag|new\s*order|bags?\s*order|order\s*worth/i, 'Order Win', 'Filing'],
+  [/block\s*deal/i, 'Block Deal', 'Deal'],
+  [/bulk\s*deal/i, 'Bulk Deal', 'Deal'],
+  [/result.*beat|profit\s*(up|surge|jump|rise|grow)|revenue\s*(up|surge|jump|rise|grow)|net\s*profit\s*(up|surge)|PAT\s*(up|surge|rise)|strong\s*result|earning.*beat|Q[1-4].*beat/i, 'Results Beat', 'Filing'],
+  [/result.*miss|profit\s*(fall|drop|decline|slip)|revenue\s*(fall|drop|decline)|weak\s*result|earning.*miss|PAT\s*(fall|drop|decline)/i, 'Results Miss', 'Filing'],
+  [/promoter.*buy|promoter.*acqui|insider\s*buy/i, 'Promoter Buy', 'Filing'],
+  [/promoter.*sell|insider\s*sell|promoter.*pledge/i, 'Promoter Sell', 'Filing'],
+  [/stake\s*(sale|sell|dilut|offload)|OFS/i, 'Stake Sale', 'Deal'],
+  [/stake\s*(buy|acquire|hike|increase)/i, 'Stake Hike', 'Deal'],
+  [/upgrade|target\s*raise|outperform|overweight|price\s*target.*rais/i, 'Upgrade', 'News'],
+  [/downgrade|underperform|underweight|target\s*cut|price\s*target.*cut/i, 'Downgrade', 'News'],
+  [/acquisition|acquire|takeover|buyout|merger|amalgam/i, 'Acquisition', 'News'],
+  [/contract\s*(win|award|bag|secure|worth)|wins?\s*contract/i, 'Contract Award', 'Filing'],
+  [/regulatory.*action|SEBI.*action|penalty|fine.*impos|ban\s/i, 'Regulatory Action', 'Filing'],
+  [/margin\s*(pressure|squeeze|compress|contract)/i, 'Margin Pressure', 'Filing'],
+  [/export\s*(order|deal|contract)|international.*order/i, 'Export Order', 'Filing'],
+  [/capex|new\s*plant|capacity\s*expan|greenfield|brownfield/i, 'Capex Plan', 'Filing'],
+  [/nuclear|reactor|atomic\s*energy/i, 'Nuclear Order', 'News'],
+  [/defence\s*(order|contract)|military\s*(order|contract)|army.*order|navy.*order|missile/i, 'Defence Order', 'Filing'],
+  [/buyback|buy\s*back/i, 'Buyback', 'Filing'],
+  [/dividend/i, 'Dividend', 'Filing'],
+  [/bonus\s*issue|stock\s*split/i, 'Bonus/Split', 'Filing'],
+  [/demerger|demerge|spin-?off/i, 'Demerger', 'Filing'],
+  [/QIP|preferential\s*allot|right\s*issue|fund\s*rais/i, 'Fund Raise', 'Filing'],
+  [/FII.*buy|FPI.*buy|DII.*buy|institutional.*buy/i, 'FII/DII Buy', 'Deal'],
+  [/FII.*sell|FPI.*sell|institutional.*sell/i, 'FII Sell', 'Deal'],
+  [/rating.*upgrade|CRISIL.*upgrade|ICRA.*upgrade|CARE.*upgrade/i, 'Rating Upgrade', 'News'],
+  [/rating.*downgrade|CRISIL.*downgrade|ICRA.*downgrade/i, 'Rating Downgrade', 'News'],
+  [/partnership|tie-?up|JV\b|joint\s*venture|MOU\b|pact\b|collaborat/i, 'New Partnership', 'Filing'],
+  [/new\s*product\s*launch|product\s*launch|new\s*launch/i, 'Product Launch', 'News'],
+  [/short\s*cover|short\s*squeeze/i, 'Short Cover', 'Deal'],
+  [/debt\s*reduc|debt\s*free|repay/i, 'Debt Reduction', 'Filing'],
+  [/management\s*change|CEO\s*appoint|MD\s*appoint|new\s*CEO/i, 'Mgmt Change', 'Filing'],
+];
+
+function matchCatalyst(text: string): { label: string; sourceType: string } | null {
+  if (!text) return null;
+  for (const [regex, label, srcType] of CATALYST_PATTERNS) {
+    if (regex.test(text)) return { label, sourceType: srcType };
+  }
+  return null;
+}
+
+function getHoursAgo(dateStr: string): number {
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return 999;
+    return Math.max(0, Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60)));
+  } catch { return 999; }
+}
+
+function formatTimeAgo(hours: number): string {
+  if (hours <= 0 || hours >= 999) return '';
+  if (hours < 1) return '<1h';
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return days === 1 ? '1d' : `${days}d`;
+}
+
+const NO_TRIGGER: StockCatalyst = { label: 'No clear trigger', sourceType: '', confidence: 'LOW', timeAgo: '' };
+
+async function fetchStockCatalysts(tickers: string[]): Promise<Map<string, StockCatalyst>> {
+  const catalysts = new Map<string, StockCatalyst>();
+  const tickerSet = new Set(tickers.map(t => t.toUpperCase()));
+
+  // ── Phase 1: Intelligence signals from Redis (highest priority, pre-validated) ──
+  try {
+    const intel = await kvGet<any>('intelligence:signals');
+    if (intel) {
+      const allSignals = [...(intel.top3 || []), ...(intel.signals || []), ...(intel.notable || [])];
+      for (const sig of allSignals) {
+        const sym = (sig.symbol || '').toUpperCase();
+        if (!tickerSet.has(sym) || catalysts.has(sym)) continue;
+
+        const headline = sig.headline || '';
+        const whyItMatters = sig.whyItMatters || '';
+        const matched = matchCatalyst(headline) || matchCatalyst(whyItMatters) || matchCatalyst(sig.eventType || '');
+
+        if (matched) {
+          const hoursAgo = getHoursAgo(sig.date || sig.timestamp || '');
+          // Reject stale signals (>72h)
+          if (hoursAgo > 72) continue;
+          const confRaw = (sig.confidenceScore || 0) / 100;
+          // Directness: 0.8 for intel (pre-validated), Freshness, Source reliability: 0.9
+          const score = (0.4 * 0.8) + (0.3 * (hoursAgo < 12 ? 1 : hoursAgo < 48 ? 0.7 : 0.4)) + (0.3 * 0.9);
+          if (score < 0.5) continue; // REJECT low-confidence
+
+          catalysts.set(sym, {
+            label: matched.label,
+            sourceType: 'Intel',
+            confidence: score >= 0.75 ? 'HIGH' : 'MEDIUM',
+            timeAgo: formatTimeAgo(hoursAgo),
+          });
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[CATALYST] Intel signals fetch failed:', e);
+  }
+
+  // ── Phase 2: NSE corporate announcements (filings — highest reliability) ──
+  const needPhase2 = tickers.filter(t => !catalysts.has(t.toUpperCase())).slice(0, 12);
+  if (needPhase2.length > 0) {
+    try {
+      const results = await Promise.allSettled(
+        needPhase2.map(async (symbol) => {
+          const data = await nseApiFetch(`/api/corporates-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`, 30000);
+          const items = (Array.isArray(data) ? data : data?.data || []).slice(0, 3);
+          for (const item of items) {
+            const desc = item.desc || item.subject || '';
+            const matched = matchCatalyst(desc);
+            if (matched) {
+              const hoursAgo = getHoursAgo(item.an_dt || item.date || '');
+              if (hoursAgo > 72) continue;
+              return {
+                symbol: symbol.toUpperCase(),
+                catalyst: {
+                  label: matched.label,
+                  sourceType: 'Filing',
+                  confidence: (hoursAgo < 24 ? 'HIGH' : 'MEDIUM') as 'HIGH' | 'MEDIUM',
+                  timeAgo: formatTimeAgo(hoursAgo),
+                } as StockCatalyst,
+              };
+            }
+          }
+          return null;
+        })
+      );
+      for (const r of results) {
+        if (r.status === 'fulfilled' && r.value) {
+          catalysts.set(r.value.symbol, r.value.catalyst);
+        }
+      }
+    } catch (e) {
+      console.warn('[CATALYST] NSE filings fetch failed:', e);
+    }
+  }
+
+  // ── Phase 3: Google News RSS for big movers still without catalysts ──
+  // STRICT: Only accept if headline explicitly matches an allowed catalyst pattern
+  const needPhase3 = tickers.filter(t => !catalysts.has(t.toUpperCase())).slice(0, 10);
+  if (needPhase3.length > 0) {
+    try {
+      const rssResults = await Promise.allSettled(
+        needPhase3.map(async (symbol) => {
+          const query = encodeURIComponent(`"${symbol}" NSE stock`);
+          const url = `https://news.google.com/rss/search?q=${query}&hl=en-IN&gl=IN&ceid=IN:en`;
+          const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
+          if (!r.ok) return null;
+          const xml = await r.text();
+          // Check first 5 headlines
+          const itemRegex = /<item[^>]*>[\s\S]*?<title[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>[\s\S]*?<pubDate>([\s\S]*?)<\/pubDate>/g;
+          let match;
+          let count = 0;
+          while ((match = itemRegex.exec(xml)) !== null && count < 5) {
+            count++;
+            const headline = (match[1] || '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
+            const pubDate = (match[2] || '').trim();
+            const matched = matchCatalyst(headline);
+            if (matched) {
+              const hoursAgo = getHoursAgo(pubDate);
+              if (hoursAgo > 72) continue;
+              return {
+                symbol: symbol.toUpperCase(),
+                catalyst: {
+                  label: matched.label,
+                  sourceType: 'News',
+                  confidence: 'MEDIUM' as const,
+                  timeAgo: formatTimeAgo(hoursAgo),
+                } as StockCatalyst,
+              };
+            }
+          }
+          return null;
+        })
+      );
+      for (const r of rssResults) {
+        if (r.status === 'fulfilled' && r.value) {
+          catalysts.set(r.value.symbol, r.value.catalyst);
+        }
+      }
+    } catch (e) {
+      console.warn('[CATALYST] Google News fetch failed:', e);
+    }
+  }
+
+  // ── Fill remaining with "No clear trigger" ──
+  for (const t of tickers) {
+    if (!catalysts.has(t.toUpperCase())) {
+      catalysts.set(t.toUpperCase(), { ...NO_TRIGGER });
+    }
+  }
+
+  return catalysts;
+}
+
+// ── Watchlist Drivers — top thematic narratives ──
+function getWatchlistDrivers(stocks: Stock[], catalysts: Map<string, StockCatalyst>): string[] {
+  const labelGroups = new Map<string, string[]>();
+  for (const s of stocks) {
+    const cat = catalysts.get(s.ticker.toUpperCase());
+    if (cat && cat.label !== 'No clear trigger' && cat.confidence !== 'LOW') {
+      const group = labelGroups.get(cat.label) || [];
+      group.push(s.ticker);
+      labelGroups.set(cat.label, group);
+    }
+  }
+  return [...labelGroups.entries()]
+    .sort((a, b) => b[1].length - a[1].length)
+    .slice(0, 3)
+    .map(([label, syms]) => `${label} -> ${syms.slice(0, 3).join(', ')}${syms.length > 3 ? ' +' + (syms.length - 3) : ''}`);
 }
 
 // NSE helpers removed — using @/lib/nse directly (shared cookies, caching, retry)
@@ -272,115 +498,6 @@ async function fetchWatchlistNews(watchlist: string[]): Promise<NewsItem[]> {
   return [];
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// STOCK REASONS — Real news catalysts for each stock
-// ══════════════════════════════════════════════════════════════════════════
-
-function extractCatalyst(headline: string): string {
-  if (!headline) return '';
-  const patterns: [RegExp, string][] = [
-    [/nuclear|reactor|atomic/i, 'Nuclear Deal'],
-    [/order\s*win|order\s*bag|order\s*worth|new\s*order|bags?\s*order/i, 'Order Win'],
-    [/block\s*deal|bulk\s*deal/i, 'Block Deal'],
-    [/buyback|buy\s*back/i, 'Buyback'],
-    [/dividend/i, 'Dividend'],
-    [/split|stock\s*split|bonus/i, 'Bonus/Split'],
-    [/result|earning|profit\s*(up|surge|jump|rise|grow)|revenue\s*(up|surge|jump|grow)|net\s*profit|PAT\s*(up|surge|rise)/i, 'Results Beat'],
-    [/loss|profit\s*(fall|drop|decline|slip)|revenue\s*(fall|drop|decline)/i, 'Weak Results'],
-    [/upgrade|target\s*raise|outperform|overweight/i, 'Upgrade'],
-    [/downgrade|underperform|underweight|target\s*cut/i, 'Downgrade'],
-    [/acquisition|acquire|takeover|buyout|merger/i, 'Acquisition'],
-    [/partnership|tie-?up|collaborat|joint\s*venture|JV|MOU|pact/i, 'New Pact'],
-    [/contract|deal\s*worth|wins?\s*contract/i, 'New Contract'],
-    [/expansion|capex|new\s*plant|capacity|greenfield/i, 'Expansion'],
-    [/launch|new\s*product|introduce/i, 'New Launch'],
-    [/stake\s*(sale|buy|acquire|hike|increase)|promoter/i, 'Stake Change'],
-    [/FII|FPI|DII|mutual\s*fund|institutional/i, 'Fund Flow'],
-    [/defence|defense|military|army|navy|missile/i, 'Defence Order'],
-    [/export|international|global\s*order/i, 'Export Order'],
-    [/approval|clearance|SEBI|RBI|regulatory/i, 'Approval'],
-    [/IPO|listing|debut/i, 'IPO Buzz'],
-    [/solar|wind|renewable|green\s*energy/i, 'Green Energy'],
-    [/EV|electric\s*vehicle|battery/i, 'EV Play'],
-    [/semiconductor|chip|fab/i, 'Chip/Semi'],
-    [/AI|artificial\s*intelligence|data\s*center/i, 'AI/Data'],
-    [/infra|highway|railway|metro|road/i, 'Infra Push'],
-    [/pharma|drug|FDA|USFDA|ANDA/i, 'Pharma News'],
-    [/bank|NPA|NIM|credit\s*grow|loan\s*growth/i, 'Banking'],
-    [/oil|gas|crude|refin/i, 'Oil & Gas'],
-    [/metal|steel|aluminium|copper|zinc/i, 'Metal Rally'],
-    [/IT\s*deal|digital\s*deal|tech\s*deal|cloud/i, 'Tech Deal'],
-    [/real\s*estate|realty|housing|property/i, 'Realty Boom'],
-    [/rating|CRISIL|ICRA|credit\s*rating/i, 'Rating News'],
-    [/demerger|demerge|spin-?off/i, 'Demerger'],
-    [/right\s*issue|QIP|preferential/i, 'Fund Raise'],
-    [/ban|restriction|penalty|fine/i, 'Regulatory'],
-    [/short\s*cover|short\s*squeeze/i, 'Short Cover'],
-  ];
-  for (const [regex, label] of patterns) {
-    if (regex.test(headline)) return label;
-  }
-  const words = headline.replace(/[^a-zA-Z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 2);
-  const stopWords = new Set(['the', 'and', 'for', 'with', 'from', 'has', 'had', 'its', 'that', 'this', 'are', 'was', 'were', 'been', 'will', 'can', 'may', 'not', 'but', 'also', 'into', 'said', 'says', 'per', 'ltd', 'limited', 'shares', 'stock', 'stocks', 'company', 'market', 'nse', 'bse', 'india']);
-  const meaningful = words.filter(w => !stopWords.has(w.toLowerCase())).slice(0, 3);
-  if (meaningful.length > 0) return meaningful.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
-  return '';
-}
-
-async function fetchStockReasons(tickers: string[]): Promise<Map<string, string>> {
-  const reasons = new Map<string, string>();
-  const tickerSet = new Set(tickers.map(t => t.toUpperCase()));
-
-  // Phase 1: Intelligence signals from Redis
-  try {
-    const intel = await kvGet<any>('intelligence:signals');
-    if (intel && intel.signals) {
-      const allSignals = [...(intel.signals || []), ...(intel.top3 || []), ...(intel.notable || [])];
-      for (const sig of allSignals) {
-        const sym = (sig.symbol || '').toUpperCase();
-        if (tickerSet.has(sym) && !reasons.has(sym)) {
-          const catalyst = extractCatalyst(sig.headline || '') ||
-            extractCatalyst(sig.whyItMatters || '') ||
-            sig.eventType || '';
-          if (catalyst) reasons.set(sym, truncate(catalyst, 14));
-        }
-      }
-    }
-  } catch (e) {
-    console.warn('[REASONS] Intel signals fetch failed:', e);
-  }
-
-  // Phase 2: Google News RSS for stocks without reasons (parallel, top 15)
-  const needReasons = tickers.filter(t => !reasons.has(t.toUpperCase())).slice(0, 15);
-  if (needReasons.length > 0) {
-    try {
-      const rssResults = await Promise.allSettled(
-        needReasons.map(async (symbol) => {
-          const query = encodeURIComponent(`${symbol} NSE stock`);
-          const url = `https://news.google.com/rss/search?q=${query}&hl=en-IN&gl=IN&ceid=IN:en`;
-          const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
-          if (!r.ok) return { symbol, headline: '' };
-          const xml = await r.text();
-          const titleMatch = xml.match(/<item[^>]*>[\s\S]*?<title[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
-          return { symbol, headline: titleMatch?.[1]?.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim() || '' };
-        })
-      );
-      for (const result of rssResults) {
-        if (result.status === 'fulfilled' && result.value.headline) {
-          const sym = result.value.symbol.toUpperCase();
-          const catalyst = extractCatalyst(result.value.headline);
-          if (catalyst && !reasons.has(sym)) {
-            reasons.set(sym, truncate(catalyst, 14));
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('[REASONS] Google News RSS failed:', e);
-    }
-  }
-
-  return reasons;
-}
 
 // ══════════════════════════════════════════════════════════════════════════
 // IMAGE GENERATION — Watchlist Pulse Card
@@ -405,35 +522,33 @@ function getISTTimestamp(): string {
   return `${day} ${month} ${year}, ${h12.toString().padStart(2, '0')}:${minutes} ${ampm}`;
 }
 
-async function generateWatchlistImage(stocks: Stock[], reasons: Map<string, string>): Promise<ArrayBuffer> {
+// Generates MULTIPLE images (max 14 rows per panel per image)
+async function generateWatchlistImages(
+  stocks: Stock[],
+  catalysts: Map<string, StockCatalyst>,
+): Promise<ArrayBuffer[]> {
   const displayStocks = stocks.slice(0, 100);
   const timestamp = getISTTimestamp();
   const W = 1200;
+  const MAX_ROWS = 14;
 
-  // Dimensions — match Portfolio Pulse exactly
-  const ACCENT_H = 4;
-  const HEADER_H = 64;
-  const METRICS_H = 48;
-  const COL_HEADER_H = 34;
-  const ROW_H = 32;
-  const FOOTER_H = 30;
-  const COL_GAP = 6;
-  const HALF_W = (W - COL_GAP) / 2;
-
-  // Sort by change percent descending
+  // Sort
   const sorted = [...displayStocks].sort((a, b) => b.changePercent - a.changePercent);
-  const winners = sorted.filter(s => s.changePercent >= 0);
-  const losers = sorted.filter(s => s.changePercent < 0).reverse();
-  const winnersN = winners.length;
-  const losersN = losers.length;
+  const allWinners = sorted.filter(s => s.changePercent >= 0);
+  const allLosers = sorted.filter(s => s.changePercent < 0).reverse(); // worst first
+  const winnersN = allWinners.length;
+  const losersN = allLosers.length;
   const avgChange = displayStocks.length > 0
     ? Math.round(displayStocks.reduce((a, b) => a + b.changePercent, 0) / displayStocks.length * 100) / 100
     : 0;
+  const drivers = getWatchlistDrivers(displayStocks, catalysts);
 
-  const maxRows = Math.max(winners.length, losers.length);
-  const totalHeight = ACCENT_H + HEADER_H + METRICS_H + COL_HEADER_H + (maxRows * ROW_H) + FOOTER_H;
+  // Chunk into images
+  const maxSide = Math.max(allWinners.length, allLosers.length);
+  const numImages = Math.ceil(maxSide / MAX_ROWS);
+  const images: ArrayBuffer[] = [];
 
-  // High-contrast color palette
+  // Colors
   const getPctColor = (pct: number): string => {
     if (pct >= 3) return '#00E676';
     if (pct >= 0.5) return '#69F0AE';
@@ -443,171 +558,242 @@ async function generateWatchlistImage(stocks: Stock[], reasons: Map<string, stri
     return '#FF1744';
   };
 
-  // Render a single stock row
-  const renderRow = (s: Stock, idx: number, side: string) => {
-    const pctColor = getPctColor(s.changePercent);
-    const rowBg = idx % 2 === 0 ? '#101828' : '#161F33';
-    const sign = s.changePercent >= 0 ? '+' : '';
-    const reason = reasons.get(s.ticker.toUpperCase()) || '';
+  const getConfColor = (c: string): string => {
+    if (c === 'HIGH') return '#00E676';
+    if (c === 'MEDIUM') return '#FFD740';
+    return '#78909C';
+  };
 
-    return (
-      <div key={`${side}-${idx}`} style={{
-        display: 'flex', alignItems: 'center', height: `${ROW_H}px`,
-        backgroundColor: rowBg, paddingLeft: '8px', paddingRight: '8px',
-        borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1E293B',
-      }}>
-        <div style={{ display: 'flex', width: '22px', color: '#64748B', fontSize: '11px', fontWeight: 700, justifyContent: 'flex-end', marginRight: '6px' }}>
-          {idx + 1}
-        </div>
-        <div style={{ display: 'flex', width: '100px', fontWeight: 900, color: '#F8FAFC', fontSize: '14px' }}>
-          {truncate(s.ticker, 10)}
-        </div>
-        <div style={{ display: 'flex', width: '80px', justifyContent: 'flex-end', color: '#E2E8F0', fontSize: '13px', fontWeight: 700 }}>
-          <span style={{ display: 'flex' }}>{s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}</span>
-        </div>
-        <div style={{ display: 'flex', width: '58px', justifyContent: 'flex-end', color: pctColor, fontSize: '12px', fontWeight: 700, marginLeft: '4px' }}>
-          <span style={{ display: 'flex' }}>{sign}{s.change.toFixed(1)}</span>
-        </div>
-        <div style={{ display: 'flex', width: '62px', justifyContent: 'flex-end', color: pctColor, fontWeight: 900, fontSize: '14px', marginLeft: '2px' }}>
-          <span style={{ display: 'flex' }}>{sign}{s.changePercent.toFixed(1)}%</span>
-        </div>
-        <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', marginLeft: '6px' }}>
-          {reason ? (
-            <div style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              backgroundColor: s.changePercent >= 0 ? '#052E16' : '#2D0A0A',
-              borderWidth: '1px', borderStyle: 'solid',
-              borderColor: s.changePercent >= 0 ? '#166534' : '#7F1D1D',
-              borderRadius: '4px', paddingLeft: '5px', paddingRight: '5px',
-              paddingTop: '1px', paddingBottom: '1px',
-            }}>
-              <span style={{ display: 'flex', fontSize: '10px', fontWeight: 700, color: s.changePercent >= 0 ? '#86EFAC' : '#FCA5A5' }}>
-                {reason}
+  const getConfBg = (c: string): string => {
+    if (c === 'HIGH') return '#052E16';
+    if (c === 'MEDIUM') return '#2A2000';
+    return '#1A1A2E';
+  };
+
+  for (let imgIdx = 0; imgIdx < numImages; imgIdx++) {
+    const wStart = imgIdx * MAX_ROWS;
+    const lStart = imgIdx * MAX_ROWS;
+    const winners = allWinners.slice(wStart, wStart + MAX_ROWS);
+    const losers = allLosers.slice(lStart, lStart + MAX_ROWS);
+    const isFirst = imgIdx === 0;
+    const pageRows = Math.max(winners.length, losers.length);
+    if (pageRows === 0) continue;
+
+    // Dimensions
+    const ACCENT_H = 4;
+    const HEADER_H = 60;
+    const METRICS_H = 44;
+    const DRIVERS_H = isFirst && drivers.length > 0 ? 42 : 0;
+    const COL_HEADER_H = 30;
+    const ROW_H = 44;
+    const FOOTER_H = 28;
+    const COL_GAP = 4;
+    const HALF_W = (W - COL_GAP) / 2;
+
+    const totalHeight = ACCENT_H + HEADER_H + METRICS_H + DRIVERS_H + COL_HEADER_H + (pageRows * ROW_H) + FOOTER_H;
+
+    // Row renderer
+    const renderRow = (s: Stock, idx: number, globalIdx: number, side: string) => {
+      const pctColor = getPctColor(s.changePercent);
+      const rowBg = idx % 2 === 0 ? '#0C1322' : '#111B30';
+      const sign = s.changePercent >= 0 ? '+' : '';
+      const cat = catalysts.get(s.ticker.toUpperCase()) || NO_TRIGGER;
+      const isTopMover = globalIdx < 5;
+
+      return (
+        <div key={`${side}-${idx}`} style={{
+          display: 'flex', alignItems: 'center', height: `${ROW_H}px`,
+          backgroundColor: rowBg, paddingLeft: '6px', paddingRight: '6px',
+          borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1E293B',
+        }}>
+          {/* # */}
+          <div style={{ display: 'flex', width: '20px', color: '#475569', fontSize: '10px', fontWeight: 700, justifyContent: 'flex-end', marginRight: '5px' }}>
+            {globalIdx + 1}
+          </div>
+          {/* SYMBOL */}
+          <div style={{ display: 'flex', width: '88px', fontWeight: 900, color: '#F1F5F9', fontSize: isTopMover ? '14px' : '13px' }}>
+            {truncate(s.ticker, 10)}
+          </div>
+          {/* %CHG */}
+          <div style={{ display: 'flex', width: '62px', justifyContent: 'flex-end', color: pctColor, fontWeight: 900, fontSize: isTopMover ? '15px' : '13px' }}>
+            <span style={{ display: 'flex' }}>{sign}{s.changePercent.toFixed(1)}%</span>
+          </div>
+          {/* PRICE */}
+          <div style={{ display: 'flex', width: '72px', justifyContent: 'flex-end', color: '#CBD5E1', fontSize: '12px', fontWeight: 600, marginLeft: '4px' }}>
+            <span style={{ display: 'flex' }}>{s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}</span>
+          </div>
+          {/* CHG */}
+          <div style={{ display: 'flex', width: '52px', justifyContent: 'flex-end', color: pctColor, fontSize: '11px', fontWeight: 600, marginLeft: '2px' }}>
+            <span style={{ display: 'flex' }}>{sign}{s.change.toFixed(1)}</span>
+          </div>
+          {/* WHY — largest column, 2 lines */}
+          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, marginLeft: '8px', justifyContent: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              <span style={{ display: 'flex', fontSize: isTopMover ? '12px' : '11px', fontWeight: 700, color: cat.label === 'No clear trigger' ? '#64748B' : '#F1F5F9' }}>
+                {truncate(cat.label, 16)}
               </span>
+              {cat.confidence !== 'LOW' && (
+                <span style={{
+                  display: 'flex', marginLeft: '4px', fontSize: '9px', fontWeight: 800,
+                  color: getConfColor(cat.confidence),
+                  backgroundColor: getConfBg(cat.confidence),
+                  paddingLeft: '3px', paddingRight: '3px', paddingTop: '1px', paddingBottom: '1px',
+                  borderRadius: '2px',
+                }}>
+                  {cat.confidence}
+                </span>
+              )}
             </div>
-          ) : <span style={{ display: 'flex' }} />}
+            {cat.sourceType && (
+              <span style={{ display: 'flex', fontSize: '9px', color: '#64748B', fontWeight: 600, marginTop: '1px' }}>
+                {cat.sourceType}{cat.timeAgo ? ` . ${cat.timeAgo} ago` : ''}
+              </span>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    // Filler rows
+    const renderFillers = (count: number, side: string) => {
+      const out = [];
+      for (let i = 0; i < count; i++) {
+        out.push(
+          <div key={`fill-${side}-${i}`} style={{ display: 'flex', height: `${ROW_H}px`, backgroundColor: '#0C1322', borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1E293B' }} />
+        );
+      }
+      return out;
+    };
+
+    const pageLabel = numImages > 1 ? ` (${imgIdx + 1}/${numImages})` : '';
+    const contLabel = imgIdx > 0 ? ' cont.' : '';
+
+    const element = (
+      <div style={{
+        display: 'flex', flexDirection: 'column', width: `${W}px`, height: `${totalHeight}px`,
+        backgroundColor: '#080E1A', fontFamily: 'sans-serif',
+      }}>
+        {/* Accent bar */}
+        <div style={{ display: 'flex', width: '100%', height: `${ACCENT_H}px`, background: 'linear-gradient(90deg, #00E676 0%, #2979FF 50%, #FF1744 100%)' }} />
+
+        {/* Header */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          paddingLeft: '20px', paddingRight: '20px', height: `${HEADER_H}px`,
+          backgroundColor: '#0A1128', borderBottomWidth: '2px', borderBottomStyle: 'solid', borderBottomColor: '#1E3A5F',
+        }}>
+          <span style={{ display: 'flex', fontSize: '26px', fontWeight: 900, color: '#FFFFFF', letterSpacing: '1px' }}>
+            WATCHLIST PULSE{pageLabel}
+          </span>
+          <span style={{ display: 'flex', fontSize: '13px', color: '#94A3B8', fontWeight: 700 }}>{timestamp}</span>
+        </div>
+
+        {/* KPI Strip */}
+        <div style={{
+          display: 'flex', alignItems: 'center', paddingLeft: '20px', paddingRight: '20px',
+          height: `${METRICS_H}px`, backgroundColor: '#0C1322', fontSize: '15px', fontWeight: 700,
+          borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1E293B',
+        }}>
+          <span style={{ display: 'flex', marginRight: '28px' }}>
+            <span style={{ display: 'flex', color: '#FFFFFF', fontWeight: 900, fontSize: '18px' }}>{displayStocks.length}</span>
+            <span style={{ display: 'flex', marginLeft: '5px', color: '#94A3B8', fontSize: '14px' }}>Stocks</span>
+          </span>
+          <span style={{ display: 'flex', marginRight: '28px' }}>
+            <span style={{ display: 'flex', color: '#00E676', fontWeight: 900, fontSize: '18px' }}>{winnersN}</span>
+            <span style={{ display: 'flex', marginLeft: '5px', color: '#94A3B8', fontSize: '14px' }}>Up</span>
+          </span>
+          <span style={{ display: 'flex', marginRight: '28px' }}>
+            <span style={{ display: 'flex', color: '#FF1744', fontWeight: 900, fontSize: '18px' }}>{losersN}</span>
+            <span style={{ display: 'flex', marginLeft: '5px', color: '#94A3B8', fontSize: '14px' }}>Down</span>
+          </span>
+          <span style={{ display: 'flex' }}>
+            <span style={{ display: 'flex', marginRight: '5px', color: '#94A3B8', fontSize: '14px' }}>Avg</span>
+            <span style={{ display: 'flex', color: avgChange >= 0 ? '#00E676' : '#FF1744', fontWeight: 900, fontSize: '18px' }}>
+              {avgChange >= 0 ? '+' : ''}{avgChange.toFixed(2)}%
+            </span>
+          </span>
+        </div>
+
+        {/* Drivers block — first image only */}
+        {isFirst && drivers.length > 0 && (
+          <div style={{
+            display: 'flex', alignItems: 'center', paddingLeft: '20px', paddingRight: '20px',
+            height: `${DRIVERS_H}px`, backgroundColor: '#0D1526',
+            borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1E293B',
+          }}>
+            <span style={{ display: 'flex', fontSize: '11px', fontWeight: 800, color: '#FFD740', marginRight: '8px', letterSpacing: '1px' }}>
+              DRIVERS
+            </span>
+            <span style={{ display: 'flex', fontSize: '11px', fontWeight: 600, color: '#94A3B8' }}>
+              {drivers.join('  |  ')}
+            </span>
+          </div>
+        )}
+
+        {/* Two-column body */}
+        <div style={{ display: 'flex', flex: 1 }}>
+          {/* LEFT — WINNERS */}
+          <div style={{ display: 'flex', flexDirection: 'column', width: `${HALF_W}px` }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', height: `${COL_HEADER_H}px`,
+              backgroundColor: '#061208', paddingLeft: '6px', paddingRight: '6px',
+              borderBottomWidth: '2px', borderBottomStyle: 'solid', borderBottomColor: '#00C853',
+            }}>
+              <div style={{ display: 'flex', width: '20px', marginRight: '5px' }} />
+              <div style={{ display: 'flex', width: '88px', fontSize: '11px', fontWeight: 900, color: '#00E676', letterSpacing: '1px' }}>
+                WINNERS{contLabel} ({winnersN})
+              </div>
+              <div style={{ display: 'flex', width: '62px', justifyContent: 'flex-end', fontSize: '9px', fontWeight: 800, color: '#475569' }}>%CHG</div>
+              <div style={{ display: 'flex', width: '72px', justifyContent: 'flex-end', fontSize: '9px', fontWeight: 800, color: '#475569', marginLeft: '4px' }}>PRICE</div>
+              <div style={{ display: 'flex', width: '52px', justifyContent: 'flex-end', fontSize: '9px', fontWeight: 800, color: '#475569', marginLeft: '2px' }}>CHG</div>
+              <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', fontSize: '9px', fontWeight: 800, color: '#475569', marginLeft: '8px' }}>WHY</div>
+            </div>
+            {winners.map((s, i) => renderRow(s, i, wStart + i, 'w'))}
+            {winners.length < pageRows && renderFillers(pageRows - winners.length, 'w')}
+          </div>
+
+          {/* Divider */}
+          <div style={{ display: 'flex', width: `${COL_GAP}px`, backgroundColor: '#1E3A5F' }} />
+
+          {/* RIGHT — LOSERS */}
+          <div style={{ display: 'flex', flexDirection: 'column', width: `${HALF_W}px` }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', height: `${COL_HEADER_H}px`,
+              backgroundColor: '#120606', paddingLeft: '6px', paddingRight: '6px',
+              borderBottomWidth: '2px', borderBottomStyle: 'solid', borderBottomColor: '#D50000',
+            }}>
+              <div style={{ display: 'flex', width: '20px', marginRight: '5px' }} />
+              <div style={{ display: 'flex', width: '88px', fontSize: '11px', fontWeight: 900, color: '#FF1744', letterSpacing: '1px' }}>
+                LOSERS{contLabel} ({losersN})
+              </div>
+              <div style={{ display: 'flex', width: '62px', justifyContent: 'flex-end', fontSize: '9px', fontWeight: 800, color: '#475569' }}>%CHG</div>
+              <div style={{ display: 'flex', width: '72px', justifyContent: 'flex-end', fontSize: '9px', fontWeight: 800, color: '#475569', marginLeft: '4px' }}>PRICE</div>
+              <div style={{ display: 'flex', width: '52px', justifyContent: 'flex-end', fontSize: '9px', fontWeight: 800, color: '#475569', marginLeft: '2px' }}>CHG</div>
+              <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', fontSize: '9px', fontWeight: 800, color: '#475569', marginLeft: '8px' }}>WHY</div>
+            </div>
+            {losers.map((s, i) => renderRow(s, i, lStart + i, 'l'))}
+            {losers.length < pageRows && renderFillers(pageRows - losers.length, 'l')}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          paddingLeft: '20px', paddingRight: '20px', height: `${FOOTER_H}px`,
+          backgroundColor: '#080E1A', borderTopWidth: '1px', borderTopStyle: 'solid', borderTopColor: '#1E293B',
+          fontSize: '11px', color: '#475569', fontWeight: 600,
+        }}>
+          <span style={{ display: 'flex' }}>market-cockpit.vercel.app</span>
+          <span style={{ display: 'flex' }}>{timestamp}</span>
         </div>
       </div>
     );
-  };
 
-  // Filler rows
-  const renderFillers = (count: number, side: string) => {
-    const out = [];
-    for (let i = 0; i < count; i++) {
-      out.push(
-        <div key={`fill-${side}-${i}`} style={{ display: 'flex', height: `${ROW_H}px`, backgroundColor: '#101828', borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1E293B' }} />
-      );
-    }
-    return out;
-  };
+    const buf = await (new ImageResponse(element, { width: W, height: totalHeight })).arrayBuffer();
+    images.push(buf);
+  }
 
-  const element = (
-    <div style={{
-      display: 'flex', flexDirection: 'column', width: `${W}px`, height: `${totalHeight}px`,
-      backgroundColor: '#0B1120', fontFamily: 'sans-serif',
-    }}>
-      {/* Accent bar */}
-      <div style={{ display: 'flex', width: '100%', height: `${ACCENT_H}px`, background: 'linear-gradient(90deg, #00E676 0%, #2979FF 50%, #FF1744 100%)' }} />
-
-      {/* Header */}
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        paddingLeft: '24px', paddingRight: '24px', height: `${HEADER_H}px`,
-        backgroundColor: '#0D1526', borderBottomWidth: '2px', borderBottomStyle: 'solid', borderBottomColor: '#1E3A5F',
-      }}>
-        <span style={{ display: 'flex', fontSize: '28px', fontWeight: 900, color: '#FFFFFF', letterSpacing: '2px' }}>
-          WATCHLIST PULSE
-        </span>
-        <span style={{ display: 'flex', fontSize: '14px', color: '#94A3B8', fontWeight: 700 }}>{timestamp}</span>
-      </div>
-
-      {/* KPI Strip */}
-      <div style={{
-        display: 'flex', alignItems: 'center', paddingLeft: '24px', paddingRight: '24px',
-        height: `${METRICS_H}px`, backgroundColor: '#0F1729', fontSize: '17px', fontWeight: 700,
-        borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1E293B',
-      }}>
-        <span style={{ display: 'flex', marginRight: '32px' }}>
-          <span style={{ display: 'flex', color: '#FFFFFF', fontWeight: 900, fontSize: '20px' }}>{displayStocks.length}</span>
-          <span style={{ display: 'flex', marginLeft: '6px', color: '#94A3B8' }}>Stocks</span>
-        </span>
-        <span style={{ display: 'flex', marginRight: '32px' }}>
-          <span style={{ display: 'flex', color: '#00E676', fontWeight: 900, fontSize: '20px' }}>{winnersN}</span>
-          <span style={{ display: 'flex', marginLeft: '6px', color: '#94A3B8' }}>Up</span>
-        </span>
-        <span style={{ display: 'flex', marginRight: '32px' }}>
-          <span style={{ display: 'flex', color: '#FF1744', fontWeight: 900, fontSize: '20px' }}>{losersN}</span>
-          <span style={{ display: 'flex', marginLeft: '6px', color: '#94A3B8' }}>Down</span>
-        </span>
-        <span style={{ display: 'flex' }}>
-          <span style={{ display: 'flex', marginRight: '6px', color: '#94A3B8' }}>Avg</span>
-          <span style={{ display: 'flex', color: avgChange >= 0 ? '#00E676' : '#FF1744', fontWeight: 900, fontSize: '20px' }}>
-            {avgChange >= 0 ? '+' : ''}{avgChange.toFixed(2)}%
-          </span>
-        </span>
-      </div>
-
-      {/* Two-column body */}
-      <div style={{ display: 'flex', flex: 1 }}>
-        {/* LEFT — WINNERS */}
-        <div style={{ display: 'flex', flexDirection: 'column', width: `${HALF_W}px` }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', height: `${COL_HEADER_H}px`,
-            backgroundColor: '#071A0B', paddingLeft: '8px', paddingRight: '8px',
-            borderBottomWidth: '2px', borderBottomStyle: 'solid', borderBottomColor: '#00C853',
-          }}>
-            <div style={{ display: 'flex', width: '22px', marginRight: '6px' }} />
-            <div style={{ display: 'flex', width: '100px', fontSize: '12px', fontWeight: 900, color: '#00E676', letterSpacing: '1px' }}>
-              WINNERS ({winnersN})
-            </div>
-            <div style={{ display: 'flex', width: '80px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#64748B' }}>PRICE</div>
-            <div style={{ display: 'flex', width: '58px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#64748B', marginLeft: '4px' }}>CHG</div>
-            <div style={{ display: 'flex', width: '62px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#64748B', marginLeft: '2px' }}>%CHG</div>
-            <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#64748B', marginLeft: '6px' }}>WHY</div>
-          </div>
-          {winners.map((s, i) => renderRow(s, i, 'w'))}
-          {winners.length < maxRows && renderFillers(maxRows - winners.length, 'w')}
-        </div>
-
-        {/* Divider */}
-        <div style={{ display: 'flex', width: `${COL_GAP}px`, backgroundColor: '#1E3A5F' }} />
-
-        {/* RIGHT — LOSERS */}
-        <div style={{ display: 'flex', flexDirection: 'column', width: `${HALF_W}px` }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', height: `${COL_HEADER_H}px`,
-            backgroundColor: '#1A0808', paddingLeft: '8px', paddingRight: '8px',
-            borderBottomWidth: '2px', borderBottomStyle: 'solid', borderBottomColor: '#D50000',
-          }}>
-            <div style={{ display: 'flex', width: '22px', marginRight: '6px' }} />
-            <div style={{ display: 'flex', width: '100px', fontSize: '12px', fontWeight: 900, color: '#FF1744', letterSpacing: '1px' }}>
-              LOSERS ({losersN})
-            </div>
-            <div style={{ display: 'flex', width: '80px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#64748B' }}>PRICE</div>
-            <div style={{ display: 'flex', width: '58px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#64748B', marginLeft: '4px' }}>CHG</div>
-            <div style={{ display: 'flex', width: '62px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#64748B', marginLeft: '2px' }}>%CHG</div>
-            <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#64748B', marginLeft: '6px' }}>WHY</div>
-          </div>
-          {losers.map((s, i) => renderRow(s, i, 'l'))}
-          {losers.length < maxRows && renderFillers(maxRows - losers.length, 'l')}
-        </div>
-      </div>
-
-      {/* Footer */}
-      <div style={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        paddingLeft: '24px', paddingRight: '24px', height: `${FOOTER_H}px`,
-        backgroundColor: '#0B1120', borderTopWidth: '1px', borderTopStyle: 'solid', borderTopColor: '#1E293B',
-        fontSize: '12px', color: '#64748B', fontWeight: 600,
-      }}>
-        <span style={{ display: 'flex' }}>market-cockpit.vercel.app</span>
-        <span style={{ display: 'flex' }}>{timestamp}</span>
-      </div>
-    </div>
-  );
-
-  return (new ImageResponse(element, { width: W, height: totalHeight })).arrayBuffer();
+  return images;
 }
 
 // ── Telegram Send Functions ─────────────────────────────────────────────
@@ -666,6 +852,39 @@ async function sendTelegramPhoto(
     return { ok: result.ok, error: result.description };
   } catch (e: any) {
     console.error(`[WATCHLIST] Photo send EXCEPTION: ${e.message}`);
+    return { ok: false, error: e.message };
+  }
+}
+
+async function sendTelegramMediaGroup(
+  imageBuffers: ArrayBuffer[],
+  caption: string = '',
+  chatId?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const targetId = chatId || TG_CHAT_ID;
+  if (imageBuffers.length === 1) {
+    return sendTelegramPhoto(imageBuffers[0], caption, chatId);
+  }
+  const tgUrl = `https://api.telegram.org/bot${TG_TOKEN}/sendMediaGroup`;
+  console.log(`[WATCHLIST] Sending ${imageBuffers.length} photos as media group to chat=${targetId}`);
+  try {
+    const formData = new FormData();
+    formData.append('chat_id', targetId);
+    const media = imageBuffers.map((_, i) => ({
+      type: 'photo',
+      media: `attach://photo${i}`,
+      ...(i === 0 && caption ? { caption, parse_mode: 'HTML' } : {}),
+    }));
+    formData.append('media', JSON.stringify(media));
+    imageBuffers.forEach((buf, i) => {
+      formData.append(`photo${i}`, new Blob([buf], { type: 'image/png' }), `pulse_${i}.png`);
+    });
+    const r = await fetch(tgUrl, { method: 'POST', body: formData });
+    const result = await r.json();
+    console.log(`[WATCHLIST] MediaGroup send: ${result.ok ? 'OK' : 'FAILED'} - ${result.description || ''}`);
+    return { ok: result.ok, error: result.description };
+  } catch (e: any) {
+    console.error(`[WATCHLIST] MediaGroup send EXCEPTION: ${e.message}`);
     return { ok: false, error: e.message };
   }
 }
@@ -838,11 +1057,11 @@ export async function POST(request: Request) {
         await sendTelegramTo(chatId, 'No watchlist data available. Market may be closed or symbols not found.');
       } else {
         try {
-          const reasons = await fetchStockReasons(stocks.map(s => s.ticker));
-          const img = await generateWatchlistImage(stocks, reasons);
+          const catalysts = await fetchStockCatalysts(stocks.map(s => s.ticker));
+          const imgs = await generateWatchlistImages(stocks, catalysts);
           const gainers = stocks.filter(s => s.changePercent > 0).length;
           const losers = stocks.filter(s => s.changePercent < 0).length;
-          await sendTelegramPhoto(img, `<b>${stocks.length} stocks</b> • Gainers: ${gainers} | Losers: ${losers} — <a href="https://market-cockpit.vercel.app">Dashboard</a>`, chatId);
+          await sendTelegramMediaGroup(imgs, `<b>${stocks.length} stocks</b> • Gainers: ${gainers} | Losers: ${losers} — <a href="https://market-cockpit.vercel.app">Dashboard</a>`, chatId);
         } catch (e) {
           console.error('[WATCHLIST] Image gen failed:', e);
           // Fallback to text
@@ -974,12 +1193,12 @@ export async function GET(request: Request) {
   diagnostics.steps.push('sending_watchlist_image');
   let imageError: string | undefined;
   try {
-    const reasons = await fetchStockReasons(stocks.map(s => s.ticker));
-    const img = await generateWatchlistImage(stocks, reasons);
+    const catalysts = await fetchStockCatalysts(stocks.map(s => s.ticker));
+    const imgs = await generateWatchlistImages(stocks, catalysts);
     const gainers = stocks.filter(s => s.changePercent > 0).length;
     const losers = stocks.filter(s => s.changePercent < 0).length;
     const caption = `<b>Watchlist Pulse</b>\n${stocks.length} stocks • Gainers: ${gainers} | Losers: ${losers}\n<a href="https://market-cockpit.vercel.app">Dashboard</a>`;
-    const photoResult = await sendTelegramPhoto(img, caption);
+    const photoResult = await sendTelegramMediaGroup(imgs, caption);
     if (!photoResult.ok) {
       imageError = photoResult.error;
       diagnostics.steps.push('image_send_failed');
