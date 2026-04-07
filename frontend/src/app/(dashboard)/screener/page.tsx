@@ -50,7 +50,6 @@ const THEME = {
   red: '#EF4444',
 };
 
-const SECTORS = ['All', 'IT', 'Banking', 'Energy', 'Auto', 'FMCG', 'Pharma', 'Telecom', 'Healthcare', 'Financial Services', 'Metals', 'Consumer Durables', 'Capital Goods', 'Power', 'Cement', 'Insurance', 'Infrastructure', 'Diversified', 'Mining', 'Retail', 'Real Estate', 'Chemicals', 'Defence', 'Logistics', 'Hospitality', 'Consumer Services', 'Transportation', 'Textiles', 'Other'];
 const SORT_OPTIONS = ['Name', 'Change%', 'Price', 'Volume'];
 
 export default function ScreenerPage() {
@@ -65,6 +64,7 @@ export default function ScreenerPage() {
   const [sortBy, setSortBy] = useState('Name');
   const [sortAscending, setSortAscending] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
+  const [sectors, setSectors] = useState<string[]>(['All']);
 
   const itemsPerPage = 20;
 
@@ -77,6 +77,12 @@ export default function ScreenerPage() {
       if (!response.ok) throw new Error('Failed to fetch quotes');
       const result: QuotesData = await response.json();
       setData(result);
+
+      // Derive sectors from the stocks data
+      const uniqueSectors = new Set(result.stocks.map(stock => stock.sector));
+      const sortedSectors = ['All', ...Array.from(uniqueSectors).sort()];
+      setSectors(sortedSectors);
+
       setCurrentPage(1);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
@@ -370,7 +376,7 @@ export default function ScreenerPage() {
                     fontSize: '12px',
                   }}
                 >
-                  {SECTORS.map((sector) => (
+                  {sectors.map((sector) => (
                     <option key={sector} value={sector}>
                       {sector}
                     </option>
