@@ -316,11 +316,11 @@ async function generateMoversImage(
 
   // Calculate heights
   const ACCENT_H = 2;
-  const HEADER_H = 52;
-  const COL_HEADER_H = 28;
-  const ROW_H = 36;
-  const TIER_HEADER_H = 24;
-  const FOOTER_H = 32;
+  const HEADER_H = 58;
+  const COL_HEADER_H = 30;
+  const ROW_H = 40;
+  const TIER_HEADER_H = 28;
+  const FOOTER_H = 34;
 
   const strongCount = strong.length;
   const moderateCount = moderate.length;
@@ -348,31 +348,31 @@ async function generateMoversImage(
         borderBottom: '1px solid #1F2937',
       }}
     >
-      <span style={{ width: '30px', color: '#9CA3AF', fontSize: '14px', fontWeight: 400 }}>
+      <span style={{ width: '30px', color: '#9CA3AF', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
         {rowIdx + 1}
       </span>
-      <span style={{ width: '100px', marginLeft: '12px', color: '#E5E7EB', fontSize: '14px', fontWeight: 700 }}>
+      <span style={{ width: '100px', marginLeft: '12px', color: '#FFFFFF', fontSize: '16px', fontWeight: 800, display: 'flex' }}>
         {truncate(s.ticker, 12)}
       </span>
       <div style={{ display: 'flex', width: '85px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-        <span style={{ color: accentColor, fontSize: '14px', fontWeight: 700, fontFamily: 'monospace' }}>
+        <span style={{ color: accentColor, fontSize: '16px', fontWeight: 800, fontFamily: 'monospace', display: 'flex' }}>
           {isGainers ? '+' : ''}{s.changePercent.toFixed(1)}%
         </span>
       </div>
       <div style={{ display: 'flex', width: '90px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-        <span style={{ color: '#E5E7EB', fontSize: '14px', fontWeight: 700, fontFamily: 'monospace' }}>
+        <span style={{ color: '#FFFFFF', fontSize: '16px', fontWeight: 800, fontFamily: 'monospace', display: 'flex' }}>
           {s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}
         </span>
       </div>
       <div style={{ display: 'flex', width: '75px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-        <span style={{ color: accentColor, fontSize: '14px', fontWeight: 400, fontFamily: 'monospace' }}>
+        <span style={{ color: accentColor, fontSize: '16px', fontWeight: 800, fontFamily: 'monospace', display: 'flex' }}>
           {isGainers ? '+' : ''}{s.change.toFixed(1)}
         </span>
       </div>
-      <span style={{ width: '110px', marginLeft: '12px', color: '#9CA3AF', fontSize: '14px', fontWeight: 400 }}>
+      <span style={{ width: '110px', marginLeft: '12px', color: '#9CA3AF', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
         {truncate(s.sector, 18)}
       </span>
-      <span style={{ width: '60px', marginLeft: '12px', color: '#9CA3AF', fontSize: '14px', fontWeight: 400 }}>
+      <span style={{ width: '60px', marginLeft: '12px', color: '#9CA3AF', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
         {s.cap === 'L' ? 'Large' : s.cap === 'M' ? 'Mid' : 'Small'}
       </span>
     </div>
@@ -391,10 +391,10 @@ async function generateMoversImage(
         borderLeft: `2px solid ${accentColor}`,
       }}
     >
-      <span style={{ color: accentColor, fontSize: '12px', fontWeight: 700, textTransform: 'uppercase' }}>
+      <span style={{ color: accentColor, fontSize: '14px', fontWeight: 800, textTransform: 'uppercase', display: 'flex' }}>
         {label}
       </span>
-      <span style={{ marginLeft: '8px', color: '#64748B', fontSize: '12px', fontWeight: 700 }}>
+      <span style={{ marginLeft: '8px', color: '#64748B', fontSize: '14px', fontWeight: 800, display: 'flex' }}>
         ({count})
       </span>
     </div>
@@ -427,10 +427,10 @@ async function generateMoversImage(
           borderBottom: '1px solid #1F2937',
         }}
       >
-        <span style={{ fontSize: '20px', fontWeight: 700, color: accentColor, letterSpacing: '1px', textTransform: 'uppercase' }}>
+        <span style={{ fontSize: '24px', fontWeight: 800, color: accentColor, letterSpacing: '1px', textTransform: 'uppercase', display: 'flex' }}>
           {isGainers ? 'Top Gainers' : 'Top Losers'}
         </span>
-        <span style={{ fontSize: '14px', fontWeight: 700, color: '#9CA3AF', letterSpacing: '0.5px' }}>
+        <span style={{ fontSize: '14px', fontWeight: 700, color: '#9CA3AF', letterSpacing: '0.5px', display: 'flex' }}>
           {allStocks.length} stocks · {timestamp}
         </span>
       </div>
@@ -447,31 +447,31 @@ async function generateMoversImage(
           borderBottom: '1px solid #1F2937',
         }}
       >
-        <span style={{ width: '30px', color: '#64748B', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase' }}>
+        <span style={{ width: '30px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           #
         </span>
-        <span style={{ width: '100px', marginLeft: '12px', color: '#64748B', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase' }}>
+        <span style={{ width: '100px', marginLeft: '12px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           Symbol
         </span>
         <div style={{ display: 'flex', width: '85px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-          <span style={{ color: '#64748B', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase' }}>
+          <span style={{ color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
             %Chg
           </span>
         </div>
         <div style={{ display: 'flex', width: '90px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-          <span style={{ color: '#64748B', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase' }}>
+          <span style={{ color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
             Price
           </span>
         </div>
         <div style={{ display: 'flex', width: '75px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-          <span style={{ color: '#64748B', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase' }}>
+          <span style={{ color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
             Chg
           </span>
         </div>
-        <span style={{ width: '110px', marginLeft: '12px', color: '#64748B', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase' }}>
+        <span style={{ width: '110px', marginLeft: '12px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           Sector
         </span>
-        <span style={{ width: '60px', marginLeft: '12px', color: '#64748B', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase' }}>
+        <span style={{ width: '60px', marginLeft: '12px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           Cap
         </span>
       </div>
@@ -547,14 +547,14 @@ async function generateStreetPulseCard(
 
   // Heights
   const ACCENT_H = 2;
-  const HEADER_H = 52;
+  const HEADER_H = 58;
   const INDEX_H = indices.length > 0 ? 32 : 0;
   const BREADTH_H = 44;
   const SECTION_H = 32;
-  const COL_HEADER_H = 28;
-  const TIER_HEADER_H = 24;
-  const ROW_H = 34;
-  const FOOTER_H = 32;
+  const COL_HEADER_H = 30;
+  const TIER_HEADER_H = 28;
+  const ROW_H = 38;
+  const FOOTER_H = 34;
 
   const gainersRowsH = (strongGainers.length > 0 ? TIER_HEADER_H : 0) + strongGainers.length * ROW_H +
                        (moderateGainers.length > 0 ? TIER_HEADER_H : 0) + moderateGainers.length * ROW_H;
@@ -576,31 +576,31 @@ async function generateStreetPulseCard(
         borderBottom: '1px solid #1F2937',
       }}
     >
-      <span style={{ width: '25px', color: '#9CA3AF', fontSize: '13px', fontWeight: 400 }}>
+      <span style={{ width: '25px', color: '#9CA3AF', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
         {rowIdx + 1}
       </span>
-      <span style={{ width: '90px', marginLeft: '12px', color: '#E5E7EB', fontSize: '13px', fontWeight: 700 }}>
+      <span style={{ width: '90px', marginLeft: '12px', color: '#FFFFFF', fontSize: '16px', fontWeight: 800, display: 'flex' }}>
         {truncate(s.ticker, 12)}
       </span>
       <div style={{ display: 'flex', width: '80px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-        <span style={{ color: isBullish ? '#22C55E' : '#B91C1C', fontSize: '13px', fontWeight: 700, fontFamily: 'monospace' }}>
+        <span style={{ color: isBullish ? '#22C55E' : '#B91C1C', fontSize: '16px', fontWeight: 800, fontFamily: 'monospace', display: 'flex' }}>
           {isBullish ? '+' : ''}{s.changePercent.toFixed(1)}%
         </span>
       </div>
       <div style={{ display: 'flex', width: '85px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-        <span style={{ color: '#E5E7EB', fontSize: '13px', fontWeight: 700, fontFamily: 'monospace' }}>
+        <span style={{ color: '#FFFFFF', fontSize: '16px', fontWeight: 800, fontFamily: 'monospace', display: 'flex' }}>
           {s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}
         </span>
       </div>
       <div style={{ display: 'flex', width: '70px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-        <span style={{ color: isBullish ? '#22C55E' : '#B91C1C', fontSize: '13px', fontWeight: 400, fontFamily: 'monospace' }}>
+        <span style={{ color: isBullish ? '#22C55E' : '#B91C1C', fontSize: '16px', fontWeight: 800, fontFamily: 'monospace', display: 'flex' }}>
           {isBullish ? '+' : ''}{s.change.toFixed(1)}
         </span>
       </div>
-      <span style={{ width: '100px', marginLeft: '12px', color: '#9CA3AF', fontSize: '13px', fontWeight: 400 }}>
+      <span style={{ width: '100px', marginLeft: '12px', color: '#9CA3AF', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
         {truncate(s.sector, 16)}
       </span>
-      <span style={{ width: '55px', marginLeft: '12px', color: '#9CA3AF', fontSize: '13px', fontWeight: 400 }}>
+      <span style={{ width: '55px', marginLeft: '12px', color: '#9CA3AF', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
         {s.cap === 'L' ? 'Large' : s.cap === 'M' ? 'Mid' : 'Small'}
       </span>
     </div>
@@ -619,10 +619,10 @@ async function generateStreetPulseCard(
         borderLeft: `2px solid ${color}`,
       }}
     >
-      <span style={{ color: color, fontSize: '12px', fontWeight: 700, textTransform: 'uppercase' }}>
+      <span style={{ color: color, fontSize: '14px', fontWeight: 800, textTransform: 'uppercase', display: 'flex' }}>
         {label}
       </span>
-      <span style={{ marginLeft: '8px', color: '#64748B', fontSize: '12px', fontWeight: 700 }}>
+      <span style={{ marginLeft: '8px', color: '#64748B', fontSize: '14px', fontWeight: 800, display: 'flex' }}>
         ({count})
       </span>
     </div>
@@ -655,10 +655,10 @@ async function generateStreetPulseCard(
           borderBottom: '1px solid #1F2937',
         }}
       >
-        <span style={{ fontSize: '20px', fontWeight: 700, color: '#E5E7EB', letterSpacing: '1px', textTransform: 'uppercase' }}>
+        <span style={{ fontSize: '24px', fontWeight: 800, color: '#E5E7EB', letterSpacing: '1px', textTransform: 'uppercase', display: 'flex' }}>
           Street Pulse
         </span>
-        <span style={{ fontSize: '14px', fontWeight: 700, color: '#9CA3AF', letterSpacing: '0.5px' }}>
+        <span style={{ fontSize: '14px', fontWeight: 700, color: '#9CA3AF', letterSpacing: '0.5px', display: 'flex' }}>
           {timestamp}
         </span>
       </div>
@@ -796,31 +796,31 @@ async function generateStreetPulseCard(
           borderBottom: '1px solid #1F2937',
         }}
       >
-        <span style={{ width: '25px', color: '#64748B', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase' }}>
+        <span style={{ width: '25px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           #
         </span>
-        <span style={{ width: '90px', marginLeft: '12px', color: '#64748B', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase' }}>
+        <span style={{ width: '90px', marginLeft: '12px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           Symbol
         </span>
         <div style={{ display: 'flex', width: '80px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-          <span style={{ color: '#64748B', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase' }}>
+          <span style={{ color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
             %Chg
           </span>
         </div>
         <div style={{ display: 'flex', width: '85px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-          <span style={{ color: '#64748B', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase' }}>
+          <span style={{ color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
             Price
           </span>
         </div>
         <div style={{ display: 'flex', width: '70px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-          <span style={{ color: '#64748B', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase' }}>
+          <span style={{ color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
             Chg
           </span>
         </div>
-        <span style={{ width: '100px', marginLeft: '12px', color: '#64748B', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase' }}>
+        <span style={{ width: '100px', marginLeft: '12px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           Sector
         </span>
-        <span style={{ width: '55px', marginLeft: '12px', color: '#64748B', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase' }}>
+        <span style={{ width: '55px', marginLeft: '12px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           Cap
         </span>
       </div>
@@ -871,31 +871,31 @@ async function generateStreetPulseCard(
           borderBottom: '1px solid #1F2937',
         }}
       >
-        <span style={{ width: '25px', color: '#64748B', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase' }}>
+        <span style={{ width: '25px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           #
         </span>
-        <span style={{ width: '90px', marginLeft: '12px', color: '#64748B', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase' }}>
+        <span style={{ width: '90px', marginLeft: '12px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           Symbol
         </span>
         <div style={{ display: 'flex', width: '80px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-          <span style={{ color: '#64748B', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase' }}>
+          <span style={{ color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
             %Chg
           </span>
         </div>
         <div style={{ display: 'flex', width: '85px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-          <span style={{ color: '#64748B', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase' }}>
+          <span style={{ color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
             Price
           </span>
         </div>
         <div style={{ display: 'flex', width: '70px', marginLeft: '12px', justifyContent: 'flex-end' }}>
-          <span style={{ color: '#64748B', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase' }}>
+          <span style={{ color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
             Chg
           </span>
         </div>
-        <span style={{ width: '100px', marginLeft: '12px', color: '#64748B', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase' }}>
+        <span style={{ width: '100px', marginLeft: '12px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           Sector
         </span>
-        <span style={{ width: '55px', marginLeft: '12px', color: '#64748B', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase' }}>
+        <span style={{ width: '55px', marginLeft: '12px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
           Cap
         </span>
       </div>

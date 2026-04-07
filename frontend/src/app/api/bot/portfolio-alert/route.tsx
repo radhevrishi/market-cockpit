@@ -345,14 +345,14 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
   const timestamp = getISTTimestamp();
   const W = 1200;
 
-  // Dark theme dimensions
+  // Dark theme dimensions — increased row height for larger fonts
   const ACCENT_H = 2;
-  const HEADER_H = 48;
-  const METRICS_H = 36;
-  const COL_HEADER_H = 32;
-  const TIER_HEADER_H = 28;
-  const ROW_H = 36;
-  const FOOTER_H = 28;
+  const HEADER_H = 54;
+  const METRICS_H = 40;
+  const COL_HEADER_H = 34;
+  const TIER_HEADER_H = 32;
+  const ROW_H = 40;
+  const FOOTER_H = 30;
 
   // Sort by change percent descending
   const sorted = [...displayStocks].sort((a, b) => b.changePercent - a.changePercent);
@@ -427,8 +427,8 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
           borderLeftWidth: '4px',
           borderLeftStyle: 'solid',
           borderLeftColor: tier.color,
-          fontSize: '12px',
-          fontWeight: 600,
+          fontSize: '14px',
+          fontWeight: 800,
           color: tier.textColor,
           letterSpacing: '1.2px',
           textTransform: 'uppercase' as const,
@@ -483,8 +483,8 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
           alignItems: 'flex-start',
         }}>
           <span style={{
-            fontSize: '20px',
-            fontWeight: 700,
+            fontSize: '24px',
+            fontWeight: 800,
             color: '#E5E7EB',
             letterSpacing: '2px',
             textTransform: 'uppercase' as const,
@@ -514,15 +514,16 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
           paddingBottom: '8px',
           height: `${METRICS_H}px`,
           backgroundColor: '#0F172A',
-          fontSize: '13px',
+          fontSize: '15px',
           color: '#E5E7EB',
+          fontWeight: 700,
           borderBottomWidth: '1px',
           borderBottomStyle: 'solid',
           borderBottomColor: '#1F2937',
         }}
       >
         <span style={{ display: 'flex', marginRight: '24px' }}>
-          <span style={{ display: 'flex', color: '#9CA3AF' }}>{displayStocks.length}</span>
+          <span style={{ display: 'flex', color: '#9CA3AF', fontWeight: 700 }}>{displayStocks.length}</span>
           <span style={{ display: 'flex', marginLeft: '4px', color: '#9CA3AF' }}>Stocks</span>
         </span>
         <span style={{ display: 'flex', marginRight: '24px' }}>
@@ -558,8 +559,8 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
           borderBottomWidth: '1px',
           borderBottomStyle: 'solid',
           borderBottomColor: '#1F2937',
-          fontSize: '12px',
-          fontWeight: 600,
+          fontSize: '13px',
+          fontWeight: 700,
           color: '#64748B',
           letterSpacing: '0.8px',
           textTransform: 'uppercase' as const,
@@ -614,7 +615,7 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
                     paddingBottom: '0px',
                     backgroundColor: rowBg,
                     height: `${ROW_H}px`,
-                    fontSize: '14px',
+                    fontSize: '16px',
                     fontFamily: 'monospace',
                     borderBottomWidth: '1px',
                     borderBottomStyle: 'solid',
@@ -630,8 +631,8 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
                     width: '35px',
                     marginRight: '12px',
                     color: '#64748B',
-                    fontSize: '13px',
-                    fontWeight: 400,
+                    fontSize: '14px',
+                    fontWeight: 600,
                     justifyContent: 'flex-end',
                   }}>
                     {rowIndex + 1}
@@ -642,9 +643,9 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
                     display: 'flex',
                     width: '110px',
                     marginRight: '12px',
-                    fontWeight: 700,
-                    color: '#E5E7EB',
-                    fontSize: '14px',
+                    fontWeight: 800,
+                    color: '#FFFFFF',
+                    fontSize: '16px',
                   }}>
                     {truncate(s.ticker, 12)}
                   </div>
@@ -655,8 +656,8 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
                     width: '95px',
                     marginRight: '12px',
                     color: pctColor,
-                    fontWeight: 700,
-                    fontSize: '14px',
+                    fontWeight: 800,
+                    fontSize: '16px',
                     justifyContent: 'flex-end',
                   }}>
                     <span style={{ display: 'flex' }}>{arrow} {s.changePercent >= 0 ? '+' : ''}{s.changePercent.toFixed(1)}%</span>
@@ -667,9 +668,9 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
                     display: 'flex',
                     width: '100px',
                     marginRight: '12px',
-                    color: '#E5E7EB',
-                    fontSize: '14px',
-                    fontWeight: 700,
+                    color: '#FFFFFF',
+                    fontSize: '16px',
+                    fontWeight: 800,
                     justifyContent: 'flex-end',
                   }}>
                     <span style={{ display: 'flex' }}>{s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}</span>
@@ -681,8 +682,8 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
                     width: '80px',
                     marginRight: '12px',
                     color: pctColor,
-                    fontSize: '14px',
-                    fontWeight: 700,
+                    fontSize: '16px',
+                    fontWeight: 800,
                     justifyContent: 'flex-end',
                   }}>
                     <span style={{ display: 'flex' }}>{s.change >= 0 ? '+' : ''}{s.change.toFixed(1)}</span>
@@ -693,8 +694,8 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
                     display: 'flex',
                     flex: 1,
                     color: '#9CA3AF',
-                    fontSize: '13px',
-                    fontWeight: 400,
+                    fontSize: '14px',
+                    fontWeight: 600,
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap' as const,

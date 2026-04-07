@@ -338,8 +338,10 @@ async def get_bottleneck_dashboard(
             NewsArticle.published_at >= cutoff,
             NewsArticle.is_duplicate == False,  # noqa: E712
         ]
+        # For specific region filters (IN, US), ONLY show articles from that region
+        # Don't include GLOBAL — it pollutes India view with US articles like Micron, Exxon etc.
         if region and region != "ALL":
-            conditions.append(or_(NewsArticle.region == region, NewsArticle.region == "GLOBAL"))
+            conditions.append(NewsArticle.region == region)
         result = await db.execute(
             select(NewsArticle)
             .where(and_(*conditions))
@@ -359,14 +361,13 @@ async def get_bottleneck_dashboard(
                     symbols.append(t["ticker"])
 
             # Defense: strip INDIA_* themes from articles that aren't actually India-context
-            # This prevents stale/incorrect INDIA_* tags from polluting the dashboard
             raw_themes = art.themes if isinstance(art.themes, list) else []
             if art.region != "IN":
                 clean_themes = [t for t in raw_themes if not t.startswith("INDIA_")]
             else:
                 clean_themes = raw_themes
 
-            # Skip articles that have no valid themes after cleaning (stale data)
+            # Skip articles that have no valid themes after cleaning
             if not clean_themes:
                 continue
 
