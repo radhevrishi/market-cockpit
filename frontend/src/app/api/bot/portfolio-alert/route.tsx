@@ -341,21 +341,66 @@ function getISTTimestamp(): string {
 }
 
 async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
-  const displayStocks = stocks.slice(0, 50);
+  const displayStocks = stocks.slice(0, 60);
   const timestamp = getISTTimestamp();
   const W = 1200;
 
   // Dark theme dimensions
-  const ACCENT_H = 3;
+  const ACCENT_H = 2;
   const HEADER_H = 48;
   const METRICS_H = 36;
   const COL_HEADER_H = 32;
-  const ROW_H = 46;
+  const TIER_HEADER_H = 28;
+  const ROW_H = 36;
   const FOOTER_H = 28;
-  const totalHeight = ACCENT_H + HEADER_H + METRICS_H + COL_HEADER_H + displayStocks.length * ROW_H + FOOTER_H;
 
   // Sort by change percent descending
   const sorted = [...displayStocks].sort((a, b) => b.changePercent - a.changePercent);
+
+  // Define tier groupings
+  interface Tier {
+    label: string;
+    min: number;
+    max: number;
+    color: string;
+    bgTint: string;
+    textColor: string;
+  }
+
+  const tiers: Tier[] = [
+    { label: 'STRONG GAINERS', min: 3, max: Infinity, color: '#16A34A', bgTint: '#16A34A15', textColor: '#22C55E' },
+    { label: 'GAINERS', min: 0.5, max: 3, color: '#4ADE80', bgTint: '#4ADE8015', textColor: '#4ADE80' },
+    { label: 'FLAT', min: -0.5, max: 0.5, color: '#64748B', bgTint: '#64748B15', textColor: '#64748B' },
+    { label: 'LOSERS', min: -3, max: -0.5, color: '#F87171', bgTint: '#F8717115', textColor: '#F87171' },
+    { label: 'STRONG LOSERS', min: -Infinity, max: -3, color: '#DC2626', bgTint: '#DC262615', textColor: '#EF4444' },
+  ];
+
+  // Group stocks by tier
+  const stocksByTier: { [tierIndex: number]: Stock[] } = {};
+  tiers.forEach((_, index) => {
+    stocksByTier[index] = [];
+  });
+
+  sorted.forEach(stock => {
+    for (let i = 0; i < tiers.length; i++) {
+      const tier = tiers[i];
+      if (stock.changePercent >= tier.min && stock.changePercent < tier.max) {
+        stocksByTier[i].push(stock);
+        break;
+      }
+    }
+  });
+
+  // Calculate total height including tier headers
+  let totalHeight = ACCENT_H + HEADER_H + METRICS_H + COL_HEADER_H + FOOTER_H;
+  let tierCount = 0;
+  Object.keys(stocksByTier).forEach(tierIdx => {
+    const idx = parseInt(tierIdx);
+    if (stocksByTier[idx].length > 0) {
+      tierCount++;
+      totalHeight += TIER_HEADER_H + stocksByTier[idx].length * ROW_H;
+    }
+  });
 
   const gainers = stocks.filter(s => s.changePercent > 0).length;
   const losers = stocks.filter(s => s.changePercent < 0).length;
@@ -363,6 +408,38 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
   const avgChange = stocks.length > 0
     ? Math.round(stocks.reduce((sum, s) => sum + s.changePercent, 0) / stocks.length * 100) / 100
     : 0;
+
+  // Render helper function for tier header
+  const renderTierHeader = (tierIndex: number, tier: Tier, count: number) => {
+    return (
+      <div
+        key={`tier-${tierIndex}`}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          paddingLeft: '20px',
+          paddingRight: '20px',
+          height: `${TIER_HEADER_H}px`,
+          backgroundColor: tier.bgTint,
+          borderBottomWidth: '1px',
+          borderBottomStyle: 'solid',
+          borderBottomColor: '#1F2937',
+          borderLeftWidth: '4px',
+          borderLeftStyle: 'solid',
+          borderLeftColor: tier.color,
+          fontSize: '12px',
+          fontWeight: 600,
+          color: tier.textColor,
+          letterSpacing: '1.2px',
+          textTransform: 'uppercase' as const,
+          justifyContent: 'space-between',
+        }}
+      >
+        <span style={{ display: 'flex' }}>{tier.label}</span>
+        <span style={{ display: 'flex', color: '#9CA3AF' }}>({count})</span>
+      </div>
+    );
+  };
 
   const element = (
     <div
@@ -375,7 +452,7 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
         fontFamily: 'sans-serif',
       }}
     >
-      {/* ── Top accent gradient bar (3px) ── */}
+      {/* ── Top accent gradient bar (2px) ── */}
       <div style={{
         display: 'flex',
         width: '100%',
@@ -383,31 +460,30 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
         background: 'linear-gradient(90deg, #3B82F6 0%, #60A5FA 100%)',
       }} />
 
-      {/* ── Header Row (slim, dark) ── */}
+      {/* ── Header Row ── */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          paddingLeft: '24px',
-          paddingRight: '24px',
+          paddingLeft: '20px',
+          paddingRight: '20px',
           paddingTop: '10px',
           paddingBottom: '10px',
           height: `${HEADER_H}px`,
-          backgroundColor: '#0F172A',
+          backgroundColor: '#111827',
           borderBottomWidth: '1px',
           borderBottomStyle: 'solid',
           borderBottomColor: '#1F2937',
         }}
       >
-        {/* Left: Title "PORTFOLIO PULSE" in small caps */}
         <div style={{
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'flex-start',
         }}>
           <span style={{
-            fontSize: '23px',
+            fontSize: '20px',
             fontWeight: 700,
             color: '#E5E7EB',
             letterSpacing: '2px',
@@ -417,9 +493,9 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
           </span>
         </div>
 
-        {/* Right: Date */}
         <span style={{
-          fontSize: '14px',
+          display: 'flex',
+          fontSize: '12px',
           color: '#9CA3AF',
           letterSpacing: '0.5px',
         }}>
@@ -427,18 +503,18 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
         </span>
       </div>
 
-      {/* ── Compact KPI Strip (single horizontal line) ── */}
+      {/* ── Compact KPI Strip ── */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
-          paddingLeft: '24px',
-          paddingRight: '24px',
+          paddingLeft: '20px',
+          paddingRight: '20px',
           paddingTop: '8px',
           paddingBottom: '8px',
           height: `${METRICS_H}px`,
-          backgroundColor: '#111827',
-          fontSize: '16px',
+          backgroundColor: '#0F172A',
+          fontSize: '13px',
           color: '#E5E7EB',
           borderBottomWidth: '1px',
           borderBottomStyle: 'solid',
@@ -446,35 +522,35 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
         }}
       >
         <span style={{ display: 'flex', marginRight: '24px' }}>
-          <span style={{ color: '#9CA3AF' }}>{displayStocks.length}</span>
-          <span style={{ marginLeft: '4px', color: '#9CA3AF' }}>Stocks</span>
+          <span style={{ display: 'flex', color: '#9CA3AF' }}>{displayStocks.length}</span>
+          <span style={{ display: 'flex', marginLeft: '4px', color: '#9CA3AF' }}>Stocks</span>
         </span>
         <span style={{ display: 'flex', marginRight: '24px' }}>
-          <span style={{ color: '#16A34A', fontWeight: 700 }}>{gainers}</span>
-          <span style={{ marginLeft: '4px', color: '#9CA3AF' }}>Up</span>
+          <span style={{ display: 'flex', color: '#22C55E', fontWeight: 700 }}>{gainers}</span>
+          <span style={{ display: 'flex', marginLeft: '4px', color: '#9CA3AF' }}>Up</span>
         </span>
         <span style={{ display: 'flex', marginRight: '24px' }}>
-          <span style={{ color: '#DC2626', fontWeight: 700 }}>{losers}</span>
-          <span style={{ marginLeft: '4px', color: '#9CA3AF' }}>Down</span>
+          <span style={{ display: 'flex', color: '#EF4444', fontWeight: 700 }}>{losers}</span>
+          <span style={{ display: 'flex', marginLeft: '4px', color: '#9CA3AF' }}>Down</span>
         </span>
         <span style={{ display: 'flex', marginRight: '24px' }}>
-          <span style={{ color: '#9CA3AF', fontWeight: 700 }}>{unchanged}</span>
-          <span style={{ marginLeft: '4px', color: '#9CA3AF' }}>Flat</span>
+          <span style={{ display: 'flex', color: '#9CA3AF', fontWeight: 600 }}>{unchanged}</span>
+          <span style={{ display: 'flex', marginLeft: '4px', color: '#9CA3AF' }}>Flat</span>
         </span>
-        <span style={{ display: 'flex', marginRight: '0px' }}>
-          <span style={{ color: avgChange >= 0 ? '#16A34A' : '#DC2626', fontWeight: 700 }}>
+        <span style={{ display: 'flex' }}>
+          <span style={{ display: 'flex', color: avgChange >= 0 ? '#22C55E' : '#EF4444', fontWeight: 700 }}>
             {avgChange >= 0 ? '+' : ''}{avgChange.toFixed(2)}%
           </span>
-          <span style={{ marginLeft: '4px', color: '#9CA3AF' }}>Avg</span>
+          <span style={{ display: 'flex', marginLeft: '4px', color: '#9CA3AF' }}>Avg</span>
         </span>
       </div>
 
-      {/* ── Column Headers (uppercase, muted, letter-spacing) ── */}
+      {/* ── Column Headers ── */}
       <div
         style={{
           display: 'flex',
-          paddingLeft: '24px',
-          paddingRight: '24px',
+          paddingLeft: '20px',
+          paddingRight: '20px',
           paddingTop: '6px',
           paddingBottom: '6px',
           height: `${COL_HEADER_H}px`,
@@ -482,145 +558,164 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
           borderBottomWidth: '1px',
           borderBottomStyle: 'solid',
           borderBottomColor: '#1F2937',
-          fontSize: '13px',
-          fontWeight: 700,
+          fontSize: '12px',
+          fontWeight: 600,
           color: '#64748B',
           letterSpacing: '0.8px',
           textTransform: 'uppercase' as const,
           alignItems: 'center',
         }}
       >
-        <div style={{ display: 'flex', width: '30px', marginRight: '12px' }}>#</div>
-        <div style={{ display: 'flex', width: '100px', marginRight: '12px' }}>SYMBOL</div>
-        <div style={{ display: 'flex', width: '100px', marginRight: '12px', justifyContent: 'flex-end' }}>%CHG</div>
-        <div style={{ display: 'flex', width: '90px', marginRight: '12px', justifyContent: 'flex-end' }}>PRICE</div>
+        <div style={{ display: 'flex', width: '35px', marginRight: '12px', justifyContent: 'flex-end' }}>#</div>
+        <div style={{ display: 'flex', width: '110px', marginRight: '12px' }}>SYMBOL</div>
+        <div style={{ display: 'flex', width: '95px', marginRight: '12px', justifyContent: 'flex-end' }}>%CHG</div>
+        <div style={{ display: 'flex', width: '100px', marginRight: '12px', justifyContent: 'flex-end' }}>PRICE</div>
         <div style={{ display: 'flex', width: '80px', marginRight: '12px', justifyContent: 'flex-end' }}>CHANGE</div>
-        <div style={{ display: 'flex', width: '140px', marginRight: '0px' }}>SECTOR</div>
+        <div style={{ display: 'flex', flex: 1 }}>SECTOR</div>
       </div>
 
-      {/* ── Data Rows (zebra striped with row accent border) ── */}
-      {sorted.map((s, i) => {
-        const isPositive = s.changePercent >= 0;
-        const pctColor = isPositive ? '#16A34A' : '#DC2626';
-        const chgColor = isPositive ? '#16A34A' : '#DC2626';
-        const rowBg = i % 2 === 0 ? '#0F172A' : '#111827';
-        const accentColor = isPositive ? '#16A34A' : s.changePercent < 0 ? '#DC2626' : '#334155';
-        const rowTint = isPositive ? '#14532D20' : s.changePercent < 0 ? '#7F1D1D20' : 'transparent';
-        const arrow = isPositive ? '↑' : s.changePercent < 0 ? '↓' : '−';
+      {/* ── Tier Groups with Data Rows ── */}
+      {tiers.map((tier, tierIndex) => {
+        const tierStocks = stocksByTier[tierIndex];
+        if (tierStocks.length === 0) return null;
 
         return (
-          <div
-            key={i}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              paddingLeft: '24px',
-              paddingRight: '24px',
-              paddingTop: '0px',
-              paddingBottom: '0px',
-              backgroundColor: rowBg,
-              height: `${ROW_H}px`,
-              fontSize: '13px',
-              borderBottomWidth: '1px',
-              borderBottomStyle: 'solid',
-              borderBottomColor: '#1F2937',
-              borderLeftWidth: '3px',
-              borderLeftStyle: 'solid',
-              borderLeftColor: accentColor,
-            }}
-          >
-            {/* Row number */}
-            <div style={{
-              display: 'flex',
-              width: '30px',
-              marginRight: '12px',
-              color: '#64748B',
-              fontSize: '15px',
-              fontWeight: 700,
-            }}>
-              {i + 1}
-            </div>
+          <div key={`tier-section-${tierIndex}`} style={{ display: 'flex', flexDirection: 'column' }}>
+            {renderTierHeader(tierIndex, tier, tierStocks.length)}
 
-            {/* Symbol (bold, white) */}
-            <div style={{
-              display: 'flex',
-              width: '100px',
-              marginRight: '12px',
-              fontWeight: 700,
-              color: '#E5E7EB',
-              fontSize: '17px',
-              fontFamily: 'monospace',
-            }}>
-              {truncate(s.ticker, 12)}
-            </div>
+            {tierStocks.map((s, rowIndex) => {
+              const isPositive = s.changePercent >= 0;
+              const isStrongGain = s.changePercent >= 3;
+              const isStrongLoss = s.changePercent < -3;
 
-            {/* %Change (BOLD, colored, with arrow, monospace) */}
-            <div style={{
-              display: 'flex',
-              width: '100px',
-              marginRight: '12px',
-              color: pctColor,
-              fontWeight: 700,
-              fontSize: '17px',
-              fontFamily: 'monospace',
-              justifyContent: 'flex-end',
-            }}>
-              <span>{arrow} {s.changePercent >= 0 ? '+' : ''}{s.changePercent.toFixed(1)}%</span>
-            </div>
+              let pctColor = '#64748B';
+              if (isStrongGain) {
+                pctColor = '#22C55E';
+              } else if (s.changePercent >= 0.5) {
+                pctColor = '#4ADE80';
+              } else if (s.changePercent <= -3) {
+                pctColor = '#EF4444';
+              } else if (s.changePercent < -0.5) {
+                pctColor = '#F87171';
+              }
 
-            {/* Price (right-aligned, monospace, muted) */}
-            <div style={{
-              display: 'flex',
-              width: '90px',
-              marginRight: '12px',
-              color: '#E5E7EB',
-              fontSize: '17px',
-              fontFamily: 'monospace',
-              fontWeight: 700,
-              justifyContent: 'flex-end',
-            }}>
-              <span>{s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}</span>
-            </div>
+              const rowBg = rowIndex % 2 === 0 ? '#0F172A' : '#111827';
+              const arrow = s.changePercent > 0 ? '↑' : s.changePercent < 0 ? '↓' : '−';
 
-            {/* Change (right-aligned, colored, monospace) */}
-            <div style={{
-              display: 'flex',
-              width: '80px',
-              marginRight: '12px',
-              color: chgColor,
-              fontSize: '17px',
-              fontFamily: 'monospace',
-              fontWeight: 700,
-              justifyContent: 'flex-end',
-            }}>
-              <span>{s.change >= 0 ? '+' : ''}{s.change.toFixed(1)}</span>
-            </div>
+              return (
+                <div
+                  key={`row-${tierIndex}-${rowIndex}`}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    paddingLeft: '20px',
+                    paddingRight: '20px',
+                    paddingTop: '0px',
+                    paddingBottom: '0px',
+                    backgroundColor: rowBg,
+                    height: `${ROW_H}px`,
+                    fontSize: '14px',
+                    fontFamily: 'monospace',
+                    borderBottomWidth: '1px',
+                    borderBottomStyle: 'solid',
+                    borderBottomColor: '#1F2937',
+                    borderLeftWidth: '4px',
+                    borderLeftStyle: 'solid',
+                    borderLeftColor: tier.color,
+                  }}
+                >
+                  {/* Row number */}
+                  <div style={{
+                    display: 'flex',
+                    width: '35px',
+                    marginRight: '12px',
+                    color: '#64748B',
+                    fontSize: '13px',
+                    fontWeight: 400,
+                    justifyContent: 'flex-end',
+                  }}>
+                    {rowIndex + 1}
+                  </div>
 
-            {/* Sector (left-aligned, muted) */}
-            <div style={{
-              display: 'flex',
-              width: '140px',
-              color: '#9CA3AF',
-              fontSize: '14px',
-              fontWeight: 700,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap' as const,
-            }}>
-              {truncate(s.sector, 22)}
-            </div>
+                  {/* Symbol */}
+                  <div style={{
+                    display: 'flex',
+                    width: '110px',
+                    marginRight: '12px',
+                    fontWeight: 700,
+                    color: '#E5E7EB',
+                    fontSize: '14px',
+                  }}>
+                    {truncate(s.ticker, 12)}
+                  </div>
+
+                  {/* %Change */}
+                  <div style={{
+                    display: 'flex',
+                    width: '95px',
+                    marginRight: '12px',
+                    color: pctColor,
+                    fontWeight: 700,
+                    fontSize: '14px',
+                    justifyContent: 'flex-end',
+                  }}>
+                    <span style={{ display: 'flex' }}>{arrow} {s.changePercent >= 0 ? '+' : ''}{s.changePercent.toFixed(1)}%</span>
+                  </div>
+
+                  {/* Price */}
+                  <div style={{
+                    display: 'flex',
+                    width: '100px',
+                    marginRight: '12px',
+                    color: '#E5E7EB',
+                    fontSize: '14px',
+                    fontWeight: 700,
+                    justifyContent: 'flex-end',
+                  }}>
+                    <span style={{ display: 'flex' }}>{s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}</span>
+                  </div>
+
+                  {/* Change */}
+                  <div style={{
+                    display: 'flex',
+                    width: '80px',
+                    marginRight: '12px',
+                    color: pctColor,
+                    fontSize: '14px',
+                    fontWeight: 700,
+                    justifyContent: 'flex-end',
+                  }}>
+                    <span style={{ display: 'flex' }}>{s.change >= 0 ? '+' : ''}{s.change.toFixed(1)}</span>
+                  </div>
+
+                  {/* Sector */}
+                  <div style={{
+                    display: 'flex',
+                    flex: 1,
+                    color: '#9CA3AF',
+                    fontSize: '13px',
+                    fontWeight: 400,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap' as const,
+                  }}>
+                    {truncate(s.sector, 22)}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         );
       })}
 
-      {/* ── Footer (thin line, muted text) ── */}
+      {/* ── Footer ── */}
       <div
         style={{
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          paddingLeft: '24px',
-          paddingRight: '24px',
+          paddingLeft: '20px',
+          paddingRight: '20px',
           paddingTop: '6px',
           paddingBottom: '6px',
           height: `${FOOTER_H}px`,
@@ -628,13 +723,13 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
           borderTopWidth: '1px',
           borderTopStyle: 'solid',
           borderTopColor: '#1F2937',
-          fontSize: '13px',
+          fontSize: '10px',
           color: '#64748B',
           letterSpacing: '0.5px',
         }}
       >
-        <span>market-cockpit.vercel.app</span>
-        <span>{timestamp}</span>
+        <span style={{ display: 'flex' }}>market-cockpit.vercel.app</span>
+        <span style={{ display: 'flex' }}>{timestamp}</span>
       </div>
     </div>
   );

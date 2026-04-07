@@ -252,48 +252,56 @@ async function fetchRSSNews(symbols: string[]): Promise<MCNewsItem[]> {
     { name: 'Mint Economy', url: 'https://www.livemint.com/rss/economy' },
   ];
 
-  const symbolSet = new Set(symbols.map(s => s.toUpperCase()));
-
-  for (const feed of RSS_FEEDS) {
-    try {
-      const res = await fetch(feed.url, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-        signal: AbortSignal.timeout(5000),
-      });
-      if (!res.ok) continue;
-      const xml = await res.text();
-
-      const itemRegex = /<item>([\s\S]*?)<\/item>/g;
-      let match;
-      while ((match = itemRegex.exec(xml)) !== null) {
-        const content = match[1];
-        const title = content.match(/<title>([\s\S]*?)<\/title>/)?.[1]?.replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim() || '';
-        const pubDate = content.match(/<pubDate>([\s\S]*?)<\/pubDate>/)?.[1]?.trim() || '';
-        const link = content.match(/<link>([\s\S]*?)<\/link>/)?.[1]?.trim() || '';
-        const desc = content.match(/<description>([\s\S]*?)<\/description>/)?.[1]?.replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').replace(/<[^>]*>/g, '').trim() || '';
-
-        if (!title || title.length < 10) continue;
-
-        // Match against portfolio/watchlist symbols
-        const matchedSymbol = symbols.find(s => {
-          const upper = title.toUpperCase() + ' ' + desc.toUpperCase();
-          return upper.includes(s.toUpperCase());
+  // Fetch ALL feeds in parallel (not sequential) to avoid 9×5s=45s timeout
+  const feedResults = await Promise.allSettled(
+    RSS_FEEDS.map(async (feed) => {
+      const items: MCNewsItem[] = [];
+      try {
+        const res = await fetch(feed.url, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+          signal: AbortSignal.timeout(4000),
         });
+        if (!res.ok) return items;
+        const xml = await res.text();
 
-        if (matchedSymbol) {
-          allNews.push({
-            symbol: matchedSymbol,
-            companyName: matchedSymbol,
-            subject: title,
-            desc: desc || title,
-            date: pubDate || new Date().toISOString(),
-            source: feed.name.toLowerCase().replace(/\s+/g, '_'),
-            url: link,
+        const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+        let match;
+        while ((match = itemRegex.exec(xml)) !== null) {
+          const content = match[1];
+          const title = content.match(/<title>([\s\S]*?)<\/title>/)?.[1]?.replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim() || '';
+          const pubDate = content.match(/<pubDate>([\s\S]*?)<\/pubDate>/)?.[1]?.trim() || '';
+          const link = content.match(/<link>([\s\S]*?)<\/link>/)?.[1]?.trim() || '';
+          const desc = content.match(/<description>([\s\S]*?)<\/description>/)?.[1]?.replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').replace(/<[^>]*>/g, '').trim() || '';
+
+          if (!title || title.length < 10) continue;
+
+          const matchedSymbol = symbols.find(s => {
+            const upper = title.toUpperCase() + ' ' + desc.toUpperCase();
+            return upper.includes(s.toUpperCase());
           });
+
+          if (matchedSymbol) {
+            items.push({
+              symbol: matchedSymbol,
+              companyName: matchedSymbol,
+              subject: title,
+              desc: desc || title,
+              date: pubDate || new Date().toISOString(),
+              source: feed.name.toLowerCase().replace(/\s+/g, '_'),
+              url: link,
+            });
+          }
         }
+      } catch (e) {
+        // Silently skip failed feeds
       }
-    } catch (e) {
-      // Silently skip failed feeds
+      return items;
+    })
+  );
+
+  for (const result of feedResults) {
+    if (result.status === 'fulfilled') {
+      allNews.push(...result.value);
     }
   }
 
