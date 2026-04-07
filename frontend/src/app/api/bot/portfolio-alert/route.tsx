@@ -436,12 +436,12 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
           alignItems: 'center',
         }}
       >
-        <div style={{ width: '30px', marginRight: '12px' }}>#</div>
-        <div style={{ width: '100px', marginRight: '12px' }}>Symbol</div>
-        <div style={{ width: '100px', marginRight: '12px' }}>%Change</div>
-        <div style={{ width: '90px', marginRight: '12px', textAlign: 'right' }}>Price</div>
-        <div style={{ width: '80px', marginRight: '12px', textAlign: 'right' }}>Change</div>
-        <div style={{ width: '140px', marginRight: '0px' }}>Sector</div>
+        <div style={{ display: 'flex', width: '30px', marginRight: '12px' }}>#</div>
+        <div style={{ display: 'flex', width: '100px', marginRight: '12px' }}>SYMBOL</div>
+        <div style={{ display: 'flex', width: '100px', marginRight: '12px', justifyContent: 'flex-end' }}>%CHG</div>
+        <div style={{ display: 'flex', width: '90px', marginRight: '12px', justifyContent: 'flex-end' }}>PRICE</div>
+        <div style={{ display: 'flex', width: '80px', marginRight: '12px', justifyContent: 'flex-end' }}>CHANGE</div>
+        <div style={{ display: 'flex', width: '140px', marginRight: '0px' }}>SECTOR</div>
       </div>
 
       {/* ── Data Rows (zebra striped with row accent border) ── */}
@@ -477,17 +477,19 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
           >
             {/* Row number */}
             <div style={{
+              display: 'flex',
               width: '30px',
               marginRight: '12px',
               color: '#64748B',
-              fontSize: '13px',
-              fontWeight: 600,
+              fontSize: '15px',
+              fontWeight: 700,
             }}>
               {i + 1}
             </div>
 
             {/* Symbol (bold, white) */}
             <div style={{
+              display: 'flex',
               width: '100px',
               marginRight: '12px',
               fontWeight: 700,
@@ -500,46 +502,53 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
 
             {/* %Change (BOLD, colored, with arrow, monospace) */}
             <div style={{
+              display: 'flex',
               width: '100px',
               marginRight: '12px',
               color: pctColor,
               fontWeight: 700,
               fontSize: '17px',
               fontFamily: 'monospace',
-              textAlign: 'right' as const,
+              justifyContent: 'flex-end',
             }}>
-              {arrow} {s.changePercent >= 0 ? '+' : ''}{s.changePercent.toFixed(1)}%
+              <span>{arrow} {s.changePercent >= 0 ? '+' : ''}{s.changePercent.toFixed(1)}%</span>
             </div>
 
             {/* Price (right-aligned, monospace, muted) */}
             <div style={{
+              display: 'flex',
               width: '90px',
               marginRight: '12px',
               color: '#E5E7EB',
               fontSize: '17px',
               fontFamily: 'monospace',
-              textAlign: 'right' as const,
+              fontWeight: 700,
+              justifyContent: 'flex-end',
             }}>
-              {s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}
+              <span>{s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}</span>
             </div>
 
             {/* Change (right-aligned, colored, monospace) */}
             <div style={{
+              display: 'flex',
               width: '80px',
               marginRight: '12px',
               color: chgColor,
               fontSize: '17px',
               fontFamily: 'monospace',
-              textAlign: 'right' as const,
+              fontWeight: 700,
+              justifyContent: 'flex-end',
             }}>
-              {s.change >= 0 ? '+' : ''}{s.change.toFixed(1)}
+              <span>{s.change >= 0 ? '+' : ''}{s.change.toFixed(1)}</span>
             </div>
 
             {/* Sector (left-aligned, muted) */}
             <div style={{
+              display: 'flex',
               width: '140px',
               color: '#9CA3AF',
-              fontSize: '13px',
+              fontSize: '14px',
+              fontWeight: 700,
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap' as const,

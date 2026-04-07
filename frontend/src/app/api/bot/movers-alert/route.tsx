@@ -357,10 +357,10 @@ async function generateMoversImage(
           borderBottom: `1px solid #1F2937`,
         }}
       >
-        <span style={{ fontSize: '23px', fontWeight: 700, color: accentColor, letterSpacing: '2px', textTransform: 'uppercase' as const }}>
+        <span style={{ fontSize: '26px', fontWeight: 700, color: accentColor, letterSpacing: '2px', textTransform: 'uppercase' as const }}>
           {isGainers ? 'Top Gainers' : 'Top Losers'}
         </span>
-        <span style={{ fontSize: '14px', color: '#9CA3AF', letterSpacing: '0.5px' }}>
+        <span style={{ fontSize: '14px', fontWeight: 700, color: '#9CA3AF', letterSpacing: '0.5px' }}>
           {displayStocks.length} stocks · {timestamp}
         </span>
       </div>
@@ -377,17 +377,18 @@ async function generateMoversImage(
           height: `${KPI_H}px`,
           backgroundColor: '#111827',
           fontSize: '15px',
+          fontWeight: 700,
           color: '#E5E7EB',
           borderBottom: `1px solid #1F2937`,
           fontFamily: 'monospace',
         }}
       >
-        <span style={{ color: '#9CA3AF', marginRight: '24px' }}>
+        <span style={{ color: '#9CA3AF', marginRight: '24px', fontWeight: 700 }}>
           {displayStocks.length} Stocks
         </span>
         {topGainer && (
           <div style={{ display: 'flex' }}>
-            <span style={{ color: '#9CA3AF', marginRight: '24px' }}>
+            <span style={{ color: '#9CA3AF', marginRight: '24px', fontWeight: 700 }}>
               Top: {topGainer.ticker}
             </span>
             <span style={{ color: accentColor, fontWeight: 700, marginRight: '24px' }}>
@@ -395,7 +396,7 @@ async function generateMoversImage(
             </span>
           </div>
         )}
-        <span style={{ color: '#9CA3AF', marginRight: '24px' }}>
+        <span style={{ color: '#9CA3AF', marginRight: '24px', fontWeight: 700 }}>
           Avg: {isGainers ? '+' : ''}{avgChg.toFixed(2)}%
         </span>
       </div>
@@ -407,7 +408,7 @@ async function generateMoversImage(
           paddingLeft: '28px',
           paddingRight: '28px',
           height: `${COL_HEADER_H}px`,
-          fontSize: '13px',
+          fontSize: '14px',
           fontWeight: 700,
           color: '#64748B',
           backgroundColor: '#111827',
@@ -417,13 +418,13 @@ async function generateMoversImage(
           alignItems: 'center',
         }}
       >
-        <span style={{ width: '30px' }}>{"#"}</span>
-        <span style={{ width: '100px', marginLeft: '12px' }}>Symbol</span>
-        <span style={{ width: '90px', marginLeft: '12px' }}>%Change</span>
-        <span style={{ width: '90px', marginLeft: '12px', textAlign: 'right' }}>Price</span>
-        <span style={{ width: '80px', marginLeft: '12px', textAlign: 'right' }}>Change</span>
-        <span style={{ width: '120px', marginLeft: '12px' }}>Sector</span>
-        <span style={{ width: '100px', marginLeft: '12px' }}>Cap</span>
+        <span style={{ width: '30px', fontWeight: 700 }}>{"#"}</span>
+        <span style={{ width: '100px', marginLeft: '12px', fontWeight: 700 }}>Symbol</span>
+        <span style={{ width: '90px', marginLeft: '12px', fontWeight: 700 }}>%Change</span>
+        <span style={{ width: '90px', marginLeft: '12px', justifyContent: 'flex-end', display: 'flex', fontWeight: 700 }}>Price</span>
+        <span style={{ width: '80px', marginLeft: '12px', justifyContent: 'flex-end', display: 'flex', fontWeight: 700 }}>Change</span>
+        <span style={{ width: '120px', marginLeft: '12px', fontWeight: 700 }}>Sector</span>
+        <span style={{ width: '100px', marginLeft: '12px', fontWeight: 700 }}>Cap</span>
       </div>
 
       {/* ── Data Rows ── */}
@@ -439,32 +440,33 @@ async function generateMoversImage(
               paddingTop: '6px',
               paddingBottom: '6px',
               backgroundColor: i % 2 === 0 ? '#0F172A' : '#111827',
-              fontSize: '17px',
+              fontSize: '18px',
+              fontWeight: 700,
               alignItems: 'center',
               height: `${ROW_H}px`,
               borderLeft: `3px solid ${accentColor}`,
               borderBottom: `1px solid #1F2937`,
             }}
           >
-            <span style={{ width: '30px', color: '#9CA3AF', fontSize: '15px', fontWeight: 600 }}>{i + 1}</span>
-            <span style={{ width: '100px', fontWeight: 700, color: '#E5E7EB', fontSize: '17px', letterSpacing: '0.3px', marginLeft: '12px' }}>
+            <span style={{ width: '30px', color: '#9CA3AF', fontSize: '16px', fontWeight: 700 }}>{i + 1}</span>
+            <span style={{ width: '100px', fontWeight: 700, color: '#E5E7EB', fontSize: '18px', letterSpacing: '0.3px', marginLeft: '12px' }}>
               {truncate(s.ticker, 12)}
             </span>
             <div style={{ display: 'flex', width: '90px', alignItems: 'center', marginLeft: '12px' }}>
-              <span style={{ fontSize: '17px', fontWeight: 700, color: accentColor, fontFamily: 'monospace' }}>
+              <span style={{ fontSize: '18px', fontWeight: 700, color: accentColor, fontFamily: 'monospace' }}>
                 {arrow} {isGainers ? '+' : ''}{s.changePercent.toFixed(1)}%
               </span>
             </div>
-            <span style={{ width: '90px', textAlign: 'right', color: '#E5E7EB', fontSize: '17px', fontWeight: 600, fontFamily: 'monospace', marginLeft: '12px' }}>
-              {s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}
-            </span>
-            <span style={{ width: '80px', textAlign: 'right', color: accentColor, fontSize: '16px', fontFamily: 'monospace', marginLeft: '12px' }}>
-              {isGainers ? '+' : ''}{s.change.toFixed(1)}
-            </span>
-            <span style={{ width: '120px', color: '#9CA3AF', fontSize: '15px', marginLeft: '12px' }}>
+            <div style={{ width: '90px', justifyContent: 'flex-end', display: 'flex', color: '#E5E7EB', fontSize: '18px', fontWeight: 700, fontFamily: 'monospace', marginLeft: '12px' }}>
+              <span>{s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}</span>
+            </div>
+            <div style={{ width: '80px', justifyContent: 'flex-end', display: 'flex', color: accentColor, fontSize: '16px', fontWeight: 700, fontFamily: 'monospace', marginLeft: '12px' }}>
+              <span>{isGainers ? '+' : ''}{s.change.toFixed(1)}</span>
+            </div>
+            <span style={{ width: '120px', color: '#9CA3AF', fontSize: '16px', fontWeight: 700, marginLeft: '12px' }}>
               {truncate(s.sector, 20)}
             </span>
-            <span style={{ width: '100px', color: '#9CA3AF', fontSize: '15px', marginLeft: '12px' }}>
+            <span style={{ width: '100px', color: '#9CA3AF', fontSize: '16px', fontWeight: 700, marginLeft: '12px' }}>
               {s.cap === 'L' ? 'Large' : s.cap === 'M' ? 'Mid' : 'Small'}
             </span>
           </div>
@@ -483,7 +485,8 @@ async function generateMoversImage(
           paddingBottom: '6px',
           height: `${FOOTER_H}px`,
           backgroundColor: '#111827',
-          fontSize: '12px',
+          fontSize: '13px',
+          fontWeight: 700,
           color: '#64748B',
           borderTop: `1px solid #1F2937`,
           marginTop: 'auto',
@@ -569,10 +572,10 @@ async function generateStreetPulseCard(
           borderBottom: `1px solid #1F2937`,
         }}
       >
-        <span style={{ fontSize: '24px', fontWeight: 700, color: '#E5E7EB', letterSpacing: '2px', textTransform: 'uppercase' as const }}>
+        <span style={{ fontSize: '26px', fontWeight: 700, color: '#E5E7EB', letterSpacing: '2px', textTransform: 'uppercase' as const }}>
           Street Pulse
         </span>
-        <span style={{ fontSize: '14px', color: '#9CA3AF', letterSpacing: '0.5px' }}>
+        <span style={{ fontSize: '14px', fontWeight: 700, color: '#9CA3AF', letterSpacing: '0.5px' }}>
           {timestamp}
         </span>
       </div>
@@ -590,6 +593,7 @@ async function generateStreetPulseCard(
             height: `${INDEX_H}px`,
             backgroundColor: '#111827',
             fontSize: '15px',
+            fontWeight: 700,
             borderBottom: `1px solid #1F2937`,
           }}
         >
@@ -611,7 +615,7 @@ async function generateStreetPulseCard(
                   marginRight: '24px',
                 }}
               >
-                <span style={{ color: '#9CA3AF', fontSize: '14px', marginRight: '6px' }}>
+                <span style={{ color: '#9CA3AF', fontSize: '14px', fontWeight: 700, marginRight: '6px' }}>
                   {idx.shortName}
                 </span>
                 <span style={{ color: '#E5E7EB', fontSize: '15px', fontWeight: 700, fontFamily: 'monospace', marginRight: '6px' }}>
@@ -648,7 +652,8 @@ async function generateStreetPulseCard(
           paddingBottom: '4px',
           height: `${BREADTH_H}px`,
           backgroundColor: '#111827',
-          fontSize: '11px',
+          fontSize: '13px',
+          fontWeight: 700,
           borderBottom: `1px solid #1F2937`,
         }}
       >
@@ -672,7 +677,7 @@ async function generateStreetPulseCard(
           />
         </div>
         {/* Text info */}
-        <span style={{ display: 'flex', color: '#9CA3AF', fontSize: '11px' }}>
+        <span style={{ display: 'flex', color: '#9CA3AF', fontSize: '13px', fontWeight: 700 }}>
           <span>Advancers: </span><span style={{ color: '#16A34A', fontWeight: 700 }}>{breadth.advancing}</span><span> | Decliners: </span>
           <span style={{ color: '#DC2626', fontWeight: 700 }}>{breadth.declining}</span><span> | Unchanged: </span>
           <span style={{ color: '#9CA3AF', fontWeight: 700 }}>{breadth.unchanged}</span>
@@ -695,10 +700,10 @@ async function generateStreetPulseCard(
         }}
       >
         <div style={{ display: 'flex', width: '3px', height: '16px', backgroundColor: '#16A34A', marginRight: '12px' }} />
-        <span style={{ fontSize: '18px', fontWeight: 700, color: '#16A34A', letterSpacing: '1px', textTransform: 'uppercase' as const }}>
+        <span style={{ fontSize: '20px', fontWeight: 700, color: '#16A34A', letterSpacing: '1px', textTransform: 'uppercase' as const }}>
           Top Gainers
         </span>
-        <span style={{ fontSize: '14px', color: '#9CA3AF', marginLeft: '8px' }}>
+        <span style={{ fontSize: '14px', fontWeight: 700, color: '#9CA3AF', marginLeft: '8px' }}>
           ({topG.length})
         </span>
       </div>
@@ -713,7 +718,7 @@ async function generateStreetPulseCard(
           paddingBottom: '4px',
           height: `${COL_HEADER_H}px`,
           backgroundColor: '#111827',
-          fontSize: '13px',
+          fontSize: '14px',
           fontWeight: 700,
           color: '#64748B',
           borderBottom: `1px solid #1F2937`,
@@ -722,13 +727,13 @@ async function generateStreetPulseCard(
           alignItems: 'center',
         }}
       >
-        <span style={{ width: '28px' }}>{"#"}</span>
-        <span style={{ width: '100px', marginLeft: '12px' }}>Symbol</span>
-        <span style={{ width: '80px', marginLeft: '12px' }}>%Change</span>
-        <span style={{ width: '80px', marginLeft: '12px', textAlign: 'right' }}>Price</span>
-        <span style={{ width: '70px', marginLeft: '12px', textAlign: 'right' }}>Change</span>
-        <span style={{ width: '120px', marginLeft: '12px' }}>Sector</span>
-        <span style={{ width: '100px', marginLeft: '12px' }}>Cap</span>
+        <span style={{ width: '28px', fontWeight: 700 }}>{"#"}</span>
+        <span style={{ width: '100px', marginLeft: '12px', fontWeight: 700 }}>Symbol</span>
+        <span style={{ width: '80px', marginLeft: '12px', fontWeight: 700 }}>%Change</span>
+        <span style={{ width: '80px', marginLeft: '12px', justifyContent: 'flex-end', display: 'flex', fontWeight: 700 }}>Price</span>
+        <span style={{ width: '70px', marginLeft: '12px', justifyContent: 'flex-end', display: 'flex', fontWeight: 700 }}>Change</span>
+        <span style={{ width: '120px', marginLeft: '12px', fontWeight: 700 }}>Sector</span>
+        <span style={{ width: '100px', marginLeft: '12px', fontWeight: 700 }}>Cap</span>
       </div>
 
       {/* ── Gainers Data Rows ── */}
@@ -742,30 +747,31 @@ async function generateStreetPulseCard(
             paddingTop: '6px',
             paddingBottom: '6px',
             backgroundColor: i % 2 === 0 ? '#0F172A' : '#111827',
-            fontSize: '17px',
+            fontSize: '18px',
+            fontWeight: 700,
             alignItems: 'center',
             height: `${ROW_H}px`,
             borderLeft: `3px solid #16A34A`,
             borderBottom: `1px solid #1F2937`,
           }}
         >
-          <span style={{ width: '28px', color: '#9CA3AF', fontSize: '15px', fontWeight: 600 }}>{i + 1}</span>
-          <span style={{ width: '100px', fontWeight: 700, color: '#E5E7EB', fontSize: '17px', marginLeft: '12px' }}>
+          <span style={{ width: '28px', color: '#9CA3AF', fontSize: '16px', fontWeight: 700 }}>{i + 1}</span>
+          <span style={{ width: '100px', fontWeight: 700, color: '#E5E7EB', fontSize: '18px', marginLeft: '12px' }}>
             {truncate(s.ticker, 12)}
           </span>
-          <span style={{ width: '80px', color: '#16A34A', fontSize: '17px', fontWeight: 700, fontFamily: 'monospace', marginLeft: '12px' }}>
+          <span style={{ width: '80px', color: '#16A34A', fontSize: '18px', fontWeight: 700, fontFamily: 'monospace', marginLeft: '12px' }}>
             ↑ +{s.changePercent.toFixed(1)}%
           </span>
-          <span style={{ width: '80px', textAlign: 'right', color: '#E5E7EB', fontSize: '17px', fontWeight: 600, fontFamily: 'monospace', marginLeft: '12px' }}>
-            {s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}
-          </span>
-          <span style={{ width: '70px', textAlign: 'right', color: '#16A34A', fontSize: '16px', fontFamily: 'monospace', marginLeft: '12px' }}>
-            +{s.change.toFixed(1)}
-          </span>
-          <span style={{ width: '120px', color: '#9CA3AF', fontSize: '15px', marginLeft: '12px' }}>
+          <div style={{ width: '80px', justifyContent: 'flex-end', display: 'flex', color: '#E5E7EB', fontSize: '18px', fontWeight: 700, fontFamily: 'monospace', marginLeft: '12px' }}>
+            <span>{s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}</span>
+          </div>
+          <div style={{ width: '70px', justifyContent: 'flex-end', display: 'flex', color: '#16A34A', fontSize: '16px', fontWeight: 700, fontFamily: 'monospace', marginLeft: '12px' }}>
+            <span>+{s.change.toFixed(1)}</span>
+          </div>
+          <span style={{ width: '120px', color: '#9CA3AF', fontSize: '16px', fontWeight: 700, marginLeft: '12px' }}>
             {truncate(s.sector, 20)}
           </span>
-          <span style={{ width: '100px', color: '#9CA3AF', fontSize: '15px', marginLeft: '12px' }}>
+          <span style={{ width: '100px', color: '#9CA3AF', fontSize: '16px', fontWeight: 700, marginLeft: '12px' }}>
             {s.cap === 'L' ? 'Large' : s.cap === 'M' ? 'Mid' : 'Small'}
           </span>
         </div>
@@ -787,10 +793,10 @@ async function generateStreetPulseCard(
         }}
       >
         <div style={{ display: 'flex', width: '3px', height: '16px', backgroundColor: '#DC2626', marginRight: '12px' }} />
-        <span style={{ fontSize: '18px', fontWeight: 700, color: '#DC2626', letterSpacing: '1px', textTransform: 'uppercase' as const }}>
+        <span style={{ fontSize: '20px', fontWeight: 700, color: '#DC2626', letterSpacing: '1px', textTransform: 'uppercase' as const }}>
           Top Losers
         </span>
-        <span style={{ fontSize: '14px', color: '#9CA3AF', marginLeft: '8px' }}>
+        <span style={{ fontSize: '14px', fontWeight: 700, color: '#9CA3AF', marginLeft: '8px' }}>
           ({topL.length})
         </span>
       </div>
@@ -805,7 +811,7 @@ async function generateStreetPulseCard(
           paddingBottom: '4px',
           height: `${COL_HEADER_H}px`,
           backgroundColor: '#111827',
-          fontSize: '13px',
+          fontSize: '14px',
           fontWeight: 700,
           color: '#64748B',
           borderBottom: `1px solid #1F2937`,
@@ -814,13 +820,13 @@ async function generateStreetPulseCard(
           alignItems: 'center',
         }}
       >
-        <span style={{ width: '28px' }}>{"#"}</span>
-        <span style={{ width: '100px', marginLeft: '12px' }}>Symbol</span>
-        <span style={{ width: '80px', marginLeft: '12px' }}>%Change</span>
-        <span style={{ width: '80px', marginLeft: '12px', textAlign: 'right' }}>Price</span>
-        <span style={{ width: '70px', marginLeft: '12px', textAlign: 'right' }}>Change</span>
-        <span style={{ width: '120px', marginLeft: '12px' }}>Sector</span>
-        <span style={{ width: '100px', marginLeft: '12px' }}>Cap</span>
+        <span style={{ width: '28px', fontWeight: 700 }}>{"#"}</span>
+        <span style={{ width: '100px', marginLeft: '12px', fontWeight: 700 }}>Symbol</span>
+        <span style={{ width: '80px', marginLeft: '12px', fontWeight: 700 }}>%Change</span>
+        <span style={{ width: '80px', marginLeft: '12px', justifyContent: 'flex-end', display: 'flex', fontWeight: 700 }}>Price</span>
+        <span style={{ width: '70px', marginLeft: '12px', justifyContent: 'flex-end', display: 'flex', fontWeight: 700 }}>Change</span>
+        <span style={{ width: '120px', marginLeft: '12px', fontWeight: 700 }}>Sector</span>
+        <span style={{ width: '100px', marginLeft: '12px', fontWeight: 700 }}>Cap</span>
       </div>
 
       {/* ── Losers Data Rows ── */}
@@ -834,30 +840,31 @@ async function generateStreetPulseCard(
             paddingTop: '6px',
             paddingBottom: '6px',
             backgroundColor: i % 2 === 0 ? '#0F172A' : '#111827',
-            fontSize: '17px',
+            fontSize: '18px',
+            fontWeight: 700,
             alignItems: 'center',
             height: `${ROW_H}px`,
             borderLeft: `3px solid #DC2626`,
             borderBottom: `1px solid #1F2937`,
           }}
         >
-          <span style={{ width: '28px', color: '#9CA3AF', fontSize: '15px', fontWeight: 600 }}>{i + 1}</span>
-          <span style={{ width: '100px', fontWeight: 700, color: '#E5E7EB', fontSize: '17px', marginLeft: '12px' }}>
+          <span style={{ width: '28px', color: '#9CA3AF', fontSize: '16px', fontWeight: 700 }}>{i + 1}</span>
+          <span style={{ width: '100px', fontWeight: 700, color: '#E5E7EB', fontSize: '18px', marginLeft: '12px' }}>
             {truncate(s.ticker, 12)}
           </span>
-          <span style={{ width: '80px', color: '#DC2626', fontSize: '17px', fontWeight: 700, fontFamily: 'monospace', marginLeft: '12px' }}>
+          <span style={{ width: '80px', color: '#DC2626', fontSize: '18px', fontWeight: 700, fontFamily: 'monospace', marginLeft: '12px' }}>
             ↓ {s.changePercent.toFixed(1)}%
           </span>
-          <span style={{ width: '80px', textAlign: 'right', color: '#E5E7EB', fontSize: '17px', fontWeight: 600, fontFamily: 'monospace', marginLeft: '12px' }}>
-            {s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}
-          </span>
-          <span style={{ width: '70px', textAlign: 'right', color: '#DC2626', fontSize: '16px', fontFamily: 'monospace', marginLeft: '12px' }}>
-            {s.change.toFixed(1)}
-          </span>
-          <span style={{ width: '120px', color: '#9CA3AF', fontSize: '15px', marginLeft: '12px' }}>
+          <div style={{ width: '80px', justifyContent: 'flex-end', display: 'flex', color: '#E5E7EB', fontSize: '18px', fontWeight: 700, fontFamily: 'monospace', marginLeft: '12px' }}>
+            <span>{s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}</span>
+          </div>
+          <div style={{ width: '70px', justifyContent: 'flex-end', display: 'flex', color: '#DC2626', fontSize: '16px', fontWeight: 700, fontFamily: 'monospace', marginLeft: '12px' }}>
+            <span>{s.change.toFixed(1)}</span>
+          </div>
+          <span style={{ width: '120px', color: '#9CA3AF', fontSize: '16px', fontWeight: 700, marginLeft: '12px' }}>
             {truncate(s.sector, 20)}
           </span>
-          <span style={{ width: '100px', color: '#9CA3AF', fontSize: '15px', marginLeft: '12px' }}>
+          <span style={{ width: '100px', color: '#9CA3AF', fontSize: '16px', fontWeight: 700, marginLeft: '12px' }}>
             {s.cap === 'L' ? 'Large' : s.cap === 'M' ? 'Mid' : 'Small'}
           </span>
         </div>
@@ -875,7 +882,8 @@ async function generateStreetPulseCard(
           paddingBottom: '6px',
           height: `${FOOTER_H}px`,
           backgroundColor: '#111827',
-          fontSize: '12px',
+          fontSize: '13px',
+          fontWeight: 700,
           color: '#64748B',
           borderTop: `1px solid #1F2937`,
           marginTop: 'auto',

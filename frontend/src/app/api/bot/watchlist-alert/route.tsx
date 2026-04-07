@@ -322,7 +322,7 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
       >
         {/* Left: Title */}
         <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <span style={{ fontSize: '24px', fontWeight: 700, color: '#3B82F6', letterSpacing: '2px', textTransform: 'uppercase' as const }}>
+          <span style={{ fontSize: '26px', fontWeight: 700, color: '#3B82F6', letterSpacing: '2px', textTransform: 'uppercase' as const }}>
             WATCHLIST PULSE
           </span>
           <span style={{ fontSize: '15px', color: '#9CA3AF', letterSpacing: '0.5px', marginTop: '2px' }}>
@@ -332,21 +332,21 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
 
         {/* Right: Quick KPI inline */}
         <div style={{ display: 'flex', alignItems: 'center' }}>
-          <span style={{ fontSize: '16px', color: '#9CA3AF', marginRight: '8px' }}>
+          <span style={{ fontSize: '17px', color: '#9CA3AF', marginRight: '8px', fontWeight: 700 }}>
             {displayStocks.length} Stocks
           </span>
-          <span style={{ fontSize: '16px', color: '#16A34A', marginRight: '8px', fontWeight: 600 }}>
+          <span style={{ fontSize: '17px', color: '#16A34A', marginRight: '8px', fontWeight: 700 }}>
             {gainers} Up
           </span>
-          <span style={{ fontSize: '16px', color: '#DC2626', marginRight: '8px', fontWeight: 600 }}>
+          <span style={{ fontSize: '17px', color: '#DC2626', marginRight: '8px', fontWeight: 700 }}>
             {losers} Down
           </span>
           {flatCount > 0 && (
-            <span style={{ fontSize: '16px', color: '#9CA3AF', marginRight: '8px' }}>
+            <span style={{ fontSize: '17px', color: '#9CA3AF', marginRight: '8px', fontWeight: 700 }}>
               {flatCount} Flat
             </span>
           )}
-          <span style={{ fontSize: '16px', color: avgChange >= 0 ? '#16A34A' : '#DC2626', fontWeight: 600 }}>
+          <span style={{ fontSize: '17px', color: avgChange >= 0 ? '#16A34A' : '#DC2626', fontWeight: 700 }}>
             Avg: {avgChange >= 0 ? '+' : ''}{avgChange.toFixed(2)}%
           </span>
         </div>
@@ -368,27 +368,27 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
           borderBottomColor: '#1F2937',
         }}
       >
-        <span style={{ display: 'flex', fontSize: '16px', color: '#E5E7EB', marginRight: '24px', fontWeight: 600 }}>
-          <span style={{ color: '#9CA3AF', marginRight: '6px' }}>Total:</span>
-          <span>{stocks.length}</span>
+        <span style={{ display: 'flex', fontSize: '17px', color: '#E5E7EB', marginRight: '24px', fontWeight: 700 }}>
+          <span style={{ color: '#9CA3AF', marginRight: '6px', fontWeight: 700 }}>Total:</span>
+          <span style={{ fontWeight: 700 }}>{stocks.length}</span>
         </span>
-        <span style={{ display: 'flex', fontSize: '16px', color: '#16A34A', marginRight: '24px', fontWeight: 600 }}>
-          <span style={{ color: '#9CA3AF', marginRight: '4px' }}>Up:</span>
-          <span>{gainers}</span>
+        <span style={{ display: 'flex', fontSize: '17px', color: '#16A34A', marginRight: '24px', fontWeight: 700 }}>
+          <span style={{ color: '#9CA3AF', marginRight: '4px', fontWeight: 700 }}>Up:</span>
+          <span style={{ fontWeight: 700 }}>{gainers}</span>
         </span>
-        <span style={{ display: 'flex', fontSize: '16px', color: '#DC2626', marginRight: '24px', fontWeight: 600 }}>
-          <span style={{ color: '#9CA3AF', marginRight: '4px' }}>Down:</span>
-          <span>{losers}</span>
+        <span style={{ display: 'flex', fontSize: '17px', color: '#DC2626', marginRight: '24px', fontWeight: 700 }}>
+          <span style={{ color: '#9CA3AF', marginRight: '4px', fontWeight: 700 }}>Down:</span>
+          <span style={{ fontWeight: 700 }}>{losers}</span>
         </span>
         {flatCount > 0 && (
-          <span style={{ display: 'flex', fontSize: '16px', color: '#9CA3AF', marginRight: '24px', fontWeight: 600 }}>
-            <span style={{ color: '#9CA3AF', marginRight: '4px' }}>Flat:</span>
-            <span>{flatCount}</span>
+          <span style={{ display: 'flex', fontSize: '17px', color: '#9CA3AF', marginRight: '24px', fontWeight: 700 }}>
+            <span style={{ color: '#9CA3AF', marginRight: '4px', fontWeight: 700 }}>Flat:</span>
+            <span style={{ fontWeight: 700 }}>{flatCount}</span>
           </span>
         )}
-        <span style={{ display: 'flex', fontSize: '16px', color: avgChange >= 0 ? '#16A34A' : '#DC2626', fontWeight: 600 }}>
-          <span style={{ color: '#9CA3AF', marginRight: '4px' }}>Avg:</span>
-          <span>{avgChange >= 0 ? '+' : ''}{avgChange.toFixed(2)}%</span>
+        <span style={{ display: 'flex', fontSize: '17px', color: avgChange >= 0 ? '#16A34A' : '#DC2626', fontWeight: 700 }}>
+          <span style={{ color: '#9CA3AF', marginRight: '4px', fontWeight: 700 }}>Avg:</span>
+          <span style={{ fontWeight: 700 }}>{avgChange >= 0 ? '+' : ''}{avgChange.toFixed(2)}%</span>
         </span>
       </div>
 
@@ -404,7 +404,7 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
           borderBottomWidth: '1px',
           borderBottomStyle: 'solid',
           borderBottomColor: '#1F2937',
-          fontSize: '14px',
+          fontSize: '15px',
           fontWeight: 700,
           color: '#64748B',
           letterSpacing: '0.5px',
@@ -412,12 +412,12 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
           backgroundColor: '#0F172A',
         }}
       >
-        <span style={{ width: '30px', marginRight: '16px' }}>#</span>
-        <span style={{ width: '100px', marginRight: '12px' }}>Symbol</span>
-        <span style={{ width: '60px', marginRight: '12px', textAlign: 'right' as const }}>%Chg</span>
-        <span style={{ width: '80px', marginRight: '12px', textAlign: 'right' as const }}>Price</span>
-        <span style={{ width: '70px', marginRight: '12px', textAlign: 'right' as const }}>Change</span>
-        <span style={{ flex: 1, textAlign: 'left' as const }}>Sector</span>
+        <span style={{ width: '30px', marginRight: '16px', fontWeight: 700 }}>#</span>
+        <span style={{ width: '100px', marginRight: '12px', fontWeight: 700 }}>Symbol</span>
+        <span style={{ width: '60px', marginRight: '12px', justifyContent: 'flex-end', display: 'flex', fontWeight: 700 }}>%Chg</span>
+        <span style={{ width: '80px', marginRight: '12px', justifyContent: 'flex-end', display: 'flex', fontWeight: 700 }}>Price</span>
+        <span style={{ width: '70px', marginRight: '12px', justifyContent: 'flex-end', display: 'flex', fontWeight: 700 }}>Change</span>
+        <span style={{ flex: 1, fontWeight: 700 }}>Sector</span>
       </div>
 
       {/* ── Data Rows ── */}
@@ -464,33 +464,33 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
             }}
           >
             {/* # Index */}
-            <span style={{ width: '30px', marginRight: '16px', color: '#9CA3AF', fontSize: '17px', fontWeight: 600 }}>
+            <span style={{ width: '30px', marginRight: '16px', color: '#9CA3AF', fontSize: '15px', fontWeight: 700 }}>
               {i + 1}
             </span>
 
             {/* Symbol (bold, white) */}
-            <span style={{ width: '100px', marginRight: '12px', fontWeight: 700, color: '#E5E7EB', fontSize: '17px', letterSpacing: '0.3px', fontFamily: 'sans-serif' }}>
+            <span style={{ width: '100px', marginRight: '12px', fontWeight: 700, color: '#E5E7EB', fontSize: '18px', letterSpacing: '0.3px', fontFamily: 'sans-serif' }}>
               {truncate(s.ticker, 10)}
             </span>
 
             {/* %Change (bold, colored, with arrow, monospace, right-aligned) */}
-            <span style={{ width: '60px', marginRight: '12px', textAlign: 'right' as const, color: isPositive ? '#16A34A' : isNeutral ? '#9CA3AF' : '#DC2626', fontSize: '17px', fontWeight: 700, fontFamily: 'monospace' }}>
-              {arrow} {Math.abs(s.changePercent).toFixed(1)}%
-              {isBigMover && <span style={{ marginLeft: '4px', color: '#F59E0B' }}>●</span>}
+            <span style={{ width: '60px', marginRight: '12px', justifyContent: 'flex-end', display: 'flex', color: isPositive ? '#16A34A' : isNeutral ? '#9CA3AF' : '#DC2626', fontSize: '18px', fontWeight: 700, fontFamily: 'monospace' }}>
+              <span>{arrow} {Math.abs(s.changePercent).toFixed(1)}%</span>
+              {isBigMover && <span style={{ marginLeft: '4px', color: '#F59E0B', fontWeight: 700 }}>●</span>}
             </span>
 
             {/* Price (monospace, right-aligned) */}
-            <span style={{ width: '80px', marginRight: '12px', textAlign: 'right' as const, color: '#E5E7EB', fontSize: '17px', fontFamily: 'monospace' }}>
+            <span style={{ width: '80px', marginRight: '12px', justifyContent: 'flex-end', display: 'flex', color: '#E5E7EB', fontSize: '18px', fontFamily: 'monospace', fontWeight: 700 }}>
               {s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}
             </span>
 
             {/* Change (colored, monospace, right-aligned) */}
-            <span style={{ width: '70px', marginRight: '12px', textAlign: 'right' as const, color: isPositive ? '#16A34A' : isNeutral ? '#9CA3AF' : '#DC2626', fontSize: '17px', fontFamily: 'monospace' }}>
+            <span style={{ width: '70px', marginRight: '12px', justifyContent: 'flex-end', display: 'flex', color: isPositive ? '#16A34A' : isNeutral ? '#9CA3AF' : '#DC2626', fontSize: '18px', fontFamily: 'monospace', fontWeight: 700 }}>
               {isPositive ? '+' : ''}{s.change.toFixed(1)}
             </span>
 
             {/* Sector (left-aligned, muted) */}
-            <span style={{ flex: 1, color: '#9CA3AF', fontSize: '13px', fontFamily: 'sans-serif' }}>
+            <span style={{ flex: 1, color: '#9CA3AF', fontSize: '15px', fontFamily: 'sans-serif', fontWeight: 700 }}>
               {truncate(s.sector, 20)}
             </span>
           </div>
@@ -517,8 +517,8 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
           letterSpacing: '0.5px',
         }}
       >
-        <span>market-cockpit.vercel.app</span>
-        <span>{timestamp}</span>
+        <span style={{ fontWeight: 700 }}>market-cockpit.vercel.app</span>
+        <span style={{ fontWeight: 700 }}>{timestamp}</span>
       </div>
     </div>
   );
