@@ -159,12 +159,10 @@ export async function GET(request: Request) {
       ];
     }
 
-    // FALLBACK: If KV is empty or has very few signals, fetch fresh from RSS
-    if (allSignals.length < 5) {
-      console.log('[Bottleneck] KV empty/stale, fetching RSS fallback...');
-      const rssSignals = await fetchRSSFallbackSignals();
-      allSignals = [...allSignals, ...rssSignals];
-    }
+    // ALWAYS fetch live RSS to ensure bottleneck buckets have broad content to match against
+    // KV signals are stock-specific events; RSS provides sector/macro news needed for bottleneck detection
+    const rssSignals = await fetchRSSFallbackSignals();
+    allSignals = [...allSignals, ...rssSignals];
 
     // Build buckets
     const buckets: any[] = [];
