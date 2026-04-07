@@ -386,10 +386,52 @@ const CATALYST_PATTERNS: [RegExp, string, string][] = [
   [/management\s*change|CEO\s*appoint|MD\s*appoint|new\s*CEO/i, 'Mgmt Change', 'Filing'],
 ];
 
+const EVENT_TYPE_MAP: Record<string, string> = {
+  'ORDER_WIN': 'Order Win', 'BLOCK_DEAL': 'Block Deal', 'BULK_DEAL': 'Bulk Deal',
+  'RESULTS_BEAT': 'Results Beat', 'RESULTS_MISS': 'Results Miss',
+  'PROMOTER_BUY': 'Promoter Buy', 'PROMOTER_SELL': 'Promoter Sell',
+  'STAKE_SALE': 'Stake Sale', 'STAKE_BUY': 'Stake Hike',
+  'UPGRADE': 'Upgrade', 'DOWNGRADE': 'Downgrade',
+  'ACQUISITION': 'Acquisition', 'CONTRACT_WIN': 'Contract Award',
+  'REGULATORY': 'Regulatory Action', 'CAPEX': 'Capex Plan',
+  'DEFENCE_ORDER': 'Defence Order', 'NUCLEAR': 'Nuclear Order',
+  'BUYBACK': 'Buyback', 'DIVIDEND': 'Dividend', 'BONUS_SPLIT': 'Bonus/Split',
+  'DEMERGER': 'Demerger', 'FUND_RAISE': 'Fund Raise', 'QIP': 'Fund Raise',
+  'FII_BUY': 'FII/DII Buy', 'FII_SELL': 'FII Sell',
+  'PARTNERSHIP': 'New Partnership', 'PRODUCT_LAUNCH': 'Product Launch',
+  'DEBT_REDUCTION': 'Debt Reduction', 'MGMT_CHANGE': 'Mgmt Change',
+};
+
 function matchCatalyst(text: string): { label: string; sourceType: string } | null {
   if (!text) return null;
   for (const [regex, label, srcType] of CATALYST_PATTERNS) {
     if (regex.test(text)) return { label, sourceType: srcType };
+  }
+  return null;
+}
+
+function extractHeadlineSummary(headline: string, symbol: string): string | null {
+  const h = headline.toLowerCase();
+  const sym = symbol.toLowerCase();
+  // Must mention the symbol or a close variant
+  if (!h.includes(sym) && !h.includes(sym.replace(/tech$|ener$|infra$/, ''))) return null;
+
+  // Strong action words indicate a real catalyst in the headline
+  const actionPatterns: [RegExp, string][] = [
+    [/surge|soar|rocket|skyrocket|zoom/i, 'Shares Surge'],
+    [/crash|tank|plunge|tumble|sink/i, 'Shares Crash'],
+    [/jump|rally|gain|climb|rise/i, 'Shares Rally'],
+    [/fall|drop|slip|decline|slide/i, 'Shares Fall'],
+    [/hit.*high|52.*week.*high|all.*time.*high|new.*high/i, '52W High'],
+    [/hit.*low|52.*week.*low|new.*low/i, '52W Low'],
+    [/target.*price|price.*target|brokerage/i, 'Broker Target'],
+    [/circuit|upper.*circuit/i, 'Upper Circuit'],
+    [/lower.*circuit/i, 'Lower Circuit'],
+    [/volume.*spike|heavy.*volume|volume.*surge/i, 'Volume Spike'],
+  ];
+
+  for (const [regex, label] of actionPatterns) {
+    if (regex.test(headline)) return label;
   }
   return null;
 }
@@ -412,8 +454,9 @@ function formatTimeAgo(hours: number): string {
 
 const NO_TRIGGER: StockCatalyst = { label: 'No clear trigger', sourceType: '', confidence: 'LOW', timeAgo: '' };
 
-async function fetchStockCatalysts(tickers: string[]): Promise<Map<string, StockCatalyst>> {
+async function fetchStockCatalysts(stocks: Stock[]): Promise<Map<string, StockCatalyst>> {
   const catalysts = new Map<string, StockCatalyst>();
+  const tickers = stocks.map(s => s.ticker);
   const tickerSet = new Set(tickers.map(t => t.toUpperCase()));
 
   // ── Phase 1: Intelligence signals from Redis (highest priority, pre-validated) ──
@@ -427,21 +470,29 @@ async function fetchStockCatalysts(tickers: string[]): Promise<Map<string, Stock
 
         const headline = sig.headline || '';
         const whyItMatters = sig.whyItMatters || '';
-        const matched = matchCatalyst(headline) || matchCatalyst(whyItMatters) || matchCatalyst(sig.eventType || '');
+        const eventType = (sig.eventType || '').toUpperCase();
 
-        if (matched) {
+        // Try eventType mapping first
+        let matched = eventType && EVENT_TYPE_MAP[eventType]
+          ? { label: EVENT_TYPE_MAP[eventType], sourceType: 'Intel' }
+          : null;
+
+        // Then try headline/whyItMatters patterns
+        if (!matched) {
+          matched = matchCatalyst(headline) || matchCatalyst(whyItMatters);
+          if (matched) matched.sourceType = 'Intel';
+        }
+
+        // If we have ANY intel signal for this ticker with a non-empty headline, USE IT
+        if (matched && (headline || whyItMatters || eventType)) {
           const hoursAgo = getHoursAgo(sig.date || sig.timestamp || '');
-          // Reject stale signals (>72h)
-          if (hoursAgo > 72) continue;
-          const confRaw = (sig.confidenceScore || 0) / 100;
-          // Directness: 0.8 for intel (pre-validated), Freshness, Source reliability: 0.9
-          const score = (0.4 * 0.8) + (0.3 * (hoursAgo < 12 ? 1 : hoursAgo < 48 ? 0.7 : 0.4)) + (0.3 * 0.9);
-          if (score < 0.5) continue; // REJECT low-confidence
+          // Extended freshness: 168h (7 days) for intel signals
+          if (hoursAgo > 168) continue;
 
           catalysts.set(sym, {
             label: matched.label,
             sourceType: 'Intel',
-            confidence: score >= 0.75 ? 'HIGH' : 'MEDIUM',
+            confidence: 'MEDIUM',
             timeAgo: formatTimeAgo(hoursAgo),
           });
         }
@@ -475,6 +526,20 @@ async function fetchStockCatalysts(tickers: string[]): Promise<Map<string, Stock
                 } as StockCatalyst,
               };
             }
+
+            // If no pattern match but recent filing, show the subject
+            const hoursAgo = getHoursAgo(item.an_dt || item.date || '');
+            if (hoursAgo < 48 && desc) {
+              return {
+                symbol: symbol.toUpperCase(),
+                catalyst: {
+                  label: truncate(desc, 14),
+                  sourceType: 'Filing',
+                  confidence: 'MEDIUM' as const,
+                  timeAgo: formatTimeAgo(hoursAgo),
+                } as StockCatalyst,
+              };
+            }
           }
           return null;
         })
@@ -489,26 +554,27 @@ async function fetchStockCatalysts(tickers: string[]): Promise<Map<string, Stock
     }
   }
 
-  // ── Phase 3: Google News RSS for big movers still without catalysts ──
-  // STRICT: Only accept if headline explicitly matches an allowed catalyst pattern
+  // ── Phase 3: Google News RSS for stocks still without catalysts ──
   const needPhase3 = tickers.filter(t => !catalysts.has(t.toUpperCase())).slice(0, 10);
   if (needPhase3.length > 0) {
     try {
       const rssResults = await Promise.allSettled(
         needPhase3.map(async (symbol) => {
-          const query = encodeURIComponent(`"${symbol}" NSE stock`);
+          const query = encodeURIComponent(`${symbol} share price`);
           const url = `https://news.google.com/rss/search?q=${query}&hl=en-IN&gl=IN&ceid=IN:en`;
           const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
           if (!r.ok) return null;
           const xml = await r.text();
-          // Check first 5 headlines
+          // Check first 10 headlines
           const itemRegex = /<item[^>]*>[\s\S]*?<title[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>[\s\S]*?<pubDate>([\s\S]*?)<\/pubDate>/g;
           let match;
           let count = 0;
-          while ((match = itemRegex.exec(xml)) !== null && count < 5) {
+          while ((match = itemRegex.exec(xml)) !== null && count < 10) {
             count++;
             const headline = (match[1] || '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
             const pubDate = (match[2] || '').trim();
+
+            // First try explicit pattern match
             const matched = matchCatalyst(headline);
             if (matched) {
               const hoursAgo = getHoursAgo(pubDate);
@@ -517,6 +583,22 @@ async function fetchStockCatalysts(tickers: string[]): Promise<Map<string, Stock
                 symbol: symbol.toUpperCase(),
                 catalyst: {
                   label: matched.label,
+                  sourceType: 'News',
+                  confidence: 'MEDIUM' as const,
+                  timeAgo: formatTimeAgo(hoursAgo),
+                } as StockCatalyst,
+              };
+            }
+
+            // Try headline summary for news about the stock
+            const summary = extractHeadlineSummary(headline, symbol);
+            if (summary) {
+              const hoursAgo = getHoursAgo(pubDate);
+              if (hoursAgo > 72) continue;
+              return {
+                symbol: symbol.toUpperCase(),
+                catalyst: {
+                  label: summary,
                   sourceType: 'News',
                   confidence: 'MEDIUM' as const,
                   timeAgo: formatTimeAgo(hoursAgo),
@@ -534,6 +616,71 @@ async function fetchStockCatalysts(tickers: string[]): Promise<Map<string, Stock
       }
     } catch (e) {
       console.warn('[CATALYST] Google News fetch failed:', e);
+    }
+  }
+
+  // ── Phase 4: Company name search for big movers still without catalysts ──
+  const needPhase4 = stocks
+    .filter(s => !catalysts.has(s.ticker.toUpperCase()) && Math.abs(s.changePercent) > 3)
+    .slice(0, 5);
+  if (needPhase4.length > 0) {
+    try {
+      const phase4Results = await Promise.allSettled(
+        needPhase4.map(async (stock) => {
+          const query = encodeURIComponent(`${stock.company} stock`);
+          const url = `https://news.google.com/rss/search?q=${query}&hl=en-IN&gl=IN&ceid=IN:en`;
+          const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
+          if (!r.ok) return null;
+          const xml = await r.text();
+          // Check first 10 headlines
+          const itemRegex = /<item[^>]*>[\s\S]*?<title[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>[\s\S]*?<pubDate>([\s\S]*?)<\/pubDate>/g;
+          let match;
+          let count = 0;
+          while ((match = itemRegex.exec(xml)) !== null && count < 10) {
+            count++;
+            const headline = (match[1] || '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
+            const pubDate = (match[2] || '').trim();
+
+            const matched = matchCatalyst(headline);
+            if (matched) {
+              const hoursAgo = getHoursAgo(pubDate);
+              if (hoursAgo > 72) continue;
+              return {
+                symbol: stock.ticker.toUpperCase(),
+                catalyst: {
+                  label: matched.label,
+                  sourceType: 'News',
+                  confidence: 'MEDIUM' as const,
+                  timeAgo: formatTimeAgo(hoursAgo),
+                } as StockCatalyst,
+              };
+            }
+
+            const summary = extractHeadlineSummary(headline, stock.ticker);
+            if (summary) {
+              const hoursAgo = getHoursAgo(pubDate);
+              if (hoursAgo > 72) continue;
+              return {
+                symbol: stock.ticker.toUpperCase(),
+                catalyst: {
+                  label: summary,
+                  sourceType: 'News',
+                  confidence: 'MEDIUM' as const,
+                  timeAgo: formatTimeAgo(hoursAgo),
+                } as StockCatalyst,
+              };
+            }
+          }
+          return null;
+        })
+      );
+      for (const r of phase4Results) {
+        if (r.status === 'fulfilled' && r.value) {
+          catalysts.set(r.value.symbol, r.value.catalyst);
+        }
+      }
+    } catch (e) {
+      console.warn('[CATALYST] Company news fetch failed:', e);
     }
   }
 
@@ -646,12 +793,12 @@ async function generatePortfolioImages(
 
     // Dimensions
     const ACCENT_H = 4;
-    const HEADER_H = 60;
-    const METRICS_H = 44;
-    const DRIVERS_H = isFirst && drivers.length > 0 ? 42 : 0;
-    const COL_HEADER_H = 30;
-    const ROW_H = 44;
-    const FOOTER_H = 28;
+    const HEADER_H = 74;
+    const METRICS_H = 56;
+    const DRIVERS_H = isFirst && drivers.length > 0 ? 52 : 0;
+    const COL_HEADER_H = 36;
+    const ROW_H = 54;
+    const FOOTER_H = 34;
     const COL_GAP = 4;
     const HALF_W = (W - COL_GAP) / 2;
 
@@ -672,34 +819,34 @@ async function generatePortfolioImages(
           borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1E293B',
         }}>
           {/* # */}
-          <div style={{ display: 'flex', width: '20px', color: '#475569', fontSize: '10px', fontWeight: 700, justifyContent: 'flex-end', marginRight: '5px' }}>
+          <div style={{ display: 'flex', width: '24px', color: '#475569', fontSize: '13px', fontWeight: 700, justifyContent: 'flex-end', marginRight: '5px' }}>
             {globalIdx + 1}
           </div>
           {/* SYMBOL */}
-          <div style={{ display: 'flex', width: '88px', fontWeight: 900, color: '#F1F5F9', fontSize: isTopMover ? '14px' : '13px' }}>
+          <div style={{ display: 'flex', width: '105px', fontWeight: 900, color: '#F1F5F9', fontSize: isTopMover ? '18px' : '17px' }}>
             {truncate(s.ticker, 10)}
           </div>
           {/* %CHG */}
-          <div style={{ display: 'flex', width: '62px', justifyContent: 'flex-end', color: pctColor, fontWeight: 900, fontSize: isTopMover ? '15px' : '13px' }}>
+          <div style={{ display: 'flex', width: '72px', justifyContent: 'flex-end', color: pctColor, fontWeight: 900, fontSize: isTopMover ? '18px' : '17px' }}>
             <span style={{ display: 'flex' }}>{sign}{s.changePercent.toFixed(1)}%</span>
           </div>
           {/* PRICE */}
-          <div style={{ display: 'flex', width: '72px', justifyContent: 'flex-end', color: '#CBD5E1', fontSize: '12px', fontWeight: 600, marginLeft: '4px' }}>
+          <div style={{ display: 'flex', width: '80px', justifyContent: 'flex-end', color: '#CBD5E1', fontSize: '15px', fontWeight: 600, marginLeft: '4px' }}>
             <span style={{ display: 'flex' }}>{s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}</span>
           </div>
           {/* CHG */}
-          <div style={{ display: 'flex', width: '52px', justifyContent: 'flex-end', color: pctColor, fontSize: '11px', fontWeight: 600, marginLeft: '2px' }}>
+          <div style={{ display: 'flex', width: '60px', justifyContent: 'flex-end', color: pctColor, fontSize: '14px', fontWeight: 600, marginLeft: '2px' }}>
             <span style={{ display: 'flex' }}>{sign}{s.change.toFixed(1)}</span>
           </div>
           {/* WHY — largest column, 2 lines */}
           <div style={{ display: 'flex', flexDirection: 'column', flex: 1, marginLeft: '8px', justifyContent: 'center' }}>
             <div style={{ display: 'flex', alignItems: 'center' }}>
-              <span style={{ display: 'flex', fontSize: isTopMover ? '12px' : '11px', fontWeight: 700, color: cat.label === 'No clear trigger' ? '#64748B' : '#F1F5F9' }}>
+              <span style={{ display: 'flex', fontSize: isTopMover ? '15px' : '14px', fontWeight: 700, color: cat.label === 'No clear trigger' ? '#64748B' : '#F1F5F9' }}>
                 {truncate(cat.label, 16)}
               </span>
               {cat.confidence !== 'LOW' && (
                 <span style={{
-                  display: 'flex', marginLeft: '4px', fontSize: '9px', fontWeight: 800,
+                  display: 'flex', marginLeft: '4px', fontSize: '11px', fontWeight: 800,
                   color: getConfColor(cat.confidence),
                   backgroundColor: getConfBg(cat.confidence),
                   paddingLeft: '3px', paddingRight: '3px', paddingTop: '1px', paddingBottom: '1px',
@@ -710,7 +857,7 @@ async function generatePortfolioImages(
               )}
             </div>
             {cat.sourceType && (
-              <span style={{ display: 'flex', fontSize: '9px', color: '#64748B', fontWeight: 600, marginTop: '1px' }}>
+              <span style={{ display: 'flex', fontSize: '12px', color: '#64748B', fontWeight: 600, marginTop: '1px' }}>
                 {cat.sourceType}{cat.timeAgo ? ` . ${cat.timeAgo} ago` : ''}
               </span>
             )}
@@ -747,10 +894,10 @@ async function generatePortfolioImages(
           paddingLeft: '20px', paddingRight: '20px', height: `${HEADER_H}px`,
           backgroundColor: '#0A1128', borderBottomWidth: '2px', borderBottomStyle: 'solid', borderBottomColor: '#1E3A5F',
         }}>
-          <span style={{ display: 'flex', fontSize: '26px', fontWeight: 900, color: '#FFFFFF', letterSpacing: '1px' }}>
+          <span style={{ display: 'flex', fontSize: '32px', fontWeight: 900, color: '#FFFFFF', letterSpacing: '1px' }}>
             PORTFOLIO PULSE{pageLabel}
           </span>
-          <span style={{ display: 'flex', fontSize: '13px', color: '#94A3B8', fontWeight: 700 }}>{timestamp}</span>
+          <span style={{ display: 'flex', fontSize: '16px', color: '#94A3B8', fontWeight: 700 }}>{timestamp}</span>
         </div>
 
         {/* KPI Strip */}
@@ -760,20 +907,20 @@ async function generatePortfolioImages(
           borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1E293B',
         }}>
           <span style={{ display: 'flex', marginRight: '28px' }}>
-            <span style={{ display: 'flex', color: '#FFFFFF', fontWeight: 900, fontSize: '18px' }}>{displayStocks.length}</span>
-            <span style={{ display: 'flex', marginLeft: '5px', color: '#94A3B8', fontSize: '14px' }}>Holdings</span>
+            <span style={{ display: 'flex', color: '#FFFFFF', fontWeight: 900, fontSize: '24px' }}>{displayStocks.length}</span>
+            <span style={{ display: 'flex', marginLeft: '5px', color: '#94A3B8', fontSize: '17px' }}>Holdings</span>
           </span>
           <span style={{ display: 'flex', marginRight: '28px' }}>
-            <span style={{ display: 'flex', color: '#00E676', fontWeight: 900, fontSize: '18px' }}>{winnersN}</span>
-            <span style={{ display: 'flex', marginLeft: '5px', color: '#94A3B8', fontSize: '14px' }}>Up</span>
+            <span style={{ display: 'flex', color: '#00E676', fontWeight: 900, fontSize: '24px' }}>{winnersN}</span>
+            <span style={{ display: 'flex', marginLeft: '5px', color: '#94A3B8', fontSize: '17px' }}>Up</span>
           </span>
           <span style={{ display: 'flex', marginRight: '28px' }}>
-            <span style={{ display: 'flex', color: '#FF1744', fontWeight: 900, fontSize: '18px' }}>{losersN}</span>
-            <span style={{ display: 'flex', marginLeft: '5px', color: '#94A3B8', fontSize: '14px' }}>Down</span>
+            <span style={{ display: 'flex', color: '#FF1744', fontWeight: 900, fontSize: '24px' }}>{losersN}</span>
+            <span style={{ display: 'flex', marginLeft: '5px', color: '#94A3B8', fontSize: '17px' }}>Down</span>
           </span>
           <span style={{ display: 'flex' }}>
-            <span style={{ display: 'flex', marginRight: '5px', color: '#94A3B8', fontSize: '14px' }}>Avg</span>
-            <span style={{ display: 'flex', color: avgChange >= 0 ? '#00E676' : '#FF1744', fontWeight: 900, fontSize: '18px' }}>
+            <span style={{ display: 'flex', marginRight: '5px', color: '#94A3B8', fontSize: '17px' }}>Avg</span>
+            <span style={{ display: 'flex', color: avgChange >= 0 ? '#00E676' : '#FF1744', fontWeight: 900, fontSize: '24px' }}>
               {avgChange >= 0 ? '+' : ''}{avgChange.toFixed(2)}%
             </span>
           </span>
@@ -786,10 +933,10 @@ async function generatePortfolioImages(
             height: `${DRIVERS_H}px`, backgroundColor: '#0D1526',
             borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1E293B',
           }}>
-            <span style={{ display: 'flex', fontSize: '11px', fontWeight: 800, color: '#FFD740', marginRight: '8px', letterSpacing: '1px' }}>
+            <span style={{ display: 'flex', fontSize: '14px', fontWeight: 800, color: '#FFD740', marginRight: '8px', letterSpacing: '1px' }}>
               DRIVERS
             </span>
-            <span style={{ display: 'flex', fontSize: '11px', fontWeight: 600, color: '#94A3B8' }}>
+            <span style={{ display: 'flex', fontSize: '13px', fontWeight: 600, color: '#94A3B8' }}>
               {drivers.join('  |  ')}
             </span>
           </div>
@@ -804,14 +951,14 @@ async function generatePortfolioImages(
               backgroundColor: '#061208', paddingLeft: '6px', paddingRight: '6px',
               borderBottomWidth: '2px', borderBottomStyle: 'solid', borderBottomColor: '#00C853',
             }}>
-              <div style={{ display: 'flex', width: '20px', marginRight: '5px' }} />
-              <div style={{ display: 'flex', width: '88px', fontSize: '11px', fontWeight: 900, color: '#00E676', letterSpacing: '1px' }}>
+              <div style={{ display: 'flex', width: '24px', marginRight: '5px' }} />
+              <div style={{ display: 'flex', width: '105px', fontSize: '14px', fontWeight: 900, color: '#00E676', letterSpacing: '1px' }}>
                 WINNERS{contLabel} ({winnersN})
               </div>
-              <div style={{ display: 'flex', width: '62px', justifyContent: 'flex-end', fontSize: '9px', fontWeight: 800, color: '#475569' }}>%CHG</div>
-              <div style={{ display: 'flex', width: '72px', justifyContent: 'flex-end', fontSize: '9px', fontWeight: 800, color: '#475569', marginLeft: '4px' }}>PRICE</div>
-              <div style={{ display: 'flex', width: '52px', justifyContent: 'flex-end', fontSize: '9px', fontWeight: 800, color: '#475569', marginLeft: '2px' }}>CHG</div>
-              <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', fontSize: '9px', fontWeight: 800, color: '#475569', marginLeft: '8px' }}>WHY</div>
+              <div style={{ display: 'flex', width: '72px', justifyContent: 'flex-end', fontSize: '12px', fontWeight: 800, color: '#475569' }}>%CHG</div>
+              <div style={{ display: 'flex', width: '80px', justifyContent: 'flex-end', fontSize: '12px', fontWeight: 800, color: '#475569', marginLeft: '4px' }}>PRICE</div>
+              <div style={{ display: 'flex', width: '60px', justifyContent: 'flex-end', fontSize: '12px', fontWeight: 800, color: '#475569', marginLeft: '2px' }}>CHG</div>
+              <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', fontSize: '12px', fontWeight: 800, color: '#475569', marginLeft: '8px' }}>WHY</div>
             </div>
             {winners.map((s, i) => renderRow(s, i, wStart + i, 'w'))}
             {winners.length < pageRows && renderFillers(pageRows - winners.length, 'w')}
@@ -827,14 +974,14 @@ async function generatePortfolioImages(
               backgroundColor: '#120606', paddingLeft: '6px', paddingRight: '6px',
               borderBottomWidth: '2px', borderBottomStyle: 'solid', borderBottomColor: '#D50000',
             }}>
-              <div style={{ display: 'flex', width: '20px', marginRight: '5px' }} />
-              <div style={{ display: 'flex', width: '88px', fontSize: '11px', fontWeight: 900, color: '#FF1744', letterSpacing: '1px' }}>
+              <div style={{ display: 'flex', width: '24px', marginRight: '5px' }} />
+              <div style={{ display: 'flex', width: '105px', fontSize: '14px', fontWeight: 900, color: '#FF1744', letterSpacing: '1px' }}>
                 LOSERS{contLabel} ({losersN})
               </div>
-              <div style={{ display: 'flex', width: '62px', justifyContent: 'flex-end', fontSize: '9px', fontWeight: 800, color: '#475569' }}>%CHG</div>
-              <div style={{ display: 'flex', width: '72px', justifyContent: 'flex-end', fontSize: '9px', fontWeight: 800, color: '#475569', marginLeft: '4px' }}>PRICE</div>
-              <div style={{ display: 'flex', width: '52px', justifyContent: 'flex-end', fontSize: '9px', fontWeight: 800, color: '#475569', marginLeft: '2px' }}>CHG</div>
-              <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', fontSize: '9px', fontWeight: 800, color: '#475569', marginLeft: '8px' }}>WHY</div>
+              <div style={{ display: 'flex', width: '72px', justifyContent: 'flex-end', fontSize: '12px', fontWeight: 800, color: '#475569' }}>%CHG</div>
+              <div style={{ display: 'flex', width: '80px', justifyContent: 'flex-end', fontSize: '12px', fontWeight: 800, color: '#475569', marginLeft: '4px' }}>PRICE</div>
+              <div style={{ display: 'flex', width: '60px', justifyContent: 'flex-end', fontSize: '12px', fontWeight: 800, color: '#475569', marginLeft: '2px' }}>CHG</div>
+              <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', fontSize: '12px', fontWeight: 800, color: '#475569', marginLeft: '8px' }}>WHY</div>
             </div>
             {losers.map((s, i) => renderRow(s, i, lStart + i, 'l'))}
             {losers.length < pageRows && renderFillers(pageRows - losers.length, 'l')}
@@ -846,7 +993,7 @@ async function generatePortfolioImages(
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           paddingLeft: '20px', paddingRight: '20px', height: `${FOOTER_H}px`,
           backgroundColor: '#080E1A', borderTopWidth: '1px', borderTopStyle: 'solid', borderTopColor: '#1E293B',
-          fontSize: '11px', color: '#475569', fontWeight: 600,
+          fontSize: '13px', color: '#475569', fontWeight: 600,
         }}>
           <span style={{ display: 'flex' }}>market-cockpit.vercel.app</span>
           <span style={{ display: 'flex' }}>{timestamp}</span>
@@ -1152,7 +1299,7 @@ export async function POST(request: Request) {
         await sendTelegramTo(chatId, 'No portfolio data available. Market may be closed or symbols not found.');
       } else {
         try {
-          const catalysts = await fetchStockCatalysts(stocks.map(s => s.ticker));
+          const catalysts = await fetchStockCatalysts(stocks);
           const imgs = await generatePortfolioImages(stocks, catalysts);
           const gainers = stocks.filter(s => s.changePercent > 0).length;
           const losers = stocks.filter(s => s.changePercent < 0).length;
@@ -1282,7 +1429,7 @@ export async function GET(request: Request) {
 
   // Generate and send image
   try {
-    const catalysts = await fetchStockCatalysts(stocks.map(s => s.ticker));
+    const catalysts = await fetchStockCatalysts(stocks);
     diagnostics.steps.push('catalysts_fetched');
     const imgs = await generatePortfolioImages(stocks, catalysts);
     diagnostics.steps.push('images_generated');
