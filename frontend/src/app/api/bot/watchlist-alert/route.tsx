@@ -273,11 +273,121 @@ async function fetchWatchlistNews(watchlist: string[]): Promise<NewsItem[]> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// STOCK REASONS — Real news catalysts for each stock
+// ══════════════════════════════════════════════════════════════════════════
+
+function extractCatalyst(headline: string): string {
+  if (!headline) return '';
+  const patterns: [RegExp, string][] = [
+    [/nuclear|reactor|atomic/i, 'Nuclear Deal'],
+    [/order\s*win|order\s*bag|order\s*worth|new\s*order|bags?\s*order/i, 'Order Win'],
+    [/block\s*deal|bulk\s*deal/i, 'Block Deal'],
+    [/buyback|buy\s*back/i, 'Buyback'],
+    [/dividend/i, 'Dividend'],
+    [/split|stock\s*split|bonus/i, 'Bonus/Split'],
+    [/result|earning|profit\s*(up|surge|jump|rise|grow)|revenue\s*(up|surge|jump|grow)|net\s*profit|PAT\s*(up|surge|rise)/i, 'Results Beat'],
+    [/loss|profit\s*(fall|drop|decline|slip)|revenue\s*(fall|drop|decline)/i, 'Weak Results'],
+    [/upgrade|target\s*raise|outperform|overweight/i, 'Upgrade'],
+    [/downgrade|underperform|underweight|target\s*cut/i, 'Downgrade'],
+    [/acquisition|acquire|takeover|buyout|merger/i, 'Acquisition'],
+    [/partnership|tie-?up|collaborat|joint\s*venture|JV|MOU|pact/i, 'New Pact'],
+    [/contract|deal\s*worth|wins?\s*contract/i, 'New Contract'],
+    [/expansion|capex|new\s*plant|capacity|greenfield/i, 'Expansion'],
+    [/launch|new\s*product|introduce/i, 'New Launch'],
+    [/stake\s*(sale|buy|acquire|hike|increase)|promoter/i, 'Stake Change'],
+    [/FII|FPI|DII|mutual\s*fund|institutional/i, 'Fund Flow'],
+    [/defence|defense|military|army|navy|missile/i, 'Defence Order'],
+    [/export|international|global\s*order/i, 'Export Order'],
+    [/approval|clearance|SEBI|RBI|regulatory/i, 'Approval'],
+    [/IPO|listing|debut/i, 'IPO Buzz'],
+    [/solar|wind|renewable|green\s*energy/i, 'Green Energy'],
+    [/EV|electric\s*vehicle|battery/i, 'EV Play'],
+    [/semiconductor|chip|fab/i, 'Chip/Semi'],
+    [/AI|artificial\s*intelligence|data\s*center/i, 'AI/Data'],
+    [/infra|highway|railway|metro|road/i, 'Infra Push'],
+    [/pharma|drug|FDA|USFDA|ANDA/i, 'Pharma News'],
+    [/bank|NPA|NIM|credit\s*grow|loan\s*growth/i, 'Banking'],
+    [/oil|gas|crude|refin/i, 'Oil & Gas'],
+    [/metal|steel|aluminium|copper|zinc/i, 'Metal Rally'],
+    [/IT\s*deal|digital\s*deal|tech\s*deal|cloud/i, 'Tech Deal'],
+    [/real\s*estate|realty|housing|property/i, 'Realty Boom'],
+    [/rating|CRISIL|ICRA|credit\s*rating/i, 'Rating News'],
+    [/demerger|demerge|spin-?off/i, 'Demerger'],
+    [/right\s*issue|QIP|preferential/i, 'Fund Raise'],
+    [/ban|restriction|penalty|fine/i, 'Regulatory'],
+    [/short\s*cover|short\s*squeeze/i, 'Short Cover'],
+  ];
+  for (const [regex, label] of patterns) {
+    if (regex.test(headline)) return label;
+  }
+  const words = headline.replace(/[^a-zA-Z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 2);
+  const stopWords = new Set(['the', 'and', 'for', 'with', 'from', 'has', 'had', 'its', 'that', 'this', 'are', 'was', 'were', 'been', 'will', 'can', 'may', 'not', 'but', 'also', 'into', 'said', 'says', 'per', 'ltd', 'limited', 'shares', 'stock', 'stocks', 'company', 'market', 'nse', 'bse', 'india']);
+  const meaningful = words.filter(w => !stopWords.has(w.toLowerCase())).slice(0, 3);
+  if (meaningful.length > 0) return meaningful.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+  return '';
+}
+
+async function fetchStockReasons(tickers: string[]): Promise<Map<string, string>> {
+  const reasons = new Map<string, string>();
+  const tickerSet = new Set(tickers.map(t => t.toUpperCase()));
+
+  // Phase 1: Intelligence signals from Redis
+  try {
+    const intel = await kvGet<any>('intelligence:signals');
+    if (intel && intel.signals) {
+      const allSignals = [...(intel.signals || []), ...(intel.top3 || []), ...(intel.notable || [])];
+      for (const sig of allSignals) {
+        const sym = (sig.symbol || '').toUpperCase();
+        if (tickerSet.has(sym) && !reasons.has(sym)) {
+          const catalyst = extractCatalyst(sig.headline || '') ||
+            extractCatalyst(sig.whyItMatters || '') ||
+            sig.eventType || '';
+          if (catalyst) reasons.set(sym, truncate(catalyst, 14));
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[REASONS] Intel signals fetch failed:', e);
+  }
+
+  // Phase 2: Google News RSS for stocks without reasons (parallel, top 15)
+  const needReasons = tickers.filter(t => !reasons.has(t.toUpperCase())).slice(0, 15);
+  if (needReasons.length > 0) {
+    try {
+      const rssResults = await Promise.allSettled(
+        needReasons.map(async (symbol) => {
+          const query = encodeURIComponent(`${symbol} NSE stock`);
+          const url = `https://news.google.com/rss/search?q=${query}&hl=en-IN&gl=IN&ceid=IN:en`;
+          const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
+          if (!r.ok) return { symbol, headline: '' };
+          const xml = await r.text();
+          const titleMatch = xml.match(/<item[^>]*>[\s\S]*?<title[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
+          return { symbol, headline: titleMatch?.[1]?.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim() || '' };
+        })
+      );
+      for (const result of rssResults) {
+        if (result.status === 'fulfilled' && result.value.headline) {
+          const sym = result.value.symbol.toUpperCase();
+          const catalyst = extractCatalyst(result.value.headline);
+          if (catalyst && !reasons.has(sym)) {
+            reasons.set(sym, truncate(catalyst, 14));
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[REASONS] Google News RSS failed:', e);
+    }
+  }
+
+  return reasons;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // IMAGE GENERATION — Watchlist Pulse Card
 // ══════════════════════════════════════════════════════════════════════════
 
 function truncate(s: string, maxLen: number): string {
-  if (!s) return '—';
+  if (!s) return '';
   return s.length > maxLen ? s.slice(0, maxLen - 2) + '..' : s;
 }
 
@@ -295,7 +405,7 @@ function getISTTimestamp(): string {
   return `${day} ${month} ${year}, ${h12.toString().padStart(2, '0')}:${minutes} ${ampm}`;
 }
 
-async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
+async function generateWatchlistImage(stocks: Stock[], reasons: Map<string, string>): Promise<ArrayBuffer> {
   const displayStocks = stocks.slice(0, 100);
   const timestamp = getISTTimestamp();
   const W = 1200;
@@ -333,37 +443,12 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
     return '#FF1744';
   };
 
-  // Short reason tag based on sector, cap, and % move
-  const getReasonTag = (s: Stock): string => {
-    const sector = (s.sector || '').toLowerCase();
-    const pct = Math.abs(s.changePercent);
-    if (pct >= 5) return pct >= 5 && s.changePercent > 0 ? 'Rally' : 'Selloff';
-    if (sector.includes('bank') || sector.includes('financ')) return 'Banking';
-    if (sector.includes('pharma') || sector.includes('health')) return 'Pharma';
-    if (sector.includes('auto')) return 'Auto';
-    if (sector.includes('it') || sector.includes('tech') || sector.includes('software') || sector.includes('computer')) return 'IT';
-    if (sector.includes('metal') || sector.includes('mining') || sector.includes('steel')) return 'Metals';
-    if (sector.includes('energy') || sector.includes('oil') || sector.includes('gas') || sector.includes('power')) return 'Energy';
-    if (sector.includes('cement') || sector.includes('construct') || sector.includes('infra')) return 'Infra';
-    if (sector.includes('fmcg') || sector.includes('consumer')) return 'FMCG';
-    if (sector.includes('chemical')) return 'Chem';
-    if (sector.includes('telecom') || sector.includes('media')) return 'Telecom';
-    if (sector.includes('realty') || sector.includes('real estate')) return 'Realty';
-    if (sector.includes('agri') || sector.includes('fertiliz')) return 'Agri';
-    if (sector.includes('defence') || sector.includes('aero')) return 'Defence';
-    if (sector.includes('textile') || sector.includes('apparel')) return 'Textile';
-    if (s.cap === 'L') return 'Large Cap';
-    if (s.cap === 'M') return 'Mid Cap';
-    if (s.cap === 'S') return 'Small Cap';
-    return sector ? truncate(sector.charAt(0).toUpperCase() + sector.slice(1), 10) : '';
-  };
-
   // Render a single stock row
   const renderRow = (s: Stock, idx: number, side: string) => {
     const pctColor = getPctColor(s.changePercent);
     const rowBg = idx % 2 === 0 ? '#101828' : '#161F33';
     const sign = s.changePercent >= 0 ? '+' : '';
-    const reason = getReasonTag(s);
+    const reason = reasons.get(s.ticker.toUpperCase()) || '';
 
     return (
       <div key={`${side}-${idx}`} style={{
@@ -753,7 +838,8 @@ export async function POST(request: Request) {
         await sendTelegramTo(chatId, 'No watchlist data available. Market may be closed or symbols not found.');
       } else {
         try {
-          const img = await generateWatchlistImage(stocks);
+          const reasons = await fetchStockReasons(stocks.map(s => s.ticker));
+          const img = await generateWatchlistImage(stocks, reasons);
           const gainers = stocks.filter(s => s.changePercent > 0).length;
           const losers = stocks.filter(s => s.changePercent < 0).length;
           await sendTelegramPhoto(img, `<b>${stocks.length} stocks</b> • Gainers: ${gainers} | Losers: ${losers} — <a href="https://market-cockpit.vercel.app">Dashboard</a>`, chatId);
@@ -888,7 +974,8 @@ export async function GET(request: Request) {
   diagnostics.steps.push('sending_watchlist_image');
   let imageError: string | undefined;
   try {
-    const img = await generateWatchlistImage(stocks);
+    const reasons = await fetchStockReasons(stocks.map(s => s.ticker));
+    const img = await generateWatchlistImage(stocks, reasons);
     const gainers = stocks.filter(s => s.changePercent > 0).length;
     const losers = stocks.filter(s => s.changePercent < 0).length;
     const caption = `<b>Watchlist Pulse</b>\n${stocks.length} stocks • Gainers: ${gainers} | Losers: ${losers}\n<a href="https://market-cockpit.vercel.app">Dashboard</a>`;
