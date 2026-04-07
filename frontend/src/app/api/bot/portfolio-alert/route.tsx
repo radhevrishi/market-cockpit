@@ -158,27 +158,81 @@ async function fetchPortfolioStocks(portfolio: string[]): Promise<Stock[]> {
     console.error('[PORTFOLIO] Full market fetch failed:', e);
   }
 
-  // Step 2: NSE fallback for missing stocks
+  // Step 2: NSE index fallback for missing stocks
   if (seen.size < portfolio.length) {
-    const missing = [...portfolioSet].filter(t => !seen.has(t));
-    console.log(`[PORTFOLIO] ${missing.length} stocks still missing, trying NSE...`);
+    const missing1 = [...portfolioSet].filter(t => !seen.has(t));
+    console.log(`[PORTFOLIO] ${missing1.length} stocks still missing, trying NSE indices...`);
     const cookies = await getNseCookies();
     if (cookies) {
       const indices = [
-        { name: 'NIFTY 50', label: '' },
-        { name: 'NIFTY NEXT 50', label: '' },
-        { name: 'NIFTY MIDCAP 100', label: '' },
-        { name: 'NIFTY SMLCAP 100', label: '' },
+        'NIFTY 500',
+        'NIFTY MIDCAP 150',
+        'NIFTY SMLCAP 250',
+        'NIFTY MICROCAP 250',
+        'NIFTY TOTAL MARKET',
       ];
-      for (const { name } of indices) {
+      for (const name of indices) {
         const data = await fetchNseIndex(name, cookies);
         for (const item of data) addStock(item);
-        if (seen.size === portfolio.length) break;
+        if (seen.size >= portfolio.length) break;
       }
     }
   }
 
-  console.log(`[PORTFOLIO] Final: ${allStocks.length} portfolio stocks fetched`);
+  // Step 3: Individual NSE quote fetch for any STILL missing stocks
+  if (seen.size < portfolio.length) {
+    const missing2 = [...portfolioSet].filter(t => !seen.has(t));
+    console.log(`[PORTFOLIO] ${missing2.length} stocks still missing after indices, fetching individually...`);
+    const cookies = await getNseCookies();
+    if (cookies) {
+      // Batch in groups of 5 to avoid hammering NSE
+      for (let i = 0; i < missing2.length; i += 5) {
+        const batch = missing2.slice(i, i + 5);
+        const results = await Promise.allSettled(
+          batch.map(async (symbol) => {
+            try {
+              // Clean up symbol: remove NSE: prefix, BOM: prefix
+              const cleanSymbol = symbol.replace(/^NSE:/i, '').replace(/^BOM:/i, '').replace(/^\d+$/, '');
+              if (!cleanSymbol) return;
+              const url = `${NSE_BASE}/api/quote-equity?symbol=${encodeURIComponent(cleanSymbol)}`;
+              const r = await fetch(url, { headers: { ...NSE_HEADERS, Cookie: cookies }, signal: AbortSignal.timeout(5000) });
+              if (r.ok) {
+                const data = await r.json();
+                const pd = data?.priceInfo || {};
+                const info = data?.info || {};
+                if (pd.lastPrice > 0) {
+                  const tk = (info.symbol || cleanSymbol).toUpperCase();
+                  if (!seen.has(tk) && (portfolioSet.has(tk) || portfolioSet.has(symbol))) {
+                    seen.add(tk);
+                    // Also add original symbol to seen in case of NSE: prefix
+                    seen.add(symbol);
+                    allStocks.push({
+                      ticker: tk,
+                      company: info.companyName || tk,
+                      price: pd.lastPrice,
+                      changePercent: Math.round((pd.pChange || 0) * 100) / 100,
+                      change: Math.round((pd.change || 0) * 100) / 100,
+                      cap: 'S',
+                      sector: info.industry || '',
+                      dayHigh: pd.intraDayHighLow?.max,
+                      dayLow: pd.intraDayHighLow?.min,
+                      weekHigh52: pd.weekHighLow?.max,
+                      weekLow52: pd.weekHighLow?.min,
+                    });
+                  }
+                }
+              }
+            } catch (e) {
+              console.warn(`[PORTFOLIO] Individual fetch ${symbol} failed:`, e);
+            }
+          })
+        );
+      }
+      console.log(`[PORTFOLIO] After individual fetch: ${allStocks.length} stocks total`);
+    }
+  }
+
+  console.log(`[PORTFOLIO] Final: ${allStocks.length} portfolio stocks fetched out of ${portfolio.length}`);
   return allStocks;
 }
 
@@ -287,7 +341,7 @@ function getISTTimestamp(): string {
 }
 
 async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
-  const displayStocks = stocks.slice(0, 20);
+  const displayStocks = stocks.slice(0, 50);
   const timestamp = getISTTimestamp();
   const W = 1200;
 
