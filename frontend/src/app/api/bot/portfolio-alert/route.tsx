@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { ImageResponse } from 'next/og';
 import React from 'react';
+import { kvGet, kvSet } from '@/lib/kv';
+import { fetchNifty500, fetchNiftyMidcap250, fetchNiftySmallcap250, fetchNiftyMicrocap250, fetchNiftyTotalMarket, fetchGainers, fetchLosers, nseApiFetch } from '@/lib/nse';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
@@ -18,14 +20,7 @@ const DEFAULT_PORTFOLIO = [
   'LUMAXTECH', 'MTARTECH', 'WAAREEENER', 'HBLENGINE',
 ];
 
-// ── NSE Headers ─────────────────────────────────────────────────────────
-const NSE_BASE = 'https://www.nseindia.com';
-const NSE_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  Accept: 'application/json, text/plain, */*',
-  Referer: 'https://www.nseindia.com/',
-  'Accept-Language': 'en-US,en;q=0.9',
-};
+// NSE headers/cookies handled by @/lib/nse (shared across all routes)
 
 // ── Interfaces ──────────────────────────────────────────────────────────
 interface Stock {
@@ -53,37 +48,31 @@ interface Portfolio {
   addedAt: number;
 }
 
-// ── In-Memory Portfolio Storage (with API sync) ─────────────────────────
+// ── Portfolio Storage (direct Redis — no self-referencing HTTP calls) ───
 const portfolioStorage: Record<string, Portfolio> = {};
-let apiSyncDone: Record<string, boolean> = {};
 
 async function getPortfolio(chatId: string): Promise<string[]> {
-  if (!apiSyncDone[chatId]) {
-    apiSyncDone[chatId] = true;
-    try {
-      const res = await fetch(`${API_BASE}/api/watchlist?chatId=pf_${chatId}`, {
-        signal: AbortSignal.timeout(3000),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.watchlist && Array.isArray(data.watchlist) && data.watchlist.length > 0) {
-          portfolioStorage[chatId] = { stocks: data.watchlist, addedAt: Date.now() };
-          console.log(`[PORTFOLIO] Loaded ${data.watchlist.length} stocks from API for ${chatId}`);
-          return data.watchlist;
-        }
-      }
-    } catch (e) {
-      console.warn('[PORTFOLIO] API sync failed, using local:', e);
+  // Read DIRECTLY from Redis — no HTTP self-call, no timeout issues, instant
+  try {
+    const stored = await kvGet<string[]>(`watchlist:pf_${chatId}`);
+    if (stored && Array.isArray(stored) && stored.length > 0) {
+      console.log(`[PORTFOLIO] Loaded ${stored.length} stocks from Redis for pf_${chatId}`);
+      portfolioStorage[chatId] = { stocks: stored, addedAt: Date.now() };
+      return stored;
     }
+  } catch (e) {
+    console.warn('[PORTFOLIO] Redis read failed:', e);
   }
 
-  if (!portfolioStorage[chatId]) {
-    portfolioStorage[chatId] = {
-      stocks: [...DEFAULT_PORTFOLIO],
-      addedAt: Date.now(),
-    };
+  // Fallback: check in-memory (from /add commands in current session)
+  if (portfolioStorage[chatId] && portfolioStorage[chatId].stocks.length > 0) {
+    return portfolioStorage[chatId].stocks;
   }
-  return portfolioStorage[chatId].stocks;
+
+  // Last resort: default portfolio
+  console.warn(`[PORTFOLIO] No saved portfolio found, using DEFAULT_PORTFOLIO (${DEFAULT_PORTFOLIO.length})`);
+  portfolioStorage[chatId] = { stocks: [...DEFAULT_PORTFOLIO], addedAt: Date.now() };
+  return DEFAULT_PORTFOLIO;
 }
 
 function setPortfolio(chatId: string, stocks: string[]): void {
@@ -94,54 +83,13 @@ function setPortfolio(chatId: string, stocks: string[]): void {
   };
 }
 
-// ── NSE Helpers ─────────────────────────────────────────────────────────
-async function getNseCookies(): Promise<string> {
-  try {
-    const r = await fetch(NSE_BASE, { headers: { 'User-Agent': NSE_HEADERS['User-Agent'] } });
-    const setCookie = r.headers.getSetCookie?.() || [];
-    return setCookie.map(c => c.split(';')[0]).join('; ');
-  } catch { return ''; }
-}
+// NSE helpers removed — using @/lib/nse directly (shared cookies, caching, retry)
 
-async function fetchNseIndex(indexName: string, cookies: string): Promise<any[]> {
-  try {
-    const url = `${NSE_BASE}/api/equity-stockIndices?index=${encodeURIComponent(indexName)}`;
-    const r = await fetch(url, { headers: { ...NSE_HEADERS, Cookie: cookies } });
-    if (r.ok) {
-      const json = await r.json();
-      return json?.data || [];
-    }
-  } catch (e) {
-    console.error(`[PORTFOLIO] NSE fetch ${indexName} failed:`, e);
-  }
-  return [];
-}
-
-// ── Fetch Portfolio Stocks (FULLY PARALLEL — no sequential bottlenecks) ─
+// ── Fetch Portfolio Stocks (DIRECT NSE LIB — zero self-referencing calls) ──
 async function fetchPortfolioStocks(portfolio: string[]): Promise<Stock[]> {
   const portfolioSet = new Set(portfolio.map(t => t.toUpperCase()));
   const allStocks: Stock[] = [];
   const seen = new Set<string>();
-
-  function addStock(s: any) {
-    const tk = (s.ticker || s.symbol || '').trim().toUpperCase();
-    if (!tk || !portfolioSet.has(tk) || seen.has(tk)) return;
-    if ((s.price || s.lastPrice || 0) <= 0) return;
-    seen.add(tk);
-    allStocks.push({
-      ticker: tk,
-      company: s.company || s.meta?.companyName || tk,
-      price: s.price || s.lastPrice || 0,
-      changePercent: Math.round((s.changePercent || s.pChange || 0) * 100) / 100,
-      change: Math.round((s.change || 0) * 100) / 100,
-      cap: (s.indexGroup || '').toLowerCase().includes('large') ? 'L' : 'M',
-      sector: s.sector || '',
-      dayHigh: s.dayHigh || s.high || undefined,
-      dayLow: s.dayLow || s.low || undefined,
-      weekHigh52: s.yearHigh || s.weekHigh52 || undefined,
-      weekLow52: s.yearLow || s.weekLow52 || undefined,
-    });
-  }
 
   function addNseItem(item: any) {
     const tk = (item.symbol || '').trim().toUpperCase();
@@ -163,51 +111,49 @@ async function fetchPortfolioStocks(portfolio: string[]): Promise<Stock[]> {
     });
   }
 
-  // Get cookies ONCE upfront
-  const cookies = await getNseCookies();
-  console.log(`[PORTFOLIO] Cookies: ${cookies ? 'OK' : 'FAILED'}, portfolio: ${portfolio.length} stocks`);
-
-  // ── PHASE 1: Fire ALL data sources in PARALLEL ──
-  // Market quotes API (self-call) + 5 NSE indices — ALL at once, no waiting
+  console.log(`[PORTFOLIO] Fetching ${portfolio.length} stocks via DIRECT NSE lib (no self-calls)...`);
   const phase1Start = Date.now();
-  const results = await Promise.allSettled([
-    // Source 0: Market quotes API (10s timeout — don't let self-call block everything)
-    fetch(`${API_BASE}/api/market/quotes?market=india`, {
-      headers: { 'User-Agent': 'MarketCockpit-Bot/1.0' },
-      signal: AbortSignal.timeout(10000),
-    }).then(r => r.ok ? r.json() : null).catch(() => null),
-    // Source 1-5: Direct NSE index fetches (parallel, not sequential!)
-    cookies ? fetchNseIndex('NIFTY 500', cookies) : Promise.resolve([]),
-    cookies ? fetchNseIndex('NIFTY MIDCAP 150', cookies) : Promise.resolve([]),
-    cookies ? fetchNseIndex('NIFTY SMLCAP 250', cookies) : Promise.resolve([]),
-    cookies ? fetchNseIndex('NIFTY MICROCAP 250', cookies) : Promise.resolve([]),
-    cookies ? fetchNseIndex('NIFTY TOTAL MARKET', cookies) : Promise.resolve([]),
+
+  // ── PHASE 1: Fetch ALL NSE indices in PARALLEL using the shared @/lib/nse ──
+  // These functions have built-in caching (60s), cookie management, retry on 403.
+  // NO self-referencing HTTP calls — runs in the SAME serverless function.
+  const [n500, mid250, sml250, micro250, totalMkt, gainers, losers] = await Promise.allSettled([
+    fetchNifty500().catch(() => null),
+    fetchNiftyMidcap250().catch(() => null),
+    fetchNiftySmallcap250().catch(() => null),
+    fetchNiftyMicrocap250().catch(() => null),
+    fetchNiftyTotalMarket().catch(() => null),
+    fetchGainers().catch(() => null),
+    fetchLosers().catch(() => null),
   ]);
-  console.log(`[PORTFOLIO] Phase 1 (parallel) done in ${Date.now() - phase1Start}ms`);
 
-  // Process market quotes API response
-  const marketResult = results[0];
-  if (marketResult.status === 'fulfilled' && marketResult.value?.stocks) {
-    const stocks = marketResult.value.stocks;
-    console.log(`[PORTFOLIO] Market API returned ${stocks.length} stocks`);
-    for (const s of stocks) addStock(s);
-  } else {
-    console.warn(`[PORTFOLIO] Market API failed or empty`);
-  }
+  // Process each index result
+  const processIndex = (result: PromiseSettledResult<any>) => {
+    if (result.status !== 'fulfilled' || !result.value?.data) return;
+    for (const item of result.value.data) addNseItem(item);
+  };
+  processIndex(n500);
+  processIndex(mid250);
+  processIndex(sml250);
+  processIndex(micro250);
+  processIndex(totalMkt);
 
-  // Process all NSE index data
-  for (let i = 1; i <= 5; i++) {
-    const r = results[i];
-    if (r.status === 'fulfilled' && Array.isArray(r.value)) {
-      for (const item of r.value) addNseItem(item);
-    }
-  }
-  console.log(`[PORTFOLIO] After Phase 1: ${seen.size}/${portfolio.length} found`);
+  // Gainers/losers have different structure
+  const processLive = (result: PromiseSettledResult<any>) => {
+    if (result.status !== 'fulfilled' || !result.value) return;
+    const v = result.value;
+    const items = [...(v.NIFTY?.data || []), ...(v.allSec?.data || [])];
+    for (const item of items) addNseItem(item);
+  };
+  processLive(gainers);
+  processLive(losers);
 
-  // ── PHASE 2: Individual NSE fetches for ALL remaining missing stocks — ALL PARALLEL ──
-  if (seen.size < portfolio.length && cookies) {
+  console.log(`[PORTFOLIO] Phase 1 done in ${Date.now() - phase1Start}ms: ${seen.size}/${portfolio.length} found`);
+
+  // ── PHASE 2: Individual NSE quote for ALL remaining missing stocks — ALL PARALLEL ──
+  if (seen.size < portfolio.length) {
     const missing = [...portfolioSet].filter(t => !seen.has(t));
-    console.log(`[PORTFOLIO] Phase 2: fetching ${missing.length} missing stocks individually (ALL parallel)...`);
+    console.log(`[PORTFOLIO] Phase 2: ${missing.length} missing, fetching individually via nseApiFetch...`);
     const phase2Start = Date.now();
 
     await Promise.allSettled(
@@ -215,34 +161,28 @@ async function fetchPortfolioStocks(portfolio: string[]): Promise<Stock[]> {
         try {
           const cleanSymbol = symbol.replace(/^NSE:/i, '').replace(/^BOM:/i, '').replace(/^\d+$/, '');
           if (!cleanSymbol) return;
-          const url = `${NSE_BASE}/api/quote-equity?symbol=${encodeURIComponent(cleanSymbol)}`;
-          const r = await fetch(url, {
-            headers: { ...NSE_HEADERS, Cookie: cookies },
-            signal: AbortSignal.timeout(8000),
-          });
-          if (r.ok) {
-            const data = await r.json();
-            const pd = data?.priceInfo || {};
-            const info = data?.info || {};
-            if (pd.lastPrice > 0) {
-              const tk = (info.symbol || cleanSymbol).toUpperCase();
-              if (!seen.has(tk) && (portfolioSet.has(tk) || portfolioSet.has(symbol))) {
-                seen.add(tk);
-                seen.add(symbol);
-                allStocks.push({
-                  ticker: tk,
-                  company: info.companyName || tk,
-                  price: pd.lastPrice,
-                  changePercent: Math.round((pd.pChange || 0) * 100) / 100,
-                  change: Math.round((pd.change || 0) * 100) / 100,
-                  cap: 'S',
-                  sector: info.industry || '',
-                  dayHigh: pd.intraDayHighLow?.max,
-                  dayLow: pd.intraDayHighLow?.min,
-                  weekHigh52: pd.weekHighLow?.max,
-                  weekLow52: pd.weekHighLow?.min,
-                });
-              }
+          // Use shared nseApiFetch — handles cookies, caching, retry automatically
+          const data = await nseApiFetch(`/api/quote-equity?symbol=${encodeURIComponent(cleanSymbol)}`, 30000);
+          if (data?.priceInfo?.lastPrice > 0) {
+            const pd = data.priceInfo;
+            const info = data.info || {};
+            const tk = (info.symbol || cleanSymbol).toUpperCase();
+            if (!seen.has(tk) && (portfolioSet.has(tk) || portfolioSet.has(symbol))) {
+              seen.add(tk);
+              seen.add(symbol);
+              allStocks.push({
+                ticker: tk,
+                company: info.companyName || tk,
+                price: pd.lastPrice,
+                changePercent: Math.round((pd.pChange || 0) * 100) / 100,
+                change: Math.round((pd.change || 0) * 100) / 100,
+                cap: 'S',
+                sector: info.industry || '',
+                dayHigh: pd.intraDayHighLow?.max,
+                dayLow: pd.intraDayHighLow?.min,
+                weekHigh52: pd.weekHighLow?.max,
+                weekLow52: pd.weekHighLow?.min,
+              });
             }
           }
         } catch (e) {
@@ -250,7 +190,7 @@ async function fetchPortfolioStocks(portfolio: string[]): Promise<Stock[]> {
         }
       })
     );
-    console.log(`[PORTFOLIO] Phase 2 done in ${Date.now() - phase2Start}ms, total: ${allStocks.length}`);
+    console.log(`[PORTFOLIO] Phase 2 done in ${Date.now() - phase2Start}ms`);
   }
 
   const stillMissing = [...portfolioSet].filter(t => !seen.has(t));
@@ -323,31 +263,26 @@ async function fetchPortfolioNews(portfolio: string[]): Promise<NewsItem[]> {
     console.error('[PORTFOLIO] Unfiltered intelligence fetch failed:', e);
   }
 
-  // Fallback 2: NSE corporate announcements (PARALLEL, not sequential)
+  // Fallback 2: NSE corporate announcements (PARALLEL, using nseApiFetch)
   try {
-    const cookies = await getNseCookies();
-    if (cookies) {
-      const results = await Promise.allSettled(
-        portfolio.slice(0, 10).map(async (symbol) => {
-          const url = `${NSE_BASE}/api/corporates-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`;
-          const r = await fetch(url, { headers: { ...NSE_HEADERS, Cookie: cookies }, signal: AbortSignal.timeout(5000) });
-          if (r.ok) {
-            const data = await r.json();
-            const items = (Array.isArray(data) ? data : data?.data || []).slice(0, 2);
-            return items.map((item: any) => ({
-              title: `${symbol}: ${item.desc || item.subject || 'Corporate Announcement'}`,
-              source: 'NSE Filing',
-              timestamp: item.an_dt || item.date,
-            }));
-          }
-          return [];
-        })
-      );
-      const announcements: NewsItem[] = results
-        .filter((r): r is PromiseFulfilledResult<NewsItem[]> => r.status === 'fulfilled')
-        .flatMap(r => r.value);
-      if (announcements.length > 0) return announcements.slice(0, 10);
-    }
+    const results = await Promise.allSettled(
+      portfolio.slice(0, 10).map(async (symbol) => {
+        const data = await nseApiFetch(`/api/corporates-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`, 30000);
+        if (data) {
+          const items = (Array.isArray(data) ? data : data?.data || []).slice(0, 2);
+          return items.map((item: any) => ({
+            title: `${symbol}: ${item.desc || item.subject || 'Corporate Announcement'}`,
+            source: 'NSE Filing',
+            timestamp: item.an_dt || item.date,
+          }));
+        }
+        return [];
+      })
+    );
+    const announcements: NewsItem[] = results
+      .filter((r): r is PromiseFulfilledResult<NewsItem[]> => r.status === 'fulfilled')
+      .flatMap(r => r.value);
+    if (announcements.length > 0) return announcements.slice(0, 10);
   } catch {}
 
   return [];
@@ -838,12 +773,13 @@ export async function POST(request: Request) {
         const updated = [...new Set([...current, ...toAdd])];
         setPortfolio(chatId, updated);
 
-        // Sync to shared API
-        fetch(`${API_BASE}/api/watchlist`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chatId: `pf_${chatId}`, watchlist: updated, secret: BOT_SECRET }),
-        }).catch(() => {});
+        // Save DIRECTLY to Redis — no fire-and-forget HTTP that can silently fail
+        try {
+          await kvSet(`watchlist:pf_${chatId}`, updated);
+          console.log(`[PORTFOLIO] Saved ${updated.length} stocks to Redis for pf_${chatId}`);
+        } catch (e) {
+          console.error('[PORTFOLIO] Redis save failed:', e);
+        }
 
         const added = updated.length - before;
         await sendTelegramTo(chatId,
@@ -862,11 +798,10 @@ export async function POST(request: Request) {
         } else {
           setPortfolio(chatId, updated);
 
-          fetch(`${API_BASE}/api/watchlist`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chatId: `pf_${chatId}`, watchlist: updated, secret: BOT_SECRET }),
-          }).catch(() => {});
+          // Save directly to Redis
+          try {
+            await kvSet(`watchlist:pf_${chatId}`, updated);
+          } catch {}
 
           await sendTelegramTo(chatId,
             `[OK] <b>Removed</b>\n\n[-] Removed: <code>${toRemove}</code>\nTotal holdings: <b>${updated.length}</b>`
