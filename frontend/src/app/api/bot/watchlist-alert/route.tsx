@@ -35,13 +35,6 @@ interface Stock {
   weekLow52?: number;
 }
 
-interface StockCatalyst {
-  label: string;        // "Nuclear Order" or "No clear trigger"
-  sourceType: string;   // "Filing" | "News" | "Intel" | "Deal" | ""
-  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
-  timeAgo: string;      // "2h" | "1d" | ""
-}
-
 interface NewsItem {
   title: string;
   source?: string;
@@ -303,27 +296,23 @@ function getISTTimestamp(): string {
   return `${day} ${month} ${year}, ${h12.toString().padStart(2, '0')}:${minutes} ${ampm}`;
 }
 
-// Generates MULTIPLE images (max 14 rows per panel per image)
-async function generateWatchlistImages(stocks: Stock[]): Promise<ArrayBuffer[]> {
+// Generates a SINGLE image with all stocks (dynamic sizing based on count)
+async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
   const displayStocks = stocks.slice(0, 100);
   const timestamp = getISTTimestamp();
   const W = 1200;
-  const MAX_ROWS = 14;
 
   // Sort
   const sorted = [...displayStocks].sort((a, b) => b.changePercent - a.changePercent);
-  const allWinners = sorted.filter(s => s.changePercent >= 0);
-  const allLosers = sorted.filter(s => s.changePercent < 0).reverse(); // worst first
-  const winnersN = allWinners.length;
-  const losersN = allLosers.length;
+  const winners = sorted.filter(s => s.changePercent >= 0);
+  const losers = sorted.filter(s => s.changePercent < 0).reverse();
+  const winnersN = winners.length;
+  const losersN = losers.length;
   const avgChange = displayStocks.length > 0
     ? Math.round(displayStocks.reduce((a, b) => a + b.changePercent, 0) / displayStocks.length * 100) / 100
     : 0;
 
-  // Chunk into images
-  const maxSide = Math.max(allWinners.length, allLosers.length);
-  const numImages = Math.ceil(maxSide / MAX_ROWS);
-  const images: ArrayBuffer[] = [];
+  const maxRows = Math.max(winners.length, losers.length);
 
   // Colors
   const getPctColor = (pct: number): string => {
@@ -335,32 +324,27 @@ async function generateWatchlistImages(stocks: Stock[]): Promise<ArrayBuffer[]> 
     return '#FF1744';
   };
 
-  for (let imgIdx = 0; imgIdx < numImages; imgIdx++) {
-    const wStart = imgIdx * MAX_ROWS;
-    const lStart = imgIdx * MAX_ROWS;
-    const winners = allWinners.slice(wStart, wStart + MAX_ROWS);
-    const losers = allLosers.slice(lStart, lStart + MAX_ROWS);
-    const pageRows = Math.max(winners.length, losers.length);
-    if (pageRows === 0) continue;
-
-    // Dimensions
+  {
+    // Dimensions — single image, all stocks
     const ACCENT_H = 4;
-    const HEADER_H = 74;
-    const METRICS_H = 56;
-    const COL_HEADER_H = 36;
-    const ROW_H = 54;
-    const FOOTER_H = 34;
+    const HEADER_H = 64;
+    const METRICS_H = 48;
+    const COL_HEADER_H = 32;
+    const ROW_H = maxRows > 30 ? 34 : maxRows > 20 ? 38 : 44;
+    const FOOTER_H = 28;
     const COL_GAP = 4;
     const HALF_W = (W - COL_GAP) / 2;
+    const fontSize = maxRows > 30 ? { sym: 14, pct: 14, price: 12, chg: 11, w52: 11, w52pct: 10, num: 11 }
+      : maxRows > 20 ? { sym: 15, pct: 15, price: 13, chg: 12, w52: 12, w52pct: 10, num: 12 }
+      : { sym: 17, pct: 17, price: 14, chg: 13, w52: 13, w52pct: 11, num: 13 };
 
-    const totalHeight = ACCENT_H + HEADER_H + METRICS_H + COL_HEADER_H + (pageRows * ROW_H) + FOOTER_H;
+    const totalHeight = ACCENT_H + HEADER_H + METRICS_H + COL_HEADER_H + (maxRows * ROW_H) + FOOTER_H;
 
     // Row renderer
-    const renderRow = (s: Stock, idx: number, globalIdx: number, side: string) => {
+    const renderRow = (s: Stock, idx: number, side: string) => {
       const pctColor = getPctColor(s.changePercent);
       const rowBg = idx % 2 === 0 ? '#0C1322' : '#111B30';
       const sign = s.changePercent >= 0 ? '+' : '';
-      const isTopMover = globalIdx < 5;
 
       // Calculate % from 52W HIGH
       const pctFrom52 = s.weekHigh52 && s.weekHigh52 > 0
@@ -384,38 +368,38 @@ async function generateWatchlistImages(stocks: Stock[]): Promise<ArrayBuffer[]> 
           borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1E293B',
         }}>
           {/* # */}
-          <div style={{ display: 'flex', width: '24px', color: '#475569', fontSize: '13px', fontWeight: 700, justifyContent: 'flex-end', marginRight: '5px' }}>
-            {globalIdx + 1}
+          <div style={{ display: 'flex', width: '22px', color: '#475569', fontSize: `${fontSize.num}px`, fontWeight: 700, justifyContent: 'flex-end', marginRight: '3px' }}>
+            {idx + 1}
           </div>
           {/* 200 DMA proxy warning dot */}
           <div style={{
-            display: 'flex', width: '10px', height: '10px', borderRadius: '5px',
+            display: 'flex', width: '8px', height: '8px', borderRadius: '4px',
             backgroundColor: dotColor,
-            marginRight: '4px',
+            marginRight: '3px',
           }} />
           {/* SYMBOL */}
-          <div style={{ display: 'flex', width: '105px', fontWeight: 900, color: '#F1F5F9', fontSize: isTopMover ? '18px' : '17px' }}>
+          <div style={{ display: 'flex', width: '95px', fontWeight: 900, color: '#F1F5F9', fontSize: `${fontSize.sym}px` }}>
             {truncate(s.ticker, 10)}
           </div>
           {/* %CHG */}
-          <div style={{ display: 'flex', width: '72px', justifyContent: 'flex-end', color: pctColor, fontWeight: 900, fontSize: isTopMover ? '18px' : '17px' }}>
+          <div style={{ display: 'flex', width: '65px', justifyContent: 'flex-end', color: pctColor, fontWeight: 900, fontSize: `${fontSize.pct}px` }}>
             <span style={{ display: 'flex' }}>{sign}{s.changePercent.toFixed(1)}%</span>
           </div>
           {/* PRICE */}
-          <div style={{ display: 'flex', width: '80px', justifyContent: 'flex-end', color: '#CBD5E1', fontSize: '15px', fontWeight: 600, marginLeft: '4px' }}>
+          <div style={{ display: 'flex', width: '75px', justifyContent: 'flex-end', color: '#CBD5E1', fontSize: `${fontSize.price}px`, fontWeight: 600, marginLeft: '3px' }}>
             <span style={{ display: 'flex' }}>{s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}</span>
           </div>
           {/* CHG */}
-          <div style={{ display: 'flex', width: '60px', justifyContent: 'flex-end', color: pctColor, fontSize: '14px', fontWeight: 600, marginLeft: '2px' }}>
+          <div style={{ display: 'flex', width: '55px', justifyContent: 'flex-end', color: pctColor, fontSize: `${fontSize.chg}px`, fontWeight: 600, marginLeft: '2px' }}>
             <span style={{ display: 'flex' }}>{sign}{s.change.toFixed(1)}</span>
           </div>
-          {/* 52W HIGH — replaces WHY */}
-          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, marginLeft: '8px', justifyContent: 'center', alignItems: 'flex-end' }}>
-            <span style={{ display: 'flex', fontSize: '14px', fontWeight: 700, color: '#CBD5E1' }}>
-              52W H: {s.weekHigh52 ? s.weekHigh52.toLocaleString('en-IN', { maximumFractionDigits: 0 }) : '--'}
+          {/* 52W HIGH */}
+          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, marginLeft: '6px', justifyContent: 'center', alignItems: 'flex-end' }}>
+            <span style={{ display: 'flex', fontSize: `${fontSize.w52}px`, fontWeight: 700, color: '#CBD5E1' }}>
+              {s.weekHigh52 ? s.weekHigh52.toLocaleString('en-IN', { maximumFractionDigits: 0 }) : '--'}
             </span>
             {s.weekHigh52 && s.weekHigh52 > 0 && (
-              <span style={{ display: 'flex', fontSize: '12px', fontWeight: 700, color: from52Color, marginTop: '1px' }}>
+              <span style={{ display: 'flex', fontSize: `${fontSize.w52pct}px`, fontWeight: 700, color: from52Color, marginTop: '1px' }}>
                 {pctFrom52 >= 0 ? '+' : ''}{pctFrom52.toFixed(1)}%
               </span>
             )}
@@ -435,9 +419,6 @@ async function generateWatchlistImages(stocks: Stock[]): Promise<ArrayBuffer[]> 
       return out;
     };
 
-    const pageLabel = numImages > 1 ? ` (${imgIdx + 1}/${numImages})` : '';
-    const contLabel = imgIdx > 0 ? ' cont.' : '';
-
     const element = (
       <div style={{
         display: 'flex', flexDirection: 'column', width: `${W}px`, height: `${totalHeight}px`,
@@ -453,32 +434,32 @@ async function generateWatchlistImages(stocks: Stock[]): Promise<ArrayBuffer[]> 
           backgroundColor: '#0A1128', borderBottomWidth: '2px', borderBottomStyle: 'solid', borderBottomColor: '#1E3A5F',
         }}>
           <span style={{ display: 'flex', fontSize: '32px', fontWeight: 900, color: '#FFFFFF', letterSpacing: '1px' }}>
-            WATCHLIST PULSE{pageLabel}
+            WATCHLIST PULSE
           </span>
-          <span style={{ display: 'flex', fontSize: '14px', color: '#94A3B8', fontWeight: 700 }}>{timestamp}</span>
+          <span style={{ display: 'flex', fontSize: '16px', color: '#94A3B8', fontWeight: 700 }}>{timestamp}</span>
         </div>
 
         {/* KPI Strip */}
         <div style={{
           display: 'flex', alignItems: 'center', paddingLeft: '20px', paddingRight: '20px',
-          height: `${METRICS_H}px`, backgroundColor: '#0C1322', fontSize: '16px', fontWeight: 700,
+          height: `${METRICS_H}px`, backgroundColor: '#0C1322', fontSize: '15px', fontWeight: 700,
           borderBottomWidth: '1px', borderBottomStyle: 'solid', borderBottomColor: '#1E293B',
         }}>
-          <span style={{ display: 'flex', marginRight: '32px' }}>
-            <span style={{ display: 'flex', color: '#FFFFFF', fontWeight: 900, fontSize: '20px' }}>{displayStocks.length}</span>
-            <span style={{ display: 'flex', marginLeft: '6px', color: '#94A3B8', fontSize: '15px' }}>Stocks</span>
+          <span style={{ display: 'flex', marginRight: '28px' }}>
+            <span style={{ display: 'flex', color: '#FFFFFF', fontWeight: 900, fontSize: '24px' }}>{displayStocks.length}</span>
+            <span style={{ display: 'flex', marginLeft: '5px', color: '#94A3B8', fontSize: '17px' }}>Stocks</span>
           </span>
-          <span style={{ display: 'flex', marginRight: '32px' }}>
-            <span style={{ display: 'flex', color: '#00E676', fontWeight: 900, fontSize: '20px' }}>{winnersN}</span>
-            <span style={{ display: 'flex', marginLeft: '6px', color: '#94A3B8', fontSize: '15px' }}>Up</span>
+          <span style={{ display: 'flex', marginRight: '28px' }}>
+            <span style={{ display: 'flex', color: '#00E676', fontWeight: 900, fontSize: '24px' }}>{winnersN}</span>
+            <span style={{ display: 'flex', marginLeft: '5px', color: '#94A3B8', fontSize: '17px' }}>Up</span>
           </span>
-          <span style={{ display: 'flex', marginRight: '32px' }}>
-            <span style={{ display: 'flex', color: '#FF1744', fontWeight: 900, fontSize: '20px' }}>{losersN}</span>
-            <span style={{ display: 'flex', marginLeft: '6px', color: '#94A3B8', fontSize: '15px' }}>Down</span>
+          <span style={{ display: 'flex', marginRight: '28px' }}>
+            <span style={{ display: 'flex', color: '#FF1744', fontWeight: 900, fontSize: '24px' }}>{losersN}</span>
+            <span style={{ display: 'flex', marginLeft: '5px', color: '#94A3B8', fontSize: '17px' }}>Down</span>
           </span>
           <span style={{ display: 'flex' }}>
-            <span style={{ display: 'flex', marginRight: '6px', color: '#94A3B8', fontSize: '15px' }}>Avg</span>
-            <span style={{ display: 'flex', color: avgChange >= 0 ? '#00E676' : '#FF1744', fontWeight: 900, fontSize: '20px' }}>
+            <span style={{ display: 'flex', marginRight: '5px', color: '#94A3B8', fontSize: '17px' }}>Avg</span>
+            <span style={{ display: 'flex', color: avgChange >= 0 ? '#00E676' : '#FF1744', fontWeight: 900, fontSize: '24px' }}>
               {avgChange >= 0 ? '+' : ''}{avgChange.toFixed(2)}%
             </span>
           </span>
@@ -487,7 +468,6 @@ async function generateWatchlistImages(stocks: Stock[]): Promise<ArrayBuffer[]> 
             <span style={{ display: 'flex', color: '#94A3B8', fontSize: '12px' }}>Below 200 DMA</span>
           </span>
         </div>
-
 
         {/* Two-column body */}
         <div style={{ display: 'flex', flex: 1 }}>
@@ -500,16 +480,16 @@ async function generateWatchlistImages(stocks: Stock[]): Promise<ArrayBuffer[]> 
             }}>
               <div style={{ display: 'flex', width: '24px', marginRight: '5px' }} />
               <div style={{ display: 'flex', width: '10px', marginRight: '4px' }} />
-              <div style={{ display: 'flex', width: '105px', fontSize: '12px', fontWeight: 900, color: '#00E676', letterSpacing: '1px' }}>
-                WINNERS{contLabel} ({winnersN})
+              <div style={{ display: 'flex', width: '105px', fontSize: '14px', fontWeight: 900, color: '#00E676', letterSpacing: '1px' }}>
+                WINNERS ({winnersN})
               </div>
-              <div style={{ display: 'flex', width: '72px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#475569' }}>%CHG</div>
-              <div style={{ display: 'flex', width: '80px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#475569', marginLeft: '4px' }}>PRICE</div>
-              <div style={{ display: 'flex', width: '60px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#475569', marginLeft: '2px' }}>CHG</div>
+              <div style={{ display: 'flex', width: '72px', justifyContent: 'flex-end', fontSize: '12px', fontWeight: 800, color: '#475569' }}>%CHG</div>
+              <div style={{ display: 'flex', width: '80px', justifyContent: 'flex-end', fontSize: '12px', fontWeight: 800, color: '#475569', marginLeft: '4px' }}>PRICE</div>
+              <div style={{ display: 'flex', width: '60px', justifyContent: 'flex-end', fontSize: '12px', fontWeight: 800, color: '#475569', marginLeft: '2px' }}>CHG</div>
               <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', fontSize: '12px', fontWeight: 800, color: '#475569', marginLeft: '8px' }}>52W H</div>
             </div>
-            {winners.map((s, i) => renderRow(s, i, wStart + i, 'w'))}
-            {winners.length < pageRows && renderFillers(pageRows - winners.length, 'w')}
+            {winners.map((s, i) => renderRow(s, i, 'w'))}
+            {winners.length < maxRows && renderFillers(maxRows - winners.length, 'w')}
           </div>
 
           {/* Divider */}
@@ -524,16 +504,16 @@ async function generateWatchlistImages(stocks: Stock[]): Promise<ArrayBuffer[]> 
             }}>
               <div style={{ display: 'flex', width: '24px', marginRight: '5px' }} />
               <div style={{ display: 'flex', width: '10px', marginRight: '4px' }} />
-              <div style={{ display: 'flex', width: '105px', fontSize: '12px', fontWeight: 900, color: '#FF1744', letterSpacing: '1px' }}>
-                LOSERS{contLabel} ({losersN})
+              <div style={{ display: 'flex', width: '105px', fontSize: '14px', fontWeight: 900, color: '#FF1744', letterSpacing: '1px' }}>
+                LOSERS ({losersN})
               </div>
-              <div style={{ display: 'flex', width: '72px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#475569' }}>%CHG</div>
-              <div style={{ display: 'flex', width: '80px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#475569', marginLeft: '4px' }}>PRICE</div>
-              <div style={{ display: 'flex', width: '60px', justifyContent: 'flex-end', fontSize: '10px', fontWeight: 800, color: '#475569', marginLeft: '2px' }}>CHG</div>
+              <div style={{ display: 'flex', width: '72px', justifyContent: 'flex-end', fontSize: '12px', fontWeight: 800, color: '#475569' }}>%CHG</div>
+              <div style={{ display: 'flex', width: '80px', justifyContent: 'flex-end', fontSize: '12px', fontWeight: 800, color: '#475569', marginLeft: '4px' }}>PRICE</div>
+              <div style={{ display: 'flex', width: '60px', justifyContent: 'flex-end', fontSize: '12px', fontWeight: 800, color: '#475569', marginLeft: '2px' }}>CHG</div>
               <div style={{ display: 'flex', flex: 1, justifyContent: 'flex-end', fontSize: '12px', fontWeight: 800, color: '#475569', marginLeft: '8px' }}>52W H</div>
             </div>
-            {losers.map((s, i) => renderRow(s, i, lStart + i, 'l'))}
-            {losers.length < pageRows && renderFillers(pageRows - losers.length, 'l')}
+            {losers.map((s, i) => renderRow(s, i, 'l'))}
+            {losers.length < maxRows && renderFillers(maxRows - losers.length, 'l')}
           </div>
         </div>
 
@@ -542,7 +522,7 @@ async function generateWatchlistImages(stocks: Stock[]): Promise<ArrayBuffer[]> 
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           paddingLeft: '20px', paddingRight: '20px', height: `${FOOTER_H}px`,
           backgroundColor: '#080E1A', borderTopWidth: '1px', borderTopStyle: 'solid', borderTopColor: '#1E293B',
-          fontSize: '11px', color: '#475569', fontWeight: 600,
+          fontSize: '13px', color: '#475569', fontWeight: 600,
         }}>
           <span style={{ display: 'flex' }}>market-cockpit.vercel.app</span>
           <span style={{ display: 'flex' }}>{timestamp}</span>
@@ -551,10 +531,8 @@ async function generateWatchlistImages(stocks: Stock[]): Promise<ArrayBuffer[]> 
     );
 
     const buf = await (new ImageResponse(element, { width: W, height: totalHeight })).arrayBuffer();
-    images.push(buf);
+    return buf;
   }
-
-  return images;
 }
 
 // ── Telegram Send Functions ─────────────────────────────────────────────
@@ -818,10 +796,10 @@ export async function POST(request: Request) {
         await sendTelegramTo(chatId, 'No watchlist data available. Market may be closed or symbols not found.');
       } else {
         try {
-          const imgs = await generateWatchlistImages(stocks);
+          const img = await generateWatchlistImage(stocks);
           const gainers = stocks.filter(s => s.changePercent > 0).length;
           const losers = stocks.filter(s => s.changePercent < 0).length;
-          await sendTelegramMediaGroup(imgs, `<b>${stocks.length} stocks</b> • Gainers: ${gainers} | Losers: ${losers} — <a href="https://market-cockpit.vercel.app">Dashboard</a>`, chatId);
+          await sendTelegramPhoto(img, `<b>${stocks.length} stocks</b> • Gainers: ${gainers} | Losers: ${losers} — <a href="https://market-cockpit.vercel.app">Dashboard</a>`, chatId);
         } catch (e) {
           console.error('[WATCHLIST] Image gen failed:', e);
           // Fallback to text
@@ -953,11 +931,11 @@ export async function GET(request: Request) {
   diagnostics.steps.push('sending_watchlist_image');
   let imageError: string | undefined;
   try {
-    const imgs = await generateWatchlistImages(stocks);
+    const img = await generateWatchlistImage(stocks);
     const gainers = stocks.filter(s => s.changePercent > 0).length;
     const losers = stocks.filter(s => s.changePercent < 0).length;
     const caption = `<b>Watchlist Pulse</b>\n${stocks.length} stocks • Gainers: ${gainers} | Losers: ${losers}\n<a href="https://market-cockpit.vercel.app">Dashboard</a>`;
-    const photoResult = await sendTelegramMediaGroup(imgs, caption);
+    const photoResult = await sendTelegramPhoto(img, caption);
     if (!photoResult.ok) {
       imageError = photoResult.error;
       diagnostics.steps.push('image_send_failed');
