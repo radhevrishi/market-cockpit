@@ -185,28 +185,59 @@ async function fetchPortfolioStocks(portfolio: string[]): Promise<Stock[]> {
 // ── Fetch News for Portfolio ────────────────────────────────────────────
 async function fetchPortfolioNews(portfolio: string[]): Promise<NewsItem[]> {
   try {
-    const url = `${API_BASE}/api/v1/news`;
-    console.log(`[PORTFOLIO] Fetching news from ${url}`);
-    const r = await fetch(url, { headers: { 'User-Agent': 'MarketCockpit-Bot/1.0' } });
+    // Use intelligence API as news source (the /api/v1/news endpoint doesn't exist)
+    const pf = portfolio.join(',');
+    const url = `${API_BASE}/api/market/intelligence?days=7&portfolio=${pf}`;
+    console.log(`[PORTFOLIO] Fetching news/intelligence from ${url}`);
+    const r = await fetch(url, { headers: { 'User-Agent': 'MarketCockpit-Bot/1.0' }, signal: AbortSignal.timeout(15000) });
     if (r.ok) {
       const data = await r.json();
-      const allNews = data.news || data.results || [];
-      const portfolioSet = new Set(portfolio.map(t => t.toUpperCase()));
+      const allSignals = data.signals || [];
 
-      const filtered = allNews.filter((n: any) => {
-        const text = (n.title || n.headline || '').toUpperCase();
-        return [...portfolioSet].some(t => text.includes(t));
-      });
+      // Convert intelligence signals to news items
+      const newsItems: NewsItem[] = allSignals
+        .filter((s: any) => s.isPortfolio || portfolio.some(t =>
+          (s.symbol || s.ticker || s.primaryTicker || '').toUpperCase() === t.toUpperCase()
+        ))
+        .slice(0, 15)
+        .map((s: any) => ({
+          title: s.headline || s.narrative || s.summary || `${s.symbol || s.ticker}: ${s.eventType || 'Update'}`,
+          source: s.eventType || s.signalClass || 'Intelligence',
+          timestamp: s.date || s.timestamp,
+        }));
 
-      return filtered.slice(0, 10).map((n: any) => ({
-        title: n.title || n.headline || 'Untitled',
-        source: n.source || 'Market Cockpit',
-        timestamp: n.date || n.timestamp,
-      }));
+      return newsItems;
     }
   } catch (e) {
-    console.error('[PORTFOLIO] News fetch failed:', e);
+    console.error('[PORTFOLIO] News/intelligence fetch failed:', e);
   }
+
+  // Fallback: Try NSE corporate announcements
+  try {
+    const cookies = await getNseCookies();
+    if (cookies) {
+      const announcements: NewsItem[] = [];
+      for (const symbol of portfolio.slice(0, 5)) {
+        try {
+          const url = `${NSE_BASE}/api/corporates-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`;
+          const r = await fetch(url, { headers: { ...NSE_HEADERS, Cookie: cookies }, signal: AbortSignal.timeout(5000) });
+          if (r.ok) {
+            const data = await r.json();
+            const items = (Array.isArray(data) ? data : data?.data || []).slice(0, 3);
+            for (const item of items) {
+              announcements.push({
+                title: `${symbol}: ${item.desc || item.subject || 'Corporate Announcement'}`,
+                source: 'NSE Filing',
+                timestamp: item.an_dt || item.date,
+              });
+            }
+          }
+        } catch {}
+      }
+      if (announcements.length > 0) return announcements.slice(0, 10);
+    }
+  } catch {}
+
   return [];
 }
 
@@ -297,12 +328,12 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
         flexDirection: 'column',
         width: `${W}px`,
         height: `${totalHeight}px`,
-        backgroundColor: '#080C14',
+        backgroundColor: '#FFFFFF',
         fontFamily: 'Inter, Menlo, system-ui, sans-serif',
       }}
     >
       {/* ── Top accent gradient bar ── */}
-      <div style={{ display: 'flex', width: '100%', height: `${ACCENT_H}px`, background: 'linear-gradient(90deg, #7C3AED 0%, #A855F7 40%, #C084FC 100%)' }} />
+      <div style={{ display: 'flex', width: '100%', height: `${ACCENT_H}px`, background: 'linear-gradient(90deg, #7C3AED 0%, #8B5CF6 40%, #A78BFA 100%)' }} />
 
       {/* ── Header Row ── */}
       <div
@@ -320,7 +351,7 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
             P
           </div>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <span style={{ fontSize: '22px', fontWeight: 800, color: '#F1F5F9', letterSpacing: '1px', textTransform: 'uppercase' as const }}>
+            <span style={{ fontSize: '22px', fontWeight: 800, color: '#0F172A', letterSpacing: '1px', textTransform: 'uppercase' as const }}>
               Portfolio Pulse
             </span>
             <span style={{ fontSize: '11px', color: '#64748B', letterSpacing: '0.5px', marginTop: '2px' }}>
@@ -336,10 +367,10 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
             alignItems: 'center',
             padding: '6px 14px',
             borderRadius: '6px',
-            backgroundColor: avgChange > 0.3 ? '#052E16' : avgChange < -0.3 ? '#450A0A' : '#422006',
-            border: `1px solid ${avgChange > 0.3 ? '#166534' : avgChange < -0.3 ? '#991B1B' : '#854D0E'}`,
+            backgroundColor: avgChange > 0.3 ? '#F0FDF4' : avgChange < -0.3 ? '#FEF2F2' : '#FFF7ED',
+            border: `1px solid ${avgChange > 0.3 ? '#BBF7D0' : avgChange < -0.3 ? '#FECACA' : '#FED7AA'}`,
           }}>
-            <span style={{ fontSize: '13px', fontWeight: 700, color: moodColor, letterSpacing: '0.5px' }}>
+            <span style={{ fontSize: '13px', fontWeight: 700, color: avgChange > 0.3 ? '#16A34A' : avgChange < -0.3 ? '#DC2626' : '#9A3412', letterSpacing: '0.5px' }}>
               {moodLabel}
             </span>
           </div>
@@ -348,8 +379,8 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
             alignItems: 'center',
             padding: '6px 14px',
             borderRadius: '6px',
-            backgroundColor: '#0F172A',
-            border: '1px solid #1E293B',
+            backgroundColor: '#F8FAFC',
+            border: '1px solid #E2E8F0',
           }}>
             <span style={{ fontSize: '15px', fontWeight: 700, color: moodColor }}>
               {avgChange >= 0 ? '+' : ''}{avgChange.toFixed(2)}%
@@ -368,34 +399,34 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
         }}
       >
         {/* Gainers */}
-        <div style={{ display: 'flex', flex: 1, flexDirection: 'column', justifyContent: 'center', padding: '10px 16px', backgroundColor: '#0A1A12', borderRadius: '8px', border: '1px solid #14532D' }}>
-          <span style={{ fontSize: '11px', color: '#4ADE80', fontWeight: 600, letterSpacing: '0.5px' }}>GAINERS</span>
-          <span style={{ fontSize: '22px', fontWeight: 800, color: '#22C55E', marginTop: '2px' }}>{gainers}</span>
+        <div style={{ display: 'flex', flex: 1, flexDirection: 'column', justifyContent: 'center', padding: '10px 16px', backgroundColor: '#F0FDF4', borderRadius: '8px', border: '1px solid #BBF7D0' }}>
+          <span style={{ fontSize: '11px', color: '#16A34A', fontWeight: 600, letterSpacing: '0.5px' }}>GAINERS</span>
+          <span style={{ fontSize: '22px', fontWeight: 800, color: '#16A34A', marginTop: '2px' }}>{gainers}</span>
         </div>
         {/* Losers */}
-        <div style={{ display: 'flex', flex: 1, flexDirection: 'column', justifyContent: 'center', padding: '10px 16px', backgroundColor: '#1A0A0A', borderRadius: '8px', border: '1px solid #7F1D1D' }}>
-          <span style={{ fontSize: '11px', color: '#F87171', fontWeight: 600, letterSpacing: '0.5px' }}>LOSERS</span>
-          <span style={{ fontSize: '22px', fontWeight: 800, color: '#EF4444', marginTop: '2px' }}>{losers}</span>
+        <div style={{ display: 'flex', flex: 1, flexDirection: 'column', justifyContent: 'center', padding: '10px 16px', backgroundColor: '#FEF2F2', borderRadius: '8px', border: '1px solid #FECACA' }}>
+          <span style={{ fontSize: '11px', color: '#DC2626', fontWeight: 600, letterSpacing: '0.5px' }}>LOSERS</span>
+          <span style={{ fontSize: '22px', fontWeight: 800, color: '#DC2626', marginTop: '2px' }}>{losers}</span>
         </div>
         {/* Unchanged */}
-        <div style={{ display: 'flex', flex: 1, flexDirection: 'column', justifyContent: 'center', padding: '10px 16px', backgroundColor: '#0F172A', borderRadius: '8px', border: '1px solid #1E293B' }}>
-          <span style={{ fontSize: '11px', color: '#94A3B8', fontWeight: 600, letterSpacing: '0.5px' }}>FLAT</span>
-          <span style={{ fontSize: '22px', fontWeight: 800, color: '#CBD5E1', marginTop: '2px' }}>{unchanged}</span>
+        <div style={{ display: 'flex', flex: 1, flexDirection: 'column', justifyContent: 'center', padding: '10px 16px', backgroundColor: '#F8FAFC', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
+          <span style={{ fontSize: '11px', color: '#475569', fontWeight: 600, letterSpacing: '0.5px' }}>FLAT</span>
+          <span style={{ fontSize: '22px', fontWeight: 800, color: '#475569', marginTop: '2px' }}>{unchanged}</span>
         </div>
         {/* Best Performer */}
-        <div style={{ display: 'flex', flex: 2, flexDirection: 'column', justifyContent: 'center', padding: '10px 16px', backgroundColor: '#0A1A12', borderRadius: '8px', border: '1px solid #14532D' }}>
-          <span style={{ fontSize: '11px', color: '#4ADE80', fontWeight: 600, letterSpacing: '0.5px' }}>TOP PERFORMER</span>
+        <div style={{ display: 'flex', flex: 2, flexDirection: 'column', justifyContent: 'center', padding: '10px 16px', backgroundColor: '#F0FDF4', borderRadius: '8px', border: '1px solid #BBF7D0' }}>
+          <span style={{ fontSize: '11px', color: '#16A34A', fontWeight: 600, letterSpacing: '0.5px' }}>TOP PERFORMER</span>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginTop: '2px' }}>
-            <span style={{ fontSize: '16px', fontWeight: 800, color: '#F1F5F9' }}>{best?.ticker || '—'}</span>
-            <span style={{ fontSize: '14px', fontWeight: 700, color: '#22C55E' }}>+{best?.changePercent?.toFixed(1) || '0'}%</span>
+            <span style={{ fontSize: '16px', fontWeight: 800, color: '#0F172A' }}>{best?.ticker || '—'}</span>
+            <span style={{ fontSize: '14px', fontWeight: 700, color: '#16A34A' }}>+{best?.changePercent?.toFixed(1) || '0'}%</span>
           </div>
         </div>
         {/* Worst Performer */}
-        <div style={{ display: 'flex', flex: 2, flexDirection: 'column', justifyContent: 'center', padding: '10px 16px', backgroundColor: '#1A0A0A', borderRadius: '8px', border: '1px solid #7F1D1D' }}>
-          <span style={{ fontSize: '11px', color: '#F87171', fontWeight: 600, letterSpacing: '0.5px' }}>WORST PERFORMER</span>
+        <div style={{ display: 'flex', flex: 2, flexDirection: 'column', justifyContent: 'center', padding: '10px 16px', backgroundColor: '#FEF2F2', borderRadius: '8px', border: '1px solid #FECACA' }}>
+          <span style={{ fontSize: '11px', color: '#DC2626', fontWeight: 600, letterSpacing: '0.5px' }}>WORST PERFORMER</span>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginTop: '2px' }}>
-            <span style={{ fontSize: '16px', fontWeight: 800, color: '#F1F5F9' }}>{worst?.ticker || '—'}</span>
-            <span style={{ fontSize: '14px', fontWeight: 700, color: '#EF4444' }}>{worst?.changePercent?.toFixed(1) || '0'}%</span>
+            <span style={{ fontSize: '16px', fontWeight: 800, color: '#0F172A' }}>{worst?.ticker || '—'}</span>
+            <span style={{ fontSize: '14px', fontWeight: 700, color: '#DC2626' }}>{worst?.changePercent?.toFixed(1) || '0'}%</span>
           </div>
         </div>
       </div>
@@ -406,12 +437,13 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
           display: 'flex',
           padding: '8px 28px',
           marginTop: '8px',
-          borderBottom: '1px solid #1E293B',
+          borderBottom: '1px solid #E2E8F0',
           fontSize: '10px',
           fontWeight: 700,
-          color: '#64748B',
+          color: '#475569',
           letterSpacing: '1px',
           textTransform: 'uppercase' as const,
+          backgroundColor: '#F1F5F9',
         }}
       >
         <span style={{ width: '30px' }}>#</span>
@@ -427,15 +459,15 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
       {/* ── Data Rows ── */}
       {sorted.map((s, i) => {
         const isPositive = s.changePercent >= 0;
-        const pctColor = isPositive ? '#22C55E' : '#EF4444';
-        const chgColor = isPositive ? '#15803D' : '#991B1B';
+        const pctColor = isPositive ? '#16A34A' : '#DC2626';
+        const chgColor = isPositive ? '#16A34A' : '#DC2626';
         const rangeText = s.dayHigh && s.dayLow
           ? `${s.dayLow.toFixed(0)} – ${s.dayHigh.toFixed(0)}`
           : '—';
         const pos52 = w52Pct(s);
         const barW = 120;
         const fillW = pos52 !== null ? Math.round((pos52 / 100) * barW) : 0;
-        const barColor = pos52 !== null ? (pos52 > 70 ? '#22C55E' : pos52 > 40 ? '#F59E0B' : '#EF4444') : '#334155';
+        const barColor = pos52 !== null ? (pos52 > 70 ? '#16A34A' : pos52 > 40 ? '#F59E0B' : '#DC2626') : '#CBD5E1';
 
         return (
           <div
@@ -443,21 +475,21 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
             style={{
               display: 'flex',
               padding: '8px 28px',
-              backgroundColor: i % 2 === 0 ? '#0B1120' : '#080C14',
+              backgroundColor: i % 2 === 0 ? '#FFFFFF' : '#F8FAFC',
               fontSize: '13px',
               alignItems: 'center',
-              borderBottom: '1px solid #111827',
+              borderBottom: '1px solid #F1F5F9',
               height: `${ROW_H}px`,
             }}
           >
-            <span style={{ width: '30px', color: '#475569', fontSize: '11px', fontWeight: 600 }}>{i + 1}</span>
-            <span style={{ width: '120px', fontWeight: 700, color: '#F1F5F9', fontSize: '13px', letterSpacing: '0.3px' }}>
+            <span style={{ width: '30px', color: '#94A3B8', fontSize: '11px', fontWeight: 600 }}>{i + 1}</span>
+            <span style={{ width: '120px', fontWeight: 700, color: '#0F172A', fontSize: '13px', letterSpacing: '0.3px' }}>
               {truncate(s.ticker, 12)}
             </span>
             <span style={{ width: '170px', color: '#64748B', fontSize: '11px' }}>
               {truncate(s.sector, 22)}
             </span>
-            <span style={{ width: '100px', textAlign: 'right', color: '#E2E8F0', fontSize: '13px', fontWeight: 600, fontFamily: 'Menlo, monospace' }}>
+            <span style={{ width: '100px', textAlign: 'right', color: '#1E293B', fontSize: '13px', fontWeight: 600, fontFamily: 'Menlo, monospace' }}>
               {s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}
             </span>
             <span style={{ width: '90px', textAlign: 'right', color: pctColor, fontSize: '12px', fontFamily: 'Menlo, monospace' }}>
@@ -469,27 +501,27 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
                 alignItems: 'center',
                 padding: '2px 8px',
                 borderRadius: '4px',
-                backgroundColor: isPositive ? '#052E16' : '#450A0A',
+                backgroundColor: isPositive ? '#DCFCE7' : '#FEE2E2',
               }}>
                 <span style={{ fontSize: '12px', fontWeight: 700, color: pctColor, fontFamily: 'Menlo, monospace' }}>
                   {isPositive ? '+' : ''}{s.changePercent.toFixed(1)}%
                 </span>
               </div>
             </div>
-            <span style={{ width: '120px', textAlign: 'right', color: '#94A3B8', fontSize: '11px', fontFamily: 'Menlo, monospace' }}>
+            <span style={{ width: '120px', textAlign: 'right', color: '#64748B', fontSize: '11px', fontFamily: 'Menlo, monospace' }}>
               {rangeText}
             </span>
             {/* 52W position bar */}
             <div style={{ display: 'flex', width: '180px', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
               {pos52 !== null ? (
                 <>
-                  <div style={{ display: 'flex', width: `${barW}px`, height: '6px', backgroundColor: '#1E293B', borderRadius: '3px', overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', width: `${barW}px`, height: '6px', backgroundColor: '#E2E8F0', borderRadius: '3px', overflow: 'hidden' }}>
                     <div style={{ display: 'flex', width: `${fillW}px`, height: '6px', backgroundColor: barColor, borderRadius: '3px' }} />
                   </div>
-                  <span style={{ fontSize: '10px', color: '#94A3B8', fontWeight: 600, fontFamily: 'Menlo, monospace', minWidth: '32px' }}>{pos52}%</span>
+                  <span style={{ fontSize: '10px', color: '#64748B', fontWeight: 600, fontFamily: 'Menlo, monospace', minWidth: '32px' }}>{pos52}%</span>
                 </>
               ) : (
-                <span style={{ fontSize: '10px', color: '#334155' }}>—</span>
+                <span style={{ fontSize: '10px', color: '#CBD5E1' }}>—</span>
               )}
             </div>
           </div>
@@ -503,10 +535,10 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
           justifyContent: 'space-between',
           alignItems: 'center',
           padding: '8px 28px',
-          backgroundColor: '#0B1120',
+          backgroundColor: '#F1F5F9',
           fontSize: '10px',
-          color: '#475569',
-          borderTop: '1px solid #1E293B',
+          color: '#94A3B8',
+          borderTop: '1px solid #E2E8F0',
           marginTop: 'auto',
           letterSpacing: '0.5px',
         }}
@@ -617,23 +649,23 @@ function buildPortfolioMessage(stocks: Stock[], portfolio: string[]): string {
     ? Math.round(stocks.reduce((sum, s) => sum + s.changePercent, 0) / stocks.length * 100) / 100
     : 0;
 
-  const moodEmoji = avg > 0.5 ? '🟢' : avg < -0.5 ? '🔴' : '🟡';
+  const moodMarker = avg > 0.5 ? '[+]' : avg < -0.5 ? '[-]' : '[~]';
   const moodText = avg > 0.5 ? 'BULLISH' : avg < -0.5 ? 'BEARISH' : 'NEUTRAL';
 
   const lines: string[] = [];
   const DIV = '▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬';
 
-  lines.push(`${moodEmoji} <b>PORTFOLIO PULSE</b>  ·  <code>${moodText}</code>`);
+  lines.push(`${moodMarker} <b>PORTFOLIO PULSE</b>  ·  <code>${moodText}</code>`);
   lines.push(`<i>${timeStr} IST  •  ${stocks.length}/${portfolio.length} holdings tracked</i>`);
   lines.push('');
 
   if (gainers.length > 0) {
     lines.push(DIV);
     lines.push('');
-    lines.push(`<b>📈 Top Gainers</b>`);
+    lines.push(`<b>> Top Gainers</b>`);
     lines.push('');
     for (const s of gainers.slice(0, 5)) {
-      lines.push(`  🟢 <b>${esc(s.ticker)}</b>  <code>+${s.changePercent.toFixed(1)}%</code>  ${fmtPrice(s.price)}`);
+      lines.push(`  [+] <b>${esc(s.ticker)}</b>  <code>+${s.changePercent.toFixed(1)}%</code>  ${fmtPrice(s.price)}`);
     }
     lines.push('');
   }
@@ -641,10 +673,10 @@ function buildPortfolioMessage(stocks: Stock[], portfolio: string[]): string {
   if (losers.length > 0) {
     lines.push(DIV);
     lines.push('');
-    lines.push(`<b>📉 Top Losers</b>`);
+    lines.push(`<b><< Top Losers</b>`);
     lines.push('');
     for (const s of losers.slice(0, 5)) {
-      lines.push(`  🔴 <b>${esc(s.ticker)}</b>  <code>${s.changePercent.toFixed(1)}%</code>  ${fmtPrice(s.price)}`);
+      lines.push(`  [-] <b>${esc(s.ticker)}</b>  <code>${s.changePercent.toFixed(1)}%</code>  ${fmtPrice(s.price)}`);
     }
     lines.push('');
   }
@@ -656,10 +688,10 @@ function buildPortfolioMessage(stocks: Stock[], portfolio: string[]): string {
   if (near52High.length > 0) {
     lines.push(DIV);
     lines.push('');
-    lines.push(`<b>🏔 Near 52-Week High</b>`);
+    lines.push(`<b>^ Near 52-Week High</b>`);
     for (const s of near52High.slice(0, 3)) {
       const pctFrom = s.weekHigh52 ? ((s.price / s.weekHigh52 - 1) * 100).toFixed(1) : '?';
-      lines.push(`  ⬆️ <b>${esc(s.ticker)}</b>  ${fmtPrice(s.price)}  (${pctFrom}% from high)`);
+      lines.push(`  ^ <b>${esc(s.ticker)}</b>  ${fmtPrice(s.price)}  (${pctFrom}% from high)`);
     }
     lines.push('');
   }
@@ -667,17 +699,17 @@ function buildPortfolioMessage(stocks: Stock[], portfolio: string[]): string {
   if (near52Low.length > 0) {
     lines.push(DIV);
     lines.push('');
-    lines.push(`<b>⚠️ Near 52-Week Low</b>`);
+    lines.push(`<b>[!] Near 52-Week Low</b>`);
     for (const s of near52Low.slice(0, 3)) {
       const pctFrom = s.weekLow52 ? ((s.price / s.weekLow52 - 1) * 100).toFixed(1) : '?';
-      lines.push(`  ⬇️ <b>${esc(s.ticker)}</b>  ${fmtPrice(s.price)}  (+${pctFrom}% from low)`);
+      lines.push(`  v <b>${esc(s.ticker)}</b>  ${fmtPrice(s.price)}  (+${pctFrom}% from low)`);
     }
     lines.push('');
   }
 
   lines.push(DIV);
   lines.push('');
-  lines.push(`<b>📊 Portfolio Summary</b>`);
+  lines.push(`<b>Portfolio Summary</b>`);
   lines.push(`Avg Change: <code>${fmtPct(avg, 2)}</code>`);
   lines.push(`Gainers: <b>${gainers.length}</b> | Losers: <b>${losers.length}</b>`);
   lines.push('');
@@ -705,16 +737,16 @@ export async function POST(request: Request) {
 
     if (text === '/start') {
       await sendTelegramTo(chatId,
-        `💼 <b>MC Portfolio Pulse — Connected!</b>\n\nWelcome ${esc(firstName)}! Your portfolio tracker is live.\n\n📊 <b>What you'll receive:</b>\n• Real-time performance cards for YOUR holdings\n• Gainers &amp; losers in your portfolio\n• 52-week high/low proximity alerts\n• Intelligence signals for your stocks\n• Latest news for portfolio companies\n\n⏰ <b>Default Portfolio:</b>\n${DEFAULT_PORTFOLIO.slice(0, 8).join(', ')}, …\n\n💡 <b>Commands:</b>\n/add SYMBOL — Add holdings (space-separated)\n/remove SYMBOL — Remove holding\n/list — Show your portfolio\n/pulse — Get portfolio performance card\n/intel — Intelligence signals for your stocks\n/news — Latest news for portfolio\n/help — Show all commands\n/status — Bot status\n\n🌐 <a href="https://market-cockpit.vercel.app/portfolio">View Dashboard</a>\n<i>Powered by Market Cockpit</i>`
+        `<b>MC Portfolio Pulse — Connected!</b>\n\nWelcome ${esc(firstName)}! Your portfolio tracker is live.\n\n<b>What you'll receive:</b>\n• Real-time performance cards for YOUR holdings\n• Gainers &amp; losers in your portfolio\n• 52-week high/low proximity alerts\n• Intelligence signals for your stocks\n• Latest news for portfolio companies\n\n<b>Default Portfolio:</b>\n${DEFAULT_PORTFOLIO.slice(0, 8).join(', ')}, …\n\n<b>Commands:</b>\n/add SYMBOL — Add holdings (space-separated)\n/remove SYMBOL — Remove holding\n/list — Show your portfolio\n/pulse — Get portfolio performance card\n/intel — Intelligence signals for your stocks\n/news — Latest news for portfolio\n/help — Show all commands\n/status — Bot status\n\n<a href="https://market-cockpit.vercel.app/portfolio">View Dashboard</a>\n<i>Powered by Market Cockpit</i>`
       );
     } else if (text === '/help') {
       await sendTelegramTo(chatId,
-        `❓ <b>MC Portfolio Pulse — Help</b>\n\n<b>Commands:</b>\n/start — Welcome &amp; setup\n/add SYMBOL — Add holdings (space-separated, e.g. /add TCS INFY)\n/remove SYMBOL — Remove single holding\n/list — Show your current portfolio\n/pulse — Generate portfolio performance card\n/intel — Get intelligence signals for portfolio\n/news — Get latest news for portfolio companies\n/status — Bot status &amp; diagnostics\n/help — This help message\n\n<b>Examples:</b>\n<code>/add BAJAJFINSV BHARTIARTL</code> — Add two stocks\n<code>/remove TATAMOTORS</code> — Remove one\n<code>/list</code> — See all holdings\n\n<b>Scheduled Alerts:</b>\n⏰ Twice daily: 10:15 AM &amp; 3:15 PM IST\n📸 Portfolio performance card\n📰 Relevant news &amp; intelligence\n\n🌐 <a href="https://market-cockpit.vercel.app/portfolio">View Dashboard</a>\n<i>Powered by Market Cockpit</i>`
+        `<b>MC Portfolio Pulse — Help</b>\n\n<b>Commands:</b>\n/start — Welcome &amp; setup\n/add SYMBOL — Add holdings (space-separated, e.g. /add TCS INFY)\n/remove SYMBOL — Remove single holding\n/list — Show your current portfolio\n/pulse — Generate portfolio performance card\n/intel — Get intelligence signals for portfolio\n/news — Get latest news for portfolio companies\n/status — Bot status &amp; diagnostics\n/help — This help message\n\n<b>Examples:</b>\n<code>/add BAJAJFINSV BHARTIARTL</code> — Add two stocks\n<code>/remove TATAMOTORS</code> — Remove one\n<code>/list</code> — See all holdings\n\n<b>Scheduled Alerts:</b>\nTwice daily: 10:15 AM &amp; 3:15 PM IST\n• Portfolio performance card\n• Relevant news &amp; intelligence\n\n<a href="https://market-cockpit.vercel.app/portfolio">View Dashboard</a>\n<i>Powered by Market Cockpit</i>`
       );
     } else if (text === '/list') {
       const portfolio = await getPortfolio(chatId);
       const total = portfolio.length;
-      const lines = [`💼 <b>Your Portfolio</b>  (${total} holdings)\n`];
+      const lines = [`<b>Your Portfolio</b>  (${total} holdings)\n`];
 
       if (total <= 20) {
         for (let i = 0; i < total; i++) {
@@ -727,14 +759,14 @@ export async function POST(request: Request) {
         }
       }
       lines.push('');
-      lines.push(`💡 /add SYMBOL — Add holdings`);
-      lines.push(`➖ /remove SYMBOL — Remove holding`);
-      lines.push(`📸 /pulse — Performance card`);
+      lines.push(`/add SYMBOL — Add holdings`);
+      lines.push(`/remove SYMBOL — Remove holding`);
+      lines.push(`/pulse — Performance card`);
       await sendTelegramTo(chatId, lines.join('\n'));
     } else if (text.startsWith('/add ')) {
       const toAdd = text.slice(5).trim().split(/[\s,]+/).map((t: string) => t.toUpperCase()).filter((t: string) => t.length > 0 && t.length < 30);
       if (toAdd.length === 0) {
-        await sendTelegramTo(chatId, '❌ Please provide stock symbols. Example: <code>/add TCS INFY</code> or <code>/add TCS,INFY,WIPRO</code>');
+        await sendTelegramTo(chatId, '[X] Please provide stock symbols. Example: <code>/add TCS INFY</code> or <code>/add TCS,INFY,WIPRO</code>');
       } else {
         const current = await getPortfolio(chatId);
         const before = current.length;
@@ -750,18 +782,18 @@ export async function POST(request: Request) {
 
         const added = updated.length - before;
         await sendTelegramTo(chatId,
-          `✅ <b>Portfolio Updated</b>\n\n➕ Added: <code>${toAdd.join(', ')}</code>\n💼 Total holdings: <b>${updated.length}</b>\n\n<i>Your portfolio will be used for alerts and reports.</i>`
+          `[OK] <b>Portfolio Updated</b>\n\n[+] Added: <code>${toAdd.join(', ')}</code>\nTotal holdings: <b>${updated.length}</b>\n\n<i>Your portfolio will be used for alerts and reports.</i>`
         );
       }
     } else if (text.startsWith('/remove ')) {
       const toRemove = text.slice(8).trim().toUpperCase();
       if (!toRemove) {
-        await sendTelegramTo(chatId, '❌ Please provide a symbol. Example: <code>/remove HFCL</code>');
+        await sendTelegramTo(chatId, '[X] Please provide a symbol. Example: <code>/remove HFCL</code>');
       } else {
         const current = await getPortfolio(chatId);
         const updated = current.filter(t => t !== toRemove);
         if (updated.length === current.length) {
-          await sendTelegramTo(chatId, `❌ <b>${toRemove}</b> not found in your portfolio.`);
+          await sendTelegramTo(chatId, `[X] <b>${toRemove}</b> not found in your portfolio.`);
         } else {
           setPortfolio(chatId, updated);
 
@@ -772,22 +804,22 @@ export async function POST(request: Request) {
           }).catch(() => {});
 
           await sendTelegramTo(chatId,
-            `✅ <b>Removed</b>\n\n➖ Removed: <code>${toRemove}</code>\n💼 Total holdings: <b>${updated.length}</b>`
+            `[OK] <b>Removed</b>\n\n[-] Removed: <code>${toRemove}</code>\nTotal holdings: <b>${updated.length}</b>`
           );
         }
       }
     } else if (text === '/pulse') {
-      await sendTelegramTo(chatId, '⏳ <i>Generating portfolio pulse card...</i>');
+      await sendTelegramTo(chatId, '<i>Generating portfolio pulse card...</i>');
       const portfolio = await getPortfolio(chatId);
       const stocks = await fetchPortfolioStocks(portfolio);
       if (stocks.length === 0) {
-        await sendTelegramTo(chatId, '💼 No portfolio data available. Market may be closed or symbols not found.');
+        await sendTelegramTo(chatId, 'No portfolio data available. Market may be closed or symbols not found.');
       } else {
         try {
           const img = await generatePortfolioImage(stocks);
           const gainers = stocks.filter(s => s.changePercent > 0).length;
           const losers = stocks.filter(s => s.changePercent < 0).length;
-          await sendTelegramPhoto(img, `💼 <b>${stocks.length} holdings</b> • ↑${gainers} ↓${losers} — <a href="https://market-cockpit.vercel.app/portfolio">Dashboard</a>`, chatId);
+          await sendTelegramPhoto(img, `<b>${stocks.length} holdings</b> • Up:${gainers} Down:${losers} — <a href="https://market-cockpit.vercel.app/portfolio">Dashboard</a>`, chatId);
         } catch (e) {
           console.error('[PORTFOLIO] Image gen failed:', e);
           const msg = buildPortfolioMessage(stocks, portfolio);
@@ -795,16 +827,16 @@ export async function POST(request: Request) {
         }
       }
     } else if (text === '/intel') {
-      await sendTelegramTo(chatId, '⏳ <i>Fetching intelligence signals...</i>');
+      await sendTelegramTo(chatId, '<i>Fetching intelligence signals...</i>');
       const portfolio = await getPortfolio(chatId);
       const signals = await fetchPortfolioIntelligence(portfolio);
       if (signals.length === 0) {
-        await sendTelegramTo(chatId, '🧠 No actionable intelligence signals for your portfolio right now.');
+        await sendTelegramTo(chatId, 'No actionable intelligence signals for your portfolio right now.');
       } else {
-        const lines = [`<b>🧠 Portfolio Intelligence</b>\n`];
+        const lines = [`<b>Portfolio Intelligence</b>\n`];
         for (let i = 0; i < signals.length; i++) {
           const s = signals[i];
-          const tier = s.signalTierV7 === 'ACTIONABLE' ? '🔴' : s.signalTierV7 === 'NOTABLE' ? '🟡' : '⚪';
+          const tier = s.signalTierV7 === 'ACTIONABLE' ? '[ACTION]' : s.signalTierV7 === 'NOTABLE' ? '[NOTABLE]' : '[INFO]';
           const action = s.action || 'MONITOR';
           const name = s.symbol || s.ticker || s.primaryTicker || '???';
           const company = s.company || s.companyName || '';
@@ -820,16 +852,16 @@ export async function POST(request: Request) {
         await sendTelegramTo(chatId, lines.join('\n'));
       }
     } else if (text === '/news') {
-      await sendTelegramTo(chatId, '⏳ <i>Fetching latest news...</i>');
+      await sendTelegramTo(chatId, '<i>Fetching latest news...</i>');
       const portfolio = await getPortfolio(chatId);
       const news = await fetchPortfolioNews(portfolio);
       if (news.length === 0) {
-        await sendTelegramTo(chatId, '📰 No recent news for your portfolio holdings.');
+        await sendTelegramTo(chatId, 'No recent news for your portfolio holdings.');
       } else {
-        const lines = [`<b>📰 Portfolio News</b>\n`];
+        const lines = [`<b>Portfolio News</b>\n`];
         for (let i = 0; i < news.length; i++) {
           lines.push(`${i + 1}. ${esc(truncate(news[i].title, 80))}`);
-          if (news[i].source) lines.push(`   <i>${news[i].source}</i>`);
+          if (news[i].source) lines.push(`   <i>[${news[i].source}]</i>`);
         }
         await sendTelegramTo(chatId, lines.join('\n'));
       }
@@ -843,7 +875,7 @@ export async function POST(request: Request) {
       const portfolio = await getPortfolio(chatId);
 
       await sendTelegramTo(chatId,
-        `⚙️ <b>MC Portfolio Pulse — Status</b>\n\n✅ Bot: Online\n🕒 IST: ${ist.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}\n${isMarketDay && isMarketHours ? '🟢 Market: Open' : '🔴 Market: Closed'}\n💼 Portfolio: <b>${portfolio.length}</b> holdings\n⏰ Alerts: 10:15 AM &amp; 3:15 PM IST (Mon–Fri)\n\n<i>Portfolio synced to cloud — persists across sessions.</i>`
+        `<b>MC Portfolio Pulse — Status</b>\n\n[OK] Bot: Online\nIST: ${ist.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}\n${isMarketDay && isMarketHours ? '[+] Market: Open' : '[-] Market: Closed'}\nPortfolio: <b>${portfolio.length}</b> holdings\nAlerts: 10:15 AM &amp; 3:15 PM IST (Mon–Fri)\n\n<i>Portfolio synced to cloud — persists across sessions.</i>`
       );
     }
 
@@ -902,7 +934,7 @@ export async function GET(request: Request) {
   if (stocks.length === 0) {
     console.warn('[PORTFOLIO] No stock data fetched!');
     const errMsg = await sendTelegram(
-      `⚠️ <b>Portfolio Pulse</b>\n\nCould not fetch market data for ${portfolio.length} holdings.\nMarket may be closed or data unavailable.\n\n<i>Will retry on next schedule.</i>`
+      `<b>Portfolio Pulse</b>\n\nCould not fetch market data for ${portfolio.length} holdings.\nMarket may be closed or data unavailable.\n\n<i>Will retry on next schedule.</i>`
     );
     return NextResponse.json({ ok: false, reason: 'no_data', diagnostics, elapsed: Date.now() - startTime });
   }
@@ -916,7 +948,7 @@ export async function GET(request: Request) {
     const losers = stocks.filter(s => s.changePercent < 0).length;
     const photoResult = await sendTelegramPhoto(
       img,
-      `💼 <b>${stocks.length} holdings</b> • ↑${gainers} ↓${losers} — <a href="https://market-cockpit.vercel.app/portfolio">Dashboard</a>`
+      `<b>${stocks.length} holdings</b> • Up:${gainers} Down:${losers} — <a href="https://market-cockpit.vercel.app/portfolio">Dashboard</a>`
     );
     diagnostics.steps.push(photoResult.ok ? 'photo_sent' : 'photo_failed');
 
@@ -938,9 +970,9 @@ export async function GET(request: Request) {
     try {
       const signals = await fetchPortfolioIntelligence(portfolio);
       if (signals.length > 0) {
-        const lines = [`<b>🧠 Portfolio Intelligence</b>\n`];
+        const lines = [`<b>Portfolio Intelligence</b>\n`];
         for (const s of signals.slice(0, 5)) {
-          const tier = s.signalTierV7 === 'ACTIONABLE' ? '🔴' : s.signalTierV7 === 'NOTABLE' ? '🟡' : '⚪';
+          const tier = s.signalTierV7 === 'ACTIONABLE' ? '[ACTION]' : s.signalTierV7 === 'NOTABLE' ? '[NOTABLE]' : '[INFO]';
           const action = s.action || 'MONITOR';
           const name = s.symbol || s.ticker || s.primaryTicker || '???';
           const company = s.company || s.companyName || '';
@@ -952,7 +984,7 @@ export async function GET(request: Request) {
           if (s.eventType) lines.push(`   <i>${s.eventType}${impact}${value}</i>`);
           lines.push('');
         }
-        lines.push(`<a href="https://market-cockpit.vercel.app/orders">Full Intelligence →</a>`);
+        lines.push(`<a href="https://market-cockpit.vercel.app/orders">Full Intelligence</a>`);
         await sendTelegram(lines.join('\n'));
         diagnostics.steps.push('intel_sent');
       }
@@ -967,10 +999,10 @@ export async function GET(request: Request) {
     diagnostics.steps.push(`news_fetched_${news.length}`);
 
     if (news.length > 0) {
-      const newsLines = [`<b>📰 Portfolio News</b>\n`];
+      const newsLines = [`<b>Portfolio News</b>\n`];
       for (let i = 0; i < Math.min(news.length, 8); i++) {
         newsLines.push(`${i + 1}. ${esc(truncate(news[i].title, 80))}`);
-        if (news[i].source) newsLines.push(`   <i>${news[i].source}</i>`);
+        if (news[i].source) newsLines.push(`   <i>[${news[i].source}]</i>`);
       }
       const newsResult = await sendTelegram(newsLines.join('\n'));
       diagnostics.steps.push(newsResult.ok ? 'news_sent' : 'news_failed');

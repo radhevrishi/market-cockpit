@@ -186,28 +186,60 @@ async function fetchWatchlistStocks(watchlist: string[]): Promise<Stock[]> {
 // ── Fetch News for Watchlist ────────────────────────────────────────────
 async function fetchWatchlistNews(watchlist: string[]): Promise<NewsItem[]> {
   try {
-    const url = `${API_BASE}/api/v1/news`;
-    console.log(`[WATCHLIST] Fetching news from ${url}`);
-    const r = await fetch(url, { headers: { 'User-Agent': 'MarketCockpit-Bot/1.0' } });
+    // Use intelligence API as news source (the /api/v1/news endpoint doesn't exist)
+    const wl = watchlist.join(',');
+    const url = `${API_BASE}/api/market/intelligence?days=7&portfolio=${wl}`;
+    console.log(`[WATCHLIST] Fetching news/intelligence from ${url}`);
+    const r = await fetch(url, { headers: { 'User-Agent': 'MarketCockpit-Bot/1.0' }, signal: AbortSignal.timeout(15000) });
     if (r.ok) {
       const data = await r.json();
-      const allNews = data.news || data.results || [];
+      const allSignals = data.signals || [];
+
       const watchlistSet = new Set(watchlist.map(t => t.toUpperCase()));
+      const newsItems: NewsItem[] = allSignals
+        .filter((s: any) => {
+          const sym = (s.symbol || s.ticker || s.primaryTicker || '').toUpperCase();
+          return s.isPortfolio || watchlistSet.has(sym);
+        })
+        .slice(0, 15)
+        .map((s: any) => ({
+          title: s.headline || s.narrative || s.summary || `${s.symbol || s.ticker}: ${s.eventType || 'Update'}`,
+          source: s.eventType || s.signalClass || 'Intelligence',
+          timestamp: s.date || s.timestamp,
+        }));
 
-      const filtered = allNews.filter((n: any) => {
-        const text = (n.title || n.headline || '').toUpperCase();
-        return [...watchlistSet].some(t => text.includes(t));
-      });
-
-      return filtered.slice(0, 10).map((n: any) => ({
-        title: n.title || n.headline || 'Untitled',
-        source: n.source || 'Market Cockpit',
-        timestamp: n.date || n.timestamp,
-      }));
+      return newsItems;
     }
   } catch (e) {
-    console.error('[WATCHLIST] News fetch failed:', e);
+    console.error('[WATCHLIST] News/intelligence fetch failed:', e);
   }
+
+  // Fallback: Try NSE corporate announcements
+  try {
+    const cookies = await getNseCookies();
+    if (cookies) {
+      const announcements: NewsItem[] = [];
+      for (const symbol of watchlist.slice(0, 5)) {
+        try {
+          const url = `${NSE_BASE}/api/corporates-announcements?index=equities&symbol=${encodeURIComponent(symbol)}`;
+          const r = await fetch(url, { headers: { ...NSE_HEADERS, Cookie: cookies }, signal: AbortSignal.timeout(5000) });
+          if (r.ok) {
+            const data = await r.json();
+            const items = (Array.isArray(data) ? data : data?.data || []).slice(0, 3);
+            for (const item of items) {
+              announcements.push({
+                title: `${symbol}: ${item.desc || item.subject || 'Corporate Announcement'}`,
+                source: 'NSE Filing',
+                timestamp: item.an_dt || item.date,
+              });
+            }
+          }
+        } catch {}
+      }
+      if (announcements.length > 0) return announcements.slice(0, 10);
+    }
+  } catch {}
+
   return [];
 }
 
@@ -270,12 +302,12 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
         flexDirection: 'column',
         width: `${W}px`,
         height: `${totalHeight}px`,
-        backgroundColor: '#080C14',
+        backgroundColor: '#FFFFFF',
         fontFamily: 'Inter, Menlo, system-ui, sans-serif',
       }}
     >
       {/* ── Top accent gradient bar ── */}
-      <div style={{ display: 'flex', width: '100%', height: `${ACCENT_H}px`, background: 'linear-gradient(90deg, #0369A1 0%, #0EA5E9 40%, #38BDF8 100%)' }} />
+      <div style={{ display: 'flex', width: '100%', height: `${ACCENT_H}px`, background: 'linear-gradient(90deg, #0369A1 0%, #0284C7 40%, #38BDF8 100%)' }} />
 
       {/* ── Header Row ── */}
       <div
@@ -292,7 +324,7 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
             W
           </div>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <span style={{ fontSize: '22px', fontWeight: 800, color: '#F1F5F9', letterSpacing: '1px', textTransform: 'uppercase' as const }}>
+            <span style={{ fontSize: '22px', fontWeight: 800, color: '#0F172A', letterSpacing: '1px', textTransform: 'uppercase' as const }}>
               Watchlist Pulse
             </span>
             <span style={{ fontSize: '11px', color: '#64748B', letterSpacing: '0.5px', marginTop: '2px' }}>
@@ -303,14 +335,14 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
 
         {/* Right: Quick stats */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', padding: '6px 14px', borderRadius: '6px', backgroundColor: '#0F172A', border: '1px solid #1E293B' }}>
-            <span style={{ fontSize: '11px', color: '#64748B', marginRight: '6px' }}>AVG</span>
-            <span style={{ fontSize: '14px', fontWeight: 700, color: avgChange >= 0 ? '#22C55E' : '#EF4444' }}>
+          <div style={{ display: 'flex', alignItems: 'center', padding: '6px 14px', borderRadius: '6px', backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0' }}>
+            <span style={{ fontSize: '11px', color: '#475569', marginRight: '6px' }}>AVG</span>
+            <span style={{ fontSize: '14px', fontWeight: 700, color: avgChange >= 0 ? '#16A34A' : '#DC2626' }}>
               {avgChange >= 0 ? '+' : ''}{avgChange.toFixed(2)}%
             </span>
           </div>
           {bigMovers > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', padding: '6px 14px', borderRadius: '6px', backgroundColor: '#422006', border: '1px solid #854D0E' }}>
+            <div style={{ display: 'flex', alignItems: 'center', padding: '6px 14px', borderRadius: '6px', backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0' }}>
               <span style={{ fontSize: '12px', fontWeight: 700, color: '#F59E0B' }}>
                 {bigMovers} BIG MOVER{bigMovers > 1 ? 'S' : ''}
               </span>
@@ -328,32 +360,32 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
           gap: '10px',
         }}
       >
-        <div style={{ display: 'flex', flex: 1, alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '8px 16px', backgroundColor: '#0A1A12', borderRadius: '8px', border: '1px solid #14532D' }}>
-          <span style={{ fontSize: '20px', fontWeight: 800, color: '#22C55E' }}>{gainers}</span>
-          <span style={{ fontSize: '11px', color: '#4ADE80', fontWeight: 600 }}>GAINERS</span>
+        <div style={{ display: 'flex', flex: 1, alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '8px 16px', backgroundColor: '#F0FDF4', borderRadius: '8px', border: '1px solid #BBF7D0' }}>
+          <span style={{ fontSize: '20px', fontWeight: 800, color: '#16A34A' }}>{gainers}</span>
+          <span style={{ fontSize: '11px', color: '#16A34A', fontWeight: 600 }}>GAINERS</span>
         </div>
-        <div style={{ display: 'flex', flex: 1, alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '8px 16px', backgroundColor: '#1A0A0A', borderRadius: '8px', border: '1px solid #7F1D1D' }}>
-          <span style={{ fontSize: '20px', fontWeight: 800, color: '#EF4444' }}>{losers}</span>
-          <span style={{ fontSize: '11px', color: '#F87171', fontWeight: 600 }}>LOSERS</span>
+        <div style={{ display: 'flex', flex: 1, alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '8px 16px', backgroundColor: '#FEF2F2', borderRadius: '8px', border: '1px solid #FECACA' }}>
+          <span style={{ fontSize: '20px', fontWeight: 800, color: '#DC2626' }}>{losers}</span>
+          <span style={{ fontSize: '11px', color: '#DC2626', fontWeight: 600 }}>LOSERS</span>
         </div>
-        <div style={{ display: 'flex', flex: 3, alignItems: 'center', gap: '24px', padding: '8px 20px', backgroundColor: '#0F172A', borderRadius: '8px', border: '1px solid #1E293B' }}>
+        <div style={{ display: 'flex', flex: 3, alignItems: 'center', gap: '24px', padding: '8px 20px', backgroundColor: '#F8FAFC', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             <span style={{ fontSize: '10px', color: '#64748B', fontWeight: 600 }}>BIGGEST MOVER</span>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', marginTop: '1px' }}>
-              <span style={{ fontSize: '14px', fontWeight: 800, color: '#F1F5F9' }}>{sorted[0]?.ticker || '—'}</span>
-              <span style={{ fontSize: '12px', fontWeight: 700, color: sorted[0]?.changePercent >= 0 ? '#22C55E' : '#EF4444' }}>
+              <span style={{ fontSize: '14px', fontWeight: 800, color: '#0F172A' }}>{sorted[0]?.ticker || '—'}</span>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: sorted[0]?.changePercent >= 0 ? '#16A34A' : '#DC2626' }}>
                 {sorted[0]?.changePercent >= 0 ? '+' : ''}{sorted[0]?.changePercent?.toFixed(1)}%
               </span>
             </div>
           </div>
-          <div style={{ display: 'flex', width: '1px', height: '28px', backgroundColor: '#1E293B' }} />
+          <div style={{ display: 'flex', width: '1px', height: '28px', backgroundColor: '#E2E8F0' }} />
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             <span style={{ fontSize: '10px', color: '#64748B', fontWeight: 600 }}>MOST VOLATILE</span>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', marginTop: '1px' }}>
-              <span style={{ fontSize: '14px', fontWeight: 800, color: '#F1F5F9' }}>
+              <span style={{ fontSize: '14px', fontWeight: 800, color: '#0F172A' }}>
                 {sorted.length > 1 ? sorted[1]?.ticker : '—'}
               </span>
-              <span style={{ fontSize: '12px', fontWeight: 700, color: sorted.length > 1 ? (sorted[1]?.changePercent >= 0 ? '#22C55E' : '#EF4444') : '#64748B' }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: sorted.length > 1 ? (sorted[1]?.changePercent >= 0 ? '#16A34A' : '#DC2626') : '#64748B' }}>
                 {sorted.length > 1 ? `${sorted[1]?.changePercent >= 0 ? '+' : ''}${sorted[1]?.changePercent?.toFixed(1)}%` : '—'}
               </span>
             </div>
@@ -367,12 +399,13 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
           display: 'flex',
           padding: '8px 28px',
           marginTop: '8px',
-          borderBottom: '1px solid #1E293B',
+          borderBottom: '1px solid #E2E8F0',
           fontSize: '10px',
           fontWeight: 700,
-          color: '#64748B',
+          color: '#475569',
           letterSpacing: '1px',
           textTransform: 'uppercase' as const,
+          backgroundColor: '#F1F5F9',
         }}
       >
         <span style={{ width: '30px' }}>#</span>
@@ -388,14 +421,14 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
       {/* ── Data Rows ── */}
       {sorted.map((s, i) => {
         const isPositive = s.changePercent >= 0;
-        const pctColor = isPositive ? '#22C55E' : '#EF4444';
+        const pctColor = isPositive ? '#16A34A' : '#DC2626';
         const rangeText = s.dayHigh && s.dayLow
           ? `${s.dayLow.toFixed(0)} – ${s.dayHigh.toFixed(0)}`
           : '—';
         const pos52 = w52Pct(s);
         const barW = 120;
         const fillW = pos52 !== null ? Math.round((pos52 / 100) * barW) : 0;
-        const barColor = pos52 !== null ? (pos52 > 70 ? '#22C55E' : pos52 > 40 ? '#F59E0B' : '#EF4444') : '#334155';
+        const barColor = pos52 !== null ? (pos52 > 70 ? '#16A34A' : pos52 > 40 ? '#F59E0B' : '#DC2626') : '#CBD5E1';
         const isBigMover = Math.abs(s.changePercent) >= 2;
 
         return (
@@ -404,22 +437,22 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
             style={{
               display: 'flex',
               padding: '8px 28px',
-              backgroundColor: i % 2 === 0 ? '#0B1120' : '#080C14',
+              backgroundColor: i % 2 === 0 ? '#F8FAFC' : '#FFFFFF',
               fontSize: '13px',
               alignItems: 'center',
-              borderBottom: '1px solid #111827',
+              borderBottom: '1px solid #F1F5F9',
               height: `${ROW_H}px`,
               borderLeft: isBigMover ? '3px solid #F59E0B' : '3px solid transparent',
             }}
           >
-            <span style={{ width: '30px', color: '#475569', fontSize: '11px', fontWeight: 600 }}>{i + 1}</span>
-            <span style={{ width: '120px', fontWeight: 700, color: '#F1F5F9', fontSize: '13px', letterSpacing: '0.3px' }}>
+            <span style={{ width: '30px', color: '#64748B', fontSize: '11px', fontWeight: 600 }}>{i + 1}</span>
+            <span style={{ width: '120px', fontWeight: 700, color: '#0F172A', fontSize: '13px', letterSpacing: '0.3px' }}>
               {truncate(s.ticker, 12)}
             </span>
             <span style={{ width: '170px', color: '#64748B', fontSize: '11px' }}>
               {truncate(s.sector, 22)}
             </span>
-            <span style={{ width: '100px', textAlign: 'right', color: '#E2E8F0', fontSize: '13px', fontWeight: 600, fontFamily: 'Menlo, monospace' }}>
+            <span style={{ width: '100px', textAlign: 'right', color: '#1E293B', fontSize: '13px', fontWeight: 600, fontFamily: 'Menlo, monospace' }}>
               {s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}
             </span>
             <span style={{ width: '90px', textAlign: 'right', color: pctColor, fontSize: '12px', fontFamily: 'Menlo, monospace' }}>
@@ -431,26 +464,26 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
                 alignItems: 'center',
                 padding: '2px 8px',
                 borderRadius: '4px',
-                backgroundColor: isPositive ? '#052E16' : '#450A0A',
+                backgroundColor: isPositive ? '#DCFCE7' : '#FEE2E2',
               }}>
-                <span style={{ fontSize: '12px', fontWeight: 700, color: pctColor, fontFamily: 'Menlo, monospace' }}>
+                <span style={{ fontSize: '12px', fontWeight: 700, color: isPositive ? '#16A34A' : '#DC2626', fontFamily: 'Menlo, monospace' }}>
                   {isPositive ? '+' : ''}{s.changePercent.toFixed(1)}%
                 </span>
               </div>
             </div>
-            <span style={{ width: '120px', textAlign: 'right', color: '#94A3B8', fontSize: '11px', fontFamily: 'Menlo, monospace' }}>
+            <span style={{ width: '120px', textAlign: 'right', color: '#64748B', fontSize: '11px', fontFamily: 'Menlo, monospace' }}>
               {rangeText}
             </span>
             <div style={{ display: 'flex', width: '180px', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
               {pos52 !== null ? (
                 <>
-                  <div style={{ display: 'flex', width: `${barW}px`, height: '6px', backgroundColor: '#1E293B', borderRadius: '3px', overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', width: `${barW}px`, height: '6px', backgroundColor: '#E2E8F0', borderRadius: '3px', overflow: 'hidden' }}>
                     <div style={{ display: 'flex', width: `${fillW}px`, height: '6px', backgroundColor: barColor, borderRadius: '3px' }} />
                   </div>
-                  <span style={{ fontSize: '10px', color: '#94A3B8', fontWeight: 600, fontFamily: 'Menlo, monospace', minWidth: '32px' }}>{pos52}%</span>
+                  <span style={{ fontSize: '10px', color: '#64748B', fontWeight: 600, fontFamily: 'Menlo, monospace', minWidth: '32px' }}>{pos52}%</span>
                 </>
               ) : (
-                <span style={{ fontSize: '10px', color: '#334155' }}>—</span>
+                <span style={{ fontSize: '10px', color: '#94A3B8' }}>—</span>
               )}
             </div>
           </div>
@@ -464,10 +497,10 @@ async function generateWatchlistImage(stocks: Stock[]): Promise<ArrayBuffer> {
           justifyContent: 'space-between',
           alignItems: 'center',
           padding: '8px 28px',
-          backgroundColor: '#0B1120',
+          backgroundColor: '#F1F5F9',
           fontSize: '10px',
-          color: '#475569',
-          borderTop: '1px solid #1E293B',
+          color: '#94A3B8',
+          borderTop: '1px solid #E2E8F0',
           marginTop: 'auto',
           letterSpacing: '0.5px',
         }}
@@ -578,23 +611,23 @@ function buildWatchlistMessage(stocks: Stock[], watchlist: string[]): string {
     ? Math.round(stocks.reduce((sum, s) => sum + s.changePercent, 0) / stocks.length * 100) / 100
     : 0;
 
-  const moodEmoji = avg > 0.5 ? '🟢' : avg < -0.5 ? '🔴' : '🟡';
   const moodText = avg > 0.5 ? 'BULLISH' : avg < -0.5 ? 'BEARISH' : 'NEUTRAL';
+  const moodMark = avg > 0.5 ? '[+]' : avg < -0.5 ? '[-]' : '[~]';
 
   const lines: string[] = [];
   const DIV = '▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬';
 
-  lines.push(`${moodEmoji} <b>WATCHLIST PULSE</b>  ·  <code>${moodText}</code>`);
+  lines.push(`${moodMark} <b>WATCHLIST PULSE</b>  ·  <code>${moodText}</code>`);
   lines.push(`<i>${timeStr} IST  •  ${stocks.length}/${watchlist.length} stocks tracked</i>`);
   lines.push('');
 
   if (gainers.length > 0) {
     lines.push(DIV);
     lines.push('');
-    lines.push(`<b>📈 Top Gainers</b>`);
+    lines.push(`<b>Top Gainers</b>`);
     lines.push('');
     for (const s of gainers.slice(0, 5)) {
-      lines.push(`  🟢 <b>${esc(s.ticker)}</b>  <code>+${s.changePercent.toFixed(1)}%</code>  ${fmtPrice(s.price)}`);
+      lines.push(`  [+] <b>${esc(s.ticker)}</b>  <code>+${s.changePercent.toFixed(1)}%</code>  ${fmtPrice(s.price)}`);
     }
     lines.push('');
   }
@@ -602,17 +635,17 @@ function buildWatchlistMessage(stocks: Stock[], watchlist: string[]): string {
   if (losers.length > 0) {
     lines.push(DIV);
     lines.push('');
-    lines.push(`<b>📉 Top Losers</b>`);
+    lines.push(`<b>Top Losers</b>`);
     lines.push('');
     for (const s of losers.slice(0, 5)) {
-      lines.push(`  🔴 <b>${esc(s.ticker)}</b>  <code>${s.changePercent.toFixed(1)}%</code>  ${fmtPrice(s.price)}`);
+      lines.push(`  [-] <b>${esc(s.ticker)}</b>  <code>${s.changePercent.toFixed(1)}%</code>  ${fmtPrice(s.price)}`);
     }
     lines.push('');
   }
 
   lines.push(DIV);
   lines.push('');
-  lines.push(`<b>📊 Summary</b>`);
+  lines.push(`<b>Summary</b>`);
   lines.push(`Avg Change: <code>${fmtPct(avg, 2)}</code>`);
   lines.push(`Gainers: <b>${gainers.length}</b> | Losers: <b>${losers.length}</b>`);
   lines.push('');
@@ -640,16 +673,16 @@ export async function POST(request: Request) {
 
     if (text === '/start') {
       await sendTelegramTo(chatId,
-        `🎯 <b>MC Watchlist Pulse — Connected!</b>\n\nWelcome ${esc(firstName)}! Your personal stock watchlist tracker is live.\n\n📊 <b>What you'll receive:</b>\n• Real-time performance cards for YOUR stocks\n• Sector breakdown &amp; day ranges\n• Gainers &amp; losers from your watchlist\n• Latest news for your tracked companies\n\n⏰ <b>Default Watchlist:</b>\n${DEFAULT_WATCHLIST.slice(0, 8).join(', ')}, …\n\n💡 <b>Commands:</b>\n/watch SYMBOL — Add stocks (space-separated)\n/unwatch SYMBOL — Remove stock\n/list — Show your watchlist\n/pulse — Get watchlist performance card\n/news — Latest news for your stocks\n/help — Show all commands\n/status — Bot status\n\n🌐 <a href="https://market-cockpit.vercel.app">View Dashboard</a>\n<i>Powered by Market Cockpit</i>`
+        `<b>MC Watchlist Pulse — Connected!</b>\n\nWelcome ${esc(firstName)}! Your personal stock watchlist tracker is live.\n\n<b>What you will receive:</b>\n• Real-time performance cards for YOUR stocks\n• Sector breakdown &amp; day ranges\n• Gainers &amp; losers from your watchlist\n• Latest news for your tracked companies\n\n<b>Default Watchlist:</b>\n${DEFAULT_WATCHLIST.slice(0, 8).join(', ')}, …\n\n<b>Commands:</b>\n/watch SYMBOL — Add stocks (space-separated)\n/unwatch SYMBOL — Remove stock\n/list — Show your watchlist\n/pulse — Get watchlist performance card\n/news — Latest news for your stocks\n/help — Show all commands\n/status — Bot status\n\n<a href="https://market-cockpit.vercel.app">View Dashboard</a>\n<i>Powered by Market Cockpit</i>`
       );
     } else if (text === '/help') {
       await sendTelegramTo(chatId,
-        `❓ <b>MC Watchlist Pulse — Help</b>\n\n<b>Commands:</b>\n/start — Welcome &amp; setup\n/watch SYMBOL — Add stocks (space-separated, e.g. /watch TCS INFY)\n/unwatch SYMBOL — Remove single stock\n/list — Show your current watchlist\n/pulse — Generate performance card for your stocks\n/news — Get latest news for watchlist stocks\n/status — Bot status &amp; diagnostics\n/help — This help message\n\n<b>Examples:</b>\n<code>/watch BAJAJFINSV BHARTIARTL</code> — Add two stocks\n<code>/unwatch TATAMOTORS</code> — Remove one\n<code>/list</code> — See all tracked stocks\n\n<b>Scheduled Alerts:</b>\n⏰ Twice daily: 10:05 AM &amp; 3:05 PM IST\n📸 Watchlist performance card\n📰 Relevant news\n\n🌐 <a href="https://market-cockpit.vercel.app">View Dashboard</a>\n<i>Powered by Market Cockpit</i>`
+        `<b>MC Watchlist Pulse — Help</b>\n\n<b>Commands:</b>\n/start — Welcome &amp; setup\n/watch SYMBOL — Add stocks (space-separated, e.g. /watch TCS INFY)\n/unwatch SYMBOL — Remove single stock\n/list — Show your current watchlist\n/pulse — Generate performance card for your stocks\n/news — Get latest news for watchlist stocks\n/status — Bot status &amp; diagnostics\n/help — This help message\n\n<b>Examples:</b>\n<code>/watch BAJAJFINSV BHARTIARTL</code> — Add two stocks\n<code>/unwatch TATAMOTORS</code> — Remove one\n<code>/list</code> — See all tracked stocks\n\n<b>Scheduled Alerts:</b>\nTwice daily: 10:05 AM &amp; 3:05 PM IST\nWatchlist performance card\nRelevant news\n\n<a href="https://market-cockpit.vercel.app">View Dashboard</a>\n<i>Powered by Market Cockpit</i>`
       );
     } else if (text === '/list') {
       const watchlist = await getWatchlist(chatId);
       const total = watchlist.length;
-      const lines = [`📊 <b>Your Watchlist</b>  (${total} stocks)\n`];
+      const lines = [`<b>Your Watchlist</b>  (${total} stocks)\n`];
 
       if (total <= 20) {
         // Short list: numbered format
@@ -664,15 +697,15 @@ export async function POST(request: Request) {
         }
       }
       lines.push('');
-      lines.push(`💡 /watch SYMBOL — Add stocks`);
-      lines.push(`➖ /unwatch SYMBOL — Remove stock`);
-      lines.push(`📸 /pulse — Performance card`);
+      lines.push(`/watch SYMBOL — Add stocks`);
+      lines.push(`/unwatch SYMBOL — Remove stock`);
+      lines.push(`/pulse — Performance card`);
       await sendTelegramTo(chatId, lines.join('\n'));
     } else if (text.startsWith('/watch ')) {
       // Support both comma and space separators: /watch TCS INFY or /watch TCS,INFY,WIPRO
       const toAdd = text.slice(7).trim().split(/[\s,]+/).map((t: string) => t.toUpperCase()).filter((t: string) => t.length > 0 && t.length < 30);
       if (toAdd.length === 0) {
-        await sendTelegramTo(chatId, '❌ Please provide stock symbols. Example: <code>/watch TCS INFY</code> or <code>/watch TCS,INFY,WIPRO</code>');
+        await sendTelegramTo(chatId, '[X] Please provide stock symbols. Example: <code>/watch TCS INFY</code> or <code>/watch TCS,INFY,WIPRO</code>');
       } else {
         const current = await getWatchlist(chatId);
         const before = current.length;
@@ -688,18 +721,18 @@ export async function POST(request: Request) {
 
         const added = updated.length - before;
         await sendTelegramTo(chatId,
-          `✅ <b>Watchlist Updated</b>\n\n➕ Added: <code>${toAdd.join(', ')}</code>\n📊 Total stocks: <b>${updated.length}</b>\n\n<i>Your watchlist will be used for alerts and reports.</i>`
+          `[OK] <b>Watchlist Updated</b>\n\nAdded: <code>${toAdd.join(', ')}</code>\nTotal stocks: <b>${updated.length}</b>\n\n<i>Your watchlist will be used for alerts and reports.</i>`
         );
       }
     } else if (text.startsWith('/unwatch ')) {
       const toRemove = text.slice(9).trim().toUpperCase();
       if (!toRemove) {
-        await sendTelegramTo(chatId, '❌ Please provide a symbol. Example: <code>/unwatch RELIANCE</code>');
+        await sendTelegramTo(chatId, '[X] Please provide a symbol. Example: <code>/unwatch RELIANCE</code>');
       } else {
         const current = await getWatchlist(chatId);
         const updated = current.filter(t => t !== toRemove);
         if (updated.length === current.length) {
-          await sendTelegramTo(chatId, `❌ <b>${toRemove}</b> not found in your watchlist.`);
+          await sendTelegramTo(chatId, `[X] <b>${toRemove}</b> not found in your watchlist.`);
         } else {
           setWatchlist(chatId, updated);
 
@@ -711,45 +744,45 @@ export async function POST(request: Request) {
           }).catch(() => {});
 
           await sendTelegramTo(chatId,
-            `✅ <b>Removed</b>\n\n➖ Removed: <code>${toRemove}</code>\n📊 Total stocks: <b>${updated.length}</b>`
+            `[OK] <b>Removed</b>\n\nRemoved: <code>${toRemove}</code>\nTotal stocks: <b>${updated.length}</b>`
           );
         }
       }
     } else if (text === '/pulse') {
-      await sendTelegramTo(chatId, '⏳ <i>Generating watchlist pulse card...</i>');
+      await sendTelegramTo(chatId, 'Generating watchlist pulse card...');
       const watchlist = await getWatchlist(chatId);
       const stocks = await fetchWatchlistStocks(watchlist);
       if (stocks.length === 0) {
-        await sendTelegramTo(chatId, '📊 No watchlist data available. Market may be closed or symbols not found.');
+        await sendTelegramTo(chatId, 'No watchlist data available. Market may be closed or symbols not found.');
       } else {
         try {
           const img = await generateWatchlistImage(stocks);
           const gainers = stocks.filter(s => s.changePercent > 0).length;
           const losers = stocks.filter(s => s.changePercent < 0).length;
-          await sendTelegramPhoto(img, `📊 <b>${stocks.length} stocks</b> • ↑${gainers} ↓${losers} — <a href="https://market-cockpit.vercel.app">Dashboard</a>`, chatId);
+          await sendTelegramPhoto(img, `<b>${stocks.length} stocks</b> • Gainers: ${gainers} | Losers: ${losers} — <a href="https://market-cockpit.vercel.app">Dashboard</a>`, chatId);
         } catch (e) {
           console.error('[WATCHLIST] Image gen failed:', e);
           // Fallback to text
           const lines = [`<b>WATCHLIST PERFORMANCE</b>\n`];
           const sorted = [...stocks].sort((a, b) => Math.abs(b.changePercent) - Math.abs(a.changePercent));
           for (const s of sorted.slice(0, 15)) {
-            const dir = s.changePercent >= 0 ? '📈' : '📉';
+            const dir = s.changePercent >= 0 ? '>>' : '<<';
             lines.push(`${dir} <b>${s.ticker}</b>  <code>${fmtPct(s.changePercent)}</code>  ${fmtPrice(s.price)}`);
           }
           await sendTelegramTo(chatId, lines.join('\n'));
         }
       }
     } else if (text === '/news') {
-      await sendTelegramTo(chatId, '⏳ <i>Fetching latest news...</i>');
+      await sendTelegramTo(chatId, 'Fetching latest news...');
       const watchlist = await getWatchlist(chatId);
       const news = await fetchWatchlistNews(watchlist);
       if (news.length === 0) {
-        await sendTelegramTo(chatId, '📰 No recent news for your watchlist stocks.');
+        await sendTelegramTo(chatId, 'No recent news for your watchlist stocks.');
       } else {
-        const lines = [`<b>📰 Latest News</b>\n`];
+        const lines = [`<b>Latest News</b>\n`];
         for (let i = 0; i < news.length; i++) {
           lines.push(`${i + 1}. ${esc(truncate(news[i].title, 80))}`);
-          if (news[i].source) lines.push(`   <i>${news[i].source}</i>`);
+          if (news[i].source) lines.push(`   <i>Type: ${news[i].source}</i>`);
         }
         await sendTelegramTo(chatId, lines.join('\n'));
       }
@@ -763,7 +796,7 @@ export async function POST(request: Request) {
       const watchlist = await getWatchlist(chatId);
 
       await sendTelegramTo(chatId,
-        `⚙️ <b>MC Watchlist Pulse — Status</b>\n\n✅ Bot: Online\n🕒 IST: ${ist.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}\n${isMarketDay && isMarketHours ? '🟢 Market: Open' : '🔴 Market: Closed'}\n📊 Watchlist: <b>${watchlist.length}</b> stocks\n⏰ Alerts: 10:05 AM &amp; 3:05 PM IST (Mon–Fri)\n\n<i>Watchlist synced to cloud — persists across sessions.</i>`
+        `<b>MC Watchlist Pulse — Status</b>\n\n[OK] Bot: Online\nIST: ${ist.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}\n${isMarketDay && isMarketHours ? '[OPEN] Market: Open' : '[CLOSED] Market: Closed'}\nWatchlist: <b>${watchlist.length}</b> stocks\nAlerts: 10:05 AM &amp; 3:05 PM IST (Mon–Fri)\n\n<i>Watchlist synced to cloud — persists across sessions.</i>`
       );
     }
 
@@ -816,7 +849,7 @@ export async function GET(request: Request) {
   if (mode === 'test') {
     diagnostics.steps.push('sending_test_message');
     const result = await sendTelegram(
-      '✅ <b>Market Cockpit Watchlist Pulse Connected</b>\n\n📊 Your watchlist alerts are active!\n\n📸 Performance card — Your tracked stocks\n📰 Relevant news headlines\n\n⏰ Twice daily: 10:05 AM &amp; 3:05 PM IST\n\n🌐 <a href="https://market-cockpit.vercel.app">View Dashboard</a>'
+      '[OK] <b>Market Cockpit Watchlist Pulse Connected</b>\n\nYour watchlist alerts are active!\n\nPerformance card — Your tracked stocks\nRelevant news headlines\n\nTwice daily: 10:05 AM &amp; 3:05 PM IST\n\n<a href="https://market-cockpit.vercel.app">View Dashboard</a>'
     );
     diagnostics.steps.push(result.ok ? 'test_sent_ok' : 'test_send_failed');
     return NextResponse.json({ ok: result.ok, mode: 'test', telegramResponse: result.telegramResponse, error: result.error, diagnostics, elapsed: Date.now() - startTime });
@@ -849,7 +882,7 @@ export async function GET(request: Request) {
   if (stocks.length === 0) {
     diagnostics.steps.push('no_data_sending_closed_msg');
     const result = await sendTelegram(
-      '📊 <b>Market Cockpit Watchlist Pulse</b>\n\nMarket is closed or watchlist stocks unavailable.\n\n<i>Next alert during market hours.</i>'
+      '<b>Market Cockpit Watchlist Pulse</b>\n\nMarket is closed or watchlist stocks unavailable.\n\n<i>Next alert during market hours.</i>'
     );
     return NextResponse.json({ ok: result.ok, status: 'no-data', telegramResponse: result.telegramResponse, error: result.error, diagnostics, elapsed: Date.now() - startTime });
   }
@@ -861,7 +894,7 @@ export async function GET(request: Request) {
     const img = await generateWatchlistImage(stocks);
     const gainers = stocks.filter(s => s.changePercent > 0).length;
     const losers = stocks.filter(s => s.changePercent < 0).length;
-    const caption = `📊 <b>Watchlist Pulse</b>\n${stocks.length} stocks • ↑${gainers} ↓${losers}\n<a href="https://market-cockpit.vercel.app">Dashboard</a>`;
+    const caption = `<b>Watchlist Pulse</b>\n${stocks.length} stocks • Gainers: ${gainers} | Losers: ${losers}\n<a href="https://market-cockpit.vercel.app">Dashboard</a>`;
     const photoResult = await sendTelegramPhoto(img, caption);
     if (!photoResult.ok) {
       imageError = photoResult.error;
@@ -887,10 +920,10 @@ export async function GET(request: Request) {
   // Send news if available
   if (news.length > 0) {
     diagnostics.steps.push('sending_news');
-    const newsLines = ['<b>📰 Latest News</b>\n'];
+    const newsLines = ['<b>Latest News</b>\n'];
     for (let i = 0; i < news.length; i++) {
       newsLines.push(`${i + 1}. ${esc(truncate(news[i].title, 80))}`);
-      if (news[i].source) newsLines.push(`   <i>${news[i].source}</i>`);
+      if (news[i].source) newsLines.push(`   <i>Type: ${news[i].source}</i>`);
     }
     const newsResult = await sendTelegram(newsLines.join('\n'));
     diagnostics.steps.push(newsResult.ok ? 'news_sent_ok' : 'news_send_failed');
