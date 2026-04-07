@@ -4,43 +4,55 @@ import { kvGet } from '@/lib/kv';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
-// ── Bottleneck bucket definitions (yesterday's broad keyword approach) ──
+// ── Bottleneck bucket definitions (broad keyword approach) ──────────
 // Simple, broad keyword matching — catches everything relevant.
 // NO quality gate, NO constraint signal check, NO noise filter.
-const BOTTLENECK_BUCKETS: Record<string, { label: string; keywords: RegExp; severity_color: string; severity_icon: string }> = {
+const BOTTLENECK_BUCKETS: Record<string, {
+  label: string;
+  description: string;
+  keywords: RegExp;
+  severity_color: string;
+  severity_icon: string;
+}> = {
   // ── GLOBAL / SECTOR BUCKETS ──
   SEMICONDUCTOR: {
     label: 'Semiconductor & Chip Supply',
-    keywords: /\b(semiconductor|chip|wafer|foundry|fab|tsmc|samsung foundry|intel fab|asml|hbm|dram|nand|memory|gpu shortage|photonics|silicon|lithograph|osat|packaging|chip export|chip ban)\b/i,
+    description: 'Chip supply constraints, fab capacity, memory cycles, photonics, and export controls affecting semiconductor ecosystem',
+    keywords: /\b(semiconductor|chip|wafer|foundry|fab|tsmc|samsung foundry|intel fab|asml|hbm|dram|nand|memory|gpu shortage|photonics|silicon|lithograph|osat|packaging|chip export|chip ban|photonic|optical chip|silicon photonics|chip deal|chip revenue|chip boom|memory chip)\b/i,
     severity_color: '#DC2626',
     severity_icon: '🔴',
   },
   AI_INFRASTRUCTURE: {
     label: 'AI Infrastructure & Data Centers',
-    keywords: /\b(data center|gpu|nvidia|ai infrastructure|cloud capacity|hyperscal|power grid|ai chip|compute capacity|ai server|ai spending|ai investment|ai demand|ai boom|accelerator)\b/i,
+    description: 'GPU/accelerator demand, data center capacity, AI compute spending, and cloud infrastructure constraints',
+    keywords: /\b(data center|gpu|nvidia|ai infrastructure|cloud capacity|hyperscal|power grid|ai chip|compute capacity|ai server|ai spending|ai investment|ai demand|ai boom|accelerator|tpu|tensor processing)\b/i,
     severity_color: '#EA580C',
     severity_icon: '🟠',
   },
   ENERGY: {
     label: 'Energy & Power',
-    keywords: /\b(oil|crude|opec|natural gas|coal|power|electricity|energy crisis|fuel|refinery|lng|petrol|diesel|brent|wti|energy price|gasoline|heating oil|oil price|oil supply)\b/i,
+    description: 'Oil, gas, coal, and power supply dynamics including OPEC, refinery output, and energy pricing',
+    keywords: /\b(oil|crude|opec|natural gas|coal|power|electricity|energy crisis|fuel|refinery|lng|petrol|diesel|brent|wti|energy price|gasoline|heating oil|oil price|oil supply|oil production|strait of hormuz|hormuz)\b/i,
     severity_color: '#CA8A04',
     severity_icon: '🟡',
   },
   SUPPLY_CHAIN: {
     label: 'Global Supply Chain',
-    keywords: /\b(supply chain|logistics|shipping|freight|container|port|suez|panama|red sea|trade route|import|export|cargo|warehouse|inventory|stockpile|backlog)\b/i,
+    description: 'Logistics disruptions, shipping delays, port congestion, and trade route issues',
+    keywords: /\b(supply chain|logistics|shipping|freight|container|port|suez|panama|red sea|trade route|import|export|cargo|warehouse|inventory|stockpile|backlog|transshipment)\b/i,
     severity_color: '#D97706',
     severity_icon: '🟠',
   },
   TARIFF_TRADE: {
     label: 'Tariff & Trade War',
+    description: 'Tariff escalations, trade restrictions, sanctions, and protectionist policies',
     keywords: /\b(tariff|trade war|sanction|embargo|import duty|custom duty|trade restrict|export ban|export curb|trade barrier|anti.dumping|countervailing|protectionism|reshoring|nearshoring|decouple|friendshoring)\b/i,
     severity_color: '#B91C1C',
     severity_icon: '🔴',
   },
   COMMODITY_METALS: {
     label: 'Commodity & Metal Supply',
+    description: 'Critical metals, minerals, and commodity supply dynamics including rare earths',
     keywords: /\b(aluminium|aluminum|steel|copper|zinc|nickel|lithium|cobalt|rare earth|iron ore|metal price|commodity|mining|mineral|titanium|tin|lead|gold price|silver price|palladium|platinum)\b/i,
     severity_color: '#92400E',
     severity_icon: '🟤',
@@ -48,66 +60,99 @@ const BOTTLENECK_BUCKETS: Record<string, { label: string; keywords: RegExp; seve
   // ── INDIA-SPECIFIC BUCKETS ──
   INDIA_BANKING: {
     label: 'India Banking & Credit',
+    description: 'RBI policy, credit growth, NPA stress, NBFC liquidity, and SEBI regulations',
     keywords: /\b(rbi|npa|credit growth|bank|nbfc|lending|loan|deposit|liquidity|repo rate|monetary policy|sebi|mutual fund|sbi|hdfc|icici|axis bank|kotak)\b/i,
     severity_color: '#2563EB',
     severity_icon: '🔵',
   },
   INDIA_AGRI: {
     label: 'India Agriculture & Food',
+    description: 'Monsoon impact, crop output, food inflation, and fertilizer supply',
     keywords: /\b(monsoon|crop|agriculture|food|wheat|rice|sugar|fertilizer|msp|kharif|rabi|farm|agri|onion|tomato|vegetable|food inflation|edible oil|soybean)\b/i,
     severity_color: '#16A34A',
     severity_icon: '🟢',
   },
   INDIA_DEFENCE: {
     label: 'India Defence & Aerospace',
-    keywords: /\b(defence|defense|military|missile|fighter|hal|bhel|drdo|isro|satellite|aerospace|ammunition|navy|army|air force|warship|submarine|radar)\b/i,
+    description: 'Defence procurement, military modernization, DRDO/ISRO/HAL developments, and security',
+    keywords: /\b(defence|defense|military|missile|fighter|hal|bhel|drdo|isro|satellite|aerospace|ammunition|navy|army|air force|warship|submarine|radar|defense budget|defence budget)\b/i,
     severity_color: '#7C3AED',
     severity_icon: '🟣',
   },
   INDIA_PHARMA: {
     label: 'India Pharma & Healthcare',
+    description: 'Drug approvals, USFDA actions, API supply, and healthcare sector developments',
     keywords: /\b(pharma|drug|fda|usfda|anda|api|formulation|hospital|healthcare|vaccine|biotech|generic|clinical trial|medicine|cipla|sun pharma|dr reddy|lupin|divi)\b/i,
     severity_color: '#0891B2',
     severity_icon: '🔵',
   },
   INDIA_INFRA: {
     label: 'India Infrastructure & Real Estate',
+    description: 'Highway, railway, metro, port, airport, and real estate sector developments',
     keywords: /\b(infrastructure|highway|road|railway|metro|smart city|real estate|housing|cement|construction|bridge|tunnel|port|airport|rera|affordable housing|dlf|godrej|l&t)\b/i,
     severity_color: '#6D28D9',
     severity_icon: '🟣',
   },
   INDIA_AUTO: {
     label: 'India Auto & EV',
+    description: 'Auto sales, EV transition, battery supply, and vehicle manufacturing trends',
     keywords: /\b(auto|automobile|car|vehicle|ev|electric vehicle|tata motors|maruti|mahindra|bajaj|hero|two wheeler|suv|battery|charging|ola electric|ather)\b/i,
     severity_color: '#059669',
     severity_icon: '🟢',
   },
+  INDIA_NUCLEAR: {
+    label: 'India Nuclear & Atomic Energy',
+    description: 'Nuclear reactor milestones, atomic energy program, thorium cycle, and nuclear power capacity',
+    keywords: /\b(nuclear reactor|atomic reactor|nuclear power|atomic energy|thorium|breeder reactor|kalpakkam|bhabha|nuclear fuel|criticality|nuclear plant|atomic plant|uranium india|nuclear capacity|fast breeder|nuclear milestone)\b/i,
+    severity_color: '#0E7490',
+    severity_icon: '⚛️',
+  },
   // ── US-SPECIFIC BUCKETS ──
   US_TECH: {
     label: 'US Tech & Innovation',
+    description: 'Big tech earnings, AI race, cloud computing, and Silicon Valley developments',
     keywords: /\b(apple|google|microsoft|amazon|meta|tesla|netflix|alphabet|openai|chatgpt|artificial intelligence|machine learning|big tech|tech stock|silicon valley|cloud computing|saas|cybersecurity|quantum|spacex)\b/i,
     severity_color: '#3B82F6',
     severity_icon: '🔵',
   },
   US_FINANCE: {
     label: 'US Finance & Fed',
+    description: 'Federal Reserve policy, inflation data, bond yields, and Wall Street developments',
     keywords: /\b(fed|federal reserve|interest rate|rate hike|rate cut|inflation|cpi|pce|treasury|bond yield|wall street|jpmorgan|goldman|bank of america|citigroup|morgan stanley|recession|stagflation|fomc|powell)\b/i,
     severity_color: '#1E40AF',
     severity_icon: '🔵',
   },
   US_TRADE: {
     label: 'US Trade & Geopolitics',
+    description: 'US-China tensions, Iran/Middle East, sanctions, and trade policy developments',
     keywords: /\b(china trade|us china|taiwan|geopolit|pentagon|nato|ukraine|russia|iran|middle east|south china sea|trade deal|trade deficit|commerce department|treasury department|state department|biden|trump|executive order)\b/i,
     severity_color: '#991B1B',
     severity_icon: '🔴',
   },
   US_ENERGY: {
     label: 'US Energy & Climate',
+    description: 'Shale, LNG, renewables, nuclear power, EV battery supply, and energy transition',
     keywords: /\b(shale|permian|natural gas|lng export|oil rig|pipeline|renewable|solar|wind energy|nuclear|uranium|ev battery|lithium|clean energy|carbon|climate|epa|energy transition|hydrogen)\b/i,
     severity_color: '#D97706',
     severity_icon: '🟠',
   },
+  US_DEFENCE: {
+    label: 'US Defence & Military',
+    description: 'Defense budget, Pentagon spending, military procurement, and defense tech',
+    keywords: /\b(defense budget|defence budget|pentagon|military spending|defense spending|defense contract|lockheed|raytheon|northrop|boeing defense|general dynamics|l3harris|defense startup|military tech|arms deal|weapons system|trillion.*defense|defense.*trillion|fighter jet|f-35|f-16|naval|aircraft carrier)\b/i,
+    severity_color: '#581C87',
+    severity_icon: '🟣',
+  },
 };
+
+// Severity calculation based on signal count
+function getSeverity(signalCount: number): { severity: number; severity_label: string } {
+  if (signalCount >= 10) return { severity: 5, severity_label: 'CRITICAL' };
+  if (signalCount >= 5)  return { severity: 4, severity_label: 'HIGH' };
+  if (signalCount >= 3)  return { severity: 3, severity_label: 'ELEVATED' };
+  if (signalCount >= 1)  return { severity: 2, severity_label: 'WATCH' };
+  return { severity: 1, severity_label: 'LOW' };
+}
 
 // ── RSS Feeds for live scanning ─────────────────────────────────────
 const BOTTLENECK_RSS = [
@@ -242,9 +287,15 @@ export async function GET(request: Request) {
           return true;
         });
 
+        const { severity, severity_label } = getSeverity(dedupedSignals.length);
+
         buckets.push({
+          bucket_id: key,
           bucket_name: key,
           label: config.label,
+          description: config.description,
+          severity,
+          severity_label,
           severity_color: config.severity_color,
           severity_icon: config.severity_icon,
           signal_count: dedupedSignals.length,

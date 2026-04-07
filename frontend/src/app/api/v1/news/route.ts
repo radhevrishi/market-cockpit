@@ -37,10 +37,11 @@ const CACHE_TTL = 300; // 5 min
 function classifyArticle(title: string, desc: string): { article_type: string; investment_tier: number } {
   const text = (title + ' ' + desc).toLowerCase();
 
-  if (/bottleneck|supply chain|shortage|disruption|capacity constraint|chip shortage|semiconductor|tariff|trade war|sanction|embargo|fed rate|rate hike|rate cut|inflation|crude oil|opec|energy crisis/i.test(text))
-    return { article_type: 'BOTTLENECK', investment_tier: 1 };
-  if (/earnings|quarterly|q[1-4]\s?(fy|20)|profit|revenue|results/i.test(text))
+  // Check EARNINGS first — "beats expectations", "raises guidance" etc. are earnings, not bottlenecks
+  if (/earnings|quarterly|q[1-4]\s?(fy|20)|profit|revenue|results|beats? expectation|miss(es|ed)? expectation|guidance (raise|lower|maintain|reaffirm)|eps /i.test(text))
     return { article_type: 'EARNINGS', investment_tier: 1 };
+  if (/bottleneck|supply chain|shortage|disruption|capacity constraint|chip shortage|semiconductor|tariff|trade war|sanction|embargo|crude oil|opec|energy crisis|photonics|wafer|memory chip|nuclear reactor|defense budget|defence budget/i.test(text))
+    return { article_type: 'BOTTLENECK', investment_tier: 1 };
   if (/upgrade|downgrade|rating|target price|buy|sell|hold|outperform|underperform/i.test(text))
     return { article_type: 'RATING_CHANGE', investment_tier: 1 };
   if (/rbi|fed|inflation|gdp|rate cut|rate hike|monetary|fiscal|trade deficit|current account/i.test(text))
