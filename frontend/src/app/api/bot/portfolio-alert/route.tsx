@@ -296,7 +296,7 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
   const HEADER_H = 48;
   const METRICS_H = 36;
   const COL_HEADER_H = 32;
-  const ROW_H = 38;
+  const ROW_H = 46;
   const FOOTER_H = 28;
   const totalHeight = ACCENT_H + HEADER_H + METRICS_H + COL_HEADER_H + displayStocks.length * ROW_H + FOOTER_H;
 
@@ -353,7 +353,7 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
           alignItems: 'flex-start',
         }}>
           <span style={{
-            fontSize: '16px',
+            fontSize: '23px',
             fontWeight: 700,
             color: '#E5E7EB',
             letterSpacing: '2px',
@@ -365,7 +365,7 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
 
         {/* Right: Date */}
         <span style={{
-          fontSize: '12px',
+          fontSize: '14px',
           color: '#9CA3AF',
           letterSpacing: '0.5px',
         }}>
@@ -384,7 +384,7 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
           paddingBottom: '8px',
           height: `${METRICS_H}px`,
           backgroundColor: '#111827',
-          fontSize: '13px',
+          fontSize: '16px',
           color: '#E5E7EB',
           borderBottomWidth: '1px',
           borderBottomStyle: 'solid',
@@ -428,7 +428,7 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
           borderBottomWidth: '1px',
           borderBottomStyle: 'solid',
           borderBottomColor: '#1F2937',
-          fontSize: '11px',
+          fontSize: '13px',
           fontWeight: 700,
           color: '#64748B',
           letterSpacing: '0.8px',
@@ -480,7 +480,7 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
               width: '30px',
               marginRight: '12px',
               color: '#64748B',
-              fontSize: '11px',
+              fontSize: '13px',
               fontWeight: 600,
             }}>
               {i + 1}
@@ -492,7 +492,7 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
               marginRight: '12px',
               fontWeight: 700,
               color: '#E5E7EB',
-              fontSize: '14px',
+              fontSize: '17px',
               fontFamily: 'monospace',
             }}>
               {truncate(s.ticker, 12)}
@@ -504,7 +504,7 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
               marginRight: '12px',
               color: pctColor,
               fontWeight: 700,
-              fontSize: '14px',
+              fontSize: '17px',
               fontFamily: 'monospace',
               textAlign: 'right' as const,
             }}>
@@ -516,7 +516,7 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
               width: '90px',
               marginRight: '12px',
               color: '#E5E7EB',
-              fontSize: '14px',
+              fontSize: '17px',
               fontFamily: 'monospace',
               textAlign: 'right' as const,
             }}>
@@ -528,7 +528,7 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
               width: '80px',
               marginRight: '12px',
               color: chgColor,
-              fontSize: '13px',
+              fontSize: '17px',
               fontFamily: 'monospace',
               textAlign: 'right' as const,
             }}>
@@ -539,7 +539,7 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
             <div style={{
               width: '140px',
               color: '#9CA3AF',
-              fontSize: '12px',
+              fontSize: '13px',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap' as const,
@@ -565,7 +565,7 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
           borderTopWidth: '1px',
           borderTopStyle: 'solid',
           borderTopColor: '#1F2937',
-          fontSize: '11px',
+          fontSize: '13px',
           color: '#64748B',
           letterSpacing: '0.5px',
         }}
@@ -991,52 +991,9 @@ export async function GET(request: Request) {
     await sendTelegram(msg);
   }
 
-  // Also send intelligence signals if available
-  if (mode === 'full') {
-    try {
-      const signals = await fetchPortfolioIntelligence(portfolio);
-      if (signals.length > 0) {
-        const lines = [`<b>Portfolio Intelligence</b>\n`];
-        for (const s of signals.slice(0, 5)) {
-          const tier = s.signalTierV7 === 'ACTIONABLE' ? '[ACTION]' : s.signalTierV7 === 'NOTABLE' ? '[NOTABLE]' : '[INFO]';
-          const action = s.action || 'MONITOR';
-          const name = s.symbol || s.ticker || s.primaryTicker || '???';
-          const company = s.company || s.companyName || '';
-          const impact = s.impactLevel ? ` · ${s.impactLevel}` : '';
-          const value = s.eventValueCr ? ` · ₹${s.eventValueCr} Cr` : '';
-          lines.push(`${tier} <b>${esc(name)}</b>${company ? ` (${esc(truncate(company, 25))})` : ''}  <code>${action}</code>`);
-          const desc = s.headline || s.narrative || s.summary || s.eventType || '';
-          if (desc) lines.push(`   ${esc(truncate(desc, 80))}`);
-          if (s.eventType) lines.push(`   <i>${s.eventType}${impact}${value}</i>`);
-          lines.push('');
-        }
-        lines.push(`<a href="https://market-cockpit.vercel.app/orders">Full Intelligence</a>`);
-        await sendTelegram(lines.join('\n'));
-        diagnostics.steps.push('intel_sent');
-      }
-    } catch (e) {
-      console.warn('[PORTFOLIO] Intel fetch failed:', e);
-    }
-  }
-
-  // Fetch and send news
-  try {
-    const news = await fetchPortfolioNews(portfolio);
-    diagnostics.steps.push(`news_fetched_${news.length}`);
-
-    if (news.length > 0) {
-      const newsLines = [`<b>Portfolio News</b>\n`];
-      for (let i = 0; i < Math.min(news.length, 8); i++) {
-        newsLines.push(`${i + 1}. ${esc(truncate(news[i].title, 80))}`);
-        if (news[i].source) newsLines.push(`   <i>[${news[i].source}]</i>`);
-      }
-      const newsResult = await sendTelegram(newsLines.join('\n'));
-      diagnostics.steps.push(newsResult.ok ? 'news_sent' : 'news_failed');
-    }
-  } catch (e) {
-    console.warn('[PORTFOLIO] News fetch failed:', e);
-    diagnostics.steps.push('news_error');
-  }
+  // Intel and news are only sent via explicit /intel and /news commands
+  // The scheduled GET alert only sends the portfolio image card
+  diagnostics.steps.push('done');
 
   return NextResponse.json({
     ok: true,

@@ -311,7 +311,7 @@ async function generateMoversImage(
   const HEADER_H = 48;
   const KPI_H = 32;
   const COL_HEADER_H = 28;
-  const ROW_H = 38;
+  const ROW_H = 46;
   const FOOTER_H = 32;
   const totalHeight = ACCENT_H + HEADER_H + KPI_H + COL_HEADER_H + displayStocks.length * ROW_H + FOOTER_H;
 
@@ -357,10 +357,10 @@ async function generateMoversImage(
           borderBottom: `1px solid #1F2937`,
         }}
       >
-        <span style={{ fontSize: '16px', fontWeight: 700, color: accentColor, letterSpacing: '2px', textTransform: 'uppercase' as const }}>
+        <span style={{ fontSize: '23px', fontWeight: 700, color: accentColor, letterSpacing: '2px', textTransform: 'uppercase' as const }}>
           {isGainers ? 'Top Gainers' : 'Top Losers'}
         </span>
-        <span style={{ fontSize: '11px', color: '#9CA3AF', letterSpacing: '0.5px' }}>
+        <span style={{ fontSize: '14px', color: '#9CA3AF', letterSpacing: '0.5px' }}>
           {displayStocks.length} stocks · {timestamp}
         </span>
       </div>
@@ -376,7 +376,7 @@ async function generateMoversImage(
           paddingBottom: '8px',
           height: `${KPI_H}px`,
           backgroundColor: '#111827',
-          fontSize: '12px',
+          fontSize: '15px',
           color: '#E5E7EB',
           borderBottom: `1px solid #1F2937`,
           fontFamily: 'monospace',
@@ -407,7 +407,7 @@ async function generateMoversImage(
           paddingLeft: '28px',
           paddingRight: '28px',
           height: `${COL_HEADER_H}px`,
-          fontSize: '11px',
+          fontSize: '13px',
           fontWeight: 700,
           color: '#64748B',
           backgroundColor: '#111827',
@@ -439,32 +439,32 @@ async function generateMoversImage(
               paddingTop: '6px',
               paddingBottom: '6px',
               backgroundColor: i % 2 === 0 ? '#0F172A' : '#111827',
-              fontSize: '14px',
+              fontSize: '17px',
               alignItems: 'center',
               height: `${ROW_H}px`,
               borderLeft: `3px solid ${accentColor}`,
               borderBottom: `1px solid #1F2937`,
             }}
           >
-            <span style={{ width: '30px', color: '#9CA3AF', fontSize: '12px', fontWeight: 600 }}>{i + 1}</span>
-            <span style={{ width: '100px', fontWeight: 700, color: '#E5E7EB', fontSize: '14px', letterSpacing: '0.3px', marginLeft: '12px' }}>
+            <span style={{ width: '30px', color: '#9CA3AF', fontSize: '15px', fontWeight: 600 }}>{i + 1}</span>
+            <span style={{ width: '100px', fontWeight: 700, color: '#E5E7EB', fontSize: '17px', letterSpacing: '0.3px', marginLeft: '12px' }}>
               {truncate(s.ticker, 12)}
             </span>
             <div style={{ display: 'flex', width: '90px', alignItems: 'center', marginLeft: '12px' }}>
-              <span style={{ fontSize: '14px', fontWeight: 700, color: accentColor, fontFamily: 'monospace' }}>
+              <span style={{ fontSize: '17px', fontWeight: 700, color: accentColor, fontFamily: 'monospace' }}>
                 {arrow} {isGainers ? '+' : ''}{s.changePercent.toFixed(1)}%
               </span>
             </div>
-            <span style={{ width: '90px', textAlign: 'right', color: '#E5E7EB', fontSize: '14px', fontWeight: 600, fontFamily: 'monospace', marginLeft: '12px' }}>
+            <span style={{ width: '90px', textAlign: 'right', color: '#E5E7EB', fontSize: '17px', fontWeight: 600, fontFamily: 'monospace', marginLeft: '12px' }}>
               {s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}
             </span>
-            <span style={{ width: '80px', textAlign: 'right', color: accentColor, fontSize: '13px', fontFamily: 'monospace', marginLeft: '12px' }}>
+            <span style={{ width: '80px', textAlign: 'right', color: accentColor, fontSize: '16px', fontFamily: 'monospace', marginLeft: '12px' }}>
               {isGainers ? '+' : ''}{s.change.toFixed(1)}
             </span>
-            <span style={{ width: '120px', color: '#9CA3AF', fontSize: '12px', marginLeft: '12px' }}>
+            <span style={{ width: '120px', color: '#9CA3AF', fontSize: '15px', marginLeft: '12px' }}>
               {truncate(s.sector, 20)}
             </span>
-            <span style={{ width: '100px', color: '#9CA3AF', fontSize: '12px', marginLeft: '12px' }}>
+            <span style={{ width: '100px', color: '#9CA3AF', fontSize: '15px', marginLeft: '12px' }}>
               {s.cap === 'L' ? 'Large' : s.cap === 'M' ? 'Mid' : 'Small'}
             </span>
           </div>
@@ -483,7 +483,7 @@ async function generateMoversImage(
           paddingBottom: '6px',
           height: `${FOOTER_H}px`,
           backgroundColor: '#111827',
-          fontSize: '11px',
+          fontSize: '12px',
           color: '#64748B',
           borderTop: `1px solid #1F2937`,
           marginTop: 'auto',
@@ -521,7 +521,7 @@ async function generateStreetPulseCard(
   const BREADTH_H = 28;
   const SECTION_LABEL_H = 28;
   const COL_HEADER_H = 28;
-  const ROW_H = 38;
+  const ROW_H = 46;
   const FOOTER_H = 32;
   const totalHeight =
     ACCENT_H +
@@ -569,10 +569,10 @@ async function generateStreetPulseCard(
           borderBottom: `1px solid #1F2937`,
         }}
       >
-        <span style={{ fontSize: '18px', fontWeight: 700, color: '#E5E7EB', letterSpacing: '2px', textTransform: 'uppercase' as const }}>
+        <span style={{ fontSize: '24px', fontWeight: 700, color: '#E5E7EB', letterSpacing: '2px', textTransform: 'uppercase' as const }}>
           Street Pulse
         </span>
-        <span style={{ fontSize: '11px', color: '#9CA3AF', letterSpacing: '0.5px' }}>
+        <span style={{ fontSize: '14px', color: '#9CA3AF', letterSpacing: '0.5px' }}>
           {timestamp}
         </span>
       </div>
@@ -589,7 +589,7 @@ async function generateStreetPulseCard(
             paddingBottom: '6px',
             height: `${INDEX_H}px`,
             backgroundColor: '#111827',
-            fontSize: '12px',
+            fontSize: '15px',
             borderBottom: `1px solid #1F2937`,
           }}
         >
@@ -611,13 +611,13 @@ async function generateStreetPulseCard(
                   marginRight: '24px',
                 }}
               >
-                <span style={{ color: '#9CA3AF', fontSize: '11px', marginRight: '6px' }}>
+                <span style={{ color: '#9CA3AF', fontSize: '14px', marginRight: '6px' }}>
                   {idx.shortName}
                 </span>
-                <span style={{ color: '#E5E7EB', fontSize: '12px', fontWeight: 700, fontFamily: 'monospace', marginRight: '6px' }}>
+                <span style={{ color: '#E5E7EB', fontSize: '15px', fontWeight: 700, fontFamily: 'monospace', marginRight: '6px' }}>
                   {isVix ? idx.level.toFixed(1) : idx.level.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                 </span>
-                <span style={{ color: idxColor, fontSize: '11px', fontWeight: 700, fontFamily: 'monospace' }}>
+                <span style={{ color: idxColor, fontSize: '14px', fontWeight: 700, fontFamily: 'monospace' }}>
                   {idx.changePercent >= 0 ? '+' : ''}{idx.changePercent.toFixed(2)}%
                 </span>
                 {i < indices.length - 1 && (
@@ -695,10 +695,10 @@ async function generateStreetPulseCard(
         }}
       >
         <div style={{ display: 'flex', width: '3px', height: '16px', backgroundColor: '#16A34A', marginRight: '12px' }} />
-        <span style={{ fontSize: '12px', fontWeight: 700, color: '#16A34A', letterSpacing: '1px', textTransform: 'uppercase' as const }}>
+        <span style={{ fontSize: '18px', fontWeight: 700, color: '#16A34A', letterSpacing: '1px', textTransform: 'uppercase' as const }}>
           Top Gainers
         </span>
-        <span style={{ fontSize: '10px', color: '#9CA3AF', marginLeft: '8px' }}>
+        <span style={{ fontSize: '14px', color: '#9CA3AF', marginLeft: '8px' }}>
           ({topG.length})
         </span>
       </div>
@@ -713,7 +713,7 @@ async function generateStreetPulseCard(
           paddingBottom: '4px',
           height: `${COL_HEADER_H}px`,
           backgroundColor: '#111827',
-          fontSize: '10px',
+          fontSize: '13px',
           fontWeight: 700,
           color: '#64748B',
           borderBottom: `1px solid #1F2937`,
@@ -742,30 +742,30 @@ async function generateStreetPulseCard(
             paddingTop: '6px',
             paddingBottom: '6px',
             backgroundColor: i % 2 === 0 ? '#0F172A' : '#111827',
-            fontSize: '13px',
+            fontSize: '17px',
             alignItems: 'center',
             height: `${ROW_H}px`,
             borderLeft: `3px solid #16A34A`,
             borderBottom: `1px solid #1F2937`,
           }}
         >
-          <span style={{ width: '28px', color: '#9CA3AF', fontSize: '12px', fontWeight: 600 }}>{i + 1}</span>
-          <span style={{ width: '100px', fontWeight: 700, color: '#E5E7EB', fontSize: '13px', marginLeft: '12px' }}>
+          <span style={{ width: '28px', color: '#9CA3AF', fontSize: '15px', fontWeight: 600 }}>{i + 1}</span>
+          <span style={{ width: '100px', fontWeight: 700, color: '#E5E7EB', fontSize: '17px', marginLeft: '12px' }}>
             {truncate(s.ticker, 12)}
           </span>
-          <span style={{ width: '80px', color: '#16A34A', fontSize: '13px', fontWeight: 700, fontFamily: 'monospace', marginLeft: '12px' }}>
+          <span style={{ width: '80px', color: '#16A34A', fontSize: '17px', fontWeight: 700, fontFamily: 'monospace', marginLeft: '12px' }}>
             ↑ +{s.changePercent.toFixed(1)}%
           </span>
-          <span style={{ width: '80px', textAlign: 'right', color: '#E5E7EB', fontSize: '13px', fontWeight: 600, fontFamily: 'monospace', marginLeft: '12px' }}>
+          <span style={{ width: '80px', textAlign: 'right', color: '#E5E7EB', fontSize: '17px', fontWeight: 600, fontFamily: 'monospace', marginLeft: '12px' }}>
             {s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}
           </span>
-          <span style={{ width: '70px', textAlign: 'right', color: '#16A34A', fontSize: '12px', fontFamily: 'monospace', marginLeft: '12px' }}>
+          <span style={{ width: '70px', textAlign: 'right', color: '#16A34A', fontSize: '16px', fontFamily: 'monospace', marginLeft: '12px' }}>
             +{s.change.toFixed(1)}
           </span>
-          <span style={{ width: '120px', color: '#9CA3AF', fontSize: '12px', marginLeft: '12px' }}>
+          <span style={{ width: '120px', color: '#9CA3AF', fontSize: '15px', marginLeft: '12px' }}>
             {truncate(s.sector, 20)}
           </span>
-          <span style={{ width: '100px', color: '#9CA3AF', fontSize: '12px', marginLeft: '12px' }}>
+          <span style={{ width: '100px', color: '#9CA3AF', fontSize: '15px', marginLeft: '12px' }}>
             {s.cap === 'L' ? 'Large' : s.cap === 'M' ? 'Mid' : 'Small'}
           </span>
         </div>
@@ -787,10 +787,10 @@ async function generateStreetPulseCard(
         }}
       >
         <div style={{ display: 'flex', width: '3px', height: '16px', backgroundColor: '#DC2626', marginRight: '12px' }} />
-        <span style={{ fontSize: '12px', fontWeight: 700, color: '#DC2626', letterSpacing: '1px', textTransform: 'uppercase' as const }}>
+        <span style={{ fontSize: '18px', fontWeight: 700, color: '#DC2626', letterSpacing: '1px', textTransform: 'uppercase' as const }}>
           Top Losers
         </span>
-        <span style={{ fontSize: '10px', color: '#9CA3AF', marginLeft: '8px' }}>
+        <span style={{ fontSize: '14px', color: '#9CA3AF', marginLeft: '8px' }}>
           ({topL.length})
         </span>
       </div>
@@ -805,7 +805,7 @@ async function generateStreetPulseCard(
           paddingBottom: '4px',
           height: `${COL_HEADER_H}px`,
           backgroundColor: '#111827',
-          fontSize: '10px',
+          fontSize: '13px',
           fontWeight: 700,
           color: '#64748B',
           borderBottom: `1px solid #1F2937`,
@@ -834,30 +834,30 @@ async function generateStreetPulseCard(
             paddingTop: '6px',
             paddingBottom: '6px',
             backgroundColor: i % 2 === 0 ? '#0F172A' : '#111827',
-            fontSize: '13px',
+            fontSize: '17px',
             alignItems: 'center',
             height: `${ROW_H}px`,
             borderLeft: `3px solid #DC2626`,
             borderBottom: `1px solid #1F2937`,
           }}
         >
-          <span style={{ width: '28px', color: '#9CA3AF', fontSize: '12px', fontWeight: 600 }}>{i + 1}</span>
-          <span style={{ width: '100px', fontWeight: 700, color: '#E5E7EB', fontSize: '13px', marginLeft: '12px' }}>
+          <span style={{ width: '28px', color: '#9CA3AF', fontSize: '15px', fontWeight: 600 }}>{i + 1}</span>
+          <span style={{ width: '100px', fontWeight: 700, color: '#E5E7EB', fontSize: '17px', marginLeft: '12px' }}>
             {truncate(s.ticker, 12)}
           </span>
-          <span style={{ width: '80px', color: '#DC2626', fontSize: '13px', fontWeight: 700, fontFamily: 'monospace', marginLeft: '12px' }}>
+          <span style={{ width: '80px', color: '#DC2626', fontSize: '17px', fontWeight: 700, fontFamily: 'monospace', marginLeft: '12px' }}>
             ↓ {s.changePercent.toFixed(1)}%
           </span>
-          <span style={{ width: '80px', textAlign: 'right', color: '#E5E7EB', fontSize: '13px', fontWeight: 600, fontFamily: 'monospace', marginLeft: '12px' }}>
+          <span style={{ width: '80px', textAlign: 'right', color: '#E5E7EB', fontSize: '17px', fontWeight: 600, fontFamily: 'monospace', marginLeft: '12px' }}>
             {s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}
           </span>
-          <span style={{ width: '70px', textAlign: 'right', color: '#DC2626', fontSize: '12px', fontFamily: 'monospace', marginLeft: '12px' }}>
+          <span style={{ width: '70px', textAlign: 'right', color: '#DC2626', fontSize: '16px', fontFamily: 'monospace', marginLeft: '12px' }}>
             {s.change.toFixed(1)}
           </span>
-          <span style={{ width: '120px', color: '#9CA3AF', fontSize: '12px', marginLeft: '12px' }}>
+          <span style={{ width: '120px', color: '#9CA3AF', fontSize: '15px', marginLeft: '12px' }}>
             {truncate(s.sector, 20)}
           </span>
-          <span style={{ width: '100px', color: '#9CA3AF', fontSize: '12px', marginLeft: '12px' }}>
+          <span style={{ width: '100px', color: '#9CA3AF', fontSize: '15px', marginLeft: '12px' }}>
             {s.cap === 'L' ? 'Large' : s.cap === 'M' ? 'Mid' : 'Small'}
           </span>
         </div>
@@ -875,7 +875,7 @@ async function generateStreetPulseCard(
           paddingBottom: '6px',
           height: `${FOOTER_H}px`,
           backgroundColor: '#111827',
-          fontSize: '10px',
+          fontSize: '12px',
           color: '#64748B',
           borderTop: `1px solid #1F2937`,
           marginTop: 'auto',
