@@ -291,12 +291,13 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
   const timestamp = getISTTimestamp();
   const W = 1200;
 
-  const ACCENT_H = 4;
-  const HEADER_H = 72;
-  const METRICS_H = 64;
-  const COL_HEADER_H = 36;
+  // Dark theme dimensions
+  const ACCENT_H = 3;
+  const HEADER_H = 48;
+  const METRICS_H = 36;
+  const COL_HEADER_H = 32;
   const ROW_H = 38;
-  const FOOTER_H = 36;
+  const FOOTER_H = 28;
   const totalHeight = ACCENT_H + HEADER_H + METRICS_H + COL_HEADER_H + displayStocks.length * ROW_H + FOOTER_H;
 
   // Sort by change percent descending
@@ -309,18 +310,6 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
     ? Math.round(stocks.reduce((sum, s) => sum + s.changePercent, 0) / stocks.length * 100) / 100
     : 0;
 
-  // Best & worst performers
-  const best = sorted[0];
-  const worst = sorted[sorted.length - 1];
-  const moodColor = avgChange > 0.3 ? '#10B981' : avgChange < -0.3 ? '#EF4444' : '#F59E0B';
-  const moodLabel = avgChange > 0.3 ? 'BULLISH' : avgChange < -0.3 ? 'BEARISH' : 'NEUTRAL';
-
-  // 52W range helper — position as pct (0-100) within 52w band
-  const w52Pct = (s: Stock) => {
-    if (!s.weekHigh52 || !s.weekLow52 || s.weekHigh52 === s.weekLow52) return null;
-    return Math.max(0, Math.min(100, Math.round(((s.price - s.weekLow52) / (s.weekHigh52 - s.weekLow52)) * 100)));
-  };
-
   const element = (
     <div
       style={{
@@ -328,224 +317,261 @@ async function generatePortfolioImage(stocks: Stock[]): Promise<ArrayBuffer> {
         flexDirection: 'column',
         width: `${W}px`,
         height: `${totalHeight}px`,
-        backgroundColor: '#FFFFFF',
-        fontFamily: 'Inter, Menlo, system-ui, sans-serif',
+        backgroundColor: '#0F172A',
+        fontFamily: 'sans-serif',
       }}
     >
-      {/* ── Top accent gradient bar ── */}
-      <div style={{ display: 'flex', width: '100%', height: `${ACCENT_H}px`, background: 'linear-gradient(90deg, #7C3AED 0%, #8B5CF6 40%, #A78BFA 100%)' }} />
+      {/* ── Top accent gradient bar (3px) ── */}
+      <div style={{
+        display: 'flex',
+        width: '100%',
+        height: `${ACCENT_H}px`,
+        background: 'linear-gradient(90deg, #3B82F6 0%, #60A5FA 100%)',
+      }} />
 
-      {/* ── Header Row ── */}
+      {/* ── Header Row (slim, dark) ── */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          padding: '16px 28px 12px 28px',
+          paddingLeft: '24px',
+          paddingRight: '24px',
+          paddingTop: '10px',
+          paddingBottom: '10px',
           height: `${HEADER_H}px`,
+          backgroundColor: '#0F172A',
+          borderBottomWidth: '1px',
+          borderBottomStyle: 'solid',
+          borderBottomColor: '#1F2937',
         }}
       >
-        {/* Left: Title block */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '40px', height: '40px', borderRadius: '8px', backgroundColor: '#7C3AED', fontSize: '20px' }}>
-            P
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <span style={{ fontSize: '22px', fontWeight: 800, color: '#0F172A', letterSpacing: '1px', textTransform: 'uppercase' as const }}>
-              Portfolio Pulse
-            </span>
-            <span style={{ fontSize: '11px', color: '#64748B', letterSpacing: '0.5px', marginTop: '2px' }}>
-              {displayStocks.length} HOLDINGS  ·  LIVE  ·  {timestamp}
-            </span>
-          </div>
+        {/* Left: Title "PORTFOLIO PULSE" in small caps */}
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'flex-start',
+        }}>
+          <span style={{
+            fontSize: '16px',
+            fontWeight: 700,
+            color: '#E5E7EB',
+            letterSpacing: '2px',
+            textTransform: 'uppercase' as const,
+          }}>
+            Portfolio Pulse
+          </span>
         </div>
 
-        {/* Right: Mood badge */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            padding: '6px 14px',
-            borderRadius: '6px',
-            backgroundColor: avgChange > 0.3 ? '#F0FDF4' : avgChange < -0.3 ? '#FEF2F2' : '#FFF7ED',
-            border: `1px solid ${avgChange > 0.3 ? '#BBF7D0' : avgChange < -0.3 ? '#FECACA' : '#FED7AA'}`,
-          }}>
-            <span style={{ fontSize: '13px', fontWeight: 700, color: avgChange > 0.3 ? '#16A34A' : avgChange < -0.3 ? '#DC2626' : '#9A3412', letterSpacing: '0.5px' }}>
-              {moodLabel}
-            </span>
-          </div>
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            padding: '6px 14px',
-            borderRadius: '6px',
-            backgroundColor: '#F8FAFC',
-            border: '1px solid #E2E8F0',
-          }}>
-            <span style={{ fontSize: '15px', fontWeight: 700, color: moodColor }}>
-              {avgChange >= 0 ? '+' : ''}{avgChange.toFixed(2)}%
-            </span>
-          </div>
-        </div>
+        {/* Right: Date */}
+        <span style={{
+          fontSize: '12px',
+          color: '#9CA3AF',
+          letterSpacing: '0.5px',
+        }}>
+          {timestamp}
+        </span>
       </div>
 
-      {/* ── Metrics Strip ── */}
+      {/* ── Compact KPI Strip (single horizontal line) ── */}
       <div
         style={{
           display: 'flex',
-          padding: '0 28px',
+          alignItems: 'center',
+          paddingLeft: '24px',
+          paddingRight: '24px',
+          paddingTop: '8px',
+          paddingBottom: '8px',
           height: `${METRICS_H}px`,
-          gap: '12px',
+          backgroundColor: '#111827',
+          fontSize: '13px',
+          color: '#E5E7EB',
+          borderBottomWidth: '1px',
+          borderBottomStyle: 'solid',
+          borderBottomColor: '#1F2937',
         }}
       >
-        {/* Gainers */}
-        <div style={{ display: 'flex', flex: 1, flexDirection: 'column', justifyContent: 'center', padding: '10px 16px', backgroundColor: '#F0FDF4', borderRadius: '8px', border: '1px solid #BBF7D0' }}>
-          <span style={{ fontSize: '11px', color: '#16A34A', fontWeight: 600, letterSpacing: '0.5px' }}>GAINERS</span>
-          <span style={{ fontSize: '22px', fontWeight: 800, color: '#16A34A', marginTop: '2px' }}>{gainers}</span>
-        </div>
-        {/* Losers */}
-        <div style={{ display: 'flex', flex: 1, flexDirection: 'column', justifyContent: 'center', padding: '10px 16px', backgroundColor: '#FEF2F2', borderRadius: '8px', border: '1px solid #FECACA' }}>
-          <span style={{ fontSize: '11px', color: '#DC2626', fontWeight: 600, letterSpacing: '0.5px' }}>LOSERS</span>
-          <span style={{ fontSize: '22px', fontWeight: 800, color: '#DC2626', marginTop: '2px' }}>{losers}</span>
-        </div>
-        {/* Unchanged */}
-        <div style={{ display: 'flex', flex: 1, flexDirection: 'column', justifyContent: 'center', padding: '10px 16px', backgroundColor: '#F8FAFC', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
-          <span style={{ fontSize: '11px', color: '#475569', fontWeight: 600, letterSpacing: '0.5px' }}>FLAT</span>
-          <span style={{ fontSize: '22px', fontWeight: 800, color: '#475569', marginTop: '2px' }}>{unchanged}</span>
-        </div>
-        {/* Best Performer */}
-        <div style={{ display: 'flex', flex: 2, flexDirection: 'column', justifyContent: 'center', padding: '10px 16px', backgroundColor: '#F0FDF4', borderRadius: '8px', border: '1px solid #BBF7D0' }}>
-          <span style={{ fontSize: '11px', color: '#16A34A', fontWeight: 600, letterSpacing: '0.5px' }}>TOP PERFORMER</span>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginTop: '2px' }}>
-            <span style={{ fontSize: '16px', fontWeight: 800, color: '#0F172A' }}>{best?.ticker || '—'}</span>
-            <span style={{ fontSize: '14px', fontWeight: 700, color: '#16A34A' }}>+{best?.changePercent?.toFixed(1) || '0'}%</span>
-          </div>
-        </div>
-        {/* Worst Performer */}
-        <div style={{ display: 'flex', flex: 2, flexDirection: 'column', justifyContent: 'center', padding: '10px 16px', backgroundColor: '#FEF2F2', borderRadius: '8px', border: '1px solid #FECACA' }}>
-          <span style={{ fontSize: '11px', color: '#DC2626', fontWeight: 600, letterSpacing: '0.5px' }}>WORST PERFORMER</span>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginTop: '2px' }}>
-            <span style={{ fontSize: '16px', fontWeight: 800, color: '#0F172A' }}>{worst?.ticker || '—'}</span>
-            <span style={{ fontSize: '14px', fontWeight: 700, color: '#DC2626' }}>{worst?.changePercent?.toFixed(1) || '0'}%</span>
-          </div>
-        </div>
+        <span style={{ marginRight: '24px' }}>
+          <span style={{ color: '#9CA3AF' }}>{displayStocks.length}</span>
+          <span style={{ marginLeft: '4px', color: '#9CA3AF' }}>Stocks</span>
+        </span>
+        <span style={{ marginRight: '24px' }}>
+          <span style={{ color: '#16A34A', fontWeight: 700 }}>{gainers}</span>
+          <span style={{ marginLeft: '4px', color: '#9CA3AF' }}>Up</span>
+        </span>
+        <span style={{ marginRight: '24px' }}>
+          <span style={{ color: '#DC2626', fontWeight: 700 }}>{losers}</span>
+          <span style={{ marginLeft: '4px', color: '#9CA3AF' }}>Down</span>
+        </span>
+        <span style={{ marginRight: '24px' }}>
+          <span style={{ color: '#9CA3AF', fontWeight: 700 }}>{unchanged}</span>
+          <span style={{ marginLeft: '4px', color: '#9CA3AF' }}>Flat</span>
+        </span>
+        <span style={{ marginRight: '0px' }}>
+          <span style={{ color: avgChange >= 0 ? '#16A34A' : '#DC2626', fontWeight: 700 }}>
+            {avgChange >= 0 ? '+' : ''}{avgChange.toFixed(2)}%
+          </span>
+          <span style={{ marginLeft: '4px', color: '#9CA3AF' }}>Avg</span>
+        </span>
       </div>
 
-      {/* ── Column Headers ── */}
+      {/* ── Column Headers (uppercase, muted, letter-spacing) ── */}
       <div
         style={{
           display: 'flex',
-          padding: '8px 28px',
-          marginTop: '8px',
-          borderBottom: '1px solid #E2E8F0',
-          fontSize: '10px',
+          paddingLeft: '24px',
+          paddingRight: '24px',
+          paddingTop: '6px',
+          paddingBottom: '6px',
+          height: `${COL_HEADER_H}px`,
+          backgroundColor: '#0F172A',
+          borderBottomWidth: '1px',
+          borderBottomStyle: 'solid',
+          borderBottomColor: '#1F2937',
+          fontSize: '11px',
           fontWeight: 700,
-          color: '#475569',
-          letterSpacing: '1px',
+          color: '#64748B',
+          letterSpacing: '0.8px',
           textTransform: 'uppercase' as const,
-          backgroundColor: '#F1F5F9',
+          alignItems: 'center',
         }}
       >
-        <span style={{ width: '30px' }}>#</span>
-        <span style={{ width: '120px' }}>SYMBOL</span>
-        <span style={{ width: '170px' }}>SECTOR</span>
-        <span style={{ width: '100px', textAlign: 'right' }}>PRICE</span>
-        <span style={{ width: '90px', textAlign: 'right' }}>CHG</span>
-        <span style={{ width: '80px', textAlign: 'right' }}>%CHG</span>
-        <span style={{ width: '120px', textAlign: 'right' }}>DAY RANGE</span>
-        <span style={{ width: '180px', textAlign: 'center' }}>52W POSITION</span>
+        <div style={{ width: '30px', marginRight: '12px' }}>#</div>
+        <div style={{ width: '100px', marginRight: '12px' }}>Symbol</div>
+        <div style={{ width: '100px', marginRight: '12px' }}>%Change</div>
+        <div style={{ width: '90px', marginRight: '12px', textAlign: 'right' }}>Price</div>
+        <div style={{ width: '80px', marginRight: '12px', textAlign: 'right' }}>Change</div>
+        <div style={{ width: '140px', marginRight: '0px' }}>Sector</div>
       </div>
 
-      {/* ── Data Rows ── */}
+      {/* ── Data Rows (zebra striped with row accent border) ── */}
       {sorted.map((s, i) => {
         const isPositive = s.changePercent >= 0;
         const pctColor = isPositive ? '#16A34A' : '#DC2626';
         const chgColor = isPositive ? '#16A34A' : '#DC2626';
-        const rangeText = s.dayHigh && s.dayLow
-          ? `${s.dayLow.toFixed(0)} – ${s.dayHigh.toFixed(0)}`
-          : '—';
-        const pos52 = w52Pct(s);
-        const barW = 120;
-        const fillW = pos52 !== null ? Math.round((pos52 / 100) * barW) : 0;
-        const barColor = pos52 !== null ? (pos52 > 70 ? '#16A34A' : pos52 > 40 ? '#F59E0B' : '#DC2626') : '#CBD5E1';
+        const rowBg = i % 2 === 0 ? '#0F172A' : '#111827';
+        const accentColor = isPositive ? '#16A34A' : s.changePercent < 0 ? '#DC2626' : '#334155';
+        const rowTint = isPositive ? '#14532D20' : s.changePercent < 0 ? '#7F1D1D20' : 'transparent';
+        const arrow = isPositive ? '↑' : s.changePercent < 0 ? '↓' : '−';
 
         return (
           <div
             key={i}
             style={{
               display: 'flex',
-              padding: '8px 28px',
-              backgroundColor: i % 2 === 0 ? '#FFFFFF' : '#F8FAFC',
-              fontSize: '13px',
               alignItems: 'center',
-              borderBottom: '1px solid #F1F5F9',
+              paddingLeft: '24px',
+              paddingRight: '24px',
+              paddingTop: '0px',
+              paddingBottom: '0px',
+              backgroundColor: rowBg,
               height: `${ROW_H}px`,
+              fontSize: '13px',
+              borderBottomWidth: '1px',
+              borderBottomStyle: 'solid',
+              borderBottomColor: '#1F2937',
+              borderLeftWidth: '3px',
+              borderLeftStyle: 'solid',
+              borderLeftColor: accentColor,
             }}
           >
-            <span style={{ width: '30px', color: '#94A3B8', fontSize: '11px', fontWeight: 600 }}>{i + 1}</span>
-            <span style={{ width: '120px', fontWeight: 700, color: '#0F172A', fontSize: '13px', letterSpacing: '0.3px' }}>
-              {truncate(s.ticker, 12)}
-            </span>
-            <span style={{ width: '170px', color: '#64748B', fontSize: '11px' }}>
-              {truncate(s.sector, 22)}
-            </span>
-            <span style={{ width: '100px', textAlign: 'right', color: '#1E293B', fontSize: '13px', fontWeight: 600, fontFamily: 'Menlo, monospace' }}>
-              {s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}
-            </span>
-            <span style={{ width: '90px', textAlign: 'right', color: pctColor, fontSize: '12px', fontFamily: 'Menlo, monospace' }}>
-              {isPositive ? '+' : ''}{s.change.toFixed(1)}
-            </span>
-            <div style={{ display: 'flex', width: '80px', justifyContent: 'flex-end' }}>
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                padding: '2px 8px',
-                borderRadius: '4px',
-                backgroundColor: isPositive ? '#DCFCE7' : '#FEE2E2',
-              }}>
-                <span style={{ fontSize: '12px', fontWeight: 700, color: pctColor, fontFamily: 'Menlo, monospace' }}>
-                  {isPositive ? '+' : ''}{s.changePercent.toFixed(1)}%
-                </span>
-              </div>
+            {/* Row number */}
+            <div style={{
+              width: '30px',
+              marginRight: '12px',
+              color: '#64748B',
+              fontSize: '11px',
+              fontWeight: 600,
+            }}>
+              {i + 1}
             </div>
-            <span style={{ width: '120px', textAlign: 'right', color: '#64748B', fontSize: '11px', fontFamily: 'Menlo, monospace' }}>
-              {rangeText}
-            </span>
-            {/* 52W position bar */}
-            <div style={{ display: 'flex', width: '180px', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-              {pos52 !== null ? (
-                <>
-                  <div style={{ display: 'flex', width: `${barW}px`, height: '6px', backgroundColor: '#E2E8F0', borderRadius: '3px', overflow: 'hidden' }}>
-                    <div style={{ display: 'flex', width: `${fillW}px`, height: '6px', backgroundColor: barColor, borderRadius: '3px' }} />
-                  </div>
-                  <span style={{ fontSize: '10px', color: '#64748B', fontWeight: 600, fontFamily: 'Menlo, monospace', minWidth: '32px' }}>{pos52}%</span>
-                </>
-              ) : (
-                <span style={{ fontSize: '10px', color: '#CBD5E1' }}>—</span>
-              )}
+
+            {/* Symbol (bold, white) */}
+            <div style={{
+              width: '100px',
+              marginRight: '12px',
+              fontWeight: 700,
+              color: '#E5E7EB',
+              fontSize: '14px',
+              fontFamily: 'monospace',
+            }}>
+              {truncate(s.ticker, 12)}
+            </div>
+
+            {/* %Change (BOLD, colored, with arrow, monospace) */}
+            <div style={{
+              width: '100px',
+              marginRight: '12px',
+              color: pctColor,
+              fontWeight: 700,
+              fontSize: '14px',
+              fontFamily: 'monospace',
+              textAlign: 'right' as const,
+            }}>
+              {arrow} {s.changePercent >= 0 ? '+' : ''}{s.changePercent.toFixed(1)}%
+            </div>
+
+            {/* Price (right-aligned, monospace, muted) */}
+            <div style={{
+              width: '90px',
+              marginRight: '12px',
+              color: '#E5E7EB',
+              fontSize: '14px',
+              fontFamily: 'monospace',
+              textAlign: 'right' as const,
+            }}>
+              {s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}
+            </div>
+
+            {/* Change (right-aligned, colored, monospace) */}
+            <div style={{
+              width: '80px',
+              marginRight: '12px',
+              color: chgColor,
+              fontSize: '13px',
+              fontFamily: 'monospace',
+              textAlign: 'right' as const,
+            }}>
+              {s.change >= 0 ? '+' : ''}{s.change.toFixed(1)}
+            </div>
+
+            {/* Sector (left-aligned, muted) */}
+            <div style={{
+              width: '140px',
+              color: '#9CA3AF',
+              fontSize: '12px',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap' as const,
+            }}>
+              {truncate(s.sector, 22)}
             </div>
           </div>
         );
       })}
 
-      {/* ── Footer ── */}
+      {/* ── Footer (thin line, muted text) ── */}
       <div
         style={{
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          padding: '8px 28px',
-          backgroundColor: '#F1F5F9',
-          fontSize: '10px',
-          color: '#94A3B8',
-          borderTop: '1px solid #E2E8F0',
-          marginTop: 'auto',
+          paddingLeft: '24px',
+          paddingRight: '24px',
+          paddingTop: '6px',
+          paddingBottom: '6px',
+          height: `${FOOTER_H}px`,
+          backgroundColor: '#0F172A',
+          borderTopWidth: '1px',
+          borderTopStyle: 'solid',
+          borderTopColor: '#1F2937',
+          fontSize: '11px',
+          color: '#64748B',
           letterSpacing: '0.5px',
         }}
       >
-        <span>MARKET COCKPIT  ·  {displayStocks.length} HOLDINGS</span>
-        <span>DATA: NSE INDIA  ·  LIVE</span>
-        <span>@mc_portfolio_pulse_bot</span>
+        <span>market-cockpit.vercel.app</span>
+        <span>{timestamp}</span>
       </div>
     </div>
   );
