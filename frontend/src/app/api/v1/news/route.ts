@@ -37,25 +37,42 @@ const CACHE_TTL = 300; // 5 min
 function classifyArticle(title: string, desc: string): { article_type: string; investment_tier: number } {
   const text = (title + ' ' + desc).toLowerCase();
 
+  // Noise filter FIRST — reject clickbait, listicles, lifestyle
+  if (/multibagger|penny stock|should you buy|stock(s)? to buy|hot stock|best (stock|pick)|free tips|moneymaker|money.?maker|horoscope|recipe|cricket|bollywood|celebrity|entertainment/i.test(text))
+    return { article_type: 'GENERAL', investment_tier: 3 };
+
   // Check EARNINGS first — "beats expectations", "raises guidance" etc. are earnings, not bottlenecks
-  if (/earnings|quarterly|q[1-4]\s?(fy|20)|profit|revenue|results|beats? expectation|miss(es|ed)? expectation|guidance (raise|lower|maintain|reaffirm)|eps /i.test(text))
+  if (/earnings|quarterly|q[1-4]\s?(fy|20)|profit|revenue|results|beats? expectations?|miss(es|ed)? expectations?|guidance (raise|lower|maintain|reaffirm)|eps /i.test(text))
     return { article_type: 'EARNINGS', investment_tier: 1 };
-  if (/bottleneck|supply chain|shortage|disruption|capacity constraint|chip shortage|semiconductor|tariff|trade war|sanction|embargo|crude oil|opec|energy crisis|photonics|wafer|memory chip|nuclear reactor|defense budget|defence budget/i.test(text))
+
+  // MARKET MOVES — index rallies, selloffs, daily market wraps
+  if (/\b(dow|s&p|nasdaq|sensex|nifty|hang seng|nikkei)\b.{0,30}\b(surge|rally|jump|soar|rocket|climb|rise|fall|drop|crash|tank|slip|gain|lose)/i.test(text))
+    return { article_type: 'MACRO', investment_tier: 2 };
+
+  // BOTTLENECK — supply constraints, shortages, capacity limits
+  if (/bottleneck|supply chain (disruption|crisis|shortage)|shortage|capacity constraint|chip shortage|semiconductor.*supply|tariff|trade war|sanction|embargo|crude oil.*price|opec.*cut|energy crisis|photonics|wafer|memory chip|nuclear reactor|nuclear power|defense budget|defence budget/i.test(text))
     return { article_type: 'BOTTLENECK', investment_tier: 1 };
+
   if (/upgrade|downgrade|rating|target price|buy|sell|hold|outperform|underperform/i.test(text))
     return { article_type: 'RATING_CHANGE', investment_tier: 1 };
-  if (/rbi|fed|inflation|gdp|rate cut|rate hike|monetary|fiscal|trade deficit|current account/i.test(text))
+
+  // MACRO — central bank, inflation, GDP
+  if (/\b(rbi|federal reserve|fed rate|inflation data|gdp|rate cut|rate hike|monetary policy|fiscal (policy|deficit)|trade deficit|current account)\b/i.test(text))
     return { article_type: 'MACRO', investment_tier: 1 };
-  if (/tariff|sanction|ban|restrict|trade war|import duty|custom duty/i.test(text))
+
+  if (/tariff|sanction.*trade|export ban|import duty|custom duty|trade restrict/i.test(text))
     return { article_type: 'TARIFF', investment_tier: 1 };
-  if (/geopolit|war|conflict|china|taiwan|iran|russia|military|defence/i.test(text))
+
+  // GEOPOLITICAL — tightened: require conflict/tension/attack context, not bare country names
+  if (/geopolit|war.*conflict|military.*attack|military.*strike|china.*taiwan.*tension|iran.*attack|iran.*strike|russia.*ukraine|missile.*strike|south china sea.*conflict/i.test(text))
     return { article_type: 'GEOPOLITICAL', investment_tier: 2 };
+
+  // CEASEFIRE / PEACE — separate category, not bottleneck
+  if (/ceasefire|cease fire|peace (deal|agreement|talk)|truce|armistice|de-escalat/i.test(text))
+    return { article_type: 'GEOPOLITICAL', investment_tier: 2 };
+
   if (/merger|acquisition|takeover|buyback|demerger|stake|fundraise|ipo|ofs|qip/i.test(text))
     return { article_type: 'CORPORATE', investment_tier: 2 };
-
-  // Noise filter
-  if (/multibagger|penny stock|should you buy|stock(s)? to buy|hot stock|best (stock|pick)|free tips/i.test(text))
-    return { article_type: 'GENERAL', investment_tier: 3 };
 
   return { article_type: 'GENERAL', investment_tier: 2 };
 }

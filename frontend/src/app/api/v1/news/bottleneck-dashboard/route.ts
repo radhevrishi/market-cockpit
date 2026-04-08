@@ -4,9 +4,28 @@ import { kvGet } from '@/lib/kv';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
-// ── Bottleneck bucket definitions (broad keyword approach) ──────────
-// Simple, broad keyword matching — catches everything relevant.
-// NO quality gate, NO constraint signal check, NO noise filter.
+// ════════════════════════════════════════════════════════════════════════
+// NOISE FILTER — reject articles that are NOT about supply constraints
+// These are market rallies, earnings, general commentary, lifestyle, etc.
+// Applied BEFORE bucket keyword matching to prevent false positives.
+// ════════════════════════════════════════════════════════════════════════
+const NOISE_PATTERNS = /\b(stock(s)? (surge|rally|jump|soar|rocket|climb|rise|rebound|recover)|market(s)? (surge|rally|jump|soar|rocket|climb|rise|rebound|recover)|dow (surge|rally|jump|soar|rocket|climb|rise)|s&p (surge|rally|jump|soar|rocket|climb|500 up)|nasdaq (surge|rally|jump|soar|rocket|climb|rise)|sensex (surge|rally|jump|soar|rocket|climb|rise)|nifty (surge|rally|jump|soar|rocket|climb|rise)|ceasefire|cease fire|peace deal|peace agreement|peace talk|truce|armistice|de-escalat|ease worr|eas(e|ing) tension|worries ease|fears ease|concerns ease|beats? expectations?|miss(es|ed)? expectations?|quarterly (result|earning|profit)|q[1-4]\s?(fy|20)|earnings (beat|miss|surpass|top)|revenue (beat|miss|surpass)|profit (beat|miss|surpass)|guidance (raise|lower|maintain)|multibagger|penny stock|should you buy|stock(s)? to buy|hot stock|best (stock|pick|fund)|free tips|moneymaker|money.?maker|joke|light.?hearted|humour|humor|meme stock|wedding|recipe|horoscope|cricket|bollywood|celebrity|entertainment)\b/i;
+
+// Also reject if headline is purely about stock index movements with no supply context
+const PURE_MARKET_MOVE = /^.{0,15}(dow|s&p|nasdaq|sensex|nifty|hang seng|dax|ftse|nikkei|kospi).{0,60}(up|down|gain|lose|fall|drop|surge|rally|jump|slip|tank|crash|point|percent|%)/i;
+
+function isNoise(headline: string, desc: string): boolean {
+  const text = headline + ' ' + desc;
+  if (NOISE_PATTERNS.test(text)) return true;
+  if (PURE_MARKET_MOVE.test(headline)) return true;
+  return false;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// BOTTLENECK BUCKET DEFINITIONS
+// Each bucket targets a specific supply-chain / constraint theme.
+// Keywords are tightened to require constraint-relevant context.
+// ════════════════════════════════════════════════════════════════════════
 const BOTTLENECK_BUCKETS: Record<string, {
   label: string;
   description: string;
@@ -17,135 +36,148 @@ const BOTTLENECK_BUCKETS: Record<string, {
   // ── GLOBAL / SECTOR BUCKETS ──
   SEMICONDUCTOR: {
     label: 'Semiconductor & Chip Supply',
-    description: 'Chip supply constraints, fab capacity, memory cycles, photonics, and export controls affecting semiconductor ecosystem',
-    keywords: /\b(semiconductor|chip|wafer|foundry|fab|tsmc|samsung foundry|intel fab|asml|hbm|dram|nand|memory|gpu shortage|photonics|silicon|lithograph|osat|packaging|chip export|chip ban|photonic|optical chip|silicon photonics|chip deal|chip revenue|chip boom|memory chip)\b/i,
+    description: 'Chip supply constraints, fab capacity, memory cycles, photonics, and export controls',
+    keywords: /\b(semiconductor|chip shortage|chip supply|chip demand|wafer|foundry|fab capacity|tsmc|samsung foundry|intel fab|asml|hbm|dram|nand|memory chip|gpu shortage|photonics|photonic|silicon photonics|optical chip|lithograph|osat|advanced packaging|chip export|chip ban|chip deal|chip revenue|chip boom|memory cycle|chip production|chip capacity|eda tool|chip equipment)\b/i,
     severity_color: '#DC2626',
     severity_icon: '🔴',
   },
   AI_INFRASTRUCTURE: {
     label: 'AI Infrastructure & Data Centers',
-    description: 'GPU/accelerator demand, data center capacity, AI compute spending, and cloud infrastructure constraints',
-    keywords: /\b(data center|gpu|nvidia|ai infrastructure|cloud capacity|hyperscal|power grid|ai chip|compute capacity|ai server|ai spending|ai investment|ai demand|ai boom|accelerator|tpu|tensor processing)\b/i,
+    description: 'GPU/accelerator demand, data center capacity, AI compute spending, cloud constraints',
+    keywords: /\b(data center|gpu demand|gpu supply|gpu shortage|nvidia|ai infrastructure|cloud capacity|hyperscal|power grid.*data|ai chip|compute capacity|ai server|ai spending|ai investment|ai demand|accelerator demand|tpu|tensor processing)\b/i,
     severity_color: '#EA580C',
     severity_icon: '🟠',
   },
   ENERGY: {
-    label: 'Energy & Power',
-    description: 'Oil, gas, coal, and power supply dynamics including OPEC, refinery output, and energy pricing',
-    keywords: /\b(oil|crude|opec|natural gas|coal|power|electricity|energy crisis|fuel|refinery|lng|petrol|diesel|brent|wti|energy price|gasoline|heating oil|oil price|oil supply|oil production|strait of hormuz|hormuz)\b/i,
+    label: 'Energy & Power Supply',
+    description: 'Oil supply disruptions, OPEC cuts, refinery constraints, energy crisis, fuel shortages',
+    // Tightened: removed bare "oil" and "power" — too broad. Require supply/price/cut/crisis context.
+    keywords: /\b(oil price|oil supply|oil production|oil shortage|crude oil|crude price|opec cut|opec\+|natural gas price|natural gas supply|coal shortage|coal price|power crisis|power shortage|electricity crisis|energy crisis|fuel shortage|fuel price|refinery shutdown|refinery capacity|lng supply|lng price|petrol price|diesel price|diesel shortage|brent crude|wti crude|oil embargo|oil sanction|strait of hormuz.*block|hormuz.*disrupt|hormuz.*threat|energy security)\b/i,
     severity_color: '#CA8A04',
     severity_icon: '🟡',
   },
   SUPPLY_CHAIN: {
     label: 'Global Supply Chain',
-    description: 'Logistics disruptions, shipping delays, port congestion, and trade route issues',
-    keywords: /\b(supply chain|logistics|shipping|freight|container|port|suez|panama|red sea|trade route|import|export|cargo|warehouse|inventory|stockpile|backlog|transshipment)\b/i,
+    description: 'Logistics disruptions, shipping delays, port congestion, trade route blockages',
+    // Tightened: removed bare "import", "export", "port" — too broad
+    keywords: /\b(supply chain disruption|supply chain crisis|supply chain bottleneck|supply shortage|logistics disruption|logistics delay|shipping delay|shipping crisis|freight rate|container shortage|port congestion|port strike|suez.*block|panama.*drought|red sea.*attack|red sea.*disrupt|trade route disruption|cargo delay|warehouse shortage|backlog|transshipment delay)\b/i,
     severity_color: '#D97706',
     severity_icon: '🟠',
   },
   TARIFF_TRADE: {
     label: 'Tariff & Trade War',
-    description: 'Tariff escalations, trade restrictions, sanctions, and protectionist policies',
-    keywords: /\b(tariff|trade war|sanction|embargo|import duty|custom duty|trade restrict|export ban|export curb|trade barrier|anti.dumping|countervailing|protectionism|reshoring|nearshoring|decouple|friendshoring)\b/i,
+    description: 'Tariff escalations, trade restrictions, sanctions, export bans, protectionism',
+    keywords: /\b(tariff|trade war|sanction|embargo|import duty|custom duty|trade restrict|export ban|export curb|trade barrier|anti.dumping|countervailing|protectionism|reshoring|nearshoring|decouple|friendshoring|trade retaliat)\b/i,
     severity_color: '#B91C1C',
     severity_icon: '🔴',
   },
   COMMODITY_METALS: {
     label: 'Commodity & Metal Supply',
-    description: 'Critical metals, minerals, and commodity supply dynamics including rare earths',
-    keywords: /\b(aluminium|aluminum|steel|copper|zinc|nickel|lithium|cobalt|rare earth|iron ore|metal price|commodity|mining|mineral|titanium|tin|lead|gold price|silver price|palladium|platinum)\b/i,
+    description: 'Critical metals supply constraints, mining disruptions, rare earth shortages',
+    // Tightened: removed bare "commodity" and "mining" — require price/supply/shortage context
+    keywords: /\b(aluminium price|aluminum price|steel price|steel shortage|copper price|copper shortage|zinc price|nickel price|nickel supply|lithium supply|lithium price|cobalt supply|cobalt price|rare earth|iron ore price|iron ore supply|metal shortage|metal price|mineral supply|titanium supply|palladium|platinum supply|commodity crisis|commodity supply|mining disruption|mining strike)\b/i,
     severity_color: '#92400E',
     severity_icon: '🟤',
   },
+
   // ── INDIA-SPECIFIC BUCKETS ──
   INDIA_BANKING: {
     label: 'India Banking & Credit',
-    description: 'RBI policy, credit growth, NPA stress, NBFC liquidity, and SEBI regulations',
-    keywords: /\b(rbi|npa|credit growth|bank|nbfc|lending|loan|deposit|liquidity|repo rate|monetary policy|sebi|mutual fund|sbi|hdfc|icici|axis bank|kotak)\b/i,
+    description: 'RBI policy, credit growth, NPA stress, NBFC liquidity, regulatory changes',
+    // Tightened: removed bare "bank", "loan", "deposit" — too broad
+    keywords: /\b(rbi policy|rbi rate|repo rate|reverse repo|npa|credit growth|credit squeeze|nbfc crisis|nbfc liquidity|lending rate|loan growth|deposit growth|liquidity crisis|liquidity squeeze|monetary policy|sebi regulation|sebi circular|banking reform|credit crunch|bank fraud|bank merger)\b/i,
     severity_color: '#2563EB',
     severity_icon: '🔵',
   },
   INDIA_AGRI: {
     label: 'India Agriculture & Food',
-    description: 'Monsoon impact, crop output, food inflation, and fertilizer supply',
-    keywords: /\b(monsoon|crop|agriculture|food|wheat|rice|sugar|fertilizer|msp|kharif|rabi|farm|agri|onion|tomato|vegetable|food inflation|edible oil|soybean)\b/i,
+    description: 'Monsoon impact, crop output, food inflation, fertilizer supply',
+    keywords: /\b(monsoon|crop failure|crop output|crop damage|agriculture crisis|food inflation|wheat price|rice price|rice export ban|sugar price|sugar export|fertilizer shortage|fertilizer subsidy|msp hike|kharif sowing|rabi sowing|farm distress|agri crisis|onion price|tomato price|vegetable price|food crisis|edible oil price|soybean price|pulses price)\b/i,
     severity_color: '#16A34A',
     severity_icon: '🟢',
   },
   INDIA_DEFENCE: {
     label: 'India Defence & Aerospace',
-    description: 'Defence procurement, military modernization, DRDO/ISRO/HAL developments, and security',
-    keywords: /\b(defence|defense|military|missile|fighter|hal|bhel|drdo|isro|satellite|aerospace|ammunition|navy|army|air force|warship|submarine|radar|defense budget|defence budget)\b/i,
+    description: 'Defence procurement, military modernization, DRDO/ISRO/HAL, strategic capability',
+    keywords: /\b(india.*defence|india.*defense|indian (military|navy|army|air force)|defence procurement|defence order|defence deal|missile (test|launch|order)|fighter (jet|aircraft|order)|hal order|hal deliver|bhel order|drdo (test|develop|missile)|isro (launch|satellite|mission)|satellite launch|aerospace order|ammunition|warship|submarine.*india|radar system|defence budget india|defence budget.*crore|defence budget.*lakh|make in india.*defence|atmanirbhar.*defence|defence corridor|defence export)\b/i,
     severity_color: '#7C3AED',
     severity_icon: '🟣',
   },
   INDIA_PHARMA: {
     label: 'India Pharma & Healthcare',
-    description: 'Drug approvals, USFDA actions, API supply, and healthcare sector developments',
-    keywords: /\b(pharma|drug|fda|usfda|anda|api|formulation|hospital|healthcare|vaccine|biotech|generic|clinical trial|medicine|cipla|sun pharma|dr reddy|lupin|divi)\b/i,
+    description: 'Drug approvals, USFDA actions, API supply, healthcare capacity',
+    keywords: /\b(pharma.*india|india.*pharma|drug approval|drug shortage|fda approval|fda warning|usfda|anda approval|api supply|api shortage|formulation export|hospital capacity|healthcare infrastructure|vaccine (supply|shortage|drive|approval)|biotech.*india|generic drug|clinical trial.*india|pharma export|bulk drug|pharma policy)\b/i,
     severity_color: '#0891B2',
     severity_icon: '🔵',
   },
   INDIA_INFRA: {
-    label: 'India Infrastructure & Real Estate',
-    description: 'Highway, railway, metro, port, airport, and real estate sector developments',
-    keywords: /\b(infrastructure|highway|road|railway|metro|smart city|real estate|housing|cement|construction|bridge|tunnel|port|airport|rera|affordable housing|dlf|godrej|l&t)\b/i,
+    label: 'India Infrastructure',
+    description: 'Highway, railway, metro, port, airport developments and bottlenecks',
+    keywords: /\b(highway (project|order|contract|delay)|railway (order|electrif|expansion|freight)|metro (project|expansion|line)|smart city|infrastructure (order|spend|investment|bottleneck)|cement (demand|price|supply)|construction (order|boom|delay)|bridge (project|inaugurat)|tunnel (project|breakthrough)|port (expansion|capacity|congestion)|airport (expansion|terminal|traffic)|rera|affordable housing.*india|dlf|godrej propert|l&t.*order|l&t.*infra)\b/i,
     severity_color: '#6D28D9',
     severity_icon: '🟣',
   },
   INDIA_AUTO: {
     label: 'India Auto & EV',
-    description: 'Auto sales, EV transition, battery supply, and vehicle manufacturing trends',
-    keywords: /\b(auto|automobile|car|vehicle|ev|electric vehicle|tata motors|maruti|mahindra|bajaj|hero|two wheeler|suv|battery|charging|ola electric|ather)\b/i,
+    description: 'Auto sales trends, EV transition, battery supply, manufacturing shifts',
+    // Tightened: removed bare "car", "vehicle", "battery", "suv" — too broad
+    keywords: /\b(auto sale|auto (production|output)|automobile.*india|india.*automobile|ev (sales|production|policy|subsidy|adoption)|electric vehicle.*india|tata motors|maruti (sales|production)|mahindra (sales|ev|suv)|bajaj (sales|auto)|hero (sales|motocorp)|two wheeler (sales|production)|battery (plant|gigafactory|supply|shortage).*india|ola electric|ather energy|ev charging|auto export|auto component)\b/i,
     severity_color: '#059669',
     severity_icon: '🟢',
   },
   INDIA_NUCLEAR: {
     label: 'India Nuclear & Atomic Energy',
-    description: 'Nuclear reactor milestones, atomic energy program, thorium cycle, and nuclear power capacity',
-    keywords: /\b(nuclear reactor|atomic reactor|nuclear power|atomic energy|thorium|breeder reactor|kalpakkam|bhabha|nuclear fuel|criticality|nuclear plant|atomic plant|uranium india|nuclear capacity|fast breeder|nuclear milestone)\b/i,
+    description: 'Nuclear reactor milestones, atomic energy program, thorium cycle, nuclear power capacity',
+    // Broadened: catch success news too — commissioning, achievement, approval, record
+    keywords: /\b(nuclear reactor|atomic reactor|nuclear power.*india|india.*nuclear power|atomic energy|thorium|breeder reactor|kalpakkam|bhabha atomic|nuclear fuel|criticality|nuclear plant|atomic plant|uranium.*india|nuclear capacity|fast breeder|nuclear milestone|nuclear commission|nuclear approv|nuclear achiev|nuclear (record|capacity addition)|kudankulam|kakrapar|rawatbhata|tarapur|jaitapur|gorakhpur.*nuclear|npcil|nuclear energy.*india|india.*nuclear energy|bhavini|atomic energy commission|dae.*nuclear)\b/i,
     severity_color: '#0E7490',
     severity_icon: '⚛️',
   },
+
   // ── US-SPECIFIC BUCKETS ──
   US_TECH: {
-    label: 'US Tech & Innovation',
-    description: 'Big tech earnings, AI race, cloud computing, and Silicon Valley developments',
-    keywords: /\b(apple|google|microsoft|amazon|meta|tesla|netflix|alphabet|openai|chatgpt|artificial intelligence|machine learning|big tech|tech stock|silicon valley|cloud computing|saas|cybersecurity|quantum|spacex)\b/i,
+    label: 'US Big Tech & AI',
+    description: 'Big tech supply constraints, AI chip race, cloud capacity, tech regulation',
+    // Tightened: require tech/supply/constraint context, not just company name mentions
+    keywords: /\b(apple.*supply|apple.*chip|google.*ai|google.*cloud|microsoft.*ai|microsoft.*azure|amazon.*aws|amazon.*cloud|meta.*ai|meta.*data center|tesla.*production|tesla.*battery|tesla.*delivery|openai|chatgpt|artificial intelligence.*constraint|machine learning.*demand|big tech.*regulat|silicon valley.*shortage|cloud computing.*demand|saas.*growth|cybersecurity.*threat|quantum.*computing|spacex.*launch)\b/i,
     severity_color: '#3B82F6',
     severity_icon: '🔵',
   },
   US_FINANCE: {
-    label: 'US Finance & Fed',
-    description: 'Federal Reserve policy, inflation data, bond yields, and Wall Street developments',
-    keywords: /\b(fed|federal reserve|interest rate|rate hike|rate cut|inflation|cpi|pce|treasury|bond yield|wall street|jpmorgan|goldman|bank of america|citigroup|morgan stanley|recession|stagflation|fomc|powell)\b/i,
+    label: 'US Fed & Monetary Policy',
+    description: 'Federal Reserve decisions, inflation data, bond yield moves, credit conditions',
+    // Tightened: removed bare "fed", "inflation", "wall street" — require policy/data context
+    keywords: /\b(federal reserve|fed (rate|decision|meeting|pause|cut|hike|minutes)|interest rate (decision|cut|hike|hold)|rate hike|rate cut|inflation (data|report|reading|cpi|pce|core)|cpi (report|data|reading)|pce (report|data|reading)|treasury yield|bond yield (surge|spike|fall|drop|rise)|fomc (meeting|minutes|decision|statement)|powell (speak|press|testimony|remark)|recession (risk|fear|warning|signal)|stagflation|credit (crunch|tighten|condition))\b/i,
     severity_color: '#1E40AF',
     severity_icon: '🔵',
   },
   US_TRADE: {
     label: 'US Trade & Geopolitics',
-    description: 'US-China tensions, Iran/Middle East, sanctions, and trade policy developments',
-    keywords: /\b(china trade|us china|taiwan|geopolit|pentagon|nato|ukraine|russia|iran|middle east|south china sea|trade deal|trade deficit|commerce department|treasury department|state department|biden|trump|executive order)\b/i,
+    description: 'US-China tensions, sanctions, trade policy, geopolitical supply risks',
+    // Tightened: removed bare "iran", "russia", "trump", "biden" — require trade/sanction/policy context
+    keywords: /\b(china trade|us.china (trade|tension|tariff|sanction|restrict)|taiwan.*chip|taiwan.*semiconductor|taiwan.*strait|geopolit.*supply|geopolit.*trade|pentagon.*contract|nato.*spend|ukraine.*energy|ukraine.*grain|russia.*oil|russia.*gas|russia.*sanction|iran.*oil|iran.*sanction|iran.*nuclear|middle east.*oil|south china sea.*ship|trade (deal|deficit|surplus|agreement|negotiat)|commerce department|treasury.*sanction|executive order.*trade|executive order.*chip)\b/i,
     severity_color: '#991B1B',
     severity_icon: '🔴',
   },
   US_ENERGY: {
     label: 'US Energy & Climate',
-    description: 'Shale, LNG, renewables, nuclear power, EV battery supply, and energy transition',
-    keywords: /\b(shale|permian|natural gas|lng export|oil rig|pipeline|renewable|solar|wind energy|nuclear|uranium|ev battery|lithium|clean energy|carbon|climate|epa|energy transition|hydrogen)\b/i,
+    description: 'Shale production, LNG, renewables, nuclear power, EV battery supply, energy transition',
+    keywords: /\b(shale (production|output|rig)|permian (basin|output)|natural gas (price|supply|export)|lng (export|terminal|capacity)|oil rig count|pipeline (project|approval|block)|renewable (energy|capacity|investment)|solar (capacity|install|tariff)|wind (energy|farm|capacity|offshore)|nuclear (power|plant|reactor|energy)|uranium (price|supply|mining)|ev battery (supply|demand|shortage|plant)|lithium (supply|price|mining)|clean energy (investment|policy)|carbon (tax|capture|emission)|climate (policy|regulation)|epa (regulation|rule)|energy transition|hydrogen (economy|production|fuel))\b/i,
     severity_color: '#D97706',
     severity_icon: '🟠',
   },
   US_DEFENCE: {
-    label: 'US Defence & Military',
-    description: 'Defense budget, Pentagon spending, military procurement, and defense tech',
-    keywords: /\b(defense budget|defence budget|pentagon|military spending|defense spending|defense contract|lockheed|raytheon|northrop|boeing defense|general dynamics|l3harris|defense startup|military tech|arms deal|weapons system|trillion.*defense|defense.*trillion|fighter jet|f-35|f-16|naval|aircraft carrier)\b/i,
+    label: 'US Defence Budget & Military',
+    description: 'Defense budget, Pentagon spending, military procurement, defense tech',
+    keywords: /\b(defense budget|defence budget|pentagon (budget|spend|contract|order)|military spending|defense spending|defense contract|defense order|lockheed (martin|order|contract)|raytheon|northrop (grumman|order|contract)|boeing (defense|military)|general dynamics|l3harris|defense (startup|tech|innovation)|military tech|arms (deal|sale|export)|weapons (system|order|contract)|fighter jet (order|contract|deal)|f-35|f-16|naval (contract|order|ship)|aircraft carrier)\b/i,
     severity_color: '#581C87',
     severity_icon: '🟣',
   },
 };
 
-// Severity calculation based on signal count
+// ════════════════════════════════════════════════════════════════════════
+// SEVERITY
+// ════════════════════════════════════════════════════════════════════════
 function getSeverity(signalCount: number): { severity: number; severity_label: string } {
   if (signalCount >= 10) return { severity: 5, severity_label: 'CRITICAL' };
   if (signalCount >= 5)  return { severity: 4, severity_label: 'HIGH' };
@@ -154,7 +186,9 @@ function getSeverity(signalCount: number): { severity: number; severity_label: s
   return { severity: 1, severity_label: 'LOW' };
 }
 
-// ── RSS Feeds for live scanning ─────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════
+// RSS FEEDS
+// ════════════════════════════════════════════════════════════════════════
 const BOTTLENECK_RSS = [
   // India
   { name: 'ET Markets', url: 'https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms', region: 'IN' },
@@ -164,6 +198,7 @@ const BOTTLENECK_RSS = [
   { name: 'Business Standard', url: 'https://www.business-standard.com/rss/markets-106.rss', region: 'IN' },
   { name: 'BS Companies', url: 'https://www.business-standard.com/rss/companies-101.rss', region: 'IN' },
   { name: 'Mint Economy', url: 'https://www.livemint.com/rss/economy', region: 'IN' },
+  { name: 'NDTV Profit', url: 'https://feeds.feedburner.com/ndtvprofit-latest', region: 'IN' },
   // US / Global
   { name: 'CNBC Top News', url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114', region: 'US' },
   { name: 'CNBC Technology', url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19854910', region: 'US' },
@@ -178,7 +213,9 @@ const BOTTLENECK_RSS = [
   { name: 'Seeking Alpha', url: 'https://seekingalpha.com/market_currents.xml', region: 'US' },
 ];
 
-// ── Fetch live RSS feeds ────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════
+// RSS FETCHER
+// ════════════════════════════════════════════════════════════════════════
 async function fetchLiveRSSSignals(): Promise<any[]> {
   const feedResults = await Promise.allSettled(
     BOTTLENECK_RSS.map(async (feed) => {
@@ -224,6 +261,9 @@ async function fetchLiveRSSSignals(): Promise<any[]> {
   return signals;
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// MAIN HANDLER
+// ════════════════════════════════════════════════════════════════════════
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -240,15 +280,22 @@ export async function GET(request: Request) {
       ];
     }
 
-    // Always fetch live RSS — this is critical for broad coverage
+    // Always fetch live RSS for broad coverage
     const rssSignals = await fetchLiveRSSSignals();
     allSignals = [...allSignals, ...rssSignals];
 
-    // Build buckets — simple broad keyword matching, NO quality gate
+    // ── NOISE FILTER: Remove non-bottleneck articles BEFORE matching ──
+    const cleanSignals = allSignals.filter((s: any) => {
+      const headline = s.headline || '';
+      const desc = s.narrative || s.summary || '';
+      return !isNoise(headline, desc);
+    });
+
+    // Build buckets from clean signals
     const buckets: any[] = [];
 
     for (const [key, config] of Object.entries(BOTTLENECK_BUCKETS)) {
-      const matchingSignals = allSignals.filter((s: any) => {
+      const matchingSignals = cleanSignals.filter((s: any) => {
         const text = (s.headline || '') + ' ' + (s.narrative || '') + ' ' + (s.summary || '') + ' ' + (s.eventType || '');
         if (!config.keywords.test(text)) return false;
 
@@ -256,7 +303,6 @@ export async function GET(request: Request) {
         if (regionFilter === 'IN') {
           if (key.startsWith('INDIA_')) return true;
           if (key.startsWith('US_')) return false;
-          // Global buckets: check for India context or accept if from IN feed
           if (s.region === 'IN') return true;
           const indiaTest = /\b(india|nse|bse|nifty|sensex|rbi|rupee|inr|sebi|crore|lakh)\b/i;
           return indiaTest.test(text);
@@ -264,7 +310,6 @@ export async function GET(request: Request) {
         if (regionFilter === 'US') {
           if (key.startsWith('US_')) return true;
           if (key.startsWith('INDIA_')) return false;
-          // Global buckets: check for US context or accept if from US feed
           if (s.region === 'US') return true;
           const usTest = /\b(us|usa|nasdaq|nyse|fed|dollar|usd|wall street|s&p|american|united states)\b/i;
           return usTest.test(text);
@@ -332,6 +377,8 @@ export async function GET(request: Request) {
     return NextResponse.json({
       success: true,
       total_articles: allSignals.length,
+      filtered_articles: cleanSignals.length,
+      noise_removed: allSignals.length - cleanSignals.length,
       buckets,
     });
   } catch (error) {
