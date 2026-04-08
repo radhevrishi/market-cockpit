@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { RefreshCw, Filter, X, ExternalLink, AlertCircle, Zap, ChevronDown, ChevronRight } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
@@ -676,11 +676,20 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
 // ── Bottleneck Dashboard ──────────────────────────────────────────────────────
 
 function BottleneckDashboard({ dashboard, isLoading }: { dashboard?: BnDashboard; isLoading: boolean }) {
-  const [expandedBuckets, setExpandedBuckets] = useState<Set<string>>(new Set());
+  // All buckets expanded by default
+  const [collapsedBuckets, setCollapsedBuckets] = useState<Set<string>>(new Set());
   const [expandedSignals, setExpandedSignals] = useState<Set<string>>(new Set());
 
+  // Compat: expandedBuckets derived from collapsedBuckets (inverted logic)
+  const expandedBuckets = useMemo(() => {
+    if (!dashboard?.buckets) return new Set<string>();
+    const all = new Set(dashboard.buckets.map(b => b.bucket_id));
+    for (const id of collapsedBuckets) all.delete(id);
+    return all;
+  }, [dashboard, collapsedBuckets]);
+
   const toggleBucket = (id: string) => {
-    setExpandedBuckets(prev => {
+    setCollapsedBuckets(prev => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
@@ -718,11 +727,23 @@ function BottleneckDashboard({ dashboard, isLoading }: { dashboard?: BnDashboard
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
       {/* Summary bar */}
-      <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '12px', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+      <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '12px', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
         <span style={{ fontSize: '11px', fontWeight: '700', color: '#EF4444', letterSpacing: '0.5px' }}>BOTTLENECK INTELLIGENCE</span>
         <span style={{ fontSize: '11px', color: '#4A5B6C' }}>
-          {dashboard.buckets.length} categories · {dashboard.total_articles} evidence articles · last 90 days
+          {dashboard.buckets.length} categories · {dashboard.buckets.reduce((s, b) => s + b.signal_count, 0)} signals · {dashboard.total_articles} evidence articles
         </span>
+        <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto' }}>
+          {[
+            { label: 'CRITICAL', count: dashboard.buckets.filter(b => b.severity >= 5).length, color: '#EF4444' },
+            { label: 'HIGH', count: dashboard.buckets.filter(b => b.severity === 4).length, color: '#F59E0B' },
+            { label: 'ELEVATED', count: dashboard.buckets.filter(b => b.severity === 3).length, color: '#3B82F6' },
+            { label: 'WATCH', count: dashboard.buckets.filter(b => b.severity <= 2).length, color: '#6B7280' },
+          ].filter(s => s.count > 0).map(s => (
+            <span key={s.label} style={{ fontSize: '9px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', backgroundColor: s.color + '15', color: s.color, border: `1px solid ${s.color}30` }}>
+              {s.count} {s.label}
+            </span>
+          ))}
+        </div>
       </div>
 
       {/* Bucket cards */}
