@@ -44,7 +44,7 @@ const BOTTLENECK_BUCKETS: Record<string, {
   AI_INFRASTRUCTURE: {
     label: 'AI Infrastructure & Data Centers',
     description: 'GPU/accelerator demand, data center capacity, AI compute spending, cloud constraints',
-    keywords: /\b(data center|gpu demand|gpu supply|gpu shortage|nvidia|ai infrastructure|cloud capacity|hyperscal|power grid.*data|ai chip|compute capacity|ai server|ai spending|ai investment|ai demand|accelerator demand|tpu|tensor processing)\b/i,
+    keywords: /\b(data center|gpu|nvidia|ai infrastructure|cloud capacity|hyperscal|power grid|ai chip|compute capacity|ai server|ai spending|ai investment|ai demand|ai boom|accelerator|tpu|tensor processing|inference|training.*compute)\b/i,
     severity_color: '#EA580C',
     severity_icon: '🟠',
   },
@@ -137,25 +137,22 @@ const BOTTLENECK_BUCKETS: Record<string, {
   // ── US-SPECIFIC BUCKETS ──
   US_TECH: {
     label: 'US Big Tech & AI',
-    description: 'Big tech supply constraints, AI chip race, cloud capacity, tech regulation',
-    // Tightened: require tech/supply/constraint context, not just company name mentions
-    keywords: /\b(apple.*supply|apple.*chip|google.*ai|google.*cloud|microsoft.*ai|microsoft.*azure|amazon.*aws|amazon.*cloud|meta.*ai|meta.*data center|tesla.*production|tesla.*battery|tesla.*delivery|openai|chatgpt|artificial intelligence.*constraint|machine learning.*demand|big tech.*regulat|silicon valley.*shortage|cloud computing.*demand|saas.*growth|cybersecurity.*threat|quantum.*computing|spacex.*launch)\b/i,
+    description: 'Big tech developments, AI race, cloud capacity, tech regulation',
+    keywords: /\b(openai|chatgpt|artificial intelligence|machine learning|big tech|silicon valley|cloud computing|cybersecurity|quantum computing|spacex|apple.{0,15}(chip|supply|ai|vision)|google.{0,15}(ai|cloud|gemini|search)|microsoft.{0,15}(ai|azure|copilot)|amazon.{0,15}(aws|cloud|alexa)|meta.{0,15}(ai|llama|data center|metaverse)|tesla.{0,15}(production|battery|delivery|robot|fsd)|nvidia.{0,15}(earning|revenue|supply|demand|gpu)|broadcom|amd|intel.{0,15}(fab|foundry|chip)|saas|tech (layoff|antitrust|regulation))\b/i,
     severity_color: '#3B82F6',
     severity_icon: '🔵',
   },
   US_FINANCE: {
     label: 'US Fed & Monetary Policy',
     description: 'Federal Reserve decisions, inflation data, bond yield moves, credit conditions',
-    // Tightened: removed bare "fed", "inflation", "wall street" — require policy/data context
-    keywords: /\b(federal reserve|fed (rate|decision|meeting|pause|cut|hike|minutes)|interest rate (decision|cut|hike|hold)|rate hike|rate cut|inflation (data|report|reading|cpi|pce|core)|cpi (report|data|reading)|pce (report|data|reading)|treasury yield|bond yield (surge|spike|fall|drop|rise)|fomc (meeting|minutes|decision|statement)|powell (speak|press|testimony|remark)|recession (risk|fear|warning|signal)|stagflation|credit (crunch|tighten|condition))\b/i,
+    keywords: /\b(federal reserve|fed rate|fed (decision|meeting|pause|cut|hike|minutes)|interest rate (decision|cut|hike|hold)|rate hike|rate cut|inflation (data|report|reading|number)|cpi|pce|treasury yield|bond yield|fomc|powell|recession|stagflation|credit (crunch|tighten|condition)|jpmorgan|goldman sachs|bank of america|citigroup|morgan stanley|wall street.{0,20}(warn|fear|risk|crisis|rout|plunge))\b/i,
     severity_color: '#1E40AF',
     severity_icon: '🔵',
   },
   US_TRADE: {
     label: 'US Trade & Geopolitics',
     description: 'US-China tensions, sanctions, trade policy, geopolitical supply risks',
-    // Tightened: removed bare "iran", "russia", "trump", "biden" — require trade/sanction/policy context
-    keywords: /\b(china trade|us.china (trade|tension|tariff|sanction|restrict)|taiwan.*chip|taiwan.*semiconductor|taiwan.*strait|geopolit.*supply|geopolit.*trade|pentagon.*contract|nato.*spend|ukraine.*energy|ukraine.*grain|russia.*oil|russia.*gas|russia.*sanction|iran.*oil|iran.*sanction|iran.*nuclear|middle east.*oil|south china sea.*ship|trade (deal|deficit|surplus|agreement|negotiat)|commerce department|treasury.*sanction|executive order.*trade|executive order.*chip)\b/i,
+    keywords: /\b(china trade|us.china|china.us|china tariff|taiwan.{0,15}(chip|semiconductor|strait|tension)|geopolit|pentagon|nato|ukraine.{0,15}(energy|grain|war|conflict)|russia.{0,15}(oil|gas|sanction|ukraine)|iran.{0,15}(oil|sanction|nuclear|deal)|middle east.{0,15}(oil|tension|conflict)|south china sea|trade (deal|deficit|surplus|agreement|negotiat|restrict)|commerce department|treasury.{0,15}sanction|executive order|tariff.*china|china.*tariff|trump.{0,15}(tariff|trade|china|sanction)|biden.{0,15}(chip|trade|china|sanction))\b/i,
     severity_color: '#991B1B',
     severity_icon: '🔴',
   },
@@ -350,6 +347,21 @@ export async function GET(request: Request) {
             id: s.symbol || key,
             headline: s.headline || s.narrative || `${s.symbol}: ${s.eventType || 'Signal'}`,
             summary: s.narrative || s.summary || '',
+            // Frontend BnSignal interface expects these exact field names:
+            sources: [s.source || 'Intelligence'],
+            tickers: s.symbol ? [s.symbol] : [],
+            latest_at: s.date || s.timestamp || new Date().toISOString(),
+            evidence_count: 1,
+            articles: [{
+              id: s.symbol || key,
+              headline: s.headline || '',
+              source_name: s.source || 'Intelligence',
+              source_url: s.link || '',
+              published_at: s.date || s.timestamp || new Date().toISOString(),
+              importance_score: 0.7,
+              sentiment: 'neutral',
+            }],
+            // Keep backward compat fields too
             source: s.source || 'Intelligence',
             date: s.date || s.timestamp || new Date().toISOString(),
             ticker: s.symbol || '',
