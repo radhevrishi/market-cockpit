@@ -35,16 +35,13 @@ const nextConfig = {
       },
     ];
   },
-  // Proxy /api/v1/* to FastAPI backend ONLY in local dev (Vercel has no Python backend).
-  // On Vercel, Next.js API routes at /api/v1/* handle everything natively.
+  // Proxy all /api/v1/* requests to the FastAPI backend.
+  // This avoids CORS and localhost IPv4/IPv6 resolution issues.
   async rewrites() {
-    if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
-      return []; // No rewrite on Vercel — Next.js API routes serve /api/v1/*
-    }
     return [
       {
         source: '/api/v1/:path*',
-        destination: `${process.env.FASTAPI_URL || 'http://127.0.0.1:8000'}/api/v1/:path*`,
+        destination: 'http://127.0.0.1:8000/api/v1/:path*',
       },
     ];
   },

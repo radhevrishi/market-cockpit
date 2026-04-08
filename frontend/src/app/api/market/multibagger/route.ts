@@ -205,7 +205,7 @@ async function fetchScreenerData(symbol: string): Promise<{ data: Record<string,
   for (const url of urls) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const timeout = attempt === 0 ? 8000 : 10000; // 8s first, 10s retry — tighter to avoid deadline cascade
+        const timeout = attempt === 0 ? 10000 : 12000; // 10s first, 12s retry
         const resp = await fetch(url, {
           headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0', 'Accept': 'text/html,application/xhtml+xml' },
           signal: AbortSignal.timeout(timeout),
@@ -1443,7 +1443,6 @@ export async function GET(request: NextRequest) {
     // ── PHASE 0: Check Redis cache for each symbol (4h TTL) ──
     // Symbols with fresh cached results skip all fetching → instant response
     const CACHE_TTL = 14400; // 4 hours in seconds
-    const STALE_CACHE_TTL = 3600; // 1 hour for stale/partial data — prevents vicious retry loop
     const uncachedSymbols: string[] = [];
     const cachePromises = cleanSymbols.map(async (sym) => {
       try {
@@ -1536,12 +1535,6 @@ export async function GET(request: NextRequest) {
             });
           }
         }
-        // Cache deadline-fallback results too (1h TTL) to prevent re-fetching every time
-        for (const r of results.slice(-remaining.length)) {
-          if (r.overallScore > 0) {
-            kvSet(`mb:${r.symbol}`, r, STALE_CACHE_TTL).catch(() => {});
-          }
-        }
         break;
       }
       const batch = uncachedSymbols.slice(i, i + BATCH);
@@ -1562,15 +1555,16 @@ export async function GET(request: NextRequest) {
           // ── Pre-populate from Yahoo v7 batch data (already fetched in Phase 1) ──
           const batchYahoo = yahooBatchData.get(yahooSym) || yahooBatchData.get(symbol) || yahooBatchData.get(nseSym);
 
-          // ── Multi-source fetching — keep at least 1 retry for all list sizes ──
+          // ── Multi-source fetching — reduced retries for large lists to stay within deadline ──
           // Use aliased symbols for each source to maximize resolution rate
-          const maxRetries = 1; // Always allow 1 retry — disabling retries caused mass timeouts
+          const isLargeList = uncachedSymbols.length > 8;
+          const maxRetries = isLargeList ? 1 : 2;
           const [scrResult, nseResult, yahooResult, nseFinResult, googleResult, yahooV7Result] = await Promise.all([
             withRetry(() => fetchScreenerData(screenerSym), maxRetries, 300).catch((): { data: Record<string, any>; ok: boolean; url: string } => ({ data: {}, ok: false, url: '' })),
             withRetry(() => fetchNSEData(nseSym), maxRetries, 300).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
-            withRetry(() => fetchYahooData(yahooSym), 1, 500).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
+            withRetry(() => fetchYahooData(yahooSym), isLargeList ? 0 : 1, 500).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
             withRetry(() => fetchNSEFinancials(nseSym), maxRetries, 300).catch((): Record<string, any> => ({})),
-            withRetry(() => fetchGoogleFinanceData(nseSym), 1, 500).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
+            withRetry(() => fetchGoogleFinanceData(nseSym), isLargeList ? 0 : 1, 500).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
             // Yahoo v7 is fast (4s timeout) and gives PE, EPS, bookValue, priceToBook, 52W data
             fetchYahooV7Quote(yahooSym).catch((): { data: Record<string, any>; ok: boolean } => ({ data: {}, ok: false })),
           ]);
@@ -1898,13 +1892,10 @@ export async function GET(request: NextRequest) {
         }
       }));
       results.push(...batchOut);
-      // Cache results in Redis — FRESH data gets 4h TTL, STALE data gets 1h TTL
-      // Caching STALE data prevents the vicious cycle where timeouts are never cached
-      // and every request re-triggers the same expensive fetch
+      // Cache successful results in Redis (4h TTL) — skip caching errors/NR/static
       for (const r of batchOut) {
-        if (r.quality?.valid && r.grade !== 'NR' && r.overallScore > 0) {
-          const ttl = r.quality?.staleness === 'STALE' ? STALE_CACHE_TTL : CACHE_TTL;
-          kvSet(`mb:${r.symbol}`, r, ttl).catch(() => {}); // fire-and-forget
+        if (r.quality?.valid && r.quality?.staleness !== 'STALE' && r.grade !== 'NR' && r.overallScore > 0) {
+          kvSet(`mb:${r.symbol}`, r, CACHE_TTL).catch(() => {}); // fire-and-forget
         }
       }
     }

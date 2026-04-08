@@ -212,7 +212,7 @@ function BriefCard({ brief, isLoading, error, onRefresh }: {
   if (error) return (
     <div className="flex flex-col items-center justify-center py-16 gap-3">
       <AlertCircle className="w-8 h-8 text-red-400" />
-      <p className="text-[#8899AA] text-sm">Could not load brief — please try again</p>
+      <p className="text-[#8899AA] text-sm">Could not load brief — is the backend running?</p>
       <button onClick={onRefresh} className="flex items-center gap-1.5 text-[#0F7ABF] text-sm hover:text-[#38A9E8]">
         <RefreshCw className="w-4 h-4" /> Try again
       </button>
@@ -337,7 +337,7 @@ function ChatTab({ aiAvailable, apiHasError }: { aiAvailable: boolean; apiHasErr
     onError: () => {
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: '⚠️ AI service is temporarily unavailable. Please try again later.',
+        content: '⚠️ Could not reach the AI service. Check that the backend is running.',
         ts: new Date(),
       }]);
     },

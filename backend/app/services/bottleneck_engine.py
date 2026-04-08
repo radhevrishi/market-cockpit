@@ -71,30 +71,6 @@ MACRO_BUCKETS = {
         "base_severity": 3,
         "description": "India-specific infrastructure bottlenecks across sectors",
     },
-    "INDIA_BANKING": {
-        "label": "India Banking & Credit",
-        "themes": ["INDIA_BANKING_CREDIT"],
-        "base_severity": 4,
-        "description": "Banking liquidity, NPA stress, NBFC credit constraints affecting Indian financial system",
-    },
-    "INDIA_AGRI": {
-        "label": "India Agriculture & Food Supply",
-        "themes": ["INDIA_AGRI_SUPPLY"],
-        "base_severity": 3,
-        "description": "Agricultural supply chain disruptions, crop failures, food inflation, and fertilizer shortages",
-    },
-    "INDIA_DEFENCE": {
-        "label": "India Defence & Aerospace",
-        "themes": ["INDIA_DEFENCE_AERO"],
-        "base_severity": 2,
-        "description": "Defence production delays, procurement bottlenecks, and indigenisation constraints",
-    },
-    "INDIA_PHARMA": {
-        "label": "India Pharma & Healthcare",
-        "themes": ["INDIA_PHARMA_HEALTH"],
-        "base_severity": 3,
-        "description": "API/bulk drug supply constraints, healthcare infrastructure gaps, drug shortages",
-    },
 }
 
 # Reverse mapping: theme → macro bucket

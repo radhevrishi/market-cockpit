@@ -58,50 +58,14 @@ async function fetchIndiaCalendar(monthParam: string | null) {
 
   const events: any[] = [];
 
-  // Collect all unique tickers for batch sector lookup
-  const tickersSet = new Set<string>();
-  if (boardMeetings && Array.isArray(boardMeetings)) {
-    for (const meeting of boardMeetings) {
-      const ticker = meeting.bm_symbol || meeting.symbol || '';
-      if (ticker) tickersSet.add(ticker);
-    }
-  }
-  if (corpActions && Array.isArray(corpActions)) {
-    for (const action of corpActions) {
-      const ticker = action.symbol || '';
-      if (ticker) tickersSet.add(ticker);
-    }
-  }
-
-  // Parallel batch sector lookup with chunking (20 at a time) to avoid overload
-  const tickers = Array.from(tickersSet);
-  const chunkSize = 20;
-  const sectorMap = new Map<string, string>();
-
-  for (let i = 0; i < tickers.length; i += chunkSize) {
-    const chunk = tickers.slice(i, i + chunkSize);
-    const results = await Promise.allSettled(
-      chunk.map(ticker => getSectorForSymbol(ticker))
-    );
-
-    results.forEach((result, idx) => {
-      const ticker = chunk[idx];
-      if (result.status === 'fulfilled' && result.value) {
-        sectorMap.set(ticker, result.value);
-      } else {
-        sectorMap.set(ticker, ''); // fallback to empty string on error
-      }
-    });
-  }
-
-  // Parse board meetings (earnings announcements) - use sector map, no await in loop
+  // Parse board meetings (earnings announcements)
   if (boardMeetings && Array.isArray(boardMeetings)) {
     for (const meeting of boardMeetings) {
       const purpose = (meeting.bm_purpose || meeting.purpose || '').toLowerCase();
       const isEarnings = purpose.includes('result') || purpose.includes('financial') || purpose.includes('quarter');
-
+      
       const ticker = meeting.bm_symbol || meeting.symbol || '';
-      const sector = sectorMap.get(ticker) || '';
+      const sector = ticker ? await getSectorForSymbol(ticker) : '';
 
       events.push({
         company: meeting.bm_companyName || meeting.sm_name || ticker,
@@ -114,12 +78,12 @@ async function fetchIndiaCalendar(monthParam: string | null) {
     }
   }
 
-  // Parse corporate actions (dividends, splits, bonuses) - use sector map, no await in loop
+  // Parse corporate actions (dividends, splits, bonuses)
   if (corpActions && Array.isArray(corpActions)) {
     for (const action of corpActions) {
       const ticker = action.symbol || '';
-      const sector = sectorMap.get(ticker) || '';
-
+      const sector = ticker ? await getSectorForSymbol(ticker) : '';
+      
       events.push({
         company: action.comp || action.company || '',
         ticker,

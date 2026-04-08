@@ -366,9 +366,9 @@ function StatusBadgeWithBackend({ status, isLoading, label }: { status: 'present
 
   if (status === 'offline') {
     return (
-      <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border bg-gray-500/20 border-gray-500/30 text-gray-400" title="Service unavailable">
+      <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border bg-gray-500/20 border-gray-500/30 text-gray-400" title="Backend offline">
         <span>◯</span>
-        Unavailable
+        Backend offline
       </span>
     );
   }
@@ -430,7 +430,7 @@ function ApiKeysSection() {
     } catch {
       setApiKeyStatus('offline');
       setAvKeyStatus('offline');
-      toast.error('Service check unavailable');
+      toast.error('Backend offline');
     } finally {
       setIsLoadingHealth(false);
     }

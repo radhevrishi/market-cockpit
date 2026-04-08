@@ -39,9 +39,9 @@ function formatTime(d: Date | null): string {
 function classifyCap(s: { indexGroup?: string; marketCap?: number }): string {
   if (s.indexGroup === 'Large' || s.indexGroup === 'Mid' || s.indexGroup === 'Small') return s.indexGroup;
   const mcap = s.marketCap || 0;
-  if (mcap >= 1_000_000_000_000) return 'Large'; // 1000B (1 lakh crore)
-  if (mcap >= 250_000_000_000) return 'Mid'; // 250B-1000B
-  return 'Small'; // Below 250B
+  if (mcap > 500_000_000_000) return 'Large';
+  if (mcap > 100_000_000_000) return 'Mid';
+  return 'Small';
 }
 
 function isValidStock(s: { ticker?: string; price?: number }): boolean {
@@ -51,7 +51,7 @@ function isValidStock(s: { ticker?: string; price?: number }): boolean {
   return true;
 }
 
-function passesMoveFilter(pct: number, active: Set<MoveToken>): boolean {
+function passesMoveFiler(pct: number, active: Set<MoveToken>): boolean {
   if (active.size === 0) return true;
   for (const token of active) {
     switch (token) {
@@ -164,7 +164,7 @@ export default function MoversPage() {
       if (capFilter === 'Mid & Small' && s.cap === 'Large') return false;
       if (capFilter !== 'All' && capFilter !== 'Mid & Small' && s.cap !== capFilter) return false;
       if (sectorFilter !== 'All' && s.sector !== sectorFilter) return false;
-      if (!passesMoveFilter(s.changePercent, moveTokens)) return false;
+      if (!passesMoveFiler(s.changePercent, moveTokens)) return false;
       return true;
     });
   }, [allStocks, capFilter, sectorFilter, moveTokens]);
@@ -516,8 +516,8 @@ export default function MoversPage() {
                 padding: isMobile ? '6px 10px' : '8px 14px',
                 borderRadius: '8px', border: 'none',
                 backgroundColor: sp.avg >= 0
-                  ? `rgba(16,185,129,${Math.min(0.6, Math.abs(sp.avg) * 0.1 + 0.1)})`
-                  : `rgba(239,68,68,${Math.min(0.6, Math.abs(sp.avg) * 0.1 + 0.1)})`,
+                  ? `rgba(16,185,129,${Math.min(0.35, Math.abs(sp.avg) * 0.06 + 0.08)})`
+                  : `rgba(239,68,68,${Math.min(0.35, Math.abs(sp.avg) * 0.06 + 0.08)})`,
                 cursor: 'pointer', transition: 'all 0.15s',
                 outline: sectorFilter === sp.sector ? `2px solid ${ACCENT}` : 'none', outlineOffset: '1px',
               }}>
