@@ -269,7 +269,7 @@ async function fetchEarningsPulse(): Promise<Earning[]> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// IMAGE GENERATION — Professional table cards like EarningsPulse
+// IMAGE GENERATION — Bloomberg Terminal Style
 // ══════════════════════════════════════════════════════════════════════════
 
 function truncate(s: string, maxLen: number): string {
@@ -296,146 +296,650 @@ async function generateMoversImage(
   type: 'gainers' | 'losers',
 ): Promise<ArrayBuffer> {
   const isGainers = type === 'gainers';
-  const title = isGainers ? 'Top Gainers' : 'Top Losers';
-  const titleColor = isGainers ? '#2e7d32' : '#c62828';
-  const pctColor = isGainers ? '#2e7d32' : '#c62828';
-  const threshold = isGainers ? '≥+4%' : '≤-4%';
   const timestamp = getISTTimestamp();
+  const W = 1200;
 
-  // Filter by 4% threshold
-  const filtered = isGainers
-    ? stocks.filter(s => s.changePercent >= 4)
-    : stocks.filter(s => s.changePercent <= -4);
+  const allStocks = stocks.slice(0, 25);
 
-  const displayStocks = filtered.length > 0 ? filtered.slice(0, 20) : stocks.slice(0, 20);
-  const actualThreshold = filtered.length > 0;
+  // Tier stocks: strong (≥5%) vs moderate (<5%)
+  const strong = isGainers
+    ? allStocks.filter(s => s.changePercent >= 5)
+    : allStocks.filter(s => s.changePercent <= -5);
+  const moderate = isGainers
+    ? allStocks.filter(s => s.changePercent < 5 && s.changePercent >= 0)
+    : allStocks.filter(s => s.changePercent > -5 && s.changePercent < 0);
 
-  const ROW_H = 42;
-  const HEADER_H = 90;
-  const COL_HEADER_H = 44;
-  const FOOTER_H = 44;
-  const totalHeight = HEADER_H + COL_HEADER_H + displayStocks.length * ROW_H + FOOTER_H;
+  const accentColor = isGainers ? '#22C55E' : '#B91C1C';
+  const accentGrad = isGainers
+    ? 'linear-gradient(90deg, #16A34A 0%, #22C55E 100%)'
+    : 'linear-gradient(90deg, #991B1B 0%, #B91C1C 100%)';
+
+  // Calculate heights
+  const ACCENT_H = 2;
+  const HEADER_H = 58;
+  const COL_HEADER_H = 30;
+  const ROW_H = 40;
+  const TIER_HEADER_H = 28;
+  const FOOTER_H = 34;
+
+  const strongCount = strong.length;
+  const moderateCount = moderate.length;
+  const hasStrong = strongCount > 0;
+  const hasModerate = moderateCount > 0;
+
+  const totalHeight =
+    ACCENT_H +
+    HEADER_H +
+    COL_HEADER_H +
+    (hasStrong ? TIER_HEADER_H + strongCount * ROW_H : 0) +
+    (hasModerate ? TIER_HEADER_H + moderateCount * ROW_H : 0) +
+    FOOTER_H;
+
+  const RowComponent = (s: Stock, idx: number, rowIdx: number) => (
+    <div
+      key={`${idx}-${rowIdx}`}
+      style={{
+        display: 'flex',
+        paddingLeft: '20px',
+        paddingRight: '20px',
+        alignItems: 'center',
+        height: `${ROW_H}px`,
+        backgroundColor: rowIdx % 2 === 0 ? '#0F172A' : '#111827',
+        borderBottom: '1px solid #1F2937',
+      }}
+    >
+      <span style={{ width: '30px', color: '#9CA3AF', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
+        {rowIdx + 1}
+      </span>
+      <span style={{ width: '100px', marginLeft: '12px', color: '#FFFFFF', fontSize: '16px', fontWeight: 800, display: 'flex' }}>
+        {truncate(s.ticker, 12)}
+      </span>
+      <div style={{ display: 'flex', width: '85px', marginLeft: '12px', justifyContent: 'flex-end' }}>
+        <span style={{ color: accentColor, fontSize: '16px', fontWeight: 800, fontFamily: 'monospace', display: 'flex' }}>
+          {isGainers ? '+' : ''}{s.changePercent.toFixed(1)}%
+        </span>
+      </div>
+      <div style={{ display: 'flex', width: '90px', marginLeft: '12px', justifyContent: 'flex-end' }}>
+        <span style={{ color: '#FFFFFF', fontSize: '16px', fontWeight: 800, fontFamily: 'monospace', display: 'flex' }}>
+          {s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}
+        </span>
+      </div>
+      <div style={{ display: 'flex', width: '75px', marginLeft: '12px', justifyContent: 'flex-end' }}>
+        <span style={{ color: accentColor, fontSize: '16px', fontWeight: 800, fontFamily: 'monospace', display: 'flex' }}>
+          {isGainers ? '+' : ''}{s.change.toFixed(1)}
+        </span>
+      </div>
+      <span style={{ width: '110px', marginLeft: '12px', color: '#9CA3AF', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
+        {truncate(s.sector, 18)}
+      </span>
+      <span style={{ width: '60px', marginLeft: '12px', color: '#9CA3AF', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
+        {s.cap === 'L' ? 'Large' : s.cap === 'M' ? 'Mid' : 'Small'}
+      </span>
+    </div>
+  );
+
+  const TierHeader = (label: string, count: number) => (
+    <div
+      style={{
+        display: 'flex',
+        paddingLeft: '20px',
+        paddingRight: '20px',
+        alignItems: 'center',
+        height: `${TIER_HEADER_H}px`,
+        backgroundColor: '#111827',
+        borderBottom: '1px solid #1F2937',
+        borderLeft: `2px solid ${accentColor}`,
+      }}
+    >
+      <span style={{ color: accentColor, fontSize: '14px', fontWeight: 800, textTransform: 'uppercase', display: 'flex' }}>
+        {label}
+      </span>
+      <span style={{ marginLeft: '8px', color: '#64748B', fontSize: '14px', fontWeight: 800, display: 'flex' }}>
+        ({count})
+      </span>
+    </div>
+  );
 
   const element = (
     <div
       style={{
         display: 'flex',
         flexDirection: 'column',
-        width: '1100px',
+        width: `${W}px`,
         height: `${totalHeight}px`,
-        backgroundColor: '#ffffff',
-        fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
+        backgroundColor: '#0F172A',
+        fontFamily: 'system-ui, sans-serif',
       }}
     >
-      {/* ── Header ── */}
+      {/* Accent bar */}
+      <div style={{ display: 'flex', width: '100%', height: `${ACCENT_H}px`, background: accentGrad }} />
+
+      {/* Header */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'center',
-          padding: '20px 32px',
-          gap: '16px',
+          justifyContent: 'space-between',
+          paddingLeft: '20px',
+          paddingRight: '20px',
+          height: `${HEADER_H}px`,
+          backgroundColor: '#0F172A',
+          borderBottom: '1px solid #1F2937',
         }}
       >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: '52px',
-            height: '52px',
-            borderRadius: '50%',
-            backgroundColor: '#1a1a2e',
-            fontSize: '28px',
-          }}
-        >
-          🐂
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <span style={{ fontSize: '32px', fontWeight: 700, color: titleColor, letterSpacing: '-0.5px' }}>
-            {title}
-          </span>
-          <span style={{ fontSize: '15px', color: '#718096', marginTop: '2px' }}>
-            Intraday  •  {actualThreshold ? threshold : 'All'}  •  {timestamp}
-          </span>
-        </div>
+        <span style={{ fontSize: '24px', fontWeight: 800, color: accentColor, letterSpacing: '1px', textTransform: 'uppercase', display: 'flex' }}>
+          {isGainers ? 'Top Gainers' : 'Top Losers'}
+        </span>
+        <span style={{ fontSize: '14px', fontWeight: 700, color: '#9CA3AF', letterSpacing: '0.5px', display: 'flex' }}>
+          {allStocks.length} stocks · {timestamp}
+        </span>
       </div>
 
-      {/* ── Column Headers ── */}
+      {/* Column Headers */}
       <div
         style={{
           display: 'flex',
-          backgroundColor: '#2d3748',
-          color: '#e2e8f0',
-          padding: '12px 32px',
-          fontSize: '13px',
-          fontWeight: 700,
-          letterSpacing: '0.5px',
+          paddingLeft: '20px',
+          paddingRight: '20px',
+          height: `${COL_HEADER_H}px`,
+          alignItems: 'center',
+          backgroundColor: '#111827',
+          borderBottom: '1px solid #1F2937',
         }}
       >
-        <span style={{ width: '140px' }}>Symbol</span>
-        <span style={{ width: '200px' }}>Sector</span>
-        <span style={{ width: '220px' }}>Industry</span>
-        <span style={{ width: '100px', textAlign: 'right' }}>Chg%</span>
-        <span style={{ width: '100px', textAlign: 'right' }}>Price</span>
-        <span style={{ width: '50px', textAlign: 'center' }}>Cap</span>
-      </div>
-
-      {/* ── Data Rows ── */}
-      {displayStocks.map((s, i) => (
-        <div
-          key={i}
-          style={{
-            display: 'flex',
-            padding: '10px 32px',
-            backgroundColor: i % 2 === 0 ? '#f7fafc' : '#ffffff',
-            fontSize: '14px',
-            alignItems: 'center',
-            borderBottom: '1px solid #edf2f7',
-          }}
-        >
-          <span style={{ width: '140px', fontWeight: 700, color: '#1a202c', fontSize: '14px' }}>
-            {truncate(s.ticker, 14)}
-          </span>
-          <span style={{ width: '200px', color: '#2d3748', fontSize: '13px' }}>
-            {truncate(s.sector, 20)}
-          </span>
-          <span style={{ width: '220px', color: '#2d3748', fontSize: '13px' }}>
-            {truncate(s.industry, 22)}
-          </span>
-          <span style={{ width: '100px', textAlign: 'right', fontWeight: 700, color: pctColor, fontSize: '15px' }}>
-            {isGainers ? '+' : ''}{s.changePercent.toFixed(1)}%
-          </span>
-          <span style={{ width: '100px', textAlign: 'right', color: '#2d3748', fontSize: '13px' }}>
-            ₹{s.price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
-          </span>
-          <span style={{ width: '50px', textAlign: 'center', color: '#2d3748', fontSize: '13px', fontWeight: 600 }}>
-            {s.cap}
+        <span style={{ width: '30px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+          #
+        </span>
+        <span style={{ width: '100px', marginLeft: '12px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+          Symbol
+        </span>
+        <div style={{ display: 'flex', width: '85px', marginLeft: '12px', justifyContent: 'flex-end' }}>
+          <span style={{ color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+            %Chg
           </span>
         </div>
-      ))}
+        <div style={{ display: 'flex', width: '90px', marginLeft: '12px', justifyContent: 'flex-end' }}>
+          <span style={{ color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+            Price
+          </span>
+        </div>
+        <div style={{ display: 'flex', width: '75px', marginLeft: '12px', justifyContent: 'flex-end' }}>
+          <span style={{ color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+            Chg
+          </span>
+        </div>
+        <span style={{ width: '110px', marginLeft: '12px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+          Sector
+        </span>
+        <span style={{ width: '60px', marginLeft: '12px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+          Cap
+        </span>
+      </div>
 
-      {/* ── Footer ── */}
+      {/* Strong tier */}
+      {hasStrong && (
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          {TierHeader(isGainers ? 'STRONG GAINERS (≥5%)' : 'STRONG LOSERS (≥5%)', strongCount)}
+          {strong.map((s, i) => RowComponent(s, i, i))}
+        </div>
+      )}
+
+      {/* Moderate tier */}
+      {hasModerate && (
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          {TierHeader(isGainers ? 'GAINERS (<5%)' : 'LOSERS (<5%)', moderateCount)}
+          {moderate.map((s, i) => RowComponent(s, i, i))}
+        </div>
+      )}
+
+      {/* Footer */}
       <div
         style={{
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          padding: '12px 32px',
-          backgroundColor: '#edf2f7',
+          paddingLeft: '20px',
+          paddingRight: '20px',
+          height: `${FOOTER_H}px`,
+          backgroundColor: '#111827',
+          borderTop: '1px solid #1F2937',
           fontSize: '13px',
-          color: '#718096',
-          marginTop: 'auto',
+          fontWeight: 700,
+          color: '#64748B',
         }}
       >
-        <span>{displayStocks.length} stocks</span>
-        <span>@mc_street_pulse_bot</span>
+        <span>market-cockpit.vercel.app</span>
+        <span>{timestamp}</span>
       </div>
     </div>
   );
 
   const response = new ImageResponse(element, {
-    width: 1100,
+    width: W,
+    height: totalHeight,
+  });
+
+  return response.arrayBuffer();
+}
+
+// ── Combined Street Pulse Dashboard Card ──────────────────────────────
+async function generateStreetPulseCard(
+  movers: { total: number; gainers: Stock[]; losers: Stock[]; avgChange: number; breadth: Breadth },
+  indices: IndexData[],
+): Promise<ArrayBuffer> {
+  const timestamp = getISTTimestamp();
+  const W = 1200;
+
+  const gainersAll = movers.gainers.slice(0, 25);
+  const losersAll = movers.losers.slice(0, 25);
+
+  // Tier gainers
+  const strongGainers = gainersAll.filter(s => s.changePercent >= 5);
+  const moderateGainers = gainersAll.filter(s => s.changePercent < 5 && s.changePercent >= 0);
+
+  // Tier losers
+  const strongLosers = losersAll.filter(s => s.changePercent <= -5);
+  const moderateLosers = losersAll.filter(s => s.changePercent > -5 && s.changePercent < 0);
+
+  const { breadth } = movers;
+  const adTotal = breadth.advancing + breadth.declining + breadth.unchanged;
+  const advPct = adTotal > 0 ? Math.round((breadth.advancing / adTotal) * 100) : 50;
+
+  // Heights
+  const ACCENT_H = 2;
+  const HEADER_H = 58;
+  const INDEX_H = indices.length > 0 ? 32 : 0;
+  const BREADTH_H = 44;
+  const SECTION_H = 32;
+  const COL_HEADER_H = 30;
+  const TIER_HEADER_H = 28;
+  const ROW_H = 38;
+  const FOOTER_H = 34;
+
+  const gainersRowsH = (strongGainers.length > 0 ? TIER_HEADER_H : 0) + strongGainers.length * ROW_H +
+                       (moderateGainers.length > 0 ? TIER_HEADER_H : 0) + moderateGainers.length * ROW_H;
+  const losersRowsH = (strongLosers.length > 0 ? TIER_HEADER_H : 0) + strongLosers.length * ROW_H +
+                      (moderateLosers.length > 0 ? TIER_HEADER_H : 0) + moderateLosers.length * ROW_H;
+
+  const totalHeight = ACCENT_H + HEADER_H + INDEX_H + BREADTH_H + SECTION_H + COL_HEADER_H + gainersRowsH + SECTION_H + COL_HEADER_H + losersRowsH + FOOTER_H;
+
+  const RowComponent = (s: Stock, idx: number, rowIdx: number, isBullish: boolean) => (
+    <div
+      key={`${idx}-${rowIdx}`}
+      style={{
+        display: 'flex',
+        paddingLeft: '20px',
+        paddingRight: '20px',
+        alignItems: 'center',
+        height: `${ROW_H}px`,
+        backgroundColor: rowIdx % 2 === 0 ? '#0F172A' : '#111827',
+        borderBottom: '1px solid #1F2937',
+      }}
+    >
+      <span style={{ width: '25px', color: '#9CA3AF', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
+        {rowIdx + 1}
+      </span>
+      <span style={{ width: '90px', marginLeft: '12px', color: '#FFFFFF', fontSize: '16px', fontWeight: 800, display: 'flex' }}>
+        {truncate(s.ticker, 12)}
+      </span>
+      <div style={{ display: 'flex', width: '80px', marginLeft: '12px', justifyContent: 'flex-end' }}>
+        <span style={{ color: isBullish ? '#22C55E' : '#B91C1C', fontSize: '16px', fontWeight: 800, fontFamily: 'monospace', display: 'flex' }}>
+          {isBullish ? '+' : ''}{s.changePercent.toFixed(1)}%
+        </span>
+      </div>
+      <div style={{ display: 'flex', width: '85px', marginLeft: '12px', justifyContent: 'flex-end' }}>
+        <span style={{ color: '#FFFFFF', fontSize: '16px', fontWeight: 800, fontFamily: 'monospace', display: 'flex' }}>
+          {s.price.toLocaleString('en-IN', { maximumFractionDigits: 1 })}
+        </span>
+      </div>
+      <div style={{ display: 'flex', width: '70px', marginLeft: '12px', justifyContent: 'flex-end' }}>
+        <span style={{ color: isBullish ? '#22C55E' : '#B91C1C', fontSize: '16px', fontWeight: 800, fontFamily: 'monospace', display: 'flex' }}>
+          {isBullish ? '+' : ''}{s.change.toFixed(1)}
+        </span>
+      </div>
+      <span style={{ width: '100px', marginLeft: '12px', color: '#9CA3AF', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
+        {truncate(s.sector, 16)}
+      </span>
+      <span style={{ width: '55px', marginLeft: '12px', color: '#9CA3AF', fontSize: '14px', fontWeight: 600, display: 'flex' }}>
+        {s.cap === 'L' ? 'Large' : s.cap === 'M' ? 'Mid' : 'Small'}
+      </span>
+    </div>
+  );
+
+  const TierHeader = (label: string, count: number, color: string) => (
+    <div
+      style={{
+        display: 'flex',
+        paddingLeft: '20px',
+        paddingRight: '20px',
+        alignItems: 'center',
+        height: `${TIER_HEADER_H}px`,
+        backgroundColor: '#111827',
+        borderBottom: '1px solid #1F2937',
+        borderLeft: `2px solid ${color}`,
+      }}
+    >
+      <span style={{ color: color, fontSize: '14px', fontWeight: 800, textTransform: 'uppercase', display: 'flex' }}>
+        {label}
+      </span>
+      <span style={{ marginLeft: '8px', color: '#64748B', fontSize: '14px', fontWeight: 800, display: 'flex' }}>
+        ({count})
+      </span>
+    </div>
+  );
+
+  const element = (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        width: `${W}px`,
+        height: `${totalHeight}px`,
+        backgroundColor: '#0F172A',
+        fontFamily: 'system-ui, sans-serif',
+      }}
+    >
+      {/* Accent bar */}
+      <div style={{ display: 'flex', width: '100%', height: `${ACCENT_H}px`, background: 'linear-gradient(90deg, #3B82F6 0%, #60A5FA 100%)' }} />
+
+      {/* Header */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingLeft: '20px',
+          paddingRight: '20px',
+          height: `${HEADER_H}px`,
+          backgroundColor: '#0F172A',
+          borderBottom: '1px solid #1F2937',
+        }}
+      >
+        <span style={{ fontSize: '24px', fontWeight: 800, color: '#E5E7EB', letterSpacing: '1px', textTransform: 'uppercase', display: 'flex' }}>
+          Street Pulse
+        </span>
+        <span style={{ fontSize: '14px', fontWeight: 700, color: '#9CA3AF', letterSpacing: '0.5px', display: 'flex' }}>
+          {timestamp}
+        </span>
+      </div>
+
+      {/* Index Strip */}
+      {indices.length > 0 && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            paddingLeft: '20px',
+            paddingRight: '20px',
+            height: `${INDEX_H}px`,
+            backgroundColor: '#111827',
+            fontSize: '14px',
+            fontWeight: 700,
+            borderBottom: '1px solid #1F2937',
+          }}
+        >
+          {indices.map((idx, i) => {
+            const isVix = idx.shortName === 'VIX';
+            const idxColor = isVix
+              ? idx.changePercent > 0
+                ? '#B91C1C'
+                : '#22C55E'
+              : idx.changePercent >= 0
+                ? '#22C55E'
+                : '#B91C1C';
+            return (
+              <div
+                key={i}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  marginRight: '32px',
+                }}
+              >
+                <span style={{ color: '#9CA3AF', fontSize: '14px', fontWeight: 700, marginRight: '8px' }}>
+                  <span>{idx.shortName}</span>
+                </span>
+                <span style={{ color: '#E5E7EB', fontSize: '14px', fontWeight: 700, fontFamily: 'monospace', marginRight: '8px' }}>
+                  <span>{isVix ? idx.level.toFixed(1) : idx.level.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
+                </span>
+                <span style={{ color: idxColor, fontSize: '14px', fontWeight: 700, fontFamily: 'monospace' }}>
+                  <span>{idx.changePercent >= 0 ? '+' : ''}{idx.changePercent.toFixed(2)}%</span>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Breadth Bar */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          paddingLeft: '20px',
+          paddingRight: '20px',
+          paddingTop: '6px',
+          paddingBottom: '6px',
+          height: `${BREADTH_H}px`,
+          backgroundColor: '#111827',
+          borderBottom: '1px solid #1F2937',
+          flexDirection: 'column',
+        }}
+      >
+        <div style={{ display: 'flex', width: '100%', height: '14px', borderRadius: '2px', backgroundColor: '#1F2937', overflow: 'hidden', marginBottom: '6px' }}>
+          <div
+            style={{
+              display: 'flex',
+              width: `${advPct}%`,
+              height: '14px',
+              backgroundColor: '#22C55E',
+            }}
+          />
+          <div
+            style={{
+              display: 'flex',
+              flex: 1,
+              height: '14px',
+              backgroundColor: '#B91C1C',
+            }}
+          />
+        </div>
+        <div style={{ display: 'flex', width: '100%', alignItems: 'center' }}>
+          <span style={{ color: '#9CA3AF', fontSize: '13px', fontWeight: 700 }}>
+            <span>Adv: </span>
+          </span>
+          <span style={{ color: '#22C55E', fontSize: '13px', fontWeight: 700, marginRight: '12px' }}>
+            <span>{breadth.advancing}</span>
+          </span>
+          <span style={{ color: '#9CA3AF', fontSize: '13px', fontWeight: 700 }}>
+            <span>Dec: </span>
+          </span>
+          <span style={{ color: '#B91C1C', fontSize: '13px', fontWeight: 700, marginRight: '12px' }}>
+            <span>{breadth.declining}</span>
+          </span>
+          <span style={{ color: '#9CA3AF', fontSize: '13px', fontWeight: 700 }}>
+            <span>Unc: </span>
+          </span>
+          <span style={{ color: '#9CA3AF', fontSize: '13px', fontWeight: 700 }}>
+            <span>{breadth.unchanged}</span>
+          </span>
+        </div>
+      </div>
+
+      {/* Gainers Section Header */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          paddingLeft: '20px',
+          paddingRight: '20px',
+          height: `${SECTION_H}px`,
+          backgroundColor: '#0F172A',
+          borderBottom: '1px solid #1F2937',
+        }}
+      >
+        <div style={{ display: 'flex', width: '2px', height: '20px', backgroundColor: '#22C55E', marginRight: '12px' }} />
+        <span style={{ fontSize: '16px', fontWeight: 700, color: '#22C55E', textTransform: 'uppercase' }}>
+          <span>Gainers</span>
+        </span>
+      </div>
+
+      {/* Gainers Column Headers */}
+      <div
+        style={{
+          display: 'flex',
+          paddingLeft: '20px',
+          paddingRight: '20px',
+          height: `${COL_HEADER_H}px`,
+          alignItems: 'center',
+          backgroundColor: '#111827',
+          borderBottom: '1px solid #1F2937',
+        }}
+      >
+        <span style={{ width: '25px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+          #
+        </span>
+        <span style={{ width: '90px', marginLeft: '12px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+          Symbol
+        </span>
+        <div style={{ display: 'flex', width: '80px', marginLeft: '12px', justifyContent: 'flex-end' }}>
+          <span style={{ color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+            %Chg
+          </span>
+        </div>
+        <div style={{ display: 'flex', width: '85px', marginLeft: '12px', justifyContent: 'flex-end' }}>
+          <span style={{ color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+            Price
+          </span>
+        </div>
+        <div style={{ display: 'flex', width: '70px', marginLeft: '12px', justifyContent: 'flex-end' }}>
+          <span style={{ color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+            Chg
+          </span>
+        </div>
+        <span style={{ width: '100px', marginLeft: '12px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+          Sector
+        </span>
+        <span style={{ width: '55px', marginLeft: '12px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+          Cap
+        </span>
+      </div>
+
+      {/* Strong Gainers Tier */}
+      {strongGainers.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          {TierHeader('STRONG ≥5%', strongGainers.length, '#22C55E')}
+          {strongGainers.map((s, i) => RowComponent(s, i, i, true))}
+        </div>
+      )}
+
+      {/* Moderate Gainers Tier */}
+      {moderateGainers.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          {TierHeader('MODERATE <5%', moderateGainers.length, '#22C55E')}
+          {moderateGainers.map((s, i) => RowComponent(s, i, i, true))}
+        </div>
+      )}
+
+      {/* Losers Section Header */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          paddingLeft: '20px',
+          paddingRight: '20px',
+          height: `${SECTION_H}px`,
+          backgroundColor: '#0F172A',
+          borderBottom: '1px solid #1F2937',
+        }}
+      >
+        <div style={{ display: 'flex', width: '2px', height: '20px', backgroundColor: '#B91C1C', marginRight: '12px' }} />
+        <span style={{ fontSize: '16px', fontWeight: 700, color: '#B91C1C', textTransform: 'uppercase' }}>
+          <span>Losers</span>
+        </span>
+      </div>
+
+      {/* Losers Column Headers */}
+      <div
+        style={{
+          display: 'flex',
+          paddingLeft: '20px',
+          paddingRight: '20px',
+          height: `${COL_HEADER_H}px`,
+          alignItems: 'center',
+          backgroundColor: '#111827',
+          borderBottom: '1px solid #1F2937',
+        }}
+      >
+        <span style={{ width: '25px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+          #
+        </span>
+        <span style={{ width: '90px', marginLeft: '12px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+          Symbol
+        </span>
+        <div style={{ display: 'flex', width: '80px', marginLeft: '12px', justifyContent: 'flex-end' }}>
+          <span style={{ color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+            %Chg
+          </span>
+        </div>
+        <div style={{ display: 'flex', width: '85px', marginLeft: '12px', justifyContent: 'flex-end' }}>
+          <span style={{ color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+            Price
+          </span>
+        </div>
+        <div style={{ display: 'flex', width: '70px', marginLeft: '12px', justifyContent: 'flex-end' }}>
+          <span style={{ color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+            Chg
+          </span>
+        </div>
+        <span style={{ width: '100px', marginLeft: '12px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+          Sector
+        </span>
+        <span style={{ width: '55px', marginLeft: '12px', color: '#64748B', fontSize: '13px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+          Cap
+        </span>
+      </div>
+
+      {/* Strong Losers Tier */}
+      {strongLosers.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          {TierHeader('STRONG ≥5%', strongLosers.length, '#B91C1C')}
+          {strongLosers.map((s, i) => RowComponent(s, i, i, false))}
+        </div>
+      )}
+
+      {/* Moderate Losers Tier */}
+      {moderateLosers.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          {TierHeader('MODERATE <5%', moderateLosers.length, '#B91C1C')}
+          {moderateLosers.map((s, i) => RowComponent(s, i, i, false))}
+        </div>
+      )}
+
+      {/* Footer */}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          paddingLeft: '20px',
+          paddingRight: '20px',
+          height: `${FOOTER_H}px`,
+          backgroundColor: '#111827',
+          borderTop: '1px solid #1F2937',
+          fontSize: '13px',
+          fontWeight: 700,
+          color: '#64748B',
+        }}
+      >
+        <span>market-cockpit.vercel.app</span>
+        <span>{timestamp}</span>
+      </div>
+    </div>
+  );
+
+  const response = new ImageResponse(element, {
+    width: W,
     height: totalHeight,
   });
 
@@ -522,23 +1026,23 @@ function fmtPrice(p: number): string {
 
 function idxLine(idx: IndexData): string {
   const isVix = idx.shortName === 'VIX';
-  const emoji = isVix
-    ? (idx.changePercent > 0 ? '🔺' : '🔻')
-    : (idx.changePercent >= 0 ? '🟩' : '🟥');
+  const dir = isVix
+    ? (idx.changePercent > 0 ? '^' : 'v')
+    : (idx.changePercent >= 0 ? '+' : '-');
   const lvl = isVix
     ? idx.level.toFixed(2)
     : idx.level.toLocaleString('en-IN', { maximumFractionDigits: 0 });
   const chg = fmtPct(idx.changePercent, 2);
   const label = isVix ? `${idx.shortName} (Fear)` : idx.shortName;
-  return `${emoji} <b>${esc(label)}</b>  ${lvl}  <code>${chg}</code>`;
+  return `${dir} <b>${esc(label)}</b>  ${lvl}  <code>${chg}</code>`;
 }
 
 function breadthBar(adv: number, dec: number, total: number): string {
-  const barLen = 14;
+  const barLen = 20;
   const advPct = total > 0 ? adv / total : 0;
   const advBlocks = Math.round(advPct * barLen);
   const decBlocks = barLen - advBlocks;
-  return '🟩'.repeat(advBlocks) + '🟥'.repeat(decBlocks);
+  return '[' + '+'.repeat(advBlocks) + '-'.repeat(decBlocks) + ']';
 }
 
 // ── Build Text Summary Message (indices + breadth + earnings) ──────────
@@ -566,7 +1070,8 @@ function buildSummaryMessage(
   const lines: string[] = [];
 
   // Header
-  lines.push(`${moodEmoji} <b>MC STREET PULSE</b>  ·  <code>${moodText}</code>`);
+  const moodSymbol = avgChange > 0.5 ? '[+]' : avgChange < -0.5 ? '[-]' : '[~]';
+  lines.push(`${moodSymbol} <b>MC STREET PULSE</b>  ·  <code>${moodText}</code>`);
   lines.push(`<i>${esc(dateStr)}  ${timeStr} IST</i>`);
   lines.push('');
 
@@ -574,7 +1079,7 @@ function buildSummaryMessage(
   if (indices.length > 0) {
     lines.push(DIV);
     lines.push('');
-    lines.push(`<b>📊 INDICES</b>`);
+    lines.push(`<b>INDICES</b>`);
     lines.push('');
     for (const idx of indices) {
       lines.push(idxLine(idx));
@@ -585,13 +1090,13 @@ function buildSummaryMessage(
   // Breadth
   lines.push(DIV);
   lines.push('');
-  lines.push(`<b>📈 MARKET BREADTH</b>  <i>${total} stocks</i>`);
+  lines.push(`<b>MARKET BREADTH</b>  <i>${total} stocks</i>`);
   lines.push('');
   lines.push(breadthBar(breadth.advancing, breadth.declining, adTotal));
-  lines.push(`🟩 <b>${breadth.advancing}</b> advancing   🟥 <b>${breadth.declining}</b> declining   ⬜ ${breadth.unchanged} flat`);
+  lines.push(`[+] <b>${breadth.advancing}</b> advancing   [-] <b>${breadth.declining}</b> declining   [~] ${breadth.unchanged} flat`);
   lines.push(`A/D: <b>${adRatio}</b>   Avg: <code>${fmtPct(avgChange, 2)}</code>`);
   if (breadth.mid.adv + breadth.mid.dec > 0 || breadth.small.adv + breadth.small.dec > 0) {
-    lines.push(`<i>Mid</i> ↑${breadth.mid.adv} ↓${breadth.mid.dec}   <i>Small</i> ↑${breadth.small.adv} ↓${breadth.small.dec}`);
+    lines.push(`<i>Mid</i> ^${breadth.mid.adv} v${breadth.mid.dec}   <i>Small</i> ^${breadth.small.adv} v${breadth.small.dec}`);
   }
   lines.push('');
 
@@ -601,13 +1106,13 @@ function buildSummaryMessage(
   if (extremeUp.length > 0 || extremeDown.length > 0) {
     lines.push(DIV);
     lines.push('');
-    lines.push(`<b>🚨 CIRCUIT BREAKERS</b>  <i>≥ 8% move</i>`);
+    lines.push(`<b>CIRCUIT BREAKERS</b>  <i>≥ 8% move</i>`);
     lines.push('');
     for (const s of extremeUp.slice(0, 5)) {
-      lines.push(`  🟢 <b>${esc(s.ticker)}</b>  <code>+${s.changePercent.toFixed(1)}%</code>  ${fmtPrice(s.price)}  [${s.cap}]`);
+      lines.push(`  [+] <b>${esc(s.ticker)}</b>  <code>+${s.changePercent.toFixed(1)}%</code>  ${fmtPrice(s.price)}  [${s.cap}]`);
     }
     for (const s of extremeDown.slice(0, 5)) {
-      lines.push(`  🔴 <b>${esc(s.ticker)}</b>  <code>${s.changePercent.toFixed(1)}%</code>  ${fmtPrice(s.price)}  [${s.cap}]`);
+      lines.push(`  [-] <b>${esc(s.ticker)}</b>  <code>${s.changePercent.toFixed(1)}%</code>  ${fmtPrice(s.price)}  [${s.cap}]`);
     }
     lines.push('');
   }
@@ -616,10 +1121,10 @@ function buildSummaryMessage(
   if (earnings.length > 0) {
     lines.push(DIV);
     lines.push('');
-    lines.push(`<b>💰 EARNINGS PULSE</b>  <i>Top Results This Month</i>`);
+    lines.push(`<b>EARNINGS PULSE</b>  <i>Top Results This Month</i>`);
     lines.push('');
     for (const e of earnings.slice(0, 8)) {
-      const badge = e.quality === 'Excellent' ? '⭐' : '✅';
+      const badge = e.quality === 'Excellent' ? '[OK]' : '[OK]';
       const mv = e.movePercent !== 0 ? `  <code>${fmtPct(e.movePercent)}</code>` : '';
       lines.push(`  ${badge} <b>${esc(e.symbol)}</b>  <i>${esc(e.quarter)}</i>${mv}`);
     }
@@ -631,7 +1136,7 @@ function buildSummaryMessage(
   lines.push('');
   lines.push(`<i>L=Large  M=Mid  S=Small</i>`);
   lines.push('');
-  lines.push(`🌐 <a href="https://market-cockpit.vercel.app/movers">Open Dashboard</a>  ·  <i>Market Cockpit</i>`);
+  lines.push(`<a href="https://market-cockpit.vercel.app/movers">Open Dashboard</a>  ·  <i>Market Cockpit</i>`);
 
   return lines.join('\n');
 }
@@ -648,7 +1153,18 @@ async function sendFullAlert(
   const errors: string[] = [];
   const target = chatId || TG_CHAT_ID;
 
-  // 1. Send Gainers Image
+  // 1. Send Combined Street Pulse Dashboard Card
+  try {
+    const dashImg = await generateStreetPulseCard(movers, indices);
+    const caption = `<b>Street Pulse</b>\n${movers.total} stocks • ^${movers.breadth.advancing} v${movers.breadth.declining}\n<a href="https://market-cockpit.vercel.app/movers">Dashboard</a>`;
+    const r0 = await sendTelegramPhoto(dashImg, caption, target);
+    if (!r0.ok) errors.push(`Dashboard image: ${r0.error}`);
+  } catch (e: any) {
+    console.error('[BOT] Dashboard image failed:', e);
+    errors.push(`Dashboard image exception: ${e.message}`);
+  }
+
+  // 2. Send Gainers Image
   try {
     const gainersImg = await generateMoversImage(movers.gainers, 'gainers');
     const r1 = await sendTelegramPhoto(gainersImg, '', target);
@@ -658,7 +1174,7 @@ async function sendFullAlert(
     errors.push(`Gainers image exception: ${e.message}`);
   }
 
-  // 2. Send Losers Image
+  // 2b. Send Losers Image
   try {
     const losersImg = await generateMoversImage(movers.losers, 'losers');
     const r2 = await sendTelegramPhoto(losersImg, '', target);
@@ -674,6 +1190,30 @@ async function sendFullAlert(
   if (!r3.ok) errors.push(`Summary text: ${r3.error}`);
 
   return { ok: errors.length === 0, errors };
+}
+
+// ── Fetch Market News ──────────────────────────────────────────────────
+async function fetchMarketNews(): Promise<{title: string; source: string; timestamp?: string}[]> {
+  try {
+    const url = `${API_BASE}/api/market/intelligence?days=3`;
+    console.log(`[BOT] Fetching market news from ${url}`);
+    const r = await fetch(url, { headers: { 'User-Agent': 'MarketCockpit-Bot/1.0' }, signal: AbortSignal.timeout(15000) });
+    if (r.ok) {
+      const data = await r.json();
+      const allSignals = data.signals || [];
+      return allSignals
+        .filter((s: any) => s.signalTierV7 === 'ACTIONABLE' || s.signalTierV7 === 'NOTABLE')
+        .slice(0, 15)
+        .map((s: any) => ({
+          title: s.headline || s.narrative || s.summary || `${s.symbol || s.ticker}: ${s.eventType || 'Update'}`,
+          source: `${s.symbol || s.ticker || ''} | ${s.eventType || s.signalClass || 'Market'}`,
+          timestamp: s.date || s.timestamp,
+        }));
+    }
+  } catch (e) {
+    console.error('[BOT] Market news fetch failed:', e);
+  }
+  return [];
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -693,32 +1233,32 @@ export async function POST(request: Request) {
 
     if (text === '/start') {
       await sendTelegramTo(chatId,
-        `🚀 <b>MC Street Pulse — Connected!</b>\n\nWelcome ${esc(firstName)}! Your market intelligence bot is live.\n\n📊 <b>What you'll receive:</b>\n• Professional image cards — Top Gainers &amp; Losers\n• Sector &amp; Industry breakdown\n• NIFTY, MIDCAP, SMALLCAP &amp; VIX snapshot\n• Market breadth (advance/decline ratio)\n• Circuit breaker alerts (8%+ moves)\n• Earnings pulse (top quality results)\n\n⏰ <b>Schedule:</b> 10:05 AM &amp; 3:05 PM IST (Mon–Fri)\n\n💡 <b>Commands:</b>\n/pulse — Get live pulse with images\n/gainers — Top gainers image card\n/losers — Top losers image card\n/indices — Index snapshot + breadth\n/status — Bot status &amp; next alert\n/help — Show all commands\n\n🌐 <a href="https://market-cockpit.vercel.app/movers">View Dashboard</a>\n<i>Powered by Market Cockpit</i>`
+        `<b>MC Street Pulse — Connected!</b>\n\nWelcome ${esc(firstName)}! Your market intelligence bot is live.\n\n<b>What you'll receive:</b>\n• Professional image cards — Top Gainers &amp; Losers\n• Sector &amp; Industry breakdown\n• NIFTY, MIDCAP, SMALLCAP &amp; VIX snapshot\n• Market breadth (advance/decline ratio)\n• Circuit breaker alerts (8%+ moves)\n• Earnings pulse (top quality results)\n\n<b>Schedule:</b> 10:05 AM &amp; 3:05 PM IST (Mon–Fri)\n\n<b>Commands:</b>\n/pulse — Get live pulse with images\n/gainers — Top gainers image card\n/losers — Top losers image card\n/indices — Index snapshot + breadth\n/news — Market intelligence alerts\n/status — Bot status &amp; next alert\n/help — Show all commands\n\n<a href="https://market-cockpit.vercel.app/movers">View Dashboard</a>\n<i>Powered by Market Cockpit</i>`
       );
     } else if (text === '/help') {
       await sendTelegramTo(chatId,
-        `❓ <b>MC Street Pulse — Help</b>\n\n<b>Commands:</b>\n/start — Welcome &amp; setup\n/pulse — Full market pulse with image cards\n/gainers — Top gainers image (4%+ movers)\n/losers — Top losers image (4%+ drops)\n/indices — NIFTY/MIDCAP/SMALLCAP/VIX snapshot\n/status — Bot status &amp; next alert\n/help — This help message\n\n<b>Automatic Alerts:</b>\n⏰ 10:05 AM IST — Morning pulse\n⏰ 3:05 PM IST — Afternoon pulse\n\nEach alert includes:\n📸 Top Gainers image card\n📸 Top Losers image card\n📊 Index snapshot &amp; breadth\n🚨 Circuit breakers (8%+)\n💰 Earnings pulse\n\n🌐 <a href="https://market-cockpit.vercel.app/movers">View Full Dashboard</a>\n<i>Powered by Market Cockpit</i>`
+        `<b>MC Street Pulse — Help</b>\n\n<b>Commands:</b>\n/start — Welcome &amp; setup\n/pulse — Full market pulse with image cards\n/gainers — Top gainers image (4%+ movers)\n/losers — Top losers image (4%+ drops)\n/indices — NIFTY/MIDCAP/SMALLCAP/VIX snapshot\n/news — Market intelligence alerts\n/status — Bot status &amp; next alert\n/help — This help message\n\n<b>Automatic Alerts:</b>\n10:05 AM IST — Morning pulse\n3:05 PM IST — Afternoon pulse\n\nEach alert includes:\nTop Gainers image card\nTop Losers image card\nIndex snapshot &amp; breadth\nCircuit breakers (8%+)\nEarnings pulse\n\n<a href="https://market-cockpit.vercel.app/movers">View Full Dashboard</a>\n<i>Powered by Market Cockpit</i>`
       );
     } else if (text === '/pulse') {
-      await sendTelegramTo(chatId, '⏳ <i>Generating market pulse with image cards...</i>');
+      await sendTelegramTo(chatId, 'Generating street pulse dashboard...');
       const [movers, earnings, indices] = await Promise.all([fetchMovers(), fetchEarningsPulse(), fetchIndexSnapshot()]);
       if (movers.total === 0) {
-        await sendTelegramTo(chatId, '📊 Market is closed or data unavailable. Try during market hours (9:15 AM – 3:30 PM IST).');
+        await sendTelegramTo(chatId, 'Market is closed or data unavailable. Try during market hours (9:15 AM – 3:30 PM IST).');
       } else {
         await sendFullAlert(movers, earnings, indices, chatId);
       }
     } else if (text === '/gainers') {
-      await sendTelegramTo(chatId, '⏳ <i>Generating gainers card...</i>');
+      await sendTelegramTo(chatId, 'Generating gainers card...');
       const movers = await fetchMovers();
       if (movers.gainers.length === 0) {
-        await sendTelegramTo(chatId, '📊 No gainers data available. Market may be closed.');
+        await sendTelegramTo(chatId, 'No gainers data available. Market may be closed.');
       } else {
         try {
           const img = await generateMoversImage(movers.gainers, 'gainers');
-          await sendTelegramPhoto(img, `🟢 Top ${movers.gainers.filter(g => g.changePercent >= 4).length || movers.gainers.length} Gainers — <a href="https://market-cockpit.vercel.app/movers">Dashboard</a>`, chatId);
+          await sendTelegramPhoto(img, `Top ${movers.gainers.filter(g => g.changePercent >= 4).length || movers.gainers.length} Gainers — <a href="https://market-cockpit.vercel.app/movers">Dashboard</a>`, chatId);
         } catch (e) {
           // Fallback to text
-          const lines = [`📈 <b>TOP GAINERS</b>\n`];
+          const lines = [`<b>TOP GAINERS</b>\n`];
           for (let i = 0; i < movers.gainers.length; i++) {
             const g = movers.gainers[i];
             lines.push(`${i + 1}. <b>${esc(g.ticker)}</b>  <b>+${g.changePercent.toFixed(1)}%</b>  ${fmtPrice(g.price)}  [${g.cap}]`);
@@ -727,16 +1267,16 @@ export async function POST(request: Request) {
         }
       }
     } else if (text === '/losers') {
-      await sendTelegramTo(chatId, '⏳ <i>Generating losers card...</i>');
+      await sendTelegramTo(chatId, 'Generating losers card...');
       const movers = await fetchMovers();
       if (movers.losers.length === 0) {
-        await sendTelegramTo(chatId, '📊 No losers data available. Market may be closed.');
+        await sendTelegramTo(chatId, 'No losers data available. Market may be closed.');
       } else {
         try {
           const img = await generateMoversImage(movers.losers, 'losers');
-          await sendTelegramPhoto(img, `🔴 Top ${movers.losers.filter(l => l.changePercent <= -4).length || movers.losers.length} Losers — <a href="https://market-cockpit.vercel.app/movers">Dashboard</a>`, chatId);
+          await sendTelegramPhoto(img, `Top ${movers.losers.filter(l => l.changePercent <= -4).length || movers.losers.length} Losers — <a href="https://market-cockpit.vercel.app/movers">Dashboard</a>`, chatId);
         } catch (e) {
-          const lines = [`📉 <b>TOP LOSERS</b>\n`];
+          const lines = [`<b>TOP LOSERS</b>\n`];
           for (let i = 0; i < movers.losers.length; i++) {
             const l = movers.losers[i];
             lines.push(`${i + 1}. <b>${esc(l.ticker)}</b>  <b>${l.changePercent.toFixed(1)}%</b>  ${fmtPrice(l.price)}  [${l.cap}]`);
@@ -745,22 +1285,37 @@ export async function POST(request: Request) {
         }
       }
     } else if (text === '/indices') {
-      await sendTelegramTo(chatId, '⏳ <i>Fetching index data...</i>');
+      await sendTelegramTo(chatId, 'Fetching index data...');
       const [indices, movers] = await Promise.all([fetchIndexSnapshot(), fetchMovers()]);
       const DIV = '─'.repeat(22);
       const adRatio = movers.breadth.declining > 0
         ? (movers.breadth.advancing / movers.breadth.declining).toFixed(2)
         : '∞';
-      const lines = [`📈 <b>INDEX SNAPSHOT</b>\n`];
+      const lines = [`<b>INDEX SNAPSHOT</b>\n`];
       for (const idx of indices) lines.push(idxLine(idx));
       lines.push('');
       lines.push(DIV);
       lines.push('');
-      lines.push(`📊 <b>MARKET BREADTH</b>`);
-      lines.push(`↑<b>${movers.breadth.advancing}</b> advancing  ↓<b>${movers.breadth.declining}</b> declining  →${movers.breadth.unchanged} flat`);
+      lines.push(`<b>MARKET BREADTH</b>`);
+      lines.push(`^<b>${movers.breadth.advancing}</b> advancing  v<b>${movers.breadth.declining}</b> declining  ${movers.breadth.unchanged} flat`);
       lines.push(`A/D Ratio: <b>${adRatio}x</b>`);
-      lines.push(`Mid: ↑${movers.breadth.mid.adv} ↓${movers.breadth.mid.dec}   Sml: ↑${movers.breadth.small.adv} ↓${movers.breadth.small.dec}`);
+      lines.push(`Mid: ^${movers.breadth.mid.adv} v${movers.breadth.mid.dec}   Sml: ^${movers.breadth.small.adv} v${movers.breadth.small.dec}`);
       await sendTelegramTo(chatId, lines.join('\n'));
+    } else if (text === '/news') {
+      await sendTelegramTo(chatId, 'Fetching market intelligence...');
+      const news = await fetchMarketNews();
+      if (news.length === 0) {
+        await sendTelegramTo(chatId, '<b>Market News</b>\n\nNo actionable intelligence signals at this time.');
+      } else {
+        const lines = [`<b>MARKET INTELLIGENCE</b>\n`];
+        for (let i = 0; i < news.length; i++) {
+          lines.push(`${i + 1}. ${esc(news[i].title)}`);
+          if (news[i].source) lines.push(`   <i>${news[i].source}</i>`);
+        }
+        lines.push('');
+        lines.push(`<a href="https://market-cockpit.vercel.app/orders">Full Intelligence Dashboard</a>`);
+        await sendTelegramTo(chatId, lines.join('\n'));
+      }
     } else if (text === '/status') {
       const now = new Date();
       const ist = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
@@ -771,7 +1326,7 @@ export async function POST(request: Request) {
       const nextAlert = h < 10 ? '10:05 AM' : h < 15 ? '3:05 PM' : 'Tomorrow 10:05 AM';
 
       await sendTelegramTo(chatId,
-        `⚙️ <b>MC Street Pulse — Status</b>\n\n✅ Bot: Online\n🕒 IST: ${ist.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}\n${isMarketDay && isMarketHours ? '🟢 Market: Open' : '🔴 Market: Closed'}\n⏰ Next Alert: ${isMarketDay ? nextAlert : 'Monday 10:05 AM'}\n📸 Mode: Image Cards + Text Summary\n\n<i>Alerts run Mon–Fri at 10:05 AM &amp; 3:05 PM IST</i>`
+        `<b>MC Street Pulse — Status</b>\n\n[OK] Bot: Online\nIST: ${ist.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}\n${isMarketDay && isMarketHours ? '[+] Market: Open' : '[-] Market: Closed'}\nNext Alert: ${isMarketDay ? nextAlert : 'Monday 10:05 AM'}\nMode: Image Cards + Text Summary\n\n<i>Alerts run Mon–Fri at 10:05 AM &amp; 3:05 PM IST</i>`
       );
     }
 
@@ -815,7 +1370,7 @@ export async function GET(request: Request) {
   if (mode === 'test') {
     diagnostics.steps.push('sending_test_message');
     const result = await sendTelegram(
-      '✅ <b>Market Cockpit Bot Connected</b>\n\nImage card alerts are active! You\'ll receive:\n📸 Top Gainers card\n📸 Top Losers card\n📊 Index + Breadth summary\n\nTwice daily at 10:05 AM &amp; 3:05 PM IST.\n\n🌐 <a href="https://market-cockpit.vercel.app/movers">View Dashboard</a>'
+      '<b>Market Cockpit Bot Connected</b>\n\nImage card alerts are active! You\'ll receive:\nTop Gainers card\nTop Losers card\nIndex + Breadth summary\n\nTwice daily at 10:05 AM &amp; 3:05 PM IST.\n\n<a href="https://market-cockpit.vercel.app/movers">View Dashboard</a>'
     );
     diagnostics.steps.push(result.ok ? 'test_sent_ok' : 'test_send_failed');
     return NextResponse.json({ ok: result.ok, mode: 'test', telegramResponse: result.telegramResponse, error: result.error, diagnostics, elapsed: Date.now() - startTime });
@@ -855,7 +1410,7 @@ export async function GET(request: Request) {
   if (movers.total === 0 && earnings.length === 0) {
     diagnostics.steps.push('no_data_sending_closed_msg');
     const result = await sendTelegram(
-      '📊 <b>Market Cockpit</b>\n\nMarket is closed or data unavailable.\n\n<i>Next alert during market hours.</i>'
+      '<b>Market Cockpit</b>\n\nMarket is closed or data unavailable.\n\n<i>Next alert during market hours.</i>'
     );
     return NextResponse.json({ ok: result.ok, status: 'no-data', telegramResponse: result.telegramResponse, error: result.error, diagnostics, elapsed: Date.now() - startTime });
   }

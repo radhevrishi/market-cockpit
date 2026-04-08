@@ -1482,13 +1482,13 @@ export default function CompanyIntelligencePage() {
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             {/* High Conviction Signals */}
-            {filteredSignals.filter(s => s.weightedScore > 70).length > 0 && (
+            {filteredSignals.filter(s => (s.weightedScore ?? 0) > 70).length > 0 && (
               <>
                 <div style={{ fontSize: '10px', fontWeight: 700, color: GREEN, marginTop: '8px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                   {'✓ HIGH CONVICTION (Score > 70)'}
                 </div>
                 {filteredSignals
-                  .filter(s => s.weightedScore > 70)
+                  .filter(s => (s.weightedScore ?? 0) > 70)
                   .map((s, i) => (
                     <div key={`sig-hc-${i}`} style={{
                       backgroundColor: CARD,
@@ -1787,13 +1787,13 @@ export default function CompanyIntelligencePage() {
             )}
 
             {/* Emerging Signals */}
-            {filteredSignals.filter(s => s.weightedScore >= 40 && s.weightedScore <= 70).length > 0 && (
+            {filteredSignals.filter(s => (s.weightedScore ?? 0) >= 40 && (s.weightedScore ?? 0) <= 70).length > 0 && (
               <>
                 <div style={{ fontSize: '10px', fontWeight: 700, color: YELLOW, marginTop: '8px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                   {'→ EMERGING SIGNALS (Score 40-70)'}
                 </div>
                 {filteredSignals
-                  .filter(s => s.weightedScore >= 40 && s.weightedScore <= 70)
+                  .filter(s => (s.weightedScore ?? 0) >= 40 && (s.weightedScore ?? 0) <= 70)
                   .map((s, i) => (
                     <div key={`sig-em-${i}`} style={{
                       backgroundColor: CARD,
@@ -2007,13 +2007,13 @@ export default function CompanyIntelligencePage() {
             )}
 
             {/* Noise */}
-            {filteredSignals.filter(s => s.weightedScore < 40).length > 0 && (
+            {filteredSignals.filter(s => (s.weightedScore ?? 0) < 40).length > 0 && (
               <>
                 <div style={{ fontSize: '10px', fontWeight: 700, color: TEXT3, marginTop: '8px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                   {'◇ NOISE (Score < 40)'}
                 </div>
                 {filteredSignals
-                  .filter(s => s.weightedScore < 40)
+                  .filter(s => (s.weightedScore ?? 0) < 40)
                   .map((s, i) => (
                     <div key={`sig-no-${i}`} style={{
                       backgroundColor: CARD,

@@ -38,7 +38,7 @@ export default function LoginPage() {
       router.push('/');
     } catch (err: unknown) {
       if (err instanceof TypeError && err.message === 'Failed to fetch') {
-        setError('Cannot reach the server. Make sure the backend is running (bash start_local.sh).');
+        setError('Service temporarily unavailable. Please try again in a moment.');
       } else {
         setError(err instanceof Error ? err.message : 'Login failed');
       }
