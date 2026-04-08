@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { RefreshCw, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, ChevronUp, ChevronDown } from 'lucide-react';
+import { RefreshCw, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, ChevronUp, ChevronDown, Zap } from 'lucide-react';
 
 interface Stock {
   ticker: string;
@@ -91,6 +91,7 @@ export default function MoversPage() {
   const [moveTokens, setMoveTokens] = useState<Set<MoveToken>>(new Set());
   const [gainerSort, setGainerSort] = useState<SortState>({ key: 'changePercent', dir: 'desc' });
   const [loserSort, setLoserSort] = useState<SortState>({ key: 'changePercent', dir: 'asc' });
+  const [earningsTickers, setEarningsTickers] = useState<Map<string, { quality: string; quarter: string }>>(new Map());
 
   const windowWidth = useWindowWidth();
   const isMobile = windowWidth < 640;
@@ -156,7 +157,33 @@ export default function MoversPage() {
     }
   }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  // Fetch recent earnings for badges
+  const fetchEarnings = useCallback(async () => {
+    try {
+      const now = new Date();
+      const curMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const prevMonth = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
+      const [curRes, prevRes] = await Promise.all([
+        fetch(`/api/market/earnings?market=india&month=${curMonth}`).catch(() => null),
+        fetch(`/api/market/earnings?market=india&month=${prevMonth}`).catch(() => null),
+      ]);
+      const map = new Map<string, { quality: string; quarter: string }>();
+      for (const res of [curRes, prevRes]) {
+        if (res && res.ok) {
+          const json = await res.json();
+          for (const r of (json.results || [])) {
+            if (r.quality !== 'Upcoming' && r.quality !== 'Preview' && !map.has(r.ticker)) {
+              map.set(r.ticker, { quality: r.quality, quarter: r.quarter });
+            }
+          }
+        }
+      }
+      setEarningsTickers(map);
+    } catch { /* silent */ }
+  }, []);
+
+  useEffect(() => { fetchData(); fetchEarnings(); }, [fetchData, fetchEarnings]);
   useEffect(() => { const i = setInterval(fetchData, 60000); return () => clearInterval(i); }, [fetchData]);
 
   const filtered = useMemo(() => {
@@ -191,12 +218,12 @@ export default function MoversPage() {
 
   const gainers = useMemo(() => {
     const base = filtered.filter(s => s.changePercent > 0);
-    return sortStocks(base, gainerSort).slice(0, 25);
+    return sortStocks(base, gainerSort).slice(0, 30);
   }, [filtered, gainerSort, sortStocks]);
 
   const losers = useMemo(() => {
     const base = filtered.filter(s => s.changePercent < 0);
-    return sortStocks(base, loserSort).slice(0, 25);
+    return sortStocks(base, loserSort).slice(0, 30);
   }, [filtered, loserSort, sortStocks]);
 
   const sectors = useMemo(() => {
@@ -269,12 +296,31 @@ export default function MoversPage() {
     );
   };
 
+  // Earnings badge component
+  const EarningsBadge = ({ ticker }: { ticker: string }) => {
+    const info = earningsTickers.get(ticker);
+    if (!info) return null;
+    const qColor = info.quality === 'Excellent' || info.quality === 'Great' ? GREEN
+      : info.quality === 'Good' ? '#81C784'
+      : info.quality === 'OK' ? '#F59E0B'
+      : RED;
+    return (
+      <span style={{
+        fontSize: '8px', fontWeight: '700', padding: '1px 4px', borderRadius: '3px', marginLeft: '4px',
+        backgroundColor: `${qColor}20`, color: qColor, verticalAlign: 'middle',
+        display: 'inline-flex', alignItems: 'center', gap: '2px',
+      }}>
+        <Zap size={7} />{info.quarter || 'Q'}
+      </span>
+    );
+  };
+
   // Mobile card row — compact, no Sector/Vol columns
   const MobileRow = ({ stock, rank, up }: { stock: Stock; rank: number; up: boolean }) => (
     <tr style={{ borderBottom: `1px solid ${BORDER}` }}>
       <td style={{ padding: '8px 6px', color: TEXT3, fontSize: '11px', width: '24px' }}>{rank}</td>
       <td style={{ padding: '8px 4px' }}>
-        <div style={{ fontWeight: '700', fontSize: '12px', color: ACCENT }}>{stock.ticker}</div>
+        <div style={{ fontWeight: '700', fontSize: '12px', color: ACCENT }}>{stock.ticker}<EarningsBadge ticker={stock.ticker} /></div>
         <div style={{ fontSize: '9px', color: TEXT3, maxWidth: '110px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{stock.company}</div>
       </td>
       <td style={{ padding: '8px 4px', textAlign: 'right', fontSize: '12px', color: TEXT1, fontWeight: '500', fontVariantNumeric: 'tabular-nums' }}>
@@ -303,7 +349,7 @@ export default function MoversPage() {
       onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}>
       <td style={{ padding: '10px 12px', color: TEXT3, fontSize: '12px', width: '36px' }}>{rank}</td>
       <td style={{ padding: '10px 8px' }}>
-        <div style={{ fontWeight: '600', fontSize: '13px', color: ACCENT }}>{stock.ticker}</div>
+        <div style={{ fontWeight: '600', fontSize: '13px', color: ACCENT }}>{stock.ticker}<EarningsBadge ticker={stock.ticker} /></div>
         <div style={{ fontSize: '10px', color: TEXT3, maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{stock.company}</div>
       </td>
       {!isTablet && <td style={{ padding: '10px 8px', fontSize: '12px', color: TEXT2 }}>{stock.sector}</td>}

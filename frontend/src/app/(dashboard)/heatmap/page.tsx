@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, BarChart3, TrendingUp } from 'lucide-react';
 
 interface Stock {
   ticker: string;
@@ -23,6 +23,32 @@ interface ApiResponse {
     losersCount: number;
     avgChange: number;
   };
+}
+
+interface EarningsResult {
+  ticker: string;
+  company: string;
+  sector: string;
+  marketCap: string; // 'L' | 'M' | 'S' | 'Micro'
+  quality: string;
+  priceMove: number | null;
+  cmp: number | null;
+  resultDate: string;
+  quarter: string;
+}
+
+interface EarningsApiResponse {
+  results: EarningsResult[];
+  summary: {
+    total: number;
+    excellent: number;
+    great: number;
+    good: number;
+    ok: number;
+    weak: number;
+    upcoming: number;
+  };
+  source: string;
 }
 
 // ── Squarified Treemap ─────────────────────────────────────────────────
@@ -108,20 +134,33 @@ function squarify(
   return results;
 }
 
-// ── Premium Color Palette ──────────────────────────────────────────────
+// ── Color Palettes ──────────────────────────────────────────────
 function getChangeColor(pct: number): string {
-  // Smooth gradient: deep red → muted → deep green
-  if (pct >= 5)   return '#00695C'; // teal 800
-  if (pct >= 3)   return '#00897B'; // teal 600
-  if (pct >= 1.5) return '#26A69A'; // teal 400
-  if (pct >= 0.5) return '#4DB6AC'; // teal 300
-  if (pct >= 0.1) return '#1B3A34'; // dark teal hint
-  if (pct >= -0.1) return '#1A2332'; // neutral dark
-  if (pct >= -0.5) return '#3E2023'; // dark red hint
-  if (pct >= -1.5) return '#C62828'; // red 800
-  if (pct >= -3)  return '#B71C1C'; // red 900
-  if (pct >= -5)  return '#D32F2F'; // red 700
-  return '#E53935'; // red 600
+  if (pct >= 5)   return '#00695C';
+  if (pct >= 3)   return '#00897B';
+  if (pct >= 1.5) return '#26A69A';
+  if (pct >= 0.5) return '#4DB6AC';
+  if (pct >= 0.1) return '#1B3A34';
+  if (pct >= -0.1) return '#1A2332';
+  if (pct >= -0.5) return '#3E2023';
+  if (pct >= -1.5) return '#C62828';
+  if (pct >= -3)  return '#B71C1C';
+  if (pct >= -5)  return '#D32F2F';
+  return '#E53935';
+}
+
+// Wider range for post-earnings moves (can be ±30%+)
+function getEarningsColor(pct: number): string {
+  if (pct >= 15)  return '#004D40'; // very deep teal
+  if (pct >= 10)  return '#00695C';
+  if (pct >= 5)   return '#00897B';
+  if (pct >= 2)   return '#26A69A';
+  if (pct >= 0)   return '#1B3A34';
+  if (pct >= -2)  return '#3E2023';
+  if (pct >= -5)  return '#C62828';
+  if (pct >= -10) return '#B71C1C';
+  if (pct >= -15) return '#D32F2F';
+  return '#E53935'; // deep red for -15%+
 }
 
 function getTextColor(pct: number): string {
@@ -135,11 +174,26 @@ function getSubTextOpacity(pct: number): number {
 }
 
 type HeatmapTab = 'nifty50' | 'midcap150' | 'smallcap150';
+type HeatmapMode = 'daily' | 'earnings';
+
+// Market cap string to numeric value for treemap sizing
+function mcapToValue(mcap: string): number {
+  switch (mcap) {
+    case 'L': return 50000;
+    case 'M': return 8000;
+    case 'S': return 2000;
+    case 'Micro': return 500;
+    default: return 1000;
+  }
+}
 
 export default function HeatmapPage() {
   const [tab, setTab] = useState<HeatmapTab>('nifty50');
+  const [mode, setMode] = useState<HeatmapMode>('daily');
   const [dataMap, setDataMap] = useState<Record<string, ApiResponse>>({});
+  const [earningsData, setEarningsData] = useState<EarningsApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [earningsLoading, setEarningsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -147,7 +201,7 @@ export default function HeatmapPage() {
   const [containerSize, setContainerSize] = useState({ w: 1200, h: 680 });
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const fetchAll = useCallback(async () => {
+  const fetchDaily = useCallback(async () => {
     try {
       setError(null);
       setIsRefreshing(true);
@@ -170,8 +224,75 @@ export default function HeatmapPage() {
     }
   }, []);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
-  useEffect(() => { const i = setInterval(fetchAll, 60000); return () => clearInterval(i); }, [fetchAll]);
+  const fetchEarnings = useCallback(async () => {
+    try {
+      setEarningsLoading(true);
+      setError(null);
+      // Fetch current month + previous month to get enough results
+      const now = new Date();
+      const curMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const prevMonth = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
+
+      const [curRes, prevRes] = await Promise.all([
+        fetch(`/api/market/earnings?market=india&month=${curMonth}`),
+        fetch(`/api/market/earnings?market=india&month=${prevMonth}`),
+      ]);
+
+      let allResults: EarningsResult[] = [];
+      if (curRes.ok) {
+        const curJson = await curRes.json();
+        allResults = [...(curJson.results || [])];
+      }
+      if (prevRes.ok) {
+        const prevJson = await prevRes.json();
+        const existingTickers = new Set(allResults.map(r => r.ticker));
+        for (const r of (prevJson.results || [])) {
+          if (!existingTickers.has(r.ticker)) allResults.push(r);
+        }
+      }
+
+      // Filter to only reported results with priceMove data
+      const reported = allResults.filter(r =>
+        r.quality !== 'Upcoming' && r.quality !== 'Preview' && r.priceMove !== null && r.priceMove !== undefined
+      );
+
+      const gainers = reported.filter(r => (r.priceMove || 0) > 0).length;
+      const losers = reported.filter(r => (r.priceMove || 0) < 0).length;
+      const avgMove = reported.length > 0
+        ? reported.reduce((s, r) => s + (r.priceMove || 0), 0) / reported.length
+        : 0;
+
+      setEarningsData({
+        results: reported,
+        summary: {
+          total: reported.length,
+          excellent: reported.filter(r => r.quality === 'Excellent').length,
+          great: reported.filter(r => r.quality === 'Great').length,
+          good: reported.filter(r => r.quality === 'Good').length,
+          ok: reported.filter(r => r.quality === 'OK').length,
+          weak: reported.filter(r => r.quality === 'Weak').length,
+          upcoming: 0,
+        },
+        source: 'NSE India',
+      });
+      setLastUpdated(new Date());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch earnings');
+    } finally {
+      setEarningsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchDaily(); }, [fetchDaily]);
+  useEffect(() => { const i = setInterval(fetchDaily, 60000); return () => clearInterval(i); }, [fetchDaily]);
+
+  // Fetch earnings when mode switches
+  useEffect(() => {
+    if (mode === 'earnings' && !earningsData) {
+      fetchEarnings();
+    }
+  }, [mode, earningsData, fetchEarnings]);
 
   // Responsive
   useEffect(() => {
@@ -184,19 +305,21 @@ export default function HeatmapPage() {
     measure();
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
-  }, [loading]);
+  }, [loading, earningsLoading]);
 
-  const data = dataMap[tab] || null;
+  const dailyData = dataMap[tab] || null;
+  const isEarningsMode = mode === 'earnings';
+  const isLoading = isEarningsMode ? earningsLoading : loading;
 
-  // Build treemap
-  const treemap = useMemo((): {
+  // Build daily treemap
+  const dailyTreemap = useMemo((): {
     rects: { x: number; y: number; w: number; h: number; stock: Stock; sector: string }[];
     sectorRects: { x: number; y: number; w: number; h: number; data: any }[];
   } | null => {
-    if (!data || !data.stocks.length) return null;
+    if (!dailyData || !dailyData.stocks.length || isEarningsMode) return null;
 
     const sectorMap = new Map<string, Stock[]>();
-    for (const s of data.stocks) {
+    for (const s of dailyData.stocks) {
       const arr = sectorMap.get(s.sector) || [];
       arr.push(s);
       sectorMap.set(s.sector, arr);
@@ -225,11 +348,64 @@ export default function HeatmapPage() {
     }
 
     return { rects: allRects, sectorRects };
-  }, [data, containerSize]);
+  }, [dailyData, containerSize, isEarningsMode]);
+
+  // Build earnings treemap
+  const earningsTreemap = useMemo((): {
+    rects: { x: number; y: number; w: number; h: number; result: EarningsResult; sector: string }[];
+    sectorRects: { x: number; y: number; w: number; h: number; data: any }[];
+  } | null => {
+    if (!earningsData || !earningsData.results.length || !isEarningsMode) return null;
+
+    const sectorMap = new Map<string, EarningsResult[]>();
+    for (const r of earningsData.results) {
+      const sector = r.sector || 'Other';
+      const arr = sectorMap.get(sector) || [];
+      arr.push(r);
+      sectorMap.set(sector, arr);
+    }
+
+    const sectorItems = [...sectorMap.entries()].map(([sector, results]) => ({
+      value: results.reduce((s, r) => s + mcapToValue(r.marketCap), 0),
+      data: { sector, results },
+    }));
+
+    const { w, h } = containerSize;
+    const sectorRects = squarify(sectorItems, 0, 0, w, h);
+    const allRects: { x: number; y: number; w: number; h: number; result: EarningsResult; sector: string }[] = [];
+
+    for (const sr of sectorRects) {
+      const { sector, results } = sr.data;
+      const stockItems = results.map((r: EarningsResult) => ({
+        value: mcapToValue(r.marketCap),
+        data: r,
+      }));
+      const gap = 1;
+      const innerRects = squarify(stockItems, sr.x + gap, sr.y + gap, sr.w - gap * 2, sr.h - gap * 2);
+      for (const ir of innerRects) {
+        allRects.push({ ...ir, result: ir.data, sector });
+      }
+    }
+
+    return { rects: allRects, sectorRects };
+  }, [earningsData, containerSize, isEarningsMode]);
 
   const formatTime = (d: Date | null) => d ? d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '--:--';
 
-  const hoveredStock = hoveredTicker && data ? data.stocks.find(s => s.ticker === hoveredTicker) : null;
+  const hoveredDailyStock = !isEarningsMode && hoveredTicker && dailyData ? dailyData.stocks.find(s => s.ticker === hoveredTicker) : null;
+  const hoveredEarningsResult = isEarningsMode && hoveredTicker && earningsData ? earningsData.results.find(r => r.ticker === hoveredTicker) : null;
+
+  // Earnings summary stats
+  const earningsSummary = useMemo(() => {
+    if (!earningsData) return null;
+    const results = earningsData.results;
+    const gainers = results.filter(r => (r.priceMove || 0) > 0).length;
+    const losers = results.filter(r => (r.priceMove || 0) < 0).length;
+    const avgMove = results.length > 0
+      ? results.reduce((s, r) => s + (r.priceMove || 0), 0) / results.length
+      : 0;
+    return { total: results.length, gainers, losers, avgMove };
+  }, [earningsData]);
 
   const BG = '#0A0E1A';
   const CARD = '#0D1623';
@@ -239,54 +415,99 @@ export default function HeatmapPage() {
   const RED = '#EF4444';
   const TEXT1 = '#F5F7FA';
   const TEXT3 = '#4A5B6C';
+  const AMBER = '#F59E0B';
+
+  const hasTreemap = isEarningsMode ? earningsTreemap !== null : dailyTreemap !== null;
 
   return (
     <div style={{ backgroundColor: BG, color: TEXT1, minHeight: '100vh', padding: '16px 20px' }}>
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
           <h1 style={{ fontSize: '22px', fontWeight: '700', margin: 0, letterSpacing: '-0.3px' }}>Market Heatmap</h1>
 
-          {/* Tab Toggle */}
+          {/* Mode Toggle */}
           <div style={{ display: 'flex', backgroundColor: CARD, borderRadius: '8px', border: `1px solid ${BORDER}`, padding: '3px' }}>
-            {([
-              { key: 'nifty50' as HeatmapTab, label: 'NIFTY 50' },
-              { key: 'midcap150' as HeatmapTab, label: 'Midcap 150' },
-              { key: 'smallcap150' as HeatmapTab, label: 'Smallcap 150' },
-            ]).map(t => (
-              <button
-                key={t.key}
-                onClick={() => setTab(t.key)}
-                style={{
-                  padding: '6px 16px', borderRadius: '6px', border: 'none', fontSize: '12px', fontWeight: '600',
-                  backgroundColor: tab === t.key ? ACCENT : 'transparent',
-                  color: tab === t.key ? '#fff' : TEXT3,
-                  cursor: 'pointer', transition: 'all 0.15s', whiteSpace: 'nowrap',
-                }}
-              >
-                {t.label}
-              </button>
-            ))}
+            <button
+              onClick={() => setMode('daily')}
+              style={{
+                padding: '6px 14px', borderRadius: '6px', border: 'none', fontSize: '12px', fontWeight: '600',
+                backgroundColor: mode === 'daily' ? ACCENT : 'transparent',
+                color: mode === 'daily' ? '#fff' : TEXT3,
+                cursor: 'pointer', transition: 'all 0.15s', whiteSpace: 'nowrap',
+                display: 'flex', alignItems: 'center', gap: '5px',
+              }}
+            >
+              <BarChart3 size={12} />Daily Changes
+            </button>
+            <button
+              onClick={() => setMode('earnings')}
+              style={{
+                padding: '6px 14px', borderRadius: '6px', border: 'none', fontSize: '12px', fontWeight: '600',
+                backgroundColor: mode === 'earnings' ? AMBER : 'transparent',
+                color: mode === 'earnings' ? '#000' : TEXT3,
+                cursor: 'pointer', transition: 'all 0.15s', whiteSpace: 'nowrap',
+                display: 'flex', alignItems: 'center', gap: '5px',
+              }}
+            >
+              <TrendingUp size={12} />Post-Earnings
+            </button>
           </div>
+
+          {/* Index Tab Toggle — only in daily mode */}
+          {!isEarningsMode && (
+            <div style={{ display: 'flex', backgroundColor: CARD, borderRadius: '8px', border: `1px solid ${BORDER}`, padding: '3px' }}>
+              {([
+                { key: 'nifty50' as HeatmapTab, label: 'NIFTY 50' },
+                { key: 'midcap150' as HeatmapTab, label: 'Midcap 150' },
+                { key: 'smallcap150' as HeatmapTab, label: 'Smallcap 150' },
+              ]).map(t => (
+                <button
+                  key={t.key}
+                  onClick={() => setTab(t.key)}
+                  style={{
+                    padding: '6px 16px', borderRadius: '6px', border: 'none', fontSize: '12px', fontWeight: '600',
+                    backgroundColor: tab === t.key ? ACCENT : 'transparent',
+                    color: tab === t.key ? '#fff' : TEXT3,
+                    cursor: 'pointer', transition: 'all 0.15s', whiteSpace: 'nowrap',
+                  }}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-          {data && (
+          {/* Daily summary stats */}
+          {!isEarningsMode && dailyData && (
             <div style={{ display: 'flex', gap: '16px', fontSize: '12px' }}>
-              <span style={{ color: TEXT3 }}>{data.summary.total} stocks</span>
-              <span style={{ color: GREEN, fontWeight: '600' }}>{data.summary.gainersCount} up</span>
-              <span style={{ color: RED, fontWeight: '600' }}>{data.summary.losersCount} down</span>
-              <span style={{ color: (data.summary.avgChange || 0) >= 0 ? GREEN : RED, fontWeight: '600' }}>
-                avg {(data.summary.avgChange || 0) > 0 ? '+' : ''}{(data.summary.avgChange || 0).toFixed(1)}%
+              <span style={{ color: TEXT3 }}>{dailyData.summary.total} stocks</span>
+              <span style={{ color: GREEN, fontWeight: '600' }}>{dailyData.summary.gainersCount} up</span>
+              <span style={{ color: RED, fontWeight: '600' }}>{dailyData.summary.losersCount} down</span>
+              <span style={{ color: (dailyData.summary.avgChange || 0) >= 0 ? GREEN : RED, fontWeight: '600' }}>
+                avg {(dailyData.summary.avgChange || 0) > 0 ? '+' : ''}{(dailyData.summary.avgChange || 0).toFixed(1)}%
               </span>
             </div>
           )}
-          <button onClick={fetchAll} disabled={isRefreshing} style={{
+          {/* Earnings summary stats */}
+          {isEarningsMode && earningsSummary && (
+            <div style={{ display: 'flex', gap: '16px', fontSize: '12px' }}>
+              <span style={{ color: AMBER, fontWeight: '600' }}>{earningsSummary.total} results</span>
+              <span style={{ color: GREEN, fontWeight: '600' }}>{earningsSummary.gainers} gainers</span>
+              <span style={{ color: RED, fontWeight: '600' }}>{earningsSummary.losers} losers</span>
+              <span style={{ color: earningsSummary.avgMove >= 0 ? GREEN : RED, fontWeight: '600' }}>
+                avg {earningsSummary.avgMove > 0 ? '+' : ''}{earningsSummary.avgMove.toFixed(1)}%
+              </span>
+            </div>
+          )}
+          <button onClick={isEarningsMode ? fetchEarnings : fetchDaily} disabled={isRefreshing || earningsLoading} style={{
             padding: '6px 10px', borderRadius: '6px', border: `1px solid ${BORDER}`, backgroundColor: CARD,
-            color: ACCENT, cursor: isRefreshing ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center',
-            opacity: isRefreshing ? 0.5 : 1, transition: 'all 0.2s',
+            color: ACCENT, cursor: (isRefreshing || earningsLoading) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center',
+            opacity: (isRefreshing || earningsLoading) ? 0.5 : 1, transition: 'all 0.2s',
           }}>
-            <RefreshCw size={13} style={{ animation: isRefreshing ? 'spin 1s linear infinite' : 'none' }} />
+            <RefreshCw size={13} style={{ animation: (isRefreshing || earningsLoading) ? 'spin 1s linear infinite' : 'none' }} />
           </button>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: TEXT3 }}>
             <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: GREEN, animation: 'pulse 2s ease infinite' }} />
@@ -296,21 +517,21 @@ export default function HeatmapPage() {
       </div>
 
       {/* Loading */}
-      {loading && (
+      {isLoading && (
         <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '500px' }}>
           <div style={{ width: '40px', height: '40px', border: '3px solid #1A2840', borderTop: `3px solid ${ACCENT}`, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
         </div>
       )}
 
       {/* Error */}
-      {error && !loading && (
+      {error && !isLoading && (
         <div style={{ backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', padding: '14px', color: RED, fontSize: '13px', marginBottom: '12px' }}>
           {error}
         </div>
       )}
 
-      {/* Treemap */}
-      {data && !loading && treemap !== null && (
+      {/* Daily Treemap */}
+      {!isEarningsMode && dailyData && !loading && dailyTreemap !== null && (
         <div
           ref={containerRef}
           style={{
@@ -324,8 +545,7 @@ export default function HeatmapPage() {
             viewBox={`0 0 ${containerSize.w} ${containerSize.h}`}
             style={{ display: 'block', width: '100%', height: '100%' }}
           >
-            {/* Stock cells */}
-            {treemap.rects.map((r) => {
+            {dailyTreemap.rects.map((r) => {
               const isHov = hoveredTicker === r.stock.ticker;
               const pct = r.stock.changePercent;
               const minD = Math.min(r.w, r.h);
@@ -382,8 +602,7 @@ export default function HeatmapPage() {
               );
             })}
 
-            {/* Sector borders + labels */}
-            {treemap.sectorRects.map((sr: any) => (
+            {dailyTreemap.sectorRects.map((sr: any) => (
               <g key={sr.data.sector}>
                 <rect x={sr.x} y={sr.y} width={sr.w} height={sr.h}
                   fill="none" stroke="#0A0E1A" strokeWidth={2.5} pointerEvents="none" />
@@ -399,8 +618,8 @@ export default function HeatmapPage() {
             ))}
           </svg>
 
-          {/* Tooltip */}
-          {hoveredStock && (
+          {/* Daily Tooltip */}
+          {hoveredDailyStock && (
             <div style={{
               position: 'absolute', top: '10px', right: '10px',
               backgroundColor: 'rgba(10,14,26,0.95)', backdropFilter: 'blur(12px)',
@@ -408,30 +627,30 @@ export default function HeatmapPage() {
               minWidth: '220px', zIndex: 10, boxShadow: '0 12px 40px rgba(0,0,0,0.6)',
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                <span style={{ fontWeight: '700', fontSize: '15px', color: ACCENT }}>{hoveredStock.ticker}</span>
+                <span style={{ fontWeight: '700', fontSize: '15px', color: ACCENT }}>{hoveredDailyStock.ticker}</span>
                 <span style={{
                   fontSize: '14px', fontWeight: '700', padding: '2px 8px', borderRadius: '4px',
-                  color: hoveredStock.changePercent >= 0 ? GREEN : RED,
-                  backgroundColor: hoveredStock.changePercent >= 0 ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)',
+                  color: hoveredDailyStock.changePercent >= 0 ? GREEN : RED,
+                  backgroundColor: hoveredDailyStock.changePercent >= 0 ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)',
                 }}>
-                  {hoveredStock.changePercent > 0 ? '+' : ''}{hoveredStock.changePercent.toFixed(2)}%
+                  {hoveredDailyStock.changePercent > 0 ? '+' : ''}{hoveredDailyStock.changePercent.toFixed(2)}%
                 </span>
               </div>
-              <div style={{ fontSize: '11px', color: '#8A95A3', marginBottom: '10px', lineHeight: '1.3' }}>{hoveredStock.company}</div>
+              <div style={{ fontSize: '11px', color: '#8A95A3', marginBottom: '10px', lineHeight: '1.3' }}>{hoveredDailyStock.company}</div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px 16px', fontSize: '11px' }}>
                 <span style={{ color: TEXT3 }}>Price</span>
-                <span style={{ color: TEXT1, textAlign: 'right', fontWeight: '600' }}>{'\u20B9'}{hoveredStock.price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+                <span style={{ color: TEXT1, textAlign: 'right', fontWeight: '600' }}>{'\u20B9'}{hoveredDailyStock.price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
                 <span style={{ color: TEXT3 }}>Change</span>
-                <span style={{ color: hoveredStock.change >= 0 ? GREEN : RED, textAlign: 'right', fontWeight: '600' }}>
-                  {hoveredStock.change > 0 ? '+' : ''}{hoveredStock.change.toFixed(2)}
+                <span style={{ color: hoveredDailyStock.change >= 0 ? GREEN : RED, textAlign: 'right', fontWeight: '600' }}>
+                  {hoveredDailyStock.change > 0 ? '+' : ''}{hoveredDailyStock.change.toFixed(2)}
                 </span>
                 <span style={{ color: TEXT3 }}>Sector</span>
-                <span style={{ color: '#C9D4E0', textAlign: 'right' }}>{hoveredStock.sector}</span>
+                <span style={{ color: '#C9D4E0', textAlign: 'right' }}>{hoveredDailyStock.sector}</span>
                 <span style={{ color: TEXT3 }}>Volume</span>
                 <span style={{ color: '#C9D4E0', textAlign: 'right' }}>
-                  {hoveredStock.volume >= 1e7 ? (hoveredStock.volume / 1e7).toFixed(1) + 'Cr'
-                    : hoveredStock.volume >= 1e5 ? (hoveredStock.volume / 1e5).toFixed(1) + 'L'
-                    : hoveredStock.volume.toLocaleString('en-IN')}
+                  {hoveredDailyStock.volume >= 1e7 ? (hoveredDailyStock.volume / 1e7).toFixed(1) + 'Cr'
+                    : hoveredDailyStock.volume >= 1e5 ? (hoveredDailyStock.volume / 1e5).toFixed(1) + 'L'
+                    : hoveredDailyStock.volume.toLocaleString('en-IN')}
                 </span>
               </div>
             </div>
@@ -439,27 +658,211 @@ export default function HeatmapPage() {
         </div>
       )}
 
-      {/* Color Legend */}
-      {!loading && (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '2px', marginTop: '8px' }}>
-          {[
-            { label: '-5%+', color: '#E53935' },
-            { label: '-3%', color: '#D32F2F' },
-            { label: '-1.5%', color: '#C62828' },
-            { label: '-0.5%', color: '#3E2023' },
-            { label: '0', color: '#1A2332' },
-            { label: '+0.5%', color: '#1B3A34' },
-            { label: '+1.5%', color: '#26A69A' },
-            { label: '+3%', color: '#00897B' },
-            { label: '+5%+', color: '#00695C' },
-          ].map((item, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-              <div style={{ width: '32px', height: '8px', backgroundColor: item.color, borderRadius: i === 0 ? '3px 0 0 3px' : i === 8 ? '0 3px 3px 0' : '0' }} />
-              {(i === 0 || i === 4 || i === 8) && (
-                <span style={{ fontSize: '9px', color: TEXT3, minWidth: '24px' }}>{item.label}</span>
-              )}
+      {/* Earnings Treemap */}
+      {isEarningsMode && !earningsLoading && earningsTreemap !== null && (
+        <div
+          ref={containerRef}
+          style={{
+            position: 'relative', width: '100%', height: `${containerSize.h}px`,
+            backgroundColor: '#060A14', borderRadius: '8px', overflow: 'hidden', border: `1px solid ${BORDER}`,
+          }}
+        >
+          <svg
+            width={containerSize.w}
+            height={containerSize.h}
+            viewBox={`0 0 ${containerSize.w} ${containerSize.h}`}
+            style={{ display: 'block', width: '100%', height: '100%' }}
+          >
+            {earningsTreemap.rects.map((r) => {
+              const isHov = hoveredTicker === r.result.ticker;
+              const pct = r.result.priceMove || 0;
+              const minD = Math.min(r.w, r.h);
+              const showTicker = minD > 18;
+              const showPct = minD > 30;
+              const showQuality = r.w > 55 && r.h > 46;
+              const fs = Math.min(12, Math.max(7, minD / 4));
+
+              return (
+                <g key={r.result.ticker}>
+                  <rect
+                    x={r.x + 0.5} y={r.y + 0.5}
+                    width={Math.max(0, r.w - 1)} height={Math.max(0, r.h - 1)}
+                    fill={getEarningsColor(pct)}
+                    opacity={isHov ? 1 : 0.9}
+                    rx={1.5}
+                    style={{ cursor: 'pointer', transition: 'opacity 0.12s' }}
+                    onMouseEnter={() => setHoveredTicker(r.result.ticker)}
+                    onMouseLeave={() => setHoveredTicker(null)}
+                  />
+                  {showTicker && (
+                    <text
+                      x={r.x + r.w / 2}
+                      y={r.y + r.h / 2 + (showPct ? -fs * 0.4 : fs * 0.35) + (showQuality ? -fs * 0.25 : 0)}
+                      textAnchor="middle" fill={getTextColor(pct)} fontSize={fs} fontWeight="700"
+                      fontFamily="'Inter',system-ui,-apple-system,sans-serif" pointerEvents="none"
+                    >
+                      {r.result.ticker}
+                    </text>
+                  )}
+                  {showPct && (
+                    <text
+                      x={r.x + r.w / 2}
+                      y={r.y + r.h / 2 + fs * 0.7 + (showQuality ? -fs * 0.2 : 0)}
+                      textAnchor="middle" fill={getTextColor(pct)} fontSize={fs * 0.8} fontWeight="500"
+                      fontFamily="'Inter',system-ui,-apple-system,sans-serif"
+                      opacity={getSubTextOpacity(pct)} pointerEvents="none"
+                    >
+                      {pct > 0 ? '+' : ''}{pct.toFixed(1)}%
+                    </text>
+                  )}
+                  {showQuality && (
+                    <text
+                      x={r.x + r.w / 2}
+                      y={r.y + r.h / 2 + fs * 1.6}
+                      textAnchor="middle"
+                      fill={
+                        r.result.quality === 'Excellent' || r.result.quality === 'Great' ? '#4DB6AC'
+                        : r.result.quality === 'Good' ? '#81C784'
+                        : r.result.quality === 'OK' ? '#FFB74D'
+                        : '#EF5350'
+                      }
+                      fontSize={fs * 0.6} fontWeight="600"
+                      fontFamily="'Inter',system-ui,-apple-system,sans-serif"
+                      opacity={0.8} pointerEvents="none"
+                    >
+                      {r.result.quality}
+                    </text>
+                  )}
+                </g>
+              );
+            })}
+
+            {earningsTreemap.sectorRects.map((sr: any) => (
+              <g key={sr.data.sector}>
+                <rect x={sr.x} y={sr.y} width={sr.w} height={sr.h}
+                  fill="none" stroke="#0A0E1A" strokeWidth={2.5} pointerEvents="none" />
+                {sr.w > 70 && sr.h > 18 && (
+                  <text x={sr.x + 6} y={sr.y + 14}
+                    fill="rgba(255,255,255,0.45)" fontSize="10" fontWeight="600"
+                    fontFamily="'Inter',system-ui,-apple-system,sans-serif" pointerEvents="none"
+                  >
+                    {sr.data.sector}
+                  </text>
+                )}
+              </g>
+            ))}
+          </svg>
+
+          {/* Earnings Tooltip */}
+          {hoveredEarningsResult && (
+            <div style={{
+              position: 'absolute', top: '10px', right: '10px',
+              backgroundColor: 'rgba(10,14,26,0.95)', backdropFilter: 'blur(12px)',
+              border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '14px 18px',
+              minWidth: '240px', zIndex: 10, boxShadow: '0 12px 40px rgba(0,0,0,0.6)',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <span style={{ fontWeight: '700', fontSize: '15px', color: ACCENT }}>{hoveredEarningsResult.ticker}</span>
+                <span style={{
+                  fontSize: '14px', fontWeight: '700', padding: '2px 8px', borderRadius: '4px',
+                  color: (hoveredEarningsResult.priceMove || 0) >= 0 ? GREEN : RED,
+                  backgroundColor: (hoveredEarningsResult.priceMove || 0) >= 0 ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)',
+                }}>
+                  {(hoveredEarningsResult.priceMove || 0) > 0 ? '+' : ''}{(hoveredEarningsResult.priceMove || 0).toFixed(1)}%
+                </span>
+              </div>
+              <div style={{ fontSize: '11px', color: '#8A95A3', marginBottom: '10px', lineHeight: '1.3' }}>{hoveredEarningsResult.company}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px 16px', fontSize: '11px' }}>
+                <span style={{ color: TEXT3 }}>Quality</span>
+                <span style={{
+                  textAlign: 'right', fontWeight: '600',
+                  color: hoveredEarningsResult.quality === 'Excellent' || hoveredEarningsResult.quality === 'Great' ? GREEN
+                    : hoveredEarningsResult.quality === 'Good' ? '#81C784'
+                    : hoveredEarningsResult.quality === 'OK' ? AMBER
+                    : RED,
+                }}>
+                  {hoveredEarningsResult.quality}
+                </span>
+                <span style={{ color: TEXT3 }}>Quarter</span>
+                <span style={{ color: '#C9D4E0', textAlign: 'right' }}>{hoveredEarningsResult.quarter}</span>
+                <span style={{ color: TEXT3 }}>Result Date</span>
+                <span style={{ color: '#C9D4E0', textAlign: 'right' }}>{hoveredEarningsResult.resultDate}</span>
+                <span style={{ color: TEXT3 }}>CMP</span>
+                <span style={{ color: TEXT1, textAlign: 'right', fontWeight: '600' }}>
+                  {hoveredEarningsResult.cmp ? `\u20B9${hoveredEarningsResult.cmp.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '--'}
+                </span>
+                <span style={{ color: TEXT3 }}>Sector</span>
+                <span style={{ color: '#C9D4E0', textAlign: 'right' }}>{hoveredEarningsResult.sector || '--'}</span>
+                <span style={{ color: TEXT3 }}>Cap</span>
+                <span style={{ color: '#C9D4E0', textAlign: 'right' }}>
+                  {hoveredEarningsResult.marketCap === 'L' ? 'Large' : hoveredEarningsResult.marketCap === 'M' ? 'Mid' : hoveredEarningsResult.marketCap === 'S' ? 'Small' : hoveredEarningsResult.marketCap}
+                </span>
+              </div>
             </div>
-          ))}
+          )}
+        </div>
+      )}
+
+      {/* Empty state for earnings mode */}
+      {isEarningsMode && !earningsLoading && (!earningsData || earningsData.results.length === 0) && (
+        <div style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          minHeight: '400px', color: TEXT3, fontSize: '14px',
+        }}>
+          <TrendingUp size={40} style={{ marginBottom: '12px', opacity: 0.4 }} />
+          <p>No post-earnings data available for this period</p>
+          <button onClick={fetchEarnings} style={{
+            marginTop: '12px', padding: '8px 20px', borderRadius: '6px', border: `1px solid ${BORDER}`,
+            backgroundColor: CARD, color: ACCENT, cursor: 'pointer', fontSize: '12px',
+          }}>
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Color Legend */}
+      {!isLoading && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '2px', marginTop: '8px' }}>
+          {isEarningsMode ? (
+            // Wider scale for earnings moves
+            [
+              { label: '-15%+', color: '#E53935' },
+              { label: '-10%', color: '#D32F2F' },
+              { label: '-5%', color: '#B71C1C' },
+              { label: '-2%', color: '#C62828' },
+              { label: '0', color: '#1B3A34' },
+              { label: '+2%', color: '#26A69A' },
+              { label: '+5%', color: '#00897B' },
+              { label: '+10%', color: '#00695C' },
+              { label: '+15%+', color: '#004D40' },
+            ].map((item, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                <div style={{ width: '32px', height: '8px', backgroundColor: item.color, borderRadius: i === 0 ? '3px 0 0 3px' : i === 8 ? '0 3px 3px 0' : '0' }} />
+                {(i === 0 || i === 4 || i === 8) && (
+                  <span style={{ fontSize: '9px', color: TEXT3, minWidth: '28px' }}>{item.label}</span>
+                )}
+              </div>
+            ))
+          ) : (
+            [
+              { label: '-5%+', color: '#E53935' },
+              { label: '-3%', color: '#D32F2F' },
+              { label: '-1.5%', color: '#C62828' },
+              { label: '-0.5%', color: '#3E2023' },
+              { label: '0', color: '#1A2332' },
+              { label: '+0.5%', color: '#1B3A34' },
+              { label: '+1.5%', color: '#26A69A' },
+              { label: '+3%', color: '#00897B' },
+              { label: '+5%+', color: '#00695C' },
+            ].map((item, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                <div style={{ width: '32px', height: '8px', backgroundColor: item.color, borderRadius: i === 0 ? '3px 0 0 3px' : i === 8 ? '0 3px 3px 0' : '0' }} />
+                {(i === 0 || i === 4 || i === 8) && (
+                  <span style={{ fontSize: '9px', color: TEXT3, minWidth: '24px' }}>{item.label}</span>
+                )}
+              </div>
+            ))
+          )}
         </div>
       )}
 
