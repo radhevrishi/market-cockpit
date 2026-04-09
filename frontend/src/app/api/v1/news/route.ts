@@ -28,6 +28,13 @@ const RSS_FEEDS = [
   { name: 'Reuters India', url: 'https://feeds.reuters.com/reuters/INbusinessNews', region: 'GLOBAL' },
   { name: 'Investing.com News', url: 'https://www.investing.com/rss/news.rss', region: 'US' },
   { name: 'Seeking Alpha Market News', url: 'https://seekingalpha.com/market_currents.xml', region: 'US' },
+  // ── Semiconductor / Tech Supply Chain Feeds ──
+  { name: 'Tom\'s Hardware', url: 'https://www.tomshardware.com/feeds/all', region: 'US' },
+  { name: 'AnandTech', url: 'https://www.anandtech.com/rss/', region: 'US' },
+  { name: 'The Register', url: 'https://www.theregister.com/headlines.atom', region: 'US' },
+  { name: 'Ars Technica', url: 'https://feeds.arstechnica.com/arstechnica/technology-lab', region: 'US' },
+  { name: 'TechCrunch', url: 'https://techcrunch.com/feed/', region: 'US' },
+  { name: 'SemiWiki', url: 'https://semiwiki.com/feed/', region: 'US' },
 ];
 
 const CACHE_KEY = 'news:articles:v1';
@@ -39,41 +46,107 @@ const BOTTLENECK_TTL = 7776000; // 90 days in seconds
 function classifyArticle(title: string, desc: string): { article_type: string; investment_tier: number } {
   const text = (title + ' ' + desc).toLowerCase();
 
-  // Noise filter FIRST — reject clickbait, listicles, lifestyle
-  if (/multibagger|penny stock|should you buy|stock(s)? to buy|hot stock|best (stock|pick)|free tips|moneymaker|money.?maker|horoscope|recipe|cricket|bollywood|celebrity|entertainment/i.test(text))
+  // ── 1. NOISE: clickbait, lifestyle, junk ──
+  if (/multibagger|penny stock|should you buy|stock(s)? to buy|hot stock|best (stock|pick)|free tips|moneymaker|money.?maker|horoscope|recipe|cricket|bollywood|celebrity|entertainment|march madness|bracket|winnings|entry fee/i.test(text))
     return { article_type: 'GENERAL', investment_tier: 3 };
 
-  // Check EARNINGS first — "beats expectations", "raises guidance" etc. are earnings, not bottlenecks
+  // ── 2. EARNINGS ──
   if (/earnings|quarterly|q[1-4]\s?(fy|20)|profit|revenue|results|beats? expectations?|miss(es|ed)? expectations?|guidance (raise|lower|maintain|reaffirm)|eps /i.test(text))
     return { article_type: 'EARNINGS', investment_tier: 1 };
 
-  // MARKET MOVES — index rallies, selloffs, daily market wraps
+  // ── 3. MARKET MOVES — index rallies, selloffs ──
   if (/\b(dow|s&p|nasdaq|sensex|nifty|hang seng|nikkei)\b.{0,30}\b(surge|rally|jump|soar|rocket|climb|rise|fall|drop|crash|tank|slip|gain|lose)/i.test(text))
     return { article_type: 'MACRO', investment_tier: 2 };
 
-  // BOTTLENECK — supply constraints, shortages, capacity limits, strategic sector developments
-  // Must match all themes covered by the bottleneck dashboard buckets
-  if (/bottleneck|supply chain|shortage|capacity constraint|chip (shortage|supply|demand|ban|export)|semiconductor|wafer|foundry|fab|tsmc|asml|photonics|photonic|silicon photonics|hbm|dram|nand|memory chip|memory cycle|gpu (shortage|demand|supply)|nvidia|data center|ai (infrastructure|chip|server|spending|demand|boom)|cloud capacity|hyperscal|oil (price|supply|shortage|production)|crude oil|opec|energy crisis|fuel (shortage|price)|refinery|lng|coal (shortage|price)|power (crisis|shortage|grid)|nuclear (reactor|power|plant|energy|fuel|capacity|project|deal|pact)|atomic (reactor|energy)|thorium|breeder reactor|kalpakkam|kudankulam|npcil|tariff|trade war|sanction|embargo|export ban|import duty|trade restrict|rare earth|lithium|cobalt|copper (price|shortage)|steel (price|shortage)|aluminium|aluminum|nickel|supply chain disruption|shipping (delay|crisis)|freight rate|port (congestion|strike)|red sea|suez|rbi (policy|rate)|repo rate|npa|credit (growth|crunch)|nbfc|sebi|defense budget|defence budget|pentagon|military spending|defence (order|procurement)|drdo|isro|hal|pharma.*fda|usfda|drug (approval|shortage)|api supply|monsoon|crop (failure|output)|food inflation|fertilizer|auto (sale|production)|ev (sales|production|battery)|electric vehicle|infrastructure (order|bottleneck)|highway|railway|cement (demand|price)|fed rate|federal reserve|fomc|inflation (data|report)|cpi|pce|bond yield|recession|geopolit|us.china|china.*tariff|taiwan.*chip|iran.*(oil|sanction|nuclear)|russia.*(oil|gas|sanction)|ukraine|shale|pipeline|renewable|solar|wind energy|uranium|hydrogen|climate policy/i.test(text))
+  // ── 4. CEASEFIRE / PEACE / GENERAL WAR NEWS → GEOPOLITICAL (NOT bottleneck) ──
+  if (/ceasefire|cease.?fire|peace (deal|agreement|talk)|truce|armistice|de-escalat|hostilities|fragile.*truce|fragile.*ceasefire/i.test(text))
+    return { article_type: 'GEOPOLITICAL', investment_tier: 2 };
+
+  // ── 5. GEOPOLITICAL — war, conflict, Iran general, Russia general ──
+  if (/geopolit|war.{0,20}(conflict|impact|risk|cost|threat|deepen|escala)|military.{0,15}(attack|strike|operation)|china.*taiwan.*tension|iran.{0,20}(war|attack|strike|bomb|missile|ceasefire|truce|hostil)|russia.{0,15}(ukraine|war|invasion)|missile.*strike|south china sea|nato.*rift|conquest|hormuz.{0,20}(open|toll|limitation|disrupt|block|threat)|strait of hormuz/i.test(text))
+    return { article_type: 'GEOPOLITICAL', investment_tier: 2 };
+
+  // ── 6. MACRO — central bank, inflation, GDP, yields, Fed, RBI ──
+  if (/\b(rbi|federal reserve|fed rate|fed.{0,10}(signal|patience|rate|cut|hike|meeting|minutes|decision)|inflation (data|report|reading|risk|linger|outlook)|gdp|rate cut|rate hike|monetary policy|fiscal (policy|deficit)|trade deficit|current account|treasury yield|bond yield|cpi|pce|fomc|recession|stagflation|interest rate)\b/i.test(text))
+    return { article_type: 'MACRO', investment_tier: 1 };
+
+  // ── 7. TARIFF / TRADE (generic trade policy, not supply-chain-specific) ──
+  if (/tariff|sanction.*trade|export ban|import duty|custom duty|trade restrict|trade war|embargo|protectionism/i.test(text))
+    return { article_type: 'TARIFF', investment_tier: 1 };
+
+  // ── 8. OIL / ENERGY PRICE (price commentary, not supply constraint) ──
+  // Oil price movements, OPEC news, crude trends → MACRO, not bottleneck
+  if (/\b(oil price|crude oil|crude price|brent crude|wti crude|opec|oil (gain|rise|drop|fall|surge|rally|slip)|oil production|oil (shock|embargo)|fuel price|petrol price|diesel price|natural gas price|energy security)\b/i.test(text))
+    return { article_type: 'MACRO', investment_tier: 1 };
+
+  // ── 9. BOTTLENECK — STRICT: only structural supply constraints ──
+  // These are REAL bottlenecks: semiconductor supply, memory cycles, photonics,
+  // compute infrastructure, nuclear energy, critical minerals, logistics disruptions,
+  // defence procurement, pharma supply, agriculture constraints, EV/auto transitions
+  if (/bottleneck|supply chain (disruption|crisis|bottleneck|constraint)|supply shortage|capacity constraint/i.test(text))
     return { article_type: 'BOTTLENECK', investment_tier: 1 };
 
+  // Semiconductor & Chip supply
+  if (/\b(semiconductor|wafer|foundry|fab (capacity|expansion|construction)|tsmc|asml|chip (shortage|supply|demand|ban|export|production|capacity)|chip export|advanced packaging|osat|eda tool|chip equipment|lithograph)\b/i.test(text))
+    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+
+  // Photonics & optical interconnects
+  if (/\b(photonics|photonic|silicon photonics|optical (chip|interconnect|transceiver)|co-packaged optics|optical (network|switch))\b/i.test(text))
+    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+
+  // Memory & storage cycles
+  if (/\b(hbm|hbm2|hbm3|dram (price|supply|demand|cycle|shortage)|nand (price|supply|demand|cycle|shortage)|memory chip|memory (cycle|supply|demand|constraint|shortage)|flash memory|3d nand)\b/i.test(text))
+    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+
+  // AI infrastructure & compute constraints
+  if (/\b(gpu (shortage|demand|supply|allocation|constraint)|ai (infrastructure|chip|server|spending|demand)|data center (capacity|power|constraint|build|expansion)|cloud capacity|hyperscal.{0,10}(build|invest|spend|capacity)|compute (capacity|constraint|shortage)|ai accelerator|tpu|inference.*constraint|training.*compute)\b/i.test(text))
+    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+
+  // Nuclear energy (India + global)
+  if (/\b(nuclear (reactor|power|plant|energy|fuel|capacity|project|deal|pact|milestone)|atomic (reactor|energy)|thorium|breeder reactor|kalpakkam|kudankulam|npcil|bhavini|nuclear commission|criticality|atomic energy commission)\b/i.test(text))
+    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+
+  // Critical minerals & rare earths
+  if (/\b(rare earth|lithium (supply|price|mining|shortage)|cobalt (supply|price)|copper (shortage|price|supply)|nickel (supply|price)|aluminium (price|shortage)|aluminum (price|shortage)|steel (price|shortage)|mineral supply|critical mineral|titanium supply)\b/i.test(text))
+    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+
+  // Logistics & shipping disruptions
+  if (/\b(shipping (delay|crisis|disruption)|freight rate|container shortage|port (congestion|strike)|red sea.{0,15}(attack|disrupt)|suez.{0,10}block|panama.{0,10}drought|trade route disruption|cargo delay|logistics (disruption|delay|crisis))\b/i.test(text))
+    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+
+  // Defence procurement (India + US)
+  if (/\b(defence (order|procurement|deal|budget|corridor|export)|defense (order|procurement|contract|budget|spending)|drdo|isro|hal (order|deliver)|military (spending|procurement)|pentagon (budget|spend|contract))\b/i.test(text))
+    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+
+  // Pharma supply constraints
+  if (/\b(drug (shortage|approval)|usfda|fda (approval|warning)|api (supply|shortage)|pharma.*supply|bulk drug|pharma export)\b/i.test(text))
+    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+
+  // Agriculture & food supply constraints
+  if (/\b(monsoon|crop (failure|output|damage)|food inflation|fertilizer (shortage|subsidy)|agriculture crisis|food crisis)\b/i.test(text))
+    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+
+  // Auto & EV transition supply constraints
+  if (/\b(ev (sales|production|battery|shift)|electric vehicle.{0,15}(production|supply|battery)|battery (plant|gigafactory|supply|shortage)|auto (production|component|export))\b/i.test(text))
+    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+
+  // Energy infrastructure (renewables, hydrogen, power grid — NOT price commentary)
+  if (/\b(solar (capacity|install|project|panel|power project)|wind (farm|capacity|offshore|energy)|renewable (energy|capacity|investment|project)|hydrogen (economy|production|fuel|cell)|power (grid|crisis|shortage)|energy transition|nuclear power|uranium (price|supply|mining)|clean energy)\b/i.test(text))
+    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+
+  // India infrastructure bottlenecks
+  if (/\b(infrastructure (order|bottleneck|spend)|highway (project|order|delay)|railway (order|electrif|expansion)|cement (demand|price|supply)|construction (order|delay))\b/i.test(text))
+    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+
+  // India banking structural (NOT general RBI news)
+  if (/\b(npa|credit (growth|crunch|squeeze)|nbfc (crisis|liquidity)|lending rate.*squeeze|liquidity (crisis|squeeze)|banking reform)\b/i.test(text))
+    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+
+  // ── 10. RATING CHANGES ──
   if (/upgrade|downgrade|rating|target price|buy|sell|hold|outperform|underperform/i.test(text))
     return { article_type: 'RATING_CHANGE', investment_tier: 1 };
 
-  // MACRO — central bank, inflation, GDP
-  if (/\b(rbi|federal reserve|fed rate|inflation data|gdp|rate cut|rate hike|monetary policy|fiscal (policy|deficit)|trade deficit|current account)\b/i.test(text))
-    return { article_type: 'MACRO', investment_tier: 1 };
-
-  if (/tariff|sanction.*trade|export ban|import duty|custom duty|trade restrict/i.test(text))
-    return { article_type: 'TARIFF', investment_tier: 1 };
-
-  // GEOPOLITICAL — tightened: require conflict/tension/attack context, not bare country names
-  if (/geopolit|war.*conflict|military.*attack|military.*strike|china.*taiwan.*tension|iran.*attack|iran.*strike|russia.*ukraine|missile.*strike|south china sea.*conflict/i.test(text))
-    return { article_type: 'GEOPOLITICAL', investment_tier: 2 };
-
-  // CEASEFIRE / PEACE — separate category, not bottleneck
-  if (/ceasefire|cease fire|peace (deal|agreement|talk)|truce|armistice|de-escalat/i.test(text))
-    return { article_type: 'GEOPOLITICAL', investment_tier: 2 };
-
+  // ── 11. CORPORATE ──
   if (/merger|acquisition|takeover|buyback|demerger|stake|fundraise|ipo|ofs|qip/i.test(text))
     return { article_type: 'CORPORATE', investment_tier: 2 };
 

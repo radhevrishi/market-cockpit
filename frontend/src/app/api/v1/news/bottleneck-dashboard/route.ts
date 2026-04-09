@@ -208,6 +208,12 @@ const BOTTLENECK_RSS = [
   { name: 'Yahoo Finance', url: 'https://finance.yahoo.com/news/rssindex', region: 'US' },
   { name: 'Investing.com', url: 'https://www.investing.com/rss/news.rss', region: 'US' },
   { name: 'Seeking Alpha', url: 'https://seekingalpha.com/market_currents.xml', region: 'US' },
+  // Semiconductor / Tech Supply Chain
+  { name: 'Tom\'s Hardware', url: 'https://www.tomshardware.com/feeds/all', region: 'US' },
+  { name: 'The Register', url: 'https://www.theregister.com/headlines.atom', region: 'US' },
+  { name: 'Ars Technica', url: 'https://feeds.arstechnica.com/arstechnica/technology-lab', region: 'US' },
+  { name: 'TechCrunch', url: 'https://techcrunch.com/feed/', region: 'US' },
+  { name: 'SemiWiki', url: 'https://semiwiki.com/feed/', region: 'US' },
 ];
 
 // ════════════════════════════════════════════════════════════════════════
