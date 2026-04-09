@@ -176,22 +176,22 @@ function generateImpact(title: string, desc: string, article_type: string): stri
   const text = (title + ' ' + desc).toLowerCase();
 
   // Map patterns to impact statements
-  const patterns: Array<[RegExp, string]> = [
-    (/semiconductor|wafer|fab|tsmc|asml|foundry/, 'Supply chain constraint affecting chip production capacity'),
-    (/nuclear|reactor|atomic|thorium|breeder|npcil|kudankulam|kalpakkam/, 'Strategic energy infrastructure development'),
-    (/tariff|trade war|sanction|embargo|export ban|import duty|trade restrict/, 'Trade policy shift impacting cross-border supply flows'),
-    (/oil|energy|opec|crude|fuel|refinery|lng/, 'Energy supply dynamics affecting production costs'),
-    (/ai|gpu|data center|hyperscal|nvidia|compute|inference/, 'Compute infrastructure demand-supply gap'),
-    (/memory|dram|nand|hbm|memory chip|memory cycle/, 'Memory supply cycle affecting tech hardware margins'),
-    (/photonic|photonics|silicon photonics/, 'Next-gen interconnect technology for AI infrastructure'),
-    (/defense|defence|military|pentagon|drdo|hal|procurement/, 'Defence procurement and strategic capability development'),
-    (/rare earth|lithium|cobalt|copper|nickel|aluminium|aluminum/, 'Critical mineral supply constraints impacting manufacturing'),
-    (/monsoon|crop|fertilizer|agriculture|food/, 'Agricultural output cycles affecting commodity supply'),
-    (/rbi|federal reserve|fed rate|inflation|interest rate|repo rate/, 'Monetary policy impacting capital flows and cost of financing'),
-    (/shipping|port|freight|red sea|suez|supply chain|logistics/, 'Logistics bottleneck affecting supply chain timelines'),
-    (/auto|ev|electric vehicle|battery/, 'Automotive transition driving component demand shifts'),
-    (/pharmaceutical|fda|drug|api|medicine/, 'Healthcare supply chain and regulatory impact'),
-    (/geopolit|china|taiwan|russia|ukraine|iran/, 'Geopolitical risk affecting supply chains and markets'),
+  const patterns: [RegExp, string][] = [
+    [/semiconductor|wafer|fab|tsmc|asml|foundry/, 'Supply chain constraint affecting chip production capacity'],
+    [/nuclear|reactor|atomic|thorium|breeder|npcil|kudankulam|kalpakkam/, 'Strategic energy infrastructure development'],
+    [/tariff|trade war|sanction|embargo|export ban|import duty|trade restrict/, 'Trade policy shift impacting cross-border supply flows'],
+    [/oil|energy|opec|crude|fuel|refinery|lng/, 'Energy supply dynamics affecting production costs'],
+    [/ai|gpu|data center|hyperscal|nvidia|compute|inference/, 'Compute infrastructure demand-supply gap'],
+    [/memory|dram|nand|hbm|memory chip|memory cycle/, 'Memory supply cycle affecting tech hardware margins'],
+    [/photonic|photonics|silicon photonics/, 'Next-gen interconnect technology for AI infrastructure'],
+    [/defense|defence|military|pentagon|drdo|hal|procurement/, 'Defence procurement and strategic capability development'],
+    [/rare earth|lithium|cobalt|copper|nickel|aluminium|aluminum/, 'Critical mineral supply constraints impacting manufacturing'],
+    [/monsoon|crop|fertilizer|agriculture|food/, 'Agricultural output cycles affecting commodity supply'],
+    [/rbi|federal reserve|fed rate|inflation|interest rate|repo rate/, 'Monetary policy impacting capital flows and cost of financing'],
+    [/shipping|port|freight|red sea|suez|supply chain|logistics/, 'Logistics bottleneck affecting supply chain timelines'],
+    [/auto|ev|electric vehicle|battery/, 'Automotive transition driving component demand shifts'],
+    [/pharmaceutical|fda|drug|api|medicine/, 'Healthcare supply chain and regulatory impact'],
+    [/geopolit|china|taiwan|russia|ukraine|iran/, 'Geopolitical risk affecting supply chains and markets'],
   ];
 
   for (const [pattern, statement] of patterns) {
