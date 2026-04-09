@@ -221,6 +221,12 @@ const BOTTLENECK_RSS = [
   { name: 'Ars Technica', url: 'https://feeds.arstechnica.com/arstechnica/technology-lab', region: 'US' },
   { name: 'TechCrunch', url: 'https://techcrunch.com/feed/', region: 'US' },
   { name: 'SemiWiki', url: 'https://semiwiki.com/feed/', region: 'US' },
+  // Memory / Storage Cycle
+  { name: 'DigiTimes Memory', url: 'https://www.digitimes.com/rss/memory.xml', region: 'GLOBAL' },
+  { name: 'Blocks & Files', url: 'https://blocksandfiles.com/feed/', region: 'GLOBAL' },
+  // Photonics / Optical Interconnect
+  { name: 'Lightwave', url: 'https://www.lightwaveonline.com/rss', region: 'GLOBAL' },
+  { name: 'Photonics.com', url: 'https://www.photonics.com/RSS/feeds/industry.xml', region: 'GLOBAL' },
 ];
 
 // ════════════════════════════════════════════════════════════════════════
@@ -274,7 +280,7 @@ async function fetchLiveRSSSignals(): Promise<any[]> {
 // ════════════════════════════════════════════════════════════════════════
 // PERSISTENCE HELPERS
 // ════════════════════════════════════════════════════════════════════════
-const PERSISTENT_KEY = 'bottleneck:dashboard:persistent:v3'; // v3: structural-only persistence
+const PERSISTENT_KEY = 'bottleneck:dashboard:persistent:v4'; // v4: memory/photonics enhanced
 const PERSISTENT_TTL = 7776000; // 90 days in seconds
 
 function isSignalTooOld(date: string | Date, maxDays: number = 90): boolean {

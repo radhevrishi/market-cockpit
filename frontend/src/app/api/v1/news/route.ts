@@ -35,41 +35,68 @@ const RSS_FEEDS = [
   { name: 'Ars Technica', url: 'https://feeds.arstechnica.com/arstechnica/technology-lab', region: 'US' },
   { name: 'TechCrunch', url: 'https://techcrunch.com/feed/', region: 'US' },
   { name: 'SemiWiki', url: 'https://semiwiki.com/feed/', region: 'US' },
+  // ── Memory / Storage Cycle Feeds ──
+  { name: 'DigiTimes Memory', url: 'https://www.digitimes.com/rss/memory.xml', region: 'GLOBAL' },
+  { name: 'Blocks & Files', url: 'https://blocksandfiles.com/feed/', region: 'GLOBAL' },
+  // ── Photonics / Optical Interconnect Feeds ──
+  { name: 'Lightwave', url: 'https://www.lightwaveonline.com/rss', region: 'GLOBAL' },
+  { name: 'Photonics.com', url: 'https://www.photonics.com/RSS/feeds/industry.xml', region: 'GLOBAL' },
 ];
 
-const CACHE_KEY = 'news:articles:v4'; // v4: scoring gate + structural persistence + investment mapping
+const CACHE_KEY = 'news:articles:v5'; // v5: memory/photonics feeds + implicit constraint + expanded mapping
 const CACHE_TTL = 300; // 5 min
-const BOTTLENECK_PERSISTENT_KEY = 'bottleneck:articles:persistent:v3'; // v3: structural-only persistence
+const BOTTLENECK_PERSISTENT_KEY = 'bottleneck:articles:persistent:v4'; // v4: memory/photonics enhanced
 const BOTTLENECK_TTL = 7776000; // 90 days in seconds
 
 // ══════════════════════════════════════════════════════════════════════
 // CORE SIGNAL DEFINITIONS — Institutional-grade constraint detection
 // ══════════════════════════════════════════════════════════════════════
-const CONSTRAINT_TERMS = /(shortage|constraint|bottleneck|capacity (limit|constraint|tight)|supply (gap|crisis|disruption)|production (cut|limit|issue)|yield issue|allocation|undersupply)/i;
-const BREAKTHROUGH_TERMS = /(commissioned|achieves criticality|operational|goes live|milestone|first-of-its-kind|indigenous development|deployment|scaled up)/i;
-const STRUCTURAL_TERMS = /(wafer|fab|tsmc|asml|hbm|dram|nand|advanced packaging|cowos|chiplet|power grid|transmission|nuclear|reactor|thorium|rare earth|lithium)/i;
+const CONSTRAINT_TERMS = /(shortage|constraint|bottleneck|capacity (limit|constraint|tight)|supply (gap|crisis|disruption)|production (cut|limit|issue)|yield issue|allocation|undersupply|backlog|overbooked|sold out|wait(list|ing list))/i;
+const IMPLICIT_CONSTRAINT = /(surge in demand|demand spike|tight market|capacity lag|outstripping supply|demand outstrip|demand exceed|supply trail|lead time|pricing pressure|supply.{0,10}trail|ramp.{0,10}(slow|delay|behind)|demand.{0,10}(surge|soar|spike|outpace|overwhelm)|supply.{0,10}(crunch|squeeze|pinch))/i;
+const BREAKTHROUGH_TERMS = /(commissioned|achieves criticality|operational|goes live|milestone|first-of-its-kind|indigenous development|deployment|scaled up|record output|record capacity|breakthrough|world.?first)/i;
+const STRUCTURAL_TERMS = /(wafer|fab|tsmc|asml|hbm|dram|nand|advanced packaging|cowos|chiplet|power grid|transmission|nuclear|reactor|thorium|rare earth|lithium|silicon photonics|optical interconnect|co-packaged optics|euv|high.?na|gaafet|gate.?all.?around|backside power|3d.?ic|interposer|substrate|abf film|hybrid bonding|tsv|redistribution layer|rdl)/i;
 const ACTIVITY_TERMS = /(launch|announce|partnership|investment|funding|approval|award|expansion plan)/i;
+
+// ── Company & CEO Signal Terms (catch structural news via key figures) ──
+// When these CEOs/leaders speak about supply/capacity/bottleneck topics, it's always signal
+const CEO_SIGNAL_TERMS = /(jensen huang|lisa su|pat gelsinger|cc wei|mark liu|peter wennink|cristiano amon|sundar pichai|satya nadella|andy jassy|mark zuckerberg|sam altman|elon musk|morris chang|sanjay mehrotra|kwak noh-jung|tim cook).{0,40}(supply|capacity|shortage|bottleneck|constraint|demand|infrastructure|chip|semiconductor|ai|compute|fab|data center|nuclear|energy|power)/i;
+
+// ── Broad Company Names for structural supply chain capture ──
+const SUPPLY_CHAIN_COMPANIES = /(tsmc|asml|applied materials|lam research|tokyo electron|screen holdings|kla corp|synopsys|cadence|sk hynix|micron|samsung semiconductor|samsung foundry|intel foundry|globalfoundries|umc|smic|amkor|ase group|jcet|powerchip|nanya|winbond|infineon|stmicro|nxp|texas instruments|onsemi|wolfspeed|cree|ii-vi|coherent|lumentum|broadcom|marvell|nvidia|amd|qualcomm|mediatek|arm holdings|arteris|rambus|kaynes|syrma|dixon|vedanta semiconductor|tata electronics|bhel|npcil|bhavini|l&t|siemens energy|ge vernova|cameco|nexgen energy)/i;
+
+const MEMORY_COMPANY_TERMS = /(sk hynix|micron|samsung|nanya|winbond).{0,20}(hbm|dram|ddr5|capacity|supply|shortage|allocation|lead time|pricing|output|expansion|fab)/i;
+const PHOTONICS_CONSTRAINT = /(silicon photonics|co-packaged optics|optical interconnect|cpo|optical transceiver|pluggable optics|800g|1\.6t).{0,20}(scaling|bandwidth|limit|bottleneck|power constraint|demand|ramp|adoption|capacity|shortage|lead time)/i;
 
 // ══════════════════════════════════════════════════════════════════════
 // INVESTMENT MAPPING — Actionable intelligence layer
 // ══════════════════════════════════════════════════════════════════════
 const INVESTMENT_MAP: Record<string, string[]> = {
   semiconductor: ['TSMC', 'ASML', 'AMAT'],
-  memory: ['Micron', 'Samsung'],
-  packaging: ['TSMC', 'ASE'],
+  memory: ['Micron', 'SK Hynix', 'Samsung'],
+  packaging: ['TSMC', 'ASE', 'Amkor', 'JCET'],
+  interconnect: ['Rambus', 'Arteris'],
+  photonics: ['Lumentum', 'Coherent Corp', 'II-VI'],
   ai_infra: ['Nvidia', 'Amazon', 'Microsoft'],
   power: ['Siemens Energy', 'GE Vernova'],
   nuclear: ['BHEL', 'L&T', 'Cameco'],
+  india_ems: ['Kaynes Technology', 'Syrma SGS', 'Dixon Technologies'],
 };
 
 function getInvestmentTickers(text: string): string[] {
   const tickers: string[] = [];
   if (/semiconductor|wafer|fab|tsmc|asml|foundry|lithograph/i.test(text)) tickers.push(...INVESTMENT_MAP.semiconductor);
-  if (/hbm|dram|nand|memory/i.test(text)) tickers.push(...INVESTMENT_MAP.memory);
-  if (/cowos|advanced packaging|chiplet|2\.5d|3d stacking/i.test(text)) tickers.push(...INVESTMENT_MAP.packaging);
+  if (/hbm|dram|nand|memory|sk hynix|micron/i.test(text)) tickers.push(...INVESTMENT_MAP.memory);
+  if (/cowos|advanced packaging|chiplet|2\.5d|3d stacking|osat/i.test(text)) tickers.push(...INVESTMENT_MAP.packaging);
+  if (/interconnect|noc|network.on.chip|data movement/i.test(text)) tickers.push(...INVESTMENT_MAP.interconnect);
+  if (/photonics|silicon photonics|optical interconnect|co-packaged optics|cpo/i.test(text)) tickers.push(...INVESTMENT_MAP.photonics);
   if (/ai|gpu|data center|hyperscal|compute/i.test(text)) tickers.push(...INVESTMENT_MAP.ai_infra);
   if (/power grid|electricity|transmission/i.test(text)) tickers.push(...INVESTMENT_MAP.power);
   if (/nuclear|thorium|reactor|npcil|bhavini/i.test(text)) tickers.push(...INVESTMENT_MAP.nuclear);
+  if (/india.{0,15}(ems|pcb|system integration|electronics manufacturing)|kaynes|syrma|dixon/i.test(text)) tickers.push(...INVESTMENT_MAP.india_ems);
+  if (/euv|high.?na|lithograph|extreme ultraviolet/i.test(text)) tickers.push('ASML');
+  if (/abf|substrate|interposer/i.test(text)) tickers.push('Ibiden', 'Shinko Electric');
+  if (/lam research|etch|deposition/i.test(text)) tickers.push('Lam Research');
+  if (/kla|inspection|metrology/i.test(text)) tickers.push('KLA Corp');
   return [...new Set(tickers)];
 }
 
@@ -82,13 +109,47 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
     return { article_type: 'GENERAL', investment_tier: 3 };
 
   // ══ SUPER BOTTLENECK OVERRIDE ══
-  // If structural term + (constraint OR breakthrough), this is ALWAYS bottleneck
-  // Captures: HBM shortages, CoWoS constraints, nuclear milestones
+  // If structural term + (constraint OR breakthrough OR implicit constraint), ALWAYS bottleneck
+  // Captures: HBM shortages, CoWoS constraints, nuclear milestones, demand outstripping supply
   // Avoids: "TSMC expansion" alone, "AI investment" alone
   if (
     STRUCTURAL_TERMS.test(text) &&
-    (CONSTRAINT_TERMS.test(text) || BREAKTHROUGH_TERMS.test(text))
+    (CONSTRAINT_TERMS.test(text) || BREAKTHROUGH_TERMS.test(text) || IMPLICIT_CONSTRAINT.test(text))
   ) {
+    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+  }
+
+  // ══ MEMORY COMPANY SIGNAL OVERRIDE ══
+  // "SK Hynix HBM capacity", "Micron DRAM supply" → always bottleneck
+  if (MEMORY_COMPANY_TERMS.test(text)) {
+    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+  }
+
+  // ══ PHOTONICS CONSTRAINT OVERRIDE ══
+  // "Silicon photonics scaling bottleneck", "CPO bandwidth limit" → always bottleneck
+  if (PHOTONICS_CONSTRAINT.test(text)) {
+    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+  }
+
+  // ══ IMPLICIT CONSTRAINT ON KEY TECH ══
+  // "HBM demand surges", "photonics gains traction" with demand/supply context
+  if (
+    /(hbm|dram|nand|photonics|optical interconnect|co-packaged optics|cowos|chiplet|euv|high.?na|interposer|abf film|substrate)/i.test(text) &&
+    IMPLICIT_CONSTRAINT.test(text)
+  ) {
+    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+  }
+
+  // ══ CEO SIGNAL OVERRIDE ══
+  // When key tech CEOs discuss supply/capacity topics, always bottleneck
+  // "Jensen Huang says GPU shortage", "Sundar Pichai AI infrastructure"
+  if (CEO_SIGNAL_TERMS.test(text)) {
+    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+  }
+
+  // ══ SUPPLY CHAIN COMPANY + CONSTRAINT ══
+  // When a known supply chain company is mentioned with constraint terms
+  if (SUPPLY_CHAIN_COMPANIES.test(text) && (CONSTRAINT_TERMS.test(text) || IMPLICIT_CONSTRAINT.test(text))) {
     return { article_type: 'BOTTLENECK', investment_tier: 1 };
   }
 
@@ -131,9 +192,11 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
   {
     let score = 0;
     if (CONSTRAINT_TERMS.test(text)) score += 2;
+    if (IMPLICIT_CONSTRAINT.test(text)) score += 2;
     if (BREAKTHROUGH_TERMS.test(text)) score += 2;
     if (STRUCTURAL_TERMS.test(text)) score += 2;
-    if (/(wafer|hbm|packaging|power grid|nuclear)/i.test(text)) score += 1;
+    if (SUPPLY_CHAIN_COMPANIES.test(text)) score += 1;
+    if (/(wafer|hbm|packaging|power grid|nuclear|photonics|euv|cowos|interposer)/i.test(text)) score += 1;
 
     // Helper: reject activity-only without constraint evidence
     const rejectActivityOnly = (): { article_type: string; investment_tier: number } | null => {
@@ -170,12 +233,38 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
         if (r) return r;
       }
 
-      // Memory & storage cycles (UPGRADED — proximity matching)
-      if (/(hbm|dram|nand).{0,25}(shortage|tight|constraint|undersupply|capacity)/i.test(text)) {
+      // Memory & storage cycles (UPGRADED — proximity + company-led + DDR5)
+      if (/(hbm3e?|dram|ddr5|nand|memory).{0,25}(tight|shortage|undersupply|pricing pressure|allocation|lead time|constraint|capacity)/i.test(text)) {
         const r = rejectActivityOnly();
         if (r) return r;
       }
-      if (/\b(hbm|hbm2|hbm3|memory chip|memory (cycle|supply|demand|constraint|shortage)|flash memory|3d nand)\b/i.test(text)) {
+      if (/(sk hynix|micron|samsung).{0,20}(hbm|dram|capacity|supply|shortage|allocation)/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+      if (/\b(hbm|hbm2|hbm3|hbm3e|ddr5|memory chip|memory (cycle|supply|demand|constraint|shortage)|flash memory|3d nand)\b/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+
+      // Packaging substrate / ABF film / advanced materials bottleneck
+      if (/(abf film|abf substrate|ajinomoto|substrate).{0,20}(shortage|constraint|supply|capacity|tight|lead time)/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+      if (/(interposer|tsv|hybrid bonding|redistribution layer|rdl|fan-out).{0,20}(capacity|constraint|shortage|bottleneck|scaling)/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+
+      // EUV / High-NA lithography bottleneck (next-gen constraint)
+      if (/(euv|high.?na|extreme ultraviolet).{0,20}(capacity|constraint|shortage|delivery|delay|backlog|tool)/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+
+      // Interconnect / NoC / Data Movement bottleneck (institutional edge)
+      if (/\b(interconnect|network.on.chip|noc|data movement|chip-to-chip|die-to-die|ucie|bunch of wires)\b.{0,20}(bottleneck|constraint|bandwidth|limit|scaling)/i.test(text)) {
         const r = rejectActivityOnly();
         if (r) return r;
       }
@@ -313,13 +402,19 @@ function generateImpact(title: string, desc: string, article_type: string): stri
 
   // Map patterns to impact statements
   const patterns: [RegExp, string][] = [
+    [/cowos|advanced packaging|chiplet|interposer|hybrid bonding/, 'Advanced packaging capacity bottleneck — direct AI compute constraint'],
+    [/euv|high.?na|extreme ultraviolet|lithograph/, 'Leading-edge lithography capacity constraint limiting chip production'],
+    [/abf|substrate|ajinomoto/, 'Substrate supply constraint affecting advanced packaging throughput'],
+    [/interconnect|noc|data movement|die-to-die|ucie/, 'Data movement bottleneck — chip-to-chip bandwidth limiting system performance'],
     [/semiconductor|wafer|fab|tsmc|asml|foundry/, 'Supply chain constraint affecting chip production capacity'],
-    [/nuclear|reactor|atomic|thorium|breeder|npcil|kudankulam|kalpakkam/, 'Strategic energy infrastructure development'],
+    [/hbm|dram (shortage|tight|constraint)|memory.*shortage/, 'HBM/Memory supply cycle — highest margin expansion zone in semiconductors'],
+    [/memory|dram|nand|memory chip|memory cycle/, 'Memory supply cycle affecting tech hardware margins'],
+    [/photonic|photonics|silicon photonics|co-packaged optics|cpo|optical interconnect/, 'Next-gen optical interconnect — emerging bottleneck post-packaging/power'],
+    [/nuclear|reactor|atomic|thorium|breeder|npcil|kudankulam|kalpakkam/, 'Strategic energy infrastructure — long-cycle structural constraint'],
+    [/power grid|electricity|transmission.*constraint/, 'Power/grid constraint — critical for AI data center expansion'],
+    [/ai|gpu|data center|hyperscal|nvidia|compute|inference/, 'Compute infrastructure demand-supply gap'],
     [/tariff|trade war|sanction|embargo|export ban|import duty|trade restrict/, 'Trade policy shift impacting cross-border supply flows'],
     [/oil|energy|opec|crude|fuel|refinery|lng/, 'Energy supply dynamics affecting production costs'],
-    [/ai|gpu|data center|hyperscal|nvidia|compute|inference/, 'Compute infrastructure demand-supply gap'],
-    [/memory|dram|nand|hbm|memory chip|memory cycle/, 'Memory supply cycle affecting tech hardware margins'],
-    [/photonic|photonics|silicon photonics/, 'Next-gen interconnect technology for AI infrastructure'],
     [/defense|defence|military|pentagon|drdo|hal|procurement/, 'Defence procurement and strategic capability development'],
     [/rare earth|lithium|cobalt|copper|nickel|aluminium|aluminum/, 'Critical mineral supply constraints impacting manufacturing'],
     [/monsoon|crop|fertilizer|agriculture|food/, 'Agricultural output cycles affecting commodity supply'],
@@ -327,7 +422,9 @@ function generateImpact(title: string, desc: string, article_type: string): stri
     [/shipping|port|freight|red sea|suez|supply chain|logistics/, 'Logistics bottleneck affecting supply chain timelines'],
     [/auto|ev|electric vehicle|battery/, 'Automotive transition driving component demand shifts'],
     [/pharmaceutical|fda|drug|api|medicine/, 'Healthcare supply chain and regulatory impact'],
+    [/kaynes|syrma|dixon|india.*ems|electronics manufacturing/, 'India EMS/PCB ecosystem — beneficiary of AI hardware supply chain localization'],
     [/geopolit|china|taiwan|russia|ukraine|iran/, 'Geopolitical risk affecting supply chains and markets'],
+    [/jensen huang|lisa su|pat gelsinger|cc wei|sundar pichai|satya nadella|sam altman/, 'CEO-level signal on structural supply/demand dynamics'],
   ];
 
   for (const [pattern, statement] of patterns) {
