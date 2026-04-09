@@ -21,6 +21,13 @@ function isNoise(headline: string, desc: string): boolean {
   return false;
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// SIGNAL KEYS — High-value structural terms for primary/supporting split
+// ══════════════════════════════════════════════════════════════════════
+const SIGNAL_KEYS = /(hbm|dram|nand|wafer|tsmc|asml|cowos|power grid|nuclear)/i;
+const STRUCTURAL_TERMS_DASH = /(wafer|fab|tsmc|asml|hbm|dram|nand|advanced packaging|cowos|chiplet|power grid|transmission|nuclear|reactor|thorium|rare earth|lithium)/i;
+const CONSTRAINT_TERMS_DASH = /(shortage|constraint|bottleneck|capacity (limit|constraint|tight)|supply (gap|crisis|disruption)|production (cut|limit|issue)|yield issue|allocation|undersupply)/i;
+
 // ════════════════════════════════════════════════════════════════════════
 // BOTTLENECK BUCKET DEFINITIONS
 // Each bucket targets a specific supply-chain / constraint theme.
@@ -267,7 +274,7 @@ async function fetchLiveRSSSignals(): Promise<any[]> {
 // ════════════════════════════════════════════════════════════════════════
 // PERSISTENCE HELPERS
 // ════════════════════════════════════════════════════════════════════════
-const PERSISTENT_KEY = 'bottleneck:dashboard:persistent:v2'; // v2: reset after classifier fix
+const PERSISTENT_KEY = 'bottleneck:dashboard:persistent:v3'; // v3: structural-only persistence
 const PERSISTENT_TTL = 7776000; // 90 days in seconds
 
 function isSignalTooOld(date: string | Date, maxDays: number = 90): boolean {
@@ -402,10 +409,20 @@ export async function GET(request: Request) {
 
         const { severity, severity_label } = getSeverity(dedupedSignals.length);
 
-        const bucketSignals = dedupedSignals.slice(0, 10).map((s: any) => ({
+        // ── SIGNAL INTELLIGENCE: sort primary (high-signal) first, supporting after ──
+        const sortedSignals = [...dedupedSignals].sort((a, b) => {
+          const aText = (a.headline || '') + ' ' + (a.narrative || a.summary || '');
+          const bText = (b.headline || '') + ' ' + (b.narrative || b.summary || '');
+          const aKey = SIGNAL_KEYS.test(aText) ? 1 : 0;
+          const bKey = SIGNAL_KEYS.test(bText) ? 1 : 0;
+          return bKey - aKey; // primary signals first
+        });
+
+        const bucketSignals = sortedSignals.slice(0, 10).map((s: any, idx: number) => ({
           id: s.symbol || key,
           headline: s.headline || s.narrative || `${s.symbol}: ${s.eventType || 'Signal'}`,
           summary: s.narrative || s.summary || '',
+          signal_role: idx === 0 ? 'primary' : 'supporting',
           // Frontend BnSignal interface expects these exact field names:
           sources: [s.source || 'Intelligence'],
           tickers: s.symbol ? [s.symbol] : [],
@@ -444,8 +461,7 @@ export async function GET(request: Request) {
       }
     }
 
-    // After building buckets, save all matched signals to persistent store
-    // Collect all signals that matched any bucket
+    // After building buckets, save only STRUCTURAL signals to persistent store
     const allMatchedSignals = buckets.flatMap(b =>
       b.signals.map((sig: any) => ({
         headline: sig.headline,
@@ -455,7 +471,12 @@ export async function GET(request: Request) {
         bucket_id: b.bucket_id,
       }))
     );
-    await savePersistentSignals(allMatchedSignals);
+    // Only persist signals that contain structural terms
+    const structuralSignals = allMatchedSignals.filter(s => {
+      const text = (s.headline + ' ' + (s.summary || '')).toLowerCase();
+      return STRUCTURAL_TERMS_DASH.test(text);
+    });
+    await savePersistentSignals(structuralSignals);
 
     // Sort: region-specific buckets first, then by signal count
     buckets.sort((a, b) => {

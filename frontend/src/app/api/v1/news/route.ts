@@ -37,10 +37,41 @@ const RSS_FEEDS = [
   { name: 'SemiWiki', url: 'https://semiwiki.com/feed/', region: 'US' },
 ];
 
-const CACHE_KEY = 'news:articles:v3'; // v3: strict bottleneck classifier + IBEF
+const CACHE_KEY = 'news:articles:v4'; // v4: scoring gate + structural persistence + investment mapping
 const CACHE_TTL = 300; // 5 min
-const BOTTLENECK_PERSISTENT_KEY = 'bottleneck:articles:persistent:v2'; // v2: reset after classifier fix
+const BOTTLENECK_PERSISTENT_KEY = 'bottleneck:articles:persistent:v3'; // v3: structural-only persistence
 const BOTTLENECK_TTL = 7776000; // 90 days in seconds
+
+// ══════════════════════════════════════════════════════════════════════
+// CORE SIGNAL DEFINITIONS — Institutional-grade constraint detection
+// ══════════════════════════════════════════════════════════════════════
+const CONSTRAINT_TERMS = /(shortage|constraint|bottleneck|capacity (limit|constraint|tight)|supply (gap|crisis|disruption)|production (cut|limit|issue)|yield issue|allocation|undersupply)/i;
+const BREAKTHROUGH_TERMS = /(commissioned|achieves criticality|operational|goes live|milestone|first-of-its-kind|indigenous development|deployment|scaled up)/i;
+const STRUCTURAL_TERMS = /(wafer|fab|tsmc|asml|hbm|dram|nand|advanced packaging|cowos|chiplet|power grid|transmission|nuclear|reactor|thorium|rare earth|lithium)/i;
+const ACTIVITY_TERMS = /(launch|announce|partnership|investment|funding|approval|award|expansion plan)/i;
+
+// ══════════════════════════════════════════════════════════════════════
+// INVESTMENT MAPPING — Actionable intelligence layer
+// ══════════════════════════════════════════════════════════════════════
+const INVESTMENT_MAP: Record<string, string[]> = {
+  semiconductor: ['TSMC', 'ASML', 'AMAT'],
+  memory: ['Micron', 'Samsung'],
+  packaging: ['TSMC', 'ASE'],
+  ai_infra: ['Nvidia', 'Amazon', 'Microsoft'],
+  power: ['Siemens Energy', 'GE Vernova'],
+  nuclear: ['BHEL', 'L&T', 'Cameco'],
+};
+
+function getInvestmentTickers(text: string): string[] {
+  const tickers: string[] = [];
+  if (/semiconductor|wafer|fab|tsmc|asml|foundry|lithograph/i.test(text)) tickers.push(...INVESTMENT_MAP.semiconductor);
+  if (/hbm|dram|nand|memory/i.test(text)) tickers.push(...INVESTMENT_MAP.memory);
+  if (/cowos|advanced packaging|chiplet|2\.5d|3d stacking/i.test(text)) tickers.push(...INVESTMENT_MAP.packaging);
+  if (/ai|gpu|data center|hyperscal|compute/i.test(text)) tickers.push(...INVESTMENT_MAP.ai_infra);
+  if (/power grid|electricity|transmission/i.test(text)) tickers.push(...INVESTMENT_MAP.power);
+  if (/nuclear|thorium|reactor|npcil|bhavini/i.test(text)) tickers.push(...INVESTMENT_MAP.nuclear);
+  return [...new Set(tickers)];
+}
 
 // ── Type Classification ──────────────────────────────────────────────
 function classifyArticle(title: string, desc: string): { article_type: string; investment_tier: number } {
@@ -49,6 +80,17 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
   // ── 1. NOISE: clickbait, lifestyle, junk ──
   if (/multibagger|penny stock|should you buy|stock(s)? to buy|hot stock|best (stock|pick)|free tips|moneymaker|money.?maker|horoscope|recipe|cricket|bollywood|celebrity|entertainment|march madness|bracket|winnings|entry fee/i.test(text))
     return { article_type: 'GENERAL', investment_tier: 3 };
+
+  // ══ SUPER BOTTLENECK OVERRIDE ══
+  // If structural term + (constraint OR breakthrough), this is ALWAYS bottleneck
+  // Captures: HBM shortages, CoWoS constraints, nuclear milestones
+  // Avoids: "TSMC expansion" alone, "AI investment" alone
+  if (
+    STRUCTURAL_TERMS.test(text) &&
+    (CONSTRAINT_TERMS.test(text) || BREAKTHROUGH_TERMS.test(text))
+  ) {
+    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+  }
 
   // ── 2. EARNINGS ──
   if (/earnings|quarterly|q[1-4]\s?(fy|20)|profit|revenue|results|beats? expectations?|miss(es|ed)? expectations?|guidance (raise|lower|maintain|reaffirm)|eps /i.test(text))
@@ -74,73 +116,167 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
   if (/tariff|sanction.*trade|export ban|import duty|custom duty|trade restrict|trade war|embargo|protectionism/i.test(text))
     return { article_type: 'TARIFF', investment_tier: 1 };
 
-  // ── 8. OIL / ENERGY PRICE (price commentary, not supply constraint) ──
-  // Oil price movements, OPEC news, crude trends → MACRO, not bottleneck
+  // ── 8. OIL / COMMODITY PRICE (price commentary, not supply constraint) ──
+  // Expanded: also catches copper, lithium, gas price movements
+  if (/\b(oil|crude|brent|copper|lithium|gas)\b.{0,15}\b(price|rise|gain|drop|fall|surge|tank|hover)\b/i.test(text))
+    return { article_type: 'MACRO', investment_tier: 1 };
   if (/\b(oil price|crude oil|crude price|brent crude|wti crude|opec|oil (gain|rise|drop|fall|surge|rally|slip)|oil production|oil (shock|embargo)|fuel price|petrol price|diesel price|natural gas price|energy security)\b/i.test(text))
+    return { article_type: 'MACRO', investment_tier: 1 };
+  // Supply fear without actual constraint = MACRO noise
+  if (/supply fear|concern|worry/i.test(text) && !CONSTRAINT_TERMS.test(text))
     return { article_type: 'MACRO', investment_tier: 1 };
 
   // ── 9. BOTTLENECK — STRICT: only structural supply constraints ──
-  // These are REAL bottlenecks: semiconductor supply, memory cycles, photonics,
-  // compute infrastructure, nuclear energy, critical minerals, logistics disruptions,
-  // defence procurement, pharma supply, agriculture constraints, EV/auto transitions
-  if (/bottleneck|supply chain (disruption|crisis|bottleneck|constraint)|supply shortage|capacity constraint/i.test(text))
-    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+  // ── SCORING GATE: reject weak signals before any sub-group check ──
+  {
+    let score = 0;
+    if (CONSTRAINT_TERMS.test(text)) score += 2;
+    if (BREAKTHROUGH_TERMS.test(text)) score += 2;
+    if (STRUCTURAL_TERMS.test(text)) score += 2;
+    if (/(wafer|hbm|packaging|power grid|nuclear)/i.test(text)) score += 1;
 
-  // Semiconductor & Chip supply
-  if (/\b(semiconductor|wafer|foundry|fab (capacity|expansion|construction)|tsmc|asml|chip (shortage|supply|demand|ban|export|production|capacity)|chip export|advanced packaging|osat|eda tool|chip equipment|lithograph)\b/i.test(text))
-    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+    // Helper: reject activity-only without constraint evidence
+    const rejectActivityOnly = (): { article_type: string; investment_tier: number } | null => {
+      if (ACTIVITY_TERMS.test(text) && !CONSTRAINT_TERMS.test(text)) return null;
+      if (text.length < 40 && !CONSTRAINT_TERMS.test(text)) return null;
+      return { article_type: 'BOTTLENECK', investment_tier: 1 };
+    };
 
-  // Photonics & optical interconnects
-  if (/\b(photonics|photonic|silicon photonics|optical (chip|interconnect|transceiver)|co-packaged optics|optical (network|switch))\b/i.test(text))
-    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+    // Only enter bottleneck matching if score >= 3
+    if (score >= 3) {
+      // Generic supply constraint
+      if (/bottleneck|supply chain (disruption|crisis|bottleneck|constraint)|supply shortage|capacity constraint/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
 
-  // Memory & storage cycles
-  if (/\b(hbm|hbm2|hbm3|dram (price|supply|demand|cycle|shortage)|nand (price|supply|demand|cycle|shortage)|memory chip|memory (cycle|supply|demand|constraint|shortage)|flash memory|3d nand)\b/i.test(text))
-    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+      // Semiconductor & Chip supply (UPGRADED — proximity matching)
+      if (/(wafer|fab|tsmc|asml).{0,25}(capacity|constraint|shortage|tight)/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+      if (/(cowos|advanced packaging|chiplet|2\.5d|3d stacking).{0,20}(capacity|constraint|shortage)/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+      if (/\b(semiconductor|foundry|chip (shortage|supply|demand|ban|export|production|capacity)|chip export|osat|eda tool|chip equipment|lithograph)\b/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
 
-  // AI infrastructure & compute constraints
-  if (/\b(gpu (shortage|demand|supply|allocation|constraint)|ai (infrastructure|chip|server|spending|demand)|data center (capacity|power|constraint|build|expansion)|cloud capacity|hyperscal.{0,10}(build|invest|spend|capacity)|compute (capacity|constraint|shortage)|ai accelerator|tpu|inference.*constraint|training.*compute)\b/i.test(text))
-    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+      // Photonics & optical interconnects
+      if (/\b(photonics|photonic|silicon photonics|optical (chip|interconnect|transceiver)|co-packaged optics|optical (network|switch))\b/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
 
-  // Nuclear energy (India + global)
-  if (/\b(nuclear (reactor|power|plant|energy|fuel|capacity|project|deal|pact|milestone)|atomic (reactor|energy)|thorium|breeder reactor|kalpakkam|kudankulam|npcil|bhavini|nuclear commission|criticality|atomic energy commission)\b/i.test(text))
-    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+      // Memory & storage cycles (UPGRADED — proximity matching)
+      if (/(hbm|dram|nand).{0,25}(shortage|tight|constraint|undersupply|capacity)/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+      if (/\b(hbm|hbm2|hbm3|memory chip|memory (cycle|supply|demand|constraint|shortage)|flash memory|3d nand)\b/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
 
-  // Critical minerals & rare earths
-  if (/\b(rare earth|lithium (supply|price|mining|shortage)|cobalt (supply|price)|copper (shortage|price|supply)|nickel (supply|price)|aluminium (price|shortage)|aluminum (price|shortage)|steel (price|shortage)|mineral supply|critical mineral|titanium supply)\b/i.test(text))
-    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+      // AI infrastructure & compute constraints (UPGRADED — noise-resistant)
+      if (/(ai|gpu|compute).{0,30}(shortage|constraint|capacity|allocation)/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+      if (/data center.{0,30}(power|capacity|constraint|limit)/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+      if (/cloud.{0,20}(capacity|constraint)/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+      if (/\b(ai accelerator|tpu|inference.*constraint|training.*compute)\b/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
 
-  // Logistics & shipping disruptions
-  if (/\b(shipping (delay|crisis|disruption)|freight rate|container shortage|port (congestion|strike)|red sea.{0,15}(attack|disrupt)|suez.{0,10}block|panama.{0,10}drought|trade route disruption|cargo delay|logistics (disruption|delay|crisis))\b/i.test(text))
-    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+      // Power / Grid (NEW — very important for AI infra)
+      if (/(power grid|electricity|energy).{0,25}(constraint|shortage|limit)/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+      if (/transmission.{0,20}(constraint|capacity)/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
 
-  // Defence procurement (India + US)
-  if (/\b(defence (order|procurement|deal|budget|corridor|export)|defense (order|procurement|contract|budget|spending)|drdo|isro|hal (order|deliver)|military (spending|procurement)|pentagon (budget|spend|contract))\b/i.test(text))
-    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+      // Nuclear energy (UPGRADED — breakthrough + constraint)
+      if (/(fast breeder|thorium|npcil|bhavini|kalpakkam).{0,25}(criticality|commissioned|operational|milestone)/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+      if (/nuclear.{0,20}(capacity|constraint|fuel shortage)/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+      if (/\b(nuclear (reactor|power|plant|energy|fuel|project|deal|pact|milestone)|atomic (reactor|energy)|breeder reactor|kudankulam|nuclear commission|criticality|atomic energy commission)\b/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
 
-  // Pharma supply constraints
-  if (/\b(drug (shortage|approval)|usfda|fda (approval|warning)|api (supply|shortage)|pharma.*supply|bulk drug|pharma export)\b/i.test(text))
-    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+      // Critical minerals & rare earths
+      if (/\b(rare earth|lithium (supply|mining|shortage)|cobalt (supply)|copper (shortage|supply)|nickel (supply)|mineral supply|critical mineral|titanium supply)\b/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
 
-  // Agriculture & food supply constraints
-  if (/\b(monsoon|crop (failure|output|damage)|food inflation|fertilizer (shortage|subsidy)|agriculture crisis|food crisis)\b/i.test(text))
-    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+      // Logistics & shipping disruptions
+      if (/\b(shipping (delay|crisis|disruption)|freight rate|container shortage|port (congestion|strike)|red sea.{0,15}(attack|disrupt)|suez.{0,10}block|panama.{0,10}drought|trade route disruption|cargo delay|logistics (disruption|delay|crisis))\b/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
 
-  // Auto & EV transition supply constraints
-  if (/\b(ev (sales|production|battery|shift)|electric vehicle.{0,15}(production|supply|battery)|battery (plant|gigafactory|supply|shortage)|auto (production|component|export))\b/i.test(text))
-    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+      // Defence procurement (India + US)
+      if (/\b(defence (order|procurement|deal|budget|corridor|export)|defense (order|procurement|contract|budget|spending)|drdo|isro|hal (order|deliver)|military (spending|procurement)|pentagon (budget|spend|contract))\b/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
 
-  // Energy infrastructure (renewables, hydrogen, power grid — NOT price commentary)
-  if (/\b(solar (capacity|install|project|panel|power project)|wind (farm|capacity|offshore|energy)|renewable (energy|capacity|investment|project)|hydrogen (economy|production|fuel|cell)|power (grid|crisis|shortage)|energy transition|nuclear power|uranium (price|supply|mining)|clean energy)\b/i.test(text))
-    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+      // Pharma supply constraints
+      if (/\b(drug (shortage|approval)|usfda|fda (approval|warning)|api (supply|shortage)|pharma.*supply|bulk drug|pharma export)\b/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
 
-  // India infrastructure bottlenecks
-  if (/\b(infrastructure (order|bottleneck|spend)|highway (project|order|delay)|railway (order|electrif|expansion)|cement (demand|price|supply)|construction (order|delay))\b/i.test(text))
-    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+      // Agriculture & food supply constraints
+      if (/\b(monsoon|crop (failure|output|damage)|food inflation|fertilizer (shortage|subsidy)|agriculture crisis|food crisis)\b/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
 
-  // India banking structural (NOT general RBI news)
-  if (/\b(npa|credit (growth|crunch|squeeze)|nbfc (crisis|liquidity)|lending rate.*squeeze|liquidity (crisis|squeeze)|banking reform)\b/i.test(text))
-    return { article_type: 'BOTTLENECK', investment_tier: 1 };
+      // Auto & EV transition supply constraints
+      if (/\b(ev (sales|production|battery|shift)|electric vehicle.{0,15}(production|supply|battery)|battery (plant|gigafactory|supply|shortage)|auto (production|component|export))\b/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+
+      // Energy infrastructure (renewables, hydrogen, power grid — NOT price commentary)
+      if (/\b(solar (capacity|install|project)|wind (farm|capacity|offshore)|renewable (capacity|investment|project)|hydrogen (economy|production|fuel|cell)|power (grid|crisis|shortage)|energy transition|uranium (supply|mining)|clean energy)\b/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+
+      // India infrastructure bottlenecks
+      if (/\b(infrastructure (order|bottleneck|spend)|highway (project|order|delay)|railway (order|electrif|expansion)|cement (demand|supply)|construction (order|delay))\b/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+
+      // India banking structural (NOT general RBI news)
+      if (/\b(npa|credit (growth|crunch|squeeze)|nbfc (crisis|liquidity)|lending rate.*squeeze|liquidity (crisis|squeeze)|banking reform)\b/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+    }
+  }
 
   // ── 10. RATING CHANGES ──
   if (/upgrade|downgrade|rating|target price|buy|sell|hold|outperform|underperform/i.test(text))
@@ -359,15 +495,28 @@ async function fetchAllNews(): Promise<any[]> {
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
+  });
+
+  // ── FEED-LEVEL FIX: Per-source cap to ensure diversity ──
+  const PER_SOURCE_CAP = 8;
+  const sourceCount: Record<string, number> = {};
+  const diversified = deduped.filter(a => {
+    const src = a.source_name || a.source || 'unknown';
+    if (!sourceCount[src]) sourceCount[src] = 0;
+    if (sourceCount[src] >= PER_SOURCE_CAP) return false;
+    sourceCount[src]++;
+    return true;
   }).slice(0, 500);
 
-  // Add impact statements to all articles
-  const articlesWithImpact = deduped.map(a => ({
+  // Add impact statements + investment tickers to all articles
+  const articlesWithImpact = diversified.map(a => ({
     ...a,
     impact_statement: generateImpact(a.title, a.summary, a.article_type),
+    investment_tickers: a.article_type === 'BOTTLENECK' ? getInvestmentTickers(a.title + ' ' + a.summary) : [],
   }));
 
-  // Save BOTTLENECK articles to persistent KV storage (90-day TTL)
+  // ── PERSISTENCE LAYER — structural filter + tiered TTL ──
+  const DAY = 86400; // seconds
   const bottleneckArticles = articlesWithImpact.filter(a => a.article_type === 'BOTTLENECK');
   if (bottleneckArticles.length > 0) {
     try {
@@ -378,10 +527,16 @@ async function fetchAllNews(): Promise<any[]> {
         persistentArticles = [];
       }
 
+      // Only persist articles that match STRUCTURAL_TERMS
+      const structuralBottlenecks = bottleneckArticles.filter(a => {
+        const text = (a.title + ' ' + (a.summary || '')).toLowerCase();
+        return STRUCTURAL_TERMS.test(text);
+      });
+
       // Merge new articles with existing ones, dedup by title
       const titleSet = new Set<string>();
       const merged = [
-        ...bottleneckArticles,
+        ...structuralBottlenecks,
         ...persistentArticles.filter(a => {
           const key = a.title.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 50);
           if (titleSet.has(key)) return false;
@@ -398,10 +553,16 @@ async function fetchAllNews(): Promise<any[]> {
         return true;
       });
 
-      await kvSet(BOTTLENECK_PERSISTENT_KEY, finalMerged, BOTTLENECK_TTL);
+      // Tiered TTL: nuclear milestones get 180 days, structural gets 90 days
+      const text = finalMerged.map(a => a.title).join(' ').toLowerCase();
+      let persistTTL = 90 * DAY;
+      if (/(fast breeder|thorium|nuclear milestone|criticality)/i.test(text)) {
+        persistTTL = 180 * DAY;
+      }
+
+      await kvSet(BOTTLENECK_PERSISTENT_KEY, finalMerged, persistTTL);
     } catch (error) {
       console.error('[News API] Failed to save bottleneck articles to persistent storage:', error);
-      // Continue without error
     }
   }
 
