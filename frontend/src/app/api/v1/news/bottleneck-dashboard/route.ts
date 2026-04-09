@@ -177,6 +177,57 @@ const BOTTLENECK_BUCKETS: Record<string, {
     severity_color: '#581C87',
     severity_icon: '🟣',
   },
+
+  // ── FUTURE-CRITICAL BUCKETS ──
+  QUANTUM: {
+    label: 'Quantum Computing & Cryogenics',
+    description: 'Quantum chip fabrication, qubit scaling, cryogenic supply, error correction constraints',
+    keywords: /\b(quantum (computer|chip|computing|processor|advantage|supremacy)|qubit|superconducting|ion trap|cryogenic|dilution refrigerator|quantum (error|correction|scaling)|ionq|rigetti|ibm quantum|google quantum|honeywell quantum|topological qubit)\b/i,
+    severity_color: '#7C2D12',
+    severity_icon: '🔮',
+  },
+  ADVANCED_MATERIALS: {
+    label: 'Advanced Materials (GaN, SiC, Graphene)',
+    description: 'Wide-bandgap semiconductors, 2D materials, metamaterials — next-gen manufacturing constraints',
+    keywords: /\b(gallium nitride|gan|silicon carbide|sic|graphene|wide bandgap|2d material|metamaterial|wolfspeed|onsemi|infineon.*sic|cree|compound semiconductor)\b/i,
+    severity_color: '#065F46',
+    severity_icon: '🟩',
+  },
+  COOLING: {
+    label: 'Data Center Cooling & Thermal',
+    description: 'Liquid cooling, immersion cooling, thermal management — next bottleneck after power',
+    keywords: /\b(liquid cooling|immersion cooling|data center cooling|rear.?door|direct.?to.?chip|thermal management|coolant|heat sink|cooling capacity|vertiv|nvent|modine)\b/i,
+    severity_color: '#0284C7',
+    severity_icon: '❄️',
+  },
+  POWER_GRID: {
+    label: 'Power Grid & Transformer Supply',
+    description: 'Transformer shortages, HVDC, substation backlogs, grid infrastructure constraints',
+    keywords: /\b(transformer (shortage|backlog|lead time|constraint)|high voltage equipment|grid infrastructure|substation (shortage|backlog|constraint)|hvdc|switchgear (shortage|constraint)|circuit breaker.*shortage|power grid (constraint|bottleneck|shortage)|eaton|schneider|abb.*grid)\b/i,
+    severity_color: '#B45309',
+    severity_icon: '⚡',
+  },
+  BATTERY_MATERIALS: {
+    label: 'Battery Materials & Energy Storage',
+    description: 'Solid-state battery, lithium hydroxide, anode/cathode supply, refining constraints',
+    keywords: /\b(solid state battery|lithium hydroxide|battery (material|grade|recycling|supply)|anode (material|supply)|cathode (material|supply)|electrolyte|albemarle|sqm|livent|mp materials|battery (constraint|shortage|bottleneck))\b/i,
+    severity_color: '#78350F',
+    severity_icon: '🔋',
+  },
+  AEROSPACE: {
+    label: 'Aerospace & Space Supply Chain',
+    description: 'Rocket engine production, satellite manufacturing, launch capacity, propulsion constraints',
+    keywords: /\b(rocket (engine|production|launch)|satellite (manufacturing|supply|production)|space launch|propulsion (system|constraint)|launch vehicle|spacecraft|orbit.{0,15}(capacity|constraint)|spacex|rocket lab|l3harris|northrop.*space|boeing.*space|blue origin)\b/i,
+    severity_color: '#312E81',
+    severity_icon: '🚀',
+  },
+  LASER: {
+    label: 'Laser Systems & Directed Energy',
+    description: 'High-power laser supply, EUV source, directed energy weapons, precision manufacturing',
+    keywords: /\b(laser (system|supply|production|source|constraint)|euv (source|laser)|directed energy|high power laser|fiber laser|ipg photonics|trumpf|coherent.*laser|laser focus)\b/i,
+    severity_color: '#831843',
+    severity_icon: '🔴',
+  },
 };
 
 // ════════════════════════════════════════════════════════════════════════
@@ -227,6 +278,10 @@ const BOTTLENECK_RSS = [
   // Photonics / Optical Interconnect
   { name: 'Lightwave', url: 'https://www.lightwaveonline.com/rss', region: 'GLOBAL' },
   { name: 'Photonics.com', url: 'https://www.photonics.com/RSS/feeds/industry.xml', region: 'GLOBAL' },
+  // Laser / Quantum / Power / Aerospace
+  { name: 'Laser Focus World', url: 'https://www.laserfocusworld.com/rss', region: 'GLOBAL' },
+  { name: 'Quantum Computing Report', url: 'https://quantumcomputingreport.com/feed/', region: 'GLOBAL' },
+  { name: 'Power Technology', url: 'https://www.power-technology.com/feed/', region: 'GLOBAL' },
 ];
 
 // ════════════════════════════════════════════════════════════════════════
@@ -280,7 +335,7 @@ async function fetchLiveRSSSignals(): Promise<any[]> {
 // ════════════════════════════════════════════════════════════════════════
 // PERSISTENCE HELPERS
 // ════════════════════════════════════════════════════════════════════════
-const PERSISTENT_KEY = 'bottleneck:dashboard:persistent:v4'; // v4: memory/photonics enhanced
+const PERSISTENT_KEY = 'bottleneck:dashboard:persistent:v5'; // v5: future-tech buckets + tiered TTL
 const PERSISTENT_TTL = 7776000; // 90 days in seconds
 
 function isSignalTooOld(date: string | Date, maxDays: number = 90): boolean {

@@ -41,31 +41,44 @@ const RSS_FEEDS = [
   // ── Photonics / Optical Interconnect Feeds ──
   { name: 'Lightwave', url: 'https://www.lightwaveonline.com/rss', region: 'GLOBAL' },
   { name: 'Photonics.com', url: 'https://www.photonics.com/RSS/feeds/industry.xml', region: 'GLOBAL' },
+  // ── Laser / Quantum / Power / Aerospace Feeds ──
+  { name: 'Laser Focus World', url: 'https://www.laserfocusworld.com/rss', region: 'GLOBAL' },
+  { name: 'Quantum Computing Report', url: 'https://quantumcomputingreport.com/feed/', region: 'GLOBAL' },
+  { name: 'Power Technology', url: 'https://www.power-technology.com/feed/', region: 'GLOBAL' },
 ];
 
-const CACHE_KEY = 'news:articles:v5'; // v5: memory/photonics feeds + implicit constraint + expanded mapping
+const CACHE_KEY = 'news:articles:v6'; // v6: future-tech domains + hype suppression + LONG_CYCLE_TECH
 const CACHE_TTL = 300; // 5 min
-const BOTTLENECK_PERSISTENT_KEY = 'bottleneck:articles:persistent:v4'; // v4: memory/photonics enhanced
+const BOTTLENECK_PERSISTENT_KEY = 'bottleneck:articles:persistent:v5'; // v5: future-tech + tiered TTL
 const BOTTLENECK_TTL = 7776000; // 90 days in seconds
 
 // ══════════════════════════════════════════════════════════════════════
 // CORE SIGNAL DEFINITIONS — Institutional-grade constraint detection
 // ══════════════════════════════════════════════════════════════════════
-const CONSTRAINT_TERMS = /(shortage|constraint|bottleneck|capacity (limit|constraint|tight)|supply (gap|crisis|disruption)|production (cut|limit|issue)|yield issue|allocation|undersupply|backlog|overbooked|sold out|wait(list|ing list))/i;
+// ── Universal Constraint Dictionary (used across ALL domains) ──
+const CONSTRAINT_TERMS = /(shortage|constraint|bottleneck|tight|undersupply|capacity (limit|constraint|tight)|supply (gap|crisis|disruption)|production (cut|limit|issue)|yield issue|allocation|backlog|delay|lead time|overbooked|sold out|wait(list|ing list)|scaling limit)/i;
 const IMPLICIT_CONSTRAINT = /(surge in demand|demand spike|tight market|capacity lag|outstripping supply|demand outstrip|demand exceed|supply trail|lead time|pricing pressure|supply.{0,10}trail|ramp.{0,10}(slow|delay|behind)|demand.{0,10}(surge|soar|spike|outpace|overwhelm)|supply.{0,10}(crunch|squeeze|pinch))/i;
 const BREAKTHROUGH_TERMS = /(commissioned|achieves criticality|operational|goes live|milestone|first-of-its-kind|indigenous development|deployment|scaled up|record output|record capacity|breakthrough|world.?first)/i;
-const STRUCTURAL_TERMS = /(wafer|fab|tsmc|asml|hbm|dram|nand|advanced packaging|cowos|chiplet|power grid|transmission|nuclear|reactor|thorium|rare earth|lithium|silicon photonics|optical interconnect|co-packaged optics|euv|high.?na|gaafet|gate.?all.?around|backside power|3d.?ic|interposer|substrate|abf film|hybrid bonding|tsv|redistribution layer|rdl)/i;
+
+// ── Structural Terms (all physical supply chain technologies) ──
+const STRUCTURAL_TERMS = /(wafer|fab|tsmc|asml|hbm|dram|nand|advanced packaging|cowos|chiplet|power grid|transmission|nuclear|reactor|thorium|rare earth|lithium|silicon photonics|optical interconnect|co-packaged optics|euv|high.?na|gaafet|gate.?all.?around|backside power|3d.?ic|interposer|substrate|abf film|hybrid bonding|tsv|redistribution layer|rdl|quantum (chip|computer|qubit)|superconducting|ion trap|gallium nitride|gan|silicon carbide|sic|graphene|metamaterial|liquid cooling|immersion cooling|transformer|hvdc|substation|solid state battery|anode|cathode|rocket engine|satellite|propulsion)/i;
+
+// ── Hype Suppression — reject future-tech noise without constraint ──
+const HYPE_TERMS = /(launch|announce|startup|funding|raises|partnership|unveil|research breakthrough|demo|prototype|proof of concept|pitch|accelerator|incubator)/i;
+
+// ── Long-Cycle Tech — gets 180-day persistence TTL ──
+const LONG_CYCLE_TECH = /(quantum|photonics|silicon photonics|gan|sic|gallium nitride|silicon carbide|euv|nuclear|grid|cooling|immersion cooling|thorium|graphene|metamaterial|solid state battery|hvdc|satellite|propulsion)/i;
+
 const ACTIVITY_TERMS = /(launch|announce|partnership|investment|funding|approval|award|expansion plan)/i;
 
 // ── Company & CEO Signal Terms (catch structural news via key figures) ──
-// When these CEOs/leaders speak about supply/capacity/bottleneck topics, it's always signal
 const CEO_SIGNAL_TERMS = /(jensen huang|lisa su|pat gelsinger|cc wei|mark liu|peter wennink|cristiano amon|sundar pichai|satya nadella|andy jassy|mark zuckerberg|sam altman|elon musk|morris chang|sanjay mehrotra|kwak noh-jung|tim cook).{0,40}(supply|capacity|shortage|bottleneck|constraint|demand|infrastructure|chip|semiconductor|ai|compute|fab|data center|nuclear|energy|power)/i;
 
 // ── Broad Company Names for structural supply chain capture ──
-const SUPPLY_CHAIN_COMPANIES = /(tsmc|asml|applied materials|lam research|tokyo electron|screen holdings|kla corp|synopsys|cadence|sk hynix|micron|samsung semiconductor|samsung foundry|intel foundry|globalfoundries|umc|smic|amkor|ase group|jcet|powerchip|nanya|winbond|infineon|stmicro|nxp|texas instruments|onsemi|wolfspeed|cree|ii-vi|coherent|lumentum|broadcom|marvell|nvidia|amd|qualcomm|mediatek|arm holdings|arteris|rambus|kaynes|syrma|dixon|vedanta semiconductor|tata electronics|bhel|npcil|bhavini|l&t|siemens energy|ge vernova|cameco|nexgen energy)/i;
+const SUPPLY_CHAIN_COMPANIES = /(tsmc|asml|applied materials|lam research|tokyo electron|screen holdings|kla corp|synopsys|cadence|sk hynix|micron|samsung semiconductor|samsung foundry|intel foundry|globalfoundries|umc|smic|amkor|ase group|jcet|powerchip|nanya|winbond|infineon|stmicro|nxp|texas instruments|onsemi|wolfspeed|cree|ii-vi|coherent|lumentum|broadcom|marvell|nvidia|amd|qualcomm|mediatek|arm holdings|arteris|rambus|kaynes|syrma|dixon|vedanta semiconductor|tata electronics|bhel|npcil|bhavini|l&t|siemens energy|ge vernova|cameco|nexgen energy|ibm quantum|google quantum|honeywell quantum|ionq|rigetti)/i;
 
 const MEMORY_COMPANY_TERMS = /(sk hynix|micron|samsung|nanya|winbond).{0,20}(hbm|dram|ddr5|capacity|supply|shortage|allocation|lead time|pricing|output|expansion|fab)/i;
-const PHOTONICS_CONSTRAINT = /(silicon photonics|co-packaged optics|optical interconnect|cpo|optical transceiver|pluggable optics|800g|1\.6t).{0,20}(scaling|bandwidth|limit|bottleneck|power constraint|demand|ramp|adoption|capacity|shortage|lead time)/i;
+const PHOTONICS_CONSTRAINT = /(silicon photonics|co-packaged optics|optical interconnect|cpo|optical transceiver|pluggable optics|optical compute|laser interconnect|800g|1\.6t).{0,20}(scaling|bandwidth|limit|bottleneck|power constraint|demand|ramp|adoption|capacity|shortage|lead time)/i;
 
 // ══════════════════════════════════════════════════════════════════════
 // INVESTMENT MAPPING — Actionable intelligence layer
@@ -76,9 +89,16 @@ const INVESTMENT_MAP: Record<string, string[]> = {
   packaging: ['TSMC', 'ASE', 'Amkor', 'JCET'],
   interconnect: ['Rambus', 'Arteris'],
   photonics: ['Lumentum', 'Coherent Corp', 'II-VI'],
+  laser: ['IPG Photonics', 'Trumpf', 'Coherent Corp'],
+  quantum: ['IonQ', 'Rigetti', 'IBM'],
   ai_infra: ['Nvidia', 'Amazon', 'Microsoft'],
   power: ['Siemens Energy', 'GE Vernova'],
+  power_electronics: ['Eaton', 'Schneider Electric', 'ABB'],
+  cooling: ['Vertiv', 'nVent', 'Modine Manufacturing'],
+  advanced_materials: ['Wolfspeed', 'ON Semi', 'Infineon'],
+  battery_materials: ['Albemarle', 'SQM', 'Livent', 'MP Materials'],
   nuclear: ['BHEL', 'L&T', 'Cameco'],
+  aerospace: ['SpaceX', 'Rocket Lab', 'L3Harris', 'Northrop Grumman'],
   india_ems: ['Kaynes Technology', 'Syrma SGS', 'Dixon Technologies'],
 };
 
@@ -92,6 +112,13 @@ function getInvestmentTickers(text: string): string[] {
   if (/ai|gpu|data center|hyperscal|compute/i.test(text)) tickers.push(...INVESTMENT_MAP.ai_infra);
   if (/power grid|electricity|transmission/i.test(text)) tickers.push(...INVESTMENT_MAP.power);
   if (/nuclear|thorium|reactor|npcil|bhavini/i.test(text)) tickers.push(...INVESTMENT_MAP.nuclear);
+  if (/laser|euv|directed energy/i.test(text)) tickers.push(...INVESTMENT_MAP.laser);
+  if (/quantum|qubit|superconducting|ion trap/i.test(text)) tickers.push(...INVESTMENT_MAP.quantum);
+  if (/transformer|hvdc|substation|grid infrastructure/i.test(text)) tickers.push(...INVESTMENT_MAP.power_electronics);
+  if (/liquid cooling|immersion cooling|data center cooling|thermal/i.test(text)) tickers.push(...INVESTMENT_MAP.cooling);
+  if (/gallium nitride|gan|silicon carbide|sic|graphene|wide bandgap/i.test(text)) tickers.push(...INVESTMENT_MAP.advanced_materials);
+  if (/solid state battery|lithium hydroxide|anode|cathode|battery material/i.test(text)) tickers.push(...INVESTMENT_MAP.battery_materials);
+  if (/rocket|satellite|space launch|propulsion/i.test(text)) tickers.push(...INVESTMENT_MAP.aerospace);
   if (/india.{0,15}(ems|pcb|system integration|electronics manufacturing)|kaynes|syrma|dixon/i.test(text)) tickers.push(...INVESTMENT_MAP.india_ems);
   if (/euv|high.?na|lithograph|extreme ultraviolet/i.test(text)) tickers.push('ASML');
   if (/abf|substrate|interposer/i.test(text)) tickers.push('Ibiden', 'Shinko Electric');
@@ -198,9 +225,10 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
     if (SUPPLY_CHAIN_COMPANIES.test(text)) score += 1;
     if (/(wafer|hbm|packaging|power grid|nuclear|photonics|euv|cowos|interposer)/i.test(text)) score += 1;
 
-    // Helper: reject activity-only without constraint evidence
+    // Helper: reject activity/hype without constraint evidence
     const rejectActivityOnly = (): { article_type: string; investment_tier: number } | null => {
-      if (ACTIVITY_TERMS.test(text) && !CONSTRAINT_TERMS.test(text)) return null;
+      if (ACTIVITY_TERMS.test(text) && !CONSTRAINT_TERMS.test(text) && !IMPLICIT_CONSTRAINT.test(text)) return null;
+      if (HYPE_TERMS.test(text) && !CONSTRAINT_TERMS.test(text) && !IMPLICIT_CONSTRAINT.test(text)) return null;
       if (text.length < 40 && !CONSTRAINT_TERMS.test(text)) return null;
       return { article_type: 'BOTTLENECK', investment_tier: 1 };
     };
@@ -265,6 +293,62 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
 
       // Interconnect / NoC / Data Movement bottleneck (institutional edge)
       if (/\b(interconnect|network.on.chip|noc|data movement|chip-to-chip|die-to-die|ucie|bunch of wires)\b.{0,20}(bottleneck|constraint|bandwidth|limit|scaling)/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+
+      // ── FUTURE-CRITICAL DOMAINS (TECH_TERM + CONSTRAINT_TERM only) ──
+
+      // A. Photonics / Optical Compute (upgraded)
+      if (/(silicon photonics|co-packaged optics|cpo|optical interconnect|optical compute|laser interconnect).{0,25}(shortage|constraint|scaling limit|power limit|bandwidth bottleneck|capacity)/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+
+      // B. Laser Systems (EUV + Quantum + Defense)
+      if (/(laser|euv|extreme ultraviolet|high power laser|directed energy).{0,25}(supply constraint|capacity limit|shortage|production bottleneck|delivery delay|backlog)/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+
+      // C. Quantum Computing / Cryogenics
+      if (/(quantum computer|quantum chip|qubit|superconducting|ion trap|cryogenic|dilution refrigerator).{0,25}(scaling limit|error rate|cooling constraint|fabrication constraint|bottleneck|shortage|capacity)/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+
+      // D. Advanced Materials (GaN, SiC, graphene, metamaterials)
+      if (/(graphene|gan|sic|gallium nitride|silicon carbide|2d material|metamaterial|wide bandgap).{0,25}(supply constraint|manufacturing bottleneck|yield issue|capacity limit|shortage|scaling)/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+
+      // E. Semiconductor Equipment (ultra-critical)
+      if (/(euv lithography|lithography system|etching equipment|deposition tool|inspection tool|metrology|etch chamber|cvd|pvd).{0,25}(backlog|supply constraint|delivery delay|capacity limit|shortage|lead time)/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+
+      // F. Data Center Cooling (next big bottleneck)
+      if (/(liquid cooling|immersion cooling|data center cooling|rear-door|direct-to-chip|thermal management).{0,25}(capacity constraint|scaling limit|thermal bottleneck|shortage|supply|demand)/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+
+      // G. Power Electronics / Grid Hardware
+      if (/(transformer|high voltage equipment|grid infrastructure|substation|hvdc|switchgear|circuit breaker).{0,25}(shortage|constraint|backlog|capacity limit|lead time|delivery delay)/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+
+      // H. Battery Raw Materials (beyond lithium)
+      if (/(solid state battery|lithium hydroxide|battery material|anode|cathode|electrolyte|battery grade|battery recycling).{0,25}(supply constraint|shortage|capacity bottleneck|refining limit|production limit)/i.test(text)) {
+        const r = rejectActivityOnly();
+        if (r) return r;
+      }
+
+      // I. Aerospace / Space Supply Chain
+      if (/(rocket engine|satellite|space launch|propulsion system|launch vehicle|spacecraft|orbit).{0,25}(production bottleneck|supply constraint|capacity limit|backlog|delivery delay)/i.test(text)) {
         const r = rejectActivityOnly();
         if (r) return r;
       }
@@ -423,6 +507,13 @@ function generateImpact(title: string, desc: string, article_type: string): stri
     [/auto|ev|electric vehicle|battery/, 'Automotive transition driving component demand shifts'],
     [/pharmaceutical|fda|drug|api|medicine/, 'Healthcare supply chain and regulatory impact'],
     [/kaynes|syrma|dixon|india.*ems|electronics manufacturing/, 'India EMS/PCB ecosystem — beneficiary of AI hardware supply chain localization'],
+    [/laser|directed energy|high power laser/, 'Laser system supply chain — critical for EUV lithography and defense'],
+    [/quantum|qubit|superconducting|ion trap|cryogenic/, 'Quantum computing supply constraint — long-cycle structural bottleneck'],
+    [/gallium nitride|gan|silicon carbide|sic|wide bandgap/, 'Advanced materials bottleneck — wide-bandgap semiconductor supply'],
+    [/liquid cooling|immersion cooling|data center cooling|thermal/, 'Data center cooling constraint — next big bottleneck after power'],
+    [/transformer|hvdc|substation|grid infrastructure|switchgear/, 'Power grid hardware shortage — constraining data center and energy expansion'],
+    [/solid state battery|lithium hydroxide|anode|cathode|battery material/, 'Battery materials supply chain — constraining EV and energy storage transition'],
+    [/rocket|satellite|space launch|propulsion/, 'Aerospace supply chain constraint — launch capacity and component bottleneck'],
     [/geopolit|china|taiwan|russia|ukraine|iran/, 'Geopolitical risk affecting supply chains and markets'],
     [/jensen huang|lisa su|pat gelsinger|cc wei|sundar pichai|satya nadella|sam altman/, 'CEO-level signal on structural supply/demand dynamics'],
   ];
@@ -650,10 +741,10 @@ async function fetchAllNews(): Promise<any[]> {
         return true;
       });
 
-      // Tiered TTL: nuclear milestones get 180 days, structural gets 90 days
-      const text = finalMerged.map(a => a.title).join(' ').toLowerCase();
+      // Tiered TTL: long-cycle tech (quantum/photonics/nuclear/GaN/SiC/cooling) → 180 days
+      const allTitles = finalMerged.map(a => a.title).join(' ').toLowerCase();
       let persistTTL = 90 * DAY;
-      if (/(fast breeder|thorium|nuclear milestone|criticality)/i.test(text)) {
+      if (LONG_CYCLE_TECH.test(allTitles)) {
         persistTTL = 180 * DAY;
       }
 
