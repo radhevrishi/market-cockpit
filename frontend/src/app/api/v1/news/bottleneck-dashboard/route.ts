@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { kvGet } from '@/lib/kv';
+import { kvGet, kvSet } from '@/lib/kv';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -259,6 +259,55 @@ async function fetchLiveRSSSignals(): Promise<any[]> {
 }
 
 // ════════════════════════════════════════════════════════════════════════
+// PERSISTENCE HELPERS
+// ════════════════════════════════════════════════════════════════════════
+const PERSISTENT_KEY = 'bottleneck:dashboard:persistent';
+const PERSISTENT_TTL = 7776000; // 90 days in seconds
+
+function isSignalTooOld(date: string | Date, maxDays: number = 90): boolean {
+  try {
+    const signalDate = new Date(date);
+    const now = new Date();
+    const ageMs = now.getTime() - signalDate.getTime();
+    const ageDays = ageMs / (1000 * 60 * 60 * 24);
+    return ageDays > maxDays;
+  } catch {
+    return false; // If date parsing fails, keep the signal
+  }
+}
+
+function normHeadlineForDedup(headline: string): string {
+  return (headline || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 40);
+}
+
+async function loadPersistentSignals(): Promise<any[]> {
+  try {
+    const persistent = await kvGet<any[]>(PERSISTENT_KEY);
+    return persistent || [];
+  } catch {
+    return [];
+  }
+}
+
+async function savePersistentSignals(signals: any[]): Promise<void> {
+  try {
+    // Filter out signals older than 90 days
+    const fresh = signals.filter(s => !isSignalTooOld(s.date));
+    // Store limited fields to save space
+    const compact = fresh.map(s => ({
+      headline: s.headline,
+      summary: s.summary || s.narrative || '',
+      source: s.source,
+      date: s.date,
+      bucket_id: s.bucket_id,
+    }));
+    await kvSet(PERSISTENT_KEY, compact, PERSISTENT_TTL);
+  } catch {
+    // Silently fail — don't break the main handler if KV write fails
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════
 // MAIN HANDLER
 // ════════════════════════════════════════════════════════════════════════
 export async function GET(request: Request) {
@@ -280,6 +329,22 @@ export async function GET(request: Request) {
     // Always fetch live RSS for broad coverage
     const rssSignals = await fetchLiveRSSSignals();
     allSignals = [...allSignals, ...rssSignals];
+
+    // Load persistent signals from KV and merge with live signals
+    const persistentSignals = await loadPersistentSignals();
+
+    // Merge: combine live RSS + persistent, dedup by headline
+    const mergedSignals = [...rssSignals, ...persistentSignals];
+    const seen = new Set<string>();
+    const dedupedMerged = mergedSignals.filter(s => {
+      const key = normHeadlineForDedup(s.headline);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    // Use deduplicated merged signals for processing
+    allSignals = [...allSignals, ...dedupedMerged];
 
     // ── NOISE FILTER: Remove non-bottleneck articles BEFORE matching ──
     const cleanSignals = allSignals.filter((s: any) => {
@@ -331,6 +396,31 @@ export async function GET(request: Request) {
 
         const { severity, severity_label } = getSeverity(dedupedSignals.length);
 
+        const bucketSignals = dedupedSignals.slice(0, 10).map((s: any) => ({
+          id: s.symbol || key,
+          headline: s.headline || s.narrative || `${s.symbol}: ${s.eventType || 'Signal'}`,
+          summary: s.narrative || s.summary || '',
+          // Frontend BnSignal interface expects these exact field names:
+          sources: [s.source || 'Intelligence'],
+          tickers: s.symbol ? [s.symbol] : [],
+          latest_at: s.date || s.timestamp || new Date().toISOString(),
+          evidence_count: 1,
+          articles: [{
+            id: s.symbol || key,
+            headline: s.headline || '',
+            source_name: s.source || 'Intelligence',
+            source_url: s.link || '',
+            published_at: s.date || s.timestamp || new Date().toISOString(),
+            importance_score: 0.7,
+            sentiment: 'neutral',
+          }],
+          // Keep backward compat fields too
+          source: s.source || 'Intelligence',
+          date: s.date || s.timestamp || new Date().toISOString(),
+          ticker: s.symbol || '',
+          severity: s.signalTierV7 === 'ACTIONABLE' ? 'HIGH' : 'MEDIUM',
+        }));
+
         buckets.push({
           bucket_id: key,
           bucket_name: key,
@@ -343,33 +433,23 @@ export async function GET(request: Request) {
           signal_count: dedupedSignals.length,
           article_count: dedupedSignals.length,
           key_tickers: [...tickers].slice(0, 8),
-          signals: dedupedSignals.slice(0, 10).map((s: any) => ({
-            id: s.symbol || key,
-            headline: s.headline || s.narrative || `${s.symbol}: ${s.eventType || 'Signal'}`,
-            summary: s.narrative || s.summary || '',
-            // Frontend BnSignal interface expects these exact field names:
-            sources: [s.source || 'Intelligence'],
-            tickers: s.symbol ? [s.symbol] : [],
-            latest_at: s.date || s.timestamp || new Date().toISOString(),
-            evidence_count: 1,
-            articles: [{
-              id: s.symbol || key,
-              headline: s.headline || '',
-              source_name: s.source || 'Intelligence',
-              source_url: s.link || '',
-              published_at: s.date || s.timestamp || new Date().toISOString(),
-              importance_score: 0.7,
-              sentiment: 'neutral',
-            }],
-            // Keep backward compat fields too
-            source: s.source || 'Intelligence',
-            date: s.date || s.timestamp || new Date().toISOString(),
-            ticker: s.symbol || '',
-            severity: s.signalTierV7 === 'ACTIONABLE' ? 'HIGH' : 'MEDIUM',
-          })),
+          signals: bucketSignals,
         });
       }
     }
+
+    // After building buckets, save all matched signals to persistent store
+    // Collect all signals that matched any bucket
+    const allMatchedSignals = buckets.flatMap(b =>
+      b.signals.map((sig: any) => ({
+        headline: sig.headline,
+        summary: sig.summary,
+        source: sig.source,
+        date: sig.latest_at || sig.date,
+        bucket_id: b.bucket_id,
+      }))
+    );
+    await savePersistentSignals(allMatchedSignals);
 
     // Sort: region-specific buckets first, then by signal count
     buckets.sort((a, b) => {

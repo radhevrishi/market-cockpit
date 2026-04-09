@@ -28,6 +28,7 @@ interface NewsArticle {
   themes?: string[];
   investment_tier?: number;
   relevance_tags?: string[];
+  impact_statement?: string;
 }
 
 // Bottleneck dashboard types
@@ -521,7 +522,12 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
               </span>
             ))}
           </div>
-          <p style={{ fontSize: '14px', fontWeight: '600', color: '#E8EDF2', margin: '0 0 8px', lineHeight: '1.45' }}>{title}</p>
+          <p style={{ fontSize: '14px', fontWeight: '600', color: '#E8EDF2', margin: '0 0 4px', lineHeight: '1.45' }}>{title}</p>
+          {article.impact_statement && (
+            <p style={{ fontSize: '11px', color: '#F59E0B', margin: '0 0 6px', lineHeight: '1.4', fontWeight: '500', fontStyle: 'italic' }}>
+              Impact: {article.impact_statement}
+            </p>
+          )}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '12px', color: '#6A7B8C', fontWeight: '500' }}>{source}</span>
             <span style={{ fontSize: '12px', color: '#2A3B4C' }}>·</span>
@@ -1138,7 +1144,44 @@ export default function NewsFeedPage() {
         </div>
       )}
 
-      {/* ── Bottleneck Dashboard (shown above articles when BOTTLENECK is active) */}
+      {/* ── BOTTLENECK ARTICLES (shown at TOP when BOTTLENECK mode is active) ── */}
+      {showBottleneckDashboard && !isLoading && articles?.length > 0 && (
+        <div style={{ marginBottom: '16px' }}>
+          {/* Header bar */}
+          <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #EF444440', borderRadius: '12px', padding: '12px 16px', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '12px', fontWeight: '700', color: '#EF4444', letterSpacing: '0.5px' }}>BOTTLENECK ARTICLES</span>
+            <span style={{ fontSize: '11px', color: '#4A5B6C' }}>
+              {articles.length} articles · Most critical first{region !== 'ALL' ? ` · ${region === 'IN' ? '🇮🇳 India' : '🇺🇸 US'}` : ''}
+            </span>
+            <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto' }}>
+              <span style={{ fontSize: '9px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#EF444415', color: '#EF4444', border: '1px solid #EF444430' }}>
+                {articles.filter(a => (a.investment_tier || 0) === 1).length} HIGH
+              </span>
+              <span style={{ fontSize: '9px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#F59E0B15', color: '#F59E0B', border: '1px solid #F59E0B30' }}>
+                {articles.filter(a => (a.investment_tier || 0) === 2).length} MEDIUM
+              </span>
+            </div>
+          </div>
+          {/* ALL bottleneck articles — no truncation, sorted by importance then date */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {[...articles]
+              .sort((a, b) => {
+                // Sort: HIGH tier first, then by date descending
+                const tierA = a.investment_tier || 2;
+                const tierB = b.investment_tier || 2;
+                if (tierA !== tierB) return tierA - tierB;
+                return new Date(b.published_at).getTime() - new Date(a.published_at).getTime();
+              })
+              .map(art => <NewsCard key={art.id} article={art} onSelect={setSelectedArticle} />)
+            }
+          </div>
+          <div style={{ textAlign: 'center', padding: '12px 0 4px', fontSize: '11px', color: '#4A5B6C' }}>
+            Showing all {articles.length} bottleneck articles · Includes persistent signals up to 90 days
+          </div>
+        </div>
+      )}
+
+      {/* ── Bottleneck Dashboard (category intelligence below articles) */}
       {showBottleneckDashboard && (
         <div style={{ marginBottom: '16px' }}>
           <BottleneckDashboard dashboard={bnDashboard} isLoading={bnLoading} />
@@ -1146,7 +1189,7 @@ export default function NewsFeedPage() {
       )}
 
       {/* ── Signal summary bar ─────────────────────────────────────── */}
-      {!isLoading && articles?.length > 0 && (
+      {!isLoading && articles?.length > 0 && !showBottleneckDashboard && (
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px', padding: '8px 12px', backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '10px', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '10px', fontWeight: '700', color: '#6A7B8C', letterSpacing: '0.5px' }}>SIGNALS</span>
           <span style={{ fontSize: '11px', color: '#EF4444', fontWeight: '600' }}>
@@ -1168,14 +1211,8 @@ export default function NewsFeedPage() {
         </div>
       )}
 
-      {/* ── Articles list (always shown — filtered by type + region) ── */}
+      {/* ── Articles list (non-bottleneck modes, or loading state) ── */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        {showBottleneckDashboard && articles?.length ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-            <span style={{ fontSize: '11px', fontWeight: '700', color: '#EF4444', letterSpacing: '0.5px' }}>BOTTLENECK ARTICLES</span>
-            <span style={{ fontSize: '11px', color: '#4A5B6C' }}>{articles.length} articles{region !== 'ALL' ? ` · ${region === 'IN' ? '🇮🇳 India' : '🇺🇸 US'}` : ''}</span>
-          </div>
-        ) : null}
         {isLoading ? (
           Array.from({ length: 6 }).map((_, i) => (
             <div key={i} style={{ height: '80px', backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '14px' }} className="animate-shimmer" />
@@ -1197,6 +1234,9 @@ export default function NewsFeedPage() {
               {isRefreshing ? 'Fetching news…' : 'Refresh Now'}
             </button>
           </div>
+        ) : showBottleneckDashboard && articles?.length > 0 ? (
+          // Bottleneck articles already shown at top — don't duplicate
+          null
         ) : groupByLayer && !showBottleneckDashboard && articleType === 'ALL' ? (
           // ── Layered view: group articles by institutional hierarchy ──
           <>

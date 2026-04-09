@@ -32,6 +32,8 @@ const RSS_FEEDS = [
 
 const CACHE_KEY = 'news:articles:v1';
 const CACHE_TTL = 300; // 5 min
+const BOTTLENECK_PERSISTENT_KEY = 'bottleneck:articles:persistent';
+const BOTTLENECK_TTL = 7776000; // 90 days in seconds
 
 // ── Type Classification ──────────────────────────────────────────────
 function classifyArticle(title: string, desc: string): { article_type: string; investment_tier: number } {
@@ -94,6 +96,43 @@ function detectRegion(title: string, desc: string, feedRegion: string): string {
   if (/\b(nifty|sensex|bse|nse|rbi|india|rupee|inr|sebi)\b/.test(text)) return 'IN';
   if (/\b(nasdaq|s&p|dow|fed|wall street|nyse|usd|us market)\b/.test(text)) return 'US';
   return feedRegion || 'IN';
+}
+
+// ── Impact Statement Generation ─────────────────────────────────────
+function generateImpact(title: string, desc: string, article_type: string): string {
+  const text = (title + ' ' + desc).toLowerCase();
+
+  // Map patterns to impact statements
+  const patterns: Array<[RegExp, string]> = [
+    (/semiconductor|wafer|fab|tsmc|asml|foundry/, 'Supply chain constraint affecting chip production capacity'),
+    (/nuclear|reactor|atomic|thorium|breeder|npcil|kudankulam|kalpakkam/, 'Strategic energy infrastructure development'),
+    (/tariff|trade war|sanction|embargo|export ban|import duty|trade restrict/, 'Trade policy shift impacting cross-border supply flows'),
+    (/oil|energy|opec|crude|fuel|refinery|lng/, 'Energy supply dynamics affecting production costs'),
+    (/ai|gpu|data center|hyperscal|nvidia|compute|inference/, 'Compute infrastructure demand-supply gap'),
+    (/memory|dram|nand|hbm|memory chip|memory cycle/, 'Memory supply cycle affecting tech hardware margins'),
+    (/photonic|photonics|silicon photonics/, 'Next-gen interconnect technology for AI infrastructure'),
+    (/defense|defence|military|pentagon|drdo|hal|procurement/, 'Defence procurement and strategic capability development'),
+    (/rare earth|lithium|cobalt|copper|nickel|aluminium|aluminum/, 'Critical mineral supply constraints impacting manufacturing'),
+    (/monsoon|crop|fertilizer|agriculture|food/, 'Agricultural output cycles affecting commodity supply'),
+    (/rbi|federal reserve|fed rate|inflation|interest rate|repo rate/, 'Monetary policy impacting capital flows and cost of financing'),
+    (/shipping|port|freight|red sea|suez|supply chain|logistics/, 'Logistics bottleneck affecting supply chain timelines'),
+    (/auto|ev|electric vehicle|battery/, 'Automotive transition driving component demand shifts'),
+    (/pharmaceutical|fda|drug|api|medicine/, 'Healthcare supply chain and regulatory impact'),
+    (/geopolit|china|taiwan|russia|ukraine|iran/, 'Geopolitical risk affecting supply chains and markets'),
+  ];
+
+  for (const [pattern, statement] of patterns) {
+    if (pattern.test(text)) {
+      return statement;
+    }
+  }
+
+  // Default statement for bottleneck articles
+  if (article_type === 'BOTTLENECK') {
+    return 'Supply chain or market constraint with structural implications';
+  }
+
+  return '';
 }
 
 // ── Fetch all RSS feeds ──────────────────────────────────────────────
@@ -168,12 +207,58 @@ async function fetchAllNews(): Promise<any[]> {
 
   // Dedup by title similarity
   const seen = new Set<string>();
-  return articles.filter(a => {
+  const deduped = articles.filter(a => {
     const key = a.title.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 50);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
-  }).slice(0, 200);
+  }).slice(0, 500);
+
+  // Add impact statements to all articles
+  const articlesWithImpact = deduped.map(a => ({
+    ...a,
+    impact_statement: generateImpact(a.title, a.summary, a.article_type),
+  }));
+
+  // Save BOTTLENECK articles to persistent KV storage (90-day TTL)
+  const bottleneckArticles = articlesWithImpact.filter(a => a.article_type === 'BOTTLENECK');
+  if (bottleneckArticles.length > 0) {
+    try {
+      let persistentArticles: any[] = [];
+      try {
+        persistentArticles = await kvGet<any[]>(BOTTLENECK_PERSISTENT_KEY) || [];
+      } catch {
+        persistentArticles = [];
+      }
+
+      // Merge new articles with existing ones, dedup by title
+      const titleSet = new Set<string>();
+      const merged = [
+        ...bottleneckArticles,
+        ...persistentArticles.filter(a => {
+          const key = a.title.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 50);
+          if (titleSet.has(key)) return false;
+          titleSet.add(key);
+          return true;
+        }),
+      ];
+
+      // Keep the deduplicated merged list
+      const finalMerged = merged.filter(a => {
+        const key = a.title.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 50);
+        if (titleSet.has(key)) return false;
+        titleSet.add(key);
+        return true;
+      });
+
+      await kvSet(BOTTLENECK_PERSISTENT_KEY, finalMerged, BOTTLENECK_TTL);
+    } catch (error) {
+      console.error('[News API] Failed to save bottleneck articles to persistent storage:', error);
+      // Continue without error
+    }
+  }
+
+  return articlesWithImpact;
 }
 
 export async function GET(request: Request) {
@@ -181,6 +266,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const region = searchParams.get('region') || 'ALL';
     const search = searchParams.get('search') || '';
+    const type = searchParams.get('type') || '';
 
     // Try cache first
     let articles: any[] | null = null;
@@ -194,8 +280,33 @@ export async function GET(request: Request) {
       try { await kvSet(CACHE_KEY, articles, CACHE_TTL); } catch {}
     }
 
+    // If filtering for BOTTLENECK type, also load persistent bottleneck articles
+    if (type === 'BOTTLENECK') {
+      try {
+        const persistentBottlenecks = await kvGet<any[]>(BOTTLENECK_PERSISTENT_KEY) || [];
+        // Merge persistent articles with fresh ones, avoiding duplicates
+        const titleSet = new Set<string>();
+        const merged = [
+          ...articles.filter(a => a.article_type === 'BOTTLENECK'),
+          ...persistentBottlenecks.filter(a => {
+            const key = a.title.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 50);
+            if (titleSet.has(key)) return false;
+            titleSet.add(key);
+            return true;
+          }),
+        ];
+        articles = merged;
+      } catch (error) {
+        console.error('[News API] Failed to load persistent bottleneck articles:', error);
+        // Continue with fresh articles only
+      }
+    }
+
     // Apply filters
     let filtered = articles;
+    if (type && type !== '') {
+      filtered = filtered.filter(a => a.article_type === type);
+    }
     if (region && region !== 'ALL') {
       filtered = filtered.filter(a => a.region === region || a.region === 'GLOBAL');
     }
