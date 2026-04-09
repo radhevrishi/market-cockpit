@@ -37,9 +37,9 @@ const RSS_FEEDS = [
   { name: 'SemiWiki', url: 'https://semiwiki.com/feed/', region: 'US' },
 ];
 
-const CACHE_KEY = 'news:articles:v1';
+const CACHE_KEY = 'news:articles:v3'; // v3: strict bottleneck classifier + IBEF
 const CACHE_TTL = 300; // 5 min
-const BOTTLENECK_PERSISTENT_KEY = 'bottleneck:articles:persistent';
+const BOTTLENECK_PERSISTENT_KEY = 'bottleneck:articles:persistent:v2'; // v2: reset after classifier fix
 const BOTTLENECK_TTL = 7776000; // 90 days in seconds
 
 // ── Type Classification ──────────────────────────────────────────────
@@ -270,6 +270,80 @@ async function fetchAllNews(): Promise<any[]> {
       articles.push(...result.value);
     }
   }
+
+  // ── IBEF India Economy News (HTML scrape — no RSS available) ──
+  try {
+    const ibefRes = await fetch('https://www.ibef.org/indian-economy-news', {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (ibefRes.ok) {
+      const html = await ibefRes.text();
+      // Extract news items from IBEF's HTML structure
+      // IBEF uses <a> tags with news headlines inside card-like divs
+      const linkRegex = /<a[^>]+href="(\/indian-economy-news\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+      let ibefMatch;
+      let ibefCount = 0;
+      const ibefSeen = new Set<string>();
+      while ((ibefMatch = linkRegex.exec(html)) !== null && ibefCount < 25) {
+        const href = ibefMatch[1];
+        const inner = ibefMatch[2].replace(/<[^>]*>/g, '').trim();
+        if (!inner || inner.length < 15 || ibefSeen.has(inner)) continue;
+        ibefSeen.add(inner);
+        ibefCount++;
+        const fullUrl = `https://www.ibef.org${href}`;
+        const { article_type, investment_tier } = classifyArticle(inner, '');
+        const tickers = extractTickers(inner);
+        articles.push({
+          id: `ibef-${Buffer.from(href).toString('base64').slice(0, 20)}`,
+          title: inner,
+          headline: inner,
+          summary: '',
+          source_name: 'IBEF',
+          source: 'IBEF',
+          source_url: fullUrl,
+          published_at: new Date().toISOString(), // IBEF doesn't show dates in listings
+          region: 'IN',
+          article_type,
+          investment_tier,
+          tickers,
+          primary_ticker: tickers[0] || null,
+          sentiment: null,
+          importance_score: investment_tier === 1 ? 0.8 : 0.5,
+        });
+      }
+      // Also try extracting from h3/h4 tags with links (alternative page structure)
+      const h3Regex = /<h[34][^>]*>\s*<a[^>]+href="([^"]*indian-economy-news[^"]*)"[^>]*>\s*([\s\S]*?)\s*<\/a>\s*<\/h[34]>/g;
+      let h3Match;
+      while ((h3Match = h3Regex.exec(html)) !== null && ibefCount < 40) {
+        const href = h3Match[1];
+        const inner = h3Match[2].replace(/<[^>]*>/g, '').trim();
+        if (!inner || inner.length < 15 || ibefSeen.has(inner)) continue;
+        ibefSeen.add(inner);
+        ibefCount++;
+        const fullUrl = href.startsWith('http') ? href : `https://www.ibef.org${href}`;
+        const { article_type, investment_tier } = classifyArticle(inner, '');
+        const tickers = extractTickers(inner);
+        articles.push({
+          id: `ibef-${Buffer.from(href).toString('base64').slice(0, 20)}`,
+          title: inner,
+          headline: inner,
+          summary: '',
+          source_name: 'IBEF',
+          source: 'IBEF',
+          source_url: fullUrl,
+          published_at: new Date().toISOString(),
+          region: 'IN',
+          article_type,
+          investment_tier,
+          tickers,
+          primary_ticker: tickers[0] || null,
+          sentiment: null,
+          importance_score: investment_tier === 1 ? 0.8 : 0.5,
+        });
+      }
+    }
+  } catch { /* IBEF scrape failed — non-critical */ }
 
   // Sort by date descending
   articles.sort((a, b) => {

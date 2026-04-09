@@ -267,7 +267,7 @@ async function fetchLiveRSSSignals(): Promise<any[]> {
 // ════════════════════════════════════════════════════════════════════════
 // PERSISTENCE HELPERS
 // ════════════════════════════════════════════════════════════════════════
-const PERSISTENT_KEY = 'bottleneck:dashboard:persistent';
+const PERSISTENT_KEY = 'bottleneck:dashboard:persistent:v2'; // v2: reset after classifier fix
 const PERSISTENT_TTL = 7776000; // 90 days in seconds
 
 function isSignalTooOld(date: string | Date, maxDays: number = 90): boolean {
