@@ -437,11 +437,31 @@ async function fetchAllNews(): Promise<any[]> {
     }
   } catch { /* IBEF scrape failed — non-critical */ }
 
-  // Sort by date descending
+  // ── DUAL RANKING: blend recency (event urgency) + structural importance ──
+  // Without this, structural bottlenecks (memory, photonics) get buried by
+  // high-recency low-importance noise. Score = recency + structural bonus.
+  const now = Date.now();
+  const HOUR = 3600000;
   articles.sort((a, b) => {
     const da = new Date(a.published_at).getTime() || 0;
     const db = new Date(b.published_at).getTime() || 0;
-    return db - da;
+
+    // Recency score: 1.0 for just-published, decays over 24h
+    const recencyA = Math.max(0, 1 - (now - da) / (24 * HOUR));
+    const recencyB = Math.max(0, 1 - (now - db) / (24 * HOUR));
+
+    // Structural bonus: BOTTLENECK tier-1 gets +0.4, others get 0
+    const structA = (a.article_type === 'BOTTLENECK' && a.investment_tier === 1) ? 0.4 : 0;
+    const structB = (b.article_type === 'BOTTLENECK' && b.investment_tier === 1) ? 0.4 : 0;
+
+    // Tier bonus: tier 1 = +0.2, tier 2 = +0.1
+    const tierA = a.investment_tier === 1 ? 0.2 : a.investment_tier === 2 ? 0.1 : 0;
+    const tierB = b.investment_tier === 1 ? 0.2 : b.investment_tier === 2 ? 0.1 : 0;
+
+    const scoreA = recencyA + structA + tierA;
+    const scoreB = recencyB + structB + tierB;
+
+    return scoreB - scoreA;
   });
 
   // Dedup by title similarity
@@ -464,11 +484,89 @@ async function fetchAllNews(): Promise<any[]> {
     return true;
   }).slice(0, 500);
 
+  // ── SYNTHETIC STRUCTURAL ARTICLES ──
+  // Convert multi-year structural constraints into event-like articles
+  // so they surface in the main feed alongside regular news.
+  // Only inject if no real article covers this domain in current batch.
+  const SYNTHETIC_STRUCTURAL: Array<{
+    sub_tag: string;
+    title: string;
+    summary: string;
+    status: string;
+    tickers: string[];
+    detect: RegExp;
+  }> = [
+    {
+      sub_tag: 'MEMORY_STORAGE',
+      title: '[STRUCTURAL ALERT] AI memory bottleneck intensifying — HBM supply constrained, demand accelerating',
+      summary: 'HBM supply concentrated in 3-4 players. Memory bandwidth is the gating factor for AI scaling. Multi-year investment theme with 625x demand increase projected.',
+      status: 'CRITICAL',
+      tickers: ['MU', 'SKHYNIX'],
+      detect: /hbm|dram|memory.{0,15}(shortage|constraint|tight|bandwidth|wall|supply)/i,
+    },
+    {
+      sub_tag: 'INTERCONNECT_PHOTONICS',
+      title: '[STRUCTURAL ALERT] Interconnect bandwidth wall — silicon photonics transition underway',
+      summary: 'Copper interconnect saturating. AI clusters are bandwidth-bound, not compute-bound. Optical I/O becoming mandatory for next-gen AI infrastructure.',
+      status: 'ELEVATED',
+      tickers: ['COHR', 'LITE'],
+      detect: /photonics|optical interconnect|co-packaged optics|cpo|bandwidth.{0,15}(bottleneck|limit|scaling)/i,
+    },
+    {
+      sub_tag: 'FABRICATION_PACKAGING',
+      title: '[STRUCTURAL ALERT] Advanced packaging capacity constraint — CoWoS remains binding bottleneck',
+      summary: 'Multi-die architectures require CoWoS/EMIB. TSMC packaging capacity is the binding constraint for AI chip production. Lead times extended.',
+      status: 'CRITICAL',
+      tickers: ['TSM', 'AMKR'],
+      detect: /cowos|advanced packaging|chiplet.{0,15}(capacity|constraint|shortage)/i,
+    },
+    {
+      sub_tag: 'POWER_GRID',
+      title: '[STRUCTURAL ALERT] Data center power demand outpacing grid infrastructure',
+      summary: 'Grid capacity lagging data center buildout. Transformer shortages and substation backlogs. Power is the next binding constraint after compute and packaging.',
+      status: 'ELEVATED',
+      tickers: ['GEV', 'SIEGY'],
+      detect: /power grid|transformer.{0,15}(shortage|backlog)|data center.{0,15}power/i,
+    },
+  ];
+
+  // Check which structural domains are already covered by real articles
+  const allText = diversified.map(a => (a.title + ' ' + (a.summary || '')).toLowerCase()).join(' ');
+  const syntheticArticles: any[] = [];
+
+  for (const synth of SYNTHETIC_STRUCTURAL) {
+    if (!synth.detect.test(allText)) {
+      // No real article covers this domain — inject synthetic
+      syntheticArticles.push({
+        id: `synthetic-${synth.sub_tag}`,
+        title: synth.title,
+        headline: synth.title,
+        summary: synth.summary,
+        source_name: 'Structural Analysis',
+        source: 'Structural Analysis',
+        source_url: '',
+        published_at: new Date().toISOString(),
+        region: 'GLOBAL',
+        article_type: 'BOTTLENECK',
+        investment_tier: 1,
+        bottleneck_sub_tag: synth.sub_tag,
+        tickers: synth.tickers,
+        primary_ticker: synth.tickers[0] || null,
+        sentiment: null,
+        importance_score: synth.status === 'CRITICAL' ? 0.95 : 0.85,
+        is_synthetic: true,
+        structural_status: synth.status,
+      });
+    }
+  }
+
+  const withSynthetics = [...diversified, ...syntheticArticles];
+
   // Add impact statements + investment tickers
-  const articlesWithImpact = diversified.map(a => ({
+  const articlesWithImpact = withSynthetics.map(a => ({
     ...a,
-    impact_statement: generateImpact(a.title, a.summary, a.article_type),
-    investment_tickers: a.article_type === 'BOTTLENECK' ? getInvestmentTickers(a.title + ' ' + a.summary) : [],
+    impact_statement: generateImpact(a.title, a.summary || '', a.article_type),
+    investment_tickers: a.article_type === 'BOTTLENECK' ? getInvestmentTickers(a.title + ' ' + (a.summary || '')) : [],
   }));
 
   // ── Persistence: save structural bottleneck articles to KV ──
