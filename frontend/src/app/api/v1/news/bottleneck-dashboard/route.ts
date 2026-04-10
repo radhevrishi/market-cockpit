@@ -24,9 +24,113 @@ function isNoise(headline: string, desc: string): boolean {
 // ══════════════════════════════════════════════════════════════════════
 // SIGNAL KEYS — High-value structural terms for primary/supporting split
 // ══════════════════════════════════════════════════════════════════════
-const SIGNAL_KEYS = /(hbm|dram|nand|wafer|tsmc|asml|cowos|power grid|nuclear)/i;
-const STRUCTURAL_TERMS_DASH = /(wafer|fab|tsmc|asml|hbm|dram|nand|advanced packaging|cowos|chiplet|power grid|transmission|nuclear|reactor|thorium|rare earth|lithium)/i;
+const SIGNAL_KEYS = /(hbm|dram|nand|wafer|tsmc|asml|cowos|power grid|nuclear|photonics|optical interconnect|co-packaged optics|memory wall|bandwidth limit)/i;
+const STRUCTURAL_TERMS_DASH = /(wafer|fab|tsmc|asml|hbm|dram|nand|advanced packaging|cowos|chiplet|power grid|transmission|nuclear|reactor|thorium|rare earth|lithium|photonics|optical interconnect|silicon photonics|co-packaged optics|memory bandwidth|memory wall)/i;
 const CONSTRAINT_TERMS_DASH = /(shortage|constraint|bottleneck|capacity (limit|constraint|tight)|supply (gap|crisis|disruption)|production (cut|limit|issue)|yield issue|allocation|undersupply)/i;
+
+// ── SEMANTIC TRIGGERS: Implicit bottleneck detection ──
+// These detect bottlenecks from context even without explicit "shortage" or "bottleneck" words.
+// Pattern: DOMAIN_TERM + IMPLICIT_SIGNAL → infer bottleneck
+const IMPLICIT_BOTTLENECK_TRIGGERS: Array<{ domain: RegExp; signals: RegExp; inject_bucket: string }> = [
+  {
+    domain: /(hbm|dram|nand|ddr5|memory)/i,
+    signals: /(surge in demand|demand spike|tight market|capacity lag|outstripping supply|running hot|fully allocated|oversubscribed|pricing pressure|lead time|supercycle|625x|demand increase)/i,
+    inject_bucket: 'MEMORY_STORAGE',
+  },
+  {
+    domain: /(photonics|optical interconnect|co-packaged optics|silicon photonics|cpo|optical I\/O)/i,
+    signals: /(scaling|bandwidth|limit|bottleneck|power constraint|traction|transition|mandatory|next big|tackling|$4b|optics bet)/i,
+    inject_bucket: 'INTERCONNECT_PHOTONICS',
+  },
+  {
+    domain: /(cowos|advanced packaging|chiplet|interposer|2\.5d|3d stacking)/i,
+    signals: /(capacity|constraint|shortage|backlog|lead time|tight|expansion|ramp)/i,
+    inject_bucket: 'FABRICATION_PACKAGING',
+  },
+  {
+    domain: /(gpu|compute|accelerator|inference|training)/i,
+    signals: /(shortage|constraint|allocation|waitlist|sold out|demand|backlog|capacity)/i,
+    inject_bucket: 'COMPUTE_SCALING',
+  },
+  {
+    domain: /(power grid|electricity|data center power|transformer)/i,
+    signals: /(constraint|shortage|limit|backlog|crisis|bottleneck|capacity)/i,
+    inject_bucket: 'POWER_GRID',
+  },
+  {
+    domain: /(nuclear|thorium|reactor|breeder|criticality)/i,
+    signals: /(commissioned|milestone|operational|goes live|capacity|fuel|achievement)/i,
+    inject_bucket: 'INDIA_NUCLEAR',
+  },
+];
+
+function inferImplicitBucket(headline: string, desc: string): string | null {
+  const text = (headline + ' ' + desc).toLowerCase();
+  for (const trigger of IMPLICIT_BOTTLENECK_TRIGGERS) {
+    if (trigger.domain.test(text) && trigger.signals.test(text)) {
+      return trigger.inject_bucket;
+    }
+  }
+  return null;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// PERSISTENT STRUCTURAL THESES — always-on display, even without daily news
+// These represent multi-year structural constraints that are ALWAYS active.
+// They show on the dashboard regardless of whether today's RSS has articles.
+// ══════════════════════════════════════════════════════════════════════
+interface StructuralThesis {
+  bucket_id: string;
+  headline: string;
+  summary: string;
+  status: 'ACTIVE' | 'EMERGING' | 'EASING';
+  timeframe: string;
+}
+
+const STRUCTURAL_THESES: StructuralThesis[] = [
+  {
+    bucket_id: 'MEMORY_STORAGE',
+    headline: 'Memory supply-demand imbalance — HBM supercycle',
+    summary: 'Compute scaling > memory scaling. HBM supply concentrated in 3-4 players. Memory is gating factor for AI scaling TODAY and multi-year.',
+    status: 'ACTIVE',
+    timeframe: 'Current + 3-5 years',
+  },
+  {
+    bucket_id: 'INTERCONNECT_PHOTONICS',
+    headline: 'Interconnect bandwidth wall — optical transition underway',
+    summary: 'Copper interconnect saturating. AI clusters bandwidth-bound, not compute-bound. Optical I/O becoming mandatory. Tier-1 future constraint.',
+    status: 'EMERGING',
+    timeframe: '3-7 years',
+  },
+  {
+    bucket_id: 'FABRICATION_PACKAGING',
+    headline: 'Advanced packaging capacity constraint — CoWoS bottleneck',
+    summary: 'Multi-die architectures require CoWoS/EMIB. TSMC packaging capacity is the binding constraint for AI chip production.',
+    status: 'ACTIVE',
+    timeframe: 'Current + 2-3 years',
+  },
+  {
+    bucket_id: 'COMPUTE_SCALING',
+    headline: 'GPU/accelerator demand exceeding supply',
+    summary: 'AI training and inference demand growing faster than GPU supply. Allocation-based access, multi-quarter lead times.',
+    status: 'ACTIVE',
+    timeframe: 'Current + 2-4 years',
+  },
+  {
+    bucket_id: 'POWER_GRID',
+    headline: 'Data center power constraints — grid infrastructure lagging',
+    summary: 'Data center power demand outpacing grid capacity. Transformer shortages, substation backlogs. Power = next binding constraint.',
+    status: 'ACTIVE',
+    timeframe: 'Current + 5-10 years',
+  },
+  {
+    bucket_id: 'INDIA_NUCLEAR',
+    headline: 'India nuclear energy buildout — long-cycle structural',
+    summary: 'Fast breeder reactor program, thorium cycle development. Energy security constraint solved via indigenous nuclear. Multi-decade program.',
+    status: 'ACTIVE',
+    timeframe: '10-30 years',
+  },
+];
 
 // ════════════════════════════════════════════════════════════════════════
 // BOTTLENECK BUCKET DEFINITIONS
@@ -40,18 +144,33 @@ const BOTTLENECK_BUCKETS: Record<string, {
   severity_color: string;
   severity_icon: string;
 }> = {
-  // ── GLOBAL / SECTOR BUCKETS ──
-  SEMICONDUCTOR: {
-    label: 'Semiconductor & Chip Supply',
-    description: 'Chip supply constraints, fab capacity, memory cycles, photonics, and export controls',
-    keywords: /\b(semiconductor|chip shortage|chip supply|chip demand|wafer|foundry|fab capacity|tsmc|samsung foundry|intel fab|asml|hbm|dram|nand|memory chip|gpu shortage|photonics|photonic|silicon photonics|optical chip|lithograph|osat|advanced packaging|chip export|chip ban|chip deal|chip revenue|chip boom|memory cycle|chip production|chip capacity|eda tool|chip equipment)\b/i,
+  // ── DEEP TECH BOTTLENECK SUB-TAXONOMY ──
+  // Stable 10–20 year primitives. Each describes a PHYSICAL system, not a narrative.
+  COMPUTE_SCALING: {
+    label: 'Compute Scaling',
+    description: 'GPU/accelerator demand, Moore\'s law limits, AI compute capacity constraints',
+    keywords: /\b(gpu (shortage|constraint|demand|supply|allocation)|compute (capacity|constraint|shortage|scaling|limit)|ai (chip|accelerator|infrastructure|server|spending|demand|boom|compute)|nvidia.{0,15}(supply|demand|shortage|allocation|constraint)|amd.{0,15}(gpu|supply|demand)|data center.{0,15}(capacity|constraint|power)|cloud (capacity|constraint)|hyperscal|inference.{0,15}(demand|capacity|cost)|training.{0,15}(compute|capacity|cost)|tpu|tensor processing|accelerator.{0,15}(demand|supply|shortage))\b/i,
     severity_color: '#DC2626',
     severity_icon: '🔴',
   },
-  AI_INFRASTRUCTURE: {
-    label: 'AI Infrastructure & Data Centers',
-    description: 'GPU/accelerator demand, data center capacity, AI compute spending, cloud constraints',
-    keywords: /\b(data center|gpu|nvidia|ai infrastructure|cloud capacity|hyperscal|power grid|ai chip|compute capacity|ai server|ai spending|ai investment|ai demand|ai boom|accelerator|tpu|tensor processing|inference|training.*compute)\b/i,
+  MEMORY_STORAGE: {
+    label: 'Memory & Storage',
+    description: 'DRAM, HBM, NAND supply cycles — memory bandwidth/latency as gating factor for AI scaling',
+    keywords: /\b(hbm|hbm3e?|dram|ddr5|nand|memory (chip|shortage|constraint|bandwidth|wall|demand|supply|cycle|tight|pricing|allocation|capacity)|memory wall|sk hynix|micron.{0,15}(hbm|dram|memory|capacity|supply|revenue|earnings)|samsung.{0,15}(hbm|dram|memory|foundry|capacity)|memory (lead time|undersupply|pricing pressure)|storage (shortage|constraint|supply))\b/i,
+    severity_color: '#DC2626',
+    severity_icon: '🔴',
+  },
+  INTERCONNECT_PHOTONICS: {
+    label: 'Interconnect & Photonics',
+    description: 'Optical I/O, silicon photonics, co-packaged optics, bandwidth scaling — next bottleneck after compute',
+    keywords: /\b(photonics|photonic|silicon photonics|co-packaged optics|cpo|optical (interconnect|chip|I\/O|transceiver|module)|interconnect (scaling|bottleneck|bandwidth|constraint|limit)|data movement (bottleneck|constraint|limit)|bandwidth (bottleneck|constraint|limit|scaling)|noc|network.on.chip|chip.to.chip|optical (bandwidth|scaling)|coherent.{0,15}(optics|transceiver|optical)|lumentum|broadcom.{0,15}(optic|transceiver)|inphi|marvell.{0,15}(optic|interconnect)|copper.{0,15}(limit|saturat|bandwidth))\b/i,
+    severity_color: '#DC2626',
+    severity_icon: '🔴',
+  },
+  FABRICATION_PACKAGING: {
+    label: 'Fabrication & Packaging',
+    description: 'TSMC CoWoS, EUV lithography, advanced packaging, chiplet integration — physical manufacturing limits',
+    keywords: /\b(semiconductor|chip (shortage|supply|demand|production|capacity|equipment)|wafer (capacity|constraint|shortage|supply)|foundry (capacity|constraint|shortage)|fab (capacity|constraint|expansion)|tsmc.{0,15}(capacity|cowos|constraint|shortage|revenue|expansion)|asml.{0,15}(euv|lithograph|supply|order|backlog)|advanced packaging|cowos|emib|chiplet|interposer|hybrid bonding|2\.5d|3d (stacking|packaging|integration)|osat|lithograph|chip export|chip ban|eda tool|chip equipment|intel (foundry|fab)|samsung foundry|globalfoundries|applied materials|lam research)\b/i,
     severity_color: '#EA580C',
     severity_icon: '🟠',
   },
@@ -335,7 +454,7 @@ async function fetchLiveRSSSignals(): Promise<any[]> {
 // ════════════════════════════════════════════════════════════════════════
 // PERSISTENCE HELPERS
 // ════════════════════════════════════════════════════════════════════════
-const PERSISTENT_KEY = 'bottleneck:dashboard:persistent:v5'; // v5: future-tech buckets + tiered TTL
+const PERSISTENT_KEY = 'bottleneck:dashboard:persistent:v7'; // v7: deep tech sub-taxonomy + structural theses
 const PERSISTENT_TTL = 7776000; // 90 days in seconds
 
 function isSignalTooOld(date: string | Date, maxDays: number = 90): boolean {
@@ -427,13 +546,32 @@ export async function GET(request: Request) {
       return !isNoise(headline, desc);
     });
 
+    // ── IMPLICIT BOTTLENECK INJECTION ──
+    // For each signal, check if it matches an implicit bottleneck trigger
+    // and inject it into the appropriate bucket even if keyword matching fails
+    const implicitInjections: Record<string, any[]> = {};
+    for (const s of cleanSignals) {
+      const headline = s.headline || '';
+      const desc = s.narrative || s.summary || '';
+      const inferredBucket = inferImplicitBucket(headline, desc);
+      if (inferredBucket) {
+        if (!implicitInjections[inferredBucket]) implicitInjections[inferredBucket] = [];
+        implicitInjections[inferredBucket].push(s);
+      }
+    }
+
     // Build buckets from clean signals
     const buckets: any[] = [];
 
     for (const [key, config] of Object.entries(BOTTLENECK_BUCKETS)) {
-      const matchingSignals = cleanSignals.filter((s: any) => {
+      // Merge keyword-matched + implicit-injected signals
+      const implicitForBucket = implicitInjections[key] || [];
+      const matchingSignals = [...cleanSignals, ...implicitForBucket].filter((s: any) => {
         const text = (s.headline || '') + ' ' + (s.narrative || '') + ' ' + (s.summary || '') + ' ' + (s.eventType || '');
-        if (!config.keywords.test(text)) return false;
+        // Accept if keyword matches OR if this signal was implicitly injected into this bucket
+        if (config.keywords.test(text)) return true;
+        if (implicitForBucket.includes(s)) return true;
+        return false;
 
         // Region filter
         if (regionFilter === 'IN') {
@@ -519,6 +657,71 @@ export async function GET(request: Request) {
           key_tickers: [...tickers].slice(0, 8),
           signals: bucketSignals,
         });
+      }
+    }
+
+    // ── STRUCTURAL THESES INJECTION ──
+    // Ensure critical structural bottlenecks always appear on the dashboard
+    // even if no daily RSS articles match. This is thesis-driven, not reactive.
+    const existingBucketIds = new Set(buckets.map(b => b.bucket_id));
+    for (const thesis of STRUCTURAL_THESES) {
+      const existingBucket = buckets.find(b => b.bucket_id === thesis.bucket_id);
+      if (existingBucket) {
+        // Add thesis as the FIRST signal (primary context) if not already present
+        const alreadyHasThesis = existingBucket.signals.some(
+          (s: any) => s.headline === thesis.headline
+        );
+        if (!alreadyHasThesis) {
+          existingBucket.signals.unshift({
+            id: `thesis-${thesis.bucket_id}`,
+            headline: `[${thesis.status}] ${thesis.headline}`,
+            summary: `${thesis.summary} (Timeframe: ${thesis.timeframe})`,
+            signal_role: 'thesis',
+            sources: ['Structural Analysis'],
+            tickers: [],
+            latest_at: new Date().toISOString(),
+            evidence_count: 0,
+            articles: [],
+            source: 'Structural Analysis',
+            date: new Date().toISOString(),
+            ticker: '',
+            severity: thesis.status === 'ACTIVE' ? 'HIGH' : 'MEDIUM',
+          });
+          existingBucket.signal_count += 1;
+        }
+      } else {
+        // Create bucket with ONLY the structural thesis — it always appears
+        const config = BOTTLENECK_BUCKETS[thesis.bucket_id];
+        if (config) {
+          buckets.push({
+            bucket_id: thesis.bucket_id,
+            bucket_name: thesis.bucket_id,
+            label: config.label,
+            description: config.description,
+            severity: 2,
+            severity_label: thesis.status === 'ACTIVE' ? 'STRUCTURAL' : 'EMERGING',
+            severity_color: config.severity_color,
+            severity_icon: config.severity_icon,
+            signal_count: 1,
+            article_count: 0,
+            key_tickers: [],
+            signals: [{
+              id: `thesis-${thesis.bucket_id}`,
+              headline: `[${thesis.status}] ${thesis.headline}`,
+              summary: `${thesis.summary} (Timeframe: ${thesis.timeframe})`,
+              signal_role: 'thesis',
+              sources: ['Structural Analysis'],
+              tickers: [],
+              latest_at: new Date().toISOString(),
+              evidence_count: 0,
+              articles: [],
+              source: 'Structural Analysis',
+              date: new Date().toISOString(),
+              ticker: '',
+              severity: thesis.status === 'ACTIVE' ? 'HIGH' : 'MEDIUM',
+            }],
+          });
+        }
       }
     }
 
