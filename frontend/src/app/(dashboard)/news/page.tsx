@@ -29,6 +29,11 @@ interface NewsArticle {
   investment_tier?: number;
   relevance_tags?: string[];
   impact_statement?: string;
+  bottleneck_sub_tag?: string;
+  bottleneck_level?: string;
+  is_synthetic?: boolean;
+  structural_status?: string;
+  feed_layer?: string;
 }
 
 // Bottleneck dashboard types
@@ -898,6 +903,7 @@ export default function NewsFeedPage() {
   const [articleType,   setArticleType]   = useState<string>('ALL');
   const [sourceName,    setSourceName]    = useState<string>('ALL');
   const [signalFilter,  setSignalFilter]  = useState<string>('ALL'); // 'ALL' = HIGH+MEDIUM (hides noise), 'HIGH' = only high, 'MEDIUM' = only medium
+  const [bottleneckLevel, setBottleneckLevel] = useState<string>('ALL'); // Bottleneck sub-filter: ALL, CRITICAL_BOTTLENECK, BOTTLENECK, WATCH, RESOLVED_EASING
   const [search,        setSearch]        = useState('');
   const [showFilters,   setShowFilters]   = useState(false);
   const [selectedArticle, setSelectedArticle] = useState<NewsArticle | null>(null);
@@ -935,6 +941,10 @@ export default function NewsFeedPage() {
   const STALE_MS = 48 * 60 * 60 * 1000; // 48 hours
   const articles = filterArticles(allArticles || [], region, articleType, signalFilter, sourceName).filter(a => {
     if (!isMarketRelevant(a)) return false;
+    // Bottleneck level sub-filter (only active when viewing BOTTLENECK)
+    if (bottleneckLevel !== 'ALL' && articleType === 'BOTTLENECK') {
+      if ((a as any).bottleneck_level !== bottleneckLevel) return false;
+    }
     // When HIGH signal selected, exclude stale articles
     if (signalFilter === 'HIGH') {
       const pubTime = new Date(a.published_at || a.ingested_at || 0).getTime();
@@ -1029,7 +1039,7 @@ export default function NewsFeedPage() {
             style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '8px', padding: '7px 12px', color: '#F5F7FA', fontSize: '14px', minWidth: '160px', width: '200px', outline: 'none', flexShrink: 0 }}
           />
           <button
-            onClick={() => setArticleType(articleType === 'BOTTLENECK' ? 'ALL' : 'BOTTLENECK')}
+            onClick={() => { setArticleType(articleType === 'BOTTLENECK' ? 'ALL' : 'BOTTLENECK'); setBottleneckLevel('ALL'); }}
             style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: articleType === 'BOTTLENECK' ? '#EF444420' : '#111B35', border: `1px solid ${articleType === 'BOTTLENECK' ? '#EF4444' : '#1E2D45'}`, borderRadius: '8px', padding: '7px 12px', color: articleType === 'BOTTLENECK' ? '#EF4444' : '#8A95A3', fontSize: '12px', fontWeight: '600', cursor: 'pointer', flexShrink: 0, minHeight: '36px' }}
             title="Show critical bottleneck news (GPU, Memory, Photonics, Power, etc.)"
           >
@@ -1127,7 +1137,7 @@ export default function NewsFeedPage() {
             </div>
           </div>
           <button
-            onClick={() => { setRegion('ALL'); setArticleType('ALL'); setSourceName('ALL'); setSignalFilter('ALL'); setSearch(''); }}
+            onClick={() => { setRegion('ALL'); setArticleType('ALL'); setSourceName('ALL'); setSignalFilter('ALL'); setBottleneckLevel('ALL'); setSearch(''); }}
             style={{ marginTop: '12px', fontSize: '11px', color: '#4A5B6C', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
           >
             <X style={{ width: '10px', height: '10px' }} /> Clear filters
@@ -1148,35 +1158,72 @@ export default function NewsFeedPage() {
       {showBottleneckDashboard && !isLoading && articles?.length > 0 && (
         <div style={{ marginBottom: '16px' }}>
           {/* Header bar */}
-          <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #EF444440', borderRadius: '12px', padding: '12px 16px', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '12px', fontWeight: '700', color: '#EF4444', letterSpacing: '0.5px' }}>BOTTLENECK ARTICLES</span>
-            <span style={{ fontSize: '11px', color: '#4A5B6C' }}>
-              {articles.length} articles · Most critical first{region !== 'ALL' ? ` · ${region === 'IN' ? '🇮🇳 India' : '🇺🇸 US'}` : ''}
-            </span>
-            <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto' }}>
-              <span style={{ fontSize: '9px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#EF444415', color: '#EF4444', border: '1px solid #EF444430' }}>
-                {articles.filter(a => (a.investment_tier || 0) === 1).length} HIGH
-              </span>
-              <span style={{ fontSize: '9px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#F59E0B15', color: '#F59E0B', border: '1px solid #F59E0B30' }}>
-                {articles.filter(a => (a.investment_tier || 0) === 2).length} MEDIUM
+          <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #EF444440', borderRadius: '12px', padding: '12px 16px', marginBottom: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '10px' }}>
+              <span style={{ fontSize: '12px', fontWeight: '700', color: '#EF4444', letterSpacing: '0.5px' }}>BOTTLENECK ARTICLES</span>
+              <span style={{ fontSize: '11px', color: '#4A5B6C' }}>
+                {articles.length} articles{region !== 'ALL' ? ` · ${region === 'IN' ? '🇮🇳 India' : '🇺🇸 US'}` : ''}
               </span>
             </div>
+            {/* ── Bottleneck Level Sub-Filters ── */}
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+              {([
+                { value: 'ALL', label: 'All', color: '#8A95A3', bg: '#111B35', border: '#1E2D45', icon: '' },
+                { value: 'CRITICAL_BOTTLENECK', label: 'Critical', color: '#EF4444', bg: '#EF444418', border: '#EF444440', icon: '🔴' },
+                { value: 'BOTTLENECK', label: 'Bottleneck', color: '#F59E0B', bg: '#F59E0B15', border: '#F59E0B30', icon: '🟠' },
+                { value: 'WATCH', label: 'Watch', color: '#3B82F6', bg: '#3B82F615', border: '#3B82F630', icon: '🔵' },
+                { value: 'RESOLVED_EASING', label: 'Resolved / Easing', color: '#10B981', bg: '#10B98115', border: '#10B98130', icon: '🟢' },
+              ] as const).map(lvl => {
+                const isActive = bottleneckLevel === lvl.value;
+                const count = lvl.value === 'ALL'
+                  ? articles.length
+                  : (allArticles || []).filter(a => a.article_type === 'BOTTLENECK' && (a as any).bottleneck_level === lvl.value).length;
+                return (
+                  <button
+                    key={lvl.value}
+                    onClick={() => setBottleneckLevel(lvl.value)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '4px',
+                      padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600',
+                      cursor: 'pointer',
+                      border: `1px solid ${isActive ? lvl.color : '#1E2D45'}`,
+                      backgroundColor: isActive ? lvl.bg : 'transparent',
+                      color: isActive ? lvl.color : '#8A95A3',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    {lvl.icon && <span style={{ fontSize: '8px' }}>{lvl.icon}</span>}
+                    {lvl.label}
+                    <span style={{
+                      fontSize: '9px', fontWeight: '700',
+                      padding: '1px 5px', borderRadius: '4px',
+                      backgroundColor: isActive ? `${lvl.color}20` : '#1E2D4580',
+                      color: isActive ? lvl.color : '#4A5B6C',
+                      marginLeft: '2px',
+                    }}>
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          {/* ALL bottleneck articles — no truncation, sorted by importance then date */}
+          {/* ALL bottleneck articles — sorted by level then date */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {[...articles]
               .sort((a, b) => {
-                // Sort: HIGH tier first, then by date descending
-                const tierA = a.investment_tier || 2;
-                const tierB = b.investment_tier || 2;
-                if (tierA !== tierB) return tierA - tierB;
+                // Sort: CRITICAL first, then BOTTLENECK, WATCH, RESOLVED
+                const levelOrder: Record<string, number> = { CRITICAL_BOTTLENECK: 0, BOTTLENECK: 1, WATCH: 2, RESOLVED_EASING: 3 };
+                const levelA = levelOrder[(a as any).bottleneck_level] ?? 1;
+                const levelB = levelOrder[(b as any).bottleneck_level] ?? 1;
+                if (levelA !== levelB) return levelA - levelB;
                 return new Date(b.published_at).getTime() - new Date(a.published_at).getTime();
               })
               .map(art => <NewsCard key={art.id} article={art} onSelect={setSelectedArticle} />)
             }
           </div>
           <div style={{ textAlign: 'center', padding: '12px 0 4px', fontSize: '11px', color: '#4A5B6C' }}>
-            Showing all {articles.length} bottleneck articles · Includes persistent signals up to 90 days
+            Showing {articles.length} bottleneck articles{bottleneckLevel !== 'ALL' ? ` · Filtered: ${bottleneckLevel.replace(/_/g, ' ')}` : ''} · Includes persistent signals up to 90 days
           </div>
         </div>
       )}

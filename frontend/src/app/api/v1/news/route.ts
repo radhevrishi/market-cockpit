@@ -135,7 +135,77 @@ function getBottleneckSubTag(text: string): string {
   return 'GENERAL_CONSTRAINT';
 }
 
-function classifyArticle(title: string, desc: string): { article_type: string; investment_tier: number; bottleneck_sub_tag?: string } {
+// ══════════════════════════════════════════════════════════════════════
+// BOTTLENECK LEVEL — Multi-level severity classification
+//
+// CRITICAL_BOTTLENECK: Active shortage/constraint with immediate supply impact
+//   - Explicit shortage/crisis language + structural system
+//   - CEO signals about supply constraints
+//   - Quantified timelines ("3 weeks", "lead time 52 weeks")
+//
+// BOTTLENECK: Confirmed constraint, may not be immediate crisis
+//   - System + constraint detected but less urgent language
+//   - Capacity limits, allocation, backlog
+//   - Structural milestones (breakthrough, commissioned)
+//
+// WATCH: Early signal, emerging constraint, or indirect indicator
+//   - Demand signals without explicit shortage
+//   - Company announcements implying tightness
+//   - Hype-adjacent but with real system terms
+//
+// RESOLVED_EASING: Constraint easing, capacity expanding, supply recovering
+//   - Expansion, ramp-up, new fab, capacity addition
+//   - Price drops in constrained areas
+//   - Supply recovery signals
+// ══════════════════════════════════════════════════════════════════════
+function getBottleneckLevel(text: string): string {
+  // RESOLVED / EASING: supply improving, capacity expanding
+  if (/(capacity (expansion|addition|increase|ramp)|supply (recover|improv|ease|normal)|shortage (eas|end|resolv)|price (drop|decline|fall|ease|normal|soften).*(?:dram|nand|hbm|chip|memory|wafer)|new fab|production ramp|yield improv|backlog (clear|reduc)|lead time (shrink|improv|shorten))/i.test(text)) {
+    return 'RESOLVED_EASING';
+  }
+
+  // CRITICAL BOTTLENECK: active crisis with immediate impact
+  if (/(shortage|crisis|crunch|halt|suspend|disrupt|shut.?down|stock.?out|sold out|zero inventory|fuel crunch|blackout)/i.test(text) &&
+      HARDWARE_SYSTEM.test(text)) {
+    return 'CRITICAL_BOTTLENECK';
+  }
+  // CEO/exec urgency signals
+  if (CEO_SIGNAL.test(text) && /(shortage|constraint|crisis|critical|urgent|severe)/i.test(text)) {
+    return 'CRITICAL_BOTTLENECK';
+  }
+  // Quantified timeline urgency
+  if (/\d+\s*(week|day|month)s?\s*(of supply|shortage|backlog|lead time|delay)/i.test(text)) {
+    return 'CRITICAL_BOTTLENECK';
+  }
+  // Synthetic structural alerts marked CRITICAL
+  if (/\[STRUCTURAL.*ALERT\]/i.test(text) && /(critical|intensif|constrain|bottleneck)/i.test(text)) {
+    return 'CRITICAL_BOTTLENECK';
+  }
+
+  // BOTTLENECK: confirmed constraint, not immediate crisis
+  if (PHYSICAL_CONSTRAINT.test(text) && HARDWARE_SYSTEM.test(text)) {
+    return 'BOTTLENECK';
+  }
+  if (BREAKTHROUGH.test(text) && HARDWARE_SYSTEM.test(text)) {
+    return 'BOTTLENECK';
+  }
+  if (SUPPLY_CHAIN_COMPANIES.test(text) && PHYSICAL_CONSTRAINT.test(text)) {
+    return 'BOTTLENECK';
+  }
+
+  // WATCH: early/emerging signal
+  if (IMPLICIT_CONSTRAINT.test(text)) {
+    return 'WATCH';
+  }
+  if (HARDWARE_SYSTEM.test(text) && /(demand|growth|invest|spend|order|announce|plan|expand)/i.test(text)) {
+    return 'WATCH';
+  }
+
+  // Default for anything classified BOTTLENECK by the main classifier
+  return 'BOTTLENECK';
+}
+
+function classifyArticle(title: string, desc: string): { article_type: string; investment_tier: number; bottleneck_sub_tag?: string; bottleneck_level?: string } {
   const text = (title + ' ' + desc).toLowerCase();
 
   // ── 1. NOISE: clickbait, lifestyle, junk ──
@@ -157,13 +227,13 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
     if (isHype && !/(shortage|bottleneck|constraint|tight|undersupply|limit|backlog|delay|crisis|disruption)/i.test(text)) {
       // fall through — this is hype, not constraint
     } else {
-      return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text) };
+      return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text), bottleneck_level: getBottleneckLevel(text) };
     }
   }
 
   // Rule 2: System + Breakthrough → BOTTLENECK (structural milestone)
   if (isSystem && isBreakthrough) {
-    return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text) };
+    return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text), bottleneck_level: getBottleneckLevel(text) };
   }
 
   // Rule 2b: Implicit constraint detection (demand-side signals without explicit "shortage")
@@ -172,7 +242,7 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
     /(hbm|dram|nand|ddr5|memory|photonics|optical interconnect|co-packaged optics|cowos|advanced packaging)/i.test(text) &&
     IMPLICIT_CONSTRAINT.test(text)
   ) {
-    return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text) };
+    return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text), bottleneck_level: getBottleneckLevel(text) };
   }
 
   // Rule 2c: Photonics-specific override (next bottleneck after power + packaging)
@@ -180,7 +250,7 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
     /(silicon photonics|co-packaged optics|optical interconnect|cpo)/i.test(text) &&
     /(scaling|bandwidth|limit|bottleneck|power constraint|capacity|adoption|traction|deployment)/i.test(text)
   ) {
-    return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text) };
+    return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text), bottleneck_level: getBottleneckLevel(text) };
   }
 
   // Rule 2d: Memory company + memory term (company-led signals)
@@ -189,7 +259,7 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
     /(sk hynix|micron|samsung)/i.test(text) &&
     /(hbm|dram|capacity|supply|allocation|lead time|pricing|margin|shortage)/i.test(text)
   ) {
-    return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text) };
+    return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text), bottleneck_level: getBottleneckLevel(text) };
   }
 
   // Rule 2e: Enhanced memory detection (underweight area)
@@ -197,23 +267,23 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
     /(hbm3e?|dram|ddr5|nand|memory)/i.test(text) &&
     /(tight|shortage|undersupply|pricing pressure|allocation|lead time|constraint)/i.test(text)
   ) {
-    return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text) };
+    return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text), bottleneck_level: getBottleneckLevel(text) };
   }
 
   // Rule 3: India structural domains (nuclear, defence, pharma, agri, infra, banking)
   // These are CURRENT real bottlenecks in Indian production supply chains
   if (INDIA_STRUCTURAL.test(text)) {
-    return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text) };
+    return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text), bottleneck_level: getBottleneckLevel(text) };
   }
 
   // Rule 4: Known supply chain company + constraint → BOTTLENECK
   if (SUPPLY_CHAIN_COMPANIES.test(text) && isConstraint) {
-    return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text) };
+    return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text), bottleneck_level: getBottleneckLevel(text) };
   }
 
   // Rule 5: CEO signal with supply/capacity context
   if (CEO_SIGNAL.test(text)) {
-    return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text) };
+    return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text), bottleneck_level: getBottleneckLevel(text) };
   }
 
   // ── 2. EARNINGS ──
@@ -348,7 +418,7 @@ async function fetchAllNews(): Promise<any[]> {
 
           if (!title || title.length < 10) continue;
 
-          const { article_type, investment_tier, bottleneck_sub_tag } = classifyArticle(title, desc);
+          const { article_type, investment_tier, bottleneck_sub_tag, bottleneck_level } = classifyArticle(title, desc);
           const tickers = extractTickers(title);
           const region = detectRegion(title, desc, feed.region);
 
@@ -365,6 +435,7 @@ async function fetchAllNews(): Promise<any[]> {
             article_type,
             investment_tier,
             bottleneck_sub_tag: bottleneck_sub_tag || null,
+            bottleneck_level: bottleneck_level || null,
             tickers: tickers,
             primary_ticker: tickers[0] || null,
             sentiment: null,
@@ -401,14 +472,14 @@ async function fetchAllNews(): Promise<any[]> {
         ibefSeen.add(inner);
         ibefCount++;
         const fullUrl = `https://www.ibef.org${href}`;
-        const { article_type, investment_tier, bottleneck_sub_tag } = classifyArticle(inner, '');
+        const { article_type, investment_tier, bottleneck_sub_tag, bottleneck_level } = classifyArticle(inner, '');
         const tickers = extractTickers(inner);
         articles.push({
           id: `ibef-${Buffer.from(href).toString('base64').slice(0, 20)}`,
           title: inner, headline: inner, summary: '',
           source_name: 'IBEF', source: 'IBEF', source_url: fullUrl,
           published_at: new Date().toISOString(), region: 'IN',
-          article_type, investment_tier, bottleneck_sub_tag: bottleneck_sub_tag || null, tickers,
+          article_type, investment_tier, bottleneck_sub_tag: bottleneck_sub_tag || null, bottleneck_level: bottleneck_level || null, tickers,
           primary_ticker: tickers[0] || null, sentiment: null,
           importance_score: investment_tier === 1 ? 0.8 : 0.5,
         });
@@ -422,14 +493,14 @@ async function fetchAllNews(): Promise<any[]> {
         ibefSeen.add(inner);
         ibefCount++;
         const fullUrl = href.startsWith('http') ? href : `https://www.ibef.org${href}`;
-        const { article_type, investment_tier, bottleneck_sub_tag } = classifyArticle(inner, '');
+        const { article_type, investment_tier, bottleneck_sub_tag, bottleneck_level } = classifyArticle(inner, '');
         const tickers = extractTickers(inner);
         articles.push({
           id: `ibef-${Buffer.from(href).toString('base64').slice(0, 20)}`,
           title: inner, headline: inner, summary: '',
           source_name: 'IBEF', source: 'IBEF', source_url: fullUrl,
           published_at: new Date().toISOString(), region: 'IN',
-          article_type, investment_tier, bottleneck_sub_tag: bottleneck_sub_tag || null, tickers,
+          article_type, investment_tier, bottleneck_sub_tag: bottleneck_sub_tag || null, bottleneck_level: bottleneck_level || null, tickers,
           primary_ticker: tickers[0] || null, sentiment: null,
           importance_score: investment_tier === 1 ? 0.8 : 0.5,
         });
@@ -590,6 +661,7 @@ async function fetchAllNews(): Promise<any[]> {
         importance_score: synth.status === 'CRITICAL' ? 0.95 : 0.85,
         is_synthetic: true,
         structural_status: synth.status,
+        bottleneck_level: synth.status === 'CRITICAL' ? 'CRITICAL_BOTTLENECK' : 'BOTTLENECK',
       });
     }
   }
