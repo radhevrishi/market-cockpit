@@ -437,29 +437,63 @@ async function fetchAllNews(): Promise<any[]> {
     }
   } catch { /* IBEF scrape failed — non-critical */ }
 
-  // ── DUAL RANKING: blend recency (event urgency) + structural importance ──
-  // Without this, structural bottlenecks (memory, photonics) get buried by
-  // high-recency low-importance noise. Score = recency + structural bonus.
+  // ══════════════════════════════════════════════════════════════════════
+  // INSTITUTIONAL RANKING: Score = Recency×0.4 + Severity×0.3 + Structural×0.3
+  //
+  // This replaces pure recency sort. The formula ensures:
+  // - A CRITICAL structural alert (memory/photonics) with no fresh headline
+  //   scores HIGHER than a 1-hour-old tier-2 general article
+  // - Event shocks (fuel shortage, war disruption) still rank high via severity
+  // - Structural alpha (multi-year themes) doesn't get buried by noise
+  // ══════════════════════════════════════════════════════════════════════
   const now = Date.now();
   const HOUR = 3600000;
+
+  // Severity map: article_type → severity score (0-1)
+  const SEVERITY_MAP: Record<string, number> = {
+    BOTTLENECK: 1.0,    // Supply constraints = highest severity
+    GEOPOLITICAL: 0.85, // War, sanctions = high severity
+    TARIFF: 0.8,        // Trade restrictions = high severity
+    MACRO: 0.7,         // Fed, RBI, inflation = moderate-high
+    EARNINGS: 0.6,      // Company results = moderate
+    RATING_CHANGE: 0.5, // Analyst actions = moderate
+    CORPORATE: 0.4,     // M&A, IPO = lower
+    GENERAL: 0.1,       // Noise floor
+  };
+
+  // Structural importance: sub_tag driven (0-1)
+  const STRUCTURAL_MAP: Record<string, number> = {
+    MEMORY_STORAGE: 1.0,           // Current + multi-year bottleneck
+    INTERCONNECT_PHOTONICS: 0.95,  // Emerging, highest asymmetry
+    FABRICATION_PACKAGING: 0.9,    // Active CoWoS constraint
+    COMPUTE_SCALING: 0.85,         // GPU demand > supply
+    POWER_GRID: 0.8,               // Next binding constraint
+    NUCLEAR_ENERGY: 0.75,          // Long-cycle, India strategic
+    THERMAL_COOLING: 0.6,
+    MATERIALS_SUPPLY: 0.55,
+    QUANTUM_CRYOGENICS: 0.4,
+    GENERAL_CONSTRAINT: 0.3,
+  };
+
   articles.sort((a, b) => {
     const da = new Date(a.published_at).getTime() || 0;
     const db = new Date(b.published_at).getTime() || 0;
 
-    // Recency score: 1.0 for just-published, decays over 24h
-    const recencyA = Math.max(0, 1 - (now - da) / (24 * HOUR));
-    const recencyB = Math.max(0, 1 - (now - db) / (24 * HOUR));
+    // Recency: 1.0 → just published, decays to 0 over 48h (longer window)
+    const recencyA = Math.max(0, 1 - (now - da) / (48 * HOUR));
+    const recencyB = Math.max(0, 1 - (now - db) / (48 * HOUR));
 
-    // Structural bonus: BOTTLENECK tier-1 gets +0.4, others get 0
-    const structA = (a.article_type === 'BOTTLENECK' && a.investment_tier === 1) ? 0.4 : 0;
-    const structB = (b.article_type === 'BOTTLENECK' && b.investment_tier === 1) ? 0.4 : 0;
+    // Severity: from article_type
+    const severityA = SEVERITY_MAP[a.article_type] || 0.1;
+    const severityB = SEVERITY_MAP[b.article_type] || 0.1;
 
-    // Tier bonus: tier 1 = +0.2, tier 2 = +0.1
-    const tierA = a.investment_tier === 1 ? 0.2 : a.investment_tier === 2 ? 0.1 : 0;
-    const tierB = b.investment_tier === 1 ? 0.2 : b.investment_tier === 2 ? 0.1 : 0;
+    // Structural importance: from bottleneck_sub_tag (non-BOTTLENECK = 0)
+    const structA = a.article_type === 'BOTTLENECK' ? (STRUCTURAL_MAP[a.bottleneck_sub_tag] || 0.3) : 0;
+    const structB = b.article_type === 'BOTTLENECK' ? (STRUCTURAL_MAP[b.bottleneck_sub_tag] || 0.3) : 0;
 
-    const scoreA = recencyA + structA + tierA;
-    const scoreB = recencyB + structB + tierB;
+    // FINAL SCORE = Recency×0.4 + Severity×0.3 + Structural×0.3
+    const scoreA = (recencyA * 0.4) + (severityA * 0.3) + (structA * 0.3);
+    const scoreB = (recencyB * 0.4) + (severityB * 0.3) + (structB * 0.3);
 
     return scoreB - scoreA;
   });
@@ -669,6 +703,38 @@ export async function GET(request: Request) {
         const text = (a.title + ' ' + a.summary + ' ' + (a.tickers || []).join(' ')).toLowerCase();
         return terms.some(t => text.includes(t));
       });
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // STRUCTURAL PINNING: When viewing BOTTLENECK articles,
+    // pin [STRUCTURAL ALERT] items in top 5, then event bottlenecks.
+    // This creates 2 visual layers:
+    //   Layer 1: "Structural Constraints (Alpha Layer)" — pinned top
+    //   Layer 2: "Immediate Bottlenecks" — event-driven, below
+    // ══════════════════════════════════════════════════════════════════
+    if (type === 'BOTTLENECK' || type === '') {
+      const structural = filtered.filter(a => a.is_synthetic || a.structural_status);
+      const events = filtered.filter(a => !a.is_synthetic && !a.structural_status);
+
+      // Sort structural by status: CRITICAL first, then ELEVATED
+      structural.sort((a, b) => {
+        const statusOrder: Record<string, number> = { CRITICAL: 0, ELEVATED: 1, EMERGING: 2 };
+        const aOrder = statusOrder[a.structural_status] ?? 3;
+        const bOrder = statusOrder[b.structural_status] ?? 3;
+        return aOrder - bOrder;
+      });
+
+      // Tag each article with its feed_layer for frontend rendering
+      const taggedStructural = structural.map(a => ({
+        ...a,
+        feed_layer: 'STRUCTURAL_ALPHA' as const,
+      }));
+      const taggedEvents = events.map(a => ({
+        ...a,
+        feed_layer: 'IMMEDIATE_BOTTLENECK' as const,
+      }));
+
+      filtered = [...taggedStructural, ...taggedEvents];
     }
 
     return NextResponse.json(filtered);
