@@ -453,6 +453,12 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
     } catch { return false; }
   })();
 
+  const isPersistent = isPersistentSignal(article);
+  const isStructural = !!article.is_synthetic
+    || article.feed_layer === 'STRUCTURAL_ALPHA'
+    || article.structural_status === 'CRITICAL'
+    || article.structural_status === 'ELEVATED';
+
   const handleCardClick = (e: React.MouseEvent) => {
     // If clicking inner buttons, don't navigate
     if ((e.target as HTMLElement).closest('button')) return;
@@ -472,7 +478,7 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
     <CardWrapper
       {...cardProps}
       className="news-card"
-      style={{ display: 'block', backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '14px', padding: '16px', cursor: 'pointer', transition: 'border-color 0.15s, background-color 0.15s', opacity: isStale ? 0.55 : 1, textDecoration: 'none', color: 'inherit' }}
+      style={{ display: 'block', backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '14px', padding: '16px', cursor: 'pointer', transition: 'border-color 0.15s, background-color 0.15s', opacity: (isStale && !isPersistent && !isStructural) ? 0.55 : 1, textDecoration: 'none', color: 'inherit' }}
       onClick={handleCardClick}
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
@@ -488,13 +494,31 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
             }}>
               {article.article_type?.replace(/_/g, ' ')}
             </span>
-            {isStale && (
+            {isStale && !isPersistent && (
               <span style={{
                 fontSize: '9px', fontWeight: '700', padding: '3px 8px', borderRadius: '5px',
                 backgroundColor: '#78350F20', color: '#F59E0B', border: '1px solid #F59E0B30',
                 letterSpacing: '0.3px',
               }}>
                 STALE
+              </span>
+            )}
+            {isPersistent && (
+              <span style={{
+                fontSize: '9px', fontWeight: '700', padding: '3px 8px', borderRadius: '5px',
+                backgroundColor: '#8B5CF615', color: '#A78BFA', border: '1px solid #8B5CF640',
+                letterSpacing: '0.3px',
+              }}>
+                PERSISTENT
+              </span>
+            )}
+            {isStructural && (
+              <span style={{
+                fontSize: '9px', fontWeight: '700', padding: '3px 8px', borderRadius: '5px',
+                backgroundColor: '#6366F115', color: '#818CF8', border: '1px solid #6366F140',
+                letterSpacing: '0.3px',
+              }}>
+                STRUCTURAL
               </span>
             )}
             {tier && (
@@ -686,7 +710,7 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
 
 // ── Bottleneck Dashboard ──────────────────────────────────────────────────────
 
-function BottleneckDashboard({ dashboard, isLoading }: { dashboard?: BnDashboard; isLoading: boolean }) {
+function BottleneckDashboard({ dashboard, isLoading, onOpenDrilldown }: { dashboard?: BnDashboard; isLoading: boolean; onOpenDrilldown?: (subTag: string) => void }) {
   // All buckets expanded by default
   const [collapsedBuckets, setCollapsedBuckets] = useState<Set<string>>(new Set());
   const [expandedSignals, setExpandedSignals] = useState<Set<string>>(new Set());
@@ -795,6 +819,19 @@ function BottleneckDashboard({ dashboard, isLoading }: { dashboard?: BnDashboard
                 </div>
               </div>
 
+              {onOpenDrilldown && BOTTLENECK_DRILLDOWN[bucket.bucket_id] && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onOpenDrilldown(bucket.bucket_id); }}
+                  style={{
+                    fontSize: '10px', fontWeight: '700', padding: '5px 9px', borderRadius: '6px', cursor: 'pointer',
+                    border: '1px solid #8B5CF640', backgroundColor: '#8B5CF615', color: '#A78BFA',
+                    flexShrink: 0, letterSpacing: '0.3px',
+                  }}
+                  title="Open supply/demand drilldown"
+                >
+                  DEEP DIVE
+                </button>
+              )}
               {isExpanded
                 ? <ChevronDown style={{ width: '16px', height: '16px', color: '#4A5B6C', flexShrink: 0 }} />
                 : <ChevronRight style={{ width: '16px', height: '16px', color: '#4A5B6C', flexShrink: 0 }} />
@@ -896,6 +933,306 @@ function BottleneckDashboard({ dashboard, isLoading }: { dashboard?: BnDashboard
   );
 }
 
+// ── Drilldown knowledge base ─────────────────────────────────────────────────
+// Maps bottleneck sub-tags to institutional narrative: why it's a bottleneck,
+// supply vs demand dynamics, and listed company winners/losers.
+
+type DrilldownEntry = {
+  label: string;
+  icon: string;
+  why: string;
+  supply: string;
+  demand: string;
+  winners: Array<{ ticker: string; thesis: string }>;
+  losers: Array<{ ticker: string; thesis: string }>;
+};
+
+const BOTTLENECK_DRILLDOWN: Record<string, DrilldownEntry> = {
+  MEMORY_STORAGE: {
+    label: 'Memory & Storage',
+    icon: '🧠',
+    why: 'HBM and enterprise DRAM/NAND capacity is sold out through 2026. Every hyperscaler GPU needs 6-8 stacks of HBM3E; capacity additions lag GPU demand by 18-24 months.',
+    supply: 'Only 3 HBM producers (SK Hynix, Samsung, Micron). Capex cycles are 2-3 years. Yield on HBM3E is structurally below DDR5.',
+    demand: 'Every Blackwell GPU consumes 8× HBM3E stacks. Inference clusters need 3-5× the memory footprint of training. Demand growing ~60% YoY.',
+    winners: [
+      { ticker: '000660.KS', thesis: 'SK Hynix: HBM share leader, 50%+ of supply' },
+      { ticker: 'MU', thesis: 'Micron: HBM3E ramp, capex leverage' },
+      { ticker: '005930.KS', thesis: 'Samsung: HBM3E qualification gating catch-up' },
+    ],
+    losers: [
+      { ticker: 'NVDA', thesis: 'Margin pressure as HBM costs stay elevated' },
+      { ticker: 'META', thesis: 'Capex inflation on memory-heavy training clusters' },
+    ],
+  },
+  INTERCONNECT_PHOTONICS: {
+    label: 'Interconnect & Photonics',
+    icon: '💡',
+    why: 'Copper interconnects hit bandwidth walls at 224 Gbps SerDes. Co-packaged optics and silicon photonics are the only path to 1.6T/3.2T fabrics for future AI factories.',
+    supply: 'CPO supply chain immature: lasers, modulators, couplers bottlenecked at a handful of vendors. TSMC/Intel photonics integration still ramping.',
+    demand: 'Every rack-scale AI system (NVL72, Trainium3) needs 10-100× more optical transceivers than prior generations. Hyperscaler buys locked through 2027.',
+    winners: [
+      { ticker: 'COHR', thesis: 'Coherent: datacenter transceivers, VCSEL supply' },
+      { ticker: 'LITE', thesis: 'Lumentum: indium phosphide lasers for CPO' },
+      { ticker: 'AVGO', thesis: 'Broadcom: Tomahawk 5 switches + CPO reference design' },
+      { ticker: 'MRVL', thesis: 'Marvell: 800G/1.6T DSPs, custom silicon' },
+    ],
+    losers: [],
+  },
+  FABRICATION_PACKAGING: {
+    label: 'Advanced Fabrication & Packaging',
+    icon: '🏭',
+    why: 'CoWoS advanced packaging at TSMC is the single-point bottleneck for every leading-edge AI accelerator. Capacity doubles every 18 months but demand outpaces it.',
+    supply: 'TSMC CoWoS-L/S capacity: ~35K wpm in 2024, ~70K wpm targeted 2026. Intel Foveros and Samsung I-Cube still sub-scale. ASML High-NA EUV gating N2/A16 ramp.',
+    demand: 'Nvidia alone consumes 60%+ of CoWoS. AMD MI300/MI350, AWS Trainium, Google TPU all share remaining supply. Demand growing 80%+ YoY.',
+    winners: [
+      { ticker: 'TSM', thesis: 'TSMC: monopoly on advanced packaging, CoWoS pricing power' },
+      { ticker: 'ASML', thesis: 'ASML: sole EUV/High-NA supplier, 2-year backlog' },
+      { ticker: 'AMAT', thesis: 'Applied Materials: advanced packaging tools' },
+      { ticker: 'LRCX', thesis: 'Lam Research: etch and deposition for N2/A16' },
+    ],
+    losers: [
+      { ticker: 'INTC', thesis: 'Intel Foundry behind on advanced packaging ramp' },
+    ],
+  },
+  COMPUTE_SCALING: {
+    label: 'Compute & GPU Allocation',
+    icon: '⚡',
+    why: 'GPU supply remains rationed by Nvidia. H100/H200 allocation is relationship-driven, Blackwell ramp gated by CoWoS. Tier-2 clouds and enterprises wait 6-12 months.',
+    supply: 'Nvidia ships what TSMC packages. MI300X/MI325X are the only meaningful alternative; TPU/Trainium captive to respective hyperscalers.',
+    demand: 'Hyperscaler AI capex ~$300B/yr, projected $450B+ in 2026. Sovereign AI funds, neoclouds, enterprise inference all competing for allocation.',
+    winners: [
+      { ticker: 'NVDA', thesis: 'Nvidia: allocation monopoly, 75%+ gross margin' },
+      { ticker: 'AMD', thesis: 'AMD: MI series captures tier-2 demand' },
+      { ticker: 'AVGO', thesis: 'Broadcom: custom ASIC (Google TPU, Meta MTIA)' },
+    ],
+    losers: [
+      { ticker: 'CRWV', thesis: 'Neoclouds dependent on NVDA allocation' },
+    ],
+  },
+  POWER_GRID: {
+    label: 'Power & Grid Constraints',
+    icon: '🔌',
+    why: 'Data center power demand outpaces grid interconnect timelines by 3-7 years. Transformer, switchgear, and HV cable lead times are 80-130 weeks.',
+    supply: 'Only 3 major transformer OEMs globally. Grain-oriented electrical steel (GOES) constrained. Utility interconnect queues span 5-10 years in PJM/ERCOT.',
+    demand: 'AI data center nameplate demand: 50 GW US by 2030 (Goldman, EPRI). Hyperscaler site selection now power-first, real-estate second.',
+    winners: [
+      { ticker: 'GEV', thesis: 'GE Vernova: grid equipment, transformers' },
+      { ticker: 'ETN', thesis: 'Eaton: switchgear, UPS, electrical backbone' },
+      { ticker: 'VRT', thesis: 'Vertiv: power/cooling for data centers' },
+      { ticker: 'ABB.SW', thesis: 'ABB: transformers, HV switchgear' },
+      { ticker: 'SU.PA', thesis: 'Schneider Electric: grid + DC power distribution' },
+    ],
+    losers: [],
+  },
+  NUCLEAR_ENERGY: {
+    label: 'Nuclear Energy',
+    icon: '☢️',
+    why: 'Hyperscalers pivoting to nuclear PPAs for 24/7 carbon-free baseload. SMRs and restart of retired plants are the only gigawatt-scale path this decade.',
+    supply: 'Enriched uranium supply constrained post-Russia sanctions. Centrus and Urenco ramping HALEU slowly. SMR deployments 2028-2032.',
+    demand: 'MSFT/Three Mile Island, AMZN/Talen, GOOG/Kairos, META/SMR RFP — every hyperscaler has inked nuclear deals. India targeting 100 GW by 2047.',
+    winners: [
+      { ticker: 'CCJ', thesis: 'Cameco: uranium mining leader' },
+      { ticker: 'LEU', thesis: 'Centrus: HALEU enrichment monopoly' },
+      { ticker: 'VST', thesis: 'Vistra: nuclear fleet + AI hyperscaler PPAs' },
+      { ticker: 'CEG', thesis: 'Constellation: Three Mile Island restart, MSFT PPA' },
+      { ticker: 'TLN', thesis: 'Talen: Susquehanna nuclear + AWS deal' },
+      { ticker: 'NPCIL', thesis: 'NPCIL (India): 100 GW target by 2047' },
+    ],
+    losers: [],
+  },
+  THERMAL_COOLING: {
+    label: 'Thermal & Cooling',
+    icon: '❄️',
+    why: 'Blackwell and beyond require direct-to-chip liquid cooling. Retrofit is impractical; new builds are 100% liquid-cooled. CDU and cold-plate supply sold out.',
+    supply: 'CoolIT, Motivair, Boyd, Asetek are the main CDU vendors. Cold plate supply concentrated in Taiwan.',
+    demand: 'NVL72 racks = 120+ kW/rack. Every new AI data center must deploy liquid cooling. Retrofit-ability is becoming CIO top-3 concern.',
+    winners: [
+      { ticker: 'VRT', thesis: 'Vertiv: liquid cooling + power thermal management' },
+      { ticker: 'SMCI', thesis: 'Supermicro: liquid-cooled rack integration' },
+      { ticker: 'ETN', thesis: 'Eaton: thermal electrical infrastructure' },
+    ],
+    losers: [],
+  },
+  MATERIALS_SUPPLY: {
+    label: 'Critical Materials',
+    icon: '⛏️',
+    why: 'Gallium, germanium, neon, rare earths, and high-purity quartz gating semi and defense supply chains. China export controls accelerating bifurcation.',
+    supply: 'China controls 80%+ of gallium/germanium processing, 90%+ of rare earth refining. Alternative supply 3-7 years out.',
+    demand: 'AI, defense, EV, and renewable electrification all drawing from same materials stack. Demand growing 2-3× by 2030.',
+    winners: [
+      { ticker: 'MP', thesis: 'MP Materials: US rare earth independence' },
+      { ticker: 'LYC.AX', thesis: 'Lynas: ex-China rare earth processing' },
+    ],
+    losers: [],
+  },
+  QUANTUM_CRYOGENICS: {
+    label: 'Quantum & Cryogenics',
+    icon: '🧊',
+    why: 'Quantum hardware gated by dilution refrigerators, helium-3, and cryo electronics. Scale-up of logical qubits is the decade-long bottleneck.',
+    supply: 'Bluefors, Oxford Instruments dominate dilution fridges. Helium-3 supply constrained by tritium decay chain.',
+    demand: 'Sovereign quantum programs (US DOE, EU, China, India) + hyperscaler R&D (IBM, Google, MSFT, AMZN). Demand inelastic in near term.',
+    winners: [
+      { ticker: 'IBM', thesis: 'IBM: largest gate-based quantum fleet' },
+      { ticker: 'RGTI', thesis: 'Rigetti: superconducting qubit IP' },
+      { ticker: 'IONQ', thesis: 'IonQ: trapped-ion roadmap' },
+    ],
+    losers: [],
+  },
+};
+
+// Persistent signal threshold: articles older than this but still ranked
+// represent structural (non-news) constraints that won't resolve quickly.
+const PERSISTENT_DAYS = 30;
+const PERSISTENT_MS = PERSISTENT_DAYS * 24 * 60 * 60 * 1000;
+
+function isPersistentSignal(article: NewsArticle): boolean {
+  try {
+    const pubTime = new Date(article.published_at).getTime();
+    if (!Number.isFinite(pubTime)) return false;
+    return Date.now() - pubTime > PERSISTENT_MS;
+  } catch { return false; }
+}
+
+// ── Drilldown Panel ──────────────────────────────────────────────────────────
+
+function BottleneckDrilldown({
+  subTag,
+  articles,
+  onClose,
+  onSelectArticle,
+}: {
+  subTag: string;
+  articles: NewsArticle[];
+  onClose: () => void;
+  onSelectArticle: (a: NewsArticle) => void;
+}) {
+  const entry = BOTTLENECK_DRILLDOWN[subTag];
+  const relatedArticles = useMemo(
+    () => articles.filter(a => a.bottleneck_sub_tag === subTag).slice(0, 15),
+    [articles, subTag],
+  );
+
+  if (!entry) {
+    return (
+      <div
+        style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', backgroundColor: 'rgba(0,0,0,0.65)' }}
+        onClick={onClose}
+      >
+        <div
+          style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', width: '100%', maxWidth: '700px', height: '100vh', overflowY: 'auto', padding: '20px 16px' }}
+          onClick={e => e.stopPropagation()}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <h2 style={{ fontSize: '16px', color: '#F5F7FA', margin: 0 }}>{subTag.replace(/_/g, ' ')}</h2>
+            <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#4A5B6C', cursor: 'pointer' }}>
+              <X style={{ width: '18px', height: '18px' }} />
+            </button>
+          </div>
+          <p style={{ fontSize: '13px', color: '#8A95A3' }}>No drilldown available for this category yet.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', backgroundColor: 'rgba(0,0,0,0.65)' }}
+      onClick={onClose}
+    >
+      <div
+        style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', width: '100%', maxWidth: '720px', height: '100vh', overflowY: 'auto', padding: '20px 16px' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '4px' }}>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#4A5B6C', cursor: 'pointer' }}>
+            <X style={{ width: '18px', height: '18px' }} />
+          </button>
+        </div>
+
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+          <div style={{ fontSize: '32px' }}>{entry.icon}</div>
+          <div>
+            <div style={{ fontSize: '10px', fontWeight: '700', color: '#EF4444', letterSpacing: '0.8px', marginBottom: '2px' }}>STRUCTURAL BOTTLENECK</div>
+            <h2 style={{ fontSize: '22px', fontWeight: '700', color: '#F5F7FA', margin: 0 }}>{entry.label}</h2>
+          </div>
+        </div>
+
+        {/* Why it's a bottleneck */}
+        <section style={{ marginBottom: '18px' }}>
+          <p style={{ fontSize: '10px', fontWeight: '700', color: '#EF4444', margin: '0 0 8px', letterSpacing: '0.5px' }}>WHY IT'S A BOTTLENECK</p>
+          <p style={{ fontSize: '13px', color: '#C9D4E0', lineHeight: '1.6', margin: 0 }}>{entry.why}</p>
+        </section>
+
+        {/* Supply vs Demand */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '18px' }}>
+          <div style={{ backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '10px', padding: '12px' }}>
+            <p style={{ fontSize: '10px', fontWeight: '700', color: '#F59E0B', margin: '0 0 6px', letterSpacing: '0.5px' }}>SUPPLY</p>
+            <p style={{ fontSize: '12px', color: '#C9D4E0', lineHeight: '1.55', margin: 0 }}>{entry.supply}</p>
+          </div>
+          <div style={{ backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '10px', padding: '12px' }}>
+            <p style={{ fontSize: '10px', fontWeight: '700', color: '#10B981', margin: '0 0 6px', letterSpacing: '0.5px' }}>DEMAND</p>
+            <p style={{ fontSize: '12px', color: '#C9D4E0', lineHeight: '1.55', margin: 0 }}>{entry.demand}</p>
+          </div>
+        </div>
+
+        {/* Winners */}
+        {entry.winners.length > 0 && (
+          <section style={{ marginBottom: '16px' }}>
+            <p style={{ fontSize: '10px', fontWeight: '700', color: '#10B981', margin: '0 0 8px', letterSpacing: '0.5px' }}>▲ LISTED COMPANIES — WINNERS</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {entry.winners.map(w => (
+                <div key={w.ticker} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '8px 10px', backgroundColor: '#10B98108', border: '1px solid #10B98130', borderRadius: '8px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: '700', color: '#10B981', backgroundColor: '#10B98120', padding: '2px 7px', borderRadius: '4px', flexShrink: 0, minWidth: '70px', textAlign: 'center' }}>
+                    {w.ticker}
+                  </span>
+                  <span style={{ fontSize: '12px', color: '#C9D4E0', lineHeight: '1.45' }}>{w.thesis}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Losers */}
+        {entry.losers.length > 0 && (
+          <section style={{ marginBottom: '16px' }}>
+            <p style={{ fontSize: '10px', fontWeight: '700', color: '#EF4444', margin: '0 0 8px', letterSpacing: '0.5px' }}>▼ LISTED COMPANIES — UNDER PRESSURE</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {entry.losers.map(l => (
+                <div key={l.ticker} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '8px 10px', backgroundColor: '#EF444408', border: '1px solid #EF444430', borderRadius: '8px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: '700', color: '#EF4444', backgroundColor: '#EF444420', padding: '2px 7px', borderRadius: '4px', flexShrink: 0, minWidth: '70px', textAlign: 'center' }}>
+                    {l.ticker}
+                  </span>
+                  <span style={{ fontSize: '12px', color: '#C9D4E0', lineHeight: '1.45' }}>{l.thesis}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Related articles */}
+        {relatedArticles.length > 0 && (
+          <section style={{ borderTop: '1px solid #1E2D45', paddingTop: '16px' }}>
+            <p style={{ fontSize: '10px', fontWeight: '700', color: '#4A5B6C', margin: '0 0 10px', letterSpacing: '0.5px' }}>RECENT EVIDENCE ({relatedArticles.length})</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {relatedArticles.map(a => (
+                <button
+                  key={a.id}
+                  onClick={() => onSelectArticle(a)}
+                  style={{ textAlign: 'left', background: '#111B35', border: '1px solid #1E2D45', borderRadius: '8px', padding: '10px 12px', cursor: 'pointer', color: '#C9D4E0', fontSize: '12px', lineHeight: '1.45' }}
+                >
+                  <div style={{ fontWeight: '600', color: '#E8EDF2', marginBottom: '3px' }}>{getTitle(a)}</div>
+                  <div style={{ fontSize: '10px', color: '#4A5B6C' }}>{getSource(a)} · {timeAgo(a.published_at)}</div>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function NewsFeedPage() {
@@ -904,9 +1241,13 @@ export default function NewsFeedPage() {
   const [sourceName,    setSourceName]    = useState<string>('ALL');
   const [signalFilter,  setSignalFilter]  = useState<string>('ALL'); // 'ALL' = HIGH+MEDIUM (hides noise), 'HIGH' = only high, 'MEDIUM' = only medium
   const [bottleneckLevel, setBottleneckLevel] = useState<string>('ALL'); // Bottleneck sub-filter: ALL, CRITICAL_BOTTLENECK, BOTTLENECK, WATCH, RESOLVED_EASING
+  const [bottleneckCategory, setBottleneckCategory] = useState<string>('ALL'); // Sub-tag: MEMORY_STORAGE, INTERCONNECT_PHOTONICS, etc.
+  const [structuralOnly, setStructuralOnly] = useState<boolean>(false); // Show only synthetic/structural signals
+  const [sortBy,        setSortBy]        = useState<'impact' | 'time'>('impact'); // Default: impact-based sort
   const [search,        setSearch]        = useState('');
   const [showFilters,   setShowFilters]   = useState(false);
   const [selectedArticle, setSelectedArticle] = useState<NewsArticle | null>(null);
+  const [drilldownSubTag, setDrilldownSubTag] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing]   = useState(false);
   const [groupByLayer,  setGroupByLayer]  = useState(true); // Group articles by layer
   const filterPanelRef = useRef<HTMLDivElement>(null);
@@ -936,22 +1277,86 @@ export default function NewsFeedPage() {
   const { data: allArticles, isLoading, error, refetch } = useNews(search);
   const { data: rawInPlay, isLoading: inPlayLoading, refetch: refetchInPlay } = useInPlay();
 
-  // Client-side filter chain: server filters → signal filter → junk filter → stale filter
-  const now = Date.now();
+  // ── Filtering engine: memoized multi-dimensional filter + sort ──────────────
+  // Combines: region × article_type × signal × source × bottleneck_level ×
+  //           bottleneck_category × structural_only × search-stale filter.
+  // Sort: 'impact' (importance_score + structural boost) or 'time' (published_at desc).
   const STALE_MS = 48 * 60 * 60 * 1000; // 48 hours
-  const articles = filterArticles(allArticles || [], region, articleType, signalFilter, sourceName).filter(a => {
-    if (!isMarketRelevant(a)) return false;
-    // Bottleneck level sub-filter (only active when viewing BOTTLENECK)
-    if (bottleneckLevel !== 'ALL' && articleType === 'BOTTLENECK') {
-      if ((a as any).bottleneck_level !== bottleneckLevel) return false;
+
+  const articles = useMemo(() => {
+    const now = Date.now();
+    const base = filterArticles(allArticles || [], region, articleType, signalFilter, sourceName);
+
+    const filtered = base.filter(a => {
+      if (!isMarketRelevant(a)) return false;
+      // Bottleneck level sub-filter (only active when viewing BOTTLENECK)
+      if (bottleneckLevel !== 'ALL' && articleType === 'BOTTLENECK') {
+        if (a.bottleneck_level !== bottleneckLevel) return false;
+      }
+      // Bottleneck category sub-filter (sub-tag: MEMORY_STORAGE etc.)
+      if (bottleneckCategory !== 'ALL' && articleType === 'BOTTLENECK') {
+        if (a.bottleneck_sub_tag !== bottleneckCategory) return false;
+      }
+      // Structural-only toggle: keep only synthetic/structural-pinned signals
+      if (structuralOnly) {
+        const isStructural = !!a.is_synthetic
+          || a.feed_layer === 'STRUCTURAL_ALPHA'
+          || a.structural_status === 'CRITICAL'
+          || a.structural_status === 'ELEVATED';
+        if (!isStructural) return false;
+      }
+      // When HIGH signal selected, exclude stale articles
+      if (signalFilter === 'HIGH') {
+        const pubTime = new Date(a.published_at || a.ingested_at || 0).getTime();
+        if (now - pubTime > STALE_MS) return false;
+      }
+      return true;
+    });
+
+    // Sort: impact uses importance_score with structural + severity boost;
+    // time uses published_at desc.
+    const SEVERITY_BOOST: Record<string, number> = {
+      CRITICAL_BOTTLENECK: 3,
+      BOTTLENECK: 2,
+      WATCH: 1,
+      RESOLVED_EASING: 0,
+    };
+
+    const scoreOf = (a: NewsArticle): number => {
+      const imp = a.importance_score || 0;
+      const sev = SEVERITY_BOOST[a.bottleneck_level || ''] || 0;
+      const structural = (a.is_synthetic || a.feed_layer === 'STRUCTURAL_ALPHA') ? 2 : 0;
+      const recency = (() => {
+        try {
+          const age = (Date.now() - new Date(a.published_at).getTime()) / (1000 * 60 * 60);
+          return Math.max(0, 3 - age / 24); // 3 points today, 0 after ~3 days
+        } catch { return 0; }
+      })();
+      return imp * 2 + sev * 1.5 + structural + recency;
+    };
+
+    if (sortBy === 'impact') {
+      filtered.sort((a, b) => scoreOf(b) - scoreOf(a));
+    } else {
+      filtered.sort((a, b) => {
+        try {
+          return new Date(b.published_at).getTime() - new Date(a.published_at).getTime();
+        } catch { return 0; }
+      });
     }
-    // When HIGH signal selected, exclude stale articles
-    if (signalFilter === 'HIGH') {
-      const pubTime = new Date(a.published_at || a.ingested_at || 0).getTime();
-      if (now - pubTime > STALE_MS) return false;
-    }
-    return true;
-  });
+
+    return filtered;
+  }, [
+    allArticles,
+    region,
+    articleType,
+    signalFilter,
+    sourceName,
+    bottleneckLevel,
+    bottleneckCategory,
+    structuralOnly,
+    sortBy,
+  ]);
   const inPlay = (rawInPlay || []).filter(isMarketRelevant);
   const { data: bnDashboard, isLoading: bnLoading, refetch: refetchBn } = useBottleneckDashboard(articleType === 'BOTTLENECK', region);
   const showBottleneckDashboard = articleType === 'BOTTLENECK';
@@ -1039,7 +1444,7 @@ export default function NewsFeedPage() {
             style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '8px', padding: '7px 12px', color: '#F5F7FA', fontSize: '14px', minWidth: '160px', width: '200px', outline: 'none', flexShrink: 0 }}
           />
           <button
-            onClick={() => { setArticleType(articleType === 'BOTTLENECK' ? 'ALL' : 'BOTTLENECK'); setBottleneckLevel('ALL'); }}
+            onClick={() => { setArticleType(articleType === 'BOTTLENECK' ? 'ALL' : 'BOTTLENECK'); setBottleneckLevel('ALL'); setBottleneckCategory('ALL'); setStructuralOnly(false); }}
             style={{ display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: articleType === 'BOTTLENECK' ? '#EF444420' : '#111B35', border: `1px solid ${articleType === 'BOTTLENECK' ? '#EF4444' : '#1E2D45'}`, borderRadius: '8px', padding: '7px 12px', color: articleType === 'BOTTLENECK' ? '#EF4444' : '#8A95A3', fontSize: '12px', fontWeight: '600', cursor: 'pointer', flexShrink: 0, minHeight: '36px' }}
             title="Show critical bottleneck news (GPU, Memory, Photonics, Power, etc.)"
           >
@@ -1137,7 +1542,7 @@ export default function NewsFeedPage() {
             </div>
           </div>
           <button
-            onClick={() => { setRegion('ALL'); setArticleType('ALL'); setSourceName('ALL'); setSignalFilter('ALL'); setBottleneckLevel('ALL'); setSearch(''); }}
+            onClick={() => { setRegion('ALL'); setArticleType('ALL'); setSourceName('ALL'); setSignalFilter('ALL'); setBottleneckLevel('ALL'); setBottleneckCategory('ALL'); setStructuralOnly(false); setSearch(''); }}
             style={{ marginTop: '12px', fontSize: '11px', color: '#4A5B6C', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
           >
             <X style={{ width: '10px', height: '10px' }} /> Clear filters
@@ -1155,18 +1560,52 @@ export default function NewsFeedPage() {
       )}
 
       {/* ── BOTTLENECK ARTICLES (shown at TOP when BOTTLENECK mode is active) ── */}
-      {showBottleneckDashboard && !isLoading && articles?.length > 0 && (
+      {showBottleneckDashboard && !isLoading && (
         <div style={{ marginBottom: '16px' }}>
-          {/* Header bar */}
-          <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #EF444440', borderRadius: '12px', padding: '12px 16px', marginBottom: '10px' }}>
+          {/* Sticky header+filter bar */}
+          <div style={{
+            position: 'sticky', top: 0, zIndex: 10,
+            backgroundColor: '#0D1B2E', border: '1px solid #EF444440', borderRadius: '12px',
+            padding: '12px 16px', marginBottom: '10px',
+            backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
+            boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
+          }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '10px' }}>
               <span style={{ fontSize: '12px', fontWeight: '700', color: '#EF4444', letterSpacing: '0.5px' }}>BOTTLENECK ARTICLES</span>
               <span style={{ fontSize: '11px', color: '#4A5B6C' }}>
                 {articles.length} articles{region !== 'ALL' ? ` · ${region === 'IN' ? '🇮🇳 India' : '🇺🇸 US'}` : ''}
               </span>
+              <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto', alignItems: 'center' }}>
+                {/* Sort toggle */}
+                <button
+                  onClick={() => setSortBy(sortBy === 'impact' ? 'time' : 'impact')}
+                  style={{
+                    fontSize: '10px', fontWeight: '600', padding: '4px 9px', borderRadius: '6px', cursor: 'pointer',
+                    border: `1px solid ${sortBy === 'impact' ? '#F59E0B60' : '#1E2D45'}`,
+                    backgroundColor: sortBy === 'impact' ? '#F59E0B15' : 'transparent',
+                    color: sortBy === 'impact' ? '#F59E0B' : '#8A95A3',
+                  }}
+                  title="Toggle sort order"
+                >
+                  {sortBy === 'impact' ? '▲ By Impact' : '🕒 By Time'}
+                </button>
+                {/* Structural-only toggle */}
+                <button
+                  onClick={() => setStructuralOnly(v => !v)}
+                  style={{
+                    fontSize: '10px', fontWeight: '600', padding: '4px 9px', borderRadius: '6px', cursor: 'pointer',
+                    border: `1px solid ${structuralOnly ? '#8B5CF660' : '#1E2D45'}`,
+                    backgroundColor: structuralOnly ? '#8B5CF615' : 'transparent',
+                    color: structuralOnly ? '#8B5CF6' : '#8A95A3',
+                  }}
+                  title="Show only structural (non-news) signals"
+                >
+                  {structuralOnly ? '● Structural Only' : '○ Structural Only'}
+                </button>
+              </div>
             </div>
             {/* ── Bottleneck Level Sub-Filters ── */}
-            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' }}>
               {([
                 { value: 'ALL', label: 'All', color: '#8A95A3', bg: '#111B35', border: '#1E2D45', icon: '' },
                 { value: 'CRITICAL_BOTTLENECK', label: 'Critical', color: '#EF4444', bg: '#EF444418', border: '#EF444440', icon: '🔴' },
@@ -1175,9 +1614,16 @@ export default function NewsFeedPage() {
                 { value: 'RESOLVED_EASING', label: 'Resolved / Easing', color: '#10B981', bg: '#10B98115', border: '#10B98130', icon: '🟢' },
               ] as const).map(lvl => {
                 const isActive = bottleneckLevel === lvl.value;
+                // Count respects region + category + structural toggles for a meaningful live count
                 const count = lvl.value === 'ALL'
                   ? articles.length
-                  : (allArticles || []).filter(a => a.article_type === 'BOTTLENECK' && (a as any).bottleneck_level === lvl.value).length;
+                  : (allArticles || []).filter(a => {
+                      if (a.article_type !== 'BOTTLENECK') return false;
+                      if (a.bottleneck_level !== lvl.value) return false;
+                      if (region !== 'ALL' && a.region !== region && a.region !== 'GLOBAL') return false;
+                      if (bottleneckCategory !== 'ALL' && a.bottleneck_sub_tag !== bottleneckCategory) return false;
+                      return true;
+                    }).length;
                 return (
                   <button
                     key={lvl.value}
@@ -1207,31 +1653,126 @@ export default function NewsFeedPage() {
                 );
               })}
             </div>
+            {/* ── Bottleneck Category (sub-tag) Filters ── */}
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+              {([
+                { value: 'ALL', label: 'All Categories', icon: '' },
+                { value: 'MEMORY_STORAGE', label: 'Memory', icon: '🧠' },
+                { value: 'INTERCONNECT_PHOTONICS', label: 'Photonics', icon: '💡' },
+                { value: 'FABRICATION_PACKAGING', label: 'Packaging', icon: '🏭' },
+                { value: 'COMPUTE_SCALING', label: 'Compute', icon: '⚡' },
+                { value: 'POWER_GRID', label: 'Power', icon: '🔌' },
+                { value: 'NUCLEAR_ENERGY', label: 'Nuclear', icon: '☢️' },
+                { value: 'THERMAL_COOLING', label: 'Cooling', icon: '❄️' },
+                { value: 'MATERIALS_SUPPLY', label: 'Materials', icon: '⛏️' },
+                { value: 'QUANTUM_CRYOGENICS', label: 'Quantum', icon: '🧊' },
+              ] as const).map(cat => {
+                const isActive = bottleneckCategory === cat.value;
+                const canDrill = cat.value !== 'ALL' && BOTTLENECK_DRILLDOWN[cat.value];
+                const count = cat.value === 'ALL'
+                  ? articles.length
+                  : (allArticles || []).filter(a => {
+                      if (a.article_type !== 'BOTTLENECK') return false;
+                      if (a.bottleneck_sub_tag !== cat.value) return false;
+                      if (region !== 'ALL' && a.region !== region && a.region !== 'GLOBAL') return false;
+                      if (bottleneckLevel !== 'ALL' && a.bottleneck_level !== bottleneckLevel) return false;
+                      return true;
+                    }).length;
+                return (
+                  <button
+                    key={cat.value}
+                    onClick={() => setBottleneckCategory(cat.value)}
+                    onDoubleClick={() => { if (canDrill) setDrilldownSubTag(cat.value); }}
+                    title={canDrill ? 'Click to filter · Double-click to open drilldown' : ''}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '4px',
+                      padding: '4px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '600',
+                      cursor: 'pointer',
+                      border: `1px solid ${isActive ? '#8B5CF6' : '#1E2D45'}`,
+                      backgroundColor: isActive ? '#8B5CF615' : 'transparent',
+                      color: isActive ? '#8B5CF6' : '#8A95A3',
+                    }}
+                  >
+                    {cat.icon && <span style={{ fontSize: '9px' }}>{cat.icon}</span>}
+                    {cat.label}
+                    <span style={{
+                      fontSize: '9px', fontWeight: '700',
+                      padding: '1px 4px', borderRadius: '3px',
+                      backgroundColor: isActive ? '#8B5CF620' : '#1E2D4580',
+                      color: isActive ? '#8B5CF6' : '#4A5B6C',
+                    }}>
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          {/* ALL bottleneck articles — sorted by level then date */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {[...articles]
-              .sort((a, b) => {
-                // Sort: CRITICAL first, then BOTTLENECK, WATCH, RESOLVED
-                const levelOrder: Record<string, number> = { CRITICAL_BOTTLENECK: 0, BOTTLENECK: 1, WATCH: 2, RESOLVED_EASING: 3 };
-                const levelA = levelOrder[(a as any).bottleneck_level] ?? 1;
-                const levelB = levelOrder[(b as any).bottleneck_level] ?? 1;
-                if (levelA !== levelB) return levelA - levelB;
-                return new Date(b.published_at).getTime() - new Date(a.published_at).getTime();
-              })
-              .map(art => <NewsCard key={art.id} article={art} onSelect={setSelectedArticle} />)
-            }
-          </div>
-          <div style={{ textAlign: 'center', padding: '12px 0 4px', fontSize: '11px', color: '#4A5B6C' }}>
-            Showing {articles.length} bottleneck articles{bottleneckLevel !== 'ALL' ? ` · Filtered: ${bottleneckLevel.replace(/_/g, ' ')}` : ''} · Includes persistent signals up to 90 days
-          </div>
+
+          {/* Drilldown launch bar when category is selected */}
+          {bottleneckCategory !== 'ALL' && BOTTLENECK_DRILLDOWN[bottleneckCategory] && (
+            <button
+              onClick={() => setDrilldownSubTag(bottleneckCategory)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '10px', width: '100%',
+                backgroundColor: '#8B5CF610', border: '1px solid #8B5CF640',
+                borderRadius: '10px', padding: '10px 14px', marginBottom: '10px',
+                cursor: 'pointer', textAlign: 'left', color: '#C9D4E0',
+              }}
+            >
+              <span style={{ fontSize: '20px' }}>{BOTTLENECK_DRILLDOWN[bottleneckCategory].icon}</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '12px', fontWeight: '700', color: '#8B5CF6' }}>
+                  {BOTTLENECK_DRILLDOWN[bottleneckCategory].label} · Analysis
+                </div>
+                <div style={{ fontSize: '10px', color: '#8A95A3' }}>
+                  Click for supply/demand breakdown and listed companies impacted
+                </div>
+              </div>
+              <ChevronRight style={{ width: '14px', height: '14px', color: '#8B5CF6' }} />
+            </button>
+          )}
+
+          {/* Articles list OR empty state */}
+          {articles.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '48px 20px', backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '12px' }}>
+              <p style={{ fontSize: '28px', marginBottom: '10px' }}>🔎</p>
+              <p style={{ fontSize: '14px', fontWeight: '600', color: '#F5F7FA', margin: '0 0 6px' }}>
+                No bottleneck articles match your filters
+              </p>
+              <p style={{ fontSize: '12px', color: '#4A5B6C', margin: '0 0 14px', lineHeight: '1.5' }}>
+                Try clearing the level, category, or structural-only filters.
+              </p>
+              <button
+                onClick={() => { setBottleneckLevel('ALL'); setBottleneckCategory('ALL'); setStructuralOnly(false); }}
+                style={{ backgroundColor: '#0F7ABF', color: 'white', border: 'none', borderRadius: '8px', padding: '7px 14px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}
+              >
+                Reset Bottleneck Filters
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {articles.map(art => <NewsCard key={art.id} article={art} onSelect={setSelectedArticle} />)}
+            </div>
+          )}
+
+          {articles.length > 0 && (
+            <div style={{ textAlign: 'center', padding: '12px 0 4px', fontSize: '11px', color: '#4A5B6C' }}>
+              Showing {articles.length} bottleneck articles
+              {bottleneckLevel !== 'ALL' ? ` · Level: ${bottleneckLevel.replace(/_/g, ' ')}` : ''}
+              {bottleneckCategory !== 'ALL' ? ` · Category: ${bottleneckCategory.replace(/_/g, ' ')}` : ''}
+              {structuralOnly ? ' · Structural Only' : ''}
+              {' · Sort: '}{sortBy === 'impact' ? 'Impact' : 'Time'}
+              {' · Includes persistent signals up to 90 days'}
+            </div>
+          )}
         </div>
       )}
 
       {/* ── Bottleneck Dashboard (category intelligence below articles) */}
       {showBottleneckDashboard && (
         <div style={{ marginBottom: '16px' }}>
-          <BottleneckDashboard dashboard={bnDashboard} isLoading={bnLoading} />
+          <BottleneckDashboard dashboard={bnDashboard} isLoading={bnLoading} onOpenDrilldown={setDrilldownSubTag} />
         </div>
       )}
 
@@ -1321,6 +1862,16 @@ export default function NewsFeedPage() {
       {/* ── Article detail overlay ─────────────────────────────────── */}
       {selectedArticle && (
         <ArticleDetail article={selectedArticle} onClose={() => setSelectedArticle(null)} />
+      )}
+
+      {/* ── Bottleneck drilldown overlay ───────────────────────────── */}
+      {drilldownSubTag && (
+        <BottleneckDrilldown
+          subTag={drilldownSubTag}
+          articles={allArticles || []}
+          onClose={() => setDrilldownSubTag(null)}
+          onSelectArticle={a => { setDrilldownSubTag(null); setSelectedArticle(a); }}
+        />
       )}
     </div>
   );
