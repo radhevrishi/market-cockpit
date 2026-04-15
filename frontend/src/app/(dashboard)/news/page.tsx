@@ -710,18 +710,50 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
 
 // ── Bottleneck Dashboard ──────────────────────────────────────────────────────
 
-function BottleneckDashboard({ dashboard, isLoading, onOpenDrilldown }: { dashboard?: BnDashboard; isLoading: boolean; onOpenDrilldown?: (subTag: string) => void }) {
+function BottleneckDashboard({
+  dashboard,
+  isLoading,
+  onOpenDrilldown,
+  bottleneckLevel = 'ALL',
+  bottleneckCategory = 'ALL',
+}: {
+  dashboard?: BnDashboard;
+  isLoading: boolean;
+  onOpenDrilldown?: (subTag: string) => void;
+  bottleneckLevel?: string;
+  bottleneckCategory?: string;
+}) {
   // All buckets expanded by default
   const [collapsedBuckets, setCollapsedBuckets] = useState<Set<string>>(new Set());
   const [expandedSignals, setExpandedSignals] = useState<Set<string>>(new Set());
 
+  // Filter buckets by the active level/category sub-filters so the dashboard
+  // stays consistent with the top article list.
+  const filteredBuckets = useMemo(() => {
+    if (!dashboard?.buckets) return [];
+    const levelToSeverity: Record<string, (sev: number) => boolean> = {
+      CRITICAL_BOTTLENECK: sev => sev >= 5,
+      BOTTLENECK: sev => sev === 4,
+      WATCH: sev => sev <= 3 && sev >= 2,
+      RESOLVED_EASING: sev => sev <= 1,
+    };
+    return dashboard.buckets.filter(b => {
+      if (bottleneckLevel !== 'ALL') {
+        const pred = levelToSeverity[bottleneckLevel];
+        if (pred && !pred(b.severity)) return false;
+      }
+      if (bottleneckCategory !== 'ALL' && b.bucket_id !== bottleneckCategory) return false;
+      return true;
+    });
+  }, [dashboard, bottleneckLevel, bottleneckCategory]);
+
   // Compat: expandedBuckets derived from collapsedBuckets (inverted logic)
   const expandedBuckets = useMemo(() => {
-    if (!dashboard?.buckets) return new Set<string>();
-    const all = new Set(dashboard.buckets.map(b => b.bucket_id));
+    if (!filteredBuckets.length) return new Set<string>();
+    const all = new Set(filteredBuckets.map(b => b.bucket_id));
     for (const id of collapsedBuckets) all.delete(id);
     return all;
-  }, [dashboard, collapsedBuckets]);
+  }, [filteredBuckets, collapsedBuckets]);
 
   const toggleBucket = (id: string) => {
     setCollapsedBuckets(prev => {
@@ -759,20 +791,30 @@ function BottleneckDashboard({ dashboard, isLoading, onOpenDrilldown }: { dashbo
     );
   }
 
+  if (!filteredBuckets.length) {
+    return (
+      <div style={{ textAlign: 'center', padding: '40px 20px', backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '12px' }}>
+        <p style={{ fontSize: '28px', marginBottom: '10px' }}>🔎</p>
+        <p style={{ fontSize: '14px', fontWeight: '600', color: '#F5F7FA', margin: '0 0 6px' }}>No dashboard buckets match current filters</p>
+        <p style={{ fontSize: '12px', color: '#4A5B6C', margin: 0 }}>Try clearing the level or category filter to see the full intelligence grid.</p>
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
       {/* Summary bar */}
       <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '12px', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
         <span style={{ fontSize: '11px', fontWeight: '700', color: '#EF4444', letterSpacing: '0.5px' }}>BOTTLENECK INTELLIGENCE</span>
         <span style={{ fontSize: '11px', color: '#4A5B6C' }}>
-          {dashboard.buckets.length} categories · {dashboard.buckets.reduce((s, b) => s + b.signal_count, 0)} signals · {dashboard.total_articles} evidence articles
+          {filteredBuckets.length} categories · {filteredBuckets.reduce((s, b) => s + b.signal_count, 0)} signals · {filteredBuckets.reduce((s, b) => s + b.article_count, 0)} evidence articles
         </span>
         <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto' }}>
           {[
-            { label: 'CRITICAL', count: dashboard.buckets.filter(b => b.severity >= 5).length, color: '#EF4444' },
-            { label: 'HIGH', count: dashboard.buckets.filter(b => b.severity === 4).length, color: '#F59E0B' },
-            { label: 'ELEVATED', count: dashboard.buckets.filter(b => b.severity === 3).length, color: '#3B82F6' },
-            { label: 'WATCH', count: dashboard.buckets.filter(b => b.severity <= 2).length, color: '#6B7280' },
+            { label: 'CRITICAL', count: filteredBuckets.filter(b => b.severity >= 5).length, color: '#EF4444' },
+            { label: 'HIGH', count: filteredBuckets.filter(b => b.severity === 4).length, color: '#F59E0B' },
+            { label: 'ELEVATED', count: filteredBuckets.filter(b => b.severity === 3).length, color: '#3B82F6' },
+            { label: 'WATCH', count: filteredBuckets.filter(b => b.severity <= 2).length, color: '#6B7280' },
           ].filter(s => s.count > 0).map(s => (
             <span key={s.label} style={{ fontSize: '9px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', backgroundColor: s.color + '15', color: s.color, border: `1px solid ${s.color}30` }}>
               {s.count} {s.label}
@@ -782,7 +824,7 @@ function BottleneckDashboard({ dashboard, isLoading, onOpenDrilldown }: { dashbo
       </div>
 
       {/* Bucket cards */}
-      {dashboard.buckets.map(bucket => {
+      {filteredBuckets.map(bucket => {
         const isExpanded = expandedBuckets.has(bucket.bucket_id);
         return (
           <div key={bucket.bucket_id} style={{ backgroundColor: '#111B35', border: `1px solid ${bucket.severity >= 4 ? bucket.severity_color + '40' : '#1E2D45'}`, borderRadius: '14px', overflow: 'hidden' }}>
@@ -1345,7 +1387,20 @@ export default function NewsFeedPage() {
       });
     }
 
-    return filtered;
+    // Deduplicate by id (and by headline+source as fallback) — backend may
+    // return the same article from multiple caches (persistent + live merge)
+    // which was causing duplicate rows in the bottleneck view.
+    const seen = new Set<string>();
+    const deduped: NewsArticle[] = [];
+    for (const a of filtered) {
+      const key = a.id
+        || `${(a.title || a.headline || '').toLowerCase().trim()}|${(a.source || a.source_name || '').toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(a);
+    }
+
+    return deduped;
   }, [
     allArticles,
     region,
@@ -1772,7 +1827,13 @@ export default function NewsFeedPage() {
       {/* ── Bottleneck Dashboard (category intelligence below articles) */}
       {showBottleneckDashboard && (
         <div style={{ marginBottom: '16px' }}>
-          <BottleneckDashboard dashboard={bnDashboard} isLoading={bnLoading} onOpenDrilldown={setDrilldownSubTag} />
+          <BottleneckDashboard
+            dashboard={bnDashboard}
+            isLoading={bnLoading}
+            onOpenDrilldown={setDrilldownSubTag}
+            bottleneckLevel={bottleneckLevel}
+            bottleneckCategory={bottleneckCategory}
+          />
         </div>
       )}
 
