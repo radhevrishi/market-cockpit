@@ -61,9 +61,10 @@ const BOTTLENECK_TTL = 7776000; // 90 days in seconds
 
 // ── Dimension A: Hardware / Infrastructure System Types ──
 // These are STABLE categories — they describe physical systems, not tech names.
-// New technologies (quantum, photonics, etc.) only enter when articles
-// describe them using these system-level terms WITH a constraint.
-const HARDWARE_SYSTEM = /(chip|semiconductor|wafer|fab|foundry|memory|dram|nand|hbm|packaging|chiplet|interconnect|data center|server|compute|gpu|network|infrastructure|grid|power|energy|reactor|nuclear|transmission|cooling|thermal|logistics|shipping|port|pipeline|refinery|manufacturing|production|assembly|supply chain)/i;
+// IMPORTANT: Keep this tight — overly generic words like "network", "infrastructure",
+// "production", "manufacturing" cause false positives (e.g. "Network18 Q4 results").
+// Each term must describe a PHYSICAL system that CAN have supply constraints.
+const HARDWARE_SYSTEM = /(chip|semiconductor|wafer|fab|foundry|memory|dram|nand|hbm|packaging|chiplet|interconnect|data center|server rack|compute cluster|gpu|tpu|ai accelerator|power grid|electricity grid|reactor|nuclear|transmission line|cooling system|thermal management|shipping container|port capacity|oil pipeline|refinery capacity|supply chain disruption)/i;
 
 // ── Dimension B: Physical Constraint Types ──
 // These are INVARIANT — they describe physical limits, not narratives.
@@ -78,8 +79,16 @@ const IMPLICIT_CONSTRAINT = /(surge in demand|demand spike|tight market|capacity
 // ── Hype / Noise suppression — these WITHOUT constraint = reject ──
 const HYPE_ONLY = /(launch|announce|startup|funding|raises|partnership|unveil|demo|prototype|proof of concept|pitch|accelerator|incubator|research breakthrough)/i;
 
-// ── India structural domains (current real bottlenecks, kept as-is) ──
-const INDIA_STRUCTURAL = /(nuclear (reactor|power|plant|energy|fuel|capacity|project|milestone)|atomic (reactor|energy)|thorium|breeder reactor|kalpakkam|kudankulam|npcil|bhavini|criticality|atomic energy commission|defence (order|procurement|deal|budget|corridor|export)|defense (order|procurement|contract|budget|spending)|drdo|isro|hal (order|deliver)|drug (shortage|approval)|usfda|fda (approval|warning)|api (supply|shortage)|pharma.*supply|bulk drug|monsoon|crop (failure|output|damage)|food inflation|fertilizer (shortage|subsidy)|agriculture crisis|infrastructure (order|bottleneck|spend)|highway (project|order|delay)|railway (order|electrif|expansion)|npa|credit (growth|crunch|squeeze)|nbfc (crisis|liquidity)|banking reform)/i;
+// ── India structural domains — HARD: always BOTTLENECK (physical system constraints) ──
+const INDIA_STRUCTURAL_HARD = /(nuclear (reactor|power|plant|energy|fuel|capacity|project|milestone)|atomic (reactor|energy)|thorium|breeder reactor|kalpakkam|kudankulam|npcil|bhavini|criticality|atomic energy commission|defence (order|procurement|deal|budget|corridor|export)|defense (order|procurement|contract|budget|spending)|drdo|isro|hal (order|deliver))/i;
+
+// ── India structural domains — SOFT: only BOTTLENECK when ALSO has constraint signal ──
+// These domains are real but articles about them are often earnings/macro/general news.
+// E.g., "ICICI Bank Q4 earnings with strong credit growth" should NOT be BOTTLENECK.
+const INDIA_STRUCTURAL_SOFT = /(drug (shortage|approval)|usfda|fda (approval|warning)|api (supply|shortage)|pharma.*supply|bulk drug|monsoon|crop (failure|output|damage)|food inflation|fertilizer (shortage|subsidy)|agriculture crisis|infrastructure (order|bottleneck|spend)|highway (project|order|delay)|railway (order|electrif|expansion)|npa|credit (crunch|squeeze)|nbfc (crisis|liquidity))/i;
+
+// Signals that the soft domain is actually a constraint (not just reporting)
+const INDIA_SOFT_CONSTRAINT = /(shortage|crisis|crunch|squeeze|bottleneck|constraint|delay|halt|suspend|capacity limit|underspend|overdue|stalled|backlog|supply gap)/i;
 
 // ── Supply chain company names (only fires WITH constraint) ──
 const SUPPLY_CHAIN_COMPANIES = /(tsmc|asml|applied materials|lam research|sk hynix|micron|samsung semiconductor|samsung foundry|intel foundry|globalfoundries|amkor|ase group|nvidia|amd|broadcom|qualcomm|infineon|nxp|onsemi|wolfspeed|coherent|lumentum|bhel|npcil|bhavini|l&t|siemens energy|ge vernova|cameco)/i;
@@ -213,6 +222,25 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
     return { article_type: 'GENERAL', investment_tier: 3 };
 
   // ══════════════════════════════════════════════════════════════════
+  // EARNINGS GATE — run BEFORE bottleneck rules to prevent earnings
+  // articles from being misclassified as BOTTLENECK just because they
+  // mention credit growth, supply chain companies, etc.
+  // "ICICI Bank beats Q4 earnings" should be EARNINGS, not BOTTLENECK.
+  // ══════════════════════════════════════════════════════════════════
+  const isEarningsArticle = /\b(earnings|quarterly results?|q[1-4]\s?(fy|20)|profit (up|down|rise|fall|beat|miss|jump|surge|decline)|revenue (up|down|rise|beat|miss|jump|surge|decline|growth)|results\s+(beat|miss|exceed|top)|beats? expectations?|miss(es|ed)? expectations?|guidance (raise|lower|maintain|reaffirm)|eps |net income|operating income|ebitda|bottom.?line|top.?line)\b/i.test(text);
+
+  // If it's clearly an earnings article AND not about a core constraint domain, classify as EARNINGS
+  if (isEarningsArticle) {
+    // Exception: memory/semi companies reporting supply constraints in earnings
+    const isCoreConstraintEarnings =
+      /(hbm|dram|nand|cowos|packaging capacity|chip shortage|wafer capacity|supply constraint|allocation|lead time)/i.test(text) &&
+      /(sk hynix|micron|samsung|tsmc|asml|intel foundry|nvidia)/i.test(text);
+    if (!isCoreConstraintEarnings) {
+      return { article_type: 'EARNINGS', investment_tier: 1 };
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════
   // UNIVERSAL BOTTLENECK RULE (no future edits needed)
   // HARDWARE_SYSTEM × PHYSICAL_CONSTRAINT → BOTTLENECK
   // ══════════════════════════════════════════════════════════════════
@@ -239,7 +267,7 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
   // Rule 2b: Implicit constraint detection (demand-side signals without explicit "shortage")
   // Captures: "HBM demand outstrips supply", "DRAM running hot", etc.
   if (
-    /(hbm|dram|nand|ddr5|memory|photonics|optical interconnect|co-packaged optics|cowos|advanced packaging)/i.test(text) &&
+    /(hbm|dram|nand|ddr5|photonics|optical interconnect|co-packaged optics|cowos|advanced packaging)/i.test(text) &&
     IMPLICIT_CONSTRAINT.test(text)
   ) {
     return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text), bottleneck_level: getBottleneckLevel(text) };
@@ -254,7 +282,6 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
   }
 
   // Rule 2d: Memory company + memory term (company-led signals)
-  // Memory bottlenecks are often announced via company earnings/guidance, not generic headlines
   if (
     /(sk hynix|micron|samsung)/i.test(text) &&
     /(hbm|dram|capacity|supply|allocation|lead time|pricing|margin|shortage)/i.test(text)
@@ -264,15 +291,21 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
 
   // Rule 2e: Enhanced memory detection (underweight area)
   if (
-    /(hbm3e?|dram|ddr5|nand|memory)/i.test(text) &&
+    /(hbm3e?|dram|ddr5|nand)/i.test(text) &&
     /(tight|shortage|undersupply|pricing pressure|allocation|lead time|constraint)/i.test(text)
   ) {
     return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text), bottleneck_level: getBottleneckLevel(text) };
   }
 
-  // Rule 3: India structural domains (nuclear, defence, pharma, agri, infra, banking)
-  // These are CURRENT real bottlenecks in Indian production supply chains
-  if (INDIA_STRUCTURAL.test(text)) {
+  // Rule 3a: India structural domains — HARD (always BOTTLENECK)
+  // Nuclear, defence, DRDO/ISRO — these are genuine structural bottlenecks
+  if (INDIA_STRUCTURAL_HARD.test(text)) {
+    return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text), bottleneck_level: getBottleneckLevel(text) };
+  }
+
+  // Rule 3b: India structural domains — SOFT (only BOTTLENECK with constraint signal)
+  // Pharma, agri, banking, infra — only when there's real constraint language
+  if (INDIA_STRUCTURAL_SOFT.test(text) && INDIA_SOFT_CONSTRAINT.test(text)) {
     return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text), bottleneck_level: getBottleneckLevel(text) };
   }
 
@@ -286,11 +319,7 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
     return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text), bottleneck_level: getBottleneckLevel(text) };
   }
 
-  // ── 2. EARNINGS ──
-  if (/earnings|quarterly|q[1-4]\s?(fy|20)|profit|revenue|results|beats? expectations?|miss(es|ed)? expectations?|guidance (raise|lower|maintain|reaffirm)|eps /i.test(text))
-    return { article_type: 'EARNINGS', investment_tier: 1 };
-
-  // ── 3. MARKET MOVES — index rallies, selloffs ──
+  // ── 2. MARKET MOVES — index rallies, selloffs ──
   if (/\b(dow|s&p|nasdaq|sensex|nifty|hang seng|nikkei)\b.{0,30}\b(surge|rally|jump|soar|rocket|climb|rise|fall|drop|crash|tank|slip|gain|lose)/i.test(text))
     return { article_type: 'MACRO', investment_tier: 2 };
 
@@ -322,7 +351,11 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
     return { article_type: 'MACRO', investment_tier: 1 };
 
   // ── 9. RATING CHANGES ──
-  if (/upgrade|downgrade|rating|target price|buy|sell|hold|outperform|underperform/i.test(text))
+  // Tightened: "buy" and "sell" alone are too broad (match almost everything).
+  // Require analyst-context: "rating", "target price", "upgrade to buy", etc.
+  if (/\b(upgrade[ds]?|downgrade[ds]?|target price|price target|outperform|underperform|overweight|underweight)\b/i.test(text))
+    return { article_type: 'RATING_CHANGE', investment_tier: 1 };
+  if (/\b(analyst|broker|brokerage|rating)\b.{0,20}\b(buy|sell|hold|neutral|accumulate|reduce)\b/i.test(text))
     return { article_type: 'RATING_CHANGE', investment_tier: 1 };
 
   // ── 10. CORPORATE ──
