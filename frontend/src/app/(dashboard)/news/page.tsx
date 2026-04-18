@@ -395,10 +395,11 @@ const JUNK_HEADLINE_PATTERNS = [
   /\bstocks? to (buy|sell|watch) (on|this) (monday|tuesday|wednesday|thursday|friday)/i,
   /\bjewellery stock to watch/i,
   /\brecommends? (three|two|five|3|2|5) stocks?\b/i,
-  /\b(buy or sell):?\s/i,
+  // Removed: /\b(buy or sell):?\s/i — killed legitimate analyst rating articles
 
   // Listicle investing clickbait with specific % claims
-  /\b(soars?|surge|jump)\s+\d{2,}%/i,
+  // NOTE: removed "soars/surge/jump X%" — this killed legitimate news like
+  // "TSMC revenue surges 35%". Kept only specific clickbait patterns.
   /\b\d+ (supercharged|unstoppable|incredible|explosive) .* stock/i,
   /\bultra-high-yielding dividend/i,
   /\bload up on these \d/i,
@@ -414,8 +415,7 @@ const JUNK_HEADLINE_PATTERNS = [
 
 const JUNK_SOURCE_PATTERNS = [
   /moneyist/i,
-  /yahoo finance us financials/i,
-  /yahoo tech semis/i,           // often clickbait disguised as tech/semi news
+  // Removed: yahoo finance us financials, yahoo tech semis — killed entire sources
 ];
 
 function isMarketRelevant(article: NewsArticle): boolean {
@@ -1387,14 +1387,13 @@ export default function NewsFeedPage() {
       });
     }
 
-    // Deduplicate by id (and by headline+source as fallback) — backend may
-    // return the same article from multiple caches (persistent + live merge)
-    // which was causing duplicate rows in the bottleneck view.
+    // Deduplicate by headline+source (NOT by id — backend IDs can collide
+    // when multiple articles share the same domain prefix). This catches
+    // true duplicates from persistent + live cache merge.
     const seen = new Set<string>();
     const deduped: NewsArticle[] = [];
     for (const a of filtered) {
-      const key = a.id
-        || `${(a.title || a.headline || '').toLowerCase().trim()}|${(a.source || a.source_name || '').toLowerCase()}`;
+      const key = `${(a.title || a.headline || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 60)}|${(a.source_name || a.source || '').toLowerCase()}`;
       if (seen.has(key)) continue;
       seen.add(key);
       deduped.push(a);

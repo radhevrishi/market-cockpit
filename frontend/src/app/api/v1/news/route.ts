@@ -455,8 +455,17 @@ async function fetchAllNews(): Promise<any[]> {
           const tickers = extractTickers(title);
           const region = detectRegion(title, desc, feed.region);
 
+          // Generate a unique ID from the full link+title — NOT just 20 chars
+          // of base64 (which only encodes the domain prefix and collides).
+          const idSource = link || title;
+          let hash = 0;
+          for (let ci = 0; ci < idSource.length; ci++) {
+            hash = ((hash << 5) - hash + idSource.charCodeAt(ci)) | 0;
+          }
+          const uniqueId = `rss-${Math.abs(hash).toString(36)}-${Buffer.from(idSource).toString('base64').slice(-12)}`;
+
           items.push({
-            id: `rss-${Buffer.from(link || title).toString('base64').slice(0, 20)}`,
+            id: uniqueId,
             title,
             headline: title,
             summary: desc.slice(0, 300),
@@ -508,7 +517,7 @@ async function fetchAllNews(): Promise<any[]> {
         const { article_type, investment_tier, bottleneck_sub_tag, bottleneck_level } = classifyArticle(inner, '');
         const tickers = extractTickers(inner);
         articles.push({
-          id: `ibef-${Buffer.from(href).toString('base64').slice(0, 20)}`,
+          id: `ibef-${Buffer.from(href).toString('base64').slice(-20)}`,
           title: inner, headline: inner, summary: '',
           source_name: 'IBEF', source: 'IBEF', source_url: fullUrl,
           published_at: new Date().toISOString(), region: 'IN',
@@ -529,7 +538,7 @@ async function fetchAllNews(): Promise<any[]> {
         const { article_type, investment_tier, bottleneck_sub_tag, bottleneck_level } = classifyArticle(inner, '');
         const tickers = extractTickers(inner);
         articles.push({
-          id: `ibef-${Buffer.from(href).toString('base64').slice(0, 20)}`,
+          id: `ibef-${Buffer.from(href).toString('base64').slice(-20)}`,
           title: inner, headline: inner, summary: '',
           source_name: 'IBEF', source: 'IBEF', source_url: fullUrl,
           published_at: new Date().toISOString(), region: 'IN',
