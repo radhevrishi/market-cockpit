@@ -1165,6 +1165,20 @@ export default function EarningsPage() {
           >
             90D
           </button>
+          <button
+            onClick={() => {
+              setDateFrom('');
+              setDateTo('');
+            }}
+            style={{
+              background: 'none', border: `1px solid ${CARD_BORDER}`, borderRadius: '4px',
+              color: TEXT_DIM, padding: '2px 6px', cursor: 'pointer', fontSize: '10px',
+              whiteSpace: 'nowrap',
+            }}
+            title="Show all dates — no date filter"
+          >
+            ALL
+          </button>
         </div>
 
         {['ALL', 'EXCELLENT', 'STRONG', 'GOOD', 'OK', 'BAD'].map(g => {
