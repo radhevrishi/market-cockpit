@@ -617,6 +617,12 @@ export default function EarningsPage() {
   const [sortBy, setSortBy] = useState<'score' | 'symbol' | 'revenueYoY' | 'patYoY'>('score');
   const [filterGrades, setFilterGrades] = useState<string[]>(['ALL']);
   const [viewMode, setViewMode] = useState<ViewMode>('watchlist');
+  // Date range filter — defaults to last 30 days → today
+  const [dateFrom, setDateFrom] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 30);
+    return d.toISOString().slice(0, 10);
+  });
+  const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
   const [portfolioSymbols, setPortfolioSymbols] = useState<string[]>([]);
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>([]);
   const [failedSymbols, setFailedSymbols] = useState<string[]>([]);
@@ -817,14 +823,36 @@ export default function EarningsPage() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   // Sort and filter
-  const sortedCards = useMemo(() =>
-    [...cards]
+  const sortedCards = useMemo(() => {
+    const fromDate = dateFrom ? new Date(dateFrom) : null;
+    const toDate = dateTo ? new Date(dateTo + 'T23:59:59') : null;
+
+    return [...cards]
       .filter(c => {
         // Filter by viewMode (universe membership)
         if (viewMode === 'portfolio' && c.universeTag !== 'portfolio' && c.universeTag !== 'both') return false;
         if (viewMode === 'watchlist' && c.universeTag !== 'watchlist' && c.universeTag !== 'both') return false;
         // Filter by grade
         if (!filterGrades.includes('ALL') && !filterGrades.includes(c.grade)) return false;
+        // ── Date range filter ──
+        // Use resultDate (when earnings were reported) if available, else fall back to quarter period
+        if (fromDate || toDate) {
+          let reportDate: Date | null = null;
+          // Try resultDate first (ISO string or parseable date)
+          if (c.resultDate && c.resultDate !== '-' && c.resultDate !== 'N/A') {
+            const parsed = new Date(c.resultDate);
+            if (!isNaN(parsed.getTime())) reportDate = parsed;
+          }
+          // Fall back to period (e.g. "Mar 2026") — use end of that month
+          if (!reportDate && c.period) {
+            reportDate = parseQuarterDate(c.period);
+          }
+          if (reportDate) {
+            if (fromDate && reportDate < fromDate) return false;
+            if (toDate && reportDate > toDate) return false;
+          }
+          // If no parseable date at all, keep the card (don't hide data)
+        }
         return true;
       })
       .sort((a, b) => {
@@ -834,8 +862,9 @@ export default function EarningsPage() {
           case 'patYoY': return (b.patYoY || -999) - (a.patYoY || -999);
           default: return b.totalScore - a.totalScore;
         }
-      }),
-    [cards, filterGrades, sortBy, viewMode]
+      });
+    },
+    [cards, filterGrades, sortBy, viewMode, dateFrom, dateTo]
   );
 
   // Compute aggregations
@@ -1059,6 +1088,66 @@ export default function EarningsPage() {
           <option value="revenueYoY">Sort: Revenue YoY</option>
           <option value="patYoY">Sort: PAT YoY</option>
         </select>
+
+        {/* Date Range Filter */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '6px',
+          backgroundColor: CARD, border: `1px solid ${CARD_BORDER}`, borderRadius: '6px',
+          padding: '4px 10px',
+        }}>
+          <span style={{ fontSize: '10px', color: TEXT_DIM, fontWeight: 600, whiteSpace: 'nowrap' }}>From</span>
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={e => setDateFrom(e.target.value)}
+            style={{
+              backgroundColor: 'transparent', border: 'none', color: TEXT,
+              fontSize: '12px', cursor: 'pointer', outline: 'none',
+              colorScheme: 'dark',
+            }}
+          />
+          <span style={{ fontSize: '10px', color: TEXT_DIM, fontWeight: 600, whiteSpace: 'nowrap' }}>To</span>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={e => setDateTo(e.target.value)}
+            style={{
+              backgroundColor: 'transparent', border: 'none', color: TEXT,
+              fontSize: '12px', cursor: 'pointer', outline: 'none',
+              colorScheme: 'dark',
+            }}
+          />
+          <button
+            onClick={() => {
+              const d = new Date(); d.setDate(d.getDate() - 30);
+              setDateFrom(d.toISOString().slice(0, 10));
+              setDateTo(new Date().toISOString().slice(0, 10));
+            }}
+            style={{
+              background: 'none', border: `1px solid ${CARD_BORDER}`, borderRadius: '4px',
+              color: TEXT_DIM, padding: '2px 6px', cursor: 'pointer', fontSize: '10px',
+              whiteSpace: 'nowrap',
+            }}
+            title="Reset to last 30 days"
+          >
+            30D
+          </button>
+          <button
+            onClick={() => {
+              const d = new Date(); d.setDate(d.getDate() - 90);
+              setDateFrom(d.toISOString().slice(0, 10));
+              setDateTo(new Date().toISOString().slice(0, 10));
+            }}
+            style={{
+              background: 'none', border: `1px solid ${CARD_BORDER}`, borderRadius: '4px',
+              color: TEXT_DIM, padding: '2px 6px', cursor: 'pointer', fontSize: '10px',
+              whiteSpace: 'nowrap',
+            }}
+            title="Reset to last 90 days"
+          >
+            90D
+          </button>
+        </div>
 
         {['ALL', 'EXCELLENT', 'STRONG', 'GOOD', 'OK', 'BAD'].map(g => {
           const isActive = filterGrades.includes(g);
