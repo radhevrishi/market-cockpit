@@ -102,39 +102,76 @@ export default function TickerSearch({
     setShowDropdown(merged.length > 0 || term.length >= 2);
     setSelectedIdx(-1);
 
-    // Step 2: If fewer than 3 local matches and term >= 2 chars, query API
+    // Step 2: If fewer than 3 local matches and term >= 2 chars, query APIs
+    // Uses /api/symbols (NSE catalog search by ticker + company name) as primary,
+    // then /api/market/quote for live price data on top matches.
     if (localMatches.length < 3 && term.length >= 2) {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(async () => {
-        // Abort any in-flight request to prevent stale results overwriting fresh ones
         if (abortRef.current) abortRef.current.abort();
         const controller = new AbortController();
         abortRef.current = controller;
         setSearching(true);
         try {
-          const res = await fetch(`/api/market/quote?symbols=${encodeURIComponent(term)}`, { signal: controller.signal });
-          if (res.ok) {
-            const data = await res.json();
-            const apiSugs: TickerSuggestion[] = (data.stocks || []).map((s: any) => ({
-              ticker: s.ticker,
-              company: s.company || s.ticker,
-              sector: s.sector || '—',
-              price: s.price || 0,
-              changePercent: s.changePercent || 0,
-            }));
-            setApiResults(apiSugs);
-            // Merge with local
-            const newMerged = [...localMatches];
-            for (const r of apiSugs) {
-              if (!newMerged.find(m => m.ticker === r.ticker)) newMerged.push(r);
-            }
-            setSuggestions(newMerged.slice(0, 10));
-            if (newMerged.length > 0) setShowDropdown(true);
+          // Search the full NSE symbol catalog (matches ticker AND company name)
+          const symbolRes = await fetch(
+            `/api/symbols?search=${encodeURIComponent(q.trim())}&limit=10`,
+            { signal: controller.signal },
+          );
+          let catalogSugs: TickerSuggestion[] = [];
+          if (symbolRes.ok) {
+            const symbolData = await symbolRes.json();
+            catalogSugs = (symbolData.results || []).map((s: any) => ({
+              ticker: s.symbol || s.ticker || '',
+              company: s.companyName || s.company || s.symbol || '',
+              sector: s.industry || s.sector || '—',
+              price: 0,
+              changePercent: 0,
+            })).filter((s: TickerSuggestion) => s.ticker);
           }
+
+          // Also try individual quote for exact ticker match (gets live price)
+          const cleanTicker = term.replace(/\s+/g, '');
+          if (/^[A-Z0-9&-]+$/.test(cleanTicker)) {
+            try {
+              const quoteRes = await fetch(
+                `/api/market/quote?symbols=${encodeURIComponent(cleanTicker)}`,
+                { signal: controller.signal },
+              );
+              if (quoteRes.ok) {
+                const quoteData = await quoteRes.json();
+                for (const s of (quoteData.stocks || [])) {
+                  const existing = catalogSugs.find(c => c.ticker === s.ticker);
+                  if (existing) {
+                    existing.price = s.price || 0;
+                    existing.changePercent = s.changePercent || 0;
+                    if (s.company) existing.company = s.company;
+                    if (s.sector) existing.sector = s.sector;
+                  } else {
+                    catalogSugs.unshift({
+                      ticker: s.ticker,
+                      company: s.company || s.ticker,
+                      sector: s.sector || '—',
+                      price: s.price || 0,
+                      changePercent: s.changePercent || 0,
+                    });
+                  }
+                }
+              }
+            } catch { /* quote fetch is best-effort */ }
+          }
+
+          setApiResults(catalogSugs);
+          const newMerged = [...localMatches];
+          for (const r of catalogSugs) {
+            if (!newMerged.find(m => m.ticker === r.ticker)) newMerged.push(r);
+          }
+          setSuggestions(newMerged.slice(0, 12));
+          if (newMerged.length > 0) setShowDropdown(true);
         } catch (e: any) {
           if (e?.name !== 'AbortError') console.error('Search API error:', e);
         } finally { setSearching(false); }
-      }, 400);
+      }, 350);
     }
   }, [quotes, apiResults, allowBulk]);
 
