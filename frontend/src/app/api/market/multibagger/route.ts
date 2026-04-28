@@ -1293,61 +1293,12 @@ export async function GET(request: NextRequest) {
     const watchlist = watchlistRaw ? watchlistRaw.split(',').map(s => s.trim().toUpperCase()).filter(s => s.length >= 2) : [];
     const allSymbols = Array.from(new Set([...portfolio, ...watchlist]));
 
-    // ── STATIC FALLBACK DATA: Last resort for symbols where ALL live sources fail ──
-    // Marked with source: 'Static' so the UI can show a badge. Updated periodically.
-    // Data from NSE/screener.in as of April 2026.
-    const STATIC_FALLBACK: Record<string, { company: string; sector: string; lastPrice: number; marketCapCr: number; pe: number | null; roe: number | null; opm: number | null; de: number | null; promoterPct: number | null }> = {
-      'HBLENGINE': { company: 'HBL Power Systems', sector: 'Industrial Manufacturing', lastPrice: 625, marketCapCr: 17400, pe: 48, roe: 22, opm: 16, de: 0.1, promoterPct: 56 },
-      'HBLPOWER': { company: 'HBL Power Systems', sector: 'Industrial Manufacturing', lastPrice: 625, marketCapCr: 17400, pe: 48, roe: 22, opm: 16, de: 0.1, promoterPct: 56 },
-      'APARINDS': { company: 'Apar Industries', sector: 'Cables', lastPrice: 7800, marketCapCr: 31200, pe: 38, roe: 28, opm: 10, de: 0.5, promoterPct: 55 },
-      'APARIND': { company: 'Apar Industries', sector: 'Cables', lastPrice: 7800, marketCapCr: 31200, pe: 38, roe: 28, opm: 10, de: 0.5, promoterPct: 55 },
-      'PRICOLLTD': { company: 'Pricol Limited', sector: 'Auto Ancillaries', lastPrice: 430, marketCapCr: 5200, pe: 28, roe: 18, opm: 12, de: 0.3, promoterPct: 48 },
-      'TDPOWERSYS': { company: 'TD Power Systems', sector: 'Capital Goods', lastPrice: 420, marketCapCr: 6800, pe: 45, roe: 15, opm: 14, de: 0.1, promoterPct: 58 },
-      'ENGINERSIN': { company: 'Engineers India Ltd', sector: 'Engineering', lastPrice: 185, marketCapCr: 10400, pe: 22, roe: 14, opm: 12, de: 0.0, promoterPct: 51 },
-      'ECLERX': { company: 'eClerx Services', sector: 'IT Services', lastPrice: 2600, marketCapCr: 11200, pe: 24, roe: 30, opm: 28, de: 0.0, promoterPct: 50 },
-      'JAMNAAUTO': { company: 'Jamna Auto Industries', sector: 'Auto Ancillaries', lastPrice: 105, marketCapCr: 4200, pe: 22, roe: 24, opm: 15, de: 0.1, promoterPct: 47 },
-      'DATAMATICS': { company: 'Datamatics Global Services', sector: 'IT Services', lastPrice: 510, marketCapCr: 3000, pe: 20, roe: 18, opm: 16, de: 0.1, promoterPct: 66 },
-      'SKIPPER': { company: 'Skipper Limited', sector: 'Capital Goods', lastPrice: 420, marketCapCr: 4300, pe: 32, roe: 16, opm: 10, de: 0.8, promoterPct: 55 },
-      'BALUFORGE': { company: 'Balu Forge Industries', sector: 'Industrial Manufacturing', lastPrice: 520, marketCapCr: 4000, pe: 35, roe: 14, opm: 18, de: 0.3, promoterPct: 60 },
-      'KPIGREEN': { company: 'KPI Green Energy', sector: 'Renewable Energy', lastPrice: 420, marketCapCr: 5200, pe: 32, roe: 18, opm: 22, de: 1.2, promoterPct: 62 },
-      'GARUDA': { company: 'Garuda Construction', sector: 'Construction', lastPrice: 110, marketCapCr: 1800, pe: 28, roe: 12, opm: 14, de: 0.5, promoterPct: 55 },
-      'INOXWIND': { company: 'Inox Wind Limited', sector: 'Renewable Energy', lastPrice: 180, marketCapCr: 20500, pe: null, roe: 8, opm: 10, de: 0.8, promoterPct: 47 },
-      'SAGILITY': { company: 'Sagility India', sector: 'IT Services', lastPrice: 38, marketCapCr: 17800, pe: 60, roe: 10, opm: 18, de: 0.2, promoterPct: 70 },
-      'SAGILITYWL': { company: 'Sagility India', sector: 'IT Services', lastPrice: 38, marketCapCr: 17800, pe: 60, roe: 10, opm: 18, de: 0.2, promoterPct: 70 },
-      'POWERMECH': { company: 'Power Mech Projects', sector: 'Engineering', lastPrice: 1850, marketCapCr: 2900, pe: 18, roe: 16, opm: 10, de: 0.6, promoterPct: 52 },
-      'ACMESOLAR': { company: 'Acme Solar Holdings', sector: 'Renewable Energy', lastPrice: 225, marketCapCr: 14500, pe: null, roe: 5, opm: 55, de: 3.5, promoterPct: 68 },
-      'RUBICON': { company: 'Rubicon Research', sector: 'Pharma', lastPrice: 55, marketCapCr: 1200, pe: null, roe: null, opm: 8, de: 1.0, promoterPct: 60 },
-      'DYNACONS': { company: 'Dynacons Systems', sector: 'IT Services', lastPrice: 1050, marketCapCr: 850, pe: 22, roe: 25, opm: 8, de: 0.1, promoterPct: 50 },
-      'JSLL': { company: 'JSL Lifestyle', sector: 'Consumer Durables', lastPrice: 90, marketCapCr: 900, pe: 25, roe: 12, opm: 8, de: 0.5, promoterPct: 55 },
-      'SENORES': { company: 'Senores Pharmaceuticals', sector: 'Pharma', lastPrice: 440, marketCapCr: 2800, pe: 30, roe: 15, opm: 20, de: 0.3, promoterPct: 58 },
-      'SMLMAH': { company: 'SML Isuzu (Mahindra)', sector: 'Automobiles', lastPrice: 1800, marketCapCr: 3400, pe: 35, roe: 10, opm: 6, de: 0.2, promoterPct: 51 },
-      'BELRISE': { company: 'Belrise Industries', sector: 'Auto Ancillaries', lastPrice: 55, marketCapCr: 4200, pe: null, roe: null, opm: 12, de: 1.5, promoterPct: 72 },
-      'IZMO': { company: 'IZMO Limited', sector: 'IT Services', lastPrice: 85, marketCapCr: 350, pe: 15, roe: 12, opm: 10, de: 0.1, promoterPct: 50 },
-      'LENSKART': { company: 'Lenskart Solutions', sector: 'Retail', lastPrice: 22, marketCapCr: 48000, pe: null, roe: null, opm: null, de: null, promoterPct: 30 },
-      'S&SPOWER': { company: 'S&S Power Switchgear', sector: 'Capital Goods', lastPrice: 360, marketCapCr: 1100, pe: 40, roe: 15, opm: 12, de: 0.2, promoterPct: 60 },
-      'SIGMA': { company: 'Sigma Solve Limited', sector: 'IT Services', lastPrice: 450, marketCapCr: 750, pe: 30, roe: 18, opm: 14, de: 0.1, promoterPct: 55 },
-      // Portfolio stocks — ensure scoring even under timeout
-      'HFCL': { company: 'HFCL Limited', sector: 'Telecom Equipment', lastPrice: 110, marketCapCr: 15800, pe: 38, roe: 14, opm: 16, de: 0.3, promoterPct: 38 },
-      'GRAVITA': { company: 'Gravita India', sector: 'Non-Ferrous Metals', lastPrice: 2100, marketCapCr: 14500, pe: 42, roe: 28, opm: 10, de: 0.4, promoterPct: 55 },
-      'CEINSYS': { company: 'Ceinsys Tech', sector: 'IT Services', lastPrice: 995, marketCapCr: 2500, pe: 55, roe: 18, opm: 15, de: 0.2, promoterPct: 52 },
-      'AEROFLEX': { company: 'Aeroflex Industries', sector: 'Industrial Products', lastPrice: 255, marketCapCr: 3400, pe: 45, roe: 16, opm: 18, de: 0.3, promoterPct: 60 },
-      'CPPLUS': { company: 'CP Plus (Aditya Infotech)', sector: 'Electronics', lastPrice: 680, marketCapCr: 5000, pe: 35, roe: 15, opm: 10, de: 0.2, promoterPct: 48 },
-      'DIXON': { company: 'Dixon Technologies', sector: 'Consumer Electronics', lastPrice: 15500, marketCapCr: 93000, pe: 120, roe: 25, opm: 5, de: 0.2, promoterPct: 34 },
-      'IKS': { company: 'IKS Health', sector: 'Healthcare IT', lastPrice: 580, marketCapCr: 4800, pe: 60, roe: 12, opm: 20, de: 0.1, promoterPct: 55 },
-      'PARAS': { company: 'Paras Defence', sector: 'Defence', lastPrice: 1050, marketCapCr: 4200, pe: 65, roe: 12, opm: 22, de: 0.2, promoterPct: 58 },
-      'QPOWER': { company: 'Quality Power Electrical', sector: 'Capital Goods', lastPrice: 470, marketCapCr: 5200, pe: 40, roe: 18, opm: 14, de: 0.4, promoterPct: 50 },
-      'JSWINFRA': { company: 'JSW Infrastructure', sector: 'Infrastructure', lastPrice: 300, marketCapCr: 63000, pe: 55, roe: 10, opm: 45, de: 0.6, promoterPct: 86 },
-      'DEEDEV': { company: 'Dee Development Engineers', sector: 'Engineering', lastPrice: 310, marketCapCr: 2200, pe: 32, roe: 15, opm: 12, de: 0.5, promoterPct: 52 },
-      'LUMAXTECH': { company: 'Lumax Auto Technologies', sector: 'Auto Ancillaries', lastPrice: 510, marketCapCr: 3500, pe: 28, roe: 18, opm: 9, de: 0.2, promoterPct: 53 },
-      'MTARTECH': { company: 'Mtar Technologies', sector: 'Defence/Aerospace', lastPrice: 1650, marketCapCr: 5100, pe: 70, roe: 10, opm: 22, de: 0.1, promoterPct: 52 },
-      // Symbols that frequently fail live data fetches
-      'SYRMA': { company: 'Syrma SGS Technology', sector: 'Industrial Products', lastPrice: 813, marketCapCr: 15700, pe: 65, roe: 12, opm: 8, de: 0.1, promoterPct: 55 },
-      'WAAREEENER': { company: 'Waaree Energies', sector: 'Renewable Energy', lastPrice: 3082, marketCapCr: 88700, pe: 80, roe: 30, opm: 18, de: 0.3, promoterPct: 68 },
-      'WELCORP': { company: 'Welspun Corp', sector: 'Steel', lastPrice: 865, marketCapCr: 22800, pe: 14, roe: 18, opm: 12, de: 0.5, promoterPct: 48 },
-      'SANSERA': { company: 'Sansera Engineering', sector: 'Auto Ancillaries', lastPrice: 2142, marketCapCr: 13300, pe: 42, roe: 14, opm: 15, de: 0.3, promoterPct: 53 },
-      'SAILIFE': { company: 'Sai Life Sciences', sector: 'Pharma', lastPrice: 945, marketCapCr: 20000, pe: 80, roe: 10, opm: 18, de: 0.4, promoterPct: 55 },
-      'SJS': { company: 'SJS Enterprises', sector: 'Auto Ancillaries', lastPrice: 1593, marketCapCr: 5100, pe: 55, roe: 12, opm: 20, de: 0.1, promoterPct: 58 },
-    };
+    // ── STATIC FALLBACK: REMOVED ──
+    // Static hardcoded data was causing stale prices and unreliable scores.
+    // If live data fails, symbols now show as "Data Unavailable" (NR) instead
+    // of misleading stale values. The KV cache (4h TTL) still retains live data
+    // across requests so successful fetches are reused without refetching.
+    const STATIC_FALLBACK: Record<string, { company: string; sector: string; lastPrice: number; marketCapCr: number; pe: number | null; roe: number | null; opm: number | null; de: number | null; promoterPct: number | null }> = {};
 
     // ── SYMBOL ALIAS MAP: NSE symbols that need alternate names on screener.in/Yahoo ──
     // Many NSE symbols have different representations across data sources.
