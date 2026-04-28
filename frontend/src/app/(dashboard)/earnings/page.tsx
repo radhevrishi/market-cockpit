@@ -834,19 +834,37 @@ export default function EarningsPage() {
         if (viewMode === 'watchlist' && c.universeTag !== 'watchlist' && c.universeTag !== 'both') return false;
         // Filter by grade
         if (!filterGrades.includes('ALL') && !filterGrades.includes(c.grade)) return false;
-        // ── Date range filter ──
-        // Use resultDate (when earnings were reported) if available, else fall back to quarter period
+        // ── Reporting Period Filter ──
+        // Determines when earnings were REPORTED (not when the quarter ended).
+        // - If resultDate is an actual date like "15-Apr-2026", use it directly.
+        // - If resultDate is just the quarter period like "Mar 2026", it means
+        //   Q4 FY26 ended March 31 — results are typically reported 15-45 days later.
+        //   So we use END of that month + 15 days as the estimated report date.
         if (fromDate || toDate) {
           let reportDate: Date | null = null;
-          // Try resultDate first (ISO string or parseable date)
+
+          // Try resultDate first (ISO string or full date like "15-Apr-2026 17:30:00")
           if (c.resultDate && c.resultDate !== '-' && c.resultDate !== 'N/A') {
-            const parsed = new Date(c.resultDate);
-            if (!isNaN(parsed.getTime())) reportDate = parsed;
+            // Check if it's a real date (not just "Mar 2026")
+            const isJustPeriod = /^[A-Za-z]{3,9}\s+\d{4}$/.test(c.resultDate.trim());
+            if (!isJustPeriod) {
+              // Try parsing as ISO / human date
+              const parsed = new Date(c.resultDate.replace(/(\d{2})-([A-Za-z]{3})-(\d{4})/, '$2 $1, $3'));
+              if (!isNaN(parsed.getTime())) reportDate = parsed;
+            }
           }
-          // Fall back to period (e.g. "Mar 2026") — use end of that month
+
+          // Fall back to period (e.g. "Mar 2026") with reporting lag estimate
           if (!reportDate && c.period) {
-            reportDate = parseQuarterDate(c.period);
+            const quarterEnd = parseQuarterDate(c.period);
+            if (quarterEnd) {
+              // Shift to end of month + 15 days to estimate actual report date.
+              // Q4 ending March → results typically reported mid-April.
+              const endOfMonth = new Date(quarterEnd.getFullYear(), quarterEnd.getMonth() + 1, 0);
+              reportDate = new Date(endOfMonth.getTime() + 15 * 24 * 60 * 60 * 1000);
+            }
           }
+
           if (reportDate) {
             if (fromDate && reportDate < fromDate) return false;
             if (toDate && reportDate > toDate) return false;

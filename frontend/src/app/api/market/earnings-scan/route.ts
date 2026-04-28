@@ -129,6 +129,7 @@ interface StoredEarnings {
   failureReasons?: string[];     // Why other sources failed
   fetchedAt: number;
   validatedAt: number;
+  broadcastDate?: string | null;  // Actual NSE result announcement date (e.g., "15-Apr-2026 17:30:00")
   guidance?: GuidanceData;       // Forward-looking sentiment from screener.in Pros/Cons
 }
 
@@ -426,7 +427,7 @@ const SOURCE_CONFIDENCE: Record<string, number> = {
 
 // ── Helper: Fetch NSE Financials (REAL PARSER) ──
 
-async function fetchNSEFinancials(symbol: string): Promise<{ quarters: QuarterFinancials[]; companyName: string; isBanking: boolean } | null> {
+async function fetchNSEFinancials(symbol: string): Promise<{ quarters: QuarterFinancials[]; companyName: string; isBanking: boolean; broadcastDate?: string | null } | null> {
   try {
     const data = await fetchCompanyFinancialResults(symbol);
     if (!data) return null;
@@ -517,8 +518,15 @@ async function fetchNSEFinancials(symbol: string): Promise<{ quarters: QuarterFi
       return true;
     });
 
-    console.log(`[NSE Parser] ${symbol}: Parsed ${deduped.length} quarters: ${deduped.map(q => q.period).join(', ')}`);
-    return { quarters: deduped, companyName, isBanking };
+    // Extract the most recent broadcast date for the card's resultDate
+    let latestBroadcastDate: string | null = null;
+    for (const row of results.slice(0, 2)) {
+      const bc = row.re_broadCast || row.broadcastDate || row.resultDate || '';
+      if (bc && bc.length > 6) { latestBroadcastDate = bc; break; }
+    }
+
+    console.log(`[NSE Parser] ${symbol}: Parsed ${deduped.length} quarters: ${deduped.map(q => q.period).join(', ')}${latestBroadcastDate ? ` · broadcast: ${latestBroadcastDate}` : ''}`);
+    return { quarters: deduped, companyName, isBanking, broadcastDate: latestBroadcastDate };
   } catch (err) {
     console.warn(`[NSE Parser] ${symbol} failed:`, (err as Error).message);
     return null;
@@ -1711,6 +1719,7 @@ async function buildEarningsCard(symbol: string): Promise<EarningsScanCard> {
       source: winner.source,
       sourceConfidence: finalConfidence,
       dataStatus,
+      broadcastDate: (nseData as any)?.broadcastDate || null,
       failureReasons: failureReasons.length > 0 ? failureReasons : undefined,
       fetchedAt: Date.now(), validatedAt: Date.now(),
       guidance: guidanceData || undefined,
@@ -1782,7 +1791,8 @@ function buildCardFromStoredData(data: StoredEarnings): EarningsScanCard | null 
     bookValue: null,
     sector: data.sector,
     isBanking: data.isBanking,
-  }, data.guidance || null);
+    broadcastDate: data.broadcastDate || null,
+  } as any, data.guidance || null);
 
   if (card) {
     card.source = data.source;
@@ -1887,7 +1897,8 @@ function buildCardFromData(data: ScreenerData, guidanceData?: GuidanceData | nul
     symbol: data.symbol,
     company: data.companyName,
     period: latest.period,
-    resultDate: `${latest.period.split(' ')[0]} ${latest.period.split(' ')[1]}`,
+    // Use actual broadcast date if available (from NSE data), else fall back to period
+    resultDate: (data as any).broadcastDate || `${latest.period.split(' ')[0]} ${latest.period.split(' ')[1]}`,
     reportType,
     quarters: displayQuarters,
     revenueYoY, revenueQoQ,
