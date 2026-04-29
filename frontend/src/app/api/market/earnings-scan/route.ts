@@ -141,8 +141,13 @@ function getGlobalStore(): Map<string, StoredEarnings> {
   return (globalThis as any).__MC_EARNINGS_STORE__;
 }
 
-const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
-const KV_CACHE_TTL_SECONDS = 6 * 60 * 60; // 6 hours in Redis (slightly longer than memory TTL)
+// ── Smart caching: per symbol per quarter ──
+// Earnings data for a completed quarter doesn't change. So once we have
+// TCS:Mar2026 data, we store it for 30 days (not 6 hours). Recompute
+// only triggers when a NEW quarter is detected (period changes).
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h in-memory freshness check
+const KV_CACHE_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days in Redis — earnings don't change retroactively
+const KV_CACHE_TTL_FRESH = 6 * 60 * 60; // 6h for data we suspect might update (latest quarter)
 
 // ══════════════════════════════════════════════
 // FETCH RESILIENCE HELPERS
@@ -183,18 +188,29 @@ async function fetchWithTimeout<T>(
   return null;
 }
 
-function isDataFresh(fetchedAt: number): boolean {
-  return Date.now() - fetchedAt < CACHE_TTL_MS;
+function isDataFresh(fetchedAt: number, period?: string): boolean {
+  // Settled quarters (>3 months old) stay fresh for 24h in memory
+  // Current quarters stay fresh for 6h (might get revisions)
+  const settled = period ? isQuarterSettled(period) : false;
+  const ttl = settled ? CACHE_TTL_MS : 6 * 60 * 60 * 1000;
+  return Date.now() - fetchedAt < ttl;
 }
 
-/** KV key for earnings cache */
+/** KV key: per symbol (latest known quarter).
+ *  Also stores a quarter-pinned key for long-term archival. */
 function earningsKvKey(symbol: string): string {
-  return `earnings:${symbol}`;
+  return `earnings:v2:${symbol}`;
+}
+function earningsQuarterKey(symbol: string, period: string): string {
+  return `earnings:q:${symbol}:${period.replace(/\s+/g, '')}`;
 }
 
-/** Try to load earnings data from KV store (Redis) */
+/** Try to load earnings data from KV store (Redis).
+ *  First checks the per-symbol key (latest), then falls back to
+ *  quarter-pinned keys for long-term cached data. */
 async function kvLoadEarnings(symbol: string): Promise<StoredEarnings | null> {
   try {
+    // Primary: latest earnings for this symbol
     const data = await kvGet<StoredEarnings>(earningsKvKey(symbol));
     if (data && data.symbol && data.quarters && data.quarters.length > 0) {
       return data;
@@ -205,15 +221,42 @@ async function kvLoadEarnings(symbol: string): Promise<StoredEarnings | null> {
   return null;
 }
 
-/** Save earnings data to KV store (Redis) + in-memory */
+/** Determine if a quarter is "current" (might still get revisions)
+ *  vs "settled" (safe to cache long-term). A quarter is settled if
+ *  it ended more than 3 months ago. */
+function isQuarterSettled(period: string): boolean {
+  const parts = period.trim().split(/\s+/);
+  if (parts.length < 2) return false;
+  const months: Record<string, number> = {
+    Jan:0, Feb:1, Mar:2, Apr:3, May:4, Jun:5,
+    Jul:6, Aug:7, Sep:8, Oct:9, Nov:10, Dec:11,
+  };
+  const m = months[parts[0]];
+  const y = parseInt(parts[1]);
+  if (m === undefined || isNaN(y)) return false;
+  const quarterEnd = new Date(y, m + 1, 0); // end of that month
+  const monthsSince = (Date.now() - quarterEnd.getTime()) / (30 * 24 * 60 * 60 * 1000);
+  return monthsSince > 3; // settled if >3 months since quarter end
+}
+
+/** Save earnings data to KV store (Redis) + in-memory.
+ *  Uses smart TTL: settled quarters get 30-day TTL, fresh quarters get 6h. */
 async function kvSaveEarnings(symbol: string, data: StoredEarnings): Promise<void> {
-  // Always save to in-memory
   const store = getGlobalStore();
   store.set(symbol, data);
 
-  // Also persist to KV (Redis) with TTL
+  const period = data.quarters?.[0]?.period || '';
+  const settled = period ? isQuarterSettled(period) : false;
+  const ttl = settled ? KV_CACHE_TTL_SECONDS : KV_CACHE_TTL_FRESH;
+
   try {
-    await kvSet(earningsKvKey(symbol), data, KV_CACHE_TTL_SECONDS);
+    // Save per-symbol (latest) with appropriate TTL
+    await kvSet(earningsKvKey(symbol), data, ttl);
+
+    // Also save quarter-pinned key for long-term (30 days always)
+    if (period) {
+      await kvSet(earningsQuarterKey(symbol, period), data, KV_CACHE_TTL_SECONDS);
+    }
   } catch (e) {
     console.warn(`[Earnings Cache] KV save failed for ${symbol}:`, e);
   }
@@ -1541,8 +1584,9 @@ async function buildEarningsCard(symbol: string): Promise<EarningsScanCard> {
 
   // Step 0: Check in-memory store first (fastest)
   let stored = store.get(symbol) || null;
-  if (stored && isDataFresh(stored.fetchedAt)) {
-    console.log(`[Earnings Scan] ${symbol}: Using fresh in-memory cache (${Math.round((Date.now() - stored.fetchedAt) / 60000)}min old)`);
+  const storedPeriod = stored?.quarters?.[0]?.period;
+  if (stored && isDataFresh(stored.fetchedAt, storedPeriod)) {
+    console.log(`[Earnings Scan] ${symbol}: Using fresh in-memory cache (${Math.round((Date.now() - stored.fetchedAt) / 60000)}min old, period: ${storedPeriod})`);
     dataAge = 'fresh';
     const card = buildCardFromStoredData(stored);
     if (card) {
@@ -1552,10 +1596,12 @@ async function buildEarningsCard(symbol: string): Promise<EarningsScanCard> {
   }
 
   // Step 0.5: Check KV store (Redis) — survives cold starts
-  if (!stored || !isDataFresh(stored?.fetchedAt || 0)) {
+  // With smart TTL, settled quarters are cached 30 days in KV
+  if (!stored || !isDataFresh(stored?.fetchedAt || 0, storedPeriod)) {
     const kvData = await kvLoadEarnings(symbol);
-    if (kvData && isDataFresh(kvData.fetchedAt)) {
-      console.log(`[Earnings Scan] ${symbol}: Using fresh KV cache (${Math.round((Date.now() - kvData.fetchedAt) / 60000)}min old)`);
+    const kvPeriod = kvData?.quarters?.[0]?.period;
+    if (kvData && isDataFresh(kvData.fetchedAt, kvPeriod)) {
+      console.log(`[Earnings Scan] ${symbol}: Using fresh KV cache (${Math.round((Date.now() - kvData.fetchedAt) / 60000)}min old, period: ${kvPeriod})`);
       store.set(symbol, kvData);
       stored = kvData;
       dataAge = 'fresh';

@@ -978,26 +978,41 @@ export default function EarningsPage() {
         return;
       }
 
-      // Batch symbols into groups of 30
+      // Batch symbols into groups of 30, run up to 3 batches in parallel
       const BATCH_SIZE = 30;
+      const PARALLEL = 3;
       let allCards: EarningsScanCard[] = [];
       let allFailed: string[] = [];
       let lastSummary: any = null;
       let lastSource = 'unknown';
       let lastUpdatedAt = new Date().toISOString();
 
+      const batches: string[][] = [];
       for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
-        const batch = symbols.slice(i, i + BATCH_SIZE);
-        // URL-encode symbols to handle & in tickers like M&M, S&SPOWER (BUG-04 fix)
-        const encodedSymbols = batch.map(s => encodeURIComponent(s)).join(',');
-        const res = await fetch(`/api/market/earnings-scan?symbols=${encodedSymbols}&debug=true`);
-        if (!res.ok) { console.error(`Batch ${i / BATCH_SIZE + 1} failed`); continue; }
-        const data: ScanResponse = await res.json();
-        allCards = [...allCards, ...(data.cards || [])];
-        if (data.failed) allFailed = [...allFailed, ...data.failed];
-        if (data.summary) lastSummary = data.summary;
-        if (data.source) lastSource = data.source;
-        if (data.updatedAt) lastUpdatedAt = data.updatedAt;
+        batches.push(symbols.slice(i, i + BATCH_SIZE));
+      }
+
+      // Process in waves of PARALLEL concurrent batches
+      for (let w = 0; w < batches.length; w += PARALLEL) {
+        const wave = batches.slice(w, w + PARALLEL);
+        const results = await Promise.allSettled(
+          wave.map(async (batch) => {
+            const encoded = batch.map(s => encodeURIComponent(s)).join(',');
+            const res = await fetch(`/api/market/earnings-scan?symbols=${encoded}&debug=true`);
+            if (!res.ok) return null;
+            return res.json() as Promise<ScanResponse>;
+          })
+        );
+        for (const r of results) {
+          if (r.status === 'fulfilled' && r.value) {
+            const data = r.value;
+            allCards = [...allCards, ...(data.cards || [])];
+            if (data.failed) allFailed = [...allFailed, ...data.failed];
+            if (data.summary) lastSummary = data.summary;
+            if (data.source) lastSource = data.source;
+            if (data.updatedAt) lastUpdatedAt = data.updatedAt;
+          }
+        }
       }
 
       // Tag each card with universe membership
@@ -1127,20 +1142,33 @@ export default function EarningsPage() {
         return;
       }
 
-      // Step 2: Fetch earnings in batches of 30
+      // Step 2: Fetch earnings in parallel batches (5 concurrent)
       const BATCH = 30;
+      const PARALLEL = 5;
       let allScCards: EarningsScanCard[] = [];
+      const scBatches: string[][] = [];
       for (let i = 0; i < screenerOnly.length; i += BATCH) {
-        const batch = screenerOnly.slice(i, i + BATCH);
-        const encoded = batch.map(s => encodeURIComponent(s)).join(',');
-        try {
-          const res = await fetch(`/api/market/earnings-scan?symbols=${encoded}`);
-          if (res.ok) {
-            const data: ScanResponse = await res.json();
-            const batchCards = (data.cards || []).map(c => ({ ...c, universeTag: 'screener' as const }));
+        scBatches.push(screenerOnly.slice(i, i + BATCH));
+      }
+
+      for (let w = 0; w < scBatches.length; w += PARALLEL) {
+        const wave = scBatches.slice(w, w + PARALLEL);
+        const results = await Promise.allSettled(
+          wave.map(async (batch) => {
+            const encoded = batch.map(s => encodeURIComponent(s)).join(',');
+            const res = await fetch(`/api/market/earnings-scan?symbols=${encoded}`);
+            if (!res.ok) return null;
+            return res.json() as Promise<ScanResponse>;
+          })
+        );
+        for (const r of results) {
+          if (r.status === 'fulfilled' && r.value) {
+            const batchCards = (r.value.cards || []).map(c => ({ ...c, universeTag: 'screener' as const }));
             allScCards = [...allScCards, ...batchCards];
           }
-        } catch { /* skip failed batches */ }
+        }
+        // Update progress after each wave
+        setScreenerCards(prev => [...prev, ...allScCards.slice(prev.length)]);
       }
 
       setScreenerCards(allScCards);
