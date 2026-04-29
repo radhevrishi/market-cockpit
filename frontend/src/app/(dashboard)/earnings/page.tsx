@@ -442,11 +442,22 @@ function FinancialTable({ card }: { card: EarningsScanCard }) {
 
 type CommentarySignal = 'POSITIVE' | 'MIXED' | 'RED_FLAG';
 
+// ══════════════════════════════════════════════
+// FORMAT: [TREND] | [QUALITY] | [DRIVER]
+//
+// TREND  = P&L direction (Beat / Strong / Mixed / Weak / Miss)
+// QUALITY = balance sheet + qualitative trust signal (Clean ✓ / Weak CF ⚠️ / Leverage-led ⚠️)
+// DRIVER  = root cause or anomaly (Margin expansion / Receivables ↑ / Exceptionals / etc.)
+//
+// Core question every line answers: "Can I trust this earnings print?"
+// ══════════════════════════════════════════════
+
 function generateEarningsCommentary(card: EarningsScanCard): { text: string; signal: CommentarySignal } | null {
   if (card.dataQuality === 'PRICE_ONLY' || card.quarters.length === 0) return null;
 
   const rev = card.revenueYoY;
   const pat = card.patYoY;
+  const eps = card.epsYoY;
   const q0 = card.quarters[0];
   const latestMonth = q0?.period?.split(' ')[0];
   const latestYear = parseInt(q0?.period?.split(' ')[1] || '0');
@@ -455,179 +466,159 @@ function generateEarningsCommentary(card: EarningsScanCard): { text: string; sig
     const y = parseInt(q.period.split(' ')[1]);
     return m === latestMonth && y === latestYear - 1;
   });
+  const prevQ = card.quarters[1] || null;
   const opmDelta = yoyQ ? q0.opm - yoyQ.opm : 0;
   const hasRev = rev !== null;
   const hasPat = pat !== null;
 
-  // ── Qualitative signals from screener.in Pros/Cons + guidance ──
+  // ── Qualitative signals from screener.in Pros/Cons ──
   const posKeys = (card.keyPhrasesPositive || []).map(k => k.toLowerCase());
   const negKeys = (card.keyPhrasesNegative || []).map(k => k.toLowerCase());
-  const guidance = card.guidance; // Positive / Neutral / Negative
-  const revOutlook = card.revenueOutlook; // Up / Flat / Down
-  const marginOutlook = card.marginOutlook; // Expanding / Stable / Contracting
-  const demandSignal = card.demandSignal; // Strong / Moderate / Weak
-  const capexSignal = card.capexSignal; // Expanding / Stable / Reducing
+  const guidance = card.guidance;
+  const marginOutlook = card.marginOutlook;
+  const capexSignal = card.capexSignal;
+  const demandSignal = card.demandSignal;
 
-  const hasDebtFree = posKeys.some(k => k.includes('debt free') || k.includes('zero debt'));
+  // Detect qualitative flags
+  const isDebtFree = posKeys.some(k => k.includes('debt free') || k.includes('zero debt'));
   const hasOrderBook = posKeys.some(k => k.includes('order') || k.includes('book'));
   const hasPromoterBuy = posKeys.some(k => k.includes('promoter') && k.includes('increas'));
   const hasHighDebt = negKeys.some(k => k.includes('debt') || k.includes('leverage') || k.includes('borrowing'));
-  const hasMarginPressure = negKeys.some(k => k.includes('margin') || k.includes('opm') || k.includes('profitability'));
-  const hasWorkingCapIssue = negKeys.some(k => k.includes('working capital') || k.includes('inventory') || k.includes('receivable') || k.includes('cash flow'));
+  const hasWCStress = negKeys.some(k => k.includes('working capital') || k.includes('inventory') || k.includes('receivable') || k.includes('cash flow'));
   const hasLowROE = negKeys.some(k => k.includes('roe') || k.includes('return on equity'));
 
-  // ── Narrative builder: combine numbers + qualitative context ──
+  // ── Build TREND ──
+  let trend: string;
+  if (!hasRev || !hasPat) {
+    trend = 'Mixed';
+  } else if (rev! > 15 && pat! > 20 && opmDelta >= 0) {
+    trend = 'Beat';
+  } else if (rev! > 10 && pat! > 10) {
+    trend = 'Strong';
+  } else if (rev! > 0 && pat! > 0) {
+    trend = rev! > 5 ? 'Strong' : 'Steady';
+  } else if (rev! > 5 && pat! <= 0) {
+    trend = 'Mixed';
+  } else if (rev! <= 0 && pat! <= 0) {
+    trend = rev! < -5 && pat! < -10 ? 'Miss' : 'Weak';
+  } else {
+    trend = 'Mixed';
+  }
+  if (q0.pat < 0) trend = 'Miss';
 
-  // CASE 1: Net loss quarter — always RED
+  // ── Build QUALITY ──
+  let quality: string;
+  let qualityIcon: string;
+  if (isDebtFree && !hasWCStress) {
+    quality = 'Clean'; qualityIcon = '✓';
+  } else if (hasHighDebt && hasWCStress) {
+    quality = 'Leverage + WC stress'; qualityIcon = '⚠️';
+  } else if (hasHighDebt) {
+    quality = 'Leverage-led'; qualityIcon = '⚠️';
+  } else if (hasWCStress) {
+    quality = 'Weak CF'; qualityIcon = '⚠️';
+  } else if (hasLowROE) {
+    quality = 'Low ROE'; qualityIcon = '⚠️';
+  } else if (isDebtFree) {
+    quality = 'Clean'; qualityIcon = '✓';
+  } else {
+    // Infer from margin + guidance
+    if (opmDelta > 2 && (trend === 'Beat' || trend === 'Strong')) {
+      quality = 'Clean'; qualityIcon = '✓';
+    } else if (opmDelta < -5) {
+      quality = 'Margin stress'; qualityIcon = '⚠️';
+    } else {
+      quality = 'Adequate'; qualityIcon = '–';
+    }
+  }
+
+  // ── Build DRIVER (the WHY — this is the institutional insight) ──
+  let driver: string;
+
   if (q0.pat < 0) {
-    const ctx = hasHighDebt ? 'High debt amplifying losses' : hasWorkingCapIssue ? 'Working capital strain visible' : 'Profitability under stress';
-    return { text: `${ctx}. Net loss quarter — ${guidance === 'Positive' ? 'but forward guidance constructive, watch for turnaround' : 'no clear recovery signal yet'}`, signal: 'RED_FLAG' };
-  }
-
-  // CASE 2: Revenue declining + PAT declining — RED unless guidance positive
-  if (hasRev && hasPat && rev! < -5 && pat! < -10) {
-    if (guidance === 'Positive' && (revOutlook === 'Up' || demandSignal === 'Strong')) {
-      return { text: `Weak quarter (rev/profit both down) but forward guidance positive with ${revOutlook === 'Up' ? 'revenue outlook improving' : 'demand signals intact'} — potential turnaround`, signal: 'MIXED' };
+    driver = hasHighDebt ? 'Interest burden driving losses' : 'Net loss — profitability broken';
+  } else if (hasRev && rev! > 30 && opmDelta < -4) {
+    // Hyper-growth with margin crush — scaling/FAI pattern
+    if (guidance === 'Positive' || marginOutlook === 'Expanding' || capexSignal === 'Expanding') {
+      driver = 'Growth investment phase — margin recovery guided';
+      quality = 'Investment phase'; qualityIcon = '→';
+    } else if (hasOrderBook) {
+      driver = 'Scaling into new segments — order visibility intact';
+      quality = 'Investment phase'; qualityIcon = '→';
+    } else {
+      driver = `Margin collapse ${Math.abs(opmDelta).toFixed(0)}pp — growth not converting`;
     }
-    const ctx = hasHighDebt ? 'Debt burden compounding the decline' : hasMarginPressure ? 'Structural margin pressure visible' : 'Cyclical or demand-driven headwinds';
-    return { text: `${ctx}. Broad fundamental decline — ${negKeys.length > 0 ? negKeys.slice(0, 2).join(', ') : 'monitor closely'}`, signal: 'RED_FLAG' };
-  }
-
-  // CASE 3: Revenue up but profit down sharply — context matters
-  if (hasRev && hasPat && rev! > 5 && pat! < -15) {
-    if (guidance === 'Positive' || capexSignal === 'Expanding' || hasOrderBook) {
-      const reason = capexSignal === 'Expanding' ? 'capex-led expansion phase' : hasOrderBook ? 'strong order book backing growth' : 'management guides recovery';
-      return { text: `Profit ↓ despite topline growth — ${reason}. Likely investment phase, not structural deterioration`, signal: 'MIXED' };
-    }
-    const reason = hasHighDebt ? 'rising interest costs eroding profits' : hasMarginPressure ? 'cost structure under pressure' : 'operating leverage absent';
-    return { text: `Growth without profits — ${reason}. ${hasWorkingCapIssue ? 'Working capital also strained' : 'Watch if margins recover with scale'}`, signal: 'RED_FLAG' };
-  }
-
-  // CASE 4: Margin crush (>5pp) with revenue growth — investment phase vs real problem
-  if (opmDelta < -5 && hasRev && rev! > 0) {
-    if (guidance === 'Positive' || marginOutlook === 'Expanding' || hasOrderBook || capexSignal === 'Expanding') {
-      const whyOk = marginOutlook === 'Expanding' ? 'margin recovery guided ahead' :
-                     hasOrderBook ? 'strong order book provides revenue visibility' :
-                     capexSignal === 'Expanding' ? 'capex expansion — scaling costs hitting margins temporarily' :
-                     'forward outlook constructive';
-      return { text: `OPM compressed ${Math.abs(opmDelta).toFixed(0)}pp but ${whyOk}. Growth investment phase — not structural decline`, signal: 'MIXED' };
-    }
-    if (rev! > 30) {
-      return { text: `Hyper-growth (${rev!.toFixed(0)}%) but margins compressed ${Math.abs(opmDelta).toFixed(0)}pp — new segment/customer ramp likely. Watch for stabilization`, signal: 'MIXED' };
-    }
-    const ctx = hasHighDebt ? 'Debt + margin compression = watch closely' : 'Operating leverage absent';
-    return { text: `${ctx} — OPM down ${Math.abs(opmDelta).toFixed(0)}pp. ${negKeys.length > 0 ? negKeys.slice(0, 2).join(', ') : 'No clear margin recovery signal'}`, signal: 'RED_FLAG' };
-  }
-
-  // CASE 5: Stellar all-round numbers
-  if (hasRev && hasPat && rev! > 20 && pat! > 25 && opmDelta >= 0) {
-    const qualitative = hasDebtFree ? 'Debt-free balance sheet amplifying returns' :
-                         hasOrderBook ? 'Strong order book provides forward visibility' :
-                         marginOutlook === 'Expanding' ? 'Margin expansion trajectory intact' :
-                         demandSignal === 'Strong' ? 'Demand signals remain robust' :
-                         hasPromoterBuy ? 'Promoter increasing stake — skin in the game' :
-                         'Operating leverage playing out';
-    return { text: `${qualitative}. Broad-based earnings beat with margin expansion`, signal: 'POSITIVE' };
-  }
-
-  // CASE 6: Strong growth with margin expansion
-  if (hasRev && hasPat && rev! > 10 && pat! > 15 && opmDelta > 1) {
-    const qualitative = hasDebtFree ? 'Debt-free, margins expanding — clean compounder' :
-                         capexSignal === 'Expanding' ? 'Growing + expanding capacity — scaling with discipline' :
-                         demandSignal === 'Strong' ? 'Strong demand + margin expansion = pricing power' :
-                         'Earnings quality improving — operating leverage visible';
-    return { text: `${qualitative}`, signal: 'POSITIVE' };
-  }
-
-  // CASE 7: Modest topline but strong profit growth (efficiency)
-  if (hasRev && hasPat && rev! >= 0 && rev! < 12 && pat! > 15 && opmDelta > 1) {
-    const qualitative = hasDebtFree ? 'Lean balance sheet driving profit disproportionate to revenue' :
-                         marginOutlook === 'Expanding' ? 'Operational efficiency unlocking margins' :
-                         'Cost optimization driving bottom line — profit growing faster than revenue';
-    return { text: `${qualitative}`, signal: 'POSITIVE' };
-  }
-
-  // CASE 8: High revenue growth (>50%) — hyper-growth context
-  if (hasRev && rev! > 50 && hasPat && pat! > 0) {
-    if (opmDelta < -3) {
-      const ctx = guidance === 'Positive' ? 'Mgmt guides margin recovery as programs mature' :
-                   hasOrderBook ? 'Strong order pipeline backing the growth trajectory' :
-                   'Monitor if margins stabilize with scale';
-      return { text: `Hyper-growth phase — new segments/customers ramping. ${ctx}`, signal: 'MIXED' };
-    }
-    const ctx = hasDebtFree ? 'Scaling debt-free — rare at this growth rate' :
-                 hasOrderBook ? 'Order book provides multi-quarter visibility' :
-                 'Execution at scale — margins holding despite rapid growth';
-    return { text: `${ctx}`, signal: 'POSITIVE' };
-  }
-
-  // CASE 9: Revenue growing, profit lagging
-  if (hasRev && hasPat && rev! > 10 && pat! >= 0 && pat! < rev! * 0.4) {
+  } else if (hasRev && hasPat && rev! > 5 && pat! < -10) {
+    driver = hasHighDebt ? 'Finance costs eroding operating gains' :
+             hasWCStress ? 'Working capital consuming operating profit' :
+             'Cost structure outpacing revenue growth';
+  } else if (opmDelta > 3 && hasPat && pat! > 15) {
+    driver = 'Margin expansion driving earnings leverage';
+  } else if (opmDelta > 1 && isDebtFree) {
+    driver = 'Debt-free + margins expanding';
+  } else if (opmDelta < -3 && hasPat && pat! > 0) {
     if (guidance === 'Positive' || marginOutlook === 'Expanding') {
-      return { text: `Topline outpacing profits — ${marginOutlook === 'Expanding' ? 'but margin recovery guided' : 'forward guidance constructive'}. Execution phase, watch margin trajectory`, signal: 'MIXED' };
+      driver = `OPM ↓ ${Math.abs(opmDelta).toFixed(0)}pp — management guides recovery`;
+    } else {
+      driver = `OPM ↓ ${Math.abs(opmDelta).toFixed(0)}pp — no recovery signal`;
     }
-    const ctx = hasMarginPressure ? 'Input cost / competitive pressure on margins' :
-                 hasWorkingCapIssue ? 'Working capital consuming operating gains' :
-                 hasHighDebt ? 'Finance costs eating into operating profit' :
-                 'Growth not yet converting to bottom line';
-    return { text: `${ctx}. Revenue growing but profit leverage missing`, signal: 'MIXED' };
+  } else if (hasRev && hasPat && rev! < -5 && pat! < -10) {
+    driver = demandSignal === 'Weak' ? 'Demand deterioration' :
+             hasHighDebt ? 'Debt + declining demand' :
+             guidance === 'Positive' ? 'Cyclical trough — recovery guided' :
+             'Broad-based decline';
+  } else if (hasRev && hasPat && rev! > 0 && pat! > 0 && pat! < rev! * 0.3) {
+    driver = hasWCStress ? 'Revenue growing but cash conversion weak' :
+             hasHighDebt ? 'Finance costs capping profit conversion' :
+             'Topline growth not flowing to bottom line';
+  } else if (isDebtFree && hasOrderBook) {
+    driver = 'Debt-free with order visibility';
+  } else if (isDebtFree) {
+    driver = 'Clean balance sheet';
+  } else if (hasOrderBook) {
+    driver = 'Order book provides visibility';
+  } else if (hasPromoterBuy) {
+    driver = 'Promoter increasing stake';
+  } else if (guidance === 'Positive' && demandSignal === 'Strong') {
+    driver = 'Demand strong, guidance constructive';
+  } else if (guidance === 'Negative') {
+    driver = 'Forward guidance cautious';
+  } else if (negKeys.length > 0) {
+    driver = negKeys.slice(0, 2).join(', ');
+  } else if (posKeys.length > 0) {
+    driver = posKeys.slice(0, 2).join(', ');
+  } else {
+    driver = trend === 'Beat' || trend === 'Strong' ? 'Steady execution' : 'Limited visibility';
   }
 
-  // CASE 10: Flat quarter
-  if (hasRev && Math.abs(rev!) < 5 && hasPat && Math.abs(pat!) < 8) {
-    if (guidance === 'Positive' || revOutlook === 'Up') {
-      return { text: `Flat quarter but forward outlook constructive — ${revOutlook === 'Up' ? 'revenue recovery expected' : 'management guides improvement'}`, signal: 'MIXED' };
-    }
-    if (guidance === 'Negative' || demandSignal === 'Weak') {
-      return { text: `Stagnant quarter with weak forward signals — ${demandSignal === 'Weak' ? 'demand softening' : 'outlook cautious'}. No near-term catalyst`, signal: 'RED_FLAG' };
-    }
-    const ctx = hasDebtFree ? 'Balance sheet clean but growth stalling' : 'Consolidation phase — no clear catalyst';
-    return { text: `${ctx}`, signal: 'MIXED' };
+  // ── Compose the 3-block line ──
+  const text = `${trend} | ${quality} ${qualityIcon} | ${driver}`;
+
+  // ── Signal from trend + quality ──
+  let signal: CommentarySignal;
+  if (trend === 'Miss' || (trend === 'Weak' && qualityIcon === '⚠️')) {
+    signal = 'RED_FLAG';
+  } else if (trend === 'Beat' && qualityIcon !== '⚠️') {
+    signal = 'POSITIVE';
+  } else if (trend === 'Strong' && qualityIcon !== '⚠️') {
+    signal = 'POSITIVE';
+  } else if (trend === 'Weak' || trend === 'Miss') {
+    signal = 'RED_FLAG';
+  } else if (trend === 'Mixed' || qualityIcon === '⚠️' || qualityIcon === '→') {
+    signal = 'MIXED';
+  } else if (trend === 'Steady') {
+    signal = quality === 'Clean' ? 'POSITIVE' : 'MIXED';
+  } else {
+    signal = 'MIXED';
   }
 
-  // CASE 11: Mild margin contraction with growth
-  if (hasRev && hasPat && rev! > 5 && pat! > 0 && opmDelta < -1) {
-    const ctx = hasMarginPressure ? 'Input costs / mix change pressuring margins' :
-                 hasHighDebt ? 'Finance costs weighing on margins' :
-                 hasWorkingCapIssue ? 'Working capital buildup impacting cash conversion' :
-                 'Mild margin pressure — monitor if temporary or structural';
-    return { text: `${ctx}`, signal: pat! > 10 ? 'POSITIVE' : 'MIXED' };
-  }
-
-  // CASE 12: Healthy growth — add qualitative context
-  if (hasRev && hasPat && rev! > 5 && pat! > 5) {
-    const qualitative = hasDebtFree ? 'Debt-free compounder — clean earnings' :
-                         hasOrderBook ? 'Order book provides earnings visibility' :
-                         demandSignal === 'Strong' ? 'Demand backdrop strong' :
-                         guidance === 'Positive' ? 'Forward guidance positive' :
-                         hasPromoterBuy ? 'Promoter conviction visible' :
-                         'Steady execution';
-    return { text: `${qualitative}`, signal: 'POSITIVE' };
-  }
-
-  // CASE 13: Revenue declining but profits stable (cost cutting)
-  if (hasRev && hasPat && rev! < -3 && pat! > 0) {
-    return { text: `Revenue declining but profitability held — likely cost restructuring or mix improvement. ${guidance === 'Positive' ? 'Forward outlook constructive' : 'Sustainability uncertain'}`, signal: 'MIXED' };
-  }
-
-  // Fallback: use whatever qualitative signals we have
-  if (negKeys.length > 0 && posKeys.length === 0) {
-    return { text: `Key concerns: ${negKeys.slice(0, 3).join(', ')}`, signal: 'RED_FLAG' };
-  }
-  if (posKeys.length > 0 && negKeys.length === 0) {
-    return { text: `Key strengths: ${posKeys.slice(0, 3).join(', ')}`, signal: 'POSITIVE' };
-  }
-  if (posKeys.length > 0 && negKeys.length > 0) {
-    return { text: `Strengths: ${posKeys.slice(0, 2).join(', ')} | Risks: ${negKeys.slice(0, 2).join(', ')}`, signal: 'MIXED' };
-  }
-
-  return null;
+  return { text, signal };
 }
 
 const COMMENTARY_COLORS: Record<CommentarySignal, { bg: string; border: string; text: string; icon: string }> = {
-  POSITIVE:  { bg: '#10B98110', border: '#10B98130', text: '#10B981', icon: '▲' },
+  POSITIVE:  { bg: '#10B98110', border: '#10B98130', text: '#10B981', icon: '✓' },
   MIXED:     { bg: '#F59E0B10', border: '#F59E0B30', text: '#F59E0B', icon: '●' },
-  RED_FLAG:  { bg: '#EF444410', border: '#EF444430', text: '#EF4444', icon: '▼' },
+  RED_FLAG:  { bg: '#EF444410', border: '#EF444430', text: '#EF4444', icon: '⚠' },
 };
 
 // ══════════════════════════════════════════════
@@ -719,20 +710,33 @@ function EarningsCardComponent({ card }: { card: EarningsScanCard }) {
         </div>
       )}
 
-      {/* Earnings Commentary — one-line institutional insight */}
+      {/* Earnings Verdict — institutional 3-block: TREND | QUALITY | DRIVER */}
       {(() => {
         const commentary = generateEarningsCommentary(card);
         if (!commentary) return null;
         const colors = COMMENTARY_COLORS[commentary.signal];
+        // Split on pipes for individual block styling
+        const blocks = commentary.text.split(' | ');
         return (
           <div style={{
-            padding: '8px 16px', borderTop: `1px solid ${CARD_BORDER}`,
-            backgroundColor: colors.bg, display: 'flex', alignItems: 'flex-start', gap: '8px',
+            padding: '7px 16px', borderTop: `1px solid ${CARD_BORDER}`,
+            backgroundColor: colors.bg, display: 'flex', alignItems: 'center', gap: '6px',
           }}>
-            <span style={{ fontSize: '13px', lineHeight: '1', flexShrink: 0, marginTop: '1px' }}>{colors.icon}</span>
-            <span style={{ fontSize: '11px', color: colors.text, fontWeight: 600, lineHeight: '1.45' }}>
-              {commentary.text}
-            </span>
+            <span style={{ fontSize: '12px', flexShrink: 0 }}>{colors.icon}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap', fontSize: '11px', fontWeight: 600, lineHeight: '1.4' }}>
+              {blocks.map((block, i) => (
+                <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  {i === 0 ? (
+                    <span style={{ color: colors.text, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.3px' }}>{block}</span>
+                  ) : i === 1 ? (
+                    <span style={{ color: '#8899AA' }}>{block}</span>
+                  ) : (
+                    <span style={{ color: colors.text }}>{block}</span>
+                  )}
+                  {i < blocks.length - 1 && <span style={{ color: '#2A3B4C', margin: '0 2px' }}>|</span>}
+                </span>
+              ))}
+            </div>
           </div>
         );
       })()}
