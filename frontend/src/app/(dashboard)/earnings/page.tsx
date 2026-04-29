@@ -638,32 +638,48 @@ function generateEarningsCommentary(card: EarningsScanCard): { text: string; for
   const dem = card.demandSignal;
   const mar = card.marginOutlook;
 
-  let forward: string;
-  if (label === 'Miss') {
-    if (g === 'Positive') forward = 'Management guides recovery; watch for execution';
-    else if (hasHighDebt) forward = 'Debt overhang limits recovery optionality';
-    else forward = 'No visible catalyst for near-term recovery';
-  } else if (label === 'Mixed') {
-    if (cap === 'Expanding' && (g === 'Positive' || mar === 'Expanding')) forward = 'Capex expanding; margins should recover as projects mature';
-    else if (mar === 'Expanding' || g === 'Positive') forward = 'Margin recovery guided; operating leverage should improve';
-    else if (hasOrderBook) forward = 'Order pipeline intact; execution key to margin inflection';
-    else if (opmDelta < -5 && hasRev && rev! > 30) forward = 'Hyper-growth phase; margins should stabilize with scale';
-    else forward = 'Forward visibility limited; monitor next quarter for direction';
-  } else if (label === 'Beat') {
-    if (cap === 'Expanding' && isDebtFree) forward = 'Expanding capacity debt-free; runway for sustained compounding';
-    else if (mar === 'Expanding' && dem === 'Strong') forward = 'Demand strong and margins expanding; positive operating leverage';
-    else if (g === 'Positive' && hasOrderBook) forward = 'Positive guidance backed by order visibility';
-    else if (isDebtFree) forward = 'Clean balance sheet supports sustained earnings growth';
-    else if (hasWCStress) forward = 'Watch working capital; cash conversion must improve';
-    else if (g === 'Positive') forward = 'Forward guidance constructive';
-    else forward = 'Execution strong; sustain trajectory to confirm';
-  } else {
-    if (mar === 'Expanding' && isDebtFree) forward = 'Margins expanding on clean balance sheet; compounding visible';
-    else if (g === 'Positive' && cap === 'Expanding') forward = 'Capacity addition underway; growth runway ahead';
-    else if (isDebtFree && hasOrderBook) forward = 'Debt-free with order visibility; structural tailwind';
-    else if (g === 'Positive') forward = 'Forward guidance constructive';
-    else if (opmDelta < -2) forward = 'Monitor if margin pressure is cyclical or structural';
-    else forward = 'Steady trajectory; watch for margin or growth inflection';
+  // ── LINE 2: FORWARD — only from REAL qualitative signals ──
+  // Show ONLY when backed by actual screener.in Pros/Cons data.
+  // If no real signal → empty string → line not rendered.
+  // No templated filler like "clean balance sheet supports growth".
+  const hasRealGuidance = g === 'Positive' || g === 'Negative';
+  const hasRealCapex = cap === 'Expanding' || cap === 'Reducing';
+  const hasRealDemand = dem === 'Strong' || dem === 'Weak';
+  const hasRealMargin = mar === 'Expanding' || mar === 'Contracting';
+  const hasAnyRealSignal = hasRealGuidance || hasRealCapex || hasRealDemand || hasRealMargin
+    || posKeys.length > 0 || negKeys.length > 0;
+
+  let forward = '';
+  if (hasAnyRealSignal) {
+    // Build from actual signals only
+    const parts: string[] = [];
+
+    // Guidance direction (from screener Pros/Cons sentiment)
+    if (g === 'Positive') parts.push('Forward guidance positive');
+    else if (g === 'Negative') parts.push('Forward guidance cautious');
+
+    // Capex signal
+    if (cap === 'Expanding') parts.push('capex expanding');
+    else if (cap === 'Reducing') parts.push('capex reducing');
+
+    // Demand signal
+    if (dem === 'Strong') parts.push('demand strong');
+    else if (dem === 'Weak') parts.push('demand weakening');
+
+    // Margin outlook
+    if (mar === 'Expanding') parts.push('margins expanding');
+    else if (mar === 'Contracting') parts.push('margins contracting');
+
+    // Key Pros/Cons phrases (the actual screener.in data)
+    if (posKeys.length > 0 && negKeys.length > 0) {
+      parts.push(`Pros: ${posKeys.slice(0, 2).join(', ')}; Risks: ${negKeys.slice(0, 2).join(', ')}`);
+    } else if (posKeys.length > 0) {
+      parts.push(`Pros: ${posKeys.slice(0, 3).join(', ')}`);
+    } else if (negKeys.length > 0) {
+      parts.push(`Risks: ${negKeys.slice(0, 3).join(', ')}`);
+    }
+
+    forward = parts.join(' · ');
   }
 
   const text = `${label} | ${driver}`;
@@ -1598,6 +1614,21 @@ export default function EarningsPage() {
             title="Reset to last 30 days"
           >
             30D
+          </button>
+          <button
+            onClick={() => {
+              const d = new Date(); d.setDate(d.getDate() - 60);
+              setDateFrom(d.toISOString().slice(0, 10));
+              setDateTo(new Date().toISOString().slice(0, 10));
+            }}
+            style={{
+              background: 'none', border: `1px solid ${CARD_BORDER}`, borderRadius: '4px',
+              color: TEXT_DIM, padding: '2px 6px', cursor: 'pointer', fontSize: '10px',
+              whiteSpace: 'nowrap',
+            }}
+            title="Reset to last 60 days"
+          >
+            60D
           </button>
           <button
             onClick={() => {
