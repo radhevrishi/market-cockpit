@@ -885,21 +885,83 @@ export default function EarningsPage() {
     [cards, filterGrades, sortBy, viewMode, dateFrom, dateTo]
   );
 
-  // Compute aggregations
+  // ── Visible cards: filtered by viewMode + date, but NOT grade ──
+  // Used for summary counts so the grade buttons show accurate numbers.
+  const visibleCards = useMemo(() => {
+    const fromDate = dateFrom ? new Date(dateFrom) : null;
+    const toDate = dateTo ? new Date(dateTo + 'T23:59:59') : null;
+
+    return cards.filter(c => {
+      // Filter by viewMode
+      if (viewMode === 'portfolio' && c.universeTag !== 'portfolio' && c.universeTag !== 'both') return false;
+      if (viewMode === 'watchlist' && c.universeTag !== 'watchlist' && c.universeTag !== 'both') return false;
+      // Date filter (same logic as sortedCards)
+      if (fromDate || toDate) {
+        let reportDate: Date | null = null;
+        if (c.resultDate && c.resultDate !== '-' && c.resultDate !== 'N/A') {
+          const isJustPeriod = /^[A-Za-z]{3,9}\s+\d{4}$/.test(c.resultDate.trim());
+          if (!isJustPeriod) {
+            const parsed = new Date(c.resultDate.replace(/(\d{2})-([A-Za-z]{3})-(\d{4})/, '$2 $1, $3'));
+            if (!isNaN(parsed.getTime())) reportDate = parsed;
+          }
+        }
+        if (!reportDate && c.period) {
+          const quarterEnd = parseQuarterDate(c.period);
+          if (quarterEnd) {
+            const endOfMonth = new Date(quarterEnd.getFullYear(), quarterEnd.getMonth() + 1, 0);
+            reportDate = new Date(endOfMonth.getTime() + 15 * 24 * 60 * 60 * 1000);
+          }
+        }
+        if (reportDate) {
+          if (fromDate && reportDate < fromDate) return false;
+          if (toDate && reportDate > toDate) return false;
+        }
+      }
+      return true;
+    });
+  }, [cards, viewMode, dateFrom, dateTo]);
+
+  // Compute aggregations from visible cards (respects date + viewMode)
   const portfolioAgg = useMemo(() =>
-    computeAggregation(cards.filter(c => c.universeTag === 'portfolio' || c.universeTag === 'both'), 'PORTFOLIO SUMMARY'),
-    [cards]
+    computeAggregation(visibleCards.filter(c => c.universeTag === 'portfolio' || c.universeTag === 'both'), 'PORTFOLIO SUMMARY'),
+    [visibleCards]
   );
 
   const watchlistAgg = useMemo(() =>
-    computeAggregation(cards.filter(c => c.universeTag === 'watchlist' || c.universeTag === 'both'), 'WATCHLIST SUMMARY'),
-    [cards]
+    computeAggregation(visibleCards.filter(c => c.universeTag === 'watchlist' || c.universeTag === 'both'), 'WATCHLIST SUMMARY'),
+    [visibleCards]
   );
 
+  // Live grade counts from visible cards (what user will see when clicking each grade)
+  const liveSummary = useMemo(() => {
+    const vc = visibleCards;
+    const withGuidance = vc.filter(c => c.guidance);
+    return {
+      total: vc.length,
+      excellent: vc.filter(c => c.grade === 'EXCELLENT').length,
+      strong: vc.filter(c => c.grade === 'STRONG').length,
+      good: vc.filter(c => c.grade === 'GOOD').length,
+      ok: vc.filter(c => c.grade === 'OK').length,
+      bad: vc.filter(c => c.grade === 'BAD').length,
+      avgScore: vc.length > 0 ? vc.reduce((s, c) => s + c.totalScore, 0) / vc.length : 0,
+      guidanceCoverage: withGuidance.length,
+      guidancePositive: withGuidance.filter(c => c.guidance === 'Positive').length,
+      guidanceNeutral: withGuidance.filter(c => c.guidance === 'Neutral').length,
+      guidanceNegative: withGuidance.filter(c => c.guidance === 'Negative').length,
+      avgSentiment: withGuidance.length > 0 ? withGuidance.reduce((s, c) => s + (c.sentimentScore || 0), 0) / withGuidance.length : 0,
+      divergences: vc.filter(c => c.divergence && c.divergence !== 'None').length,
+      dataQualityBreakdown: {
+        full: vc.filter(c => c.dataQuality === 'FULL').length,
+        partial: vc.filter(c => c.dataQuality === 'PARTIAL').length,
+        priceOnly: vc.filter(c => c.dataQuality === 'PRICE_ONLY').length,
+      },
+    };
+  }, [visibleCards]);
+
   // Show actual card count (with data) vs total requested symbols
-  const portfolioCardCount = cards.filter(c => c.universeTag === 'portfolio' || c.universeTag === 'both').length;
-  const watchlistCardCount = cards.filter(c => c.universeTag === 'watchlist' || c.universeTag === 'both').length;
-  const bothCardCount = cards.length;
+  const portfolioCardCount = visibleCards.filter(c => c.universeTag === 'portfolio' || c.universeTag === 'both').length;
+  const watchlistCardCount = visibleCards.filter(c => c.universeTag === 'watchlist' || c.universeTag === 'both').length;
+  const bothCardCount = visibleCards.length;
 
   const VIEW_TABS: { key: ViewMode; label: string; emoji: string; count: number; total: number }[] = [
     { key: 'portfolio', label: 'Portfolio', emoji: '💼', count: portfolioCardCount, total: portfolioSymbols.length },
@@ -1236,17 +1298,17 @@ export default function EarningsPage() {
         </div>
       )}
 
-      {/* Grade Summary Bar */}
-      {summary && !loading && (
+      {/* Grade Summary Bar — uses liveSummary (respects viewMode + date filter) */}
+      {!loading && visibleCards.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '12px', marginBottom: '24px' }}>
           {[
-            { label: 'Total', value: summary.total, color: ACCENT },
-            { label: 'EXCELLENT', value: summary.excellent || 0, color: '#7C3AED' },
-            { label: 'STRONG', value: summary.strong, color: '#00C853' },
-            { label: 'GOOD', value: summary.good, color: '#4CAF50' },
-            { label: 'OK', value: summary.ok, color: '#FFD600' },
-            { label: 'BAD', value: summary.bad, color: '#F44336' },
-            { label: 'Avg Score', value: summary.avgScore, color: ACCENT },
+            { label: 'Total', value: liveSummary.total, color: ACCENT },
+            { label: 'EXCELLENT', value: liveSummary.excellent, color: '#7C3AED' },
+            { label: 'STRONG', value: liveSummary.strong, color: '#00C853' },
+            { label: 'GOOD', value: liveSummary.good, color: '#4CAF50' },
+            { label: 'OK', value: liveSummary.ok, color: '#FFD600' },
+            { label: 'BAD', value: liveSummary.bad, color: '#F44336' },
+            { label: 'Avg Score', value: liveSummary.avgScore, color: ACCENT },
           ].map(s => (
             <div key={s.label} style={{ backgroundColor: CARD, border: `1px solid ${CARD_BORDER}`, borderRadius: '8px', padding: '12px 16px', textAlign: 'center' }}>
               <div style={{ fontSize: '10px', color: TEXT_DIM, textTransform: 'uppercase', marginBottom: '4px' }}>{s.label}</div>
@@ -1258,35 +1320,35 @@ export default function EarningsPage() {
         </div>
       )}
 
-      {/* Guidance Sentiment Aggregation */}
-      {summary && !loading && (summary.guidanceCoverage || 0) > 0 && (
+      {/* Guidance Sentiment Aggregation — uses liveSummary */}
+      {!loading && liveSummary.guidanceCoverage > 0 && (
         <div style={{
           display: 'flex', gap: '16px', marginBottom: '16px', alignItems: 'center', flexWrap: 'wrap',
           backgroundColor: CARD, border: `1px solid ${CARD_BORDER}`, borderRadius: '8px', padding: '10px 16px',
         }}>
           <span style={{ fontSize: '10px', color: TEXT_DIM, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Forward Guidance</span>
-          <span style={{ fontSize: '12px', color: TEXT_DIM }}>{summary.guidanceCoverage} of {summary.total} covered</span>
-          <span style={{ fontSize: '12px', color: '#10B981', fontWeight: 600 }}>▲ Positive: {summary.guidancePositive}</span>
-          <span style={{ fontSize: '12px', color: '#F59E0B', fontWeight: 600 }}>● Neutral: {summary.guidanceNeutral}</span>
-          <span style={{ fontSize: '12px', color: '#EF4444', fontWeight: 600 }}>▼ Negative: {summary.guidanceNegative}</span>
-          <span style={{ fontSize: '12px', color: (summary.avgSentiment || 0) > 0 ? '#10B981' : (summary.avgSentiment || 0) < 0 ? '#EF4444' : TEXT_DIM, fontWeight: 700 }}>
-            Avg Sentiment: {(summary.avgSentiment || 0) > 0 ? '+' : ''}{(summary.avgSentiment || 0).toFixed(3)}
+          <span style={{ fontSize: '12px', color: TEXT_DIM }}>{liveSummary.guidanceCoverage} of {liveSummary.total} covered</span>
+          <span style={{ fontSize: '12px', color: '#10B981', fontWeight: 600 }}>▲ Positive: {liveSummary.guidancePositive}</span>
+          <span style={{ fontSize: '12px', color: '#F59E0B', fontWeight: 600 }}>● Neutral: {liveSummary.guidanceNeutral}</span>
+          <span style={{ fontSize: '12px', color: '#EF4444', fontWeight: 600 }}>▼ Negative: {liveSummary.guidanceNegative}</span>
+          <span style={{ fontSize: '12px', color: liveSummary.avgSentiment > 0 ? '#10B981' : liveSummary.avgSentiment < 0 ? '#EF4444' : TEXT_DIM, fontWeight: 700 }}>
+            Avg Sentiment: {liveSummary.avgSentiment > 0 ? '+' : ''}{liveSummary.avgSentiment.toFixed(3)}
           </span>
-          {(summary.divergences || 0) > 0 && (
+          {liveSummary.divergences > 0 && (
             <span style={{ fontSize: '11px', color: '#F59E0B', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '3px' }}>
-              ⚡ {summary.divergences} Divergence{(summary.divergences || 0) > 1 ? 's' : ''}
+              ⚡ {liveSummary.divergences} Divergence{liveSummary.divergences > 1 ? 's' : ''}
             </span>
           )}
         </div>
       )}
 
       {/* Data Quality + Completeness Gate */}
-      {summary && !loading && (
+      {!loading && visibleCards.length > 0 && (
         <div style={{ display: 'flex', gap: '16px', marginBottom: '20px', fontSize: '11px', color: TEXT_DIM, flexWrap: 'wrap', alignItems: 'center' }}>
-          <span style={{ color: GREEN }}>● Full: {summary.dataQualityBreakdown.full}</span>
-          <span style={{ color: YELLOW }}>● Partial: {summary.dataQualityBreakdown.partial}</span>
-          <span style={{ color: RED }}>● Price Only: {summary.dataQualityBreakdown.priceOnly}</span>
-          <span>Showing {sortedCards.length} of {cards.length}</span>
+          <span style={{ color: GREEN }}>● Full: {liveSummary.dataQualityBreakdown.full}</span>
+          <span style={{ color: YELLOW }}>● Partial: {liveSummary.dataQualityBreakdown.partial}</span>
+          <span style={{ color: RED }}>● Price Only: {liveSummary.dataQualityBreakdown.priceOnly}</span>
+          <span>Showing {sortedCards.length} of {visibleCards.length}{visibleCards.length < cards.length ? ` (${cards.length} total)` : ''}</span>
           {/* Data completeness ratio */}
           {(() => {
             const totalRequested = viewMode === 'portfolio' ? portfolioSymbols.length : viewMode === 'watchlist' ? watchlistSymbols.length : new Set([...portfolioSymbols, ...watchlistSymbols]).size;
