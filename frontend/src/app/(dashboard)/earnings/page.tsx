@@ -638,48 +638,95 @@ function generateEarningsCommentary(card: EarningsScanCard): { text: string; for
   const dem = card.demandSignal;
   const mar = card.marginOutlook;
 
-  // ── LINE 2: FORWARD — only from REAL qualitative signals ──
-  // Show ONLY when backed by actual screener.in Pros/Cons data.
-  // If no real signal → empty string → line not rendered.
-  // No templated filler like "clean balance sheet supports growth".
-  const hasRealGuidance = g === 'Positive' || g === 'Negative';
-  const hasRealCapex = cap === 'Expanding' || cap === 'Reducing';
-  const hasRealDemand = dem === 'Strong' || dem === 'Weak';
-  const hasRealMargin = mar === 'Expanding' || mar === 'Contracting';
-  const hasAnyRealSignal = hasRealGuidance || hasRealCapex || hasRealDemand || hasRealMargin
-    || posKeys.length > 0 || negKeys.length > 0;
+  // ── LINE 2: QUALITY & INFLECTION — pattern detection from financials ──
+  // Detects: divergences, cash quality flags, operating leverage shifts,
+  // margin inflection, inorganic distortion, one-off items. Every statement
+  // must be backed by data in the card — no filler.
+
+  const fwdRevQoQ = card.revenueQoQ;
+  // Check if margins are improving sequentially (QoQ)
+  const fwdQoqOpmUp = prevQ ? q0.opm > prevQ.opm : false;
+  const fwdQoqOpmDelta = prevQ ? q0.opm - prevQ.opm : 0;
+  // Revenue acceleration: QoQ growth > YoY growth = accelerating
+  const isAccelerating = fwdRevQoQ !== null && hasRev && fwdRevQoQ > 0 && rev! > 0 && fwdRevQoQ > rev! * 0.5;
+  // Profit quality: PAT growing much faster than revenue = operating leverage
+  const hasOpLeverage = hasRev && hasPat && rev! > 5 && pat! > rev! * 1.5 && opmDelta > 0;
+  // Profit quality: PAT growing much slower than revenue = deleverage
+  const hasDeleverage = hasRev && hasPat && rev! > 10 && pat! < rev! * 0.3 && pat! > 0;
 
   let forward = '';
-  if (hasAnyRealSignal) {
-    // Build from actual signals only
-    const parts: string[] = [];
+  const insights: string[] = [];
 
-    // Guidance direction (from screener Pros/Cons sentiment)
-    if (g === 'Positive') parts.push('Forward guidance positive');
-    else if (g === 'Negative') parts.push('Forward guidance cautious');
+  // ── QUALITY FLAGS (from financial data) ──
 
-    // Capex signal
-    if (cap === 'Expanding') parts.push('capex expanding');
-    else if (cap === 'Reducing') parts.push('capex reducing');
+  // PAT growing but on declining margins over multiple quarters
+  if (hasPat && pat! > 10 && opmDelta < -3 && fwdQoqOpmDelta < -1) {
+    insights.push('profit growth masks deteriorating margin trend');
+  }
 
-    // Demand signal
-    if (dem === 'Strong') parts.push('demand strong');
-    else if (dem === 'Weak') parts.push('demand weakening');
+  // Revenue up strongly but PAT flat/down = cost blow-up
+  if (hasRev && rev! > 20 && hasPat && pat! < 5 && pat! > -10) {
+    insights.push('revenue surge not reaching bottom line');
+  }
 
-    // Margin outlook
-    if (mar === 'Expanding') parts.push('margins expanding');
-    else if (mar === 'Contracting') parts.push('margins contracting');
+  // Working capital + profit divergence
+  if (hasWCStress && hasPat && pat! > 15) {
+    insights.push('strong profits but cash quality weakened by receivables');
+  }
 
-    // Key Pros/Cons phrases (the actual screener.in data)
+  // High debt eating into otherwise good operating performance
+  if (hasHighDebt && hasRev && rev! > 10 && hasPat && pat! < rev! * 0.5 && pat! > 0) {
+    insights.push('finance costs capping profit conversion');
+  }
+
+  // Net loss despite revenue growth
+  if (q0.pat < 0 && hasRev && rev! > 0) {
+    insights.push('losses despite revenue growth — cost base unsustainable');
+  }
+
+  // ── INFLECTION SIGNALS ──
+
+  // Operating leverage: profit growing much faster than revenue with margin expansion
+  if (hasOpLeverage) {
+    insights.push('operating leverage visible — margins expanding with scale');
+  }
+
+  // Revenue acceleration (QoQ momentum picking up)
+  if (isAccelerating && !hasOpLeverage) {
+    insights.push('revenue momentum accelerating sequentially');
+  }
+
+  // Margin inflection: OPM was declining YoY but improving QoQ = potential turnaround
+  if (opmDelta < -2 && fwdQoqOpmUp && fwdQoqOpmDelta > 1) {
+    insights.push('margin inflection visible — QoQ recovery despite YoY decline');
+  }
+
+  // Capex expanding (from screener data — real signal)
+  if (cap === 'Expanding') {
+    insights.push('capex expanding — capacity addition underway');
+  }
+
+  // Deleverage warning: revenue growing but profit not following
+  if (hasDeleverage && insights.length === 0) {
+    insights.push('growth not translating to profit — operating deleverage');
+  }
+
+  // ── SCREENER PROS/CONS (real qualitative data) ──
+  if (insights.length === 0) {
+    // Only fall back to Pros/Cons if no financial pattern detected
     if (posKeys.length > 0 && negKeys.length > 0) {
-      parts.push(`Pros: ${posKeys.slice(0, 2).join(', ')}; Risks: ${negKeys.slice(0, 2).join(', ')}`);
-    } else if (posKeys.length > 0) {
-      parts.push(`Pros: ${posKeys.slice(0, 3).join(', ')}`);
+      insights.push(`${posKeys.slice(0, 2).join(', ')}; but ${negKeys.slice(0, 2).join(', ')}`);
     } else if (negKeys.length > 0) {
-      parts.push(`Risks: ${negKeys.slice(0, 3).join(', ')}`);
+      insights.push(negKeys.slice(0, 3).join(', '));
+    } else if (posKeys.length > 0) {
+      insights.push(posKeys.slice(0, 3).join(', '));
     }
+  }
 
-    forward = parts.join(' · ');
+  if (insights.length > 0) {
+    // Capitalize first letter
+    const combined = insights.slice(0, 2).join('; ');
+    forward = combined.charAt(0).toUpperCase() + combined.slice(1);
   }
 
   const text = `${label} | ${driver}`;
