@@ -83,7 +83,7 @@ interface EarningsScanCard {
   screenerUrl: string;
   nseUrl: string;
   // Extended: which universe the stock belongs to
-  universeTag?: 'portfolio' | 'watchlist' | 'both';
+  universeTag?: 'portfolio' | 'watchlist' | 'both' | 'screener';
 }
 
 interface ScanResponse {
@@ -116,7 +116,7 @@ interface ScanResponse {
   requestedSymbols?: string[];
 }
 
-type ViewMode = 'portfolio' | 'watchlist' | 'both';
+type ViewMode = 'portfolio' | 'watchlist' | 'both' | 'screener';
 
 // ── Aggregation Types ──
 
@@ -683,8 +683,8 @@ const COMMENTARY_COLORS: Record<CommentarySignal, { bg: string; border: string; 
 // ══════════════════════════════════════════════
 
 function EarningsCardComponent({ card }: { card: EarningsScanCard }) {
-  const tagColor = card.universeTag === 'portfolio' ? '#10B981' : card.universeTag === 'both' ? '#8B5CF6' : ACCENT;
-  const tagLabel = card.universeTag === 'portfolio' ? 'PORTFOLIO' : card.universeTag === 'both' ? 'BOTH' : 'WATCHLIST';
+  const tagColor = card.universeTag === 'portfolio' ? '#10B981' : card.universeTag === 'both' ? '#8B5CF6' : card.universeTag === 'screener' ? '#F59E0B' : ACCENT;
+  const tagLabel = card.universeTag === 'portfolio' ? 'PORTFOLIO' : card.universeTag === 'both' ? 'BOTH' : card.universeTag === 'screener' ? 'SCREENER' : 'WATCHLIST';
 
   // Check if data is stale (>6 months old) and cap score at 40 if >4 quarters old
   const staleData = isDataStale(card.period, 6);
@@ -904,6 +904,11 @@ export default function EarningsPage() {
   const [portfolioSymbols, setPortfolioSymbols] = useState<string[]>([]);
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>([]);
   const [failedSymbols, setFailedSymbols] = useState<string[]>([]);
+  // Screener tab: separate universe — loaded on demand, never mixed into portfolio/watchlist
+  const [screenerCards, setScreenerCards] = useState<EarningsScanCard[]>([]);
+  const [screenerLoading, setScreenerLoading] = useState(false);
+  const [screenerLoaded, setScreenerLoaded] = useState(false);
+  const [screenerSymbolCount, setScreenerSymbolCount] = useState(0);
 
   const fetchData = useCallback(async (forceRefresh = false) => {
     // Tab cache check
@@ -1098,18 +1103,78 @@ export default function EarningsPage() {
     }
   }, []);
 
+  // ── Screener earnings: fetch ALL NSE stocks, then scan earnings in batches ──
+  const fetchScreenerEarnings = useCallback(async () => {
+    if (screenerLoaded) return; // Already loaded — don't refetch
+    setScreenerLoading(true);
+    try {
+      // Step 1: Get all NSE stock tickers from the quotes API
+      const quotesRes = await fetch('/api/market/quotes?market=india');
+      if (!quotesRes.ok) throw new Error('Failed to fetch stock list');
+      const quotesData = await quotesRes.json();
+      const allStocks: string[] = (quotesData.stocks || []).map((s: any) => s.ticker).filter(Boolean);
+
+      // Exclude portfolio + watchlist symbols (they're already in the main cards)
+      const pfSet = new Set(portfolioSymbols);
+      const wlSet = new Set(watchlistSymbols);
+      const screenerOnly = allStocks.filter(s => !pfSet.has(s) && !wlSet.has(s));
+      setScreenerSymbolCount(screenerOnly.length);
+
+      if (screenerOnly.length === 0) {
+        setScreenerCards([]);
+        setScreenerLoaded(true);
+        setScreenerLoading(false);
+        return;
+      }
+
+      // Step 2: Fetch earnings in batches of 30
+      const BATCH = 30;
+      let allScCards: EarningsScanCard[] = [];
+      for (let i = 0; i < screenerOnly.length; i += BATCH) {
+        const batch = screenerOnly.slice(i, i + BATCH);
+        const encoded = batch.map(s => encodeURIComponent(s)).join(',');
+        try {
+          const res = await fetch(`/api/market/earnings-scan?symbols=${encoded}`);
+          if (res.ok) {
+            const data: ScanResponse = await res.json();
+            const batchCards = (data.cards || []).map(c => ({ ...c, universeTag: 'screener' as const }));
+            allScCards = [...allScCards, ...batchCards];
+          }
+        } catch { /* skip failed batches */ }
+      }
+
+      setScreenerCards(allScCards);
+      setScreenerLoaded(true);
+    } catch (err) {
+      console.error('[Screener Earnings]', err);
+    } finally {
+      setScreenerLoading(false);
+    }
+  }, [screenerLoaded, portfolioSymbols, watchlistSymbols]);
+
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Trigger screener fetch only when user switches to Screener tab
+  useEffect(() => {
+    if (viewMode === 'screener' && !screenerLoaded && !screenerLoading) {
+      fetchScreenerEarnings();
+    }
+  }, [viewMode, screenerLoaded, screenerLoading, fetchScreenerEarnings]);
 
   // Sort and filter
   const sortedCards = useMemo(() => {
     const fromDate = dateFrom ? new Date(dateFrom) : null;
     const toDate = dateTo ? new Date(dateTo + 'T23:59:59') : null;
 
-    return [...cards]
+    // Screener tab uses completely separate data — never mixed
+    const sourceCards = viewMode === 'screener' ? screenerCards : cards;
+
+    return [...sourceCards]
       .filter(c => {
         // Filter by viewMode (universe membership)
-        if (viewMode === 'portfolio' && c.universeTag !== 'portfolio' && c.universeTag !== 'both') return false;
-        if (viewMode === 'watchlist' && c.universeTag !== 'watchlist' && c.universeTag !== 'both') return false;
+        if (viewMode === 'screener') { /* show all screener cards */ }
+        else if (viewMode === 'portfolio' && c.universeTag !== 'portfolio' && c.universeTag !== 'both') return false;
+        else if (viewMode === 'watchlist' && c.universeTag !== 'watchlist' && c.universeTag !== 'both') return false;
         // Filter by grade
         if (!filterGrades.includes('ALL') && !filterGrades.includes(c.grade)) return false;
         // ── Reporting Period Filter ──
@@ -1166,7 +1231,7 @@ export default function EarningsPage() {
         }
       });
     },
-    [cards, filterGrades, sortBy, viewMode, dateFrom, dateTo, guidanceFilter]
+    [cards, screenerCards, filterGrades, sortBy, viewMode, dateFrom, dateTo, guidanceFilter]
   );
 
   // ── Visible cards: filtered by viewMode + date, but NOT grade ──
@@ -1175,10 +1240,13 @@ export default function EarningsPage() {
     const fromDate = dateFrom ? new Date(dateFrom) : null;
     const toDate = dateTo ? new Date(dateTo + 'T23:59:59') : null;
 
-    return cards.filter(c => {
+    const sourceCards = viewMode === 'screener' ? screenerCards : cards;
+
+    return sourceCards.filter(c => {
       // Filter by viewMode
-      if (viewMode === 'portfolio' && c.universeTag !== 'portfolio' && c.universeTag !== 'both') return false;
-      if (viewMode === 'watchlist' && c.universeTag !== 'watchlist' && c.universeTag !== 'both') return false;
+      if (viewMode === 'screener') { /* show all */ }
+      else if (viewMode === 'portfolio' && c.universeTag !== 'portfolio' && c.universeTag !== 'both') return false;
+      else if (viewMode === 'watchlist' && c.universeTag !== 'watchlist' && c.universeTag !== 'both') return false;
       // Date filter (same logic as sortedCards)
       if (fromDate || toDate) {
         let reportDate: Date | null = null;
@@ -1209,7 +1277,7 @@ export default function EarningsPage() {
       }
       return true;
     });
-  }, [cards, viewMode, dateFrom, dateTo, guidanceFilter]);
+  }, [cards, screenerCards, viewMode, dateFrom, dateTo, guidanceFilter]);
 
   // Compute aggregations from visible cards (respects date + viewMode)
   const portfolioAgg = useMemo(() =>
@@ -1257,6 +1325,7 @@ export default function EarningsPage() {
     { key: 'portfolio', label: 'Portfolio', emoji: '💼', count: portfolioCardCount, total: portfolioSymbols.length },
     { key: 'watchlist', label: 'Watchlist', emoji: '📋', count: watchlistCardCount, total: watchlistSymbols.length },
     { key: 'both', label: 'Both', emoji: '🔗', count: bothCardCount, total: new Set([...portfolioSymbols, ...watchlistSymbols]).size },
+    { key: 'screener', label: 'Screener', emoji: '🔍', count: screenerCards.length, total: screenerSymbolCount },
   ];
 
   // ── PDF Download ──
@@ -1598,8 +1667,19 @@ export default function EarningsPage() {
         </div>
       </div>
 
-      {/* Aggregation Panels */}
-      {!loading && cards.length > 0 && (
+      {/* Screener Loading State */}
+      {viewMode === 'screener' && screenerLoading && (
+        <div style={{ textAlign: 'center', padding: '60px 20px' }}>
+          <div style={{ width: '44px', height: '44px', border: `3px solid ${CARD_BORDER}`, borderTop: `3px solid ${ACCENT}`, borderRadius: '50%', margin: '0 auto 16px', animation: 'spin 1s linear infinite' }} />
+          <p style={{ color: TEXT_DIM, margin: 0 }}>Scanning earnings for {screenerSymbolCount} screener stocks...</p>
+          <p style={{ color: TEXT_DIM, margin: '8px 0 0', fontSize: '12px' }}>This may take 30-60 seconds (fetching from multiple sources in batches)</p>
+          <p style={{ color: TEXT_DIM, margin: '4px 0 0', fontSize: '11px' }}>{screenerCards.length} loaded so far</p>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        </div>
+      )}
+
+      {/* Aggregation Panels — not for screener */}
+      {!loading && viewMode !== 'screener' && cards.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: viewMode === 'both' ? '1fr 1fr' : '1fr', gap: '16px', marginBottom: '24px' }}>
           {(viewMode === 'portfolio' || viewMode === 'both') && <AggregationPanel agg={portfolioAgg} color="#10B981" />}
           {(viewMode === 'watchlist' || viewMode === 'both') && <AggregationPanel agg={watchlistAgg} color={ACCENT} />}
@@ -1656,7 +1736,7 @@ export default function EarningsPage() {
           <span style={{ color: GREEN }}>● Full: {liveSummary.dataQualityBreakdown.full}</span>
           <span style={{ color: YELLOW }}>● Partial: {liveSummary.dataQualityBreakdown.partial}</span>
           <span style={{ color: RED }}>● Price Only: {liveSummary.dataQualityBreakdown.priceOnly}</span>
-          <span>Showing {sortedCards.length} of {visibleCards.length}{visibleCards.length < cards.length ? ` (${cards.length} total)` : ''}</span>
+          <span>Showing {sortedCards.length} of {visibleCards.length}{viewMode !== 'screener' && visibleCards.length < cards.length ? ` (${cards.length} total)` : ''}{viewMode === 'screener' ? ` (screener universe)` : ''}</span>
           {/* Data completeness ratio */}
           {(() => {
             const totalRequested = viewMode === 'portfolio' ? portfolioSymbols.length : viewMode === 'watchlist' ? watchlistSymbols.length : new Set([...portfolioSymbols, ...watchlistSymbols]).size;
@@ -1678,8 +1758,8 @@ export default function EarningsPage() {
         </div>
       )}
 
-      {/* Loading */}
-      {loading && (
+      {/* Loading — only for portfolio/watchlist/both, not screener (screener has its own) */}
+      {loading && viewMode !== 'screener' && (
         <div style={{ textAlign: 'center', padding: '80px 20px' }}>
           <div style={{ width: '44px', height: '44px', border: `3px solid ${CARD_BORDER}`, borderTop: `3px solid ${ACCENT}`, borderRadius: '50%', margin: '0 auto 16px', animation: 'spin 1s linear infinite' }} />
           <p style={{ color: TEXT_DIM, margin: 0 }}>Scanning quarterly results for {viewMode === 'both' ? 'portfolio + watchlist' : viewMode} stocks...</p>
