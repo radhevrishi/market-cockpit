@@ -585,50 +585,49 @@ function generateEarningsCommentary(card: EarningsScanCard): { text: string; for
       driver = 'Earnings lacked clear direction this quarter';
     }
 
-  // --- BEAT patterns ---
-  } else if (label === 'Beat') {
-    if (opmDelta > 3 && isDebtFree) {
-      driver = 'Operating leverage and clean balance sheet lifted profits';
-    } else if (opmDelta > 3) {
-      driver = 'Margin expansion and operating leverage drove the beat';
-    } else if (hasPat && pat! > rev! * 1.5 && opmDelta > 0) {
-      driver = 'Higher margins and operating leverage lifted profits';
-    } else if (isDebtFree && opmDelta >= 0) {
-      driver = 'Volume growth on a debt-free base drove earnings';
-    } else if (hasOrderBook) {
-      driver = 'Order execution and mix improvement drove the beat';
-    } else if (hasWCStress) {
-      driver = 'Profits strong but receivables weakened cash quality';
-    } else if (opmDelta >= 0) {
-      driver = 'Broad-based growth with margins holding';
-    } else if (opmDelta > -2) {
-      driver = 'Volume growth drove profits despite softer margins';
-    } else {
-      driver = 'Strong volume growth more than offset margin pressure';
-    }
-
-  // --- STRONG patterns ---
+  // --- BEAT / STRONG patterns (merged — each card gets a unique driver) ---
   } else {
-    if (opmDelta > 2 && isDebtFree) {
-      driver = 'Margins expanded on a clean balance sheet';
-    } else if (opmDelta > 2) {
-      driver = 'Cost discipline drove margin expansion';
-    } else if (isDebtFree && hasPat && pat! > 15) {
-      driver = 'Volume growth on a debt-free base lifted earnings';
-    } else if (opmDelta < -3 && guidance === 'Positive') {
+    // Identify the DOMINANT driver from the actual numbers
+    const patRevRatio = (hasRev && hasPat && rev! > 0) ? pat! / rev! : 1;
+    const marginExpanded = opmDelta > 2;
+    const marginHeld = opmDelta >= -1;
+    const marginSoftened = opmDelta < -1 && opmDelta >= -4;
+    const marginCrushed = opmDelta < -4;
+
+    if (marginExpanded && patRevRatio > 1.3) {
+      // PAT grew much faster than revenue + margins expanded = operating leverage
+      driver = 'Margin expansion and operating leverage lifted profits';
+    } else if (marginExpanded && isDebtFree) {
+      driver = 'Margins expanded on a debt-free base';
+    } else if (marginExpanded) {
+      driver = 'Cost discipline and mix improvement drove margin expansion';
+    } else if (patRevRatio > 2 && marginHeld) {
+      // PAT grew 2x revenue = strong leverage even without big margin move
+      driver = 'Operating leverage amplified profit growth';
+    } else if (marginCrushed && hasRev && rev! > 30) {
+      driver = 'Scaling costs diluted margins during rapid growth phase';
+    } else if (marginCrushed) {
+      driver = 'Input cost inflation squeezed margins despite growth';
+    } else if (marginSoftened && hasPat && pat! > 20) {
       driver = 'Volume growth drove profits despite softer margins';
-    } else if (opmDelta < -3) {
+    } else if (marginSoftened) {
       driver = 'Revenue growth partly offset by margin dilution';
+    } else if (hasWCStress && hasPat && pat! > 10) {
+      driver = 'Earnings grew but working capital absorbed cash';
+    } else if (hasHighDebt && hasPat && pat! > 15) {
+      driver = 'Earnings grew but financial leverage remains elevated';
+    } else if (isDebtFree && hasPat && pat! > 20) {
+      driver = 'Strong profit growth on a clean balance sheet';
     } else if (hasOrderBook) {
       driver = 'Order book execution supported earnings growth';
-    } else if (hasWCStress) {
-      driver = 'Earnings grew but working capital needs rose';
-    } else if (hasHighDebt && hasPat && pat! > 10) {
-      driver = 'Earnings grew but financial leverage remains elevated';
-    } else if (opmDelta >= 0) {
-      driver = 'Broad-based growth with margins holding';
+    } else if (hasRev && rev! > 20 && marginHeld) {
+      driver = 'Strong revenue growth with margins intact';
+    } else if (hasPat && pat! > 30) {
+      driver = 'Profit surge driven by volume and cost control';
+    } else if (hasRev && rev! > 10) {
+      driver = 'Revenue momentum supported earnings this quarter';
     } else {
-      driver = 'Revenue growth supported earnings this quarter';
+      driver = 'Incremental growth across revenue and profits';
     }
   }
 
@@ -643,89 +642,75 @@ function generateEarningsCommentary(card: EarningsScanCard): { text: string; for
   // margin inflection, inorganic distortion, one-off items. Every statement
   // must be backed by data in the card — no filler.
 
+  // ── LINE 2: QUALITY & INFLECTION — always generate, never blank ──
   const fwdRevQoQ = card.revenueQoQ;
-  // Check if margins are improving sequentially (QoQ)
   const fwdQoqOpmUp = prevQ ? q0.opm > prevQ.opm : false;
   const fwdQoqOpmDelta = prevQ ? q0.opm - prevQ.opm : 0;
-  // Revenue acceleration: QoQ growth > YoY growth = accelerating
-  const isAccelerating = fwdRevQoQ !== null && hasRev && fwdRevQoQ > 0 && rev! > 0 && fwdRevQoQ > rev! * 0.5;
-  // Profit quality: PAT growing much faster than revenue = operating leverage
-  const hasOpLeverage = hasRev && hasPat && rev! > 5 && pat! > rev! * 1.5 && opmDelta > 0;
-  // Profit quality: PAT growing much slower than revenue = deleverage
-  const hasDeleverage = hasRev && hasPat && rev! > 10 && pat! < rev! * 0.3 && pat! > 0;
+  const patRevRatio2 = (hasRev && hasPat && rev! > 0) ? pat! / rev! : 1;
 
   let forward = '';
   const insights: string[] = [];
 
-  // ── QUALITY FLAGS (from financial data) ──
-
-  // PAT growing but on declining margins over multiple quarters
-  if (hasPat && pat! > 10 && opmDelta < -3 && fwdQoqOpmDelta < -1) {
-    insights.push('profit growth masks deteriorating margin trend');
-  }
-
-  // Revenue up strongly but PAT flat/down = cost blow-up
-  if (hasRev && rev! > 20 && hasPat && pat! < 5 && pat! > -10) {
-    insights.push('revenue surge not reaching bottom line');
-  }
-
-  // Working capital + profit divergence
-  if (hasWCStress && hasPat && pat! > 15) {
-    insights.push('strong profits but cash quality weakened by receivables');
-  }
-
-  // High debt eating into otherwise good operating performance
-  if (hasHighDebt && hasRev && rev! > 10 && hasPat && pat! < rev! * 0.5 && pat! > 0) {
-    insights.push('finance costs capping profit conversion');
-  }
-
-  // Net loss despite revenue growth
-  if (q0.pat < 0 && hasRev && rev! > 0) {
+  // ── RED FLAGS ──
+  if (q0.pat < 0 && hasRev && rev! > 0)
     insights.push('losses despite revenue growth — cost base unsustainable');
-  }
+  if (hasPat && pat! > 10 && opmDelta < -3 && fwdQoqOpmDelta < -1)
+    insights.push('profit growth masks deteriorating margin trend');
+  if (hasRev && rev! > 15 && hasPat && pat! < 3 && pat! > -10)
+    insights.push('revenue surge not reaching bottom line');
+  if (hasWCStress)
+    insights.push('working capital stretched — watch cash conversion');
+  if (hasHighDebt && hasPat && pat! > 0 && patRevRatio2 < 0.5)
+    insights.push('finance costs capping profit conversion');
 
-  // ── INFLECTION SIGNALS ──
+  // ── OPERATING LEVERAGE / DELEVERAGE ──
+  if (hasPat && hasRev && pat! > rev! * 1.3 && opmDelta > 0)
+    insights.push('operating leverage visible — profit outpacing revenue');
+  else if (hasPat && hasRev && rev! > 8 && pat! < rev! * 0.3 && pat! > 0 && insights.length === 0)
+    insights.push('operating deleverage — profit lagging revenue growth');
 
-  // Operating leverage: profit growing much faster than revenue with margin expansion
-  if (hasOpLeverage) {
-    insights.push('operating leverage visible — margins expanding with scale');
-  }
+  // ── MARGIN TRAJECTORY ──
+  if (opmDelta > 3)
+    insights.push(`OPM expanded ${opmDelta.toFixed(0)}pp YoY`);
+  else if (opmDelta < -3 && fwdQoqOpmUp && fwdQoqOpmDelta > 0.5)
+    insights.push('margin inflection — QoQ recovery despite YoY decline');
+  else if (opmDelta < -3)
+    insights.push(`OPM contracted ${Math.abs(opmDelta).toFixed(0)}pp YoY`);
 
-  // Revenue acceleration (QoQ momentum picking up)
-  if (isAccelerating && !hasOpLeverage) {
-    insights.push('revenue momentum accelerating sequentially');
-  }
+  // ── MOMENTUM ──
+  if (fwdRevQoQ !== null && fwdRevQoQ > 15)
+    insights.push('sequential revenue momentum strong');
+  else if (fwdRevQoQ !== null && fwdRevQoQ < -10)
+    insights.push('sequential revenue declined — watch for demand softness');
 
-  // Margin inflection: OPM was declining YoY but improving QoQ = potential turnaround
-  if (opmDelta < -2 && fwdQoqOpmUp && fwdQoqOpmDelta > 1) {
-    insights.push('margin inflection visible — QoQ recovery despite YoY decline');
-  }
-
-  // Capex expanding (from screener data — real signal)
-  if (cap === 'Expanding') {
+  // ── CAPEX / QUALITATIVE (screener data) ──
+  if (cap === 'Expanding')
     insights.push('capex expanding — capacity addition underway');
+  else if (cap === 'Reducing')
+    insights.push('capex reducing');
+  if (dem === 'Strong')
+    insights.push('demand signals strong');
+  else if (dem === 'Weak')
+    insights.push('demand weakening');
+
+  // ── BALANCE SHEET SIGNAL ──
+  if (isDebtFree && insights.every(i => !i.includes('debt') && !i.includes('leverage')))
+    insights.push('debt-free balance sheet');
+
+  // ── SCREENER PROS/CONS as additive context ──
+  if (posKeys.length > 0 && negKeys.length > 0) {
+    insights.push(`${posKeys.slice(0, 2).join(', ')}; but ${negKeys.slice(0, 2).join(', ')}`);
+  } else if (negKeys.length > 0 && insights.length < 2) {
+    insights.push(negKeys.slice(0, 2).join(', '));
+  } else if (posKeys.length > 0 && insights.length < 2) {
+    insights.push(posKeys.slice(0, 2).join(', '));
   }
 
-  // Deleverage warning: revenue growing but profit not following
-  if (hasDeleverage && insights.length === 0) {
-    insights.push('growth not translating to profit — operating deleverage');
-  }
-
-  // ── SCREENER PROS/CONS (real qualitative data) ──
-  if (insights.length === 0) {
-    // Only fall back to Pros/Cons if no financial pattern detected
-    if (posKeys.length > 0 && negKeys.length > 0) {
-      insights.push(`${posKeys.slice(0, 2).join(', ')}; but ${negKeys.slice(0, 2).join(', ')}`);
-    } else if (negKeys.length > 0) {
-      insights.push(negKeys.slice(0, 3).join(', '));
-    } else if (posKeys.length > 0) {
-      insights.push(posKeys.slice(0, 3).join(', '));
-    }
-  }
-
+  // Always produce line 2 — pick best 2 insights, capitalize
   if (insights.length > 0) {
-    // Capitalize first letter
-    const combined = insights.slice(0, 2).join('; ');
+    // Deduplicate similar insights
+    const unique = insights.filter((v, i, a) => a.findIndex(x => x.slice(0, 15) === v.slice(0, 15)) === i);
+    const combined = unique.slice(0, 2).join('. ');
     forward = combined.charAt(0).toUpperCase() + combined.slice(1);
   }
 
