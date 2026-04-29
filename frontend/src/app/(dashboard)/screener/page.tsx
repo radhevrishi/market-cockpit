@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Search, Loader } from 'lucide-react';
 
 interface Quote {
@@ -11,6 +11,131 @@ interface Quote {
   change: number;
   changePercent: number;
   volume: number;
+}
+
+// ── Earnings Insight types (lightweight — from earnings-scan API) ──
+interface EarningsInsight {
+  symbol: string;
+  revenueYoY: number | null;
+  patYoY: number | null;
+  epsYoY: number | null;
+  opmNow: number;
+  opmPrev: number;
+  period: string;
+  grade: string;
+  guidance: string | null;
+  keyPhrasesPositive: string[];
+  keyPhrasesNegative: string[];
+  capexSignal: string;
+  demandSignal: string;
+  marginOutlook: string;
+  revenueOutlook: string;
+  patQtr: number; // latest quarter PAT
+}
+
+// ── Earnings verdict engine (same logic as earnings page) ──
+function generateVerdict(e: EarningsInsight): { label: string; driver: string; forward: string; signal: 'green' | 'yellow' | 'red' } {
+  const rev = e.revenueYoY, pat = e.patYoY;
+  const opmDelta = e.opmNow - e.opmPrev;
+  const hasRev = rev !== null, hasPat = pat !== null;
+  const profitConversion = (hasRev && hasPat && rev! > 0) ? pat! / rev! : 1;
+
+  const posKeys = e.keyPhrasesPositive.map(k => k.toLowerCase());
+  const negKeys = e.keyPhrasesNegative.map(k => k.toLowerCase());
+  const isDebtFree = posKeys.some(k => k.includes('debt free') || k.includes('zero debt'));
+  const hasOrderBook = posKeys.some(k => k.includes('order'));
+  const hasHighDebt = negKeys.some(k => k.includes('debt') || k.includes('borrowing'));
+  const hasWCStress = negKeys.some(k => k.includes('working capital') || k.includes('receivable'));
+
+  // ── CLASSIFY ──
+  let label: string;
+  if (e.patQtr < 0) label = 'Miss';
+  else if (!hasRev || !hasPat) label = 'Mixed';
+  else if (rev! <= -5 && pat! <= -10) label = 'Miss';
+  else if (rev! <= 0 && pat! <= 0) label = 'Miss';
+  else if (rev! > 5 && pat! <= 0) label = 'Mixed';
+  else if (rev! > 15 && profitConversion < 0.25 && opmDelta < -3) label = 'Mixed';
+  else if (rev! > 10 && profitConversion < 0.3 && opmDelta < -2) label = 'Mixed';
+  else if (hasWCStress && opmDelta < -3) label = 'Mixed';
+  else if (rev! > 12 && pat! > 18 && opmDelta >= -1) label = 'Beat';
+  else if (rev! > 8 && pat! > 10) label = pat! > rev! ? 'Beat' : 'Strong';
+  else if (rev! > 0 && pat! > 0) label = 'Strong';
+  else label = 'Mixed';
+
+  // ── LINE 1: DRIVER ──
+  let driver: string;
+  if (label === 'Miss') {
+    if (e.patQtr < 0 && hasHighDebt) driver = 'Interest burden pushed earnings into loss';
+    else if (e.patQtr < 0) driver = 'Operating losses; cost base exceeds revenue';
+    else if (hasRev && rev! > 5 && hasPat && pat! < -10) { driver = hasHighDebt ? 'Finance costs eroded operating gains' : opmDelta < -4 ? 'Scaling costs squeezed margins despite growth' : 'Rising costs absorbed revenue growth'; }
+    else if (hasRev && rev! < -5 && hasHighDebt) driver = 'Demand weakness compounded by debt burden';
+    else if (hasRev && rev! < -5) driver = 'Revenue decline and weaker demand dragged profits';
+    else driver = 'Revenue and profit both declined';
+  } else if (label === 'Mixed') {
+    if (hasRev && rev! > 30 && opmDelta < -4) driver = hasOrderBook ? 'Capacity ramp-up costs absorbed the revenue surge' : 'Scaling costs absorbed most of the revenue surge';
+    else if (hasRev && rev! > 10 && opmDelta < -3) driver = 'Employee and project costs squeezed margins';
+    else if (hasRev && rev! > 5 && hasPat && pat! <= 0) driver = hasHighDebt ? 'Finance costs capped profit despite revenue growth' : 'Rising costs offset revenue growth entirely';
+    else if (hasWCStress && hasRev && rev! > 0) driver = 'Growth stretched working capital and weakened cash quality';
+    else if (profitConversion < 0.3 && hasRev && rev! > 10 && opmDelta < -2) driver = 'Input cost inflation squeezed operating margins';
+    else driver = 'No clear earnings inflection this quarter';
+  } else if (label === 'Beat') {
+    if (opmDelta > 3 && isDebtFree) driver = 'Operating leverage and clean balance sheet lifted profits';
+    else if (opmDelta > 3) driver = 'Margin expansion and operating leverage drove the beat';
+    else if (hasPat && pat! > rev! * 1.5 && opmDelta > 0) driver = 'Higher margins and operating leverage lifted profits';
+    else if (isDebtFree && opmDelta >= 0) driver = 'Volume growth on a debt-free base drove earnings';
+    else if (hasOrderBook) driver = 'Order execution and mix improvement drove the beat';
+    else if (hasWCStress) driver = 'Profits strong but receivables weakened cash quality';
+    else if (opmDelta >= 0) driver = 'Broad-based growth with margins holding';
+    else driver = 'Volume growth drove profits despite softer margins';
+  } else {
+    if (opmDelta > 2 && isDebtFree) driver = 'Margins expanded on a clean balance sheet';
+    else if (opmDelta > 2) driver = 'Cost discipline drove margin expansion';
+    else if (isDebtFree && hasPat && pat! > 15) driver = 'Volume growth on a debt-free base lifted earnings';
+    else if (opmDelta < -3 && e.guidance === 'Positive') driver = 'Volume growth drove profits despite softer margins';
+    else if (opmDelta < -3) driver = 'Revenue growth partly offset by margin dilution';
+    else if (hasOrderBook) driver = 'Order book execution supported earnings growth';
+    else if (hasWCStress) driver = 'Earnings grew but working capital needs rose';
+    else if (opmDelta >= 0) driver = 'Broad-based growth with margins holding';
+    else driver = 'Revenue growth supported earnings this quarter';
+  }
+
+  // ── LINE 2: FORWARD OUTLOOK ──
+  let forward: string;
+  const g = e.guidance;
+  const cap = e.capexSignal;
+  const dem = e.demandSignal;
+  const mar = e.marginOutlook;
+  const revOl = e.revenueOutlook;
+
+  if (label === 'Miss') {
+    if (g === 'Positive') forward = 'Management guides recovery; watch for execution';
+    else if (hasHighDebt) forward = 'Debt overhang limits recovery optionality';
+    else forward = 'No visible catalyst for near-term recovery';
+  } else if (label === 'Mixed') {
+    if (cap === 'Expanding' && (g === 'Positive' || mar === 'Expanding')) forward = 'Capex expanding; margins should recover as projects mature';
+    else if (mar === 'Expanding' || g === 'Positive') forward = 'Margin recovery guided; operating leverage should improve';
+    else if (hasOrderBook) forward = 'Order pipeline intact; execution key to margin inflection';
+    else if (opmDelta < -5 && hasRev && rev! > 30) forward = 'Hyper-growth phase; margins should stabilize with scale';
+    else forward = 'Forward visibility limited; monitor next quarter for direction';
+  } else if (label === 'Beat') {
+    if (cap === 'Expanding' && isDebtFree) forward = 'Expanding capacity debt-free; runway for sustained compounding';
+    else if (mar === 'Expanding' && dem === 'Strong') forward = 'Demand strong and margins expanding; positive operating leverage';
+    else if (g === 'Positive' && hasOrderBook) forward = 'Positive guidance backed by order visibility';
+    else if (isDebtFree) forward = 'Clean balance sheet supports sustained earnings growth';
+    else if (hasWCStress) forward = 'Watch working capital; cash conversion must improve';
+    else if (g === 'Positive') forward = 'Forward guidance constructive';
+    else forward = 'Execution was strong; sustain trajectory to confirm';
+  } else {
+    if (mar === 'Expanding' && isDebtFree) forward = 'Margins expanding on clean balance sheet; compounding visible';
+    else if (g === 'Positive' && cap === 'Expanding') forward = 'Capacity addition underway; growth runway ahead';
+    else if (isDebtFree && hasOrderBook) forward = 'Debt-free with order visibility; structural tailwind';
+    else if (g === 'Positive') forward = 'Forward guidance constructive';
+    else if (opmDelta < -2) forward = 'Monitor if margin pressure is cyclical or structural';
+    else forward = 'Steady trajectory; watch for margin or growth inflection';
+  }
+
+  const signal: 'green' | 'yellow' | 'red' = (label === 'Beat' || label === 'Strong') ? 'green' : label === 'Miss' ? 'red' : 'yellow';
+  return { label, driver, forward, signal };
 }
 
 interface Earning {
@@ -65,6 +190,11 @@ export default function ScreenerPage() {
   const [sortAscending, setSortAscending] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const [sectors, setSectors] = useState<string[]>(['All']);
+  // Earnings Insight: opt-in checkbox — only fetches when ticked
+  const [showEarnings, setShowEarnings] = useState(false);
+  const [earningsInsights, setEarningsInsights] = useState<Map<string, EarningsInsight>>(new Map());
+  const [earningsLoading, setEarningsLoading] = useState(false);
+  const earningsFetchedRef = useRef<Set<string>>(new Set());
 
   const itemsPerPage = 20;
 
@@ -182,10 +312,72 @@ export default function ScreenerPage() {
       return () => clearInterval(interval);
     } else {
       fetchEarningsData();
-      const interval = setInterval(fetchEarningsData, 300000); // 5 minutes for earnings
+      const interval = setInterval(fetchEarningsData, 300000);
       return () => clearInterval(interval);
     }
   }, [screenerMode, fetchQuotesData, fetchEarningsData]);
+
+  // ── Earnings Insight: lazy-fetch for visible page only when checkbox ticked ──
+  const fetchEarningsForPage = useCallback(async (symbols: string[]) => {
+    // Skip already-fetched symbols
+    const toFetch = symbols.filter(s => !earningsFetchedRef.current.has(s));
+    if (toFetch.length === 0) return;
+
+    setEarningsLoading(true);
+    try {
+      const BATCH = 20;
+      for (let i = 0; i < toFetch.length; i += BATCH) {
+        const batch = toFetch.slice(i, i + BATCH);
+        const encoded = batch.map(s => encodeURIComponent(s)).join(',');
+        const res = await fetch(`/api/market/earnings-scan?symbols=${encoded}`);
+        if (!res.ok) continue;
+        const data = await res.json();
+        const cards = data.cards || [];
+
+        setEarningsInsights(prev => {
+          const next = new Map(prev);
+          for (const c of cards) {
+            // Find YoY quarter for OPM comparison
+            const q0 = c.quarters?.[0];
+            const latestMonth = q0?.period?.split(' ')?.[0];
+            const latestYear = parseInt(q0?.period?.split(' ')?.[1] || '0');
+            const yoyQ = (c.quarters || []).find((q: any) => {
+              const m = q.period.split(' ')[0];
+              const y = parseInt(q.period.split(' ')[1]);
+              return m === latestMonth && y === latestYear - 1;
+            });
+
+            next.set(c.symbol, {
+              symbol: c.symbol,
+              revenueYoY: c.revenueYoY ?? null,
+              patYoY: c.patYoY ?? null,
+              epsYoY: c.epsYoY ?? null,
+              opmNow: q0?.opm ?? 0,
+              opmPrev: yoyQ?.opm ?? q0?.opm ?? 0,
+              period: c.period || '',
+              grade: c.grade || '',
+              guidance: c.guidance || null,
+              keyPhrasesPositive: c.keyPhrasesPositive || [],
+              keyPhrasesNegative: c.keyPhrasesNegative || [],
+              capexSignal: c.capexSignal || 'Unknown',
+              demandSignal: c.demandSignal || 'Unknown',
+              marginOutlook: c.marginOutlook || 'Unknown',
+              revenueOutlook: c.revenueOutlook || 'Unknown',
+              patQtr: q0?.pat ?? 0,
+            });
+            earningsFetchedRef.current.add(c.symbol);
+          }
+          // Also mark symbols that returned no card as fetched (avoid retrying)
+          for (const s of batch) earningsFetchedRef.current.add(s);
+          return next;
+        });
+      }
+    } catch (e) {
+      console.error('[Screener] Earnings fetch failed:', e);
+    } finally {
+      setEarningsLoading(false);
+    }
+  }, []);
 
   const filteredQuotes = React.useMemo(() => {
     if (!data) return [];
@@ -253,6 +445,14 @@ export default function ScreenerPage() {
   const startIndex = (currentPage - 1) * itemsPerPage;
   const displayedQuotes = filteredQuotes.slice(startIndex, startIndex + itemsPerPage);
   const displayedEarnings = filteredEarnings.slice(startIndex, startIndex + itemsPerPage);
+
+  // Trigger earnings fetch when checkbox is on and page changes
+  useEffect(() => {
+    if (!showEarnings || screenerMode !== 'stocks') return;
+    const pageSymbols = displayedQuotes.map(q => q.ticker);
+    if (pageSymbols.length > 0) fetchEarningsForPage(pageSymbols);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showEarnings, screenerMode, currentPage, fetchEarningsForPage, displayedQuotes.length]);
 
   const handleSortClick = (column: string) => {
     if (sortBy === column) {
@@ -440,6 +640,27 @@ export default function ScreenerPage() {
             </div>
           </div>
 
+          {/* Earnings Insight Checkbox — Stock Screener only */}
+          {screenerMode === 'stocks' && (
+            <div style={{ marginTop: '16px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12px', color: showEarnings ? THEME.accent : THEME.textSecondary, fontWeight: 600 }}>
+                <input
+                  type="checkbox"
+                  checked={showEarnings}
+                  onChange={e => setShowEarnings(e.target.checked)}
+                  style={{ accentColor: THEME.accent, width: '16px', height: '16px', cursor: 'pointer' }}
+                />
+                Earnings Intelligence
+                {earningsLoading && <Loader size={14} color={THEME.accent} style={{ animation: 'spin 1s linear infinite' }} />}
+                {showEarnings && !earningsLoading && earningsInsights.size > 0 && (
+                  <span style={{ fontSize: '10px', color: THEME.textSecondary, fontWeight: 400 }}>
+                    ({earningsInsights.size} loaded — fetches per page)
+                  </span>
+                )}
+              </label>
+            </div>
+          )}
+
           {/* Results Count */}
           {!loading && (
             <div style={{ marginTop: '16px', fontSize: '12px', color: THEME.textSecondary }}>
@@ -561,12 +782,17 @@ export default function ScreenerPage() {
                       >
                         Volume {sortBy === 'Volume' && (sortAscending ? '↑' : '↓')}
                       </th>
+                      {showEarnings && (
+                        <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: THEME.accent, minWidth: '320px' }}>
+                          Earnings Verdict
+                        </th>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
                     {displayedQuotes.length === 0 ? (
                       <tr>
-                        <td colSpan={7} style={{ padding: '32px 16px', textAlign: 'center', color: THEME.textSecondary }}>
+                        <td colSpan={showEarnings ? 8 : 7} style={{ padding: '32px 16px', textAlign: 'center', color: THEME.textSecondary }}>
                           No results found
                         </td>
                       </tr>
@@ -625,6 +851,33 @@ export default function ScreenerPage() {
                           <td style={{ padding: '12px 16px', fontSize: '12px', textAlign: 'right', color: THEME.textSecondary }}>
                             {(quote.volume / 1000000).toFixed(1)}M
                           </td>
+                          {showEarnings && (() => {
+                            const insight = earningsInsights.get(quote.ticker);
+                            if (!insight) {
+                              return (
+                                <td style={{ padding: '12px 16px', fontSize: '11px', color: THEME.textSecondary, fontStyle: 'italic' }}>
+                                  {earningsLoading ? '...' : '—'}
+                                </td>
+                              );
+                            }
+                            const v = generateVerdict(insight);
+                            const clr = v.signal === 'green' ? THEME.green : v.signal === 'red' ? THEME.red : '#F59E0B';
+                            return (
+                              <td style={{ padding: '8px 16px', verticalAlign: 'top' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
+                                  <span style={{
+                                    fontSize: '9px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.4px',
+                                    color: clr, padding: '1px 6px', borderRadius: '3px',
+                                    backgroundColor: `${clr}18`, border: `1px solid ${clr}30`,
+                                  }}>{v.label}</span>
+                                  <span style={{ fontSize: '10px', color: '#C0CCD8', fontWeight: 500, lineHeight: '1.3' }}>{v.driver}</span>
+                                </div>
+                                <div style={{ fontSize: '9px', color: THEME.textSecondary, lineHeight: '1.3', fontStyle: 'italic' }}>
+                                  {v.forward}
+                                </div>
+                              </td>
+                            );
+                          })()}
                         </tr>
                       ))
                     )}
