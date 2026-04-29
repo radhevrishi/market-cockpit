@@ -447,9 +447,7 @@ function generateEarningsCommentary(card: EarningsScanCard): { text: string; sig
 
   const rev = card.revenueYoY;
   const pat = card.patYoY;
-  const eps = card.epsYoY;
   const q0 = card.quarters[0];
-  // Find YoY quarter for margin comparison
   const latestMonth = q0?.period?.split(' ')[0];
   const latestYear = parseInt(q0?.period?.split(' ')[1] || '0');
   const yoyQ = card.quarters.find(q => {
@@ -460,94 +458,167 @@ function generateEarningsCommentary(card: EarningsScanCard): { text: string; sig
   const opmDelta = yoyQ ? q0.opm - yoyQ.opm : 0;
   const hasRev = rev !== null;
   const hasPat = pat !== null;
-  const hasEps = eps !== null;
 
-  // ── RED FLAG patterns ──
+  // ── Qualitative signals from screener.in Pros/Cons + guidance ──
+  const posKeys = (card.keyPhrasesPositive || []).map(k => k.toLowerCase());
+  const negKeys = (card.keyPhrasesNegative || []).map(k => k.toLowerCase());
+  const guidance = card.guidance; // Positive / Neutral / Negative
+  const revOutlook = card.revenueOutlook; // Up / Flat / Down
+  const marginOutlook = card.marginOutlook; // Expanding / Stable / Contracting
+  const demandSignal = card.demandSignal; // Strong / Moderate / Weak
+  const capexSignal = card.capexSignal; // Expanding / Stable / Reducing
 
-  // Revenue declining + PAT declining = broad deterioration
-  if (hasRev && hasPat && rev! < -5 && pat! < -10) {
-    return { text: `Revenue ↓ ${Math.abs(rev!).toFixed(0)}% and profit ↓ ${Math.abs(pat!).toFixed(0)}% YoY — broad fundamental deterioration`, signal: 'RED_FLAG' };
-  }
+  const hasDebtFree = posKeys.some(k => k.includes('debt free') || k.includes('zero debt'));
+  const hasOrderBook = posKeys.some(k => k.includes('order') || k.includes('book'));
+  const hasPromoterBuy = posKeys.some(k => k.includes('promoter') && k.includes('increas'));
+  const hasHighDebt = negKeys.some(k => k.includes('debt') || k.includes('leverage') || k.includes('borrowing'));
+  const hasMarginPressure = negKeys.some(k => k.includes('margin') || k.includes('opm') || k.includes('profitability'));
+  const hasWorkingCapIssue = negKeys.some(k => k.includes('working capital') || k.includes('inventory') || k.includes('receivable') || k.includes('cash flow'));
+  const hasLowROE = negKeys.some(k => k.includes('roe') || k.includes('return on equity'));
 
-  // Revenue growing but PAT falling sharply = cost/margin blow-up
-  if (hasRev && hasPat && rev! > 5 && pat! < -15) {
-    return { text: `Revenue ↑ ${rev!.toFixed(0)}% but profit ↓ ${Math.abs(pat!).toFixed(0)}% — growth not translating, cost structure under pressure`, signal: 'RED_FLAG' };
-  }
+  // ── Narrative builder: combine numbers + qualitative context ──
 
-  // Severe margin crush (>500bps) even with growth
-  if (opmDelta < -5 && hasRev && rev! > 0) {
-    return { text: `OPM compressed ${Math.abs(opmDelta).toFixed(0)}pp despite revenue growth — operating leverage absent, watch cost escalation`, signal: 'RED_FLAG' };
-  }
-
-  // PAT negative (loss-making quarter)
+  // CASE 1: Net loss quarter — always RED
   if (q0.pat < 0) {
-    return { text: `Net loss of ₹${Math.abs(q0.pat).toFixed(0)}Cr this quarter — earnings under severe stress`, signal: 'RED_FLAG' };
+    const ctx = hasHighDebt ? 'High debt amplifying losses' : hasWorkingCapIssue ? 'Working capital strain visible' : 'Profitability under stress';
+    return { text: `${ctx}. Net loss quarter — ${guidance === 'Positive' ? 'but forward guidance constructive, watch for turnaround' : 'no clear recovery signal yet'}`, signal: 'RED_FLAG' };
   }
 
-  // Revenue flat/declining + margin contracting
-  if (hasRev && rev! < 0 && opmDelta < -2) {
-    return { text: `Revenue ↓ ${Math.abs(rev!).toFixed(0)}% with margin contraction of ${Math.abs(opmDelta).toFixed(0)}pp — cyclical or structural headwinds`, signal: 'RED_FLAG' };
+  // CASE 2: Revenue declining + PAT declining — RED unless guidance positive
+  if (hasRev && hasPat && rev! < -5 && pat! < -10) {
+    if (guidance === 'Positive' && (revOutlook === 'Up' || demandSignal === 'Strong')) {
+      return { text: `Weak quarter (rev/profit both down) but forward guidance positive with ${revOutlook === 'Up' ? 'revenue outlook improving' : 'demand signals intact'} — potential turnaround`, signal: 'MIXED' };
+    }
+    const ctx = hasHighDebt ? 'Debt burden compounding the decline' : hasMarginPressure ? 'Structural margin pressure visible' : 'Cyclical or demand-driven headwinds';
+    return { text: `${ctx}. Broad fundamental decline — ${negKeys.length > 0 ? negKeys.slice(0, 2).join(', ') : 'monitor closely'}`, signal: 'RED_FLAG' };
   }
 
-  // ── POSITIVE patterns ──
-
-  // Stellar all-round: Rev >20%, PAT >25%, EPS >20%, margin expanding
-  if (hasRev && hasPat && hasEps && rev! > 20 && pat! > 25 && eps! > 20 && opmDelta >= 0) {
-    return { text: `Stellar quarter — revenue ↑ ${rev!.toFixed(0)}%, profit ↑ ${pat!.toFixed(0)}%, margin expanding. Strong operating leverage`, signal: 'POSITIVE' };
+  // CASE 3: Revenue up but profit down sharply — context matters
+  if (hasRev && hasPat && rev! > 5 && pat! < -15) {
+    if (guidance === 'Positive' || capexSignal === 'Expanding' || hasOrderBook) {
+      const reason = capexSignal === 'Expanding' ? 'capex-led expansion phase' : hasOrderBook ? 'strong order book backing growth' : 'management guides recovery';
+      return { text: `Profit ↓ despite topline growth — ${reason}. Likely investment phase, not structural deterioration`, signal: 'MIXED' };
+    }
+    const reason = hasHighDebt ? 'rising interest costs eroding profits' : hasMarginPressure ? 'cost structure under pressure' : 'operating leverage absent';
+    return { text: `Growth without profits — ${reason}. ${hasWorkingCapIssue ? 'Working capital also strained' : 'Watch if margins recover with scale'}`, signal: 'RED_FLAG' };
   }
 
-  // Very strong growth with margin expansion
-  if (hasRev && hasPat && rev! > 15 && pat! > 20 && opmDelta > 1) {
-    return { text: `Strong broad-based growth with ${opmDelta.toFixed(0)}pp margin expansion — earnings quality improving`, signal: 'POSITIVE' };
+  // CASE 4: Margin crush (>5pp) with revenue growth — investment phase vs real problem
+  if (opmDelta < -5 && hasRev && rev! > 0) {
+    if (guidance === 'Positive' || marginOutlook === 'Expanding' || hasOrderBook || capexSignal === 'Expanding') {
+      const whyOk = marginOutlook === 'Expanding' ? 'margin recovery guided ahead' :
+                     hasOrderBook ? 'strong order book provides revenue visibility' :
+                     capexSignal === 'Expanding' ? 'capex expansion — scaling costs hitting margins temporarily' :
+                     'forward outlook constructive';
+      return { text: `OPM compressed ${Math.abs(opmDelta).toFixed(0)}pp but ${whyOk}. Growth investment phase — not structural decline`, signal: 'MIXED' };
+    }
+    if (rev! > 30) {
+      return { text: `Hyper-growth (${rev!.toFixed(0)}%) but margins compressed ${Math.abs(opmDelta).toFixed(0)}pp — new segment/customer ramp likely. Watch for stabilization`, signal: 'MIXED' };
+    }
+    const ctx = hasHighDebt ? 'Debt + margin compression = watch closely' : 'Operating leverage absent';
+    return { text: `${ctx} — OPM down ${Math.abs(opmDelta).toFixed(0)}pp. ${negKeys.length > 0 ? negKeys.slice(0, 2).join(', ') : 'No clear margin recovery signal'}`, signal: 'RED_FLAG' };
   }
 
-  // High revenue + PAT growth (even if margins flat)
-  if (hasRev && hasPat && rev! > 20 && pat! > 20) {
-    return { text: `Revenue ↑ ${rev!.toFixed(0)}% and profit ↑ ${pat!.toFixed(0)}% — solid execution at scale`, signal: 'POSITIVE' };
+  // CASE 5: Stellar all-round numbers
+  if (hasRev && hasPat && rev! > 20 && pat! > 25 && opmDelta >= 0) {
+    const qualitative = hasDebtFree ? 'Debt-free balance sheet amplifying returns' :
+                         hasOrderBook ? 'Strong order book provides forward visibility' :
+                         marginOutlook === 'Expanding' ? 'Margin expansion trajectory intact' :
+                         demandSignal === 'Strong' ? 'Demand signals remain robust' :
+                         hasPromoterBuy ? 'Promoter increasing stake — skin in the game' :
+                         'Operating leverage playing out';
+    return { text: `${qualitative}. Broad-based earnings beat with margin expansion`, signal: 'POSITIVE' };
   }
 
-  // Modest growth but strong margin expansion (efficiency story)
-  if (hasRev && hasPat && rev! > 0 && rev! < 15 && pat! > 15 && opmDelta > 2) {
-    return { text: `Modest topline but profit ↑ ${pat!.toFixed(0)}% on ${opmDelta.toFixed(0)}pp margin expansion — operational efficiency kicking in`, signal: 'POSITIVE' };
+  // CASE 6: Strong growth with margin expansion
+  if (hasRev && hasPat && rev! > 10 && pat! > 15 && opmDelta > 1) {
+    const qualitative = hasDebtFree ? 'Debt-free, margins expanding — clean compounder' :
+                         capexSignal === 'Expanding' ? 'Growing + expanding capacity — scaling with discipline' :
+                         demandSignal === 'Strong' ? 'Strong demand + margin expansion = pricing power' :
+                         'Earnings quality improving — operating leverage visible';
+    return { text: `${qualitative}`, signal: 'POSITIVE' };
   }
 
-  // Revenue explosion >50% (high-growth phase)
+  // CASE 7: Modest topline but strong profit growth (efficiency)
+  if (hasRev && hasPat && rev! >= 0 && rev! < 12 && pat! > 15 && opmDelta > 1) {
+    const qualitative = hasDebtFree ? 'Lean balance sheet driving profit disproportionate to revenue' :
+                         marginOutlook === 'Expanding' ? 'Operational efficiency unlocking margins' :
+                         'Cost optimization driving bottom line — profit growing faster than revenue';
+    return { text: `${qualitative}`, signal: 'POSITIVE' };
+  }
+
+  // CASE 8: High revenue growth (>50%) — hyper-growth context
   if (hasRev && rev! > 50 && hasPat && pat! > 0) {
-    return { text: `Revenue surged ${rev!.toFixed(0)}% — hyper-growth phase. Watch if margins stabilize as scale builds`, signal: 'POSITIVE' };
+    if (opmDelta < -3) {
+      const ctx = guidance === 'Positive' ? 'Mgmt guides margin recovery as programs mature' :
+                   hasOrderBook ? 'Strong order pipeline backing the growth trajectory' :
+                   'Monitor if margins stabilize with scale';
+      return { text: `Hyper-growth phase — new segments/customers ramping. ${ctx}`, signal: 'MIXED' };
+    }
+    const ctx = hasDebtFree ? 'Scaling debt-free — rare at this growth rate' :
+                 hasOrderBook ? 'Order book provides multi-quarter visibility' :
+                 'Execution at scale — margins holding despite rapid growth';
+    return { text: `${ctx}`, signal: 'POSITIVE' };
   }
 
-  // ── MIXED patterns ──
-
-  // Revenue growing but margins compressing (scaling/investment phase)
-  if (hasRev && rev! > 15 && opmDelta < -3 && hasPat && pat! > -10) {
-    return { text: `Revenue ↑ ${rev!.toFixed(0)}% but OPM compressed ${Math.abs(opmDelta).toFixed(0)}pp — likely investment/FAI phase, watch for margin recovery`, signal: 'MIXED' };
+  // CASE 9: Revenue growing, profit lagging
+  if (hasRev && hasPat && rev! > 10 && pat! >= 0 && pat! < rev! * 0.4) {
+    if (guidance === 'Positive' || marginOutlook === 'Expanding') {
+      return { text: `Topline outpacing profits — ${marginOutlook === 'Expanding' ? 'but margin recovery guided' : 'forward guidance constructive'}. Execution phase, watch margin trajectory`, signal: 'MIXED' };
+    }
+    const ctx = hasMarginPressure ? 'Input cost / competitive pressure on margins' :
+                 hasWorkingCapIssue ? 'Working capital consuming operating gains' :
+                 hasHighDebt ? 'Finance costs eating into operating profit' :
+                 'Growth not yet converting to bottom line';
+    return { text: `${ctx}. Revenue growing but profit leverage missing`, signal: 'MIXED' };
   }
 
-  // Flat growth, flat margins = steady but uninspiring
-  if (hasRev && Math.abs(rev!) < 5 && hasPat && Math.abs(pat!) < 10) {
-    return { text: `Broadly flat quarter — revenue ${rev! >= 0 ? '↑' : '↓'} ${Math.abs(rev!).toFixed(0)}%, profit ${pat! >= 0 ? '↑' : '↓'} ${Math.abs(pat!).toFixed(0)}%. No inflection yet`, signal: 'MIXED' };
+  // CASE 10: Flat quarter
+  if (hasRev && Math.abs(rev!) < 5 && hasPat && Math.abs(pat!) < 8) {
+    if (guidance === 'Positive' || revOutlook === 'Up') {
+      return { text: `Flat quarter but forward outlook constructive — ${revOutlook === 'Up' ? 'revenue recovery expected' : 'management guides improvement'}`, signal: 'MIXED' };
+    }
+    if (guidance === 'Negative' || demandSignal === 'Weak') {
+      return { text: `Stagnant quarter with weak forward signals — ${demandSignal === 'Weak' ? 'demand softening' : 'outlook cautious'}. No near-term catalyst`, signal: 'RED_FLAG' };
+    }
+    const ctx = hasDebtFree ? 'Balance sheet clean but growth stalling' : 'Consolidation phase — no clear catalyst';
+    return { text: `${ctx}`, signal: 'MIXED' };
   }
 
-  // Revenue growing but PAT lagging (mild cost pressure)
-  if (hasRev && hasPat && rev! > 10 && pat! >= 0 && pat! < rev! * 0.5) {
-    return { text: `Revenue ↑ ${rev!.toFixed(0)}% but profit ↑ only ${pat!.toFixed(0)}% — topline momentum not fully flowing to bottom line`, signal: 'MIXED' };
+  // CASE 11: Mild margin contraction with growth
+  if (hasRev && hasPat && rev! > 5 && pat! > 0 && opmDelta < -1) {
+    const ctx = hasMarginPressure ? 'Input costs / mix change pressuring margins' :
+                 hasHighDebt ? 'Finance costs weighing on margins' :
+                 hasWorkingCapIssue ? 'Working capital buildup impacting cash conversion' :
+                 'Mild margin pressure — monitor if temporary or structural';
+    return { text: `${ctx}`, signal: pat! > 10 ? 'POSITIVE' : 'MIXED' };
   }
 
-  // Good numbers overall but margin contraction
-  if (hasRev && hasPat && rev! > 5 && pat! > 5 && opmDelta < -1) {
-    return { text: `Decent growth (Rev ↑${rev!.toFixed(0)}%, PAT ↑${pat!.toFixed(0)}%) but margins under mild pressure (${opmDelta.toFixed(0)}pp)`, signal: 'MIXED' };
-  }
-
-  // Revenue growing, PAT growing = generally positive
+  // CASE 12: Healthy growth — add qualitative context
   if (hasRev && hasPat && rev! > 5 && pat! > 5) {
-    return { text: `Healthy quarter — revenue ↑ ${rev!.toFixed(0)}% and profit ↑ ${pat!.toFixed(0)}% YoY`, signal: 'POSITIVE' };
+    const qualitative = hasDebtFree ? 'Debt-free compounder — clean earnings' :
+                         hasOrderBook ? 'Order book provides earnings visibility' :
+                         demandSignal === 'Strong' ? 'Demand backdrop strong' :
+                         guidance === 'Positive' ? 'Forward guidance positive' :
+                         hasPromoterBuy ? 'Promoter conviction visible' :
+                         'Steady execution';
+    return { text: `${qualitative}`, signal: 'POSITIVE' };
   }
 
-  // Fallback: describe what we see
-  if (hasRev && hasPat) {
-    const revDir = rev! > 0 ? '↑' : '↓';
-    const patDir = pat! > 0 ? '↑' : '↓';
-    return { text: `Revenue ${revDir} ${Math.abs(rev!).toFixed(0)}%, Profit ${patDir} ${Math.abs(pat!).toFixed(0)}% YoY`, signal: rev! > 0 && pat! > 0 ? 'POSITIVE' : pat! < 0 ? 'RED_FLAG' : 'MIXED' };
+  // CASE 13: Revenue declining but profits stable (cost cutting)
+  if (hasRev && hasPat && rev! < -3 && pat! > 0) {
+    return { text: `Revenue declining but profitability held — likely cost restructuring or mix improvement. ${guidance === 'Positive' ? 'Forward outlook constructive' : 'Sustainability uncertain'}`, signal: 'MIXED' };
+  }
+
+  // Fallback: use whatever qualitative signals we have
+  if (negKeys.length > 0 && posKeys.length === 0) {
+    return { text: `Key concerns: ${negKeys.slice(0, 3).join(', ')}`, signal: 'RED_FLAG' };
+  }
+  if (posKeys.length > 0 && negKeys.length === 0) {
+    return { text: `Key strengths: ${posKeys.slice(0, 3).join(', ')}`, signal: 'POSITIVE' };
+  }
+  if (posKeys.length > 0 && negKeys.length > 0) {
+    return { text: `Strengths: ${posKeys.slice(0, 2).join(', ')} | Risks: ${negKeys.slice(0, 2).join(', ')}`, signal: 'MIXED' };
   }
 
   return null;
