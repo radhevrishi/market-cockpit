@@ -623,6 +623,7 @@ export default function EarningsPage() {
     return d.toISOString().slice(0, 10);
   });
   const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [guidanceFilter, setGuidanceFilter] = useState<'ALL' | 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL'>('ALL'); // Filter by forward guidance sentiment
   const [portfolioSymbols, setPortfolioSymbols] = useState<string[]>([]);
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>([]);
   const [failedSymbols, setFailedSymbols] = useState<string[]>([]);
@@ -871,6 +872,12 @@ export default function EarningsPage() {
           }
           // If no parseable date at all, keep the card (don't hide data)
         }
+        // Guidance sentiment filter
+        if (guidanceFilter !== 'ALL') {
+          if (guidanceFilter === 'POSITIVE' && (c.sentimentScore || 0) <= 0) return false;
+          if (guidanceFilter === 'NEGATIVE' && (c.sentimentScore || 0) >= 0) return false;
+          if (guidanceFilter === 'NEUTRAL' && c.guidance !== 'Neutral') return false;
+        }
         return true;
       })
       .sort((a, b) => {
@@ -882,7 +889,7 @@ export default function EarningsPage() {
         }
       });
     },
-    [cards, filterGrades, sortBy, viewMode, dateFrom, dateTo]
+    [cards, filterGrades, sortBy, viewMode, dateFrom, dateTo, guidanceFilter]
   );
 
   // ── Visible cards: filtered by viewMode + date, but NOT grade ──
@@ -917,9 +924,15 @@ export default function EarningsPage() {
           if (toDate && reportDate > toDate) return false;
         }
       }
+      // Guidance sentiment filter
+      if (guidanceFilter !== 'ALL') {
+        if (guidanceFilter === 'POSITIVE' && (c.sentimentScore || 0) <= 0) return false;
+        if (guidanceFilter === 'NEGATIVE' && (c.sentimentScore || 0) >= 0) return false;
+        if (guidanceFilter === 'NEUTRAL' && c.guidance !== 'Neutral') return false;
+      }
       return true;
     });
-  }, [cards, viewMode, dateFrom, dateTo]);
+  }, [cards, viewMode, dateFrom, dateTo, guidanceFilter]);
 
   // Compute aggregations from visible cards (respects date + viewMode)
   const portfolioAgg = useMemo(() =>
@@ -1266,6 +1279,24 @@ export default function EarningsPage() {
               color: isActive ? '#000' : TEXT,
               padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600,
             }}>{g}</button>
+          );
+        })}
+
+        {/* Guidance Sentiment Filter */}
+        {([
+          { key: 'ALL' as const, label: 'All Guidance', icon: '', color: TEXT_DIM },
+          { key: 'POSITIVE' as const, label: '▲ Positive', icon: '', color: '#10B981' },
+          { key: 'NEUTRAL' as const, label: '● Neutral', icon: '', color: '#F59E0B' },
+          { key: 'NEGATIVE' as const, label: '▼ Negative', icon: '', color: '#EF4444' },
+        ] as const).map(g => {
+          const isActive = guidanceFilter === g.key;
+          return (
+            <button key={g.key} onClick={() => setGuidanceFilter(g.key)} style={{
+              backgroundColor: isActive ? `${g.color}20` : CARD,
+              border: `1px solid ${isActive ? g.color : CARD_BORDER}`,
+              color: isActive ? g.color : TEXT_DIM,
+              padding: '8px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '11px', fontWeight: 600,
+            }}>{g.label}</button>
           );
         })}
 
