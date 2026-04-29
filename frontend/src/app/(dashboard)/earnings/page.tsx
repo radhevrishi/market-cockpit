@@ -435,6 +435,131 @@ function FinancialTable({ card }: { card: EarningsScanCard }) {
 }
 
 // ══════════════════════════════════════════════
+// EARNINGS COMMENTARY — one-line institutional insight
+// Generated from financial data: revenue, PAT, EPS, OPM trends.
+// Signal: 🟢 POSITIVE / 🟡 MIXED / 🔴 RED FLAG
+// ══════════════════════════════════════════════
+
+type CommentarySignal = 'POSITIVE' | 'MIXED' | 'RED_FLAG';
+
+function generateEarningsCommentary(card: EarningsScanCard): { text: string; signal: CommentarySignal } | null {
+  if (card.dataQuality === 'PRICE_ONLY' || card.quarters.length === 0) return null;
+
+  const rev = card.revenueYoY;
+  const pat = card.patYoY;
+  const eps = card.epsYoY;
+  const q0 = card.quarters[0];
+  // Find YoY quarter for margin comparison
+  const latestMonth = q0?.period?.split(' ')[0];
+  const latestYear = parseInt(q0?.period?.split(' ')[1] || '0');
+  const yoyQ = card.quarters.find(q => {
+    const m = q.period.split(' ')[0];
+    const y = parseInt(q.period.split(' ')[1]);
+    return m === latestMonth && y === latestYear - 1;
+  });
+  const opmDelta = yoyQ ? q0.opm - yoyQ.opm : 0;
+  const hasRev = rev !== null;
+  const hasPat = pat !== null;
+  const hasEps = eps !== null;
+
+  // ── RED FLAG patterns ──
+
+  // Revenue declining + PAT declining = broad deterioration
+  if (hasRev && hasPat && rev! < -5 && pat! < -10) {
+    return { text: `Revenue ↓ ${Math.abs(rev!).toFixed(0)}% and profit ↓ ${Math.abs(pat!).toFixed(0)}% YoY — broad fundamental deterioration`, signal: 'RED_FLAG' };
+  }
+
+  // Revenue growing but PAT falling sharply = cost/margin blow-up
+  if (hasRev && hasPat && rev! > 5 && pat! < -15) {
+    return { text: `Revenue ↑ ${rev!.toFixed(0)}% but profit ↓ ${Math.abs(pat!).toFixed(0)}% — growth not translating, cost structure under pressure`, signal: 'RED_FLAG' };
+  }
+
+  // Severe margin crush (>500bps) even with growth
+  if (opmDelta < -5 && hasRev && rev! > 0) {
+    return { text: `OPM compressed ${Math.abs(opmDelta).toFixed(0)}pp despite revenue growth — operating leverage absent, watch cost escalation`, signal: 'RED_FLAG' };
+  }
+
+  // PAT negative (loss-making quarter)
+  if (q0.pat < 0) {
+    return { text: `Net loss of ₹${Math.abs(q0.pat).toFixed(0)}Cr this quarter — earnings under severe stress`, signal: 'RED_FLAG' };
+  }
+
+  // Revenue flat/declining + margin contracting
+  if (hasRev && rev! < 0 && opmDelta < -2) {
+    return { text: `Revenue ↓ ${Math.abs(rev!).toFixed(0)}% with margin contraction of ${Math.abs(opmDelta).toFixed(0)}pp — cyclical or structural headwinds`, signal: 'RED_FLAG' };
+  }
+
+  // ── POSITIVE patterns ──
+
+  // Stellar all-round: Rev >20%, PAT >25%, EPS >20%, margin expanding
+  if (hasRev && hasPat && hasEps && rev! > 20 && pat! > 25 && eps! > 20 && opmDelta >= 0) {
+    return { text: `Stellar quarter — revenue ↑ ${rev!.toFixed(0)}%, profit ↑ ${pat!.toFixed(0)}%, margin expanding. Strong operating leverage`, signal: 'POSITIVE' };
+  }
+
+  // Very strong growth with margin expansion
+  if (hasRev && hasPat && rev! > 15 && pat! > 20 && opmDelta > 1) {
+    return { text: `Strong broad-based growth with ${opmDelta.toFixed(0)}pp margin expansion — earnings quality improving`, signal: 'POSITIVE' };
+  }
+
+  // High revenue + PAT growth (even if margins flat)
+  if (hasRev && hasPat && rev! > 20 && pat! > 20) {
+    return { text: `Revenue ↑ ${rev!.toFixed(0)}% and profit ↑ ${pat!.toFixed(0)}% — solid execution at scale`, signal: 'POSITIVE' };
+  }
+
+  // Modest growth but strong margin expansion (efficiency story)
+  if (hasRev && hasPat && rev! > 0 && rev! < 15 && pat! > 15 && opmDelta > 2) {
+    return { text: `Modest topline but profit ↑ ${pat!.toFixed(0)}% on ${opmDelta.toFixed(0)}pp margin expansion — operational efficiency kicking in`, signal: 'POSITIVE' };
+  }
+
+  // Revenue explosion >50% (high-growth phase)
+  if (hasRev && rev! > 50 && hasPat && pat! > 0) {
+    return { text: `Revenue surged ${rev!.toFixed(0)}% — hyper-growth phase. Watch if margins stabilize as scale builds`, signal: 'POSITIVE' };
+  }
+
+  // ── MIXED patterns ──
+
+  // Revenue growing but margins compressing (scaling/investment phase)
+  if (hasRev && rev! > 15 && opmDelta < -3 && hasPat && pat! > -10) {
+    return { text: `Revenue ↑ ${rev!.toFixed(0)}% but OPM compressed ${Math.abs(opmDelta).toFixed(0)}pp — likely investment/FAI phase, watch for margin recovery`, signal: 'MIXED' };
+  }
+
+  // Flat growth, flat margins = steady but uninspiring
+  if (hasRev && Math.abs(rev!) < 5 && hasPat && Math.abs(pat!) < 10) {
+    return { text: `Broadly flat quarter — revenue ${rev! >= 0 ? '↑' : '↓'} ${Math.abs(rev!).toFixed(0)}%, profit ${pat! >= 0 ? '↑' : '↓'} ${Math.abs(pat!).toFixed(0)}%. No inflection yet`, signal: 'MIXED' };
+  }
+
+  // Revenue growing but PAT lagging (mild cost pressure)
+  if (hasRev && hasPat && rev! > 10 && pat! >= 0 && pat! < rev! * 0.5) {
+    return { text: `Revenue ↑ ${rev!.toFixed(0)}% but profit ↑ only ${pat!.toFixed(0)}% — topline momentum not fully flowing to bottom line`, signal: 'MIXED' };
+  }
+
+  // Good numbers overall but margin contraction
+  if (hasRev && hasPat && rev! > 5 && pat! > 5 && opmDelta < -1) {
+    return { text: `Decent growth (Rev ↑${rev!.toFixed(0)}%, PAT ↑${pat!.toFixed(0)}%) but margins under mild pressure (${opmDelta.toFixed(0)}pp)`, signal: 'MIXED' };
+  }
+
+  // Revenue growing, PAT growing = generally positive
+  if (hasRev && hasPat && rev! > 5 && pat! > 5) {
+    return { text: `Healthy quarter — revenue ↑ ${rev!.toFixed(0)}% and profit ↑ ${pat!.toFixed(0)}% YoY`, signal: 'POSITIVE' };
+  }
+
+  // Fallback: describe what we see
+  if (hasRev && hasPat) {
+    const revDir = rev! > 0 ? '↑' : '↓';
+    const patDir = pat! > 0 ? '↑' : '↓';
+    return { text: `Revenue ${revDir} ${Math.abs(rev!).toFixed(0)}%, Profit ${patDir} ${Math.abs(pat!).toFixed(0)}% YoY`, signal: rev! > 0 && pat! > 0 ? 'POSITIVE' : pat! < 0 ? 'RED_FLAG' : 'MIXED' };
+  }
+
+  return null;
+}
+
+const COMMENTARY_COLORS: Record<CommentarySignal, { bg: string; border: string; text: string; icon: string }> = {
+  POSITIVE:  { bg: '#10B98110', border: '#10B98130', text: '#10B981', icon: '▲' },
+  MIXED:     { bg: '#F59E0B10', border: '#F59E0B30', text: '#F59E0B', icon: '●' },
+  RED_FLAG:  { bg: '#EF444410', border: '#EF444430', text: '#EF4444', icon: '▼' },
+};
+
+// ══════════════════════════════════════════════
 // CARD COMPONENT
 // ══════════════════════════════════════════════
 
@@ -522,6 +647,24 @@ function EarningsCardComponent({ card }: { card: EarningsScanCard }) {
           Quarterly financial data not available for this stock
         </div>
       )}
+
+      {/* Earnings Commentary — one-line institutional insight */}
+      {(() => {
+        const commentary = generateEarningsCommentary(card);
+        if (!commentary) return null;
+        const colors = COMMENTARY_COLORS[commentary.signal];
+        return (
+          <div style={{
+            padding: '8px 16px', borderTop: `1px solid ${CARD_BORDER}`,
+            backgroundColor: colors.bg, display: 'flex', alignItems: 'flex-start', gap: '8px',
+          }}>
+            <span style={{ fontSize: '13px', lineHeight: '1', flexShrink: 0, marginTop: '1px' }}>{colors.icon}</span>
+            <span style={{ fontSize: '11px', color: colors.text, fontWeight: 600, lineHeight: '1.45' }}>
+              {commentary.text}
+            </span>
+          </div>
+        );
+      })()}
 
       {/* Guidance & Sentiment Section */}
       {card.guidance && (
