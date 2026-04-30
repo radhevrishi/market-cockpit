@@ -6,7 +6,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   BarChart3, Newspaper, Calendar, Briefcase, Compass, Bell, Settings, LogOut, ChevronDown, BookMarked, Search,
-  TrendingUp, Grid3X3, RefreshCw, Filter, Globe, Rocket, Shield, LineChart, Star,
+  TrendingUp, Grid3X3, RefreshCw, Filter, Globe, Rocket, Shield, LineChart, Star, Microscope,
 } from 'lucide-react';
 import api from '@/lib/api';
 import TickerDrawer from '@/components/TickerDrawer';
@@ -23,7 +23,8 @@ const NAV: NavItem[] = [
   { href: '/watchlists',    label: 'Watchlist',       icon: <BookMarked className="w-5 h-5" /> },
   { href: '/orders',        label: 'Intelligence',    icon: <Shield className="w-5 h-5" /> },
   { href: '/earnings',      label: 'Earnings',        icon: <LineChart className="w-5 h-5" /> },
-  { href: '/multibagger',   label: 'Multibagger',     icon: <Star className="w-5 h-5" /> },
+  { href: '/multibagger',      label: 'Multibagger',     icon: <Star className="w-5 h-5" /> },
+  { href: '/bottleneck-intel', label: 'Bottleneck',     icon: <Microscope className="w-5 h-5" /> },
   { href: '/rrg',           label: 'RRG',             icon: <RefreshCw className="w-5 h-5" /> },
   { href: '/screener',      label: 'Screener',        icon: <Filter className="w-5 h-5" /> },
   { href: '/ipos',          label: 'IPOs',            icon: <Rocket className="w-5 h-5" /> },
