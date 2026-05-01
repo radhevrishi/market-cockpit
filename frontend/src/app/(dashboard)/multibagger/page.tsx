@@ -997,8 +997,6 @@ export default function MultibaggerPage() {
       {/* Scorecard tab — existing content */}
       {activeTab === 'scorecard' && <div style={{ maxWidth: 880, margin: '0 auto', padding: '20px 16px' }}>
         <div style={{ marginBottom: 20 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-            <div />
 
           {/* Stats */}
           {data?.meta && !loading && (
