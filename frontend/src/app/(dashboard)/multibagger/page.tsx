@@ -774,12 +774,22 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:ExcelResult[])=>void }) {
-  const [fileName, setFileName] = useState('');
+  const [fileName, setFileName] = useState(() => {
+    // Restore last session's file label from meta
+    try {
+      const meta = JSON.parse(localStorage.getItem(STORAGE_META) || '{}');
+      if (meta.count && meta.savedAt) {
+        const d = new Date(meta.savedAt);
+        return `${meta.count} stocks · saved ${d.toLocaleString()}`;
+      }
+    } catch {}
+    return '';
+  });
   const [parseError, setParseError] = useState('');
   const [loading, setLoading] = useState(false);
   const [expRow, setExpRow] = useState<string|null>(null);
   const [gradeFilter, setGradeFilter] = useState('ALL');
-  const [goodOnly, setGoodOnly] = useState(false); // "Good companies only" — no red flags, no deceleration
+  const [goodOnly, setGoodOnly] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function parseSingleFile(file:File, XLSX: typeof import('xlsx')) {
@@ -793,8 +803,11 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
     setLoading(true); setParseError('');
     try {
       const XLSX=await import('xlsx');
-      const seen=new Set<string>();
-      const merged:ExcelRow[]=[];
+      // Start with existing rows — new uploads MERGE in, never replace
+      const existingSymbols = new Set(rows.map(r => r.symbol));
+      const newRows: ExcelRow[] = [];
+      const seenNew = new Set<string>();
+
       for (const file of arr) {
         const raw=await parseSingleFile(file,XLSX);
         if(!raw.length) continue;
@@ -802,15 +815,32 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
         if(!cm['symbol']) continue;
         for (const r of raw) {
           const row=rawRowToExcelRow(r as Record<string,unknown>,cm);
-          if(!row||seen.has(row.symbol)) continue;
-          seen.add(row.symbol);
-          merged.push(row);
+          if(!row||existingSymbols.has(row.symbol)||seenNew.has(row.symbol)) continue;
+          seenNew.add(row.symbol);
+          newRows.push(row);
         }
       }
-      if(!merged.length){setParseError('No valid rows found. Ensure files have NSE Code column.');setLoading(false);return;}
-      const scored=merged.map(r=>scoreExcelRow(r)).sort((a,b)=>b.score-a.score);
-      setRows(scored);
-      setFileName(arr.length===1?arr[0].name:`${arr.length} files · ${merged.length} stocks merged`);
+
+      if(!newRows.length && rows.length > 0) {
+        setParseError(`All stocks in these files already exist in the current dataset (${rows.length} stocks). No new entries added.`);
+        setLoading(false); return;
+      }
+      if(!newRows.length) {
+        setParseError('No valid rows found. Ensure files have NSE Code column.');
+        setLoading(false); return;
+      }
+
+      // Score new rows and merge with existing
+      const newScored = newRows.map(r => scoreExcelRow(r));
+      const allScored = [...rows, ...newScored].sort((a,b) => b.score - a.score);
+      setRows(allScored);
+
+      const addedCount = newRows.length;
+      const totalCount = allScored.length;
+      setFileName(rows.length > 0
+        ? `+${addedCount} new stocks added · ${totalCount} total`
+        : `${arr.length} file${arr.length>1?'s':''} · ${totalCount} stocks`
+      );
     } catch(e:unknown){setParseError(`Error: ${e instanceof Error?e.message:String(e)}`);}
     setLoading(false);
   }
@@ -854,7 +884,9 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
           📊 Upload Screener.in exports — SQGLP + Fisher + Framework scoring
         </div>
         <div style={{fontSize:F.md,color:MUTED,lineHeight:1.8,marginBottom:12}}>
-          Export any Screener.in screen as CSV and upload here. All fields auto-detected. Multiple files merged automatically.
+          Export any Screener.in screen as CSV and upload here. All fields auto-detected. Multiple files merged.
+          New uploads <strong style={{color:GREEN}}>add to existing data</strong> — never replace. Only <strong style={{color:RED}}>Clear All Data</strong> removes it.
+          {rows.length > 0 && <span style={{color:GREEN}}> ✅ {rows.length} stocks currently loaded.</span>}
           <span style={{color:YELLOW}}> Add these extra columns</span> to unlock full scoring:
         </div>
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(220px,1fr))',gap:8}}>
@@ -1225,25 +1257,68 @@ function MultibaggerChecklist({excelRows}:{excelRows:ExcelResult[]}) {
 // MAIN PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
 
+const STORAGE_KEY = 'mb_excel_scored_v2';
+const STORAGE_META = 'mb_excel_meta_v2';
+
 export default function MultibaggerPage() {
-  const [activeTab,setActiveTab]=useState<'excel'|'checklist'>('excel');
-  const [excelRows,setExcelRows]=useState<ExcelResult[]>([]);
+  const [activeTab, setActiveTab] = useState<'excel'|'checklist'>('excel');
+
+  // Lazy-init from localStorage — data survives navigation and page refresh.
+  // Only cleared when user explicitly clicks "Clear All Data".
+  const [excelRows, setExcelRowsState] = useState<ExcelResult[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) return JSON.parse(saved) as ExcelResult[];
+    } catch {}
+    return [];
+  });
+
+  // Wrapper: sets state AND persists to localStorage simultaneously
+  function setExcelRows(rows: ExcelResult[]) {
+    setExcelRowsState(rows);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
+      localStorage.setItem(STORAGE_META, JSON.stringify({
+        savedAt: new Date().toISOString(),
+        count: rows.length,
+      }));
+    } catch {}
+  }
+
+  // Clear all data — explicit user action only
+  function clearExcelRows() {
+    setExcelRowsState([]);
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(STORAGE_META);
+    } catch {}
+  }
 
   return (
     <div style={{background:BG,minHeight:'100vh',color:TEXT,fontFamily:'system-ui,-apple-system,sans-serif'}}>
       {/* Header */}
       <div style={{backgroundColor:'#13131a',borderBottom:'1px solid rgba(255,255,255,0.08)',padding:'20px 24px 0'}}>
         <div style={{maxWidth:1100,margin:'0 auto'}}>
-          <div style={{marginBottom:16}}>
-            <h1 style={{fontSize:F.h1,fontWeight:900,color:PURPLE,margin:0}}>🚀 Multibagger Research Engine</h1>
-            <p style={{fontSize:F.md,color:MUTED,margin:'5px 0 0'}}>
-              SQGLP (MOSL 100×) · Fisher 100-Bagger Checklist · Multibagger Framework · Upload Screener.in → instant institutional scoring
-            </p>
+          <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:16,gap:12}}>
+            <div>
+              <h1 style={{fontSize:F.h1,fontWeight:900,color:PURPLE,margin:0}}>🚀 Multibagger Research Engine</h1>
+              <p style={{fontSize:F.md,color:MUTED,margin:'5px 0 0'}}>
+                SQGLP (MOSL 100×) · Fisher 100-Bagger · Multibagger Framework · Upload Screener.in → instant institutional scoring
+              </p>
+            </div>
+            {excelRows.length > 0 && (
+              <button
+                onClick={() => { if (window.confirm(`Clear all ${excelRows.length} stocks? This cannot be undone.`)) clearExcelRows(); }}
+                style={{padding:'8px 16px',backgroundColor:`${RED}14`,border:`1px solid ${RED}40`,borderRadius:8,color:RED,fontSize:F.sm,fontWeight:700,cursor:'pointer',flexShrink:0,whiteSpace:'nowrap'}}
+              >
+                🗑 Clear All Data ({excelRows.length})
+              </button>
+            )}
           </div>
           <div style={{display:'flex',gap:0}}>
             {([
-              {id:'excel',    label:'📤 Excel Score & Rank', desc:'Upload CSVs → 5-pillar SQGLP scoring'},
-              {id:'checklist',label:'📋 Research Checklist',  desc:`37 criteria · ${excelRows.length?`${excelRows.length} stocks loaded`:'auto-checks from Excel'}`},
+              {id:'excel',    label:'📤 Excel Score & Rank'},
+              {id:'checklist',label:`📋 Research Checklist${excelRows.length?` (${excelRows.length} loaded)`:''}`},
             ] as const).map(tab=>{
               const active=activeTab===tab.id;
               return (
@@ -1256,8 +1331,8 @@ export default function MultibaggerPage() {
         </div>
       </div>
 
-      {activeTab==='excel'     &&<ExcelCompare rows={excelRows} setRows={setExcelRows}/>}
-      {activeTab==='checklist' &&<MultibaggerChecklist excelRows={excelRows}/>}
+      {activeTab==='excel'     && <ExcelCompare rows={excelRows} setRows={setExcelRows} />}
+      {activeTab==='checklist' && <MultibaggerChecklist excelRows={excelRows} />}
     </div>
   );
 }
