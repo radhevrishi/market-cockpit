@@ -108,9 +108,9 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
     qc.invalidateQueries({ queryKey: ['market', 'indices'] });
   }, [qc]);
 
-  // Show loading skeleton for first 3 seconds
+  // Show loading skeleton briefly — set short so pages feel fast
   useEffect(() => {
-    const timer = setTimeout(() => setShowLoadingSkeleton(false), 3000);
+    const timer = setTimeout(() => setShowLoadingSkeleton(false), 600);
     return () => clearTimeout(timer);
   }, []);
 

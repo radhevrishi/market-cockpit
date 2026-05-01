@@ -714,6 +714,7 @@ function ScoreGauge({ score }: { score: number }) {
 function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDashboard; isLoading: boolean; articles: NewsArticle[] }) {
   const [expBucket, setExpBucket] = useState<string | null>(null);
   const [expSignal, setExpSignal] = useState<string | null>(null);
+  const [activeBucket, setActiveBucket] = useState<string | null>(null); // which pill is selected
 
   if (isLoading) return <SkeletonGrid count={6} height={150} />;
   if (!dashboard?.buckets?.length) return <EmptyState msg="No bottleneck dashboard data. Check backend." />;
@@ -751,19 +752,45 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
           </div>
         </div>
       )}
-      {/* Rotation strip */}
+      {/* Rotation strip — clickable pills to focus on a specific layer */}
       <div style={{ marginBottom: '20px', padding: '10px 16px', backgroundColor: '#060E1A', borderRadius: '8px', border: '1px solid #1A2840', display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
         <span style={{ fontSize: '10px', color: '#4A5B6C', fontWeight: '700', letterSpacing: '1px', marginRight: '4px' }}>ROTATION →</span>
-        {sorted.map((b, i) => (
-          <span key={b.bucket_id} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-            {i > 0 && <span style={{ color: '#1A2840' }}>›</span>}
-            <span style={{ fontSize: '10px', fontWeight: '600', padding: '2px 8px', borderRadius: '4px', color: getSev(b.severity_label).badge, backgroundColor: getSev(b.severity_label).badgeBg, border: `1px solid ${getSev(b.severity_label).border}`, opacity: Math.max(0.4, 1 - i * 0.1) }}>{b.label}</span>
-          </span>
-        ))}
+        {activeBucket && (
+          <button onClick={() => { setActiveBucket(null); setExpBucket(null); }} style={{ fontSize: '9px', color: '#4A5B6C', backgroundColor: '#1A2840', border: '1px solid #1A2840', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer', marginRight: '4px' }}>
+            ✕ Show all
+          </button>
+        )}
+        {sorted.map((b, i) => {
+          const isSelected = activeBucket === b.bucket_id;
+          const sty = getSev(b.severity_label);
+          return (
+            <span key={b.bucket_id} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              {i > 0 && <span style={{ color: '#1A2840' }}>›</span>}
+              <button
+                onClick={() => {
+                  if (isSelected) { setActiveBucket(null); setExpBucket(null); }
+                  else { setActiveBucket(b.bucket_id); setExpBucket(b.bucket_id); }
+                }}
+                style={{
+                  fontSize: '10px', fontWeight: isSelected ? '800' : '600',
+                  padding: '3px 10px', borderRadius: '4px', cursor: 'pointer',
+                  color: isSelected ? '#F5F7FA' : sty.badge,
+                  backgroundColor: isSelected ? sty.badge + '40' : sty.badgeBg,
+                  border: `1px solid ${isSelected ? sty.badge : sty.border}`,
+                  opacity: isSelected ? 1 : Math.max(0.4, 1 - i * 0.1),
+                  outline: 'none',
+                  boxShadow: isSelected ? `0 0 8px ${sty.badge}40` : 'none',
+                  transition: 'all 0.15s',
+                }}
+              >{b.label}</button>
+            </span>
+          );
+        })}
+        <span style={{ fontSize: '10px', color: '#4A5B6C', marginLeft: 'auto' }}>Click any layer to focus</span>
       </div>
-      {/* Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '12px' }}>
-        {sorted.map((b) => {
+      {/* Grid — filtered by activeBucket if one is selected */}
+      <div style={{ display: 'grid', gridTemplateColumns: activeBucket ? '1fr' : 'repeat(auto-fill, minmax(320px, 1fr))', gap: '12px' }}>
+        {(activeBucket ? sorted.filter(b => b.bucket_id === activeBucket) : sorted).map((b) => {
           const sty = getSev(b.severity_label);
           const isExp = expBucket === b.bucket_id;
           const vel = velocities[b.bucket_id];
@@ -865,26 +892,37 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
 
   const enriched = useMemo(() => buildEnrichedStocks(articles, quotes), [articles, quotes]);
 
-  // Live-only rows: tickers from news NOT already in the universe
+  // Live News: ALL tickers from BOTTLENECK news ranked by evidence count.
+  // The universe is comprehensive enough that most major names are already there,
+  // so "not in universe" filter always returns 0. Instead: show everything from news,
+  // badge in-universe stocks as "✓ TRACKED" and new ones as "🆕 NEW".
   const universeTickers = new Set(UNIVERSE_DEDUPED.map(u => u.ticker.replace(/\d+$/, '').toUpperCase()));
   const liveExtra = useMemo(() => {
-    const map = new Map<string, { symbol: string; sub_tag?: string; level?: string; evidence_count: number; headlines: string[]; latest_at?: string; price?: number; change_pct?: number; market_cap?: number }>();
+    const map = new Map<string, { symbol: string; sub_tag?: string; level?: string; evidence_count: number; headlines: string[]; latest_at?: string; price?: number; change_pct?: number; market_cap?: number; inUniverse: boolean; velocity_week: number }>();
+    const now = Date.now();
     for (const a of articles) {
       for (const sym of getTickerSymbols(a)) {
-        if (universeTickers.has(sym.toUpperCase())) continue;
-        if (!map.has(sym)) map.set(sym, { symbol: sym, sub_tag: a.bottleneck_sub_tag, level: a.bottleneck_level, evidence_count: 0, headlines: [] });
+        if (!map.has(sym)) map.set(sym, { symbol: sym, sub_tag: a.bottleneck_sub_tag, level: a.bottleneck_level, evidence_count: 0, headlines: [], inUniverse: universeTickers.has(sym.toUpperCase()), velocity_week: 0 });
         const r = map.get(sym)!;
         r.evidence_count++;
+        const age = now - new Date(a.published_at).getTime();
+        if (age < WEEK_MS) r.velocity_week++;
         if (!r.sub_tag && a.bottleneck_sub_tag) r.sub_tag = a.bottleneck_sub_tag;
         const h = a.title || a.headline || '';
         if (h && r.headlines.length < 3 && !r.headlines.includes(h)) r.headlines.push(h);
+        if (!r.latest_at || (a.published_at && a.published_at > r.latest_at)) r.latest_at = a.published_at;
       }
     }
     const qm = new Map<string, QuoteStock>(quotes.map(q => [q.ticker.toUpperCase(), q]));
     return Array.from(map.values())
-      .filter(r => r.evidence_count >= 2)
+      .filter(r => r.evidence_count >= 1)
       .map(r => ({ ...r, price: qm.get(r.symbol.toUpperCase())?.price, change_pct: qm.get(r.symbol.toUpperCase())?.changePercent, market_cap: qm.get(r.symbol.toUpperCase())?.marketCap }))
-      .sort((a, b) => b.evidence_count - a.evidence_count);
+      // Sort: new discoveries first (not in universe + high evidence), then by evidence
+      .sort((a, b) => {
+        const aScore = (!a.inUniverse ? 10 : 0) + a.velocity_week * 2 + a.evidence_count;
+        const bScore = (!b.inUniverse ? 10 : 0) + b.velocity_week * 2 + b.evidence_count;
+        return bScore - aScore;
+      });
   }, [articles, quotes]);
 
   const LAYERS = ['ALL', 'INTERCONNECT_PHOTONICS', 'MATERIALS_SUPPLY', 'FABRICATION_PACKAGING', 'COMPUTE_SCALING', 'MEMORY_STORAGE', 'POWER_GRID', 'NUCLEAR_ENERGY', 'THERMAL_COOLING'];
@@ -914,7 +952,7 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
         <div style={{ display: 'flex', gap: '0', backgroundColor: '#060E1A', border: '1px solid #1A2840', borderRadius: '8px', overflow: 'hidden' }}>
           {(['universe', 'live'] as const).map(m => (
             <button key={m} onClick={() => setViewMode(m)} style={{ padding: '6px 14px', background: viewMode === m ? '#0F7ABF20' : 'transparent', border: 'none', cursor: 'pointer', color: viewMode === m ? '#0F7ABF' : '#6B7A8D', fontSize: '11px', fontWeight: viewMode === m ? '700' : '400' }}>
-              {m === 'universe' ? `🔬 Framework (${enriched.length})` : `📡 Live News (${liveExtra.length})`}
+              {m === 'universe' ? `🔬 Framework (${enriched.length})` : `📡 Live Signal (${liveExtra.length}) · ${liveExtra.filter(r => !r.inUniverse).length} new`}
             </button>
           ))}
         </div>
@@ -1079,29 +1117,41 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
       {/* ── Live News view ── */}
       {viewMode === 'live' && (
         <>
-          <div style={{ marginBottom: '10px', padding: '8px 12px', backgroundColor: '#060E1A', border: '1px solid #1A2840', borderRadius: '8px' }}>
-            <p style={{ fontSize: '11px', color: '#6B7A8D', margin: 0 }}>Tickers extracted from live BOTTLENECK news articles — not in the Serenity framework watchlist. Evidence count = how many articles mention this ticker. All data live.</p>
+          <div style={{ marginBottom: '10px', padding: '10px 14px', backgroundColor: '#060E1A', border: '1px solid #1A2840', borderRadius: '8px', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '11px', color: '#6B7A8D' }}>All tickers mentioned in live BOTTLENECK news, ranked by discovery score.</span>
+            <span style={{ fontSize: '11px', color: '#10B981' }}>✓ TRACKED = already in framework watchlist</span>
+            <span style={{ fontSize: '11px', color: '#F59E0B' }}>🆕 NEW = potential new discovery</span>
+            <span style={{ fontSize: '11px', color: '#EF4444' }}>🔥 = accelerating this week</span>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '60px 1fr 100px 80px', gap: '8px', padding: '6px 12px', fontSize: '10px', fontWeight: '700', letterSpacing: '0.8px', color: '#4A5B6C', borderBottom: '1px solid #1A2840' }}>
-            <span>SIGNALS</span><span>TICKER / LAYER</span><span>LEVEL</span><span>PRICE</span>
+          <div style={{ display: 'grid', gridTemplateColumns: '70px 1fr 1fr 80px 80px', gap: '8px', padding: '6px 12px', fontSize: '10px', fontWeight: '700', letterSpacing: '0.8px', color: '#4A5B6C', borderBottom: '1px solid #1A2840' }}>
+            <span>SIGNALS</span><span>TICKER</span><span>LAYER</span><span>STATUS</span><span>PRICE</span>
           </div>
           {liveExtra.length === 0
-            ? <EmptyState msg="No additional tickers in live bottleneck news right now." />
+            ? <EmptyState msg="No tickers in live bottleneck news right now." />
             : liveExtra.map((r, i) => {
               const ti = r.sub_tag ? TIER_MAP[r.sub_tag] : null;
-              const lvs = getLvl(r.level);
               const cp = r.change_pct ?? 0;
+              const isNew = !r.inUniverse;
+              const isHot = r.velocity_week >= 2;
               return (
-                <div key={r.symbol} style={{ display: 'grid', gridTemplateColumns: '60px 1fr 100px 80px', gap: '8px', padding: '9px 12px', borderBottom: '1px solid #1A284018', alignItems: 'center', backgroundColor: i % 2 === 1 ? '#060E1A14' : 'transparent' }}>
-                  <span style={{ fontSize: '16px', fontWeight: '800', color: '#C9D4E0' }}>{r.evidence_count}</span>
+                <div key={r.symbol} style={{ display: 'grid', gridTemplateColumns: '70px 1fr 1fr 80px 80px', gap: '8px', padding: '9px 12px', borderBottom: '1px solid #1A284018', alignItems: 'center', backgroundColor: isNew ? '#F59E0B06' : i % 2 === 1 ? '#060E1A14' : 'transparent', borderLeft: isNew ? '2px solid #F59E0B40' : '2px solid transparent' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    <span style={{ fontSize: '15px', fontWeight: '800', color: isHot ? '#F59E0B' : '#C9D4E0' }}>{r.evidence_count}</span>
+                    {isHot && <span style={{ fontSize: '9px', color: '#F59E0B' }}>🔥 {r.velocity_week} wk</span>}
+                  </div>
                   <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
-                      <span style={{ fontSize: '13px', fontWeight: '700', color: '#F5F7FA' }}>{r.symbol}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '2px' }}>
+                      <span style={{ fontSize: '13px', fontWeight: '700', color: isNew ? '#F59E0B' : '#F5F7FA' }}>{r.symbol}</span>
                       {ti && <span style={{ fontSize: '9px', fontWeight: '700', color: ti.color, border: `1px solid ${ti.color}40`, padding: '1px 4px', borderRadius: '3px' }}>T{ti.tier}</span>}
                     </div>
-                    {r.sub_tag && <span style={{ fontSize: '10px', color: '#6B7A8D' }}>{r.sub_tag.replace(/_/g,' ').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase())}</span>}
+                    {r.latest_at && <span style={{ fontSize: '9px', color: '#4A5B6C' }}>{timeAgo(r.latest_at)}</span>}
                   </div>
-                  {lvs ? <span style={{ fontSize: '10px', fontWeight: '700', color: lvs.color, backgroundColor: lvs.bg, border: `1px solid ${lvs.border}`, padding: '2px 7px', borderRadius: '4px', textAlign: 'center' }}>{r.level}</span> : <span style={{ fontSize: '11px', color: '#4A5B6C' }}>—</span>}
+                  <span style={{ fontSize: '10px', color: '#6B7A8D', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {r.sub_tag ? r.sub_tag.replace(/_/g,' ').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase()).split(' ').slice(0,3).join(' ') : '—'}
+                  </span>
+                  <span style={{ fontSize: '9px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', textAlign: 'center', color: isNew ? '#F59E0B' : '#10B981', backgroundColor: isNew ? '#F59E0B14' : '#10B98114', border: `1px solid ${isNew ? '#F59E0B30' : '#10B98130'}` }}>
+                    {isNew ? '🆕 NEW' : '✓ TRACKED'}
+                  </span>
                   <div>{r.price ? <><span style={{ fontSize: '12px', color: '#F5F7FA', fontWeight: '600' }}>${r.price.toFixed(2)}</span>{cp !== 0 && <div style={{ fontSize: '10px', color: cp >= 0 ? '#10B981' : '#EF4444' }}>{cp >= 0 ? '+' : ''}{cp.toFixed(2)}%</div>}</> : <span style={{ fontSize: '11px', color: '#4A5B6C' }}>—</span>}</div>
                 </div>
               );
@@ -1373,8 +1423,42 @@ function GeoOverlay({ articles, isLoading }: { articles: NewsArticle[]; isLoadin
 // SECTION 5 — CONFERENCE CALENDAR
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Detect live conference signal: are news articles mentioning this conference right now?
+const CONF_KEYWORDS: Record<string, string[]> = {
+  'NVDA GTC':    ['gtc','nvidia gtc','jensen keynote','nvidia developer conference'],
+  'OFC':         ['ofc conference','optical fiber conference','silicon photonics conference'],
+  'SEMICON West':['semicon west','semicon','semiconductor equipment show'],
+  'Hot Chips':   ['hot chips','hotchips'],
+  'TSMC OIP':    ['tsmc oip','oip alliance','open innovation platform','tsmc packaging'],
+  'IEEE IEDM':   ['iedm','electron devices meeting'],
+};
+
+function useConferenceSignals() {
+  return useQuery<Record<string, number>>({
+    queryKey: ['bn', 'conf-signals'],
+    queryFn: async () => {
+      const r = await fetch('/api/v1/news?limit=200&importance_min=2');
+      if (!r.ok) return {};
+      const articles = await r.json() as NewsArticle[];
+      const counts: Record<string, number> = {};
+      for (const [confName, kws] of Object.entries(CONF_KEYWORDS)) {
+        counts[confName] = articles.filter(a => {
+          const text = ((a.title || a.headline || '') + ' ' + (a.summary || '')).toLowerCase();
+          return kws.some(kw => text.includes(kw));
+        }).length;
+      }
+      return counts;
+    },
+    refetchInterval: 300_000, // 5 min
+    staleTime: 240_000,
+    retry: 1,
+  });
+}
+
 function ConferenceCalendar() {
   const now = new Date();
+  const { data: confSignals = {} } = useConferenceSignals();
+
   const getStatus = (dateStr: string): 'upcoming' | 'past' | 'soon' => {
     const parts = dateStr.split(' ');
     if (parts.length < 2) return 'upcoming';
@@ -1398,18 +1482,25 @@ function ConferenceCalendar() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '12px' }}>
         {CONFERENCES.map((conf) => {
           const status = getStatus(conf.date);
+          const liveSignals = confSignals[conf.name] ?? 0;
+          const isHot = liveSignals >= 3; // 3+ articles = conference generating buzz
           const statusStyle = {
             upcoming: { bg: '#0F7ABF14', border: '#0F7ABF30', badge: '#0F7ABF', label: 'UPCOMING' },
             soon:     { bg: '#F59E0B14', border: '#F59E0B30', badge: '#F59E0B', label: '⚡ ENTER NOW' },
             past:     { bg: '#4A5B6C14', border: '#1A2840',   badge: '#4A5B6C', label: 'PAST' },
           }[status];
           return (
-            <div key={conf.name} style={{ padding: '16px', border: `1px solid ${statusStyle.border}`, borderRadius: '12px', backgroundColor: statusStyle.bg }}>
+            <div key={conf.name} style={{ padding: '16px', border: `1px solid ${isHot ? '#EF444440' : statusStyle.border}`, borderRadius: '12px', backgroundColor: statusStyle.bg, boxShadow: isHot ? '0 0 12px #EF444414' : 'none' }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '8px', gap: '8px' }}>
                 <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '3px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px', flexWrap: 'wrap' }}>
                     <span style={{ fontSize: '14px', fontWeight: '800', color: '#F5F7FA' }}>{conf.name}</span>
                     <span style={{ fontSize: '9px', fontWeight: '700', letterSpacing: '0.8px', color: statusStyle.badge, backgroundColor: statusStyle.badge + '20', padding: '2px 6px', borderRadius: '3px' }}>{statusStyle.label}</span>
+                    {liveSignals > 0 && (
+                      <span style={{ fontSize: '9px', fontWeight: '700', color: isHot ? '#EF4444' : '#10B981', backgroundColor: isHot ? '#EF444414' : '#10B98114', border: `1px solid ${isHot ? '#EF444430' : '#10B98130'}`, padding: '2px 6px', borderRadius: '3px' }}>
+                        {isHot ? '🔥' : '📡'} {liveSignals} live article{liveSignals !== 1 ? 's' : ''}
+                      </span>
+                    )}
                   </div>
                   <span style={{ fontSize: '12px', color: '#8A95A3', fontWeight: '600' }}>{conf.date}</span>
                 </div>
