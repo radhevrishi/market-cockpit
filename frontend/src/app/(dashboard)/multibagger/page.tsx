@@ -89,6 +89,24 @@ const CHECKLIST: ChecklistItem[] = [
     label:'YOY quarterly profit growth > 10% (no earnings deterioration)', target:'Latest quarter: PAT not declining QoQ',
     why:'Profit deceleration is the earliest warning signal per Framework. Even a beat with declining trajectory = red flag.',
     autoField:'yoyProfitGrowth', autoPass:v=>v>=10, autoFormat:v=>`YOY Profit ${v.toFixed(1)}%` },
+  { id:'rev_accel', pillar:'GROWTH', pillarColor:'#38bdf8', weight:9, source:'Framework.docx — MANDATORY',
+    label:'RECENT revenue > historical CAGR (business ACCELERATING, not decelerating)', target:'Latest quarter YOY % > 3-5yr CAGR = acceleration. Deceleration = REJECT immediately.',
+    why:"Framework #1 non-negotiable: 'Sequential acceleration in YoY growth: 18%→26%→38%→52% = buy. High growth but decelerating = reject.' Absence of 2+ primary signals → reject.",
+    autoField:'accelSignal' as unknown as keyof ExcelRow,
+    autoPass:(_v,row)=>row?.accelSignal==='ACCELERATING',
+    autoFormat:(_v,row)=>row?.accelSignal?`${row.accelSignal}: recent ${row.yoySalesGrowth?.toFixed(0)}% vs CAGR ${row.revCagr?.toFixed(0)}% (${(row.revenueAcceleration??0)>=0?'+':''}${row.revenueAcceleration?.toFixed(0)}pp)`:'' },
+  { id:'profit_accel', pillar:'GROWTH', pillarColor:'#38bdf8', weight:7, source:'Framework.docx',
+    label:'RECENT profit growth > historical (PAT also accelerating)', target:'YOY quarterly profit growth > PAT CAGR = earnings quality improving',
+    why:"Framework: Both revenue AND profit must accelerate. 'PAT +140% vs Revenue +43% = operating leverage visible.' Profit deceleration while revenue grows = margin warning.",
+    autoField:'profitAcceleration' as unknown as keyof ExcelRow,
+    autoPass:(_v,row)=>row!==undefined&&(row.profitAcceleration??-999)>=0,
+    autoFormat:(_v,row)=>row?.profitAcceleration!==undefined?`Profit accel ${(row.profitAcceleration)>=0?'+':''}${row.profitAcceleration?.toFixed(0)}pp vs historical`:'' },
+  { id:'recent_oplev', pillar:'GROWTH', pillarColor:'#38bdf8', weight:6, source:'Framework.docx',
+    label:'Recent quarter operating leverage ≥ 1.5× (PAT growing 1.5× faster than sales this quarter)', target:'YOY profit / YOY sales ratio ≥ 1.5 this quarter = real-time margin expansion',
+    why:"Framework: 'Revenue +30%, EBITDA +60%, PAT +90%' = operating leverage firing NOW, not just in historical CAGR. This is the real-time proof of operating leverage.",
+    autoField:'recentOpLev' as unknown as keyof ExcelRow,
+    autoPass:(_v,row)=>row!==undefined&&(row.recentOpLev??0)>=1.3,
+    autoFormat:(_v,row)=>row?.recentOpLev!==undefined?`Recent op lev ${row.recentOpLev.toFixed(1)}× (P:${row.yoyProfitGrowth?.toFixed(0)}%/S:${row.yoySalesGrowth?.toFixed(0)}%)`:'' },
   { id:'new_engine', pillar:'GROWTH', pillarColor:'#38bdf8', weight:5, source:'Framework.docx',
     label:'New growth engine already contributing (not just announced)', target:'New product / new geography / new segment already in revenue',
     why:"Framework mandatory check: 'At least one must be visible + monetizing.' Announcements without revenue = narrative trap." },
@@ -209,7 +227,13 @@ interface ExcelRow {
   aboveDMA200?: number;
   netDebtEbitda?: number;
   fiiPlusDii?: number;
-  opLeverageRatio?: number; // profitCagr / revCagr
+  opLeverageRatio?: number;    // profitCagr / revCagr (historical)
+  // ── RECENT / ACCELERATION — Framework.docx Core Signal ────────────────────
+  // Derived by comparing latest quarter (YOY) vs historical CAGR
+  revenueAcceleration?: number;   // yoySalesGrowth - revCagr → positive = accelerating
+  profitAcceleration?: number;    // yoyProfitGrowth - profitCagr → positive = accelerating
+  recentOpLev?: number;           // yoyProfitGrowth / yoySalesGrowth (recent operating leverage)
+  accelSignal?: 'ACCELERATING' | 'STABLE' | 'DECELERATING'; // composite trend signal
 }
 
 interface ExcelResult extends ExcelRow {
@@ -304,12 +328,48 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     }
     if (s>=85) strengths.push(`Profit CAGR ${row.profitCagr.toFixed(1)}% — compounding`);
   }
-  if (row.yoySalesGrowth!==undefined)  { growS+=sv(row.yoySalesGrowth,[5,12,25]);  growC++; }
+  if (row.yoySalesGrowth!==undefined)  { growS+=sv(row.yoySalesGrowth,[5,12,25]); growC++; }
   if (row.yoyProfitGrowth!==undefined) {
     growS+=sv(row.yoyProfitGrowth,[5,15,30]); growC++;
     if (row.yoyProfitGrowth<0) risks.push(`YOY profit −${Math.abs(row.yoyProfitGrowth).toFixed(0)}% — earnings deteriorating`);
   }
   if (row.epsGrowth!==undefined) { growS+=sv(row.epsGrowth,[10,20,35]); growC++; }
+
+  // ── FRAMEWORK.DOCX CORE: ACCELERATION SIGNAL ────────────────────────────────
+  // "Revenue Acceleration is non-negotiable. Decelerating = reject immediately."
+  // Compare latest quarter YOY vs historical CAGR to determine trend direction.
+  if (row.accelSignal !== undefined) {
+    const accelScores = { 'ACCELERATING': 92, 'STABLE': 60, 'DECELERATING': 20 };
+    const accelBonus = accelScores[row.accelSignal];
+    growS += accelBonus; growC++;
+
+    if (row.accelSignal === 'ACCELERATING' && row.revenueAcceleration !== undefined) {
+      strengths.push(`Revenue ACCELERATING: recent +${row.yoySalesGrowth?.toFixed(0)}% vs CAGR ${row.revCagr?.toFixed(0)}% (+${row.revenueAcceleration}pp) — Framework Core Signal`);
+    } else if (row.accelSignal === 'DECELERATING' && row.revenueAcceleration !== undefined) {
+      risks.push(`Revenue DECELERATING: recent ${row.yoySalesGrowth?.toFixed(0)}% vs CAGR ${row.revCagr?.toFixed(0)}% (${row.revenueAcceleration}pp) — Framework rejection filter`);
+      redFlags.push({ label: `Revenue decelerating: ${row.yoySalesGrowth?.toFixed(0)}% vs historical ${row.revCagr?.toFixed(0)}%`, severity: 'HIGH', source: 'Framework.docx' });
+    }
+  }
+
+  // Profit acceleration — Framework: "PAT growth must also accelerate, not just revenue"
+  if (row.profitAcceleration !== undefined) {
+    if (row.profitAcceleration >= 10) {
+      strengths.push(`Profit ACCELERATING +${row.profitAcceleration}pp above historical — earnings quality improving`);
+      growS += 8; growC += 0.3;
+    } else if (row.profitAcceleration <= -15) {
+      risks.push(`Profit growth decelerating ${row.profitAcceleration}pp — margins or volume compressing`);
+    }
+  }
+
+  // Recent operating leverage (quarterly) — is PAT growing faster than revenue RIGHT NOW?
+  if (row.recentOpLev !== undefined && row.yoySalesGrowth !== undefined && row.yoySalesGrowth > 0) {
+    if (row.recentOpLev >= 1.5) {
+      strengths.push(`Recent op leverage ${row.recentOpLev.toFixed(1)}× — PAT ${row.yoyProfitGrowth?.toFixed(0)}% vs sales ${row.yoySalesGrowth?.toFixed(0)}% this quarter`);
+      growS += 6; growC += 0.2;
+    } else if (row.recentOpLev < 0.7 && (row.yoyProfitGrowth ?? 0) < (row.yoySalesGrowth ?? 0)) {
+      risks.push(`Weak recent op leverage ${row.recentOpLev.toFixed(1)}× — margins compressing this quarter`);
+    }
+  }
 
   // ── LONGEVITY (15%) — SQGLP "L" ──────────────────────────────────────────
   // Proxy using: ROE trend proxy, market cap (small=more runway), non-peak sector
@@ -410,10 +470,22 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
 
   const hasCrit=redFlags.some(f=>f.severity==='CRITICAL');
   const highCnt=redFlags.filter(f=>f.severity==='HIGH').length;
-  let score=Math.round(penalized/5)*5;
-  if (hasCrit)       score=Math.min(score,40);
-  else if (highCnt>=2) score=Math.min(score,50);
-  else if (highCnt>=1) score=Math.min(score,62);
+  const medCnt=redFlags.filter(f=>f.severity==='MEDIUM').length;
+
+  // Red flags are ACTIVE score penalties — not just caps.
+  // Each CRITICAL = -25 pts, each HIGH = -12 pts, each MEDIUM = -5 pts.
+  // This ensures bad companies with good historical numbers get penalised for current risks.
+  const redFlagPenalty = (hasCrit?25:0) + (highCnt*12) + (medCnt*5);
+  let score=Math.round((penalized - redFlagPenalty)/5)*5;
+
+  // Absolute caps for serious red flags (company is structurally disqualified)
+  if (hasCrit)         score=Math.min(score,38);
+  else if (highCnt>=2) score=Math.min(score,48);
+  else if (highCnt>=1) score=Math.min(score,60);
+
+  // Deceleration is a hard Framework filter — cap at B- even if numbers look good historically
+  if (row.accelSignal==='DECELERATING') score=Math.min(score,52);
+
   score=Math.max(0,Math.min(100,score));
 
   const grade:Grade=score>=80?'A+':score>=72?'A':score>=63?'B+':score>=54?'B':score>=42?'C':'D';
@@ -562,6 +634,34 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
     netDebtEbitda:(netDebt!==undefined&&ebitda!==undefined&&ebitda>0)?Math.round(netDebt/ebitda*10)/10:undefined,
     fiiPlusDii:(fii!==undefined&&dii!==undefined)?Math.round((fii+dii)*10)/10:fii!==undefined?fii:undefined,
     opLeverageRatio:(n(m['profitCagr']?row[m['profitCagr']]:undefined)!==undefined&&n(m['revCagr']?row[m['revCagr']]:undefined)!==undefined&&(n(m['revCagr']?row[m['revCagr']]:undefined) as number)>0)?(n(m['profitCagr']?row[m['profitCagr']]:undefined) as number)/(n(m['revCagr']?row[m['revCagr']]:undefined) as number):undefined,
+    // ── ACCELERATION SIGNALS (Framework.docx Core Signal) ────────────────────
+    // Compare latest quarter YOY vs historical CAGR to detect trend direction.
+    // If recent (YOY) > historical (CAGR): business is ACCELERATING — key buy signal.
+    // If recent < historical: DECELERATING — key rejection filter.
+    get revenueAcceleration() {
+      const yoy=n(m['yoySalesGrowth']?row[m['yoySalesGrowth']]:undefined);
+      const cagr=n(m['revCagr']?row[m['revCagr']]:undefined);
+      return (yoy!==undefined&&cagr!==undefined)?Math.round(yoy-cagr):undefined;
+    },
+    get profitAcceleration() {
+      const yoy=n(m['yoyProfitGrowth']?row[m['yoyProfitGrowth']]:undefined);
+      const cagr=n(m['profitCagr']?row[m['profitCagr']]:undefined);
+      return (yoy!==undefined&&cagr!==undefined)?Math.round(yoy-cagr):undefined;
+    },
+    get recentOpLev() {
+      const yoyP=n(m['yoyProfitGrowth']?row[m['yoyProfitGrowth']]:undefined);
+      const yoyS=n(m['yoySalesGrowth']?row[m['yoySalesGrowth']]:undefined);
+      return (yoyP!==undefined&&yoyS!==undefined&&yoyS>0)?Math.round(yoyP/yoyS*10)/10:undefined;
+    },
+    get accelSignal(): 'ACCELERATING'|'STABLE'|'DECELERATING'|undefined {
+      const yoy=n(m['yoySalesGrowth']?row[m['yoySalesGrowth']]:undefined);
+      const cagr=n(m['revCagr']?row[m['revCagr']]:undefined);
+      if(yoy===undefined||cagr===undefined) return undefined;
+      const delta=yoy-cagr;
+      if(delta>=5) return 'ACCELERATING';
+      if(delta<=-5) return 'DECELERATING';
+      return 'STABLE';
+    },
   };
 }
 
@@ -575,6 +675,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   const [loading, setLoading] = useState(false);
   const [expRow, setExpRow] = useState<string|null>(null);
   const [gradeFilter, setGradeFilter] = useState('ALL');
+  const [goodOnly, setGoodOnly] = useState(false); // "Good companies only" — no red flags, no deceleration
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function parseSingleFile(file:File, XLSX: typeof import('xlsx')) {
@@ -611,8 +712,17 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   }
 
   const GRADES:Grade[]=['A+','A','B+','B','C','D'];
-  const filtered=gradeFilter==='ALL'?rows:rows.filter(r=>r.grade===gradeFilter);
-  const topPicks=rows.filter(r=>['A+','A','B+'].includes(r.grade));
+  // "Good companies only" filter — applies ALL criteria from frameworks:
+  // No CRITICAL red flags, no deceleration, no high pledge, score ≥ B+
+  const goodCompanies = rows.filter(r =>
+    !r.redFlags.some(f=>f.severity==='CRITICAL') &&   // No CRITICAL flags
+    r.redFlags.filter(f=>f.severity==='HIGH').length===0 && // No HIGH flags
+    r.accelSignal !== 'DECELERATING' &&                // Not decelerating
+    r.score >= 60                                      // Minimum score threshold
+  );
+  const baseRows = goodOnly ? goodCompanies : rows;
+  const filtered = gradeFilter==='ALL' ? baseRows : baseRows.filter(r=>r.grade===gradeFilter);
+  const topPicks = rows.filter(r=>['A+','A','B+'].includes(r.grade));
 
   const METRICS: [keyof ExcelRow, string, string][] = [
     ['roce','ROCE %','Quality'],['roe','ROE %','Quality'],['opm','OPM %','Quality'],
@@ -620,6 +730,8 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
     ['revCagr','Sales CAGR %','Growth'],['profitCagr','Profit CAGR %','Growth'],
     ['opLeverageRatio','Op Leverage x','Growth'],
     ['yoySalesGrowth','YOY Sales %','Growth'],['yoyProfitGrowth','YOY Profit %','Growth'],
+    ['revenueAcceleration','Rev Accel pp','Recent'],['profitAcceleration','Profit Accel pp','Recent'],
+    ['recentOpLev','Recent Op Lev x','Recent'],
     ['epsGrowth','EPS Growth %','Growth'],
     ['de','D/E x','Fin Str'],['netDebtEbitda','ND/EBITDA x','Fin Str'],
     ['promoter','Promoter %','Fin Str'],['pledge','Pledge %','Fin Str'],
@@ -695,9 +807,19 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
               </div>
             ))}
             <div style={{display:'flex',gap:6,alignItems:'center',marginLeft:'auto',flexWrap:'wrap'}}>
+              {/* Good Companies Only filter — the most important button */}
+              <button onClick={()=>setGoodOnly(v=>!v)} style={{
+                fontSize:F.sm,fontWeight:800,padding:'8px 16px',borderRadius:8,
+                border:`2px solid ${goodOnly?GREEN+'80':BORDER}`,
+                background:goodOnly?`${GREEN}18`:'transparent',
+                color:goodOnly?GREEN:MUTED,cursor:'pointer',
+              }}>
+                {goodOnly?`✅ Good Only (${goodCompanies.length})`:`🔍 Show Good Only`}
+              </button>
+              <div style={{width:1,background:BORDER,height:24}}/>
               {(['ALL',...GRADES] as const).map(g=>(
                 <button key={g} onClick={()=>setGradeFilter(g)} style={{fontSize:F.sm,fontWeight:700,padding:'8px 14px',borderRadius:8,border:`1px solid ${gradeFilter===g?(GRADE_COLOR[g as Grade]||PURPLE)+'60':BORDER}`,background:gradeFilter===g?`${GRADE_COLOR[g as Grade]||PURPLE}18`:'transparent',color:gradeFilter===g?(GRADE_COLOR[g as Grade]||PURPLE):MUTED,cursor:'pointer'}}>
-                  {g}{g!=='ALL'&&` (${rows.filter(r=>r.grade===g).length})`}
+                  {g}{g!=='ALL'&&` (${baseRows.filter(r=>r.grade===g).length})`}
                 </button>
               ))}
             </div>
@@ -715,9 +837,11 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
               <div key={r.symbol+idx} style={{borderBottom:`1px solid rgba(255,255,255,0.05)`}}>
                 <button onClick={()=>setExpRow(isExp?null:r.symbol)} style={{width:'100%',background:isExp?CARD_BG:'transparent',border:'none',cursor:'pointer',textAlign:'left',padding:'14px 14px'}}>
                   <div style={{display:'grid',gridTemplateColumns:'120px 160px 70px 70px 1fr 110px',gap:10,alignItems:'center'}}>
-                    <div style={{display:'flex',alignItems:'center',gap:6}}>
-                      <span style={{fontSize:F.lg,fontWeight:800,color:hasCrit?RED:TEXT}}>{r.symbol}</span>
+                    <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                      <span style={{fontSize:F.lg,fontWeight:800,color:hasCrit?RED:r.accelSignal==='DECELERATING'?ORANGE:TEXT}}>{r.symbol}</span>
                       {idx<3&&<span style={{fontSize:F.md}}>⭐</span>}
+                      {r.accelSignal==='ACCELERATING'&&<span title="Revenue accelerating" style={{fontSize:F.xs,color:GREEN,fontWeight:800,border:`1px solid ${GREEN}40`,padding:'1px 5px',borderRadius:4}}>🚀 ACCEL</span>}
+                      {r.accelSignal==='DECELERATING'&&<span title="Revenue decelerating — Framework rejection filter" style={{fontSize:F.xs,color:ORANGE,fontWeight:800,border:`1px solid ${ORANGE}40`,padding:'1px 5px',borderRadius:4}}>📉 DECEL</span>}
                     </div>
                     <span style={{fontSize:F.sm,color:MUTED,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.company||r.sector}</span>
                     <span style={{fontSize:F.h2,fontWeight:900,color:GRADE_COLOR[r.grade]??MUTED}}>{r.score}</span>
@@ -857,10 +981,15 @@ function MultibaggerChecklist({excelRows}:{excelRows:ExcelResult[]}) {
     const result:Record<string,{pass:boolean;note:string}|null>={};
     for (const item of CHECKLIST){
       if(!item.autoField||!item.autoPass) continue;
-      const val=excelStock[item.autoField] as number|undefined;
-      if(val===undefined||val===null) continue;
-      const pass=item.autoPass(val,excelStock);
-      const note=`Auto from Excel: ${item.autoFormat?item.autoFormat(val,excelStock):val.toFixed(2)} → ${pass?'✅ PASS':'❌ FAIL'}`;
+      // Handle both numeric fields and derived non-numeric fields (accelSignal etc.)
+      const rawVal=excelStock[item.autoField as keyof ExcelResult];
+      // For string-type fields (accelSignal), pass 0 as numeric placeholder — autoPass uses row
+      const numVal = typeof rawVal === 'number' ? rawVal : (rawVal !== undefined ? 0 : undefined);
+      if(numVal===undefined && rawVal===undefined) continue;
+      const pass=item.autoPass(numVal??0, excelStock);
+      const formatted = item.autoFormat ? item.autoFormat(numVal??0, excelStock) : (typeof rawVal==='number'?rawVal.toFixed(2):String(rawVal??''));
+      if(!formatted) continue; // skip if format returns empty (derived field not available)
+      const note=`Auto: ${formatted} → ${pass?'✅ PASS':'❌ FAIL'}`;
       result[item.id]={pass,note};
     }
     return result;
