@@ -236,12 +236,35 @@ interface ExcelRow {
   accelSignal?: 'ACCELERATING' | 'STABLE' | 'DECELERATING'; // composite trend signal
 }
 
+// ── BUCKET TYPES ──────────────────────────────────────────────────────────────
+// Three distinct profiles with different weight sets and criteria.
+type Bucket = 'CORE_COMPOUNDER' | 'EMERGING_MULTIBAGGER' | 'HIGH_RISK' | 'MONITOR';
+const BUCKET_CONFIG: Record<Bucket, { label: string; color: string; icon: string; desc: string }> = {
+  CORE_COMPOUNDER:     { label: 'Core Compounder',      color: '#10b981', icon: '🏆', desc: 'High quality + consistent growth + clean balance sheet' },
+  EMERGING_MULTIBAGGER:{ label: 'Emerging Multibagger',  color: '#a78bfa', icon: '🚀', desc: 'Accelerating growth + early discovery + rerating potential' },
+  HIGH_RISK:           { label: 'High-Risk Accel',       color: '#f97316', icon: '⚡', desc: 'Fast growth but balance sheet or quality concerns' },
+  MONITOR:             { label: 'Monitor / Watch',       color: '#64748b', icon: '👁', desc: 'Fails hard filters — watch only, not for active sizing' },
+};
+
+// ── DECISION STRIP — 5 pass/fail checks shown on every row ───────────────────
+interface DecisionCheck { pass: boolean; label: string; detail: string; }
+interface DecisionStrip {
+  survival: DecisionCheck;    // No CRITICAL flags, debt OK, promoter OK
+  acceleration: DecisionCheck;// Revenue accelerating vs historical
+  valuation: DecisionCheck;   // PEG < 1.5 or below intrinsic value
+  discovery: DecisionCheck;   // FII+DII < 25% (undiscovered)
+  technical: DecisionCheck;   // Above DMA200, not in deep drawdown
+}
+
 interface ExcelResult extends ExcelRow {
   score: number; grade: Grade;
+  bucket: Bucket;
+  decisionStrip: DecisionStrip;
   pillarScores: { id: string; label: string; score: number; color: string; weight: number }[];
   redFlags: { label: string; severity: 'CRITICAL'|'HIGH'|'MEDIUM'; source: string }[];
   strengths: string[]; risks: string[];
   coverage: number;
+  reratingBonus: number; // explicit bonus/penalty for discovery + momentum
 }
 
 // Sector benchmarks: [p25, median, p75]
@@ -568,41 +591,142 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     }
   }
 
-  // SQGLP weights: S=Size(in Longevity), Q=Quality, G=Growth, L=Longevity, P=Price(Valuation)
-  const raw = qual*0.25 + growth*0.25 + longe*0.15 + fin*0.15 + val*0.15 + mkt*0.05;
-  // Hard penalties applied directly to raw score before coverage scaling
+  // ── BUCKET CLASSIFICATION ────────────────────────────────────────────────────
+  // Determines which scoring weight set to use and how to label the stock.
+  const hasCrit = redFlags.some(f=>f.severity==='CRITICAL');
+  const highCnt = redFlags.filter(f=>f.severity==='HIGH').length;
+  const medCnt  = redFlags.filter(f=>f.severity==='MEDIUM').length;
+
+  // Hard fail criteria → MONITOR bucket (ranked separately, not in top picks)
+  const isHardFail =
+    hasCrit ||                                                    // CRITICAL red flag
+    highCnt >= 2 ||                                              // 2+ HIGH flags = structural issue
+    (row.accelSignal === 'DECELERATING' && highCnt >= 1) ||      // Decelerating + a flag
+    (row.de !== undefined && row.de > 2.5) ||                    // Extreme leverage
+    (row.pledge !== undefined && row.pledge > 40);               // Promoter pledged > 40%
+
+  // Core Compounder: quality + consistency + clean balance sheet + steady growth
+  const isCoreCompounder =
+    !isHardFail &&
+    (row.roce ?? 0) >= 18 &&
+    (row.cfoToPat ?? 0) >= 0.8 &&
+    (row.de ?? 999) <= 0.5 &&
+    (row.revCagr ?? 0) >= 15 &&
+    (row.promoter ?? 0) >= 40 &&
+    highCnt === 0;
+
+  // Emerging Multibagger: acceleration + discovery + rerating potential
+  const isEmergingMultibagger =
+    !isHardFail && !isCoreCompounder &&
+    (row.accelSignal === 'ACCELERATING' || (row.yoySalesGrowth ?? 0) >= 25) &&
+    (row.recentOpLev ?? 0) >= 1.0 &&
+    (row.marketCapCr ?? 99999) <= 10000 &&
+    highCnt <= 1;
+
+  const bucket: Bucket =
+    isHardFail ? 'MONITOR' :
+    isCoreCompounder ? 'CORE_COMPOUNDER' :
+    isEmergingMultibagger ? 'EMERGING_MULTIBAGGER' : 'HIGH_RISK';
+
+  // ── BUCKET-SPECIFIC WEIGHTS ───────────────────────────────────────────────────
+  // Core Compounder: quality + fin strength matter most; growth is secondary
+  // Emerging Multibagger: growth + longevity (discovery/smallness) matter most
+  // High-Risk / Monitor: default SQGLP weights
+  let raw: number;
+  let bucketWeights: number[];
+
+  if (bucket === 'CORE_COMPOUNDER') {
+    // Quality 25%, Fin Strength 20%, Growth 20%, Longevity 15%, Valuation 10%, Market 10%
+    bucketWeights = [0.25, 0.20, 0.15, 0.20, 0.10, 0.10];
+  } else if (bucket === 'EMERGING_MULTIBAGGER') {
+    // Growth 30%, Longevity(discovery) 20%, Quality 15%, Fin Strength 15%, Valuation 10%, Market 10%
+    bucketWeights = [0.15, 0.30, 0.20, 0.15, 0.10, 0.10];
+  } else {
+    // Default SQGLP
+    bucketWeights = [0.25, 0.25, 0.15, 0.15, 0.15, 0.05];
+  }
+  // [qual, growth, longe, fin, val, mkt]
+  raw = qual*bucketWeights[0] + growth*bucketWeights[1] + longe*bucketWeights[2] +
+        fin*bucketWeights[3] + val*bucketWeights[4] + mkt*bucketWeights[5];
+
+  // ── RERATING BONUS / PENALTY ──────────────────────────────────────────────────
+  // Bonus: features that drive PE expansion and institutional discovery
+  // Penalty: features that create multiple compression
+  let reratingBonus = 0;
+
+  // Bonus signals (discovery + momentum + cheap growth)
+  if ((row.fiiPlusDii ?? 100) < 10)                                         reratingBonus += 8;  // largely undiscovered
+  else if ((row.fiiPlusDii ?? 100) < 20)                                    reratingBonus += 4;  // early institutional
+  if (row.accelSignal === 'ACCELERATING')                                    reratingBonus += 6;  // revenue accelerating
+  if ((row.profitAcceleration ?? 0) > 10)                                   reratingBonus += 4;  // profit accelerating
+  if ((row.fcfAbsolute ?? -1) > 0)                                          reratingBonus += 3;  // FCF positive
+  if ((row.peg ?? 99) < 0.8 && (row.peg ?? 0) > 0)                        reratingBonus += 5;  // cheap growth (PEG < 0.8)
+  if ((row.marginOfSafety ?? -99) > 20)                                     reratingBonus += 4;  // below intrinsic value
+
+  // Penalty signals (crowded, extended, expensive for quality)
+  if ((row.fiiPlusDii ?? 0) > 40)                                           reratingBonus -= 5;  // heavily institutional
+  if ((row.aboveDMA200 ?? 0) > 40)                                          reratingBonus -= 4;  // price extended
+  if ((row.pe ?? 0) > 80 && (row.profitCagr ?? 0) < 25)                    reratingBonus -= 6;  // expensive without matching growth
+  if ((row.marginOfSafety ?? 0) < -40)                                      reratingBonus -= 5;  // significantly above IV
+  if (row.accelSignal === 'DECELERATING' && (row.pe ?? 0) > 40)             reratingBonus -= 8;  // decelerating + expensive = worst combo
+  if ((row.fcfAbsolute ?? 1) < 0 && (row.netDebt ?? 0) > 0)                reratingBonus -= 4;  // burning cash + has debt
+
+  reratingBonus = Math.max(-20, Math.min(20, reratingBonus)); // cap at ±20
+
+  // ── FINAL SCORE ───────────────────────────────────────────────────────────────
   const rawAfterPenalty = Math.max(0, raw - hardPenalty);
   const penalized = rawAfterPenalty*(0.5+coverageRatio*0.5);
-
-  const hasCrit=redFlags.some(f=>f.severity==='CRITICAL');
-  const highCnt=redFlags.filter(f=>f.severity==='HIGH').length;
-  const medCnt=redFlags.filter(f=>f.severity==='MEDIUM').length;
-
-  // Red flag penalties (on top of hard penalties)
   const redFlagPenalty = (hasCrit?25:0) + (highCnt*12) + (medCnt*5);
-  let score=Math.round((penalized - redFlagPenalty)/5)*5;
+  let score = Math.round((penalized - redFlagPenalty + reratingBonus) / 5) * 5;
 
-  // Absolute caps for serious red flags (company is structurally disqualified)
-  if (hasCrit)         score=Math.min(score,38);
-  else if (highCnt>=2) score=Math.min(score,48);
-  else if (highCnt>=1) score=Math.min(score,60);
+  // Absolute caps
+  if (hasCrit)            score = Math.min(score, 38);
+  else if (highCnt >= 2)  score = Math.min(score, 48);
+  else if (highCnt >= 1)  score = Math.min(score, 60);
+  if (row.accelSignal === 'DECELERATING') score = Math.min(score, 52);
+  if (bucket === 'MONITOR') score = Math.min(score, 45); // Monitor stocks capped at 45
 
-  // Deceleration is a hard Framework filter — cap at B- even if numbers look good historically
-  if (row.accelSignal==='DECELERATING') score=Math.min(score,52);
+  score = Math.max(0, Math.min(100, score));
+  const grade:Grade = score>=80?'A+':score>=72?'A':score>=63?'B+':score>=54?'B':score>=42?'C':'D';
 
-  score=Math.max(0,Math.min(100,score));
-
-  const grade:Grade=score>=80?'A+':score>=72?'A':score>=63?'B+':score>=54?'B':score>=42?'C':'D';
+  // ── DECISION STRIP ────────────────────────────────────────────────────────────
+  const decisionStrip: DecisionStrip = {
+    survival: {
+      pass: !hasCrit && highCnt === 0 && (row.pledge??0) <= 25 && (row.de??0) <= (b.deMax*1.5),
+      label: 'Survival',
+      detail: hasCrit ? `CRITICAL flag` : highCnt > 0 ? `${highCnt} HIGH flag(s)` : (row.pledge??0)>25 ? `Pledge ${row.pledge?.toFixed(0)}%` : 'Clean',
+    },
+    acceleration: {
+      pass: row.accelSignal === 'ACCELERATING' || (row.yoySalesGrowth ?? 0) >= 20,
+      label: 'Accel',
+      detail: row.accelSignal ?? (row.yoySalesGrowth !== undefined ? `YOY ${row.yoySalesGrowth.toFixed(0)}%` : 'No data'),
+    },
+    valuation: {
+      pass: ((row.peg??99) < 1.5 && (row.peg??0)>0) || (row.marginOfSafety??-99) > 0,
+      label: 'Value',
+      detail: row.peg ? `PEG ${row.peg.toFixed(1)}` : row.marginOfSafety !== undefined ? `MoS ${row.marginOfSafety.toFixed(0)}%` : 'No data',
+    },
+    discovery: {
+      pass: (row.fiiPlusDii ?? 100) < 25,
+      label: 'Discovery',
+      detail: row.fiiPlusDii !== undefined ? `FII+DII ${row.fiiPlusDii.toFixed(0)}%` : 'No data',
+    },
+    technical: {
+      pass: (row.aboveDMA200 ?? -100) >= 0 && (row.return1m ?? -100) >= -15,
+      label: 'Technical',
+      detail: row.aboveDMA200 !== undefined ? `${row.aboveDMA200 >= 0 ? '+' : ''}${row.aboveDMA200.toFixed(0)}% vs DMA` : 'No data',
+    },
+  };
 
   return {
-    ...row, score, grade, coverage, strengths, risks, redFlags,
-    pillarScores:[
-      {id:'QUALITY',    label:'Quality (Q)',    score:Math.round(qual),  color:'#a78bfa', weight:25},
-      {id:'GROWTH',     label:'Growth (G)',     score:Math.round(growth),color:'#38bdf8', weight:25},
-      {id:'LONGEVITY',  label:'Longevity (L)',  score:Math.round(longe), color:'#06b6d4', weight:15},
-      {id:'FIN_STR',    label:'Fin Strength',   score:Math.round(fin),   color:'#10b981', weight:15},
-      {id:'VALUATION',  label:'Valuation (P)',  score:Math.round(val),   color:'#f59e0b', weight:15},
-      {id:'MARKET',     label:'Market',         score:Math.round(mkt),   color:'#f97316', weight:5},
+    ...row, score, grade, bucket, decisionStrip, reratingBonus, coverage, strengths, risks, redFlags,
+    pillarScores: [
+      {id:'QUALITY',   label:'Quality (Q)',   score:Math.round(qual),  color:'#a78bfa', weight:Math.round(bucketWeights[0]*100)},
+      {id:'GROWTH',    label:'Growth (G)',    score:Math.round(growth),color:'#38bdf8', weight:Math.round(bucketWeights[1]*100)},
+      {id:'LONGEVITY', label:'Longevity (L)', score:Math.round(longe), color:'#06b6d4', weight:Math.round(bucketWeights[2]*100)},
+      {id:'FIN_STR',   label:'Fin Strength',  score:Math.round(fin),   color:'#10b981', weight:Math.round(bucketWeights[3]*100)},
+      {id:'VALUATION', label:'Valuation (P)', score:Math.round(val),   color:'#f59e0b', weight:Math.round(bucketWeights[4]*100)},
+      {id:'MARKET',    label:'Market',        score:Math.round(mkt),   color:'#f97316', weight:Math.round(bucketWeights[5]*100)},
     ],
   };
 }
@@ -790,6 +914,10 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   const [expRow, setExpRow] = useState<string|null>(null);
   const [gradeFilter, setGradeFilter] = useState('ALL');
   const [goodOnly, setGoodOnly] = useState(false);
+  const [bucketFilter, setBucketFilter] = useState<Bucket|'ALL'>('ALL');
+  const [accelOnly, setAccelOnly] = useState(false);
+  const [fcfOnly, setFcfOnly] = useState(false);
+  const [discoveryOnly, setDiscoveryOnly] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function parseSingleFile(file:File, XLSX: typeof import('xlsx')) {
@@ -846,17 +974,22 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   }
 
   const GRADES:Grade[]=['A+','A','B+','B','C','D'];
-  // "Good companies only" filter — applies ALL criteria from frameworks:
-  // No CRITICAL red flags, no deceleration, no high pledge, score ≥ B+
+  // "Good companies only" = passes all hard survival criteria
   const goodCompanies = rows.filter(r =>
-    !r.redFlags.some(f=>f.severity==='CRITICAL') &&   // No CRITICAL flags
-    r.redFlags.filter(f=>f.severity==='HIGH').length===0 && // No HIGH flags
-    r.accelSignal !== 'DECELERATING' &&                // Not decelerating
-    r.score >= 60                                      // Minimum score threshold
+    r.decisionStrip.survival.pass &&
+    r.accelSignal !== 'DECELERATING' &&
+    r.bucket !== 'MONITOR' &&
+    r.score >= 60
   );
-  const baseRows = goodOnly ? goodCompanies : rows;
-  const filtered = gradeFilter==='ALL' ? baseRows : baseRows.filter(r=>r.grade===gradeFilter);
-  const topPicks = rows.filter(r=>['A+','A','B+'].includes(r.grade));
+
+  // Apply all active filters in order
+  let baseRows = goodOnly ? goodCompanies : rows;
+  if (bucketFilter !== 'ALL') baseRows = baseRows.filter(r => r.bucket === bucketFilter);
+  if (accelOnly)      baseRows = baseRows.filter(r => r.decisionStrip.acceleration.pass);
+  if (fcfOnly)        baseRows = baseRows.filter(r => (r.fcfAbsolute ?? -1) > 0 || (r.cfoToPat ?? 0) >= 0.8);
+  if (discoveryOnly)  baseRows = baseRows.filter(r => (r.fiiPlusDii ?? 100) < 15);
+  const filtered = gradeFilter === 'ALL' ? baseRows : baseRows.filter(r => r.grade === gradeFilter);
+  const topPicks = rows.filter(r => ['A+','A','B+'].includes(r.grade) && r.bucket !== 'MONITOR');
 
   const METRICS: [keyof ExcelRow, string, string][] = [
     ['roce','ROCE %','Quality'],['roe','ROE %','Quality'],['opm','OPM %','Quality'],
@@ -943,27 +1076,48 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
               </div>
             ))}
             <div style={{display:'flex',gap:6,alignItems:'center',marginLeft:'auto',flexWrap:'wrap'}}>
-              {/* Good Companies Only filter — the most important button */}
-              <button onClick={()=>setGoodOnly(v=>!v)} style={{
-                fontSize:F.sm,fontWeight:800,padding:'8px 16px',borderRadius:8,
-                border:`2px solid ${goodOnly?GREEN+'80':BORDER}`,
-                background:goodOnly?`${GREEN}18`:'transparent',
-                color:goodOnly?GREEN:MUTED,cursor:'pointer',
-              }}>
-                {goodOnly?`✅ Good Only (${goodCompanies.length})`:`🔍 Show Good Only`}
+              {/* Good Companies Only */}
+              <button onClick={()=>setGoodOnly(v=>!v)} style={{fontSize:F.sm,fontWeight:800,padding:'8px 16px',borderRadius:8,border:`2px solid ${goodOnly?GREEN+'80':BORDER}`,background:goodOnly?`${GREEN}18`:'transparent',color:goodOnly?GREEN:MUTED,cursor:'pointer'}}>
+                {goodOnly?`✅ Good Only (${goodCompanies.length})`:`🔍 Good Only`}
               </button>
               <div style={{width:1,background:BORDER,height:24}}/>
+              {/* Grade filter */}
               {(['ALL',...GRADES] as const).map(g=>(
-                <button key={g} onClick={()=>setGradeFilter(g)} style={{fontSize:F.sm,fontWeight:700,padding:'8px 14px',borderRadius:8,border:`1px solid ${gradeFilter===g?(GRADE_COLOR[g as Grade]||PURPLE)+'60':BORDER}`,background:gradeFilter===g?`${GRADE_COLOR[g as Grade]||PURPLE}18`:'transparent',color:gradeFilter===g?(GRADE_COLOR[g as Grade]||PURPLE):MUTED,cursor:'pointer'}}>
-                  {g}{g!=='ALL'&&` (${baseRows.filter(r=>r.grade===g).length})`}
+                <button key={g} onClick={()=>setGradeFilter(g)} style={{fontSize:F.sm,fontWeight:700,padding:'7px 12px',borderRadius:8,border:`1px solid ${gradeFilter===g?(GRADE_COLOR[g as Grade]||PURPLE)+'60':BORDER}`,background:gradeFilter===g?`${GRADE_COLOR[g as Grade]||PURPLE}18`:'transparent',color:gradeFilter===g?(GRADE_COLOR[g as Grade]||PURPLE):MUTED,cursor:'pointer'}}>
+                  {g}{g!=='ALL'&&` (${rows.filter(r=>r.grade===g).length})`}
                 </button>
               ))}
             </div>
           </div>
+          {/* Bucket + quick filters row */}
+          <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
+            <span style={{fontSize:F.xs,color:MUTED,fontWeight:700,letterSpacing:'0.5px'}}>BUCKET:</span>
+            {(['ALL','CORE_COMPOUNDER','EMERGING_MULTIBAGGER','HIGH_RISK','MONITOR'] as const).map(b=>{
+              const cfg = b==='ALL' ? {label:'All',color:MUTED,icon:'',count:rows.length} :
+                {...BUCKET_CONFIG[b], count:rows.filter(r=>r.bucket===b).length};
+              return (
+                <button key={b} onClick={()=>setBucketFilter(b)} style={{fontSize:F.xs,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${bucketFilter===b?cfg.color+'60':BORDER}`,background:bucketFilter===b?cfg.color+'18':'transparent',color:bucketFilter===b?cfg.color:MUTED,cursor:'pointer'}}>
+                  {cfg.icon && `${cfg.icon} `}{'label' in cfg ? cfg.label : b} ({cfg.count})
+                </button>
+              );
+            })}
+            <div style={{width:1,background:BORDER,height:20}}/>
+            <span style={{fontSize:F.xs,color:MUTED,fontWeight:700,letterSpacing:'0.5px'}}>QUICK:</span>
+            {[
+              {key:'accel',  label:'🚀 Accelerating', active:accelOnly,  toggle:()=>setAccelOnly(v=>!v),  count:rows.filter(r=>r.decisionStrip.acceleration.pass).length},
+              {key:'fcf',    label:'💰 FCF+',         active:fcfOnly,    toggle:()=>setFcfOnly(v=>!v),    count:rows.filter(r=>(r.fcfAbsolute??-1)>0||(r.cfoToPat??0)>=0.8).length},
+              {key:'disc',   label:'🔍 Discovery <15%',active:discoveryOnly,toggle:()=>setDiscoveryOnly(v=>!v),count:rows.filter(r=>(r.fiiPlusDii??100)<15).length},
+            ].map(f=>(
+              <button key={f.key} onClick={f.toggle} style={{fontSize:F.xs,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${f.active?ACCENT+'60':BORDER}`,background:f.active?ACCENT+'14':'transparent',color:f.active?ACCENT:MUTED,cursor:'pointer'}}>
+                {f.label} ({f.count})
+              </button>
+            ))}
+            <span style={{fontSize:F.xs,color:MUTED,marginLeft:'auto'}}>{filtered.length} showing</span>
+          </div>
 
           {/* Table header */}
-          <div style={{display:'grid',gridTemplateColumns:'120px 160px 70px 70px 1fr 110px',gap:10,padding:'10px 14px',fontSize:F.sm,fontWeight:700,letterSpacing:'0.6px',color:MUTED,borderBottom:`1px solid ${BORDER}`}}>
-            <span>TICKER</span><span>COMPANY</span><span>SCORE</span><span>GRADE</span><span>SQGLP PILLARS</span><span>DATA / FLAGS</span>
+          <div style={{display:'grid',gridTemplateColumns:'130px 150px 70px 70px 130px 1fr 90px',gap:8,padding:'10px 14px',fontSize:F.xs,fontWeight:700,letterSpacing:'0.6px',color:MUTED,borderBottom:`1px solid ${BORDER}`}}>
+            <span>TICKER</span><span>COMPANY</span><span>SCORE</span><span>GRADE</span><span>DECISION STRIP</span><span>SQGLP PILLARS</span><span>COV</span>
           </div>
 
           {filtered.map((r,idx)=>{
@@ -971,32 +1125,69 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
             const hasCrit=r.redFlags.some(f=>f.severity==='CRITICAL');
             return (
               <div key={r.symbol+idx} style={{borderBottom:`1px solid rgba(255,255,255,0.05)`}}>
-                <button onClick={()=>setExpRow(isExp?null:r.symbol)} style={{width:'100%',background:isExp?CARD_BG:'transparent',border:'none',cursor:'pointer',textAlign:'left',padding:'14px 14px'}}>
-                  <div style={{display:'grid',gridTemplateColumns:'120px 160px 70px 70px 1fr 110px',gap:10,alignItems:'center'}}>
-                    <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
-                      <span style={{fontSize:F.lg,fontWeight:800,color:hasCrit?RED:r.accelSignal==='DECELERATING'?ORANGE:TEXT}}>{r.symbol}</span>
-                      {idx<3&&<span style={{fontSize:F.md}}>⭐</span>}
-                      {r.accelSignal==='ACCELERATING'&&<span title="Revenue accelerating" style={{fontSize:F.xs,color:GREEN,fontWeight:800,border:`1px solid ${GREEN}40`,padding:'1px 5px',borderRadius:4}}>🚀 ACCEL</span>}
-                      {r.accelSignal==='DECELERATING'&&<span title="Revenue decelerating — Framework rejection filter" style={{fontSize:F.xs,color:ORANGE,fontWeight:800,border:`1px solid ${ORANGE}40`,padding:'1px 5px',borderRadius:4}}>📉 DECEL</span>}
+                <button onClick={()=>setExpRow(isExp?null:r.symbol)} style={{width:'100%',background:isExp?CARD_BG:'transparent',border:'none',cursor:'pointer',textAlign:'left',padding:'12px 14px'}}>
+                  <div style={{display:'grid',gridTemplateColumns:'130px 150px 70px 70px 130px 1fr 90px',gap:8,alignItems:'center'}}>
+                    {/* Ticker + bucket + accel badge */}
+                    <div style={{display:'flex',flexDirection:'column',gap:3}}>
+                      <div style={{display:'flex',alignItems:'center',gap:5}}>
+                        <span style={{fontSize:F.lg,fontWeight:800,color:hasCrit?RED:r.bucket==='MONITOR'?MUTED:TEXT}}>{r.symbol}</span>
+                        {idx<3&&r.bucket!=='MONITOR'&&<span style={{fontSize:F.md}}>⭐</span>}
+                      </div>
+                      {/* Bucket badge */}
+                      <span style={{fontSize:F.xs,fontWeight:700,color:BUCKET_CONFIG[r.bucket].color,border:`1px solid ${BUCKET_CONFIG[r.bucket].color}40`,padding:'1px 5px',borderRadius:3,width:'fit-content'}}>
+                        {BUCKET_CONFIG[r.bucket].icon} {BUCKET_CONFIG[r.bucket].label.split(' ').slice(0,2).join(' ')}
+                      </span>
+                      {/* Rerating bonus indicator */}
+                      {r.reratingBonus !== 0 && (
+                        <span style={{fontSize:F.xs,color:r.reratingBonus>0?GREEN:RED}}>
+                          {r.reratingBonus>0?'↑':'↓'} rerating {r.reratingBonus>0?'+':''}{r.reratingBonus}
+                        </span>
+                      )}
                     </div>
+
+                    {/* Company */}
                     <span style={{fontSize:F.sm,color:MUTED,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.company||r.sector}</span>
+
+                    {/* Score */}
                     <span style={{fontSize:F.h2,fontWeight:900,color:GRADE_COLOR[r.grade]??MUTED}}>{r.score}</span>
+
+                    {/* Grade */}
                     <span style={{fontSize:F.md,fontWeight:800,padding:'4px 8px',borderRadius:6,color:GRADE_COLOR[r.grade],backgroundColor:`${GRADE_COLOR[r.grade]}18`,border:`1px solid ${GRADE_COLOR[r.grade]}30`,textAlign:'center'}}>{r.grade}</span>
-                    {/* SQGLP pillar bars */}
-                    <div style={{display:'flex',gap:6,alignItems:'center'}}>
-                      {r.pillarScores.map(p=>(
-                        <div key={p.id} style={{display:'flex',flexDirection:'column',alignItems:'center',gap:3,minWidth:38}}>
-                          <span style={{fontSize:F.sm,fontWeight:700,color:p.color}}>{p.score}</span>
-                          <div style={{width:32,height:6,backgroundColor:'rgba(255,255,255,0.08)',borderRadius:3,overflow:'hidden'}}>
-                            <div style={{height:'100%',width:`${p.score}%`,backgroundColor:p.color}}/>
-                          </div>
-                          <span style={{fontSize:F.xs,color:MUTED}}>{p.label.split(' ')[0].slice(0,5)}</span>
+
+                    {/* Decision strip — 5 compact pass/fail indicators */}
+                    <div style={{display:'flex',flexDirection:'column',gap:2}}>
+                      {([
+                        {key:'survival',   s:r.decisionStrip.survival},
+                        {key:'acceleration',s:r.decisionStrip.acceleration},
+                        {key:'valuation',  s:r.decisionStrip.valuation},
+                        {key:'discovery',  s:r.decisionStrip.discovery},
+                        {key:'technical',  s:r.decisionStrip.technical},
+                      ] as const).map(({key,s})=>(
+                        <div key={key} title={`${s.label}: ${s.detail}`} style={{display:'flex',alignItems:'center',gap:4}}>
+                          <div style={{width:10,height:10,borderRadius:2,backgroundColor:s.pass?GREEN:RED,flexShrink:0}}/>
+                          <span style={{fontSize:10,color:s.pass?`${GREEN}CC`:`${RED}CC`,fontWeight:600}}>{s.label}</span>
+                          <span style={{fontSize:9,color:MUTED,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:60}}>{s.detail}</span>
                         </div>
                       ))}
                     </div>
-                    <div style={{display:'flex',flexDirection:'column',gap:3}}>
-                      <span style={{fontSize:F.sm,color:r.coverage>=70?GREEN:r.coverage>=50?YELLOW:ORANGE}}>{r.coverage}% data</span>
-                      {r.redFlags.length>0&&<span style={{fontSize:F.sm,color:hasCrit?RED:ORANGE}}>⚠ {r.redFlags.length} flag{r.redFlags.length>1?'s':''}</span>}
+
+                    {/* SQGLP pillar bars */}
+                    <div style={{display:'flex',gap:4,alignItems:'center',flexWrap:'wrap'}}>
+                      {r.pillarScores.map(p=>(
+                        <div key={p.id} style={{display:'flex',flexDirection:'column',alignItems:'center',gap:2,minWidth:32}}>
+                          <span style={{fontSize:F.sm,fontWeight:700,color:p.color}}>{p.score}</span>
+                          <div style={{width:26,height:5,backgroundColor:'rgba(255,255,255,0.08)',borderRadius:2,overflow:'hidden'}}>
+                            <div style={{height:'100%',width:`${p.score}%`,backgroundColor:p.color}}/>
+                          </div>
+                          <span style={{fontSize:9,color:MUTED}}>{p.label.split(' ')[0].slice(0,4)}</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Coverage + flags */}
+                    <div style={{display:'flex',flexDirection:'column',gap:2}}>
+                      <span style={{fontSize:F.sm,color:r.coverage>=70?GREEN:r.coverage>=50?YELLOW:ORANGE}}>{r.coverage}%</span>
+                      {r.redFlags.length>0&&<span style={{fontSize:F.xs,color:hasCrit?RED:ORANGE}}>⚠{r.redFlags.length}</span>}
                     </div>
                   </div>
                 </button>
@@ -1037,7 +1228,10 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                       </div>
                     </div>
                     <div style={{fontSize:F.sm,color:MUTED,borderTop:`1px solid ${BORDER}`,paddingTop:8,marginTop:12}}>
-                      Sector: {r.sector} · Data: {r.coverage}% · Framework: SQGLP (MOSL 100×) + Fisher 100-Bagger + Multibagger Framework
+                      <span>Sector: {r.sector}</span> · <span>Data: {r.coverage}%</span> ·
+                      <span style={{color:BUCKET_CONFIG[r.bucket].color}}>{BUCKET_CONFIG[r.bucket].icon} {BUCKET_CONFIG[r.bucket].label}</span> ·
+                      {r.reratingBonus!==0&&<span style={{color:r.reratingBonus>0?GREEN:RED}}>Rerating {r.reratingBonus>0?'+':''}{r.reratingBonus}pts</span>}
+                      <span style={{color:MUTED,fontSize:F.xs}}>Wts: Q{r.pillarScores[0].weight}% G{r.pillarScores[1].weight}% L{r.pillarScores[2].weight}% F{r.pillarScores[3].weight}% V{r.pillarScores[4].weight}%</span>
                     </div>
                   </div>
                 )}
