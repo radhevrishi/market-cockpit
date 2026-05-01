@@ -91,6 +91,9 @@ interface DrilldownEntry {
   label: string; icon: string; why: string; supply: string; demand: string;
   winners: { ticker: string; thesis: string }[];
   losers: { ticker: string; thesis: string }[];
+  confirms: string[];   // what confirms the thesis is playing out
+  breaks: string[];     // what would invalidate the thesis
+  watch_kpi: string[];  // leading indicators to track
 }
 const DRILLDOWN: Record<string, DrilldownEntry> = {
   MEMORY_STORAGE: {
@@ -98,112 +101,99 @@ const DRILLDOWN: Record<string, DrilldownEntry> = {
     why: 'HBM and enterprise DRAM/NAND capacity is sold out through 2026. Every hyperscaler GPU needs 6–8 stacks of HBM3E; capacity additions lag GPU demand by 18–24 months.',
     supply: 'Only 3 HBM producers (SK Hynix, Samsung, Micron). Capex cycles 2–3 years. Yield on HBM3E structurally below DDR5.',
     demand: 'Every Blackwell GPU consumes 8× HBM3E stacks. Inference clusters need 3–5× the memory footprint of training. Demand ~60% YoY.',
-    winners: [
-      { ticker: 'MU',       thesis: 'Micron: HBM3E ramp, capex leverage' },
-      { ticker: 'SKX',      thesis: 'SK Hynix: HBM share leader 50%+ supply' },
-      { ticker: 'AEHR',     thesis: 'Aehr Test: wafer-level burn-in bottleneck for HBM' },
-    ],
-    losers: [
-      { ticker: 'NVDA', thesis: 'Margin pressure as HBM costs stay elevated' },
-    ],
+    winners: [{ ticker: 'MU', thesis: 'Micron: HBM3E ramp, capex leverage' }, { ticker: 'AEHR', thesis: 'Aehr Test: wafer-level burn-in bottleneck for HBM' }],
+    losers: [{ ticker: 'NVDA', thesis: 'Margin pressure as HBM costs stay elevated' }],
+    confirms: ['HBM3E ASP increasing in supplier earnings calls', 'Lead times quoted >6 months by NVDA/AMD', 'New data center announcements citing memory as constraint', 'Micron/SK Hynix capacity sold out for next 2 quarters'],
+    breaks: ['A 4th HBM supplier qualifies at major hyperscaler', 'AI inference demand drops materially (model efficiency breakthrough)', 'TSMC CoWoS capacity glut forces GPU inventory correction'],
+    watch_kpi: ['HBM3E spot pricing (should be rising)', 'MU/SKX gross margin trajectory', 'NVDA H200 vs B200 shipment mix (B200 = 8× more HBM)', 'AEHR order backlog language in earnings calls'],
   },
   INTERCONNECT_PHOTONICS: {
     label: 'Interconnect & Photonics', icon: '💡',
     why: 'Copper hits bandwidth walls at 224 Gbps SerDes. Co-packaged optics (CPO) and silicon photonics are the only path to 1.6T/3.2T fabrics for future AI factories.',
     supply: 'CPO supply chain immature: lasers, modulators, couplers bottlenecked at handful of vendors. TSMC/Intel photonics integration still ramping.',
     demand: 'Every rack-scale AI system (NVL72, Trainium3) needs 10–100× more optical transceivers than prior generations. Hyperscaler buys locked through 2027.',
-    winners: [
-      { ticker: 'COHR', thesis: 'Coherent: datacenter transceivers, VCSEL supply' },
-      { ticker: 'LITE', thesis: 'Lumentum: InP lasers for CPO modules' },
-      { ticker: 'AVGO', thesis: 'Broadcom: Tomahawk 5 + CPO reference design' },
-      { ticker: 'MRVL', thesis: 'Marvell: 800G/1.6T DSPs, custom silicon' },
-      { ticker: 'AAOI', thesis: 'AAOI: 800G single-mode transceivers ramping' },
-    ],
+    winners: [{ ticker: 'COHR', thesis: 'Coherent: datacenter transceivers, VCSEL supply' }, { ticker: 'MRVL', thesis: 'Marvell: 800G/1.6T DSPs, custom silicon' }, { ticker: 'AAOI', thesis: 'AAOI: 800G single-mode transceivers ramping' }],
     losers: [],
+    confirms: ['800G/1.6T transceiver order announcements from hyperscalers', 'CPO product wins at AMD/NVDA rack-scale systems', 'SIVE lasers named in GlobalFoundries or Intel photonics roadmap PDFs', 'COHR/LITE revenue guidance raised citing datacenter optics'],
+    breaks: ['Electrical interconnect (UALink/CXL) solves bandwidth problem without optics', 'NVDA pivots to on-chip optical integration eliminating transceiver need', 'Multiple new laser suppliers qualify at major CPO customer'],
+    watch_kpi: ['800G transceiver lead times (should be >16 weeks)', 'COHR datacenter % of revenue', 'GFS photonics roadmap PDF updates (track via Wayback Machine)', 'MRVL custom silicon revenue guidance'],
   },
   FABRICATION_PACKAGING: {
     label: 'Advanced Fabrication & Packaging', icon: '🏭',
     why: 'CoWoS advanced packaging at TSMC is the single-point bottleneck for every leading-edge AI accelerator. Capacity doubles every 18 months but demand outpaces it.',
     supply: 'TSMC CoWoS-L/S: ~35K wpm 2024, ~70K wpm targeted 2026. Intel Foveros and Samsung I-Cube sub-scale. ASML High-NA EUV gating N2/A16 ramp.',
     demand: 'Nvidia alone consumes 60%+ of CoWoS. AMD MI300/MI350, AWS Trainium, Google TPU all share remaining. Demand 80%+ YoY.',
-    winners: [
-      { ticker: 'TSM',  thesis: 'TSMC: monopoly advanced packaging, CoWoS pricing power' },
-      { ticker: 'ASML', thesis: 'ASML: sole EUV/High-NA supplier, 2-year backlog' },
-      { ticker: 'AMAT', thesis: 'Applied Materials: advanced packaging tools' },
-      { ticker: 'LRCX', thesis: 'Lam Research: etch and deposition for N2/A16' },
-    ],
+    winners: [{ ticker: 'TSM', thesis: 'TSMC: monopoly advanced packaging, CoWoS pricing power' }, { ticker: 'ASML', thesis: 'ASML: sole EUV/High-NA supplier, 2-year backlog' }, { ticker: 'AMAT', thesis: 'Applied Materials: advanced packaging tools' }],
     losers: [{ ticker: 'INTC', thesis: 'Intel Foundry behind on advanced packaging' }],
+    confirms: ['TSMC CoWoS price increase or capacity allocation announcement', 'ASML order backlog growing / delivery slots pushed out', 'NVDA B200 yield improvement news (CoWoS driven)', 'New CoWoS customer announced (AMD, AWS, Google, Meta)'],
+    breaks: ['Fan-out panel level packaging (FOPLP) scales and bypasses CoWoS', 'Samsung I-Cube or Intel Foveros qualifies at NVDA', 'TSMC CoWoS capacity doubles ahead of schedule'],
+    watch_kpi: ['TSMC CoWoS utilization rate (should be >95%)', 'ASML book-to-bill ratio', 'NVDA gross margin on H/B series (packaging cost impact)', 'Advanced packaging capex announcements from OSAT players'],
   },
   COMPUTE_SCALING: {
     label: 'Compute & GPU Allocation', icon: '⚡',
     why: 'GPU supply remains rationed by Nvidia. H100/H200 allocation relationship-driven. Blackwell ramp gated by CoWoS. Tier-2 clouds and enterprises wait 6–12 months.',
     supply: 'Nvidia ships what TSMC packages. MI300X/MI325X the only meaningful alternative; TPU/Trainium captive to respective hyperscalers.',
     demand: 'Hyperscaler AI capex ~$300B/yr, projected $450B+ 2026. Sovereign AI funds, neoclouds, enterprise inference all competing for allocation.',
-    winners: [
-      { ticker: 'NVDA', thesis: 'Nvidia: allocation monopoly, 75%+ gross margin' },
-      { ticker: 'AMD',  thesis: 'AMD: MI series captures tier-2 demand' },
-      { ticker: 'AVGO', thesis: 'Broadcom: custom ASIC (TPU, MTIA)' },
-    ],
+    winners: [{ ticker: 'NVDA', thesis: 'Nvidia: allocation monopoly, 75%+ gross margin' }, { ticker: 'AMD', thesis: 'AMD: MI series captures tier-2 demand' }, { ticker: 'AVGO', thesis: 'Broadcom: custom ASIC (TPU, MTIA)' }],
     losers: [{ ticker: 'CRWV', thesis: 'Neoclouds dependent on NVDA allocation' }],
+    confirms: ['Hyperscaler capex guidance raised (MSFT/META/AMZN/GOOG)', 'NVDA data center revenue beats + guides higher', 'AMD MI300X customer wins at tier-2 clouds', 'Sovereign AI deals announced (UAE, India, Japan)'],
+    breaks: ['Open-source model breakthrough cuts compute requirements by 10×', 'US export restrictions tightened on Nvidia H/B series', 'Hyperscaler capex guidance cut materially'],
+    watch_kpi: ['NVDA data center revenue quarterly trajectory', 'Hyperscaler AI capex guidance in earnings calls', 'AMD MI series customer count', 'GPU spot market pricing on AWS/Azure'],
   },
   POWER_GRID: {
     label: 'Power & Grid Constraints', icon: '🔌',
     why: 'Data center power demand outpaces grid interconnect timelines by 3–7 years. Transformer, switchgear, and HV cable lead times are 80–130 weeks.',
     supply: 'Only 3 major transformer OEMs globally. Grain-oriented electrical steel (GOES) constrained. Utility interconnect queues span 5–10 years in PJM/ERCOT.',
     demand: 'AI data center nameplate demand: 50 GW US by 2030 (Goldman, EPRI). Hyperscaler site selection now power-first.',
-    winners: [
-      { ticker: 'GEV', thesis: 'GE Vernova: grid equipment, transformers' },
-      { ticker: 'ETN', thesis: 'Eaton: switchgear, UPS, electrical backbone' },
-      { ticker: 'VRT', thesis: 'Vertiv: power/cooling for data centers' },
-    ],
+    winners: [{ ticker: 'GEV', thesis: 'GE Vernova: grid equipment, transformers' }, { ticker: 'ETN', thesis: 'Eaton: switchgear, UPS, electrical backbone' }, { ticker: 'VRT', thesis: 'Vertiv: power/cooling for data centers' }],
     losers: [],
+    confirms: ['Transformer lead times quoted >100 weeks by GEV/ABB/Siemens', 'Hyperscaler data center site cancellations citing power availability', 'PJM/ERCOT interconnect queue backlogs disclosed in utility filings', 'GEV/ETN order backlog growing, pricing increasing'],
+    breaks: ['Nuclear SMRs deploy on-site at hyperscalers at scale by 2027', 'Grid modernization bill passes with massive transformer subsidies', 'AI inference efficiency reduces per-GPU power consumption >50%'],
+    watch_kpi: ['GEV order backlog (should keep growing)', 'ETN data center-specific revenue segment', 'PJM/ERCOT interconnect queue length (public)', 'Large power transformer lead time surveys from industry publications'],
   },
   NUCLEAR_ENERGY: {
     label: 'Nuclear Energy', icon: '☢️',
     why: 'Hyperscalers pivoting to nuclear PPAs for 24/7 carbon-free baseload. SMRs and restart of retired plants are the only GW-scale path this decade.',
     supply: 'Enriched uranium supply constrained post-Russia sanctions. Centrus and Urenco ramping HALEU slowly. SMR deployments 2028–2032.',
     demand: 'MSFT/Three Mile Island, AMZN/Talen, GOOG/Kairos, META SMR RFP — every hyperscaler has inked nuclear deals.',
-    winners: [
-      { ticker: 'CCJ', thesis: 'Cameco: uranium mining leader' },
-      { ticker: 'LEU', thesis: 'Centrus: HALEU enrichment monopoly' },
-      { ticker: 'CEG', thesis: 'Constellation: Three Mile Island restart, MSFT PPA' },
-      { ticker: 'TLN', thesis: 'Talen: Susquehanna nuclear + AWS deal' },
-    ],
+    winners: [{ ticker: 'CCJ', thesis: 'Cameco: uranium mining leader' }, { ticker: 'LEU', thesis: 'Centrus: HALEU enrichment monopoly' }, { ticker: 'CEG', thesis: 'Constellation: Three Mile Island restart, MSFT PPA' }],
     losers: [],
+    confirms: ['New hyperscaler nuclear PPA announcement', 'NRC license approval for SMR design', 'HALEU enrichment capacity expansion announcement', 'Uranium spot price above $100/lb'],
+    breaks: ['Next-gen solar + battery storage achieves <$20/MWh 24/7 cost', 'NRC license denials for multiple SMR projects', 'US-Russia nuclear fuel deal reinstated at scale'],
+    watch_kpi: ['Uranium spot price (cameco.com/investors)', 'NRC SMR licensing pipeline', 'Hyperscaler % of power from carbon-free sources', 'CEG/TLN nuclear generation capacity utilization'],
   },
   THERMAL_COOLING: {
     label: 'Thermal & Cooling', icon: '❄️',
     why: 'Blackwell and beyond require direct-to-chip liquid cooling. Retrofit impractical; new builds 100% liquid-cooled. CDU and cold-plate supply sold out.',
     supply: 'CoolIT, Motivair, Boyd, Asetek are the main CDU vendors. Cold plate supply concentrated in Taiwan.',
     demand: 'NVL72 racks = 120+ kW/rack. Every new AI data center must deploy liquid cooling.',
-    winners: [
-      { ticker: 'VRT',   thesis: 'Vertiv: liquid cooling + power thermal management' },
-      { ticker: 'SMCI',  thesis: 'Supermicro: liquid-cooled rack integration' },
-    ],
+    winners: [{ ticker: 'VRT', thesis: 'Vertiv: liquid cooling + power thermal management' }, { ticker: 'SMCI', thesis: 'Supermicro: liquid-cooled rack integration' }],
     losers: [],
+    confirms: ['VRT liquid cooling revenue growing >50% YoY', 'New hyperscaler DC build announcement specifying 100% liquid cooling', 'CDU/cold plate lead times >20 weeks', 'SMCI liquid-cooled rack backlog mentioned in earnings'],
+    breaks: ['Immersion cooling becomes dominant (different supply chain)', 'NVDA next chip reduces power consumption below air-cooling threshold', 'New CDU suppliers entering at scale in Taiwan/Korea'],
+    watch_kpi: ['VRT liquid cooling % of revenue', 'SMCI liquid cooling attach rate per rack', 'kW/rack specification in new DC construction permits', 'CoolIT/Boyd private company capacity news'],
   },
   MATERIALS_SUPPLY: {
     label: 'Critical Materials', icon: '⛏️',
     why: 'Gallium, germanium, neon, rare earths, and high-purity quartz gating semi and defense supply chains. China export controls accelerating bifurcation.',
     supply: 'China controls 80%+ of gallium/germanium processing, 90%+ of rare earth refining. Alternative supply 3–7 years out.',
     demand: 'AI, defense, EV, and renewable electrification all drawing from same materials stack. Demand 2–3× by 2030.',
-    winners: [
-      { ticker: 'MP',   thesis: 'MP Materials: US rare earth independence' },
-      { ticker: 'AXTI', thesis: 'AXT Inc: InP/GaAs substrates — Strait of Hormuz analogy (+5,579% YTD)' },
-    ],
+    winners: [{ ticker: 'MP', thesis: 'MP Materials: US rare earth independence' }, { ticker: 'AXTI', thesis: 'AXT Inc: InP/GaAs substrates — "Strait of AXTI"' }],
     losers: [],
+    confirms: ['China tightens gallium/germanium export quotas', 'AXTI named in new hyperscaler photonics roadmap', 'DoD awards critical minerals contract to US domestic producer', 'Spot price for gallium/germanium rising >20% QoQ'],
+    breaks: ['Recycling technology recovers >50% of critical materials from e-waste', 'Major new gallium deposits developed outside China at scale', 'Compound semiconductors replaced by silicon-only alternatives in photonics'],
+    watch_kpi: ['Gallium spot price (should be rising)', 'China MOFCOM export quota announcements', 'AXTI quarterly substrate shipment volume', 'MP Materials NdFeB magnet production ramp'],
   },
   QUANTUM_CRYOGENICS: {
     label: 'Quantum & Cryogenics', icon: '🧊',
     why: 'Quantum hardware gated by dilution refrigerators, helium-3, and cryo electronics. Scale-up of logical qubits is the decade-long bottleneck.',
     supply: 'Bluefors, Oxford Instruments dominate dilution fridges. Helium-3 supply constrained by tritium decay chain.',
     demand: 'Sovereign quantum programs (US DOE, EU, China, India) + hyperscaler R&D (IBM, Google, MSFT, AMZN). Demand inelastic.',
-    winners: [
-      { ticker: 'IBM',  thesis: 'IBM: largest gate-based quantum fleet' },
-      { ticker: 'IONQ', thesis: 'IonQ: trapped-ion roadmap' },
-      { ticker: 'RGTI', thesis: 'Rigetti: superconducting qubit IP' },
-    ],
+    winners: [{ ticker: 'IBM', thesis: 'IBM: largest gate-based quantum fleet' }, { ticker: 'IONQ', thesis: 'IonQ: trapped-ion roadmap' }],
     losers: [],
+    confirms: ['IBM logical qubit count doubles on schedule', 'DOE/NSF quantum computing contract awards growing', 'Bluefors dilution fridge lead times >12 months', 'New national quantum initiative funding announcement'],
+    breaks: ['Classical computing solves target problems before quantum does', 'Room-temperature qubit technology validated at scale', 'He-3 alternative cryogenic technology works below 20mK'],
+    watch_kpi: ['IBM quantum volume trajectory', 'IonQ / Rigetti customer count and revenue', 'Helium-3 spot price', 'Government quantum initiative budget lines'],
   },
 };
 
@@ -595,6 +585,35 @@ const UNIVERSE_DEDUPED = SERENITY_UNIVERSE.filter((u, i, arr) => arr.findIndex(x
 
 // ── Scanner enrichment ────────────────────────────────────────────────────────
 
+// ── Evidence velocity engine ──────────────────────────────────────────────────
+// Measures momentum: articles in last 7 days vs prior 7 days per ticker/layer.
+// Rising velocity = thesis gaining confirmation → boost score and show 🔥
+// This is the dynamic layer that makes the scanner theme-driven, not static.
+
+const DAY_MS = 86_400_000;
+const WEEK_MS = 7 * DAY_MS;
+
+function calcVelocity(articles: NewsArticle[], matchFn: (a: NewsArticle) => boolean): {
+  week: number; prev: number; trend: '🔥' | '📉' | '→'; isNew: boolean; accel: number;
+} {
+  const now = Date.now();
+  let week = 0, prev = 0;
+  for (const a of articles) {
+    if (!matchFn(a)) continue;
+    const age = now - new Date(a.published_at).getTime();
+    if (age < WEEK_MS) week++;
+    else if (age < 2 * WEEK_MS) prev++;
+  }
+  const ratio = prev === 0 ? week : week / prev;
+  const trend: '🔥' | '📉' | '→' = ratio >= 1.5 ? '🔥' : ratio <= 0.5 && prev > 0 ? '📉' : '→';
+  const accel = Math.min(12, Math.round((ratio - 1) * 6)); // -6 to +12 velocity bonus
+  return { week, prev, trend, isNew: week > 0 && week >= prev, accel };
+}
+
+function calcBucketVelocity(articles: NewsArticle[], bucketId: string) {
+  return calcVelocity(articles, a => a.bottleneck_sub_tag === bucketId);
+}
+
 interface EnrichedStock extends UniverseStock {
   evidence_count: number;
   headlines: string[];
@@ -605,6 +624,7 @@ interface EnrichedStock extends UniverseStock {
   quote_name?: string;
   is_small_cap: boolean;
   score: number;
+  velocity: { week: number; prev: number; trend: '🔥' | '📉' | '→'; isNew: boolean; accel: number };
 }
 
 function buildEnrichedStocks(articles: NewsArticle[], quotes: QuoteStock[]): EnrichedStock[] {
@@ -647,8 +667,13 @@ function buildEnrichedStocks(articles: NewsArticle[], quotes: QuoteStock[]): Enr
     const evBonus = Math.min(8, evidenceCount * 2);
     // - Competition moat
     const compBonus = u.competitors === '1 public' ? 10 : u.competitors === '2–3 public' ? 5 : 0;
+    // - Velocity bonus: articles this week vs prior week (dynamic)
+    const vel = calcVelocity(articles, a =>
+      getTickerSymbols(a).some(s => s.toUpperCase() === u.ticker.replace(/\d+$/,'').toUpperCase() || s.toUpperCase() === shortTicker)
+    );
+    const velBonus = Math.max(0, vel.accel); // 0–12 if accelerating
 
-    const score = Math.min(100, upstreamBonus + sizeBonus + arb + serenityBonus + evBonus + compBonus);
+    const score = Math.min(100, upstreamBonus + sizeBonus + arb + serenityBonus + evBonus + compBonus + velBonus);
 
     return {
       ...u,
@@ -661,6 +686,7 @@ function buildEnrichedStocks(articles: NewsArticle[], quotes: QuoteStock[]): Enr
       quote_name: q?.company,
       is_small_cap: isSC,
       score,
+      velocity: vel,
     };
   }).sort((a, b) => b.score - a.score);
 }
@@ -685,14 +711,24 @@ function ScoreGauge({ score }: { score: number }) {
 // SECTION 1 — ROTATION TRACKER
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function RotationTracker({ dashboard, isLoading }: { dashboard?: BnDashboard; isLoading: boolean }) {
+function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDashboard; isLoading: boolean; articles: NewsArticle[] }) {
   const [expBucket, setExpBucket] = useState<string | null>(null);
   const [expSignal, setExpSignal] = useState<string | null>(null);
 
   if (isLoading) return <SkeletonGrid count={6} height={150} />;
   if (!dashboard?.buckets?.length) return <EmptyState msg="No bottleneck dashboard data. Check backend." />;
 
-  const sorted = [...dashboard.buckets].sort((a, b) => b.severity - a.severity);
+  // Live velocity per bucket — shows which layers are gaining/losing momentum right now
+  const velocities = Object.fromEntries(
+    (dashboard.buckets ?? []).map(b => [b.bucket_id, calcBucketVelocity(articles, b.bucket_id)])
+  );
+
+  const sorted = [...dashboard.buckets].sort((a, b) => {
+    // Primary: severity. Secondary: velocity trend (accelerating buckets bubble up)
+    const sevDiff = b.severity - a.severity;
+    if (sevDiff !== 0) return sevDiff;
+    return (velocities[b.bucket_id]?.week ?? 0) - (velocities[a.bucket_id]?.week ?? 0);
+  });
   const top = sorted[0];
 
   return (
@@ -730,8 +766,11 @@ function RotationTracker({ dashboard, isLoading }: { dashboard?: BnDashboard; is
         {sorted.map((b) => {
           const sty = getSev(b.severity_label);
           const isExp = expBucket === b.bucket_id;
+          const vel = velocities[b.bucket_id];
+          const isAccel = vel?.trend === '🔥';
+          const isFading = vel?.trend === '📉';
           return (
-            <div key={b.bucket_id} style={{ backgroundColor: sty.bg || '#0D1623', border: `1px solid ${sty.border}`, borderRadius: '12px', overflow: 'hidden', boxShadow: isExp ? sty.glow : 'none' }}>
+            <div key={b.bucket_id} style={{ backgroundColor: sty.bg || '#0D1623', border: `1px solid ${isAccel ? '#F59E0B60' : sty.border}`, borderRadius: '12px', overflow: 'hidden', boxShadow: isExp ? sty.glow : isAccel ? '0 0 12px #F59E0B18' : 'none' }}>
               <button onClick={() => setExpBucket(isExp ? null : b.bucket_id)} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '14px 16px' }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
                   <span style={{ fontSize: '22px', flexShrink: 0 }}>{b.severity_icon || '🔹'}</span>
@@ -739,11 +778,14 @@ function RotationTracker({ dashboard, isLoading }: { dashboard?: BnDashboard; is
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px', flexWrap: 'wrap' }}>
                       <span style={{ fontSize: '13px', fontWeight: '700', color: '#F5F7FA' }}>{b.label}</span>
                       <span style={{ fontSize: '9px', fontWeight: '700', letterSpacing: '0.8px', color: sty.badge, backgroundColor: sty.badgeBg, padding: '2px 6px', borderRadius: '3px' }}>{b.severity_label}</span>
+                      {isAccel && <span title={`${vel.week} articles this week vs ${vel.prev} prior week`} style={{ fontSize: '9px', fontWeight: '700', color: '#F59E0B', backgroundColor: '#F59E0B18', border: '1px solid #F59E0B40', padding: '2px 6px', borderRadius: '3px' }}>🔥 ACCELERATING</span>}
+                      {isFading && <span title={`${vel.week} articles this week vs ${vel.prev} prior week`} style={{ fontSize: '9px', color: '#4A5B6C', backgroundColor: '#4A5B6C14', border: '1px solid #1A2840', padding: '2px 6px', borderRadius: '3px' }}>📉 Fading</span>}
                     </div>
                     <p style={{ fontSize: '11px', color: '#6B7A8D', margin: '0 0 8px', lineHeight: '1.4' }}>{b.description}</p>
                     <div style={{ display: 'flex', gap: '14px', marginBottom: '8px' }}>
                       <span style={{ fontSize: '11px', color: '#8A95A3' }}><span style={{ color: sty.badge, fontWeight: '700', fontSize: '15px' }}>{b.signal_count}</span> signals</span>
                       <span style={{ fontSize: '11px', color: '#8A95A3' }}><span style={{ fontWeight: '600', color: '#C9D4E0' }}>{b.article_count}</span> articles</span>
+                      {vel && <span style={{ fontSize: '11px', color: isAccel ? '#F59E0B' : '#4A5B6C' }}>{vel.week} this wk</span>}
                     </div>
                     {b.key_tickers?.length > 0 && (
                       <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
@@ -951,6 +993,8 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
                       {s.is_small_cap && <span style={{ fontSize: '8px', color: '#F59E0B', border: '1px solid #F59E0B40', padding: '0 3px', borderRadius: '3px', fontWeight: '700' }}>SC</span>}
                       {s.is_serenity_pick && <span title="Serenity explicitly mentioned this stock" style={{ fontSize: '8px', color: '#8B5CF6', border: '1px solid #8B5CF640', padding: '0 3px', borderRadius: '3px', fontWeight: '700' }}>S✓</span>}
                       {s.evidence_count > 0 && <span style={{ fontSize: '8px', color: '#10B981', border: '1px solid #10B98140', padding: '0 3px', borderRadius: '3px', fontWeight: '700' }}>📡{s.evidence_count}</span>}
+                      {s.velocity.trend === '🔥' && <span title={`${s.velocity.week} articles this week vs ${s.velocity.prev} prior week`} style={{ fontSize: '9px', color: '#F59E0B', fontWeight: '700' }}>🔥</span>}
+                      {s.velocity.trend === '📉' && <span style={{ fontSize: '9px', color: '#4A5B6C' }}>📉</span>}
                     </div>
 
                     {/* Chain position */}
@@ -1154,6 +1198,22 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
             )}
           </div>
 
+          {/* Structured thesis: confirms / breaks / KPIs */}
+          <div style={{ padding: '0 20px 16px', borderTop: '1px solid #1A2840', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px', paddingTop: '16px' }}>
+            <div>
+              <p style={{ fontSize: '10px', color: '#10B981', fontWeight: '700', letterSpacing: '1px', margin: '0 0 8px' }}>✅ WHAT CONFIRMS THESIS</p>
+              {entry.confirms.map((c, i) => <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '5px', fontSize: '11px', color: '#8A95A3', lineHeight: '1.4' }}><span style={{ color: '#10B981', flexShrink: 0 }}>›</span>{c}</div>)}
+            </div>
+            <div>
+              <p style={{ fontSize: '10px', color: '#EF4444', fontWeight: '700', letterSpacing: '1px', margin: '0 0 8px' }}>❌ WHAT BREAKS THESIS</p>
+              {entry.breaks.map((b, i) => <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '5px', fontSize: '11px', color: '#8A95A3', lineHeight: '1.4' }}><span style={{ color: '#EF4444', flexShrink: 0 }}>›</span>{b}</div>)}
+            </div>
+            <div>
+              <p style={{ fontSize: '10px', color: '#F59E0B', fontWeight: '700', letterSpacing: '1px', margin: '0 0 8px' }}>📊 WATCH THESE KPIs</p>
+              {entry.watch_kpi.map((k, i) => <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '5px', fontSize: '11px', color: '#8A95A3', lineHeight: '1.4' }}><span style={{ color: '#F59E0B', flexShrink: 0 }}>›</span>{k}</div>)}
+            </div>
+          </div>
+
           {/* Live evidence */}
           {bucketArticles.length > 0 && (
             <div style={{ padding: '12px 20px 16px', borderTop: '1px solid #1A2840' }}>
@@ -1182,17 +1242,56 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
 // SECTION 4 — GEOPOLITICAL OVERLAY
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Geo mechanism detection — keyword-based, no API needed
+// Each mechanism maps to affected supply chain layers so we can show chain impact
+const GEO_MECHANISMS: Record<string, { label: string; color: string; icon: string; layers: string[] }> = {
+  TARIFF:     { label: 'Tariff / Trade',  color: '#F59E0B', icon: '🏷️', layers: ['MATERIALS_SUPPLY','FABRICATION_PACKAGING','MEMORY_STORAGE'] },
+  EXPORT_BAN: { label: 'Export Control',  color: '#EF4444', icon: '🚫', layers: ['MATERIALS_SUPPLY','INTERCONNECT_PHOTONICS','FABRICATION_PACKAGING'] },
+  SUBSIDY:    { label: 'Subsidy / Grant', color: '#10B981', icon: '💰', layers: ['FABRICATION_PACKAGING','MATERIALS_SUPPLY','NUCLEAR_ENERGY'] },
+  MILITARY:   { label: 'Military / Sanctions', color: '#8B5CF6', icon: '⚔️', layers: ['MATERIALS_SUPPLY','COMPUTE_SCALING','INTERCONNECT_PHOTONICS'] },
+  POWER:      { label: 'Power / Grid',    color: '#06B6D4', icon: '⚡', layers: ['POWER_GRID','NUCLEAR_ENERGY','THERMAL_COOLING'] },
+  SHIPPING:   { label: 'Shipping / Ports',color: '#0F7ABF', icon: '🚢', layers: ['MATERIALS_SUPPLY','MEMORY_STORAGE','FABRICATION_PACKAGING'] },
+  CURRENCY:   { label: 'Currency / FX',   color: '#F59E0B', icon: '💱', layers: ['MATERIALS_SUPPLY','FABRICATION_PACKAGING'] },
+};
+
+const MECHANISM_KEYWORDS: Record<string, string[]> = {
+  TARIFF:     ['tariff','duty','trade war','levy','import tax','trade restriction','section 301'],
+  EXPORT_BAN: ['export ban','export control','entity list','ear99','eccn','semiconductor export','chips export','gallium','germanium','export restriction'],
+  SUBSIDY:    ['subsidy','chips act','grant','funding','incentive','federal funding','doe funding','defense contract','government contract','rfp'],
+  MILITARY:   ['military','defense','sanctions','itar','weapon','national security','nato','army','navy','airforce','missile','war '],
+  POWER:      ['blackout','grid constraint','electricity shortage','power crisis','energy crisis','grid bottleneck','rolling blackout','data center power'],
+  SHIPPING:   ['shipping','port congestion','suez','red sea','freight disruption','logistics','container shortage','panama canal'],
+  CURRENCY:   ['currency','forex','fx rate','devaluation','yuan','yen weakens','won drops','exchange rate'],
+};
+
+function detectMechanism(article: NewsArticle): { key: string; label: string; color: string; icon: string; layers: string[] } | null {
+  const text = ((article.title || article.headline || '') + ' ' + (article.summary || '')).toLowerCase();
+  for (const [key, kws] of Object.entries(MECHANISM_KEYWORDS)) {
+    if (kws.some(kw => text.includes(kw))) return { key, ...GEO_MECHANISMS[key] };
+  }
+  return null;
+}
+
 function GeoOverlay({ articles, isLoading }: { articles: NewsArticle[]; isLoading: boolean }) {
   const [typeFilter, setTypeFilter] = useState('ALL');
+  const [mechFilter, setMechFilter] = useState('ALL');
   if (isLoading) return <SkeletonGrid count={6} height={80} />;
 
   const GEO_TYPES = new Set(['GEOPOLITICAL', 'TARIFF', 'MACRO']);
-  const filtered = articles.filter(a =>
-    typeFilter === 'ALL'
-      ? GEO_TYPES.has(a.article_type)
-      : a.article_type === typeFilter
+  const withMechanism = articles
+    .filter(a => GEO_TYPES.has(a.article_type))
+    .map(a => ({ ...a, mechanism: detectMechanism(a) }));
+
+  const filtered = withMechanism.filter(a =>
+    (typeFilter === 'ALL' || a.article_type === typeFilter) &&
+    (mechFilter === 'ALL' || a.mechanism?.key === mechFilter)
   );
   const typeColor = (t: string) => ({ GEOPOLITICAL: '#EF4444', TARIFF: '#F59E0B', MACRO: '#8B5CF6' })[t] ?? '#4A5B6C';
+
+  // Count mechanisms in current view
+  const mechCounts = Object.fromEntries(
+    Object.keys(GEO_MECHANISMS).map(k => [k, withMechanism.filter(a => a.mechanism?.key === k).length])
+  );
 
   return (
     <div style={{ padding: '20px' }}>
@@ -1203,44 +1302,63 @@ function GeoOverlay({ articles, isLoading }: { articles: NewsArticle[]; isLoadin
         </p>
       </div>
 
-      <div style={{ display: 'flex', gap: '6px', marginBottom: '16px', flexWrap: 'wrap' }}>
+      {/* Type filter */}
+      <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', flexWrap: 'wrap' }}>
         {['ALL','GEOPOLITICAL','TARIFF','MACRO'].map(t => {
-          const cnt = t === 'ALL'
-            ? articles.filter(a => GEO_TYPES.has(a.article_type)).length
-            : articles.filter(a => a.article_type === t).length;
+          const cnt = t === 'ALL' ? withMechanism.length : withMechanism.filter(a => a.article_type === t).length;
           return (
-            <button key={t} onClick={() => setTypeFilter(t)} style={{
-              padding: '5px 12px', borderRadius: '7px', border: `1px solid ${typeFilter === t ? typeColor(t) + '60' : '#1A2840'}`,
-              cursor: 'pointer', backgroundColor: typeFilter === t ? typeColor(t) + '14' : 'transparent',
-              color: typeFilter === t ? typeColor(t) : '#6B7A8D', fontSize: '11px', fontWeight: '600',
-            }}>
+            <button key={t} onClick={() => setTypeFilter(t)} style={{ padding: '5px 12px', borderRadius: '7px', border: `1px solid ${typeFilter === t ? typeColor(t) + '60' : '#1A2840'}`, cursor: 'pointer', backgroundColor: typeFilter === t ? typeColor(t) + '14' : 'transparent', color: typeFilter === t ? typeColor(t) : '#6B7A8D', fontSize: '11px', fontWeight: '600' }}>
               {t} ({cnt})
             </button>
           );
         })}
-        <span style={{ fontSize: '11px', color: '#4A5B6C', marginLeft: 'auto', alignSelf: 'center' }}>Live · auto-refreshes every 90s</span>
+        <span style={{ fontSize: '11px', color: '#4A5B6C', marginLeft: 'auto', alignSelf: 'center' }}>Live · every 90s</span>
       </div>
 
-      {filtered.length === 0 ? <EmptyState msg="No geopolitical articles found." /> : filtered.map((a, i) => {
+      {/* Mechanism filter — auto-classified from article text */}
+      <div style={{ display: 'flex', gap: '5px', marginBottom: '16px', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '10px', color: '#4A5B6C', fontWeight: '700', alignSelf: 'center', letterSpacing: '0.5px' }}>MECHANISM:</span>
+        <button onClick={() => setMechFilter('ALL')} style={{ padding: '3px 10px', borderRadius: '6px', border: `1px solid ${mechFilter === 'ALL' ? '#0F7ABF60' : '#1A2840'}`, cursor: 'pointer', backgroundColor: mechFilter === 'ALL' ? '#0F7ABF14' : 'transparent', color: mechFilter === 'ALL' ? '#0F7ABF' : '#6B7A8D', fontSize: '10px', fontWeight: '600' }}>ALL</button>
+        {Object.entries(GEO_MECHANISMS).filter(([k]) => (mechCounts[k] ?? 0) > 0).map(([k, m]) => (
+          <button key={k} onClick={() => setMechFilter(k === mechFilter ? 'ALL' : k)} style={{ padding: '3px 10px', borderRadius: '6px', border: `1px solid ${mechFilter === k ? m.color + '60' : '#1A2840'}`, cursor: 'pointer', backgroundColor: mechFilter === k ? m.color + '14' : 'transparent', color: mechFilter === k ? m.color : '#6B7A8D', fontSize: '10px', fontWeight: '600' }}>
+            {m.icon} {m.label} ({mechCounts[k]})
+          </button>
+        ))}
+      </div>
+
+      {filtered.length === 0 ? <EmptyState msg="No geopolitical articles for this filter." /> : filtered.map((a, i) => {
         const url = cleanUrl(a.url || a.source_url || '#');
         const tc = typeColor(a.article_type);
         const tickers = getTickerSymbols(a);
         const sentiment = a.sentiment?.toUpperCase();
         const sentColor = sentiment === 'BULLISH' ? '#10B981' : sentiment === 'BEARISH' ? '#EF4444' : '#6B7A8D';
+        const mech = a.mechanism;
         return (
-          <div key={a.id || i} style={{ marginBottom: '8px', padding: '12px 14px', backgroundColor: '#0D1623', border: '1px solid #1A2840', borderRadius: '10px', borderLeft: `3px solid ${tc}` }}>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '6px' }}>
+          <div key={a.id || i} style={{ marginBottom: '8px', padding: '12px 14px', backgroundColor: '#0D1623', border: '1px solid #1A2840', borderRadius: '10px', borderLeft: `3px solid ${mech ? mech.color : tc}` }}>
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '6px', flexWrap: 'wrap' }}>
               <span style={{ fontSize: '9px', fontWeight: '700', letterSpacing: '0.8px', color: tc, backgroundColor: tc + '18', padding: '2px 7px', borderRadius: '3px', flexShrink: 0 }}>{a.article_type}</span>
-              {sentiment && sentiment !== 'NEUTRAL' && <span style={{ fontSize: '9px', color: sentColor, fontWeight: '700' }}>{sentiment === 'BULLISH' ? '↑' : '↓'} {sentiment}</span>}
+              {mech && (
+                <span style={{ fontSize: '9px', fontWeight: '700', color: mech.color, backgroundColor: mech.color + '18', border: `1px solid ${mech.color}40`, padding: '2px 7px', borderRadius: '3px' }}>
+                  {mech.icon} {mech.label}
+                </span>
+              )}
+              {sentiment && sentiment !== 'NEUTRAL' && <span style={{ fontSize: '9px', color: sentColor, fontWeight: '700', marginLeft: 'auto' }}>{sentiment === 'BULLISH' ? '↑' : '↓'} {sentiment}</span>}
             </div>
             <a href={url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
               <p style={{ fontSize: '13px', color: '#C9D4E0', margin: '0 0 6px', lineHeight: '1.4', fontWeight: '500' }}>{a.title || a.headline}</p>
             </a>
             {a.summary && <p style={{ fontSize: '11px', color: '#8A95A3', margin: '0 0 8px', lineHeight: '1.5' }}>{a.summary}</p>}
+            {mech && mech.layers.length > 0 && (
+              <div style={{ display: 'flex', gap: '4px', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '9px', color: '#4A5B6C', fontWeight: '600' }}>CHAIN IMPACT →</span>
+                {mech.layers.map(l => {
+                  const ti = TIER_MAP[l];
+                  return ti ? <span key={l} style={{ fontSize: '9px', color: ti.color, backgroundColor: ti.color + '14', border: `1px solid ${ti.color}30`, padding: '1px 6px', borderRadius: '3px', fontWeight: '600' }}>T{ti.tier} {l.replace(/_/g,' ').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase()).split(' ').slice(0,2).join(' ')}</span> : null;
+                })}
+              </div>
+            )}
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '10px', color: '#4A5B6C' }}>{a.source_name}</span>
-              <span style={{ fontSize: '10px', color: '#4A5B6C' }}>·</span>
-              <span style={{ fontSize: '10px', color: '#4A5B6C' }}>{timeAgo(a.published_at)}</span>
+              <span style={{ fontSize: '10px', color: '#4A5B6C' }}>{a.source_name} · {timeAgo(a.published_at)}</span>
               {tickers.slice(0, 4).map(t => <span key={t} style={{ fontSize: '10px', color: '#0F7ABF', fontWeight: '600', backgroundColor: '#0F7ABF14', padding: '1px 5px', borderRadius: '3px' }}>${t}</span>)}
               <a href={url} target="_blank" rel="noopener noreferrer" style={{ marginLeft: 'auto', color: '#4A5B6C' }}><ExternalLink className="w-3 h-3" /></a>
             </div>
@@ -1321,8 +1439,29 @@ function ConferenceCalendar() {
 // SECTION 6 — SUPPLY CHAIN MAP
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function SupplyChainMap({ dashboard }: { dashboard?: BnDashboard }) {
+function SupplyChainMap({ dashboard, articles }: { dashboard?: BnDashboard; articles: NewsArticle[] }) {
   const activeBuckets = new Set(dashboard?.buckets?.filter(b => b.severity >= 3).map(b => b.bucket_id) ?? []);
+  const activeSevMap = Object.fromEntries(dashboard?.buckets?.map(b => [b.bucket_id, b.severity]) ?? []);
+
+  // Live evidence counts per sub_tag from news
+  const evidencePerTag = useMemo(() => {
+    const counts: Record<string, { count: number; lastSignal?: string }> = {};
+    for (const a of articles) {
+      const tag = a.bottleneck_sub_tag;
+      if (!tag) continue;
+      if (!counts[tag]) counts[tag] = { count: 0 };
+      counts[tag].count++;
+      if (!counts[tag].lastSignal || a.published_at > counts[tag].lastSignal!) counts[tag].lastSignal = a.published_at;
+    }
+    return counts;
+  }, [articles]);
+
+  // Bottleneck probability: 0–100% derived from severity + evidence
+  function bottleneckProb(subTag: string): number {
+    const sev = activeSevMap[subTag] ?? 0;
+    const ev = evidencePerTag[subTag]?.count ?? 0;
+    return Math.min(100, Math.round(sev * 20 + Math.min(40, ev * 4)));
+  }
 
   return (
     <div style={{ padding: '20px' }}>
@@ -1333,9 +1472,11 @@ function SupplyChainMap({ dashboard }: { dashboard?: BnDashboard }) {
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
         {SUPPLY_CHAIN.map((tier, i) => {
-          // Map tier to sub_tag for bottleneck detection
           const tagForTier = Object.entries(TIER_MAP).find(([, v]) => v.tier === tier.tier)?.[0];
           const isActive = tagForTier ? activeBuckets.has(tagForTier) : false;
+          const evData = tagForTier ? evidencePerTag[tagForTier] : null;
+          const prob = tagForTier ? bottleneckProb(tagForTier) : 0;
+          const vel = tagForTier ? calcBucketVelocity(articles, tagForTier) : null;
           const arrow = i < SUPPLY_CHAIN.length - 1;
 
           return (
@@ -1343,26 +1484,40 @@ function SupplyChainMap({ dashboard }: { dashboard?: BnDashboard }) {
               <div style={{
                 padding: '14px 18px', borderRadius: '10px',
                 backgroundColor: isActive ? tier.color + '12' : '#0D1623',
-                border: `1px solid ${isActive ? tier.color + '60' : '#1A2840'}`,
+                border: `1px solid ${isActive ? tier.color + '60' : vel?.trend === '🔥' ? '#F59E0B40' : '#1A2840'}`,
                 boxShadow: isActive ? `0 0 14px ${tier.color}18` : 'none',
                 transition: 'all 0.2s',
                 display: 'flex', alignItems: 'center', gap: '14px',
               }}>
-                <div style={{ width: '36px', height: '36px', borderRadius: '8px', backgroundColor: tier.color + '20', border: `1px solid ${tier.color}40`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <span style={{ fontSize: '13px', fontWeight: '800', color: tier.color }}>T{tier.tier}</span>
+                <div style={{ width: '46px', flexShrink: 0, textAlign: 'center' }}>
+                  <div style={{ width: '36px', height: '36px', borderRadius: '8px', backgroundColor: tier.color + '20', border: `1px solid ${tier.color}40`, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 4px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: '800', color: tier.color }}>T{tier.tier}</span>
+                  </div>
+                  {prob > 0 && (
+                    <div title={`Bottleneck probability: ${prob}%`} style={{ fontSize: '9px', color: prob >= 60 ? '#EF4444' : prob >= 30 ? '#F59E0B' : '#4A5B6C', fontWeight: '700' }}>{prob}%</div>
+                  )}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
                     <span style={{ fontSize: '13px', fontWeight: '700', color: '#F5F7FA' }}>{tier.label}</span>
                     {isActive && <span style={{ fontSize: '9px', fontWeight: '700', color: '#EF4444', backgroundColor: '#EF444420', border: '1px solid #EF444440', padding: '2px 7px', borderRadius: '3px', letterSpacing: '0.8px' }}>⚡ ACTIVE BOTTLENECK</span>}
+                    {vel?.trend === '🔥' && !isActive && <span style={{ fontSize: '9px', color: '#F59E0B', fontWeight: '700' }}>🔥 Rising</span>}
+                    {evData && evData.count > 0 && <span style={{ fontSize: '9px', color: '#10B981', backgroundColor: '#10B98114', padding: '1px 5px', borderRadius: '3px' }}>📡 {evData.count} live</span>}
                   </div>
                   <p style={{ fontSize: '11px', color: '#6B7A8D', margin: '0 0 6px' }}>{tier.sub}</p>
-                  <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }}>
                     {tier.companies.map(c => (
                       <span key={c} style={{ fontSize: '10px', fontWeight: '600', color: tier.color, backgroundColor: tier.color + '14', border: `1px solid ${tier.color}30`, padding: '1px 7px', borderRadius: '4px' }}>{c}</span>
                     ))}
+                    {evData?.lastSignal && <span style={{ fontSize: '9px', color: '#4A5B6C', marginLeft: '4px' }}>· last {timeAgo(evData.lastSignal)}</span>}
                   </div>
                 </div>
+                {/* Probability bar */}
+                {prob > 0 && (
+                  <div style={{ width: '4px', height: '60px', backgroundColor: '#1A2840', borderRadius: '2px', flexShrink: 0, overflow: 'hidden' }}>
+                    <div style={{ width: '100%', height: `${prob}%`, backgroundColor: prob >= 60 ? '#EF4444' : prob >= 30 ? '#F59E0B' : '#0F7ABF', borderRadius: '2px', marginTop: 'auto', position: 'absolute', bottom: 0 }} />
+                  </div>
+                )}
               </div>
               {arrow && <div style={{ display: 'flex', justifyContent: 'center', padding: '2px 0', color: '#1A2840', fontSize: '16px' }}>↓</div>}
             </div>
@@ -1390,11 +1545,36 @@ function SupplyChainMap({ dashboard }: { dashboard?: BnDashboard }) {
 // SECTION 7 — SERENITY CHECKLIST
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function SerenityChecklist() {
+function SerenityChecklist({ enriched }: { enriched: EnrichedStock[] }) {
   const [symbol, setSymbol] = useState('');
   const [activeSymbol, setActiveSymbol] = useState('');
   const [checks, setChecks] = useState<Record<string, boolean>>({});
   const [savedSymbols, setSavedSymbols] = useState<string[]>([]);
+
+  // Auto-computable items from live data — keyed by checklist item id
+  // These are evaluated from the enriched universe, then applied to the active symbol
+  const autoChecks = useMemo((): Record<string, { pass: boolean; note: string } | null> => {
+    if (!activeSymbol) return {};
+    const sym = activeSymbol.toUpperCase();
+    const stock = enriched.find(s => s.ticker.replace(/\d+$/, '').toUpperCase() === sym || s.ticker.toUpperCase() === sym);
+    if (!stock) return {};
+    return {
+      size_asymmetry: stock.is_small_cap
+        ? { pass: true,  note: `Auto: Market cap ${fmtCap(stock.market_cap)} < $2B ✅` }
+        : stock.market_cap
+          ? { pass: false, note: `Auto: Market cap ${fmtCap(stock.market_cap)} — not small-cap` }
+          : null,
+      geopolitical: stock.is_non_us
+        ? { pass: true, note: `Auto: Non-US listing (${stock.exchange}) — cross-border arb available ✅` }
+        : { pass: false, note: `Auto: US-listed — no cross-border arb edge` },
+      five_sources: stock.evidence_count >= 5
+        ? { pass: true,  note: `Auto: ${stock.evidence_count} live news articles found ✅` }
+        : { pass: false, note: `Auto: Only ${stock.evidence_count} live articles — need ≥5 sources` },
+      competitors: stock.competitors === '1 public' || stock.competitors === '2–3 public'
+        ? { pass: true,  note: `Auto: ${stock.competitors} (from framework data) ✅` }
+        : null,
+    };
+  }, [activeSymbol, enriched]);
 
   // Load from localStorage
   useEffect(() => {
@@ -1482,12 +1662,27 @@ function SerenityChecklist() {
           {sections.map(sec => (
             <div key={sec} style={{ marginBottom: '16px' }}>
               <p style={{ fontSize: '10px', color: '#4A5B6C', fontWeight: '700', letterSpacing: '1px', margin: '0 0 8px' }}>{sec.toUpperCase()}</p>
-              {CHECKLIST_ITEMS.filter(i => i.section === sec).map(item => (
-                <button key={item.id} onClick={() => toggleCheck(item.id)} style={{ width: '100%', textAlign: 'left', display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '10px 14px', marginBottom: '4px', backgroundColor: checks[item.id] ? '#10B98108' : '#0D1623', border: `1px solid ${checks[item.id] ? '#10B98128' : '#1A2840'}`, borderRadius: '8px', cursor: 'pointer', transition: 'all 0.15s' }}>
-                  {checks[item.id] ? <CheckSquare className="w-4 h-4" style={{ color: '#10B981', flexShrink: 0, marginTop: '1px' }} /> : <Square className="w-4 h-4" style={{ color: '#4A5B6C', flexShrink: 0, marginTop: '1px' }} />}
-                  <span style={{ fontSize: '12px', color: checks[item.id] ? '#10B981' : '#C9D4E0', lineHeight: '1.4', textDecoration: checks[item.id] ? 'line-through' : 'none', textDecorationColor: '#10B98160' }}>{item.label}</span>
-                </button>
-              ))}
+              {CHECKLIST_ITEMS.filter(i => i.section === sec).map(item => {
+                const auto = autoChecks[item.id];
+                const isChecked = auto?.pass || checks[item.id];
+                const isAuto = !!auto;
+                return (
+                  <div key={item.id}>
+                    <button onClick={() => !isAuto && toggleCheck(item.id)} style={{ width: '100%', textAlign: 'left', display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '10px 14px', marginBottom: isAuto && auto.note ? '0' : '4px', backgroundColor: isChecked ? '#10B98108' : '#0D1623', border: `1px solid ${isChecked ? '#10B98128' : '#1A2840'}`, borderRadius: isAuto && auto.note ? '8px 8px 0 0' : '8px', cursor: isAuto ? 'default' : 'pointer', transition: 'all 0.15s' }}>
+                      {isChecked ? <CheckSquare className="w-4 h-4" style={{ color: isAuto ? '#06B6D4' : '#10B981', flexShrink: 0, marginTop: '1px' }} /> : <Square className="w-4 h-4" style={{ color: '#4A5B6C', flexShrink: 0, marginTop: '1px' }} />}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{ fontSize: '12px', color: isChecked ? (isAuto ? '#06B6D4' : '#10B981') : '#C9D4E0', lineHeight: '1.4', textDecoration: isChecked ? 'line-through' : 'none', textDecorationColor: isAuto ? '#06B6D460' : '#10B98160' }}>{item.label}</span>
+                        {isAuto && <span style={{ fontSize: '9px', color: '#06B6D4', backgroundColor: '#06B6D414', border: '1px solid #06B6D430', padding: '0 5px', borderRadius: '3px', marginLeft: '8px', fontWeight: '600' }}>AUTO</span>}
+                      </div>
+                    </button>
+                    {isAuto && auto.note && (
+                      <div style={{ padding: '6px 14px 8px 38px', backgroundColor: '#06B6D408', border: '1px solid #06B6D420', borderTop: 'none', borderRadius: '0 0 8px 8px', marginBottom: '4px' }}>
+                        <span style={{ fontSize: '10px', color: '#06B6D4' }}>{auto.note}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           ))}
         </>
@@ -1592,13 +1787,13 @@ export default function BottleneckIntelPage() {
       </div>
 
       {/* Content */}
-      {activeTab === 'Rotation'  && <RotationTracker dashboard={dashboard} isLoading={dashLoading} />}
+      {activeTab === 'Rotation'  && <RotationTracker dashboard={dashboard} isLoading={dashLoading} articles={bnArticles} />}
       {activeTab === 'Scanner'   && <StockScanner articles={bnArticles} isLoading={bnLoading} quotes={usQuotes} quotesLoading={quotesLoading} />}
       {activeTab === 'Drilldown' && <DrilldownKB articles={bnArticles} />}
       {activeTab === 'Geo'       && <GeoOverlay articles={geoArticles} isLoading={geoLoading} />}
       {activeTab === 'Calendar'  && <ConferenceCalendar />}
-      {activeTab === 'Map'       && <SupplyChainMap dashboard={dashboard} />}
-      {activeTab === 'Checklist' && <SerenityChecklist />}
+      {activeTab === 'Map'       && <SupplyChainMap dashboard={dashboard} articles={bnArticles} />}
+      {(() => { const enriched = buildEnrichedStocks(bnArticles, usQuotes); return activeTab === 'Checklist' && <SerenityChecklist enriched={enriched} />; })()}
     </div>
   );
 }
