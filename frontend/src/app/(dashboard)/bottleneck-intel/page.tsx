@@ -707,6 +707,123 @@ function ScoreGauge({ score }: { score: number }) {
   );
 }
 
+// ── Emerging Theme Detector ───────────────────────────────────────────────────
+// Scans live news headlines for supply-chain stress keywords that may NOT fit
+// the 9 predefined buckets. Surfaces new themes as auto-detected intelligence.
+// This is the "discovery-first" layer — it finds new bottleneck classes from evidence.
+
+const EMERGING_THEME_DETECTORS = [
+  { id: 'transformer',    label: 'Transformer / Grid Equipment', icon: '🔌', color: '#F59E0B', keywords: ['transformer','grid equipment','switchgear','electrical steel','goes','power transformer','abb transformer','grid backlog'] },
+  { id: 'specialty_gas',  label: 'Specialty Gas Supply',         icon: '💨', color: '#06B6D4', keywords: ['neon gas','specialty gas','noble gas','argon shortage','krypton','xenon','ultra-pure'] },
+  { id: 'rare_earth',     label: 'Rare Earth / Critical Minerals',icon: '⛏️', color: '#8B5CF6', keywords: ['rare earth','gallium ban','germanium','tungsten','indium','cobalt supply','lithium shortage','critical mineral','critical material'] },
+  { id: 'opt_test',       label: 'Optical / Wafer Test Crunch',   icon: '🔬', color: '#0F7ABF', keywords: ['wafer test','burn-in','test capacity','test bottleneck','optical test','probe card','test socket'] },
+  { id: 'qual_cycle',     label: 'Qualification Cycle Signal',    icon: '🎯', color: '#10B981', keywords: ['design win','qualification complete','qual ramp','ramp phase','volume production','customer qualification','qual cycle'] },
+  { id: 'backlog',        label: 'Backlog / Lead Time Expansion', icon: '⏱️', color: '#EF4444', keywords: ['lead time','backlog','allocation','sold out','capacity constrained','order backlog','delivery delay','supply tight'] },
+  { id: 'subsidy_policy', label: 'Subsidy / Industrial Policy',   icon: '💰', color: '#10B981', keywords: ['chips act','semiconductor subsidy','doe grant','defense contract','rfp award','government funding','manufacturing incentive'] },
+  { id: 'shipping_port',  label: 'Shipping / Port Disruption',    icon: '🚢', color: '#0F7ABF', keywords: ['port congestion','shipping delay','red sea','suez disruption','freight cost','container shortage','logistics crunch'] },
+  { id: 'ai_power',       label: 'AI Data Center Power Crunch',   icon: '⚡', color: '#F59E0B', keywords: ['data center power','ai power demand','utility grid','interconnect queue','pjm','ercot','power constraint','megawatt','gigawatt'] },
+  { id: 'smr_nuclear',    label: 'SMR / Nuclear PPA',             icon: '☢️', color: '#8B5CF6', keywords: ['smr','nuclear ppa','small modular reactor','nuclear deal','kairos','terrapower','nuscale','three mile island'] },
+  { id: 'defense_semi',   label: 'Defense Semiconductor Demand',  icon: '🛡️', color: '#EF4444', keywords: ['defense chip','military semiconductor','itar','dod semiconductor','defense electronics','avionics','military demand'] },
+  { id: 'cooling_cdm',    label: 'Liquid Cooling / CDU Shortage', icon: '❄️', color: '#06B6D4', keywords: ['liquid cooling','cdu','cold plate','immersion cooling','direct liquid','cooling shortage','thermal management bottleneck'] },
+];
+
+// Cross-reference: which themes map to existing buckets (to avoid duplication)
+const THEME_TO_BUCKET: Record<string, string> = {
+  opt_test: 'INTERCONNECT_PHOTONICS',
+  qual_cycle: 'FABRICATION_PACKAGING',
+  rare_earth: 'MATERIALS_SUPPLY',
+  ai_power: 'POWER_GRID',
+  smr_nuclear: 'NUCLEAR_ENERGY',
+  cooling_cdm: 'THERMAL_COOLING',
+};
+
+interface DetectedTheme {
+  id: string; label: string; icon: string; color: string;
+  count: number; weekCount: number; headlines: string[];
+  isNew: boolean; // true if NOT already in existing 9 buckets
+}
+
+function detectEmergingThemes(articles: NewsArticle[]): DetectedTheme[] {
+  const now = Date.now();
+  const results: DetectedTheme[] = [];
+  for (const det of EMERGING_THEME_DETECTORS) {
+    const matched = articles.filter(a => {
+      const text = ((a.title || a.headline || '') + ' ' + (a.summary || '')).toLowerCase();
+      return det.keywords.some(kw => text.includes(kw));
+    });
+    if (matched.length === 0) continue;
+    const weekMatched = matched.filter(a => now - new Date(a.published_at).getTime() < WEEK_MS);
+    const headlines = matched.slice(0, 3).map(a => a.title || a.headline || '');
+    results.push({
+      id: det.id, label: det.label, icon: det.icon, color: det.color,
+      count: matched.length, weekCount: weekMatched.length,
+      headlines,
+      isNew: !THEME_TO_BUCKET[det.id], // "new" = not already covered by existing 9 buckets
+    });
+  }
+  return results.sort((a, b) => b.weekCount - a.weekCount || b.count - a.count);
+}
+
+function EmergingThemes({ articles }: { articles: NewsArticle[] }) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const themes = useMemo(() => detectEmergingThemes(articles), [articles]);
+  if (themes.length === 0) return null;
+
+  const newThemes = themes.filter(t => t.isNew);
+  const coveredThemes = themes.filter(t => !t.isNew);
+
+  return (
+    <div style={{ marginBottom: '20px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+        <span style={{ fontSize: '10px', fontWeight: '700', letterSpacing: '1px', color: '#4A5B6C' }}>🔍 LIVE THEME DETECTION</span>
+        {newThemes.length > 0 && <span style={{ fontSize: '9px', fontWeight: '700', color: '#F59E0B', backgroundColor: '#F59E0B14', border: '1px solid #F59E0B30', padding: '1px 7px', borderRadius: '3px' }}>{newThemes.length} NEW themes not in framework</span>}
+        <span style={{ fontSize: '10px', color: '#4A5B6C', marginLeft: 'auto' }}>auto-detected from live news · not hardcoded</span>
+      </div>
+      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+        {themes.map(t => {
+          const isExp = expanded === t.id;
+          return (
+            <div key={t.id} style={{ borderRadius: '8px', overflow: 'hidden', border: `1px solid ${t.isNew ? '#F59E0B40' : t.color + '30'}` }}>
+              <button
+                onClick={() => setExpanded(isExp ? null : t.id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px',
+                  background: isExp ? t.color + '18' : t.isNew ? '#F59E0B08' : 'transparent',
+                  border: 'none', cursor: 'pointer',
+                }}
+              >
+                <span style={{ fontSize: '14px' }}>{t.icon}</span>
+                <div style={{ textAlign: 'left' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: '700', color: t.isNew ? '#F59E0B' : '#C9D4E0' }}>{t.label}</span>
+                    {t.isNew && <span style={{ fontSize: '8px', fontWeight: '800', color: '#F59E0B', border: '1px solid #F59E0B40', padding: '0 4px', borderRadius: '3px' }}>NEW</span>}
+                    {t.weekCount >= 3 && <span style={{ fontSize: '9px', color: '#EF4444' }}>🔥</span>}
+                  </div>
+                  <span style={{ fontSize: '9px', color: '#4A5B6C' }}>{t.count} articles · {t.weekCount} this week</span>
+                </div>
+              </button>
+              {isExp && (
+                <div style={{ padding: '8px 12px', backgroundColor: '#060E1A', borderTop: `1px solid ${t.color}20` }}>
+                  {t.headlines.map((h, i) => (
+                    <div key={i} style={{ fontSize: '11px', color: '#8A95A3', padding: '3px 0', borderBottom: i < t.headlines.length - 1 ? '1px solid #1A2840' : 'none', lineHeight: '1.4' }}>
+                      › {h}
+                    </div>
+                  ))}
+                  {t.isNew && (
+                    <div style={{ marginTop: '6px', padding: '5px 8px', backgroundColor: '#F59E0B08', border: '1px solid #F59E0B20', borderRadius: '4px', fontSize: '10px', color: '#F59E0B' }}>
+                      ⭐ Not in framework watchlist — potential new bottleneck class to research
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — ROTATION TRACKER
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -734,6 +851,9 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
 
   return (
     <div style={{ padding: '20px' }}>
+      {/* Emerging themes — discovery-first layer */}
+      <EmergingThemes articles={articles} />
+
       {/* Banner */}
       {top && (
         <div style={{ marginBottom: '20px', padding: '16px 20px', backgroundColor: '#060E1A', border: `1px solid ${getSev(top.severity_label).border}`, borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '14px', boxShadow: getSev(top.severity_label).glow }}>
@@ -888,7 +1008,7 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
 }) {
   const [filterLayer, setFilterLayer] = useState('ALL');
   const [expRow, setExpRow] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<'universe' | 'live'>('universe');
+  const [viewMode, setViewMode] = useState<'universe' | 'live'>('live'); // default to discovery-first
 
   const enriched = useMemo(() => buildEnrichedStocks(articles, quotes), [articles, quotes]);
 
@@ -897,31 +1017,52 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
   // so "not in universe" filter always returns 0. Instead: show everything from news,
   // badge in-universe stocks as "✓ TRACKED" and new ones as "🆕 NEW".
   const universeTickers = new Set(UNIVERSE_DEDUPED.map(u => u.ticker.replace(/\d+$/, '').toUpperCase()));
+  // Text-signal detectors — scan article headline+summary for Serenity-relevant signals
+  // These are dynamic scoring inputs beyond static structural filters
+  const TEXT_SIGNALS: { key: string; label: string; icon: string; color: string; keywords: string[] }[] = [
+    { key: 'scarcity',    label: 'Scarcity',    icon: '🔒', color: '#EF4444', keywords: ['sold out','allocation','rationed','supply tight','capacity constrained','shortage','backlog','queue'] },
+    { key: 'lead_time',   label: 'Lead Time',   icon: '⏱️', color: '#F59E0B', keywords: ['lead time','delivery delay','extended lead','weeks','months backlog','order backlog'] },
+    { key: 'design_win',  label: 'Design Win',  icon: '🎯', color: '#10B981', keywords: ['design win','qualification complete','ramp phase','volume production','customer win','design selection'] },
+    { key: 'backlog',     label: 'Backlog',     icon: '📦', color: '#F59E0B', keywords: ['record backlog','growing backlog','order book','new orders','order flow'] },
+    { key: 'capex',       label: 'Capex Signal',icon: '💰', color: '#8B5CF6', keywords: ['capex','capacity expansion','new fab','plant expansion','capacity investment','building capacity'] },
+    { key: 'price_power', label: 'Pricing Pwr', icon: '💲', color: '#10B981', keywords: ['price increase','asp rising','pricing power','higher prices','premium pricing','price hike'] },
+  ];
+
+  function detectTextSignals(headlines: string[]): string[] {
+    const text = headlines.join(' ').toLowerCase();
+    return TEXT_SIGNALS.filter(s => s.keywords.some(kw => text.includes(kw))).map(s => s.key);
+  }
+
   const liveExtra = useMemo(() => {
-    const map = new Map<string, { symbol: string; sub_tag?: string; level?: string; evidence_count: number; headlines: string[]; latest_at?: string; price?: number; change_pct?: number; market_cap?: number; inUniverse: boolean; velocity_week: number }>();
+    const map = new Map<string, { symbol: string; sub_tag?: string; level?: string; evidence_count: number; headlines: string[]; latest_at?: string; price?: number; change_pct?: number; market_cap?: number; inUniverse: boolean; velocity_week: number; textSignals: string[] }>();
     const now = Date.now();
     for (const a of articles) {
       for (const sym of getTickerSymbols(a)) {
-        if (!map.has(sym)) map.set(sym, { symbol: sym, sub_tag: a.bottleneck_sub_tag, level: a.bottleneck_level, evidence_count: 0, headlines: [], inUniverse: universeTickers.has(sym.toUpperCase()), velocity_week: 0 });
+        if (!map.has(sym)) map.set(sym, { symbol: sym, sub_tag: a.bottleneck_sub_tag, level: a.bottleneck_level, evidence_count: 0, headlines: [], inUniverse: universeTickers.has(sym.toUpperCase()), velocity_week: 0, textSignals: [] });
         const r = map.get(sym)!;
         r.evidence_count++;
         const age = now - new Date(a.published_at).getTime();
         if (age < WEEK_MS) r.velocity_week++;
         if (!r.sub_tag && a.bottleneck_sub_tag) r.sub_tag = a.bottleneck_sub_tag;
         const h = a.title || a.headline || '';
-        if (h && r.headlines.length < 3 && !r.headlines.includes(h)) r.headlines.push(h);
+        if (h && r.headlines.length < 5 && !r.headlines.includes(h)) r.headlines.push(h);
         if (!r.latest_at || (a.published_at && a.published_at > r.latest_at)) r.latest_at = a.published_at;
       }
     }
     const qm = new Map<string, QuoteStock>(quotes.map(q => [q.ticker.toUpperCase(), q]));
     return Array.from(map.values())
       .filter(r => r.evidence_count >= 1)
-      .map(r => ({ ...r, price: qm.get(r.symbol.toUpperCase())?.price, change_pct: qm.get(r.symbol.toUpperCase())?.changePercent, market_cap: qm.get(r.symbol.toUpperCase())?.marketCap }))
-      // Sort: new discoveries first (not in universe + high evidence), then by evidence
+      .map(r => ({
+        ...r,
+        price: qm.get(r.symbol.toUpperCase())?.price,
+        change_pct: qm.get(r.symbol.toUpperCase())?.changePercent,
+        market_cap: qm.get(r.symbol.toUpperCase())?.marketCap,
+        textSignals: detectTextSignals(r.headlines),
+      }))
       .sort((a, b) => {
-        const aScore = (!a.inUniverse ? 10 : 0) + a.velocity_week * 2 + a.evidence_count;
-        const bScore = (!b.inUniverse ? 10 : 0) + b.velocity_week * 2 + b.evidence_count;
-        return bScore - aScore;
+        // Discovery score: new picks + velocity + text signals + evidence
+        const sigScore = (r: typeof a) => (!r.inUniverse ? 10 : 0) + r.velocity_week * 2 + r.textSignals.length * 3 + r.evidence_count;
+        return sigScore(b) - sigScore(a);
       });
   }, [articles, quotes]);
 
@@ -952,7 +1093,7 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
         <div style={{ display: 'flex', gap: '0', backgroundColor: '#060E1A', border: '1px solid #1A2840', borderRadius: '8px', overflow: 'hidden' }}>
           {(['universe', 'live'] as const).map(m => (
             <button key={m} onClick={() => setViewMode(m)} style={{ padding: '6px 14px', background: viewMode === m ? '#0F7ABF20' : 'transparent', border: 'none', cursor: 'pointer', color: viewMode === m ? '#0F7ABF' : '#6B7A8D', fontSize: '11px', fontWeight: viewMode === m ? '700' : '400' }}>
-              {m === 'universe' ? `🔬 Framework (${enriched.length})` : `📡 Live Signal (${liveExtra.length}) · ${liveExtra.filter(r => !r.inUniverse).length} new`}
+              {m === 'live' ? `📡 Live Discovery (${liveExtra.length}) · ${liveExtra.filter(r => !r.inUniverse).length} new` : `🔬 Framework Anchors (${enriched.length})`}
             </button>
           ))}
         </div>
@@ -1114,17 +1255,21 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
         </>
       )}
 
-      {/* ── Live News view ── */}
+      {/* ── Live Discovery view — discovery-first ── */}
       {viewMode === 'live' && (
         <>
-          <div style={{ marginBottom: '10px', padding: '10px 14px', backgroundColor: '#060E1A', border: '1px solid #1A2840', borderRadius: '8px', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '11px', color: '#6B7A8D' }}>All tickers mentioned in live BOTTLENECK news, ranked by discovery score.</span>
-            <span style={{ fontSize: '11px', color: '#10B981' }}>✓ TRACKED = already in framework watchlist</span>
-            <span style={{ fontSize: '11px', color: '#F59E0B' }}>🆕 NEW = potential new discovery</span>
-            <span style={{ fontSize: '11px', color: '#EF4444' }}>🔥 = accelerating this week</span>
+          <div style={{ marginBottom: '10px', padding: '10px 14px', backgroundColor: '#060E1A', border: '1px solid #1A2840', borderRadius: '8px' }}>
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '6px' }}>
+              <span style={{ fontSize: '11px', color: '#F5F7FA', fontWeight: '600' }}>Discovery-first: ranked by live evidence velocity + text signals</span>
+            </div>
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '10px', color: '#F59E0B' }}>🆕 NEW = not in framework — research candidate</span>
+              <span style={{ fontSize: '10px', color: '#10B981' }}>✓ TRACKED = in watchlist</span>
+              {TEXT_SIGNALS.slice(0,4).map(s => <span key={s.key} style={{ fontSize: '10px', color: s.color }}>{s.icon} {s.label}</span>)}
+            </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '70px 1fr 1fr 80px 80px', gap: '8px', padding: '6px 12px', fontSize: '10px', fontWeight: '700', letterSpacing: '0.8px', color: '#4A5B6C', borderBottom: '1px solid #1A2840' }}>
-            <span>SIGNALS</span><span>TICKER</span><span>LAYER</span><span>STATUS</span><span>PRICE</span>
+          <div style={{ display: 'grid', gridTemplateColumns: '60px 100px 1fr 170px 80px', gap: '8px', padding: '6px 12px', fontSize: '10px', fontWeight: '700', letterSpacing: '0.8px', color: '#4A5B6C', borderBottom: '1px solid #1A2840' }}>
+            <span>SIGNALS</span><span>TICKER</span><span>LAYER + SIGNALS DETECTED</span><span>STATUS</span><span>PRICE</span>
           </div>
           {liveExtra.length === 0
             ? <EmptyState msg="No tickers in live bottleneck news right now." />
@@ -1133,25 +1278,51 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
               const cp = r.change_pct ?? 0;
               const isNew = !r.inUniverse;
               const isHot = r.velocity_week >= 2;
+              const sigs = TEXT_SIGNALS.filter(s => r.textSignals.includes(s.key));
               return (
-                <div key={r.symbol} style={{ display: 'grid', gridTemplateColumns: '70px 1fr 1fr 80px 80px', gap: '8px', padding: '9px 12px', borderBottom: '1px solid #1A284018', alignItems: 'center', backgroundColor: isNew ? '#F59E0B06' : i % 2 === 1 ? '#060E1A14' : 'transparent', borderLeft: isNew ? '2px solid #F59E0B40' : '2px solid transparent' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                    <span style={{ fontSize: '15px', fontWeight: '800', color: isHot ? '#F59E0B' : '#C9D4E0' }}>{r.evidence_count}</span>
-                    {isHot && <span style={{ fontSize: '9px', color: '#F59E0B' }}>🔥 {r.velocity_week} wk</span>}
-                  </div>
+                <div key={r.symbol} style={{
+                  display: 'grid', gridTemplateColumns: '60px 100px 1fr 170px 80px', gap: '8px',
+                  padding: '10px 12px', borderBottom: '1px solid #1A284018', alignItems: 'center',
+                  backgroundColor: isNew ? '#F59E0B06' : i % 2 === 1 ? '#060E1A14' : 'transparent',
+                  borderLeft: isNew ? '2px solid #F59E0B40' : sigs.length > 0 ? '2px solid #10B98140' : '2px solid transparent',
+                }}>
+                  {/* Signal count + velocity */}
                   <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '2px' }}>
+                    <span style={{ fontSize: '15px', fontWeight: '800', color: isHot ? '#F59E0B' : '#C9D4E0', display: 'block' }}>{r.evidence_count}</span>
+                    {isHot && <span style={{ fontSize: '9px', color: '#F59E0B' }}>🔥{r.velocity_week}wk</span>}
+                  </div>
+
+                  {/* Ticker */}
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
                       <span style={{ fontSize: '13px', fontWeight: '700', color: isNew ? '#F59E0B' : '#F5F7FA' }}>{r.symbol}</span>
-                      {ti && <span style={{ fontSize: '9px', fontWeight: '700', color: ti.color, border: `1px solid ${ti.color}40`, padding: '1px 4px', borderRadius: '3px' }}>T{ti.tier}</span>}
+                      {ti && <span style={{ fontSize: '8px', fontWeight: '700', color: ti.color, border: `1px solid ${ti.color}40`, padding: '0 3px', borderRadius: '3px' }}>T{ti.tier}</span>}
                     </div>
                     {r.latest_at && <span style={{ fontSize: '9px', color: '#4A5B6C' }}>{timeAgo(r.latest_at)}</span>}
                   </div>
-                  <span style={{ fontSize: '10px', color: '#6B7A8D', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {r.sub_tag ? r.sub_tag.replace(/_/g,' ').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase()).split(' ').slice(0,3).join(' ') : '—'}
-                  </span>
+
+                  {/* Layer + text signal badges */}
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: '10px', color: '#6B7A8D', marginBottom: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {r.sub_tag ? r.sub_tag.replace(/_/g,' ').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase()) : '—'}
+                    </div>
+                    {sigs.length > 0 && (
+                      <div style={{ display: 'flex', gap: '3px', flexWrap: 'wrap' }}>
+                        {sigs.map(s => (
+                          <span key={s.key} title={s.label} style={{ fontSize: '9px', fontWeight: '700', color: s.color, backgroundColor: s.color + '14', border: `1px solid ${s.color}30`, padding: '0 5px', borderRadius: '3px' }}>
+                            {s.icon} {s.label}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Status badge */}
                   <span style={{ fontSize: '9px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', textAlign: 'center', color: isNew ? '#F59E0B' : '#10B981', backgroundColor: isNew ? '#F59E0B14' : '#10B98114', border: `1px solid ${isNew ? '#F59E0B30' : '#10B98130'}` }}>
-                    {isNew ? '🆕 NEW' : '✓ TRACKED'}
+                    {isNew ? '🆕 NEW PICK' : '✓ TRACKED'}
                   </span>
+
+                  {/* Price */}
                   <div>{r.price ? <><span style={{ fontSize: '12px', color: '#F5F7FA', fontWeight: '600' }}>${r.price.toFixed(2)}</span>{cp !== 0 && <div style={{ fontSize: '10px', color: cp >= 0 ? '#10B981' : '#EF4444' }}>{cp >= 0 ? '+' : ''}{cp.toFixed(2)}%</div>}</> : <span style={{ fontSize: '11px', color: '#4A5B6C' }}>—</span>}</div>
                 </div>
               );
@@ -1420,7 +1591,7 @@ function GeoOverlay({ articles, isLoading }: { articles: NewsArticle[]; isLoadin
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SECTION 5 — CONFERENCE CALENDAR
+// SECTION 5 — CONFERENCE CALENDAR + EARNINGS CATALYST ENGINE
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // Detect live conference signal: are news articles mentioning this conference right now?
@@ -1432,6 +1603,29 @@ const CONF_KEYWORDS: Record<string, string[]> = {
   'TSMC OIP':    ['tsmc oip','oip alliance','open innovation platform','tsmc packaging'],
   'IEEE IEDM':   ['iedm','electron devices meeting'],
 };
+
+// Universe tickers that matter most for earnings catalysts
+const EARNINGS_WATCH = ['NVDA','AMD','AVGO','MRVL','COHR','LITE','MU','AEHR','FORM','TSM','ASML','AMAT','LRCX','GEV','ETN','VRT','CCJ','CEG','TLN','SMCI','NBIS'];
+
+function useEarningsSignals() {
+  return useQuery<NewsArticle[]>({
+    queryKey: ['bn', 'earnings-signals'],
+    queryFn: async () => {
+      const r = await fetch('/api/v1/news?limit=100&importance_min=3&article_type=EARNINGS');
+      if (!r.ok) return [];
+      const data = await r.json();
+      if (!Array.isArray(data)) return [];
+      // Filter to universe stocks only
+      return data.filter((a: NewsArticle) => {
+        const tickers = (a.ticker_symbols ?? []);
+        return tickers.some((t: string) => EARNINGS_WATCH.includes(t.toUpperCase()));
+      });
+    },
+    refetchInterval: 300_000,
+    staleTime: 240_000,
+    retry: 1,
+  });
+}
 
 function useConferenceSignals() {
   return useQuery<Record<string, number>>({
@@ -1458,6 +1652,7 @@ function useConferenceSignals() {
 function ConferenceCalendar() {
   const now = new Date();
   const { data: confSignals = {} } = useConferenceSignals();
+  const { data: earningsArticles = [] } = useEarningsSignals();
 
   const getStatus = (dateStr: string): 'upcoming' | 'past' | 'soon' => {
     const parts = dateStr.split(' ');
@@ -1521,6 +1716,50 @@ function ConferenceCalendar() {
             </div>
           );
         })}
+      </div>
+
+      {/* ── Earnings Catalyst Engine ── */}
+      <div style={{ marginTop: '28px' }}>
+        <div style={{ marginBottom: '14px', padding: '10px 16px', backgroundColor: '#10B98108', border: '1px solid #10B98128', borderRadius: '10px' }}>
+          <p style={{ fontSize: '12px', color: '#10B981', fontWeight: '700', margin: '0 0 2px' }}>📊 Earnings Catalyst Engine — Live</p>
+          <p style={{ fontSize: '11px', color: '#6B7A8D', margin: 0 }}>
+            Recent earnings news for Serenity universe stocks. These are the qualification→ramp→visible order cycles that confirm or break theses. Auto-fetched from live news.
+          </p>
+        </div>
+        {earningsArticles.length === 0 ? (
+          <div style={{ padding: '20px', textAlign: 'center', color: '#4A5B6C', fontSize: '12px' }}>No recent earnings articles for universe stocks. Check back after earnings season.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {earningsArticles.slice(0, 15).map((a, i) => {
+              const url = cleanUrl(a.url || a.source_url || '#');
+              const tickers = (a.ticker_symbols ?? []).filter((t: string) => EARNINGS_WATCH.includes(t.toUpperCase()));
+              const text = ((a.title || a.headline || '') + ' ' + (a.summary || '')).toLowerCase();
+              // Detect if this is a positive (beat/raised) or negative (miss/cut) signal
+              const positive = ['beat','raised','raised guidance','record revenue','exceeded','above estimates','top estimates'].some(kw => text.includes(kw));
+              const negative = ['missed','lowered','cut guidance','below estimates','disappointing','warning'].some(kw => text.includes(kw));
+              const sentColor = positive ? '#10B981' : negative ? '#EF4444' : '#8A95A3';
+              // Detect Serenity-relevant keywords in earnings
+              const qualSignal = ['design win','qual','qualification','ramp'].some(kw => text.includes(kw));
+              const backlogSignal = ['backlog','lead time','allocation','sold out'].some(kw => text.includes(kw));
+              return (
+                <div key={a.id || i} style={{ padding: '10px 14px', backgroundColor: '#0D1623', border: `1px solid ${positive ? '#10B98128' : negative ? '#EF444420' : '#1A2840'}`, borderRadius: '8px', borderLeft: `3px solid ${sentColor}` }}>
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '5px', flexWrap: 'wrap' }}>
+                    {tickers.slice(0,3).map((t: string) => <span key={t} style={{ fontSize: '11px', fontWeight: '800', color: '#0F7ABF', backgroundColor: '#0F7ABF14', padding: '1px 7px', borderRadius: '4px' }}>{t}</span>)}
+                    {positive && <span style={{ fontSize: '9px', color: '#10B981', fontWeight: '700', backgroundColor: '#10B98114', padding: '1px 6px', borderRadius: '3px' }}>↑ BEAT / RAISED</span>}
+                    {negative && <span style={{ fontSize: '9px', color: '#EF4444', fontWeight: '700', backgroundColor: '#EF444414', padding: '1px 6px', borderRadius: '3px' }}>↓ MISS / CUT</span>}
+                    {qualSignal && <span style={{ fontSize: '9px', color: '#8B5CF6', fontWeight: '700', backgroundColor: '#8B5CF614', padding: '1px 6px', borderRadius: '3px' }}>🎯 QUAL SIGNAL</span>}
+                    {backlogSignal && <span style={{ fontSize: '9px', color: '#F59E0B', fontWeight: '700', backgroundColor: '#F59E0B14', padding: '1px 6px', borderRadius: '3px' }}>⏱️ BACKLOG SIGNAL</span>}
+                    <span style={{ fontSize: '10px', color: '#4A5B6C', marginLeft: 'auto' }}>{timeAgo(a.published_at)}</span>
+                  </div>
+                  <a href={url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+                    <p style={{ fontSize: '12px', color: '#C9D4E0', margin: '0 0 3px', lineHeight: '1.4', fontWeight: '500' }}>{a.title || a.headline}</p>
+                  </a>
+                  <span style={{ fontSize: '10px', color: '#4A5B6C' }}>{a.source_name}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
