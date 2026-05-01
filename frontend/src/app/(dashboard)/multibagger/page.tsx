@@ -647,94 +647,115 @@ function ExcelCompare() {
   const REQUIRED_COLS = ['Symbol','ROCE','ROE','OPM','D/E','Rev CAGR','Profit CAGR','Promoter%','Pledge%','PE','Market Cap Cr'];
   const OPTIONAL_COLS = ['Company','Sector','ICR','PB','Price','52W High','YoY Rev'];
 
-  async function handleFile(file: File) {
+  async function parseSingleFile(file: File, XLSX: typeof import('xlsx')): Promise<Record<string, unknown>[]> {
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: 'array' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    return XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' });
+  }
+
+  function buildColMap(sampleRow: Record<string, unknown>): Record<string, string> {
+    const colMap: Record<string, string> = {};
+    for (const col of Object.keys(sampleRow)) {
+      const c = col.trim().toLowerCase().replace(/[^a-z0-9%]/g, '');
+      const orig = col.trim();
+      if (orig === 'NSE Code' || orig === 'NSE code') colMap['symbol'] = col;
+      else if (orig === 'Name') colMap['company'] = col;
+      else if (orig === 'Industry' || orig === 'Industry Group') { if (!colMap['sector']) colMap['sector'] = col; }
+      else if (orig === 'Return on capital employed') colMap['roce'] = col;
+      else if (orig === 'Return on equity') colMap['roe'] = col;
+      else if (orig === 'Return on invested capital') { if (!colMap['roe']) colMap['roe'] = col; }
+      else if (orig === 'OPM') colMap['opm'] = col;
+      else if (orig === 'Debt to equity') colMap['de'] = col;
+      else if (orig === 'Sales growth') colMap['revCagr'] = col;
+      else if (orig === 'Profit growth') colMap['profitCagr'] = col;
+      else if (orig === 'YOY Quarterly sales growth') colMap['yoyRev'] = col;
+      else if (orig === 'Promoter holding') colMap['promoter'] = col;
+      else if (orig === 'Price to Earning') colMap['pe'] = col;
+      else if (orig === 'Market Capitalization') colMap['marketCapCr'] = col;
+      else if (orig === 'Current Price') colMap['price'] = col;
+      else if (orig === 'DMA 200') colMap['high52w'] = col;
+      else if (!colMap['symbol'] && (c.includes('nsecode') || c.includes('symbol') || c.includes('ticker'))) colMap['symbol'] = col;
+      else if (!colMap['company'] && (c.includes('company') || (c.includes('name') && !c.includes('sector')))) colMap['company'] = col;
+      else if (!colMap['sector'] && (c.includes('sector') || c.includes('industry'))) colMap['sector'] = col;
+      else if (!colMap['roce'] && (c === 'roce' || c.includes('returnoncap') || c.includes('returnoncapital'))) colMap['roce'] = col;
+      else if (!colMap['roe'] && (c === 'roe' || c.includes('returnonequit'))) colMap['roe'] = col;
+      else if (!colMap['opm'] && (c === 'opm' || c.includes('operatingmargin'))) colMap['opm'] = col;
+      else if (!colMap['de'] && (c.includes('debttoequit') || c.includes('debt/equity') || c === 'de')) colMap['de'] = col;
+      else if (!colMap['revCagr'] && (c.includes('salescagr') || c.includes('revcagr') || c.includes('revenuecagr'))) colMap['revCagr'] = col;
+      else if (!colMap['profitCagr'] && (c.includes('profitcagr') || c.includes('patcagr'))) colMap['profitCagr'] = col;
+      else if (!colMap['yoyRev'] && (c.includes('yoyrev') || c.includes('yoygrowth'))) colMap['yoyRev'] = col;
+      else if (!colMap['promoter'] && c.includes('promoter') && !c.includes('pledge')) colMap['promoter'] = col;
+      else if (!colMap['pledge'] && c.includes('pledge')) colMap['pledge'] = col;
+      else if (!colMap['icr'] && (c.includes('icr') || c.includes('interestcoverage'))) colMap['icr'] = col;
+      else if (!colMap['pe'] && (c === 'pe' || c.includes('priceearning') || c.includes('p/e'))) colMap['pe'] = col;
+      else if (!colMap['pb'] && (c === 'pb' || c.includes('pricebook') || c.includes('p/b'))) colMap['pb'] = col;
+      else if (!colMap['marketCapCr'] && c.includes('marketcap')) colMap['marketCapCr'] = col;
+      else if (!colMap['price'] && c.includes('currentprice')) colMap['price'] = col;
+      else if (!colMap['high52w'] && (c.includes('52') || c.includes('dma200') || c.includes('yearhigh'))) colMap['high52w'] = col;
+    }
+    return colMap;
+  }
+
+  function rawRowToExcelRow(row: Record<string, unknown>, colMap: Record<string, string>): ExcelRow | null {
+    const n = (val: unknown): number | undefined => {
+      if (val === '' || val === null || val === undefined) return undefined;
+      const v = parseFloat(String(val).replace(/[%,₹,]/g, ''));
+      return isNaN(v) ? undefined : v;
+    };
+    const sym = String(row[colMap['symbol']] || '').trim().toUpperCase();
+    if (!sym) return null;
+    return {
+      symbol: sym,
+      company: String(row[colMap['company'] ?? ''] || '').trim(),
+      sector: String(row[colMap['sector'] ?? ''] || 'INDUSTRIALS').trim(),
+      roce: n(colMap['roce'] ? row[colMap['roce']] : undefined),
+      roe: n(colMap['roe'] ? row[colMap['roe']] : undefined),
+      opm: n(colMap['opm'] ? row[colMap['opm']] : undefined),
+      de: n(colMap['de'] ? row[colMap['de']] : undefined),
+      revCagr: n(colMap['revCagr'] ? row[colMap['revCagr']] : undefined),
+      profitCagr: n(colMap['profitCagr'] ? row[colMap['profitCagr']] : undefined),
+      yoyRev: n(colMap['yoyRev'] ? row[colMap['yoyRev']] : undefined),
+      promoter: n(colMap['promoter'] ? row[colMap['promoter']] : undefined),
+      pledge: n(colMap['pledge'] ? row[colMap['pledge']] : undefined),
+      icr: n(colMap['icr'] ? row[colMap['icr']] : undefined),
+      pe: n(colMap['pe'] ? row[colMap['pe']] : undefined),
+      pb: n(colMap['pb'] ? row[colMap['pb']] : undefined),
+      marketCapCr: n(colMap['marketCapCr'] ? row[colMap['marketCapCr']] : undefined),
+      price: n(colMap['price'] ? row[colMap['price']] : undefined),
+      high52w: n(colMap['high52w'] ? row[colMap['high52w']] : undefined),
+    };
+  }
+
+  async function handleFiles(files: FileList | File[]) {
+    const fileArray = Array.from(files);
     setLoading(true); setParseError(''); setRows([]);
     try {
       const XLSX = await import('xlsx');
-      const buffer = await file.arrayBuffer();
-      const wb = XLSX.read(buffer, { type: 'array' });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' });
-      if (raw.length === 0) { setParseError('No data rows found in the file.'); setLoading(false); return; }
+      // Parse each file independently → normalize using that file's own colMap
+      const allParsed = await Promise.all(fileArray.map(async f => {
+        const rawArr = await parseSingleFile(f, XLSX);
+        if (rawArr.length === 0) return [];
+        const colMap = buildColMap(rawArr[0] as Record<string, unknown>);
+        if (!colMap['symbol']) return []; // skip files with no symbol column
+        return rawArr.map(r => rawRowToExcelRow(r as Record<string, unknown>, colMap)).filter((r): r is ExcelRow => r !== null);
+      }));
 
-      // Case-insensitive column mapping
-      const colMap: Record<string, string> = {};
-      const sampleRow = raw[0] as Record<string, unknown>;
-      for (const col of Object.keys(sampleRow)) {
-        const c = col.trim().toLowerCase().replace(/[^a-z0-9%]/g, '');
-        const orig = col.trim();
-        // Screener.in exact matches first
-        if (orig === 'NSE Code' || orig === 'NSE code') colMap['symbol'] = col;
-        else if (orig === 'Name') colMap['company'] = col;
-        else if (orig === 'Industry' || orig === 'Industry Group') { if (!colMap['sector']) colMap['sector'] = col; }
-        else if (orig === 'Return on capital employed') colMap['roce'] = col;
-        else if (orig === 'Return on equity') colMap['roe'] = col;
-        else if (orig === 'Return on invested capital') { if (!colMap['roe']) colMap['roe'] = col; }
-        else if (orig === 'OPM') colMap['opm'] = col;
-        else if (orig === 'Debt to equity') colMap['de'] = col;
-        else if (orig === 'Sales growth') colMap['revCagr'] = col;
-        else if (orig === 'Profit growth') colMap['profitCagr'] = col;
-        else if (orig === 'YOY Quarterly sales growth') colMap['yoyRev'] = col;
-        else if (orig === 'Promoter holding') colMap['promoter'] = col;
-        else if (orig === 'Price to Earning') colMap['pe'] = col;
-        else if (orig === 'Market Capitalization') colMap['marketCapCr'] = col;
-        else if (orig === 'Current Price') colMap['price'] = col;
-        else if (orig === 'DMA 200') colMap['high52w'] = col; // use DMA200 as momentum proxy
-        // Generic fallback
-        else if (!colMap['symbol'] && (c.includes('nsecode') || c.includes('symbol') || c.includes('ticker'))) colMap['symbol'] = col;
-        else if (!colMap['company'] && (c.includes('company') || (c.includes('name') && !c.includes('sector')))) colMap['company'] = col;
-        else if (!colMap['sector'] && (c.includes('sector') || c.includes('industry'))) colMap['sector'] = col;
-        else if (!colMap['roce'] && (c === 'roce' || c.includes('returnoncap') || c.includes('returnoncapital'))) colMap['roce'] = col;
-        else if (!colMap['roe'] && (c === 'roe' || c.includes('returnonequit'))) colMap['roe'] = col;
-        else if (!colMap['opm'] && (c === 'opm' || c.includes('operatingmargin'))) colMap['opm'] = col;
-        else if (!colMap['de'] && (c.includes('debttoequit') || c.includes('debt/equity') || c === 'de')) colMap['de'] = col;
-        else if (!colMap['revCagr'] && (c.includes('salescagr') || c.includes('revcagr') || c.includes('revenuecagr'))) colMap['revCagr'] = col;
-        else if (!colMap['profitCagr'] && (c.includes('profitcagr') || c.includes('patcagr'))) colMap['profitCagr'] = col;
-        else if (!colMap['yoyRev'] && (c.includes('yoyrev') || c.includes('yoygrowth'))) colMap['yoyRev'] = col;
-        else if (!colMap['promoter'] && c.includes('promoter') && !c.includes('pledge')) colMap['promoter'] = col;
-        else if (!colMap['pledge'] && c.includes('pledge')) colMap['pledge'] = col;
-        else if (!colMap['icr'] && (c.includes('icr') || c.includes('interestcoverage'))) colMap['icr'] = col;
-        else if (!colMap['pe'] && (c === 'pe' || c.includes('priceearning') || c.includes('p/e'))) colMap['pe'] = col;
-        else if (!colMap['pb'] && (c === 'pb' || c.includes('pricebook') || c.includes('p/b'))) colMap['pb'] = col;
-        else if (!colMap['marketCapCr'] && c.includes('marketcap')) colMap['marketCapCr'] = col;
-        else if (!colMap['price'] && c.includes('currentprice')) colMap['price'] = col;
-        else if (!colMap['high52w'] && (c.includes('52') || c.includes('dma200') || c.includes('yearhigh'))) colMap['high52w'] = col;
+      // Merge normalized rows from all files, deduplicating by symbol
+      const seen = new Set<string>();
+      const merged: ExcelRow[] = [];
+      for (const fileRows of allParsed) {
+        for (const row of fileRows) {
+          if (!row.symbol || seen.has(row.symbol)) continue;
+          seen.add(row.symbol);
+          merged.push(row);
+        }
       }
+      if (merged.length === 0) { setParseError('No valid rows found. Make sure files have a Symbol/NSE Code column.'); setLoading(false); return; }
 
-      if (!colMap['symbol']) { setParseError('Could not find a Symbol/Ticker column. Please check column headers match the template.'); setLoading(false); return; }
-
-      const n = (val: unknown): number | undefined => {
-        if (val === '' || val === null || val === undefined) return undefined;
-        const v = parseFloat(String(val).replace(/[%,₹]/g, ''));
-        return isNaN(v) ? undefined : v;
-      };
-
-      const scored: ExcelResult[] = (raw as Record<string, unknown>[]).map(row => {
-        const r: ExcelRow = {
-          symbol: String(row[colMap['symbol']] || '').trim().toUpperCase(),
-          company: String(row[colMap['company'] ?? ''] || '').trim(),
-          sector: String(row[colMap['sector'] ?? ''] || 'INDUSTRIALS').trim(),
-          roce: n(colMap['roce'] ? row[colMap['roce']] : undefined),
-          roe: n(colMap['roe'] ? row[colMap['roe']] : undefined),
-          opm: n(colMap['opm'] ? row[colMap['opm']] : undefined),
-          de: n(colMap['de'] ? row[colMap['de']] : undefined),
-          revCagr: n(colMap['revCagr'] ? row[colMap['revCagr']] : undefined),
-          profitCagr: n(colMap['profitCagr'] ? row[colMap['profitCagr']] : undefined),
-          yoyRev: n(colMap['yoyRev'] ? row[colMap['yoyRev']] : undefined),
-          promoter: n(colMap['promoter'] ? row[colMap['promoter']] : undefined),
-          pledge: n(colMap['pledge'] ? row[colMap['pledge']] : undefined),
-          icr: n(colMap['icr'] ? row[colMap['icr']] : undefined),
-          pe: n(colMap['pe'] ? row[colMap['pe']] : undefined),
-          pb: n(colMap['pb'] ? row[colMap['pb']] : undefined),
-          marketCapCr: n(colMap['marketCapCr'] ? row[colMap['marketCapCr']] : undefined),
-          price: n(colMap['price'] ? row[colMap['price']] : undefined),
-          high52w: n(colMap['high52w'] ? row[colMap['high52w']] : undefined),
-        };
-        return scoreExcelRow(r);
-      }).filter(r => r.symbol).sort((a, b) => b.score - a.score);
-
+      const scored: ExcelResult[] = merged.map(r => scoreExcelRow(r)).sort((a, b) => b.score - a.score);
       setRows(scored);
-      setFileName(file.name);
+      setFileName(fileArray.length === 1 ? fileArray[0].name : `${fileArray.length} files merged (${merged.length} stocks)`);
     } catch (e: unknown) {
       setParseError(`Parse error: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -763,13 +784,13 @@ function ExcelCompare() {
       <div
         onClick={() => fileRef.current?.click()}
         onDragOver={e => e.preventDefault()}
-        onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
+        onDrop={e => { e.preventDefault(); if (e.dataTransfer.files.length > 0) handleFiles(e.dataTransfer.files); }}
         style={{ marginBottom: 16, padding: '28px 20px', border: `2px dashed ${PURPLE}40`, borderRadius: 12, textAlign: 'center', cursor: 'pointer', backgroundColor: `${PURPLE}05`, transition: 'all 0.15s' }}
       >
         <div style={{ fontSize: 28, marginBottom: 8 }}>{loading ? '⏳' : '📁'}</div>
         <div style={{ fontSize: 14, fontWeight: 700, color: PURPLE }}>{loading ? 'Scoring...' : fileName ? `✅ ${fileName}` : 'Click to upload or drag & drop'}</div>
-        <div style={{ fontSize: 11, color: MUTED, marginTop: 4 }}>.xlsx or .csv · any number of stocks</div>
-        <input ref={fileRef} type="file" accept=".xlsx,.csv,.xls" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
+        <div style={{ fontSize: 11, color: MUTED, marginTop: 4 }}>Multiple .xlsx or .csv files supported · columns auto-detected in any order · duplicates merged</div>
+        <input ref={fileRef} type="file" accept=".xlsx,.csv,.xls" multiple style={{ display: 'none' }} onChange={e => { if (e.target.files && e.target.files.length > 0) handleFiles(e.target.files); }} />
       </div>
 
       {parseError && <div style={{ marginBottom: 12, padding: '10px 14px', backgroundColor: `${RED}10`, border: `1px solid ${RED}30`, borderRadius: 8, fontSize: 12, color: RED }}>{parseError}</div>}
