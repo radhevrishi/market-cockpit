@@ -245,25 +245,52 @@ interface ExcelResult extends ExcelRow {
 }
 
 // Sector benchmarks: [p25, median, p75]
-const SBENCH: Record<string, { roce: number[]; opm: number[]; pe: number[]; rg: number[] }> = {
-  TECHNOLOGY:   { roce:[20,28,38], opm:[18,25,35], pe:[25,35,55], rg:[12,20,30] },
-  PHARMA:       { roce:[15,22,32], opm:[15,22,30], pe:[20,30,45], rg:[10,15,22] },
-  BANKING_FIN:  { roce:[12,16,22], opm:[20,30,40], pe:[12,18,28], rg:[12,18,25] },
-  INDUSTRIALS:  { roce:[14,20,28], opm:[8,12,18],  pe:[18,26,40], rg:[10,16,24] },
-  CONSUMER:     { roce:[16,24,34], opm:[10,16,22], pe:[22,32,50], rg:[8,15,22]  },
-  CHEMICALS:    { roce:[15,22,30], opm:[12,18,25], pe:[18,28,42], rg:[10,18,28] },
-  AUTO:         { roce:[14,20,28], opm:[8,12,18],  pe:[15,22,35], rg:[8,14,22]  },
-  DEFAULT:      { roce:[14,20,28], opm:[10,15,22], pe:[18,26,42], rg:[10,16,24] },
+// ── SECTOR BENCHMARKS — sector-appropriate, NOT normalized across all ────────
+// Capital-light sectors (IT, asset-light) have naturally higher ROCE — their
+// benchmark p75 is set higher so 60% ROCE in IT doesn't score 100 automatically.
+// Capital-intensive sectors (Infra, Solar, Steel, Auto) have lower ROCE expectations.
+// This gives credit to a manufacturing company achieving 25% ROCE vs IT company at 60%.
+const SBENCH: Record<string, { roce: number[]; opm: number[]; pe: number[]; rg: number[]; deMax: number }> = {
+  // Capital-light / software — high ROCE is expected; set thresholds high
+  TECHNOLOGY:   { roce:[28,40,58], opm:[18,26,36], pe:[24,34,54], rg:[12,20,30], deMax:0.3 },
+  // Pharma / Healthcare — medium capex, strong IP-based margins
+  PHARMA:       { roce:[16,24,34], opm:[16,23,32], pe:[20,30,46], rg:[10,15,22], deMax:0.5 },
+  // Banking/NBFC — ROCE concept is different (NIM/ROA-based), use loose thresholds
+  BANKING_FIN:  { roce:[12,16,22], opm:[22,32,44], pe:[11,17,27], rg:[12,18,26], deMax:8.0 },
+  // Capital goods, industrial manufacturing — moderate ROCE is genuinely good
+  INDUSTRIALS:  { roce:[13,18,26], opm:[8,12,18],  pe:[17,25,40], rg:[10,16,24], deMax:0.7 },
+  // Consumer brands / FMCG — asset-light distribution, high ROCE expected
+  CONSUMER:     { roce:[20,30,44], opm:[10,17,24], pe:[22,32,52], rg:[8,15,22],  deMax:0.4 },
+  // Specialty chemicals — process industry, moderate-high ROCE
+  CHEMICALS:    { roce:[14,22,32], opm:[12,18,26], pe:[17,27,42], rg:[10,18,28], deMax:0.6 },
+  // Automobiles / auto ancillary — capital-intensive, lower ROCE acceptable
+  AUTO:         { roce:[11,17,25], opm:[7,11,17],  pe:[14,21,34], rg:[8,14,22],  deMax:0.8 },
+  // Infra / Power / Solar / Renewables / Capital goods — very high capex, low ROCE normal
+  // WEBELSOLAR, power companies etc. belong here — ROCE of 15-20% is genuinely strong
+  INFRA:        { roce:[8,14,22],  opm:[9,14,20],  pe:[14,22,36], rg:[8,15,22],  deMax:1.5 },
+  // Metals / Mining / Commodities — cyclical, capital intensive
+  METALS:       { roce:[8,13,22],  opm:[8,14,22],  pe:[8,14,24],  rg:[5,12,22],  deMax:1.0 },
+  DEFAULT:      { roce:[13,20,28], opm:[10,15,22], pe:[17,25,42], rg:[10,16,24], deMax:0.7 },
 };
 
 function getSectorKey(s: string): string {
   const u = s.toUpperCase();
-  if (/TECH|SOFTWARE|IT |COMPUTER/.test(u)) return 'TECHNOLOGY';
-  if (/PHARMA|DRUG|HEALTH|BIOTECH/.test(u)) return 'PHARMA';
-  if (/BANK|FINANCE|NBFC|INSURANCE|LENDING/.test(u)) return 'BANKING_FIN';
-  if (/CHEM|SPECIALTY/.test(u)) return 'CHEMICALS';
-  if (/AUTO|VEHICLE/.test(u)) return 'AUTO';
-  if (/CONSUMER|FMCG|RETAIL|PERSONAL/.test(u)) return 'CONSUMER';
+  // Capital-light / Technology
+  if (/TECH|SOFTWARE|IT |COMPUTER|SAAS|IT-|SERVICES.*TECH/.test(u)) return 'TECHNOLOGY';
+  // Pharma / Healthcare
+  if (/PHARMA|DRUG|HEALTH|BIOTECH|MEDIC|HOSPITAL|DIAGNOSTIC/.test(u)) return 'PHARMA';
+  // Banking / Finance
+  if (/BANK|FINANCE|NBFC|INSURANCE|LENDING|MFI|MICROFI/.test(u)) return 'BANKING_FIN';
+  // Specialty Chemicals
+  if (/CHEM|SPECIALTY|AGROCH|PESTICIDE|FERTILISER|FERTILIZER/.test(u)) return 'CHEMICALS';
+  // Auto / Vehicles
+  if (/AUTO|VEHICLE|ANCILLAR|TYRE|BEARING/.test(u)) return 'AUTO';
+  // Consumer / FMCG
+  if (/CONSUMER|FMCG|RETAIL|PERSONAL|BEVERAG|FOOD|APPAREL|FASHION/.test(u)) return 'CONSUMER';
+  // Metals / Mining
+  if (/METAL|STEEL|IRON|ALUMIN|COPPER|MINING|MINERAL|ZINC|CEMENT/.test(u)) return 'METALS';
+  // Infra / Power / Solar / Renewable — MOST IMPORTANT: Solar companies like WEBELSOLAR
+  if (/INFRA|CONSTRUCT|REAL.*ESTATE|POWER|ENERGY|SOLAR|RENEW|EPC|GRID|TRANSMISSION|GENERAT|UTILITY|ELECT.*EQUIPMENT/.test(u)) return 'INFRA';
   return 'INDUSTRIALS';
 }
 
@@ -417,27 +444,56 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   if (row.changeInPromoter!==undefined) {
     const s = row.changeInPromoter>1?85:row.changeInPromoter>0?72:row.changeInPromoter>-1?55:30;
     finS+=s; finC++;
-    if (row.changeInPromoter<-2) redFlags.push({label:`Promoter sold ${Math.abs(row.changeInPromoter).toFixed(1)}% this quarter`,severity:'MEDIUM',source:'Fisher Scuttlebutt'});
-    if (row.changeInPromoter>1) strengths.push(`Promoter bought +${row.changeInPromoter.toFixed(1)}% — insider conviction`);
+    if (row.changeInPromoter<-2) redFlags.push({label:`Promoter sold −${Math.abs(row.changeInPromoter).toFixed(1)}% this quarter`,severity:'MEDIUM',source:'Fisher Scuttlebutt'});
+    if (row.changeInPromoter>1) {
+      // Only count as "conviction" if absolute holding is already healthy (≥ 40%)
+      // Buying from 29% → 31% is still a low-promoter-holding company
+      const absHolding = row.promoter ?? 0;
+      if (absHolding >= 40) {
+        strengths.push(`Promoter bought +${row.changeInPromoter.toFixed(1)}% (now ${absHolding.toFixed(1)}%) — insider conviction`);
+      } else {
+        risks.push(`Promoter bought +${row.changeInPromoter.toFixed(1)}% but holding (${absHolding.toFixed(1)}%) still below 40% — insufficient skin in game despite buying`);
+      }
+    }
   }
   if (row.icr!==undefined) {
     finS+=sv(row.icr,[2,5,10]); finC++;
     if (row.icr<1.5) redFlags.push({label:`ICR ${row.icr.toFixed(1)}× — dangerously low`,severity:'CRITICAL',source:'Fisher'});
   }
 
-  // ── VALUATION (15%) — SQGLP "P" Price ────────────────────────────────────
-  if (row.pe!==undefined) { valS+=sv(row.pe,b.pe,false); valC++; if (row.pe>120) redFlags.push({label:`P/E ${row.pe.toFixed(0)}× — extreme valuation`,severity:'MEDIUM',source:'Fisher'}); }
-  if (row.peg!==undefined && row.peg>0) {
-    const s=row.peg<0.8?92:row.peg<1.5?74:row.peg<2.5?50:22;
-    valS+=s; valC++;
-    if (row.peg<0.8) strengths.push(`PEG ${row.peg.toFixed(2)} — undervalued for growth`);
-    if (row.peg>2.5) risks.push(`PEG ${row.peg.toFixed(2)} — expensive for growth rate`);
+  // ── VALUATION (15%) — SQGLP "P" = (PEG score + P/E sector-percentile + MoS) / 3 ──
+  // Each of the three valuation dimensions is scored independently then averaged.
+  // This prevents a very cheap PE offsetting a terrible PEG or vice versa.
+  const valComponents: number[] = [];
+
+  // 1. P/E sector-relative percentile (sector-specific benchmark — not normalized across all)
+  if (row.pe!==undefined) {
+    const peScore = sv(row.pe, b.pe, false);
+    valComponents.push(peScore);
+    if (row.pe>120) redFlags.push({label:`P/E ${row.pe.toFixed(0)}× — extreme valuation`,severity:'MEDIUM',source:'Fisher'});
+    if (peScore < 35) risks.push(`P/E ${row.pe.toFixed(1)}x above sector median (${b.pe[1]}x) — expensive vs peers`);
   }
+
+  // 2. PEG ratio — growth-adjusted valuation
+  if (row.peg!==undefined && row.peg>0) {
+    const pegScore = row.peg<0.8?92:row.peg<1.0?84:row.peg<1.5?74:row.peg<2.0?58:row.peg<2.5?42:22;
+    valComponents.push(pegScore);
+    if (row.peg<0.8) strengths.push(`PEG ${row.peg.toFixed(2)} — undervalued growth (Fisher entry zone)`);
+    if (row.peg>2.5) risks.push(`PEG ${row.peg.toFixed(2)} — overpaying for growth rate`);
+  }
+
+  // 3. Margin of safety vs intrinsic value (MOSL: buy substantially below intrinsic value)
   if (row.marginOfSafety!==undefined) {
-    const s=row.marginOfSafety>30?90:row.marginOfSafety>10?76:row.marginOfSafety>0?62:row.marginOfSafety>-20?44:22;
-    valS+=s; valC++;
+    const mosScore = row.marginOfSafety>30?92:row.marginOfSafety>15?80:row.marginOfSafety>0?66:row.marginOfSafety>-15?48:row.marginOfSafety>-30?34:18;
+    valComponents.push(mosScore);
     if (row.marginOfSafety>20) strengths.push(`${row.marginOfSafety.toFixed(0)}% below intrinsic value — MOSL margin of safety`);
-    if (row.marginOfSafety<-35) risks.push(`Price ${Math.abs(row.marginOfSafety).toFixed(0)}% above intrinsic value`);
+    if (row.marginOfSafety<-30) risks.push(`Price ${Math.abs(row.marginOfSafety).toFixed(0)}% above intrinsic value — no margin of safety`);
+  }
+
+  // Average the available components (not sum/count — each component weighted equally)
+  if (valComponents.length > 0) {
+    valS = valComponents.reduce((a,b)=>a+b, 0) / valComponents.length;
+    valC = 1; // treat as single averaged score
   }
 
   // ── MARKET/MOMENTUM (5%) ─────────────────────────────────────────────────
@@ -464,17 +520,65 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   const coverage=Math.min(100,Math.round((filledFields/17)*100));
   const coverageRatio=coverage/100;
 
+  // ── HARD PENALTIES — absolute point deductions, applied before compositing ──────────
+  // These are non-negotiable penalties that directly cut the score.
+  // They ensure companies with structural weaknesses can't hide behind good historical CAGR.
+  let hardPenalty = 0;
+
+  // Promoter holding below 40% — insufficient founder alignment
+  if (row.promoter !== undefined && row.promoter < 40) {
+    hardPenalty += 10;
+    risks.push(`Hard penalty −10: Promoter ${row.promoter.toFixed(1)}% below 40% threshold`);
+  }
+
+  // CFO/PAT below 0.7 — earnings quality weak (only 70% cash-backed)
+  if (row.cfoToPat !== undefined && row.cfoToPat < 0.7 && row.cfoToPat >= 0) {
+    hardPenalty += 10;
+    risks.push(`Hard penalty −10: CFO/PAT ${row.cfoToPat.toFixed(2)}x < 0.7 — earnings not cash-backed`);
+  }
+
+  // D/E > 0.7 — above capital efficiency threshold (WEBELSOLAR example: capital-heavy solar)
+  // Note: for INFRA sector deMax is higher (1.5), so we use sector-appropriate threshold
+  const sectorDeMax = b.deMax;
+  if (row.de !== undefined && row.de > sectorDeMax) {
+    hardPenalty += 10;
+    risks.push(`Hard penalty −10: D/E ${row.de.toFixed(2)}x above sector threshold (${sectorDeMax}x for ${getSectorKey(row.sector)})`);
+  }
+
+  // Profit deceleration severe (recent profit growth fell >25pp below historical CAGR)
+  if (row.profitAcceleration !== undefined && row.profitAcceleration < -25) {
+    hardPenalty += 15;
+    risks.push(`Hard penalty −15: Profit deceleration ${row.profitAcceleration.toFixed(0)}pp — earnings collapsing vs history`);
+  }
+
+  // OPM below sector p25 — operating weakness, scalability questionable
+  if (row.opm !== undefined && row.opm < b.opm[0]) {
+    hardPenalty += 5;
+    risks.push(`Hard penalty −5: OPM ${row.opm.toFixed(1)}% below sector p25 (${b.opm[0]}%) — weak operating model`);
+  }
+
+  // Op leverage below 1.0 despite strong growth — growth without scalability (WEBELSOLAR: 1.17)
+  if (row.recentOpLev !== undefined && row.yoySalesGrowth !== undefined && row.yoySalesGrowth > 15) {
+    if (row.recentOpLev < 1.0) {
+      hardPenalty += 10;
+      risks.push(`Hard penalty −10: Op leverage ${row.recentOpLev.toFixed(2)}x < 1.0 at ${row.yoySalesGrowth.toFixed(0)}% sales growth — COSTS growing faster than revenue`);
+    } else if (row.recentOpLev < 1.5) {
+      hardPenalty += 5;
+      risks.push(`Hard penalty −5: Op leverage ${row.recentOpLev.toFixed(2)}x weak (< 1.5) despite ${row.yoySalesGrowth.toFixed(0)}% growth — limited scalability`);
+    }
+  }
+
   // SQGLP weights: S=Size(in Longevity), Q=Quality, G=Growth, L=Longevity, P=Price(Valuation)
   const raw = qual*0.25 + growth*0.25 + longe*0.15 + fin*0.15 + val*0.15 + mkt*0.05;
-  const penalized = raw*(0.5+coverageRatio*0.5);
+  // Hard penalties applied directly to raw score before coverage scaling
+  const rawAfterPenalty = Math.max(0, raw - hardPenalty);
+  const penalized = rawAfterPenalty*(0.5+coverageRatio*0.5);
 
   const hasCrit=redFlags.some(f=>f.severity==='CRITICAL');
   const highCnt=redFlags.filter(f=>f.severity==='HIGH').length;
   const medCnt=redFlags.filter(f=>f.severity==='MEDIUM').length;
 
-  // Red flags are ACTIVE score penalties — not just caps.
-  // Each CRITICAL = -25 pts, each HIGH = -12 pts, each MEDIUM = -5 pts.
-  // This ensures bad companies with good historical numbers get penalised for current risks.
+  // Red flag penalties (on top of hard penalties)
   const redFlagPenalty = (hasCrit?25:0) + (highCnt*12) + (medCnt*5);
   let score=Math.round((penalized - redFlagPenalty)/5)*5;
 
