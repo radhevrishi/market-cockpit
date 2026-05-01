@@ -623,6 +623,7 @@ interface EnrichedStock extends UniverseStock {
   change_pct?: number;
   quote_name?: string;
   is_small_cap: boolean;
+  is_non_us: boolean;
   score: number;
   velocity: { week: number; prev: number; trend: '🔥' | '📉' | '→'; isNew: boolean; accel: number };
 }
@@ -685,6 +686,7 @@ function buildEnrichedStocks(articles: NewsArticle[], quotes: QuoteStock[]): Enr
       change_pct: q?.changePercent,
       quote_name: q?.company,
       is_small_cap: isSC,
+      is_non_us: !!exchangeFlag(u.exchange),
       score,
       velocity: vel,
     };
