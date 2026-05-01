@@ -277,7 +277,7 @@ const JUNK = new Set([
   'UAE','GCC','MENA','APAC','EMEA','ASEAN','BRICS','G7','G20','NATO','OPEC','WTO','IMF','WB',
   'IPL','BPL','ISL','PKL','IND','AUS','ENG','PAK','GT','MI','CSK','KKR','RCB','SRH','DC','LSG','PBKS','RR','BCCI',
   'LTD','PVT','INC','LLC','CORP','PLC','AG','NV','SA','SPA','AB','AS','OY','GMBH',
-  'FDA','DOE','DOD','DOJ','CFPB','IRS','CFTC','FINRA','FTC','BOI','SBI','PNB','IOB','BOB','UCO',
+  'FDA','DOE','DOD','DOJ','CFPB','IRS','CFTC','FINRA','FTC','BOI','SBI','PNB','IOB','BOB','UCO','SK',
   'ACC','DM','FY','TETRA','RTX','SM','EV','BI','TSMC','NET','AES','JSW','EVM','TMC','EC','ASP','MCX','FTA','ST','II','KR','GCC','EMYN','HUL','GLP','YD','ESAF','LIV','JBS','ATF','RPG','NPP','NPU','WAVE','SIEGY','GEV',
   'ALL','ARE','HAL','BEL','CAN','HAS','HAD','WAS','GET','GOT','SET','PUT','BID','ASK',
   'FFO','NMI','BOE','HUL','SSD','USD','EUR','KR','GLP','UP','FOMC',
@@ -370,51 +370,299 @@ function useUSQuotes() {
   });
 }
 
-// ── Scanner builder ───────────────────────────────────────────────────────────
+// ── Serenity Universe — curated from framework document ──────────────────────
+// These are the stocks Serenity explicitly covers or would look at per her framework.
+// The scanner shows these + enriches with live news evidence + live prices.
 
-interface ScannerRow {
-  symbol: string; sub_tag?: string; level?: string; evidence_count: number;
-  latest_at?: string; headlines: string[]; exchange?: string;
-  price?: number; market_cap?: number; change_pct?: number; company_name?: string;
-  is_small_cap: boolean; is_non_us: boolean; score: number;
-  tier?: { tier: number; label: string; color: string };
+interface UniverseStock {
+  ticker: string;
+  name: string;
+  exchange: string;      // NYSE | NASDAQ | STO | TSE | KRX | TWO | FRA | OTC
+  sub_tag: string;
+  val_tier: number;      // 1 = raw materials (most upstream / most asymmetric)
+  competitors: string;   // "1 public" | "2–3 public" | "3–5 public" | ">5 public"
+  key_customers: string[]; // who they supply → ultimately hyperscalers
+  serenity_note: string;
+  is_serenity_pick: boolean; // explicitly mentioned by Serenity
+  models: number[];
 }
 
-interface RowBase { symbol: string; sub_tag?: string; level?: string; evidence_count: number; latest_at?: string; headlines: string[]; }
+const SERENITY_UNIVERSE: UniverseStock[] = [
+  // ── T1: Raw Materials / Substrates (most upstream = highest asymmetry) ──────
+  {
+    ticker: 'AXTI', name: 'AXT Inc', exchange: 'NASDAQ', sub_tag: 'MATERIALS_SUPPLY', val_tier: 1,
+    competitors: '2–3 public', key_customers: ['COHR','LITE','SIVE','II-VI'],
+    serenity_note: '"Strait of AXTI" — 20% of world oil through Strait of Hormuz = AXTI for InP/GaAs substrates. Vertically integrated: crystal growth → wafer slicing → epi deposition → quality cert. +5,579% YTD example. CHIPS Act strategic. DoD critical material.',
+    is_serenity_pick: true, models: [25, 2, 6, 36],
+  },
+  {
+    ticker: 'SIVE', name: 'Sivers Semiconductors', exchange: 'STO', sub_tag: 'INTERCONNECT_PHOTONICS', val_tier: 2,
+    competitors: '1 public', key_customers: ['JBL','MRVL','O-Net','Ayar Labs','Celestial AI'],
+    serenity_note: "Serenity's #1 cross-border pick. CW laser light source for Jabil 1.6T LRO, Marvell CPO, AMD CPO via Ayar. ~€140M MC when flagged. 'The next $LITE markets missed.' DNB bank later validated. Apple InP laser arrays rumoured for consumer hardware.",
+    is_serenity_pick: true, models: [2, 6, 10, 34, 31],
+  },
+  {
+    ticker: 'MP', name: 'MP Materials', exchange: 'NYSE', sub_tag: 'MATERIALS_SUPPLY', val_tier: 1,
+    competitors: '2–3 public', key_customers: ['GM','Raytheon','DoD','semi OEMs'],
+    serenity_note: 'US rare earth independence — only domestic rare earth miner + processor. Magnet manufacturing coming online. DoD contract. China controls 90% of global refining; geopolitical decoupling = MP direct beneficiary.',
+    is_serenity_pick: false, models: [29, 36],
+  },
+  {
+    ticker: 'SOI', name: 'Soitec', exchange: 'STO', sub_tag: 'MATERIALS_SUPPLY', val_tier: 2,
+    competitors: '1 public', key_customers: ['TSMC','GlobalFoundries','STMicro'],
+    serenity_note: 'Photonics-SOI substrates used in 100% of next-gen AI data center optical chips. Serenity entered ~€43 → +140% in one month. "Like a Shiny Zigzagoon." No substitute for Photonics-SOI in silicon photonics.',
+    is_serenity_pick: true, models: [2, 6, 10],
+  },
+  {
+    ticker: 'LPK', name: 'LPKF Laser & Electronics', exchange: 'FRA', sub_tag: 'FABRICATION_PACKAGING', val_tier: 2,
+    competitors: '1 public', key_customers: ['TSMC CoPoS','glass substrate makers'],
+    serenity_note: '~€210M cap. Critical chokepoint for LIDE (Laser Induced Deep Etching) in glass core substrates. Deep IP moat. "Possible TSM CoPoS link." Qual-cycle play — ignore quarterly revenue noise per Model 3. Revenue will ramp AFTER qual.',
+    is_serenity_pick: true, models: [2, 3, 6],
+  },
+  // ── T2-T3: Foundry / Equipment ────────────────────────────────────────────
+  {
+    ticker: 'TSEM', name: 'Tower Semiconductor', exchange: 'NASDAQ', sub_tag: 'FABRICATION_PACKAGING', val_tier: 3,
+    competitors: '3–5 public', key_customers: ['MRVL','AVGO','STMicro','Apple'],
+    serenity_note: '"TSM of photonics" — the foundry that manufactures photonic chips. CPO customers ramp → Tower gets fab orders BEFORE chip designers see revenue. $113 → $226 in 40 days = Serenity\'s 16th 100%+ return. Two-phase play: buy foundry first, rotate to chip designer later.',
+    is_serenity_pick: true, models: [20, 4],
+  },
+  {
+    ticker: 'WIN3105', name: 'Win Semiconductors (3105)', exchange: 'TWO', sub_tag: 'FABRICATION_PACKAGING', val_tier: 3,
+    competitors: '2–3 public', key_customers: ['QCOM','Skyworks','pHEMT OEMs'],
+    serenity_note: '"One of the most important foundries in the world aside from $TSM." GaAs/InP compound semiconductor foundry. $4.1B MC when Serenity posted. Zero US analyst coverage on Taiwan OTC. Pure cross-border arbitrage. Supplies entire wireless infrastructure stack.',
+    is_serenity_pick: true, models: [10, 2, 31],
+  },
+  {
+    ticker: 'ASML', name: 'ASML', exchange: 'NASDAQ', sub_tag: 'FABRICATION_PACKAGING', val_tier: 3,
+    competitors: '1 public', key_customers: ['TSMC','Samsung','Intel'],
+    serenity_note: 'Sole supplier of EUV and High-NA EUV lithography. 2-year backlog. Every advanced chip goes through ASML tools. Classic Serenity Model 2 — zero substitutability, customers cannot switch. Large-cap anchor for the basket (Model 28).',
+    is_serenity_pick: false, models: [2, 7],
+  },
+  {
+    ticker: 'AMAT', name: 'Applied Materials', exchange: 'NASDAQ', sub_tag: 'FABRICATION_PACKAGING', val_tier: 3,
+    competitors: '3–5 public', key_customers: ['TSMC','Samsung','Intel','Micron'],
+    serenity_note: 'Advanced packaging tools and CVD/PVD equipment. CoWoS and hybrid bonding tooling demand growing as packaging becomes the bottleneck. Two-phase play: equipment maker benefits before pure-play packaging companies.',
+    is_serenity_pick: false, models: [20],
+  },
+  // ── T4: Photonics / Memory / Test ────────────────────────────────────────
+  {
+    ticker: 'COHR', name: 'Coherent', exchange: 'NYSE', sub_tag: 'INTERCONNECT_PHOTONICS', val_tier: 4,
+    competitors: '3–5 public', key_customers: ['META','MSFT','AMZN','GOOG'],
+    serenity_note: "Transceivers, EMLs, VCSELs. Well-covered by analysts — Serenity says go UPSTREAM to COHR's suppliers (AXTI, SIVE). However, vertical integration thesis: COHR may acquire AXTI to secure substrate supply, creating M&A premium (Model 27). Tier-1 OEM.",
+    is_serenity_pick: true, models: [27, 28],
+  },
+  {
+    ticker: 'LITE', name: 'Lumentum', exchange: 'NASDAQ', sub_tag: 'INTERCONNECT_PHOTONICS', val_tier: 4,
+    competitors: '3–5 public', key_customers: ['COHR','JNPR','CSCO'],
+    serenity_note: 'InP lasers for CPO. Serenity held $LITE for +5% while holding SIVE for +12.69% — proves upstream picks outperform. On GFS AI photonics roadmap. Use as thesis confirmation, position in suppliers for alpha.',
+    is_serenity_pick: true, models: [4, 28],
+  },
+  {
+    ticker: 'MRVL', name: 'Marvell Technology', exchange: 'NASDAQ', sub_tag: 'INTERCONNECT_PHOTONICS', val_tier: 4,
+    competitors: '3–5 public', key_customers: ['MSFT Maia','AWS Trainium','GOOG','META'],
+    serenity_note: "2–3x revenue growth from MSFT Maia ramp. Custom ASIC + CPO DSP. Serenity's core basket holding (Model 28). Uses SIVE lasers for CPO → MRVL is downstream of SIVE. Buy both but expect SIVE to 10x first.",
+    is_serenity_pick: true, models: [28, 18],
+  },
+  {
+    ticker: 'AVGO', name: 'Broadcom', exchange: 'NASDAQ', sub_tag: 'COMPUTE_SCALING', val_tier: 5,
+    competitors: '3–5 public', key_customers: ['GOOG TPU','META MTIA','Apple','AMZN'],
+    serenity_note: 'Custom ASIC leader. Long hyperscaler ASIC — every major hyperscaler uses Broadcom custom silicon. Tomahawk 5 switches + CPO reference design. Core basket holding for correlated AI capex upside.',
+    is_serenity_pick: true, models: [28, 18],
+  },
+  {
+    ticker: 'AAOI', name: 'Applied Optoelectronics', exchange: 'NASDAQ', sub_tag: 'INTERCONNECT_PHOTONICS', val_tier: 4,
+    competitors: '3–5 public', key_customers: ['major hyperscaler (undisclosed)'],
+    serenity_note: '$71M + $53M = $124M in new orders from a single hyperscaler since mid-March. 800G single-mode DC transceivers. Serenity posted this as the PERFECT example of qual→ramp→visible orders cycle. Was $25, went to $104 in months. Model 26: count qual engagements, not P/E.',
+    is_serenity_pick: true, models: [26, 3, 34],
+  },
+  {
+    ticker: 'MU', name: 'Micron Technology', exchange: 'NASDAQ', sub_tag: 'MEMORY_STORAGE', val_tier: 4,
+    competitors: '3 public', key_customers: ['NVDA','AMD','hyperscalers'],
+    serenity_note: 'HBM3E ramp. One of only 3 HBM producers globally (SK Hynix, Samsung, Micron). CHIPS Act funding recipient = government-validated bottleneck. Capex leverage play for AI memory supercycle.',
+    is_serenity_pick: false, models: [36, 28],
+  },
+  {
+    ticker: 'AEHR', name: 'Aehr Test Systems', exchange: 'NASDAQ', sub_tag: 'MEMORY_STORAGE', val_tier: 4,
+    competitors: '2–3 public', key_customers: ['SiC wafer producers','HBM makers'],
+    serenity_note: '"$420 looks inevitable on $AEHR. Have never seen so many hyperscalers qualifying a $1.1B company before." Wafer-level burn-in for SiC + HBM. Qual-cycle play par excellence. Revenue lags design wins by 12-24 months — the market misreads the lag as failure.',
+    is_serenity_pick: true, models: [3, 26, 2],
+  },
+  // ── T4: Test / Easter Eggs (Model 24) ────────────────────────────────────
+  {
+    ticker: 'FORM', name: 'FormFactor', exchange: 'NASDAQ', sub_tag: 'FABRICATION_PACKAGING', val_tier: 4,
+    competitors: '2–3 public', key_customers: ['TSMC','Intel','AMD','Micron'],
+    serenity_note: 'Silicon photonics wafer test bottleneck. Easter egg from "Silicon photonics scaling hits wafer testing bottleneck" headline. Small-cap niche wafer test alongside AEHR. Model 24: convert headline to stock list.',
+    is_serenity_pick: true, models: [24],
+  },
+  // ── T5: Compute / Cooling ────────────────────────────────────────────────
+  {
+    ticker: 'NVDA', name: 'Nvidia', exchange: 'NASDAQ', sub_tag: 'COMPUTE_SCALING', val_tier: 5,
+    competitors: '2–3 public', key_customers: ['all hyperscalers','neoclouds','enterprises'],
+    serenity_note: "Allocation monopoly, 75%+ gross margin. But Serenity says don't stop here — trace backward to who supplies NVDA's packaging, lasers, memory. NVDA itself is Tier 5; the 10x plays are Tier 1-3 upstream.",
+    is_serenity_pick: false, models: [1, 18],
+  },
+  {
+    ticker: 'AMD', name: 'AMD', exchange: 'NASDAQ', sub_tag: 'COMPUTE_SCALING', val_tier: 5,
+    competitors: '2–3 public', key_customers: ['hyperscalers','cloud providers'],
+    serenity_note: 'MI300X/MI325X captures tier-2 GPU demand. AMD CPO roadmap via Ayar Labs uses SIVE lasers. Downstream anchor in Serenity basket. Traces to TSEM (foundry), SIVE (lasers), AXTI (substrates) upstream.',
+    is_serenity_pick: false, models: [28],
+  },
+  {
+    ticker: 'VRT', name: 'Vertiv Holdings', exchange: 'NYSE', sub_tag: 'THERMAL_COOLING', val_tier: 5,
+    competitors: '3–5 public', key_customers: ['hyperscalers','colo operators','telecos'],
+    serenity_note: 'NVL72 racks = 120+ kW/rack → every new AI DC must deploy liquid cooling. Vertiv does both power + thermal. CDU and cold plate supply sold out. Lead times 40–80 weeks. Power + cooling = two bottlenecks in one ticker.',
+    is_serenity_pick: false, models: [4],
+  },
+  {
+    ticker: 'SMCI', name: 'Super Micro Computer', exchange: 'NASDAQ', sub_tag: 'THERMAL_COOLING', val_tier: 5,
+    competitors: '3–5 public', key_customers: ['NVDA channel','hyperscalers'],
+    serenity_note: 'Liquid-cooled rack integration — direct rack-scale deployment for Blackwell. BUT: Serenity Anti-Dilution Filter (Model 19) — check shares outstanding growth and SBC before sizing. High revenue growth but dilution history.',
+    is_serenity_pick: false, models: [19, 21],
+  },
+  {
+    ticker: 'NBIS', name: 'Nebius Group', exchange: 'NASDAQ', sub_tag: 'COMPUTE_SCALING', val_tier: 5,
+    competitors: '3–5 public', key_customers: ['enterprise AI','developers'],
+    serenity_note: '"One of them ends up as the next AWS in 5 years." +61.1% YTD vs $IREN -7.9%. This is Serenity\'s Neocloud Filter (Model 21): real GPU cloud infrastructure vs marketing story. NBIS = real infra. IREN = rental with $6B ATM dilution.',
+    is_serenity_pick: true, models: [21, 19],
+  },
+  // ── T6: Power / Nuclear ─────────────────────────────────────────────────
+  {
+    ticker: 'GEV', name: 'GE Vernova', exchange: 'NYSE', sub_tag: 'POWER_GRID', val_tier: 6,
+    competitors: '3–5 public', key_customers: ['utilities','data center developers'],
+    serenity_note: 'Grid equipment + transformers. 80–130 week lead times on large power transformers — only 3 major OEMs globally. AI DC nameplate demand: 50 GW US by 2030. Utility interconnect queues span 5–10 years.',
+    is_serenity_pick: false, models: [4],
+  },
+  {
+    ticker: 'ETN', name: 'Eaton Corporation', exchange: 'NYSE', sub_tag: 'POWER_GRID', val_tier: 6,
+    competitors: '3–5 public', key_customers: ['data centers','utilities','industrial'],
+    serenity_note: 'Switchgear, UPS, electrical backbone for AI data centers. Power-first site selection = Eaton sells before shovels go in the ground. Grain-oriented electrical steel (GOES) constraint driving pricing power.',
+    is_serenity_pick: false, models: [4],
+  },
+  {
+    ticker: 'CEG', name: 'Constellation Energy', exchange: 'NASDAQ', sub_tag: 'NUCLEAR_ENERGY', val_tier: 6,
+    competitors: '3–5 public', key_customers: ['MSFT (Three Mile Island PPA)'],
+    serenity_note: 'Three Mile Island restart + Microsoft PPA. Hyperscalers pivoting to nuclear for 24/7 carbon-free baseload. SMR + existing fleet. Government policy tailwind (IRA nuclear credits). Demand inelastic from hyperscaler PPAs.',
+    is_serenity_pick: false, models: [36, 29],
+  },
+  {
+    ticker: 'CCJ', name: 'Cameco', exchange: 'NYSE', sub_tag: 'NUCLEAR_ENERGY', val_tier: 1,
+    competitors: '3–5 public', key_customers: ['utilities','nuclear operators globally'],
+    serenity_note: 'Uranium mining leader. Enriched uranium supply constrained post-Russia sanctions. Every new nuclear PPA needs long-term uranium supply. Centrus and Urenco ramping HALEU slowly — Cameco bridges the gap.',
+    is_serenity_pick: false, models: [29, 36],
+  },
+  {
+    ticker: 'LEU', name: 'Centrus Energy', exchange: 'NYSE', sub_tag: 'NUCLEAR_ENERGY', val_tier: 1,
+    competitors: '1 public', key_customers: ['US DOE','nuclear operators'],
+    serenity_note: 'HALEU (High-Assay Low-Enriched Uranium) enrichment monopoly in the US. SMR reactors require HALEU. Only domestic producer. DOE contract. If SMRs ramp 2028–2032, Centrus is the single-point supply constraint.',
+    is_serenity_pick: false, models: [2, 36],
+  },
+  // ── Cross-border plays (Model 10) ─────────────────────────────────────────
+  {
+    ticker: 'TOWA6315', name: 'Towa Corp (6315)', exchange: 'TSE', sub_tag: 'FABRICATION_PACKAGING', val_tier: 3,
+    competitors: '1 public', key_customers: ['Micron','SK Hynix','Samsung'],
+    serenity_note: '"A rare, living definition of monopoly over HBM4 compression molding." ~$1.35B cap. Every major memory company is their customer. +20% YTD when posted. Zero US coverage. Classic Model 10 cross-border arb — Japanese precision manufacturing monopoly.',
+    is_serenity_pick: true, models: [2, 10, 6],
+  },
+  {
+    ticker: 'AUROS322310', name: 'Auros (322310)', exchange: 'KRX', sub_tag: 'FABRICATION_PACKAGING', val_tier: 3,
+    competitors: '2–3 public', key_customers: ['SK Hynix','Samsung (HBM4e)'],
+    serenity_note: '~$210M cap. SK Hynix + Samsung supplier for HBM4e hybrid bonding. Compared by Serenity to SIVE + CPO + AEHR for memory. Sub-$250M company supplying the companies making HBM for Nvidia. Pure size asymmetry play.',
+    is_serenity_pick: true, models: [6, 10, 31],
+  },
+  {
+    ticker: 'QDLASER6613', name: 'QD Laser (6613)', exchange: 'TSE', sub_tag: 'INTERCONNECT_PHOTONICS', val_tier: 2,
+    competitors: '2–3 public', key_customers: ['data center module makers'],
+    serenity_note: '+226% YTD. Quantum dot laser for next-gen photonics. Two-phase play: first buy $ALRIB (Aixtron) — the MBE machine supplier. Then pivot to QD Laser once production qualification confirmed. "Safest way: unknown MBE machine suppliers early on."',
+    is_serenity_pick: true, models: [20, 10],
+  },
+  {
+    ticker: 'ALRIB', name: 'Aixtron SE', exchange: 'FRA', sub_tag: 'FABRICATION_PACKAGING', val_tier: 2,
+    competitors: '2–3 public', key_customers: ['QD Laser','compound semi makers','SiC epi'],
+    serenity_note: 'MBE/MOCVD deposition equipment maker — the machine that MAKES the compound semi wafers. Phase 1 of Serenity\'s two-phase play: "Buy Aixtron early on, then pivot to pure-play lasers when qual → ramp." Predictable revenue: QD Laser needs Aixtron to scale.',
+    is_serenity_pick: true, models: [20],
+  },
+  // ── Materials geopolitical plays (Model 25, 29) ─────────────────────────
+  {
+    ticker: 'AXTI', name: 'AXT Inc (duplicate check)', exchange: 'NASDAQ', sub_tag: 'MATERIALS_SUPPLY', val_tier: 1,
+    competitors: '2–3 public', key_customers: ['COHR','LITE','photonic chip makers'],
+    serenity_note: 'See first entry — AXTI is Serenity\'s primary example of Model 25 (Strait of Hormuz = Strait of AXTI). Geopolitical thesis: US domestic InP substrate = strategic asset if Iran tensions disrupt Middle East.',
+    is_serenity_pick: true, models: [25],
+  },
+];
 
-function buildRows(articles: NewsArticle[], quotes: QuoteStock[]): ScannerRow[] {
-  const map = new Map<string, RowBase>();
+// Deduplicate by ticker (AXTI appears twice intentionally for different thesis angles — keep first)
+const UNIVERSE_DEDUPED = SERENITY_UNIVERSE.filter((u, i, arr) => arr.findIndex(x => x.ticker === u.ticker) === i);
+
+// ── Scanner enrichment ────────────────────────────────────────────────────────
+
+interface EnrichedStock extends UniverseStock {
+  evidence_count: number;
+  headlines: string[];
+  latest_at?: string;
+  price?: number;
+  market_cap?: number;
+  change_pct?: number;
+  quote_name?: string;
+  is_small_cap: boolean;
+  score: number;
+}
+
+function buildEnrichedStocks(articles: NewsArticle[], quotes: QuoteStock[]): EnrichedStock[] {
+  // Build evidence map from live articles
+  const evidenceMap = new Map<string, { count: number; headlines: string[]; latest: string }>();
   for (const a of articles) {
     for (const sym of getTickerSymbols(a)) {
-      if (!map.has(sym)) map.set(sym, { symbol: sym, sub_tag: a.bottleneck_sub_tag, level: a.bottleneck_level, evidence_count: 0, latest_at: a.published_at, headlines: [] });
-      const r = map.get(sym)!;
-      r.evidence_count++;
-      const lvs = ['CRITICAL','BOTTLENECK','WATCH','RESOLVED'];
-      if (a.bottleneck_level) { const ni = lvs.indexOf(a.bottleneck_level.toUpperCase()), ci = lvs.indexOf((r.level ?? '').toUpperCase()); if (ni !== -1 && (ci === -1 || ni < ci)) r.level = a.bottleneck_level; }
-      if (!r.sub_tag && a.bottleneck_sub_tag) r.sub_tag = a.bottleneck_sub_tag;
+      const key = sym.toUpperCase();
+      if (!evidenceMap.has(key)) evidenceMap.set(key, { count: 0, headlines: [], latest: '' });
+      const e = evidenceMap.get(key)!;
+      e.count++;
       const h = a.title || a.headline || '';
-      if (h && r.headlines.length < 4 && !r.headlines.includes(h)) r.headlines.push(h);
-      if (a.published_at && (!r.latest_at || a.published_at > r.latest_at)) r.latest_at = a.published_at;
+      if (h && e.headlines.length < 3 && !e.headlines.includes(h)) e.headlines.push(h);
+      if (!e.latest || a.published_at > e.latest) e.latest = a.published_at;
     }
   }
+  // Build quote map
   const qm = new Map<string, QuoteStock>(quotes.map(q => [q.ticker.toUpperCase(), q]));
-  return Array.from(map.values())
-    .filter(r => (r.sub_tag && r.evidence_count >= 1) || r.evidence_count >= 2)
-    .map((base: RowBase): ScannerRow => {
-      const q = qm.get(base.symbol.toUpperCase());
-      const mc = q?.marketCap;
-      const isSC = !!(mc && mc > 0 && mc < 2_000_000_000);
-      const ef = exchangeFlag(q?.sector);
-      const tierInfo = base.sub_tag ? TIER_MAP[base.sub_tag] : undefined;
-      return {
-        symbol: base.symbol, sub_tag: base.sub_tag, level: base.level,
-        evidence_count: base.evidence_count, latest_at: base.latest_at, headlines: base.headlines,
-        price: q?.price, market_cap: mc, change_pct: q?.changePercent, company_name: q?.company,
-        exchange: q?.sector, is_small_cap: isSC, is_non_us: !!ef, tier: tierInfo,
-        score: calcScore({ level: base.level, evidence_count: base.evidence_count, sub_tag: base.sub_tag, is_small_cap: isSC }),
-      };
-    })
-    .sort((a, b) => b.score - a.score);
+
+  return UNIVERSE_DEDUPED.map((u): EnrichedStock => {
+    // Match quotes by short ticker (strip exchange suffix like 6315, 322310)
+    const shortTicker = u.ticker.replace(/\d+$/, '').toUpperCase();
+    const q = qm.get(u.ticker.toUpperCase()) ?? qm.get(shortTicker);
+    const ev = evidenceMap.get(u.ticker.toUpperCase()) ?? evidenceMap.get(shortTicker);
+    const mc = q?.marketCap;
+    const isSC = !!(mc && mc > 0 && mc < 2_000_000_000);
+    const evidenceCount = ev?.count ?? 0;
+
+    // Serenity Score:
+    // - Upstream bonus: earlier in value chain = rarer = more asymmetric
+    const upstreamBonus = Math.max(0, (10 - u.val_tier) * 7); // T1=63, T2=56, T3=49, ..., T10=0
+    // - Size asymmetry bonus
+    const sizeBonus = isSC ? 15 : (mc && mc < 10_000_000_000 ? 5 : 0);
+    // - Cross-border arb bonus (non-US = info asymmetry)
+    const nonUsBonuses: Record<string, number> = { STO: 12, TSE: 12, KRX: 12, TWO: 10, FRA: 8 };
+    const arb = nonUsBonuses[u.exchange] ?? 0;
+    // - Serenity explicit mention
+    const serenityBonus = u.is_serenity_pick ? 10 : 0;
+    // - Live evidence bonus (max 8)
+    const evBonus = Math.min(8, evidenceCount * 2);
+    // - Competition moat
+    const compBonus = u.competitors === '1 public' ? 10 : u.competitors === '2–3 public' ? 5 : 0;
+
+    const score = Math.min(100, upstreamBonus + sizeBonus + arb + serenityBonus + evBonus + compBonus);
+
+    return {
+      ...u,
+      evidence_count: evidenceCount,
+      headlines: ev?.headlines ?? [],
+      latest_at: ev?.latest,
+      price: q?.price,
+      market_cap: mc,
+      change_pct: q?.changePercent,
+      quote_name: q?.company,
+      is_small_cap: isSC,
+      score,
+    };
+  }).sort((a, b) => b.score - a.score);
 }
 
 // ── Score Gauge ───────────────────────────────────────────────────────────────
@@ -551,96 +799,272 @@ function RotationTracker({ dashboard, isLoading }: { dashboard?: BnDashboard; is
   );
 }
 
+// ── Criteria check helper ─────────────────────────────────────────────────────
+function CriteriaCheck({ pass, label }: { pass: boolean; label: string }) {
+  return (
+    <span title={label} style={{ fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: '2px', color: pass ? '#10B981' : '#EF444480', whiteSpace: 'nowrap' }}>
+      {pass ? '✅' : '❌'} {label}
+    </span>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 2 — STOCK SCANNER
+// Universe = curated from Serenity framework doc (static watchlist)
+// Data     = 100% live: prices from /api/market/quotes, evidence from /api/v1/news
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function StockScanner({ articles, isLoading, quotes, quotesLoading }: { articles: NewsArticle[]; isLoading: boolean; quotes: QuoteStock[]; quotesLoading: boolean }) {
-  const [filterLevel, setFilterLevel] = useState('ALL');
+function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
+  articles: NewsArticle[]; isLoading: boolean; quotes: QuoteStock[]; quotesLoading: boolean;
+}) {
+  const [filterLayer, setFilterLayer] = useState('ALL');
   const [expRow, setExpRow] = useState<string | null>(null);
-  const allRows = useMemo(() => buildRows(articles, quotes), [articles, quotes]);
-  const rows = useMemo(() => filterLevel === 'ALL' ? allRows : allRows.filter(r => r.level?.toUpperCase() === filterLevel), [allRows, filterLevel]);
-  const asymmetry = allRows.filter(r => r.is_small_cap && ['CRITICAL','BOTTLENECK'].includes(r.level?.toUpperCase() ?? ''));
+  const [viewMode, setViewMode] = useState<'universe' | 'live'>('universe');
+
+  const enriched = useMemo(() => buildEnrichedStocks(articles, quotes), [articles, quotes]);
+
+  // Live-only rows: tickers from news NOT already in the universe
+  const universeTickers = new Set(UNIVERSE_DEDUPED.map(u => u.ticker.replace(/\d+$/, '').toUpperCase()));
+  const liveExtra = useMemo(() => {
+    const map = new Map<string, { symbol: string; sub_tag?: string; level?: string; evidence_count: number; headlines: string[]; latest_at?: string; price?: number; change_pct?: number; market_cap?: number }>();
+    for (const a of articles) {
+      for (const sym of getTickerSymbols(a)) {
+        if (universeTickers.has(sym.toUpperCase())) continue;
+        if (!map.has(sym)) map.set(sym, { symbol: sym, sub_tag: a.bottleneck_sub_tag, level: a.bottleneck_level, evidence_count: 0, headlines: [] });
+        const r = map.get(sym)!;
+        r.evidence_count++;
+        if (!r.sub_tag && a.bottleneck_sub_tag) r.sub_tag = a.bottleneck_sub_tag;
+        const h = a.title || a.headline || '';
+        if (h && r.headlines.length < 3 && !r.headlines.includes(h)) r.headlines.push(h);
+      }
+    }
+    const qm = new Map<string, QuoteStock>(quotes.map(q => [q.ticker.toUpperCase(), q]));
+    return Array.from(map.values())
+      .filter(r => r.evidence_count >= 2)
+      .map(r => ({ ...r, price: qm.get(r.symbol.toUpperCase())?.price, change_pct: qm.get(r.symbol.toUpperCase())?.changePercent, market_cap: qm.get(r.symbol.toUpperCase())?.marketCap }))
+      .sort((a, b) => b.evidence_count - a.evidence_count);
+  }, [articles, quotes]);
+
+  const LAYERS = ['ALL', 'INTERCONNECT_PHOTONICS', 'MATERIALS_SUPPLY', 'FABRICATION_PACKAGING', 'COMPUTE_SCALING', 'MEMORY_STORAGE', 'POWER_GRID', 'NUCLEAR_ENERGY', 'THERMAL_COOLING'];
+  const filtered = useMemo(() => filterLayer === 'ALL' ? enriched : enriched.filter(r => r.sub_tag === filterLayer), [enriched, filterLayer]);
+
+  const multibaggers = enriched.filter(s => s.score >= 70 && s.is_small_cap);
+  const withLiveSignal = enriched.filter(s => s.evidence_count > 0);
 
   if (isLoading) return <SkeletonGrid count={8} height={54} />;
 
   return (
     <div style={{ padding: '20px' }}>
+      {/* Data transparency banner */}
+      <div style={{ marginBottom: '14px', padding: '10px 14px', backgroundColor: '#0F7ABF08', border: '1px solid #0F7ABF20', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+        <Zap className="w-3 h-3" style={{ color: '#0F7ABF', flexShrink: 0 }} />
+        <span style={{ fontSize: '11px', color: '#6B7A8D' }}>
+          <strong style={{ color: '#0F7ABF' }}>Watchlist</strong> from Serenity framework doc ·&nbsp;
+          <strong style={{ color: '#10B981' }}>Prices/market cap</strong> live from Yahoo Finance ·&nbsp;
+          <strong style={{ color: '#F59E0B' }}>Evidence</strong> live from news feed ·&nbsp;
+          {quotesLoading ? '⏳ loading quotes…' : <span style={{ color: '#10B981' }}>✅ {quotes.length} quotes loaded</span>}
+        </span>
+      </div>
+
+      {/* Stats row */}
       <div style={{ display: 'flex', gap: '10px', marginBottom: '14px', flexWrap: 'wrap', alignItems: 'center' }}>
-        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-          {['ALL','CRITICAL','BOTTLENECK','WATCH'].map(lv => {
-            const cnt = lv === 'ALL' ? allRows.length : allRows.filter(r => r.level?.toUpperCase() === lv).length;
-            const ls = getLvl(lv);
-            return <button key={lv} onClick={() => setFilterLevel(lv)} style={{ padding: '5px 12px', borderRadius: '7px', border: `1px solid ${filterLevel === lv ? (ls?.border ?? '#0F7ABF40') : '#1A2840'}`, cursor: 'pointer', backgroundColor: filterLevel === lv ? (ls?.bg ?? '#0F7ABF14') : 'transparent', color: filterLevel === lv ? (ls?.color ?? '#0F7ABF') : '#6B7A8D', fontSize: '11px', fontWeight: '600' }}>{lv} ({cnt})</button>;
-          })}
-        </div>
-        <span style={{ fontSize: '11px', color: '#4A5B6C', marginLeft: 'auto' }}>{rows.length} companies · {quotesLoading ? 'loading quotes…' : `${quotes.length} prices`}</span>
-      </div>
-      {asymmetry.length > 0 && (
-        <div style={{ marginBottom: '12px', padding: '10px 14px', backgroundColor: '#F59E0B08', border: '1px solid #F59E0B28', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Flag className="w-4 h-4" style={{ color: '#F59E0B', flexShrink: 0 }} />
-          <span style={{ fontSize: '12px', color: '#F59E0B', fontWeight: '700' }}>{asymmetry.length} size asymmetry plays </span>
-          <span style={{ fontSize: '11px', color: '#8A95A3' }}>— small-cap (&lt;$2B) at CRITICAL/BOTTLENECK severity · Model 06</span>
-        </div>
-      )}
-      {/* Column headers */}
-      <div style={{ display: 'grid', gridTemplateColumns: '46px 88px 1fr 108px 108px 64px 78px', gap: '8px', padding: '6px 12px', fontSize: '10px', fontWeight: '700', letterSpacing: '0.8px', color: '#4A5B6C', borderBottom: '1px solid #1A2840' }}>
-        <span>SCORE</span><span>TICKER</span><span>LAYER</span><span>LEVEL</span><span>MKT CAP</span><span>SIGNALS</span><span>PRICE</span>
-      </div>
-      {rows.length === 0 ? <EmptyState msg="No results for this filter." /> : rows.map((row, idx) => {
-        const ls = getLvl(row.level);
-        const isExp = expRow === row.symbol;
-        const cp = row.change_pct ?? 0;
-        return (
-          <div key={row.symbol} style={{ borderBottom: '1px solid #1A284018' }}>
-            <button onClick={() => setExpRow(isExp ? null : row.symbol)} style={{ width: '100%', background: isExp ? '#0D162340' : idx % 2 === 1 ? '#060E1A18' : 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', padding: '9px 12px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '46px 88px 1fr 108px 108px 64px 78px', gap: '8px', alignItems: 'center' }}>
-                <ScoreGauge score={row.score} />
-                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: '13px', fontWeight: '700', color: '#F5F7FA' }}>{row.symbol}</span>
-                  {row.is_non_us && exchangeFlag(row.exchange) && <span style={{ fontSize: '13px' }}>{exchangeFlag(row.exchange)!.flag}</span>}
-                  {row.is_small_cap && <span title="Small-cap <$2B" style={{ fontSize: '8px', color: '#F59E0B', border: '1px solid #F59E0B40', padding: '0 3px', borderRadius: '3px', fontWeight: '700' }}>SC</span>}
-                  {idx < 3 && <Trophy className="w-3 h-3" style={{ color: scoreColor(row.score) }} />}
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  {row.tier ? (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                      <span style={{ fontSize: '9px', fontWeight: '700', color: row.tier.color, border: `1px solid ${row.tier.color}40`, padding: '1px 4px', borderRadius: '3px', flexShrink: 0 }}>T{row.tier.tier}</span>
-                      <span style={{ fontSize: '11px', color: '#8A95A3', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.sub_tag!.replace(/_/g,' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase())}</span>
-                    </div>
-                  ) : <span style={{ fontSize: '11px', color: '#4A5B6C' }}>—</span>}
-                </div>
-                {ls ? <span style={{ fontSize: '10px', fontWeight: '700', color: ls.color, backgroundColor: ls.bg, border: `1px solid ${ls.border}`, padding: '3px 8px', borderRadius: '4px', textAlign: 'center' }}>{row.level}</span> : <span style={{ fontSize: '11px', color: '#4A5B6C' }}>—</span>}
-                <span style={{ fontSize: '12px', color: row.is_small_cap ? '#F59E0B' : '#C9D4E0', fontWeight: row.is_small_cap ? '700' : '400' }}>{fmtCap(row.market_cap)}</span>
-                <span style={{ fontSize: '14px', fontWeight: '700', color: '#C9D4E0' }}>{row.evidence_count}</span>
-                <div>{row.price ? <><span style={{ fontSize: '12px', fontWeight: '600', color: '#F5F7FA' }}>${row.price.toFixed(2)}</span>{cp !== 0 && <div style={{ fontSize: '10px', color: cp >= 0 ? '#10B981' : '#EF4444' }}>{cp >= 0 ? '+' : ''}{cp.toFixed(2)}%</div>}</> : <span style={{ fontSize: '11px', color: '#4A5B6C' }}>—</span>}</div>
-              </div>
+        {/* View toggle */}
+        <div style={{ display: 'flex', gap: '0', backgroundColor: '#060E1A', border: '1px solid #1A2840', borderRadius: '8px', overflow: 'hidden' }}>
+          {(['universe', 'live'] as const).map(m => (
+            <button key={m} onClick={() => setViewMode(m)} style={{ padding: '6px 14px', background: viewMode === m ? '#0F7ABF20' : 'transparent', border: 'none', cursor: 'pointer', color: viewMode === m ? '#0F7ABF' : '#6B7A8D', fontSize: '11px', fontWeight: viewMode === m ? '700' : '400' }}>
+              {m === 'universe' ? `🔬 Framework (${enriched.length})` : `📡 Live News (${liveExtra.length})`}
             </button>
-            {isExp && (
-              <div style={{ padding: '10px 12px 14px 58px', backgroundColor: '#060E1A30', borderTop: '1px solid #1A2840' }}>
-                <div style={{ display: 'flex', gap: '14px', marginBottom: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-                  {row.company_name && <span style={{ fontSize: '12px', color: '#8A95A3' }}>{row.company_name}</span>}
-                  {row.tier && <span style={{ fontSize: '11px', color: row.tier.color }}>{row.tier.label}</span>}
-                  {row.latest_at && <span style={{ fontSize: '10px', color: '#4A5B6C' }}>Last signal {timeAgo(row.latest_at)}</span>}
-                </div>
-                <p style={{ fontSize: '10px', color: '#4A5B6C', fontWeight: '700', letterSpacing: '0.8px', marginBottom: '6px' }}>EVIDENCE ({row.evidence_count} articles)</p>
-                {row.headlines.map((h, i) => (
-                  <div key={i} style={{ display: 'flex', gap: '6px', alignItems: 'flex-start', padding: '7px 10px', marginBottom: '4px', backgroundColor: '#060E1A', borderRadius: '6px', border: '1px solid #1A2840' }}>
-                    <Zap className="w-3 h-3" style={{ color: '#0F7ABF', flexShrink: 0, marginTop: '2px' }} />
-                    <span style={{ fontSize: '11px', color: '#C9D4E0', lineHeight: '1.45' }}>{h}</span>
-                  </div>
-                ))}
-                <div style={{ marginTop: '8px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                  {row.sub_tag && <Tag label="Model 01 · Supply Chain" color="#8B5CF6" />}
-                  {row.is_small_cap && <Tag label="Model 06 · Size Asymmetry" color="#F59E0B" />}
-                  {row.evidence_count >= 3 && <Tag label="Model 02 · Monopoly Signal" color="#0F7ABF" />}
-                  {row.is_non_us && <Tag label="Model 10 · Cross-Border Arb" color="#06B6D4" />}
-                </div>
+          ))}
+        </div>
+
+        {viewMode === 'universe' && (
+          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+            {multibaggers.length > 0 && (
+              <div style={{ padding: '5px 12px', borderRadius: '7px', border: '1px solid #F59E0B30', backgroundColor: '#F59E0B08', fontSize: '11px', color: '#F59E0B', fontWeight: '600' }}>
+                ⭐ {multibaggers.length} potential multibaggers
+              </div>
+            )}
+            {withLiveSignal.length > 0 && (
+              <div style={{ padding: '5px 12px', borderRadius: '7px', border: '1px solid #10B98130', backgroundColor: '#10B98108', fontSize: '11px', color: '#10B981', fontWeight: '600' }}>
+                📡 {withLiveSignal.length} with live signal
               </div>
             )}
           </div>
-        );
-      })}
+        )}
+        <span style={{ fontSize: '11px', color: '#4A5B6C', marginLeft: 'auto' }}>
+          {viewMode === 'universe' ? `${filtered.length} stocks` : `${liveExtra.length} tickers from live news`}
+        </span>
+      </div>
+
+      {/* Layer filter (universe only) */}
+      {viewMode === 'universe' && (
+        <div style={{ display: 'flex', gap: '4px', marginBottom: '14px', overflowX: 'auto', scrollbarWidth: 'none', paddingBottom: '2px' }}>
+          {LAYERS.map(lyr => {
+            const cnt = lyr === 'ALL' ? enriched.length : enriched.filter(r => r.sub_tag === lyr).length;
+            const ti = lyr !== 'ALL' ? TIER_MAP[lyr] : null;
+            return (
+              <button key={lyr} onClick={() => setFilterLayer(lyr)} style={{
+                padding: '4px 10px', borderRadius: '6px', flexShrink: 0,
+                border: `1px solid ${filterLayer === lyr ? (ti?.color ?? '#0F7ABF') + '50' : '#1A2840'}`,
+                cursor: 'pointer',
+                backgroundColor: filterLayer === lyr ? (ti?.color ?? '#0F7ABF') + '14' : 'transparent',
+                color: filterLayer === lyr ? (ti?.color ?? '#0F7ABF') : '#6B7A8D',
+                fontSize: '10px', fontWeight: filterLayer === lyr ? '700' : '400',
+              }}>
+                {lyr === 'ALL' ? 'ALL' : lyr.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()).split(' ').slice(0,2).join(' ')} ({cnt})
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Universe view ── */}
+      {viewMode === 'universe' && (
+        <>
+          {/* Column headers */}
+          <div style={{ display: 'grid', gridTemplateColumns: '44px 110px 1fr 160px 90px 70px', gap: '8px', padding: '6px 12px', fontSize: '10px', fontWeight: '700', letterSpacing: '0.8px', color: '#4A5B6C', borderBottom: '1px solid #1A2840' }}>
+            <span>SCORE</span><span>TICKER</span><span>CHAIN POSITION</span><span>4 SERENITY CHECKS</span><span>MKT CAP</span><span>PRICE</span>
+          </div>
+
+          {filtered.map((s, idx) => {
+            const ef = exchangeFlag(s.exchange);
+            const isExp = expRow === s.ticker;
+            const cp = s.change_pct ?? 0;
+            const ti = TIER_MAP[s.sub_tag];
+            const isMultibagger = s.score >= 70 && s.is_small_cap;
+            const check1 = s.competitors === '1 public' || s.competitors === '2–3 public'; // monopoly test
+            const check2 = s.is_small_cap;   // size asymmetry
+            const check3 = s.exchange !== 'NYSE' && s.exchange !== 'NASDAQ'; // cross-border arb
+            const check4 = s.val_tier <= 4;   // upstream enough
+            return (
+              <div key={s.ticker} style={{ borderBottom: '1px solid #1A284018' }}>
+                <button onClick={() => setExpRow(isExp ? null : s.ticker)} style={{ width: '100%', background: isExp ? '#0D162340' : idx % 2 === 1 ? '#060E1A14' : 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', padding: '9px 12px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '44px 110px 1fr 160px 90px 70px', gap: '8px', alignItems: 'center' }}>
+                    {/* Score */}
+                    <ScoreGauge score={s.score} />
+
+                    {/* Ticker */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '3px', flexWrap: 'wrap', minWidth: 0 }}>
+                      {isMultibagger && <span title="Potential multibagger — high score + small cap" style={{ fontSize: '13px' }}>⭐</span>}
+                      <span style={{ fontSize: '12px', fontWeight: '800', color: '#F5F7FA' }}>{s.ticker.replace(/\d+$/, '')}</span>
+                      {ef && <span title={`${ef.label} listed`} style={{ fontSize: '12px' }}>{ef.flag}</span>}
+                      {s.is_small_cap && <span style={{ fontSize: '8px', color: '#F59E0B', border: '1px solid #F59E0B40', padding: '0 3px', borderRadius: '3px', fontWeight: '700' }}>SC</span>}
+                      {s.is_serenity_pick && <span title="Serenity explicitly mentioned this stock" style={{ fontSize: '8px', color: '#8B5CF6', border: '1px solid #8B5CF640', padding: '0 3px', borderRadius: '3px', fontWeight: '700' }}>S✓</span>}
+                      {s.evidence_count > 0 && <span style={{ fontSize: '8px', color: '#10B981', border: '1px solid #10B98140', padding: '0 3px', borderRadius: '3px', fontWeight: '700' }}>📡{s.evidence_count}</span>}
+                    </div>
+
+                    {/* Chain position */}
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '2px' }}>
+                        {ti && <span style={{ fontSize: '9px', fontWeight: '700', color: ti.color, border: `1px solid ${ti.color}40`, padding: '1px 4px', borderRadius: '3px', flexShrink: 0 }}>T{ti.tier}</span>}
+                        <span style={{ fontSize: '11px', color: '#8A95A3', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sub_tag.replace(/_/g,' ').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase())}</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                        {s.key_customers.slice(0,3).map(c => <span key={c} style={{ fontSize: '9px', color: '#0F7ABF', backgroundColor: '#0F7ABF14', padding: '0 4px', borderRadius: '3px' }}>→{c}</span>)}
+                      </div>
+                    </div>
+
+                    {/* 4 Criteria checks */}
+                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                      <CriteriaCheck pass={check1} label={`<3 competitors (${s.competitors})`} />
+                      <CriteriaCheck pass={check2} label="<$2B mkt cap" />
+                      <CriteriaCheck pass={check3} label="Non-US listing" />
+                      <CriteriaCheck pass={check4} label={`Tier ≤4 upstream (T${s.val_tier})`} />
+                    </div>
+
+                    {/* Market cap */}
+                    <span style={{ fontSize: '11px', color: s.is_small_cap ? '#F59E0B' : '#C9D4E0', fontWeight: s.is_small_cap ? '700' : '400' }}>{fmtCap(s.market_cap)}</span>
+
+                    {/* Price */}
+                    <div>{s.price ? <><span style={{ fontSize: '12px', fontWeight: '600', color: '#F5F7FA' }}>${s.price.toFixed(2)}</span>{cp !== 0 && <div style={{ fontSize: '10px', color: cp >= 0 ? '#10B981' : '#EF4444' }}>{cp >= 0 ? '+' : ''}{cp.toFixed(2)}%</div>}</> : <span style={{ fontSize: '10px', color: '#4A5B6C' }}>—</span>}</div>
+                  </div>
+                </button>
+
+                {/* Expanded */}
+                {isExp && (
+                  <div style={{ padding: '12px 14px 16px 60px', backgroundColor: '#060E1A30', borderTop: '1px solid #1A2840' }}>
+                    <div style={{ display: 'flex', gap: '10px', marginBottom: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                      <span style={{ fontSize: '12px', fontWeight: '700', color: '#C9D4E0' }}>{s.name}</span>
+                      {s.quote_name && s.quote_name !== s.name && <span style={{ fontSize: '11px', color: '#6B7A8D' }}>{s.quote_name}</span>}
+                      <span style={{ fontSize: '11px', color: '#4A5B6C' }}>{s.exchange}</span>
+                      {ti && <span style={{ fontSize: '11px', color: ti.color }}>{ti.label}</span>}
+                    </div>
+
+                    {/* Serenity thesis */}
+                    <div style={{ padding: '10px 12px', backgroundColor: '#060E1A', border: '1px solid #1A2840', borderRadius: '8px', marginBottom: '10px' }}>
+                      <p style={{ fontSize: '10px', color: '#8B5CF6', fontWeight: '700', letterSpacing: '0.8px', margin: '0 0 6px' }}>🔬 SERENITY THESIS</p>
+                      <p style={{ fontSize: '12px', color: '#C9D4E0', lineHeight: '1.6', margin: 0 }}>{s.serenity_note}</p>
+                    </div>
+
+                    {/* Key customers */}
+                    <div style={{ marginBottom: '10px' }}>
+                      <p style={{ fontSize: '10px', color: '#4A5B6C', fontWeight: '700', letterSpacing: '0.8px', margin: '0 0 6px' }}>SUPPLIES → (key customers)</p>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        {s.key_customers.map(c => <span key={c} style={{ fontSize: '11px', color: '#0F7ABF', backgroundColor: '#0F7ABF14', border: '1px solid #0F7ABF30', padding: '2px 8px', borderRadius: '5px', fontWeight: '600' }}>{c}</span>)}
+                      </div>
+                    </div>
+
+                    {/* Live evidence headlines */}
+                    {s.headlines.length > 0 && (
+                      <div style={{ marginBottom: '10px' }}>
+                        <p style={{ fontSize: '10px', color: '#4A5B6C', fontWeight: '700', letterSpacing: '0.8px', margin: '0 0 6px' }}>📡 LIVE EVIDENCE ({s.evidence_count} articles)</p>
+                        {s.headlines.map((h, i) => (
+                          <div key={i} style={{ display: 'flex', gap: '6px', alignItems: 'flex-start', padding: '7px 10px', marginBottom: '4px', backgroundColor: '#060E1A', borderRadius: '6px', border: '1px solid #10B98120' }}>
+                            <Zap className="w-3 h-3" style={{ color: '#10B981', flexShrink: 0, marginTop: '2px' }} />
+                            <span style={{ fontSize: '11px', color: '#C9D4E0', lineHeight: '1.45' }}>{h}</span>
+                          </div>
+                        ))}
+                        {s.latest_at && <p style={{ fontSize: '10px', color: '#4A5B6C', margin: '4px 0 0' }}>Last signal: {timeAgo(s.latest_at)}</p>}
+                      </div>
+                    )}
+
+                    {/* Applicable models */}
+                    <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+                      {s.models.map(m => <Tag key={m} label={`Model ${m}`} color="#8B5CF6" />)}
+                      {isMultibagger && <Tag label="⭐ Potential Multibagger" color="#F59E0B" />}
+                      {!s.is_small_cap && s.val_tier <= 3 && <Tag label="Upstream anchor — look further upstream" color="#EF4444" />}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </>
+      )}
+
+      {/* ── Live News view ── */}
+      {viewMode === 'live' && (
+        <>
+          <div style={{ marginBottom: '10px', padding: '8px 12px', backgroundColor: '#060E1A', border: '1px solid #1A2840', borderRadius: '8px' }}>
+            <p style={{ fontSize: '11px', color: '#6B7A8D', margin: 0 }}>Tickers extracted from live BOTTLENECK news articles — not in the Serenity framework watchlist. Evidence count = how many articles mention this ticker. All data live.</p>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '60px 1fr 100px 80px', gap: '8px', padding: '6px 12px', fontSize: '10px', fontWeight: '700', letterSpacing: '0.8px', color: '#4A5B6C', borderBottom: '1px solid #1A2840' }}>
+            <span>SIGNALS</span><span>TICKER / LAYER</span><span>LEVEL</span><span>PRICE</span>
+          </div>
+          {liveExtra.length === 0
+            ? <EmptyState msg="No additional tickers in live bottleneck news right now." />
+            : liveExtra.map((r, i) => {
+              const ti = r.sub_tag ? TIER_MAP[r.sub_tag] : null;
+              const lvs = getLvl(r.level);
+              const cp = r.change_pct ?? 0;
+              return (
+                <div key={r.symbol} style={{ display: 'grid', gridTemplateColumns: '60px 1fr 100px 80px', gap: '8px', padding: '9px 12px', borderBottom: '1px solid #1A284018', alignItems: 'center', backgroundColor: i % 2 === 1 ? '#060E1A14' : 'transparent' }}>
+                  <span style={{ fontSize: '16px', fontWeight: '800', color: '#C9D4E0' }}>{r.evidence_count}</span>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
+                      <span style={{ fontSize: '13px', fontWeight: '700', color: '#F5F7FA' }}>{r.symbol}</span>
+                      {ti && <span style={{ fontSize: '9px', fontWeight: '700', color: ti.color, border: `1px solid ${ti.color}40`, padding: '1px 4px', borderRadius: '3px' }}>T{ti.tier}</span>}
+                    </div>
+                    {r.sub_tag && <span style={{ fontSize: '10px', color: '#6B7A8D' }}>{r.sub_tag.replace(/_/g,' ').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase())}</span>}
+                  </div>
+                  {lvs ? <span style={{ fontSize: '10px', fontWeight: '700', color: lvs.color, backgroundColor: lvs.bg, border: `1px solid ${lvs.border}`, padding: '2px 7px', borderRadius: '4px', textAlign: 'center' }}>{r.level}</span> : <span style={{ fontSize: '11px', color: '#4A5B6C' }}>—</span>}
+                  <div>{r.price ? <><span style={{ fontSize: '12px', color: '#F5F7FA', fontWeight: '600' }}>${r.price.toFixed(2)}</span>{cp !== 0 && <div style={{ fontSize: '10px', color: cp >= 0 ? '#10B981' : '#EF4444' }}>{cp >= 0 ? '+' : ''}{cp.toFixed(2)}%</div>}</> : <span style={{ fontSize: '11px', color: '#4A5B6C' }}>—</span>}</div>
+                </div>
+              );
+            })
+          }
+        </>
+      )}
     </div>
   );
 }
@@ -762,7 +1186,12 @@ function GeoOverlay({ articles, isLoading }: { articles: NewsArticle[]; isLoadin
   const [typeFilter, setTypeFilter] = useState('ALL');
   if (isLoading) return <SkeletonGrid count={6} height={80} />;
 
-  const filtered = typeFilter === 'ALL' ? articles : articles.filter(a => a.article_type === typeFilter);
+  const GEO_TYPES = new Set(['GEOPOLITICAL', 'TARIFF', 'MACRO']);
+  const filtered = articles.filter(a =>
+    typeFilter === 'ALL'
+      ? GEO_TYPES.has(a.article_type)
+      : a.article_type === typeFilter
+  );
   const typeColor = (t: string) => ({ GEOPOLITICAL: '#EF4444', TARIFF: '#F59E0B', MACRO: '#8B5CF6' })[t] ?? '#4A5B6C';
 
   return (
@@ -775,15 +1204,20 @@ function GeoOverlay({ articles, isLoading }: { articles: NewsArticle[]; isLoadin
       </div>
 
       <div style={{ display: 'flex', gap: '6px', marginBottom: '16px', flexWrap: 'wrap' }}>
-        {['ALL','GEOPOLITICAL','TARIFF'].map(t => (
-          <button key={t} onClick={() => setTypeFilter(t)} style={{
-            padding: '5px 12px', borderRadius: '7px', border: `1px solid ${typeFilter === t ? typeColor(t) + '60' : '#1A2840'}`,
-            cursor: 'pointer', backgroundColor: typeFilter === t ? typeColor(t) + '14' : 'transparent',
-            color: typeFilter === t ? typeColor(t) : '#6B7A8D', fontSize: '11px', fontWeight: '600',
-          }}>
-            {t} ({t === 'ALL' ? articles.length : articles.filter(a => a.article_type === t).length})
-          </button>
-        ))}
+        {['ALL','GEOPOLITICAL','TARIFF','MACRO'].map(t => {
+          const cnt = t === 'ALL'
+            ? articles.filter(a => GEO_TYPES.has(a.article_type)).length
+            : articles.filter(a => a.article_type === t).length;
+          return (
+            <button key={t} onClick={() => setTypeFilter(t)} style={{
+              padding: '5px 12px', borderRadius: '7px', border: `1px solid ${typeFilter === t ? typeColor(t) + '60' : '#1A2840'}`,
+              cursor: 'pointer', backgroundColor: typeFilter === t ? typeColor(t) + '14' : 'transparent',
+              color: typeFilter === t ? typeColor(t) : '#6B7A8D', fontSize: '11px', fontWeight: '600',
+            }}>
+              {t} ({cnt})
+            </button>
+          );
+        })}
         <span style={{ fontSize: '11px', color: '#4A5B6C', marginLeft: 'auto', alignSelf: 'center' }}>Live · auto-refreshes every 90s</span>
       </div>
 
