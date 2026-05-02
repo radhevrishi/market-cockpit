@@ -1012,59 +1012,83 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
     if (rows.length === 0) return;
     setGuidanceLoading(true);
     try {
-      // Fetch earnings + guidance articles (same as Calendar earnings logic)
-      const [r1, r2] = await Promise.all([
-        fetch('/api/v1/news?limit=200&importance_min=2&article_type=EARNINGS'),
-        fetch('/api/v1/news?limit=100&importance_min=2&article_type=CORPORATE'),
+      // Fetch all recent earnings + corporate + rating change articles
+      // Use a broad fetch since NSE ticker_symbols may not be tagged in all articles
+      const fetches = await Promise.all([
+        fetch('/api/v1/news?limit=300&importance_min=1&article_type=EARNINGS'),
+        fetch('/api/v1/news?limit=200&importance_min=1&article_type=CORPORATE'),
+        fetch('/api/v1/news?limit=100&importance_min=2&article_type=RATING_CHANGE'),
       ]);
-      const [d1, d2] = await Promise.all([r1.json(), r2.json()]);
+      const datas = await Promise.all(fetches.map(r => r.ok ? r.json() : []));
       const articles: NewsArticle[] = [
-        ...(Array.isArray(d1) ? d1 : []),
-        ...(Array.isArray(d2) ? d2 : []),
+        ...(Array.isArray(datas[0]) ? datas[0] : []),
+        ...(Array.isArray(datas[1]) ? datas[1] : []),
+        ...(Array.isArray(datas[2]) ? datas[2] : []),
       ];
 
       const scores: Record<string, number> = {};
       const counts: Record<string, number> = {};
 
+      // Build a full text corpus for each article for fast lookup
+      const articleTexts = articles.map(a => ({
+        a,
+        full: ((a.title ?? '') + ' ' + (a.headline ?? '') + ' ' + (a.summary ?? '')).toLowerCase(),
+        tickers: ((a.ticker_symbols ?? []) as string[]).map((t: string) =>
+          t.toUpperCase().replace(/\.NS$|\.BO$|^NSE:|^BSE:/i, '')
+        ),
+      }));
+
       for (const stock of rows) {
-        const sym = stock.symbol.toUpperCase();
-        // Match articles by ticker_symbols
-        const relevant = articles.filter(a => {
-          const tickers = (a.ticker_symbols ?? []) as string[];
-          return tickers.some((t: string) => t.toUpperCase() === sym);
-        });
+        const sym = stock.symbol.toUpperCase().replace(/\.NS$|\.BO$/i, '');
+        // Company name keywords — use first meaningful word(s) for text match
+        const companyName = (stock.company || '').toLowerCase();
+        const companyKeywords = companyName
+          .replace(/\b(ltd|limited|pvt|private|india|industries|solutions|tech|technologies|systems|services|enterprises|group)\b/gi, '')
+          .trim()
+          .split(/\s+/)
+          .filter(w => w.length >= 4)  // only meaningful words ≥4 chars
+          .slice(0, 2);                 // first 2 meaningful words
+
+        // Match by: (1) exact ticker, (2) ticker partial match, (3) company name keywords in text
+        const relevant = articleTexts.filter(({ full, tickers }) => {
+          // 1. Exact ticker symbol match (handles .NS stripped)
+          if (tickers.some(t => t === sym || t.startsWith(sym))) return true;
+          // 2. Company name keyword match in article text (requires ALL keywords present)
+          if (companyKeywords.length > 0 && companyKeywords.every(kw => full.includes(kw))) return true;
+          return false;
+        }).map(({ a }) => a);
 
         counts[sym] = relevant.length;
 
         if (relevant.length === 0) {
-          scores[sym] = 0.5; // neutral — no guidance data
+          scores[sym] = -1; // -1 = genuinely no data (distinct from 0.5 neutral)
           continue;
         }
 
-        // Score: start neutral, adjust per article signal
+        // Score: start neutral, adjust per article signal (same logic as Calendar earnings engine)
         let score = 0.5;
         for (const a of relevant.slice(0, 6)) {
-          const text = ((a.title || a.headline || '') + ' ' + (a.summary || '')).toLowerCase();
+          const text = ((a.title ?? '') + ' ' + (a.headline ?? '') + ' ' + (a.summary ?? '')).toLowerCase();
           const isPositive = GUIDANCE_POSITIVE.some(kw => text.includes(kw));
           const isNegative = GUIDANCE_NEGATIVE.some(kw => text.includes(kw));
-          // Positive guidance = big forward visibility boost
-          if (isPositive && !isNegative) score = Math.min(1.0, score + 0.18);
+          if (isPositive && !isNegative)      score = Math.min(1.0, score + 0.18);
           else if (isNegative && !isPositive) score = Math.max(0.0, score - 0.18);
-          // Mixed signals = slight positive tilt (guidance exists = visibility)
-          else if (isPositive && isNegative) score = Math.min(0.75, score + 0.05);
+          else if (isPositive && isNegative)  score = Math.min(0.75, score + 0.05);
         }
         scores[sym] = Math.round(score * 10) / 10;
       }
 
       setGuidanceScores(scores);
       setGuidanceArticleCounts(counts);
-    } catch {}
+    } catch (e) {
+      console.error('Guidance fetch failed:', e);
+    }
     setGuidanceLoading(false);
   }
 
   function guidanceBonus(sym: string): number {
     const g = guidanceScores[sym];
-    if (g === undefined) return 0;
+    if (g === undefined || g === -1) return 0; // no data = no adjustment
     if (g >= 0.85) return 14;  // multiple raises / strong guidance upgrade
     if (g >= 0.70) return 8;   // single raise or beat
     if (g >= 0.55) return 3;   // mildly positive
@@ -1076,6 +1100,9 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
 
   function applyGuidance(r: ExcelResult): ExcelResult & { guidanceScore?: number; guidanceAdj?: number } {
     if (!guidanceMode || Object.keys(guidanceScores).length === 0) return r;
+    const gs = guidanceScores[r.symbol];
+    // -1 = no data found, don't adjust score
+    if (gs === -1) return { ...r, guidanceScore: -1, guidanceAdj: 0 };
     const adj = guidanceBonus(r.symbol);
     const newScore = Math.max(0, Math.min(100, r.score + adj));
     const newGrade: Grade = newScore>=80?'A+':newScore>=72?'A':newScore>=63?'B+':newScore>=54?'B':newScore>=42?'C':'D';
@@ -1275,18 +1302,25 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
           </div>
         </div>
         {guidanceMode && !guidanceLoading && Object.keys(guidanceScores).length > 0 && (
-          <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
             {[
-              {label:'Strong ▲', count:Object.values(guidanceScores).filter(v=>v>=0.7).length, color:GREEN},
-              {label:'Neutral →', count:Object.values(guidanceScores).filter(v=>v>0.45&&v<0.7).length, color:MUTED},
-              {label:'Weak ▼', count:Object.values(guidanceScores).filter(v=>v<=0.3).length, color:RED},
-              {label:'No data', count:Object.values(guidanceScores).filter(v=>v===0.5&&guidanceArticleCounts[Object.keys(guidanceScores).find(k=>guidanceScores[k]===v)??'']===0).length, color:MUTED},
+              {label:'Strong ▲',  count:Object.values(guidanceScores).filter(v=>v>=0.7).length,           color:GREEN},
+              {label:'Positive',  count:Object.values(guidanceScores).filter(v=>v>=0.55&&v<0.7).length,   color:'#34d399'},
+              {label:'Neutral',   count:Object.values(guidanceScores).filter(v=>v>0.45&&v<0.55).length,   color:MUTED},
+              {label:'Negative',  count:Object.values(guidanceScores).filter(v=>v>0.3&&v<=0.45).length,   color:ORANGE},
+              {label:'Weak ▼',   count:Object.values(guidanceScores).filter(v=>v>=0&&v<=0.3).length,      color:RED},
+              {label:'No data',  count:Object.values(guidanceScores).filter(v=>v===-1).length,             color:MUTED},
             ].map(({label,count,color})=>(
-              <div key={label} style={{padding:'6px 12px',backgroundColor:`${color}14`,border:`1px solid ${color}30`,borderRadius:7,textAlign:'center'}}>
+              <div key={label} style={{padding:'6px 10px',backgroundColor:`${color}14`,border:`1px solid ${color}30`,borderRadius:7,textAlign:'center',minWidth:60}}>
                 <div style={{fontSize:F.md,fontWeight:800,color}}>{count}</div>
                 <div style={{fontSize:F.xs,color:MUTED}}>{label}</div>
               </div>
             ))}
+            {Object.values(guidanceScores).filter(v=>v===-1).length === Object.keys(guidanceScores).length && (
+              <span style={{fontSize:F.xs,color:ORANGE,fontStyle:'italic',marginLeft:8}}>
+                ⚠ No earnings articles matched — try with more stocks or wait for earnings season
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -1396,10 +1430,14 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                     {guidanceMode && (() => {
                       const rAny = r as ExcelResult & { guidanceScore?: number; guidanceAdj?: number };
                       const gs = rAny.guidanceScore;
-                      const adj = rAny.guidanceAdj;
-                      if (gs === undefined) return <div style={{fontSize:F.xs,color:MUTED}}>—</div>;
-                      const gColor = gs >= 0.7 ? GREEN : gs <= 0.3 ? RED : gs >= 0.55 ? '#F59E0B' : MUTED;
-                      const gLabel = gs >= 0.85 ? '▲ Strong' : gs >= 0.70 ? '▲ Positive' : gs <= 0.15 ? '▼ Weak' : gs <= 0.30 ? '▼ Negative' : '→ Neutral';
+                      const adj = rAny.guidanceAdj ?? 0;
+                      const articleCount = guidanceArticleCounts[r.symbol] ?? 0;
+                      // -1 = no matching articles found
+                      if (gs === undefined || gs === -1) {
+                        return <div style={{fontSize:F.xs,color:MUTED,fontStyle:'italic'}}>—<br/><span style={{fontSize:9}}>no data</span></div>;
+                      }
+                      const gColor = gs >= 0.7 ? GREEN : gs <= 0.3 ? RED : gs >= 0.55 ? '#34d399' : gs <= 0.45 ? ORANGE : MUTED;
+                      const gLabel = gs >= 0.85 ? '▲ Strong' : gs >= 0.70 ? '▲ Positive' : gs >= 0.55 ? '↑ Mild +' : gs <= 0.15 ? '▼ Weak' : gs <= 0.30 ? '▼ Negative' : gs <= 0.45 ? '↓ Mild −' : '→ Neutral';
                       return (
                         <div style={{display:'flex',flexDirection:'column',gap:2}}>
                           <div style={{display:'flex',alignItems:'center',gap:4}}>
@@ -1408,8 +1446,8 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                             </div>
                             <span style={{fontSize:F.xs,fontWeight:700,color:gColor}}>{gs.toFixed(1)}</span>
                           </div>
-                          <span style={{fontSize:9,color:gColor}}>{gLabel}{adj && adj !== 0 ? ` (${adj>0?'+':''}${adj})` : ''}</span>
-                          {guidanceArticleCounts[r.symbol] > 0 && <span style={{fontSize:9,color:MUTED}}>{guidanceArticleCounts[r.symbol]} articles</span>}
+                          <span style={{fontSize:9,color:gColor,fontWeight:600}}>{gLabel}{adj !== 0 ? ` (${adj>0?'+':''}${adj}pts)` : ''}</span>
+                          <span style={{fontSize:9,color:MUTED}}>{articleCount} article{articleCount!==1?'s':''}</span>
                         </div>
                       );
                     })()}
