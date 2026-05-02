@@ -428,6 +428,15 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   }
   accelS = Math.max(0, Math.min(100, accelS));
 
+  // Fix 5: Low-margin businesses can't sustain op leverage cycles.
+  // Reduce acceleration pillar score by 20% if OPM below 12%.
+  // Prevents commodity-thin businesses from scoring high on acceleration alone.
+  if (row.opm !== undefined && row.opm < 12) {
+    const penalty = accelS * 0.20;
+    accelS = Math.max(0, accelS - penalty);
+    risks.push(`Acceleration discounted 20%: OPM ${row.opm.toFixed(1)}% < 12% — low margins limit op leverage sustainability`);
+  }
+
   // ── LONGEVITY — SQGLP "L" ─────────────────────────────────────────────────
   if (row.roce!==undefined && row.revCagr!==undefined) {
     const ls = (row.roce>=20 && row.revCagr>=15)?85:(row.roce>=15 && row.revCagr>=10)?65:45;
@@ -598,9 +607,14 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     hardPenalty += 10;
     risks.push(`Hard −10: Promoter ${row.promoter.toFixed(1)}% below ${promoterThreshold}% threshold`);
   }
-  if (row.cfoToPat !== undefined && row.cfoToPat < cfoThreshold && row.cfoToPat >= 0) {
+  // Fix 2: DOUBLE PENALTY on poor cash conversion.
+  // CFO/PAT < 0.5 = profit is largely paper — major red flag for compounders.
+  if (row.cfoToPat !== undefined && row.cfoToPat < 0.5 && row.cfoToPat >= 0) {
+    hardPenalty += 20; // doubled from 10
+    risks.push(`Hard −20: CFO/PAT ${row.cfoToPat.toFixed(2)}x < 0.5 — severely poor cash conversion (profit mostly paper)`);
+  } else if (row.cfoToPat !== undefined && row.cfoToPat < cfoThreshold && row.cfoToPat >= 0) {
     hardPenalty += 10;
-    risks.push(`Hard −10: CFO/PAT ${row.cfoToPat.toFixed(2)}x < ${cfoThreshold} — earnings quality weak`);
+    risks.push(`Hard −10: CFO/PAT ${row.cfoToPat.toFixed(2)}x < ${cfoThreshold}`);
   }
   if (row.de !== undefined && row.de > deThreshold) {
     hardPenalty += 10;
@@ -718,9 +732,45 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     risks.push(`Decay filter: combined trajectory ${rawTrajectory.toFixed(0)}pp → "fading multibagger" → capped at 45`);
   }
 
-  // Massively overvalued (MoS < -60%) AND decelerating → never above 50
+  // Massively overvalued + decelerating → never above 50
   if ((row.marginOfSafety ?? 0) < -60 && isDecelerating) {
     score = Math.min(score, 48);
+  }
+
+  // ── QUALITY CAP — Fix 1 ──────────────────────────────────────────────────────
+  // "Real compounders vs temporary growth spikes" — Fisher/MOSL core principle.
+  // Strong growth + weak quality = cyclical spike, NOT a 100-bagger.
+  const hasQualityWeakness =
+    (row.cfoToPat !== undefined && row.cfoToPat < 0.6) ||   // poor cash conversion
+    (row.opm !== undefined && row.opm < b.opm[0]) ||        // below sector p25
+    (row.roce !== undefined && row.roce < 15);              // below minimum ROCE
+
+  if (hasQualityWeakness) {
+    score = Math.min(score, 85);
+    // Strongest quality failures cap even lower
+    if (row.cfoToPat !== undefined && row.cfoToPat < 0.5) {
+      score = Math.min(score, 80); // CFO/PAT < 0.5 = earnings are largely paper profit
+    }
+  }
+
+  // ── VALUATION REALITY CHECK — Fix 3 ──────────────────────────────────────────
+  // "Every true multibagger looks expensive — but not MASSIVELY overvalued vs IV"
+  if ((row.marginOfSafety ?? 0) < -50) score = Math.min(score, 80);
+  else if ((row.marginOfSafety ?? 0) < -30) score = Math.min(score, 90);
+
+  // ── A+ RARITY GATE — Fix 4 ───────────────────────────────────────────────────
+  // A+ (95-100) is reserved for stocks passing ALL quality gates simultaneously.
+  // This alone will reduce A+ count from 35 → ~5-8 in a typical screen.
+  if (score >= 95) {
+    const passesAplusGate =
+      (row.cfoToPat ?? 0) > 1.0 &&     // earnings fully backed by cash (and more)
+      (row.roce ?? 0) > 20 &&           // above-average return on capital
+      (row.fcfAbsolute ?? -1) > 0 &&    // generating real free cash flow
+      (row.promoter ?? 0) > 50;         // promoter majority stake
+    if (!passesAplusGate) {
+      score = Math.min(score, 90); // knock down to A range — good but not exceptional
+      risks.push(`A+ gate: requires CFO/PAT>1.0 + ROCE>20 + FCF positive + Promoter>50. Capped at 90.`);
+    }
   }
 
   score = Math.max(0, Math.min(100, score));
