@@ -1231,8 +1231,8 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
 
       {rows.length>0&&(
         <>
-          {/* Summary */}
-          <div style={{display:'flex',gap:14,marginBottom:18,flexWrap:'wrap'}}>
+          {/* Summary + GUIDANCE button on same row */}
+          <div style={{display:'flex',gap:14,marginBottom:18,flexWrap:'wrap',alignItems:'stretch'}}>
             {[
               {label:'Scored',value:rows.length,color:PURPLE},
               {label:'Top Picks (B+)',value:topPicks.length,color:GREEN},
@@ -1244,6 +1244,37 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                 <div style={{fontSize:F.sm,color:MUTED,marginTop:2}}>{label}</div>
               </div>
             ))}
+
+            {/* ── GUIDANCE BUTTON — prominent, always visible when data is loaded ── */}
+            <button
+              onClick={() => {
+                if (guidanceMode) {
+                  setGuidanceMode(false);
+                  setGuidanceScores({});
+                } else {
+                  setGuidanceMode(true);
+                  fetchGuidanceScores();
+                }
+              }}
+              style={{
+                padding:'14px 24px', borderRadius:10, cursor:'pointer',
+                border:`2px solid ${guidanceMode ? '#F59E0B' : '#F59E0B60'}`,
+                background: guidanceMode ? '#F59E0B22' : '#F59E0B08',
+                color:'#F59E0B', textAlign:'center',
+                display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:4,
+                minWidth:140,
+              }}
+            >
+              <div style={{fontSize:28}}>{guidanceLoading ? '⏳' : guidanceMode ? '📡' : '📡'}</div>
+              <div style={{fontSize:F.md,fontWeight:900}}>
+                {guidanceLoading ? 'Fetching…' : guidanceMode ? 'Guidance ON' : 'Guidance'}
+              </div>
+              <div style={{fontSize:F.xs,color:'#F59E0B99',fontWeight:500}}>
+                {guidanceMode
+                  ? `${Object.keys(guidanceScores).length} scored · click to reset`
+                  : 'Score with earnings guidance'}
+              </div>
+            </button>
             <div style={{display:'flex',gap:6,alignItems:'center',marginLeft:'auto',flexWrap:'wrap'}}>
               {/* Good Companies Only */}
               <button onClick={()=>setGoodOnly(v=>!v)} style={{fontSize:F.sm,fontWeight:800,padding:'8px 16px',borderRadius:8,border:`2px solid ${goodOnly?GREEN+'80':BORDER}`,background:goodOnly?`${GREEN}18`:'transparent',color:goodOnly?GREEN:MUTED,cursor:'pointer'}}>
@@ -1283,36 +1314,6 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                 {f.label} ({f.count})
               </button>
             ))}
-            <div style={{width:1,background:BORDER,height:20,marginLeft:4}}/>
-            {/* GUIDANCE BUTTON — fetches earnings news, re-scores with guidance signal */}
-            <button
-              onClick={() => {
-                if (guidanceMode) {
-                  // Toggle OFF — reset to original scores
-                  setGuidanceMode(false);
-                  setGuidanceScores({});
-                } else {
-                  // Toggle ON — fetch and apply guidance
-                  setGuidanceMode(true);
-                  fetchGuidanceScores();
-                }
-              }}
-              disabled={rows.length === 0}
-              style={{
-                fontSize:F.xs, fontWeight:800, padding:'5px 14px', borderRadius:7, cursor:rows.length===0?'not-allowed':'pointer',
-                border:`2px solid ${guidanceMode ? '#F59E0B80' : BORDER}`,
-                background:guidanceMode ? '#F59E0B18' : 'transparent',
-                color:guidanceMode ? '#F59E0B' : MUTED,
-                display:'flex', alignItems:'center', gap:5,
-              }}
-            >
-              {guidanceLoading ? '⏳ Loading…' : guidanceMode ? `📡 Guidance ON (${Object.keys(guidanceScores).length} scored)` : '📡 Guidance'}
-            </button>
-            {guidanceMode && !guidanceLoading && (
-              <span style={{fontSize:F.xs, color:'#F59E0B', fontStyle:'italic'}}>
-                Scores re-ranked with guidance signal · click again to reset
-              </span>
-            )}
             <span style={{fontSize:F.xs,color:MUTED,marginLeft:'auto'}}>{filtered.length} showing</span>
           </div>
 
