@@ -765,10 +765,9 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   if ((row.marginOfSafety ?? 0) < -50) score = Math.min(score, 80);
   else if ((row.marginOfSafety ?? 0) < -30) score = Math.min(score, 90);
 
-  // ── A+ RARITY GATE — Fix 4 ───────────────────────────────────────────────────
-  // A+ (95-100) is reserved for stocks passing ALL quality gates simultaneously.
-  // This alone will reduce A+ count from 35 → ~5-8 in a typical screen.
-  if (score >= 95) {
+  // ── A+ RARITY GATE — requires ALL quality gates simultaneously ───────────────
+  // A+ (≥90) requires evidence of genuine quality, not just growth/acceleration.
+  if (score >= 90) {
     const passesAplusGate =
       (row.cfoToPat ?? 0) > 1.0 &&     // earnings fully backed by cash (and more)
       (row.roce ?? 0) > 20 &&           // above-average return on capital
@@ -781,7 +780,9 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   }
 
   score = Math.max(0, Math.min(100, score));
-  const grade:Grade = score>=80?'A+':score>=72?'A':score>=63?'B+':score>=54?'B':score>=42?'C':'D';
+  // Institutional grade distribution: A+ = top 5-10%, A = next 10-15%, etc.
+  // Raised thresholds to prevent A+ inflation (was 80 → now 90).
+  const grade:Grade = score>=90?'A+':score>=80?'A':score>=68?'B+':score>=55?'B':score>=42?'C':'D';
 
   // ── DECISION STRIP ────────────────────────────────────────────────────────
   const decisionStrip: DecisionStrip = {
@@ -1085,27 +1086,12 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
           }
           scores[sym] = Math.round(score * 10) / 10;
         } else {
-          // NO NEWS FOUND — use trajectory as proxy (honest for small-caps with no news coverage)
-          // Small-cap Indian stocks rarely get news coverage, but their own numbers tell the story:
-          // Strong acceleration + positive trajectory = implied positive guidance direction
-          const trajectory = (stock.revenueAcceleration ?? 0) + (stock.profitAcceleration ?? 0);
-          const accel = stock.accelSignal;
-          if (accel === 'ACCELERATING' && trajectory > 30) {
-            scores[sym] = 0.7; // strong acceleration = implied positive results/guidance
-            counts[sym] = 0;   // mark as proxy, not actual articles
-          } else if (accel === 'ACCELERATING' && trajectory > 10) {
-            scores[sym] = 0.6;
-            counts[sym] = 0;
-          } else if (accel === 'DECELERATING' && trajectory < -30) {
-            scores[sym] = 0.3; // deceleration = implied guidance concern
-            counts[sym] = 0;
-          } else if (accel === 'DECELERATING') {
-            scores[sym] = 0.4;
-            counts[sym] = 0;
-          } else {
-            scores[sym] = -1; // truly neutral / no signal
-            counts[sym] = 0;
-          }
+          // NO NEWS FOUND — no adjustment. Trajectory/acceleration is ALREADY scored
+          // in the ACCEL pillar (25% weight). Using it again here would double-count
+          // and artificially inflate all accelerating stocks by +8pts.
+          // Guidance feature should only re-score based on ACTUAL earnings news.
+          scores[sym] = -1; // no news = no guidance signal = score unchanged
+          counts[sym] = 0;
         }
       }
 
@@ -1135,8 +1121,27 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
     // -1 = no data found, don't adjust score
     if (gs === -1) return { ...r, guidanceScore: -1, guidanceAdj: 0 };
     const adj = guidanceBonus(r.symbol);
-    const newScore = Math.max(0, Math.min(100, r.score + adj));
-    const newGrade: Grade = newScore>=80?'A+':newScore>=72?'A':newScore>=63?'B+':newScore>=54?'B':newScore>=42?'C':'D';
+    let newScore = Math.max(0, Math.min(100, r.score + adj));
+
+    // Re-apply quality and valuation caps — guidance cannot bypass these hard limits.
+    // A company with poor cash flow or overvalued vs intrinsic value should not
+    // jump past its quality-capped ceiling even with great earnings news.
+    const b2 = SBENCH[getSectorKey(r.sector)] ?? SBENCH.DEFAULT;
+    const hasQualWeakness = (r.cfoToPat !== undefined && r.cfoToPat < 0.6) ||
+                            (r.opm !== undefined && r.opm < b2.opm[0]) ||
+                            (r.roce !== undefined && r.roce < 15);
+    if (hasQualWeakness)                              newScore = Math.min(newScore, 85);
+    if ((r.cfoToPat ?? 1) < 0.5)                     newScore = Math.min(newScore, 80);
+    if ((r.marginOfSafety ?? 0) < -50)               newScore = Math.min(newScore, 80);
+    else if ((r.marginOfSafety ?? 0) < -30)          newScore = Math.min(newScore, 90);
+    // Re-apply A+ gate — guidance articles cannot grant A+ if quality gates fail
+    if (newScore >= 90) {
+      const passGate = (r.cfoToPat ?? 0) > 1.0 && (r.roce ?? 0) > 20 &&
+                       (r.fcfAbsolute ?? -1) > 0 && (r.promoter ?? 0) > 50;
+      if (!passGate) newScore = Math.min(newScore, 89);
+    }
+
+    const newGrade: Grade = newScore>=90?'A+':newScore>=80?'A':newScore>=68?'B+':newScore>=55?'B':newScore>=42?'C':'D';
     return { ...r, score: newScore, grade: newGrade, guidanceScore: guidanceScores[r.symbol], guidanceAdj: adj };
   }
 
@@ -1667,7 +1672,7 @@ function MultibaggerChecklist({excelRows}:{excelRows:ExcelResult[]}) {
   const completed=CHECKLIST.filter(i=>autoChecks[i.id]?.pass||checks[i.id]).length;
   const autoPassed=Object.values(autoChecks).filter(v=>v?.pass).length;
   const pct=Math.round((completed/CHECKLIST.length)*100);
-  const grade:Grade=pct>=85?'A+':pct>=72?'A':pct>=58?'B+':pct>=44?'B':pct>=30?'C':'D';
+  const grade:Grade=pct>=90?'A+':pct>=80?'A':pct>=68?'B+':pct>=55?'B':pct>=42?'C':'D';
 
   return (
     <div style={{maxWidth:1100,margin:'0 auto',padding:'28px 20px'}}>
