@@ -988,6 +988,93 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   const [fcfOnly, setFcfOnly] = useState(false);
   const [discoveryOnly, setDiscoveryOnly] = useState(false);
   const [inflectionOnly, setInflectionOnly] = useState(false);
+
+  // ── GUIDANCE MODE ──────────────────────────────────────────────────────────
+  // When ON: fetches recent earnings/guidance news, scores each company
+  // by guidance quality (0.0-1.0), re-scores and re-sorts.
+  // When OFF: no change to existing scores.
+  const [guidanceMode, setGuidanceMode] = useState(false);
+  const [guidanceLoading, setGuidanceLoading] = useState(false);
+  const [guidanceScores, setGuidanceScores] = useState<Record<string, number>>({}); // symbol → 0.0-1.0
+  const [guidanceArticleCounts, setGuidanceArticleCounts] = useState<Record<string, number>>({});
+
+  const GUIDANCE_POSITIVE = ['raised guidance','guidance upgrade','raised outlook','beats estimates','above estimates','record quarter','record revenue','strong beat','raised earnings','margin expansion','strong growth','upgraded','rerating','guidance raised'];
+  const GUIDANCE_NEGATIVE = ['cut guidance','lowered guidance','below estimates','disappointing','warning','cautious','revenue miss','profit miss','guidance cut','margin pressure','revised down','lowered outlook'];
+
+  async function fetchGuidanceScores() {
+    if (rows.length === 0) return;
+    setGuidanceLoading(true);
+    try {
+      // Fetch earnings + guidance articles (same as Calendar earnings logic)
+      const [r1, r2] = await Promise.all([
+        fetch('/api/v1/news?limit=200&importance_min=2&article_type=EARNINGS'),
+        fetch('/api/v1/news?limit=100&importance_min=2&article_type=CORPORATE'),
+      ]);
+      const [d1, d2] = await Promise.all([r1.json(), r2.json()]);
+      const articles: NewsArticle[] = [
+        ...(Array.isArray(d1) ? d1 : []),
+        ...(Array.isArray(d2) ? d2 : []),
+      ];
+
+      const scores: Record<string, number> = {};
+      const counts: Record<string, number> = {};
+
+      for (const stock of rows) {
+        const sym = stock.symbol.toUpperCase();
+        // Match articles by ticker_symbols
+        const relevant = articles.filter(a => {
+          const tickers = (a.ticker_symbols ?? []) as string[];
+          return tickers.some((t: string) => t.toUpperCase() === sym);
+        });
+
+        counts[sym] = relevant.length;
+
+        if (relevant.length === 0) {
+          scores[sym] = 0.5; // neutral — no guidance data
+          continue;
+        }
+
+        // Score: start neutral, adjust per article signal
+        let score = 0.5;
+        for (const a of relevant.slice(0, 6)) {
+          const text = ((a.title || a.headline || '') + ' ' + (a.summary || '')).toLowerCase();
+          const isPositive = GUIDANCE_POSITIVE.some(kw => text.includes(kw));
+          const isNegative = GUIDANCE_NEGATIVE.some(kw => text.includes(kw));
+          // Positive guidance = big forward visibility boost
+          if (isPositive && !isNegative) score = Math.min(1.0, score + 0.18);
+          else if (isNegative && !isPositive) score = Math.max(0.0, score - 0.18);
+          // Mixed signals = slight positive tilt (guidance exists = visibility)
+          else if (isPositive && isNegative) score = Math.min(0.75, score + 0.05);
+        }
+        scores[sym] = Math.round(score * 10) / 10;
+      }
+
+      setGuidanceScores(scores);
+      setGuidanceArticleCounts(counts);
+    } catch {}
+    setGuidanceLoading(false);
+  }
+
+  function guidanceBonus(sym: string): number {
+    const g = guidanceScores[sym];
+    if (g === undefined) return 0;
+    if (g >= 0.85) return 14;  // multiple raises / strong guidance upgrade
+    if (g >= 0.70) return 8;   // single raise or beat
+    if (g >= 0.55) return 3;   // mildly positive
+    if (g <= 0.15) return -14; // multiple cuts or misses
+    if (g <= 0.30) return -8;  // guidance cut or miss
+    if (g <= 0.45) return -3;  // mildly negative
+    return 0; // neutral (0.5)
+  }
+
+  function applyGuidance(r: ExcelResult): ExcelResult & { guidanceScore?: number; guidanceAdj?: number } {
+    if (!guidanceMode || Object.keys(guidanceScores).length === 0) return r;
+    const adj = guidanceBonus(r.symbol);
+    const newScore = Math.max(0, Math.min(100, r.score + adj));
+    const newGrade: Grade = newScore>=80?'A+':newScore>=72?'A':newScore>=63?'B+':newScore>=54?'B':newScore>=42?'C':'D';
+    return { ...r, score: newScore, grade: newGrade, guidanceScore: guidanceScores[r.symbol], guidanceAdj: adj };
+  }
+
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function parseSingleFile(file:File, XLSX: typeof import('xlsx')) {
@@ -1059,7 +1146,11 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   if (fcfOnly)        baseRows = baseRows.filter(r => (r.fcfAbsolute ?? -1) > 0 || (r.cfoToPat ?? 0) >= 0.8);
   if (discoveryOnly)   baseRows = baseRows.filter(r => (r.fiiPlusDii ?? 100) < 15);
   if (inflectionOnly)  baseRows = baseRows.filter(r => r.inflectionSignal || r.triggerBonus >= 10);
-  const filtered = gradeFilter === 'ALL' ? baseRows : baseRows.filter(r => r.grade === gradeFilter);
+  const baseFiltered = gradeFilter === 'ALL' ? baseRows : baseRows.filter(r => r.grade === gradeFilter);
+  // Apply guidance re-scoring and re-sort when guidance mode is active
+  const filtered = guidanceMode && Object.keys(guidanceScores).length > 0
+    ? [...baseFiltered.map(r => applyGuidance(r))].sort((a, b) => b.score - a.score)
+    : baseFiltered;
   const topPicks = rows.filter(r => ['A+','A','B+'].includes(r.grade) && r.bucket !== 'MONITOR');
 
   const METRICS: [keyof ExcelRow, string, string][] = [
@@ -1179,17 +1270,50 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
               {key:'fcf',    label:'💰 FCF+',         active:fcfOnly,    toggle:()=>setFcfOnly(v=>!v),    count:rows.filter(r=>(r.fcfAbsolute??-1)>0||(r.cfoToPat??0)>=0.8).length},
               {key:'disc',    label:'🔍 Discovery <15%', active:discoveryOnly,  toggle:()=>setDiscoveryOnly(v=>!v),  count:rows.filter(r=>(r.fiiPlusDii??100)<15).length},
       {key:'inflect', label:'💥 Inflection',     active:inflectionOnly, toggle:()=>setInflectionOnly(v=>!v), count:rows.filter(r=>r.inflectionSignal||r.triggerBonus>=10).length},
+      // Guidance button — separate from regular toggles, has its own fetch action
             ].map(f=>(
               <button key={f.key} onClick={f.toggle} style={{fontSize:F.xs,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${f.active?ACCENT+'60':BORDER}`,background:f.active?ACCENT+'14':'transparent',color:f.active?ACCENT:MUTED,cursor:'pointer'}}>
                 {f.label} ({f.count})
               </button>
             ))}
+            <div style={{width:1,background:BORDER,height:20,marginLeft:4}}/>
+            {/* GUIDANCE BUTTON — fetches earnings news, re-scores with guidance signal */}
+            <button
+              onClick={() => {
+                if (guidanceMode) {
+                  // Toggle OFF — reset to original scores
+                  setGuidanceMode(false);
+                  setGuidanceScores({});
+                } else {
+                  // Toggle ON — fetch and apply guidance
+                  setGuidanceMode(true);
+                  fetchGuidanceScores();
+                }
+              }}
+              disabled={rows.length === 0}
+              style={{
+                fontSize:F.xs, fontWeight:800, padding:'5px 14px', borderRadius:7, cursor:rows.length===0?'not-allowed':'pointer',
+                border:`2px solid ${guidanceMode ? '#F59E0B80' : BORDER}`,
+                background:guidanceMode ? '#F59E0B18' : 'transparent',
+                color:guidanceMode ? '#F59E0B' : MUTED,
+                display:'flex', alignItems:'center', gap:5,
+              }}
+            >
+              {guidanceLoading ? '⏳ Loading…' : guidanceMode ? `📡 Guidance ON (${Object.keys(guidanceScores).length} scored)` : '📡 Guidance'}
+            </button>
+            {guidanceMode && !guidanceLoading && (
+              <span style={{fontSize:F.xs, color:'#F59E0B', fontStyle:'italic'}}>
+                Scores re-ranked with guidance signal · click again to reset
+              </span>
+            )}
             <span style={{fontSize:F.xs,color:MUTED,marginLeft:'auto'}}>{filtered.length} showing</span>
           </div>
 
           {/* Table header */}
-          <div style={{display:'grid',gridTemplateColumns:'130px 150px 70px 70px 130px 1fr 90px',gap:8,padding:'10px 14px',fontSize:F.xs,fontWeight:700,letterSpacing:'0.6px',color:MUTED,borderBottom:`1px solid ${BORDER}`}}>
-            <span>TICKER</span><span>COMPANY</span><span>SCORE</span><span>GRADE</span><span>DECISION STRIP</span><span>SQGLP PILLARS</span><span>COV</span>
+          <div style={{display:'grid',gridTemplateColumns:guidanceMode?'130px 150px 70px 70px 90px 130px 1fr 90px':'130px 150px 70px 70px 130px 1fr 90px',gap:8,padding:'10px 14px',fontSize:F.xs,fontWeight:700,letterSpacing:'0.6px',color:MUTED,borderBottom:`1px solid ${BORDER}`}}>
+            <span>TICKER</span><span>COMPANY</span><span>SCORE</span><span>GRADE</span>
+            {guidanceMode && <span style={{color:'#F59E0B'}}>GUIDANCE</span>}
+            <span>DECISION STRIP</span><span>SQGLP PILLARS</span><span>COV</span>
           </div>
 
           {filtered.map((r,idx)=>{
@@ -1198,7 +1322,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
             return (
               <div key={r.symbol+idx} style={{borderBottom:`1px solid rgba(255,255,255,0.05)`}}>
                 <button onClick={()=>setExpRow(isExp?null:r.symbol)} style={{width:'100%',background:isExp?CARD_BG:'transparent',border:'none',cursor:'pointer',textAlign:'left',padding:'12px 14px'}}>
-                  <div style={{display:'grid',gridTemplateColumns:'130px 150px 70px 70px 130px 1fr 90px',gap:8,alignItems:'center'}}>
+                  <div style={{display:'grid',gridTemplateColumns:guidanceMode?'130px 150px 70px 70px 90px 130px 1fr 90px':'130px 150px 70px 70px 130px 1fr 90px',gap:8,alignItems:'center'}}>
                     {/* Ticker + bucket + accel badge */}
                     <div style={{display:'flex',flexDirection:'column',gap:3}}>
                       <div style={{display:'flex',alignItems:'center',gap:5}}>
@@ -1227,6 +1351,28 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
 
                     {/* Grade */}
                     <span style={{fontSize:F.md,fontWeight:800,padding:'4px 8px',borderRadius:6,color:GRADE_COLOR[r.grade],backgroundColor:`${GRADE_COLOR[r.grade]}18`,border:`1px solid ${GRADE_COLOR[r.grade]}30`,textAlign:'center'}}>{r.grade}</span>
+
+                    {/* Guidance column — only shown when guidance mode is active */}
+                    {guidanceMode && (() => {
+                      const rAny = r as ExcelResult & { guidanceScore?: number; guidanceAdj?: number };
+                      const gs = rAny.guidanceScore;
+                      const adj = rAny.guidanceAdj;
+                      if (gs === undefined) return <div style={{fontSize:F.xs,color:MUTED}}>—</div>;
+                      const gColor = gs >= 0.7 ? GREEN : gs <= 0.3 ? RED : gs >= 0.55 ? '#F59E0B' : MUTED;
+                      const gLabel = gs >= 0.85 ? '▲ Strong' : gs >= 0.70 ? '▲ Positive' : gs <= 0.15 ? '▼ Weak' : gs <= 0.30 ? '▼ Negative' : '→ Neutral';
+                      return (
+                        <div style={{display:'flex',flexDirection:'column',gap:2}}>
+                          <div style={{display:'flex',alignItems:'center',gap:4}}>
+                            <div style={{width:32,height:5,backgroundColor:'rgba(255,255,255,0.08)',borderRadius:2,overflow:'hidden'}}>
+                              <div style={{height:'100%',width:`${Math.round(gs*100)}%`,backgroundColor:gColor,borderRadius:2}}/>
+                            </div>
+                            <span style={{fontSize:F.xs,fontWeight:700,color:gColor}}>{gs.toFixed(1)}</span>
+                          </div>
+                          <span style={{fontSize:9,color:gColor}}>{gLabel}{adj && adj !== 0 ? ` (${adj>0?'+':''}${adj})` : ''}</span>
+                          {guidanceArticleCounts[r.symbol] > 0 && <span style={{fontSize:9,color:MUTED}}>{guidanceArticleCounts[r.symbol]} articles</span>}
+                        </div>
+                      );
+                    })()}
 
                     {/* Decision strip — 5 compact pass/fail indicators */}
                     <div style={{display:'flex',flexDirection:'column',gap:2}}>
@@ -1305,6 +1451,12 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                       <span>Sector: {r.sector}</span> · <span>Data: {r.coverage}%</span> ·
                       <span style={{color:BUCKET_CONFIG[r.bucket].color}}>{BUCKET_CONFIG[r.bucket].icon} {BUCKET_CONFIG[r.bucket].label}</span> ·
                       {r.reratingBonus!==0&&<span style={{color:r.reratingBonus>0?GREEN:RED}}>Rerating {r.reratingBonus>0?'+':''}{r.reratingBonus}pts</span>}
+                      {guidanceMode && (() => {
+                        const rAny = r as ExcelResult & { guidanceScore?: number; guidanceAdj?: number };
+                        if (rAny.guidanceScore === undefined) return null;
+                        const gColor = (rAny.guidanceScore ?? 0.5) >= 0.7 ? GREEN : (rAny.guidanceScore ?? 0.5) <= 0.3 ? RED : '#F59E0B';
+                        return <span style={{color:gColor}}>Guidance {rAny.guidanceScore?.toFixed(1)} → score adj {rAny.guidanceAdj && rAny.guidanceAdj>0?'+':''}{rAny.guidanceAdj}pts</span>;
+                      })()}
                       <span style={{color:MUTED,fontSize:F.xs}}>Wts: Q{r.pillarScores[0].weight}% G{r.pillarScores[1].weight}% L{r.pillarScores[2].weight}% F{r.pillarScores[3].weight}% V{r.pillarScores[4].weight}%</span>
                     </div>
                   </div>
