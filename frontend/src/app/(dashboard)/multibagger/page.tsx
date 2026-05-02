@@ -1229,6 +1229,68 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
 
       {parseError&&<div style={{marginBottom:14,padding:'12px 16px',backgroundColor:`${RED}10`,border:`1px solid ${RED}30`,borderRadius:10,fontSize:F.md,color:RED}}>{parseError}</div>}
 
+      {/* ── GUIDANCE BUTTON — always visible, prominent ─────────────────────────
+          Fetches recent earnings/guidance news and re-scores all loaded stocks.
+          Shows disabled state when no data is loaded yet. */}
+      <div style={{marginBottom:20,display:'flex',alignItems:'center',gap:14,padding:'16px 20px',backgroundColor:CARD_BG,border:`2px solid ${guidanceMode?'#F59E0B':'#F59E0B40'}`,borderRadius:12,flexWrap:'wrap'}}>
+        <button
+          onClick={() => {
+            if (rows.length === 0) return;
+            if (guidanceMode) {
+              setGuidanceMode(false);
+              setGuidanceScores({});
+            } else {
+              setGuidanceMode(true);
+              fetchGuidanceScores();
+            }
+          }}
+          style={{
+            padding:'14px 28px', borderRadius:10,
+            cursor: rows.length === 0 ? 'not-allowed' : 'pointer',
+            border:`2px solid ${guidanceMode?'#F59E0B':'#F59E0B60'}`,
+            background: guidanceMode ? '#F59E0B30' : '#F59E0B10',
+            color: rows.length === 0 ? '#F59E0B50' : '#F59E0B',
+            display:'flex', alignItems:'center', gap:10,
+            opacity: rows.length === 0 ? 0.5 : 1,
+            transition:'all 0.15s',
+          }}
+        >
+          <span style={{fontSize:26}}>{guidanceLoading ? '⏳' : '📡'}</span>
+          <div>
+            <div style={{fontSize:F.lg,fontWeight:900,letterSpacing:'-0.3px'}}>
+              {guidanceLoading ? 'Fetching guidance…' : guidanceMode ? 'Guidance: ON' : 'Guidance'}
+            </div>
+            <div style={{fontSize:F.xs,fontWeight:400,marginTop:2,color:'#F59E0B99'}}>
+              {rows.length === 0 ? 'Upload data first, then click to score with guidance' :
+               guidanceMode ? `${Object.keys(guidanceScores).length} stocks re-scored · click again to reset` :
+               `Re-score ${rows.length} stocks using live earnings & guidance news`}
+            </div>
+          </div>
+          {guidanceMode && <span style={{fontSize:F.sm,fontWeight:700,color:'#F59E0B',marginLeft:8}}>✓ ACTIVE</span>}
+        </button>
+        <div style={{flex:1,minWidth:200}}>
+          <div style={{fontSize:F.sm,color:MUTED,lineHeight:1.6}}>
+            Fetches latest earnings results + guidance upgrades/cuts from live news feed.
+            Re-ranks all stocks: <span style={{color:GREEN}}>raised guidance = +14 pts</span> · <span style={{color:RED}}>cut guidance = −14 pts</span> · shows guidance score (0.0–1.0) per stock.
+          </div>
+        </div>
+        {guidanceMode && !guidanceLoading && Object.keys(guidanceScores).length > 0 && (
+          <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+            {[
+              {label:'Strong ▲', count:Object.values(guidanceScores).filter(v=>v>=0.7).length, color:GREEN},
+              {label:'Neutral →', count:Object.values(guidanceScores).filter(v=>v>0.45&&v<0.7).length, color:MUTED},
+              {label:'Weak ▼', count:Object.values(guidanceScores).filter(v=>v<=0.3).length, color:RED},
+              {label:'No data', count:Object.values(guidanceScores).filter(v=>v===0.5&&guidanceArticleCounts[Object.keys(guidanceScores).find(k=>guidanceScores[k]===v)??'']===0).length, color:MUTED},
+            ].map(({label,count,color})=>(
+              <div key={label} style={{padding:'6px 12px',backgroundColor:`${color}14`,border:`1px solid ${color}30`,borderRadius:7,textAlign:'center'}}>
+                <div style={{fontSize:F.md,fontWeight:800,color}}>{count}</div>
+                <div style={{fontSize:F.xs,color:MUTED}}>{label}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {rows.length>0&&(
         <>
           {/* Summary + GUIDANCE button on same row */}
@@ -1245,36 +1307,6 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
               </div>
             ))}
 
-            {/* ── GUIDANCE BUTTON — prominent, always visible when data is loaded ── */}
-            <button
-              onClick={() => {
-                if (guidanceMode) {
-                  setGuidanceMode(false);
-                  setGuidanceScores({});
-                } else {
-                  setGuidanceMode(true);
-                  fetchGuidanceScores();
-                }
-              }}
-              style={{
-                padding:'14px 24px', borderRadius:10, cursor:'pointer',
-                border:`2px solid ${guidanceMode ? '#F59E0B' : '#F59E0B60'}`,
-                background: guidanceMode ? '#F59E0B22' : '#F59E0B08',
-                color:'#F59E0B', textAlign:'center',
-                display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:4,
-                minWidth:140,
-              }}
-            >
-              <div style={{fontSize:28}}>{guidanceLoading ? '⏳' : guidanceMode ? '📡' : '📡'}</div>
-              <div style={{fontSize:F.md,fontWeight:900}}>
-                {guidanceLoading ? 'Fetching…' : guidanceMode ? 'Guidance ON' : 'Guidance'}
-              </div>
-              <div style={{fontSize:F.xs,color:'#F59E0B99',fontWeight:500}}>
-                {guidanceMode
-                  ? `${Object.keys(guidanceScores).length} scored · click to reset`
-                  : 'Score with earnings guidance'}
-              </div>
-            </button>
             <div style={{display:'flex',gap:6,alignItems:'center',marginLeft:'auto',flexWrap:'wrap'}}>
               {/* Good Companies Only */}
               <button onClick={()=>setGoodOnly(v=>!v)} style={{fontSize:F.sm,fontWeight:800,padding:'8px 16px',borderRadius:8,border:`2px solid ${goodOnly?GREEN+'80':BORDER}`,background:goodOnly?`${GREEN}18`:'transparent',color:goodOnly?GREEN:MUTED,cursor:'pointer'}}>
