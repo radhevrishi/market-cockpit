@@ -264,7 +264,11 @@ interface ExcelResult extends ExcelRow {
   redFlags: { label: string; severity: 'CRITICAL'|'HIGH'|'MEDIUM'; source: string }[];
   strengths: string[]; risks: string[];
   coverage: number;
-  reratingBonus: number; // explicit bonus/penalty for discovery + momentum
+  reratingBonus: number;
+  // New: trajectory and trigger signals
+  trajectoryScore: number;  // (recent − historical) for sales + profit — change direction
+  triggerBonus: number;     // proxy for turnaround / new engine / inflection
+  inflectionSignal: boolean;// early-phase: low→high profit growth
 }
 
 // Sector benchmarks: [p25, median, p75]
@@ -327,15 +331,23 @@ function sv(v: number|undefined, bench: number[], hiGood=true): number {
   return Math.max(0, 30+Math.max(0,val)/Math.max(lo,1)*20);
 }
 
+
 function scoreExcelRow(row: ExcelRow): ExcelResult {
   const b = SBENCH[getSectorKey(row.sector)] ?? SBENCH.DEFAULT;
   const strengths: string[] = [];
   const risks: string[] = [];
   const redFlags: { label:string; severity:'CRITICAL'|'HIGH'|'MEDIUM'; source:string }[] = [];
 
-  let qualS=0,qualC=0, growS=0,growC=0, longS=0,longC=0, finS=0,finC=0, valS=0,valC=0, mktS=50,mktC=1;
+  // PRE-BUCKET: rough classification used to relax thresholds for Emerging bucket
+  // (Full bucket classification happens after scoring)
+  const isLikelyEmerging =
+    (row.accelSignal === 'ACCELERATING' || (row.yoySalesGrowth ?? 0) >= 25) &&
+    (row.marketCapCr ?? 99999) <= 10000;
 
-  // ── QUALITY (25%) ─────────────────────────────────────────────────────────
+  let qualS=0,qualC=0, growS=0,growC=0, accelS=50,accelC=1,
+      longS=0,longC=0, finS=0,finC=0, valS=0, mktS=50,mktC=1;
+
+  // ── QUALITY (feeds qual pillar) ───────────────────────────────────────────
   if (row.roce!==undefined) {
     const s=sv(row.roce,b.roce); qualS+=s; qualC++;
     if (s>=80) strengths.push(`ROCE ${row.roce.toFixed(1)}% — above sector, moat confirmed`);
@@ -361,122 +373,109 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     if (row.promoter>=55) strengths.push(`Promoter ${row.promoter.toFixed(0)}% — strong alignment`);
   }
 
-  // ── GROWTH (25%) ─────────────────────────────────────────────────────────
+  // ── GROWTH (historical trajectory) ───────────────────────────────────────
   if (row.revCagr!==undefined) {
     const s=sv(row.revCagr,[8,15,25]); growS+=s; growC++;
     if (s>=80) strengths.push(`Revenue CAGR ${row.revCagr.toFixed(1)}% — excellent growth engine`);
   }
   if (row.profitCagr!==undefined) {
     const s=sv(row.profitCagr,[10,20,30]); growS+=s; growC++;
-    // Operating leverage check
-    if (row.revCagr!==undefined && row.revCagr>0) {
-      const ratio = row.profitCagr / row.revCagr;
-      if (ratio>=1.5) strengths.push(`Op leverage ${ratio.toFixed(1)}× — PAT ${row.profitCagr.toFixed(0)}% vs Rev ${row.revCagr.toFixed(0)}%`);
-      else if (ratio<0.8 && row.profitCagr<row.revCagr) risks.push(`Weak op leverage ${ratio.toFixed(1)}× — profit not scaling`);
-      // Bonus for strong operating leverage
-      if (ratio>=1.5) { growS+=10; growC+=0.3; }
-    }
     if (s>=85) strengths.push(`Profit CAGR ${row.profitCagr.toFixed(1)}% — compounding`);
-  }
-  if (row.yoySalesGrowth!==undefined)  { growS+=sv(row.yoySalesGrowth,[5,12,25]); growC++; }
-  if (row.yoyProfitGrowth!==undefined) {
-    growS+=sv(row.yoyProfitGrowth,[5,15,30]); growC++;
-    if (row.yoyProfitGrowth<0) risks.push(`YOY profit −${Math.abs(row.yoyProfitGrowth).toFixed(0)}% — earnings deteriorating`);
   }
   if (row.epsGrowth!==undefined) { growS+=sv(row.epsGrowth,[10,20,35]); growC++; }
 
-  // ── FRAMEWORK.DOCX CORE: ACCELERATION SIGNAL ────────────────────────────────
-  // "Revenue Acceleration is non-negotiable. Decelerating = reject immediately."
-  // Compare latest quarter YOY vs historical CAGR to determine trend direction.
+  // FIX #5: ROCE direction — low ROCE rising fast = early winner; high ROCE stagnating = late trap
+  if (row.roce!==undefined && row.profitCagr!==undefined) {
+    if (row.roce < 15 && row.profitCagr > 40) {
+      growS += 8; growC += 0.4;
+      strengths.push(`Low ROCE (${row.roce.toFixed(0)}%) + high profit growth (${row.profitCagr.toFixed(0)}%) = early compounder phase`);
+    } else if (row.roce > 25 && (row.revCagr ?? 0) < 10) {
+      growS -= 6; // late-stage, growth slowing despite quality
+      risks.push(`High ROCE (${row.roce.toFixed(0)}%) but slow revenue growth (${(row.revCagr??0).toFixed(0)}%) — mature, limited re-rating ahead`);
+    }
+  }
+
+  // ── ACCELERATION PILLAR (independent — most important for 100-baggers) ────
+  // FIX #1+#2: Acceleration is its own pillar, not a sub-variable inside Growth.
+  // This is the Framework Core Signal — trajectory change > static level.
+  accelS = 50; accelC = 1;
+
+  // Base acceleration from revenue trend
   if (row.accelSignal !== undefined) {
-    const accelScores = { 'ACCELERATING': 92, 'STABLE': 60, 'DECELERATING': 20 };
-    const accelBonus = accelScores[row.accelSignal];
-    growS += accelBonus; growC++;
-
-    if (row.accelSignal === 'ACCELERATING' && row.revenueAcceleration !== undefined) {
-      strengths.push(`Revenue ACCELERATING: recent +${row.yoySalesGrowth?.toFixed(0)}% vs CAGR ${row.revCagr?.toFixed(0)}% (+${row.revenueAcceleration}pp) — Framework Core Signal`);
-    } else if (row.accelSignal === 'DECELERATING' && row.revenueAcceleration !== undefined) {
-      risks.push(`Revenue DECELERATING: recent ${row.yoySalesGrowth?.toFixed(0)}% vs CAGR ${row.revCagr?.toFixed(0)}% (${row.revenueAcceleration}pp) — Framework rejection filter`);
-      redFlags.push({ label: `Revenue decelerating: ${row.yoySalesGrowth?.toFixed(0)}% vs historical ${row.revCagr?.toFixed(0)}%`, severity: 'HIGH', source: 'Framework.docx' });
+    const base = { 'ACCELERATING': 85, 'STABLE': 55, 'DECELERATING': 18 }[row.accelSignal];
+    accelS = base + Math.min(10, (row.revenueAcceleration ?? 0) * 0.3);
+    if (row.accelSignal === 'ACCELERATING') {
+      strengths.push(`Revenue ACCELERATING: +${row.yoySalesGrowth?.toFixed(0)}% vs CAGR ${row.revCagr?.toFixed(0)}% (+${row.revenueAcceleration?.toFixed(0)}pp) — Framework Core Signal`);
+    } else if (row.accelSignal === 'DECELERATING') {
+      risks.push(`Revenue DECELERATING: ${row.yoySalesGrowth?.toFixed(0)}% vs CAGR ${row.revCagr?.toFixed(0)}% (${row.revenueAcceleration?.toFixed(0)}pp) — Framework rejection filter`);
+      redFlags.push({ label: `Revenue decelerating`, severity: 'HIGH', source: 'Framework' });
     }
   }
-
-  // Profit acceleration — Framework: "PAT growth must also accelerate, not just revenue"
-  if (row.profitAcceleration !== undefined) {
-    if (row.profitAcceleration >= 10) {
-      strengths.push(`Profit ACCELERATING +${row.profitAcceleration}pp above historical — earnings quality improving`);
-      growS += 8; growC += 0.3;
-    } else if (row.profitAcceleration <= -15) {
-      risks.push(`Profit growth decelerating ${row.profitAcceleration}pp — margins or volume compressing`);
-    }
-  }
-
-  // Recent operating leverage (quarterly) — is PAT growing faster than revenue RIGHT NOW?
+  // FIX #2+#3: Operating leverage as primary scored input in acceleration pillar
+  // OpLev = YOY Profit / YOY Sales — this is THE multibagger inflection signal
   if (row.recentOpLev !== undefined && row.yoySalesGrowth !== undefined && row.yoySalesGrowth > 0) {
-    if (row.recentOpLev >= 1.5) {
-      strengths.push(`Recent op leverage ${row.recentOpLev.toFixed(1)}× — PAT ${row.yoyProfitGrowth?.toFixed(0)}% vs sales ${row.yoySalesGrowth?.toFixed(0)}% this quarter`);
-      growS += 6; growC += 0.2;
-    } else if (row.recentOpLev < 0.7 && (row.yoyProfitGrowth ?? 0) < (row.yoySalesGrowth ?? 0)) {
-      risks.push(`Weak recent op leverage ${row.recentOpLev.toFixed(1)}× — margins compressing this quarter`);
-    }
+    const opLevScore = row.recentOpLev >= 2.0 ? 95 : row.recentOpLev >= 1.5 ? 85 : row.recentOpLev >= 1.0 ? 65 : 30;
+    accelS = (accelS + opLevScore) / 2; // blend with acceleration signal
+    accelC++;
+    if (row.recentOpLev >= 2.0) strengths.push(`Op leverage ${row.recentOpLev.toFixed(1)}× — breakout phase (PAT ${row.yoyProfitGrowth?.toFixed(0)}% vs Sales ${row.yoySalesGrowth.toFixed(0)}%)`);
+    else if (row.recentOpLev >= 1.5) strengths.push(`Op leverage ${row.recentOpLev.toFixed(1)}× — scaling well`);
+    else if (row.recentOpLev < 1.0) risks.push(`Op leverage ${row.recentOpLev.toFixed(1)}× — costs growing faster than revenue`);
   }
+  // Profit acceleration bonus
+  if (row.profitAcceleration !== undefined) {
+    if (row.profitAcceleration >= 15) { accelS = Math.min(100, accelS + 8); strengths.push(`Profit ACCELERATING +${row.profitAcceleration.toFixed(0)}pp above CAGR`); }
+    else if (row.profitAcceleration <= -20) { accelS = Math.max(0, accelS - 8); risks.push(`Profit growth collapsing ${row.profitAcceleration.toFixed(0)}pp`); }
+  }
+  accelS = Math.max(0, Math.min(100, accelS));
 
-  // ── LONGEVITY (15%) — SQGLP "L" ──────────────────────────────────────────
-  // Proxy using: ROE trend proxy, market cap (small=more runway), non-peak sector
+  // ── LONGEVITY — SQGLP "L" ─────────────────────────────────────────────────
   if (row.roce!==undefined && row.revCagr!==undefined) {
-    // High ROIC + high growth = Fisher 100× profile = longevity signal
-    const longevityScore = (row.roce>=20 && row.revCagr>=15) ? 85 :
-                           (row.roce>=15 && row.revCagr>=10) ? 65 : 45;
-    longS+=longevityScore; longC++;
+    const ls = (row.roce>=20 && row.revCagr>=15)?85:(row.roce>=15 && row.revCagr>=10)?65:45;
+    longS+=ls; longC++;
   }
+  // FIX #9: Nonlinear market cap scoring — tighter bands with more granularity at small end
   if (row.marketCapCr!==undefined) {
-    // Small = more runway for compounding (MOSL SQGLP "S")
-    const s = row.marketCapCr<500?90:row.marketCapCr<2000?82:row.marketCapCr<5000?72:row.marketCapCr<10000?60:40;
+    const s = row.marketCapCr<300?98:row.marketCapCr<500?95:row.marketCapCr<1000?90:
+              row.marketCapCr<2000?85:row.marketCapCr<5000?72:row.marketCapCr<10000?60:
+              row.marketCapCr<25000?45:30;
     longS+=s; longC++;
-    if (row.marketCapCr<500) strengths.push(`Market cap ₹${row.marketCapCr.toFixed(0)}Cr — maximum runway for 100×`);
-    else if (row.marketCapCr>20000) risks.push(`Market cap ₹${row.marketCapCr.toLocaleString()}Cr — limited room for 100×`);
+    if (row.marketCapCr<500) strengths.push(`Market cap ₹${row.marketCapCr.toFixed(0)}Cr — maximum small-base runway`);
+    else if (row.marketCapCr>25000) risks.push(`Market cap ₹${row.marketCapCr.toLocaleString()}Cr — large base limits upside`);
   }
   if (row.fiiPlusDii!==undefined) {
-    // Low institutional = undiscovered = longevity of opportunity
     const s = row.fiiPlusDii<10?90:row.fiiPlusDii<20?78:row.fiiPlusDii<35?62:45;
     longS+=s; longC++;
     if (row.fiiPlusDii<10) strengths.push(`FII+DII ${row.fiiPlusDii.toFixed(1)}% — largely undiscovered`);
-    else if (row.fiiPlusDii>40) risks.push(`FII+DII ${row.fiiPlusDii.toFixed(1)}% — heavily institutionally held`);
+    else if (row.fiiPlusDii>40) risks.push(`FII+DII ${row.fiiPlusDii.toFixed(1)}% — heavily institutionalised`);
   }
 
-  // ── FINANCIAL STRENGTH (15%) ──────────────────────────────────────────────
+  // ── FINANCIAL STRENGTH ────────────────────────────────────────────────────
   if (row.de!==undefined) {
     finS+=sv(row.de,[0.5,1.0,2.0],false); finC++;
-    if (row.de>3.0) redFlags.push({label:`D/E ${row.de.toFixed(2)}× — CRITICAL debt level`,severity:'CRITICAL',source:'Fisher'});
+    if (row.de>3.0) redFlags.push({label:`D/E ${row.de.toFixed(2)}× — CRITICAL debt`,severity:'CRITICAL',source:'Fisher'});
     else if (row.de>2.0) redFlags.push({label:`D/E ${row.de.toFixed(2)}× — high leverage`,severity:'HIGH',source:'Fisher'});
-    if (row.de<=0.1) strengths.push(`D/E ${row.de.toFixed(2)}× — virtually debt-free`);
+    if (row.de<=0.1) strengths.push(`D/E ${row.de.toFixed(2)}× — debt-free`);
   }
   if (row.netDebtEbitda!==undefined) {
     const s = row.netDebtEbitda<0?95:row.netDebtEbitda<0.5?88:row.netDebtEbitda<1.5?72:row.netDebtEbitda<3?45:20;
     finS+=s; finC++;
-    if (row.netDebtEbitda>3.0) redFlags.push({label:`Net Debt/EBITDA ${row.netDebtEbitda.toFixed(1)}× — Fisher survival filter FAIL`,severity:'CRITICAL',source:'Fisher Stage 6'});
-    else if (row.netDebtEbitda>1.5) redFlags.push({label:`Net Debt/EBITDA ${row.netDebtEbitda.toFixed(1)}× — above Fisher threshold`,severity:'HIGH',source:'Fisher Stage 6'});
-    if (row.netDebtEbitda<0) strengths.push(`Net cash company — zero debt risk`);
+    if (row.netDebtEbitda>3.0) redFlags.push({label:`ND/EBITDA ${row.netDebtEbitda.toFixed(1)}× — Fisher FAIL`,severity:'CRITICAL',source:'Fisher'});
+    else if (row.netDebtEbitda>1.5) redFlags.push({label:`ND/EBITDA ${row.netDebtEbitda.toFixed(1)}× — above Fisher threshold`,severity:'HIGH',source:'Fisher'});
+    if (row.netDebtEbitda<0) strengths.push(`Net cash company`);
   }
   if (row.pledge!==undefined) {
     finS+=sv(row.pledge,[2,10,25],false); finC++;
-    if (row.pledge>50) redFlags.push({label:`Pledge ${row.pledge.toFixed(0)}% — CRITICAL forced selling risk`,severity:'CRITICAL',source:'Fisher'});
-    else if (row.pledge>25) redFlags.push({label:`Pledge ${row.pledge.toFixed(0)}% — material risk`,severity:'HIGH',source:'Fisher'});
-    if (row.pledge<1) strengths.push(`Zero pledge — clean promoter structure`);
+    if (row.pledge>50) redFlags.push({label:`Pledge ${row.pledge.toFixed(0)}% — CRITICAL`,severity:'CRITICAL',source:'Fisher'});
+    else if (row.pledge>25) redFlags.push({label:`Pledge ${row.pledge.toFixed(0)}% — risky`,severity:'HIGH',source:'Fisher'});
+    if (row.pledge<1) strengths.push(`Zero pledge`);
   }
   if (row.changeInPromoter!==undefined) {
     const s = row.changeInPromoter>1?85:row.changeInPromoter>0?72:row.changeInPromoter>-1?55:30;
     finS+=s; finC++;
-    if (row.changeInPromoter<-2) redFlags.push({label:`Promoter sold −${Math.abs(row.changeInPromoter).toFixed(1)}% this quarter`,severity:'MEDIUM',source:'Fisher Scuttlebutt'});
+    if (row.changeInPromoter<-2) redFlags.push({label:`Promoter sold −${Math.abs(row.changeInPromoter).toFixed(1)}%`,severity:'MEDIUM',source:'Fisher'});
     if (row.changeInPromoter>1) {
-      // Only count as "conviction" if absolute holding is already healthy (≥ 40%)
-      // Buying from 29% → 31% is still a low-promoter-holding company
-      const absHolding = row.promoter ?? 0;
-      if (absHolding >= 40) {
-        strengths.push(`Promoter bought +${row.changeInPromoter.toFixed(1)}% (now ${absHolding.toFixed(1)}%) — insider conviction`);
-      } else {
-        risks.push(`Promoter bought +${row.changeInPromoter.toFixed(1)}% but holding (${absHolding.toFixed(1)}%) still below 40% — insufficient skin in game despite buying`);
-      }
+      if ((row.promoter??0)>=40) strengths.push(`Promoter bought +${row.changeInPromoter.toFixed(1)}% (${row.promoter?.toFixed(0)}%) — insider conviction`);
+      else risks.push(`Promoter bought but holding (${row.promoter?.toFixed(0)}%) still below 40%`);
     }
   }
   if (row.icr!==undefined) {
@@ -484,42 +483,40 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     if (row.icr<1.5) redFlags.push({label:`ICR ${row.icr.toFixed(1)}× — dangerously low`,severity:'CRITICAL',source:'Fisher'});
   }
 
-  // ── VALUATION (15%) — SQGLP "P" = (PEG score + P/E sector-percentile + MoS) / 3 ──
-  // Each of the three valuation dimensions is scored independently then averaged.
-  // This prevents a very cheap PE offsetting a terrible PEG or vice versa.
+  // ── VALUATION — (PEG + PE-percentile + MoS) / 3 ──────────────────────────
+  // FIX #6: Relax valuation strictness for high-growth companies.
+  // All true multibaggers look "expensive" at entry. PEG penalty removed if rev growth >25%.
+  const isHighGrowth = (row.revCagr ?? 0) > 25 || (row.yoySalesGrowth ?? 0) > 25;
   const valComponents: number[] = [];
 
-  // 1. P/E sector-relative percentile (sector-specific benchmark — not normalized across all)
   if (row.pe!==undefined) {
     const peScore = sv(row.pe, b.pe, false);
     valComponents.push(peScore);
-    if (row.pe>120) redFlags.push({label:`P/E ${row.pe.toFixed(0)}× — extreme valuation`,severity:'MEDIUM',source:'Fisher'});
-    if (peScore < 35) risks.push(`P/E ${row.pe.toFixed(1)}x above sector median (${b.pe[1]}x) — expensive vs peers`);
+    // FIX #6: Only flag extreme PE if NOT in high-growth acceleration
+    if (row.pe > 120 && !isHighGrowth) redFlags.push({label:`P/E ${row.pe.toFixed(0)}× — extreme, not justified by growth`,severity:'MEDIUM',source:'Fisher'});
+    if (row.pe > 120 && isHighGrowth) risks.push(`P/E ${row.pe.toFixed(0)}× — high but growth justifies it (growth >25%)`); // note, not a flag
+    if (peScore < 35) risks.push(`P/E ${row.pe.toFixed(1)}x — expensive vs sector`);
   }
-
-  // 2. PEG ratio — growth-adjusted valuation
   if (row.peg!==undefined && row.peg>0) {
+    // FIX #6: Skip PEG PENALTY (but still score it) when high growth — early multibaggers always look expensive on PEG
     const pegScore = row.peg<0.8?92:row.peg<1.0?84:row.peg<1.5?74:row.peg<2.0?58:row.peg<2.5?42:22;
     valComponents.push(pegScore);
-    if (row.peg<0.8) strengths.push(`PEG ${row.peg.toFixed(2)} — undervalued growth (Fisher entry zone)`);
-    if (row.peg>2.5) risks.push(`PEG ${row.peg.toFixed(2)} — overpaying for growth rate`);
+    if (row.peg<0.8) strengths.push(`PEG ${row.peg.toFixed(2)} — undervalued growth`);
+    if (row.peg>2.5 && !isHighGrowth) risks.push(`PEG ${row.peg.toFixed(2)} — expensive for growth rate`);
+    // High growth + high PEG = acceptable, just note it
+    if (row.peg>2.5 && isHighGrowth) risks.push(`PEG ${row.peg.toFixed(2)} — high but revenue growth >25% may justify`);
   }
-
-  // 3. Margin of safety vs intrinsic value (MOSL: buy substantially below intrinsic value)
   if (row.marginOfSafety!==undefined) {
     const mosScore = row.marginOfSafety>30?92:row.marginOfSafety>15?80:row.marginOfSafety>0?66:row.marginOfSafety>-15?48:row.marginOfSafety>-30?34:18;
     valComponents.push(mosScore);
-    if (row.marginOfSafety>20) strengths.push(`${row.marginOfSafety.toFixed(0)}% below intrinsic value — MOSL margin of safety`);
-    if (row.marginOfSafety<-30) risks.push(`Price ${Math.abs(row.marginOfSafety).toFixed(0)}% above intrinsic value — no margin of safety`);
+    if (row.marginOfSafety>20) strengths.push(`${row.marginOfSafety.toFixed(0)}% below intrinsic value — margin of safety`);
+    if (row.marginOfSafety<-30) risks.push(`Price ${Math.abs(row.marginOfSafety).toFixed(0)}% above intrinsic value`);
   }
-
-  // Average the available components (not sum/count — each component weighted equally)
   if (valComponents.length > 0) {
     valS = valComponents.reduce((a,b)=>a+b, 0) / valComponents.length;
-    valC = 1; // treat as single averaged score
   }
 
-  // ── MARKET/MOMENTUM (5%) ─────────────────────────────────────────────────
+  // ── MARKET / TECHNICAL ────────────────────────────────────────────────────
   if (row.aboveDMA200!==undefined) {
     mktS=row.aboveDMA200>10?85:row.aboveDMA200>0?72:row.aboveDMA200>-15?52:28; mktC=1;
     if (row.aboveDMA200<-30) risks.push(`${Math.abs(row.aboveDMA200).toFixed(0)}% below DMA200 — deep drawdown`);
@@ -528,13 +525,19 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     const s=row.return1m>10?80:row.return1m>0?65:row.return1m>-15?50:28;
     mktS=(mktS*mktC+s)/(mktC+1); mktC++;
   }
+  // FIX #7: Re-rating signal — price above DMA200 AND growth accelerating = confirmation
+  if (row.aboveDMA200 !== undefined && row.aboveDMA200 > 0 && row.accelSignal === 'ACCELERATING') {
+    mktS = Math.min(100, mktS + 8);
+    strengths.push(`Price above DMA200 (+${row.aboveDMA200.toFixed(0)}%) AND revenue accelerating — re-rating in progress`);
+  }
 
-  // ── COMPOSITE (SQGLP-weighted) ────────────────────────────────────────────
+  // ── PILLAR AVERAGES ───────────────────────────────────────────────────────
   const qual  = qualC>0?qualS/qualC:50;
   const growth= growC>0?growS/growC:50;
+  const accel = accelS; // already a single score
   const longe = longC>0?longS/longC:50;
   const fin   = finC>0?finS/finC:50;
-  const val   = valC>0?valS/valC:50;
+  const val   = valComponents.length>0?valS:50;
   const mkt   = mktS;
 
   const filledFields=[row.roce,row.roe,row.opm,row.cfoToPat,row.promoter,row.de,
@@ -543,193 +546,165 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   const coverage=Math.min(100,Math.round((filledFields/17)*100));
   const coverageRatio=coverage/100;
 
-  // ── HARD PENALTIES — absolute point deductions, applied before compositing ──────────
-  // These are non-negotiable penalties that directly cut the score.
-  // They ensure companies with structural weaknesses can't hide behind good historical CAGR.
+  // ── FIX #10: TRAJECTORY SCORE — change direction, not just level ───────────
+  // "100-baggers are CHANGING companies, not just good companies"
+  // Trajectory = (recent - historical) for sales + profit — purely about direction
+  const salesTrajectory  = (row.yoySalesGrowth  ?? 0) - (row.revCagr    ?? 0);
+  const profitTrajectory = (row.yoyProfitGrowth ?? 0) - (row.profitCagr ?? 0);
+  const trajectoryScore  = salesTrajectory + profitTrajectory; // combined pp above historical
+  const trajectoryBonus  = trajectoryScore > 40 ? 12 : trajectoryScore > 20 ? 7 : trajectoryScore > 0 ? 3 : trajectoryScore < -30 ? -12 : trajectoryScore < -15 ? -7 : 0;
+  if (trajectoryScore > 30) strengths.push(`Strong positive trajectory: +${trajectoryScore.toFixed(0)}pp above historical trend`);
+  if (trajectoryScore < -20) risks.push(`Negative trajectory: ${trajectoryScore.toFixed(0)}pp below historical trend`);
+
+  // ── FIX #1+#3+#4: TRIGGER SCORE — proxy for demerger/turnaround/new engine ──
+  // Can't detect these directly from Screener, but can proxy via metric patterns:
+  let triggerBonus = 0;
+  const inflectionSignal =
+    (row.yoyProfitGrowth ?? 0) > 50 &&
+    (row.profitCagr ?? 0) < 20 &&
+    (row.opm ?? 0) > (b.opm[0]); // OPM above sector floor
+
+  // Turnaround: profit growth >50% from low historical base
+  if (inflectionSignal) {
+    triggerBonus += 8;
+    strengths.push(`Early inflection: profit growth ${row.yoyProfitGrowth?.toFixed(0)}% from low base (CAGR ${row.profitCagr?.toFixed(0)}%) — turnaround phase`);
+  }
+  // New growth engine: YOY acceleration + both sales and profit accelerating together
+  if (row.accelSignal === 'ACCELERATING' && (row.profitAcceleration ?? 0) > 20 && (row.revenueAcceleration ?? 0) > 15) {
+    triggerBonus += 6;
+    strengths.push(`New growth engine firing: sales +${row.revenueAcceleration?.toFixed(0)}pp AND profit +${row.profitAcceleration?.toFixed(0)}pp above historical`);
+  }
+  // Industry tailwind signal: multi-quarter revenue acceleration + op leverage together
+  if ((row.revenueAcceleration ?? 0) > 15 && (row.recentOpLev ?? 0) > 1.5) {
+    triggerBonus += 5;
+    strengths.push(`Industry tailwind + op leverage: acceleration ${row.revenueAcceleration?.toFixed(0)}pp + leverage ${row.recentOpLev?.toFixed(1)}×`);
+  }
+  // Operating leverage breakout (standalone — CG Power / KPIT pattern)
+  if ((row.recentOpLev ?? 0) >= 2.0 && (row.yoySalesGrowth ?? 0) > 20) {
+    triggerBonus += 4;
+    strengths.push(`Breakout op leverage ${row.recentOpLev?.toFixed(1)}× — Lloyds/CG Power pattern`);
+  }
+  triggerBonus = Math.min(20, triggerBonus); // cap at +20
+
+  // ── HARD PENALTIES ────────────────────────────────────────────────────────
   let hardPenalty = 0;
 
-  // Promoter holding below 40% — insufficient founder alignment
-  if (row.promoter !== undefined && row.promoter < 40) {
-    hardPenalty += 10;
-    risks.push(`Hard penalty −10: Promoter ${row.promoter.toFixed(1)}% below 40% threshold`);
-  }
+  // FIX #8: Relax thresholds for Emerging bucket companies
+  const promoterThreshold = isLikelyEmerging ? 35 : 40;
+  const cfoThreshold      = isLikelyEmerging ? 0.6 : 0.7;
+  const deThreshold       = isLikelyEmerging ? b.deMax * 1.5 : b.deMax;
 
-  // CFO/PAT below 0.7 — earnings quality weak (only 70% cash-backed)
-  if (row.cfoToPat !== undefined && row.cfoToPat < 0.7 && row.cfoToPat >= 0) {
+  if (row.promoter !== undefined && row.promoter < promoterThreshold) {
     hardPenalty += 10;
-    risks.push(`Hard penalty −10: CFO/PAT ${row.cfoToPat.toFixed(2)}x < 0.7 — earnings not cash-backed`);
+    risks.push(`Hard −10: Promoter ${row.promoter.toFixed(1)}% below ${promoterThreshold}% threshold`);
   }
-
-  // D/E > 0.7 — above capital efficiency threshold (WEBELSOLAR example: capital-heavy solar)
-  // Note: for INFRA sector deMax is higher (1.5), so we use sector-appropriate threshold
-  const sectorDeMax = b.deMax;
-  if (row.de !== undefined && row.de > sectorDeMax) {
+  if (row.cfoToPat !== undefined && row.cfoToPat < cfoThreshold && row.cfoToPat >= 0) {
     hardPenalty += 10;
-    risks.push(`Hard penalty −10: D/E ${row.de.toFixed(2)}x above sector threshold (${sectorDeMax}x for ${getSectorKey(row.sector)})`);
+    risks.push(`Hard −10: CFO/PAT ${row.cfoToPat.toFixed(2)}x < ${cfoThreshold} — earnings quality weak`);
   }
-
-  // Profit deceleration severe (recent profit growth fell >25pp below historical CAGR)
-  if (row.profitAcceleration !== undefined && row.profitAcceleration < -25) {
+  if (row.de !== undefined && row.de > deThreshold) {
+    hardPenalty += 10;
+    risks.push(`Hard −10: D/E ${row.de.toFixed(2)}x above ${isLikelyEmerging ? 'relaxed ' : ''}sector threshold (${deThreshold.toFixed(1)}x)`);
+  }
+  if ((row.profitAcceleration ?? 0) < -25) {
     hardPenalty += 15;
-    risks.push(`Hard penalty −15: Profit deceleration ${row.profitAcceleration.toFixed(0)}pp — earnings collapsing vs history`);
+    risks.push(`Hard −15: Profit deceleration ${row.profitAcceleration?.toFixed(0)}pp — severe collapse`);
   }
-
-  // OPM below sector p25 — operating weakness, scalability questionable
   if (row.opm !== undefined && row.opm < b.opm[0]) {
     hardPenalty += 5;
-    risks.push(`Hard penalty −5: OPM ${row.opm.toFixed(1)}% below sector p25 (${b.opm[0]}%) — weak operating model`);
+    risks.push(`Hard −5: OPM ${row.opm.toFixed(1)}% below sector p25 (${b.opm[0]}%)`);
   }
-
-  // Op leverage below 1.0 despite strong growth — growth without scalability (WEBELSOLAR: 1.17)
   if (row.recentOpLev !== undefined && row.yoySalesGrowth !== undefined && row.yoySalesGrowth > 15) {
-    if (row.recentOpLev < 1.0) {
-      hardPenalty += 10;
-      risks.push(`Hard penalty −10: Op leverage ${row.recentOpLev.toFixed(2)}x < 1.0 at ${row.yoySalesGrowth.toFixed(0)}% sales growth — COSTS growing faster than revenue`);
-    } else if (row.recentOpLev < 1.5) {
-      hardPenalty += 5;
-      risks.push(`Hard penalty −5: Op leverage ${row.recentOpLev.toFixed(2)}x weak (< 1.5) despite ${row.yoySalesGrowth.toFixed(0)}% growth — limited scalability`);
-    }
+    if (row.recentOpLev < 1.0) { hardPenalty += 10; risks.push(`Hard −10: Op leverage ${row.recentOpLev.toFixed(2)}x < 1.0 — costs growing faster than revenue`); }
+    else if (row.recentOpLev < 1.5) { hardPenalty += 5; risks.push(`Hard −5: Op leverage ${row.recentOpLev.toFixed(2)}x weak despite ${row.yoySalesGrowth.toFixed(0)}% growth`); }
   }
 
-  // ── BUCKET CLASSIFICATION ────────────────────────────────────────────────────
-  // Determines which scoring weight set to use and how to label the stock.
-  const hasCrit = redFlags.some(f=>f.severity==='CRITICAL');
-  const highCnt = redFlags.filter(f=>f.severity==='HIGH').length;
-  const medCnt  = redFlags.filter(f=>f.severity==='MEDIUM').length;
+  // ── BUCKET CLASSIFICATION (7-pillar weights) ──────────────────────────────
+  const hasCrit  = redFlags.some(f=>f.severity==='CRITICAL');
+  const highCnt  = redFlags.filter(f=>f.severity==='HIGH').length;
+  const medCnt   = redFlags.filter(f=>f.severity==='MEDIUM').length;
 
-  // Hard fail criteria → MONITOR bucket (ranked separately, not in top picks)
-  const isHardFail =
-    hasCrit ||                                                    // CRITICAL red flag
-    highCnt >= 2 ||                                              // 2+ HIGH flags = structural issue
-    (row.accelSignal === 'DECELERATING' && highCnt >= 1) ||      // Decelerating + a flag
-    (row.de !== undefined && row.de > 2.5) ||                    // Extreme leverage
-    (row.pledge !== undefined && row.pledge > 40);               // Promoter pledged > 40%
+  const isHardFail = hasCrit || highCnt>=2 || (row.accelSignal==='DECELERATING'&&highCnt>=1) || (row.de??0)>2.5 || (row.pledge??0)>40;
+  const isCoreCompounder = !isHardFail && (row.roce??0)>=18 && (row.cfoToPat??0)>=0.8 && (row.de??999)<=0.5 && (row.revCagr??0)>=15 && (row.promoter??0)>=40 && highCnt===0;
+  const isEmergingMultibagger = !isHardFail && !isCoreCompounder && (row.accelSignal==='ACCELERATING'||(row.yoySalesGrowth??0)>=25) && (row.recentOpLev??0)>=1.0 && (row.marketCapCr??99999)<=10000 && highCnt<=1;
+  const bucket: Bucket = isHardFail?'MONITOR':isCoreCompounder?'CORE_COMPOUNDER':isEmergingMultibagger?'EMERGING_MULTIBAGGER':'HIGH_RISK';
 
-  // Core Compounder: quality + consistency + clean balance sheet + steady growth
-  const isCoreCompounder =
-    !isHardFail &&
-    (row.roce ?? 0) >= 18 &&
-    (row.cfoToPat ?? 0) >= 0.8 &&
-    (row.de ?? 999) <= 0.5 &&
-    (row.revCagr ?? 0) >= 15 &&
-    (row.promoter ?? 0) >= 40 &&
-    highCnt === 0;
-
-  // Emerging Multibagger: acceleration + discovery + rerating potential
-  const isEmergingMultibagger =
-    !isHardFail && !isCoreCompounder &&
-    (row.accelSignal === 'ACCELERATING' || (row.yoySalesGrowth ?? 0) >= 25) &&
-    (row.recentOpLev ?? 0) >= 1.0 &&
-    (row.marketCapCr ?? 99999) <= 10000 &&
-    highCnt <= 1;
-
-  const bucket: Bucket =
-    isHardFail ? 'MONITOR' :
-    isCoreCompounder ? 'CORE_COMPOUNDER' :
-    isEmergingMultibagger ? 'EMERGING_MULTIBAGGER' : 'HIGH_RISK';
-
-  // ── BUCKET-SPECIFIC WEIGHTS ───────────────────────────────────────────────────
-  // Core Compounder: quality + fin strength matter most; growth is secondary
-  // Emerging Multibagger: growth + longevity (discovery/smallness) matter most
-  // High-Risk / Monitor: default SQGLP weights
-  let raw: number;
-  let bucketWeights: number[];
-
+  // 7-pillar weight sets [qual, growth, accel, longe, fin, val, mkt]
+  let bw: number[];
   if (bucket === 'CORE_COMPOUNDER') {
-    // Quality 25%, Fin Strength 20%, Growth 20%, Longevity 15%, Valuation 10%, Market 10%
-    bucketWeights = [0.25, 0.20, 0.15, 0.20, 0.10, 0.10];
+    // Quality and fin strength dominate — consistency over momentum
+    bw = [0.25, 0.18, 0.08, 0.14, 0.20, 0.10, 0.05];
   } else if (bucket === 'EMERGING_MULTIBAGGER') {
-    // Growth 30%, Longevity(discovery) 20%, Quality 15%, Fin Strength 15%, Valuation 10%, Market 10%
-    bucketWeights = [0.15, 0.30, 0.20, 0.15, 0.10, 0.10];
+    // Acceleration is #1 — discovery + small base matter most
+    // FIX #9: Market cap size upweighted to 25% of Longevity for Emerging
+    bw = [0.12, 0.18, 0.25, 0.20, 0.10, 0.10, 0.05];
   } else {
-    // Default SQGLP
-    bucketWeights = [0.25, 0.25, 0.15, 0.15, 0.15, 0.05];
+    // Default SQGLP (High-Risk / Monitor)
+    bw = [0.20, 0.20, 0.18, 0.12, 0.15, 0.10, 0.05];
   }
-  // [qual, growth, longe, fin, val, mkt]
-  raw = qual*bucketWeights[0] + growth*bucketWeights[1] + longe*bucketWeights[2] +
-        fin*bucketWeights[3] + val*bucketWeights[4] + mkt*bucketWeights[5];
+  const raw = qual*bw[0] + growth*bw[1] + accel*bw[2] + longe*bw[3] + fin*bw[4] + val*bw[5] + mkt*bw[6];
 
-  // ── RERATING BONUS / PENALTY ──────────────────────────────────────────────────
-  // Bonus: features that drive PE expansion and institutional discovery
-  // Penalty: features that create multiple compression
+  // ── RERATING BONUS ────────────────────────────────────────────────────────
   let reratingBonus = 0;
+  if ((row.fiiPlusDii??100)<10)                                    reratingBonus+=8;
+  else if ((row.fiiPlusDii??100)<20)                               reratingBonus+=4;
+  if (row.accelSignal==='ACCELERATING')                            reratingBonus+=6;
+  if ((row.profitAcceleration??0)>10)                              reratingBonus+=4;
+  if ((row.fcfAbsolute??-1)>0)                                     reratingBonus+=3;
+  if ((row.peg??99)<0.8&&(row.peg??0)>0)                          reratingBonus+=5;
+  if ((row.marginOfSafety??-99)>20)                                reratingBonus+=4;
+  if ((row.fiiPlusDii??0)>40)                                      reratingBonus-=5;
+  if ((row.aboveDMA200??0)>40)                                     reratingBonus-=4;
+  // FIX #6: No rerating penalty for high PE if genuinely high growth
+  if ((row.pe??0)>80&&(row.profitCagr??0)<25&&!isHighGrowth)      reratingBonus-=6;
+  if ((row.marginOfSafety??0)<-40)                                 reratingBonus-=5;
+  if (row.accelSignal==='DECELERATING'&&(row.pe??0)>40)            reratingBonus-=8;
+  if ((row.fcfAbsolute??1)<0&&(row.netDebt??0)>0)                  reratingBonus-=4;
+  reratingBonus = Math.max(-20, Math.min(20, reratingBonus));
 
-  // Bonus signals (discovery + momentum + cheap growth)
-  if ((row.fiiPlusDii ?? 100) < 10)                                         reratingBonus += 8;  // largely undiscovered
-  else if ((row.fiiPlusDii ?? 100) < 20)                                    reratingBonus += 4;  // early institutional
-  if (row.accelSignal === 'ACCELERATING')                                    reratingBonus += 6;  // revenue accelerating
-  if ((row.profitAcceleration ?? 0) > 10)                                   reratingBonus += 4;  // profit accelerating
-  if ((row.fcfAbsolute ?? -1) > 0)                                          reratingBonus += 3;  // FCF positive
-  if ((row.peg ?? 99) < 0.8 && (row.peg ?? 0) > 0)                        reratingBonus += 5;  // cheap growth (PEG < 0.8)
-  if ((row.marginOfSafety ?? -99) > 20)                                     reratingBonus += 4;  // below intrinsic value
-
-  // Penalty signals (crowded, extended, expensive for quality)
-  if ((row.fiiPlusDii ?? 0) > 40)                                           reratingBonus -= 5;  // heavily institutional
-  if ((row.aboveDMA200 ?? 0) > 40)                                          reratingBonus -= 4;  // price extended
-  if ((row.pe ?? 0) > 80 && (row.profitCagr ?? 0) < 25)                    reratingBonus -= 6;  // expensive without matching growth
-  if ((row.marginOfSafety ?? 0) < -40)                                      reratingBonus -= 5;  // significantly above IV
-  if (row.accelSignal === 'DECELERATING' && (row.pe ?? 0) > 40)             reratingBonus -= 8;  // decelerating + expensive = worst combo
-  if ((row.fcfAbsolute ?? 1) < 0 && (row.netDebt ?? 0) > 0)                reratingBonus -= 4;  // burning cash + has debt
-
-  reratingBonus = Math.max(-20, Math.min(20, reratingBonus)); // cap at ±20
-
-  // ── FINAL SCORE ───────────────────────────────────────────────────────────────
+  // ── FINAL SCORE ───────────────────────────────────────────────────────────
   const rawAfterPenalty = Math.max(0, raw - hardPenalty);
-  const penalized = rawAfterPenalty*(0.5+coverageRatio*0.5);
+  const penalized = rawAfterPenalty * (0.5 + coverageRatio * 0.5);
   const redFlagPenalty = (hasCrit?25:0) + (highCnt*12) + (medCnt*5);
-  let score = Math.round((penalized - redFlagPenalty + reratingBonus) / 5) * 5;
+
+  // Total bonus includes: rerating + trajectory + trigger signals
+  const totalBonus = reratingBonus + trajectoryBonus + triggerBonus;
+
+  let score = Math.round((penalized - redFlagPenalty + totalBonus) / 5) * 5;
 
   // Absolute caps
   if (hasCrit)            score = Math.min(score, 38);
   else if (highCnt >= 2)  score = Math.min(score, 48);
   else if (highCnt >= 1)  score = Math.min(score, 60);
   if (row.accelSignal === 'DECELERATING') score = Math.min(score, 52);
-  if (bucket === 'MONITOR') score = Math.min(score, 45); // Monitor stocks capped at 45
+  if (bucket === 'MONITOR') score = Math.min(score, 45);
 
   score = Math.max(0, Math.min(100, score));
   const grade:Grade = score>=80?'A+':score>=72?'A':score>=63?'B+':score>=54?'B':score>=42?'C':'D';
 
-  // ── DECISION STRIP ────────────────────────────────────────────────────────────
+  // ── DECISION STRIP ────────────────────────────────────────────────────────
   const decisionStrip: DecisionStrip = {
-    survival: {
-      pass: !hasCrit && highCnt === 0 && (row.pledge??0) <= 25 && (row.de??0) <= (b.deMax*1.5),
-      label: 'Survival',
-      detail: hasCrit ? `CRITICAL flag` : highCnt > 0 ? `${highCnt} HIGH flag(s)` : (row.pledge??0)>25 ? `Pledge ${row.pledge?.toFixed(0)}%` : 'Clean',
-    },
-    acceleration: {
-      pass: row.accelSignal === 'ACCELERATING' || (row.yoySalesGrowth ?? 0) >= 20,
-      label: 'Accel',
-      detail: row.accelSignal ?? (row.yoySalesGrowth !== undefined ? `YOY ${row.yoySalesGrowth.toFixed(0)}%` : 'No data'),
-    },
-    valuation: {
-      pass: ((row.peg??99) < 1.5 && (row.peg??0)>0) || (row.marginOfSafety??-99) > 0,
-      label: 'Value',
-      detail: row.peg ? `PEG ${row.peg.toFixed(1)}` : row.marginOfSafety !== undefined ? `MoS ${row.marginOfSafety.toFixed(0)}%` : 'No data',
-    },
-    discovery: {
-      pass: (row.fiiPlusDii ?? 100) < 25,
-      label: 'Discovery',
-      detail: row.fiiPlusDii !== undefined ? `FII+DII ${row.fiiPlusDii.toFixed(0)}%` : 'No data',
-    },
-    technical: {
-      pass: (row.aboveDMA200 ?? -100) >= 0 && (row.return1m ?? -100) >= -15,
-      label: 'Technical',
-      detail: row.aboveDMA200 !== undefined ? `${row.aboveDMA200 >= 0 ? '+' : ''}${row.aboveDMA200.toFixed(0)}% vs DMA` : 'No data',
-    },
+    survival: { pass:!hasCrit&&highCnt===0&&(row.pledge??0)<=25&&(row.de??0)<=(b.deMax*1.5), label:'Survival', detail:hasCrit?'CRITICAL flag':highCnt>0?`${highCnt} HIGH flag(s)`:(row.pledge??0)>25?`Pledge ${row.pledge?.toFixed(0)}%`:'Clean' },
+    acceleration: { pass:row.accelSignal==='ACCELERATING'||(row.yoySalesGrowth??0)>=20, label:'Accel', detail:row.accelSignal??(row.yoySalesGrowth!==undefined?`YOY ${row.yoySalesGrowth.toFixed(0)}%`:'No data') },
+    valuation: { pass:((row.peg??99)<1.5&&(row.peg??0)>0)||((row.marginOfSafety??-99)>0), label:'Value', detail:row.peg?`PEG ${row.peg.toFixed(1)}`:row.marginOfSafety!==undefined?`MoS ${row.marginOfSafety.toFixed(0)}%`:'No data' },
+    discovery: { pass:(row.fiiPlusDii??100)<25, label:'Discovery', detail:row.fiiPlusDii!==undefined?`FII+DII ${row.fiiPlusDii.toFixed(0)}%`:'No data' },
+    technical: { pass:(row.aboveDMA200??-100)>=0&&(row.return1m??-100)>=-15, label:'Technical', detail:row.aboveDMA200!==undefined?`${row.aboveDMA200>=0?'+':''}${row.aboveDMA200.toFixed(0)}% vs DMA`:'No data' },
   };
 
   return {
-    ...row, score, grade, bucket, decisionStrip, reratingBonus, coverage, strengths, risks, redFlags,
+    ...row, score, grade, bucket, decisionStrip, reratingBonus, trajectoryScore, triggerBonus, inflectionSignal, coverage, strengths, risks, redFlags,
     pillarScores: [
-      {id:'QUALITY',   label:'Quality (Q)',   score:Math.round(qual),  color:'#a78bfa', weight:Math.round(bucketWeights[0]*100)},
-      {id:'GROWTH',    label:'Growth (G)',    score:Math.round(growth),color:'#38bdf8', weight:Math.round(bucketWeights[1]*100)},
-      {id:'LONGEVITY', label:'Longevity (L)', score:Math.round(longe), color:'#06b6d4', weight:Math.round(bucketWeights[2]*100)},
-      {id:'FIN_STR',   label:'Fin Strength',  score:Math.round(fin),   color:'#10b981', weight:Math.round(bucketWeights[3]*100)},
-      {id:'VALUATION', label:'Valuation (P)', score:Math.round(val),   color:'#f59e0b', weight:Math.round(bucketWeights[4]*100)},
-      {id:'MARKET',    label:'Market',        score:Math.round(mkt),   color:'#f97316', weight:Math.round(bucketWeights[5]*100)},
+      {id:'QUALITY',    label:'Quality',      score:Math.round(qual),  color:'#a78bfa', weight:Math.round(bw[0]*100)},
+      {id:'GROWTH',     label:'Growth',       score:Math.round(growth),color:'#38bdf8', weight:Math.round(bw[1]*100)},
+      {id:'ACCEL',      label:'Accel',        score:Math.round(accel), color:'#10b981', weight:Math.round(bw[2]*100)},
+      {id:'LONGEVITY',  label:'Longevity',    score:Math.round(longe), color:'#06b6d4', weight:Math.round(bw[3]*100)},
+      {id:'FIN_STR',    label:'Fin Str',      score:Math.round(fin),   color:'#34d399', weight:Math.round(bw[4]*100)},
+      {id:'VALUATION',  label:'Valuation',    score:Math.round(val),   color:'#f59e0b', weight:Math.round(bw[5]*100)},
+      {id:'MARKET',     label:'Market',       score:Math.round(mkt),   color:'#f97316', weight:Math.round(bw[6]*100)},
     ],
   };
 }
+
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // COLUMN DETECTION — Screener.in + extra custom fields
@@ -918,6 +893,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   const [accelOnly, setAccelOnly] = useState(false);
   const [fcfOnly, setFcfOnly] = useState(false);
   const [discoveryOnly, setDiscoveryOnly] = useState(false);
+  const [inflectionOnly, setInflectionOnly] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function parseSingleFile(file:File, XLSX: typeof import('xlsx')) {
@@ -987,7 +963,8 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   if (bucketFilter !== 'ALL') baseRows = baseRows.filter(r => r.bucket === bucketFilter);
   if (accelOnly)      baseRows = baseRows.filter(r => r.decisionStrip.acceleration.pass);
   if (fcfOnly)        baseRows = baseRows.filter(r => (r.fcfAbsolute ?? -1) > 0 || (r.cfoToPat ?? 0) >= 0.8);
-  if (discoveryOnly)  baseRows = baseRows.filter(r => (r.fiiPlusDii ?? 100) < 15);
+  if (discoveryOnly)   baseRows = baseRows.filter(r => (r.fiiPlusDii ?? 100) < 15);
+  if (inflectionOnly)  baseRows = baseRows.filter(r => r.inflectionSignal || r.triggerBonus >= 10);
   const filtered = gradeFilter === 'ALL' ? baseRows : baseRows.filter(r => r.grade === gradeFilter);
   const topPicks = rows.filter(r => ['A+','A','B+'].includes(r.grade) && r.bucket !== 'MONITOR');
 
@@ -1106,7 +1083,8 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
             {[
               {key:'accel',  label:'🚀 Accelerating', active:accelOnly,  toggle:()=>setAccelOnly(v=>!v),  count:rows.filter(r=>r.decisionStrip.acceleration.pass).length},
               {key:'fcf',    label:'💰 FCF+',         active:fcfOnly,    toggle:()=>setFcfOnly(v=>!v),    count:rows.filter(r=>(r.fcfAbsolute??-1)>0||(r.cfoToPat??0)>=0.8).length},
-              {key:'disc',   label:'🔍 Discovery <15%',active:discoveryOnly,toggle:()=>setDiscoveryOnly(v=>!v),count:rows.filter(r=>(r.fiiPlusDii??100)<15).length},
+              {key:'disc',    label:'🔍 Discovery <15%', active:discoveryOnly,  toggle:()=>setDiscoveryOnly(v=>!v),  count:rows.filter(r=>(r.fiiPlusDii??100)<15).length},
+      {key:'inflect', label:'💥 Inflection',     active:inflectionOnly, toggle:()=>setInflectionOnly(v=>!v), count:rows.filter(r=>r.inflectionSignal||r.triggerBonus>=10).length},
             ].map(f=>(
               <button key={f.key} onClick={f.toggle} style={{fontSize:F.xs,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${f.active?ACCENT+'60':BORDER}`,background:f.active?ACCENT+'14':'transparent',color:f.active?ACCENT:MUTED,cursor:'pointer'}}>
                 {f.label} ({f.count})
@@ -1137,12 +1115,14 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                       <span style={{fontSize:F.xs,fontWeight:700,color:BUCKET_CONFIG[r.bucket].color,border:`1px solid ${BUCKET_CONFIG[r.bucket].color}40`,padding:'1px 5px',borderRadius:3,width:'fit-content'}}>
                         {BUCKET_CONFIG[r.bucket].icon} {BUCKET_CONFIG[r.bucket].label.split(' ').slice(0,2).join(' ')}
                       </span>
-                      {/* Rerating bonus indicator */}
-                      {r.reratingBonus !== 0 && (
-                        <span style={{fontSize:F.xs,color:r.reratingBonus>0?GREEN:RED}}>
-                          {r.reratingBonus>0?'↑':'↓'} rerating {r.reratingBonus>0?'+':''}{r.reratingBonus}
-                        </span>
-                      )}
+                      {/* Signals: inflection/trigger/trajectory/rerating */}
+                      <div style={{display:'flex',gap:3,flexWrap:'wrap',marginTop:2}}>
+                        {r.inflectionSignal&&<span title="Early inflection phase: low-base high profit growth" style={{fontSize:9,fontWeight:800,color:'#F59E0B',border:'1px solid #F59E0B40',padding:'0 4px',borderRadius:3}}>💥 INFLECT</span>}
+                        {r.triggerBonus>=10&&<span title={`Trigger bonus +${r.triggerBonus}: turnaround/new engine/industry shift proxy`} style={{fontSize:9,fontWeight:700,color:'#10B981',border:'1px solid #10B98140',padding:'0 4px',borderRadius:3}}>⚡+{r.triggerBonus}</span>}
+                        {r.trajectoryScore>20&&<span title={`Trajectory +${r.trajectoryScore.toFixed(0)}pp above historical`} style={{fontSize:9,fontWeight:700,color:'#38bdf8',border:'1px solid #38bdf840',padding:'0 4px',borderRadius:3}}>↑T+{r.trajectoryScore.toFixed(0)}</span>}
+                        {r.trajectoryScore<-20&&<span title={`Trajectory ${r.trajectoryScore.toFixed(0)}pp below historical`} style={{fontSize:9,color:RED}}>↓T{r.trajectoryScore.toFixed(0)}</span>}
+                        {r.reratingBonus!==0&&<span style={{fontSize:9,color:r.reratingBonus>0?GREEN:RED}}>{r.reratingBonus>0?'↑':'↓'}{Math.abs(r.reratingBonus)}r</span>}
+                      </div>
                     </div>
 
                     {/* Company */}
