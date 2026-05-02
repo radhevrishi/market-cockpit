@@ -653,13 +653,23 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   if ((row.fcfAbsolute??-1)>0)                                     reratingBonus+=3;
   if ((row.peg??99)<0.8&&(row.peg??0)>0)                          reratingBonus+=5;
   if ((row.marginOfSafety??-99)>20)                                reratingBonus+=4;
-  if ((row.fiiPlusDii??0)>40)                                      reratingBonus-=5;
+  // Fix: FII+DII >50% = crowded trade = -8 (was -5 for >40%). Undiscovered alpha gone.
+  if ((row.fiiPlusDii??0)>50)                                      reratingBonus-=8;
+  else if ((row.fiiPlusDii??0)>40)                                 reratingBonus-=5;
   if ((row.aboveDMA200??0)>40)                                     reratingBonus-=4;
-  // FIX #6: No rerating penalty for high PE if genuinely high growth
-  if ((row.pe??0)>80&&(row.profitCagr??0)<25&&!isHighGrowth)      reratingBonus-=6;
-  if ((row.marginOfSafety??0)<-40)                                 reratingBonus-=5;
-  if (row.accelSignal==='DECELERATING'&&(row.pe??0)>40)            reratingBonus-=8;
-  if ((row.fcfAbsolute??1)<0&&(row.netDebt??0)>0)                  reratingBonus-=4;
+  if ((row.pe??0)>80&&(row.profitCagr??0)<25&&!isHighGrowth)       reratingBonus-=6;
+  if ((row.marginOfSafety??0)<-40)                                  reratingBonus-=5;
+  if (row.accelSignal==='DECELERATING'&&(row.pe??0)>40)             reratingBonus-=8;
+  if ((row.fcfAbsolute??1)<0&&(row.netDebt??0)>0)                   reratingBonus-=4;
+
+  // Fix PEG ILLUSION: PEG looks cheap but price is massively above intrinsic value
+  // Classic growth trap: PEG 0.29 on a stock 81% above intrinsic = false signal
+  const rawRevDecel  = (row.yoySalesGrowth  !== undefined && row.revCagr    !== undefined) ? row.yoySalesGrowth  - row.revCagr    : undefined;
+  const rawProfDecel = (row.yoyProfitGrowth !== undefined && row.profitCagr !== undefined) ? row.yoyProfitGrowth - row.profitCagr : undefined;
+  if ((row.marginOfSafety??0) < -50 && (row.peg??99) < 1.5 && (row.peg??0) > 0) {
+    reratingBonus -= 8; // cancel PEG benefit — stock is overvalued regardless of growth
+    risks.push(`PEG illusion: PEG ${row.peg?.toFixed(2)} looks cheap but price is ${Math.abs(row.marginOfSafety??0).toFixed(0)}% above intrinsic value`);
+  }
   reratingBonus = Math.max(-20, Math.min(20, reratingBonus));
 
   // ── FINAL SCORE ───────────────────────────────────────────────────────────
@@ -667,17 +677,51 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   const penalized = rawAfterPenalty * (0.5 + coverageRatio * 0.5);
   const redFlagPenalty = (hasCrit?25:0) + (highCnt*12) + (medCnt*5);
 
+  // Block trigger bonuses entirely when in deceleration phase.
+  // Op leverage 3.7x on a decelerating stock is a LAGGING signal, not a forward one.
+  const isDecelerating = (rawRevDecel !== undefined && rawRevDecel < -5) || row.accelSignal === 'DECELERATING';
+  const effectiveTriggerBonus = isDecelerating ? 0 : triggerBonus;
+
   // Total bonus includes: rerating + trajectory + trigger signals
-  const totalBonus = reratingBonus + trajectoryBonus + triggerBonus;
+  const totalBonus = reratingBonus + trajectoryBonus + effectiveTriggerBonus;
 
   let score = Math.round((penalized - redFlagPenalty + totalBonus) / 5) * 5;
 
-  // Absolute caps
+  // ── STANDARD RED FLAG CAPS ─────────────────────────────────────────────────
   if (hasCrit)            score = Math.min(score, 38);
   else if (highCnt >= 2)  score = Math.min(score, 48);
   else if (highCnt >= 1)  score = Math.min(score, 60);
   if (row.accelSignal === 'DECELERATING') score = Math.min(score, 52);
   if (bucket === 'MONITOR') score = Math.min(score, 45);
+
+  // ── DECAY FILTER — binding caps from RAW numbers, not derived fields ─────────
+  // These fire even when accelSignal/profitAcceleration failed to compute (column mapping issue).
+  // "Past winners" must be eliminated. A stock scoring A+ on 145% historical CAGR
+  // while current acceleration is -13pp and profit decel is -48pp is a FADING MULTIBAGGER.
+
+  // Revenue deceleration > 10pp below CAGR → hard cap at 55
+  if (rawRevDecel !== undefined && rawRevDecel < -10) {
+    score = Math.min(score, 55);
+    if (rawRevDecel < -10) risks.push(`Decay filter: revenue decel ${rawRevDecel.toFixed(0)}pp below CAGR → capped at 55`);
+  }
+
+  // Profit deceleration > 25pp below CAGR → hard cap at 50
+  if (rawProfDecel !== undefined && rawProfDecel < -25) {
+    score = Math.min(score, 50);
+    risks.push(`Decay filter: profit decel ${rawProfDecel.toFixed(0)}pp below CAGR → capped at 50`);
+  }
+
+  // BOTH decelerating (combined trajectory < -40pp) → hard cap at 45 + additional penalty
+  const rawTrajectory = (rawRevDecel !== undefined && rawProfDecel !== undefined) ? rawRevDecel + rawProfDecel : undefined;
+  if (rawTrajectory !== undefined && rawTrajectory < -40) {
+    score = Math.min(score, 45);
+    risks.push(`Decay filter: combined trajectory ${rawTrajectory.toFixed(0)}pp → "fading multibagger" → capped at 45`);
+  }
+
+  // Massively overvalued (MoS < -60%) AND decelerating → never above 50
+  if ((row.marginOfSafety ?? 0) < -60 && isDecelerating) {
+    score = Math.min(score, 48);
+  }
 
   score = Math.max(0, Math.min(100, score));
   const grade:Grade = score>=80?'A+':score>=72?'A':score>=63?'B+':score>=54?'B':score>=42?'C':'D';
