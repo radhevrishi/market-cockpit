@@ -1012,24 +1012,31 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
     if (rows.length === 0) return;
     setGuidanceLoading(true);
     try {
-      // Fetch all recent earnings + corporate + rating change articles
-      // Use a broad fetch since NSE ticker_symbols may not be tagged in all articles
+      // For Indian small-caps, earnings coverage in news is sparse.
+      // Strategy: fetch ALL recent articles broadly (not type-filtered),
+      // try multiple matching approaches, then fall back to trajectory proxy.
       const fetches = await Promise.all([
-        fetch('/api/v1/news?limit=300&importance_min=1&article_type=EARNINGS'),
-        fetch('/api/v1/news?limit=200&importance_min=1&article_type=CORPORATE'),
-        fetch('/api/v1/news?limit=100&importance_min=2&article_type=RATING_CHANGE'),
+        fetch('/api/v1/news?limit=500&importance_min=1&article_type=EARNINGS'),
+        fetch('/api/v1/news?limit=300&importance_min=1&article_type=CORPORATE'),
+        fetch('/api/v1/news?limit=200&importance_min=1&article_type=RATING_CHANGE'),
+        fetch('/api/v1/news?limit=200&importance_min=2&article_type=GENERAL'),
+        fetch('/api/v1/news?limit=100&importance_min=2&article_type=BOTTLENECK'),
       ]);
-      const datas = await Promise.all(fetches.map(r => r.ok ? r.json() : []));
-      const articles: NewsArticle[] = [
-        ...(Array.isArray(datas[0]) ? datas[0] : []),
-        ...(Array.isArray(datas[1]) ? datas[1] : []),
-        ...(Array.isArray(datas[2]) ? datas[2] : []),
-      ];
+      const datas = await Promise.all(fetches.map(r => r.ok ? r.json().catch(()=>[]) : Promise.resolve([])));
+      const all = (datas.flat() as NewsArticle[]);
+      // Deduplicate by id
+      const seen = new Set<string>();
+      const articles = all.filter(a => {
+        const id = a.id ?? (a.title ?? '') + (a.published_at ?? '');
+        if (seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      });
 
       const scores: Record<string, number> = {};
       const counts: Record<string, number> = {};
 
-      // Build a full text corpus for each article for fast lookup
+      // Pre-process articles for fast matching
       const articleTexts = articles.map(a => ({
         a,
         full: ((a.title ?? '') + ' ' + (a.headline ?? '') + ' ' + (a.summary ?? '')).toLowerCase(),
@@ -1040,42 +1047,66 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
 
       for (const stock of rows) {
         const sym = stock.symbol.toUpperCase().replace(/\.NS$|\.BO$/i, '');
-        // Company name keywords — use first meaningful word(s) for text match
-        const companyName = (stock.company || '').toLowerCase();
-        const companyKeywords = companyName
-          .replace(/\b(ltd|limited|pvt|private|india|industries|solutions|tech|technologies|systems|services|enterprises|group)\b/gi, '')
-          .trim()
-          .split(/\s+/)
-          .filter(w => w.length >= 4)  // only meaningful words ≥4 chars
-          .slice(0, 2);                 // first 2 meaningful words
 
-        // Match by: (1) exact ticker, (2) ticker partial match, (3) company name keywords in text
+        // Build company name search tokens — multiple strategies for Indian names
+        const companyRaw = (stock.company || '').toLowerCase();
+        // Remove noise words
+        const cleanCompany = companyRaw
+          .replace(/\b(ltd|limited|pvt|private|india|industries|solutions|tech|technologies|systems|services|enterprises|group|engineering|energy|power|chemicals|pharma|pharmaceuticals|finance|capital|holdings|infra|infrastructure)\b/gi, '')
+          .replace(/[()]/g, '').trim();
+        const companyWords = cleanCompany.split(/\s+/).filter(w => w.length >= 4).slice(0, 2);
+        // Also try: first 6 chars of symbol as a text match (e.g. "SKIPPER" in article)
+        const symShort = sym.toLowerCase().slice(0, 6);
+
+        // Match strategies (OR logic - any match counts)
         const relevant = articleTexts.filter(({ full, tickers }) => {
-          // 1. Exact ticker symbol match (handles .NS stripped)
-          if (tickers.some(t => t === sym || t.startsWith(sym))) return true;
-          // 2. Company name keyword match in article text (requires ALL keywords present)
-          if (companyKeywords.length > 0 && companyKeywords.every(kw => full.includes(kw))) return true;
+          // 1. Ticker match (exact, stripping exchange suffixes)
+          if (tickers.some(t => t === sym || t.includes(sym.slice(0,6)))) return true;
+          // 2. Symbol text appears in article (e.g. "SKIPPER reported...")
+          if (full.includes(sym.toLowerCase()) || (symShort.length >= 4 && full.includes(symShort))) return true;
+          // 3. Company name keywords (ALL significant words must appear)
+          if (companyWords.length >= 2 && companyWords.every(w => full.includes(w))) return true;
+          if (companyWords.length === 1 && companyWords[0].length >= 6 && full.includes(companyWords[0])) return true;
           return false;
         }).map(({ a }) => a);
 
         counts[sym] = relevant.length;
 
-        if (relevant.length === 0) {
-          scores[sym] = -1; // -1 = genuinely no data (distinct from 0.5 neutral)
-          continue;
+        if (relevant.length > 0) {
+          // Score from actual news articles
+          let score = 0.5;
+          for (const a of relevant.slice(0, 8)) {
+            const text = ((a.title ?? '') + ' ' + (a.headline ?? '') + ' ' + (a.summary ?? '')).toLowerCase();
+            const isPositive = GUIDANCE_POSITIVE.some(kw => text.includes(kw));
+            const isNegative = GUIDANCE_NEGATIVE.some(kw => text.includes(kw));
+            if (isPositive && !isNegative)      score = Math.min(1.0, score + 0.15);
+            else if (isNegative && !isPositive) score = Math.max(0.0, score - 0.15);
+            else if (isPositive && isNegative)  score = Math.min(0.75, score + 0.04);
+          }
+          scores[sym] = Math.round(score * 10) / 10;
+        } else {
+          // NO NEWS FOUND — use trajectory as proxy (honest for small-caps with no news coverage)
+          // Small-cap Indian stocks rarely get news coverage, but their own numbers tell the story:
+          // Strong acceleration + positive trajectory = implied positive guidance direction
+          const trajectory = (stock.revenueAcceleration ?? 0) + (stock.profitAcceleration ?? 0);
+          const accel = stock.accelSignal;
+          if (accel === 'ACCELERATING' && trajectory > 30) {
+            scores[sym] = 0.7; // strong acceleration = implied positive results/guidance
+            counts[sym] = 0;   // mark as proxy, not actual articles
+          } else if (accel === 'ACCELERATING' && trajectory > 10) {
+            scores[sym] = 0.6;
+            counts[sym] = 0;
+          } else if (accel === 'DECELERATING' && trajectory < -30) {
+            scores[sym] = 0.3; // deceleration = implied guidance concern
+            counts[sym] = 0;
+          } else if (accel === 'DECELERATING') {
+            scores[sym] = 0.4;
+            counts[sym] = 0;
+          } else {
+            scores[sym] = -1; // truly neutral / no signal
+            counts[sym] = 0;
+          }
         }
-
-        // Score: start neutral, adjust per article signal (same logic as Calendar earnings engine)
-        let score = 0.5;
-        for (const a of relevant.slice(0, 6)) {
-          const text = ((a.title ?? '') + ' ' + (a.headline ?? '') + ' ' + (a.summary ?? '')).toLowerCase();
-          const isPositive = GUIDANCE_POSITIVE.some(kw => text.includes(kw));
-          const isNegative = GUIDANCE_NEGATIVE.some(kw => text.includes(kw));
-          if (isPositive && !isNegative)      score = Math.min(1.0, score + 0.18);
-          else if (isNegative && !isPositive) score = Math.max(0.0, score - 0.18);
-          else if (isPositive && isNegative)  score = Math.min(0.75, score + 0.05);
-        }
-        scores[sym] = Math.round(score * 10) / 10;
       }
 
       setGuidanceScores(scores);
@@ -1316,11 +1347,12 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                 <div style={{fontSize:F.xs,color:MUTED}}>{label}</div>
               </div>
             ))}
-            {Object.values(guidanceScores).filter(v=>v===-1).length === Object.keys(guidanceScores).length && (
-              <span style={{fontSize:F.xs,color:ORANGE,fontStyle:'italic',marginLeft:8}}>
-                ⚠ No earnings articles matched — try with more stocks or wait for earnings season
-              </span>
-            )}
+            {/* Legend */}
+            <div style={{fontSize:F.xs,color:MUTED,marginLeft:8,lineHeight:1.5}}>
+              <span style={{color:GREEN}}>News-based</span> = from earnings articles ·&nbsp;
+              <span style={{color:ACCENT}}>📊 proxy</span> = trajectory signal (no news coverage) ·&nbsp;
+              <span style={{color:MUTED}}>— no data</span> = no signal available
+            </div>
           </div>
         )}
       </div>
@@ -1447,7 +1479,9 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                             <span style={{fontSize:F.xs,fontWeight:700,color:gColor}}>{gs.toFixed(1)}</span>
                           </div>
                           <span style={{fontSize:9,color:gColor,fontWeight:600}}>{gLabel}{adj !== 0 ? ` (${adj>0?'+':''}${adj}pts)` : ''}</span>
-                          <span style={{fontSize:9,color:MUTED}}>{articleCount} article{articleCount!==1?'s':''}</span>
+                          <span style={{fontSize:9,color:MUTED}}>
+                            {articleCount > 0 ? `${articleCount} article${articleCount!==1?'s':''}` : '📊 trajectory proxy'}
+                          </span>
                         </div>
                       );
                     })()}
