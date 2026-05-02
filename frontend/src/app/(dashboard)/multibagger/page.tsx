@@ -20,6 +20,13 @@ const YELLOW  = '#f59e0b';
 const F = { xs:11, sm:13, md:15, lg:17, xl:20, h1:24, h2:20, h3:17 };
 
 type Grade = 'A+' | 'A' | 'B+' | 'B' | 'C' | 'D' | 'NR';
+
+// Minimal NewsArticle type for guidance scoring (full type lives in bottleneck-intel)
+interface NewsArticle {
+  id?: string; title?: string; headline?: string; summary?: string;
+  ticker_symbols?: string[]; article_type?: string; published_at?: string;
+  source_name?: string; importance_score?: number;
+}
 const GRADE_COLOR: Record<Grade, string> = {
   'A+':'#10b981','A':'#34d399','B+':'#f59e0b','B':'#f97316','C':'#fb923c','D':'#ef4444','NR':'#64748b',
 };
