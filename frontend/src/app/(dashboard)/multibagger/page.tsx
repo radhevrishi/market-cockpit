@@ -1536,9 +1536,9 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
           </div>
 
           {/* Table header */}
-          <div style={{display:'grid',gridTemplateColumns:guidanceMode?'130px 150px 70px 70px 90px 130px 1fr 90px':'130px 150px 70px 70px 130px 1fr 90px',gap:8,padding:'10px 14px',fontSize:F.xs,fontWeight:700,letterSpacing:'0.6px',color:MUTED,borderBottom:`1px solid ${BORDER}`}}>
+          <div style={{display:'grid',gridTemplateColumns:'130px 150px 70px 70px 90px 130px 1fr 90px',gap:8,padding:'10px 14px',fontSize:F.xs,fontWeight:700,letterSpacing:'0.6px',color:MUTED,borderBottom:`1px solid ${BORDER}`}}>
             <span>TICKER</span><span>COMPANY</span><span>SCORE</span><span>GRADE</span>
-            {guidanceMode && <span style={{color:'#F59E0B'}}>GUIDANCE</span>}
+            <span style={{color:guidanceMode?'#F59E0B':MUTED}}>GUIDANCE{!guidanceMode&&<span style={{fontSize:9,fontWeight:400}}> ↑click 📡</span>}</span>
             <span>DECISION STRIP</span><span>SQGLP PILLARS</span><span>COV</span>
           </div>
 
@@ -1548,7 +1548,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
             return (
               <div key={r.symbol+idx} style={{borderBottom:`1px solid rgba(255,255,255,0.05)`}}>
                 <button onClick={()=>setExpRow(isExp?null:r.symbol)} style={{width:'100%',background:isExp?CARD_BG:'transparent',border:'none',cursor:'pointer',textAlign:'left',padding:'12px 14px'}}>
-                  <div style={{display:'grid',gridTemplateColumns:guidanceMode?'130px 150px 70px 70px 90px 130px 1fr 90px':'130px 150px 70px 70px 130px 1fr 90px',gap:8,alignItems:'center'}}>
+                  <div style={{display:'grid',gridTemplateColumns:'130px 150px 70px 70px 90px 130px 1fr 90px',gap:8,alignItems:'center'}}>
                     {/* Ticker + bucket + accel badge */}
                     <div style={{display:'flex',flexDirection:'column',gap:3}}>
                       <div style={{display:'flex',alignItems:'center',gap:5}}>
@@ -1578,8 +1578,10 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                     {/* Grade */}
                     <span style={{fontSize:F.md,fontWeight:800,padding:'4px 8px',borderRadius:6,color:GRADE_COLOR[r.grade],backgroundColor:`${GRADE_COLOR[r.grade]}18`,border:`1px solid ${GRADE_COLOR[r.grade]}30`,textAlign:'center'}}>{r.grade}</span>
 
-                    {/* Guidance column — only shown when guidance mode is active */}
-                    {guidanceMode && (() => {
+                    {/* Guidance column — always shown, populated when guidance mode active */}
+                    {!guidanceMode
+                      ? <div style={{fontSize:F.xs,color:MUTED,textAlign:'center'}}>—</div>
+                      : (() => {
                       const rAny = r as ExcelResult & { guidanceScore?: number; guidanceAdj?: number };
                       const gs = rAny.guidanceScore;
                       const adj = rAny.guidanceAdj ?? 0;
@@ -1606,7 +1608,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                       );
                     })()}
 
-                    {/* Decision strip — 5 compact pass/fail indicators */}
+                    {/* Decision strip */}
                     <div style={{display:'flex',flexDirection:'column',gap:2}}>
                       {([
                         {key:'survival',   s:r.decisionStrip.survival},
@@ -1920,19 +1922,26 @@ export default function MultibaggerPage() {
   const [excelRows, setExcelRowsState] = useState<ExcelResult[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) return JSON.parse(saved) as ExcelResult[];
+      if (saved) {
+        const parsed = JSON.parse(saved) as ExcelResult[];
+        // Always apply forced ranking on load — ensures grade distribution is correct
+        // even when data was saved before forced ranking was implemented
+        const sorted = [...parsed].sort((a, b) => b.score - a.score);
+        return applyForcedRanking(sorted);
+      }
     } catch {}
     return [];
   });
 
-  // Wrapper: sets state AND persists to localStorage simultaneously
+  // Wrapper: always applies forced ranking before saving/setting state
   function setExcelRows(rows: ExcelResult[]) {
-    setExcelRowsState(rows);
+    const ranked = applyForcedRanking(rows); // sort already done by caller
+    setExcelRowsState(ranked);
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(ranked));
       localStorage.setItem(STORAGE_META, JSON.stringify({
         savedAt: new Date().toISOString(),
-        count: rows.length,
+        count: ranked.length,
       }));
     } catch {}
   }
