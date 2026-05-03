@@ -1407,17 +1407,15 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
     // Guidance upgrades can move stocks 10–30% in weeks (market behavior).
     // Binary trigger: if guidance strongly positive AND stock is accelerating →
     // promote one full grade tier. This is the "forward visibility" premium.
-    const gs = guidanceScores[r.symbol];
-    const GRADE_UP: Record<Grade, Grade> = {'D':'C','C':'B','B':'B+','B+':'A','A':'A+','A+':'A+','NR':'NR'};
-    const GRADE_DOWN: Record<Grade, Grade> = {'A+':'A','A':'B+','B+':'B','B':'C','C':'D','D':'D','NR':'NR'};
+    const guidanceScore = guidanceScores[r.symbol];
+    const GRADE_UP_MAP: Record<Grade, Grade> = {'D':'C','C':'B','B':'B+','B+':'A','A':'A+','A+':'A+','NR':'NR'};
+    const GRADE_DOWN_MAP: Record<Grade, Grade> = {'A+':'A','A':'B+','B+':'B','B':'C','C':'D','D':'D','NR':'NR'};
 
-    if (gs !== undefined && gs !== -1) {
-      if (gs >= 0.7 && r.accelSignal === 'ACCELERATING') {
-        // Strong guidance + acceleration = promote one tier
-        newGrade = GRADE_UP[newGrade] as Grade;
-      } else if (gs <= 0.3 && r.accelSignal === 'DECELERATING') {
-        // Weak guidance + deceleration = demote one tier (double confirmation)
-        newGrade = GRADE_DOWN[newGrade] as Grade;
+    if (guidanceScore !== undefined && guidanceScore !== -1) {
+      if (guidanceScore >= 0.7 && r.accelSignal === 'ACCELERATING') {
+        newGrade = GRADE_UP_MAP[newGrade] as Grade;
+      } else if (guidanceScore <= 0.3 && r.accelSignal === 'DECELERATING') {
+        newGrade = GRADE_DOWN_MAP[newGrade] as Grade;
       }
     }
     // Consistency gate: guidance promotion cannot create A+ if stock has flags
