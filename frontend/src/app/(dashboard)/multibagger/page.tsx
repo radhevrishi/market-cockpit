@@ -1076,6 +1076,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   const [parseError, setParseError] = useState('');
   const [loading, setLoading] = useState(false);
   const [expRow, setExpRow] = useState<string|null>(null);
+  const [expandAll, setExpandAll] = useState(false);
   const [gradeFilter, setGradeFilter] = useState('ALL');
   const [goodOnly, setGoodOnly] = useState(false);
   const [bucketFilter, setBucketFilter] = useState<Bucket|'ALL'>('ALL');
@@ -1521,6 +1522,17 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
               </button>
             ))}
             <span style={{fontSize:F.xs,color:MUTED,marginLeft:'auto'}}>{filtered.length} showing</span>
+            <button
+              onClick={() => { setExpandAll(v => !v); setExpRow(null); }}
+              style={{
+                fontSize:F.xs, fontWeight:700, padding:'5px 12px', borderRadius:7, cursor:'pointer',
+                border:`1px solid ${expandAll ? ACCENT+'60' : BORDER}`,
+                background: expandAll ? ACCENT+'14' : 'transparent',
+                color: expandAll ? ACCENT : MUTED,
+              }}
+            >
+              {expandAll ? '⊟ Collapse All' : '⊞ Expand All'}
+            </button>
           </div>
 
           {/* Table header */}
@@ -1531,7 +1543,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
           </div>
 
           {filtered.map((r,idx)=>{
-            const isExp=expRow===r.symbol;
+            const isExp=expandAll || expRow===r.symbol;
             const hasCrit=r.redFlags.some(f=>f.severity==='CRITICAL');
             return (
               <div key={r.symbol+idx} style={{borderBottom:`1px solid rgba(255,255,255,0.05)`}}>
