@@ -243,8 +243,54 @@ interface ExcelRow {
   accelSignal?: 'ACCELERATING' | 'STABLE' | 'DECELERATING'; // composite trend signal
 }
 
+// ── OWNERSHIP INTELLIGENCE LAYER ─────────────────────────────────────────────
+// Replaces flat "promoter < 35% = penalty" with context-aware ownership scoring.
+// Promoter holding alone is meaningless without knowing who else holds the stock.
+type OwnershipCategory = 'FOUNDER_CONTROLLED' | 'INSTITUTIONALIZING' | 'MATURE' | 'OWNERSHIP_VACUUM';
+
+const OWNERSHIP_CONFIG: Record<OwnershipCategory, { label: string; color: string; icon: string; strategy: string; allocation: string }> = {
+  FOUNDER_CONTROLLED: {
+    label:'Founder-Controlled',  color:'#10b981', icon:'🏛',
+    strategy:'Accumulate early — institutional re-rating ahead',
+    allocation:'30–40% of portfolio allocation',
+  },
+  INSTITUTIONALIZING: {
+    label:'Institutionalizing',  color:'#a78bfa', icon:'📈',
+    strategy:'Highest conviction zone — 5–10x moves with lower risk than early stage',
+    allocation:'40–50% of portfolio allocation',
+  },
+  MATURE: {
+    label:'Fully Institutionalized', color:'#38bdf8', icon:'🏦',
+    strategy:'Use for stability — lower multibagger upside, de-risked',
+    allocation:'10–20% of portfolio allocation',
+  },
+  OWNERSHIP_VACUUM: {
+    label:'Ownership Vacuum',    color:'#f97316', icon:'⚠️',
+    strategy:'Only enter with strong cash flow + high growth. Size: 1–3% max',
+    allocation:'< 10% of portfolio allocation',
+  },
+};
+
+function classifyOwnership(promoter?: number, fiiDii?: number, changeInPromoter?: number): OwnershipCategory {
+  const p  = promoter ?? 0;
+  const f  = fiiDii   ?? 0;
+  const dp = changeInPromoter ?? 0; // delta promoter this quarter
+
+  // Ownership Vacuum: neither founder nor institutions own meaningfully
+  if (p < 30 && f < 12) return 'OWNERSHIP_VACUUM';
+
+  // Founder-Controlled: founder has majority, institutions haven't discovered yet
+  if (p >= 50 && f < 18) return 'FOUNDER_CONTROLLED';
+
+  // Mature: institutions heavily owned, founder no longer dominant
+  if (f >= 32 || (f >= 25 && p < 45)) return 'MATURE';
+
+  // Institutionalizing: mixed but trending right direction
+  // Strong signal: promoter 30-60% AND FII/DII rising (15%+) — sweet spot
+  return 'INSTITUTIONALIZING';
+}
+
 // ── BUCKET TYPES ──────────────────────────────────────────────────────────────
-// Three distinct profiles with different weight sets and criteria.
 type Bucket = 'CORE_COMPOUNDER' | 'EMERGING_MULTIBAGGER' | 'HIGH_RISK' | 'MONITOR';
 const BUCKET_CONFIG: Record<Bucket, { label: string; color: string; icon: string; desc: string }> = {
   CORE_COMPOUNDER:     { label: 'Core Compounder',      color: '#10b981', icon: '🏆', desc: 'High quality + consistent growth + clean balance sheet' },
@@ -272,6 +318,7 @@ interface ExcelResult extends ExcelRow {
   strengths: string[]; risks: string[];
   coverage: number;
   reratingBonus: number;
+  ownershipCategory: OwnershipCategory;
   // New: trajectory and trigger signals
   trajectoryScore: number;  // (recent − historical) for sales + profit — change direction
   triggerBonus: number;     // proxy for turnaround / new engine / inflection
@@ -387,6 +434,14 @@ function applyForcedRanking(results: ExcelResult[]): ExcelResult[] {
     // Missing FCF data + A+ grade → inconsistency: we don't know if self-funded
     // (FCF is in the A+ gate, but if not in data, can't confirm gate passed)
     // Note: already handled by A+ gate in scoreExcelRow — this is a safety net
+
+    // ── EXTREME GROWTH FALSE POSITIVE RULE ──────────────────────────────────
+    // Silkflex pattern: Sales +200%, FCF negative, D/E > 1 = classic small-cap spike risk
+    // The model rewards growth but misses fragility when multiple risk factors compound.
+    const GRADE_DOWN: Record<Grade, Grade> = {'A+':'A','A':'B+','B+':'B','B':'C','C':'D','D':'D','NR':'NR'};
+    if ((r.revCagr ?? 0) > 150 && (r.fcfAbsolute ?? 1) < 0 && (r.de ?? 0) > 1.0) {
+      grade = GRADE_DOWN[grade] as Grade; // forced 1-tier downgrade
+    }
 
     // Bucket overrides: MONITOR → max B, HIGH_RISK → max A (rank-independent)
     if (r.bucket === 'MONITOR'   && !['C','D'].includes(grade))  grade = 'B';
@@ -669,9 +724,23 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   const cfoThreshold      = isLikelyEmerging ? 0.6 : 0.7;
   const deThreshold       = isLikelyEmerging ? b.deMax * 1.5 : b.deMax;
 
+  // Context-aware ownership penalty: promoter alone is insufficient signal.
+  // A low-promoter stock where institutions have already validated it (FII+DII > 20%)
+  // is materially different from one with no institutional backing at all.
   if (row.promoter !== undefined && row.promoter < promoterThreshold) {
-    hardPenalty += 10;
-    risks.push(`Hard −10: Promoter ${row.promoter.toFixed(1)}% below ${promoterThreshold}% threshold`);
+    const fiiDii = row.fiiPlusDii ?? 0;
+    if (fiiDii >= 20) {
+      // Institutional confidence compensates — neutral, no penalty (e.g. CEAT)
+      // Institutions have done their own diligence; low promoter is structural, not a risk
+    } else if (fiiDii >= 10) {
+      // Partial institutional backing — half penalty
+      hardPenalty += 5;
+      risks.push(`Ownership gap −5: Promoter ${row.promoter.toFixed(1)}% low, FII+DII ${fiiDii.toFixed(0)}% partial cover`);
+    } else {
+      // Ownership vacuum — full penalty (e.g. DRC Systems: 20% promoter, <1% FII)
+      hardPenalty += 10;
+      risks.push(`Ownership vacuum −10: Promoter ${row.promoter.toFixed(1)}% + FII+DII ${fiiDii.toFixed(0)}% — no meaningful ownership anchor`);
+    }
   }
   // Fix 2: DOUBLE PENALTY on poor cash conversion.
   // CFO/PAT < 0.5 = profit is largely paper — major red flag for compounders.
@@ -843,7 +912,31 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     risks.push(`PEG illusion: PEG ${row.peg?.toFixed(2)} but price is ${Math.abs(row.marginOfSafety??0).toFixed(0)}% above intrinsic value`);
   }
 
-  reratingBonus = Math.max(-18, Math.min(15, reratingBonus)); // tighter cap: max +15, min -18
+  // ── OWNERSHIP INTELLIGENCE BONUS/PENALTY ─────────────────────────────────────
+  const ownershipCategory = classifyOwnership(row.promoter, row.fiiPlusDii, row.changeInPromoter);
+  // Ownership category adjusts the rerating bonus — it's a forward-looking positioning signal
+  if (ownershipCategory === 'FOUNDER_CONTROLLED') {
+    reratingBonus += 4; // best zone: founder skin + institutional re-rating ahead
+    strengths.push(`Ownership: Founder-Controlled (${row.promoter?.toFixed(0)}% promoter, ${(row.fiiPlusDii??0).toFixed(0)}% FII+DII) — pre-institutional discovery zone`);
+  } else if (ownershipCategory === 'INSTITUTIONALIZING') {
+    reratingBonus += 2; // sweet spot: institutional validation in progress
+    strengths.push(`Ownership: Institutionalizing — institutions entering while founder-backed`);
+  } else if (ownershipCategory === 'OWNERSHIP_VACUUM') {
+    reratingBonus -= 5; // danger: no strong ownership anchor
+    risks.push(`Ownership vacuum: Promoter ${row.promoter?.toFixed(0)}% + FII+DII ${(row.fiiPlusDii??0).toFixed(0)}% — position size max 1-3%`);
+  }
+  // MATURE gets no bonus/penalty — already priced in by institutions
+
+  // Delta signal: promoter buying from high base = strongest insider signal
+  if ((row.changeInPromoter??0) > 2 && ownershipCategory === 'FOUNDER_CONTROLLED') {
+    reratingBonus += 3; // founder buying more when already >50% = very high conviction
+    strengths.push(`Insider accumulation: promoter bought +${row.changeInPromoter?.toFixed(1)}% from strong base`);
+  } else if ((row.changeInPromoter??0) < -3 && (row.promoter??0) > 40) {
+    reratingBonus -= 4; // significant promoter selling = watch closely
+    risks.push(`Insider selling: promoter sold ${Math.abs(row.changeInPromoter??0).toFixed(1)}% — exit signal if trend continues`);
+  }
+
+  reratingBonus = Math.max(-18, Math.min(18, reratingBonus));
 
   // ── FINAL SCORE ───────────────────────────────────────────────────────────
   const rawAfterPenalty = Math.max(0, raw - hardPenalty);
@@ -946,7 +1039,7 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   };
 
   return {
-    ...row, score, grade, bucket, decisionStrip, reratingBonus, trajectoryScore, triggerBonus, inflectionSignal, coverage, strengths, risks, redFlags,
+    ...row, score, grade, bucket, ownershipCategory, decisionStrip, reratingBonus, trajectoryScore, triggerBonus, inflectionSignal, coverage, strengths, risks, redFlags,
     pillarScores: [
       {id:'QUALITY',    label:'Quality',      score:Math.round(qual),  color:'#a78bfa', weight:Math.round(bw[0]*100)},
       {id:'GROWTH',     label:'Growth',       score:Math.round(growth),color:'#38bdf8', weight:Math.round(bw[1]*100)},
@@ -1308,7 +1401,31 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
       if (!passGate) newScore = Math.min(newScore, 89);
     }
 
-    const newGrade: Grade = newScore>=90?'A+':newScore>=80?'A':newScore>=68?'B+':newScore>=55?'B':newScore>=42?'C':'D';
+    let newGrade: Grade = newScore>=90?'A+':newScore>=80?'A':newScore>=68?'B+':newScore>=55?'B':newScore>=42?'C':'D';
+
+    // ── GUIDANCE TIER PROMOTION ───────────────────────────────────────────────
+    // Guidance upgrades can move stocks 10–30% in weeks (market behavior).
+    // Binary trigger: if guidance strongly positive AND stock is accelerating →
+    // promote one full grade tier. This is the "forward visibility" premium.
+    const gs = guidanceScores[r.symbol];
+    const GRADE_UP: Record<Grade, Grade> = {'D':'C','C':'B','B':'B+','B+':'A','A':'A+','A+':'A+','NR':'NR'};
+    const GRADE_DOWN: Record<Grade, Grade> = {'A+':'A','A':'B+','B+':'B','B':'C','C':'D','D':'D','NR':'NR'};
+
+    if (gs !== undefined && gs !== -1) {
+      if (gs >= 0.7 && r.accelSignal === 'ACCELERATING') {
+        // Strong guidance + acceleration = promote one tier
+        newGrade = GRADE_UP[newGrade] as Grade;
+      } else if (gs <= 0.3 && r.accelSignal === 'DECELERATING') {
+        // Weak guidance + deceleration = demote one tier (double confirmation)
+        newGrade = GRADE_DOWN[newGrade] as Grade;
+      }
+    }
+    // Consistency gate: guidance promotion cannot create A+ if stock has flags
+    const hasCritForG = r.redFlags.some(f => f.severity === 'CRITICAL');
+    const highCntForG = r.redFlags.filter(f => f.severity === 'HIGH').length;
+    if (hasCritForG && (newGrade === 'A+' || newGrade === 'A')) newGrade = 'B+';
+    if (highCntForG >= 2 && newGrade === 'A+') newGrade = 'A';
+
     return { ...r, score: newScore, grade: newGrade, guidanceScore: guidanceScores[r.symbol], guidanceAdj: adj };
   }
 
@@ -1624,6 +1741,12 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                       <span style={{fontSize:F.xs,fontWeight:700,color:BUCKET_CONFIG[r.bucket].color,border:`1px solid ${BUCKET_CONFIG[r.bucket].color}40`,padding:'1px 5px',borderRadius:3,width:'fit-content'}}>
                         {BUCKET_CONFIG[r.bucket].icon} {BUCKET_CONFIG[r.bucket].label.split(' ').slice(0,2).join(' ')}
                       </span>
+                      {/* Ownership category badge */}
+                      {r.ownershipCategory && (
+                        <span title={OWNERSHIP_CONFIG[r.ownershipCategory].strategy} style={{fontSize:9,fontWeight:700,color:OWNERSHIP_CONFIG[r.ownershipCategory].color,border:`1px solid ${OWNERSHIP_CONFIG[r.ownershipCategory].color}40`,padding:'1px 4px',borderRadius:3,width:'fit-content'}}>
+                          {OWNERSHIP_CONFIG[r.ownershipCategory].icon} {r.ownershipCategory === 'FOUNDER_CONTROLLED' ? 'Founder' : r.ownershipCategory === 'INSTITUTIONALIZING' ? 'Institutnlzg' : r.ownershipCategory === 'MATURE' ? 'Mature' : 'Vac⚠'}
+                        </span>
+                      )}
                       {/* Signals: inflection/trigger/trajectory/rerating */}
                       <div style={{display:'flex',gap:3,flexWrap:'wrap',marginTop:2}}>
                         {r.inflectionSignal&&<span title="Early inflection phase: low-base high profit growth" style={{fontSize:9,fontWeight:800,color:'#F59E0B',border:'1px solid #F59E0B40',padding:'0 4px',borderRadius:3}}>💥 INFLECT</span>}
@@ -1750,6 +1873,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                       <span>Sector: {r.sector}</span> · <span>Data: {r.coverage}%</span> ·
                       <span style={{color:BUCKET_CONFIG[r.bucket].color}}>{BUCKET_CONFIG[r.bucket].icon} {BUCKET_CONFIG[r.bucket].label}</span> ·
                       {r.reratingBonus!==0&&<span style={{color:r.reratingBonus>0?GREEN:RED}}>Rerating {r.reratingBonus>0?'+':''}{r.reratingBonus}pts</span>}
+                      {r.ownershipCategory&&<span style={{color:OWNERSHIP_CONFIG[r.ownershipCategory].color,fontWeight:700}}>{OWNERSHIP_CONFIG[r.ownershipCategory].icon} {OWNERSHIP_CONFIG[r.ownershipCategory].label}: {OWNERSHIP_CONFIG[r.ownershipCategory].strategy}</span>}
                       {guidanceMode && (() => {
                         const rAny = r as ExcelResult & { guidanceScore?: number; guidanceAdj?: number };
                         if (rAny.guidanceScore === undefined) return null;
