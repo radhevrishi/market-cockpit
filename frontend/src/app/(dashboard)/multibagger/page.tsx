@@ -774,8 +774,8 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
       (row.fcfAbsolute ?? -1) > 0 &&    // generating real free cash flow
       (row.promoter ?? 0) > 50;         // promoter majority stake
     if (!passesAplusGate) {
-      score = Math.min(score, 90); // knock down to A range — good but not exceptional
-      risks.push(`A+ gate: requires CFO/PAT>1.0 + ROCE>20 + FCF positive + Promoter>50. Capped at 90.`);
+      score = Math.min(score, 89); // cap at 89 = A range (A+ requires ≥90)
+      risks.push(`A+ gate failed: need CFO/PAT>1.0 + ROCE>20 + FCF positive + Promoter>50. Capped at 89.`);
     }
   }
 
@@ -1086,12 +1086,26 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
           }
           scores[sym] = Math.round(score * 10) / 10;
         } else {
-          // NO NEWS FOUND — no adjustment. Trajectory/acceleration is ALREADY scored
-          // in the ACCEL pillar (25% weight). Using it again here would double-count
-          // and artificially inflate all accelerating stocks by +8pts.
-          // Guidance feature should only re-score based on ACTUAL earnings news.
-          scores[sym] = -1; // no news = no guidance signal = score unchanged
-          counts[sym] = 0;
+          // NO NEWS FOUND — use earnings trajectory as proxy signal.
+          // For Indian small-caps with no press coverage, the latest quarterly numbers
+          // ARE the guidance signal. Score is capped at 0.65 max (vs 1.0 for real news)
+          // and bonus is halved vs news-based, to prevent double-counting.
+          const trajectory = (stock.revenueAcceleration ?? 0) + (stock.profitAcceleration ?? 0);
+          const accel = stock.accelSignal;
+          if (accel === 'ACCELERATING' && trajectory > 60) {
+            scores[sym] = 0.65; // very strong — both sales and profit beating history significantly
+          } else if (accel === 'ACCELERATING' && trajectory > 30) {
+            scores[sym] = 0.60; // solid acceleration
+          } else if (accel === 'ACCELERATING' && trajectory > 10) {
+            scores[sym] = 0.55; // mild positive signal
+          } else if (accel === 'DECELERATING' && trajectory < -40) {
+            scores[sym] = 0.25; // strong decel warning
+          } else if (accel === 'DECELERATING') {
+            scores[sym] = 0.38; // mild decel
+          } else {
+            scores[sym] = -1;   // STABLE or no clear signal — no adjustment
+          }
+          counts[sym] = 0; // mark as proxy (no actual articles)
         }
       }
 
