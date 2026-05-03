@@ -435,6 +435,45 @@ function applyForcedRanking(results: ExcelResult[]): ExcelResult[] {
     // (FCF is in the A+ gate, but if not in data, can't confirm gate passed)
     // Note: already handled by A+ gate in scoreExcelRow — this is a safety net
 
+    // ── BAD RERATE: Specific structural issues that override rank position ───────
+    // These catch cases where a stock ranks high by score but has a disqualifying
+    // structural issue that the rank algorithm doesn't see directly.
+
+    // Ownership vacuum in top picks → never A+ (no meaningful owner backing)
+    // DRC Systems pattern: 20% promoter + 0% FII/DII = neither founder nor institutional conviction
+    if (r.ownershipCategory === 'OWNERSHIP_VACUUM' && grade === 'A+') {
+      grade = 'A';
+    }
+
+    // Below DMA200 + A+ = price contradicts fundamental strength claim
+    // "Top pick" should have price action confirming the thesis
+    if ((r.aboveDMA200 ?? 0) < -8 && grade === 'A+') {
+      grade = 'A';
+    }
+
+    // STABLE acceleration in Emerging Multibagger bucket + A+ = contradiction
+    // An "Emerging Multibagger" getting A+ with STABLE growth hasn't emerged yet
+    if (r.bucket === 'EMERGING_MULTIBAGGER' && r.accelSignal !== 'ACCELERATING' && grade === 'A+') {
+      grade = 'A';
+    }
+
+    // ── GOOD RERATE: Confirm genuinely clean stocks deserve their grade ───────────
+    // A stock that passes ALL of these simultaneously is a genuine top-tier candidate
+    // and should not be penalised for being in a non-Core bucket.
+    // (This won't promote beyond what rank already gave, but ensures no spurious demotion)
+    const isGenuinelyClean = r.decisionStrip.survival.pass &&
+      r.decisionStrip.acceleration.pass &&
+      r.decisionStrip.discovery.pass &&
+      r.redFlags.length === 0 &&
+      (r.cfoToPat ?? 0) >= 0.8 &&
+      (r.de ?? 0) <= 0.5 &&
+      (r.promoter ?? 0) >= 40 &&
+      r.accelSignal === 'ACCELERATING';
+    // If genuinely clean and got demoted by bucket override, hold at A minimum
+    if (isGenuinelyClean && (grade === 'B+' || grade === 'B') && r.bucket !== 'MONITOR') {
+      grade = 'A';
+    }
+
     // ── EXTREME GROWTH FALSE POSITIVE RULE ──────────────────────────────────
     // Silkflex pattern: Sales +200%, FCF negative, D/E > 1 = classic small-cap spike risk
     // The model rewards growth but misses fragility when multiple risk factors compound.
