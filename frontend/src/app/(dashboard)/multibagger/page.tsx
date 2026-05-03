@@ -1259,7 +1259,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   const [loading, setLoading] = useState(false);
   const [expRow, setExpRow] = useState<string|null>(null);
   const [expandAll, setExpandAll] = useState(false);
-  const [gradeFilter, setGradeFilter] = useState('ALL');
+  const [gradeFilter, setGradeFilter] = useState<Set<string>>(new Set(['ALL']));
   const [goodOnly, setGoodOnly] = useState(false);
   const [bucketFilter, setBucketFilter] = useState<Bucket|'ALL'>('ALL');
   const [accelOnly, setAccelOnly] = useState(false);
@@ -1524,7 +1524,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   if (fcfOnly)        baseRows = baseRows.filter(r => (r.fcfAbsolute ?? -1) > 0 || (r.cfoToPat ?? 0) >= 0.8);
   if (discoveryOnly)   baseRows = baseRows.filter(r => (r.fiiPlusDii ?? 100) < 15);
   if (inflectionOnly)  baseRows = baseRows.filter(r => r.inflectionSignal || r.triggerBonus >= 10);
-  const baseFiltered = gradeFilter === 'ALL' ? baseRows : baseRows.filter(r => r.grade === gradeFilter);
+  const baseFiltered = gradeFilter.has('ALL') ? baseRows : baseRows.filter(r => gradeFilter.has(r.grade));
   // Apply guidance re-scoring and re-sort when guidance mode is active
   const filtered = guidanceMode && Object.keys(guidanceScores).length > 0
     ? [...baseFiltered.map(r => applyGuidance(r))].sort((a, b) => b.score - a.score)
@@ -1693,11 +1693,23 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
               </button>
               <div style={{width:1,background:BORDER,height:24}}/>
               {/* Grade filter */}
-              {(['ALL',...GRADES] as const).map(g=>(
-                <button key={g} onClick={()=>setGradeFilter(g)} style={{fontSize:F.sm,fontWeight:700,padding:'7px 12px',borderRadius:8,border:`1px solid ${gradeFilter===g?(GRADE_COLOR[g as Grade]||PURPLE)+'60':BORDER}`,background:gradeFilter===g?`${GRADE_COLOR[g as Grade]||PURPLE}18`:'transparent',color:gradeFilter===g?(GRADE_COLOR[g as Grade]||PURPLE):MUTED,cursor:'pointer'}}>
+              {(['ALL',...GRADES] as const).map(g=>{
+                const active = gradeFilter.has(g);
+                const col = GRADE_COLOR[g as Grade] || PURPLE;
+                return (
+                <button key={g} onClick={()=>{
+                  if (g === 'ALL') { setGradeFilter(new Set(['ALL'])); return; }
+                  setGradeFilter(prev => {
+                    const next = new Set(prev);
+                    next.delete('ALL'); // clear ALL when selecting specific grades
+                    if (next.has(g)) { next.delete(g); if (next.size === 0) next.add('ALL'); }
+                    else next.add(g);
+                    return next;
+                  });
+                }} style={{fontSize:F.sm,fontWeight:700,padding:'7px 12px',borderRadius:8,border:`1px solid ${active?col+'60':BORDER}`,background:active?col+'18':'transparent',color:active?col:MUTED,cursor:'pointer'}}>
                   {g}{g!=='ALL'&&` (${rows.filter(r=>r.grade===g).length})`}
                 </button>
-              ))}
+                );})}
             </div>
           </div>
           {/* Bucket + quick filters row */}
