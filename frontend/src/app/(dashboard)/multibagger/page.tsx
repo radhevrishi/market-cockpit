@@ -358,15 +358,40 @@ function applyForcedRanking(results: ExcelResult[]): ExcelResult[] {
     // idx=0 is highest score (already sorted descending)
     const pct = idx / n;
     let grade: Grade;
-    if      (pct < 0.10) grade = 'A+'; // top 10%  → typically 3-5 stocks from 38
-    else if (pct < 0.28) grade = 'A';  // next 18% → typically 5-7 stocks
-    else if (pct < 0.55) grade = 'B+'; // next 27% → watchlist candidates
-    else if (pct < 0.75) grade = 'B';  // next 20% → monitor
-    else if (pct < 0.88) grade = 'C';  // next 13% → weak
-    else                 grade = 'D';  // bottom 12% → reject
-    // Bucket overrides: MONITOR → max B, HIGH_RISK → max A
-    if (r.bucket === 'MONITOR'   && !['C','D'].includes(grade)) grade = 'B';
-    if (r.bucket === 'HIGH_RISK' && grade === 'A+')              grade = 'A';
+    if      (pct < 0.10) grade = 'A+'; // top 10%
+    else if (pct < 0.28) grade = 'A';  // next 18%
+    else if (pct < 0.55) grade = 'B+'; // next 27%
+    else if (pct < 0.75) grade = 'B';  // next 20%
+    else if (pct < 0.88) grade = 'C';  // next 13%
+    else                 grade = 'D';  // bottom 12%
+
+    // ── GRADE CONSISTENCY GATE ───────────────────────────────────────────────
+    // "Score/grade inconsistency with risk text creates trust friction" — fix:
+    // A+ requires ALL survival signals to be reasonably clean. If the risk panel
+    // shows serious flaws, the grade must not say A+.
+
+    const hasCrit  = r.redFlags.some(f => f.severity === 'CRITICAL');
+    const highCnt  = r.redFlags.filter(f => f.severity === 'HIGH').length;
+    // Count how many hard-penalty items appear in risks
+    const hardPenaltyCount = r.risks.filter(s => s.startsWith('Hard ')).length;
+
+    // CRITICAL flag → never A+ or A (trust-breaking inconsistency)
+    if (hasCrit && (grade === 'A+' || grade === 'A')) grade = 'B+';
+
+    // 2+ HIGH flags → never A+ (multiple structural failures)
+    if (highCnt >= 2 && grade === 'A+') grade = 'A';
+
+    // 3+ hard penalties → never A+ (too many structural issues to be top pick)
+    if (hardPenaltyCount >= 3 && grade === 'A+') grade = 'A';
+
+    // Missing FCF data + A+ grade → inconsistency: we don't know if self-funded
+    // (FCF is in the A+ gate, but if not in data, can't confirm gate passed)
+    // Note: already handled by A+ gate in scoreExcelRow — this is a safety net
+
+    // Bucket overrides: MONITOR → max B, HIGH_RISK → max A (rank-independent)
+    if (r.bucket === 'MONITOR'   && !['C','D'].includes(grade))  grade = 'B';
+    if (r.bucket === 'HIGH_RISK' && grade === 'A+')               grade = 'A';
+
     return { ...r, grade };
   });
 }
@@ -750,35 +775,75 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     // Default SQGLP (High-Risk / Monitor)
     bw = [0.20, 0.20, 0.18, 0.12, 0.15, 0.10, 0.05];
   }
-  const raw = qual*bw[0] + growth*bw[1] + accel*bw[2] + longe*bw[3] + fin*bw[4] + val*bw[5] + mkt*bw[6];
+  // ── QUALITY SURVIVAL COEFFICIENT ─────────────────────────────────────────────
+  // Acceleration cannot dominate when survival quality is weak.
+  // Each survival failure proportionally reduces the Acceleration pillar contribution.
+  // This stops "story velocity" (Jeena Sikho, Silkflex, DRC pattern) from overriding
+  // "survival quality" (CFO/PAT, FCF, promoter, debt).
+  let qualitySurvivalCoeff = 1.0;
+  if (row.cfoToPat !== undefined && row.cfoToPat < 0.7 && row.cfoToPat >= 0) qualitySurvivalCoeff -= 0.15;
+  if ((row.fcfAbsolute ?? 0) < 0)                                              qualitySurvivalCoeff -= 0.10;
+  if (row.promoter !== undefined && row.promoter < 40)                         qualitySurvivalCoeff -= 0.10;
+  if (row.de !== undefined && row.de > b.deMax)                                qualitySurvivalCoeff -= 0.08;
+  if ((row.roce ?? 99) < 12)                                                   qualitySurvivalCoeff -= 0.07;
+  qualitySurvivalCoeff = Math.max(0.45, qualitySurvivalCoeff); // floor: never below 45% credit
 
-  // ── RERATING BONUS ────────────────────────────────────────────────────────
+  const effectiveAccel = accel * qualitySurvivalCoeff;
+  const raw = qual*bw[0] + growth*bw[1] + effectiveAccel*bw[2] + longe*bw[3] + fin*bw[4] + val*bw[5] + mkt*bw[6];
+
+  // ── RERATING BONUS — only truly ADDITIVE signals not already in pillars ────────
+  // REMOVED to prevent double-counting:
+  //   • PEG < 0.8 bonus → already captured in Valuation pillar components
+  //   • MoS > 20% bonus → already captured in Valuation pillar components
+  //   • accelSignal=ACCELERATING bonus → already captured in Acceleration pillar (25%)
+  //   • profitAcceleration bonus → already captured in Acceleration pillar
+  //   • aboveDMA200 + accelerating bonus → already in Market + Acceleration pillars
+  //
+  // KEPT — signals genuinely NOT captured elsewhere:
+  //   • Institutional discovery (FII+DII) — longevity pillar uses this but not fully
+  //   • Promoter buying — pure insider signal, not in pillars
+  //   • Capital trap compound (FCF- + debt) — structural red flag compound
+  //   • Crowded trade penalty — purely a forward-looking positioning risk
+  //   • Decel + expensive — compound signal (both already penalised individually)
   let reratingBonus = 0;
-  if ((row.fiiPlusDii??100)<10)                                    reratingBonus+=8;
-  else if ((row.fiiPlusDii??100)<20)                               reratingBonus+=4;
-  if (row.accelSignal==='ACCELERATING')                            reratingBonus+=6;
-  if ((row.profitAcceleration??0)>10)                              reratingBonus+=4;
-  if ((row.fcfAbsolute??-1)>0)                                     reratingBonus+=3;
-  if ((row.peg??99)<0.8&&(row.peg??0)>0)                          reratingBonus+=5;
-  if ((row.marginOfSafety??-99)>20)                                reratingBonus+=4;
-  // Fix: FII+DII >50% = crowded trade = -8 (was -5 for >40%). Undiscovered alpha gone.
-  if ((row.fiiPlusDii??0)>50)                                      reratingBonus-=8;
-  else if ((row.fiiPlusDii??0)>40)                                 reratingBonus-=5;
-  if ((row.aboveDMA200??0)>40)                                     reratingBonus-=4;
-  if ((row.pe??0)>80&&(row.profitCagr??0)<25&&!isHighGrowth)       reratingBonus-=6;
-  if ((row.marginOfSafety??0)<-40)                                  reratingBonus-=5;
-  if (row.accelSignal==='DECELERATING'&&(row.pe??0)>40)             reratingBonus-=8;
-  if ((row.fcfAbsolute??1)<0&&(row.netDebt??0)>0)                   reratingBonus-=4;
 
-  // Fix PEG ILLUSION: PEG looks cheap but price is massively above intrinsic value
-  // Classic growth trap: PEG 0.29 on a stock 81% above intrinsic = false signal
+  // Discovery premium — institutional ownership not yet arrived (not double-counted:
+  // longevity uses FII/DII for runway, but rerating uses it for future demand catalyst)
+  if ((row.fiiPlusDii??100)<5)       reratingBonus+=8;  // essentially zero institutional
+  else if ((row.fiiPlusDii??100)<12) reratingBonus+=5;  // very early institutional
+  else if ((row.fiiPlusDii??100)<22) reratingBonus+=2;  // early discovery
+
+  // Promoter buying is pure insider conviction signal (not in any pillar)
+  if ((row.changeInPromoter??0) > 2 && (row.promoter??0) >= 40)  reratingBonus+=4;
+
+  // FCF triple-quality (FCF positive + CFO/PAT > 1 + low debt) — extreme quality combo
+  if ((row.fcfAbsolute??-1)>0 && (row.cfoToPat??0)>1.0 && (row.de??99)<0.3) reratingBonus+=3;
+
+  // Crowding penalty — alpha already realised by institutions
+  if ((row.fiiPlusDii??0)>55)        reratingBonus-=8;  // >55% = crowded
+  else if ((row.fiiPlusDii??0)>42)   reratingBonus-=4;  // getting crowded
+
+  // Capital trap compound (FCF negative + meaningful debt)
+  if ((row.fcfAbsolute??1)<0 && (row.de??0)>0.7)        reratingBonus-=6;
+
+  // Expensive + decelerating = dangerous combination
+  if (row.accelSignal==='DECELERATING' && (row.pe??0)>40) reratingBonus-=8;
+
+  // Overvalued vs intrinsic even with momentum (trap)
+  if ((row.marginOfSafety??0)<-50)                        reratingBonus-=5;
+
+  // High PE without earnings power to justify (separate from PEG which is in valuation)
+  if ((row.pe??0)>80 && (row.profitCagr??0)<20 && !isHighGrowth) reratingBonus-=5;
+
+  // PEG illusion: cheap PEG but massively above intrinsic value
   const rawRevDecel  = (row.yoySalesGrowth  !== undefined && row.revCagr    !== undefined) ? row.yoySalesGrowth  - row.revCagr    : undefined;
   const rawProfDecel = (row.yoyProfitGrowth !== undefined && row.profitCagr !== undefined) ? row.yoyProfitGrowth - row.profitCagr : undefined;
-  if ((row.marginOfSafety??0) < -50 && (row.peg??99) < 1.5 && (row.peg??0) > 0) {
-    reratingBonus -= 8; // cancel PEG benefit — stock is overvalued regardless of growth
-    risks.push(`PEG illusion: PEG ${row.peg?.toFixed(2)} looks cheap but price is ${Math.abs(row.marginOfSafety??0).toFixed(0)}% above intrinsic value`);
+  if ((row.marginOfSafety??0) < -50 && (row.peg??99) < 1.5 && (row.peg??0) > 0 && !cyclical) {
+    reratingBonus -= 6;
+    risks.push(`PEG illusion: PEG ${row.peg?.toFixed(2)} but price is ${Math.abs(row.marginOfSafety??0).toFixed(0)}% above intrinsic value`);
   }
-  reratingBonus = Math.max(-20, Math.min(20, reratingBonus));
+
+  reratingBonus = Math.max(-18, Math.min(15, reratingBonus)); // tighter cap: max +15, min -18
 
   // ── FINAL SCORE ───────────────────────────────────────────────────────────
   const rawAfterPenalty = Math.max(0, raw - hardPenalty);
