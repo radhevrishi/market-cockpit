@@ -443,6 +443,30 @@ function applyForcedRanking(results: ExcelResult[]): ExcelResult[] {
       grade = GRADE_DOWN[grade] as Grade; // forced 1-tier downgrade
     }
 
+    // ── HARD METRIC GRADE CAPS (absolute, rank-independent) ──────────────────
+    // These ensure score and grade tell the same story. A stock with a serious
+    // structural flaw cannot appear in top picks regardless of other strengths.
+
+    // CFO/PAT < 0.8 → max B+ (earnings quality too weak for A-tier)
+    if ((r.cfoToPat ?? 1) < 0.8 && (r.cfoToPat ?? 1) >= 0) {
+      if (grade === 'A+' || grade === 'A') grade = 'B+';
+    }
+
+    // D/E > 1.0 → max B (leverage too high for investment-grade picks)
+    if ((r.de ?? 0) > 1.0) {
+      if (grade === 'A+' || grade === 'A' || grade === 'B+') grade = 'B';
+    }
+
+    // MoS worse than -50% → no A grades (overvalued vs intrinsic)
+    if ((r.marginOfSafety ?? 0) < -50) {
+      if (grade === 'A+' || grade === 'A') grade = 'B+';
+    }
+
+    // Profit deceleration worse than -25pp → never in top picks
+    if ((r.profitAcceleration ?? 0) < -25) {
+      if (grade === 'A+' || grade === 'A' || grade === 'B+') grade = 'B';
+    }
+
     // Bucket overrides: MONITOR → max B, HIGH_RISK → max A (rank-independent)
     if (r.bucket === 'MONITOR'   && !['C','D'].includes(grade))  grade = 'B';
     if (r.bucket === 'HIGH_RISK' && grade === 'A+')               grade = 'A';
