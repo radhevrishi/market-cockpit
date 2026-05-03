@@ -339,8 +339,41 @@ function sv(v: number|undefined, bench: number[], hiGood=true): number {
 }
 
 
+// ── CYCLICAL SECTOR DETECTION ─────────────────────────────────────────────────
+// PEG and P/E are unreliable for cyclicals — earnings spike at cycle peak, not structural.
+// For these sectors: skip PEG benefit, apply mean-reversion penalty.
+function isCyclicalSector(sector: string): boolean {
+  const s = sector.toUpperCase();
+  return /METAL|STEEL|IRON|ALUMIN|COPPER|ZINC|CEMENT|MINING|MINERAL|COMMODITY|OIL|GAS|CRUDE|PETRO|SUGAR|COTTON|TEXTILE.*SPIN|FERTILISER|FERTILIZER|CAST.*FORG|FORG.*CAST|SHIPPING|BULK/.test(s);
+}
+
+// ── FORCED RANKING — institutional grade distribution ─────────────────────────
+// Converts absolute score into a relative rank. Top 10% = A+, not every stock >80.
+// This matches how institutional funds actually construct watchlists:
+// only the top 5-10% of a screen is actionable; the rest is monitor-only.
+function applyForcedRanking(results: ExcelResult[]): ExcelResult[] {
+  if (results.length === 0) return results;
+  const n = results.length;
+  return results.map((r, idx) => {
+    // idx=0 is highest score (already sorted descending)
+    const pct = idx / n;
+    let grade: Grade;
+    if      (pct < 0.10) grade = 'A+'; // top 10%  → typically 3-5 stocks from 38
+    else if (pct < 0.28) grade = 'A';  // next 18% → typically 5-7 stocks
+    else if (pct < 0.55) grade = 'B+'; // next 27% → watchlist candidates
+    else if (pct < 0.75) grade = 'B';  // next 20% → monitor
+    else if (pct < 0.88) grade = 'C';  // next 13% → weak
+    else                 grade = 'D';  // bottom 12% → reject
+    // Bucket overrides: MONITOR → max B, HIGH_RISK → max A
+    if (r.bucket === 'MONITOR'   && !['C','D'].includes(grade)) grade = 'B';
+    if (r.bucket === 'HIGH_RISK' && grade === 'A+')              grade = 'A';
+    return { ...r, grade };
+  });
+}
+
 function scoreExcelRow(row: ExcelRow): ExcelResult {
   const b = SBENCH[getSectorKey(row.sector)] ?? SBENCH.DEFAULT;
+  const cyclical = isCyclicalSector(row.sector);
   const strengths: string[] = [];
   const risks: string[] = [];
   const redFlags: { label:string; severity:'CRITICAL'|'HIGH'|'MEDIUM'; source:string }[] = [];
@@ -513,14 +546,15 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     if (row.pe > 120 && isHighGrowth) risks.push(`P/E ${row.pe.toFixed(0)}× — high but growth justifies it (growth >25%)`); // note, not a flag
     if (peScore < 35) risks.push(`P/E ${row.pe.toFixed(1)}x — expensive vs sector`);
   }
-  if (row.peg!==undefined && row.peg>0) {
-    // FIX #6: Skip PEG PENALTY (but still score it) when high growth — early multibaggers always look expensive on PEG
+  // PEG: skipped entirely for cyclical sectors — earnings at cycle peak inflate denominator
+  if (row.peg!==undefined && row.peg>0 && !cyclical) {
     const pegScore = row.peg<0.8?92:row.peg<1.0?84:row.peg<1.5?74:row.peg<2.0?58:row.peg<2.5?42:22;
     valComponents.push(pegScore);
     if (row.peg<0.8) strengths.push(`PEG ${row.peg.toFixed(2)} — undervalued growth`);
     if (row.peg>2.5 && !isHighGrowth) risks.push(`PEG ${row.peg.toFixed(2)} — expensive for growth rate`);
-    // High growth + high PEG = acceptable, just note it
-    if (row.peg>2.5 && isHighGrowth) risks.push(`PEG ${row.peg.toFixed(2)} — high but revenue growth >25% may justify`);
+    if (row.peg>2.5 && isHighGrowth)  risks.push(`PEG ${row.peg.toFixed(2)} — high but growth >25% may justify`);
+  } else if (cyclical && row.peg!==undefined) {
+    risks.push(`PEG ${row.peg.toFixed(2)} excluded — cyclical earnings unreliable for growth-adjusted valuation`);
   }
   if (row.marginOfSafety!==undefined) {
     const mosScore = row.marginOfSafety>30?92:row.marginOfSafety>15?80:row.marginOfSafety>0?66:row.marginOfSafety>-15?48:row.marginOfSafety>-30?34:18;
@@ -638,6 +672,59 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   if (row.recentOpLev !== undefined && row.yoySalesGrowth !== undefined && row.yoySalesGrowth > 15) {
     if (row.recentOpLev < 1.0) { hardPenalty += 10; risks.push(`Hard −10: Op leverage ${row.recentOpLev.toFixed(2)}x < 1.0 — costs growing faster than revenue`); }
     else if (row.recentOpLev < 1.5) { hardPenalty += 5; risks.push(`Hard −5: Op leverage ${row.recentOpLev.toFixed(2)}x weak despite ${row.yoySalesGrowth.toFixed(0)}% growth`); }
+  }
+
+  // ── CAPITAL ALLOCATION QUALITY ───────────────────────────────────────────────
+  // Aurum Proptech pattern: strong growth but destroying capital via debt + negative FCF.
+  // "Many high-growth stories destroy capital" — Fisher 100-Bagger Ch.4
+  if ((row.fcfAbsolute ?? 0) < 0 && (row.de ?? 0) > 0.7) {
+    hardPenalty += 8;
+    risks.push(`Capital trap −8: negative FCF + D/E ${row.de?.toFixed(2)}x — borrowing to fund losses`);
+  }
+  if ((row.roce ?? 99) < 12 && (row.de ?? 0) > 0.5) {
+    hardPenalty += 5;
+    risks.push(`Capital efficiency −5: ROCE ${row.roce?.toFixed(0)}% below cost of capital with D/E ${row.de?.toFixed(2)}x`);
+  }
+  // Reinvestment quality: high growth + negative FCF = growth not self-funded
+  if ((row.revCagr ?? 0) > 20 && (row.fcfAbsolute ?? 1) < 0 && (row.cfoToPat ?? 1) < 0.5) {
+    hardPenalty += 6;
+    risks.push(`Reinvestment risk −6: ${(row.revCagr??0).toFixed(0)}% growth but FCF negative + CFO/PAT < 0.5`);
+  }
+
+  // ── REVENUE CONSISTENCY (cyclical / one-off detection) ───────────────────────
+  // Disa India / Pricol pattern: acceleration from commodity upcycle, not structural.
+  // If 3yr CAGR available AND single-period CAGR is 2.5x+ the 3yr → likely spike.
+  if (row.salesGrowth3y !== undefined) {
+    if (row.salesGrowth3y < 12 && (row.revCagr ?? 0) > 20) {
+      hardPenalty += 6;
+      risks.push(`Consistency risk −6: 3yr CAGR only ${row.salesGrowth3y.toFixed(0)}% vs recent ${(row.revCagr??0).toFixed(0)}% — likely cyclical spike`);
+    } else if (row.revCagr !== undefined && row.revCagr > row.salesGrowth3y * 2.5 && row.salesGrowth3y > 0) {
+      hardPenalty += 4;
+      risks.push(`One-off spike risk −4: recent CAGR ${row.revCagr.toFixed(0)}% is ${(row.revCagr/row.salesGrowth3y).toFixed(1)}x the 3yr trend (${row.salesGrowth3y.toFixed(0)}%)`);
+    }
+  }
+
+  // ── CYCLICAL SECTOR PENALTY ──────────────────────────────────────────────────
+  // PEG/PE unreliable at earnings peaks in cyclicals. Earnings will mean-revert.
+  // For cyclicals: PEG benefit is removed in valuation section (see below),
+  // plus a direct hard penalty for cycle risk.
+  if (cyclical) {
+    hardPenalty += 4;
+    risks.push(`Cyclical risk −4: sector (${row.sector}) = mean-reverting margins, PEG/PE unreliable`);
+  }
+
+  // ── TECHNICAL GATE (DMA200 enforcement) ─────────────────────────────────────
+  // "Only overweight stocks above 200 DMA AND earnings acceleration" — institutional rule.
+  // Below DMA200 = capital currently trapped. Combined with deceleration = avoid.
+  if (row.aboveDMA200 !== undefined) {
+    if (row.aboveDMA200 < -15 && row.accelSignal === 'DECELERATING') {
+      hardPenalty += 10;
+      risks.push(`Technical gate −10: below DMA200 (${row.aboveDMA200.toFixed(0)}%) AND fundamentals decelerating — worst combo`);
+    } else if (row.aboveDMA200 < -10 && row.accelSignal !== 'ACCELERATING') {
+      hardPenalty += 5;
+      risks.push(`Technical gate −5: below DMA200 (${row.aboveDMA200.toFixed(0)}%) without earnings acceleration — capital inefficiency`);
+    }
+    // Bonus: above DMA200 + accelerating = trend confirmation (add to market pillar)
   }
 
   // ── BUCKET CLASSIFICATION (7-pillar weights) ──────────────────────────────
@@ -1201,7 +1288,9 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
 
       // Score new rows and merge with existing
       const newScored = newRows.map(r => scoreExcelRow(r));
-      const allScored = [...rows, ...newScored].sort((a,b) => b.score - a.score);
+      // Sort by score, then apply forced ranking to compress grades institutionally
+      const merged = [...rows, ...newScored].sort((a,b) => b.score - a.score);
+      const allScored = applyForcedRanking(merged);
       setRows(allScored);
 
       const addedCount = newRows.length;
