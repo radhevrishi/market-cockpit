@@ -2207,9 +2207,10 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
           })()}
 
           {/* Table header */}
-          <div style={{display:'grid',gridTemplateColumns:'130px 150px 70px 70px 90px 130px 1fr 90px',gap:8,padding:'10px 14px',fontSize:F.xs,fontWeight:700,letterSpacing:'0.6px',color:MUTED,borderBottom:`1px solid ${BORDER}`}}>
+          <div style={{display:'grid',gridTemplateColumns:'130px 130px 65px 65px 96px 86px 120px 1fr 76px',gap:8,padding:'10px 14px',fontSize:F.xs,fontWeight:700,letterSpacing:'0.6px',color:MUTED,borderBottom:`1px solid ${BORDER}`}}>
             <span>TICKER</span><span>COMPANY</span><span>SCORE</span><span>GRADE</span>
-            <span style={{color:guidanceMode?'#F59E0B':MUTED}}>GUIDANCE{!guidanceMode&&<span style={{fontSize:9,fontWeight:400}}> ↑click 📡</span>}</span>
+            <span style={{color:YELLOW}}>P/E · PEG</span>
+            <span style={{color:guidanceMode?'#F59E0B':MUTED}}>GUIDANCE{!guidanceMode&&<span style={{fontSize:9,fontWeight:400}}> ↑📡</span>}</span>
             <span>DECISION STRIP</span><span>SQGLP PILLARS</span><span>COV</span>
           </div>
 
@@ -2219,7 +2220,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
             return (
               <div key={r.symbol+idx} style={{borderBottom:`1px solid rgba(255,255,255,0.05)`}}>
                 <button onClick={()=>setExpRow(isExp?null:r.symbol)} style={{width:'100%',background:isExp?CARD_BG:'transparent',border:'none',cursor:'pointer',textAlign:'left',padding:'12px 14px'}}>
-                  <div style={{display:'grid',gridTemplateColumns:'130px 150px 70px 70px 90px 130px 1fr 90px',gap:8,alignItems:'center'}}>
+                  <div style={{display:'grid',gridTemplateColumns:'130px 130px 65px 65px 96px 86px 120px 1fr 76px',gap:8,alignItems:'center'}}>
                     {/* Ticker + bucket + accel badge */}
                     <div style={{display:'flex',flexDirection:'column',gap:3}}>
                       <div style={{display:'flex',alignItems:'center',gap:5}}>
@@ -2254,6 +2255,47 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
 
                     {/* Grade */}
                     <span style={{fontSize:F.md,fontWeight:800,padding:'4px 8px',borderRadius:6,color:GRADE_COLOR[r.grade],backgroundColor:`${GRADE_COLOR[r.grade]}18`,border:`1px solid ${GRADE_COLOR[r.grade]}30`,textAlign:'center'}}>{r.grade}</span>
+
+                    {/* P/E + PEG — always visible for every stock */}
+                    {(() => {
+                      const pe = r.pe;
+                      const peg = r.peg;
+                      const mcap = r.marketCapCr;
+                      // P/E color: sector-appropriate. Green < sector mid, Orange = mid-high, Red > 2× sector p75
+                      const b2 = SBENCH[getSectorKey(r.sector)] ?? SBENCH.DEFAULT;
+                      const peColor = pe === undefined ? MUTED :
+                        pe < b2.pe[1]   ? GREEN :
+                        pe < b2.pe[2]   ? YELLOW :
+                        pe > b2.pe[2]*1.5 ? RED : ORANGE;
+                      // PEG color: < 1 = green (cheap growth), 1-1.5 = yellow, > 2 = red
+                      const pegColor = peg === undefined || peg <= 0 ? MUTED :
+                        peg < 1.0 ? GREEN : peg < 1.5 ? YELLOW : peg < 2.5 ? ORANGE : RED;
+                      return (
+                        <div style={{display:'flex',flexDirection:'column',gap:3}}>
+                          {pe !== undefined
+                            ? <div style={{display:'flex',alignItems:'baseline',gap:3}}>
+                                <span style={{fontSize:F.xs,color:MUTED,fontWeight:600}}>PE</span>
+                                <span style={{fontSize:F.md,fontWeight:800,color:peColor}}>{pe.toFixed(0)}×</span>
+                              </div>
+                            : <span style={{fontSize:F.xs,color:`${MUTED}60`}}>PE —</span>
+                          }
+                          {peg !== undefined && peg > 0
+                            ? <div style={{display:'flex',alignItems:'baseline',gap:3}}>
+                                <span style={{fontSize:F.xs,color:MUTED,fontWeight:600}}>PEG</span>
+                                <span style={{fontSize:F.md,fontWeight:800,color:pegColor}}>{peg.toFixed(2)}</span>
+                              </div>
+                            : <span style={{fontSize:F.xs,color:`${MUTED}60`}}>PEG —</span>
+                          }
+                          {mcap !== undefined &&
+                            <span style={{fontSize:9,color:MUTED}}>
+                              {mcap >= 100000 ? `₹${(mcap/100000).toFixed(1)}L Cr` :
+                               mcap >= 1000   ? `₹${(mcap/1000).toFixed(1)}k Cr`  :
+                                                `₹${mcap.toFixed(0)}Cr`}
+                            </span>
+                          }
+                        </div>
+                      );
+                    })()}
 
                     {/* Guidance column — always shown, populated when guidance mode active */}
                     {!guidanceMode
