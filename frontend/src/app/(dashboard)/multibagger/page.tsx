@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 
 // Shared API base — respects NEXT_PUBLIC_API_URL env var so all fetch() calls
 // resolve consistently when the base URL changes (fixes #13: mixed /api/v1 vs /api)
@@ -3111,6 +3111,569 @@ function MultibaggerChecklist({excelRows}:{excelRows:ExcelResult[]}) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// USA MULTIBAGGER SYSTEM — TradingView CSV format
+// Framework: Revenue Acceleration + Gross Margin + FCF Quality + US Valuation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface USARow {
+  symbol: string; company: string; sector: string; exchange: string;
+  marketCapUsd?: number;          // Market capitalization (USD)
+  revenueGrowthQtr?: number;      // Revenue growth %, Quarterly YoY
+  revenueGrowthAnn?: number;      // Revenue growth %, Annual YoY
+  grossMarginAnn?: number;        // Gross margin %, Annual (GPM)
+  fcfMarginAnn?: number;          // Free cash flow margin %, Annual
+  grossProfitGrowthQtr?: number;  // Gross profit growth %, Quarterly YoY
+  pe?: number;                    // Price to earnings ratio
+  forwardPe?: number;             // Forward non-GAAP PE, Annual
+  netDebtUsd?: number;            // Net debt, Annual (USD)
+  evEbitda?: number;              // EV/EBITDA, TTM
+  evRevenue?: number;             // EV/Revenue, TTM
+  ps?: number;                    // Price to sales
+  opmTtm?: number;                // Operating margin %, TTM
+  pb?: number;                    // Price to book
+  roe?: number;                   // Return on equity %, TTM
+  cashUsd?: number;               // Cash & equivalents, Annual (USD)
+  ltDebtUsd?: number;             // Long-term debt, Annual (USD)
+  nextEarnings?: string;
+  // Optional — user may add from TradingView
+  epsGrowth?: number;             // EPS diluted growth %, TTM YoY
+  roic?: number;                  // Return on invested capital %, Annual
+  de?: number;                    // Debt / equity ratio
+  netProfitMargin?: number;       // Net profit margin %, TTM
+  perf1y?: number;                // 1-year performance %
+  pctFrom52wHigh?: number;        // Change from 52-week high, %
+  // Derived
+  revenueAccel?: number;          // revenueGrowthQtr - revenueGrowthAnn
+  accelSignal?: 'ACCELERATING'|'STABLE'|'DECELERATING';
+  marketCapB?: number;            // marketCapUsd / 1e9 (in billions)
+  netDebtToRevProxy?: number;     // netDebtUsd / (marketCapUsd × evRevenue) — leverage proxy
+}
+type USAGrade = 'A+'|'A'|'B+'|'B'|'C'|'D';
+
+// US Sector benchmarks: [p25, median, p75]
+const USA_BENCH: Record<string, { gm: number[]; opm: number[]; fcf: number[]; revGrowth: number[]; evEbitda: number[] }> = {
+  'Electronic technology': { gm:[45,58,72], opm:[15,25,38], fcf:[10,22,35], revGrowth:[10,20,40], evEbitda:[20,35,60] },
+  'Technology services':   { gm:[60,72,85], opm:[15,22,34], fcf:[12,20,32], revGrowth:[15,25,45], evEbitda:[25,40,70] },
+  'Health technology':     { gm:[50,65,80], opm:[10,18,30], fcf:[8,16,28],  revGrowth:[8,15,28],  evEbitda:[18,28,50] },
+  'Finance':               { gm:[30,45,60], opm:[20,30,42], fcf:[10,18,28], revGrowth:[8,15,25],  evEbitda:[12,20,35] },
+  'Consumer durables':     { gm:[30,42,55], opm:[10,18,28], fcf:[6,14,24],  revGrowth:[8,15,28],  evEbitda:[15,25,40] },
+  DEFAULT:                 { gm:[35,50,65], opm:[10,20,32], fcf:[8,16,28],  revGrowth:[10,20,35], evEbitda:[18,30,50] },
+};
+function getUSABench(sector: string) {
+  const s = sector.toLowerCase();
+  if (s.includes('electronic') || s.includes('semiconductor')) return USA_BENCH['Electronic technology'];
+  if (s.includes('tech')) return USA_BENCH['Technology services'];
+  if (s.includes('health') || s.includes('pharma') || s.includes('bio')) return USA_BENCH['Health technology'];
+  if (s.includes('finance') || s.includes('bank') || s.includes('insur')) return USA_BENCH['Finance'];
+  if (s.includes('consumer') || s.includes('retail')) return USA_BENCH['Consumer durables'];
+  return USA_BENCH.DEFAULT;
+}
+
+function svUS(v: number|undefined, bench: number[], hiGood=true): number {
+  if (v===undefined||v===null||isNaN(v as number)) return 0;
+  const [lo,mid,hi] = hiGood ? bench : bench.map(x=>-x);
+  const val = hiGood ? v : -v;
+  if (val>=hi) return Math.min(100, 88+(val-hi)*0.4);
+  if (val>=mid) return 72+((val-mid)/(hi-mid))*16;
+  if (val>=lo) return 50+((val-lo)/(mid-lo))*22;
+  return Math.max(0, 30+Math.max(0,val)/Math.max(lo,1)*20);
+}
+
+function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; coverage: number; strengths: string[]; risks: string[]; pillarScores: {id:string;label:string;score:number;color:string}[] } {
+  const b = getUSABench(row.sector);
+  const strengths: string[] = [];
+  const risks: string[] = [];
+
+  // ── QUALITY (30%): Gross Margin, FCF Margin, OPM, ROE ──────────────────────
+  let qualS=0, qualC=0;
+  if (row.grossMarginAnn !== undefined) {
+    const s=svUS(row.grossMarginAnn,b.gm); qualS+=s; qualC++;
+    if (s>=80) strengths.push(`Gross margin ${row.grossMarginAnn.toFixed(1)}% — pricing power, durable moat`);
+    else if (s<45) risks.push(`Gross margin ${row.grossMarginAnn.toFixed(1)}% — thin, limited pricing power`);
+  }
+  if (row.fcfMarginAnn !== undefined) {
+    const s = row.fcfMarginAnn>=25?92:row.fcfMarginAnn>=15?82:row.fcfMarginAnn>=8?65:row.fcfMarginAnn>=0?45:20;
+    qualS+=s; qualC++;
+    if (row.fcfMarginAnn>=15) strengths.push(`FCF margin ${row.fcfMarginAnn.toFixed(1)}% — strong cash generation`);
+    else if (row.fcfMarginAnn<0) risks.push(`Negative FCF margin — burning cash`);
+  }
+  if (row.opmTtm !== undefined) {
+    const s=svUS(row.opmTtm,b.opm); qualS+=s; qualC++;
+    if (s>=80) strengths.push(`Operating margin ${row.opmTtm.toFixed(1)}% — operational excellence`);
+  }
+  if (row.roe !== undefined) {
+    const s=svUS(row.roe,[10,18,28]); qualS+=s; qualC++;
+    if (s>=80) strengths.push(`ROE ${row.roe.toFixed(1)}% — strong returns on equity`);
+  }
+  if (row.roic !== undefined) {
+    const s=row.roic>=25?90:row.roic>=18?80:row.roic>=12?65:row.roic>=8?45:25;
+    qualS+=s; qualC++;
+    if (row.roic>=20) strengths.push(`ROIC ${row.roic.toFixed(1)}% — above cost of capital, durable value creation`);
+    else if (row.roic<10) risks.push(`ROIC ${row.roic.toFixed(1)}% — below WACC, capital not productive`);
+  }
+  if (row.netProfitMargin !== undefined) {
+    const s=svUS(row.netProfitMargin,[5,12,22]); qualS+=s*0.6; qualC+=0.6;
+  }
+
+  // ── GROWTH (25%): Revenue Annual + Quarterly ────────────────────────────────
+  let growS=0, growC=0;
+  if (row.revenueGrowthAnn !== undefined) {
+    const s=svUS(row.revenueGrowthAnn,b.revGrowth); growS+=s; growC++;
+    if (s>=80) strengths.push(`Revenue growth ${row.revenueGrowthAnn.toFixed(1)}% YoY — strong compounding`);
+    // 🚨 Growth Quality Filter (same as India — ≥20% for US multibaggers)
+    if (row.revenueGrowthAnn < 20) {
+      const penalty = row.revenueGrowthAnn < 10 ? 25 : 12;
+      growS = Math.max(0, growS - penalty);
+      risks.push(`🚨 Growth filter: ${row.revenueGrowthAnn.toFixed(1)}% annual revenue growth${row.revenueGrowthAnn < 10 ? ' — very low for US multibagger (−25)' : ' — below 20% threshold (−12)'}`);
+    }
+  }
+  if (row.epsGrowth !== undefined) {
+    const s=svUS(row.epsGrowth,[10,25,45]); growS+=s; growC++;
+    if (s>=80) strengths.push(`EPS growth ${row.epsGrowth.toFixed(1)}% — earnings compounding`);
+  }
+  if (row.grossProfitGrowthQtr !== undefined && row.revenueGrowthQtr !== undefined) {
+    // Gross profit growing faster than revenue = margin expansion
+    if (row.grossProfitGrowthQtr > row.revenueGrowthQtr + 5) {
+      growS += 10; growC += 0.4;
+      strengths.push(`Gross profit +${row.grossProfitGrowthQtr.toFixed(0)}% vs revenue +${row.revenueGrowthQtr.toFixed(0)}% — margins expanding`);
+    }
+  }
+
+  // ── ACCELERATION (20%): Quarterly growth vs Annual growth ─────────────────
+  let accelS=50;
+  const revAccel = row.revenueAccel ?? (row.revenueGrowthQtr !== undefined && row.revenueGrowthAnn !== undefined ? row.revenueGrowthQtr - row.revenueGrowthAnn : undefined);
+  if (revAccel !== undefined) {
+    const signal = revAccel >= 8 ? 'ACCELERATING' : revAccel <= -8 ? 'DECELERATING' : 'STABLE';
+    accelS = signal==='ACCELERATING' ? Math.min(100, 80 + revAccel * 0.5) : signal==='DECELERATING' ? Math.max(15, 45 + revAccel) : 55;
+    if (signal==='ACCELERATING') strengths.push(`Revenue ACCELERATING: +${row.revenueGrowthQtr?.toFixed(0)}% QoQ YoY vs +${row.revenueGrowthAnn?.toFixed(0)}% Annual (+${revAccel.toFixed(0)}pp)`);
+    if (signal==='DECELERATING') risks.push(`Revenue DECELERATING: ${row.revenueGrowthQtr?.toFixed(0)}% QoQ vs ${row.revenueGrowthAnn?.toFixed(0)}% Annual (${revAccel.toFixed(0)}pp)`);
+  }
+
+  // ── VALUATION (15%): EV/EBITDA, P/E, Forward P/E, P/S ────────────────────
+  const valComponents: number[] = [];
+  if (row.evEbitda !== undefined && row.evEbitda > 0) {
+    valComponents.push(svUS(row.evEbitda,b.evEbitda,false));
+    if (row.evEbitda < b.evEbitda[0]) strengths.push(`EV/EBITDA ${row.evEbitda.toFixed(1)}× — cheap on enterprise value`);
+    else if (row.evEbitda > b.evEbitda[2]*1.5) risks.push(`EV/EBITDA ${row.evEbitda.toFixed(1)}× — very expensive`);
+  }
+  if (row.forwardPe !== undefined && row.forwardPe > 0) {
+    const fpS = row.forwardPe<15?90:row.forwardPe<25?80:row.forwardPe<40?65:row.forwardPe<60?48:row.forwardPe<100?32:18;
+    valComponents.push(fpS);
+    if (row.forwardPe<20) strengths.push(`Forward P/E ${row.forwardPe.toFixed(1)}× — attractive growth-adjusted valuation`);
+  } else if (row.pe !== undefined && row.pe > 0) {
+    valComponents.push(svUS(row.pe,[15,30,55],false));
+  }
+  if (row.ps !== undefined && row.ps > 0) {
+    valComponents.push(svUS(row.ps,[2,5,12],false));
+  }
+  const valS = valComponents.length > 0 ? valComponents.reduce((a,b)=>a+b,0)/valComponents.length : 50;
+
+  // ── MARKET (10%): Market cap discovery + sector tailwind ─────────────────
+  let mktS=50;
+  if (row.marketCapB !== undefined) {
+    mktS = row.marketCapB<1?90:row.marketCapB<5?82:row.marketCapB<20?72:row.marketCapB<100?58:row.marketCapB<500?44:32;
+    if (row.marketCapB<5) strengths.push(`Market cap $${row.marketCapB.toFixed(1)}B — small base, maximum runway`);
+    else if (row.marketCapB>200) risks.push(`Market cap $${row.marketCapB.toFixed(0)}B — large, limits multibagger potential`);
+  }
+  if (row.pctFrom52wHigh !== undefined) {
+    if (row.pctFrom52wHigh >= -5) { mktS = Math.min(100, mktS+10); strengths.push(`Near 52W high (${row.pctFrom52wHigh.toFixed(0)}%) — price confirming thesis`); }
+    else if (row.pctFrom52wHigh < -40) mktS = Math.max(0, mktS-10);
+  }
+  if (row.perf1y !== undefined && row.perf1y > 20) { mktS = Math.min(100, mktS+6); strengths.push(`+${row.perf1y.toFixed(0)}% past year — momentum confirming fundamentals`); }
+  const tailwind = getSectorTailwind(row.sector);
+  if (tailwind.score >= 70) { mktS = Math.min(100, mktS+6); strengths.push(`Sector tailwind (${tailwind.label}): ${tailwind.drivers.slice(0,50)}`); }
+
+  // ── LEVERAGE CHECK ────────────────────────────────────────────────────────
+  if (row.de !== undefined && row.de > 2.0) risks.push(`D/E ${row.de.toFixed(2)}× — significant leverage`);
+  if (row.netDebtUsd !== undefined && row.marketCapUsd !== undefined && row.marketCapUsd > 0) {
+    const netDebtToMcap = row.netDebtUsd / row.marketCapUsd * 100;
+    if (netDebtToMcap > 50) risks.push(`Net debt ${netDebtToMcap.toFixed(0)}% of market cap — heavy balance sheet`);
+    else if (row.netDebtUsd < 0) strengths.push(`Net cash position — no debt risk`);
+  }
+
+  // ── PILLARS & FINAL SCORE ─────────────────────────────────────────────────
+  const qual  = qualC>0 ? qualS/qualC : 50;
+  const growth= growC>0 ? growS/growC : 50;
+  const accel = accelS;
+  const val   = valS;
+  const mkt   = mktS;
+
+  const filledFields = [row.revenueGrowthAnn, row.grossMarginAnn, row.fcfMarginAnn, row.opmTtm, row.roe, row.evEbitda, row.pe, row.marketCapUsd, row.netDebtUsd, row.revenueGrowthQtr].filter(v=>v!==undefined).length;
+  const coverage = Math.min(100, Math.round(filledFields/10*100));
+
+  const raw = qual*0.30 + growth*0.25 + accel*0.20 + val*0.15 + mkt*0.10;
+  let score = Math.max(0, Math.min(100, Math.round(raw/5)*5));
+
+  // Grade
+  const grade: USAGrade = score>=90?'A+':score>=80?'A':score>=68?'B+':score>=55?'B':score>=42?'C':'D';
+
+  return {
+    ...row,
+    score, grade, coverage,
+    revenueAccel: revAccel,
+    accelSignal: revAccel !== undefined ? (revAccel>=8?'ACCELERATING':revAccel<=-8?'DECELERATING':'STABLE') : undefined,
+    marketCapB: row.marketCapUsd !== undefined ? Math.round(row.marketCapUsd/1e9*100)/100 : undefined,
+    strengths, risks,
+    pillarScores: [
+      {id:'QUALITY',   label:'Quality',    score:Math.round(qual),   color:'#a78bfa'},
+      {id:'GROWTH',    label:'Growth',     score:Math.round(growth), color:'#38bdf8'},
+      {id:'ACCEL',     label:'Accel',      score:Math.round(accel),  color:'#10b981'},
+      {id:'VALUATION', label:'Valuation',  score:Math.round(val),    color:'#f59e0b'},
+      {id:'MARKET',    label:'Market',     score:Math.round(mkt),    color:'#f97316'},
+    ],
+  };
+}
+
+type USAResult = ReturnType<typeof scoreUSARow>;
+
+function applyUSARanking(results: USAResult[]): USAResult[] {
+  if (!results.length) return results;
+  const n = results.length;
+  return results.map((r, idx) => {
+    const pct = idx / n;
+    let grade: USAGrade =
+      pct < 0.10 ? 'A+' : pct < 0.28 ? 'A' : pct < 0.55 ? 'B+' : pct < 0.75 ? 'B' : pct < 0.88 ? 'C' : 'D';
+    // Hard caps
+    if (r.marketCapB !== undefined && r.marketCapB > 500 && ['A+','A','B+'].includes(grade)) grade = 'B'; // too big to 100×
+    if (r.revenueGrowthAnn !== undefined && r.revenueGrowthAnn < 10 && ['A+','A'].includes(grade)) grade = 'B+';
+    if (r.accelSignal === 'DECELERATING' && grade === 'A+') grade = 'A';
+    return { ...r, grade };
+  });
+}
+
+function parseUSARow(row: Record<string,unknown>): USARow | null {
+  const n = (v: unknown): number|undefined => {
+    if (v===''||v===null||v===undefined) return undefined;
+    const parsed = parseFloat(String(v).replace(/[,$%]/g,''));
+    return isNaN(parsed) ? undefined : parsed;
+  };
+  const sym = String(row['Symbol']??'').trim().toUpperCase();
+  if (!sym) return null;
+  const mcapRaw = n(row['Market capitalization']);
+  const cashRaw = n(row['Cash & equivalents, Annual']);
+  const ltDebtRaw = n(row['Long term debt, Annual']);
+  const netDebtRaw = n(row['Net debt, Annual']);
+  const revQtr = n(row['Revenue growth %, Quarterly YoY']);
+  const revAnn = n(row['Revenue growth %, Annual YoY']);
+  return {
+    symbol: sym,
+    company: String(row['Description']??'').trim(),
+    sector:  String(row['Sector']??'').trim() || 'Technology services',
+    exchange: String(row['Exchange']??'').trim(),
+    marketCapUsd: mcapRaw,
+    marketCapB: mcapRaw !== undefined ? Math.round(mcapRaw/1e9*100)/100 : undefined,
+    revenueGrowthQtr: revQtr,
+    revenueGrowthAnn: revAnn,
+    grossMarginAnn:   n(row['Gross margin %, Annual']),
+    fcfMarginAnn:     n(row['Free cash flow margin %, Annual']),
+    grossProfitGrowthQtr: n(row['Gross profit growth %, Quarterly YoY']),
+    pe:          n(row['Price to earnings ratio']),
+    forwardPe:   n(row['Forward non-GAAP price to earnings, Annual']),
+    netDebtUsd:  netDebtRaw,
+    evEbitda:    n(row['Enterprise value to EBITDA ratio, Trailing 12 months']),
+    evRevenue:   n(row['Enterprise value to revenue ratio, Trailing 12 months']),
+    ps:          n(row['Price to sales ratio']),
+    opmTtm:      n(row['Operating margin %, Trailing 12 months']),
+    pb:          n(row['Price to book ratio']),
+    roe:         n(row['Return on equity %, Trailing 12 months']),
+    cashUsd:     cashRaw,
+    ltDebtUsd:   ltDebtRaw,
+    nextEarnings: String(row['Upcoming earnings date']??'').trim()||undefined,
+    // Optional extra fields — maps both TradingView exact names AND common variants
+    epsGrowth: n(
+      row['Earnings per share diluted growth %, TTM YoY'] ??   // TradingView exact
+      row['EPS diluted growth %, TTM YoY'] ??
+      row['EPS growth %, TTM YoY']
+    ),
+    roic: n(
+      row['Return on invested capital %, Annual'] ??            // TradingView exact
+      row['ROIC']
+    ),
+    de: n(
+      row['Debt to equity ratio, Quarterly'] ??                 // TradingView exact
+      row['Debt / equity ratio'] ??
+      row['Debt to equity ratio']
+    ),
+    netProfitMargin: n(
+      row['Net margin %, Trailing 12 months'] ??                // TradingView exact
+      row['Net profit margin %, TTM'] ??
+      row['Net profit margin %, Annual']
+    ),
+    perf1y: n(
+      row['Performance % 1 year'] ??                            // TradingView exact
+      row['Performance, 1 Year %'] ??
+      row['1-year performance %'] ??
+      row['Perf.Y']
+    ),
+    pctFrom52wHigh: n(
+      row['Change from 52-week high, %'] ??                     // TradingView optional
+      row['% from 52W high'] ??
+      row['Change from 52W High']
+    ),
+    // Derived at parse time
+    revenueAccel: (revQtr !== undefined && revAnn !== undefined) ? Math.round(revQtr - revAnn) : undefined,
+    accelSignal: (revQtr !== undefined && revAnn !== undefined)
+      ? (revQtr - revAnn >= 8 ? 'ACCELERATING' : revQtr - revAnn <= -8 ? 'DECELERATING' : 'STABLE')
+      : undefined,
+  };
+}
+
+const USA_STORAGE_KEY = 'mb_usa_scored_v1';
+
+function USACompare() {
+  const fileRef = React.useRef<HTMLInputElement>(null);
+  const [rows, setRowsState] = React.useState<USAResult[]>(() => {
+    try {
+      const saved = localStorage.getItem(USA_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved) as USAResult[];
+        const rescored = parsed.map(r => scoreUSARow(r as unknown as USARow));
+        return applyUSARanking(rescored.sort((a,b)=>b.score-a.score));
+      }
+    } catch {}
+    return [];
+  });
+  const [loading, setLoading] = React.useState(false);
+  const [parseError, setParseError] = React.useState('');
+  const [fileName, setFileName] = React.useState('');
+  const [expRow, setExpRow] = React.useState<string|null>(null);
+  const [expandAll, setExpandAll] = React.useState(false);
+  const [gradeFilter, setGradeFilter] = React.useState<Set<string>>(new Set(['ALL']));
+  const [accelOnly, setAccelOnly] = React.useState(false);
+
+  function setRows(r: USAResult[]) {
+    const ranked = applyUSARanking(r);
+    setRowsState(ranked);
+    try { localStorage.setItem(USA_STORAGE_KEY, JSON.stringify(ranked)); } catch {}
+  }
+
+  async function handleFiles(files: FileList | File[]) {
+    setParseError(''); setLoading(true);
+    try {
+      const XLSX = await import('xlsx');
+      const arr = Array.from(files);
+      const allRows: USARow[] = [];
+      const seenSymbols = new Set(rows.map(r=>r.symbol));
+      for (const file of arr) {
+        const buf = await file.arrayBuffer();
+        const wb = XLSX.read(buf, { type:'array' });
+        const raw = XLSX.utils.sheet_to_json<Record<string,unknown>>(wb.Sheets[wb.SheetNames[0]], { defval:'' });
+        for (const r of raw) {
+          const parsed = parseUSARow(r as Record<string,unknown>);
+          if (!parsed || seenSymbols.has(parsed.symbol)) continue;
+          seenSymbols.add(parsed.symbol);
+          allRows.push(parsed);
+        }
+      }
+      if (!allRows.length) { setParseError('No valid rows found. Ensure the file has a Symbol column.'); setLoading(false); return; }
+      const scored = allRows.map(r => scoreUSARow(r));
+      const merged = [...rows, ...scored].sort((a,b)=>b.score-a.score);
+      setRows(merged);
+      setFileName(`${arr.length} file${arr.length>1?'s':''} · ${merged.length} stocks`);
+    } catch(e) { setParseError(`Error: ${e instanceof Error?e.message:String(e)}`); }
+    setLoading(false);
+  }
+
+  const GRADES: USAGrade[] = ['A+','A','B+','B','C','D'];
+  const GRADE_COLOR_US: Record<USAGrade,string> = {'A+':'#10b981','A':'#34d399','B+':'#f59e0b','B':'#f97316','C':'#fb923c','D':'#ef4444'};
+  let filtered = gradeFilter.has('ALL') ? rows : rows.filter(r=>gradeFilter.has(r.grade));
+  if (accelOnly) filtered = filtered.filter(r=>r.accelSignal==='ACCELERATING');
+
+  return (
+    <div style={{maxWidth:1100,margin:'0 auto',padding:'28px 20px'}}>
+      {/* Header */}
+      <div style={{marginBottom:20,padding:'18px 20px',backgroundColor:CARD_BG,border:`1px solid ${BORDER}`,borderRadius:12}}>
+        <div style={{fontSize:F.lg,fontWeight:800,color:'#38bdf8',marginBottom:8}}>🇺🇸 USA Multibagger — TradingView Export</div>
+        <div style={{fontSize:F.md,color:MUTED,lineHeight:1.8,marginBottom:12}}>
+          Export from TradingView Screener as CSV and upload. All columns auto-detected.
+          <span style={{color:YELLOW}}> Recommended extra columns to add:</span>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(240px,1fr))',gap:8}}>
+          {[
+            {field:'EPS diluted growth %, TTM YoY', why:'Profit growth — Fisher Twin Engine'},
+            {field:'Return on invested capital %, Annual', why:'ROIC — capital efficiency'},
+            {field:'Debt / equity ratio', why:'Leverage measurement'},
+            {field:'Net profit margin %, TTM', why:'Profitability quality'},
+            {field:'Change from 52-week high, %', why:'Technical RS proxy'},
+            {field:'1-year performance %', why:'Momentum confirmation'},
+          ].map(({field,why})=>(
+            <div key={field} style={{padding:'8px 12px',backgroundColor:CARD2,borderRadius:6,border:`1px solid ${BORDER}`}}>
+              <div style={{fontSize:F.sm,fontWeight:700,color:ACCENT}}>{field}</div>
+              <div style={{fontSize:F.xs,color:MUTED}}>{why}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Upload */}
+      <div
+        onClick={()=>fileRef.current?.click()}
+        onDragOver={e=>e.preventDefault()}
+        onDrop={e=>{e.preventDefault();if(e.dataTransfer.files.length)handleFiles(e.dataTransfer.files);}}
+        style={{marginBottom:20,padding:'32px 24px',border:`2px dashed #38bdf840`,borderRadius:14,textAlign:'center',cursor:'pointer',backgroundColor:'#38bdf805'}}
+      >
+        <div style={{fontSize:40,marginBottom:10}}>{loading?'⏳':'📁'}</div>
+        <div style={{fontSize:F.xl,fontWeight:700,color:'#38bdf8'}}>
+          {loading?'Scoring...' : fileName?`✅ ${fileName}` : 'Upload TradingView CSV'}
+        </div>
+        <div style={{fontSize:F.md,color:MUTED,marginTop:6}}>Export any TradingView screen · .csv · all columns auto-detected</div>
+        <input ref={fileRef} type="file" accept=".csv,.xlsx" multiple style={{display:'none'}}
+          onChange={e=>{if(e.target.files?.length)handleFiles(e.target.files);}} />
+      </div>
+      {parseError && <div style={{marginBottom:14,padding:'12px',backgroundColor:`${RED}10`,border:`1px solid ${RED}30`,borderRadius:10,fontSize:F.md,color:RED}}>{parseError}</div>}
+
+      {rows.length>0&&(
+        <>
+          {/* Summary */}
+          <div style={{display:'flex',gap:14,marginBottom:18,flexWrap:'wrap',alignItems:'stretch'}}>
+            {[
+              {label:'Scored',value:rows.length,color:'#38bdf8'},
+              {label:'Top Picks (B+)',value:rows.filter(r=>['A+','A','B+'].includes(r.grade)).length,color:GREEN},
+              {label:'Best Score',value:rows[0]?.score??0,color:rows[0]?.score>=72?GREEN:YELLOW},
+              {label:'Avg Score',value:Math.round(rows.reduce((a,r)=>a+r.score,0)/rows.length),color:MUTED},
+            ].map(({label,value,color})=>(
+              <div key={label} style={{padding:'14px 22px',backgroundColor:CARD_BG,border:`1px solid ${BORDER}`,borderRadius:10,textAlign:'center'}}>
+                <div style={{fontSize:F.h1,fontWeight:900,color}}>{value}</div>
+                <div style={{fontSize:F.sm,color:MUTED,marginTop:2}}>{label}</div>
+              </div>
+            ))}
+            <div style={{display:'flex',gap:6,alignItems:'center',marginLeft:'auto',flexWrap:'wrap'}}>
+              {(['ALL',...GRADES] as const).map(g=>{
+                const active=gradeFilter.has(g);
+                const col=GRADE_COLOR_US[g as USAGrade]||'#38bdf8';
+                return <button key={g} onClick={()=>{
+                  if(g==='ALL'){setGradeFilter(new Set(['ALL']));return;}
+                  setGradeFilter(prev=>{const n=new Set(prev);n.delete('ALL');if(n.has(g)){n.delete(g);if(n.size===0)n.add('ALL');}else n.add(g);return n;});
+                }} style={{fontSize:F.sm,fontWeight:700,padding:'7px 12px',borderRadius:8,border:`1px solid ${active?col+'60':BORDER}`,background:active?col+'18':'transparent',color:active?col:MUTED,cursor:'pointer'}}>
+                  {g}{g!=='ALL'&&` (${rows.filter(r=>r.grade===g).length})`}
+                </button>;
+              })}
+              <button onClick={()=>setAccelOnly(v=>!v)} style={{fontSize:F.xs,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${accelOnly?GREEN+'60':BORDER}`,background:accelOnly?`${GREEN}14`:'transparent',color:accelOnly?GREEN:MUTED,cursor:'pointer'}}>
+                🚀 Accelerating ({rows.filter(r=>r.accelSignal==='ACCELERATING').length})
+              </button>
+              <button onClick={()=>{setExpandAll(v=>!v);setExpRow(null);}} style={{fontSize:F.xs,fontWeight:700,padding:'5px 12px',borderRadius:7,cursor:'pointer',border:`1px solid ${expandAll?ACCENT+'60':BORDER}`,background:expandAll?ACCENT+'14':'transparent',color:expandAll?ACCENT:MUTED}}>
+                {expandAll?'⊟ Collapse All':'⊞ Expand All'}
+              </button>
+              <span style={{fontSize:F.xs,color:MUTED}}>{filtered.length} showing</span>
+              <button onClick={()=>{ if(window.confirm(`Clear all ${rows.length} stocks?`)){setRowsState([]);localStorage.removeItem(USA_STORAGE_KEY);setFileName('');} }} style={{fontSize:F.xs,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${RED}40`,background:`${RED}10`,color:RED,cursor:'pointer'}}>
+                🗑 Clear
+              </button>
+            </div>
+          </div>
+
+          {/* Table Header */}
+          <div style={{display:'grid',gridTemplateColumns:'120px 150px 65px 65px 100px 110px 1fr 70px',gap:8,padding:'10px 14px',fontSize:F.xs,fontWeight:700,letterSpacing:'0.6px',color:MUTED,borderBottom:`1px solid ${BORDER}`}}>
+            <span>TICKER</span><span>COMPANY</span><span>SCORE</span><span>GRADE</span>
+            <span style={{color:YELLOW}}>VALUATION</span>
+            <span>ACCEL</span><span>PILLARS</span><span>COV</span>
+          </div>
+
+          {filtered.map((r,idx)=>{
+            const isExp=expandAll||expRow===r.symbol;
+            return (
+              <div key={r.symbol+idx} style={{borderBottom:`1px solid rgba(255,255,255,0.05)`}}>
+                <button onClick={()=>setExpRow(isExp?null:r.symbol)} style={{width:'100%',background:isExp?CARD_BG:'transparent',border:'none',cursor:'pointer',textAlign:'left',padding:'12px 14px'}}>
+                  <div style={{display:'grid',gridTemplateColumns:'120px 150px 65px 65px 100px 110px 1fr 70px',gap:8,alignItems:'center'}}>
+                    <div>
+                      <div style={{display:'flex',alignItems:'center',gap:5}}>
+                        <span style={{fontSize:F.lg,fontWeight:800,color:TEXT}}>{r.symbol}</span>
+                        {idx<3&&<span style={{fontSize:F.md}}>⭐</span>}
+                      </div>
+                      <span style={{fontSize:F.xs,color:MUTED}}>{r.exchange}</span>
+                      {r.nextEarnings&&<div style={{fontSize:9,color:'#f59e0b'}}>📅 {r.nextEarnings}</div>}
+                    </div>
+                    <span style={{fontSize:F.sm,color:MUTED,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.company}</span>
+                    <span style={{fontSize:F.h2,fontWeight:900,color:GRADE_COLOR_US[r.grade]}}>{r.score}</span>
+                    <span style={{fontSize:F.md,fontWeight:800,padding:'4px 8px',borderRadius:6,color:GRADE_COLOR_US[r.grade],backgroundColor:`${GRADE_COLOR_US[r.grade]}18`,border:`1px solid ${GRADE_COLOR_US[r.grade]}30`,textAlign:'center'}}>{r.grade}</span>
+                    <div style={{display:'flex',flexDirection:'column',gap:3}}>
+                      {r.forwardPe !== undefined && r.forwardPe > 0
+                        ? <div style={{display:'flex',alignItems:'baseline',gap:3}}><span style={{fontSize:F.xs,color:MUTED}}>Fwd P/E</span><span style={{fontSize:F.md,fontWeight:800,color:r.forwardPe<25?GREEN:r.forwardPe<50?YELLOW:ORANGE}}>{r.forwardPe.toFixed(0)}×</span></div>
+                        : r.pe !== undefined && r.pe > 0
+                        ? <div style={{display:'flex',alignItems:'baseline',gap:3}}><span style={{fontSize:F.xs,color:MUTED}}>P/E</span><span style={{fontSize:F.md,fontWeight:800,color:r.pe<25?GREEN:r.pe<50?YELLOW:ORANGE}}>{r.pe.toFixed(0)}×</span></div>
+                        : <span style={{fontSize:F.xs,color:`${MUTED}60`}}>P/E —</span>
+                      }
+                      {r.evEbitda !== undefined && r.evEbitda > 0
+                        ? <span style={{fontSize:10,color:MUTED}}>EV/EBITDA {r.evEbitda.toFixed(0)}×</span>
+                        : null}
+                      {r.marketCapB !== undefined && <span style={{fontSize:9,color:MUTED}}>${r.marketCapB >= 1 ? r.marketCapB.toFixed(1)+'B' : (r.marketCapB*1000).toFixed(0)+'M'}</span>}
+                    </div>
+                    <div style={{display:'flex',flexDirection:'column',gap:2}}>
+                      <span style={{fontSize:F.xs,fontWeight:700,color:r.accelSignal==='ACCELERATING'?GREEN:r.accelSignal==='DECELERATING'?RED:MUTED}}>
+                        {r.accelSignal??'—'}
+                      </span>
+                      {r.revenueGrowthQtr !== undefined && <span style={{fontSize:10,color:MUTED}}>QoQ +{r.revenueGrowthQtr.toFixed(0)}%</span>}
+                      {r.revenueGrowthAnn !== undefined && <span style={{fontSize:10,color:MUTED}}>Ann +{r.revenueGrowthAnn.toFixed(0)}%</span>}
+                    </div>
+                    <div style={{display:'flex',gap:4,alignItems:'center',flexWrap:'wrap'}}>
+                      {r.pillarScores.map(p=>(
+                        <div key={p.id} style={{display:'flex',flexDirection:'column',alignItems:'center',gap:2,minWidth:32}}>
+                          <span style={{fontSize:F.sm,fontWeight:700,color:p.color}}>{p.score}</span>
+                          <div style={{width:26,height:5,backgroundColor:'rgba(255,255,255,0.08)',borderRadius:2,overflow:'hidden'}}>
+                            <div style={{height:'100%',width:`${p.score}%`,backgroundColor:p.color}}/>
+                          </div>
+                          <span style={{fontSize:9,color:MUTED}}>{p.label.slice(0,4)}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <span style={{fontSize:F.sm,color:r.coverage>=70?GREEN:r.coverage>=50?YELLOW:ORANGE}}>{r.coverage}%</span>
+                  </div>
+                </button>
+                {isExp&&(
+                  <div style={{padding:'16px 14px 20px',backgroundColor:`${CARD_BG}CC`,borderTop:`1px solid ${BORDER}`}}>
+                    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:16}}>
+                      <div>
+                        <div style={{fontSize:F.sm,color:MUTED,fontWeight:700,letterSpacing:'0.8px',marginBottom:8}}>KEY METRICS</div>
+                        {[
+                          ['Rev Growth (Ann)','revenueGrowthAnn','%'],['Rev Growth (Qtr YoY)','revenueGrowthQtr','%'],
+                          ['Gross Margin','grossMarginAnn','%'],['FCF Margin','fcfMarginAnn','%'],
+                          ['Operating Margin','opmTtm','%'],['Net Profit Margin','netProfitMargin','%'],
+                          ['ROE','roe','%'],['ROIC','roic','%'],
+                          ['P/E','pe','×'],['Forward P/E','forwardPe','×'],['EV/EBITDA','evEbitda','×'],['P/S','ps','×'],
+                          ['Market Cap','marketCapB','$B'],['D/E','de','×'],['EPS Growth','epsGrowth','%'],
+                          ['1Y Performance','perf1y','%'],['vs 52W High','pctFrom52wHigh','%'],
+                        ].filter(([,f])=>(r as any)[f]!==undefined).map(([label,field,unit])=>{
+                          const v=(r as any)[field] as number;
+                          return (
+                            <div key={String(field)} style={{display:'flex',justifyContent:'space-between',fontSize:F.md,padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
+                              <span style={{color:MUTED}}>{label}</span>
+                              <span style={{color:TEXT,fontWeight:700}}>{unit==='$B'?`$${v.toFixed(1)}B`:unit==='%'?`${v.toFixed(1)}%`:`${v.toFixed(1)}×`}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div>
+                        {r.strengths.length>0&&<>
+                          <div style={{fontSize:F.sm,color:GREEN,fontWeight:700,marginBottom:6}}>✅ STRENGTHS</div>
+                          {r.strengths.map((s,i)=><div key={i} style={{fontSize:F.md,color:MUTED,padding:'3px 0'}}>› {s}</div>)}
+                        </>}
+                        {r.risks.length>0&&<>
+                          <div style={{fontSize:F.sm,color:ORANGE,fontWeight:700,marginTop:12,marginBottom:6}}>⚠️ RISKS</div>
+                          {r.risks.map((s,i)=><div key={i} style={{fontSize:F.md,color:MUTED,padding:'3px 0'}}>› {s}</div>)}
+                        </>}
+                        <div style={{fontSize:F.sm,color:MUTED,marginTop:12,borderTop:`1px solid ${BORDER}`,paddingTop:8}}>
+                          {r.sector} · {r.exchange} · Data: {r.coverage}% · {r.nextEarnings&&`Next earnings: ${r.nextEarnings}`}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </>
+      )}
+      {!rows.length&&!loading&&(
+        <div style={{textAlign:'center',padding:56,color:MUTED}}>
+          <div style={{fontSize:48}}>🇺🇸</div>
+          <div style={{fontSize:F.h2,color:TEXT,fontWeight:700,marginTop:14}}>Upload TradingView CSV to score US stocks</div>
+          <div style={{fontSize:F.md,color:MUTED,marginTop:8}}>Go to TradingView Screener → add the columns above → Export CSV → upload here</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // MAIN PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -3118,7 +3681,7 @@ const STORAGE_KEY = 'mb_excel_scored_v2';
 const STORAGE_META = 'mb_excel_meta_v2';
 
 export default function MultibaggerPage() {
-  const [activeTab, setActiveTab] = useState<'excel'|'checklist'>('excel');
+  const [activeTab, setActiveTab] = useState<'excel'|'usa'|'checklist'>('excel');
 
   // Lazy-init from localStorage — data survives navigation and page refresh.
   // Only cleared when user explicitly clicks "Clear All Data".
@@ -3127,9 +3690,11 @@ export default function MultibaggerPage() {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved) as ExcelResult[];
-        // Always apply forced ranking on load — ensures grade distribution is correct
-        // even when data was saved before forced ranking was implemented
-        const sorted = [...parsed].sort((a, b) => b.score - a.score);
+        // RE-SCORE on every load — ExcelResult extends ExcelRow, so all raw fields
+        // are preserved in localStorage. Re-running scoreExcelRow picks up any
+        // scoring formula changes (e.g. new -30 growth filter) without re-upload.
+        const rescored = parsed.map(r => scoreExcelRow(r as unknown as ExcelRow));
+        const sorted = rescored.sort((a, b) => b.score - a.score);
         return applyForcedRanking(sorted);
       }
     } catch {}
@@ -3181,7 +3746,8 @@ export default function MultibaggerPage() {
           </div>
           <div style={{display:'flex',gap:0}}>
             {([
-              {id:'excel',    label:'📤 Excel Score & Rank'},
+              {id:'excel',    label:'🇮🇳 India Multibagger Ranking'},
+              {id:'usa',      label:'🇺🇸 USA Multibagger'},
               {id:'checklist',label:`📋 Research Checklist${excelRows.length?` (${excelRows.length} loaded)`:''}`},
             ] as const).map(tab=>{
               const active=activeTab===tab.id;
@@ -3196,6 +3762,7 @@ export default function MultibaggerPage() {
       </div>
 
       {activeTab==='excel'     && <ExcelCompare rows={excelRows} setRows={setExcelRows} />}
+      {activeTab==='usa'       && <USACompare />}
       {activeTab==='checklist' && <MultibaggerChecklist excelRows={excelRows} />}
     </div>
   );
