@@ -1858,6 +1858,9 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   // P/E and PEG range filters — 'ALL' means no filter
   const [peMax, setPeMax] = useState<'ALL'|15|25|40|60|100>('ALL');
   const [pegMax, setPegMax] = useState<'ALL'|0.8|1.0|1.5|2.0>('ALL');
+  // Guidance tier filter — only applies when guidanceMode is ON
+  type GuidanceTier = 'ALL'|'STRONG'|'POS'|'NEUTRAL'|'NEG'|'WEAK';
+  const [guidanceTier, setGuidanceTier] = useState<GuidanceTier>('ALL');
 
   // ── GUIDANCE MODE ──────────────────────────────────────────────────────────
   // When ON: fetches recent earnings/guidance news, scores each company
@@ -2132,6 +2135,19 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   // P/E and PEG filters — only apply when data is available for a stock
   if (peMax  !== 'ALL') baseRows = baseRows.filter(r => r.pe  !== undefined && r.pe  > 0 && r.pe  <= peMax);
   if (pegMax !== 'ALL') baseRows = baseRows.filter(r => r.peg !== undefined && r.peg > 0 && r.peg <= pegMax);
+  // Guidance tier filter — only meaningful when guidance mode is ON
+  if (guidanceTier !== 'ALL' && guidanceMode) {
+    baseRows = baseRows.filter(r => {
+      const gs = guidanceScores[r.symbol];
+      if (gs === undefined || gs === -1) return false;
+      if (guidanceTier === 'STRONG')  return gs >= 0.70;
+      if (guidanceTier === 'POS')     return gs >= 0.55 && gs < 0.70;
+      if (guidanceTier === 'NEUTRAL') return gs > 0.45 && gs < 0.55;
+      if (guidanceTier === 'NEG')     return gs > 0.30 && gs <= 0.45;
+      if (guidanceTier === 'WEAK')    return gs <= 0.30;
+      return true;
+    });
+  }
   const baseFiltered = gradeFilter.has('ALL') ? baseRows : baseRows.filter(r => gradeFilter.has(r.grade));
   // Apply guidance re-scoring and re-sort when guidance mode is active
   const filtered = guidanceMode && Object.keys(guidanceScores).length > 0
@@ -2356,6 +2372,25 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                 {f.label} ({f.count})
               </button>
             ))}
+            {/* Guidance tier filter — only shown when guidance mode is ON */}
+            {guidanceMode && <>
+              <div style={{width:1,background:BORDER,height:20}}/>
+              <span style={{fontSize:F.xs,color:'#F59E0B',fontWeight:700,letterSpacing:'0.5px'}}>GUIDANCE:</span>
+              {([
+                {k:'ALL' as GuidanceTier,    label:'All',        col:MUTED},
+                {k:'STRONG' as GuidanceTier, label:'▲ Strong',   col:GREEN},
+                {k:'POS' as GuidanceTier,    label:'↑ Positive', col:'#34d399'},
+                {k:'NEUTRAL' as GuidanceTier,label:'→ Neutral',  col:MUTED},
+                {k:'NEG' as GuidanceTier,    label:'↓ Negative', col:ORANGE},
+                {k:'WEAK' as GuidanceTier,   label:'▼ Weak',     col:RED},
+              ] as const).map(({k,label,col})=>(
+                <button key={k} onClick={()=>setGuidanceTier(prev=>prev===k?'ALL':k)}
+                  style={{fontSize:F.xs,fontWeight:700,padding:'4px 9px',borderRadius:6,
+                  border:`1px solid ${guidanceTier===k?col+'60':BORDER}`,background:guidanceTier===k?col+'18':'transparent',color:guidanceTier===k?col:MUTED,cursor:'pointer'}}>
+                  {label}
+                </button>
+              ))}
+            </>}
             {/* P/E filter */}
             <div style={{width:1,background:BORDER,height:20}}/>
             <span style={{fontSize:F.xs,color:MUTED,fontWeight:700,letterSpacing:'0.5px'}}>P/E:</span>
@@ -3198,9 +3233,12 @@ interface USARow {
   netProfitMargin?: number;       // Net profit margin %, TTM
   perf1y?: number;                // 1-year performance %
   pctFrom52wHigh?: number;        // Change from 52-week high, %
-  insiderOwnership?: number;      // Insider ownership % — US promoter proxy
-  analystCount?: number;          // Number of analyst estimates — low = undiscovered
-  forwardRevGrowth?: number;      // Forward revenue growth %, FY1 — visibility
+  insiderOwnership?: number;      // (not in TradingView — kept for future use)
+  analystCount?: number;          // (not in TradingView — kept for future use)
+  forwardRevGrowth?: number;      // (not in TradingView standard — kept for future use)
+  analystRating?: string;         // TradingView "Analyst Rating": Strong buy/Buy/Neutral/Sell
+  rsi14?: number;                 // TradingView "Relative strength index, 14"
+  pFcf?: number;                  // TradingView "Price to free cash flow, TTM"
   // Derived
   revenueAccel?: number;          // revenueGrowthQtr - revenueGrowthAnn
   accelSignal?: 'ACCELERATING'|'STABLE'|'DECELERATING';
@@ -3246,10 +3284,13 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
 
   // ── QUALITY (30%): Gross Margin, FCF Margin, OPM, ROE ──────────────────────
   let qualS=0, qualC=0;
-  if (row.grossMarginAnn !== undefined) {
-    const s=svUS(row.grossMarginAnn,b.gm); qualS+=s; qualC++;
-    if (s>=80) strengths.push(`Gross margin ${row.grossMarginAnn.toFixed(1)}% — pricing power, durable moat`);
-    else if (s<45) risks.push(`Gross margin ${row.grossMarginAnn.toFixed(1)}% — thin, limited pricing power`);
+  // Use TTM as primary gross margin (TradingView now provides TTM; Annual is fallback)
+  const effectiveGM = row.grossMarginTtm ?? row.grossMarginAnn;
+  if (effectiveGM !== undefined) {
+    const s=svUS(effectiveGM,b.gm); qualS+=s; qualC++;
+    const label = row.grossMarginTtm !== undefined ? 'TTM' : 'Annual';
+    if (s>=80) strengths.push(`Gross margin ${effectiveGM.toFixed(1)}% (${label}) — pricing power, durable moat`);
+    else if (s<45) risks.push(`Gross margin ${effectiveGM.toFixed(1)}% (${label}) — thin, limited pricing power`);
   }
   if (row.fcfMarginAnn !== undefined) {
     const s = row.fcfMarginAnn>=25?92:row.fcfMarginAnn>=15?82:row.fcfMarginAnn>=8?65:row.fcfMarginAnn>=0?45:20;
@@ -3406,6 +3447,49 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
   const tailwind = getSectorTailwind(row.sector);
   if (tailwind.score >= 70) { mktS = Math.min(100, mktS+6); strengths.push(`Sector tailwind (${tailwind.label}): ${tailwind.drivers.slice(0,50)}`); }
 
+  // ── Analyst Rating (TradingView consensus) ───────────────────────────────
+  if (row.analystRating) {
+    const rating = row.analystRating.toLowerCase().trim();
+    if (rating.includes('strong buy')) {
+      mktS = Math.min(100, mktS + 8);
+      strengths.push(`Analyst consensus: Strong Buy — institutional conviction signal`);
+    } else if (rating.includes('buy')) {
+      mktS = Math.min(100, mktS + 4);
+      strengths.push(`Analyst consensus: Buy — positive professional outlook`);
+    } else if (rating.includes('strong sell')) {
+      mktS = Math.max(0, mktS - 10);
+      risks.push(`Analyst consensus: Strong Sell — professional community broadly negative`);
+    } else if (rating.includes('sell')) {
+      mktS = Math.max(0, mktS - 5);
+      risks.push(`Analyst consensus: Sell — analysts see downside risk`);
+    }
+    // Neutral / Hold → no adjustment (no signal)
+  }
+
+  // ── RSI Momentum (TradingView "Relative strength index, 14") ─────────────
+  if (row.rsi14 !== undefined) {
+    if (row.rsi14 >= 55 && row.rsi14 <= 75) {
+      mktS = Math.min(100, mktS + 5);
+      strengths.push(`RSI ${row.rsi14.toFixed(0)} — uptrend momentum zone (not overbought)`);
+    } else if (row.rsi14 > 80) {
+      risks.push(`RSI ${row.rsi14.toFixed(0)} — overbought, potential short-term pullback`);
+    } else if (row.rsi14 < 35) {
+      if (row.accelSignal === 'ACCELERATING') {
+        strengths.push(`RSI ${row.rsi14.toFixed(0)} — oversold with accelerating fundamentals (potential entry)`);
+      } else {
+        risks.push(`RSI ${row.rsi14.toFixed(0)} — oversold, momentum broken`);
+      }
+    }
+  }
+
+  // ── P/FCF Valuation (TradingView "Price to free cash flow, TTM") ─────────
+  if (row.pFcf !== undefined && row.pFcf > 0) {
+    const pfcfScore = row.pFcf < 15 ? 90 : row.pFcf < 25 ? 78 : row.pFcf < 40 ? 62 : row.pFcf < 60 ? 44 : 25;
+    valComponents.push(pfcfScore * 0.8); // slightly less weight than P/E but highly credible
+    if (row.pFcf < 20) strengths.push(`P/FCF ${row.pFcf.toFixed(0)}× — cheap on free cash flow basis (Buffett preferred metric)`);
+    else if (row.pFcf > 60) risks.push(`P/FCF ${row.pFcf.toFixed(0)}× — expensive relative to free cash flow`);
+  }
+
   // ── LEVERAGE CHECK ────────────────────────────────────────────────────────
   if (row.de !== undefined && row.de > 2.0) risks.push(`D/E ${row.de.toFixed(2)}× — significant leverage`);
   if (row.netDebtUsd !== undefined && row.marketCapUsd !== undefined && row.marketCapUsd > 0) {
@@ -3421,8 +3505,11 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
   const val   = valS;
   const mkt   = mktS;
 
-  const filledFields = [row.revenueGrowthAnn, row.grossMarginAnn, row.fcfMarginAnn, row.opmTtm, row.roe, row.evEbitda, row.pe||row.forwardPe, row.marketCapUsd, row.netDebtUsd, row.revenueGrowthQtr, row.epsGrowth, row.roic, row.ruleOf40].filter(v=>v!==undefined).length;
-  const coverage = Math.min(100, Math.round(filledFields/13*100));
+  const filledFields = [effectiveGM, row.fcfMarginAnn, row.opmTtm, row.roe, row.evEbitda,
+    row.pe||row.forwardPe, row.marketCapUsd, row.netDebtUsd, row.revenueGrowthQtr,
+    row.revenueGrowthAnn, row.epsGrowth, row.roic, row.peg, row.revGrowth3yr,
+    row.analystRating ? 1 : undefined].filter(v=>v!==undefined).length;
+  const coverage = Math.min(100, Math.round(filledFields/15*100));
 
   const raw = qual*0.30 + growth*0.25 + accel*0.20 + val*0.15 + mkt*0.10;
   let score = Math.max(0, Math.min(100, Math.round(raw/5)*5));
@@ -3435,7 +3522,10 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
   const computedRuleOf40 = (row.revenueGrowthAnn !== undefined && row.fcfMarginAnn !== undefined)
     ? Math.round(row.revenueGrowthAnn + row.fcfMarginAnn)
     : row.ruleOf40;
-  const computedGMExpansion = (row.grossMarginTtm !== undefined && row.grossMarginAnn !== undefined)
+  // Gross margin expansion: TTM vs Annual. If user only has TTM (new CSV format),
+  // expansion can't be computed — returns undefined (handled gracefully in scoring).
+  const computedGMExpansion = (row.grossMarginTtm !== undefined && row.grossMarginAnn !== undefined
+                                && row.grossMarginTtm !== row.grossMarginAnn)
     ? Math.round((row.grossMarginTtm - row.grossMarginAnn) * 10) / 10
     : row.grossMarginExpansion;
 
@@ -3500,7 +3590,9 @@ function parseUSARow(row: Record<string,unknown>): USARow | null {
     marketCapB: mcapRaw !== undefined ? Math.round(mcapRaw/1e9*100)/100 : undefined,
     revenueGrowthQtr: revQtr,
     revenueGrowthAnn: revAnn,
-    grossMarginAnn:   n(row['Gross margin %, Annual']),
+    // Gross margin: use TTM (TradingView now provides Trailing 12 months) OR Annual as fallback
+    grossMarginAnn:   n(row['Gross margin %, Annual'] ??
+                        row['Gross margin %, Trailing 12 months']),  // TTM = primary if Annual missing
     fcfMarginAnn:     n(row['Free cash flow margin %, Annual']),
     grossProfitGrowthQtr: n(row['Gross profit growth %, Quarterly YoY']),
     pe:          n(row['Price to earnings ratio']),
@@ -3547,36 +3639,47 @@ function parseUSARow(row: Record<string,unknown>): USARow | null {
       row['% from 52W high'] ??
       row['Change from 52W High']
     ),
-    // New fields — add these in TradingView for better scoring
+    // ── TradingView fields (confirmed to exist) ──────────────────────────────
+    // 5-year CAGR (TradingView column: "Revenue growth %, 5 year CAGR")
     revGrowth3yr: n(
-      row['Revenue growth %, 3-year CAGR'] ??
+      row['Revenue growth %, 5 year CAGR'] ??  // TradingView exact name
+      row['Revenue growth %, 3-year CAGR'] ??  // fallback for old exports
       row['Revenue 3-year CAGR, %'] ??
       row['Revenue growth %, 3 year CAGR']
     ),
+    // Gross margin TTM (TradingView: "Gross margin %, Trailing 12 months")
     grossMarginTtm: n(
-      row['Gross margin %, TTM'] ??
-      row['Gross margin %, Trailing 12 months']
+      row['Gross margin %, Trailing 12 months'] ??  // TradingView exact
+      row['Gross margin %, TTM']
     ),
+    // PEG ratio TTM (TradingView: "Price to earning to growth, Trailing 12 months")
     peg: n(
+      row['Price to earning to growth, Trailing 12 months'] ??  // TradingView exact
       row['Price to earnings growth ratio'] ??
       row['PEG ratio'] ??
       row['PEG']
     ),
-    insiderOwnership: n(
-      row['Insider ownership, %'] ??
-      row['Insider ownership %'] ??
-      row['Insider Ownership, %']
+    // Analyst Rating (TradingView: "Analyst Rating" — string: Strong buy/Buy/Neutral/Sell)
+    analystRating: (() => {
+      const v = String(row['Analyst Rating'] ?? row['Analyst rating'] ?? '').trim();
+      return v || undefined;
+    })(),
+    // RSI (TradingView: "Relative strength index, 14")
+    rsi14: n(
+      row['Relative strength index, 14'] ??
+      row['RSI, 14'] ??
+      row['RSI']
     ),
-    analystCount: n(
-      row['Number of analyst estimates'] ??
-      row['Analyst ratings'] ??
-      row['Analysts']
+    // P/FCF (TradingView: "Price to free cash flow, TTM")
+    pFcf: n(
+      row['Price to free cash flow, TTM'] ??
+      row['Price to free cash flow ratio, TTM'] ??
+      row['P/FCF']
     ),
-    forwardRevGrowth: n(
-      row['Forward revenue growth %, FY1'] ??
-      row['Revenue growth %, next year'] ??
-      row['Revenue growth est., next fiscal year, %']
-    ),
+    // ── Kept for forward compatibility but not standard in TradingView ───────
+    insiderOwnership: n(row['Insider ownership, %'] ?? row['Insider ownership %']),
+    analystCount:     n(row['Number of analyst estimates'] ?? row['Analysts']),
+    forwardRevGrowth: n(row['Forward revenue growth %, FY1'] ?? row['Revenue growth %, next year']),
     // Derived at parse time
     revenueAccel: (revQtr !== undefined && revAnn !== undefined) ? Math.round(revQtr - revAnn) : undefined,
     accelSignal: (revQtr !== undefined && revAnn !== undefined)
@@ -3907,9 +4010,10 @@ function USACompare() {
   const [expandAll, setExpandAll] = React.useState(false);
   const [gradeFilter, setGradeFilter] = React.useState<Set<string>>(new Set(['ALL']));
   const [accelOnly, setAccelOnly] = React.useState(false);
-  const [usPeMax,  setUsPeMax]  = React.useState<'ALL'|15|25|40|60|100>('ALL');
-  const [usPegMax, setUsPegMax] = React.useState<'ALL'|0.8|1.0|1.5|2.0>('ALL');
-  const [usFcfOnly, setUsFcfOnly] = React.useState(false);
+  const [usPeMax,       setUsPeMax]       = React.useState<'ALL'|15|25|40|60|100>('ALL');
+  const [usPegMax,      setUsPegMax]      = React.useState<'ALL'|0.8|1.0|1.5|2.0>('ALL');
+  const [usFcfOnly,     setUsFcfOnly]     = React.useState(false);
+  const [usRatingFilter,setUsRatingFilter]= React.useState<'ALL'|'BUY'|'STRONG_BUY'>('ALL');
 
   function setRows(r: USAResult[]) {
     const ranked = applyUSARanking(r);
@@ -3949,6 +4053,9 @@ function USACompare() {
   let filtered = gradeFilter.has('ALL') ? rows : rows.filter(r=>gradeFilter.has(r.grade));
   if (accelOnly)        filtered = filtered.filter(r=>r.accelSignal==='ACCELERATING');
   if (usFcfOnly)        filtered = filtered.filter(r=>(r.fcfMarginAnn ?? -99) >= 10);
+  // Analyst Rating filter
+  if (usRatingFilter === 'BUY')       filtered = filtered.filter(r => r.analystRating?.toLowerCase().includes('buy'));
+  if (usRatingFilter === 'STRONG_BUY')filtered = filtered.filter(r => r.analystRating?.toLowerCase().includes('strong buy'));
   // P/E filter uses forwardPe first (more forward-looking), falls back to trailing P/E
   if (usPeMax  !== 'ALL') filtered = filtered.filter(r=>{
     const pe = r.forwardPe && r.forwardPe > 0 ? r.forwardPe : r.pe;
@@ -3967,18 +4074,23 @@ function USACompare() {
         </div>
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(240px,1fr))',gap:8}}>
           {[
-            {field:'EPS diluted growth %, TTM YoY', why:'Profit growth — Fisher Twin Engine ✅ added'},
+            // ── Base export (always present in TradingView) ──────────────────
+            {field:'Gross margin %, Trailing 12 months', why:'GPM TTM — pricing power & moat ✅ confirmed in TradingView'},
+            {field:'Free cash flow margin %, Annual', why:'FCF quality ✅ confirmed in TradingView'},
+            {field:'Operating margin %, Trailing 12 months', why:'Operational efficiency ✅ in TradingView'},
+            {field:'Return on equity %, Trailing 12 months', why:'Returns quality ✅ in TradingView'},
+            // ── Add these — confirmed to exist in TradingView ────────────────
+            {field:'Earnings per share diluted growth %, TTM YoY', why:'EPS growth — Fisher Twin Engine ✅ added'},
             {field:'Return on invested capital %, Annual', why:'ROIC — capital efficiency ✅ added'},
             {field:'Debt to equity ratio, Quarterly', why:'Leverage ✅ added'},
             {field:'Net margin %, Trailing 12 months', why:'Net profitability ✅ added'},
-            {field:'Performance % 1 year', why:'Momentum ✅ added'},
-            {field:'Revenue growth %, 3-year CAGR', why:'🆕 Sustained growth vs spike check'},
-            {field:'Gross margin %, TTM', why:'🆕 Margin expansion signal (TTM vs Annual)'},
-            {field:'Price to earnings growth ratio', why:'🆕 PEG — growth-adjusted valuation'},
-            {field:'Insider ownership, %', why:'🆕 US promoter proxy — management skin in game'},
-            {field:'Number of analyst estimates', why:'🆕 Discovery: low count = undiscovered'},
-            {field:'Forward revenue growth %, FY1', why:'🆕 Visibility: analyst forward estimates'},
-            {field:'Change from 52-week high, %', why:'🆕 Technical RS proxy'},
+            {field:'Performance % 1 year', why:'1-year momentum ✅ added'},
+            {field:'Revenue growth %, 5 year CAGR', why:'Sustained growth vs spike check ✅ added'},
+            {field:'Price to earning to growth, Trailing 12 months', why:'PEG — growth-adjusted valuation ✅ added'},
+            {field:'Analyst Rating', why:'Buy/Strong Buy/Sell — consensus signal ✅ added'},
+            // ── Still to add — exist in TradingView ──────────────────────────
+            {field:'Relative strength index, 14', why:'🆕 RSI momentum — overbought/oversold signal'},
+            {field:'Price to free cash flow, TTM', why:'🆕 P/FCF — Buffett preferred valuation metric'},
           ].map(({field,why})=>(
             <div key={field} style={{padding:'8px 12px',backgroundColor:CARD2,borderRadius:6,border:`1px solid ${BORDER}`}}>
               <div style={{fontSize:F.sm,fontWeight:700,color:ACCENT}}>{field}</div>
@@ -4038,6 +4150,22 @@ function USACompare() {
                 💰 FCF≥10% ({rows.filter(r=>(r.fcfMarginAnn??-99)>=10).length})
               </button>
 
+              {/* Analyst Rating filter — only shown when data has ratings */}
+              {rows.some(r=>r.analystRating) && <>
+                <div style={{width:1,background:BORDER,height:18}}/>
+                <span style={{fontSize:F.xs,color:'#F59E0B',fontWeight:700}}>ANALYST:</span>
+                {([
+                  {k:'ALL' as const, label:'All', col:MUTED},
+                  {k:'BUY' as const, label:'Buy+', col:GREEN},
+                  {k:'STRONG_BUY' as const, label:'Strong Buy', col:'#10b981'},
+                ] as const).map(({k,label,col})=>(
+                  <button key={k} onClick={()=>setUsRatingFilter(p=>p===k?'ALL':k)} style={{fontSize:F.xs,fontWeight:700,padding:'4px 9px',borderRadius:6,
+                    border:`1px solid ${usRatingFilter===k?col+'60':BORDER}`,background:usRatingFilter===k?col+'18':'transparent',color:usRatingFilter===k?col:MUTED,cursor:'pointer'}}>
+                    {label} {k!=='ALL'&&`(${rows.filter(r=>k==='BUY'?r.analystRating?.toLowerCase().includes('buy'):r.analystRating?.toLowerCase().includes('strong buy')).length})`}
+                  </button>
+                ))}
+              </>}
+
               {/* Fwd P/E filter */}
               <div style={{width:1,background:BORDER,height:18}}/>
               <span style={{fontSize:F.xs,color:MUTED,fontWeight:700}}>Fwd P/E:</span>
@@ -4088,6 +4216,11 @@ function USACompare() {
                       </div>
                       <span style={{fontSize:F.xs,color:MUTED}}>{r.exchange}</span>
                       {r.nextEarnings&&<div style={{fontSize:9,color:'#f59e0b'}}>📅 {r.nextEarnings}</div>}
+                      {r.analystRating && (() => {
+                        const rating = r.analystRating.toLowerCase();
+                        const col = rating.includes('strong buy') ? GREEN : rating.includes('buy') ? '#34d399' : rating.includes('strong sell') ? RED : rating.includes('sell') ? ORANGE : MUTED;
+                        return <div style={{fontSize:9,fontWeight:700,color:col}}>{r.analystRating}</div>;
+                      })()}
                     </div>
                     <span style={{fontSize:F.sm,color:MUTED,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.company}</span>
                     <span style={{fontSize:F.h2,fontWeight:900,color:GRADE_COLOR_US[r.grade]}}>{r.score}</span>
@@ -4242,14 +4375,30 @@ export default function MultibaggerPage() {
                 SQGLP (MOSL 100×) · Fisher 100-Bagger · Multibagger Framework · Upload Screener.in → instant institutional scoring
               </p>
             </div>
-            {excelRows.length > 0 && (
+            {/* Tab-specific clear buttons — India and USA are independent datasets */}
+            {(activeTab==='excel'||activeTab==='checklist') && excelRows.length > 0 && (
               <button
-                onClick={() => { if (window.confirm(`Clear all ${excelRows.length} stocks? This cannot be undone.`)) clearExcelRows(); }}
+                onClick={() => { if (window.confirm(`Clear all ${excelRows.length} India stocks? This cannot be undone.`)) clearExcelRows(); }}
                 style={{padding:'8px 16px',backgroundColor:`${RED}14`,border:`1px solid ${RED}40`,borderRadius:8,color:RED,fontSize:F.sm,fontWeight:700,cursor:'pointer',flexShrink:0,whiteSpace:'nowrap'}}
               >
-                🗑 Clear All Data ({excelRows.length})
+                🗑 Clear India Data ({excelRows.length})
               </button>
             )}
+            {(activeTab==='usa'||activeTab==='usa-checklist') && (() => {
+              try {
+                const d = JSON.parse(localStorage.getItem('mb_usa_scored_v1')||'[]');
+                const count = Array.isArray(d) ? d.length : 0;
+                if (count === 0) return null;
+                return (
+                  <button
+                    onClick={() => { if (window.confirm(`Clear all ${count} USA stocks? This cannot be undone.`)) { localStorage.removeItem('mb_usa_scored_v1'); window.location.reload(); } }}
+                    style={{padding:'8px 16px',backgroundColor:`${RED}14`,border:`1px solid ${RED}40`,borderRadius:8,color:RED,fontSize:F.sm,fontWeight:700,cursor:'pointer',flexShrink:0,whiteSpace:'nowrap'}}
+                  >
+                    🗑 Clear USA Data ({count})
+                  </button>
+                );
+              } catch { return null; }
+            })()}
           </div>
           <div style={{display:'flex',gap:0}}>
             {([
