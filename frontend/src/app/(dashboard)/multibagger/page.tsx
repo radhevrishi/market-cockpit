@@ -229,12 +229,21 @@ interface ExcelRow {
   fii?: number; dii?: number;
   // Market/momentum
   dma200?: number; return1m?: number; return1w?: number;
+  // ── NEW: Incremental / trend fields (Gap 1-3, 5, 7) ──────────────────────
+  roce3yr?: number;      // ROCE 3 years ago → incremental ROCE signal (Gap 1)
+  opm3yr?: number;       // OPM 3 years ago → margin expansion / revenue quality (Gap 2)
+  high52w?: number;      // 52-week High → technical proximity / RS proxy (Gap 7)
   // Derived
   marginOfSafety?: number;
   aboveDMA200?: number;
   netDebtEbitda?: number;
   fiiPlusDii?: number;
   opLeverageRatio?: number;    // profitCagr / revCagr (historical)
+  evEbitda?: number;           // (MCap + NetDebt) / EBITDA → enterprise value check (Gap 5)
+  fcfYield?: number;           // FCF / MCap × 100% → cash return on market cap (Gap 5)
+  roceExpansion?: number;      // roce − roce3yr → is new capital productive? (Gap 1)
+  opmExpansion?: number;       // opm − opm3yr → pricing power / margin quality (Gap 2)
+  pctFrom52wHigh?: number;     // (price − high52w) / high52w × 100 → technical RS proxy (Gap 7)
   // ── RECENT / ACCELERATION — Framework.docx Core Signal ────────────────────
   // Derived by comparing latest quarter (YOY) vs historical CAGR
   revenueAcceleration?: number;   // yoySalesGrowth - revCagr → positive = accelerating
@@ -392,6 +401,57 @@ function sv(v: number|undefined, bench: number[], hiGood=true): number {
 function isCyclicalSector(sector: string): boolean {
   const s = sector.toUpperCase();
   return /METAL|STEEL|IRON|ALUMIN|COPPER|ZINC|CEMENT|MINING|MINERAL|COMMODITY|OIL|GAS|CRUDE|PETRO|SUGAR|COTTON|TEXTILE.*SPIN|FERTILISER|FERTILIZER|CAST.*FORG|FORG.*CAST|SHIPPING|BULK/.test(s);
+}
+
+// ── INDUSTRY TAILWIND ENGINE (Gap 3) ─────────────────────────────────────────
+// Structural industry tailwind score (0-100) based on policy, demand cycle, global shift.
+// Sources: MOSL sector studies, PLI notifications, DPIIT data, RBI credit flows.
+// "Invest in right industry at right cycle point" — Fisher Stage 1 + MOSL core principle.
+function getSectorTailwind(sector: string): { score: number; label: 'HIGH'|'MEDIUM-HIGH'|'MEDIUM'|'LOW'; drivers: string } {
+  const s = sector.toUpperCase();
+  // HIGH TAILWIND (75–100) — structural multi-year growth + strong policy support
+  if (/DEFENCE|AERO|AEROSPACE|MILITARY|ORDNANCE|DEFENCE.*MFG/.test(s))
+    return { score:95, label:'HIGH', drivers:'Indigenisation mandate + export push + PLI scheme' };
+  if (/EMS|ELECTRONICS.*MFG|ELEC.*COMPONENT|PCB|CIRCUIT.*BOARD/.test(s))
+    return { score:90, label:'HIGH', drivers:'PLI scheme + Apple/Samsung supply chain + China+1' };
+  if (/DATA.*CENT|AI.*INFRA|CLOUD.*INFRA/.test(s))
+    return { score:88, label:'HIGH', drivers:'AI infrastructure build-out, secular multi-decade growth' };
+  if (/RAILWAY|METRO|BULLET.*TRAIN|FREIGHT.*CORR/.test(s))
+    return { score:85, label:'HIGH', drivers:'₹2.5L Cr capex cycle, dedicated freight corridor' };
+  if (/SOLAR|WIND.*POWER|GREEN.*HYDROGEN|RENEW.*ENERGY|CLEAN.*ENERGY/.test(s))
+    return { score:83, label:'HIGH', drivers:'500 GW target, ISTS waiver, favourable policy' };
+  if (/CDMO|CONTRACT.*MFG.*PHARMA|CONTRACT.*RESEARCH|CRO.*PHARMA/.test(s))
+    return { score:82, label:'HIGH', drivers:'China+1 API diversification, global pharma outsourcing' };
+  if (/LOGISTIC|WAREHOU|3PL|SUPPLY.*CHAIN|COLD.*CHAIN/.test(s))
+    return { score:76, label:'HIGH', drivers:'Organised logistics growth, e-comm + GST formalisation' };
+  // MEDIUM-HIGH (55–74)
+  if (/SPECIALTY.*CHEM|SPEC.*CHEM|FLUOROCHEM|FINE.*CHEM/.test(s))
+    return { score:68, label:'MEDIUM-HIGH', drivers:'China+1, import substitution, global specialty demand' };
+  if (/CAPITAL.*GOOD|HEAVY.*ENGG|MACHINE.*TOOL|POWER.*EQUIP/.test(s))
+    return { score:66, label:'MEDIUM-HIGH', drivers:'Capex supercycle, PLI, MSME formalisation' };
+  if (/HOSPITAL|DIAGNOSTICS|HEALTH.*SERVICE|MEDTECH|MED.*DEVICE/.test(s))
+    return { score:62, label:'MEDIUM-HIGH', drivers:'Under-penetrated healthcare, insurance expansion' };
+  if (/SMALL.*FIN|MICRO.*FIN|NBFC|PRIV.*BANK/.test(s))
+    return { score:60, label:'MEDIUM-HIGH', drivers:'Credit growth, banking formalisation, India consumption' };
+  // MEDIUM (40–54)
+  if (/TECH|SOFTWARE|IT |SAAS|INTERNET/.test(s))
+    return { score:50, label:'MEDIUM', drivers:'Steady IT spend; near-term pressure from AI commoditisation' };
+  if (/CONSUMER|FMCG|RETAIL.*BRAND|D2C|FOOD.*BEVER/.test(s))
+    return { score:50, label:'MEDIUM', drivers:'Middle class + premiumisation; volume growth moderate' };
+  if (/PHARMA|GENERIC.*DRUG|FORMULATION/.test(s))
+    return { score:46, label:'MEDIUM', drivers:'US generic pricing pressure, USFDA compliance costs' };
+  if (/AUTO.*ANC|COMPONENT|BEARING|TYRE/.test(s))
+    return { score:44, label:'MEDIUM', drivers:'ICE→EV transition uncertainty on component mix' };
+  // LOW (0–39) — structural headwinds or peak-cycle risk
+  if (/METAL|STEEL|IRON|ALUMIN|COPPER|ZINC|CEMENT/.test(s))
+    return { score:28, label:'LOW', drivers:'Commodity cycle, China oversupply risk, mean reversion' };
+  if (/TEXTILE|COTTON|YARN|APPAREL|GARMENT|WEAV|DENIM/.test(s))
+    return { score:30, label:'LOW', drivers:'Competition from Bangladesh/Vietnam, low pricing power' };
+  if (/OIL|GAS|CRUDE|PETRO|REFIN/.test(s))
+    return { score:25, label:'LOW', drivers:'Energy transition risk, volatile crude, margin pressure' };
+  if (/SUGAR|TOBACCO|ALCOHOL|LIQUOR|GAMING/.test(s))
+    return { score:22, label:'LOW', drivers:'Regulatory headwinds, excise risk, demand uncertainty' };
+  return { score:50, label:'MEDIUM', drivers:'Sector-specific factors; no strong policy signal' };
 }
 
 // ── FORCED RANKING — institutional grade distribution ─────────────────────────
@@ -581,6 +641,55 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     if (row.promoter>=55) strengths.push(`Promoter ${row.promoter.toFixed(0)}% — strong alignment`);
   }
 
+  // ── GAP 1: INCREMENTAL ROCE — capital productivity on new investments ──────
+  // "Does new capital earn at least as much as legacy capital?"
+  // Rising ROCE = reinvestment is value-accretive (Fisher key test).
+  // Falling ROCE despite high absolute level = growth is diluting returns (value trap).
+  if (row.roceExpansion !== undefined) {
+    if (row.roceExpansion > 8) {
+      qualS += 18; qualC += 0.7;
+      strengths.push(`Incremental ROCE +${row.roceExpansion.toFixed(1)}pp (3yr) — new capital highly productive`);
+    } else if (row.roceExpansion > 3) {
+      qualS += 10; qualC += 0.4;
+      strengths.push(`ROCE expanding +${row.roceExpansion.toFixed(1)}pp — capital efficiency improving`);
+    } else if (row.roceExpansion < -8) {
+      qualS -= 12;
+      risks.push(`Incremental ROCE −${Math.abs(row.roceExpansion).toFixed(1)}pp — growth diluting capital returns (value trap signal)`);
+    } else if (row.roceExpansion < -3) {
+      qualS -= 6;
+      risks.push(`ROCE contracting −${Math.abs(row.roceExpansion).toFixed(1)}pp — watch capital allocation discipline`);
+    }
+  }
+
+  // ── GAP 2: OPM EXPANSION — pricing power / revenue quality signal ──────────
+  // "Revenue quality = can the company expand margins as it grows?"
+  // OPM rising 3yr = structural pricing power, not just volume/inflation.
+  // OPM falling = moat eroding, competition intensifying.
+  if (row.opmExpansion !== undefined) {
+    if (row.opmExpansion > 5) {
+      qualS += 14; qualC += 0.5;
+      strengths.push(`OPM expanded +${row.opmExpansion.toFixed(1)}pp (3yr) — pricing power confirmed, revenue quality high`);
+    } else if (row.opmExpansion > 2) {
+      qualS += 7; qualC += 0.25;
+      strengths.push(`OPM improving +${row.opmExpansion.toFixed(1)}pp — margins trending right`);
+    } else if (row.opmExpansion < -5) {
+      qualS -= 10;
+      risks.push(`OPM compressed −${Math.abs(row.opmExpansion).toFixed(1)}pp (3yr) — pricing power eroding`);
+    } else if (row.opmExpansion < -2) {
+      qualS -= 5;
+      risks.push(`OPM declining −${Math.abs(row.opmExpansion).toFixed(1)}pp — margin pressure, watch competitive dynamics`);
+    }
+  }
+
+  // ── GAP 4: PROMOTER GOVERNANCE DEPTH (beyond holding %) ──────────────────
+  // Pledge % already scored in FIN_STRENGTH — but compound pledge + low promoter = danger
+  if (row.pledge !== undefined && row.promoter !== undefined) {
+    if (row.pledge > 30 && row.promoter < 50) {
+      redFlags.push({ label: `Pledge ${row.pledge.toFixed(0)}% + Promoter ${row.promoter.toFixed(0)}% — forced-sell spiral risk`, severity: 'HIGH', source: 'Fisher governance' });
+      risks.push(`Governance risk: high pledge (${row.pledge.toFixed(0)}%) on already-modest holding (${row.promoter.toFixed(0)}%) = lender control risk`);
+    }
+  }
+
   // ── GROWTH (historical trajectory) ───────────────────────────────────────
   if (row.revCagr!==undefined) {
     const s=sv(row.revCagr,[8,15,25]); growS+=s; growC++;
@@ -730,6 +839,38 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     if (row.marginOfSafety>20) strengths.push(`${row.marginOfSafety.toFixed(0)}% below intrinsic value — margin of safety`);
     if (row.marginOfSafety<-30) risks.push(`Price ${Math.abs(row.marginOfSafety).toFixed(0)}% above intrinsic value`);
   }
+  // ── GAP 5: EV/EBITDA — enterprise value vs operating earnings ──────────────
+  // More robust than PE for capital-structure-neutral comparison.
+  // Works for companies with significant debt or cash (PE would distort).
+  if (row.evEbitda !== undefined && row.evEbitda > 0) {
+    const skey = getSectorKey(row.sector);
+    const evBench = skey==='TECHNOLOGY'?[18,28,46] : skey==='PHARMA'?[14,21,34] :
+                    skey==='CONSUMER'?[16,26,42]   : skey==='INFRA'?[7,13,20]   :
+                    skey==='METALS'?[5,9,15]        : [10,16,26];
+    const evScore = sv(row.evEbitda, evBench, false); // lower EV/EBITDA = better
+    valComponents.push(evScore * 0.85); // slight discount vs PE — additional datapoint
+    if (row.evEbitda < evBench[0]) strengths.push(`EV/EBITDA ${row.evEbitda.toFixed(1)}× — cheap on enterprise value`);
+    else if (row.evEbitda > evBench[2] * 1.5) risks.push(`EV/EBITDA ${row.evEbitda.toFixed(1)}× — expensive vs operating earnings`);
+  }
+
+  // ── GAP 5: FCF YIELD — real cash return relative to market cap ─────────────
+  // Buffett's preferred metric: cash the business generates per rupee of market cap.
+  // FCF yield > 4% = attractively priced; > 6% = cheap; < 1% = expensive in cash terms.
+  if (row.fcfYield !== undefined) {
+    if (row.fcfYield > 6) {
+      valComponents.push(90);
+      strengths.push(`FCF yield ${row.fcfYield.toFixed(1)}% — generating exceptional cash vs market cap`);
+    } else if (row.fcfYield > 3) {
+      valComponents.push(72);
+      strengths.push(`FCF yield ${row.fcfYield.toFixed(1)}% — solid cash return on market cap`);
+    } else if (row.fcfYield > 1) {
+      valComponents.push(55);
+    } else if (row.fcfYield < 0) {
+      valComponents.push(28);
+      risks.push(`Negative FCF yield ${row.fcfYield.toFixed(1)}% — burning cash relative to market cap`);
+    }
+  }
+
   if (valComponents.length > 0) {
     valS = valComponents.reduce((a,b)=>a+b, 0) / valComponents.length;
   }
@@ -747,6 +888,34 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   if (row.aboveDMA200 !== undefined && row.aboveDMA200 > 0 && row.accelSignal === 'ACCELERATING') {
     mktS = Math.min(100, mktS + 8);
     strengths.push(`Price above DMA200 (+${row.aboveDMA200.toFixed(0)}%) AND revenue accelerating — re-rating in progress`);
+  }
+
+  // ── GAP 7: 52-WEEK HIGH PROXIMITY — relative strength proxy ──────────────
+  // Near 52W high = institutional buying confirmed, trend intact.
+  // Far below 52W high = price has rejected/broken down — thesis needs re-validation.
+  // Used as RS proxy since index-relative data isn't in Screener exports.
+  if (row.pctFrom52wHigh !== undefined) {
+    if (row.pctFrom52wHigh >= -5) {
+      // At or near 52W high — trend confirmation
+      mktS = Math.min(100, mktS + 10);
+      if (row.accelSignal === 'ACCELERATING') {
+        strengths.push(`Near 52W high (${row.pctFrom52wHigh.toFixed(0)}%) + accelerating fundamentals — breakout setup`);
+      } else {
+        strengths.push(`Near 52W high (${row.pctFrom52wHigh.toFixed(0)}%) — institutional buying confirmed`);
+      }
+    } else if (row.pctFrom52wHigh >= -20) {
+      mktS = Math.min(100, mktS + 4); // moderate pullback from high — healthy
+    } else if (row.pctFrom52wHigh < -40) {
+      // Significant drawdown — either opportunity (if fundamentals strong) or breakdown
+      mktS = Math.max(0, mktS - 12);
+      if (row.accelSignal === 'ACCELERATING') {
+        strengths.push(`${Math.abs(row.pctFrom52wHigh).toFixed(0)}% off 52W high — deep pullback with accelerating fundamentals (potential entry)`);
+      } else {
+        risks.push(`${Math.abs(row.pctFrom52wHigh).toFixed(0)}% below 52W high + no fundamental acceleration — capital destruction risk`);
+      }
+    } else if (row.pctFrom52wHigh < -25) {
+      mktS = Math.max(0, mktS - 6);
+    }
   }
 
   // ── PILLAR AVERAGES ───────────────────────────────────────────────────────
@@ -895,6 +1064,16 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     risks.push(`Cyclical risk −4: sector (${row.sector}) = mean-reverting margins, PEG/PE unreliable`);
   }
 
+  // ── GAP 1+2 PENALTIES: Incremental ROCE contraction + OPM compression ─────
+  if (row.roceExpansion !== undefined && row.roceExpansion < -10) {
+    hardPenalty += 10;
+    risks.push(`Hard −10: ROCE fell ${Math.abs(row.roceExpansion).toFixed(0)}pp over 3yr — new capital earning less than legacy (value destruction)`);
+  }
+  if (row.opmExpansion !== undefined && row.opmExpansion < -6) {
+    hardPenalty += 7;
+    risks.push(`Hard −7: OPM compressed ${Math.abs(row.opmExpansion).toFixed(0)}pp over 3yr — moat eroding, pricing power weakening`);
+  }
+
   // ── TECHNICAL GATE (DMA200 enforcement) ─────────────────────────────────────
   // "Only overweight stocks above 200 DMA AND earnings acceleration" — institutional rule.
   // Below DMA200 = capital currently trapped. Combined with deceleration = avoid.
@@ -1022,6 +1201,24 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   } else if ((row.changeInPromoter??0) < -3 && (row.promoter??0) > 40) {
     reratingBonus -= 4; // significant promoter selling = watch closely
     risks.push(`Insider selling: promoter sold ${Math.abs(row.changeInPromoter??0).toFixed(1)}% — exit signal if trend continues`);
+  }
+
+  // ── GAP 3: INDUSTRY TAILWIND BONUS ──────────────────────────────────────────
+  // Structural sector tailwind is a forward-looking signal not captured in any pillar.
+  // Fisher Stage 1: "Is the industry growing? If not, can the company take market share?"
+  // Defence/EMS/Solar/Railway get bonus; Metals/Textiles/Oil get penalty.
+  const tailwind = getSectorTailwind(row.sector);
+  const tailwindBonus = tailwind.score >= 80 ? 8 : tailwind.score >= 65 ? 5 :
+                        tailwind.score >= 50 ? 2 : tailwind.score < 30 ? -7 : 0;
+  if (tailwind.score >= 80) strengths.push(`Sector tailwind (${tailwind.label}): ${tailwind.drivers}`);
+  else if (tailwind.score < 35) risks.push(`Sector headwind (${tailwind.label}): ${tailwind.drivers}`);
+  reratingBonus += tailwindBonus;
+
+  // ── GAP 1+2: INCREMENTAL ROCE + OPM BONUS to reratingBonus ────────────────
+  // ROCE expanding + OPM expanding together = compounding moat setup (Fisher enduring quality)
+  if ((row.roceExpansion ?? -99) > 5 && (row.opmExpansion ?? -99) > 3) {
+    reratingBonus += 4;
+    strengths.push(`Double quality compounder: ROCE +${row.roceExpansion?.toFixed(1)}pp + OPM +${row.opmExpansion?.toFixed(1)}pp — moat strengthening`);
   }
 
   reratingBonus = Math.max(-18, Math.min(18, reratingBonus));
@@ -1184,6 +1381,13 @@ function buildColMap(sampleRow: Record<string,unknown>): Record<string,string> {
     else if (o==='Net Debt'||o==='Net debt')                       m['netDebt']=col;
     else if (o==='EPS'||o==='EPS (TTM)')                           m['eps']=col;
     else if (o==='EPS growth'||o==='EPS Growth')                   m['epsGrowth']=col;
+    // ── NEW FIELDS (Gap 1: incremental ROCE, Gap 2: OPM trend, Gap 7: 52W high) ──
+    else if (o==='Return on capital employed 3Years'||o==='ROCE 3Years'||o==='ROCE 3 Years'||o==='Return on capital employed 3 Years')
+      m['roce3yr']=col;
+    else if (o==='OPM 3Years'||o==='OPM 3 Years'||o==='Operating Profit Margin 3Years')
+      m['opm3yr']=col;
+    else if (o==='52 Week High'||o==='52W High'||o==='52 week high'||o==='52wk High')
+      m['high52w']=col;
     // Generic fallbacks
     else if (!m['symbol']&&(c.includes('nsecode')||c.includes('symbol')||c.includes('ticker'))) m['symbol']=col;
     else if (!m['company']&&c.includes('name')&&!c.includes('sector')) m['company']=col;
@@ -1214,6 +1418,9 @@ function buildColMap(sampleRow: Record<string,unknown>): Record<string,string> {
     else if (!m['epsGrowth']&&c.includes('epsgrowth')) m['epsGrowth']=col;
     else if (!m['eps']&&(c==='eps'||c.includes('earningspershare'))) m['eps']=col;
     else if (!m['return1m']&&(c.includes('1month')||c.includes('1mreturn'))) m['return1m']=col;
+    else if (!m['roce3yr']&&(c.includes('roce')||c.includes('returnoncap'))&&(c.includes('3yr')||c.includes('3year')||c.includes('3y')&&c.includes('ago'))) m['roce3yr']=col;
+    else if (!m['opm3yr']&&(c.includes('opm')||c.includes('operatingmargin'))&&(c.includes('3yr')||c.includes('3year')||c.includes('3y'))) m['opm3yr']=col;
+    else if (!m['high52w']&&c.includes('52')&&c.includes('high')) m['high52w']=col;
   }
   return m;
 }
@@ -1233,6 +1440,13 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
   const ebitda=n(m['ebitda']?row[m['ebitda']]:undefined);
   const fii=n(m['fii']?row[m['fii']]:undefined);
   const dii=n(m['dii']?row[m['dii']]:undefined);
+  const mcap=n(m['marketCapCr']?row[m['marketCapCr']]:undefined);
+  const fcfAbs=n(m['fcfAbsolute']?row[m['fcfAbsolute']]:undefined);
+  const roce_cur=n(m['roce']?row[m['roce']]:undefined);
+  const opm_cur=n(m['opm']?row[m['opm']]:undefined);
+  const roce3yr=n(m['roce3yr']?row[m['roce3yr']]:undefined);
+  const opm3yr=n(m['opm3yr']?row[m['opm3yr']]:undefined);
+  const high52w=n(m['high52w']?row[m['high52w']]:undefined);
   return {
     symbol:sym,
     company:String(row[m['company']??'']??'').trim(),
@@ -1266,12 +1480,32 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
     fcfAbsolute:n(m['fcfAbsolute']?row[m['fcfAbsolute']]:undefined),
     return1m:n(m['return1m']?row[m['return1m']]:undefined),
     return1w:n(m['return1w']?row[m['return1w']]:undefined),
+    // ── New raw fields ──
+    roce3yr,
+    opm3yr,
+    high52w,
     // Derived
     marginOfSafety:(iv!==undefined&&price!==undefined&&price>0)?Math.round((iv-price)/price*100):undefined,
     aboveDMA200:(dma!==undefined&&price!==undefined&&dma>0)?Math.round((price-dma)/dma*100):undefined,
     netDebtEbitda:(netDebt!==undefined&&ebitda!==undefined&&ebitda>0)?Math.round(netDebt/ebitda*10)/10:undefined,
     fiiPlusDii:(fii!==undefined&&dii!==undefined)?Math.round((fii+dii)*10)/10:fii!==undefined?fii:undefined,
     opLeverageRatio:(n(m['profitCagr']?row[m['profitCagr']]:undefined)!==undefined&&n(m['revCagr']?row[m['revCagr']]:undefined)!==undefined&&(n(m['revCagr']?row[m['revCagr']]:undefined) as number)>0)?(n(m['profitCagr']?row[m['profitCagr']]:undefined) as number)/(n(m['revCagr']?row[m['revCagr']]:undefined) as number):undefined,
+    // ── NEW DERIVED FIELDS ────────────────────────────────────────────────────
+    // Gap 5: EV/EBITDA = (MCap + NetDebt) / EBITDA
+    evEbitda:(mcap!==undefined&&netDebt!==undefined&&ebitda!==undefined&&ebitda>0)?
+      Math.round((mcap+netDebt)/ebitda*10)/10 : undefined,
+    // Gap 5: FCF Yield = FCF / MCap × 100%
+    fcfYield:(fcfAbs!==undefined&&mcap!==undefined&&mcap>0)?
+      Math.round(fcfAbs/mcap*1000)/10 : undefined,
+    // Gap 1: Incremental ROCE = current ROCE − ROCE 3 years ago (+ve = new capital productive)
+    roceExpansion:(roce_cur!==undefined&&roce3yr!==undefined)?
+      Math.round((roce_cur-roce3yr)*10)/10 : undefined,
+    // Gap 2: OPM expansion = current OPM − OPM 3 years ago (+ve = pricing power improving)
+    opmExpansion:(opm_cur!==undefined&&opm3yr!==undefined)?
+      Math.round((opm_cur-opm3yr)*10)/10 : undefined,
+    // Gap 7: % from 52-week High (0 = AT high; -40 = 40% below high)
+    pctFrom52wHigh:(price!==undefined&&high52w!==undefined&&high52w>0)?
+      Math.round((price-high52w)/high52w*100) : undefined,
     // ── ACCELERATION SIGNALS (Framework.docx Core Signal) ────────────────────
     // Compare latest quarter YOY vs historical CAGR to detect trend direction.
     // If recent (YOY) > historical (CAGR): business is ACCELERATING — key buy signal.
@@ -1611,6 +1845,9 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
     ['marketCapCr','MCap ₹Cr','Valuation'],['marginOfSafety','MoS %','Valuation'],
     ['fiiPlusDii','FII+DII %','SQGLP-S'],['fii','FII %','SQGLP-S'],['dii','DII %','SQGLP-S'],
     ['aboveDMA200','vs DMA200 %','Market'],['return1m','Ret 1M %','Market'],
+    ['pctFrom52wHigh','vs 52W High %','Market'],
+    ['evEbitda','EV/EBITDA x','Valuation'],['fcfYield','FCF Yield %','Valuation'],
+    ['roceExpansion','ROCE Δ 3yr pp','Quality'],['opmExpansion','OPM Δ 3yr pp','Quality'],
   ];
 
   return (
@@ -1628,13 +1865,16 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
         </div>
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(220px,1fr))',gap:8}}>
           {[
-            {field:'Free Cash Flow',why:'Fisher FCF filter'},
+            {field:'Free Cash Flow',why:'Fisher FCF filter + FCF yield'},
             {field:'Net Debt',why:'Fisher survival: ND/EBITDA < 1.5'},
-            {field:'EBITDA',why:'ND/EBITDA calculation'},
+            {field:'EBITDA',why:'ND/EBITDA + EV/EBITDA valuation'},
             {field:'FII Holding',why:'MOSL SQGLP "S" undiscovered'},
             {field:'DII Holding',why:'Institutional coverage check'},
             {field:'Change in promoter holding',why:'Insider trend signal'},
             {field:'EPS growth',why:'Fisher Twin Engine check'},
+            {field:'Return on capital employed 3Years',why:'Gap 1: incremental ROCE signal'},
+            {field:'OPM 3Years',why:'Gap 2: margin expansion / revenue quality'},
+            {field:'52 Week High',why:'Gap 7: relative strength proxy'},
           ].map(({field,why})=>(
             <div key={field} style={{padding:'8px 12px',backgroundColor:CARD2,borderRadius:6,border:`1px solid ${BORDER}`}}>
               <div style={{fontSize:F.sm,fontWeight:700,color:ACCENT}}>{field}</div>
@@ -1814,6 +2054,109 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
               {expandAll ? '⊟ Collapse All' : '⊞ Expand All'}
             </button>
           </div>
+
+          {/* ── GAP 6: PORTFOLIO CONSTRUCTION PANEL ─────────────────────────── */}
+          {(() => {
+            // Grade → position size recommendation (SQGLP-based, risk-adjusted)
+            const sizeMap: Record<Grade,string> = {'A+':'8–12%','A':'5–8%','B+':'3–5%','B':'1–3%','C':'0%','D':'0%','NR':'0%'};
+            const actionMap: Record<Grade,string> = {'A+':'Core position','A':'Standard position','B+':'Pilot / accumulate on dips','B':'Watchlist only','C':'Avoid','D':'Avoid','NR':'No data'};
+            const actionColor: Record<Grade,string> = {'A+':GREEN,'A':'#34d399','B+':YELLOW,'B':MUTED,'C':RED,'D':RED,'NR':MUTED};
+            // Bucket allocation caps
+            const bucketCaps: Record<Bucket, { maxPct: number; label: string; color: string }> = {
+              CORE_COMPOUNDER:      { maxPct:40, label:'Core (≤40% total)', color:GREEN },
+              EMERGING_MULTIBAGGER: { maxPct:35, label:'Emerging (≤35% total)', color:PURPLE },
+              HIGH_RISK:            { maxPct:15, label:'High-Risk (≤15% total)', color:ORANGE },
+              MONITOR:              { maxPct:5,  label:'Monitor (≤5% total)', color:MUTED },
+            };
+            const actionableRows = rows.filter(r => ['A+','A','B+'].includes(r.grade) && r.bucket !== 'MONITOR');
+            // Sector concentration
+            const sectorCounts = actionableRows.reduce((acc, r) => {
+              acc[r.sector] = (acc[r.sector] || 0) + 1;
+              return acc;
+            }, {} as Record<string,number>);
+            const concentratedSectors = Object.entries(sectorCounts).filter(([,c]) => c >= 3);
+            // Bucket breakdowns of actionable picks
+            const bucketGroups = (['CORE_COMPOUNDER','EMERGING_MULTIBAGGER','HIGH_RISK'] as Bucket[]).map(b => ({
+              b, cfg: bucketCaps[b],
+              stocks: actionableRows.filter(r => r.bucket === b),
+            }));
+            return (
+              <details style={{marginBottom:16}} open={false}>
+                <summary style={{cursor:'pointer',padding:'12px 16px',backgroundColor:CARD_BG,border:`1px solid ${BORDER}`,borderRadius:10,
+                  fontSize:F.md,fontWeight:700,color:PURPLE,userSelect:'none',
+                  display:'flex',gap:10,alignItems:'center',listStyle:'none'}}>
+                  📐 Portfolio Construction (Gap 6)
+                  <span style={{fontSize:F.xs,fontWeight:400,color:MUTED,marginLeft:4}}>
+                    {actionableRows.length} actionable picks — allocation guide, sizing, concentration check
+                  </span>
+                </summary>
+                <div style={{padding:'18px',backgroundColor:CARD2,border:`1px solid ${BORDER}`,borderTop:'none',borderRadius:'0 0 10px 10px'}}>
+                  {/* Position sizing by grade */}
+                  <div style={{marginBottom:18}}>
+                    <div style={{fontSize:F.sm,fontWeight:800,color:MUTED,letterSpacing:'0.5px',marginBottom:10}}>POSITION SIZING BY GRADE</div>
+                    <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                      {(['A+','A','B+','B'] as Grade[]).map(g => {
+                        const cnt = actionableRows.filter(r => r.grade === g).length;
+                        return (
+                          <div key={g} style={{padding:'12px 18px',backgroundColor:CARD_BG,borderRadius:8,border:`1px solid ${GRADE_COLOR[g]}30`,minWidth:140}}>
+                            <div style={{display:'flex',gap:8,alignItems:'baseline',marginBottom:4}}>
+                              <span style={{fontSize:F.xl,fontWeight:900,color:GRADE_COLOR[g]}}>{g}</span>
+                              <span style={{fontSize:F.xs,color:MUTED}}>{cnt} stocks</span>
+                            </div>
+                            <div style={{fontSize:F.md,fontWeight:700,color:TEXT}}>{sizeMap[g]}</div>
+                            <div style={{fontSize:F.xs,color:actionColor[g],marginTop:3}}>{actionMap[g]}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  {/* Bucket allocation limits */}
+                  <div style={{marginBottom:18}}>
+                    <div style={{fontSize:F.sm,fontWeight:800,color:MUTED,letterSpacing:'0.5px',marginBottom:10}}>BUCKET ALLOCATION CAPS</div>
+                    <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                      {bucketGroups.map(({b, cfg, stocks}) => (
+                        <div key={b} style={{padding:'12px 16px',backgroundColor:CARD_BG,borderRadius:8,border:`1px solid ${cfg.color}30`,flex:'1 1 160px'}}>
+                          <div style={{fontSize:F.xs,fontWeight:700,color:cfg.color,marginBottom:4}}>{BUCKET_CONFIG[b].icon} {BUCKET_CONFIG[b].label}</div>
+                          <div style={{fontSize:F.lg,fontWeight:800,color:TEXT,marginBottom:2}}>{stocks.length} picks</div>
+                          <div style={{fontSize:F.xs,color:MUTED}}>{cfg.label}</div>
+                          {stocks.slice(0,3).map(s => (
+                            <div key={s.symbol} style={{fontSize:F.xs,color:MUTED,marginTop:3}}>
+                              <span style={{color:GRADE_COLOR[s.grade],fontWeight:700}}>{s.grade}</span> {s.symbol} ({sizeMap[s.grade]})
+                            </div>
+                          ))}
+                          {stocks.length > 3 && <div style={{fontSize:F.xs,color:MUTED,marginTop:2}}>+{stocks.length-3} more</div>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  {/* Sector concentration warning */}
+                  {concentratedSectors.length > 0 && (
+                    <div style={{padding:'12px 16px',backgroundColor:`${ORANGE}10`,border:`1px solid ${ORANGE}30`,borderRadius:8,marginBottom:16}}>
+                      <div style={{fontSize:F.sm,fontWeight:800,color:ORANGE,marginBottom:6}}>⚠️ Sector Concentration Risk</div>
+                      {concentratedSectors.map(([sector, cnt]) => (
+                        <div key={sector} style={{fontSize:F.xs,color:TEXT,marginBottom:3}}>
+                          <strong>{sector}</strong>: {cnt} picks in top grades — consider capping at 2 per sector for diversification
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {/* Ownership allocation guidance */}
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:8}}>
+                    {(['FOUNDER_CONTROLLED','INSTITUTIONALIZING','MATURE','OWNERSHIP_VACUUM'] as OwnershipCategory[]).map(cat => {
+                      const cfg = OWNERSHIP_CONFIG[cat];
+                      const cnt = actionableRows.filter(r => r.ownershipCategory === cat).length;
+                      return (
+                        <div key={cat} style={{padding:'10px 14px',backgroundColor:CARD_BG,borderRadius:8,border:`1px solid ${cfg.color}20`}}>
+                          <div style={{fontSize:F.xs,fontWeight:700,color:cfg.color}}>{cfg.icon} {cfg.label}</div>
+                          <div style={{fontSize:F.xs,color:MUTED,marginTop:2}}>{cnt} picks · {cfg.allocation}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </details>
+            );
+          })()}
 
           {/* Table header */}
           <div style={{display:'grid',gridTemplateColumns:'130px 150px 70px 70px 90px 130px 1fr 90px',gap:8,padding:'10px 14px',fontSize:F.xs,fontWeight:700,letterSpacing:'0.6px',color:MUTED,borderBottom:`1px solid ${BORDER}`}}>
