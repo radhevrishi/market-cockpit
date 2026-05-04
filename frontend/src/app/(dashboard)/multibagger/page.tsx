@@ -1855,6 +1855,9 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   const [fcfOnly, setFcfOnly] = useState(false);
   const [discoveryOnly, setDiscoveryOnly] = useState(false);
   const [inflectionOnly, setInflectionOnly] = useState(false);
+  // P/E and PEG range filters — 'ALL' means no filter
+  const [peMax, setPeMax] = useState<'ALL'|15|25|40|60|100>('ALL');
+  const [pegMax, setPegMax] = useState<'ALL'|0.8|1.0|1.5|2.0>('ALL');
 
   // ── GUIDANCE MODE ──────────────────────────────────────────────────────────
   // When ON: fetches recent earnings/guidance news, scores each company
@@ -2126,6 +2129,9 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   if (fcfOnly)        baseRows = baseRows.filter(r => (r.fcfAbsolute ?? -1) > 0 || (r.cfoToPat ?? 0) >= 0.8);
   if (discoveryOnly)   baseRows = baseRows.filter(r => (r.fiiPlusDii ?? 100) < 15);
   if (inflectionOnly)  baseRows = baseRows.filter(r => r.inflectionSignal || r.triggerBonus >= 10);
+  // P/E and PEG filters — only apply when data is available for a stock
+  if (peMax  !== 'ALL') baseRows = baseRows.filter(r => r.pe  !== undefined && r.pe  > 0 && r.pe  <= peMax);
+  if (pegMax !== 'ALL') baseRows = baseRows.filter(r => r.peg !== undefined && r.peg > 0 && r.peg <= pegMax);
   const baseFiltered = gradeFilter.has('ALL') ? baseRows : baseRows.filter(r => gradeFilter.has(r.grade));
   // Apply guidance re-scoring and re-sort when guidance mode is active
   const filtered = guidanceMode && Object.keys(guidanceScores).length > 0
@@ -2348,6 +2354,24 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
             ].map(f=>(
               <button key={f.key} onClick={f.toggle} style={{fontSize:F.xs,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${f.active?ACCENT+'60':BORDER}`,background:f.active?ACCENT+'14':'transparent',color:f.active?ACCENT:MUTED,cursor:'pointer'}}>
                 {f.label} ({f.count})
+              </button>
+            ))}
+            {/* P/E filter */}
+            <div style={{width:1,background:BORDER,height:20}}/>
+            <span style={{fontSize:F.xs,color:MUTED,fontWeight:700,letterSpacing:'0.5px'}}>P/E:</span>
+            {(['ALL',15,25,40,60,100] as const).map(v=>(
+              <button key={v} onClick={()=>setPeMax(prev=>prev===v?'ALL':v)} style={{fontSize:F.xs,fontWeight:700,padding:'5px 10px',borderRadius:7,
+                border:`1px solid ${peMax===v?YELLOW+'60':BORDER}`,background:peMax===v?`${YELLOW}14`:'transparent',color:peMax===v?YELLOW:MUTED,cursor:'pointer'}}>
+                {v==='ALL'?'All':`<${v}×`}
+              </button>
+            ))}
+            {/* PEG filter */}
+            <div style={{width:1,background:BORDER,height:20}}/>
+            <span style={{fontSize:F.xs,color:MUTED,fontWeight:700,letterSpacing:'0.5px'}}>PEG:</span>
+            {(['ALL',0.8,1.0,1.5,2.0] as const).map(v=>(
+              <button key={v} onClick={()=>setPegMax(prev=>prev===v?'ALL':v)} style={{fontSize:F.xs,fontWeight:700,padding:'5px 10px',borderRadius:7,
+                border:`1px solid ${pegMax===v?GREEN+'60':BORDER}`,background:pegMax===v?`${GREEN}14`:'transparent',color:pegMax===v?GREEN:MUTED,cursor:'pointer'}}>
+                {v==='ALL'?'All':`<${v}`}
               </button>
             ))}
             <span style={{fontSize:F.xs,color:MUTED,marginLeft:'auto'}}>{filtered.length} showing</span>
@@ -3883,6 +3907,9 @@ function USACompare() {
   const [expandAll, setExpandAll] = React.useState(false);
   const [gradeFilter, setGradeFilter] = React.useState<Set<string>>(new Set(['ALL']));
   const [accelOnly, setAccelOnly] = React.useState(false);
+  const [usPeMax,  setUsPeMax]  = React.useState<'ALL'|15|25|40|60|100>('ALL');
+  const [usPegMax, setUsPegMax] = React.useState<'ALL'|0.8|1.0|1.5|2.0>('ALL');
+  const [usFcfOnly, setUsFcfOnly] = React.useState(false);
 
   function setRows(r: USAResult[]) {
     const ranked = applyUSARanking(r);
@@ -3920,7 +3947,14 @@ function USACompare() {
   const GRADES: USAGrade[] = ['A+','A','B+','B','C','D'];
   const GRADE_COLOR_US: Record<USAGrade,string> = {'A+':'#10b981','A':'#34d399','B+':'#f59e0b','B':'#f97316','C':'#fb923c','D':'#ef4444'};
   let filtered = gradeFilter.has('ALL') ? rows : rows.filter(r=>gradeFilter.has(r.grade));
-  if (accelOnly) filtered = filtered.filter(r=>r.accelSignal==='ACCELERATING');
+  if (accelOnly)        filtered = filtered.filter(r=>r.accelSignal==='ACCELERATING');
+  if (usFcfOnly)        filtered = filtered.filter(r=>(r.fcfMarginAnn ?? -99) >= 10);
+  // P/E filter uses forwardPe first (more forward-looking), falls back to trailing P/E
+  if (usPeMax  !== 'ALL') filtered = filtered.filter(r=>{
+    const pe = r.forwardPe && r.forwardPe > 0 ? r.forwardPe : r.pe;
+    return pe !== undefined && pe > 0 && pe <= usPeMax;
+  });
+  if (usPegMax !== 'ALL') filtered = filtered.filter(r=>r.peg !== undefined && r.peg > 0 && r.peg <= usPegMax);
 
   return (
     <div style={{maxWidth:1100,margin:'0 auto',padding:'28px 20px'}}>
@@ -4000,6 +4034,30 @@ function USACompare() {
               <button onClick={()=>setAccelOnly(v=>!v)} style={{fontSize:F.xs,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${accelOnly?GREEN+'60':BORDER}`,background:accelOnly?`${GREEN}14`:'transparent',color:accelOnly?GREEN:MUTED,cursor:'pointer'}}>
                 🚀 Accelerating ({rows.filter(r=>r.accelSignal==='ACCELERATING').length})
               </button>
+              <button onClick={()=>setUsFcfOnly(v=>!v)} style={{fontSize:F.xs,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${usFcfOnly?'#38bdf8'+'60':BORDER}`,background:usFcfOnly?`${'#38bdf8'}14`:'transparent',color:usFcfOnly?'#38bdf8':MUTED,cursor:'pointer'}}>
+                💰 FCF≥10% ({rows.filter(r=>(r.fcfMarginAnn??-99)>=10).length})
+              </button>
+
+              {/* Fwd P/E filter */}
+              <div style={{width:1,background:BORDER,height:18}}/>
+              <span style={{fontSize:F.xs,color:MUTED,fontWeight:700}}>Fwd P/E:</span>
+              {(['ALL',15,25,40,60,100] as const).map(v=>(
+                <button key={String(v)} onClick={()=>setUsPeMax(p=>p===v?'ALL':v)} style={{fontSize:F.xs,fontWeight:700,padding:'4px 9px',borderRadius:6,
+                  border:`1px solid ${usPeMax===v?YELLOW+'60':BORDER}`,background:usPeMax===v?`${YELLOW}14`:'transparent',color:usPeMax===v?YELLOW:MUTED,cursor:'pointer'}}>
+                  {v==='ALL'?'All':`<${v}×`}
+                </button>
+              ))}
+
+              {/* PEG filter */}
+              <div style={{width:1,background:BORDER,height:18}}/>
+              <span style={{fontSize:F.xs,color:MUTED,fontWeight:700}}>PEG:</span>
+              {(['ALL',0.8,1.0,1.5,2.0] as const).map(v=>(
+                <button key={String(v)} onClick={()=>setUsPegMax(p=>p===v?'ALL':v)} style={{fontSize:F.xs,fontWeight:700,padding:'4px 9px',borderRadius:6,
+                  border:`1px solid ${usPegMax===v?GREEN+'60':BORDER}`,background:usPegMax===v?`${GREEN}14`:'transparent',color:usPegMax===v?GREEN:MUTED,cursor:'pointer'}}>
+                  {v==='ALL'?'All':`<${v}`}
+                </button>
+              ))}
+
               <button onClick={()=>{setExpandAll(v=>!v);setExpRow(null);}} style={{fontSize:F.xs,fontWeight:700,padding:'5px 12px',borderRadius:7,cursor:'pointer',border:`1px solid ${expandAll?ACCENT+'60':BORDER}`,background:expandAll?ACCENT+'14':'transparent',color:expandAll?ACCENT:MUTED}}>
                 {expandAll?'⊟ Collapse All':'⊞ Expand All'}
               </button>
