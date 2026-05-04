@@ -506,6 +506,7 @@ function EditPositionModal({ pos, portfolioId, onClose }: { pos: ApiPosition; po
   const [form, setForm] = useState({
     quantity: Number.isInteger(pos.quantity) ? String(Math.round(pos.quantity)) : String(parseFloat(pos.quantity.toFixed(2))),
     avg_cost: String(parseFloat(pos.avg_cost.toFixed(2))),
+    notes: pos.notes || '',
   });
   const [error, setError] = useState('');
 
@@ -547,6 +548,7 @@ function EditPositionModal({ pos, portfolioId, onClose }: { pos: ApiPosition; po
     mutation.mutate({
       quantity: qty,
       avg_cost: cost,
+      ...(form.notes.trim() ? { notes: form.notes.trim() } : {}),
     });
   };
 
@@ -600,6 +602,18 @@ function EditPositionModal({ pos, portfolioId, onClose }: { pos: ApiPosition; po
               placeholder="1000"
               required
               className="w-full bg-[#0D1B2E] border border-[#2A3B4C] rounded-lg px-3 py-2.5 text-white text-sm placeholder-[#4A5B6C] focus:outline-none focus:border-[#0F7ABF] transition-colors"
+            />
+          </div>
+
+          {/* Notes — investment thesis / entry reason */}
+          <div>
+            <label className="block text-xs font-medium text-[#8899AA] uppercase tracking-wider mb-1.5">Notes / Thesis <span className="normal-case text-[#4A5B6C]">(optional)</span></label>
+            <textarea
+              value={form.notes}
+              onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+              placeholder="Why you bought, price target, catalyst…"
+              rows={3}
+              className="w-full bg-[#0D1B2E] border border-[#2A3B4C] rounded-lg px-3 py-2.5 text-white text-sm placeholder-[#4A5B6C] focus:outline-none focus:border-[#0F7ABF] transition-colors resize-none"
             />
           </div>
 
@@ -668,6 +682,11 @@ function PositionRow({ pos, portfolioId, signal }: { pos: ApiPosition; portfolio
         <div>
           <p className="text-white text-sm font-bold">{pos.ticker}</p>
           <p className="text-[#4A5B6C] text-[10px]">{pos.company_name ?? ''}</p>
+          {pos.notes && (
+            <p className="text-[#0F7ABF] text-[9px] mt-0.5 max-w-[110px] truncate" title={pos.notes}>
+              📝 {pos.notes}
+            </p>
+          )}
         </div>
       </td>
       <td className="px-4 py-3 text-[#8899AA] text-xs">{pos.exchange}</td>
@@ -904,8 +923,45 @@ export default function PortfoliosPage() {
 
   const currency = portfolios?.find(p => p.id === activeId)?.currency ?? 'INR';
   const sym = currency === 'INR' ? '₹' : '$';
-
   const noPortfolios = !loadingPf && (portfolios ?? []).length === 0;
+
+  // ── #17: Daily P&L snapshot — store one entry per calendar day in localStorage ──
+  const PNL_HISTORY_KEY = `mc_pf_history_${activeId}`;
+  const MAX_HISTORY_DAYS = 30;
+  const pnlHistory: { date: string; value: number }[] = (() => {
+    try { return JSON.parse(localStorage.getItem(PNL_HISTORY_KEY) || '[]'); } catch { return []; }
+  })();
+  // Save today's snapshot when summary loads
+  useEffect(() => {
+    if (!summary?.total_value || !activeId) return;
+    const today = new Date().toISOString().slice(0, 10);
+    try {
+      const hist: { date: string; value: number }[] = JSON.parse(localStorage.getItem(PNL_HISTORY_KEY) || '[]');
+      const last = hist[hist.length - 1];
+      // Only save if it's a new day or value changed meaningfully (>0.1%)
+      const changed = !last || last.date !== today || Math.abs(last.value - summary.total_value) / last.value > 0.001;
+      if (changed) {
+        const updated = [...hist.filter(h => h.date !== today), { date: today, value: summary.total_value }]
+          .sort((a, b) => a.date.localeCompare(b.date))
+          .slice(-MAX_HISTORY_DAYS);
+        localStorage.setItem(PNL_HISTORY_KEY, JSON.stringify(updated));
+      }
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [summary?.total_value, activeId]);
+
+  // ── #19: Geography/exchange concentration by portfolio value ──
+  const posConcentration = (() => {
+    const byExchange: Record<string, number> = {};
+    let total = 0;
+    for (const pos of (positions ?? [])) {
+      const val = (pos.cmp ?? (pos as any).current_price ?? pos.avg_cost ?? 0) * (pos.quantity ?? 0);
+      const exch = ['NSE', 'BSE'].includes((pos.exchange ?? '').toUpperCase()) ? 'India (NSE/BSE)' : 'US (NYSE/NASDAQ)';
+      byExchange[exch] = (byExchange[exch] || 0) + val;
+      total += val;
+    }
+    return { byExchange, total };
+  })();
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
@@ -994,6 +1050,73 @@ export default function PortfoliosPage() {
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {/* ── #17+#19: P&L Sparkline + Sector Concentration ── */}
+          {activeId && (pnlHistory.length > 1 || posConcentration.total > 0) && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+              {/* P&L Sparkline — #17 */}
+              {pnlHistory.length > 1 && (() => {
+                const vals = pnlHistory.map(h => h.value);
+                const min = Math.min(...vals), max = Math.max(...vals);
+                const range = max - min || 1;
+                const W = 280, H = 56;
+                const pts = vals.map((v, i) => {
+                  const x = (i / (vals.length - 1)) * W;
+                  const y = H - ((v - min) / range) * H;
+                  return `${x.toFixed(1)},${y.toFixed(1)}`;
+                }).join(' ');
+                const last = vals[vals.length - 1], first = vals[0];
+                const up = last >= first;
+                const pct = first > 0 ? ((last - first) / first * 100).toFixed(1) : '0';
+                return (
+                  <div className="bg-[#1A2B3C] border border-[#2A3B4C] rounded-xl p-5">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-[#8899AA] text-xs font-medium uppercase tracking-wider">Portfolio Value (30d)</p>
+                      <span className={`text-xs font-semibold ${up ? 'text-emerald-400' : 'text-red-400'}`}>{up ? '+' : ''}{pct}%</span>
+                    </div>
+                    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="56" preserveAspectRatio="none">
+                      <polyline fill="none" stroke={up ? '#10b981' : '#ef4444'} strokeWidth="1.8" points={pts} />
+                    </svg>
+                    <div className="flex justify-between text-[9px] text-[#4A5B6C] mt-1">
+                      <span>{pnlHistory[0]?.date?.slice(5)}</span>
+                      <span>{pnlHistory[pnlHistory.length - 1]?.date?.slice(5)}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Geography Concentration — #19 */}
+              {posConcentration.total > 0 && (
+                <div className="bg-[#1A2B3C] border border-[#2A3B4C] rounded-xl p-5">
+                  <p className="text-[#8899AA] text-xs font-medium uppercase tracking-wider mb-3">Geographic Allocation</p>
+                  <div className="space-y-3">
+                    {Object.entries(posConcentration.byExchange)
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([exch, val]) => {
+                        const pct = posConcentration.total > 0 ? (val / posConcentration.total * 100) : 0;
+                        const isIndia = exch.includes('India');
+                        return (
+                          <div key={exch}>
+                            <div className="flex justify-between text-xs mb-1">
+                              <span className="text-white text-[11px]">{exch}</span>
+                              <span className="text-[#8899AA] text-[11px]">{pct.toFixed(1)}%</span>
+                            </div>
+                            <div className="h-2 bg-[#0D1B2E] rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all ${isIndia ? 'bg-orange-400' : 'bg-blue-400'}`}
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                    })}
+                  </div>
+                  <p className="text-[9px] text-[#4A5B6C] mt-3">{(positions ?? []).length} positions · {sym}{posConcentration.total.toLocaleString('en-IN', { maximumFractionDigits: 0 })} est. value</p>
+                </div>
+              )}
             </div>
           )}
 

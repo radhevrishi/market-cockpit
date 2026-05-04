@@ -587,6 +587,21 @@ export default function CompanyIntelligencePage() {
     trends.filter(t => t.isExcel && !signals.some(s => s.isExcel && s.symbol === t.symbol)).length;
   const totalSignalValue = signals.filter(s => s.valueCr > 0).reduce((sum, s) => sum + s.valueCr, 0);
 
+  // ── #20: Cross-universe overlap — stocks appearing in 2+ tracked universes ──
+  // A signal in Portfolio AND Watchlist AND Excel = highest conviction zone
+  const allTaggedSignals = [...signals, ...notableSignals];
+  const overlapMap = new Map<string, { signal: Signal; universes: string[] }>();
+  for (const s of allTaggedSignals) {
+    const universes: string[] = [];
+    if (s.isPortfolio) universes.push('Portfolio');
+    if (s.isWatchlist) universes.push('Watchlist');
+    if (s.isExcel)     universes.push('Excel Picks');
+    if (universes.length >= 2 && !overlapMap.has(s.symbol)) {
+      overlapMap.set(s.symbol, { signal: s, universes });
+    }
+  }
+  const overlapSignals = [...overlapMap.values()].sort((a, b) => (b.signal.weightedScore || 0) - (a.signal.weightedScore || 0));
+
   return (
     <div style={{ backgroundColor: BG, color: TEXT1, minHeight: '100vh', padding: '16px 20px' }}>
       {/* Header */}
@@ -808,6 +823,42 @@ export default function CompanyIntelligencePage() {
           <div style={{ width: '28px', height: '28px', border: '3px solid #1A2840', borderTopColor: ACCENT, borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 10px' }} />
           <p style={{ color: TEXT3, fontSize: '13px' }}>Scanning corporate announcements, block deals, bulk deals...</p>
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        </div>
+      )}
+
+      {/* ── #20: CROSS-UNIVERSE OVERLAP — highest conviction zone ── */}
+      {overlapSignals.length > 0 && typeFilter === 'ALL' && universeFilter === 'ALL' && (
+        <div style={{ marginBottom: '16px', padding: '14px 16px', backgroundColor: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.25)', borderLeft: '3px solid #8b5cf6', borderRadius: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+            <span style={{ fontSize: '12px', fontWeight: 800, color: '#a78bfa', letterSpacing: '1px' }}>⭐ CROSS-UNIVERSE OVERLAP</span>
+            <span style={{ fontSize: '11px', color: TEXT3 }}>Stocks with signals in 2+ tracked universes — highest conviction</span>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {overlapSignals.map(({ signal: s, universes }) => {
+              const actionCol = s.action === 'BUY' || s.action === 'ADD' ? GREEN
+                : s.action === 'TRIM' || s.action === 'EXIT' ? RED : YELLOW;
+              return (
+                <div key={s.symbol} style={{
+                  padding: '8px 14px', backgroundColor: 'rgba(139,92,246,0.10)',
+                  border: '1px solid rgba(139,92,246,0.3)', borderRadius: '8px', minWidth: '160px',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 800, color: TEXT1 }}>{s.symbol}</span>
+                    <span style={{ fontSize: '9px', fontWeight: 700, color: actionCol, padding: '1px 5px', borderRadius: '3px', backgroundColor: `${actionCol}15` }}>{s.action}</span>
+                  </div>
+                  <div style={{ fontSize: '10px', color: TEXT3, marginBottom: '4px' }}>{s.company}</div>
+                  <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                    {universes.map(u => (
+                      <span key={u} style={{ fontSize: '9px', fontWeight: 600, padding: '1px 6px', borderRadius: '10px',
+                        backgroundColor: u === 'Portfolio' ? 'rgba(139,92,246,0.2)' : u === 'Watchlist' ? 'rgba(15,122,191,0.2)' : 'rgba(16,185,129,0.2)',
+                        color: u === 'Portfolio' ? '#a78bfa' : u === 'Watchlist' ? '#38bdf8' : '#10b981',
+                      }}>{u}</span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

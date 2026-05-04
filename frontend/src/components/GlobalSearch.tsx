@@ -94,17 +94,42 @@ export default function GlobalSearch() {
     }
   }, [open])
 
-  // Search with debounce - first check local index, then try API
+  // Search with debounce - first check local index + Excel stocks, then try API
   const search = useCallback(async (q: string) => {
     if (!q.trim()) { setResults([]); return }
     const ticker = q.trim().toUpperCase()
-    
-    // Instant local search first
-    const localMatches = TICKER_INDEX.filter(t => 
+
+    // Read Excel-scored stocks from Multibagger engine (mb_excel_scored_v2 in localStorage)
+    // These are the user's own scored stocks — include them in instant search results
+    const excelIndex: { ticker: string; exchange: string; name: string; grade?: string; score?: number }[] = (() => {
+      try {
+        const raw = localStorage.getItem('mb_excel_scored_v2')
+        if (!raw) return []
+        const parsed = JSON.parse(raw)
+        if (!Array.isArray(parsed)) return []
+        return parsed.map((r: any) => ({
+          ticker: (r.symbol || '').toUpperCase(),
+          exchange: 'NSE',
+          name: r.company || r.symbol || '',
+          grade: r.grade,
+          score: r.score,
+        })).filter(r => r.ticker)
+      } catch { return [] }
+    })()
+
+    // Combined index: deduplicated, Excel stocks take priority (they have grade/score)
+    const existingTickers = new Set(TICKER_INDEX.map(t => t.ticker))
+    const combinedIndex = [
+      ...excelIndex,
+      ...TICKER_INDEX.filter(t => !excelIndex.some(e => e.ticker === t.ticker)),
+    ]
+
+    // Instant local search first (combined index)
+    const localMatches = combinedIndex.filter(t =>
       t.ticker.includes(ticker) || t.name.toUpperCase().includes(ticker)
-    ).slice(0, 5).map(t => ({
+    ).slice(0, 6).map(t => ({
       ticker: t.ticker,
-      name: t.name,
+      name: (t as any).grade ? `${t.name}  [${(t as any).grade} · ${(t as any).score ?? ''}]` : t.name,
       price: 0,
       change_pct: 0,
       exchange: t.exchange,
@@ -177,7 +202,23 @@ export default function GlobalSearch() {
 
   if (!open) return null
 
-  const displayItems = query ? results : POPULAR_TICKERS.map(p => ({ ...p, price: 0, change_pct: 0 }))
+  // Default display: top Excel picks (if any scored) + fallback to popular tickers
+  const defaultItems = (() => {
+    try {
+      const raw = localStorage.getItem('mb_excel_scored_v2')
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed
+            .filter((r: any) => ['A+', 'A', 'B+'].includes(r.grade))
+            .slice(0, 6)
+            .map((r: any) => ({ ticker: r.symbol, name: `${r.company || r.symbol}  [${r.grade}]`, price: 0, change_pct: 0, exchange: 'NSE' }))
+        }
+      }
+    } catch {}
+    return POPULAR_TICKERS.map(p => ({ ...p, price: 0, change_pct: 0 }))
+  })()
+  const displayItems = query ? results : defaultItems
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 px-4" onClick={() => setOpen(false)}>

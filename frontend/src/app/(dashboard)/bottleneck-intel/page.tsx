@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useCallback, useEffect, type ReactNode } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   RefreshCw, ExternalLink, ChevronDown, ChevronRight,
@@ -709,16 +709,53 @@ function buildEnrichedStocks(articles: NewsArticle[], quotes: QuoteStock[]): Enr
 
 // ── Score Gauge ───────────────────────────────────────────────────────────────
 
+// ── #22: Score formula tooltip ────────────────────────────────────────────────
+const SCORE_FORMULA_LINES = [
+  { label: 'Upstream position',  detail: 'T1=+63 → T2=+56 → T3=+49 … T10=0  (rarer = higher)' },
+  { label: 'Small-cap bonus',    detail: 'Market cap <$2B → +15 pts' },
+  { label: 'Cross-border arb',   detail: 'STO/TSE/KRX → +12 · TWO → +10 · FRA → +8' },
+  { label: 'Serenity mention',   detail: 'Explicitly named in Serenity research → +10' },
+  { label: 'Live evidence',      detail: 'News articles found → +2 per article (max +8)' },
+  { label: 'Competition moat',   detail: '1 public competitor → +10 · 2–3 → +5' },
+  { label: 'News velocity',      detail: 'Articles this week > prior week → up to +12' },
+  { label: 'Criteria penalty',   detail: 'Each failed check (competition / size / listing / tier) → −5' },
+  { label: 'Max score',          detail: '100  (hard cap via Math.min)' },
+];
+
 function ScoreGauge({ score }: { score: number }) {
   const c = scoreColor(score);
+  const [showFormula, setShowFormula] = React.useState(false);
   return (
-    <div style={{ width: '38px', height: '38px', position: 'relative', flexShrink: 0 }}>
-      <svg viewBox="0 0 38 38" style={{ transform: 'rotate(-90deg)', width: '100%', height: '100%' }}>
-        <circle cx="19" cy="19" r="15" fill="none" stroke="#1A2840" strokeWidth="3.5" />
-        <circle cx="19" cy="19" r="15" fill="none" stroke={c} strokeWidth="3.5"
-          strokeDasharray={`${(score / 100) * 94.2} 94.2`} strokeLinecap="round" />
-      </svg>
-      <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: '800', color: c }}>{score}</span>
+    <div style={{ position: 'relative', flexShrink: 0 }}>
+      <div style={{ width: '38px', height: '38px', position: 'relative', cursor: 'pointer' }}
+           onClick={e => { e.stopPropagation(); setShowFormula(v => !v); }}
+           title="Click to see scoring formula">
+        <svg viewBox="0 0 38 38" style={{ transform: 'rotate(-90deg)', width: '100%', height: '100%' }}>
+          <circle cx="19" cy="19" r="15" fill="none" stroke="#1A2840" strokeWidth="3.5" />
+          <circle cx="19" cy="19" r="15" fill="none" stroke={c} strokeWidth="3.5"
+            strokeDasharray={`${(score / 100) * 94.2} 94.2`} strokeLinecap="round" />
+        </svg>
+        <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: '800', color: c }}>{score}</span>
+      </div>
+      {showFormula && (
+        <div onClick={e => e.stopPropagation()} style={{
+          position: 'absolute', top: '44px', left: 0, zIndex: 100,
+          backgroundColor: '#0D1B2E', border: '1px solid #1A2840', borderRadius: '10px',
+          padding: '14px 16px', width: '300px', boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+            <span style={{ fontSize: '11px', fontWeight: 800, color: '#F5F7FA', letterSpacing: '0.5px' }}>HOW THE SERENITY SCORE WORKS</span>
+            <button onClick={() => setShowFormula(false)} style={{ background: 'none', border: 'none', color: '#4A5B6C', cursor: 'pointer', fontSize: '14px' }}>✕</button>
+          </div>
+          {SCORE_FORMULA_LINES.map(({ label, detail }) => (
+            <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', padding: '4px 0', borderBottom: '1px solid #1A2840' }}>
+              <span style={{ fontSize: '10px', color: '#8A95A3', flexShrink: 0, minWidth: '120px' }}>{label}</span>
+              <span style={{ fontSize: '10px', color: '#C9D4E0', textAlign: 'right' }}>{detail}</span>
+            </div>
+          ))}
+          <p style={{ fontSize: '9px', color: '#4A5B6C', marginTop: '8px' }}>Score = sum of all bonuses − failed check penalties, capped at 100. Click score ring again to dismiss.</p>
+        </div>
+      )}
     </div>
   );
 }
