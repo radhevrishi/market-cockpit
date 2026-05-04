@@ -1289,6 +1289,23 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     }
   }
 
+  // ── 🚨 GROWTH QUALITY FILTER — 100-bagger base requirement ──────────────────
+  // MOSL 100× study: every enduring 100-bagger had ≥15% revenue CAGR.
+  // Without this base growth rate, compounding to 100× in <20 yrs is mathematically
+  // near-impossible. This is the first filter Warren Buffett / MOSL apply.
+  // Nuance: if recent YOY ≥ 25% (company inflecting), penalty halved — growth may
+  // be emerging even if historical CAGR was low (turnaround / new product).
+  if (row.revCagr !== undefined && row.revCagr < 15) {
+    const isInflecting = (row.yoySalesGrowth ?? 0) >= 25;
+    if (isInflecting) {
+      hardPenalty += 15;
+      risks.push(`Growth Quality Filter −15: Sales CAGR ${row.revCagr.toFixed(1)}% < 15% (but recent YOY ${(row.yoySalesGrowth??0).toFixed(0)}% suggests inflection — half penalty)`);
+    } else {
+      hardPenalty += 30;
+      risks.push(`🚨 Growth Quality Filter −30: Sales CAGR ${row.revCagr.toFixed(1)}% < 15% — insufficient base growth for 100-bagger thesis (MOSL: every 100× had ≥15% CAGR)`);
+    }
+  }
+
   // ── CYCLICAL SECTOR PENALTY ──────────────────────────────────────────────────
   // PEG/PE unreliable at earnings peaks in cyclicals. Earnings will mean-revert.
   // For cyclicals: PEG benefit is removed in valuation section (see below),
