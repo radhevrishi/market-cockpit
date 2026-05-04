@@ -3115,16 +3115,32 @@ function MultibaggerChecklist({excelRows}:{excelRows:ExcelResult[]}) {
 // Framework: Revenue Acceleration + Gross Margin + FCF Quality + US Valuation
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Excel serial date → readable string (TradingView exports dates as serial numbers)
+function usaSerialDate(v: unknown): string | undefined {
+  if (!v || v === '') return undefined;
+  const s = String(v).trim();
+  const num = parseFloat(s);
+  if (!isNaN(num) && num > 40000 && num < 60000) {
+    // Excel serial: days since Jan 1 1900 (JS epoch adjustment = -25569 days)
+    const d = new Date(Math.round((num - 25569) * 86400000));
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+  return s || undefined; // Already a readable string
+}
+
 interface USARow {
   symbol: string; company: string; sector: string; exchange: string;
   marketCapUsd?: number;          // Market capitalization (USD)
   revenueGrowthQtr?: number;      // Revenue growth %, Quarterly YoY
   revenueGrowthAnn?: number;      // Revenue growth %, Annual YoY
+  revGrowth3yr?: number;          // Revenue growth %, 3-year CAGR (sustained growth check)
   grossMarginAnn?: number;        // Gross margin %, Annual (GPM)
+  grossMarginTtm?: number;        // Gross margin %, TTM (more current, for expansion check)
   fcfMarginAnn?: number;          // Free cash flow margin %, Annual
   grossProfitGrowthQtr?: number;  // Gross profit growth %, Quarterly YoY
   pe?: number;                    // Price to earnings ratio
   forwardPe?: number;             // Forward non-GAAP PE, Annual
+  peg?: number;                   // PEG ratio (P/E ÷ growth rate)
   netDebtUsd?: number;            // Net debt, Annual (USD)
   evEbitda?: number;              // EV/EBITDA, TTM
   evRevenue?: number;             // EV/Revenue, TTM
@@ -3142,11 +3158,15 @@ interface USARow {
   netProfitMargin?: number;       // Net profit margin %, TTM
   perf1y?: number;                // 1-year performance %
   pctFrom52wHigh?: number;        // Change from 52-week high, %
+  insiderOwnership?: number;      // Insider ownership % — US promoter proxy
+  analystCount?: number;          // Number of analyst estimates — low = undiscovered
+  forwardRevGrowth?: number;      // Forward revenue growth %, FY1 — visibility
   // Derived
   revenueAccel?: number;          // revenueGrowthQtr - revenueGrowthAnn
   accelSignal?: 'ACCELERATING'|'STABLE'|'DECELERATING';
   marketCapB?: number;            // marketCapUsd / 1e9 (in billions)
-  netDebtToRevProxy?: number;     // netDebtUsd / (marketCapUsd × evRevenue) — leverage proxy
+  ruleOf40?: number;              // revenueGrowthAnn + fcfMarginAnn (≥40 = excellent)
+  grossMarginExpansion?: number;  // grossMarginTtm - grossMarginAnn (positive = expanding)
 }
 type USAGrade = 'A+'|'A'|'B+'|'B'|'C'|'D';
 
@@ -3214,25 +3234,51 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
   if (row.netProfitMargin !== undefined) {
     const s=svUS(row.netProfitMargin,[5,12,22]); qualS+=s*0.6; qualC+=0.6;
   }
+  // Gross margin expansion signal (TTM vs Annual — higher TTM = improving)
+  if (row.grossMarginExpansion !== undefined) {
+    if (row.grossMarginExpansion > 3) {
+      qualS += 12; qualC += 0.5;
+      strengths.push(`Gross margin expanding +${row.grossMarginExpansion.toFixed(1)}pp (TTM vs Annual) — pricing power improving`);
+    } else if (row.grossMarginExpansion < -3) {
+      qualS -= 8;
+      risks.push(`Gross margin compressing −${Math.abs(row.grossMarginExpansion).toFixed(1)}pp — competitive pressure or cost inflation`);
+    }
+  }
+  // Rule of 40 — SaaS/tech benchmark: revGrowth + FCF margin ≥ 40 = institutional quality
+  const ruleOf40 = row.ruleOf40;
+  if (ruleOf40 !== undefined) {
+    const r40S = ruleOf40 >= 60 ? 94 : ruleOf40 >= 40 ? 80 : ruleOf40 >= 25 ? 62 : ruleOf40 >= 10 ? 44 : 25;
+    qualS += r40S; qualC++;
+    if (ruleOf40 >= 40) strengths.push(`Rule of 40: ${ruleOf40.toFixed(0)} (Rev ${(row.revenueGrowthAnn??0).toFixed(0)}% + FCF ${(row.fcfMarginAnn??0).toFixed(0)}%) — institutional quality benchmark`);
+    else if (ruleOf40 < 20) risks.push(`Rule of 40: ${ruleOf40.toFixed(0)} — below threshold (need ≥40 for premium valuation)`);
+  }
 
-  // ── GROWTH (25%): Revenue Annual + Quarterly ────────────────────────────────
+  // ── GROWTH (25%): Revenue Annual + Quarterly + 3yr CAGR ──────────────────────
   let growS=0, growC=0;
   if (row.revenueGrowthAnn !== undefined) {
     const s=svUS(row.revenueGrowthAnn,b.revGrowth); growS+=s; growC++;
     if (s>=80) strengths.push(`Revenue growth ${row.revenueGrowthAnn.toFixed(1)}% YoY — strong compounding`);
-    // 🚨 Growth Quality Filter (same as India — ≥20% for US multibaggers)
+    // 🚨 Growth Quality Filter — ≥20% for US multibaggers
     if (row.revenueGrowthAnn < 20) {
       const penalty = row.revenueGrowthAnn < 10 ? 25 : 12;
       growS = Math.max(0, growS - penalty);
       risks.push(`🚨 Growth filter: ${row.revenueGrowthAnn.toFixed(1)}% annual revenue growth${row.revenueGrowthAnn < 10 ? ' — very low for US multibagger (−25)' : ' — below 20% threshold (−12)'}`);
     }
   }
+  // 3-year CAGR consistency check — spike vs sustained
+  if (row.revGrowth3yr !== undefined) {
+    const s = svUS(row.revGrowth3yr, b.revGrowth); growS += s * 0.8; growC += 0.8;
+    if (row.revenueGrowthAnn !== undefined && row.revGrowth3yr < row.revenueGrowthAnn * 0.5) {
+      growS -= 12; risks.push(`Revenue spike risk: ${row.revenueGrowthAnn.toFixed(0)}% annual vs ${row.revGrowth3yr.toFixed(0)}% 3yr CAGR — recent surge may not be sustained`);
+    } else if (row.revGrowth3yr > 25) {
+      strengths.push(`Sustained growth: ${row.revGrowth3yr.toFixed(1)}% 3yr CAGR — not a one-year spike`);
+    }
+  }
   if (row.epsGrowth !== undefined) {
     const s=svUS(row.epsGrowth,[10,25,45]); growS+=s; growC++;
-    if (s>=80) strengths.push(`EPS growth ${row.epsGrowth.toFixed(1)}% — earnings compounding`);
+    if (s>=80) strengths.push(`EPS growth ${row.epsGrowth.toFixed(1)}% — earnings compounding faster than revenue (op leverage)`);
   }
   if (row.grossProfitGrowthQtr !== undefined && row.revenueGrowthQtr !== undefined) {
-    // Gross profit growing faster than revenue = margin expansion
     if (row.grossProfitGrowthQtr > row.revenueGrowthQtr + 5) {
       growS += 10; growC += 0.4;
       strengths.push(`Gross profit +${row.grossProfitGrowthQtr.toFixed(0)}% vs revenue +${row.revenueGrowthQtr.toFixed(0)}% — margins expanding`);
@@ -3266,14 +3312,42 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
   if (row.ps !== undefined && row.ps > 0) {
     valComponents.push(svUS(row.ps,[2,5,12],false));
   }
+  // PEG ratio — best growth-adjusted valuation check
+  if (row.peg !== undefined && row.peg > 0) {
+    const pegS = row.peg<0.8?92:row.peg<1.2?82:row.peg<2.0?65:row.peg<3.0?45:25;
+    valComponents.push(pegS);
+    if (row.peg<1.0) strengths.push(`PEG ${row.peg.toFixed(2)} — undervalued relative to growth rate`);
+    else if (row.peg>3.0) risks.push(`PEG ${row.peg.toFixed(2)} — expensive relative to growth rate`);
+  }
+  // Forward revenue growth — visibility premium
+  if (row.forwardRevGrowth !== undefined) {
+    if (row.forwardRevGrowth >= 25) { valComponents.push(78); strengths.push(`Forward revenue growth ${row.forwardRevGrowth.toFixed(0)}% FY1 — analysts see continued acceleration`); }
+    else if (row.forwardRevGrowth >= 15) valComponents.push(62);
+    else if (row.forwardRevGrowth < 10) { valComponents.push(35); risks.push(`Forward revenue growth ${row.forwardRevGrowth.toFixed(0)}% — analysts expect slowdown`); }
+  }
   const valS = valComponents.length > 0 ? valComponents.reduce((a,b)=>a+b,0)/valComponents.length : 50;
 
-  // ── MARKET (10%): Market cap discovery + sector tailwind ─────────────────
+  // ── MARKET (10%): Market cap discovery + sector tailwind + insider ──────────
   let mktS=50;
   if (row.marketCapB !== undefined) {
-    mktS = row.marketCapB<1?90:row.marketCapB<5?82:row.marketCapB<20?72:row.marketCapB<100?58:row.marketCapB<500?44:32;
-    if (row.marketCapB<5) strengths.push(`Market cap $${row.marketCapB.toFixed(1)}B — small base, maximum runway`);
-    else if (row.marketCapB>200) risks.push(`Market cap $${row.marketCapB.toFixed(0)}B — large, limits multibagger potential`);
+    // Tighter bands: US multibaggers typically emerge from $1-50B range
+    mktS = row.marketCapB<0.5?92:row.marketCapB<2?86:row.marketCapB<10?78:row.marketCapB<50?65:row.marketCapB<150?50:row.marketCapB<500?38:26;
+    if (row.marketCapB<2)   strengths.push(`Market cap $${row.marketCapB.toFixed(1)}B — micro/small cap, maximum runway`);
+    else if (row.marketCapB<10) strengths.push(`Market cap $${row.marketCapB.toFixed(1)}B — small cap, strong multibagger runway`);
+    else if (row.marketCapB>150) risks.push(`Market cap $${row.marketCapB.toFixed(0)}B — large cap, limited 100× potential from here`);
+  }
+  // Insider ownership — US promoter proxy (high = skin in game)
+  if (row.insiderOwnership !== undefined) {
+    const insS = row.insiderOwnership>=20?85:row.insiderOwnership>=10?72:row.insiderOwnership>=5?58:40;
+    mktS = (mktS + insS) / 2;
+    if (row.insiderOwnership >= 15) strengths.push(`Insider ownership ${row.insiderOwnership.toFixed(1)}% — management has skin in game`);
+    else if (row.insiderOwnership < 2) risks.push(`Insider ownership ${row.insiderOwnership.toFixed(1)}% — very low management alignment`);
+  }
+  // Analyst count — low coverage = undiscovered (like SQGLP "S" for India)
+  if (row.analystCount !== undefined) {
+    if (row.analystCount <= 5)  { mktS = Math.min(100, mktS+8);  strengths.push(`Only ${row.analystCount} analysts covering — undiscovered, institutional re-rating ahead`); }
+    else if (row.analystCount <= 12) { mktS = Math.min(100, mktS+4); }
+    else if (row.analystCount > 30) { mktS = Math.max(0, mktS-5); risks.push(`${row.analystCount} analysts covering — well-covered, limited discovery premium`); }
   }
   if (row.pctFrom52wHigh !== undefined) {
     if (row.pctFrom52wHigh >= -5) { mktS = Math.min(100, mktS+10); strengths.push(`Near 52W high (${row.pctFrom52wHigh.toFixed(0)}%) — price confirming thesis`); }
@@ -3298,8 +3372,8 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
   const val   = valS;
   const mkt   = mktS;
 
-  const filledFields = [row.revenueGrowthAnn, row.grossMarginAnn, row.fcfMarginAnn, row.opmTtm, row.roe, row.evEbitda, row.pe, row.marketCapUsd, row.netDebtUsd, row.revenueGrowthQtr].filter(v=>v!==undefined).length;
-  const coverage = Math.min(100, Math.round(filledFields/10*100));
+  const filledFields = [row.revenueGrowthAnn, row.grossMarginAnn, row.fcfMarginAnn, row.opmTtm, row.roe, row.evEbitda, row.pe||row.forwardPe, row.marketCapUsd, row.netDebtUsd, row.revenueGrowthQtr, row.epsGrowth, row.roic, row.ruleOf40].filter(v=>v!==undefined).length;
+  const coverage = Math.min(100, Math.round(filledFields/13*100));
 
   const raw = qual*0.30 + growth*0.25 + accel*0.20 + val*0.15 + mkt*0.10;
   let score = Math.max(0, Math.min(100, Math.round(raw/5)*5));
@@ -3333,10 +3407,12 @@ function applyUSARanking(results: USAResult[]): USAResult[] {
     const pct = idx / n;
     let grade: USAGrade =
       pct < 0.10 ? 'A+' : pct < 0.28 ? 'A' : pct < 0.55 ? 'B+' : pct < 0.75 ? 'B' : pct < 0.88 ? 'C' : 'D';
-    // Hard caps
-    if (r.marketCapB !== undefined && r.marketCapB > 500 && ['A+','A','B+'].includes(grade)) grade = 'B'; // too big to 100×
+    // Hard caps — mathematically derived
+    // $150B+ = cannot 100× realistically (PLTR $349B, NVDA $3T etc.)
+    if (r.marketCapB !== undefined && r.marketCapB > 150 && ['A+','A'].includes(grade)) grade = 'B+';
+    if (r.marketCapB !== undefined && r.marketCapB > 500 && grade === 'B+') grade = 'B';
     if (r.revenueGrowthAnn !== undefined && r.revenueGrowthAnn < 10 && ['A+','A'].includes(grade)) grade = 'B+';
-    if (r.accelSignal === 'DECELERATING' && grade === 'A+') grade = 'A';
+    if (r.accelSignal === 'DECELERATING' && ['A+','A'].includes(grade)) grade = 'B+';
     return { ...r, grade };
   });
 }
@@ -3378,7 +3454,8 @@ function parseUSARow(row: Record<string,unknown>): USARow | null {
     roe:         n(row['Return on equity %, Trailing 12 months']),
     cashUsd:     cashRaw,
     ltDebtUsd:   ltDebtRaw,
-    nextEarnings: String(row['Upcoming earnings date']??'').trim()||undefined,
+    // Fix: TradingView exports dates as Excel serial numbers (e.g. 46148.08 = May 4 2026)
+    nextEarnings: usaSerialDate(row['Upcoming earnings date']),
     // Optional extra fields — maps both TradingView exact names AND common variants
     epsGrowth: n(
       row['Earnings per share diluted growth %, TTM YoY'] ??   // TradingView exact
@@ -3406,15 +3483,55 @@ function parseUSARow(row: Record<string,unknown>): USARow | null {
       row['Perf.Y']
     ),
     pctFrom52wHigh: n(
-      row['Change from 52-week high, %'] ??                     // TradingView optional
+      row['Change from 52-week high, %'] ??
       row['% from 52W high'] ??
       row['Change from 52W High']
+    ),
+    // New fields — add these in TradingView for better scoring
+    revGrowth3yr: n(
+      row['Revenue growth %, 3-year CAGR'] ??
+      row['Revenue 3-year CAGR, %'] ??
+      row['Revenue growth %, 3 year CAGR']
+    ),
+    grossMarginTtm: n(
+      row['Gross margin %, TTM'] ??
+      row['Gross margin %, Trailing 12 months']
+    ),
+    peg: n(
+      row['Price to earnings growth ratio'] ??
+      row['PEG ratio'] ??
+      row['PEG']
+    ),
+    insiderOwnership: n(
+      row['Insider ownership, %'] ??
+      row['Insider ownership %'] ??
+      row['Insider Ownership, %']
+    ),
+    analystCount: n(
+      row['Number of analyst estimates'] ??
+      row['Analyst ratings'] ??
+      row['Analysts']
+    ),
+    forwardRevGrowth: n(
+      row['Forward revenue growth %, FY1'] ??
+      row['Revenue growth %, next year'] ??
+      row['Revenue growth est., next fiscal year, %']
     ),
     // Derived at parse time
     revenueAccel: (revQtr !== undefined && revAnn !== undefined) ? Math.round(revQtr - revAnn) : undefined,
     accelSignal: (revQtr !== undefined && revAnn !== undefined)
       ? (revQtr - revAnn >= 8 ? 'ACCELERATING' : revQtr - revAnn <= -8 ? 'DECELERATING' : 'STABLE')
       : undefined,
+    // Rule of 40 = revenue growth + FCF margin (≥40 = institutional benchmark)
+    ruleOf40: (revAnn !== undefined && n(row['Free cash flow margin %, Annual']) !== undefined)
+      ? Math.round(revAnn + (n(row['Free cash flow margin %, Annual']) as number))
+      : undefined,
+    // Gross margin expansion = TTM vs Annual (positive = improving pricing power)
+    grossMarginExpansion: (() => {
+      const ttm = n(row['Gross margin %, TTM'] ?? row['Gross margin %, Trailing 12 months']);
+      const ann = n(row['Gross margin %, Annual']);
+      return (ttm !== undefined && ann !== undefined) ? Math.round((ttm - ann) * 10) / 10 : undefined;
+    })(),
   };
 }
 
@@ -3490,12 +3607,18 @@ function USACompare() {
         </div>
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(240px,1fr))',gap:8}}>
           {[
-            {field:'EPS diluted growth %, TTM YoY', why:'Profit growth — Fisher Twin Engine'},
-            {field:'Return on invested capital %, Annual', why:'ROIC — capital efficiency'},
-            {field:'Debt / equity ratio', why:'Leverage measurement'},
-            {field:'Net profit margin %, TTM', why:'Profitability quality'},
-            {field:'Change from 52-week high, %', why:'Technical RS proxy'},
-            {field:'1-year performance %', why:'Momentum confirmation'},
+            {field:'EPS diluted growth %, TTM YoY', why:'Profit growth — Fisher Twin Engine ✅ added'},
+            {field:'Return on invested capital %, Annual', why:'ROIC — capital efficiency ✅ added'},
+            {field:'Debt to equity ratio, Quarterly', why:'Leverage ✅ added'},
+            {field:'Net margin %, Trailing 12 months', why:'Net profitability ✅ added'},
+            {field:'Performance % 1 year', why:'Momentum ✅ added'},
+            {field:'Revenue growth %, 3-year CAGR', why:'🆕 Sustained growth vs spike check'},
+            {field:'Gross margin %, TTM', why:'🆕 Margin expansion signal (TTM vs Annual)'},
+            {field:'Price to earnings growth ratio', why:'🆕 PEG — growth-adjusted valuation'},
+            {field:'Insider ownership, %', why:'🆕 US promoter proxy — management skin in game'},
+            {field:'Number of analyst estimates', why:'🆕 Discovery: low count = undiscovered'},
+            {field:'Forward revenue growth %, FY1', why:'🆕 Visibility: analyst forward estimates'},
+            {field:'Change from 52-week high, %', why:'🆕 Technical RS proxy'},
           ].map(({field,why})=>(
             <div key={field} style={{padding:'8px 12px',backgroundColor:CARD2,borderRadius:6,border:`1px solid ${BORDER}`}}>
               <div style={{fontSize:F.sm,fontWeight:700,color:ACCENT}}>{field}</div>
