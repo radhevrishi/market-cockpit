@@ -2105,6 +2105,178 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
             >
               {expandAll ? '⊟ Collapse All' : '⊞ Expand All'}
             </button>
+
+            {/* ── DOWNLOAD DOCX ── */}
+            {filtered.length > 0 && (
+              <button
+                title="Download full report as Word document"
+                onClick={async () => {
+                  const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
+                    HeadingLevel, AlignmentType, WidthType, BorderStyle: BS, ShadingType, LevelFormat } = await import('docx');
+                  const border = { style: BS.SINGLE, size: 1, color: 'CCCCCC' };
+                  const borders = { top: border, bottom: border, left: border, right: border };
+                  const cm = { top: 80, bottom: 80, left: 120, right: 120 };
+                  const fmtVal = (field: keyof ExcelRow, label: string, v: number) => {
+                    if (label.includes('Cr')) return `₹${v.toLocaleString('en-IN', {maximumFractionDigits:2})}`;
+                    if (label.endsWith(' x')) return `${v.toFixed(2)}×`;
+                    return `${v.toFixed(1)}${label.includes('%') || label.includes('pp') ? '%' : ''}`;
+                  };
+                  const children: any[] = [
+                    new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun({ text: '📊 Multibagger Research Report', bold: true, size: 36 })] }),
+                    new Paragraph({ children: [new TextRun({ text: `Generated: ${new Date().toLocaleDateString('en-IN', {day:'numeric',month:'long',year:'numeric'})}  |  Stocks: ${filtered.length}  |  Framework: SQGLP + Fisher 100-Bagger`, size: 20, color: '666666' })] }),
+                    new Paragraph({ children: [new TextRun('')] }),
+                    // Grade summary table
+                    new Table({ width: { size: 9360, type: WidthType.DXA }, columnWidths: [1560,1560,1560,1560,1560,1560], rows: [
+                      new TableRow({ children: ['A+','A','B+','B','C','D'].map(g => new TableCell({ borders, margins: cm, width: { size: 1560, type: WidthType.DXA }, shading: { fill: g==='A+'?'E8F5E9':g==='A'?'F1F8E9':g==='B+'?'FFF8E1':g==='B'?'FFF3E0':'FAFAFA', type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: g, bold: true })] })] })) }),
+                      new TableRow({ children: ['A+','A','B+','B','C','D'].map(g => new TableCell({ borders, margins: cm, width: { size: 1560, type: WidthType.DXA }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: String(filtered.filter(r=>r.grade===g).length), bold: true, size: 24 })] })] })) }),
+                    ]}),
+                    new Paragraph({ children: [new TextRun('')] }),
+                  ];
+                  for (const r of filtered) {
+                    const gs = guidanceScores[r.symbol];
+                    children.push(
+                      new Paragraph({ heading: HeadingLevel.HEADING_2, pageBreakBefore: children.length > 10, children: [new TextRun({ text: `${r.symbol}  —  ${r.company || r.sector}`, bold: true })] }),
+                      new Table({ width: { size: 9360, type: WidthType.DXA }, columnWidths: [2340,2340,2340,2340], rows: [
+                        new TableRow({ children: [
+                          new TableCell({ borders, margins: cm, width: { size: 2340, type: WidthType.DXA }, shading: { fill: 'F5F5F5', type: ShadingType.CLEAR }, children: [new Paragraph({ children: [new TextRun({ text: `Score: ${r.score} | Grade: ${r.grade}`, bold: true })] })] }),
+                          new TableCell({ borders, margins: cm, width: { size: 2340, type: WidthType.DXA }, children: [new Paragraph({ children: [new TextRun(`Bucket: ${r.bucket.replace(/_/g,' ')}`)] })] }),
+                          new TableCell({ borders, margins: cm, width: { size: 2340, type: WidthType.DXA }, children: [new Paragraph({ children: [new TextRun(`Ownership: ${r.ownershipCategory.replace(/_/g,' ')}`)] })] }),
+                          new TableCell({ borders, margins: cm, width: { size: 2340, type: WidthType.DXA }, children: [new Paragraph({ children: [new TextRun(gs !== undefined && gs !== -1 ? `Guidance: ${gs.toFixed(1)}` : 'Guidance: —')] })] }),
+                        ]}),
+                      ]}),
+                    );
+                    // Metrics table
+                    const metricRows = METRICS.filter(([f]) => r[f] !== undefined && r[f] !== null);
+                    if (metricRows.length > 0) {
+                      children.push(new Paragraph({ children: [new TextRun({ text: 'Metrics', bold: true, size: 22 })] }));
+                      const half = Math.ceil(metricRows.length / 2);
+                      for (let i = 0; i < half; i++) {
+                        const left = metricRows[i], right = metricRows[i + half];
+                        children.push(new Table({ width: { size: 9360, type: WidthType.DXA }, columnWidths: [2600,2080,2600,2080], rows: [
+                          new TableRow({ children: [
+                            new TableCell({ borders, margins: cm, width: { size: 2600, type: WidthType.DXA }, shading: { fill: 'F9F9F9', type: ShadingType.CLEAR }, children: [new Paragraph({ children: [new TextRun({ text: left[1], size: 18 })] })] }),
+                            new TableCell({ borders, margins: cm, width: { size: 2080, type: WidthType.DXA }, children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: fmtVal(left[0], left[1], r[left[0]] as number), bold: true, size: 18 })] })] }),
+                            ...(right ? [
+                              new TableCell({ borders, margins: cm, width: { size: 2600, type: WidthType.DXA }, shading: { fill: 'F9F9F9', type: ShadingType.CLEAR }, children: [new Paragraph({ children: [new TextRun({ text: right[1], size: 18 })] })] }),
+                              new TableCell({ borders, margins: cm, width: { size: 2080, type: WidthType.DXA }, children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: fmtVal(right[0], right[1], r[right[0]] as number), bold: true, size: 18 })] })] }),
+                            ] : [
+                              new TableCell({ borders, margins: cm, width: { size: 2600, type: WidthType.DXA }, children: [new Paragraph({ children: [] })] }),
+                              new TableCell({ borders, margins: cm, width: { size: 2080, type: WidthType.DXA }, children: [new Paragraph({ children: [] })] }),
+                            ]),
+                          ]}),
+                        ]}));
+                      }
+                    }
+                    // Strengths
+                    if (r.strengths.length > 0) {
+                      children.push(new Paragraph({ children: [new TextRun({ text: '✅ Strengths', bold: true, size: 22, color: '1B7F4F' })] }));
+                      r.strengths.forEach(s => children.push(new Paragraph({ indent: { left: 360 }, children: [new TextRun({ text: `• ${s}`, size: 18 })] })));
+                    }
+                    // Risks
+                    if (r.risks.length > 0 || r.redFlags.length > 0) {
+                      children.push(new Paragraph({ children: [new TextRun({ text: '⚠ Risks & Flags', bold: true, size: 22, color: 'B91C1C' })] }));
+                      r.redFlags.forEach(f => children.push(new Paragraph({ indent: { left: 360 }, children: [new TextRun({ text: `🚩 [${f.severity}] ${f.label}`, size: 18, color: 'B91C1C' })] })));
+                      r.risks.filter(s => !s.startsWith('Hard ')).forEach(s => children.push(new Paragraph({ indent: { left: 360 }, children: [new TextRun({ text: `• ${s}`, size: 18 })] })));
+                    }
+                    children.push(new Paragraph({ children: [new TextRun({ text: `Sector: ${r.sector}  |  Data: ${r.coverage}%  |  Pillar weights: ${r.pillarScores.map(p=>`${p.label} ${p.weight}%`).join(' · ')}`, size: 16, color: '888888' })] }));
+                    children.push(new Paragraph({ children: [new TextRun('')] }));
+                  }
+                  const doc = new Document({ sections: [{ properties: { page: { size: { width: 12240, height: 15840 }, margin: { top: 1080, right: 1080, bottom: 1080, left: 1080 } } }, children }] });
+                  const blob = await Packer.toBlob(doc);
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a'); a.href = url; a.download = `multibagger-${new Date().toISOString().slice(0,10)}.docx`; a.click(); URL.revokeObjectURL(url);
+                }}
+                style={{ fontSize:F.xs, fontWeight:700, padding:'5px 12px', borderRadius:7, cursor:'pointer', border:`1px solid ${BORDER}`, background:'transparent', color:'#a78bfa' }}
+              >⬇ DOCX</button>
+            )}
+
+            {/* ── DOWNLOAD PDF ── */}
+            {filtered.length > 0 && (
+              <button
+                title="Download full report as PDF"
+                onClick={async () => {
+                  const { jsPDF } = await import('jspdf');
+                  const autoTable = (await import('jspdf-autotable')).default;
+                  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+                  const pageW = doc.internal.pageSize.getWidth();
+                  const margin = 14;
+                  const contentW = pageW - margin * 2;
+                  const fmtV = (label: string, v: number) => {
+                    if (label.includes('Cr')) return `₹${v.toLocaleString('en-IN',{maximumFractionDigits:1})}`;
+                    if (label.endsWith(' x')) return `${v.toFixed(2)}×`;
+                    return `${v.toFixed(1)}${label.includes('%')||label.includes('pp')?'%':''}`;
+                  };
+                  // Cover page
+                  doc.setFontSize(22); doc.setFont('helvetica','bold');
+                  doc.text('Multibagger Research Report', pageW/2, 40, { align: 'center' });
+                  doc.setFontSize(11); doc.setFont('helvetica','normal');
+                  doc.text(`SQGLP · Fisher 100-Bagger · ${filtered.length} stocks · ${new Date().toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}`, pageW/2, 50, { align: 'center' });
+                  // Grade summary
+                  const gradeSummary = ['A+','A','B+','B','C','D'].map(g => [g, String(filtered.filter(r=>r.grade===g).length)]);
+                  autoTable(doc, { startY: 60, margin: { left: margin }, head: [['A+','A','B+','B','C','D']], body: [gradeSummary.map(([,n])=>n)], theme: 'grid', headStyles: { fillColor: [88,28,135], textColor: 255, fontStyle: 'bold', halign: 'center' }, bodyStyles: { halign: 'center', fontStyle: 'bold', fontSize: 13 }, tableWidth: contentW });
+                  for (let i = 0; i < filtered.length; i++) {
+                    const r = filtered[i];
+                    doc.addPage();
+                    const gs = guidanceScores[r.symbol];
+                    // Stock header
+                    doc.setFillColor(15, 23, 42); doc.rect(0, 0, pageW, 22, 'F');
+                    doc.setTextColor(255,255,255); doc.setFontSize(14); doc.setFont('helvetica','bold');
+                    doc.text(`${r.symbol}  —  ${r.company || r.sector}`, margin, 10);
+                    doc.setFontSize(9); doc.setFont('helvetica','normal');
+                    const gradeColor: Record<string,[number,number,number]> = {'A+':[16,185,129],'A':[52,211,153],'B+':[245,158,11],'B':[249,115,22],'C':[251,146,60],'D':[239,68,68]};
+                    const gc = gradeColor[r.grade] || [100,100,100];
+                    doc.setTextColor(...gc); doc.setFontSize(18); doc.setFont('helvetica','bold');
+                    doc.text(r.grade, pageW - margin - 10, 13, { align: 'right' });
+                    doc.setTextColor(200,200,200); doc.setFontSize(9); doc.setFont('helvetica','normal');
+                    doc.text(`Score: ${r.score}  |  ${r.bucket.replace(/_/g,' ')}  |  ${r.ownershipCategory.replace(/_/g,' ')}  |  Guidance: ${gs !== undefined && gs !== -1 ? gs.toFixed(1) : '—'}`, margin, 18);
+                    doc.setTextColor(0,0,0);
+                    // Metrics table
+                    const metricRows = METRICS.filter(([f]) => r[f] !== undefined && r[f] !== null)
+                      .map(([f,label]) => [label, fmtV(label, r[f] as number)]);
+                    const half = Math.ceil(metricRows.length / 2);
+                    const leftCol = metricRows.slice(0, half);
+                    const rightCol = metricRows.slice(half);
+                    const tableBody = leftCol.map((row, i) => [...row, ...(rightCol[i] || ['',''])]);
+                    autoTable(doc, { startY: 26, margin: { left: margin }, head: [['Metric','Value','Metric','Value']], body: tableBody, theme: 'striped', headStyles: { fillColor: [30,41,59], textColor: 255, fontSize: 8 }, bodyStyles: { fontSize: 7.5 }, columnStyles: { 0: { cellWidth: contentW*0.32 }, 1: { cellWidth: contentW*0.18, halign:'right' }, 2: { cellWidth: contentW*0.32 }, 3: { cellWidth: contentW*0.18, halign:'right' } }, tableWidth: contentW });
+                    const afterMetrics = (doc as any).lastAutoTable?.finalY || 80;
+                    // Strengths
+                    if (r.strengths.length > 0) {
+                      doc.setFontSize(9); doc.setFont('helvetica','bold'); doc.setTextColor(27,127,79);
+                      doc.text('✅ STRENGTHS', margin, afterMetrics + 6);
+                      doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(40,40,40);
+                      let y = afterMetrics + 11;
+                      for (const s of r.strengths.slice(0,12)) {
+                        const lines = doc.splitTextToSize(`• ${s}`, contentW - 4);
+                        doc.text(lines, margin + 2, y); y += lines.length * 4;
+                        if (y > 260) break;
+                      }
+                      // Risks
+                      if (r.risks.length > 0 || r.redFlags.length > 0) {
+                        doc.setFontSize(9); doc.setFont('helvetica','bold'); doc.setTextColor(185,28,28);
+                        doc.text('⚠ RISKS', margin, y + 4);
+                        doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(60,40,40);
+                        y += 9;
+                        for (const f of r.redFlags.slice(0,5)) {
+                          const lines = doc.splitTextToSize(`🚩 [${f.severity}] ${f.label}`, contentW - 4);
+                          doc.text(lines, margin + 2, y); y += lines.length * 4;
+                          if (y > 275) break;
+                        }
+                        for (const s of r.risks.filter(x=>!x.startsWith('Hard ')).slice(0,8)) {
+                          const lines = doc.splitTextToSize(`• ${s}`, contentW - 4);
+                          doc.text(lines, margin + 2, y); y += lines.length * 4;
+                          if (y > 275) break;
+                        }
+                      }
+                    }
+                    // Footer
+                    doc.setFontSize(7); doc.setTextColor(140,140,140);
+                    doc.text(`Sector: ${r.sector}  |  Data: ${r.coverage}%  |  ${i+1}/${filtered.length}`, margin, 289);
+                  }
+                  doc.save(`multibagger-${new Date().toISOString().slice(0,10)}.pdf`);
+                }}
+                style={{ fontSize:F.xs, fontWeight:700, padding:'5px 12px', borderRadius:7, cursor:'pointer', border:`1px solid ${BORDER}`, background:'transparent', color:'#f97316' }}
+              >⬇ PDF</button>
+            )}
           </div>
 
           {/* ── GAP 6: PORTFOLIO CONSTRUCTION PANEL ─────────────────────────── */}

@@ -21,6 +21,7 @@
     "axios": "^1.7.2",
     "clsx": "^2.1.1",
     "date-fns": "^2.30.0",
+    "docx": "^9.6.1",
     "file-saver": "^2.0.5",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",
