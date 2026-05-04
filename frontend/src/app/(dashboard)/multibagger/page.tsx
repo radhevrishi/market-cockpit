@@ -2,6 +2,10 @@
 
 import { useState, useMemo, useRef } from 'react';
 
+// Shared API base — respects NEXT_PUBLIC_API_URL env var so all fetch() calls
+// resolve consistently when the base URL changes (fixes #13: mixed /api/v1 vs /api)
+const API_BASE = (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_API_URL) || '/api/v1';
+
 // ── Design tokens — institutional scale ───────────────────────────────────────
 const BG      = '#0a0a0f';
 const CARD_BG = '#13131a';
@@ -1618,11 +1622,11 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
       // Strategy: fetch ALL recent articles broadly (not type-filtered),
       // try multiple matching approaches, then fall back to trajectory proxy.
       const fetches = await Promise.all([
-        fetch('/api/v1/news?limit=500&importance_min=1&article_type=EARNINGS'),
-        fetch('/api/v1/news?limit=300&importance_min=1&article_type=CORPORATE'),
-        fetch('/api/v1/news?limit=200&importance_min=1&article_type=RATING_CHANGE'),
-        fetch('/api/v1/news?limit=200&importance_min=2&article_type=GENERAL'),
-        fetch('/api/v1/news?limit=100&importance_min=2&article_type=BOTTLENECK'),
+        fetch(`${API_BASE}/news?limit=500&importance_min=1&article_type=EARNINGS`),
+        fetch(`${API_BASE}/news?limit=300&importance_min=1&article_type=CORPORATE`),
+        fetch(`${API_BASE}/news?limit=200&importance_min=1&article_type=RATING_CHANGE`),
+        fetch(`${API_BASE}/news?limit=200&importance_min=2&article_type=GENERAL`),
+        fetch(`${API_BASE}/news?limit=100&importance_min=2&article_type=BOTTLENECK`),
       ]);
       const datas = await Promise.all(fetches.map(r => r.ok ? r.json().catch(()=>[]) : Promise.resolve([])));
       const all = (datas.flat() as NewsArticle[]);

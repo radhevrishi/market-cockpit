@@ -76,6 +76,36 @@ function usePositions(portfolioId: string) {
   });
 }
 
+// ── Intelligence signals for a set of tickers (same endpoint as single-portfolio view) ──
+interface PortfolioSignal {
+  symbol: string;
+  weightedScore?: number;
+  action?: string;          // BUY | ADD | HOLD | TRIM | EXIT | AVOID | WATCH
+  sectorTrend?: string;     // Bullish | Neutral | Bearish
+}
+function usePortfolioIntelligence(tickers: string[]) {
+  return useQuery<Map<string, PortfolioSignal>>({
+    queryKey: ['portfolios', 'intelligence', tickers.sort().join(',')],
+    queryFn: async () => {
+      if (!tickers.length) return new Map();
+      const pfParam = `portfolio=${tickers.join(',')}`;
+      const res = await fetch(`/api/market/intelligence?days=30&${pfParam}`);
+      if (!res.ok) return new Map();
+      const data = await res.json();
+      const signals: PortfolioSignal[] = [...(data.signals || []), ...(data.notable || [])];
+      const map = new Map<string, PortfolioSignal>();
+      for (const s of signals) {
+        if (!map.has(s.symbol)) map.set(s.symbol, s);
+      }
+      return map;
+    },
+    enabled: tickers.length > 0,
+    staleTime: 5 * 60_000,
+    gcTime: 15 * 60_000,
+    retry: 0,
+  });
+}
+
 function usePortfolioSummary(portfolioId: string) {
   return useQuery<PortfolioSummary>({
     queryKey: ['portfolios', portfolioId, 'summary'],
@@ -606,7 +636,7 @@ function EditPositionModal({ pos, portfolioId, onClose }: { pos: ApiPosition; po
 
 // ─── Position Row ─────────────────────────────────────────────────────────────
 
-function PositionRow({ pos, portfolioId }: { pos: ApiPosition; portfolioId: string }) {
+function PositionRow({ pos, portfolioId, signal }: { pos: ApiPosition; portfolioId: string; signal?: PortfolioSignal }) {
   const qc = useQueryClient();
   const [showEditModal, setShowEditModal] = useState(false);
   const deleteMut = useMutation({
@@ -654,6 +684,29 @@ function PositionRow({ pos, portfolioId }: { pos: ApiPosition; portfolioId: stri
         <span className={`text-xs font-semibold ${pnlColor(dayChange)}`}>
           {dayChange >= 0 ? '+' : ''}{dayChange.toFixed(2)}%
         </span>
+      </td>
+      {/* Intelligence signal — score + action badge from /api/market/intelligence */}
+      <td className="px-4 py-3">
+        {signal ? (
+          <div className="flex flex-col gap-0.5">
+            {signal.weightedScore !== undefined && (
+              <span className={`text-xs font-bold ${signal.weightedScore >= 65 ? 'text-emerald-400' : signal.weightedScore >= 45 ? 'text-amber-400' : 'text-[#4A5B6C]'}`}>
+                {Math.round(signal.weightedScore)}
+              </span>
+            )}
+            {signal.action && (
+              <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded ${
+                signal.action === 'BUY' || signal.action === 'ADD'  ? 'bg-emerald-500/15 text-emerald-400' :
+                signal.action === 'TRIM' || signal.action === 'EXIT' ? 'bg-red-500/15 text-red-400' :
+                'bg-[#1A2B3C] text-[#4A5B6C]'
+              }`}>
+                {signal.action}
+              </span>
+            )}
+          </div>
+        ) : (
+          <span className="text-[#2A3B4C] text-[10px]">—</span>
+        )}
       </td>
       <td className="px-4 py-3 text-[#8899AA] text-xs">{sym}{totalValue.toFixed(0)}</td>
       <td className="px-4 py-3 text-[#4A5B6C] text-xs">
@@ -845,6 +898,9 @@ export default function PortfoliosPage() {
 
   const { data: positions, isLoading: loadingPos, refetch } = usePositions(activeId);
   const { data: summary, isLoading: loadingSum } = usePortfolioSummary(activeId);
+  // Intelligence signals for all positions in the active portfolio
+  const positionTickers = (positions ?? []).map(p => p.ticker).filter(Boolean);
+  const { data: intelligenceMap } = usePortfolioIntelligence(positionTickers);
 
   const currency = portfolios?.find(p => p.id === activeId)?.currency ?? 'INR';
   const sym = currency === 'INR' ? '₹' : '$';
@@ -978,18 +1034,18 @@ export default function PortfoliosPage() {
                 <table className="w-full min-w-[900px]">
                   <thead>
                     <tr className="border-b border-[#2A3B4C] bg-[#0D1B2E]/40">
-                      {['Ticker', 'Exch', 'Qty', 'Avg Cost', 'CMP', 'P&L', 'Day%', 'Value', 'Next Earn', ''].map(h => (
+                      {['Ticker', 'Exch', 'Qty', 'Avg Cost', 'CMP', 'P&L', 'Day%', 'Signal', 'Value', 'Next Earn', ''].map(h => (
                         <th key={h} className="px-4 py-3 text-left text-[#4A5B6C] text-[11px] font-semibold uppercase tracking-wider">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {loadingPos
-                      ? Array.from({ length: 5 }).map((_, i) => <TableRowSkeleton key={i} cols={10} />)
+                      ? Array.from({ length: 5 }).map((_, i) => <TableRowSkeleton key={i} cols={11} />)
                       : !positions?.length
                       ? (
                         <tr>
-                          <td colSpan={10} className="text-center py-16 text-[#4A5B6C] text-sm">
+                          <td colSpan={11} className="text-center py-16 text-[#4A5B6C] text-sm">
                             No positions yet.{' '}
                             <button onClick={() => setShowAddPosition(true)} className="text-[#0F7ABF] hover:text-[#38A9E8]">
                               Add your first position →
@@ -997,7 +1053,7 @@ export default function PortfoliosPage() {
                           </td>
                         </tr>
                       )
-                      : positions.map(pos => <PositionRow key={pos.id} pos={pos} portfolioId={activeId} />)
+                      : positions.map(pos => <PositionRow key={pos.id} pos={pos} portfolioId={activeId} signal={intelligenceMap?.get(pos.ticker)} />)
                     }
                   </tbody>
                 </table>

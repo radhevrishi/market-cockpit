@@ -617,6 +617,46 @@ export default function CompanyIntelligencePage() {
             <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
           </button>
           {lastUpdated && <span style={{ fontSize: '11px', color: TEXT3 }}>{lastUpdated}</span>}
+
+          {/* Export to XLSX — all visible filtered signals */}
+          <button
+            onClick={async () => {
+              if (!filteredSignals.length) return;
+              const XLSX = await import('xlsx');
+              const rows = filteredSignals.map(s => ({
+                Symbol:       s.symbol,
+                Company:      s.company,
+                Date:         s.date,
+                Action:       s.action,
+                Score:        s.score,
+                'Wtd Score':  s.weightedScore,
+                Sentiment:    s.sentiment,
+                Impact:       s.impactLevel,
+                Confidence:   s.impactConfidence,
+                'Event Type': s.eventType,
+                'Value (Cr)': s.valueCr || '',
+                Headline:     s.headline,
+                Source:       s.dataSource || s.source,
+                Portfolio:    s.isPortfolio ? 'Yes' : '',
+                Watchlist:    s.isWatchlist ? 'Yes' : '',
+                'Excel Pick': s.isExcel    ? 'Yes' : '',
+              }));
+              const ws = XLSX.utils.json_to_sheet(rows);
+              const wb = XLSX.utils.book_new();
+              XLSX.utils.book_append_sheet(wb, ws, 'Intelligence');
+              XLSX.writeFile(wb, `intelligence-${new Date().toISOString().slice(0,10)}.xlsx`);
+            }}
+            title="Export visible signals to Excel"
+            style={{
+              display: 'flex', alignItems: 'center', gap: '4px',
+              background: 'none', border: `1px solid ${BORDER}`, borderRadius: '5px',
+              padding: '4px 10px', cursor: filteredSignals.length ? 'pointer' : 'not-allowed',
+              color: filteredSignals.length ? '#10b981' : TEXT3, fontSize: '11px', fontWeight: 600,
+              opacity: filteredSignals.length ? 1 : 0.4,
+            }}
+          >
+            ↓ XLSX ({filteredSignals.length})
+          </button>
         </div>
       </div>
 

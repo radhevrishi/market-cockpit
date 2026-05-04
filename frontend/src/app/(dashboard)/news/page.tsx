@@ -1317,7 +1317,11 @@ export default function NewsFeedPage() {
   }, [showFilters]);
 
   // Fetch ALL articles once — filters applied client-side for instant switching
-  const { data: allArticles, isLoading, error, refetch } = useNews(search);
+  const { data: allArticles, isLoading, error, refetch, dataUpdatedAt } = useNews(search);
+  // Format the last-fetched time for display
+  const newsFetchedAt = dataUpdatedAt
+    ? new Date(dataUpdatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+    : null;
   const { data: rawInPlay, isLoading: inPlayLoading, refetch: refetchInPlay } = useInPlay();
 
   // ── Filtering engine: memoized multi-dimensional filter + sort ──────────────
@@ -1491,6 +1495,9 @@ export default function NewsFeedPage() {
       <div style={{ marginBottom: '12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
           <h1 style={{ fontSize: '15px', fontWeight: '700', color: '#F5F7FA', margin: 0 }}>News Feed</h1>
+          {newsFetchedAt && (
+            <span style={{ fontSize: '11px', color: '#4A5B6C' }}>Updated {newsFetchedAt}</span>
+          )}
         </div>
         {/* Controls row — horizontally scrollable on mobile */}
         <div className="scrollbar-hide mobile-scroll" style={{ display: 'flex', gap: '8px', alignItems: 'center', overflowX: 'auto', paddingBottom: '4px' }}>

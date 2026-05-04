@@ -225,18 +225,20 @@ export default function ScreenerPage() {
     setLoading(true);
     setError(null);
 
-    // 15-second timeout for earnings data
-    const timeoutPromise = new Promise<void>((_, reject) =>
-      setTimeout(() => reject(new Error('Could not load earnings data. Try refreshing.')), 15000)
-    );
+    // AbortController replaces Promise.race + dangling setTimeout.
+    // When the timeout fires, the in-flight fetch is actually cancelled (no orphaned request).
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     try {
-      const fetchPromise = (async () => {
-        // Fetch current month first — only use previous month as fallback if no results
-        const now = new Date();
-        const monthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      // Fetch current month first — only use previous month as fallback if no results
+      const now = new Date();
+      const monthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
-        const currentRes = await fetch(`/api/market/earnings?month=${monthStr}`).then(r => r.ok ? r.json() : null).catch(() => null);
+      // Inner IIFE so abort signal propagates to both fetch calls
+      const runFetch = async () => {
+        const currentRes = await fetch(`/api/market/earnings?month=${monthStr}`, { signal: controller.signal })
+          .then(r => r.ok ? r.json() : null).catch(() => null);
 
         let allResults: any[] = [];
         const seen = new Set<string>();
@@ -257,7 +259,7 @@ export default function ScreenerPage() {
         if (allResults.length < 5) {
           const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
           const prevMonthStr = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`;
-          const prevRes = await fetch(`/api/market/earnings?month=${prevMonthStr}`).then(r => r.ok ? r.json() : null).catch(() => null);
+          const prevRes = await fetch(`/api/market/earnings?month=${prevMonthStr}`, { signal: controller.signal }).then(r => r.ok ? r.json() : null).catch(() => null);
           if (prevRes) {
             const items = prevRes.results || prevRes.earnings || [];
             for (const r of items) {
@@ -295,12 +297,17 @@ export default function ScreenerPage() {
         };
         setEarningsData(mapped);
         setCurrentPage(1);
-      })();
+      };
 
-      await Promise.race([fetchPromise, timeoutPromise]);
+      await runFetch();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      if ((err as Error)?.name === 'AbortError') {
+        setError('Earnings data timed out (15 s) — try refreshing');
+      } else {
+        setError(err instanceof Error ? err.message : 'An error occurred');
+      }
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
     }
   }, []);
@@ -674,12 +681,34 @@ export default function ScreenerPage() {
             <Loader size={40} color={THEME.accent} style={{ animation: 'spin 1s linear infinite' }} />
           </div>
         ) : !loading && screenerMode === 'stocks' && !data ? (
-          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px', color: THEME.textSecondary }}>
-            No stock data available. Try refreshing the page.
+          <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minHeight: '400px', gap: '8px' }}>
+            {error
+              ? <>
+                  <span style={{ fontSize: '28px' }}>⚠️</span>
+                  <span style={{ color: THEME.red, fontWeight: 600 }}>API error — could not load stock data</span>
+                  <span style={{ color: THEME.textSecondary, fontSize: '13px' }}>{error}</span>
+                  <button onClick={fetchQuotesData} style={{ marginTop: '8px', padding: '8px 18px', borderRadius: '7px', border: `1px solid ${THEME.accent}`, background: 'transparent', color: THEME.accent, cursor: 'pointer', fontSize: '13px' }}>Retry</button>
+                </>
+              : <>
+                  <span style={{ fontSize: '28px' }}>📊</span>
+                  <span style={{ color: THEME.textSecondary }}>Loading stock data…</span>
+                </>
+            }
           </div>
         ) : !loading && screenerMode === 'earnings' && !earningsData ? (
-          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px', color: THEME.textSecondary }}>
-            No earnings data available. Try refreshing the page.
+          <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minHeight: '400px', gap: '8px' }}>
+            {error
+              ? <>
+                  <span style={{ fontSize: '28px' }}>⚠️</span>
+                  <span style={{ color: THEME.red, fontWeight: 600 }}>Failed to load earnings data</span>
+                  <span style={{ color: THEME.textSecondary, fontSize: '13px' }}>{error}</span>
+                  <button onClick={fetchEarningsData} style={{ marginTop: '8px', padding: '8px 18px', borderRadius: '7px', border: `1px solid ${THEME.accent}`, background: 'transparent', color: THEME.accent, cursor: 'pointer', fontSize: '13px' }}>Retry</button>
+                </>
+              : <>
+                  <span style={{ fontSize: '28px' }}>📅</span>
+                  <span style={{ color: THEME.textSecondary }}>Loading earnings data…</span>
+                </>
+            }
           </div>
         ) : screenerMode === 'stocks' && data ? (
           <>
@@ -793,7 +822,7 @@ export default function ScreenerPage() {
                     {displayedQuotes.length === 0 ? (
                       <tr>
                         <td colSpan={showEarnings ? 8 : 7} style={{ padding: '32px 16px', textAlign: 'center', color: THEME.textSecondary }}>
-                          No results found
+                          No results match your filters — try a different search or sector
                         </td>
                       </tr>
                     ) : (
