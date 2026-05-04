@@ -231,8 +231,9 @@ interface ExcelRow {
   dma200?: number; return1m?: number; return1w?: number;
   // ── NEW: Incremental / trend fields (Gap 1-3, 5, 7) ──────────────────────
   roce3yr?: number;      // ROCE 3 years ago → incremental ROCE signal (Gap 1)
-  opm3yr?: number;       // OPM 3 years ago → margin expansion / revenue quality (Gap 2)
-  high52w?: number;      // 52-week High → technical proximity / RS proxy (Gap 7)
+  opm3yr?: number;       // OPM 3 years ago — custom Screener ratio (Gap 2)
+  opmPrev?: number;      // OPM last year (Screener "OPM last year") → 1yr margin change (Gap 2)
+  high52w?: number;      // 52-week High price (Screener "High price") (Gap 7)
   // Derived
   marginOfSafety?: number;
   aboveDMA200?: number;
@@ -663,21 +664,23 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
 
   // ── GAP 2: OPM EXPANSION — pricing power / revenue quality signal ──────────
   // "Revenue quality = can the company expand margins as it grows?"
-  // OPM rising 3yr = structural pricing power, not just volume/inflation.
+  // OPM rising vs prior = structural pricing power, not just volume/inflation.
   // OPM falling = moat eroding, competition intensifying.
   if (row.opmExpansion !== undefined) {
+    // Label period: 3yr if opm3yr data available, otherwise 1yr (opmPrev / "OPM last year")
+    const opmPeriod = row.opm3yr !== undefined ? '3yr' : '1yr';
     if (row.opmExpansion > 5) {
       qualS += 14; qualC += 0.5;
-      strengths.push(`OPM expanded +${row.opmExpansion.toFixed(1)}pp (3yr) — pricing power confirmed, revenue quality high`);
+      strengths.push(`OPM expanded +${row.opmExpansion.toFixed(1)}pp (${opmPeriod}) — pricing power confirmed, revenue quality high`);
     } else if (row.opmExpansion > 2) {
       qualS += 7; qualC += 0.25;
-      strengths.push(`OPM improving +${row.opmExpansion.toFixed(1)}pp — margins trending right`);
+      strengths.push(`OPM improving +${row.opmExpansion.toFixed(1)}pp (${opmPeriod}) — margins trending right`);
     } else if (row.opmExpansion < -5) {
       qualS -= 10;
-      risks.push(`OPM compressed −${Math.abs(row.opmExpansion).toFixed(1)}pp (3yr) — pricing power eroding`);
+      risks.push(`OPM compressed −${Math.abs(row.opmExpansion).toFixed(1)}pp (${opmPeriod}) — pricing power eroding`);
     } else if (row.opmExpansion < -2) {
       qualS -= 5;
-      risks.push(`OPM declining −${Math.abs(row.opmExpansion).toFixed(1)}pp — margin pressure, watch competitive dynamics`);
+      risks.push(`OPM declining −${Math.abs(row.opmExpansion).toFixed(1)}pp (${opmPeriod}) — margin pressure, watch competitive dynamics`);
     }
   }
 
@@ -1071,7 +1074,7 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   }
   if (row.opmExpansion !== undefined && row.opmExpansion < -6) {
     hardPenalty += 7;
-    risks.push(`Hard −7: OPM compressed ${Math.abs(row.opmExpansion).toFixed(0)}pp over 3yr — moat eroding, pricing power weakening`);
+    risks.push(`Hard −7: OPM compressed ${Math.abs(row.opmExpansion).toFixed(0)}pp (${row.opm3yr !== undefined ? '3yr' : '1yr'}) — moat eroding, pricing power weakening`);
   }
 
   // ── TECHNICAL GATE (DMA200 enforcement) ─────────────────────────────────────
@@ -1381,13 +1384,26 @@ function buildColMap(sampleRow: Record<string,unknown>): Record<string,string> {
     else if (o==='Net Debt'||o==='Net debt')                       m['netDebt']=col;
     else if (o==='EPS'||o==='EPS (TTM)')                           m['eps']=col;
     else if (o==='EPS growth'||o==='EPS Growth')                   m['epsGrowth']=col;
-    // ── NEW FIELDS (Gap 1: incremental ROCE, Gap 2: OPM trend, Gap 7: 52W high) ──
-    else if (o==='Return on capital employed 3Years'||o==='ROCE 3Years'||o==='ROCE 3 Years'||o==='Return on capital employed 3 Years')
-      m['roce3yr']=col;
+    else if (o==='Pledged percentage'||o==='Pledged Percentage')   m['pledge']=col;
+    // ── GAP 2: OPM comparison — Screener "OPM last year" or custom "OPM 3Years" ──
+    else if (o==='OPM last year'||o==='OPM preceding year')        m['opmPrev']=col;
     else if (o==='OPM 3Years'||o==='OPM 3 Years'||o==='Operating Profit Margin 3Years')
       m['opm3yr']=col;
-    else if (o==='52 Week High'||o==='52W High'||o==='52 week high'||o==='52wk High')
+    // ── GAP 1: ROCE history — requires custom Screener ratio ──
+    else if (o==='Return on capital employed 3Years'||o==='ROCE 3Years'||o==='ROCE 3 Years'||o==='Return on capital employed 3 Years')
+      m['roce3yr']=col;
+    // ── GAP 7: 52W High — Screener calls it "High price" ──
+    else if (o==='High price'||o==='52 Week High'||o==='52W High'||o==='52wk High')
       m['high52w']=col;
+    // ── GAP 7: % from 52W High — Screener already computes this ("From 52W High") ──
+    else if (o==='From 52W High'||o==='From 52 week high'||o==='from 52W High')
+      m['pctFrom52wHighDirect']=col;
+    // ── GAP 5: EV/EBITDA direct — user added as custom ratio ("EV / EBITDA") ──
+    else if (o==='EV / EBITDA'||o==='EV/EBITDA'||o==='Enterprise Value/EBITDA'||o==='EV to EBITDA')
+      m['evEbitdaDirect']=col;
+    // ── GAP 5: FCF Yield direct — user added as custom ratio ("FCF Yield") ──
+    else if (o==='FCF Yield'||o==='FCF Yield %'||o==='Free cash flow yield'||o==='FCF yield')
+      m['fcfYieldDirect']=col;
     // Generic fallbacks
     else if (!m['symbol']&&(c.includes('nsecode')||c.includes('symbol')||c.includes('ticker'))) m['symbol']=col;
     else if (!m['company']&&c.includes('name')&&!c.includes('sector')) m['company']=col;
@@ -1419,8 +1435,12 @@ function buildColMap(sampleRow: Record<string,unknown>): Record<string,string> {
     else if (!m['eps']&&(c==='eps'||c.includes('earningspershare'))) m['eps']=col;
     else if (!m['return1m']&&(c.includes('1month')||c.includes('1mreturn'))) m['return1m']=col;
     else if (!m['roce3yr']&&(c.includes('roce')||c.includes('returnoncap'))&&(c.includes('3yr')||c.includes('3year')||c.includes('3y')&&c.includes('ago'))) m['roce3yr']=col;
-    else if (!m['opm3yr']&&(c.includes('opm')||c.includes('operatingmargin'))&&(c.includes('3yr')||c.includes('3year')||c.includes('3y'))) m['opm3yr']=col;
-    else if (!m['high52w']&&c.includes('52')&&c.includes('high')) m['high52w']=col;
+    else if (!m['opm3yr']&&(c.includes('opm')||c.includes('operatingmargin'))&&(c.includes('3yr')||c.includes('3year'))) m['opm3yr']=col;
+    else if (!m['opmPrev']&&(c.includes('opm')||c.includes('operatingmargin'))&&(c.includes('lastyear')||c.includes('preceding')||c.includes('prevyr')||c.includes('lastyear'))) m['opmPrev']=col;
+    else if (!m['high52w']&&(c.includes('highprice')||c.includes('52whigh')||(c.includes('52')&&c.includes('high')))) m['high52w']=col;
+    else if (!m['pctFrom52wHighDirect']&&(c.includes('from52w')||c.includes('from52week'))) m['pctFrom52wHighDirect']=col;
+    else if (!m['evEbitdaDirect']&&(c.includes('evebitda')||c.includes('evtoebitda')||(c.includes('ev')&&c.includes('ebitda')))) m['evEbitdaDirect']=col;
+    else if (!m['fcfYieldDirect']&&(c.includes('fcfyield')||c.includes('freecashflowyield'))) m['fcfYieldDirect']=col;
   }
   return m;
 }
@@ -1446,7 +1466,14 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
   const opm_cur=n(m['opm']?row[m['opm']]:undefined);
   const roce3yr=n(m['roce3yr']?row[m['roce3yr']]:undefined);
   const opm3yr=n(m['opm3yr']?row[m['opm3yr']]:undefined);
-  const high52w=n(m['high52w']?row[m['high52w']]:undefined);
+  const opmPrev=n(m['opmPrev']?row[m['opmPrev']]:undefined);  // Screener "OPM last year"
+  const high52w=n(m['high52w']?row[m['high52w']]:undefined);  // Screener "High price"
+  // Direct columns (user-added custom ratios from Screener):
+  const pctFrom52wHighDirect=n(m['pctFrom52wHighDirect']?row[m['pctFrom52wHighDirect']]:undefined);
+  const evEbitdaDirect=n(m['evEbitdaDirect']?row[m['evEbitdaDirect']]:undefined);
+  const fcfYieldDirect=n(m['fcfYieldDirect']?row[m['fcfYieldDirect']]:undefined);
+  // Determine which OPM comparison base is available: prefer 3yr, fall back to 1yr
+  const opmBase = opm3yr ?? opmPrev;  // undefined if neither available
   return {
     symbol:sym,
     company:String(row[m['company']??'']??'').trim(),
@@ -1483,6 +1510,7 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
     // ── New raw fields ──
     roce3yr,
     opm3yr,
+    opmPrev,
     high52w,
     // Derived
     marginOfSafety:(iv!==undefined&&price!==undefined&&price>0)?Math.round((iv-price)/price*100):undefined,
@@ -1491,21 +1519,26 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
     fiiPlusDii:(fii!==undefined&&dii!==undefined)?Math.round((fii+dii)*10)/10:fii!==undefined?fii:undefined,
     opLeverageRatio:(n(m['profitCagr']?row[m['profitCagr']]:undefined)!==undefined&&n(m['revCagr']?row[m['revCagr']]:undefined)!==undefined&&(n(m['revCagr']?row[m['revCagr']]:undefined) as number)>0)?(n(m['profitCagr']?row[m['profitCagr']]:undefined) as number)/(n(m['revCagr']?row[m['revCagr']]:undefined) as number):undefined,
     // ── NEW DERIVED FIELDS ────────────────────────────────────────────────────
-    // Gap 5: EV/EBITDA = (MCap + NetDebt) / EBITDA
-    evEbitda:(mcap!==undefined&&netDebt!==undefined&&ebitda!==undefined&&ebitda>0)?
-      Math.round((mcap+netDebt)/ebitda*10)/10 : undefined,
-    // Gap 5: FCF Yield = FCF / MCap × 100%
-    fcfYield:(fcfAbs!==undefined&&mcap!==undefined&&mcap>0)?
-      Math.round(fcfAbs/mcap*1000)/10 : undefined,
+    // Gap 5: EV/EBITDA — prefer direct Screener column ("EV / EBITDA"), fallback = computed
+    evEbitda: evEbitdaDirect ??
+      ((mcap!==undefined&&netDebt!==undefined&&ebitda!==undefined&&ebitda>0)?
+        Math.round((mcap+netDebt)/ebitda*10)/10 : undefined),
+    // Gap 5: FCF Yield — prefer direct Screener column ("FCF Yield"), fallback = computed
+    // Direct value is already in %; computed: FCF(Cr)/MCap(Cr)*100
+    fcfYield: fcfYieldDirect ??
+      ((fcfAbs!==undefined&&mcap!==undefined&&mcap>0)?
+        Math.round(fcfAbs/mcap*1000)/10 : undefined),
     // Gap 1: Incremental ROCE = current ROCE − ROCE 3 years ago (+ve = new capital productive)
     roceExpansion:(roce_cur!==undefined&&roce3yr!==undefined)?
       Math.round((roce_cur-roce3yr)*10)/10 : undefined,
-    // Gap 2: OPM expansion = current OPM − OPM 3 years ago (+ve = pricing power improving)
-    opmExpansion:(opm_cur!==undefined&&opm3yr!==undefined)?
-      Math.round((opm_cur-opm3yr)*10)/10 : undefined,
-    // Gap 7: % from 52-week High (0 = AT high; -40 = 40% below high)
-    pctFrom52wHigh:(price!==undefined&&high52w!==undefined&&high52w>0)?
-      Math.round((price-high52w)/high52w*100) : undefined,
+    // Gap 2: OPM expansion — current vs best available historical (3yr preferred, 1yr fallback)
+    // opmBase = opm3yr (custom ratio) ?? opmPrev (Screener "OPM last year")
+    opmExpansion:(opm_cur!==undefined&&opmBase!==undefined)?
+      Math.round((opm_cur-opmBase)*10)/10 : undefined,
+    // Gap 7: % from 52W High — prefer "From 52W High" column (already %) else compute
+    pctFrom52wHigh: pctFrom52wHighDirect ??
+      ((price!==undefined&&high52w!==undefined&&high52w>0)?
+        Math.round((price-high52w)/high52w*100) : undefined),
     // ── ACCELERATION SIGNALS (Framework.docx Core Signal) ────────────────────
     // Compare latest quarter YOY vs historical CAGR to detect trend direction.
     // If recent (YOY) > historical (CAGR): business is ACCELERATING — key buy signal.
@@ -1872,9 +1905,11 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
             {field:'DII Holding',why:'Institutional coverage check'},
             {field:'Change in promoter holding',why:'Insider trend signal'},
             {field:'EPS growth',why:'Fisher Twin Engine check'},
-            {field:'Return on capital employed 3Years',why:'Gap 1: incremental ROCE signal'},
-            {field:'OPM 3Years',why:'Gap 2: margin expansion / revenue quality'},
-            {field:'52 Week High',why:'Gap 7: relative strength proxy'},
+            {field:'OPM last year',why:'Gap 2: 1yr OPM expansion / margin quality'},
+            {field:'From 52W High',why:'Gap 7: % from 52W high (already computed by Screener)'},
+            {field:'High price',why:'Gap 7: 52W high price (Screener standard field)'},
+            {field:'EV / EBITDA',why:'Gap 5: enterprise value vs EBITDA (custom ratio)'},
+            {field:'FCF Yield',why:'Gap 5: FCF as % of market cap (custom ratio)'},
           ].map(({field,why})=>(
             <div key={field} style={{padding:'8px 12px',backgroundColor:CARD2,borderRadius:6,border:`1px solid ${BORDER}`}}>
               <div style={{fontSize:F.sm,fontWeight:700,color:ACCENT}}>{field}</div>
