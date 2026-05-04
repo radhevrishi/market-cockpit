@@ -1687,24 +1687,37 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
           }
           scores[sym] = Math.round(score * 10) / 10;
         } else {
-          // NO NEWS FOUND — use earnings trajectory as proxy signal.
-          // For Indian small-caps with no press coverage, the latest quarterly numbers
-          // ARE the guidance signal. Score is capped at 0.65 max (vs 1.0 for real news)
-          // and bonus is halved vs news-based, to prevent double-counting.
-          const trajectory = (stock.revenueAcceleration ?? 0) + (stock.profitAcceleration ?? 0);
+          // NO NEWS FOUND — use earnings trajectory as proxy for ALL stocks.
+          // For Indian small-caps there is often zero press coverage; the trajectory
+          // from quarterly numbers IS the forward signal. Score capped at 0.65.
+          // Key fix: STABLE = 0.50 (neutral, not "no data"). ACCELERATING = ≥0.55
+          // even when delta is small, because accelSignal itself is meaningful.
+          const revAccel  = stock.revenueAcceleration;
+          const profAccel = stock.profitAcceleration;
+          const trajectory = (revAccel ?? 0) + (profAccel ?? 0);
           const accel = stock.accelSignal;
-          if (accel === 'ACCELERATING' && trajectory > 60) {
-            scores[sym] = 0.65; // very strong — both sales and profit beating history significantly
-          } else if (accel === 'ACCELERATING' && trajectory > 30) {
-            scores[sym] = 0.60; // solid acceleration
-          } else if (accel === 'ACCELERATING' && trajectory > 10) {
-            scores[sym] = 0.55; // mild positive signal
-          } else if (accel === 'DECELERATING' && trajectory < -40) {
-            scores[sym] = 0.25; // strong decel warning
+          const hasMetrics = revAccel !== undefined || profAccel !== undefined ||
+                             stock.revCagr !== undefined || stock.profitCagr !== undefined;
+
+          if (accel === 'ACCELERATING') {
+            // ACCELERATING signal is meaningful by itself — trajectory shows magnitude
+            if (trajectory > 60)      scores[sym] = 0.65;
+            else if (trajectory > 30) scores[sym] = 0.60;
+            else if (trajectory > 10) scores[sym] = 0.57;
+            else                      scores[sym] = 0.55; // low-delta ACCELERATING still positive
+          } else if (accel === 'STABLE') {
+            // STABLE = performing as expected, no upgrade/downgrade signal
+            // Show 0.50 (neutral) NOT -1 — "no surprise" IS information
+            scores[sym] = 0.50;
           } else if (accel === 'DECELERATING') {
-            scores[sym] = 0.38; // mild decel
+            if (trajectory < -40)      scores[sym] = 0.25;
+            else if (trajectory < -20) scores[sym] = 0.35;
+            else                       scores[sym] = 0.40;
+          } else if (hasMetrics) {
+            // accelSignal undefined (e.g. missing YOY data) but some metrics exist
+            scores[sym] = 0.50; // neutral default
           } else {
-            scores[sym] = -1;   // STABLE or no clear signal — no adjustment
+            scores[sym] = -1;   // truly no information at all
           }
           counts[sym] = 0; // mark as proxy (no actual articles)
         }
