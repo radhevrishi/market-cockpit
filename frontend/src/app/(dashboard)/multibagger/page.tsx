@@ -233,6 +233,9 @@ interface ExcelRow {
   fii?: number; dii?: number;
   // Market/momentum
   dma200?: number; return1m?: number; return1w?: number;
+  // ── Kill-switch metrics ──────────────────────────────────────────────────
+  gpm?: number;   // Gross Profit Margin % (Screener "Gross profit margin" or custom)
+  roic?: number;  // Return on Invested Capital % (Screener "Return on invested capital")
   // ── NEW: Incremental / trend fields (Gap 1-3, 5, 7) ──────────────────────
   roce3yr?: number;      // ROCE 3 years ago → incremental ROCE signal (Gap 1)
   opm3yr?: number;       // OPM 3 years ago — custom Screener ratio (Gap 2)
@@ -323,6 +326,23 @@ interface DecisionStrip {
   technical: DecisionCheck;   // Above DMA200, not in deep drawdown
 }
 
+// ── 8-TEST KILL-SWITCH LAYER ─────────────────────────────────────────────────
+// Each test has 2-3 automated checks. pass=true|false|null (null = insufficient data).
+// Test passes if majority (≥ half of non-null) checks pass.
+interface KSCheck {
+  label: string;
+  pass: boolean | null;   // null = no data for this check
+  detail: string;
+}
+interface KSTest {
+  id: string;
+  icon: string;
+  label: string;
+  checks: KSCheck[];
+  pass: boolean;          // majority of non-null checks pass
+  failCount: number;      // how many automated checks failed
+}
+
 interface ExcelResult extends ExcelRow {
   score: number; grade: Grade;
   bucket: Bucket;
@@ -337,6 +357,7 @@ interface ExcelResult extends ExcelRow {
   trajectoryScore: number;  // (recent − historical) for sales + profit — change direction
   triggerBonus: number;     // proxy for turnaround / new engine / inflection
   inflectionSignal: boolean;// early-phase: low→high profit growth
+  killSwitch: KSTest[];     // 8-test final kill-switch layer
 }
 
 // Sector benchmarks: [p25, median, p75]
@@ -457,6 +478,170 @@ function getSectorTailwind(sector: string): { score: number; label: 'HIGH'|'MEDI
   if (/SUGAR|TOBACCO|ALCOHOL|LIQUOR|GAMING/.test(s))
     return { score:22, label:'LOW', drivers:'Regulatory headwinds, excise risk, demand uncertainty' };
   return { score:50, label:'MEDIUM', drivers:'Sector-specific factors; no strong policy signal' };
+}
+
+// ── 8-TEST KILL-SWITCH ENGINE ─────────────────────────────────────────────────
+// Converts quantitative metrics into 8 institutional-grade decision tests.
+// Each check: pass=true (✅) | false (❌) | null (⬜ = insufficient data).
+// A test PASSES when the majority of non-null automated checks pass.
+function computeKillSwitch(row: ExcelRow): KSTest[] {
+  const b = SBENCH[getSectorKey(row.sector)] ?? SBENCH.DEFAULT;
+  const cyclical = isCyclicalSector(row.sector);
+  const tailwind = getSectorTailwind(row.sector);
+  // ROIC: use direct field if available, else proxy from ROCE (ROIC ≈ ROCE × 0.75 post-tax)
+  const roicEff = row.roic ?? (row.roce !== undefined ? Math.round(row.roce * 0.75 * 10) / 10 : undefined);
+  const ks = (label: string, pass: boolean | null, detail: string): KSCheck => ({ label, pass, detail });
+  const mkTest = (id: string, icon: string, label: string, checks: KSCheck[]): KSTest => {
+    const nonNull = checks.filter(c => c.pass !== null);
+    const passed  = nonNull.filter(c => c.pass === true).length;
+    const failed  = nonNull.filter(c => c.pass === false).length;
+    return { id, icon, label, checks, pass: nonNull.length === 0 ? false : passed >= Math.ceil(nonNull.length / 2), failCount: failed };
+  };
+
+  return [
+    // ── 1. MOAT TEST ────────────────────────────────────────────────────────────
+    mkTest('moat', '🧠', 'Moat Test', [
+      // Pricing power: GPM > 30% OR (OPM above sector median AND expanding)
+      ks('Pricing power',
+        row.gpm !== undefined ? row.gpm > 30 :
+        (row.opm !== undefined ? row.opm >= b.opm[1] && (row.opmExpansion ?? 0) >= 0 : null),
+        row.gpm !== undefined ? `GPM ${row.gpm.toFixed(1)}% (>30% = pricing power)` :
+        row.opm !== undefined ? `OPM ${row.opm.toFixed(1)}% vs sector median ${b.opm[1]}%` : 'No gross margin data'),
+      // Switching cost / moat strength: ROCE sustained above cost of capital
+      ks('Sustainable returns',
+        roicEff !== undefined ? roicEff >= 15 : (row.roce !== undefined ? row.roce >= 18 : null),
+        roicEff !== undefined ? `ROIC ${roicEff.toFixed(1)}% — ${roicEff >= 20 ? 'well above WACC (durable moat)' : roicEff >= 15 ? 'above WACC' : 'near WACC (weak moat)'}` :
+        'No ROIC/ROCE data'),
+      // Earnings quality as governance/moat proxy
+      ks('Earnings quality',
+        row.cfoToPat !== undefined ? row.cfoToPat >= 0.8 : null,
+        row.cfoToPat !== undefined ? `CFO/PAT ${row.cfoToPat.toFixed(2)}× — ${row.cfoToPat >= 0.8 ? 'earnings cash-backed' : 'earnings not fully cash-backed'}` : 'No CFO/PAT data'),
+    ]),
+
+    // ── 2. MARKET RUNWAY TEST ───────────────────────────────────────────────────
+    mkTest('runway', '🌍', 'Market Runway Test', [
+      // TAM supports 5-10x: company needs to be small enough (MCap < ₹10k Cr)
+      ks('Small-base potential',
+        row.marketCapCr !== undefined ? row.marketCapCr < 10000 : null,
+        row.marketCapCr !== undefined ? `MCap ₹${row.marketCapCr >= 1000 ? (row.marketCapCr/1000).toFixed(1)+'k' : row.marketCapCr.toFixed(0)}Cr — ${row.marketCapCr < 2000 ? '✓ micro-cap, maximum runway' : row.marketCapCr < 10000 ? '✓ small-cap, good runway' : '× large-cap, limited 10× potential'}` : 'No MCap data'),
+      // Company share < 10% of industry: FII+DII < 25% = undiscovered = early innings
+      ks('Undiscovered',
+        row.fiiPlusDii !== undefined ? row.fiiPlusDii < 25 : null,
+        row.fiiPlusDii !== undefined ? `FII+DII ${row.fiiPlusDii.toFixed(1)}% — ${row.fiiPlusDii < 10 ? '✓ largely undiscovered' : row.fiiPlusDii < 25 ? '✓ early institutional' : '× well-owned, re-rating already priced'}` : 'No FII/DII data'),
+      // Structural tailwind exists
+      ks('Structural tailwind',
+        tailwind.score >= 60,
+        `${tailwind.label} (${tailwind.score}/100) — ${tailwind.drivers.slice(0, 50)}`),
+    ]),
+
+    // ── 3. REVENUE QUALITY TEST ─────────────────────────────────────────────────
+    mkTest('rev_quality', '🔁', 'Revenue Quality Test', [
+      // Not cyclical spike: sustained growth across multiple years
+      ks('Not cyclical spike',
+        row.salesGrowth3y !== undefined ? !cyclical && row.salesGrowth3y > 10 :
+        (row.revCagr !== undefined ? !cyclical && row.revCagr > 12 : null),
+        row.salesGrowth3y !== undefined ? `3yr CAGR ${row.salesGrowth3y.toFixed(1)}% — ${cyclical ? '⚠ cyclical sector, spike risk' : !cyclical && row.salesGrowth3y > 10 ? '✓ sustained' : '× low sustained growth'}` :
+        row.revCagr !== undefined ? `Rev CAGR ${row.revCagr.toFixed(1)}%, ${cyclical ? 'cyclical sector' : 'non-cyclical'}` : 'No growth data'),
+      // Cash-backed revenue (not paper revenue)
+      ks('Cash-backed revenue',
+        row.cfoToPat !== undefined ? row.cfoToPat >= 0.7 : null,
+        row.cfoToPat !== undefined ? `CFO/PAT ${row.cfoToPat.toFixed(2)}× — ${row.cfoToPat >= 0.7 ? '✓ cash-backed' : '× revenue not converting to cash'}` : 'No CFO data'),
+      // Margin quality: not thin-margin commodity business
+      ks('Margin quality',
+        row.gpm !== undefined ? row.gpm > 20 : (row.opm !== undefined ? row.opm >= b.opm[0] : null),
+        row.gpm !== undefined ? `GPM ${row.gpm.toFixed(1)}%` :
+        row.opm !== undefined ? `OPM ${row.opm.toFixed(1)}% vs sector p25 ${b.opm[0]}%` : 'No margin data'),
+    ]),
+
+    // ── 4. CAPITAL ALLOCATION TEST ──────────────────────────────────────────────
+    mkTest('capital', '💰', 'Capital Allocation Test', [
+      // No excessive dilution: promoter not selling significantly
+      ks('No dilution',
+        row.changeInPromoter !== undefined ? row.changeInPromoter >= -2 : null,
+        row.changeInPromoter !== undefined ? `Promoter ${row.changeInPromoter >= 0 ? '+' : ''}${row.changeInPromoter.toFixed(1)}% — ${row.changeInPromoter >= 0.5 ? '✓ buying (conviction)' : row.changeInPromoter >= -1 ? '✓ stable' : '× selling (watch)'}` : 'No promoter change data'),
+      // Capex creating returns > ROCE: incremental ROCE stable/rising
+      ks('Capex creating returns',
+        row.roceExpansion !== undefined ? row.roceExpansion >= 0 : null,
+        row.roceExpansion !== undefined ? `Incremental ROCE ${row.roceExpansion >= 0 ? '+' : ''}${row.roceExpansion.toFixed(1)}pp — ${row.roceExpansion >= 3 ? '✓ capex highly productive' : row.roceExpansion >= 0 ? '✓ capex stable' : '× capex diluting returns'}` : 'No ROCE 3yr data'),
+      // Efficient reinvestment: ROIC > 12% and FCF positive
+      ks('Reinvests efficiently',
+        roicEff !== undefined && row.fcfAbsolute !== undefined ? roicEff >= 12 && row.fcfAbsolute > 0 :
+        roicEff !== undefined ? roicEff >= 12 : null,
+        roicEff !== undefined ? `ROIC ${roicEff.toFixed(1)}%${row.fcfAbsolute !== undefined ? ` · FCF ${row.fcfAbsolute > 0 ? '+' : ''}₹${row.fcfAbsolute.toFixed(0)}Cr` : ''}` : 'No ROIC data'),
+    ]),
+
+    // ── 5. COMPETITIVE STABILITY TEST ──────────────────────────────────────────
+    mkTest('competitive', '⚔️', 'Competitive Stability Test', [
+      // Margins stable across cycles: OPM not collapsing
+      ks('Margins stable',
+        row.opmExpansion !== undefined ? row.opmExpansion >= -4 :
+        (row.opm !== undefined ? row.opm >= b.opm[0] : null),
+        row.opmExpansion !== undefined ? `OPM trend ${row.opmExpansion >= 0 ? '+' : ''}${row.opmExpansion.toFixed(1)}pp (${row.opm3yr !== undefined ? '3yr' : '1yr'}) — ${row.opmExpansion >= 0 ? '✓ expanding' : row.opmExpansion >= -4 ? '→ stable' : '× compressing'}` :
+        row.opm !== undefined ? `OPM ${row.opm.toFixed(1)}% vs sector p25 ${b.opm[0]}%` : 'No OPM trend data'),
+      // No structural commoditization: not in cyclical sector AND ROCE holding
+      ks('No commoditization',
+        !cyclical && (roicEff === undefined || roicEff >= 12),
+        cyclical ? `⚠ Cyclical sector (${row.sector}) — earnings mean-revert` :
+        roicEff !== undefined ? `Non-cyclical · ROIC ${roicEff.toFixed(1)}%` : `Non-cyclical sector`),
+      // GPM stability as moat durability check
+      ks('Gross margin durability',
+        row.gpm !== undefined ? row.gpm > 25 : (row.roce !== undefined ? row.roce >= 15 : null),
+        row.gpm !== undefined ? `GPM ${row.gpm.toFixed(1)}% — ${row.gpm > 40 ? '✓ strong moat (hard to commoditize)' : row.gpm > 25 ? '✓ sustainable margins' : '× thin gross margins'}` :
+        row.roce !== undefined ? `ROCE ${row.roce.toFixed(1)}% (proxy for durability)` : 'No GPM/ROCE data'),
+    ]),
+
+    // ── 6. GOVERNANCE TEST ─────────────────────────────────────────────────────
+    mkTest('governance', '🏛', 'Governance Test', [
+      // Clean earnings: CFO/PAT ≥ 0.8 = auditor hasn't flagged revenue manipulation
+      ks('Clean earnings (CFO/PAT)',
+        row.cfoToPat !== undefined ? row.cfoToPat >= 0.8 : null,
+        row.cfoToPat !== undefined ? `CFO/PAT ${row.cfoToPat.toFixed(2)}× — ${row.cfoToPat >= 1.0 ? '✓ excellent (earnings + depreciation)' : row.cfoToPat >= 0.8 ? '✓ clean' : row.cfoToPat >= 0.5 ? '→ partial (watch)' : '× earnings not cash-backed'}` : 'No CFO/PAT data'),
+      // No pledge = no hidden leverage via promoter shares
+      ks('No pledge/hidden leverage',
+        row.pledge !== undefined ? row.pledge <= 5 : null,
+        row.pledge !== undefined ? `Pledge ${row.pledge.toFixed(1)}% — ${row.pledge === 0 ? '✓ zero pledge (clean governance)' : row.pledge <= 5 ? '✓ minimal' : row.pledge <= 25 ? '→ watch (forced-sell risk if market falls)' : '× high pledge, forced-sell risk'}` : 'No pledge data'),
+      // No off-balance sheet risk: ND/EBITDA < 2.5 and D/E < 1.5
+      ks('No hidden leverage',
+        row.netDebtEbitda !== undefined || row.de !== undefined ?
+          (row.netDebtEbitda ?? 0) < 2.5 && (row.de ?? 0) < 1.5 : null,
+        row.netDebtEbitda !== undefined ? `ND/EBITDA ${row.netDebtEbitda.toFixed(1)}× · D/E ${(row.de??0).toFixed(2)}×` :
+        row.de !== undefined ? `D/E ${row.de.toFixed(2)}×` : 'No leverage data'),
+    ]),
+
+    // ── 7. REINVESTMENT ENGINE TEST ────────────────────────────────────────────
+    mkTest('reinvest', '🔄', 'Reinvestment Engine Test', [
+      // Incremental ROCE stable or rising (new capital as productive as legacy)
+      ks('Incremental ROCE stable/rising',
+        row.roceExpansion !== undefined ? row.roceExpansion >= -3 :
+        (row.roce !== undefined ? row.roce >= 15 : null),
+        row.roceExpansion !== undefined ? `ROCE Δ ${row.roceExpansion >= 0 ? '+' : ''}${row.roceExpansion.toFixed(1)}pp — ${row.roceExpansion >= 5 ? '✓ compounding' : row.roceExpansion >= 0 ? '✓ stable' : row.roceExpansion >= -3 ? '→ slight dilution (monitor)' : '× reinvestment destroying value'}` :
+        row.roce !== undefined ? `ROCE ${row.roce.toFixed(1)}% — proxy for reinvestment quality` : 'No ROCE data'),
+      // FCF + growth: self-funding = no dilution needed
+      ks('Self-funding growth',
+        row.fcfAbsolute !== undefined && row.revCagr !== undefined ?
+          row.fcfAbsolute > 0 && row.revCagr > 10 : null,
+        row.fcfAbsolute !== undefined ? `FCF ₹${row.fcfAbsolute.toFixed(0)}Cr · Rev CAGR ${(row.revCagr??0).toFixed(0)}% — ${row.fcfAbsolute > 0 && (row.revCagr??0) > 10 ? '✓ high-growth AND self-funded' : row.fcfAbsolute > 0 ? '→ FCF+ but growth slow' : '× FCF negative (capex-intensive phase)'}` : 'No FCF data'),
+    ]),
+
+    // ── 8. DOWNSIDE STRESS TEST ────────────────────────────────────────────────
+    mkTest('stress', '⚠️', 'Downside Stress Test', [
+      // Survives 30-50% earnings decline: low leverage = can survive
+      ks('Leverage buffer',
+        row.de !== undefined ? row.de < 0.8 : null,
+        row.de !== undefined ? `D/E ${row.de.toFixed(2)}× — ${row.de <= 0.1 ? '✓ debt-free, max resilience' : row.de < 0.5 ? '✓ low leverage' : row.de < 0.8 ? '→ moderate (survives 30% decline)' : '× high leverage, existential risk in downturn'}` : 'No D/E data'),
+      // No existential liquidity risk: ND/EBITDA < 2 or net cash
+      ks('No liquidity risk',
+        row.netDebtEbitda !== undefined ? row.netDebtEbitda < 2.0 :
+        (row.icr !== undefined ? row.icr > 4 : null),
+        row.netDebtEbitda !== undefined ? `ND/EBITDA ${row.netDebtEbitda.toFixed(1)}× — ${row.netDebtEbitda < 0 ? '✓ net cash' : row.netDebtEbitda < 1 ? '✓ minimal net debt' : row.netDebtEbitda < 2 ? '→ manageable' : '× high debt load (liquidity risk)'}` :
+        row.icr !== undefined ? `ICR ${row.icr.toFixed(1)}× — ${row.icr > 6 ? '✓ strong coverage' : row.icr > 3 ? '→ adequate' : '× weak coverage'}` : 'No debt/ICR data'),
+      // Earnings cushion via growth rate: high compounders survive better
+      ks('Earnings cushion',
+        row.profitCagr !== undefined && row.cfoToPat !== undefined ?
+          row.profitCagr > 15 && row.cfoToPat >= 0.7 : null,
+        row.profitCagr !== undefined ? `PAT CAGR ${row.profitCagr.toFixed(0)}% · CFO/PAT ${(row.cfoToPat??0).toFixed(2)}× — ${row.profitCagr > 20 && (row.cfoToPat??0) >= 0.8 ? '✓ strong cushion' : '→ moderate cushion'}` : 'No earnings data'),
+    ]),
+  ];
 }
 
 // ── FORCED RANKING — institutional grade distribution ─────────────────────────
@@ -600,6 +785,19 @@ function applyForcedRanking(results: ExcelResult[]): ExcelResult[] {
       if (['A+','A','B+'].includes(grade)) grade = 'B';
     }
 
+    // ── KILL-SWITCH GRADE CAP ─────────────────────────────────────────────────
+    // If the 8-test kill-switch shows structural failures, cap accordingly.
+    // Tests with insufficient data (all checks null) are excluded from the count.
+    const ksTests = r.killSwitch ?? [];
+    const ksTestedCount = ksTests.filter(t => t.checks.some(c => c.pass !== null)).length;
+    if (ksTestedCount >= 4) {
+      const ksFailed = ksTests.filter(t => !t.pass && t.checks.some(c => c.pass !== null)).length;
+      // 4+ tests fail → max B+ (structural concerns, not investment-grade picks)
+      if (ksFailed >= 4 && ['A+','A'].includes(grade)) grade = 'B+';
+      // 5+ tests fail → max B (too many fundamental failures for conviction)
+      if (ksFailed >= 5 && grade === 'B+') grade = 'B';
+    }
+
     return { ...r, grade };
   });
 }
@@ -644,6 +842,35 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     qualS+=sv(row.promoter,[20,40,60]); qualC++;
     if (row.promoter<20) redFlags.push({label:`Promoter ${row.promoter.toFixed(0)}% — very low`,severity:'HIGH',source:'MOSL+Fisher'});
     if (row.promoter>=55) strengths.push(`Promoter ${row.promoter.toFixed(0)}% — strong alignment`);
+  }
+
+  // ── GPM (Gross Profit Margin) — pricing power & moat signal ─────────────────
+  // GPM > OPM gap shows operating leverage potential; high GPM = pricing power
+  if (row.gpm !== undefined) {
+    // Sector-aware GPM benchmarks: consumer/pharma expect >50%, industrial >25%
+    const gpmBench = getSectorKey(row.sector) === 'TECHNOLOGY' ? [40,55,70] :
+                     getSectorKey(row.sector) === 'PHARMA'     ? [45,58,72] :
+                     getSectorKey(row.sector) === 'CONSUMER'   ? [30,45,60] :
+                     getSectorKey(row.sector) === 'CHEMICALS'  ? [25,38,55] : [20,32,50];
+    const gpmScore = sv(row.gpm, gpmBench);
+    qualS += gpmScore * 0.7; qualC += 0.7; // weighted less than ROCE, but meaningful
+    if (gpmScore >= 80) strengths.push(`GPM ${row.gpm.toFixed(1)}% — strong gross margin, pricing power confirmed`);
+    else if (gpmScore < 40) risks.push(`GPM ${row.gpm.toFixed(1)}% — thin gross margins, limited pricing power`);
+  }
+
+  // ── ROIC (Return on Invested Capital) — true capital efficiency test ──────────
+  // ROIC > WACC = value creation. ROIC > 15% = strong business. < 10% = destroys value.
+  // If ROIC not provided, use ROCE as proxy (ROIC ≈ ROCE × 0.75 for typical tax rates)
+  const roicEffective = row.roic ?? (row.roce !== undefined ? row.roce * 0.75 : undefined);
+  if (roicEffective !== undefined) {
+    const roicScore = roicEffective >= 25 ? 92 : roicEffective >= 18 ? 82 : roicEffective >= 12 ? 65 :
+                      roicEffective >= 8  ? 48 : 28;
+    qualS += roicScore * 0.8; qualC += 0.8;
+    if (roicEffective >= 20) strengths.push(`ROIC ${roicEffective.toFixed(1)}% — well above cost of capital, durable value creation`);
+    else if (roicEffective < 10) {
+      risks.push(`ROIC ${roicEffective.toFixed(1)}% — below typical WACC (10%), capital allocation destroying value`);
+      redFlags.push({ label: `ROIC ${roicEffective.toFixed(1)}% — below WACC`, severity: 'HIGH', source: 'Fisher ROIC' });
+    }
   }
 
   // ── GAP 1: INCREMENTAL ROCE — capital productivity on new investments ──────
@@ -1330,8 +1557,11 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     technical: { pass:(row.aboveDMA200??-100)>=0&&(row.return1m??-100)>=-15, label:'Technical', detail:row.aboveDMA200!==undefined?`${row.aboveDMA200>=0?'+':''}${row.aboveDMA200.toFixed(0)}% vs DMA`:'No data' },
   };
 
+  // Compute kill-switch AFTER all scoring is settled
+  const killSwitch = computeKillSwitch(row);
+
   return {
-    ...row, score, grade, bucket, ownershipCategory, decisionStrip, reratingBonus, trajectoryScore, triggerBonus, inflectionSignal, coverage, strengths, risks, redFlags,
+    ...row, score, grade, bucket, ownershipCategory, decisionStrip, reratingBonus, trajectoryScore, triggerBonus, inflectionSignal, coverage, strengths, risks, redFlags, killSwitch,
     pillarScores: [
       {id:'QUALITY',    label:'Quality',      score:Math.round(qual),  color:'#a78bfa', weight:Math.round(bw[0]*100)},
       {id:'GROWTH',     label:'Growth',       score:Math.round(growth),color:'#38bdf8', weight:Math.round(bw[1]*100)},
@@ -1389,6 +1619,9 @@ function buildColMap(sampleRow: Record<string,unknown>): Record<string,string> {
     else if (o==='EPS'||o==='EPS (TTM)')                           m['eps']=col;
     else if (o==='EPS growth'||o==='EPS Growth')                   m['epsGrowth']=col;
     else if (o==='Pledged percentage'||o==='Pledged Percentage')   m['pledge']=col;
+    // ── Kill-switch metrics ──
+    else if (o==='Gross profit margin'||o==='Gross Profit Margin'||o==='GPM'||o==='Gross Margin') m['gpm']=col;
+    else if (o==='Return on invested capital'||o==='ROIC'||o==='Return on Invested Capital') m['roic']=col;
     // ── GAP 2: OPM comparison — Screener "OPM last year" or custom "OPM 3Years" ──
     else if (o==='OPM last year'||o==='OPM preceding year')        m['opmPrev']=col;
     else if (o==='OPM 3Years'||o==='OPM 3 Years'||o==='Operating Profit Margin 3Years')
@@ -1445,6 +1678,8 @@ function buildColMap(sampleRow: Record<string,unknown>): Record<string,string> {
     else if (!m['pctFrom52wHighDirect']&&(c.includes('from52w')||c.includes('from52week'))) m['pctFrom52wHighDirect']=col;
     else if (!m['evEbitdaDirect']&&(c.includes('evebitda')||c.includes('evtoebitda')||(c.includes('ev')&&c.includes('ebitda')))) m['evEbitdaDirect']=col;
     else if (!m['fcfYieldDirect']&&(c.includes('fcfyield')||c.includes('freecashflowyield'))) m['fcfYieldDirect']=col;
+    else if (!m['gpm']&&(c.includes('grossprofit')&&c.includes('margin')||c==='gpm'||c.includes('grossmargin'))) m['gpm']=col;
+    else if (!m['roic']&&(c.includes('returnoninvested')||c==='roic')) m['roic']=col;
   }
   return m;
 }
@@ -1512,6 +1747,8 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
     return1m:n(m['return1m']?row[m['return1m']]:undefined),
     return1w:n(m['return1w']?row[m['return1w']]:undefined),
     // ── New raw fields ──
+    gpm: n(m['gpm']?row[m['gpm']]:undefined),
+    roic: n(m['roic']?row[m['roic']]:undefined),
     roce3yr,
     opm3yr,
     opmPrev,
@@ -1898,6 +2135,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
     ['pctFrom52wHigh','vs 52W High %','Market'],
     ['evEbitda','EV/EBITDA x','Valuation'],['fcfYield','FCF Yield %','Valuation'],
     ['roceExpansion','ROCE Δ 3yr pp','Quality'],['opmExpansion','OPM Δ 3yr pp','Quality'],
+    ['gpm','GPM %','Quality'],['roic','ROIC %','Quality'],
   ];
 
   return (
@@ -1927,6 +2165,8 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
             {field:'High price',why:'Gap 7: 52W high price (Screener standard field)'},
             {field:'EV / EBITDA',why:'Gap 5: enterprise value vs EBITDA (custom ratio)'},
             {field:'FCF Yield',why:'Gap 5: FCF as % of market cap (custom ratio)'},
+            {field:'Gross profit margin',why:'Kill-switch: GPM → pricing power & moat test'},
+            {field:'Return on invested capital',why:'Kill-switch: ROIC → capital efficiency & reinvestment engine'},
           ].map(({field,why})=>(
             <div key={field} style={{padding:'8px 12px',backgroundColor:CARD2,borderRadius:6,border:`1px solid ${BORDER}`}}>
               <div style={{fontSize:F.sm,fontWeight:700,color:ACCENT}}>{field}</div>
@@ -2574,6 +2814,56 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                           <div style={{fontSize:F.sm,color:RED,fontWeight:700,letterSpacing:'0.8px',marginTop:12,marginBottom:6}}>🚨 RED FLAGS</div>
                           {r.redFlags.map((f,i)=><div key={i} style={{fontSize:F.md,color:f.severity==='CRITICAL'?RED:ORANGE,padding:'3px 0'}}>⛔ {f.label} <span style={{fontSize:F.xs,color:MUTED}}>[{f.source}]</span></div>)}
                         </>}
+
+                        {/* ── 8-TEST KILL-SWITCH PANEL ── */}
+                        {r.killSwitch && r.killSwitch.length > 0 && (() => {
+                          const tested = r.killSwitch.filter(t => t.checks.some(c => c.pass !== null));
+                          if (tested.length === 0) return null;
+                          const passed = tested.filter(t => t.pass).length;
+                          const failed = tested.filter(t => !t.pass).length;
+                          const pColor = passed >= 6 ? GREEN : passed >= 4 ? YELLOW : ORANGE;
+                          return (
+                            <div style={{marginTop:16,borderTop:`1px solid ${BORDER}`,paddingTop:12}}>
+                              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
+                                <span style={{fontSize:F.sm,fontWeight:800,letterSpacing:'0.8px',color:PURPLE}}>🛡 8-TEST KILL-SWITCH</span>
+                                <span style={{fontSize:F.xs,color:pColor,fontWeight:700}}>{passed}/{tested.length} pass</span>
+                                {failed > 0 && <span style={{fontSize:F.xs,color:failed>=5?RED:ORANGE}}>· {failed} fail{failed>=4?' (grade capped)':''}</span>}
+                              </div>
+                              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(240px,1fr))',gap:8}}>
+                                {r.killSwitch.map(t => {
+                                  const hasTested = t.checks.some(c => c.pass !== null);
+                                  const tColor = !hasTested ? MUTED : t.pass ? GREEN : ORANGE;
+                                  const passedC = t.checks.filter(c=>c.pass===true).length;
+                                  const failedC = t.checks.filter(c=>c.pass===false).length;
+                                  return (
+                                    <details key={t.id} style={{backgroundColor:CARD2,border:`1px solid ${tColor}30`,borderLeft:`3px solid ${tColor}`,borderRadius:7,padding:'8px 10px'}}>
+                                      <summary style={{cursor:'pointer',listStyle:'none',display:'flex',alignItems:'center',gap:6,userSelect:'none'}}>
+                                        <span style={{fontSize:14}}>{t.icon}</span>
+                                        <span style={{fontSize:F.xs,fontWeight:700,color:TEXT,flex:1}}>{t.label}</span>
+                                        <span style={{fontSize:F.xs,fontWeight:700,color:tColor}}>
+                                          {!hasTested ? '⬜ No data' : t.pass ? `✅ ${passedC}/${t.checks.filter(c=>c.pass!==null).length}` : `❌ ${passedC}/${t.checks.filter(c=>c.pass!==null).length}`}
+                                        </span>
+                                      </summary>
+                                      <div style={{marginTop:8,borderTop:`1px solid ${BORDER}`,paddingTop:6}}>
+                                        {t.checks.map((c,ci)=>(
+                                          <div key={ci} style={{display:'flex',gap:6,alignItems:'flex-start',padding:'3px 0'}}>
+                                            <span style={{fontSize:12,flexShrink:0,marginTop:1}}>
+                                              {c.pass===true?'✅':c.pass===false?'❌':'⬜'}
+                                            </span>
+                                            <div>
+                                              <div style={{fontSize:F.xs,fontWeight:600,color:c.pass===true?GREEN:c.pass===false?RED:MUTED}}>{c.label}</div>
+                                              <div style={{fontSize:10,color:`${MUTED}CC`,lineHeight:1.4}}>{c.detail}</div>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </details>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                     <div style={{fontSize:F.sm,color:MUTED,borderTop:`1px solid ${BORDER}`,paddingTop:8,marginTop:12}}>
