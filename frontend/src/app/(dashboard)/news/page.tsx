@@ -241,7 +241,8 @@ const decodeHtml = (html: string): string => {
 };
 
 // Tickers that are almost always false positives from NLP extraction
-const JUNK_TICKERS = new Set(['ON', 'A', 'IT', 'ALL', 'AN', 'IS', 'ARE', 'OR', 'SO', 'GO', 'DO', 'HE', 'WE', 'AI']);
+// 'A' removed — it is Agilent Technologies, a real ticker. 'ON' kept (ambiguous). 'AI' kept (C3.ai).
+const JUNK_TICKERS = new Set(['ON', 'IT', 'ALL', 'AN', 'IS', 'ARE', 'OR', 'SO', 'GO', 'DO', 'HE', 'WE', 'AI']);
 
 // Works whether the schema sent ticker_symbols (preferred) or raw tickers dicts
 function getTickerSymbols(article: NewsArticle): string[] {

@@ -380,7 +380,9 @@ export default function PortfolioPage() {
       const currentValue = cmp > 0 ? cmp * h.quantity : investedValue; // fallback to invested if no live price
       const pnl = currentValue - investedValue;
       const pnlPercent = investedValue > 0 ? (pnl / investedValue) * 100 : 0;
-      const dayPnl = change * h.quantity;
+      // Correct: day P&L = (changePercent/100) × current_market_value
+      // Old formula (change × qty) was wrong: absolute price change varies across stocks
+      const dayPnl = cmp > 0 ? (changePercent / 100) * currentValue : 0;
       const signal = intelligence.get(h.symbol) || intelligence.get(normalized);
       return { symbol: h.symbol, company: quote?.company || h.symbol, sector: quote?.sector || '—',
         entryPrice: h.entryPrice, quantity: h.quantity, cmp, change, changePercent,

@@ -657,8 +657,8 @@ function buildEnrichedStocks(articles: NewsArticle[], quotes: QuoteStock[]): Enr
     // Serenity Score:
     // - Upstream bonus: earlier in value chain = rarer = more asymmetric
     const upstreamBonus = Math.max(0, (10 - u.val_tier) * 7); // T1=63, T2=56, T3=49, ..., T10=0
-    // - Size asymmetry bonus
-    const sizeBonus = isSC ? 15 : (mc && mc < 10_000_000_000 ? 5 : 0);
+    // - Size asymmetry bonus: unified $2B threshold (was inconsistently $2B display / $10B calc)
+    const sizeBonus = isSC ? 15 : 0; // only true small-cap (<$2B) gets bonus; removed $10B tier
     // - Cross-border arb bonus (non-US = info asymmetry)
     const nonUsBonuses: Record<string, number> = { STO: 12, TSE: 12, KRX: 12, TWO: 10, FRA: 8 };
     const arb = nonUsBonuses[u.exchange] ?? 0;
@@ -674,7 +674,21 @@ function buildEnrichedStocks(articles: NewsArticle[], quotes: QuoteStock[]): Enr
     );
     const velBonus = Math.max(0, vel.accel); // 0–12 if accelerating
 
-    const score = Math.min(100, upstreamBonus + sizeBonus + arb + serenityBonus + evBonus + compBonus + velBonus);
+    // Criteria checks — now part of score (each failed check = −5 pts)
+    // check1: <3 public competitors (monopoly / duopoly test)
+    const check1 = u.competitors === '1 public' || u.competitors === '2–3 public';
+    // check2: small-cap (<$2B) — size asymmetry (now unified with sizeBonus threshold)
+    const check2 = isSC;
+    // check3: non-US listing — cross-border info arbitrage
+    const check3 = u.exchange !== 'NYSE' && u.exchange !== 'NASDAQ';
+    // check4: tier ≤4 upstream — close enough to the bottleneck
+    const check4 = u.val_tier <= 4;
+    const criteriaFail = [check1, check2, check3, check4].filter(c => !c).length;
+    const criteriaBonus = -criteriaFail * 5; // −5 per failed check (max −20)
+
+    const score = Math.min(100, Math.max(0,
+      upstreamBonus + sizeBonus + arb + serenityBonus + evBonus + compBonus + velBonus + criteriaBonus
+    ));
 
     return {
       ...u,
@@ -1155,10 +1169,12 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
             const cp = s.change_pct ?? 0;
             const ti = TIER_MAP[s.sub_tag];
             const isMultibagger = s.score >= 70 && s.is_small_cap;
-            const check1 = s.competitors === '1 public' || s.competitors === '2–3 public'; // monopoly test
-            const check2 = s.is_small_cap;   // size asymmetry
-            const check3 = s.exchange !== 'NYSE' && s.exchange !== 'NASDAQ'; // cross-border arb
-            const check4 = s.val_tier <= 4;   // upstream enough
+            // These checks mirror the score formula — check2 uses $2B threshold (unified)
+            const check1 = s.competitors === '1 public' || s.competitors === '2–3 public';
+            const check2 = s.is_small_cap; // is_small_cap = mc < $2B (unified with scoring)
+            const check3 = s.exchange !== 'NYSE' && s.exchange !== 'NASDAQ';
+            const check4 = s.val_tier <= 4;
+            const checksPass = [check1, check2, check3, check4].filter(Boolean).length;
             return (
               <div key={s.ticker} style={{ borderBottom: '1px solid #1A284018' }}>
                 <button onClick={() => setExpRow(isExp ? null : s.ticker)} style={{ width: '100%', background: isExp ? '#0D162340' : idx % 2 === 1 ? '#060E1A14' : 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', padding: '9px 12px' }}>
@@ -1189,8 +1205,9 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
                       </div>
                     </div>
 
-                    {/* 4 Criteria checks */}
+                    {/* 4 Criteria checks — each failed check penalises score −5pts */}
                     <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '9px', color: checksPass === 4 ? '#10B981' : checksPass >= 3 ? '#F59E0B' : '#EF4444', fontWeight: 700, marginBottom: 2 }}>{checksPass}/4 ✓</span>
                       <CriteriaCheck pass={check1} label={`<3 competitors (${s.competitors})`} />
                       <CriteriaCheck pass={check2} label="<$2B mkt cap" />
                       <CriteriaCheck pass={check3} label="Non-US listing" />

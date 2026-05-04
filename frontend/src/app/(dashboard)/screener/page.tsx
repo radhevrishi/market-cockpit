@@ -1062,29 +1062,30 @@ export default function ScreenerPage() {
               Previous
             </button>
 
-            {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-              const pageNum = currentPage <= 3 ? i + 1 : currentPage - 2 + i;
-              if (pageNum > totalPages) return null;
-              return (
-                <button
-                  key={pageNum}
-                  onClick={() => setCurrentPage(pageNum)}
-                  style={{
-                    padding: '8px 12px',
-                    background: currentPage === pageNum ? THEME.accent : THEME.card,
-                    color: currentPage === pageNum ? THEME.background : THEME.textSecondary,
-                    border: `1px solid ${THEME.border}`,
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    fontSize: '12px',
-                    fontWeight: currentPage === pageNum ? '600' : '400',
-                    transition: 'all 0.2s',
-                  }}
-                >
-                  {pageNum}
-                </button>
+            {(() => {
+              // Build page button list: first, ...ellipsis, sliding window of 3, ...ellipsis, last
+              const pages: (number | '...')[] = [];
+              if (totalPages <= 7) {
+                for (let p = 1; p <= totalPages; p++) pages.push(p);
+              } else {
+                pages.push(1);
+                const start = Math.max(2, currentPage - 1);
+                const end   = Math.min(totalPages - 1, currentPage + 1);
+                if (start > 2) pages.push('...');
+                for (let p = start; p <= end; p++) pages.push(p);
+                if (end < totalPages - 1) pages.push('...');
+                pages.push(totalPages);
+              }
+              return pages.map((p, i) => p === '...'
+                ? <span key={`ellipsis-${i}`} style={{ padding: '8px 4px', color: THEME.textSecondary, fontSize: '12px' }}>…</span>
+                : <button key={p} onClick={() => setCurrentPage(p as number)} style={{
+                    padding: '8px 12px', background: currentPage === p ? THEME.accent : THEME.card,
+                    color: currentPage === p ? THEME.background : THEME.textSecondary,
+                    border: `1px solid ${THEME.border}`, borderRadius: '6px', cursor: 'pointer',
+                    fontSize: '12px', fontWeight: currentPage === p ? '600' : '400', transition: 'all 0.2s',
+                  }}>{p}</button>
               );
-            })}
+            })()}
 
             <button
               onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}

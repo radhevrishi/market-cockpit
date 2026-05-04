@@ -239,6 +239,9 @@ interface CompanyTrend {
   avgScore: number;
   maxScore?: number;
   signals?: TrendSignalDetail[];
+  isExcel?: boolean;   // tagged client-side from Multibagger engine
+  isPortfolio?: boolean;
+  isWatchlist?: boolean;
 }
 
 interface DailyBias {
@@ -387,21 +390,22 @@ export default function CompanyIntelligencePage() {
       }
     } catch {}
     const _excelSet = new Set(_excelSymbols);
-    const _tagExcel = (arr: Signal[]) => arr.map(s =>
-      _excelSet.has(((s as any).ticker || s.symbol || '').toString().toUpperCase())
+    // Generic tagger — works for Signal[], CompanyTrend[], ThematicIdea[], or any {symbol:string}[]
+    const _tagExcel = <T extends { symbol: string }>(arr: T[]): T[] => arr.map(s =>
+      _excelSet.has((s.symbol || '').toString().trim().toUpperCase())
         ? { ...s, isExcel: true } : s
     );
 
     // Tab cache: if data was fetched recently and not forcing refresh, use cached data
     if (!forceRefresh && _cache && _cache.daysFilter === daysFilter && (Date.now() - _cache.timestamp) < CACHE_TTL) {
       const data = _cache.data;
-      setTop3(data.top3 || []);
+      setTop3(_tagExcel(data.top3 || []));
       setSignals(_tagExcel(data.signals || []));
       setNotableSignals(_filterGovNoise(_tagExcel(data.notable || [])));
-      setSpeculativeSignals(data.speculative || []);
+      setSpeculativeSignals(_tagExcel(data.speculative || []));
       setQuietMarket(!!data.quietMarket);
-      setThematicIdeas(data.thematicIdeas || []);
-      setTrends(data.trends || []);
+      setThematicIdeas(_tagExcel(data.thematicIdeas || []));
+      setTrends(_tagExcel(data.trends || []));
       setBias(data.bias || null);
       setStats(data._stats || null);
       if (data.debug) setDebugInfo(data.debug);
@@ -450,18 +454,18 @@ export default function CompanyIntelligencePage() {
       const res = await fetch(`/api/market/intelligence?days=${daysFilter}${wlParam}${pfParam}${exParam}&debug=true`);
       const data = await res.json();
 
-      setTop3(data.top3 || []);
+      setTop3(_tagExcel(data.top3 || []));
       setSignals(_tagExcel(data.signals || []));
       setNotableSignals(_filterGovNoise(_tagExcel(data.notable || [])));
-      setSpeculativeSignals(data.speculative || []);
+      setSpeculativeSignals(_tagExcel(data.speculative || []));
       setQuietMarket(!!data.quietMarket);
-      setThematicIdeas(data.thematicIdeas || []);
-      setTrends(data.trends || []);
+      setThematicIdeas(_tagExcel(data.thematicIdeas || []));
+      setTrends(_tagExcel(data.trends || []));
       setBias(data.bias || null);
       setStats(data._stats || null);
       setNoHighConfSignals(!!data.noHighConfSignals);
       setNoActionableSignals(!!data.noActionableSignals);
-      setMonitorList(_filterGovNoise(data.observations || []));
+      setMonitorList(_filterGovNoise(_tagExcel(data.observations || [])));
       const statsLine = data._stats ?
         `${data._stats.actionable || 0} actionable · ${data._stats.notable || 0} notable · ${data._stats.monitor || 0} monitor · ${data._stats.speculative || 0} speculative · ${data._stats.rejected || 0} rejected` : '';
       const filterLine = data._meta?.filterRange ? ` · Filter: ${data._meta.filterRange} (${data._meta.totalSignalsBefore ?? '?'}→${data._meta.totalSignalsDateFiltered ?? data._meta.totalSignalsBefore ?? '?'}→${data._meta.totalSignalsAfter ?? '?'})` : '';
@@ -575,7 +579,12 @@ export default function CompanyIntelligencePage() {
   const negativeCount = signals.filter(s => s.isNegative).length;
   const portfolioCount = signals.filter(s => s.isPortfolio).length;
   const watchlistCount = signals.filter(s => s.isWatchlist).length;
-  const excelCount     = signals.filter(s => s.isExcel).length;
+  // Count across ALL signal arrays — signals, notable, speculative, monitor, and stacking trends
+  const excelCount = signals.filter(s => s.isExcel).length +
+    notableSignals.filter(s => s.isExcel).length +
+    speculativeSignals.filter(s => s.isExcel).length +
+    monitorList.filter(s => s.isExcel).length +
+    trends.filter(t => t.isExcel && !signals.some(s => s.isExcel && s.symbol === t.symbol)).length;
   const totalSignalValue = signals.filter(s => s.valueCr > 0).reduce((sum, s) => sum + s.valueCr, 0);
 
   return (
@@ -763,13 +772,17 @@ export default function CompanyIntelligencePage() {
       )}
 
       {/* ── TREND LAYER (Signal Stacking) ── */}
-      {trends.length > 0 && typeFilter === 'ALL' && (
+      {trends.length > 0 && typeFilter === 'ALL' && (universeFilter === 'ALL' || universeFilter === 'PORTFOLIO' || universeFilter === 'WATCHLIST' || universeFilter === 'EXCEL') && (
         <div style={{ marginBottom: '16px' }}>
           <div style={{ fontSize: '11px', fontWeight: 700, color: TEXT3, marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '1.5px' }}>
             SIGNAL STACKING — MULTI-EVENT COMPANIES
           </div>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            {trends.map(t => {
+            {trends
+              .filter(t => universeFilter === 'PORTFOLIO' ? t.isPortfolio :
+                           universeFilter === 'WATCHLIST'  ? t.isWatchlist  :
+                           universeFilter === 'EXCEL'      ? t.isExcel      : true)
+              .map(t => {
               const stackColor = t.stackLevel === 'STRONG' ? GREEN : t.stackLevel === 'BUILDING' ? YELLOW : TEXT3;
               const isExpanded = expandedTrends.has(t.symbol);
               return (
