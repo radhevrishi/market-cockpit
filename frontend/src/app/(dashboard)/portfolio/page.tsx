@@ -5,6 +5,7 @@ import { Plus, Trash2, TrendingUp, TrendingDown, RefreshCw, Download, ArrowUpDow
 import toast from 'react-hot-toast';
 import TickerSearch, { type TickerSuggestion } from '@/components/TickerSearch';
 import { normalizeTicker } from '@/lib/tickers';
+import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 
 /* ── Types ──────────────────────────────────────────────────────────── */
 
@@ -62,8 +63,6 @@ type SortOrder = 'asc' | 'desc';
 
 /* ── Constants ─────────────────────────────────────────────────────── */
 
-const CHAT_ID = '5057319640';
-const SECRET = 'mc-bot-2026';
 const STORAGE_KEY = 'mc_portfolio_holdings';
 
 /* ── Helpers ───────────────────────────────────────────────────────── */
@@ -363,7 +362,7 @@ export default function PortfolioPage() {
     fetch('/api/portfolio', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chatId: CHAT_ID, secret: SECRET, action: 'set', holdings: h }),
+      body: JSON.stringify({ chatId: CHAT_ID, secret: BOT_SECRET, action: 'set', holdings: h }),
     }).then(r => { if (!r.ok) console.error('Portfolio sync failed'); }).catch(console.error);
   }, []);
 

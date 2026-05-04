@@ -6,6 +6,7 @@ import toast from 'react-hot-toast';
 import TickerSearch, { type TickerSuggestion } from '@/components/TickerSearch';
 import { normalizeTicker } from '@/lib/tickers';
 import { isPriceSuspect } from '@/lib/nse';
+import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -331,7 +332,7 @@ export default function WatchlistsPage() {
       await fetch('/api/watchlist', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chatId: '5057319640', action: 'set-flag', symbol: ticker, flag: next }),
+        body: JSON.stringify({ chatId: CHAT_ID, action: 'set-flag', symbol: ticker, flag: next }),
       });
     } catch {}
   }, [watchlistFlags]);
@@ -341,7 +342,7 @@ export default function WatchlistsPage() {
     const initTickers = async () => {
       // Try to sync with shared watchlist (remote is source of truth)
       try {
-        const syncRes = await fetch('/api/watchlist?chatId=5057319640');
+        const syncRes = await fetch('/api/watchlist?chatId=${CHAT_ID}');
         if (syncRes.ok) {
           const syncData = await syncRes.json();
           if (syncData.watchlist && syncData.watchlist.length > 0) {
@@ -493,6 +494,7 @@ export default function WatchlistsPage() {
       return;
     }
 
+    const prevTickers = [...tickers]; // snapshot for rollback
     const newTickers = [...tickers, ...toAdd];
     setTickers(newTickers);
     setStoredTickers(newTickers);
@@ -503,23 +505,23 @@ export default function WatchlistsPage() {
       : `${toAdd.length} ticker${toAdd.length > 1 ? 's' : ''} added. Total: ${newTickers.length}`;
     toast.success(msg);
 
-    // Sync FULL list to shared API (not incremental — avoids race conditions)
+    // Sync FULL list to shared API — roll back on failure
     fetch('/api/watchlist', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chatId: '5057319640',
-        watchlist: newTickers,
-        secret: 'mc-bot-2026',
-      }),
+      body: JSON.stringify({ chatId: CHAT_ID, watchlist: newTickers, secret: BOT_SECRET }),
     })
       .then(res => {
-        if (!res.ok) console.error('Watchlist sync failed:', res.status);
-        else console.log(`[Watchlist] Synced ${newTickers.length} tickers to Redis`);
+        if (!res.ok) {
+          setTickers(prevTickers); setStoredTickers(prevTickers);
+          toast.error('Failed to save — changes reverted');
+        }
       })
-      .catch((e) => console.error('Failed to sync add:', e));
+      .catch(() => {
+        setTickers(prevTickers); setStoredTickers(prevTickers);
+        toast.error('Network error — changes reverted');
+      });
 
-    // Refetch to get new ticker data
     setTimeout(() => fetchData(), 500);
   }, [tickerInput, tickers, fetchData]);
 
@@ -542,7 +544,7 @@ export default function WatchlistsPage() {
         toast.success(`${toAdd.length} ticker${toAdd.length > 1 ? 's' : ''} added. Total: ${newTickers.length}`);
         fetch('/api/watchlist', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chatId: '5057319640', watchlist: newTickers, secret: 'mc-bot-2026' }),
+          body: JSON.stringify({ chatId: CHAT_ID, watchlist: newTickers, secret: BOT_SECRET }),
         }).catch(console.error);
         setTimeout(() => fetchData(), 500);
       }, 0);
@@ -554,6 +556,7 @@ export default function WatchlistsPage() {
     if (!symbol || !/^[A-Z0-9&-]+$/.test(symbol)) { toast.error('Invalid ticker'); return; }
     if (tickers.includes(symbol)) { toast.error(`${symbol} already in watchlist`); return; }
 
+    const prevTickers = [...tickers];
     const newTickers = [...tickers, symbol];
     setTickers(newTickers);
     setStoredTickers(newTickers);
@@ -561,8 +564,12 @@ export default function WatchlistsPage() {
 
     fetch('/api/watchlist', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chatId: '5057319640', watchlist: newTickers, secret: 'mc-bot-2026' }),
-    }).catch(console.error);
+      body: JSON.stringify({ chatId: CHAT_ID, watchlist: newTickers, secret: BOT_SECRET }),
+    })
+      .then(res => {
+        if (!res.ok) { setTickers(prevTickers); setStoredTickers(prevTickers); toast.error(`${symbol} — save failed, reverted`); }
+      })
+      .catch(() => { setTickers(prevTickers); setStoredTickers(prevTickers); toast.error('Network error — reverted'); });
     setTimeout(() => fetchData(), 500);
   }, [tickers, fetchData]);
 
@@ -577,23 +584,23 @@ export default function WatchlistsPage() {
     }));
   }, [quotes]);
 
-  // Handle remove ticker
+  // Handle remove ticker — with rollback on failure
   const handleRemoveTicker = useCallback((ticker: string) => {
+    const prevTickers = [...tickers];
     const newTickers = tickers.filter(t => t !== ticker);
     setTickers(newTickers);
     setStoredTickers(newTickers);
     toast.success(`${ticker} removed from watchlist`);
 
-    // Sync FULL list to shared API
     fetch('/api/watchlist', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chatId: '5057319640',
-        watchlist: newTickers,
-        secret: 'mc-bot-2026',
-      }),
-    }).catch((e) => console.error('Failed to sync remove:', e));
+      body: JSON.stringify({ chatId: CHAT_ID, watchlist: newTickers, secret: BOT_SECRET }),
+    })
+      .then(res => {
+        if (!res.ok) { setTickers(prevTickers); setStoredTickers(prevTickers); toast.error(`${ticker} — remove failed, reverted`); }
+      })
+      .catch(() => { setTickers(prevTickers); setStoredTickers(prevTickers); toast.error('Network error — reverted'); });
   }, [tickers]);
 
   // Handle sort

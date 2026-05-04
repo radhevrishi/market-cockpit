@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Activity, Filter, ChevronDown, ChevronUp } from 'lucide-react';
+import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 
 // ══════════════════════════════════════════════
 // EARNINGS GUIDANCE TAB — Historical + Real-time Guidance Intelligence
@@ -20,7 +21,6 @@ const YELLOW = '#FFD600';
 const RED = '#F44336';
 const PURPLE = '#7C3AED';
 
-const CHAT_ID = '5057319640';
 
 interface GuidanceEvent {
   id: string;
@@ -78,6 +78,8 @@ export default function EarningsGuidancePage() {
   const [error, setError] = useState('');
   const [computing, setComputing] = useState(false);
   const [pollCount, setPollCount] = useState(0);
+  const [pollStopped, setPollStopped] = useState(false); // user manually stopped OR max reached
+  const MAX_POLLS = 15; // 15 × 20s = 5 min max
   const [filterMode, setFilterMode] = useState<FilterMode>('ALL');
   const [showOpLeverage, setShowOpLeverage] = useState(false);
   const [showCapexHeavy, setShowCapexHeavy] = useState(false);
@@ -135,17 +137,20 @@ export default function EarningsGuidancePage() {
   // Initial fetch
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // Auto-poll every 20s when computing, up to 15 attempts (~5 min)
+  // Auto-poll every 20s when computing, up to MAX_POLLS attempts (~5 min)
   useEffect(() => {
-    if (!computing) { setPollCount(0); return; }
-    if (pollCount >= 15) return; // Give up after 5 min
-
+    if (!computing || pollStopped) { if (!computing) { setPollCount(0); setPollStopped(false); } return; }
+    if (pollCount >= MAX_POLLS) {
+      setComputing(false);
+      setPollStopped(true);
+      return;
+    }
     const timer = setTimeout(async () => {
       setPollCount(p => p + 1);
       await fetchData(true);
     }, 20000);
     return () => clearTimeout(timer);
-  }, [computing, pollCount, fetchData]);
+  }, [computing, pollCount, pollStopped, fetchData]);
 
   // Filtered events
   const filteredEvents = useMemo(() => {
@@ -276,19 +281,32 @@ export default function EarningsGuidancePage() {
           <p style={{ margin: 0, fontSize: '13px' }}>
             {data?.events?.length
               ? 'Try adjusting filters'
+              : pollStopped && !computing
+              ? `Stopped after ${MAX_POLLS} attempts. Backend may still be computing — try refreshing manually.`
               : computing
-              ? `Auto-refreshing in 20 seconds (attempt ${pollCount + 1}/15). First run may take up to 3 minutes.`
+              ? `Auto-refreshing in 20 seconds (attempt ${pollCount + 1}/${MAX_POLLS}). First run may take up to 3 minutes.`
               : 'Data refreshes automatically via background pipeline. Check back shortly.'}
           </p>
-          {computing && (
+          {computing && !pollStopped && (
             <div style={{ marginTop: '20px' }}>
-              <div style={{ width: '200px', height: '4px', backgroundColor: '#1A2540', borderRadius: '2px', margin: '0 auto', overflow: 'hidden' }}>
+              <div style={{ width: '200px', height: '4px', backgroundColor: '#1A2540', borderRadius: '2px', margin: '0 auto 14px', overflow: 'hidden' }}>
                 <div style={{
                   height: '100%', backgroundColor: ACCENT, borderRadius: '2px',
                   animation: 'progress-bar 2s linear infinite',
-                  width: '40%',
+                  width: `${Math.round((pollCount / MAX_POLLS) * 100)}%`,
+                  transition: 'width 1s linear',
                 }} />
               </div>
+              {/* Manual stop — user can bail out of infinite loop */}
+              <button
+                onClick={() => { setPollStopped(true); setComputing(false); }}
+                style={{
+                  padding: '6px 16px', borderRadius: '6px', border: `1px solid #4A5B6C`,
+                  background: 'transparent', color: '#8899AA', cursor: 'pointer', fontSize: '12px',
+                }}
+              >
+                Stop auto-refresh
+              </button>
             </div>
           )}
         </div>

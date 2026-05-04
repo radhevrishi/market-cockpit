@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Download, AlertTriangle } from 'lucide-react';
+import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 
 // ══════════════════════════════════════════════
 // EARNINGS PAGE — Custom Universe Only
@@ -21,11 +22,29 @@ const YELLOW = '#FFD600';
 const RED = '#F44336';
 const HEADER_BG = '#0A1628';
 
-const CHAT_ID = '5057319640';
 
 // Tab cache: avoid refetching on every tab switch
+// Uses a module-level variable scoped to THIS tab via a per-tab ID stored in sessionStorage.
+// sessionStorage is per-tab, so two tabs running the earnings page cannot share/corrupt data.
+// Includes "month" field — cache auto-invalidates when calendar month changes.
 const EARNINGS_CACHE_TTL = 180000; // 3 min
-let _earningsCache: { data: any; timestamp: number } | null = null;
+const _cacheMonth = () => new Date().toISOString().slice(0, 7); // "2026-05"
+
+// Generate a per-tab ID on first use — survives page refresh within same tab (session),
+// but each new tab gets its own ID, preventing cross-tab cache corruption.
+const _getTabId = () => {
+  if (typeof sessionStorage === 'undefined') return 'ssr';
+  let id = sessionStorage.getItem('mc_earnings_tab_id');
+  if (!id) { id = Math.random().toString(36).slice(2); sessionStorage.setItem('mc_earnings_tab_id', id); }
+  return id;
+};
+
+// Per-tab in-memory cache — keyed by tabId so parallel tabs never collide
+const _perTabCache = new Map<string, { data: any; timestamp: number; month: string }>();
+const _earningsCache = {
+  get: () => _perTabCache.get(_getTabId()) ?? null,
+  set: (v: { data: any; timestamp: number; month: string }) => _perTabCache.set(_getTabId(), v),
+};
 
 // ── Types matching earnings-scan API ──
 
@@ -959,9 +978,13 @@ export default function EarningsPage() {
   const [screenerSymbolCount, setScreenerSymbolCount] = useState(0);
 
   const fetchData = useCallback(async (forceRefresh = false) => {
-    // Tab cache check
-    if (!forceRefresh && _earningsCache && (Date.now() - _earningsCache.timestamp) < EARNINGS_CACHE_TTL) {
-      const c = _earningsCache.data;
+    // Tab cache check — per-tab (no cross-tab race) + month-keyed invalidation
+    const currentMonth = _cacheMonth();
+    const _cached = _earningsCache.get();
+    if (!forceRefresh && _cached &&
+        _cached.month === currentMonth &&
+        (Date.now() - _cached.timestamp) < EARNINGS_CACHE_TTL) {
+      const c = _cached.data;
       setCards(c.cards || []);
       setFailedSymbols(c.failedSymbols || []);
       setSummary(c.summary);
@@ -1154,11 +1177,12 @@ export default function EarningsPage() {
       setSource(lastSource);
       setUpdatedAt(lastUpdatedAt);
 
-      // Cache for tab switching
-      _earningsCache = {
+      // Cache for tab switching — per-tab + month-keyed
+      _earningsCache.set({
         data: { cards: allCards, failedSymbols: allFailed, summary: lastSummary, source: lastSource, updatedAt: lastUpdatedAt },
         timestamp: Date.now(),
-      };
+        month: currentMonth,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load earnings data');
     } finally {

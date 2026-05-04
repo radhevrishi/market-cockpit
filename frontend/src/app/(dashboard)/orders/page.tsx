@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Shield, RefreshCw, TrendingUp, TrendingDown, Minus, Eye, Filter, Zap, AlertTriangle } from 'lucide-react';
+import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 
 // Theme
 const BG = '#0A0E1A';
@@ -333,7 +334,6 @@ const eventTypeIcon = (t: string) => {
 type FilterType = 'ALL' | 'BUY' | 'ADD' | 'HOLD' | 'WATCH' | 'TRIM' | 'ORDERS' | 'CAPEX' | 'DEALS' | 'STRATEGIC' | 'NEGATIVE' | 'HIGH_IMPACT' | 'NOTABLE';
 type UniverseFilter = 'ALL' | 'PORTFOLIO' | 'WATCHLIST' | 'EXCEL';
 
-const CHAT_ID = '5057319640';
 
 /** Filter out GOVERNANCE / Mgmt Change signals — not useful for portfolio decisions */
 const _filterGovNoise = (list: any[]) =>
