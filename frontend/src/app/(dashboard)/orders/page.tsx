@@ -83,6 +83,7 @@ interface Signal {
   earningsBoost: boolean;
   isWatchlist: boolean;
   isPortfolio: boolean;
+  isExcel?: boolean;          // from Multibagger Excel Score & Rank engine
   lastPrice?: number | null;       // Current stock price for performance tracking
   dataSource?: string;             // 'NSE' | 'Moneycontrol' | 'Google News' | 'Block Deal' | 'Bulk Deal'
   signalStackCount?: number;
@@ -327,7 +328,7 @@ const eventTypeIcon = (t: string) => {
 };
 
 type FilterType = 'ALL' | 'BUY' | 'ADD' | 'HOLD' | 'WATCH' | 'TRIM' | 'ORDERS' | 'CAPEX' | 'DEALS' | 'STRATEGIC' | 'NEGATIVE' | 'HIGH_IMPACT' | 'NOTABLE';
-type UniverseFilter = 'ALL' | 'PORTFOLIO' | 'WATCHLIST';
+type UniverseFilter = 'ALL' | 'PORTFOLIO' | 'WATCHLIST' | 'EXCEL';
 
 const CHAT_ID = '5057319640';
 
@@ -371,12 +372,32 @@ export default function CompanyIntelligencePage() {
   const [productionStatus, setProductionStatus] = useState<string>('');
 
   const fetchData = useCallback(async (forceRefresh = false) => {
+    // Read Excel scored stocks from Multibagger engine (mb_excel_scored_v2 in localStorage)
+    // Done here (before cache check) so tagging works even on cache hits
+    let _excelSymbols: string[] = [];
+    try {
+      const raw = localStorage.getItem('mb_excel_scored_v2');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          _excelSymbols = parsed
+            .map((r: any) => (r.symbol || '').toString().trim().toUpperCase())
+            .filter(Boolean);
+        }
+      }
+    } catch {}
+    const _excelSet = new Set(_excelSymbols);
+    const _tagExcel = (arr: Signal[]) => arr.map(s =>
+      _excelSet.has(((s as any).ticker || s.symbol || '').toString().toUpperCase())
+        ? { ...s, isExcel: true } : s
+    );
+
     // Tab cache: if data was fetched recently and not forcing refresh, use cached data
     if (!forceRefresh && _cache && _cache.daysFilter === daysFilter && (Date.now() - _cache.timestamp) < CACHE_TTL) {
       const data = _cache.data;
       setTop3(data.top3 || []);
-      setSignals(data.signals || []);
-      setNotableSignals(_filterGovNoise(data.notable || []));
+      setSignals(_tagExcel(data.signals || []));
+      setNotableSignals(_filterGovNoise(_tagExcel(data.notable || [])));
       setSpeculativeSignals(data.speculative || []);
       setQuietMarket(!!data.quietMarket);
       setThematicIdeas(data.thematicIdeas || []);
@@ -425,12 +446,13 @@ export default function CompanyIntelligencePage() {
 
       const wlParam = watchlist.length > 0 ? `&watchlist=${watchlist.join(',')}` : '';
       const pfParam = portfolio.length > 0 ? `&portfolio=${portfolio.join(',')}` : '';
-      const res = await fetch(`/api/market/intelligence?days=${daysFilter}${wlParam}${pfParam}&debug=true`);
+      const exParam = _excelSymbols.length > 0 ? `&excel=${_excelSymbols.join(',')}` : '';
+      const res = await fetch(`/api/market/intelligence?days=${daysFilter}${wlParam}${pfParam}${exParam}&debug=true`);
       const data = await res.json();
 
       setTop3(data.top3 || []);
-      setSignals(data.signals || []);
-      setNotableSignals(_filterGovNoise(data.notable || []));
+      setSignals(_tagExcel(data.signals || []));
+      setNotableSignals(_filterGovNoise(_tagExcel(data.notable || [])));
       setSpeculativeSignals(data.speculative || []);
       setQuietMarket(!!data.quietMarket);
       setThematicIdeas(data.thematicIdeas || []);
@@ -514,6 +536,7 @@ export default function CompanyIntelligencePage() {
     // Universe filter
     if (universeFilter === 'PORTFOLIO') list = list.filter(s => s.isPortfolio);
     if (universeFilter === 'WATCHLIST') list = list.filter(s => s.isWatchlist);
+    if (universeFilter === 'EXCEL')     list = list.filter(s => s.isExcel);
     // Type filter
     if (typeFilter === 'BUY') list = list.filter(s => s.action === 'BUY');
     if (typeFilter === 'ADD') list = list.filter(s => s.action === 'ADD');
@@ -552,6 +575,7 @@ export default function CompanyIntelligencePage() {
   const negativeCount = signals.filter(s => s.isNegative).length;
   const portfolioCount = signals.filter(s => s.isPortfolio).length;
   const watchlistCount = signals.filter(s => s.isWatchlist).length;
+  const excelCount     = signals.filter(s => s.isExcel).length;
   const totalSignalValue = signals.filter(s => s.valueCr > 0).reduce((sum, s) => sum + s.valueCr, 0);
 
   return (
@@ -1369,15 +1393,16 @@ export default function CompanyIntelligencePage() {
 
           {/* Universe filter */}
           {([
-            { key: 'ALL' as UniverseFilter, label: 'All', count: signals.length },
-            { key: 'PORTFOLIO' as UniverseFilter, label: 'Portfolio', count: portfolioCount },
-            { key: 'WATCHLIST' as UniverseFilter, label: 'Watchlist', count: watchlistCount },
+            { key: 'ALL'       as UniverseFilter, label: 'All',          count: signals.length,  color: PURPLE },
+            { key: 'PORTFOLIO' as UniverseFilter, label: 'Portfolio',    count: portfolioCount,  color: PURPLE },
+            { key: 'WATCHLIST' as UniverseFilter, label: 'Watchlist',    count: watchlistCount,  color: ACCENT },
+            { key: 'EXCEL'     as UniverseFilter, label: '📊 Excel Picks', count: excelCount,    color: '#10b981' },
           ]).map(f => (
             <button key={f.key} onClick={() => setUniverseFilter(f.key)} style={{
               padding: '4px 10px', borderRadius: '5px', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
-              border: `1px solid ${universeFilter === f.key ? PURPLE : BORDER}`,
-              background: universeFilter === f.key ? 'rgba(139,92,246,0.15)' : 'transparent',
-              color: universeFilter === f.key ? PURPLE : TEXT3,
+              border: `1px solid ${universeFilter === f.key ? f.color : BORDER}`,
+              background: universeFilter === f.key ? `${f.color}22` : 'transparent',
+              color: universeFilter === f.key ? f.color : TEXT3,
             }}>{f.label} ({f.count})</button>
           ))}
 
