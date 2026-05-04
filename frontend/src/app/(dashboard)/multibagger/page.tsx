@@ -2061,6 +2061,25 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
 
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // ── SORTABLE COLUMNS ──────────────────────────────────────────────────────
+  type IndiaSort = 'score'|'pe'|'peg'|'roce'|'revCagr'|'profitCagr'|'marketCapCr'|'revenueAcceleration'|'opm'|'cfoToPat';
+  const [sortField, setSortField] = useState<IndiaSort>('score');
+  const [sortAsc,   setSortAsc]   = useState(false);
+  function handleSort(field: IndiaSort) {
+    if (sortField === field) { setSortAsc(v => !v); return; }
+    // Default direction: ascending is "better" for PE/PEG/MCap (lower = better); descending for everything else
+    setSortField(field);
+    setSortAsc(['pe','peg','marketCapCr'].includes(field));
+  }
+  // Sort indicator helper
+  const sortIcon = (f: IndiaSort) => sortField===f ? (sortAsc?' ▲':' ▼') : '';
+
+  // ── SCORE CHANGE (vs prev upload baseline) ────────────────────────────────
+  const PREV_SCORES_KEY = 'mb_india_prev_scores_v1';
+  const prevScoreMap = useMemo<Record<string,number>>(() => {
+    try { return JSON.parse(localStorage.getItem(PREV_SCORES_KEY)||'{}'); } catch { return {}; }
+  }, []); // read once on mount
+
   async function parseSingleFile(file:File, XLSX: typeof import('xlsx')) {
     const buf=await file.arrayBuffer();
     const wb=XLSX.read(buf,{type:'array'});
@@ -2101,10 +2120,11 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
 
       // Score new rows and merge with existing
       const newScored = newRows.map(r => scoreExcelRow(r));
-      // Sort by score, then apply forced ranking to compress grades institutionally
       const merged = [...rows, ...newScored].sort((a,b) => b.score - a.score);
       const allScored = applyForcedRanking(merged);
       setRows(allScored);
+      // Save score baseline so score-change indicator works on next load
+      try { localStorage.setItem(PREV_SCORES_KEY, JSON.stringify(Object.fromEntries(allScored.map(r=>[r.symbol,r.score])))); } catch {}
 
       const addedCount = newRows.length;
       const totalCount = allScored.length;
@@ -2149,10 +2169,28 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
     });
   }
   const baseFiltered = gradeFilter.has('ALL') ? baseRows : baseRows.filter(r => gradeFilter.has(r.grade));
-  // Apply guidance re-scoring and re-sort when guidance mode is active
-  const filtered = guidanceMode && Object.keys(guidanceScores).length > 0
-    ? [...baseFiltered.map(r => applyGuidance(r))].sort((a, b) => b.score - a.score)
-    : baseFiltered;
+  // Apply guidance re-scoring when active
+  const guidanceApplied = guidanceMode && Object.keys(guidanceScores).length > 0
+    ? [...baseFiltered.map(r => applyGuidance(r))] : baseFiltered;
+  // Apply sortable column sort (default: score descending — same as before)
+  const filtered = [...guidanceApplied].sort((a, b) => {
+    const getV = (r: ExcelResult): number => {
+      switch(sortField) {
+        case 'pe':                  return r.pe ?? (sortAsc ? 999 : -1);
+        case 'peg':                 return r.peg ?? (sortAsc ? 999 : -1);
+        case 'roce':                return r.roce ?? (sortAsc ? -1 : 999);
+        case 'revCagr':             return r.revCagr ?? (sortAsc ? -1 : 999);
+        case 'profitCagr':          return r.profitCagr ?? (sortAsc ? -1 : 999);
+        case 'marketCapCr':         return r.marketCapCr ?? (sortAsc ? 999999 : -1);
+        case 'revenueAcceleration': return r.revenueAcceleration ?? (sortAsc ? -999 : 999);
+        case 'opm':                 return r.opm ?? (sortAsc ? -1 : 999);
+        case 'cfoToPat':            return r.cfoToPat ?? (sortAsc ? -1 : 999);
+        default:                    return r.score; // 'score'
+      }
+    };
+    const av = getV(a), bv = getV(b);
+    return sortAsc ? av - bv : bv - av;
+  });
   const topPicks = rows.filter(r => ['A+','A','B+'].includes(r.grade) && r.bucket !== 'MONITOR');
 
   const METRICS: [keyof ExcelRow, string, string][] = [
@@ -2593,6 +2631,37 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                 style={{ fontSize:F.xs, fontWeight:700, padding:'5px 12px', borderRadius:7, cursor:'pointer', border:`1px solid ${BORDER}`, background:'transparent', color:'#f97316' }}
               >⬇ PDF</button>
             )}
+
+            {/* ── CSV EXPORT ── */}
+            {filtered.length > 0 && (
+              <button
+                title="Export as CSV (Excel-compatible)"
+                onClick={async () => {
+                  const XLSX = await import('xlsx');
+                  const data = filtered.map(r => ({
+                    Symbol: r.symbol, Company: r.company, Score: r.score, Grade: r.grade,
+                    Bucket: r.bucket, Sector: r.sector,
+                    'ROCE %': r.roce, 'ROE %': r.roe, 'OPM %': r.opm, 'CFO/PAT': r.cfoToPat,
+                    'FCF Cr': r.fcfAbsolute, 'Rev CAGR %': r.revCagr, 'Profit CAGR %': r.profitCagr,
+                    'YOY Sales %': r.yoySalesGrowth, 'YOY Profit %': r.yoyProfitGrowth,
+                    'D/E': r.de, 'Pledge %': r.pledge, 'Promoter %': r.promoter, 'Δ Promoter': r.changeInPromoter,
+                    'P/E': r.pe, 'PEG': r.peg, 'MCap Cr': r.marketCapCr, 'MoS %': r.marginOfSafety,
+                    'FII+DII %': r.fiiPlusDii, 'GPM %': r.gpm, 'ROIC %': r.roic,
+                    'Rev Accel pp': r.revenueAcceleration, 'Profit Accel pp': r.profitAcceleration,
+                    'Accel Signal': r.accelSignal, 'EV/EBITDA': r.evEbitda, 'FCF Yield %': r.fcfYield,
+                    'ROCE Δ 3yr': r.roceExpansion, 'OPM Δ': r.opmExpansion,
+                    'KS Pass': (r.killSwitch??[]).filter(t=>t.pass&&t.checks.some(c=>c.pass!==null)).length + '/' +
+                              (r.killSwitch??[]).filter(t=>t.checks.some(c=>c.pass!==null)).length,
+                    'Rerating': r.reratingBonus, Coverage: r.coverage,
+                  }));
+                  const ws = XLSX.utils.json_to_sheet(data);
+                  const wb = XLSX.utils.book_new();
+                  XLSX.utils.book_append_sheet(wb, ws, 'India');
+                  XLSX.writeFile(wb, `india-multibagger-${new Date().toISOString().slice(0,10)}.csv`, { bookType: 'csv' });
+                }}
+                style={{ fontSize:F.xs, fontWeight:700, padding:'5px 12px', borderRadius:7, cursor:'pointer', border:`1px solid ${BORDER}`, background:'transparent', color:'#06b6d4' }}
+              >⬇ CSV</button>
+            )}
           </div>
 
           {/* ── GAP 6: PORTFOLIO CONSTRUCTION PANEL ─────────────────────────── */}
@@ -2700,10 +2769,15 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
 
           {/* Table header */}
           <div style={{display:'grid',gridTemplateColumns:'130px 130px 65px 65px 96px 86px 120px 1fr 76px',gap:8,padding:'10px 14px',fontSize:F.xs,fontWeight:700,letterSpacing:'0.6px',color:MUTED,borderBottom:`1px solid ${BORDER}`}}>
-            <span>TICKER</span><span>COMPANY</span><span>SCORE</span><span>GRADE</span>
-            <span style={{color:YELLOW}}>P/E · PEG</span>
+            {/* Clickable sort headers */}
+            <span>TICKER</span><span>COMPANY</span>
+            <span onClick={()=>handleSort('score')} style={{cursor:'pointer',userSelect:'none',color:sortField==='score'?ACCENT:MUTED}}>SCORE{sortIcon('score')}</span>
+            <span>GRADE</span>
+            <span onClick={()=>handleSort('pe')} style={{cursor:'pointer',userSelect:'none',color:sortField==='pe'||sortField==='peg'?YELLOW:MUTED}}>P/E{sortIcon('pe')} · <span onClick={e=>{e.stopPropagation();handleSort('peg')}} style={{cursor:'pointer'}}>PEG{sortIcon('peg')}</span></span>
             <span style={{color:guidanceMode?'#F59E0B':MUTED}}>GUIDANCE{!guidanceMode&&<span style={{fontSize:9,fontWeight:400}}> ↑📡</span>}</span>
-            <span>DECISION STRIP</span><span>SQGLP PILLARS</span><span>COV</span>
+            <span>DECISION STRIP</span>
+            <span onClick={()=>handleSort('revenueAcceleration')} style={{cursor:'pointer',userSelect:'none',color:sortField==='revenueAcceleration'?GREEN:MUTED}}>SQGLP PILLARS{sortIcon('revenueAcceleration')}</span>
+            <span onClick={()=>handleSort('marketCapCr')} style={{cursor:'pointer',userSelect:'none',color:sortField==='marketCapCr'?'#f97316':MUTED}}>COV{sortIcon('marketCapCr')}</span>
           </div>
 
           {filtered.map((r,idx)=>{
@@ -2849,10 +2923,27 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                       ))}
                     </div>
 
-                    {/* Coverage + flags */}
+                    {/* Coverage + kill-switch + score delta */}
                     <div style={{display:'flex',flexDirection:'column',gap:2}}>
                       <span style={{fontSize:F.sm,color:r.coverage>=70?GREEN:r.coverage>=50?YELLOW:ORANGE}}>{r.coverage}%</span>
                       {r.redFlags.length>0&&<span style={{fontSize:F.xs,color:hasCrit?RED:ORANGE}}>⚠{r.redFlags.length}</span>}
+                      {/* Kill-switch badge — N/8 tests pass */}
+                      {(() => {
+                        const ks = r.killSwitch ?? [];
+                        const tested = ks.filter(t => t.checks.some(c=>c.pass!==null));
+                        if (tested.length < 4) return null;
+                        const passed = tested.filter(t=>t.pass).length;
+                        const col = passed>=6?GREEN:passed>=4?YELLOW:ORANGE;
+                        return <span title="Kill-switch: N/8 tests pass" style={{fontSize:9,fontWeight:700,color:col}}>🛡{passed}/{tested.length}</span>;
+                      })()}
+                      {/* Score change vs prev upload */}
+                      {(() => {
+                        const prev = prevScoreMap[r.symbol];
+                        if (prev===undefined) return null;
+                        const delta = r.score - prev;
+                        if (delta===0) return null;
+                        return <span style={{fontSize:9,fontWeight:700,color:delta>0?GREEN:RED}}>{delta>0?`↑${delta}`:`↓${Math.abs(delta)}`}</span>;
+                      })()}
                     </div>
                   </div>
                 </button>
@@ -3806,8 +3897,15 @@ const USA_CHECKLIST: USAChecklistItem[] = [
 const USA_CHECKLIST_STORAGE = 'mb_usa_checklist_v1';
 
 function USAChecklist() {
+  // Re-score from localStorage so ALL derived fields (ruleOf40, grossMarginExpansion,
+  // accelSignal etc.) are always current — fixes autoStatus returning null for old data.
   const usaRows = (() => {
-    try { return JSON.parse(localStorage.getItem('mb_usa_scored_v1')||'[]') as USAResult[]; } catch { return []; }
+    try {
+      const saved = localStorage.getItem('mb_usa_scored_v1');
+      if (!saved) return [];
+      const parsed = JSON.parse(saved) as USAResult[];
+      return parsed.map(r => scoreUSARow(r as unknown as USARow));
+    } catch { return []; }
   })();
   const [checks, setChecks] = React.useState<Record<string,boolean>>(() => {
     try { return JSON.parse(localStorage.getItem(USA_CHECKLIST_STORAGE)||'{}'); } catch { return {}; }
@@ -4014,6 +4112,21 @@ function USACompare() {
   const [usPegMax,      setUsPegMax]      = React.useState<'ALL'|0.8|1.0|1.5|2.0>('ALL');
   const [usFcfOnly,     setUsFcfOnly]     = React.useState(false);
   const [usRatingFilter,setUsRatingFilter]= React.useState<'ALL'|'BUY'|'STRONG_BUY'>('ALL');
+  // USA sortable columns
+  type USASort = 'score'|'fwdPe'|'peg'|'revGrowthAnn'|'ruleOf40'|'fcfMargin'|'marketCapB'|'grossMargin';
+  const [usSortField, setUsSortField] = React.useState<USASort>('score');
+  const [usSortAsc,   setUsSortAsc]   = React.useState(false);
+  function handleUSASort(field: USASort) {
+    if (usSortField===field) { setUsSortAsc(v=>!v); return; }
+    setUsSortField(field);
+    setUsSortAsc(['fwdPe','peg','marketCapB'].includes(field));
+  }
+  const usSortIcon = (f: USASort) => usSortField===f ? (usSortAsc?' ▲':' ▼') : '';
+  // USA score baseline
+  const USA_PREV_KEY = 'mb_usa_prev_scores_v1';
+  const usPrevScores = React.useMemo<Record<string,number>>(() => {
+    try { return JSON.parse(localStorage.getItem(USA_PREV_KEY)||'{}'); } catch { return {}; }
+  }, []);
 
   function setRows(r: USAResult[]) {
     const ranked = applyUSARanking(r);
@@ -4043,6 +4156,8 @@ function USACompare() {
       const scored = allRows.map(r => scoreUSARow(r));
       const merged = [...rows, ...scored].sort((a,b)=>b.score-a.score);
       setRows(merged);
+      // Save USA score baseline
+      try { localStorage.setItem(USA_PREV_KEY, JSON.stringify(Object.fromEntries(merged.map(r=>[r.symbol,r.score])))); } catch {}
       setFileName(`${arr.length} file${arr.length>1?'s':''} · ${merged.length} stocks`);
     } catch(e) { setParseError(`Error: ${e instanceof Error?e.message:String(e)}`); }
     setLoading(false);
@@ -4062,6 +4177,23 @@ function USACompare() {
     return pe !== undefined && pe > 0 && pe <= usPeMax;
   });
   if (usPegMax !== 'ALL') filtered = filtered.filter(r=>r.peg !== undefined && r.peg > 0 && r.peg <= usPegMax);
+  // Apply USA sort
+  filtered = [...filtered].sort((a,b) => {
+    const getV = (r: USAResult): number => {
+      switch(usSortField) {
+        case 'fwdPe':       return (r.forwardPe&&r.forwardPe>0?r.forwardPe:r.pe) ?? (usSortAsc?999:-1);
+        case 'peg':         return r.peg ?? (usSortAsc?999:-1);
+        case 'revGrowthAnn':return r.revenueGrowthAnn ?? (usSortAsc?-1:999);
+        case 'ruleOf40':    return r.ruleOf40 ?? (usSortAsc?-1:999);
+        case 'fcfMargin':   return r.fcfMarginAnn ?? (usSortAsc?-1:999);
+        case 'marketCapB':  return r.marketCapB ?? (usSortAsc?999:-1);
+        case 'grossMargin': return (r.grossMarginTtm??r.grossMarginAnn) ?? (usSortAsc?-1:999);
+        default:            return r.score;
+      }
+    };
+    const av=getV(a), bv=getV(b);
+    return usSortAsc ? av-bv : bv-av;
+  });
 
   return (
     <div style={{maxWidth:1100,margin:'0 auto',padding:'28px 20px'}}>
@@ -4190,17 +4322,47 @@ function USACompare() {
                 {expandAll?'⊟ Collapse All':'⊞ Expand All'}
               </button>
               <span style={{fontSize:F.xs,color:MUTED}}>{filtered.length} showing</span>
+              {/* CSV Export USA */}
+              {filtered.length > 0 && (
+                <button onClick={async ()=>{
+                  const XLSX = await import('xlsx');
+                  const data = filtered.map(r=>({
+                    Symbol:r.symbol, Company:r.company, Score:r.score, Grade:r.grade,
+                    Sector:r.sector, Exchange:r.exchange, 'MCap $B':r.marketCapB,
+                    'Rev Growth Ann %':r.revenueGrowthAnn, 'Rev Growth Qtr %':r.revenueGrowthQtr,
+                    'Gross Margin %':r.grossMarginTtm??r.grossMarginAnn, 'FCF Margin %':r.fcfMarginAnn,
+                    'OPM %':r.opmTtm, 'Net Margin %':r.netProfitMargin,
+                    ROE:r.roe, ROIC:r.roic, 'EPS Growth %':r.epsGrowth,
+                    'Fwd P/E':r.forwardPe, 'P/E':r.pe, 'PEG':r.peg,
+                    'EV/EBITDA':r.evEbitda, 'P/S':r.ps,
+                    'Rule of 40':r.ruleOf40, 'Accel Signal':r.accelSignal,
+                    'Net Debt $':r.netDebtUsd, 'D/E':r.de,
+                    '1Y Perf %':r.perf1y, 'Analyst Rating':r.analystRating,
+                    'RSI 14':r.rsi14, 'P/FCF':r.pFcf, 'Next Earnings':r.nextEarnings,
+                  }));
+                  const ws = XLSX.utils.json_to_sheet(data);
+                  const wb = XLSX.utils.book_new();
+                  XLSX.utils.book_append_sheet(wb, ws, 'USA');
+                  XLSX.writeFile(wb, `usa-multibagger-${new Date().toISOString().slice(0,10)}.csv`, {bookType:'csv'});
+                }} style={{fontSize:F.xs,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${BORDER}`,background:'transparent',color:'#06b6d4',cursor:'pointer'}}>
+                  ⬇ CSV
+                </button>
+              )}
               <button onClick={()=>{ if(window.confirm(`Clear all ${rows.length} stocks?`)){setRowsState([]);localStorage.removeItem(USA_STORAGE_KEY);setFileName('');} }} style={{fontSize:F.xs,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${RED}40`,background:`${RED}10`,color:RED,cursor:'pointer'}}>
                 🗑 Clear
               </button>
             </div>
           </div>
 
-          {/* Table Header */}
+          {/* Table Header — sortable */}
           <div style={{display:'grid',gridTemplateColumns:'120px 150px 65px 65px 100px 110px 1fr 70px',gap:8,padding:'10px 14px',fontSize:F.xs,fontWeight:700,letterSpacing:'0.6px',color:MUTED,borderBottom:`1px solid ${BORDER}`}}>
-            <span>TICKER</span><span>COMPANY</span><span>SCORE</span><span>GRADE</span>
-            <span style={{color:YELLOW}}>VALUATION</span>
-            <span>ACCEL</span><span>PILLARS</span><span>COV</span>
+            <span>TICKER</span><span>COMPANY</span>
+            <span onClick={()=>handleUSASort('score')} style={{cursor:'pointer',color:usSortField==='score'?ACCENT:MUTED}}>SCORE{usSortIcon('score')}</span>
+            <span>GRADE</span>
+            <span onClick={()=>handleUSASort('fwdPe')} style={{cursor:'pointer',color:usSortField==='fwdPe'||usSortField==='peg'?YELLOW:MUTED}}>VAL{usSortIcon('fwdPe')}</span>
+            <span onClick={()=>handleUSASort('revGrowthAnn')} style={{cursor:'pointer',color:usSortField==='revGrowthAnn'||usSortField==='ruleOf40'?GREEN:MUTED}}>ACCEL / R40{usSortIcon('revGrowthAnn')}</span>
+            <span onClick={()=>handleUSASort('grossMargin')} style={{cursor:'pointer',color:usSortField==='grossMargin'||usSortField==='fcfMargin'?'#a78bfa':MUTED}}>PILLARS{usSortIcon('grossMargin')}</span>
+            <span onClick={()=>handleUSASort('marketCapB')} style={{cursor:'pointer',color:usSortField==='marketCapB'?ORANGE:MUTED}}>COV{usSortIcon('marketCapB')}</span>
           </div>
 
           {filtered.map((r,idx)=>{
@@ -4243,6 +4405,14 @@ function USACompare() {
                       </span>
                       {r.revenueGrowthQtr !== undefined && <span style={{fontSize:10,color:MUTED}}>QoQ +{r.revenueGrowthQtr.toFixed(0)}%</span>}
                       {r.revenueGrowthAnn !== undefined && <span style={{fontSize:10,color:MUTED}}>Ann +{r.revenueGrowthAnn.toFixed(0)}%</span>}
+                      {/* Rule of 40 badge */}
+                      {r.ruleOf40 !== undefined && (
+                        <span style={{fontSize:9,fontWeight:700,
+                          color:r.ruleOf40>=60?GREEN:r.ruleOf40>=40?YELLOW:r.ruleOf40>=20?ORANGE:RED,
+                          border:`1px solid ${r.ruleOf40>=40?GREEN:ORANGE}30`,padding:'0 4px',borderRadius:3}}>
+                          R40:{r.ruleOf40}
+                        </span>
+                      )}
                     </div>
                     <div style={{display:'flex',gap:4,alignItems:'center',flexWrap:'wrap'}}>
                       {r.pillarScores.map(p=>(
@@ -4255,7 +4425,17 @@ function USACompare() {
                         </div>
                       ))}
                     </div>
-                    <span style={{fontSize:F.sm,color:r.coverage>=70?GREEN:r.coverage>=50?YELLOW:ORANGE}}>{r.coverage}%</span>
+                    {/* COV + score delta */}
+                    <div style={{display:'flex',flexDirection:'column',gap:2}}>
+                      <span style={{fontSize:F.sm,color:r.coverage>=70?GREEN:r.coverage>=50?YELLOW:ORANGE}}>{r.coverage}%</span>
+                      {(() => {
+                        const prev = usPrevScores[r.symbol];
+                        if (prev===undefined) return null;
+                        const d = r.score - prev;
+                        if (d===0) return null;
+                        return <span style={{fontSize:9,fontWeight:700,color:d>0?GREEN:RED}}>{d>0?`↑${d}`:`↓${Math.abs(d)}`}</span>;
+                      })()}
+                    </div>
                   </div>
                 </button>
                 {isExp&&(
