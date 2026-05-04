@@ -374,6 +374,12 @@ export default function CompanyIntelligencePage() {
   const [quietMarket, setQuietMarket] = useState(false);
   const [productionStatus, setProductionStatus] = useState<string>('');
 
+  // ── Excel News Digest — news articles for Excel picks with no corporate signals ──
+  // When Excel stocks have no M&A / order events, this provides news coverage
+  type ExcelNewsItem = { symbol: string; company: string; headline: string; published: string; sentiment: string };
+  const [excelNewsDigest, setExcelNewsDigest] = useState<ExcelNewsItem[]>([]);
+  const [excelNewsLoading, setExcelNewsLoading] = useState(false);
+
   const fetchData = useCallback(async (forceRefresh = false) => {
     // Read Excel scored stocks from Multibagger engine (mb_excel_scored_v2 in localStorage)
     // Done here (before cache check) so tagging works even on cache hits
@@ -519,6 +525,69 @@ export default function CompanyIntelligencePage() {
           flags, addedPrices: prices, lastUpdated: ts,
         }, timestamp: Date.now(), daysFilter };
       }
+      // ── Excel News Digest — fetch news for Excel picks with NO corporate signals ──
+      // Corporate events (M&A, orders) only exist for ~20% of stocks in any period.
+      // For the remaining 80%, use news articles as the monitoring signal.
+      try {
+        const coveredByIntelligence = new Set<string>();
+        [..._retag(data.signals||[]) as Signal[], ..._retag(data.notable||[]) as Signal[], ..._retag(data.trends||[]) as CompanyTrend[]]
+          .filter((s: any) => s.isExcel)
+          .forEach((s: any) => coveredByIntelligence.add((s.symbol||'').toUpperCase()));
+
+        const uncoveredExcel = _excelSymbols
+          .filter(s => !coveredByIntelligence.has(s))
+          .slice(0, 40); // cap at 40 to keep URL size manageable
+
+        if (uncoveredExcel.length > 0) {
+          setExcelNewsLoading(true);
+          // Fetch news for all uncovered Excel tickers in one call using | search
+          const searchQuery = uncoveredExcel.join('|');
+          const newsRes = await fetch(
+            `${(typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_API_URL) || '/api/v1'}/news?limit=200&importance_min=1&search=${encodeURIComponent(searchQuery)}`
+          );
+          if (newsRes.ok) {
+            const newsData = await newsRes.json();
+            const articles: any[] = Array.isArray(newsData) ? newsData : [];
+
+            // Match articles to Excel symbols
+            const digestItems: ExcelNewsItem[] = [];
+            const seenSymbols = new Set<string>();
+
+            for (const sym of uncoveredExcel) {
+              const symLower = sym.toLowerCase();
+              // Find the most recent article mentioning this ticker
+              const match = articles.find(a => {
+                const tickers: string[] = (a.ticker_symbols || []).map((t: string) =>
+                  t.toUpperCase().replace(/\.NS$|\.BO$/i, ''));
+                if (tickers.some(t => t === sym || t.startsWith(sym.slice(0, 5)))) return true;
+                const text = ((a.title||'') + ' ' + (a.headline||'')).toLowerCase();
+                return text.includes(symLower);
+              });
+
+              if (match && !seenSymbols.has(sym)) {
+                seenSymbols.add(sym);
+                const text = (match.title || match.headline || '').toLowerCase();
+                const sentiment = ['raised','upgrade','beat','record','growth','order','win','expand'].some(w => text.includes(w)) ? 'Bullish'
+                  : ['miss','cut','loss','warn','decline','fall'].some(w => text.includes(w)) ? 'Bearish' : 'Neutral';
+                // Get company name from Excel data
+                const excelEntry = (() => { try { return (JSON.parse(localStorage.getItem('mb_excel_scored_v2')||'[]') as any[]).find(r => (r.symbol||'').toUpperCase() === sym); } catch { return null; } })();
+                digestItems.push({
+                  symbol: sym,
+                  company: excelEntry?.company || sym,
+                  headline: match.title || match.headline || '',
+                  published: match.published_at || '',
+                  sentiment,
+                });
+              }
+            }
+            setExcelNewsDigest(digestItems);
+          }
+          setExcelNewsLoading(false);
+        }
+      } catch (e) {
+        setExcelNewsLoading(false);
+      }
+
     } catch (err) {
       console.error('[Intelligence] Error:', err);
     }
@@ -895,6 +964,56 @@ export default function CompanyIntelligencePage() {
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* ── EXCEL NEWS DIGEST — news coverage for Excel picks with no corporate signals ── */}
+      {(excelNewsDigest.length > 0 || excelNewsLoading) && (universeFilter === 'ALL' || universeFilter === 'EXCEL') && typeFilter === 'ALL' && (
+        <div style={{ marginBottom: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+            <span style={{ fontSize: '11px', fontWeight: 800, color: '#10b981', letterSpacing: '1px' }}>
+              📊 EXCEL PICKS — NEWS MONITOR {excelNewsLoading ? '⏳' : `(${excelNewsDigest.length})`}
+            </span>
+            <span style={{ fontSize: '10px', color: TEXT3 }}>
+              Excel stocks without corporate signals — recent news coverage
+            </span>
+          </div>
+          {excelNewsLoading && (
+            <div style={{ fontSize: '11px', color: TEXT3, padding: '8px 0' }}>Fetching news for uncovered Excel picks…</div>
+          )}
+          {!excelNewsLoading && excelNewsDigest.length > 0 && (
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {excelNewsDigest.map(item => {
+                const sentColor = item.sentiment === 'Bullish' ? GREEN : item.sentiment === 'Bearish' ? RED : TEXT3;
+                const relDate = item.published ? (() => {
+                  const d = new Date(item.published);
+                  const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+                  return days === 0 ? 'Today' : days === 1 ? 'Yesterday' : `${days}d ago`;
+                })() : '';
+                return (
+                  <div key={item.symbol} style={{
+                    padding: '8px 12px', minWidth: '180px', maxWidth: '260px', flex: '1 1 200px',
+                    backgroundColor: CARD, border: `1px solid ${sentColor}25`,
+                    borderLeft: `3px solid ${sentColor}`, borderRadius: '8px',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '12px', fontWeight: 800, color: TEXT1 }}>{item.symbol}</span>
+                      <span style={{ fontSize: '9px', fontWeight: 700, color: sentColor, padding: '1px 5px', borderRadius: '3px', backgroundColor: `${sentColor}15` }}>{item.sentiment}</span>
+                      {relDate && <span style={{ fontSize: '9px', color: TEXT3, marginLeft: 'auto' }}>{relDate}</span>}
+                    </div>
+                    <div style={{ fontSize: '10px', color: TEXT3, marginBottom: '4px' }}>{item.company}</div>
+                    <div style={{ fontSize: '10px', color: TEXT2, lineHeight: 1.4,
+                      display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                      {item.headline}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {!excelNewsLoading && excelNewsDigest.length === 0 && !loading && (
+            <div style={{ fontSize: '11px', color: TEXT3 }}>No recent news found for uncovered Excel picks in this period.</div>
+          )}
         </div>
       )}
 
