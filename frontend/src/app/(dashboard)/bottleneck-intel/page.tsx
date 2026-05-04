@@ -664,7 +664,7 @@ function buildEnrichedStocks(articles: NewsArticle[], quotes: QuoteStock[]): Enr
     const arb = nonUsBonuses[u.exchange] ?? 0;
     // - Serenity explicit mention
     const serenityBonus = u.is_serenity_pick ? 10 : 0;
-    // - Live evidence bonus (max 8)
+    // - Live evidence bonus (max 8) — absolute count signal
     const evBonus = Math.min(8, evidenceCount * 2);
     // - Competition moat
     const compBonus = u.competitors === '1 public' ? 10 : u.competitors === '2–3 public' ? 5 : 0;
@@ -673,6 +673,10 @@ function buildEnrichedStocks(articles: NewsArticle[], quotes: QuoteStock[]): Enr
       getTickerSymbols(a).some(s => s.toUpperCase() === u.ticker.replace(/\d+$/,'').toUpperCase() || s.toUpperCase() === shortTicker)
     );
     const velBonus = Math.max(0, vel.accel); // 0–12 if accelerating
+    // FIX: evidence and velocity measured the same thing — don't sum both.
+    // A stock with 5 articles this week + 0 prior would get evBonus=8 + velBonus=12 = 20pts noise bonus.
+    // Use max(evidence, velocity): rewards TRUE acceleration over one-time article dumps.
+    const newsBonus = Math.max(evBonus, velBonus);
 
     // Criteria checks — now part of score (each failed check = −5 pts)
     // check1: <3 public competitors (monopoly / duopoly test)
@@ -686,9 +690,12 @@ function buildEnrichedStocks(articles: NewsArticle[], quotes: QuoteStock[]): Enr
     const criteriaFail = [check1, check2, check3, check4].filter(c => !c).length;
     const criteriaBonus = -criteriaFail * 5; // −5 per failed check (max −20)
 
-    const score = Math.min(100, Math.max(0,
-      upstreamBonus + sizeBonus + arb + serenityBonus + evBonus + compBonus + velBonus + criteriaBonus
+    // Hard-cap junk: stocks failing ALL 4 criteria are fundamentally unsuitable
+    // (large-cap, US-listed, downstream, crowded) — cap at 20 regardless of news
+    const rawScore = Math.min(100, Math.max(0,
+      upstreamBonus + sizeBonus + arb + serenityBonus + newsBonus + compBonus + criteriaBonus
     ));
+    const score = criteriaFail >= 4 ? Math.min(rawScore, 20) : rawScore;
 
     return {
       ...u,

@@ -3234,23 +3234,31 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
   if (row.netProfitMargin !== undefined) {
     const s=svUS(row.netProfitMargin,[5,12,22]); qualS+=s*0.6; qualC+=0.6;
   }
-  // Gross margin expansion signal (TTM vs Annual — higher TTM = improving)
+  // Gross margin expansion scoring (TTM vs Annual — direction > absolute level)
+  // GPM expansion = pricing power improving = moat strengthening = institutional buy signal
   if (row.grossMarginExpansion !== undefined) {
-    if (row.grossMarginExpansion > 3) {
-      qualS += 12; qualC += 0.5;
-      strengths.push(`Gross margin expanding +${row.grossMarginExpansion.toFixed(1)}pp (TTM vs Annual) — pricing power improving`);
-    } else if (row.grossMarginExpansion < -3) {
-      qualS -= 8;
+    if (row.grossMarginExpansion > 5) {
+      qualS += 16; qualC += 0.6;
+      strengths.push(`Gross margin expanding +${row.grossMarginExpansion.toFixed(1)}pp (TTM vs Annual) — pricing power confirming moat`);
+    } else if (row.grossMarginExpansion > 2) {
+      qualS += 8; qualC += 0.3;
+      strengths.push(`Gross margin expanding +${row.grossMarginExpansion.toFixed(1)}pp — margins trending right`);
+    } else if (row.grossMarginExpansion < -4) {
+      qualS -= 12;
       risks.push(`Gross margin compressing −${Math.abs(row.grossMarginExpansion).toFixed(1)}pp — competitive pressure or cost inflation`);
+    } else if (row.grossMarginExpansion < -2) {
+      qualS -= 6;
+      risks.push(`Gross margin declining −${Math.abs(row.grossMarginExpansion).toFixed(1)}pp — watch pricing power`);
     }
   }
-  // Rule of 40 — SaaS/tech benchmark: revGrowth + FCF margin ≥ 40 = institutional quality
+  // Rule of 40 — SaaS/tech benchmark (narrative only, NOT added to pillars to prevent double-counting)
+  // Revenue growth scored in GROWTH pillar; FCF margin scored in QUALITY above.
+  // Rule of 40 here just surfaces the combined number as a strength/risk label.
   const ruleOf40 = row.ruleOf40;
   if (ruleOf40 !== undefined) {
-    const r40S = ruleOf40 >= 60 ? 94 : ruleOf40 >= 40 ? 80 : ruleOf40 >= 25 ? 62 : ruleOf40 >= 10 ? 44 : 25;
-    qualS += r40S; qualC++;
-    if (ruleOf40 >= 40) strengths.push(`Rule of 40: ${ruleOf40.toFixed(0)} (Rev ${(row.revenueGrowthAnn??0).toFixed(0)}% + FCF ${(row.fcfMarginAnn??0).toFixed(0)}%) — institutional quality benchmark`);
-    else if (ruleOf40 < 20) risks.push(`Rule of 40: ${ruleOf40.toFixed(0)} — below threshold (need ≥40 for premium valuation)`);
+    if (ruleOf40 >= 60) strengths.push(`🏆 Rule of 40: ${ruleOf40.toFixed(0)} — elite (Rev ${(row.revenueGrowthAnn??0).toFixed(0)}% + FCF ${(row.fcfMarginAnn??0).toFixed(0)}%)`);
+    else if (ruleOf40 >= 40) strengths.push(`✅ Rule of 40: ${ruleOf40.toFixed(0)} — passes institutional benchmark (≥40)`);
+    else if (ruleOf40 < 20) risks.push(`⚠️ Rule of 40: ${ruleOf40.toFixed(0)} — below threshold (need ≥40 for premium multiple)`);
   }
 
   // ── GROWTH (25%): Revenue Annual + Quarterly + 3yr CAGR ──────────────────────
@@ -3289,8 +3297,9 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
   let accelS=50;
   const revAccel = row.revenueAccel ?? (row.revenueGrowthQtr !== undefined && row.revenueGrowthAnn !== undefined ? row.revenueGrowthQtr - row.revenueGrowthAnn : undefined);
   if (revAccel !== undefined) {
-    const signal = revAccel >= 8 ? 'ACCELERATING' : revAccel <= -8 ? 'DECELERATING' : 'STABLE';
-    accelS = signal==='ACCELERATING' ? Math.min(100, 80 + revAccel * 0.5) : signal==='DECELERATING' ? Math.max(15, 45 + revAccel) : 55;
+    // 5pp threshold (not 8): A QoQ 20% vs Ann 14% (+6pp) IS accelerating — don't miss it
+    const signal = revAccel >= 5 ? 'ACCELERATING' : revAccel <= -5 ? 'DECELERATING' : 'STABLE';
+    accelS = signal==='ACCELERATING' ? Math.min(100, 78 + revAccel * 0.6) : signal==='DECELERATING' ? Math.max(15, 50 + revAccel) : 55;
     if (signal==='ACCELERATING') strengths.push(`Revenue ACCELERATING: +${row.revenueGrowthQtr?.toFixed(0)}% QoQ YoY vs +${row.revenueGrowthAnn?.toFixed(0)}% Annual (+${revAccel.toFixed(0)}pp)`);
     if (signal==='DECELERATING') risks.push(`Revenue DECELERATING: ${row.revenueGrowthQtr?.toFixed(0)}% QoQ vs ${row.revenueGrowthAnn?.toFixed(0)}% Annual (${revAccel.toFixed(0)}pp)`);
   }
@@ -3520,7 +3529,7 @@ function parseUSARow(row: Record<string,unknown>): USARow | null {
     // Derived at parse time
     revenueAccel: (revQtr !== undefined && revAnn !== undefined) ? Math.round(revQtr - revAnn) : undefined,
     accelSignal: (revQtr !== undefined && revAnn !== undefined)
-      ? (revQtr - revAnn >= 8 ? 'ACCELERATING' : revQtr - revAnn <= -8 ? 'DECELERATING' : 'STABLE')
+      ? (revQtr - revAnn >= 5 ? 'ACCELERATING' : revQtr - revAnn <= -5 ? 'DECELERATING' : 'STABLE')
       : undefined,
     // Rule of 40 = revenue growth + FCF margin (≥40 = institutional benchmark)
     ruleOf40: (revAnn !== undefined && n(row['Free cash flow margin %, Annual']) !== undefined)
@@ -3533,6 +3542,262 @@ function parseUSARow(row: Record<string,unknown>): USARow | null {
       return (ttm !== undefined && ann !== undefined) ? Math.round((ttm - ann) * 10) / 10 : undefined;
     })(),
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// USA RESEARCH CHECKLIST — 28 criteria covering US multibagger framework
+// Fisher 100-Bagger + MOSL SQGLP adapted for US growth stocks + Rule of 40
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface USAChecklistItem {
+  id: string; label: string; pillar: string; pillarColor: string;
+  target: string; why: string; weight: number; source: string;
+}
+
+const USA_CHECKLIST: USAChecklistItem[] = [
+  // ── QUALITY / MOAT ────────────────────────────────────────────────────────
+  { id:'us_gm', pillar:'QUALITY', pillarColor:'#a78bfa', weight:8, source:'Fisher + SaaS benchmark',
+    label:'Gross Margin ≥ 60% (software) or ≥ 50% (semis/hardware)', target:'Software: >65% elite · Hardware: >50% · <35% = weak moat',
+    why:'Gross margin is the first test of pricing power. High GM = durable competitive advantage. Google 55%, NVDA 74%, AAPL 46%. Below 35% = no moat.' },
+  { id:'us_gm_expand', pillar:'QUALITY', pillarColor:'#a78bfa', weight:7, source:'Institutional standard',
+    label:'Gross Margin expanding QoQ / TTM vs Annual (direction > absolute)', target:'TTM GM > Annual GM = pricing power strengthening',
+    why:'A rising GM trend proves the moat is durably improving, not just high. The direction is more important than the level for predicting future multiples.' },
+  { id:'us_fcf', pillar:'QUALITY', pillarColor:'#a78bfa', weight:8, source:'Fisher + Buffett',
+    label:'FCF Margin ≥ 15% AND positive (free cash machine)', target:'>25% = excellent · >15% = good · <0% = risk',
+    why:'US tech multibaggers are defined by FCF generation. NVDA 55% FCF margin, MSFT 29%. FCF funds buybacks, R&D, M&A without dilution.' },
+  { id:'us_roe', pillar:'QUALITY', pillarColor:'#a78bfa', weight:6, source:'Buffett',
+    label:'ROE ≥ 20% consistently (without excessive leverage)', target:'>30% = exceptional · >20% = good · <10% = weak',
+    why:'Buffett rule: ROE > 20% without leverage = true earnings power. With leverage = false signal.' },
+  { id:'us_roic', pillar:'QUALITY', pillarColor:'#a78bfa', weight:7, source:'Fisher ROIC test',
+    label:'ROIC ≥ 15% AND stable or rising (not diluting from new investments)', target:'>20% = moat confirmed · 10–20% = acceptable · <10% = below WACC',
+    why:"Fisher key test: 'Does new capital earn at least as much as legacy capital?' Rising ROIC = each dollar invested creates more value than before." },
+  { id:'us_r40', pillar:'QUALITY', pillarColor:'#a78bfa', weight:9, source:'SaaS/tech institutional benchmark',
+    label:'Rule of 40: (Revenue growth% + FCF margin%) ≥ 40', target:'≥60 = elite · ≥40 = investment grade · <20 = value trap for SaaS',
+    why:'The primary institutional benchmark for evaluating tech/SaaS companies. Combines growth + profitability into one number. Palantir at 78, NVDA at ~100+. BELOW 20 = no premium multiple justified.' },
+  { id:'us_moat_type', pillar:'QUALITY', pillarColor:'#a78bfa', weight:6, source:'Fisher 100-Bagger',
+    label:'Moat type: network effects / switching cost / ecosystem (Tier 1)', target:'Network > Switching > Brand > Cost > Regulatory (weakest)',
+    why:'Fisher: verify moat type matters more than gross margin. A 90% gross margin with zero switching costs (commoditizable) is not a moat.' },
+  // ── GROWTH ────────────────────────────────────────────────────────────────
+  { id:'us_revgrowth', pillar:'GROWTH', pillarColor:'#38bdf8', weight:9, source:'MOSL adapted',
+    label:'Revenue CAGR ≥ 20% (3-year or annual)', target:'>30% = hypergrowth · >20% = multibagger zone · <15% = insufficient',
+    why:'US multibaggers need higher base growth than India. NVDA 3yr CAGR 90%+. Palantir 24%. Rule: if a company cannot grow 20%+ annually, it cannot 10× in 5 years.' },
+  { id:'us_rev_accel', pillar:'GROWTH', pillarColor:'#38bdf8', weight:9, source:'Framework core signal',
+    label:'Revenue ACCELERATING: Quarterly YoY > Annual YoY (+5pp threshold)', target:'QoQ YoY % > Annual % by ≥5pp = structural acceleration',
+    why:'MOST important signal for entry timing. NVDA went from 20% growth to 200% in 2023 before consensus caught on. Catch this inflection, not after.' },
+  { id:'us_eps_growth', pillar:'GROWTH', pillarColor:'#38bdf8', weight:7, source:'Fisher Twin Engine',
+    label:'EPS growth ≥ 20% AND faster than revenue (op leverage proof)', target:'EPS CAGR > Revenue CAGR × 1.3 = operating leverage firing',
+    why:'Fisher Twin Engine: EPS growth + stable/expanding PE = compounding. EPS growing faster than revenue = operating leverage visible.' },
+  { id:'us_growth_sustained', pillar:'GROWTH', pillarColor:'#38bdf8', weight:6, source:'MOSL consistency check',
+    label:'3-year CAGR ≥ 15% (not a one-year spike)', target:'3yr CAGR ≥ 15% confirms sustainability. Annual/3yr ratio < 2× = not a spike.',
+    why:'COVID-reopening, one-off contracts, and AI hype create fake spikes. 3yr CAGR confirms the growth is structural, not cyclical.' },
+  { id:'us_gp_expansion', pillar:'GROWTH', pillarColor:'#38bdf8', weight:5, source:'Operating leverage',
+    label:'Gross profit growing faster than revenue (margin expansion real-time)', target:'Gross profit growth QoQ % > Revenue growth QoQ % = live margin expansion',
+    why:'If GP grows faster than revenue, OPM will expand next quarter. Lead indicator of upcoming profitability improvement.' },
+  // ── VALUATION ─────────────────────────────────────────────────────────────
+  { id:'us_peg', pillar:'VALUATION', pillarColor:'#f59e0b', weight:7, source:'Fisher PEG adapted',
+    label:'PEG Ratio < 1.5 (growth at reasonable price)', target:'<0.8 = exceptional · 0.8–1.5 = fair GARP · >2.5 = expensive growth',
+    why:'Fisher: PEG adjusts P/E for growth rate. Paying 40× PE for 40% growth = fair (PEG=1). Paying 40× for 10% growth = expensive (PEG=4).' },
+  { id:'us_ev_ebitda', pillar:'VALUATION', pillarColor:'#f59e0b', weight:6, source:'Institutional standard',
+    label:'EV/EBITDA < sector median (enterprise value discipline)', target:'Tech: <35× fair · <20× cheap · >80× very expensive',
+    why:'EV/EBITDA is capital-structure neutral — works even with buybacks, debt, or net-cash. More reliable than P/E for comparing companies.' },
+  { id:'us_fwd_pe', pillar:'VALUATION', pillarColor:'#f59e0b', weight:5, source:'Growth investing',
+    label:'Forward P/E < 40× (or justified by growth trajectory)', target:'<25× = cheap · 25–40× = fair growth premium · >80× = requires exceptional execution',
+    why:'Forward PE anchors valuation to expected earnings. NVDA at 25× fwd PE in 2023 was cheap for 400% EPS growth ahead. Context matters.' },
+  { id:'us_mcap', pillar:'VALUATION', pillarColor:'#f59e0b', weight:8, source:'MOSL SQGLP adapted',
+    label:'Market Cap $1B–$50B = multibagger runway zone', target:'$1–5B = maximum runway · $5–50B = solid runway · >$150B = limited 10× potential',
+    why:'MOSL: sheer size militates against great growth. A $1B company can 100× to $100B. A $300B company needs to become $30T. Focus on $1–50B.' },
+  // ── BALANCE SHEET ─────────────────────────────────────────────────────────
+  { id:'us_debt', pillar:'BALANCE SHEET', pillarColor:'#10b981', weight:6, source:'Fisher survival filter',
+    label:'D/E ≤ 0.5 (low leverage = resilience in downturns)', target:'D/E < 0.5 = clean · <1.0 = acceptable · >2.0 = existential risk in rate hikes',
+    why:'US tech cycles can be brutal. High leverage during 2022 rate cycle destroyed companies. D/E < 0.5 = survives any cycle.' },
+  { id:'us_net_cash', pillar:'BALANCE SHEET', pillarColor:'#10b981', weight:5, source:'Buffett',
+    label:'Net cash position OR ND/EBITDA < 1.5', target:'Net cash = maximum flexibility · ND/EBITDA < 1.0 = safe · >3.0 = CRITICAL',
+    why:'Net cash = can fund growth internally, return capital, make acquisitions. Best companies self-fund.' },
+  // ── DISCOVERY / SQGLP "S" ─────────────────────────────────────────────────
+  { id:'us_discovery', pillar:'DISCOVERY', pillarColor:'#06b6d4', weight:8, source:'MOSL SQGLP "S" adapted',
+    label:'Analyst coverage ≤ 10 (undiscovered = institutional re-rating ahead)', target:'≤5 = essentially undiscovered · ≤12 = early · >30 = fully discovered, alpha gone',
+    why:'MOSL: low institutional holding = undiscovered. US equivalent = low analyst coverage. When Goldman/MS initiate coverage, the re-rating happens. Be there first.' },
+  { id:'us_insider', pillar:'DISCOVERY', pillarColor:'#06b6d4', weight:6, source:'Fisher insider signal',
+    label:'Insider ownership ≥ 10% (management skin in game)', target:'>20% = strong alignment · 10–20% = good · <2% = watch carefully',
+    why:'Fisher Scuttlebutt: insiders who own significant equity behave differently. Founder-led companies with 15%+ insider ownership consistently outperform.' },
+  { id:'us_fwd_growth', pillar:'DISCOVERY', pillarColor:'#06b6d4', weight:5, source:'Forward visibility',
+    label:'Forward revenue growth ≥ 20% FY1 (analysts confirm acceleration continues)', target:'>25% = analysts highly confident · <10% = slowdown expected',
+    why:'Forward guidance from management + analyst consensus. If consensus sees 25%+ growth ahead, institutional money will follow.' },
+  // ── TECHNICAL / MARKET ────────────────────────────────────────────────────
+  { id:'us_technical', pillar:'TECHNICAL', pillarColor:'#f97316', weight:5, source:'MOSL price action',
+    label:'Price above DMA200 OR within 20% (trend not broken)', target:'Above = uptrend intact · 0 to -20% = consolidating · >-30% = wait for reversal',
+    why:'Price action validates fundamental thesis. 100-baggers rarely give long entry windows below DMA200.' },
+  { id:'us_52wk', pillar:'TECHNICAL', pillarColor:'#f97316', weight:4, source:'Relative strength',
+    label:'Near 52-week high (within 10%) = price confirming thesis', target:'0 to -10% = institutional buying confirmed · <-40% = requires deep dive',
+    why:'When fundamentals are accelerating AND price is making new highs, institutions are actively buying. Breakout patterns precede the biggest moves.' },
+  { id:'us_perf1y', pillar:'TECHNICAL', pillarColor:'#f97316', weight:3, source:'Momentum',
+    label:'1-year performance > 20% (momentum confirming fundamentals)', target:'>50% = exceptional momentum · >20% = positive · Negative = wait for catalyst',
+    why:'Price reflects accumulated fundamental insight. Strong 1-year performance with accelerating fundamentals = thesis intact, market agreeing.' },
+  // ── SECTOR / TAILWIND ────────────────────────────────────────────────────
+  { id:'us_tailwind', pillar:'SECTOR', pillarColor:'#8b5cf6', weight:7, source:'Fisher Stage 1',
+    label:'Sector structural tailwind — NOT at cyclical peak', target:'AI infra · Defence · Healthcare IT · Fintech · Space tech = HIGH tailwind',
+    why:"Fisher: 'Buy the right industry at the right cycle point.' 100-baggers ride tailwinds + execution, not execution alone. Semiconductor in AI build-out = tailwind. Crypto at peak = cyclical trap." },
+  { id:'us_not_cyclical', pillar:'SECTOR', pillarColor:'#8b5cf6', weight:5, source:'Fisher Stage 1',
+    label:'Not at peak cyclical moment (avoid sector top)', target:'Avoid: energy at high prices · semis at peak cycle · banks at credit peak',
+    why:'Fisher: peak cyclical earnings = P/E looks cheap but earnings will collapse. Cyclical peaks are value traps disguised as value buys.' },
+  // ── CATALYSTS ────────────────────────────────────────────────────────────
+  { id:'us_catalyst', pillar:'CATALYST', pillarColor:'#ec4899', weight:6, source:'Framework mandatory',
+    label:'Visible catalyst for re-rating in next 4–8 quarters', target:'New product launch / margin improvement / market share gain / international expansion',
+    why:'Without a visible catalyst, a fundamentally good company can stay cheap for years. Identify the specific trigger that will move valuation.' },
+  { id:'us_repeat', pillar:'CATALYST', pillarColor:'#ec4899', weight:5, source:'Framework final filter',
+    label:'Growth repeatable for next 4–6 quarters (not one-quarter wonder)', target:"'Did this quarter materially increase probability of higher future earnings?' YES = buy",
+    why:'The most important question: can this quarter structurally repeat? Framework: final filter before conviction sizing.' },
+];
+
+const USA_CHECKLIST_STORAGE = 'mb_usa_checklist_v1';
+
+function USAChecklist() {
+  const usaRows = (() => {
+    try { return JSON.parse(localStorage.getItem('mb_usa_scored_v1')||'[]') as USAResult[]; } catch { return []; }
+  })();
+  const [checks, setChecks] = React.useState<Record<string,boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem(USA_CHECKLIST_STORAGE)||'{}'); } catch { return {}; }
+  });
+  const [selectedTicker, setSelectedTicker] = React.useState('');
+  const [notes, setNotes] = React.useState<Record<string,string>>(() => {
+    try { return JSON.parse(localStorage.getItem('mb_usa_notes_v1')||'{}'); } catch { return {}; }
+  });
+
+  const selRow = usaRows.find(r => r.symbol === selectedTicker);
+
+  function toggleCheck(id: string) {
+    const next = { ...checks, [id]: !checks[id] };
+    setChecks(next);
+    localStorage.setItem(USA_CHECKLIST_STORAGE, JSON.stringify(next));
+  }
+  function updateNote(id: string, v: string) {
+    const next = { ...notes, [id]: v };
+    setNotes(next);
+    localStorage.setItem('mb_usa_notes_v1', JSON.stringify(next));
+  }
+
+  const pillars = [...new Set(USA_CHECKLIST.map(c=>c.pillar))];
+  const passed = USA_CHECKLIST.filter(c=>checks[c.id]).length;
+  const total  = USA_CHECKLIST.length;
+  const weightedPass = USA_CHECKLIST.filter(c=>checks[c.id]).reduce((s,c)=>s+c.weight,0);
+  const weightedTotal = USA_CHECKLIST.reduce((s,c)=>s+c.weight,0);
+
+  // Auto-check from scored data when ticker selected
+  const autoStatus = (item: USAChecklistItem): boolean | null => {
+    if (!selRow) return null;
+    const r = selRow;
+    switch(item.id) {
+      case 'us_gm':      return (r.grossMarginAnn ?? 0) >= 50;
+      case 'us_gm_expand': return (r.grossMarginExpansion ?? 0) > 0;
+      case 'us_fcf':     return (r.fcfMarginAnn ?? -99) >= 15;
+      case 'us_roe':     return (r.roe ?? 0) >= 20;
+      case 'us_roic':    return (r.roic ?? 0) >= 15;
+      case 'us_r40':     return (r.ruleOf40 ?? 0) >= 40;
+      case 'us_revgrowth': return (r.revenueGrowthAnn ?? 0) >= 20;
+      case 'us_rev_accel': return r.accelSignal === 'ACCELERATING';
+      case 'us_eps_growth': return (r.epsGrowth ?? 0) >= 20;
+      case 'us_growth_sustained': return (r.revGrowth3yr ?? 0) >= 15;
+      case 'us_peg':     return (r.peg ?? 99) < 1.5 && (r.peg ?? 0) > 0;
+      case 'us_ev_ebitda': return (r.evEbitda ?? 999) < 40;
+      case 'us_fwd_pe':  return (r.forwardPe ?? 999) < 45 && (r.forwardPe ?? 0) > 0;
+      case 'us_mcap':    return (r.marketCapB ?? 9999) < 50;
+      case 'us_debt':    return (r.de ?? 99) <= 0.5;
+      case 'us_net_cash': return (r.netDebtUsd ?? 1) <= 0;
+      case 'us_discovery': return (r.analystCount ?? 999) <= 10;
+      case 'us_insider': return (r.insiderOwnership ?? 0) >= 10;
+      case 'us_fwd_growth': return (r.forwardRevGrowth ?? 0) >= 20;
+      case 'us_technical': return (r.pctFrom52wHigh ?? -100) >= -20;
+      case 'us_52wk':    return (r.pctFrom52wHigh ?? -100) >= -10;
+      case 'us_perf1y':  return (r.perf1y ?? -99) >= 20;
+      default: return null;
+    }
+  };
+
+  return (
+    <div style={{maxWidth:1100,margin:'0 auto',padding:'28px 20px'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:24,flexWrap:'wrap',gap:12}}>
+        <div>
+          <div style={{fontSize:F.h2,fontWeight:800,color:'#38bdf8',marginBottom:4}}>🇺🇸 USA Research Checklist</div>
+          <div style={{fontSize:F.md,color:MUTED}}>{total} criteria · Fisher 100-Bagger + MOSL SQGLP adapted + Rule of 40</div>
+        </div>
+        <div style={{display:'flex',gap:12,alignItems:'center'}}>
+          {usaRows.length > 0 && (
+            <select value={selectedTicker} onChange={e=>setSelectedTicker(e.target.value)}
+              style={{padding:'8px 14px',backgroundColor:CARD2,border:`1px solid ${BORDER}`,borderRadius:8,color:TEXT,fontSize:F.sm,cursor:'pointer'}}>
+              <option value=''>Auto-check from scored stock...</option>
+              {usaRows.slice(0,20).map(r=><option key={r.symbol} value={r.symbol}>{r.symbol} — {r.grade} ({r.score})</option>)}
+            </select>
+          )}
+          <div style={{padding:'10px 18px',backgroundColor:passed>=20?`${GREEN}18`:passed>=12?`${YELLOW}18`:`${RED}18`,border:`1px solid ${passed>=20?GREEN:passed>=12?YELLOW:RED}30`,borderRadius:10,textAlign:'center'}}>
+            <div style={{fontSize:F.h2,fontWeight:900,color:passed>=20?GREEN:passed>=12?YELLOW:RED}}>{passed}/{total}</div>
+            <div style={{fontSize:F.xs,color:MUTED}}>checked · {Math.round(weightedPass/weightedTotal*100)}% weighted</div>
+          </div>
+        </div>
+      </div>
+
+      {pillars.map(pillar => {
+        const items = USA_CHECKLIST.filter(c=>c.pillar===pillar);
+        const pPassed = items.filter(c=>checks[c.id]).length;
+        const pColor = items[0].pillarColor;
+        return (
+          <div key={pillar} style={{marginBottom:24}}>
+            <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,borderBottom:`1px solid ${BORDER}`,paddingBottom:8}}>
+              <span style={{fontSize:F.md,fontWeight:800,color:pColor,letterSpacing:'0.5px'}}>{pillar}</span>
+              <span style={{fontSize:F.xs,color:MUTED,fontWeight:600}}>{pPassed}/{items.length} checked</span>
+              <div style={{flex:1,height:4,backgroundColor:`rgba(255,255,255,0.06)`,borderRadius:2}}>
+                <div style={{height:'100%',width:`${pPassed/items.length*100}%`,backgroundColor:pColor,borderRadius:2,transition:'width 0.3s'}}/>
+              </div>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(460px,1fr))',gap:10}}>
+              {items.map(item => {
+                const auto = autoStatus(item);
+                const checked = checks[item.id] ?? false;
+                const note = notes[item.id] ?? '';
+                return (
+                  <div key={item.id} style={{
+                    padding:'14px 16px',backgroundColor:checked?`${pColor}08`:CARD_BG,
+                    border:`1px solid ${checked?pColor+'40':BORDER}`,
+                    borderLeft:`3px solid ${checked?pColor:auto===true?`${pColor}60`:auto===false?`${RED}40`:BORDER}`,
+                    borderRadius:8,transition:'all 0.15s',
+                  }}>
+                    <div style={{display:'flex',gap:10,alignItems:'flex-start'}}>
+                      <button onClick={()=>toggleCheck(item.id)} style={{
+                        width:22,height:22,borderRadius:5,border:`2px solid ${checked?pColor:BORDER}`,
+                        backgroundColor:checked?pColor:'transparent',flexShrink:0,marginTop:2,cursor:'pointer',
+                        display:'flex',alignItems:'center',justifyContent:'center',color:'white',fontSize:14,
+                      }}>{checked?'✓':''}</button>
+                      <div style={{flex:1}}>
+                        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+                          <span style={{fontSize:F.md,fontWeight:700,color:checked?TEXT:`${TEXT}CC`}}>{item.label}</span>
+                          <span style={{fontSize:F.xs,color:MUTED}}>w:{item.weight}</span>
+                          {auto !== null && (
+                            <span style={{fontSize:10,fontWeight:700,padding:'2px 6px',borderRadius:10,
+                              backgroundColor:auto?`${GREEN}18`:`${RED}18`,color:auto?GREEN:RED}}>
+                              {auto?'✅ AUTO PASS':'❌ AUTO FAIL'}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{fontSize:F.xs,color:YELLOW,marginBottom:4}}>🎯 {item.target}</div>
+                        <div style={{fontSize:F.xs,color:MUTED,lineHeight:1.5}}>{item.why}</div>
+                        <div style={{fontSize:F.xs,color:`${MUTED}70`,marginTop:3}}>Source: {item.source}</div>
+                        <textarea
+                          value={note}
+                          onChange={e=>updateNote(item.id,e.target.value)}
+                          placeholder="Your notes..."
+                          rows={1}
+                          style={{width:'100%',marginTop:6,backgroundColor:CARD2,border:`1px solid ${BORDER}`,borderRadius:6,padding:'6px 10px',color:MUTED,fontSize:F.xs,resize:'none',boxSizing:'border-box'}}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 const USA_STORAGE_KEY = 'mb_usa_scored_v1';
@@ -3804,7 +4069,7 @@ const STORAGE_KEY = 'mb_excel_scored_v2';
 const STORAGE_META = 'mb_excel_meta_v2';
 
 export default function MultibaggerPage() {
-  const [activeTab, setActiveTab] = useState<'excel'|'usa'|'checklist'>('excel');
+  const [activeTab, setActiveTab] = useState<'excel'|'usa'|'usa-checklist'|'checklist'>('excel');
 
   // Lazy-init from localStorage — data survives navigation and page refresh.
   // Only cleared when user explicitly clicks "Clear All Data".
@@ -3870,7 +4135,8 @@ export default function MultibaggerPage() {
           <div style={{display:'flex',gap:0}}>
             {([
               {id:'excel',    label:'🇮🇳 India Multibagger Ranking'},
-              {id:'usa',      label:'🇺🇸 USA Multibagger'},
+              {id:'usa',           label:'🇺🇸 USA Multibagger'},
+              {id:'usa-checklist', label:'🇺🇸 USA Checklist'},
               {id:'checklist',label:`📋 Research Checklist${excelRows.length?` (${excelRows.length} loaded)`:''}`},
             ] as const).map(tab=>{
               const active=activeTab===tab.id;
@@ -3885,7 +4151,8 @@ export default function MultibaggerPage() {
       </div>
 
       {activeTab==='excel'     && <ExcelCompare rows={excelRows} setRows={setExcelRows} />}
-      {activeTab==='usa'       && <USACompare />}
+      {activeTab==='usa'          && <USACompare />}
+      {activeTab==='usa-checklist'&& <USAChecklist />}
       {activeTab==='checklist' && <MultibaggerChecklist excelRows={excelRows} />}
     </div>
   );
