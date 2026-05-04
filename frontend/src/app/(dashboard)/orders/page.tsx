@@ -448,19 +448,45 @@ export default function CompanyIntelligencePage() {
         watchlist = JSON.parse(s);
       }
 
+      // ── KEY FIX: merge Excel symbols into the portfolio param ──────────────────
+      // The backend ONLY enriches tickers from &portfolio= and &watchlist=.
+      // &excel= was silently ignored. By merging Excel symbols into &portfolio=,
+      // the backend will actually look up corporate events / signals for them.
+      // We then re-tag client-side so portfolio/watchlist/excel flags stay accurate.
+      // Cap at 80 symbols total (top-scored first) to stay within URL limits.
+      const portfolioSet  = new Set(portfolio.map(s => s.toUpperCase()));
+      const watchlistSet  = new Set(watchlist.map(s => s.toUpperCase()));
+      // Excel-only = in Excel but not already in portfolio or watchlist
+      const excelOnlySymbols = _excelSymbols
+        .filter(s => !portfolioSet.has(s) && !watchlistSet.has(s))
+        .slice(0, Math.max(0, 80 - portfolio.length - watchlist.length));
+
+      // Merged portfolio = real portfolio + excel-only symbols (backend enriches all)
+      const mergedPortfolio = [...portfolio, ...excelOnlySymbols];
+
+      // Full re-tagger: correctly sets all three flags based on original sets
+      const _retag = <T extends { symbol: string }>(arr: T[]): T[] => arr.map(s => {
+        const sym = (s.symbol || '').toString().trim().toUpperCase();
+        return {
+          ...s,
+          isPortfolio: portfolioSet.has(sym),
+          isWatchlist: watchlistSet.has(sym),
+          isExcel: _excelSet.has(sym),
+        };
+      });
+
       const wlParam = watchlist.length > 0 ? `&watchlist=${watchlist.join(',')}` : '';
-      const pfParam = portfolio.length > 0 ? `&portfolio=${portfolio.join(',')}` : '';
-      const exParam = _excelSymbols.length > 0 ? `&excel=${_excelSymbols.join(',')}` : '';
-      const res = await fetch(`/api/market/intelligence?days=${daysFilter}${wlParam}${pfParam}${exParam}&debug=true`);
+      const pfParam = mergedPortfolio.length > 0 ? `&portfolio=${mergedPortfolio.join(',')}` : '';
+      const res = await fetch(`/api/market/intelligence?days=${daysFilter}${wlParam}${pfParam}&debug=true`);
       const data = await res.json();
 
-      setTop3(_tagExcel(data.top3 || []));
-      setSignals(_tagExcel(data.signals || []));
-      setNotableSignals(_filterGovNoise(_tagExcel(data.notable || [])));
-      setSpeculativeSignals(_tagExcel(data.speculative || []));
+      setTop3(_retag(data.top3 || []));
+      setSignals(_retag(data.signals || []));
+      setNotableSignals(_filterGovNoise(_retag(data.notable || [])));
+      setSpeculativeSignals(_retag(data.speculative || []));
       setQuietMarket(!!data.quietMarket);
-      setThematicIdeas(_tagExcel(data.thematicIdeas || []));
-      setTrends(_tagExcel(data.trends || []));
+      setThematicIdeas(_retag(data.thematicIdeas || []));
+      setTrends(_retag(data.trends || []));
       setBias(data.bias || null);
       setStats(data._stats || null);
       setNoHighConfSignals(!!data.noHighConfSignals);
@@ -480,9 +506,18 @@ export default function CompanyIntelligencePage() {
       setComputing(isComputing);
       if (!isComputing) setComputePollCount(0);
 
-      // Cache for tab switching (only cache real data, not skeletons)
+      // Cache retagged data so cache hits preserve correct portfolio/watchlist/excel flags
       if (!isComputing) {
-        _cache = { data: { ...data, notable: data.notable || [], thematicIdeas: data.thematicIdeas || [], flags, addedPrices: prices, lastUpdated: ts }, timestamp: Date.now(), daysFilter };
+        _cache = { data: {
+          ...data,
+          signals:       _retag(data.signals        || []),
+          notable:       _retag(data.notable        || []),
+          speculative:   _retag(data.speculative    || []),
+          thematicIdeas: _retag(data.thematicIdeas  || []),
+          trends:        _retag(data.trends         || []),
+          top3:          _retag(data.top3           || []),
+          flags, addedPrices: prices, lastUpdated: ts,
+        }, timestamp: Date.now(), daysFilter };
       }
     } catch (err) {
       console.error('[Intelligence] Error:', err);
@@ -579,12 +614,13 @@ export default function CompanyIntelligencePage() {
   const negativeCount = signals.filter(s => s.isNegative).length;
   const portfolioCount = signals.filter(s => s.isPortfolio).length;
   const watchlistCount = signals.filter(s => s.isWatchlist).length;
-  // Count across ALL signal arrays — signals, notable, speculative, monitor, and stacking trends
-  const excelCount = signals.filter(s => s.isExcel).length +
-    notableSignals.filter(s => s.isExcel).length +
-    speculativeSignals.filter(s => s.isExcel).length +
-    monitorList.filter(s => s.isExcel).length +
-    trends.filter(t => t.isExcel && !signals.some(s => s.isExcel && s.symbol === t.symbol)).length;
+  // Count unique Excel-tagged symbols across ALL signal arrays
+  const excelSymbolsSeen = new Set<string>();
+  [...signals, ...notableSignals, ...speculativeSignals, ...monitorList].forEach(s => {
+    if (s.isExcel) excelSymbolsSeen.add(s.symbol);
+  });
+  trends.forEach(t => { if (t.isExcel) excelSymbolsSeen.add(t.symbol); });
+  const excelCount = excelSymbolsSeen.size;
   const totalSignalValue = signals.filter(s => s.valueCr > 0).reduce((sum, s) => sum + s.valueCr, 0);
 
   // ── #20: Cross-universe overlap — stocks appearing in 2+ tracked universes ──
