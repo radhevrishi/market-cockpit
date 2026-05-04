@@ -2931,7 +2931,23 @@ function MultibaggerChecklist({excelRows}:{excelRows:ExcelResult[]}) {
 
   function loadSymbol(sym:string){
     setActiveSymbol(sym);
-    try{setChecks(JSON.parse(localStorage.getItem(`mb3_checks_${sym}`)||'{}'));}catch{setChecks({});}
+    // Load saved checks
+    let savedChecks: Record<string,boolean> = {};
+    try{ savedChecks = JSON.parse(localStorage.getItem(`mb3_checks_${sym}`)||'{}'); } catch{}
+    // Auto-tick items where autoPass fires for this stock
+    const stock = excelRows.find(r => r.symbol.toUpperCase() === sym.toUpperCase());
+    if (stock) {
+      for (const item of CHECKLIST) {
+        if (item.autoField && item.autoPass) {
+          const val = stock[item.autoField as keyof ExcelResult];
+          if (val !== undefined) {
+            savedChecks[item.id] = item.autoPass(val as number, stock);
+          }
+        }
+      }
+      localStorage.setItem(`mb3_checks_${sym}`, JSON.stringify(savedChecks));
+    }
+    setChecks(savedChecks);
     try{setNotes(JSON.parse(localStorage.getItem(`mb3_notes_${sym}`)||'{}'));}catch{setNotes({});}
   }
   function addSymbol(){
@@ -3390,12 +3406,23 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
   // Grade
   const grade: USAGrade = score>=90?'A+':score>=80?'A':score>=68?'B+':score>=55?'B':score>=42?'C':'D';
 
+  // Recompute derived fields every time — fixes stale localStorage data where
+  // these were undefined because they were added after the original upload.
+  const computedRuleOf40 = (row.revenueGrowthAnn !== undefined && row.fcfMarginAnn !== undefined)
+    ? Math.round(row.revenueGrowthAnn + row.fcfMarginAnn)
+    : row.ruleOf40;
+  const computedGMExpansion = (row.grossMarginTtm !== undefined && row.grossMarginAnn !== undefined)
+    ? Math.round((row.grossMarginTtm - row.grossMarginAnn) * 10) / 10
+    : row.grossMarginExpansion;
+
   return {
     ...row,
     score, grade, coverage,
+    ruleOf40: computedRuleOf40,
+    grossMarginExpansion: computedGMExpansion,
     revenueAccel: revAccel,
-    accelSignal: revAccel !== undefined ? (revAccel>=8?'ACCELERATING':revAccel<=-8?'DECELERATING':'STABLE') : undefined,
-    marketCapB: row.marketCapUsd !== undefined ? Math.round(row.marketCapUsd/1e9*100)/100 : undefined,
+    accelSignal: revAccel !== undefined ? (revAccel>=5?'ACCELERATING':revAccel<=-5?'DECELERATING':'STABLE') : row.accelSignal,
+    marketCapB: row.marketCapUsd !== undefined ? Math.round(row.marketCapUsd/1e9*100)/100 : row.marketCapB,
     strengths, risks,
     pillarScores: [
       {id:'QUALITY',   label:'Quality',    score:Math.round(qual),   color:'#a78bfa'},
@@ -3683,34 +3710,56 @@ function USAChecklist() {
   const weightedTotal = USA_CHECKLIST.reduce((s,c)=>s+c.weight,0);
 
   // Auto-check from scored data when ticker selected
-  const autoStatus = (item: USAChecklistItem): boolean | null => {
-    if (!selRow) return null;
-    const r = selRow;
-    switch(item.id) {
-      case 'us_gm':      return (r.grossMarginAnn ?? 0) >= 50;
-      case 'us_gm_expand': return (r.grossMarginExpansion ?? 0) > 0;
-      case 'us_fcf':     return (r.fcfMarginAnn ?? -99) >= 15;
-      case 'us_roe':     return (r.roe ?? 0) >= 20;
-      case 'us_roic':    return (r.roic ?? 0) >= 15;
-      case 'us_r40':     return (r.ruleOf40 ?? 0) >= 40;
-      case 'us_revgrowth': return (r.revenueGrowthAnn ?? 0) >= 20;
-      case 'us_rev_accel': return r.accelSignal === 'ACCELERATING';
-      case 'us_eps_growth': return (r.epsGrowth ?? 0) >= 20;
-      case 'us_growth_sustained': return (r.revGrowth3yr ?? 0) >= 15;
-      case 'us_peg':     return (r.peg ?? 99) < 1.5 && (r.peg ?? 0) > 0;
-      case 'us_ev_ebitda': return (r.evEbitda ?? 999) < 40;
-      case 'us_fwd_pe':  return (r.forwardPe ?? 999) < 45 && (r.forwardPe ?? 0) > 0;
-      case 'us_mcap':    return (r.marketCapB ?? 9999) < 50;
-      case 'us_debt':    return (r.de ?? 99) <= 0.5;
-      case 'us_net_cash': return (r.netDebtUsd ?? 1) <= 0;
-      case 'us_discovery': return (r.analystCount ?? 999) <= 10;
-      case 'us_insider': return (r.insiderOwnership ?? 0) >= 10;
-      case 'us_fwd_growth': return (r.forwardRevGrowth ?? 0) >= 20;
-      case 'us_technical': return (r.pctFrom52wHigh ?? -100) >= -20;
-      case 'us_52wk':    return (r.pctFrom52wHigh ?? -100) >= -10;
-      case 'us_perf1y':  return (r.perf1y ?? -99) >= 20;
+  // Returns true/false for items with data, null for missing columns or qualitative items.
+  // CRITICAL: optional fields (user hasn't added column) MUST return null not false.
+  const autoStatus = (r: USAResult, id: string): boolean | null => {
+    switch(id) {
+      // ── Always available in base TradingView export ───────────────────────
+      case 'us_gm':        return r.grossMarginAnn !== undefined ? r.grossMarginAnn >= 50 : null;
+      case 'us_fcf':       return r.fcfMarginAnn !== undefined ? r.fcfMarginAnn >= 15 : null;
+      case 'us_revgrowth': return r.revenueGrowthAnn !== undefined ? r.revenueGrowthAnn >= 20 : null;
+      case 'us_rev_accel': return r.accelSignal !== undefined ? r.accelSignal === 'ACCELERATING' : null;
+      case 'us_ev_ebitda': return r.evEbitda !== undefined ? r.evEbitda < 40 : null;
+      case 'us_fwd_pe':    return r.forwardPe !== undefined && r.forwardPe > 0 ? r.forwardPe < 45 : null;
+      case 'us_mcap':      return r.marketCapB !== undefined ? r.marketCapB < 50 : null;
+      case 'us_net_cash':  return r.netDebtUsd !== undefined ? r.netDebtUsd <= 0 : null;
+      // ── Computed from base export (recomputed in scoreUSARow now) ─────────
+      case 'us_r40':       return r.ruleOf40 !== undefined ? r.ruleOf40 >= 40 : null;
+      case 'us_gm_expand': return r.grossMarginExpansion !== undefined ? r.grossMarginExpansion > 0 : null;
+      case 'us_gp_expand': return (r.grossProfitGrowthQtr !== undefined && r.revenueGrowthQtr !== undefined)
+                               ? r.grossProfitGrowthQtr > r.revenueGrowthQtr : null;
+      // ── Optional: user must add column to TradingView export ─────────────
+      case 'us_roe':       return r.roe !== undefined ? r.roe >= 20 : null;
+      case 'us_roic':      return r.roic !== undefined ? r.roic >= 15 : null;
+      case 'us_eps_growth': return r.epsGrowth !== undefined ? r.epsGrowth >= 20 : null;
+      case 'us_growth_sustained': return r.revGrowth3yr !== undefined ? r.revGrowth3yr >= 15 : null;
+      case 'us_peg':       return r.peg !== undefined && r.peg > 0 ? r.peg < 1.5 : null;
+      case 'us_debt':      return r.de !== undefined ? r.de <= 0.5 : null;
+      case 'us_discovery': return r.analystCount !== undefined ? r.analystCount <= 10 : null;
+      case 'us_insider':   return r.insiderOwnership !== undefined ? r.insiderOwnership >= 10 : null;
+      case 'us_fwd_growth': return r.forwardRevGrowth !== undefined ? r.forwardRevGrowth >= 20 : null;
+      case 'us_technical': return r.pctFrom52wHigh !== undefined ? r.pctFrom52wHigh >= -20 : null;
+      case 'us_52wk':      return r.pctFrom52wHigh !== undefined ? r.pctFrom52wHigh >= -10 : null;
+      case 'us_perf1y':    return r.perf1y !== undefined ? r.perf1y >= 20 : null;
+      // ── Qualitative — user must assess manually ───────────────────────────
       default: return null;
     }
+  };
+
+  // Auto-tick all auto-determinable items when ticker changes
+  // FIX: "if auto-pass it should be ticked already" — auto-pass = auto-check
+  const applyAutoChecks = (row: USAResult) => {
+    const autoUpdates: Record<string, boolean> = {};
+    for (const item of USA_CHECKLIST) {
+      const result = autoStatus(row, item.id);
+      if (result !== null) autoUpdates[item.id] = result; // tick=true for pass, untick=false for fail
+    }
+    setChecks(prev => {
+      // Qualitative items (result===null) keep manual state; auto items get overridden
+      const merged = { ...prev, ...autoUpdates };
+      localStorage.setItem(USA_CHECKLIST_STORAGE, JSON.stringify(merged));
+      return merged;
+    });
   };
 
   return (
@@ -3722,9 +3771,16 @@ function USAChecklist() {
         </div>
         <div style={{display:'flex',gap:12,alignItems:'center'}}>
           {usaRows.length > 0 && (
-            <select value={selectedTicker} onChange={e=>setSelectedTicker(e.target.value)}
+            <select value={selectedTicker} onChange={e=>{
+              const ticker = e.target.value;
+              setSelectedTicker(ticker);
+              if (ticker) {
+                const row = usaRows.find(r => r.symbol === ticker);
+                if (row) applyAutoChecks(row);
+              }
+            }}
               style={{padding:'8px 14px',backgroundColor:CARD2,border:`1px solid ${BORDER}`,borderRadius:8,color:TEXT,fontSize:F.sm,cursor:'pointer'}}>
-              <option value=''>Auto-check from scored stock...</option>
+              <option value=''>Select stock — auto-ticks all checkable items...</option>
               {usaRows.slice(0,20).map(r=><option key={r.symbol} value={r.symbol}>{r.symbol} — {r.grade} ({r.score})</option>)}
             </select>
           )}
@@ -3750,7 +3806,7 @@ function USAChecklist() {
             </div>
             <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(460px,1fr))',gap:10}}>
               {items.map(item => {
-                const auto = autoStatus(item);
+                const auto = selRow ? autoStatus(selRow, item.id) : null;
                 const checked = checks[item.id] ?? false;
                 const note = notes[item.id] ?? '';
                 return (
@@ -3773,7 +3829,12 @@ function USAChecklist() {
                           {auto !== null && (
                             <span style={{fontSize:10,fontWeight:700,padding:'2px 6px',borderRadius:10,
                               backgroundColor:auto?`${GREEN}18`:`${RED}18`,color:auto?GREEN:RED}}>
-                              {auto?'✅ AUTO PASS':'❌ AUTO FAIL'}
+                              {auto?'✅ data confirms':'❌ data fails'}
+                            </span>
+                          )}
+                          {auto === null && selRow && (
+                            <span style={{fontSize:10,color:MUTED,padding:'2px 6px',borderRadius:10,backgroundColor:`${MUTED}10`}}>
+                              ⬜ no data / qualitative
                             </span>
                           )}
                         </div>
