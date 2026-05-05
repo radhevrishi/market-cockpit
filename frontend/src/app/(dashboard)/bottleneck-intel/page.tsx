@@ -85,6 +85,116 @@ const TIER_MAP: Record<string, { tier: number; label: string; color: string }> =
   NUCLEAR_ENERGY:         { tier: 6, label: 'Tier 6 · Nuclear',          color: '#F59E0B' },
 };
 
+// ── Hierarchical Taxonomy — prevents overlap across adjacent power/cooling buckets ──────
+// Parent themes group related buckets so overlapping evidence is properly attributed.
+interface ThemeParent {
+  id: string; label: string; icon: string; color: string;
+  children: string[]; // bucket_ids + emerging theme ids
+  overlap_note: string; // why these could overlap
+}
+const THEME_PARENTS: ThemeParent[] = [
+  { id: 'POWER_INFRASTRUCTURE', label: 'Power & Grid Infrastructure', icon: '⚡', color: '#F59E0B',
+    children: ['POWER_GRID','NUCLEAR_ENERGY','THERMAL_COOLING','transformer','ai_power','cooling_cdm'],
+    overlap_note: 'All driven by AI data center power demand. POWER_GRID = supply constraint; NUCLEAR = long-cycle solution; THERMAL_COOLING = on-site DC constraint. Transformer/AI Power = early-warning signals for POWER_GRID.',
+  },
+  { id: 'AI_SILICON_STACK', label: 'AI Silicon Supply Stack', icon: '🏭', color: '#0F7ABF',
+    children: ['FABRICATION_PACKAGING','INTERCONNECT_PHOTONICS','MEMORY_STORAGE','COMPUTE_SCALING','opt_test','qual_cycle'],
+    overlap_note: 'CoWoS (packaging) enables HBM stacking (memory) and optical I/O integration (photonics). All are sequential constraints, not independent bottlenecks.',
+  },
+  { id: 'CRITICAL_MATERIALS', label: 'Critical Materials & Geopolitics', icon: '⛏️', color: '#8B5CF6',
+    children: ['MATERIALS_SUPPLY','rare_earth','specialty_gas','backlog','defense_semi'],
+    overlap_note: 'Rare earth / specialty gas / critical minerals are sub-categories of MATERIALS_SUPPLY. Backlog is a cross-cutting signal, not a standalone bottleneck.',
+  },
+  { id: 'ADVANCED_COMPUTE', label: 'Advanced Compute & Quantum', icon: '🧊', color: '#06B6D4',
+    children: ['QUANTUM_CRYOGENICS'],
+    overlap_note: 'Long-horizon, structural — separate from near-term AI silicon bottlenecks.',
+  },
+];
+
+// Investability score: combines evidence quality, lifecycle state, and company mapping completeness
+function getInvestabilityScore(bucketId: string, vel: { week: number; trend: string }, signalCount: number, articleCount: number, hasChokepoints: boolean): {
+  score: number; label: string; color: string; reasoning: string;
+} {
+  let score = 0;
+  const reasons: string[] = [];
+  // Evidence freshness (40%)
+  if (vel.week >= 3)     { score += 40; reasons.push('live acceleration'); }
+  else if (vel.week >= 1){ score += 25; reasons.push('active evidence'); }
+  else if (STRUCTURAL_THEMES.has(bucketId)) { score += 15; reasons.push('structural'); }
+  else                    { score += 0;  reasons.push('stale'); }
+  // Signal diversity (30%) — ratio check
+  const ratio = articleCount > 0 ? signalCount / articleCount : 1;
+  if (ratio < 0.6)        { score += 30; reasons.push('diverse signals'); }
+  else if (ratio < 0.85)  { score += 18; reasons.push('moderate diversity'); }
+  else                    { score += 5;  reasons.push('low diversity'); }
+  // Company mapping completeness (30%)
+  if (hasChokepoints)     { score += 30; reasons.push('company-mapped'); }
+  else                    { score += 8;  reasons.push('theme-only'); }
+  const label = score >= 75 ? '🟢 HIGH' : score >= 50 ? '🟡 MEDIUM' : score >= 30 ? '🟠 LOW' : '🔴 VERY LOW';
+  const color = score >= 75 ? '#10B981' : score >= 50 ? '#F59E0B' : score >= 30 ? '#F97316' : '#EF4444';
+  return { score, label, color, reasoning: reasons.join(' · ') };
+}
+
+// Change tracker: what changed since last session
+const CHANGE_TRACKER_KEY = 'mc_bn_snapshot_v1';
+interface BucketSnapshot { id: string; severity: number; signal_count: number; week: number; timestamp: number }
+function saveSnapshot(buckets: {bucket_id: string; severity: number; signal_count: number}[], vels: Record<string, {week: number}>) {
+  try {
+    const snap: BucketSnapshot[] = buckets.map(b => ({
+      id: b.bucket_id, severity: b.severity, signal_count: b.signal_count,
+      week: vels[b.bucket_id]?.week ?? 0, timestamp: Date.now(),
+    }));
+    localStorage.setItem(CHANGE_TRACKER_KEY, JSON.stringify(snap));
+  } catch {}
+}
+function getChanges(buckets: {bucket_id: string; label: string; severity: number; signal_count: number}[], vels: Record<string, {week: number}>): { type: string; bucket: string; label: string; detail: string; color: string }[] {
+  try {
+    const prev: BucketSnapshot[] = JSON.parse(localStorage.getItem(CHANGE_TRACKER_KEY) || '[]');
+    const prevMap = new Map(prev.map(p => [p.id, p]));
+    const AGE_HOURS = prev.length > 0 ? (Date.now() - Math.max(...prev.map(p => p.timestamp))) / 3600000 : 999;
+    if (AGE_HOURS > 48) return []; // Only show changes within 48 hours
+    const changes: { type: string; bucket: string; label: string; detail: string; color: string }[] = [];
+    for (const b of buckets) {
+      const p = prevMap.get(b.bucket_id);
+      const curWeek = vels[b.bucket_id]?.week ?? 0;
+      const prevWeek = p?.week ?? 0;
+      if (!p) { changes.push({ type: 'NEW', bucket: b.bucket_id, label: b.label, detail: 'Appeared this session', color: '#8B5CF6' }); continue; }
+      if (b.severity > p.severity) changes.push({ type: 'UPGRADED', bucket: b.bucket_id, label: b.label, detail: `Severity ↑ ${p.severity}→${b.severity}`, color: '#EF4444' });
+      else if (b.severity < p.severity) changes.push({ type: 'DOWNGRADED', bucket: b.bucket_id, label: b.label, detail: `Severity ↓ ${p.severity}→${b.severity}`, color: '#10B981' });
+      if (curWeek > prevWeek + 2) changes.push({ type: 'RISING', bucket: b.bucket_id, label: b.label, detail: `Evidence surge +${curWeek - prevWeek} articles this week`, color: '#F59E0B' });
+      else if (prevWeek >= 3 && curWeek === 0) changes.push({ type: 'COLLAPSED', bucket: b.bucket_id, label: b.label, detail: `Was ${prevWeek} articles/wk → now 0`, color: '#4A5B6C' });
+    }
+    return changes.slice(0, 6); // max 6 change cards
+  } catch { return []; }
+}
+
+// Score decay: stale non-structural themes auto-lose tactical prominence over time
+function getDecayedSeverity(bucketId: string, severity: number, vel: { week: number; prev: number }): {
+  effective: number; decayed: boolean; weeksStale: number;
+} {
+  if (vel.week > 0 || STRUCTURAL_THEMES.has(bucketId)) return { effective: severity, decayed: false, weeksStale: 0 };
+  // Estimate weeks stale from velocity data (prev week also 0 = at least 2 weeks)
+  const weeksStale = vel.prev === 0 ? 2 : 1;
+  const decayed = weeksStale >= 1;
+  // Decay: -1 severity per week stale, minimum 1
+  const effective = Math.max(1, severity - weeksStale);
+  return { effective, decayed, weeksStale };
+}
+
+// Evidence diversity: source family analysis
+function calcEvidenceDiversity(signalCount: number, articleCount: number): {
+  ratio: number; label: string; color: string; detail: string;
+} {
+  if (articleCount === 0) return { ratio: 0, label: 'No data', color: '#4A5B6C', detail: 'No articles this period' };
+  const ratio = signalCount / articleCount;
+  // Count estimated source families (rough proxy: if ratio > 0.9, likely 1 family; < 0.6 = multiple)
+  const estimatedFamilies = ratio >= 0.9 ? 1 : ratio >= 0.75 ? 2 : ratio >= 0.6 ? 3 : 4;
+  if (ratio >= 0.9) return { ratio, label: 'Single-source', color: '#EF4444', detail: `${signalCount}/${articleCount} — ~1 source family · evidence is article-proxy only` };
+  if (ratio >= 0.75) return { ratio, label: 'Low diversity', color: '#F59E0B', detail: `${signalCount}/${articleCount} — ~${estimatedFamilies} source families · needs broader confirmation` };
+  if (ratio >= 0.55) return { ratio, label: 'Moderate', color: '#0F7ABF', detail: `${signalCount}/${articleCount} — ~${estimatedFamilies} source families · reasonable signal quality` };
+  return { ratio, label: 'Good diversity', color: '#10B981', detail: `${signalCount}/${articleCount} — ~${estimatedFamilies}+ source families · signals are genuinely aggregated` };
+}
+
 // ── 3-State Lifecycle Classification ─────────────────────────────────────────
 // Every bucket is classified into a lifecycle state based on current news velocity.
 // This prevents "CRITICAL" labels on stale themes with zero weekly articles.
@@ -1204,16 +1314,77 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
     (dashboard.buckets ?? []).map(b => [b.bucket_id, calcBucketVelocity(articles, b.bucket_id)])
   );
 
+  // Apply decay to severity scores before sorting
+  const decayedSeverities = Object.fromEntries(
+    dashboard.buckets.map(b => [b.bucket_id, getDecayedSeverity(b.bucket_id, b.severity, velocities[b.bucket_id] ?? {week:0,prev:0})])
+  );
+
   const sorted = [...dashboard.buckets].sort((a, b) => {
-    // Primary: severity. Secondary: velocity trend (accelerating buckets bubble up)
-    const sevDiff = b.severity - a.severity;
+    // Sort by EFFECTIVE (decayed) severity, not raw severity
+    const sevA = decayedSeverities[a.bucket_id]?.effective ?? a.severity;
+    const sevB = decayedSeverities[b.bucket_id]?.effective ?? b.severity;
+    const sevDiff = sevB - sevA;
     if (sevDiff !== 0) return sevDiff;
     return (velocities[b.bucket_id]?.week ?? 0) - (velocities[a.bucket_id]?.week ?? 0);
   });
   const top = sorted[0];
 
+  // What changed since last session
+  const changes = getChanges(dashboard.buckets, velocities);
+  // Save snapshot for next session
+  useEffect(() => {
+    if (dashboard.buckets.length > 0) saveSnapshot(dashboard.buckets, velocities);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dashboard.buckets.length]);
+
   return (
     <div style={{ padding: '20px' }}>
+      {/* ── WHAT CHANGED — session-over-session delta ── */}
+      {changes.length > 0 && (
+        <div style={{ marginBottom: '16px', padding: '12px 16px', backgroundColor: '#060E1A', border: '1px solid #8B5CF620', borderRadius: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+            <span style={{ fontSize: '10px', fontWeight: '800', color: '#8B5CF6', letterSpacing: '1px' }}>🔄 WHAT CHANGED</span>
+            <span style={{ fontSize: '10px', color: '#4A5B6C' }}>since last session</span>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {changes.map((c, i) => (
+              <div key={i} style={{ padding: '5px 10px', borderRadius: '6px', border: `1px solid ${c.color}30`, backgroundColor: c.color + '10', fontSize: '10px' }}>
+                <span style={{ fontWeight: '700', color: c.color }}>
+                  {c.type === 'NEW' ? '🆕' : c.type === 'UPGRADED' ? '⬆️' : c.type === 'DOWNGRADED' ? '⬇️' : c.type === 'RISING' ? '📈' : '📉'} {c.type}
+                </span>
+                <span style={{ color: '#C9D4E0', marginLeft: '6px' }}>{c.label}</span>
+                <span style={{ color: '#4A5B6C', marginLeft: '6px' }}>{c.detail}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── THEME HIERARCHY — prevents overlap, shows parent-child structure ── */}
+      {(() => {
+        // Show which themes are conceptually overlapping (same parent)
+        const activeParents = THEME_PARENTS.filter(p =>
+          p.children.some(cId => {
+            const b = dashboard.buckets.find(bk => bk.bucket_id === cId);
+            return b && (velocities[cId]?.week ?? 0) > 0;
+          })
+        );
+        if (activeParents.length === 0) return null;
+        return (
+          <div style={{ marginBottom: '14px', padding: '10px 14px', backgroundColor: '#060E1A', border: '1px solid #1A284030', borderRadius: '8px' }}>
+            <div style={{ fontSize: '10px', color: '#4A5B6C', fontWeight: '700', letterSpacing: '0.8px', marginBottom: '8px' }}>📐 THEME HIERARCHY — active parent groups (prevents overlap confusion)</div>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {activeParents.map(p => (
+                <div key={p.id} style={{ padding: '5px 10px', borderRadius: '6px', border: `1px solid ${p.color}30`, backgroundColor: p.color + '08', fontSize: '10px' }}>
+                  <span style={{ color: p.color, fontWeight: '700' }}>{p.icon} {p.label}</span>
+                  <span title={p.overlap_note} style={{ color: '#4A5B6C', marginLeft: '6px', cursor: 'help' }}>({p.children.length} themes ⓘ)</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Emerging themes — discovery-first layer */}
       <EmergingThemes articles={articles} />
 
@@ -1287,7 +1458,19 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px', flexWrap: 'wrap' }}>
                       <span style={{ fontSize: '13px', fontWeight: '700', color: '#F5F7FA' }}>{b.label}</span>
-                      <span style={{ fontSize: '9px', fontWeight: '700', letterSpacing: '0.8px', color: sty.badge, backgroundColor: sty.badgeBg, padding: '2px 6px', borderRadius: '3px' }}>{b.severity_label}</span>
+                      {/* Decayed severity — shows if stale themes had their rating auto-reduced */}
+                      {(() => {
+                        const decay = decayedSeverities[b.bucket_id];
+                        if (decay?.decayed) {
+                          return (
+                            <span title={`Severity auto-decayed: ${b.severity} raw → ${decay.effective} effective (${decay.weeksStale}+ weeks with zero articles)`}
+                              style={{ fontSize: '9px', color: '#4A5B6C', backgroundColor: '#1A2840', border: '1px solid #1A2840', padding: '2px 6px', borderRadius: '3px', cursor: 'help' }}>
+                              {b.severity_label} → <span style={{ color: '#F59E0B' }}>DECAYED</span>
+                            </span>
+                          );
+                        }
+                        return <span style={{ fontSize: '9px', fontWeight: '700', letterSpacing: '0.8px', color: sty.badge, backgroundColor: sty.badgeBg, padding: '2px 6px', borderRadius: '3px' }}>{b.severity_label}</span>;
+                      })()}
                       {/* 3-state lifecycle badge — the core signal quality indicator */}
                       {(() => {
                         const lc = getBucketLifecycle(b.bucket_id, vel ?? { week: 0, prev: 0, trend: '→' });
@@ -1311,7 +1494,26 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
                       <span style={{ fontSize: '11px', color: '#8A95A3' }}><span style={{ color: sty.badge, fontWeight: '700', fontSize: '15px' }}>{b.signal_count}</span> signals</span>
                       <span style={{ fontSize: '11px', color: '#8A95A3' }}><span style={{ fontWeight: '600', color: '#C9D4E0' }}>{b.article_count}</span> articles</span>
                       {vel && <span style={{ fontSize: '11px', color: isAccel ? '#F59E0B' : '#4A5B6C' }}>{vel.week} this wk</span>}
-                      {/* Signal diversity warning: when signal≈article count → one-article-one-signal pattern */}
+                      {/* Evidence diversity with full detail */}
+                      {(() => {
+                        const div = calcEvidenceDiversity(b.signal_count, b.article_count);
+                        return (
+                          <span title={div.detail} style={{ fontSize: '9px', color: div.color, cursor: 'help' }}>
+                            {div.label}
+                          </span>
+                        );
+                      })()}
+                      {/* Investability score */}
+                      {(() => {
+                        const drillEntry = DRILLDOWN[b.bucket_id];
+                        const inv = getInvestabilityScore(b.bucket_id, vel ?? {week:0,trend:'→'}, b.signal_count, b.article_count, !!(drillEntry?.chokepoints?.length));
+                        return (
+                          <span title={`Investability: ${inv.score}/100 — ${inv.reasoning}`} style={{ fontSize: '9px', fontWeight: '700', color: inv.color, cursor: 'help' }}>
+                            💡 {inv.label}
+                          </span>
+                        );
+                      })()}
+                      {/* Legacy signal diversity warning: when signal≈article count → one-article-one-signal pattern */}
                       {(() => {
                         const div = signalDiversityScore(b.signal_count, b.article_count);
                         return div.warning ? (
@@ -1969,6 +2171,67 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
               </div>
             </div>
           )}
+
+          {/* ── VALUATION & TIMING — when to size + what price signals to watch ── */}
+          {entry.chokepoints && entry.chokepoints.length > 0 && (
+            <div style={{ padding: '14px 20px', borderTop: '1px solid #1A2840' }}>
+              <p style={{ fontSize: '10px', color: '#F59E0B', fontWeight: '800', letterSpacing: '1.2px', margin: '0 0 10px' }}>
+                ⏱ VALUATION & TIMING — when is the asymmetric entry?
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '10px' }}>
+                <div style={{ padding: '10px 14px', backgroundColor: '#F59E0B08', border: '1px solid #F59E0B20', borderRadius: '8px' }}>
+                  <p style={{ fontSize: '10px', color: '#F59E0B', fontWeight: '700', margin: '0 0 6px' }}>📍 QUALIFICATION STAGE → SIZE</p>
+                  <div style={{ fontSize: '11px', color: '#8A95A3', lineHeight: '1.6' }}>
+                    <div>🟣 Design Win → position 1-2% (pre-revenue, high risk)</div>
+                    <div>🟡 Qualifying → position 2-4% (revenue possible, mid conviction)</div>
+                    <div>🟢 Ramping → position 3-6% (revenue confirmed, high conviction)</div>
+                    <div>🔵 Volume → only enter on dips (fully priced, reduce size)</div>
+                  </div>
+                </div>
+                <div style={{ padding: '10px 14px', backgroundColor: '#0F7ABF08', border: '1px solid #0F7ABF20', borderRadius: '8px' }}>
+                  <p style={{ fontSize: '10px', color: '#0F7ABF', fontWeight: '700', margin: '0 0 6px' }}>📊 ENTRY TRIGGERS TO WATCH</p>
+                  <div style={{ fontSize: '11px', color: '#8A95A3', lineHeight: '1.6' }}>
+                    <div>→ Earnings call explicitly names hyperscaler customer</div>
+                    <div>→ Design win language: "selected," "qualified," "awarded"</div>
+                    <div>→ Lead time expansion news / backlog increase</div>
+                    <div>→ CEO buys shares from high base</div>
+                    <div>→ Institutional 13F first appearance (&lt;3 holders)</div>
+                  </div>
+                </div>
+                <div style={{ padding: '10px 14px', backgroundColor: '#EF444408', border: '1px solid #EF444420', borderRadius: '8px' }}>
+                  <p style={{ fontSize: '10px', color: '#EF4444', fontWeight: '700', margin: '0 0 6px' }}>🚨 EXIT / REDUCE TRIGGERS</p>
+                  <div style={{ fontSize: '11px', color: '#8A95A3', lineHeight: '1.6' }}>
+                    <div>→ New public competitor qualifies at same customer</div>
+                    <div>→ Management sells &gt;10% of holdings</div>
+                    <div>→ Customer explicitly names alternative supplier</div>
+                    <div>→ Technology substitution announced (e.g. silicon → InP)</div>
+                    <div>→ Order book decline 2+ consecutive quarters</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── WATCHLIST ACTIONS ── */}
+          <div style={{ padding: '12px 20px', borderTop: '1px solid #1A2840', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontSize: '10px', color: '#4A5B6C', fontWeight: '700' }}>📌 ACTIONS:</span>
+            {entry.chokepoints?.map(cp => (
+              <a key={cp.ticker}
+                href={`https://finance.yahoo.com/quote/${cp.ticker}`} target="_blank" rel="noopener noreferrer"
+                style={{ fontSize: '10px', fontWeight: '700', color: '#0F7ABF', backgroundColor: '#0F7ABF12', border: '1px solid #0F7ABF30', padding: '4px 10px', borderRadius: '5px', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                📈 {cp.ticker}
+              </a>
+            ))}
+            <a href="https://www.screener.in" target="_blank" rel="noopener noreferrer"
+              style={{ fontSize: '10px', color: '#4A5B6C', backgroundColor: '#1A2840', border: '1px solid #1A2840', padding: '4px 10px', borderRadius: '5px', textDecoration: 'none' }}>
+              🔍 Screener.in
+            </a>
+            <a href={`https://efts.sec.gov/LATEST/search-index?q="${active}"&dateRange=custom&startdt=${new Date(Date.now()-90*86400000).toISOString().slice(0,10)}`}
+              target="_blank" rel="noopener noreferrer"
+              style={{ fontSize: '10px', color: '#4A5B6C', backgroundColor: '#1A2840', border: '1px solid #1A2840', padding: '4px 10px', borderRadius: '5px', textDecoration: 'none' }}>
+              📋 SEC Filings
+            </a>
+          </div>
 
           {/* Live evidence */}
           {bucketArticles.length > 0 && (
