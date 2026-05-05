@@ -346,110 +346,414 @@ const _filterGovNoise = (list: any[]) =>
   });
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 🧠 CONCALL INTELLIGENCE ENGINE — 30D rolling management signal extractor
-// Reads screener stocks from localStorage, fetches earnings/corporate news,
-// extracts management signals, computes Signal Score + MRI Score.
+// 🧠 CONCALL INTELLIGENCE ENGINE v2 — institutional-grade management signal extractor
+// Belongs in CONCALL tab: management intent, order/capex/margin guidance, MRI
+// News-feed signals (analyst capitulation, sector tailwind) routed separately
 // ══════════════════════════════════════════════════════════════════════════════
 
-type ConcallSignalType = 'ORDER'|'CAPEX'|'MARGIN'|'PRICING'|'GUIDANCE_UP'|'GUIDANCE_DOWN'|'DEMAND_CONSTRAINT'|'LTA'|'CAPEX_DELAY'|'MARGIN_PRESSURE'|'ANALYST_CAP'|'SUPPLY_CHAIN';
+type ConcallSignalType =
+  // CONCALL SIGNALS — from management statements (earnings calls, investor presentations)
+  'ORDER'|'LTA'|'DEMAND_CONSTRAINT'|'CAPEX'|'CAPEX_DELAY'|'MARGIN'|'MARGIN_PRESSURE'|
+  'PRICING'|'GUIDANCE_UP'|'GUIDANCE_DOWN'|'CONSERVATIVE_GUIDANCE'|'VISIBILITY_CONFIDENCE'|
+  'EXPORT_DEMAND'|'ORDER_EXECUTION_DELAY'|'DEBT_REDUCTION'|'EQUITY_DILUTION'|
+  'REGULATORY_RISK'|'CUSTOMER_DELAY'|'WORKING_CAPITAL_STRESS'|'SECTOR_TAILWIND'|
+  // NEWS SIGNALS — routed to news feed
+  'ANALYST_CAP'|'SUPPLY_CHAIN';
+
 type SignalHorizon = '0-3M'|'3-6M'|'6-12M'|'12M+';
-type SignalCategory = 'DEMAND'|'MARGIN'|'CAPEX'|'PRICING'|'GUIDANCE'|'SUPPLY_CHAIN'|'RISK';
+type SignalCategory = 'DEMAND'|'MARGIN'|'CAPEX'|'PRICING'|'GUIDANCE'|'SUPPLY_CHAIN'|'RISK'|'MGMT_STYLE';
+type SignalTemporality = 'FORWARD'|'CURRENT'|'HISTORICAL'; // forward = highest value
+
+interface NumericalExtract { value?: number; unit?: string; currency?: string; timing?: string }
 
 interface ExtractedSignal {
   type: ConcallSignalType; category: SignalCategory;
-  text: string;           // extracted sentence (max 40 words)
+  text: string;           // extracted sentence
   positive: boolean;
   strength: 1|2|3|4|5;
   horizon: SignalHorizon;
-  isAlpha: boolean;       // true = changes 12-36M earnings power (not 1-5D noise)
-  source: string;         // article title
+  isAlpha: boolean;       // changes 12-36M earnings power
+  temporality: SignalTemporality;
+  numerical?: NumericalExtract;  // structured ₹ extraction
+  isForConcall: boolean;  // true = concall tab; false = news feed
+  source: string;
   date: string;
+  ageWeight: number;      // 1.0 → 0.4 based on article age
+}
+
+interface CompositeSignal {
+  category: SignalCategory;
+  label: string;
+  direction: 'UP'|'DOWN'|'STABLE';
+  strength: number;       // 1-5 composite
+  evidence: string[];     // supporting quotes
+  count: number;          // articles supporting this
 }
 
 interface CompanyConcallSummary {
   symbol: string; company: string; sector: string;
-  grade?: string; score?: number;
+  grade?: string; score?: number; source?: string;
   signals: ExtractedSignal[];
-  signalScore: number;    // 0-100
-  mriScore: number;       // Management Reliability Index 0-100
+  composite: CompositeSignal[]; // stacked multi-article composite
+  signalScore: number;
+  mriScore: number;
+  expectationShift: number; // 0-100: how much did this change forward expectations
   trend: 'IMPROVING'|'STABLE'|'DETERIORATING'|'UNKNOWN';
-  tone: string;           // e.g. "Conservative-Bullish"
+  tone: string;
+  missedByMarket: boolean; // strong signals + low article coverage
   surprisePotential: 'HIGH'|'MEDIUM'|'LOW';
   freshness: 'FRESH'|'ACTIVE'|'STALE';
   lastDate?: string;
   articleCount: number;
-  alphaCount: number;     // signals that change earnings power
+  alphaCount: number;
   noiseCount: number;
+  whyItMatters: string; // auto-generated "why this matters" statement
 }
 
-// ── Signal Extraction Patterns ──────────────────────────────────────────────
-const SIGNAL_PATTERNS: { type: ConcallSignalType; category: SignalCategory; keywords: string[]; positive: boolean; strength: 1|2|3|4|5; horizon: SignalHorizon; isAlpha: boolean }[] = [
-  // ⭐ HIGH ALPHA — changes 12-36M earnings power
-  { type:'DEMAND_CONSTRAINT', category:'DEMAND',   keywords:['demand exceed','demand higher than supply','would have done more','capacity constraint','demand outpac','shortage of','global shortage','insulator shortage'], positive:true,  strength:5, horizon:'6-12M', isAlpha:true },
-  { type:'LTA',               category:'SUPPLY_CHAIN', keywords:['long-term agreement','long term agreement','lta','multi-year contract','multi year contract','committed volume','foundry tie-up','strategic partnership','supply agreement','offtake agreement'], positive:true, strength:5, horizon:'12M+', isAlpha:true },
-  { type:'ORDER',             category:'DEMAND',   keywords:['crore order','crore orders','₹','order book','order inflow','order pipeline','large order','order worth','order of around','new orders'], positive:true,  strength:4, horizon:'0-3M', isAlpha:true },
-  { type:'GUIDANCE_UP',       category:'GUIDANCE', keywords:['guidance raised','raised guidance','above guidance','conservative deliver','conservative guiding','deliver above','guidance upgrade','bullish outlook'], positive:true,  strength:4, horizon:'3-6M', isAlpha:true },
-  { type:'ANALYST_CAP',       category:'GUIDANCE', keywords:['missed','clearly missed','wrong about','underestimated demand','underestimated growth','raising target after','raising after skeptic','capitulat'], positive:true, strength:5, horizon:'0-3M', isAlpha:true },
-  // MEDIUM ALPHA — confirms or signals improving thesis
-  { type:'CAPEX',             category:'CAPEX',    keywords:['capacity expansion','new capacity','commissioning','capex','new plant','go live','capacity online','additional capacity'], positive:true,  strength:3, horizon:'3-6M', isAlpha:true },
-  { type:'MARGIN',            category:'MARGIN',   keywords:['no margin pressure','stable margin','margin stable','pass through','pass-through','full pass','pricing power','no near-term margin','margin expansion','opm expansion'], positive:true,  strength:3, horizon:'3-6M', isAlpha:true },
-  { type:'PRICING',           category:'PRICING',  keywords:['price hike','price increase','asp rising','higher realisation','higher realization','improved pricing','better pricing'], positive:true,  strength:3, horizon:'3-6M', isAlpha:true },
-  { type:'SUPPLY_CHAIN',      category:'SUPPLY_CHAIN', keywords:['inventory build','higher inventory','managing inventory','commodity management','raw material secured'], positive:true, strength:2, horizon:'0-3M', isAlpha:false },
-  // NEGATIVE — risk signals
-  { type:'CAPEX_DELAY',       category:'CAPEX',    keywords:['capex delayed','expansion delayed','postponed','pushed back','deferred','phase shift','commissioning delay','delayed by'], positive:false, strength:3, horizon:'3-6M', isAlpha:true },
-  { type:'MARGIN_PRESSURE',   category:'MARGIN',   keywords:['margin pressure','margin headwind','cost pressure','commodity cost','input cost pressure','margin impact','squeeze'], positive:false, strength:3, horizon:'3-6M', isAlpha:true },
-  { type:'GUIDANCE_DOWN',     category:'GUIDANCE', keywords:['guidance cut','cut guidance','lowered guidance','below guidance','miss','disappointed','challenging demand','weak demand'], positive:false, strength:4, horizon:'0-3M', isAlpha:true },
+// ── Hybrid Pattern Library (Layer 1: keywords, Layer 2: semantic rules) ───────
+// CONCALL-specific: things management says in calls, presentations, interviews
+const CONCALL_PATTERNS: {
+  type: ConcallSignalType; category: SignalCategory;
+  keywords: string[];       // Layer 1: direct keyword matches
+  semantic: string[];       // Layer 2: indirect/paraphrased signals
+  positive: boolean; strength: 1|2|3|4|5; horizon: SignalHorizon; isAlpha: boolean;
+}[] = [
+  // ── DEMAND & ORDERS (highest alpha for Indian small-caps) ────────────────────
+  { type:'DEMAND_CONSTRAINT', category:'DEMAND', isAlpha:true, positive:true, strength:5, horizon:'6-12M',
+    keywords:['demand exceed','demand higher than supply','would have done more','capacity constraint','demand outpac','global shortage','insulator shortage','demand exceeds capacity'],
+    semantic:['demand remains robust','strong demand environment','demand continues to be','demand visibility strong','demand pickup','demand trend improving','capacity fully utilized','running at full capacity','demand far exceeds'],
+  },
+  { type:'ORDER', category:'DEMAND', isAlpha:true, positive:true, strength:4, horizon:'0-3M',
+    keywords:['crore order','crore orders','₹','order book','order inflow','order pipeline','large order','order worth','order of around','order visibility'],
+    semantic:['healthy order book','strong order pipeline','order momentum','significant orders','order traction','robust order inflow','order inquiry strong','inquiries at record'],
+  },
+  { type:'LTA', category:'SUPPLY_CHAIN', isAlpha:true, positive:true, strength:5, horizon:'12M+',
+    keywords:['long-term agreement','long term agreement','lta','multi-year contract','multi year contract','committed volume','offtake agreement','supply agreement'],
+    semantic:['multi-quarter visibility','assured offtake','tied up volume','secured supply','visibility for next'],
+  },
+  { type:'EXPORT_DEMAND', category:'DEMAND', isAlpha:true, positive:true, strength:4, horizon:'3-6M',
+    keywords:['export order','export inquiry','export demand','international order','overseas order','global order'],
+    semantic:['international demand growing','export traction','global customers','foreign inquiry'],
+  },
+  // ── CAPACITY & CAPEX ─────────────────────────────────────────────────────────
+  { type:'CAPEX', category:'CAPEX', isAlpha:true, positive:true, strength:3, horizon:'3-6M',
+    keywords:['capacity expansion','new capacity','commissioning','capex','new plant','go live','capacity online','additional capacity','capacity addition'],
+    semantic:['expansion on track','new line operational','adding capacity','plant coming online','brownfield expansion','greenfield underway','additional line'],
+  },
+  { type:'CAPEX_DELAY', category:'CAPEX', isAlpha:true, positive:false, strength:3, horizon:'3-6M',
+    keywords:['capex delayed','expansion delayed','postponed','pushed back','deferred','phase shift','commissioning delay'],
+    semantic:['delay in commissioning','timeline extended','capacity ramp slower','expansion taking longer'],
+  },
+  { type:'ORDER_EXECUTION_DELAY', category:'RISK', isAlpha:true, positive:false, strength:3, horizon:'0-3M',
+    keywords:['order execution delay','delivery delay','project delay','execution slowed'],
+    semantic:['slower execution','pending deliveries','execution pace slower','backlog taking longer'],
+  },
+  // ── MARGIN & PRICING ─────────────────────────────────────────────────────────
+  { type:'MARGIN', category:'MARGIN', isAlpha:true, positive:true, strength:3, horizon:'3-6M',
+    keywords:['no margin pressure','stable margin','margin stable','pass through','pass-through','full pass','pricing power','margin expansion','opm expansion'],
+    semantic:['margins expected to improve','comfortable on margins','margin trajectory positive','margin protection intact','we expect improvement in margins','no near-term margin impact'],
+  },
+  { type:'MARGIN_PRESSURE', category:'MARGIN', isAlpha:true, positive:false, strength:3, horizon:'3-6M',
+    keywords:['margin pressure','margin headwind','cost pressure','commodity cost','input cost pressure','margin impact','squeeze'],
+    semantic:['margins under pressure','cost inflation impacting','input costs elevated','margin headwinds expected'],
+  },
+  { type:'PRICING', category:'PRICING', isAlpha:true, positive:true, strength:3, horizon:'3-6M',
+    keywords:['price hike','price increase','asp rising','higher realisation','higher realization','improved pricing'],
+    semantic:['pricing power intact','able to pass on costs','realizations improving','better pricing environment'],
+  },
+  // ── GUIDANCE ─────────────────────────────────────────────────────────────────
+  { type:'GUIDANCE_UP', category:'GUIDANCE', isAlpha:true, positive:true, strength:4, horizon:'3-6M',
+    keywords:['guidance raised','raised guidance','above guidance','conservative deliver','deliver above','guidance upgrade','bullish outlook'],
+    semantic:['expect to do better','confident of outperforming','comfortable with higher','positive guidance','optimistic about growth','expect acceleration'],
+  },
+  { type:'GUIDANCE_DOWN', category:'GUIDANCE', isAlpha:true, positive:false, strength:4, horizon:'0-3M',
+    keywords:['guidance cut','cut guidance','lowered guidance','below guidance','miss','disappointed','challenging demand','weak demand'],
+    semantic:['expect challenging quarter','demand softening','expect lower revenues','moderated our outlook','tempered expectations'],
+  },
+  // ── MANAGEMENT STYLE SIGNALS (your biggest edge) ──────────────────────────────
+  { type:'CONSERVATIVE_GUIDANCE', category:'MGMT_STYLE', isAlpha:true, positive:true, strength:4, horizon:'3-6M',
+    keywords:['conservative','not providing guidance but','management remains conservative','guiding conservatively','comfortable'],
+    semantic:['management conservative','not guiding but expect','comfortable without giving numbers','traditionally conservative','conservative management'],
+  },
+  { type:'VISIBILITY_CONFIDENCE', category:'MGMT_STYLE', isAlpha:true, positive:true, strength:4, horizon:'6-12M',
+    keywords:['visibility strong','order visibility','revenue visibility','confident about growth','confident of achieving'],
+    semantic:['strong visibility into next','good revenue visibility','very confident on numbers','clear line of sight','outlook very positive'],
+  },
+  // ── CAPITAL ALLOCATION ────────────────────────────────────────────────────────
+  { type:'DEBT_REDUCTION', category:'SUPPLY_CHAIN', isAlpha:false, positive:true, strength:2, horizon:'6-12M',
+    keywords:['debt reduction','debt free','repaid debt','working capital improvement','reduced borrowing'],
+    semantic:['becoming debt free','reduced debt levels','balance sheet improving','reduced working capital cycle'],
+  },
+  { type:'EQUITY_DILUTION', category:'RISK', isAlpha:true, positive:false, strength:3, horizon:'0-3M',
+    keywords:['qip','equity dilution','rights issue','preferential allotment','fresh equity'],
+    semantic:['fund raise planned','equity infusion','additional equity'],
+  },
+  // ── RISK SIGNALS ─────────────────────────────────────────────────────────────
+  { type:'CUSTOMER_DELAY', category:'RISK', isAlpha:true, positive:false, strength:3, horizon:'0-3M',
+    keywords:['customer delay','customer slowdown','order deferral','project delayed by customer'],
+    semantic:['customer capex delayed','customer pushing delivery','slower customer offtake'],
+  },
+  { type:'REGULATORY_RISK', category:'RISK', isAlpha:true, positive:false, strength:3, horizon:'3-6M',
+    keywords:['regulatory', 'compliance issue', 'approval delayed', 'license pending', 'regulatory hurdle'],
+    semantic: ['awaiting regulatory approval', 'pending clearances', 'regulatory environment uncertain'],
+  },
+  { type:'WORKING_CAPITAL_STRESS', category:'RISK', isAlpha:true, positive:false, strength:3, horizon:'0-3M',
+    keywords:['working capital stress','receivables stretched','debtors outstanding','collection pressure'],
+    semantic:['stretched receivables','working capital cycle elongated','collections delayed'],
+  },
+  // ── SUPPLY CHAIN (noise — confirms thesis, low horizon) ───────────────────────
+  { type:'SUPPLY_CHAIN', category:'SUPPLY_CHAIN', isAlpha:false, positive:true, strength:2, horizon:'0-3M',
+    keywords:['inventory build','higher inventory','managing inventory','commodity management','raw material secured'],
+    semantic:['managing commodity exposure','inventory buffer maintained','raw material covered'],
+  },
+  // ── SECTOR TAILWIND (news feed routing) ──────────────────────────────────────
+  { type:'SECTOR_TAILWIND', category:'DEMAND', isAlpha:true, positive:true, strength:4, horizon:'6-12M',
+    keywords:['sector tailwind','industry tailwind','structural demand','sector beneficiary'],
+    semantic:['sector growing strongly','industry demand accelerating','structural growth story'],
+  },
 ];
 
-// ── Signal Extractor ─────────────────────────────────────────────────────────
+// NEWS FEED SIGNALS — these belong in general news feed, not concall
+const NEWS_FEED_PATTERNS: { type: ConcallSignalType; category: SignalCategory; keywords: string[]; semantic: string[]; positive: boolean; strength: 1|2|3|4|5; isAlpha: boolean }[] = [
+  { type:'ANALYST_CAP', category:'GUIDANCE', isAlpha:true, positive:true, strength:5,
+    keywords:['clearly missed','we were wrong','should have','underestimated demand','underestimated growth','raising target after','raising after skepticism','capitulat','raising estimates after'],
+    semantic:['analyst upgrades after','raised target on','consensus wrong on','street underestimated'],
+  },
+];
+
+// ── Forward/Backward Tagger ───────────────────────────────────────────────────
+function tagTemporality(sentence: string): SignalTemporality {
+  const s = sentence.toLowerCase();
+  const forwardWords = ['expect','anticipate','plan to','going forward','next quarter','upcoming','will see','should see','likely to','over the next','in the coming','target','guidance','outlook','forecast','aspire','project to','aim to'];
+  const historicalWords = ['last quarter','last year','previously','was','had been','in q1','in q2','in q3','in q4','fy23','fy24','reported','achieved'];
+  if (forwardWords.some(w => s.includes(w))) return 'FORWARD';
+  if (historicalWords.some(w => s.includes(w))) return 'HISTORICAL';
+  return 'CURRENT';
+}
+
+// ── Numerical Extractor ───────────────────────────────────────────────────────
+function extractNumerical(text: string): NumericalExtract | undefined {
+  // Match ₹XXX crore/lakh, or X Cr/Lakh patterns
+  const m1 = text.match(/₹\s*([\d,]+(?:\.\d+)?)\s*(cr|crore|lakh|lac|mn|bn|billion)/i);
+  const m2 = text.match(/([\d,]+(?:\.\d+)?)\s*(crore|cr|lakh|lac)\s+(order|contract|revenue|sales)/i);
+  const timingWords = ['next few weeks','next quarter','q1','q2','q3','q4','fy','this year','by march','by june','by september','by december','h1','h2'];
+  const timing = timingWords.find(t => text.toLowerCase().includes(t));
+  const match = m1 || m2;
+  if (!match) return undefined;
+  const raw = match[1].replace(/,/g,'');
+  const unit = (match[2]||'').toLowerCase();
+  const value = parseFloat(raw) * (unit.startsWith('lakh') || unit.startsWith('lac') ? 0.01 : unit.startsWith('bn') || unit.startsWith('billion') ? 100 : 1);
+  return { value: Math.round(value * 10) / 10, unit: 'Cr', currency: 'INR', timing };
+}
+
+// ── Signal Age Decay ─────────────────────────────────────────────────────────
+function getAgeWeight(dateStr: string): number {
+  if (!dateStr) return 0.5;
+  const ageDays = (Date.now() - new Date(dateStr).getTime()) / 86400000;
+  if (ageDays <= 3)  return 1.0;
+  if (ageDays <= 10) return 0.8;
+  if (ageDays <= 20) return 0.6;
+  return 0.4;
+}
+
+// ── Company Alias Generator (solves Indian small-cap name variations) ─────────
+function buildAliases(symbol: string, companyName: string): string[] {
+  const aliases: string[] = [];
+  const name = companyName.toLowerCase();
+  // Full name
+  aliases.push(name);
+  // Strip common suffixes
+  const cleaned = name.replace(/\b(ltd|limited|pvt|private|india|industries|solutions|technologies|technology|systems|services|engineering|group|enterprises|corporation|corp|inc|co\b|company)\b/g,'').replace(/\s+/g,' ').trim();
+  if (cleaned.length >= 4) aliases.push(cleaned);
+  // First 2 words
+  const words = cleaned.split(/\s+/).filter(w => w.length >= 3);
+  if (words.length >= 2) aliases.push(words.slice(0,2).join(' '));
+  if (words.length >= 1) aliases.push(words[0]);
+  // Symbol as word
+  const sym = symbol.toLowerCase().replace(/\.ns$|\.bo$/,'');
+  if (sym.length >= 3) aliases.push(sym);
+  return [...new Set(aliases.filter(a => a.length >= 3))];
+}
+
+// ── Cross-Stock Sector Signal Library ────────────────────────────────────────
+// When an article mentions a sector-wide shortage, auto-apply to relevant tracked stocks
+const SECTOR_SIGNALS: { id: string; label: string; signal: string; keywords: string[]; targetSectors: string[] }[] = [
+  { id:'INSULATOR_SHORTAGE', signal:'Global insulator shortage — direct demand beneficiary', label:'Insulator Shortage', keywords:['insulator shortage','insulator demand','global insulator','insulator supply constrained','disc insulator','string insulator'], targetSectors:['electrical','power','transmission','energy'] },
+  { id:'TRANSFORMER_SHORTAGE', signal:'Transformer supply constraint — order pipeline likely growing', label:'Transformer Shortage', keywords:['transformer shortage','transformer demand','power transformer','grid transformer','transformer backlog','transformer lead time'], targetSectors:['electrical','transformer','power','industrial'] },
+  { id:'CABLE_DEMAND', signal:'Power cable/wire demand surge — order visibility improving', label:'Cable/Wire Demand', keywords:['cable demand','wire demand','cable order','conductor demand','optical fiber demand'], targetSectors:['cable','wire','electrical','power'] },
+  { id:'DEFENCE_INDIGENISATION', signal:'Defence indigenisation push — domestic supply chain beneficiary', label:'Defence Push', keywords:['make in india defence','defence indigenisation','atmanirbhar defence','defence offset','defence import substitution'], targetSectors:['defence','engineering','electronics','aerospace'] },
+  { id:'SOLAR_BOOM', signal:'Solar capacity addition boom — supply chain demand rising', label:'Solar Demand', keywords:['solar capacity','renewable target','solar tender','solar auction','green energy target'], targetSectors:['solar','renewable','energy','electrical'] },
+  { id:'DATA_CENTER_POWER', signal:'AI/data center power demand — grid equipment beneficiary', label:'DC Power Demand', keywords:['data center power','ai power demand','data centre power','hyperscaler power'], targetSectors:['electrical','power','grid','transformer'] },
+];
+
+// ── Hybrid Signal Extractor (Layer 1 + Layer 2) ───────────────────────────────
 function extractSignals(articleText: string, source: string, date: string): ExtractedSignal[] {
   const text = articleText.toLowerCase();
   const results: ExtractedSignal[] = [];
-  for (const p of SIGNAL_PATTERNS) {
+  const ageWeight = getAgeWeight(date);
+
+  // Process concall patterns
+  for (const p of CONCALL_PATTERNS) {
+    let matched = false;
+    let matchedText = '';
+
+    // Layer 1: Keyword match
     for (const kw of p.keywords) {
       if (text.includes(kw)) {
-        // Extract surrounding sentence (max 40 words)
         const idx = text.indexOf(kw);
         const start = Math.max(0, text.lastIndexOf('.', idx - 1) + 1);
-        const end = Math.min(text.length, text.indexOf('.', idx + kw.length) + 1 || text.length);
-        const sentence = articleText.slice(start, end).trim().split(' ').slice(0, 40).join(' ');
-        if (sentence.length > 10) {
-          results.push({ type:p.type, category:p.category, text:sentence, positive:p.positive, strength:p.strength, horizon:p.horizon, isAlpha:p.isAlpha, source, date });
+        const end = Math.min(articleText.length, (text.indexOf('.', idx + kw.length) + 1) || articleText.length);
+        matchedText = articleText.slice(start, end).trim().split(' ').slice(0, 40).join(' ');
+        matched = true;
+        break;
+      }
+    }
+
+    // Layer 2: Semantic match (only if Layer 1 missed)
+    if (!matched) {
+      for (const sem of p.semantic) {
+        if (text.includes(sem)) {
+          const idx = text.indexOf(sem);
+          const start = Math.max(0, text.lastIndexOf('.', idx - 1) + 1);
+          const end = Math.min(articleText.length, (text.indexOf('.', idx + sem.length) + 1) || articleText.length);
+          matchedText = articleText.slice(start, end).trim().split(' ').slice(0, 40).join(' ');
+          matched = true;
+          break;
         }
-        break; // one signal per pattern per article
+      }
+    }
+
+    if (matched && matchedText.length > 10) {
+      const temporality = tagTemporality(matchedText);
+      const numerical = extractNumerical(matchedText);
+      // Only FORWARD + CURRENT_STATE signals count for alpha scoring
+      const effectiveAlpha = p.isAlpha && temporality !== 'HISTORICAL';
+      results.push({
+        type: p.type, category: p.category, text: matchedText,
+        positive: p.positive, strength: p.strength, horizon: p.horizon,
+        isAlpha: effectiveAlpha, temporality,
+        numerical, isForConcall: true,
+        source, date, ageWeight,
+      });
+    }
+  }
+
+  // Process news-feed patterns (analyst cap etc.) — tagged differently
+  for (const p of NEWS_FEED_PATTERNS) {
+    for (const kw of [...p.keywords, ...p.semantic]) {
+      if (text.includes(kw)) {
+        const idx = text.indexOf(kw);
+        const start = Math.max(0, text.lastIndexOf('.', idx - 1) + 1);
+        const end = Math.min(articleText.length, (text.indexOf('.', idx + kw.length) + 1) || articleText.length);
+        const matchedText = articleText.slice(start, end).trim().split(' ').slice(0, 40).join(' ');
+        if (matchedText.length > 10) {
+          results.push({
+            type: p.type, category: p.category, text: matchedText,
+            positive: p.positive, strength: p.strength, horizon: '0-3M',
+            isAlpha: p.isAlpha, temporality: 'CURRENT' as const,
+            isForConcall: false, // → routes to news feed context
+            source, date, ageWeight,
+          });
+        }
+        break;
       }
     }
   }
+
   return results;
 }
 
-// ── MRI Score (Management Reliability Index) ─────────────────────────────────
+// ── Multi-Article Signal Aggregation ─────────────────────────────────────────
+function buildCompositeSignals(signals: ExtractedSignal[]): CompositeSignal[] {
+  const cats = new Map<SignalCategory, ExtractedSignal[]>();
+  for (const s of signals) {
+    if (!cats.has(s.category)) cats.set(s.category, []);
+    cats.get(s.category)!.push(s);
+  }
+  const composites: CompositeSignal[] = [];
+  for (const [cat, sigs] of cats) {
+    if (sigs.length === 0) continue;
+    const posCount = sigs.filter(s=>s.positive).length;
+    const negCount = sigs.filter(s=>!s.positive).length;
+    const direction: 'UP'|'DOWN'|'STABLE' = posCount > negCount ? 'UP' : negCount > posCount ? 'DOWN' : 'STABLE';
+    const compositeStrength = Math.min(5, Math.round(sigs.reduce((s,sig)=>s+sig.strength * sig.ageWeight,0) / sigs.length) + (sigs.length >= 3 ? 1 : 0));
+    const catLabels: Record<string, string> = {
+      DEMAND:'Demand', MARGIN:'Margin', CAPEX:'Capacity', PRICING:'Pricing',
+      GUIDANCE:'Guidance', SUPPLY_CHAIN:'Supply Chain', RISK:'Risk', MGMT_STYLE:'Management Style',
+    };
+    composites.push({
+      category: cat,
+      label: catLabels[cat] || cat,
+      direction,
+      strength: compositeStrength as 1|2|3|4|5,
+      evidence: sigs.filter(s=>s.isAlpha).slice(0,3).map(s=>s.text),
+      count: sigs.length,
+    });
+  }
+  return composites.sort((a,b) => b.strength - a.strength);
+}
+
+// ── Expectation Shift Score ───────────────────────────────────────────────────
+function computeExpectationShift(signals: ExtractedSignal[]): number {
+  // HIGH SHIFT: new information materially different from steady-state
+  // LOW SHIFT: confirmatory / steady-state
+  let shift = 0;
+  const HIGH_SHIFT_TYPES: ConcallSignalType[] = ['DEMAND_CONSTRAINT','LTA','GUIDANCE_UP','GUIDANCE_DOWN','ANALYST_CAP','CONSERVATIVE_GUIDANCE','VISIBILITY_CONFIDENCE'];
+  const forwardAlpha = signals.filter(s=>s.isAlpha && s.temporality==='FORWARD');
+  shift += forwardAlpha.length * 12;
+  shift += signals.filter(s=>HIGH_SHIFT_TYPES.includes(s.type)).length * 8;
+  shift += signals.filter(s=>s.numerical !== undefined).length * 10; // numerical = concrete = high shift
+  shift -= signals.filter(s=>s.temporality==='HISTORICAL').length * 5; // historical = no shift
+  return Math.max(0, Math.min(100, shift));
+}
+
+// ── Why It Matters Generator ──────────────────────────────────────────────────
+function generateWhyItMatters(composites: CompositeSignal[], sym: string): string {
+  const up = composites.filter(c=>c.direction==='UP');
+  const down = composites.filter(c=>c.direction==='DOWN');
+  if (up.length === 0 && down.length === 0) return 'No material management signals detected in 30D window.';
+  const upLabels = up.slice(0,3).map(c=>c.label.toLowerCase()).join(' + ');
+  const downLabels = down.slice(0,2).map(c=>c.label.toLowerCase()).join(' + ');
+  if (up.length >= 2 && down.length === 0) {
+    return `${upLabels} signals converging — revenue acceleration likely over next 2-4 quarters. Multiple independent articles confirm improving thesis.`;
+  }
+  if (down.length >= 2 && up.length === 0) {
+    return `${downLabels} risk signals stacking — watch for earnings miss or guidance cut. Thesis under pressure.`;
+  }
+  if (up.length > 0 && down.length > 0) {
+    return `Mixed signals: ${upLabels} improving but ${downLabels} risk present. Monitor for resolution.`;
+  }
+  return `${upLabels} improving. Single-signal — needs corroboration from another source before high conviction.`;
+}
+
+// ── Fixed MRI Score (incorporates management style signals) ──────────────────
 function computeMRI(signals: ExtractedSignal[]): number {
-  if (signals.length === 0) return 50; // neutral when no data
-  const pos = signals.filter(s => s.positive).length;
-  const neg = signals.filter(s => !s.positive).length;
-  const alpha = signals.filter(s => s.isAlpha).length;
-  const guidanceRaise = signals.filter(s => s.type === 'GUIDANCE_UP').length;
-  const delays = signals.filter(s => s.type === 'CAPEX_DELAY').length;
-  // Higher MRI = management delivers on what they say
+  if (signals.length === 0) return 50;
   let score = 50;
-  score += alpha * 6;
-  score += guidanceRaise * 8;
-  score -= delays * 8;
-  score -= neg * 4;
-  score += pos * 3;
+  score += signals.filter(s=>s.type==='GUIDANCE_UP'||s.type==='CONSERVATIVE_GUIDANCE').length * 10;
+  score += signals.filter(s=>s.type==='VISIBILITY_CONFIDENCE').length * 8;
+  score += signals.filter(s=>s.isAlpha&&s.positive&&s.temporality==='FORWARD').length * 5;
+  score -= signals.filter(s=>s.type==='CAPEX_DELAY'||s.type==='ORDER_EXECUTION_DELAY').length * 10;
+  score -= signals.filter(s=>s.type==='GUIDANCE_DOWN').length * 12;
+  score -= signals.filter(s=>!s.positive&&s.isAlpha).length * 4;
+  // Consistency bonus: management style + strong alpha = credible
+  const hasConservative = signals.some(s=>s.type==='CONSERVATIVE_GUIDANCE');
+  const hasStrong = signals.some(s=>s.strength>=4&&s.positive);
+  if (hasConservative && hasStrong) score += 10; // underpromise-overdeliver pattern
   return Math.max(10, Math.min(95, score));
 }
 
-// ── Signal Score ──────────────────────────────────────────────────────────────
+// ── Fixed Signal Score (corrected weights: alpha 1.0, negative -1.2, noise 0.3) ─
 function computeSignalScore(signals: ExtractedSignal[]): number {
   if (signals.length === 0) return 0;
   const weightedSum = signals.reduce((sum, s) => {
-    let w = s.strength * (s.isAlpha ? 2 : 0.5);
-    if (!s.positive) w *= -0.8;
+    let w = s.strength * s.ageWeight;
+    if (s.isAlpha && s.positive)  w *= 1.0;
+    else if (!s.positive && s.isAlpha) w *= -1.2; // negative alpha = bigger penalty
+    else if (!s.isAlpha) w *= 0.3; // noise = low weight
     return sum + w;
   }, 0);
-  return Math.max(0, Math.min(100, Math.round(50 + weightedSum * 3)));
+  return Math.max(0, Math.min(100, Math.round(50 + weightedSum * 4)));
 }
 
 function ConcallIntelligence() {
@@ -513,7 +817,8 @@ function ConcallIntelligence() {
       const result: CompanyConcallSummary[] = [];
       for (const stock of screenerStocks) {
         const sym = stock.symbol.toUpperCase().replace(/\.NS$|\.BO$/i,'');
-        const companyWords = (stock.company||'').toLowerCase().replace(/\b(ltd|limited|pvt|private|india|industries|solutions|technology|technologies|systems|services|engineering)\b/gi,'').trim().split(/\s+/).filter(w=>w.length>=4).slice(0,2);
+        // Build alias list for better Indian small-cap matching
+        const aliases = buildAliases(sym, stock.company||sym);
 
         const relevant = allArticles.filter(a => {
           if (!a.published_at) return false;
@@ -521,59 +826,79 @@ function ConcallIntelligence() {
           if (age > THIRTY_DAYS) return false;
           const text = ((a.title||'')+(a.headline||'')+(a.summary||'')).toLowerCase();
           const tickers = ((a.ticker_symbols||[]) as string[]).map((t:string)=>t.toUpperCase().replace(/\.NS$|\.BO$/i,''));
+          // Ticker match (highest confidence)
           if (tickers.includes(sym)) return true;
-          if (text.includes(sym.toLowerCase())) return true;
-          if (companyWords.length >= 2 && companyWords.every(w => text.includes(w))) return true;
-          if (companyWords.length === 1 && companyWords[0].length >= 6 && text.includes(companyWords[0])) return true;
+          // Alias match (catches "Quality Power", "Q Power", "QPEE" etc.)
+          for (const alias of aliases) {
+            if (alias.length >= 4 && text.includes(alias)) return true;
+          }
           return false;
         });
 
-        if (relevant.length === 0) continue;
+        // Cross-stock sector signals: inject sector-wide signals for this company
+        const sectorText = (stock.sector||'').toLowerCase();
+        const sectorSignalArticles = allArticles.filter(a => {
+          if (!a.published_at || (now - new Date(a.published_at).getTime()) > THIRTY_DAYS) return false;
+          const text = ((a.title||'')+(a.headline||'')+(a.summary||'')).toLowerCase();
+          return SECTOR_SIGNALS.some(ss =>
+            ss.targetSectors.some(ts => sectorText.includes(ts)) &&
+            ss.keywords.some(kw => text.includes(kw))
+          );
+        });
 
-        // Extract signals from all relevant articles
+        if (relevant.length === 0 && sectorSignalArticles.length === 0) continue;
+
+        // Extract signals from matched articles
         const allSignals: ExtractedSignal[] = [];
-        for (const a of relevant) {
+        for (const a of [...relevant, ...sectorSignalArticles]) {
           const fullText = [(a.title||''),(a.headline||''),(a.summary||'')].join(' ');
           const sigs = extractSignals(fullText, a.title||a.headline||'', a.published_at||'');
+          // Tag sector signals appropriately
+          sigs.forEach(s => {
+            if (sectorSignalArticles.includes(a) && !relevant.includes(a)) {
+              (s as any).isSectorSignal = true;
+            }
+          });
           allSignals.push(...sigs);
         }
 
+        const composite = buildCompositeSignals(allSignals);
         const signalScore = computeSignalScore(allSignals);
         const mriScore = computeMRI(allSignals);
+        const expectationShift = computeExpectationShift(allSignals);
+        const whyItMatters = generateWhyItMatters(composite, sym);
         const posCount = allSignals.filter(s=>s.positive).length;
         const negCount = allSignals.filter(s=>!s.positive).length;
 
-        // Trend
         const trend: 'IMPROVING'|'STABLE'|'DETERIORATING'|'UNKNOWN' =
           allSignals.length === 0 ? 'UNKNOWN' :
-          posCount > negCount * 2 ? 'IMPROVING' :
-          negCount > posCount ? 'DETERIORATING' : 'STABLE';
+          posCount > negCount * 2 ? 'IMPROVING' : negCount > posCount ? 'DETERIORATING' : 'STABLE';
 
-        // Management tone
-        const hasBullish = allSignals.some(s=>s.type==='GUIDANCE_UP'||s.type==='ORDER'||s.type==='DEMAND_CONSTRAINT');
-        const hasConservative = relevant.some(a=>((a.summary||'')+(a.title||'')).toLowerCase().includes('conserv'));
-        const tone = hasConservative && hasBullish ? 'Conservative-Bullish' : hasBullish ? 'Bullish' : negCount > 0 ? 'Cautious' : 'Neutral';
+        const hasConservativeStyle = allSignals.some(s=>s.type==='CONSERVATIVE_GUIDANCE');
+        const hasBullish = allSignals.some(s=>['ORDER','DEMAND_CONSTRAINT','GUIDANCE_UP','VISIBILITY_CONFIDENCE'].includes(s.type));
+        const tone = hasConservativeStyle && hasBullish ? 'Conservative-Bullish' : hasBullish ? 'Bullish' : negCount > 0 ? 'Cautious' : 'Neutral';
 
-        // Freshness
-        const latestDate = relevant.reduce((latest, a) => {
-          if (!a.published_at) return latest;
-          return !latest || a.published_at > latest ? a.published_at : latest;
-        }, '');
+        const latestDate = [...relevant,...sectorSignalArticles].reduce((latest, a) =>
+          !latest || (a.published_at && a.published_at > latest) ? a.published_at : latest, '');
         const ageHours = latestDate ? (now - new Date(latestDate).getTime()) / 3600000 : 9999;
         const freshness: 'FRESH'|'ACTIVE'|'STALE' = ageHours < 48 ? 'FRESH' : ageHours < 168 ? 'ACTIVE' : 'STALE';
 
-        // Surprise potential
-        const hasAnalystCap = allSignals.some(s=>s.type==='ANALYST_CAP');
-        const surprisePotential: 'HIGH'|'MEDIUM'|'LOW' = hasAnalystCap || allSignals.filter(s=>s.strength>=4).length>=2 ? 'HIGH' : allSignals.length >= 3 ? 'MEDIUM' : 'LOW';
+        const alphaCount = allSignals.filter(s=>s.isAlpha).length;
+        const surprisePotential: 'HIGH'|'MEDIUM'|'LOW' =
+          (expectationShift >= 60 || allSignals.filter(s=>s.strength>=4&&s.positive).length>=2) ? 'HIGH' :
+          allSignals.length >= 3 ? 'MEDIUM' : 'LOW';
+
+        // "Missed by market" — strong signals but few articles (market hasn't priced it yet)
+        const missedByMarket = alphaCount >= 2 && relevant.length <= 2 && signalScore >= 60;
 
         result.push({
           symbol: stock.symbol, company: stock.company, sector: stock.sector,
-          grade: stock.grade, score: stock.score, source: (stock as any).source || 'Screener',
-          signals: allSignals.sort((a,b) => (b.strength - a.strength)),
-          signalScore, mriScore, trend, tone, surprisePotential, freshness,
+          grade: stock.grade, score: stock.score, source: (stock as any).source||'Screener',
+          signals: allSignals.sort((a,b) => (b.strength * b.ageWeight) - (a.strength * a.ageWeight)),
+          composite, signalScore, mriScore, expectationShift, trend, tone,
+          surprisePotential, freshness, missedByMarket, whyItMatters,
           lastDate: latestDate, articleCount: relevant.length,
-          alphaCount: allSignals.filter(s=>s.isAlpha).length,
-          noiseCount: allSignals.filter(s=>!s.isAlpha).length,
+          alphaCount, noiseCount: allSignals.filter(s=>!s.isAlpha).length,
         } as any);
       }
 
@@ -676,6 +1001,7 @@ function ConcallIntelligence() {
                     <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
                       <span style={{fontSize:9,fontWeight:700,color:toneColor(s.tone),backgroundColor:toneColor(s.tone)+'18',padding:'1px 5px',borderRadius:3}}>{s.tone}</span>
                       <span style={{fontSize:9,color:freshColor(s.freshness)}}>{s.freshness==='FRESH'?'🟢':s.freshness==='ACTIVE'?'🟡':'⚫'} {s.freshness}</span>
+                      {(s as any).missedByMarket && <span style={{fontSize:8,fontWeight:800,color:'#8B5CF6',border:'1px solid #8B5CF640',padding:'0 5px',borderRadius:3}}>🔍 MISSED?</span>}
                       {(s as any).source && (s as any).source !== 'Screener' && <span style={{fontSize:8,color:'#4A5B6C',border:'1px solid #1A2840',padding:'0 4px',borderRadius:3}}>{(s as any).source}</span>}
                     </div>
                   </div>
@@ -703,6 +1029,11 @@ function ConcallIntelligence() {
                     </div>
                     <div style={{fontSize:8,color:TEXT3}}>SURPRISE</div>
                   </div>
+                  {/* Expectation Shift */}
+                  <div style={{textAlign:'center'}}>
+                    <div style={{fontSize:14,fontWeight:900,color:(s as any).expectationShift>=60?'#ef4444':(s as any).expectationShift>=35?'#f59e0b':'#4A5B6C'}}>{(s as any).expectationShift||0}</div>
+                    <div style={{fontSize:8,color:TEXT3}}>Δ SHIFT</div>
+                  </div>
                   {/* Alpha/noise */}
                   <div style={{textAlign:'center'}}>
                     <div style={{fontSize:10,fontWeight:700,color:s.alphaCount>0?ACCENT2:TEXT3}}>⭐{s.alphaCount}</div>
@@ -714,9 +1045,44 @@ function ConcallIntelligence() {
               {isExp && (
                 <div style={{padding:'0 16px 16px',borderTop:`1px solid ${BORDER}`}}>
                   {s.signals.length === 0 ? (
-                    <div style={{padding:'16px 0',color:TEXT3,fontSize:11,textAlign:'center'}}>No decision-relevant management signals extracted from recent articles.</div>
+                    <div style={{padding:'16px 0',color:TEXT3,fontSize:11,textAlign:'center'}}>No management signals detected in 30D window. Try refreshing or check back post earnings.</div>
                   ) : (
                     <div style={{marginTop:12}}>
+
+                      {/* ── SIGNAL STACK (composite across articles) ── */}
+                      {(s as any).composite && (s as any).composite.length > 0 && (
+                        <div style={{marginBottom:14,padding:'12px 14px',backgroundColor:'#0A0F1A',border:'1px solid #8B5CF620',borderRadius:8}}>
+                          <div style={{fontSize:10,fontWeight:800,color:ACCENT2,letterSpacing:'1px',marginBottom:8}}>📊 SIGNAL STACK — composite view across all articles</div>
+                          <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                            {(s as any).composite.map((c: CompositeSignal, ci: number) => {
+                              const dc = c.direction==='UP'?'#10b981':c.direction==='DOWN'?'#ef4444':'#f59e0b';
+                              return (
+                                <div key={ci} style={{padding:'6px 10px',backgroundColor:dc+'10',border:`1px solid ${dc}30`,borderRadius:6,minWidth:90}}>
+                                  <div style={{fontSize:10,fontWeight:700,color:dc}}>{c.direction==='UP'?'↑':c.direction==='DOWN'?'↓':'→'} {c.label}</div>
+                                  <div style={{fontSize:8,color:'#4A5B6C'}}>{c.count} signal{c.count!==1?'s':''} · str:{c.strength}/5</div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ── WHY IT MATTERS ── */}
+                      {(s as any).whyItMatters && (
+                        <div style={{marginBottom:14,padding:'10px 14px',backgroundColor:'#F59E0B08',border:'1px solid #F59E0B20',borderRadius:8}}>
+                          <div style={{fontSize:9,fontWeight:800,color:'#F59E0B',marginBottom:4}}>💡 WHY THIS MATTERS FOR YOUR POSITION</div>
+                          <div style={{fontSize:11,color:'#C9D4E0',lineHeight:1.5}}>{(s as any).whyItMatters}</div>
+                        </div>
+                      )}
+
+                      {/* ── MISSED BY MARKET ── */}
+                      {(s as any).missedByMarket && (
+                        <div style={{marginBottom:14,padding:'10px 14px',backgroundColor:'#8B5CF608',border:'1px solid #8B5CF630',borderRadius:8}}>
+                          <div style={{fontSize:10,fontWeight:800,color:'#8B5CF6',marginBottom:4}}>🔍 POTENTIALLY MISSED BY MARKET</div>
+                          <div style={{fontSize:11,color:'#8A95A3'}}>Strong alpha signals ({s.alphaCount}) found but only {s.articleCount} article(s) — low coverage suggests market hasn't fully priced this yet. Verify independently before acting.</div>
+                        </div>
+                      )}
+
                       {/* Alpha signals */}
                       {s.signals.filter(sig=>sig.isAlpha).length > 0 && (
                         <div style={{marginBottom:12}}>
@@ -726,8 +1092,9 @@ function ConcallIntelligence() {
                               <div key={i} style={{padding:'10px 12px',backgroundColor:sig.positive?'#10b98108':'#ef444408',border:`1px solid ${sig.positive?'#10b98120':'#ef444420'}`,borderLeft:`3px solid ${sig.positive?'#10b981':'#ef4444'}`,borderRadius:7}}>
                                 <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:4,flexWrap:'wrap'}}>
                                   <span style={{fontSize:9,fontWeight:700,color:sig.positive?'#10b981':'#ef4444',backgroundColor:sig.positive?'#10b98118':'#ef444418',padding:'1px 6px',borderRadius:3}}>{sig.positive?'↑':'↓'} {sig.type.replace(/_/g,' ')}</span>
-                                  <span style={{fontSize:9,color:'#4A5B6C'}}>{sig.category}</span>
+                                  <span style={{fontSize:9,color:'#4A5B6C'}}>{sig.temporality}</span>
                                   <span style={{fontSize:9,fontWeight:700,color:horizonColor(sig.horizon),border:`1px solid ${horizonColor(sig.horizon)}40`,padding:'1px 5px',borderRadius:3}}>{sig.horizon}</span>
+                                  {sig.numerical && <span style={{fontSize:9,fontWeight:700,color:'#F59E0B',border:'1px solid #F59E0B40',padding:'1px 5px',borderRadius:3}}>₹{sig.numerical.value}{sig.numerical.unit}{sig.numerical.timing?` · ${sig.numerical.timing}`:''}</span>}
                                   <span style={{fontSize:8,color:'#4A5B6C',marginLeft:'auto'}}>{sig.date?new Date(sig.date).toLocaleDateString('en-IN'):''}</span>
                                 </div>
                                 <div style={{fontSize:11,color:'#C9D4E0',lineHeight:1.5,fontStyle:'italic'}}>"{sig.text}"</div>
