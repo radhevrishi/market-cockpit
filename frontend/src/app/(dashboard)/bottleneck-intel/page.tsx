@@ -307,17 +307,17 @@ const TAG_COLORS: Record<string, string> = {
 
 // ── Supply chain tiers ────────────────────────────────────────────────────────
 
-const SUPPLY_CHAIN: { tier: number; label: string; color: string; companies: string[]; sub: string }[] = [
-  { tier: 1, label: 'Raw Materials',          color: '#8B5CF6', companies: ['AXTI','MP','CCJ','LEU'],           sub: 'InP/GaAs crystals, Ge, rare earths, uranium, specialty gases' },
-  { tier: 2, label: 'Substrates & Wafers',    color: '#7C3AED', companies: ['SOI (Soitec)','SUMCO','Shin-Etsu'], sub: 'Silicon-on-insulator, compound semiconductor substrates' },
-  { tier: 3, label: 'Wafer Fab Equipment',    color: '#0F7ABF', companies: ['ASML','AMAT','LRCX','KLAC'],       sub: 'EUV lithography, CVD/PVD, etch, deposition, inspection' },
-  { tier: 4, label: 'Foundries',              color: '#0284C7', companies: ['TSM','TSEM','Win Semi (3105)'],    sub: 'TSMC, GlobalFoundries, Tower Semiconductor, Samsung' },
-  { tier: 5, label: 'Chip Designers',         color: '#0369A1', companies: ['NVDA','AMD','AVGO','MRVL','INTC'], sub: 'GPU, ASIC, custom silicon, photonic ICs' },
-  { tier: 6, label: 'Photonic Components',    color: '#06B6D4', companies: ['COHR','LITE','AAOI','SIVE (STO)'],  sub: 'Lasers, EMLs, modulators, VCSELs, detectors' },
-  { tier: 7, label: 'Modules & Transceivers', color: '#0891B2', companies: ['FNSR','JNPR','JBL','OCLR'],        sub: '400G/800G/1.6T optical transceiver modules' },
-  { tier: 8, label: 'Test & Inspection',      color: '#10B981', companies: ['AEHR','FORM','TER','Advantest'],    sub: 'Wafer-level test, burn-in, SiC test equipment' },
-  { tier: 9, label: 'Advanced Packaging',     color: '#059669', companies: ['ASX','AMKR','SPIL','IBIDEN'],       sub: 'CoWoS, HBM stacking, glass substrates, FOPLP' },
-  { tier: 10, label: 'System Integration',    color: '#16A34A', companies: ['META','AMZN','MSFT','GOOGL','NVDA'], sub: 'Hyperscaler AI factories, NVL72, Trainium, TPU clusters' },
+const SUPPLY_CHAIN: { tier: number; label: string; color: string; companies: string[]; sub: string; lens?: string }[] = [
+  { tier: 1,  label: 'Raw Materials',          color: '#8B5CF6', companies: ['AXTI','MP','CCJ','LEU'],           sub: 'InP/GaAs crystals, Ge, rare earths, uranium, specialty gases',           lens: 'Serenity lens: monopolistic supply, China bifurcation, <$2B market cap, zero Wall St coverage' },
+  { tier: 2,  label: 'Substrates & Wafers',    color: '#7C3AED', companies: ['SOI (Soitec)','SUMCO','Shin-Etsu'], sub: 'Silicon-on-insulator, compound semiconductor substrates',                   lens: 'Serenity lens: 2–3 global suppliers, multi-year customer qual cycles, switching cost moat' },
+  { tier: 3,  label: 'Wafer Fab Equipment',    color: '#0F7ABF', companies: ['ASML','AMAT','LRCX','KLAC'],       sub: 'EUV lithography, CVD/PVD, etch, deposition, inspection',                     lens: 'Serenity lens: ASML EUV monopoly, KLAC/LRCX inspection duopoly, 2yr+ lead times' },
+  { tier: 4,  label: 'Foundries',              color: '#0284C7', companies: ['TSM','TSEM','Win Semi (3105)'],    sub: 'TSMC N3/N2 + CoWoS advanced packaging, Tower, Samsung',                      lens: 'Serenity lens: TSMC CoWoS = single-point bottleneck for every AI accelerator' },
+  { tier: 5,  label: 'Chip Designers',         color: '#0369A1', companies: ['NVDA','AMD','AVGO','MRVL','INTC'], sub: 'GPU, ASIC, custom silicon, photonic ICs',                                     lens: 'Serenity lens: already fully priced — look upstream/downstream for asymmetric plays' },
+  { tier: 6,  label: 'Photonic Components',    color: '#06B6D4', companies: ['COHR','LITE','AAOI','SIVE (STO)'],  sub: 'Lasers, EMLs, modulators, VCSELs — CPO supply chain',                       lens: 'Serenity lens: SIVE = $850M Swedish laser monopolist, Strait of AXTI substrate play' },
+  { tier: 7,  label: 'Modules & Transceivers', color: '#0891B2', companies: ['FNSR','JNPR','OCLR','IIVI'],       sub: '400G/800G/1.6T optical transceiver modules, CPO integration',                lens: 'Serenity lens: 800G → 1.6T transition, OCLR/AAOI small-cap plays, hyperscaler lock-in' },
+  { tier: 8,  label: 'Test & Inspection',      color: '#10B981', companies: ['AEHR','FORM','TER','Advantest'],    sub: 'Wafer-level burn-in, SiC power device test, HBM qualification test',         lens: 'Serenity lens: AEHR = only wafer-level burn-in for SiC/GaN, no substitute, <$1B cap' },
+  { tier: 9,  label: 'Advanced Packaging',     color: '#059669', companies: ['AMKR','ASX','SPIL','IBIDEN'],       sub: 'CoWoS, HBM stacking, glass substrates, FOPLP — gating AI chip supply',      lens: 'Serenity lens: shares FABRICATION_PACKAGING bottleneck with T3 — CoWoS is THE single-point constraint' },
+  { tier: 10, label: 'System Integration',     color: '#16A34A', companies: ['META','AMZN','MSFT','GOOGL'],       sub: 'Hyperscaler AI factories — NVL72, Trainium3, TPU v5 → demand signal',         lens: 'Serenity lens: demand side — every capex announcement here ripples upstream to T1–T6' },
 ];
 
 // ── Serenity Checklist items ──────────────────────────────────────────────────
@@ -358,13 +358,22 @@ const JUNK = new Set([
   'ACC','DM','FY','TETRA','RTX','SM','EV','BI','TSMC','NET','AES','JSW','EVM','TMC','EC','ASP','MCX','FTA','ST','II','KR','GCC','EMYN','HUL','GLP','YD','ESAF','LIV','JBS','ATF','RPG','NPP','NPU','WAVE','SIEGY',
   'ALL','ARE','HAL','BEL','CAN','HAS','HAD','WAS','GET','GOT','SET','PUT','BID','ASK',
   'FFO','NMI','BOE','HUL','SSD','USD','EUR','KR','GLP','UP','FOMC',
+  // Added: news noise and non-supply-chain acronyms
+  'CNBC','BFSI','RISC','UDGAM','ADB','PPA','CPPA','REIT','ECAD','DA','IC','SC','NA','WD','PC',
+  'OASYS','ENGIE','EDPR','CIP','PAT','UBS','OLED','MARA','ACM','ADS',
+  'AI2','API2','CPU2','GPU2','ISA','ISM','SMB','SLA','SLB','SLG',
+  'NPC','NPM','NTP','NVT','OVH','OEM','ODM','PCB','SMT','THD',
 ]);
 
 function isLikelyTicker(t: string): boolean {
   if (!t) return false;
   const u = t.toUpperCase();
   if (JUNK.has(u)) return false;
-  if (!/^[A-Z]{2,6}(\.[A-Z]{1,2})?$/.test(u) && !/^[A-Z]{2,5}[0-9]$/.test(u)) return false;
+  // Standard ticker OR Asian ticker with 2+ digit suffix (TOWA6315, WIN3105).
+  // Single-digit suffix pattern [A-Z]{2,5}[0-9] was causing COHR+T4="COHRT4" false positives.
+  if (!/^[A-Z]{2,6}(\.[A-Z]{1,2})?$/.test(u) && !/^[A-Z]{2,5}[0-9]{2,}$/.test(u)) return false;
+  // Reject {ticker}T{digit} concatenations (tier badges from article text: "COHR T4" → "COHRT4")
+  if (/^[A-Z]{2,4}T[0-9]$/.test(u)) return false;
   const vowels = u.replace(/[^AEIOU]/g, '').length;
   if (u.length === 3 && vowels === 0) return false;
   return true;
@@ -1253,7 +1262,7 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
     }
     const qm = new Map<string, QuoteStock>(quotes.map(q => [q.ticker.toUpperCase(), q]));
     return Array.from(map.values())
-      .filter(r => r.evidence_count >= 1)
+      .filter(r => r.inUniverse ? r.evidence_count >= 1 : r.evidence_count >= 2) // New picks need 2+ articles to filter news noise
       .map(r => ({
         ...r,
         price: qm.get(r.symbol.toUpperCase())?.price,
@@ -2037,6 +2046,26 @@ function ConferenceCalendar() {
 // SECTION 6 — SUPPLY CHAIN MAP
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Map SUPPLY_CHAIN tiers to bottleneck bucket IDs.
+// Extends TIER_MAP (tiers 1-6) to cover T7-T10 which TIER_MAP doesn't handle.
+// T9 (Advanced Packaging = CoWoS) is critically part of FABRICATION_PACKAGING.
+const TIER_TO_BUCKET: Record<number, string> = {
+  1: 'MATERIALS_SUPPLY',
+  2: 'QUANTUM_CRYOGENICS',
+  3: 'FABRICATION_PACKAGING',
+  4: 'INTERCONNECT_PHOTONICS',
+  5: 'COMPUTE_SCALING',
+  6: 'POWER_GRID',
+  // T7: no formal bucket (transceiver modules = covered by INTERCONNECT_PHOTONICS articles)
+  7: 'INTERCONNECT_PHOTONICS',
+  // T8: Test & Inspection covered by FABRICATION_PACKAGING (test equipment = fab stack)
+  8: 'FABRICATION_PACKAGING',
+  // T9: Advanced Packaging (CoWoS, HBM stacking) = FABRICATION_PACKAGING critical bottleneck
+  9: 'FABRICATION_PACKAGING',
+  // T10: Hyperscalers = COMPUTE_SCALING (demand side, not supply constraint)
+  10: 'COMPUTE_SCALING',
+};
+
 function SupplyChainMap({ dashboard, articles }: { dashboard?: BnDashboard; articles: NewsArticle[] }) {
   const activeBuckets = new Set(dashboard?.buckets?.filter(b => b.severity >= 3).map(b => b.bucket_id) ?? []);
   const activeSevMap = Object.fromEntries(dashboard?.buckets?.map(b => [b.bucket_id, b.severity]) ?? []);
@@ -2070,11 +2099,13 @@ function SupplyChainMap({ dashboard, articles }: { dashboard?: BnDashboard; arti
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
         {SUPPLY_CHAIN.map((tier, i) => {
-          const tagForTier = Object.entries(TIER_MAP).find(([, v]) => v.tier === tier.tier)?.[0];
+          const tagForTier = TIER_TO_BUCKET[tier.tier];
           const isActive = tagForTier ? activeBuckets.has(tagForTier) : false;
           const evData = tagForTier ? evidencePerTag[tagForTier] : null;
           const prob = tagForTier ? bottleneckProb(tagForTier) : 0;
           const vel = tagForTier ? calcBucketVelocity(articles, tagForTier) : null;
+          // For T9/T10 that share a bucket with earlier tiers, show a note
+          const isSharedBucket = tier.tier > 6 && tagForTier && (tier.tier === 9 || tier.tier === 7 || tier.tier === 8);
           const arrow = i < SUPPLY_CHAIN.length - 1;
 
           return (
@@ -2098,11 +2129,18 @@ function SupplyChainMap({ dashboard, articles }: { dashboard?: BnDashboard; arti
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
                     <span style={{ fontSize: '13px', fontWeight: '700', color: '#F5F7FA' }}>{tier.label}</span>
-                    {isActive && <span style={{ fontSize: '9px', fontWeight: '700', color: '#EF4444', backgroundColor: '#EF444420', border: '1px solid #EF444440', padding: '2px 7px', borderRadius: '3px', letterSpacing: '0.8px' }}>⚡ ACTIVE BOTTLENECK</span>}
+                    {isActive && (
+                      <span style={{ fontSize: '9px', fontWeight: '700', color: '#EF4444', backgroundColor: '#EF444420', border: '1px solid #EF444440', padding: '2px 7px', borderRadius: '3px', letterSpacing: '0.8px' }}>
+                        ⚡ ACTIVE BOTTLENECK{isSharedBucket ? ' (shared)' : ''}
+                      </span>
+                    )}
                     {vel?.trend === '🔥' && !isActive && <span style={{ fontSize: '9px', color: '#F59E0B', fontWeight: '700' }}>🔥 Rising</span>}
                     {evData && evData.count > 0 && <span style={{ fontSize: '9px', color: '#10B981', backgroundColor: '#10B98114', padding: '1px 5px', borderRadius: '3px' }}>📡 {evData.count} live</span>}
                   </div>
-                  <p style={{ fontSize: '11px', color: '#6B7A8D', margin: '0 0 6px' }}>{tier.sub}</p>
+                  <p style={{ fontSize: '11px', color: '#6B7A8D', margin: '0 0 4px' }}>{tier.sub}</p>
+                  {tier.lens && (
+                    <p style={{ fontSize: '10px', color: '#4A5B6C', margin: '0 0 6px', fontStyle: 'italic' }}>{tier.lens}</p>
+                  )}
                   <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }}>
                     {tier.companies.map(c => (
                       <span key={c} style={{ fontSize: '10px', fontWeight: '600', color: tier.color, backgroundColor: tier.color + '14', border: `1px solid ${tier.color}30`, padding: '1px 7px', borderRadius: '4px' }}>{c}</span>
@@ -2110,10 +2148,10 @@ function SupplyChainMap({ dashboard, articles }: { dashboard?: BnDashboard; arti
                     {evData?.lastSignal && <span style={{ fontSize: '9px', color: '#4A5B6C', marginLeft: '4px' }}>· last {timeAgo(evData.lastSignal)}</span>}
                   </div>
                 </div>
-                {/* Probability bar */}
+                {/* Probability bar — flex-end fills from bottom, no position:absolute needed */}
                 {prob > 0 && (
-                  <div style={{ width: '4px', height: '60px', backgroundColor: '#1A2840', borderRadius: '2px', flexShrink: 0, overflow: 'hidden' }}>
-                    <div style={{ width: '100%', height: `${prob}%`, backgroundColor: prob >= 60 ? '#EF4444' : prob >= 30 ? '#F59E0B' : '#0F7ABF', borderRadius: '2px', marginTop: 'auto', position: 'absolute', bottom: 0 }} />
+                  <div title={`Bottleneck probability ${prob}%`} style={{ width: '6px', height: '60px', backgroundColor: '#1A2840', borderRadius: '3px', flexShrink: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+                    <div style={{ width: '100%', height: `${prob}%`, backgroundColor: prob >= 60 ? '#EF4444' : prob >= 30 ? '#F59E0B' : '#0F7ABF', borderRadius: '3px', transition: 'height 0.3s' }} />
                   </div>
                 )}
               </div>
