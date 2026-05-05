@@ -345,7 +345,397 @@ const _filterGovNoise = (list: any[]) =>
     return true;
   });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// 🧠 CONCALL INTELLIGENCE ENGINE — 30D rolling management signal extractor
+// Reads screener stocks from localStorage, fetches earnings/corporate news,
+// extracts management signals, computes Signal Score + MRI Score.
+// ══════════════════════════════════════════════════════════════════════════════
+
+type ConcallSignalType = 'ORDER'|'CAPEX'|'MARGIN'|'PRICING'|'GUIDANCE_UP'|'GUIDANCE_DOWN'|'DEMAND_CONSTRAINT'|'LTA'|'CAPEX_DELAY'|'MARGIN_PRESSURE'|'ANALYST_CAP'|'SUPPLY_CHAIN';
+type SignalHorizon = '0-3M'|'3-6M'|'6-12M'|'12M+';
+type SignalCategory = 'DEMAND'|'MARGIN'|'CAPEX'|'PRICING'|'GUIDANCE'|'SUPPLY_CHAIN'|'RISK';
+
+interface ExtractedSignal {
+  type: ConcallSignalType; category: SignalCategory;
+  text: string;           // extracted sentence (max 40 words)
+  positive: boolean;
+  strength: 1|2|3|4|5;
+  horizon: SignalHorizon;
+  isAlpha: boolean;       // true = changes 12-36M earnings power (not 1-5D noise)
+  source: string;         // article title
+  date: string;
+}
+
+interface CompanyConcallSummary {
+  symbol: string; company: string; sector: string;
+  grade?: string; score?: number;
+  signals: ExtractedSignal[];
+  signalScore: number;    // 0-100
+  mriScore: number;       // Management Reliability Index 0-100
+  trend: 'IMPROVING'|'STABLE'|'DETERIORATING'|'UNKNOWN';
+  tone: string;           // e.g. "Conservative-Bullish"
+  surprisePotential: 'HIGH'|'MEDIUM'|'LOW';
+  freshness: 'FRESH'|'ACTIVE'|'STALE';
+  lastDate?: string;
+  articleCount: number;
+  alphaCount: number;     // signals that change earnings power
+  noiseCount: number;
+}
+
+// ── Signal Extraction Patterns ──────────────────────────────────────────────
+const SIGNAL_PATTERNS: { type: ConcallSignalType; category: SignalCategory; keywords: string[]; positive: boolean; strength: 1|2|3|4|5; horizon: SignalHorizon; isAlpha: boolean }[] = [
+  // ⭐ HIGH ALPHA — changes 12-36M earnings power
+  { type:'DEMAND_CONSTRAINT', category:'DEMAND',   keywords:['demand exceed','demand higher than supply','would have done more','capacity constraint','demand outpac','shortage of','global shortage','insulator shortage'], positive:true,  strength:5, horizon:'6-12M', isAlpha:true },
+  { type:'LTA',               category:'SUPPLY_CHAIN', keywords:['long-term agreement','long term agreement','lta','multi-year contract','multi year contract','committed volume','foundry tie-up','strategic partnership','supply agreement','offtake agreement'], positive:true, strength:5, horizon:'12M+', isAlpha:true },
+  { type:'ORDER',             category:'DEMAND',   keywords:['crore order','crore orders','₹','order book','order inflow','order pipeline','large order','order worth','order of around','new orders'], positive:true,  strength:4, horizon:'0-3M', isAlpha:true },
+  { type:'GUIDANCE_UP',       category:'GUIDANCE', keywords:['guidance raised','raised guidance','above guidance','conservative deliver','conservative guiding','deliver above','guidance upgrade','bullish outlook'], positive:true,  strength:4, horizon:'3-6M', isAlpha:true },
+  { type:'ANALYST_CAP',       category:'GUIDANCE', keywords:['missed','clearly missed','wrong about','underestimated demand','underestimated growth','raising target after','raising after skeptic','capitulat'], positive:true, strength:5, horizon:'0-3M', isAlpha:true },
+  // MEDIUM ALPHA — confirms or signals improving thesis
+  { type:'CAPEX',             category:'CAPEX',    keywords:['capacity expansion','new capacity','commissioning','capex','new plant','go live','capacity online','additional capacity'], positive:true,  strength:3, horizon:'3-6M', isAlpha:true },
+  { type:'MARGIN',            category:'MARGIN',   keywords:['no margin pressure','stable margin','margin stable','pass through','pass-through','full pass','pricing power','no near-term margin','margin expansion','opm expansion'], positive:true,  strength:3, horizon:'3-6M', isAlpha:true },
+  { type:'PRICING',           category:'PRICING',  keywords:['price hike','price increase','asp rising','higher realisation','higher realization','improved pricing','better pricing'], positive:true,  strength:3, horizon:'3-6M', isAlpha:true },
+  { type:'SUPPLY_CHAIN',      category:'SUPPLY_CHAIN', keywords:['inventory build','higher inventory','managing inventory','commodity management','raw material secured'], positive:true, strength:2, horizon:'0-3M', isAlpha:false },
+  // NEGATIVE — risk signals
+  { type:'CAPEX_DELAY',       category:'CAPEX',    keywords:['capex delayed','expansion delayed','postponed','pushed back','deferred','phase shift','commissioning delay','delayed by'], positive:false, strength:3, horizon:'3-6M', isAlpha:true },
+  { type:'MARGIN_PRESSURE',   category:'MARGIN',   keywords:['margin pressure','margin headwind','cost pressure','commodity cost','input cost pressure','margin impact','squeeze'], positive:false, strength:3, horizon:'3-6M', isAlpha:true },
+  { type:'GUIDANCE_DOWN',     category:'GUIDANCE', keywords:['guidance cut','cut guidance','lowered guidance','below guidance','miss','disappointed','challenging demand','weak demand'], positive:false, strength:4, horizon:'0-3M', isAlpha:true },
+];
+
+// ── Signal Extractor ─────────────────────────────────────────────────────────
+function extractSignals(articleText: string, source: string, date: string): ExtractedSignal[] {
+  const text = articleText.toLowerCase();
+  const results: ExtractedSignal[] = [];
+  for (const p of SIGNAL_PATTERNS) {
+    for (const kw of p.keywords) {
+      if (text.includes(kw)) {
+        // Extract surrounding sentence (max 40 words)
+        const idx = text.indexOf(kw);
+        const start = Math.max(0, text.lastIndexOf('.', idx - 1) + 1);
+        const end = Math.min(text.length, text.indexOf('.', idx + kw.length) + 1 || text.length);
+        const sentence = articleText.slice(start, end).trim().split(' ').slice(0, 40).join(' ');
+        if (sentence.length > 10) {
+          results.push({ type:p.type, category:p.category, text:sentence, positive:p.positive, strength:p.strength, horizon:p.horizon, isAlpha:p.isAlpha, source, date });
+        }
+        break; // one signal per pattern per article
+      }
+    }
+  }
+  return results;
+}
+
+// ── MRI Score (Management Reliability Index) ─────────────────────────────────
+function computeMRI(signals: ExtractedSignal[]): number {
+  if (signals.length === 0) return 50; // neutral when no data
+  const pos = signals.filter(s => s.positive).length;
+  const neg = signals.filter(s => !s.positive).length;
+  const alpha = signals.filter(s => s.isAlpha).length;
+  const guidanceRaise = signals.filter(s => s.type === 'GUIDANCE_UP').length;
+  const delays = signals.filter(s => s.type === 'CAPEX_DELAY').length;
+  // Higher MRI = management delivers on what they say
+  let score = 50;
+  score += alpha * 6;
+  score += guidanceRaise * 8;
+  score -= delays * 8;
+  score -= neg * 4;
+  score += pos * 3;
+  return Math.max(10, Math.min(95, score));
+}
+
+// ── Signal Score ──────────────────────────────────────────────────────────────
+function computeSignalScore(signals: ExtractedSignal[]): number {
+  if (signals.length === 0) return 0;
+  const weightedSum = signals.reduce((sum, s) => {
+    let w = s.strength * (s.isAlpha ? 2 : 0.5);
+    if (!s.positive) w *= -0.8;
+    return sum + w;
+  }, 0);
+  return Math.max(0, Math.min(100, Math.round(50 + weightedSum * 3)));
+}
+
+function ConcallIntelligence() {
+  const [loading, setLoading] = useState(false);
+  const [summaries, setSummaries] = useState<CompanyConcallSummary[]>([]);
+  const [lastFetched, setLastFetched] = useState('');
+  const [expandedSym, setExpandedSym] = useState<string|null>(null);
+  const [showAlphaOnly, setShowAlphaOnly] = useState(false);
+
+  // Read screener stocks from localStorage
+  const screenerStocks: {symbol:string;company:string;sector:string;grade?:string;score?:number}[] = (() => {
+    try {
+      const d = JSON.parse(localStorage.getItem('mb_excel_scored_v2')||'[]');
+      return Array.isArray(d) ? d.map((r:any)=>({symbol:r.symbol,company:r.company||r.symbol,sector:r.sector||'',grade:r.grade,score:r.score})) : [];
+    } catch { return []; }
+  })();
+
+  async function fetchConcallData() {
+    if (screenerStocks.length === 0) return;
+    setLoading(true);
+    try {
+      // Fetch broad news covering last 30 days
+      const fetches = await Promise.allSettled([
+        fetch('/api/v1/news?limit=500&importance_min=1&article_type=EARNINGS'),
+        fetch('/api/v1/news?limit=300&importance_min=1&article_type=CORPORATE'),
+        fetch('/api/v1/news?limit=200&importance_min=2&article_type=GENERAL'),
+      ]);
+      const arrays = await Promise.all(fetches.map(async r => {
+        if (r.status !== 'fulfilled' || !r.value.ok) return [];
+        try { const d = await r.value.json(); return Array.isArray(d) ? d : []; } catch { return []; }
+      }));
+      const allArticles = arrays.flat();
+      const now = Date.now();
+      const THIRTY_DAYS = 30 * 86400000;
+
+      // Match articles to screener stocks
+      const result: CompanyConcallSummary[] = [];
+      for (const stock of screenerStocks) {
+        const sym = stock.symbol.toUpperCase().replace(/\.NS$|\.BO$/i,'');
+        const companyWords = (stock.company||'').toLowerCase().replace(/\b(ltd|limited|pvt|private|india|industries|solutions|technology|technologies|systems|services|engineering)\b/gi,'').trim().split(/\s+/).filter(w=>w.length>=4).slice(0,2);
+
+        const relevant = allArticles.filter(a => {
+          if (!a.published_at) return false;
+          const age = now - new Date(a.published_at).getTime();
+          if (age > THIRTY_DAYS) return false;
+          const text = ((a.title||'')+(a.headline||'')+(a.summary||'')).toLowerCase();
+          const tickers = ((a.ticker_symbols||[]) as string[]).map((t:string)=>t.toUpperCase().replace(/\.NS$|\.BO$/i,''));
+          if (tickers.includes(sym)) return true;
+          if (text.includes(sym.toLowerCase())) return true;
+          if (companyWords.length >= 2 && companyWords.every(w => text.includes(w))) return true;
+          if (companyWords.length === 1 && companyWords[0].length >= 6 && text.includes(companyWords[0])) return true;
+          return false;
+        });
+
+        if (relevant.length === 0) continue;
+
+        // Extract signals from all relevant articles
+        const allSignals: ExtractedSignal[] = [];
+        for (const a of relevant) {
+          const fullText = [(a.title||''),(a.headline||''),(a.summary||'')].join(' ');
+          const sigs = extractSignals(fullText, a.title||a.headline||'', a.published_at||'');
+          allSignals.push(...sigs);
+        }
+
+        const signalScore = computeSignalScore(allSignals);
+        const mriScore = computeMRI(allSignals);
+        const posCount = allSignals.filter(s=>s.positive).length;
+        const negCount = allSignals.filter(s=>!s.positive).length;
+
+        // Trend
+        const trend: 'IMPROVING'|'STABLE'|'DETERIORATING'|'UNKNOWN' =
+          allSignals.length === 0 ? 'UNKNOWN' :
+          posCount > negCount * 2 ? 'IMPROVING' :
+          negCount > posCount ? 'DETERIORATING' : 'STABLE';
+
+        // Management tone
+        const hasBullish = allSignals.some(s=>s.type==='GUIDANCE_UP'||s.type==='ORDER'||s.type==='DEMAND_CONSTRAINT');
+        const hasConservative = relevant.some(a=>((a.summary||'')+(a.title||'')).toLowerCase().includes('conserv'));
+        const tone = hasConservative && hasBullish ? 'Conservative-Bullish' : hasBullish ? 'Bullish' : negCount > 0 ? 'Cautious' : 'Neutral';
+
+        // Freshness
+        const latestDate = relevant.reduce((latest, a) => {
+          if (!a.published_at) return latest;
+          return !latest || a.published_at > latest ? a.published_at : latest;
+        }, '');
+        const ageHours = latestDate ? (now - new Date(latestDate).getTime()) / 3600000 : 9999;
+        const freshness: 'FRESH'|'ACTIVE'|'STALE' = ageHours < 48 ? 'FRESH' : ageHours < 168 ? 'ACTIVE' : 'STALE';
+
+        // Surprise potential
+        const hasAnalystCap = allSignals.some(s=>s.type==='ANALYST_CAP');
+        const surprisePotential: 'HIGH'|'MEDIUM'|'LOW' = hasAnalystCap || allSignals.filter(s=>s.strength>=4).length>=2 ? 'HIGH' : allSignals.length >= 3 ? 'MEDIUM' : 'LOW';
+
+        result.push({
+          symbol: stock.symbol, company: stock.company, sector: stock.sector,
+          grade: stock.grade, score: stock.score,
+          signals: allSignals.sort((a,b) => (b.strength - a.strength)),
+          signalScore, mriScore, trend, tone, surprisePotential, freshness,
+          lastDate: latestDate, articleCount: relevant.length,
+          alphaCount: allSignals.filter(s=>s.isAlpha).length,
+          noiseCount: allSignals.filter(s=>!s.isAlpha).length,
+        });
+      }
+
+      // Sort by signal score desc
+      setSummaries(result.sort((a,b)=>b.signalScore - a.signalScore));
+      setLastFetched(new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}));
+    } catch(e) { console.error('[Concall]',e); }
+    setLoading(false);
+  }
+
+  useEffect(() => { if (screenerStocks.length > 0) fetchConcallData(); }, []); // eslint-disable-line
+
+  const ACCENT2 = '#a78bfa';
+  const displayed = showAlphaOnly ? summaries.filter(s=>s.alphaCount>0) : summaries;
+  const toneColor = (t:string) => t.includes('Bull')?'#10b981':t==='Cautious'?'#ef4444':'#f59e0b';
+  const freshColor = (f:string) => f==='FRESH'?'#10b981':f==='ACTIVE'?'#f59e0b':'#4A5B6C';
+  const horizonColor = (h:string) => h==='0-3M'?'#ef4444':h==='3-6M'?'#f59e0b':h==='6-12M'?'#10b981':'#06b6d4';
+
+  if (screenerStocks.length === 0) return (
+    <div style={{textAlign:'center',padding:'60px 20px',color:TEXT3}}>
+      <div style={{fontSize:40,marginBottom:12}}>🧠</div>
+      <div style={{fontSize:16,fontWeight:700,color:TEXT1,marginBottom:8}}>No screener stocks loaded</div>
+      <div style={{fontSize:13,color:TEXT3}}>Upload your Screener.in export in the Multibagger tab first. Concall Intelligence will automatically track your portfolio companies.</div>
+    </div>
+  );
+
+  return (
+    <div style={{padding:'0 0 20px'}}>
+      {/* Header */}
+      <div style={{padding:'16px 0 12px',borderBottom:`1px solid ${BORDER}`,marginBottom:16}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
+          <div>
+            <div style={{fontSize:15,fontWeight:800,color:ACCENT2}}>🧠 Concall Intelligence — 30D Rolling Window</div>
+            <div style={{fontSize:11,color:TEXT3,marginTop:2}}>Management signal extraction · MRI scoring · Signal vs Noise · {screenerStocks.length} screener stocks monitored</div>
+          </div>
+          <div style={{display:'flex',gap:8,alignItems:'center'}}>
+            <button onClick={()=>setShowAlphaOnly(v=>!v)} style={{fontSize:11,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${showAlphaOnly?ACCENT2+'60':BORDER}`,background:showAlphaOnly?`${ACCENT2}18`:'transparent',color:showAlphaOnly?ACCENT2:TEXT3,cursor:'pointer'}}>
+              ⭐ Alpha Only ({summaries.filter(s=>s.alphaCount>0).length})
+            </button>
+            <button onClick={fetchConcallData} disabled={loading} style={{fontSize:11,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${BORDER}`,background:'transparent',color:TEXT3,cursor:'pointer'}}>
+              {loading ? '⏳ Scanning...' : '↻ Refresh'}
+            </button>
+            {lastFetched && <span style={{fontSize:10,color:TEXT3}}>Updated {lastFetched}</span>}
+          </div>
+        </div>
+        {/* Stats row */}
+        {summaries.length > 0 && (
+          <div style={{display:'flex',gap:16,marginTop:10,flexWrap:'wrap'}}>
+            {[
+              {label:'Companies tracked',value:summaries.length,color:ACCENT2},
+              {label:'With alpha signals',value:summaries.filter(s=>s.alphaCount>0).length,color:'#10b981'},
+              {label:'Improving trend',value:summaries.filter(s=>s.trend==='IMPROVING').length,color:'#10b981'},
+              {label:'Deteriorating',value:summaries.filter(s=>s.trend==='DETERIORATING').length,color:'#ef4444'},
+              {label:'High surprise',value:summaries.filter(s=>s.surprisePotential==='HIGH').length,color:'#f59e0b'},
+            ].map(({label,value,color})=>(
+              <div key={label} style={{textAlign:'center'}}>
+                <div style={{fontSize:18,fontWeight:900,color}}>{value}</div>
+                <div style={{fontSize:9,color:TEXT3}}>{label}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {loading && summaries.length === 0 && (
+        <div style={{textAlign:'center',padding:'40px 20px',color:TEXT3}}>
+          <div style={{fontSize:28,marginBottom:8}}>⏳</div>
+          <div style={{fontSize:13}}>Scanning {screenerStocks.length} companies for management signals...</div>
+        </div>
+      )}
+
+      {/* Company signal cards */}
+      <div style={{display:'flex',flexDirection:'column',gap:10}}>
+        {displayed.map(s => {
+          const isExp = expandedSym === s.symbol;
+          const sc = (grade:string|undefined) => ({
+            'A+':'#10b981','A':'#34d399','B+':'#f59e0b','B':'#f97316','C':'#fb923c','D':'#ef4444'
+          }[grade||'']||TEXT3);
+          return (
+            <div key={s.symbol} style={{backgroundColor:'#0D1B2E',border:`1px solid ${s.alphaCount>0?ACCENT2+'30':BORDER}`,borderRadius:10,overflow:'hidden'}}>
+              <button onClick={()=>setExpandedSym(isExp?null:s.symbol)} style={{width:'100%',textAlign:'left',background:'none',border:'none',cursor:'pointer',padding:'12px 16px'}}>
+                <div style={{display:'grid',gridTemplateColumns:'100px 1fr 80px 80px 80px 90px 70px',gap:8,alignItems:'center'}}>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:800,color:TEXT1}}>{s.symbol}</div>
+                    {s.grade && <span style={{fontSize:9,fontWeight:700,color:sc(s.grade),border:`1px solid ${sc(s.grade)}40`,padding:'1px 5px',borderRadius:3}}>{s.grade}</span>}
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,color:TEXT3,marginBottom:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.company}</div>
+                    <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+                      <span style={{fontSize:9,fontWeight:700,color:toneColor(s.tone),backgroundColor:toneColor(s.tone)+'18',padding:'1px 5px',borderRadius:3}}>{s.tone}</span>
+                      <span style={{fontSize:9,color:freshColor(s.freshness)}}>{s.freshness==='FRESH'?'🟢':s.freshness==='ACTIVE'?'🟡':'⚫'} {s.freshness}</span>
+                    </div>
+                  </div>
+                  {/* Signal Score */}
+                  <div style={{textAlign:'center'}}>
+                    <div style={{fontSize:16,fontWeight:900,color:s.signalScore>=70?'#10b981':s.signalScore>=50?'#f59e0b':'#ef4444'}}>{s.signalScore}</div>
+                    <div style={{fontSize:8,color:TEXT3}}>SIGNAL</div>
+                  </div>
+                  {/* MRI */}
+                  <div style={{textAlign:'center'}}>
+                    <div style={{fontSize:16,fontWeight:900,color:s.mriScore>=70?'#10b981':s.mriScore>=50?'#f59e0b':'#ef4444'}}>{s.mriScore}</div>
+                    <div style={{fontSize:8,color:TEXT3}}>MRI</div>
+                  </div>
+                  {/* Trend */}
+                  <div style={{textAlign:'center'}}>
+                    <div style={{fontSize:11,fontWeight:700,color:s.trend==='IMPROVING'?'#10b981':s.trend==='DETERIORATING'?'#ef4444':'#f59e0b'}}>
+                      {s.trend==='IMPROVING'?'↑':s.trend==='DETERIORATING'?'↓':'→'} {s.trend}
+                    </div>
+                    <div style={{fontSize:8,color:TEXT3}}>{s.articleCount} articles</div>
+                  </div>
+                  {/* Surprise */}
+                  <div style={{textAlign:'center'}}>
+                    <div style={{fontSize:10,fontWeight:700,color:s.surprisePotential==='HIGH'?'#ef4444':s.surprisePotential==='MEDIUM'?'#f59e0b':'#4A5B6C'}}>
+                      {s.surprisePotential}
+                    </div>
+                    <div style={{fontSize:8,color:TEXT3}}>SURPRISE</div>
+                  </div>
+                  {/* Alpha/noise */}
+                  <div style={{textAlign:'center'}}>
+                    <div style={{fontSize:10,fontWeight:700,color:s.alphaCount>0?ACCENT2:TEXT3}}>⭐{s.alphaCount}</div>
+                    <div style={{fontSize:8,color:TEXT3}}>ALPHA</div>
+                  </div>
+                </div>
+              </button>
+
+              {isExp && (
+                <div style={{padding:'0 16px 16px',borderTop:`1px solid ${BORDER}`}}>
+                  {s.signals.length === 0 ? (
+                    <div style={{padding:'16px 0',color:TEXT3,fontSize:11,textAlign:'center'}}>No decision-relevant management signals extracted from recent articles.</div>
+                  ) : (
+                    <div style={{marginTop:12}}>
+                      {/* Alpha signals */}
+                      {s.signals.filter(sig=>sig.isAlpha).length > 0 && (
+                        <div style={{marginBottom:12}}>
+                          <div style={{fontSize:10,fontWeight:800,color:ACCENT2,letterSpacing:'1px',marginBottom:8}}>⭐ ALPHA SIGNALS — changes 12-36M earnings power</div>
+                          <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                            {s.signals.filter(sig=>sig.isAlpha).map((sig,i)=>(
+                              <div key={i} style={{padding:'10px 12px',backgroundColor:sig.positive?'#10b98108':'#ef444408',border:`1px solid ${sig.positive?'#10b98120':'#ef444420'}`,borderLeft:`3px solid ${sig.positive?'#10b981':'#ef4444'}`,borderRadius:7}}>
+                                <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:4,flexWrap:'wrap'}}>
+                                  <span style={{fontSize:9,fontWeight:700,color:sig.positive?'#10b981':'#ef4444',backgroundColor:sig.positive?'#10b98118':'#ef444418',padding:'1px 6px',borderRadius:3}}>{sig.positive?'↑':'↓'} {sig.type.replace(/_/g,' ')}</span>
+                                  <span style={{fontSize:9,color:'#4A5B6C'}}>{sig.category}</span>
+                                  <span style={{fontSize:9,fontWeight:700,color:horizonColor(sig.horizon),border:`1px solid ${horizonColor(sig.horizon)}40`,padding:'1px 5px',borderRadius:3}}>{sig.horizon}</span>
+                                  <span style={{fontSize:8,color:'#4A5B6C',marginLeft:'auto'}}>{sig.date?new Date(sig.date).toLocaleDateString('en-IN'):''}</span>
+                                </div>
+                                <div style={{fontSize:11,color:'#C9D4E0',lineHeight:1.5,fontStyle:'italic'}}>"{sig.text}"</div>
+                                <div style={{fontSize:9,color:'#4A5B6C',marginTop:3}}>📰 {sig.source}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {/* Noise signals */}
+                      {s.signals.filter(sig=>!sig.isAlpha).length > 0 && (
+                        <div>
+                          <div style={{fontSize:10,fontWeight:800,color:TEXT3,letterSpacing:'1px',marginBottom:6}}>📰 NOISE SIGNALS — 1-5D relevance only</div>
+                          <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                            {s.signals.filter(sig=>!sig.isAlpha).map((sig,i)=>(
+                              <div key={i} style={{padding:'7px 10px',backgroundColor:'#1A2840',borderRadius:6,fontSize:10,color:'#8A95A3'}}>
+                                <span style={{fontWeight:600,color:sig.positive?'#10b981':'#ef4444'}}>{sig.type.replace(/_/g,' ')}</span>: {sig.text.slice(0,80)}...
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {summaries.length === 0 && !loading && (
+        <div style={{textAlign:'center',padding:'40px 20px',color:TEXT3}}>
+          <div style={{fontSize:30,marginBottom:8}}>🔍</div>
+          <div style={{fontSize:13,fontWeight:600,color:TEXT1,marginBottom:6}}>No management signals found in last 30 days</div>
+          <div style={{fontSize:11,color:TEXT3}}>Your screener stocks have {screenerStocks.length} companies loaded. Try refreshing or check back after earnings season.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CompanyIntelligencePage() {
+  const [mainTab, setMainTab] = useState<'intelligence'|'concall'>('intelligence');
   const [top3, setTop3] = useState<Signal[]>([]);
   const [signals, setSignals] = useState<Signal[]>([]);
   const [trends, setTrends] = useState<CompanyTrend[]>([]);
@@ -719,6 +1109,23 @@ export default function CompanyIntelligencePage() {
               Materiality-ranked · Confidence-scored · Evidence-tiered · Deduped
               {computing && <span style={{ marginLeft: '8px', color: ACCENT }}>⟳ Computing...</span>}
             </p>
+            {/* Main tabs */}
+            <div style={{ display: 'flex', gap: 0, marginTop: 8 }}>
+              {([
+                { id: 'intelligence' as const, label: '📡 Signals', color: ACCENT },
+                { id: 'concall' as const, label: '🧠 Concall Intel', color: '#a78bfa' },
+              ]).map(tab => (
+                <button key={tab.id} onClick={() => setMainTab(tab.id)} style={{
+                  padding: '6px 16px', border: 'none', cursor: 'pointer', background: 'transparent',
+                  fontSize: 12, fontWeight: mainTab === tab.id ? 700 : 400,
+                  color: mainTab === tab.id ? tab.color : TEXT3,
+                  borderBottom: `2px solid ${mainTab === tab.id ? tab.color : 'transparent'}`,
+                  transition: 'all 0.15s',
+                }}>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -780,6 +1187,10 @@ export default function CompanyIntelligencePage() {
         </div>
       </div>
 
+      {/* ── CONCALL INTELLIGENCE TAB ── */}
+      {mainTab === 'concall' && <ConcallIntelligence />}
+
+      {mainTab === 'intelligence' && <>
       {/* ── SCORING LEGEND (inline, compact) ── */}
       <div style={{
         display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'center',
@@ -2672,6 +3083,7 @@ export default function CompanyIntelligencePage() {
         </div>
       )}
       <style>{`@keyframes progress-bar { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }`}</style>
+      </> /* end mainTab === 'intelligence' */}
     </div>
   );
 }

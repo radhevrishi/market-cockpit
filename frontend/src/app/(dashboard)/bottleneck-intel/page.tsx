@@ -714,13 +714,37 @@ function useGeoNews() {
   return useQuery<NewsArticle[]>({
     queryKey: ['bn', 'geo'],
     queryFn: async () => {
-      const [r1, r2] = await Promise.all([
-        fetch('/api/v1/news?limit=80&importance_min=2&article_type=GEOPOLITICAL'),
-        fetch('/api/v1/news?limit=80&importance_min=2&article_type=TARIFF'),
+      // Fetch from MULTIPLE types — typed GEOPOLITICAL/TARIFF are rare in most feeds.
+      // Instead use broad fetches and apply geo keyword filtering client-side.
+      const fetches = await Promise.allSettled([
+        fetch('/api/v1/news?limit=100&importance_min=2&article_type=GEOPOLITICAL'),
+        fetch('/api/v1/news?limit=100&importance_min=2&article_type=TARIFF'),
+        fetch('/api/v1/news?limit=100&importance_min=2&article_type=MACRO'),
+        fetch('/api/v1/news?limit=100&importance_min=2&article_type=GENERAL'),
+        fetch('/api/v1/news?limit=80&importance_min=3&article_type=CORPORATE'),
       ]);
-      const [d1, d2] = await Promise.all([r1.json(), r2.json()]);
-      const merged = [...(Array.isArray(d1) ? d1 : []), ...(Array.isArray(d2) ? d2 : [])];
-      return merged.sort((a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime()).slice(0, 60);
+      const arrays = await Promise.all(fetches.map(async r => {
+        if (r.status !== 'fulfilled' || !r.value.ok) return [];
+        try { const d = await r.value.json(); return Array.isArray(d) ? d : []; } catch { return []; }
+      }));
+      // Deduplicate by URL and title hash
+      const seen = new Set<string>();
+      const all: NewsArticle[] = [];
+      for (const arr of arrays) {
+        for (const a of arr) {
+          const key = (a.url || a.source_url || '') + '|' + (a.title || a.headline || '').slice(0, 60);
+          if (!seen.has(key)) { seen.add(key); all.push(a); }
+        }
+      }
+      // Filter to geo-relevant: must match at least one geo keyword
+      const GEO_KWS = ['tariff','trade war','export ban','export control','sanction','chips act','china','taiwan','geopolit','supply chain disruption','subsidy','government contract','military','defense','federal funding','grid','electricity','shipping','port','red sea','currency','yuan','yen','trade restriction','section 301','gallium','germanium','rare earth','nato','war ','freight','logistics'];
+      const geoRelevant = all.filter(a => {
+        const text = ((a.title||'') + ' ' + (a.headline||'') + ' ' + (a.summary||'')).toLowerCase();
+        return GEO_KWS.some(kw => text.includes(kw));
+      });
+      return geoRelevant
+        .sort((a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime())
+        .slice(0, 80);
     },
     refetchInterval: 90_000, staleTime: 60_000, retry: 1,
   });
@@ -2307,16 +2331,23 @@ function GeoOverlay({ articles, isLoading }: { articles: NewsArticle[]; isLoadin
   const [mechFilter, setMechFilter] = useState('ALL');
   if (isLoading) return <SkeletonGrid count={6} height={80} />;
 
-  const GEO_TYPES = new Set(['GEOPOLITICAL', 'TARIFF', 'MACRO']);
+  // All articles already geo-filtered upstream (useGeoNews applies keyword filter).
+  // Detect mechanism from content — article_type is now secondary.
   const withMechanism = articles
-    .filter(a => GEO_TYPES.has(a.article_type))
-    .map(a => ({ ...a, mechanism: detectMechanism(a) }));
+    .map(a => ({ ...a, mechanism: detectMechanism(a) }))
+    .filter(a => a.mechanism !== null || ['GEOPOLITICAL','TARIFF'].includes(a.article_type ?? ''));
 
+  // Filter: MECHANISM-first (not article_type), since geo keywords span all article types
   const filtered = withMechanism.filter(a =>
-    (typeFilter === 'ALL' || a.article_type === typeFilter) &&
+    (typeFilter === 'ALL' || (typeFilter === 'GEOPOLITICAL' && ['EXPORT_BAN','MILITARY'].includes(a.mechanism?.key ?? '')) ||
+     (typeFilter === 'TARIFF' && a.mechanism?.key === 'TARIFF') ||
+     (typeFilter === 'MACRO' && !a.mechanism && a.article_type === 'MACRO')) &&
     (mechFilter === 'ALL' || a.mechanism?.key === mechFilter)
   );
   const typeColor = (t: string) => ({ GEOPOLITICAL: '#EF4444', TARIFF: '#F59E0B', MACRO: '#8B5CF6' })[t] ?? '#4A5B6C';
+  // Counts by mechanism bucket
+  const geopoliticalCount = withMechanism.filter(a => ['EXPORT_BAN','MILITARY'].includes(a.mechanism?.key ?? '')).length;
+  const tariffCount = withMechanism.filter(a => a.mechanism?.key === 'TARIFF').length;
 
   // Count mechanisms in current view
   const mechCounts = Object.fromEntries(
@@ -2334,14 +2365,16 @@ function GeoOverlay({ articles, isLoading }: { articles: NewsArticle[]; isLoadin
 
       {/* Type filter */}
       <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', flexWrap: 'wrap' }}>
-        {['ALL','GEOPOLITICAL','TARIFF','MACRO'].map(t => {
-          const cnt = t === 'ALL' ? withMechanism.length : withMechanism.filter(a => a.article_type === t).length;
-          return (
-            <button key={t} onClick={() => setTypeFilter(t)} style={{ padding: '5px 12px', borderRadius: '7px', border: `1px solid ${typeFilter === t ? typeColor(t) + '60' : '#1A2840'}`, cursor: 'pointer', backgroundColor: typeFilter === t ? typeColor(t) + '14' : 'transparent', color: typeFilter === t ? typeColor(t) : '#6B7A8D', fontSize: '11px', fontWeight: '600' }}>
-              {t} ({cnt})
-            </button>
-          );
-        })}
+        {[
+          {k:'ALL', label:'ALL', cnt: withMechanism.length},
+          {k:'GEOPOLITICAL', label:'GEOPOLITICAL', cnt: geopoliticalCount},
+          {k:'TARIFF', label:'TARIFF', cnt: tariffCount},
+          {k:'MACRO', label:'MACRO', cnt: withMechanism.filter(a => !a.mechanism && a.article_type === 'MACRO').length},
+        ].map(({k, label, cnt}) => (
+          <button key={k} onClick={() => setTypeFilter(k)} style={{ padding: '5px 12px', borderRadius: '7px', border: `1px solid ${typeFilter === k ? typeColor(k) + '60' : '#1A2840'}`, cursor: 'pointer', backgroundColor: typeFilter === k ? typeColor(k) + '14' : 'transparent', color: typeFilter === k ? typeColor(k) : '#6B7A8D', fontSize: '11px', fontWeight: '600' }}>
+            {label} ({cnt})
+          </button>
+        ))}
         <span style={{ fontSize: '11px', color: '#4A5B6C', marginLeft: 'auto', alignSelf: 'center' }}>Live · every 90s</span>
       </div>
 
