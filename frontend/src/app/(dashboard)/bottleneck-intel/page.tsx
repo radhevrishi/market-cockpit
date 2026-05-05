@@ -114,17 +114,51 @@ function getBucketLifecycle(bucketId: string, vel: { week: number; prev: number;
 // ── Drilldown knowledge base ──────────────────────────────────────────────────
 
 interface IndiaPick { ticker: string; exchange: 'NSE'|'BSE'; thesis: string; }
+
+// Qualification stages per Serenity framework: tracks where each company is in customer adoption
+type QualStage = 'PRE_QUAL' | 'DESIGN_WIN' | 'QUALIFICATION' | 'RAMP' | 'VOLUME' | 'UNKNOWN';
+const QUAL_STAGE_CONFIG: Record<QualStage, { label: string; color: string; desc: string }> = {
+  PRE_QUAL:     { label: 'Pre-Qual',    color: '#4A5B6C', desc: 'Not yet in any customer design — very early stage' },
+  DESIGN_WIN:   { label: 'Design Win',  color: '#8B5CF6', desc: 'Confirmed design win, customer committed — pre-revenue but high conviction' },
+  QUALIFICATION:{ label: 'Qualifying',  color: '#F59E0B', desc: 'Active qualification in progress — revenue possible within 12-18 months' },
+  RAMP:         { label: 'Ramping',     color: '#10B981', desc: 'Qualification complete, early production revenue, scaling up' },
+  VOLUME:       { label: 'Volume',      color: '#0F7ABF', desc: 'At or near full volume production — thesis largely confirmed by market' },
+  UNKNOWN:      { label: '?',           color: '#4A5B6C', desc: 'Stage not confirmed from public sources' },
+};
+
+interface Chokepoint {
+  ticker: string; name: string; exchange: string;
+  monopoly_basis: string;     // why this is the chokepoint
+  public_competitors: number; // global public competitors
+  customers: string[];        // confirmed hyperscaler/OEM customers
+  qual_stage: QualStage;
+  evidence_types: string[];   // ['earnings_transcript','sec_filing','conference_pdf','ir_page','news']
+  tier: number;               // supply chain tier (1-10)
+}
+interface CoverageMap {
+  confirmed_public: string[];  // named public companies with confirmed exposure
+  known_private: string[];     // private companies in supply chain (not investable)
+  likely_missing: string[];    // probable gaps — research candidates
+  uncovered_nodes: string[];   // chain links with no confirmed company
+}
+type EvidenceType = 'earnings' | 'sec_filing' | 'conference_pdf' | 'wayback' | 'ir_page' | 'news_article' | 'startup_deck';
+
 interface DrilldownEntry {
   label: string; icon: string; why: string; supply: string; demand: string;
-  lifecycle: 'structural' | 'cyclical'; // persistent multi-year vs news-driven
+  lifecycle: 'structural' | 'cyclical';
   winners: { ticker: string; thesis: string }[];
   losers:  { ticker: string; thesis: string }[];
-  confirms:  string[]; // what confirms the thesis is playing out
-  breaks:    string[]; // what would invalidate the thesis
-  contradictions: string[]; // specific evidence that would WEAKEN (not just break) thesis
-  watch_kpi: string[]; // leading indicators to track
-  causal_chain: string[]; // Layer A → Layer B → Layer C — second-order idea generation
-  india_plays: IndiaPick[]; // India-listed beneficiaries (NSE/BSE)
+  confirms:  string[];
+  breaks:    string[];
+  contradictions: string[];
+  watch_kpi: string[];
+  causal_chain: string[];
+  india_plays: IndiaPick[];
+  // ── Serenity P1: Chokepoint Intelligence ────────────────────────────────
+  chokepoints: Chokepoint[];         // exact public companies at the chokepoint
+  coverage: CoverageMap;             // known / private / missing / uncovered
+  evidence_types: EvidenceType[];    // what source types confirm this theme
+  theme_family?: string;             // related themes (for overlap detection)
 }
 const DRILLDOWN: Record<string, DrilldownEntry> = {
   MEMORY_STORAGE: {
@@ -140,6 +174,18 @@ const DRILLDOWN: Record<string, DrilldownEntry> = {
     watch_kpi: ['HBM3E spot pricing (should be rising)', 'MU/SKX gross margin trajectory', 'NVDA H200 vs B200 shipment mix (B200 = 8× more HBM)', 'AEHR order backlog language in earnings calls'],
     causal_chain: ['AI training scale ↑ → HBM demand surge → HBM 3-vendor oligopoly constrained → CoWoS packaging required for HBM stacking → advanced packaging substrate demand → power/cooling for HBM-dense systems'],
     india_plays: [],
+    chokepoints: [
+      { ticker: 'MU',   name: 'Micron Technology', exchange: 'NASDAQ', tier: 4, public_competitors: 2, qual_stage: 'RAMP',   customers: ['NVDA','AMD','hyperscalers'], monopoly_basis: 'Only US-based HBM producer. HBM3E yield advantage in ramp. DRAM + HBM dual revenue.', evidence_types: ['earnings','sec_filing','news_article'] },
+      { ticker: 'AEHR', name: 'Aehr Test Systems',  exchange: 'NASDAQ', tier: 8, public_competitors: 1, qual_stage: 'RAMP',   customers: ['SK Hynix','Micron','TSMC'], monopoly_basis: 'Only public company offering wafer-level burn-in for HBM and SiC. Zero near-term substitutes.', evidence_types: ['earnings','ir_page','conference_pdf'] },
+    ],
+    coverage: {
+      confirmed_public: ['MU','AEHR','SKX (SK Hynix ADR)','Samsung (005930.KS)'],
+      known_private: ['Lam Research test div (acquired)', 'Advantest (private HBM test)'],
+      likely_missing: ['NANYA Technology (TWO:2408) — independent DRAM, underfollowed Taiwan OTC', 'Winbond Electronics (TWO:2344) — specialty DRAM'],
+      uncovered_nodes: ['HBM substrate suppliers (Ibiden, Shinko — packaging nodes)', 'Test socket suppliers for HBM burn-in (Yamaichi, Wells Electronics — private)'],
+    },
+    evidence_types: ['earnings','sec_filing','conference_pdf','news_article'],
+    theme_family: 'MEMORY_COMPUTE',
   },
   INTERCONNECT_PHOTONICS: {
     label: 'Interconnect & Photonics', icon: '💡', lifecycle: 'structural',
@@ -157,6 +203,20 @@ const DRILLDOWN: Record<string, DrilldownEntry> = {
       { ticker: 'STERLITE', exchange: 'NSE', thesis: 'Sterlite Technologies: optical fiber cables, domestic data center buildout beneficiary' },
       { ticker: 'HFCL', exchange: 'NSE', thesis: 'HFCL: fiber optic cables + defense networking equipment, order book driven' },
     ],
+    chokepoints: [
+      { ticker: 'AXTI', name: 'AXT Inc', exchange: 'NASDAQ', tier: 1, public_competitors: 2, qual_stage: 'VOLUME', customers: ['COHR','LITE','Sumitomo Electric'], monopoly_basis: '"Strait of AXTI": controls premium InP/GaAs substrate supply. Switching cost = 12–18 month re-qual. ~$80M market cap vs multi-billion downstream.', evidence_types: ['earnings','sec_filing','conference_pdf','wayback'] },
+      { ticker: 'SIVE', name: 'Sivers Semiconductors', exchange: 'STO', tier: 6, public_competitors: 2, qual_stage: 'DESIGN_WIN', customers: ['Ayar Labs','GlobalFoundries','Intel Photonics'], monopoly_basis: 'Only listed pure-play InP laser supplier for CPO. $850M Swedish company with zero US analyst coverage. Multi-year qualification lock-in.', evidence_types: ['ir_page','conference_pdf','wayback'] },
+      { ticker: 'TSEM', name: 'Tower Semiconductor', exchange: 'NASDAQ', tier: 4, public_competitors: 3, qual_stage: 'QUALIFICATION', customers: ['MRVL','Broadcom','Apple'], monopoly_basis: 'One of only 2 public photonic foundries. Acquired by Intel deal collapsed, now independent — unique SiPh process.', evidence_types: ['earnings','sec_filing'] },
+      { ticker: 'COHR', name: 'Coherent Corp', exchange: 'NYSE', tier: 6, public_competitors: 3, qual_stage: 'VOLUME', customers: ['hyperscalers','JBL'], monopoly_basis: 'Largest datacenter transceiver/VCSEL supplier. 800G market leader. CPO qualification at multiple hyperscalers.', evidence_types: ['earnings','conference_pdf'] },
+    ],
+    coverage: {
+      confirmed_public: ['AXTI','SIVE','TSEM','COHR','LITE','AAOI','MRVL'],
+      known_private: ['Ayar Labs (CPO — Series C, not listed)','Celestial AI (optical compute — private)','Lightmatter (photonic interconnect — private)'],
+      likely_missing: ['WIN Semiconductors (3105.TWO) — compound semi foundry, Taiwan OTC', 'Advanced Wireless Semiconductor (AWSC.TWO) — GaAs/InP wafer manufacturer, underfollowed'],
+      uncovered_nodes: ['Electro-optic modulator suppliers (few listed)','Wavelength division multiplexing component suppliers','AR coating suppliers for optical facets'],
+    },
+    evidence_types: ['earnings','sec_filing','conference_pdf','ir_page','wayback'],
+    theme_family: 'PHOTONICS_COMPUTE',
   },
   FABRICATION_PACKAGING: {
     label: 'Advanced Fabrication & Packaging', icon: '🏭', lifecycle: 'structural',
@@ -175,6 +235,19 @@ const DRILLDOWN: Record<string, DrilldownEntry> = {
       { ticker: 'HCLTECH', exchange: 'NSE', thesis: 'HCL Tech: semiconductor engineering services, packaging design for OSAT customers' },
       { ticker: 'SASKEN', exchange: 'NSE', thesis: 'Sasken Technologies: embedded and semiconductor design services, niche exposure' },
     ],
+    chokepoints: [
+      { ticker: 'TSM',  name: 'TSMC',            exchange: 'NYSE',   tier: 4, public_competitors: 2, qual_stage: 'VOLUME' as const, customers: ['NVDA','AMD','AVGO','Apple'], monopoly_basis: 'Sole CoWoS at scale. NVDA 60%+. No credible alternative at needed capacity.', evidence_types: ['earnings','sec_filing','conference_pdf'] as EvidenceType[] },
+      { ticker: 'ASML', name: 'ASML',             exchange: 'NASDAQ', tier: 3, public_competitors: 0, qual_stage: 'VOLUME' as const, customers: ['TSMC','Samsung','Intel'], monopoly_basis: 'Absolute monopoly on EUV lithography. Zero competitors. 2yr+ backlog. $300B+ TAM.', evidence_types: ['earnings','sec_filing','ir_page'] as EvidenceType[] },
+      { ticker: 'AMKR', name: 'Amkor Technology', exchange: 'NASDAQ', tier: 9, public_competitors: 3, qual_stage: 'RAMP' as const,   customers: ['NVDA','QCOM','TI'], monopoly_basis: 'Largest US-listed OSAT. Advanced packaging for AI chips ramping.', evidence_types: ['earnings','sec_filing'] as EvidenceType[] },
+    ],
+    coverage: {
+      confirmed_public: ['ASML','AMAT','LRCX','KLAC','TSM','AMKR','ASX','SPIL'],
+      known_private: ['Ibiden (substrate)','Shinko Electric (substrate)'],
+      likely_missing: ['KOKUSAI ELECTRIC (6525.T) — vertical furnace Japan', 'ULVAC (6728.T) — deposition Japan', 'Photronics (PLAB) — photomasks small-cap'],
+      uncovered_nodes: ['EUV resist suppliers (JSR, Shin-Etsu)','Pellicle film (Mitsui Chemicals)','Zeon Corp (EUV photoresist precursor)'],
+    },
+    evidence_types: ['earnings','sec_filing','conference_pdf','wayback','ir_page'] as EvidenceType[],
+    theme_family: 'FABRICATION_STACK',
   },
   COMPUTE_SCALING: {
     label: 'Compute & GPU Allocation', icon: '⚡', lifecycle: 'cyclical',
@@ -193,6 +266,18 @@ const DRILLDOWN: Record<string, DrilldownEntry> = {
       { ticker: 'LTTS', exchange: 'NSE', thesis: 'L&T Technology Services: semiconductor design and embedded AI, adjacently benefits from GPU ecosystem' },
       { ticker: 'RAILTEL', exchange: 'NSE', thesis: 'RailTel: government data center infra, early-stage but sovereign AI compute beneficiary' },
     ],
+    chokepoints: [
+      { ticker: 'NVDA', name: 'NVIDIA',  exchange: 'NASDAQ', tier: 5, public_competitors: 1, qual_stage: 'VOLUME', customers: ['all hyperscalers','neoclouds','sovereigns'], monopoly_basis: '75%+ AI accelerator market. CUDA ecosystem lock-in = 5-7 year moat. H100/B200 allocation relationship-driven. Already fully priced.', evidence_types: ['earnings','sec_filing','conference_pdf'] },
+      { ticker: 'AVGO', name: 'Broadcom', exchange: 'NASDAQ', tier: 5, public_competitors: 2, qual_stage: 'RAMP',   customers: ['Google TPU','Meta MTIA','ByteDance'], monopoly_basis: 'Dominant custom ASIC designer for hyperscalers. XPU revenue growing >50% YoY. Multi-year NDAs with 3 hyperscalers.', evidence_types: ['earnings','sec_filing'] },
+    ],
+    coverage: {
+      confirmed_public: ['NVDA','AMD','AVGO','MRVL','INTC'],
+      known_private: ['Tenstorrent (Groq-competitor, Hyundai-backed)','d-Matrix (inference accelerator)','Etched (custom wafer ASIC)'],
+      likely_missing: ['Blaize (edge AI chips, SPAC candidate)', 'SambaNova (custom DRAM accelerator, private)', 'Cerebras (wafer-scale, pre-IPO)'],
+      uncovered_nodes: ['Network-attached accelerator controllers','AI pipeline orchestration chips','Inference-specific memory controllers'],
+    },
+    evidence_types: ['earnings','sec_filing','conference_pdf','news_article'],
+    theme_family: 'MEMORY_COMPUTE',
   },
   POWER_GRID: {
     label: 'Power & Grid Constraints', icon: '🔌', lifecycle: 'structural',
@@ -206,6 +291,19 @@ const DRILLDOWN: Record<string, DrilldownEntry> = {
     contradictions: ['GEV/Siemens disclose transformer order cancellations or backlog normalization', 'Multiple new transformer manufacturing plants announced in North America simultaneously', 'Hyperscalers publish evidence that they solved interconnect queue through co-location'],
     watch_kpi: ['GEV order backlog (should keep growing)', 'ETN data center-specific revenue segment', 'PJM/ERCOT interconnect queue length (public)', 'Large power transformer lead time surveys from industry publications'],
     causal_chain: ['AI compute ↑ → data center MW demand → grid interconnect queue (5-10yr) → transformer/switchgear shortage → GOES steel constraint → copper/HV cable demand → EPC construction bottleneck → nuclear/renewable PPA demand'],
+    chokepoints: [
+      { ticker: 'GEV', name: 'GE Vernova', exchange: 'NYSE', tier: 6, public_competitors: 3, qual_stage: 'VOLUME', customers: ['utilities','data center developers','transmission operators'], monopoly_basis: 'One of only 3 major transformer OEMs globally (GEV, Siemens, ABB). 80–130 week lead times. US-listed. Grid electrification pure-play.', evidence_types: ['earnings','ir_page','conference_pdf'] },
+      { ticker: 'ETN', name: 'Eaton Corp',  exchange: 'NYSE', tier: 6, public_competitors: 4, qual_stage: 'VOLUME', customers: ['hyperscalers','data centers','utilities'], monopoly_basis: 'Switchgear + UPS market leader. Data center-specific electrical backbone. Order backlog growing 2+ years.', evidence_types: ['earnings','sec_filing'] },
+      { ticker: 'VRT', name: 'Vertiv',      exchange: 'NYSE', tier: 6, public_competitors: 4, qual_stage: 'RAMP',   customers: ['META','MSFT','AMZN','GOOG'], monopoly_basis: 'Power + cooling dual-exposure. Hyperscaler DC infrastructure partner. Liquid cooling ramp = incremental TAM.', evidence_types: ['earnings','ir_page','conference_pdf'] },
+    ],
+    coverage: {
+      confirmed_public: ['GEV','ETN','VRT','HUBB','GE','ABB (ABB.N)','Siemens Energy (ENR.DE)'],
+      known_private: ['CG Power (India, now listed but small)', 'TBEA Co. (China, constrained)', 'Weidmann (transformer components, Swiss private)'],
+      likely_missing: ['SPX Technologies — power transformer niche (listed but small-cap)', 'Global Power Equipment Group — transformer repair/replacement', 'Preformed Line Products (PLP) — grid hardware'],
+      uncovered_nodes: ['GOES steel suppliers (AK Steel/Cleveland-Cliffs — adjacent exposure)','HV cable suppliers (Prysmian, Nexans — European listed)', 'Substation automation software'],
+    },
+    evidence_types: ['earnings','sec_filing','conference_pdf','news_article'],
+    theme_family: 'POWER_GRID_FAMILY',
     india_plays: [
       { ticker: 'BHEL', exchange: 'NSE', thesis: 'BHEL: power transformer OEM, domestic order book accelerating with data center/industrial power demand' },
       { ticker: 'POWERGRID', exchange: 'NSE', thesis: 'POWERGRID Corporation: national transmission infra build-out, AI data center connectivity beneficiary' },
@@ -225,6 +323,19 @@ const DRILLDOWN: Record<string, DrilldownEntry> = {
     breaks: ['Next-gen solar + battery storage achieves <$20/MWh 24/7 cost', 'NRC license denials for multiple SMR projects', 'US-Russia nuclear fuel deal reinstated at scale'],
     contradictions: ['Uranium spot price falls below $70/lb on new supply discovery', 'NRC approves only 1 of 5 pending SMR designs by 2028', 'Hyperscalers cancel nuclear PPAs in favour of cheaper renewables'],
     watch_kpi: ['Uranium spot price (cameco.com/investors)', 'NRC SMR licensing pipeline', 'Hyperscaler % of power from carbon-free sources', 'CEG/TLN nuclear generation capacity utilization'],
+    chokepoints: [
+      { ticker: 'LEU', name: 'Centrus Energy',     exchange: 'NYSE',   tier: 1, public_competitors: 1, qual_stage: 'RAMP',   customers: ['DOE','hyperscalers (indirect)'], monopoly_basis: 'ONLY US company licensed to produce HALEU (high-assay low-enriched uranium) for advanced SMR reactors. Urenco is sole competitor.', evidence_types: ['sec_filing','ir_page','news_article'] },
+      { ticker: 'CCJ', name: 'Cameco',              exchange: 'NYSE',   tier: 1, public_competitors: 3, qual_stage: 'VOLUME', customers: ['utilities'], monopoly_basis: 'Largest Western uranium producer. Nuclear PPA deal wave needs uranium supply.', evidence_types: ['earnings','sec_filing'] },
+      { ticker: 'CEG', name: 'Constellation Energy', exchange: 'NASDAQ', tier: 6, public_competitors: 4, qual_stage: 'VOLUME', customers: ['MSFT (TMI PPA)','hyperscalers'], monopoly_basis: 'Largest US nuclear operator. Three Mile Island restart first hyperscaler nuclear PPA executed. 24/7 carbon-free power supplier.', evidence_types: ['earnings','news_article','ir_page'] },
+    ],
+    coverage: {
+      confirmed_public: ['LEU','CCJ','CEG','Oklo (OKLO)','NuScale (SMR)'],
+      known_private: ['TerraPower (Gates-backed)','Kairos Power (Google PPA)','Commonwealth Fusion (MIT spinout)'],
+      likely_missing: ['Lightbridge (fuel technology, micro-cap)','BWX Technologies (nuclear components) — listed but under-covered'],
+      uncovered_nodes: ['Zirconium cladding suppliers (very few globally)','SMR pressure vessel manufacturers','HALEU transportation logistics'],
+    },
+    evidence_types: ['sec_filing','ir_page','conference_pdf','news_article'],
+    theme_family: 'POWER_GRID_FAMILY',
     causal_chain: ['AI compute ↑ → 24/7 carbon-free power demand → nuclear PPA race → uranium/HALEU supply constraint → enrichment capacity → SMR permitting timeline → construction materials/labor'],
     india_plays: [
       { ticker: 'NHPC', exchange: 'NSE', thesis: 'NHPC: hydropower — adjacent carbon-free baseload beneficiary of same demand driver' },
@@ -247,6 +358,18 @@ const DRILLDOWN: Record<string, DrilldownEntry> = {
       { ticker: 'APCOTEX', exchange: 'NSE', thesis: 'Apcotex Industries: thermal management chemicals, adjacent to cooling compound demand' },
       { ticker: 'THERMAX', exchange: 'NSE', thesis: 'Thermax: industrial cooling and heat exchange equipment, data center cooling adjacency' },
     ],
+    chokepoints: [
+      { ticker: 'VRT',  name: 'Vertiv',      exchange: 'NYSE',   tier: 6, public_competitors: 4, qual_stage: 'RAMP',   customers: ['all hyperscalers'], monopoly_basis: 'Dominant liquid cooling + power management for hyperscale DCs. Liquid cooling revenue 3× in 2024.', evidence_types: ['earnings','conference_pdf','ir_page'] },
+      { ticker: 'SMCI', name: 'Supermicro',   exchange: 'NASDAQ', tier: 7, public_competitors: 5, qual_stage: 'RAMP',   customers: ['hyperscalers','neoclouds'], monopoly_basis: 'Liquid-cooled rack integration leader. Modular DC + liquid cooling = direct pick for Blackwell rack density.', evidence_types: ['earnings','sec_filing'] },
+    ],
+    coverage: {
+      confirmed_public: ['VRT','SMCI'],
+      known_private: ['CoolIT Systems','Motivair','Boyd Technologies','Asetek (listed in Denmark ASETEK.CO)'],
+      likely_missing: ['Rittal (private German enclosure+cooling)','Stulz (precision cooling, private)','Airedale (UK, private)'],
+      uncovered_nodes: ['Cold plate manufacturers (mostly Taiwan private)','Cooling tower suppliers for large DCs','Thermal interface material suppliers (Dow, Henkel — conglomerate, diluted exposure)'],
+    },
+    evidence_types: ['earnings','conference_pdf','news_article'],
+    theme_family: 'POWER_GRID_FAMILY',
   },
   MATERIALS_SUPPLY: {
     label: 'Critical Materials', icon: '⛏️', lifecycle: 'structural',
@@ -265,6 +388,19 @@ const DRILLDOWN: Record<string, DrilldownEntry> = {
       { ticker: 'VEDL', exchange: 'NSE', thesis: 'Vedanta: zinc, copper, aluminum, oil — critical materials diversification play' },
       { ticker: 'NMDC', exchange: 'NSE', thesis: 'NMDC: iron ore + nascent critical minerals exploration, government-backed domestic supply' },
     ],
+    chokepoints: [
+      { ticker: 'AXTI', name: 'AXT Inc',      exchange: 'NASDAQ', tier: 1, public_competitors: 2, qual_stage: 'VOLUME', customers: ['COHR','LITE','Broadcom'], monopoly_basis: '"Strait of AXTI": premium InP/GaAs substrate. Wafer Works (Taiwan) and Sumitomo are competitors but AXTI has US presence + photonics specialization.', evidence_types: ['earnings','sec_filing','conference_pdf','wayback'] },
+      { ticker: 'MP',   name: 'MP Materials', exchange: 'NYSE',   tier: 1, public_competitors: 2, qual_stage: 'RAMP',   customers: ['GM','Stellantis','US DoD'], monopoly_basis: 'Only US-listed rare earth mining + processing company at scale. Mountain Pass mine. NdFeB magnets for EV/defense.', evidence_types: ['earnings','sec_filing','ir_page'] },
+      { ticker: 'CCJ',  name: 'Cameco',        exchange: 'NYSE',   tier: 1, public_competitors: 3, qual_stage: 'VOLUME', customers: ['utilities','nuclear power plants'], monopoly_basis: 'Largest Western uranium producer. Post-Kazatomprom sanction concerns, Cameco + Kazatomprom duopoly. HALEU demand emerging.', evidence_types: ['earnings','sec_filing'] },
+    ],
+    coverage: {
+      confirmed_public: ['AXTI','MP','CCJ','LEU','SilcoTek (private)'],
+      known_private: ['5N Plus (Canada, specialty semi materials)','REC Silicon (Norway)','Wacker Chemie (Germany — hyperpure silicon)'],
+      likely_missing: ['Vital Metals (Australia — rare earth, small)','NioCorp Developments (niobium/scandium, pre-production)','American Rare Earths (private)'],
+      uncovered_nodes: ['Neon gas suppliers (Ingas, Cryoin — Ukrainian private companies)','Specialty chemical suppliers for photoresist (JSR, Shin-Etsu)','Quartz crucible suppliers (very few, mostly private Japan)'],
+    },
+    evidence_types: ['earnings','sec_filing','conference_pdf','news_article','startup_deck'],
+    theme_family: 'MATERIALS_GEOPOLITICS',
   },
   QUANTUM_CRYOGENICS: {
     label: 'Quantum & Cryogenics', icon: '🧊', lifecycle: 'structural',
@@ -281,6 +417,18 @@ const DRILLDOWN: Record<string, DrilldownEntry> = {
     india_plays: [
       { ticker: 'TATAELXSI', exchange: 'NSE', thesis: 'Tata Elxsi: adjacent play via quantum algorithm design services and government programs' },
     ],
+    chokepoints: [
+      { ticker: 'IBM',  name: 'IBM',    exchange: 'NYSE',   tier: 5, public_competitors: 4, qual_stage: 'VOLUME', customers: ['DOE','government','enterprises'], monopoly_basis: 'Largest gate-based quantum fleet. Only company with >1,000 qubit system in production.', evidence_types: ['earnings','sec_filing','conference_pdf'] },
+      { ticker: 'IONQ', name: 'IonQ',   exchange: 'NYSE',   tier: 5, public_competitors: 3, qual_stage: 'RAMP',   customers: ['DOE','DOD','financial services'], monopoly_basis: 'Trapped-ion approach — highest published gate fidelity. Only pure-play listed quantum hardware company.', evidence_types: ['earnings','sec_filing','ir_page'] },
+    ],
+    coverage: {
+      confirmed_public: ['IBM','IONQ'],
+      known_private: ['Bluefors (dilution fridges, Finland private)','Oxford Instruments (UK, listed OXIG.L)','Quantinuum (Honeywell spinout, private)', 'Rigetti (RGTI — listed, micro-cap)'],
+      likely_missing: ['Q-Next (US DOE quantum network, private)','Diraq (Australia, private ion-trap)'],
+      uncovered_nodes: ['Cryo CMOS chip suppliers','He-3 suppliers (US government stockpile + BWX)','Quantum error correction co-processors'],
+    },
+    evidence_types: ['earnings','sec_filing','conference_pdf','news_article'],
+    theme_family: 'QUANTUM_COMPUTE',
   },
 };
 
@@ -387,6 +535,25 @@ function getTickerSymbols(a: NewsArticle): string[] {
 }
 
 // ── Serenity Score ────────────────────────────────────────────────────────────
+
+// Signal diversity: when signal_count ≈ article_count, evidence is article-proxy-driven not aggregated
+function signalDiversityScore(signalCount: number, articleCount: number): { warning: boolean; label: string } {
+  if (articleCount === 0 || signalCount === 0) return { warning: false, label: '' };
+  const ratio = signalCount / articleCount;
+  if (ratio >= 0.85) return { warning: true, label: '⚠ 1-article-1-signal: evidence not yet aggregated from multiple source types' };
+  if (ratio >= 0.65) return { warning: false, label: '→ Some signal aggregation present' };
+  return { warning: false, label: '✓ Good signal diversity — multiple source types' };
+}
+
+// Theme family mapping: resolve overlapping themes to a shared family
+const THEME_FAMILIES: Record<string, string> = {
+  'POWER_GRID': 'POWER_GRID_FAMILY', 'NUCLEAR_ENERGY': 'POWER_GRID_FAMILY', 'THERMAL_COOLING': 'POWER_GRID_FAMILY',
+  'FABRICATION_PACKAGING': 'FABRICATION_STACK',
+  'INTERCONNECT_PHOTONICS': 'PHOTONICS_COMPUTE',
+  'MEMORY_STORAGE': 'MEMORY_COMPUTE', 'COMPUTE_SCALING': 'MEMORY_COMPUTE',
+  'MATERIALS_SUPPLY': 'MATERIALS_GEOPOLITICS',
+  'QUANTUM_CRYOGENICS': 'QUANTUM_COMPUTE',
+};
 
 function calcScore(row: { level?: string; evidence_count: number; sub_tag?: string; is_small_cap: boolean }): number {
   const lw: Record<string, number> = { CRITICAL: 40, BOTTLENECK: 25, WATCH: 12, RESOLVED: 2 };
@@ -1144,6 +1311,13 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
                       <span style={{ fontSize: '11px', color: '#8A95A3' }}><span style={{ color: sty.badge, fontWeight: '700', fontSize: '15px' }}>{b.signal_count}</span> signals</span>
                       <span style={{ fontSize: '11px', color: '#8A95A3' }}><span style={{ fontWeight: '600', color: '#C9D4E0' }}>{b.article_count}</span> articles</span>
                       {vel && <span style={{ fontSize: '11px', color: isAccel ? '#F59E0B' : '#4A5B6C' }}>{vel.week} this wk</span>}
+                      {/* Signal diversity warning: when signal≈article count → one-article-one-signal pattern */}
+                      {(() => {
+                        const div = signalDiversityScore(b.signal_count, b.article_count);
+                        return div.warning ? (
+                          <span title={div.label} style={{ fontSize: '9px', color: '#F59E0B', cursor: 'help' }}>⚠ low signal diversity</span>
+                        ) : null;
+                      })()}
                     </div>
                     {b.key_tickers?.length > 0 && (
                       <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
@@ -1712,10 +1886,105 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
             </div>
           )}
 
+          {/* ── CHOKEPOINT INTELLIGENCE PANEL (P1) — the 5 Serenity questions ── */}
+          {entry.chokepoints && entry.chokepoints.length > 0 && (
+            <div style={{ padding: '16px 20px', borderTop: '1px solid #1A2840', backgroundColor: '#0A0F1A' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                <p style={{ fontSize: '10px', color: '#8B5CF6', fontWeight: '800', letterSpacing: '1.2px', margin: 0 }}>🎯 CHOKEPOINT INTELLIGENCE — exact public companies at the bottleneck</p>
+                {entry.theme_family && (
+                  <span style={{ fontSize: '9px', color: '#4A5B6C', border: '1px solid #1A2840', padding: '1px 6px', borderRadius: '10px' }}>
+                    family: {entry.theme_family}
+                  </span>
+                )}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '10px' }}>
+                {entry.chokepoints.map(cp => {
+                  const qcfg = QUAL_STAGE_CONFIG[cp.qual_stage];
+                  return (
+                    <div key={cp.ticker} style={{ padding: '12px 14px', backgroundColor: '#0D1623', border: `1px solid #8B5CF620`, borderLeft: '3px solid #8B5CF6', borderRadius: '8px' }}>
+                      {/* Company header */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '14px', fontWeight: '800', color: '#F5F7FA' }}>{cp.ticker}</span>
+                        <span style={{ fontSize: '10px', color: '#4A5B6C' }}>{cp.exchange}</span>
+                        <span style={{ fontSize: '9px', fontWeight: '700', color: '#4A5B6C', border: '1px solid #1A2840', padding: '1px 5px', borderRadius: '3px' }}>T{cp.tier}</span>
+                        <span title={qcfg.desc} style={{ fontSize: '9px', fontWeight: '700', color: qcfg.color, backgroundColor: qcfg.color + '18', border: `1px solid ${qcfg.color}40`, padding: '1px 6px', borderRadius: '3px', cursor: 'help' }}>{qcfg.label}</span>
+                        {cp.public_competitors <= 2 && (
+                          <span style={{ fontSize: '9px', fontWeight: '700', color: '#EF4444', backgroundColor: '#EF444414', border: '1px solid #EF444430', padding: '1px 6px', borderRadius: '3px' }}>🔒 {cp.public_competitors === 0 ? 'MONOPOLY' : cp.public_competitors === 1 ? 'DUOPOLY' : '3 competitors'}</span>
+                        )}
+                      </div>
+                      <p style={{ fontSize: '11px', color: '#8A95A3', margin: '0 0 6px', lineHeight: '1.5' }}>{cp.monopoly_basis}</p>
+                      {/* Confirmed customers */}
+                      {cp.customers.length > 0 && (
+                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '6px' }}>
+                          <span style={{ fontSize: '9px', color: '#4A5B6C' }}>→</span>
+                          {cp.customers.map(c => <span key={c} style={{ fontSize: '10px', color: '#0F7ABF', backgroundColor: '#0F7ABF12', border: '1px solid #0F7ABF25', padding: '1px 6px', borderRadius: '4px' }}>{c}</span>)}
+                        </div>
+                      )}
+                      {/* Evidence types */}
+                      <div style={{ display: 'flex', gap: '3px', flexWrap: 'wrap' }}>
+                        {cp.evidence_types.map(et => (
+                          <span key={et} style={{ fontSize: '8px', color: '#4A5B6C', backgroundColor: '#1A2840', padding: '1px 5px', borderRadius: '3px' }}>
+                            {et === 'earnings' ? '📊' : et === 'sec_filing' ? '📋' : et === 'conference_pdf' ? '📑' : et === 'wayback' ? '🕰' : et === 'ir_page' ? '🔗' : '📰'} {et}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ── COVERAGE COMPLETENESS (P1) — what's known, private, missing ── */}
+          {entry.coverage && (entry.coverage.confirmed_public.length > 0 || entry.coverage.likely_missing.length > 0) && (
+            <div style={{ padding: '16px 20px', borderTop: '1px solid #1A2840' }}>
+              <p style={{ fontSize: '10px', color: '#0F7ABF', fontWeight: '800', letterSpacing: '1.2px', margin: '0 0 12px' }}>🗺️ COVERAGE COMPLETENESS — who's in the chain?</p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px' }}>
+                {entry.coverage.confirmed_public.length > 0 && (
+                  <div style={{ padding: '10px 14px', backgroundColor: '#10B98108', border: '1px solid #10B98120', borderRadius: '8px' }}>
+                    <p style={{ fontSize: '9px', color: '#10B981', fontWeight: '700', margin: '0 0 6px' }}>✅ CONFIRMED PUBLIC ({entry.coverage.confirmed_public.length})</p>
+                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                      {entry.coverage.confirmed_public.map(t => <span key={t} style={{ fontSize: '10px', color: '#10B981', fontWeight: '600', backgroundColor: '#10B98112', border: '1px solid #10B98130', padding: '1px 6px', borderRadius: '4px' }}>{t}</span>)}
+                    </div>
+                  </div>
+                )}
+                {entry.coverage.known_private.length > 0 && (
+                  <div style={{ padding: '10px 14px', backgroundColor: '#F59E0B08', border: '1px solid #F59E0B20', borderRadius: '8px' }}>
+                    <p style={{ fontSize: '9px', color: '#F59E0B', fontWeight: '700', margin: '0 0 6px' }}>🏢 KNOWN PRIVATE ({entry.coverage.known_private.length})</p>
+                    {entry.coverage.known_private.map((t, i) => <div key={i} style={{ fontSize: '10px', color: '#8A95A3', padding: '2px 0' }}>{t}</div>)}
+                  </div>
+                )}
+                {entry.coverage.likely_missing.length > 0 && (
+                  <div style={{ padding: '10px 14px', backgroundColor: '#EF444408', border: '1px solid #EF444420', borderRadius: '8px' }}>
+                    <p style={{ fontSize: '9px', color: '#EF4444', fontWeight: '700', margin: '0 0 6px' }}>🔍 LIKELY MISSING — research candidates</p>
+                    {entry.coverage.likely_missing.map((t, i) => <div key={i} style={{ fontSize: '10px', color: '#8A95A3', padding: '2px 0', lineHeight: '1.4' }}>{t}</div>)}
+                  </div>
+                )}
+                {entry.coverage.uncovered_nodes.length > 0 && (
+                  <div style={{ padding: '10px 14px', backgroundColor: '#8B5CF608', border: '1px solid #8B5CF620', borderRadius: '8px' }}>
+                    <p style={{ fontSize: '9px', color: '#8B5CF6', fontWeight: '700', margin: '0 0 6px' }}>⚪ UNCOVERED NODES — no confirmed company</p>
+                    {entry.coverage.uncovered_nodes.map((t, i) => <div key={i} style={{ fontSize: '10px', color: '#4A5B6C', padding: '2px 0', lineHeight: '1.4' }}>{t}</div>)}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Live evidence */}
           {bucketArticles.length > 0 && (
             <div style={{ padding: '12px 20px 16px', borderTop: '1px solid #1A2840' }}>
-              <p style={{ fontSize: '10px', color: '#4A5B6C', fontWeight: '700', letterSpacing: '1px', margin: '0 0 10px' }}>LIVE EVIDENCE ({bucketArticles.length} articles)</p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                <p style={{ fontSize: '10px', color: '#4A5B6C', fontWeight: '700', letterSpacing: '1px', margin: 0 }}>LIVE EVIDENCE ({bucketArticles.length} articles)</p>
+                {entry.evidence_types && entry.evidence_types.length > 0 && (
+                  <div style={{ display: 'flex', gap: '3px' }}>
+                    {entry.evidence_types.map(et => (
+                      <span key={et} style={{ fontSize: '8px', color: '#4A5B6C', backgroundColor: '#1A2840', padding: '1px 5px', borderRadius: '3px' }}>
+                        {et === 'earnings' ? '📊' : et === 'sec_filing' ? '📋' : et === 'conference_pdf' ? '📑' : et === 'wayback' ? '🕰' : et === 'ir_page' ? '🔗' : '📰'} {et}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
               {bucketArticles.map((a, i) => {
                 const url = cleanUrl(a.url || a.source_url || '#');
                 return (
