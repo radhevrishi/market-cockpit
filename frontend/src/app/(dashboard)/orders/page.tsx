@@ -366,19 +366,25 @@ type SignalTemporality = 'FORWARD'|'CURRENT'|'HISTORICAL'; // forward = highest 
 
 interface NumericalExtract { value?: number; unit?: string; currency?: string; timing?: string }
 
+type SignalOrigin = 'COMPANY' | 'SECTOR' | 'DERIVED'; // COMPANY = article matched this ticker; SECTOR = cross-stock; DERIVED = inferred
+
 interface ExtractedSignal {
   type: ConcallSignalType; category: SignalCategory;
-  text: string;           // extracted sentence
+  text: string;           // extracted sentence — MANDATORY, empty = invalid signal
   positive: boolean;
   strength: 1|2|3|4|5;
   horizon: SignalHorizon;
-  isAlpha: boolean;       // changes 12-36M earnings power
+  isAlpha: boolean;
   temporality: SignalTemporality;
-  numerical?: NumericalExtract;  // structured ₹ extraction
-  isForConcall: boolean;  // true = concall tab; false = news feed
+  numerical?: NumericalExtract;
+  isForConcall: boolean;
   source: string;
   date: string;
-  ageWeight: number;      // 1.0 → 0.4 based on article age
+  ageWeight: number;
+  // NEW: subject + origin — the two fields that fix "DEMAND_CONSTRAINT everywhere"
+  subject: string;        // WHAT: "Insulators", "₹300Cr Order", "Q4 FY26 Capacity"
+  origin: SignalOrigin;   // WHO: company-specific vs sector-wide vs derived
+  dupCount?: number;      // how many duplicate signals were merged into this one
 }
 
 interface CompositeSignal {
@@ -586,6 +592,70 @@ const SECTOR_SIGNALS: { id: string; label: string; signal: string; keywords: str
   { id:'DATA_CENTER_POWER', signal:'AI/data center power demand — grid equipment beneficiary', label:'DC Power Demand', keywords:['data center power','ai power demand','data centre power','hyperscaler power'], targetSectors:['electrical','power','grid','transformer'] },
 ];
 
+// ── Subject Extractor — "WHAT" field that prevents generic DEMAND_CONSTRAINT everywhere ──
+// Maps raw article text + signal type → a specific subject ("Insulators", "₹300Cr", "Q4 FY26")
+function extractSubject(type: ConcallSignalType, text: string): string {
+  const t = text.toLowerCase();
+  // Product/material subjects — detect WHAT is constrained
+  if (t.includes('insulator')) return 'Insulators';
+  if (t.includes('transformer')) return 'Transformers';
+  if (t.includes('cable') || t.includes('conductor')) return 'Cables/Conductors';
+  if (t.includes('solar') || t.includes('module') || t.includes('panel')) return 'Solar';
+  if (t.includes('semiconductor') || t.includes('chip')) return 'Semiconductors';
+  if (t.includes('defence') || t.includes('defense') || t.includes('military')) return 'Defence';
+  if (t.includes('railway') || t.includes('rail')) return 'Railways';
+  if (t.includes('water') || t.includes('sewage') || t.includes('municipal')) return 'Water Infra';
+  if (t.includes('real estate') || t.includes('housing') || t.includes('construction')) return 'Real Estate';
+  if (t.includes('pharma') || t.includes('drug') || t.includes('api')) return 'Pharma';
+  if (t.includes('export') || t.includes('overseas') || t.includes('international')) return 'Export';
+  // Order subject: use numerical extract or generic
+  if (type === 'ORDER' || type === 'LTA') {
+    const m = text.match(/₹\s*[\d,.]+\s*(cr|crore|lakh)/i);
+    if (m) return m[0].trim();
+    return 'Order Pipeline';
+  }
+  // Capex subject: extract timing
+  if (type === 'CAPEX') {
+    const m = text.match(/[Qq][1-4]\s*[Ff][Yy]\s*\d{2,4}/i) || text.match(/[Ff][Yy]\s*\d{2,4}/i);
+    if (m) return `Capacity (${m[0].toUpperCase()})`;
+    return 'Capacity Expansion';
+  }
+  if (type === 'CAPEX_DELAY') return 'Expansion Delay';
+  if (type === 'MARGIN' || type === 'MARGIN_PRESSURE') return 'Operating Margin';
+  if (type === 'PRICING') return 'Pricing Power';
+  if (type === 'GUIDANCE_UP') return 'Management Outlook';
+  if (type === 'GUIDANCE_DOWN') return 'Guidance Risk';
+  if (type === 'CONSERVATIVE_GUIDANCE') return 'Conservative Management';
+  if (type === 'VISIBILITY_CONFIDENCE') return 'Order Visibility';
+  if (type === 'EXPORT_DEMAND') return 'Export Orders';
+  if (type === 'DEBT_REDUCTION') return 'Balance Sheet';
+  if (type === 'DEMAND_CONSTRAINT') return 'Supply Constraint';
+  return type.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// ── Signal Deduplicator — merges same-type signals, increments strength ──────
+// Fixes: DEMAND_CONSTRAINT × 3 → DEMAND_CONSTRAINT (Strength 4, merged)
+function deduplicateSignals(signals: ExtractedSignal[]): ExtractedSignal[] {
+  // Key = type + origin (company-specific ORDER stays separate from sector ORDER)
+  const grouped = new Map<string, ExtractedSignal[]>();
+  for (const s of signals) {
+    const key = `${s.type}:${s.origin}`;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key)!.push(s);
+  }
+  const deduped: ExtractedSignal[] = [];
+  for (const group of grouped.values()) {
+    // Pick the best (highest strength × ageWeight, with evidence text)
+    const withText = group.filter(s => s.text && s.text.length > 10);
+    const best = (withText.length > 0 ? withText : group).sort((a,b) => (b.strength * b.ageWeight) - (a.strength * a.ageWeight))[0];
+    // Merge subjects from all duplicates
+    const subjects = [...new Set(group.map(s => s.subject).filter(Boolean))].slice(0, 3);
+    const mergedStrength = Math.min(5, best.strength + Math.floor((group.length - 1) / 2)) as 1|2|3|4|5;
+    deduped.push({ ...best, subject: subjects.join(' + ') || best.subject, strength: mergedStrength, dupCount: group.length });
+  }
+  return deduped.sort((a,b) => (b.strength * b.ageWeight) - (a.strength * a.ageWeight));
+}
+
 // ── Hybrid Signal Extractor (Layer 1 + Layer 2) ───────────────────────────────
 function extractSignals(articleText: string, source: string, date: string): ExtractedSignal[] {
   const text = articleText.toLowerCase();
@@ -623,16 +693,19 @@ function extractSignals(articleText: string, source: string, date: string): Extr
       }
     }
 
-    if (matched && matchedText.length > 10) {
+    // EVIDENCE INTEGRITY: only create signal if we extracted actual text (≥15 chars)
+    // This prevents signals without traceable evidence — the core trust issue
+    if (matched && matchedText.length >= 15) {
       const temporality = tagTemporality(matchedText);
       const numerical = extractNumerical(matchedText);
-      // Only FORWARD + CURRENT_STATE signals count for alpha scoring
       const effectiveAlpha = p.isAlpha && temporality !== 'HISTORICAL';
+      const subject = extractSubject(p.type, matchedText);
       results.push({
         type: p.type, category: p.category, text: matchedText,
         positive: p.positive, strength: p.strength, horizon: p.horizon,
         isAlpha: effectiveAlpha, temporality,
         numerical, isForConcall: true,
+        subject, origin: 'COMPANY', // extractSignals = company match; sector signals tagged separately
         source, date, ageWeight,
       });
     }
@@ -646,12 +719,13 @@ function extractSignals(articleText: string, source: string, date: string): Extr
         const start = Math.max(0, text.lastIndexOf('.', idx - 1) + 1);
         const end = Math.min(articleText.length, (text.indexOf('.', idx + kw.length) + 1) || articleText.length);
         const matchedText = articleText.slice(start, end).trim().split(' ').slice(0, 40).join(' ');
-        if (matchedText.length > 10) {
+        if (matchedText.length >= 15) {
           results.push({
             type: p.type, category: p.category, text: matchedText,
             positive: p.positive, strength: p.strength, horizon: '0-3M',
             isAlpha: p.isAlpha, temporality: 'CURRENT' as const,
-            isForConcall: false, // → routes to news feed context
+            isForConcall: false,
+            subject: extractSubject(p.type, matchedText), origin: 'COMPANY' as SignalOrigin,
             source, date, ageWeight,
           });
         }
@@ -708,22 +782,46 @@ function computeExpectationShift(signals: ExtractedSignal[]): number {
 }
 
 // ── Why It Matters Generator ──────────────────────────────────────────────────
-function generateWhyItMatters(composites: CompositeSignal[], sym: string): string {
-  const up = composites.filter(c=>c.direction==='UP');
-  const down = composites.filter(c=>c.direction==='DOWN');
-  if (up.length === 0 && down.length === 0) return 'No material management signals detected in 30D window.';
-  const upLabels = up.slice(0,3).map(c=>c.label.toLowerCase()).join(' + ');
-  const downLabels = down.slice(0,2).map(c=>c.label.toLowerCase()).join(' + ');
-  if (up.length >= 2 && down.length === 0) {
-    return `${upLabels} signals converging — revenue acceleration likely over next 2-4 quarters. Multiple independent articles confirm improving thesis.`;
+// Upgraded: uses actual signal subjects for dynamic, company-specific narrative
+function generateWhyItMatters(composites: CompositeSignal[], signals: ExtractedSignal[]): string {
+  const demandSig = signals.find(s=>s.type==='DEMAND_CONSTRAINT'&&s.positive&&s.text);
+  const orderSig  = signals.find(s=>s.type==='ORDER'&&s.positive&&s.text);
+  const capexSig  = signals.find(s=>s.type==='CAPEX'&&s.positive&&s.text);
+  const marginSig = signals.find(s=>s.type==='MARGIN'&&s.positive&&s.text);
+  const guidanceSig = signals.find(s=>s.type==='GUIDANCE_UP'&&s.positive&&s.text);
+  const negSigs   = signals.filter(s=>!s.positive&&s.isAlpha&&s.text);
+
+  if (signals.length === 0) return 'No traceable management signals in 30D window.';
+
+  // Build specific narrative using subjects (e.g., "Insulators constrained, ₹300Cr order pipeline")
+  const parts: string[] = [];
+  if (demandSig) parts.push(`${demandSig.subject} constrained${demandSig.origin==='SECTOR'?' (sector-wide)':' (company confirmed)'}`);
+  if (orderSig)  parts.push(`${orderSig.subject || 'order pipeline'} confirmed`);
+  if (capexSig)  parts.push(`${capexSig.subject || 'capacity'} expanding`);
+  if (marginSig) parts.push(`${marginSig.subject || 'margins'} stable`);
+  if (guidanceSig) parts.push(`management ${guidanceSig.subject?.toLowerCase() || 'outlook'} positive`);
+
+  const negParts = negSigs.slice(0,2).map(s=>`${s.subject || s.type} risk`);
+
+  if (parts.length === 0 && negParts.length > 0) {
+    return `Risk signals: ${negParts.join(' + ')}. No positive confirmation. Watch closely.`;
   }
-  if (down.length >= 2 && up.length === 0) {
-    return `${downLabels} risk signals stacking — watch for earnings miss or guidance cut. Thesis under pressure.`;
+  if (parts.length >= 3 && negParts.length === 0) {
+    return `${parts.slice(0,-1).join(' + ')} → ${parts[parts.length-1]} → revenue acceleration likely 2-4 quarters.`;
   }
-  if (up.length > 0 && down.length > 0) {
-    return `Mixed signals: ${upLabels} improving but ${downLabels} risk present. Monitor for resolution.`;
+  if (parts.length >= 2 && negParts.length === 0) {
+    return `${parts.join(' + ')} → multi-signal convergence, improving conviction.`;
   }
-  return `${upLabels} improving. Single-signal — needs corroboration from another source before high conviction.`;
+  if (parts.length >= 1 && negParts.length > 0) {
+    return `${parts.join(' + ')} but ${negParts.join(' + ')} — mixed signals, monitor resolution.`;
+  }
+  if (parts.length === 1) {
+    const isOnlySector = signals.filter(s=>s.isAlpha&&s.positive).every(s=>s.origin==='SECTOR');
+    return isOnlySector
+      ? `${parts[0]} — sector signal only. No company-specific confirmation found. Low conviction.`
+      : `${parts[0]} — single signal. Needs corroboration before sizing up.`;
+  }
+  return 'Insufficient signals for synthesis. Verify manually.';
 }
 
 // ── Fixed MRI Score (incorporates management style signals) ──────────────────
@@ -754,6 +852,46 @@ function computeSignalScore(signals: ExtractedSignal[]): number {
     return sum + w;
   }, 0);
   return Math.max(0, Math.min(100, Math.round(50 + weightedSum * 4)));
+}
+
+// ── Reusable Signal Card — ensures consistent display of label + subject + evidence ──
+function SignalCard({ sig, horizonColor }: { sig: ExtractedSignal; horizonColor: (h:string)=>string }) {
+  const c = sig.positive ? '#10b981' : '#ef4444';
+  const originBadge = sig.origin === 'SECTOR' ? '🌍' : sig.origin === 'DERIVED' ? '🔮' : '🏢';
+  return (
+    <div style={{padding:'10px 12px',backgroundColor:sig.positive?'#10b98108':'#ef444408',border:`1px solid ${sig.positive?'#10b98120':'#ef444420'}`,borderLeft:`3px solid ${c}`,borderRadius:7}}>
+      <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:5,flexWrap:'wrap'}}>
+        {/* Signal label + subject together — the key fix */}
+        <span style={{fontSize:11,fontWeight:800,color:c}}>
+          {sig.positive?'↑':'↓'} {sig.type.replace(/_/g,' ')}:&nbsp;
+          <span style={{fontWeight:600,color:'#C9D4E0'}}>{sig.subject}</span>
+        </span>
+        {sig.dupCount && sig.dupCount > 1 && (
+          <span style={{fontSize:8,color:'#4A5B6C',border:'1px solid #1A2840',padding:'0 4px',borderRadius:3}}>×{sig.dupCount} merged</span>
+        )}
+        <span title={`Origin: ${sig.origin}`} style={{fontSize:9,color:'#4A5B6C'}}>{originBadge} {sig.origin}</span>
+        <span style={{fontSize:9,color:'#4A5B6C',fontStyle:'italic'}}>{sig.temporality}</span>
+        <span style={{fontSize:9,fontWeight:700,color:horizonColor(sig.horizon),border:`1px solid ${horizonColor(sig.horizon)}40`,padding:'1px 5px',borderRadius:3}}>{sig.horizon}</span>
+        {sig.numerical && (
+          <span style={{fontSize:10,fontWeight:800,color:'#F59E0B',border:'1px solid #F59E0B40',padding:'2px 7px',borderRadius:3}}>
+            ₹{sig.numerical.value}{sig.numerical.unit}{sig.numerical.timing?` · ${sig.numerical.timing}`:''}
+          </span>
+        )}
+        <span style={{fontSize:8,color:'#4A5B6C',marginLeft:'auto'}}>{sig.date?new Date(sig.date).toLocaleDateString('en-IN'):''}</span>
+      </div>
+      {/* Evidence sentence — MANDATORY. If missing, flag it */}
+      {sig.text && sig.text.length >= 15 ? (
+        <div style={{fontSize:11,color:'#C9D4E0',lineHeight:1.6,backgroundColor:'#060E1A',padding:'6px 10px',borderRadius:5,borderLeft:'2px solid #4A5B6C',marginBottom:4}}>
+          "{sig.text}"
+        </div>
+      ) : (
+        <div style={{fontSize:10,color:'#F59E0B',padding:'4px 8px',backgroundColor:'#F59E0B08',borderRadius:4,marginBottom:4}}>
+          ⚠ No traceable evidence sentence — do not act on this signal
+        </div>
+      )}
+      <div style={{fontSize:9,color:'#4A5B6C'}}>📰 {sig.source || 'Unknown source'}</div>
+    </div>
+  );
 }
 
 function ConcallIntelligence() {
@@ -848,25 +986,39 @@ function ConcallIntelligence() {
 
         if (relevant.length === 0 && sectorSignalArticles.length === 0) continue;
 
-        // Extract signals from matched articles
-        const allSignals: ExtractedSignal[] = [];
-        for (const a of [...relevant, ...sectorSignalArticles]) {
+        // Extract signals — COMPANY signals first, then SECTOR signals (clearly separated)
+        const rawSignals: ExtractedSignal[] = [];
+
+        // Company signals: from articles that matched THIS company's ticker/name
+        for (const a of relevant) {
           const fullText = [(a.title||''),(a.headline||''),(a.summary||'')].join(' ');
           const sigs = extractSignals(fullText, a.title||a.headline||'', a.published_at||'');
-          // Tag sector signals appropriately
-          sigs.forEach(s => {
-            if (sectorSignalArticles.includes(a) && !relevant.includes(a)) {
-              (s as any).isSectorSignal = true;
-            }
-          });
-          allSignals.push(...sigs);
+          // All are COMPANY origin — extractSignals already sets origin:'COMPANY'
+          rawSignals.push(...sigs);
         }
+
+        // Sector signals: from cross-stock articles — tag as SECTOR origin with sector context
+        for (const a of sectorSignalArticles) {
+          if (relevant.includes(a)) continue; // already processed as COMPANY
+          const fullText = [(a.title||''),(a.headline||''),(a.summary||'')].join(' ');
+          const sigs = extractSignals(fullText, a.title||a.headline||'', a.published_at||'');
+          // Override origin to SECTOR and mark subject with "(Sector)" suffix
+          sigs.forEach(s => {
+            s.origin = 'SECTOR';
+            if (!s.subject.includes('(Sector)')) s.subject = `${s.subject} (Sector)`;
+          });
+          rawSignals.push(...sigs);
+        }
+
+        // DEDUPLICATION: merge same-type signals, preventing DEMAND_CONSTRAINT × 3
+        const allSignals = deduplicateSignals(rawSignals);
 
         const composite = buildCompositeSignals(allSignals);
         const signalScore = computeSignalScore(allSignals);
         const mriScore = computeMRI(allSignals);
         const expectationShift = computeExpectationShift(allSignals);
-        const whyItMatters = generateWhyItMatters(composite, sym);
+        // Dynamic why-it-matters using actual signal subjects
+        const whyItMatters = generateWhyItMatters(composite, allSignals);
         const posCount = allSignals.filter(s=>s.positive).length;
         const negCount = allSignals.filter(s=>!s.positive).length;
 
@@ -1003,8 +1155,12 @@ function ConcallIntelligence() {
                       <div style={{display:'flex',gap:3,flexWrap:'wrap',marginBottom:3}}>
                         {/* Primary signal — dominant alpha */}
                         {s.signals.filter(sig=>sig.isAlpha&&sig.positive).slice(0,3).map((sig,si)=>(
-                          <span key={si} style={{fontSize:8,fontWeight:700,color:ACCENT2,backgroundColor:ACCENT2+'12',border:`1px solid ${ACCENT2}30`,padding:'1px 5px',borderRadius:3}}>
-                            {sig.type.replace(/_/g,' ')}{sig.numerical?` ₹${sig.numerical.value}${sig.numerical.unit}`:''}
+                          <span key={si} style={{fontSize:8,fontWeight:700,
+                            color:sig.origin==='SECTOR'?'#06b6d4':ACCENT2,
+                            backgroundColor:sig.origin==='SECTOR'?'#06b6d412':ACCENT2+'12',
+                            border:`1px solid ${sig.origin==='SECTOR'?'#06b6d430':ACCENT2+'30'}`,padding:'1px 5px',borderRadius:3}}>
+                            {sig.origin==='SECTOR'?'🌍 ':''}{sig.subject || sig.type.replace(/_/g,' ')}
+                            {sig.numerical?` ₹${sig.numerical.value}${sig.numerical.unit}`:''}
                           </span>
                         ))}
                         {s.signals.filter(sig=>sig.isAlpha&&!sig.positive).slice(0,1).map((sig,si)=>(
@@ -1127,41 +1283,42 @@ function ConcallIntelligence() {
                         </div>
                       )}
 
-                      {/* Alpha signals */}
+                      {/* Alpha signals — split by origin: COMPANY vs SECTOR */}
                       {s.signals.filter(sig=>sig.isAlpha).length > 0 && (
                         <div style={{marginBottom:12}}>
-                          <div style={{fontSize:10,fontWeight:800,color:ACCENT2,letterSpacing:'1px',marginBottom:8}}>⭐ ALPHA SIGNALS — changes 12-36M earnings power</div>
-                          <div style={{display:'flex',flexDirection:'column',gap:6}}>
-                            {s.signals.filter(sig=>sig.isAlpha).map((sig,i)=>(
-                              <div key={i} style={{padding:'10px 12px',backgroundColor:sig.positive?'#10b98108':'#ef444408',border:`1px solid ${sig.positive?'#10b98120':'#ef444420'}`,borderLeft:`3px solid ${sig.positive?'#10b981':'#ef4444'}`,borderRadius:7}}>
-                                <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:6,flexWrap:'wrap'}}>
-                                  {/* Signal label — primary identifier */}
-                                  <span style={{fontSize:11,fontWeight:800,color:sig.positive?'#10b981':'#ef4444'}}>
-                                    {sig.positive?'↑':'↓'} {sig.type.replace(/_/g,' ')}
-                                  </span>
-                                  <span style={{fontSize:9,color:'#4A5B6C',fontStyle:'italic'}}>{sig.temporality}</span>
-                                  <span style={{fontSize:9,fontWeight:700,color:horizonColor(sig.horizon),border:`1px solid ${horizonColor(sig.horizon)}40`,padding:'1px 5px',borderRadius:3}}>{sig.horizon}</span>
-                                  {sig.numerical && (
-                                    <span style={{fontSize:10,fontWeight:800,color:'#F59E0B',border:'1px solid #F59E0B40',padding:'2px 7px',borderRadius:3}}>
-                                      ₹{sig.numerical.value}{sig.numerical.unit}{sig.numerical.timing?` · ${sig.numerical.timing}`:''}
-                                    </span>
-                                  )}
-                                  <span style={{fontSize:8,color:'#4A5B6C',marginLeft:'auto'}}>{sig.date?new Date(sig.date).toLocaleDateString('en-IN'):''}</span>
-                                </div>
-                                {/* Evidence sentence — always shown, never optional */}
-                                {sig.text ? (
-                                  <div style={{fontSize:11,color:'#C9D4E0',lineHeight:1.6,backgroundColor:'#060E1A',padding:'6px 10px',borderRadius:5,borderLeft:'2px solid #4A5B6C',marginBottom:4}}>
-                                    "{sig.text}"
-                                  </div>
-                                ) : (
-                                  <div style={{fontSize:10,color:'#F59E0B',padding:'4px 8px',backgroundColor:'#F59E0B08',borderRadius:4,marginBottom:4}}>
-                                    ⚠ Signal detected but no sentence extracted — verify manually
-                                  </div>
-                                )}
-                                <div style={{fontSize:9,color:'#4A5B6C'}}>📰 {sig.source || 'Unknown source'}</div>
+                          {/* Company-specific signals */}
+                          {s.signals.filter(sig=>sig.isAlpha&&sig.origin==='COMPANY').length > 0 && (
+                            <div style={{marginBottom:10}}>
+                              <div style={{fontSize:10,fontWeight:800,color:'#10b981',letterSpacing:'1px',marginBottom:6}}>🏢 COMPANY SIGNALS — confirmed for {s.symbol}</div>
+                              <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                                {s.signals.filter(sig=>sig.isAlpha&&sig.origin==='COMPANY').map((sig,i)=>(
+                                  <SignalCard key={i} sig={sig} horizonColor={horizonColor} />
+                                ))}
                               </div>
-                            ))}
-                          </div>
+                            </div>
+                          )}
+                          {/* Sector signals */}
+                          {s.signals.filter(sig=>sig.isAlpha&&sig.origin==='SECTOR').length > 0 && (
+                            <div style={{marginBottom:10}}>
+                              <div style={{fontSize:10,fontWeight:800,color:'#06b6d4',letterSpacing:'1px',marginBottom:6}}>🌍 SECTOR SIGNALS — derived, not company-specific</div>
+                              <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                                {s.signals.filter(sig=>sig.isAlpha&&sig.origin==='SECTOR').map((sig,i)=>(
+                                  <SignalCard key={i} sig={sig} horizonColor={horizonColor} />
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {/* Negative alpha */}
+                          {s.signals.filter(sig=>sig.isAlpha&&!sig.positive).length > 0 && (
+                            <div>
+                              <div style={{fontSize:10,fontWeight:800,color:'#ef4444',letterSpacing:'1px',marginBottom:6}}>⚠ RISK SIGNALS</div>
+                              <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                                {s.signals.filter(sig=>sig.isAlpha&&!sig.positive).map((sig,i)=>(
+                                  <SignalCard key={i} sig={sig} horizonColor={horizonColor} />
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                       {/* Noise signals */}
