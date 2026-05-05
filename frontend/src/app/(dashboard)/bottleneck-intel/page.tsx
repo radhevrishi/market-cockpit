@@ -85,19 +85,50 @@ const TIER_MAP: Record<string, { tier: number; label: string; color: string }> =
   NUCLEAR_ENERGY:         { tier: 6, label: 'Tier 6 · Nuclear',          color: '#F59E0B' },
 };
 
+// ── 3-State Lifecycle Classification ─────────────────────────────────────────
+// Every bucket is classified into a lifecycle state based on current news velocity.
+// This prevents "CRITICAL" labels on stale themes with zero weekly articles.
+const STRUCTURAL_THEMES = new Set([
+  'FABRICATION_PACKAGING', // CoWoS constraint — decade-long infrastructure cycle
+  'INTERCONNECT_PHOTONICS', // CPO is 2025-2030 structural transition
+  'MATERIALS_SUPPLY',      // Critical minerals bifurcation — geopolitical, decade+
+  'POWER_GRID',            // Grid interconnect queues span 5-10 years
+  'NUCLEAR_ENERGY',        // SMR deployments are 2028+ structural story
+]);
+
+type BucketLifecycleState = 'ACCELERATING' | 'ACTIVE' | 'STRUCTURAL' | 'FADING' | 'STALE';
+function getBucketLifecycle(bucketId: string, vel: { week: number; prev: number; trend: string }): {
+  state: BucketLifecycleState; label: string; color: string; desc: string;
+} {
+  if (vel.week >= 2 && vel.trend === '🔥')
+    return { state: 'ACCELERATING', label: '🔥 ACCELERATING', color: '#F59E0B', desc: `${vel.week} articles this week vs ${vel.prev} prior — real-time stress building` };
+  if (vel.week >= 1)
+    return { state: 'ACTIVE', label: '⚡ ACTIVE', color: '#10B981', desc: `${vel.week} article${vel.week !== 1 ? 's' : ''} this week — thesis actively playing out` };
+  if (vel.trend === '📉' && vel.prev > 0)
+    return { state: 'FADING', label: '📉 FADING', color: '#4A5B6C', desc: `Signal decelerating — was ${vel.prev} last week, now 0 this week` };
+  if (STRUCTURAL_THEMES.has(bucketId))
+    return { state: 'STRUCTURAL', label: '🏗 STRUCTURAL', color: '#8B5CF6', desc: 'Long-cycle constraint — persists across news cycles (3–10yr duration), not driven by weekly headlines' };
+  return { state: 'STALE', label: '⏸ STALE', color: '#4A5B6C', desc: 'No articles this week — thesis may be resolved, paused, or low-priority right now' };
+}
+
 // ── Drilldown knowledge base ──────────────────────────────────────────────────
 
+interface IndiaPick { ticker: string; exchange: 'NSE'|'BSE'; thesis: string; }
 interface DrilldownEntry {
   label: string; icon: string; why: string; supply: string; demand: string;
+  lifecycle: 'structural' | 'cyclical'; // persistent multi-year vs news-driven
   winners: { ticker: string; thesis: string }[];
-  losers: { ticker: string; thesis: string }[];
-  confirms: string[];   // what confirms the thesis is playing out
-  breaks: string[];     // what would invalidate the thesis
-  watch_kpi: string[];  // leading indicators to track
+  losers:  { ticker: string; thesis: string }[];
+  confirms:  string[]; // what confirms the thesis is playing out
+  breaks:    string[]; // what would invalidate the thesis
+  contradictions: string[]; // specific evidence that would WEAKEN (not just break) thesis
+  watch_kpi: string[]; // leading indicators to track
+  causal_chain: string[]; // Layer A → Layer B → Layer C — second-order idea generation
+  india_plays: IndiaPick[]; // India-listed beneficiaries (NSE/BSE)
 }
 const DRILLDOWN: Record<string, DrilldownEntry> = {
   MEMORY_STORAGE: {
-    label: 'Memory & Storage', icon: '🧠',
+    label: 'Memory & Storage', icon: '🧠', lifecycle: 'structural',
     why: 'HBM and enterprise DRAM/NAND capacity is sold out through 2026. Every hyperscaler GPU needs 6–8 stacks of HBM3E; capacity additions lag GPU demand by 18–24 months.',
     supply: 'Only 3 HBM producers (SK Hynix, Samsung, Micron). Capex cycles 2–3 years. Yield on HBM3E structurally below DDR5.',
     demand: 'Every Blackwell GPU consumes 8× HBM3E stacks. Inference clusters need 3–5× the memory footprint of training. Demand ~60% YoY.',
@@ -105,10 +136,13 @@ const DRILLDOWN: Record<string, DrilldownEntry> = {
     losers: [{ ticker: 'NVDA', thesis: 'Margin pressure as HBM costs stay elevated' }],
     confirms: ['HBM3E ASP increasing in supplier earnings calls', 'Lead times quoted >6 months by NVDA/AMD', 'New data center announcements citing memory as constraint', 'Micron/SK Hynix capacity sold out for next 2 quarters'],
     breaks: ['A 4th HBM supplier qualifies at major hyperscaler', 'AI inference demand drops materially (model efficiency breakthrough)', 'TSMC CoWoS capacity glut forces GPU inventory correction'],
+    contradictions: ['SK Hynix/Samsung both report HBM inventory build (not sold through)', 'AI model architectures shift to smaller context windows reducing memory bandwidth need', 'CXL memory pooling reduces per-server HBM requirements by >30%'],
     watch_kpi: ['HBM3E spot pricing (should be rising)', 'MU/SKX gross margin trajectory', 'NVDA H200 vs B200 shipment mix (B200 = 8× more HBM)', 'AEHR order backlog language in earnings calls'],
+    causal_chain: ['AI training scale ↑ → HBM demand surge → HBM 3-vendor oligopoly constrained → CoWoS packaging required for HBM stacking → advanced packaging substrate demand → power/cooling for HBM-dense systems'],
+    india_plays: [],
   },
   INTERCONNECT_PHOTONICS: {
-    label: 'Interconnect & Photonics', icon: '💡',
+    label: 'Interconnect & Photonics', icon: '💡', lifecycle: 'structural',
     why: 'Copper hits bandwidth walls at 224 Gbps SerDes. Co-packaged optics (CPO) and silicon photonics are the only path to 1.6T/3.2T fabrics for future AI factories.',
     supply: 'CPO supply chain immature: lasers, modulators, couplers bottlenecked at handful of vendors. TSMC/Intel photonics integration still ramping.',
     demand: 'Every rack-scale AI system (NVL72, Trainium3) needs 10–100× more optical transceivers than prior generations. Hyperscaler buys locked through 2027.',
@@ -116,10 +150,16 @@ const DRILLDOWN: Record<string, DrilldownEntry> = {
     losers: [],
     confirms: ['800G/1.6T transceiver order announcements from hyperscalers', 'CPO product wins at AMD/NVDA rack-scale systems', 'SIVE lasers named in GlobalFoundries or Intel photonics roadmap PDFs', 'COHR/LITE revenue guidance raised citing datacenter optics'],
     breaks: ['Electrical interconnect (UALink/CXL) solves bandwidth problem without optics', 'NVDA pivots to on-chip optical integration eliminating transceiver need', 'Multiple new laser suppliers qualify at major CPO customer'],
+    contradictions: ['COHR datacenter revenue declines despite market claims', 'Hyperscaler infrastructure architects publicly endorse copper for rack-scale instead of optical', 'CPO standard fragmentation delays adoption past 2027'],
     watch_kpi: ['800G transceiver lead times (should be >16 weeks)', 'COHR datacenter % of revenue', 'GFS photonics roadmap PDF updates (track via Wayback Machine)', 'MRVL custom silicon revenue guidance'],
+    causal_chain: ['HBM bandwidth ceiling → copper I/O insufficient → co-packaged optics demand → InP/GaAs laser supply constraint → substrate supply (AXTI) bottleneck → photonic IC fab demand (TSMC photonics)'],
+    india_plays: [
+      { ticker: 'STERLITE', exchange: 'NSE', thesis: 'Sterlite Technologies: optical fiber cables, domestic data center buildout beneficiary' },
+      { ticker: 'HFCL', exchange: 'NSE', thesis: 'HFCL: fiber optic cables + defense networking equipment, order book driven' },
+    ],
   },
   FABRICATION_PACKAGING: {
-    label: 'Advanced Fabrication & Packaging', icon: '🏭',
+    label: 'Advanced Fabrication & Packaging', icon: '🏭', lifecycle: 'structural',
     why: 'CoWoS advanced packaging at TSMC is the single-point bottleneck for every leading-edge AI accelerator. Capacity doubles every 18 months but demand outpaces it.',
     supply: 'TSMC CoWoS-L/S: ~35K wpm 2024, ~70K wpm targeted 2026. Intel Foveros and Samsung I-Cube sub-scale. ASML High-NA EUV gating N2/A16 ramp.',
     demand: 'Nvidia alone consumes 60%+ of CoWoS. AMD MI300/MI350, AWS Trainium, Google TPU all share remaining. Demand 80%+ YoY.',
@@ -127,10 +167,17 @@ const DRILLDOWN: Record<string, DrilldownEntry> = {
     losers: [{ ticker: 'INTC', thesis: 'Intel Foundry behind on advanced packaging' }],
     confirms: ['TSMC CoWoS price increase or capacity allocation announcement', 'ASML order backlog growing / delivery slots pushed out', 'NVDA B200 yield improvement news (CoWoS driven)', 'New CoWoS customer announced (AMD, AWS, Google, Meta)'],
     breaks: ['Fan-out panel level packaging (FOPLP) scales and bypasses CoWoS', 'Samsung I-Cube or Intel Foveros qualifies at NVDA', 'TSMC CoWoS capacity doubles ahead of schedule'],
+    contradictions: ['TSMC announces 3× CoWoS expansion ahead of schedule with no price increase', 'NVDA discloses GPU yield rates are constrained by design not packaging', 'Multiple hyperscalers disclose GPU inventory overbuild (not shortage)'],
     watch_kpi: ['TSMC CoWoS utilization rate (should be >95%)', 'ASML book-to-bill ratio', 'NVDA gross margin on H/B series (packaging cost impact)', 'Advanced packaging capex announcements from OSAT players'],
+    causal_chain: ['CoWoS shortage → AI server deployment constraint → GPU allocation rationing → HBM bandwidth demand pull → optical I/O demand → power/cooling infrastructure demand → grid interconnect queue growth'],
+    india_plays: [
+      { ticker: 'INFY', exchange: 'NSE', thesis: 'Infosys: chip design services, VLSI/EDA talent pool serving fabless semiconductor customers' },
+      { ticker: 'HCLTECH', exchange: 'NSE', thesis: 'HCL Tech: semiconductor engineering services, packaging design for OSAT customers' },
+      { ticker: 'SASKEN', exchange: 'NSE', thesis: 'Sasken Technologies: embedded and semiconductor design services, niche exposure' },
+    ],
   },
   COMPUTE_SCALING: {
-    label: 'Compute & GPU Allocation', icon: '⚡',
+    label: 'Compute & GPU Allocation', icon: '⚡', lifecycle: 'cyclical',
     why: 'GPU supply remains rationed by Nvidia. H100/H200 allocation relationship-driven. Blackwell ramp gated by CoWoS. Tier-2 clouds and enterprises wait 6–12 months.',
     supply: 'Nvidia ships what TSMC packages. MI300X/MI325X the only meaningful alternative; TPU/Trainium captive to respective hyperscalers.',
     demand: 'Hyperscaler AI capex ~$300B/yr, projected $450B+ 2026. Sovereign AI funds, neoclouds, enterprise inference all competing for allocation.',
@@ -138,10 +185,17 @@ const DRILLDOWN: Record<string, DrilldownEntry> = {
     losers: [{ ticker: 'CRWV', thesis: 'Neoclouds dependent on NVDA allocation' }],
     confirms: ['Hyperscaler capex guidance raised (MSFT/META/AMZN/GOOG)', 'NVDA data center revenue beats + guides higher', 'AMD MI300X customer wins at tier-2 clouds', 'Sovereign AI deals announced (UAE, India, Japan)'],
     breaks: ['Open-source model breakthrough cuts compute requirements by 10×', 'US export restrictions tightened on Nvidia H/B series', 'Hyperscaler capex guidance cut materially'],
+    contradictions: ['DeepSeek/Qwen-class efficiency leap reduces per-query compute need by >5×', 'Multiple hyperscalers publicly disclose GPU overbuild in earnings calls', 'AMD MI series captures >30% of hyperscaler AI workloads'],
     watch_kpi: ['NVDA data center revenue quarterly trajectory', 'Hyperscaler AI capex guidance in earnings calls', 'AMD MI series customer count', 'GPU spot market pricing on AWS/Azure'],
+    causal_chain: ['Hyperscaler capex ↑ → GPU allocation rationed → CoWoS packaging bottleneck → HBM demand → memory supply constraint → AI inference scaling → power grid demand growth'],
+    india_plays: [
+      { ticker: 'TATAELXSI', exchange: 'NSE', thesis: 'Tata Elxsi: AI/ML engineering services, GPU cluster management, growing data center exposure' },
+      { ticker: 'LTTS', exchange: 'NSE', thesis: 'L&T Technology Services: semiconductor design and embedded AI, adjacently benefits from GPU ecosystem' },
+      { ticker: 'RAILTEL', exchange: 'NSE', thesis: 'RailTel: government data center infra, early-stage but sovereign AI compute beneficiary' },
+    ],
   },
   POWER_GRID: {
-    label: 'Power & Grid Constraints', icon: '🔌',
+    label: 'Power & Grid Constraints', icon: '🔌', lifecycle: 'structural',
     why: 'Data center power demand outpaces grid interconnect timelines by 3–7 years. Transformer, switchgear, and HV cable lead times are 80–130 weeks.',
     supply: 'Only 3 major transformer OEMs globally. Grain-oriented electrical steel (GOES) constrained. Utility interconnect queues span 5–10 years in PJM/ERCOT.',
     demand: 'AI data center nameplate demand: 50 GW US by 2030 (Goldman, EPRI). Hyperscaler site selection now power-first.',
@@ -149,10 +203,19 @@ const DRILLDOWN: Record<string, DrilldownEntry> = {
     losers: [],
     confirms: ['Transformer lead times quoted >100 weeks by GEV/ABB/Siemens', 'Hyperscaler data center site cancellations citing power availability', 'PJM/ERCOT interconnect queue backlogs disclosed in utility filings', 'GEV/ETN order backlog growing, pricing increasing'],
     breaks: ['Nuclear SMRs deploy on-site at hyperscalers at scale by 2027', 'Grid modernization bill passes with massive transformer subsidies', 'AI inference efficiency reduces per-GPU power consumption >50%'],
+    contradictions: ['GEV/Siemens disclose transformer order cancellations or backlog normalization', 'Multiple new transformer manufacturing plants announced in North America simultaneously', 'Hyperscalers publish evidence that they solved interconnect queue through co-location'],
     watch_kpi: ['GEV order backlog (should keep growing)', 'ETN data center-specific revenue segment', 'PJM/ERCOT interconnect queue length (public)', 'Large power transformer lead time surveys from industry publications'],
+    causal_chain: ['AI compute ↑ → data center MW demand → grid interconnect queue (5-10yr) → transformer/switchgear shortage → GOES steel constraint → copper/HV cable demand → EPC construction bottleneck → nuclear/renewable PPA demand'],
+    india_plays: [
+      { ticker: 'BHEL', exchange: 'NSE', thesis: 'BHEL: power transformer OEM, domestic order book accelerating with data center/industrial power demand' },
+      { ticker: 'POWERGRID', exchange: 'NSE', thesis: 'POWERGRID Corporation: national transmission infra build-out, AI data center connectivity beneficiary' },
+      { ticker: 'KPTL', exchange: 'NSE', thesis: 'Kalpataru Projects: EPC for high-voltage transmission, growing data center power connections' },
+      { ticker: 'SIEMENS', exchange: 'NSE', thesis: 'Siemens India: switchgear, transformers, grid automation — direct supply chain play' },
+      { ticker: 'ABB', exchange: 'NSE', thesis: 'ABB India: grid electrification, HV transformers, industrial automation' },
+    ],
   },
   NUCLEAR_ENERGY: {
-    label: 'Nuclear Energy', icon: '☢️',
+    label: 'Nuclear Energy', icon: '☢️', lifecycle: 'structural' as const,
     why: 'Hyperscalers pivoting to nuclear PPAs for 24/7 carbon-free baseload. SMRs and restart of retired plants are the only GW-scale path this decade.',
     supply: 'Enriched uranium supply constrained post-Russia sanctions. Centrus and Urenco ramping HALEU slowly. SMR deployments 2028–2032.',
     demand: 'MSFT/Three Mile Island, AMZN/Talen, GOOG/Kairos, META SMR RFP — every hyperscaler has inked nuclear deals.',
@@ -160,10 +223,16 @@ const DRILLDOWN: Record<string, DrilldownEntry> = {
     losers: [],
     confirms: ['New hyperscaler nuclear PPA announcement', 'NRC license approval for SMR design', 'HALEU enrichment capacity expansion announcement', 'Uranium spot price above $100/lb'],
     breaks: ['Next-gen solar + battery storage achieves <$20/MWh 24/7 cost', 'NRC license denials for multiple SMR projects', 'US-Russia nuclear fuel deal reinstated at scale'],
+    contradictions: ['Uranium spot price falls below $70/lb on new supply discovery', 'NRC approves only 1 of 5 pending SMR designs by 2028', 'Hyperscalers cancel nuclear PPAs in favour of cheaper renewables'],
     watch_kpi: ['Uranium spot price (cameco.com/investors)', 'NRC SMR licensing pipeline', 'Hyperscaler % of power from carbon-free sources', 'CEG/TLN nuclear generation capacity utilization'],
+    causal_chain: ['AI compute ↑ → 24/7 carbon-free power demand → nuclear PPA race → uranium/HALEU supply constraint → enrichment capacity → SMR permitting timeline → construction materials/labor'],
+    india_plays: [
+      { ticker: 'NHPC', exchange: 'NSE', thesis: 'NHPC: hydropower — adjacent carbon-free baseload beneficiary of same demand driver' },
+      { ticker: 'TATAPOWER', exchange: 'NSE', thesis: 'Tata Power: renewable + thermal, India nuclear adjacency via government capex' },
+    ],
   },
   THERMAL_COOLING: {
-    label: 'Thermal & Cooling', icon: '❄️',
+    label: 'Thermal & Cooling', icon: '❄️', lifecycle: 'cyclical',
     why: 'Blackwell and beyond require direct-to-chip liquid cooling. Retrofit impractical; new builds 100% liquid-cooled. CDU and cold-plate supply sold out.',
     supply: 'CoolIT, Motivair, Boyd, Asetek are the main CDU vendors. Cold plate supply concentrated in Taiwan.',
     demand: 'NVL72 racks = 120+ kW/rack. Every new AI data center must deploy liquid cooling.',
@@ -171,10 +240,16 @@ const DRILLDOWN: Record<string, DrilldownEntry> = {
     losers: [],
     confirms: ['VRT liquid cooling revenue growing >50% YoY', 'New hyperscaler DC build announcement specifying 100% liquid cooling', 'CDU/cold plate lead times >20 weeks', 'SMCI liquid-cooled rack backlog mentioned in earnings'],
     breaks: ['Immersion cooling becomes dominant (different supply chain)', 'NVDA next chip reduces power consumption below air-cooling threshold', 'New CDU suppliers entering at scale in Taiwan/Korea'],
+    contradictions: ['VRT liquid cooling margins decline due to rapid new entrant price competition', 'GPU thermal profiles plateau vs prior generation (no increase in kW/rack)', 'Hyperscalers standardize on one immersion cooling vendor bypassing CDU'],
     watch_kpi: ['VRT liquid cooling % of revenue', 'SMCI liquid cooling attach rate per rack', 'kW/rack specification in new DC construction permits', 'CoolIT/Boyd private company capacity news'],
+    causal_chain: ['GPU TDP ↑ (Blackwell 1000W+ per chip) → air cooling insufficient → liquid CDU/cold-plate required → Taiwan cold plate supply concentrated → Taiwan/Korea CDU manufacturers bottlenecked → facility retrofit capital demand'],
+    india_plays: [
+      { ticker: 'APCOTEX', exchange: 'NSE', thesis: 'Apcotex Industries: thermal management chemicals, adjacent to cooling compound demand' },
+      { ticker: 'THERMAX', exchange: 'NSE', thesis: 'Thermax: industrial cooling and heat exchange equipment, data center cooling adjacency' },
+    ],
   },
   MATERIALS_SUPPLY: {
-    label: 'Critical Materials', icon: '⛏️',
+    label: 'Critical Materials', icon: '⛏️', lifecycle: 'structural',
     why: 'Gallium, germanium, neon, rare earths, and high-purity quartz gating semi and defense supply chains. China export controls accelerating bifurcation.',
     supply: 'China controls 80%+ of gallium/germanium processing, 90%+ of rare earth refining. Alternative supply 3–7 years out.',
     demand: 'AI, defense, EV, and renewable electrification all drawing from same materials stack. Demand 2–3× by 2030.',
@@ -182,10 +257,17 @@ const DRILLDOWN: Record<string, DrilldownEntry> = {
     losers: [],
     confirms: ['China tightens gallium/germanium export quotas', 'AXTI named in new hyperscaler photonics roadmap', 'DoD awards critical minerals contract to US domestic producer', 'Spot price for gallium/germanium rising >20% QoQ'],
     breaks: ['Recycling technology recovers >50% of critical materials from e-waste', 'Major new gallium deposits developed outside China at scale', 'Compound semiconductors replaced by silicon-only alternatives in photonics'],
+    contradictions: ['China lifts export controls on gallium/germanium as part of trade deal', 'Australia/Canada brings new rare earth processing online faster than 2027', 'Silicon photonics (no compound semiconductors) achieves performance parity'],
     watch_kpi: ['Gallium spot price (should be rising)', 'China MOFCOM export quota announcements', 'AXTI quarterly substrate shipment volume', 'MP Materials NdFeB magnet production ramp'],
+    causal_chain: ['China export controls → gallium/germanium/rare earth shortage → compound semiconductor supply chain risk → photonics/defense electronics constraint → geopolitical bifurcation → US/allied domestic supply build-out investment'],
+    india_plays: [
+      { ticker: 'HINDALCO', exchange: 'NSE', thesis: 'Hindalco: aluminum and critical metal refining, adjacently benefits from materials supply chain reshoring' },
+      { ticker: 'VEDL', exchange: 'NSE', thesis: 'Vedanta: zinc, copper, aluminum, oil — critical materials diversification play' },
+      { ticker: 'NMDC', exchange: 'NSE', thesis: 'NMDC: iron ore + nascent critical minerals exploration, government-backed domestic supply' },
+    ],
   },
   QUANTUM_CRYOGENICS: {
-    label: 'Quantum & Cryogenics', icon: '🧊',
+    label: 'Quantum & Cryogenics', icon: '🧊', lifecycle: 'structural',
     why: 'Quantum hardware gated by dilution refrigerators, helium-3, and cryo electronics. Scale-up of logical qubits is the decade-long bottleneck.',
     supply: 'Bluefors, Oxford Instruments dominate dilution fridges. Helium-3 supply constrained by tritium decay chain.',
     demand: 'Sovereign quantum programs (US DOE, EU, China, India) + hyperscaler R&D (IBM, Google, MSFT, AMZN). Demand inelastic.',
@@ -193,7 +275,12 @@ const DRILLDOWN: Record<string, DrilldownEntry> = {
     losers: [],
     confirms: ['IBM logical qubit count doubles on schedule', 'DOE/NSF quantum computing contract awards growing', 'Bluefors dilution fridge lead times >12 months', 'New national quantum initiative funding announcement'],
     breaks: ['Classical computing solves target problems before quantum does', 'Room-temperature qubit technology validated at scale', 'He-3 alternative cryogenic technology works below 20mK'],
+    contradictions: ['IonQ/Rigetti customer revenue stagnates for 2+ consecutive quarters', 'IBM delays error correction milestone by >2 years', 'Photonic quantum approach (no He-3 needed) achieves logical qubit parity'],
     watch_kpi: ['IBM quantum volume trajectory', 'IonQ / Rigetti customer count and revenue', 'Helium-3 spot price', 'Government quantum initiative budget lines'],
+    causal_chain: ['Logical qubit demand → dilution refrigerator supply constraint → Bluefors/Oxford bottleneck → He-3 supply constraint → cryo electronics (SFQ/cryo CMOS) bottleneck → specialized materials demand'],
+    india_plays: [
+      { ticker: 'TATAELXSI', exchange: 'NSE', thesis: 'Tata Elxsi: adjacent play via quantum algorithm design services and government programs' },
+    ],
   },
 };
 
@@ -268,7 +355,7 @@ const JUNK = new Set([
   'IPL','BPL','ISL','PKL','IND','AUS','ENG','PAK','GT','MI','CSK','KKR','RCB','SRH','DC','LSG','PBKS','RR','BCCI',
   'LTD','PVT','INC','LLC','CORP','PLC','AG','NV','SA','SPA','AB','AS','OY','GMBH',
   'FDA','DOE','DOD','DOJ','CFPB','IRS','CFTC','FINRA','FTC','BOI','SBI','PNB','IOB','BOB','UCO','SK',
-  'ACC','DM','FY','TETRA','RTX','SM','EV','BI','TSMC','NET','AES','JSW','EVM','TMC','EC','ASP','MCX','FTA','ST','II','KR','GCC','EMYN','HUL','GLP','YD','ESAF','LIV','JBS','ATF','RPG','NPP','NPU','WAVE','SIEGY','GEV',
+  'ACC','DM','FY','TETRA','RTX','SM','EV','BI','TSMC','NET','AES','JSW','EVM','TMC','EC','ASP','MCX','FTA','ST','II','KR','GCC','EMYN','HUL','GLP','YD','ESAF','LIV','JBS','ATF','RPG','NPP','NPU','WAVE','SIEGY',
   'ALL','ARE','HAL','BEL','CAN','HAS','HAD','WAS','GET','GOT','SET','PUT','BID','ASK',
   'FFO','NMI','BOE','HUL','SSD','USD','EUR','KR','GLP','UP','FOMC',
 ]);
@@ -788,13 +875,16 @@ const EMERGING_THEME_DETECTORS = [
 ];
 
 // Cross-reference: which themes map to existing buckets (to avoid duplication)
+// Entity resolution — transformer = POWER_GRID (was incorrectly appearing as "new theme")
 const THEME_TO_BUCKET: Record<string, string> = {
-  opt_test: 'INTERCONNECT_PHOTONICS',
-  qual_cycle: 'FABRICATION_PACKAGING',
-  rare_earth: 'MATERIALS_SUPPLY',
-  ai_power: 'POWER_GRID',
-  smr_nuclear: 'NUCLEAR_ENERGY',
-  cooling_cdm: 'THERMAL_COOLING',
+  transformer:  'POWER_GRID',            // FIX: transformer/grid = POWER_GRID bucket — same entity
+  ai_power:     'POWER_GRID',            // AI data center power = POWER_GRID
+  opt_test:     'INTERCONNECT_PHOTONICS',
+  qual_cycle:   'FABRICATION_PACKAGING',
+  rare_earth:   'MATERIALS_SUPPLY',
+  smr_nuclear:  'NUCLEAR_ENERGY',
+  cooling_cdm:  'THERMAL_COOLING',
+  // backlog, subsidy_policy, defense_semi, specialty_gas, shipping_port = cross-cutting, stay as "new"
 };
 
 interface DetectedTheme {
@@ -824,11 +914,32 @@ function detectEmergingThemes(articles: NewsArticle[]): DetectedTheme[] {
   return results.sort((a, b) => b.weekCount - a.weekCount || b.count - a.count);
 }
 
+const PROMOTED_THEMES_KEY = 'mc_bn_theme_seen_v1';
 function EmergingThemes({ articles }: { articles: NewsArticle[] }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const themes = useMemo(() => detectEmergingThemes(articles), [articles]);
-  if (themes.length === 0) return null;
 
+  // Promotion workflow: track how many sessions each new theme has appeared
+  // When a theme appears in 3+ sessions → show "Promote to framework" button
+  const [themeSeen, setThemeSeen] = useState<Record<string, number>>(() => {
+    try { return JSON.parse(localStorage.getItem(PROMOTED_THEMES_KEY) || '{}'); } catch { return {}; }
+  });
+  const [promotedMsg, setPromotedMsg] = useState<string | null>(null);
+
+  // On mount/new articles: increment seen count for new themes with articles this week
+  useEffect(() => {
+    const newActive = themes.filter(t => t.isNew && t.weekCount > 0);
+    if (newActive.length === 0) return;
+    setThemeSeen(prev => {
+      const updated = { ...prev };
+      for (const t of newActive) { updated[t.id] = (updated[t.id] || 0) + 1; }
+      try { localStorage.setItem(PROMOTED_THEMES_KEY, JSON.stringify(updated)); } catch {}
+      return updated;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [themes.length]);
+
+  if (themes.length === 0) return null;
   const newThemes = themes.filter(t => t.isNew);
   const coveredThemes = themes.filter(t => !t.isNew);
 
@@ -857,7 +968,15 @@ function EmergingThemes({ articles }: { articles: NewsArticle[] }) {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                     <span style={{ fontSize: '11px', fontWeight: '700', color: t.isNew ? '#F59E0B' : '#C9D4E0' }}>{t.label}</span>
                     {t.isNew && <span style={{ fontSize: '8px', fontWeight: '800', color: '#F59E0B', border: '1px solid #F59E0B40', padding: '0 4px', borderRadius: '3px' }}>NEW</span>}
+                    {!t.isNew && <span style={{ fontSize: '8px', color: '#4A5B6C', border: '1px solid #1A284030', padding: '0 4px', borderRadius: '3px' }}>IN FRAMEWORK</span>}
                     {t.weekCount >= 3 && <span style={{ fontSize: '9px', color: '#EF4444' }}>🔥</span>}
+                    {/* Promotion badge: appears when seen 3+ sessions */}
+                    {t.isNew && (themeSeen[t.id] ?? 0) >= 3 && (
+                      <span style={{ fontSize: '8px', fontWeight: '800', color: '#8B5CF6', border: '1px solid #8B5CF640', padding: '0 4px', borderRadius: '3px', cursor: 'help' }}
+                        title={`Seen ${themeSeen[t.id]} sessions — candidate for formal taxonomy`}>
+                        🚀 PROMOTE
+                      </span>
+                    )}
                   </div>
                   <span style={{ fontSize: '9px', color: '#4A5B6C' }}>{t.count} articles · {t.weekCount} this week</span>
                 </div>
@@ -870,8 +989,16 @@ function EmergingThemes({ articles }: { articles: NewsArticle[] }) {
                     </div>
                   ))}
                   {t.isNew && (
-                    <div style={{ marginTop: '6px', padding: '5px 8px', backgroundColor: '#F59E0B08', border: '1px solid #F59E0B20', borderRadius: '4px', fontSize: '10px', color: '#F59E0B' }}>
-                      ⭐ Not in framework watchlist — potential new bottleneck class to research
+                    <div style={{ marginTop: '6px', padding: '6px 10px', backgroundColor: '#F59E0B08', border: '1px solid #F59E0B20', borderRadius: '4px' }}>
+                      <div style={{ fontSize: '10px', color: '#F59E0B', marginBottom: '3px' }}>⭐ Not in framework watchlist — potential new bottleneck class</div>
+                      {(themeSeen[t.id] ?? 0) >= 3 ? (
+                        <div style={{ fontSize: '10px', color: '#8B5CF6', marginTop: '3px', fontWeight: '700' }}>
+                          🚀 Seen {themeSeen[t.id]} sessions — ready for formal taxonomy inclusion
+                          {promotedMsg === t.id && <span style={{ marginLeft: '8px', color: '#10B981' }}>✓ Added to watchlist!</span>}
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: '10px', color: '#4A5B6C' }}>Seen {themeSeen[t.id] ?? 1} session(s) — promote to framework after 3 consistent appearances</div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -985,10 +1112,25 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px', flexWrap: 'wrap' }}>
                       <span style={{ fontSize: '13px', fontWeight: '700', color: '#F5F7FA' }}>{b.label}</span>
                       <span style={{ fontSize: '9px', fontWeight: '700', letterSpacing: '0.8px', color: sty.badge, backgroundColor: sty.badgeBg, padding: '2px 6px', borderRadius: '3px' }}>{b.severity_label}</span>
-                      {isAccel && <span title={`${vel.week} articles this week vs ${vel.prev} prior week`} style={{ fontSize: '9px', fontWeight: '700', color: '#F59E0B', backgroundColor: '#F59E0B18', border: '1px solid #F59E0B40', padding: '2px 6px', borderRadius: '3px' }}>🔥 ACCELERATING</span>}
-                      {isFading && <span title={`${vel.week} articles this week vs ${vel.prev} prior week`} style={{ fontSize: '9px', color: '#4A5B6C', backgroundColor: '#4A5B6C14', border: '1px solid #1A2840', padding: '2px 6px', borderRadius: '3px' }}>📉 Fading</span>}
+                      {/* 3-state lifecycle badge — the core signal quality indicator */}
+                      {(() => {
+                        const lc = getBucketLifecycle(b.bucket_id, vel ?? { week: 0, prev: 0, trend: '→' });
+                        return (
+                          <span title={lc.desc} style={{ fontSize: '9px', fontWeight: '700', color: lc.color, backgroundColor: lc.color + '14', border: `1px solid ${lc.color}40`, padding: '2px 6px', borderRadius: '3px', cursor: 'help' }}>
+                            {lc.label}
+                          </span>
+                        );
+                      })()}
                     </div>
-                    <p style={{ fontSize: '11px', color: '#6B7A8D', margin: '0 0 8px', lineHeight: '1.4' }}>{b.description}</p>
+                    <p style={{ fontSize: '11px', color: '#6B7A8D', margin: '0 0 8px', lineHeight: '1.4' }}>
+                      {b.description}
+                      {/* Freshness decay warning — stale critical/high themes need context */}
+                      {vel?.week === 0 && !STRUCTURAL_THEMES.has(b.bucket_id) && (b.severity ?? 0) >= 3 && (
+                        <span style={{ marginLeft: '8px', fontSize: '9px', color: '#F59E0B', fontWeight: 600 }}>
+                          ⚠ Zero articles this week — severity label may be stale residue, not live signal
+                        </span>
+                      )}
+                    </p>
                     <div style={{ display: 'flex', gap: '14px', marginBottom: '8px' }}>
                       <span style={{ fontSize: '11px', color: '#8A95A3' }}><span style={{ color: sty.badge, fontWeight: '700', fontSize: '15px' }}>{b.signal_count}</span> signals</span>
                       <span style={{ fontSize: '11px', color: '#8A95A3' }}><span style={{ fontWeight: '600', color: '#C9D4E0' }}>{b.article_count}</span> articles</span>
@@ -1498,6 +1640,69 @@ function DrilldownKB({ articles }: { articles: NewsArticle[] }) {
             </div>
           </div>
 
+          {/* Contradiction Engine — evidence that would specifically WEAKEN (not destroy) thesis */}
+          {entry.contradictions && entry.contradictions.length > 0 && (
+            <div style={{ padding: '14px 20px 16px', borderTop: '1px solid #1A2840', backgroundColor: '#0A0F1A' }}>
+              <p style={{ fontSize: '10px', color: '#F59E0B', fontWeight: '700', letterSpacing: '1px', margin: '0 0 10px' }}>
+                ⚡ CONTRADICTION ENGINE — what evidence would WEAKEN this thesis
+              </p>
+              <p style={{ fontSize: '10px', color: '#4A5B6C', margin: '0 0 10px' }}>
+                These are NOT thesis-breakers but thesis-weakeners — signals that reduce conviction without invalidating the position.
+                Monitor for these before adding to or trimming positions.
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '8px' }}>
+                {entry.contradictions.map((c, i) => (
+                  <div key={i} style={{ display: 'flex', gap: '8px', padding: '8px 12px', backgroundColor: '#F59E0B06', border: '1px solid #F59E0B20', borderRadius: '6px', fontSize: '11px', color: '#8A95A3', lineHeight: '1.5' }}>
+                    <span style={{ color: '#F59E0B', flexShrink: 0, marginTop: '1px' }}>⚠</span>
+                    {c}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Causal Chain — second-order idea generation */}
+          {entry.causal_chain && entry.causal_chain.length > 0 && (
+            <div style={{ padding: '14px 20px 16px', borderTop: '1px solid #1A2840' }}>
+              <p style={{ fontSize: '10px', color: '#06B6D4', fontWeight: '700', letterSpacing: '1px', margin: '0 0 10px' }}>
+                🔗 CAUSAL CHAIN — second-order investment ideas
+              </p>
+              {entry.causal_chain.map((chain, i) => (
+                <div key={i} style={{ fontSize: '11px', color: '#C9D4E0', lineHeight: '1.6', padding: '10px 14px', backgroundColor: '#06B6D408', border: '1px solid #06B6D420', borderRadius: '8px', marginBottom: '6px' }}>
+                  {chain.split('→').map((step, si, arr) => (
+                    <span key={si}>
+                      <span style={{ color: si === 0 ? '#EF4444' : si === arr.length-1 ? '#10B981' : '#C9D4E0', fontWeight: si === 0 || si === arr.length-1 ? '700' : '400' }}>{step.trim()}</span>
+                      {si < arr.length-1 && <span style={{ color: '#06B6D4', margin: '0 6px' }}>→</span>}
+                    </span>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* India-listed plays — separate from US plays */}
+          {entry.india_plays && entry.india_plays.length > 0 && (
+            <div style={{ padding: '14px 20px 16px', borderTop: '1px solid #1A2840' }}>
+              <p style={{ fontSize: '10px', color: '#F97316', fontWeight: '700', letterSpacing: '1px', margin: '0 0 10px' }}>
+                🇮🇳 INDIA-LISTED PLAYS (NSE/BSE)
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '8px' }}>
+                {entry.india_plays.map(p => (
+                  <div key={p.ticker} style={{ display: 'flex', gap: '10px', padding: '8px 12px', backgroundColor: '#F9731608', border: '1px solid #F9731620', borderRadius: '8px' }}>
+                    <div style={{ flexShrink: 0 }}>
+                      <span style={{ fontSize: '12px', fontWeight: '800', color: '#F97316' }}>{p.ticker}</span>
+                      <span style={{ fontSize: '9px', color: '#4A5B6C', marginLeft: '4px' }}>{p.exchange}</span>
+                    </div>
+                    <span style={{ fontSize: '11px', color: '#8A95A3', lineHeight: '1.4' }}>{p.thesis}</span>
+                  </div>
+                ))}
+              </div>
+              <p style={{ fontSize: '9px', color: '#4A5B6C', marginTop: '8px' }}>
+                Note: India plays are typically indirect/second-order beneficiaries. Verify earnings linkage before sizing.
+              </p>
+            </div>
+          )}
+
           {/* Live evidence */}
           {bucketArticles.length > 0 && (
             <div style={{ padding: '12px 20px 16px', borderTop: '1px solid #1A2840' }}>
@@ -1668,7 +1873,7 @@ const CONF_KEYWORDS: Record<string, string[]> = {
 };
 
 // Universe tickers that matter most for earnings catalysts
-const EARNINGS_WATCH = ['NVDA','AMD','AVGO','MRVL','COHR','LITE','MU','AEHR','FORM','TSM','ASML','AMAT','LRCX','GEV','ETN','VRT','CCJ','CEG','TLN','SMCI','NBIS'];
+const EARNINGS_WATCH = ['NVDA','AMD','AVGO','MRVL','COHR','LITE','MU','AEHR','FORM','TSM','ASML','AMAT','LRCX','ETN','VRT','CCJ','CEG','TLN','SMCI','NBIS'];
 
 function useEarningsSignals() {
   return useQuery<NewsArticle[]>({
