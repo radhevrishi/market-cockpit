@@ -995,20 +995,54 @@ function ConcallIntelligence() {
                   </div>
                   <div>
                     <div style={{display:'flex',alignItems:'center',gap:4,marginBottom:2}}>
-                    <div style={{fontSize:11,color:'#C9D4E0',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>{s.company}</div>
-                    {s.sector&&<span style={{fontSize:8,color:'#4A5B6C',flexShrink:0}}>{s.sector}</span>}
-                  </div>
+                      <div style={{fontSize:11,color:'#C9D4E0',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>{s.company}</div>
+                      {s.sector&&<span style={{fontSize:8,color:'#4A5B6C',flexShrink:0}}>{s.sector}</span>}
+                    </div>
+                    {/* ── KEY SIGNALS — visible without expanding ── */}
+                    {s.signals.filter(sig=>sig.isAlpha&&sig.positive).length > 0 ? (
+                      <div style={{display:'flex',gap:3,flexWrap:'wrap',marginBottom:3}}>
+                        {/* Primary signal — dominant alpha */}
+                        {s.signals.filter(sig=>sig.isAlpha&&sig.positive).slice(0,3).map((sig,si)=>(
+                          <span key={si} style={{fontSize:8,fontWeight:700,color:ACCENT2,backgroundColor:ACCENT2+'12',border:`1px solid ${ACCENT2}30`,padding:'1px 5px',borderRadius:3}}>
+                            {sig.type.replace(/_/g,' ')}{sig.numerical?` ₹${sig.numerical.value}${sig.numerical.unit}`:''}
+                          </span>
+                        ))}
+                        {s.signals.filter(sig=>sig.isAlpha&&!sig.positive).slice(0,1).map((sig,si)=>(
+                          <span key={`n${si}`} style={{fontSize:8,fontWeight:700,color:'#ef4444',backgroundColor:'#ef444412',border:'1px solid #ef444430',padding:'1px 5px',borderRadius:3}}>
+                            ⚠ {sig.type.replace(/_/g,' ')}
+                          </span>
+                        ))}
+                      </div>
+                    ) : s.articleCount === 0 ? (
+                      <span style={{fontSize:8,fontWeight:700,color:'#F59E0B',border:'1px solid #F59E0B30',padding:'1px 6px',borderRadius:3,marginBottom:3,display:'inline-block'}}>⚠ NO EVIDENCE — 0 articles</span>
+                    ) : null}
+                    {/* 1-line synthesis if available */}
+                    {(s as any).whyItMatters && s.alphaCount > 0 && (
+                      <div style={{fontSize:9,color:'#6B7A8D',lineHeight:1.4,marginBottom:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'100%'}}>
+                        💡 {(s as any).whyItMatters}
+                      </div>
+                    )}
                     <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
                       <span style={{fontSize:9,fontWeight:700,color:toneColor(s.tone),backgroundColor:toneColor(s.tone)+'18',padding:'1px 5px',borderRadius:3}}>{s.tone}</span>
                       <span style={{fontSize:9,color:freshColor(s.freshness)}}>{s.freshness==='FRESH'?'🟢':s.freshness==='ACTIVE'?'🟡':'⚫'} {s.freshness}</span>
-                      {(s as any).missedByMarket && <span style={{fontSize:8,fontWeight:800,color:'#8B5CF6',border:'1px solid #8B5CF640',padding:'0 5px',borderRadius:3}}>🔍 MISSED?</span>}
+                      {/* MISSED? only when articles exist but count is low — not on 0-article stocks */}
+                      {(s as any).missedByMarket && s.articleCount >= 1 && <span style={{fontSize:8,fontWeight:800,color:'#8B5CF6',border:'1px solid #8B5CF640',padding:'0 5px',borderRadius:3}}>🔍 MISSED?</span>}
                       {(s as any).source && (s as any).source !== 'Screener' && <span style={{fontSize:8,color:'#4A5B6C',border:'1px solid #1A2840',padding:'0 4px',borderRadius:3}}>{(s as any).source}</span>}
                     </div>
                   </div>
-                  {/* Signal Score */}
+                  {/* Signal Score — forced 0 when 0 articles (evidence integrity) */}
                   <div style={{textAlign:'center'}}>
-                    <div style={{fontSize:16,fontWeight:900,color:s.signalScore>=70?'#10b981':s.signalScore>=50?'#f59e0b':'#ef4444'}}>{s.signalScore}</div>
-                    <div style={{fontSize:8,color:TEXT3}}>SIGNAL</div>
+                    {s.articleCount === 0 ? (
+                      <>
+                        <div style={{fontSize:16,fontWeight:900,color:'#F59E0B'}}>—</div>
+                        <div style={{fontSize:8,color:'#F59E0B'}}>NO DATA</div>
+                      </>
+                    ) : (
+                      <>
+                        <div style={{fontSize:16,fontWeight:900,color:s.signalScore>=70?'#10b981':s.signalScore>=50?'#f59e0b':'#ef4444'}}>{s.signalScore}</div>
+                        <div style={{fontSize:8,color:TEXT3}}>SIGNAL</div>
+                      </>
+                    )}
                   </div>
                   {/* MRI */}
                   <div style={{textAlign:'center'}}>
@@ -1034,10 +1068,20 @@ function ConcallIntelligence() {
                     <div style={{fontSize:14,fontWeight:900,color:(s as any).expectationShift>=60?'#ef4444':(s as any).expectationShift>=35?'#f59e0b':'#4A5B6C'}}>{(s as any).expectationShift||0}</div>
                     <div style={{fontSize:8,color:TEXT3}}>Δ SHIFT</div>
                   </div>
-                  {/* Alpha/noise */}
-                  <div style={{textAlign:'center'}}>
-                    <div style={{fontSize:10,fontWeight:700,color:s.alphaCount>0?ACCENT2:TEXT3}}>⭐{s.alphaCount}</div>
-                    <div style={{fontSize:8,color:TEXT3}}>ALPHA</div>
+                  {/* Signal category breakdown — replaces opaque ⭐3 */}
+                  <div style={{textAlign:'left'}}>
+                    {s.articleCount === 0 ? (
+                      <div style={{fontSize:9,color:'#F59E0B',fontWeight:700}}>⚠ NO<br/>EVIDENCE</div>
+                    ) : (() => {
+                      const cats: Record<string,number> = {};
+                      s.signals.filter(sig=>sig.isAlpha&&sig.positive).forEach(sig => { cats[sig.category] = (cats[sig.category]||0)+1; });
+                      const catLabel: Record<string,string> = {DEMAND:'Demand',CAPEX:'Capex',MARGIN:'Margin',PRICING:'Pricing',GUIDANCE:'Guide',MGMT_STYLE:'Style',SUPPLY_CHAIN:'Supply',RISK:'Risk'};
+                      return Object.entries(cats).slice(0,4).map(([cat,cnt])=>(
+                        <div key={cat} style={{fontSize:8,color:ACCENT2,lineHeight:1.6}}>
+                          {catLabel[cat]||cat}: {cnt}
+                        </div>
+                      ));
+                    })()}
                   </div>
                 </div>
               </button>
@@ -1090,15 +1134,31 @@ function ConcallIntelligence() {
                           <div style={{display:'flex',flexDirection:'column',gap:6}}>
                             {s.signals.filter(sig=>sig.isAlpha).map((sig,i)=>(
                               <div key={i} style={{padding:'10px 12px',backgroundColor:sig.positive?'#10b98108':'#ef444408',border:`1px solid ${sig.positive?'#10b98120':'#ef444420'}`,borderLeft:`3px solid ${sig.positive?'#10b981':'#ef4444'}`,borderRadius:7}}>
-                                <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:4,flexWrap:'wrap'}}>
-                                  <span style={{fontSize:9,fontWeight:700,color:sig.positive?'#10b981':'#ef4444',backgroundColor:sig.positive?'#10b98118':'#ef444418',padding:'1px 6px',borderRadius:3}}>{sig.positive?'↑':'↓'} {sig.type.replace(/_/g,' ')}</span>
-                                  <span style={{fontSize:9,color:'#4A5B6C'}}>{sig.temporality}</span>
+                                <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:6,flexWrap:'wrap'}}>
+                                  {/* Signal label — primary identifier */}
+                                  <span style={{fontSize:11,fontWeight:800,color:sig.positive?'#10b981':'#ef4444'}}>
+                                    {sig.positive?'↑':'↓'} {sig.type.replace(/_/g,' ')}
+                                  </span>
+                                  <span style={{fontSize:9,color:'#4A5B6C',fontStyle:'italic'}}>{sig.temporality}</span>
                                   <span style={{fontSize:9,fontWeight:700,color:horizonColor(sig.horizon),border:`1px solid ${horizonColor(sig.horizon)}40`,padding:'1px 5px',borderRadius:3}}>{sig.horizon}</span>
-                                  {sig.numerical && <span style={{fontSize:9,fontWeight:700,color:'#F59E0B',border:'1px solid #F59E0B40',padding:'1px 5px',borderRadius:3}}>₹{sig.numerical.value}{sig.numerical.unit}{sig.numerical.timing?` · ${sig.numerical.timing}`:''}</span>}
+                                  {sig.numerical && (
+                                    <span style={{fontSize:10,fontWeight:800,color:'#F59E0B',border:'1px solid #F59E0B40',padding:'2px 7px',borderRadius:3}}>
+                                      ₹{sig.numerical.value}{sig.numerical.unit}{sig.numerical.timing?` · ${sig.numerical.timing}`:''}
+                                    </span>
+                                  )}
                                   <span style={{fontSize:8,color:'#4A5B6C',marginLeft:'auto'}}>{sig.date?new Date(sig.date).toLocaleDateString('en-IN'):''}</span>
                                 </div>
-                                <div style={{fontSize:11,color:'#C9D4E0',lineHeight:1.5,fontStyle:'italic'}}>"{sig.text}"</div>
-                                <div style={{fontSize:9,color:'#4A5B6C',marginTop:3}}>📰 {sig.source}</div>
+                                {/* Evidence sentence — always shown, never optional */}
+                                {sig.text ? (
+                                  <div style={{fontSize:11,color:'#C9D4E0',lineHeight:1.6,backgroundColor:'#060E1A',padding:'6px 10px',borderRadius:5,borderLeft:'2px solid #4A5B6C',marginBottom:4}}>
+                                    "{sig.text}"
+                                  </div>
+                                ) : (
+                                  <div style={{fontSize:10,color:'#F59E0B',padding:'4px 8px',backgroundColor:'#F59E0B08',borderRadius:4,marginBottom:4}}>
+                                    ⚠ Signal detected but no sentence extracted — verify manually
+                                  </div>
+                                )}
+                                <div style={{fontSize:9,color:'#4A5B6C'}}>📰 {sig.source || 'Unknown source'}</div>
                               </div>
                             ))}
                           </div>
