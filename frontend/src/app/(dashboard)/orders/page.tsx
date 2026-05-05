@@ -460,11 +460,35 @@ function ConcallIntelligence() {
   const [showAlphaOnly, setShowAlphaOnly] = useState(false);
 
   // Read screener stocks from localStorage
-  const screenerStocks: {symbol:string;company:string;sector:string;grade?:string;score?:number}[] = (() => {
+  // Combine ALL tracked stocks: Screener + Watchlist + Portfolio (so no stock is missed)
+  const screenerStocks: {symbol:string;company:string;sector:string;source:string;grade?:string;score?:number}[] = (() => {
+    const seen = new Set<string>();
+    const all: {symbol:string;company:string;sector:string;source:string;grade?:string;score?:number}[] = [];
+    // 1. Multibagger screener stocks (mb_excel_scored_v2)
     try {
       const d = JSON.parse(localStorage.getItem('mb_excel_scored_v2')||'[]');
-      return Array.isArray(d) ? d.map((r:any)=>({symbol:r.symbol,company:r.company||r.symbol,sector:r.sector||'',grade:r.grade,score:r.score})) : [];
-    } catch { return []; }
+      if (Array.isArray(d)) d.forEach((r:any) => {
+        const sym = (r.symbol||'').toUpperCase();
+        if (sym && !seen.has(sym)) { seen.add(sym); all.push({symbol:r.symbol,company:r.company||r.symbol,sector:r.sector||'',grade:r.grade,score:r.score,source:'Screener'}); }
+      });
+    } catch {}
+    // 2. Watchlist tickers (mc_watchlist_tickers)
+    try {
+      const wl = JSON.parse(localStorage.getItem('mc_watchlist_tickers')||'[]');
+      if (Array.isArray(wl)) wl.forEach((sym:string) => {
+        const s = sym.toUpperCase();
+        if (s && !seen.has(s)) { seen.add(s); all.push({symbol:s,company:s,sector:'',source:'Watchlist'}); }
+      });
+    } catch {}
+    // 3. Portfolio holdings (mc_portfolio_holdings)
+    try {
+      const pf = JSON.parse(localStorage.getItem('mc_portfolio_holdings')||'[]');
+      if (Array.isArray(pf)) pf.forEach((h:any) => {
+        const s = (h.symbol||'').toUpperCase();
+        if (s && !seen.has(s)) { seen.add(s); all.push({symbol:s,company:h.company||s,sector:'',source:'Portfolio'}); }
+      });
+    } catch {}
+    return all;
   })();
 
   async function fetchConcallData() {
@@ -544,13 +568,13 @@ function ConcallIntelligence() {
 
         result.push({
           symbol: stock.symbol, company: stock.company, sector: stock.sector,
-          grade: stock.grade, score: stock.score,
+          grade: stock.grade, score: stock.score, source: (stock as any).source || 'Screener',
           signals: allSignals.sort((a,b) => (b.strength - a.strength)),
           signalScore, mriScore, trend, tone, surprisePotential, freshness,
           lastDate: latestDate, articleCount: relevant.length,
           alphaCount: allSignals.filter(s=>s.isAlpha).length,
           noiseCount: allSignals.filter(s=>!s.isAlpha).length,
-        });
+        } as any);
       }
 
       // Sort by signal score desc
@@ -583,7 +607,15 @@ function ConcallIntelligence() {
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
           <div>
             <div style={{fontSize:15,fontWeight:800,color:ACCENT2}}>🧠 Concall Intelligence — 30D Rolling Window</div>
-            <div style={{fontSize:11,color:TEXT3,marginTop:2}}>Management signal extraction · MRI scoring · Signal vs Noise · {screenerStocks.length} screener stocks monitored</div>
+            <div style={{fontSize:11,color:TEXT3,marginTop:2}}>
+              Management signal extraction · MRI scoring · Signal vs Noise · {screenerStocks.length} companies tracked
+              <span style={{color:'#4A5B6C',marginLeft:8}}>
+                ({screenerStocks.filter(s=>s.source==='Screener').length} Screener · {screenerStocks.filter(s=>s.source==='Watchlist').length} Watchlist · {screenerStocks.filter(s=>s.source==='Portfolio').length} Portfolio)
+              </span>
+            </div>
+            <div style={{fontSize:10,color:'#F59E0B',marginTop:4}}>
+              💡 To add more stocks: in Screener.in click Export → downloads ALL results (all pages). Upload the CSV in Multibagger tab.
+            </div>
           </div>
           <div style={{display:'flex',gap:8,alignItems:'center'}}>
             <button onClick={()=>setShowAlphaOnly(v=>!v)} style={{fontSize:11,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${showAlphaOnly?ACCENT2+'60':BORDER}`,background:showAlphaOnly?`${ACCENT2}18`:'transparent',color:showAlphaOnly?ACCENT2:TEXT3,cursor:'pointer'}}>
@@ -637,10 +669,14 @@ function ConcallIntelligence() {
                     {s.grade && <span style={{fontSize:9,fontWeight:700,color:sc(s.grade),border:`1px solid ${sc(s.grade)}40`,padding:'1px 5px',borderRadius:3}}>{s.grade}</span>}
                   </div>
                   <div>
-                    <div style={{fontSize:11,color:TEXT3,marginBottom:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.company}</div>
+                    <div style={{display:'flex',alignItems:'center',gap:4,marginBottom:2}}>
+                    <div style={{fontSize:11,color:'#C9D4E0',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>{s.company}</div>
+                    {s.sector&&<span style={{fontSize:8,color:'#4A5B6C',flexShrink:0}}>{s.sector}</span>}
+                  </div>
                     <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
                       <span style={{fontSize:9,fontWeight:700,color:toneColor(s.tone),backgroundColor:toneColor(s.tone)+'18',padding:'1px 5px',borderRadius:3}}>{s.tone}</span>
                       <span style={{fontSize:9,color:freshColor(s.freshness)}}>{s.freshness==='FRESH'?'🟢':s.freshness==='ACTIVE'?'🟡':'⚫'} {s.freshness}</span>
+                      {(s as any).source && (s as any).source !== 'Screener' && <span style={{fontSize:8,color:'#4A5B6C',border:'1px solid #1A2840',padding:'0 4px',borderRadius:3}}>{(s as any).source}</span>}
                     </div>
                   </div>
                   {/* Signal Score */}
