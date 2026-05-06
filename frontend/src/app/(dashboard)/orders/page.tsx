@@ -583,14 +583,102 @@ function buildAliases(symbol: string, companyName: string): string[] {
 
 // ── Cross-Stock Sector Signal Library ────────────────────────────────────────
 // When an article mentions a sector-wide shortage, auto-apply to relevant tracked stocks
-const SECTOR_SIGNALS: { id: string; label: string; signal: string; keywords: string[]; targetSectors: string[] }[] = [
-  { id:'INSULATOR_SHORTAGE', signal:'Global insulator shortage — direct demand beneficiary', label:'Insulator Shortage', keywords:['insulator shortage','insulator demand','global insulator','insulator supply constrained','disc insulator','string insulator'], targetSectors:['electrical','power','transmission','energy'] },
-  { id:'TRANSFORMER_SHORTAGE', signal:'Transformer supply constraint — order pipeline likely growing', label:'Transformer Shortage', keywords:['transformer shortage','transformer demand','power transformer','grid transformer','transformer backlog','transformer lead time'], targetSectors:['electrical','transformer','power','industrial'] },
-  { id:'CABLE_DEMAND', signal:'Power cable/wire demand surge — order visibility improving', label:'Cable/Wire Demand', keywords:['cable demand','wire demand','cable order','conductor demand','optical fiber demand'], targetSectors:['cable','wire','electrical','power'] },
-  { id:'DEFENCE_INDIGENISATION', signal:'Defence indigenisation push — domestic supply chain beneficiary', label:'Defence Push', keywords:['make in india defence','defence indigenisation','atmanirbhar defence','defence offset','defence import substitution'], targetSectors:['defence','engineering','electronics','aerospace'] },
-  { id:'SOLAR_BOOM', signal:'Solar capacity addition boom — supply chain demand rising', label:'Solar Demand', keywords:['solar capacity','renewable target','solar tender','solar auction','green energy target'], targetSectors:['solar','renewable','energy','electrical'] },
-  { id:'DATA_CENTER_POWER', signal:'AI/data center power demand — grid equipment beneficiary', label:'DC Power Demand', keywords:['data center power','ai power demand','data centre power','hyperscaler power'], targetSectors:['electrical','power','grid','transformer'] },
+// ── Rich Sector Signal Library — subject + driver + relevance scoring ─────────
+// Each sector signal specifies: WHAT (subject), WHY (driver), WHO benefits (products+sectors)
+// relevanceThreshold: company must score >= this to receive the signal
+interface SectorSignalDef {
+  id: string; label: string;
+  signalType: 'DEMAND_SURGE'|'SUPPLY_CONSTRAINT'|'INFRASTRUCTURE_BOTTLENECK'|'CAPACITY_SHORTAGE'|'INPUT_SHORTAGE';
+  subject: string;    // WHAT: "Insulator Supply", "Grid Infrastructure"
+  driver: string;     // WHY: "T&D capex cycle", "Data center demand"
+  impact: string;     // WHAT IT MEANS for beneficiaries
+  keywords: string[]; // at least one must appear in article
+  // Multi-condition: both product AND state keyword must co-occur in same sentence
+  compoundRequired?: { product: string[]; state: string[] };
+  beneficiaryProducts: string[]; // company names/sectors matching these get relevance bonus
+  targetSectors: string[];       // high-relevance sectors (score 0.85)
+  excludeSectors: string[];      // zero relevance — don't propagate
+  relevanceThreshold: number;    // 0.0-1.0: min relevance to inject signal
+}
+const SECTOR_SIGNALS: SectorSignalDef[] = [
+  { id:'INSULATOR_SHORTAGE', label:'Insulator Shortage',
+    signalType:'SUPPLY_CONSTRAINT', subject:'Insulator Supply', driver:'T&D and grid expansion cycle',
+    impact:'Higher order inflow for insulator manufacturers operating at full capacity',
+    keywords:['insulator shortage','insulator demand','global insulator','disc insulator','string insulator','insulator supply constrained','insulator backlog'],
+    compoundRequired:{ product:['insulator','disc insulator','composite insulator'], state:['shortage','demand strong','constraint','full capacity','order book','backlog','high demand'] },
+    beneficiaryProducts:['insulator','electrical equipment','T&D','transmission equipment'],
+    targetSectors:['electrical','insulator','power transmission','T&D equipment'],
+    excludeSectors:['IT','software','pharma','bank','finance','FMCG','consumer','textile','media'],
+    relevanceThreshold: 0.6 },
+
+  { id:'TRANSFORMER_SHORTAGE', label:'Transformer Shortage',
+    signalType:'CAPACITY_SHORTAGE', subject:'Transformer Supply', driver:'Grid modernisation and data center power buildout',
+    impact:'Lead times expanding, order books building for transformer OEMs',
+    keywords:['transformer shortage','transformer demand','power transformer','grid transformer','transformer backlog','transformer lead time','transformer supply'],
+    compoundRequired:{ product:['transformer','power transformer','distribution transformer'], state:['shortage','backlog','lead time','demand','constraint','delay','strong order'] },
+    beneficiaryProducts:['transformer','electrical equipment','switchgear','power equipment'],
+    targetSectors:['electrical','transformer','power','T&D','switchgear'],
+    excludeSectors:['IT','pharma','bank','FMCG','consumer','software'],
+    relevanceThreshold: 0.6 },
+
+  { id:'CABLE_DEMAND', label:'Cable/Conductor Demand',
+    signalType:'DEMAND_SURGE', subject:'Cable/Conductor Demand', driver:'Power infra capex and renewable connectivity',
+    impact:'Volume growth and order visibility for cable & conductor manufacturers',
+    keywords:['cable demand','conductor demand','wire demand','cable order','cable backlog','conductor order'],
+    compoundRequired:{ product:['cable','conductor','wire','acsr','opgw'], state:['demand','order','growth','backlog','strong','surge','shortage'] },
+    beneficiaryProducts:['cable','conductor','wire','electrical cables'],
+    targetSectors:['cable','conductor','wire','electrical','power','telecom'],
+    excludeSectors:['IT','pharma','bank','FMCG','consumer'],
+    relevanceThreshold: 0.6 },
+
+  { id:'DEFENCE_INDIGENISATION', label:'Defence Push',
+    signalType:'DEMAND_SURGE', subject:'Defence Indigenisation', driver:'Atmanirbhar Bharat + DPP policy push',
+    impact:'Domestic order visibility improving for defence electronics and equipment',
+    keywords:['make in india defence','defence indigenisation','atmanirbhar defence','defence offset','defence import substitution','idex','drdo'],
+    beneficiaryProducts:['defence','defense','military','electronics','aerospace','ordnance'],
+    targetSectors:['defence','defense','aerospace','electronics','engineering','military'],
+    excludeSectors:['pharma','bank','FMCG','consumer','textile'],
+    relevanceThreshold: 0.65 },
+
+  { id:'SOLAR_BOOM', label:'Solar Demand',
+    signalType:'DEMAND_SURGE', subject:'Solar Equipment Demand', driver:'500GW renewable target + PLI schemes',
+    impact:'Order visibility building for solar EPC, module, and balance-of-system suppliers',
+    keywords:['solar capacity','renewable target','solar tender','solar auction','solar order','green energy target'],
+    beneficiaryProducts:['solar','module','inverter','EPC','renewable','wind','energy'],
+    targetSectors:['solar','renewable','energy','EPC','electrical'],
+    excludeSectors:['IT','bank','pharma','FMCG'],
+    relevanceThreshold: 0.55 },
+
+  { id:'GRID_INFRA_BOTTLENECK', label:'Grid Infra Bottleneck',
+    signalType:'INFRASTRUCTURE_BOTTLENECK', subject:'Grid Infrastructure', driver:'AI data center + EV + renewable power demand',
+    impact:'Long order visibility and pricing power for T&D equipment, substations, EPC players',
+    keywords:['grid infrastructure','grid constraint','power grid','grid modernisation','transmission bottleneck','grid expansion','substation'],
+    compoundRequired:{ product:['grid','substation','transmission','distribution','T&D','switchgear'], state:['constraint','bottleneck','shortage','demand','expansion','upgrade','investment'] },
+    beneficiaryProducts:['grid equipment','T&D','substation','switchgear','transformer','cable','EPC'],
+    targetSectors:['electrical','power','T&D','transmission','EPC','grid','infrastructure'],
+    excludeSectors:['IT','pharma','bank','FMCG','consumer'],
+    relevanceThreshold: 0.65 },
 ];
+
+// Compute how relevant a sector signal is for a specific company (0.0 – 1.0)
+// Rule: relevance < threshold → signal NOT propagated to this company
+function computeSectorRelevance(company: {sector:string;company:string}, sig: SectorSignalDef): number {
+  const sl = (company.sector||'').toLowerCase();
+  const cl = (company.company||'').toLowerCase();
+  if (sig.excludeSectors.some(e => sl.includes(e.toLowerCase()) || cl.includes(e.toLowerCase()))) return 0;
+  if (sig.targetSectors.some(t => sl.includes(t.toLowerCase()) || cl.includes(t.toLowerCase()))) return 0.85;
+  if (sig.beneficiaryProducts.some(b => sl.includes(b.toLowerCase()) || cl.includes(b.toLowerCase()))) return 0.7;
+  return 0.25; // default low — most stocks don't benefit from any given sector signal
+}
+
+// Check if compound requirement is met: both product AND state keyword in same sentence
+function meetsCompoundRequirement(sentence: string, compound?: {product: string[]; state: string[]}): boolean {
+  if (!compound) return true;
+  const s = sentence.toLowerCase();
+  const hasProduct = compound.product.some(p => s.includes(p));
+  const hasState   = compound.state.some(st => s.includes(st));
+  return hasProduct && hasState;
+}
 
 // ── Subject Extractor — "WHAT" field that prevents generic DEMAND_CONSTRAINT everywhere ──
 // Maps raw article text + signal type → a specific subject ("Insulators", "₹300Cr", "Q4 FY26")
@@ -657,12 +745,67 @@ function deduplicateSignals(signals: ExtractedSignal[]): ExtractedSignal[] {
 }
 
 // ── Hybrid Signal Extractor (Layer 1 + Layer 2) ───────────────────────────────
+// ── Product-specific compound patterns for extractSignals ──────────────────────
+// These fire ONLY when BOTH product keyword AND state keyword co-occur in same sentence.
+// This prevents "demand" → DEMAND_CONSTRAINT for every stock. Must be specific.
+const COMPOUND_EXTRACT_PATTERNS: {
+  type: ConcallSignalType; category: SignalCategory; subject: string;
+  products: string[]; states: string[];
+  positive: boolean; strength: 1|2|3|4|5; horizon: SignalHorizon; isAlpha: boolean;
+}[] = [
+  { type:'DEMAND_CONSTRAINT', category:'DEMAND', subject:'Insulators', isAlpha:true, positive:true, strength:5, horizon:'6-12M',
+    products:['insulator','disc insulator','composite insulator','glass insulator','porcelain insulator'],
+    states:['shortage','demand strong','high demand','robust demand','capacity constraint','order full','supply constrained','operating at full','full capacity','exceed','more orders than'] },
+  { type:'DEMAND_CONSTRAINT', category:'DEMAND', subject:'Transformers', isAlpha:true, positive:true, strength:5, horizon:'6-12M',
+    products:['transformer','power transformer','distribution transformer','hvdc transformer'],
+    states:['backlog','lead time','shortage','demand surge','constrained','order book','strong demand','cannot meet','full order'] },
+  { type:'ORDER', category:'DEMAND', subject:'Cables/Conductors', isAlpha:true, positive:true, strength:4, horizon:'0-3M',
+    products:['cable','conductor','acsr','opgw','underground cable','aerial bundled'],
+    states:['order','demand','inflow','pipeline','growing','strong','visibility','secured'] },
+  { type:'ORDER', category:'DEMAND', subject:'T&D Equipment', isAlpha:true, positive:true, strength:4, horizon:'0-3M',
+    products:['switchgear','breaker','reactor','capacitor bank','substation','bus bar'],
+    states:['order','demand','backlog','inflow','strong','secured','tendered'] },
+  { type:'CAPEX', category:'CAPEX', subject:'Capacity Expansion', isAlpha:true, positive:true, strength:3, horizon:'3-6M',
+    products:['plant','line','furnace','kiln','capacity','unit'],
+    states:['commissioning','go live','operational','expansion','fy','q1','q2','q3','q4','new line','greenfield','brownfield'] },
+  { type:'MARGIN', category:'MARGIN', subject:'Operating Margin', isAlpha:true, positive:true, strength:3, horizon:'3-6M',
+    products:['margin','opm','ebitda'],
+    states:['stable','expand','improve','intact','no pressure','protected','maintained','guidance'] },
+];
+
 function extractSignals(articleText: string, source: string, date: string): ExtractedSignal[] {
   const text = articleText.toLowerCase();
   const results: ExtractedSignal[] = [];
   const ageWeight = getAgeWeight(date);
 
-  // Process concall patterns
+  // Process compound patterns FIRST (higher specificity, higher confidence)
+  for (const cp of COMPOUND_EXTRACT_PATTERNS) {
+    // Split into sentences first
+    const sentences = articleText.split(/[.!?]/).map(s => s.trim()).filter(s => s.length >= 15);
+    for (const sentence of sentences) {
+      const sl = sentence.toLowerCase();
+      const hasProduct = cp.products.some(p => sl.includes(p));
+      const hasState   = cp.states.some(s => sl.includes(s));
+      if (hasProduct && hasState) {
+        const numerical = extractNumerical(sentence);
+        const temporality = tagTemporality(sentence);
+        const effectiveAlpha = cp.isAlpha && temporality !== 'HISTORICAL';
+        // Avoid duplicating if same type already found with better evidence
+        if (!results.some(r => r.type === cp.type && r.subject === cp.subject)) {
+          results.push({
+            type: cp.type, category: cp.category, text: sentence.split(' ').slice(0,40).join(' '),
+            positive: cp.positive, strength: cp.strength, horizon: cp.horizon,
+            isAlpha: effectiveAlpha, temporality, numerical,
+            subject: cp.subject, origin: 'COMPANY', isForConcall: true,
+            source, date, ageWeight,
+          });
+        }
+        break; // one compound signal per pattern per article
+      }
+    }
+  }
+
+  // Process generic concall patterns
   for (const p of CONCALL_PATTERNS) {
     let matched = false;
     let matchedText = '';
@@ -826,32 +969,38 @@ function generateWhyItMatters(composites: CompositeSignal[], signals: ExtractedS
 
 // ── Fixed MRI Score (incorporates management style signals) ──────────────────
 function computeMRI(signals: ExtractedSignal[]): number {
-  if (signals.length === 0) return 50;
+  // MRI = management reliability — only company-confirmed signals contribute
+  const companySigs = signals.filter(s => s.origin === 'COMPANY' && s.text && s.text.length >= 15);
+  if (companySigs.length === 0) return 50; // neutral: no company data
   let score = 50;
-  score += signals.filter(s=>s.type==='GUIDANCE_UP'||s.type==='CONSERVATIVE_GUIDANCE').length * 10;
-  score += signals.filter(s=>s.type==='VISIBILITY_CONFIDENCE').length * 8;
-  score += signals.filter(s=>s.isAlpha&&s.positive&&s.temporality==='FORWARD').length * 5;
-  score -= signals.filter(s=>s.type==='CAPEX_DELAY'||s.type==='ORDER_EXECUTION_DELAY').length * 10;
-  score -= signals.filter(s=>s.type==='GUIDANCE_DOWN').length * 12;
-  score -= signals.filter(s=>!s.positive&&s.isAlpha).length * 4;
-  // Consistency bonus: management style + strong alpha = credible
-  const hasConservative = signals.some(s=>s.type==='CONSERVATIVE_GUIDANCE');
-  const hasStrong = signals.some(s=>s.strength>=4&&s.positive);
+  score += companySigs.filter(s=>s.type==='GUIDANCE_UP'||s.type==='CONSERVATIVE_GUIDANCE').length * 10;
+  score += companySigs.filter(s=>s.type==='VISIBILITY_CONFIDENCE').length * 8;
+  score += companySigs.filter(s=>s.isAlpha&&s.positive&&s.temporality==='FORWARD').length * 5;
+  score -= companySigs.filter(s=>s.type==='CAPEX_DELAY'||s.type==='ORDER_EXECUTION_DELAY').length * 10;
+  score -= companySigs.filter(s=>s.type==='GUIDANCE_DOWN').length * 12;
+  score -= companySigs.filter(s=>!s.positive&&s.isAlpha).length * 4;
+  const hasConservative = companySigs.some(s=>s.type==='CONSERVATIVE_GUIDANCE');
+  const hasStrong = companySigs.some(s=>s.strength>=4&&s.positive);
   if (hasConservative && hasStrong) score += 10; // underpromise-overdeliver pattern
   return Math.max(10, Math.min(95, score));
 }
 
 // ── Fixed Signal Score (corrected weights: alpha 1.0, negative -1.2, noise 0.3) ─
 function computeSignalScore(signals: ExtractedSignal[]): number {
-  if (signals.length === 0) return 0;
-  const weightedSum = signals.reduce((sum, s) => {
+  // CRITICAL: Only COMPANY-matched signals score. Sector signals are context, not evidence.
+  // This prevents "Data center power demand" → phantom 100 score for every electrical company.
+  const companySignals = signals.filter(s => s.origin === 'COMPANY' && s.text && s.text.length >= 15);
+  if (companySignals.length === 0) return 0; // no company evidence = score 0
+  const weightedSum = companySignals.reduce((sum, s) => {
     let w = s.strength * s.ageWeight;
-    if (s.isAlpha && s.positive)  w *= 1.0;
-    else if (!s.positive && s.isAlpha) w *= -1.2; // negative alpha = bigger penalty
-    else if (!s.isAlpha) w *= 0.3; // noise = low weight
+    if (s.isAlpha && s.positive)    w *= 1.0;
+    else if (!s.positive && s.isAlpha) w *= -1.2;
+    else if (!s.isAlpha)            w *= 0.3;
     return sum + w;
   }, 0);
-  return Math.max(0, Math.min(100, Math.round(50 + weightedSum * 4)));
+  // Scale by coverage: more articles = higher confidence (log scale)
+  const coverageMultiplier = 1 + Math.log2(1 + companySignals.length) * 0.15;
+  return Math.max(0, Math.min(100, Math.round((50 + weightedSum * 4) * coverageMultiplier)));
 }
 
 // ── Reusable Signal Card — ensures consistent display of label + subject + evidence ──
@@ -997,17 +1146,47 @@ function ConcallIntelligence() {
           rawSignals.push(...sigs);
         }
 
-        // Sector signals: from cross-stock articles — tag as SECTOR origin with sector context
+        // Sector signals: injected ONLY when relevance >= threshold AND compound requirement met
+        // These do NOT affect signalScore (score uses COMPANY signals only) — purely context
+        const stockMeta = { sector: stock.sector||'', company: stock.company||'' };
+        const appliedSectorSignals = new Set<string>(); // deduplicate sector signals per company
         for (const a of sectorSignalArticles) {
           if (relevant.includes(a)) continue; // already processed as COMPANY
           const fullText = [(a.title||''),(a.headline||''),(a.summary||'')].join(' ');
-          const sigs = extractSignals(fullText, a.title||a.headline||'', a.published_at||'');
-          // Override origin to SECTOR and mark subject with "(Sector)" suffix
-          sigs.forEach(s => {
-            s.origin = 'SECTOR';
-            if (!s.subject.includes('(Sector)')) s.subject = `${s.subject} (Sector)`;
-          });
-          rawSignals.push(...sigs);
+          const fullTextLower = fullText.toLowerCase();
+          // Match to specific sector signal definition (not just generic extraction)
+          for (const ss of SECTOR_SIGNALS) {
+            const alreadyApplied = appliedSectorSignals.has(ss.id);
+            if (alreadyApplied) continue;
+            // Relevance gate: company must be relevant enough to receive this signal
+            const relevance = computeSectorRelevance(stockMeta, ss);
+            if (relevance < ss.relevanceThreshold) continue;
+            // Keyword gate: article must mention at least one keyword
+            const hasKeyword = ss.keywords.some(kw => fullTextLower.includes(kw));
+            if (!hasKeyword) continue;
+            // Extract the specific sentence containing the matched keyword
+            const matchedKw = ss.keywords.find(kw => fullTextLower.includes(kw));
+            if (!matchedKw) continue;
+            const idx = fullTextLower.indexOf(matchedKw);
+            const sentStart = Math.max(0, fullText.lastIndexOf('.', idx - 1) + 1);
+            const sentEnd = Math.min(fullText.length, (fullText.indexOf('.', idx + matchedKw.length) + 1) || fullText.length);
+            const sentence = fullText.slice(sentStart, sentEnd).trim().split(' ').slice(0, 40).join(' ');
+            // HARD VALIDATION: sentence must exist AND meet compound requirement
+            if (sentence.length < 15) continue;
+            if (!meetsCompoundRequirement(sentence, ss.compoundRequired)) continue;
+            appliedSectorSignals.add(ss.id);
+            rawSignals.push({
+              type: 'DEMAND_CONSTRAINT', category: 'DEMAND', text: sentence,
+              positive: true, strength: 3, horizon: '6-12M', isAlpha: true,
+              temporality: 'CURRENT',
+              subject: `${ss.subject} (${ss.signalType.replace(/_/g,' ')})`,
+              origin: 'SECTOR', isForConcall: true,
+              source: a.title || a.headline || '', date: a.published_at || '',
+              ageWeight: getAgeWeight(a.published_at || ''),
+              // Store sector metadata for richer display
+              ...(({ sectorDef: ss } as any)),
+            } as ExtractedSignal & { sectorDef: SectorSignalDef });
+          }
         }
 
         // DEDUPLICATION: merge same-type signals, preventing DEMAND_CONSTRAINT × 3
@@ -1064,6 +1243,45 @@ function ConcallIntelligence() {
   useEffect(() => { if (screenerStocks.length > 0) fetchConcallData(); }, []); // eslint-disable-line
 
   const ACCENT2 = '#a78bfa';
+  // ── Manual Concall Input state — paste raw transcript/highlight text ──
+  const [manualInput, setManualInput] = useState('');
+  const [manualSymbol, setManualSymbol] = useState('');
+  const [showManualInput, setShowManualInput] = useState(false);
+  const MANUAL_KEY = 'mb_concall_manual_v1';
+
+  function processManualInput() {
+    if (!manualInput.trim() || !manualSymbol.trim()) return;
+    const sym = manualSymbol.trim().toUpperCase();
+    const sigs = extractSignals(manualInput, 'Manual Concall Input', new Date().toISOString());
+    if (sigs.length === 0) { alert('No signals detected in the pasted text. Try adding more specific phrases like "₹300 Cr order", "capacity expansion", "margin stable" etc.'); return; }
+    // Store manual signals in localStorage keyed by symbol
+    try {
+      const stored = JSON.parse(localStorage.getItem(MANUAL_KEY)||'{}');
+      stored[sym] = { text: manualInput, signals: sigs, timestamp: Date.now() };
+      localStorage.setItem(MANUAL_KEY, JSON.stringify(stored));
+    } catch {}
+    // Inject into existing summary or create new entry
+    setSummaries(prev => {
+      const existing = prev.find(s => s.symbol === sym);
+      if (existing) {
+        const merged = deduplicateSignals([...existing.signals, ...sigs]);
+        const updated = { ...existing, signals: merged, signalScore: computeSignalScore(merged), mriScore: computeMRI(merged), alphaCount: merged.filter(s=>s.isAlpha).length, articleCount: existing.articleCount, composite: buildCompositeSignals(merged), whyItMatters: generateWhyItMatters(buildCompositeSignals(merged), merged) };
+        return prev.map(s => s.symbol === sym ? updated : s).sort((a,b)=>b.signalScore-a.signalScore);
+      }
+      const stock = screenerStocks.find(s => s.symbol.toUpperCase() === sym);
+      const newEntry: CompanyConcallSummary = {
+        symbol: sym, company: stock?.company || sym, sector: stock?.sector || '', grade: stock?.grade, score: stock?.score, source: 'Manual',
+        signals: sigs, composite: buildCompositeSignals(sigs), signalScore: computeSignalScore(sigs), mriScore: computeMRI(sigs),
+        expectationShift: computeExpectationShift(sigs), trend: 'IMPROVING', tone: 'Bullish', surprisePotential: 'HIGH',
+        freshness: 'FRESH', missedByMarket: false, whyItMatters: generateWhyItMatters(buildCompositeSignals(sigs), sigs),
+        lastDate: new Date().toISOString(), articleCount: 0, alphaCount: sigs.filter(s=>s.isAlpha).length, noiseCount: sigs.filter(s=>!s.isAlpha).length,
+      } as any;
+      return [...prev, newEntry].sort((a,b)=>b.signalScore-a.signalScore);
+    });
+    setManualInput(''); setManualSymbol(''); setShowManualInput(false);
+    alert(`✅ ${sigs.length} signals extracted from manual input for ${sym}`);
+  }
+
   const displayed = showAlphaOnly ? summaries.filter(s=>s.alphaCount>0) : summaries;
   const toneColor = (t:string) => t.includes('Bull')?'#10b981':t==='Cautious'?'#ef4444':'#f59e0b';
   const freshColor = (f:string) => f==='FRESH'?'#10b981':f==='ACTIVE'?'#f59e0b':'#4A5B6C';
@@ -1098,6 +1316,9 @@ function ConcallIntelligence() {
             <button onClick={()=>setShowAlphaOnly(v=>!v)} style={{fontSize:11,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${showAlphaOnly?ACCENT2+'60':BORDER}`,background:showAlphaOnly?`${ACCENT2}18`:'transparent',color:showAlphaOnly?ACCENT2:TEXT3,cursor:'pointer'}}>
               ⭐ Alpha Only ({summaries.filter(s=>s.alphaCount>0).length})
             </button>
+            <button onClick={()=>setShowManualInput(v=>!v)} style={{fontSize:11,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${showManualInput?'#F59E0B60':BORDER}`,background:showManualInput?`#F59E0B18`:'transparent',color:showManualInput?'#F59E0B':TEXT3,cursor:'pointer'}}>
+              📝 Paste Concall
+            </button>
             <button onClick={fetchConcallData} disabled={loading} style={{fontSize:11,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${BORDER}`,background:'transparent',color:TEXT3,cursor:'pointer'}}>
               {loading ? '⏳ Scanning...' : '↻ Refresh'}
             </button>
@@ -1122,6 +1343,37 @@ function ConcallIntelligence() {
           </div>
         )}
       </div>
+
+      {/* ── Manual Concall Input — paste transcript / highlight text ── */}
+      {showManualInput && (
+        <div style={{marginBottom:14,padding:'14px 16px',backgroundColor:'#F59E0B08',border:'1px solid #F59E0B30',borderRadius:10}}>
+          <div style={{fontSize:11,fontWeight:800,color:'#F59E0B',marginBottom:8}}>
+            📝 PASTE CONCALL HIGHLIGHTS — add transcript-level signals not in news articles
+          </div>
+          <div style={{fontSize:10,color:'#4A5B6C',marginBottom:10}}>
+            Paste raw concall text, investor presentation excerpts, or management commentary. The engine will extract signals and add to the relevant company.
+          </div>
+          <div style={{display:'flex',gap:8,marginBottom:8,flexWrap:'wrap'}}>
+            <input value={manualSymbol} onChange={e=>setManualSymbol(e.target.value.toUpperCase())}
+              placeholder="NSE Symbol (e.g. QPOWER)"
+              style={{padding:'7px 12px',backgroundColor:'#0D1B2E',border:`1px solid ${BORDER}`,borderRadius:7,color:TEXT1,fontSize:12,width:180}}/>
+            <button onClick={processManualInput} style={{padding:'7px 16px',borderRadius:7,border:'none',backgroundColor:'#F59E0B',color:'#000',fontWeight:800,fontSize:12,cursor:'pointer'}}>
+              Extract Signals →
+            </button>
+            <button onClick={()=>setShowManualInput(false)} style={{padding:'7px 12px',borderRadius:7,border:`1px solid ${BORDER}`,backgroundColor:'transparent',color:TEXT3,fontSize:12,cursor:'pointer'}}>
+              Cancel
+            </button>
+          </div>
+          <textarea value={manualInput} onChange={e=>setManualInput(e.target.value)}
+            placeholder="Paste concall transcript highlights here...&#10;Example:&#10;'Insulator demand remains robust and we are operating at full capacity. We expect ₹300 crore order in the next few weeks. New capacity will go live in Q4 FY26. Commodity costs are being passed to customers so no near-term margin pressure.'"
+            rows={6}
+            style={{width:'100%',backgroundColor:'#0D1B2E',border:`1px solid ${BORDER}`,borderRadius:8,padding:'10px 12px',color:TEXT1,fontSize:12,resize:'vertical',boxSizing:'border-box',lineHeight:1.6}}
+          />
+          <div style={{fontSize:10,color:'#4A5B6C',marginTop:6}}>
+            💡 Signals extracted from this input are tagged as COMPANY origin with highest confidence. They are NOT from news articles — they are from management statements.
+          </div>
+        </div>
+      )}
 
       {loading && summaries.length === 0 && (
         <div style={{textAlign:'center',padding:'40px 20px',color:TEXT3}}>
@@ -1300,11 +1552,32 @@ function ConcallIntelligence() {
                           {/* Sector signals */}
                           {s.signals.filter(sig=>sig.isAlpha&&sig.origin==='SECTOR').length > 0 && (
                             <div style={{marginBottom:10}}>
-                              <div style={{fontSize:10,fontWeight:800,color:'#06b6d4',letterSpacing:'1px',marginBottom:6}}>🌍 SECTOR SIGNALS — derived, not company-specific</div>
+                              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+                                <div style={{fontSize:10,fontWeight:800,color:'#06b6d4',letterSpacing:'1px'}}>🌍 SECTOR CONTEXT — does NOT affect score</div>
+                                <span style={{fontSize:9,color:'#4A5B6C',border:'1px solid #1A2840',padding:'1px 6px',borderRadius:3}}>Informational only</span>
+                              </div>
                               <div style={{display:'flex',flexDirection:'column',gap:6}}>
-                                {s.signals.filter(sig=>sig.isAlpha&&sig.origin==='SECTOR').map((sig,i)=>(
-                                  <SignalCard key={i} sig={sig} horizonColor={horizonColor} />
-                                ))}
+                                {s.signals.filter(sig=>sig.isAlpha&&sig.origin==='SECTOR').map((sig,i)=>{
+                                  const sd = (sig as any).sectorDef as (SectorSignalDef|undefined);
+                                  return (
+                                    <div key={i} style={{padding:'10px 12px',backgroundColor:'#06b6d408',border:'1px solid #06b6d420',borderLeft:'3px solid #06b6d4',borderRadius:7}}>
+                                      <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:4,flexWrap:'wrap'}}>
+                                        <span style={{fontSize:11,fontWeight:800,color:'#06b6d4'}}>🌍 {sig.subject}</span>
+                                        {sd && <span style={{fontSize:9,color:'#4A5B6C',fontStyle:'italic'}}>driven by: {sd.driver}</span>}
+                                        <span style={{fontSize:8,color:'#4A5B6C',marginLeft:'auto'}}>{sig.date?new Date(sig.date).toLocaleDateString('en-IN'):''}</span>
+                                      </div>
+                                      {sd && <div style={{fontSize:10,color:'#0F7ABF',marginBottom:4}}>→ {sd.impact}</div>}
+                                      {sig.text && sig.text.length >= 15 ? (
+                                        <div style={{fontSize:11,color:'#8A95A3',lineHeight:1.5,backgroundColor:'#060E1A',padding:'5px 9px',borderRadius:5,borderLeft:'2px solid #06b6d430',marginBottom:3}}>
+                                          "{sig.text}"
+                                        </div>
+                                      ) : (
+                                        <div style={{fontSize:10,color:'#F59E0B'}}>⚠ No direct evidence — sector inference only</div>
+                                      )}
+                                      <div style={{fontSize:9,color:'#4A5B6C'}}>📰 {sig.source}</div>
+                                    </div>
+                                  );
+                                })}
                               </div>
                             </div>
                           )}
