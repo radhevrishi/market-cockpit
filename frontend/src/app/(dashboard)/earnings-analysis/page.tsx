@@ -580,24 +580,35 @@ function detectScaleFromNumbers(rows: LabeledNum[], currency: string, curIdx: nu
   }
 
   if (revenueCandidate && revenueCandidate > 0) {
-    if (revenueCandidate >= 1e8) {
+    // BOUNDARY TABLE (USD):
+    //  >= 1e6 (1M):  absolute dollars → divide by 1,000,000 → Mn   (OSS: 32,215,500 → 32.2 Mn ✓)
+    //  >= 1e3 (1K):  already in thousands → divide by 1,000 → Mn   (Fastly: 173,021 → 173.0 Mn ✓)
+    //  >= 1    :     already in Mn → keep                           (rare; management presentations)
+    // BOUNDARY TABLE (INR):
+    //  >= 1e7 (10M): absolute rupees → divide by 1,00,000 → Cr     (large Indian cos)
+    //  >= 1e3 (1K):  in Lakhs → divide by 100 → Cr                 (Aeroflex: 41,935 → 419 Cr ✓)
+    //  >= 1    :     already in Cr → keep
+    if (revenueCandidate >= 1e6) {
+      // Absolute dollar amounts (e.g. OSS 10-K: $32,215,500 = $32.2M)
       const factor = currency === 'INR' ? 1e-5 : 1e-6;
       return { factor, scaleLabel: currency === 'INR' ? '₹ Cr' : `${sym} Mn` };
     }
-    if (revenueCandidate >= 1e5) {
+    if (revenueCandidate >= 1e3) {
+      // Already in thousands (e.g. Fastly "in thousands": 173,021 → $173 Mn)
       const factor = currency === 'INR' ? 1e-2 : 1e-3;
       return { factor, scaleLabel: currency === 'INR' ? '₹ Cr' : `${sym} Mn` };
     }
-    if (revenueCandidate >= 100) {
+    if (revenueCandidate >= 1) {
+      // Already in display units (Mn or Cr)
       return { factor: 1, scaleLabel: currency === 'INR' ? '₹ Cr' : `${sym} Mn` };
     }
   }
 
-  // Fallback: scan all rows for any large number to infer scale
+  // Fallback: scan ALL rows for any large number to infer scale
   const allNums = rows.flatMap(r => r.nums).filter(n => n > 0 && !isNaN(n));
   const maxNum = allNums.length > 0 ? Math.max(...allNums) : 0;
-  if (maxNum >= 1e8) return { factor: currency === 'INR' ? 1e-5 : 1e-6, scaleLabel: currency === 'INR' ? '₹ Cr' : `${sym} Mn` };
-  if (maxNum >= 1e5) return { factor: currency === 'INR' ? 1e-2 : 1e-3, scaleLabel: currency === 'INR' ? '₹ Cr' : `${sym} Mn` };
+  if (maxNum >= 1e6) return { factor: currency === 'INR' ? 1e-5 : 1e-6, scaleLabel: currency === 'INR' ? '₹ Cr' : `${sym} Mn` };
+  if (maxNum >= 1e3) return { factor: currency === 'INR' ? 1e-2 : 1e-3, scaleLabel: currency === 'INR' ? '₹ Cr' : `${sym} Mn` };
 
   return { factor: 1, scaleLabel: currency === 'INR' ? '₹ Cr' : `${sym} Mn` };
 }
@@ -1505,13 +1516,31 @@ function scoreNarrative(d: RawFinancials): EngineOutput & { themeList: typeof NA
 function n(v: number|null, d: RawFinancials, decimals = 1): string {
   if (v === null) return '—';
   const abs = Math.abs(v);
-  let s: string;
-  if (abs >= 1000) s = `${(v/1000).toFixed(1)}K`;
-  else if (abs >= 1) s = v.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
-  else s = v.toFixed(3);
   const sym = d.currency === 'USD' ? '$' : d.currency === 'INR' ? '₹' : '';
-  const unit = d.scaleLabel.includes('Cr') ? ' Cr' : d.scaleLabel.includes('Mn') ? ' Mn' : '';
-  return v < 0 ? `(${sym}${s}${unit})` : `${sym}${s}${unit}`;
+  const isMn = d.scaleLabel.includes('Mn') || d.scaleLabel.includes('$');
+  const isCr = d.scaleLabel.includes('Cr') || d.scaleLabel.includes('₹');
+
+  // Unit-aware display: NEVER create nonsense like "$16K Mn" or "₹400K Cr"
+  // When the value is already in Mn, scale up to Bn for large values:
+  let formatted: string;
+  if (isMn) {
+    if (abs >= 1000)       formatted = `${sym}${(v/1000).toFixed(1)} Bn`;  // $16K Mn → $16.0 Bn
+    else if (abs >= 0.1)   formatted = `${sym}${abs.toFixed(decimals)} Mn`;
+    else if (abs > 0)      formatted = `${sym}${abs.toFixed(3)} Mn`;
+    else                   formatted = `${sym}0 Mn`;
+  } else if (isCr) {
+    if (abs >= 10000)      formatted = `₹${(v/1000).toFixed(1)}K Cr`;     // ₹41000 Cr → ₹41.0K Cr
+    else if (abs >= 0.1)   formatted = `₹${abs.toFixed(decimals)} Cr`;
+    else if (abs > 0)      formatted = `₹${abs.toFixed(3)} Cr`;
+    else                   formatted = `₹0 Cr`;
+  } else {
+    // Generic fallback (no clear unit)
+    if (abs >= 1e9)        formatted = `${sym}${(v/1e9).toFixed(1)}B`;
+    else if (abs >= 1e6)   formatted = `${sym}${(v/1e6).toFixed(1)}M`;
+    else if (abs >= 1e3)   formatted = `${sym}${(v/1e3).toFixed(1)}K`;
+    else                   formatted = `${sym}${abs.toFixed(decimals)}`;
+  }
+  return v < 0 ? `(${formatted.replace(sym, '')})`.replace('(', `(${sym}`) : formatted;
 }
 function pct(v: number|null): string { return v === null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`; }
 function growth(cur: number|null, prior: number|null): { text: string; col: string }|null {
@@ -1560,6 +1589,7 @@ export default function EarningsAnalysisPage() {
   const [manualRevEst, setManualRevEst] = useState('');
   const [manualGMEst, setManualGMEst] = useState('');
   const [manualGuidance, setManualGuidance] = useState('');
+  const [showOverrides, setShowOverrides] = useState(false);
 
   async function fetchAVData(ticker: string) {
     if (!ticker.trim()) return;
@@ -1812,123 +1842,208 @@ export default function EarningsAnalysisPage() {
             </div>
           </div>
 
-          {/* ── EARNINGS SCORECARD: ACTUAL vs ESTIMATE ── */}
-          {/* This is the HERO element — most important comparison in the header */}
+          {/* ═══════════════════════════════════════════════════════════════
+              ACTUALS AND MARKET EXPECTATIONS
+              Design rules per spec:
+              1. Renamed from "ACTUAL vs ESTIMATE" → "Actuals and market expectations"
+              2. Per-metric availability badges show data source
+              3. Estimate columns hidden when no source available
+              4. Analyst overrides behind a toggle button
+              5. Coverage note at bottom
+              ═══════════════════════════════════════════════════════════════ */}
           <div style={{borderTop:`1px solid ${BORDER}`,paddingTop:14,marginBottom:14}}>
-            <div style={{fontSize:9,fontWeight:800,color:MUTED,letterSpacing:'1px',marginBottom:10}}>
-              KEY RESULTS — {d.period} · ACTUAL (from report) vs ESTIMATE (from consensus)
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,marginBottom:12,flexWrap:'wrap'}}>
+              <div>
+                <span style={{fontSize:9,fontWeight:800,color:MUTED,letterSpacing:'1px'}}>
+                  ACTUALS AND MARKET EXPECTATIONS — {d.period}
+                </span>
+              </div>
+              {/* Change 4: Analyst overrides behind button */}
+              <button
+                onClick={() => setShowOverrides(v => !v)}
+                style={{
+                  fontSize:9, padding:'3px 10px', borderRadius:5, cursor:'pointer',
+                  backgroundColor: showOverrides ? YELLOW+'18' : 'transparent',
+                  border: `1px solid ${showOverrides ? YELLOW+'50' : BORDER}`,
+                  color: showOverrides ? YELLOW : MUTED, fontWeight:700,
+                }}
+              >
+                {showOverrides ? '▲' : '▼'} Analyst override
+              </button>
             </div>
 
-            {/* Scorecard table */}
+            {/* Scorecard — cleaner table, badges, hide missing estimates */}
             <div style={{overflowX:'auto'}}>
-              <table style={{width:'100%',borderCollapse:'collapse',minWidth:500}}>
+              <table style={{width:'100%',borderCollapse:'collapse'}}>
                 <thead>
                   <tr style={{borderBottom:`1px solid ${BORDER}`}}>
-                    {['METRIC','ACTUAL','ESTIMATE','vs EST','vs PRIOR YR'].map(h=>(
-                      <th key={h} style={{padding:'4px 10px',fontSize:9,fontWeight:700,color:MUTED,textAlign:h==='METRIC'?'left':'right',letterSpacing:'0.5px'}}>{h}</th>
-                    ))}
+                    <th style={{padding:'4px 8px',fontSize:9,fontWeight:700,color:MUTED,textAlign:'left',letterSpacing:'0.5px',width:'28%'}}>METRIC</th>
+                    <th style={{padding:'4px 8px',fontSize:9,fontWeight:700,color:MUTED,textAlign:'right',width:'20%'}}>ACTUAL</th>
+                    {/* Only show ESTIMATE column when there's something to show */}
+                    {(latestEpsEst !== null || revEstNum !== null || gmEstNum !== null) && (
+                      <th style={{padding:'4px 8px',fontSize:9,fontWeight:700,color:MUTED,textAlign:'right',width:'18%'}}>ESTIMATE</th>
+                    )}
+                    {(latestEpsEst !== null || revEstNum !== null || gmEstNum !== null) && (
+                      <th style={{padding:'4px 8px',fontSize:9,fontWeight:700,color:MUTED,textAlign:'right',width:'16%'}}>vs EST</th>
+                    )}
+                    <th style={{padding:'4px 8px',fontSize:9,fontWeight:700,color:MUTED,textAlign:'right',width:'18%'}}>vs PRIOR</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {/* Revenue row */}
-                  {d.parseState !== 'failed' && (
-                    <tr style={{borderBottom:`1px solid ${BORDER}20`}}>
-                      <td style={{padding:'8px 10px',fontSize:F.xs,color:MUTED,fontWeight:600}}>Revenue</td>
-                      <td style={{padding:'8px 10px',textAlign:'right',fontSize:F.sm,fontWeight:900,color:TEXT}}>{n(d.revenue,d)}</td>
-                      <td style={{padding:'8px 10px',textAlign:'right',fontSize:F.xs,color:MUTED}}>
-                        {revEstNum ? n(revEstNum, d) : <span style={{color:'#334155',fontSize:9}}>enter ↓</span>}
+
+                  {/* Revenue row — actual only (no consensus from AV free tier) */}
+                  {d.parseState !== 'failed' && d.revenue !== null && (
+                    <tr style={{borderBottom:`1px solid ${BORDER}15`}}>
+                      <td style={{padding:'8px 8px'}}>
+                        <div style={{display:'flex',alignItems:'center',gap:6}}>
+                          <span style={{fontSize:F.xs,fontWeight:600,color:MUTED}}>Revenue</span>
+                          {/* Change 2: Source badge */}
+                          <span style={{fontSize:7,fontWeight:700,padding:'1px 5px',borderRadius:3,backgroundColor:ACCENT+'14',color:ACCENT,letterSpacing:'0.3px'}}>
+                            ACTUAL ONLY
+                          </span>
+                        </div>
                       </td>
-                      <td style={{padding:'8px 10px',textAlign:'right'}}>
-                        {revEstNum && d.revenue ? (() => { const bm = beatMissLabel(d.revenue, revEstNum); return bm ? <span style={{fontSize:F.xs,fontWeight:800,color:bm.col}}>{bm.text}</span> : <span style={{color:MUTED}}>—</span>; })() : <span style={{color:'#334155',fontSize:9}}>—</span>}
-                      </td>
-                      <td style={{padding:'8px 10px',textAlign:'right'}}>
-                        {d.revenue && d.revPrior ? (() => { const g = growth(d.revenue, d.revPrior); return g ? <span style={{fontSize:F.xs,fontWeight:700,color:g.col}}>{g.text} YoY</span> : null; })() : <span style={{color:MUTED,fontSize:F.xs}}>—</span>}
+                      <td style={{padding:'8px 8px',textAlign:'right',fontSize:F.sm,fontWeight:900,color:TEXT}}>{n(d.revenue,d)}</td>
+                      {/* Change 3: Only show estimate column if AV or override has data */}
+                      {(latestEpsEst !== null || revEstNum !== null || gmEstNum !== null) && (
+                        <td style={{padding:'8px 8px',textAlign:'right',fontSize:F.xs,color:revEstNum?MUTED:'#1e293b'}}>
+                          {revEstNum ? n(revEstNum,d) : <span style={{color:'#1e293b'}}>—</span>}
+                        </td>
+                      )}
+                      {(latestEpsEst !== null || revEstNum !== null || gmEstNum !== null) && (
+                        <td style={{padding:'8px 8px',textAlign:'right'}}>
+                          {revEstNum && d.revenue ? (() => { const bm=beatMissLabel(d.revenue,revEstNum); return bm?<span style={{fontSize:F.xs,fontWeight:800,color:bm.col}}>{bm.text}</span>:null; })() : <span style={{color:'#1e293b',fontSize:9}}>—</span>}
+                        </td>
+                      )}
+                      <td style={{padding:'8px 8px',textAlign:'right'}}>
+                        {(() => { const g=growth(d.revenue,d.revPrior); return g?<span style={{fontSize:F.xs,fontWeight:700,color:g.col}}>{g.text} YoY</span>:<span style={{color:MUTED,fontSize:F.xs}}>—</span>; })()}
                       </td>
                     </tr>
                   )}
 
-                  {/* EPS row */}
-                  <tr style={{borderBottom:`1px solid ${BORDER}20`}}>
-                    <td style={{padding:'8px 10px',fontSize:F.xs,color:MUTED,fontWeight:600}}>EPS</td>
-                    <td style={{padding:'8px 10px',textAlign:'right',fontSize:F.sm,fontWeight:900,color:latestEpsActual!==null&&latestEpsActual>=0?GREEN:latestEpsActual!==null?RED:MUTED}}>
-                      {latestEpsActual !== null ? `${latestEpsActual>=0?'$':'($'}${Math.abs(latestEpsActual).toFixed(2)}${latestEpsActual<0?')':''}` : d.eps !== null ? `${d.eps>=0?'$':'($'}${Math.abs(d.eps).toFixed(2)}${d.eps<0?')':''}` : '—'}
-                    </td>
-                    <td style={{padding:'8px 10px',textAlign:'right',fontSize:F.xs,color:MUTED}}>
-                      {latestEpsEst !== null ? `${latestEpsEst>=0?'$':'($'}${Math.abs(latestEpsEst).toFixed(2)}${latestEpsEst<0?')':''}` : '—'}
-                    </td>
-                    <td style={{padding:'8px 10px',textAlign:'right'}}>
-                      {epsBM ? <span style={{fontSize:F.xs,fontWeight:800,color:epsBM.col}}>{epsBM.text}</span> : <span style={{color:MUTED,fontSize:F.xs}}>—</span>}
-                    </td>
-                    <td style={{padding:'8px 10px',textAlign:'right'}}>
-                      {latestQ?.surprisePct !== null && latestQ?.surprisePct !== undefined ? (
-                        <span style={{fontSize:F.xs,fontWeight:700,color:surpriseColor(latestQ.surprisePct)}}>
-                          {latestQ.surprisePct >= 0 ? '+' : ''}{latestQ.surprisePct.toFixed(1)}% surprise
-                        </span>
-                      ) : <span style={{color:MUTED,fontSize:F.xs}}>—</span>}
-                    </td>
-                  </tr>
-
-                  {/* Gross Margin row */}
-                  {(d.grossMargin !== null || gmEstNum !== null) && d.parseState !== 'failed' && (
-                    <tr style={{borderBottom:`1px solid ${BORDER}20`}}>
-                      <td style={{padding:'8px 10px',fontSize:F.xs,color:MUTED,fontWeight:600}}>Gross Margin</td>
-                      <td style={{padding:'8px 10px',textAlign:'right',fontSize:F.sm,fontWeight:900,color:TEXT}}>
-                        {d.grossMargin !== null ? `${d.grossMargin.toFixed(1)}%` : '—'}
+                  {/* EPS row — actual from report + estimate from Alpha Vantage */}
+                  {(d.eps !== null || latestEpsActual !== null) && (
+                    <tr style={{borderBottom:`1px solid ${BORDER}15`}}>
+                      <td style={{padding:'8px 8px'}}>
+                        <div style={{display:'flex',alignItems:'center',gap:6}}>
+                          <span style={{fontSize:F.xs,fontWeight:600,color:MUTED}}>EPS</span>
+                          <span style={{fontSize:7,fontWeight:700,padding:'1px 5px',borderRadius:3,
+                            backgroundColor: latestEpsEst !== null ? GREEN+'18' : ACCENT+'14',
+                            color: latestEpsEst !== null ? GREEN : ACCENT, letterSpacing:'0.3px'}}>
+                            {latestEpsEst !== null ? 'ACTUAL vs CONSENSUS' : 'ACTUAL ONLY'}
+                          </span>
+                        </div>
                       </td>
-                      <td style={{padding:'8px 10px',textAlign:'right',fontSize:F.xs,color:MUTED}}>
-                        {gmEstNum ? `${gmEstNum.toFixed(1)}%` : <span style={{color:'#334155',fontSize:9}}>enter ↓</span>}
+                      <td style={{padding:'8px 8px',textAlign:'right',fontSize:F.sm,fontWeight:900,
+                        color:latestEpsActual!==null?latestEpsActual>=0?GREEN:RED:d.eps!==null?d.eps>=0?GREEN:RED:MUTED}}>
+                        {(() => { const e=latestEpsActual??d.eps; return e!==null?`${e>=0?'$':'($'}${Math.abs(e).toFixed(2)}${e<0?')':''}`:' —'; })()}
                       </td>
-                      <td style={{padding:'8px 10px',textAlign:'right'}}>
-                        {gmEstNum && d.grossMargin !== null ? (() => {
-                          const delta = d.grossMargin - gmEstNum;
-                          const col = delta >= 0 ? GREEN : RED;
-                          return <span style={{fontSize:F.xs,fontWeight:800,color:col}}>{delta >= 0 ? '↑' : '↓'} {Math.abs(delta).toFixed(1)}pp</span>;
-                        })() : <span style={{color:'#334155',fontSize:9}}>—</span>}
+                      {(latestEpsEst !== null || revEstNum !== null || gmEstNum !== null) && (
+                        <td style={{padding:'8px 8px',textAlign:'right',fontSize:F.xs,color:MUTED}}>
+                          {latestEpsEst!==null?`${latestEpsEst>=0?'$':'($'}${Math.abs(latestEpsEst).toFixed(2)}${latestEpsEst<0?')':''}`:
+                           <span style={{color:'#1e293b'}}>—</span>}
+                        </td>
+                      )}
+                      {(latestEpsEst !== null || revEstNum !== null || gmEstNum !== null) && (
+                        <td style={{padding:'8px 8px',textAlign:'right'}}>
+                          {epsBM?<span style={{fontSize:F.xs,fontWeight:800,color:epsBM.col}}>{epsBM.text}</span>:<span style={{color:'#1e293b',fontSize:9}}>—</span>}
+                        </td>
+                      )}
+                      <td style={{padding:'8px 8px',textAlign:'right'}}>
+                        {latestQ?.surprisePct!=null?<span style={{fontSize:F.xs,fontWeight:700,color:surpriseColor(latestQ.surprisePct)}}>{latestQ.surprisePct>=0?'+':''}{latestQ.surprisePct.toFixed(1)}% surprise</span>:<span style={{color:MUTED,fontSize:F.xs}}>—</span>}
                       </td>
-                      <td style={{padding:'8px 10px',textAlign:'right',fontSize:F.xs,color:MUTED}}>—</td>
                     </tr>
                   )}
 
-                  {/* Guidance row (manual entry) */}
+                  {/* Gross Margin — actual only (no consensus from AV) */}
+                  {d.grossMargin !== null && d.parseState !== 'failed' && (
+                    <tr style={{borderBottom:`1px solid ${BORDER}15`}}>
+                      <td style={{padding:'8px 8px'}}>
+                        <div style={{display:'flex',alignItems:'center',gap:6}}>
+                          <span style={{fontSize:F.xs,fontWeight:600,color:MUTED}}>Gross Margin</span>
+                          <span style={{fontSize:7,fontWeight:700,padding:'1px 5px',borderRadius:3,
+                            backgroundColor: gmEstNum ? GREEN+'18' : ACCENT+'14',
+                            color: gmEstNum ? GREEN : ACCENT, letterSpacing:'0.3px'}}>
+                            {gmEstNum ? 'ACTUAL vs OVERRIDE' : 'ACTUAL ONLY'}
+                          </span>
+                        </div>
+                      </td>
+                      <td style={{padding:'8px 8px',textAlign:'right',fontSize:F.sm,fontWeight:900,color:TEXT}}>
+                        {d.grossMargin.toFixed(1)}%
+                      </td>
+                      {(latestEpsEst !== null || revEstNum !== null || gmEstNum !== null) && (
+                        <td style={{padding:'8px 8px',textAlign:'right',fontSize:F.xs,color:MUTED}}>
+                          {gmEstNum?`${gmEstNum.toFixed(1)}%`:<span style={{color:'#1e293b'}}>—</span>}
+                        </td>
+                      )}
+                      {(latestEpsEst !== null || revEstNum !== null || gmEstNum !== null) && (
+                        <td style={{padding:'8px 8px',textAlign:'right'}}>
+                          {gmEstNum&&d.grossMargin!==null?(() => { const delta=d.grossMargin-gmEstNum; const c=delta>=0?GREEN:RED; return <span style={{fontSize:F.xs,fontWeight:800,color:c}}>{delta>=0?'↑':'↓'} {Math.abs(delta).toFixed(1)}pp</span>; })():<span style={{color:'#1e293b',fontSize:9}}>—</span>}
+                        </td>
+                      )}
+                      <td style={{padding:'8px 8px',textAlign:'right',fontSize:F.xs,color:MUTED}}>—</td>
+                    </tr>
+                  )}
+
+                  {/* Guidance — company-issued */}
                   {manualGuidance && (
                     <tr>
-                      <td style={{padding:'8px 10px',fontSize:F.xs,color:MUTED,fontWeight:600}}>Guidance</td>
-                      <td colSpan={4} style={{padding:'8px 10px',fontSize:F.xs,color:YELLOW}}>{manualGuidance}</td>
+                      <td style={{padding:'8px 8px'}}>
+                        <div style={{display:'flex',alignItems:'center',gap:6}}>
+                          <span style={{fontSize:F.xs,fontWeight:600,color:MUTED}}>Guidance</span>
+                          <span style={{fontSize:7,fontWeight:700,padding:'1px 5px',borderRadius:3,backgroundColor:YELLOW+'14',color:YELLOW,letterSpacing:'0.3px'}}>COMPANY-ISSUED</span>
+                        </div>
+                      </td>
+                      <td colSpan={4} style={{padding:'8px 8px',fontSize:F.xs,color:YELLOW,fontStyle:'italic'}}>{manualGuidance}</td>
                     </tr>
                   )}
                 </tbody>
               </table>
             </div>
 
-            {/* Manual estimate inputs */}
-            <div style={{marginTop:10,padding:'10px 12px',backgroundColor:'#0d1117',borderRadius:8,border:`1px solid ${BORDER}`}}>
-              <div style={{fontSize:9,fontWeight:700,color:MUTED,marginBottom:8}}>
-                📝 ADD ESTIMATES — revenue/margin estimates aren't in Alpha Vantage free tier; enter manually from sell-side reports or StreetAccount
-              </div>
-              <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
-                <div>
-                  <div style={{fontSize:8,color:MUTED,marginBottom:2}}>Rev est ({d.scaleLabel})</div>
-                  <input value={manualRevEst} onChange={e => setManualRevEst(e.target.value)}
-                    placeholder={`e.g. ${d.revenue ? (d.revenue * 0.95).toFixed(1) : '—'}`}
-                    style={{width:100,backgroundColor:'#111',border:`1px solid ${BORDER}`,borderRadius:5,padding:'4px 8px',color:TEXT,fontSize:11,outline:'none'}}
-                  />
-                </div>
-                <div>
-                  <div style={{fontSize:8,color:MUTED,marginBottom:2}}>Gross margin est (%)</div>
-                  <input value={manualGMEst} onChange={e => setManualGMEst(e.target.value)}
-                    placeholder={`e.g. ${d.grossMargin ? (d.grossMargin - 2).toFixed(0) : '—'}%`}
-                    style={{width:80,backgroundColor:'#111',border:`1px solid ${BORDER}`,borderRadius:5,padding:'4px 8px',color:TEXT,fontSize:11,outline:'none'}}
-                  />
-                </div>
-                <div style={{flex:1,minWidth:200}}>
-                  <div style={{fontSize:8,color:MUTED,marginBottom:2}}>Guidance / forward commentary</div>
-                  <input value={manualGuidance} onChange={e => setManualGuidance(e.target.value)}
-                    placeholder="e.g. FY26 Rev +23% vs Est. +21% — raised guidance"
-                    style={{width:'100%',backgroundColor:'#111',border:`1px solid ${BORDER}`,borderRadius:5,padding:'4px 8px',color:TEXT,fontSize:11,outline:'none'}}
-                  />
-                </div>
-              </div>
+            {/* Change 5: Coverage note */}
+            <div style={{marginTop:8,fontSize:8,color:'#334155',lineHeight:1.5}}>
+              Consensus coverage varies by metric and source. EPS estimates from Alpha Vantage when ticker fetched.
+              Revenue and margin estimates require analyst override below.
             </div>
+
+            {/* Change 4: Override inputs behind toggle */}
+            {showOverrides && (
+              <div style={{marginTop:10,padding:'10px 12px',backgroundColor:'#0d1117',borderRadius:8,border:`1px solid ${YELLOW}25`,animation:'fadeIn 0.15s ease'}}>
+                <div style={{fontSize:9,fontWeight:700,color:YELLOW,marginBottom:8}}>
+                  ✏️ ANALYST OVERRIDE — Enter estimates from sell-side reports, StreetAccount, or consensus notes
+                </div>
+                <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'flex-end'}}>
+                  <div>
+                    <div style={{fontSize:8,color:MUTED,marginBottom:2}}>Revenue est ({d.scaleLabel})</div>
+                    <input value={manualRevEst} onChange={e => setManualRevEst(e.target.value)}
+                      placeholder={d.revenue ? (d.revenue * 0.95).toFixed(1) : 'e.g. 30.5'}
+                      style={{width:96,backgroundColor:'#111',border:`1px solid ${BORDER}`,borderRadius:5,padding:'5px 8px',color:TEXT,fontSize:11,outline:'none'}}
+                    />
+                  </div>
+                  <div>
+                    <div style={{fontSize:8,color:MUTED,marginBottom:2}}>Gross margin est (%)</div>
+                    <input value={manualGMEst} onChange={e => setManualGMEst(e.target.value)}
+                      placeholder={d.grossMargin ? (d.grossMargin - 2).toFixed(0) : 'e.g. 45'}
+                      style={{width:76,backgroundColor:'#111',border:`1px solid ${BORDER}`,borderRadius:5,padding:'5px 8px',color:TEXT,fontSize:11,outline:'none'}}
+                    />
+                  </div>
+                  <div style={{flex:1,minWidth:180}}>
+                    <div style={{fontSize:8,color:MUTED,marginBottom:2}}>Guidance commentary</div>
+                    <input value={manualGuidance} onChange={e => setManualGuidance(e.target.value)}
+                      placeholder="e.g. FY26 Rev +23% vs Est +21% — raised"
+                      style={{width:'100%',backgroundColor:'#111',border:`1px solid ${BORDER}`,borderRadius:5,padding:'5px 8px',color:TEXT,fontSize:11,outline:'none'}}
+                    />
+                  </div>
+                  {(manualRevEst || manualGMEst || manualGuidance) && (
+                    <button onClick={() => { setManualRevEst(''); setManualGMEst(''); setManualGuidance(''); }}
+                      style={{padding:'5px 10px',backgroundColor:'transparent',border:`1px solid ${BORDER}`,borderRadius:5,color:MUTED,fontSize:10,cursor:'pointer'}}>
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* ── EPS BEAT/MISS TRACK RECORD ── */}

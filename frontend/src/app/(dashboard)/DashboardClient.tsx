@@ -250,6 +250,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                   margin: '2px 6px',
                   borderRadius: '10px',
                   textDecoration: 'none',
+                  cursor: 'pointer',
                   transition: 'all 0.15s',
                   backgroundColor: active ? 'rgba(15,122,191,0.18)' : 'transparent',
                   color: active ? '#0F7ABF' : '#6B7A8D',
@@ -257,6 +258,8 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
                   fontWeight: active ? '600' : '400',
                   letterSpacing: '0.3px',
                   borderLeft: active ? '2px solid #0F7ABF' : '2px solid transparent',
+                  userSelect: 'none',
+                  WebkitUserSelect: 'none',
                 }}>
                 <div>{item.icon}</div>
                 <span style={{ textAlign: 'center', lineHeight: '1.2' }}>
