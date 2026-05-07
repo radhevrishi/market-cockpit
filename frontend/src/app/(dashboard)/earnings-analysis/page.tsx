@@ -1,6 +1,9 @@
 'use client';
 
 import React, { useState, useRef, useCallback } from 'react';
+import { InstitutionalReport } from '@/components/earnings/InstitutionalReport';
+import { buildSnapshot, FinancialsInput, EstimatesInput, HistoryInput } from '@/lib/earnings/build';
+import type { EarningsSnapshot } from '@/lib/earnings/snapshot';
 
 // ── Design tokens
 const BG      = '#0a0a0f';
@@ -2061,6 +2064,8 @@ export default function EarningsAnalysisPage() {
   const [pasteText, setPasteText] = useState('');
   const [urlInput, setUrlInput] = useState('');
   const [result, setResult] = useState<{ d: RawFinancials; q: EngineOutput; r: EngineOutput; nar: ReturnType<typeof scoreNarrative> }|null>(null);
+  const [snapshot, setSnapshot] = useState<EarningsSnapshot | null>(null);
+  const [reportView, setReportView] = useState<'institutional' | 'legacy'>('institutional');
   const [loading, setLoading] = useState(false);
   const [loadingPct, setLoadingPct] = useState(0);
   const [loadingMsg, setLoadingMsg] = useState('');
@@ -2496,6 +2501,44 @@ export default function EarningsAnalysisPage() {
       setResult({ d, q, r, nar });
       setLoadingPct(100);
 
+      // ── Build institutional snapshot in parallel with FMP estimates + history ──
+      setLoadingMsg('Building institutional snapshot…');
+      try {
+        const [estRes, histRes] = await Promise.allSettled([
+          fetch(`/api/earnings/estimates?ticker=${encodeURIComponent(ticker)}`, { signal: AbortSignal.timeout(15000) }),
+          fetch(`/api/earnings/history?ticker=${encodeURIComponent(ticker)}`, { signal: AbortSignal.timeout(15000) }),
+        ]);
+        const estJson: EstimatesInput | null = estRes.status === 'fulfilled' && estRes.value.ok
+          ? await estRes.value.json().catch(() => null)
+          : null;
+        const histJson: HistoryInput | null = histRes.status === 'fulfilled' && histRes.value.ok
+          ? await histRes.value.json().catch(() => null)
+          : null;
+        const finIn: FinancialsInput = {
+          company: d.company,
+          ticker: d.ticker,
+          period: d.period,
+          filingType: d.filingType,
+          currency: d.currency,
+          scaleLabel: d.scaleLabel,
+          scaleFactor: d.scaleFactor,
+          revenue: d.revenue, revPrior: d.revPrior,
+          grossProfit: d.grossProfit, grossMargin: d.grossMargin,
+          ebit: d.ebit, ebitMargin: d.ebitMargin,
+          ebitda: d.ebitda, ebitdaMargin: d.ebitdaMargin,
+          pat: d.pat, patPrior: d.patPrior, patMargin: d.patMargin,
+          eps: d.eps, epsPrior: d.epsPrior,
+          cfo: d.cfo, fcf: d.fcf,
+          cash: d.cash, totalDebt: d.totalDebt, netDebt: d.netDebt, equity: d.equity,
+          themes: d.themes, validationWarnings: d.validationWarnings, revenueSource: d.revenueSource,
+        };
+        const snap = buildSnapshot(finIn, estJson, histJson, '');
+        setSnapshot(snap);
+      } catch (snapErr) {
+        console.warn('Snapshot build failed:', snapErr);
+        setSnapshot(null);
+      }
+
       // Save to history
       const entry: HistEntry2 = {
         id: Date.now().toString(), company: d.company, period: d.period,
@@ -2522,6 +2565,19 @@ export default function EarningsAnalysisPage() {
         const r = scoreEarningsReaction(d);
         const nar = scoreNarrative(d);
         setResult({ d, q, r, nar });
+        // Build a snapshot from parsed text (no FMP estimates available for paste path)
+        try {
+          const finIn: FinancialsInput = {
+            company: d.company, ticker: d.ticker, period: d.period, filingType: d.filingType,
+            currency: d.currency, scaleLabel: d.scaleLabel, scaleFactor: d.scaleFactor,
+            revenue: d.revenue, revPrior: d.revPrior, grossProfit: d.grossProfit, grossMargin: d.grossMargin,
+            ebit: d.ebit, ebitMargin: d.ebitMargin, ebitda: d.ebitda, ebitdaMargin: d.ebitdaMargin,
+            pat: d.pat, patPrior: d.patPrior, patMargin: d.patMargin, eps: d.eps, epsPrior: d.epsPrior,
+            cfo: d.cfo, fcf: d.fcf, cash: d.cash, totalDebt: d.totalDebt, netDebt: d.netDebt, equity: d.equity,
+            themes: d.themes, validationWarnings: d.validationWarnings, revenueSource: d.revenueSource,
+          };
+          setSnapshot(buildSnapshot(finIn, null, null, text));
+        } catch { setSnapshot(null); }
         const entry: HistEntry2 = {
           id: Date.now().toString(), company: d.company, period: d.period,
           q: q.score, r: r.score, n: nar.score,
@@ -2581,7 +2637,37 @@ export default function EarningsAnalysisPage() {
     } catch(e:any) { setError('Fetch failed: '+e.message); setLoading(false); setLoadingMsg(''); }
   }
 
-  const reset = () => { setResult(null); setError(''); setPasteText(''); setUrlInput(''); };
+  const reset = () => { setResult(null); setSnapshot(null); setError(''); setPasteText(''); setUrlInput(''); };
+
+  // Copy a deterministic plain-text summary from the snapshot
+  const copySnapshotSummary = (snap: EarningsSnapshot) => {
+    const lines: string[] = [];
+    lines.push(`${snap.company} (${snap.ticker}) — ${snap.quarter} · ${snap.filingType}`);
+    lines.push(`Source: ${snap.sources.financials} · estimates: ${snap.sources.estimates}`);
+    lines.push('');
+    lines.push('EARNINGS SCORECARD');
+    const m = snap.metrics;
+    const fnum = (v: number | null, p = 2) => v === null ? '—' : v.toFixed(p);
+    lines.push(`Revenue:          ${fnum(m.revenue.actual, 1)} vs ${fnum(m.revenue.estimate, 1)} est (${m.revenue.surprisePct === null ? '—' : (m.revenue.surprisePct >= 0 ? '+' : '') + m.revenue.surprisePct.toFixed(1) + '%'})`);
+    lines.push(`EPS:              ${fnum(m.eps.actual, 2)} vs ${fnum(m.eps.estimate, 2)} est`);
+    lines.push(`EBITDA:           ${fnum(m.ebitda.actual, 1)} vs ${fnum(m.ebitda.estimate, 1)} est`);
+    lines.push(`Gross Margin:     ${fnum(m.grossMargin.actual, 1)}% (YoY ${m.grossMargin.yoyBps === null ? '—' : (m.grossMargin.yoyBps >= 0 ? '+' : '') + Math.round(m.grossMargin.yoyBps) + ' bps'})`);
+    lines.push(`EBITDA Margin:    ${fnum(m.ebitdaMargin.actual, 1)}% vs ${fnum(m.ebitdaMargin.estimate, 1)}% est`);
+    lines.push(`Operating Margin: ${fnum(m.operatingMargin.actual, 1)}%`);
+    lines.push(`Net Income:       ${fnum(m.netIncome.actual, 1)}`);
+    lines.push(`FCF:              ${fnum(m.fcf.actual, 1)}`);
+    lines.push('');
+    lines.push(`Reaction Score:   ${snap.scores.reaction.score} (${snap.scores.reaction.grade}) — expected ${snap.reactionProbability.expected}`);
+    lines.push(`Accounting:       ${snap.scores.accounting.score} (${snap.scores.accounting.grade})`);
+    lines.push(`Narrative:        ${snap.scores.narrative.score} (${snap.scores.narrative.grade})`);
+    lines.push(`JAT:              ${snap.scores.jat.score} (${snap.scores.jat.grade}) — ${snap.scores.jat.direction}`);
+    if (snap.qualitative.keyTakeaways.length > 0) {
+      lines.push('');
+      lines.push('KEY TAKEAWAYS');
+      snap.qualitative.keyTakeaways.forEach(t => lines.push(`• ${t}`));
+    }
+    navigator.clipboard?.writeText(lines.join('\n')).catch(() => {});
+  };
 
   // ── Loading UI ──────────────────────────────────────────────────────────
   const LoadingUI = () => (
@@ -2637,6 +2723,25 @@ export default function EarningsAnalysisPage() {
   };
 
   // ── Results dashboard ────────────────────────────────────────────────────
+  // ── Institutional view: deterministic, schema-first, fixed layout ──────
+  if (result && snapshot && reportView === 'institutional') {
+    return (
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', maxWidth: 1280, margin: '0 auto', padding: '12px 20px 0' }}>
+          <button onClick={() => setReportView('legacy')}
+            style={{ fontSize: 10, padding: '4px 10px', background: 'transparent', border: `1px solid ${BORDER}`, color: MUTED, borderRadius: 4, cursor: 'pointer' }}>
+            Switch to legacy view
+          </button>
+        </div>
+        <InstitutionalReport
+          snapshot={snapshot}
+          onReset={reset}
+          onCopy={() => copySnapshotSummary(snapshot)}
+        />
+      </div>
+    );
+  }
+
   if (result) {
     const { d, q, r, nar } = result;
 
@@ -3463,6 +3568,11 @@ export default function EarningsAnalysisPage() {
           <button onClick={reset} style={{padding:'9px 18px',backgroundColor:'transparent',border:`1px solid ${BORDER}`,borderRadius:8,color:MUTED,fontSize:F.sm,cursor:'pointer'}}>
             🔄 Analyze Another
           </button>
+          {snapshot && (
+            <button onClick={() => setReportView('institutional')} style={{padding:'9px 18px',backgroundColor:'transparent',border:`1px solid ${ACCENT}`,borderRadius:8,color:ACCENT,fontSize:F.sm,cursor:'pointer'}}>
+              ← Back to institutional view
+            </button>
+          )}
         </div>
       </div>
     );
