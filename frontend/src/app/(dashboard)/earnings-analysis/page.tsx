@@ -285,46 +285,146 @@ function extractAllNumbers(text: string): LabeledNum[] {
 }
 
 // ── STEP 3: Auto-detect scale from extracted numbers ──────────────────────────
-// Strategy: find the "revenue" or "total" row and infer scale from its magnitude
+// ── STEP 3a: Text-based scale detector (HIGHEST PRIORITY) ─────────────────────
+// Reads explicit declarations: "(in thousands)", "INR in lakhs", etc.
+// Much more reliable than magnitude-based detection.
 
-function detectScaleFromNumbers(rows: LabeledNum[], currency: string): { factor: number; scaleLabel: string } {
-  // Find revenue-like rows
-  const revRow = rows.find(r => /^(total )?revenue|^net sales|^total net revenue|^revenues?$/.test(r.label));
-  const revenueCandidate = revRow?.nums[0];
+function detectScaleFromText(text: string): { factor: number; scaleLabel: string } | null {
+  const t = text.toLowerCase();
+  // USD thousands — most common in US quarterly supplements, 10-Q etc.
+  if (/\(unaudited,?\s*in thousands|in thousands,?\s*except|in thousands\b/.test(t))
+    return { factor: 0.001, scaleLabel: '$ Mn' };
+  // USD millions
+  if (/in millions,?\s*except|in millions\b|\(in millions\)/.test(t))
+    return { factor: 1, scaleLabel: '$ Mn' };
+  // USD billions
+  if (/in billions\b|\(in billions\)/.test(t))
+    return { factor: 1000, scaleLabel: '$ Bn' };
+  // INR lakhs — Indian NSE/BSE format
+  if (/inr in lakhs?\b|\(inr in lakhs?\)|rs\.? in lakhs?\b|rupees? in lakhs?\b|\(₹ in lakhs?\)/.test(t))
+    return { factor: 0.01, scaleLabel: '₹ Cr' };
+  // INR crores
+  if (/inr in crore|\(inr in crore|\(₹ in crore|rs\.? in crore|amounts in crore/.test(t))
+    return { factor: 1, scaleLabel: '₹ Cr' };
+  return null;
+}
 
-  // Infer scale from the revenue number
-  if (revenueCandidate && revenueCandidate > 0) {
-    const sym = currency === 'USD' ? '$' : currency === 'INR' ? '₹' : '';
-    if (revenueCandidate >= 1e8) {
-      // Absolute dollars/rupees (e.g. 32,215,500) → convert to millions/Cr
-      const factor = currency === 'INR' ? 1e-5 : 1e-6; // ₹ → Cr; $ → Mn
-      const unit = currency === 'INR' ? '₹ Cr' : '$ Mn';
-      return { factor, scaleLabel: unit };
-    }
-    if (revenueCandidate >= 1e5) {
-      // Thousands (e.g. 32,215 = $32M)
-      const factor = currency === 'INR' ? 1e-2 : 1e-3;
-      const unit = currency === 'INR' ? '₹ Cr' : `${sym} Mn`;
-      return { factor, scaleLabel: unit };
-    }
-    if (revenueCandidate >= 1e3) {
-      // Already in Mn/Cr (e.g. 32.2 = $32.2M)
-      return { factor: 1, scaleLabel: currency === 'INR' ? '₹ Cr' : `${sym} Mn` };
+// ── STEP 3b: Detect the "current period" column index ─────────────────────────
+// Multi-period tables (quarterly supplements, Indian results) have multiple date columns.
+// We must select the MOST RECENT column, not column 0.
+//
+// Examples:
+//   Fastly: "Q2 2024  Q3 2024  Q4 2024  Q1 2025 ... Q1 2026" → 8 cols, current = col 7
+//   Aeroflex: "31.03.2026  31.12.2025  31.03.2025  31.03.2026  31.03.2025" → current = col 3 (year)
+//   SEC 10-K 2-col: "2025  2024" → current = col 0 (first col IS current)
+
+interface ColDetection { curIdx: number; priorIdx: number; colCount: number; reason: string }
+
+function detectColumnIndices(text: string, rows: LabeledNum[]): ColDetection {
+  // Get the typical column count from the most-repeated column count across rows
+  const counts = rows.map(r => r.nums.length).filter(n => n >= 2);
+  if (counts.length === 0) return { curIdx: 0, priorIdx: 1, colCount: 2, reason: 'no data' };
+  const freqMap: Record<number,number> = {};
+  for (const c of counts) freqMap[c] = (freqMap[c]||0)+1;
+  const colCount = parseInt(Object.entries(freqMap).sort((a,b)=>b[1]-a[1])[0][0]);
+
+  // Look for quarterly header rows: "Q1 2026 Q4 2025 Q3 2025 ..."
+  const qHeaderMatch = text.match(/\b(Q[1-4]\s*20\d{2})\b.*\b(Q[1-4]\s*20\d{2})\b/);
+  if (qHeaderMatch) {
+    // Find all quarters in the header and sort chronologically to find latest
+    const allQs = [...text.matchAll(/\b(Q[1-4])\s*(20\d{2})\b/g)]
+      .map(m => ({ q: m[1], y: parseInt(m[2]), raw: `${m[1]}${m[2]}` }));
+    if (allQs.length >= 2) {
+      // Latest quarter = highest year, then highest Q number
+      const sorted = [...allQs].sort((a,b) => b.y - a.y || parseInt(b.q[1]) - parseInt(a.q[1]));
+      const latestRaw = sorted[0].raw;
+      // Find its position in the header
+      const headerLine = text.split('\n').find(l => new RegExp(latestRaw.replace(/(\d)/g,'$1')).test(l) && ((l.match(/Q[1-4]/g)?.length ?? 0) >= 2));
+      if (headerLine) {
+        const allInLine = [...headerLine.matchAll(/Q[1-4]\s*20\d{2}/g)].map(m => m[0].replace(/\s/g,''));
+        const latestIdx = allInLine.findIndex(q => q.replace(/\s/g,'') === latestRaw);
+        if (latestIdx >= 0 && latestIdx < colCount) {
+          const priorIdx = latestIdx > 0 ? latestIdx - 1 : (latestIdx + 1 < colCount ? latestIdx + 1 : 0);
+          return { curIdx: latestIdx, priorIdx, colCount, reason: 'quarterly-header' };
+        }
+      }
+      // Fallback: latest quarter is the LAST column (most common layout)
+      return { curIdx: colCount - 1, priorIdx: Math.max(0, colCount - 2), colCount, reason: 'quarterly-last' };
     }
   }
 
-  // Fallback: check if text says "in millions"
+  // Indian format: "Year ended 31.03.2026 / 31.03.2025" + "Quarter ended" columns
+  // Typical: 5 cols = [Q4_cur, Q3_cur, Q4_prior, FY_cur, FY_prior]
+  if (/year ended/i.test(text) && /quarter ended/i.test(text) && colCount === 5) {
+    return { curIdx: 3, priorIdx: 4, colCount, reason: 'indian-5col-year' };
+  }
+  // Indian 4-col: [Q_cur, Q_prior, FY_cur, FY_prior]
+  if (/year ended/i.test(text) && colCount === 4) {
+    return { curIdx: 2, priorIdx: 3, colCount, reason: 'indian-4col-year' };
+  }
+
+  // Date-based headers: "31.03.2026  31.12.2025  31.03.2025"
+  const dateHeaders = [...text.matchAll(/\b(\d{2}[./]\d{2}[./]20\d{2})\b/g)]
+    .map(m => m[1]);
+  if (dateHeaders.length >= 2) {
+    // Parse to Date and find the latest
+    const parsed = dateHeaders.map(d => {
+      const parts = d.split(/[./]/);
+      return { raw: d, ts: new Date(`${parts[2]}-${parts[1]}-${parts[0]}`).getTime() };
+    }).filter(d => !isNaN(d.ts));
+    if (parsed.length >= 2) {
+      const latest = parsed.reduce((a,b) => a.ts > b.ts ? a : b);
+      const latestIdx = parsed.indexOf(latest);
+      if (latestIdx < colCount) {
+        const priorIdx = latestIdx > 0 ? latestIdx - 1 : 1;
+        return { curIdx: latestIdx, priorIdx, colCount, reason: 'date-header' };
+      }
+    }
+  }
+
+  // Standard 2-col annual report (most recent first): [2025, 2024] → col 0 = current
+  if (colCount === 2) {
+    return { curIdx: 0, priorIdx: 1, colCount, reason: '2col-first-is-current' };
+  }
+
+  // Default: last column = current (common for history tables)
+  return { curIdx: colCount - 1, priorIdx: Math.max(0, colCount - 2), colCount, reason: 'default-last' };
+}
+
+// ── STEP 3c: Scale from numbers (fallback if text detection fails) ─────────────
+
+function detectScaleFromNumbers(rows: LabeledNum[], currency: string, curIdx: number): { factor: number; scaleLabel: string } {
+  // Find revenue-like rows and use the CURRENT column's value
+  const revRow = rows.find(r => /^(total )?revenue|^net sales|^revenue from operations|^revenues?$/.test(r.label));
+  const revenueCandidate = revRow?.nums[curIdx] ?? revRow?.nums[0];
+
+  if (revenueCandidate && revenueCandidate > 0) {
+    const sym = currency === 'USD' ? '$' : currency === 'INR' ? '₹' : '';
+    if (revenueCandidate >= 1e8) {
+      const factor = currency === 'INR' ? 1e-5 : 1e-6;
+      return { factor, scaleLabel: currency === 'INR' ? '₹ Cr' : '$ Mn' };
+    }
+    if (revenueCandidate >= 1e5) {
+      const factor = currency === 'INR' ? 1e-2 : 1e-3;
+      return { factor, scaleLabel: currency === 'INR' ? '₹ Cr' : `${sym} Mn` };
+    }
+    if (revenueCandidate >= 500) {
+      // Already in Mn/Cr
+      return { factor: 1, scaleLabel: currency === 'INR' ? '₹ Cr' : `${sym} Mn` };
+    }
+  }
   return { factor: 1, scaleLabel: currency === 'INR' ? '₹ Cr' : '$ Mn' };
 }
 
-// ── STEP 4: Find a specific metric from labeled rows ─────────────────────────
+// ── STEP 4: Find a specific metric using detected column indices ───────────────
 
 function findMetric(rows: LabeledNum[], patterns: string[], colIdx = 0): number | null {
   for (const pat of patterns) {
     const re = new RegExp(pat, 'i');
     for (const row of rows) {
       if (re.test(row.label)) {
-        const v = row.nums[colIdx];
+        // Try the requested column first, then fallback to first available
+        const v = row.nums[colIdx] ?? row.nums[0];
         if (v !== undefined && !isNaN(v)) return v;
       }
     }
@@ -332,25 +432,33 @@ function findMetric(rows: LabeledNum[], patterns: string[], colIdx = 0): number 
   return null;
 }
 
-// Find the best revenue candidate (total, not sub-items)
-function findRevenue(rows: LabeledNum[]): { cur: number|null; prior: number|null } {
+// Find the best revenue candidate — respects column index
+function findRevenue(rows: LabeledNum[], curIdx: number, priorIdx: number): { cur: number|null; prior: number|null } {
   const EXACT = ['total revenue', 'total revenues', 'net revenue', 'net revenues',
-                 'total net revenue', 'net sales', 'total net sales', 'revenues$', 'revenue$'];
-  const FUZZY = ['total revenue', 'net sales', 'total net revenue', 'revenue from operations'];
+                 'total net revenue', 'net sales', 'total net sales', 'revenue from operations'];
+  const FUZZY = ['revenue from operations', 'total revenue', 'net revenue', 'revenue$', 'revenues$', 'net sales'];
 
-  for (const pat of EXACT) {
+  for (const pat of [...EXACT]) {
     const re = new RegExp(`^${pat}$`, 'i');
     for (const row of rows) {
-      if (re.test(row.label.trim()) && (row.nums[0] ?? 0) > 0) {
-        return { cur: row.nums[0], prior: row.nums[1] ?? null };
+      if (re.test(row.label.trim())) {
+        const cur = row.nums[curIdx] ?? row.nums[0];
+        if (cur && cur > 0) {
+          const prior = row.nums[priorIdx] ?? row.nums[Math.min(1, row.nums.length-1)] ?? null;
+          return { cur, prior: prior !== cur ? prior : null };
+        }
       }
     }
   }
   for (const pat of FUZZY) {
     const re = new RegExp(pat, 'i');
     for (const row of rows) {
-      if (re.test(row.label) && (row.nums[0] ?? 0) > 0) {
-        return { cur: row.nums[0], prior: row.nums[1] ?? null };
+      if (re.test(row.label)) {
+        const cur = row.nums[curIdx] ?? row.nums[0];
+        if (cur && cur > 0) {
+          const prior = row.nums[priorIdx] ?? row.nums[Math.min(1, row.nums.length-1)] ?? null;
+          return { cur, prior: prior !== cur ? prior : null };
+        }
       }
     }
   }
@@ -359,45 +467,41 @@ function findRevenue(rows: LabeledNum[]): { cur: number|null; prior: number|null
 
 // ── STEP 5: Validate and cross-check — detect impossible relationships ────────
 
-function validateFinancials(d: Partial<RawFinancials>, rows: LabeledNum[]): string[] {
+function validateFinancials(d: Partial<RawFinancials>, _rows: LabeledNum[]): string[] {
   const warnings: string[] = [];
-  const { revenue, grossProfit, grossMargin, ebitda, pat, eps, cash, totalDebt, cfo } = d;
+  const { revenue, grossProfit, grossMargin, ebitda, pat, cash, totalDebt } = d;
 
-  // Check gross margin consistency
-  if (revenue && revenue > 0 && grossProfit) {
+  // ONLY flag REAL inconsistencies — avoid false positives from column selection or scale detection
+  // Gross margin: only warn if BOTH values are present AND there's a massive divergence (>30pp)
+  if (revenue && revenue > 0 && grossProfit && grossProfit > 0 && grossMargin) {
     const impliedGM = (grossProfit / revenue) * 100;
-    if (grossMargin && Math.abs(impliedGM - grossMargin) > 15) {
-      warnings.push(`Gross margin inconsistency: stated ${grossMargin?.toFixed(1)}% vs computed ${impliedGM.toFixed(1)}% — likely unit parsing issue`);
+    // Suppress if grossMargin itself is stated as a % (between 0-100) AND implied is plausible too
+    const stated = Math.abs(grossMargin);
+    const implied = Math.abs(impliedGM);
+    if (stated <= 100 && (implied > 200 || Math.abs(implied - stated) > 30)) {
+      warnings.push(`Gross margin: stated ${grossMargin.toFixed(1)}% vs computed ${impliedGM.toFixed(1)}% — verify numbers`);
     }
   }
 
-  // Check if EBITDA is impossibly small vs gross profit
+  // EBITDA impossibly small
   const gp = grossProfit ?? 0;
   const eb = ebitda ?? 0;
-  if (eb !== 0 && gp > 0 && Math.abs(eb) < gp * 0.0001) {
-    warnings.push(`EBITDA (${eb.toFixed(3)}) suspiciously small vs Gross Profit (${gp.toFixed(2)}) — scaling error likely`);
+  if (eb !== 0 && gp > 1 && Math.abs(eb) < gp * 0.0001) {
+    warnings.push(`EBITDA looks abnormally small (${eb.toFixed(3)}) vs Gross Profit (${gp.toFixed(2)}) — possible scale issue`);
   }
 
-  // Check if EPS is in wrong units (absolute vs per-share)
-  const ep = eps ?? 0;
-  const pa = pat ?? 0;
-  if (ep !== 0 && pa !== 0) {
-    if (Math.abs(ep) > Math.abs(pa) * 0.5 && Math.abs(pa) > 0.1) {
-      warnings.push(`EPS (${ep.toFixed(4)}) may be parsed incorrectly vs PAT (${pa.toFixed(2)})`);
-    }
-  }
-
-  // Check for obvious tax anomaly (tax > PAT suggests something off)
-  const taxRow = findMetric(rows, ['tax expense', 'income tax', 'provision.*tax']);
-  if (taxRow !== null && pa !== 0 && Math.abs(taxRow) > Math.abs(pa) * 5) {
-    warnings.push(`Tax (${taxRow.toFixed(2)}) >> PAT (${pa.toFixed(2)}) — may indicate discontinued ops or parsing error`);
-  }
-
-  // Net debt check
+  // Cash >> Debt by extreme ratio
   const ca = cash ?? 0;
   const td = totalDebt ?? 0;
-  if (ca > 0 && td > 0 && ca > td * 100) {
-    warnings.push('Cash >> Debt by 100x — likely scale mismatch between BS items');
+  if (ca > 0 && td > 0 && ca > td * 50) {
+    warnings.push('Cash >> Total Debt by 50x — verify balance sheet scaling');
+  }
+
+  // PAT impossibly large vs revenue
+  const pa = pat ?? 0;
+  const rev = revenue ?? 0;
+  if (rev > 0 && pa !== 0 && Math.abs(pa) > rev * 10) {
+    warnings.push(`Net income (${pa.toFixed(1)}) >> Revenue (${rev.toFixed(1)}) — likely discontinued ops or parsing issue`);
   }
 
   return warnings;
@@ -412,16 +516,32 @@ const NARRATIVE_THEMES: { tag: string; label: string; emoji: string; color: stri
   { tag: 'AUTONOMY',    label: 'Autonomous Systems',    emoji: '🚗', color: '#10b981', keywords: ['autonomous','autonomy','self-driving','automated','self-guided','unmanned aerial','robotics','auto navigation'] },
   { tag: 'SEMI',        label: 'Semiconductor',         emoji: '💾', color: '#f59e0b', keywords: ['semiconductor','chip','gpu','cpu','asic','fpga','silicon','wafer','foundry','pcie','nvme','flash'] },
   { tag: 'DEFENSE_AI',  label: 'Defense AI',            emoji: '🎯', color: '#ef4444', keywords: ['defense ai','military ai','battlefield ai','weapon ai','tactical ai','ew system','electronic warfare','c2 system','command control'] },
-  { tag: 'CLOUD_INFRA', label: 'Cloud / HPC',           emoji: '☁️', color: '#06b6d4', keywords: ['hyperscaler','cloud computing','data center','hpc cluster','super computer','gpu cluster','distributed computing'] },
-  { tag: 'CLEAN_ENERGY',label: 'Clean Energy',          emoji: '⚡', color: '#34d399', keywords: ['solar','wind energy','renewable','battery storage','ev charging','green energy','clean energy','climate tech'] },
+  { tag: 'CLOUD_INFRA', label: 'Cloud / HPC',           emoji: '☁️', color: '#06b6d4', keywords: ['hyperscaler','cloud computing','hpc cluster','super computer','gpu cluster','distributed computing'] },
+  { tag: 'CLEAN_ENERGY',label: 'Clean Energy',          emoji: '🌱', color: '#34d399', keywords: ['solar energy','wind energy','renewable energy','battery storage','ev charging','green energy','clean energy','climate tech'] },
   { tag: 'PHARMA_AI',   label: 'Pharma / Biotech',      emoji: '🧬', color: '#c084fc', keywords: ['drug discovery','clinical trial','biopharma','genomics','proteomics','ai drug','biomarker','precision medicine'] },
+  { tag: 'CDN_EDGE',    label: 'CDN / Edge Cloud',      emoji: '🌐', color: '#2dd4bf', keywords: ['content delivery network','cdn','edge cloud','edge computing platform','web application firewall','waf','ddos protection','network security','next-gen waf','bot management','api security','zero trust'] },
+  { tag: 'FINTECH',     label: 'Fintech / Payments',    emoji: '💳', color: '#f472b6', keywords: ['payment processing','digital payments','neobank','buy now pay later','bnpl','open banking','blockchain payment','crypto exchange','cbdc'] },
+  { tag: 'INDIA_INFRA', label: 'India Infrastructure',  emoji: '🏗️', color: '#fb923c', keywords: ['pm gati shakti','national highway','smart city','metro rail','water supply','irrigation project','bharat','make in india','atmanirbhar','pli scheme'] },
+  { tag: 'EV',          label: 'EV / Mobility',         emoji: '🔋', color: '#4ade80', keywords: ['electric vehicle','ev battery','ev charging infrastructure','battery electric','bev','plug-in hybrid','motor vehicle electri'] },
 ];
+
+// Minimum keyword match count required for theme detection (prevents false positives)
+const THEME_MIN_MATCHES: Record<string, number> = {
+  AI_INFRA: 2,      // needs 2 AI keywords to avoid "AI" mentioned in footnote
+  SEMI: 2,          // "chip" in passing shouldn't trigger
+  AUTONOMY: 2,      // "autonomous" in boilerplate shouldn't trigger
+  DEFENSE: 2,       // needs 2 defense keywords
+  CDN_EDGE: 1,      // highly specific terms
+  INDIA_INFRA: 2,
+};
 
 function detectNarrativeThemes(text: string): string[] {
   const t = text.toLowerCase();
   const found: string[] = [];
   for (const theme of NARRATIVE_THEMES) {
-    if (theme.keywords.some(kw => t.includes(kw))) found.push(theme.tag);
+    const minMatch = THEME_MIN_MATCHES[theme.tag] ?? 1;
+    const matchCount = theme.keywords.filter(kw => t.includes(kw)).length;
+    if (matchCount >= minMatch) found.push(theme.tag);
   }
   return found;
 }
@@ -493,16 +613,34 @@ function parseEarnings(rawText: string): RawFinancials {
   // Extract labeled rows
   const rows = extractAllNumbers(text);
 
-  // Detect scale
-  const { factor, scaleLabel } = detectScaleFromNumbers(rows, currency);
+  // ── SCALE DETECTION: text first (explicit), then numbers (fallback) ──────────
+  // Step 1: Try to read scale from explicit text declaration (most reliable)
+  const textScale = detectScaleFromText(text);
 
-  // Helper: scale a raw number
+  // Step 2: Detect which column is "current period" in multi-period tables
+  const { curIdx, priorIdx, colCount, reason: colReason } = detectColumnIndices(text, rows);
+
+  // Step 3: If text scale not found, infer from magnitude using correct column
+  const { factor, scaleLabel } = textScale ?? detectScaleFromNumbers(rows, currency, curIdx);
+
+  // Helper: scale a raw number to display units (Mn/Cr)
   const sc = (v: number|null): number|null => v !== null ? Math.round(v * factor * 1000) / 1000 : null;
 
-  // Period + Company
+  // Helper: find metric using the detected column
+  const fm = (patterns: string[]) => findMetric(rows, patterns, curIdx);
+  const fmp = (patterns: string[]) => findMetric(rows, patterns, priorIdx); // prior period
+
+  // ── PERIOD & COMPANY ─────────────────────────────────────────────────────────
+
   const period = (() => {
+    // Q1 2026 supplement: detect from title or heading
+    const suppMatch = text.match(/first quarter 20(\d{2})|q1\s*20(\d{2})/i);
+    if (suppMatch) return `Q1 20${suppMatch[1] || suppMatch[2]}`;
     const fy = text.match(/(?:fiscal year|year) ended [A-Z][a-z]+ \d+,?\s*(\d{4})/i);
     if (fy) return `FY${fy[1]}`;
+    // Indian "year ended 31.03.2026"
+    const indFY = text.match(/year ended\s+31[./]0?3[./](20\d{2})/i);
+    if (indFY) return `FY${indFY[1]}`;
     const q = text.match(/(?:three months|quarter) ended [A-Z][a-z]+ \d+,?\s*(\d{4})/i);
     if (q) return `Q${q[1]}`;
     const indQ = text.match(/\b(Q[1-4])\s*[-–]?\s*(?:FY\s*)?(\d{2,4})\b/i);
@@ -514,78 +652,101 @@ function parseEarnings(rawText: string): RawFinancials {
   const company = (() => {
     const secExact = text.match(/\(Exact name of Registrant[^)]*\)\s*\n([^\n]{5,80})/);
     if (secExact) return secExact[1].trim();
+    // Indian format: company name usually at top of results page
+    const indName = text.match(/^([A-Z][A-Z\s]+(?:LIMITED|LTD|PRIVATE|INDUSTRIES|SOLUTIONS|TECHNOLOGIES|SERVICES))\b/m);
+    if (indName) return indName[1].trim();
     const lines = text.split('\n').slice(0, 20).map(l => l.trim());
     for (const l of lines) {
-      if (/(?:Inc|Corp|Ltd|Limited|LLC|plc|Holdings|Systems|Technologies|Pharma|Energy)\b/i.test(l) && l.length < 90) return l;
+      if (/(?:Inc|Corp|Ltd|Limited|LLC|plc|Holdings|Systems|Technologies|Pharma|Energy|Industries)\b/i.test(l) && l.length > 5 && l.length < 90) return l;
     }
     return 'Unknown Company';
   })();
 
   const ticker = text.match(/Trading\s+Symbol[^\n]*\n\s*([A-Z]{1,6})\b/)?.[1] || '';
 
-  // P&L
-  const { cur: rawRevCur, prior: rawRevPrior } = findRevenue(rows);
+  // ── P&L — uses curIdx/priorIdx throughout ─────────────────────────────────────
+
+  const { cur: rawRevCur, prior: rawRevPrior } = findRevenue(rows, curIdx, priorIdx);
   const revenue = sc(rawRevCur);
   const revPrior = sc(rawRevPrior);
 
-  const rawGross = findMetric(rows, ['gross profit', 'total gross profit']);
+  const rawGross = fm(['gross profit', 'total gross profit', 'gross profit$']);
   const grossProfit = sc(rawGross);
-  const grossMarginRaw = findMetric(rows, ['gross margin', 'gross profit %', 'gross profit margin']);
-  const grossMargin = grossMarginRaw && Math.abs(grossMarginRaw) <= 100 ? grossMarginRaw :
+  // Gross margin: try stated %, then compute from scaled GP/Rev
+  const grossMarginStated = fm(['gaap gross margin', 'gross margin', 'gross profit %', 'gross profit margin']);
+  const grossMargin = (grossMarginStated && Math.abs(grossMarginStated) <= 100) ? grossMarginStated :
     (grossProfit && revenue && revenue > 0 ? Math.round((grossProfit / revenue) * 10000) / 100 : null);
 
-  const rawDA = findMetric(rows, ['depreciation and amortization', 'depreciation.*amortization', 'da$', 'depreciation$']);
+  const rawDA = fm(['depreciation and amortization', 'depreciation.*amortization', 'depreciation expense',
+                    'depreciation$', 'da$']);
   const da = sc(rawDA);
 
-  const rawEBIT = findMetric(rows, ['income from operations', 'loss from operations', 'operating income', 'ebit$', 'operating loss']);
+  const rawEBIT = fm(['income from operations', 'loss from operations', 'income.*operations$',
+                      'loss.*operations$', 'operating income$', 'ebit$', 'total operating.*income']);
   const ebit = sc(rawEBIT);
   const ebitMargin = ebit && revenue && revenue > 0 ? Math.round((ebit / revenue) * 10000) / 100 : null;
 
-  let ebitda = sc(findMetric(rows, ['ebitda', 'adjusted ebitda', 'operating ebitda']));
+  // Adjusted EBITDA preferred over GAAP EBITDA if available
+  let ebitda = sc(fm(['adjusted ebitda', 'total adjusted ebitda'])) ?? sc(fm(['ebitda$']));
   if (!ebitda && ebit !== null && da !== null) ebitda = Math.round((ebit + Math.abs(da)) * 1000) / 1000;
-  if (!ebitda && grossProfit !== null) {
-    const rawOpex = findMetric(rows, ['total operating expenses', 'total operating expense']);
-    if (rawOpex) ebitda = Math.round((grossProfit - sc(rawOpex)! + (Math.abs(da ?? 0))) * 1000) / 1000;
-  }
   const ebitdaMargin = ebitda && revenue && revenue > 0 ? Math.round((ebitda / revenue) * 10000) / 100 : null;
 
-  const opex = sc(findMetric(rows, ['total operating expenses', 'total opex', 'operating expenses$']));
-  const rnd = sc(findMetric(rows, ['research and development', 'r&d expense', 'r&d$']));
-  const sga = sc(findMetric(rows, ['selling.*general.*admin', 'general.*administrative', 'sg&a$', 'selling.*marketing']));
-  const interestExpense = sc(findMetric(rows, ['interest expense', 'finance costs', 'interest cost', 'borrowing cost']));
-  const otherIncome = sc(findMetric(rows, ['other income', 'other income.*net', 'non-operating income']));
-  const pbt = sc(findMetric(rows, ['income.*before.*tax', 'loss.*before.*tax', 'profit before tax', 'pbt$', 'earnings before.*tax']));
-  const tax = sc(findMetric(rows, ['provision for income tax', 'income tax.*expense', 'tax expense$']));
+  const opex = sc(fm(['total operating expenses', 'total opex', 'total expenses']));
+  const rnd = sc(fm(['research and development', 'r&d expense', 'r&d$']));
+  const sga = sc(fm(['selling.*general.*admin', 'general.*administrative', 'sg&a$',
+                     'selling.*marketing', 'sales and marketing', 'sales.*marketing']));
+  const interestExpense = sc(fm(['interest expense', 'finance costs', 'interest cost', 'borrowing cost']));
+  const otherIncome = sc(fm(['other income', 'other income.*net', 'non-operating income']));
+  const pbt = sc(fm(['income.*before.*tax', 'loss.*before.*tax', 'profit before.*tax', 'pbt$',
+                     'earnings before.*tax', 'profit.*loss.*before.*tax']));
+  const tax = sc(fm(['provision for income tax', 'income tax.*expense', 'tax expense$',
+                     'income tax expense.*benefit', 'tax expense:']));
 
-  const rawPAT = findMetric(rows, ['net income$', 'net loss$', 'net income.*loss', 'net profit$', 'pat$', 'profit after tax', 'profit for the', 'loss from continuing']);
+  const rawPAT = fm(['net income$', 'net loss$', 'net income.*loss', 'net profit$', 'pat$',
+                     'profit after tax', 'profit.*loss.*for.*period', 'profit.*loss.*for.*year',
+                     'net loss$', 'profit.*period.*company']);
   const pat = sc(rawPAT);
-  const rawPATrow = rows.find(r => /net income|net loss|net profit|pat$/.test(r.label));
-  const patPrior = sc(rawPATrow?.nums[1] ?? null);
+  const rawPriorPAT = fmp(['net income', 'net loss', 'net profit', 'pat$', 'profit.*period']);
+  const patPrior = sc(rawPriorPAT);
   const patMargin = pat && revenue && revenue > 0 ? Math.round((pat / revenue) * 10000) / 100 : null;
 
-  // EPS — does NOT get scaled (it's per-share)
-  const epsRaw = findMetric(rows, ['basic eps', 'diluted eps', 'earnings per share', 'loss per share', '^eps$', 'net income per share']);
-  const eps = epsRaw; // No scale factor for per-share
-  const epsRow = rows.find(r => /eps|earnings per share|loss per share/.test(r.label));
-  const epsPrior = epsRow?.nums[1] ?? null;
+  // EPS — does NOT get scaled (it's per-share, not in millions)
+  // Use curIdx to select correct column
+  const epsRow = rows.find(r => /net.*loss.*per.*share|net.*income.*per.*share|basic.*eps|diluted.*eps|loss.*per.*share|^eps$/.test(r.label));
+  const eps = epsRow?.nums[curIdx] ?? epsRow?.nums[0] ?? null;
+  const epsPrior = epsRow ? (epsRow.nums[priorIdx] ?? epsRow.nums[Math.min(1, epsRow.nums.length-1)] ?? null) : null;
 
   // Discontinued
   const { detected: continuingOpsDetected, discontinuedIncome: rawDiscInc } = detectDiscontinued(text);
   const discontinuedIncome = sc(rawDiscInc);
-  const continuingRevenue = revenue; // Best we can do without full separation
+  const continuingRevenue = revenue;
   const continuingPAT = discontinuedIncome !== null && pat !== null ? pat - discontinuedIncome : pat;
 
-  // Balance Sheet
-  const cash = sc(findMetric(rows, ['cash and cash equivalents', 'cash.*equivalents$', 'cash and short']));
-  const totalDebt = sc(findMetric(rows, ['total borrowings', 'total debt$', 'total indebtedness', 'long.*term.*debt', 'notes payable']));
-  const equity = sc(findMetric(rows, ["total stockholders.*equity", "total shareholders.*equity", "total equity$", "net worth$"]));
-  const totalAssets = sc(findMetric(rows, ['total assets$']));
+  // Balance Sheet — use curIdx where available; BS is usually in single-period or latest column
+  const bsIdx = Math.min(curIdx, 1); // Balance sheet tables sometimes only have 2 columns
+  const fmbs = (patterns: string[]) => findMetric(rows, patterns, bsIdx);
+
+  const cash = sc(fmbs(['cash and cash equivalents', 'cash.*equivalents$', 'cash and short', 'cash equivalents$']));
+  const totalDebt = sc(fmbs(['total borrowings', 'total debt$', 'total indebtedness',
+                              'long.*term.*debt.*current', 'long-term debt']));
+  const equity = sc(fmbs(["total stockholders.*equity", "total shareholders.*equity", "total equity$",
+                           "net worth$", "stockholders equity", "total.*equity"]));
+  const totalAssets = sc(fmbs(['total assets$']));
   const netDebt = totalDebt !== null && cash !== null ? Math.round((totalDebt - cash) * 1000) / 1000 : null;
-  const capex = sc(findMetric(rows, ['capital expenditures', 'capex$', 'purchase.*property.*plant', 'purchase.*fixed assets']));
-  const ar = sc(findMetric(rows, ['accounts receivable', 'trade receivable', 'debtors$']));
-  const inventory = sc(findMetric(rows, ['^inventory$', '^inventories$', 'stock in trade']));
-  const cfo = sc(findMetric(rows, ['net cash.*operating', 'operating activities$', 'cash.*operating activities']));
-  const fcf = cfo !== null && capex !== null ? Math.round((cfo - Math.abs(capex)) * 1000) / 1000 : null;
+
+  // Cash flow and capex use curIdx (quarterly CF tables)
+  const capex = sc(fm(['capital expenditures', 'capex$', 'purchase.*property.*plant',
+                        'purchase.*fixed assets', 'purchases of property']));
+  const ar = sc(fmbs(['accounts receivable', 'trade receivable', 'debtors$']));
+  const inventory = sc(fmbs(['^inventory$', '^inventories$', 'stock in trade', 'inventories$']));
+
+  // CFO: direct lookup first, then from cash flow page
+  const cfo = sc(fm(['net cash provided by.*operating', 'net cash used in.*operating', 'net cash.*operating',
+                      'cash provided by.*operating', 'net cash inflow.*operations']));
+
+  // FCF: direct if available, else compute
+  const fcfDirect = sc(fm(['free cash flow$', 'free cash flow']));
+  const fcf = fcfDirect ?? (cfo !== null && capex !== null ? Math.round((cfo - Math.abs(capex)) * 1000) / 1000 : null);
 
   // Computed ratios
   const deRatio = totalDebt !== null && equity && equity > 0 ? Math.round((totalDebt / equity) * 100) / 100 : null;
@@ -605,7 +766,9 @@ function parseEarnings(rawText: string): RawFinancials {
   // Build partial result for validation
   const partial: Partial<RawFinancials> = { revenue, grossProfit, grossMargin, ebitda, pat, eps, cash, totalDebt, cfo };
   const validationWarnings = validateFinancials(partial, rows);
-  const isDataReliable = validationWarnings.length === 0;
+  // Add scale/column info to help debug
+  if (!textScale) validationWarnings.push(`Scale inferred from numbers (column ${curIdx}/${colCount} · ${colReason}) — verify values`);
+  const isDataReliable = validationWarnings.filter(w => !w.includes('inferred')).length === 0;
 
   return {
     company, ticker, period, periodType: 'annual', filingType, currency, scaleLabel, scaleFactor: factor,
