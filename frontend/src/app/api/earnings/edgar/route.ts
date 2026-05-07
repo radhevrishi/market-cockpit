@@ -171,6 +171,100 @@ export async function GET(request: Request) {
     submissions = await subRes.value.json().catch(() => null);
   }
 
+  // ── Try to fetch the most recent 10-K's "Item 1. Business" text ────────
+  // This is the canonical source for theme detection — but it's heavy (10-K
+  // HTML can be 5MB). We pull only the first 200KB and extract the business
+  // overview paragraph, which is what gets parsed for themes.
+  let businessOverview = '';
+  try {
+    const recent = submissions?.filings?.recent;
+    if (recent?.form && recent?.accessionNumber && recent?.primaryDocument) {
+      const forms: string[] = recent.form;
+      // Find most recent 10-K
+      let idx = forms.findIndex((f) => f === '10-K');
+      if (idx === -1) idx = forms.findIndex((f) => f === '10-Q'); // fall back to 10-Q
+      if (idx !== -1) {
+        const accNum = String(recent.accessionNumber[idx]).replace(/-/g, '');
+        const primaryDoc = recent.primaryDocument[idx];
+        const filingUrl = `https://www.sec.gov/Archives/edgar/data/${cik}/${accNum}/${primaryDoc}`;
+        const filingRes = await fetch(filingUrl, {
+          headers: SEC_HEADERS,
+          signal: AbortSignal.timeout(10000),
+          next: { revalidate: 86400 },
+        });
+        if (filingRes.ok) {
+          // Read up to 250KB — business section is near the top of 10-K
+          const reader = filingRes.body?.getReader();
+          if (reader) {
+            const chunks: Uint8Array[] = [];
+            let total = 0;
+            const MAX = 250_000;
+            while (total < MAX) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              chunks.push(value);
+              total += value.byteLength;
+            }
+            try { reader.cancel(); } catch {}
+            const buf = new Uint8Array(total);
+            let off = 0;
+            for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
+            const html = new TextDecoder().decode(buf);
+            // Strip HTML tags, collapse whitespace, take first 8KB of plain text
+            const stripped = html
+              .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+              .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+              .replace(/<[^>]+>/g, ' ')
+              .replace(/&nbsp;/g, ' ')
+              .replace(/&amp;/g, '&')
+              .replace(/&[a-z]+;/gi, ' ')
+              .replace(/\s+/g, ' ')
+              .trim();
+            // Try to find Item 1. Business and grab ~6KB after it
+            const m = stripped.match(/item\s+1\.?\s+business[:\.]?\s+/i);
+            if (m && m.index !== undefined) {
+              businessOverview = stripped.slice(m.index, m.index + 8000);
+            } else {
+              // Fallback: grab the middle of the document where prose tends to live
+              businessOverview = stripped.slice(2000, 10000);
+            }
+          }
+        }
+      }
+    }
+  } catch {
+    // best-effort; don't fail the route if 10-K fetch dies
+  }
+
+  // ── SIC code → theme seed terms (compensates for generic SIC labels) ───
+  // Many companies have a SIC label like "Electronic Computers" that doesn't
+  // trigger thematic keywords. We seed the corpus with related vocabulary.
+  const SIC_SEEDS: Record<string, string> = {
+    '3571': 'computer server compute hardware data center accelerator gpu',                  // Electronic Computers
+    '3572': 'computer storage data center server',                                           // Computer Storage Devices
+    '3576': 'networking 5g switch router',                                                   // Computer Communications Equipment
+    '3577': 'computer peripheral printer',                                                   // Computer Peripheral Equipment
+    '3674': 'semiconductor chip foundry wafer fpga asic',                                    // Semiconductors
+    '3812': 'defense military radar surveillance aerospace sensor fusion unmanned',          // Search/Detection/Navigation
+    '3669': 'communications signal alarm',                                                   // Communications Equipment NEC
+    '3663': '5g network telecom radio satellite',                                            // Radio/TV Broadcasting Equipment
+    '7372': 'software saas subscription cloud',                                              // Prepackaged Software
+    '7370': 'software saas cloud',                                                           // Computer Services
+    '7371': 'software it services',                                                          // Computer Services
+    '7389': 'business services',                                                             // Services NEC
+    '8731': 'biotech clinical trial therapeutic research',                                   // Commercial Physical Research
+    '2834': 'pharmaceutical drug therapeutic clinical',                                      // Pharmaceutical Preparations
+    '2836': 'biotech biological clinical therapeutic',                                       // Biological Products
+    '4813': 'telecom 5g network',                                                            // Telephone Communications
+    '6770': 'holding diversified',                                                           // Holding Companies
+    '4911': 'energy electric utility power',                                                 // Electric Services
+    '1311': 'oil gas energy upstream',                                                       // Crude Petroleum & Natural Gas
+    '3711': 'auto vehicle automotive ev electric',                                           // Motor Vehicles
+    '5961': 'ecommerce retail consumer',                                                     // Catalog Mail-Order Houses
+    '5812': 'restaurant food service consumer',                                              // Eating Places
+  };
+  const sicSeed = SIC_SEEDS[String(submissions?.sic ?? '').trim()] || '';
+
   const gaap = facts?.facts?.['us-gaap'] ?? {};
 
   // 3. Extract concepts
@@ -229,18 +323,18 @@ export async function GET(request: Request) {
   const year = endDate.getFullYear();
 
   // Build a rich descriptive corpus from SEC submissions for theme detection.
-  // This is the single most important input for narrative classification when
-  // FMP profile coverage is sparse (small caps).
+  // Layered priority: 10-K business overview (richest) → SIC seed (theme hints
+  // for generic SIC codes) → company metadata.
   const businessText = [
+    businessOverview,                                    // ← actual 10-K Item 1 prose (highest signal)
+    sicSeed,                                             // ← SIC-code seed terms (for generic SICs)
     submissions?.name,
     submissions?.sicDescription,
     submissions?.category,
     facts.entityName,
-    // Tickers / former names give weak signal but help disambiguation
     ...(submissions?.tickers || []),
     ...(submissions?.formerNames || []).map((f: any) => f.name),
-    // Most recent filing forms — adds weak context (10-K, 8-K, etc.)
-    ...((submissions?.filings?.recent?.primaryDocDescription || []) as string[]).slice(0, 20),
+    ...((submissions?.filings?.recent?.primaryDocDescription || []) as string[]).slice(0, 10),
   ].filter(Boolean).join(' · ');
 
   // Return raw $ values (page applies its own SCALE factor for display)
