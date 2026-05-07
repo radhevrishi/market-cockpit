@@ -972,32 +972,383 @@ function detectDiscontinued(text: string): { detected: boolean; discontinuedInco
   return { detected: false, discontinuedIncome: null, continuingRevNote: '' };
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// TABLE-BLOCK EXTRACTION ENGINE
+// The canonical approach: document classification → canonical section → table parsing
+// All three document types (SEC annual, SEC supplement, India exchange) use one pipeline.
+// ═════════════════════════════════════════════════════════════════════════════
+
+type DocumentType = 'SEC_ANNUAL' | 'SEC_QUARTERLY' | 'SEC_SUPPLEMENT' | 'INDIA_EXCHANGE' | 'INDIA_ANNUAL' | 'UNKNOWN';
+
+type RowRole = 'header' | 'section_label' | 'line_item' | 'unlabeled_total' | 'labeled_total' | 'percentage' | 'footnote_def' | 'blank';
+
+interface TableRow2 {
+  rawLine: string;
+  cleanLabel: string;
+  values: (number | null)[];      // raw, unscaled values per column
+  isNeg: boolean[];               // parenthetical-negative flag per column
+  role: RowRole;
+  sectionCtx: string;             // e.g. 'revenue', 'cost', 'operating', 'other'
+  indentLevel: number;            // 0=top, 1=sub-item, 2=deeper
+}
+
+interface TableBlock {
+  sectionName: string;
+  rows: TableRow2[];
+  numCols: number;
+  curColIdx: number;
+  priorColIdx: number;
+  scale: { factor: number; scaleLabel: string };
+  docType: DocumentType;
+  confidence: number;             // 0–100
+}
+
+// ── 1. DOCUMENT CLASSIFICATION ───────────────────────────────────────────────
+
+function classifyDocumentType(text: string): DocumentType {
+  const t = text.toLowerCase();
+  if (/annual report on form 10-k|form 10-k\b/.test(t)) return 'SEC_ANNUAL';
+  if (/quarterly report on form 10-q/.test(t)) return 'SEC_QUARTERLY';
+  if (/investor supplement|first quarter 20\d{2}.*supplement|q[1-4] 20\d{2}.*supplement/i.test(text)) return 'SEC_SUPPLEMENT';
+  if (/consolidated financial results.*sebi|sebi.*listing obligations|regulation 33/i.test(text)) return 'INDIA_EXCHANGE';
+  if (/annual report.*india|statements? of profit and loss|ind as/i.test(t)) return 'INDIA_ANNUAL';
+  return 'UNKNOWN';
+}
+
+// ── 2. CANONICAL P&L SECTION FINDER ──────────────────────────────────────────
+// Each document type has a known canonical location for the primary financial table.
+// We always prefer the FINANCIAL TABLE over narrative summary bullets.
+
+function findCanonicalPLSection(text: string, docType: DocumentType): { text: string; scaleLine: string } | null {
+  // Pattern libraries per doc type (ordered by confidence)
+  const SEC_ANNUAL_ANCHORS = [
+    /consolidated statements? of operations/i,
+    /results of operations/i,
+  ];
+  const SEC_SUPPLEMENT_ANCHORS = [
+    /consolidated statements? of operations.*quarterly/i,
+    /consolidated statements? of operations/i,
+  ];
+  const INDIA_ANCHORS = [
+    /(?:inr|rs\.?|₹)\s+in\s+(?:lakhs?|crores?)/i,
+    /statement of (?:consolidated|standalone) financial results/i,
+    /financial results? for the (?:quarter|year)/i,
+  ];
+
+  const anchors =
+    docType === 'SEC_ANNUAL'    ? SEC_ANNUAL_ANCHORS :
+    docType === 'SEC_SUPPLEMENT'? SEC_SUPPLEMENT_ANCHORS :
+    docType === 'SEC_QUARTERLY' ? SEC_SUPPLEMENT_ANCHORS :
+    INDIA_ANCHORS;
+
+  for (const anchor of anchors) {
+    const match = anchor.exec(text);
+    if (!match) continue;
+
+    // Look ahead for scale declaration line
+    const lookAhead = text.slice(match.index, match.index + 5000);
+    const scaleLine = lookAhead.match(/\(unaudited[^)]*in thousands[^)]*\)|\(in thousands[^)]*\)|inr in lakhs?|inr in crores?|\(₹ in lakhs?\)|\(in millions\)/i)?.[0] ?? '';
+
+    // Extract the section: from anchor to next major heading or ~150 lines
+    const lines = lookAhead.split('\n');
+    const sectionLines: string[] = [];
+    let blankStreak = 0;
+    for (let i = 0; i < Math.min(lines.length, 120); i++) {
+      const l = lines[i].trim();
+      // Stop at next major financial statement heading (but not sub-headings)
+      if (i > 20 && /^(?:consolidated (?:balance sheets?|statements? of (?:stockholders|cash flows?|comprehensive))|notes? to consolidated|part i[^iv]|item \d+[^.])/i.test(l)) break;
+      if (!l) blankStreak++; else blankStreak = 0;
+      if (blankStreak > 4) break;
+      sectionLines.push(lines[i]);
+    }
+
+    const sectionText = sectionLines.join('\n');
+    if (sectionText.length > 200) {
+      return { text: sectionText, scaleLine };
+    }
+  }
+  return null;
+}
+
+// ── 3. TABLE-BLOCK PARSER ─────────────────────────────────────────────────────
+// Converts raw section text into structured TableRow2 objects with role detection.
+
+function detectRowRole(label: string, values: (number|null)[], isNeg: boolean[], prevRole: RowRole, sectionCtx: string): RowRole {
+  const lbl = label.trim().toLowerCase();
+  // Blank
+  if (!label.trim() && values.every(v => v === null)) return 'blank';
+  // Header row: multiple date/period labels
+  if (/\b(20\d{2}|q[1-4]\s*20\d{2}|\d{2}[./]\d{2}[./]20\d{2}|ytd|h[12])\b/i.test(label) && values.filter(v=>v!==null).length < 3) return 'header';
+  // Footnote definition: starts with small integer then text
+  if (/^\d{1,2}[\s.]/.test(label) && label.length < 80 && values.every(v=>v===null)) return 'footnote_def';
+  // Section label: no numbers, looks like a category header
+  if (values.every(v => v === null) && label.trim().length > 2) return 'section_label';
+  // Percentage row: values in 0-100% range AND label contains "margin" or "%"
+  if (/%|margin|rate\b/.test(lbl) && values.filter(v=>v!==null).every(v=>v!==null && Math.abs(v!)<=100)) return 'percentage';
+  // Unlabeled total: no label but has numbers (sub-total row in SEC format)
+  if (!label.trim() && values.some(v => v !== null)) return 'unlabeled_total';
+  // Labeled total: "total ...", "gross profit", "loss from operations", "net income/loss"
+  if (/^(?:total|gross profit|gross margin|(?:loss|income) from operations|net (?:income|loss|revenue)|operating (?:income|loss))/.test(lbl)) return 'labeled_total';
+  return 'line_item';
+}
+
+function parseTableRow2(rawLine: string, prevRow: TableRow2 | null, sectionCtx: string): TableRow2 {
+  const line = rawLine;
+  // Number extraction: match both regular and parenthetical negatives
+  const numRe = /(\([\d,]+(?:\.\d+)?\)|\$?\s*[\d,]+(?:\.\d+)?%?)/g;
+  const values: (number|null)[] = [];
+  const isNeg: boolean[] = [];
+  let m: RegExpExecArray | null;
+  numRe.lastIndex = 0;
+  while ((m = numRe.exec(line)) !== null) {
+    const raw = m[1].replace(/[\$,()%\s]/g, '');
+    const n = parseFloat(raw);
+    if (!isNaN(n) && raw.length > 0) {
+      const neg = m[1].startsWith('(');
+      values.push(neg ? -n : n);
+      isNeg.push(neg);
+    }
+  }
+
+  // Label: everything before first significant number
+  const firstNumIdx = line.search(/\(?\$?\s*\d[\d,]*(?:\.\d+)?/);
+  const rawLabel = firstNumIdx > 0 ? line.slice(0, firstNumIdx) : (values.length === 0 ? line : '');
+  // Clean label: remove footnote superscripts (1) (2), leading spaces, special chars
+  const cleanLabel = rawLabel.replace(/\(\d{1,2}\)|\s*\d{1,2}\s*$|\(1\)|\(2\)|\(3\)/g, '').replace(/[_|]/g, '').trim();
+
+  // Count leading spaces as indent level
+  const indentLevel = Math.floor((rawLine.length - rawLine.trimStart().length) / 2);
+
+  const role = detectRowRole(cleanLabel, values, isNeg, prevRow?.role ?? 'blank', sectionCtx);
+  return { rawLine, cleanLabel, values, isNeg, role, sectionCtx, indentLevel };
+}
+
+function parseTableBlock(sectionText: string, docType: DocumentType, currency: string): TableBlock {
+  const lines = sectionText.split('\n');
+
+  // Detect scale
+  const textScale = detectScaleFromText(sectionText);
+  const scalePlaceholder = { factor: 1, scaleLabel: currency === 'INR' ? '₹ Cr' : '$ Mn' };
+
+  // Parse rows
+  const rows: TableRow2[] = [];
+  let headerRow: TableRow2 | null = null;
+  let sectionCtx = '';
+  let prevRow: TableRow2 | null = null;
+
+  for (const line of lines) {
+    const row = parseTableRow2(line, prevRow, sectionCtx);
+    if (row.role === 'section_label') {
+      const lbl = row.cleanLabel.toLowerCase();
+      if (/revenue/.test(lbl)) sectionCtx = 'revenue';
+      else if (/cost of/.test(lbl)) sectionCtx = 'cost';
+      else if (/operating exp/.test(lbl)) sectionCtx = 'opex';
+      else if (/other income|interest/.test(lbl)) sectionCtx = 'other';
+      row.sectionCtx = sectionCtx;
+    } else if (row.role === 'header' && !headerRow && rows.length < 8) {
+      headerRow = row;
+    }
+    rows.push(row);
+    prevRow = row;
+  }
+
+  // Determine columns using existing detectColumnIndices
+  const rowsForColDetect: LabeledNum[] = rows.map(r => ({ label: r.cleanLabel, nums: r.values.filter(v=>v!==null) as number[], rawLine: r.rawLine }));
+  const { curIdx, priorIdx, colCount } = detectColumnIndices(sectionText, rowsForColDetect);
+
+  // Scale detection: use text declaration or infer from max revenue value
+  let scale = textScale;
+  if (!scale) {
+    // Find the best revenue-like row and infer scale
+    const revRow = rows.find(r =>
+      /revenue from operations|^(?:total )?revenue$|^net sales$/i.test(r.cleanLabel) ||
+      (r.role === 'unlabeled_total' && r.sectionCtx === 'revenue')
+    );
+    const revVal = revRow?.values[Math.min(curIdx, (revRow?.values.length??1)-1)];
+    if (revVal && revVal > 0) {
+      // Same boundaries as detectScaleFromNumbers
+      if (revVal >= 1e6) scale = { factor: currency === 'INR' ? 1e-5 : 1e-6, scaleLabel: currency === 'INR' ? '₹ Cr' : '$ Mn' };
+      else if (revVal >= 1e3) scale = { factor: currency === 'INR' ? 1e-2 : 1e-3, scaleLabel: currency === 'INR' ? '₹ Cr' : '$ Mn' };
+      else scale = { factor: 1, scaleLabel: currency === 'INR' ? '₹ Cr' : '$ Mn' };
+    }
+  }
+
+  const finalScale = scale ?? scalePlaceholder;
+
+  // Confidence: based on how many canonical rows we found
+  const hasRevenue = rows.some(r => /revenue|net sales/i.test(r.cleanLabel) || r.sectionCtx === 'revenue');
+  const hasGrossProfit = rows.some(r => /gross profit/i.test(r.cleanLabel));
+  const hasNetIncome = rows.some(r => /net (?:income|loss)/i.test(r.cleanLabel));
+  const confidence = (hasRevenue ? 40 : 0) + (hasGrossProfit ? 30 : 0) + (hasNetIncome ? 30 : 0);
+
+  return { sectionName: '', rows, numCols: colCount, curColIdx: curIdx, priorColIdx: priorIdx, scale: finalScale, docType, confidence };
+}
+
+// ── 4. METRIC EXTRACTION FROM TABLE BLOCK ────────────────────────────────────
+// Pulls metrics from the canonical table with a strict locking hierarchy.
+
+function getCol(row: TableRow2, colIdx: number): number | null {
+  const v = row.values[Math.min(colIdx, row.values.length - 1)];
+  return v ?? null;
+}
+
+function findRevenueInBlock(block: TableBlock): { cur: number|null; prior: number|null; source: string } {
+  const { rows, curColIdx: ci, priorColIdx: pi } = block;
+
+  // Tier 1: labeled "total revenue" / "revenue from operations"
+  for (const row of rows) {
+    if (/^(?:total )?revenues?$|^net (?:revenue|sales)$|^revenue from operations$/i.test(row.cleanLabel.trim())) {
+      const cur = getCol(row, ci);
+      if (cur && cur > 0) return { cur, prior: getCol(row, pi), source: 'labeled_row' };
+    }
+  }
+
+  // Tier 2: unlabeled subtotal row in the revenue section
+  let inRevSection = false;
+  for (const row of rows) {
+    if (row.role === 'section_label' && /revenue/i.test(row.cleanLabel)) { inRevSection = true; continue; }
+    if (inRevSection && row.role === 'section_label') { inRevSection = false; } // left revenue section
+    if (inRevSection && row.role === 'unlabeled_total') {
+      const cur = getCol(row, ci);
+      if (cur && cur > 0) return { cur, prior: getCol(row, pi), source: 'unlabeled_subtotal' };
+    }
+  }
+
+  // Tier 3: sum of revenue sub-items (first occurrence only, stop at cost section)
+  const SUB = /^(?:product|products?|service|services?|subscription|license|customer funded|hardware|software|recurring|professional)\b/i;
+  const seenLabels = new Set<string>();
+  const subItems: TableRow2[] = [];
+  for (const row of rows) {
+    if (/^cost of/i.test(row.cleanLabel)) break;
+    if (SUB.test(row.cleanLabel) && !seenLabels.has(row.cleanLabel.toLowerCase())) {
+      seenLabels.add(row.cleanLabel.toLowerCase());
+      subItems.push(row);
+    }
+  }
+  if (subItems.length >= 2) {
+    const cur = subItems.reduce((s, r) => s + (getCol(r, ci) ?? 0), 0);
+    const prior = subItems.reduce((s, r) => s + (getCol(r, pi) ?? 0), 0);
+    if (cur > 0) return { cur, prior: prior > 0 ? prior : null, source: 'sum_sub_items' };
+  }
+
+  return { cur: null, prior: null, source: 'not_found' };
+}
+
+function extractFromTableBlock(block: TableBlock): Partial<RawFinancials> & { revenueSource: string; tableConfidence: number } {
+  const { rows, curColIdx: ci, priorColIdx: pi, scale } = block;
+  const f = scale.factor;  // scale factor applied ONCE here
+
+  const sc = (v: number|null) => v !== null ? Math.round(v * f * 1000) / 1000 : null;
+
+  // Revenue with locking
+  const revResult = findRevenueInBlock(block);
+  const revenue = sc(revResult.cur);
+  const revPrior = sc(revResult.prior);
+
+  // Helper to find a row by label patterns
+  const findRow = (patterns: RegExp[]): TableRow2 | undefined =>
+    rows.find(r => patterns.some(p => p.test(r.cleanLabel)));
+
+  const gpRow   = findRow([/^gross profit/i]);
+  const ebitRow = findRow([/(?:loss|income) from operations/i, /operating (?:income|loss)/i, /ebit\b/i]);
+  const netRow  = findRow([/^net (?:income|loss)\b/i, /^net income.*loss/i]);
+  const rndRow  = findRow([/^research and development\b/i, /^r&d\b/i]);
+  const sgaRow  = findRow([/selling.*general.*admin/i, /^general.*administrative\b/i, /^sales and marketing\b/i]);
+  const intRow  = findRow([/^interest expense/i, /finance costs/i]);
+  const taxRow  = findRow([/provision for income tax/i, /^income tax expense/i, /^tax expense/i]);
+  const pbtRow  = findRow([/before.*income tax/i, /profit before tax/i, /^pbt\b/i]);
+
+  const getV = (row: TableRow2 | undefined, col: number): number | null =>
+    row ? getCol(row, col) : null;
+
+  const grossProfit = sc(getV(gpRow, ci));
+  const ebit        = sc(getV(ebitRow, ci));
+  const pat         = sc(getV(netRow, ci));
+  const patPrior    = sc(getV(netRow, pi));
+  const rnd         = sc(getV(rndRow, ci));
+  const sga         = sc(getV(sgaRow, ci));
+  const interestExpense = sc(getV(intRow, ci));
+  const tax         = sc(getV(taxRow, ci));
+  const pbt         = sc(getV(pbtRow, ci));
+
+  // Gross margin: stated % row OR computed
+  const gmPctRow = findRow([/^gaap gross margin/i, /^gross margin/i]);
+  let grossMargin: number | null = null;
+  if (gmPctRow) {
+    const v = getV(gmPctRow, ci);
+    if (v !== null && Math.abs(v) <= 100) grossMargin = v;
+  }
+  if (!grossMargin && grossProfit && revenue && revenue > 0) {
+    grossMargin = Math.round((grossProfit / revenue) * 10000) / 100;
+  }
+
+  // EBITDA
+  const daRow = findRow([/depreciation and amortization/i, /^depreciation\b/i]);
+  const da = sc(getV(daRow, ci));
+  let ebitda: number | null = null;
+  if (ebit !== null && da !== null) ebitda = Math.round((ebit + Math.abs(da)) * 1000) / 1000;
+
+  return {
+    revenue, revPrior, grossProfit, grossMargin,
+    ebit, ebitMargin: ebit && revenue && revenue > 0 ? Math.round((ebit/revenue)*10000)/100 : null,
+    ebitda, ebitdaMargin: ebitda && revenue && revenue > 0 ? Math.round((ebitda/revenue)*10000)/100 : null,
+    pat, patPrior, patMargin: pat && revenue && revenue > 0 ? Math.round((pat/revenue)*10000)/100 : null,
+    rnd, sga, interestExpense, tax, pbt, da,
+    revenueSource: revResult.source,
+    tableConfidence: block.confidence,
+    scaleLabel: scale.scaleLabel,
+    scaleFactor: scale.factor,
+  };
+}
+
 // ── STEP 8: MAIN EXTRACTION ────────────────────────────────────────────────────
 
 function parseEarnings(rawText: string): RawFinancials {
   // Apply OCR cleanup first — removes boilerplate, footnote markers, OCR noise
   const text = cleanOCRText(rawText);
   const { currency, filingType } = detectCurrency(text);
+  const docType = classifyDocumentType(text);
 
-  // Extract labeled rows
+  // ══════════════════════════════════════════════════════════════════════════
+  // PRIMARY PATH: CANONICAL-TABLE-FIRST EXTRACTION
+  // Step 1: Find the canonical P&L section (Consolidated Statements of Operations etc.)
+  // Step 2: Parse as a structured table block with row roles
+  // Step 3: Extract metrics with strict locking hierarchy
+  // Step 4: Fall back to label-based extraction for anything missing
+  // ══════════════════════════════════════════════════════════════════════════
+
+  let canonicalMetrics: (Partial<RawFinancials> & { revenueSource?: string; tableConfidence?: number }) | null = null;
+  const canonicalSection = findCanonicalPLSection(text, docType);
+
+  if (canonicalSection) {
+    const block = parseTableBlock(canonicalSection.text, docType, currency);
+    canonicalMetrics = extractFromTableBlock(block);
+  }
+
+  // ── FALLBACK: label-based extraction (existing approach) ──────────────────
+  // Extract labeled rows from full document (for metrics not in canonical section)
   const rows = extractAllNumbers(text);
 
-  // ── SCALE DETECTION: text first (explicit), then numbers (fallback) ──────────
-  // Step 1: Try to read scale from explicit text declaration (most reliable)
+  // Scale detection: use canonical block's scale if available, else detect from text/numbers
   const textScale = detectScaleFromText(text);
-
-  // Step 2: Detect which column is "current period" in multi-period tables
   const { curIdx, priorIdx, colCount, reason: colReason } = detectColumnIndices(text, rows);
 
-  // Step 3: If text scale not found, infer from magnitude using correct column
-  const { factor, scaleLabel } = textScale ?? detectScaleFromNumbers(rows, currency, curIdx);
+  // Prefer canonical metrics' scale if available (it was derived from the canonical section)
+  const canonicalScale = canonicalMetrics?.scaleLabel && canonicalMetrics?.scaleFactor
+    ? { factor: canonicalMetrics.scaleFactor, scaleLabel: canonicalMetrics.scaleLabel }
+    : null;
+  const { factor, scaleLabel } = canonicalScale ?? textScale ?? detectScaleFromNumbers(rows, currency, curIdx);
 
-  // Helper: scale a raw number to display units (Mn/Cr)
   const sc = (v: number|null): number|null => v !== null ? Math.round(v * factor * 1000) / 1000 : null;
-
-  // Helper: find metric using the detected column
   const fm = (patterns: string[]) => findMetric(rows, patterns, curIdx);
-  const fmp = (patterns: string[]) => findMetric(rows, patterns, priorIdx); // prior period
+  const fmp = (patterns: string[]) => findMetric(rows, patterns, priorIdx);
+
+  // Merge: canonical metrics take priority; fallback fills in anything missing
+  // Revenue: canonical table wins; if missing, try label-based
+  const { cur: rawRevCur, prior: rawRevPrior } = findRevenue(rows, curIdx, priorIdx, factor);
+  const revenue    = canonicalMetrics?.revenue    ?? sc(rawRevCur);
+  const revPrior   = canonicalMetrics?.revPrior   ?? sc(rawRevPrior);
+  const revenueSourceStr = canonicalMetrics?.revenueSource ?? (rawRevCur ? 'label_fallback' : 'not_found');
 
   // ── PERIOD & COMPANY ─────────────────────────────────────────────────────────
 
@@ -1058,52 +1409,45 @@ function parseEarnings(rawText: string): RawFinancials {
 
   const ticker = text.match(/Trading\s+Symbol[^\n]*\n\s*([A-Z]{1,6})\b/)?.[1] || '';
 
-  // ── P&L — uses curIdx/priorIdx throughout ─────────────────────────────────────
+  // ── P&L — canonical metrics take priority, fallback fills gaps ────────────────
+  // Revenue already resolved above (canonical + fallback merge)
 
-  // FIX: pass factor to findRevenue so it can apply plausibility check
-  const { cur: rawRevCur, prior: rawRevPrior } = findRevenue(rows, curIdx, priorIdx, factor);
-  const revenue = sc(rawRevCur);
-  const revPrior = sc(rawRevPrior);
-
-  const rawGross = fm(['gross profit', 'total gross profit', 'gross profit$']);
-  const grossProfit = sc(rawGross);
-  // Gross margin: try stated %, then compute from scaled GP/Rev
+  // Prefer canonical table values; fill in with label-based if null
+  const grossProfit = canonicalMetrics?.grossProfit
+    ?? sc(fm(['gross profit', 'total gross profit', 'gross profit$']));
   const grossMarginStated = fm(['gaap gross margin', 'gross margin', 'gross profit %', 'gross profit margin']);
-  const grossMargin = (grossMarginStated && Math.abs(grossMarginStated) <= 100) ? grossMarginStated :
-    (grossProfit && revenue && revenue > 0 ? Math.round((grossProfit / revenue) * 10000) / 100 : null);
+  const grossMargin = canonicalMetrics?.grossMargin
+    ?? ((grossMarginStated && Math.abs(grossMarginStated) <= 100) ? grossMarginStated
+    : (grossProfit && revenue && revenue > 0 ? Math.round((grossProfit / revenue) * 10000) / 100 : null));
 
-  const rawDA = fm(['depreciation and amortization', 'depreciation.*amortization', 'depreciation expense',
-                    'depreciation$', 'da$']);
-  const da = sc(rawDA);
+  const da = canonicalMetrics?.da
+    ?? sc(fm(['depreciation and amortization', 'depreciation.*amortization', 'depreciation expense', 'depreciation$']));
 
-  const rawEBIT = fm(['income from operations', 'loss from operations', 'income.*operations$',
-                      'loss.*operations$', 'operating income$', 'ebit$', 'total operating.*income']);
-  const ebit = sc(rawEBIT);
-  const ebitMargin = ebit && revenue && revenue > 0 ? Math.round((ebit / revenue) * 10000) / 100 : null;
+  const ebit = canonicalMetrics?.ebit
+    ?? sc(fm(['income from operations', 'loss from operations', 'operating income$', 'ebit$']));
+  const ebitMargin = (ebit && revenue && revenue > 0) ? Math.round((ebit / revenue) * 10000) / 100 : null;
 
-  // Adjusted EBITDA preferred over GAAP EBITDA if available
-  let ebitda = sc(fm(['adjusted ebitda', 'total adjusted ebitda'])) ?? sc(fm(['ebitda$']));
+  let ebitda = canonicalMetrics?.ebitda
+    ?? sc(fm(['adjusted ebitda', 'total adjusted ebitda'])) ?? sc(fm(['ebitda$']));
   if (!ebitda && ebit !== null && da !== null) ebitda = Math.round((ebit + Math.abs(da)) * 1000) / 1000;
-  const ebitdaMargin = ebitda && revenue && revenue > 0 ? Math.round((ebitda / revenue) * 10000) / 100 : null;
+  const ebitdaMargin = (ebitda && revenue && revenue > 0) ? Math.round((ebitda / revenue) * 10000) / 100 : null;
 
   const opex = sc(fm(['total operating expenses', 'total opex', 'total expenses']));
-  const rnd = sc(fm(['research and development', 'r&d expense', 'r&d$']));
-  const sga = sc(fm(['selling.*general.*admin', 'general.*administrative', 'sg&a$',
-                     'selling.*marketing', 'sales and marketing', 'sales.*marketing']));
-  const interestExpense = sc(fm(['interest expense', 'finance costs', 'interest cost', 'borrowing cost']));
+  const rnd = canonicalMetrics?.rnd ?? sc(fm(['research and development', 'r&d expense', 'r&d$']));
+  const sga = canonicalMetrics?.sga ?? sc(fm(['selling.*general.*admin', 'general.*administrative',
+                   'sg&a$', 'selling.*marketing', 'sales and marketing']));
+  const interestExpense = canonicalMetrics?.interestExpense
+    ?? sc(fm(['interest expense', 'finance costs', 'interest cost', 'borrowing cost']));
   const otherIncome = sc(fm(['other income', 'other income.*net', 'non-operating income']));
-  const pbt = sc(fm(['income.*before.*tax', 'loss.*before.*tax', 'profit before.*tax', 'pbt$',
-                     'earnings before.*tax', 'profit.*loss.*before.*tax']));
-  const tax = sc(fm(['provision for income tax', 'income tax.*expense', 'tax expense$',
-                     'income tax expense.*benefit', 'tax expense:']));
+  const pbt = canonicalMetrics?.pbt ?? sc(fm(['income.*before.*tax', 'loss.*before.*tax', 'profit before.*tax', 'pbt$']));
+  const tax = canonicalMetrics?.tax ?? sc(fm(['provision for income tax', 'income tax.*expense', 'tax expense$']));
 
-  const rawPAT = fm(['net income$', 'net loss$', 'net income.*loss', 'net profit$', 'pat$',
-                     'profit after tax', 'profit.*loss.*for.*period', 'profit.*loss.*for.*year',
-                     'net loss$', 'profit.*period.*company']);
-  const pat = sc(rawPAT);
-  const rawPriorPAT = fmp(['net income', 'net loss', 'net profit', 'pat$', 'profit.*period']);
-  const patPrior = sc(rawPriorPAT);
-  const patMargin = pat && revenue && revenue > 0 ? Math.round((pat / revenue) * 10000) / 100 : null;
+  const pat = canonicalMetrics?.pat
+    ?? sc(fm(['net income$', 'net loss$', 'net income.*loss', 'net profit$', 'pat$',
+              'profit after tax', 'profit.*loss.*for.*period', 'profit.*loss.*for.*year']));
+  const patPrior = canonicalMetrics?.patPrior
+    ?? sc(fmp(['net income', 'net loss', 'net profit', 'pat$', 'profit.*period']));
+  const patMargin = (pat && revenue && revenue > 0) ? Math.round((pat / revenue) * 10000) / 100 : null;
 
   // EPS — does NOT get scaled (it's per-share, not in millions)
   // Use curIdx to select correct column
@@ -1189,38 +1533,36 @@ function parseEarnings(rawText: string): RawFinancials {
   // AFTER sanitization, and assign one of three states.
   const r = result as RawFinancials;
   const revenueValid = r.revenue !== null && r.revenue > 0;
-  const grossMarginValid = r.grossMargin !== null; // null = was sanitized
+  const grossMarginValid = r.grossMargin !== null;
   const patValid = r.pat !== null;
   const coreFailed = sanitizationIssues.filter(s => s.includes('extraction failed') || s.includes('Revenue near-zero')).length > 0;
+  // Declare here so they're available in the conditions below
+  const canonicalBoost = canonicalSection ? 15 : 0;
+  const tableConf = canonicalMetrics?.tableConfidence ?? 0;
 
   let parseState: RawFinancials['parseState'];
   let parseConfidence: number;
 
   if (coreFailed || !revenueValid) {
-    // Revenue missing or core extraction failure → nothing can be trusted
     parseState = 'failed';
-    parseConfidence = 10;
+    parseConfidence = Math.min(20, 5 + canonicalBoost);
   } else if (sanitizationIssues.length > 2 || (!grossMarginValid && !patValid)) {
-    // Revenue found but multiple key metrics were nullified
     parseState = 'partial';
-    parseConfidence = 45;
+    parseConfidence = Math.min(65, 45 + canonicalBoost + Math.floor(tableConf / 5));
   } else if (sanitizationIssues.length === 0 && textScale !== null) {
-    // Explicit scale declaration + no hard failures = highest confidence
+    // Explicit scale declaration + canonical section + no failures = highest confidence
     parseState = 'verified';
-    parseConfidence = 90;
+    parseConfidence = Math.min(95, 80 + canonicalBoost);
   } else if (sanitizationIssues.length === 0) {
-    // Scale inferred but no failures
     parseState = 'verified';
-    parseConfidence = 70;
+    parseConfidence = Math.min(85, 65 + canonicalBoost);
   } else {
     parseState = 'partial';
-    parseConfidence = 55;
+    parseConfidence = Math.min(65, 50 + canonicalBoost);
   }
 
   // What source did revenue come from (for display)
-  const revenueSource = revenueValid
-    ? (rawRevCur && rawRevCur > 30000000 ? 'unlabeled_or_absolute' : 'labeled_row')
-    : 'not_found';
+  const revenueSource = revenueValid ? revenueSourceStr : 'not_found';
 
   return {
     ...(result as RawFinancials),
@@ -1562,70 +1904,155 @@ function saveHist2(e: HistEntry2[]) { try { localStorage.setItem(HISTORY_KEY2, J
 // ═════════════════════════════════════════════════════════════════════════════
 
 export default function EarningsAnalysisPage() {
-  const AV_KEY = '62EKUKC2M5WSZB9Z';
+  // ── API Keys ──────────────────────────────────────────────────────────────
+  const FMP_KEY = 'SywZSfKoRQ9JmcUZ1w98MT78rrVvHGng';  // Financial Modeling Prep (PRIMARY)
+  const AV_KEY  = '62EKUKC2M5WSZB9Z';                   // Alpha Vantage (fallback)
 
-  // Alpha Vantage — ONLY used for consensus estimates and EPS surprise history.
-  // Market data (market cap, P/E, etc.) deliberately excluded — user wants actuals from report.
+  // Consensus estimates data — enriched from FMP (primary) or AV (fallback)
   interface AVData {
     symbol: string; name: string; sector: string; industry: string;
-    // Consensus estimates only
-    epsEstNextQ: number|null;       // Next quarter EPS estimate
-    epsEstCurrentYear: number|null; // Full year EPS estimate
-    revenueEstNextQ: number|null;   // Next quarter revenue estimate (not always available)
+    dataSource: 'FMP' | 'AlphaVantage' | 'manual';
+    // Estimates — these are the ONLY fields we use from market data providers
+    epsEstNextQ: number|null;
+    epsEstCurrentYear: number|null;
+    revenueEstNextQ: number|null;       // $ Mn — FMP provides this!
+    revenueEstCurrentYear: number|null; // $ Mn — FMP provides full year
+    grossMarginEst: number|null;        // % — FMP analyst estimates
     analystTargetPrice: number|null;
+    numAnalysts: number|null;
     // EPS surprise track record (last 8 quarters)
     quarterlyEarnings: {
       fiscalDateEnding: string;
+      period: string;
       reportedEPS: number|null;
       estimatedEPS: number|null;
       surprise: number|null;
       surprisePct: number|null;
+      // Revenue actuals + estimates (FMP provides these)
+      reportedRevenue: number|null;
+      estimatedRevenue: number|null;
+      revSurprisePct: number|null;
     }[];
   }
   const [avData, setAvData] = useState<AVData|null>(null);
   const [avLoading, setAvLoading] = useState(false);
   const [avTicker, setAvTicker] = useState('');
-  // Manual estimate overrides (user can type these if AV doesn't have them)
   const [manualRevEst, setManualRevEst] = useState('');
   const [manualGMEst, setManualGMEst] = useState('');
   const [manualGuidance, setManualGuidance] = useState('');
   const [showOverrides, setShowOverrides] = useState(false);
 
+  // ── PRIMARY: Financial Modeling Prep ─────────────────────────────────────────
+  // FMP provides: earnings history + analyst estimates + revenue estimates + margins
+  async function fetchFMPData(ticker: string): Promise<boolean> {
+    try {
+      const sym = ticker.toUpperCase();
+      // FMP endpoints we use:
+      // /earnings-surprises: EPS actual vs estimate with revenue actual vs estimate
+      // /analyst-estimates: forward revenue, EPS, gross margin estimates
+      // /profile: company name, sector, industry
+      const [surpriseRes, estimatesRes, profileRes] = await Promise.allSettled([
+        fetch(`https://financialmodelingprep.com/api/v3/earnings-surprises/${encodeURIComponent(sym)}?apikey=${FMP_KEY}`),
+        fetch(`https://financialmodelingprep.com/api/v3/analyst-estimates/${encodeURIComponent(sym)}?period=quarterly&limit=4&apikey=${FMP_KEY}`),
+        fetch(`https://financialmodelingprep.com/api/v3/profile/${encodeURIComponent(sym)}?apikey=${FMP_KEY}`),
+      ]);
+
+      const surprises: any[] = surpriseRes.status === 'fulfilled' && surpriseRes.value.ok
+        ? await surpriseRes.value.json() : [];
+      const estimates: any[] = estimatesRes.status === 'fulfilled' && estimatesRes.value.ok
+        ? await estimatesRes.value.json() : [];
+      const profiles: any[] = profileRes.status === 'fulfilled' && profileRes.value.ok
+        ? await profileRes.value.json() : [];
+
+      if (!surprises.length && !estimates.length) return false;
+
+      const profile = profiles[0] ?? {};
+      const nextEst = estimates[0] ?? {};
+
+      // Build quarterly earnings with both EPS and revenue surprises
+      const quarterly = surprises.slice(0, 8).map((s: any) => {
+        // FMP provides: actualEarningResult, estimatedEarning, actualRevenue, estimatedRevenue
+        const eps = parseFloat(s.actualEarningResult ?? s.actualEps) || null;
+        const epsEst = parseFloat(s.estimatedEarning ?? s.estimatedEps) || null;
+        const rev = parseFloat(s.actualRevenue) || null;
+        const revEst = parseFloat(s.estimatedRevenue) || null;
+        const epsSurprise = eps !== null && epsEst !== null && epsEst !== 0
+          ? Math.round(((eps - epsEst) / Math.abs(epsEst)) * 10000) / 100 : null;
+        const revSurprise = rev !== null && revEst !== null && revEst !== 0
+          ? Math.round(((rev - revEst) / Math.abs(revEst)) * 10000) / 100 : null;
+        return {
+          fiscalDateEnding: s.date || '',
+          period: s.period || s.date?.slice(0, 7) || '',
+          reportedEPS: eps,
+          estimatedEPS: epsEst,
+          surprise: eps !== null && epsEst !== null ? Math.round((eps - epsEst) * 100) / 100 : null,
+          surprisePct: epsSurprise,
+          // Revenue — FMP provides these, AV doesn't
+          reportedRevenue: rev !== null ? Math.round(rev / 1e6 * 10) / 10 : null,  // → $ Mn
+          estimatedRevenue: revEst !== null ? Math.round(revEst / 1e6 * 10) / 10 : null,
+          revSurprisePct: revSurprise,
+        };
+      });
+
+      // Forward estimates (next quarter / current year) from FMP analyst-estimates
+      setAvData({
+        symbol: sym,
+        name: profile.companyName || '',
+        sector: profile.sector || '',
+        industry: profile.industry || '',
+        dataSource: 'FMP',
+        epsEstNextQ:          parseFloat(nextEst.estimatedEpsAvg)     || null,
+        epsEstCurrentYear:    parseFloat(nextEst.estimatedEpsAvg)     || null,
+        revenueEstNextQ:      nextEst.estimatedRevenueAvg ? Math.round(parseFloat(nextEst.estimatedRevenueAvg) / 1e6 * 10) / 10 : null,
+        revenueEstCurrentYear: null,
+        grossMarginEst:       nextEst.estimatedGrossProfit && nextEst.estimatedRevenueAvg
+          ? Math.round((parseFloat(nextEst.estimatedGrossProfit) / parseFloat(nextEst.estimatedRevenueAvg)) * 10000) / 100
+          : null,
+        analystTargetPrice:   parseFloat(profile.price) || null,
+        numAnalysts:          parseInt(nextEst.numberAnalysts) || null,
+        quarterlyEarnings:    quarterly,
+      });
+      return true;
+    } catch (e) {
+      console.error('FMP fetch failed:', e);
+      return false;
+    }
+  }
+
+  // ── FALLBACK: Alpha Vantage ───────────────────────────────────────────────────
   async function fetchAVData(ticker: string) {
     if (!ticker.trim()) return;
     setAvLoading(true);
+    // Try FMP first (provides revenue estimates + EPS)
+    const fmpOk = await fetchFMPData(ticker);
+    if (fmpOk) { setAvLoading(false); return; }
+
+    // FMP failed → fall back to AV
     try {
-      // Only fetch EARNINGS — not OVERVIEW (which has all the market data we don't want)
       const [earRes, ovRes] = await Promise.allSettled([
         fetch(`https://www.alphavantage.co/query?function=EARNINGS&symbol=${encodeURIComponent(ticker.toUpperCase())}&apikey=${AV_KEY}`),
         fetch(`https://www.alphavantage.co/query?function=OVERVIEW&symbol=${encodeURIComponent(ticker.toUpperCase())}&apikey=${AV_KEY}`),
       ]);
       const ear = earRes.status === 'fulfilled' && earRes.value.ok ? await earRes.value.json() : {};
       const ov  = ovRes.status  === 'fulfilled' && ovRes.value.ok  ? await ovRes.value.json()  : {};
-
       const quarterly = (ear.quarterlyEarnings || []).slice(0, 8).map((q: any) => ({
-        fiscalDateEnding: q.fiscalDateEnding || '',
-        reportedEPS:  parseFloat(q.reportedEPS)       || null,
-        estimatedEPS: parseFloat(q.estimatedEPS)      || null,
-        surprise:     parseFloat(q.surprise)           || null,
+        fiscalDateEnding: q.fiscalDateEnding || '', period: q.fiscalDateEnding?.slice(0,7) || '',
+        reportedEPS:  parseFloat(q.reportedEPS) || null,
+        estimatedEPS: parseFloat(q.estimatedEPS) || null,
+        surprise:     parseFloat(q.surprise) || null,
         surprisePct:  parseFloat(q.surprisePercentage) || null,
+        reportedRevenue: null, estimatedRevenue: null, revSurprisePct: null,
       }));
-
       setAvData({
-        symbol: ticker.toUpperCase(),
-        name: ov.Name || '',
-        sector: ov.Sector || '',
-        industry: ov.Industry || '',
-        // Estimates — this is the ONLY thing we pull from AV besides surprise history
-        epsEstNextQ:         parseFloat(ov.EPSEstimateNextQuarter)   || null,
-        epsEstCurrentYear:   parseFloat(ov.EPSEstimateCurrentYear)   || null,
-        revenueEstNextQ:     parseFloat(ov.RevenueEstimateNextQuarter) || null,
-        analystTargetPrice:  parseFloat(ov.AnalystTargetPrice) || null,
-        quarterlyEarnings: quarterly,
+        symbol: ticker.toUpperCase(), name: ov.Name || '', sector: ov.Sector || '',
+        industry: ov.Industry || '', dataSource: 'AlphaVantage',
+        epsEstNextQ: parseFloat(ov.EPSEstimateNextQuarter) || null,
+        epsEstCurrentYear: parseFloat(ov.EPSEstimateCurrentYear) || null,
+        revenueEstNextQ: null, revenueEstCurrentYear: null, grossMarginEst: null,
+        analystTargetPrice: parseFloat(ov.AnalystTargetPrice) || null,
+        numAnalysts: null, quarterlyEarnings: quarterly,
       });
-    } catch (e) {
-      console.error('Alpha Vantage fetch failed:', e);
-    }
+    } catch (e) { console.error('AV fallback failed:', e); }
     setAvLoading(false);
   }
 
@@ -1789,9 +2216,29 @@ export default function EarningsAnalysisPage() {
     const latestEpsActual = latestQ?.reportedEPS ?? d.eps ?? null;
     const epsBM = beatMissLabel(latestEpsActual, latestEpsEst);
 
-    // Revenue comparison: actual from parsed report, estimate from manual input
-    const revEstNum = manualRevEst ? parseFloat(manualRevEst.replace(/[^0-9.-]/g,'')) : null;
-    const gmEstNum = manualGMEst ? parseFloat(manualGMEst.replace(/[^0-9.-]/g,'')) : null;
+    // FMP provides revenue estimates — use those as primary, then manual override
+    // Revenue est from FMP is in $ Mn; compare with d.revenue (also in $ Mn from our scaler)
+    const fmpRevEst = avData?.revenueEstNextQ ?? null;
+    const fmpRevActual = latestQ?.reportedRevenue ?? null;   // $ Mn from FMP
+    const fmpRevEstQ = latestQ?.estimatedRevenue ?? null;    // $ Mn from FMP
+
+    // Use FMP's quarterly revenue actual/estimate if available, else fall back
+    // d.revenue is in display units (Mn or Cr); fmpRevActual is in $ Mn
+    const revActualDisplay = d.revenue; // from parsed PDF
+    const revEstDisplay = manualRevEst
+      ? parseFloat(manualRevEst.replace(/[^0-9.-]/g,''))
+      : (fmpRevEst !== null ? fmpRevEst : null); // FMP estimate in $ Mn
+
+    const revEstNum = revEstDisplay;
+    const gmEstNum = manualGMEst
+      ? parseFloat(manualGMEst.replace(/[^0-9.-]/g,''))
+      : (avData?.grossMarginEst ?? null);
+
+    // Revenue surprise from FMP's own historical data (if available)
+    const fmpRevSurprise = latestQ?.revSurprisePct ?? null;
+
+    // Has ANY estimate source?
+    const hasEstimates = latestEpsEst !== null || revEstNum !== null || gmEstNum !== null;
 
     return (
       <div style={{background:BG,minHeight:'100vh',color:TEXT,fontFamily:'system-ui,-apple-system,sans-serif',padding:'20px 16px',maxWidth:1200,margin:'0 auto'}}>
@@ -1838,7 +2285,7 @@ export default function EarningsAnalysisPage() {
               >
                 {avLoading ? '⏳' : avData ? '↻ Re-fetch' : '📡 Fetch estimates'}
               </button>
-              <span style={{fontSize:8,color:MUTED}}>Alpha Vantage</span>
+              <span style={{fontSize:8,color:MUTED}}>{avData?.dataSource === 'FMP' ? '📊 FMP' : avData?.dataSource === 'AlphaVantage' ? 'AV fallback' : 'FMP primary'}</span>
             </div>
           </div>
 
@@ -1880,10 +2327,10 @@ export default function EarningsAnalysisPage() {
                     <th style={{padding:'4px 8px',fontSize:9,fontWeight:700,color:MUTED,textAlign:'left',letterSpacing:'0.5px',width:'28%'}}>METRIC</th>
                     <th style={{padding:'4px 8px',fontSize:9,fontWeight:700,color:MUTED,textAlign:'right',width:'20%'}}>ACTUAL</th>
                     {/* Only show ESTIMATE column when there's something to show */}
-                    {(latestEpsEst !== null || revEstNum !== null || gmEstNum !== null) && (
+                    {hasEstimates && (
                       <th style={{padding:'4px 8px',fontSize:9,fontWeight:700,color:MUTED,textAlign:'right',width:'18%'}}>ESTIMATE</th>
                     )}
-                    {(latestEpsEst !== null || revEstNum !== null || gmEstNum !== null) && (
+                    {hasEstimates && (
                       <th style={{padding:'4px 8px',fontSize:9,fontWeight:700,color:MUTED,textAlign:'right',width:'16%'}}>vs EST</th>
                     )}
                     <th style={{padding:'4px 8px',fontSize:9,fontWeight:700,color:MUTED,textAlign:'right',width:'18%'}}>vs PRIOR</th>
@@ -1891,28 +2338,39 @@ export default function EarningsAnalysisPage() {
                 </thead>
                 <tbody>
 
-                  {/* Revenue row — actual only (no consensus from AV free tier) */}
+                  {/* Revenue row — actual from report, estimate from FMP/manual */}
                   {d.parseState !== 'failed' && d.revenue !== null && (
                     <tr style={{borderBottom:`1px solid ${BORDER}15`}}>
                       <td style={{padding:'8px 8px'}}>
                         <div style={{display:'flex',alignItems:'center',gap:6}}>
                           <span style={{fontSize:F.xs,fontWeight:600,color:MUTED}}>Revenue</span>
-                          {/* Change 2: Source badge */}
-                          <span style={{fontSize:7,fontWeight:700,padding:'1px 5px',borderRadius:3,backgroundColor:ACCENT+'14',color:ACCENT,letterSpacing:'0.3px'}}>
-                            ACTUAL ONLY
+                          <span style={{fontSize:7,fontWeight:700,padding:'1px 5px',borderRadius:3,
+                            backgroundColor: revEstNum ? GREEN+'18' : ACCENT+'14',
+                            color: revEstNum ? GREEN : ACCENT, letterSpacing:'0.3px'}}>
+                            {revEstNum ? `ACTUAL vs ${avData?.dataSource==='FMP'?'FMP':'CONSENSUS'}` : 'ACTUAL ONLY'}
                           </span>
                         </div>
                       </td>
                       <td style={{padding:'8px 8px',textAlign:'right',fontSize:F.sm,fontWeight:900,color:TEXT}}>{n(d.revenue,d)}</td>
-                      {/* Change 3: Only show estimate column if AV or override has data */}
-                      {(latestEpsEst !== null || revEstNum !== null || gmEstNum !== null) && (
+                      {hasEstimates && (
                         <td style={{padding:'8px 8px',textAlign:'right',fontSize:F.xs,color:revEstNum?MUTED:'#1e293b'}}>
-                          {revEstNum ? n(revEstNum,d) : <span style={{color:'#1e293b'}}>—</span>}
+                          {revEstNum !== null ? (
+                            <span title={avData?.dataSource === 'FMP' ? 'Source: Financial Modeling Prep' : 'Manual override'}>
+                              {n(revEstNum, d)}
+                              {avData?.dataSource === 'FMP' && <span style={{fontSize:7,color:'#60a5fa',marginLeft:3}}>FMP</span>}
+                            </span>
+                          ) : <span style={{color:'#1e293b'}}>—</span>}
                         </td>
                       )}
-                      {(latestEpsEst !== null || revEstNum !== null || gmEstNum !== null) && (
+                      {hasEstimates && (
                         <td style={{padding:'8px 8px',textAlign:'right'}}>
-                          {revEstNum && d.revenue ? (() => { const bm=beatMissLabel(d.revenue,revEstNum); return bm?<span style={{fontSize:F.xs,fontWeight:800,color:bm.col}}>{bm.text}</span>:null; })() : <span style={{color:'#1e293b',fontSize:9}}>—</span>}
+                          {revEstNum && d.revenue ? (() => {
+                            const bm = beatMissLabel(d.revenue, revEstNum);
+                            const fmpS = fmpRevSurprise !== null
+                              ? <span style={{fontSize:8,color:surpriseColor(fmpRevSurprise),marginLeft:4}}>({fmpRevSurprise>=0?'+':''}{fmpRevSurprise.toFixed(1)}% rev surprise)</span>
+                              : null;
+                            return bm ? <span style={{fontSize:F.xs,fontWeight:800,color:bm.col}}>{bm.text}{fmpS}</span> : null;
+                          })() : <span style={{color:'#1e293b',fontSize:9}}>—</span>}
                         </td>
                       )}
                       <td style={{padding:'8px 8px',textAlign:'right'}}>
@@ -1938,13 +2396,13 @@ export default function EarningsAnalysisPage() {
                         color:latestEpsActual!==null?latestEpsActual>=0?GREEN:RED:d.eps!==null?d.eps>=0?GREEN:RED:MUTED}}>
                         {(() => { const e=latestEpsActual??d.eps; return e!==null?`${e>=0?'$':'($'}${Math.abs(e).toFixed(2)}${e<0?')':''}`:' —'; })()}
                       </td>
-                      {(latestEpsEst !== null || revEstNum !== null || gmEstNum !== null) && (
+                      {hasEstimates && (
                         <td style={{padding:'8px 8px',textAlign:'right',fontSize:F.xs,color:MUTED}}>
                           {latestEpsEst!==null?`${latestEpsEst>=0?'$':'($'}${Math.abs(latestEpsEst).toFixed(2)}${latestEpsEst<0?')':''}`:
                            <span style={{color:'#1e293b'}}>—</span>}
                         </td>
                       )}
-                      {(latestEpsEst !== null || revEstNum !== null || gmEstNum !== null) && (
+                      {hasEstimates && (
                         <td style={{padding:'8px 8px',textAlign:'right'}}>
                           {epsBM?<span style={{fontSize:F.xs,fontWeight:800,color:epsBM.col}}>{epsBM.text}</span>:<span style={{color:'#1e293b',fontSize:9}}>—</span>}
                         </td>
@@ -1971,12 +2429,12 @@ export default function EarningsAnalysisPage() {
                       <td style={{padding:'8px 8px',textAlign:'right',fontSize:F.sm,fontWeight:900,color:TEXT}}>
                         {d.grossMargin.toFixed(1)}%
                       </td>
-                      {(latestEpsEst !== null || revEstNum !== null || gmEstNum !== null) && (
+                      {hasEstimates && (
                         <td style={{padding:'8px 8px',textAlign:'right',fontSize:F.xs,color:MUTED}}>
                           {gmEstNum?`${gmEstNum.toFixed(1)}%`:<span style={{color:'#1e293b'}}>—</span>}
                         </td>
                       )}
-                      {(latestEpsEst !== null || revEstNum !== null || gmEstNum !== null) && (
+                      {hasEstimates && (
                         <td style={{padding:'8px 8px',textAlign:'right'}}>
                           {gmEstNum&&d.grossMargin!==null?(() => { const delta=d.grossMargin-gmEstNum; const c=delta>=0?GREEN:RED; return <span style={{fontSize:F.xs,fontWeight:800,color:c}}>{delta>=0?'↑':'↓'} {Math.abs(delta).toFixed(1)}pp</span>; })():<span style={{color:'#1e293b',fontSize:9}}>—</span>}
                         </td>
@@ -2050,7 +2508,7 @@ export default function EarningsAnalysisPage() {
           {avData && avData.quarterlyEarnings.length > 0 && (
             <div style={{borderTop:`1px solid ${BORDER}`,paddingTop:12}}>
               <div style={{fontSize:9,fontWeight:700,color:MUTED,letterSpacing:'0.8px',marginBottom:8}}>
-                📊 EPS BEAT/MISS HISTORY (last {avData.quarterlyEarnings.length} quarters · from Alpha Vantage)
+                📊 EPS {'&'} REVENUE BEAT/MISS HISTORY (last {avData.quarterlyEarnings.length} quarters · source: {avData.dataSource})
               </div>
               <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
                 {avData.quarterlyEarnings.map((eq,i) => {
@@ -2076,8 +2534,18 @@ export default function EarningsAnalysisPage() {
                         )}
                       </div>
                       <div style={{fontSize:8,color:MUTED,marginTop:2}}>
-                        est {eq.estimatedEPS !== null ? (eq.estimatedEPS>=0?`$${eq.estimatedEPS.toFixed(2)}`:`($${Math.abs(eq.estimatedEPS).toFixed(2)})`) : '—'}
+                        EPS est {eq.estimatedEPS !== null ? (eq.estimatedEPS>=0?`$${eq.estimatedEPS.toFixed(2)}`:`($${Math.abs(eq.estimatedEPS).toFixed(2)})`) : '—'}
                       </div>
+                      {/* Revenue actual vs estimate — FMP provides this */}
+                      {(eq.reportedRevenue !== null || eq.estimatedRevenue !== null) && (
+                        <div style={{fontSize:7,color:MUTED,marginTop:1,borderTop:`1px solid ${BORDER}30`,paddingTop:2}}>
+                          <span style={{color:eq.revSurprisePct!==null?surpriseColor(eq.revSurprisePct):MUTED}}>
+                            Rev {eq.reportedRevenue!==null?`$${eq.reportedRevenue.toFixed(0)}M`:'?'}
+                            {eq.estimatedRevenue!==null?` vs est $${eq.estimatedRevenue.toFixed(0)}M`:''}
+                            {eq.revSurprisePct!==null?` (${eq.revSurprisePct>=0?'+':''}${eq.revSurprisePct.toFixed(0)}%)` : ''}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
