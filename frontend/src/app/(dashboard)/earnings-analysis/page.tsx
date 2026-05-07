@@ -388,11 +388,24 @@ function extractAllNumbers(text: string): LabeledNum[] {
     if (!firstNumMatch) continue;
     const labelEnd = line.indexOf(firstNumMatch[0]);
     const rawLabel = line.slice(0, labelEnd).replace(/\$|%|\|/g, '').trim().toLowerCase();
-    if (rawLabel.length < 2) continue;
-
-    // Clean label: remove trailing footnote-reference digits (e.g. "revenue 1" → "revenue")
+    // Clean label: remove trailing footnote-reference digits
     const label = rawLabel.replace(/\s+\d{1,2}$/, '').trim();
-    if (label.length < 2) continue;
+
+    if (label.length < 2) {
+      // FIX FOR OSS 10-K: unlabeled P&L total rows like "32,215,500  24,558,809"
+      // These are extremely common in SEC filings — revenue sub-items are followed by
+      // an unlabeled total line. Allow rows with 2+ LARGE numbers (> 1000) as unlabeled totals.
+      if (numTokens.length >= 2 && Math.abs(numTokens[0]) > 1000) {
+        // Keep as unlabeled total, tag with empty string
+        let nums = numTokens;
+        // Still apply footnote stripping if first token is tiny vs rest
+        if (nums.length >= 2 && nums[0] >= 1 && nums[0] <= 9 && Number.isInteger(nums[0]) && nums[1] > nums[0] * 100) {
+          nums = nums.slice(1);
+        }
+        results.push({ label: '', nums, rawLine: line });
+      }
+      continue;
+    }
 
     // FOOTNOTE GUARD: if the ONLY number is a small integer (1-9) right after the label,
     // and it has no other numbers, it's a footnote reference — skip
@@ -526,26 +539,55 @@ function detectColumnIndices(text: string, rows: LabeledNum[]): ColDetection {
 // ── STEP 3c: Scale from numbers (fallback if text detection fails) ─────────────
 
 function detectScaleFromNumbers(rows: LabeledNum[], currency: string, curIdx: number): { factor: number; scaleLabel: string } {
-  // Find revenue-like rows and use the CURRENT column's value
-  const revRow = rows.find(r => /^(total )?revenue|^net sales|^revenue from operations|^revenues?$/.test(r.label));
-  const revenueCandidate = revRow?.nums[curIdx] ?? revRow?.nums[0];
+  const sym = currency === 'USD' ? '$' : currency === 'INR' ? '₹' : '';
+
+  // Find revenue-like rows — also check empty-label rows (unlabeled P&L totals)
+  const revRow = rows.find(r =>
+    /^(total )?revenue|^net sales|^revenue from operations|^revenues?$/.test(r.label) ||
+    r.label === '' // unlabeled total rows (e.g. OSS 10-K)
+  );
+  let revenueCandidate = revRow?.nums[curIdx] ?? revRow?.nums[0];
+
+  // FIX FOR AEROFLEX OCR DECIMAL CORRUPTION:
+  // Indian PDFs sometimes produce "4124720" when the actual value is "41247.20" (lakhs)
+  // because the decimal point is dropped by OCR. This makes numbers appear 100x too large.
+  // Heuristic: if we have a labeled row (revenue from operations) AND one well-formatted
+  // column value AND another that's ~100x larger, apply /100 correction.
+  if (revRow && revRow.label !== '' && revRow.nums.length >= 2) {
+    const wellFormatted = revRow.nums.filter(n => n.toString().includes('.'));  // has decimal
+    const largeOnes = revRow.nums.filter(n => !n.toString().includes('.') && n > 100000); // no decimal, very large
+    if (wellFormatted.length > 0 && largeOnes.length > 0) {
+      // Check if large ones / 100 ≈ well-formatted ones (OCR dropped last 2 decimal digits)
+      const avgFormatted = wellFormatted.reduce((s,n)=>s+n,0)/wellFormatted.length;
+      const correctedLarge = largeOnes[0] / 100;
+      if (Math.abs(correctedLarge - avgFormatted) / avgFormatted < 2.0) {
+        // The large numbers look like decimal-corrupted versions — prefer the formatted ones
+        revenueCandidate = wellFormatted[0];
+      }
+    }
+  }
 
   if (revenueCandidate && revenueCandidate > 0) {
-    const sym = currency === 'USD' ? '$' : currency === 'INR' ? '₹' : '';
     if (revenueCandidate >= 1e8) {
       const factor = currency === 'INR' ? 1e-5 : 1e-6;
-      return { factor, scaleLabel: currency === 'INR' ? '₹ Cr' : '$ Mn' };
+      return { factor, scaleLabel: currency === 'INR' ? '₹ Cr' : `${sym} Mn` };
     }
     if (revenueCandidate >= 1e5) {
       const factor = currency === 'INR' ? 1e-2 : 1e-3;
       return { factor, scaleLabel: currency === 'INR' ? '₹ Cr' : `${sym} Mn` };
     }
-    if (revenueCandidate >= 500) {
-      // Already in Mn/Cr
+    if (revenueCandidate >= 100) {
       return { factor: 1, scaleLabel: currency === 'INR' ? '₹ Cr' : `${sym} Mn` };
     }
   }
-  return { factor: 1, scaleLabel: currency === 'INR' ? '₹ Cr' : '$ Mn' };
+
+  // Fallback: scan all rows for any large number to infer scale
+  const allNums = rows.flatMap(r => r.nums).filter(n => n > 0 && !isNaN(n));
+  const maxNum = allNums.length > 0 ? Math.max(...allNums) : 0;
+  if (maxNum >= 1e8) return { factor: currency === 'INR' ? 1e-5 : 1e-6, scaleLabel: currency === 'INR' ? '₹ Cr' : `${sym} Mn` };
+  if (maxNum >= 1e5) return { factor: currency === 'INR' ? 1e-2 : 1e-3, scaleLabel: currency === 'INR' ? '₹ Cr' : `${sym} Mn` };
+
+  return { factor: 1, scaleLabel: currency === 'INR' ? '₹ Cr' : `${sym} Mn` };
 }
 
 // ── STEP 4: Find a specific metric using detected column indices ───────────────
@@ -617,8 +659,45 @@ function findRevenue(
     }
   }
 
+  // ── STRATEGY 3: Sum of revenue sub-items (OSS 10-K pattern) ────────────────
+  // SEC filings often show: "Product  $30M  $20M\n  Services  $2M  $4M\n  32M  24M" (unlabeled total)
+  // When no labeled "total revenue" row exists, sum the sub-items to compute the total.
+  if (candidates.length === 0 || candidates[0].cur * scaleFactor < 0.5) {
+    const SUB_PATTERNS = /^(?:product|products?|service|services?|subscription|license|licenses?|customer funded|recurring|professional|hardware|software|hosted|cloud|platform|tier|segment)/i;
+    const subRows = rows.filter(r =>
+      SUB_PATTERNS.test(r.label) &&
+      r.nums.length > Math.min(curIdx, r.nums.length - 1) &&
+      (r.nums[Math.min(curIdx, r.nums.length-1)] ?? 0) > 0
+    );
+    if (subRows.length >= 2) {
+      // Use the actual curIdx or fallback to last available column
+      const colToUse = (r: LabeledNum) => Math.min(curIdx, r.nums.length - 1);
+      const sumCur   = subRows.reduce((s, r) => s + (r.nums[colToUse(r)] ?? 0), 0);
+      const sumPrior = subRows.reduce((s, r) => s + (r.nums[Math.min(priorIdx, r.nums.length-1)] ?? 0), 0);
+      if (sumCur > 0) {
+        const scaledSum = sumCur * scaleFactor;
+        const score = 200 + subRows.length * 5 + (scaledSum >= 0.5 ? 100 : 0); // high priority
+        candidates.push({ row: subRows[0], cur: sumCur, prior: sumPrior > 0 ? sumPrior : null, score });
+      }
+    }
+  }
+
+  // ── STRATEGY 4: Unlabeled rows (OSS 10-K unlabeled total line) ───────────────
+  // "32,215,500  24,558,809" — no label, but we preserved it in extractAllNumbers
+  if (candidates.length === 0 || candidates[0].cur * scaleFactor < 0.5) {
+    const unlabeledRows = rows.filter(r => r.label === '' && r.nums.length >= 2);
+    for (const row of unlabeledRows) {
+      if (row.nums.length <= curIdx) continue;
+      const cur = row.nums[curIdx] ?? row.nums[0];
+      if (!cur || cur <= 0) continue;
+      const scaledCur = cur * scaleFactor;
+      const score = row.nums.length * 5 + (scaledCur >= 0.5 ? 80 : 0);
+      const prior = row.nums[priorIdx] ?? row.nums[Math.min(1, row.nums.length-1)] ?? null;
+      candidates.push({ row, cur, prior: prior !== cur ? prior : null, score });
+    }
+  }
+
   if (candidates.length === 0) return { cur: null, prior: null };
-  // Pick highest-scoring candidate
   candidates.sort((a, b) => b.score - a.score);
   return { cur: candidates[0].cur, prior: candidates[0].prior };
 }
