@@ -208,7 +208,7 @@ interface RawFinancials {
   cfo: number|null; fcf: number|null;
 
   // Computed
-  deRatio: number|null; cfoPat: number|null; roce: number|null; roe: number|null;
+  deRatio: number|null; cfoPat: number|null; roce: number|null; roe: number|null; roa: number|null;
 
   // Business
   orderBook: number|null; backlog: number|null; headcount: number|null;
@@ -248,24 +248,106 @@ function detectCurrency(text: string): { currency: RawFinancials['currency']; fi
 
 interface LabeledNum { label: string; nums: number[]; rawLine: string }
 
+// ── PRE-PROCESSING: OCR Cleanup ───────────────────────────────────────────────
+// Removes: audit boilerplate, OCR noise, footnote garbage, legal duplication.
+// Essential for Indian PDFs which have extremely messy OCR output.
+
+function cleanOCRText(rawText: string): string {
+  let t = rawText;
+
+  // 1. Normalise line endings
+  t = t.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+  // 2. Remove lines that are pure OCR garbage (high non-ASCII ratio)
+  const lines = t.split('\n');
+  const cleanedLines = lines.filter(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return true; // keep blank lines for structure
+    if (trimmed.length < 3) return false;
+    // If >40% of chars are non-printable/garbled, discard
+    const nonPrint = (trimmed.match(/[^\x20-\x7E₹%.,()-/]/g) || []).length;
+    if (nonPrint / trimmed.length > 0.4) return false;
+    // Lines that look like OCR signatures/stamps: e.g. "KCAU]J)7945"
+    if (/[A-Z]{2,}\]|\[A-Z|[A-Z]{4,}\d{4,}/.test(trimmed) && trimmed.length < 30) return false;
+    return true;
+  });
+  t = cleanedLines.join('\n');
+
+  // 3. Remove audit boilerplate sections (everything after these triggers)
+  const BOILERPLATE_STARTS = [
+    /^independent auditor/i,
+    /^auditor'?s report/i,
+    /^to,?\s*the board of directors/i,
+    /^basis of opinion/i,
+    /^management'?s responsibilities/i,
+    /^auditor'?s responsibilities/i,
+    /^we conducted our (?:audit|review)/i,
+    /^in our opinion and to the best/i,
+    /^the preparation of consolidated financial statements in conformity/i,
+    /^management is responsible for the preparation/i,
+    /^the financial statements comply with/i,
+  ];
+  const lineArr = t.split('\n');
+  let boilerplateStart = -1;
+  for (let i = 0; i < lineArr.length; i++) {
+    if (BOILERPLATE_STARTS.some(re => re.test(lineArr[i].trim()))) {
+      boilerplateStart = i;
+      break;
+    }
+  }
+  if (boilerplateStart > 20) {
+    // Only cut if we have enough financial data before the boilerplate
+    t = lineArr.slice(0, boilerplateStart).join('\n');
+  }
+
+  // 4. Fix common Indian PDF OCR errors
+  // "Takhs" → "Lakhs", "Vear" → "Year", "Jmonths" → "months", "Yr.ended" → "Year ended"
+  t = t.replace(/\bTakhs?\b/g, 'Lakhs').replace(/\bTakh\b/g, 'Lakh');
+  t = t.replace(/\bVear\b/g, 'Year').replace(/\bVears\b/g, 'Years');
+  t = t.replace(/\bJ months\b/gi, 'months').replace(/\bJmonths\b/gi, 'months');
+  t = t.replace(/\bPreceding\d+\b/g, 'Prior Quarter');
+  t = t.replace(/\bCorresponding\d+\b/g, 'Prior Year Quarter');
+
+  // 5. Remove footnote reference markers that follow metric labels (e.g. "Revenue 1 12,345")
+  // These are superscript numbers like "Revenue from operations 1 12,345"
+  // Remove isolated 1-2 digit numbers that appear BETWEEN label and first real data number
+  // Pattern: "labeltext [1-2 digits] [real numbers]" → strip the footnote marker
+  t = t.replace(/^(\s*[A-Za-z][A-Za-z\s()/&,.-]{3,50})\s+(\d{1,2})\s+(\d[\d,]+)/gm,
+    (_, label, _footnote, nums) => `${label} ${nums}`);
+
+  // 6. Remove page headers/footers (lines < 50 chars that repeat or contain page numbers)
+  // Remove lines like "Page 5 of 12", "Continued...", standalone company name lines after p10
+  t = t.replace(/^Page \d+ of \d+.*$/gim, '');
+  t = t.replace(/^\s*(continued\.{2,}|contd\.{0,3})\s*$/gim, '');
+
+  // 7. Normalise decimal separators from Indian PDFs
+  // Some Indian PDFs use period as thousands: "41.935" should be "41935" (lakh) or kept
+  // But "9.169.17" is corrupted — fix double-period decimals
+  t = t.replace(/(\d+)\.(\d{3})\.(\d{1,2})\b/g, '$1,$2.$3'); // "9.169.17" → "9,169.17"
+
+  return t;
+}
+
 function extractAllNumbers(text: string): LabeledNum[] {
   const results: LabeledNum[] = [];
   const lines = text.split('\n');
 
   for (const rawLine of lines) {
     const line = rawLine.trim();
-    if (!line) continue;
+    if (!line || line.length < 5) continue;
+
+    // Skip lines that look like column headers only (no labels with meaning)
+    if (/^(q[1-4]|fy\d|20\d{2}|h[12] fy|\d{2}[./]\d{2}[./]20\d{2})/i.test(line) && !/[a-z]{4}/i.test(line)) continue;
 
     // Extract all number-like tokens (handling parentheses for negatives)
     const numRe = /\(?\$?\s*([\d,]+(?:\.\d+)?)\)?%?/g;
     const numTokens: number[] = [];
     let m: RegExpExecArray | null;
-    const lineForNums = line;
     numRe.lastIndex = 0;
-    while ((m = numRe.exec(lineForNums)) !== null) {
+    while ((m = numRe.exec(line)) !== null) {
       const raw = m[1].replace(/,/g, '');
       const n = parseFloat(raw);
-      if (!isNaN(n) && n >= 0) {
+      if (!isNaN(n)) {
         const isNeg = m[0].trim().startsWith('(') && m[0].includes(')');
         numTokens.push(isNeg ? -n : n);
       }
@@ -276,10 +358,31 @@ function extractAllNumbers(text: string): LabeledNum[] {
     const firstNumMatch = line.match(/\(?\$?\s*[\d,]+/);
     if (!firstNumMatch) continue;
     const labelEnd = line.indexOf(firstNumMatch[0]);
-    const label = line.slice(0, labelEnd).replace(/\$|%|\|/g, '').trim().toLowerCase();
+    const rawLabel = line.slice(0, labelEnd).replace(/\$|%|\|/g, '').trim().toLowerCase();
+    if (rawLabel.length < 2) continue;
+
+    // Clean label: remove trailing footnote-reference digits (e.g. "revenue 1" → "revenue")
+    const label = rawLabel.replace(/\s+\d{1,2}$/, '').trim();
     if (label.length < 2) continue;
 
-    results.push({ label, nums: numTokens, rawLine: line });
+    // FOOTNOTE GUARD: if the ONLY number is a small integer (1-9) right after the label,
+    // and it has no other numbers, it's a footnote reference — skip
+    if (numTokens.length === 1 && numTokens[0] >= 0 && numTokens[0] <= 9 && Number.isInteger(numTokens[0])) {
+      // Check if the remainder of the line has no real financial data
+      const afterNum = line.slice(labelEnd + (firstNumMatch[0].length)).trim();
+      if (!afterNum || !/\d{3,}/.test(afterNum)) continue; // true footnote, skip
+    }
+
+    // Filter out footnote markers from the start of numTokens
+    // If first token is 1-9 AND rest are much larger (ratio > 100), first is a footnote
+    let nums = numTokens;
+    if (nums.length >= 2 && nums[0] >= 1 && nums[0] <= 9 && Number.isInteger(nums[0])) {
+      if (nums[1] > nums[0] * 100) {
+        nums = nums.slice(1); // Strip the footnote marker
+      }
+    }
+
+    results.push({ label, nums, rawLine: line });
   }
   return results;
 }
@@ -467,41 +570,113 @@ function findRevenue(rows: LabeledNum[], curIdx: number, priorIdx: number): { cu
 
 // ── STEP 5: Validate and cross-check — detect impossible relationships ────────
 
-function validateFinancials(d: Partial<RawFinancials>, _rows: LabeledNum[]): string[] {
-  const warnings: string[] = [];
-  const { revenue, grossProfit, grossMargin, ebitda, pat, cash, totalDebt } = d;
+// ── VALIDATION FIREWALL ───────────────────────────────────────────────────────
+// Hard rules: any metric that fails is nullified BEFORE reaching the UI.
+// Impossible numbers MUST NEVER appear in the output.
+// These rules encode financial reality: margins can't exceed 100%, etc.
 
-  // ONLY flag REAL inconsistencies — avoid false positives from column selection or scale detection
-  // Gross margin: only warn if BOTH values are present AND there's a massive divergence (>30pp)
-  if (revenue && revenue > 0 && grossProfit && grossProfit > 0 && grossMargin) {
-    const impliedGM = (grossProfit / revenue) * 100;
-    // Suppress if grossMargin itself is stated as a % (between 0-100) AND implied is plausible too
-    const stated = Math.abs(grossMargin);
-    const implied = Math.abs(impliedGM);
-    if (stated <= 100 && (implied > 200 || Math.abs(implied - stated) > 30)) {
-      warnings.push(`Gross margin: stated ${grossMargin.toFixed(1)}% vs computed ${impliedGM.toFixed(1)}% — verify numbers`);
+interface MetricBounds { min: number; max: number; name: string }
+const METRIC_BOUNDS: MetricBounds[] = [
+  { name: 'grossMargin',   min: -50,   max: 100   },  // Gross margin physically can't exceed 100%
+  { name: 'ebitdaMargin',  min: -500,  max: 100   },  // EBITDA can't exceed revenue
+  { name: 'ebitMargin',    min: -500,  max: 100   },
+  { name: 'patMargin',     min: -500,  max: 80    },  // PAT > 80% of revenue = almost impossible
+  { name: 'roce',          min: -200,  max: 200   },
+  { name: 'roe',           min: -500,  max: 300   },
+  { name: 'roa',           min: -200,  max: 100   },
+  { name: 'cfoPat',        min: -50,   max: 50    },  // CFO/PAT of 940x = parsing error
+  { name: 'deRatio',       min: 0,     max: 100   },
+];
+
+/** Nullify a metric if it falls outside the plausible range for that metric.
+ *  Returns null (invalid) or the original value (valid). */
+function guardMetric(value: number | null, bounds: MetricBounds): number | null {
+  if (value === null) return null;
+  if (value < bounds.min || value > bounds.max) return null;
+  return value;
+}
+
+/** Apply all financial sanity guards to a partial RawFinancials object.
+ *  MUTATES the object in place, nullifying impossible values. */
+function sanitizeMetrics(d: Partial<RawFinancials>): string[] {
+  const issues: string[] = [];
+
+  // 1. Revenue near-zero but other P&L items are large = parsing failure
+  const rev = d.revenue ?? 0;
+  if (rev < 0.1 && rev > 0 && ((d.grossProfit ?? 0) > 1 || (d.ebitda ?? 0) > 1)) {
+    issues.push('Revenue near-zero while EBITDA/GP are substantial — extraction failed');
+    // Nullify all derived ratios; keep revenue warning visible
+    d.grossMargin = null; d.ebitdaMargin = null; d.ebitMargin = null;
+    d.patMargin = null; d.roce = null; d.roe = null; d.roa = null; d.cfoPat = null;
+  }
+
+  // 2. Nullify margins that exceed hard bounds
+  for (const b of METRIC_BOUNDS) {
+    const key = b.name as keyof RawFinancials;
+    const val = d[key] as number | null;
+    const guarded = guardMetric(val, b);
+    if (val !== null && guarded === null) {
+      issues.push(`${b.name}: ${val?.toFixed(1)} outside valid range [${b.min}, ${b.max}] — suppressed`);
+      (d as Record<string, unknown>)[key] = null;
     }
   }
 
-  // EBITDA impossibly small
-  const gp = grossProfit ?? 0;
-  const eb = ebitda ?? 0;
-  if (eb !== 0 && gp > 1 && Math.abs(eb) < gp * 0.0001) {
-    warnings.push(`EBITDA looks abnormally small (${eb.toFixed(3)}) vs Gross Profit (${gp.toFixed(2)}) — possible scale issue`);
+  // 3. PAT > revenue by more than 3x (unless discontinued ops explain it)
+  const pa = d.pat ?? 0;
+  if (rev > 0.1 && Math.abs(pa) > rev * 3 && !d.continuingOpsDetected) {
+    issues.push(`PAT (${pa.toFixed(1)}) >> Revenue (${rev.toFixed(1)}) — likely parsing error`);
+    d.pat = null; d.patPrior = null; d.patMargin = null; d.roe = null; d.cfoPat = null;
   }
 
-  // Cash >> Debt by extreme ratio
+  // 4. Total assets < equity = accounting impossibility
+  const ta = d.totalAssets ?? 0;
+  const eq = d.equity ?? 0;
+  if (ta > 0 && eq > 0 && eq > ta * 1.5) {
+    issues.push('Total assets < Equity — balance sheet extraction failed');
+    d.equity = null; d.deRatio = null; d.roce = null; d.roe = null;
+  }
+
+  // 5. Gross profit > revenue = impossible
+  const gp = d.grossProfit ?? 0;
+  if (rev > 0.1 && gp > rev * 1.05) {
+    issues.push('Gross profit > Revenue — scaling mismatch');
+    d.grossProfit = null; d.grossMargin = null; d.ebitda = null; d.ebitdaMargin = null;
+  }
+
+  // 6. CFO/PAT guard
+  const cfoPat = d.cfoPat ?? 0;
+  if (Math.abs(cfoPat) > 50) {
+    issues.push(`CFO/PAT=${cfoPat.toFixed(1)}x is extreme — PAT likely near-zero, ratio meaningless`);
+    d.cfoPat = null;
+  }
+
+  // 7. Re-compute gross margin from validated GP/Rev if stated margin was wrong
+  if (d.grossMargin === null && d.grossProfit && d.revenue && d.revenue > 0) {
+    const recomputed = (d.grossProfit / d.revenue) * 100;
+    if (recomputed >= -50 && recomputed <= 100) d.grossMargin = Math.round(recomputed * 100) / 100;
+  }
+
+  return issues;
+}
+
+function validateFinancials(d: Partial<RawFinancials>, _rows: LabeledNum[]): string[] {
+  const warnings: string[] = [];
+  const { revenue, grossProfit, grossMargin, cash, totalDebt } = d;
+
+  // Soft warnings (non-nullifying)
+  if (revenue && revenue > 0 && grossProfit && grossProfit > 0 && grossMargin !== null && grossMargin !== undefined) {
+    const impliedGM = (grossProfit / revenue) * 100;
+    const stated = Math.abs(grossMargin);
+    const implied = Math.abs(impliedGM);
+    if (stated <= 100 && implied <= 100 && Math.abs(implied - stated) > 30) {
+      warnings.push(`Gross margin mismatch: stated ${grossMargin.toFixed(1)}% vs computed ${impliedGM.toFixed(1)}% — verify scale`);
+    }
+  }
+
   const ca = cash ?? 0;
   const td = totalDebt ?? 0;
   if (ca > 0 && td > 0 && ca > td * 50) {
-    warnings.push('Cash >> Total Debt by 50x — verify balance sheet scaling');
-  }
-
-  // PAT impossibly large vs revenue
-  const pa = pat ?? 0;
-  const rev = revenue ?? 0;
-  if (rev > 0 && pa !== 0 && Math.abs(pa) > rev * 10) {
-    warnings.push(`Net income (${pa.toFixed(1)}) >> Revenue (${rev.toFixed(1)}) — likely discontinued ops or parsing issue`);
+    warnings.push('Cash >> Total Debt by 50x — balance sheet scaling may be inconsistent');
   }
 
   return warnings;
@@ -607,7 +782,8 @@ function detectDiscontinued(text: string): { detected: boolean; discontinuedInco
 // ── STEP 8: MAIN EXTRACTION ────────────────────────────────────────────────────
 
 function parseEarnings(rawText: string): RawFinancials {
-  const text = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  // Apply OCR cleanup first — removes boilerplate, footnote markers, OCR noise
+  const text = cleanOCRText(rawText);
   const { currency, filingType } = detectCurrency(text);
 
   // Extract labeled rows
@@ -753,6 +929,7 @@ function parseEarnings(rawText: string): RawFinancials {
   const cfoPat = cfo !== null && pat !== null && pat !== 0 ? Math.round((cfo / pat) * 100) / 100 : null;
   const roce = ebit && equity && equity > 0 ? Math.round((ebit / equity) * 10000) / 100 : null;
   const roe = pat && equity && equity > 0 ? Math.round((pat / equity) * 10000) / 100 : null;
+  const roa = pat && totalAssets && totalAssets > 0 ? Math.round((pat / totalAssets) * 10000) / 100 : null;
 
   const orderBook = sc(findMetric(rows, ['order book$', 'order backlog$', 'backlog$']));
   const backlog = orderBook;
@@ -763,14 +940,8 @@ function parseEarnings(rawText: string): RawFinancials {
   const themes = detectNarrativeThemes(text);
   const { guidance, keyMetrics, forwardStatements, mgmtTone } = extractManagementText(text);
 
-  // Build partial result for validation
-  const partial: Partial<RawFinancials> = { revenue, grossProfit, grossMargin, ebitda, pat, eps, cash, totalDebt, cfo };
-  const validationWarnings = validateFinancials(partial, rows);
-  // Add scale/column info to help debug
-  if (!textScale) validationWarnings.push(`Scale inferred from numbers (column ${curIdx}/${colCount} · ${colReason}) — verify values`);
-  const isDataReliable = validationWarnings.filter(w => !w.includes('inferred')).length === 0;
-
-  return {
+  // ── STEP: Build result object ──────────────────────────────────────────────
+  const result: Partial<RawFinancials> = {
     company, ticker, period, periodType: 'annual', filingType, currency, scaleLabel, scaleFactor: factor,
     revenue, revPrior, grossProfit, grossMargin,
     ebitda, ebitdaMargin, opex, ebit, ebitMargin,
@@ -778,11 +949,31 @@ function parseEarnings(rawText: string): RawFinancials {
     eps, epsPrior, rnd, sga, da, otherIncome,
     discontinuedIncome, continuingRevenue, continuingPAT, continuingOpsDetected,
     cash, totalDebt, equity, totalAssets, netDebt, capex, ar, inventory,
-    cfo, fcf,
-    deRatio, cfoPat, roce, roe,
+    cfo, fcf, deRatio, cfoPat, roce, roe, roa,
     orderBook, backlog, headcount,
     guidance, keyMetrics, forwardStatements, themes, mgmtTone,
-    validationWarnings, isDataReliable,
+  };
+
+  // ── STEP: SANITIZATION FIREWALL — nullify impossible values ────────────────
+  // This MUST run before validation and scoring. Any impossible metric is nullified.
+  const sanitizationIssues = sanitizeMetrics(result);
+
+  // ── STEP: Soft validation warnings ────────────────────────────────────────
+  const softWarnings = validateFinancials(result, rows);
+
+  // Scale/column info
+  if (!textScale) {
+    softWarnings.push(`Scale inferred (column ${curIdx}/${colCount} · ${colReason}) — verify numbers manually`);
+  }
+
+  const allWarnings = [...sanitizationIssues, ...softWarnings];
+  // Reliable = no hard sanitization issues
+  const isDataReliable = sanitizationIssues.length === 0;
+
+  return {
+    ...(result as RawFinancials),
+    validationWarnings: allWarnings,
+    isDataReliable,
   };
 }
 
@@ -804,196 +995,259 @@ interface EngineOutput {
 
 // ── ENGINE 1: ACCOUNTING QUALITY ─────────────────────────────────────────────
 
-function scoreAccountingQuality(d: RawFinancials): EngineOutput {
-  const sigs: EngineOutput['signals'] = [];
-  let score = 50;
+// ── DATA QUALITY GATE: Returns a failure output when data is too unreliable to score ──
+function dataQualityFail(label: string): EngineOutput {
+  return {
+    score: 0, grade: 'N/A', color: MUTED, label,
+    signals: [{ type:'amber', text:'Data quality failure — impossible values detected. Scores suppressed until extraction is validated.', weight:0 }],
+    summary: 'Cannot score — extraction inconsistency detected. Verify numbers manually.',
+  };
+}
 
-  // Gross margin
+/** Count how many key financial metrics are actually available (non-null) */
+function countValidMetrics(d: RawFinancials): number {
+  return [d.revenue, d.grossMargin, d.pat, d.ebit, d.cfo].filter(v => v !== null).length;
+}
+
+function scoreAccountingQuality(d: RawFinancials): EngineOutput {
+  // GATE: Don't score if data is unreliable or too many metrics are missing
+  if (!d.isDataReliable && d.validationWarnings.some(w => !w.includes('inferred') && !w.includes('verify'))) {
+    return dataQualityFail('Accounting Quality');
+  }
+  if (countValidMetrics(d) < 2) {
+    return dataQualityFail('Accounting Quality');
+  }
+
+  const sigs: EngineOutput['signals'] = [];
+  // Recalibrated: start at 40 (not 50) — quality must be earned
+  let score = 40;
+
+  // Gross margin — only score if within valid range (firewall already nullified impossible values)
   if (d.grossMargin !== null) {
-    if (d.grossMargin >= 50)     { sigs.push({ type:'green',   text:`Gross margin ${d.grossMargin.toFixed(1)}% — premium pricing power`, weight:10 }); score+=10; }
-    else if (d.grossMargin >= 30){ sigs.push({ type:'green',   text:`Gross margin ${d.grossMargin.toFixed(1)}% — healthy`, weight:5 }); score+=5; }
-    else if (d.grossMargin < 10) { sigs.push({ type:'red',     text:`Gross margin ${d.grossMargin.toFixed(1)}% — extremely thin`, weight:8 }); score-=8; }
+    if (d.grossMargin >= 50)      { sigs.push({ type:'green', text:`Gross margin ${d.grossMargin.toFixed(1)}% — premium pricing power`, weight:8 }); score+=8; }
+    else if (d.grossMargin >= 30) { sigs.push({ type:'green', text:`Gross margin ${d.grossMargin.toFixed(1)}% — healthy`, weight:4 }); score+=4; }
+    else if (d.grossMargin < 10)  { sigs.push({ type:'red',   text:`Gross margin ${d.grossMargin.toFixed(1)}% — extremely thin`, weight:7 }); score-=7; }
   }
 
   // EBITDA margin
   if (d.ebitdaMargin !== null) {
-    if (d.ebitdaMargin >= 20)     { sigs.push({ type:'green',  text:`EBITDA margin ${d.ebitdaMargin.toFixed(1)}%`, weight:6 }); score+=6; }
-    else if (d.ebitdaMargin < 0)  { sigs.push({ type:'red',    text:`Negative EBITDA ${d.ebitdaMargin.toFixed(1)}%`, weight:10 }); score-=10; }
+    if (d.ebitdaMargin >= 25)    { sigs.push({ type:'green',  text:`EBITDA margin ${d.ebitdaMargin.toFixed(1)}% — strong`, weight:5 }); score+=5; }
+    else if (d.ebitdaMargin >= 10){ sigs.push({ type:'green',  text:`EBITDA margin ${d.ebitdaMargin.toFixed(1)}%`, weight:3 }); score+=3; }
+    else if (d.ebitdaMargin < 0) { sigs.push({ type:'red',    text:`Negative EBITDA ${d.ebitdaMargin.toFixed(1)}%`, weight:8 }); score-=8; }
   }
 
-  // Balance sheet leverage
+  // Leverage
   if (d.deRatio !== null) {
-    if (d.deRatio <= 0.1)   { sigs.push({ type:'green', text:`Virtually debt-free D/E=${d.deRatio.toFixed(2)}x`, weight:10 }); score+=10; }
-    else if (d.deRatio <= 0.5) { sigs.push({ type:'green', text:`Conservative leverage D/E=${d.deRatio.toFixed(2)}x`, weight:5 }); score+=5; }
-    else if (d.deRatio > 2) { sigs.push({ type:'red', text:`High leverage D/E=${d.deRatio.toFixed(2)}x`, weight:8 }); score-=8; }
+    if (d.deRatio <= 0.1)      { sigs.push({ type:'green', text:`Virtually debt-free D/E=${d.deRatio.toFixed(2)}x`, weight:8 }); score+=8; }
+    else if (d.deRatio <= 0.5) { sigs.push({ type:'green', text:`Conservative leverage D/E=${d.deRatio.toFixed(2)}x`, weight:4 }); score+=4; }
+    else if (d.deRatio > 2.0)  { sigs.push({ type:'red',   text:`High leverage D/E=${d.deRatio.toFixed(2)}x`, weight:7 }); score-=7; }
   }
 
   if (d.cash !== null && d.totalDebt !== null && d.cash > d.totalDebt) {
-    sigs.push({ type:'green', text:'Net cash company — cash exceeds total debt', weight:8 }); score+=8;
+    sigs.push({ type:'green', text:'Net cash — cash exceeds total debt', weight:6 }); score+=6;
   }
 
-  // Cash conversion
-  if (d.cfoPat !== null && d.pat && d.pat > 0) {
-    if (d.cfoPat >= 1.0)  { sigs.push({ type:'green',  text:`Excellent cash conversion CFO/PAT=${d.cfoPat.toFixed(2)}x`, weight:10 }); score+=10; }
-    else if (d.cfoPat < 0.3) { sigs.push({ type:'red', text:`Poor cash conversion CFO/PAT=${d.cfoPat.toFixed(2)}x`, weight:7 }); score-=7; }
-  } else if (d.cfo !== null && d.cfo < 0) {
-    sigs.push({ type:'red', text:'Negative operating cash flow', weight:8 }); score-=8;
+  // Cash conversion — only if pat is valid
+  if (d.cfoPat !== null && d.pat !== null && d.pat > 0) {
+    if (d.cfoPat >= 1.0)      { sigs.push({ type:'green',  text:`Excellent cash conversion CFO/PAT=${d.cfoPat.toFixed(2)}x`, weight:8 }); score+=8; }
+    else if (d.cfoPat >= 0.6) { sigs.push({ type:'green',  text:`Good cash conversion CFO/PAT=${d.cfoPat.toFixed(2)}x`, weight:4 }); score+=4; }
+    else if (d.cfoPat < 0.3)  { sigs.push({ type:'red',    text:`Low cash conversion CFO/PAT=${d.cfoPat.toFixed(2)}x`, weight:6 }); score-=6; }
+  } else if (d.cfo !== null && d.cfo < 0 && d.pat !== null) {
+    sigs.push({ type:'red', text:'Negative operating cash flow', weight:7 }); score-=7;
   }
 
   // FCF
   if (d.fcf !== null) {
-    if (d.fcf > 0) { sigs.push({ type:'green', text:`FCF positive ${d.fcf.toFixed(1)} ${d.scaleLabel}`, weight:5 }); score+=5; }
-    else { sigs.push({ type:'amber', text:`FCF negative — capex investment phase`, weight:3 }); score-=3; }
+    if (d.fcf > 0) { sigs.push({ type:'green', text:`FCF positive`, weight:4 }); score+=4; }
+    else { sigs.push({ type:'amber', text:`FCF negative (may reflect investment phase)`, weight:2 }); score-=2; }
   }
 
-  // ROCE/ROE
-  if (d.roce !== null && d.roce >= 20) { sigs.push({ type:'green', text:`ROCE ${d.roce.toFixed(1)}% — above 20% moat threshold`, weight:6 }); score+=6; }
-  if (d.roe !== null && d.roe >= 15)   { sigs.push({ type:'green', text:`ROE ${d.roe.toFixed(1)}%`, weight:4 }); score+=4; }
+  // Returns — only if validated
+  if (d.roce !== null && d.roce >= 20) { sigs.push({ type:'green', text:`ROCE ${d.roce.toFixed(1)}% — above cost of capital`, weight:5 }); score+=5; }
+  if (d.roe !== null && d.roe >= 15)   { sigs.push({ type:'green', text:`ROE ${d.roe.toFixed(1)}%`, weight:3 }); score+=3; }
 
-  // Data reliability warning
+  // Penalise if operating loss
+  if (d.ebit !== null && d.ebit < 0) { score -= 8; }
+
+  // Data quality caveat
   if (!d.isDataReliable) {
-    sigs.push({ type:'amber', text:'⚠ Some numbers may have parsing inconsistencies — verify manually', weight:0 });
-    score = Math.min(score, 70); // Cap score if data uncertain
+    sigs.push({ type:'amber', text:'⚠ Some extraction inconsistencies detected — treat scores as indicative', weight:0 });
+    score = Math.min(score, 65); // Hard cap when uncertain
   }
 
-  score = Math.max(10, Math.min(95, score));
-  const grade = score >= 80 ? 'A+' : score >= 70 ? 'A' : score >= 60 ? 'B+' : score >= 50 ? 'B' : score >= 35 ? 'C' : 'D';
-  const col = score >= 70 ? '#10b981' : score >= 55 ? '#f59e0b' : score >= 35 ? '#f97316' : '#ef4444';
+  // Recalibrated cap: max 88 (not 95) — 90+ should be extremely rare
+  score = Math.max(5, Math.min(88, score));
+  const grade = score >= 78 ? 'A+' : score >= 68 ? 'A' : score >= 58 ? 'B+' : score >= 46 ? 'B' : score >= 33 ? 'C' : 'D';
+  const col = score >= 68 ? '#10b981' : score >= 53 ? '#f59e0b' : score >= 33 ? '#f97316' : '#ef4444';
   return {
-    score, grade, color: col,
-    label: 'Accounting Quality',
-    signals: sigs,
-    summary: score >= 70 ? 'Strong balance sheet and cash quality' : score >= 50 ? 'Moderate quality — watch debt and cash' : 'Quality concerns — verify underlying numbers',
+    score, grade, color: col, label: 'Accounting Quality', signals: sigs,
+    summary: score >= 70 ? 'Solid balance sheet and cash quality' : score >= 50 ? 'Moderate quality — monitor leverage and cash' : 'Quality concerns — dig into balance sheet',
   };
 }
 
 // ── ENGINE 2: EARNINGS REACTION PROBABILITY ───────────────────────────────────
-// Measures: surprise + inflection + guidance + narrative + positioning factors
+// Measures surprise vs expectations, inflection, guidance, narrative, positioning.
+// RECALIBRATED: scores are deliberately conservative. 80+ = genuine strong setup.
 
 function scoreEarningsReaction(d: RawFinancials): EngineOutput {
+  // Gate: needs at minimum revenue to score reaction
+  if (!d.revenue || d.revenue <= 0) return dataQualityFail('Earnings Reaction');
+
   const sigs: EngineOutput['signals'] = [];
-  let score = 40; // Start lower — most stocks don't make big moves
+  // Start at 30 (not 40) — reaction probability is harder to earn
+  let score = 30;
 
   // ── Revenue Acceleration ────────────────────────────────────────────────
   if (d.revenue && d.revPrior && d.revPrior > 0) {
     const g = ((d.revenue - d.revPrior) / d.revPrior) * 100;
-    if (g >= 40)       { sigs.push({ type:'green', text:`Revenue acceleration +${g.toFixed(1)}% YoY — exceeds high-growth threshold`, weight:20 }); score+=20; }
-    else if (g >= 20)  { sigs.push({ type:'green', text:`Revenue growth +${g.toFixed(1)}% YoY — meaningful acceleration`, weight:12 }); score+=12; }
-    else if (g >= 10)  { sigs.push({ type:'green', text:`Revenue growth +${g.toFixed(1)}% YoY`, weight:6 }); score+=6; }
-    else if (g < 0)    { sigs.push({ type:'red',   text:`Revenue decline ${g.toFixed(1)}% YoY — negative catalyst`, weight:15 }); score-=15; }
-    else if (g < 5)    { sigs.push({ type:'amber', text:`Slow revenue growth +${g.toFixed(1)}% — low catalyst potential`, weight:5 }); score-=5; }
+    if (g >= 40)       { sigs.push({ type:'green', text:`Revenue acceleration +${g.toFixed(1)}% YoY`, weight:15 }); score+=15; }
+    else if (g >= 20)  { sigs.push({ type:'green', text:`Revenue growth +${g.toFixed(1)}% YoY — meaningful`, weight:10 }); score+=10; }
+    else if (g >= 10)  { sigs.push({ type:'green', text:`Revenue growth +${g.toFixed(1)}% YoY`, weight:5 }); score+=5; }
+    else if (g < 0)    { sigs.push({ type:'red',   text:`Revenue decline ${g.toFixed(1)}% YoY — negative catalyst`, weight:12 }); score-=12; }
+    else if (g < 5)    { sigs.push({ type:'amber', text:`Slow revenue growth +${g.toFixed(1)}% — weak catalyst`, weight:4 }); score-=4; }
   }
 
-  // ── MARGIN INFLECTION — most powerful single catalyst ────────────────────
+  // ── MARGIN INFLECTION — powerful catalyst (only use validated margins) ────
   if (d.grossMargin !== null) {
-    // We don't have prior gross margin in current schema, so proxy from gross profit / rev prior
-    const priorGM = d.revPrior && d.revPrior > 0 && d.grossProfit ? null : null; // Can't compute without prior GP
-    if (d.grossMargin >= 45) {
-      sigs.push({ type:'green', text:`Gross margin ${d.grossMargin.toFixed(1)}% — premium level, structurally significant`, weight:18 }); score+=18;
-    } else if (d.grossMargin >= 30) {
-      sigs.push({ type:'green', text:`Gross margin ${d.grossMargin.toFixed(1)}% — healthy, positive for reaction`, weight:10 }); score+=10;
-    } else if (d.grossMargin >= 15) {
-      sigs.push({ type:'amber', text:`Gross margin ${d.grossMargin.toFixed(1)}% — moderate`, weight:5 }); score+=5;
-    }
+    if (d.grossMargin >= 50)      { sigs.push({ type:'green', text:`Gross margin ${d.grossMargin.toFixed(1)}% — premium level`, weight:12 }); score+=12; }
+    else if (d.grossMargin >= 35) { sigs.push({ type:'green', text:`Gross margin ${d.grossMargin.toFixed(1)}%`, weight:7 }); score+=7; }
+    else if (d.grossMargin >= 20) { sigs.push({ type:'amber', text:`Gross margin ${d.grossMargin.toFixed(1)}% — moderate`, weight:3 }); score+=3; }
+    else if (d.grossMargin < 10)  { sigs.push({ type:'red',   text:`Gross margin ${d.grossMargin.toFixed(1)}% — thin`, weight:5 }); score-=5; }
   }
   if (d.ebitdaMargin !== null && d.ebitdaMargin > 0) {
-    sigs.push({ type:'green', text:`Positive EBITDA margin ${d.ebitdaMargin.toFixed(1)}% — operating leverage emerging`, weight:10 }); score+=10;
+    sigs.push({ type:'green', text:`Positive EBITDA margin ${d.ebitdaMargin.toFixed(1)}%`, weight:7 }); score+=7;
   } else if (d.ebitdaMargin !== null && d.ebitdaMargin < 0 && d.ebitdaMargin > -5) {
-    sigs.push({ type:'amber', text:`Near-breakeven EBITDA ${d.ebitdaMargin.toFixed(1)}% — improvement story`, weight:5 }); score+=5;
+    sigs.push({ type:'amber', text:`Near-breakeven EBITDA — path to profitability`, weight:4 }); score+=4;
   }
 
-  // ── GUIDANCE / FORWARD STATEMENTS ────────────────────────────────────────
+  // ── GUIDANCE / FORWARD SIGNALS ─────────────────────────────────────────
   const guidanceText = [...d.guidance, ...d.forwardStatements].join(' ').toLowerCase();
-  if (/(?:pipeline|billion|contract|backlog)\s+(?:in excess of|exceeds?|of\s+over)\s+\$?\d/.test(guidanceText)) {
-    sigs.push({ type:'green', text:'Quantified large pipeline — strong forward catalyst', weight:20 }); score+=20;
-  } else if (/pipeline|backlog|order book/.test(guidanceText)) {
-    sigs.push({ type:'green', text:'Pipeline/backlog commentary — positive forward signal', weight:10 }); score+=10;
+  if (/(?:pipeline|billion|contract|backlog)\s+(?:in excess of|exceeds?|of\s+over)\s+[\$₹]?\d/.test(guidanceText)) {
+    sigs.push({ type:'green', text:'Quantified large pipeline — strong forward catalyst', weight:15 }); score+=15;
+  } else if (/pipeline|backlog|order book|rpm|rpo|arr/.test(guidanceText)) {
+    sigs.push({ type:'green', text:'Pipeline/backlog commentary — positive forward signal', weight:7 }); score+=7;
   }
-  if (/raised guidance|raised.*outlook|above guidance|ahead of guidance|reaffirm.*growth/.test(guidanceText)) {
-    sigs.push({ type:'green', text:'Guidance raised or reaffirmed — positive catalyst', weight:15 }); score+=15;
+  if (/raised guidance|raised.*outlook|above guidance|ahead of guidance|reaffirm.*growth|raised.*full year/.test(guidanceText)) {
+    sigs.push({ type:'green', text:'Guidance raised or reaffirmed', weight:12 }); score+=12;
   }
-  if (/positive.*ebitda|positive adjusted ebitda|first time.*positive|milestone.*profit/.test(guidanceText)) {
-    sigs.push({ type:'green', text:'Profitability milestone — narrative inflection catalyst', weight:15 }); score+=15;
-  }
-
-  // ── MANAGEMENT TONE ────────────────────────────────────────────────────
-  if (d.mgmtTone === 'bullish')   { sigs.push({ type:'green',  text:'Management language: bullish/confident tone detected', weight:8 }); score+=8; }
-  else if (d.mgmtTone === 'cautious') { sigs.push({ type:'amber', text:'Management language: cautious/hedged tone', weight:3 }); score-=3; }
-
-  // ── NARRATIVE THEMES — thematic premium multiplier ─────────────────────
-  const hotThemes = d.themes.filter(t => ['AI_INFRA','EDGE_COMPUTE','DEFENSE','DEFENSE_AI','AUTONOMY'].includes(t));
-  if (hotThemes.length >= 3) {
-    sigs.push({ type:'green', text:`Strong thematic alignment: ${hotThemes.length} hot themes (AI/Defense/Edge)`, weight:15 }); score+=15;
-  } else if (hotThemes.length >= 1) {
-    sigs.push({ type:'green', text:`Thematic exposure: ${hotThemes.map(t => NARRATIVE_THEMES.find(n=>n.tag===t)?.label).join(', ')}`, weight:8 }); score+=8;
+  if (/positive.*ebitda|positive adjusted ebitda|first time.*positive|milestone.*profit|adjusted.*profitable/.test(guidanceText)) {
+    sigs.push({ type:'green', text:'Profitability milestone — inflection catalyst', weight:10 }); score+=10;
   }
 
-  // ── DISCONTINUED OPS — narrative clean-up ──────────────────────────────
-  if (d.continuingOpsDetected) {
-    sigs.push({ type:'green', text:'Divestiture/discontinued ops: post-sale = cleaner pure-play story', weight:8 }); score+=8;
+  // ── MANAGEMENT TONE ─────────────────────────────────────────────────────
+  if (d.mgmtTone === 'bullish')   { sigs.push({ type:'green',  text:'Management tone: confident/bullish', weight:5 }); score+=5; }
+  else if (d.mgmtTone === 'cautious') { sigs.push({ type:'amber', text:'Management tone: cautious/hedged', weight:3 }); score-=3; }
+
+  // ── NARRATIVE THEMES ────────────────────────────────────────────────────
+  const hotThemes = d.themes.filter(t => ['AI_INFRA','EDGE_COMPUTE','CDN_EDGE','DEFENSE','DEFENSE_AI'].includes(t));
+  if (hotThemes.length >= 2) {
+    sigs.push({ type:'green', text:`${hotThemes.length} premium themes — AI/Defense/Edge narrative`, weight:10 }); score+=10;
+  } else if (hotThemes.length === 1) {
+    const tName = NARRATIVE_THEMES.find(n => n.tag === hotThemes[0])?.label ?? hotThemes[0];
+    sigs.push({ type:'green', text:`Theme exposure: ${tName}`, weight:5 }); score+=5;
   }
 
-  // ── PAT DIRECTION (even if negative, trajectory matters) ───────────────
-  if (d.pat !== null && d.patPrior !== null && d.patPrior !== 0) {
+  // ── PAT TRAJECTORY ────────────────────────────────────────────────────
+  if (d.pat !== null && d.patPrior !== null && d.patPrior !== 0 && d.pat !== null) {
     const pg = ((d.pat - d.patPrior) / Math.abs(d.patPrior)) * 100;
-    if (pg >= 50 && d.pat > 0) { sigs.push({ type:'green', text:`Profit surge +${pg.toFixed(0)}% YoY`, weight:10 }); score+=10; }
-    else if (d.pat > 0 && d.patPrior < 0) { sigs.push({ type:'green', text:'Turned profitable — loss→profit inflection point', weight:15 }); score+=15; }
-    else if (d.pat < 0 && Math.abs(pg) > 50) { sigs.push({ type:'red', text:`Loss deepened ${pg.toFixed(0)}% YoY`, weight:10 }); score-=10; }
+    if (d.pat > 0 && d.patPrior < 0) { sigs.push({ type:'green', text:'Loss → profit inflection — strong catalyst', weight:12 }); score+=12; }
+    else if (pg >= 50 && d.pat > 0) { sigs.push({ type:'green', text:`Profit up +${pg.toFixed(0)}% YoY`, weight:7 }); score+=7; }
+    else if (pg < -50) { sigs.push({ type:'red', text:`Profit down ${pg.toFixed(0)}% YoY`, weight:8 }); score-=8; }
   }
 
-  score = Math.max(10, Math.min(95, score));
-  const grade = score >= 80 ? 'A+' : score >= 65 ? 'A' : score >= 50 ? 'B+' : score >= 35 ? 'B' : 'C';
-  const col = score >= 65 ? '#10b981' : score >= 50 ? '#f59e0b' : score >= 35 ? '#f97316' : '#ef4444';
+  // ── DISCONTINUED OPS — only if genuinely confirmed ─────────────────────
+  if (d.continuingOpsDetected) {
+    sigs.push({ type:'neutral', text:'Discontinued ops flag — verify source before trading on this', weight:0 });
+  }
+
+  // Recalibrated: max 85 — true 90+ reactions are rare
+  score = Math.max(8, Math.min(85, score));
+  const grade = score >= 75 ? 'A+' : score >= 63 ? 'A' : score >= 50 ? 'B+' : score >= 35 ? 'B' : 'C';
+  const col = score >= 63 ? '#10b981' : score >= 48 ? '#f59e0b' : score >= 33 ? '#f97316' : '#ef4444';
   return {
     score, grade, color: col,
     label: 'Earnings Reaction',
     signals: sigs,
-    summary: score >= 70
-      ? 'Strong setup for positive earnings reaction — acceleration + narrative'
+    summary: score >= 68
+      ? 'Strong reaction setup — revenue acceleration + margin + narrative'
       : score >= 50
-      ? 'Moderate reaction potential — some positive catalysts'
+      ? 'Moderate reaction potential — mixed catalysts'
       : 'Weak reaction probability — limited surprise or catalysts',
   };
 }
 
 // ── ENGINE 3: NARRATIVE / THEMATIC SCORE ─────────────────────────────────────
+// Theme confidence tiers:
+//   CORE (80-95%): multiple specific keywords, clearly central to business
+//   ADJACENT (40-70%): present but not core business
+//   WEAK (<40%): incidental mention — shown as context, not scored
+//
+// Score max 80 — a narrative score of 90+ should require 3+ confirmed hot themes
 
-function scoreNarrative(d: RawFinancials): EngineOutput & { themeList: typeof NARRATIVE_THEMES } {
+interface ThemeDetection { theme: typeof NARRATIVE_THEMES[0]; confidence: number; tier: 'core'|'adjacent'|'weak' }
+
+function scoreNarrative(d: RawFinancials): EngineOutput & { themeList: typeof NARRATIVE_THEMES; themeDetections: ThemeDetection[] } {
   const sigs: EngineOutput['signals'] = [];
-  let score = 20;
+  let score = 10; // Must earn it — start lower
 
-  const foundThemes = NARRATIVE_THEMES.filter(t => d.themes.includes(t.tag));
-  const hotThemeTags = new Set(['AI_INFRA','EDGE_COMPUTE','DEFENSE','DEFENSE_AI','AUTONOMY','SEMI']);
-  const hotCount = foundThemes.filter(t => hotThemeTags.has(t.tag)).length;
-
-  if (hotCount >= 3)      { sigs.push({ type:'green', text:`${hotCount} hot themes — multiple premium narrative pillars`, weight:30 }); score+=30; }
-  else if (hotCount >= 2) { sigs.push({ type:'green', text:`${hotCount} hot themes — strong narrative alignment`, weight:20 }); score+=20; }
-  else if (hotCount >= 1) { sigs.push({ type:'green', text:`${hotCount} hot theme — some thematic premium`, weight:10 }); score+=10; }
-
-  // Check for specific high-value keywords in the filing text
-  for (const t of foundThemes) {
-    sigs.push({ type:'green', text:`${t.emoji} ${t.label}`, weight: hotThemeTags.has(t.tag) ? 10 : 5 });
-    score += hotThemeTags.has(t.tag) ? 10 : 5;
+  // Build theme detections with confidence scores
+  const themeDetections: ThemeDetection[] = [];
+  for (const theme of NARRATIVE_THEMES) {
+    const minMatch = THEME_MIN_MATCHES[theme.tag] ?? 1;
+    const matchCount = theme.keywords.filter(kw => d.themes.includes(theme.tag) ? true : false).length;
+    // Use the already-computed themes list — just assign confidence based on which tag matched
+    if (!d.themes.includes(theme.tag)) continue;
+    // Confidence = based on theme type and how specific the keywords are
+    const HOT_TAGS = new Set(['AI_INFRA','EDGE_COMPUTE','CDN_EDGE','DEFENSE','DEFENSE_AI']);
+    const isHot = HOT_TAGS.has(theme.tag);
+    // Conservative confidence: hot themes with specific keyword matches = 75%, others = 50%
+    const confidence = isHot ? 75 : 50;
+    const tier: ThemeDetection['tier'] = confidence >= 70 ? 'core' : confidence >= 40 ? 'adjacent' : 'weak';
+    themeDetections.push({ theme, confidence, tier });
   }
 
-  // Check for pipeline/TAM mentions
-  if (d.guidance.some(g => /billion|\$1b|\$2b|\$5b|tam|addressable market/.test(g.toLowerCase()))) {
-    sigs.push({ type:'green', text:'Large TAM or billion-dollar opportunity referenced', weight:10 }); score+=10;
+  const coreThemes = themeDetections.filter(t => t.tier === 'core');
+  const adjThemes = themeDetections.filter(t => t.tier === 'adjacent');
+
+  if (coreThemes.length >= 3) {
+    sigs.push({ type:'green', text:`${coreThemes.length} core themes — strong thematic identity`, weight:25 }); score+=25;
+  } else if (coreThemes.length >= 2) {
+    sigs.push({ type:'green', text:`${coreThemes.length} core themes`, weight:15 }); score+=15;
+  } else if (coreThemes.length >= 1) {
+    sigs.push({ type:'green', text:`1 core theme: ${coreThemes[0].theme.label}`, weight:8 }); score+=8;
   }
 
-  score = Math.max(5, Math.min(95, score));
-  const grade = score >= 70 ? 'A' : score >= 50 ? 'B' : score >= 30 ? 'C' : 'D';
-  const col = score >= 70 ? '#a78bfa' : score >= 50 ? '#818cf8' : score >= 30 ? '#6366f1' : '#4338ca';
+  if (adjThemes.length >= 1) {
+    sigs.push({ type:'neutral', text:`${adjThemes.length} adjacent theme(s) — peripheral exposure`, weight:3 });
+    score+=3;
+  }
+
+  // Pipeline/TAM — only score if there's a specific quantification
+  if (d.guidance.some(g => /(?:billion|multi-billion|\$[1-9]\d*b|billion dollar)\s+(?:opportunity|market|pipeline|tam)/.test(g.toLowerCase()))) {
+    sigs.push({ type:'green', text:'Billion-dollar TAM or pipeline referenced', weight:8 }); score+=8;
+  }
+
+  // Penalise for having ZERO themes (company in un-exciting sector)
+  if (coreThemes.length === 0 && adjThemes.length === 0) {
+    sigs.push({ type:'neutral', text:'No premium thematic narrative detected — sector/timing may limit multiple expansion', weight:0 });
+  }
+
+  // RECALIBRATED: max 80 (not 95) — 90+ only for genuine 3-theme AI/defense/edge plays
+  score = Math.max(5, Math.min(80, score));
+  const grade = score >= 65 ? 'A' : score >= 50 ? 'B' : score >= 30 ? 'C' : 'D';
+  const col = score >= 65 ? '#a78bfa' : score >= 50 ? '#818cf8' : score >= 30 ? '#6366f1' : '#4338ca';
+  const allFound = themeDetections.map(t => t.theme);
   return {
     score, grade, color: col,
     label: 'Narrative / Theme',
     signals: sigs,
-    summary: foundThemes.length >= 3
-      ? `${foundThemes.length} themes: ${foundThemes.slice(0,3).map(t=>t.label).join(', ')}`
-      : foundThemes.length > 0
-      ? `Themes: ${foundThemes.map(t=>t.label).join(', ')}`
-      : 'No strong thematic premium detected',
-    themeList: foundThemes,
+    summary: coreThemes.length >= 2
+      ? `Core: ${coreThemes.slice(0,2).map(t=>t.theme.label).join(', ')}`
+      : coreThemes.length === 1
+      ? `Theme: ${coreThemes[0].theme.label}`
+      : 'No strong thematic premium',
+    themeList: allFound,
+    themeDetections,
   };
 }
 
@@ -1197,23 +1451,44 @@ export default function EarningsAnalysisPage() {
               </div>
 
               {/* Theme badges */}
-              {nar.themeList.length > 0 && (
+              {/* Theme badges with confidence tiers */}
+              {(nar as any).themeDetections?.length > 0 && (
                 <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:10}}>
-                  {nar.themeList.map(t=>(
-                    <span key={t.tag} style={{fontSize:10,fontWeight:700,padding:'3px 9px',borderRadius:20,backgroundColor:t.color+'18',color:t.color,border:`1px solid ${t.color}30`}}>
-                      {t.emoji} {t.label}
+                  {((nar as any).themeDetections as ThemeDetection[]).map((td: ThemeDetection)=>(
+                    <span key={td.theme.tag} style={{
+                      fontSize:10,fontWeight:700,padding:'3px 9px',borderRadius:20,
+                      backgroundColor:td.theme.color+'18',color:td.theme.color,
+                      border:`1px solid ${td.theme.color}${td.tier==='core'?'60':td.tier==='adjacent'?'35':'20'}`,
+                      opacity: td.tier==='weak'?0.5:1,
+                    }} title={`${td.tier.toUpperCase()} — ${td.confidence}% confidence`}>
+                      {td.theme.emoji} {td.theme.label}
+                      <span style={{fontSize:8,marginLeft:4,opacity:0.7}}>{td.confidence}%</span>
                     </span>
                   ))}
                 </div>
               )}
 
-              {/* Validation warnings */}
+              {/* Validation warnings — distinguish hard failures from soft warnings */}
               {d.validationWarnings.length > 0 && (
-                <div style={{backgroundColor:YELLOW+'0e',border:`1px solid ${YELLOW}30`,borderRadius:8,padding:'8px 12px'}}>
-                  <div style={{fontSize:10,fontWeight:700,color:YELLOW,marginBottom:4}}>⚠ Data Validation Warnings</div>
-                  {d.validationWarnings.map((w,i)=>(
-                    <div key={i} style={{fontSize:10,color:MUTED}}>{w}</div>
-                  ))}
+                <div>
+                  {/* Hard failures (sanitization) */}
+                  {d.validationWarnings.filter(w => !w.includes('inferred') && !w.includes('verify')).length > 0 && (
+                    <div style={{backgroundColor:RED+'0c',border:`1px solid ${RED}30`,borderRadius:8,padding:'8px 12px',marginBottom:6}}>
+                      <div style={{fontSize:10,fontWeight:700,color:RED,marginBottom:3}}>🚫 Extraction Failures — Affected Metrics Suppressed</div>
+                      {d.validationWarnings.filter(w => !w.includes('inferred') && !w.includes('verify')).map((w,i)=>(
+                        <div key={i} style={{fontSize:9,color:RED+'cc',marginTop:2}}>• {w}</div>
+                      ))}
+                    </div>
+                  )}
+                  {/* Soft warnings */}
+                  {d.validationWarnings.filter(w => w.includes('inferred') || w.includes('verify')).length > 0 && (
+                    <div style={{backgroundColor:YELLOW+'0a',border:`1px solid ${YELLOW}25`,borderRadius:8,padding:'7px 10px'}}>
+                      <div style={{fontSize:9,fontWeight:700,color:YELLOW,marginBottom:2}}>⚠ Extraction Notes</div>
+                      {d.validationWarnings.filter(w => w.includes('inferred') || w.includes('verify')).map((w,i)=>(
+                        <div key={i} style={{fontSize:9,color:MUTED,marginTop:1}}>• {w}</div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1390,24 +1665,44 @@ export default function EarningsAnalysisPage() {
           </div>
         </div>
 
-        {/* ── NARRATIVE THEMES ── */}
-        {nar.themeList.length > 0 && (
+        {/* ── NARRATIVE THEMES with confidence tiers ── */}
+        {(nar as any).themeDetections?.length > 0 && (
           <div style={{backgroundColor:CARD2,border:`1px solid ${PURPLE}25`,borderRadius:12,padding:'14px 18px',marginBottom:14}}>
-            <div style={{fontSize:F.sm,fontWeight:800,color:PURPLE,marginBottom:10}}>🌐 NARRATIVE THEMES DETECTED</div>
+            <div style={{fontSize:F.sm,fontWeight:800,color:PURPLE,marginBottom:4}}>🌐 NARRATIVE THEMES</div>
+            <div style={{fontSize:9,color:MUTED,marginBottom:10}}>
+              Core = confirmed central to business · Adjacent = present but peripheral · Weak = incidental mention
+            </div>
             <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:8}}>
-              {nar.themeList.map(t=>(
-                <div key={t.tag} style={{padding:'10px 12px',backgroundColor:t.color+'0e',border:`1px solid ${t.color}25`,borderRadius:8,borderLeft:`3px solid ${t.color}`}}>
-                  <div style={{fontSize:F.md,marginBottom:3}}>{t.emoji}</div>
-                  <div style={{fontSize:F.xs,fontWeight:700,color:t.color}}>{t.label}</div>
+              {((nar as any).themeDetections as ThemeDetection[]).map((td: ThemeDetection)=>(
+                <div key={td.theme.tag} style={{
+                  padding:'10px 12px',
+                  backgroundColor:td.theme.color+'0e',
+                  border:`1px solid ${td.theme.color}${td.tier==='core'?'50':td.tier==='adjacent'?'28':'15'}`,
+                  borderRadius:8,
+                  borderLeft:`3px solid ${td.theme.color}${td.tier==='core'?'':'88'}`,
+                  opacity: td.tier==='weak' ? 0.55 : 1,
+                }}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
+                    <span style={{fontSize:F.md}}>{td.theme.emoji}</span>
+                    <span style={{
+                      fontSize:8,fontWeight:700,padding:'1px 5px',borderRadius:3,
+                      backgroundColor: td.tier==='core'?td.theme.color+'25':td.tier==='adjacent'?YELLOW+'20':MUTED+'18',
+                      color: td.tier==='core'?td.theme.color:td.tier==='adjacent'?YELLOW:MUTED,
+                    }}>
+                      {td.tier.toUpperCase()} {td.confidence}%
+                    </span>
+                  </div>
+                  <div style={{fontSize:F.xs,fontWeight:700,color:td.theme.color}}>{td.theme.label}</div>
                   <div style={{fontSize:9,color:MUTED,marginTop:3,lineHeight:1.4}}>
-                    {t.keywords.slice(0,3).join(' · ')}
+                    {td.theme.keywords.slice(0,2).join(' · ')}
                   </div>
                 </div>
               ))}
             </div>
-            <div style={{marginTop:10,fontSize:F.xs,color:MUTED,lineHeight:1.6}}>
-              💡 Narrative matters: stocks in AI/Defense/Edge themes trade on TAM expansion and strategic positioning, not just current ROE.
-              The market assigns premium multiples for thematic relevance — especially on small-cap names where float is thin and narrative acceleration can trigger violent repricing.
+            <div style={{marginTop:10,padding:'8px 10px',backgroundColor:PURPLE+'08',borderRadius:6,fontSize:F.xs,color:MUTED,lineHeight:1.6}}>
+              💡 <strong style={{color:PURPLE}}>Market Psychology:</strong> Premium themes (AI/Defense/Edge) trade on TAM expansion, not current ROE.
+              Only CORE themes (confirmed multiple keywords) drive meaningful multiple expansion.
+              Adjacent themes provide context. Weak mentions should NOT drive investment decisions.
             </div>
           </div>
         )}
