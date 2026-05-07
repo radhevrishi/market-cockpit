@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { nseApiFetch } from '@/lib/nse';
+import { rateLimitResponse } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,7 +13,9 @@ const CACHE_TTL = 60_000;
  * Returns global market indices for the ticker bar.
  * Direct NSE fetch — no FastAPI dependency.
  */
-export async function GET() {
+export async function GET(request: Request) {
+  const limited = rateLimitResponse(request, 180, 60_000); // generous: polled every 60s
+  if (limited) return limited;
   // Return cache if fresh
   if (_cache && Date.now() - _cache.ts < CACHE_TTL) {
     return NextResponse.json(_cache.data);

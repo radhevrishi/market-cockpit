@@ -585,7 +585,20 @@ export default function MoversPage() {
 
       {/* Error */}
       {error && !loading && (
-        <div style={{ backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', padding: '12px', color: RED, fontSize: '13px', marginBottom: '14px' }}>{error}</div>
+        <div style={{ backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', padding: '12px 14px', color: RED, fontSize: '13px', marginBottom: '14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+          <span>⚠ {error}</span>
+          <button onClick={() => { setError(null); }} style={{ padding: '5px 12px', borderRadius: '5px', border: '1px solid rgba(239,68,68,0.4)', backgroundColor: 'rgba(239,68,68,0.12)', color: RED, cursor: 'pointer', fontSize: '11px', fontWeight: '700' }}>
+            ↻ Retry
+          </button>
+        </div>
+      )}
+      {/* Empty state when data fails entirely */}
+      {!loading && !error && allStocks.length === 0 && (
+        <div style={{ backgroundColor: '#111B35', border: '1px solid #1E2D45', borderRadius: '12px', padding: '48px 20px', textAlign: 'center', marginBottom: '16px' }}>
+          <div style={{ fontSize: '32px', marginBottom: '12px' }}>📊</div>
+          <p style={{ fontSize: '14px', fontWeight: '600', color: '#F5F7FA', margin: '0 0 6px' }}>No market data available</p>
+          <p style={{ fontSize: '12px', color: '#4A5B6C', margin: '0 0 16px' }}>NSE data may be unavailable outside market hours or the backend is not running.</p>
+        </div>
       )}
 
       {/* Gainers / Losers tables */}

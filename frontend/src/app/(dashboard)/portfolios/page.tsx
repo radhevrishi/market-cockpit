@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, TrendingUp, TrendingDown, RefreshCw, AlertCircle, X } from 'lucide-react';
 import { format } from 'date-fns';
@@ -245,6 +245,7 @@ function CreatePortfolioModal({ onClose }: { onClose: () => void }) {
 
 function AddPositionModal({ portfolioId, onClose }: { portfolioId: string; onClose: () => void }) {
   const qc = useQueryClient();
+  const lookupAbortRef = useRef<AbortController | null>(null);
   const [form, setForm] = useState({
     ticker: '', exchange: 'NSE', company_name: '', quantity: '', avg_cost: '', currency: 'INR', notes: '',
   });
@@ -291,8 +292,11 @@ function AddPositionModal({ portfolioId, onClose }: { portfolioId: string; onClo
     }
 
     try {
-      // 5 second timeout to avoid infinite spinner
+      // Cancel any previous in-flight lookup (race condition fix)
+      lookupAbortRef.current?.abort();
       const controller = new AbortController();
+      lookupAbortRef.current = controller;
+      // 5 second timeout to avoid infinite spinner
       const timeout = setTimeout(() => controller.abort(), 5000);
       const { data } = await api.get(`/market/quote/${ticker}`, {
         params: { exchange: form.exchange },
@@ -939,7 +943,7 @@ export default function PortfoliosPage() {
       const hist: { date: string; value: number }[] = JSON.parse(localStorage.getItem(PNL_HISTORY_KEY) || '[]');
       const last = hist[hist.length - 1];
       // Only save if it's a new day or value changed meaningfully (>0.1%)
-      const changed = !last || last.date !== today || Math.abs(last.value - summary.total_value) / last.value > 0.001;
+      const changed = !last || last.date !== today || (last.value > 0 && Math.abs(last.value - summary.total_value) / last.value > 0.001) || (last.value === 0 && summary.total_value > 0);
       if (changed) {
         const updated = [...hist.filter(h => h.date !== today), { date: today, value: summary.total_value }]
           .sort((a, b) => a.date.localeCompare(b.date))

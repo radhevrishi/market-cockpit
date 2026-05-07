@@ -4496,12 +4496,1129 @@ function USACompare() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // MAIN PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
+// 📊 EARNINGS INTELLIGENCE ANALYZER
+// Upload any earnings document (PDF, Excel, CSV, paste text, URL) and get
+// institutional-grade financial extraction: P&L, balance sheet, cash flow,
+// growth rates, margin trends, quality signals, and verdict.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface ExtractedPeriod {
+  label: string;           // "Q2FY25", "FY24", "H1FY25"
+  periodType: 'quarterly' | 'annual' | 'halfyear';
+}
+
+interface FinancialSnapshot {
+  period: ExtractedPeriod;
+  // P&L (in ₹ Cr or $ Mn depending on currency)
+  revenue: number | null;
+  ebitda: number | null;
+  ebitdaMargin: number | null;
+  pat: number | null;
+  patMargin: number | null;
+  eps: number | null;
+  depreciation: number | null;
+  interestCost: number | null;
+  pbt: number | null;
+  tax: number | null;
+  otherIncome: number | null;
+  // Balance sheet
+  totalDebt: number | null;
+  cash: number | null;
+  netDebt: number | null;
+  equity: number | null;
+  totalAssets: number | null;
+  capex: number | null;
+  // Cash flow
+  cfo: number | null;
+  fcf: number | null;
+  // Returns
+  roce: number | null;
+  roe: number | null;
+  // Business
+  orderBook: number | null;
+  guidance: string[];
+  currency: 'INR' | 'USD' | 'unknown';
+  multiplier: number; // 1 = Cr, 0.01 = Lakh, 1000 = Thousand Cr etc.
+}
+
+interface EarningsAnalysis {
+  company: string;
+  exchange: string;
+  sector: string;
+  snapshots: FinancialSnapshot[];    // [current, prior_year, prior_quarter, ...] sorted latest first
+  signals: { type: 'positive' | 'negative' | 'neutral'; label: string; detail: string }[];
+  verdict: string;
+  verdictScore: number;   // 0-100
+  verdictColor: string;
+  rawText: string;
+  source: string;
+  analyzedAt: string;
+}
+
+// ── Financial extraction regexes ────────────────────────────────────────────
+
+const NUM_PATTERN = (label: string) =>
+  new RegExp(
+    `(?:${label})\\s*[:\\|]?\\s*(?:₹|Rs\\.?\\s*|INR\\s*|\\$\\s*|USD\\s*)?([\\d,]+(?:\\.\\d+)?)`,
+    'i'
+  );
+
+/** Parse a number string like "1,23,456.78" or "23456" */
+function parseNum(s: string): number {
+  const cleaned = s.replace(/,/g, '');
+  const n = parseFloat(cleaned);
+  return isNaN(n) ? 0 : n;
+}
+
+/** Detect currency and scale multiplier from document text */
+function detectCurrencyScale(text: string): { currency: 'INR' | 'USD' | 'unknown'; multiplier: number } {
+  const t = text.toLowerCase();
+  if (/\(₹ in crore|\(rs\. in crore|₹ crore|in crores?|crore rupees?/.test(t)) return { currency: 'INR', multiplier: 1 };
+  if (/\(₹ in lakh|\(rs\. in lakh|in lakhs?/.test(t)) return { currency: 'INR', multiplier: 0.01 }; // convert lakh→Cr
+  if (/\(in million|\$ million|usd million/.test(t)) return { currency: 'USD', multiplier: 1 };
+  if (/\$ billion|usd billion/.test(t)) return { currency: 'USD', multiplier: 1000 };
+  if (/₹|rupee|inr/.test(t)) return { currency: 'INR', multiplier: 1 };
+  if (/\$|dollar|usd/.test(t)) return { currency: 'USD', multiplier: 1 };
+  return { currency: 'unknown', multiplier: 1 };
+}
+
+/** Extract period labels from text (Q2FY25, FY2024, H1FY25, etc.) */
+function extractPeriods(text: string): ExtractedPeriod[] {
+  const periods: ExtractedPeriod[] = [];
+  const seen = new Set<string>();
+
+  // Pattern: Q2FY25, Q1 FY25, Q3FY2025
+  const quarterly = text.matchAll(/\b(Q[1-4])\s*[-–]?\s*?(FY\s*)?(\d{2,4})\b/gi);
+  for (const m of quarterly) {
+    const label = `${m[1].toUpperCase()}FY${m[3]}`;
+    if (!seen.has(label)) { seen.add(label); periods.push({ label, periodType: 'quarterly' }); }
+  }
+  // Pattern: FY2025, FY25, FY 2025
+  const annual = text.matchAll(/\b(FY\s*[-–]?\s*)(20\d{2}|\d{2})\b/gi);
+  for (const m of annual) {
+    const label = `FY${m[2]}`;
+    if (!seen.has(label)) { seen.add(label); periods.push({ label, periodType: 'annual' }); }
+  }
+  // Pattern: H1FY25, H2FY2024
+  const half = text.matchAll(/\b(H[12])\s*[-–]?\s*?(FY\s*)?(\d{2,4})\b/gi);
+  for (const m of half) {
+    const label = `${m[1].toUpperCase()}FY${m[3]}`;
+    if (!seen.has(label)) { seen.add(label); periods.push({ label, periodType: 'halfyear' }); }
+  }
+  // Month-Year pattern: "September 2024", "March 2025", "December 24"
+  const monthYear = text.matchAll(/\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s*[-,']\s*(20\d{2}|\d{2})\b/gi);
+  for (const m of monthYear) {
+    const MONTH_TO_QFY: Record<string, string> = {
+      jun:'Q1', sep:'Q2', dec:'Q3', mar:'Q4',
+      january:'Q4',february:'Q4',march:'Q4',
+      april:'Q1',may:'Q1',june:'Q1',
+      july:'Q2',august:'Q2',september:'Q2',
+      october:'Q3',november:'Q3',december:'Q3',
+    };
+    const mon = m[1].toLowerCase().slice(0,3);
+    const yr = m[2];
+    const q = MONTH_TO_QFY[m[1].toLowerCase()] || MONTH_TO_QFY[mon] || 'Q?';
+    const fyYr = parseInt(yr) + (mon === 'jan' || mon === 'feb' || mon === 'mar' ? 0 : 1);
+    const label = `${q}FY${String(fyYr).slice(-2)}`;
+    if (!seen.has(label)) { seen.add(label); periods.push({ label, periodType: 'quarterly' }); }
+  }
+  return periods.slice(0, 6); // max 6 periods
+}
+
+/** Extract company name from document text */
+function extractCompanyName(text: string): string {
+  // Try first few lines for company name
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 3).slice(0, 20);
+  for (const line of lines) {
+    // Company names often end with Ltd, Limited, Inc, Corp, plc
+    const m = line.match(/^([A-Z][A-Za-z\s&.,'()-]{5,60}(?:Limited|Ltd|Inc|Corp|plc|LLC|Industries|Enterprises|Technologies|Pharma|Power|Energy|Finance|Holdings)\.?)/);
+    if (m) return m[1].trim();
+  }
+  // Try finding "Company:" or "Scrip:" labels
+  const companyLabel = text.match(/(?:Company|Scrip|Entity|Issuer)\s*[:\|]\s*([A-Z][A-Za-z\s&.,'()-]{5,60})/i);
+  if (companyLabel) return companyLabel[1].trim();
+  return 'Unknown Company';
+}
+
+/** Core extraction: pull one number for a given row label from text */
+function extractValue(text: string, patterns: string[]): number | null {
+  for (const pattern of patterns) {
+    const re = new RegExp(
+      `(?:^|\\n)\\s*(?:${pattern})\\s*[:\\|]?\\s*(?:₹|Rs\\.?|\\$)?\\s*([\\d,]+(?:\\.\\d+)?)`,
+      'im'
+    );
+    const m = text.match(re);
+    if (m) {
+      const val = parseNum(m[1]);
+      if (val > 0) return val;
+    }
+  }
+  return null;
+}
+
+/** Extract percentage value */
+function extractPct(text: string, patterns: string[]): number | null {
+  for (const pattern of patterns) {
+    const re = new RegExp(
+      `(?:^|\\n)\\s*(?:${pattern})\\s*[:\\|]?\\s*([\\d]+(?:\\.\\d+)?)\\s*%`,
+      'im'
+    );
+    const m = text.match(re);
+    if (m) {
+      const val = parseFloat(m[1]);
+      if (!isNaN(val)) return val;
+    }
+  }
+  return null;
+}
+
+/** Extract guidance/management comment sentences */
+function extractGuidance(text: string): string[] {
+  const sentences = text.split(/[.!?]/).map(s => s.trim()).filter(s => s.length > 30 && s.length < 300);
+  const GUIDANCE_KEYWORDS = [
+    'guidance', 'expect', 'outlook', 'target', 'anticipate', 'forecast',
+    'confident', 'plan to', 'going forward', 'next quarter', 'fy2', 'fy26',
+    'margin expansion', 'revenue growth', 'order pipeline', 'order book',
+    'capacity', 'capex plan', 'dividend', 'buyback',
+  ];
+  return sentences
+    .filter(s => {
+      const sl = s.toLowerCase();
+      return GUIDANCE_KEYWORDS.some(kw => sl.includes(kw)) &&
+        /\b(we|company|management|our|the company)\b/i.test(s);
+    })
+    .slice(0, 6);
+}
+
+/** Main extraction function — turns raw text into FinancialSnapshot */
+function extractFinancials(text: string): FinancialSnapshot {
+  const { currency, multiplier } = detectCurrencyScale(text);
+  const periods = extractPeriods(text);
+  const period: ExtractedPeriod = periods[0] ?? { label: 'Latest Period', periodType: 'quarterly' };
+
+  const scale = (v: number | null) => v !== null ? Math.round(v * multiplier * 100) / 100 : null;
+
+  // Revenue / Net Sales
+  const revenue = scale(extractValue(text, [
+    'revenue from operations', 'net sales', 'total revenue', 'turnover',
+    'net revenue', 'total income from operations', 'sales',
+  ]));
+
+  // EBITDA / Operating Profit
+  const rawEbitda = extractValue(text, [
+    'ebitda', 'operating ebitda', 'pbdit', 'profit before depreciation.*interest.*tax',
+    'operating profit', 'ebitda excluding', 'adjusted ebitda',
+  ]);
+  let ebitda = scale(rawEbitda);
+
+  // EBITDA Margin
+  let ebitdaMargin = extractPct(text, ['ebitda margin', 'operating margin', 'pbdit margin', 'operating profit margin']);
+  if (!ebitdaMargin && ebitda && revenue && revenue > 0) {
+    ebitdaMargin = Math.round((ebitda / revenue) * 10000) / 100;
+  }
+
+  // Depreciation
+  const depreciation = scale(extractValue(text, [
+    'depreciation', 'depreciation and amortisation', 'depreciation.*amortization', 'da',
+  ]));
+
+  // Interest / Finance Cost
+  const interestCost = scale(extractValue(text, [
+    'finance costs', 'interest expense', 'interest.*finance', 'borrowing costs', 'interest cost',
+  ]));
+
+  // Other Income
+  const otherIncome = scale(extractValue(text, [
+    'other income', 'non-operating income', 'other operating income',
+  ]));
+
+  // PBT
+  const pbt = scale(extractValue(text, [
+    'profit before tax', 'pbt', 'profit before exceptional.*tax', 'earnings before tax',
+  ]));
+
+  // Tax
+  const tax = scale(extractValue(text, ['tax expense', 'income tax', 'provision for tax', 'current.*deferred tax']));
+
+  // PAT
+  const pat = scale(extractValue(text, [
+    'profit after tax', 'pat', 'net profit', 'profit for the (?:period|quarter|year|six months)',
+    'net income', 'profit attributable to owners', 'net earnings',
+  ]));
+
+  // PAT Margin
+  let patMargin = extractPct(text, ['pat margin', 'net profit margin', 'net margin', 'net income margin']);
+  if (!patMargin && pat && revenue && revenue > 0) {
+    patMargin = Math.round((pat / revenue) * 10000) / 100;
+  }
+
+  // EPS
+  const epsRaw = extractValue(text, ['basic eps', 'diluted eps', 'eps', 'earnings per share', 'basic.*eps']);
+  const eps = epsRaw; // EPS is in ₹ per share, no multiplier
+
+  // Balance Sheet
+  const totalDebt = scale(extractValue(text, [
+    'total borrowings', 'total debt', 'short-term borrowings.*long-term borrowings',
+    'borrowings', 'total indebtedness', 'long.*term.*borrowings',
+  ]));
+  const cash = scale(extractValue(text, [
+    'cash and cash equivalents', 'cash.*bank balances', 'cash equivalents', 'liquid assets',
+  ]));
+  const netDebt = (totalDebt !== null && cash !== null) ? Math.round((totalDebt - cash) * 100) / 100 : null;
+  const equity = scale(extractValue(text, [
+    "total equity", "shareholders' equity", "net worth", "total equity.*attributable",
+    'share capital.*reserves', 'equity share capital.*reserves',
+  ]));
+  const totalAssets = scale(extractValue(text, ['total assets', 'total balance sheet']));
+
+  // Capex
+  const capex = scale(extractValue(text, [
+    'capital expenditure', 'capex', 'purchase of.*assets', 'addition to fixed assets',
+    'purchase of property.*plant', 'payments for acquisition',
+  ]));
+
+  // Cash Flow
+  const cfo = scale(extractValue(text, [
+    'cash.*from operating', 'net cash from operating', 'net cash provided by operating',
+    'operating activities', 'cash generated from operations',
+  ]));
+  const fcf = (cfo !== null && capex !== null) ? Math.round((cfo - Math.abs(capex)) * 100) / 100 : null;
+
+  // Returns
+  const roce = extractPct(text, ['roce', 'return on capital employed', 'return on ce']);
+  const roe = extractPct(text, ['roe', 'return on equity', 'return on net worth', 'ronw']);
+
+  // Order book
+  const orderBook = scale(extractValue(text, [
+    'order book', 'order backlog', 'order pipeline', 'pending orders', 'unexecuted orders',
+  ]));
+
+  // Guidance quotes
+  const guidance = extractGuidance(text);
+
+  // If EBITDA not found but components available, estimate: EBITDA ≈ PAT + Tax + Interest + D&A
+  if (!ebitda && pat && depreciation) {
+    const reconstructed = (pat || 0) + (tax || 0) + (interestCost || 0) + (depreciation || 0);
+    if (reconstructed > 0) ebitda = Math.round(reconstructed * 100) / 100;
+    if (!ebitdaMargin && revenue && revenue > 0) {
+      ebitdaMargin = Math.round((ebitda! / revenue) * 10000) / 100;
+    }
+  }
+
+  return {
+    period, revenue, ebitda, ebitdaMargin, pat, patMargin, eps,
+    depreciation, interestCost, pbt, tax, otherIncome,
+    totalDebt, cash, netDebt, equity, totalAssets, capex,
+    cfo, fcf, roce, roe, orderBook, guidance, currency, multiplier,
+  };
+}
+
+/** Calculate YoY and QoQ growth rates */
+function calcGrowth(current: number | null, prior: number | null): string {
+  if (current === null || prior === null || prior === 0) return '—';
+  const pct = ((current - prior) / Math.abs(prior)) * 100;
+  const sign = pct >= 0 ? '+' : '';
+  return `${sign}${pct.toFixed(1)}%`;
+}
+function growthColor(current: number | null, prior: number | null): string {
+  if (current === null || prior === null || prior === 0) return MUTED;
+  return ((current - prior) / Math.abs(prior)) > 0 ? GREEN : RED;
+}
+
+/** Generate quality signals and verdict from financials */
+function analyzeSignals(snap: FinancialSnapshot, prior?: FinancialSnapshot): {
+  signals: EarningsAnalysis['signals'];
+  verdict: string;
+  verdictScore: number;
+  verdictColor: string;
+} {
+  const signals: EarningsAnalysis['signals'] = [];
+  let score = 50;
+
+  const { revenue, pat, ebitda, ebitdaMargin, patMargin, totalDebt, equity, cfo, fcf, roce, roe, orderBook, eps, cash } = snap;
+
+  // ── REVENUE ────────────────────────────────────────────────────────────────
+  if (prior?.revenue && revenue && revenue > 0) {
+    const revGrowth = ((revenue - prior.revenue) / prior.revenue) * 100;
+    if (revGrowth >= 20) { signals.push({ type:'positive', label:'Strong Revenue Growth', detail:`+${revGrowth.toFixed(1)}% YoY — above 20% threshold` }); score += 10; }
+    else if (revGrowth >= 10) { signals.push({ type:'positive', label:'Steady Revenue Growth', detail:`+${revGrowth.toFixed(1)}% YoY` }); score += 5; }
+    else if (revGrowth < 0) { signals.push({ type:'negative', label:'Revenue Decline', detail:`${revGrowth.toFixed(1)}% YoY — top-line contraction` }); score -= 12; }
+    else if (revGrowth < 5) { signals.push({ type:'neutral', label:'Slow Revenue Growth', detail:`+${revGrowth.toFixed(1)}% YoY — below 5% threshold` }); }
+  }
+
+  // ── PAT / PROFIT ───────────────────────────────────────────────────────────
+  if (prior?.pat && pat) {
+    const patGrowth = ((pat - prior.pat) / Math.abs(prior.pat)) * 100;
+    if (pat < 0) { signals.push({ type:'negative', label:'Net Loss This Period', detail:`PAT = ${pat.toFixed(1)} Cr — loss-making quarter` }); score -= 20; }
+    else if (patGrowth >= 25) { signals.push({ type:'positive', label:'Profit Surge', detail:`+${patGrowth.toFixed(1)}% YoY PAT growth` }); score += 12; }
+    else if (patGrowth < -10) { signals.push({ type:'negative', label:'Profit Decline', detail:`${patGrowth.toFixed(1)}% YoY — declining profitability` }); score -= 10; }
+  } else if (pat !== null && pat < 0) {
+    signals.push({ type:'negative', label:'Net Loss Reported', detail:`PAT = ${pat.toFixed(1)} Cr` }); score -= 20;
+  }
+
+  // ── MARGINS ────────────────────────────────────────────────────────────────
+  if (ebitdaMargin !== null) {
+    if (ebitdaMargin >= 25) { signals.push({ type:'positive', label:'High EBITDA Margin', detail:`${ebitdaMargin.toFixed(1)}% — strong pricing power` }); score += 8; }
+    else if (ebitdaMargin < 10) { signals.push({ type:'negative', label:'Low EBITDA Margin', detail:`${ebitdaMargin.toFixed(1)}% — thin margins` }); score -= 5; }
+    if (prior?.ebitdaMargin && ebitdaMargin > prior.ebitdaMargin + 0.5) {
+      signals.push({ type:'positive', label:'Margin Expansion', detail:`EBITDA margin: ${prior.ebitdaMargin.toFixed(1)}% → ${ebitdaMargin.toFixed(1)}% (+${(ebitdaMargin-prior.ebitdaMargin).toFixed(1)}bps)` }); score += 8;
+    } else if (prior?.ebitdaMargin && ebitdaMargin < prior.ebitdaMargin - 1.5) {
+      signals.push({ type:'negative', label:'Margin Compression', detail:`EBITDA margin fell ${(prior.ebitdaMargin - ebitdaMargin).toFixed(1)}pp YoY — cost pressure or pricing weakness` }); score -= 8;
+    }
+  }
+
+  // ── DEBT ───────────────────────────────────────────────────────────────────
+  if (totalDebt !== null && equity !== null && equity > 0) {
+    const de = totalDebt / equity;
+    if (de <= 0.1) { signals.push({ type:'positive', label:'Debt-Free / Near-Zero Debt', detail:`D/E = ${de.toFixed(2)}x — fortress balance sheet` }); score += 10; }
+    else if (de <= 0.5) { signals.push({ type:'positive', label:'Conservative Leverage', detail:`D/E = ${de.toFixed(2)}x — low leverage` }); score += 5; }
+    else if (de > 2.0) { signals.push({ type:'negative', label:'High Debt Load', detail:`D/E = ${de.toFixed(2)}x — elevated leverage risk` }); score -= 10; }
+    else if (de > 1.0) { signals.push({ type:'neutral', label:'Moderate Debt', detail:`D/E = ${de.toFixed(2)}x — watch interest coverage` }); }
+  }
+
+  // ── CASH FLOW ──────────────────────────────────────────────────────────────
+  if (cfo !== null && pat !== null && pat > 0) {
+    const cfoPat = cfo / pat;
+    if (cfoPat >= 1.0) { signals.push({ type:'positive', label:'Excellent Cash Conversion', detail:`CFO/PAT = ${cfoPat.toFixed(2)}x — profit fully backed by cash` }); score += 10; }
+    else if (cfoPat >= 0.7) { signals.push({ type:'positive', label:'Good Cash Conversion', detail:`CFO/PAT = ${cfoPat.toFixed(2)}x` }); score += 5; }
+    else if (cfoPat < 0.3) { signals.push({ type:'negative', label:'Low Cash Conversion', detail:`CFO/PAT = ${cfoPat.toFixed(2)}x — profit not converting to cash` }); score -= 8; }
+  }
+  if (fcf !== null) {
+    if (fcf > 0) { signals.push({ type:'positive', label:'Free Cash Flow Positive', detail:`FCF = ₹${fcf.toFixed(0)}Cr — self-funding growth` }); score += 6; }
+    else { signals.push({ type:'negative', label:'Negative Free Cash Flow', detail:`FCF = ₹${fcf.toFixed(0)}Cr — burning cash` }); score -= 6; }
+  }
+
+  // ── RETURNS ────────────────────────────────────────────────────────────────
+  if (roce !== null) {
+    if (roce >= 20) { signals.push({ type:'positive', label:'Strong ROCE', detail:`${roce.toFixed(1)}% — above 20% threshold` }); score += 8; }
+    else if (roce < 12) { signals.push({ type:'negative', label:'Weak ROCE', detail:`${roce.toFixed(1)}% — below cost of capital` }); score -= 6; }
+  }
+  if (roe !== null) {
+    if (roe >= 15) { signals.push({ type:'positive', label:'High ROE', detail:`${roe.toFixed(1)}% — above 15% threshold` }); score += 5; }
+    else if (roe < 10) { signals.push({ type:'negative', label:'Low ROE', detail:`${roe.toFixed(1)}%` }); score -= 4; }
+  }
+
+  // ── ORDER BOOK ─────────────────────────────────────────────────────────────
+  if (orderBook !== null && revenue !== null && revenue > 0) {
+    const obToRev = orderBook / (revenue * 4); // annualize quarterly revenue
+    if (obToRev >= 2.0) { signals.push({ type:'positive', label:'Strong Order Visibility', detail:`Order book ${obToRev.toFixed(1)}x annualised revenue — multi-quarter visibility` }); score += 8; }
+    else if (obToRev >= 1.0) { signals.push({ type:'positive', label:'Healthy Order Book', detail:`Order book ${obToRev.toFixed(1)}x annualised revenue` }); score += 4; }
+    else if (obToRev < 0.5) { signals.push({ type:'negative', label:'Low Order Visibility', detail:`Order book only ${obToRev.toFixed(1)}x annualised revenue` }); score -= 4; }
+  }
+
+  // ── CASH ───────────────────────────────────────────────────────────────────
+  if (cash !== null && totalDebt !== null && cash > totalDebt) {
+    signals.push({ type:'positive', label:'Net Cash Company', detail:`Cash ₹${cash.toFixed(0)}Cr > Debt ₹${totalDebt.toFixed(0)}Cr — strong balance sheet` }); score += 6;
+  }
+
+  score = Math.max(10, Math.min(95, score));
+  const positives = signals.filter(s => s.type === 'positive').length;
+  const negatives = signals.filter(s => s.type === 'negative').length;
+
+  let verdict: string;
+  let verdictColor: string;
+  if (score >= 75) {
+    verdict = `Strong quarter — ${positives} positive signals, ${negatives} concerns. Thesis intact.`;
+    verdictColor = GREEN;
+  } else if (score >= 60) {
+    verdict = `Decent quarter — ${positives} positives vs ${negatives} concerns. Monitor margins.`;
+    verdictColor = '#10b981aa';
+  } else if (score >= 45) {
+    verdict = `Mixed quarter — positives and negatives balanced. Watch next quarter closely.`;
+    verdictColor = YELLOW;
+  } else if (score >= 30) {
+    verdict = `Weak quarter — ${negatives} concerns dominate. Thesis under pressure.`;
+    verdictColor = ORANGE;
+  } else {
+    verdict = `Poor quarter — significant deterioration. Re-evaluate thesis.`;
+    verdictColor = RED;
+  }
+
+  return { signals, verdict, verdictScore: score, verdictColor };
+}
+
+// ── PDF text extraction via PDF.js (dynamic CDN load) ─────────────────────
+async function extractTextFromPDF(file: File): Promise<string> {
+  try {
+    // Dynamically load PDF.js from CDN to avoid bundle size impact
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    script.crossOrigin = 'anonymous';
+    await new Promise((res, rej) => { script.onload = res; script.onerror = rej; document.head.appendChild(script); });
+
+    const pdfjsLib = (window as any).pdfjsLib;
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    let allText = '';
+    for (let pageNum = 1; pageNum <= Math.min(pdf.numPages, 40); pageNum++) {
+      const page = await pdf.getPage(pageNum);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items.map((item: any) => item.str).join(' ');
+      allText += pageText + '\n';
+    }
+    return allText;
+  } catch (e) {
+    console.error('PDF extraction failed:', e);
+    return '';
+  }
+}
+
+/** Format a number for display with commas */
+function fmtCr(v: number | null, currency: 'INR' | 'USD' | 'unknown' = 'INR'): string {
+  if (v === null || v === undefined) return '—';
+  const symbol = currency === 'USD' ? '$' : '₹';
+  const unit = currency === 'USD' ? 'Mn' : 'Cr';
+  if (Math.abs(v) >= 10000) return `${symbol}${(v/1000).toFixed(1)}K ${unit}`;
+  if (Math.abs(v) >= 1000) return `${symbol}${(v/1000).toFixed(2)}K ${unit}`;
+  return `${symbol}${v.toLocaleString('en-IN', { maximumFractionDigits: 1 })} ${unit}`;
+}
+function fmtPct(v: number | null): string {
+  if (v === null) return '—';
+  return `${v.toFixed(1)}%`;
+}
+
+// ── EarningsAnalyzer Component ────────────────────────────────────────────
+
+function EarningsAnalyzer() {
+  const [mode, setMode] = useState<'paste' | 'upload' | 'url'>('paste');
+  const [rawText, setRawText] = useState('');
+  const [urlInput, setUrlInput] = useState('');
+  const [analysis, setAnalysis] = useState<EarningsAnalysis | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [multiSnap, setMultiSnap] = useState<FinancialSnapshot[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [history, setHistory] = useState<EarningsAnalysis[]>(() => {
+    try { return JSON.parse(localStorage.getItem('mb_earnings_history') || '[]'); } catch { return []; }
+  });
+
+  function saveToHistory(a: EarningsAnalysis) {
+    const updated = [a, ...history.filter(h => h.company !== a.company || h.snapshots[0]?.period.label !== a.snapshots[0]?.period.label)].slice(0, 20);
+    setHistory(updated);
+    try { localStorage.setItem('mb_earnings_history', JSON.stringify(updated)); } catch {}
+  }
+
+  async function processText(text: string, source: string) {
+    if (!text.trim()) { setError('No text to analyze. Paste earnings report content or upload a file.'); return; }
+    setLoading(true); setError('');
+    try {
+      const snap = extractFinancials(text);
+      const company = extractCompanyName(text);
+      const { signals, verdict, verdictScore, verdictColor } = analyzeSignals(snap);
+      const result: EarningsAnalysis = {
+        company, exchange: '', sector: '',
+        snapshots: [snap],
+        signals, verdict, verdictScore, verdictColor,
+        rawText: text.slice(0, 5000),
+        source, analyzedAt: new Date().toISOString(),
+      };
+      setAnalysis(result);
+      setMultiSnap([snap]);
+      saveToHistory(result);
+    } catch (e) {
+      setError('Analysis failed: ' + (e instanceof Error ? e.message : 'Unknown error'));
+    }
+    setLoading(false);
+  }
+
+  async function handleFileUpload(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setLoading(true); setError('');
+    try {
+      const file = files[0];
+      const ext = file.name.toLowerCase().split('.').pop() || '';
+      let text = '';
+
+      if (ext === 'pdf') {
+        setError(''); // clear
+        text = await extractTextFromPDF(file);
+        if (!text.trim()) {
+          setError('PDF text extraction returned empty. The PDF may be image-based. Try copying text from the PDF and using Paste mode.');
+          setLoading(false); return;
+        }
+      } else if (ext === 'xlsx' || ext === 'xls') {
+        const XLSX = await import('xlsx');
+        const data = await file.arrayBuffer();
+        const wb = XLSX.read(data, { type: 'array' });
+        const allSheets = wb.SheetNames.map(name => {
+          const ws = wb.Sheets[name];
+          return `=== Sheet: ${name} ===\n` + XLSX.utils.sheet_to_csv(ws);
+        });
+        text = allSheets.join('\n\n');
+      } else if (ext === 'csv') {
+        text = await file.text();
+      } else if (ext === 'txt') {
+        text = await file.text();
+      } else {
+        // Try reading as text anyway
+        try { text = await file.text(); } catch { setError(`Unsupported format: .${ext}`); setLoading(false); return; }
+      }
+      await processText(text, `File: ${file.name}`);
+    } catch (e) {
+      setError('File processing failed: ' + (e instanceof Error ? e.message : 'Unknown'));
+    }
+    setLoading(false);
+  }
+
+  async function handleURL() {
+    const url = urlInput.trim();
+    if (!url) { setError('Enter a URL'); return; }
+    setLoading(true); setError('');
+    try {
+      // For NSE/BSE filings that are PDFs, we fetch and parse
+      const res = await fetch(`/api/proxy?url=${encodeURIComponent(url)}`, { signal: AbortSignal.timeout(15000) });
+      if (res.ok) {
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('pdf')) {
+          const blob = await res.blob();
+          const file = new File([blob], 'report.pdf', { type: 'application/pdf' });
+          await handleFileUpload(Object.assign(new DataTransfer(), { files: [file] }).files);
+          return;
+        } else {
+          const text = await res.text();
+          // Extract text from HTML — strip tags
+          const div = document.createElement('div');
+          div.innerHTML = text;
+          const plainText = div.innerText || div.textContent || text.replace(/<[^>]*>/g, ' ');
+          await processText(plainText, `URL: ${url}`);
+          return;
+        }
+      }
+      // Fallback: proxy failed, try direct fetch (CORS may block)
+      setError('Could not fetch the URL. For NSE/BSE PDFs: download the file and upload it, or copy-paste the text.');
+    } catch (e) {
+      setError('URL fetch failed. For best results: open the document, select all text, copy, and use Paste mode.');
+    }
+    setLoading(false);
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    handleFileUpload(e.dataTransfer.files);
+  }
+
+  const snap = analysis?.snapshots[0];
+  const CARD_STYLE = { backgroundColor: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, padding: '16px 18px' };
+
+  return (
+    <div style={{ padding: '24px', maxWidth: 1100, margin: '0 auto' }}>
+
+      {/* ── Page Header ── */}
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ fontSize: F.h2, fontWeight: 800, color: ACCENT, marginBottom: 6 }}>
+          📊 Earnings Intelligence Analyzer
+        </div>
+        <div style={{ fontSize: F.sm, color: MUTED, lineHeight: 1.6 }}>
+          Upload any earnings document — PDF, Excel, CSV — or paste text from NSE/BSE/SEC filings.
+          The engine extracts all key financial numbers and generates an institutional-grade assessment.
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+          {['📄 Annual Report PDF', '📊 Quarterly Results Excel', '📋 NSE/BSE Filing', '🌐 SEC 10-Q/10-K URL', '📑 Investor Presentation'].map(label => (
+            <span key={label} style={{ fontSize: 10, color: MUTED, backgroundColor: CARD2, border: `1px solid ${BORDER}`, padding: '3px 10px', borderRadius: 20 }}>{label}</span>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Input Mode Tabs ── */}
+      <div style={{ display: 'flex', gap: 0, marginBottom: 16, borderBottom: `1px solid ${BORDER}` }}>
+        {([
+          { id: 'paste', label: '📋 Paste Text', desc: 'Copy from any document' },
+          { id: 'upload', label: '📁 Upload File', desc: 'PDF, Excel, CSV, TXT' },
+          { id: 'url', label: '🔗 URL Link', desc: 'NSE/BSE/SEC filing URL' },
+        ] as const).map(m => (
+          <button key={m.id} onClick={() => setMode(m.id)} style={{
+            padding: '10px 20px', border: 'none', cursor: 'pointer', backgroundColor: 'transparent',
+            color: mode === m.id ? ACCENT : MUTED,
+            fontWeight: mode === m.id ? 700 : 400, fontSize: F.sm,
+            borderBottom: mode === m.id ? `2px solid ${ACCENT}` : '2px solid transparent',
+            marginBottom: -1, transition: 'all 0.15s', flexShrink: 0,
+          }}>
+            {m.label}
+            <div style={{ fontSize: 9, color: mode === m.id ? ACCENT + '99' : '#475569', fontWeight: 400 }}>{m.desc}</div>
+          </button>
+        ))}
+      </div>
+
+      {/* ── Input Area ── */}
+      {mode === 'paste' && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: F.sm, color: MUTED, marginBottom: 8 }}>
+            Open the earnings document (PDF/website), press <kbd style={{ backgroundColor: '#1e293b', padding: '1px 5px', borderRadius: 3, fontSize: 10 }}>Ctrl+A</kbd> then <kbd style={{ backgroundColor: '#1e293b', padding: '1px 5px', borderRadius: 3, fontSize: 10 }}>Ctrl+C</kbd>, then paste here:
+          </div>
+          <textarea
+            value={rawText}
+            onChange={e => setRawText(e.target.value)}
+            placeholder={`Paste earnings report text here...\n\nExample — from NSE quarterly results PDF:\n\n  Revenue from Operations  2,345.67\n  EBITDA                     668.43\n  EBITDA Margin (%)          28.5%\n  PAT                        345.21\n  EPS (Basic)                 14.50\n  Q2FY25 vs Q2FY24 vs Q1FY25`}
+            rows={12}
+            style={{
+              width: '100%', backgroundColor: CARD_BG, border: `1px solid ${BORDER}`,
+              borderRadius: 10, padding: '12px 14px', color: TEXT, fontSize: 12,
+              resize: 'vertical', boxSizing: 'border-box', lineHeight: 1.6, fontFamily: 'monospace',
+            }}
+          />
+          <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
+            <button onClick={() => processText(rawText, 'Pasted text')} disabled={loading || !rawText.trim()}
+              style={{ padding: '10px 24px', backgroundColor: ACCENT, border: 'none', borderRadius: 8, color: '#000', fontWeight: 800, fontSize: F.md, cursor: 'pointer', opacity: loading || !rawText.trim() ? 0.5 : 1 }}>
+              {loading ? '⏳ Analyzing...' : '🔍 Analyze Document'}
+            </button>
+            {rawText && <button onClick={() => { setRawText(''); setAnalysis(null); setError(''); }} style={{ padding: '10px 16px', backgroundColor: 'transparent', border: `1px solid ${BORDER}`, borderRadius: 8, color: MUTED, fontSize: F.sm, cursor: 'pointer' }}>Clear</button>}
+          </div>
+        </div>
+      )}
+
+      {mode === 'upload' && (
+        <div
+          onDrop={handleDrop} onDragOver={e => e.preventDefault()}
+          style={{
+            border: `2px dashed ${BORDER}`, borderRadius: 12, padding: '40px 20px',
+            textAlign: 'center', marginBottom: 16, cursor: 'pointer',
+            backgroundColor: CARD_BG, transition: 'border-color 0.2s',
+          }}
+          onClick={() => fileRef.current?.click()}
+        >
+          <input ref={fileRef} type="file" accept=".pdf,.xlsx,.xls,.csv,.txt" style={{ display: 'none' }}
+            onChange={e => handleFileUpload(e.target.files)} />
+          <div style={{ fontSize: 40, marginBottom: 12 }}>📂</div>
+          <div style={{ fontSize: F.md, fontWeight: 700, color: TEXT, marginBottom: 6 }}>
+            Drop file here or click to browse
+          </div>
+          <div style={{ fontSize: F.sm, color: MUTED, marginBottom: 12 }}>
+            Supports: PDF (earnings reports), Excel (.xlsx/.xls), CSV, TXT
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+            {['.PDF', '.XLSX', '.XLS', '.CSV', '.TXT'].map(ext => (
+              <span key={ext} style={{ fontSize: 10, fontWeight: 700, color: ACCENT, backgroundColor: ACCENT + '14', border: `1px solid ${ACCENT}30`, padding: '3px 10px', borderRadius: 4 }}>{ext}</span>
+            ))}
+          </div>
+          {loading && <div style={{ marginTop: 16, color: ACCENT, fontSize: F.sm }}>⏳ Processing file...</div>}
+        </div>
+      )}
+
+      {mode === 'url' && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: F.sm, color: MUTED, marginBottom: 8 }}>
+            Paste a direct link to an earnings document (NSE/BSE filing, SEC EDGAR, investor relations page):
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <input
+              value={urlInput}
+              onChange={e => setUrlInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleURL()}
+              placeholder="https://nsearchives.nseindia.com/corporate/... or https://www.sec.gov/Archives/..."
+              style={{
+                flex: 1, backgroundColor: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: 8,
+                padding: '10px 14px', color: TEXT, fontSize: F.sm, outline: 'none',
+              }}
+            />
+            <button onClick={handleURL} disabled={loading || !urlInput.trim()}
+              style={{ padding: '10px 20px', backgroundColor: ACCENT, border: 'none', borderRadius: 8, color: '#000', fontWeight: 700, fontSize: F.sm, cursor: 'pointer', whiteSpace: 'nowrap', opacity: loading || !urlInput.trim() ? 0.5 : 1 }}>
+              {loading ? '⏳ Fetching...' : '🔍 Fetch & Analyze'}
+            </button>
+          </div>
+          <div style={{ fontSize: 10, color: MUTED, marginTop: 8, lineHeight: 1.5 }}>
+            💡 Best format: direct PDF link from NSE/BSE filings. For image-based PDFs, download and upload instead.
+            SEC 10-Q/10-K HTML filings work well.
+          </div>
+        </div>
+      )}
+
+      {/* ── Error ── */}
+      {error && (
+        <div style={{ backgroundColor: RED + '14', border: `1px solid ${RED}40`, borderRadius: 8, padding: '10px 14px', marginBottom: 16, color: RED, fontSize: F.sm }}>
+          ⚠ {error}
+        </div>
+      )}
+
+      {/* ── ANALYSIS OUTPUT ── */}
+      {analysis && snap && (
+        <div style={{ marginTop: 8 }}>
+
+          {/* ── Company Header ── */}
+          <div style={{ ...CARD_STYLE, marginBottom: 16, borderLeft: `4px solid ${analysis.verdictColor}` }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontSize: F.h3, fontWeight: 800, color: TEXT, marginBottom: 3 }}>
+                  {analysis.company}
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: F.sm, color: MUTED }}>Period:</span>
+                  <span style={{ fontSize: F.sm, fontWeight: 700, color: ACCENT }}>{snap.period.label}</span>
+                  <span style={{ fontSize: 10, color: MUTED }}>·</span>
+                  <span style={{ fontSize: 10, color: MUTED }}>Source: {analysis.source}</span>
+                  <span style={{ fontSize: 10, color: MUTED }}>·</span>
+                  <span style={{ fontSize: 10, color: MUTED }}>Currency: {snap.currency}</span>
+                  <span style={{ fontSize: 10, color: MUTED }}>·</span>
+                  <span style={{ fontSize: 10, color: MUTED }}>Analyzed: {new Date(analysis.analyzedAt).toLocaleTimeString()}</span>
+                </div>
+              </div>
+              {/* Verdict Score Ring */}
+              <div style={{ textAlign: 'center', flexShrink: 0 }}>
+                <div style={{ fontSize: 32, fontWeight: 900, color: analysis.verdictColor, lineHeight: 1 }}>
+                  {analysis.verdictScore}
+                </div>
+                <div style={{ width: 60, height: 4, backgroundColor: '#1e293b', borderRadius: 2, margin: '4px 0', overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${analysis.verdictScore}%`, backgroundColor: analysis.verdictColor, borderRadius: 2 }} />
+                </div>
+                <div style={{ fontSize: 10, color: MUTED }}>QUALITY SCORE</div>
+              </div>
+            </div>
+            {/* Verdict */}
+            <div style={{ marginTop: 10, padding: '10px 14px', backgroundColor: analysis.verdictColor + '12', border: `1px solid ${analysis.verdictColor}30`, borderRadius: 8 }}>
+              <div style={{ fontSize: F.sm, fontWeight: 600, color: analysis.verdictColor }}>
+                📋 VERDICT: {analysis.verdict}
+              </div>
+            </div>
+          </div>
+
+          {/* ── P&L Grid ── */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 14, marginBottom: 14 }}>
+
+            {/* Income Statement */}
+            <div style={CARD_STYLE}>
+              <div style={{ fontSize: F.sm, fontWeight: 800, color: PURPLE, marginBottom: 12, letterSpacing: '1px' }}>📈 INCOME STATEMENT</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {[
+                  { label: 'Revenue / Net Sales', value: snap.revenue, pct: null, highlight: true },
+                  { label: 'EBITDA', value: snap.ebitda, pct: snap.ebitdaMargin },
+                  { label: 'Depreciation', value: snap.depreciation, pct: null },
+                  { label: 'Interest Cost', value: snap.interestCost, pct: null },
+                  { label: 'Other Income', value: snap.otherIncome, pct: null },
+                  { label: 'PBT', value: snap.pbt, pct: null },
+                  { label: 'PAT / Net Profit', value: snap.pat, pct: snap.patMargin, highlight: true },
+                  { label: 'EPS (per share)', value: snap.eps, pct: null, isEps: true },
+                ].map(({ label, value, pct, highlight, isEps }) => (
+                  <div key={label} style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: highlight ? '5px 8px' : '3px 0',
+                    backgroundColor: highlight ? CARD_BG : 'transparent',
+                    borderRadius: 6,
+                    borderLeft: highlight ? `2px solid ${ACCENT}` : 'none',
+                    paddingLeft: highlight ? 8 : 0,
+                  }}>
+                    <span style={{ fontSize: F.xs, color: highlight ? TEXT : MUTED }}>{label}</span>
+                    <div style={{ textAlign: 'right' }}>
+                      <span style={{ fontSize: F.sm, fontWeight: highlight ? 700 : 400, color: value !== null && value < 0 ? RED : highlight ? TEXT : MUTED }}>
+                        {isEps
+                          ? (value !== null ? `₹${value.toFixed(2)}` : '—')
+                          : fmtCr(value, snap.currency)
+                        }
+                      </span>
+                      {pct !== null && (
+                        <span style={{ fontSize: 10, color: MUTED, marginLeft: 6 }}>({fmtPct(pct)})</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Balance Sheet + Returns */}
+            <div style={CARD_STYLE}>
+              <div style={{ fontSize: F.sm, fontWeight: 800, color: YELLOW, marginBottom: 12, letterSpacing: '1px' }}>🏛️ BALANCE SHEET & RETURNS</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {[
+                  { label: 'Total Borrowings', value: snap.totalDebt, pct: null, color: snap.totalDebt === null ? MUTED : snap.totalDebt === 0 ? GREEN : undefined },
+                  { label: 'Cash & Equivalents', value: snap.cash, pct: null, color: GREEN },
+                  { label: 'Net Debt', value: snap.netDebt, pct: null, color: snap.netDebt !== null ? (snap.netDebt <= 0 ? GREEN : snap.netDebt! > 1000 ? RED : MUTED) : MUTED },
+                  { label: 'Equity / Net Worth', value: snap.equity, pct: null },
+                  { label: 'Total Assets', value: snap.totalAssets, pct: null },
+                  { label: 'Capital Expenditure', value: snap.capex, pct: null },
+                ].map(({ label, value, color }) => (
+                  <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0' }}>
+                    <span style={{ fontSize: F.xs, color: MUTED }}>{label}</span>
+                    <span style={{ fontSize: F.sm, fontWeight: 400, color: color || MUTED }}>
+                      {fmtCr(value, snap.currency)}
+                    </span>
+                  </div>
+                ))}
+                <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 8, marginTop: 4 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: PURPLE, marginBottom: 6, letterSpacing: '0.5px' }}>RETURN METRICS</div>
+                  {[
+                    { label: 'ROCE', value: snap.roce, threshold: 20 },
+                    { label: 'ROE', value: snap.roe, threshold: 15 },
+                  ].map(({ label, value, threshold }) => (
+                    <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0' }}>
+                      <span style={{ fontSize: F.xs, color: MUTED }}>{label}</span>
+                      <span style={{ fontSize: F.sm, fontWeight: 700, color: value !== null ? (value >= threshold ? GREEN : value >= threshold * 0.7 ? YELLOW : RED) : MUTED }}>
+                        {fmtPct(value)}
+                      </span>
+                    </div>
+                  ))}
+                  {/* D/E ratio */}
+                  {snap.totalDebt !== null && snap.equity !== null && snap.equity > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0' }}>
+                      <span style={{ fontSize: F.xs, color: MUTED }}>Debt/Equity</span>
+                      <span style={{ fontSize: F.sm, fontWeight: 700, color: (snap.totalDebt / snap.equity) <= 0.5 ? GREEN : (snap.totalDebt / snap.equity) > 2 ? RED : YELLOW }}>
+                        {(snap.totalDebt / snap.equity).toFixed(2)}x
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Cash Flow + Order Book */}
+            <div style={CARD_STYLE}>
+              <div style={{ fontSize: F.sm, fontWeight: 800, color: GREEN, marginBottom: 12, letterSpacing: '1px' }}>💰 CASH FLOW & BUSINESS</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {[
+                  { label: 'Operating Cash Flow (CFO)', value: snap.cfo },
+                  { label: 'Free Cash Flow (FCF)', value: snap.fcf },
+                  { label: 'Capex', value: snap.capex },
+                ].map(({ label, value }) => (
+                  <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0' }}>
+                    <span style={{ fontSize: F.xs, color: MUTED }}>{label}</span>
+                    <span style={{ fontSize: F.sm, color: value !== null ? (value >= 0 ? GREEN : RED) : MUTED }}>
+                      {fmtCr(value, snap.currency)}
+                    </span>
+                  </div>
+                ))}
+                {/* CFO/PAT ratio */}
+                {snap.cfo !== null && snap.pat !== null && snap.pat > 0 && (
+                  <div style={{ padding: '5px 8px', backgroundColor: CARD_BG, borderRadius: 6, borderLeft: `2px solid ${GREEN}` }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: F.xs, color: MUTED }}>CFO / PAT (cash quality)</span>
+                      <span style={{ fontSize: F.sm, fontWeight: 700, color: (snap.cfo / snap.pat) >= 0.8 ? GREEN : RED }}>
+                        {(snap.cfo / snap.pat).toFixed(2)}x {(snap.cfo / snap.pat) >= 0.8 ? '✅' : '⚠'}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 10, color: MUTED, marginTop: 2 }}>
+                      {(snap.cfo / snap.pat) >= 1 ? 'Excellent — earnings fully backed by cash' :
+                       (snap.cfo / snap.pat) >= 0.8 ? 'Good — earnings mostly cash backed' :
+                       'Warning — profit not converting to cash'}
+                    </div>
+                  </div>
+                )}
+                {snap.orderBook !== null && (
+                  <div style={{ marginTop: 8, padding: '8px 10px', backgroundColor: ACCENT + '10', border: `1px solid ${ACCENT}30`, borderRadius: 8 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: ACCENT, marginBottom: 4 }}>📋 ORDER BOOK</div>
+                    <div style={{ fontSize: F.sm, fontWeight: 700, color: TEXT }}>
+                      {fmtCr(snap.orderBook, snap.currency)}
+                    </div>
+                    {snap.revenue && (
+                      <div style={{ fontSize: 10, color: MUTED, marginTop: 2 }}>
+                        = {(snap.orderBook! / (snap.revenue * 4)).toFixed(1)}x annualised revenue (order visibility)
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* ── Quality Signals ── */}
+          <div style={{ ...CARD_STYLE, marginBottom: 14 }}>
+            <div style={{ fontSize: F.sm, fontWeight: 800, color: TEXT, marginBottom: 12, letterSpacing: '1px' }}>
+              🎯 QUALITY SIGNALS ({analysis.signals.filter(s => s.type === 'positive').length} positive · {analysis.signals.filter(s => s.type === 'negative').length} concerns)
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
+              {analysis.signals.length === 0 ? (
+                <div style={{ fontSize: F.sm, color: MUTED, gridColumn: '1 / -1' }}>
+                  No strong signals detected. Add more financial data (EBITDA, CFO, order book) for deeper analysis.
+                </div>
+              ) : analysis.signals.map((sig, i) => (
+                <div key={i} style={{
+                  padding: '8px 12px', borderRadius: 8,
+                  backgroundColor: sig.type === 'positive' ? GREEN + '0f' : sig.type === 'negative' ? RED + '0f' : YELLOW + '0a',
+                  border: `1px solid ${sig.type === 'positive' ? GREEN + '30' : sig.type === 'negative' ? RED + '30' : YELLOW + '25'}`,
+                  borderLeft: `3px solid ${sig.type === 'positive' ? GREEN : sig.type === 'negative' ? RED : YELLOW}`,
+                }}>
+                  <div style={{ fontSize: F.xs, fontWeight: 700, color: sig.type === 'positive' ? GREEN : sig.type === 'negative' ? RED : YELLOW }}>
+                    {sig.type === 'positive' ? '✅' : sig.type === 'negative' ? '❌' : '⚠️'} {sig.label}
+                  </div>
+                  <div style={{ fontSize: 10, color: MUTED, marginTop: 3, lineHeight: 1.5 }}>{sig.detail}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ── Guidance / Management Commentary ── */}
+          {snap.guidance.length > 0 && (
+            <div style={{ ...CARD_STYLE, marginBottom: 14 }}>
+              <div style={{ fontSize: F.sm, fontWeight: 800, color: YELLOW, marginBottom: 12, letterSpacing: '1px' }}>
+                💬 MANAGEMENT GUIDANCE & COMMENTARY
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {snap.guidance.map((g, i) => (
+                  <div key={i} style={{
+                    padding: '8px 12px', backgroundColor: CARD_BG, borderRadius: 6,
+                    borderLeft: '2px solid #f59e0b50', fontSize: F.xs, color: MUTED, lineHeight: 1.6,
+                  }}>
+                    "{g}"
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── Key Ratios Summary ── */}
+          <div style={{ ...CARD_STYLE, marginBottom: 14 }}>
+            <div style={{ fontSize: F.sm, fontWeight: 800, color: ACCENT, marginBottom: 12 }}>📐 KEY RATIOS SNAPSHOT</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
+              {[
+                { label: 'EBITDA Margin', value: fmtPct(snap.ebitdaMargin), good: (snap.ebitdaMargin ?? 0) >= 20 },
+                { label: 'PAT Margin', value: fmtPct(snap.patMargin), good: (snap.patMargin ?? 0) >= 10 },
+                { label: 'ROCE', value: fmtPct(snap.roce), good: (snap.roce ?? 0) >= 20 },
+                { label: 'ROE', value: fmtPct(snap.roe), good: (snap.roe ?? 0) >= 15 },
+                { label: 'D/E Ratio', value: snap.totalDebt !== null && snap.equity !== null && snap.equity > 0 ? `${(snap.totalDebt/snap.equity).toFixed(2)}x` : '—', good: snap.totalDebt !== null && snap.equity !== null && snap.equity > 0 && (snap.totalDebt/snap.equity) <= 0.5 },
+                { label: 'CFO/PAT', value: snap.cfo !== null && snap.pat !== null && snap.pat > 0 ? `${(snap.cfo/snap.pat).toFixed(2)}x` : '—', good: snap.cfo !== null && snap.pat !== null && snap.pat > 0 && (snap.cfo/snap.pat) >= 0.8 },
+                { label: 'EPS', value: snap.eps !== null ? `₹${snap.eps.toFixed(2)}` : '—', good: (snap.eps ?? 0) > 0 },
+                { label: 'FCF', value: fmtCr(snap.fcf, snap.currency), good: (snap.fcf ?? 0) > 0 },
+              ].map(({ label, value, good }) => (
+                <div key={label} style={{ padding: '10px 12px', backgroundColor: CARD_BG, borderRadius: 8, border: `1px solid ${BORDER}` }}>
+                  <div style={{ fontSize: 9, color: MUTED, marginBottom: 4, letterSpacing: '0.5px' }}>{label}</div>
+                  <div style={{ fontSize: F.lg, fontWeight: 800, color: value === '—' ? '#334155' : good ? GREEN : RED }}>
+                    {value}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ── Compare with other periods ── */}
+          {history.filter(h => h.company === analysis.company && h.snapshots[0]?.period.label !== snap.period.label).length > 0 && (
+            <div style={{ ...CARD_STYLE, marginBottom: 14 }}>
+              <div style={{ fontSize: F.sm, fontWeight: 800, color: MUTED, marginBottom: 10 }}>📅 HISTORICAL COMPARISON (from previous analyses)</div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: F.xs }}>
+                  <thead>
+                    <tr>
+                      <th style={{ padding: '6px 10px', borderBottom: `1px solid ${BORDER}`, color: MUTED, textAlign: 'left', fontWeight: 700 }}>Metric</th>
+                      {[snap, ...history.filter(h => h.company === analysis.company && h.snapshots[0]?.period.label !== snap.period.label).map(h => h.snapshots[0])].map((s, i) => (
+                        <th key={i} style={{ padding: '6px 10px', borderBottom: `1px solid ${BORDER}`, color: i === 0 ? ACCENT : MUTED, textAlign: 'right', fontWeight: 700 }}>
+                          {s?.period.label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      { label: 'Revenue', key: 'revenue' as keyof FinancialSnapshot },
+                      { label: 'EBITDA Margin', key: 'ebitdaMargin' as keyof FinancialSnapshot },
+                      { label: 'PAT', key: 'pat' as keyof FinancialSnapshot },
+                      { label: 'EPS', key: 'eps' as keyof FinancialSnapshot },
+                    ].map(({ label, key }) => {
+                      const allSnaps = [snap, ...history.filter(h => h.company === analysis.company && h.snapshots[0]?.period.label !== snap.period.label).map(h => h.snapshots[0])];
+                      return (
+                        <tr key={label}>
+                          <td style={{ padding: '6px 10px', borderBottom: `1px solid ${BORDER}20`, color: MUTED }}>{label}</td>
+                          {allSnaps.map((s, i) => {
+                            const val = s?.[key] as number | null | undefined;
+                            const isMargin = key.includes('Margin') || key.includes('roe') || key.includes('roce');
+                            return (
+                              <td key={i} style={{ padding: '6px 10px', borderBottom: `1px solid ${BORDER}20`, textAlign: 'right', color: i === 0 ? TEXT : MUTED, fontWeight: i === 0 ? 600 : 400 }}>
+                                {isMargin ? fmtPct(val ?? null) : key === 'eps' && val !== null ? `₹${(val as number).toFixed(2)}` : fmtCr(val ?? null, snap.currency)}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* ── Action Panel ── */}
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <button onClick={() => {
+              const lines = [
+                `EARNINGS ANALYSIS — ${analysis.company} | ${snap.period.label}`,
+                `Score: ${analysis.verdictScore}/100 | ${analysis.verdict}`,
+                '',
+                'P&L:',
+                `  Revenue: ${fmtCr(snap.revenue, snap.currency)}`,
+                `  EBITDA: ${fmtCr(snap.ebitda, snap.currency)} (${fmtPct(snap.ebitdaMargin)})`,
+                `  PAT: ${fmtCr(snap.pat, snap.currency)} (${fmtPct(snap.patMargin)})`,
+                `  EPS: ₹${snap.eps?.toFixed(2) ?? '—'}`,
+                '',
+                'Balance Sheet:',
+                `  Net Debt: ${fmtCr(snap.netDebt, snap.currency)}`,
+                `  ROCE: ${fmtPct(snap.roce)} | ROE: ${fmtPct(snap.roe)}`,
+                '',
+                'Signals:',
+                ...analysis.signals.map(s => `  ${s.type === 'positive' ? '✅' : s.type === 'negative' ? '❌' : '⚠️'} ${s.label}: ${s.detail}`),
+              ].join('\n');
+              navigator.clipboard.writeText(lines).catch(() => {});
+            }}
+              style={{ padding: '8px 16px', backgroundColor: CARD2, border: `1px solid ${BORDER}`, borderRadius: 8, color: TEXT, fontSize: F.sm, cursor: 'pointer' }}>
+              📋 Copy Summary
+            </button>
+            <button onClick={() => { setAnalysis(null); setRawText(''); setUrlInput(''); setError(''); }}
+              style={{ padding: '8px 16px', backgroundColor: CARD2, border: `1px solid ${BORDER}`, borderRadius: 8, color: MUTED, fontSize: F.sm, cursor: 'pointer' }}>
+              🔄 Analyze Another
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── History ── */}
+      {!analysis && history.length > 0 && (
+        <div style={{ marginTop: 24 }}>
+          <div style={{ fontSize: F.sm, fontWeight: 700, color: MUTED, marginBottom: 10 }}>📚 RECENT ANALYSES</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 10 }}>
+            {history.slice(0, 9).map((h, i) => (
+              <button key={i} onClick={() => setAnalysis(h)}
+                style={{ ...CARD_STYLE, textAlign: 'left', cursor: 'pointer', border: `1px solid ${BORDER}`, padding: '12px 14px', background: CARD2, borderLeft: `3px solid ${h.verdictColor}` }}>
+                <div style={{ fontSize: F.sm, fontWeight: 700, color: TEXT, marginBottom: 3 }}>{h.company}</div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <span style={{ fontSize: 10, color: ACCENT }}>{h.snapshots[0]?.period.label}</span>
+                  <span style={{ fontSize: 10, color: MUTED }}>·</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: h.verdictColor }}>Score: {h.verdictScore}</span>
+                </div>
+                <div style={{ fontSize: 10, color: MUTED, marginTop: 3 }}>{h.signals.filter(s=>s.type==='positive').length}✅ {h.signals.filter(s=>s.type==='negative').length}❌ — {h.verdict.slice(0, 50)}...</div>
+              </button>
+            ))}
+          </div>
+          {history.length > 0 && (
+            <button onClick={() => { setHistory([]); localStorage.removeItem('mb_earnings_history'); }}
+              style={{ marginTop: 10, fontSize: 10, color: MUTED, background: 'none', border: 'none', cursor: 'pointer' }}>
+              🗑 Clear history
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ── Empty state ── */}
+      {!analysis && history.length === 0 && (
+        <div style={{ textAlign: 'center', padding: '50px 20px', color: MUTED }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>📊</div>
+          <div style={{ fontSize: F.lg, fontWeight: 700, color: TEXT, marginBottom: 8 }}>Upload an Earnings Report</div>
+          <div style={{ fontSize: F.sm, color: MUTED, maxWidth: 500, margin: '0 auto', lineHeight: 1.7 }}>
+            Upload the PDF, paste text, or enter a URL from any earnings document.
+            The engine scans for financial numbers — revenue, EBITDA, PAT, EPS, debt, cash flow, ROCE —
+            and generates a complete institutional assessment in seconds.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, maxWidth: 700, margin: '24px auto 0', textAlign: 'left' }}>
+            {[
+              { icon: '📄', title: 'NSE/BSE Quarterly Results', desc: 'Financial results PDF from NSE XBRL or BSE announcements' },
+              { icon: '📊', title: 'Annual Report', desc: 'Full year P&L, balance sheet, cash flow from annual report' },
+              { icon: '🌐', title: 'SEC Filings (10-Q, 10-K)', desc: 'US company quarterly/annual filings from SEC EDGAR' },
+              { icon: '📋', title: 'Investor Presentation', desc: 'Management concall deck with earnings highlights' },
+            ].map(({ icon, title, desc }) => (
+              <div key={title} style={{ padding: '14px', backgroundColor: CARD2, border: `1px solid ${BORDER}`, borderRadius: 8 }}>
+                <div style={{ fontSize: 22, marginBottom: 6 }}>{icon}</div>
+                <div style={{ fontSize: F.xs, fontWeight: 700, color: TEXT, marginBottom: 4 }}>{title}</div>
+                <div style={{ fontSize: 10, color: MUTED, lineHeight: 1.5 }}>{desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 
 const STORAGE_KEY = 'mb_excel_scored_v2';
 const STORAGE_META = 'mb_excel_meta_v2';
 
 export default function MultibaggerPage() {
-  const [activeTab, setActiveTab] = useState<'excel'|'usa'|'usa-checklist'|'checklist'>('excel');
+  const [activeTab, setActiveTab] = useState<'excel'|'usa'|'usa-checklist'|'checklist'|'earnings'>('excel');
 
   // Lazy-init from localStorage — data survives navigation and page refresh.
   // Only cleared when user explicitly clicks "Clear All Data".
@@ -4586,6 +5703,7 @@ export default function MultibaggerPage() {
               {id:'usa',           label:'🇺🇸 USA Multibagger'},
               {id:'usa-checklist', label:'🇺🇸 USA Checklist'},
               {id:'checklist',label:`📋 Research Checklist${excelRows.length?` (${excelRows.length} loaded)`:''}`},
+              {id:'earnings', label:'📊 Earnings Analyzer'},
             ] as const).map(tab=>{
               const active=activeTab===tab.id;
               return (
@@ -4602,6 +5720,7 @@ export default function MultibaggerPage() {
       {activeTab==='usa'          && <USACompare />}
       {activeTab==='usa-checklist'&& <USAChecklist />}
       {activeTab==='checklist' && <MultibaggerChecklist excelRows={excelRows} />}
+      {activeTab==='earnings'  && <EarningsAnalyzer />}
     </div>
   );
 }

@@ -32,15 +32,15 @@ const NAV: NavItem[] = [
   { href: '/calendars',     label: 'Calendar',        icon: <Calendar className="w-5 h-5" /> },
 ];
 
-// Static fallback shown while live data loads
+// Static fallback shown while live data loads — no hardcoded prices to avoid showing stale data
 const MARKETS_FALLBACK = [
-  { symbol: 'NIFTY 50',  price: '23,500', change: '—', up: true },
-  { symbol: 'SENSEX',    price: '77,000', change: '—', up: true },
-  { symbol: 'S&P 500',   price: '5,700',  change: '—', up: true },
-  { symbol: 'NASDAQ',    price: '18,200', change: '—', up: true },
-  { symbol: 'USD/INR',   price: '86.50',  change: '—', up: true },
-  { symbol: 'GOLD',      price: '3,050',  change: '—', up: true },
-  { symbol: 'CRUDE OIL', price: '69.50',  change: '—', up: true },
+  { symbol: 'NIFTY 50',  price: '—', change: '—', up: true },
+  { symbol: 'SENSEX',    price: '—', change: '—', up: true },
+  { symbol: 'S&P 500',   price: '—', change: '—', up: true },
+  { symbol: 'NASDAQ',    price: '—', change: '—', up: true },
+  { symbol: 'USD/INR',   price: '—', change: '—', up: true },
+  { symbol: 'GOLD',      price: '—', change: '—', up: true },
+  { symbol: 'CRUDE OIL', price: '—', change: '—', up: true },
 ];
 
 interface MarketIndex {
@@ -303,16 +303,25 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
             }}
             className="scrollbar-hide mobile-scroll"
           >
-            {markets.map(m => (
+            {(showLoadingSkeleton || isLoading) && (!liveIndices || liveIndices.length === 0) ? (
+              // Show animated skeleton pills while market data loads
+              MARKETS_FALLBACK.map(m => (
+                <div key={m.symbol} style={{ display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0, padding: '4px 4px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: '600', color: '#4A5B6C' }}>{m.symbol}</span>
+                  <div style={{ width: '42px', height: '12px', backgroundColor: '#1A2840', borderRadius: '4px', animation: 'shimmer 1.5s infinite' }} />
+                  <div style={{ width: '38px', height: '12px', backgroundColor: '#1A2840', borderRadius: '4px', animation: 'shimmer 1.5s infinite 0.2s' }} />
+                </div>
+              ))
+            ) : markets.map(m => (
               <button
                 key={m.symbol}
                 onClick={() => setDrawerTicker({ symbol: m.symbol })}
-                style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', padding: '4px 4px', borderRadius: '6px' }}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '6px', transition: 'background-color 0.15s' }}
                 title={`View ${m.symbol} details`}
               >
                 <span style={{ fontSize: '11px', fontWeight: '600', color: '#C9D4E0' }}>{m.symbol}</span>
-                <span style={{ fontSize: '11px', color: '#8A95A3' }}>{m.price}</span>
-                <span style={{ fontSize: '11px', fontWeight: '600', color: m.up ? '#10B981' : '#EF4444' }}>{m.change}</span>
+                {m.price !== '—' && <span style={{ fontSize: '11px', color: '#8A95A3', fontVariantNumeric: 'tabular-nums' }}>{m.price}</span>}
+                <span style={{ fontSize: '11px', fontWeight: '700', color: m.change === '—' || m.change === '...' ? '#4A5B6C' : m.up ? '#10B981' : '#EF4444', fontVariantNumeric: 'tabular-nums' }}>{m.change}</span>
               </button>
             ))}
           </div>

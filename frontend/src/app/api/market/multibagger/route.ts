@@ -327,10 +327,10 @@ function parseScreenerHTML(html: string, symbol: string): Record<string, any> {
   const qtrNums = [...qtrTable.matchAll(/<td[^>]*>\s*([\d,]+)\s*<\/td>/g)]
     .map(x => num(x[1])).filter((v): v is number => v !== null && v > 100);
   if (qtrNums.length >= 4) {
-    // Revenue QoQ growth (latest vs prior quarter)
-    d.revenueGrowthQoQ = ((qtrNums[0] - qtrNums[1]) / Math.abs(qtrNums[1])) * 100;
+    // Revenue QoQ growth (latest vs prior quarter) — guard against zero denominator
+    if (qtrNums[1] !== 0) d.revenueGrowthQoQ = ((qtrNums[0] - qtrNums[1]) / Math.abs(qtrNums[1])) * 100;
     // YoY (latest vs 4 quarters ago)
-    if (qtrNums[4]) d.revenueGrowthYoY = ((qtrNums[0] - qtrNums[4]) / Math.abs(qtrNums[4])) * 100;
+    if (qtrNums[4] && qtrNums[4] !== 0) d.revenueGrowthYoY = ((qtrNums[0] - qtrNums[4]) / Math.abs(qtrNums[4])) * 100;
   }
 
   // Net profit margin

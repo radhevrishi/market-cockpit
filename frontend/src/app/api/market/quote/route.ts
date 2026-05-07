@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { fetchStockQuote } from '@/lib/nse';
+import { rateLimitResponse } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,6 +15,8 @@ const RESPONSE_TTL = 30_000; // 30s cache for assembled response
  * Max 20 symbols per call to stay within Vercel timeout.
  */
 export async function GET(request: Request) {
+  const limited = rateLimitResponse(request, 120, 60_000);
+  if (limited) return limited;
   const { searchParams } = new URL(request.url);
   const symbolsParam = searchParams.get('symbols') || '';
 

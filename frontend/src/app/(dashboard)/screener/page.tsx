@@ -331,56 +331,68 @@ export default function ScreenerPage() {
     if (toFetch.length === 0) return;
 
     setEarningsLoading(true);
+    const controller = new AbortController();
     try {
       const BATCH = 20;
       for (let i = 0; i < toFetch.length; i += BATCH) {
         const batch = toFetch.slice(i, i + BATCH);
         const encoded = batch.map(s => encodeURIComponent(s)).join(',');
-        const res = await fetch(`/api/market/earnings-scan?symbols=${encoded}`);
+        let res: Response;
+        try {
+          res = await fetch(`/api/market/earnings-scan?symbols=${encoded}`, { signal: controller.signal });
+        } catch {
+          // Network error for this batch — don't mark as fetched so it can be retried
+          continue;
+        }
         if (!res.ok) continue;
         const data = await res.json();
         const cards = data.cards || [];
 
-        setEarningsInsights(prev => {
-          const next = new Map(prev);
-          for (const c of cards) {
-            // Find YoY quarter for OPM comparison
-            const q0 = c.quarters?.[0];
-            const latestMonth = q0?.period?.split(' ')?.[0];
-            const latestYear = parseInt(q0?.period?.split(' ')?.[1] || '0');
-            const yoyQ = (c.quarters || []).find((q: any) => {
-              const m = q.period.split(' ')[0];
-              const y = parseInt(q.period.split(' ')[1]);
-              return m === latestMonth && y === latestYear - 1;
-            });
+        // Mark all batch symbols as fetched BEFORE state update (avoid side-effects inside setState)
+        for (const s of batch) earningsFetchedRef.current.add(s);
 
-            next.set(c.symbol, {
-              symbol: c.symbol,
-              revenueYoY: c.revenueYoY ?? null,
-              patYoY: c.patYoY ?? null,
-              epsYoY: c.epsYoY ?? null,
-              opmNow: q0?.opm ?? 0,
-              opmPrev: yoyQ?.opm ?? q0?.opm ?? 0,
-              period: c.period || '',
-              grade: c.grade || '',
-              guidance: c.guidance || null,
-              keyPhrasesPositive: c.keyPhrasesPositive || [],
-              keyPhrasesNegative: c.keyPhrasesNegative || [],
-              capexSignal: c.capexSignal || 'Unknown',
-              demandSignal: c.demandSignal || 'Unknown',
-              marginOutlook: c.marginOutlook || 'Unknown',
-              revenueOutlook: c.revenueOutlook || 'Unknown',
-              patQtr: q0?.pat ?? 0,
-            });
-            earningsFetchedRef.current.add(c.symbol);
-          }
-          // Also mark symbols that returned no card as fetched (avoid retrying)
-          for (const s of batch) earningsFetchedRef.current.add(s);
-          return next;
-        });
+        const newInsights: Array<[string, EarningsInsight]> = [];
+        for (const c of cards) {
+          // Find YoY quarter for OPM comparison
+          const q0 = c.quarters?.[0];
+          const latestMonth = q0?.period?.split(' ')?.[0];
+          const latestYear = parseInt(q0?.period?.split(' ')?.[1] || '0');
+          const yoyQ = (c.quarters || []).find((q: any) => {
+            const m = q.period.split(' ')[0];
+            const y = parseInt(q.period.split(' ')[1]);
+            return m === latestMonth && y === latestYear - 1;
+          });
+          newInsights.push([c.symbol, {
+            symbol: c.symbol,
+            revenueYoY: c.revenueYoY ?? null,
+            patYoY: c.patYoY ?? null,
+            epsYoY: c.epsYoY ?? null,
+            opmNow: q0?.opm ?? 0,
+            opmPrev: yoyQ?.opm ?? q0?.opm ?? 0,
+            period: c.period || '',
+            grade: c.grade || '',
+            guidance: c.guidance || null,
+            keyPhrasesPositive: c.keyPhrasesPositive || [],
+            keyPhrasesNegative: c.keyPhrasesNegative || [],
+            capexSignal: c.capexSignal || 'Unknown',
+            demandSignal: c.demandSignal || 'Unknown',
+            marginOutlook: c.marginOutlook || 'Unknown',
+            revenueOutlook: c.revenueOutlook || 'Unknown',
+            patQtr: q0?.pat ?? 0,
+          }]);
+        }
+        if (newInsights.length > 0) {
+          setEarningsInsights(prev => {
+            const next = new Map(prev);
+            for (const [sym, insight] of newInsights) next.set(sym, insight);
+            return next;
+          });
+        }
       }
     } catch (e) {
-      console.error('[Screener] Earnings fetch failed:', e);
+      if ((e as Error)?.name !== 'AbortError') {
+        console.error('[Screener] Earnings fetch failed:', e);
+      }
     } finally {
       setEarningsLoading(false);
     }

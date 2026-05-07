@@ -1324,6 +1324,39 @@ export default function NewsFeedPage() {
     : null;
   const { data: rawInPlay, isLoading: inPlayLoading, refetch: refetchInPlay } = useInPlay();
 
+  // ── Market Bias: computed from last 24h articles ────────────────────────────
+  const marketBias = useMemo(() => {
+    if (!allArticles || allArticles.length === 0) return null;
+    const cutoff = Date.now() - 24 * 3600 * 1000;
+    const recent = allArticles.filter(a => {
+      try { return new Date(a.published_at).getTime() > cutoff; } catch { return false; }
+    });
+    if (recent.length === 0) return null;
+    const bullish = recent.filter(a => (a.sentiment || '').toUpperCase() === 'BULLISH').length;
+    const bearish = recent.filter(a => (a.sentiment || '').toUpperCase() === 'BEARISH').length;
+    const neutral = recent.length - bullish - bearish;
+    const highImpact = recent.filter(a => (a.investment_tier || 0) === 1).length;
+    const net = bullish - bearish;
+    const bias = net > 3 ? 'Bullish' : net < -3 ? 'Bearish' : 'Neutral';
+    // Top types in last 24h
+    const typeCounts: Record<string,number> = {};
+    for (const a of recent) typeCounts[a.article_type] = (typeCounts[a.article_type] || 0) + 1;
+    const topType = Object.entries(typeCounts).sort((a,b)=>b[1]-a[1])[0];
+    // Hot tickers: most mentioned in last 24h
+    const tickerCounts: Record<string,number> = {};
+    for (const a of recent) {
+      for (const t of getTickerSymbols(a)) {
+        if (t.length >= 2 && t.length <= 7) tickerCounts[t] = (tickerCounts[t] || 0) + 1;
+      }
+    }
+    const hotTickers = Object.entries(tickerCounts)
+      .filter(([,c]) => c >= 2)
+      .sort((a,b) => b[1]-a[1])
+      .slice(0, 12)
+      .map(([ticker, count]) => ({ ticker, count }));
+    return { total: recent.length, bullish, bearish, neutral, highImpact, bias, topType, hotTickers };
+  }, [allArticles]);
+
   // ── Filtering engine: memoized multi-dimensional filter + sort ──────────────
   // Combines: region × article_type × signal × source × bottleneck_level ×
   //           bottleneck_category × structural_only × search-stale filter.
@@ -1444,6 +1477,79 @@ export default function NewsFeedPage() {
 
   return (
     <div style={{ padding: '12px 10px', maxWidth: '1000px', margin: '0 auto' }}>
+
+      {/* ── MARKET BIAS HEADER ────────────────────────────────────────── */}
+      {marketBias && !isLoading && (
+        <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '12px', padding: '10px 14px', marginBottom: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap', marginBottom: marketBias.hotTickers.length > 0 ? '8px' : '0' }}>
+            {/* Bias pill */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+              <span style={{ fontSize: '10px', fontWeight: '700', color: '#4A5B6C', letterSpacing: '0.5px' }}>TODAY</span>
+              <span style={{
+                fontSize: '11px', fontWeight: '800', padding: '3px 10px', borderRadius: '6px',
+                backgroundColor: marketBias.bias === 'Bullish' ? '#10B98120' : marketBias.bias === 'Bearish' ? '#EF444420' : '#F59E0B14',
+                color: marketBias.bias === 'Bullish' ? '#10B981' : marketBias.bias === 'Bearish' ? '#EF4444' : '#F59E0B',
+                border: `1px solid ${marketBias.bias === 'Bullish' ? '#10B98130' : marketBias.bias === 'Bearish' ? '#EF444430' : '#F59E0B30'}`,
+              }}>
+                {marketBias.bias === 'Bullish' ? '↑' : marketBias.bias === 'Bearish' ? '↓' : '→'} {marketBias.bias}
+              </span>
+            </div>
+            {/* Sentiment bars */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10px', color: '#4A5B6C', flexShrink: 0 }}>
+              <span style={{ color: '#10B981', fontWeight: '700' }}>↑{marketBias.bullish}</span>
+              <span style={{ color: '#4A5B6C' }}>·</span>
+              <span style={{ color: '#4A5B6C' }}>→{marketBias.neutral}</span>
+              <span style={{ color: '#4A5B6C' }}>·</span>
+              <span style={{ color: '#EF4444', fontWeight: '700' }}>↓{marketBias.bearish}</span>
+              <span style={{ color: '#2A3B4C', marginLeft: '4px' }}>|</span>
+              <span style={{ color: '#4A5B6C' }}>{marketBias.total} stories</span>
+              {marketBias.highImpact > 0 && (
+                <><span style={{ color: '#2A3B4C', marginLeft: '4px' }}>|</span>
+                <span style={{ color: '#EF4444', fontWeight: '700' }}>{marketBias.highImpact} HIGH signal</span></>
+              )}
+            </div>
+            {/* Dominant type */}
+            {marketBias.topType && (
+              <span style={{
+                fontSize: '10px', fontWeight: '600', padding: '2px 8px', borderRadius: '5px',
+                backgroundColor: typeColor(marketBias.topType[0]) + '18',
+                color: typeColor(marketBias.topType[0]),
+                border: `1px solid ${typeColor(marketBias.topType[0])}30`,
+              }}>
+                📌 {marketBias.topType[0].replace(/_/g,' ')} ({marketBias.topType[1]})
+              </span>
+            )}
+            {/* Live indicator */}
+            <span style={{ marginLeft: 'auto', fontSize: '9px', color: '#4A5B6C', flexShrink: 0 }}>
+              <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#10B981', marginRight: '4px', animation: 'pulse 2s infinite' }} />
+              24H INTELLIGENCE
+            </span>
+          </div>
+          {/* Hot Tickers strip */}
+          {marketBias.hotTickers.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflowX: 'auto', paddingBottom: '2px' }} className="scrollbar-hide">
+              <span style={{ fontSize: '9px', fontWeight: '700', color: '#4A5B6C', letterSpacing: '0.5px', flexShrink: 0 }}>HOT:</span>
+              {marketBias.hotTickers.map(({ ticker, count }) => (
+                <button
+                  key={ticker}
+                  onClick={() => setSearch(ticker)}
+                  style={{
+                    fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '5px',
+                    backgroundColor: count >= 5 ? '#EF444418' : count >= 3 ? '#F59E0B14' : '#0F7ABF14',
+                    color: count >= 5 ? '#EF4444' : count >= 3 ? '#F59E0B' : '#0F7ABF',
+                    border: `1px solid ${count >= 5 ? '#EF444430' : count >= 3 ? '#F59E0B30' : '#0F7ABF30'}`,
+                    cursor: 'pointer', flexShrink: 0, transition: 'opacity 0.15s',
+                  }}
+                  title={`${ticker} mentioned ${count}× in last 24h — click to filter`}
+                >
+                  {ticker}
+                  <span style={{ fontSize: '8px', marginLeft: '3px', opacity: 0.7 }}>×{count}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── IN PLAY TODAY bar ─────────────────────────────────────────── */}
       {!inPlayLoading && (

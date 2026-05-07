@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { fetchAllIndices } from '@/lib/nse';
 import { fetchQuotesWithFallback, MACRO_INDICES, MACRO_CURRENCIES, MACRO_COMMODITIES, MACRO_BONDS } from '@/lib/yahoo';
+import { rateLimitResponse } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,7 +9,9 @@ export const dynamic = 'force-dynamic';
 const responseCache = new Map<string, { data: any; ts: number }>();
 const RESPONSE_TTL = 60_000; // 60s cache for macro data (changes less frequently)
 
-export async function GET() {
+export async function GET(request: Request) {
+  const limited = rateLimitResponse(request, 60, 60_000);
+  if (limited) return limited;
   // Cache key for macro data (single endpoint)
   const cacheKey = 'macro';
 

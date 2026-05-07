@@ -18,7 +18,7 @@
     "@radix-ui/react-tooltip": "^1.1.2",
     "@tanstack/react-query": "^5.51.21",
     "@upstash/redis": "^1.37.0",
-    "axios": "^1.7.2",
+    "axios": "^1.16.0",
     "clsx": "^2.1.1",
     "date-fns": "^2.30.0",
     "docx": "^9.6.1",

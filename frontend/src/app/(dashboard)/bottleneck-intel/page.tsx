@@ -8,6 +8,7 @@ import {
   Globe, Calendar, BookOpen, Map as MapIcon, CheckSquare, Square,
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -283,7 +284,11 @@ const DRILLDOWN: Record<string, DrilldownEntry> = {
     contradictions: ['SK Hynix/Samsung both report HBM inventory build (not sold through)', 'AI model architectures shift to smaller context windows reducing memory bandwidth need', 'CXL memory pooling reduces per-server HBM requirements by >30%'],
     watch_kpi: ['HBM3E spot pricing (should be rising)', 'MU/SKX gross margin trajectory', 'NVDA H200 vs B200 shipment mix (B200 = 8× more HBM)', 'AEHR order backlog language in earnings calls'],
     causal_chain: ['AI training scale ↑ → HBM demand surge → HBM 3-vendor oligopoly constrained → CoWoS packaging required for HBM stacking → advanced packaging substrate demand → power/cooling for HBM-dense systems'],
-    india_plays: [],
+    india_plays: [
+      { ticker: 'INFY', exchange: 'NSE', thesis: 'Infosys: semiconductor IP design services (Infy\'s engineering services arm works with all major DRAM/HBM firms); CHIPS Act wave = design-services order growth' },
+      { ticker: 'WIPRO', exchange: 'NSE', thesis: 'Wipro: VLSI/embedded design services, PCB layout for AI/HPC systems — memory module design and integration services' },
+      { ticker: 'CYIENT', exchange: 'NSE', thesis: 'Cyient: embedded semiconductor design services, test automation scripts for SoC/memory verification — indirect play on HBM design cycle' },
+    ],
     chokepoints: [
       { ticker: 'MU',   name: 'Micron Technology', exchange: 'NASDAQ', tier: 4, public_competitors: 2, qual_stage: 'RAMP',   customers: ['NVDA','AMD','hyperscalers'], monopoly_basis: 'Only US-based HBM producer. HBM3E yield advantage in ramp. DRAM + HBM dual revenue.', evidence_types: ['earnings','sec_filing','news_article'] },
       { ticker: 'AEHR', name: 'Aehr Test Systems',  exchange: 'NASDAQ', tier: 8, public_competitors: 1, qual_stage: 'RAMP',   customers: ['SK Hynix','Micron','TSMC'], monopoly_basis: 'Only public company offering wafer-level burn-in for HBM and SiC. Zero near-term substitutes.', evidence_types: ['earnings','ir_page','conference_pdf'] },
@@ -417,9 +422,15 @@ const DRILLDOWN: Record<string, DrilldownEntry> = {
     india_plays: [
       { ticker: 'BHEL', exchange: 'NSE', thesis: 'BHEL: power transformer OEM, domestic order book accelerating with data center/industrial power demand' },
       { ticker: 'POWERGRID', exchange: 'NSE', thesis: 'POWERGRID Corporation: national transmission infra build-out, AI data center connectivity beneficiary' },
-      { ticker: 'KPTL', exchange: 'NSE', thesis: 'Kalpataru Projects: EPC for high-voltage transmission, growing data center power connections' },
+      { ticker: 'KPTL', exchange: 'NSE', thesis: 'Kalpataru Projects (KPTL): EPC for high-voltage transmission lines and substations' },
       { ticker: 'SIEMENS', exchange: 'NSE', thesis: 'Siemens India: switchgear, transformers, grid automation — direct supply chain play' },
       { ticker: 'ABB', exchange: 'NSE', thesis: 'ABB India: grid electrification, HV transformers, industrial automation' },
+      { ticker: 'TRIL', exchange: 'NSE', thesis: 'Transformers & Rectifiers India (TRIL): specialty transformer OEM, order book multi-year visibility' },
+      { ticker: 'AMBER', exchange: 'NSE', thesis: 'Amber Enterprises: power electronics, transformer assemblies, data center UPS systems' },
+      { ticker: 'TDPOWERSYS', exchange: 'NSE', thesis: 'TD Power Systems: alternators and generators — diesel genset demand surge for data center backup power' },
+      { ticker: 'KEC', exchange: 'NSE', thesis: 'KEC International: high-voltage transmission EPC, 40%+ revenue from T&D — direct order flow beneficiary' },
+      { ticker: 'APARINDS', exchange: 'NSE', thesis: 'APAR Industries: conductors, cables, transformer oil — three direct product categories in demand' },
+      { ticker: 'GPIL', exchange: 'NSE', thesis: 'Godawari Power: grain-oriented electrical steel (GOES) — magnetic steel for transformer cores, India market leader' },
     ],
   },
   NUCLEAR_ENERGY: {
@@ -448,8 +459,12 @@ const DRILLDOWN: Record<string, DrilldownEntry> = {
     theme_family: 'POWER_GRID_FAMILY',
     causal_chain: ['AI compute ↑ → 24/7 carbon-free power demand → nuclear PPA race → uranium/HALEU supply constraint → enrichment capacity → SMR permitting timeline → construction materials/labor'],
     india_plays: [
-      { ticker: 'NHPC', exchange: 'NSE', thesis: 'NHPC: hydropower — adjacent carbon-free baseload beneficiary of same demand driver' },
-      { ticker: 'TATAPOWER', exchange: 'NSE', thesis: 'Tata Power: renewable + thermal, India nuclear adjacency via government capex' },
+      { ticker: 'NHPC', exchange: 'NSE', thesis: 'NHPC: hydropower — adjacent carbon-free baseload; government target of 500 GW by 2030 benefits NHPC directly' },
+      { ticker: 'TATAPOWER', exchange: 'NSE', thesis: 'Tata Power: renewable + thermal; India nuclear adjacency via ₹4.4L Cr nuclear expansion announced by government' },
+      { ticker: 'NTPC', exchange: 'NSE', thesis: 'NTPC: India\'s largest power generator, nuclear JV NPCIL partner — government nuclear build-out beneficiary' },
+      { ticker: 'BHARATFORGE', exchange: 'NSE', thesis: 'Bharat Forge: large forgings for nuclear reactor pressure vessels and turbine components — specialised manufacturing' },
+      { ticker: 'LT', exchange: 'NSE', thesis: 'Larsen & Toubro (LT): primary EPC for nuclear power plants in India — KKNPP, Gorakhpur, and new sites' },
+      { ticker: 'WALCHAND', exchange: 'NSE', thesis: 'Walchandnagar Industries: heavy engineering equipment for nuclear, defence, aerospace — captive supplier to NPCIL' },
     ],
   },
   THERMAL_COOLING: {
@@ -1411,6 +1426,102 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
 
       {/* Emerging themes — discovery-first layer */}
       <EmergingThemes articles={articles} />
+
+      {/* ── CONVICTION MATRIX — 2-axis view: velocity vs effective severity ── */}
+      {sorted.length >= 2 && (() => {
+        // Pre-compute max velocity once (safe against empty sorted / all-zero)
+        const weekValues = sorted.map(x => velocities[x.bucket_id]?.week ?? 0);
+        const maxWeek = Math.max(1, ...weekValues); // always >= 1 so we never divide by 0
+        try {
+          return (
+            <div style={{ marginBottom: '20px', padding: '14px 16px', backgroundColor: '#060E1A', border: '1px solid #1A284030', borderRadius: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '10px', fontWeight: '800', color: '#8B5CF6', letterSpacing: '1px' }}>📊 CONVICTION MATRIX</span>
+                <span style={{ fontSize: '10px', color: '#4A5B6C' }}>velocity × severity → lifecycle state · click to inspect</span>
+                <div style={{ display: 'flex', gap: '5px', marginLeft: 'auto', flexWrap: 'wrap' }}>
+                  {([
+                    {label:'🔥 ACCEL', color:'#F59E0B'},{label:'⚡ ACTIVE', color:'#10B981'},
+                    {label:'🏗 STRUCT', color:'#8B5CF6'},{label:'📉 FADING', color:'#4A5B6C'},
+                  ] as const).map(s=>(
+                    <span key={s.label} style={{fontSize:'8px',fontWeight:'700',color:s.color,padding:'1px 5px',borderRadius:3,border:`1px solid ${s.color}30`,backgroundColor:s.color+'10'}}>{s.label}</span>
+                  ))}
+                </div>
+              </div>
+              {/* Tile grid — each bucket is a tile */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '8px' }}>
+                {sorted.map(b => {
+                  const vel = velocities[b.bucket_id] ?? { week: 0, prev: 0, trend: '→' as const };
+                  const lc = getBucketLifecycle(b.bucket_id, { week: vel.week ?? 0, prev: vel.prev ?? 0, trend: vel.trend ?? '→' });
+                  const decayed = decayedSeverities[b.bucket_id];
+                  const eff = decayed?.effective ?? b.severity ?? 1;
+                  const hasChokepoints = !!(DRILLDOWN[b.bucket_id]?.chokepoints?.length);
+                  const invest = getInvestabilityScore(b.bucket_id, { week: vel.week ?? 0, trend: lc.state }, b.signal_count ?? 0, b.article_count ?? 0, hasChokepoints);
+                  const barW = Math.min(100, Math.round(((vel.week ?? 0) / maxWeek) * 100));
+                  // Split lifecycle label safely: '🔥 ACCELERATING' → ['🔥','ACCELERATING']
+                  const lcParts = (lc.label ?? '').split(' ');
+                  const lcEmoji = lcParts[0] ?? '';
+                  const lcWord = lcParts.slice(1).join(' ') || lc.state;
+                  const investWord = (invest.label ?? '').split(' ').slice(1).join(' ') || 'n/a';
+                  return (
+                    <div key={b.bucket_id} style={{
+                      padding: '10px 12px', borderRadius: '8px',
+                      backgroundColor: lc.color + '10',
+                      border: `1px solid ${lc.color}30`,
+                      borderLeft: `3px solid ${lc.color}`,
+                      cursor: 'pointer', transition: 'filter 0.15s',
+                    }}
+                      onClick={() => setActiveBucket(activeBucket === b.bucket_id ? null : b.bucket_id)}
+                    >
+                      <div style={{ fontSize: '10px', fontWeight: '800', color: '#F5F7FA', marginBottom: '3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {b.severity_icon ?? '⚡'} {b.label ?? b.bucket_id}
+                      </div>
+                      {/* Velocity bar */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '5px' }}>
+                        <div style={{ flex: 1, height: '3px', backgroundColor: '#1A2840', borderRadius: '2px', overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${barW}%`, backgroundColor: lc.color, borderRadius: '2px' }} />
+                        </div>
+                        <span style={{ fontSize: '9px', color: lc.color, fontWeight: '700', minWidth: '18px', textAlign: 'right' }}>{vel.week ?? 0}w</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '8px', fontWeight: '700', padding: '1px 4px', borderRadius: '3px', backgroundColor: lc.color + '20', color: lc.color }}>{lcEmoji} {lcWord}</span>
+                        <span style={{ fontSize: '8px', color: invest.color ?? '#4A5B6C', fontWeight: '700' }}>{investWord}</span>
+                        {decayed?.decayed && <span style={{ fontSize: '7px', color: '#4A5B6C', fontStyle: 'italic' }}>eff:{eff}</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Selected bucket detail */}
+              {activeBucket && sorted.find(x => x.bucket_id === activeBucket) && (() => {
+                const b = sorted.find(x => x.bucket_id === activeBucket)!;
+                const vel = velocities[activeBucket] ?? { week: 0, prev: 0, trend: '→' as const };
+                const lc = getBucketLifecycle(activeBucket, { week: vel.week ?? 0, prev: vel.prev ?? 0, trend: vel.trend ?? '→' });
+                const invest = getInvestabilityScore(activeBucket, { week: vel.week ?? 0, trend: lc.state }, b.signal_count ?? 0, b.article_count ?? 0, !!(DRILLDOWN[activeBucket]?.chokepoints?.length));
+                return (
+                  <div style={{ marginTop: '10px', padding: '12px 14px', backgroundColor: '#060E1A', border: `1px solid ${lc.color}30`, borderRadius: '8px' }}>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '6px', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '12px', fontWeight: '800', color: '#F5F7FA' }}>{b.label}</span>
+                      <span style={{ fontSize: '9px', fontWeight: '700', padding: '1px 6px', borderRadius: '3px', backgroundColor: lc.color + '20', color: lc.color }}>{lc.label}</span>
+                      <span style={{ fontSize: '9px', color: invest.color, fontWeight: '700' }}>{invest.label}</span>
+                      <span style={{ fontSize: '9px', color: '#4A5B6C', marginLeft: 'auto', textAlign: 'right' }}>Reasoning: {invest.reasoning}</span>
+                    </div>
+                    <p style={{ fontSize: '11px', color: '#8A95A3', margin: '0 0 8px', lineHeight: '1.5' }}>{lc.desc}</p>
+                    {(b.key_tickers?.length ?? 0) > 0 && (
+                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                        {(b.key_tickers ?? []).slice(0, 8).map(t => (
+                          <span key={t} style={{ fontSize: '9px', fontWeight: '700', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#0F7ABF14', color: '#0F7ABF', border: '1px solid #0F7ABF25' }}>{t}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          );
+        } catch {
+          return null; // silently skip the matrix if any unexpected data shape causes a render error
+        }
+      })()}
 
       {/* Banner */}
       {top && (
@@ -2993,8 +3104,13 @@ export default function BottleneckIntelPage() {
       {activeTab === 'Drilldown' && <DrilldownKB articles={bnArticles} />}
       {activeTab === 'Geo'       && <GeoOverlay articles={geoArticles} isLoading={geoLoading} />}
       {activeTab === 'Calendar'  && <ConferenceCalendar />}
-      {activeTab === 'Map'       && <SupplyChainMap dashboard={dashboard} articles={bnArticles} />}
-      {(() => { const enriched = buildEnrichedStocks(bnArticles, usQuotes); return activeTab === 'Checklist' && <SerenityChecklist enriched={enriched} />; })()}
+      {activeTab === 'Map'       && <ErrorBoundary context="Supply Chain Map"><SupplyChainMap dashboard={dashboard} articles={bnArticles ?? []} /></ErrorBoundary>}
+      {activeTab === 'Checklist' && (() => {
+        try {
+          const enriched = buildEnrichedStocks(bnArticles ?? [], usQuotes ?? []);
+          return <SerenityChecklist enriched={enriched} />;
+        } catch { return <div style={{ padding: 20, color: '#4A5B6C' }}>Could not load checklist data. Try refreshing.</div>; }
+      })()}
     </div>
   );
 }

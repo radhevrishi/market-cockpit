@@ -342,7 +342,7 @@ export default function WatchlistsPage() {
     const initTickers = async () => {
       // Try to sync with shared watchlist (remote is source of truth)
       try {
-        const syncRes = await fetch('/api/watchlist?chatId=${CHAT_ID}');
+        const syncRes = await fetch(`/api/watchlist?chatId=${CHAT_ID}`);
         if (syncRes.ok) {
           const syncData = await syncRes.json();
           if (syncData.watchlist && syncData.watchlist.length > 0) {

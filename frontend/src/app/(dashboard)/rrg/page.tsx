@@ -268,8 +268,11 @@ export default function RRGPage() {
         </div>
 
         {error && (
-          <div style={{ padding: '16px', background: `${THEME.red}22`, border: `1px solid ${THEME.red}`, borderRadius: '8px', color: THEME.red, marginBottom: '24px' }}>
-            Error: {error}
+          <div style={{ padding: '16px', background: `${THEME.red}22`, border: `1px solid ${THEME.red}`, borderRadius: '8px', color: THEME.red, marginBottom: '24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+            <span>⚠ {error} — check that the backend is running or try again.</span>
+            <button onClick={fetchData} style={{ padding: '6px 14px', borderRadius: '6px', border: `1px solid ${THEME.red}`, backgroundColor: `${THEME.red}18`, color: THEME.red, cursor: 'pointer', fontSize: '12px', fontWeight: '700', flexShrink: 0 }}>
+              ↻ Retry
+            </button>
           </div>
         )}
 
@@ -290,13 +293,13 @@ export default function RRGPage() {
                 </div>
               </div>
 
-              <div style={{ overflow: 'visible', display: 'flex', justifyContent: 'center' }}>
+              <div style={{ overflowX: 'auto', display: 'flex', justifyContent: 'center', WebkitOverflowScrolling: 'touch' }}>
                 <svg
                   ref={svgRef}
                   width={chartWidth}
                   height={chartHeight}
                   viewBox={`0 0 ${chartWidth} ${chartHeight}`}
-                  style={{ background: 'transparent' }}
+                  style={{ background: 'transparent', maxWidth: '100%', height: 'auto', minWidth: '320px' }}
                 >
                   {/* Quadrant backgrounds */}
                   <rect x={getPlotX(100)} y={padding} width={getPlotX(maxX) - getPlotX(100)} height={getPlotY(100) - padding} fill={QUADRANT_COLORS.Leading.bg} />

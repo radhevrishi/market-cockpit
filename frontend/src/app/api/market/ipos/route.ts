@@ -1,9 +1,12 @@
 import { NextResponse } from 'next/server';
 import { fetchCurrentIPOs, fetchUpcomingIPOs, fetchPastIPOs } from '@/lib/nse';
+import { rateLimitResponse } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(request: Request) {
+  const limited = rateLimitResponse(request, 60, 60_000);
+  if (limited) return limited;
   try {
     // Fetch from NSE APIs in parallel (catch individually — NSE IPO APIs are unreliable)
     const [currentData, upcomingData, pastData] = await Promise.all([

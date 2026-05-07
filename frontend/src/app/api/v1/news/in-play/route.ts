@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { kvGet } from '@/lib/kv';
+import { rateLimitResponse } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 
@@ -75,7 +76,9 @@ async function getStructuralMomentum(): Promise<Record<string, number>> {
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const limited = rateLimitResponse(request, 120, 60_000);
+  if (limited) return limited;
   try {
     // Read from intelligence signals (already computed and cached)
     const stored = await kvGet<any>('intelligence:signals');

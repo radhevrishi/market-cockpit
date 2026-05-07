@@ -119,9 +119,51 @@ const fetchIndividualQuotes = async (symbols: string[]): Promise<StockQuote[]> =
 const fmt = (n: number) => n >= 10000000 ? `${(n / 10000000).toFixed(2)} Cr` : n >= 100000 ? `${(n / 100000).toFixed(2)} L` : `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
 const fmtPct = (n: number) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
 
+/* ── Helpers ────────────────────────────────────────────────────────── */
+
+/** Weighted CAGR across all holdings: annualizes total return using value-weighted average holding years */
+function computePortfolioCagr(rows: PortfolioRow[], holdings: PortfolioHolding[]): number | null {
+  const now = Date.now();
+  let weightedYears = 0;
+  let totalInvested = 0;
+  for (const row of rows) {
+    const h = holdings.find(h => h.symbol === row.symbol);
+    if (!h?.addedAt) continue;
+    const addedMs = new Date(h.addedAt).getTime();
+    if (isNaN(addedMs)) continue;
+    const years = (now - addedMs) / (365.25 * 24 * 3600 * 1000);
+    if (years < 0.01) continue; // skip positions added today
+    weightedYears += years * row.investedValue;
+    totalInvested += row.investedValue;
+  }
+  if (totalInvested === 0) return null;
+  const avgYears = weightedYears / totalInvested;
+  if (avgYears < 0.01) return null;
+
+  const totalCurrent = rows.reduce((s, r) => s + r.currentValue, 0);
+  const totalInv = rows.reduce((s, r) => s + r.investedValue, 0);
+  if (totalInv <= 0 || totalCurrent <= 0) return null;
+  const cagr = (Math.pow(totalCurrent / totalInv, 1 / avgYears) - 1) * 100;
+  return parseFloat(cagr.toFixed(1));
+}
+
+/** Returns top sector and its weight% */
+function topSector(rows: PortfolioRow[]): { sector: string; pct: number } | null {
+  const totalValue = rows.reduce((s, r) => s + r.currentValue, 0);
+  if (totalValue === 0) return null;
+  const bySector: Record<string, number> = {};
+  for (const r of rows) {
+    if (!r.sector || r.sector === '—') continue;
+    bySector[r.sector] = (bySector[r.sector] ?? 0) + r.currentValue;
+  }
+  const entries = Object.entries(bySector).sort((a, b) => b[1] - a[1]);
+  if (!entries.length) return null;
+  return { sector: entries[0][0], pct: (entries[0][1] / totalValue) * 100 };
+}
+
 /* ── Summary Cards ─────────────────────────────────────────────────── */
 
-function PortfolioSummary({ rows }: { rows: PortfolioRow[] }) {
+function PortfolioSummary({ rows, holdings }: { rows: PortfolioRow[]; holdings: PortfolioHolding[] }) {
   if (rows.length === 0) return null;
 
   const totalInvested = rows.reduce((s, r) => s + r.investedValue, 0);
@@ -135,13 +177,17 @@ function PortfolioSummary({ rows }: { rows: PortfolioRow[] }) {
 
   const best = rows.length > 0 ? rows.reduce((a, b) => a.pnlPercent > b.pnlPercent ? a : b) : null;
   const worst = rows.length > 0 ? rows.reduce((a, b) => a.pnlPercent < b.pnlPercent ? a : b) : null;
+  const cagr = computePortfolioCagr(rows, holdings);
+  const top = topSector(rows);
 
   const cards = [
     { label: 'INVESTED VALUE', value: fmt(totalInvested), color: '#F5F7FA' },
     { label: 'CURRENT VALUE', value: fmt(totalCurrent), color: '#F5F7FA' },
     { label: 'TOTAL P&L', value: `${fmt(Math.abs(totalPnl))} (${fmtPct(totalPnlPct)})`, color: totalPnl >= 0 ? '#10B981' : '#EF4444' },
+    ...(cagr !== null ? [{ label: 'CAGR', value: fmtPct(cagr), sub: 'annualized return', color: cagr >= 0 ? '#10B981' : '#EF4444' }] : []),
     { label: 'DAY P&L', value: fmt(Math.abs(dayPnl)), color: dayPnl >= 0 ? '#10B981' : '#EF4444' },
     { label: 'HOLDINGS', value: `${rows.length}`, sub: `${gainers} ↑  ${losers} ↓${noData > 0 ? `  ${noData} N/A` : ''}`, color: '#F5F7FA' },
+    ...(top ? [{ label: 'TOP SECTOR', value: top.sector, sub: `${top.pct.toFixed(0)}% of portfolio`, color: '#60A5FA' }] : []),
     ...(best ? [{ label: 'BEST PERFORMER', value: best.symbol, sub: fmtPct(best.pnlPercent), color: '#10B981' }] : []),
     ...(worst ? [{ label: 'WORST PERFORMER', value: worst.symbol, sub: fmtPct(worst.pnlPercent), color: '#EF4444' }] : []),
   ];
@@ -281,6 +327,7 @@ export default function PortfolioPage() {
   const [quotes, setQuotes] = useState<StockQuote[]>([]);
   const [intelligence, setIntelligence] = useState<Map<string, Signal>>(new Map());
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [sortField, setSortField] = useState<SortField>('weight');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
@@ -309,6 +356,7 @@ export default function PortfolioPage() {
   // Fetch live quotes — bulk first, then individual for missing
   const fetchData = useCallback(async () => {
     setIsRefreshing(true);
+    setFetchError(null);
     try {
       const bulkQuotes = await fetchStockQuotes();
       const bulkTickers = new Set(bulkQuotes.map(q => q.ticker));
@@ -343,7 +391,10 @@ export default function PortfolioPage() {
 
       setLastRefresh(new Date());
       setLoading(false);
-    } catch { setLoading(false); }
+    } catch (e) {
+      setLoading(false);
+      setFetchError('Live prices unavailable — showing last known data. NSE API may be down.');
+    }
     finally { setIsRefreshing(false); }
   }, [holdings]);
 
@@ -545,13 +596,28 @@ export default function PortfolioPage() {
       {showAdd && <AddHoldingForm onAdd={handleAdd} onCancel={() => setShowAdd(false)} quotes={quotes} />}
 
       {/* ── Summary ─────────────────────────────────────────────────── */}
-      <PortfolioSummary rows={sortedRows} />
+      <PortfolioSummary rows={sortedRows} holdings={holdings} />
+
+      {/* ── Fetch error banner ──────────────────────────────────────── */}
+      {fetchError && !loading && (
+        <div style={{ backgroundColor: '#1A1212', border: '1px solid #7F1D1D', borderRadius: '10px', padding: '10px 14px', marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '12px', color: '#FCA5A5' }}>⚠ {fetchError}</span>
+          <button onClick={() => { setFetchError(null); fetchData(); }} style={{ padding: '5px 12px', borderRadius: '5px', border: '1px solid #7F1D1D', backgroundColor: '#7F1D1D30', color: '#FCA5A5', cursor: 'pointer', fontSize: '11px', fontWeight: '700', flexShrink: 0 }}>
+            ↻ Retry
+          </button>
+        </div>
+      )}
 
       {/* ── Loading ─────────────────────────────────────────────────── */}
       {loading && holdings.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           {[1, 2, 3, 4, 5].map(i => (
-            <div key={i} style={{ height: '48px', backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '10px', animation: 'pulse 2s cubic-bezier(0.4,0,0.6,1) infinite' }} />
+            <div key={i} style={{ height: '44px', backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: '10px', animation: 'pulse 2s cubic-bezier(0.4,0,0.6,1) infinite', display: 'flex', alignItems: 'center', padding: '0 16px', gap: '12px' }}>
+              <div style={{ width: '60px', height: '14px', backgroundColor: '#2A3B4C', borderRadius: '4px' }} />
+              <div style={{ flex: 1, height: '10px', backgroundColor: '#2A3B4C', borderRadius: '4px' }} />
+              <div style={{ width: '50px', height: '14px', backgroundColor: '#2A3B4C', borderRadius: '4px' }} />
+              <div style={{ width: '50px', height: '14px', backgroundColor: '#2A3B4C', borderRadius: '4px' }} />
+            </div>
           ))}
         </div>
       )}

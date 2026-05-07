@@ -109,9 +109,13 @@ const THEMES = [
   },
 ];
 
-// Flatten all tickers for a single batch POST
-const ALL_TICKERS = THEMES.flatMap(t =>
-  t.tickers.map(tk => ({ ticker: tk.ticker, exchange: tk.exchange }))
+// Split tickers by market to avoid backend confusion between US and India quotes
+const US_EXCHANGES = new Set(['NASDAQ', 'NYSE', 'AMEX']);
+const US_TICKERS = THEMES.flatMap(t =>
+  t.tickers.filter(tk => US_EXCHANGES.has(tk.exchange)).map(tk => ({ ticker: tk.ticker, exchange: tk.exchange }))
+);
+const IN_TICKERS = THEMES.flatMap(t =>
+  t.tickers.filter(tk => !US_EXCHANGES.has(tk.exchange)).map(tk => ({ ticker: tk.ticker, exchange: tk.exchange }))
 );
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -119,25 +123,39 @@ const ALL_TICKERS = THEMES.flatMap(t =>
 interface QuoteEntry { price?: number; change_pct?: number; currency?: string }
 type QuoteMap = Record<string, QuoteEntry>;
 
+// Helper: normalize API response to QuoteMap
+function normalizeQuoteResponse(data: unknown): QuoteMap {
+  if (!data) return {};
+  if (Array.isArray(data)) {
+    const map: QuoteMap = {};
+    (data as Array<{ ticker?: string; price?: number; change_pct?: number; currency?: string }>).forEach(quote => {
+      if (quote?.ticker) map[quote.ticker] = quote;
+    });
+    return map;
+  }
+  return (typeof data === 'object') ? data as QuoteMap : {};
+}
+
 // ── Hooks ─────────────────────────────────────────────────────────────────────
 
 function useThemeQuotes() {
   return useQuery<QuoteMap>({
     queryKey: ['themes', 'quotes'],
     queryFn: async () => {
-      const { data } = await api.post('/market/quotes', ALL_TICKERS);
-      // Backend returns a dict keyed by ticker symbol (or list for old format)
-      if (Array.isArray(data)) {
-        // If it returns an array, convert to map keyed by ticker
-        const map: QuoteMap = {};
-        data.forEach(quote => {
-          if (quote && quote.ticker) {
-            map[quote.ticker] = quote;
-          }
-        });
-        return map;
+      // Run US and India quote fetches in parallel (different market endpoints)
+      const results = await Promise.allSettled([
+        US_TICKERS.length > 0 ? api.post('/market/quotes', US_TICKERS) : Promise.resolve({ data: {} }),
+        IN_TICKERS.length > 0 ? api.post('/market/quotes', IN_TICKERS) : Promise.resolve({ data: {} }),
+      ]);
+
+      const merged: QuoteMap = {};
+      for (const r of results) {
+        if (r.status === 'fulfilled') {
+          const part = normalizeQuoteResponse(r.value.data);
+          Object.assign(merged, part);
+        }
       }
-      return (data && typeof data === 'object') ? data as QuoteMap : {};
+      return merged;
     },
     staleTime: 60_000,
     refetchInterval: 120_000,
@@ -183,7 +201,7 @@ export default function ThemesPage() {
   const searchParams = useSearchParams();
   const [active, setActive] = useState<string | null>(null);
   const [drawerTicker, setDrawerTicker] = useState<{ symbol: string; exchange: string } | null>(null);
-  const { data: quotes, isLoading: quotesLoading } = useThemeQuotes();
+  const { data: quotes, isLoading: quotesLoading, isError: quotesError } = useThemeQuotes();
 
   // Auto-select theme and open drawer if ticker parameter is present
   useEffect(() => {
@@ -211,6 +229,7 @@ export default function ThemesPage() {
         <p className="text-[#8899AA] text-sm mt-1">
           Pre-built baskets for your focus themes. Click a theme to expand; click any ticker for details.
           {quotesLoading && <span className="ml-2 text-[#4A5B6C] text-xs animate-pulse">Loading live prices…</span>}
+          {quotesError && <span className="ml-2 text-amber-500/80 text-xs">⚠ Live prices unavailable — showing tickers only</span>}
         </p>
       </div>
 

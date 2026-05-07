@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
+import { rateLimitResponse } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,6 +31,8 @@ function kvMetaKey(chatId: string): string {
  * Uses Redis (persistent) → in-memory fallback → DEFAULT_WATCHLIST
  */
 export async function GET(request: Request) {
+  const limited = rateLimitResponse(request, 120, 60_000); // 120 req/min per IP
+  if (limited) return limited;
   const { searchParams } = new URL(request.url);
   const chatId = searchParams.get('chatId') || 'default';
 
@@ -57,6 +60,8 @@ export async function GET(request: Request) {
  * Persists to Redis (if available) + in-memory
  */
 export async function POST(request: Request) {
+  const limited = rateLimitResponse(request, 30, 60_000); // 30 writes/min per IP
+  if (limited) return limited;
   try {
     const body = await request.json();
     const { chatId = 'default', secret } = body;

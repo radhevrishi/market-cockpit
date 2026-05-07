@@ -52,9 +52,24 @@ const qualityColors: Record<string, string> = {
   Preview: '#8B5CF6',
 };
 
-// Tab cache for calendar data (5 min TTL per month)
+// Tab cache for calendar data (5 min TTL per month, max 24 entries to prevent unbounded growth)
 const CALENDAR_CACHE_TTL = 300_000;
+const CALENDAR_CACHE_MAX = 24;
 const _calendarCache = new Map<string, { data: EarningsResponse; ts: number }>();
+
+function calendarCacheSet(key: string, value: { data: EarningsResponse; ts: number }) {
+  // Evict expired entries first
+  const now = Date.now();
+  for (const [k, v] of _calendarCache.entries()) {
+    if (now - v.ts > CALENDAR_CACHE_TTL) _calendarCache.delete(k);
+  }
+  // If still too large, evict oldest entry
+  if (_calendarCache.size >= CALENDAR_CACHE_MAX) {
+    const oldest = [..._calendarCache.entries()].sort((a, b) => a[1].ts - b[1].ts)[0];
+    if (oldest) _calendarCache.delete(oldest[0]);
+  }
+  _calendarCache.set(key, value);
+}
 
 export default function CalendarPage() {
   const [data, setData] = useState<EarningsResponse | null>(null);
@@ -85,7 +100,7 @@ export default function CalendarPage() {
       if (!res.ok) throw new Error('Failed to fetch earnings data');
       const json: EarningsResponse = await res.json();
       setData(json);
-      _calendarCache.set(cacheKey, { data: json, ts: Date.now() });
+      calendarCacheSet(cacheKey, { data: json, ts: Date.now() });
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
@@ -235,8 +250,11 @@ export default function CalendarPage() {
       )}
 
       {error && !loading && (
-        <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.red}`, borderRadius: '8px', padding: '16px', color: THEME.red, marginBottom: '24px' }}>
-          Error: {error}
+        <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.red}`, borderRadius: '8px', padding: '14px 16px', color: THEME.red, marginBottom: '24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+          <span>⚠ {error} — NSE API may be temporarily unavailable.</span>
+          <button onClick={fetchData} style={{ padding: '6px 14px', borderRadius: '6px', border: `1px solid ${THEME.red}`, backgroundColor: `${THEME.red}18`, color: THEME.red, cursor: 'pointer', fontSize: '12px', fontWeight: '700', flexShrink: 0 }}>
+            ↻ Retry
+          </button>
         </div>
       )}
 

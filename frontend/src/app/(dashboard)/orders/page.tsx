@@ -414,6 +414,8 @@ interface CompanyConcallSummary {
   alphaCount: number;
   noiseCount: number;
   whyItMatters: string; // auto-generated "why this matters" statement
+  // Article headlines for display even when no signals extracted
+  recentHeadlines: { title: string; source: string; date: string; url?: string }[];
 }
 
 // ── Hybrid Pattern Library (Layer 1: keywords, Layer 2: semantic rules) ───────
@@ -527,6 +529,59 @@ const NEWS_FEED_PATTERNS: { type: ConcallSignalType; category: SignalCategory; k
   },
 ];
 
+// ── NEWS HEADLINE PATTERNS — catch news article language (NOT management speech) ──────
+// This is a SEPARATE tier from CONCALL_PATTERNS.
+// News headlines use different language: "wins order", "bags contract", "revenue up X%"
+// These generate signals with LOWER strength (1-3) since they're less specific than mgmt statements.
+// They run AFTER compound patterns and CONCALL_PATTERNS, filling the gap for news-covered companies.
+const HEADLINE_PATTERNS: {
+  type: ConcallSignalType; category: SignalCategory; subject: string;
+  keywords: string[];
+  positive: boolean; strength: 1|2|3|4|5; horizon: SignalHorizon; isAlpha: boolean;
+}[] = [
+  // ── ORDERS — news headline style ──────────────────────────────────────────
+  { type:'ORDER', category:'DEMAND', subject:'Order Win', isAlpha:true, positive:true, strength:3, horizon:'0-3M',
+    keywords:['wins order','wins contract','bags order','bags contract','secures order','secures contract','receives order','awarded order','awarded contract','order win','contract win','new order worth','new contract worth','loi received','letter of intent','contract signed'] },
+  { type:'ORDER', category:'DEMAND', subject:'Defense Order', isAlpha:true, positive:true, strength:4, horizon:'3-6M',
+    keywords:['defence order','defense order','army order','navy contract','air force contract','drdo order','drdo contract','hal contract','ministry of defence','mod contract','defence ministry order','sos order','strategic order'] },
+  { type:'ORDER', category:'DEMAND', subject:'Government Order', isAlpha:true, positive:true, strength:3, horizon:'0-3M',
+    keywords:['government order','government contract','public sector order','psu order','nnpcl order','npcil order','powergrid order','pgcil order','nhpc order','seci order','rrecl order','state order','central order','nh order','nhai contract'] },
+  { type:'LTA', category:'SUPPLY_CHAIN', subject:'Long-Term Contract', isAlpha:true, positive:true, strength:4, horizon:'12M+',
+    keywords:['long-term supply agreement','multi-year order','long term contract','5-year supply','10-year contract','framework agreement','rate contract','annual rate contract','multi year supply'] },
+
+  // ── RESULTS & EARNINGS — headline style ──────────────────────────────────
+  { type:'GUIDANCE_UP', category:'GUIDANCE', subject:'Quarterly Results Beat', isAlpha:true, positive:true, strength:2, horizon:'0-3M',
+    keywords:['q1 results','q2 results','q3 results','q4 results','quarterly results','revenue up','profit up','pat up','net profit up','revenue rises','profit rises','pat rises','revenue grows','profit grows','record revenue','record profit','highest revenue','highest profit'] },
+  { type:'GUIDANCE_DOWN', category:'GUIDANCE', subject:'Results Miss', isAlpha:true, positive:false, strength:2, horizon:'0-3M',
+    keywords:['profit down','revenue down','pat down','net profit falls','revenue falls','revenue decline','profit declines','misses estimates','below estimates','disappoints','revenue miss'] },
+  { type:'GUIDANCE_UP', category:'GUIDANCE', subject:'Guidance Raise', isAlpha:true, positive:true, strength:3, horizon:'3-6M',
+    keywords:['raises guidance','upgrades guidance','guidance raised','upgrades target','target price raised','analyst upgrades','buy rating','strong buy'] },
+
+  // ── CAPACITY & EXPANSION ──────────────────────────────────────────────────
+  { type:'CAPEX', category:'CAPEX', subject:'Expansion', isAlpha:true, positive:true, strength:2, horizon:'3-6M',
+    keywords:['capacity expansion','new plant','plant expansion','greenfield project','brownfield expansion','new facility','new manufacturing','new production line','doubles capacity','triples capacity','capacity addition','manufacturing expansion'] },
+  { type:'CAPEX', category:'CAPEX', subject:'New Facility', isAlpha:true, positive:true, strength:2, horizon:'6-12M',
+    keywords:['inaugurates plant','inaugurates factory','new factory','sets up plant','sets up manufacturing','commissions plant','commissions factory','plant commissioned','facility commissioned'] },
+
+  // ── STRATEGIC DEALS ───────────────────────────────────────────────────────
+  { type:'LTA', category:'SUPPLY_CHAIN', subject:'Partnership/JV', isAlpha:true, positive:true, strength:3, horizon:'6-12M',
+    keywords:['joint venture','jv agreement','partnership agreement','strategic alliance','mou signed','mou with','ties up with','collaboration agreement','supply agreement signed'] },
+  { type:'EXPORT_DEMAND', category:'DEMAND', subject:'Export Order', isAlpha:true, positive:true, strength:3, horizon:'3-6M',
+    keywords:['export order','exports to','supplies to','international order','overseas contract','us order','european order','german customer','us customer','export contract','global customer','foreign order'] },
+
+  // ── DEBT / CAPITAL ────────────────────────────────────────────────────────
+  { type:'DEBT_REDUCTION', category:'SUPPLY_CHAIN', subject:'Balance Sheet', isAlpha:false, positive:true, strength:1, horizon:'6-12M',
+    keywords:['becomes debt free','debt-free','repays debt','reduces debt','zero debt','debt reduction','repaid loans','loan repaid'] },
+  { type:'EQUITY_DILUTION', category:'RISK', subject:'Equity Raise', isAlpha:true, positive:false, strength:2, horizon:'0-3M',
+    keywords:['qip opens','qip launch','rights issue','preferential allotment','fundraising','fund raise','fresh equity','dilutes equity','new shares'] },
+
+  // ── NEGATIVE ──────────────────────────────────────────────────────────────
+  { type:'REGULATORY_RISK', category:'RISK', subject:'Regulatory Action', isAlpha:true, positive:false, strength:3, horizon:'0-3M',
+    keywords:['sebi notice','sebi order','regulatory action','show cause notice','penalty imposed','fine imposed','regulatory penalty','suspended','blacklisted','debarred','nclat order','nclt order','insolvency'] },
+  { type:'CUSTOMER_DELAY', category:'RISK', subject:'Order Slowdown', isAlpha:true, positive:false, strength:2, horizon:'0-3M',
+    keywords:['order slowdown','order deferral','project delayed','execution delay','order cancellation','cancelled order','deal falls through','contract terminated'] },
+];
+
 // ── Forward/Backward Tagger ───────────────────────────────────────────────────
 function tagTemporality(sentence: string): SignalTemporality {
   const s = sentence.toLowerCase();
@@ -562,23 +617,98 @@ function getAgeWeight(dateStr: string): number {
   return 0.4;
 }
 
-// ── Company Alias Generator (solves Indian small-cap name variations) ─────────
+// ── Generic words that must NEVER be used as single-word aliases ──────────────
+// These appear in too many unrelated article headlines and cause false positives.
+const ALIAS_BLOCKLIST = new Set([
+  'global','digital','data','power','energy','india','national','new','smart','advance',
+  'next','tech','net','pro','max','plus','prime','core','one','first','alpha','beta',
+  'clean','pure','green','blue','nova','apex','ace','star','sky','sun','wind','rapid',
+  'swift','agile','flex','zen','peak','mega','micro','nano','pico','meta','omni','uni',
+  'multi','poly','trans','eco','bio','geo','neo','ultra','hyper','super','elite','premium',
+  'select','excel','royal','shield','forte','vista','clarity','horizon','nexus','vertex',
+]);
+
+// ── Manual alias overrides for tickers where auto-generation fails ───────────
+// Key = UPPERCASE NSE symbol; value = additional aliases to add
+const MANUAL_ALIASES: Record<string, string[]> = {
+  // ── Power T&D ──────────────────────────────────────────────────────────────
+  'GVT&D':      ['ge vernova t&d india', 'ge vernova t&d', 'ge vernova', 'ge t&d india', 'vernova india'],
+  'GVTD':       ['ge vernova t&d india', 'ge vernova t&d', 'ge vernova', 'ge t&d india', 'vernova india'],
+  'QPOWER':     ['quality power electrical', 'quality power el', 'quality power engineering'],
+  'ATLANTAELE': ['atlanta electric', 'atlanta electrics limited'],
+  'WEBELSOLAR': ['websol energy', 'websol solar', 'webel solar system'],
+  'SKIPPER':    ['skipper limited', 'skipper towers', 'skipper conductor', 'skipper transmission'],
+  'AZAD':       ['azad engineering limited', 'azad aerospace'],
+  'VENUSPIPES': ['venus pipes and tubes', 'venus pipes', 'venus wire'],
+  'INA':        ['insolation energy', 'insolation ener', 'insolation solar'],
+  'VERTIS':     ['vertis infrastructure limited', 'vertis infra'],
+  // ── Defense & Aerospace ────────────────────────────────────────────────────
+  // CRITICAL: "data patterns" is a generic tech phrase — use FULL legal name only
+  'DATAPATTNS': ['data patterns limited', 'data patterns (india)', 'data patterns india limited'],
+  // ── Consumer / FMCG ────────────────────────────────────────────────────────
+  // FIXED: Removed "bajaj consumer" (too generic — matches Bajaj Auto articles)
+  // Only use more specific aliases that uniquely identify Bajaj Consumer Care
+  'BAJAJCON':   ['bajaj consumer care', 'bajaj almond drops', 'bajaj nomarks', 'bajaj consumer care limited'],
+  'BAJAJFINSERV':['bajaj finserv', 'bajaj financial services'],
+  // ── Financials ─────────────────────────────────────────────────────────────
+  // FIXED: MCX is a commodity exchange — articles about "order" or "supply" are commodity orders, not equipment
+  'MCX':        ['multi commodity exchange', 'mcx india limited'],
+  'IIFL':       ['iifl finance limited', 'iifl wealth', 'iifl securities limited', 'iifl samasta'],
+  // ── Other ──────────────────────────────────────────────────────────────────
+  'TRAVELFOOD': ['travel food services', 'travel food limited'],
+  'PARKHOSPS':  ['park mediclinics', 'park hospitals limited', 'park medi world'],
+  'ATHERENERG': ['ather energy limited'],
+  'CLEANMAX':   ['clean max enviro', 'cleanmax enviro energy'],
+  'UTLSOLAR':   ['fujiyama power systems', 'utl solar', 'utl renewable energy'],
+  'GLOBAL':     ['global education limited', 'global indian international school'],
+};
+
+// ── Company Alias Generator v2 — smarter matching for Indian small-caps ──────
 function buildAliases(symbol: string, companyName: string): string[] {
+  const sym = symbol.toUpperCase().replace(/\.NS$|\.BO$/i, '');
   const aliases: string[] = [];
-  const name = companyName.toLowerCase();
-  // Full name
-  aliases.push(name);
-  // Strip common suffixes
-  const cleaned = name.replace(/\b(ltd|limited|pvt|private|india|industries|solutions|technologies|technology|systems|services|engineering|group|enterprises|corporation|corp|inc|co\b|company)\b/g,'').replace(/\s+/g,' ').trim();
-  if (cleaned.length >= 4) aliases.push(cleaned);
-  // First 2 words
-  const words = cleaned.split(/\s+/).filter(w => w.length >= 3);
-  if (words.length >= 2) aliases.push(words.slice(0,2).join(' '));
-  if (words.length >= 1) aliases.push(words[0]);
-  // Symbol as word
-  const sym = symbol.toLowerCase().replace(/\.ns$|\.bo$/,'');
-  if (sym.length >= 3) aliases.push(sym);
-  return [...new Set(aliases.filter(a => a.length >= 3))];
+  const name = companyName.toLowerCase().trim();
+
+  // 1. Always add the full company name (most specific, least ambiguous)
+  if (name.length >= 4) aliases.push(name);
+
+  // 2. Manual overrides first — highest precision
+  const manualExtra = MANUAL_ALIASES[sym] ?? [];
+  for (const m of manualExtra) aliases.push(m.toLowerCase());
+
+  // 3. Strip common business suffixes but keep meaningful parts
+  const cleaned = name
+    .replace(/\b(ltd|limited|pvt|private|industries|solutions|technologies|technology|systems|services|engineering|enterprises|corporation|corp|inc|company)\b/g, '')
+    .replace(/[&+]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // 4. Use cleaned name only if it's meaningfully different and long enough
+  if (cleaned.length >= 8 && cleaned !== name) aliases.push(cleaned);
+
+  // 5. Two-word combos from cleaned name (require both words >= 4 chars)
+  const words = cleaned.split(/\s+/).filter(w => w.length >= 4);
+  if (words.length >= 2) {
+    const twoWord = words.slice(0, 2).join(' ');
+    if (twoWord.length >= 8) aliases.push(twoWord);
+  }
+
+  // 6. Single-word from first word ONLY if it's:
+  //    - long enough (>= 7 chars to avoid generic words)
+  //    - NOT in the blocklist
+  //    - NOT a common word that appears everywhere
+  if (words.length >= 1) {
+    const firstWord = words[0];
+    if (firstWord.length >= 7 && !ALIAS_BLOCKLIST.has(firstWord)) {
+      aliases.push(firstWord);
+    }
+  }
+
+  // 7. NSE symbol itself (only if >= 4 chars — minimum to be meaningful)
+  const symLower = sym.toLowerCase();
+  if (symLower.length >= 4) aliases.push(symLower);
+
+  return [...new Set(aliases.filter(a => a.length >= 4))];
 }
 
 // ── Cross-Stock Sector Signal Library ────────────────────────────────────────
@@ -658,17 +788,96 @@ const SECTOR_SIGNALS: SectorSignalDef[] = [
     targetSectors:['electrical','power','T&D','transmission','EPC','grid','infrastructure'],
     excludeSectors:['IT','pharma','bank','FMCG','consumer'],
     relevanceThreshold: 0.65 },
+
+  // ── RAILWAY SECTOR ──────────────────────────────────────────────────────────
+  { id:'RAILWAY_CAPEX_SURGE', label:'Railway Capex Surge',
+    signalType:'DEMAND_SURGE', subject:'Railway Rolling Stock Demand', driver:'₹2.5L Cr railway budget + 100-year infra ambition',
+    impact:'Multi-year order pipeline for wagon, coach, and rail component makers',
+    keywords:['indian railways','railway budget','vande bharat','kavach','freight corridor','metro project','rvnl','rail vikas','konkan railway'],
+    beneficiaryProducts:['wagon','coach','locomotive','rail component','bogie','wheel','axle','coupling','track material'],
+    targetSectors:['railway','rolling stock','rail components','transportation','defence','engineering'],
+    excludeSectors:['pharma','bank','FMCG','consumer','textile','IT'],
+    relevanceThreshold: 0.60 },
+
+  // ── DEFENSE MACRO ────────────────────────────────────────────────────────────
+  { id:'DEFENCE_BUDGET_ALLOCATION', label:'Defence Budget Growth',
+    signalType:'DEMAND_SURGE', subject:'Defence Capital Budget', driver:'Geopolitical tensions + modernisation drive',
+    impact:'Allocation for procurement rising — orders to HAL, BDL, BEL, and private defence OEMs',
+    keywords:['defence budget','defense budget','capital allocation defence','defence procurement','dai','mod allocation','defence ministry','def capex'],
+    compoundRequired:{ product:['defence','defense','military','naval','army','air force'], state:['budget','allocation','increase','higher','capex','procurement','modernisation','crore'] },
+    beneficiaryProducts:['defence electronics','aerospace','ordnance','shipbuilding','vehicle','armament'],
+    targetSectors:['defence','defense','aerospace','military electronics','engineering','naval'],
+    excludeSectors:['pharma','FMCG','consumer','real estate','bank','textile'],
+    relevanceThreshold: 0.60 },
+
+  // ── PHARMA API DEMAND ────────────────────────────────────────────────────────
+  { id:'CHINA_PLUS_ONE_PHARMA', label:'China+1 Pharma Shift',
+    signalType:'DEMAND_SURGE', subject:'API/CDMO China+1 Migration', driver:'US-China tensions + PLI for pharma',
+    impact:'New customer inquiries and supply agreements for Indian API and CDMO players',
+    keywords:['china plus one pharma','api import substitution','cdmo india','api supply chain','china api shortage','usfda inspection','qualifies api'],
+    beneficiaryProducts:['api','active pharmaceutical','fermentation','cdmo','crams','bulk drug'],
+    targetSectors:['pharma','api','cdmo','specialty chemical'],
+    excludeSectors:['IT','bank','FMCG','consumer','real estate'],
+    relevanceThreshold: 0.65 },
+
+  // ── AGROCHEMICAL DESTOCKING ──────────────────────────────────────────────────
+  { id:'AGROCHEM_RESTOCKING', label:'Agrochem Restocking Cycle',
+    signalType:'DEMAND_SURGE', subject:'Agrochem Channel Restocking', driver:'Post-destocking normalisation',
+    impact:'Volume recovery for agrochemical formulators and technicals suppliers',
+    keywords:['agrochem restocking','channel inventory normalised','agrochemical demand recovery','crop protection demand','formulation demand'],
+    compoundRequired:{ product:['agrochemical','pesticide','herbicide','fungicide','formulation','crop protection'], state:['restocking','recovery','normalise','improving','demand picking','uptick','channel clear'] },
+    beneficiaryProducts:['agrochemical','pesticide','crop protection','technical','formulation'],
+    targetSectors:['agrochemical','specialty chemical','crop protection'],
+    excludeSectors:['IT','bank','real estate','railway','defence'],
+    relevanceThreshold: 0.70 },
+
+  // ── REAL ESTATE DEMAND ───────────────────────────────────────────────────────
+  { id:'HOUSING_DEMAND_SURGE', label:'Housing Demand Strong',
+    signalType:'DEMAND_SURGE', subject:'Residential Housing Demand', driver:'Mortgage rates stable + urbanisation',
+    impact:'Pre-sales volume and price realisation improving for residential developers',
+    keywords:['housing demand','residential demand','pre-sales growth','home sales','new launches sold','real estate demand','property prices'],
+    compoundRequired:{ product:['residential','housing','apartment','villa','plotted','township'], state:['demand','presales','sold out','record','growth','increase','strong','bookings'] },
+    beneficiaryProducts:['real estate','developer','construction','housing finance'],
+    targetSectors:['real estate','housing','construction','infrastructure'],
+    excludeSectors:['IT','pharma','FMCG','bank','defence'],
+    relevanceThreshold: 0.65 },
 ];
+
+// Sectors that are ALWAYS irrelevant for industrial/equipment/supply signals.
+// Financial companies trade instruments and provide services — NOT manufacturing beneficiaries.
+const ALWAYS_EXCLUDED_FROM_INDUSTRIAL_SIGNALS = new Set([
+  'capital markets','financial services','banking','bank','nbfc','insurance','asset management',
+  'diversified financials','consumer finance','multi-sector','holding company','investment',
+  'commodity exchange','stock exchange','futures exchange','derivatives exchange',
+  'financial','financial technology','fintech','payments','brokerage',
+  'media','entertainment','retail','restaurants','hotels','airlines','logistics services',
+  'education','telecom','it services','software','health services','hospital',
+]);
+
+// Company-level financial check (catches companies where sector tag is generic but company is financial)
+function isFinancialCompany(sector: string, company: string): boolean {
+  const sl = sector.toLowerCase();
+  const cl = company.toLowerCase();
+  // Explicit sector matches
+  if (ALWAYS_EXCLUDED_FROM_INDUSTRIAL_SIGNALS.has(sl)) return true;
+  // Regex pattern — catches "capital markets", "financial services", "exchange" etc.
+  return /\b(bank|finance|capital market|exchange|commodity exchange|broker|insurance|invest|asset manag|fund|nbfc|fintech|payment|trading platform)\b/i.test(sl + ' ' + cl);
+}
 
 // Compute how relevant a sector signal is for a specific company (0.0 – 1.0)
 // Rule: relevance < threshold → signal NOT propagated to this company
 function computeSectorRelevance(company: {sector:string;company:string}, sig: SectorSignalDef): number {
   const sl = (company.sector||'').toLowerCase();
   const cl = (company.company||'').toLowerCase();
+
+  // Hard block: financial/exchange/service sector companies — NEVER get industrial signals
+  // FIXED: Removed the '!== DEMAND_SURGE' exception that was letting pharma signals through to IIFL
+  if (isFinancialCompany(sl, cl)) return 0;
+
   if (sig.excludeSectors.some(e => sl.includes(e.toLowerCase()) || cl.includes(e.toLowerCase()))) return 0;
   if (sig.targetSectors.some(t => sl.includes(t.toLowerCase()) || cl.includes(t.toLowerCase()))) return 0.85;
   if (sig.beneficiaryProducts.some(b => sl.includes(b.toLowerCase()) || cl.includes(b.toLowerCase()))) return 0.7;
-  return 0.25; // default low — most stocks don't benefit from any given sector signal
+  return 0.2; // default very low — most stocks don't benefit from any given sector signal
 }
 
 // Check if compound requirement is met: both product AND state keyword in same sentence
@@ -748,11 +957,14 @@ function deduplicateSignals(signals: ExtractedSignal[]): ExtractedSignal[] {
 // ── Product-specific compound patterns for extractSignals ──────────────────────
 // These fire ONLY when BOTH product keyword AND state keyword co-occur in same sentence.
 // This prevents "demand" → DEMAND_CONSTRAINT for every stock. Must be specific.
+// Coverage: Power T&D, Defense, Railways, Pharma/API, Chemicals, IT/ITES, Cement,
+//           Real Estate, Textiles, Auto Components, Capital Goods, Metals.
 const COMPOUND_EXTRACT_PATTERNS: {
   type: ConcallSignalType; category: SignalCategory; subject: string;
   products: string[]; states: string[];
   positive: boolean; strength: 1|2|3|4|5; horizon: SignalHorizon; isAlpha: boolean;
 }[] = [
+  // ── POWER T&D ─────────────────────────────────────────────────────────────────
   { type:'DEMAND_CONSTRAINT', category:'DEMAND', subject:'Insulators', isAlpha:true, positive:true, strength:5, horizon:'6-12M',
     products:['insulator','disc insulator','composite insulator','glass insulator','porcelain insulator'],
     states:['shortage','demand strong','high demand','robust demand','capacity constraint','order full','supply constrained','operating at full','full capacity','exceed','more orders than'] },
@@ -765,6 +977,121 @@ const COMPOUND_EXTRACT_PATTERNS: {
   { type:'ORDER', category:'DEMAND', subject:'T&D Equipment', isAlpha:true, positive:true, strength:4, horizon:'0-3M',
     products:['switchgear','breaker','reactor','capacitor bank','substation','bus bar'],
     states:['order','demand','backlog','inflow','strong','secured','tendered'] },
+  { type:'LTA', category:'SUPPLY_CHAIN', subject:'Power Sector LTA', isAlpha:true, positive:true, strength:5, horizon:'12M+',
+    products:['power supply','grid supply','pgcil','seci','rrecl','powergrid','state discom','discom order'],
+    states:['long-term','multi-year','framework agreement','rate contract','secured','five year','annual rate','empanelled'] },
+
+  // ── DEFENSE & AEROSPACE ───────────────────────────────────────────────────────
+  { type:'ORDER', category:'DEMAND', subject:'Defense Order', isAlpha:true, positive:true, strength:5, horizon:'3-6M',
+    products:['missile','radar','helicopter','aircraft','warship','aero engine','armament','ammunition','defence','defense','military','naval','army','air force','drdo','hal','tejas','akash','brahmos'],
+    states:['order','contract','supply','secured','nominated','loi','award','qualify','trial','evaluation','indigenous','offset','make in india','ae order','production order'] },
+  { type:'CAPEX', category:'CAPEX', subject:'Defense Capacity', isAlpha:true, positive:true, strength:3, horizon:'6-12M',
+    products:['ordnance','ammunition','explosive','propellant','defence production','defense manufacturing'],
+    states:['capacity','expansion','greenfield','new line','commissioning','fy','production facility','scale up'] },
+  { type:'LTA', category:'SUPPLY_CHAIN', subject:'Defense LTA', isAlpha:true, positive:true, strength:5, horizon:'12M+',
+    products:['defence','defense','ministry of defence','mod','army','navy','air force','coast guard'],
+    states:['long-term order','multi-year contract','repeat order','framework','annual order','5-year','10-year','sos order'] },
+  { type:'EXPORT_DEMAND', category:'DEMAND', subject:'Defense Exports', isAlpha:true, positive:true, strength:4, horizon:'6-12M',
+    products:['defence export','defense export','arms export','mil export','drdo export','hal export'],
+    states:['export order','foreign military','us sale','fms','nato','friendly nation','export clearance','export approval','₹','crore'] },
+
+  // ── RAILWAYS ─────────────────────────────────────────────────────────────────
+  { type:'ORDER', category:'DEMAND', subject:'Railway Order', isAlpha:true, positive:true, strength:5, horizon:'3-6M',
+    products:['wagon','coach','locomotive','bogey','railway','vande bharat','kavach','metro','emu','demu','rail coach','freight wagon','passenger coach'],
+    states:['order','tender','award','secured','won','nominated','irctc','rvnl','indian railways','ministry of railways'] },
+  { type:'LTA', category:'SUPPLY_CHAIN', subject:'Railway LTA', isAlpha:true, positive:true, strength:5, horizon:'12M+',
+    products:['wagon','coach','locomotive','bogie','wheel','axle','coupler','rail fastener'],
+    states:['rate contract','annual','long term','framework','repeat','assured order','standing order'] },
+  { type:'CAPEX', category:'CAPEX', subject:'Rail Manufacturing Capex', isAlpha:true, positive:true, strength:3, horizon:'6-12M',
+    products:['wagon','coach factory','locomotive','foundry','forging','casting'],
+    states:['new plant','expansion','greenfield','doubling','capacity addition','new facility','commission'] },
+  { type:'DEMAND_CONSTRAINT', category:'DEMAND', subject:'Railway Wagon Shortage', isAlpha:true, positive:true, strength:4, horizon:'6-12M',
+    products:['wagon','freight wagon','coal wagon'],
+    states:['shortage','demand strong','delivery','order backlog','waiting period','queue','lead time','more orders'] },
+
+  // ── PHARMA / API / CDMO ───────────────────────────────────────────────────────
+  { type:'ORDER', category:'DEMAND', subject:'Pharma API Order', isAlpha:true, positive:true, strength:4, horizon:'0-3M',
+    products:['api','active pharmaceutical','bulk drug','fermentation','synthesis','crams','cdmo','contract manufacturing'],
+    states:['order','inquiry','rfq','award','new customer','new molecule','signed','contract','long-term supply','partnership'] },
+  { type:'EXPORT_DEMAND', category:'DEMAND', subject:'Pharma Export', isAlpha:true, positive:true, strength:4, horizon:'3-6M',
+    products:['fdf','finished dosage','formulation','generic','abbreviated','anda','dossier','us fda','usfda','eu gmp','tga','health canada'],
+    states:['approval','clearance','filing','launch','export','eu','us','uk','latam','row market','inspection completed','no observations'] },
+  { type:'MARGIN', category:'MARGIN', subject:'Pharma Gross Margin', isAlpha:true, positive:true, strength:3, horizon:'3-6M',
+    products:['api price','raw material','solvent','bulk drug price','specialty api'],
+    states:['stable','no pressure','margin intact','price stable','pass through','no headwind','commodity stable'] },
+  { type:'CAPEX', category:'CAPEX', subject:'Pharma Capacity', isAlpha:true, positive:true, strength:3, horizon:'6-12M',
+    products:['reactor','kg block','api plant','fermentation','synthesis block','formulation line','oral solid'],
+    states:['commissioning','validation','who gmp','usfda','eu gmp','ready','operational','online','new block'] },
+
+  // ── SPECIALTY CHEMICALS ────────────────────────────────────────────────────────
+  { type:'ORDER', category:'DEMAND', subject:'Agrochemical Order', isAlpha:true, positive:true, strength:4, horizon:'3-6M',
+    products:['agrochemical','pesticide','herbicide','fungicide','insecticide','crop protection'],
+    states:['new molecule','molecule transfer','csr','import substitution','china plus one','registration','order','inquiry','customer qualified'] },
+  { type:'ORDER', category:'DEMAND', subject:'Specialty Chemical Order', isAlpha:true, positive:true, strength:4, horizon:'3-6M',
+    products:['specialty chemical','fine chemical','fluorine','chloro','bromine','performance material','polymer','dye intermediate','pigment'],
+    states:['order','new customer','import substitution','china+1','rfq','contract','qualification','approved','supply agreement'] },
+  { type:'MARGIN_PRESSURE', category:'MARGIN', subject:'Chemical Margin Pressure', isAlpha:true, positive:false, strength:3, horizon:'0-3M',
+    products:['inventory destocking','channel inventory','agrochemical inventory','chinese inventory','dumping'],
+    states:['high','excess','elevated','correction','pricing pressure','lower realisation','headwind'] },
+  { type:'CAPEX', category:'CAPEX', subject:'Chemical Plant', isAlpha:true, positive:true, strength:3, horizon:'6-12M',
+    products:['chemical plant','multipurpose plant','mpp','reactor','distillation','recovery unit','effluent treatment'],
+    states:['commissioning','operational','going live','fy','new block','expansion','on track','greenfield'] },
+
+  // ── IT / ITES / SOFTWARE ─────────────────────────────────────────────────────
+  { type:'ORDER', category:'DEMAND', subject:'IT Deal Win', isAlpha:true, positive:true, strength:4, horizon:'3-6M',
+    products:['deal','tvc','tcv','contract value','it services','digital transformation','cloud migration','erp implementation','ai services','data analytics'],
+    states:['win','won','awarded','signed','new logo','large deal','mega deal','multiyear','tvc','tcv','crore','mn dollar','total contract'] },
+  { type:'GUIDANCE_UP', category:'GUIDANCE', subject:'IT Revenue Guidance', isAlpha:true, positive:true, strength:4, horizon:'3-6M',
+    products:['revenue guidance','growth guidance','pipeline','deal pipeline','demand environment'],
+    states:['raised','upgraded','higher than','comfortable','positive','sequential growth','fy guidance raised','improving demand'] },
+  { type:'MARGIN', category:'MARGIN', subject:'IT Margin', isAlpha:true, positive:true, strength:3, horizon:'3-6M',
+    products:['ebit margin','operating margin','attrition','headcount','utilization','subcontracting'],
+    states:['improving','stable','expansion','lower attrition','better utilization','subcon down','no wage hike headwind'] },
+
+  // ── CEMENT ────────────────────────────────────────────────────────────────────
+  { type:'PRICING', category:'PRICING', subject:'Cement Realisation', isAlpha:true, positive:true, strength:4, horizon:'3-6M',
+    products:['cement price','bag price','realisation','trade segment','ex-works','dealer price'],
+    states:['increase','hike','stable','improve','higher','better pricing','per bag','quarter on quarter'] },
+  { type:'CAPEX', category:'CAPEX', subject:'Cement Capacity', isAlpha:true, positive:true, strength:3, horizon:'6-12M',
+    products:['clinker','cement plant','grinding unit','kiln','blending','capacity addition','mtpa'],
+    states:['commissioning','operational','new line','on track','fy','expansion','greenfield','brown field'] },
+  { type:'MARGIN', category:'MARGIN', subject:'Cement Operating Margin', isAlpha:true, positive:true, strength:3, horizon:'3-6M',
+    products:['pet coke','coal','power fuel','freight','logistics','opex per tonne'],
+    states:['lower','reducing','declining','benefit','stable','passed through','no pressure','below peak'] },
+
+  // ── REAL ESTATE / CONSTRUCTION ────────────────────────────────────────────────
+  { type:'ORDER', category:'DEMAND', subject:'Pre-sales / Bookings', isAlpha:true, positive:true, strength:4, horizon:'3-6M',
+    products:['pre-sales','booking','registration','sold','new launch','inventory sold','units sold','residential'],
+    states:['strong','robust','higher','record','crore','growing','strong demand','oversubscribed','fully sold','sellout'] },
+  { type:'GUIDANCE_UP', category:'GUIDANCE', subject:'Pre-sales Guidance', isAlpha:true, positive:true, strength:4, horizon:'3-6M',
+    products:['pre-sales guidance','new launch','pipeline launches','launch pipeline','expected collections','cash flow guidance'],
+    states:['raise','upgrade','positive','better','comfortable','higher than','growth expected','on track'] },
+  { type:'ORDER', category:'DEMAND', subject:'EPC/Infra Order', isAlpha:true, positive:true, strength:4, horizon:'0-3M',
+    products:['epc','highway','road','bridge','dam','irrigation','water supply','tunnel','metro','airport','port'],
+    states:['order','award','loa','loi','secured','won','bid','nominated','nh','nhai','nhmb','state government','central government','nmcg'] },
+
+  // ── AUTO COMPONENTS ──────────────────────────────────────────────────────────
+  { type:'ORDER', category:'DEMAND', subject:'Auto Component Order', isAlpha:true, positive:true, strength:4, horizon:'3-6M',
+    products:['oem','tier 1','automobile','passenger vehicle','commercial vehicle','two wheeler','ev','electric vehicle','battery','motor'],
+    states:['order','new program','nomination','sop','start of production','new model','platform win','supply agreement'] },
+  { type:'EXPORT_DEMAND', category:'DEMAND', subject:'Auto Export Order', isAlpha:true, positive:true, strength:4, horizon:'3-6M',
+    products:['auto component','forging','casting','stamping','machined','pump','bearing','filtration'],
+    states:['export','global oem','tier 1 global','us customer','european','new customer','supply agreement','rfq won'] },
+
+  // ── METALS / STEEL / ALUMINIUM ────────────────────────────────────────────────
+  { type:'PRICING', category:'PRICING', subject:'Metal Realization', isAlpha:true, positive:true, strength:3, horizon:'0-3M',
+    products:['hrc','crc','flat product','long product','rebar','wire rod','aluminium','copper','zinc'],
+    states:['realisation','price','asp','better','increase','improved','higher','stable'] },
+  { type:'ORDER', category:'DEMAND', subject:'Metal Order Pipeline', isAlpha:true, positive:true, strength:4, horizon:'0-3M',
+    products:['special steel','alloy steel','stainless','aerospace grade','defense grade','armour plate','automotive grade'],
+    states:['order','supply agreement','qualified','approved','qualification complete','new application','certified','ramp'] },
+
+  // ── TEXTILES / APPAREL ────────────────────────────────────────────────────────
+  { type:'EXPORT_DEMAND', category:'DEMAND', subject:'Textile Export Order', isAlpha:true, positive:true, strength:4, horizon:'3-6M',
+    products:['yarn','fabric','garment','apparel','home textile','technical textile','fibre','polyester','cotton yarn'],
+    states:['export','new customer','us order','eu order','bangladesh','vietnam','china plus','order book','inquiry','strong demand'] },
+
+  // ── GENERIC CAPACITY / MARGIN (unchanged) ────────────────────────────────────
   { type:'CAPEX', category:'CAPEX', subject:'Capacity Expansion', isAlpha:true, positive:true, strength:3, horizon:'3-6M',
     products:['plant','line','furnace','kiln','capacity','unit'],
     states:['commissioning','go live','operational','expansion','fy','q1','q2','q3','q4','new line','greenfield','brownfield'] },
@@ -877,6 +1204,45 @@ function extractSignals(articleText: string, source: string, date: string): Extr
     }
   }
 
+  // ── HEADLINE PATTERNS — catch news-style language that CONCALL_PATTERNS misses ──
+  // These run last and only add signals if no stronger signal of the same type already exists.
+  for (const p of HEADLINE_PATTERNS) {
+    // Skip if we already have a stronger signal of this type from management language
+    const existingOfType = results.filter(r => r.type === p.type);
+    const bestExisting = existingOfType.reduce((best, r) => Math.max(best, r.strength), 0);
+    if (bestExisting >= p.strength + 1) continue; // already have a better signal
+
+    let matched = false;
+    let matchedText = '';
+    for (const kw of p.keywords) {
+      if (text.includes(kw)) {
+        const idx = text.indexOf(kw);
+        // Grab the surrounding sentence (or whole short headline)
+        const start = Math.max(0, text.lastIndexOf('.', idx - 1) + 1);
+        const end = Math.min(articleText.length, (text.indexOf('.', idx + kw.length) + 1) || articleText.length);
+        matchedText = articleText.slice(start, end).trim().split(' ').slice(0, 50).join(' ');
+        // For very short headlines, use full text
+        if (matchedText.length < 15 && articleText.length < 200) {
+          matchedText = articleText.trim().split(' ').slice(0, 50).join(' ');
+        }
+        if (matchedText.length >= 10) { matched = true; break; }
+      }
+    }
+    if (matched && matchedText.length >= 10) {
+      const temporality = tagTemporality(matchedText);
+      const numerical = extractNumerical(matchedText);
+      results.push({
+        type: p.type, category: p.category,
+        text: matchedText,
+        positive: p.positive, strength: p.strength, horizon: p.horizon,
+        isAlpha: p.isAlpha, temporality,
+        numerical, isForConcall: false, // headline = news, not concall
+        subject: p.subject, origin: 'COMPANY' as SignalOrigin,
+        source, date, ageWeight,
+      });
+    }
+  }
+
   return results;
 }
 
@@ -970,7 +1336,7 @@ function generateWhyItMatters(composites: CompositeSignal[], signals: ExtractedS
 // ── Fixed MRI Score (incorporates management style signals) ──────────────────
 function computeMRI(signals: ExtractedSignal[]): number {
   // MRI = management reliability — only company-confirmed signals contribute
-  const companySigs = signals.filter(s => s.origin === 'COMPANY' && s.text && s.text.length >= 15);
+  const companySigs = signals.filter(s => s.origin === 'COMPANY' && s.text && s.text.length >= 8);
   if (companySigs.length === 0) return 50; // neutral: no company data
   let score = 50;
   score += companySigs.filter(s=>s.type==='GUIDANCE_UP'||s.type==='CONSERVATIVE_GUIDANCE').length * 10;
@@ -989,7 +1355,9 @@ function computeMRI(signals: ExtractedSignal[]): number {
 function computeSignalScore(signals: ExtractedSignal[]): number {
   // CRITICAL: Only COMPANY-matched signals score. Sector signals are context, not evidence.
   // This prevents "Data center power demand" → phantom 100 score for every electrical company.
-  const companySignals = signals.filter(s => s.origin === 'COMPANY' && s.text && s.text.length >= 15);
+  // Lowered threshold to 8 chars: headline-style signals like "wins order" are < 15 chars
+  // but are valid COMPANY evidence (defense orders, quarterly results etc.)
+  const companySignals = signals.filter(s => s.origin === 'COMPANY' && s.text && s.text.length >= 8);
   if (companySignals.length === 0) return 0; // no company evidence = score 0
   const weightedSum = companySignals.reduce((sum, s) => {
     let w = s.strength * s.ageWeight;
@@ -1107,17 +1475,50 @@ function ConcallIntelligence() {
         // Build alias list for better Indian small-cap matching
         const aliases = buildAliases(sym, stock.company||sym);
 
+        // ── Company families: when multiple tickers share a common prefix ─────────
+        // e.g., BAJAJ → BAJAJCON, BAJAJAUTO, BAJAJFINSERV, BAJAJHLDNG
+        // If an article's PRIMARY ticker is a DIFFERENT member of the same family,
+        // we only include it if our company's specific name appears in the text.
+        const FAMILY_PREFIXES = ['BAJAJ','TATA','ADANI','BIRLA','MAHINDRA','RELIANCE','HDFC','ICICI','KOTAK','L&T','LT','HCL'];
+        const symFamily = FAMILY_PREFIXES.find(fp => sym.startsWith(fp));
+
         const relevant = allArticles.filter(a => {
           if (!a.published_at) return false;
           const age = now - new Date(a.published_at).getTime();
           if (age > THIRTY_DAYS) return false;
           const text = ((a.title||'')+(a.headline||'')+(a.summary||'')).toLowerCase();
-          const tickers = ((a.ticker_symbols||[]) as string[]).map((t:string)=>t.toUpperCase().replace(/\.NS$|\.BO$/i,''));
-          // Ticker match (highest confidence)
-          if (tickers.includes(sym)) return true;
-          // Alias match (catches "Quality Power", "Q Power", "QPEE" etc.)
+          const artTickers = ((a.ticker_symbols||[]) as string[]).map((t:string)=>t.toUpperCase().replace(/\.NS$|\.BO$/i,''));
+
+          // Primary ticker match (highest confidence):
+          if (artTickers.includes(sym)) {
+            // Cross-contamination guard: if the article's PRIMARY ticker is a DIFFERENT
+            // company in the same family (e.g., BAJAJAUTO when we want BAJAJCON),
+            // require our specific company name to appear in the text.
+            const primaryTicker = artTickers[0];
+            if (primaryTicker && primaryTicker !== sym && symFamily && primaryTicker.startsWith(symFamily)) {
+              // Different company in same family — verify our name actually appears
+              const nameInText = aliases.some(alias =>
+                alias.length >= 8 && text.includes(alias.toLowerCase())
+              );
+              return nameInText;
+            }
+            return true;
+          }
+
+          // Alias match — use word-boundary awareness for short aliases
           for (const alias of aliases) {
-            if (alias.length >= 4 && text.includes(alias)) return true;
+            if (alias.length < 4) continue;
+            // For long aliases (>= 8 chars): simple substring match is fine
+            if (alias.length >= 8) {
+              if (text.includes(alias)) return true;
+              continue;
+            }
+            // For short aliases (4-7 chars): require word boundary
+            const idx = text.indexOf(alias);
+            if (idx === -1) continue;
+            const before = idx === 0 || !/[a-z0-9]/.test(text[idx - 1]);
+            const after = idx + alias.length >= text.length || !/[a-z0-9]/.test(text[idx + alias.length]);
+            if (before && after) return true;
           }
           return false;
         });
@@ -1133,7 +1534,19 @@ function ConcallIntelligence() {
           );
         });
 
-        if (relevant.length === 0 && sectorSignalArticles.length === 0) continue;
+        // Don't skip 0-article companies — still show them with "no news" state
+        // (helps user understand which companies have no press coverage)
+        // Only skip if the company has truly nothing useful to display AND there are many stocks tracked
+        // i.e., only skip if stock score is low-grade (D) AND 0 articles AND 0 sector signals
+        if (relevant.length === 0 && sectorSignalArticles.length === 0) {
+          // Show high-grade or watchlist/portfolio stocks even with no news
+          const isHighPriority = ['A+','A','B+'].includes(stock.grade||'') || stock.source === 'Portfolio' || stock.source === 'Watchlist';
+          if (!isHighPriority) continue; // skip D/C grade screener stocks with 0 articles
+        }
+
+        // For financial companies (exchanges, banks, NBFCs): only allow GUIDANCE/RESULTS signals
+        // They don't get supply-chain, order, or capacity signals from articles
+        const stockIsFinancial = isFinancialCompany(stock.sector||'', stock.company||'');
 
         // Extract signals — COMPANY signals first, then SECTOR signals (clearly separated)
         const rawSignals: ExtractedSignal[] = [];
@@ -1142,8 +1555,12 @@ function ConcallIntelligence() {
         for (const a of relevant) {
           const fullText = [(a.title||''),(a.headline||''),(a.summary||'')].join(' ');
           const sigs = extractSignals(fullText, a.title||a.headline||'', a.published_at||'');
-          // All are COMPANY origin — extractSignals already sets origin:'COMPANY'
-          rawSignals.push(...sigs);
+          // Financial companies: filter to only GUIDANCE/RESULTS type signals
+          // (prevent commodity order language being interpreted as equipment orders)
+          const filtered = stockIsFinancial
+            ? sigs.filter(s => ['GUIDANCE_UP','GUIDANCE_DOWN','MARGIN','MARGIN_PRESSURE','EQUITY_DILUTION','REGULATORY_RISK'].includes(s.type))
+            : sigs;
+          rawSignals.push(...filtered);
         }
 
         // Sector signals: injected ONLY when relevance >= threshold AND compound requirement met
@@ -1222,6 +1639,18 @@ function ConcallIntelligence() {
         // "Missed by market" — strong signals but few articles (market hasn't priced it yet)
         const missedByMarket = alphaCount >= 2 && relevant.length <= 2 && signalScore >= 60;
 
+        // Collect recent headlines for display (even when 0 signals)
+        const recentHeadlines = relevant
+          .sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''))
+          .slice(0, 5)
+          .map(a => ({
+            title: (a.title || a.headline || '').trim(),
+            source: (a.source_name || a.source || '').trim(),
+            date: a.published_at || '',
+            url: a.url || a.source_url || '',
+          }))
+          .filter(h => h.title.length > 10);
+
         result.push({
           symbol: stock.symbol, company: stock.company, sector: stock.sector,
           grade: stock.grade, score: stock.score, source: (stock as any).source||'Screener',
@@ -1230,6 +1659,7 @@ function ConcallIntelligence() {
           surprisePotential, freshness, missedByMarket, whyItMatters,
           lastDate: latestDate, articleCount: relevant.length,
           alphaCount, noiseCount: allSignals.filter(s=>!s.isAlpha).length,
+          recentHeadlines,
         } as any);
       }
 
@@ -1249,11 +1679,16 @@ function ConcallIntelligence() {
   const [showManualInput, setShowManualInput] = useState(false);
   const MANUAL_KEY = 'mb_concall_manual_v1';
 
+  const [manualParseStatus, setManualParseStatus] = useState<{type:'ok'|'warn'|'error';msg:string}|null>(null);
+
   function processManualInput() {
     if (!manualInput.trim() || !manualSymbol.trim()) return;
     const sym = manualSymbol.trim().toUpperCase();
     const sigs = extractSignals(manualInput, 'Manual Concall Input', new Date().toISOString());
-    if (sigs.length === 0) { alert('No signals detected in the pasted text. Try adding more specific phrases like "₹300 Cr order", "capacity expansion", "margin stable" etc.'); return; }
+    if (sigs.length === 0) {
+      setManualParseStatus({type:'warn', msg:'No signals detected. Try phrases like "₹300 Cr order", "capacity expansion", "margin stable", "demand strong".'});
+      return;
+    }
     // Store manual signals in localStorage keyed by symbol
     try {
       const stored = JSON.parse(localStorage.getItem(MANUAL_KEY)||'{}');
@@ -1275,11 +1710,13 @@ function ConcallIntelligence() {
         expectationShift: computeExpectationShift(sigs), trend: 'IMPROVING', tone: 'Bullish', surprisePotential: 'HIGH',
         freshness: 'FRESH', missedByMarket: false, whyItMatters: generateWhyItMatters(buildCompositeSignals(sigs), sigs),
         lastDate: new Date().toISOString(), articleCount: 0, alphaCount: sigs.filter(s=>s.isAlpha).length, noiseCount: sigs.filter(s=>!s.isAlpha).length,
+        recentHeadlines: [{ title: 'Manual concall input', source: 'User paste', date: new Date().toISOString(), url: '' }],
       } as any;
       return [...prev, newEntry].sort((a,b)=>b.signalScore-a.signalScore);
     });
-    setManualInput(''); setManualSymbol(''); setShowManualInput(false);
-    alert(`✅ ${sigs.length} signals extracted from manual input for ${sym}`);
+    setManualInput(''); setManualSymbol('');
+    setManualParseStatus({type:'ok', msg:`✅ ${sigs.length} signal${sigs.length!==1?'s':''} extracted for ${sym}. Card updated above.`});
+    setTimeout(() => { setShowManualInput(false); setManualParseStatus(null); }, 3000);
   }
 
   const displayed = showAlphaOnly ? summaries.filter(s=>s.alphaCount>0) : summaries;
@@ -1327,20 +1764,51 @@ function ConcallIntelligence() {
         </div>
         {/* Stats row */}
         {summaries.length > 0 && (
-          <div style={{display:'flex',gap:16,marginTop:10,flexWrap:'wrap'}}>
-            {[
-              {label:'Companies tracked',value:summaries.length,color:ACCENT2},
-              {label:'With alpha signals',value:summaries.filter(s=>s.alphaCount>0).length,color:'#10b981'},
-              {label:'Improving trend',value:summaries.filter(s=>s.trend==='IMPROVING').length,color:'#10b981'},
-              {label:'Deteriorating',value:summaries.filter(s=>s.trend==='DETERIORATING').length,color:'#ef4444'},
-              {label:'High surprise',value:summaries.filter(s=>s.surprisePotential==='HIGH').length,color:'#f59e0b'},
-            ].map(({label,value,color})=>(
-              <div key={label} style={{textAlign:'center'}}>
-                <div style={{fontSize:18,fontWeight:900,color}}>{value}</div>
-                <div style={{fontSize:9,color:TEXT3}}>{label}</div>
-              </div>
-            ))}
-          </div>
+          <>
+            <div style={{display:'flex',gap:16,marginTop:10,flexWrap:'wrap'}}>
+              {[
+                {label:'Companies tracked',value:summaries.length,color:ACCENT2},
+                {label:'With alpha signals',value:summaries.filter(s=>s.alphaCount>0).length,color:'#10b981'},
+                {label:'Improving',value:summaries.filter(s=>s.trend==='IMPROVING').length,color:'#10b981'},
+                {label:'Deteriorating',value:summaries.filter(s=>s.trend==='DETERIORATING').length,color:'#ef4444'},
+                {label:'High surprise',value:summaries.filter(s=>s.surprisePotential==='HIGH').length,color:'#f59e0b'},
+                {label:'Missed by market',value:summaries.filter(s=>s.missedByMarket).length,color:'#8b5cf6'},
+                {label:'Conservative mgmt',value:summaries.filter(s=>s.signals.some(sg=>sg.type==='CONSERVATIVE_GUIDANCE')).length,color:'#06b6d4'},
+              ].map(({label,value,color})=>(
+                <div key={label} style={{textAlign:'center'}}>
+                  <div style={{fontSize:18,fontWeight:900,color}}>{value}</div>
+                  <div style={{fontSize:9,color:TEXT3}}>{label}</div>
+                </div>
+              ))}
+            </div>
+            {/* Sector breakdown strip */}
+            {(() => {
+              const bySector: Record<string,{count:number;alpha:number;improving:number}> = {};
+              for (const s of summaries.filter(x=>x.alphaCount>0)) {
+                const sec = (s.sector||'Unknown').replace(/&/g,'&').replace(/\s*\/\s*/g,'/').trim() || 'Other';
+                if (!bySector[sec]) bySector[sec] = {count:0,alpha:0,improving:0};
+                bySector[sec].count++;
+                bySector[sec].alpha += s.alphaCount;
+                if (s.trend==='IMPROVING') bySector[sec].improving++;
+              }
+              const sectorEntries = Object.entries(bySector).sort((a,b)=>b[1].alpha-a[1].alpha).slice(0,8);
+              if (sectorEntries.length === 0) return null;
+              return (
+                <div style={{marginTop:10,display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
+                  <span style={{fontSize:9,fontWeight:700,color:TEXT3,letterSpacing:'0.5px'}}>SECTORS WITH SIGNALS:</span>
+                  {sectorEntries.map(([sec,data])=>(
+                    <span key={sec} style={{fontSize:9,fontWeight:700,padding:'3px 8px',borderRadius:5,
+                      backgroundColor: data.improving > 0 ? '#10b98114' : '#1A2840',
+                      color: data.improving > 0 ? '#10b981' : TEXT3,
+                      border: `1px solid ${data.improving > 0 ? '#10b98130' : '#1A2840'}`,
+                    }}>
+                      {sec} · {data.alpha} signals{data.improving>0?` · ${data.improving}↑`:''}
+                    </span>
+                  ))}
+                </div>
+              );
+            })()}
+          </>
         )}
       </div>
 
@@ -1372,6 +1840,17 @@ function ConcallIntelligence() {
           <div style={{fontSize:10,color:'#4A5B6C',marginTop:6}}>
             💡 Signals extracted from this input are tagged as COMPANY origin with highest confidence. They are NOT from news articles — they are from management statements.
           </div>
+          {/* Inline status feedback — replaces alert() */}
+          {manualParseStatus && (
+            <div style={{marginTop:8,padding:'8px 12px',borderRadius:7,
+              backgroundColor: manualParseStatus.type==='ok'?'#10b98114':manualParseStatus.type==='warn'?'#f59e0b14':'#ef444414',
+              border:`1px solid ${manualParseStatus.type==='ok'?'#10b98130':manualParseStatus.type==='warn'?'#f59e0b30':'#ef444430'}`,
+              color: manualParseStatus.type==='ok'?'#10b981':manualParseStatus.type==='warn'?'#f59e0b':'#ef4444',
+              fontSize:11, fontWeight:600,
+            }}>
+              {manualParseStatus.msg}
+            </div>
+          )}
         </div>
       )}
 
@@ -1382,115 +1861,129 @@ function ConcallIntelligence() {
         </div>
       )}
 
-      {/* Company signal cards */}
-      <div style={{display:'flex',flexDirection:'column',gap:10}}>
+      {/* Company signal cards — redesigned for maximum info density without expanding */}
+      <div style={{display:'flex',flexDirection:'column',gap:8}}>
         {displayed.map(s => {
           const isExp = expandedSym === s.symbol;
-          const sc = (grade:string|undefined) => ({
+          const gradeColor = (g:string|undefined) => ({
             'A+':'#10b981','A':'#34d399','B+':'#f59e0b','B':'#f97316','C':'#fb923c','D':'#ef4444'
-          }[grade||'']||TEXT3);
+          }[g||'']||TEXT3);
+          const scoreColor = (n:number) => n>=70?'#10b981':n>=45?'#f59e0b':n>0?'#ef4444':'#334155';
+          const bestSig = s.signals.find(sig=>sig.isAlpha&&sig.positive&&sig.origin==='COMPANY');
+          const bestNegSig = s.signals.find(sig=>sig.isAlpha&&!sig.positive&&sig.origin==='COMPANY');
+          const topHeadline = (s as any).recentHeadlines?.[0];
+          const topNumerical = s.signals.find(sig=>sig.numerical)?.numerical;
+          const borderColor = s.alphaCount>0
+            ? (s.signalScore>=70?'#10b981':(s.trend==='DETERIORATING'?'#ef4444':'#a78bfa'))
+            : BORDER;
+
           return (
-            <div key={s.symbol} style={{backgroundColor:'#0D1B2E',border:`1px solid ${s.alphaCount>0?ACCENT2+'30':BORDER}`,borderRadius:10,overflow:'hidden'}}>
-              <button onClick={()=>setExpandedSym(isExp?null:s.symbol)} style={{width:'100%',textAlign:'left',background:'none',border:'none',cursor:'pointer',padding:'12px 16px'}}>
-                <div style={{display:'grid',gridTemplateColumns:'100px 1fr 80px 80px 80px 90px 70px',gap:8,alignItems:'center'}}>
-                  <div>
-                    <div style={{fontSize:13,fontWeight:800,color:TEXT1}}>{s.symbol}</div>
-                    {s.grade && <span style={{fontSize:9,fontWeight:700,color:sc(s.grade),border:`1px solid ${sc(s.grade)}40`,padding:'1px 5px',borderRadius:3}}>{s.grade}</span>}
-                  </div>
-                  <div>
-                    <div style={{display:'flex',alignItems:'center',gap:4,marginBottom:2}}>
-                      <div style={{fontSize:11,color:'#C9D4E0',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>{s.company}</div>
-                      {s.sector&&<span style={{fontSize:8,color:'#4A5B6C',flexShrink:0}}>{s.sector}</span>}
+            <div key={s.symbol} style={{
+              backgroundColor:'#0D1B2E',
+              border:`1px solid ${borderColor}50`,
+              borderLeft:`3px solid ${borderColor}`,
+              borderRadius:10, overflow:'hidden',
+            }}>
+              <button onClick={()=>setExpandedSym(isExp?null:s.symbol)} style={{width:'100%',textAlign:'left',background:'none',border:'none',cursor:'pointer',padding:'10px 14px 8px'}}>
+
+                {/* ── ROW 1: Identity + Scores ── */}
+                <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6}}>
+
+                  {/* Symbol + Grade */}
+                  <div style={{flexShrink:0,minWidth:70}}>
+                    <div style={{fontSize:13,fontWeight:800,color:TEXT1,letterSpacing:'-0.3px'}}>{s.symbol}</div>
+                    <div style={{display:'flex',gap:4,alignItems:'center',marginTop:1}}>
+                      {s.grade && <span style={{fontSize:8,fontWeight:700,color:gradeColor(s.grade),border:`1px solid ${gradeColor(s.grade)}40`,padding:'0px 4px',borderRadius:3}}>{s.grade}</span>}
+                      {(s as any).source && (s as any).source !== 'Screener' && <span style={{fontSize:7,color:'#475569',border:'1px solid #1A2840',padding:'0 3px',borderRadius:2}}>{(s as any).source}</span>}
                     </div>
-                    {/* ── KEY SIGNALS — visible without expanding ── */}
-                    {s.signals.filter(sig=>sig.isAlpha&&sig.positive).length > 0 ? (
-                      <div style={{display:'flex',gap:3,flexWrap:'wrap',marginBottom:3}}>
-                        {/* Primary signal — dominant alpha */}
-                        {s.signals.filter(sig=>sig.isAlpha&&sig.positive).slice(0,3).map((sig,si)=>(
-                          <span key={si} style={{fontSize:8,fontWeight:700,
-                            color:sig.origin==='SECTOR'?'#06b6d4':ACCENT2,
-                            backgroundColor:sig.origin==='SECTOR'?'#06b6d412':ACCENT2+'12',
-                            border:`1px solid ${sig.origin==='SECTOR'?'#06b6d430':ACCENT2+'30'}`,padding:'1px 5px',borderRadius:3}}>
-                            {sig.origin==='SECTOR'?'🌍 ':''}{sig.subject || sig.type.replace(/_/g,' ')}
-                            {sig.numerical?` ₹${sig.numerical.value}${sig.numerical.unit}`:''}
-                          </span>
-                        ))}
-                        {s.signals.filter(sig=>sig.isAlpha&&!sig.positive).slice(0,1).map((sig,si)=>(
-                          <span key={`n${si}`} style={{fontSize:8,fontWeight:700,color:'#ef4444',backgroundColor:'#ef444412',border:'1px solid #ef444430',padding:'1px 5px',borderRadius:3}}>
-                            ⚠ {sig.type.replace(/_/g,' ')}
-                          </span>
-                        ))}
+                  </div>
+
+                  {/* Company + Sector */}
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:11,fontWeight:600,color:'#C9D4E0',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.company}</div>
+                    <div style={{fontSize:8,color:'#475569',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.sector||'—'}</div>
+                  </div>
+
+                  {/* Right: compact metrics strip */}
+                  <div style={{display:'flex',gap:10,alignItems:'center',flexShrink:0}}>
+                    {/* Signal score */}
+                    <div style={{textAlign:'center',minWidth:32}}>
+                      <div style={{fontSize:15,fontWeight:900,lineHeight:1,color:scoreColor(s.signalScore)}}>{s.articleCount===0?'—':s.signalScore}</div>
+                      <div style={{fontSize:7,color:TEXT3,marginTop:1}}>SIG</div>
+                    </div>
+                    {/* MRI with bar */}
+                    <div style={{textAlign:'center',minWidth:36}}>
+                      <div style={{fontSize:12,fontWeight:700,color:s.mriScore>=70?'#10b981':s.mriScore===50?TEXT3:'#f59e0b',lineHeight:1}}>{s.mriScore===50&&s.articleCount===0?'—':s.mriScore}</div>
+                      <div style={{width:32,height:2,backgroundColor:'#1A2840',borderRadius:1,marginTop:2,overflow:'hidden'}}>
+                        {s.articleCount>0&&<div style={{height:'100%',width:`${s.mriScore}%`,backgroundColor:s.mriScore>=70?'#10b981':s.mriScore>=50?'#f59e0b':'#ef4444',borderRadius:1}} />}
                       </div>
-                    ) : s.articleCount === 0 ? (
-                      <span style={{fontSize:8,fontWeight:700,color:'#F59E0B',border:'1px solid #F59E0B30',padding:'1px 6px',borderRadius:3,marginBottom:3,display:'inline-block'}}>⚠ NO EVIDENCE — 0 articles</span>
-                    ) : null}
-                    {/* 1-line synthesis if available */}
-                    {(s as any).whyItMatters && s.alphaCount > 0 && (
-                      <div style={{fontSize:9,color:'#6B7A8D',lineHeight:1.4,marginBottom:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'100%'}}>
-                        💡 {(s as any).whyItMatters}
+                      <div style={{fontSize:7,color:TEXT3}}>MRI</div>
+                    </div>
+                    {/* Trend + articles */}
+                    <div style={{textAlign:'center',minWidth:40}}>
+                      <div style={{fontSize:11,fontWeight:700,color:s.trend==='IMPROVING'?'#10b981':s.trend==='DETERIORATING'?'#ef4444':s.trend==='UNKNOWN'?'#334155':'#f59e0b'}}>
+                        {s.trend==='IMPROVING'?'↑':s.trend==='DETERIORATING'?'↓':s.trend==='UNKNOWN'?'·':'→'} {s.trend==='UNKNOWN'?'—':s.trend.slice(0,4)}
                       </div>
-                    )}
-                    <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-                      <span style={{fontSize:9,fontWeight:700,color:toneColor(s.tone),backgroundColor:toneColor(s.tone)+'18',padding:'1px 5px',borderRadius:3}}>{s.tone}</span>
-                      <span style={{fontSize:9,color:freshColor(s.freshness)}}>{s.freshness==='FRESH'?'🟢':s.freshness==='ACTIVE'?'🟡':'⚫'} {s.freshness}</span>
-                      {/* MISSED? only when articles exist but count is low — not on 0-article stocks */}
-                      {(s as any).missedByMarket && s.articleCount >= 1 && <span style={{fontSize:8,fontWeight:800,color:'#8B5CF6',border:'1px solid #8B5CF640',padding:'0 5px',borderRadius:3}}>🔍 MISSED?</span>}
-                      {(s as any).source && (s as any).source !== 'Screener' && <span style={{fontSize:8,color:'#4A5B6C',border:'1px solid #1A2840',padding:'0 4px',borderRadius:3}}>{(s as any).source}</span>}
+                      <div style={{fontSize:7,color:TEXT3}}>{s.articleCount} art.</div>
                     </div>
+                    {/* Freshness dot */}
+                    <div style={{width:8,height:8,borderRadius:'50%',backgroundColor:s.freshness==='FRESH'?'#10b981':s.freshness==='ACTIVE'?'#f59e0b':'#334155',flexShrink:0}} title={s.freshness} />
+                    {/* Expand chevron */}
+                    <span style={{fontSize:10,color:'#334155',marginLeft:2}}>{isExp?'▲':'▼'}</span>
                   </div>
-                  {/* Signal Score — forced 0 when 0 articles (evidence integrity) */}
-                  <div style={{textAlign:'center'}}>
-                    {s.articleCount === 0 ? (
-                      <>
-                        <div style={{fontSize:16,fontWeight:900,color:'#F59E0B'}}>—</div>
-                        <div style={{fontSize:8,color:'#F59E0B'}}>NO DATA</div>
-                      </>
-                    ) : (
-                      <>
-                        <div style={{fontSize:16,fontWeight:900,color:s.signalScore>=70?'#10b981':s.signalScore>=50?'#f59e0b':'#ef4444'}}>{s.signalScore}</div>
-                        <div style={{fontSize:8,color:TEXT3}}>SIGNAL</div>
-                      </>
-                    )}
-                  </div>
-                  {/* MRI */}
-                  <div style={{textAlign:'center'}}>
-                    <div style={{fontSize:16,fontWeight:900,color:s.mriScore>=70?'#10b981':s.mriScore>=50?'#f59e0b':'#ef4444'}}>{s.mriScore}</div>
-                    <div style={{fontSize:8,color:TEXT3}}>MRI</div>
-                  </div>
-                  {/* Trend */}
-                  <div style={{textAlign:'center'}}>
-                    <div style={{fontSize:11,fontWeight:700,color:s.trend==='IMPROVING'?'#10b981':s.trend==='DETERIORATING'?'#ef4444':'#f59e0b'}}>
-                      {s.trend==='IMPROVING'?'↑':s.trend==='DETERIORATING'?'↓':'→'} {s.trend}
+                </div>
+
+                {/* ── ROW 2: Signal evidence OR article headline — THE KEY INFO ROW ── */}
+                <div style={{borderTop:'1px solid #1A284030',paddingTop:6}}>
+                  {s.alphaCount > 0 && bestSig ? (
+                    // HAS SIGNALS: show the best signal with evidence text
+                    <div style={{display:'flex',gap:8,alignItems:'flex-start'}}>
+                      {/* Signal type pill */}
+                      <span style={{
+                        fontSize:8,fontWeight:800,flexShrink:0,marginTop:1,
+                        padding:'1px 6px',borderRadius:4,
+                        color:bestSig.positive?'#10b981':'#ef4444',
+                        backgroundColor:(bestSig.positive?'#10b98114':'#ef444414'),
+                        border:`1px solid ${bestSig.positive?'#10b98130':'#ef444430'}`,
+                        whiteSpace:'nowrap',
+                      }}>
+                        {bestSig.positive?'↑':'↓'} {(bestSig.subject||bestSig.type.replace(/_/g,' ')).slice(0,20)}
+                        {topNumerical?` ₹${topNumerical.value}Cr`:''}
+                      </span>
+                      {/* Evidence text — the actual signal sentence */}
+                      <div style={{flex:1,fontSize:10,color:'#8A95A3',lineHeight:1.4,overflow:'hidden',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',textOverflow:'ellipsis'}}>
+                        {bestSig.text && bestSig.text.length > 8
+                          ? `"${bestSig.text.slice(0,120)}${bestSig.text.length>120?'…':'"'}`
+                          : topHeadline?.title?.slice(0,100) || 'Expand for details'
+                        }
+                      </div>
+                      {/* Negative signal warning if any */}
+                      {bestNegSig && (
+                        <span style={{fontSize:8,fontWeight:700,flexShrink:0,padding:'1px 5px',borderRadius:3,color:'#ef4444',backgroundColor:'#ef444410',border:'1px solid #ef444425'}}>
+                          ⚠ {(bestNegSig.subject||bestNegSig.type).replace(/_/g,' ').slice(0,12)}
+                        </span>
+                      )}
                     </div>
-                    <div style={{fontSize:8,color:TEXT3}}>{s.articleCount} articles</div>
-                  </div>
-                  {/* Surprise */}
-                  <div style={{textAlign:'center'}}>
-                    <div style={{fontSize:10,fontWeight:700,color:s.surprisePotential==='HIGH'?'#ef4444':s.surprisePotential==='MEDIUM'?'#f59e0b':'#4A5B6C'}}>
-                      {s.surprisePotential}
-                    </div>
-                    <div style={{fontSize:8,color:TEXT3}}>SURPRISE</div>
-                  </div>
-                  {/* Expectation Shift */}
-                  <div style={{textAlign:'center'}}>
-                    <div style={{fontSize:14,fontWeight:900,color:(s as any).expectationShift>=60?'#ef4444':(s as any).expectationShift>=35?'#f59e0b':'#4A5B6C'}}>{(s as any).expectationShift||0}</div>
-                    <div style={{fontSize:8,color:TEXT3}}>Δ SHIFT</div>
-                  </div>
-                  {/* Signal category breakdown — replaces opaque ⭐3 */}
-                  <div style={{textAlign:'left'}}>
-                    {s.articleCount === 0 ? (
-                      <div style={{fontSize:9,color:'#F59E0B',fontWeight:700}}>⚠ NO<br/>EVIDENCE</div>
-                    ) : (() => {
-                      const cats: Record<string,number> = {};
-                      s.signals.filter(sig=>sig.isAlpha&&sig.positive).forEach(sig => { cats[sig.category] = (cats[sig.category]||0)+1; });
-                      const catLabel: Record<string,string> = {DEMAND:'Demand',CAPEX:'Capex',MARGIN:'Margin',PRICING:'Pricing',GUIDANCE:'Guide',MGMT_STYLE:'Style',SUPPLY_CHAIN:'Supply',RISK:'Risk'};
-                      return Object.entries(cats).slice(0,4).map(([cat,cnt])=>(
-                        <div key={cat} style={{fontSize:8,color:ACCENT2,lineHeight:1.6}}>
-                          {catLabel[cat]||cat}: {cnt}
+                  ) : s.articleCount > 0 && topHeadline ? (
+                    // HAS ARTICLES BUT NO SIGNALS: show the latest article headline
+                    <div style={{display:'flex',gap:8,alignItems:'flex-start'}}>
+                      <span style={{fontSize:8,flexShrink:0,color:'#334155',marginTop:1}}>📰</span>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:10,color:'#64748B',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                          {topHeadline.title.slice(0,100)}{topHeadline.title.length>100?'…':''}
                         </div>
-                      ));
-                    })()}
-                  </div>
+                        <div style={{fontSize:8,color:'#334155',marginTop:1}}>
+                          {topHeadline.source} · {topHeadline.date?new Date(topHeadline.date).toLocaleDateString('en-IN',{day:'numeric',month:'short'}):''}
+                          <span style={{marginLeft:8,color:'#475569'}}>{s.articleCount} article{s.articleCount!==1?'s':''}, 0 signals — expand to see all</span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    // 0 ARTICLES
+                    <div style={{fontSize:9,color:'#334155'}}>
+                      📭 No news found in last 30 days — expand for details
+                    </div>
+                  )}
                 </div>
               </button>
 
@@ -1500,6 +1993,53 @@ function ConcallIntelligence() {
                     <div style={{padding:'16px 0',color:TEXT3,fontSize:11,textAlign:'center'}}>No management signals detected in 30D window. Try refreshing or check back post earnings.</div>
                   ) : (
                     <div style={{marginTop:12}}>
+
+                      {/* ── ARTICLE HEADLINES (always shown when articles exist) ── */}
+                      {(s as any).recentHeadlines?.length > 0 && (
+                        <div style={{marginBottom:14,padding:'10px 12px',backgroundColor:'#060E1A',border:'1px solid #1A2840',borderRadius:8}}>
+                          <div style={{fontSize:9,fontWeight:800,color:'#64748B',letterSpacing:'1px',marginBottom:8}}>
+                            📰 RECENT NEWS ({s.articleCount} article{s.articleCount!==1?'s':''} found for {s.company})
+                            {s.alphaCount === 0 && <span style={{color:'#F59E0B',marginLeft:6}}>— no actionable management signals detected yet</span>}
+                          </div>
+                          <div style={{display:'flex',flexDirection:'column',gap:5}}>
+                            {(s as any).recentHeadlines.map((h: {title:string;source:string;date:string;url?:string}, hi: number) => (
+                              <div key={hi} style={{display:'flex',gap:8,alignItems:'flex-start'}}>
+                                <span style={{fontSize:10,color:'#334155',flexShrink:0}}>›</span>
+                                <div style={{flex:1,minWidth:0}}>
+                                  {h.url ? (
+                                    <a href={h.url} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:'#94A3B8',lineHeight:1.4,textDecoration:'none',display:'block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                                      {h.title}
+                                    </a>
+                                  ) : (
+                                    <span style={{fontSize:11,color:'#94A3B8',lineHeight:1.4,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',display:'block'}}>{h.title}</span>
+                                  )}
+                                  <span style={{fontSize:9,color:'#334155'}}>{h.source}{h.date?' · '+new Date(h.date).toLocaleDateString('en-IN',{day:'numeric',month:'short'}):''}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                          {s.alphaCount === 0 && (
+                            <div style={{marginTop:8,padding:'6px 8px',backgroundColor:'#F59E0B08',border:'1px solid #F59E0B20',borderRadius:5}}>
+                              <span style={{fontSize:9,color:'#F59E0B'}}>💡 To extract signals: paste the earnings call transcript in "📝 Paste Concall" above → instant signal extraction.</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* No articles at all — explain why and what to do */}
+                      {s.articleCount === 0 && (
+                        <div style={{marginBottom:14,padding:'10px 12px',backgroundColor:'#060E1A',border:'1px solid #1A2840',borderRadius:8}}>
+                          <div style={{fontSize:9,fontWeight:800,color:'#334155',marginBottom:6}}>📭 NO NEWS FOUND IN LAST 30 DAYS</div>
+                          <div style={{fontSize:10,color:'#475569',lineHeight:1.6}}>
+                            No articles matching <strong style={{color:'#64748B'}}>{s.company}</strong> in the news database.
+                            This can happen when: (1) the company uses a different name in press coverage,
+                            (2) no significant news in 30 days, or (3) stock is too small for mainstream coverage.
+                          </div>
+                          <div style={{marginTop:8,padding:'6px 8px',backgroundColor:'#0F7ABF08',border:'1px solid #0F7ABF20',borderRadius:5}}>
+                            <span style={{fontSize:9,color:'#0F7ABF'}}>💡 Use "📝 Paste Concall" above to directly paste earnings call highlights for this company.</span>
+                          </div>
+                        </div>
+                      )}
 
                       {/* ── SIGNAL STACK (composite across articles) ── */}
                       {(s as any).composite && (s as any).composite.length > 0 && (

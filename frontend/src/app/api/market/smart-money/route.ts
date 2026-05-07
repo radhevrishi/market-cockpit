@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { nseApiFetch } from '@/lib/nse';
+import { rateLimitResponse } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -162,7 +163,9 @@ function isMarketOpen(): { open: boolean; lastTradingDay: string } {
   return { open: !isWeekend, lastTradingDay: lastDay };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const limited = rateLimitResponse(request, 60, 60_000);
+  if (limited) return limited;
   try {
     const marketStatus = isMarketOpen();
 
