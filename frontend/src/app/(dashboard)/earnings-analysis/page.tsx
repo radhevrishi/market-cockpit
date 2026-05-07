@@ -2692,293 +2692,327 @@ export default function EarningsAnalysisPage() {
           </div>
         </div>
 
-        {/* ── MAIN CONTENT GRID — only show numeric tables when extraction is not failed ── */}
-        {d.parseState === 'failed' && (
-          <div style={{backgroundColor:CARD2,border:`1px solid ${RED}25`,borderRadius:12,padding:'20px',marginBottom:14,textAlign:'center'}}>
-            <div style={{fontSize:32,marginBottom:10}}>🚫</div>
-            <div style={{fontSize:F.md,fontWeight:700,color:RED,marginBottom:6}}>Numeric Tables Suppressed</div>
-            <div style={{fontSize:F.sm,color:MUTED,maxWidth:500,margin:'0 auto',lineHeight:1.7}}>
-              Revenue extraction failed — all financial ratios and metrics are based on incorrect numbers and would be misleading.
-              Text-based analysis (themes, management commentary, guidance) is still available below.
+        {/* ═══════════════════════════════════════════════════════════════
+            INSTITUTIONAL EARNINGS OUTPUT
+            Format: Actuals → Surprise → Guidance → JAT → Score
+            US:  Consensus-driven, guidance-heavy, JAT = revision trajectory
+            India: Trend-driven, execution-heavy, JAT = operational momentum
+            ═══════════════════════════════════════════════════════════════ */}
+
+        {/* ── SECTION 1: ACTUALS vs CONSENSUS ─────────────────────────────── */}
+        {d.parseState !== 'failed' && (
+          <div style={{backgroundColor:CARD2,border:`1px solid ${BORDER}`,borderRadius:12,padding:'18px 20px',marginBottom:10}}>
+            <div style={{fontSize:9,fontWeight:800,color:MUTED,letterSpacing:'1.2px',marginBottom:12}}>
+              ACTUALS vs CONSENSUS — {d.period}
             </div>
-            <div style={{marginTop:12,padding:'8px 14px',backgroundColor:ACCENT+'10',borderRadius:8,fontSize:F.xs,color:ACCENT,display:'inline-block'}}>
-              💡 For better results: open the PDF, Ctrl+A → Ctrl+C, then use "Paste Text" mode
+
+            {/* Column headers */}
+            <div style={{display:'grid',gridTemplateColumns:'140px 1fr 1fr 1fr 1fr',gap:4,marginBottom:6,paddingBottom:6,borderBottom:`1px solid ${BORDER}`}}>
+              {['METRIC','ACTUAL','ESTIMATE','vs EST','vs PRIOR'].map(h=>(
+                <div key={h} style={{fontSize:8,fontWeight:700,color:MUTED,letterSpacing:'0.8px',textAlign:h==='METRIC'?'left':'right'}}>{h}</div>
+              ))}
+            </div>
+
+            {/* Revenue row */}
+            <div style={{display:'grid',gridTemplateColumns:'140px 1fr 1fr 1fr 1fr',gap:4,padding:'8px 0',borderBottom:`1px solid ${BORDER}20`}}>
+              <div style={{fontSize:F.xs,color:MUTED}}>Revenue</div>
+              <div style={{textAlign:'right',fontSize:F.sm,fontWeight:800,color:TEXT}}>{n(d.revenue,d)}</div>
+              <div style={{textAlign:'right',fontSize:F.xs,color:revEstNum?TEXT:MUTED}}>{revEstNum?n(revEstNum,d):'—'}</div>
+              <div style={{textAlign:'right'}}>
+                {revEstNum&&d.revenue ? (() => {
+                  const bm=beatMissLabel(d.revenue,revEstNum);
+                  return bm ? <span style={{fontSize:F.xs,fontWeight:800,color:bm.col}}>{bm.text}</span> : null;
+                })() : <span style={{fontSize:F.xs,color:MUTED}}>—</span>}
+              </div>
+              <div style={{textAlign:'right'}}>
+                {(() => { const g=growth(d.revenue,d.revPrior); return g ? <span style={{fontSize:F.xs,fontWeight:700,color:g.col}}>{g.text} YoY</span> : <span style={{fontSize:F.xs,color:MUTED}}>—</span>; })()}
+              </div>
+            </div>
+
+            {/* EPS row */}
+            {(latestEpsActual !== null || d.eps !== null) && (
+              <div style={{display:'grid',gridTemplateColumns:'140px 1fr 1fr 1fr 1fr',gap:4,padding:'8px 0',borderBottom:`1px solid ${BORDER}20`}}>
+                <div style={{fontSize:F.xs,color:MUTED}}>EPS</div>
+                <div style={{textAlign:'right',fontSize:F.sm,fontWeight:800,color:(() => { const e=latestEpsActual??d.eps; return e!==null?e>=0?GREEN:RED:MUTED; })()}}>
+                  {(() => { const e=latestEpsActual??d.eps; return e!==null?`${e>=0?'$':'($'}${Math.abs(e).toFixed(2)}${e<0?')':''}`:' —'; })()}
+                </div>
+                <div style={{textAlign:'right',fontSize:F.xs,color:MUTED}}>
+                  {latestEpsEst!==null?`${latestEpsEst>=0?'$':'($'}${Math.abs(latestEpsEst).toFixed(2)}${latestEpsEst<0?')':''}`:' —'}
+                </div>
+                <div style={{textAlign:'right'}}>
+                  {epsBM ? <span style={{fontSize:F.xs,fontWeight:800,color:epsBM.col}}>{epsBM.text}</span> : <span style={{fontSize:F.xs,color:MUTED}}>—</span>}
+                </div>
+                <div style={{textAlign:'right'}}>
+                  {latestQ?.surprisePct!=null ? <span style={{fontSize:F.xs,fontWeight:700,color:surpriseColor(latestQ.surprisePct)}}>{latestQ.surprisePct>=0?'+':''}{latestQ.surprisePct.toFixed(1)}% surprise</span> : <span style={{fontSize:F.xs,color:MUTED}}>—</span>}
+                </div>
+              </div>
+            )}
+
+            {/* Gross Margin row */}
+            {d.grossMargin !== null && (
+              <div style={{display:'grid',gridTemplateColumns:'140px 1fr 1fr 1fr 1fr',gap:4,padding:'8px 0',borderBottom:`1px solid ${BORDER}20`}}>
+                <div style={{fontSize:F.xs,color:MUTED}}>Gross Margin</div>
+                <div style={{textAlign:'right',fontSize:F.sm,fontWeight:800,color:TEXT}}>{d.grossMargin.toFixed(1)}%</div>
+                <div style={{textAlign:'right',fontSize:F.xs,color:MUTED}}>{gmEstNum?`${gmEstNum.toFixed(1)}%`:'—'}</div>
+                <div style={{textAlign:'right'}}>
+                  {gmEstNum&&d.grossMargin!==null ? (() => { const delta=d.grossMargin-gmEstNum; return <span style={{fontSize:F.xs,fontWeight:800,color:delta>=0?GREEN:RED}}>{delta>=0?'↑':'↓'} {Math.abs(delta).toFixed(1)}pp</span>; })() : <span style={{fontSize:F.xs,color:MUTED}}>—</span>}
+                </div>
+                <div style={{textAlign:'right',fontSize:F.xs,color:MUTED}}>—</div>
+              </div>
+            )}
+
+            {/* EBITDA Margin row */}
+            {d.ebitdaMargin !== null && (
+              <div style={{display:'grid',gridTemplateColumns:'140px 1fr 1fr 1fr 1fr',gap:4,padding:'8px 0'}}>
+                <div style={{fontSize:F.xs,color:MUTED}}>EBITDA Margin</div>
+                <div style={{textAlign:'right',fontSize:F.sm,fontWeight:800,color:TEXT}}>{d.ebitdaMargin.toFixed(1)}%</div>
+                <div style={{textAlign:'right',fontSize:F.xs,color:MUTED}}>—</div>
+                <div style={{textAlign:'right',fontSize:F.xs,color:MUTED}}>—</div>
+                <div style={{textAlign:'right',fontSize:F.xs,color:MUTED}}>—</div>
+              </div>
+            )}
+
+            {/* Estimate inputs — inline, compact */}
+            <div style={{marginTop:10,paddingTop:8,borderTop:`1px solid ${BORDER}`,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+              <span style={{fontSize:8,color:MUTED}}>Analyst est. override:</span>
+              <input value={manualRevEst} onChange={e=>setManualRevEst(e.target.value)} placeholder={`Rev (${d.scaleLabel})`}
+                style={{width:80,backgroundColor:'#0d1117',border:`1px solid ${BORDER}`,borderRadius:4,padding:'3px 6px',color:TEXT,fontSize:10,outline:'none'}}/>
+              <input value={manualGMEst} onChange={e=>setManualGMEst(e.target.value)} placeholder="GM %"
+                style={{width:56,backgroundColor:'#0d1117',border:`1px solid ${BORDER}`,borderRadius:4,padding:'3px 6px',color:TEXT,fontSize:10,outline:'none'}}/>
+              <input value={manualGuidance} onChange={e=>setManualGuidance(e.target.value)} placeholder="Guidance commentary..."
+                style={{flex:1,minWidth:160,backgroundColor:'#0d1117',border:`1px solid ${BORDER}`,borderRadius:4,padding:'3px 6px',color:TEXT,fontSize:10,outline:'none'}}/>
+              {!avData && <button onClick={()=>fetchAVData(avTicker||d.ticker)} disabled={avLoading}
+                style={{padding:'3px 10px',backgroundColor:ACCENT,border:'none',borderRadius:4,color:'#000',fontWeight:700,fontSize:9,cursor:'pointer',opacity:avLoading?0.6:1}}>
+                {avLoading?'⏳':'📡 Fetch FMP'}
+              </button>}
             </div>
           </div>
         )}
-        <div style={{gridTemplateColumns:'minmax(300px,2fr) minmax(280px,1fr)',gap:14,marginBottom:14,display: d.parseState === 'failed' ? 'none' : 'grid'} as React.CSSProperties}>
 
-          {/* LEFT: P&L + Balance Sheet */}
-          <div style={{display:'flex',flexDirection:'column',gap:12}}>
+        {/* ── SECTION 2: SURPRISE ──────────────────────────────────────────── */}
+        {d.parseState !== 'failed' && (latestQ?.surprisePct !== null || revEstNum !== null) && (() => {
+          const epsSurp = latestQ?.surprisePct ?? null;
+          const revSurp = revEstNum && d.revenue ? ((d.revenue - revEstNum) / Math.abs(revEstNum)) * 100 : null;
+          const gmSurp = gmEstNum && d.grossMargin ? d.grossMargin - gmEstNum : null;
 
-            {/* P&L Table */}
-            <div style={{backgroundColor:CARD2,border:`1px solid ${BORDER}`,borderRadius:12,padding:'16px 18px'}}>
-              <div style={{fontSize:F.sm,fontWeight:800,color:PURPLE,marginBottom:10,letterSpacing:'0.5px'}}>📈 INCOME STATEMENT</div>
-              {d.continuingOpsDetected && (
-                <div style={{fontSize:10,color:YELLOW,marginBottom:8,padding:'4px 8px',backgroundColor:YELLOW+'0a',borderRadius:5}}>
-                  Note: Discontinued operations (divestiture) included in net income — compare continuing-ops for clean picture
+          // Surprise level classification
+          const avgSurp = [epsSurp, revSurp].filter(v=>v!==null) as number[];
+          const avgAbs = avgSurp.length > 0 ? avgSurp.reduce((s,v)=>s+Math.abs(v),0)/avgSurp.length : 0;
+          const surpLevel = avgAbs >= 20 ? 'Exceptional' : avgAbs >= 10 ? 'Very Strong' : avgAbs >= 5 ? 'Strong' : avgAbs >= 2 ? 'Mild' : 'Inline';
+          const surpColor = avgSurp.every(v=>v>=0) ? (avgAbs >= 10 ? GREEN : '#10b98199') : avgSurp.every(v=>v<0) ? RED : YELLOW;
+
+          return (
+            <div style={{backgroundColor:surpColor+'0c',border:`1px solid ${surpColor}30`,borderRadius:12,padding:'14px 20px',marginBottom:10}}>
+              <div style={{fontSize:9,fontWeight:800,color:MUTED,letterSpacing:'1.2px',marginBottom:10}}>SURPRISE</div>
+              <div style={{display:'flex',gap:20,flexWrap:'wrap',alignItems:'flex-end'}}>
+                {revSurp !== null && (
+                  <div>
+                    <div style={{fontSize:9,color:MUTED,marginBottom:2}}>Revenue Surprise</div>
+                    <div style={{fontSize:18,fontWeight:900,color:revSurp>=0?GREEN:RED}}>{revSurp>=0?'+':''}{revSurp.toFixed(1)}%</div>
+                  </div>
+                )}
+                {epsSurp !== null && (
+                  <div>
+                    <div style={{fontSize:9,color:MUTED,marginBottom:2}}>EPS Surprise</div>
+                    <div style={{fontSize:18,fontWeight:900,color:epsSurp>=0?GREEN:RED}}>{epsSurp>=0?'+':''}{epsSurp.toFixed(1)}%</div>
+                  </div>
+                )}
+                {gmSurp !== null && (
+                  <div>
+                    <div style={{fontSize:9,color:MUTED,marginBottom:2}}>Gross Margin Surprise</div>
+                    <div style={{fontSize:18,fontWeight:900,color:gmSurp>=0?GREEN:RED}}>{gmSurp>=0?'+':''}{gmSurp.toFixed(1)} bps</div>
+                  </div>
+                )}
+                <div style={{marginLeft:'auto',textAlign:'right'}}>
+                  <div style={{fontSize:9,color:MUTED,marginBottom:2}}>Surprise Level</div>
+                  <div style={{fontSize:F.lg,fontWeight:900,color:surpColor}}>{surpLevel}</div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ── SECTION 3: GUIDANCE ──────────────────────────────────────────── */}
+        {(d.guidance.length > 0 || manualGuidance || avData?.epsEstCurrentYear !== null) && (
+          <div style={{backgroundColor:CARD2,border:`1px solid ${BORDER}`,borderRadius:12,padding:'14px 20px',marginBottom:10}}>
+            <div style={{fontSize:9,fontWeight:800,color:MUTED,letterSpacing:'1.2px',marginBottom:10}}>GUIDANCE</div>
+            <div style={{display:'flex',flexDirection:'column',gap:6}}>
+
+              {/* User-provided guidance commentary */}
+              {manualGuidance && (
+                <div style={{display:'flex',gap:10,alignItems:'flex-start',padding:'6px 0',borderBottom:`1px solid ${BORDER}20`}}>
+                  <span style={{fontSize:F.sm,fontWeight:700,color:YELLOW,minWidth:120}}>Mgmt Commentary</span>
+                  <span style={{fontSize:F.xs,color:TEXT,flex:1}}>{manualGuidance}</span>
                 </div>
               )}
-              <table style={{width:'100%',borderCollapse:'collapse'}}>
-                <thead>
-                  <tr style={{borderBottom:`1px solid ${BORDER}`}}>
-                    <th style={{padding:'4px 8px',textAlign:'left',fontSize:9,color:MUTED,fontWeight:700,letterSpacing:'0.5px'}}>METRIC</th>
-                    <th style={{padding:'4px 8px',textAlign:'right',fontSize:9,color:MUTED,fontWeight:700}}>{d.period}</th>
-                    <th style={{padding:'4px 8px',textAlign:'right',fontSize:9,color:MUTED,fontWeight:700}}>YOY</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <MetRow label="Revenue" cur={d.revenue} prior={d.revPrior} d={d} highlight />
-                  <MetRow label="Gross Profit" cur={d.grossProfit} d={d} />
-                  <MetRow label="Gross Margin" cur={d.grossMargin} d={d} isPct />
-                  <MetRow label="EBITDA" cur={d.ebitda} d={d} />
-                  <MetRow label="EBITDA Margin" cur={d.ebitdaMargin} d={d} isPct />
-                  <MetRow label="EBIT / Op. Income" cur={d.ebit} d={d} />
-                  <MetRow label="R&D Expense" cur={d.rnd} d={d} />
-                  <MetRow label="SG&A" cur={d.sga} d={d} />
-                  <MetRow label="Interest Expense" cur={d.interestExpense} d={d} />
-                  <MetRow label="Other Income" cur={d.otherIncome} d={d} />
-                  <MetRow label="PBT" cur={d.pbt} d={d} />
-                  <MetRow label="Tax" cur={d.tax} d={d} />
-                  <MetRow label="Net Income / PAT" cur={d.pat} prior={d.patPrior} d={d} highlight />
-                  <MetRow label="PAT Margin" cur={d.patMargin} d={d} isPct />
-                  <MetRow label="EPS" cur={d.eps} prior={d.epsPrior} d={d} isEps />
-                  {d.continuingOpsDetected && d.discontinuedIncome !== null && (
-                    <MetRow label="  of which: Discontinued Ops" cur={d.discontinuedIncome} d={d} />
-                  )}
-                  {d.continuingOpsDetected && d.continuingPAT !== null && (
-                    <MetRow label="  Continuing-Ops PAT (approx)" cur={d.continuingPAT} d={d} highlight />
-                  )}
-                </tbody>
-              </table>
-            </div>
 
-            {/* Balance Sheet */}
-            <div style={{backgroundColor:CARD2,border:`1px solid ${BORDER}`,borderRadius:12,padding:'16px 18px'}}>
-              <div style={{fontSize:F.sm,fontWeight:800,color:YELLOW,marginBottom:10}}>🏛️ BALANCE SHEET & RETURNS</div>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
-                {[
-                  {l:'Cash',             v:d.cash,       col:GREEN},
-                  {l:'Total Debt',       v:d.totalDebt,  col:d.totalDebt&&d.totalDebt>0?ORANGE:GREEN},
-                  {l:'Net Debt',         v:d.netDebt,    col:d.netDebt&&d.netDebt>0?ORANGE:GREEN},
-                  {l:'Equity',           v:d.equity,     col:TEXT},
-                  {l:'Total Assets',     v:d.totalAssets,col:TEXT},
-                  {l:'Capex',            v:d.capex,      col:MUTED},
-                ].map(({l,v,col})=> v !== null ? (
-                  <div key={l} style={{display:'flex',justifyContent:'space-between',padding:'4px 8px',backgroundColor:'#0f0f1a',borderRadius:6}}>
-                    <span style={{fontSize:F.xs,color:MUTED}}>{l}</span>
-                    <span style={{fontSize:F.xs,fontWeight:700,color:col}}>{n(v,d)}</span>
-                  </div>
-                ) : null)}
-              </div>
-              <div style={{borderTop:`1px solid ${BORDER}`,paddingTop:10}}>
-                <div style={{fontSize:9,fontWeight:700,color:PURPLE,letterSpacing:'0.5px',marginBottom:8}}>COMPUTED RATIOS</div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
-                  {[
-                    {l:'D/E Ratio',    v:d.deRatio!==null?`${d.deRatio.toFixed(2)}x`:'—', col:mColor(d.deRatio!==null?1-Math.min(d.deRatio,2):null,0.5,0)},
-                    {l:'ROCE',         v:pct(d.roce),        col:mColor(d.roce,20,12)},
-                    {l:'ROE',          v:pct(d.roe),         col:mColor(d.roe,15,10)},
-                    {l:'CFO/PAT',      v:d.cfoPat!==null?`${d.cfoPat.toFixed(2)}x`:'—', col:mColor(d.cfoPat,0.8,0.5)},
-                    {l:'FCF',          v:n(d.fcf,d),         col:d.fcf!==null&&d.fcf>0?GREEN:RED},
-                  ].map(({l,v,col})=>(
-                    <div key={l} style={{display:'flex',justifyContent:'space-between',padding:'4px 8px',backgroundColor:'#0f0f1a',borderRadius:6}}>
-                      <span style={{fontSize:F.xs,color:MUTED}}>{l}</span>
-                      <span style={{fontSize:F.xs,fontWeight:700,color:col}}>{v}</span>
-                    </div>
-                  ))}
-                  {/* Cash Flow row */}
-                  {d.cfo !== null && (
-                    <div style={{gridColumn:'1/-1',display:'flex',justifyContent:'space-between',padding:'4px 8px',backgroundColor:'#0f0f1a',borderRadius:6}}>
-                      <span style={{fontSize:F.xs,color:MUTED}}>Operating Cash Flow</span>
-                      <span style={{fontSize:F.xs,fontWeight:700,color:d.cfo>=0?GREEN:RED}}>{n(d.cfo,d)}</span>
-                    </div>
+              {/* EPS forward estimate from FMP */}
+              {avData?.epsEstCurrentYear !== null && (
+                <div style={{display:'flex',gap:10,alignItems:'baseline',padding:'4px 0'}}>
+                  <span style={{fontSize:F.xs,color:MUTED,minWidth:120}}>EPS (Current FY)</span>
+                  <span style={{fontSize:F.sm,fontWeight:700,color:TEXT}}>
+                    ${avData!.epsEstCurrentYear!.toFixed(2)} est
+                    {avData?.numAnalysts ? <span style={{fontSize:9,color:MUTED,marginLeft:6}}>({avData.numAnalysts} analysts)</span> : null}
+                  </span>
+                  {avData?.analystTargetPrice && (
+                    <span style={{fontSize:F.xs,color:YELLOW,marginLeft:10}}>Price Target: ${avData.analystTargetPrice.toFixed(2)}</span>
                   )}
                 </div>
-              </div>
-            </div>
-          </div>
+              )}
 
-          {/* RIGHT: Signals + Narrative */}
-          <div style={{display:'flex',flexDirection:'column',gap:12}}>
+              {/* Revenue forward estimate from FMP */}
+              {avData?.revenueEstNextQ !== null && (
+                <div style={{display:'flex',gap:10,alignItems:'baseline',padding:'4px 0'}}>
+                  <span style={{fontSize:F.xs,color:MUTED,minWidth:120}}>Revenue (Next Q)</span>
+                  <span style={{fontSize:F.sm,fontWeight:700,color:TEXT}}>${avData!.revenueEstNextQ!.toFixed(0)}M est</span>
+                  {d.revenue && avData!.revenueEstNextQ! > 0 && (
+                    <span style={{fontSize:F.xs,color:MUTED,marginLeft:8}}>
+                      implying {((avData!.revenueEstNextQ! / d.revenue - 1) * 100).toFixed(1)}% QoQ
+                    </span>
+                  )}
+                </div>
+              )}
 
-            {/* Earnings Reaction Signals */}
-            <div style={{backgroundColor:CARD2,border:`1px solid ${r.color}25`,borderLeft:`3px solid ${r.color}`,borderRadius:12,padding:'14px 16px'}}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-                <div style={{fontSize:F.sm,fontWeight:800,color:r.color}}>🎯 EARNINGS REACTION</div>
-                <button onClick={()=>setExpandedSignals(p=>({...p,reaction:!p.reaction}))}
-                  style={{fontSize:10,color:MUTED,background:'none',border:'none',cursor:'pointer'}}>
-                  {expandedSignals.reaction?'▲ less':'▼ more'}
-                </button>
-              </div>
-              {r.signals.slice(0, expandedSignals.reaction ? 99 : 5).map((s,i)=>(
-                <div key={i} style={{display:'flex',gap:8,marginBottom:6,alignItems:'flex-start'}}>
-                  <span style={{fontSize:10,flexShrink:0,marginTop:1,color:s.type==='green'?GREEN:s.type==='red'?RED:s.type==='amber'?YELLOW:MUTED}}>
-                    {s.type==='green'?'✓':s.type==='red'?'✗':'◦'}
-                  </span>
-                  <span style={{fontSize:F.xs,color:TEXT,lineHeight:1.5}}>{s.text}</span>
+              {/* Management guidance extracted from PDF */}
+              {d.guidance.slice(0,3).map((g,i)=>(
+                <div key={i} style={{display:'flex',gap:8,alignItems:'flex-start',padding:'4px 0',borderTop:i>0?`1px solid ${BORDER}10`:'none'}}>
+                  <span style={{fontSize:9,color:'#334155',flexShrink:0,marginTop:1}}>›</span>
+                  <span style={{fontSize:F.xs,color:MUTED,lineHeight:1.6,fontStyle:'italic'}}>"{g}"</span>
                 </div>
               ))}
             </div>
-
-            {/* Accounting Quality Signals */}
-            <div style={{backgroundColor:CARD2,border:`1px solid ${q.color}25`,borderLeft:`3px solid ${q.color}`,borderRadius:12,padding:'14px 16px'}}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-                <div style={{fontSize:F.sm,fontWeight:800,color:q.color}}>🏛️ ACCOUNTING QUALITY</div>
-                <button onClick={()=>setExpandedSignals(p=>({...p,quality:!p.quality}))}
-                  style={{fontSize:10,color:MUTED,background:'none',border:'none',cursor:'pointer'}}>
-                  {expandedSignals.quality?'▲ less':'▼ more'}
-                </button>
-              </div>
-              {q.signals.slice(0, expandedSignals.quality ? 99 : 4).map((s,i)=>(
-                <div key={i} style={{display:'flex',gap:8,marginBottom:5,alignItems:'flex-start'}}>
-                  <span style={{fontSize:10,flexShrink:0,color:s.type==='green'?GREEN:s.type==='red'?RED:s.type==='amber'?YELLOW:MUTED}}>
-                    {s.type==='green'?'✓':s.type==='red'?'✗':'◦'}
-                  </span>
-                  <span style={{fontSize:F.xs,color:TEXT,lineHeight:1.5}}>{s.text}</span>
-                </div>
-              ))}
-            </div>
-
-            {/* Order Book */}
-            {d.orderBook !== null && (
-              <div style={{backgroundColor:ACCENT+'10',border:`1px solid ${ACCENT}30`,borderRadius:12,padding:'14px 16px'}}>
-                <div style={{fontSize:F.sm,fontWeight:800,color:ACCENT,marginBottom:6}}>📋 ORDER BOOK / PIPELINE</div>
-                <div style={{fontSize:22,fontWeight:900,color:TEXT}}>{n(d.orderBook,d)}</div>
-                {d.revenue && <div style={{fontSize:11,color:MUTED,marginTop:3}}>= {(d.orderBook/(d.revenue*(d.periodType==='quarterly'?4:1))).toFixed(1)}x annualized revenue</div>}
-              </div>
-            )}
-
-            {/* Headcount */}
-            {d.headcount !== null && (
-              <div style={{backgroundColor:CARD2,border:`1px solid ${BORDER}`,borderRadius:12,padding:'12px 14px'}}>
-                <div style={{fontSize:9,color:MUTED,fontWeight:700,marginBottom:3}}>EMPLOYEES</div>
-                <div style={{fontSize:18,fontWeight:800,color:TEXT}}>{d.headcount.toLocaleString()}</div>
-              </div>
-            )}
           </div>
-        </div>
+        )}
 
-        {/* ── NARRATIVE THEMES with confidence tiers ── */}
-        {(nar as any).themeDetections?.length > 0 && (
-          <div style={{backgroundColor:CARD2,border:`1px solid ${PURPLE}25`,borderRadius:12,padding:'14px 18px',marginBottom:14}}>
-            <div style={{fontSize:F.sm,fontWeight:800,color:PURPLE,marginBottom:4}}>🌐 NARRATIVE THEMES</div>
-            <div style={{fontSize:9,color:MUTED,marginBottom:10}}>
-              Core = confirmed central to business · Adjacent = present but peripheral · Weak = incidental mention
-            </div>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:8}}>
-              {((nar as any).themeDetections as ThemeDetection[]).map((td: ThemeDetection)=>(
-                <div key={td.theme.tag} style={{
-                  padding:'10px 12px',
-                  backgroundColor:td.theme.color+'0e',
-                  border:`1px solid ${td.theme.color}${td.tier==='core'?'50':td.tier==='adjacent'?'28':'15'}`,
-                  borderRadius:8,
-                  borderLeft:`3px solid ${td.theme.color}${td.tier==='core'?'':'88'}`,
-                  opacity: td.tier==='weak' ? 0.55 : 1,
-                }}>
-                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
-                    <span style={{fontSize:F.md}}>{td.theme.emoji}</span>
-                    <span style={{
-                      fontSize:8,fontWeight:700,padding:'1px 5px',borderRadius:3,
-                      backgroundColor: td.tier==='core'?td.theme.color+'25':td.tier==='adjacent'?YELLOW+'20':MUTED+'18',
-                      color: td.tier==='core'?td.theme.color:td.tier==='adjacent'?YELLOW:MUTED,
-                    }}>
-                      {td.tier.toUpperCase()} {td.confidence}%
+        {/* ── SECTION 4: JAT — JUST AHEAD TRAJECTORY ───────────────────────── */}
+        {d.parseState !== 'failed' && (() => {
+          // Compute JAT signals from parsed data
+          const revGrowth = d.revenue && d.revPrior && d.revPrior > 0
+            ? ((d.revenue - d.revPrior) / d.revPrior) * 100 : null;
+          const gmTrend = d.grossMargin !== null
+            ? d.grossMargin >= 40 ? 'Positive' : d.grossMargin >= 25 ? 'Neutral' : 'Negative'
+            : null;
+          const revTraj = revGrowth !== null
+            ? revGrowth >= 25 ? 'Accelerating' : revGrowth >= 10 ? 'Stable' : revGrowth >= 0 ? 'Slowing' : 'Decelerating'
+            : null;
+          const epsTraj = latestQ?.surprisePct !== null && latestQ?.surprisePct !== undefined
+            ? latestQ.surprisePct >= 10 ? 'Upward revision path' : latestQ.surprisePct >= 0 ? 'Flat' : 'Downward pressure'
+            : null;
+          const themes = (nar as any).themeDetections?.filter((t:any)=>t.tier==='core') ?? [];
+          const trendCol = (s:string) => /Accelerating|Positive|Upward|Strong|Increasing/.test(s) ? GREEN : /Decelerating|Negative|Downward|Weak/.test(s) ? RED : YELLOW;
+
+          const rows = [
+            { label:'Revenue',      value: revTraj ?? '—', icon: revGrowth!==null ? (revGrowth>=10?'↑':revGrowth>=0?'→':'↓') : '·' },
+            { label:'Margins',      value: gmTrend ?? '—', icon: gmTrend==='Positive'?'↑':gmTrend==='Negative'?'↓':'→' },
+            { label:'EPS',          value: epsTraj ?? '—', icon: epsTraj?.startsWith('Upward')?'↑':epsTraj?.startsWith('Downward')?'↓':'→' },
+            { label:'Theme Exposure',value: themes.length>=2?'Increasing':themes.length===1?'Stable':'Declining', icon: themes.length>=2?'↑':themes.length===1?'→':'↓' },
+          ].filter(r=>r.value!=='—');
+
+          if (rows.length === 0) return null;
+
+          return (
+            <div style={{backgroundColor:CARD2,border:`1px solid ${BORDER}`,borderRadius:12,padding:'14px 20px',marginBottom:10}}>
+              <div style={{fontSize:9,fontWeight:800,color:MUTED,letterSpacing:'1.2px',marginBottom:10}}>
+                JAT — JUST AHEAD TRAJECTORY
+                <span style={{fontSize:8,fontWeight:400,marginLeft:8,color:'#334155'}}>
+                  {d.currency==='USD' ? '(guidance + revision trajectory)' : '(execution + operational momentum)'}
+                </span>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:8}}>
+                {rows.map(({label,value,icon})=>(
+                  <div key={label} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'7px 10px',backgroundColor:'#0d1117',borderRadius:7,border:`1px solid ${BORDER}`}}>
+                    <span style={{fontSize:F.xs,color:MUTED}}>{label}</span>
+                    <span style={{fontSize:F.xs,fontWeight:800,color:trendCol(value)}}>
+                      {icon} {value}
                     </span>
                   </div>
-                  <div style={{fontSize:F.xs,fontWeight:700,color:td.theme.color}}>{td.theme.label}</div>
-                  <div style={{fontSize:9,color:MUTED,marginTop:3,lineHeight:1.4}}>
-                    {td.theme.keywords.slice(0,2).join(' · ')}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div style={{marginTop:10,padding:'8px 10px',backgroundColor:PURPLE+'08',borderRadius:6,fontSize:F.xs,color:MUTED,lineHeight:1.6}}>
-              💡 <strong style={{color:PURPLE}}>Market Psychology:</strong> Premium themes (AI/Defense/Edge) trade on TAM expansion, not current ROE.
-              Only CORE themes (confirmed multiple keywords) drive meaningful multiple expansion.
-              Adjacent themes provide context. Weak mentions should NOT drive investment decisions.
-            </div>
-          </div>
-        )}
-
-        {/* ── MANAGEMENT LANGUAGE ── */}
-        {(d.guidance.length > 0 || d.keyMetrics.length > 0) && (
-          <div style={{backgroundColor:CARD2,border:`1px solid ${BORDER}`,borderRadius:12,padding:'14px 18px',marginBottom:14}}>
-            <div style={{fontSize:F.sm,fontWeight:800,color:YELLOW,marginBottom:10}}>💬 MANAGEMENT COMMENTARY</div>
-            {d.guidance.length > 0 && (
-              <>
-                <div style={{fontSize:10,fontWeight:700,color:MUTED,letterSpacing:'0.5px',marginBottom:6}}>FORWARD-LOOKING STATEMENTS</div>
-                {d.guidance.map((g,i)=>(
-                  <div key={i} style={{padding:'8px 12px',marginBottom:6,backgroundColor:'#0f0f1a',borderRadius:6,borderLeft:`2px solid ${YELLOW}50`,fontSize:F.xs,color:TEXT,lineHeight:1.7}}>
-                    "{g}"
-                  </div>
                 ))}
-              </>
-            )}
-            {d.keyMetrics.length > 0 && (
-              <>
-                <div style={{fontSize:10,fontWeight:700,color:MUTED,letterSpacing:'0.5px',marginBottom:6,marginTop:d.guidance.length?10:0}}>KEY OPERATIONAL HIGHLIGHTS</div>
-                {d.keyMetrics.map((k,i)=>(
-                  <div key={i} style={{display:'flex',gap:8,marginBottom:5}}>
-                    <span style={{color:ACCENT,fontSize:10,flexShrink:0}}>›</span>
-                    <span style={{fontSize:F.xs,color:MUTED,lineHeight:1.5}}>{k}</span>
-                  </div>
-                ))}
-              </>
-            )}
-          </div>
-        )}
-
-        {/* ── FRAMEWORK NOTE ── */}
-        <div style={{backgroundColor:'#0a0a12',border:`1px solid ${BORDER}`,borderRadius:12,padding:'14px 18px',marginBottom:14}}>
-          <div style={{fontSize:F.xs,fontWeight:800,color:MUTED,marginBottom:8,letterSpacing:'0.5px'}}>📐 THREE-ENGINE FRAMEWORK</div>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))',gap:10}}>
-            {[
-              {icon:'🏛️', label:'Accounting Quality', score:q.score, color:q.color, note:'Balance sheet, margins, cash conversion. Best for: long-term fundamental investing.'},
-              {icon:'🎯', label:'Earnings Reaction', score:r.score, color:r.color, note:'Acceleration, inflection, guidance, narrative. Best for: event-driven positioning.'},
-              {icon:'🌐', label:'Narrative/Theme', score:nar.score, color:nar.color, note:'Thematic alignment to current market premiums. Best for: multiple expansion assessment.'},
-            ].map(({icon,label,score,color,note})=>(
-              <div key={label} style={{padding:'10px 12px',backgroundColor:'#111118',borderRadius:8}}>
-                <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
-                  <span style={{fontSize:F.xs,fontWeight:700,color:TEXT}}>{icon} {label}</span>
-                  <span style={{fontSize:F.sm,fontWeight:900,color}}>{score}</span>
-                </div>
-                <div style={{height:3,backgroundColor:'#1e293b',borderRadius:2,overflow:'hidden',marginBottom:5}}>
-                  <div style={{height:'100%',width:`${score}%`,backgroundColor:color,borderRadius:2}}/>
-                </div>
-                <div style={{fontSize:9,color:MUTED,lineHeight:1.5}}>{note}</div>
               </div>
-            ))}
+            </div>
+          );
+        })()}
+
+        {/* ── SECTION 5: FINAL SCORE ───────────────────────────────────────── */}
+        {d.parseState !== 'failed' && (
+          <div style={{backgroundColor:'#0a0a12',border:`1px solid ${r.color}30`,borderRadius:12,padding:'16px 20px',marginBottom:14}}>
+            <div style={{display:'flex',alignItems:'flex-start',gap:16,flexWrap:'wrap'}}>
+              {/* Overall score */}
+              <div style={{textAlign:'center',flexShrink:0}}>
+                <div style={{fontSize:40,fontWeight:900,color:r.color,lineHeight:1}}>{r.score}</div>
+                <div style={{width:64,height:4,backgroundColor:'#1e293b',borderRadius:2,margin:'6px 0 2px',overflow:'hidden'}}>
+                  <div style={{height:'100%',width:`${r.score}%`,backgroundColor:r.color,borderRadius:2}}/>
+                </div>
+                <div style={{fontSize:8,color:MUTED,letterSpacing:'0.5px'}}>REACTION SCORE</div>
+              </div>
+
+              {/* Score breakdown */}
+              <div style={{flex:1,minWidth:200}}>
+                <div style={{fontSize:9,fontWeight:800,color:MUTED,marginBottom:8,letterSpacing:'0.8px'}}>
+                  SCORE BREAKDOWN {d.currency==='USD'?'(US WEIGHTS)':'(INDIA WEIGHTS)'}
+                </div>
+                <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                  {(d.currency==='USD' ? [
+                    {label:'Guidance + JAT',  weight:40, eng:r},
+                    {label:'Margins',          weight:25, eng:q},
+                    {label:'Revenue Surprise', weight:20, eng:r},
+                    {label:'Narrative/Themes', weight:10, eng:nar},
+                    {label:'Accounting Quality',weight:5, eng:q},
+                  ] : [
+                    {label:'Margin Trend',     weight:35, eng:q},
+                    {label:'Revenue Growth',   weight:25, eng:r},
+                    {label:'Execution/Orders', weight:20, eng:r},
+                    {label:'Guidance/Commentary',weight:15, eng:r},
+                    {label:'Narrative Theme',  weight:5, eng:nar},
+                  ]).map(({label,weight,eng})=>(
+                    <div key={label} style={{display:'flex',alignItems:'center',gap:8}}>
+                      <span style={{fontSize:8,color:MUTED,width:140,flexShrink:0}}>{label}</span>
+                      <span style={{fontSize:8,color:'#334155',width:28,flexShrink:0}}>{weight}%</span>
+                      <div style={{flex:1,height:4,backgroundColor:'#1e293b',borderRadius:2,overflow:'hidden'}}>
+                        <div style={{height:'100%',width:`${Math.min(100,eng.score)}%`,backgroundColor:eng.color,borderRadius:2,opacity:0.7}}/>
+                      </div>
+                      <span style={{fontSize:8,fontWeight:700,color:eng.color,width:24,textAlign:'right'}}>{eng.grade}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Verdict */}
+              <div style={{flex:1,minWidth:180}}>
+                <div style={{padding:'10px 14px',backgroundColor:r.color+'10',border:`1px solid ${r.color}30`,borderRadius:8,marginBottom:8}}>
+                  <div style={{fontSize:9,fontWeight:800,color:r.color,marginBottom:3}}>VERDICT</div>
+                  <div style={{fontSize:F.xs,color:TEXT,lineHeight:1.6}}>{r.summary}</div>
+                </div>
+                {/* Narrative themes compact */}
+                {(nar as any).themeDetections?.length > 0 && (
+                  <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+                    {((nar as any).themeDetections as any[]).filter((t:any)=>t.tier==='core').slice(0,4).map((td:any)=>(
+                      <span key={td.theme.tag} style={{fontSize:8,fontWeight:700,padding:'2px 7px',borderRadius:4,backgroundColor:td.theme.color+'14',color:td.theme.color}}>
+                        {td.theme.emoji} {td.theme.label}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
-          <div style={{marginTop:10,fontSize:F.xs,color:MUTED,lineHeight:1.7}}>
-            ⚠ <strong style={{color:YELLOW}}>Important:</strong> Accounting quality alone does not predict stock price reaction.
-            Earnings move stocks based on <em>surprise vs expectations</em>, margin direction, guidance credibility, and thematic positioning.
-            A company with mediocre trailing ROE but accelerating revenue, improving margins, and AI/defense exposure can still have a strong positive reaction.
-          </div>
-        </div>
+        )}
 
         {/* ── ACTIONS ── */}
         <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
           <button onClick={()=>{
+            const sym = d.currency==='USD'?'$':'₹';
             const txt=[
-              `EARNINGS ANALYSIS — ${d.company} | ${d.period} | ${d.filingType}`,
-              `Quality: ${q.score} | Reaction: ${r.score} | Narrative: ${nar.score}`,
+              `${d.company} | ${d.period} | ${d.filingType}`,
+              `Reaction Score: ${r.score} | Accounting: ${q.score} | Narrative: ${nar.score}`,
               '',
-              'INCOME STATEMENT:',
-              `  Revenue: ${n(d.revenue,d)} (YoY: ${d.revPrior?growth(d.revenue,d.revPrior)?.text:'N/A'})`,
-              `  Gross Margin: ${pct(d.grossMargin)}`,
-              `  EBITDA Margin: ${pct(d.ebitdaMargin)}`,
-              `  PAT: ${n(d.pat,d)}`,
-              `  EPS: ${d.eps!==null?`${d.currency==='USD'?'$':'₹'}${d.eps.toFixed(2)}`:'—'}`,
+              'ACTUALS vs CONSENSUS:',
+              `  Revenue: ${n(d.revenue,d)}${revEstNum?` vs Est ${n(revEstNum,d)}`:''} | YoY: ${growth(d.revenue,d.revPrior)?.text??'—'}`,
+              `  Gross Margin: ${pct(d.grossMargin)}${gmEstNum?` vs Est ${gmEstNum.toFixed(1)}%`:''}`,
+              `  EPS: ${d.eps!==null?`${sym}${d.eps.toFixed(2)}`:'—'}${latestEpsEst!==null?` vs Est ${sym}${latestEpsEst.toFixed(2)}`:''}`,
+              manualGuidance ? `Guidance: ${manualGuidance}` : '',
               '',
-              'BALANCE SHEET:',
-              `  Cash: ${n(d.cash,d)} | Debt: ${n(d.totalDebt,d)} | D/E: ${d.deRatio!==null?d.deRatio.toFixed(2)+'x':'—'}`,
-              `  ROCE: ${pct(d.roce)} | CFO/PAT: ${d.cfoPat!==null?d.cfoPat.toFixed(2)+'x':'—'}`,
-              '',
-              'THEMES: ' + (nar.themeList.map(t=>t.label).join(', ')||'None detected'),
-              '',
-              'REACTION SIGNALS:',
-              ...r.signals.map(s=>`  ${s.type==='green'?'✓':s.type==='red'?'✗':'◦'} ${s.text}`),
-            ].join('\n');
+              'THEMES: '+(((nar as any).themeDetections??[]) as any[]).filter((t:any)=>t.tier==='core').map((t:any)=>t.theme.label).join(', '),
+            ].filter(Boolean).join('\n');
             navigator.clipboard.writeText(txt).catch(()=>{});
           }} style={{padding:'9px 18px',backgroundColor:CARD2,border:`1px solid ${BORDER}`,borderRadius:8,color:TEXT,fontSize:F.sm,cursor:'pointer'}}>
             📋 Copy Summary

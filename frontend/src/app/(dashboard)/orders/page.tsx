@@ -40,7 +40,7 @@ const FRESHNESS_COLORS: Record<string, string> = {
 // ── Tab cache: Avoid refetching on every tab switch ──
 // Module-level cache persists across component remounts (tab switches)
 // Only refetches on explicit refresh or after CACHE_TTL expires
-const CACHE_TTL = 120000; // 2 min
+const CACHE_TTL = 30 * 60 * 1000; // 30 min — user controls refresh manually
 let _cache: { data: any; timestamp: number; daysFilter: number } | null = null;
 
 // ── Types ──
@@ -2175,7 +2175,9 @@ export default function CompanyIntelligencePage() {
   const [expandedTrends, setExpandedTrends] = useState<Set<string>>(new Set());
   const [bias, setBias] = useState<DailyBias | null>(null);
   const [stats, setStats] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  // FIX: Only show loading spinner on first ever load (no cache).
+  // On tab switch, the module-level _cache persists — restore silently.
+  const [loading, setLoading] = useState(() => _cache === null);
   const [lastUpdated, setLastUpdated] = useState('');
   const [daysFilter, setDaysFilter] = useState(7);
   const [typeFilter, setTypeFilter] = useState<FilterType>('ALL');
@@ -2417,9 +2419,26 @@ export default function CompanyIntelligencePage() {
     setLoading(false);
   }, [daysFilter]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  // FIX: "I will click Refresh when I need new data."
+  // Only fetch automatically in two cases:
+  //   1. First ever load (no cache at all)
+  //   2. daysFilter changed (user explicitly changed the time window)
+  // Never auto-fetch on every tab switch — that's the core complaint.
+  useEffect(() => {
+    if (_cache === null) {
+      // First load: no data at all, must fetch
+      fetchData();
+    } else if (_cache.daysFilter !== daysFilter) {
+      // User changed day filter — need fresh data for new filter
+      fetchData();
+    } else {
+      // Cache exists for this filter: restore from it silently, no loading spinner
+      fetchData(false); // fetchData(false) hits cache path → sets loading=false immediately
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [daysFilter]); // Only reruns when daysFilter changes, not on every tab switch
 
-  // Auto-poll every 20s when computing (up to 15 attempts = ~5 min)
+  // Keep computing poll — needed for background compute jobs
   useEffect(() => {
     if (!computing) return;
     if (computePollCount >= 15) return;
@@ -2429,13 +2448,7 @@ export default function CompanyIntelligencePage() {
     }, 20000);
     return () => clearTimeout(timer);
   }, [computing, computePollCount, fetchData]);
-
-  useEffect(() => {
-    // Regular auto-refresh every 2 min when NOT computing
-    if (computing) return;
-    const iv = setInterval(() => fetchData(true), 120000);
-    return () => clearInterval(iv);
-  }, [fetchData, computing]);
+  // REMOVED: 2-min auto-refresh interval — user controls refresh manually
 
   // Toggle watchlist flag (Green → Orange → Red → None → Green...)
   const toggleFlag = useCallback(async (symbol: string) => {
