@@ -220,13 +220,31 @@ export async function GET(request: Request) {
               .replace(/&[a-z]+;/gi, ' ')
               .replace(/\s+/g, ' ')
               .trim();
-            // Try to find Item 1. Business and grab ~6KB after it
-            const m = stripped.match(/item\s+1\.?\s+business[:\.]?\s+/i);
-            if (m && m.index !== undefined) {
-              businessOverview = stripped.slice(m.index, m.index + 8000);
+            // Find ALL "Item 1. Business" occurrences. The first hit is the
+            // Table of Contents (followed by a page number); we want the
+            // actual section, which has substantial prose after it.
+            const re = /item\s+1\.?\s+business/gi;
+            const matches: number[] = [];
+            let mm: RegExpExecArray | null;
+            while ((mm = re.exec(stripped)) !== null) matches.push(mm.index);
+
+            // Prefer the first match whose next 200 chars contain >150 alpha chars
+            // (skips TOC entries that are just page numbers).
+            let chosen = -1;
+            for (const idx of matches) {
+              const window = stripped.slice(idx, idx + 200);
+              const alpha = (window.match(/[a-z]/gi) || []).length;
+              if (alpha >= 150) { chosen = idx; break; }
+            }
+            // Fallback: take the LAST occurrence (after TOC, you reach the section)
+            if (chosen === -1 && matches.length >= 2) chosen = matches[matches.length - 1];
+            else if (chosen === -1 && matches.length === 1) chosen = matches[0];
+
+            if (chosen !== -1) {
+              businessOverview = stripped.slice(chosen, chosen + 8000);
             } else {
-              // Fallback: grab the middle of the document where prose tends to live
-              businessOverview = stripped.slice(2000, 10000);
+              // No anchor — grab a meaty middle slice
+              businessOverview = stripped.slice(3000, 11000);
             }
           }
         }
