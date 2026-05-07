@@ -217,10 +217,19 @@ interface RawFinancials {
   guidance: string[]; keyMetrics: string[]; forwardStatements: string[];
   themes: string[]; mgmtTone: 'bullish'|'cautious'|'neutral';
 
-  // Validation
+  // Validation + confidence gating
   validationWarnings: string[];
+  hardFailures: string[];          // metrics that were nullified by firewall
   isDataReliable: boolean;
   continuingOpsDetected: boolean;
+
+  // ── PIPELINE STATE: determines what the UI is allowed to show ───────────────
+  // 'verified'  = all key metrics passed validation, scores can be displayed
+  // 'partial'   = some metrics failed but revenue is valid, limited scores shown
+  // 'failed'    = revenue/core metrics invalid, NO scores, only text analysis
+  parseState: 'verified' | 'partial' | 'failed';
+  parseConfidence: number;         // 0-100: how confident we are in the extraction
+  revenueSource: string;           // e.g. "table_sum_subitems", "labeled_row", "unlabeled_row"
 }
 
 // ── STEP 1: Detect format ────────────────────────────────────────────────────
@@ -1141,25 +1150,62 @@ function parseEarnings(rawText: string): RawFinancials {
   };
 
   // ── STEP: SANITIZATION FIREWALL — nullify impossible values ────────────────
-  // This MUST run before validation and scoring. Any impossible metric is nullified.
   const sanitizationIssues = sanitizeMetrics(result);
 
   // ── STEP: Soft validation warnings ────────────────────────────────────────
   const softWarnings = validateFinancials(result, rows);
-
-  // Scale/column info
   if (!textScale) {
     softWarnings.push(`Scale inferred (column ${curIdx}/${colCount} · ${colReason}) — verify numbers manually`);
   }
 
   const allWarnings = [...sanitizationIssues, ...softWarnings];
-  // Reliable = no hard sanitization issues
-  const isDataReliable = sanitizationIssues.length === 0;
+
+  // ── STEP: PIPELINE STATE — determine what the UI is allowed to render ──────
+  // This is the critical gate. We look at whether key financial fields are valid
+  // AFTER sanitization, and assign one of three states.
+  const r = result as RawFinancials;
+  const revenueValid = r.revenue !== null && r.revenue > 0;
+  const grossMarginValid = r.grossMargin !== null; // null = was sanitized
+  const patValid = r.pat !== null;
+  const coreFailed = sanitizationIssues.filter(s => s.includes('extraction failed') || s.includes('Revenue near-zero')).length > 0;
+
+  let parseState: RawFinancials['parseState'];
+  let parseConfidence: number;
+
+  if (coreFailed || !revenueValid) {
+    // Revenue missing or core extraction failure → nothing can be trusted
+    parseState = 'failed';
+    parseConfidence = 10;
+  } else if (sanitizationIssues.length > 2 || (!grossMarginValid && !patValid)) {
+    // Revenue found but multiple key metrics were nullified
+    parseState = 'partial';
+    parseConfidence = 45;
+  } else if (sanitizationIssues.length === 0 && textScale !== null) {
+    // Explicit scale declaration + no hard failures = highest confidence
+    parseState = 'verified';
+    parseConfidence = 90;
+  } else if (sanitizationIssues.length === 0) {
+    // Scale inferred but no failures
+    parseState = 'verified';
+    parseConfidence = 70;
+  } else {
+    parseState = 'partial';
+    parseConfidence = 55;
+  }
+
+  // What source did revenue come from (for display)
+  const revenueSource = revenueValid
+    ? (rawRevCur && rawRevCur > 30000000 ? 'unlabeled_or_absolute' : 'labeled_row')
+    : 'not_found';
 
   return {
     ...(result as RawFinancials),
     validationWarnings: allWarnings,
-    isDataReliable,
+    hardFailures: sanitizationIssues,
+    isDataReliable: parseState !== 'failed',
+    parseState,
+    parseConfidence,
+    revenueSource,
   };
 }
 
@@ -1182,11 +1228,11 @@ interface EngineOutput {
 // ── ENGINE 1: ACCOUNTING QUALITY ─────────────────────────────────────────────
 
 // ── DATA QUALITY GATE: Returns a failure output when data is too unreliable to score ──
-function dataQualityFail(label: string): EngineOutput {
+function dataQualityFail(label: string, reason?: string): EngineOutput {
   return {
     score: 0, grade: 'N/A', color: MUTED, label,
-    signals: [{ type:'amber', text:'Data quality failure — impossible values detected. Scores suppressed until extraction is validated.', weight:0 }],
-    summary: 'Cannot score — extraction inconsistency detected. Verify numbers manually.',
+    signals: [{ type:'amber', text: reason || 'Parse state FAILED — revenue or key metrics could not be extracted. Scores require validated numbers.', weight:0 }],
+    summary: 'Cannot score — extraction validation failed.',
   };
 }
 
@@ -1196,10 +1242,11 @@ function countValidMetrics(d: RawFinancials): number {
 }
 
 function scoreAccountingQuality(d: RawFinancials): EngineOutput {
-  // GATE: Don't score if data is unreliable or too many metrics are missing
-  if (!d.isDataReliable && d.validationWarnings.some(w => !w.includes('inferred') && !w.includes('verify'))) {
-    return dataQualityFail('Accounting Quality');
+  // GATE 1: Parse state determines whether scoring is allowed at all
+  if (d.parseState === 'failed') {
+    return dataQualityFail('Accounting Quality', `Parse state: FAILED (confidence ${d.parseConfidence}%) — revenue extraction failed, no scores generated`);
   }
+  // GATE 2: Not enough valid metrics even in 'partial' state
   if (countValidMetrics(d) < 2) {
     return dataQualityFail('Accounting Quality');
   }
@@ -1276,8 +1323,9 @@ function scoreAccountingQuality(d: RawFinancials): EngineOutput {
 // RECALIBRATED: scores are deliberately conservative. 80+ = genuine strong setup.
 
 function scoreEarningsReaction(d: RawFinancials): EngineOutput {
-  // Gate: needs at minimum revenue to score reaction
-  if (!d.revenue || d.revenue <= 0) return dataQualityFail('Earnings Reaction');
+  // GATE: parseState controls whether reaction scoring is allowed
+  if (d.parseState === 'failed') return dataQualityFail('Earnings Reaction', `Parse state FAILED — no reaction score without valid revenue`);
+  if (!d.revenue || d.revenue <= 0) return dataQualityFail('Earnings Reaction', 'Revenue not extracted — cannot compute reaction probability');
 
   const sigs: EngineOutput['signals'] = [];
   // Start at 30 (not 40) — reaction probability is harder to earn
@@ -1815,6 +1863,55 @@ export default function EarningsAnalysisPage() {
           )}
         </div>
 
+        {/* ══════════════════════════════════════════════════════════════════════
+            PARSE STATE BANNER — the most important signal before any scores
+            Shows clearly whether the extraction can be trusted.
+            ══════════════════════════════════════════════════════════════════════ */}
+        {(() => {
+          const ps = d.parseState;
+          const pc = d.parseConfidence;
+          const config = {
+            verified: {
+              color: GREEN, icon: '✅', title: 'EXTRACTION VERIFIED',
+              msg: `Key metrics extracted successfully (confidence ${pc}%). Scores and ratios are calculated from validated numbers.`,
+              bg: GREEN + '0e', border: GREEN + '40',
+            },
+            partial: {
+              color: YELLOW, icon: '⚠️', title: 'PARTIAL EXTRACTION',
+              msg: `Revenue found but ${d.hardFailures.length} metric(s) failed validation (confidence ${pc}%). Scores shown with reduced confidence. Verify marked fields manually.`,
+              bg: YELLOW + '0a', border: YELLOW + '35',
+            },
+            failed: {
+              color: RED, icon: '🚫', title: 'EXTRACTION FAILED',
+              msg: `Revenue or core metrics could not be reliably extracted (confidence ${pc}%). SCORES ARE SUPPRESSED. Only text analysis (themes, management language) is shown below. Try Paste mode for better results.`,
+              bg: RED + '0c', border: RED + '40',
+            },
+          }[ps];
+          return (
+            <div style={{backgroundColor:config.bg, border:`2px solid ${config.border}`, borderRadius:10, padding:'12px 16px', marginBottom:12}}>
+              <div style={{display:'flex',alignItems:'center',gap:10}}>
+                <span style={{fontSize:18}}>{config.icon}</span>
+                <div style={{flex:1}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:3}}>
+                    <span style={{fontSize:11,fontWeight:800,color:config.color,letterSpacing:'0.8px'}}>{config.title}</span>
+                    {/* Confidence bar */}
+                    <div style={{flex:1,maxWidth:120,height:4,backgroundColor:'#1e293b',borderRadius:2,overflow:'hidden'}}>
+                      <div style={{height:'100%',width:`${pc}%`,backgroundColor:config.color,borderRadius:2}}/>
+                    </div>
+                    <span style={{fontSize:9,color:config.color,fontWeight:700}}>{pc}% confidence</span>
+                  </div>
+                  <div style={{fontSize:10,color:config.color+'dd',lineHeight:1.5}}>{config.msg}</div>
+                  {ps === 'failed' && d.hardFailures.length > 0 && (
+                    <div style={{marginTop:6,fontSize:9,color:MUTED}}>
+                      Failures: {d.hardFailures.slice(0,2).join(' · ')}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* ── COMPANY HEADER (Three-engine scores + themes + warnings) ── */}
         <div style={{backgroundColor:CARD,border:`1px solid ${BORDER}`,borderRadius:14,padding:'18px 20px',marginBottom:16}}>
           <div style={{display:'flex',alignItems:'flex-start',gap:16,flexWrap:'wrap'}}>
@@ -1894,8 +1991,21 @@ export default function EarningsAnalysisPage() {
           </div>
         </div>
 
-        {/* ── MAIN CONTENT GRID ── */}
-        <div style={{display:'grid',gridTemplateColumns:'minmax(300px,2fr) minmax(280px,1fr)',gap:14,marginBottom:14}}>
+        {/* ── MAIN CONTENT GRID — only show numeric tables when extraction is not failed ── */}
+        {d.parseState === 'failed' && (
+          <div style={{backgroundColor:CARD2,border:`1px solid ${RED}25`,borderRadius:12,padding:'20px',marginBottom:14,textAlign:'center'}}>
+            <div style={{fontSize:32,marginBottom:10}}>🚫</div>
+            <div style={{fontSize:F.md,fontWeight:700,color:RED,marginBottom:6}}>Numeric Tables Suppressed</div>
+            <div style={{fontSize:F.sm,color:MUTED,maxWidth:500,margin:'0 auto',lineHeight:1.7}}>
+              Revenue extraction failed — all financial ratios and metrics are based on incorrect numbers and would be misleading.
+              Text-based analysis (themes, management commentary, guidance) is still available below.
+            </div>
+            <div style={{marginTop:12,padding:'8px 14px',backgroundColor:ACCENT+'10',borderRadius:8,fontSize:F.xs,color:ACCENT,display:'inline-block'}}>
+              💡 For better results: open the PDF, Ctrl+A → Ctrl+C, then use "Paste Text" mode
+            </div>
+          </div>
+        )}
+        <div style={{gridTemplateColumns:'minmax(300px,2fr) minmax(280px,1fr)',gap:14,marginBottom:14,display: d.parseState === 'failed' ? 'none' : 'grid'} as React.CSSProperties}>
 
           {/* LEFT: P&L + Balance Sheet */}
           <div style={{display:'flex',flexDirection:'column',gap:12}}>
