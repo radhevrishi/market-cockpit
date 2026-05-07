@@ -2066,6 +2066,8 @@ export default function EarningsAnalysisPage() {
   const [result, setResult] = useState<{ d: RawFinancials; q: EngineOutput; r: EngineOutput; nar: ReturnType<typeof scoreNarrative> }|null>(null);
   const [snapshot, setSnapshot] = useState<EarningsSnapshot | null>(null);
   const [reportView, setReportView] = useState<'institutional' | 'legacy'>('institutional');
+  // Last EDGAR enrichment payload (sicDescription, businessText, exchange) — used by buildSnapshot
+  const lastEdgarPayloadRef = useRef<any>(null);
   const [loading, setLoading] = useState(false);
   const [loadingPct, setLoadingPct] = useState(0);
   const [loadingMsg, setLoadingMsg] = useState('');
@@ -2098,6 +2100,8 @@ export default function EarningsAnalysisPage() {
     } catch {
       return null;
     }
+    // Stash full payload for buildSnapshot enrichment
+    lastEdgarPayloadRef.current = payload;
 
     const SCALE = 1e-6; // server returns absolute USD → display in $ Mn
     const sc = (v: number | null | undefined): number | null =>
@@ -2514,6 +2518,7 @@ export default function EarningsAnalysisPage() {
         const histJson: HistoryInput | null = histRes.status === 'fulfilled' && histRes.value.ok
           ? await histRes.value.json().catch(() => null)
           : null;
+        const edgarP = lastEdgarPayloadRef.current;
         const finIn: FinancialsInput = {
           company: d.company,
           ticker: d.ticker,
@@ -2531,6 +2536,11 @@ export default function EarningsAnalysisPage() {
           cfo: d.cfo, fcf: d.fcf,
           cash: d.cash, totalDebt: d.totalDebt, netDebt: d.netDebt, equity: d.equity,
           themes: d.themes, validationWarnings: d.validationWarnings, revenueSource: d.revenueSource,
+          // SEC enrichment (when EDGAR was used)
+          sicDescription: edgarP?.sicDescription ?? null,
+          exchange: edgarP?.exchange ?? null,
+          category: edgarP?.category ?? null,
+          businessText: edgarP?.businessText ?? null,
         };
         const snap = buildSnapshot(finIn, estJson, histJson, '');
         setSnapshot(snap);
@@ -2637,7 +2647,7 @@ export default function EarningsAnalysisPage() {
     } catch(e:any) { setError('Fetch failed: '+e.message); setLoading(false); setLoadingMsg(''); }
   }
 
-  const reset = () => { setResult(null); setSnapshot(null); setError(''); setPasteText(''); setUrlInput(''); };
+  const reset = () => { setResult(null); setSnapshot(null); lastEdgarPayloadRef.current = null; setError(''); setPasteText(''); setUrlInput(''); };
 
   // Copy a deterministic plain-text summary from the snapshot
   const copySnapshotSummary = (snap: EarningsSnapshot) => {

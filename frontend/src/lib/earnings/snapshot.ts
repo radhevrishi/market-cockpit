@@ -153,12 +153,42 @@ export interface EarningsSnapshot {
     flags: string[];
   };
 
-  // Scores (deterministic, 0–100, with breakdown)
+  // Scores (deterministic, 0–100, with breakdown + confidence)
   scores: {
-    reaction: { score: number; grade: string; breakdown: Record<string, { score: number; weight: number }>; };
-    accounting: { score: number; grade: string; flags: string[] };
-    narrative: { score: number; grade: string; themes: string[] };
-    jat: { score: number; grade: string; direction: Direction; confidence: 'low' | 'medium' | 'high'; signals: Array<{ name: string; direction: Direction; weight: number }> };
+    reaction: {
+      score: number;
+      grade: string;
+      confidence: number;
+      breakdown: Record<string, { score: number | null; weight: number; reason?: string }>;
+      unavailableReason: string | null;
+    };
+    accounting: { score: number; grade: string; confidence: number; flags: string[] };
+    narrative: { score: number; grade: string; confidence: number; themes: string[] };
+    jat: {
+      score: number;
+      grade: string;
+      direction: Direction;
+      confidence: 'low' | 'medium' | 'high';
+      signals: Array<{ name: string; direction: Direction; weight: number }>;
+      unavailableReason: string | null;
+    };
+  };
+
+  // Section-level confidence + unavailable reasons for empty-state UX
+  sectionStatus: {
+    estimates: { available: boolean; confidence: number; reason: string | null };
+    sellSide: { available: boolean; confidence: number; reason: string | null };
+    history: { available: boolean; confidence: number; reason: string | null };
+    themes: { available: boolean; confidence: number; reason: string | null };
+    guidance: { available: boolean; confidence: number; reason: string | null };
+  };
+
+  // Debug provenance (for the expandable debug panel)
+  debug: {
+    endpointsHit: string[];
+    endpointsFailed: string[];
+    fallbacksUsed: string[];
+    corpusChars: number;
   };
 
   // Reaction probability (deterministic)

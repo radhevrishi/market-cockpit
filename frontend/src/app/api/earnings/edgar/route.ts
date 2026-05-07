@@ -133,26 +133,42 @@ export async function GET(request: Request) {
   const cik = cikEntry.cik;
   const padded = String(cik).padStart(10, '0');
 
-  // 2. Fetch company facts
-  let facts: any;
-  try {
-    const res = await fetch(`https://data.sec.gov/api/xbrl/companyfacts/CIK${padded}.json`, {
+  // 2. Fetch company facts AND submissions in parallel
+  // Submissions includes SIC description, exchange, business addresses — always
+  // available even when FMP profile coverage is sparse. Critical for the theme
+  // engine which needs SOME text to anchor matches against.
+  const [factsRes, subRes] = await Promise.allSettled([
+    fetch(`https://data.sec.gov/api/xbrl/companyfacts/CIK${padded}.json`, {
       headers: SEC_DATA_HEADERS,
       signal: AbortSignal.timeout(15000),
-      next: { revalidate: 3600 }, // 1h cache for filings (fresh enough for earnings)
-    });
-    if (!res.ok) {
-      return NextResponse.json(
-        { ok: false, error: `SEC companyfacts returned ${res.status} for CIK ${cik}` },
-        { status: 502 },
-      );
-    }
-    facts = await res.json();
-  } catch (err: any) {
+      next: { revalidate: 3600 },
+    }),
+    fetch(`https://data.sec.gov/submissions/CIK${padded}.json`, {
+      headers: SEC_DATA_HEADERS,
+      signal: AbortSignal.timeout(10000),
+      next: { revalidate: 86400 }, // 24h — these change rarely
+    }),
+  ]);
+
+  let facts: any;
+  if (factsRes.status === 'fulfilled' && factsRes.value.ok) {
+    facts = await factsRes.value.json().catch(() => null);
+  }
+  if (!facts) {
     return NextResponse.json(
-      { ok: false, error: `SEC companyfacts fetch failed: ${err?.message || 'timeout'}` },
-      { status: 504 },
+      {
+        ok: false,
+        error: `SEC companyfacts unavailable for CIK ${cik} (status: ${
+          factsRes.status === 'fulfilled' ? factsRes.value.status : 'rejected'
+        })`,
+      },
+      { status: 502 },
     );
+  }
+
+  let submissions: any = null;
+  if (subRes.status === 'fulfilled' && subRes.value.ok) {
+    submissions = await subRes.value.json().catch(() => null);
   }
 
   const gaap = facts?.facts?.['us-gaap'] ?? {};
@@ -212,13 +228,34 @@ export async function GET(request: Request) {
   const quarter = mo < 3 ? 'Q1' : mo < 6 ? 'Q2' : mo < 9 ? 'Q3' : 'Q4';
   const year = endDate.getFullYear();
 
+  // Build a rich descriptive corpus from SEC submissions for theme detection.
+  // This is the single most important input for narrative classification when
+  // FMP profile coverage is sparse (small caps).
+  const businessText = [
+    submissions?.name,
+    submissions?.sicDescription,
+    submissions?.category,
+    facts.entityName,
+    // Tickers / former names give weak signal but help disambiguation
+    ...(submissions?.tickers || []),
+    ...(submissions?.formerNames || []).map((f: any) => f.name),
+    // Most recent filing forms — adds weak context (10-K, 8-K, etc.)
+    ...((submissions?.filings?.recent?.primaryDocDescription || []) as string[]).slice(0, 20),
+  ].filter(Boolean).join(' · ');
+
   // Return raw $ values (page applies its own SCALE factor for display)
   return NextResponse.json({
     ok: true,
     source: 'sec_edgar_xbrl',
     ticker,
     cik,
-    company: facts.entityName || cikEntry.title || ticker,
+    company: facts.entityName || submissions?.name || cikEntry.title || ticker,
+    sicDescription: submissions?.sicDescription || null,
+    sicCode: submissions?.sic || null,
+    exchange: (submissions?.exchanges || [])[0] || null,
+    category: submissions?.category || null,
+    stateOfIncorporation: submissions?.stateOfIncorporation || null,
+    businessText, // for theme engine
     period: `${quarter} ${year}`,
     periodType: 'quarterly',
     filingType: rev.form === '10-K' ? 'SEC 10-K (EDGAR)' : 'SEC 10-Q (EDGAR)',

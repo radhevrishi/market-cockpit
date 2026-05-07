@@ -183,7 +183,7 @@ export function InstitutionalReport({ snapshot: s, onReset, onCopy }: Institutio
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14, marginBottom: 22 }}>
         <Panel title="Key Takeaways">
           {s.qualitative.keyTakeaways.length === 0 ? (
-            <Empty>No deterministic takeaways — insufficient consensus data.</Empty>
+            <Empty>{s.sectionStatus.estimates.reason || 'No deterministic takeaways — insufficient consensus data.'}</Empty>
           ) : (
             <ul style={{ margin: 0, paddingLeft: 18, color: TEXT, fontSize: 13, lineHeight: 1.75 }}>
               {s.qualitative.keyTakeaways.map((t, i) => (<li key={i}>{t}</li>))}
@@ -203,6 +203,8 @@ export function InstitutionalReport({ snapshot: s, onReset, onCopy }: Institutio
             </div>
             <div style={{ fontSize: 10, color: MUTED, marginTop: 8 }}>
               Confidence: <span style={{ color: TEXT, fontWeight: 600 }}>{s.reactionProbability.confidence}</span>
+              <span style={{ color: FAINT, padding: '0 6px' }}>·</span>
+              Reaction inputs: <span style={{ color: TEXT, fontWeight: 600 }}>{s.scores.reaction.confidence}%</span>
             </div>
           </div>
         </Panel>
@@ -217,13 +219,16 @@ export function InstitutionalReport({ snapshot: s, onReset, onCopy }: Institutio
           title="Reaction Score"
           score={reaction.score}
           grade={reaction.grade}
-          subtitle="Surprise + guidance + tone + theme"
+          subtitle={`Surprise + guidance + tone + theme · ${reaction.confidence}% inputs`}
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
             {Object.entries(reaction.breakdown).map(([k, b]) => (
-              <BarRow key={k} label={prettyKey(k)} value={b.score} weight={b.weight} />
+              <BarRow key={k} label={prettyKey(k)} value={b.score} weight={b.weight} reason={b.reason} />
             ))}
           </div>
+          {reaction.unavailableReason && (
+            <div style={{ fontSize: 10, color: ORANGE, marginTop: 6 }}>{reaction.unavailableReason}</div>
+          )}
         </ScoreCard>
 
         <ScoreCard
@@ -267,7 +272,9 @@ export function InstitutionalReport({ snapshot: s, onReset, onCopy }: Institutio
           subtitle={`Direction: ${jat.direction} · ${jat.confidence} confidence`}
         >
           {jat.signals.length === 0 ? (
-            <div style={{ fontSize: 11, color: MUTED, marginTop: 8 }}>Insufficient forward signals</div>
+            <div style={{ fontSize: 10, color: ORANGE, marginTop: 8, lineHeight: 1.5 }}>
+              {jat.unavailableReason || 'Insufficient forward signals'}
+            </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 8, fontSize: 11 }}>
               {jat.signals.slice(0, 6).map((sg, i) => (
@@ -307,7 +314,7 @@ export function InstitutionalReport({ snapshot: s, onReset, onCopy }: Institutio
 
         <Panel title="8-Quarter Margin & Surprise Trend">
           {s.history.length === 0 ? (
-            <Empty>No quarterly history available.</Empty>
+            <Empty>{s.sectionStatus.history.reason || 'No quarterly history available.'}</Empty>
           ) : (
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
@@ -346,8 +353,8 @@ export function InstitutionalReport({ snapshot: s, onReset, onCopy }: Institutio
          ═══════════════════════════════════════════════════════════════════ */}
       <SectionTitle title="Sell-Side Sentiment" subtitle="Rating distribution, target price, recent rating actions" />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14, marginBottom: 22 }}>
-        {!s.sellSide ? (
-          <Panel title="Coverage"><Empty>No sell-side coverage data available.</Empty></Panel>
+        {!s.sellSide || s.sellSide.total === 0 ? (
+          <Panel title="Coverage"><Empty>{s.sectionStatus.sellSide.reason || 'No sell-side coverage data available.'}</Empty></Panel>
         ) : (
           <>
             <Panel title="Rating Distribution">
@@ -386,10 +393,10 @@ export function InstitutionalReport({ snapshot: s, onReset, onCopy }: Institutio
       {/* ═══════════════════════════════════════════════════════════════════
           G. THEME EXPOSURE (with strength)
          ═══════════════════════════════════════════════════════════════════ */}
-      <SectionTitle title="Theme Exposure" subtitle="Deterministic keyword matching · strength = distinct evidence count" />
+      <SectionTitle title="Theme Exposure" subtitle={`Deterministic keyword matching · ${s.sectionStatus.themes.confidence}% extraction confidence`} />
       <div style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 14, marginBottom: 22 }}>
         {s.qualitative.themes.length === 0 ? (
-          <Empty>No thematic exposure detected from available text.</Empty>
+          <Empty>{s.sectionStatus.themes.reason || 'No thematic exposure detected from available text.'}</Empty>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
@@ -458,9 +465,64 @@ export function InstitutionalReport({ snapshot: s, onReset, onCopy }: Institutio
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════
-          I. PROVENANCE
+          I. SECTION-LEVEL CONFIDENCE
          ═══════════════════════════════════════════════════════════════════ */}
-      <div style={{ marginTop: 30, paddingTop: 14, borderTop: `1px solid ${BORDER}`, display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 10, fontSize: 10, color: MUTED, fontFamily: MONO }}>
+      <SectionTitle title="Coverage & Confidence" subtitle="Per-section data availability + confidence — institutional trust signal" />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, marginBottom: 22 }}>
+        {([
+          ['Estimates', s.sectionStatus.estimates],
+          ['Sell-Side', s.sectionStatus.sellSide],
+          ['History', s.sectionStatus.history],
+          ['Themes', s.sectionStatus.themes],
+          ['Guidance', s.sectionStatus.guidance],
+        ] as const).map(([label, st]) => (
+          <div key={label} style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '10px 12px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ fontSize: 9, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: 700 }}>{label}</div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: confColor(st.confidence), fontFamily: MONO }}>
+                {st.available ? `${st.confidence}%` : 'n/a'}
+              </div>
+            </div>
+            <div style={{ fontSize: 10, color: st.available ? GREEN : ORANGE, marginTop: 4 }}>
+              {st.available ? '● available' : '○ unavailable'}
+            </div>
+            {!st.available && st.reason && (
+              <div style={{ fontSize: 9, color: FAINT, marginTop: 4, lineHeight: 1.4 }}>{st.reason}</div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          J. DEBUG / PROVENANCE
+         ═══════════════════════════════════════════════════════════════════ */}
+      <details style={{ marginTop: 22, background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '10px 14px' }}>
+        <summary style={{ cursor: 'pointer', fontSize: 11, color: MUTED, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.7 }}>
+          Debug · Pipeline Provenance
+        </summary>
+        <div style={{ marginTop: 12, fontSize: 11, fontFamily: MONO, lineHeight: 1.7 }}>
+          <div><span style={{ color: MUTED }}>endpoints hit:</span> <span style={{ color: GREEN }}>{s.debug.endpointsHit.join(', ') || 'none'}</span></div>
+          <div><span style={{ color: MUTED }}>endpoints failed:</span> <span style={{ color: ORANGE }}>{s.debug.endpointsFailed.join(', ') || 'none'}</span></div>
+          {s.debug.fallbacksUsed.length > 0 && (
+            <div><span style={{ color: MUTED }}>fallbacks used:</span> <span style={{ color: YELLOW }}>{s.debug.fallbacksUsed.join('; ')}</span></div>
+          )}
+          <div><span style={{ color: MUTED }}>theme corpus:</span> <span style={{ color: TEXT }}>{s.debug.corpusChars} chars</span></div>
+          <div style={{ marginTop: 8, color: MUTED }}>reaction breakdown:</div>
+          {Object.entries(reaction.breakdown).map(([k, b]) => (
+            <div key={k} style={{ paddingLeft: 12 }}>
+              <span style={{ color: TEXT }}>{prettyKey(k)}:</span>{' '}
+              {b.score === null
+                ? <span style={{ color: ORANGE }}>null — {b.reason}</span>
+                : <span style={{ color: GREEN }}>{b.score} × {b.weight.toFixed(2)}</span>}
+            </div>
+          ))}
+        </div>
+      </details>
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          K. PROVENANCE FOOTER
+         ═══════════════════════════════════════════════════════════════════ */}
+      <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px solid ${BORDER}`, display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 10, fontSize: 10, color: MUTED, fontFamily: MONO }}>
         <div>
           financials: <span style={{ color: ACCENT }}>{s.sources.financials}</span>
           <span style={{ color: FAINT, padding: '0 8px' }}>·</span>
@@ -477,6 +539,14 @@ export function InstitutionalReport({ snapshot: s, onReset, onCopy }: Institutio
       )}
     </div>
   );
+}
+
+function confColor(c: number): string {
+  if (c >= 80) return GREEN;
+  if (c >= 60) return GREEN2;
+  if (c >= 40) return YELLOW;
+  if (c > 0) return ORANGE;
+  return FAINT;
 }
 
 // ── Small render helpers ─────────────────────────────────────────────────
@@ -607,14 +677,21 @@ function ScoreCard({ title, score, grade, subtitle, children }: { title: string;
   );
 }
 
-function BarRow({ label, value, weight }: { label: string; value: number; weight: number }) {
+function BarRow({ label, value, weight, reason }: { label: string; value: number | null; weight: number; reason?: string }) {
+  const isNull = value === null;
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10 }}>
-      <div style={{ width: 105, color: MUTED }}>{label}</div>
-      <div style={{ flex: 1, height: 6, background: 'rgba(255,255,255,0.05)', borderRadius: 3, overflow: 'hidden' }}>
-        <div style={{ height: '100%', width: `${value}%`, background: scoreColor(value), borderRadius: 3 }} />
+      <div style={{ width: 105, color: MUTED }} title={reason || undefined}>
+        {label}
       </div>
-      <div style={{ width: 28, textAlign: 'right', color: TEXT, fontFamily: MONO, fontWeight: 600 }}>{value}</div>
+      <div style={{ flex: 1, height: 6, background: 'rgba(255,255,255,0.05)', borderRadius: 3, overflow: 'hidden' }}>
+        {!isNull && (
+          <div style={{ height: '100%', width: `${value}%`, background: scoreColor(value!), borderRadius: 3 }} />
+        )}
+      </div>
+      <div style={{ width: 28, textAlign: 'right', color: isNull ? FAINT : TEXT, fontFamily: MONO, fontWeight: 600 }}>
+        {isNull ? '—' : value}
+      </div>
       <div style={{ width: 36, textAlign: 'right', color: FAINT, fontFamily: MONO }}>×{weight.toFixed(2)}</div>
     </div>
   );
