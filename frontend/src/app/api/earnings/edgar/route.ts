@@ -193,12 +193,12 @@ export async function GET(request: Request) {
           next: { revalidate: 86400 },
         });
         if (filingRes.ok) {
-          // Read up to 250KB — business section is near the top of 10-K
+          // Read up to 1.5MB — Item 1 section can be deep in the doc
           const reader = filingRes.body?.getReader();
           if (reader) {
             const chunks: Uint8Array[] = [];
             let total = 0;
-            const MAX = 250_000;
+            const MAX = 1_500_000;
             while (total < MAX) {
               const { done, value } = await reader.read();
               if (done) break;
@@ -210,41 +210,48 @@ export async function GET(request: Request) {
             let off = 0;
             for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
             const html = new TextDecoder().decode(buf);
-            // Strip HTML tags, collapse whitespace, take first 8KB of plain text
+            // Strip HTML tags, collapse whitespace
             const stripped = html
               .replace(/<script[\s\S]*?<\/script>/gi, ' ')
               .replace(/<style[\s\S]*?<\/style>/gi, ' ')
               .replace(/<[^>]+>/g, ' ')
               .replace(/&nbsp;/g, ' ')
+              .replace(/&#160;/g, ' ')
               .replace(/&amp;/g, '&')
+              .replace(/&#8217;/g, "'")
+              .replace(/&#8220;|&#8221;/g, '"')
               .replace(/&[a-z]+;/gi, ' ')
+              .replace(/&#\d+;/g, ' ')
               .replace(/\s+/g, ' ')
               .trim();
-            // Find ALL "Item 1. Business" occurrences. The first hit is the
-            // Table of Contents (followed by a page number); we want the
-            // actual section, which has substantial prose after it.
+
+            // Find ALL "Item 1. Business" occurrences and score each by how
+            // much it looks like prose vs TOC.
+            // Prose marker: section is followed by a paragraph (≥400 chars
+            // of text without another "Item N." heading nearby).
             const re = /item\s+1\.?\s+business/gi;
             const matches: number[] = [];
             let mm: RegExpExecArray | null;
             while ((mm = re.exec(stripped)) !== null) matches.push(mm.index);
 
-            // Prefer the first match whose next 200 chars contain >150 alpha chars
-            // (skips TOC entries that are just page numbers).
             let chosen = -1;
+            let bestScore = -1;
             for (const idx of matches) {
-              const window = stripped.slice(idx, idx + 200);
-              const alpha = (window.match(/[a-z]/gi) || []).length;
-              if (alpha >= 150) { chosen = idx; break; }
+              const window = stripped.slice(idx, idx + 1200);
+              // Count "Item N." occurrences — TOC has many, prose has few
+              const itemCount = (window.match(/\bitem\s+\d/gi) || []).length;
+              // Look for sentence-ending periods (prose has them)
+              const sentences = (window.match(/\.\s+[A-Z]/g) || []).length;
+              // Score: more sentences good, more "Item" headers bad
+              const score = sentences * 4 - itemCount * 3;
+              if (score > bestScore) { bestScore = score; chosen = idx; }
             }
-            // Fallback: take the LAST occurrence (after TOC, you reach the section)
-            if (chosen === -1 && matches.length >= 2) chosen = matches[matches.length - 1];
-            else if (chosen === -1 && matches.length === 1) chosen = matches[0];
 
             if (chosen !== -1) {
-              businessOverview = stripped.slice(chosen, chosen + 8000);
+              businessOverview = stripped.slice(chosen, chosen + 12000);
             } else {
-              // No anchor — grab a meaty middle slice
-              businessOverview = stripped.slice(3000, 11000);
+              // No "Item 1" anchor — slice a meaty section likely to have prose
+              businessOverview = stripped.slice(20000, 32000);
             }
           }
         }
