@@ -62,46 +62,71 @@ async function getCikMap(): Promise<Record<string, { cik: number; title: string 
 type Filing = { cur: number; prior: number | null; end: string; form: string };
 
 function extractQuarterly(gaap: any, concepts: string[]): Filing | null {
+  // Pool all quarterly filings across ALL concepts; pick the most recent.
+  // Companies migrate XBRL concepts over time (e.g. NVDA went from
+  // RevenueFromContractWithCustomerExcludingAssessedTax → Revenues),
+  // so we can't stop at the first concept with any data.
+  type FilingWithConcept = Filing & { concept: string };
+  const all: FilingWithConcept[] = [];
+
   for (const concept of concepts) {
     const units: any[] = gaap?.[concept]?.units?.USD ?? [];
-    const filings = units
+    const quarterly = units
       .filter((u) => (u.form === '10-Q' || u.form === '10-K') && u.val !== undefined && u.val !== null)
-      // Quarterly facts: "fp" is Q1/Q2/Q3/FY, "fy" is fiscal year, period (start..end) ~ 90d
       .filter((u) => {
-        if (!u.start || !u.end) return true; // instant facts use end only
+        if (!u.start || !u.end) return false; // duration facts must have start
         const days = (new Date(u.end).getTime() - new Date(u.start).getTime()) / 86400000;
-        // Accept ~90d (quarterly) or no period info; filter out YTD/cumulative
-        return days >= 80 && days <= 100;
-      })
-      .sort((a, b) => new Date(b.end).getTime() - new Date(a.end).getTime());
-
-    if (!filings.length) continue;
-    const cur = filings[0];
-    // YoY: same period last year, ±45 days
-    const targetEnd = new Date(cur.end);
-    targetEnd.setFullYear(targetEnd.getFullYear() - 1);
-    const prior = filings.find(
-      (u) => Math.abs(new Date(u.end).getTime() - targetEnd.getTime()) < 46 * 86400000
-    );
-    return {
-      cur: cur.val as number,
-      prior: (prior?.val as number) ?? null,
-      end: cur.end as string,
-      form: cur.form as string,
-    };
+        // Quarterly: ~91 days (with ±15 day tolerance for fiscal quirks)
+        return days >= 80 && days <= 105;
+      });
+    for (const u of quarterly) {
+      all.push({
+        cur: u.val,
+        prior: null,
+        end: u.end,
+        form: u.form,
+        concept,
+      });
+    }
   }
-  return null;
+
+  if (all.length === 0) return null;
+
+  // Sort by end date desc; pick most recent
+  all.sort((a, b) => new Date(b.end).getTime() - new Date(a.end).getTime());
+  const cur = all[0];
+
+  // YoY: find the same-concept filing from prior year (±45 days)
+  const sameConcept = all.filter((u) => u.concept === cur.concept);
+  const targetEnd = new Date(cur.end);
+  targetEnd.setFullYear(targetEnd.getFullYear() - 1);
+  const prior = sameConcept.find(
+    (u) => Math.abs(new Date(u.end).getTime() - targetEnd.getTime()) < 46 * 86400000,
+  );
+
+  return {
+    cur: cur.cur,
+    prior: prior?.cur ?? null,
+    end: cur.end,
+    form: cur.form,
+  };
 }
 
 function extractInstant(gaap: any, concepts: string[]): number | null {
+  // Same pattern: pool across all concepts, return the most recent value.
+  type Inst = { val: number; end: string; concept: string };
+  const all: Inst[] = [];
   for (const concept of concepts) {
     const units: any[] = gaap?.[concept]?.units?.USD ?? [];
-    const sorted = units
-      .filter((u) => (u.form === '10-Q' || u.form === '10-K') && u.val !== undefined && u.val !== null)
-      .sort((a, b) => new Date(b.end).getTime() - new Date(a.end).getTime());
-    if (sorted.length) return sorted[0].val;
+    for (const u of units) {
+      if ((u.form === '10-Q' || u.form === '10-K') && u.val !== undefined && u.val !== null && u.end) {
+        all.push({ val: u.val, end: u.end, concept });
+      }
+    }
   }
-  return null;
+  if (all.length === 0) return null;
+  all.sort((a, b) => new Date(b.end).getTime() - new Date(a.end).getTime());
+  return all[0].val;
 }
 
 // ── Route handler ──────────────────────────────────────────────────────────
