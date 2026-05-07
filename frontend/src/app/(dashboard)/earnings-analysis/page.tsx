@@ -227,18 +227,47 @@ interface RawFinancials {
 
 function detectCurrency(text: string): { currency: RawFinancials['currency']; filingType: string } {
   const t = text.toLowerCase();
+
+  // ── Filing type detection — order from most specific to least ────────────
   let filingType = 'Earnings Document';
-  if (/annual report on form 10-k|form 10-k/.test(t)) filingType = 'SEC 10-K (Annual)';
-  else if (/quarterly report on form 10-q|form 10-q/.test(t)) filingType = 'SEC 10-Q (Quarterly)';
+  // Quarterly supplement/event must come BEFORE 10-K check (Fastly supplement mentions 10-K in boilerplate)
+  if (/first quarter 20\d{2}.*investor supplement|investor supplement.*first quarter/i.test(text))
+    filingType = 'Q1 Investor Supplement';
+  else if (/second quarter 20\d{2}.*investor supplement|q2 20\d{2}.*supplement/i.test(text))
+    filingType = 'Q2 Investor Supplement';
+  else if (/(third|fourth) quarter 20\d{2}.*investor supplement/i.test(text))
+    filingType = 'Q Investor Supplement';
+  else if (/annual report on form 10-k/.test(t)) filingType = 'SEC 10-K (Annual)';
+  else if (/quarterly report on form 10-q/.test(t)) filingType = 'SEC 10-Q (Quarterly)';
   else if (/form 20-f/.test(t)) filingType = 'SEC 20-F';
   else if (/quarterly results|q[1-4] fy/.test(t)) filingType = 'Quarterly Results';
   else if (/annual report/.test(t)) filingType = 'Annual Report';
   else if (/investor presentation|earnings presentation/.test(t)) filingType = 'Investor Presentation';
+  else if (/form 10-k/.test(t)) filingType = 'SEC 10-K (Annual)';
+  else if (/form 10-q/.test(t)) filingType = 'SEC 10-Q (Quarterly)';
+
+  // ── Currency detection — frequency-based, not first-match ───────────────
+  // Count currency symbols next to numbers (not just any occurrence)
+  // This prevents "factors." → "rs." triggering INR for a USD document
+  const dollarCount = (text.match(/\$\s*[\d,]+/g) || []).length;
+  const rupeeCount  = (text.match(/[₹][\s\d]|(?:\brs\.?\s*\d|\binr\s*\d)/gi) || []).length;
+  // Strong explicit markers
+  const hasRupeeSymbol = /₹/.test(text);
+  const hasINRDeclared = /\binr\b|\brupees?\b/i.test(text);
+  // "Rs." as Indian currency ONLY when followed by a digit/space (not "rs." in "factors.")
+  const hasRsCurrency  = /\brs\.?\s+[\d,]|\brs\.\s*[\d,]/i.test(text);
 
   let currency: RawFinancials['currency'] = 'unknown';
-  if (/₹|rupee|inr|rs\./.test(t)) currency = 'INR';
-  else if (/\$|dollar|usd/.test(t)) currency = 'USD';
-  else if (/€|euro\b/.test(t)) currency = 'EUR';
+  if (dollarCount > 5 && dollarCount > rupeeCount * 2) {
+    // Clearly USD document — many "$123" occurrences dominate
+    currency = 'USD';
+  } else if (hasRupeeSymbol || hasINRDeclared || hasRsCurrency) {
+    currency = 'INR';
+  } else if (dollarCount > 0) {
+    currency = 'USD';
+  } else if (/€|euro\b/i.test(text)) {
+    currency = 'EUR';
+  }
 
   return { currency, filingType };
 }
@@ -536,36 +565,62 @@ function findMetric(rows: LabeledNum[], patterns: string[], colIdx = 0): number 
 }
 
 // Find the best revenue candidate — respects column index
-function findRevenue(rows: LabeledNum[], curIdx: number, priorIdx: number): { cur: number|null; prior: number|null } {
+function findRevenue(
+  rows: LabeledNum[],
+  curIdx: number,
+  priorIdx: number,
+  scaleFactor: number,
+): { cur: number|null; prior: number|null } {
   const EXACT = ['total revenue', 'total revenues', 'net revenue', 'net revenues',
                  'total net revenue', 'net sales', 'total net sales', 'revenue from operations'];
-  const FUZZY = ['revenue from operations', 'total revenue', 'net revenue', 'revenue$', 'revenues$', 'net sales'];
+  const FUZZY = ['revenue from operations', 'total revenue', 'net revenue', 'revenues$', 'net sales'];
 
-  for (const pat of [...EXACT]) {
+  // Candidates: collect ALL rows matching revenue patterns, then pick the best one.
+  // "Best" = has enough columns for curIdx + plausibility check (scaled value ≥ 0.5 display unit)
+  const candidates: { row: LabeledNum; cur: number; prior: number|null; score: number }[] = [];
+
+  const tryRow = (row: LabeledNum) => {
+    // FIX FOR AEROFLEX: require the row to have enough elements for curIdx
+    // If row only has 1 number (e.g., footnote "1" on its own line), skip it
+    if (row.nums.length <= curIdx) return; // not enough columns — DON'T fall back to nums[0]
+
+    const cur = row.nums[curIdx];
+    if (!cur || cur <= 0) return;
+
+    // FIX FOR FASTLY: plausibility guard
+    // If applying scale makes revenue < 0.5 display unit AND there are other candidates,
+    // this is likely a narrative "173.0 million" that shouldn't have scale applied.
+    const scaledCur = cur * scaleFactor;
+    if (scaledCur < 0.5 && scaleFactor < 1) {
+      // Too small for a public company — deprioritize but don't reject outright
+      // (could be a micro-cap, but try to find better candidates first)
+    }
+
+    const prior = row.nums[priorIdx] ?? (row.nums.length > 1 ? row.nums[Math.min(1, row.nums.length-1)] : null);
+    // Score: prefer rows with MORE columns (table rows > narrative rows) + larger values
+    const colScore = row.nums.length * 10;
+    const sizeScore = Math.min(scaledCur, 1000); // cap so massive outliers don't dominate
+    const plausibilityBonus = scaledCur >= 0.5 ? 100 : 0; // strong bonus for plausible revenue
+    candidates.push({ row, cur, prior: (prior !== cur ? prior : null), score: colScore + sizeScore + plausibilityBonus });
+  };
+
+  for (const pat of EXACT) {
     const re = new RegExp(`^${pat}$`, 'i');
     for (const row of rows) {
-      if (re.test(row.label.trim())) {
-        const cur = row.nums[curIdx] ?? row.nums[0];
-        if (cur && cur > 0) {
-          const prior = row.nums[priorIdx] ?? row.nums[Math.min(1, row.nums.length-1)] ?? null;
-          return { cur, prior: prior !== cur ? prior : null };
-        }
-      }
+      if (re.test(row.label.trim())) tryRow(row);
     }
   }
   for (const pat of FUZZY) {
     const re = new RegExp(pat, 'i');
     for (const row of rows) {
-      if (re.test(row.label)) {
-        const cur = row.nums[curIdx] ?? row.nums[0];
-        if (cur && cur > 0) {
-          const prior = row.nums[priorIdx] ?? row.nums[Math.min(1, row.nums.length-1)] ?? null;
-          return { cur, prior: prior !== cur ? prior : null };
-        }
-      }
+      if (!candidates.some(c => c.row === row) && re.test(row.label)) tryRow(row);
     }
   }
-  return { cur: null, prior: null };
+
+  if (candidates.length === 0) return { cur: null, prior: null };
+  // Pick highest-scoring candidate
+  candidates.sort((a, b) => b.score - a.score);
+  return { cur: candidates[0].cur, prior: candidates[0].prior };
 }
 
 // ── STEP 5: Validate and cross-check — detect impossible relationships ────────
@@ -764,19 +819,45 @@ function extractManagementText(text: string): {
 // ── STEP 7: Detect discontinued operations ────────────────────────────────────
 
 function detectDiscontinued(text: string): { detected: boolean; discontinuedIncome: number|null; continuingRevNote: string } {
-  const t = text.toLowerCase();
-  const detected = /discontinued operations|divestiture|disposal group|held for sale|sold.*subsidiary|sale of.*subsidiary/.test(t);
-  if (!detected) return { detected: false, discontinuedIncome: null, continuingRevNote: '' };
+  // FIX: Only look for discontinued ops in the FINANCIAL STATEMENTS section.
+  // Audit reports and legal boilerplate frequently mention "subsidiaries", "disposal groups"
+  // in a generic context that does NOT mean the company has discontinued operations.
+  //
+  // Strategy: look for the specific financial line items that only appear in actual
+  // financial statements (not audit opinion text).
 
-  // Try to extract the discontinued income amount
-  const matches = text.match(/income from discontinued operations.*?\$?\s*([\d,]+)/i);
-  const inc = matches ? parseFloat(matches[1].replace(/,/g, '')) : null;
+  // Must find the FINANCIAL STATEMENT version: a line in a P&L table
+  const hasFinancialStatement = /consolidated statements? of operations|consolidated statements? of (?:comprehensive )?income|income statement/i.test(text);
 
-  return {
-    detected: true,
-    discontinuedIncome: inc,
-    continuingRevNote: 'Discontinued operations detected — forward comparisons should use continuing-ops only',
-  };
+  // Strong indicators that discontinued ops actually affected the financial results
+  const strongSignals = [
+    /income from discontinued operations.*[\$₹]?\s*([\d,]+)/i,  // explicit line item with amount
+    /loss from discontinued operations.*[\$₹]?\s*([\d,]+)/i,
+    /gain on sale.*subsidiary.*[\$₹]?\s*([\d,]+)/i,
+    /net.*discontinued operations.*[\$₹]?\s*([\d,]+)/i,
+  ];
+
+  for (const sig of strongSignals) {
+    const m = text.match(sig);
+    if (m) {
+      const inc = parseFloat(m[1]?.replace(/,/g, '') || '0');
+      return {
+        detected: true,
+        discontinuedIncome: isNaN(inc) ? null : inc,
+        continuingRevNote: 'Discontinued operations detected in financial statements',
+      };
+    }
+  }
+
+  // Secondary: only flag if financial statement section exists AND specific language appears
+  if (hasFinancialStatement) {
+    const t = text.toLowerCase();
+    if (/discontinued operations/.test(t) && /bressner|divestiture|held for sale|disposal group/.test(t)) {
+      return { detected: true, discontinuedIncome: null, continuingRevNote: 'Divestiture detected — verify discontinued ops impact' };
+    }
+  }
+
+  return { detected: false, discontinuedIncome: null, continuingRevNote: '' };
 }
 
 // ── STEP 8: MAIN EXTRACTION ────────────────────────────────────────────────────
@@ -809,31 +890,56 @@ function parseEarnings(rawText: string): RawFinancials {
   // ── PERIOD & COMPANY ─────────────────────────────────────────────────────────
 
   const period = (() => {
-    // Q1 2026 supplement: detect from title or heading
+    // Q1/Q2/Q3/Q4 supplement (check BEFORE annual to avoid "For the fiscal year" in boilerplate)
     const suppMatch = text.match(/first quarter 20(\d{2})|q1\s*20(\d{2})/i);
     if (suppMatch) return `Q1 20${suppMatch[1] || suppMatch[2]}`;
-    const fy = text.match(/(?:fiscal year|year) ended [A-Z][a-z]+ \d+,?\s*(\d{4})/i);
-    if (fy) return `FY${fy[1]}`;
+    const suppMatch2 = text.match(/second quarter 20(\d{2})|q2\s*20(\d{2})/i);
+    if (suppMatch2) return `Q2 20${suppMatch2[1] || suppMatch2[2]}`;
+
+    // FIX: Use the MOST RECENT year from all "fiscal year/year ended" matches
+    // (not just the first match — historical refs like "year ended Dec 31, 2015" appear later
+    // in the document but JS text.match returns the first occurrence regardless)
+    const allFYMatches = [...text.matchAll(/(?:for the fiscal year|fiscal year) ended [A-Za-z]+ \d+,?\s*(\d{4})/gi)];
+    if (allFYMatches.length > 0) {
+      const mostRecent = allFYMatches.map(m => parseInt(m[1])).sort((a,b) => b-a)[0];
+      return `FY${mostRecent}`;
+    }
     // Indian "year ended 31.03.2026"
     const indFY = text.match(/year ended\s+31[./]0?3[./](20\d{2})/i);
     if (indFY) return `FY${indFY[1]}`;
-    const q = text.match(/(?:three months|quarter) ended [A-Z][a-z]+ \d+,?\s*(\d{4})/i);
+    // All "year ended MONTH YEAR" matches → pick most recent
+    const allYearEnded = [...text.matchAll(/year ended [A-Za-z]+ \d+,?\s*(\d{4})/gi)];
+    if (allYearEnded.length > 0) {
+      const mostRecent = allYearEnded.map(m => parseInt(m[1])).sort((a,b) => b-a)[0];
+      return `FY${mostRecent}`;
+    }
+    const q = text.match(/(?:three months|quarter) ended [A-Za-z]+ \d+,?\s*(\d{4})/i);
     if (q) return `Q${q[1]}`;
     const indQ = text.match(/\b(Q[1-4])\s*[-–]?\s*(?:FY\s*)?(\d{2,4})\b/i);
     if (indQ) return `${indQ[1].toUpperCase()}FY${indQ[2]}`;
-    const yr = text.match(/\b(20\d{2})\b/)?.[1];
-    return yr ? `FY${yr}` : 'Latest';
+    // Most recent year in first 3000 chars
+    const firstYears = (text.slice(0, 3000).match(/\b(20\d{2})\b/g) || []).map(Number).sort((a,b)=>b-a);
+    return firstYears.length > 0 ? `FY${firstYears[0]}` : 'Latest';
   })();
 
   const company = (() => {
-    const secExact = text.match(/\(Exact name of Registrant[^)]*\)\s*\n([^\n]{5,80})/);
-    if (secExact) return secExact[1].trim();
-    // Indian format: company name usually at top of results page
-    const indName = text.match(/^([A-Z][A-Z\s]+(?:LIMITED|LTD|PRIVATE|INDUSTRIES|SOLUTIONS|TECHNOLOGIES|SERVICES))\b/m);
+    // FIX: SEC 10-K — company name appears BEFORE "(Exact name of Registrant...)", not after
+    const secBefore = text.match(/([^\n]{5,80})\n\(Exact name of Registrant[^)]*\)/);
+    if (secBefore) return secBefore[1].trim();
+    // Fallback: after (rare alternative layout)
+    const secAfter = text.match(/\(Exact name of Registrant[^)]*\)\s*\n([^\n]{5,80})/);
+    if (secAfter) {
+      const candidate = secAfter[1].trim();
+      // Reject if it looks like state/EIN info "Delaware 33-0885351"
+      if (!/^\w{2,}\s+\d{2}-\d{6,}/.test(candidate)) return candidate;
+    }
+    // Indian format: look for ALL-CAPS company name with corporate suffix
+    const indName = text.match(/^([A-Z][A-Z\s&.]{5,}(?:LIMITED|LTD|PRIVATE|INDUSTRIES|SOLUTIONS|TECHNOLOGIES|SERVICES|SYSTEMS))\s*$/m);
     if (indName) return indName[1].trim();
-    const lines = text.split('\n').slice(0, 20).map(l => l.trim());
+    // Generic: first line with corporate suffix near top of document
+    const lines = text.split('\n').slice(0, 25).map(l => l.trim());
     for (const l of lines) {
-      if (/(?:Inc|Corp|Ltd|Limited|LLC|plc|Holdings|Systems|Technologies|Pharma|Energy|Industries)\b/i.test(l) && l.length > 5 && l.length < 90) return l;
+      if (/(?:Inc\.|Corp\.|Ltd\.|Limited|LLC|plc|Holdings|Systems|Technologies|Pharma|Energy|Industries)\b/i.test(l) && l.length > 5 && l.length < 90 && !/^\(|^[\d-]/.test(l)) return l;
     }
     return 'Unknown Company';
   })();
@@ -842,7 +948,8 @@ function parseEarnings(rawText: string): RawFinancials {
 
   // ── P&L — uses curIdx/priorIdx throughout ─────────────────────────────────────
 
-  const { cur: rawRevCur, prior: rawRevPrior } = findRevenue(rows, curIdx, priorIdx);
+  // FIX: pass factor to findRevenue so it can apply plausibility check
+  const { cur: rawRevCur, prior: rawRevPrior } = findRevenue(rows, curIdx, priorIdx, factor);
   const revenue = sc(rawRevCur);
   const revPrior = sc(rawRevPrior);
 
@@ -1286,6 +1393,71 @@ function saveHist2(e: HistEntry2[]) { try { localStorage.setItem(HISTORY_KEY2, J
 // ═════════════════════════════════════════════════════════════════════════════
 
 export default function EarningsAnalysisPage() {
+  const AV_KEY = '62EKUKC2M5WSZB9Z';
+
+  // Alpha Vantage consensus/overview data
+  interface AVData {
+    symbol: string; name: string; sector: string; industry: string;
+    marketCap: number|null; peRatio: number|null; forwardPE: number|null;
+    eps: number|null; epsEstimateCurrentYear: number|null;
+    revenuePerShare: number|null; dividendYield: number|null;
+    analystTargetPrice: number|null; weekHigh52: number|null; weekLow52: number|null;
+    sharesOutstanding: number|null; bookValue: number|null;
+    priceToBook: number|null; evToEBITDA: number|null;
+    quarterlyEarnings: { fiscalDateEnding: string; reportedEPS: number|null; estimatedEPS: number|null; surprise: number|null; surprisePct: number|null }[];
+  }
+  const [avData, setAvData] = useState<AVData|null>(null);
+  const [avLoading, setAvLoading] = useState(false);
+  const [avTicker, setAvTicker] = useState('');
+
+  async function fetchAVData(ticker: string) {
+    if (!ticker.trim()) return;
+    setAvLoading(true);
+    try {
+      // Fetch company overview + quarterly earnings in parallel
+      const [ovRes, earRes] = await Promise.allSettled([
+        fetch(`https://www.alphavantage.co/query?function=OVERVIEW&symbol=${encodeURIComponent(ticker.toUpperCase())}&apikey=${AV_KEY}`),
+        fetch(`https://www.alphavantage.co/query?function=EARNINGS&symbol=${encodeURIComponent(ticker.toUpperCase())}&apikey=${AV_KEY}`),
+      ]);
+
+      const ov = ovRes.status === 'fulfilled' && ovRes.value.ok ? await ovRes.value.json() : {};
+      const ear = earRes.status === 'fulfilled' && earRes.value.ok ? await earRes.value.json() : {};
+
+      const quarterly = (ear.quarterlyEarnings || []).slice(0, 6).map((q: any) => ({
+        fiscalDateEnding: q.fiscalDateEnding || '',
+        reportedEPS: parseFloat(q.reportedEPS) || null,
+        estimatedEPS: parseFloat(q.estimatedEPS) || null,
+        surprise: parseFloat(q.surprise) || null,
+        surprisePct: parseFloat(q.surprisePercentage) || null,
+      }));
+
+      setAvData({
+        symbol: ticker.toUpperCase(),
+        name: ov.Name || '',
+        sector: ov.Sector || '',
+        industry: ov.Industry || '',
+        marketCap: parseFloat(ov.MarketCapitalization) || null,
+        peRatio: parseFloat(ov.PERatio) || null,
+        forwardPE: parseFloat(ov.ForwardPE) || null,
+        eps: parseFloat(ov.EPS) || null,
+        epsEstimateCurrentYear: parseFloat(ov.EPSEstimateCurrentYear) || null,
+        revenuePerShare: parseFloat(ov.RevenuePerShareTTM) || null,
+        dividendYield: parseFloat(ov.DividendYield) || null,
+        analystTargetPrice: parseFloat(ov.AnalystTargetPrice) || null,
+        weekHigh52: parseFloat(ov['52WeekHigh']) || null,
+        weekLow52: parseFloat(ov['52WeekLow']) || null,
+        sharesOutstanding: parseFloat(ov.SharesOutstanding) || null,
+        bookValue: parseFloat(ov.BookValue) || null,
+        priceToBook: parseFloat(ov.PriceToBookRatio) || null,
+        evToEBITDA: parseFloat(ov.EVToEBITDA) || null,
+        quarterlyEarnings: quarterly,
+      });
+    } catch (e) {
+      console.error('Alpha Vantage fetch failed:', e);
+    }
+    setAvLoading(false);
+  }
+
   const [mode, setMode] = useState<'upload'|'paste'|'url'>('upload');
   const [pasteText, setPasteText] = useState('');
   const [urlInput, setUrlInput] = useState('');
@@ -1426,18 +1598,148 @@ export default function EarningsAnalysisPage() {
   // ── Results dashboard ────────────────────────────────────────────────────
   if (result) {
     const { d, q, r, nar } = result;
+
+    // Resolve ticker for AV lookup (use parsed ticker or let user input)
+    const resolvedTicker = avTicker || d.ticker;
+
+    // Format large numbers for the AV header
+    const fmtMktCap = (v: number|null) => {
+      if (!v) return '—';
+      if (v >= 1e12) return `$${(v/1e12).toFixed(2)}T`;
+      if (v >= 1e9) return `$${(v/1e9).toFixed(2)}B`;
+      if (v >= 1e6) return `$${(v/1e6).toFixed(1)}M`;
+      return `$${v.toFixed(0)}`;
+    };
+    const fmtNum = (v: number|null, dec=2) => v === null ? '—' : v.toLocaleString(undefined, {maximumFractionDigits:dec,minimumFractionDigits:dec});
+    const surpriseColor = (pct: number|null) => pct === null ? MUTED : pct >= 5 ? GREEN : pct >= 0 ? '#10b981aa' : pct >= -5 ? YELLOW : RED;
+
     return (
       <div style={{background:BG,minHeight:'100vh',color:TEXT,fontFamily:'system-ui,-apple-system,sans-serif',padding:'20px 16px',maxWidth:1200,margin:'0 auto'}}>
 
-        {/* ── COMPANY HEADER ── */}
+        {/* ══════════════════════════════════════════════════════════════════════
+            INSTITUTIONAL HEADER — Bloomberg-style company intelligence block
+            Shows: identity, market data, consensus estimates, EPS surprise track record
+            ══════════════════════════════════════════════════════════════════════ */}
+        <div style={{backgroundColor:'#0a0a14',border:`1px solid ${BORDER}`,borderRadius:14,padding:'20px 22px',marginBottom:14,boxShadow:'0 4px 32px rgba(0,0,0,0.4)'}}>
+
+          {/* Row 1: Company name + ticker input + fetch button */}
+          <div style={{display:'flex',alignItems:'flex-start',gap:14,flexWrap:'wrap',marginBottom:16}}>
+            <div style={{flex:1,minWidth:240}}>
+              <h1 style={{fontSize:28,fontWeight:900,color:TEXT,margin:'0 0 4px',letterSpacing:'-0.5px'}}>
+                {avData?.name || d.company}
+              </h1>
+              <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+                {(avData?.symbol || d.ticker) && (
+                  <span style={{fontSize:13,fontWeight:800,color:ACCENT,backgroundColor:ACCENT+'18',padding:'3px 10px',borderRadius:5,letterSpacing:'0.5px'}}>
+                    {avData?.symbol || d.ticker}
+                  </span>
+                )}
+                {avData?.sector && <span style={{fontSize:11,color:MUTED}}>{avData.sector}</span>}
+                {avData?.sector && <span style={{fontSize:11,color:'#2A3B4C'}}>›</span>}
+                {avData?.industry && <span style={{fontSize:11,color:MUTED}}>{avData.industry}</span>}
+                <span style={{fontSize:11,color:'#2A3B4C'}}>·</span>
+                <span style={{fontSize:11,color:MUTED}}>{d.period} · {d.filingType}</span>
+              </div>
+            </div>
+
+            {/* Alpha Vantage ticker lookup */}
+            <div style={{display:'flex',gap:8,alignItems:'center',flexShrink:0}}>
+              <input
+                value={avTicker}
+                onChange={e => setAvTicker(e.target.value.toUpperCase())}
+                onKeyDown={e => e.key === 'Enter' && fetchAVData(avTicker || d.ticker)}
+                placeholder={d.ticker || 'Ticker (e.g. FSLY)'}
+                style={{width:120,backgroundColor:'#111',border:`1px solid ${BORDER}`,borderRadius:7,padding:'6px 10px',color:TEXT,fontSize:12,outline:'none'}}
+              />
+              <button
+                onClick={() => fetchAVData(avTicker || d.ticker)}
+                disabled={avLoading}
+                style={{padding:'6px 14px',backgroundColor:ACCENT,border:'none',borderRadius:7,color:'#000',fontWeight:700,fontSize:12,cursor:'pointer',opacity:avLoading?0.6:1}}
+              >
+                {avLoading ? '⏳' : '📡 Fetch'}
+              </button>
+              <span style={{fontSize:9,color:MUTED}}>via Alpha Vantage</span>
+            </div>
+          </div>
+
+          {/* Row 2: Market data grid */}
+          {avData && (
+            <div style={{borderTop:`1px solid ${BORDER}`,paddingTop:14,marginBottom:14}}>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))',gap:10,marginBottom:12}}>
+                {[
+                  { label:'MARKET CAP',    value: fmtMktCap(avData.marketCap) },
+                  { label:'P/E (TTM)',      value: fmtNum(avData.peRatio,1) },
+                  { label:'FORWARD P/E',   value: fmtNum(avData.forwardPE,1) },
+                  { label:'EV/EBITDA',     value: fmtNum(avData.evToEBITDA,1) },
+                  { label:'P/B RATIO',     value: fmtNum(avData.priceToBook,2) },
+                  { label:'EPS (TTM)',      value: avData.eps !== null ? `$${avData.eps.toFixed(2)}` : '—' },
+                  { label:'EPS EST FY',    value: avData.epsEstimateCurrentYear !== null ? `$${avData.epsEstimateCurrentYear.toFixed(2)}` : '—' },
+                  { label:'ANALYST TARGET',value: avData.analystTargetPrice !== null ? `$${avData.analystTargetPrice.toFixed(2)}` : '—' },
+                  { label:'52W HIGH',      value: avData.weekHigh52 !== null ? `$${avData.weekHigh52.toFixed(2)}` : '—' },
+                  { label:'52W LOW',       value: avData.weekLow52 !== null ? `$${avData.weekLow52.toFixed(2)}` : '—' },
+                  { label:'DIV YIELD',     value: avData.dividendYield !== null ? `${(avData.dividendYield*100).toFixed(2)}%` : '—' },
+                  { label:'BOOK VALUE',    value: avData.bookValue !== null ? `$${avData.bookValue.toFixed(2)}` : '—' },
+                ].map(({label, value}) => (
+                  <div key={label} style={{backgroundColor:'#111',borderRadius:8,padding:'9px 11px',border:`1px solid ${BORDER}`}}>
+                    <div style={{fontSize:8,color:MUTED,fontWeight:700,letterSpacing:'0.8px',marginBottom:3}}>{label}</div>
+                    <div style={{fontSize:14,fontWeight:800,color:TEXT}}>{value}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* EPS Surprise Track Record */}
+              {avData.quarterlyEarnings.length > 0 && (
+                <div>
+                  <div style={{fontSize:10,fontWeight:700,color:MUTED,letterSpacing:'0.8px',marginBottom:8}}>📊 EPS SURPRISE HISTORY — ACTUAL vs ESTIMATE (last {avData.quarterlyEarnings.length} quarters)</div>
+                  <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                    {avData.quarterlyEarnings.map((eq,i) => {
+                      const spct = eq.surprisePct;
+                      const sCol = surpriseColor(spct);
+                      return (
+                        <div key={i} style={{
+                          backgroundColor: sCol + '12',
+                          border: `1px solid ${sCol}30`,
+                          borderTop: `3px solid ${sCol}`,
+                          borderRadius: 8, padding:'8px 12px', minWidth:100, textAlign:'center',
+                        }}>
+                          <div style={{fontSize:9,color:MUTED,marginBottom:4}}>{eq.fiscalDateEnding?.slice(0,7)}</div>
+                          <div style={{fontSize:13,fontWeight:900,color:sCol}}>
+                            {eq.reportedEPS !== null ? `$${eq.reportedEPS.toFixed(2)}` : '—'}
+                          </div>
+                          <div style={{fontSize:9,color:MUTED,marginTop:2}}>
+                            Est: {eq.estimatedEPS !== null ? `$${eq.estimatedEPS.toFixed(2)}` : '—'}
+                          </div>
+                          {spct !== null && (
+                            <div style={{fontSize:10,fontWeight:700,color:sCol,marginTop:3}}>
+                              {spct >= 0 ? '+' : ''}{spct.toFixed(1)}%
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div style={{marginTop:8,fontSize:9,color:MUTED}}>
+                    💡 Earnings reaction is driven by SURPRISE vs estimates.
+                    Consistent beats → stock re-rates higher on each print.
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {!avData && (
+            <div style={{borderTop:`1px solid ${BORDER}`,paddingTop:12,display:'flex',gap:12,alignItems:'center'}}>
+              <span style={{fontSize:11,color:MUTED}}>
+                📡 Enter the stock ticker above to fetch market data, consensus estimates, and EPS surprise history from Alpha Vantage.
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* ── COMPANY HEADER (Three-engine scores + themes + warnings) ── */}
         <div style={{backgroundColor:CARD,border:`1px solid ${BORDER}`,borderRadius:14,padding:'18px 20px',marginBottom:16}}>
           <div style={{display:'flex',alignItems:'flex-start',gap:16,flexWrap:'wrap'}}>
             <div style={{flex:1,minWidth:200}}>
-              <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginBottom:4}}>
-                <h1 style={{fontSize:22,fontWeight:900,color:TEXT,margin:0}}>{d.company}</h1>
-                {d.ticker && <span style={{fontSize:11,fontWeight:800,color:ACCENT,backgroundColor:ACCENT+'18',padding:'2px 8px',borderRadius:4}}>{d.ticker}</span>}
-                {d.continuingOpsDetected && <span style={{fontSize:10,fontWeight:700,color:YELLOW,backgroundColor:YELLOW+'14',padding:'2px 8px',borderRadius:4}}>⚠ Discontinued Ops Detected</span>}
-              </div>
               <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:10}}>
                 <span style={{fontSize:11,color:MUTED}}>{d.period}</span>
                 <span style={{fontSize:11,color:MUTED}}>·</span>
@@ -1448,6 +1750,7 @@ export default function EarningsAnalysisPage() {
                 <span style={{fontSize:11,fontWeight:700,color:d.mgmtTone==='bullish'?GREEN:d.mgmtTone==='cautious'?ORANGE:MUTED}}>
                   Mgmt tone: {d.mgmtTone}
                 </span>
+                {d.continuingOpsDetected && <span style={{fontSize:10,fontWeight:700,color:YELLOW,backgroundColor:YELLOW+'14',padding:'2px 8px',borderRadius:4}}>⚠ Discontinued Ops</span>}
               </div>
 
               {/* Theme badges */}
