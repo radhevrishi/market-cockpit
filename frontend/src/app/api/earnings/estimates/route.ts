@@ -4,27 +4,47 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FMP consensus / estimates / sell-side sentiment server-side aggregator
+// FMP consensus / sell-side server-side aggregator (NEW /stable/ API)
 // ─────────────────────────────────────────────────────────────────────────────
-// Pulls in parallel from FMP and returns ONE consolidated JSON the page can
-// build an EarningsSnapshot from. Server-side so we can keep the API key off
-// the client, share aggressive caching, and avoid CORS for any FMP redirect.
+// FMP deprecated all /api/v3/ legacy endpoints on Aug 31, 2025. This route
+// uses the new /stable/?symbol=X query-param API.
+//
+// Free-tier coverage map:
+//   ALWAYS works (any ticker):
+//     /stable/profile, /stable/quote, /stable/income-statement,
+//     /stable/balance-sheet-statement, /stable/cash-flow-statement,
+//     /stable/key-metrics-ttm, /stable/analyst-estimates?period=annual
+//   Works for liquid names:
+//     /stable/earnings (limit ≤5), /stable/price-target-summary,
+//     /stable/grades, /stable/earnings-surprises
+//   Premium-only:
+//     /stable/analyst-estimates?period=quarter,
+//     /stable/earnings?limit>5, /stable/ratings-historical?limit>1
 // ─────────────────────────────────────────────────────────────────────────────
 
 const FMP_KEY = process.env.FMP_KEY || 'SywZSfKoRQ9JmcUZ1w98MT78rrVvHGng';
-const FMP = 'https://financialmodelingprep.com/api/v3';
-const FMP_V4 = 'https://financialmodelingprep.com/api/v4';
+const STABLE = 'https://financialmodelingprep.com/stable';
 
-async function safeJson<T = any>(url: string, timeoutMs = 8000): Promise<T | null> {
+async function safeJson<T = any>(url: string, timeoutMs = 8000): Promise<{ data: T | null; ok: boolean; reason?: string }> {
   try {
     const res = await fetch(url, {
       signal: AbortSignal.timeout(timeoutMs),
-      next: { revalidate: 3600 }, // 1h ISR cache
+      next: { revalidate: 3600 },
     });
-    if (!res.ok) return null;
-    return (await res.json()) as T;
-  } catch {
-    return null;
+    if (!res.ok) return { data: null, ok: false, reason: `HTTP ${res.status}` };
+    const text = await res.text();
+    // FMP returns "Premium Query Parameter:" or "Error Message" as plain text/JSON
+    if (text.startsWith('Premium') || text.includes('"Error Message"')) {
+      return { data: null, ok: false, reason: 'premium_or_error' };
+    }
+    try {
+      const parsed = JSON.parse(text);
+      return { data: parsed as T, ok: true };
+    } catch {
+      return { data: null, ok: false, reason: 'parse_error' };
+    }
+  } catch (err: any) {
+    return { data: null, ok: false, reason: err?.message || 'network_error' };
   }
 }
 
@@ -36,112 +56,200 @@ export async function GET(request: Request) {
   }
   const t = encodeURIComponent(ticker);
 
+  const debug: { hit: string[]; failed: { endpoint: string; reason: string }[] } = { hit: [], failed: [] };
+
+  // Issue all calls in parallel
   const [
-    estQuarterly,
-    estAnnual,
-    surpriseHist,
-    profile,
-    quote,
-    rating,
-    upgradeDowngrade,
-    targetConsensus,
-    keyMetricsTtm,
+    profileRes,
+    quoteRes,
+    earningsRes,           // limit=5: gives next-Q estimate + last 4 surprises
+    estAnnualRes,          // annual estimates (free tier)
+    targetRes,             // price target summary (sometimes premium for small caps)
+    gradesRes,             // analyst ratings actions
+    keyMetricsRes,         // TTM ratios
+    surprisesRes,          // historical surprises (alt endpoint)
   ] = await Promise.all([
-    safeJson<any[]>(`${FMP}/analyst-estimates/${t}?period=quarter&limit=8&apikey=${FMP_KEY}`),
-    safeJson<any[]>(`${FMP}/analyst-estimates/${t}?period=annual&limit=4&apikey=${FMP_KEY}`),
-    safeJson<any[]>(`${FMP}/earnings-surprises/${t}?apikey=${FMP_KEY}`),
-    safeJson<any[]>(`${FMP}/profile/${t}?apikey=${FMP_KEY}`),
-    safeJson<any[]>(`${FMP}/quote/${t}?apikey=${FMP_KEY}`),
-    safeJson<any[]>(`${FMP_V4}/grade?symbol=${t}&apikey=${FMP_KEY}`),
-    safeJson<any[]>(`${FMP_V4}/upgrades-downgrades?symbol=${t}&apikey=${FMP_KEY}`),
-    safeJson<any[]>(`${FMP_V4}/price-target-consensus?symbol=${t}&apikey=${FMP_KEY}`),
-    safeJson<any[]>(`${FMP}/key-metrics-ttm/${t}?apikey=${FMP_KEY}`),
+    safeJson<any[]>(`${STABLE}/profile?symbol=${t}&apikey=${FMP_KEY}`),
+    safeJson<any[]>(`${STABLE}/quote?symbol=${t}&apikey=${FMP_KEY}`),
+    safeJson<any[]>(`${STABLE}/earnings?symbol=${t}&limit=5&apikey=${FMP_KEY}`),
+    safeJson<any[]>(`${STABLE}/analyst-estimates?symbol=${t}&period=annual&limit=4&apikey=${FMP_KEY}`),
+    safeJson<any[]>(`${STABLE}/price-target-summary?symbol=${t}&apikey=${FMP_KEY}`),
+    safeJson<any[]>(`${STABLE}/grades?symbol=${t}&apikey=${FMP_KEY}`),
+    safeJson<any[]>(`${STABLE}/key-metrics-ttm?symbol=${t}&apikey=${FMP_KEY}`),
+    safeJson<any[]>(`${STABLE}/earnings-surprises?symbol=${t}&apikey=${FMP_KEY}`),
   ]);
 
-  // ── Next-quarter consensus (the row whose date is in the future) ───────
+  const track = (name: string, r: { ok: boolean; reason?: string }) => {
+    if (r.ok) debug.hit.push(name);
+    else debug.failed.push({ endpoint: name, reason: r.reason || 'unknown' });
+  };
+  track('profile', profileRes);
+  track('quote', quoteRes);
+  track('earnings', earningsRes);
+  track('analyst-estimates-annual', estAnnualRes);
+  track('price-target-summary', targetRes);
+  track('grades', gradesRes);
+  track('key-metrics-ttm', keyMetricsRes);
+  track('earnings-surprises', surprisesRes);
+
+  const profileObj = (profileRes.data || [])[0] || null;
+  const quoteObj = (quoteRes.data || [])[0] || null;
+  const targetObj = (targetRes.data || [])[0] || null;
+  const ttm = (keyMetricsRes.data || [])[0] || null;
+
+  // ── Earnings array: [next, last_reported, ...older] ────────────────────
+  const earningsArr = earningsRes.data || [];
+  // First row whose actual is null AND date is in the future = next-Q estimate
   const today = Date.now();
-  const upcoming = (estQuarterly || []).find((e: any) => {
-    const d = new Date(e.date).getTime();
-    return !Number.isNaN(d) && d >= today;
-  });
-  const nextQ = upcoming || (estQuarterly || [])[0] || null;
+  const upcoming = earningsArr.find((e: any) =>
+    (e.epsActual === null || e.revenueActual === null) &&
+    new Date(e.date).getTime() >= today - 7 * 86400000,
+  );
+  const lastReported = earningsArr.find((e: any) =>
+    e.epsActual !== null && e.revenueActual !== null,
+  );
 
-  // ── Most recent reported quarter from earnings-surprises ───────────────
-  const lastReported = (surpriseHist || [])[0] || null;
+  // ── Annual estimates (free tier) ───────────────────────────────────────
+  const estFY = (estAnnualRes.data || [])[0] || null;
+  // Build a quarterly-ish "next" estimate by dividing FY by 4 (rough proxy)
+  // We prefer the upcoming-quarter from /earnings when available; fall back to
+  // FY/4 when only annual estimates exist.
+  const fyToQ = (fy: any) =>
+    fy
+      ? {
+          revenueAvg: fy.revenueAvg ? Math.round(fy.revenueAvg / 4) : null,
+          epsAvg: fy.epsAvg ? Math.round((fy.epsAvg / 4) * 100) / 100 : null,
+          ebitdaAvg: fy.ebitdaAvg ? Math.round(fy.ebitdaAvg / 4) : null,
+          ebitAvg: fy.ebitAvg ? Math.round(fy.ebitAvg / 4) : null,
+          netIncomeAvg: fy.netIncomeAvg ? Math.round(fy.netIncomeAvg / 4) : null,
+          numAnalysts: fy.numAnalystsRevenue || fy.numberAnalystsEstimatedRevenue || null,
+        }
+      : null;
 
-  // ── Sell-side rating distribution (from /grade endpoint, last 90 days) ─
+  let consensusNextQ: any = null;
+  if (upcoming) {
+    consensusNextQ = {
+      date: upcoming.date,
+      revenueAvg: upcoming.revenueEstimated || null,
+      revenueLow: null,
+      revenueHigh: null,
+      epsAvg: upcoming.epsEstimated || null,
+      epsLow: null,
+      epsHigh: null,
+      ebitdaAvg: null,
+      ebitAvg: null,
+      netIncomeAvg: null,
+      numAnalysts: null,
+    };
+  } else if (estFY) {
+    consensusNextQ = { date: estFY.date, ...(fyToQ(estFY) || {}), revenueLow: null, revenueHigh: null, epsLow: null, epsHigh: null };
+  }
+
+  // ── Last reported surprise ─────────────────────────────────────────────
+  let lastReportedSurprise: any = null;
+  if (lastReported) {
+    lastReportedSurprise = {
+      date: lastReported.date,
+      actualEps: lastReported.epsActual,
+      estimateEps: lastReported.epsEstimated,
+      actualRevenue: lastReported.revenueActual,
+      estimateRevenue: lastReported.revenueEstimated,
+    };
+  }
+
+  // ── Surprise history — combine /earnings + /earnings-surprises ─────────
+  const histFromEarnings = (earningsRes.data || [])
+    .filter((e: any) => e.epsActual !== null)
+    .slice(0, 8)
+    .map((e: any) => ({
+      date: e.date,
+      actualEps: e.epsActual,
+      estimateEps: e.epsEstimated,
+      actualRevenue: e.revenueActual,
+      estimateRevenue: e.revenueEstimated,
+    }));
+  const histFromSurprises = (surprisesRes.data || [])
+    .slice(0, 8)
+    .map((s: any) => ({
+      date: s.date,
+      actualEps: s.epsActual ?? null,
+      estimateEps: s.epsEstimated ?? null,
+      actualRevenue: null,
+      estimateRevenue: null,
+    }));
+  const surpriseHistory = histFromEarnings.length > 0 ? histFromEarnings : histFromSurprises;
+
+  // ── Sell-side: bucket /grades by action+grade ─────────────────────────
   type Bucket = { strongBuy: number; buy: number; hold: number; sell: number; strongSell: number };
   const bucket: Bucket = { strongBuy: 0, buy: 0, hold: 0, sell: 0, strongSell: 0 };
   const cutoff = Date.now() - 90 * 86400000;
-  (rating || []).forEach((r: any) => {
+  let recentUpgrades30d = 0;
+  let recentDowngrades30d = 0;
+  const cutoff30 = Date.now() - 30 * 86400000;
+
+  (gradesRes.data || []).forEach((r: any) => {
     const ts = new Date(r.date || 0).getTime();
     if (ts < cutoff) return;
-    const g = String(r.newGrade || '').toLowerCase();
-    if (/strong\s*buy|outperform|overweight/.test(g)) bucket.strongBuy++;
-    else if (/buy|positive/.test(g)) bucket.buy++;
-    else if (/hold|neutral|equal\s*weight|market\s*perform/.test(g)) bucket.hold++;
-    else if (/strong\s*sell|underperform|underweight/.test(g)) bucket.strongSell++;
-    else if (/sell|negative/.test(g)) bucket.sell++;
+    const grade = String(r.newGrade || '').toLowerCase();
+    if (/strong\s*buy|outperform|overweight/.test(grade)) bucket.strongBuy++;
+    else if (/buy|positive/.test(grade)) bucket.buy++;
+    else if (/hold|neutral|equal\s*weight|market\s*perform/.test(grade)) bucket.hold++;
+    else if (/strong\s*sell|underperform|underweight/.test(grade)) bucket.strongSell++;
+    else if (/sell|negative/.test(grade)) bucket.sell++;
+
+    if (ts >= cutoff30) {
+      const action = String(r.action || '').toLowerCase();
+      if (/upgrade|raise/.test(action)) recentUpgrades30d++;
+      else if (/downgrade|lower|cut/.test(action)) recentDowngrades30d++;
+    }
   });
-  const totalAnalysts =
-    bucket.strongBuy + bucket.buy + bucket.hold + bucket.sell + bucket.strongSell;
+  const total = bucket.strongBuy + bucket.buy + bucket.hold + bucket.sell + bucket.strongSell;
 
-  // ── Recent up/down-grades count (last 30 days) ─────────────────────────
-  const cutoff30 = Date.now() - 30 * 86400000;
-  let recentUpgrades = 0;
-  let recentDowngrades = 0;
-  (upgradeDowngrade || []).forEach((u: any) => {
-    const ts = new Date(u.publishedDate || u.date || 0).getTime();
-    if (ts < cutoff30) return;
-    const action = String(u.action || u.gradeChange || '').toLowerCase();
-    if (/upgrad|raise/.test(action)) recentUpgrades++;
-    else if (/downgrad|cut|lower/.test(action)) recentDowngrades++;
-  });
+  // ── Target price: prefer summary, fallback to grades' priceTarget if present ─
+  let consensusTargetPrice: number | null = null;
+  let targetHigh: number | null = null;
+  let targetLow: number | null = null;
+  let targetMedian: number | null = null;
+  if (targetObj) {
+    consensusTargetPrice = targetObj.lastQuarterAvgPriceTarget || targetObj.lastYearAvgPriceTarget || null;
+    targetHigh = targetObj.targetHigh ?? null;
+    targetLow = targetObj.targetLow ?? null;
+    targetMedian = targetObj.targetMedian ?? null;
+  }
 
-  const profileObj = (profile || [])[0] || null;
-  const quoteObj = (quote || [])[0] || null;
-  const targetObj = (targetConsensus || [])[0] || null;
-  const ttm = (keyMetricsTtm || [])[0] || null;
-
-  // ── Estimate revisions trajectory (compare current vs prior year same-Q) ─
-  // Heuristic: if we have ≥2 quarterly estimates, compare est avg vs older
+  // ── Revision trajectory ────────────────────────────────────────────────
   let revisionBias: 'up' | 'down' | 'flat' | 'na' = 'na';
   let revisionMagnitudePct: number | null = null;
-  if ((estQuarterly || []).length >= 2 && nextQ) {
-    const older = estQuarterly!.find(
-      (e: any) => new Date(e.date).getTime() < new Date(nextQ.date).getTime() - 60 * 86400000,
-    );
-    if (older?.estimatedRevenueAvg && nextQ.estimatedRevenueAvg) {
-      const olderRev = parseFloat(older.estimatedRevenueAvg);
-      const newRev = parseFloat(nextQ.estimatedRevenueAvg);
-      if (olderRev > 0) {
-        const pct = ((newRev - olderRev) / olderRev) * 100;
-        revisionMagnitudePct = Math.round(pct * 100) / 100;
-        if (pct > 1) revisionBias = 'up';
-        else if (pct < -1) revisionBias = 'down';
-        else revisionBias = 'flat';
-      }
+  const annualEsts = estAnnualRes.data || [];
+  if (annualEsts.length >= 2) {
+    const cur = annualEsts[0]?.revenueAvg;
+    const prev = annualEsts[1]?.revenueAvg;
+    if (cur && prev && prev > 0) {
+      const pct = ((cur - prev) / prev) * 100;
+      revisionMagnitudePct = Math.round(pct * 100) / 100;
+      if (pct > 1) revisionBias = 'up';
+      else if (pct < -1) revisionBias = 'down';
+      else revisionBias = 'flat';
     }
   }
 
   return NextResponse.json({
     ok: true,
     ticker,
-    source: 'fmp',
+    source: 'fmp_stable',
     profile: profileObj
       ? {
           companyName: profileObj.companyName,
           sector: profileObj.sector,
           industry: profileObj.industry,
-          description: profileObj.description,
+          description: profileObj.description, // ← CRITICAL for theme engine
           ceo: profileObj.ceo,
           fullTimeEmployees: profileObj.fullTimeEmployees,
-          mktCap: profileObj.mktCap,
-          enterpriseValue: profileObj.enterpriseValue ?? null,
+          mktCap: profileObj.marketCap, // new API uses marketCap not mktCap
+          enterpriseValue: null,
           beta: profileObj.beta,
-          exchange: profileObj.exchangeShortName,
+          exchange: profileObj.exchange,
           country: profileObj.country,
-          image: profileObj.image,
           ipoDate: profileObj.ipoDate,
         }
       : null,
@@ -149,7 +257,7 @@ export async function GET(request: Request) {
       ? {
           price: quoteObj.price,
           change: quoteObj.change,
-          changePct: quoteObj.changesPercentage,
+          changePct: quoteObj.changePercentage,
           marketCap: quoteObj.marketCap,
           eps: quoteObj.eps,
           pe: quoteObj.pe,
@@ -158,61 +266,33 @@ export async function GET(request: Request) {
           yearLow: quoteObj.yearLow,
           yearHigh: quoteObj.yearHigh,
           volume: quoteObj.volume,
-          avgVolume: quoteObj.avgVolume,
+          avgVolume: quoteObj.priceAvg50 ? null : null,
           earningsAnnouncement: quoteObj.earningsAnnouncement,
           sharesOutstanding: quoteObj.sharesOutstanding,
         }
       : null,
-    consensusNextQ: nextQ
+    consensusNextQ,
+    consensusFY: estFY
       ? {
-          date: nextQ.date,
-          revenueAvg: parseFloat(nextQ.estimatedRevenueAvg) || null,
-          revenueLow: parseFloat(nextQ.estimatedRevenueLow) || null,
-          revenueHigh: parseFloat(nextQ.estimatedRevenueHigh) || null,
-          epsAvg: parseFloat(nextQ.estimatedEpsAvg) || null,
-          epsLow: parseFloat(nextQ.estimatedEpsLow) || null,
-          epsHigh: parseFloat(nextQ.estimatedEpsHigh) || null,
-          ebitdaAvg: parseFloat(nextQ.estimatedEbitdaAvg) || null,
-          ebitAvg: parseFloat(nextQ.estimatedEbitAvg) || null,
-          netIncomeAvg: parseFloat(nextQ.estimatedNetIncomeAvg) || null,
-          numAnalysts: parseInt(nextQ.numberAnalystsEstimatedRevenue || nextQ.numberAnalysts) || null,
+          date: estFY.date,
+          revenueAvg: estFY.revenueAvg || null,
+          epsAvg: estFY.epsAvg || null,
+          ebitdaAvg: estFY.ebitdaAvg || null,
+          netIncomeAvg: estFY.netIncomeAvg || null,
+          numAnalysts: estFY.numAnalystsRevenue || null,
         }
       : null,
-    consensusFY: estAnnual && estAnnual[0]
-      ? {
-          date: estAnnual[0].date,
-          revenueAvg: parseFloat(estAnnual[0].estimatedRevenueAvg) || null,
-          epsAvg: parseFloat(estAnnual[0].estimatedEpsAvg) || null,
-          ebitdaAvg: parseFloat(estAnnual[0].estimatedEbitdaAvg) || null,
-          netIncomeAvg: parseFloat(estAnnual[0].estimatedNetIncomeAvg) || null,
-          numAnalysts: parseInt(estAnnual[0].numberAnalystsEstimatedRevenue) || null,
-        }
-      : null,
-    lastReportedSurprise: lastReported
-      ? {
-          date: lastReported.date,
-          actualEps: parseFloat(lastReported.actualEarningResult ?? lastReported.actualEps) || null,
-          estimateEps: parseFloat(lastReported.estimatedEarning ?? lastReported.estimatedEps) || null,
-          actualRevenue: parseFloat(lastReported.actualRevenue) || null,
-          estimateRevenue: parseFloat(lastReported.estimatedRevenue) || null,
-        }
-      : null,
-    surpriseHistory: (surpriseHist || []).slice(0, 12).map((q: any) => ({
-      date: q.date,
-      actualEps: parseFloat(q.actualEarningResult ?? q.actualEps) || null,
-      estimateEps: parseFloat(q.estimatedEarning ?? q.estimatedEps) || null,
-      actualRevenue: parseFloat(q.actualRevenue) || null,
-      estimateRevenue: parseFloat(q.estimatedRevenue) || null,
-    })),
+    lastReportedSurprise,
+    surpriseHistory,
     sellSide: {
       bucket,
-      total: totalAnalysts,
-      recentUpgrades30d: recentUpgrades,
-      recentDowngrades30d: recentDowngrades,
-      consensusTargetPrice: targetObj?.targetConsensus ?? null,
-      targetHigh: targetObj?.targetHigh ?? null,
-      targetLow: targetObj?.targetLow ?? null,
-      targetMedian: targetObj?.targetMedian ?? null,
+      total,
+      recentUpgrades30d,
+      recentDowngrades30d,
+      consensusTargetPrice,
+      targetHigh,
+      targetLow,
+      targetMedian,
     },
     revisionTrajectory: {
       bias: revisionBias,
@@ -220,20 +300,21 @@ export async function GET(request: Request) {
     },
     ttm: ttm
       ? {
-          peRatioTTM: ttm.peRatioTTM,
-          pegRatioTTM: ttm.pegRatioTTM,
-          pbRatioTTM: ttm.pbRatioTTM,
-          enterpriseValueTTM: ttm.enterpriseValueTTM,
-          evToOperatingCashFlowTTM: ttm.evToOperatingCashFlowTTM,
-          evToFreeCashFlowTTM: ttm.evToFreeCashFlowTTM,
-          roeTTM: ttm.roeTTM,
-          roicTTM: ttm.roicTTM,
-          debtToEquityTTM: ttm.debtToEquityTTM,
-          netDebtToEBITDATTM: ttm.netDebtToEBITDATTM,
-          freeCashFlowYieldTTM: ttm.freeCashFlowYieldTTM,
-          dividendYieldTTM: ttm.dividendYieldTTM,
-          payoutRatioTTM: ttm.payoutRatioTTM,
+          peRatioTTM: ttm.peRatioTTM ?? null,
+          pbRatioTTM: ttm.priceToBookRatioTTM ?? null,
+          enterpriseValueTTM: ttm.enterpriseValueTTM ?? null,
+          evToOperatingCashFlowTTM: ttm.evToOperatingCashFlowTTM ?? null,
+          evToFreeCashFlowTTM: ttm.evToFreeCashFlowTTM ?? null,
+          evToEBITDATTM: ttm.evToEBITDATTM ?? null,
+          roeTTM: ttm.returnOnEquityTTM ?? null,
+          roicTTM: ttm.returnOnCapitalEmployedTTM ?? null,
+          debtToEquityTTM: ttm.debtToEquityTTM ?? null,
+          netDebtToEBITDATTM: ttm.netDebtToEBITDATTM ?? null,
+          freeCashFlowYieldTTM: ttm.freeCashFlowYieldTTM ?? null,
+          dividendYieldTTM: ttm.dividendYieldTTM ?? null,
+          payoutRatioTTM: ttm.payoutRatioTTM ?? null,
         }
       : null,
+    debug,
   });
 }

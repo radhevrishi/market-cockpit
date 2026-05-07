@@ -4,11 +4,14 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 8-quarter income-statement history (with computed margins) for trend tiles
+// 8-quarter income-statement history (NEW /stable/ FMP API)
+// ─────────────────────────────────────────────────────────────────────────────
+// Free-tier limit: max 5 quarters per call. So we cap at 5Q, not 8Q.
+// Pairs each row with /stable/earnings to get actual+estimate revenue/EPS.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const FMP_KEY = process.env.FMP_KEY || 'SywZSfKoRQ9JmcUZ1w98MT78rrVvHGng';
-const FMP = 'https://financialmodelingprep.com/api/v3';
+const STABLE = 'https://financialmodelingprep.com/stable';
 
 async function safeJson<T = any>(url: string, timeoutMs = 8000): Promise<T | null> {
   try {
@@ -17,15 +20,16 @@ async function safeJson<T = any>(url: string, timeoutMs = 8000): Promise<T | nul
       next: { revalidate: 3600 },
     });
     if (!res.ok) return null;
-    return (await res.json()) as T;
+    const text = await res.text();
+    if (text.startsWith('Premium') || text.includes('"Error Message"')) return null;
+    try { return JSON.parse(text) as T; } catch { return null; }
   } catch {
     return null;
   }
 }
 
 function pct(num: number | null, den: number | null): number | null {
-  if (num === null || den === null || !Number.isFinite(num) || !Number.isFinite(den) || den === 0)
-    return null;
+  if (num === null || den === null || !Number.isFinite(num) || !Number.isFinite(den) || den === 0) return null;
   return Math.round((num / den) * 10000) / 100;
 }
 
@@ -37,32 +41,43 @@ export async function GET(request: Request) {
   }
   const t = encodeURIComponent(ticker);
 
-  const [income, cashflow, balance, calendar] = await Promise.all([
-    safeJson<any[]>(`${FMP}/income-statement/${t}?period=quarter&limit=12&apikey=${FMP_KEY}`),
-    safeJson<any[]>(`${FMP}/cash-flow-statement/${t}?period=quarter&limit=12&apikey=${FMP_KEY}`),
-    safeJson<any[]>(`${FMP}/balance-sheet-statement/${t}?period=quarter&limit=12&apikey=${FMP_KEY}`),
-    safeJson<any[]>(`${FMP}/historical/earning_calendar/${t}?apikey=${FMP_KEY}`),
+  const [income, cashflow, balance, earnings] = await Promise.all([
+    safeJson<any[]>(`${STABLE}/income-statement?symbol=${t}&period=quarter&limit=5&apikey=${FMP_KEY}`),
+    safeJson<any[]>(`${STABLE}/cash-flow-statement?symbol=${t}&period=quarter&limit=5&apikey=${FMP_KEY}`),
+    safeJson<any[]>(`${STABLE}/balance-sheet-statement?symbol=${t}&period=quarter&limit=5&apikey=${FMP_KEY}`),
+    safeJson<any[]>(`${STABLE}/earnings?symbol=${t}&limit=5&apikey=${FMP_KEY}`),
   ]);
 
-  // ── Index calendar entries by reporting quarter ────────────────────────
-  const calByDate = new Map<string, any>();
-  (calendar || []).forEach((c: any) => {
-    if (c.date) calByDate.set(c.date, c);
-    if (c.fiscalDateEnding) calByDate.set(c.fiscalDateEnding, c);
-  });
+  if (!income || income.length === 0) {
+    return NextResponse.json({
+      ok: false,
+      ticker,
+      error: `No quarterly income statement available from FMP for ${ticker} (small-cap or thin coverage)`,
+      reason: income === null ? 'endpoint_blocked_or_premium' : 'empty_response',
+    }, { status: 404 });
+  }
 
-  // ── Index cashflow / balance sheet by date ─────────────────────────────
   const cfByDate = new Map<string, any>();
   (cashflow || []).forEach((c: any) => c.date && cfByDate.set(c.date, c));
   const bsByDate = new Map<string, any>();
   (balance || []).forEach((b: any) => b.date && bsByDate.set(b.date, b));
+  const earnByDate = new Map<string, any>();
+  (earnings || []).forEach((e: any) => e.date && earnByDate.set(e.date, e));
 
-  // Build last 8 quarters with computed margins + matched estimates
-  const quarters = (income || []).slice(0, 8).map((row: any) => {
+  const quarters = income.slice(0, 5).map((row: any) => {
     const date = row.date;
     const cf = cfByDate.get(date) || {};
     const bs = bsByDate.get(date) || {};
-    const cal = calByDate.get(date) || calByDate.get(row.fillingDate) || {};
+    // Earnings rows are dated by REPORT date, not period-end. Match nearest.
+    let earnRow: any = earnByDate.get(date);
+    if (!earnRow && earnings) {
+      // Find the earnings row whose date is within ±60 days of period end
+      const targetTs = new Date(date).getTime();
+      earnRow = earnings.find((e: any) => {
+        const dt = new Date(e.date).getTime();
+        return !isNaN(dt) && Math.abs(dt - targetTs) < 60 * 86400000;
+      });
+    }
 
     const revenue = parseFloat(row.revenue) || null;
     const grossProfit = parseFloat(row.grossProfit) || null;
@@ -71,13 +86,12 @@ export async function GET(request: Request) {
     const netIncome = parseFloat(row.netIncome) || null;
     const cfo = parseFloat(cf.operatingCashFlow ?? cf.netCashProvidedByOperatingActivities) || null;
     const capex = parseFloat(cf.capitalExpenditure) || null;
-    const fcf =
-      cfo !== null && capex !== null ? Math.round((cfo - Math.abs(capex)) * 100) / 100 : null;
+    const fcf = cfo !== null && capex !== null ? Math.round((cfo - Math.abs(capex)) * 100) / 100 : null;
 
-    const calEstRev = parseFloat(cal.estimatedRevenue) || null;
-    const calEstEps = parseFloat(cal.estimatedEarning ?? cal.epsEstimated) || null;
-    const calActRev = parseFloat(cal.actualRevenue) || revenue;
-    const calActEps = parseFloat(cal.actualEarningResult ?? cal.eps) || parseFloat(row.eps) || null;
+    const calEstRev = earnRow?.revenueEstimated || null;
+    const calEstEps = earnRow?.epsEstimated || null;
+    const calActRev = earnRow?.revenueActual || revenue;
+    const calActEps = earnRow?.epsActual || parseFloat(row.eps) || null;
 
     const revSurprisePct =
       calActRev !== null && calEstRev !== null && calEstRev > 0
@@ -90,8 +104,8 @@ export async function GET(request: Request) {
 
     return {
       date,
-      period: row.period,
-      calendarYear: row.calendarYear,
+      period: row.period || row.fiscalYear ? `${row.period} ${row.fiscalYear}` : row.date,
+      calendarYear: row.fiscalYear,
       revenue,
       revenueEstimate: calEstRev,
       revenueSurprisePct: revSurprisePct,
@@ -118,7 +132,6 @@ export async function GET(request: Request) {
     };
   });
 
-  // ── Beat streak summary (last 8Q where estimate available) ─────────────
   const revBeats = quarters.filter((q) => q.revenueSurprisePct !== null && q.revenueSurprisePct > 0).length;
   const revWithEst = quarters.filter((q) => q.revenueSurprisePct !== null).length;
   const epsBeats = quarters.filter((q) => q.epsSurprisePct !== null && q.epsSurprisePct > 0).length;
@@ -131,14 +144,13 @@ export async function GET(request: Request) {
       : null;
   const avgEpsSurprise =
     epsWithEst > 0
-      ? Math.round((quarters.reduce((s, q) => s + (q.epsSurprisePct ?? 0), 0) / epsWithEst) * 100) /
-        100
+      ? Math.round((quarters.reduce((s, q) => s + (q.epsSurprisePct ?? 0), 0) / epsWithEst) * 100) / 100
       : null;
 
   return NextResponse.json({
     ok: true,
     ticker,
-    source: 'fmp_history',
+    source: 'fmp_stable_history',
     quarters,
     streak: {
       revenueBeat: revBeats,
