@@ -320,9 +320,13 @@ export async function GET(request: Request) {
   // 3. Extract concepts
   const rev = extractQuarterly(gaap, [
     'RevenueFromContractWithCustomerExcludingAssessedTax',
+    'RevenueFromContractWithCustomerIncludingAssessedTax', // Fastly etc.
     'Revenues',
     'SalesRevenueNet',
     'RevenueFromContractWithCustomer',
+    'RevenueNet',
+    'TotalRevenues',
+    'OperatingRevenue',
   ]);
   if (!rev || !rev.cur) {
     return NextResponse.json(
