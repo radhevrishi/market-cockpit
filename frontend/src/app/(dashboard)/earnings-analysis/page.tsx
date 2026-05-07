@@ -2056,7 +2056,8 @@ export default function EarningsAnalysisPage() {
     setAvLoading(false);
   }
 
-  const [mode, setMode] = useState<'upload'|'paste'|'url'>('upload');
+  const [mode, setMode] = useState<'ticker'|'upload'|'paste'|'url'>('ticker');
+  const [tickerInput, setTickerInput] = useState('');
   const [pasteText, setPasteText] = useState('');
   const [urlInput, setUrlInput] = useState('');
   const [result, setResult] = useState<{ d: RawFinancials; q: EngineOutput; r: EngineOutput; nar: ReturnType<typeof scoreNarrative> }|null>(null);
@@ -2067,6 +2068,183 @@ export default function EarningsAnalysisPage() {
   const [history, setHistory] = useState<HistEntry2[]>(() => loadHist2());
   const [expandedSignals, setExpandedSignals] = useState<Record<string, boolean>>({});
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // ── TICKER-FIRST: Fetch complete financials from FMP API ──────────────────
+  // This is the PRIMARY flow — no PDF, no OCR, structured data directly.
+  // US: FMP income statement + balance sheet + cash flow + earnings surprises
+  // India: FMP (has .NS/.BO tickers) + NSE/BSE fallback
+  async function fetchFromTicker(sym: string) {
+    if (!sym.trim()) { setError('Enter a ticker symbol'); return; }
+    const ticker = sym.trim().toUpperCase();
+    setLoading(true); setError(''); setLoadingMsg(`Fetching ${ticker} from FMP…`); setLoadingPct(10);
+
+    try {
+      // Detect exchange from ticker format
+      const isIndia = ticker.endsWith('.NS') || ticker.endsWith('.BO') || ticker.endsWith('.BSE') || ticker.endsWith('.NSE');
+
+      // Fetch everything in parallel from FMP
+      setLoadingMsg('Fetching financials, estimates, company profile…');
+      const [incRes, bsRes, cfRes, surpriseRes, estRes, profRes] = await Promise.allSettled([
+        fetch(`https://financialmodelingprep.com/api/v3/income-statement/${encodeURIComponent(ticker)}?period=quarterly&limit=5&apikey=${FMP_KEY}`),
+        fetch(`https://financialmodelingprep.com/api/v3/balance-sheet-statement/${encodeURIComponent(ticker)}?period=quarterly&limit=2&apikey=${FMP_KEY}`),
+        fetch(`https://financialmodelingprep.com/api/v3/cash-flow-statement/${encodeURIComponent(ticker)}?period=quarterly&limit=2&apikey=${FMP_KEY}`),
+        fetch(`https://financialmodelingprep.com/api/v3/earnings-surprises/${encodeURIComponent(ticker)}?apikey=${FMP_KEY}`),
+        fetch(`https://financialmodelingprep.com/api/v3/analyst-estimates/${encodeURIComponent(ticker)}?period=quarterly&limit=4&apikey=${FMP_KEY}`),
+        fetch(`https://financialmodelingprep.com/api/v3/profile/${encodeURIComponent(ticker)}?apikey=${FMP_KEY}`),
+      ]);
+
+      const safe = async (res: PromiseSettledResult<Response>) =>
+        res.status === 'fulfilled' && res.value.ok ? res.value.json().catch(() => []) : [];
+
+      const [inc, bs, cf, surprises, ests, profiles] = await Promise.all([
+        safe(incRes), safe(bsRes), safe(cfRes), safe(surpriseRes), safe(estRes), safe(profRes),
+      ]);
+      setLoadingPct(60);
+
+      const profile = (profiles as any[])[0] ?? {};
+      const cur = (inc as any[])[0] ?? {};   // most recent quarter
+      const prev = (inc as any[])[1] ?? {};  // prior year same quarter (for YoY)
+      const bsCur = (bs as any[])[0] ?? {};
+      const cfCur = (cf as any[])[0] ?? {};
+      const nextEst = (ests as any[])[0] ?? {};
+
+      if (!cur.revenue && !cur.netIncome && !profile.companyName) {
+        setError(`No FMP data found for "${ticker}". Try adding exchange suffix: FSLY, OSS, AEROFLEX.NS`);
+        setLoading(false); return;
+      }
+
+      setLoadingMsg('Building analysis…');
+
+      // Determine currency and scale
+      const currency: 'USD'|'INR'|'EUR'|'unknown' = isIndia ? 'INR' : (profile.currency === 'INR' ? 'INR' : 'USD');
+      const scaleFactor = 1e-6;  // FMP gives absolute values; normalize to Mn
+      const scaleLabel = currency === 'INR' ? '₹ Mn' : '$ Mn';
+      const s = (v: any): number|null => { const n = parseFloat(v); return isNaN(n) ? null : Math.round(n * scaleFactor * 100) / 100; };
+
+      // Build quarterly earnings history for AV section
+      const quarterly = (surprises as any[]).slice(0, 8).map((q: any) => ({
+        fiscalDateEnding: q.date || '',
+        period: q.date?.slice(0, 7) || '',
+        reportedEPS: parseFloat(q.actualEarningResult ?? q.actualEps) || null,
+        estimatedEPS: parseFloat(q.estimatedEarning ?? q.estimatedEps) || null,
+        surprise: null,
+        surprisePct: (() => { const a=parseFloat(q.actualEarningResult??q.actualEps); const e=parseFloat(q.estimatedEarning??q.estimatedEps); return !isNaN(a)&&!isNaN(e)&&e!==0?Math.round(((a-e)/Math.abs(e))*10000)/100:null; })(),
+        reportedRevenue: parseFloat(q.actualRevenue) ? Math.round(parseFloat(q.actualRevenue)/1e6*10)/10 : null,
+        estimatedRevenue: parseFloat(q.estimatedRevenue) ? Math.round(parseFloat(q.estimatedRevenue)/1e6*10)/10 : null,
+        revSurprisePct: (() => { const a=parseFloat(q.actualRevenue); const e=parseFloat(q.estimatedRevenue); return !isNaN(a)&&!isNaN(e)&&e!==0?Math.round(((a-e)/Math.abs(e))*10000)/100:null; })(),
+      }));
+
+      // Set AV data from FMP
+      setAvData({
+        symbol: ticker, name: profile.companyName || ticker,
+        sector: profile.sector || '', industry: profile.industry || '',
+        dataSource: 'FMP',
+        epsEstNextQ: parseFloat(nextEst.estimatedEpsAvg) || null,
+        epsEstCurrentYear: parseFloat(nextEst.estimatedEpsAvg) || null,
+        revenueEstNextQ: nextEst.estimatedRevenueAvg ? Math.round(parseFloat(nextEst.estimatedRevenueAvg)/1e6*10)/10 : null,
+        revenueEstCurrentYear: null,
+        grossMarginEst: null,
+        analystTargetPrice: parseFloat(profile.price) || null,
+        numAnalysts: parseInt(nextEst.numberAnalysts) || null,
+        quarterlyEarnings: quarterly,
+      });
+      setAvTicker(ticker);
+
+      // Build RawFinancials from structured FMP data
+      const revenue    = s(cur.revenue);
+      const revPrior   = s(prev.revenue);
+      const grossProfit = s(cur.grossProfit);
+      const grossMargin = revenue && revenue > 0 && grossProfit ? Math.round((grossProfit/revenue)*10000)/100 : (parseFloat(cur.grossProfitRatio)*100 || null);
+      const ebit       = s(cur.operatingIncome);
+      const ebitda     = s(cur.ebitda);
+      const pat        = s(cur.netIncome);
+      const patPrior   = s(prev.netIncome);
+      const rnd        = s(cur.researchAndDevelopmentExpenses);
+      const sga        = s(cur.sellingGeneralAndAdministrativeExpenses);
+      const interestExpense = s(cur.interestExpense);
+      const tax        = s(cur.incomeTaxExpense);
+      const pbt        = s(cur.incomeBeforeTax);
+      const da         = s(cur.depreciationAndAmortization);
+      const eps        = parseFloat(cur.eps) || null;
+      const epsPrior   = parseFloat(prev.eps) || null;
+      const cash       = s(bsCur.cashAndCashEquivalents);
+      const totalDebt  = s(bsCur.totalDebt);
+      const equity     = s(bsCur.totalStockholdersEquity ?? bsCur.totalEquity);
+      const totalAssets = s(bsCur.totalAssets);
+      const capex      = s(cfCur.capitalExpenditure);
+      const cfo        = s(cfCur.operatingCashFlow ?? cfCur.netCashProvidedByOperatingActivities);
+      const period     = cur.period || cur.date?.slice(0,7) || 'Latest';
+      const filingType = isIndia ? 'Quarterly Results' : 'SEC 10-Q (FMP)';
+
+      const ebitMargin   = ebit&&revenue&&revenue>0 ? Math.round((ebit/revenue)*10000)/100 : null;
+      const ebitdaMargin = ebitda&&revenue&&revenue>0 ? Math.round((ebitda/revenue)*10000)/100 : null;
+      const patMargin    = pat&&revenue&&revenue>0 ? Math.round((pat/revenue)*10000)/100 : null;
+      const netDebt      = totalDebt!==null&&cash!==null ? totalDebt-cash : null;
+      const deRatio      = totalDebt!==null&&equity&&equity>0 ? Math.round((totalDebt/equity)*100)/100 : null;
+      const cfoPat       = cfo!==null&&pat!==null&&pat!==0 ? Math.round((cfo/pat)*100)/100 : null;
+      const roce         = ebit&&equity&&equity>0 ? Math.round((ebit/equity)*10000)/100 : null;
+      const roe          = pat&&equity&&equity>0 ? Math.round((pat/equity)*10000)/100 : null;
+      const roa          = pat&&totalAssets&&totalAssets>0 ? Math.round((pat/totalAssets)*10000)/100 : null;
+      const fcf          = cfo!==null&&capex!==null ? cfo-Math.abs(capex) : null;
+
+      const fmpText = `${profile.companyName||ticker} ${period} ${profile.sector||''} ${profile.industry||''}`;
+      const themes = detectNarrativeThemes(fmpText + ' ' + (profile.description||''));
+      const mgmtTone: 'bullish'|'cautious'|'neutral' = 'neutral';
+
+      const d: RawFinancials = {
+        company: profile.companyName || ticker,
+        ticker,
+        period: period.includes('Q') ? period : `Q ${period}`,
+        periodType: 'quarterly',
+        filingType,
+        currency,
+        scaleLabel,
+        scaleFactor,
+        revenue, revPrior, grossProfit, grossMargin,
+        ebit, ebitMargin, ebitda, ebitdaMargin, opex: null,
+        pat, patPrior, patMargin, eps, epsPrior, rnd, sga, da,
+        interestExpense, pbt, tax, otherIncome: null,
+        discontinuedIncome: null, continuingRevenue: revenue, continuingPAT: pat,
+        continuingOpsDetected: false,
+        cash, totalDebt, equity, totalAssets, netDebt, capex,
+        ar: null, inventory: null, cfo, fcf,
+        deRatio, cfoPat, roce, roe, roa,
+        orderBook: null, backlog: null, headcount: profile.fullTimeEmployees || null,
+        guidance: [], keyMetrics: [], forwardStatements: [],
+        themes, mgmtTone,
+        validationWarnings: ['Data source: FMP structured API — no PDF parsing'],
+        hardFailures: [],
+        isDataReliable: true,
+        parseState: revenue && revenue > 0 ? 'verified' : 'partial',
+        parseConfidence: revenue && revenue > 0 ? 95 : 40,
+        revenueSource: 'fmp_api',
+      };
+
+      // Run validation and scoring
+      const sanitizationIssues = sanitizeMetrics(d);
+      d.hardFailures = sanitizationIssues;
+      d.isDataReliable = sanitizationIssues.filter(s => !s.includes('verify')).length === 0;
+
+      setLoadingPct(90);
+      const q = scoreAccountingQuality(d);
+      const r = scoreEarningsReaction(d);
+      const nar = scoreNarrative(d);
+      setResult({ d, q, r, nar });
+
+      // Save to history
+      const entry: HistEntry2 = {
+        id: Date.now().toString(), company: d.company, period: d.period,
+        q: q.score, r: r.score, n: nar.score, color: r.color, summary: r.summary,
+        at: new Date().toISOString(),
+      };
+      const upd = [entry, ...history.filter(h => h.company !== d.company || h.period !== d.period)];
+      setHistory(upd); saveHist2(upd);
+
+    } catch(e: any) {
+      setError(`FMP fetch failed: ${e.message}. Try another ticker or use PDF upload.`);
+    }
+    setLoading(false); setLoadingMsg(''); setLoadingPct(0);
+  }
 
   const process = useCallback((text: string) => {
     setError('');
@@ -2833,7 +3011,7 @@ export default function EarningsAnalysisPage() {
         })()}
 
         {/* ── SECTION 3: GUIDANCE ──────────────────────────────────────────── */}
-        {(d.guidance.length > 0 || manualGuidance || avData?.epsEstCurrentYear !== null) && (
+        {(d.guidance.length > 0 || manualGuidance || avData?.epsEstCurrentYear != null) && (
           <div style={{backgroundColor:CARD2,border:`1px solid ${BORDER}`,borderRadius:12,padding:'14px 20px',marginBottom:10}}>
             <div style={{fontSize:9,fontWeight:800,color:MUTED,letterSpacing:'1.2px',marginBottom:10}}>GUIDANCE</div>
             <div style={{display:'flex',flexDirection:'column',gap:6}}>
@@ -2847,11 +3025,11 @@ export default function EarningsAnalysisPage() {
               )}
 
               {/* EPS forward estimate from FMP */}
-              {avData?.epsEstCurrentYear !== null && (
+              {avData?.epsEstCurrentYear != null && (
                 <div style={{display:'flex',gap:10,alignItems:'baseline',padding:'4px 0'}}>
                   <span style={{fontSize:F.xs,color:MUTED,minWidth:120}}>EPS (Current FY)</span>
                   <span style={{fontSize:F.sm,fontWeight:700,color:TEXT}}>
-                    ${avData!.epsEstCurrentYear!.toFixed(2)} est
+                    ${(avData?.epsEstCurrentYear ?? 0).toFixed(2)} est
                     {avData?.numAnalysts ? <span style={{fontSize:9,color:MUTED,marginLeft:6}}>({avData.numAnalysts} analysts)</span> : null}
                   </span>
                   {avData?.analystTargetPrice && (
@@ -2861,13 +3039,13 @@ export default function EarningsAnalysisPage() {
               )}
 
               {/* Revenue forward estimate from FMP */}
-              {avData?.revenueEstNextQ !== null && (
+              {avData?.revenueEstNextQ != null && (
                 <div style={{display:'flex',gap:10,alignItems:'baseline',padding:'4px 0'}}>
                   <span style={{fontSize:F.xs,color:MUTED,minWidth:120}}>Revenue (Next Q)</span>
-                  <span style={{fontSize:F.sm,fontWeight:700,color:TEXT}}>${avData!.revenueEstNextQ!.toFixed(0)}M est</span>
-                  {d.revenue && avData!.revenueEstNextQ! > 0 && (
+                  <span style={{fontSize:F.sm,fontWeight:700,color:TEXT}}>${(avData?.revenueEstNextQ ?? 0).toFixed(0)}M est</span>
+                  {d.revenue && (avData?.revenueEstNextQ ?? 0) > 0 && (
                     <span style={{fontSize:F.xs,color:MUTED,marginLeft:8}}>
-                      implying {((avData!.revenueEstNextQ! / d.revenue - 1) * 100).toFixed(1)}% QoQ
+                      implying {(((avData?.revenueEstNextQ ?? 0) / d.revenue - 1) * 100).toFixed(1)}% QoQ
                     </span>
                   )}
                 </div>
@@ -3030,40 +3208,104 @@ export default function EarningsAnalysisPage() {
     <div style={{background:BG,minHeight:'100vh',color:TEXT,fontFamily:'system-ui,-apple-system,sans-serif',padding:'24px 20px',maxWidth:1140,margin:'0 auto'}}>
 
       {/* Header */}
-      <div style={{marginBottom:24}}>
-        <h1 style={{fontSize:24,fontWeight:900,color:ACCENT,margin:'0 0 6px'}}>📊 Earnings Intelligence</h1>
-        <p style={{fontSize:F.sm,color:MUTED,margin:'0 0 10px',lineHeight:1.6}}>
-          Three-engine analysis: Accounting Quality · Earnings Reaction Probability · Narrative / Thematic Score.
-          Upload any earnings filing — SEC 10-K/10-Q, NSE/BSE quarterly results, annual report PDF or Excel.
+      <div style={{marginBottom:20}}>
+        <h1 style={{fontSize:24,fontWeight:900,color:ACCENT,margin:'0 0 4px'}}>📊 Earnings Intelligence</h1>
+        <p style={{fontSize:F.xs,color:MUTED,margin:0}}>
+          Enter a ticker for instant analysis from FMP structured data · or upload a PDF for manual filings
         </p>
-        <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-          {['🎯 Earnings Reaction Score','🏛️ Accounting Quality','🌐 Narrative Themes','⚠ Data Validation','💬 Mgmt Language'].map(l=>(
-            <span key={l} style={{fontSize:10,color:MUTED,backgroundColor:CARD2,border:`1px solid ${BORDER}`,padding:'3px 9px',borderRadius:20}}>{l}</span>
-          ))}
-        </div>
       </div>
 
-      {/* Mode tabs */}
+      {/* Mode tabs — Ticker is default and PRIMARY */}
       <div style={{display:'flex',borderBottom:`1px solid ${BORDER}`,marginBottom:20}}>
         {([
-          {id:'upload',icon:'📁',label:'Upload File',sub:'PDF, Excel, CSV, TXT'},
-          {id:'paste', icon:'📋',label:'Paste Text', sub:'Copy from any source'},
-          {id:'url',   icon:'🔗',label:'URL Link',   sub:'SEC EDGAR, NSE, BSE'},
+          {id:'ticker', icon:'🔍', label:'Ticker Lookup', sub:'FMP · SEC · NSE · BSE'},
+          {id:'upload', icon:'📁', label:'Upload File',   sub:'PDF, Excel, CSV'},
+          {id:'paste',  icon:'📋', label:'Paste Text',    sub:'Copy from document'},
+          {id:'url',    icon:'🔗', label:'URL',           sub:'SEC EDGAR filing'},
         ] as const).map(m=>(
           <button key={m.id} onClick={()=>setMode(m.id)} style={{
-            padding:'10px 20px',border:'none',cursor:'pointer',background:'transparent',
+            padding:'10px 18px',border:'none',cursor:'pointer',background:'transparent',
             color:mode===m.id?ACCENT:MUTED,fontWeight:mode===m.id?700:400,fontSize:F.sm,
             borderBottom:mode===m.id?`2px solid ${ACCENT}`:'2px solid transparent',
-            marginBottom:-1,transition:'all 0.15s',
+            marginBottom:-1,transition:'all 0.15s',flexShrink:0,
           }}>
             {m.icon} {m.label}
-            <div style={{fontSize:9,color:mode===m.id?ACCENT+'99':'#334155',fontWeight:400}}>{m.sub}</div>
+            <div style={{fontSize:8,color:mode===m.id?ACCENT+'99':'#334155',fontWeight:400}}>{m.sub}</div>
           </button>
         ))}
       </div>
 
       {loading ? <LoadingUI /> : (
         <>
+          {/* ── TICKER MODE — PRIMARY ─────────────────────────────────────── */}
+          {mode === 'ticker' && (
+            <div>
+              <div style={{marginBottom:12,fontSize:F.sm,color:MUTED,lineHeight:1.7}}>
+                Enter any stock ticker. The system fetches structured financials from FMP automatically —
+                no PDF needed. Use exchange suffix for Indian stocks: <code style={{color:ACCENT}}>AEROFLEX.NS</code> or <code style={{color:ACCENT}}>AEROFLEX.BO</code>
+              </div>
+              <div style={{display:'flex',gap:10,alignItems:'stretch',flexWrap:'wrap',marginBottom:16}}>
+                <input
+                  value={tickerInput}
+                  onChange={e => setTickerInput(e.target.value.toUpperCase())}
+                  onKeyDown={e => e.key === 'Enter' && fetchFromTicker(tickerInput)}
+                  placeholder="e.g. FSLY · OSS · AEROFLEX.NS · BAJAJCON · TSLA"
+                  autoFocus
+                  style={{
+                    flex:1, minWidth:240, backgroundColor:CARD, border:`2px solid ${ACCENT}40`,
+                    borderRadius:10, padding:'12px 16px', color:TEXT, fontSize:F.md,
+                    outline:'none', letterSpacing:'0.5px', fontWeight:600,
+                  }}
+                />
+                <button
+                  onClick={() => fetchFromTicker(tickerInput)}
+                  disabled={!tickerInput.trim()}
+                  style={{
+                    padding:'12px 28px', backgroundColor:ACCENT, border:'none', borderRadius:10,
+                    color:'#000', fontWeight:800, fontSize:F.md, cursor:'pointer',
+                    opacity:!tickerInput.trim()?0.5:1, letterSpacing:'0.5px',
+                  }}
+                >
+                  🔍 Analyze
+                </button>
+              </div>
+
+              {/* Quick examples */}
+              <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:20}}>
+                <span style={{fontSize:9,color:MUTED}}>Quick examples:</span>
+                {[
+                  {sym:'FSLY', label:'Fastly (US CDN)'},
+                  {sym:'OSS', label:'One Stop Systems (Defense AI)'},
+                  {sym:'NVDA', label:'Nvidia'},
+                  {sym:'TSLA', label:'Tesla'},
+                  {sym:'AEROFLEX.NS', label:'Aeroflex (India)'},
+                  {sym:'BAJAJCON.NS', label:'Bajaj Consumer (India)'},
+                  {sym:'TCS.NS', label:'TCS (India IT)'},
+                ].map(({sym, label}) => (
+                  <button key={sym} onClick={() => { setTickerInput(sym); setTimeout(() => fetchFromTicker(sym), 50); }}
+                    style={{
+                      fontSize:9, fontWeight:700, padding:'3px 10px', borderRadius:6, cursor:'pointer',
+                      backgroundColor:CARD2, border:`1px solid ${BORDER}`, color:MUTED,
+                    }}
+                    title={label}
+                  >
+                    {sym}
+                  </button>
+                ))}
+              </div>
+
+              <div style={{backgroundColor:CARD2,border:`1px solid ${BORDER}`,borderRadius:10,padding:'12px 16px',fontSize:F.xs,color:MUTED,lineHeight:1.8}}>
+                <div style={{fontWeight:700,color:TEXT,marginBottom:4}}>What gets fetched:</div>
+                <div>📊 <strong>Income statement</strong> — Revenue, Gross Profit, EBIT, EBITDA, PAT, EPS (current + prior quarters)</div>
+                <div>🏛️ <strong>Balance sheet</strong> — Cash, Debt, Equity, Total Assets</div>
+                <div>💰 <strong>Cash flow</strong> — CFO, Capex, FCF</div>
+                <div>🎯 <strong>Earnings surprises</strong> — EPS actual vs estimate, Revenue actual vs estimate (last 8 quarters)</div>
+                <div>📈 <strong>Forward estimates</strong> — Revenue, EPS, analyst count from FMP consensus</div>
+                <div>🌐 <strong>Company profile</strong> — Name, sector, industry, employees</div>
+              </div>
+            </div>
+          )}
+
           {mode === 'upload' && (
             <div style={{border:`2px dashed ${BORDER}`,borderRadius:14,padding:'44px 24px',textAlign:'center',cursor:'pointer',backgroundColor:CARD,transition:'border-color 0.2s'}}
               onClick={()=>fileRef.current?.click()}
