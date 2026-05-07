@@ -675,51 +675,153 @@ function analyzeSignals(d: FinancialData): { signals: Signal[]; score: number; v
 // PDF TEXT EXTRACTION (browser-side via PDF.js CDN)
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function extractPDFText(file: File): Promise<{ text: string; error: string }> {
+/** Yield to the browser event loop so the UI stays responsive during heavy processing */
+const yieldToUI = () => new Promise<void>(r => setTimeout(r, 0));
+
+/** Load a script from CDN with a hard timeout so we never hang forever */
+async function loadScriptWithTimeout(src: string, timeoutMs = 8000): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Script load timed out after ${timeoutMs / 1000}s: ${src}`)), timeoutMs);
+    // Check if already loaded (idempotent)
+    if (document.querySelector(`script[src="${src}"]`) && (window as any).pdfjsLib) {
+      clearTimeout(timer); resolve(); return;
+    }
+    const script = document.createElement('script');
+    script.src = src;
+    script.crossOrigin = 'anonymous';
+    script.onload  = () => { clearTimeout(timer); resolve(); };
+    script.onerror = () => { clearTimeout(timer); reject(new Error('Failed to load PDF.js from CDN. Check your internet connection.')); };
+    document.head.appendChild(script);
+  });
+}
+
+/** Extract text from a PDF file using PDF.js (loaded from CDN).
+ *  Key improvements over v1:
+ *  - Hard 8s timeout on CDN script loading (never hangs forever)
+ *  - Hard 30s overall extraction timeout
+ *  - Yields to UI every 5 pages so browser stays responsive
+ *  - Smart page selection: reads cover + financial section only (not all 277 pages)
+ *  - Graceful fallback: returns partial text if timeout reached mid-extraction
+ */
+async function extractPDFText(
+  file: File,
+  onProgress?: (pct: number, msg: string) => void,
+): Promise<{ text: string; error: string }> {
+  const OVERALL_TIMEOUT_MS = 30_000;
+  const deadline = Date.now() + OVERALL_TIMEOUT_MS;
+  const checkDeadline = () => Date.now() > deadline;
+
   try {
-    // Load PDF.js from CDN if not already loaded
+    onProgress?.(5, 'Loading PDF engine…');
+
+    // ── Step 1: Load PDF.js with timeout ──────────────────────────────────
     if (!(window as any).pdfjsLib) {
-      await new Promise<void>((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-        script.crossOrigin = 'anonymous';
-        script.onload = () => resolve();
-        script.onerror = () => reject(new Error('PDF.js CDN load failed'));
-        document.head.appendChild(script);
-      });
+      await loadScriptWithTimeout(
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
+        8000,
+      );
     }
     const pdfjsLib = (window as any).pdfjsLib;
+    // Must set workerSrc BEFORE calling getDocument
     pdfjsLib.GlobalWorkerOptions.workerSrc =
       'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    let allText = '';
-    const MAX_PAGES = 80; // 10-K can be 200+ pages; focus on key financial sections
-    const totalPages = Math.min(pdf.numPages, MAX_PAGES);
+    onProgress?.(10, 'Reading file…');
+    await yieldToUI();
 
-    for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
-      const page = await pdf.getPage(pageNum);
-      const content = await page.getTextContent();
-      // Reconstruct lines preserving tabular structure
-      const items: any[] = content.items;
-      let lastY: number | null = null;
-      let line = '';
-      for (const item of items) {
-        const y = Math.round(item.transform[5]);
-        if (lastY !== null && Math.abs(y - lastY) > 3) {
-          allText += line.trimEnd() + '\n';
-          line = '';
-        }
-        line += item.str + ' ';
-        lastY = y;
+    // ── Step 2: Load document with timeout wrapper ─────────────────────────
+    const arrayBuffer = await file.arrayBuffer();
+    if (checkDeadline()) return { text: '', error: 'Extraction timed out during file read.' };
+
+    const loadTask = pdfjsLib.getDocument({ data: arrayBuffer });
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('PDF load timed out (malformed or encrypted PDF?)')), OVERALL_TIMEOUT_MS),
+    );
+
+    onProgress?.(20, 'Parsing PDF structure…');
+    const pdf = await Promise.race([loadTask.promise, timeoutPromise]);
+    const totalPageCount: number = pdf.numPages;
+
+    // ── Step 3: Smart page selection ──────────────────────────────────────
+    // Financial statements are usually in the middle-to-late section of annual reports.
+    // Strategy: read pages 1-10 (cover/identity), then pages 40-90 (financial section),
+    // then pages 90-130. For small PDFs (<50 pages), read everything.
+    let pagesToRead: number[];
+    if (totalPageCount <= 50) {
+      pagesToRead = Array.from({ length: totalPageCount }, (_, i) => i + 1);
+    } else {
+      // Cover + Table of Contents (first 10)
+      const cover = Array.from({ length: Math.min(10, totalPageCount) }, (_, i) => i + 1);
+      // Financial section heuristic: pages 40-130 for US 10-K, 30-90 for Indian filings
+      const start = Math.min(30, totalPageCount);
+      const end   = Math.min(130, totalPageCount);
+      const financial = Array.from({ length: end - start + 1 }, (_, i) => i + start);
+      // Deduplicate
+      pagesToRead = [...new Set([...cover, ...financial])];
+    }
+
+    const totalToProcess = pagesToRead.length;
+    onProgress?.(25, `Extracting text from ${totalToProcess} of ${totalPageCount} pages…`);
+    await yieldToUI();
+
+    // ── Step 4: Extract text page by page, yielding every 5 pages ─────────
+    let allText = '';
+    for (let i = 0; i < pagesToRead.length; i++) {
+      if (checkDeadline()) {
+        // Return partial text with a note
+        allText += '\n[Extraction stopped: 30s timeout reached. Partial data shown.]\n';
+        break;
       }
-      if (line.trim()) allText += line.trimEnd() + '\n';
-      allText += '\n';
+
+      const pageNum = pagesToRead[i];
+      try {
+        const page = await pdf.getPage(pageNum);
+        const content = await page.getTextContent();
+        const items: any[] = content.items;
+
+        // Reconstruct text lines preserving columnar layout (critical for financial tables)
+        let lastY: number | null = null;
+        let line = '';
+        for (const item of items) {
+          const y = Math.round(item.transform[5]);
+          if (lastY !== null && Math.abs(y - lastY) > 3) {
+            allText += line.trimEnd() + '\n';
+            line = '';
+          }
+          line += item.str + ' ';
+          lastY = y;
+        }
+        if (line.trim()) allText += line.trimEnd() + '\n';
+        allText += '\n';
+      } catch {
+        // Skip unreadable pages (common in image-based PDFs)
+      }
+
+      // Yield to UI every 5 pages to prevent browser freeze
+      if (i % 5 === 4) {
+        const pct = 25 + Math.round(((i + 1) / totalToProcess) * 70);
+        onProgress?.(pct, `Processing page ${pageNum} of ${totalPageCount}…`);
+        await yieldToUI();
+      }
+    }
+
+    onProgress?.(98, 'Analyzing financial data…');
+    await yieldToUI();
+
+    if (!allText.trim()) {
+      return { text: '', error: 'No text extracted — this PDF may be image-based (scanned). Try copying text manually and using Paste mode.' };
     }
     return { text: allText, error: '' };
+
   } catch (e: any) {
-    return { text: '', error: e.message || 'PDF extraction failed' };
+    const msg = e?.message || 'Unknown error';
+    if (msg.includes('timed out') || msg.includes('timeout')) {
+      return { text: '', error: `${msg}. Try Paste mode: open the PDF, Ctrl+A, Ctrl+C, paste here.` };
+    }
+    if (msg.includes('CDN') || msg.includes('network') || msg.includes('load')) {
+      return { text: '', error: `PDF engine load failed. Check internet and try again, or use Paste mode.` };
+    }
+    return { text: '', error: `PDF extraction failed: ${msg}. Try Paste mode instead.` };
   }
 }
 
@@ -787,6 +889,7 @@ export default function EarningsAnalysisPage() {
   const [verdictColor, setVerdictColor] = useState(MUTED);
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState('');
+  const [loadingPct, setLoadingPct] = useState(0);
   const [error, setError] = useState('');
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
   const [expandedSec, setExpandedSec] = useState<string|null>(null);
@@ -819,7 +922,7 @@ export default function EarningsAnalysisPage() {
       } catch (e: any) {
         setError('Analysis failed: ' + e.message);
       }
-      setLoading(false); setLoadingMsg('');
+      setLoading(false); setLoadingMsg(''); setLoadingPct(0);
     }, 10);
   }, [history]);
 
@@ -830,11 +933,15 @@ export default function EarningsAnalysisPage() {
     setLoading(true); setError('');
 
     if (ext === 'pdf') {
-      setLoadingMsg(`Parsing PDF: ${file.name} (this may take 10-20s)...`);
-      const { text, error: pdfErr } = await extractPDFText(file);
+      setLoadingPct(0);
+      setLoadingMsg(`Reading: ${file.name}`);
+      const { text, error: pdfErr } = await extractPDFText(
+        file,
+        (pct, msg) => { setLoadingPct(pct); setLoadingMsg(msg); },
+      );
       if (pdfErr || !text.trim()) {
-        setError(`PDF extraction issue: ${pdfErr || 'Empty text'}. Try "Paste Text" mode — open the PDF, Ctrl+A, Ctrl+C, paste here.`);
-        setLoading(false); setLoadingMsg(''); return;
+        setError(pdfErr || 'No text extracted. Try Paste mode: open the PDF, Ctrl+A, Ctrl+C, paste.');
+        setLoading(false); setLoadingMsg(''); setLoadingPct(0); return;
       }
       run(text, `PDF: ${file.name}`);
     } else if (ext === 'xlsx' || ext === 'xls') {
@@ -867,7 +974,7 @@ export default function EarningsAnalysisPage() {
       if (ct.includes('pdf')) {
         const blob = await res.blob();
         const file = new File([blob], 'report.pdf', { type: 'application/pdf' });
-        const { text, error: e } = await extractPDFText(file);
+        const { text, error: e } = await extractPDFText(file, (pct, msg) => { setLoadingPct(pct); setLoadingMsg(msg); });
         if (e || !text) throw new Error(e || 'Empty PDF');
         run(text, `URL: ${url}`);
       } else {
@@ -936,10 +1043,35 @@ export default function EarningsAnalysisPage() {
             >
               <input ref={fileRef} type="file" accept=".pdf,.xlsx,.xls,.csv,.txt" style={{ display: 'none' }} onChange={e => handleFile(e.target.files)} />
               {loading ? (
-                <div>
-                  <div style={{ fontSize: 36, marginBottom: 12 }}>⏳</div>
-                  <div style={{ fontSize: F.md, color: ACCENT }}>{loadingMsg}</div>
-                  <div style={{ fontSize: F.sm, color: MUTED, marginTop: 6 }}>Large PDFs (100+ pages) may take 20–30s…</div>
+                <div style={{ width: '100%', maxWidth: 420, margin: '0 auto' }}>
+                  {/* Animated spinner */}
+                  <div style={{ fontSize: 36, marginBottom: 16, animation: 'spin 1.5s linear infinite', display: 'inline-block' }}>⚙️</div>
+                  <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+
+                  {/* Progress bar */}
+                  <div style={{ width: '100%', height: 6, backgroundColor: '#1e293b', borderRadius: 3, overflow: 'hidden', marginBottom: 12 }}>
+                    <div style={{
+                      height: '100%', borderRadius: 3, transition: 'width 0.3s ease',
+                      width: `${loadingPct}%`,
+                      background: `linear-gradient(90deg, ${ACCENT}, #818cf8)`,
+                    }} />
+                  </div>
+
+                  {/* Status message */}
+                  <div style={{ fontSize: F.md, fontWeight: 600, color: ACCENT, marginBottom: 6 }}>{loadingMsg || 'Processing…'}</div>
+                  {loadingPct > 0 && loadingPct < 98 && (
+                    <div style={{ fontSize: 10, color: MUTED }}>{loadingPct}% complete</div>
+                  )}
+                  <div style={{ fontSize: F.sm, color: MUTED, marginTop: 8 }}>
+                    {loadingPct < 20
+                      ? 'Loading PDF engine from CDN…'
+                      : loadingPct < 90
+                      ? 'Extracting financial data from pages…'
+                      : 'Finalizing analysis…'}
+                  </div>
+                  <div style={{ fontSize: 10, color: '#334155', marginTop: 6 }}>
+                    💡 The page stays responsive — you can switch tabs while this runs
+                  </div>
                 </div>
               ) : (
                 <>
