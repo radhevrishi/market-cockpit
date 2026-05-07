@@ -550,10 +550,13 @@ function detectColumnIndices(text: string, rows: LabeledNum[]): ColDetection {
 function detectScaleFromNumbers(rows: LabeledNum[], currency: string, curIdx: number): { factor: number; scaleLabel: string } {
   const sym = currency === 'USD' ? '$' : currency === 'INR' ? '₹' : '';
 
-  // Find revenue-like rows — also check empty-label rows (unlabeled P&L totals)
+  // FIX: Only use LABELED revenue rows for scale detection.
+  // Empty-label rows appear throughout the document (cost totals, asset totals, etc.)
+  // and would give wrong scale. The global max-number fallback handles the case
+  // where no labeled revenue row exists (e.g., OSS 10-K unlabeled total format).
   const revRow = rows.find(r =>
-    /^(total )?revenue|^net sales|^revenue from operations|^revenues?$/.test(r.label) ||
-    r.label === '' // unlabeled total rows (e.g. OSS 10-K)
+    r.label.length > 0 && // MUST have a label
+    /^(total )?revenue|^net sales|^revenue from operations|^revenues?$/.test(r.label)
   );
   let revenueCandidate = revRow?.nums[curIdx] ?? revRow?.nums[0];
 
@@ -673,13 +676,23 @@ function findRevenue(
   // When no labeled "total revenue" row exists, sum the sub-items to compute the total.
   if (candidates.length === 0 || candidates[0].cur * scaleFactor < 0.5) {
     const SUB_PATTERNS = /^(?:product|products?|service|services?|subscription|license|licenses?|customer funded|recurring|professional|hardware|software|hosted|cloud|platform|tier|segment)/i;
-    const subRows = rows.filter(r =>
-      SUB_PATTERNS.test(r.label) &&
-      r.nums.length > Math.min(curIdx, r.nums.length - 1) &&
-      (r.nums[Math.min(curIdx, r.nums.length-1)] ?? 0) > 0
-    );
+    // FIX: Use FIRST OCCURRENCE ONLY per label to avoid summing both revenue AND cost sub-items.
+    // In OSS 10-K: "Product" appears in BOTH revenue section AND cost section.
+    // Taking first occurrence means we get the revenue sub-items (they appear first in document order).
+    const seenSubLabels = new Set<string>();
+    const subRows: LabeledNum[] = [];
+    for (const r of rows) {
+      if (
+        SUB_PATTERNS.test(r.label) &&
+        !seenSubLabels.has(r.label) &&      // FIRST occurrence only
+        r.nums.length > Math.min(curIdx, r.nums.length - 1) &&
+        (r.nums[Math.min(curIdx, r.nums.length-1)] ?? 0) > 0
+      ) {
+        seenSubLabels.add(r.label);
+        subRows.push(r);
+      }
+    }
     if (subRows.length >= 2) {
-      // Use the actual curIdx or fallback to last available column
       const colToUse = (r: LabeledNum) => Math.min(curIdx, r.nums.length - 1);
       const sumCur   = subRows.reduce((s, r) => s + (r.nums[colToUse(r)] ?? 0), 0);
       const sumPrior = subRows.reduce((s, r) => s + (r.nums[Math.min(priorIdx, r.nums.length-1)] ?? 0), 0);
@@ -1522,40 +1535,50 @@ function saveHist2(e: HistEntry2[]) { try { localStorage.setItem(HISTORY_KEY2, J
 export default function EarningsAnalysisPage() {
   const AV_KEY = '62EKUKC2M5WSZB9Z';
 
-  // Alpha Vantage consensus/overview data
+  // Alpha Vantage — ONLY used for consensus estimates and EPS surprise history.
+  // Market data (market cap, P/E, etc.) deliberately excluded — user wants actuals from report.
   interface AVData {
     symbol: string; name: string; sector: string; industry: string;
-    marketCap: number|null; peRatio: number|null; forwardPE: number|null;
-    eps: number|null; epsEstimateCurrentYear: number|null;
-    revenuePerShare: number|null; dividendYield: number|null;
-    analystTargetPrice: number|null; weekHigh52: number|null; weekLow52: number|null;
-    sharesOutstanding: number|null; bookValue: number|null;
-    priceToBook: number|null; evToEBITDA: number|null;
-    quarterlyEarnings: { fiscalDateEnding: string; reportedEPS: number|null; estimatedEPS: number|null; surprise: number|null; surprisePct: number|null }[];
+    // Consensus estimates only
+    epsEstNextQ: number|null;       // Next quarter EPS estimate
+    epsEstCurrentYear: number|null; // Full year EPS estimate
+    revenueEstNextQ: number|null;   // Next quarter revenue estimate (not always available)
+    analystTargetPrice: number|null;
+    // EPS surprise track record (last 8 quarters)
+    quarterlyEarnings: {
+      fiscalDateEnding: string;
+      reportedEPS: number|null;
+      estimatedEPS: number|null;
+      surprise: number|null;
+      surprisePct: number|null;
+    }[];
   }
   const [avData, setAvData] = useState<AVData|null>(null);
   const [avLoading, setAvLoading] = useState(false);
   const [avTicker, setAvTicker] = useState('');
+  // Manual estimate overrides (user can type these if AV doesn't have them)
+  const [manualRevEst, setManualRevEst] = useState('');
+  const [manualGMEst, setManualGMEst] = useState('');
+  const [manualGuidance, setManualGuidance] = useState('');
 
   async function fetchAVData(ticker: string) {
     if (!ticker.trim()) return;
     setAvLoading(true);
     try {
-      // Fetch company overview + quarterly earnings in parallel
-      const [ovRes, earRes] = await Promise.allSettled([
-        fetch(`https://www.alphavantage.co/query?function=OVERVIEW&symbol=${encodeURIComponent(ticker.toUpperCase())}&apikey=${AV_KEY}`),
+      // Only fetch EARNINGS — not OVERVIEW (which has all the market data we don't want)
+      const [earRes, ovRes] = await Promise.allSettled([
         fetch(`https://www.alphavantage.co/query?function=EARNINGS&symbol=${encodeURIComponent(ticker.toUpperCase())}&apikey=${AV_KEY}`),
+        fetch(`https://www.alphavantage.co/query?function=OVERVIEW&symbol=${encodeURIComponent(ticker.toUpperCase())}&apikey=${AV_KEY}`),
       ]);
-
-      const ov = ovRes.status === 'fulfilled' && ovRes.value.ok ? await ovRes.value.json() : {};
       const ear = earRes.status === 'fulfilled' && earRes.value.ok ? await earRes.value.json() : {};
+      const ov  = ovRes.status  === 'fulfilled' && ovRes.value.ok  ? await ovRes.value.json()  : {};
 
-      const quarterly = (ear.quarterlyEarnings || []).slice(0, 6).map((q: any) => ({
+      const quarterly = (ear.quarterlyEarnings || []).slice(0, 8).map((q: any) => ({
         fiscalDateEnding: q.fiscalDateEnding || '',
-        reportedEPS: parseFloat(q.reportedEPS) || null,
-        estimatedEPS: parseFloat(q.estimatedEPS) || null,
-        surprise: parseFloat(q.surprise) || null,
-        surprisePct: parseFloat(q.surprisePercentage) || null,
+        reportedEPS:  parseFloat(q.reportedEPS)       || null,
+        estimatedEPS: parseFloat(q.estimatedEPS)      || null,
+        surprise:     parseFloat(q.surprise)           || null,
+        surprisePct:  parseFloat(q.surprisePercentage) || null,
       }));
 
       setAvData({
@@ -1563,20 +1586,11 @@ export default function EarningsAnalysisPage() {
         name: ov.Name || '',
         sector: ov.Sector || '',
         industry: ov.Industry || '',
-        marketCap: parseFloat(ov.MarketCapitalization) || null,
-        peRatio: parseFloat(ov.PERatio) || null,
-        forwardPE: parseFloat(ov.ForwardPE) || null,
-        eps: parseFloat(ov.EPS) || null,
-        epsEstimateCurrentYear: parseFloat(ov.EPSEstimateCurrentYear) || null,
-        revenuePerShare: parseFloat(ov.RevenuePerShareTTM) || null,
-        dividendYield: parseFloat(ov.DividendYield) || null,
-        analystTargetPrice: parseFloat(ov.AnalystTargetPrice) || null,
-        weekHigh52: parseFloat(ov['52WeekHigh']) || null,
-        weekLow52: parseFloat(ov['52WeekLow']) || null,
-        sharesOutstanding: parseFloat(ov.SharesOutstanding) || null,
-        bookValue: parseFloat(ov.BookValue) || null,
-        priceToBook: parseFloat(ov.PriceToBookRatio) || null,
-        evToEBITDA: parseFloat(ov.EVToEBITDA) || null,
+        // Estimates — this is the ONLY thing we pull from AV besides surprise history
+        epsEstNextQ:         parseFloat(ov.EPSEstimateNextQuarter)   || null,
+        epsEstCurrentYear:   parseFloat(ov.EPSEstimateCurrentYear)   || null,
+        revenueEstNextQ:     parseFloat(ov.RevenueEstimateNextQuarter) || null,
+        analystTargetPrice:  parseFloat(ov.AnalystTargetPrice) || null,
         quarterlyEarnings: quarterly,
       });
     } catch (e) {
@@ -1727,138 +1741,242 @@ export default function EarningsAnalysisPage() {
     const { d, q, r, nar } = result;
 
     // Resolve ticker for AV lookup (use parsed ticker or let user input)
-    const resolvedTicker = avTicker || d.ticker;
-
-    // Format large numbers for the AV header
-    const fmtMktCap = (v: number|null) => {
-      if (!v) return '—';
-      if (v >= 1e12) return `$${(v/1e12).toFixed(2)}T`;
-      if (v >= 1e9) return `$${(v/1e9).toFixed(2)}B`;
-      if (v >= 1e6) return `$${(v/1e6).toFixed(1)}M`;
-      return `$${v.toFixed(0)}`;
-    };
-    const fmtNum = (v: number|null, dec=2) => v === null ? '—' : v.toLocaleString(undefined, {maximumFractionDigits:dec,minimumFractionDigits:dec});
+    // Helpers for the earnings scorecard
     const surpriseColor = (pct: number|null) => pct === null ? MUTED : pct >= 5 ? GREEN : pct >= 0 ? '#10b981aa' : pct >= -5 ? YELLOW : RED;
+    const beatMissLabel = (actual: number|null, est: number|null): {text:string;col:string}|null => {
+      if (actual === null || est === null) return null;
+      const delta = actual - est;
+      const pct = est !== 0 ? (delta / Math.abs(est)) * 100 : 0;
+      if (pct >= 5) return { text: `↑ BEAT +${pct.toFixed(0)}%`, col: GREEN };
+      if (pct >= 0) return { text: `↑ MET +${pct.toFixed(1)}%`, col: '#10b981aa' };
+      if (pct >= -5) return { text: `↓ MISS ${pct.toFixed(1)}%`, col: YELLOW };
+      return { text: `↓ MISS ${pct.toFixed(0)}%`, col: RED };
+    };
+
+    // Most recent quarter from AV (for EPS comparison)
+    const latestQ = avData?.quarterlyEarnings[0] ?? null;
+    const latestEpsEst = latestQ?.estimatedEPS ?? avData?.epsEstNextQ ?? null;
+    const latestEpsActual = latestQ?.reportedEPS ?? d.eps ?? null;
+    const epsBM = beatMissLabel(latestEpsActual, latestEpsEst);
+
+    // Revenue comparison: actual from parsed report, estimate from manual input
+    const revEstNum = manualRevEst ? parseFloat(manualRevEst.replace(/[^0-9.-]/g,'')) : null;
+    const gmEstNum = manualGMEst ? parseFloat(manualGMEst.replace(/[^0-9.-]/g,'')) : null;
 
     return (
       <div style={{background:BG,minHeight:'100vh',color:TEXT,fontFamily:'system-ui,-apple-system,sans-serif',padding:'20px 16px',maxWidth:1200,margin:'0 auto'}}>
 
         {/* ══════════════════════════════════════════════════════════════════════
-            INSTITUTIONAL HEADER — Bloomberg-style company intelligence block
-            Shows: identity, market data, consensus estimates, EPS surprise track record
+            COMPANY IDENTITY + EARNINGS SCORECARD
+            Design: company name, ticker, period at top.
+            Then: ACTUAL vs ESTIMATE comparison (the hero metric).
+            Then: EPS beat/miss track record.
+            NO market data grid — user gets all financial data from the report below.
             ══════════════════════════════════════════════════════════════════════ */}
-        <div style={{backgroundColor:'#0a0a14',border:`1px solid ${BORDER}`,borderRadius:14,padding:'20px 22px',marginBottom:14,boxShadow:'0 4px 32px rgba(0,0,0,0.4)'}}>
+        <div style={{backgroundColor:'#0a0a14',border:`1px solid ${BORDER}`,borderRadius:14,padding:'20px 22px',marginBottom:14,boxShadow:'0 4px 24px rgba(0,0,0,0.4)'}}>
 
-          {/* Row 1: Company name + ticker input + fetch button */}
-          <div style={{display:'flex',alignItems:'flex-start',gap:14,flexWrap:'wrap',marginBottom:16}}>
-            <div style={{flex:1,minWidth:240}}>
-              <h1 style={{fontSize:28,fontWeight:900,color:TEXT,margin:'0 0 4px',letterSpacing:'-0.5px'}}>
+          {/* Company identity + fetch row */}
+          <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:14,flexWrap:'wrap',marginBottom:14}}>
+            <div>
+              <h1 style={{fontSize:26,fontWeight:900,color:TEXT,margin:'0 0 4px',letterSpacing:'-0.5px'}}>
                 {avData?.name || d.company}
               </h1>
               <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
                 {(avData?.symbol || d.ticker) && (
-                  <span style={{fontSize:13,fontWeight:800,color:ACCENT,backgroundColor:ACCENT+'18',padding:'3px 10px',borderRadius:5,letterSpacing:'0.5px'}}>
+                  <span style={{fontSize:12,fontWeight:800,color:ACCENT,backgroundColor:ACCENT+'18',padding:'2px 9px',borderRadius:4,letterSpacing:'0.5px'}}>
                     {avData?.symbol || d.ticker}
                   </span>
                 )}
-                {avData?.sector && <span style={{fontSize:11,color:MUTED}}>{avData.sector}</span>}
-                {avData?.sector && <span style={{fontSize:11,color:'#2A3B4C'}}>›</span>}
-                {avData?.industry && <span style={{fontSize:11,color:MUTED}}>{avData.industry}</span>}
-                <span style={{fontSize:11,color:'#2A3B4C'}}>·</span>
-                <span style={{fontSize:11,color:MUTED}}>{d.period} · {d.filingType}</span>
+                {avData?.sector && <><span style={{fontSize:10,color:MUTED}}>{avData.sector}</span><span style={{color:'#2A3B4C',fontSize:10}}>›</span></>}
+                {avData?.industry && <span style={{fontSize:10,color:MUTED}}>{avData.industry}</span>}
+                <span style={{fontSize:10,color:'#2A3B4C'}}>·</span>
+                <span style={{fontSize:10,color:MUTED}}>{d.period} · {d.filingType} · {d.scaleLabel}</span>
+                {avData?.analystTargetPrice && (
+                  <span style={{fontSize:10,color:YELLOW}}>🎯 Target ${avData.analystTargetPrice.toFixed(2)}</span>
+                )}
               </div>
             </div>
-
-            {/* Alpha Vantage ticker lookup */}
-            <div style={{display:'flex',gap:8,alignItems:'center',flexShrink:0}}>
-              <input
-                value={avTicker}
-                onChange={e => setAvTicker(e.target.value.toUpperCase())}
+            {/* Compact fetch button */}
+            <div style={{display:'flex',gap:6,alignItems:'center',flexShrink:0}}>
+              <input value={avTicker} onChange={e => setAvTicker(e.target.value.toUpperCase())}
                 onKeyDown={e => e.key === 'Enter' && fetchAVData(avTicker || d.ticker)}
-                placeholder={d.ticker || 'Ticker (e.g. FSLY)'}
-                style={{width:120,backgroundColor:'#111',border:`1px solid ${BORDER}`,borderRadius:7,padding:'6px 10px',color:TEXT,fontSize:12,outline:'none'}}
+                placeholder={d.ticker || 'Ticker'}
+                style={{width:90,backgroundColor:'#0d1117',border:`1px solid ${BORDER}`,borderRadius:6,padding:'5px 8px',color:TEXT,fontSize:11,outline:'none'}}
               />
-              <button
-                onClick={() => fetchAVData(avTicker || d.ticker)}
-                disabled={avLoading}
-                style={{padding:'6px 14px',backgroundColor:ACCENT,border:'none',borderRadius:7,color:'#000',fontWeight:700,fontSize:12,cursor:'pointer',opacity:avLoading?0.6:1}}
+              <button onClick={() => fetchAVData(avTicker || d.ticker)} disabled={avLoading}
+                style={{padding:'5px 12px',backgroundColor:avData?ACCENT+'20':ACCENT,border:avData?`1px solid ${ACCENT}`:' none',borderRadius:6,color:avData?ACCENT:'#000',fontWeight:700,fontSize:11,cursor:'pointer',opacity:avLoading?0.6:1}}
               >
-                {avLoading ? '⏳' : '📡 Fetch'}
+                {avLoading ? '⏳' : avData ? '↻ Re-fetch' : '📡 Fetch estimates'}
               </button>
-              <span style={{fontSize:9,color:MUTED}}>via Alpha Vantage</span>
+              <span style={{fontSize:8,color:MUTED}}>Alpha Vantage</span>
             </div>
           </div>
 
-          {/* Row 2: Market data grid */}
-          {avData && (
-            <div style={{borderTop:`1px solid ${BORDER}`,paddingTop:14,marginBottom:14}}>
-              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))',gap:10,marginBottom:12}}>
-                {[
-                  { label:'MARKET CAP',    value: fmtMktCap(avData.marketCap) },
-                  { label:'P/E (TTM)',      value: fmtNum(avData.peRatio,1) },
-                  { label:'FORWARD P/E',   value: fmtNum(avData.forwardPE,1) },
-                  { label:'EV/EBITDA',     value: fmtNum(avData.evToEBITDA,1) },
-                  { label:'P/B RATIO',     value: fmtNum(avData.priceToBook,2) },
-                  { label:'EPS (TTM)',      value: avData.eps !== null ? `$${avData.eps.toFixed(2)}` : '—' },
-                  { label:'EPS EST FY',    value: avData.epsEstimateCurrentYear !== null ? `$${avData.epsEstimateCurrentYear.toFixed(2)}` : '—' },
-                  { label:'ANALYST TARGET',value: avData.analystTargetPrice !== null ? `$${avData.analystTargetPrice.toFixed(2)}` : '—' },
-                  { label:'52W HIGH',      value: avData.weekHigh52 !== null ? `$${avData.weekHigh52.toFixed(2)}` : '—' },
-                  { label:'52W LOW',       value: avData.weekLow52 !== null ? `$${avData.weekLow52.toFixed(2)}` : '—' },
-                  { label:'DIV YIELD',     value: avData.dividendYield !== null ? `${(avData.dividendYield*100).toFixed(2)}%` : '—' },
-                  { label:'BOOK VALUE',    value: avData.bookValue !== null ? `$${avData.bookValue.toFixed(2)}` : '—' },
-                ].map(({label, value}) => (
-                  <div key={label} style={{backgroundColor:'#111',borderRadius:8,padding:'9px 11px',border:`1px solid ${BORDER}`}}>
-                    <div style={{fontSize:8,color:MUTED,fontWeight:700,letterSpacing:'0.8px',marginBottom:3}}>{label}</div>
-                    <div style={{fontSize:14,fontWeight:800,color:TEXT}}>{value}</div>
-                  </div>
-                ))}
-              </div>
+          {/* ── EARNINGS SCORECARD: ACTUAL vs ESTIMATE ── */}
+          {/* This is the HERO element — most important comparison in the header */}
+          <div style={{borderTop:`1px solid ${BORDER}`,paddingTop:14,marginBottom:14}}>
+            <div style={{fontSize:9,fontWeight:800,color:MUTED,letterSpacing:'1px',marginBottom:10}}>
+              KEY RESULTS — {d.period} · ACTUAL (from report) vs ESTIMATE (from consensus)
+            </div>
 
-              {/* EPS Surprise Track Record */}
-              {avData.quarterlyEarnings.length > 0 && (
+            {/* Scorecard table */}
+            <div style={{overflowX:'auto'}}>
+              <table style={{width:'100%',borderCollapse:'collapse',minWidth:500}}>
+                <thead>
+                  <tr style={{borderBottom:`1px solid ${BORDER}`}}>
+                    {['METRIC','ACTUAL','ESTIMATE','vs EST','vs PRIOR YR'].map(h=>(
+                      <th key={h} style={{padding:'4px 10px',fontSize:9,fontWeight:700,color:MUTED,textAlign:h==='METRIC'?'left':'right',letterSpacing:'0.5px'}}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* Revenue row */}
+                  {d.parseState !== 'failed' && (
+                    <tr style={{borderBottom:`1px solid ${BORDER}20`}}>
+                      <td style={{padding:'8px 10px',fontSize:F.xs,color:MUTED,fontWeight:600}}>Revenue</td>
+                      <td style={{padding:'8px 10px',textAlign:'right',fontSize:F.sm,fontWeight:900,color:TEXT}}>{n(d.revenue,d)}</td>
+                      <td style={{padding:'8px 10px',textAlign:'right',fontSize:F.xs,color:MUTED}}>
+                        {revEstNum ? n(revEstNum, d) : <span style={{color:'#334155',fontSize:9}}>enter ↓</span>}
+                      </td>
+                      <td style={{padding:'8px 10px',textAlign:'right'}}>
+                        {revEstNum && d.revenue ? (() => { const bm = beatMissLabel(d.revenue, revEstNum); return bm ? <span style={{fontSize:F.xs,fontWeight:800,color:bm.col}}>{bm.text}</span> : <span style={{color:MUTED}}>—</span>; })() : <span style={{color:'#334155',fontSize:9}}>—</span>}
+                      </td>
+                      <td style={{padding:'8px 10px',textAlign:'right'}}>
+                        {d.revenue && d.revPrior ? (() => { const g = growth(d.revenue, d.revPrior); return g ? <span style={{fontSize:F.xs,fontWeight:700,color:g.col}}>{g.text} YoY</span> : null; })() : <span style={{color:MUTED,fontSize:F.xs}}>—</span>}
+                      </td>
+                    </tr>
+                  )}
+
+                  {/* EPS row */}
+                  <tr style={{borderBottom:`1px solid ${BORDER}20`}}>
+                    <td style={{padding:'8px 10px',fontSize:F.xs,color:MUTED,fontWeight:600}}>EPS</td>
+                    <td style={{padding:'8px 10px',textAlign:'right',fontSize:F.sm,fontWeight:900,color:latestEpsActual!==null&&latestEpsActual>=0?GREEN:latestEpsActual!==null?RED:MUTED}}>
+                      {latestEpsActual !== null ? `${latestEpsActual>=0?'$':'($'}${Math.abs(latestEpsActual).toFixed(2)}${latestEpsActual<0?')':''}` : d.eps !== null ? `${d.eps>=0?'$':'($'}${Math.abs(d.eps).toFixed(2)}${d.eps<0?')':''}` : '—'}
+                    </td>
+                    <td style={{padding:'8px 10px',textAlign:'right',fontSize:F.xs,color:MUTED}}>
+                      {latestEpsEst !== null ? `${latestEpsEst>=0?'$':'($'}${Math.abs(latestEpsEst).toFixed(2)}${latestEpsEst<0?')':''}` : '—'}
+                    </td>
+                    <td style={{padding:'8px 10px',textAlign:'right'}}>
+                      {epsBM ? <span style={{fontSize:F.xs,fontWeight:800,color:epsBM.col}}>{epsBM.text}</span> : <span style={{color:MUTED,fontSize:F.xs}}>—</span>}
+                    </td>
+                    <td style={{padding:'8px 10px',textAlign:'right'}}>
+                      {latestQ?.surprisePct !== null && latestQ?.surprisePct !== undefined ? (
+                        <span style={{fontSize:F.xs,fontWeight:700,color:surpriseColor(latestQ.surprisePct)}}>
+                          {latestQ.surprisePct >= 0 ? '+' : ''}{latestQ.surprisePct.toFixed(1)}% surprise
+                        </span>
+                      ) : <span style={{color:MUTED,fontSize:F.xs}}>—</span>}
+                    </td>
+                  </tr>
+
+                  {/* Gross Margin row */}
+                  {(d.grossMargin !== null || gmEstNum !== null) && d.parseState !== 'failed' && (
+                    <tr style={{borderBottom:`1px solid ${BORDER}20`}}>
+                      <td style={{padding:'8px 10px',fontSize:F.xs,color:MUTED,fontWeight:600}}>Gross Margin</td>
+                      <td style={{padding:'8px 10px',textAlign:'right',fontSize:F.sm,fontWeight:900,color:TEXT}}>
+                        {d.grossMargin !== null ? `${d.grossMargin.toFixed(1)}%` : '—'}
+                      </td>
+                      <td style={{padding:'8px 10px',textAlign:'right',fontSize:F.xs,color:MUTED}}>
+                        {gmEstNum ? `${gmEstNum.toFixed(1)}%` : <span style={{color:'#334155',fontSize:9}}>enter ↓</span>}
+                      </td>
+                      <td style={{padding:'8px 10px',textAlign:'right'}}>
+                        {gmEstNum && d.grossMargin !== null ? (() => {
+                          const delta = d.grossMargin - gmEstNum;
+                          const col = delta >= 0 ? GREEN : RED;
+                          return <span style={{fontSize:F.xs,fontWeight:800,color:col}}>{delta >= 0 ? '↑' : '↓'} {Math.abs(delta).toFixed(1)}pp</span>;
+                        })() : <span style={{color:'#334155',fontSize:9}}>—</span>}
+                      </td>
+                      <td style={{padding:'8px 10px',textAlign:'right',fontSize:F.xs,color:MUTED}}>—</td>
+                    </tr>
+                  )}
+
+                  {/* Guidance row (manual entry) */}
+                  {manualGuidance && (
+                    <tr>
+                      <td style={{padding:'8px 10px',fontSize:F.xs,color:MUTED,fontWeight:600}}>Guidance</td>
+                      <td colSpan={4} style={{padding:'8px 10px',fontSize:F.xs,color:YELLOW}}>{manualGuidance}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Manual estimate inputs */}
+            <div style={{marginTop:10,padding:'10px 12px',backgroundColor:'#0d1117',borderRadius:8,border:`1px solid ${BORDER}`}}>
+              <div style={{fontSize:9,fontWeight:700,color:MUTED,marginBottom:8}}>
+                📝 ADD ESTIMATES — revenue/margin estimates aren't in Alpha Vantage free tier; enter manually from sell-side reports or StreetAccount
+              </div>
+              <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
                 <div>
-                  <div style={{fontSize:10,fontWeight:700,color:MUTED,letterSpacing:'0.8px',marginBottom:8}}>📊 EPS SURPRISE HISTORY — ACTUAL vs ESTIMATE (last {avData.quarterlyEarnings.length} quarters)</div>
-                  <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-                    {avData.quarterlyEarnings.map((eq,i) => {
-                      const spct = eq.surprisePct;
-                      const sCol = surpriseColor(spct);
-                      return (
-                        <div key={i} style={{
-                          backgroundColor: sCol + '12',
-                          border: `1px solid ${sCol}30`,
-                          borderTop: `3px solid ${sCol}`,
-                          borderRadius: 8, padding:'8px 12px', minWidth:100, textAlign:'center',
-                        }}>
-                          <div style={{fontSize:9,color:MUTED,marginBottom:4}}>{eq.fiscalDateEnding?.slice(0,7)}</div>
-                          <div style={{fontSize:13,fontWeight:900,color:sCol}}>
-                            {eq.reportedEPS !== null ? `$${eq.reportedEPS.toFixed(2)}` : '—'}
-                          </div>
-                          <div style={{fontSize:9,color:MUTED,marginTop:2}}>
-                            Est: {eq.estimatedEPS !== null ? `$${eq.estimatedEPS.toFixed(2)}` : '—'}
-                          </div>
-                          {spct !== null && (
-                            <div style={{fontSize:10,fontWeight:700,color:sCol,marginTop:3}}>
-                              {spct >= 0 ? '+' : ''}{spct.toFixed(1)}%
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div style={{marginTop:8,fontSize:9,color:MUTED}}>
-                    💡 Earnings reaction is driven by SURPRISE vs estimates.
-                    Consistent beats → stock re-rates higher on each print.
-                  </div>
+                  <div style={{fontSize:8,color:MUTED,marginBottom:2}}>Rev est ({d.scaleLabel})</div>
+                  <input value={manualRevEst} onChange={e => setManualRevEst(e.target.value)}
+                    placeholder={`e.g. ${d.revenue ? (d.revenue * 0.95).toFixed(1) : '—'}`}
+                    style={{width:100,backgroundColor:'#111',border:`1px solid ${BORDER}`,borderRadius:5,padding:'4px 8px',color:TEXT,fontSize:11,outline:'none'}}
+                  />
                 </div>
-              )}
+                <div>
+                  <div style={{fontSize:8,color:MUTED,marginBottom:2}}>Gross margin est (%)</div>
+                  <input value={manualGMEst} onChange={e => setManualGMEst(e.target.value)}
+                    placeholder={`e.g. ${d.grossMargin ? (d.grossMargin - 2).toFixed(0) : '—'}%`}
+                    style={{width:80,backgroundColor:'#111',border:`1px solid ${BORDER}`,borderRadius:5,padding:'4px 8px',color:TEXT,fontSize:11,outline:'none'}}
+                  />
+                </div>
+                <div style={{flex:1,minWidth:200}}>
+                  <div style={{fontSize:8,color:MUTED,marginBottom:2}}>Guidance / forward commentary</div>
+                  <input value={manualGuidance} onChange={e => setManualGuidance(e.target.value)}
+                    placeholder="e.g. FY26 Rev +23% vs Est. +21% — raised guidance"
+                    style={{width:'100%',backgroundColor:'#111',border:`1px solid ${BORDER}`,borderRadius:5,padding:'4px 8px',color:TEXT,fontSize:11,outline:'none'}}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ── EPS BEAT/MISS TRACK RECORD ── */}
+          {avData && avData.quarterlyEarnings.length > 0 && (
+            <div style={{borderTop:`1px solid ${BORDER}`,paddingTop:12}}>
+              <div style={{fontSize:9,fontWeight:700,color:MUTED,letterSpacing:'0.8px',marginBottom:8}}>
+                📊 EPS BEAT/MISS HISTORY (last {avData.quarterlyEarnings.length} quarters · from Alpha Vantage)
+              </div>
+              <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                {avData.quarterlyEarnings.map((eq,i) => {
+                  const spct = eq.surprisePct;
+                  const sCol = surpriseColor(spct);
+                  const isBeat = spct !== null && spct >= 0;
+                  return (
+                    <div key={i} style={{
+                      backgroundColor:'#0d1117',
+                      border:`1px solid ${sCol}35`,
+                      borderLeft:`3px solid ${sCol}`,
+                      borderRadius:7, padding:'7px 10px', minWidth:86,
+                    }}>
+                      <div style={{fontSize:8,color:MUTED,marginBottom:3,letterSpacing:'0.3px'}}>{eq.fiscalDateEnding?.slice(0,7)}</div>
+                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',gap:4}}>
+                        <span style={{fontSize:13,fontWeight:900,color:sCol,lineHeight:1}}>
+                          {eq.reportedEPS !== null ? (eq.reportedEPS>=0?`$${eq.reportedEPS.toFixed(2)}`:`($${Math.abs(eq.reportedEPS).toFixed(2)})`) : '—'}
+                        </span>
+                        {spct !== null && (
+                          <span style={{fontSize:9,fontWeight:800,color:sCol}}>
+                            {isBeat?'+':''}{spct.toFixed(0)}%
+                          </span>
+                        )}
+                      </div>
+                      <div style={{fontSize:8,color:MUTED,marginTop:2}}>
+                        est {eq.estimatedEPS !== null ? (eq.estimatedEPS>=0?`$${eq.estimatedEPS.toFixed(2)}`:`($${Math.abs(eq.estimatedEPS).toFixed(2)})`) : '—'}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{marginTop:8,fontSize:9,color:MUTED,lineHeight:1.5}}>
+                💡 Consistent beats drive re-rating. Institutional reaction = <em>surprise vs expectations</em>, not just absolute numbers.
+              </div>
             </div>
           )}
 
           {!avData && (
-            <div style={{borderTop:`1px solid ${BORDER}`,paddingTop:12,display:'flex',gap:12,alignItems:'center'}}>
-              <span style={{fontSize:11,color:MUTED}}>
-                📡 Enter the stock ticker above to fetch market data, consensus estimates, and EPS surprise history from Alpha Vantage.
-              </span>
+            <div style={{borderTop:`1px solid ${BORDER}`,paddingTop:10,fontSize:10,color:MUTED}}>
+              Enter a stock ticker above to load EPS beat/miss history and consensus estimates from Alpha Vantage.
+              Actuals come from the uploaded earnings document.
             </div>
           )}
         </div>
