@@ -2078,6 +2078,14 @@ export default function EarningsAnalysisPage() {
     screenerJson: any;
     fmpProfile: any;
   } | null>(null);
+  // Cached US snapshot inputs — same idea, for the InstitutionalReport's
+  // concall upload button. We keep the FinancialsInput, estimates, and
+  // history JSON so the build runs locally without re-fetching FMP.
+  const usSnapshotInputsRef = useRef<{
+    finIn: any;
+    estJson: any;
+    histJson: any;
+  } | null>(null);
   const [concallProcessing, setConcallProcessing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadingPct, setLoadingPct] = useState(0);
@@ -2720,6 +2728,7 @@ export default function EarningsAnalysisPage() {
             category: edgarP?.category ?? null,
             businessText: edgarP?.businessText ?? null,
           };
+          usSnapshotInputsRef.current = { finIn, estJson, histJson };
           const snap = buildSnapshot(finIn, estJson, histJson, '');
           setSnapshot(snap);
         }
@@ -2831,6 +2840,7 @@ export default function EarningsAnalysisPage() {
     setSnapshot(null);
     lastEdgarPayloadRef.current = null;
     indiaSnapshotInputsRef.current = null;
+    usSnapshotInputsRef.current = null;
     setError('');
     setPasteText('');
     setUrlInput('');
@@ -2851,6 +2861,18 @@ export default function EarningsAnalysisPage() {
         inputs.fmpProfile,
         text,
       );
+      setSnapshot(snap);
+    } finally {
+      setConcallProcessing(false);
+    }
+  }, []);
+
+  const handleUsConcallText = useCallback((text: string) => {
+    const inputs = usSnapshotInputsRef.current;
+    if (!inputs) return;
+    setConcallProcessing(true);
+    try {
+      const snap = buildSnapshot(inputs.finIn, inputs.estJson, inputs.histJson, text);
       setSnapshot(snap);
     } finally {
       setConcallProcessing(false);
@@ -2983,6 +3005,8 @@ export default function EarningsAnalysisPage() {
             snapshot={snapshot}
             onReset={reset}
             onCopy={() => copySnapshotSummary(snapshot)}
+            onConcallText={handleUsConcallText}
+            concallProcessing={concallProcessing}
           />
         )}
       </div>

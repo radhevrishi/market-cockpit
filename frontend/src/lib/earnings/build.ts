@@ -191,20 +191,29 @@ export function buildSnapshot(
   const histQ = (history?.quarters || []).slice();
   const qoq = histQ[1] || null;
   const qoqRev = qoq?.revenue !== null && qoq?.revenue !== undefined ? Math.round(qoq.revenue * sf * 100) / 100 : null;
+  // YoY = same fiscal quarter one year ago (4 quarters back in the history
+  // array). When fin.* doesn't carry priors (e.g. EDGAR XBRL only filled
+  // current quarter) we fall back to history[4].
+  const yoyHist = histQ[4] || null;
+  const yoyRevFromHist =
+    yoyHist?.revenue !== null && yoyHist?.revenue !== undefined
+      ? Math.round(yoyHist.revenue * sf * 100) / 100
+      : null;
+  const yoyEpsFromHist = yoyHist?.eps ?? null;
 
   const metrics = {
     revenue: buildMetric({
       metric: 'Revenue', unit: 'currency',
       actual: revenueActual,
       estimate: revenueEstimate,
-      prior: fin.revPrior,
+      prior: fin.revPrior ?? yoyRevFromHist,
       qoqPrior: qoqRev,
     }),
     eps: buildMetric({
       metric: 'EPS', unit: 'count',
       actual: epsActual,
       estimate: epsEstimate,
-      prior: fin.epsPrior,
+      prior: fin.epsPrior ?? yoyEpsFromHist,
       qoqPrior: qoq?.eps ?? null,
     }),
     ebitda: buildMetric({

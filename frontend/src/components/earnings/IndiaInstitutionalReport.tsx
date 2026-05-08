@@ -431,7 +431,6 @@ export function IndiaInstitutionalReport({
         <KpiTile label="ROE" value={ix.topMetrics.roe != null ? `${ix.topMetrics.roe.toFixed(1)}%` : '—'} tone={profitTone(ix.topMetrics.roe, [20, 12, 8])} />
         <KpiTile label="P/E" value={fmtNum(ix.topMetrics.peRatio, 1) + 'x'} tone="na" />
         <KpiTile label="Book Value" value={ix.topMetrics.bookValue != null ? `₹${ix.topMetrics.bookValue.toFixed(0)}` : '—'} tone="na" />
-        <KpiTile label="Div. Yield" value={ix.topMetrics.dividendYieldPct != null ? `${ix.topMetrics.dividendYieldPct.toFixed(2)}%` : '—'} tone="na" />
         <KpiTile label="D / E" value={ix.topMetrics.debtToEquity != null ? `${ix.topMetrics.debtToEquity.toFixed(2)}x` : '—'} tone={debtTone(ix.topMetrics.debtToEquity)} />
       </div>
 
