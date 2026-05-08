@@ -43,3 +43,14 @@ frontend.log
 docker-compose.override.yml
 .vercel
 .env*.local
+
+# Deploy scaffolding from Cowork patches — never commit
+*.patch
+DEPLOY_NOW.sh
+APPLY_*.md
+CLAUDE_HANDOFF.md
+FETCH_HEAD
+ORIG_HEAD
+*\ 2.ts
+*\ 2.tsx
+*\ 2.md
