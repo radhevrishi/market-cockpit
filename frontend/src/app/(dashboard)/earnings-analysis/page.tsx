@@ -2,6 +2,7 @@
 
 import React, { useState, useRef, useCallback } from 'react';
 import { InstitutionalReport } from '@/components/earnings/InstitutionalReport';
+import { IndiaInstitutionalReport } from '@/components/earnings/IndiaInstitutionalReport';
 import { buildSnapshot, FinancialsInput, EstimatesInput, HistoryInput } from '@/lib/earnings/build';
 import { buildIndiaSnapshot } from '@/lib/earnings/india-build';
 import type { EarningsSnapshot } from '@/lib/earnings/snapshot';
@@ -2761,20 +2762,47 @@ export default function EarningsAnalysisPage() {
 
   // ── Results dashboard ────────────────────────────────────────────────────
   // ── Institutional view: deterministic, schema-first, fixed layout ──────
+  // Branch on currency: India tickers route to the dedicated India component
+  // which uses fundamentals-only mode (QoQ/YoY trajectory, sector KPIs,
+  // working capital cycle, promoter trend — no fake consensus grades).
   if (result && snapshot && reportView === 'institutional') {
+    const isIndia = snapshot.currency === 'INR' || !!snapshot.indiaExtras;
     return (
       <div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', maxWidth: 1280, margin: '0 auto', padding: '12px 20px 0' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', maxWidth: 1280, margin: '0 auto', padding: '12px 20px 0' }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <span style={{
+              fontSize: 10,
+              padding: '4px 10px',
+              borderRadius: 4,
+              background: isIndia ? 'rgba(251,191,36,0.15)' : 'rgba(125,211,252,0.10)',
+              color: isIndia ? '#fbbf24' : '#7dd3fc',
+              border: `1px solid ${isIndia ? '#fbbf2440' : '#7dd3fc40'}`,
+              fontWeight: 700,
+              letterSpacing: 0.6,
+              textTransform: 'uppercase',
+            }}>
+              {isIndia ? '🇮🇳 India · Fundamentals Mode' : '🇺🇸 US · Full Consensus Mode'}
+            </span>
+          </div>
           <button onClick={() => setReportView('legacy')}
             style={{ fontSize: 10, padding: '4px 10px', background: 'transparent', border: `1px solid ${BORDER}`, color: MUTED, borderRadius: 4, cursor: 'pointer' }}>
             Switch to legacy view
           </button>
         </div>
-        <InstitutionalReport
-          snapshot={snapshot}
-          onReset={reset}
-          onCopy={() => copySnapshotSummary(snapshot)}
-        />
+        {isIndia ? (
+          <IndiaInstitutionalReport
+            snapshot={snapshot}
+            onReset={reset}
+            onCopy={() => copySnapshotSummary(snapshot)}
+          />
+        ) : (
+          <InstitutionalReport
+            snapshot={snapshot}
+            onReset={reset}
+            onCopy={() => copySnapshotSummary(snapshot)}
+          />
+        )}
       </div>
     );
   }

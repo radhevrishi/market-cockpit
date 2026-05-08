@@ -206,6 +206,107 @@ export interface EarningsSnapshot {
   };
   validationWarnings: string[];
   generatedAt: string;
+
+  // ── India-specific institutional extras (only populated when currency==='INR') ─
+  // The dedicated IndiaInstitutionalReport component reads from this. The US
+  // InstitutionalReport ignores it.
+  indiaExtras?: IndiaExtras;
+
+  // Mode flag — drives which report component renders
+  // 'us_full_consensus' | 'india_fundamental_only' | 'india_full_consensus'
+  analysisMode?: AnalysisMode;
+}
+
+export type AnalysisMode = 'us_full_consensus' | 'india_fundamental_only' | 'india_full_consensus';
+
+export interface IndiaExtras {
+  // Top-level metrics from Screener
+  topMetrics: {
+    marketCapCr: number | null;
+    cmp: number | null;
+    peRatio: number | null;
+    bookValue: number | null;
+    dividendYieldPct: number | null;
+    roce: number | null;
+    roe: number | null;
+    promoterHoldingPct: number | null;
+    debtToEquity: number | null;
+  };
+
+  // Working capital cycle (days)
+  workingCapital: {
+    debtorDays: number | null;
+    inventoryDays: number | null;
+    daysPayable: number | null;
+    cashConversionCycle: number | null;
+    workingCapitalDays: number | null;
+    cfoOverPat: number | null;
+    interestCoverage: number | null;
+    asOfPeriod: string | null;
+  };
+
+  // Promoter & governance
+  governance: {
+    promoterHoldingPct: number | null;
+    promoterChangeQoQ: number | null;     // pp difference latest vs previous
+    promoterChangeYoY: number | null;     // pp difference latest vs 4Q ago
+    fiiHoldingPct: number | null;
+    fiiChangeQoQ: number | null;
+    diiHoldingPct: number | null;
+    diiChangeQoQ: number | null;
+    publicHoldingPct: number | null;
+    pledgePct: number | null;             // null if not reported
+    flags: string[];                       // institutional commentary
+  };
+
+  // Quarterly breakdown (last 8Q) — values in ₹ Cr
+  quarterlyTrend: Array<{
+    period: string;
+    revenue: number | null;
+    operatingProfit: number | null;
+    opmPct: number | null;
+    netProfit: number | null;
+    netMarginPct: number | null;
+    eps: number | null;
+    qoqRevenuePct: number | null;
+    qoqProfitPct: number | null;
+    yoyRevenuePct: number | null;
+    yoyProfitPct: number | null;
+    yoyOpmBps: number | null;
+  }>;
+
+  // Sector intelligence
+  sector: {
+    slug: string;
+    displayName: string;
+    sectorString: string | null;       // "Fast Moving Consumer Goods"
+    industryString: string | null;     // "Personal Products"
+    subIndustryString: string | null;
+    kpis: Array<{
+      label: string;
+      description: string;
+      importance: 'critical' | 'high' | 'medium';
+      tracked: boolean;                // populated when we have data
+      value?: string;
+    }>;
+    macroThemes: string[];
+    redFlags: string[];
+  };
+
+  // Fundamental composite (replaces "reaction score" for India)
+  fundamentalScore: {
+    overall: number;                   // 0-100
+    grade: string;
+    components: {
+      growth: { score: number; label: string };
+      margin: { score: number; label: string };
+      working_capital: { score: number; label: string };
+      promoter: { score: number; label: string };
+      cash_conversion: { score: number; label: string };
+    };
+    direction: 'improving' | 'stable' | 'deteriorating';
+    confidence: 'high' | 'medium' | 'low';
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

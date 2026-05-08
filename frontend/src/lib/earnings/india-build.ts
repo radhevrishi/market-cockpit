@@ -15,8 +15,9 @@
 import {
   EarningsSnapshot,
   buildMetric,
+  IndiaExtras,
 } from './snapshot';
-import { detectThemes, classifyMgmtTone } from './themes';
+import { detectIndiaThemes, classifyMgmtToneIndia } from './india-themes';
 import {
   computeAccountingQuality,
   computeNarrativeScore,
@@ -199,18 +200,19 @@ export function buildIndiaSnapshot(
     }),
   };
 
-  // ── Theme detection from description + sector themes ──────────────────
+  // ── Theme detection — INDIA macro themes (rural recovery / China+1 / etc) ─
   const themeCorpus = [
     screener?.about || '',
     fmpProfile?.description || '',
     industryStr,
     sectorTemplate.themes.join(' '),
+    sectorTemplate.displayName,
     rawText || '',
   ].filter(Boolean).join(' · ');
 
-  const themeRes = detectThemes(themeCorpus);
+  const themeRes = detectIndiaThemes(themeCorpus);
   const themes = themeRes.themes;
-  const toneRes = classifyMgmtTone(rawText || '');
+  const toneRes = classifyMgmtToneIndia(rawText || '');
 
   // ── Accounting quality from screener ratios ───────────────────────────
   const recentRatios = (screener?.ratios || [])
@@ -372,6 +374,18 @@ export function buildIndiaSnapshot(
   }
   takeaways.push(`Sector: ${sectorTemplate.displayName} — KPIs to track: ${sectorTemplate.kpis.slice(0, 3).map((k) => k.label).join(', ')}`);
 
+  // ── INDIA EXTRAS — fundamentals-mode dedicated payload ──────────────────
+  const indiaExtras: IndiaExtras = computeIndiaExtras({
+    screener,
+    sector,
+    sectorTemplate,
+    sectorStr,
+    industryStr,
+    subIndStr,
+    quarters,
+    cfoOverPat,
+  });
+
   return {
     ticker,
     company: screener?.company || fmpProfile?.companyName || ticker,
@@ -466,10 +480,261 @@ export function buildIndiaSnapshot(
       estimates: 'unavailable',
       history: 'screener_in',
     },
+    indiaExtras,
+    analysisMode: 'india_fundamental_only',
     validationWarnings: [
       'India fundamentals-only mode — consensus surprise scoring suppressed',
       `Sector KPIs to track: ${sectorTemplate.kpis.filter((k) => k.importance === 'critical').map((k) => k.label).join(' · ')}`,
     ],
     generatedAt: new Date().toISOString(),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// computeIndiaExtras — fundamentals-mode payload
+// ─────────────────────────────────────────────────────────────────────────────
+function computeIndiaExtras(opts: {
+  screener: ScreenerInput | null;
+  sector: IndiaSector;
+  sectorTemplate: typeof INDIA_SECTOR_TEMPLATES[IndiaSector];
+  sectorStr: string;
+  industryStr: string;
+  subIndStr: string;
+  quarters: NonNullable<ScreenerInput['quarterly']>;
+  cfoOverPat: number | null;
+}): IndiaExtras {
+  const { screener, sector, sectorTemplate, sectorStr, industryStr, subIndStr, quarters, cfoOverPat } = opts;
+
+  // Top metrics passthrough
+  const tm = screener?.topMetrics || ({} as any);
+  const topMetrics = {
+    marketCapCr: tm.marketCap ?? null,
+    cmp: tm.currentPrice ?? null,
+    peRatio: tm.peRatio ?? null,
+    bookValue: tm.bookValue ?? null,
+    dividendYieldPct: tm.dividendYieldPct ?? null,
+    roce: tm.roce ?? null,
+    roe: tm.roe ?? null,
+    promoterHoldingPct: tm.promoterHoldingPct ?? null,
+    debtToEquity: tm.debtToEquity ?? null,
+  };
+
+  // Working capital — most recent annual ratios from screener
+  const ratios = screener?.ratios || [];
+  const recentRatios =
+    ratios
+      .map((r) => r)
+      .reverse()
+      .find((r) => r.cashConversionCycle !== null || r.debtorDays !== null) || null;
+  const workingCapital = {
+    debtorDays: recentRatios?.debtorDays ?? null,
+    inventoryDays: recentRatios?.inventoryDays ?? null,
+    daysPayable: recentRatios?.daysPayable ?? null,
+    cashConversionCycle: recentRatios?.cashConversionCycle ?? null,
+    workingCapitalDays: recentRatios?.workingCapitalDays ?? null,
+    cfoOverPat,
+    interestCoverage: null,
+    asOfPeriod: recentRatios?.period ?? null,
+  };
+
+  // Promoter trend — last 12 quarters of shareholding
+  const sh = screener?.shareholding || [];
+  const last = sh[sh.length - 1] || null;
+  const prev = sh[sh.length - 2] || null;
+  const yoy = sh.length >= 5 ? sh[sh.length - 5] : null;
+  const flags: string[] = [];
+  const promoterChangeQoQ =
+    last?.promoters != null && prev?.promoters != null ? Math.round((last.promoters - prev.promoters) * 100) / 100 : null;
+  const promoterChangeYoY =
+    last?.promoters != null && yoy?.promoters != null ? Math.round((last.promoters - yoy.promoters) * 100) / 100 : null;
+  const fiiChangeQoQ =
+    last?.fii != null && prev?.fii != null ? Math.round((last.fii - prev.fii) * 100) / 100 : null;
+  const diiChangeQoQ =
+    last?.dii != null && prev?.dii != null ? Math.round((last.dii - prev.dii) * 100) / 100 : null;
+
+  if (promoterChangeQoQ !== null && promoterChangeQoQ <= -0.5) {
+    flags.push(`Promoter holding ↓ ${Math.abs(promoterChangeQoQ).toFixed(2)} pp QoQ — review for stake dilution`);
+  } else if (promoterChangeQoQ !== null && promoterChangeQoQ >= 0.3) {
+    flags.push(`Promoter holding ↑ ${promoterChangeQoQ.toFixed(2)} pp QoQ — accumulation signal`);
+  }
+  if (fiiChangeQoQ !== null && fiiChangeQoQ >= 1) {
+    flags.push(`FII inflow +${fiiChangeQoQ.toFixed(2)} pp QoQ — institutional accumulation`);
+  } else if (fiiChangeQoQ !== null && fiiChangeQoQ <= -1) {
+    flags.push(`FII outflow ${fiiChangeQoQ.toFixed(2)} pp QoQ — institutional distribution`);
+  }
+  if (diiChangeQoQ !== null && diiChangeQoQ >= 1) {
+    flags.push(`DII inflow +${diiChangeQoQ.toFixed(2)} pp QoQ — domestic institutional buying`);
+  }
+
+  const governance = {
+    promoterHoldingPct: last?.promoters ?? topMetrics.promoterHoldingPct,
+    promoterChangeQoQ,
+    promoterChangeYoY,
+    fiiHoldingPct: last?.fii ?? null,
+    fiiChangeQoQ,
+    diiHoldingPct: last?.dii ?? null,
+    diiChangeQoQ,
+    publicHoldingPct: last?.public ?? null,
+    pledgePct: null,
+    flags,
+  };
+
+  // Quarterly trend with QoQ + YoY computed
+  const qtrendBase = quarters.slice(-8).map((q, idx, arr) => {
+    const prevQ = idx > 0 ? arr[idx - 1] : null;
+    const yoyQ = idx >= 4 ? arr[idx - 4] : null;
+    const qoqRev =
+      q.sales != null && prevQ?.sales != null && prevQ.sales !== 0
+        ? Math.round(((q.sales - prevQ.sales) / Math.abs(prevQ.sales)) * 10000) / 100
+        : null;
+    const qoqProfit =
+      q.netProfit != null && prevQ?.netProfit != null && prevQ.netProfit !== 0
+        ? Math.round(((q.netProfit - prevQ.netProfit) / Math.abs(prevQ.netProfit)) * 10000) / 100
+        : null;
+    const yoyRev =
+      q.sales != null && yoyQ?.sales != null && yoyQ.sales !== 0
+        ? Math.round(((q.sales - yoyQ.sales) / Math.abs(yoyQ.sales)) * 10000) / 100
+        : null;
+    const yoyProfit =
+      q.netProfit != null && yoyQ?.netProfit != null && yoyQ.netProfit !== 0
+        ? Math.round(((q.netProfit - yoyQ.netProfit) / Math.abs(yoyQ.netProfit)) * 10000) / 100
+        : null;
+    const yoyOpmBps =
+      q.opmPct != null && yoyQ?.opmPct != null
+        ? Math.round((q.opmPct - yoyQ.opmPct) * 100)
+        : null;
+    return {
+      period: q.period,
+      revenue: q.sales,
+      operatingProfit: q.operatingProfit,
+      opmPct: q.opmPct,
+      netProfit: q.netProfit,
+      netMarginPct: q.netMargin,
+      eps: q.eps,
+      qoqRevenuePct: qoqRev,
+      qoqProfitPct: qoqProfit,
+      yoyRevenuePct: yoyRev,
+      yoyProfitPct: yoyProfit,
+      yoyOpmBps,
+    };
+  });
+
+  // Sector KPI checklist — mark which we have data for
+  const sectorBlock = {
+    slug: sector,
+    displayName: sectorTemplate.displayName,
+    sectorString: sectorStr || null,
+    industryString: industryStr || null,
+    subIndustryString: subIndStr || null,
+    kpis: sectorTemplate.kpis.map((k) => {
+      // Currently we don't extract sector-specific KPIs from filings.
+      // The framework is present; the data layer is the next milestone.
+      // For working-capital-driven sectors, mark the WC KPIs as tracked.
+      let tracked = false;
+      let value: string | undefined;
+      if (k.label.toLowerCase().includes('cash conversion') && workingCapital.cashConversionCycle !== null) {
+        tracked = true; value = `${workingCapital.cashConversionCycle.toFixed(0)} days`;
+      } else if (k.label.toLowerCase().includes('debtor') && workingCapital.debtorDays !== null) {
+        tracked = true; value = `${workingCapital.debtorDays.toFixed(0)} days`;
+      } else if (k.label.toLowerCase().includes('inventory') && workingCapital.inventoryDays !== null) {
+        tracked = true; value = `${workingCapital.inventoryDays.toFixed(0)} days`;
+      } else if (k.label.toLowerCase().includes('working capital') && workingCapital.workingCapitalDays !== null) {
+        tracked = true; value = `${workingCapital.workingCapitalDays.toFixed(0)} days`;
+      } else if (/op\s*-?\s*margin|opm|operating\s+profit/i.test(k.label) && qtrendBase.at(-1)?.opmPct != null) {
+        tracked = true; value = `${qtrendBase.at(-1)!.opmPct!.toFixed(1)}%`;
+      } else if (/net\s+margin/i.test(k.label) && qtrendBase.at(-1)?.netMarginPct != null) {
+        tracked = true; value = `${qtrendBase.at(-1)!.netMarginPct!.toFixed(1)}%`;
+      } else if (/d\/e|debt.{0,3}equity/i.test(k.label) && topMetrics.debtToEquity != null) {
+        tracked = true; value = `${topMetrics.debtToEquity.toFixed(2)}x`;
+      } else if (/roe/i.test(k.label) && topMetrics.roe != null) {
+        tracked = true; value = `${topMetrics.roe.toFixed(1)}%`;
+      } else if (/roce/i.test(k.label) && topMetrics.roce != null) {
+        tracked = true; value = `${topMetrics.roce.toFixed(1)}%`;
+      }
+      return { label: k.label, description: k.description, importance: k.importance, tracked, value };
+    }),
+    macroThemes: sectorTemplate.themes,
+    redFlags: sectorTemplate.redFlags,
+  };
+
+  // Fundamental composite — replaces "reaction score" for India
+  // Components: growth (revenue YoY), margin (OPM trend), working capital,
+  //             promoter (stability), cash conversion (CFO/PAT)
+  const last8 = qtrendBase.slice(-8);
+  const lastQuarterRow = last8.at(-1);
+  const lastRevYoY = lastQuarterRow?.yoyRevenuePct ?? null;
+  const lastProfitYoY = lastQuarterRow?.yoyProfitPct ?? null;
+  const lastOpmYoY = lastQuarterRow?.yoyOpmBps ?? null;
+
+  const score01 = (v: number, lo: number, hi: number) =>
+    Math.max(0, Math.min(100, Math.round(((v - lo) / (hi - lo)) * 100)));
+
+  const growthScore =
+    lastRevYoY !== null
+      ? score01(lastRevYoY, -10, 30)  // -10% revenue → 0; +30% → 100
+      : 50;
+  const marginScore =
+    lastOpmYoY !== null
+      ? score01(lastOpmYoY, -300, 300) // ±300 bps band
+      : (lastQuarterRow?.opmPct ?? 0) > 15 ? 65 : 50;
+  const workingCapitalScore =
+    workingCapital.cashConversionCycle !== null
+      ? score01(-workingCapital.cashConversionCycle, -120, 0) // 120d → 0; 0d → 100
+      : 50;
+  const promoterScore =
+    promoterChangeQoQ !== null
+      ? score01(promoterChangeQoQ, -1.0, 1.0)
+      : (governance.promoterHoldingPct !== null && governance.promoterHoldingPct >= 50 ? 65 : 50);
+  const cashConversionScore =
+    cfoOverPat !== null
+      ? score01(cfoOverPat, 0.4, 1.5)
+      : 50;
+
+  const overall = Math.round(
+    growthScore * 0.30 +
+    marginScore * 0.25 +
+    workingCapitalScore * 0.15 +
+    promoterScore * 0.15 +
+    cashConversionScore * 0.15,
+  );
+
+  const grade =
+    overall >= 85 ? 'A' :
+    overall >= 75 ? 'A-' :
+    overall >= 65 ? 'B+' :
+    overall >= 55 ? 'B' :
+    overall >= 45 ? 'C+' :
+    overall >= 35 ? 'C' : 'D';
+
+  const direction: 'improving' | 'stable' | 'deteriorating' =
+    overall >= 65 ? 'improving' : overall <= 40 ? 'deteriorating' : 'stable';
+
+  const confidence: 'high' | 'medium' | 'low' =
+    last8.length >= 6 ? 'high' : last8.length >= 3 ? 'medium' : 'low';
+
+  const labelFor = (s: number) =>
+    s >= 75 ? 'strong' : s >= 60 ? 'healthy' : s >= 45 ? 'mixed' : s >= 30 ? 'soft' : 'weak';
+
+  const fundamentalScore = {
+    overall,
+    grade,
+    components: {
+      growth: { score: growthScore, label: labelFor(growthScore) },
+      margin: { score: marginScore, label: labelFor(marginScore) },
+      working_capital: { score: workingCapitalScore, label: labelFor(workingCapitalScore) },
+      promoter: { score: promoterScore, label: labelFor(promoterScore) },
+      cash_conversion: { score: cashConversionScore, label: labelFor(cashConversionScore) },
+    },
+    direction,
+    confidence,
+  };
+
+  return {
+    topMetrics,
+    workingCapital,
+    governance,
+    quarterlyTrend: qtrendBase,
+    sector: sectorBlock,
+    fundamentalScore,
   };
 }

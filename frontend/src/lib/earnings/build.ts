@@ -529,6 +529,7 @@ export function buildSnapshot(
       estimates: estimates?.ok ? 'fmp_consensus' : 'unavailable',
       history: history?.ok ? 'fmp_history' : 'unavailable',
     },
+    analysisMode: 'us_full_consensus',
     validationWarnings: fin.validationWarnings || [],
     generatedAt: new Date().toISOString(),
   };
