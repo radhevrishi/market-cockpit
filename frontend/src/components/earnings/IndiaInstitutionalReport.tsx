@@ -298,6 +298,110 @@ export function IndiaInstitutionalReport({
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════
+          E2. CONCALL INSIGHTS — only renders when transcript was uploaded
+         ═══════════════════════════════════════════════════════════════════ */}
+      {ix.concall && (
+        <>
+          <SectionTitle
+            title="Concall Insights"
+            subtitle={`${ix.concall.charsAnalyzed.toLocaleString()} chars analysed · ${ix.concall.topQuotes.length} key quotes · ${ix.concall.toneSignals.length} tone signals`}
+          />
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14, marginBottom: 22 }}>
+            {/* Top quotes */}
+            <Panel title={`Top Quotes (ranked by signal density)`}>
+              {ix.concall.topQuotes.length === 0 ? (
+                <Empty>No high-signal quotes extracted. Try a longer transcript.</Empty>
+              ) : (
+                <ol style={{ margin: 0, paddingLeft: 22, color: TEXT, fontSize: 12, lineHeight: 1.7 }}>
+                  {ix.concall.topQuotes.map((q, i) => (
+                    <li key={i} style={{ marginBottom: 8, fontStyle: 'italic' }}>"{q}"</li>
+                  ))}
+                </ol>
+              )}
+            </Panel>
+            {/* Concall score */}
+            <Panel title="Concall Score">
+              <div style={{ textAlign: 'center', padding: '4px 0' }}>
+                <div style={{ fontSize: 38, fontWeight: 800, color: scoreColor(ix.concall.concallScore), fontFamily: MONO, lineHeight: 1 }}>
+                  {ix.concall.concallScore}<span style={{ fontSize: 14, color: MUTED }}>/100</span>
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: scoreColor(ix.concall.concallScore), letterSpacing: 0.5, marginTop: 2 }}>
+                  {ix.concall.concallGrade}
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'center', gap: 14, marginTop: 10, fontSize: 10, fontFamily: MONO }}>
+                  <span style={{ color: GREEN }}>+{ix.concall.positiveCount}</span>
+                  <span style={{ color: ACCENT }}>~{ix.concall.cautiousCount}</span>
+                  <span style={{ color: ORANGE }}>−{ix.concall.negativeCount}</span>
+                </div>
+                <div style={{ fontSize: 9, color: MUTED, marginTop: 6, lineHeight: 1.4 }}>
+                  positive · cautious · negative cues
+                </div>
+              </div>
+            </Panel>
+          </div>
+
+          {/* Tone signals */}
+          {ix.concall.toneSignals.length > 0 && (
+            <div style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 14, marginBottom: 22 }}>
+              <div style={{ fontSize: 11, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: 700, marginBottom: 10 }}>
+                Tone Signals
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {ix.concall.toneSignals.map((t, i) => {
+                  const color = t.sentiment === 'positive' ? GREEN : t.sentiment === 'negative' ? ORANGE : ACCENT;
+                  return (
+                    <span
+                      key={i}
+                      title={t.context}
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        color,
+                        border: `1px solid ${color}40`,
+                        background: `${color}10`,
+                        padding: '4px 10px',
+                        borderRadius: 999,
+                        cursor: 'help',
+                      }}
+                    >
+                      {t.sentiment === 'positive' ? '↑ ' : t.sentiment === 'negative' ? '↓ ' : '~ '}
+                      {t.phrase}
+                    </span>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 9, color: FAINT, marginTop: 8 }}>
+                Hover any chip to see the source sentence.
+              </div>
+            </div>
+          )}
+
+          {/* Key topical mentions */}
+          {ix.concall.keyMentions.length > 0 && (
+            <div style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 14, marginBottom: 22 }}>
+              <div style={{ fontSize: 11, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: 700, marginBottom: 10 }}>
+                Topical Mentions
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                <tbody>
+                  {ix.concall.keyMentions.map((m, i) => (
+                    <tr key={i} style={{ borderBottom: `1px solid ${BORDER}` }}>
+                      <td style={{ padding: '8px 10px', verticalAlign: 'top', textTransform: 'capitalize', color: ACCENT, fontWeight: 700, width: 160 }}>
+                        {m.topic.replace(/_/g, ' ')}
+                      </td>
+                      <td style={{ padding: '8px 10px', color: TEXT, lineHeight: 1.6, fontStyle: 'italic' }}>
+                        "{m.quote}"
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════
           F. WORKING CAPITAL CYCLE
          ═══════════════════════════════════════════════════════════════════ */}
       <SectionTitle title="Working Capital & Cash Conversion" subtitle={wc.asOfPeriod ? `As of ${wc.asOfPeriod}` : 'Annual ratios'} />
@@ -362,24 +466,39 @@ export function IndiaInstitutionalReport({
             </tr>
           </thead>
           <tbody>
-            {ix.sector.kpis.map((k) => (
-              <tr key={k.label} style={{ borderBottom: `1px solid ${BORDER}` }}>
-                <Td><span style={{ fontWeight: 600, color: TEXT }}>{k.label}</span></Td>
-                <Td>
-                  <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 3, color: importanceColor(k.importance), background: importanceColor(k.importance) + '20', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                    {k.importance}
-                  </span>
-                </Td>
-                <Td>
-                  {k.tracked ? (
-                    <span style={{ fontSize: 11, color: GREEN, fontWeight: 600, fontFamily: MONO }}>● {k.value || 'tracked'}</span>
-                  ) : (
-                    <span style={{ fontSize: 10, color: FAINT }}>○ not extracted</span>
-                  )}
-                </Td>
-                <Td><span style={{ fontSize: 11, color: MUTED }}>{k.description}</span></Td>
-              </tr>
-            ))}
+            {ix.sector.kpis.map((k) => {
+              const concallQuote = ix.concall?.sectorKpiHits.find((h) => h.label === k.label)?.quote;
+              return (
+                <tr key={k.label} style={{ borderBottom: `1px solid ${BORDER}` }}>
+                  <Td><span style={{ fontWeight: 600, color: TEXT }}>{k.label}</span></Td>
+                  <Td>
+                    <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 3, color: importanceColor(k.importance), background: importanceColor(k.importance) + '20', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                      {k.importance}
+                    </span>
+                  </Td>
+                  <Td>
+                    {k.tracked ? (
+                      <span
+                        title={concallQuote || ''}
+                        style={{ fontSize: 11, color: GREEN, fontWeight: 600, fontFamily: MONO, cursor: concallQuote ? 'help' : 'default' }}
+                      >
+                        ● {k.value || 'tracked'}
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: 10, color: FAINT }}>○ not extracted</span>
+                    )}
+                  </Td>
+                  <Td>
+                    <span style={{ fontSize: 11, color: MUTED }}>{k.description}</span>
+                    {concallQuote && (
+                      <div style={{ fontSize: 10, color: GREEN, marginTop: 4, fontStyle: 'italic', lineHeight: 1.4 }}>
+                        ↳ "{concallQuote.slice(0, 180)}{concallQuote.length > 180 ? '…' : ''}"
+                      </div>
+                    )}
+                  </Td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
         <div style={{ fontSize: 10, color: MUTED, marginTop: 10, lineHeight: 1.6 }}>

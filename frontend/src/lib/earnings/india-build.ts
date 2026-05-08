@@ -26,6 +26,7 @@ import {
 } from './scoring';
 import { classifyIndiaSector, INDIA_SECTOR_TEMPLATES, IndiaSector } from './india-sectors';
 import { inferGuidance } from './build';
+import { extractIndiaConcallInsights } from './india-concall';
 
 // ── Inputs ────────────────────────────────────────────────────────────────
 export interface ScreenerInput {
@@ -406,6 +407,7 @@ export function buildIndiaSnapshot(
     subIndStr,
     quarters,
     cfoOverPat,
+    rawText,
   });
 
   return {
@@ -545,8 +547,9 @@ function computeIndiaExtras(opts: {
   subIndStr: string;
   quarters: NonNullable<ScreenerInput['quarterly']>;
   cfoOverPat: number | null;
+  rawText?: string;
 }): IndiaExtras {
-  const { screener, sector, sectorTemplate, sectorStr, industryStr, subIndStr, quarters, cfoOverPat } = opts;
+  const { screener, sector, sectorTemplate, sectorStr, industryStr, subIndStr, quarters, cfoOverPat, rawText } = opts;
 
   // Top metrics passthrough
   const tm = screener?.topMetrics || ({} as any);
@@ -657,7 +660,18 @@ function computeIndiaExtras(opts: {
     };
   });
 
+  // ── Concall extraction (only when transcript was supplied) ──
+  const concallInsights =
+    rawText && rawText.trim().length >= 50
+      ? extractIndiaConcallInsights(rawText, sectorTemplate)
+      : null;
+
   // Sector KPI checklist — mark which we have data for
+  const concallKpiByLabel = new Map<string, string>();
+  for (const hit of concallInsights?.sectorKpiHits || []) {
+    concallKpiByLabel.set(hit.label, hit.quote);
+  }
+
   const sectorBlock = {
     slug: sector,
     displayName: sectorTemplate.displayName,
@@ -688,6 +702,12 @@ function computeIndiaExtras(opts: {
         tracked = true; value = `${topMetrics.roe.toFixed(1)}%`;
       } else if (/roce/i.test(k.label) && topMetrics.roce != null) {
         tracked = true; value = `${topMetrics.roce.toFixed(1)}%`;
+      }
+      // Concall transcript override — if the user pasted a transcript and it
+      // mentions this KPI, mark tracked even if we had no quantitative value.
+      if (!tracked && concallKpiByLabel.has(k.label)) {
+        tracked = true;
+        value = 'mentioned in concall';
       }
       return { label: k.label, description: k.description, importance: k.importance, tracked, value };
     }),
@@ -774,5 +794,6 @@ function computeIndiaExtras(opts: {
     quarterlyTrend: qtrendBase,
     sector: sectorBlock,
     fundamentalScore,
+    concall: concallInsights || undefined,
   };
 }

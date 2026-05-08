@@ -315,6 +315,27 @@ export interface IndiaExtras {
     direction: 'improving' | 'stable' | 'deteriorating';
     confidence: 'high' | 'medium' | 'low';
   };
+
+  // Concall extraction — populated when the user pastes a transcript
+  concall?: {
+    topQuotes: string[];
+    toneSignals: Array<{
+      phrase: string;
+      context: string;
+      sentiment: 'positive' | 'cautious' | 'negative';
+    }>;
+    keyMentions: Array<{
+      topic: 'operating_leverage' | 'capex' | 'margins' | 'eps' | 'launches' | 'demand' | 'guidance' | 'inflation' | 'pricing';
+      quote: string;
+    }>;
+    sectorKpiHits: Array<{ label: string; value: string; quote: string }>;
+    concallScore: number;
+    concallGrade: string;
+    positiveCount: number;
+    negativeCount: number;
+    cautiousCount: number;
+    charsAnalyzed: number;
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
