@@ -48,6 +48,45 @@ export interface ConcallInsights {
   charsAnalyzed: number;
 }
 
+// ── Boilerplate strip — Indian listed-co cover letters and SEBI templates ──
+// Most BSE / NSE filing decks start with "To, The General Manager...",
+// "Pursuant to Regulation 30 of SEBI...", or "We enclose herewith the Investor
+// Presentation". These add up to several hundred chars of noise that score
+// well on the surface (real verbs, real punctuation) but contain zero alpha.
+function stripBoilerplate(text: string): string {
+  let t = text;
+  // Remove the cover-letter block (everything before "Investor Presentation"
+  // or "Q[1-4] FY[YY] Performance" / "Performance Highlights").
+  const startMarkers = [
+    /Investor Presentation\s+(?:[-–]\s+)?(?:Q[1-4]|FY)\s*\d/i,
+    /(?:Q[1-4]|H[12]|FY)\s*\d{2}.{0,30}Performance Highlights/i,
+    /(?:MD'?s|Managing Director'?s)\s+Commentary/i,
+  ];
+  let cutPos = -1;
+  for (const re of startMarkers) {
+    const m = t.match(re);
+    if (m && m.index !== undefined) {
+      cutPos = Math.max(cutPos, m.index);
+    }
+  }
+  if (cutPos > 200) t = t.slice(cutPos);
+
+  // Strip the standard SEBI safe-harbor paragraph (regulator-mandated disclaimer)
+  t = t.replace(
+    /This presentation contains certain forward looking statements[\s\S]*?materially incorrect in future/gi,
+    ' ',
+  );
+  t = t.replace(/Pursuant to Regulation 30[\s\S]{0,400}?Investor Presentation/gi, ' ');
+
+  // Strip "To, The General Manager … Trading Symbol: XXXX Dear Sir/Ma'am"
+  t = t.replace(
+    /To,\s*\nThe (General Manager|Listing[\s\S]*?)Dear Sir\/Ma'?am[,\s]*/gi,
+    ' ',
+  );
+
+  return t.replace(/\s+/g, ' ').trim();
+}
+
 // ── Sentence splitter — preserves trailing punctuation ─────────────────────
 function splitSentences(text: string): string[] {
   return text
@@ -57,6 +96,27 @@ function splitSentences(text: string): string[] {
     .filter((s) => s.length >= 20 && s.length <= 320);
 }
 
+// Detect "tabley" sentences: lots of numbers, very few prose words.
+// Aeroflex decks dump P&L tables as continuous text — they look like quotes
+// but are actually columns smushed together.
+function isTableNoise(s: string): boolean {
+  const numCount = (s.match(/\b\d+(?:[.,]\d+)?\b/g) || []).length;
+  const wordCount = (s.match(/\b[A-Za-z]{3,}\b/g) || []).length;
+  if (numCount >= 4 && wordCount <= 4) return true;
+  if (numCount > wordCount && numCount >= 5) return true;
+  // Period strings like "FY21 FY22 FY23 FY24 FY25 FY26 +25%"
+  if (/(?:\bFY\s?\d{2,4}\b\s*){3,}/.test(s)) return true;
+  if (/(?:\bQ[1-4]\s?FY\s?\d{2,4}\b\s*){3,}/.test(s)) return true;
+  // Comma-separated number lists ("46 4,98,861 2.3 Q4FY26 571 3,31,763 18.9")
+  if ((s.match(/\d[,.]\d{2,3}/g) || []).length >= 3) return true;
+  return false;
+}
+
+// Detect cover-letter / regulatory boilerplate sentences
+function isBoilerplate(s: string): boolean {
+  return /\b(National Stock Exchange|BSE Limited|Bandra Kurla Complex|P\.J\. Towers|Listing Department|Trading Symbol|Compliance Officer|Membership No\.|Pursuant to Regulation|Yours faithfully|Dear Sir|Subject\s*:|safe harbor|forward looking statements concerning|risks and uncertainties)\b/i.test(s);
+}
+
 // ── Signal scorer — higher is more "informative" for an analyst ───────────
 const NUMBER_RE = /\b\d+(?:\.\d+)?(?:\s*%|\s*bps|\s*bp|\s*x|\s*Cr|\s*crore|\s*Mn|\s*million|\s*billion|\s*Bn|\s*basis points)?\b/gi;
 const STRONG_VERBS = /\b(grew|grow(ing|s)?|expand(ed|ing|s)?|increase[sd]?|rose|jumped|surged|accelerat(ed|ing|es)?|outperform(ed|ing|s)?|improved|enhanced|optimized|streamlined|delivered|achiev(ed|ing|es)?|beat|exceeded|raised|lowered|reduced|declined|contracted|fell|dropped|missed|impact(ed|ing|s)?|pressured|softened|moderated)\b/gi;
@@ -64,17 +124,29 @@ const FORWARD_WORDS = /\b(guidance|outlook|expect(s|ed|ing)?|forecast(ed|ing|s)?
 const TOPIC_WORDS = /\b(margin|EBITDA|operating profit|operating leverage|capex|capital expenditure|EPS|earnings|revenue|sales|volume|pricing|mix|new launch|new product|innovation|premium|rural|urban|distribution|reach|coverage|ad spend|A&P|R&D|gross margin|capacity|utilisation|utilization|inventory|working capital|debtor|receivable|payable|order book|backlog|attrition|hiring|deal pipeline|win rate|ARR|deal TCV|net adds|GMV|AUM|NIM|GNPA|slippage|provision|credit cost|book value|ROE|ROCE)\b/gi;
 
 function scoreSentence(s: string): number {
+  // Hard reject: pure-number tables or regulatory boilerplate — never quote-worthy
+  if (isTableNoise(s)) return -100;
+  if (isBoilerplate(s)) return -100;
+
   let score = 0;
   const numbers = s.match(NUMBER_RE);
-  if (numbers) score += Math.min(numbers.length, 5) * 6;
+  const numCount = numbers ? numbers.length : 0;
   const verbs = s.match(STRONG_VERBS);
-  if (verbs) score += Math.min(verbs.length, 4) * 4;
+  const verbCount = verbs ? verbs.length : 0;
   const fwd = s.match(FORWARD_WORDS);
-  if (fwd) score += Math.min(fwd.length, 3) * 5;
   const topics = s.match(TOPIC_WORDS);
+  const wordCount = (s.match(/\b[A-Za-z]{3,}\b/g) || []).length;
+
+  if (numbers) score += Math.min(numCount, 5) * 6;
+  if (verbs) score += Math.min(verbCount, 4) * 4;
+  if (fwd) score += Math.min(fwd.length, 3) * 5;
   if (topics) score += Math.min(topics.length, 4) * 3;
-  // Slightly favor sentences with both a number AND a strong verb
+  // Reward sentences with both a number AND a strong verb (real prose)
   if (numbers && verbs) score += 4;
+  // Penalize numeric-heavy with no verbs (semi-tables)
+  if (numCount >= 3 && verbCount === 0) score -= 8;
+  // Require a minimum prose density — short sentences with 1-2 words rarely informative
+  if (wordCount < 8) score -= 4;
   // Penalize over-long boilerplate
   if (s.length > 240) score -= 3;
   // Penalize Q&A formalities
@@ -166,16 +238,24 @@ const SECTOR_KPI_PATTERNS: Record<string, RegExp[]> = {
   'GNPA': [/\bGNPA\b|\bgross NPA\b|\b(asset quality|slippage|stress)\b/i],
   'CASA': [/\bCASA\b|\b(savings|current account)\s+(growth|ratio)/i],
   'Credit Cost': [/\b(credit cost|provisioning|provision coverage|PCR)\b/i],
-  // Auto / Industrials
-  'Order Book': [/\b(order (book|inflow|backlog)|book[- ]to[- ]bill)\b/i],
-  'Capex Plan': [/\b(capex plan|capital expenditure|capacity (expansion|addition)|new plant)\b/i],
-  'Capacity Utilization': [/\b(capacity utili[sz]ation|plant utili[sz]ation|production volume)\b/i],
+  // Auto / Industrials / Capital Goods
+  'Order Book': [/\b(order (book|inflow|backlog|intake)|book[- ]to[- ]bill)\b/i],
+  'Order Inflow': [/\b(order (inflow|intake|booking|new order|wins)|fresh orders|won orders|deal wins?|secured orders)\b/i],
+  'Order Book / Backlog': [/\b(order (book|backlog)|book[- ]to[- ]bill|backlog (of|stood))\b/i],
+  'Execution / Revenue': [/\b(execution|revenue conversion|backlog (conversion|burn|drawdown)|delivered (orders|revenue))\b/i, /\b(commission(ed|ing)|delivered|despatch(ed|es))\b.{0,40}(plant|capacity|skid|unit|order)/i],
+  'Capex Plan': [/\b(capex plan|capital expenditure|capacity (expansion|addition)|new plant|new facility|brownfield|greenfield|scale up to|expanded.{0,40}capacity)\b/i],
+  'Capacity Utilization': [/\b(capacity utili[sz]ation|plant utili[sz]ation|production volume|capacity (of|stood at|increased to))\b/i],
+  'Export Order Mix': [/\b(export (mix|order|share|revenue|geography|contribution)|domestic\s*[:.&]?\s*export|geographic(al)? (split|mix)|americas?|europe.{0,20}(asia|africa))\b/i],
   // Real estate
-  'Pre-sales / Bookings': [/\b(pre[- ]?sales|booking value|sales velocity|launches)\b/i],
-  'Collections': [/\b(collection (efficiency|run[- ]?rate)|cash flow from operations)\b/i],
+  'Pre-sales / Bookings': [/\b(pre[- ]?sales|booking value|sales velocity|launches|new launches|launch pipeline)\b/i],
+  'Collections': [/\b(collection (efficiency|run[- ]?rate)|cash flow from operations|cash collections)\b/i],
+  'Project Launches': [/\b(project (launch|launched)|new project|tower (launch|launched))\b/i],
   // Energy / Utilities
-  'PLF / Capacity Factor': [/\bPLF\b|\bcapacity factor\b|\bload factor\b/i],
-  'Tariff': [/\btariff\b|\bpower purchase\b|\bPPA\b/i],
+  'PLF / Capacity Factor': [/\bPLF\b|\bcapacity factor\b|\bload factor\b|\bgeneration (volume|output)/i],
+  'Tariff': [/\btariff\b|\bpower purchase\b|\bPPA\b|\bmerchant power\b/i],
+  'Generation Volume': [/\b(generation (volume|output)|MW (commission(ed|ing)?|added))/i],
+  // Note: 'EBITDA Margin' and 'Margin Trajectory' are already defined under
+  // Pharma and IT/Services above — they apply cross-sector via the key match.
 };
 
 // ── Main extractor ─────────────────────────────────────────────────────────
@@ -198,7 +278,8 @@ export function extractIndiaConcallInsights(
   };
   if (text.length < 50) return empty;
 
-  const sentences = splitSentences(text);
+  const cleaned = stripBoilerplate(text);
+  const sentences = splitSentences(cleaned).filter((s) => !isBoilerplate(s) && !isTableNoise(s));
 
   // 1. Rank sentences by score, dedupe near-duplicates, pick top 4.
   const scored = sentences
@@ -238,15 +319,23 @@ export function extractIndiaConcallInsights(
 
   const trimmedTone = toneSignals.slice(0, 12);
 
-  // 3. Topic mentions — best (longest informative) sentence per topic.
+  // 3. Topic mentions — find best matching SENTENCE (not regex span) for each
+  // topic. Requires verb + min word count to avoid catching chart headers.
   const keyMentions: ConcallKeyMention[] = [];
   for (const { topic, re } of TOPIC_PATTERNS) {
-    const m = text.match(re);
-    if (m && m[0]) {
-      const quote = m[0].trim().replace(/\s+/g, ' ');
-      if (quote.length >= 25 && quote.length <= 320) {
-        keyMentions.push({ topic, quote });
-      }
+    // Look across already-cleaned sentences to ensure we don't pick up
+    // table noise. Take the highest-scoring sentence that matches.
+    const candidates = sentences.filter((s) => re.test(s) && !isTableNoise(s) && !isBoilerplate(s));
+    if (candidates.length === 0) continue;
+    // Prefer sentences with a verb and at least 10 prose words
+    const scored = candidates
+      .map((s) => ({ s, sc: scoreSentence(s) }))
+      .filter((x) => x.sc > 0)
+      .sort((a, b) => b.sc - a.sc);
+    if (scored.length === 0) continue;
+    const quote = scored[0].s.replace(/\s+/g, ' ').trim();
+    if (quote.length >= 30 && quote.length <= 320) {
+      keyMentions.push({ topic, quote });
     }
   }
 

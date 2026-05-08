@@ -569,18 +569,43 @@ function computeGrowthDeltaPp(
 export function inferGuidance(rawText: string): EarningsSnapshot['guidance'] {
   const t = (rawText || '').toLowerCase();
   let direction: EarningsSnapshot['guidance']['direction'] = 'na';
+  // Explicit US-style guidance language
   if (/raise(d)?\s+(full[\s-]year\s+)?guidance|increased\s+guidance|guiding\s+(higher|up)/i.test(t)) direction = 'raised';
   else if (/lower(ed)?\s+guidance|reduced\s+guidance|cut(ting)?\s+guidance|guiding\s+(lower|down)/i.test(t)) direction = 'lowered';
   else if (/maintain(ing)?\s+guidance|reaffirm(ed|s|ing)?\s+guidance|reiterat(ing|e[sd]?)\s+guidance/i.test(t)) direction = 'maintained';
   else if (/initial\s+guidance|introduc(ing|e[sd]?)\s+guidance|providing\s+initial/i.test(t)) direction = 'introduced';
 
+  // Indian-deck capacity / capex forward statements ("plans to scale up to X
+  // skids by Q2FY27", "set up automatic welding station by Dec-26",
+  // "expansion to 20 mn meters by Q2FY27"). Treat as 'introduced' direction
+  // because they're concrete forward plans without explicit raise/lower
+  // language.
+  if (direction === 'na') {
+    const planRe = /\b(plan(s|ned|ning)?\s+to|on track to|expected to|going to|target(ed|s|ing)?\s+to)\s+[a-z\s]{0,40}\bby\s+(Q[1-4]\s?FY\s?\d{2,4}|FY\s?\d{2,4}|H[12]\s?FY?\s?\d{2,4}|\d{4}|[a-z]{3,4}[- ]?\d{2,4}|next quarter|next year)/i;
+    const expansionRe = /\b(expand(ed|ing|ion)?|increased?|scale up|scaling|add(ed|ing|ition)?|commission(ed|ing)?)\s+(?:its\s+)?[a-z\s]{0,30}capacity\s+to\s+[\d,]+/i;
+    const setupRe = /\b(set(ting)? up|adding|adding up|to commission|new plant|brownfield|greenfield)\b[\s\S]{0,80}\b(by|in)\s+(Q[1-4]\s?FY?\s?\d{2,4}|FY\s?\d{2,4}|[a-z]{3,4}[- ]?\d{2,4}|\d{4})/i;
+    if (planRe.test(t) || expansionRe.test(t) || setupRe.test(t)) {
+      direction = 'introduced';
+    }
+  }
+
+  // Broaden commentary harvest — pull sentences with guidance, outlook,
+  // capex/capacity plans, expected, on track, by Q[N]FY[YY]. Keeps the same
+  // 5-sentence cap and 280-char ceiling.
   const commentary: string[] = [];
   const sentences = (rawText || '').split(/(?<=[.!?])\s+/);
+  const guidanceSentenceRe = /\b(guidance|outlook|expect|guide|project(s|ed|ing)?|plan(s|ned|ning)?|on track|targeted?|aim(ing)? to|by\s+(Q[1-4]\s?FY?\s?\d{2,4}|FY\s?\d{2,4}|[a-z]{3,4}[- ]\d{2,4})|capacity (expansion|addition))\b/i;
+  const seenStarts = new Set<string>();
   for (const s of sentences) {
-    if (/guidance|outlook|expect|guide|projects?/i.test(s) && s.length < 280) {
-      commentary.push(s.trim());
-      if (commentary.length >= 5) break;
-    }
+    const trimmed = s.trim();
+    if (trimmed.length > 280 || trimmed.length < 25) continue;
+    if (!guidanceSentenceRe.test(trimmed)) continue;
+    // dedupe near-duplicates by leading 60 chars
+    const key = trimmed.slice(0, 60).toLowerCase();
+    if (seenStarts.has(key)) continue;
+    seenStarts.add(key);
+    commentary.push(trimmed);
+    if (commentary.length >= 5) break;
   }
 
   return {
