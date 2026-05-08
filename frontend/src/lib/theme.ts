@@ -58,8 +58,14 @@ export const THEMES: Record<ThemeName, ThemePalette> = {
     ORANGE: '#fb923c',
     YELLOW: '#facc15',
     TEAL: '#14b8a6',
+    // Unified font stack — institutional reports look stitched together
+    // when sans/mono families differ between prose and tabular cells.
+    // We keep the MONO export name for backwards-compat (callers use it
+    // for tabular-numeric cells with `font-variant-numeric: tabular-nums`),
+    // but it now points to the same family so the page reads as one
+    // typographic system.
     FONT: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-    MONO: '"SF Mono", Monaco, "Cascadia Code", "Roboto Mono", monospace',
+    MONO: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
   },
 
   light: {
@@ -83,7 +89,7 @@ export const THEMES: Record<ThemeName, ThemePalette> = {
     YELLOW: '#ca8a04',
     TEAL: '#0d9488',
     FONT: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-    MONO: '"SF Mono", Monaco, "Cascadia Code", "Roboto Mono", monospace',
+    MONO: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
   },
 
   professional: {

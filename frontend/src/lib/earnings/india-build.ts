@@ -144,12 +144,27 @@ export function buildIndiaSnapshot(
   else endpointsFailed.push('fmp_profile_india');
 
   // ── Sector classification ─────────────────────────────────────────────
-  // Prefer Screener's explicit sector + industry fields. Fall back to FMP
-  // industry. Fall back to free-text description.
+  // Use ONLY the curated Screener.in classification fields. Do NOT pass
+  // FMP's free-text description into the classifier — FMP descriptions
+  // enumerate every end-use industry the company's products touch, e.g.
+  // AEROFLEX (industrial flexible-hose manufacturer) describes products
+  // as "used in aerospace and defense, semiconductors, robotics, hydrogen,
+  // electric mobility, natural gas, steel, petrochemicals, solar,
+  // chemicals, food and pharmaceuticals, paper and pulp, HVAC". The word
+  // "pharmaceutical" inside that end-use list previously caused the
+  // pharma regex to fire and tag Aeroflex as a pharma company.
+  //
+  // Source-of-truth priority for sector / industry:
+  //   1. Screener.in sector + industry (authoritative classification)
+  //   2. Screener.in subIndustry (when available)
+  //   3. FMP industry field (NOT description) — only used when Screener
+  //      industry is missing entirely
+  // FMP description is reserved for the theme corpus only (see below)
+  // and is NEVER used for taxonomic sector mapping.
   const sectorStr = screener?.sector || '';
   const industryStr = screener?.industry || fmpProfile?.industry || '';
   const subIndStr = screener?.subIndustry || '';
-  const classifyText = [sectorStr, industryStr, subIndStr, fmpProfile?.description || ''].join(' ');
+  const classifyText = [sectorStr, subIndStr].filter(Boolean).join(' ');
   const sector: IndiaSector = classifyIndiaSector(industryStr || sectorStr, classifyText);
   const sectorTemplate = INDIA_SECTOR_TEMPLATES[sector];
 
@@ -229,12 +244,29 @@ export function buildIndiaSnapshot(
   };
 
   // ── Theme detection — INDIA macro themes (rural recovery / China+1 / etc) ─
+  // CRITICAL: do NOT inject sectorTemplate.themes into the corpus. Doing
+  // so creates a self-fulfilling prophecy where a misclassified sector
+  // pushes its own theme keywords ("US generics pricing", "CDMO", "GLP-1",
+  // etc.) into the corpus, and the detector "rediscovers" them as
+  // evidence. AEROFLEX exhibited this: pharma misclassification fed
+  // pharma themes into the corpus, which then triggered the Pharma
+  // theme as "high" with `cdmo / us generics / ipm growth` listed as
+  // evidence — even though the company's actual concall and description
+  // contain none of those phrases.
+  //
+  // Also exclude FMP description from theme corpus: it enumerates every
+  // end-use industry which spuriously triggers themes that don't apply
+  // to the issuer (semiconductor / pharma / aerospace exposure on a
+  // generic flex-hose manufacturer).
+  //
+  // Theme evidence MUST come from external authored text only:
+  //   - Screener company about (curated paragraph, not end-use list)
+  //   - Industry/sector labels (taxonomic, short)
+  //   - Concall transcript (rawText) — what management actually said
   const themeCorpus = [
     screener?.about || '',
-    fmpProfile?.description || '',
     industryStr,
-    sectorTemplate.themes.join(' '),
-    sectorTemplate.displayName,
+    sectorStr,
     rawText || '',
   ].filter(Boolean).join(' · ');
 
