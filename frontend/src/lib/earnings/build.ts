@@ -154,6 +154,11 @@ export function buildSnapshot(
   const consNext = estimates?.consensusNextQ || null;
   const lastSurp = estimates?.lastReportedSurprise || null;
 
+  // Hoisted history slice — used both for QoQ (later) and as an EPS / EBITDA
+  // fallback when the EDGAR XBRL parser doesn't fill those fields (GOOG
+  // pre-2026 shows EPS as '—' in scorecard otherwise).
+  const histQ = (history?.quarters || []).slice();
+
   const lastRevEst = lastSurp?.estimateRevenue !== null && lastSurp?.estimateRevenue !== undefined
     ? Math.round(lastSurp.estimateRevenue * sf * 100) / 100
     : null;
@@ -170,11 +175,12 @@ export function buildSnapshot(
 
   // EPS source priority: FMP earnings-surprises actualEps FIRST so the
   // scorecard "Actual" matches the consensus convention used in
-  // estimateEps (typically non-GAAP). Falling back to fin.eps (EDGAR XBRL
-  // basic GAAP) caused a visible mismatch on Tesla — scorecard showed
-  // non-GAAP 0.41 while the trend table showed GAAP 0.15 for the same
-  // quarter, making the Surprise calculation incoherent.
-  const epsActual = lastSurp?.actualEps ?? fin.eps ?? null;
+  // estimateEps (typically non-GAAP). Then fin.eps (EDGAR XBRL basic GAAP),
+  // then history[0].eps as a last-resort fallback. Some companies (GOOG
+  // pre-2026) don't carry EarningsPerShareBasic in XBRL — only diluted,
+  // or only as Class A / Class C splits — so without the history fallback
+  // the scorecard EPS row went '—' even though the trend had values.
+  const epsActual = lastSurp?.actualEps ?? fin.eps ?? histQ[0]?.eps ?? null;
   const epsEstimate = lastEpsEst ?? consNext?.epsAvg ?? null;
 
   const ebitdaEst = consNext?.ebitdaAvg !== null && consNext?.ebitdaAvg !== undefined
@@ -187,8 +193,7 @@ export function buildSnapshot(
     ? Math.round((ebitdaEst / revenueEstimate) * 10000) / 100
     : null;
 
-  // ── QoQ from history ───────────────────────────────────────────────────
-  const histQ = (history?.quarters || []).slice();
+  // ── QoQ from history (histQ already hoisted above for EPS fallback) ──
   const qoq = histQ[1] || null;
   const qoqRev = qoq?.revenue !== null && qoq?.revenue !== undefined ? Math.round(qoq.revenue * sf * 100) / 100 : null;
   // YoY = same fiscal quarter one year ago (4 quarters back in the history
@@ -218,19 +223,25 @@ export function buildSnapshot(
     }),
     ebitda: buildMetric({
       metric: 'EBITDA', unit: 'currency',
-      actual: fin.ebitda,
+      // history rows don't carry raw EBITDA — they have ebitdaMargin instead.
+      // If EDGAR didn't supply EBITDA, derive from ebitdaMargin × revenue.
+      actual: fin.ebitda ?? (
+        histQ[0]?.ebitdaMargin != null && fin.revenue != null
+          ? Math.round((histQ[0].ebitdaMargin / 100) * fin.revenue * 100) / 100
+          : null
+      ),
       estimate: ebitdaEst,
       prior: null, qoqPrior: null,
     }),
     grossMargin: buildMetric({
       metric: 'Gross Margin', unit: 'percent',
-      actual: fin.grossMargin,
+      actual: fin.grossMargin ?? histQ[0]?.grossMargin ?? null,
       estimate: null, prior: null,
       qoqPrior: qoq?.grossMargin ?? null,
     }),
     ebitdaMargin: buildMetric({
       metric: 'EBITDA Margin', unit: 'percent',
-      actual: fin.ebitdaMargin,
+      actual: fin.ebitdaMargin ?? histQ[0]?.ebitdaMargin ?? null,
       estimate: ebitdaMarginEst,
       prior: null,
       qoqPrior: qoq?.ebitdaMargin ?? null,

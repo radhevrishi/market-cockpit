@@ -75,19 +75,14 @@ export async function GET(request: Request) {
   });
   passthrough.append('apikey', apiKey);
 
-  // Map our endpoint slug to FMP path:
-  //   profile, income-statement, etc → /api/v3/{endpoint}/{ticker}
-  //   profile-v2 → /stable/profile?symbol=
-  //   quote, earnings, price-target-summary, grades, key-metrics-ttm → /stable/{endpoint}?symbol=
-  let fmpUrl: string;
-  if (endpoint === 'profile-v2' || endpoint === 'quote' || endpoint === 'earnings' ||
-      endpoint === 'price-target-summary' || endpoint === 'grades' || endpoint === 'key-metrics-ttm') {
-    const slug = endpoint === 'profile-v2' ? 'profile' : endpoint;
-    passthrough.set('symbol', ticker);
-    fmpUrl = `https://financialmodelingprep.com/stable/${slug}?${passthrough.toString()}`;
-  } else {
-    fmpUrl = `https://financialmodelingprep.com/api/v3/${endpoint}/${encodeURIComponent(ticker)}?${passthrough.toString()}`;
-  }
+  // FMP deprecated all /api/v3/ legacy endpoints on Aug 31, 2025 — every
+  // endpoint we proxy now lives at /stable/ with ?symbol= as a query param.
+  // (Previous version of this route hit /api/v3/ for surprises / estimates /
+  // income-statement / balance-sheet / cash-flow which is why GOOG showed
+  // "No FMP analyst coverage" — the deprecated endpoints return empty.)
+  passthrough.set('symbol', ticker);
+  const slug = endpoint === 'profile-v2' ? 'profile' : endpoint;
+  const fmpUrl = `https://financialmodelingprep.com/stable/${slug}?${passthrough.toString()}`;
 
   try {
     const res = await fetch(fmpUrl, {

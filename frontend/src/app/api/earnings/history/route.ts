@@ -217,10 +217,15 @@ export async function GET(request: Request) {
   const t = encodeURIComponent(ticker);
 
   const [income, cashflow, balance, earnings, surprises] = await Promise.all([
-    safeJson<any[]>(`${STABLE}/income-statement?symbol=${t}&period=quarter&limit=5&apikey=${FMP_KEY}`),
-    safeJson<any[]>(`${STABLE}/cash-flow-statement?symbol=${t}&period=quarter&limit=5&apikey=${FMP_KEY}`),
-    safeJson<any[]>(`${STABLE}/balance-sheet-statement?symbol=${t}&period=quarter&limit=5&apikey=${FMP_KEY}`),
-    safeJson<any[]>(`${STABLE}/earnings?symbol=${t}&limit=5&apikey=${FMP_KEY}`),
+    // limit=10 instead of 5 — covers two fiscal years so Q4 quarters that
+    // get reported in 10-K filings (rather than separate 10-Q) still surface.
+    // GOOG / FB / AAPL all hit this — calendar-FY companies whose Q4 income
+    // statement appears as period='FY' in /stable/, leaving gaps when limit
+    // was too small.
+    safeJson<any[]>(`${STABLE}/income-statement?symbol=${t}&period=quarter&limit=10&apikey=${FMP_KEY}`),
+    safeJson<any[]>(`${STABLE}/cash-flow-statement?symbol=${t}&period=quarter&limit=10&apikey=${FMP_KEY}`),
+    safeJson<any[]>(`${STABLE}/balance-sheet-statement?symbol=${t}&period=quarter&limit=10&apikey=${FMP_KEY}`),
+    safeJson<any[]>(`${STABLE}/earnings?symbol=${t}&limit=10&apikey=${FMP_KEY}`),
     // /earnings-surprises is the canonical "actual vs consensus" feed.
     // For some tickers (Tesla being the obvious example) /stable/earnings
     // returns GAAP basic EPS while /stable/earnings-surprises returns the
@@ -273,7 +278,15 @@ export async function GET(request: Request) {
   const surpByDate = new Map<string, any>();
   (surprises || []).forEach((s: any) => s.date && surpByDate.set(s.date, s));
 
-  const quarters = income.slice(0, 5).map((row: any) => {
+  // Sort newest-first by date (FMP usually returns sorted but be defensive)
+  // then take 8 most recent. Bumped from 5 to 8 to fix Q4-skip gap on
+  // calendar-FY companies (GOOG / FB / AAPL).
+  const sortedIncome = [...income].sort((a: any, b: any) => {
+    const at = new Date(a.date || 0).getTime();
+    const bt = new Date(b.date || 0).getTime();
+    return bt - at;
+  });
+  const quarters = sortedIncome.slice(0, 8).map((row: any) => {
     const date = row.date;
     const cf = cfByDate.get(date) || {};
     const bs = bsByDate.get(date) || {};
