@@ -243,6 +243,19 @@ export interface IndiaExtras {
     cfoOverPat: number | null;
     interestCoverage: number | null;
     asOfPeriod: string | null;
+    // Sector-aware tone thresholds. Tuple format [good_max, mid_max, bad_floor]
+    // for "lower-is-better" metrics; reverse semantics for daysPayable.
+    // Calibrated per IndiaSector (see WC_BENCHMARKS in india-sectors.ts) so
+    // 122 inventory days reads green for capital goods but red for FMCG.
+    benchmarks?: {
+      debtorDays: [number, number, number];
+      inventoryDays: [number, number, number];
+      daysPayable: [number, number, number];
+      cashConvCycle: [number, number, number];
+      workingCapitalDays: [number, number, number];
+      cfoOverPat: { good: number; mid: number };
+      sectorLabel: string;   // human-readable benchmark source ("Industrials / Capital Goods", etc.)
+    };
   };
 
   // Promoter & governance

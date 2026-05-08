@@ -24,7 +24,7 @@ import {
   computeJatScore,
   JatSignal,
 } from './scoring';
-import { classifyIndiaSector, INDIA_SECTOR_TEMPLATES, IndiaSector } from './india-sectors';
+import { classifyIndiaSector, INDIA_SECTOR_TEMPLATES, IndiaSector, WC_BENCHMARKS } from './india-sectors';
 import { inferGuidance } from './build';
 import { extractIndiaConcallInsights } from './india-concall';
 
@@ -609,6 +609,10 @@ function computeIndiaExtras(opts: {
       .map((r) => r)
       .reverse()
       .find((r) => r.cashConversionCycle !== null || r.debtorDays !== null) || null;
+  // Sector-aware working capital thresholds. Pulled from WC_BENCHMARKS
+  // keyed off the classified sector — so a 122-day inventory cycle reads
+  // green for capital goods (normal) and red for FMCG (alarming).
+  const wcBench = WC_BENCHMARKS[sector];
   const workingCapital = {
     debtorDays: recentRatios?.debtorDays ?? null,
     inventoryDays: recentRatios?.inventoryDays ?? null,
@@ -618,6 +622,10 @@ function computeIndiaExtras(opts: {
     cfoOverPat,
     interestCoverage: null,
     asOfPeriod: recentRatios?.period ?? null,
+    benchmarks: {
+      ...wcBench,
+      sectorLabel: sectorTemplate.displayName,
+    },
   };
 
   // Promoter trend — last 12 quarters of shareholding
@@ -870,17 +878,29 @@ function computeIndiaExtras(opts: {
     lastOpmYoY !== null
       ? score01(lastOpmYoY, -300, 300) // ±300 bps band
       : (lastQuarterRow?.opmPct ?? 0) > 15 ? 65 : 50;
+  // Sector-aware working capital score. The previous fixed 120-day CCC
+  // anchor punished capital-goods / defense / real-estate companies for
+  // running structurally long cycles even when they were mid-of-pack
+  // for their peer set. AEROFLEX (Iron & Steel Products) had CCC 112d,
+  // scoring 7/100 on the universal scale — but 112d is roughly mid-cycle
+  // for industrial flexible-hose manufacturers. Using the sector
+  // benchmark band [good, mid, bad] from WC_BENCHMARKS the score
+  // becomes linear from bad_floor → good_max.
+  const wcBenchCCC = wcBench.cashConvCycle; // [good, mid, bad]
   const workingCapitalScore =
     workingCapital.cashConversionCycle !== null
-      ? score01(-workingCapital.cashConversionCycle, -120, 0) // 120d → 0; 0d → 100
+      ? score01(-workingCapital.cashConversionCycle, -wcBenchCCC[2], -wcBenchCCC[0])
       : 50;
   const promoterScore =
     promoterChangeQoQ !== null
       ? score01(promoterChangeQoQ, -1.0, 1.0)
       : (governance.promoterHoldingPct !== null && governance.promoterHoldingPct >= 50 ? 65 : 50);
+  // CFO/PAT score also sector-aware. Anchor: mid threshold scores ~50,
+  // good threshold scores ~90, well above good caps at 100.
+  const cfoBench = wcBench.cfoOverPat;
   const cashConversionScore =
     cfoOverPat !== null
-      ? score01(cfoOverPat, 0.4, 1.5)
+      ? score01(cfoOverPat, cfoBench.mid - 0.3, cfoBench.good + 0.5)
       : 50;
 
   // ── FORWARD OUTLOOK COMPONENT ────────────────────────────────────────

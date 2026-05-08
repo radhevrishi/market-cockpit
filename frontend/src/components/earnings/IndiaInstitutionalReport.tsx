@@ -507,14 +507,37 @@ export function IndiaInstitutionalReport({
       {/* ═══════════════════════════════════════════════════════════════════
           F. WORKING CAPITAL CYCLE
          ═══════════════════════════════════════════════════════════════════ */}
-      <SectionTitle title="Working Capital & Cash Conversion" subtitle={wc.asOfPeriod ? `As of ${wc.asOfPeriod}` : 'Annual ratios'} />
+      {/* Sector-aware WC tone — capital goods companies legitimately run
+          long debtor/inventory cycles. Default thresholds kept as fallback
+          for snapshots built before the benchmarks field existed. */}
+      <SectionTitle
+        title="Working Capital & Cash Conversion"
+        subtitle={
+          wc.benchmarks?.sectorLabel
+            ? `As of ${wc.asOfPeriod || 'annual'} · benchmarks vs ${wc.benchmarks.sectorLabel}`
+            : (wc.asOfPeriod ? `As of ${wc.asOfPeriod}` : 'Annual ratios')
+        }
+      />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginBottom: 22 }}>
-        <KpiTile label="Debtor Days" value={fmtDays(wc.debtorDays)} tone={wcTone(wc.debtorDays, [60, 90, 120])} hint="Days of receivables outstanding" />
-        <KpiTile label="Inventory Days" value={fmtDays(wc.inventoryDays)} tone={wcTone(wc.inventoryDays, [60, 100, 150])} hint="Days of inventory on hand" />
-        <KpiTile label="Days Payable" value={fmtDays(wc.daysPayable)} tone={wcTone(wc.daysPayable, [120, 60, 30], 'reverse')} hint="Higher is better — supplier float" />
-        <KpiTile label="Cash Conv. Cycle" value={fmtDays(wc.cashConversionCycle)} tone={wcTone(wc.cashConversionCycle, [30, 60, 90])} hint="Lower is better — cash freed" />
-        <KpiTile label="Working Cap. Days" value={fmtDays(wc.workingCapitalDays)} tone={wcTone(wc.workingCapitalDays, [60, 100, 140])} hint="WC tied to operations" />
-        <KpiTile label="CFO / PAT" value={wc.cfoOverPat != null ? `${wc.cfoOverPat.toFixed(2)}x` : '—'} tone={wc.cfoOverPat == null ? 'na' : wc.cfoOverPat >= 0.85 ? 'good' : wc.cfoOverPat >= 0.5 ? 'mid' : 'bad'} hint="Earnings → cash conversion" />
+        <KpiTile label="Debtor Days" value={fmtDays(wc.debtorDays)} tone={wcTone(wc.debtorDays, wc.benchmarks?.debtorDays || [60, 90, 120])} hint="Days of receivables outstanding" />
+        <KpiTile label="Inventory Days" value={fmtDays(wc.inventoryDays)} tone={wcTone(wc.inventoryDays, wc.benchmarks?.inventoryDays || [60, 100, 150])} hint="Days of inventory on hand" />
+        <KpiTile label="Days Payable" value={fmtDays(wc.daysPayable)} tone={wcTone(wc.daysPayable, wc.benchmarks?.daysPayable || [120, 60, 30], 'reverse')} hint="Higher is better — supplier float" />
+        <KpiTile label="Cash Conv. Cycle" value={fmtDays(wc.cashConversionCycle)} tone={wcTone(wc.cashConversionCycle, wc.benchmarks?.cashConvCycle || [30, 60, 90])} hint="Lower is better — cash freed" />
+        <KpiTile label="Working Cap. Days" value={fmtDays(wc.workingCapitalDays)} tone={wcTone(wc.workingCapitalDays, wc.benchmarks?.workingCapitalDays || [60, 100, 140])} hint="WC tied to operations" />
+        <KpiTile
+          label="CFO / PAT"
+          value={wc.cfoOverPat != null ? `${wc.cfoOverPat.toFixed(2)}x` : '—'}
+          tone={
+            wc.cfoOverPat == null
+              ? 'na'
+              : wc.cfoOverPat >= (wc.benchmarks?.cfoOverPat?.good ?? 0.85)
+                ? 'good'
+                : wc.cfoOverPat >= (wc.benchmarks?.cfoOverPat?.mid ?? 0.5)
+                  ? 'mid'
+                  : 'bad'
+          }
+          hint="Earnings → cash conversion"
+        />
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════

@@ -34,6 +34,33 @@ export interface IndiaSectorKPI {
   importance: 'critical' | 'high' | 'medium';
 }
 
+// ── Working-capital benchmarks ─────────────────────────────────────────
+// Tuple format: [good_max, mid_max, bad_floor]
+//   - For "lower is better" metrics (debtor days / inventory / CCC):
+//     value <= good_max  → green
+//     value <= mid_max   → amber
+//     value >  mid_max   → red
+//   - For "higher is better" metrics (days payable, marked 'reverse' at
+//     the call site): value >= good_max → green; value >= mid_max →
+//     amber; else red.
+//
+// Calibrations are sector-aware because what's normal differs by 10×
+// across the taxonomy:
+//   - FMCG: 30-day debtor cycle is normal; 90 is alarming
+//   - Capital Goods: 90-180 day debtor cycle is normal; 250+ is alarming
+//   - Real Estate: project inventory is measured in years (730+ days)
+//   - Banks / NBFCs: WC days are not meaningful → wide bands so the
+//     UI doesn't scream red on a metric that doesn't apply.
+// ────────────────────────────────────────────────────────────────────────
+export interface WCBenchmark {
+  debtorDays: [number, number, number];
+  inventoryDays: [number, number, number];
+  daysPayable: [number, number, number];      // higher-is-better; pass 'reverse' to wcTone
+  cashConvCycle: [number, number, number];
+  workingCapitalDays: [number, number, number];
+  cfoOverPat: { good: number; mid: number };  // ≥good = green, ≥mid = amber, else red
+}
+
 export interface IndiaSectorTemplate {
   sector: IndiaSector;
   displayName: string;
@@ -41,6 +68,191 @@ export interface IndiaSectorTemplate {
   themes: string[];     // sector-relevant macro themes
   redFlags: string[];   // institutional warning signals
 }
+
+// Sector → working-capital benchmark map. Kept separate from
+// INDIA_SECTOR_TEMPLATES so the template literals stay readable; the build
+// pipeline merges these in at snapshot time.
+export const WC_BENCHMARKS: Record<IndiaSector, WCBenchmark> = {
+  fmcg: {
+    debtorDays: [30, 45, 60],
+    inventoryDays: [45, 75, 100],
+    daysPayable: [90, 60, 30],
+    cashConvCycle: [15, 45, 75],
+    workingCapitalDays: [30, 60, 90],
+    cfoOverPat: { good: 0.9, mid: 0.7 },
+  },
+  banks: {
+    // Banks don't operate on WC days — wide bands so the UI doesn't paint
+    // any cell red on a metric that's structurally meaningless.
+    debtorDays: [180, 365, 730],
+    inventoryDays: [180, 365, 730],
+    daysPayable: [180, 90, 30],
+    cashConvCycle: [180, 365, 730],
+    workingCapitalDays: [180, 365, 730],
+    cfoOverPat: { good: 0.7, mid: 0.4 },
+  },
+  nbfc_insurance: {
+    debtorDays: [180, 365, 730],
+    inventoryDays: [180, 365, 730],
+    daysPayable: [180, 90, 30],
+    cashConvCycle: [180, 365, 730],
+    workingCapitalDays: [180, 365, 730],
+    cfoOverPat: { good: 0.6, mid: 0.4 },
+  },
+  it_services: {
+    debtorDays: [60, 90, 120],
+    inventoryDays: [15, 30, 60],
+    daysPayable: [60, 30, 15],
+    cashConvCycle: [60, 90, 120],
+    workingCapitalDays: [60, 100, 140],
+    cfoOverPat: { good: 0.95, mid: 0.75 },
+  },
+  pharma_healthcare: {
+    debtorDays: [60, 90, 120],
+    inventoryDays: [90, 130, 180],
+    daysPayable: [90, 60, 30],
+    cashConvCycle: [60, 120, 180],
+    workingCapitalDays: [80, 130, 180],
+    cfoOverPat: { good: 0.85, mid: 0.6 },
+  },
+  auto: {
+    debtorDays: [30, 60, 90],
+    inventoryDays: [30, 60, 90],
+    daysPayable: [60, 45, 30],
+    cashConvCycle: [15, 45, 75],
+    workingCapitalDays: [30, 75, 120],
+    cfoOverPat: { good: 0.85, mid: 0.6 },
+  },
+  industrials_capgoods: {
+    // Capital-goods companies typically run 90-180 day debtor cycles
+    // and 90-200 day inventory (build-to-order, long execution).
+    debtorDays: [75, 120, 180],
+    inventoryDays: [75, 150, 220],
+    daysPayable: [90, 60, 30],
+    cashConvCycle: [75, 150, 220],
+    workingCapitalDays: [100, 175, 250],
+    cfoOverPat: { good: 0.7, mid: 0.45 },
+  },
+  metals_mining: {
+    // Aeroflex Industries (Iron & Steel Products) lands here — typical
+    // industrial-products WC profile, mid-cycle debtor exposure.
+    debtorDays: [60, 105, 150],
+    inventoryDays: [60, 100, 140],
+    daysPayable: [60, 45, 30],
+    cashConvCycle: [60, 110, 160],
+    workingCapitalDays: [75, 130, 180],
+    cfoOverPat: { good: 0.85, mid: 0.6 },
+  },
+  cement: {
+    debtorDays: [30, 60, 90],
+    inventoryDays: [30, 60, 90],
+    daysPayable: [60, 45, 30],
+    cashConvCycle: [30, 60, 90],
+    workingCapitalDays: [45, 75, 105],
+    cfoOverPat: { good: 0.9, mid: 0.7 },
+  },
+  energy_oil_gas: {
+    debtorDays: [30, 60, 90],
+    inventoryDays: [30, 60, 90],
+    daysPayable: [60, 45, 30],
+    cashConvCycle: [15, 45, 75],
+    workingCapitalDays: [30, 60, 90],
+    cfoOverPat: { good: 0.85, mid: 0.6 },
+  },
+  energy_power_renewable: {
+    // DISCOM payment cycle pushes debtor days higher than other sectors.
+    debtorDays: [60, 120, 180],
+    inventoryDays: [30, 60, 90],
+    daysPayable: [60, 45, 30],
+    cashConvCycle: [60, 150, 240],
+    workingCapitalDays: [75, 150, 240],
+    cfoOverPat: { good: 0.9, mid: 0.7 },
+  },
+  chemicals: {
+    debtorDays: [60, 90, 120],
+    inventoryDays: [60, 100, 150],
+    daysPayable: [60, 45, 30],
+    cashConvCycle: [60, 100, 150],
+    workingCapitalDays: [75, 120, 180],
+    cfoOverPat: { good: 0.85, mid: 0.6 },
+  },
+  consumer_durables: {
+    debtorDays: [45, 75, 100],
+    inventoryDays: [60, 100, 140],
+    daysPayable: [60, 45, 30],
+    cashConvCycle: [45, 90, 130],
+    workingCapitalDays: [60, 100, 140],
+    cfoOverPat: { good: 0.85, mid: 0.6 },
+  },
+  consumer_retail: {
+    // Retail collects cash at till — debtor days near zero is normal.
+    debtorDays: [10, 25, 45],
+    inventoryDays: [45, 75, 110],
+    daysPayable: [60, 45, 30],
+    cashConvCycle: [15, 45, 75],
+    workingCapitalDays: [30, 60, 90],
+    cfoOverPat: { good: 0.9, mid: 0.7 },
+  },
+  real_estate: {
+    // Project inventory is measured in years not months — separate scale.
+    debtorDays: [60, 120, 240],
+    inventoryDays: [365, 730, 1460],
+    daysPayable: [180, 90, 60],
+    cashConvCycle: [365, 730, 1460],
+    workingCapitalDays: [365, 730, 1460],
+    cfoOverPat: { good: 0.7, mid: 0.4 },
+  },
+  media_telecom: {
+    debtorDays: [45, 75, 105],
+    inventoryDays: [30, 60, 90],
+    daysPayable: [60, 45, 30],
+    cashConvCycle: [30, 60, 90],
+    workingCapitalDays: [45, 75, 105],
+    cfoOverPat: { good: 0.95, mid: 0.75 },
+  },
+  defense_aerospace: {
+    // Long-cycle contracts: 6-12 months payable / receivable common.
+    debtorDays: [90, 180, 270],
+    inventoryDays: [120, 220, 320],
+    daysPayable: [90, 60, 30],
+    cashConvCycle: [120, 240, 360],
+    workingCapitalDays: [150, 280, 420],
+    cfoOverPat: { good: 0.7, mid: 0.45 },
+  },
+  agri_food: {
+    debtorDays: [30, 60, 90],
+    inventoryDays: [60, 100, 150],
+    daysPayable: [60, 45, 30],
+    cashConvCycle: [45, 90, 130],
+    workingCapitalDays: [60, 100, 140],
+    cfoOverPat: { good: 0.85, mid: 0.6 },
+  },
+  paper_packaging: {
+    debtorDays: [45, 75, 105],
+    inventoryDays: [60, 90, 130],
+    daysPayable: [60, 45, 30],
+    cashConvCycle: [45, 90, 130],
+    workingCapitalDays: [60, 100, 140],
+    cfoOverPat: { good: 0.85, mid: 0.6 },
+  },
+  logistics_transport: {
+    debtorDays: [45, 75, 105],
+    inventoryDays: [15, 30, 60],
+    daysPayable: [60, 45, 30],
+    cashConvCycle: [30, 60, 90],
+    workingCapitalDays: [45, 75, 105],
+    cfoOverPat: { good: 0.9, mid: 0.7 },
+  },
+  diversified: {
+    // Mid-band defaults — used when sector cannot be mapped.
+    debtorDays: [60, 100, 140],
+    inventoryDays: [60, 100, 150],
+    daysPayable: [75, 50, 30],
+    cashConvCycle: [60, 110, 160],
+    workingCapitalDays: [75, 130, 180],
+    cfoOverPat: { good: 0.85, mid: 0.6 },
+  },
+};
 
 // ── Sector templates ────────────────────────────────────────────────────
 export const INDIA_SECTOR_TEMPLATES: Record<IndiaSector, IndiaSectorTemplate> = {
