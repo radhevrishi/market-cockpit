@@ -273,8 +273,60 @@ export async function fetchLatestFinancialResults() {
 }
 
 // Fetch financial results for a specific company (for enriching announcements)
-export async function fetchCompanyFinancialResults(symbol: string) {
-  return nseApiFetch(`/api/corporates-financial-results?index=equities&symbol=${encodeURIComponent(symbol)}`, 300000);
+//
+// Calls the NSE corporates-financial-results endpoint twice in fallback chain:
+//   1. with a 3-year date range (gets the most recent filings — required for
+//      symbols where the bare symbol query returns ancient cached rows)
+//   2. without a date range (used when #1 returns empty — some smaller caps
+//      only respond to the symbol filter)
+// Results are merged, deduped by toDate, and returned as a single array. The
+// caller filters by period span.
+export async function fetchCompanyFinancialResults(symbol: string): Promise<any> {
+  const today = new Date();
+  const past = new Date(today);
+  past.setFullYear(today.getFullYear() - 3);
+  const fmt = (d: Date) => `${d.getDate().toString().padStart(2, '0')}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getFullYear()}`;
+  const fromDate = fmt(past);
+  const toDate = fmt(today);
+
+  // Try with date range first (most recent filings)
+  let primary: any = null;
+  try {
+    primary = await nseApiFetch(
+      `/api/corporates-financial-results?index=equities&symbol=${encodeURIComponent(symbol)}&period=Quarterly&from_date=${fromDate}&to_date=${toDate}`,
+      300000,
+    );
+  } catch {
+    // ignore
+  }
+  const primaryArr: any[] = Array.isArray(primary) ? primary : primary?.data || [];
+
+  // Always also try without a date range — smaller caps sometimes don't
+  // respond to the date filter; merging both gives the best coverage.
+  let fallback: any = null;
+  try {
+    fallback = await nseApiFetch(
+      `/api/corporates-financial-results?index=equities&symbol=${encodeURIComponent(symbol)}`,
+      300000,
+    );
+  } catch {
+    // ignore
+  }
+  const fallbackArr: any[] = Array.isArray(fallback) ? fallback : fallback?.data || [];
+
+  // Merge + dedupe by toDate (keeps newest of each period)
+  const combined: any[] = [...primaryArr, ...fallbackArr];
+  if (combined.length === 0) return null;
+  const seen = new Set<string>();
+  const dedup: any[] = [];
+  for (const r of combined) {
+    const key = `${r.toDate || r.broadCastDate || ''}::${r.consolidated || r.re_emp || ''}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      dedup.push(r);
+    }
+  }
+  return dedup;
 }
 
 // Fetch individual stock detailed quote
