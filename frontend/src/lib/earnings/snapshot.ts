@@ -325,7 +325,22 @@ export interface IndiaExtras {
       sentiment: 'positive' | 'cautious' | 'negative';
     }>;
     keyMentions: Array<{
-      topic: 'operating_leverage' | 'capex' | 'margins' | 'eps' | 'launches' | 'demand' | 'guidance' | 'inflation' | 'pricing';
+      topic:
+        | 'operating_leverage'
+        | 'capex'
+        | 'margins'
+        | 'eps'
+        | 'launches'
+        | 'demand'
+        | 'guidance'
+        | 'inflation'
+        | 'pricing'
+        | 'dividend'
+        | 'subsidiary'
+        | 'geographic_mix'
+        | 'capacity'
+        | 'rd_pipeline'
+        | 'customer_wins';
       quote: string;
     }>;
     sectorKpiHits: Array<{ label: string; value: string; quote: string }>;

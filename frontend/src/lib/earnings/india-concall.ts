@@ -31,7 +31,22 @@ export interface ConcallToneSignal {
 }
 
 export interface ConcallKeyMention {
-  topic: 'operating_leverage' | 'capex' | 'margins' | 'eps' | 'launches' | 'demand' | 'guidance' | 'inflation' | 'pricing';
+  topic:
+    | 'operating_leverage'
+    | 'capex'
+    | 'margins'
+    | 'eps'
+    | 'launches'
+    | 'demand'
+    | 'guidance'
+    | 'inflation'
+    | 'pricing'
+    | 'dividend'
+    | 'subsidiary'
+    | 'geographic_mix'
+    | 'capacity'
+    | 'rd_pipeline'
+    | 'customer_wins';
   quote: string;
 }
 
@@ -53,6 +68,10 @@ export interface ConcallInsights {
 // "Pursuant to Regulation 30 of SEBI...", or "We enclose herewith the Investor
 // Presentation". These add up to several hundred chars of noise that score
 // well on the surface (real verbs, real punctuation) but contain zero alpha.
+//
+// Investor presentations also contain non-financial sections (CSR, Sustainability,
+// Employee Wellbeing, "Why X Matters") that score on verbs but aren't relevant
+// to earnings analysis. Strip them so they don't pollute top quotes.
 function stripBoilerplate(text: string): string {
   let t = text;
   // Remove the cover-letter block (everything before "Investor Presentation"
@@ -61,6 +80,7 @@ function stripBoilerplate(text: string): string {
     /Investor Presentation\s+(?:[-–]\s+)?(?:Q[1-4]|FY)\s*\d/i,
     /(?:Q[1-4]|H[12]|FY)\s*\d{2}.{0,30}Performance Highlights/i,
     /(?:MD'?s|Managing Director'?s)\s+Commentary/i,
+    /Q\d\s*&\s*FY\s*\d{2}\s+Performance/i,
   ];
   let cutPos = -1;
   for (const re of startMarkers) {
@@ -76,6 +96,10 @@ function stripBoilerplate(text: string): string {
     /This presentation contains certain forward looking statements[\s\S]*?materially incorrect in future/gi,
     ' ',
   );
+  t = t.replace(
+    /This presentation and the accompanying slides[\s\S]*?expressly excluded\.?/gi,
+    ' ',
+  );
   t = t.replace(/Pursuant to Regulation 30[\s\S]{0,400}?Investor Presentation/gi, ' ');
 
   // Strip "To, The General Manager … Trading Symbol: XXXX Dear Sir/Ma'am"
@@ -83,6 +107,42 @@ function stripBoilerplate(text: string): string {
     /To,\s*\nThe (General Manager|Listing[\s\S]*?)Dear Sir\/Ma'?am[,\s]*/gi,
     ' ',
   );
+
+  // Strip non-financial sections by chopping at section dividers. Every
+  // numbered section header like "1. CSR Activities" / "6. Ensuring Employee
+  // Well Being" / "5. Responsible Corporate" cuts out everything between it
+  // and the next numbered header (or end of doc).
+  const NONFIN_SECTIONS = [
+    /\b\d+\.\s*CSR Activities/i,
+    /\b\d+\.\s*Corporate Social Responsibility/i,
+    /\b\d+\.\s*Sustainability\b/i,
+    /\b\d+\.\s*Sustainability Integrated/i,
+    /\b\d+\.\s*Responsible Corporate/i,
+    /\b\d+\.\s*Ensuring Employee Well[- ]?Being/i,
+    /\b\d+\.\s*Employee Wellbeing/i,
+    /Annual Cricket Tournament/i,
+    /Safety Week Celebrations/i,
+    /Ashadham Reconstruction/i,
+    /Tribal Children Education/i,
+    /Bal Asha Trust/i,
+    /SAT Foundation/i,
+    /St\.\s+Anthony Home/i,
+    /Why do .{1,40} Matter\?/i,
+  ];
+  for (const re of NONFIN_SECTIONS) {
+    const m = re.exec(t);
+    if (!m || m.index === undefined) continue;
+    // Look ahead for next "X. Heading" section break or just chop a fixed
+    // window forward (most section blocks are < 1500 chars).
+    const tail = t.slice(m.index);
+    const nextSectionMatch = /\n\s*\d+\.\s+[A-Z]/.exec(tail.slice(20));
+    const blockLen = nextSectionMatch ? nextSectionMatch.index + 20 : Math.min(tail.length, 1500);
+    t = t.slice(0, m.index) + ' ' + t.slice(m.index + blockLen);
+  }
+
+  // Strip THANK YOU footer block + investor relations contact details
+  t = t.replace(/THANK YOU!?[\s\S]{0,800}$/i, ' ');
+  t = t.replace(/Investor Relations Advisors:[\s\S]{0,400}$/i, ' ');
 
   return t.replace(/\s+/g, ' ').trim();
 }
@@ -156,18 +216,31 @@ function scoreSentence(s: string): number {
 
 // ── Tone phrase tables ─────────────────────────────────────────────────────
 const POSITIVE_PHRASES: Array<[RegExp, string]> = [
-  [/\bstrong (growth|momentum|demand|performance|traction|order\s?book|pipeline)\b/i, 'strong'],
-  [/\b(record|all[- ]time high|highest\s+ever|best\s+quarter)\b/i, 'record'],
+  [/\bstrong (growth|momentum|demand|performance|traction|order\s?book|pipeline|cash generation|EBITDA)\b/i, 'strong'],
+  [/\b(record|all[- ]time high|highest\s+ever|best\s+quarter|highest ever quarterly)\b/i, 'record'],
   [/\bmargin (expansion|expanded|expand)/i, 'margin expansion'],
   [/\boperating leverage\b/i, 'operating leverage'],
   [/\b(double|triple|multi)[- ]?digit growth\b/i, 'double-digit growth'],
-  [/\b(robust|healthy|encouraging|positive|constructive) (demand|outlook|growth|trajectory|trend)\b/i, 'robust'],
+  [/\b(robust|healthy|encouraging|positive|constructive) (demand|outlook|growth|trajectory|trend|cash generation)\b/i, 'robust'],
   [/\baccelerat(ed|ing) growth\b/i, 'accelerating'],
-  [/\bcapacity expansion|capex.*(approved|sanctioned|on track)/i, 'capex on track'],
+  [/\bcapacity expansion|capex.*(approved|sanctioned|on track)|on track to (set up|commission|complete)/i, 'capex on track'],
   [/\bnew (product|launch|customer wins?|geographies)\b/i, 'new launches'],
   [/\b(green ?shoots|recovery|rebound|turnaround)\b/i, 'recovery'],
   [/\b(market share|share gains?)\b/i, 'market share gains'],
   [/\bbeat (consensus|expectations|estimates)\b/i, 'beat consensus'],
+  [/\bwell (positioned|prepared|placed)\b/i, 'well positioned'],
+  [/\bsustain(ed|able|ing)? (growth|momentum)\b/i, 'sustained momentum'],
+  [/\bgrowth opportunit(y|ies)\b/i, 'growth opportunity'],
+  [/\boperational excellence\b/i, 'operational excellence'],
+  [/\b(landmark|breakthrough)\s+(year|quarter|achievement)\b/i, 'landmark milestone'],
+  [/\blong[- ]term growth (opportunit|prospect|drivers)/i, 'long-term growth drivers'],
+  [/\b(resilien(t|ce)|resilien(t|ce) of the business)\b/i, 'resilient business'],
+  [/\bdividend (declared|increased|raised|special)/i, 'dividend declared'],
+  [/\binvest(ment)?\s+(in|towards)\s+(automation|capacity|capability|R\s*&\s*D|innovation)/i, 'investment in capability'],
+  [/\bsuccessful (entry|expansion|launch|commissioning)\b/i, 'successful entry'],
+  [/\bdebt[- ]?free (balance sheet|company)\b/i, 'debt-free balance sheet'],
+  [/\bbook[- ]to[- ]bill\s+(of|stood at|ratio)\s+\d/i, 'book-to-bill positive'],
+  [/\bglobal customer (relationships|base|wins)\b/i, 'global customer base'],
 ];
 
 const CAUTIOUS_PHRASES: Array<[RegExp, string]> = [
@@ -199,14 +272,20 @@ const NEGATIVE_PHRASES: Array<[RegExp, string]> = [
 // ── Topic extraction patterns ──────────────────────────────────────────────
 const TOPIC_PATTERNS: Array<{ topic: ConcallKeyMention['topic']; re: RegExp }> = [
   { topic: 'operating_leverage', re: /[^.!?]*\b(operating leverage|fixed cost (absorption|leverage)|scale (benefit|economies))\b[^.!?]*[.!?]/i },
-  { topic: 'capex', re: /[^.!?]*\b(capex|capital expenditure|capacity (expansion|addition)|new plant|new facility|brownfield|greenfield)\b[^.!?]*[.!?]/i },
-  { topic: 'margins', re: /[^.!?]*\b(gross margin|EBITDA margin|operating margin|margin (expansion|compression|trajectory|outlook))\b[^.!?]*[.!?]/i },
-  { topic: 'eps', re: /[^.!?]*\b(EPS|earnings per share|profit (before|after) tax|PAT (grew|declined|growth))\b[^.!?]*[.!?]/i },
-  { topic: 'launches', re: /[^.!?]*\b(new (product|launch|SKU|variant|innovation)|recently launched|launching|introduce[ds]?)\b[^.!?]*[.!?]/i },
-  { topic: 'demand', re: /[^.!?]*\b(demand (environment|trend|outlook)|consumer (sentiment|spending)|order (book|inflow))\b[^.!?]*[.!?]/i },
-  { topic: 'guidance', re: /[^.!?]*\b(guidance|outlook for|expect.{0,40}(year|FY|H[12]|Q[1-4]))\b[^.!?]*[.!?]/i },
-  { topic: 'inflation', re: /[^.!?]*\b(input cost|raw material|commodity|inflation|deflation|palm oil|crude|copper|aluminium|steel)\b[^.!?]*[.!?]/i },
+  { topic: 'capex', re: /[^.!?]*\b(capex|capital expenditure|capacity (expansion|addition)|new plant|new facility|brownfield|greenfield|expanded.{0,40}capacity|scale up to)\b[^.!?]*[.!?]/i },
+  { topic: 'capacity', re: /[^.!?]*\b(skid (capacity|assembly)|production capacity|installed capacity|capacity utili[sz]ation|capacity stood at|capacity of \d)\b[^.!?]*[.!?]/i },
+  { topic: 'margins', re: /[^.!?]*\b(gross margin|EBITDA margin|operating margin|margin (expansion|compression|trajectory|outlook|of \d))\b[^.!?]*[.!?]/i },
+  { topic: 'eps', re: /[^.!?]*\b(EPS (in|of|stood)|earnings per share|profit (before|after) tax|PAT (grew|declined|growth)|cash profit)\b[^.!?]*[.!?]/i },
+  { topic: 'launches', re: /[^.!?]*\b(new (product|launch|SKU|variant|innovation)|recently launched|launching|introduce[ds]?|successful entry)\b[^.!?]*[.!?]/i },
+  { topic: 'demand', re: /[^.!?]*\b(demand (environment|trend|outlook|across)|consumer (sentiment|spending)|order (book|inflow|intake)|strong demand)\b[^.!?]*[.!?]/i },
+  { topic: 'guidance', re: /[^.!?]*\b(guidance|outlook for|expect.{0,40}(year|FY|H[12]|Q[1-4])|on track to|plan(s|ned)? to (set up|commission|scale|expand)|by (Q[1-4]\s?FY?\s?\d|FY\s?\d|[a-z]{3,4}-\d{2}))\b[^.!?]*[.!?]/i },
+  { topic: 'inflation', re: /[^.!?]*\b(input cost (pressure|inflation)|raw material (cost|inflation|prices)|commodity (cost|inflation|prices)|palm oil|crude (price|inflation)|copper (price|inflation)|aluminium (price|inflation)|steel prices?)\b[^.!?]*[.!?]/i },
   { topic: 'pricing', re: /[^.!?]*\b(price (hike|increase|cut)|pricing power|pricing strategy|pass(ed|ing)? (on|through))\b[^.!?]*[.!?]/i },
+  { topic: 'dividend', re: /[^.!?]*\b(declared (a |an )?(final |interim |special )?dividend|dividend of (Rs|₹)|interim dividend|special dividend|dividend per (share|equity))\b[^.!?]*[.!?]/i },
+  { topic: 'subsidiary', re: /[^.!?]*\b(subsidiary|Hyd[- ]?Air|wholly[- ]owned subsidiary|JV partner|joint venture)\b[^.!?]{0,40}\b(grew|growth|expanded|recorded|delivered|reported|YoY)/i },
+  { topic: 'geographic_mix', re: /[^.!?]*\b(domestic (\s*[:.]\s*|\s+vs\s+|\s+&\s+)?export|geographic(al)? (split|mix)|exports? (to|grew|declined|share)|Americas?|export (revenue|share|contribution))\b[^.!?]*[.!?]/i },
+  { topic: 'rd_pipeline', re: /[^.!?]*\b(R\s*&\s*D (lab|spend|pipeline|cost|intensity)|research and development|products (under|in) R\s*&\s*D|R\s*&\s*D (centre|center))\b[^.!?]*[.!?]/i },
+  { topic: 'customer_wins', re: /[^.!?]*\b(customer (wins?|additions?|onboard|relationships|base)|won (a|new) (contract|deal|customer)|client wins?|new geographies|new (region|market) entry)\b[^.!?]*[.!?]/i },
 ];
 
 // ── Sector KPI keyword maps ────────────────────────────────────────────────
@@ -340,6 +419,11 @@ export function extractIndiaConcallInsights(
   }
 
   // 4. Sector KPI hits.
+  // Two-tier matching:
+  //   (a) prefer a clean prose sentence as evidence
+  //   (b) fall back to "the keyword appears anywhere in the cleaned text"
+  //       so KPIs like EBITDA Margin still light up when the deck only
+  //       mentions them inside a P&L table
   const sectorKpiHits: ConcallSectorKpiHit[] = [];
   if (sectorTemplate) {
     for (const kpi of sectorTemplate.kpis) {
@@ -350,7 +434,24 @@ export function extractIndiaConcallInsights(
         const sentence = sentences.find((s) => re.test(s));
         if (sentence) { evidence = sentence; break; }
       }
-      if (evidence) {
+      if (!evidence) {
+        // Fallback: keyword present somewhere in cleaned text, but only inside
+        // tables / boilerplate. Track the KPI as mentioned, with a generic
+        // pointer instead of a specific quote.
+        for (const re of patterns) {
+          if (re.test(cleaned)) {
+            evidence = '__table_data__';
+            break;
+          }
+        }
+      }
+      if (evidence === '__table_data__') {
+        sectorKpiHits.push({
+          label: kpi.label,
+          value: 'mentioned in concall (P&L table)',
+          quote: 'Found in the financial-data table; no narrative sentence available.',
+        });
+      } else if (evidence) {
         sectorKpiHits.push({ label: kpi.label, value: 'mentioned in concall', quote: evidence });
       }
     }

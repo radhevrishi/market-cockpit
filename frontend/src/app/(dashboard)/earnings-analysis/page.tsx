@@ -2595,11 +2595,33 @@ export default function EarningsAnalysisPage() {
         if (financials) setLoadingPct(45);
       }
 
+      // ── Bare-symbol India auto-fallback (SWIGGY / ZOMATO / RELIANCE) ──
+      // If the user typed a bare symbol with no .NS / .BO suffix and US
+      // sources came back empty, try the India pipeline before giving up.
+      // Many recent listings (Swiggy IPO Nov-2024) get flagged as US
+      // because they lack a suffix.
+      if (!financials && !isIndia) {
+        setLoadingMsg(`${ticker} not on US sources — trying NSE/BSE/Screener as ${ticker}.NS…`);
+        setLoadingPct(25);
+        try {
+          financials = await fetchFromScreenerIndia(`${ticker}.NS`);
+          if (financials) {
+            setLoadingPct(45);
+          }
+        } catch {
+          // ignore
+        }
+      }
+
       if (!financials) {
         if (isIndia) {
           setError(`No data found for "${ticker}" on NSE, BSE, Screener.in, or FMP. Verify the ticker symbol — try without the .NS / .BO suffix, or use the BSE 6-digit scrip code if it's BSE-only.`);
         } else {
-          setError(`No data found for "${ticker}". Verify the ticker symbol (e.g. AAPL, FSLY, OSS). For very small companies not on EDGAR, try PDF upload.`);
+          setError(
+            `No data found for "${ticker}" on EDGAR / FMP / NSE / BSE / Screener.in. ` +
+            `If this is an Indian stock, try with a .NS suffix (e.g. ${ticker}.NS or ${ticker}.BO). ` +
+            `For very small US caps not on EDGAR, try PDF upload.`,
+          );
         }
         setLoading(false); return;
       }
@@ -2661,14 +2683,22 @@ export default function EarningsAnalysisPage() {
 
       // ── Build institutional snapshot in parallel with FMP estimates + history ──
       setLoadingMsg('Building institutional snapshot…');
+      // Re-classify based on the ACTUAL data the lookup returned. The ticker
+      // might have come in bare (e.g. SWIGGY) and resolved via the India
+      // fallback — in which case d.currency is 'INR' and we want the India
+      // pipeline, not the US one.
+      const dataIsIndia = isIndia || d.currency === 'INR';
       try {
-        if (isIndia) {
+        if (dataIsIndia) {
           // ── INDIA PIPELINE: Screener.in + FMP profile ──
           // Don't call FMP estimates/history — they're premium-blocked for India.
           // Don't call EDGAR — India tickers aren't on SEC.
+          // For bare-symbol India fallback (e.g. SWIGGY), pass ${ticker}.NS
+          // so the screener route searches with the suffix that works.
+          const indiaTicker = isIndia ? ticker : `${ticker}.NS`;
           const [screenerRes, profileRes] = await Promise.allSettled([
-            fetch(`/api/earnings/india-screener?ticker=${encodeURIComponent(ticker)}`, { signal: AbortSignal.timeout(20000) }),
-            fetch(`/api/earnings/estimates?ticker=${encodeURIComponent(ticker)}`, { signal: AbortSignal.timeout(15000) }),
+            fetch(`/api/earnings/india-screener?ticker=${encodeURIComponent(indiaTicker)}`, { signal: AbortSignal.timeout(20000) }),
+            fetch(`/api/earnings/estimates?ticker=${encodeURIComponent(indiaTicker)}`, { signal: AbortSignal.timeout(15000) }),
           ]);
           const screenerJson: any = screenerRes.status === 'fulfilled' && screenerRes.value.ok
             ? await screenerRes.value.json().catch(() => null)

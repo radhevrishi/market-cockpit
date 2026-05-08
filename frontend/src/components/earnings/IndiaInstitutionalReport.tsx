@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { EarningsSnapshot, IndiaExtras, ThemeStrength } from '@/lib/earnings/snapshot';
+import { ConcallUploadModal } from './ConcallUploadModal';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // IndiaInstitutionalReport — fundamentals-driven layout
@@ -117,7 +118,6 @@ export function IndiaInstitutionalReport({
   concallProcessing,
 }: IndiaInstitutionalReportProps) {
   const [showConcallModal, setShowConcallModal] = React.useState(false);
-  const [concallText, setConcallText] = React.useState('');
   const ix: IndiaExtras | undefined = s.indiaExtras;
   if (!ix) {
     return (
@@ -605,72 +605,24 @@ export function IndiaInstitutionalReport({
         ))}
       </div>
 
-      {/* ── Concall paste modal ────────────────────────────────────────── */}
+      {/* ── Concall upload modal ──────────────────────────────────────── */}
       {showConcallModal && onConcallText && (
-        <div
-          onClick={() => setShowConcallModal(false)}
-          style={{
-            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            zIndex: 1000, padding: 20,
+        <ConcallUploadModal
+          accentColor={ACCENT}
+          bg={BG}
+          panel={PANEL}
+          panelBorder={BORDER}
+          panelBorder2={BORDER2}
+          textColor={TEXT}
+          mutedColor={MUTED}
+          mono={MONO}
+          processing={!!concallProcessing}
+          onClose={() => setShowConcallModal(false)}
+          onSubmit={(combined) => {
+            onConcallText(combined);
+            setShowConcallModal(false);
           }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 10,
-              padding: 18, width: '100%', maxWidth: 720,
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
-              <h3 style={{ fontSize: 14, fontWeight: 700, color: TEXT, margin: 0, textTransform: 'uppercase', letterSpacing: 1 }}>
-                Upload Concall Transcript
-              </h3>
-              <button onClick={() => setShowConcallModal(false)} style={{ background: 'transparent', border: 'none', color: MUTED, fontSize: 16, cursor: 'pointer' }}>×</button>
-            </div>
-            <div style={{ fontSize: 11, color: MUTED, marginBottom: 10, lineHeight: 1.5 }}>
-              Paste the earnings concall transcript or investor presentation prepared remarks.
-              The text is parsed locally for guidance language (raised / lowered / maintained),
-              management tone (positive / cautious / neutral), and India macro themes.
-              Nothing is sent to a third party — extraction runs in the browser.
-            </div>
-            <textarea
-              value={concallText}
-              onChange={(e) => setConcallText(e.target.value)}
-              placeholder="Paste concall transcript here…"
-              style={{
-                width: '100%', minHeight: 280, padding: 12,
-                background: BG, color: TEXT, border: `1px solid ${BORDER}`,
-                borderRadius: 6, fontSize: 12, fontFamily: MONO, resize: 'vertical',
-                lineHeight: 1.5,
-              }}
-            />
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
-              <button
-                onClick={() => { setConcallText(''); setShowConcallModal(false); }}
-                style={{ padding: '8px 14px', fontSize: 11, color: TEXT, background: 'transparent', border: `1px solid ${BORDER2}`, borderRadius: 5, cursor: 'pointer' }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  if (concallText.trim().length < 50) return;
-                  onConcallText(concallText);
-                  setShowConcallModal(false);
-                }}
-                disabled={concallText.trim().length < 50 || concallProcessing}
-                style={{
-                  padding: '8px 14px', fontSize: 11, fontWeight: 700,
-                  color: BG, background: ACCENT, border: 'none', borderRadius: 5,
-                  cursor: concallText.trim().length < 50 ? 'not-allowed' : 'pointer',
-                  opacity: concallText.trim().length < 50 ? 0.5 : 1,
-                }}
-              >
-                Extract & Rebuild
-              </button>
-            </div>
-          </div>
-        </div>
+        />
       )}
 
       {/* Debug provenance */}
