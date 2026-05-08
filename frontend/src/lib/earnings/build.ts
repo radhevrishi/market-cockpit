@@ -168,10 +168,14 @@ export function buildSnapshot(
     : null;
 
   const revenueActual = fin.revenue;
-  const revenueEstimate = lastRevEst ?? (consNext?.revenueAvg !== null && consNext?.revenueAvg !== undefined
-    ? Math.round(consNext.revenueAvg * sf * 100) / 100
-    : null);
-  if (revenueEstimate !== null && lastRevEst === null) fallbacksUsed.push('next-Q revenue est used as proxy for last reported');
+  // SCORECARD CONSENSUS RULE: only show consensus for the JUST-REPORTED
+  // quarter. Forward-Q estimates (consNext) are for the NEXT quarter and
+  // produce bogus surprise math when used as a proxy. NVDA case: actual
+  // Q3 FY26 was $57B (a beat); without this guard the scorecard rendered
+  // "Severe Miss -13.8%" by comparing against the Q4 FY26 forward estimate
+  // of $66B. If FMP didn't report the lastReportedSurprise estimate, leave
+  // estimate null — the verdict logic correctly shows '—'.
+  const revenueEstimate = lastRevEst;
 
   // EPS source priority: FMP earnings-surprises actualEps FIRST so the
   // scorecard "Actual" matches the consensus convention used in
@@ -181,7 +185,10 @@ export function buildSnapshot(
   // or only as Class A / Class C splits — so without the history fallback
   // the scorecard EPS row went '—' even though the trend had values.
   const epsActual = lastSurp?.actualEps ?? fin.eps ?? histQ[0]?.eps ?? null;
-  const epsEstimate = lastEpsEst ?? consNext?.epsAvg ?? null;
+  // EPS estimate: same rule as revenue — only use the consensus for the
+  // JUST-REPORTED quarter (lastEpsEst). Don't fall back to next-quarter
+  // consensus (consNext) which produces fake surprise math.
+  const epsEstimate = lastEpsEst;
 
   const ebitdaEst = consNext?.ebitdaAvg !== null && consNext?.ebitdaAvg !== undefined
     ? Math.round(consNext.ebitdaAvg * sf * 100) / 100

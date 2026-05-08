@@ -59,7 +59,7 @@ async function getCikMap(): Promise<Record<string, { cik: number; title: string 
 }
 
 // ── XBRL extraction helpers ────────────────────────────────────────────────
-type Filing = { cur: number; prior: number | null; end: string; form: string };
+type Filing = { cur: number; prior: number | null; end: string; form: string; fy?: number; fp?: string };
 
 function extractQuarterly(gaap: any, concepts: string[]): Filing | null {
   // Pool all quarterly filings across ALL concepts; pick the most recent.
@@ -85,6 +85,8 @@ function extractQuarterly(gaap: any, concepts: string[]): Filing | null {
         prior: null,
         end: u.end,
         form: u.form,
+        fy: u.fy,
+        fp: u.fp,
         concept,
       });
     }
@@ -109,6 +111,8 @@ function extractQuarterly(gaap: any, concepts: string[]): Filing | null {
     prior: prior?.cur ?? null,
     end: cur.end,
     form: cur.form,
+    fy: cur.fy,
+    fp: cur.fp,
   };
 }
 
@@ -371,10 +375,22 @@ export async function GET(request: Request) {
   const totalAssets = extractInstant(gaap, ['Assets']);
 
   // 4. Period label
-  const endDate = new Date(rev.end);
-  const mo = endDate.getMonth();
-  const quarter = mo < 3 ? 'Q1' : mo < 6 ? 'Q2' : mo < 9 ? 'Q3' : 'Q4';
-  const year = endDate.getFullYear();
+  // Prefer XBRL's own fy + fp (fiscal year + fiscal period) when present —
+  // this gives correct labels for non-Mar-FY companies. NVDA's FY ends in
+  // late January, so a quarter ending Oct 26 2025 is fiscal Q3 FY2026
+  // (not calendar Q4 2025 as a naive end-date computation would say).
+  // Falls back to calendar-quarter-from-end-date when XBRL fy/fp missing.
+  let quarter: string;
+  let year: number;
+  if (rev.fy && rev.fp && /^Q[1-4]$/i.test(rev.fp)) {
+    quarter = rev.fp.toUpperCase();
+    year = rev.fy;
+  } else {
+    const endDate = new Date(rev.end);
+    const mo = endDate.getMonth();
+    quarter = mo < 3 ? 'Q1' : mo < 6 ? 'Q2' : mo < 9 ? 'Q3' : 'Q4';
+    year = endDate.getFullYear();
+  }
 
   // Build a rich descriptive corpus from SEC submissions for theme detection.
   // Layered priority: 10-K business overview (richest) → SIC seed (theme hints
