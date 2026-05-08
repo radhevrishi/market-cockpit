@@ -2212,9 +2212,124 @@ export default function EarningsAnalysisPage() {
     } as RawFinancials;
   }
 
-  // ── NSE/BSE via server-side proxy (India tickers) ──────────────────────────
-  // NSE requires session cookies + a real User-Agent — both impossible from a
-  // browser. We hit /api/earnings/india which uses lib/nse.ts under the hood.
+  // ── India primary path via /api/earnings/india-screener ───────────────────
+  // The screener route runs NSE-primary internally (NSE corporates-financial
+  // -results) with Screener.in fallback. It returns Cr-denominated quarterly
+  // P&L plus TTM ratios. We map it to RawFinancials so the rest of the
+  // pipeline (FMP estimates, snapshot builder) works unchanged.
+  async function fetchFromScreenerIndia(ticker: string): Promise<RawFinancials | null> {
+    let payload: any = null;
+    try {
+      const res = await fetch(`/api/earnings/india-screener?ticker=${encodeURIComponent(ticker)}`, {
+        signal: AbortSignal.timeout(20000),
+      });
+      payload = await res.json().catch(() => null);
+      if (!res.ok || !payload?.ok) return null;
+    } catch {
+      return null;
+    }
+
+    const latest = payload.latest;
+    if (!latest) return null;
+
+    // Screener returns values in ₹ Cr. Internal canonical is ₹ Mn (10× Cr).
+    const crToMn = (v: number | null | undefined): number | null =>
+      v === null || v === undefined ? null : Math.round(v * 10 * 100) / 100;
+
+    const revenue = crToMn(latest.revenue);
+    const revPrior = crToMn(payload.yoyPriorQuarter?.revenue);
+    const ebitVal = crToMn(latest.operatingProfit);
+    const patVal = crToMn(latest.netIncome);
+    const daVal = crToMn(latest.depreciation);
+    const opmPct = latest.ebitdaMargin ?? null;
+
+    let ebitda: number | null = null;
+    if (ebitVal !== null && daVal !== null) {
+      ebitda = Math.round((ebitVal + Math.abs(daVal)) * 1000) / 1000;
+    }
+
+    const themes = detectNarrativeThemes(
+      `${payload.company || ticker} ${payload.about || ''} ${payload.industry || ''} ${payload.sector || ''}`,
+    );
+
+    const usedNse = payload.source === 'nse_primary' || payload.source === 'nse_primary_screener_unavailable';
+    const sourceLabel = usedNse
+      ? 'NSE Quarterly Results (filing data)'
+      : 'Screener.in Quarterly Results';
+
+    return {
+      company: payload.company || ticker,
+      ticker: (payload.ticker || ticker).toUpperCase(),
+      period: latest.period || 'Latest',
+      periodType: 'quarterly',
+      filingType: usedNse ? 'NSE Quarterly Results' : 'Quarterly Results (Screener.in)',
+      currency: 'INR',
+      scaleLabel: '₹ Mn',
+      scaleFactor: 1, // values stored in ₹ Mn (matches NSE/FMP path conventions)
+      revenue,
+      revPrior,
+      grossProfit: null,
+      grossMargin: null,
+      ebit: ebitVal,
+      ebitMargin:
+        ebitVal && revenue && revenue > 0 ? Math.round((ebitVal / revenue) * 10000) / 100 : opmPct,
+      ebitda,
+      ebitdaMargin:
+        ebitda && revenue && revenue > 0 ? Math.round((ebitda / revenue) * 10000) / 100 : opmPct,
+      opex: null,
+      pat: patVal,
+      patPrior: crToMn(payload.yoyPriorQuarter?.netIncome),
+      patMargin:
+        patVal && revenue && revenue > 0 ? Math.round((patVal / revenue) * 10000) / 100 : (latest.netMargin ?? null),
+      eps: latest.eps ?? null,
+      epsPrior: payload.yoyPriorQuarter?.eps ?? null,
+      rnd: null,
+      sga: null,
+      da: daVal,
+      interestExpense: crToMn(latest.interestExpense),
+      pbt: crToMn(latest.pbt),
+      tax: null,
+      otherIncome: crToMn(latest.otherIncome),
+      cash: null,
+      totalDebt: null,
+      equity: null,
+      totalAssets: null,
+      netDebt: null,
+      capex: null,
+      ar: null,
+      inventory: null,
+      cfo: null,
+      fcf: null,
+      deRatio: payload.topMetrics?.debtToEquity ?? null,
+      cfoPat: null,
+      roce: payload.topMetrics?.roce ?? null,
+      roe: payload.topMetrics?.roe ?? null,
+      roa: null,
+      orderBook: null,
+      backlog: null,
+      headcount: null,
+      guidance: [],
+      keyMetrics: [],
+      forwardStatements: [],
+      themes,
+      mgmtTone: 'neutral',
+      validationWarnings: [`Source: ${sourceLabel} — values in ₹ Cr`],
+      hardFailures: [],
+      isDataReliable: revenue !== null,
+      parseState: revenue !== null ? 'verified' : 'partial',
+      parseConfidence: revenue !== null ? (usedNse ? 95 : 88) : 60,
+      revenueSource: usedNse ? 'nse_quarterly_results' : 'screener_in',
+      discontinuedIncome: null,
+      continuingRevenue: revenue,
+      continuingPAT: patVal,
+      continuingOpsDetected: false,
+    } as RawFinancials;
+  }
+
+  // ── NSE/BSE via server-side proxy (India tickers) — TERTIARY fallback ─────
+  // Used only if /api/earnings/india-screener returns nothing. Hits the
+  // narrower /api/earnings/india endpoint which only checks NSE/BSE direct
+  // financial-results endpoints (recent IPOs may not yet be listed there).
   async function fetchFromIndiaExchanges(ticker: string): Promise<RawFinancials | null> {
     let payload: any = null;
     try {
@@ -2418,25 +2533,45 @@ export default function EarningsAnalysisPage() {
           console.warn('EDGAR XBRL lookup failed, trying FMP:', edgarErr);
         }
       } else {
-        // ── India stocks: NSE/BSE WEBSITES are PRIMARY (authoritative filings) ──
-        setLoadingMsg(`Looking up ${ticker} on NSE/BSE…`);
+        // ── India stocks: PRIMARY = /api/earnings/india-screener ──
+        // Internally NSE-first (corporates-financial-results), then Screener
+        // fallback. Covers recent IPOs (ACMESOLAR) and BSE-only midcaps that
+        // the narrower /api/earnings/india endpoint can't resolve.
+        setLoadingMsg(`Looking up ${ticker} on NSE/BSE/Screener…`);
         setLoadingPct(10);
         try {
-          financials = await fetchFromIndiaExchanges(ticker);
+          financials = await fetchFromScreenerIndia(ticker);
           if (financials) {
             setLoadingMsg(`Found ${ticker} on ${financials.filingType} — fetching analyst estimates…`);
             setLoadingPct(40);
           }
-        } catch (inErr) {
-          console.warn('NSE/BSE lookup failed, trying FMP:', inErr);
+        } catch (scrErr) {
+          console.warn('Screener-india lookup failed, trying NSE direct:', scrErr);
+        }
+
+        // Tertiary: narrower NSE/BSE-only endpoint (kept for tickers Screener
+        // doesn't index but NSE does, e.g. fresh listings before Screener
+        // updates its slug map).
+        if (!financials) {
+          setLoadingMsg(`${ticker} not on Screener — trying NSE/BSE direct…`);
+          setLoadingPct(15);
+          try {
+            financials = await fetchFromIndiaExchanges(ticker);
+            if (financials) {
+              setLoadingMsg(`Found ${ticker} on ${financials.filingType} — fetching analyst estimates…`);
+              setLoadingPct(40);
+            }
+          } catch (inErr) {
+            console.warn('NSE/BSE direct lookup failed, trying FMP:', inErr);
+          }
         }
       }
 
       if (!financials) {
-        // FMP fallback: US tickers not on EDGAR, India tickers not on NSE/BSE,
-        // or whenever the primary path fails.
+        // FMP final fallback: US tickers not on EDGAR; India tickers not on
+        // NSE/BSE/Screener.
         setLoadingMsg(
-          isIndia ? `${ticker} not on NSE/BSE — trying FMP…` : `${ticker} not on EDGAR — trying FMP…`,
+          isIndia ? `${ticker} not on NSE/BSE/Screener — trying FMP…` : `${ticker} not on EDGAR — trying FMP…`,
         );
         setLoadingPct(20);
         financials = await fetchFromFMP(ticker);
@@ -2445,7 +2580,7 @@ export default function EarningsAnalysisPage() {
 
       if (!financials) {
         if (isIndia) {
-          setError(`No data found for "${ticker}". Check the NSE (.NS) or BSE (.BO) suffix is correct, e.g. RELIANCE.NS or AEROFLEX.BO`);
+          setError(`No data found for "${ticker}" on NSE, BSE, Screener.in, or FMP. Verify the ticker symbol — try without the .NS / .BO suffix, or use the BSE 6-digit scrip code if it's BSE-only.`);
         } else {
           setError(`No data found for "${ticker}". Verify the ticker symbol (e.g. AAPL, FSLY, OSS). For very small companies not on EDGAR, try PDF upload.`);
         }
