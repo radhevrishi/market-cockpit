@@ -316,6 +316,16 @@ export interface IndiaExtras {
     confidence: 'high' | 'medium' | 'low';
   };
 
+  // One-line institutional verdict — synthesised from FundamentalScore +
+  // direction signals. Renders prominently below the company name so the
+  // user knows at a glance "what to do with this company".
+  topLine?: {
+    headline: string;        // e.g. "Q4 rebound but margins still under YoY pressure"
+    verdict: 'BUY' | 'ACCUMULATE' | 'HOLD' | 'NEUTRAL' | 'AVOID' | 'SELL';
+    rationale: string;        // one short clause explaining the verdict
+    watchPoints: string[];    // 2-3 KPIs / signals to monitor
+  };
+
   // Concall extraction — populated when the user pastes a transcript
   concall?: {
     topQuotes: string[];

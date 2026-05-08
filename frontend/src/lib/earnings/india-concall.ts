@@ -177,6 +177,30 @@ function isBoilerplate(s: string): boolean {
   return /\b(National Stock Exchange|BSE Limited|Bandra Kurla Complex|P\.J\. Towers|Listing Department|Trading Symbol|Compliance Officer|Membership No\.|Pursuant to Regulation|Yours faithfully|Dear Sir|Subject\s*:|safe harbor|forward looking statements concerning|risks and uncertainties)\b/i.test(s);
 }
 
+// Detect PROCEDURAL disclosures — corporate-action / governance announcements
+// that show up at the back of investor presentations and BSE filings. They
+// score on real verbs and dates but contain ZERO earnings analysis. These
+// are commonly:
+//   - dividend record dates / book closure / payment dates
+//   - AGM / EGM / postal ballot notices
+//   - director appointment / retirement / superannuation notices
+//   - audit committee / nomination committee / committee changes
+//   - share transfer / loss of share certificate notices
+//   - SEBI / Reg 30 / Reg 31 / Reg 76 references
+function isProceduralDisclosure(s: string): boolean {
+  return (
+    /\b(record date|book closure|cum[- ]?dividend|ex[- ]?dividend|AGM|EGM|postal ballot|notice of meeting)\b/i.test(s)
+    || /\bentitlement of (members|shareholders) to receive (the |a |an )?(final |interim |special )?dividend\b/i.test(s)
+    || /\bdividend (will be |shall be )?(paid|payable) on or before\b/i.test(s)
+    || /\b(retiring from the services of the Company|superannuation|cessation of employment|appointment as (a |an )?(director|key managerial|chief|company secretary))\b/i.test(s)
+    || /\bRegulation\s+(30|31|76|33)\b/i.test(s)
+    || /\bForm\s+(CG[- ]?\d|MGT[- ]?\d|DIR[- ]?\d)\b/i.test(s)
+    || /\b(loss of share certificate|share transfer|duplicate share certificate)\b/i.test(s)
+    || /\b(Audit|Nomination & Remuneration|Risk Management|Stakeholders Relationship) Committee\b/i.test(s)
+    || /\b(Friday|Monday|Tuesday|Wednesday|Thursday|Saturday|Sunday),\s*[A-Z][a-z]+\s+\d{1,2},\s*\d{4}\b/.test(s)  // formal date strings — only used for record dates / payment dates
+  );
+}
+
 // ── Signal scorer — higher is more "informative" for an analyst ───────────
 const NUMBER_RE = /\b\d+(?:\.\d+)?(?:\s*%|\s*bps|\s*bp|\s*x|\s*Cr|\s*crore|\s*Mn|\s*million|\s*billion|\s*Bn|\s*basis points)?\b/gi;
 const STRONG_VERBS = /\b(grew|grow(ing|s)?|expand(ed|ing|s)?|increase[sd]?|rose|jumped|surged|accelerat(ed|ing|es)?|outperform(ed|ing|s)?|improved|enhanced|optimized|streamlined|delivered|achiev(ed|ing|es)?|beat|exceeded|raised|lowered|reduced|declined|contracted|fell|dropped|missed|impact(ed|ing|s)?|pressured|softened|moderated)\b/gi;
@@ -184,9 +208,12 @@ const FORWARD_WORDS = /\b(guidance|outlook|expect(s|ed|ing)?|forecast(ed|ing|s)?
 const TOPIC_WORDS = /\b(margin|EBITDA|operating profit|operating leverage|capex|capital expenditure|EPS|earnings|revenue|sales|volume|pricing|mix|new launch|new product|innovation|premium|rural|urban|distribution|reach|coverage|ad spend|A&P|R&D|gross margin|capacity|utilisation|utilization|inventory|working capital|debtor|receivable|payable|order book|backlog|attrition|hiring|deal pipeline|win rate|ARR|deal TCV|net adds|GMV|AUM|NIM|GNPA|slippage|provision|credit cost|book value|ROE|ROCE)\b/gi;
 
 function scoreSentence(s: string): number {
-  // Hard reject: pure-number tables or regulatory boilerplate — never quote-worthy
+  // Hard reject: pure-number tables, regulatory boilerplate, or procedural
+  // disclosures (dividend record dates, retirement notices, AGM notices) —
+  // never quote-worthy.
   if (isTableNoise(s)) return -100;
   if (isBoilerplate(s)) return -100;
+  if (isProceduralDisclosure(s)) return -100;
 
   let score = 0;
   const numbers = s.match(NUMBER_RE);
@@ -358,7 +385,9 @@ export function extractIndiaConcallInsights(
   if (text.length < 50) return empty;
 
   const cleaned = stripBoilerplate(text);
-  const sentences = splitSentences(cleaned).filter((s) => !isBoilerplate(s) && !isTableNoise(s));
+  const sentences = splitSentences(cleaned).filter(
+    (s) => !isBoilerplate(s) && !isTableNoise(s) && !isProceduralDisclosure(s),
+  );
 
   // 1. Rank sentences by score, dedupe near-duplicates, pick top 4.
   const scored = sentences

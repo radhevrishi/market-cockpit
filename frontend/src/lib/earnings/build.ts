@@ -584,7 +584,12 @@ export function inferGuidance(rawText: string): EarningsSnapshot['guidance'] {
     const planRe = /\b(plan(s|ned|ning)?\s+to|on track to|expected to|going to|target(ed|s|ing)?\s+to)\s+[a-z\s]{0,40}\bby\s+(Q[1-4]\s?FY\s?\d{2,4}|FY\s?\d{2,4}|H[12]\s?FY?\s?\d{2,4}|\d{4}|[a-z]{3,4}[- ]?\d{2,4}|next quarter|next year)/i;
     const expansionRe = /\b(expand(ed|ing|ion)?|increased?|scale up|scaling|add(ed|ing|ition)?|commission(ed|ing)?)\s+(?:its\s+)?[a-z\s]{0,30}capacity\s+to\s+[\d,]+/i;
     const setupRe = /\b(set(ting)? up|adding|adding up|to commission|new plant|brownfield|greenfield)\b[\s\S]{0,80}\b(by|in)\s+(Q[1-4]\s?FY?\s?\d{2,4}|FY\s?\d{2,4}|[a-z]{3,4}[- ]?\d{2,4}|\d{4})/i;
-    if (planRe.test(t) || expansionRe.test(t) || setupRe.test(t)) {
+    // Stage-Gate / multi-year product roadmaps with explicit ₹X Cr targets
+    // (Intellect Design Arena describes Stage 4 ₹1,500 Cr target). Treat as
+    // 'introduced' guidance.
+    const stageGateRe = /\b(Stage\s*[1-9]|Phase\s*[1-9]|Year\s*[1-9])\b[\s\S]{0,80}(₹|\bRs\.?\s|\bUSD?\s|\$)\s*[\d,]+\s*(Cr|crore|Mn|million|Bn|billion|lakh)/i;
+    const multiYearTargetRe = /\b(\d[- ]year (cycle|plan|roadmap|target|horizon)|aspires? to|aspirational target|target of (₹|\bRs\.?|\$)?\s*[\d,]+)\b/i;
+    if (planRe.test(t) || expansionRe.test(t) || setupRe.test(t) || stageGateRe.test(t) || multiYearTargetRe.test(t)) {
       direction = 'introduced';
     }
   }

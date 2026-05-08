@@ -177,6 +177,36 @@ export function IndiaInstitutionalReport({
         </div>
       </div>
 
+      {/* ── ONE-LINE INSTITUTIONAL VERDICT — what to do at a glance ── */}
+      {ix.topLine && (() => {
+        const v = ix.topLine.verdict;
+        const verdictColor =
+          v === 'BUY' ? GREEN : v === 'ACCUMULATE' ? '#86efac' : v === 'HOLD' ? '#fbbf24' :
+          v === 'NEUTRAL' ? MUTED : v === 'AVOID' ? '#fb923c' : '#f87171';
+        return (
+          <div style={{ marginTop: 14, marginBottom: 10, background: PANEL, border: `1px solid ${BORDER}`, borderLeft: `3px solid ${verdictColor}`, borderRadius: 6, padding: '12px 16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 12, fontWeight: 800, color: verdictColor, fontFamily: MONO, letterSpacing: 1, padding: '3px 10px', borderRadius: 4, background: `${verdictColor}15`, border: `1px solid ${verdictColor}40` }}>
+                {v}
+              </span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: TEXT, lineHeight: 1.4 }}>
+                {ix.topLine.headline}
+              </span>
+            </div>
+            <div style={{ fontSize: 12, color: MUTED, marginTop: 6, lineHeight: 1.5 }}>
+              {ix.topLine.rationale}
+              {ix.topLine.watchPoints.length > 0 && (
+                <>
+                  <span style={{ color: FAINT }}> · </span>
+                  <strong style={{ color: ACCENT, fontWeight: 600 }}>Watch:</strong>
+                  <span> {ix.topLine.watchPoints.join(' · ')}</span>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Fundamentals-mode banner */}
       <div style={{ background: 'rgba(251,191,36,0.08)', border: `1px solid ${ACCENT}30`, borderLeft: `3px solid ${ACCENT}`, borderRadius: 6, padding: '10px 14px', marginBottom: 22, marginTop: 14, fontSize: 11, color: TEXT, lineHeight: 1.6 }}>
         <strong style={{ color: ACCENT }}>India Institutional Mode</strong> — Sell-side consensus is sparse for Indian midcaps. This report compares <strong>QoQ and YoY trajectory</strong>, not estimate beats. Fundamentals, working-capital cycle, and promoter signals carry the institutional weight here.

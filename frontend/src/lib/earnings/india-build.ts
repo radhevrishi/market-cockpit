@@ -633,7 +633,11 @@ function computeIndiaExtras(opts: {
   const bpsChange = (cur: number | null | undefined, base: number | null | undefined): number | null =>
     cur != null && base != null ? Math.round((cur - base) * 100) : null;
 
-  const qtrendBase = quarters.slice(-8).map((q, idx, arr) => {
+  // Skip quarters with no revenue — usually appear when NSE-primary returned
+  // fewer than 8 quarters and Screener's older periods got dropped during
+  // the merge. Empty rows clutter the trend table without adding signal.
+  const validQuarters = quarters.filter((q) => q.sales !== null);
+  const qtrendBase = validQuarters.slice(-8).map((q, idx, arr) => {
     const prevQ = idx > 0 ? arr[idx - 1] : null;
     const yoyQ = idx >= 4 ? arr[idx - 4] : null;
     return {
@@ -787,6 +791,19 @@ function computeIndiaExtras(opts: {
     confidence,
   };
 
+  // ── ONE-LINE INSTITUTIONAL VERDICT ─────────────────────────────────────
+  // Rule-based summary: combines revenue/margin direction, accounting flags,
+  // sector classification, and FundamentalScore into a single actionable line.
+  const topLine = buildTopLineVerdict({
+    fundamentalScore,
+    quarterlyTrend: qtrendBase,
+    workingCapital,
+    governance,
+    accountingFlags: opts.screener?.ok ? [] : [], // flags carried via accountingQuality elsewhere
+    sectorTemplate,
+    cfoOverPat,
+  });
+
   return {
     topMetrics,
     workingCapital,
@@ -794,6 +811,106 @@ function computeIndiaExtras(opts: {
     quarterlyTrend: qtrendBase,
     sector: sectorBlock,
     fundamentalScore,
+    topLine,
     concall: concallInsights || undefined,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// One-line verdict generator — deterministic, no LLM
+// ─────────────────────────────────────────────────────────────────────────
+function buildTopLineVerdict(args: {
+  fundamentalScore: IndiaExtras['fundamentalScore'];
+  quarterlyTrend: IndiaExtras['quarterlyTrend'];
+  workingCapital: IndiaExtras['workingCapital'];
+  governance: IndiaExtras['governance'];
+  accountingFlags: string[];
+  sectorTemplate: typeof INDIA_SECTOR_TEMPLATES[IndiaSector];
+  cfoOverPat: number | null;
+}): NonNullable<IndiaExtras['topLine']> {
+  const { fundamentalScore: fs, quarterlyTrend, workingCapital, governance, sectorTemplate, cfoOverPat } = args;
+  const last = quarterlyTrend.at(-1);
+  const revYoY = last?.yoyRevenuePct ?? null;
+  const profitYoY = last?.yoyProfitPct ?? null;
+  const opmYoY = last?.yoyOpmBps ?? null;
+  const revQoQ = last?.qoqRevenuePct ?? null;
+  const profitQoQ = last?.qoqProfitPct ?? null;
+
+  // ── Verdict from FundamentalScore + direction ────────────────────────
+  let verdict: NonNullable<IndiaExtras['topLine']>['verdict'] = 'NEUTRAL';
+  if (fs.overall >= 80) {
+    verdict = fs.direction === 'improving' ? 'BUY' : 'ACCUMULATE';
+  } else if (fs.overall >= 65) {
+    verdict = fs.direction === 'improving' ? 'ACCUMULATE' : 'HOLD';
+  } else if (fs.overall >= 45) {
+    verdict = fs.direction === 'deteriorating' ? 'AVOID' : 'NEUTRAL';
+  } else if (fs.overall >= 30) {
+    verdict = 'AVOID';
+  } else {
+    verdict = 'SELL';
+  }
+
+  // ── Headline: directional movement ───────────────────────────────────
+  const parts: string[] = [];
+  if (revYoY != null && profitYoY != null) {
+    if (revYoY >= 10 && profitYoY >= 10) {
+      parts.push('Strong YoY growth across revenue and profit');
+    } else if (revYoY >= 10 && profitYoY < 0) {
+      parts.push('Revenue growing but profit contracting YoY');
+    } else if (revYoY < 0 && profitYoY < 0) {
+      parts.push('Revenue and profit both contracting YoY');
+    } else if (revYoY >= 5 && Math.abs(profitYoY) < 5) {
+      parts.push('Steady revenue growth, profit roughly flat YoY');
+    } else if (revYoY < 0 && profitYoY > 0) {
+      parts.push('Revenue softening but profit holding up — margin tailwind');
+    } else if (revQoQ != null && revQoQ >= 5 && revYoY < 0) {
+      parts.push(`QoQ rebound (+${revQoQ.toFixed(1)}%) after weak YoY trend`);
+    } else if (revYoY >= 5) {
+      parts.push(`Mid-single-digit YoY revenue growth (${revYoY.toFixed(1)}%)`);
+    } else {
+      parts.push('Mixed quarterly performance');
+    }
+  } else if (revYoY != null) {
+    parts.push(revYoY >= 0 ? `Revenue +${revYoY.toFixed(1)}% YoY` : `Revenue ${revYoY.toFixed(1)}% YoY`);
+  } else {
+    parts.push(`${sectorTemplate.displayName} midcap`);
+  }
+
+  // ── Margin trajectory note ───────────────────────────────────────────
+  if (opmYoY != null) {
+    if (opmYoY <= -200) parts.push(`OPM compressed ${Math.abs(opmYoY)} bps YoY`);
+    else if (opmYoY >= 200) parts.push(`OPM expanded ${opmYoY} bps YoY`);
+  }
+
+  // ── Risk overlay — pick the single most material flag ────────────────
+  let primaryRisk: string | null = null;
+  if (cfoOverPat !== null && cfoOverPat < 0.5) {
+    primaryRisk = `cash conversion weak (CFO/PAT ${cfoOverPat.toFixed(2)}x)`;
+  } else if (workingCapital.cashConversionCycle !== null && workingCapital.cashConversionCycle > 120) {
+    primaryRisk = `working capital stretched (${workingCapital.cashConversionCycle.toFixed(0)} day CCC)`;
+  } else if (governance.promoterChangeYoY !== null && governance.promoterChangeYoY < -3) {
+    primaryRisk = `promoter holding ↓${Math.abs(governance.promoterChangeYoY).toFixed(1)} pp YoY`;
+  } else if (opmYoY !== null && opmYoY <= -300) {
+    primaryRisk = `margin pressure deepening (-${Math.abs(opmYoY)} bps YoY)`;
+  }
+
+  const headline = parts.join(' · ');
+
+  // ── Rationale clause for the verdict ─────────────────────────────────
+  const rationale = (() => {
+    if (verdict === 'BUY') return 'Fundamentals improving across growth, margin, and cash conversion';
+    if (verdict === 'ACCUMULATE') return 'Quality fundamentals — accumulate on dips';
+    if (verdict === 'HOLD') return 'Fundamentals stable but no near-term catalyst — hold and monitor';
+    if (verdict === 'NEUTRAL') return primaryRisk ? `Mixed signals; primary concern: ${primaryRisk}` : 'Mixed signals — wait for clearer trend';
+    if (verdict === 'AVOID') return primaryRisk ? `Deteriorating fundamentals; key issue: ${primaryRisk}` : 'Deteriorating fundamentals — wait for stabilisation';
+    return primaryRisk ? `Multiple deteriorating signals; key issue: ${primaryRisk}` : 'Material deterioration across fundamentals';
+  })();
+
+  // ── Watch points: top 3 critical sector KPIs ─────────────────────────
+  const watchPoints = sectorTemplate.kpis
+    .filter((k) => k.importance === 'critical')
+    .slice(0, 3)
+    .map((k) => k.label);
+
+  return { headline, verdict, rationale, watchPoints };
 }
