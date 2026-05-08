@@ -36,6 +36,18 @@ export interface ScreenerInput {
   industry?: string | null;
   about?: string | null;
   unit?: string;
+  source?: string;
+  provenance?: {
+    financials?: string;
+    history?: string;
+    ratios?: string;
+    topMetrics?: string;
+    sector?: string;
+    annual?: string;
+    balanceSheet?: string;
+    cashFlow?: string;
+    shareholding?: string;
+  };
   topMetrics?: {
     marketCap: number | null;        // ₹ Cr
     currentPrice: number | null;
@@ -110,6 +122,15 @@ export function buildIndiaSnapshot(
   const endpointsFailed: string[] = [];
   const fallbacksUsed: string[] = [];
 
+  // Provenance flags drive what appears in `sources` at the bottom of the page.
+  // Quarterly P&L (revenue/PAT/OPM/EPS/margins/history) come from NSE filings
+  // when available; Screener.in remains the source for TTM ratios and longer
+  // annual history.
+  const financialsSource = screener?.provenance?.financials || (screener?.ok ? 'screener_in' : 'unavailable');
+  const historySource = screener?.provenance?.history || (screener?.ok ? 'screener_in' : 'unavailable');
+  const usedNse = financialsSource === 'nse_quarterly_results';
+
+  if (usedNse) endpointsHit.push('nse_corporates_financial_results');
   if (screener?.ok) endpointsHit.push('screener_in');
   else endpointsFailed.push('screener_in');
   if (fmpProfile) endpointsHit.push('fmp_profile_india');
@@ -472,13 +493,16 @@ export function buildIndiaSnapshot(
         ...fallbacksUsed,
         'India mode: fundamentals-only (no consensus, no reaction scoring)',
         `Sector classification: ${sector}`,
+        usedNse
+          ? 'Quarterly P&L: NSE financial-results (primary)'
+          : 'Quarterly P&L: Screener.in (NSE unavailable or insufficient quarters)',
       ],
       corpusChars: themeRes.corpusChars,
     },
     sources: {
-      financials: 'screener_in',
+      financials: financialsSource,
       estimates: 'unavailable',
-      history: 'screener_in',
+      history: historySource,
     },
     indiaExtras,
     analysisMode: 'india_fundamental_only',

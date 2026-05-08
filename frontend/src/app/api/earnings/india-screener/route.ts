@@ -1,20 +1,22 @@
 import { NextResponse } from 'next/server';
+import { fetchCompanyFinancialResults } from '@/lib/nse';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Screener.in proxy — the gold-standard public source for Indian financials
+// India earnings proxy — NSE PRIMARY, Screener.in FALLBACK
 // ─────────────────────────────────────────────────────────────────────────────
-// Returns:
-//   - Top metrics (Market Cap, CMP, P/E, ROE, ROCE, Book Value, etc.) in ₹ Cr
-//   - 12-13 quarters of P&L (Sales, OP, OPM, Tax, Net Profit, EPS) in ₹ Cr
-//   - 10-12 years of annual P&L
-//   - Balance sheet / cash flow rows
-//   - Sector / industry classification
-//   - Business description
-// All numeric values are in ₹ Crores (Screener's native unit) — caller must
-// convert to internal canonical (₹ Mn = ₹ Cr × 10) if needed.
+// Source priority for quarterly P&L (Revenue / OP / PAT / EPS / margins):
+//   1. NSE corporates-financial-results (authoritative filing data, in Lakhs)
+//   2. Screener.in quarterly section (parsed HTML, in Cr)
+//
+// Source priority for TTM ratios (P/E, ROCE, ROE, Book Value, D/E, etc.),
+// annual P&L history, balance sheet, cash flow, shareholding pattern, and
+// sector/industry classification — Screener.in only (NSE doesn't expose these).
+//
+// All numeric values returned in ₹ Crores. The `source` field tells the
+// builder whether quarterly figures came from NSE (preferred) or Screener.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SCREENER_HEADERS = {
@@ -157,6 +159,170 @@ function parseTableHtml(tableHtml: string): ParsedTable | null {
   return { headers, rows };
 }
 
+// ── NSE quarterly extraction ─────────────────────────────────────────────
+// NSE's /api/corporates-financial-results returns rows like:
+//   { symbol, fromDate, toDate, consolidated, audited, cumulative,
+//     income, expenditure, profitBeforeTax, profitAfterTax, basicEps,
+//     financeCost, depreciationAmortisation, ... }
+// All numeric fields are in ₹ LAKHS (1 Lakh = 0.01 Cr). We convert to ₹ Cr
+// to match Screener's native unit.
+function nsePickNum(obj: any, keys: string[]): number | null {
+  for (const k of keys) {
+    const v = obj?.[k];
+    if (v === undefined || v === null || v === '') continue;
+    const n = parseFloat(String(v).replace(/,/g, ''));
+    if (!Number.isNaN(n) && Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+function nsePeriodLabel(toDate: string): string {
+  const d = new Date(toDate);
+  if (Number.isNaN(d.getTime())) return toDate || 'Latest';
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${months[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+interface NseQuarter {
+  period: string;
+  sales: number | null;
+  expenses: number | null;
+  operatingProfit: number | null;
+  opmPct: number | null;
+  otherIncome: number | null;
+  interest: number | null;
+  depreciation: number | null;
+  pbt: number | null;
+  taxPct: number | null;
+  netProfit: number | null;
+  eps: number | null;
+  netMargin: number | null;
+  toDate: string;
+}
+
+async function fetchNseQuarters(symbol: string): Promise<NseQuarter[]> {
+  let raw: any[] = [];
+  try {
+    const fin = await fetchCompanyFinancialResults(symbol);
+    raw = Array.isArray(fin) ? fin : fin?.data || [];
+  } catch {
+    return [];
+  }
+  if (!raw || raw.length === 0) return [];
+
+  // Filter to filings within last 3 years (NSE sometimes returns ancient rows)
+  const cutoff = Date.now() - 3 * 365 * 24 * 3600 * 1000;
+  const recent = raw.filter((r) => {
+    const t = new Date(r.toDate || r.broadCastDate || 0).getTime();
+    return t >= cutoff;
+  });
+  if (recent.length === 0) return [];
+
+  // Sort newest first, then dedupe by toDate, preferring Consolidated rows.
+  const byDate = [...recent].sort(
+    (a, b) =>
+      new Date(b.toDate || b.broadCastDate || 0).getTime() -
+      new Date(a.toDate || a.broadCastDate || 0).getTime(),
+  );
+  const cons = byDate.filter((r) => /consolidated/i.test(r.consolidated || r.re_emp || ''));
+  const stand = byDate.filter((r) => !/consolidated/i.test(r.consolidated || r.re_emp || ''));
+  const merged = [...cons, ...stand];
+  const seen = new Set<string>();
+  const dedup: any[] = [];
+  for (const r of merged) {
+    const key = r.toDate || '';
+    if (!seen.has(key) && key) {
+      seen.add(key);
+      dedup.push(r);
+    }
+  }
+
+  // Drop rows where the period clearly looks YTD/cumulative (Cumulative=Y or
+  // period spans more than ~120 days — NSE does file H1/9M/FY rows here too).
+  const quarterly = dedup.filter((r) => {
+    const cum = String(r.cumulative || '').toUpperCase();
+    if (cum === 'Y' || cum === 'TRUE') return false;
+    const from = new Date(r.fromDate || 0).getTime();
+    const to = new Date(r.toDate || 0).getTime();
+    if (!from || !to) return true;
+    const days = (to - from) / (24 * 3600 * 1000);
+    return days >= 60 && days <= 130; // single quarter
+  });
+  if (quarterly.length === 0) return [];
+
+  // Sort oldest first to match Screener's quarterly column ordering.
+  quarterly.sort(
+    (a, b) =>
+      new Date(a.toDate || 0).getTime() - new Date(b.toDate || 0).getTime(),
+  );
+
+  const lakhsToCr = (n: number | null): number | null =>
+    n === null ? null : Math.round((n / 100) * 100) / 100;
+
+  return quarterly.slice(-12).map((r): NseQuarter => {
+    const salesL = nsePickNum(r, [
+      'revenueFromOperations',
+      'income',
+      'totalIncomeFromOperations',
+      'netSales',
+      'sales',
+    ]);
+    const expensesL = nsePickNum(r, ['expenditure', 'totalExpenses', 'totalExpenditure']);
+    const operatingProfitL = nsePickNum(r, [
+      'profitFromOperations',
+      'operatingProfit',
+      'profitBeforeInterestTaxOtherItems',
+    ]);
+    const pbtL = nsePickNum(r, ['profitBeforeTax', 'pbt']);
+    const taxL = nsePickNum(r, ['tax', 'taxExpense', 'totalTax']);
+    const netProfitL = nsePickNum(r, [
+      'profitAfterTax',
+      'profitLossForPeriod',
+      'netProfitLoss',
+      'pat',
+      'profitLoss',
+    ]);
+    const interestL = nsePickNum(r, ['financeCost', 'interestExpense', 'interest']);
+    const depreciationL = nsePickNum(r, ['depreciationAmortisation', 'depreciation']);
+    const otherIncomeL = nsePickNum(r, ['otherIncome', 'otherInc']);
+    const eps = nsePickNum(r, ['basicEps', 'epsBasic', 'eps']);
+
+    const salesCr = lakhsToCr(salesL);
+    const operatingProfitCr = lakhsToCr(operatingProfitL);
+    const netProfitCr = lakhsToCr(netProfitL);
+    const pbtCr = lakhsToCr(pbtL);
+    const opmPct =
+      salesCr && operatingProfitCr !== null && salesCr > 0
+        ? Math.round((operatingProfitCr / salesCr) * 1000) / 10
+        : null;
+    const taxPct =
+      taxL !== null && pbtL !== null && pbtL !== 0
+        ? Math.round((taxL / pbtL) * 1000) / 10
+        : null;
+    const netMargin =
+      netProfitCr !== null && salesCr && salesCr > 0
+        ? Math.round((netProfitCr / salesCr) * 10000) / 100
+        : null;
+
+    return {
+      period: nsePeriodLabel(r.toDate || r.broadCastDate || ''),
+      sales: salesCr,
+      expenses: lakhsToCr(expensesL),
+      operatingProfit: operatingProfitCr,
+      opmPct,
+      otherIncome: lakhsToCr(otherIncomeL),
+      interest: lakhsToCr(interestL),
+      depreciation: lakhsToCr(depreciationL),
+      pbt: pbtCr,
+      taxPct,
+      netProfit: netProfitCr,
+      eps,
+      netMargin,
+      toDate: r.toDate || '',
+    };
+  });
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const raw = (searchParams.get('ticker') || '').trim();
@@ -173,6 +339,12 @@ export async function GET(request: Request) {
     sections: [],
     warnings: [],
   };
+
+  // ── NSE quarterly fetch runs in parallel with Screener HTML fetch ──────
+  // We always issue the NSE call so we have authoritative quarterly numbers
+  // ready by the time Screener returns. Screener still supplies TTM ratios,
+  // annual P&L, balance sheet, cash flow, shareholding, and sector info.
+  const nsePromise = fetchNseQuarters(symbol);
 
   let html: string | null = null;
   try {
@@ -227,6 +399,93 @@ export async function GET(request: Request) {
   }
 
   if (!html) {
+    // Screener failed — try to salvage with NSE-only payload before 404'ing
+    const nseQuartersOnly = await nsePromise.catch(() => [] as NseQuarter[]);
+    if (nseQuartersOnly.length >= 4) {
+      const latestQ = nseQuartersOnly[nseQuartersOnly.length - 1];
+      const yoyQ =
+        nseQuartersOnly.length >= 5 ? nseQuartersOnly[nseQuartersOnly.length - 5] : null;
+      const qoqQ =
+        nseQuartersOnly.length >= 2 ? nseQuartersOnly[nseQuartersOnly.length - 2] : null;
+      return NextResponse.json({
+        ok: true,
+        source: 'nse_primary_screener_unavailable',
+        ticker: symbol,
+        rawTicker: raw,
+        company: null,
+        industry: null,
+        sector: null,
+        subIndustry: null,
+        about: null,
+        debug: {
+          ...debug,
+          warnings: [
+            ...debug.warnings,
+            `Screener.in unavailable (${debug.status}) — returning NSE-only quarterly P&L`,
+          ],
+        },
+        unit: 'INR_Cr',
+        topMetrics: {
+          marketCap: null,
+          currentPrice: null,
+          peRatio: null,
+          bookValue: null,
+          dividendYieldPct: null,
+          roce: null,
+          roe: null,
+          faceValue: null,
+          promoterHoldingPct: null,
+          debtToEquity: null,
+        },
+        latest: {
+          period: latestQ.period,
+          revenue: latestQ.sales,
+          operatingProfit: latestQ.operatingProfit,
+          ebitdaMargin: latestQ.opmPct,
+          netIncome: latestQ.netProfit,
+          netMargin: latestQ.netMargin,
+          eps: latestQ.eps,
+          interestExpense: latestQ.interest,
+          depreciation: latestQ.depreciation,
+          pbt: latestQ.pbt,
+          taxPct: latestQ.taxPct,
+          otherIncome: latestQ.otherIncome,
+        },
+        yoyPriorQuarter: yoyQ
+          ? {
+              period: yoyQ.period,
+              revenue: yoyQ.sales,
+              operatingProfit: yoyQ.operatingProfit,
+              ebitdaMargin: yoyQ.opmPct,
+              netIncome: yoyQ.netProfit,
+              eps: yoyQ.eps,
+            }
+          : null,
+        qoqPriorQuarter: qoqQ
+          ? {
+              period: qoqQ.period,
+              revenue: qoqQ.sales,
+              operatingProfit: qoqQ.operatingProfit,
+              ebitdaMargin: qoqQ.opmPct,
+              netIncome: qoqQ.netProfit,
+              eps: qoqQ.eps,
+            }
+          : null,
+        quarterly: nseQuartersOnly,
+        annual: [],
+        balanceSheet: [],
+        cashFlow: [],
+        ratios: [],
+        shareholding: [],
+        provenance: {
+          financials: 'nse_quarterly_results',
+          history: 'nse_quarterly_results',
+          ratios: 'unavailable',
+          topMetrics: 'unavailable',
+          sector: 'unavailable',
+        },
+      });
+    }
     return NextResponse.json(
       { ok: false, error: `Screener.in returned ${debug.status} for ${symbol}`, debug },
       { status: 404 },
@@ -350,14 +609,64 @@ export async function GET(request: Request) {
       })
     : [];
 
+  // ── NSE quarterly OVERRIDE — authoritative source for quarterly P&L ────
+  // If NSE returned ≥4 quarters of valid filings, replace the screener-parsed
+  // quarterly data. Screener values can be stale, mis-aggregated for groups
+  // with consolidated/standalone variants, or compressed when the table is
+  // wide. NSE is the filer; its numbers are the truth.
+  const nseQuarters = await nsePromise.catch(() => [] as NseQuarter[]);
+  const useNse = nseQuarters.length >= 4;
+
+  // Stitch: prefer NSE quarters (newest 12); fall back to screener for any
+  // older periods Screener has but NSE didn't return.
+  let mergedQuarterly: typeof quarterly = quarterly;
+  if (useNse) {
+    const nseDates = new Set(
+      nseQuarters
+        .map((q) => q.toDate)
+        .filter((d): d is string => !!d)
+        .map((d) => new Date(d).getTime()),
+    );
+    const screenerOnlyOlder = quarterly.filter((sq) => {
+      // Screener doesn't expose a toDate; match by period label fragment instead
+      return !nseQuarters.some((nq) => nq.period === sq.period);
+    });
+    // Combine: older Screener-only periods first, then NSE quarters in order
+    mergedQuarterly = [
+      ...screenerOnlyOlder.slice(0, Math.max(0, 12 - nseQuarters.length)),
+      ...nseQuarters.map((q) => ({
+        period: q.period,
+        sales: q.sales,
+        expenses: q.expenses,
+        operatingProfit: q.operatingProfit,
+        opmPct: q.opmPct,
+        otherIncome: q.otherIncome,
+        interest: q.interest,
+        depreciation: q.depreciation,
+        pbt: q.pbt,
+        taxPct: q.taxPct,
+        netProfit: q.netProfit,
+        eps: q.eps,
+        netMargin: q.netMargin,
+      })),
+    ];
+    debug.warnings.push(
+      `NSE primary: replaced ${nseQuarters.length} quarters of P&L with NSE financial-results filings`,
+    );
+  } else if (nseQuarters.length > 0) {
+    debug.warnings.push(
+      `NSE returned ${nseQuarters.length} quarter(s) — below threshold (4); using Screener for quarterly`,
+    );
+  }
+
   // Most recent quarter data (caller's "latest reported")
-  const latest = quarterly[quarterly.length - 1] || null;
-  const prevYear = quarterly.length >= 5 ? quarterly[quarterly.length - 5] : null; // YoY = 4 quarters back
-  const prevQuarter = quarterly.length >= 2 ? quarterly[quarterly.length - 2] : null;
+  const latest = mergedQuarterly[mergedQuarterly.length - 1] || null;
+  const prevYear = mergedQuarterly.length >= 5 ? mergedQuarterly[mergedQuarterly.length - 5] : null;
+  const prevQuarter = mergedQuarterly.length >= 2 ? mergedQuarterly[mergedQuarterly.length - 2] : null;
 
   return NextResponse.json({
     ok: true,
-    source: 'screener_in',
+    source: useNse ? 'nse_primary' : 'screener_in',
     ticker: symbol,
     rawTicker: raw,
     company: companyName,
@@ -367,6 +676,17 @@ export async function GET(request: Request) {
     about,
     debug,
     unit: 'INR_Cr',
+    provenance: {
+      financials: useNse ? 'nse_quarterly_results' : 'screener_in',
+      history: useNse ? 'nse_quarterly_results' : 'screener_in',
+      ratios: 'screener_in',
+      topMetrics: 'screener_in',
+      sector: 'screener_in',
+      annual: 'screener_in',
+      balanceSheet: 'screener_in',
+      cashFlow: 'screener_in',
+      shareholding: 'screener_in',
+    },
     topMetrics: {
       marketCap,           // ₹ Cr
       currentPrice: cmp,   // ₹
@@ -415,7 +735,7 @@ export async function GET(request: Request) {
           eps: prevQuarter.eps,
         }
       : null,
-    quarterly,
+    quarterly: mergedQuarterly,
     annual: annualTable
       ? annualTable.headers.map((header, idx) => ({
           period: header,
