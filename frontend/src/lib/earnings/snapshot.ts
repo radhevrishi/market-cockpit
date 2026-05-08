@@ -484,6 +484,18 @@ export function buildMetric(opts: {
     }
   }
 
+  // SANITY GUARD: if absolute surprise > 50% the data is almost certainly
+  // a period-mismatch bug (forward estimate vs prior actual), not a real
+  // beat/miss. Earnings rarely surprise more than 30%; 50%+ in the wild
+  // is an FMP data alignment quirk. Drop to '—' rather than render a
+  // misleading 'Severe Miss / Blowout Beat' verdict.
+  if (surprisePct !== null && Math.abs(surprisePct) > 50) {
+    surprisePct = null;
+  }
+  if (surpriseBps !== null && Math.abs(surpriseBps) > 5000) {
+    surpriseBps = null;
+  }
+
   const surpriseClass = unit === 'percent'
     ? classifySurpriseBps(surpriseBps)
     : classifySurprisePct(surprisePct);

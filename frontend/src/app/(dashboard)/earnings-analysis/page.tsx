@@ -1910,10 +1910,10 @@ function saveHist2(e: HistEntry2[]) { try { localStorage.setItem(HISTORY_KEY2, J
 
 export default function EarningsAnalysisPage() {
   // ── API Keys ──────────────────────────────────────────────────────────────
-  // FMP_KEY removed from client — was hardcoded and shipping to browser JS.
-  // All FMP calls now route through /api/earnings/fmp-proxy which holds the
-  // key server-side and rate-limits per IP.
-  const AV_KEY  = '62EKUKC2M5WSZB9Z';                   // Alpha Vantage (fallback)
+  // FMP_KEY and AV_KEY removed from client — both were hardcoded and
+  // shipping to browser JS. FMP calls go through /api/earnings/fmp-proxy;
+  // Alpha Vantage calls go through /api/earnings/av-proxy. Both routes
+  // hold the keys server-side and rate-limit per IP.
 
   // Helper that calls FMP's legacy v3 endpoints via the server proxy.
   // Returns a Response. Caller calls .ok and .json() — but .json() returns
@@ -2048,14 +2048,17 @@ export default function EarningsAnalysisPage() {
     const fmpOk = await fetchFMPData(ticker);
     if (fmpOk) { setAvLoading(false); return; }
 
-    // FMP failed → fall back to AV
+    // FMP failed → fall back to AV via server-side proxy (key kept server-only)
     try {
+      const sym = encodeURIComponent(ticker.toUpperCase());
       const [earRes, ovRes] = await Promise.allSettled([
-        fetch(`https://www.alphavantage.co/query?function=EARNINGS&symbol=${encodeURIComponent(ticker.toUpperCase())}&apikey=${AV_KEY}`),
-        fetch(`https://www.alphavantage.co/query?function=OVERVIEW&symbol=${encodeURIComponent(ticker.toUpperCase())}&apikey=${AV_KEY}`),
+        fetch(`/api/earnings/av-proxy?function=EARNINGS&symbol=${sym}`),
+        fetch(`/api/earnings/av-proxy?function=OVERVIEW&symbol=${sym}`),
       ]);
-      const ear = earRes.status === 'fulfilled' && earRes.value.ok ? await earRes.value.json() : {};
-      const ov  = ovRes.status  === 'fulfilled' && ovRes.value.ok  ? await ovRes.value.json()  : {};
+      const earJson = earRes.status === 'fulfilled' && earRes.value.ok ? await earRes.value.json() : null;
+      const ovJson  = ovRes.status  === 'fulfilled' && ovRes.value.ok  ? await ovRes.value.json()  : null;
+      const ear = earJson?.data || {};
+      const ov  = ovJson?.data || {};
       const quarterly = (ear.quarterlyEarnings || []).slice(0, 8).map((q: any) => ({
         fiscalDateEnding: q.fiscalDateEnding || '', period: q.fiscalDateEnding?.slice(0,7) || '',
         reportedEPS:  parseFloat(q.reportedEPS) || null,
@@ -2895,6 +2898,9 @@ export default function EarningsAnalysisPage() {
   // Re-run buildIndiaSnapshot with a concall transcript so guidance / tone /
   // theme detection get filled in. Cached inputs from the original fetch are
   // reused so we don't hammer Screener / FMP again.
+  // Also auto-archive the extraction to /api/concall/history so the
+  // Concall Intel tab populates with credibility data over multiple
+  // quarters.
   const handleIndiaConcallText = useCallback((text: string) => {
     const inputs = indiaSnapshotInputsRef.current;
     if (!inputs) return;
@@ -2908,6 +2914,31 @@ export default function EarningsAnalysisPage() {
         text,
       );
       setSnapshot(snap);
+      // Fire-and-forget archive so future Concall Intel tab can compare
+      // guidance vs outcome across quarters.
+      const concall = snap.indiaExtras?.concall;
+      if (concall) {
+        const archive = {
+          ticker: inputs.ticker,
+          snapshot: {
+            period: snap.quarter,
+            capturedAt: new Date().toISOString(),
+            concallScore: concall.concallScore,
+            concallGrade: concall.concallGrade,
+            positiveCount: concall.positiveCount,
+            negativeCount: concall.negativeCount,
+            cautiousCount: concall.cautiousCount,
+            guidanceDirection: snap.guidance.direction,
+            guidanceCommentary: snap.guidance.commentary || [],
+            topQuotes: concall.topQuotes,
+          },
+        };
+        fetch('/api/concall/history', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(archive),
+        }).catch(() => null);
+      }
     } finally {
       setConcallProcessing(false);
     }

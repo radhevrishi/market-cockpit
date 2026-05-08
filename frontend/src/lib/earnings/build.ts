@@ -210,10 +210,24 @@ export function buildSnapshot(
   // ── QoQ from history (histQ already hoisted above for EPS fallback) ──
   const qoq = histQ[1] || null;
   const qoqRev = qoq?.revenue !== null && qoq?.revenue !== undefined ? Math.round(qoq.revenue * sf * 100) / 100 : null;
-  // YoY = same fiscal quarter one year ago (4 quarters back in the history
-  // array). When fin.* doesn't carry priors (e.g. EDGAR XBRL only filled
-  // current quarter) we fall back to history[4].
-  const yoyHist = histQ[4] || null;
+  // YoY = same fiscal quarter one year ago. Don't blindly use histQ[4] —
+  // some companies have Q4-skipping (10-K replaces 10-Q for Q4), so
+  // histQ[4] could be 5 quarters back. Match by PERIOD LABEL instead.
+  // NVDA fix: current Q3 2026, want Q3 2025 (one fiscal year earlier),
+  // not histQ[4] which would be Q2 2025 due to the trend-table sequence
+  // Q3-Q2-Q1 then skip Q4 to next year.
+  const findYoyMatchingHistory = (currentPeriod: string | null): typeof histQ[number] | null => {
+    if (!currentPeriod) return histQ[4] || null;
+    // Period format from FMP: e.g. "Q3 2026" / "Q1 2025" / similar
+    const m = currentPeriod.match(/Q([1-4])\s+(\d{4})/);
+    if (!m) return histQ[4] || null;
+    const targetQ = `Q${m[1]}`;
+    const targetY = parseInt(m[2], 10) - 1; // one fiscal year prior
+    const target = `${targetQ} ${targetY}`;
+    const found = histQ.find((q) => (q.period || '').includes(target));
+    return found ?? histQ[4] ?? null;
+  };
+  const yoyHist = findYoyMatchingHistory(fin.period);
   const yoyRevFromHist =
     yoyHist?.revenue !== null && yoyHist?.revenue !== undefined
       ? Math.round(yoyHist.revenue * sf * 100) / 100

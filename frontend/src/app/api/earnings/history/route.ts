@@ -278,10 +278,17 @@ export async function GET(request: Request) {
   const surpByDate = new Map<string, any>();
   (surprises || []).forEach((s: any) => s.date && surpByDate.set(s.date, s));
 
-  // Sort newest-first by date (FMP usually returns sorted but be defensive)
-  // then take 8 most recent. Bumped from 5 to 8 to fix Q4-skip gap on
-  // calendar-FY companies (GOOG / FB / AAPL).
-  const sortedIncome = [...income].sort((a: any, b: any) => {
+  // Drop fiscal-year (10-K) rows that FMP sometimes returns alongside
+  // quarter rows when ?period=quarter — these have period='FY' and contain
+  // ANNUAL totals which would corrupt every quarterly calculation
+  // downstream. NVDA / GOOG / AAPL all hit this: the calendar Q4 is
+  // reported via 10-K, FMP returns it labeled 'FY' instead of 'Q4'.
+  const quarterlyOnly = (income as any[]).filter((row) => {
+    const p = String(row.period || '').toUpperCase();
+    return p === 'Q1' || p === 'Q2' || p === 'Q3' || p === 'Q4';
+  });
+  // Sort newest-first by date.
+  const sortedIncome = [...quarterlyOnly].sort((a: any, b: any) => {
     const at = new Date(a.date || 0).getTime();
     const bt = new Date(b.date || 0).getTime();
     return bt - at;
@@ -368,6 +375,26 @@ export async function GET(request: Request) {
       sbc: parseFloat(cf.stockBasedCompensation) || null,
     };
   });
+
+  // POST-PROCESS — drop EPS outliers that are >5x the median of the
+  // surrounding rows. NVDA's Q1 FY25 row shows EPS 6.04 in our trend
+  // because that period was pre-split (10:1 split happened June 2024)
+  // and FMP didn't retroactively adjust. Set to null so downstream
+  // YoY math doesn't go off the rails.
+  const allEps = quarters.map((q) => q.eps).filter((v): v is number => v !== null && v !== undefined);
+  if (allEps.length >= 3) {
+    const sorted = [...allEps].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    const absMedian = Math.abs(median);
+    if (absMedian > 0) {
+      for (const q of quarters) {
+        if (q.eps !== null && Math.abs(q.eps) > absMedian * 5) {
+          q.eps = null;
+          q.epsSurprisePct = null;
+        }
+      }
+    }
+  }
 
   const revBeats = quarters.filter((q) => q.revenueSurprisePct !== null && q.revenueSurprisePct > 0).length;
   const revWithEst = quarters.filter((q) => q.revenueSurprisePct !== null).length;
