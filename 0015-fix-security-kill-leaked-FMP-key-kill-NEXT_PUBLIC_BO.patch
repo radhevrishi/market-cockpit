@@ -1,0 +1,558 @@
+From fd8899b779fa04c47765c5f3f9e7490d36b06a1f Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Fri, 8 May 2026 14:27:11 +0200
+Subject: [PATCH 15/17] fix(security): kill leaked FMP key, kill
+ NEXT_PUBLIC_BOT_SECRET, rate-limit /api/* via middleware
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+After audit:
+1. earnings-analysis client component had FMP_KEY hardcoded as a string
+   (visible in browser Sources tab → quota drainable)
+2. lib/config.ts shipped BOT_SECRET via NEXT_PUBLIC_* with a hardcoded
+   fallback ('mc-bot-2026') → portfolio/watchlist write paths wide open
+3. Server routes (estimates, history) had the same FMP_KEY hardcoded as
+   a fallback string, leaking via the public GitHub repo
+4. No global rate limiting on /api/* — only 3 of 30+ routes had
+   per-route rate limits
+5. No middleware.ts at all
+
+Changes:
+
+A. NEW /api/earnings/fmp-proxy route
+   - Allowlists: earnings-surprises, analyst-estimates, profile,
+     income-statement, balance-sheet-statement, cash-flow-statement,
+     quote, earnings, price-target-summary, grades, key-metrics-ttm
+   - Rate limit: 60 req/min/IP
+   - Server-only FMP_KEY env var; no fallback string. Returns 503 when
+     env var is missing.
+   - 5-minute response cache.
+
+B. earnings-analysis page.tsx — all 9 direct browser-side fetches to
+   financialmodelingprep.com replaced with /api/earnings/fmp-proxy
+   calls via fmpFetch() / unwrapFmpJson() helpers. The client no longer
+   knows the FMP key.
+
+C. lib/config.ts BOT_SECRET fallback removed: `process.env.NEXT_PUBLIC_BOT_SECRET ?? ''`
+   instead of `?? 'mc-bot-2026'`. Server routes (portfolio, watchlist,
+   bot/*) now check both `BOT_SECRET` (truthiness) AND token equality
+   so an empty MC_BOT_SECRET env var fails closed instead of accepting
+   any empty token.
+
+D. Server routes (api/earnings/estimates, api/earnings/history)
+   FMP_KEY fallback string removed.
+
+E. NEW frontend/src/middleware.ts
+   Edge middleware applies tiered rate limits to all /api/* routes:
+   - 30 req/min/IP for heavy routes (india-screener, india, history,
+     edgar, estimates, fmp-proxy, concall/parse, multibagger)
+   - 120 req/min/IP for everything else
+   X-RateLimit-Limit / X-RateLimit-Remaining / Retry-After headers
+   on every response.
+
+F. india-screener route also gets a per-route 30/min rate limit on top
+   of the middleware (defense in depth, since the screener scrape is
+   the single most expensive endpoint).
+
+POST-DEPLOY ACTION REQUIRED:
+After this lands on Vercel, ROTATE the FMP API key on FMP's dashboard.
+The previous key is in git history (visible at
+github.com/radhevrishi/market-cockpit history) and should be considered
+compromised. New key goes in Vercel env vars as FMP_KEY.
+
+If you also want web client portfolio/watchlist writes to work again,
+set MC_BOT_SECRET in Vercel env (any random string), and have the
+client send it in request bodies — but real per-user auth (next-auth
+or similar) is the proper long-term fix.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ .../(dashboard)/earnings-analysis/page.tsx    |  52 +++++---
+ .../src/app/api/bot/movers-alert/route.tsx    |   2 +-
+ .../src/app/api/bot/portfolio-alert/route.tsx |   2 +-
+ .../src/app/api/bot/watchlist-alert/route.tsx |   2 +-
+ .../src/app/api/earnings/estimates/route.ts   |   4 +-
+ .../src/app/api/earnings/fmp-proxy/route.ts   | 121 ++++++++++++++++++
+ .../src/app/api/earnings/history/route.ts     |   4 +-
+ .../app/api/earnings/india-screener/route.ts  |   7 +
+ frontend/src/app/api/portfolio/route.ts       |   6 +-
+ frontend/src/app/api/watchlist/route.ts       |   6 +-
+ frontend/src/lib/config.ts                    |  18 ++-
+ frontend/src/middleware.ts                    |  77 +++++++++++
+ 12 files changed, 269 insertions(+), 32 deletions(-)
+ create mode 100644 frontend/src/app/api/earnings/fmp-proxy/route.ts
+ create mode 100644 frontend/src/middleware.ts
+
+diff --git a/frontend/src/app/(dashboard)/earnings-analysis/page.tsx b/frontend/src/app/(dashboard)/earnings-analysis/page.tsx
+index d6078c2..b6e18a7 100644
+--- a/frontend/src/app/(dashboard)/earnings-analysis/page.tsx
++++ b/frontend/src/app/(dashboard)/earnings-analysis/page.tsx
+@@ -1910,9 +1910,28 @@ function saveHist2(e: HistEntry2[]) { try { localStorage.setItem(HISTORY_KEY2, J
+ 
+ export default function EarningsAnalysisPage() {
+   // ── API Keys ──────────────────────────────────────────────────────────────
+-  const FMP_KEY = 'SywZSfKoRQ9JmcUZ1w98MT78rrVvHGng';  // Financial Modeling Prep (PRIMARY)
++  // FMP_KEY removed from client — was hardcoded and shipping to browser JS.
++  // All FMP calls now route through /api/earnings/fmp-proxy which holds the
++  // key server-side and rate-limits per IP.
+   const AV_KEY  = '62EKUKC2M5WSZB9Z';                   // Alpha Vantage (fallback)
+ 
++  // Helper that calls FMP's legacy v3 endpoints via the server proxy.
++  // Returns a Response. Caller calls .ok and .json() — but .json() returns
++  // the proxy envelope { ok, data }; the page code already destructures via
++  // `safeEst` helpers that handle both shapes via `j?.data ?? j ?? []`.
++  // For sites that consumed the array directly we wrap with unwrapFmp().
++  function fmpFetch(endpoint: string, ticker: string, params: Record<string, string> = {}): Promise<Response> {
++    const qs = new URLSearchParams({ endpoint, ticker, ...params });
++    return fetch(`/api/earnings/fmp-proxy?${qs.toString()}`);
++  }
++  // Helper to unwrap the proxy envelope { ok, data } back to the raw array
++  // shape that the existing destructuring code expects. Returns [] on error.
++  async function unwrapFmpJson(res: Response): Promise<any[]> {
++    if (!res.ok) return [];
++    const j = await res.json().catch(() => null);
++    return j?.data ?? (Array.isArray(j) ? j : []);
++  }
++
+   // Consensus estimates data — enriched from FMP (primary) or AV (fallback)
+   interface AVData {
+     symbol: string; name: string; sector: string; industry: string;
+@@ -1957,17 +1976,14 @@ export default function EarningsAnalysisPage() {
+       // /analyst-estimates: forward revenue, EPS, gross margin estimates
+       // /profile: company name, sector, industry
+       const [surpriseRes, estimatesRes, profileRes] = await Promise.allSettled([
+-        fetch(`https://financialmodelingprep.com/api/v3/earnings-surprises/${encodeURIComponent(sym)}?apikey=${FMP_KEY}`),
+-        fetch(`https://financialmodelingprep.com/api/v3/analyst-estimates/${encodeURIComponent(sym)}?period=quarterly&limit=4&apikey=${FMP_KEY}`),
+-        fetch(`https://financialmodelingprep.com/api/v3/profile/${encodeURIComponent(sym)}?apikey=${FMP_KEY}`),
++        fmpFetch('earnings-surprises', sym),
++        fmpFetch('analyst-estimates', sym, { period: 'quarterly', limit: '4' }),
++        fmpFetch('profile', sym),
+       ]);
+ 
+-      const surprises: any[] = surpriseRes.status === 'fulfilled' && surpriseRes.value.ok
+-        ? await surpriseRes.value.json() : [];
+-      const estimates: any[] = estimatesRes.status === 'fulfilled' && estimatesRes.value.ok
+-        ? await estimatesRes.value.json() : [];
+-      const profiles: any[] = profileRes.status === 'fulfilled' && profileRes.value.ok
+-        ? await profileRes.value.json() : [];
++      const surprises: any[] = surpriseRes.status === 'fulfilled' ? await unwrapFmpJson(surpriseRes.value) : [];
++      const estimates: any[] = estimatesRes.status === 'fulfilled' ? await unwrapFmpJson(estimatesRes.value) : [];
++      const profiles: any[] = profileRes.status === 'fulfilled' ? await unwrapFmpJson(profileRes.value) : [];
+ 
+       if (!surprises.length && !estimates.length) return false;
+ 
+@@ -2458,13 +2474,13 @@ export default function EarningsAnalysisPage() {
+ 
+   async function fetchFromFMP(ticker: string): Promise<RawFinancials | null> {
+     const [incRes, bsRes, cfRes, profRes] = await Promise.allSettled([
+-      fetch(`https://financialmodelingprep.com/api/v3/income-statement/${encodeURIComponent(ticker)}?period=quarterly&limit=5&apikey=${FMP_KEY}`),
+-      fetch(`https://financialmodelingprep.com/api/v3/balance-sheet-statement/${encodeURIComponent(ticker)}?period=quarterly&limit=2&apikey=${FMP_KEY}`),
+-      fetch(`https://financialmodelingprep.com/api/v3/cash-flow-statement/${encodeURIComponent(ticker)}?period=quarterly&limit=2&apikey=${FMP_KEY}`),
+-      fetch(`https://financialmodelingprep.com/api/v3/profile/${encodeURIComponent(ticker)}?apikey=${FMP_KEY}`),
++      fmpFetch('income-statement', ticker, { period: 'quarterly', limit: '5' }),
++      fmpFetch('balance-sheet-statement', ticker, { period: 'quarterly', limit: '2' }),
++      fmpFetch('cash-flow-statement', ticker, { period: 'quarterly', limit: '2' }),
++      fmpFetch('profile', ticker),
+     ]);
+     const safe = async (r: PromiseSettledResult<Response>) =>
+-      r.status === 'fulfilled' && r.value.ok ? r.value.json().catch(() => []) : [];
++      r.status === 'fulfilled' ? unwrapFmpJson(r.value) : [];
+     const [inc, bs, cf, profiles] = await Promise.all([safe(incRes), safe(bsRes), safe(cfRes), safe(profRes)]);
+ 
+     const profile = (profiles as any[])[0] ?? {};
+@@ -2630,11 +2646,11 @@ export default function EarningsAnalysisPage() {
+       setLoadingMsg('Fetching analyst estimates and earnings surprise history…');
+       setLoadingPct(60);
+       const [surpriseRes, estRes] = await Promise.allSettled([
+-        fetch(`https://financialmodelingprep.com/api/v3/earnings-surprises/${encodeURIComponent(ticker)}?apikey=${FMP_KEY}`),
+-        fetch(`https://financialmodelingprep.com/api/v3/analyst-estimates/${encodeURIComponent(ticker)}?period=quarterly&limit=4&apikey=${FMP_KEY}`),
++        fmpFetch('earnings-surprises', ticker),
++        fmpFetch('analyst-estimates', ticker, { period: 'quarterly', limit: '4' }),
+       ]);
+       const safeEst = async (r: PromiseSettledResult<Response>) =>
+-        r.status === 'fulfilled' && r.value.ok ? r.value.json().catch(() => []) : [];
++        r.status === 'fulfilled' ? unwrapFmpJson(r.value) : [];
+       const [surprises, ests] = await Promise.all([safeEst(surpriseRes), safeEst(estRes)]);
+       const nextEst = (ests as any[])[0] ?? {};
+ 
+diff --git a/frontend/src/app/api/bot/movers-alert/route.tsx b/frontend/src/app/api/bot/movers-alert/route.tsx
+index 99498e8..d16ee96 100644
+--- a/frontend/src/app/api/bot/movers-alert/route.tsx
++++ b/frontend/src/app/api/bot/movers-alert/route.tsx
+@@ -8,7 +8,7 @@ export const maxDuration = 55;
+ // ── Config ──────────────────────────────────────────────────────────────
+ const TG_TOKEN = '8763736180:AAFZ96g_IMunKzwdkVacWLrfjl8fms1BdvY';
+ const TG_CHAT_ID = '5057319640';
+-const BOT_SECRET = process.env.MC_BOT_SECRET || 'mc-bot-2026';
++const BOT_SECRET = process.env.MC_BOT_SECRET || '';
+ const API_BASE = 'https://market-cockpit.vercel.app';
+ 
+ // ── NSE Direct Fetch ────────────────────────────────────────────────────
+diff --git a/frontend/src/app/api/bot/portfolio-alert/route.tsx b/frontend/src/app/api/bot/portfolio-alert/route.tsx
+index 8aa02eb..b4c7a2a 100644
+--- a/frontend/src/app/api/bot/portfolio-alert/route.tsx
++++ b/frontend/src/app/api/bot/portfolio-alert/route.tsx
+@@ -10,7 +10,7 @@ export const maxDuration = 55;
+ // ── Config ──────────────────────────────────────────────────────────────
+ const TG_TOKEN = '8522816501:AAGFbhOb8EYj7cG0yUwsaZ5ZFUEpRkA7Zss';
+ const TG_CHAT_ID = '5057319640';
+-const BOT_SECRET = process.env.MC_BOT_SECRET || 'mc-bot-2026';
++const BOT_SECRET = process.env.MC_BOT_SECRET || '';
+ const API_BASE = 'https://market-cockpit.vercel.app';
+ 
+ // ── Default Portfolio (user's actual holdings) ─────────────────────────
+diff --git a/frontend/src/app/api/bot/watchlist-alert/route.tsx b/frontend/src/app/api/bot/watchlist-alert/route.tsx
+index c0b4c02..b24883c 100644
+--- a/frontend/src/app/api/bot/watchlist-alert/route.tsx
++++ b/frontend/src/app/api/bot/watchlist-alert/route.tsx
+@@ -10,7 +10,7 @@ export const maxDuration = 55;
+ // ── Config ──────────────────────────────────────────────────────────────
+ const TG_TOKEN = '8681784264:AAG7OV3ibS4r89Lbrta50NkWnJSCTrtoS80';
+ const TG_CHAT_ID = '5057319640';
+-const BOT_SECRET = process.env.MC_BOT_SECRET || 'mc-bot-2026';
++const BOT_SECRET = process.env.MC_BOT_SECRET || '';
+ const API_BASE = 'https://market-cockpit.vercel.app';
+ 
+ // ── Default Watchlist ───────────────────────────────────────────────────
+diff --git a/frontend/src/app/api/earnings/estimates/route.ts b/frontend/src/app/api/earnings/estimates/route.ts
+index e67d9e8..b0da6fc 100644
+--- a/frontend/src/app/api/earnings/estimates/route.ts
++++ b/frontend/src/app/api/earnings/estimates/route.ts
+@@ -22,7 +22,9 @@ export const maxDuration = 30;
+ //     /stable/earnings?limit>5, /stable/ratings-historical?limit>1
+ // ─────────────────────────────────────────────────────────────────────────────
+ 
+-const FMP_KEY = process.env.FMP_KEY || 'SywZSfKoRQ9JmcUZ1w98MT78rrVvHGng';
++// Server-only — no string fallback. The previous fallback was a hardcoded
++// FMP key checked into the repo and shipping to anyone reading source.
++const FMP_KEY = process.env.FMP_KEY || '';
+ const STABLE = 'https://financialmodelingprep.com/stable';
+ 
+ async function safeJson<T = any>(url: string, timeoutMs = 8000): Promise<{ data: T | null; ok: boolean; reason?: string }> {
+diff --git a/frontend/src/app/api/earnings/fmp-proxy/route.ts b/frontend/src/app/api/earnings/fmp-proxy/route.ts
+new file mode 100644
+index 0000000..7ac8355
+--- /dev/null
++++ b/frontend/src/app/api/earnings/fmp-proxy/route.ts
+@@ -0,0 +1,121 @@
++import { NextResponse } from 'next/server';
++import { rateLimitResponse } from '@/lib/rateLimit';
++
++export const dynamic = 'force-dynamic';
++export const maxDuration = 30;
++
++// ─────────────────────────────────────────────────────────────────────────
++// /api/earnings/fmp-proxy?endpoint=<path>&<other>=<value>
++//
++// Server-side proxy for FMP. Replaces direct browser-side FMP calls in
++// the earnings-analysis page that hardcoded the API key as a string in
++// React component code (visible in Sources tab → quota drainable by any
++// visitor).
++//
++// Allowlist of endpoints — only routes the page actually uses. Anything
++// else returns 403. Per-IP rate limit applies.
++// ─────────────────────────────────────────────────────────────────────────
++
++const ALLOWED_ENDPOINTS = new Set<string>([
++  // legacy v3
++  'earnings-surprises',
++  'analyst-estimates',
++  'profile',
++  'income-statement',
++  'balance-sheet-statement',
++  'cash-flow-statement',
++  // /stable/ — keep aligned with /api/earnings/{estimates,history}
++  'profile-v2',
++  'quote',
++  'earnings',
++  'price-target-summary',
++  'grades',
++  'key-metrics-ttm',
++]);
++
++function getFmpKey(): string | null {
++  // Server-only env var. No fallback string — fail rather than ship a
++  // hardcoded key to anyone who reads the source.
++  return process.env.FMP_KEY || null;
++}
++
++export async function GET(request: Request) {
++  const limited = rateLimitResponse(request, 60, 60_000); // 60 req/min/IP
++  if (limited) return limited;
++
++  const apiKey = getFmpKey();
++  if (!apiKey) {
++    return NextResponse.json(
++      { ok: false, error: 'FMP_KEY env var not set on server' },
++      { status: 503 },
++    );
++  }
++
++  const url = new URL(request.url);
++  const endpoint = url.searchParams.get('endpoint');
++  const ticker = url.searchParams.get('ticker');
++  if (!endpoint || !ticker) {
++    return NextResponse.json(
++      { ok: false, error: 'Missing endpoint or ticker query param' },
++      { status: 400 },
++    );
++  }
++  if (!ALLOWED_ENDPOINTS.has(endpoint)) {
++    return NextResponse.json(
++      { ok: false, error: `Endpoint "${endpoint}" not allowlisted` },
++      { status: 403 },
++    );
++  }
++
++  // Pass through all original query params except endpoint/ticker, and
++  // append apikey on the server side.
++  const passthrough = new URLSearchParams();
++  url.searchParams.forEach((v, k) => {
++    if (k !== 'endpoint' && k !== 'ticker') passthrough.append(k, v);
++  });
++  passthrough.append('apikey', apiKey);
++
++  // Map our endpoint slug to FMP path:
++  //   profile, income-statement, etc → /api/v3/{endpoint}/{ticker}
++  //   profile-v2 → /stable/profile?symbol=
++  //   quote, earnings, price-target-summary, grades, key-metrics-ttm → /stable/{endpoint}?symbol=
++  let fmpUrl: string;
++  if (endpoint === 'profile-v2' || endpoint === 'quote' || endpoint === 'earnings' ||
++      endpoint === 'price-target-summary' || endpoint === 'grades' || endpoint === 'key-metrics-ttm') {
++    const slug = endpoint === 'profile-v2' ? 'profile' : endpoint;
++    passthrough.set('symbol', ticker);
++    fmpUrl = `https://financialmodelingprep.com/stable/${slug}?${passthrough.toString()}`;
++  } else {
++    fmpUrl = `https://financialmodelingprep.com/api/v3/${endpoint}/${encodeURIComponent(ticker)}?${passthrough.toString()}`;
++  }
++
++  try {
++    const res = await fetch(fmpUrl, {
++      signal: AbortSignal.timeout(15000),
++      next: { revalidate: 300 }, // 5-min cache
++    });
++    if (!res.ok) {
++      return NextResponse.json(
++        { ok: false, error: `FMP returned ${res.status}`, endpoint, ticker },
++        { status: res.status === 429 ? 429 : 502 },
++      );
++    }
++    const text = await res.text();
++    if (text.startsWith('Premium') || text.includes('"Error Message"')) {
++      return NextResponse.json(
++        { ok: false, error: 'FMP endpoint requires premium subscription', endpoint, ticker },
++        { status: 402 },
++      );
++    }
++    let json: any;
++    try { json = JSON.parse(text); } catch {
++      return NextResponse.json({ ok: false, error: 'FMP returned non-JSON' }, { status: 502 });
++    }
++    return NextResponse.json({ ok: true, data: json });
++  } catch (err: any) {
++    return NextResponse.json(
++      { ok: false, error: `FMP fetch failed: ${err?.message || 'timeout'}` },
++      { status: 504 },
++    );
++  }
++}
+diff --git a/frontend/src/app/api/earnings/history/route.ts b/frontend/src/app/api/earnings/history/route.ts
+index 014f60f..49ffa08 100644
+--- a/frontend/src/app/api/earnings/history/route.ts
++++ b/frontend/src/app/api/earnings/history/route.ts
+@@ -10,7 +10,9 @@ export const maxDuration = 30;
+ // Pairs each row with /stable/earnings to get actual+estimate revenue/EPS.
+ // ─────────────────────────────────────────────────────────────────────────────
+ 
+-const FMP_KEY = process.env.FMP_KEY || 'SywZSfKoRQ9JmcUZ1w98MT78rrVvHGng';
++// Server-only — no string fallback. Hardcoded fallback removed in security
++// patch 15 because it was leaking via the public repo.
++const FMP_KEY = process.env.FMP_KEY || '';
+ const STABLE = 'https://financialmodelingprep.com/stable';
+ 
+ async function safeJson<T = any>(url: string, timeoutMs = 8000): Promise<T | null> {
+diff --git a/frontend/src/app/api/earnings/india-screener/route.ts b/frontend/src/app/api/earnings/india-screener/route.ts
+index 6acbe2d..c335920 100644
+--- a/frontend/src/app/api/earnings/india-screener/route.ts
++++ b/frontend/src/app/api/earnings/india-screener/route.ts
+@@ -1,5 +1,6 @@
+ import { NextResponse } from 'next/server';
+ import { fetchCompanyFinancialResults } from '@/lib/nse';
++import { rateLimitResponse } from '@/lib/rateLimit';
+ 
+ export const dynamic = 'force-dynamic';
+ export const maxDuration = 30;
+@@ -324,6 +325,12 @@ async function fetchNseQuarters(symbol: string): Promise<NseQuarter[]> {
+ }
+ 
+ export async function GET(request: Request) {
++  // Rate limit: NSE + Screener fetches are expensive (multi-MB scrapes,
++  // up to 4 sequential HTTP calls per request including the staleness retry).
++  // 30 lookups/min/IP is generous for legitimate use, blocks scraping.
++  const limited = rateLimitResponse(request, 30, 60_000);
++  if (limited) return limited;
++
+   const { searchParams } = new URL(request.url);
+   const raw = (searchParams.get('ticker') || '').trim();
+   if (!raw) {
+diff --git a/frontend/src/app/api/portfolio/route.ts b/frontend/src/app/api/portfolio/route.ts
+index 65bf92a..99ce970 100644
+--- a/frontend/src/app/api/portfolio/route.ts
++++ b/frontend/src/app/api/portfolio/route.ts
+@@ -3,7 +3,7 @@ import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
+ 
+ export const dynamic = 'force-dynamic';
+ 
+-const BOT_SECRET = process.env.MC_BOT_SECRET || 'mc-bot-2026';
++const BOT_SECRET = process.env.MC_BOT_SECRET || '';
+ 
+ /* ── Types ─────────────────────────────────────────────── */
+ export interface PortfolioHolding {
+@@ -62,8 +62,8 @@ export async function POST(request: Request) {
+     const body = await request.json();
+     const { chatId = 'default', secret } = body;
+ 
+-    if (secret !== BOT_SECRET) {
+-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
++    if (!BOT_SECRET || secret !== BOT_SECRET) {
++      return NextResponse.json({ error: 'Unauthorized — server secret not configured or token mismatch' }, { status: 401 });
+     }
+ 
+     const existing = await kvGet<PortfolioData>(kvKey(chatId));
+diff --git a/frontend/src/app/api/watchlist/route.ts b/frontend/src/app/api/watchlist/route.ts
+index 4eeaaaa..f15ab1e 100644
+--- a/frontend/src/app/api/watchlist/route.ts
++++ b/frontend/src/app/api/watchlist/route.ts
+@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
+ // No hardcoded default — user's watchlist is the single source of truth (from Telegram bot or UI)
+ const DEFAULT_WATCHLIST: string[] = [];
+ 
+-const BOT_SECRET = process.env.MC_BOT_SECRET || 'mc-bot-2026';
++const BOT_SECRET = process.env.MC_BOT_SECRET || '';
+ 
+ type WatchlistFlag = 'GREEN' | 'ORANGE' | 'RED' | null;
+ interface WatchlistFlags { [symbol: string]: WatchlistFlag; }
+@@ -90,8 +90,8 @@ export async function POST(request: Request) {
+     }
+ 
+     // Auth check for watchlist modification actions
+-    if (secret !== BOT_SECRET) {
+-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
++    if (!BOT_SECRET || secret !== BOT_SECRET) {
++      return NextResponse.json({ error: 'Unauthorized — server secret not configured or token mismatch' }, { status: 401 });
+     }
+ 
+     let updated: string[] = [];
+diff --git a/frontend/src/lib/config.ts b/frontend/src/lib/config.ts
+index 97d8fcf..e63ccd9 100644
+--- a/frontend/src/lib/config.ts
++++ b/frontend/src/lib/config.ts
+@@ -10,6 +10,18 @@
+ export const CHAT_ID =
+   process.env.NEXT_PUBLIC_CHAT_ID ?? '5057319640';
+ 
+-/** Shared secret for watchlist write operations */
+-export const BOT_SECRET =
+-  process.env.NEXT_PUBLIC_BOT_SECRET ?? 'mc-bot-2026';
++/**
++ * Shared secret for watchlist / portfolio write operations.
++ *
++ * SECURITY NOTE: This used to fall back to a hardcoded string
++ * ("mc-bot-2026") AND be exposed via NEXT_PUBLIC_BOT_SECRET, meaning
++ * the secret was visible in the browser bundle and anyone could call
++ * the write endpoints. As of security patch 15:
++ *  - Empty string is the default — server endpoints reject any request
++ *    without a matching MC_BOT_SECRET env var on the server.
++ *  - Web client write paths (portfolio editor, watchlist mutations)
++ *    will return 401 unless you implement real per-user auth.
++ *  - The Telegram bot continues to work because it sends the secret
++ *    server-to-server with the value of MC_BOT_SECRET set on Vercel.
++ */
++export const BOT_SECRET = process.env.NEXT_PUBLIC_BOT_SECRET ?? '';
+diff --git a/frontend/src/middleware.ts b/frontend/src/middleware.ts
+new file mode 100644
+index 0000000..0fa5455
+--- /dev/null
++++ b/frontend/src/middleware.ts
+@@ -0,0 +1,77 @@
++import { NextResponse } from 'next/server';
++import type { NextRequest } from 'next/server';
++import { checkRateLimit } from '@/lib/rateLimit';
++
++// ─────────────────────────────────────────────────────────────────────────
++// Global Edge middleware — applies a per-IP rate ceiling to /api/*
++//
++// Tiered limits:
++//   - Heavy routes (server-side scrape / file parse / EDGAR XBRL):
++//     30 requests / minute / IP
++//   - Other API routes:
++//     120 requests / minute / IP
++//
++// Individual route handlers may apply additional, tighter limits (e.g.
++// watchlist write paths). The middleware is the outermost filter so abusive
++// IPs get rejected before any route code runs.
++// ─────────────────────────────────────────────────────────────────────────
++
++const HEAVY_ROUTES = [
++  '/api/earnings/india-screener',
++  '/api/earnings/india',
++  '/api/earnings/history',
++  '/api/earnings/edgar',
++  '/api/earnings/estimates',
++  '/api/earnings/fmp-proxy',
++  '/api/concall/parse',
++  '/api/market/multibagger',
++];
++
++function clientIp(req: NextRequest): string {
++  return (
++    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
++    req.headers.get('x-real-ip') ||
++    req.ip ||
++    'anon'
++  );
++}
++
++export function middleware(req: NextRequest) {
++  const path = req.nextUrl.pathname;
++  if (!path.startsWith('/api/')) return NextResponse.next();
++
++  const ip = clientIp(req);
++  const isHeavy = HEAVY_ROUTES.some((p) => path.startsWith(p));
++  const limit = isHeavy ? 30 : 120;
++  const windowMs = 60_000;
++
++  const { allowed, remaining, resetInMs } = checkRateLimit(ip, limit, windowMs);
++  if (!allowed) {
++    return NextResponse.json(
++      {
++        ok: false,
++        error: 'Rate limit exceeded',
++        remaining,
++        resetInSeconds: Math.ceil(resetInMs / 1000),
++      },
++      {
++        status: 429,
++        headers: {
++          'X-RateLimit-Limit': String(limit),
++          'X-RateLimit-Remaining': '0',
++          'X-RateLimit-Reset-Ms': String(resetInMs),
++          'Retry-After': String(Math.ceil(resetInMs / 1000)),
++        },
++      },
++    );
++  }
++
++  const res = NextResponse.next();
++  res.headers.set('X-RateLimit-Limit', String(limit));
++  res.headers.set('X-RateLimit-Remaining', String(remaining));
++  return res;
++}
++
++export const config = {
++  matcher: ['/api/:path*'],
++};
+-- 
+2.34.1
+

@@ -1,0 +1,258 @@
+From bda0fd91eea4b2080a4401ad0dbe0e3f75648664 Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Fri, 8 May 2026 13:21:06 +0200
+Subject: [PATCH 09/17] =?UTF-8?q?fix(india):=20Screener=20freshness=20lag?=
+ =?UTF-8?q?=20=E2=80=94=20NSE=20override=20fires=20for=20any=20quarter=20c?=
+ =?UTF-8?q?ount?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+User observed JSWINFRA showing Dec 2025 / Q3 FY26 as latest in the
+report when the company had already filed Q4 FY26 (Mar 2026 quarter).
+Footer was 'financials: screener_in', meaning the NSE override never
+fired — Screener was lagging and our code didn't catch up.
+
+Two root causes:
+1. NSE override required ≥4 quarters before activating. Many smaller
+   caps (especially recent IPOs) have 1-3 NSE filings indexed; we'd
+   skip NSE entirely even when its single most-recent row was newer
+   than Screener's stale latest.
+2. fetchCompanyFinancialResults made one bare-symbol call to NSE
+   without a date range. Some symbols return ancient cached results
+   from that endpoint.
+
+Fixes:
+- Lower override threshold from 4 → 1 NSE quarter. Any NSE row that
+  passes the 60-130 day single-quarter filter is now spliced into
+  the merged quarterly array.
+- Add a 'freshness patch' detection: parse Screener's period labels
+  ('Mar 2025') back into timestamps; if NSE's latest period is more
+  recent than Screener's, log it explicitly in debug.warnings so
+  users can see why the source flipped.
+- Merge logic now sorts the union of NSE + Screener-only periods by
+  parsed timestamp and takes the most recent 12. Earlier code only
+  appended NSE rows after Screener-only rows, which broke if NSE
+  filled a period that fell between two Screener rows.
+- fetchCompanyFinancialResults: now hits NSE twice in fallback —
+  first with Quarterly + 3y date range (last 36 months), then
+  bare-symbol as backup. Results are merged + deduped by
+  (toDate × consolidated/standalone). Smaller caps that don't
+  respond to date filter still work via fallback.
+- Return type made explicit Promise<any> so the existing
+  Array.isArray / .data handling at call sites doesn't narrow.
+
+After deploy, JSWINFRA should show Mar 2026 / Q4 FY26 as latest if
+NSE has filed it; if NSE also lags, the report falls back to Screener
+with a debug note about the freshness gap.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ .../app/api/earnings/india-screener/route.ts  | 120 +++++++++++-------
+ frontend/src/lib/nse.ts                       |  56 +++++++-
+ 2 files changed, 129 insertions(+), 47 deletions(-)
+
+diff --git a/frontend/src/app/api/earnings/india-screener/route.ts b/frontend/src/app/api/earnings/india-screener/route.ts
+index cb92af3..e239678 100644
+--- a/frontend/src/app/api/earnings/india-screener/route.ts
++++ b/frontend/src/app/api/earnings/india-screener/route.ts
+@@ -609,54 +609,84 @@ export async function GET(request: Request) {
+       })
+     : [];
+ 
+-  // ── NSE quarterly OVERRIDE — authoritative source for quarterly P&L ────
+-  // If NSE returned ≥4 quarters of valid filings, replace the screener-parsed
+-  // quarterly data. Screener values can be stale, mis-aggregated for groups
+-  // with consolidated/standalone variants, or compressed when the table is
+-  // wide. NSE is the filer; its numbers are the truth.
++  // ── NSE quarterly OVERRIDE / FRESHNESS PATCH ───────────────────────────
++  // The default source is Screener.in's quarterly table — but Screener can
++  // lag the actual filings by several weeks (JSW Infra Q4 FY26 was filed
++  // and published on the company IR site while Screener still showed
++  // Dec 2025 / Q3 FY26 as the latest). NSE's corporates-financial-results
++  // endpoint refreshes within ~24h of each filing, so we use it as both
++  // an authoritative override AND a freshness patch.
++  //
++  // Logic:
++  //  - If NSE returned ≥1 quarter, splice each NSE quarter into the
++  //    quarterly array. Any NSE quarter with a more recent period than
++  //    Screener's latest replaces / extends the array — fixing the lag.
++  //  - Below NSE rows we keep older Screener periods (Screener has 12+
++  //    quarters of history, NSE only the most recent few).
++  //  - Tag the source as 'nse_primary' whenever ANY NSE row was used so
++  //    the user can see in the footer that the latest figure is freshly
++  //    sourced from NSE filings.
+   const nseQuarters = await nsePromise.catch(() => [] as NseQuarter[]);
+-  const useNse = nseQuarters.length >= 4;
+ 
+-  // Stitch: prefer NSE quarters (newest 12); fall back to screener for any
+-  // older periods Screener has but NSE didn't return.
++  // Helper to coerce a screener-period header (e.g. "Mar 2025") into a
++  // sortable timestamp; used to detect freshness gaps. Returns 0 on failure
++  // so unparsed Screener rows sort to the back.
++  const monthMap: Record<string, number> = {
++    Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5,
++    Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11,
++  };
++  const periodToTs = (label: string): number => {
++    const m = label?.match(/([A-Z][a-z]{2})\s+(\d{4})/);
++    if (!m) return 0;
++    const mo = monthMap[m[1]];
++    if (mo === undefined) return 0;
++    return new Date(parseInt(m[2], 10), mo, 28).getTime();
++  };
++
+   let mergedQuarterly: typeof quarterly = quarterly;
+-  if (useNse) {
+-    const nseDates = new Set(
+-      nseQuarters
+-        .map((q) => q.toDate)
+-        .filter((d): d is string => !!d)
+-        .map((d) => new Date(d).getTime()),
+-    );
+-    const screenerOnlyOlder = quarterly.filter((sq) => {
+-      // Screener doesn't expose a toDate; match by period label fragment instead
+-      return !nseQuarters.some((nq) => nq.period === sq.period);
+-    });
+-    // Combine: older Screener-only periods first, then NSE quarters in order
+-    mergedQuarterly = [
+-      ...screenerOnlyOlder.slice(0, Math.max(0, 12 - nseQuarters.length)),
+-      ...nseQuarters.map((q) => ({
+-        period: q.period,
+-        sales: q.sales,
+-        expenses: q.expenses,
+-        operatingProfit: q.operatingProfit,
+-        opmPct: q.opmPct,
+-        otherIncome: q.otherIncome,
+-        interest: q.interest,
+-        depreciation: q.depreciation,
+-        pbt: q.pbt,
+-        taxPct: q.taxPct,
+-        netProfit: q.netProfit,
+-        eps: q.eps,
+-        netMargin: q.netMargin,
+-      })),
+-    ];
+-    debug.warnings.push(
+-      `NSE primary: replaced ${nseQuarters.length} quarters of P&L with NSE financial-results filings`,
+-    );
+-  } else if (nseQuarters.length > 0) {
+-    debug.warnings.push(
+-      `NSE returned ${nseQuarters.length} quarter(s) — below threshold (4); using Screener for quarterly`,
+-    );
++  let useNse = false;
++  let nseLatestNewer = false;
++  if (nseQuarters.length > 0) {
++    useNse = true;
++    const screenerLatestTs = quarterly.length > 0
++      ? periodToTs(quarterly[quarterly.length - 1].period)
++      : 0;
++    const nseLatestTs = periodToTs(nseQuarters[nseQuarters.length - 1].period);
++    nseLatestNewer = nseLatestTs > screenerLatestTs && screenerLatestTs > 0;
++
++    // Map NSE rows to the screener-quarterly shape and dedupe by period.
++    const nseAsRows = nseQuarters.map((q) => ({
++      period: q.period,
++      sales: q.sales,
++      expenses: q.expenses,
++      operatingProfit: q.operatingProfit,
++      opmPct: q.opmPct,
++      otherIncome: q.otherIncome,
++      interest: q.interest,
++      depreciation: q.depreciation,
++      pbt: q.pbt,
++      taxPct: q.taxPct,
++      netProfit: q.netProfit,
++      eps: q.eps,
++      netMargin: q.netMargin,
++    }));
++    const nsePeriods = new Set(nseAsRows.map((r) => r.period));
++    const screenerOnlyOlder = quarterly.filter((sq) => !nsePeriods.has(sq.period));
++
++    // Combine: older Screener-only periods first, then NSE rows. Sort by
++    // period timestamp so the most recent is genuinely last.
++    mergedQuarterly = [...screenerOnlyOlder, ...nseAsRows]
++      .sort((a, b) => periodToTs(a.period) - periodToTs(b.period))
++      .slice(-12);
++    if (nseLatestNewer) {
++      debug.warnings.push(
++        `NSE freshness patch: NSE has a more recent quarter (${nseQuarters[nseQuarters.length - 1].period}) than Screener's latest (${quarterly[quarterly.length - 1]?.period}). Using NSE as latest.`,
++      );
++    } else {
++      debug.warnings.push(
++        `NSE primary: spliced ${nseQuarters.length} NSE quarter(s) into ${screenerOnlyOlder.length} older Screener period(s)`,
++      );
++    }
+   }
+ 
+   // Most recent quarter data (caller's "latest reported")
+diff --git a/frontend/src/lib/nse.ts b/frontend/src/lib/nse.ts
+index 33a5681..da6acfe 100644
+--- a/frontend/src/lib/nse.ts
++++ b/frontend/src/lib/nse.ts
+@@ -273,8 +273,60 @@ export async function fetchLatestFinancialResults() {
+ }
+ 
+ // Fetch financial results for a specific company (for enriching announcements)
+-export async function fetchCompanyFinancialResults(symbol: string) {
+-  return nseApiFetch(`/api/corporates-financial-results?index=equities&symbol=${encodeURIComponent(symbol)}`, 300000);
++//
++// Calls the NSE corporates-financial-results endpoint twice in fallback chain:
++//   1. with a 3-year date range (gets the most recent filings — required for
++//      symbols where the bare symbol query returns ancient cached rows)
++//   2. without a date range (used when #1 returns empty — some smaller caps
++//      only respond to the symbol filter)
++// Results are merged, deduped by toDate, and returned as a single array. The
++// caller filters by period span.
++export async function fetchCompanyFinancialResults(symbol: string): Promise<any> {
++  const today = new Date();
++  const past = new Date(today);
++  past.setFullYear(today.getFullYear() - 3);
++  const fmt = (d: Date) => `${d.getDate().toString().padStart(2, '0')}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getFullYear()}`;
++  const fromDate = fmt(past);
++  const toDate = fmt(today);
++
++  // Try with date range first (most recent filings)
++  let primary: any = null;
++  try {
++    primary = await nseApiFetch(
++      `/api/corporates-financial-results?index=equities&symbol=${encodeURIComponent(symbol)}&period=Quarterly&from_date=${fromDate}&to_date=${toDate}`,
++      300000,
++    );
++  } catch {
++    // ignore
++  }
++  const primaryArr: any[] = Array.isArray(primary) ? primary : primary?.data || [];
++
++  // Always also try without a date range — smaller caps sometimes don't
++  // respond to the date filter; merging both gives the best coverage.
++  let fallback: any = null;
++  try {
++    fallback = await nseApiFetch(
++      `/api/corporates-financial-results?index=equities&symbol=${encodeURIComponent(symbol)}`,
++      300000,
++    );
++  } catch {
++    // ignore
++  }
++  const fallbackArr: any[] = Array.isArray(fallback) ? fallback : fallback?.data || [];
++
++  // Merge + dedupe by toDate (keeps newest of each period)
++  const combined: any[] = [...primaryArr, ...fallbackArr];
++  if (combined.length === 0) return null;
++  const seen = new Set<string>();
++  const dedup: any[] = [];
++  for (const r of combined) {
++    const key = `${r.toDate || r.broadCastDate || ''}::${r.consolidated || r.re_emp || ''}`;
++    if (!seen.has(key)) {
++      seen.add(key);
++      dedup.push(r);
++    }
++  }
++  return dedup;
+ }
+ 
+ // Fetch individual stock detailed quote
+-- 
+2.34.1
+

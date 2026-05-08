@@ -257,6 +257,19 @@ export interface IndiaExtras {
     publicHoldingPct: number | null;
     pledgePct: number | null;             // null if not reported
     flags: string[];                       // institutional commentary
+    // Promoter Trust Score — composite governance signal (0-100)
+    // Inputs: stability 40%, pledge 30%, consistency 15%, institutional confirmation 15%
+    trustScore?: {
+      score: number;                       // 0-100
+      grade: 'A' | 'B' | 'C' | 'D' | 'F';
+      verdict: string;                     // human-readable interpretation
+      breakdown: {
+        stability: { score: number; reason: string };
+        pledge: { score: number; reason: string };
+        consistency: { score: number; reason: string };
+        institutional: { score: number; reason: string };
+      };
+    };
   };
 
   // Quarterly breakdown (last 8Q) — values in ₹ Cr
@@ -311,6 +324,10 @@ export interface IndiaExtras {
       working_capital: { score: number; label: string };
       promoter: { score: number; label: string };
       cash_conversion: { score: number; label: string };
+      // Sixth component — populated only when a concall transcript is
+      // available. Pulls from concall tone signals + guidance direction
+      // and feeds into the overall composite with full weight.
+      forward?: { score: number; label: string };
     };
     direction: 'improving' | 'stable' | 'deteriorating';
     confidence: 'high' | 'medium' | 'low';

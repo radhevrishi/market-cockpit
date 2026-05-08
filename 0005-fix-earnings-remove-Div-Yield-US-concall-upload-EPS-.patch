@@ -1,0 +1,272 @@
+From 89f26628b6457d632fa6b9b2817d5610d77eca6d Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Fri, 8 May 2026 11:22:10 +0200
+Subject: [PATCH 05/17] fix(earnings): remove Div Yield, US concall upload, EPS
+ YoY fallback
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Three small follow-ups gathered during user testing:
+
+ - Drop the Div Yield tile from India Profitability & Leverage. User
+   doesn't track it and it crowds the row.
+ - Wire onConcallText through to InstitutionalReport too so US tickers
+   (Tesla et al.) get the same paste-transcript modal that India just
+   gained. handleUsConcallText reruns buildSnapshot with the cached
+   FinancialsInput / estimates / history JSON so we don't re-hit FMP.
+ - Tesla's EPS YoY column showed '—' because EDGAR XBRL only fills
+   epsBasic for the current quarter — fin.epsPrior was always null.
+   Fall back to history[4].eps (same fiscal quarter one year ago) so
+   the YoY surprise number actually renders. Same fix applied to
+   revenue YoY for symmetry, even though FMP usually fills revPrior.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ .../(dashboard)/earnings-analysis/page.tsx    |  24 ++++
+ .../earnings/IndiaInstitutionalReport.tsx     |   1 -
+ .../earnings/InstitutionalReport.tsx          | 103 +++++++++++++++++-
+ frontend/src/lib/earnings/build.ts            |  13 ++-
+ 4 files changed, 137 insertions(+), 4 deletions(-)
+
+diff --git a/frontend/src/app/(dashboard)/earnings-analysis/page.tsx b/frontend/src/app/(dashboard)/earnings-analysis/page.tsx
+index 99a65ac..d322605 100644
+--- a/frontend/src/app/(dashboard)/earnings-analysis/page.tsx
++++ b/frontend/src/app/(dashboard)/earnings-analysis/page.tsx
+@@ -2078,6 +2078,14 @@ export default function EarningsAnalysisPage() {
+     screenerJson: any;
+     fmpProfile: any;
+   } | null>(null);
++  // Cached US snapshot inputs — same idea, for the InstitutionalReport's
++  // concall upload button. We keep the FinancialsInput, estimates, and
++  // history JSON so the build runs locally without re-fetching FMP.
++  const usSnapshotInputsRef = useRef<{
++    finIn: any;
++    estJson: any;
++    histJson: any;
++  } | null>(null);
+   const [concallProcessing, setConcallProcessing] = useState(false);
+   const [loading, setLoading] = useState(false);
+   const [loadingPct, setLoadingPct] = useState(0);
+@@ -2720,6 +2728,7 @@ export default function EarningsAnalysisPage() {
+             category: edgarP?.category ?? null,
+             businessText: edgarP?.businessText ?? null,
+           };
++          usSnapshotInputsRef.current = { finIn, estJson, histJson };
+           const snap = buildSnapshot(finIn, estJson, histJson, '');
+           setSnapshot(snap);
+         }
+@@ -2831,6 +2840,7 @@ export default function EarningsAnalysisPage() {
+     setSnapshot(null);
+     lastEdgarPayloadRef.current = null;
+     indiaSnapshotInputsRef.current = null;
++    usSnapshotInputsRef.current = null;
+     setError('');
+     setPasteText('');
+     setUrlInput('');
+@@ -2857,6 +2867,18 @@ export default function EarningsAnalysisPage() {
+     }
+   }, []);
+ 
++  const handleUsConcallText = useCallback((text: string) => {
++    const inputs = usSnapshotInputsRef.current;
++    if (!inputs) return;
++    setConcallProcessing(true);
++    try {
++      const snap = buildSnapshot(inputs.finIn, inputs.estJson, inputs.histJson, text);
++      setSnapshot(snap);
++    } finally {
++      setConcallProcessing(false);
++    }
++  }, []);
++
+   // Copy a deterministic plain-text summary from the snapshot
+   const copySnapshotSummary = (snap: EarningsSnapshot) => {
+     const lines: string[] = [];
+@@ -2983,6 +3005,8 @@ export default function EarningsAnalysisPage() {
+             snapshot={snapshot}
+             onReset={reset}
+             onCopy={() => copySnapshotSummary(snapshot)}
++            onConcallText={handleUsConcallText}
++            concallProcessing={concallProcessing}
+           />
+         )}
+       </div>
+diff --git a/frontend/src/components/earnings/IndiaInstitutionalReport.tsx b/frontend/src/components/earnings/IndiaInstitutionalReport.tsx
+index 2f9633f..22313d2 100644
+--- a/frontend/src/components/earnings/IndiaInstitutionalReport.tsx
++++ b/frontend/src/components/earnings/IndiaInstitutionalReport.tsx
+@@ -431,7 +431,6 @@ export function IndiaInstitutionalReport({
+         <KpiTile label="ROE" value={ix.topMetrics.roe != null ? `${ix.topMetrics.roe.toFixed(1)}%` : '—'} tone={profitTone(ix.topMetrics.roe, [20, 12, 8])} />
+         <KpiTile label="P/E" value={fmtNum(ix.topMetrics.peRatio, 1) + 'x'} tone="na" />
+         <KpiTile label="Book Value" value={ix.topMetrics.bookValue != null ? `₹${ix.topMetrics.bookValue.toFixed(0)}` : '—'} tone="na" />
+-        <KpiTile label="Div. Yield" value={ix.topMetrics.dividendYieldPct != null ? `${ix.topMetrics.dividendYieldPct.toFixed(2)}%` : '—'} tone="na" />
+         <KpiTile label="D / E" value={ix.topMetrics.debtToEquity != null ? `${ix.topMetrics.debtToEquity.toFixed(2)}x` : '—'} tone={debtTone(ix.topMetrics.debtToEquity)} />
+       </div>
+ 
+diff --git a/frontend/src/components/earnings/InstitutionalReport.tsx b/frontend/src/components/earnings/InstitutionalReport.tsx
+index 86476da..19ae3ce 100644
+--- a/frontend/src/components/earnings/InstitutionalReport.tsx
++++ b/frontend/src/components/earnings/InstitutionalReport.tsx
+@@ -110,9 +110,21 @@ export interface InstitutionalReportProps {
+   snapshot: EarningsSnapshot;
+   onReset?: () => void;
+   onCopy?: () => void;
++  // Concall upload — optional callback that takes pasted concall text and
++  // re-runs the snapshot builder. Mirror of the India report's plumbing.
++  onConcallText?: (text: string) => void;
++  concallProcessing?: boolean;
+ }
+ 
+-export function InstitutionalReport({ snapshot: s, onReset, onCopy }: InstitutionalReportProps) {
++export function InstitutionalReport({
++  snapshot: s,
++  onReset,
++  onCopy,
++  onConcallText,
++  concallProcessing,
++}: InstitutionalReportProps) {
++  const [showConcallModal, setShowConcallModal] = React.useState(false);
++  const [concallText, setConcallText] = React.useState('');
+   const tone = TONE_LABEL[s.qualitative.mgmtTone] ?? TONE_LABEL.neutral;
+   const guideLabel = GUIDANCE_LABEL[s.guidance.direction] ?? GUIDANCE_LABEL.na;
+   const reaction = s.scores.reaction;
+@@ -505,10 +517,99 @@ export function InstitutionalReport({ snapshot: s, onReset, onCopy }: Institutio
+             {!st.available && st.reason && (
+               <div style={{ fontSize: 9, color: FAINT, marginTop: 4, lineHeight: 1.4 }}>{st.reason}</div>
+             )}
++            {label === 'Guidance' && onConcallText && !st.available && (
++              <button
++                onClick={() => setShowConcallModal(true)}
++                disabled={concallProcessing}
++                style={{
++                  marginTop: 8,
++                  width: '100%',
++                  padding: '6px 10px',
++                  fontSize: 10,
++                  fontWeight: 700,
++                  color: BG,
++                  background: '#7dd3fc',
++                  border: 'none',
++                  borderRadius: 5,
++                  cursor: concallProcessing ? 'wait' : 'pointer',
++                  letterSpacing: 0.5,
++                  textTransform: 'uppercase',
++                }}
++              >
++                {concallProcessing ? 'Extracting…' : '+ Upload Concall'}
++              </button>
++            )}
+           </div>
+         ))}
+       </div>
+ 
++      {/* ── Concall paste modal ────────────────────────────────────────── */}
++      {showConcallModal && onConcallText && (
++        <div
++          onClick={() => setShowConcallModal(false)}
++          style={{
++            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
++            display: 'flex', alignItems: 'center', justifyContent: 'center',
++            zIndex: 1000, padding: 20,
++          }}
++        >
++          <div
++            onClick={(e) => e.stopPropagation()}
++            style={{
++              background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 10,
++              padding: 18, width: '100%', maxWidth: 720,
++            }}
++          >
++            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
++              <h3 style={{ fontSize: 14, fontWeight: 700, color: TEXT, margin: 0, textTransform: 'uppercase', letterSpacing: 1 }}>
++                Upload Concall Transcript
++              </h3>
++              <button onClick={() => setShowConcallModal(false)} style={{ background: 'transparent', border: 'none', color: MUTED, fontSize: 16, cursor: 'pointer' }}>×</button>
++            </div>
++            <div style={{ fontSize: 11, color: MUTED, marginBottom: 10, lineHeight: 1.5 }}>
++              Paste the earnings concall transcript or investor presentation prepared remarks.
++              Parsed locally for guidance language (raised / lowered / maintained / introduced) plus
++              up to 5 commentary sentences. Nothing is sent to a third party.
++            </div>
++            <textarea
++              value={concallText}
++              onChange={(e) => setConcallText(e.target.value)}
++              placeholder="Paste concall transcript here…"
++              style={{
++                width: '100%', minHeight: 280, padding: 12,
++                background: BG, color: TEXT, border: `1px solid ${BORDER}`,
++                borderRadius: 6, fontSize: 12, fontFamily: MONO, resize: 'vertical',
++                lineHeight: 1.5,
++              }}
++            />
++            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
++              <button
++                onClick={() => { setConcallText(''); setShowConcallModal(false); }}
++                style={{ padding: '8px 14px', fontSize: 11, color: TEXT, background: 'transparent', border: `1px solid ${BORDER2}`, borderRadius: 5, cursor: 'pointer' }}
++              >
++                Cancel
++              </button>
++              <button
++                onClick={() => {
++                  if (concallText.trim().length < 50) return;
++                  onConcallText(concallText);
++                  setShowConcallModal(false);
++                }}
++                disabled={concallText.trim().length < 50 || concallProcessing}
++                style={{
++                  padding: '8px 14px', fontSize: 11, fontWeight: 700,
++                  color: BG, background: '#7dd3fc', border: 'none', borderRadius: 5,
++                  cursor: concallText.trim().length < 50 ? 'not-allowed' : 'pointer',
++                  opacity: concallText.trim().length < 50 ? 0.5 : 1,
++                }}
++              >
++                Extract & Rebuild
++              </button>
++            </div>
++          </div>
++        </div>
++      )}
++
+       {/* ═══════════════════════════════════════════════════════════════════
+           J. DEBUG / PROVENANCE
+          ═══════════════════════════════════════════════════════════════════ */}
+diff --git a/frontend/src/lib/earnings/build.ts b/frontend/src/lib/earnings/build.ts
+index 6822bb4..45c5d7e 100644
+--- a/frontend/src/lib/earnings/build.ts
++++ b/frontend/src/lib/earnings/build.ts
+@@ -191,20 +191,29 @@ export function buildSnapshot(
+   const histQ = (history?.quarters || []).slice();
+   const qoq = histQ[1] || null;
+   const qoqRev = qoq?.revenue !== null && qoq?.revenue !== undefined ? Math.round(qoq.revenue * sf * 100) / 100 : null;
++  // YoY = same fiscal quarter one year ago (4 quarters back in the history
++  // array). When fin.* doesn't carry priors (e.g. EDGAR XBRL only filled
++  // current quarter) we fall back to history[4].
++  const yoyHist = histQ[4] || null;
++  const yoyRevFromHist =
++    yoyHist?.revenue !== null && yoyHist?.revenue !== undefined
++      ? Math.round(yoyHist.revenue * sf * 100) / 100
++      : null;
++  const yoyEpsFromHist = yoyHist?.eps ?? null;
+ 
+   const metrics = {
+     revenue: buildMetric({
+       metric: 'Revenue', unit: 'currency',
+       actual: revenueActual,
+       estimate: revenueEstimate,
+-      prior: fin.revPrior,
++      prior: fin.revPrior ?? yoyRevFromHist,
+       qoqPrior: qoqRev,
+     }),
+     eps: buildMetric({
+       metric: 'EPS', unit: 'count',
+       actual: epsActual,
+       estimate: epsEstimate,
+-      prior: fin.epsPrior,
++      prior: fin.epsPrior ?? yoyEpsFromHist,
+       qoqPrior: qoq?.eps ?? null,
+     }),
+     ebitda: buildMetric({
+-- 
+2.34.1
+

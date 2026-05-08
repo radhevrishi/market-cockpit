@@ -1,0 +1,476 @@
+From 9e1498e374693269318f899dc62fe9f01b1727d0 Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Fri, 8 May 2026 11:13:45 +0200
+Subject: [PATCH 04/17] fix(earnings): trend-table OP+EPS deltas, concall
+ upload, TSLA EPS source
+
+Three issues from user feedback:
+
+1. India Quarterly Trend (8Q) table only showed Revenue value+QoQ%+YoY%,
+   OPM%+OPM YoY-bps, PAT value+YoY%, and EPS value. Operating Profit
+   value was missing entirely; EPS had no YoY%; PAT QoQ% wasn't there.
+   Restructure the table to add Op Profit, OP YoY%, PAT QoQ%, and EPS
+   YoY% columns. Drop Revenue QoQ% (already in Latest Quarter table)
+   to manage width.
+
+2. Concall upload UI didn't exist despite the page promising 'Upload
+   concall transcript or investor presentation for tone + guidance
+   extraction'. Add a button + paste-text modal in the Coverage &
+   Sources card that calls a new onConcallText prop. Page caches the
+   india-snapshot inputs in a ref so the user can re-run the builder
+   with concall text without re-fetching Screener / FMP. Export the
+   existing inferGuidance regex set from build.ts and reuse it inside
+   india-build.ts so Indian transcripts get parsed for raised /
+   lowered / maintained / introduced direction plus up to 5 commentary
+   sentences. sectionStatus.guidance now reflects whether a transcript
+   has been supplied (75% confidence with direction, 50% with only
+   commentary).
+
+3. Tesla scorecard showed EPS 0.41 (non-GAAP from FMP earnings-
+   surprises) while the trend table showed EPS 0.15 (GAAP from FMP
+   /stable/earnings + /stable/income-statement). Same quarter, two
+   different EPS numbers, with the +15.8% surprise tied to neither
+   visibly. Align both:
+    - build.ts epsActual now prefers lastSurp.actualEps over fin.eps
+      so the scorecard 'Actual' column matches the consensus
+      convention used in 'Estimate'
+    - history route adds /stable/earnings-surprises to its parallel
+      fetch and prefers surpRow.epsActual over earnings.epsActual /
+      income-statement.eps for the trend's per-row EPS, ensuring the
+      8-quarter trend column matches the headline scorecard
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ .../(dashboard)/earnings-analysis/page.tsx    |  49 +++++++-
+ .../src/app/api/earnings/history/route.ts     |  36 +++++-
+ .../earnings/IndiaInstitutionalReport.tsx     | 117 +++++++++++++++++-
+ frontend/src/lib/earnings/build.ts            |  12 +-
+ frontend/src/lib/earnings/india-build.ts      |  41 ++++--
+ 5 files changed, 231 insertions(+), 24 deletions(-)
+
+diff --git a/frontend/src/app/(dashboard)/earnings-analysis/page.tsx b/frontend/src/app/(dashboard)/earnings-analysis/page.tsx
+index 3ea5418..99a65ac 100644
+--- a/frontend/src/app/(dashboard)/earnings-analysis/page.tsx
++++ b/frontend/src/app/(dashboard)/earnings-analysis/page.tsx
+@@ -2070,6 +2070,15 @@ export default function EarningsAnalysisPage() {
+   const [reportView, setReportView] = useState<'institutional' | 'legacy'>('institutional');
+   // Last EDGAR enrichment payload (sicDescription, businessText, exchange) — used by buildSnapshot
+   const lastEdgarPayloadRef = useRef<any>(null);
++  // Cached India snapshot inputs so the user can re-run with a pasted concall
++  // transcript without re-fetching Screener / FMP.
++  const indiaSnapshotInputsRef = useRef<{
++    ticker: string;
++    filingType: string;
++    screenerJson: any;
++    fmpProfile: any;
++  } | null>(null);
++  const [concallProcessing, setConcallProcessing] = useState(false);
+   const [loading, setLoading] = useState(false);
+   const [loadingPct, setLoadingPct] = useState(0);
+   const [loadingMsg, setLoadingMsg] = useState('');
+@@ -2660,6 +2669,13 @@ export default function EarningsAnalysisPage() {
+             ? await profileRes.value.json().catch(() => null)
+             : null;
+           const fmpProfile = fmpJson?.profile || null;
++          // Cache so the user can later re-run with a concall transcript
++          indiaSnapshotInputsRef.current = {
++            ticker: d.ticker,
++            filingType: d.filingType,
++            screenerJson,
++            fmpProfile,
++          };
+           const snap = buildIndiaSnapshot(
+             d.ticker,
+             d.filingType,
+@@ -2810,7 +2826,36 @@ export default function EarningsAnalysisPage() {
+     } catch(e:any) { setError('Fetch failed: '+e.message); setLoading(false); setLoadingMsg(''); }
+   }
+ 
+-  const reset = () => { setResult(null); setSnapshot(null); lastEdgarPayloadRef.current = null; setError(''); setPasteText(''); setUrlInput(''); };
++  const reset = () => {
++    setResult(null);
++    setSnapshot(null);
++    lastEdgarPayloadRef.current = null;
++    indiaSnapshotInputsRef.current = null;
++    setError('');
++    setPasteText('');
++    setUrlInput('');
++  };
++
++  // Re-run buildIndiaSnapshot with a concall transcript so guidance / tone /
++  // theme detection get filled in. Cached inputs from the original fetch are
++  // reused so we don't hammer Screener / FMP again.
++  const handleIndiaConcallText = useCallback((text: string) => {
++    const inputs = indiaSnapshotInputsRef.current;
++    if (!inputs) return;
++    setConcallProcessing(true);
++    try {
++      const snap = buildIndiaSnapshot(
++        inputs.ticker,
++        inputs.filingType,
++        inputs.screenerJson,
++        inputs.fmpProfile,
++        text,
++      );
++      setSnapshot(snap);
++    } finally {
++      setConcallProcessing(false);
++    }
++  }, []);
+ 
+   // Copy a deterministic plain-text summary from the snapshot
+   const copySnapshotSummary = (snap: EarningsSnapshot) => {
+@@ -2930,6 +2975,8 @@ export default function EarningsAnalysisPage() {
+             snapshot={snapshot}
+             onReset={reset}
+             onCopy={() => copySnapshotSummary(snapshot)}
++            onConcallText={handleIndiaConcallText}
++            concallProcessing={concallProcessing}
+           />
+         ) : (
+           <InstitutionalReport
+diff --git a/frontend/src/app/api/earnings/history/route.ts b/frontend/src/app/api/earnings/history/route.ts
+index 0c6a4d2..6d5d218 100644
+--- a/frontend/src/app/api/earnings/history/route.ts
++++ b/frontend/src/app/api/earnings/history/route.ts
+@@ -41,11 +41,18 @@ export async function GET(request: Request) {
+   }
+   const t = encodeURIComponent(ticker);
+ 
+-  const [income, cashflow, balance, earnings] = await Promise.all([
++  const [income, cashflow, balance, earnings, surprises] = await Promise.all([
+     safeJson<any[]>(`${STABLE}/income-statement?symbol=${t}&period=quarter&limit=5&apikey=${FMP_KEY}`),
+     safeJson<any[]>(`${STABLE}/cash-flow-statement?symbol=${t}&period=quarter&limit=5&apikey=${FMP_KEY}`),
+     safeJson<any[]>(`${STABLE}/balance-sheet-statement?symbol=${t}&period=quarter&limit=5&apikey=${FMP_KEY}`),
+     safeJson<any[]>(`${STABLE}/earnings?symbol=${t}&limit=5&apikey=${FMP_KEY}`),
++    // /earnings-surprises is the canonical "actual vs consensus" feed.
++    // For some tickers (Tesla being the obvious example) /stable/earnings
++    // returns GAAP basic EPS while /stable/earnings-surprises returns the
++    // non-GAAP figure consensus is built around — pulling both lets us
++    // prefer the consensus-comparable value so the trend table matches the
++    // scorecard's headline EPS.
++    safeJson<any[]>(`${STABLE}/earnings-surprises?symbol=${t}&apikey=${FMP_KEY}`),
+   ]);
+ 
+   if (!income || income.length === 0) {
+@@ -63,6 +70,8 @@ export async function GET(request: Request) {
+   (balance || []).forEach((b: any) => b.date && bsByDate.set(b.date, b));
+   const earnByDate = new Map<string, any>();
+   (earnings || []).forEach((e: any) => e.date && earnByDate.set(e.date, e));
++  const surpByDate = new Map<string, any>();
++  (surprises || []).forEach((s: any) => s.date && surpByDate.set(s.date, s));
+ 
+   const quarters = income.slice(0, 5).map((row: any) => {
+     const date = row.date;
+@@ -88,10 +97,22 @@ export async function GET(request: Request) {
+     const capex = parseFloat(cf.capitalExpenditure) || null;
+     const fcf = cfo !== null && capex !== null ? Math.round((cfo - Math.abs(capex)) * 100) / 100 : null;
+ 
+-    const calEstRev = earnRow?.revenueEstimated || null;
+-    const calEstEps = earnRow?.epsEstimated || null;
+-    const calActRev = earnRow?.revenueActual || revenue;
+-    const calActEps = earnRow?.epsActual || parseFloat(row.eps) || null;
++    // Match a /earnings-surprises row by date or the nearest report (±60d)
++    let surpRow: any = surpByDate.get(date);
++    if (!surpRow && surprises) {
++      const targetTs = new Date(date).getTime();
++      surpRow = surprises.find((s: any) => {
++        const dt = new Date(s.date).getTime();
++        return !isNaN(dt) && Math.abs(dt - targetTs) < 60 * 86400000;
++      });
++    }
++
++    const calEstRev = surpRow?.revenueEstimated ?? earnRow?.revenueEstimated ?? null;
++    // Prefer earnings-surprises actuals — same convention as the scorecard's
++    // lastReportedSurprise, ensuring trend EPS matches the headline scorecard.
++    const calEstEps = surpRow?.epsEstimated ?? earnRow?.epsEstimated ?? null;
++    const calActRev = surpRow?.revenueActual ?? earnRow?.revenueActual ?? revenue;
++    const calActEps = surpRow?.epsActual ?? earnRow?.epsActual ?? parseFloat(row.eps) ?? null;
+ 
+     const revSurprisePct =
+       calActRev !== null && calEstRev !== null && calEstRev > 0
+@@ -117,7 +138,10 @@ export async function GET(request: Request) {
+       ebitdaMargin: pct(ebitda, revenue),
+       netIncome,
+       netMargin: pct(netIncome, revenue),
+-      eps: parseFloat(row.eps) || null,
++      // Use calActEps (consensus-comparable, prefers /earnings-surprises)
++      // instead of raw income-statement EPS so the trend column matches the
++      // headline scorecard EPS.
++      eps: calActEps,
+       epsEstimate: calEstEps,
+       epsSurprisePct,
+       cfo,
+diff --git a/frontend/src/components/earnings/IndiaInstitutionalReport.tsx b/frontend/src/components/earnings/IndiaInstitutionalReport.tsx
+index 380f765..2f9633f 100644
+--- a/frontend/src/components/earnings/IndiaInstitutionalReport.tsx
++++ b/frontend/src/components/earnings/IndiaInstitutionalReport.tsx
+@@ -102,9 +102,22 @@ export interface IndiaInstitutionalReportProps {
+   snapshot: EarningsSnapshot;
+   onReset?: () => void;
+   onCopy?: () => void;
++  /** When provided, the report shows an "Upload concall" button that opens
++   *  a paste-text modal. Caller is responsible for re-running the snapshot
++   *  builder with the supplied transcript so guidance / tone get filled in. */
++  onConcallText?: (text: string) => void;
++  concallProcessing?: boolean;
+ }
+ 
+-export function IndiaInstitutionalReport({ snapshot: s, onReset, onCopy }: IndiaInstitutionalReportProps) {
++export function IndiaInstitutionalReport({
++  snapshot: s,
++  onReset,
++  onCopy,
++  onConcallText,
++  concallProcessing,
++}: IndiaInstitutionalReportProps) {
++  const [showConcallModal, setShowConcallModal] = React.useState(false);
++  const [concallText, setConcallText] = React.useState('');
+   const ix: IndiaExtras | undefined = s.indiaExtras;
+   if (!ix) {
+     return (
+@@ -250,13 +263,16 @@ export function IndiaInstitutionalReport({ snapshot: s, onReset, onCopy }: India
+               <tr style={{ borderBottom: `1px solid ${BORDER2}`, color: MUTED, background: PANEL2 }}>
+                 <Th sm>Period</Th>
+                 <Th sm right>Revenue</Th>
+-                <Th sm right>QoQ%</Th>
+                 <Th sm right>YoY%</Th>
++                <Th sm right>Op Profit</Th>
++                <Th sm right>OP YoY%</Th>
+                 <Th sm right>OPM%</Th>
+                 <Th sm right>OPM YoY</Th>
+                 <Th sm right>PAT</Th>
++                <Th sm right>QoQ%</Th>
+                 <Th sm right>YoY%</Th>
+                 <Th sm right>EPS</Th>
++                <Th sm right>YoY%</Th>
+               </tr>
+             </thead>
+             <tbody>
+@@ -264,13 +280,16 @@ export function IndiaInstitutionalReport({ snapshot: s, onReset, onCopy }: India
+                 <tr key={q.period} style={{ borderBottom: `1px solid ${BORDER}` }}>
+                   <Td>{q.period}</Td>
+                   <Td right mono>{fmtCr(q.revenue, 0)}</Td>
+-                  <Td right mono color={colorForChange(q.qoqRevenuePct)}>{fmtPct(q.qoqRevenuePct)}</Td>
+                   <Td right mono color={colorForChange(q.yoyRevenuePct)}>{fmtPct(q.yoyRevenuePct)}</Td>
++                  <Td right mono>{fmtCr(q.operatingProfit, 0)}</Td>
++                  <Td right mono color={colorForChange(q.yoyOpProfitPct)}>{fmtPct(q.yoyOpProfitPct)}</Td>
+                   <Td right mono>{q.opmPct != null ? `${q.opmPct.toFixed(0)}%` : '—'}</Td>
+                   <Td right mono color={colorForChange(q.yoyOpmBps)}>{fmtBps(q.yoyOpmBps)}</Td>
+                   <Td right mono>{fmtCr(q.netProfit, 0)}</Td>
++                  <Td right mono color={colorForChange(q.qoqProfitPct)}>{fmtPct(q.qoqProfitPct)}</Td>
+                   <Td right mono color={colorForChange(q.yoyProfitPct)}>{fmtPct(q.yoyProfitPct)}</Td>
+                   <Td right mono>{q.eps != null ? `₹${q.eps.toFixed(1)}` : '—'}</Td>
++                  <Td right mono color={colorForChange(q.yoyEpsPct)}>{fmtPct(q.yoyEpsPct)}</Td>
+                 </tr>
+               ))}
+             </tbody>
+@@ -426,7 +445,7 @@ export function IndiaInstitutionalReport({ snapshot: s, onReset, onCopy }: India
+           ['Working Capital', { available: wc.cashConversionCycle != null, confidence: wc.cashConversionCycle != null ? 90 : 0, reason: 'Annual ratios from Screener.in' }],
+           ['Promoter Trend', { available: ix.governance.promoterHoldingPct != null, confidence: 90, reason: 'Quarterly shareholding from Screener.in' }],
+           ['Themes', s.sectionStatus.themes],
+-          ['Concall / Guidance', { available: false, confidence: 0, reason: 'Upload concall transcript or investor presentation for tone + guidance extraction' }],
++          ['Concall / Guidance', s.sectionStatus.guidance ?? { available: false, confidence: 0, reason: 'Upload concall transcript or investor presentation for tone + guidance extraction' }],
+           ['Consensus / Sell-Side', { available: false, confidence: 0, reason: 'India sell-side coverage suppressed — fundamentals-only mode (correct institutional behavior)' }],
+         ] as const).map(([label, st]) => (
+           <div key={label} style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '10px 12px' }}>
+@@ -442,10 +461,100 @@ export function IndiaInstitutionalReport({ snapshot: s, onReset, onCopy }: India
+             {st.reason && (
+               <div style={{ fontSize: 9, color: FAINT, marginTop: 4, lineHeight: 1.4 }}>{st.reason}</div>
+             )}
++            {label === 'Concall / Guidance' && onConcallText && !st.available && (
++              <button
++                onClick={() => setShowConcallModal(true)}
++                disabled={concallProcessing}
++                style={{
++                  marginTop: 8,
++                  width: '100%',
++                  padding: '6px 10px',
++                  fontSize: 10,
++                  fontWeight: 700,
++                  color: BG,
++                  background: ACCENT,
++                  border: 'none',
++                  borderRadius: 5,
++                  cursor: concallProcessing ? 'wait' : 'pointer',
++                  letterSpacing: 0.5,
++                  textTransform: 'uppercase',
++                }}
++              >
++                {concallProcessing ? 'Extracting…' : '+ Upload Concall'}
++              </button>
++            )}
+           </div>
+         ))}
+       </div>
+ 
++      {/* ── Concall paste modal ────────────────────────────────────────── */}
++      {showConcallModal && onConcallText && (
++        <div
++          onClick={() => setShowConcallModal(false)}
++          style={{
++            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
++            display: 'flex', alignItems: 'center', justifyContent: 'center',
++            zIndex: 1000, padding: 20,
++          }}
++        >
++          <div
++            onClick={(e) => e.stopPropagation()}
++            style={{
++              background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 10,
++              padding: 18, width: '100%', maxWidth: 720,
++            }}
++          >
++            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
++              <h3 style={{ fontSize: 14, fontWeight: 700, color: TEXT, margin: 0, textTransform: 'uppercase', letterSpacing: 1 }}>
++                Upload Concall Transcript
++              </h3>
++              <button onClick={() => setShowConcallModal(false)} style={{ background: 'transparent', border: 'none', color: MUTED, fontSize: 16, cursor: 'pointer' }}>×</button>
++            </div>
++            <div style={{ fontSize: 11, color: MUTED, marginBottom: 10, lineHeight: 1.5 }}>
++              Paste the earnings concall transcript or investor presentation prepared remarks.
++              The text is parsed locally for guidance language (raised / lowered / maintained),
++              management tone (positive / cautious / neutral), and India macro themes.
++              Nothing is sent to a third party — extraction runs in the browser.
++            </div>
++            <textarea
++              value={concallText}
++              onChange={(e) => setConcallText(e.target.value)}
++              placeholder="Paste concall transcript here…"
++              style={{
++                width: '100%', minHeight: 280, padding: 12,
++                background: BG, color: TEXT, border: `1px solid ${BORDER}`,
++                borderRadius: 6, fontSize: 12, fontFamily: MONO, resize: 'vertical',
++                lineHeight: 1.5,
++              }}
++            />
++            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
++              <button
++                onClick={() => { setConcallText(''); setShowConcallModal(false); }}
++                style={{ padding: '8px 14px', fontSize: 11, color: TEXT, background: 'transparent', border: `1px solid ${BORDER2}`, borderRadius: 5, cursor: 'pointer' }}
++              >
++                Cancel
++              </button>
++              <button
++                onClick={() => {
++                  if (concallText.trim().length < 50) return;
++                  onConcallText(concallText);
++                  setShowConcallModal(false);
++                }}
++                disabled={concallText.trim().length < 50 || concallProcessing}
++                style={{
++                  padding: '8px 14px', fontSize: 11, fontWeight: 700,
++                  color: BG, background: ACCENT, border: 'none', borderRadius: 5,
++                  cursor: concallText.trim().length < 50 ? 'not-allowed' : 'pointer',
++                  opacity: concallText.trim().length < 50 ? 0.5 : 1,
++                }}
++              >
++                Extract & Rebuild
++              </button>
++            </div>
++          </div>
++        </div>
++      )}
++
+       {/* Debug provenance */}
+       <details style={{ marginTop: 6, background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '10px 14px' }}>
+         <summary style={{ cursor: 'pointer', fontSize: 11, color: MUTED, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.7 }}>
+diff --git a/frontend/src/lib/earnings/build.ts b/frontend/src/lib/earnings/build.ts
+index dcb7bb6..6822bb4 100644
+--- a/frontend/src/lib/earnings/build.ts
++++ b/frontend/src/lib/earnings/build.ts
+@@ -168,7 +168,13 @@ export function buildSnapshot(
+     : null);
+   if (revenueEstimate !== null && lastRevEst === null) fallbacksUsed.push('next-Q revenue est used as proxy for last reported');
+ 
+-  const epsActual = fin.eps !== null ? fin.eps : (lastSurp?.actualEps ?? null);
++  // EPS source priority: FMP earnings-surprises actualEps FIRST so the
++  // scorecard "Actual" matches the consensus convention used in
++  // estimateEps (typically non-GAAP). Falling back to fin.eps (EDGAR XBRL
++  // basic GAAP) caused a visible mismatch on Tesla — scorecard showed
++  // non-GAAP 0.41 while the trend table showed GAAP 0.15 for the same
++  // quarter, making the Surprise calculation incoherent.
++  const epsActual = lastSurp?.actualEps ?? fin.eps ?? null;
+   const epsEstimate = lastEpsEst ?? consNext?.epsAvg ?? null;
+ 
+   const ebitdaEst = consNext?.ebitdaAvg !== null && consNext?.ebitdaAvg !== undefined
+@@ -549,7 +555,9 @@ function computeGrowthDeltaPp(
+   return Math.round((itemGrowth - revGrowth) * 10) / 10;
+ }
+ 
+-function inferGuidance(rawText: string): EarningsSnapshot['guidance'] {
++// Exported so the India pipeline can reuse the same regex set for concall
++// transcripts (the language is broadly similar across markets).
++export function inferGuidance(rawText: string): EarningsSnapshot['guidance'] {
+   const t = (rawText || '').toLowerCase();
+   let direction: EarningsSnapshot['guidance']['direction'] = 'na';
+   if (/raise(d)?\s+(full[\s-]year\s+)?guidance|increased\s+guidance|guiding\s+(higher|up)/i.test(t)) direction = 'raised';
+diff --git a/frontend/src/lib/earnings/india-build.ts b/frontend/src/lib/earnings/india-build.ts
+index 9a8271b..1b6f6f0 100644
+--- a/frontend/src/lib/earnings/india-build.ts
++++ b/frontend/src/lib/earnings/india-build.ts
+@@ -25,6 +25,7 @@ import {
+   JatSignal,
+ } from './scoring';
+ import { classifyIndiaSector, INDIA_SECTOR_TEMPLATES, IndiaSector } from './india-sectors';
++import { inferGuidance } from './build';
+ 
+ // ── Inputs ────────────────────────────────────────────────────────────────
+ export interface ScreenerInput {
+@@ -423,13 +424,15 @@ export function buildIndiaSnapshot(
+     currency: 'INR',
+     scaleLabel: '₹ Cr',
+     metrics,
+-    guidance: {
+-      direction: 'na',
+-      revenue: null,
+-      eps: null,
+-      ebitda: null,
+-      commentary: [],
+-    },
++    guidance: rawText && rawText.trim().length > 50
++      ? inferGuidance(rawText)
++      : {
++          direction: 'na',
++          revenue: null,
++          eps: null,
++          ebitda: null,
++          commentary: [],
++        },
+     qualitative: {
+       mgmtTone: toneRes.tone,
+       toneConfidence: toneRes.confidence,
+@@ -481,10 +484,26 @@ export function buildIndiaSnapshot(
+         confidence: themeRes.confidence,
+         reason: themeRes.unavailableReason,
+       },
+-      guidance: {
+-        available: false, confidence: 0,
+-        reason: 'No guidance text available — upload concall transcript for guidance extraction',
+-      },
++      guidance: (() => {
++        if (!rawText || rawText.trim().length <= 50) {
++          return {
++            available: false, confidence: 0,
++            reason: 'Upload concall transcript or investor presentation for tone + guidance extraction',
++          };
++        }
++        const g = inferGuidance(rawText);
++        const hasDirection = g.direction !== 'na';
++        const hasCommentary = g.commentary.length > 0;
++        return {
++          available: hasDirection || hasCommentary,
++          confidence: hasDirection ? 75 : hasCommentary ? 50 : 0,
++          reason: hasDirection
++            ? null
++            : hasCommentary
++              ? 'Commentary extracted but no clear direction (raised / lowered / maintained)'
++              : 'Concall text uploaded but no guidance language matched',
++        };
++      })(),
+     },
+     debug: {
+       endpointsHit,
+-- 
+2.34.1
+

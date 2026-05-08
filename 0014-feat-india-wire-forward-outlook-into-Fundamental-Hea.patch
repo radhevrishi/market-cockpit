@@ -1,0 +1,203 @@
+From 08d33985339b85370373c61bd248e0ed41c5c4ed Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Fri, 8 May 2026 14:14:20 +0200
+Subject: [PATCH 14/17] feat(india): wire forward-outlook into Fundamental
+ Health composite + tier-shift verdict
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+User reported MTAR Tech showing Concall Score 85/A and FORWARD STRONG
+but Fundamental Health stuck at 56/B and verdict NEUTRAL — the strong
+forward signal wasn't actually moving the headline numbers. Guidance
+should play a crucial role.
+
+Three changes:
+
+A. SIXTH FUNDAMENTAL COMPONENT
+   When a concall is provided, fundamentalScore.components now includes
+   a 'forward' tile alongside growth / margin / WC / promoter /
+   cash_conversion. Score derived from concallScore (0-100) with a small
+   adjustment from explicit guidance direction:
+    - 'raised'    → base + 10
+    - 'lowered'   → base − 15
+    - 'introduced' / 'maintained' → base unchanged
+   Capped 0-100. The Fundamental Components row shows 6 cards instead
+   of 5 when present.
+
+B. RE-WEIGHTED COMPOSITE
+   With forward present, weights become:
+     growth 22% · margin 20% · WC 12% · promoter 10% · cash 11% · forward 25%
+   Without forward, original 30/25/15/15/15 weighting unchanged.
+   Forward gets the largest single weight because the user reasonably
+   asks for it to play a crucial role — a strong concall is the single
+   best predictor of next-quarter performance.
+
+   Direction also tilts on forward: forward ≥75 + composite ≥50 →
+   'improving' (lifts moderate fundamentals when commentary is bullish);
+   forward ≤30 + composite ≤60 → 'deteriorating'.
+
+C. VERDICT TIER SHIFT
+   buildTopLineVerdict now post-processes the verdict against forward
+   score. Verdict tiers ordered SELL → AVOID → NEUTRAL → HOLD →
+   ACCUMULATE → BUY.
+    - forward ≥80 (very positive concall): bump verdict up one tier
+    - forward ≤25 (weak concall): bump verdict down one tier
+   Pinned at extremes (BUY can't go higher, SELL can't go lower).
+
+Effect for MTAR:
+   Before: composite 56/B, NEUTRAL · FORWARD: STRONG
+   After:  composite ~64/B+, ACCUMULATE · FORWARD: STRONG
+   (forward score 85+10 dir-bonus = 95 lifts composite via 25% weight,
+   then tier-shifts NEUTRAL → HOLD → ACCUMULATE)
+
+Effect for any India ticker:
+ - Concall now has measurable impact on the headline grade and verdict
+ - Fundamental Components UI row gets a 'Forward Outlook' tile when a
+   transcript is uploaded
+ - Without a transcript the report works exactly as before (5-component
+   composite, no shift)
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ .../earnings/IndiaInstitutionalReport.tsx     |  3 +
+ frontend/src/lib/earnings/india-build.ts      | 71 ++++++++++++++++---
+ frontend/src/lib/earnings/snapshot.ts         |  4 ++
+ 3 files changed, 70 insertions(+), 8 deletions(-)
+
+diff --git a/frontend/src/components/earnings/IndiaInstitutionalReport.tsx b/frontend/src/components/earnings/IndiaInstitutionalReport.tsx
+index 47bfe0a..0a11b44 100644
+--- a/frontend/src/components/earnings/IndiaInstitutionalReport.tsx
++++ b/frontend/src/components/earnings/IndiaInstitutionalReport.tsx
+@@ -314,6 +314,9 @@ export function IndiaInstitutionalReport({
+         <ComponentCard title="Working Capital" score={fs.components.working_capital.score} label={fs.components.working_capital.label} />
+         <ComponentCard title="Promoter Signal" score={fs.components.promoter.score} label={fs.components.promoter.label} />
+         <ComponentCard title="Cash Conversion" score={fs.components.cash_conversion.score} label={fs.components.cash_conversion.label} />
++        {fs.components.forward && (
++          <ComponentCard title="Forward Outlook" score={fs.components.forward.score} label={fs.components.forward.label} />
++        )}
+       </div>
+ 
+       {/* ═══════════════════════════════════════════════════════════════════
+diff --git a/frontend/src/lib/earnings/india-build.ts b/frontend/src/lib/earnings/india-build.ts
+index 42083c6..7ffd991 100644
+--- a/frontend/src/lib/earnings/india-build.ts
++++ b/frontend/src/lib/earnings/india-build.ts
+@@ -757,13 +757,41 @@ function computeIndiaExtras(opts: {
+       ? score01(cfoOverPat, 0.4, 1.5)
+       : 50;
+ 
+-  const overall = Math.round(
+-    growthScore * 0.30 +
+-    marginScore * 0.25 +
+-    workingCapitalScore * 0.15 +
+-    promoterScore * 0.15 +
+-    cashConversionScore * 0.15,
+-  );
++  // ── FORWARD OUTLOOK COMPONENT ────────────────────────────────────────
++  // Sixth component, only populated when a concall transcript is available.
++  // Map concallScore (0-100) directly, with a small adjustment from explicit
++  // guidance direction (raised → +10, lowered → −15, introduced/maintained
++  // neutral). Capped at 0-100.
++  const guidanceDirRaw = rawText && rawText.trim().length > 50
++    ? inferGuidance(rawText).direction
++    : 'na';
++  const forwardScore = (() => {
++    if (!concallInsights || concallInsights.charsAnalyzed === 0) return null;
++    let base = concallInsights.concallScore;
++    if (guidanceDirRaw === 'raised') base += 10;
++    else if (guidanceDirRaw === 'lowered') base -= 15;
++    return Math.max(0, Math.min(100, Math.round(base)));
++  })();
++
++  // ── COMPOSITE ────────────────────────────────────────────────────────
++  // When forward is present, give it ~25% weight and re-weight the others.
++  // When absent, fall back to original 5-component weighting.
++  const overall = forwardScore !== null
++    ? Math.round(
++        growthScore * 0.22 +
++        marginScore * 0.20 +
++        workingCapitalScore * 0.12 +
++        promoterScore * 0.10 +
++        cashConversionScore * 0.11 +
++        forwardScore * 0.25,
++      )
++    : Math.round(
++        growthScore * 0.30 +
++        marginScore * 0.25 +
++        workingCapitalScore * 0.15 +
++        promoterScore * 0.15 +
++        cashConversionScore * 0.15,
++      );
+ 
+   const grade =
+     overall >= 85 ? 'A' :
+@@ -773,8 +801,15 @@ function computeIndiaExtras(opts: {
+     overall >= 45 ? 'C+' :
+     overall >= 35 ? 'C' : 'D';
+ 
+-  const direction: 'improving' | 'stable' | 'deteriorating' =
++  // Forward outlook tilts the direction even when current-state composite
++  // is middling — a very-positive concall pushes neutral fundamentals into
++  // 'improving'; a weak concall does the opposite.
++  let direction: 'improving' | 'stable' | 'deteriorating' =
+     overall >= 65 ? 'improving' : overall <= 40 ? 'deteriorating' : 'stable';
++  if (forwardScore !== null) {
++    if (forwardScore >= 75 && overall >= 50) direction = 'improving';
++    else if (forwardScore <= 30 && overall <= 60) direction = 'deteriorating';
++  }
+ 
+   const confidence: 'high' | 'medium' | 'low' =
+     last8.length >= 6 ? 'high' : last8.length >= 3 ? 'medium' : 'low';
+@@ -791,6 +826,9 @@ function computeIndiaExtras(opts: {
+       working_capital: { score: workingCapitalScore, label: labelFor(workingCapitalScore) },
+       promoter: { score: promoterScore, label: labelFor(promoterScore) },
+       cash_conversion: { score: cashConversionScore, label: labelFor(cashConversionScore) },
++      ...(forwardScore !== null
++        ? { forward: { score: forwardScore, label: labelFor(forwardScore) } }
++        : {}),
+     },
+     direction,
+     confidence,
+@@ -864,6 +902,23 @@ function buildTopLineVerdict(args: {
+     verdict = 'SELL';
+   }
+ 
++  // ── FORWARD-OUTLOOK TIER SHIFT ───────────────────────────────────────
++  // A very-positive concall pulls verdict up one tier (NEUTRAL→HOLD,
++  // HOLD→ACCUMULATE, AVOID→NEUTRAL). A weak concall pulls it down one.
++  // Pinned at the extremes — BUY can't go higher, SELL can't go lower.
++  const fwdScore = (fs.components as any).forward?.score as number | undefined;
++  if (typeof fwdScore === 'number') {
++    const tiers: NonNullable<IndiaExtras['topLine']>['verdict'][] = [
++      'SELL', 'AVOID', 'NEUTRAL', 'HOLD', 'ACCUMULATE', 'BUY',
++    ];
++    const idx = tiers.indexOf(verdict);
++    if (fwdScore >= 80 && idx >= 0 && idx < tiers.length - 1) {
++      verdict = tiers[idx + 1];
++    } else if (fwdScore <= 25 && idx > 0) {
++      verdict = tiers[idx - 1];
++    }
++  }
++
+   // ── Headline: directional movement ───────────────────────────────────
+   const parts: string[] = [];
+   if (revYoY != null && profitYoY != null) {
+diff --git a/frontend/src/lib/earnings/snapshot.ts b/frontend/src/lib/earnings/snapshot.ts
+index 98c5d48..d2bf76e 100644
+--- a/frontend/src/lib/earnings/snapshot.ts
++++ b/frontend/src/lib/earnings/snapshot.ts
+@@ -311,6 +311,10 @@ export interface IndiaExtras {
+       working_capital: { score: number; label: string };
+       promoter: { score: number; label: string };
+       cash_conversion: { score: number; label: string };
++      // Sixth component — populated only when a concall transcript is
++      // available. Pulls from concall tone signals + guidance direction
++      // and feeds into the overall composite with full weight.
++      forward?: { score: number; label: string };
+     };
+     direction: 'improving' | 'stable' | 'deteriorating';
+     confidence: 'high' | 'medium' | 'low';
+-- 
+2.34.1
+

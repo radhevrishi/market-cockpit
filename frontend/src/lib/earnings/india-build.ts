@@ -617,6 +617,99 @@ function computeIndiaExtras(opts: {
     flags.push(`DII inflow +${diiChangeQoQ.toFixed(2)} pp QoQ — domestic institutional buying`);
   }
 
+  // ── PROMOTER TRUST SCORE ─────────────────────────────────────────────
+  // Composite 0-100 governance signal. Inputs:
+  //   - Stability      40%  (promoter % YoY change)
+  //   - Pledge         30%  (level + trend; mostly null on Screener free tier)
+  //   - Consistency    15%  (8Q standard deviation of promoter holding)
+  //   - Institutional  15%  (FII / DII confirming flows)
+  const trustScore = (() => {
+    let stabilityRaw = 50;
+    let stabilityReason = 'Promoter holding data missing';
+    if (promoterChangeYoY !== null) {
+      if (promoterChangeYoY <= -5) { stabilityRaw = 10; stabilityReason = `Promoter holding ↓${Math.abs(promoterChangeYoY).toFixed(2)}pp YoY — material dilution`; }
+      else if (promoterChangeYoY <= -2) { stabilityRaw = 30; stabilityReason = `Promoter holding ↓${Math.abs(promoterChangeYoY).toFixed(2)}pp YoY — meaningful dilution`; }
+      else if (promoterChangeYoY <= -0.5) { stabilityRaw = 55; stabilityReason = `Promoter holding ↓${Math.abs(promoterChangeYoY).toFixed(2)}pp YoY — modest decline`; }
+      else if (promoterChangeYoY < 0.5) { stabilityRaw = 75; stabilityReason = 'Promoter holding flat YoY — stable'; }
+      else if (promoterChangeYoY < 2) { stabilityRaw = 90; stabilityReason = `Promoter holding ↑${promoterChangeYoY.toFixed(2)}pp YoY — accumulation`; }
+      else { stabilityRaw = 100; stabilityReason = `Promoter holding ↑${promoterChangeYoY.toFixed(2)}pp YoY — strong accumulation`; }
+    }
+
+    // Pledge — Screener free tier rarely fills this. Default to neutral (60).
+    // When BSE/NSE pledge filings are wired in (future patch), this will
+    // pick up the actual percentage.
+    const pledgeLevel: number | null = (screener as any)?.topMetrics?.pledgePct ?? null;
+    let pledgeRaw = 60;
+    let pledgeReason = 'Pledge data not reported on Screener';
+    if (pledgeLevel !== null && pledgeLevel !== undefined) {
+      const pl: number = pledgeLevel;
+      if (pl > 50) { pledgeRaw = 0; pledgeReason = `${pl.toFixed(1)}% of promoter holding pledged — severe stress`; }
+      else if (pl > 20) { pledgeRaw = 25; pledgeReason = `${pl.toFixed(1)}% pledged — elevated risk`; }
+      else if (pl > 5) { pledgeRaw = 60; pledgeReason = `${pl.toFixed(1)}% pledged — moderate`; }
+      else { pledgeRaw = 100; pledgeReason = `${pl.toFixed(1)}% pledged — clean`; }
+    }
+
+    // Consistency — std-dev of promoter holding over the trailing 8 quarters
+    let consistencyRaw = 70;
+    let consistencyReason = 'Insufficient history for stability check';
+    if (sh.length >= 4) {
+      const series = sh.slice(-8).map((s: any) => s.promoters).filter((v: any): v is number => typeof v === 'number');
+      if (series.length >= 3) {
+        const mean = series.reduce((a, b) => a + b, 0) / series.length;
+        const variance = series.reduce((a, b) => a + (b - mean) ** 2, 0) / series.length;
+        const sd = Math.sqrt(variance);
+        if (sd < 0.5) { consistencyRaw = 100; consistencyReason = `Promoter % near-perfectly stable (sd ${sd.toFixed(2)}pp)`; }
+        else if (sd < 1) { consistencyRaw = 85; consistencyReason = `Promoter % consistent (sd ${sd.toFixed(2)}pp)`; }
+        else if (sd < 2) { consistencyRaw = 60; consistencyReason = `Promoter % wobbly (sd ${sd.toFixed(2)}pp over 8Q)`; }
+        else { consistencyRaw = 25; consistencyReason = `Promoter % volatile (sd ${sd.toFixed(2)}pp over 8Q) — large swings`; }
+      }
+    }
+
+    // Institutional confirmation
+    let instRaw = 50;
+    let instReason = 'No clear institutional flow signal';
+    if (fiiChangeQoQ !== null && diiChangeQoQ !== null) {
+      const fiiPos = fiiChangeQoQ >= 0.5;
+      const diiPos = diiChangeQoQ >= 0.5;
+      const fiiNeg = fiiChangeQoQ <= -0.5;
+      const diiNeg = diiChangeQoQ <= -0.5;
+      if (fiiPos && diiPos) { instRaw = 100; instReason = 'Both FII and DII increasing stake QoQ'; }
+      else if (fiiPos || diiPos) { instRaw = 75; instReason = `${fiiPos ? 'FII' : 'DII'} increasing stake QoQ`; }
+      else if (fiiNeg && diiNeg) { instRaw = 15; instReason = 'Both FII and DII reducing stake — broad distribution'; }
+      else if (fiiNeg || diiNeg) { instRaw = 35; instReason = `${fiiNeg ? 'FII' : 'DII'} reducing stake QoQ`; }
+    }
+
+    const overallTrust = Math.round(
+      stabilityRaw * 0.40 +
+      pledgeRaw * 0.30 +
+      consistencyRaw * 0.15 +
+      instRaw * 0.15,
+    );
+
+    let grade: 'A' | 'B' | 'C' | 'D' | 'F' = 'F';
+    let verdict = '';
+    if (overallTrust >= 85) { grade = 'A'; verdict = 'Promoter actions align with shareholders'; }
+    else if (overallTrust >= 70) { grade = 'B'; verdict = 'Stable promoter behaviour, no material flags'; }
+    else if (overallTrust >= 50) { grade = 'C'; verdict = 'Mixed governance signals — monitor closely'; }
+    else if (overallTrust >= 30) { grade = 'D'; verdict = 'Multiple governance concerns'; }
+    else { grade = 'F'; verdict = 'Material governance risk — investigate before adding'; }
+
+    return {
+      score: overallTrust,
+      grade,
+      verdict,
+      breakdown: {
+        stability: { score: Math.round(stabilityRaw), reason: stabilityReason },
+        pledge: { score: Math.round(pledgeRaw), reason: pledgeReason },
+        consistency: { score: Math.round(consistencyRaw), reason: consistencyReason },
+        institutional: { score: Math.round(instRaw), reason: instReason },
+      },
+    };
+  })();
+  // Helper alias used by trustScore IIFE above — pledgePct field will be null
+  // until we wire a pledge data source. Defined here for hoist.
+  function _placeholder() {}
+
   const governance = {
     promoterHoldingPct: last?.promoters ?? topMetrics.promoterHoldingPct,
     promoterChangeQoQ,
@@ -628,6 +721,7 @@ function computeIndiaExtras(opts: {
     publicHoldingPct: last?.public ?? null,
     pledgePct: null,
     flags,
+    trustScore,
   };
 
   // Quarterly trend with QoQ + YoY computed
@@ -757,13 +851,41 @@ function computeIndiaExtras(opts: {
       ? score01(cfoOverPat, 0.4, 1.5)
       : 50;
 
-  const overall = Math.round(
-    growthScore * 0.30 +
-    marginScore * 0.25 +
-    workingCapitalScore * 0.15 +
-    promoterScore * 0.15 +
-    cashConversionScore * 0.15,
-  );
+  // ── FORWARD OUTLOOK COMPONENT ────────────────────────────────────────
+  // Sixth component, only populated when a concall transcript is available.
+  // Map concallScore (0-100) directly, with a small adjustment from explicit
+  // guidance direction (raised → +10, lowered → −15, introduced/maintained
+  // neutral). Capped at 0-100.
+  const guidanceDirRaw = rawText && rawText.trim().length > 50
+    ? inferGuidance(rawText).direction
+    : 'na';
+  const forwardScore = (() => {
+    if (!concallInsights || concallInsights.charsAnalyzed === 0) return null;
+    let base = concallInsights.concallScore;
+    if (guidanceDirRaw === 'raised') base += 10;
+    else if (guidanceDirRaw === 'lowered') base -= 15;
+    return Math.max(0, Math.min(100, Math.round(base)));
+  })();
+
+  // ── COMPOSITE ────────────────────────────────────────────────────────
+  // When forward is present, give it ~25% weight and re-weight the others.
+  // When absent, fall back to original 5-component weighting.
+  const overall = forwardScore !== null
+    ? Math.round(
+        growthScore * 0.22 +
+        marginScore * 0.20 +
+        workingCapitalScore * 0.12 +
+        promoterScore * 0.10 +
+        cashConversionScore * 0.11 +
+        forwardScore * 0.25,
+      )
+    : Math.round(
+        growthScore * 0.30 +
+        marginScore * 0.25 +
+        workingCapitalScore * 0.15 +
+        promoterScore * 0.15 +
+        cashConversionScore * 0.15,
+      );
 
   const grade =
     overall >= 85 ? 'A' :
@@ -773,8 +895,15 @@ function computeIndiaExtras(opts: {
     overall >= 45 ? 'C+' :
     overall >= 35 ? 'C' : 'D';
 
-  const direction: 'improving' | 'stable' | 'deteriorating' =
+  // Forward outlook tilts the direction even when current-state composite
+  // is middling — a very-positive concall pushes neutral fundamentals into
+  // 'improving'; a weak concall does the opposite.
+  let direction: 'improving' | 'stable' | 'deteriorating' =
     overall >= 65 ? 'improving' : overall <= 40 ? 'deteriorating' : 'stable';
+  if (forwardScore !== null) {
+    if (forwardScore >= 75 && overall >= 50) direction = 'improving';
+    else if (forwardScore <= 30 && overall <= 60) direction = 'deteriorating';
+  }
 
   const confidence: 'high' | 'medium' | 'low' =
     last8.length >= 6 ? 'high' : last8.length >= 3 ? 'medium' : 'low';
@@ -791,6 +920,9 @@ function computeIndiaExtras(opts: {
       working_capital: { score: workingCapitalScore, label: labelFor(workingCapitalScore) },
       promoter: { score: promoterScore, label: labelFor(promoterScore) },
       cash_conversion: { score: cashConversionScore, label: labelFor(cashConversionScore) },
+      ...(forwardScore !== null
+        ? { forward: { score: forwardScore, label: labelFor(forwardScore) } }
+        : {}),
     },
     direction,
     confidence,
@@ -862,6 +994,33 @@ function buildTopLineVerdict(args: {
     verdict = 'AVOID';
   } else {
     verdict = 'SELL';
+  }
+
+  // ── FORWARD-OUTLOOK TIER SHIFT ───────────────────────────────────────
+  // A very-positive concall pulls verdict up one tier (NEUTRAL→HOLD,
+  // HOLD→ACCUMULATE, AVOID→NEUTRAL). A weak concall pulls it down one.
+  // Pinned at the extremes — BUY can't go higher, SELL can't go lower.
+  const fwdScore = (fs.components as any).forward?.score as number | undefined;
+  const tiers: NonNullable<IndiaExtras['topLine']>['verdict'][] = [
+    'SELL', 'AVOID', 'NEUTRAL', 'HOLD', 'ACCUMULATE', 'BUY',
+  ];
+  if (typeof fwdScore === 'number') {
+    const idx = tiers.indexOf(verdict);
+    if (fwdScore >= 80 && idx >= 0 && idx < tiers.length - 1) {
+      verdict = tiers[idx + 1];
+    } else if (fwdScore <= 25 && idx > 0) {
+      verdict = tiers[idx - 1];
+    }
+  }
+
+  // ── PROMOTER TRUST TIER SHIFT ────────────────────────────────────────
+  // Governance is a hard veto in institutional analysis. Trust < D (sub-30)
+  // pulls the verdict down one tier; very-high trust does NOT lift verdict
+  // (positive governance is necessary but not sufficient for a buy).
+  const trust = args.governance.trustScore;
+  if (trust && trust.score <= 30) {
+    const idx = tiers.indexOf(verdict);
+    if (idx > 0) verdict = tiers[idx - 1];
   }
 
   // ── Headline: directional movement ───────────────────────────────────

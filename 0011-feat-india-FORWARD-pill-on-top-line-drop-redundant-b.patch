@@ -1,0 +1,285 @@
+From 689fdc307aa262fb2b0a7c13f3626ea8bb87c2fe Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Fri, 8 May 2026 13:46:38 +0200
+Subject: [PATCH 11/17] feat(india): FORWARD pill on top line + drop redundant
+ banner
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+User wants forward-looking guidance signal as the FIRST visible signal
+('very good or very bad about future in first line') and finds the
+existing 'India Institutional Mode — Sell-side consensus is sparse...'
+banner redundant once the verdict card is in place.
+
+A. FORWARD PILL ON TOP LINE
+   New 6-class outlook grade rendered next to VERDICT pill:
+    very_positive → STRONG (green)
+    positive      → POSITIVE (light green)
+    mixed         → MIXED (amber)
+    cautious      → CAUTIOUS (orange)
+    weak          → WEAK (red)
+    not_provided  → skipped (no pill rendered)
+
+   Computation combines:
+    - Explicit guidance.direction from inferGuidance (raised /
+      lowered / maintained / introduced) — strongest signal
+    - Concall tone counts (positive / cautious / negative)
+    - Topical mention coverage (capex, capacity, launches, demand,
+      operating_leverage, customer_wins all flagged as positive
+      forward indicators)
+
+   Decision tree:
+    raised guidance OR (introduced + ≥3 positive cues) → very_positive
+    lowered guidance → weak
+    introduced/maintained + ≥2 positive + dominant → positive
+    negative-dominant + ≥3 negatives → weak
+    cautious-dominant + ≥2 → cautious
+    no concall + no guidance language → not_provided
+
+   Evidence string drawn from keyMentions:
+    - 'guidance raised by management' / 'guidance lowered by management'
+      when explicit
+    - else top 3 forward-positive topics joined: 'capacity / capex
+      expansion + new launches + demand outlook'
+    - else fallback to tone-signal counts: 'N positive signals in
+      commentary'
+
+   Renders as a SECOND PILL beside VERDICT in the top-line card,
+   followed by a forward-outlook subtitle line:
+   '▶ Forward outlook: positive — capacity / capex expansion +
+   new launches + demand outlook'
+
+B. BANNER REMOVED
+   The 'India Institutional Mode — Sell-side consensus is sparse...'
+   yellow banner that appeared between the header and the Latest
+   Quarter table is gone. The verdict + FORWARD pill card now
+   replaces it as the institutional summary. Saves ~50px of
+   vertical space and the explanatory text was redundant.
+
+C. CLEANER HEADER
+   Removed the duplicate '🇮🇳 India · Fundamentals Mode' pill from
+   the company-name line (the page wrapper above the report
+   already shows it once). Header now reads cleaner:
+   'Bajaj Consumer Care Ltd  BAJAJCON' instead of 'Bajaj Consumer
+   Care Ltd  BAJAJCON  🇮🇳 INDIA · FUNDAMENTALS MODE'.
+
+After this lands, Intellect Design Arena will show:
+  [AVOID] [FORWARD: STRONG] QoQ rebound (+15.9%) · OPM compressed 600 bps YoY
+  ▶ Forward outlook: strong — new launches + forward guidance
+  Deteriorating fundamentals; key issue: cash conversion weak (CFO/PAT 0.22x)
+  Watch: CC Revenue Growth · EBIT Margin · Deal TCV
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ .../earnings/IndiaInstitutionalReport.tsx     | 33 +++++--
+ frontend/src/lib/earnings/india-build.ts      | 88 ++++++++++++++++++-
+ frontend/src/lib/earnings/snapshot.ts         |  7 ++
+ 3 files changed, 118 insertions(+), 10 deletions(-)
+
+diff --git a/frontend/src/components/earnings/IndiaInstitutionalReport.tsx b/frontend/src/components/earnings/IndiaInstitutionalReport.tsx
+index c35c4d6..77a05ff 100644
+--- a/frontend/src/components/earnings/IndiaInstitutionalReport.tsx
++++ b/frontend/src/components/earnings/IndiaInstitutionalReport.tsx
+@@ -145,7 +145,6 @@ export function IndiaInstitutionalReport({
+             <span style={{ fontSize: 13, fontWeight: 700, color: ACCENT, background: 'rgba(251,191,36,0.10)', padding: '3px 9px', borderRadius: 4, fontFamily: MONO }}>
+               {s.ticker}
+             </span>
+-            <span style={{ fontSize: 10, fontWeight: 700, color: SAFFRON, background: `${SAFFRON}18`, padding: '2px 8px', borderRadius: 3, textTransform: 'uppercase', letterSpacing: 0.7 }}>🇮🇳 India · Fundamentals Mode</span>
+           </div>
+           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, alignItems: 'center', fontSize: 12, color: MUTED }}>
+             <span style={{ fontWeight: 600, color: TEXT }}>{s.quarter}</span>
+@@ -183,16 +182,38 @@ export function IndiaInstitutionalReport({
+         const verdictColor =
+           v === 'BUY' ? GREEN : v === 'ACCUMULATE' ? '#86efac' : v === 'HOLD' ? '#fbbf24' :
+           v === 'NEUTRAL' ? MUTED : v === 'AVOID' ? '#fb923c' : '#f87171';
++        const fwd = ix.topLine.forwardLook;
++        const fwdColor = fwd
++          ? fwd.grade === 'very_positive' ? GREEN
++            : fwd.grade === 'positive' ? '#86efac'
++            : fwd.grade === 'mixed' ? '#fbbf24'
++            : fwd.grade === 'cautious' ? '#fb923c'
++            : fwd.grade === 'weak' ? '#f87171'
++            : MUTED
++          : MUTED;
+         return (
+           <div style={{ marginTop: 14, marginBottom: 10, background: PANEL, border: `1px solid ${BORDER}`, borderLeft: `3px solid ${verdictColor}`, borderRadius: 6, padding: '12px 16px' }}>
+-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
++            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+               <span style={{ fontSize: 12, fontWeight: 800, color: verdictColor, fontFamily: MONO, letterSpacing: 1, padding: '3px 10px', borderRadius: 4, background: `${verdictColor}15`, border: `1px solid ${verdictColor}40` }}>
+                 {v}
+               </span>
+-              <span style={{ fontSize: 14, fontWeight: 700, color: TEXT, lineHeight: 1.4 }}>
++              {fwd && (
++                <span
++                  title={fwd.evidence}
++                  style={{ fontSize: 11, fontWeight: 800, color: fwdColor, fontFamily: MONO, letterSpacing: 0.8, padding: '3px 10px', borderRadius: 4, background: `${fwdColor}15`, border: `1px solid ${fwdColor}40`, cursor: 'help' }}
++                >
++                  FORWARD: {fwd.label}
++                </span>
++              )}
++              <span style={{ fontSize: 14, fontWeight: 700, color: TEXT, lineHeight: 1.4, flex: 1, minWidth: 0 }}>
+                 {ix.topLine.headline}
+               </span>
+             </div>
++            {fwd && (
++              <div style={{ fontSize: 11, color: fwdColor, marginTop: 6, lineHeight: 1.5, fontWeight: 500 }}>
++                ▶ Forward outlook: <strong>{fwd.label.toLowerCase()}</strong> — {fwd.evidence}
++              </div>
++            )}
+             <div style={{ fontSize: 12, color: MUTED, marginTop: 6, lineHeight: 1.5 }}>
+               {ix.topLine.rationale}
+               {ix.topLine.watchPoints.length > 0 && (
+@@ -207,10 +228,8 @@ export function IndiaInstitutionalReport({
+         );
+       })()}
+ 
+-      {/* Fundamentals-mode banner */}
+-      <div style={{ background: 'rgba(251,191,36,0.08)', border: `1px solid ${ACCENT}30`, borderLeft: `3px solid ${ACCENT}`, borderRadius: 6, padding: '10px 14px', marginBottom: 22, marginTop: 14, fontSize: 11, color: TEXT, lineHeight: 1.6 }}>
+-        <strong style={{ color: ACCENT }}>India Institutional Mode</strong> — Sell-side consensus is sparse for Indian midcaps. This report compares <strong>QoQ and YoY trajectory</strong>, not estimate beats. Fundamentals, working-capital cycle, and promoter signals carry the institutional weight here.
+-      </div>
++      {/* Banner removed — the top-line verdict card above is the institutional signal */}
++      <div style={{ marginBottom: 14 }} />
+ 
+       {/* ═══════════════════════════════════════════════════════════════════
+           B. LATEST QUARTER AT A GLANCE — QoQ + YoY (no consensus column)
+diff --git a/frontend/src/lib/earnings/india-build.ts b/frontend/src/lib/earnings/india-build.ts
+index d1b4637..300e8f5 100644
+--- a/frontend/src/lib/earnings/india-build.ts
++++ b/frontend/src/lib/earnings/india-build.ts
+@@ -793,7 +793,11 @@ function computeIndiaExtras(opts: {
+ 
+   // ── ONE-LINE INSTITUTIONAL VERDICT ─────────────────────────────────────
+   // Rule-based summary: combines revenue/margin direction, accounting flags,
+-  // sector classification, and FundamentalScore into a single actionable line.
++  // sector classification, FundamentalScore, and guidance direction into
++  // a single actionable line.
++  const guidanceDir = rawText && rawText.trim().length > 50
++    ? inferGuidance(rawText).direction
++    : 'na';
+   const topLine = buildTopLineVerdict({
+     fundamentalScore,
+     quarterlyTrend: qtrendBase,
+@@ -802,6 +806,8 @@ function computeIndiaExtras(opts: {
+     accountingFlags: opts.screener?.ok ? [] : [], // flags carried via accountingQuality elsewhere
+     sectorTemplate,
+     cfoOverPat,
++    concall: concallInsights,
++    guidanceDirection: guidanceDir,
+   });
+ 
+   return {
+@@ -827,8 +833,10 @@ function buildTopLineVerdict(args: {
+   accountingFlags: string[];
+   sectorTemplate: typeof INDIA_SECTOR_TEMPLATES[IndiaSector];
+   cfoOverPat: number | null;
++  concall?: NonNullable<IndiaExtras['concall']> | null;
++  guidanceDirection?: 'raised' | 'lowered' | 'maintained' | 'introduced' | 'na';
+ }): NonNullable<IndiaExtras['topLine']> {
+-  const { fundamentalScore: fs, quarterlyTrend, workingCapital, governance, sectorTemplate, cfoOverPat } = args;
++  const { fundamentalScore: fs, quarterlyTrend, workingCapital, governance, sectorTemplate, cfoOverPat, concall, guidanceDirection } = args;
+   const last = quarterlyTrend.at(-1);
+   const revYoY = last?.yoyRevenuePct ?? null;
+   const profitYoY = last?.yoyProfitPct ?? null;
+@@ -912,5 +920,79 @@ function buildTopLineVerdict(args: {
+     .slice(0, 3)
+     .map((k) => k.label);
+ 
+-  return { headline, verdict, rationale, watchPoints };
++  // ── FORWARD-LOOKING SIGNAL ───────────────────────────────────────────
++  // Combines explicit guidance direction (raised / lowered / maintained /
++  // introduced) with concall tone signal counts to produce a six-class
++  // outlook grade. Skipped entirely if no concall was uploaded AND the
++  // standalone guidance language inference also returned 'na'.
++  const positiveCount = concall?.positiveCount ?? 0;
++  const negativeCount = concall?.negativeCount ?? 0;
++  const cautiousCount = concall?.cautiousCount ?? 0;
++  const totalToneSignals = positiveCount + negativeCount + cautiousCount;
++  const dir = guidanceDirection ?? 'na';
++  const hasConcall = !!concall && concall.charsAnalyzed > 0;
++
++  let forwardLook: NonNullable<NonNullable<IndiaExtras['topLine']>['forwardLook']> | undefined;
++  if (hasConcall || dir !== 'na') {
++    let grade: NonNullable<NonNullable<IndiaExtras['topLine']>['forwardLook']>['grade'] = 'mixed';
++    if (dir === 'raised' || (dir === 'introduced' && positiveCount >= 3 && negativeCount <= 1)) {
++      grade = 'very_positive';
++    } else if (dir === 'lowered') {
++      grade = 'weak';
++    } else if (dir === 'introduced' || dir === 'maintained') {
++      if (positiveCount >= 2 && positiveCount > negativeCount + cautiousCount) grade = 'positive';
++      else if (negativeCount > positiveCount + cautiousCount) grade = 'weak';
++      else if (cautiousCount > positiveCount) grade = 'cautious';
++      else grade = positiveCount >= negativeCount ? 'positive' : 'mixed';
++    } else if (hasConcall) {
++      // No explicit direction — use tone counts alone
++      if (positiveCount >= 5 && negativeCount === 0) grade = 'very_positive';
++      else if (positiveCount >= 3 && positiveCount > negativeCount + cautiousCount) grade = 'positive';
++      else if (negativeCount >= 3 && negativeCount > positiveCount) grade = 'weak';
++      else if (cautiousCount > positiveCount && cautiousCount >= 2) grade = 'cautious';
++      else if (totalToneSignals === 0) grade = 'not_provided';
++      else grade = 'mixed';
++    } else {
++      grade = 'not_provided';
++    }
++
++    const labelMap: Record<typeof grade, string> = {
++      very_positive: 'STRONG',
++      positive: 'POSITIVE',
++      mixed: 'MIXED',
++      cautious: 'CAUTIOUS',
++      weak: 'WEAK',
++      not_provided: 'N/A',
++    };
++
++    // Evidence: top topical mentions that signal forward direction
++    const evidenceTopics = (concall?.keyMentions || [])
++      .map((m) => m.topic)
++      .filter((t) => ['capex', 'capacity', 'launches', 'guidance', 'demand', 'operating_leverage', 'customer_wins'].includes(t));
++    const evidenceLabels: Record<string, string> = {
++      capex: 'capacity / capex expansion',
++      capacity: 'capacity ramp',
++      launches: 'new launches',
++      guidance: 'forward guidance',
++      demand: 'demand outlook',
++      operating_leverage: 'operating leverage',
++      customer_wins: 'customer wins',
++    };
++    const evidence = (() => {
++      if (dir === 'raised') return 'guidance raised by management';
++      if (dir === 'lowered') return 'guidance lowered by management';
++      if (evidenceTopics.length > 0) {
++        return evidenceTopics.slice(0, 3).map((t) => evidenceLabels[t]).join(' + ');
++      }
++      if (negativeCount > positiveCount) return `${negativeCount} cautionary signals in commentary`;
++      if (positiveCount > 0) return `${positiveCount} positive signals in commentary`;
++      return 'no forward-looking commentary detected';
++    })();
++
++    if (grade !== 'not_provided') {
++      forwardLook = { grade, label: labelMap[grade], evidence };
++    }
++  }
++
++  return { headline, verdict, rationale, watchPoints, forwardLook };
+ }
+diff --git a/frontend/src/lib/earnings/snapshot.ts b/frontend/src/lib/earnings/snapshot.ts
+index dc416ae..f26dfa9 100644
+--- a/frontend/src/lib/earnings/snapshot.ts
++++ b/frontend/src/lib/earnings/snapshot.ts
+@@ -324,6 +324,13 @@ export interface IndiaExtras {
+     verdict: 'BUY' | 'ACCUMULATE' | 'HOLD' | 'NEUTRAL' | 'AVOID' | 'SELL';
+     rationale: string;        // one short clause explaining the verdict
+     watchPoints: string[];    // 2-3 KPIs / signals to monitor
++    // Forward-looking signal — derived from guidance.direction + concall
++    // tone counts + key mentions. Renders as a second pill next to VERDICT.
++    forwardLook?: {
++      grade: 'very_positive' | 'positive' | 'mixed' | 'cautious' | 'weak' | 'not_provided';
++      label: string;          // human-readable: "STRONG", "POSITIVE", "MIXED", etc.
++      evidence: string;       // short clause: "capacity expansion + new product roadmap"
++    };
+   };
+ 
+   // Concall extraction — populated when the user pastes a transcript
+-- 
+2.34.1
+

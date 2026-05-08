@@ -187,8 +187,23 @@ export function IndiaInstitutionalReport({
             <Pill label="Promoter" value={ix.topMetrics.promoterHoldingPct !== null ? `${ix.topMetrics.promoterHoldingPct.toFixed(1)}%` : '—'} color={ACCENT} />
           </div>
           {(onCopy || onReset) && (
-            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+            <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
               {onCopy && <button onClick={onCopy} style={btnSec()}>Copy summary</button>}
+              <button
+                onClick={async () => {
+                  try {
+                    const { exportIndiaReportPdf } = await import('@/lib/earnings/india-pdf-export');
+                    await exportIndiaReportPdf(s);
+                  } catch (e: any) {
+                    console.error('PDF export failed:', e);
+                    alert('PDF export failed: ' + (e?.message || 'unknown error'));
+                  }
+                }}
+                style={{ ...btnSec(), background: ACCENT, color: BG, fontWeight: 700 }}
+                title="Download institutional PDF report"
+              >
+                ↓ PDF
+              </button>
               {onReset && <button onClick={onReset} style={btnSec()}>New analysis</button>}
             </div>
           )}
@@ -333,6 +348,9 @@ export function IndiaInstitutionalReport({
         <ComponentCard title="Working Capital" score={fs.components.working_capital.score} label={fs.components.working_capital.label} />
         <ComponentCard title="Promoter Signal" score={fs.components.promoter.score} label={fs.components.promoter.label} />
         <ComponentCard title="Cash Conversion" score={fs.components.cash_conversion.score} label={fs.components.cash_conversion.label} />
+        {fs.components.forward && (
+          <ComponentCard title="Forward Outlook" score={fs.components.forward.score} label={fs.components.forward.label} />
+        )}
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════
@@ -502,7 +520,31 @@ export function IndiaInstitutionalReport({
       {/* ═══════════════════════════════════════════════════════════════════
           G. PROMOTER & GOVERNANCE
          ═══════════════════════════════════════════════════════════════════ */}
-      <SectionTitle title="Promoter & Governance" subtitle="Holding pattern + recent shifts" />
+      <SectionTitle title="Promoter & Governance" subtitle="Holding pattern + Trust Score" />
+      {gov.trustScore && (() => {
+        const t = gov.trustScore;
+        const trustColor = t.score >= 70 ? GREEN : t.score >= 50 ? ACCENT : t.score >= 30 ? ORANGE : '#ef4444';
+        return (
+          <div style={{ marginBottom: 12, background: PANEL, border: `1px solid ${BORDER}`, borderLeft: `3px solid ${trustColor}`, borderRadius: 6, padding: '12px 14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+              <div style={{ minWidth: 110 }}>
+                <div style={{ fontSize: 9, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.7, fontWeight: 700 }}>Promoter Trust</div>
+                <div style={{ fontSize: 30, fontWeight: 800, color: trustColor, fontFamily: MONO, lineHeight: 1.1 }}>{t.score}<span style={{ fontSize: 12, color: MUTED }}>/100</span></div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: trustColor, letterSpacing: 0.5 }}>Grade {t.grade}</div>
+              </div>
+              <div style={{ flex: 1, minWidth: 220 }}>
+                <div style={{ fontSize: 12, color: TEXT, fontWeight: 600, marginBottom: 6 }}>{t.verdict}</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 6, fontSize: 10, color: MUTED }}>
+                  <div title={t.breakdown.stability.reason}><strong style={{ color: TEXT }}>Stability {t.breakdown.stability.score}</strong> · {t.breakdown.stability.reason}</div>
+                  <div title={t.breakdown.pledge.reason}><strong style={{ color: TEXT }}>Pledge {t.breakdown.pledge.score}</strong> · {t.breakdown.pledge.reason}</div>
+                  <div title={t.breakdown.consistency.reason}><strong style={{ color: TEXT }}>Consistency {t.breakdown.consistency.score}</strong> · {t.breakdown.consistency.reason}</div>
+                  <div title={t.breakdown.institutional.reason}><strong style={{ color: TEXT }}>Institutional {t.breakdown.institutional.score}</strong> · {t.breakdown.institutional.reason}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
         <Panel title="Promoter Holding">
           <div style={{ fontSize: 28, fontWeight: 800, color: ACCENT, fontFamily: MONO }}>
