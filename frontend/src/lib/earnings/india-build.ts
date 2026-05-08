@@ -30,6 +30,8 @@ export interface ScreenerInput {
   ok?: boolean;
   ticker: string;
   company?: string | null;
+  sector?: string | null;
+  subIndustry?: string | null;
   industry?: string | null;
   about?: string | null;
   unit?: string;
@@ -113,8 +115,13 @@ export function buildIndiaSnapshot(
   else endpointsFailed.push('fmp_profile_india');
 
   // ── Sector classification ─────────────────────────────────────────────
+  // Prefer Screener's explicit sector + industry fields. Fall back to FMP
+  // industry. Fall back to free-text description.
+  const sectorStr = screener?.sector || '';
   const industryStr = screener?.industry || fmpProfile?.industry || '';
-  const sector: IndiaSector = classifyIndiaSector(industryStr, fmpProfile?.description || '');
+  const subIndStr = screener?.subIndustry || '';
+  const classifyText = [sectorStr, industryStr, subIndStr, fmpProfile?.description || ''].join(' ');
+  const sector: IndiaSector = classifyIndiaSector(industryStr || sectorStr, classifyText);
   const sectorTemplate = INDIA_SECTOR_TEMPLATES[sector];
 
   // ── Convert ₹ Cr → ₹ Mn for internal canonical (× 10) ─────────────────

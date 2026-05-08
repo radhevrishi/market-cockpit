@@ -1603,6 +1603,7 @@ function buildColMap(sampleRow: Record<string,unknown>): Record<string,string> {
     const o=col.trim();
     // Screener.in exact names
     if (o==='NSE Code'||o==='NSE code')                            m['symbol']=col;
+    else if (o==='BSE Code'||o==='BSE code')                       m['bseCode']=col;
     else if (o==='Name')                                           m['company']=col;
     else if (o==='Industry')          {if(!m['sector'])            m['sector']=col;}
     else if (o==='Industry Group')    {if(!m['sector'])            m['sector']=col;}
@@ -1707,7 +1708,18 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
     const v=parseFloat(String(val).replace(/[%,₹ ]/g,''));
     return isNaN(v)?undefined:v;
   };
-  const sym=String(row[m['symbol']]??'').trim().toUpperCase();
+  // Prefer NSE Code; fall back to BSE Code for BSE-only listings (e.g. AXTEL).
+  // If both are empty, derive a sanitized symbol from the company name so we
+  // don't silently drop institutionally-relevant rows.
+  let sym=String(row[m['symbol']]??'').trim().toUpperCase();
+  if (!sym && m['bseCode']) {
+    const bse = String(row[m['bseCode']]??'').trim();
+    if (bse) sym = `BSE:${bse}`;
+  }
+  if (!sym) {
+    const name = String(row[m['company']??'']??'').trim();
+    if (name) sym = name.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 12);
+  }
   if(!sym) return null;
   const price=n(m['price']?row[m['price']]:undefined);
   const iv=n(m['intrinsicValue']?row[m['intrinsicValue']]:undefined);

@@ -190,6 +190,34 @@ export async function GET(request: Request) {
       debug.status = res.status;
       debug.warnings.push('Consolidated not available — fell back to standalone');
     }
+    // ── BSE-only fallback: use Screener search API to resolve ticker ──
+    // Some companies (AXTEL, smaller midcaps) are BSE-only and Screener
+    // routes them by BSE code, e.g. /company/523850/ instead of /company/AXTEL/.
+    if (!res.ok) {
+      try {
+        const searchRes = await fetch(
+          `https://www.screener.in/api/company/search/?q=${encodeURIComponent(symbol)}`,
+          { headers: SCREENER_HEADERS, signal: AbortSignal.timeout(8000) },
+        );
+        if (searchRes.ok) {
+          const results = await searchRes.json();
+          if (Array.isArray(results) && results.length > 0) {
+            const url = results[0].url; // e.g. "/company/523850/"
+            const fallbackUrl = `https://www.screener.in${url}`;
+            debug.warnings.push(`Resolved via Screener search: ${results[0].name} (${url})`);
+            res = await fetch(fallbackUrl, {
+              headers: SCREENER_HEADERS,
+              signal: AbortSignal.timeout(15000),
+              next: { revalidate: 3600 },
+            });
+            debug.url = fallbackUrl;
+            debug.status = res.status;
+          }
+        }
+      } catch {
+        // search fallback failed — continue with original 404
+      }
+    }
     if (res.ok) html = await res.text();
   } catch (err: any) {
     return NextResponse.json(
@@ -222,9 +250,8 @@ export async function GET(request: Request) {
   const roce = parseScreenerNumber(extractTopMetric(html, 'ROCE'));
   const roe = parseScreenerNumber(extractTopMetric(html, 'ROE'));
   const faceValue = parseScreenerNumber(extractTopMetric(html, 'Face Value'));
-  const promoterHolding = parseScreenerNumber(extractTopMetric(html, 'Promoter holding'));
+  const promoterHolding = null; // computed below from meta tooltip
   const debtToEquity = parseScreenerNumber(extractTopMetric(html, 'Debt to equity'));
-  const ratiosIntPayout = parseScreenerNumber(extractTopMetric(html, 'Int Coverage'));
 
   // ── Quarterly P&L ────────────────────────────────────────────────────
   const quartersSection = getSection(html, 'quarters');
@@ -250,18 +277,40 @@ export async function GET(request: Request) {
   const shSection = getSection(html, 'shareholding');
   const shTable = shSection ? parseScreenerTable(shSection) : null;
 
-  // ── Sector / industry from breadcrumb / company page ─────────────────
+  // ── Sector / industry from breadcrumb metadata ───────────────────────
+  // Screener exposes them as: <... title="Sector">Fast Moving Consumer Goods
+  let sector: string | null = null;
   let industry: string | null = null;
-  const industryMatch = html.match(/<a[^>]*href="\/company\/compare\/\d+\/[^"]*\/"[^>]*>([^<]+)<\/a>/);
-  if (industryMatch) industry = industryMatch[1].trim();
+  let subIndustry: string | null = null;
+  const sectorMatch = html.match(new RegExp('title="Sector"[^>]*>\\s*([^\\n<]+?)(?:\\s*<\\/)', 'i'));
+  if (sectorMatch) sector = stripTags(sectorMatch[1]).trim();
+  const industryMatch = html.match(new RegExp('title="Industry"[^>]*>\\s*([^\\n<]+?)(?:\\s*<\\/)', 'i'));
+  if (industryMatch) industry = stripTags(industryMatch[1]).trim();
+  const subIndMatch = html.match(new RegExp('title="(?:Sub\\s*-?\\s*Industry|Basic Industry)"[^>]*>\\s*([^\\n<]+?)(?:\\s*<\\/)', 'i'));
+  if (subIndMatch) subIndustry = stripTags(subIndMatch[1]).trim();
+
   let companyName: string | null = null;
   const nameMatch = html.match(/<h1[^>]*class="[^"]*"[^>]*>([^<]+)<\/h1>/);
   if (nameMatch) companyName = stripTags(nameMatch[1]);
 
-  // ── Business description ─────────────────────────────────────────────
+  // ── Business description (Screener "About" panel) ────────────────────
   let about: string | null = null;
+  // Try the "company-profile" container first
   const aboutMatch = html.match(/<div[^>]*class="company-profile"[\s\S]{0,8000}?<p[^>]*>([\s\S]*?)<\/p>/);
   if (aboutMatch) about = stripTags(aboutMatch[1]);
+  // Fallback: extract from the meta title tooltip which contains a 1-line
+  // synopsis ("Market Cap … Revenue … Profit … Promoter Holding 43%")
+  if (!about) {
+    const meta = html.match(/<meta[^>]*name="description"[^>]*content="([^"]+)"/);
+    if (meta) about = meta[1];
+  }
+
+  // ── Promoter holding from meta tooltip if not on top-ratios list ─────
+  let promoterHoldingPct = parseScreenerNumber(extractTopMetric(html, 'Promoter holding'));
+  if (promoterHoldingPct === null) {
+    const ph = html.match(/Promoter\s+Holding\s*[:\s]+([\d.]+)\s*%/i);
+    if (ph) promoterHoldingPct = parseScreenerNumber(ph[1]);
+  }
 
   // ── Build normalized output ──────────────────────────────────────────
   // All Screener values are in ₹ Crores. We return them as-is and tag the unit.
@@ -313,6 +362,8 @@ export async function GET(request: Request) {
     rawTicker: raw,
     company: companyName,
     industry,
+    sector,
+    subIndustry,
     about,
     debug,
     unit: 'INR_Cr',
@@ -325,7 +376,7 @@ export async function GET(request: Request) {
       roce,
       roe,
       faceValue,
-      promoterHoldingPct: promoterHolding,
+      promoterHoldingPct: promoterHoldingPct,
       debtToEquity,
     },
     latest: latest
