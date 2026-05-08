@@ -10,7 +10,9 @@ export const maxDuration = 30;
 // Pairs each row with /stable/earnings to get actual+estimate revenue/EPS.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const FMP_KEY = process.env.FMP_KEY || 'SywZSfKoRQ9JmcUZ1w98MT78rrVvHGng';
+// Server-only — no string fallback. Hardcoded fallback removed in security
+// patch 15 because it was leaking via the public repo.
+const FMP_KEY = process.env.FMP_KEY || '';
 const STABLE = 'https://financialmodelingprep.com/stable';
 
 async function safeJson<T = any>(url: string, timeoutMs = 8000): Promise<T | null> {

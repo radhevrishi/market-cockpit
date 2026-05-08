@@ -3,7 +3,7 @@ import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 
 export const dynamic = 'force-dynamic';
 
-const BOT_SECRET = process.env.MC_BOT_SECRET || 'mc-bot-2026';
+const BOT_SECRET = process.env.MC_BOT_SECRET || '';
 
 /* ── Types ─────────────────────────────────────────────── */
 export interface PortfolioHolding {
@@ -62,8 +62,8 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { chatId = 'default', secret } = body;
 
-    if (secret !== BOT_SECRET) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!BOT_SECRET || secret !== BOT_SECRET) {
+      return NextResponse.json({ error: 'Unauthorized — server secret not configured or token mismatch' }, { status: 401 });
     }
 
     const existing = await kvGet<PortfolioData>(kvKey(chatId));

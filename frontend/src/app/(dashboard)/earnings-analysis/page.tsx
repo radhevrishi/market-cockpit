@@ -1910,8 +1910,27 @@ function saveHist2(e: HistEntry2[]) { try { localStorage.setItem(HISTORY_KEY2, J
 
 export default function EarningsAnalysisPage() {
   // ── API Keys ──────────────────────────────────────────────────────────────
-  const FMP_KEY = 'SywZSfKoRQ9JmcUZ1w98MT78rrVvHGng';  // Financial Modeling Prep (PRIMARY)
+  // FMP_KEY removed from client — was hardcoded and shipping to browser JS.
+  // All FMP calls now route through /api/earnings/fmp-proxy which holds the
+  // key server-side and rate-limits per IP.
   const AV_KEY  = '62EKUKC2M5WSZB9Z';                   // Alpha Vantage (fallback)
+
+  // Helper that calls FMP's legacy v3 endpoints via the server proxy.
+  // Returns a Response. Caller calls .ok and .json() — but .json() returns
+  // the proxy envelope { ok, data }; the page code already destructures via
+  // `safeEst` helpers that handle both shapes via `j?.data ?? j ?? []`.
+  // For sites that consumed the array directly we wrap with unwrapFmp().
+  function fmpFetch(endpoint: string, ticker: string, params: Record<string, string> = {}): Promise<Response> {
+    const qs = new URLSearchParams({ endpoint, ticker, ...params });
+    return fetch(`/api/earnings/fmp-proxy?${qs.toString()}`);
+  }
+  // Helper to unwrap the proxy envelope { ok, data } back to the raw array
+  // shape that the existing destructuring code expects. Returns [] on error.
+  async function unwrapFmpJson(res: Response): Promise<any[]> {
+    if (!res.ok) return [];
+    const j = await res.json().catch(() => null);
+    return j?.data ?? (Array.isArray(j) ? j : []);
+  }
 
   // Consensus estimates data — enriched from FMP (primary) or AV (fallback)
   interface AVData {
@@ -1957,17 +1976,14 @@ export default function EarningsAnalysisPage() {
       // /analyst-estimates: forward revenue, EPS, gross margin estimates
       // /profile: company name, sector, industry
       const [surpriseRes, estimatesRes, profileRes] = await Promise.allSettled([
-        fetch(`https://financialmodelingprep.com/api/v3/earnings-surprises/${encodeURIComponent(sym)}?apikey=${FMP_KEY}`),
-        fetch(`https://financialmodelingprep.com/api/v3/analyst-estimates/${encodeURIComponent(sym)}?period=quarterly&limit=4&apikey=${FMP_KEY}`),
-        fetch(`https://financialmodelingprep.com/api/v3/profile/${encodeURIComponent(sym)}?apikey=${FMP_KEY}`),
+        fmpFetch('earnings-surprises', sym),
+        fmpFetch('analyst-estimates', sym, { period: 'quarterly', limit: '4' }),
+        fmpFetch('profile', sym),
       ]);
 
-      const surprises: any[] = surpriseRes.status === 'fulfilled' && surpriseRes.value.ok
-        ? await surpriseRes.value.json() : [];
-      const estimates: any[] = estimatesRes.status === 'fulfilled' && estimatesRes.value.ok
-        ? await estimatesRes.value.json() : [];
-      const profiles: any[] = profileRes.status === 'fulfilled' && profileRes.value.ok
-        ? await profileRes.value.json() : [];
+      const surprises: any[] = surpriseRes.status === 'fulfilled' ? await unwrapFmpJson(surpriseRes.value) : [];
+      const estimates: any[] = estimatesRes.status === 'fulfilled' ? await unwrapFmpJson(estimatesRes.value) : [];
+      const profiles: any[] = profileRes.status === 'fulfilled' ? await unwrapFmpJson(profileRes.value) : [];
 
       if (!surprises.length && !estimates.length) return false;
 
@@ -2458,13 +2474,13 @@ export default function EarningsAnalysisPage() {
 
   async function fetchFromFMP(ticker: string): Promise<RawFinancials | null> {
     const [incRes, bsRes, cfRes, profRes] = await Promise.allSettled([
-      fetch(`https://financialmodelingprep.com/api/v3/income-statement/${encodeURIComponent(ticker)}?period=quarterly&limit=5&apikey=${FMP_KEY}`),
-      fetch(`https://financialmodelingprep.com/api/v3/balance-sheet-statement/${encodeURIComponent(ticker)}?period=quarterly&limit=2&apikey=${FMP_KEY}`),
-      fetch(`https://financialmodelingprep.com/api/v3/cash-flow-statement/${encodeURIComponent(ticker)}?period=quarterly&limit=2&apikey=${FMP_KEY}`),
-      fetch(`https://financialmodelingprep.com/api/v3/profile/${encodeURIComponent(ticker)}?apikey=${FMP_KEY}`),
+      fmpFetch('income-statement', ticker, { period: 'quarterly', limit: '5' }),
+      fmpFetch('balance-sheet-statement', ticker, { period: 'quarterly', limit: '2' }),
+      fmpFetch('cash-flow-statement', ticker, { period: 'quarterly', limit: '2' }),
+      fmpFetch('profile', ticker),
     ]);
     const safe = async (r: PromiseSettledResult<Response>) =>
-      r.status === 'fulfilled' && r.value.ok ? r.value.json().catch(() => []) : [];
+      r.status === 'fulfilled' ? unwrapFmpJson(r.value) : [];
     const [inc, bs, cf, profiles] = await Promise.all([safe(incRes), safe(bsRes), safe(cfRes), safe(profRes)]);
 
     const profile = (profiles as any[])[0] ?? {};
@@ -2630,11 +2646,11 @@ export default function EarningsAnalysisPage() {
       setLoadingMsg('Fetching analyst estimates and earnings surprise history…');
       setLoadingPct(60);
       const [surpriseRes, estRes] = await Promise.allSettled([
-        fetch(`https://financialmodelingprep.com/api/v3/earnings-surprises/${encodeURIComponent(ticker)}?apikey=${FMP_KEY}`),
-        fetch(`https://financialmodelingprep.com/api/v3/analyst-estimates/${encodeURIComponent(ticker)}?period=quarterly&limit=4&apikey=${FMP_KEY}`),
+        fmpFetch('earnings-surprises', ticker),
+        fmpFetch('analyst-estimates', ticker, { period: 'quarterly', limit: '4' }),
       ]);
       const safeEst = async (r: PromiseSettledResult<Response>) =>
-        r.status === 'fulfilled' && r.value.ok ? r.value.json().catch(() => []) : [];
+        r.status === 'fulfilled' ? unwrapFmpJson(r.value) : [];
       const [surprises, ests] = await Promise.all([safeEst(surpriseRes), safeEst(estRes)]);
       const nextEst = (ests as any[])[0] ?? {};
 

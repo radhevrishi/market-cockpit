@@ -22,7 +22,9 @@ export const maxDuration = 30;
 //     /stable/earnings?limit>5, /stable/ratings-historical?limit>1
 // ─────────────────────────────────────────────────────────────────────────────
 
-const FMP_KEY = process.env.FMP_KEY || 'SywZSfKoRQ9JmcUZ1w98MT78rrVvHGng';
+// Server-only — no string fallback. The previous fallback was a hardcoded
+// FMP key checked into the repo and shipping to anyone reading source.
+const FMP_KEY = process.env.FMP_KEY || '';
 const STABLE = 'https://financialmodelingprep.com/stable';
 
 async function safeJson<T = any>(url: string, timeoutMs = 8000): Promise<{ data: T | null; ok: boolean; reason?: string }> {

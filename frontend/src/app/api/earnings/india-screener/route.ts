@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { fetchCompanyFinancialResults } from '@/lib/nse';
+import { rateLimitResponse } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -324,6 +325,12 @@ async function fetchNseQuarters(symbol: string): Promise<NseQuarter[]> {
 }
 
 export async function GET(request: Request) {
+  // Rate limit: NSE + Screener fetches are expensive (multi-MB scrapes,
+  // up to 4 sequential HTTP calls per request including the staleness retry).
+  // 30 lookups/min/IP is generous for legitimate use, blocks scraping.
+  const limited = rateLimitResponse(request, 30, 60_000);
+  if (limited) return limited;
+
   const { searchParams } = new URL(request.url);
   const raw = (searchParams.get('ticker') || '').trim();
   if (!raw) {

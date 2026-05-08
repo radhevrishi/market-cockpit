@@ -10,7 +10,7 @@ export const maxDuration = 55;
 // ── Config ──────────────────────────────────────────────────────────────
 const TG_TOKEN = '8522816501:AAGFbhOb8EYj7cG0yUwsaZ5ZFUEpRkA7Zss';
 const TG_CHAT_ID = '5057319640';
-const BOT_SECRET = process.env.MC_BOT_SECRET || 'mc-bot-2026';
+const BOT_SECRET = process.env.MC_BOT_SECRET || '';
 const API_BASE = 'https://market-cockpit.vercel.app';
 
 // ── Default Portfolio (user's actual holdings) ─────────────────────────
