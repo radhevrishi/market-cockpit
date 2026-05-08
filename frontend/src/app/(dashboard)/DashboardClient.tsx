@@ -11,6 +11,7 @@ import {
 import api from '@/lib/api';
 import TickerDrawer from '@/components/TickerDrawer';
 import GlobalSearch from '@/components/GlobalSearch';
+import { ThemeSwitcher } from '@/components/ThemeSwitcher';
 import MarketHours from '@/components/MarketHours';
 
 interface NavItem { href: string; label: string; icon: ReactNode; }
@@ -272,6 +273,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
 
         {/* Settings + Signout */}
         <div style={{ borderTop: '1px solid #1A2840', padding: '8px 0' }}>
+          <ThemeSwitcher compact />
           <Link href="/settings" title="Settings"
             style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px', padding: '10px 4px',
               color: '#6B7A8D', textDecoration: 'none', fontSize: '9px' }}>

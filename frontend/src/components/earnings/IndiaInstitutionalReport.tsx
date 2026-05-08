@@ -3,6 +3,7 @@
 import React from 'react';
 import { EarningsSnapshot, IndiaExtras, ThemeStrength } from '@/lib/earnings/snapshot';
 import { ConcallUploadModal } from './ConcallUploadModal';
+import { useTheme } from '@/contexts/ThemeContext';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // IndiaInstitutionalReport — fundamentals-driven layout
@@ -117,6 +118,24 @@ export function IndiaInstitutionalReport({
   onConcallText,
   concallProcessing,
 }: IndiaInstitutionalReportProps) {
+  // Theme palette — overrides the module-level dark defaults so the report
+  // re-renders in the active theme (dark / light / professional).
+  const { palette } = useTheme();
+  const BG = palette.BG;
+  const PANEL = palette.PANEL;
+  const PANEL2 = palette.PANEL2;
+  const BORDER = palette.BORDER;
+  const BORDER2 = palette.BORDER2;
+  const TEXT = palette.TEXT;
+  const MUTED = palette.MUTED;
+  const FAINT = palette.FAINT;
+  const ACCENT = palette.ACCENT;
+  const SAFFRON = palette.SAFFRON;
+  const GREEN = palette.GREEN;
+  const ORANGE = palette.ORANGE;
+  const FONT = palette.FONT;
+  const MONO = palette.MONO;
+
   const [showConcallModal, setShowConcallModal] = React.useState(false);
   const ix: IndiaExtras | undefined = s.indiaExtras;
   if (!ix) {

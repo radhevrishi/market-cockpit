@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'react-hot-toast';
+import { ThemeProvider } from '@/contexts/ThemeContext';
 
 export function Providers({ children }: { children: ReactNode }) {
   // useState ensures each request gets its own QueryClient in SSR
@@ -21,6 +22,7 @@ export function Providers({ children }: { children: ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
+      <ThemeProvider>
       {children}
       <Toaster
         position="bottom-right"
@@ -37,6 +39,7 @@ export function Providers({ children }: { children: ReactNode }) {
           error:   { duration: 5000, iconTheme: { primary: '#EF4444', secondary: '#111B35' } },
         }}
       />
+      </ThemeProvider>
     </QueryClientProvider>
   );
 }
