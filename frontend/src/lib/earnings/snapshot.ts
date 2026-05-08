@@ -333,6 +333,15 @@ export interface IndiaExtras {
     };
   };
 
+  // Source-data staleness flag — set when latest reported period is more
+  // than 9 months old. UI surfaces this as a red banner so users don't
+  // mistake archived data for current.
+  staleness?: {
+    monthsOld: number | null;
+    isStale: boolean;
+    latestPeriod: string | null;
+  };
+
   // Concall extraction — populated when the user pastes a transcript
   concall?: {
     topQuotes: string[];

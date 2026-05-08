@@ -39,6 +39,11 @@ export interface ScreenerInput {
   about?: string | null;
   unit?: string;
   source?: string;
+  staleness?: {
+    monthsOld: number | null;
+    isStale: boolean;
+    latestPeriod: string | null;
+  };
   provenance?: {
     financials?: string;
     history?: string;
@@ -819,6 +824,7 @@ function computeIndiaExtras(opts: {
     fundamentalScore,
     topLine,
     concall: concallInsights || undefined,
+    staleness: opts.screener?.staleness,
   };
 }
 

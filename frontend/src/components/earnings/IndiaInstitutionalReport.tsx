@@ -176,6 +176,23 @@ export function IndiaInstitutionalReport({
         </div>
       </div>
 
+      {/* ── STALENESS BANNER — red warning when source data is > 9 months old ── */}
+      {ix.staleness?.isStale && (
+        <div style={{ marginTop: 14, marginBottom: 4, background: '#7f1d1d', border: '1px solid #ef4444', borderRadius: 6, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 18 }}>⚠</span>
+          <div style={{ flex: 1, color: '#fecaca', fontSize: 12, lineHeight: 1.5 }}>
+            <strong style={{ color: '#fef2f2', fontSize: 13 }}>STALE DATA WARNING</strong>
+            <span style={{ marginLeft: 8 }}>
+              Latest reported period is <strong style={{ color: '#fef2f2' }}>{ix.staleness.latestPeriod}</strong>
+              {ix.staleness.monthsOld !== null && (
+                <> — that is <strong style={{ color: '#fef2f2' }}>{ix.staleness.monthsOld} months</strong> old.</>
+              )}
+              {' '}The upstream source has not been updated. Verify the ticker symbol; if correct, the company may have been delisted, renamed, or has a non-standard slug on Screener.in. Treat numbers below as historical, not current.
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* ── ONE-LINE INSTITUTIONAL VERDICT — what to do at a glance ── */}
       {ix.topLine && (() => {
         const v = ix.topLine.verdict;

@@ -391,6 +391,86 @@ export async function GET(request: Request) {
       }
     }
     if (res.ok) html = await res.text();
+
+    // ── STALENESS RETRY ─────────────────────────────────────────────────
+    // Quick scan of the HTML for the most recent quarter header. If it's
+    // older than 9 months, the bare-symbol slug probably resolved to an
+    // archived / wrong-canonical page. Retry via search API to find the
+    // current slug.
+    if (html) {
+      const headerMatches = html.match(/>(?:Mar|Jun|Sep|Dec)\s+(\d{4})</g) || [];
+      let bestYear = 0;
+      for (const m of headerMatches) {
+        const y = parseInt(m.match(/(\d{4})/)?.[1] || '0', 10);
+        if (y > bestYear) bestYear = y;
+      }
+      const yearsOld = bestYear > 0 ? new Date().getFullYear() - bestYear : 0;
+      if (bestYear > 0 && yearsOld >= 1) {
+        debug.warnings.push(
+          `Initial Screener page yielded latest year ${bestYear} (${yearsOld}+ years old). Retrying via search API to find canonical slug.`,
+        );
+        try {
+          const searchRes = await fetch(
+            `https://www.screener.in/api/company/search/?q=${encodeURIComponent(symbol)}`,
+            { headers: SCREENER_HEADERS, signal: AbortSignal.timeout(8000) },
+          );
+          if (searchRes.ok) {
+            const results = await searchRes.json();
+            if (Array.isArray(results) && results.length > 0) {
+              const url = results[0].url;
+              const fallbackUrl = `https://www.screener.in${url}consolidated/`;
+              debug.warnings.push(`Resolved via search API: ${results[0].name} (${url}consolidated/)`);
+              const fallbackRes = await fetch(fallbackUrl, {
+                headers: SCREENER_HEADERS,
+                signal: AbortSignal.timeout(15000),
+                cache: 'no-store',
+              });
+              if (fallbackRes.ok) {
+                const fallbackHtml = await fallbackRes.text();
+                // Verify the fallback page is actually fresher
+                const fb = fallbackHtml.match(/>(?:Mar|Jun|Sep|Dec)\s+(\d{4})</g) || [];
+                let fbYear = 0;
+                for (const m of fb) {
+                  const y = parseInt(m.match(/(\d{4})/)?.[1] || '0', 10);
+                  if (y > fbYear) fbYear = y;
+                }
+                if (fbYear > bestYear) {
+                  debug.url = fallbackUrl;
+                  debug.status = fallbackRes.status;
+                  html = fallbackHtml;
+                  debug.warnings.push(`Replaced stale page (${bestYear}) with fresher canonical (${fbYear}).`);
+                } else {
+                  // Try non-consolidated variant
+                  const altUrl = `https://www.screener.in${url}`;
+                  const altRes = await fetch(altUrl, {
+                    headers: SCREENER_HEADERS,
+                    signal: AbortSignal.timeout(15000),
+                    cache: 'no-store',
+                  });
+                  if (altRes.ok) {
+                    const altHtml = await altRes.text();
+                    const am = altHtml.match(/>(?:Mar|Jun|Sep|Dec)\s+(\d{4})</g) || [];
+                    let altYear = 0;
+                    for (const m of am) {
+                      const y = parseInt(m.match(/(\d{4})/)?.[1] || '0', 10);
+                      if (y > altYear) altYear = y;
+                    }
+                    if (altYear > bestYear) {
+                      debug.url = altUrl;
+                      debug.status = altRes.status;
+                      html = altHtml;
+                      debug.warnings.push(`Replaced stale page (${bestYear}) with standalone variant (${altYear}).`);
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } catch {
+          // search/retry failed — keep the stale html, banner will warn user
+        }
+      }
+    }
   } catch (err: any) {
     return NextResponse.json(
       { ok: false, error: `Screener.in fetch failed: ${err?.message || 'timeout'}`, debug },
@@ -694,6 +774,28 @@ export async function GET(request: Request) {
   const prevYear = mergedQuarterly.length >= 5 ? mergedQuarterly[mergedQuarterly.length - 5] : null;
   const prevQuarter = mergedQuarterly.length >= 2 ? mergedQuarterly[mergedQuarterly.length - 2] : null;
 
+  // ── STALENESS GATE ─────────────────────────────────────────────────────
+  // Indian listed-co quarterly results land within ~45 days of period end.
+  // If the latest period is more than 9 months old, the source is wrong —
+  // either the slug routes to an archived page (KENNAMET → wrong canonical)
+  // or the company has been delisted. Surface this loudly instead of
+  // pretending the stale data is current.
+  let stalenessMonths: number | null = null;
+  if (latest) {
+    const latestTs = periodToTs(latest.period);
+    if (latestTs > 0) {
+      stalenessMonths = Math.round(
+        (Date.now() - latestTs) / (30.44 * 24 * 3600 * 1000),
+      );
+    }
+  }
+  const isStale = stalenessMonths !== null && stalenessMonths > 9;
+  if (isStale) {
+    debug.warnings.push(
+      `STALE DATA: latest period (${latest?.period}) is ${stalenessMonths} months old. Source slug may be wrong — try /api/company/search to find canonical URL.`,
+    );
+  }
+
   return NextResponse.json({
     ok: true,
     source: useNse ? 'nse_primary' : 'screener_in',
@@ -706,6 +808,11 @@ export async function GET(request: Request) {
     about,
     debug,
     unit: 'INR_Cr',
+    staleness: {
+      monthsOld: stalenessMonths,
+      isStale,
+      latestPeriod: latest?.period || null,
+    },
     provenance: {
       financials: useNse ? 'nse_quarterly_results' : 'screener_in',
       history: useNse ? 'nse_quarterly_results' : 'screener_in',
