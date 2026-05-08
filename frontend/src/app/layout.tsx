@@ -23,8 +23,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="manifest" href="/manifest.json" />
       </head>
       <body className="font-sans antialiased" style={{
-        backgroundColor: '#0A0E1A',
-        color: '#F5F7FA',
+        // Theme-aware via ThemeContext, which sets --mc-bg / --mc-text on
+        // <html> data-theme. Hardcoded values used as fallback before
+        // hydration so the very first paint isn't a white flash.
+        backgroundColor: 'var(--mc-bg, #0A0E1A)',
+        color: 'var(--mc-text, #F5F7FA)',
         fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
       }}>
         <Providers>
