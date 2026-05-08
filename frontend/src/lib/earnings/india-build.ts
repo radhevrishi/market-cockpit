@@ -793,7 +793,11 @@ function computeIndiaExtras(opts: {
 
   // ── ONE-LINE INSTITUTIONAL VERDICT ─────────────────────────────────────
   // Rule-based summary: combines revenue/margin direction, accounting flags,
-  // sector classification, and FundamentalScore into a single actionable line.
+  // sector classification, FundamentalScore, and guidance direction into
+  // a single actionable line.
+  const guidanceDir = rawText && rawText.trim().length > 50
+    ? inferGuidance(rawText).direction
+    : 'na';
   const topLine = buildTopLineVerdict({
     fundamentalScore,
     quarterlyTrend: qtrendBase,
@@ -802,6 +806,8 @@ function computeIndiaExtras(opts: {
     accountingFlags: opts.screener?.ok ? [] : [], // flags carried via accountingQuality elsewhere
     sectorTemplate,
     cfoOverPat,
+    concall: concallInsights,
+    guidanceDirection: guidanceDir,
   });
 
   return {
@@ -827,8 +833,10 @@ function buildTopLineVerdict(args: {
   accountingFlags: string[];
   sectorTemplate: typeof INDIA_SECTOR_TEMPLATES[IndiaSector];
   cfoOverPat: number | null;
+  concall?: NonNullable<IndiaExtras['concall']> | null;
+  guidanceDirection?: 'raised' | 'lowered' | 'maintained' | 'introduced' | 'na';
 }): NonNullable<IndiaExtras['topLine']> {
-  const { fundamentalScore: fs, quarterlyTrend, workingCapital, governance, sectorTemplate, cfoOverPat } = args;
+  const { fundamentalScore: fs, quarterlyTrend, workingCapital, governance, sectorTemplate, cfoOverPat, concall, guidanceDirection } = args;
   const last = quarterlyTrend.at(-1);
   const revYoY = last?.yoyRevenuePct ?? null;
   const profitYoY = last?.yoyProfitPct ?? null;
@@ -912,5 +920,79 @@ function buildTopLineVerdict(args: {
     .slice(0, 3)
     .map((k) => k.label);
 
-  return { headline, verdict, rationale, watchPoints };
+  // ── FORWARD-LOOKING SIGNAL ───────────────────────────────────────────
+  // Combines explicit guidance direction (raised / lowered / maintained /
+  // introduced) with concall tone signal counts to produce a six-class
+  // outlook grade. Skipped entirely if no concall was uploaded AND the
+  // standalone guidance language inference also returned 'na'.
+  const positiveCount = concall?.positiveCount ?? 0;
+  const negativeCount = concall?.negativeCount ?? 0;
+  const cautiousCount = concall?.cautiousCount ?? 0;
+  const totalToneSignals = positiveCount + negativeCount + cautiousCount;
+  const dir = guidanceDirection ?? 'na';
+  const hasConcall = !!concall && concall.charsAnalyzed > 0;
+
+  let forwardLook: NonNullable<NonNullable<IndiaExtras['topLine']>['forwardLook']> | undefined;
+  if (hasConcall || dir !== 'na') {
+    let grade: NonNullable<NonNullable<IndiaExtras['topLine']>['forwardLook']>['grade'] = 'mixed';
+    if (dir === 'raised' || (dir === 'introduced' && positiveCount >= 3 && negativeCount <= 1)) {
+      grade = 'very_positive';
+    } else if (dir === 'lowered') {
+      grade = 'weak';
+    } else if (dir === 'introduced' || dir === 'maintained') {
+      if (positiveCount >= 2 && positiveCount > negativeCount + cautiousCount) grade = 'positive';
+      else if (negativeCount > positiveCount + cautiousCount) grade = 'weak';
+      else if (cautiousCount > positiveCount) grade = 'cautious';
+      else grade = positiveCount >= negativeCount ? 'positive' : 'mixed';
+    } else if (hasConcall) {
+      // No explicit direction — use tone counts alone
+      if (positiveCount >= 5 && negativeCount === 0) grade = 'very_positive';
+      else if (positiveCount >= 3 && positiveCount > negativeCount + cautiousCount) grade = 'positive';
+      else if (negativeCount >= 3 && negativeCount > positiveCount) grade = 'weak';
+      else if (cautiousCount > positiveCount && cautiousCount >= 2) grade = 'cautious';
+      else if (totalToneSignals === 0) grade = 'not_provided';
+      else grade = 'mixed';
+    } else {
+      grade = 'not_provided';
+    }
+
+    const labelMap: Record<typeof grade, string> = {
+      very_positive: 'STRONG',
+      positive: 'POSITIVE',
+      mixed: 'MIXED',
+      cautious: 'CAUTIOUS',
+      weak: 'WEAK',
+      not_provided: 'N/A',
+    };
+
+    // Evidence: top topical mentions that signal forward direction
+    const evidenceTopics = (concall?.keyMentions || [])
+      .map((m) => m.topic)
+      .filter((t) => ['capex', 'capacity', 'launches', 'guidance', 'demand', 'operating_leverage', 'customer_wins'].includes(t));
+    const evidenceLabels: Record<string, string> = {
+      capex: 'capacity / capex expansion',
+      capacity: 'capacity ramp',
+      launches: 'new launches',
+      guidance: 'forward guidance',
+      demand: 'demand outlook',
+      operating_leverage: 'operating leverage',
+      customer_wins: 'customer wins',
+    };
+    const evidence = (() => {
+      if (dir === 'raised') return 'guidance raised by management';
+      if (dir === 'lowered') return 'guidance lowered by management';
+      if (evidenceTopics.length > 0) {
+        return evidenceTopics.slice(0, 3).map((t) => evidenceLabels[t]).join(' + ');
+      }
+      if (negativeCount > positiveCount) return `${negativeCount} cautionary signals in commentary`;
+      if (positiveCount > 0) return `${positiveCount} positive signals in commentary`;
+      return 'no forward-looking commentary detected';
+    })();
+
+    if (grade !== 'not_provided') {
+      forwardLook = { grade, label: labelMap[grade], evidence };
+    }
+  }
+
+  return { headline, verdict, rationale, watchPoints, forwardLook };
 }

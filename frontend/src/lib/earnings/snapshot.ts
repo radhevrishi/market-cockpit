@@ -324,6 +324,13 @@ export interface IndiaExtras {
     verdict: 'BUY' | 'ACCUMULATE' | 'HOLD' | 'NEUTRAL' | 'AVOID' | 'SELL';
     rationale: string;        // one short clause explaining the verdict
     watchPoints: string[];    // 2-3 KPIs / signals to monitor
+    // Forward-looking signal — derived from guidance.direction + concall
+    // tone counts + key mentions. Renders as a second pill next to VERDICT.
+    forwardLook?: {
+      grade: 'very_positive' | 'positive' | 'mixed' | 'cautious' | 'weak' | 'not_provided';
+      label: string;          // human-readable: "STRONG", "POSITIVE", "MIXED", etc.
+      evidence: string;       // short clause: "capacity expansion + new product roadmap"
+    };
   };
 
   // Concall extraction — populated when the user pastes a transcript

@@ -145,7 +145,6 @@ export function IndiaInstitutionalReport({
             <span style={{ fontSize: 13, fontWeight: 700, color: ACCENT, background: 'rgba(251,191,36,0.10)', padding: '3px 9px', borderRadius: 4, fontFamily: MONO }}>
               {s.ticker}
             </span>
-            <span style={{ fontSize: 10, fontWeight: 700, color: SAFFRON, background: `${SAFFRON}18`, padding: '2px 8px', borderRadius: 3, textTransform: 'uppercase', letterSpacing: 0.7 }}>🇮🇳 India · Fundamentals Mode</span>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, alignItems: 'center', fontSize: 12, color: MUTED }}>
             <span style={{ fontWeight: 600, color: TEXT }}>{s.quarter}</span>
@@ -183,16 +182,38 @@ export function IndiaInstitutionalReport({
         const verdictColor =
           v === 'BUY' ? GREEN : v === 'ACCUMULATE' ? '#86efac' : v === 'HOLD' ? '#fbbf24' :
           v === 'NEUTRAL' ? MUTED : v === 'AVOID' ? '#fb923c' : '#f87171';
+        const fwd = ix.topLine.forwardLook;
+        const fwdColor = fwd
+          ? fwd.grade === 'very_positive' ? GREEN
+            : fwd.grade === 'positive' ? '#86efac'
+            : fwd.grade === 'mixed' ? '#fbbf24'
+            : fwd.grade === 'cautious' ? '#fb923c'
+            : fwd.grade === 'weak' ? '#f87171'
+            : MUTED
+          : MUTED;
         return (
           <div style={{ marginTop: 14, marginBottom: 10, background: PANEL, border: `1px solid ${BORDER}`, borderLeft: `3px solid ${verdictColor}`, borderRadius: 6, padding: '12px 16px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 12, fontWeight: 800, color: verdictColor, fontFamily: MONO, letterSpacing: 1, padding: '3px 10px', borderRadius: 4, background: `${verdictColor}15`, border: `1px solid ${verdictColor}40` }}>
                 {v}
               </span>
-              <span style={{ fontSize: 14, fontWeight: 700, color: TEXT, lineHeight: 1.4 }}>
+              {fwd && (
+                <span
+                  title={fwd.evidence}
+                  style={{ fontSize: 11, fontWeight: 800, color: fwdColor, fontFamily: MONO, letterSpacing: 0.8, padding: '3px 10px', borderRadius: 4, background: `${fwdColor}15`, border: `1px solid ${fwdColor}40`, cursor: 'help' }}
+                >
+                  FORWARD: {fwd.label}
+                </span>
+              )}
+              <span style={{ fontSize: 14, fontWeight: 700, color: TEXT, lineHeight: 1.4, flex: 1, minWidth: 0 }}>
                 {ix.topLine.headline}
               </span>
             </div>
+            {fwd && (
+              <div style={{ fontSize: 11, color: fwdColor, marginTop: 6, lineHeight: 1.5, fontWeight: 500 }}>
+                ▶ Forward outlook: <strong>{fwd.label.toLowerCase()}</strong> — {fwd.evidence}
+              </div>
+            )}
             <div style={{ fontSize: 12, color: MUTED, marginTop: 6, lineHeight: 1.5 }}>
               {ix.topLine.rationale}
               {ix.topLine.watchPoints.length > 0 && (
@@ -207,10 +228,8 @@ export function IndiaInstitutionalReport({
         );
       })()}
 
-      {/* Fundamentals-mode banner */}
-      <div style={{ background: 'rgba(251,191,36,0.08)', border: `1px solid ${ACCENT}30`, borderLeft: `3px solid ${ACCENT}`, borderRadius: 6, padding: '10px 14px', marginBottom: 22, marginTop: 14, fontSize: 11, color: TEXT, lineHeight: 1.6 }}>
-        <strong style={{ color: ACCENT }}>India Institutional Mode</strong> — Sell-side consensus is sparse for Indian midcaps. This report compares <strong>QoQ and YoY trajectory</strong>, not estimate beats. Fundamentals, working-capital cycle, and promoter signals carry the institutional weight here.
-      </div>
+      {/* Banner removed — the top-line verdict card above is the institutional signal */}
+      <div style={{ marginBottom: 14 }} />
 
       {/* ═══════════════════════════════════════════════════════════════════
           B. LATEST QUARTER AT A GLANCE — QoQ + YoY (no consensus column)
