@@ -168,14 +168,20 @@ export function buildSnapshot(
     : null;
 
   const revenueActual = fin.revenue;
-  // SCORECARD CONSENSUS RULE: only show consensus for the JUST-REPORTED
-  // quarter. Forward-Q estimates (consNext) are for the NEXT quarter and
-  // produce bogus surprise math when used as a proxy. NVDA case: actual
-  // Q3 FY26 was $57B (a beat); without this guard the scorecard rendered
-  // "Severe Miss -13.8%" by comparing against the Q4 FY26 forward estimate
-  // of $66B. If FMP didn't report the lastReportedSurprise estimate, leave
-  // estimate null — the verdict logic correctly shows '—'.
-  const revenueEstimate = lastRevEst;
+  // SCORECARD CONSENSUS RULE — period-match guard.
+  // lastReportedSurprise from FMP /stable/earnings-surprises is sometimes a
+  // FORWARD row: estimate populated but actual still null (the upcoming
+  // quarter where street has set a number but the company hasn't reported
+  // yet). Using its estimateRevenue against fin.revenue (which is from
+  // EDGAR for the just-reported quarter) produces bogus surprises like
+  // NVDA Q3 FY26 actual $57B compared to Q4 FY26 forward $66B → fake
+  // -13.8% Severe Miss.
+  //
+  // Guard: only trust lastSurp.estimateRevenue if lastSurp.actualRevenue
+  // is ALSO populated (i.e. the row is a closed surprise pair, not a
+  // forward forecast).
+  const lastSurpIsClosed = lastSurp?.actualRevenue != null && lastSurp?.estimateRevenue != null;
+  const revenueEstimate = lastSurpIsClosed ? lastRevEst : null;
 
   // EPS source priority: FMP earnings-surprises actualEps FIRST so the
   // scorecard "Actual" matches the consensus convention used in
@@ -185,10 +191,11 @@ export function buildSnapshot(
   // or only as Class A / Class C splits — so without the history fallback
   // the scorecard EPS row went '—' even though the trend had values.
   const epsActual = lastSurp?.actualEps ?? fin.eps ?? histQ[0]?.eps ?? null;
-  // EPS estimate: same rule as revenue — only use the consensus for the
-  // JUST-REPORTED quarter (lastEpsEst). Don't fall back to next-quarter
-  // consensus (consNext) which produces fake surprise math.
-  const epsEstimate = lastEpsEst;
+  // EPS estimate: same period-match guard as revenue. Only trust
+  // lastSurp.estimateEps when lastSurp.actualEps is ALSO populated
+  // (closed surprise pair). Forward-row estimates create fake beats/misses.
+  const lastSurpEpsIsClosed = lastSurp?.actualEps != null && lastSurp?.estimateEps != null;
+  const epsEstimate = lastSurpEpsIsClosed ? lastEpsEst : null;
 
   const ebitdaEst = consNext?.ebitdaAvg !== null && consNext?.ebitdaAvg !== undefined
     ? Math.round(consNext.ebitdaAvg * sf * 100) / 100
