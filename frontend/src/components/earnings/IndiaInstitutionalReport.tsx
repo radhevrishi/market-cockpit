@@ -185,11 +185,11 @@ export function IndiaInstitutionalReport({ snapshot: s, onReset, onCopy }: India
           </thead>
           <tbody>
             <IndiaMetricRow label="Revenue" value={fmtCr(lastQ?.revenue)} qoq={lastQ?.qoqRevenuePct} yoy={lastQ?.yoyRevenuePct} />
-            <IndiaMetricRow label="Operating Profit" value={fmtCr(lastQ?.operatingProfit)} qoq={null} yoy={null} />
-            <IndiaMetricRow label="OPM (Operating Margin)" value={lastQ?.opmPct != null ? `${lastQ.opmPct.toFixed(1)}%` : '—'} qoq={null} yoy={lastQ?.yoyOpmBps} yoyAsBps />
+            <IndiaMetricRow label="Operating Profit" value={fmtCr(lastQ?.operatingProfit)} qoq={lastQ?.qoqOpProfitPct} yoy={lastQ?.yoyOpProfitPct} />
+            <IndiaMetricRow label="OPM (Operating Margin)" value={lastQ?.opmPct != null ? `${lastQ.opmPct.toFixed(1)}%` : '—'} qoq={lastQ?.qoqOpmBps} qoqAsBps yoy={lastQ?.yoyOpmBps} yoyAsBps />
             <IndiaMetricRow label="Net Profit (PAT)" value={fmtCr(lastQ?.netProfit)} qoq={lastQ?.qoqProfitPct} yoy={lastQ?.yoyProfitPct} />
-            <IndiaMetricRow label="Net Margin" value={lastQ?.netMarginPct != null ? `${lastQ.netMarginPct.toFixed(1)}%` : '—'} qoq={null} yoy={null} />
-            <IndiaMetricRow label="EPS" value={lastQ?.eps != null ? `₹${lastQ.eps.toFixed(2)}` : '—'} qoq={null} yoy={null} />
+            <IndiaMetricRow label="Net Margin" value={lastQ?.netMarginPct != null ? `${lastQ.netMarginPct.toFixed(1)}%` : '—'} qoq={lastQ?.qoqNetMarginBps} qoqAsBps yoy={lastQ?.yoyNetMarginBps} yoyAsBps />
+            <IndiaMetricRow label="EPS" value={lastQ?.eps != null ? `₹${lastQ.eps.toFixed(2)}` : '—'} qoq={lastQ?.qoqEpsPct} yoy={lastQ?.yoyEpsPct} />
           </tbody>
         </table>
       </div>
@@ -547,11 +547,12 @@ function Td({ children, right, mono, color }: { children?: React.ReactNode; righ
   );
 }
 
-function IndiaMetricRow({ label, value, qoq, yoy, yoyAsBps }: {
+function IndiaMetricRow({ label, value, qoq, yoy, qoqAsBps, yoyAsBps }: {
   label: string;
   value: string;
   qoq: number | null | undefined;
   yoy: number | null | undefined;
+  qoqAsBps?: boolean;
   yoyAsBps?: boolean;
 }) {
   return (
@@ -559,7 +560,7 @@ function IndiaMetricRow({ label, value, qoq, yoy, yoyAsBps }: {
       <td style={{ padding: '10px 12px', fontSize: 12, color: TEXT, fontWeight: 600 }}>{label}</td>
       <td style={{ padding: '10px 12px', textAlign: 'right', fontSize: 14, color: TEXT, fontFamily: MONO, fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{value}</td>
       <td style={{ padding: '10px 12px', textAlign: 'right', fontSize: 12, color: colorForChange(qoq), fontFamily: MONO, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
-        {qoq != null ? fmtPct(qoq) : '—'}
+        {qoq != null ? (qoqAsBps ? fmtBps(qoq) : fmtPct(qoq)) : '—'}
       </td>
       <td style={{ padding: '10px 12px', textAlign: 'right', fontSize: 12, color: colorForChange(yoy), fontFamily: MONO, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
         {yoy != null ? (yoyAsBps ? fmtBps(yoy) : fmtPct(yoy)) : '—'}

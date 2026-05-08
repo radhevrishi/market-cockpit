@@ -273,6 +273,14 @@ export interface IndiaExtras {
     yoyRevenuePct: number | null;
     yoyProfitPct: number | null;
     yoyOpmBps: number | null;
+    // Additional deltas surfaced in the Latest Quarter summary table
+    qoqOpProfitPct: number | null;
+    yoyOpProfitPct: number | null;
+    qoqOpmBps: number | null;
+    qoqEpsPct: number | null;
+    yoyEpsPct: number | null;
+    qoqNetMarginBps: number | null;
+    yoyNetMarginBps: number | null;
   }>;
 
   // Sector intelligence

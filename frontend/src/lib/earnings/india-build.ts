@@ -604,29 +604,16 @@ function computeIndiaExtras(opts: {
   };
 
   // Quarterly trend with QoQ + YoY computed
+  const pctChange = (cur: number | null | undefined, base: number | null | undefined): number | null =>
+    cur != null && base != null && base !== 0
+      ? Math.round(((cur - base) / Math.abs(base)) * 10000) / 100
+      : null;
+  const bpsChange = (cur: number | null | undefined, base: number | null | undefined): number | null =>
+    cur != null && base != null ? Math.round((cur - base) * 100) : null;
+
   const qtrendBase = quarters.slice(-8).map((q, idx, arr) => {
     const prevQ = idx > 0 ? arr[idx - 1] : null;
     const yoyQ = idx >= 4 ? arr[idx - 4] : null;
-    const qoqRev =
-      q.sales != null && prevQ?.sales != null && prevQ.sales !== 0
-        ? Math.round(((q.sales - prevQ.sales) / Math.abs(prevQ.sales)) * 10000) / 100
-        : null;
-    const qoqProfit =
-      q.netProfit != null && prevQ?.netProfit != null && prevQ.netProfit !== 0
-        ? Math.round(((q.netProfit - prevQ.netProfit) / Math.abs(prevQ.netProfit)) * 10000) / 100
-        : null;
-    const yoyRev =
-      q.sales != null && yoyQ?.sales != null && yoyQ.sales !== 0
-        ? Math.round(((q.sales - yoyQ.sales) / Math.abs(yoyQ.sales)) * 10000) / 100
-        : null;
-    const yoyProfit =
-      q.netProfit != null && yoyQ?.netProfit != null && yoyQ.netProfit !== 0
-        ? Math.round(((q.netProfit - yoyQ.netProfit) / Math.abs(yoyQ.netProfit)) * 10000) / 100
-        : null;
-    const yoyOpmBps =
-      q.opmPct != null && yoyQ?.opmPct != null
-        ? Math.round((q.opmPct - yoyQ.opmPct) * 100)
-        : null;
     return {
       period: q.period,
       revenue: q.sales,
@@ -635,11 +622,19 @@ function computeIndiaExtras(opts: {
       netProfit: q.netProfit,
       netMarginPct: q.netMargin,
       eps: q.eps,
-      qoqRevenuePct: qoqRev,
-      qoqProfitPct: qoqProfit,
-      yoyRevenuePct: yoyRev,
-      yoyProfitPct: yoyProfit,
-      yoyOpmBps,
+      qoqRevenuePct: pctChange(q.sales, prevQ?.sales),
+      qoqProfitPct: pctChange(q.netProfit, prevQ?.netProfit),
+      yoyRevenuePct: pctChange(q.sales, yoyQ?.sales),
+      yoyProfitPct: pctChange(q.netProfit, yoyQ?.netProfit),
+      yoyOpmBps: bpsChange(q.opmPct, yoyQ?.opmPct),
+      // ── Additional deltas surfaced in Latest Quarter summary table ──────
+      qoqOpProfitPct: pctChange(q.operatingProfit, prevQ?.operatingProfit),
+      yoyOpProfitPct: pctChange(q.operatingProfit, yoyQ?.operatingProfit),
+      qoqOpmBps: bpsChange(q.opmPct, prevQ?.opmPct),
+      qoqEpsPct: pctChange(q.eps, prevQ?.eps),
+      yoyEpsPct: pctChange(q.eps, yoyQ?.eps),
+      qoqNetMarginBps: bpsChange(q.netMargin, prevQ?.netMargin),
+      yoyNetMarginBps: bpsChange(q.netMargin, yoyQ?.netMargin),
     };
   });
 
