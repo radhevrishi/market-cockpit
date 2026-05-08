@@ -167,34 +167,82 @@ export function buildSnapshot(
     ? Math.round(lastSurp.actualRevenue * sf * 100) / 100
     : null;
 
-  const revenueActual = fin.revenue;
-  // SCORECARD CONSENSUS RULE — period-match guard.
-  // lastReportedSurprise from FMP /stable/earnings-surprises is sometimes a
-  // FORWARD row: estimate populated but actual still null (the upcoming
-  // quarter where street has set a number but the company hasn't reported
-  // yet). Using its estimateRevenue against fin.revenue (which is from
-  // EDGAR for the just-reported quarter) produces bogus surprises like
-  // NVDA Q3 FY26 actual $57B compared to Q4 FY26 forward $66B → fake
-  // -13.8% Severe Miss.
+  // ── CANONICAL QUARTER RECONCILIATION ──────────────────────────────────
+  // Two providers give us the latest quarter from different ingest
+  // pipelines:
+  //   - EDGAR XBRL (fin.revenue / fin.eps / fin.period) — slow ingest;
+  //     can lag the company's actual report by 4–8 weeks because XBRL
+  //     extraction depends on SEC's full-text indexing
+  //   - FMP /stable/earnings (lastSurp.{actual,estimate}Revenue/Eps) —
+  //     usually within hours of the press release
   //
-  // Guard: only trust lastSurp.estimateRevenue if lastSurp.actualRevenue
-  // is ALSO populated (i.e. the row is a closed surprise pair, not a
-  // forward forecast).
+  // When EDGAR is behind, our pipeline previously used:
+  //     fin.revenue        ← Q3 actual (EDGAR, stale)
+  //     lastSurp.estRev    ← Q4 estimate (FMP, current)
+  // That produced a fake -13.8% Severe Miss for NVDA in May 2026 (EDGAR
+  // had Q3 FY26 = $57B; FMP already had Q4 FY26 actual $68.1B vs
+  // estimate $66.1B = +3% real beat).
+  //
+  // The closed-pair guard (lastSurpIsClosed) is necessary but not
+  // sufficient: it correctly rejects FORWARD rows where actual is null,
+  // but it does NOT detect period drift between two different closed
+  // sources. We need a structural guard that compares fin.revenue to
+  // lastSurp.actualRevenue and, when they differ by more than 5%,
+  // declares a quarter mismatch and prefers FMP's closed pair (which
+  // is internally consistent because actual + estimate come from the
+  // same row, same period).
+  // ─────────────────────────────────────────────────────────────────────
   const lastSurpIsClosed = lastSurp?.actualRevenue != null && lastSurp?.estimateRevenue != null;
+  const lastSurpEpsIsClosed = lastSurp?.actualEps != null && lastSurp?.estimateEps != null;
+
+  // Detect cross-provider period drift in a DIRECTIONAL way. Two
+  // possible mismatches:
+  //   (a) FMP > EDGAR by 5%+ → FMP has the newer quarter, EDGAR
+  //       ingest is lagging. Common case (NVDA May-2026: EDGAR
+  //       has Q3 $57B, FMP has Q4 $68B). We switch to FMP.
+  //   (b) EDGAR > FMP by 5%+ → very rare; would imply FMP missed
+  //       an earnings entirely. We do NOT switch; stick with EDGAR.
+  // The asymmetric guard prevents false-positives where both sources
+  // have the SAME quarter but FMP's number is the press-release figure
+  // while EDGAR has a slightly-restated 10-Q value (typical < 1% diff).
+  const finRev = fin.revenue;
+  const fmpAct = lastRevAct;
+  const quarterMismatch =
+    lastSurpIsClosed &&
+    finRev != null &&
+    fmpAct != null &&
+    (fmpAct - finRev) / Math.max(Math.abs(fmpAct), 1) > 0.05;
+
+  if (quarterMismatch) {
+    const msg =
+      `Quarter reconciliation: EDGAR XBRL last-parsed period ${fin.period} ` +
+      `reports rev ${finRev?.toFixed(0)} (scaled units) but FMP closed pair ` +
+      `(date ${lastSurp?.date}) reports rev ${fmpAct?.toFixed(0)}. ` +
+      `Diff > 5% with FMP newer → EDGAR is ingest-lagging. Scorecard ` +
+      `switched to FMP closed pair to keep actual + estimate from the ` +
+      `same period.`;
+    fallbacksUsed.push(msg);
+  }
+
+  // SCORECARD CONSENSUS RULE — period-matched closed pair only.
+  //   - When quarterMismatch: use FMP actual + FMP estimate (guaranteed
+  //     same row, same period) — this is the institutionally correct
+  //     surprise pair for the latest reported quarter.
+  //   - When aligned: use EDGAR actual (more authoritative GAAP source)
+  //     but only emit estimate if FMP's closed pair is present.
+  //   - When FMP has no closed pair: don't compute a surprise at all
+  //     (rather than back-fill with a forward-row estimate that would
+  //     create a fake beat/miss).
+  const revenueActual = quarterMismatch ? fmpAct : finRev;
   const revenueEstimate = lastSurpIsClosed ? lastRevEst : null;
 
-  // EPS source priority: FMP earnings-surprises actualEps FIRST so the
-  // scorecard "Actual" matches the consensus convention used in
-  // estimateEps (typically non-GAAP). Then fin.eps (EDGAR XBRL basic GAAP),
-  // then history[0].eps as a last-resort fallback. Some companies (GOOG
-  // pre-2026) don't carry EarningsPerShareBasic in XBRL — only diluted,
-  // or only as Class A / Class C splits — so without the history fallback
-  // the scorecard EPS row went '—' even though the trend had values.
-  const epsActual = lastSurp?.actualEps ?? fin.eps ?? histQ[0]?.eps ?? null;
-  // EPS estimate: same period-match guard as revenue. Only trust
-  // lastSurp.estimateEps when lastSurp.actualEps is ALSO populated
-  // (closed surprise pair). Forward-row estimates create fake beats/misses.
-  const lastSurpEpsIsClosed = lastSurp?.actualEps != null && lastSurp?.estimateEps != null;
+  // EPS uses the same priority. Note: EPS displayed already preferred
+  // FMP's actualEps (line ~193 in the prior version) because FMP's EPS
+  // matches the non-GAAP consensus convention. We keep that behavior
+  // and add the same period-mismatch logic for the estimate side.
+  const epsActual = quarterMismatch
+    ? (lastSurp?.actualEps ?? null)
+    : (lastSurp?.actualEps ?? fin.eps ?? histQ[0]?.eps ?? null);
   const epsEstimate = lastSurpEpsIsClosed ? lastEpsEst : null;
 
   const ebitdaEst = consNext?.ebitdaAvg !== null && consNext?.ebitdaAvg !== undefined
@@ -227,69 +275,111 @@ export function buildSnapshot(
     const found = histQ.find((q) => (q.period || '').includes(target));
     return found ?? histQ[4] ?? null;
   };
-  const yoyHist = findYoyMatchingHistory(fin.period);
+  // When quarterMismatch is true, EDGAR (fin.*) is for the prior quarter
+  // and history[0] from FMP is for the current quarter. We want the
+  // SCORECARD to reflect the current quarter, so derived metrics
+  // (EBITDA / margins / NetIncome / FCF) should source from history[0]
+  // when the period drift is detected. When aligned, prefer the EDGAR
+  // values which are authoritative GAAP.
+  //
+  // The findYoyMatchingHistory lookup also flips: when mismatched, the
+  // EDGAR period label can't be trusted as the "current" anchor —
+  // history[0].period is the right anchor for "one year ago" search.
+  const currentPeriodLabel = quarterMismatch ? (histQ[0]?.period ?? fin.period) : fin.period;
+  const yoyHist = findYoyMatchingHistory(currentPeriodLabel);
   const yoyRevFromHist =
     yoyHist?.revenue !== null && yoyHist?.revenue !== undefined
       ? Math.round(yoyHist.revenue * sf * 100) / 100
       : null;
   const yoyEpsFromHist = yoyHist?.eps ?? null;
 
+  // Derived-metric handling under quarter mismatch:
+  //
+  // FMP /stable/earnings (the source of lastReportedSurprise) ingests
+  // earnings releases within hours. FMP /stable/income-statement (the
+  // source of /api/earnings/history → histQ) ingests on a slower cycle
+  // and CAN STILL BE BEHIND by a quarter when /stable/earnings is
+  // current. Verified May 2026 NVDA: /stable/earnings has Q4 FY26
+  // closed pair, but /stable/income-statement only has up to Q3 FY26.
+  // EDGAR XBRL is also stuck at Q3.
+  //
+  // So when quarterMismatch fires, NEITHER fin.* (EDGAR) NOR histQ[0]
+  // (FMP income-statement) is reliable for the FMP-current quarter —
+  // they're both for the prior quarter. The only fields we trust on
+  // mismatch are Revenue and EPS from lastSurp directly.
+  //
+  // Other metrics get NULL'd out so the scorecard shows '—' instead of
+  // labeling Q3 margins as Q4 margins. The validationWarnings banner
+  // tells the user why.
+  const grossMarginActual = quarterMismatch
+    ? null
+    : (fin.grossMargin ?? histQ[0]?.grossMargin ?? null);
+  const ebitdaMarginActual = quarterMismatch
+    ? null
+    : (fin.ebitdaMargin ?? histQ[0]?.ebitdaMargin ?? null);
+  const operatingMarginActual = quarterMismatch
+    ? null
+    : (fin.ebitMargin ?? histQ[0]?.operatingMargin ?? null);
+  const ebitdaActual = quarterMismatch
+    ? null
+    : (fin.ebitda ?? (
+        histQ[0]?.ebitdaMargin != null && fin.revenue != null
+          ? Math.round((histQ[0].ebitdaMargin / 100) * fin.revenue * 100) / 100
+          : null
+      ));
+  const netIncomeActual = quarterMismatch ? null : fin.pat;
+  const fcfActual = quarterMismatch ? null : fin.fcf;
+
   const metrics = {
     revenue: buildMetric({
       metric: 'Revenue', unit: 'currency',
       actual: revenueActual,
       estimate: revenueEstimate,
-      prior: fin.revPrior ?? yoyRevFromHist,
+      prior: quarterMismatch ? yoyRevFromHist : (fin.revPrior ?? yoyRevFromHist),
       qoqPrior: qoqRev,
     }),
     eps: buildMetric({
       metric: 'EPS', unit: 'count',
       actual: epsActual,
       estimate: epsEstimate,
-      prior: fin.epsPrior ?? yoyEpsFromHist,
+      prior: quarterMismatch ? yoyEpsFromHist : (fin.epsPrior ?? yoyEpsFromHist),
       qoqPrior: qoq?.eps ?? null,
     }),
     ebitda: buildMetric({
       metric: 'EBITDA', unit: 'currency',
-      // history rows don't carry raw EBITDA — they have ebitdaMargin instead.
-      // If EDGAR didn't supply EBITDA, derive from ebitdaMargin × revenue.
-      actual: fin.ebitda ?? (
-        histQ[0]?.ebitdaMargin != null && fin.revenue != null
-          ? Math.round((histQ[0].ebitdaMargin / 100) * fin.revenue * 100) / 100
-          : null
-      ),
+      actual: ebitdaActual,
       estimate: ebitdaEst,
       prior: null, qoqPrior: null,
     }),
     grossMargin: buildMetric({
       metric: 'Gross Margin', unit: 'percent',
-      actual: fin.grossMargin ?? histQ[0]?.grossMargin ?? null,
+      actual: grossMarginActual,
       estimate: null, prior: null,
       qoqPrior: qoq?.grossMargin ?? null,
     }),
     ebitdaMargin: buildMetric({
       metric: 'EBITDA Margin', unit: 'percent',
-      actual: fin.ebitdaMargin ?? histQ[0]?.ebitdaMargin ?? null,
+      actual: ebitdaMarginActual,
       estimate: ebitdaMarginEst,
       prior: null,
       qoqPrior: qoq?.ebitdaMargin ?? null,
     }),
     operatingMargin: buildMetric({
       metric: 'Operating Margin', unit: 'percent',
-      actual: fin.ebitMargin,
+      actual: operatingMarginActual,
       estimate: null, prior: null,
       qoqPrior: qoq?.operatingMargin ?? null,
     }),
     netIncome: buildMetric({
       metric: 'Net Income', unit: 'currency',
-      actual: fin.pat,
+      actual: netIncomeActual,
       estimate: netIncomeEst,
-      prior: fin.patPrior,
+      prior: quarterMismatch ? null : fin.patPrior,
       qoqPrior: null,
     }),
     fcf: buildMetric({
       metric: 'Free Cash Flow', unit: 'currency',
-      actual: fin.fcf,
+      actual: fcfActual,
       estimate: null, prior: null,
       qoqPrior: qoq?.fcf !== null && qoq?.fcf !== undefined ? Math.round(qoq.fcf * sf * 100) / 100 : null,
     }),
@@ -527,8 +617,12 @@ export function buildSnapshot(
   return {
     ticker: fin.ticker,
     company: fin.company,
-    quarter: fin.period,
-    filingType: fin.filingType,
+    // Period label tracks the canonical reconciled quarter. When the
+    // EDGAR XBRL ingest is stale, we surface the FMP-current period
+    // (e.g. NVDA "Q4 2026" instead of stale "Q3 2026") so the header
+    // matches the values shown in the scorecard.
+    quarter: currentPeriodLabel,
+    filingType: quarterMismatch ? `${fin.filingType} (FMP-reconciled — EDGAR ingest pending)` : fin.filingType,
     exchange: estimates?.profile?.exchange ?? fin.exchange ?? null,
     sector: estimates?.profile?.sector ?? null,
     industry: estimates?.profile?.industry ?? fin.sicDescription ?? null,
@@ -584,7 +678,17 @@ export function buildSnapshot(
       history: history?.ok ? 'fmp_history' : 'unavailable',
     },
     analysisMode: 'us_full_consensus',
-    validationWarnings: fin.validationWarnings || [],
+    validationWarnings: [
+      ...(fin.validationWarnings || []),
+      ...(quarterMismatch
+        ? [
+            `EDGAR ingest lag detected — FMP reports newer closed quarter ` +
+              `(${lastSurp?.date}) than our XBRL pipeline parsed (${fin.period}). ` +
+              `Scorecard reconciled to FMP closed pair to avoid period-mismatch ` +
+              `surprise miscalculation.`,
+          ]
+        : []),
+    ],
     generatedAt: new Date().toISOString(),
   };
 }
