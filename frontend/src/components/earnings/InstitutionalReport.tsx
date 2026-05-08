@@ -38,7 +38,16 @@ function fmtNum(v: number | null, digits = 2): string {
 
 function fmtCurrency(v: number | null, scaleLabel: string, digits = 1): string {
   if (v === null || !Number.isFinite(v)) return '—';
+  const isInr = scaleLabel.includes('₹');
   const sign = v < 0 ? '-' : '';
+  // For India: snapshot stores values in ₹ Mn (= ₹ 10 Lakh = 0.1 Cr)
+  // Display in ₹ Cr (≥10) or ₹ Lakh (<10).
+  if (isInr) {
+    const cr = Math.abs(v) / 10; // ₹ Mn → ₹ Cr
+    if (cr >= 100) return `${sign}${cr.toFixed(0)} Cr`;
+    if (cr >= 1) return `${sign}${cr.toFixed(1)} Cr`;
+    return `${sign}${(Math.abs(v) * 10).toFixed(0)} L`; // ₹ Mn → ₹ Lakh
+  }
   const abs = Math.abs(v);
   if (abs >= 1000) return `${sign}${(abs / 1000).toFixed(2)} B`;
   return `${sign}${abs.toFixed(digits)}`;
@@ -56,8 +65,15 @@ function fmtBps(v: number | null): string {
   return `${sign}${Math.round(v)} bps`;
 }
 
-function fmtMcap(v: number | null): string {
+function fmtMcap(v: number | null, currency: string = 'USD'): string {
   if (v === null || !Number.isFinite(v)) return '—';
+  if (currency === 'INR') {
+    // India convention: ₹ Cr (1 Cr = 10⁷ INR)
+    const cr = v / 1e7;
+    if (cr >= 1e5) return `₹${(cr / 1e5).toFixed(2)} Lakh Cr`;
+    if (cr >= 1e3) return `₹${(cr / 1e3).toFixed(1)}K Cr`;
+    return `₹${cr.toFixed(0)} Cr`;
+  }
   if (v >= 1e12) return `$${(v / 1e12).toFixed(2)}T`;
   if (v >= 1e9) return `$${(v / 1e9).toFixed(2)}B`;
   if (v >= 1e6) return `$${(v / 1e6).toFixed(0)}M`;
@@ -131,8 +147,8 @@ export function InstitutionalReport({ snapshot: s, onReset, onCopy }: Institutio
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, fontSize: 11 }}>
           <div style={{ display: 'flex', gap: 14 }}>
-            <Stat label="Market Cap" value={fmtMcap(s.marketCap)} />
-            <Stat label="EV" value={fmtMcap(s.enterpriseValue)} />
+            <Stat label="Market Cap" value={fmtMcap(s.marketCap, s.currency)} />
+            <Stat label="EV" value={fmtMcap(s.enterpriseValue, s.currency)} />
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <Pill label="Tone" value={tone.label} color={tone.color} />

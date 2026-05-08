@@ -3,6 +3,7 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { InstitutionalReport } from '@/components/earnings/InstitutionalReport';
 import { buildSnapshot, FinancialsInput, EstimatesInput, HistoryInput } from '@/lib/earnings/build';
+import { buildIndiaSnapshot } from '@/lib/earnings/india-build';
 import type { EarningsSnapshot } from '@/lib/earnings/snapshot';
 
 // ── Design tokens
@@ -2508,42 +2509,68 @@ export default function EarningsAnalysisPage() {
       // ── Build institutional snapshot in parallel with FMP estimates + history ──
       setLoadingMsg('Building institutional snapshot…');
       try {
-        const [estRes, histRes] = await Promise.allSettled([
-          fetch(`/api/earnings/estimates?ticker=${encodeURIComponent(ticker)}`, { signal: AbortSignal.timeout(15000) }),
-          fetch(`/api/earnings/history?ticker=${encodeURIComponent(ticker)}`, { signal: AbortSignal.timeout(15000) }),
-        ]);
-        const estJson: EstimatesInput | null = estRes.status === 'fulfilled' && estRes.value.ok
-          ? await estRes.value.json().catch(() => null)
-          : null;
-        const histJson: HistoryInput | null = histRes.status === 'fulfilled' && histRes.value.ok
-          ? await histRes.value.json().catch(() => null)
-          : null;
-        const edgarP = lastEdgarPayloadRef.current;
-        const finIn: FinancialsInput = {
-          company: d.company,
-          ticker: d.ticker,
-          period: d.period,
-          filingType: d.filingType,
-          currency: d.currency,
-          scaleLabel: d.scaleLabel,
-          scaleFactor: d.scaleFactor,
-          revenue: d.revenue, revPrior: d.revPrior,
-          grossProfit: d.grossProfit, grossMargin: d.grossMargin,
-          ebit: d.ebit, ebitMargin: d.ebitMargin,
-          ebitda: d.ebitda, ebitdaMargin: d.ebitdaMargin,
-          pat: d.pat, patPrior: d.patPrior, patMargin: d.patMargin,
-          eps: d.eps, epsPrior: d.epsPrior,
-          cfo: d.cfo, fcf: d.fcf,
-          cash: d.cash, totalDebt: d.totalDebt, netDebt: d.netDebt, equity: d.equity,
-          themes: d.themes, validationWarnings: d.validationWarnings, revenueSource: d.revenueSource,
-          // SEC enrichment (when EDGAR was used)
-          sicDescription: edgarP?.sicDescription ?? null,
-          exchange: edgarP?.exchange ?? null,
-          category: edgarP?.category ?? null,
-          businessText: edgarP?.businessText ?? null,
-        };
-        const snap = buildSnapshot(finIn, estJson, histJson, '');
-        setSnapshot(snap);
+        if (isIndia) {
+          // ── INDIA PIPELINE: Screener.in + FMP profile ──
+          // Don't call FMP estimates/history — they're premium-blocked for India.
+          // Don't call EDGAR — India tickers aren't on SEC.
+          const [screenerRes, profileRes] = await Promise.allSettled([
+            fetch(`/api/earnings/india-screener?ticker=${encodeURIComponent(ticker)}`, { signal: AbortSignal.timeout(20000) }),
+            fetch(`/api/earnings/estimates?ticker=${encodeURIComponent(ticker)}`, { signal: AbortSignal.timeout(15000) }),
+          ]);
+          const screenerJson: any = screenerRes.status === 'fulfilled' && screenerRes.value.ok
+            ? await screenerRes.value.json().catch(() => null)
+            : null;
+          const fmpJson: any = profileRes.status === 'fulfilled' && profileRes.value.ok
+            ? await profileRes.value.json().catch(() => null)
+            : null;
+          const fmpProfile = fmpJson?.profile || null;
+          const snap = buildIndiaSnapshot(
+            d.ticker,
+            d.filingType,
+            screenerJson,
+            fmpProfile,
+            '',
+          );
+          setSnapshot(snap);
+        } else {
+          // ── US PIPELINE: SEC EDGAR + FMP estimates/history ──
+          const [estRes, histRes] = await Promise.allSettled([
+            fetch(`/api/earnings/estimates?ticker=${encodeURIComponent(ticker)}`, { signal: AbortSignal.timeout(15000) }),
+            fetch(`/api/earnings/history?ticker=${encodeURIComponent(ticker)}`, { signal: AbortSignal.timeout(15000) }),
+          ]);
+          const estJson: EstimatesInput | null = estRes.status === 'fulfilled' && estRes.value.ok
+            ? await estRes.value.json().catch(() => null)
+            : null;
+          const histJson: HistoryInput | null = histRes.status === 'fulfilled' && histRes.value.ok
+            ? await histRes.value.json().catch(() => null)
+            : null;
+          const edgarP = lastEdgarPayloadRef.current;
+          const finIn: FinancialsInput = {
+            company: d.company,
+            ticker: d.ticker,
+            period: d.period,
+            filingType: d.filingType,
+            currency: d.currency,
+            scaleLabel: d.scaleLabel,
+            scaleFactor: d.scaleFactor,
+            revenue: d.revenue, revPrior: d.revPrior,
+            grossProfit: d.grossProfit, grossMargin: d.grossMargin,
+            ebit: d.ebit, ebitMargin: d.ebitMargin,
+            ebitda: d.ebitda, ebitdaMargin: d.ebitdaMargin,
+            pat: d.pat, patPrior: d.patPrior, patMargin: d.patMargin,
+            eps: d.eps, epsPrior: d.epsPrior,
+            cfo: d.cfo, fcf: d.fcf,
+            cash: d.cash, totalDebt: d.totalDebt, netDebt: d.netDebt, equity: d.equity,
+            themes: d.themes, validationWarnings: d.validationWarnings, revenueSource: d.revenueSource,
+            // SEC enrichment (when EDGAR was used)
+            sicDescription: edgarP?.sicDescription ?? null,
+            exchange: edgarP?.exchange ?? null,
+            category: edgarP?.category ?? null,
+            businessText: edgarP?.businessText ?? null,
+          };
+          const snap = buildSnapshot(finIn, estJson, histJson, '');
+          setSnapshot(snap);
+        }
       } catch (snapErr) {
         console.warn('Snapshot build failed:', snapErr);
         setSnapshot(null);
