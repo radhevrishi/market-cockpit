@@ -116,10 +116,18 @@ interface ParsedTable {
 }
 
 function parseScreenerTable(sectionHtml: string): ParsedTable | null {
-  // Find the first <table> in the section
-  const tableMatch = sectionHtml.match(/<table[^>]*data-result-table[^>]*>([\s\S]*?)<\/table>/);
-  if (!tableMatch) return null;
-  const tableHtml = tableMatch[1];
+  // Find the first <table> in the section. Screener uses class="data-table"
+  const tableMatch = sectionHtml.match(/<table[^>]*class="[^"]*data-table[^"]*"[^>]*>([\s\S]*?)<\/table>/);
+  if (!tableMatch) {
+    // Fallback: any <table>
+    const fallback = sectionHtml.match(/<table[^>]*>([\s\S]*?)<\/table>/);
+    if (!fallback) return null;
+    return parseTableHtml(fallback[1]);
+  }
+  return parseTableHtml(tableMatch[1]);
+}
+
+function parseTableHtml(tableHtml: string): ParsedTable | null {
 
   // Headers
   const headers: string[] = [];

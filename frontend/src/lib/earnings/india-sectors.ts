@@ -324,29 +324,57 @@ export const INDIA_SECTOR_TEMPLATES: Record<IndiaSector, IndiaSectorTemplate> = 
 };
 
 // ── Industry-string → sector mapper ──────────────────────────────────────
+// CRITICAL: regexes use word boundaries to avoid false matches like
+// "oil" matching "toiletries" or "metal" matching "metaphor".
+// Order matters: more specific categories first (FMCG before generic
+// consumer; bank before generic finance).
 export function classifyIndiaSector(industry: string | null | undefined, fallbackText: string = ''): IndiaSector {
   const t = `${industry || ''} ${fallbackText || ''}`.toLowerCase();
 
-  if (/(bank|psu bank|private bank)/.test(t)) return 'banks';
-  if (/(insurance|asset management|amc|broker|capital market|finance|nbfc|housing finance|microfinance)/.test(t)) return 'nbfc_insurance';
-  if (/(it -|computers - software|software|it services|consulting)/.test(t)) return 'it_services';
-  if (/(pharmaceutic|drug|biotech|hospital|diagnostic|healthcare|medical)/.test(t)) return 'pharma_healthcare';
-  if (/(auto|automobile|tyre|tire|tractor|two\s*-?\s*wheeler|four\s*-?\s*wheeler|commercial vehicle|electric vehicle)/.test(t)) return 'auto';
-  if (/(defen|aerospace|aviation|shipyard)/.test(t)) return 'defense_aerospace';
-  if (/(capital good|engineering|industrial|capgoods|machinery|electrical equipment|bearing|compressor|forging|casting)/.test(t)) return 'industrials_capgoods';
-  if (/(steel|aluminium|aluminum|copper|zinc|metal|mining|iron ore|coal|ferro)/.test(t)) return 'metals_mining';
-  if (/cement/.test(t)) return 'cement';
-  if (/(refiner|petroleum|oil|gas|lng|upstream|downstream|petro)/.test(t)) return 'energy_oil_gas';
-  if (/(power|electricity|renewable|solar|wind|hydro|thermal)/.test(t)) return 'energy_power_renewable';
-  if (/(chemical|specialty chemical|agrochem|pesticide|fertilizer|paint|dye)/.test(t)) return 'chemicals';
-  if (/(consumer durable|electronics|appliance|fan|cooler|kitchen)/.test(t)) return 'consumer_durables';
-  if (/(retail|e\s*-?\s*commerce|apparel|footwear|hotel|restaurant|qsr|hospitality)/.test(t)) return 'consumer_retail';
-  if (/(personal product|household|fmcg|food|beverage|tobacco|consumer staples)/.test(t)) return 'fmcg';
-  if (/(real estate|realty|construction)/.test(t)) return 'real_estate';
-  if (/(media|broadcast|entertainment|telecom|communication|cable)/.test(t)) return 'media_telecom';
-  if (/(seed|agri|tea|sugar|edible oil|food processing)/.test(t)) return 'agri_food';
-  if (/(paper|packaging|carton|corrug)/.test(t)) return 'paper_packaging';
-  if (/(logistics|transport|shipping|courier|airline|port|railway)/.test(t)) return 'logistics_transport';
+  // FMCG first (so "personal product / household" doesn't fall through to
+  // any generic consumer match)
+  if (/\b(fmcg|consumer\s+staples|household\s*&?\s*personal\s+products?|personal\s+products?|household\s+products?|tobacco|beverage|consumer\s+food|hair\s+oil|cosmetic|toiletry|toiletries|soap|detergent)/.test(t)) return 'fmcg';
+
+  if (/\b(bank(?:ing)?|psu\s+bank|private\s+bank)\b/.test(t)) return 'banks';
+  if (/\b(insurance|asset\s+management|amc\b|stock\s+broker|broker(?:age)?|capital\s+market|nbfc\b|housing\s+finance|microfinance|small\s+finance|mutual\s+fund)/.test(t)) return 'nbfc_insurance';
+
+  // IT — be careful with "it" as a substring
+  if (/\b(it\s*[-–]\s*software|computers?\s*[-–]\s*software|software\s*[-–]\s*services|it\s+services|it\s+consulting|software\s+services|application\s+software|technology\s+services|computer\s+software)\b/.test(t)) return 'it_services';
+  // Last-ditch IT match (riskier substrings)
+  if (/\b(software|saas|cloud\s+services)\b/.test(t) && !/\bsoftware\s+(license|tool|product|company|company)/.test(t)) return 'it_services';
+
+  if (/\b(pharmaceutical|pharma\b|drug|biotech|hospital|diagnostic|healthcare|medical\s+devices?|formulations?|api\s+manufactur|generics)/.test(t)) return 'pharma_healthcare';
+
+  if (/\b(automobile|auto\s+(component|ancillary|parts?|industry|sector)|tyre|tire|tractor|two\s*-?\s*wheeler|four\s*-?\s*wheeler|commercial\s+vehicle|electric\s+vehicle|passenger\s+vehicle|automotive)\b/.test(t)) return 'auto';
+
+  if (/\b(defen[cs]e|aerospace|aviation|shipyard|defence\s+&?\s*aerospace|aircraft|missile)\b/.test(t)) return 'defense_aerospace';
+
+  if (/\b(capital\s+goods?|engineering|industrial(?:s)?|capgoods|industrial\s+machinery|electrical\s+equipment|bearings?|compressor|forging|casting|industrial\s+gases|construction\s+equipment|electrical\s+component)\b/.test(t)) return 'industrials_capgoods';
+
+  if (/\b(iron\s*&?\s*steel|steel|aluminium|aluminum|copper|zinc\b|nonferrous\s+metals?|ferrous\s+metals?|metals?\s*&?\s*mining|mining|iron\s+ore|coal\b|ferro\s+alloy|precious\s+metals?)\b/.test(t)) return 'metals_mining';
+
+  if (/\bcement\b/.test(t)) return 'cement';
+
+  // Oil & Gas — use word boundaries strictly
+  if (/\b(refiner(?:y|ies)?|petroleum|oil\s+&?\s*gas|crude\s+oil|natural\s+gas|lng\b|upstream|downstream|petrochemical|petro\s+products|gas\s+distribution)\b/.test(t)) return 'energy_oil_gas';
+
+  if (/\b(power\s+(generation|distribution|utility|sector|company|grid)|electric\s+utility|electricity\s+generation|renewable\s+energy|solar\s+(power|panel|cell|farm|module)|wind\s+(power|turbine|farm)|hydro\s+power|thermal\s+power|gas\s+power|battery\s+storage|bess\b)\b/.test(t)) return 'energy_power_renewable';
+
+  if (/\b(specialty\s+chemicals?|agrochemicals?|chemicals?\b|pesticide|fertilizer|paint\b|dye\s+(chemical|stuff)|industrial\s+chemicals?)\b/.test(t)) return 'chemicals';
+
+  if (/\b(consumer\s+durables?|electronics\s+(appliance|component)|home\s+appliances?|fan\b|cooler|kitchen\s+appliances?|cooling\s+appliances?|consumer\s+electronics)\b/.test(t)) return 'consumer_durables';
+
+  if (/\b(retail\s+(chain|trading|store|outlet)|e\s*-?\s*commerce|apparel|footwear|hotel(?:s|ing|ier)?|restaurant|qsr|hospitality|departmental\s+store|supermarket|hypermarket)\b/.test(t)) return 'consumer_retail';
+
+  if (/\b(real\s+estate|realty|residential\s+construction|commercial\s+real\s+estate)\b/.test(t)) return 'real_estate';
+
+  if (/\b(media\s+(content|broadcast)|broadcasting|entertainment|telecom\b|communication\s+services|cable\s+&?\s*satellite|telecom\s+services|wireless\s+services|fixed\s+line|publishing|print\s+media|tv\s+broadcast)\b/.test(t)) return 'media_telecom';
+
+  if (/\b(agri\s+(business|input)|agricultural|tea\s+(industry|estate)|sugar\s+(industry|mill)|edible\s+oil|food\s+processing|seeds?\s+(industry|company)|dairy\s+products?)\b/.test(t)) return 'agri_food';
+
+  if (/\b(paper\s+(industry|product)|packaging\s+(material|product)|corrugat|pulp\s+&?\s*paper|paperboard)\b/.test(t)) return 'paper_packaging';
+
+  if (/\b(logistics|transport(?:ation)?|shipping\s+(line|company)|courier|airlines?|port\s+services?|railway|road\s+transport|cargo)\b/.test(t)) return 'logistics_transport';
 
   return 'diversified';
 }
