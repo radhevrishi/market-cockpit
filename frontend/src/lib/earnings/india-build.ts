@@ -25,6 +25,7 @@ import {
   JatSignal,
 } from './scoring';
 import { classifyIndiaSector, INDIA_SECTOR_TEMPLATES, IndiaSector } from './india-sectors';
+import { inferGuidance } from './build';
 
 // ── Inputs ────────────────────────────────────────────────────────────────
 export interface ScreenerInput {
@@ -423,13 +424,15 @@ export function buildIndiaSnapshot(
     currency: 'INR',
     scaleLabel: '₹ Cr',
     metrics,
-    guidance: {
-      direction: 'na',
-      revenue: null,
-      eps: null,
-      ebitda: null,
-      commentary: [],
-    },
+    guidance: rawText && rawText.trim().length > 50
+      ? inferGuidance(rawText)
+      : {
+          direction: 'na',
+          revenue: null,
+          eps: null,
+          ebitda: null,
+          commentary: [],
+        },
     qualitative: {
       mgmtTone: toneRes.tone,
       toneConfidence: toneRes.confidence,
@@ -481,10 +484,26 @@ export function buildIndiaSnapshot(
         confidence: themeRes.confidence,
         reason: themeRes.unavailableReason,
       },
-      guidance: {
-        available: false, confidence: 0,
-        reason: 'No guidance text available — upload concall transcript for guidance extraction',
-      },
+      guidance: (() => {
+        if (!rawText || rawText.trim().length <= 50) {
+          return {
+            available: false, confidence: 0,
+            reason: 'Upload concall transcript or investor presentation for tone + guidance extraction',
+          };
+        }
+        const g = inferGuidance(rawText);
+        const hasDirection = g.direction !== 'na';
+        const hasCommentary = g.commentary.length > 0;
+        return {
+          available: hasDirection || hasCommentary,
+          confidence: hasDirection ? 75 : hasCommentary ? 50 : 0,
+          reason: hasDirection
+            ? null
+            : hasCommentary
+              ? 'Commentary extracted but no clear direction (raised / lowered / maintained)'
+              : 'Concall text uploaded but no guidance language matched',
+        };
+      })(),
     },
     debug: {
       endpointsHit,

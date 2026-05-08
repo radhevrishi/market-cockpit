@@ -41,11 +41,18 @@ export async function GET(request: Request) {
   }
   const t = encodeURIComponent(ticker);
 
-  const [income, cashflow, balance, earnings] = await Promise.all([
+  const [income, cashflow, balance, earnings, surprises] = await Promise.all([
     safeJson<any[]>(`${STABLE}/income-statement?symbol=${t}&period=quarter&limit=5&apikey=${FMP_KEY}`),
     safeJson<any[]>(`${STABLE}/cash-flow-statement?symbol=${t}&period=quarter&limit=5&apikey=${FMP_KEY}`),
     safeJson<any[]>(`${STABLE}/balance-sheet-statement?symbol=${t}&period=quarter&limit=5&apikey=${FMP_KEY}`),
     safeJson<any[]>(`${STABLE}/earnings?symbol=${t}&limit=5&apikey=${FMP_KEY}`),
+    // /earnings-surprises is the canonical "actual vs consensus" feed.
+    // For some tickers (Tesla being the obvious example) /stable/earnings
+    // returns GAAP basic EPS while /stable/earnings-surprises returns the
+    // non-GAAP figure consensus is built around — pulling both lets us
+    // prefer the consensus-comparable value so the trend table matches the
+    // scorecard's headline EPS.
+    safeJson<any[]>(`${STABLE}/earnings-surprises?symbol=${t}&apikey=${FMP_KEY}`),
   ]);
 
   if (!income || income.length === 0) {
@@ -63,6 +70,8 @@ export async function GET(request: Request) {
   (balance || []).forEach((b: any) => b.date && bsByDate.set(b.date, b));
   const earnByDate = new Map<string, any>();
   (earnings || []).forEach((e: any) => e.date && earnByDate.set(e.date, e));
+  const surpByDate = new Map<string, any>();
+  (surprises || []).forEach((s: any) => s.date && surpByDate.set(s.date, s));
 
   const quarters = income.slice(0, 5).map((row: any) => {
     const date = row.date;
@@ -88,10 +97,22 @@ export async function GET(request: Request) {
     const capex = parseFloat(cf.capitalExpenditure) || null;
     const fcf = cfo !== null && capex !== null ? Math.round((cfo - Math.abs(capex)) * 100) / 100 : null;
 
-    const calEstRev = earnRow?.revenueEstimated || null;
-    const calEstEps = earnRow?.epsEstimated || null;
-    const calActRev = earnRow?.revenueActual || revenue;
-    const calActEps = earnRow?.epsActual || parseFloat(row.eps) || null;
+    // Match a /earnings-surprises row by date or the nearest report (±60d)
+    let surpRow: any = surpByDate.get(date);
+    if (!surpRow && surprises) {
+      const targetTs = new Date(date).getTime();
+      surpRow = surprises.find((s: any) => {
+        const dt = new Date(s.date).getTime();
+        return !isNaN(dt) && Math.abs(dt - targetTs) < 60 * 86400000;
+      });
+    }
+
+    const calEstRev = surpRow?.revenueEstimated ?? earnRow?.revenueEstimated ?? null;
+    // Prefer earnings-surprises actuals — same convention as the scorecard's
+    // lastReportedSurprise, ensuring trend EPS matches the headline scorecard.
+    const calEstEps = surpRow?.epsEstimated ?? earnRow?.epsEstimated ?? null;
+    const calActRev = surpRow?.revenueActual ?? earnRow?.revenueActual ?? revenue;
+    const calActEps = surpRow?.epsActual ?? earnRow?.epsActual ?? parseFloat(row.eps) ?? null;
 
     const revSurprisePct =
       calActRev !== null && calEstRev !== null && calEstRev > 0
@@ -117,7 +138,10 @@ export async function GET(request: Request) {
       ebitdaMargin: pct(ebitda, revenue),
       netIncome,
       netMargin: pct(netIncome, revenue),
-      eps: parseFloat(row.eps) || null,
+      // Use calActEps (consensus-comparable, prefers /earnings-surprises)
+      // instead of raw income-statement EPS so the trend column matches the
+      // headline scorecard EPS.
+      eps: calActEps,
       epsEstimate: calEstEps,
       epsSurprisePct,
       cfo,

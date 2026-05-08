@@ -102,9 +102,22 @@ export interface IndiaInstitutionalReportProps {
   snapshot: EarningsSnapshot;
   onReset?: () => void;
   onCopy?: () => void;
+  /** When provided, the report shows an "Upload concall" button that opens
+   *  a paste-text modal. Caller is responsible for re-running the snapshot
+   *  builder with the supplied transcript so guidance / tone get filled in. */
+  onConcallText?: (text: string) => void;
+  concallProcessing?: boolean;
 }
 
-export function IndiaInstitutionalReport({ snapshot: s, onReset, onCopy }: IndiaInstitutionalReportProps) {
+export function IndiaInstitutionalReport({
+  snapshot: s,
+  onReset,
+  onCopy,
+  onConcallText,
+  concallProcessing,
+}: IndiaInstitutionalReportProps) {
+  const [showConcallModal, setShowConcallModal] = React.useState(false);
+  const [concallText, setConcallText] = React.useState('');
   const ix: IndiaExtras | undefined = s.indiaExtras;
   if (!ix) {
     return (
@@ -250,13 +263,16 @@ export function IndiaInstitutionalReport({ snapshot: s, onReset, onCopy }: India
               <tr style={{ borderBottom: `1px solid ${BORDER2}`, color: MUTED, background: PANEL2 }}>
                 <Th sm>Period</Th>
                 <Th sm right>Revenue</Th>
-                <Th sm right>QoQ%</Th>
                 <Th sm right>YoY%</Th>
+                <Th sm right>Op Profit</Th>
+                <Th sm right>OP YoY%</Th>
                 <Th sm right>OPM%</Th>
                 <Th sm right>OPM YoY</Th>
                 <Th sm right>PAT</Th>
+                <Th sm right>QoQ%</Th>
                 <Th sm right>YoY%</Th>
                 <Th sm right>EPS</Th>
+                <Th sm right>YoY%</Th>
               </tr>
             </thead>
             <tbody>
@@ -264,13 +280,16 @@ export function IndiaInstitutionalReport({ snapshot: s, onReset, onCopy }: India
                 <tr key={q.period} style={{ borderBottom: `1px solid ${BORDER}` }}>
                   <Td>{q.period}</Td>
                   <Td right mono>{fmtCr(q.revenue, 0)}</Td>
-                  <Td right mono color={colorForChange(q.qoqRevenuePct)}>{fmtPct(q.qoqRevenuePct)}</Td>
                   <Td right mono color={colorForChange(q.yoyRevenuePct)}>{fmtPct(q.yoyRevenuePct)}</Td>
+                  <Td right mono>{fmtCr(q.operatingProfit, 0)}</Td>
+                  <Td right mono color={colorForChange(q.yoyOpProfitPct)}>{fmtPct(q.yoyOpProfitPct)}</Td>
                   <Td right mono>{q.opmPct != null ? `${q.opmPct.toFixed(0)}%` : '—'}</Td>
                   <Td right mono color={colorForChange(q.yoyOpmBps)}>{fmtBps(q.yoyOpmBps)}</Td>
                   <Td right mono>{fmtCr(q.netProfit, 0)}</Td>
+                  <Td right mono color={colorForChange(q.qoqProfitPct)}>{fmtPct(q.qoqProfitPct)}</Td>
                   <Td right mono color={colorForChange(q.yoyProfitPct)}>{fmtPct(q.yoyProfitPct)}</Td>
                   <Td right mono>{q.eps != null ? `₹${q.eps.toFixed(1)}` : '—'}</Td>
+                  <Td right mono color={colorForChange(q.yoyEpsPct)}>{fmtPct(q.yoyEpsPct)}</Td>
                 </tr>
               ))}
             </tbody>
@@ -426,7 +445,7 @@ export function IndiaInstitutionalReport({ snapshot: s, onReset, onCopy }: India
           ['Working Capital', { available: wc.cashConversionCycle != null, confidence: wc.cashConversionCycle != null ? 90 : 0, reason: 'Annual ratios from Screener.in' }],
           ['Promoter Trend', { available: ix.governance.promoterHoldingPct != null, confidence: 90, reason: 'Quarterly shareholding from Screener.in' }],
           ['Themes', s.sectionStatus.themes],
-          ['Concall / Guidance', { available: false, confidence: 0, reason: 'Upload concall transcript or investor presentation for tone + guidance extraction' }],
+          ['Concall / Guidance', s.sectionStatus.guidance ?? { available: false, confidence: 0, reason: 'Upload concall transcript or investor presentation for tone + guidance extraction' }],
           ['Consensus / Sell-Side', { available: false, confidence: 0, reason: 'India sell-side coverage suppressed — fundamentals-only mode (correct institutional behavior)' }],
         ] as const).map(([label, st]) => (
           <div key={label} style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '10px 12px' }}>
@@ -442,9 +461,99 @@ export function IndiaInstitutionalReport({ snapshot: s, onReset, onCopy }: India
             {st.reason && (
               <div style={{ fontSize: 9, color: FAINT, marginTop: 4, lineHeight: 1.4 }}>{st.reason}</div>
             )}
+            {label === 'Concall / Guidance' && onConcallText && !st.available && (
+              <button
+                onClick={() => setShowConcallModal(true)}
+                disabled={concallProcessing}
+                style={{
+                  marginTop: 8,
+                  width: '100%',
+                  padding: '6px 10px',
+                  fontSize: 10,
+                  fontWeight: 700,
+                  color: BG,
+                  background: ACCENT,
+                  border: 'none',
+                  borderRadius: 5,
+                  cursor: concallProcessing ? 'wait' : 'pointer',
+                  letterSpacing: 0.5,
+                  textTransform: 'uppercase',
+                }}
+              >
+                {concallProcessing ? 'Extracting…' : '+ Upload Concall'}
+              </button>
+            )}
           </div>
         ))}
       </div>
+
+      {/* ── Concall paste modal ────────────────────────────────────────── */}
+      {showConcallModal && onConcallText && (
+        <div
+          onClick={() => setShowConcallModal(false)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 1000, padding: 20,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 10,
+              padding: 18, width: '100%', maxWidth: 720,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 700, color: TEXT, margin: 0, textTransform: 'uppercase', letterSpacing: 1 }}>
+                Upload Concall Transcript
+              </h3>
+              <button onClick={() => setShowConcallModal(false)} style={{ background: 'transparent', border: 'none', color: MUTED, fontSize: 16, cursor: 'pointer' }}>×</button>
+            </div>
+            <div style={{ fontSize: 11, color: MUTED, marginBottom: 10, lineHeight: 1.5 }}>
+              Paste the earnings concall transcript or investor presentation prepared remarks.
+              The text is parsed locally for guidance language (raised / lowered / maintained),
+              management tone (positive / cautious / neutral), and India macro themes.
+              Nothing is sent to a third party — extraction runs in the browser.
+            </div>
+            <textarea
+              value={concallText}
+              onChange={(e) => setConcallText(e.target.value)}
+              placeholder="Paste concall transcript here…"
+              style={{
+                width: '100%', minHeight: 280, padding: 12,
+                background: BG, color: TEXT, border: `1px solid ${BORDER}`,
+                borderRadius: 6, fontSize: 12, fontFamily: MONO, resize: 'vertical',
+                lineHeight: 1.5,
+              }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+              <button
+                onClick={() => { setConcallText(''); setShowConcallModal(false); }}
+                style={{ padding: '8px 14px', fontSize: 11, color: TEXT, background: 'transparent', border: `1px solid ${BORDER2}`, borderRadius: 5, cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (concallText.trim().length < 50) return;
+                  onConcallText(concallText);
+                  setShowConcallModal(false);
+                }}
+                disabled={concallText.trim().length < 50 || concallProcessing}
+                style={{
+                  padding: '8px 14px', fontSize: 11, fontWeight: 700,
+                  color: BG, background: ACCENT, border: 'none', borderRadius: 5,
+                  cursor: concallText.trim().length < 50 ? 'not-allowed' : 'pointer',
+                  opacity: concallText.trim().length < 50 ? 0.5 : 1,
+                }}
+              >
+                Extract & Rebuild
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Debug provenance */}
       <details style={{ marginTop: 6, background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '10px 14px' }}>

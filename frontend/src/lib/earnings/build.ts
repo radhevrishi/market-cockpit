@@ -168,7 +168,13 @@ export function buildSnapshot(
     : null);
   if (revenueEstimate !== null && lastRevEst === null) fallbacksUsed.push('next-Q revenue est used as proxy for last reported');
 
-  const epsActual = fin.eps !== null ? fin.eps : (lastSurp?.actualEps ?? null);
+  // EPS source priority: FMP earnings-surprises actualEps FIRST so the
+  // scorecard "Actual" matches the consensus convention used in
+  // estimateEps (typically non-GAAP). Falling back to fin.eps (EDGAR XBRL
+  // basic GAAP) caused a visible mismatch on Tesla — scorecard showed
+  // non-GAAP 0.41 while the trend table showed GAAP 0.15 for the same
+  // quarter, making the Surprise calculation incoherent.
+  const epsActual = lastSurp?.actualEps ?? fin.eps ?? null;
   const epsEstimate = lastEpsEst ?? consNext?.epsAvg ?? null;
 
   const ebitdaEst = consNext?.ebitdaAvg !== null && consNext?.ebitdaAvg !== undefined
@@ -549,7 +555,9 @@ function computeGrowthDeltaPp(
   return Math.round((itemGrowth - revGrowth) * 10) / 10;
 }
 
-function inferGuidance(rawText: string): EarningsSnapshot['guidance'] {
+// Exported so the India pipeline can reuse the same regex set for concall
+// transcripts (the language is broadly similar across markets).
+export function inferGuidance(rawText: string): EarningsSnapshot['guidance'] {
   const t = (rawText || '').toLowerCase();
   let direction: EarningsSnapshot['guidance']['direction'] = 'na';
   if (/raise(d)?\s+(full[\s-]year\s+)?guidance|increased\s+guidance|guiding\s+(higher|up)/i.test(t)) direction = 'raised';

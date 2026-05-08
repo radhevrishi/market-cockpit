@@ -2070,6 +2070,15 @@ export default function EarningsAnalysisPage() {
   const [reportView, setReportView] = useState<'institutional' | 'legacy'>('institutional');
   // Last EDGAR enrichment payload (sicDescription, businessText, exchange) — used by buildSnapshot
   const lastEdgarPayloadRef = useRef<any>(null);
+  // Cached India snapshot inputs so the user can re-run with a pasted concall
+  // transcript without re-fetching Screener / FMP.
+  const indiaSnapshotInputsRef = useRef<{
+    ticker: string;
+    filingType: string;
+    screenerJson: any;
+    fmpProfile: any;
+  } | null>(null);
+  const [concallProcessing, setConcallProcessing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadingPct, setLoadingPct] = useState(0);
   const [loadingMsg, setLoadingMsg] = useState('');
@@ -2660,6 +2669,13 @@ export default function EarningsAnalysisPage() {
             ? await profileRes.value.json().catch(() => null)
             : null;
           const fmpProfile = fmpJson?.profile || null;
+          // Cache so the user can later re-run with a concall transcript
+          indiaSnapshotInputsRef.current = {
+            ticker: d.ticker,
+            filingType: d.filingType,
+            screenerJson,
+            fmpProfile,
+          };
           const snap = buildIndiaSnapshot(
             d.ticker,
             d.filingType,
@@ -2810,7 +2826,36 @@ export default function EarningsAnalysisPage() {
     } catch(e:any) { setError('Fetch failed: '+e.message); setLoading(false); setLoadingMsg(''); }
   }
 
-  const reset = () => { setResult(null); setSnapshot(null); lastEdgarPayloadRef.current = null; setError(''); setPasteText(''); setUrlInput(''); };
+  const reset = () => {
+    setResult(null);
+    setSnapshot(null);
+    lastEdgarPayloadRef.current = null;
+    indiaSnapshotInputsRef.current = null;
+    setError('');
+    setPasteText('');
+    setUrlInput('');
+  };
+
+  // Re-run buildIndiaSnapshot with a concall transcript so guidance / tone /
+  // theme detection get filled in. Cached inputs from the original fetch are
+  // reused so we don't hammer Screener / FMP again.
+  const handleIndiaConcallText = useCallback((text: string) => {
+    const inputs = indiaSnapshotInputsRef.current;
+    if (!inputs) return;
+    setConcallProcessing(true);
+    try {
+      const snap = buildIndiaSnapshot(
+        inputs.ticker,
+        inputs.filingType,
+        inputs.screenerJson,
+        inputs.fmpProfile,
+        text,
+      );
+      setSnapshot(snap);
+    } finally {
+      setConcallProcessing(false);
+    }
+  }, []);
 
   // Copy a deterministic plain-text summary from the snapshot
   const copySnapshotSummary = (snap: EarningsSnapshot) => {
@@ -2930,6 +2975,8 @@ export default function EarningsAnalysisPage() {
             snapshot={snapshot}
             onReset={reset}
             onCopy={() => copySnapshotSummary(snapshot)}
+            onConcallText={handleIndiaConcallText}
+            concallProcessing={concallProcessing}
           />
         ) : (
           <InstitutionalReport
