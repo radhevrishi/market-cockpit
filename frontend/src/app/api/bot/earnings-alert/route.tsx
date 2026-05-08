@@ -10,7 +10,9 @@ export const maxDuration = 55;
 // Never uses a different data pipeline than the earnings page.
 // ══════════════════════════════════════════════
 
-const BOT_TOKEN = '8681784264:AAG7OV3ibS4r89Lbrta50NkWnJSCTrtoS80';
+// Server-only — leaked token in git history rotated; set
+// TELEGRAM_BOT_TOKEN_EARNINGS in Vercel env vars.
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN_EARNINGS || process.env.TELEGRAM_BOT_TOKEN || '';
 // Use production alias directly — VERCEL_URL is blocked by Deployment Protection (401)
 const API_BASE = 'https://market-cockpit.vercel.app';
 

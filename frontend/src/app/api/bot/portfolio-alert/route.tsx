@@ -8,8 +8,10 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
 
 // ── Config ──────────────────────────────────────────────────────────────
-const TG_TOKEN = '8522816501:AAGFbhOb8EYj7cG0yUwsaZ5ZFUEpRkA7Zss';
-const TG_CHAT_ID = '5057319640';
+// Server-only — leaked token rotated; set TELEGRAM_BOT_TOKEN_PORTFOLIO
+// (or TELEGRAM_BOT_TOKEN as a shared default) in Vercel env vars.
+const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN_PORTFOLIO || process.env.TELEGRAM_BOT_TOKEN || '';
+const TG_CHAT_ID = process.env.TELEGRAM_CHAT_ID_PORTFOLIO || process.env.TELEGRAM_CHAT_ID || '';
 const BOT_SECRET = process.env.MC_BOT_SECRET || '';
 const API_BASE = 'https://market-cockpit.vercel.app';
 
