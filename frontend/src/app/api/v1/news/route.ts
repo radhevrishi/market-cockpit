@@ -105,12 +105,12 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v9'; // v9: bottleneck regression fix (patch 0046)
+const CACHE_KEY = 'news:articles:v10'; // v10: title-anchored gate (patch 0047)
 const CACHE_TTL = 300; // 5 min
-// v8 → v9 bump invalidates the 216-article regression bucket that
-// accumulated when INDIA_STRUCTURAL_HARD was firing too broadly. Old
-// data is GC'd on next read.
-const BOTTLENECK_PERSISTENT_KEY = 'bottleneck:articles:persistent:v9';
+// v9 → v10 bump invalidates the bottleneck bucket again because the
+// title-anchored gate is now mandatory — older entries in v9 may
+// have been classified before the title check existed.
+const BOTTLENECK_PERSISTENT_KEY = 'bottleneck:articles:persistent:v10';
 const BOTTLENECK_TTL = 7776000; // 90 days in seconds
 
 // ══════════════════════════════════════════════════════════════════════
@@ -345,8 +345,24 @@ function getBottleneckLevel(text: string): string {
   return 'BOTTLENECK';
 }
 
+// PATCH 0047: TITLE_ANCHOR_RE — for an article to reach BOTTLENECK,
+// its TITLE itself (not just summary blurb) must contain at least
+// one structural anchor: a hardware system token, a named
+// structural company, or a named supply-chain company. Without a
+// title anchor, articles fall through to GENERAL.
+//
+// Why this matters: classifyArticle was reading (title + desc).
+// Many unrelated articles ("Putin Ukraine conflict", "GM privacy
+// settlement", "Trump Media reports $2.2B") have summary text that
+// drops words like "supply chain disruption" or "data center" in
+// passing — enough to trigger HARDWARE_SYSTEM × PHYSICAL_CONSTRAINT.
+// Anchoring on title alone keeps the BOTTLENECK feed honest.
+const TITLE_BOTTLENECK_ANCHOR_RE = /\b(chip|chips|chipmaker|semiconductor|wafer|fab|foundry|memory chip|dram|nand|hbm|cowos|chiplet|packaging|interposer|photonics|optical interconnect|cpo|gpu|tpu|ai accelerator|ai chip|data center|server rack|compute cluster|grid|power grid|electricity grid|reactor|nuclear|transmission line|substation|transformer|cooling|thermal|shipping container|port|pipeline|refinery|refining|tsmc|asml|sk hynix|micron|samsung|nvidia|amd|broadcom|qualcomm|infineon|wolfspeed|coherent|lumentum|amkor|ase group|globalfoundries|intel foundry|applied materials|lam research|hal\b|bel\b|bdl\b|bhel|npcil|bhavini|brahmos|drdo|isro|mazagon|cochin shipyard|grse|garden reach|bharat dynamics|bharat electronics|bharat earth movers|beml|tata advanced|tata electronics|tata semiconductor|adani defence|paras defence|astra microwave|data patterns|midhani|mishra dhatu|coal india|power grid corp|ntpc|nhpc|kaynes|syrma sgs|dixon|polymatech|amkor india|micron gujarat|drdo|isro|kalpakkam|kudankulam|dholera|sanand|critical mineral|rare earth|lithium|cobalt|euv|lithography|battery cell|gigafactory|electrolyser|green hydrogen|solar capacity|wind capacity|hydropower|coal shortage|coal stockpile|fuel crunch|gas pipeline|kg-?d6|vande bharat|agni|tejas|akash missile|s-400|rafale|p-?75 submarine|pinaka|pslv|gslv|chandrayaan|gaganyaan|space sector|semiconductor mission|ism\s|pli scheme|fame[- ]?ii|fame[- ]?iii|nhai award|highway awarded)\b/i;
+
 function classifyArticle(title: string, desc: string): { article_type: string; investment_tier: number; bottleneck_sub_tag?: string; bottleneck_level?: string } {
   const text = (title + ' ' + desc).toLowerCase();
+  const titleLower = title.toLowerCase();
+  const titleHasAnchor = TITLE_BOTTLENECK_ANCHOR_RE.test(title);
 
   // ── 1. NOISE FILTER — institutional terminal: aggressive subtraction ──
   //
@@ -465,7 +481,17 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
   // ══════════════════════════════════════════════════════════════════
   // UNIVERSAL BOTTLENECK RULE (no future edits needed)
   // HARDWARE_SYSTEM × PHYSICAL_CONSTRAINT → BOTTLENECK
+  //
+  // PATCH 0047: ALL bottleneck paths now require a TITLE anchor. If
+  // the title itself doesn't carry a hardware/system/named-co token,
+  // skip ALL bottleneck classification. This keeps "Putin Ukraine
+  // conflict" out of BOTTLENECK even when the description mentions
+  // "supply chain disruption" in passing.
   // ══════════════════════════════════════════════════════════════════
+  if (!titleHasAnchor) {
+    // Title has no structural anchor — never reach BOTTLENECK.
+    // Fall through to MACRO / GEOPOLITICAL / RATING / CORPORATE / GENERAL.
+  } else {
   const isSystem = HARDWARE_SYSTEM.test(text);
   const isConstraint = PHYSICAL_CONSTRAINT.test(text);
   const isBreakthrough = BREAKTHROUGH.test(text);
@@ -584,6 +610,7 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
   if (CEO_SIGNAL.test(text)) {
     return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text), bottleneck_level: getBottleneckLevel(text) };
   }
+  } // end of titleHasAnchor block (PATCH 0047)
 
   // ── 2. MARKET MOVES — index rallies, selloffs ──
   if (/\b(dow|s&p|nasdaq|sensex|nifty|hang seng|nikkei)\b.{0,30}\b(surge|rally|jump|soar|rocket|climb|rise|fall|drop|crash|tank|slip|gain|lose)/i.test(text))
@@ -1080,6 +1107,53 @@ async function fetchAllNews(): Promise<any[]> {
           // Articles whose title/desc match deal-page / consumer-tech
           // patterns cannot reach BOTTLENECK regardless of feed tier.
           if (BOTTLENECK_DOMAIN_DENYLIST.test(title + ' ' + desc) && article_type === 'BOTTLENECK') {
+            article_type = 'GENERAL';
+            investment_tier = 3;
+            bottleneck_sub_tag = undefined;
+            bottleneck_level = undefined;
+          }
+
+          // ── PATCH 0047: Title-anchor safety net ──
+          // Belt + braces: even if classifier somehow assigned BOTTLENECK,
+          // verify the title carries a structural anchor token. If not,
+          // demote. This catches edge cases where INDIA_STRUCTURAL_HARD
+          // fired on description text rather than title.
+          if (article_type === 'BOTTLENECK' && !TITLE_BOTTLENECK_ANCHOR_RE.test(title)) {
+            article_type = 'GENERAL';
+            investment_tier = 3;
+            bottleneck_sub_tag = undefined;
+            bottleneck_level = undefined;
+          }
+
+          // ── PATCH 0047: Source-feed denylist for BOTTLENECK ──
+          // Bloomberg Politics / Bloomberg Markets videos, Power
+          // Technology project announcements, SemiWiki CEO interviews,
+          // MarketWatch opinion columns are noise even when they pass
+          // other gates. Demote.
+          const FEED_BOTTLENECK_DENYLIST = new Set([
+            'Bloomberg Politics',
+            'Bloomberg Markets',
+            'Power Technology',
+            'SemiWiki',
+            'MarketWatch Top Stories',
+            'NDTV Profit',
+            'Investing.com News',
+            'TechCrunch',
+            'The Register',
+            'Ars Technica',
+            'Tom\'s Hardware',
+            'Blocks & Files',
+            'Yahoo Finance',
+            'CNBC Top News',
+            'CNBC World',
+            'CNBC Technology',
+            'CNBC Finance',
+            'BSE Corp Announcements',
+            'SEBI Press Releases',
+            'FT Markets',
+            'Seeking Alpha Market News',
+          ]);
+          if (article_type === 'BOTTLENECK' && FEED_BOTTLENECK_DENYLIST.has(feed.name) && !TITLE_BOTTLENECK_ANCHOR_RE.test(title)) {
             article_type = 'GENERAL';
             investment_tier = 3;
             bottleneck_sub_tag = undefined;
