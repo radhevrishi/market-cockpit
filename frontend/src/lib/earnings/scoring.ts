@@ -72,7 +72,7 @@ export interface ReactionBreakdownEntry {
 }
 
 export function computeReactionScore(snap: Pick<EarningsSnapshot, 'metrics' | 'qualitative' | 'guidance'>): {
-  score: number;
+  score: number | null;
   grade: string;
   confidence: number;
   breakdown: Record<string, ReactionBreakdownEntry>;
