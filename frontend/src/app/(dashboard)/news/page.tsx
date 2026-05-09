@@ -216,8 +216,25 @@ function useCalendar() {
 }
 
 // ── Phase 2.5: Anomaly detector ──────────────────────────────────────
+// PATCH 0050: enriched response includes themes_v2 / tickers_v2 with
+// display names + why_it_matters explanations.
+type AnomalySignal = {
+  display_name: string;
+  count: number;
+  baseline_count: number;
+  deviation: 'EMERGING' | 'ESCALATING' | 'DOMINANT';
+  why_it_matters: string;
+};
+type AnomalyResponse = {
+  tickers: [string, number][];
+  themes: [string, number][];
+  section_title?: string;
+  section_subtitle?: string;
+  themes_v2?: AnomalySignal[];
+  tickers_v2?: AnomalySignal[];
+};
 function useAnomalies() {
-  return useQuery<{ tickers: [string, number][]; themes: [string, number][] }>({
+  return useQuery<AnomalyResponse>({
     queryKey: ['news', 'anomalies'],
     queryFn: async () => {
       const { data } = await api.get('/news?anomalies=1');
@@ -1810,29 +1827,50 @@ export default function NewsFeedPage() {
         </div>
       )}
 
-      {/* ── PHASE 2.5: ANOMALY ALERTS — auto-detect concentration ─────── */}
-      {anomalies && (anomalies.tickers?.length > 0 || anomalies.themes?.length > 0) && (
+      {/* ── PATCH 0050: EMERGING STRESS SIGNALS — institutional anomaly box ── */}
+      {anomalies && ((anomalies.themes_v2?.length || 0) > 0 || (anomalies.tickers_v2?.length || 0) > 0) && (
         <div style={{
           backgroundColor: '#0D1B2E', border: '1px solid #1E2D45',
           borderLeft: '3px solid #EF4444',
-          borderRadius: '12px', padding: '8px 12px', marginBottom: '12px',
-          display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap',
+          borderRadius: '12px', padding: '12px 14px', marginBottom: '12px',
         }}>
-          <span style={{ fontSize: '10px', fontWeight: 700, color: '#EF4444', letterSpacing: '0.8px', flexShrink: 0 }}>
-            🚨 ANOMALY · 24H
-          </span>
-          {(anomalies.tickers || []).slice(0, 5).map(([t, n]) => (
-            <span key={t} style={{ fontSize: '10px', color: '#E6EDF3' }}>
-              <strong style={{ color: '#F59E0B' }}>{t}</strong>
-              <span style={{ color: '#4A5B6C' }}> ×{n}</span>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', marginBottom: '8px' }}>
+            <span style={{ fontSize: '11px', fontWeight: 700, color: '#EF4444', letterSpacing: '0.8px' }}>
+              🚨 {anomalies.section_title || 'Emerging Stress Signals'}
             </span>
-          ))}
-          {(anomalies.themes || []).slice(0, 3).map(([th, n]) => (
-            <span key={th} style={{ fontSize: '10px', color: '#E6EDF3' }}>
-              <strong style={{ color: '#10B981' }}>{th}</strong>
-              <span style={{ color: '#4A5B6C' }}> ×{n}</span>
+            <span style={{ fontSize: '10px', color: '#6677AA' }}>
+              {anomalies.section_subtitle || 'Themes & names with article concentration above baseline'}
             </span>
-          ))}
+          </div>
+          {(anomalies.themes_v2 || []).slice(0, 4).map((t: any) => {
+            const stateColor = t.deviation === 'DOMINANT' ? '#EF4444' : t.deviation === 'ESCALATING' ? '#F59E0B' : '#10B981';
+            return (
+              <div key={t.display_name} style={{ marginBottom: '6px', fontSize: '11px', lineHeight: 1.5 }}>
+                <span style={{ color: stateColor, fontWeight: 700, marginRight: '6px' }}>
+                  {t.deviation === 'DOMINANT' ? '●●●' : t.deviation === 'ESCALATING' ? '●●' : '●'}
+                </span>
+                <strong style={{ color: '#F5F7FA' }}>{t.display_name}</strong>
+                <span style={{ color: '#4A5B6C', marginLeft: '6px' }}>×{t.count} (baseline ~{t.baseline_count})</span>
+                <div style={{ color: '#8899AA', marginLeft: '24px', marginTop: '2px', fontSize: '10px' }}>
+                  → {t.why_it_matters}
+                </div>
+              </div>
+            );
+          })}
+          {(anomalies.tickers_v2 || []).slice(0, 5).length > 0 && (
+            <div style={{ marginTop: '8px', paddingTop: '6px', borderTop: '1px solid #1E2D45' }}>
+              <span style={{ fontSize: '10px', color: '#6677AA', marginRight: '8px' }}>Names clustering:</span>
+              {(anomalies.tickers_v2 || []).slice(0, 5).map((tk: any) => {
+                const tkColor = tk.deviation === 'DOMINANT' ? '#EF4444' : tk.deviation === 'ESCALATING' ? '#F59E0B' : '#10B981';
+                return (
+                  <span key={tk.display_name} style={{ marginRight: '10px', fontSize: '10px' }}>
+                    <strong style={{ color: tkColor }}>{tk.display_name}</strong>
+                    <span style={{ color: '#4A5B6C' }}> ×{tk.count}</span>
+                  </span>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

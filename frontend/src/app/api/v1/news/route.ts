@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { recordXRef } from '@/lib/news/cross-reference';
-import { buildInstitutionalEnvelope } from '@/lib/news/institutional-engine';
+import {
+  buildInstitutionalEnvelope, shouldKeepEarnings, generateInstitutionalImpactLabel,
+  generateWhyThisMatters, buildConsensusVariant, applySignalDecay, buildCausalChain,
+  classifyAnomaly, classifyTickerAnomaly,
+} from '@/lib/news/institutional-engine';
 import { scoreAnchor, BOTTLENECK_ANCHOR_THRESHOLD, getSourceCredibility, detectResolutionState, inferBottleneckCategory } from '@/lib/news/ontology';
 
 export const dynamic = 'force-dynamic';
@@ -107,13 +111,12 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v11'; // v11: institutional engine + ontology (patch 0049+0050)
+const CACHE_KEY = 'news:articles:v12'; // v12: intelligence layer (patch 0050)
 const CACHE_TTL = 300; // 5 min
-// v10 → v11 bump invalidates again because the article schema now
-// includes importance_rank, half_life, taxonomy, transmission chain,
-// expectation state, structural confidence, and macro regime fields.
-// Older bucket entries lack these fields and would render incorrectly.
-const BOTTLENECK_PERSISTENT_KEY = 'bottleneck:articles:persistent:v11';
+// v11 → v12 bump because article schema now includes
+// institutional_impact_label, why_this_matters, consensus_variant,
+// and causal_chain fields. Older entries lack them.
+const BOTTLENECK_PERSISTENT_KEY = 'bottleneck:articles:persistent:v12';
 const BOTTLENECK_TTL = 7776000; // 90 days in seconds
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1229,6 +1232,78 @@ async function fetchAllNews(): Promise<any[]> {
           // ── PATCH 0049: Suppress TIER_4_NOISE upstream ──
           if (envelope.importance_rank === 'TIER_4_NOISE') continue;
 
+          // ── PATCH 0050: Earnings inclusion gate ──
+          // Earnings articles only enter the feed if they (a) carry a
+          // material surprise on a major ticker, (b) carry guidance /
+          // estimate-revision language, (c) carry thesis-shifting AI /
+          // monetization / margin-durability tokens, (d) anchor on
+          // structural bottleneck themes, or (e) announce capex moves.
+          // Plain "Essent beats by $0.13" never enters.
+          if (article_type === 'EARNINGS') {
+            const keep = shouldKeepEarnings({ title, desc, specific_impact: specificImpact, tickers, consequence_score: consequence });
+            if (!keep) continue;
+          }
+
+          // ── PATCH 0050: Institutional impact label override ──
+          // Replace the generic "Structural supply-chain signal" with
+          // sub-tag-aware institutional phrasing.
+          const institutionalImpact = generateInstitutionalImpactLabel({
+            bottleneck_sub_tag: bottleneck_sub_tag || null,
+            bottleneck_category: article_type === 'BOTTLENECK'
+              ? inferBottleneckCategory({ bottleneck_sub_tag: bottleneck_sub_tag || null, anchor })
+              : 'NONE',
+            bottleneck_resolution: article_type === 'BOTTLENECK'
+              ? detectResolutionState(title + ' ' + desc).state
+              : null,
+            article_type,
+          });
+
+          // ── PATCH 0050: Why-This-Matters PM line ──
+          const whyThisMatters = generateWhyThisMatters({
+            article_type,
+            bottleneck_sub_tag: bottleneck_sub_tag || null,
+            bottleneck_category: article_type === 'BOTTLENECK'
+              ? inferBottleneckCategory({ bottleneck_sub_tag: bottleneck_sub_tag || null, anchor })
+              : undefined,
+            bottleneck_resolution: article_type === 'BOTTLENECK'
+              ? detectResolutionState(title + ' ' + desc).state
+              : null,
+            half_life: envelope.half_life,
+            importance_rank: envelope.importance_rank,
+            expectation: envelope.expectation,
+          });
+
+          // ── PATCH 0050: Consensus / Variant block (HIGH-signal only) ──
+          const consensusVariant = buildConsensusVariant({
+            bottleneck_sub_tag: bottleneck_sub_tag || null,
+            bottleneck_category: article_type === 'BOTTLENECK'
+              ? inferBottleneckCategory({ bottleneck_sub_tag: bottleneck_sub_tag || null, anchor })
+              : undefined,
+            importance_rank: envelope.importance_rank,
+            article_type,
+          });
+
+          // ── PATCH 0050: Multi-hop causal chain ──
+          const causalChain = buildCausalChain({
+            bottleneck_sub_tag: bottleneck_sub_tag || null,
+            bottleneck_category: article_type === 'BOTTLENECK'
+              ? inferBottleneckCategory({ bottleneck_sub_tag: bottleneck_sub_tag || null, anchor })
+              : undefined,
+            article_type,
+            importance_rank: envelope.importance_rank,
+            title,
+            desc,
+          });
+
+          // ── PATCH 0050: Apply signal decay ──
+          // Replaces the simple linear age-divide with half-life × age decay.
+          const baseImportance = consequence / 100;
+          const decayedImportance = applySignalDecay({
+            half_life: envelope.half_life,
+            age_days: ageDays,
+            base_importance: baseImportance,
+          });
+
           items.push({
             id: uniqueId,
             title,
@@ -1270,11 +1345,17 @@ async function fetchAllNews(): Promise<any[]> {
             expectation: envelope.expectation,
             structural_confidence: envelope.structural_confidence ?? null,
             macro_regime: envelope.macro_regime ?? null,
+            // PATCH 0050: intelligence layer
+            institutional_impact_label: institutionalImpact,
+            why_this_matters: whyThisMatters,
+            consensus_variant: consensusVariant,
+            causal_chain: causalChain,
             tickers: tickers,
             primary_ticker: tickers[0] || null,
-            // Final importance: consequence * recency-decay * (watchlist+if+match)
-            // recency_factor: 1.0 today → 0.5 at 7 days → 0.2 at 30 days
-            importance_score: Math.round((consequence / 100) * Math.max(0.2, 1 - ageDays / 30) * 100) / 100,
+            // PATCH 0050: importance now uses half-life decay instead of
+            // linear age divide. TRANSIENT articles fade in days; SECULAR
+            // ones persist for ~18 months.
+            importance_score: decayedImportance,
           });
         }
       } catch { /* skip failed feeds */ }
@@ -1539,7 +1620,8 @@ async function fetchAllNews(): Promise<any[]> {
   // Add impact statements + investment tickers
   const articlesWithImpact = withSynthetics.map(a => ({
     ...a,
-    impact_statement: generateImpact(a.title, a.summary || '', a.article_type, a.region, a.bottleneck_sub_tag),
+    // PATCH 0050: prefer institutional impact label when set
+    impact_statement: a.institutional_impact_label || generateImpact(a.title, a.summary || '', a.article_type, a.region, a.bottleneck_sub_tag),
     investment_tickers: a.article_type === 'BOTTLENECK' ? getInvestmentTickers(a.title + ' ' + (a.summary || '')) : [],
   }));
 
@@ -1817,7 +1899,21 @@ export async function GET(request: Request) {
       }
       const tickerHot = Object.entries(tickerCount).filter(([_, n]) => n >= 3).sort((a, b) => b[1] - a[1]);
       const themeHot = Object.entries(themeCount).filter(([_, n]) => n >= 3).sort((a, b) => b[1] - a[1]);
-      return NextResponse.json({ tickers: tickerHot, themes: themeHot });
+
+      // PATCH 0050: enrich anomalies with display names + why-it-matters
+      const themesEnriched = themeHot.map(([theme, n]) => classifyAnomaly({ theme, count: n }));
+      const tickersEnriched = tickerHot.map(([ticker, n]) => classifyTickerAnomaly({ ticker, count: n }));
+
+      return NextResponse.json({
+        // Legacy raw shape kept for backward-compat with old UI
+        tickers: tickerHot,
+        themes: themeHot,
+        // PATCH 0050: enriched institutional shape
+        section_title: 'Emerging Stress Signals',
+        section_subtitle: 'Themes & names with article concentration above baseline',
+        themes_v2: themesEnriched,
+        tickers_v2: tickersEnriched,
+      });
     }
 
     return NextResponse.json(filtered);

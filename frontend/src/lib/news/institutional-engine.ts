@@ -580,3 +580,446 @@ export function buildInstitutionalEnvelope(article: {
 
   return envelope;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PATCH 0050 — INTELLIGENCE LAYER
+//
+// Adds the seven "PM-grade" upgrades the user requested:
+//   1. Earnings inclusion gate (thesis-changing / structural / revisions only)
+//   2. Institutional impact labels (replace generic "Structural supply-chain signal")
+//   3. Anomaly explanation (what deviated, from what baseline, why)
+//   4. Why-This-Matters PM summary line
+//   5. Consensus vs Variant view block
+//   6. Signal decay logic (half-life × age → effective importance)
+//   7. Multi-hop causal chain mapping
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── 1. Earnings inclusion gate ─────────────────────────────────────────────
+
+export function shouldKeepEarnings(args: {
+  title: string;
+  desc: string;
+  specific_impact?: { magnitudePct?: number };
+  tickers: string[];
+  consequence_score: number;
+}): boolean {
+  const { title, desc, specific_impact, tickers, consequence_score } = args;
+  const text = (title + ' ' + desc).toLowerCase();
+  const titleU = title.toUpperCase();
+  const hasMajorTicker = tickers.some(t => MAJOR_TICKERS.has(t.toUpperCase())) ||
+    Array.from(MAJOR_TICKERS).some(t => titleU.includes(t));
+  const hasMaterialSurprise = (specific_impact?.magnitudePct ?? 0) >= 5;
+  // Estimate revision language
+  const hasRevision = /\b(guidance (raise|raised|raises|lower|cut|reduced|withdrawn)|estimate (revis|raise|cut)|target (raise|cut|lift)|consensus revis|outlook (raise|cut|lower)|forecast (raise|cut))\b/i.test(text);
+  // Thesis-changing AI / monetization / margin durability language
+  const hasThesisShift = /\b(ai (acceleration|spending|capex|monetization|inflection)|enterprise ai|inference demand|software monetization|margin (durability|sustainability|expansion)|operating leverage|pricing power|cannibaliz|labor model disruption|workforce (reduc|cut|layoff).{0,20}ai|ai.{0,20}(layoff|cut|automat))\b/i.test(text);
+  // Structural confirmation — earnings note matches active bottleneck theme
+  const hasStructuralAnchor = /\b(hbm|cowos|advanced packaging|euv|wafer|fab|memory pricing|allocation|lead time|capacity (?:constraint|tight|sold out|hit zero)|backlog|order book|book.?to.?bill)\b/i.test(text);
+  // Capex / capacity announcements
+  const hasCapex = /\b(capex (raise|increase|step.up|guide|guidance)|capacity (expansion|addition)|new fab|fab construction|gigafactory|production ramp)\b/i.test(text);
+
+  // Keep if at least one institutional anchor is present
+  if (hasMaterialSurprise && hasMajorTicker) return true;
+  if (hasRevision) return true;
+  if (hasThesisShift) return true;
+  if (hasStructuralAnchor) return true;
+  if (hasCapex) return true;
+  if (hasMajorTicker && consequence_score >= 50) return true;
+  return false;
+}
+
+// ── 2. Institutional impact labels ─────────────────────────────────────────
+
+const INSTITUTIONAL_IMPACT_LABELS: Record<string, Record<string, string>> = {
+  COMPUTE_CONSTRAINT: {
+    EMERGING:   'Compute capacity gap forming — early HBM / packaging tightness',
+    PERSISTENT: 'GPU deployment bottleneck shifting upstream — packaging-bound',
+    EASING:     'Compute capacity easing — wafer / packaging ramp catching up',
+    RESOLVED:   'Compute supply normalising — pricing power fading',
+    DEFAULT:    'AI infra capex acceleration — accelerator allocation tight',
+  },
+  POWER_CONSTRAINT: {
+    EMERGING:   'Grid stress emerging — early signs of DC build queueing',
+    PERSISTENT: 'Power availability constraining hyperscaler buildouts',
+    EASING:     'Transformer / grid capacity ramping — DC backlog working through',
+    RESOLVED:   'Power adequacy restored — DC build pace normalising',
+    DEFAULT:    'Power / grid capacity inflection — utility & power-equipment beneficiary',
+  },
+  DEFENSE_SUPPLY: {
+    EMERGING:   'Defence order book inflecting — early procurement cycle',
+    PERSISTENT: 'Defence procurement cycle accelerating — order-book visibility extends',
+    EASING:     'Defence delivery cadence improving — backlog conversion rising',
+    RESOLVED:   'Defence cycle peak — book-to-bill normalising',
+    DEFAULT:    'Defence capex cycle — HAL / BEL / BDL beneficiary',
+  },
+  MATERIAL_SCARCITY: {
+    EMERGING:   'Critical mineral price floor lifting — early reshoring signal',
+    PERSISTENT: 'Critical mineral concentration risk — strategic stockpile building',
+    EASING:     'Material supply rebalancing — Western miner rerate underway',
+    RESOLVED:   'Material adequacy restored — pricing pressure fading',
+    DEFAULT:    'Material scarcity risk — vertical integration accelerating',
+  },
+  LOGISTICS_CONSTRAINT: {
+    EMERGING:   'Logistics chokepoint forming — early freight rate signal',
+    PERSISTENT: 'Logistics constraint binding — supply rerouting active',
+    EASING:     'Logistics flow restoring — freight rate normalising',
+    RESOLVED:   'Logistics normalisation — supply chain repriced',
+    DEFAULT:    'Logistics chokepoint — freight & inventory cost up',
+  },
+  ENERGY_CONSTRAINT: {
+    EMERGING:   'Energy supply tightening — early refining / pipeline stress',
+    PERSISTENT: 'Energy supply binding — refining / pipeline throughput stretched',
+    EASING:     'Energy supply rebalancing — capacity coming online',
+    RESOLVED:   'Energy adequacy restored — pricing stabilising',
+    DEFAULT:    'Energy supply dynamics shifting — refiner / OMC margin watch',
+  },
+  FINANCIAL_INFRA: {
+    PERSISTENT: 'Financial infra event — RBI / SEBI policy transmission',
+    DEFAULT:    'Financial infra signal — regulatory / liquidity transmission',
+  },
+};
+
+const SUBTAG_INSTITUTIONAL_LABELS: Record<string, string> = {
+  MEMORY_STORAGE:         'HBM pricing power strengthening — DRAM cycle extending',
+  FABRICATION_PACKAGING:  'CoWoS / advanced packaging tight — GPU build packaging-bound',
+  INTERCONNECT_PHOTONICS: 'Silicon photonics transition — electrical interconnect saturating',
+  COMPUTE_SCALING:        'Enterprise AI inference demand accelerating',
+  POWER_GRID:             'Power availability constraining hyperscaler buildouts',
+  NUCLEAR_ENERGY:         'Nuclear renaissance — AI baseload demand rerating utility duration',
+  THERMAL_COOLING:        'Liquid cooling adoption — DC rack power density rising',
+  MATERIALS_SUPPLY:       'Critical mineral concentration risk — reshoring premium',
+  QUANTUM_CRYOGENICS:     'Quantum infra emerging — pre-commercial signal',
+};
+
+export function generateInstitutionalImpactLabel(args: {
+  bottleneck_sub_tag?: string | null;
+  bottleneck_category?: string;
+  bottleneck_resolution?: string | null;
+  article_type: string;
+}): string {
+  const { bottleneck_sub_tag, bottleneck_category, bottleneck_resolution, article_type } = args;
+  if (article_type !== 'BOTTLENECK') return '';
+  // Prefer sub-tag specific label
+  if (bottleneck_sub_tag && SUBTAG_INSTITUTIONAL_LABELS[bottleneck_sub_tag]) {
+    return SUBTAG_INSTITUTIONAL_LABELS[bottleneck_sub_tag];
+  }
+  // Fall back to category × resolution-state matrix
+  if (bottleneck_category && INSTITUTIONAL_IMPACT_LABELS[bottleneck_category]) {
+    const map = INSTITUTIONAL_IMPACT_LABELS[bottleneck_category];
+    const state = bottleneck_resolution || 'DEFAULT';
+    return map[state] || map.DEFAULT || '';
+  }
+  return '';
+}
+
+// ── 4. Why-This-Matters PM summary line ────────────────────────────────────
+// Generates a 1-line portfolio-manager summary explaining the investment
+// implication. Keyed off sub-tag + half-life + resolution state.
+
+const WHY_THIS_MATTERS_TEMPLATES: Record<string, string> = {
+  MEMORY_STORAGE:         'AI training / inference demand is outpacing memory wafer supply; DRAM/HBM ASP power can extend the memory cycle through 2027 even if other semis cool.',
+  FABRICATION_PACKAGING:  'GPU shipment growth may remain packaging-constrained through 2027 despite wafer expansion. Cloud capex timing risk shifts from chips to substrates.',
+  INTERCONNECT_PHOTONICS: 'Electrical interconnect scaling limits are forcing optical migration in AI clusters. Optical-component TAM expansion is multi-year.',
+  COMPUTE_SCALING:        'Accelerator allocation tightness signals enterprise AI inference demand is sticky, not speculative. Custom-silicon programs accelerate.',
+  POWER_GRID:             'Grid lag means DC build pace shifts to power-rich regions; transformer / GE Vernova / BHEL beneficiary; hyperscaler capex re-shapes.',
+  NUCLEAR_ENERGY:         'AI baseload demand is rerating nuclear order books and uranium price floors. Utility duration is shortening as new builds get committed.',
+  THERMAL_COOLING:        'Rack power density past air-cooling envelope. Liquid-cooling / CDU adoption becomes mandatory; immersion TAM expands.',
+  MATERIALS_SUPPLY:       'Critical-mineral concentration risk is forcing strategic stockpiles and reshoring. Western miner rerating underway; vertical-integration moves accelerate.',
+  QUANTUM_CRYOGENICS:     'Pre-commercial signal — multi-year horizon. Watch milestone-driven inflection but no near-term P&L impact.',
+};
+
+const CATEGORY_WHY_TEMPLATES: Record<string, string> = {
+  COMPUTE_CONSTRAINT:   'Constraint sits in the AI capex transmission chain — pricing power, lead times, and accelerator allocation drive 2026-27 earnings dispersion.',
+  POWER_CONSTRAINT:     'Power adequacy is the binding constraint after compute. DC build pace, utility capex, and grid-equipment ASP all rerate.',
+  DEFENSE_SUPPLY:       'Defence capex cycle visibility is multi-year — order book conversion + export wins drive earnings durability for HAL/BEL/BDL.',
+  MATERIAL_SCARCITY:    'Concentration risk forces strategic supply moves — pricing power for upstream miners / processors, cost pressure downstream.',
+  LOGISTICS_CONSTRAINT: 'Freight chokepoint feeds into inventory, working capital, and pricing pass-through across consumer / industrial supply chains.',
+  ENERGY_CONSTRAINT:    'Energy supply tightness flows to refining / OMC margin, fiscal subsidy bill, and rate-sensitive sector rotation.',
+  FINANCIAL_INFRA:      'Regulatory / liquidity transmission — RBI / SEBI policy moves repricing curve, NIM, and credit cycle.',
+};
+
+export function generateWhyThisMatters(args: {
+  article_type: string;
+  bottleneck_sub_tag?: string | null;
+  bottleneck_category?: string;
+  bottleneck_resolution?: string | null;
+  half_life: SignalHalfLife;
+  importance_rank: SignalImportanceRank;
+  expectation: ExpectationState;
+}): string | null {
+  const { article_type, bottleneck_sub_tag, bottleneck_category, half_life,
+          importance_rank, expectation } = args;
+  // Only emit for HIGH-signal articles
+  if (importance_rank !== 'TIER_1_ALPHA' && importance_rank !== 'TIER_2_RELEVANT') return null;
+
+  let base: string | null = null;
+  if (article_type === 'BOTTLENECK') {
+    base = (bottleneck_sub_tag && WHY_THIS_MATTERS_TEMPLATES[bottleneck_sub_tag]) ||
+           (bottleneck_category && CATEGORY_WHY_TEMPLATES[bottleneck_category]) ||
+           null;
+  }
+  if (article_type === 'EARNINGS') {
+    base = 'Earnings event with material thesis content — track guidance trajectory, mix, and whether it confirms the active structural narrative.';
+  }
+  if (article_type === 'TARIFF') {
+    base = 'Trade-policy move alters supply-chain cost & local content economics — currency, margin, and rerouting follow within quarters.';
+  }
+  if (article_type === 'GEOPOLITICAL') {
+    base = 'Geopolitical event with supply-chain transmission risk — energy / shipping / strategic-mineral channels are the primary read.';
+  }
+  if (article_type === 'MACRO') {
+    base = 'Macro regime signal — liquidity / growth / inflation transmission to sector rotation and duration trade.';
+  }
+  if (!base) return null;
+
+  // Append decay flavor
+  const decayQualifier = half_life === 'SECULAR' ? ' Multi-year theme.'
+    : half_life === 'STRUCTURAL' ? ' Multi-quarter theme.'
+    : half_life === 'CYCLICAL' ? ' Watch through this cycle.'
+    : '';
+  // Append expectation flavor
+  const expQualifier = expectation.priced_in_score >= 70 ? ' (largely priced in — variant requires divergence)' :
+    expectation.priced_in_score <= 30 ? ' (under-recognised — surprise potential)' : '';
+  return base + decayQualifier + expQualifier;
+}
+
+// ── 5. Consensus vs Variant view block ─────────────────────────────────────
+
+export interface ConsensusVariant {
+  consensus: string;
+  variant: string;
+  market_pricing: string;
+  risk: string;
+}
+
+const CV_TEMPLATES: Record<string, ConsensusVariant> = {
+  MEMORY_STORAGE: {
+    consensus:      'Memory cycle peaks in 2026; pricing power normalises into 2027.',
+    variant:        'HBM allocation + DRAM tightness + AI demand extend cycle into 2028.',
+    market_pricing: 'Memory equities priced for cyclical normalisation; ~12-15x trough EPS.',
+    risk:           'New-fab supply ramps faster than expected; HBM capacity catches up.',
+  },
+  FABRICATION_PACKAGING: {
+    consensus:      'AI infra demand peaks 2026; packaging eases.',
+    variant:        'CoWoS / advanced packaging remains binding through 2027 despite expansion.',
+    market_pricing: 'TSMC / packagers priced for soft cyclical landing.',
+    risk:           'AMKR / ASE capex catches up; substrate yield improves.',
+  },
+  INTERCONNECT_PHOTONICS: {
+    consensus:      'Optical I/O is a 2027+ story; copper has runway.',
+    variant:        'Bandwidth wall in 2026 forces CPO adoption ahead of consensus timeline.',
+    market_pricing: 'Photonics names priced as speculative thematic; not yet in earnings.',
+    risk:           'Hyperscaler conservatism delays CPO ramp; copper-DAC TCO advantage holds.',
+  },
+  COMPUTE_SCALING: {
+    consensus:      'Inference market commoditises; accelerator margins compress.',
+    variant:        'Inference demand is sticky and accelerator allocation stays tight; custom-silicon is additive.',
+    market_pricing: 'NVDA priced at peak-margin multiple; AMD priced as #2 share gainer.',
+    risk:           'Open-source models compress inference unit economics; Hyperscalers pivot to ASIC.',
+  },
+  POWER_GRID: {
+    consensus:      'Grid catches up by 2027; DC builds proceed on schedule.',
+    variant:        'Grid lag persists; DC pace shifts to power-rich geographies; transformer ASP up multi-year.',
+    market_pricing: 'GEV / ETN priced for cyclical, not secular, demand.',
+    risk:           'Grid-modernisation capex executes; demand-response and behind-the-meter solutions scale.',
+  },
+  NUCLEAR_ENERGY: {
+    consensus:      'Nuclear revival is slow; project execution risk dominates.',
+    variant:        'AI baseload demand re-rates SMR + uranium curve; utility duration shortens.',
+    market_pricing: 'Cameco priced for cyclical uranium; SMR names speculative.',
+    risk:           'SMR cost overruns; existing nuclear sufficient for AI demand.',
+  },
+  THERMAL_COOLING: {
+    consensus:      'Liquid cooling is a niche; air still works.',
+    variant:        'Rack power density past air envelope; liquid is mandatory by 2026.',
+    market_pricing: 'Cooling specialists priced as thematic, not embedded.',
+    risk:           'AI training compute densifies more slowly; air solutions extend.',
+  },
+  MATERIALS_SUPPLY: {
+    consensus:      'Material supply self-corrects within a cycle.',
+    variant:        'Concentration risk drives multi-year reshoring premium for Western processors.',
+    market_pricing: 'Western miners discounted vs Chinese peers.',
+    risk:           'Substitution / recycling reduces demand; Chinese supply stable.',
+  },
+};
+
+export function buildConsensusVariant(args: {
+  bottleneck_sub_tag?: string | null;
+  bottleneck_category?: string;
+  importance_rank: SignalImportanceRank;
+  article_type: string;
+}): ConsensusVariant | null {
+  const { bottleneck_sub_tag, importance_rank, article_type } = args;
+  if (importance_rank !== 'TIER_1_ALPHA' && importance_rank !== 'TIER_2_RELEVANT') return null;
+  if (article_type !== 'BOTTLENECK') return null;
+  return (bottleneck_sub_tag && CV_TEMPLATES[bottleneck_sub_tag]) || null;
+}
+
+// ── 6. Signal decay logic ──────────────────────────────────────────────────
+// Half-life × age determines effective importance. After ~3x half-life, the
+// signal is dead.
+
+const HALF_LIFE_DAYS: Record<SignalHalfLife, number> = {
+  TRANSIENT:  4,    // 3-5 days
+  CYCLICAL:   30,   // ~1 month
+  STRUCTURAL: 180,  // ~6 months
+  SECULAR:    540,  // ~18 months
+};
+
+export function applySignalDecay(args: {
+  half_life: SignalHalfLife;
+  age_days: number;
+  base_importance: number;  // 0-1
+}): number {
+  const { half_life, age_days, base_importance } = args;
+  const halfLife = HALF_LIFE_DAYS[half_life];
+  // Exponential half-life decay
+  const decay = Math.pow(0.5, age_days / halfLife);
+  return Math.max(0.05, Math.round(base_importance * decay * 100) / 100);
+}
+
+// ── 7. Multi-hop causal chain mapping ──────────────────────────────────────
+// Each link: { from, to, mechanism }.
+// Chains are read top-down so the first link is closest to the news event.
+
+export interface CausalLink {
+  from: string;
+  to: string;
+  mechanism: string;
+}
+
+const CAUSAL_CHAINS: Record<string, CausalLink[]> = {
+  MEMORY_STORAGE: [
+    { from: 'HBM shortage',         to: 'GPU shipment delays',           mechanism: 'memory-bound build' },
+    { from: 'GPU shipment delays',  to: 'Cloud deployment slowdown',     mechanism: 'capacity gap' },
+    { from: 'Cloud deployment',     to: 'Enterprise AI rollout delays',  mechanism: 'inference availability' },
+    { from: 'Enterprise AI delays', to: 'Software monetisation lag',     mechanism: 'AI-feature ARPU push back' },
+  ],
+  FABRICATION_PACKAGING: [
+    { from: 'CoWoS / packaging tight', to: 'GPU shipment cap',         mechanism: 'substrate yield' },
+    { from: 'GPU cap',                 to: 'Cloud capex re-timing',    mechanism: 'capacity sequencing' },
+    { from: 'Cloud capex re-timing',   to: 'Hyperscaler capex shift',  mechanism: 'reallocation to power-rich regions' },
+    { from: 'Hyperscaler shift',       to: 'GE Vernova / BHEL upside', mechanism: 'transformer / grid order' },
+  ],
+  POWER_GRID: [
+    { from: 'Grid capacity lag',     to: 'DC build delay',                   mechanism: 'utility connection queue' },
+    { from: 'DC build delay',        to: 'Hyperscaler capex re-routes',      mechanism: 'load-shifting to power-rich regions' },
+    { from: 'Capex re-route',        to: 'Power-equipment ASP up',           mechanism: 'transformer / substation order' },
+    { from: 'Power-equipment ASP',   to: 'GEV / BHEL / Eaton margin lift',   mechanism: 'pricing power' },
+  ],
+  NUCLEAR_ENERGY: [
+    { from: 'AI baseload demand',    to: 'Nuclear order book',                mechanism: 'utility decarbon mandate' },
+    { from: 'Nuclear orders',        to: 'Uranium price floor up',            mechanism: 'fuel demand schedule' },
+    { from: 'Uranium price up',      to: 'Cameco / KAP rerate',               mechanism: 'spot-price upgrade' },
+    { from: 'Reactor commissioning', to: 'BHEL / NPCIL execution visibility', mechanism: 'EPC backlog' },
+  ],
+  ENERGY_CONSTRAINT: [
+    { from: 'Iran conflict',         to: 'Oil volatility',         mechanism: 'Hormuz transit risk' },
+    { from: 'Oil volatility',        to: 'Diesel subsidy pressure', mechanism: 'India under-recovery' },
+    { from: 'Diesel subsidy',        to: 'India fiscal burden',     mechanism: 'subsidy bill expansion' },
+    { from: 'Fiscal burden',         to: 'OMC margin stress',       mechanism: 'price pass-through lag' },
+    { from: 'OMC margin',            to: 'Bank liquidity / NIM',    mechanism: 'OMC borrowing → bank balance sheet' },
+    { from: 'Bank liquidity',        to: 'Rate path expectation',   mechanism: 'monetary stance recalibration' },
+  ],
+  LOGISTICS_CONSTRAINT: [
+    { from: 'Freight chokepoint',    to: 'Inventory build cost',    mechanism: 'longer in-transit / dwell' },
+    { from: 'Inventory cost',        to: 'Working capital pressure', mechanism: 'NWC tied up' },
+    { from: 'Working capital',       to: 'Pricing pass-through',    mechanism: 'cost recovery' },
+  ],
+  MATERIAL_SCARCITY: [
+    { from: 'Critical mineral risk', to: 'Strategic stockpile',     mechanism: 'sovereign reserve build' },
+    { from: 'Stockpile',             to: 'Western miner rerate',    mechanism: 'multi-year price floor' },
+    { from: 'Miner rerate',          to: 'Vertical integration',    mechanism: 'OEM upstream M&A' },
+  ],
+};
+
+export function buildCausalChain(args: {
+  bottleneck_sub_tag?: string | null;
+  bottleneck_category?: string;
+  article_type: string;
+  importance_rank: SignalImportanceRank;
+  title: string;
+  desc: string;
+}): CausalLink[] {
+  const { bottleneck_sub_tag, bottleneck_category, article_type, importance_rank, title, desc } = args;
+  if (importance_rank !== 'TIER_1_ALPHA' && importance_rank !== 'TIER_2_RELEVANT') return [];
+
+  // Sub-tag chain takes priority
+  if (bottleneck_sub_tag && CAUSAL_CHAINS[bottleneck_sub_tag]) return CAUSAL_CHAINS[bottleneck_sub_tag];
+
+  // Category fallback
+  if (bottleneck_category && CAUSAL_CHAINS[bottleneck_category]) return CAUSAL_CHAINS[bottleneck_category];
+
+  // Special-case: oil / Iran chain triggers on geopolitical text even when not BOTTLENECK
+  const text = (title + ' ' + desc).toLowerCase();
+  if (article_type === 'GEOPOLITICAL' && /(iran|hormuz|red sea|opec|crude|brent|wti)/.test(text)) {
+    return CAUSAL_CHAINS.ENERGY_CONSTRAINT;
+  }
+  return [];
+}
+
+// ── 3. Anomaly explanation builder ─────────────────────────────────────────
+// Replaces the machine-y "GENERAL_CONSTRAINT ×3" with semantic phrasing.
+
+export interface AnomalySignal {
+  display_name: string;       // human-readable replacement for raw key
+  count: number;
+  baseline_count: number;     // typical 7-day rolling avg (estimated)
+  deviation: 'EMERGING' | 'ESCALATING' | 'DOMINANT';
+  why_it_matters: string;     // 1-line explanation
+}
+
+const THEME_DISPLAY: Record<string, string> = {
+  MEMORY_STORAGE:         'HBM / DRAM stress',
+  FABRICATION_PACKAGING:  'Packaging / wafer capacity',
+  INTERCONNECT_PHOTONICS: 'Optical interconnect adoption',
+  COMPUTE_SCALING:        'AI accelerator capacity',
+  POWER_GRID:             'Power / grid capacity',
+  NUCLEAR_ENERGY:         'Nuclear / reactor cycle',
+  THERMAL_COOLING:        'Liquid cooling adoption',
+  MATERIALS_SUPPLY:       'Critical mineral concentration',
+  QUANTUM_CRYOGENICS:     'Quantum infra emergence',
+  GENERAL_CONSTRAINT:     'Cross-category supply tightening',
+};
+
+const THEME_WHY: Record<string, string> = {
+  MEMORY_STORAGE:         'Multi-source coverage of HBM / DRAM tightness signals AI memory cycle is accelerating, not normalising.',
+  FABRICATION_PACKAGING:  'Cluster of packaging capacity articles indicates upstream constraint binding harder; GPU shipment risk extends.',
+  INTERCONNECT_PHOTONICS: 'Optical / CPO coverage spike suggests bandwidth wall is moving forward in deployment timelines.',
+  COMPUTE_SCALING:        'Accelerator-allocation chatter clustering — supports the "inference demand is sticky" thesis.',
+  POWER_GRID:             'Grid / transformer headlines clustering — power is becoming the next binding constraint after compute.',
+  NUCLEAR_ENERGY:         'Nuclear / SMR coverage cluster — AI baseload narrative gaining institutional traction.',
+  THERMAL_COOLING:        'Liquid-cooling articles spiking — rack power density push past air envelope.',
+  MATERIALS_SUPPLY:       'Critical-mineral coverage rising — strategic supply policy responses likely.',
+  GENERAL_CONSTRAINT:     'Multi-category supply tightness — broad-based reshoring / inflation pressure read.',
+};
+
+export function classifyAnomaly(args: { theme: string; count: number }): AnomalySignal {
+  const { theme, count } = args;
+  // Baseline assumption: typical 7-day per-theme volume is 1-2 articles
+  const baseline = 2;
+  let deviation: AnomalySignal['deviation'] = 'EMERGING';
+  if (count >= 8) deviation = 'DOMINANT';
+  else if (count >= 5) deviation = 'ESCALATING';
+  return {
+    display_name: THEME_DISPLAY[theme] || theme.replace(/_/g, ' ').toLowerCase(),
+    count,
+    baseline_count: baseline,
+    deviation,
+    why_it_matters: THEME_WHY[theme] || 'Cluster activity above baseline — emerging narrative to track.',
+  };
+}
+
+export function classifyTickerAnomaly(args: { ticker: string; count: number }): AnomalySignal {
+  const { ticker, count } = args;
+  let deviation: AnomalySignal['deviation'] = 'EMERGING';
+  if (count >= 6) deviation = 'DOMINANT';
+  else if (count >= 4) deviation = 'ESCALATING';
+  return {
+    display_name: ticker,
+    count,
+    baseline_count: 1,
+    deviation,
+    why_it_matters: `${count} articles in 24h on ${ticker} — flow / news event clustering. Watch for follow-on price action.`,
+  };
+}

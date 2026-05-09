@@ -246,6 +246,55 @@ export default function NewsCard({ article, onTickerClick }: Props) {
             </div>
           )}
 
+          {/* PATCH 0050: Why-This-Matters PM line */}
+          {(article as any).why_this_matters && (
+            <div className="text-[11px] mt-2 leading-relaxed border-l-2 border-amber-500/50 pl-2 py-1 bg-amber-500/5">
+              <span className="text-amber-400 font-bold mr-1">Why this matters:</span>
+              <span className="text-[#C4D2DD]">{(article as any).why_this_matters}</span>
+            </div>
+          )}
+
+          {/* PATCH 0050: Consensus vs Variant block */}
+          {(article as any).consensus_variant && (
+            <div className="mt-2 border border-[#1E2D45] rounded p-2 text-[10px] leading-relaxed bg-[#0D1B2E]/50">
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                <div>
+                  <span className="text-[#6677AA] uppercase tracking-wide">Consensus</span>
+                  <div className="text-[#C4D2DD]">{(article as any).consensus_variant.consensus}</div>
+                </div>
+                <div>
+                  <span className="text-[#F59E0B] uppercase tracking-wide">Variant View</span>
+                  <div className="text-[#F5F7FA] font-medium">{(article as any).consensus_variant.variant}</div>
+                </div>
+                <div>
+                  <span className="text-[#6677AA] uppercase tracking-wide">Market Pricing</span>
+                  <div className="text-[#8899AA]">{(article as any).consensus_variant.market_pricing}</div>
+                </div>
+                <div>
+                  <span className="text-[#EF4444] uppercase tracking-wide">Risk</span>
+                  <div className="text-[#8899AA]">{(article as any).consensus_variant.risk}</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* PATCH 0050: Multi-hop causal chain */}
+          {((article as any).causal_chain || []).length > 0 && (
+            <div className="mt-2 text-[10px] leading-relaxed">
+              <div className="text-[#6677AA] uppercase tracking-wide mb-1">Causal chain</div>
+              <div className="flex flex-col gap-0.5 pl-2 border-l border-[#1E2D45]">
+                {((article as any).causal_chain as Array<{ from: string; to: string; mechanism: string }>).map((link, i) => (
+                  <div key={i} className="text-[#8899AA]">
+                    <span className="text-[#C4D2DD]">{link.from}</span>
+                    <span className="text-[#0F7ABF] mx-1">→</span>
+                    <span className="text-[#C4D2DD]">{link.to}</span>
+                    <span className="text-[#4A5B6C] italic ml-1">({link.mechanism})</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Beneficiary / At-Risk exposure mapping */}
           {((article as any).exposure_beneficiaries?.length > 0 || (article as any).exposure_at_risk?.length > 0) && (
             <div className="text-[10px] mt-1 flex items-center flex-wrap gap-x-2 gap-y-1">
