@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
 import { recordXRef } from '@/lib/news/cross-reference';
+import { buildInstitutionalEnvelope } from '@/lib/news/institutional-engine';
+import { scoreAnchor, BOTTLENECK_ANCHOR_THRESHOLD, getSourceCredibility, detectResolutionState, inferBottleneckCategory } from '@/lib/news/ontology';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -105,12 +107,13 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v10'; // v10: title-anchored gate (patch 0047)
+const CACHE_KEY = 'news:articles:v11'; // v11: institutional engine + ontology (patch 0049+0050)
 const CACHE_TTL = 300; // 5 min
-// v9 → v10 bump invalidates the bottleneck bucket again because the
-// title-anchored gate is now mandatory — older entries in v9 may
-// have been classified before the title check existed.
-const BOTTLENECK_PERSISTENT_KEY = 'bottleneck:articles:persistent:v10';
+// v10 → v11 bump invalidates again because the article schema now
+// includes importance_rank, half_life, taxonomy, transmission chain,
+// expectation state, structural confidence, and macro regime fields.
+// Older bucket entries lack these fields and would render incorrectly.
+const BOTTLENECK_PERSISTENT_KEY = 'bottleneck:articles:persistent:v11';
 const BOTTLENECK_TTL = 7776000; // 90 days in seconds
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1113,47 +1116,30 @@ async function fetchAllNews(): Promise<any[]> {
             bottleneck_level = undefined;
           }
 
-          // ── PATCH 0047: Title-anchor safety net ──
-          // Belt + braces: even if classifier somehow assigned BOTTLENECK,
-          // verify the title carries a structural anchor token. If not,
-          // demote. This catches edge cases where INDIA_STRUCTURAL_HARD
-          // fired on description text rather than title.
-          if (article_type === 'BOTTLENECK' && !TITLE_BOTTLENECK_ANCHOR_RE.test(title)) {
+          // ── PATCH 0050: Weighted token scoring (replaces regex anchor) ──
+          // Score the title+desc against domain token dictionaries. Tokens
+          // in the title count 2x; tokens in summary count 1x. Articles
+          // need score ≥ BOTTLENECK_ANCHOR_THRESHOLD to be eligible for
+          // BOTTLENECK. Companion-required tokens (e.g. "memory" alone)
+          // only fire if a constraint companion appears.
+          const anchor = scoreAnchor(title, desc);
+          const hasAnchor = anchor.total >= BOTTLENECK_ANCHOR_THRESHOLD;
+
+          // ── PATCH 0050: Source credibility weighting (replaces denylist) ──
+          // No more hard denylist. Each source gets a credibility factor
+          // and a flag whether bottleneck escalation needs a strong anchor.
+          const cred = getSourceCredibility(feed.name);
+
+          // BOTTLENECK demotion: only if no anchor OR (anchor required and
+          // missing). Replaces the regex-based safety net + denylist.
+          if (article_type === 'BOTTLENECK' && !hasAnchor) {
             article_type = 'GENERAL';
             investment_tier = 3;
             bottleneck_sub_tag = undefined;
             bottleneck_level = undefined;
           }
-
-          // ── PATCH 0047: Source-feed denylist for BOTTLENECK ──
-          // Bloomberg Politics / Bloomberg Markets videos, Power
-          // Technology project announcements, SemiWiki CEO interviews,
-          // MarketWatch opinion columns are noise even when they pass
-          // other gates. Demote.
-          const FEED_BOTTLENECK_DENYLIST = new Set([
-            'Bloomberg Politics',
-            'Bloomberg Markets',
-            'Power Technology',
-            'SemiWiki',
-            'MarketWatch Top Stories',
-            'NDTV Profit',
-            'Investing.com News',
-            'TechCrunch',
-            'The Register',
-            'Ars Technica',
-            'Tom\'s Hardware',
-            'Blocks & Files',
-            'Yahoo Finance',
-            'CNBC Top News',
-            'CNBC World',
-            'CNBC Technology',
-            'CNBC Finance',
-            'BSE Corp Announcements',
-            'SEBI Press Releases',
-            'FT Markets',
-            'Seeking Alpha Market News',
-          ]);
-          if (article_type === 'BOTTLENECK' && FEED_BOTTLENECK_DENYLIST.has(feed.name) && !TITLE_BOTTLENECK_ANCHOR_RE.test(title)) {
+          if (article_type === 'BOTTLENECK' && cred.bottleneck_anchor_required && anchor.title_score < 12) {
+            // Needs at least one strong title token
             article_type = 'GENERAL';
             investment_tier = 3;
             bottleneck_sub_tag = undefined;
@@ -1192,7 +1178,9 @@ async function fetchAllNews(): Promise<any[]> {
           if (ageDays > 365) continue; // hard cap, even structural
 
           // Consequence score — institutional weight on five dimensions.
-          const consequence = computeConsequenceScore(title, desc, article_type);
+          const rawConsequence = computeConsequenceScore(title, desc, article_type);
+          // PATCH 0050: apply source credibility factor — replaces denylist.
+          const consequence = Math.round(rawConsequence * cred.factor);
           let effectiveTier = investment_tier;
           if (consequence < 30 && investment_tier <= 2) {
             effectiveTier = Math.min(3, investment_tier + 1);
@@ -1209,6 +1197,37 @@ async function fetchAllNews(): Promise<any[]> {
 
           // ── PHASE 2.8: Sentiment magnitude (1-10 scale) ──
           const sentiment = computeSentimentMagnitude(title, desc);
+
+          // ── PATCH 0049: Institutional envelope ──
+          // Adds: signal importance rank, half-life, taxonomy, transmission
+          // chain (with second-order effects + causal path), expectation
+          // state (priced-in / surprise / saturation), structural confidence
+          // (for BOTTLENECK), macro regime decomposition (for MACRO).
+          const envelope = buildInstitutionalEnvelope({
+            article_type,
+            bottleneck_sub_tag: bottleneck_sub_tag || null,
+            bottleneck_level: bottleneck_level || null,
+            consequence_score: consequence,
+            specific_impact: specificImpact,
+            exposure_beneficiaries: exposure.beneficiaries,
+            exposure_at_risk: exposure.atRisk,
+            tickers,
+            source_tier: feed.tier,
+            feed_name: feed.name,
+            title,
+            desc,
+          });
+
+          // ── PATCH 0050: Bottleneck category + resolution state ──
+          const bottleneck_category = article_type === 'BOTTLENECK'
+            ? inferBottleneckCategory({ bottleneck_sub_tag: bottleneck_sub_tag || null, anchor })
+            : 'NONE';
+          const resolution = article_type === 'BOTTLENECK'
+            ? detectResolutionState(title + ' ' + desc)
+            : { state: null, confidence: 0 };
+
+          // ── PATCH 0049: Suppress TIER_4_NOISE upstream ──
+          if (envelope.importance_rank === 'TIER_4_NOISE') continue;
 
           items.push({
             id: uniqueId,
@@ -1230,12 +1249,27 @@ async function fetchAllNews(): Promise<any[]> {
             article_type,
             investment_tier: effectiveTier,
             consequence_score: consequence,
+            consequence_score_raw: rawConsequence,
+            credibility_factor: cred.factor,
+            anchor_score: anchor.total,
+            anchor_categories: anchor.categories_hit,
             specific_impact: specificImpact,
             exposure_beneficiaries: exposure.beneficiaries,
             exposure_at_risk: exposure.atRisk,
             sentiment,
             bottleneck_sub_tag: bottleneck_sub_tag || null,
             bottleneck_level: bottleneck_level || null,
+            bottleneck_category,
+            bottleneck_resolution: resolution.state,
+            bottleneck_resolution_confidence: resolution.confidence,
+            // PATCH 0049: institutional envelope
+            importance_rank: envelope.importance_rank,
+            half_life: envelope.half_life,
+            signal_taxonomy: envelope.taxonomy,
+            transmission: envelope.transmission,
+            expectation: envelope.expectation,
+            structural_confidence: envelope.structural_confidence ?? null,
+            macro_regime: envelope.macro_regime ?? null,
             tickers: tickers,
             primary_ticker: tickers[0] || null,
             // Final importance: consequence * recency-decay * (watchlist+if+match)
@@ -1443,6 +1477,27 @@ async function fetchAllNews(): Promise<any[]> {
   for (const synth of SYNTHETIC_STRUCTURAL) {
     if (!synth.detect.test(allText)) {
       // No real article covers this domain — inject synthetic
+      // PATCH 0049/0050: synthetic articles also get the institutional
+      // envelope + ontology fields so frontend renders consistently.
+      const synthAnchor = scoreAnchor(synth.title, synth.summary);
+      const synthCategory = inferBottleneckCategory({ bottleneck_sub_tag: synth.sub_tag, anchor: synthAnchor });
+      const synthRes = detectResolutionState(synth.title + ' ' + synth.summary);
+      const synthEnvelope = buildInstitutionalEnvelope({
+        article_type: 'BOTTLENECK',
+        bottleneck_sub_tag: synth.sub_tag,
+        bottleneck_level: synth.status === 'CRITICAL' ? 'CRITICAL_BOTTLENECK' : 'BOTTLENECK',
+        consequence_score: synth.status === 'CRITICAL' ? 95 : 85,
+        is_synthetic: true,
+        structural_status: synth.status,
+        specific_impact: undefined,
+        exposure_beneficiaries: synth.tickers,
+        exposure_at_risk: [],
+        tickers: synth.tickers,
+        source_tier: 'primary',
+        feed_name: 'Structural Analysis',
+        title: synth.title,
+        desc: synth.summary,
+      });
       syntheticArticles.push({
         id: `synthetic-${synth.sub_tag}`,
         title: synth.title,
@@ -1456,6 +1511,18 @@ async function fetchAllNews(): Promise<any[]> {
         article_type: 'BOTTLENECK',
         investment_tier: 1,
         bottleneck_sub_tag: synth.sub_tag,
+        bottleneck_category: synthCategory,
+        bottleneck_resolution: synthRes.state,
+        bottleneck_resolution_confidence: synthRes.confidence,
+        importance_rank: synthEnvelope.importance_rank,
+        half_life: synthEnvelope.half_life,
+        signal_taxonomy: synthEnvelope.taxonomy,
+        transmission: synthEnvelope.transmission,
+        expectation: synthEnvelope.expectation,
+        structural_confidence: synthEnvelope.structural_confidence ?? null,
+        macro_regime: synthEnvelope.macro_regime ?? null,
+        anchor_score: synthAnchor.total,
+        anchor_categories: synthAnchor.categories_hit,
         tickers: synth.tickers,
         primary_ticker: synth.tickers[0] || null,
         sentiment: null,
