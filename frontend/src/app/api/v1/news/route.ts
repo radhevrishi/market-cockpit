@@ -80,15 +80,23 @@ const IMPLICIT_CONSTRAINT = /(surge in demand|demand spike|tight market|capacity
 const HYPE_ONLY = /(launch|announce|startup|funding|raises|partnership|unveil|demo|prototype|proof of concept|pitch|accelerator|incubator|research breakthrough)/i;
 
 // ── India structural domains — HARD: always BOTTLENECK (physical system constraints) ──
-const INDIA_STRUCTURAL_HARD = /(nuclear (reactor|power|plant|energy|fuel|capacity|project|milestone)|atomic (reactor|energy)|thorium|breeder reactor|kalpakkam|kudankulam|npcil|bhavini|criticality|atomic energy commission|defence (order|procurement|deal|budget|corridor|export)|defense (order|procurement|contract|budget|spending)|drdo|isro|hal (order|deliver))/i;
+// Expanded to capture more genuine India structural news the user flagged:
+// power deficit, coal supply, water scarcity, port/freight congestion,
+// railway freight congestion, MIRV / Agni / Tejas defence platforms,
+// space sector PSLV / GSLV launches, semiconductor mission (ISM), PLI
+// corridors (Dholera / Sanand fab parks).
+const INDIA_STRUCTURAL_HARD = /(nuclear (reactor|power|plant|energy|fuel|capacity|project|milestone)|atomic (reactor|energy)|thorium|breeder reactor|kalpakkam|kudankulam|npcil|bhavini|criticality|atomic energy commission|defence (order|procurement|deal|budget|corridor|export)|defense (order|procurement|contract|budget|spending)|drdo|isro|hal (order|deliver|contract)|brahmos|akash missile|tejas|mirv|agni (missile|test)|pslv|gslv|chandrayaan|gaganyaan|space sector|india semiconductor mission|ism (mou|approval|incentive)|dholera (fab|semiconductor)|sanand fab|micron.{0,20}gujarat|tata.{0,20}semiconductor|vedanta.{0,20}fab|power deficit|electricity shortage|load shedding|coal (shortage|stockpile|allocation|crisis)|water scarcity industrial|industrial water shortage|jnpt (congestion|backlog)|port (congestion|backlog) india|railway freight congestion|cargo (backlog|delay) india)/i;
 
 // ── India structural domains — SOFT: only BOTTLENECK when ALSO has constraint signal ──
 // These domains are real but articles about them are often earnings/macro/general news.
 // E.g., "ICICI Bank Q4 earnings with strong credit growth" should NOT be BOTTLENECK.
-const INDIA_STRUCTURAL_SOFT = /(drug (shortage|approval)|usfda|fda (approval|warning)|api (supply|shortage)|pharma.*supply|bulk drug|monsoon|crop (failure|output|damage)|food inflation|fertilizer (shortage|subsidy)|agriculture crisis|infrastructure (order|bottleneck|spend)|highway (project|order|delay)|railway (order|electrif|expansion)|npa|credit (crunch|squeeze)|nbfc (crisis|liquidity))/i;
+// Expanded with: forex / rupee depreciation crunch, container shortages,
+// urea / DAP / MOP fertilizer crunch, gas pipeline capacity, refinery
+// throughput, steel / aluminum / copper India supply.
+const INDIA_STRUCTURAL_SOFT = /(drug (shortage|approval)|usfda|fda (approval|warning)|api (supply|shortage)|pharma.*supply|bulk drug|monsoon|crop (failure|output|damage)|food inflation|fertilizer (shortage|subsidy)|agriculture crisis|infrastructure (order|bottleneck|spend)|highway (project|order|delay)|railway (order|electrif|expansion)|npa|credit (crunch|squeeze)|nbfc (crisis|liquidity)|rupee (depreciat|fall|crash|weaken)|forex (reserve|crunch|deplet)|container (shortage|cost|rate)|urea (shortage|import)|dap (shortage|import)|mop (shortage|import)|gas pipeline (capacity|throughput)|refinery (throughput|maintenance|shutdown)|steel (price|inventory|prod) india|aluminium (price|capacity) india|copper (price|capacity) india)/i;
 
 // Signals that the soft domain is actually a constraint (not just reporting)
-const INDIA_SOFT_CONSTRAINT = /(shortage|crisis|crunch|squeeze|bottleneck|constraint|delay|halt|suspend|capacity limit|underspend|overdue|stalled|backlog|supply gap)/i;
+const INDIA_SOFT_CONSTRAINT = /(shortage|crisis|crunch|squeeze|bottleneck|constraint|delay|halt|suspend|capacity limit|underspend|overdue|stalled|backlog|supply gap|stretched|stress|deplet|deficit)/i;
 
 // ── Supply chain company names (only fires WITH constraint) ──
 const SUPPLY_CHAIN_COMPANIES = /(tsmc|asml|applied materials|lam research|sk hynix|micron|samsung semiconductor|samsung foundry|intel foundry|globalfoundries|amkor|ase group|nvidia|amd|broadcom|qualcomm|infineon|nxp|onsemi|wolfspeed|coherent|lumentum|bhel|npcil|bhavini|l&t|siemens energy|ge vernova|cameco)/i;
@@ -217,9 +225,58 @@ function getBottleneckLevel(text: string): string {
 function classifyArticle(title: string, desc: string): { article_type: string; investment_tier: number; bottleneck_sub_tag?: string; bottleneck_level?: string } {
   const text = (title + ' ' + desc).toLowerCase();
 
-  // ── 1. NOISE: clickbait, lifestyle, junk ──
-  if (/multibagger|penny stock|should you buy|stock(s)? to buy|hot stock|best (stock|pick)|free tips|moneymaker|money.?maker|horoscope|recipe|cricket|bollywood|celebrity|entertainment|march madness|bracket|winnings|entry fee/i.test(text))
-    return { article_type: 'GENERAL', investment_tier: 3 };
+  // ── 1. NOISE FILTER — institutional terminal: aggressive subtraction ──
+  //
+  // Premise: a $30k institutional feed survives on omission quality.
+  // Out of ~190 daily stories only ~8 should reach the surface. We drop
+  // EVERYTHING that doesn't carry earnings / supply-chain / regime /
+  // capital-flow / cross-sector consequence.
+  //
+  // Tier 4 = filter-eligible (UI drops). Categories that hit tier 4:
+  //   - Retail clickbait + multibagger pumps
+  //   - Personal finance / retirement / advice columns
+  //   - Sports + celebrity + entertainment
+  //   - Indian regional politics without policy/regulatory angle
+  //   - Generic market wraps ("Sensex falls 500 points", "top gainers")
+  //   - Generic premarket / after-hours stock movers
+  //   - Tech trivia / lifestyle / product reviews
+  //   - Generic geopolitical filler (war daily updates without specific
+  //     supply-chain / earnings consequence)
+  //   - SEO listicles ("most overvalued tech stocks", "top picks")
+
+  // Retail / clickbait
+  const NOISE_RE = /\b(multibagger|penny stock|should you buy|stock(s)? to buy|hot stock|best (stock|pick)|free tips|moneymaker|money.?maker|horoscope|recipe|bollywood|celebrity|entertainment|march madness|bracket|winnings|entry fee|top gainers? & losers?|top gainers? and losers?|q4 results today live|quarterly results live)\b/i;
+
+  // Personal finance / retirement / advice columns — institutional readers
+  // don't need "I'm 66, should I invest $100k" or "recession-proof retirement"
+  const PERSONAL_FINANCE_RE = /\b(i'?m \d{2}|should i invest|recession.?proof (your |my )?(retirement|income)|social security disability|my (mother|father|niece|nephew|aunt|uncle).{0,40}(invest|inherit|disability|insurance)|will i lose|should i buy|should i sell|am i wrong|am i right|americans are not great|paying social security|does this make sense)\b/i;
+
+  // Sports — require sports CONTEXT, not just "cricket" anywhere
+  const SPORTS_RE = /\b(test (cricket|match|series)|odi (match|series)|t20 (match|series|world cup)|ipl (match|score|auction|playoff)|fifa|world cup (final|qualifier)|olympic|asian games|asia cup|kabaddi|wfi|vinesh phogat|rohit sharma|virat kohli|mahendra dhoni|wrestling federation|doping (rule|violation)|cricket (board|league|fixture|controversy|live updates|broadcast))\b/i;
+
+  // Indian regional politics without direct investing angle (TVK / VCK /
+  // local elections / party-leadership churn). Investing-relevant
+  // policy / Budget / GST / regulatory still pass through other paths.
+  const REGIONAL_POLITICS_RE = /\b(vck|tvk|iuml|admk|mdmk|pmk|ntk|dmdk|amma makkal|vijay (push|leader|tvk|party)|tamilnadu (election|politics|party|leader|chief minister)|stalin (election|cabinet|reshuffle)|president'?s? rule|local elections? defeat|show.?cause notice (to|against)|ww2 victory parade|russia (holds|scaled|parade))\b/i;
+
+  // Pure tech trivia / lifestyle / product reviews / consumer fluff
+  const FLUFF_RE = /\b(rooftop swimming pool|tux the penguin|linux mascot|amiga emulating|retro gaming|reddit blocked|tricked.?out terminals?|share your shell|instant photography|instax|ars asks|build on|clips feed|tiktok.?like|whoop on.?demand|rooftop pool|bt tower|frontier plane|frog dies|teflon market|prestigious job|housing market lost|punching above)\b/i;
+
+  // Generic market wraps + premarket movers + day-of stock chatter
+  // ("Sensex falls 500 points", "Stocks making biggest moves", "premarket")
+  const MARKET_WRAP_RE = /\b(sensex (falls?|gains?|ends?|tanks?|drops?) \d|nifty \d{2}\s*ends?|nifty 50 ends? (below|above)|nifty bulls indecisive|stocks? making the biggest moves? (premarket|after.?hours)|premarket movers?|after.?hours? movers?|stocks? to (watch|buy|sell)|jim cramer (says|believes|thinks)|cramer says|cramer believes|cramer's (take|view)|tech stocks could offer|smaller (tech )?stocks are punching|insider trades?:?|notable names?|sa asks|ignore market noise|market wrap|day's losers?|day's gainers?)\b/i;
+
+  // Generic geopolitical filler — daily war / parade / ceasefire updates
+  // WITHOUT specific company / sector / supply-chain consequence
+  const GEOPOLITICAL_FILLER_RE = /\b(no closer to ending war|tehran'?s response|expects.{0,20}response|peace deal'? today'?|response on peace deal|holds scaled.?back|war over (ukraine|israel) deepen|consumer sentiment falls|jobs report tops|jobless claims|witnesses scaled|trump.{0,15}peace|rubio says)\b/i;
+
+  // SEO content listicles
+  const SEO_LISTICLE_RE = /\b(most overvalued (tech )?stocks?|nvidia has already committed|gpt.?\d.?\d may burn|here'?s what traders|here'?s what'?s ahead|no description|prestigious job|teflon market|just-ahead|jim cramer|next major deadline|how much further|how long can|how to recession.?proof)\b/i;
+
+  if (NOISE_RE.test(text) || PERSONAL_FINANCE_RE.test(text) || SPORTS_RE.test(text) || REGIONAL_POLITICS_RE.test(text) || FLUFF_RE.test(text) || MARKET_WRAP_RE.test(text) || GEOPOLITICAL_FILLER_RE.test(text) || SEO_LISTICLE_RE.test(text)) {
+    // Return tier 4 — filter layer downstream drops these from main feed.
+    return { article_type: 'GENERAL', investment_tier: 4 };
+  }
 
   // ══════════════════════════════════════════════════════════════════
   // EARNINGS GATE — run BEFORE bottleneck rules to prevent earnings
@@ -373,6 +430,70 @@ function extractTickers(title: string): string[] {
   return words.filter(w => !JUNK_TICKERS.has(w) && w.length >= 2).slice(0, 3);
 }
 
+// ── Market Consequence Engine ────────────────────────────────────────
+//
+// A real institutional terminal scores each surviving article on its
+// consequence weight, not just its surface keywords. Five dimensions
+// (per the user spec):
+//   - Earnings impact     25%
+//   - Supply-chain        20%
+//   - Cross-sector        20%
+//   - Regime shift        15%
+//   - Persistence         10%
+//   - Surprise / novelty  10%
+//
+// Score 0-100. Articles below 30 get demoted to tier 3 even if they
+// passed the type classifier — keeps generic chatter out of the
+// HIGH-SIGNAL surface.
+function computeConsequenceScore(title: string, desc: string, article_type: string): number {
+  const text = (title + ' ' + desc).toLowerCase();
+  let score = 0;
+
+  // (a) Earnings impact (25): explicit miss / beat / guidance / margin
+  // delta language with a specific number nearby. Generic "results were
+  // released" doesn't score.
+  const epsImpact = /\b(eps|profit|revenue|ebitda|margin)\s+(beat|miss|tops?|exceeds?|fell short|came in (above|below))/i.test(text)
+    || /\b(\d{1,3}(?:\.\d+)?\s*%)\s+(beat|miss|surprise|growth|decline|drop|jump)/i.test(text)
+    || /\bguidance\s+(raised?|lowered?|maintained?|reaffirmed?|withdrawn?)/i.test(text);
+  if (epsImpact) score += 25;
+  else if (/\b(profit|revenue|earnings|q[1-4])\s+(rises?|falls?|jumps?|declines?|grew|grows?|down|up)\b/i.test(text)) score += 12;
+
+  // (b) Supply-chain consequence (20): explicit shortage / capacity / lead time
+  const supplyImpact = /\b(shortage|sold out|capacity (hit|reached|sold)|lead time|allocation|backlog of \d|out of stock|production halt)\b/i.test(text);
+  if (supplyImpact) score += 20;
+  else if (/\b(capacity|supply|allocation|tight|constrained?)\b/i.test(text)) score += 8;
+
+  // (c) Cross-sector propagation (20): article names ≥2 sectors OR
+  // explicitly states ripple effect ("affects A and B", "impacts X
+  // ecosystem", "puts pressure on")
+  const sectorWords = (text.match(/\b(semiconductor|memory|hbm|data center|grid|power|nuclear|pharma|banking|nbfc|auto|cement|fmcg|it services|defence|infrastructure|fertilizer|metals|crude|oil|chemicals)\b/g) || []);
+  const uniqueSectors = new Set(sectorWords);
+  if (uniqueSectors.size >= 3) score += 20;
+  else if (uniqueSectors.size >= 2) score += 12;
+  else if (/\b(ripple|cascading|spillover|cross.?sector|chain reaction|knock.?on)\b/i.test(text)) score += 12;
+
+  // (d) Regime implication (15): macro regime / liquidity / rate / FX
+  const regimeShift = /\b(rate (cut|hike) (expected|approaching|signal|decision)|fed.{0,15}(pivot|cycle|regime|signal)|monetary (policy|stance|tightening|easing|pause)|liquidity (regime|drain|injection|surplus|deficit)|risk.?off|risk.?on|equity (multiple|rerat|derat)|duration (compression|repricing)|yield curve)\b/i.test(text);
+  if (regimeShift) score += 15;
+
+  // (e) Persistence duration (10): structural language ("multi-year",
+  // "long-cycle", "structural", "secular trend", "decade-long")
+  const persistent = /\b(multi.?year|long.?cycle|structural|secular|decade.?long|five.?year|10.?year|long.?term|multi.?decade|generational)\b/i.test(text);
+  if (persistent) score += 10;
+
+  // (f) Surprise / novelty (10): explicit unexpected / first-time /
+  // record-breaking / unprecedented language
+  const novel = /\b(unprecedented|never before|first time|record (high|low|breaking)|exceeds expectations|surprises|caught off guard|catches.{0,15}flat.?footed|wakes.{0,15}up|emerges)\b/i.test(text);
+  if (novel) score += 10;
+
+  // Article type bonus — BOTTLENECK and EARNINGS get a small floor since
+  // the classifier already vetted them as institutionally relevant.
+  if (article_type === 'BOTTLENECK') score = Math.max(score, 35);
+  if (article_type === 'EARNINGS') score = Math.max(score, 25);
+
+  return Math.min(100, score);
+}
+
 // ── Region detection ─────────────────────────────────────────────────
 function detectRegion(title: string, desc: string, feedRegion: string): string {
   if (feedRegion === 'US') return 'US';
@@ -382,42 +503,122 @@ function detectRegion(title: string, desc: string, feedRegion: string): string {
   return feedRegion || 'IN';
 }
 
-// ── Impact Statement Generation ─────────────────────────────────────
-function generateImpact(title: string, desc: string, article_type: string): string {
+// ── Impact Statement Generation — region-aware ──────────────────────
+//
+// PROBLEM the user flagged: India domestic news (SBI Q4 profit, ESOP rules,
+// Britannia plant relocation, Citi India downgrade) was getting global
+// supply-chain bottleneck labels because broad regexes match common
+// English words ("auto" matches "automated", "packaging" matches food
+// packaging, "defence" matches India defence-sector commentary, etc.).
+//
+// FIX: India-region articles get India-specific patterns FIRST. Only when
+// no India-specific bucket fits do we fall through to the global supply-
+// chain labels. The global list is also tightened so generic words don't
+// overmatch.
+function generateImpact(
+  title: string,
+  desc: string,
+  article_type: string,
+  region: string = 'IN',
+): string {
   const text = (title + ' ' + desc).toLowerCase();
 
-  const patterns: [RegExp, string][] = [
-    [/packaging|chiplet|interposer|cowos|hybrid bonding/, 'Advanced packaging capacity constraint — direct compute bottleneck'],
-    [/semiconductor|wafer|fab|tsmc|asml|foundry/, 'Chip production capacity constraint'],
-    [/hbm3e?.*constraint|hbm.*tight|hbm.*shortage|hbm.*allocation/, 'HBM supply constraint — highest margin memory segment'],
-    [/(sk hynix|micron|samsung).{0,20}(hbm|dram|capacity|supply)/, 'Memory company supply signal — watch capacity/allocation'],
-    [/hbm|dram.*shortage|memory.*constraint|memory.*tight/, 'Memory supply cycle — capacity/allocation constraint'],
-    [/ddr5|nand.*tight|nand.*shortage/, 'Memory supply cycle — DDR5/NAND capacity constraint'],
-    [/memory|dram|nand/, 'Memory supply cycle affecting hardware margins'],
-    [/silicon photonics|co-packaged optics|cpo/, 'Silicon photonics — next-gen interconnect bottleneck'],
-    [/photonic|optical|interconnect|co-packaged/, 'Optical/interconnect bandwidth or scaling constraint'],
-    [/nuclear|reactor|atomic|thorium|breeder|npcil|kalpakkam/, 'Strategic energy infrastructure — long-cycle structural constraint'],
-    [/power grid|electricity|transmission|transformer/, 'Power/grid capacity constraint'],
-    [/data center|server|compute|gpu|ai.*infrastructure/, 'Compute infrastructure demand-supply gap'],
-    [/cooling|thermal/, 'Thermal/cooling capacity constraint'],
-    [/shipping|port|freight|logistics|supply chain/, 'Logistics/supply chain disruption'],
-    [/defence|defense|military|drdo|hal|isro/, 'Defence procurement and strategic capability'],
-    [/drug|pharma|fda|usfda|api/, 'Healthcare supply chain constraint'],
-    [/monsoon|crop|fertilizer|agriculture|food/, 'Agricultural supply cycle'],
-    [/rare earth|lithium|cobalt|copper|nickel|mineral/, 'Critical mineral supply constraint'],
-    [/tariff|trade war|sanction|embargo/, 'Trade policy impacting supply flows'],
-    [/oil|energy|opec|crude|fuel/, 'Energy supply dynamics'],
-    [/auto|ev|electric vehicle|battery/, 'Automotive transition demand shift'],
-    [/infrastructure|highway|railway|cement/, 'India infrastructure constraint'],
-    [/npa|credit|nbfc|liquidity|banking/, 'Banking/credit structural constraint'],
-    [/geopolit|china|taiwan|russia|ukraine|iran/, 'Geopolitical supply chain risk'],
+  // ── India-specific labels (run FIRST when region === 'IN') ────────
+  // Captures the news categories Indian institutional investors actually
+  // care about: RBI policy, earnings season, FII/DII flow, sectoral
+  // cycle markers, regulatory actions, capital-market activity, etc.
+  const indiaPatterns: [RegExp, string][] = [
+    // EARNINGS first — most India news this season is Q4 results.
+    [/\b(q[1-4]|fy\s?2[0-9])\s+(result|profit|revenue|earnings|net (profit|income))/i, 'Q4 earnings season — quarterly delta'],
+    [/\bnet profit (rises?|falls?|jumps?|declines?|down|up|grew|grows?)\b/i, 'Quarterly earnings delta'],
+
+    // RBI / monetary policy — distinct from "rate" overmatches.
+    [/\brbi\s+(policy|repo|rate (cut|hike|decision)|mpc|monetary|deputy governor|reshuffle)/i, 'RBI policy / monetary stance'],
+    [/\b(mpc|monetary policy committee|repo rate|reverse repo|crr|slr|liquidity adjustment)\b/i, 'RBI monetary policy signal'],
+    [/\becl framework|expected credit loss\b/i, 'RBI ECL framework — banking provisioning impact'],
+
+    // FII / DII flows — daily/weekly flow signal Indian analysts watch.
+    [/\b(fii|fpi|dii|foreign portfolio investor|domestic institutional|outflow|inflow)\s+(buy|sell|outflow|inflow|net (buy|sell|sold|bought)|stake|holding)/i, 'FII / DII flow signal'],
+
+    // Sector cycle markers — broad enough to catch Indian sectoral news
+    // but specific enough not to match generic supply-chain global news.
+    [/\b(auto sales|monthly (auto|two[- ]wheeler|passenger vehicle))\b/i, 'Auto monthly sales — volume cycle'],
+    [/\b(gst collection|gst revenue|gst mop[- ]?up|gst kitty)/i, 'GST collection — consumption proxy'],
+    [/\b(manufacturing pmi|services pmi|composite pmi|core sector)\b/i, 'PMI / core sector — industrial activity'],
+    [/\b(monsoon (forecast|deficit|progress|rainfall)|imd|rainfall (deficit|surplus))/i, 'Monsoon — rural / agri demand driver'],
+
+    // Capital-market events — IPO, FPO, OFS, block, bulk deals
+    [/\b(ipo|fpo|qip|ofs|rights issue|bonus issue|stock split)\s+(launch|open|close|subscri|alloca|listing|price band|approval)/i, 'Primary market activity / capital raise'],
+    [/\b(block deal|bulk deal|stake (sale|purchase|acquisition)|promoter (sale|exit|stake change))/i, 'Block / bulk deal — institutional flow'],
+    [/\b(promoter pledge|pledge increase|pledge release|insider (trade|trading|buy|sell))\b/i, 'Promoter / insider activity'],
+
+    // Regulatory / SEBI / corporate action
+    [/\b(sebi (order|penalty|action|approval|circular|consultation))\b/i, 'SEBI regulatory action'],
+    [/\b(esop|stock option|grant of (option|shares)|share buyback|buy[- ]?back)\b/i, 'Corporate action — capital allocation'],
+    [/\b(dividend (declaration|payout|record date)|interim dividend|final dividend)\b/i, 'Dividend announcement'],
+    [/\b(merger|demerger|hive[- ]?off|amalgamation|scheme of arrangement|delisting)\b/i, 'Corporate restructuring'],
+
+    // Brokerage / rating actions
+    [/\b(brokerage (upgrade|downgrade|target|rating)|target price (raised?|cut|maintained|reduced)|moody|fitch|s&p|crisil|icra)\s+(downgrade|upgrade|outlook|review|rating)/i, 'Rating / target action'],
+    [/\b(citi|jp morgan|morgan stanley|goldman|nomura|jefferies|kotak|elara|jm financial|emkay)\s+(downgrade|upgrade|target|cuts?|raises?|maintains?|sees?|recommends?)/i, 'Sell-side rating / target action'],
+
+    // India structural bottleneck domains (genuine constraints)
+    [/\b(power deficit|electricity shortage|load shedding|grid (frequency|stability))/i, 'Power / grid capacity constraint'],
+    [/\b(coal (shortage|stockpile|stock|imports?|allocation)|coal india)/i, 'Coal supply — power feedstock'],
+    [/\b(highway contract|nhai (award|tender|contract)|road construction)/i, 'India infrastructure — roads / highways'],
+    [/\b(railway (freight|capex|tender|order)|vande bharat|rail vikas)/i, 'India infrastructure — railways'],
+    [/\b(rare earth|lithium|cobalt|critical mineral|kabil|amrita)\b/i, 'Critical mineral — strategic supply'],
+    [/\b(crude (price|cost)|brent|wti).{0,20}(india|domestic|fuel)/i, 'Crude price → India fuel inflation'],
+    [/\b(rupee|inr|dollar.{0,10}(rate|level)|usd[- ]?inr|forex)\s+(weaken|deprec|fall|rise|strength|crore)/i, 'Rupee / forex pressure'],
+    [/\b(banking|credit growth|loan book|gnpa|nnpa|slippage|provision coverage)/i, 'Banking / credit cycle'],
+    [/\b(npa|stressed asset|asset quality|sma[- ]?[12]|provision)/i, 'Banking asset quality'],
+    [/\b(nbfc|housing finance|microfinance|small finance bank|cost of funds)/i, 'NBFC / shadow banking'],
+
+    // Pharma / IT / Auto / FMCG — sector-specific (only when sector-tag matches)
+    [/\b(usfda (warning|observation|inspection|483)|ema warning|fda 483)/i, 'Pharma — FDA observation / warning'],
+    [/\b(it services|attrition|deal tcv|constant currency|cc growth|wage hike)/i, 'IT services — deal flow / margin'],
+    [/\b(rural (demand|consumption|sales|recovery))/i, 'Rural demand cycle'],
+
+    // Geopolitical with India angle
+    [/\b(india.{0,30}(china|pakistan|sri lanka|bangladesh)|loc|line of (control|actual control)|standoff|border tension)/i, 'India geopolitical / border'],
   ];
 
-  for (const [pattern, statement] of patterns) {
+  if (region === 'IN') {
+    for (const [pattern, statement] of indiaPatterns) {
+      if (pattern.test(text)) return statement;
+    }
+  }
+
+  // ── Global supply-chain labels (US / global news, or India fallback) ─
+  // Tightened: "auto" must be preceded by space/start to avoid matching
+  // "automated"; "memory" requires a memory-context cohort word.
+  const globalPatterns: [RegExp, string][] = [
+    [/\b(packaging|chiplet|interposer|cowos|hybrid bonding)\b.{0,40}\b(capacity|constraint|shortage|tight|allocation|bottleneck)\b/, 'Advanced packaging capacity constraint — direct compute bottleneck'],
+    [/\b(semiconductor|wafer|fab|tsmc|asml|foundry)\b.{0,40}\b(capacity|constraint|shortage|tight|allocation|delay)\b/, 'Chip production capacity constraint'],
+    [/\bhbm3e?\b.{0,30}\b(constraint|tight|shortage|allocation)\b/, 'HBM supply constraint — highest margin memory segment'],
+    [/\b(sk hynix|micron|samsung)\b.{0,30}\b(hbm|dram|capacity|supply)\b/, 'Memory company supply signal — watch capacity/allocation'],
+    [/\b(hbm|dram)\b.{0,30}\b(shortage|tight|constraint|allocation)\b/, 'Memory supply cycle — capacity/allocation constraint'],
+    [/\b(ddr5|nand)\b.{0,30}\b(tight|shortage|allocation)\b/, 'Memory supply cycle — DDR5/NAND capacity constraint'],
+    [/\b(silicon photonics|co-packaged optics|cpo)\b/, 'Silicon photonics — next-gen interconnect bottleneck'],
+    [/\b(power grid|electricity grid|transmission|transformer)\b.{0,40}\b(capacity|constraint|shortage|stress)\b/, 'Power/grid capacity constraint'],
+    [/\bdata center.{0,30}(power|capacity|constraint|build)/, 'Compute infrastructure demand-supply gap'],
+    [/\b(thermal|cooling)\b.{0,30}\b(capacity|constraint|design)\b/, 'Thermal/cooling capacity constraint'],
+    [/\b(shipping|port|freight|supply chain)\b.{0,30}\b(disruption|constraint|delay|congestion)\b/, 'Logistics/supply chain disruption'],
+    [/\b(rare earth|lithium|cobalt)\b.{0,30}\b(supply|constraint|export|allocation)\b/, 'Critical mineral supply constraint'],
+    [/\b(tariff|trade war|sanction|embargo)\b/, 'Trade policy impacting supply flows'],
+    [/\b(opec|crude oil|brent|wti)\b.{0,30}\b(price|supply|cut|production)\b/, 'Energy supply dynamics'],
+    [/\b(geopolit|taiwan strait|russia.{0,15}ukraine|iran.{0,15}war|missile strike)\b/, 'Geopolitical supply chain risk'],
+  ];
+
+  for (const [pattern, statement] of globalPatterns) {
     if (pattern.test(text)) return statement;
   }
 
+  // Fallback by article_type when no specific pattern matches.
   if (article_type === 'BOTTLENECK') return 'Physical system constraint with structural implications';
+  if (article_type === 'EARNINGS') return region === 'IN' ? 'Quarterly earnings — track delta vs estimate' : 'Earnings — vs consensus';
+  if (article_type === 'MACRO') return region === 'IN' ? 'India macro signal' : 'US macro signal';
+  if (article_type === 'GEOPOLITICAL') return 'Geopolitical risk';
   return '';
 }
 
@@ -464,6 +665,25 @@ async function fetchAllNews(): Promise<any[]> {
           }
           const uniqueId = `rss-${Math.abs(hash).toString(36)}-${Buffer.from(idSource).toString('base64').slice(-12)}`;
 
+          // Drop noise/sports/regional-politics/fluff at ingestion time.
+          if (investment_tier >= 4) continue;
+
+          // Consequence score — institutional weight on five dimensions.
+          // Articles scoring below 30 get demoted to tier 3 even if they
+          // passed type classification, so the HIGH-SIGNAL surface only
+          // surfaces things with real consequence.
+          const consequence = computeConsequenceScore(title, desc, article_type);
+          let effectiveTier = investment_tier;
+          if (consequence < 30 && investment_tier <= 2) {
+            // Generic-feel article — demote one tier.
+            effectiveTier = Math.min(3, investment_tier + 1);
+          }
+          if (consequence < 15) {
+            // Low-consequence article that somehow passed classifier;
+            // drop to tier 4 (filter-eligible).
+            continue;
+          }
+
           items.push({
             id: uniqueId,
             title,
@@ -475,13 +695,17 @@ async function fetchAllNews(): Promise<any[]> {
             published_at: pubDate || new Date().toISOString(),
             region,
             article_type,
-            investment_tier,
+            investment_tier: effectiveTier,
+            consequence_score: consequence,
             bottleneck_sub_tag: bottleneck_sub_tag || null,
             bottleneck_level: bottleneck_level || null,
             tickers: tickers,
             primary_ticker: tickers[0] || null,
             sentiment: null,
-            importance_score: investment_tier === 1 ? 0.8 : investment_tier === 2 ? 0.5 : 0.2,
+            // importance_score now uses consequence directly (0-1) rather
+            // than the coarse tier-based 0.2/0.5/0.8 lookup. Lets the
+            // ranker order articles within a tier by structural weight.
+            importance_score: Math.round((consequence / 100) * 100) / 100,
           });
         }
       } catch { /* skip failed feeds */ }
@@ -713,7 +937,7 @@ async function fetchAllNews(): Promise<any[]> {
   // Add impact statements + investment tickers
   const articlesWithImpact = withSynthetics.map(a => ({
     ...a,
-    impact_statement: generateImpact(a.title, a.summary || '', a.article_type),
+    impact_statement: generateImpact(a.title, a.summary || '', a.article_type, a.region),
     investment_tickers: a.article_type === 'BOTTLENECK' ? getInvestmentTickers(a.title + ' ' + (a.summary || '')) : [],
   }));
 
