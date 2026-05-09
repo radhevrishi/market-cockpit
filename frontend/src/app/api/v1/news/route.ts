@@ -581,7 +581,7 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
       IMPLICIT_CONSTRAINT.test(text) ||
       BREAKTHROUGH.test(text) ||
       NAMED_STRUCTURAL_CO.test(text) ||
-      QUANTIFIED_COMMITMENT.test(text);
+      QUANTIFIED_COMMITMENT; // already a boolean from the .test() chain above
     if (!hasRealSignal) {
       // HARD pattern matched but no real signal — drop to GENERAL tier 3.
       return { article_type: 'GENERAL', investment_tier: 3 };
