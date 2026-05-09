@@ -240,7 +240,8 @@ export function buildSnapshot(
   //     (rather than back-fill with a forward-row estimate that would
   //     create a fake beat/miss).
   const revenueActual = quarterMismatch ? fmpAct : finRev;
-  const revenueEstimate = lastSurpIsClosed ? lastRevEst : null;
+  let revenueEstimate = lastSurpIsClosed ? lastRevEst : null;
+  let revenueEstimateSource: 'consensus' | 'prior_quarter_proxy' = 'consensus';
 
   // EPS uses the same priority. Note: EPS displayed already preferred
   // FMP's actualEps (line ~193 in the prior version) because FMP's EPS
@@ -249,7 +250,12 @@ export function buildSnapshot(
   const epsActual = quarterMismatch
     ? (lastSurp?.actualEps ?? null)
     : (lastSurp?.actualEps ?? fin.eps ?? histQ[0]?.eps ?? null);
-  const epsEstimate = lastSurpEpsIsClosed ? lastEpsEst : null;
+  let epsEstimate = lastSurpEpsIsClosed ? lastEpsEst : null;
+  let epsEstimateSource: 'consensus' | 'prior_quarter_proxy' = 'consensus';
+
+  // Prior-quarter proxy fallback for Revenue / EPS estimate is applied
+  // AFTER qoq / qoqRev are computed below — see the block right after
+  // those definitions.
 
   const ebitdaEst = consNext?.ebitdaAvg !== null && consNext?.ebitdaAvg !== undefined
     ? Math.round(consNext.ebitdaAvg * sf * 100) / 100
@@ -264,6 +270,42 @@ export function buildSnapshot(
   // ── QoQ from history (histQ already hoisted above for EPS fallback) ──
   const qoq = histQ[1] || null;
   const qoqRev = qoq?.revenue !== null && qoq?.revenue !== undefined ? Math.round(qoq.revenue * sf * 100) / 100 : null;
+
+  // ── PRIOR-QUARTER PROXY FALLBACK (US small caps only) ────────────────
+  // Cascade for revenue/EPS estimate:
+  //   1. FMP closed pair (lastSurp.{revenue,eps}Estimate) — already
+  //      assigned above when lastSurpIsClosed
+  //   2. NASDAQ.com fallback — folded into lastSurp by the estimates
+  //      route's fetchNasdaqSmallCap when FMP returned empty
+  //   3. PRIOR QUARTER ACTUAL as proxy estimate. Only when steps 1+2
+  //      produced nothing AND ticker is US AND we have a qoqPrior to
+  //      substitute. Effectively a sequential-growth read framed as
+  //      a surprise — labelled with estimateSource='prior_quarter_proxy'
+  //      so the UI surfaces a "(prior Q)" badge and institutional
+  //      readers know it's not a real beat/miss vs street.
+  //
+  // India is excluded — the India pipeline (india-build.ts) already
+  // doesn't surface a Consensus column and uses its own QoQ/YoY-driven
+  // verdict; adding a proxy here would be redundant.
+  const isUS = fin.currency === 'USD';
+  if (isUS && revenueEstimate === null && qoqRev !== null && qoqRev !== 0) {
+    revenueEstimate = qoqRev;
+    revenueEstimateSource = 'prior_quarter_proxy';
+    fallbacksUsed.push(
+      `Prior-quarter proxy used for Revenue: no consensus available (FMP/NASDAQ ` +
+      `both empty for ${fin.ticker}); compared to prior quarter actual ` +
+      `${qoqRev.toFixed(0)} as fallback.`
+    );
+  }
+  if (isUS && epsEstimate === null && qoq?.eps != null && qoq.eps !== 0) {
+    epsEstimate = qoq.eps;
+    epsEstimateSource = 'prior_quarter_proxy';
+    fallbacksUsed.push(
+      `Prior-quarter proxy used for EPS: no consensus available; compared to ` +
+      `prior quarter EPS ${qoq.eps.toFixed(2)} as fallback.`
+    );
+  }
+
   // YoY = same fiscal quarter one year ago. Don't blindly use histQ[4] —
   // some companies have Q4-skipping (10-K replaces 10-Q for Q4), so
   // histQ[4] could be 5 quarters back. Match by PERIOD LABEL instead.
@@ -341,6 +383,7 @@ export function buildSnapshot(
       metric: 'Revenue', unit: 'currency',
       actual: revenueActual,
       estimate: revenueEstimate,
+      estimateSource: revenueEstimateSource,
       prior: quarterMismatch ? yoyRevFromHist : (fin.revPrior ?? yoyRevFromHist),
       qoqPrior: qoqRev,
     }),
@@ -348,6 +391,7 @@ export function buildSnapshot(
       metric: 'EPS', unit: 'count',
       actual: epsActual,
       estimate: epsEstimate,
+      estimateSource: epsEstimateSource,
       prior: quarterMismatch ? yoyEpsFromHist : (fin.epsPrior ?? yoyEpsFromHist),
       qoqPrior: qoq?.eps ?? null,
     }),
@@ -601,11 +645,19 @@ export function buildSnapshot(
   const takeaways: string[] = [];
   if (metrics.revenue.surpriseClass !== 'na' && metrics.revenue.surpriseClass !== 'inline') {
     const dir = (metrics.revenue.surprisePct ?? 0) >= 0 ? 'beat' : 'missed';
-    takeaways.push(`Revenue ${dir} consensus by ${(metrics.revenue.surprisePct ?? 0).toFixed(1)}%`);
+    // Avoid claiming "beat consensus" when the comparison is actually vs
+    // prior quarter (no consensus available). Re-frame as sequential growth.
+    const anchor = metrics.revenue.estimateSource === 'prior_quarter_proxy'
+      ? 'prior quarter'
+      : 'consensus';
+    takeaways.push(`Revenue ${dir} ${anchor} by ${(metrics.revenue.surprisePct ?? 0).toFixed(1)}%`);
   }
   if (metrics.eps.surpriseClass !== 'na' && metrics.eps.surpriseClass !== 'inline') {
     const dir = (metrics.eps.surprisePct ?? 0) >= 0 ? 'beat' : 'missed';
-    takeaways.push(`EPS ${dir} consensus by ${(metrics.eps.surprisePct ?? 0).toFixed(1)}%`);
+    const anchor = metrics.eps.estimateSource === 'prior_quarter_proxy'
+      ? 'prior quarter'
+      : 'consensus';
+    takeaways.push(`EPS ${dir} ${anchor} by ${(metrics.eps.surprisePct ?? 0).toFixed(1)}%`);
   }
   if (metrics.revenue.yoyPct !== null) {
     const dir = metrics.revenue.yoyPct >= 0 ? 'grew' : 'contracted';

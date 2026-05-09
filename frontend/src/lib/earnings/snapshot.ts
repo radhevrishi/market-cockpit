@@ -46,6 +46,12 @@ export interface MetricLine {
   qoqPct: number | null;
   qoqBps: number | null;
   surpriseClass: SurpriseClass;
+  // When 'consensus', estimate is a real analyst consensus (FMP / NASDAQ).
+  // When 'prior_quarter_proxy', estimate equals last quarter's actual —
+  // used as a fallback for ultra-thin small caps with NO sell-side
+  // coverage anywhere. UI must surface this so the user doesn't
+  // mistake QoQ growth for a real beat/miss vs street.
+  estimateSource?: 'consensus' | 'prior_quarter_proxy';
 }
 
 export interface ThemeExposure {
@@ -502,11 +508,17 @@ export function buildMetric(opts: {
   estimate?: number | null;
   prior?: number | null;
   qoqPrior?: number | null;
+  // 'consensus' = real analyst estimate (FMP/NASDAQ/etc.).
+  // 'prior_quarter_proxy' = no consensus available anywhere → prior
+  // quarter actual was substituted as the comparison anchor. UI must
+  // surface this so QoQ growth isn't read as a real surprise vs street.
+  estimateSource?: 'consensus' | 'prior_quarter_proxy';
 }): MetricLine {
   const { metric, unit, actual } = opts;
   const estimate = opts.estimate ?? null;
   const prior = opts.prior ?? null;
   const qoqPrior = opts.qoqPrior ?? null;
+  const estimateSource = opts.estimateSource ?? 'consensus';
 
   let surprisePct: number | null = null;
   let surpriseBps: number | null = null;
@@ -561,5 +573,6 @@ export function buildMetric(opts: {
     qoqPct,
     qoqBps,
     surpriseClass,
+    estimateSource,
   };
 }
