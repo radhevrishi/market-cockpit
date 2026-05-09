@@ -330,9 +330,24 @@ const tierBadge = (tier?: number) => {
 const typeColor = (t: string) =>
   ({ BOTTLENECK: '#EF4444', EARNINGS: '#10B981', RATING_CHANGE: '#F59E0B', MACRO: '#8B5CF6', GEOPOLITICAL: '#DC2626', TARIFF: '#EA580C', CORPORATE: '#06B6D4', GENERAL: '#4A5B6C' })[t] ?? '#4A5B6C';
 const regionFlag = (r: string) => r === 'IN' ? '🇮🇳' : r === 'US' ? '🇺🇸' : '🌐';
-const sentimentBadge = (sentiment?: string) => {
-  if (!sentiment) return null;
-  const upper = sentiment.toUpperCase();
+// sentiment can now be either:
+//   - legacy string ('BULLISH' / 'BEARISH' / 'NEUTRAL')
+//   - new object { direction: 'positive'|'negative'|'neutral', magnitude: 1-10 }
+// Normalise to a string so the existing badge code keeps working.
+function normalizeSentiment(s: any): string {
+  if (!s) return '';
+  if (typeof s === 'string') return s;
+  if (typeof s === 'object' && s.direction) {
+    if (s.direction === 'positive') return 'BULLISH';
+    if (s.direction === 'negative') return 'BEARISH';
+    return 'NEUTRAL';
+  }
+  return '';
+}
+const sentimentBadge = (sentiment?: any) => {
+  const s = normalizeSentiment(sentiment);
+  if (!s) return null;
+  const upper = s.toUpperCase();
   if (upper === 'BULLISH') {
     return { icon: '↑', label: 'Bullish', bg: '#10B98120', color: '#10B981', border: '#10B98140' };
   } else if (upper === 'BEARISH') {
@@ -1387,8 +1402,8 @@ export default function NewsFeedPage() {
       try { return new Date(a.published_at).getTime() > cutoff; } catch { return false; }
     });
     if (recent.length === 0) return null;
-    const bullish = recent.filter(a => (a.sentiment || '').toUpperCase() === 'BULLISH').length;
-    const bearish = recent.filter(a => (a.sentiment || '').toUpperCase() === 'BEARISH').length;
+    const bullish = recent.filter(a => normalizeSentiment(a.sentiment) === 'BULLISH').length;
+    const bearish = recent.filter(a => normalizeSentiment(a.sentiment) === 'BEARISH').length;
     const neutral = recent.length - bullish - bearish;
     const highImpact = recent.filter(a => (a.investment_tier || 0) === 1).length;
     const net = bullish - bearish;
