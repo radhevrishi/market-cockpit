@@ -7,6 +7,10 @@ import {
   classifyAnomaly, classifyTickerAnomaly,
 } from '@/lib/news/institutional-engine';
 import { scoreAnchor, BOTTLENECK_ANCHOR_THRESHOLD, getSourceCredibility, detectResolutionState, inferBottleneckCategory } from '@/lib/news/ontology';
+// PATCH 0051: 10-year semantic graph architecture
+import { scoreGraph, GRAPH_ANCHOR_THRESHOLD, NODE_DISPLAY } from '@/lib/news/semantic-graph';
+import { classifySourceTier, getTierContribution } from '@/lib/news/source-tiers';
+import { recordEvidence } from '@/lib/news/evidence-accumulator';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -102,6 +106,38 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
   { name: 'Bloomberg Markets', url: 'https://feeds.bloomberg.com/markets/news.rss', region: 'US', tier: 'primary' },
   { name: 'Bloomberg Politics', url: 'https://feeds.bloomberg.com/politics/news.rss', region: 'US', tier: 'primary' },
   { name: 'FT Markets', url: 'https://www.ft.com/markets?format=rss', region: 'GLOBAL', tier: 'primary' },
+
+  // ─── PATCH 0051: Specialist feeds — durable domain depth ─────────────
+  // Semis / AI Infra
+  { name: 'TrendForce',           url: 'https://www.trendforce.com/news/feed', region: 'GLOBAL', tier: 'secondary' },
+  { name: 'EE Times',              url: 'https://www.eetimes.com/feed/',        region: 'US',     tier: 'secondary' },
+  { name: 'Data Center Dynamics',  url: 'https://www.datacenterdynamics.com/en/rss/', region: 'GLOBAL', tier: 'secondary' },
+  { name: 'Light Reading',         url: 'https://www.lightreading.com/rss_simple.asp', region: 'US', tier: 'secondary' },
+  { name: 'ServeTheHome',          url: 'https://www.servethehome.com/feed/',   region: 'US',     tier: 'secondary' },
+  { name: 'NextPlatform',          url: 'https://www.nextplatform.com/feed/',   region: 'US',     tier: 'secondary' },
+  // Energy / Grid / Commodity
+  { name: 'Utility Dive',          url: 'https://www.utilitydive.com/feeds/news/', region: 'US', tier: 'secondary' },
+  { name: 'Power Engineering',     url: 'https://www.power-eng.com/feed/',      region: 'US',     tier: 'secondary' },
+  { name: 'World Nuclear News',    url: 'https://world-nuclear-news.org/RSS',   region: 'GLOBAL', tier: 'secondary' },
+  { name: 'OilPrice',              url: 'https://oilprice.com/rss/main',        region: 'GLOBAL', tier: 'secondary' },
+  { name: 'FreightWaves',          url: 'https://www.freightwaves.com/news/feed', region: 'US',   tier: 'secondary' },
+  // Defense / Aerospace
+  { name: 'Defense News',          url: 'https://www.defensenews.com/arc/outboundfeeds/rss/', region: 'US', tier: 'secondary' },
+  { name: 'Breaking Defense',      url: 'https://breakingdefense.com/feed/',    region: 'US',     tier: 'secondary' },
+  { name: 'SpaceNews',             url: 'https://spacenews.com/feed/',          region: 'US',     tier: 'secondary' },
+  { name: 'Aviation Week',         url: 'https://aviationweek.com/rss.xml',     region: 'US',     tier: 'secondary' },
+  // India infra / industrial
+  { name: 'ET Infra',              url: 'https://infra.economictimes.indiatimes.com/rss/topstories', region: 'IN', tier: 'secondary' },
+  { name: 'ET EnergyWorld',        url: 'https://energy.economictimes.indiatimes.com/rss/topstories', region: 'IN', tier: 'secondary' },
+  { name: 'ET Telecom',            url: 'https://telecom.economictimes.indiatimes.com/rss/topstories', region: 'IN', tier: 'secondary' },
+  { name: 'Power Line',            url: 'https://powerline.net.in/feed/',       region: 'IN',     tier: 'secondary' },
+  { name: 'Renewable Watch',       url: 'https://renewablewatch.in/feed/',      region: 'IN',     tier: 'secondary' },
+  { name: 'Construction World',    url: 'https://www.constructionworld.in/rss', region: 'IN',     tier: 'secondary' },
+  // India defense
+  { name: 'Livefist',              url: 'https://www.livefistdefence.com/feed', region: 'IN',     tier: 'secondary' },
+  { name: 'IDRW',                  url: 'https://www.idrw.org/feed/',           region: 'IN',     tier: 'secondary' },
+  // India electronics / EMS
+  { name: 'ElectronicsB2B',        url: 'https://www.electronicsb2b.com/feed/', region: 'IN',     tier: 'secondary' },
 ];
 
 // Domain denylist for BOTTLENECK tier escalation. These sources can
@@ -111,12 +147,12 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v12'; // v12: intelligence layer (patch 0050)
+const CACHE_KEY = 'news:articles:v13'; // v13: semantic graph + source tiers + evidence (patch 0051)
 const CACHE_TTL = 300; // 5 min
-// v11 → v12 bump because article schema now includes
-// institutional_impact_label, why_this_matters, consensus_variant,
-// and causal_chain fields. Older entries lack them.
-const BOTTLENECK_PERSISTENT_KEY = 'bottleneck:articles:persistent:v12';
+// v12 → v13 bump: schema now includes graph_primary_node,
+// graph_event_class, graph_dependent_nodes, source_tier_v2,
+// source_multiplier. Older entries lack them.
+const BOTTLENECK_PERSISTENT_KEY = 'bottleneck:articles:persistent:v13';
 const BOTTLENECK_TTL = 7776000; // 90 days in seconds
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1128,9 +1164,15 @@ async function fetchAllNews(): Promise<any[]> {
           const anchor = scoreAnchor(title, desc);
           const hasAnchor = anchor.total >= BOTTLENECK_ANCHOR_THRESHOLD;
 
-          // ── PATCH 0050: Source credibility weighting (replaces denylist) ──
-          // No more hard denylist. Each source gets a credibility factor
-          // and a flag whether bottleneck escalation needs a strong anchor.
+          // ── PATCH 0051: Semantic graph score (10-year architecture) ──
+          // The graph maps tokens to permanent SystemNode primitives.
+          // Adding new themes is a data update, not a code change.
+          const graph = scoreGraph(title, desc);
+
+          // ── PATCH 0050+0051: Source tier (replaces denylist) ──
+          // PATCH 0051 introduces tier-based classification of every source.
+          // The legacy credibility map is still consulted as a fallback.
+          const tierMeta = getTierContribution(feed.name);
           const cred = getSourceCredibility(feed.name);
 
           // BOTTLENECK demotion: only if no anchor OR (anchor required and
@@ -1182,8 +1224,14 @@ async function fetchAllNews(): Promise<any[]> {
 
           // Consequence score — institutional weight on five dimensions.
           const rawConsequence = computeConsequenceScore(title, desc, article_type);
-          // PATCH 0050: apply source credibility factor — replaces denylist.
-          const consequence = Math.round(rawConsequence * cred.factor);
+          // PATCH 0050: apply source credibility factor (legacy).
+          // PATCH 0051: combine with tier multiplier for richer weighting.
+          //   PRIMARY ×1.15, SPECIALIST ×1.10, GENERALIST ×0.95,
+          //   EDITORIAL ×0.55, PRESS_RELEASE ×0.40, SOCIAL ×0.30.
+          const tierMultiplier = tierMeta.multiplier;
+          const credMultiplier = cred.factor;
+          const combinedMultiplier = Math.min(1.20, (tierMultiplier + credMultiplier) / 2);
+          const consequence = Math.max(0, Math.round(rawConsequence * combinedMultiplier - tierMeta.noise_penalty));
           let effectiveTier = investment_tier;
           if (consequence < 30 && investment_tier <= 2) {
             effectiveTier = Math.min(3, investment_tier + 1);
@@ -1328,6 +1376,15 @@ async function fetchAllNews(): Promise<any[]> {
             credibility_factor: cred.factor,
             anchor_score: anchor.total,
             anchor_categories: anchor.categories_hit,
+            // PATCH 0051: 10-year architecture
+            source_tier_v2: classifySourceTier(feed.name),
+            source_multiplier: combinedMultiplier,
+            graph_primary_node: graph.primary_node,
+            graph_primary_label: NODE_DISPLAY[graph.primary_node],
+            graph_event_class: graph.event_class,
+            graph_nodes_hit: graph.nodes_hit,
+            graph_dependent_nodes: graph.dependent_nodes,
+            graph_total_weight: graph.total_weight,
             specific_impact: specificImpact,
             exposure_beneficiaries: exposure.beneficiaries,
             exposure_at_risk: exposure.atRisk,
@@ -1648,6 +1705,26 @@ async function fetchAllNews(): Promise<any[]> {
       ),
   ).catch(() => { /* non-fatal */ });
 
+  // ── PATCH 0051: Evidence accumulator ──
+  // For each article that hits a SystemNode, record a source-weighted
+  // sample. Over time, themes emerge organically: HBM shortage articles
+  // accumulate confidence in MEMORY_INFRA, photonics articles in
+  // INTERCONNECT_INFRA, etc. Fire-and-forget.
+  Promise.all(
+    articlesWithImpact
+      .filter((a: any) => a.graph_primary_node && a.graph_primary_node !== 'NONE')
+      .slice(0, 40)
+      .map((a: any) =>
+        recordEvidence(a.graph_primary_node, {
+          article_id: a.id,
+          title: a.title,
+          source: a.source_name,
+          tier: a.source_tier_v2 || 'UNKNOWN',
+          raw_weight: Math.min(10, Math.round((a.graph_total_weight || 0) / 4)),
+        }),
+      ),
+  ).catch(() => { /* non-fatal */ });
+
   // ── Persistence: save structural bottleneck articles to KV ──
   const DAY = 86400;
   const bottleneckArticles = articlesWithImpact.filter(a => a.article_type === 'BOTTLENECK');
@@ -1887,6 +1964,29 @@ export async function GET(request: Request) {
     // Counts articles per ticker and per theme. Tickers/themes with
     // ≥3 articles in the last 24h are flagged as "anomalous" — usually
     // means something is developing.
+    // ── PATCH 0051: Evidence ledger endpoint ──
+    // Returns rolling 30-day theme confidence per SystemNode. Lets the
+    // frontend build a "themes emerging" widget that surfaces what the
+    // accumulated evidence says — independent of any single article.
+    const evidenceFlag = searchParams.get('evidence') === '1';
+    if (evidenceFlag) {
+      const { readAllEvidence } = await import('@/lib/news/evidence-accumulator');
+      const allNodes: Array<import('@/lib/news/semantic-graph').SystemNode> = [
+        'COMPUTE_INFRA','MEMORY_INFRA','PACKAGING_INFRA','FABRICATION_INFRA',
+        'INTERCONNECT_INFRA','COOLING_INFRA','NETWORK_BANDWIDTH',
+        'ENERGY_INFRA','NUCLEAR_INFRA','OIL_GAS_INFRA','RENEWABLE_INFRA',
+        'LOGISTICS_INFRA','TRANSPORT_INFRA','DEFENSE_INFRA','AEROSPACE_INFRA',
+        'RESOURCE_SCARCITY','AGRI_INFRA','MANUFACTURING_CAPACITY',
+        'LABOR_CONSTRAINT','CAPITAL_CONSTRAINT',
+      ];
+      const all = await readAllEvidence(allNodes);
+      return NextResponse.json({
+        nodes: all,
+        section_title: 'Theme Confidence Ledger',
+        section_subtitle: 'Source-weighted evidence accumulation, 30-day rolling decay',
+      });
+    }
+
     if (anomalies) {
       const tickerCount: Record<string, number> = {};
       const themeCount: Record<string, number> = {};

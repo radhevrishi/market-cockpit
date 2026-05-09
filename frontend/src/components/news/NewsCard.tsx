@@ -190,6 +190,22 @@ export default function NewsCard({ article, onTickerClick }: Props) {
                   {tag.replace(/_/g, ' ').toLowerCase()}
                 </span>
               ))}
+              {/* PATCH 0051: graph node + event class pills */}
+              {(article as any).graph_primary_label && (article as any).graph_primary_node !== 'NONE' && (
+                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-teal-500/15 text-teal-300 border border-teal-500/30" title="System node — permanent ontology primitive">
+                  ⬢ {(article as any).graph_primary_label}
+                </span>
+              )}
+              {(article as any).graph_event_class && (
+                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${
+                  (article as any).graph_event_class === 'SECULAR' ? 'bg-fuchsia-500/20 text-fuchsia-200 border-fuchsia-500/40' :
+                  (article as any).graph_event_class === 'STRUCTURE' ? 'bg-violet-500/20 text-violet-200 border-violet-500/40' :
+                  (article as any).graph_event_class === 'CYCLE' ? 'bg-indigo-500/20 text-indigo-200 border-indigo-500/40' :
+                  'bg-zinc-500/15 text-zinc-300 border-zinc-500/30'
+                }`} title="Event vs structure">
+                  {(article as any).graph_event_class.toLowerCase()}
+                </span>
+              )}
             </div>
           )}
 
