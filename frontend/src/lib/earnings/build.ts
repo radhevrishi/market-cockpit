@@ -80,6 +80,12 @@ export interface EstimatesInput {
   } | null;
   consensusFY?: any;
   lastReportedSurprise?: {
+    // Press-release / announcement date from FMP /stable/earnings.
+    // Used by the cross-provider quarter-mismatch reconciliation log
+    // to surface which calendar quarter FMP is reporting (vs the
+    // EDGAR-reported fin.period). Optional because older snapshot
+    // sources may not populate it.
+    date?: string;
     actualEps: number | null;
     estimateEps: number | null;
     actualRevenue: number | null;
