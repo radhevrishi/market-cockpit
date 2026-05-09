@@ -357,9 +357,27 @@ const sentimentBadge = (sentiment?: any) => {
   }
   return null;
 };
-const timeAgo = (iso: string) => {
+// Safely parse a date — handles RSS feeds (BSE / SEBI / WSJ etc.) that
+// occasionally return malformed pubDate strings. Returns null on
+// invalid input so callers can render "—" instead of crashing.
+function safeDate(iso: string | undefined | null): Date | null {
+  if (!iso) return null;
   try {
     const d = new Date(iso);
+    if (isNaN(d.getTime())) return null;
+    return d;
+  } catch { return null; }
+}
+function safeRelative(iso: string | undefined | null): string {
+  const d = safeDate(iso);
+  if (!d) return '';
+  try { return formatDistanceToNow(d, { addSuffix: true }); }
+  catch { return ''; }
+}
+const timeAgo = (iso: string) => {
+  try {
+    const d = safeDate(iso);
+    if (!d) return '—';
     const now = new Date();
     // If date is in the future, just show the absolute time
     if (d > now) {
@@ -1686,7 +1704,7 @@ export default function NewsFeedPage() {
             {mustRead.slice(0, 5).map((art, idx) => {
               const syms = getTickerSymbols(art);
               const url = getUrl(art);
-              const time = art.published_at ? formatDistanceToNow(new Date(art.published_at), { addSuffix: true }) : '';
+              const time = safeRelative(art.published_at);
               return (
                 <a
                   key={art.id || idx}

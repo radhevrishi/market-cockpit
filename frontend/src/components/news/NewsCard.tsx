@@ -37,7 +37,17 @@ export default function NewsCard({ article, onTickerClick }: Props) {
   const [expanded, setExpanded] = useState(false);
   const tier = importanceTier(article.importance_score ?? 0);
   const badge = TYPE_BADGE[article.article_type ?? 'GENERAL'] ?? TYPE_BADGE.GENERAL;
-  const timeAgo = article.published_at ? formatDistanceToNow(new Date(article.published_at), { addSuffix: true }) : '';
+  // Defensive: some new RSS feeds (BSE / SEBI / WSJ) emit malformed
+  // pubDate strings that crash formatDistanceToNow with "Invalid time
+  // value". Validate before formatting; fallback to '' on bad input.
+  const timeAgo = (() => {
+    if (!article.published_at) return '';
+    try {
+      const d = new Date(article.published_at);
+      if (isNaN(d.getTime())) return '';
+      return formatDistanceToNow(d, { addSuffix: true });
+    } catch { return ''; }
+  })();
 
   return (
     <div className="bg-[#1A2B3C] border border-[#2A3B4C] rounded-lg p-4 hover:border-[#0F7ABF]/50 transition-colors group">

@@ -993,7 +993,13 @@ async function fetchAllNews(): Promise<any[]> {
             source: feed.name,
             source_tier: feed.tier,
             source_url: link,
-            published_at: pubDate || new Date().toISOString(),
+            // Validate pubDate before storing — some new RSS feeds emit
+            // malformed dates that crash the UI's formatDistanceToNow.
+            published_at: (() => {
+              if (!pubDate) return new Date().toISOString();
+              const d = new Date(pubDate);
+              return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+            })(),
             region,
             article_type,
             investment_tier: effectiveTier,
