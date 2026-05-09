@@ -230,9 +230,16 @@ export function IndiaInstitutionalReport({
       {/* ── ONE-LINE INSTITUTIONAL VERDICT — what to do at a glance ── */}
       {ix.topLine && (() => {
         const v = ix.topLine.verdict;
+        // WATCHLIST = amber-orange ('expensive but quality, wait for entry').
+        // Distinct from AVOID (red-orange) and HOLD (yellow).
         const verdictColor =
-          v === 'BUY' ? GREEN : v === 'ACCUMULATE' ? '#86efac' : v === 'HOLD' ? '#fbbf24' :
-          v === 'NEUTRAL' ? MUTED : v === 'AVOID' ? '#fb923c' : '#f87171';
+          v === 'BUY' ? GREEN
+          : v === 'ACCUMULATE' ? '#86efac'
+          : v === 'HOLD' ? '#fbbf24'
+          : v === 'NEUTRAL' ? MUTED
+          : v === 'WATCHLIST' ? '#facc15'  // amber — quality + caution
+          : v === 'AVOID' ? '#fb923c'
+          : '#f87171';
         const fwd = ix.topLine.forwardLook;
         const fwdColor = fwd
           ? fwd.grade === 'very_positive' ? GREEN
@@ -258,6 +265,13 @@ export function IndiaInstitutionalReport({
               )}
               {ix.valuation && ix.valuation.tier !== 'na' && (() => {
                 const val = ix.valuation;
+                // 'bubble' renamed to 'EXPENSIVE' on the pill — bubble is
+                // a charged term that implies fundamentals AND price are
+                // disconnected. The new PEG-aware tiering downgrades a
+                // bubble P/E to 'stretched' when growth justifies, so
+                // when 'bubble' DOES fire it means even adjusted for
+                // growth the multiple is dislocated. Show as EXPENSIVE
+                // (informationally accurate, less inflammatory).
                 const valColor =
                   val.tier === 'bubble' ? '#ef4444'
                   : val.tier === 'stretched' ? '#fb923c'
@@ -270,7 +284,7 @@ export function IndiaInstitutionalReport({
                   (val.vsSectorMidX != null ? `${val.vsSectorMidX}× sector mid. ` : '') +
                   val.label;
                 const lbl =
-                  val.tier === 'bubble' ? 'BUBBLE'
+                  val.tier === 'bubble' ? 'EXPENSIVE'
                   : val.tier === 'stretched' ? 'STRETCHED'
                   : val.tier === 'premium' ? 'PREMIUM'
                   : 'FAIR';

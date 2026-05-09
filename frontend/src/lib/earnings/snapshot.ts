@@ -361,7 +361,13 @@ export interface IndiaExtras {
   // user knows at a glance "what to do with this company".
   topLine?: {
     headline: string;        // e.g. "Q4 rebound but margins still under YoY pressure"
-    verdict: 'BUY' | 'ACCUMULATE' | 'HOLD' | 'NEUTRAL' | 'AVOID' | 'SELL';
+    // WATCHLIST = high-quality fundamentals + stretched/bubble valuation.
+    // Sits between HOLD and AVOID in tier ordering. Used when the
+    // business is improving but the multiple is rich enough that an
+    // institutional reader should wait for entry rather than enter
+    // immediately. AVOID stays reserved for actual fundamental
+    // deterioration / governance breaks / accounting flags.
+    verdict: 'BUY' | 'ACCUMULATE' | 'HOLD' | 'NEUTRAL' | 'WATCHLIST' | 'AVOID' | 'SELL';
     rationale: string;        // one short clause explaining the verdict
     watchPoints: string[];    // 2-3 KPIs / signals to monitor
     // Forward-looking signal — derived from guidance.direction + concall

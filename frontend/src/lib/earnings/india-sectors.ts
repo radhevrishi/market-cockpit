@@ -131,17 +131,70 @@ export interface ValuationAssessment {
   vsSectorMidX: number | null;
 }
 
-export function assessValuation(pe: number | null | undefined, sector: IndiaSector): ValuationAssessment {
+// PEG-aware valuation. Growth context can downgrade a "bubble" P/E back
+// to "stretched" when earnings compounding justifies the multiple.
+//
+// PEG = P/E ÷ EPS growth rate (4Q YoY trailing avg, in %).
+// Institutional rule of thumb:
+//   PEG <= 1.0  → cheap for the growth on offer
+//   PEG <= 1.5  → fair for growth
+//   PEG <= 2.0  → premium but defensible
+//   PEG <= 3.0  → stretched
+//   PEG  > 3.0  → expensive (true overvaluation, growth doesn't justify)
+//
+// The function returns the SAME ValuationAssessment shape but the tier
+// is now growth-adjusted: a 105x P/E that would otherwise be 'bubble'
+// becomes 'stretched' if EPS is compounding 50%+ (PEG ~2.1).
+export function assessValuation(
+  pe: number | null | undefined,
+  sector: IndiaSector,
+  epsGrowthPct: number | null = null,  // 4Q YoY trailing avg, pass null when unknown
+): ValuationAssessment {
   const band = VALUATION_BANDS[sector];
   if (pe == null || !Number.isFinite(pe) || pe <= 0) {
     return { tier: 'na', band, pe: null, label: 'P/E n/a', vsSectorMidX: null };
   }
   const mid = (band.fairLow + band.fairHigh) / 2;
   const vsMid = mid > 0 ? Math.round((pe / mid) * 10) / 10 : null;
-  if (pe <= band.fairHigh) return { tier: 'fair', band, pe, label: 'Fair valuation', vsSectorMidX: vsMid };
-  if (pe <= band.stretched) return { tier: 'premium', band, pe, label: 'Premium valuation', vsSectorMidX: vsMid };
-  if (pe <= band.bubble) return { tier: 'stretched', band, pe, label: 'Stretched — caps verdict at Hold', vsSectorMidX: vsMid };
-  return { tier: 'bubble', band, pe, label: 'Bubble — caps verdict at Avoid', vsSectorMidX: vsMid };
+
+  // Step 1 — raw band tier from sector P/E ranges.
+  let tier: ValuationTier;
+  if (pe <= band.fairHigh) tier = 'fair';
+  else if (pe <= band.stretched) tier = 'premium';
+  else if (pe <= band.bubble) tier = 'stretched';
+  else tier = 'bubble';
+
+  // Step 2 — growth re-grade. When EPS is compounding strongly,
+  // calculate PEG and downgrade the tier severity.
+  //   PEG <= 2  : downgrade bubble → stretched, stretched → premium
+  //   PEG <= 1.5: downgrade bubble → premium
+  //   PEG <= 1  : downgrade bubble → fair (cheap for growth)
+  // Only applies when epsGrowthPct >= 15% (else PEG math is meaningless;
+  // small growers with high P/E really are expensive).
+  let pegReason = '';
+  if (epsGrowthPct !== null && epsGrowthPct >= 15) {
+    const peg = pe / epsGrowthPct;
+    pegReason = ` PEG ${peg.toFixed(1)} on ${epsGrowthPct.toFixed(0)}% EPS growth`;
+    if (peg <= 1.0) {
+      tier = 'fair';
+    } else if (peg <= 1.5) {
+      if (tier === 'bubble' || tier === 'stretched') tier = 'premium';
+    } else if (peg <= 2.0) {
+      if (tier === 'bubble') tier = 'stretched';
+    } else if (peg <= 3.0) {
+      // No downgrade — already at appropriate tier
+    } else {
+      // PEG > 3 with high growth: still expensive
+    }
+  }
+
+  let label: string;
+  if (tier === 'fair') label = `Fair valuation${pegReason}`;
+  else if (tier === 'premium') label = `Premium valuation${pegReason}`;
+  else if (tier === 'stretched') label = `Stretched — quality + premium pricing${pegReason}`;
+  else label = `Expensive — multiple disconnected from growth${pegReason}`;
+
+  return { tier, band, pe, label, vsSectorMidX: vsMid };
 }
 
 // Sector → working-capital benchmark map. Kept separate from

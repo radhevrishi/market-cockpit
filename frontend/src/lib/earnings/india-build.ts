@@ -891,10 +891,34 @@ function computeIndiaExtras(opts: {
     workingCapital.cashConversionCycle !== null
       ? score01(-workingCapital.cashConversionCycle, -wcBenchCCC[2], -wcBenchCCC[0])
       : 50;
-  const promoterScore =
-    promoterChangeQoQ !== null
-      ? score01(promoterChangeQoQ, -1.0, 1.0)
-      : (governance.promoterHoldingPct !== null && governance.promoterHoldingPct >= 50 ? 65 : 50);
+  // Promoter signal — sliding scale recalibrated.
+  //
+  // OLD logic: score01(promoterChangeQoQ, -1.0, 1.0) which mapped a
+  // 1.52 pp decline to score 0/100 — that's "severe governance risk"
+  // territory and is excessively punitive. A 1-2 pp drop on a single
+  // quarter could be OFS / institutional placement / family
+  // structuring / ESOP dilution — NOT automatically a sell signal.
+  //
+  // NEW: wider band so small declines don't slam to floor.
+  //   -3 pp QoQ → ~0   (severe — large drop, governance flag)
+  //   -2 pp QoQ → ~25
+  //   -1.5 pp   → ~37  (AEROFLEX case)
+  //   -1   pp   → ~50
+  //   -0.5 pp   → ~62
+  //    0   pp   → ~75
+  //   +1   pp   → ~100 (accumulation)
+  // Combined with promoter_holding floor (>= 50% → +5 bias) and trust
+  // breakdown items (pledge / consistency / institutional flow).
+  const promoterScore = (() => {
+    if (promoterChangeQoQ === null) {
+      return (governance.promoterHoldingPct !== null && governance.promoterHoldingPct >= 50 ? 65 : 50);
+    }
+    const base = score01(promoterChangeQoQ, -3.0, 1.0);
+    // Add small floor bonus when absolute holding is high (>= 60%)
+    // since strong baseline holding partially offsets a single QoQ tick.
+    const floorBonus = (governance.promoterHoldingPct ?? 0) >= 60 ? 5 : 0;
+    return Math.min(100, Math.round(base + floorBonus));
+  })();
   // CFO/PAT score also sector-aware. Anchor: mid threshold scores ~50,
   // good threshold scores ~90, well above good caps at 100.
   const cfoBench = wcBench.cfoOverPat;
@@ -993,7 +1017,19 @@ function computeIndiaExtras(opts: {
   // industrial like AEROFLEX never emits a bullish verdict purely on
   // fundamentals. The valuation tier flows into buildTopLineVerdict via
   // valuationCap and surfaces in IndiaExtras.valuation for the UI.
-  const valuationAssessment = assessValuation(topMetrics.peRatio, sector);
+  // EPS growth — 4Q YoY trailing average from the quarterly trend.
+  // Passed into assessValuation so the PEG-aware logic can downgrade
+  // "bubble" → "stretched" when growth justifies the multiple.
+  // For AEROFLEX (Q1-Q4 FY26 EPS YoY 52% avg, P/E 105 → PEG ~2.0 →
+  // tier becomes 'stretched' instead of 'bubble').
+  const epsYoYWindow = qtrendBase
+    .slice(-4)
+    .map((q) => q.yoyEpsPct ?? null)
+    .filter((v): v is number => v !== null && Number.isFinite(v));
+  const epsGrowthAvg = epsYoYWindow.length >= 1
+    ? epsYoYWindow.reduce((s, v) => s + v, 0) / epsYoYWindow.length
+    : null;
+  const valuationAssessment = assessValuation(topMetrics.peRatio, sector, epsGrowthAvg);
 
   const topLine = buildTopLineVerdict({
     fundamentalScore,
@@ -1076,8 +1112,12 @@ function buildTopLineVerdict(args: {
   // HOLD→ACCUMULATE, AVOID→NEUTRAL). A weak concall pulls it down one.
   // Pinned at the extremes — BUY can't go higher, SELL can't go lower.
   const fwdScore = (fs.components as any).forward?.score as number | undefined;
+  // WATCHLIST sits between AVOID and NEUTRAL — used when fundamentals are
+  // strong but valuation is so rich that an institutional reader should
+  // wait for entry rather than enter immediately. AVOID stays reserved
+  // for actual fundamental deterioration.
   const tiers: NonNullable<IndiaExtras['topLine']>['verdict'][] = [
-    'SELL', 'AVOID', 'NEUTRAL', 'HOLD', 'ACCUMULATE', 'BUY',
+    'SELL', 'AVOID', 'WATCHLIST', 'NEUTRAL', 'HOLD', 'ACCUMULATE', 'BUY',
   ];
   if (typeof fwdScore === 'number') {
     const idx = tiers.indexOf(verdict);
@@ -1098,19 +1138,35 @@ function buildTopLineVerdict(args: {
     if (idx > 0) verdict = tiers[idx - 1];
   }
 
-  // ── VALUATION DISCIPLINE CAP ─────────────────────────────────────────
-  // Fundamentals can be excellent and still not justify any P/E. A 105x
-  // P/E iron-and-steel name (AEROFLEX) shouldn't read ACCUMULATE off
-  // pure-fundamentals scoring; the sector P/E band caps the verdict.
-  //   - 'stretched' (1.5–2× sector fair max): cap verdict at HOLD
-  //   - 'bubble'    (> 2× sector fair max):   cap verdict at AVOID
-  // 'premium' is only a label — institutional readers see the tag but
-  // the verdict isn't capped.
+  // ── VALUATION DISCIPLINE CAP (5-dimension aware) ─────────────────────
+  // Old logic forced AVOID at "bubble" P/E regardless of fundamentals.
+  // That collapsed business quality + earnings momentum + valuation
+  // into one tag and produced the AEROFLEX contradiction:
+  //   AVOID + FORWARD STRONG + Health 85 + Concall 93 — internally
+  //   inconsistent for a buy-side reader.
+  //
+  // New logic separates fundamental strength (fs.overall) from valuation
+  // tier and only forces AVOID when fundamentals ALSO support it.
+  //
+  // Quality-aware cap matrix:
+  //                 Strong fundamentals    Weak fundamentals
+  //                 (fs.overall >= 70)     (fs.overall < 70)
+  //   stretched     cap at ACCUMULATE      cap at HOLD
+  //   bubble        cap at WATCHLIST       cap at AVOID
+  //
+  // WATCHLIST = "high quality, valuation premium is the risk — wait for
+  // entry" — institutionally honest framing for an expensive but
+  // fundamentally-improving issuer.
   const valuationTier = args.valuationTier ?? 'na';
   if (valuationTier === 'stretched' || valuationTier === 'bubble') {
-    const capIdx = valuationTier === 'bubble'
-      ? tiers.indexOf('AVOID')
-      : tiers.indexOf('HOLD');
+    const fundamentalsStrong = fs.overall >= 70;
+    let capLabel: NonNullable<IndiaExtras['topLine']>['verdict'];
+    if (valuationTier === 'bubble') {
+      capLabel = fundamentalsStrong ? 'WATCHLIST' : 'AVOID';
+    } else {
+      capLabel = fundamentalsStrong ? 'ACCUMULATE' : 'HOLD';
+    }
+    const capIdx = tiers.indexOf(capLabel);
     const curIdx = tiers.indexOf(verdict);
     if (curIdx > capIdx) verdict = tiers[capIdx];
   }
@@ -1162,12 +1218,48 @@ function buildTopLineVerdict(args: {
   const headline = parts.join(' · ');
 
   // ── Rationale clause for the verdict ─────────────────────────────────
+  // Quality-aware: text reflects ACTUAL fundamentals, not just the
+  // verdict label. AEROFLEX (Health 85, Concall 93, Forward Strong)
+  // capped at WATCHLIST by valuation must NOT read "deteriorating
+  // fundamentals" — the fundamentals are improving; valuation is the
+  // single risk. We branch on fs.overall + valuation tier to pick
+  // the institutionally-honest framing.
   const rationale = (() => {
+    const valTier = args.valuationTier ?? 'na';
+    const valNote =
+      valTier === 'bubble' ? 'multiple disconnected from sector norms'
+      : valTier === 'stretched' ? 'multiple stretched vs sector'
+      : valTier === 'premium' ? 'premium valuation'
+      : '';
+
+    // WATCHLIST is exclusively quality + expensive. Frame it as such.
+    if (verdict === 'WATCHLIST') {
+      return `Quality fundamentals (Health ${fs.overall}/100) — ${valNote || 'valuation rich'}; watchlist for entry on correction or execution confirmation`;
+    }
     if (verdict === 'BUY') return 'Fundamentals improving across growth, margin, and cash conversion';
-    if (verdict === 'ACCUMULATE') return 'Quality fundamentals — accumulate on dips';
-    if (verdict === 'HOLD') return 'Fundamentals stable but no near-term catalyst — hold and monitor';
+    if (verdict === 'ACCUMULATE') {
+      // Strong fundamentals + (possibly) stretched valuation — reflect both.
+      if (valTier === 'stretched') return `Quality fundamentals; valuation stretched — accumulate on dips, not at all-time highs`;
+      return 'Quality fundamentals — accumulate on dips';
+    }
+    if (verdict === 'HOLD') {
+      // HOLD can come from neutral fundamentals OR strong fund + stretched val.
+      // Distinguish by fs.overall:
+      if (fs.overall >= 70 && (valTier === 'stretched' || valTier === 'premium')) {
+        return `Strong fundamentals but ${valNote} — wait for valuation reset`;
+      }
+      return 'Fundamentals stable but no near-term catalyst — hold and monitor';
+    }
     if (verdict === 'NEUTRAL') return primaryRisk ? `Mixed signals; primary concern: ${primaryRisk}` : 'Mixed signals — wait for clearer trend';
-    if (verdict === 'AVOID') return primaryRisk ? `Deteriorating fundamentals; key issue: ${primaryRisk}` : 'Deteriorating fundamentals — wait for stabilisation';
+    if (verdict === 'AVOID') {
+      // AVOID is now reserved for actual deterioration. If fs.overall
+      // is high and only valuation triggered the cap, it should have
+      // been WATCHLIST — but defensively hand back honest text.
+      if (fs.overall >= 70 && valTier === 'bubble') {
+        return `Quality fundamentals but ${valNote}; valuation risk dominant — defer entry`;
+      }
+      return primaryRisk ? `Deteriorating fundamentals; key issue: ${primaryRisk}` : 'Deteriorating fundamentals — wait for stabilisation';
+    }
     return primaryRisk ? `Multiple deteriorating signals; key issue: ${primaryRisk}` : 'Material deterioration across fundamentals';
   })();
 
