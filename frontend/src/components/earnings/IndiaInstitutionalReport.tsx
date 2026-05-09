@@ -256,6 +256,33 @@ export function IndiaInstitutionalReport({
                   FORWARD: {fwd.label}
                 </span>
               )}
+              {ix.valuation && ix.valuation.tier !== 'na' && (() => {
+                const val = ix.valuation;
+                const valColor =
+                  val.tier === 'bubble' ? '#ef4444'
+                  : val.tier === 'stretched' ? '#fb923c'
+                  : val.tier === 'premium' ? '#fbbf24'
+                  : '#10b981';
+                const tip =
+                  `P/E ${val.pe?.toFixed(0) ?? '—'}× vs sector fair band ` +
+                  `${val.fairLow}–${val.fairHigh}× (stretched > ${val.stretched}×, ` +
+                  `bubble > ${val.bubble}×). ` +
+                  (val.vsSectorMidX != null ? `${val.vsSectorMidX}× sector mid. ` : '') +
+                  val.label;
+                const lbl =
+                  val.tier === 'bubble' ? 'BUBBLE'
+                  : val.tier === 'stretched' ? 'STRETCHED'
+                  : val.tier === 'premium' ? 'PREMIUM'
+                  : 'FAIR';
+                return (
+                  <span
+                    title={tip}
+                    style={{ fontSize: 11, fontWeight: 800, color: valColor, fontFamily: MONO, letterSpacing: 0.8, padding: '3px 10px', borderRadius: 4, background: `${valColor}15`, border: `1px solid ${valColor}40`, cursor: 'help' }}
+                  >
+                    P/E: {lbl}
+                  </span>
+                );
+              })()}
               <span style={{ fontSize: 14, fontWeight: 700, color: TEXT, lineHeight: 1.4, flex: 1, minWidth: 0 }}>
                 {ix.topLine.headline}
               </span>
@@ -539,6 +566,104 @@ export function IndiaInstitutionalReport({
           hint="Earnings → cash conversion"
         />
       </div>
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          F2. RISK PROFILE — extracted from concall transcript
+              Shows customer/export concentration, FX hedging, debt
+              refinancing notes, commodity sensitivity, WC stress.
+              Each metric only renders when concall extraction found
+              evidence; absence is treated as "not disclosed", not OK.
+         ═══════════════════════════════════════════════════════════════════ */}
+      {ix.concall?.riskProfile && (() => {
+        const r = ix.concall.riskProfile;
+        const hasAny =
+          r.customerConcentrationPct !== null ||
+          r.customerConcentrationQuote !== null ||
+          r.exportConcentrationPct !== null ||
+          r.fxHedgePct !== null ||
+          r.fxHedgeQuote !== null ||
+          r.debtRefinancingFlag ||
+          r.commoditySensitivityFlag ||
+          r.workingCapitalStressFlag;
+        if (!hasAny) return null;
+        // Tone helpers — high concentration = bad, hedging = good, etc.
+        const concTone = (pct: number | null): 'good' | 'mid' | 'bad' | 'na' => {
+          if (pct == null) return 'na';
+          if (pct >= 50) return 'bad';
+          if (pct >= 30) return 'mid';
+          return 'good';
+        };
+        const expTone = (pct: number | null): 'good' | 'mid' | 'bad' | 'na' => {
+          if (pct == null) return 'na';
+          if (pct >= 75) return 'mid';   // export-heavy = FX risk
+          return 'good';
+        };
+        const hedgeTone = (pct: number | null): 'good' | 'mid' | 'bad' | 'na' => {
+          if (pct == null) return 'na';
+          if (pct >= 60) return 'good';
+          if (pct >= 30) return 'mid';
+          return 'bad';
+        };
+        const flagTone = (f: boolean): 'mid' | 'na' => f ? 'mid' : 'na';
+        return (
+          <>
+            <SectionTitle
+              title="Risk Profile"
+              subtitle="Extracted from concall — institutional risk flags"
+            />
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10, marginBottom: 14 }}>
+              {(r.customerConcentrationPct !== null || r.customerConcentrationQuote) && (
+                <RiskTile
+                  label="Customer Concentration"
+                  value={r.customerConcentrationPct !== null ? `${r.customerConcentrationPct.toFixed(0)}%` : 'flagged'}
+                  tone={concTone(r.customerConcentrationPct)}
+                  quote={r.customerConcentrationQuote}
+                />
+              )}
+              {(r.exportConcentrationPct !== null || r.exportConcentrationQuote) && (
+                <RiskTile
+                  label="Export Concentration"
+                  value={r.exportConcentrationPct !== null ? `${r.exportConcentrationPct.toFixed(0)}%` : 'flagged'}
+                  tone={expTone(r.exportConcentrationPct)}
+                  quote={r.exportConcentrationQuote}
+                />
+              )}
+              {(r.fxHedgePct !== null || r.fxHedgeQuote) && (
+                <RiskTile
+                  label="FX Hedging"
+                  value={r.fxHedgePct !== null ? `${r.fxHedgePct.toFixed(0)}%` : 'natural'}
+                  tone={hedgeTone(r.fxHedgePct)}
+                  quote={r.fxHedgeQuote}
+                />
+              )}
+              {r.debtRefinancingFlag && (
+                <RiskTile
+                  label="Debt Refinancing"
+                  value="flagged"
+                  tone={flagTone(true)}
+                  quote={r.debtRefinancingQuote}
+                />
+              )}
+              {r.commoditySensitivityFlag && (
+                <RiskTile
+                  label="Commodity / RM Sensitivity"
+                  value="discussed"
+                  tone={flagTone(true)}
+                  quote={r.commoditySensitivityQuote}
+                />
+              )}
+              {r.workingCapitalStressFlag && (
+                <RiskTile
+                  label="Working Capital Stress"
+                  value="flagged"
+                  tone={flagTone(true)}
+                  quote={r.workingCapitalStressQuote}
+                />
+              )}
+            </div>
+          </>
+        );
+      })()}
 
       {/* ═══════════════════════════════════════════════════════════════════
           G. PROMOTER & GOVERNANCE
@@ -919,6 +1044,33 @@ function KpiTile({ label, value, tone, hint }: { label: string; value: string; t
       <div style={{ fontSize: 9, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: 600 }}>{label}</div>
       <div style={{ fontSize: 16, color: c, fontFamily: MONO, fontWeight: 700, marginTop: 4 }}>{value}</div>
       {hint && <div style={{ fontSize: 9, color: FAINT, marginTop: 4, lineHeight: 1.3 }}>{hint}</div>}
+    </div>
+  );
+}
+
+// RiskTile — variant of KpiTile that shows a concall quote on hover.
+// Used by the Risk Profile section to surface evidence behind each
+// extracted metric.
+function RiskTile({ label, value, tone, quote }: { label: string; value: string; tone: 'good' | 'mid' | 'bad' | 'na'; quote?: string | null }) {
+  const c = tone === 'good' ? GREEN : tone === 'mid' ? YELLOW : tone === 'bad' ? RED : FAINT;
+  return (
+    <div
+      title={quote || undefined}
+      style={{
+        background: PANEL,
+        border: `1px solid ${BORDER}`,
+        borderRadius: 8,
+        padding: '10px 12px',
+        cursor: quote ? 'help' : 'default',
+      }}
+    >
+      <div style={{ fontSize: 9, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: 600 }}>{label}</div>
+      <div style={{ fontSize: 16, color: c, fontFamily: MONO, fontWeight: 700, marginTop: 4 }}>{value}</div>
+      {quote && (
+        <div style={{ fontSize: 9, color: FAINT, marginTop: 4, lineHeight: 1.3, fontStyle: 'italic', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+          "{quote.length > 90 ? quote.slice(0, 87) + '…' : quote}"
+        </div>
+      )}
     </div>
   );
 }

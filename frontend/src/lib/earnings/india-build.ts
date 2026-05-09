@@ -24,7 +24,7 @@ import {
   computeJatScore,
   JatSignal,
 } from './scoring';
-import { classifyIndiaSector, INDIA_SECTOR_TEMPLATES, IndiaSector, WC_BENCHMARKS } from './india-sectors';
+import { classifyIndiaSector, INDIA_SECTOR_TEMPLATES, IndiaSector, WC_BENCHMARKS, assessValuation } from './india-sectors';
 import { inferGuidance } from './build';
 import { extractIndiaConcallInsights } from './india-concall';
 
@@ -987,6 +987,14 @@ function computeIndiaExtras(opts: {
   const guidanceDir = rawText && rawText.trim().length > 50
     ? inferGuidance(rawText).direction
     : 'na';
+  // ── Valuation discipline ─────────────────────────────────────────────
+  // Sector-aware fair-P/E assessment. Caps the verdict tier when P/E is
+  // meaningfully above the sector's typical band so a 105x P/E
+  // industrial like AEROFLEX never emits a bullish verdict purely on
+  // fundamentals. The valuation tier flows into buildTopLineVerdict via
+  // valuationCap and surfaces in IndiaExtras.valuation for the UI.
+  const valuationAssessment = assessValuation(topMetrics.peRatio, sector);
+
   const topLine = buildTopLineVerdict({
     fundamentalScore,
     quarterlyTrend: qtrendBase,
@@ -997,6 +1005,7 @@ function computeIndiaExtras(opts: {
     cfoOverPat,
     concall: concallInsights,
     guidanceDirection: guidanceDir,
+    valuationTier: valuationAssessment.tier,
   });
 
   return {
@@ -1009,6 +1018,16 @@ function computeIndiaExtras(opts: {
     topLine,
     concall: concallInsights || undefined,
     staleness: opts.screener?.staleness,
+    valuation: {
+      tier: valuationAssessment.tier,
+      pe: valuationAssessment.pe,
+      fairLow: valuationAssessment.band.fairLow,
+      fairHigh: valuationAssessment.band.fairHigh,
+      stretched: valuationAssessment.band.stretched,
+      bubble: valuationAssessment.band.bubble,
+      label: valuationAssessment.label,
+      vsSectorMidX: valuationAssessment.vsSectorMidX,
+    },
   };
 }
 
@@ -1025,6 +1044,10 @@ function buildTopLineVerdict(args: {
   cfoOverPat: number | null;
   concall?: NonNullable<IndiaExtras['concall']> | null;
   guidanceDirection?: 'raised' | 'lowered' | 'maintained' | 'introduced' | 'na';
+  // Sector-aware fair-P/E tier. 'stretched' caps the verdict at HOLD;
+  // 'bubble' caps at AVOID. Prevents 105x P/E names from emitting BUY
+  // signals on fundamentals alone.
+  valuationTier?: 'fair' | 'premium' | 'stretched' | 'bubble' | 'na';
 }): NonNullable<IndiaExtras['topLine']> {
   const { fundamentalScore: fs, quarterlyTrend, workingCapital, governance, sectorTemplate, cfoOverPat, concall, guidanceDirection } = args;
   const last = quarterlyTrend.at(-1);
@@ -1073,6 +1096,23 @@ function buildTopLineVerdict(args: {
   if (trust && trust.score <= 30) {
     const idx = tiers.indexOf(verdict);
     if (idx > 0) verdict = tiers[idx - 1];
+  }
+
+  // ── VALUATION DISCIPLINE CAP ─────────────────────────────────────────
+  // Fundamentals can be excellent and still not justify any P/E. A 105x
+  // P/E iron-and-steel name (AEROFLEX) shouldn't read ACCUMULATE off
+  // pure-fundamentals scoring; the sector P/E band caps the verdict.
+  //   - 'stretched' (1.5–2× sector fair max): cap verdict at HOLD
+  //   - 'bubble'    (> 2× sector fair max):   cap verdict at AVOID
+  // 'premium' is only a label — institutional readers see the tag but
+  // the verdict isn't capped.
+  const valuationTier = args.valuationTier ?? 'na';
+  if (valuationTier === 'stretched' || valuationTier === 'bubble') {
+    const capIdx = valuationTier === 'bubble'
+      ? tiers.indexOf('AVOID')
+      : tiers.indexOf('HOLD');
+    const curIdx = tiers.indexOf(verdict);
+    if (curIdx > capIdx) verdict = tiers[capIdx];
   }
 
   // ── Headline: directional movement ───────────────────────────────────

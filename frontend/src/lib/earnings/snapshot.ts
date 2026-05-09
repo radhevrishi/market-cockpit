@@ -406,6 +406,36 @@ export interface IndiaExtras {
     negativeCount: number;
     cautiousCount: number;
     charsAnalyzed: number;
+    // Concall-mined risk profile — populated by extractIndiaConcallInsights.
+    // Each metric is null/false when no signal is found in the transcript.
+    riskProfile?: {
+      customerConcentrationPct: number | null;
+      customerConcentrationQuote: string | null;
+      exportConcentrationPct: number | null;
+      exportConcentrationQuote: string | null;
+      fxHedgePct: number | null;
+      fxHedgeQuote: string | null;
+      debtRefinancingFlag: boolean;
+      debtRefinancingQuote: string | null;
+      commoditySensitivityFlag: boolean;
+      commoditySensitivityQuote: string | null;
+      workingCapitalStressFlag: boolean;
+      workingCapitalStressQuote: string | null;
+    };
+  };
+
+  // Valuation discipline — sector-aware fair-P/E assessment that gates
+  // verdict tone. Populated by buildIndiaSnapshot from
+  // assessValuation(topMetrics.peRatio, sector).
+  valuation?: {
+    tier: 'fair' | 'premium' | 'stretched' | 'bubble' | 'na';
+    pe: number | null;
+    fairLow: number;
+    fairHigh: number;
+    stretched: number;
+    bubble: number;
+    label: string;
+    vsSectorMidX: number | null;  // multiple of sector mid (1.0 = at mid)
   };
 }
 

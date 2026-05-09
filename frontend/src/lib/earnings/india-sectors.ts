@@ -69,6 +69,81 @@ export interface IndiaSectorTemplate {
   redFlags: string[];   // institutional warning signals
 }
 
+// ── Valuation discipline ───────────────────────────────────────────────
+// Sector-aware fair P/E bands. Without these, a 105x P/E industrial gets
+// the same "ACCUMULATE" verdict as a 22x P/E industrial — which mis-frames
+// risk for any institutional reader. AEROFLEX at 105x in iron/steel is
+// 4–6× sector typical; that has to override the fundamentals score
+// before the verdict tier renders.
+//
+// Tuple format: [fair_low, fair_high, stretched, bubble]
+//   - PE <= fair_high       → no flag
+//   - fair_high < PE <= stretched → "Premium valuation"
+//   - stretched < PE <= bubble    → "Stretched — verdict capped at Hold"
+//   - PE > bubble                  → "Bubble — verdict capped at Avoid"
+//
+// Numbers calibrated against Indian 5-yr historical median +/- 1 stdev
+// for each sector. Conservative on the upside so we don't suppress
+// legitimately re-rating sectors (defense / cap-goods).
+export interface ValuationBand {
+  fairLow: number;
+  fairHigh: number;
+  stretched: number;
+  bubble: number;
+}
+
+export const VALUATION_BANDS: Record<IndiaSector, ValuationBand> = {
+  fmcg: { fairLow: 35, fairHigh: 60, stretched: 80, bubble: 110 },
+  banks: { fairLow: 10, fairHigh: 20, stretched: 28, bubble: 40 },
+  nbfc_insurance: { fairLow: 12, fairHigh: 25, stretched: 35, bubble: 50 },
+  it_services: { fairLow: 20, fairHigh: 32, stretched: 45, bubble: 65 },
+  pharma_healthcare: { fairLow: 18, fairHigh: 32, stretched: 45, bubble: 65 },
+  auto: { fairLow: 12, fairHigh: 25, stretched: 35, bubble: 50 },
+  industrials_capgoods: { fairLow: 25, fairHigh: 45, stretched: 65, bubble: 90 },
+  // Iron/steel and base metals trade cyclically — fair P/E is low because
+  // earnings peak in commodity ups; 105x P/E (AEROFLEX) is 5x sector typical.
+  metals_mining: { fairLow: 8, fairHigh: 18, stretched: 28, bubble: 45 },
+  cement: { fairLow: 18, fairHigh: 30, stretched: 42, bubble: 60 },
+  energy_oil_gas: { fairLow: 8, fairHigh: 18, stretched: 28, bubble: 45 },
+  energy_power_renewable: { fairLow: 12, fairHigh: 25, stretched: 38, bubble: 55 },
+  chemicals: { fairLow: 18, fairHigh: 32, stretched: 45, bubble: 65 },
+  consumer_durables: { fairLow: 28, fairHigh: 50, stretched: 70, bubble: 100 },
+  consumer_retail: { fairLow: 35, fairHigh: 65, stretched: 90, bubble: 130 },
+  real_estate: { fairLow: 12, fairHigh: 28, stretched: 42, bubble: 65 },
+  media_telecom: { fairLow: 15, fairHigh: 28, stretched: 42, bubble: 60 },
+  // Defense/aerospace currently re-rating; bands wider on the upside.
+  defense_aerospace: { fairLow: 25, fairHigh: 50, stretched: 75, bubble: 110 },
+  agri_food: { fairLow: 15, fairHigh: 28, stretched: 42, bubble: 60 },
+  paper_packaging: { fairLow: 8, fairHigh: 18, stretched: 28, bubble: 45 },
+  logistics_transport: { fairLow: 15, fairHigh: 28, stretched: 42, bubble: 60 },
+  diversified: { fairLow: 15, fairHigh: 28, stretched: 42, bubble: 60 },
+};
+
+export type ValuationTier = 'fair' | 'premium' | 'stretched' | 'bubble' | 'na';
+
+export interface ValuationAssessment {
+  tier: ValuationTier;
+  band: ValuationBand;
+  pe: number | null;
+  // Pretty label for the verdict pill
+  label: string;
+  // Multiplier vs sector mid (fair_low + fair_high) / 2
+  vsSectorMidX: number | null;
+}
+
+export function assessValuation(pe: number | null | undefined, sector: IndiaSector): ValuationAssessment {
+  const band = VALUATION_BANDS[sector];
+  if (pe == null || !Number.isFinite(pe) || pe <= 0) {
+    return { tier: 'na', band, pe: null, label: 'P/E n/a', vsSectorMidX: null };
+  }
+  const mid = (band.fairLow + band.fairHigh) / 2;
+  const vsMid = mid > 0 ? Math.round((pe / mid) * 10) / 10 : null;
+  if (pe <= band.fairHigh) return { tier: 'fair', band, pe, label: 'Fair valuation', vsSectorMidX: vsMid };
+  if (pe <= band.stretched) return { tier: 'premium', band, pe, label: 'Premium valuation', vsSectorMidX: vsMid };
+  if (pe <= band.bubble) return { tier: 'stretched', band, pe, label: 'Stretched — caps verdict at Hold', vsSectorMidX: vsMid };
+  return { tier: 'bubble', band, pe, label: 'Bubble — caps verdict at Avoid', vsSectorMidX: vsMid };
+}
+
 // Sector → working-capital benchmark map. Kept separate from
 // INDIA_SECTOR_TEMPLATES so the template literals stay readable; the build
 // pipeline merges these in at snapshot time.

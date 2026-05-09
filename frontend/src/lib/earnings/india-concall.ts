@@ -50,6 +50,31 @@ export interface ConcallKeyMention {
   quote: string;
 }
 
+// ── Risk profile extracted from concall transcripts ───────────────────
+// Indian concalls routinely state these structurally — analysts
+// memorise them on every call. Extracting them gives institutional
+// readers risk metrics without needing extra data feeds.
+export interface ConcallRiskProfile {
+  // Customer concentration — "top customer 26%", "single principal", etc.
+  customerConcentrationPct: number | null;
+  customerConcentrationQuote: string | null;
+  // Export contribution — "exports 75% of revenue"
+  exportConcentrationPct: number | null;
+  exportConcentrationQuote: string | null;
+  // FX hedging — "60% hedged", "natural hedge", "USD revenue X%"
+  fxHedgePct: number | null;
+  fxHedgeQuote: string | null;
+  // Debt refinancing notes — "borrowings due", "refinanc"
+  debtRefinancingFlag: boolean;
+  debtRefinancingQuote: string | null;
+  // Commodity / raw-material sensitivity — explicit RM cost mentions
+  commoditySensitivityFlag: boolean;
+  commoditySensitivityQuote: string | null;
+  // Working-capital stress / receivables stretch
+  workingCapitalStressFlag: boolean;
+  workingCapitalStressQuote: string | null;
+}
+
 export interface ConcallInsights {
   topQuotes: string[];
   toneSignals: ConcallToneSignal[];
@@ -61,6 +86,7 @@ export interface ConcallInsights {
   negativeCount: number;
   cautiousCount: number;
   charsAnalyzed: number;
+  riskProfile: ConcallRiskProfile;
 }
 
 // ── Boilerplate strip — Indian listed-co cover letters and SEBI templates ──
@@ -370,6 +396,20 @@ export function extractIndiaConcallInsights(
   sectorTemplate: IndiaSectorTemplate | null,
 ): ConcallInsights {
   const text = (rawText || '').trim();
+  const emptyRisk: ConcallRiskProfile = {
+    customerConcentrationPct: null,
+    customerConcentrationQuote: null,
+    exportConcentrationPct: null,
+    exportConcentrationQuote: null,
+    fxHedgePct: null,
+    fxHedgeQuote: null,
+    debtRefinancingFlag: false,
+    debtRefinancingQuote: null,
+    commoditySensitivityFlag: false,
+    commoditySensitivityQuote: null,
+    workingCapitalStressFlag: false,
+    workingCapitalStressQuote: null,
+  };
   const empty: ConcallInsights = {
     topQuotes: [],
     toneSignals: [],
@@ -381,6 +421,7 @@ export function extractIndiaConcallInsights(
     negativeCount: 0,
     cautiousCount: 0,
     charsAnalyzed: 0,
+    riskProfile: emptyRisk,
   };
   if (text.length < 50) return empty;
 
@@ -516,6 +557,13 @@ export function extractIndiaConcallInsights(
   else if (concallScore >= 20) concallGrade = 'D';
   else concallGrade = 'F';
 
+  // ── Risk profile extraction ───────────────────────────────────────
+  // Run regex extractors over the cleaned text. Each looks for a
+  // specific institutional risk metric that's routinely stated in
+  // Indian concalls. We capture both the percentage (where present)
+  // and the source quote so the UI can show provenance on hover.
+  const riskProfile = extractRiskProfile(cleaned, sentences);
+
   return {
     topQuotes,
     toneSignals: trimmedTone,
@@ -527,5 +575,109 @@ export function extractIndiaConcallInsights(
     negativeCount,
     cautiousCount,
     charsAnalyzed: text.length,
+    riskProfile,
   };
+}
+
+// ── Risk profile extractor ────────────────────────────────────────────
+// Scans concall sentences for structurally-stated risk metrics. We avoid
+// false positives by requiring the percentage / number to be in the same
+// sentence as the qualifying noun (customer / export / hedge / debt).
+function extractRiskProfile(cleaned: string, sentences: string[]): ConcallRiskProfile {
+  const out: ConcallRiskProfile = {
+    customerConcentrationPct: null,
+    customerConcentrationQuote: null,
+    exportConcentrationPct: null,
+    exportConcentrationQuote: null,
+    fxHedgePct: null,
+    fxHedgeQuote: null,
+    debtRefinancingFlag: false,
+    debtRefinancingQuote: null,
+    commoditySensitivityFlag: false,
+    commoditySensitivityQuote: null,
+    workingCapitalStressFlag: false,
+    workingCapitalStressQuote: null,
+  };
+
+  // Customer concentration — "top 5 customers contribute 60%",
+  // "single principal", "top customer ~26% of sales", etc.
+  const customerRe = /\b(?:top\s+(?:1|one|single|2|two|3|three|5|five|ten|10)\s+(?:customer|client)s?|largest\s+(?:customer|client)|single\s+principal|key\s+(?:customer|client)|customer\s+concentration)[\s\S]{0,80}?(\d{1,2}(?:[.,]\d+)?)\s*%/i;
+  const exclusivityRe = /\b(under\s+exclusivity|sole\s+supplier|single\s+principal|exclusive\s+(?:vendor|supplier))/i;
+  for (const s of sentences) {
+    if (out.customerConcentrationPct !== null) break;
+    const m = s.match(customerRe);
+    if (m) {
+      const v = parseFloat(m[1].replace(',', '.'));
+      if (!Number.isNaN(v) && v > 0 && v <= 100) {
+        out.customerConcentrationPct = v;
+        out.customerConcentrationQuote = s.length > 240 ? s.slice(0, 237) + '…' : s;
+      }
+    } else if (exclusivityRe.test(s) && out.customerConcentrationQuote === null) {
+      out.customerConcentrationQuote = s.length > 240 ? s.slice(0, 237) + '…' : s;
+      // No numeric — flag with -1 sentinel via leaving pct null but quote populated
+    }
+  }
+
+  // Export concentration — "exports 75% of revenue", "export revenue X%"
+  const exportRe = /\b(?:exports?\s+(?:account\s+for|contribut(?:e|ing)|are|stand\s+at|of\s+revenue)?[\s\S]{0,30}?(\d{1,2}(?:[.,]\d+)?)\s*%|(?:revenue|sales)\s+(?:from\s+)?exports?[\s\S]{0,30}?(\d{1,2}(?:[.,]\d+)?)\s*%|export[s]?\s+share[\s\S]{0,30}?(\d{1,2}(?:[.,]\d+)?)\s*%)/i;
+  for (const s of sentences) {
+    if (out.exportConcentrationPct !== null) break;
+    const m = s.match(exportRe);
+    if (m) {
+      const v = parseFloat((m[1] || m[2] || m[3] || '').replace(',', '.'));
+      if (!Number.isNaN(v) && v > 0 && v <= 100) {
+        out.exportConcentrationPct = v;
+        out.exportConcentrationQuote = s.length > 240 ? s.slice(0, 237) + '…' : s;
+      }
+    }
+  }
+
+  // FX hedging — "60% hedged", "natural hedge", "USD revenue 40%"
+  const fxRe = /\b(?:(\d{1,2}(?:[.,]\d+)?)\s*%[\s\S]{0,30}?(?:hedge|hedged|forex|FX|USD)|hedge[d]?\s+(?:position|book|exposure)[\s\S]{0,30}?(\d{1,2}(?:[.,]\d+)?)\s*%|forex\s+(?:exposure|hedge)[\s\S]{0,30}?(\d{1,2}(?:[.,]\d+)?)\s*%)/i;
+  const naturalHedgeRe = /\b(natural\s+hedge|naturally\s+hedged|forex\s+neutral)/i;
+  for (const s of sentences) {
+    if (out.fxHedgePct !== null) break;
+    const m = s.match(fxRe);
+    if (m) {
+      const v = parseFloat((m[1] || m[2] || m[3] || '').replace(',', '.'));
+      if (!Number.isNaN(v) && v > 0 && v <= 100) {
+        out.fxHedgePct = v;
+        out.fxHedgeQuote = s.length > 240 ? s.slice(0, 237) + '…' : s;
+      }
+    } else if (naturalHedgeRe.test(s) && out.fxHedgeQuote === null) {
+      out.fxHedgeQuote = s.length > 240 ? s.slice(0, 237) + '…' : s;
+    }
+  }
+
+  // Debt refinancing — explicit refinancing mentions or upcoming maturities
+  const debtRe = /\b(refinanc(?:e|ing|ed)|debt\s+(?:maturit|coming\s+due|repayment\s+schedule)|borrowings?\s+(?:due|maturity|maturing)|bond\s+redemption|tenure\s+extension)/i;
+  for (const s of sentences) {
+    if (out.debtRefinancingFlag) break;
+    if (debtRe.test(s)) {
+      out.debtRefinancingFlag = true;
+      out.debtRefinancingQuote = s.length > 240 ? s.slice(0, 237) + '…' : s;
+    }
+  }
+
+  // Commodity / RM sensitivity — explicit input cost mentions
+  const commodityRe = /\b(raw\s+material\s+(?:cost|prices?|inflation|volatility)|input\s+cost\s+pressure|commodity\s+(?:headwind|tailwind|cycle|prices?)|RM\s+pressure|crude\s+(?:price|impact)|metal\s+prices?\s+(?:rising|falling))/i;
+  for (const s of sentences) {
+    if (out.commoditySensitivityFlag) break;
+    if (commodityRe.test(s)) {
+      out.commoditySensitivityFlag = true;
+      out.commoditySensitivityQuote = s.length > 240 ? s.slice(0, 237) + '…' : s;
+    }
+  }
+
+  // Working capital stress — explicit WC stretch / receivables build
+  const wcRe = /\b(working\s+capital\s+(?:stretch|deteriorat|elevat|increase|pressure|cycle\s+lengthening)|receivables?\s+(?:stretch|build|elevat|delay)|debtor\s+days\s+(?:rising|elevated|stretched)|inventory\s+build|stuck\s+inventory)/i;
+  for (const s of sentences) {
+    if (out.workingCapitalStressFlag) break;
+    if (wcRe.test(s)) {
+      out.workingCapitalStressFlag = true;
+      out.workingCapitalStressQuote = s.length > 240 ? s.slice(0, 237) + '…' : s;
+    }
+  }
+
+  return out;
 }
