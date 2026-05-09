@@ -1697,11 +1697,11 @@ export default function NewsFeedPage() {
               ★ MUST READ
             </span>
             <span style={{ fontSize: '10px', color: '#4A5B6C' }}>
-              Top 5 institutional reads — consequence × source × recency
+              Top 10 institutional reads — US + India mix · consequence × source × ticker × recency
             </span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            {mustRead.slice(0, 5).map((art, idx) => {
+            {mustRead.slice(0, 10).map((art, idx) => {
               const syms = getTickerSymbols(art);
               const url = getUrl(art);
               const time = safeRelative(art.published_at);

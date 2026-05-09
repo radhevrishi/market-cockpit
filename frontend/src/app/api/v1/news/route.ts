@@ -145,7 +145,67 @@ const HYPE_ONLY = /(launch|announce|startup|funding|raises|partnership|unveil|de
 // railway freight congestion, MIRV / Agni / Tejas defence platforms,
 // space sector PSLV / GSLV launches, semiconductor mission (ISM), PLI
 // corridors (Dholera / Sanand fab parks).
-const INDIA_STRUCTURAL_HARD = /(nuclear (reactor|power|plant|energy|fuel|capacity|project|milestone)|atomic (reactor|energy)|thorium|breeder reactor|kalpakkam|kudankulam|npcil|bhavini|criticality|atomic energy commission|defence (order|procurement|deal|budget|corridor|export)|defense (order|procurement|contract|budget|spending)|drdo|isro|hal (order|deliver|contract)|brahmos|akash missile|tejas|mirv|agni (missile|test)|pslv|gslv|chandrayaan|gaganyaan|space sector|india semiconductor mission|ism (mou|approval|incentive)|dholera (fab|semiconductor)|sanand fab|micron.{0,20}gujarat|tata.{0,20}semiconductor|vedanta.{0,20}fab|power deficit|electricity shortage|load shedding|coal (shortage|stockpile|allocation|crisis)|water scarcity industrial|industrial water shortage|jnpt (congestion|backlog)|port (congestion|backlog) india|railway freight congestion|cargo (backlog|delay) india)/i;
+// EXPANDED INDIA structural HARD list — match US-side breadth.
+// Adds: PLI scheme disbursements, defence corridor allocations,
+// EMS/PCB capacity expansions, EV battery cell mfg, green hydrogen,
+// Vande Bharat railway tenders, refinery commissioning, ISM
+// approvals, NPCIL reactor commissioning, lithium reserves, rare
+// earth processing, Dholera/Sanand fab construction milestones,
+// gas pipeline (KG-D6/KG-Krishna), city gas distribution, defence
+// export licences, BEL/HAL contract wins, BEML defence orders,
+// strategic petroleum reserve, captive coal blocks, power
+// transmission Gati Shakti, semiconductor design wins.
+//
+// IMPORTANT: missile-test announcements WITHOUT named exposed
+// company are EXCLUDED from this list (moved to MISSILE_TEST_NOISE_RE
+// below) — pure platform tests aren't actionable structural news.
+const INDIA_STRUCTURAL_HARD = new RegExp(
+  '(' +
+    // Nuclear
+    'nuclear (reactor|power|plant|energy|fuel|capacity|project|milestone|commissioned)|atomic (reactor|energy)|thorium|breeder reactor|kalpakkam|kudankulam|npcil|bhavini|criticality|atomic energy commission|' +
+    // Defence orders / contracts (NOT just tests)
+    'defence (order|procurement|deal|budget|corridor|export|contract win)|defense (order|procurement|contract|budget|spending|export)|drdo (order|approval|technology transfer)|isro (mission|order|contract)|hal (order|deliver|contract win|production)|bel (order|contract)|bdl (order)|gtre|garden reach order|cochin shipyard order|mazagon dock order|' +
+    // Defence platform commissioning (only when structural)
+    'tejas (delivery|production line|batch)|brahmos (export|order)|akash (export|deployment|order)|s-400|rafale (delivery|squadron)|p-?75 (submarine|alpha)|pinaka order|' +
+    // Space sector commercial wins
+    'pslv (launch|commercial|mission|order)|gslv (mission|launch|order)|chandrayaan (mission|launch)|gaganyaan (test|mission|module)|space sector (private|reform|policy)|isro (commercial|spacex|partnership)|' +
+    // Semiconductor mission
+    'india semiconductor mission|ism (mou|approval|incentive|disburs)|dholera (fab|semiconductor|construction)|sanand fab|micron.{0,20}gujarat|tata.{0,20}semiconductor|vedanta.{0,20}fab|tower semiconductor india|polymatech|kaynes (semiconductor|fab)|asm india|asm semiconductor india|' +
+    // PLI scheme disbursements / approvals (real money flow)
+    'pli (scheme )?(disburs|approved|allocated|released)|production[- ]linked incentive (disburs|approved|allocated|released)|fame[- ]ii\\s+(disburs|extended|allocated)|' +
+    // Power & grid
+    'power deficit|electricity shortage|load shedding|grid stress|grid frequency|grid (congestion|capacity)|coal (shortage|stockpile|allocation|crisis|stock at)|hydropower (commissioned|tender)|pumped storage|' +
+    // EV battery cell manufacturing
+    'battery cell (manufacturing|capacity|gigafactory)|gigafactory india|li[- ]?ion cell india|exide cell|amara raja cell|' +
+    // Green hydrogen / renewables
+    'green hydrogen (mission|order|capacity|tender)|electrolyser (capacity|order)|' +
+    // Critical minerals
+    'lithium (reserve|exploration|mine) india|rare earth (processing|reserve|mine) india|kabil|amrita|critical mineral (allocation|policy)|' +
+    // Refinery / petroleum
+    'refinery (commissioning|capacity expansion|throughput|shutdown)|spr|strategic petroleum reserve india|' +
+    // Pipeline / gas distribution
+    'gas pipeline (capacity|commissioning|throughput|tender)|city gas (distribution|tender|round)|kg[- ]?d6|kg[- ]?krishna|' +
+    // Railway / Vande Bharat
+    'vande bharat (order|production|tender)|rail vikas (order|tender)|metro (rail tender|coach order)|loco (manufacturing|order)|wag-?\\d+ (order|tender)|' +
+    // Highway / EPC (when actual order, not preview)
+    'nhai (award|contract awarded|tender awarded)|highway (project awarded|contract awarded)|hybrid annuity model award|hsm award|' +
+    // Water / industrial
+    'water scarcity industrial|industrial water shortage|jal jeevan (allocation|disburs)|' +
+    // Ports / freight
+    'jnpt (congestion|backlog|expansion)|port (congestion|backlog|expansion) india|major port (capacity|expansion)|sagarmala (allocation|approval)|railway freight (congestion|capacity)|cargo (backlog|delay) india|' +
+    // Banking / NBFC structural events
+    'rbi.{0,20}(licence|license|repealed|revoke|granted)|sebi (final order|enforcement order|surveillance)|insolvency (resolution|admission)|ibc (admission|liquidation)|' +
+    // Auto BS-VII / EV mandate
+    'bs[- ]?vii|bs[- ]?7|fame[- ]?iii|ev mandate|electric vehicle policy india|' +
+  ')',
+  'i'
+);
+
+// MISSILE_TEST_NOISE_RE — defence platform tests without named
+// exposed company. These show up as "Agni MIRV test", "BrahMos test
+// fire" but unless the article also names HAL/BEL/BDL/L&T they have
+// no actionable institutional read. Demote to GENERAL.
+const MISSILE_TEST_NOISE_RE = /\b(successfully tests?|test fire[ds]?|test launch|capability test|inducted into service|range tested|missile capability|test demonstration|nuclear[- ]capable test|first test)\b/i;
 
 // ── India structural domains — SOFT: only BOTTLENECK when ALSO has constraint signal ──
 // These domains are real but articles about them are often earnings/macro/general news.
@@ -435,8 +495,17 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
   }
 
   // Rule 3a: India structural domains — HARD (always BOTTLENECK)
-  // Nuclear, defence, DRDO/ISRO — these are genuine structural bottlenecks
+  // Nuclear, defence orders, DRDO/ISRO commercial wins, PLI disbursements,
+  // semiconductor mission progress, refinery commissioning, etc.
+  // BUT exclude pure missile-test announcements without named company —
+  // those are platform-level news, not investing structural alpha.
   if (INDIA_STRUCTURAL_HARD.test(text)) {
+    const isMissileTestNoise =
+      MISSILE_TEST_NOISE_RE.test(text)
+      && !/\b(hal|bel|bdl|brahmos aerospace|l&t|larsen|mazagon|cochin shipyard|grse|bharat dynamics|bharat electronics|bharat earth movers|beml|tata advanced|adani defence|paras defence|astra microwave|data patterns|midhani|mishra dhatu|munjal showa|defence corridor|defence export.{0,20}\\$|order worth)\b/i.test(text);
+    if (isMissileTestNoise) {
+      return { article_type: 'GENERAL', investment_tier: 3 };
+    }
     return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text), bottleneck_level: getBottleneckLevel(text) };
   }
 
@@ -1451,28 +1520,60 @@ export async function GET(request: Request) {
         primary: 1.3, secondary: 1.0, tertiary: 0.7, editorial: 1.2, retail: 0.4,
       };
       const now = Date.now();
-      const ranked = filtered
-        .filter(a => a.article_type !== 'COMMENTARY' && a.article_type !== 'GENERAL')
-        .filter(a => (a.consequence_score || 0) >= 35)
-        .map(a => {
-          const ageH = a.published_at ? (now - new Date(a.published_at).getTime()) / 3600000 : 100;
-          const recencyMult = ageH <= 6 ? 1.0 : ageH <= 24 ? 0.7 : ageH <= 72 ? 0.4 : 0.15;
-          const specificImpactBonus = (a.specific_impact?.label) ? 1.4 : 1.0;
-          const watchlistBonus = (a.watchlist_match && a.watchlist_match.length > 0) ? 1.5 : 1.0;
-          const tierMult = tierWeight[a.source_tier] || 1.0;
-          // Heavy penalty for BOTTLENECK that's actually retail-tier
-          // (escapes through if classifier let it through earlier)
-          const retailPenalty = a.source_tier === 'retail' ? 0.5 : 1.0;
-          const must_read_score = (a.consequence_score / 100)
-            * tierMult
-            * recencyMult
-            * specificImpactBonus
-            * watchlistBonus
-            * retailPenalty;
-          return { ...a, must_read_score };
+
+      // MUST_READ_DENY_RE — patterns that must NEVER appear in MUST READ
+      // even if they passed the BOTTLENECK gate. Lawsuits, missile-test
+      // announcements without named company, parliamentary review
+      // previews, top-gainers listicles, generic "ordered to pay" legal.
+      const MUST_READ_DENY_RE = /\b(ordered to pay|sued over|lawsuit|court order|guilty|convicted|criminal charge|missile (test|capability|launch)|agni missile|brahmos test|tejas test|test fire|successfully test|parliamentary panel|petroleum panel|energy panel review|panel to review|top gainers? (?:&|and) losers?|gainers?\s*(?:&|and)\s*losers?|highway contracts|highway approvals|highway tenders?|construction[- ]ready)\b/i;
+
+      // STRICT ACTIONABILITY GATE — for MUST READ specifically.
+      // An article qualifies only if it has at least ONE of:
+      //   - specific_impact extracted (Bloomberg-style "X: ±N%")
+      //   - matches user watchlist
+      //   - is from primary tier with consequence ≥ 60
+      //   - mentions a major institutional ticker in title
+      const MAJOR_TICKER_RE = /\b(NVDA|AAPL|GOOGL|GOOG|MSFT|AMZN|META|TSLA|TSM|ASML|AVGO|AMD|MU|HDFC|HDFCBANK|ICICIBANK|SBIN|RELIANCE|TCS|INFY|WIPRO|HCLTECH|LT|BAJFINANCE|BAJAJFINSV|KOTAKBANK|AXISBANK|MARUTI|TATAMOTORS|TATASTEEL|JSWSTEEL|HINDUNILVR|ITC|NESTLEIND|BRITANNIA|ASIANPAINT|TITAN|ULTRACEMCO|BHARTIARTL|JIOFIN|ADANIENT|ADANIPORTS|POWERGRID|NTPC|ONGC|COALINDIA|BPCL|IOC|HPCL|HAL|BEL|BHEL|GRSE|BEML|MAZAGON|CONCOR|IRCTC|RAILTEL|RVNL|CONCOR|IDEA|VBL|TRENT|DMART|DLF|GODREJCP|DABUR|MARICO|COLPAL|UBL|BIOCON|CIPLA|DIVISLAB|SUNPHARMA|DRREDDY|APOLLOHOSP|MAXHEALTH|BAJAJ-AUTO|EICHERMOT|HEROMOTOCO|TVSMOTOR|MOTHERSON|BOSCHLTD|SIEMENS|ABB|HAVELLS|VOLTAS|BLUEDART|GLAND|SYNGENE|LAURUSLABS|NAUKRI|PERSISTENT|MPHASIS|COFORGE|LTIM|MINDTREE|TECHM|MFSL)\b/i;
+
+      // Take top 5 IN + top 5 US for a balanced 10-article surface.
+      const scoreArticle = (a: any) => {
+        const ageH = a.published_at ? (now - new Date(a.published_at).getTime()) / 3600000 : 100;
+        const recencyMult = ageH <= 6 ? 1.0 : ageH <= 24 ? 0.7 : ageH <= 72 ? 0.4 : 0.15;
+        const specificImpactBonus = (a.specific_impact?.label) ? 1.4 : 1.0;
+        const watchlistBonus = (a.watchlist_match && a.watchlist_match.length > 0) ? 1.5 : 1.0;
+        const tierMult = tierWeight[a.source_tier] || 1.0;
+        const retailPenalty = a.source_tier === 'retail' ? 0.5 : 1.0;
+        const tickerBonus = MAJOR_TICKER_RE.test(a.title || '') ? 1.3 : 1.0;
+        return (a.consequence_score / 100) * tierMult * recencyMult * specificImpactBonus * watchlistBonus * retailPenalty * tickerBonus;
+      };
+
+      const eligible = filtered
+        .filter((a) => a.article_type !== 'COMMENTARY' && a.article_type !== 'GENERAL')
+        .filter((a) => (a.consequence_score || 0) >= 50)         // raised from 35
+        .filter((a) => !MUST_READ_DENY_RE.test(a.title || ''))   // hard exclusion
+        .filter((a) => {
+          // Must satisfy at least one actionability anchor
+          const hasSpecificImpact = !!a.specific_impact?.label;
+          const isWatchlist = (a.watchlist_match && a.watchlist_match.length > 0);
+          const isPrimaryHigh = a.source_tier === 'primary' && (a.consequence_score || 0) >= 60;
+          const hasMajorTicker = MAJOR_TICKER_RE.test(a.title || '');
+          return hasSpecificImpact || isWatchlist || isPrimaryHigh || hasMajorTicker;
         })
-        .sort((a, b) => (b.must_read_score || 0) - (a.must_read_score || 0))
-        .slice(0, 5);
+        .map((a) => ({ ...a, must_read_score: scoreArticle(a) }));
+
+      // Split by region: top 5 IN + top 5 US (or up to 10 mixed if one region thin)
+      const indiaTop = eligible.filter((a) => a.region === 'IN').sort((a, b) => b.must_read_score - a.must_read_score).slice(0, 5);
+      const usTop = eligible.filter((a) => a.region === 'US' || a.region === 'GLOBAL').sort((a, b) => b.must_read_score - a.must_read_score).slice(0, 5);
+
+      // Interleave for visual mix
+      const merged: any[] = [];
+      const maxLen = Math.max(indiaTop.length, usTop.length);
+      for (let i = 0; i < maxLen; i++) {
+        if (indiaTop[i]) merged.push(indiaTop[i]);
+        if (usTop[i]) merged.push(usTop[i]);
+      }
+      // Top up if one side has fewer than 5
+      const ranked = merged.slice(0, 10);
       return NextResponse.json(ranked);
     }
 
