@@ -412,7 +412,17 @@ export interface IndiaExtras {
         | 'geographic_mix'
         | 'capacity'
         | 'rd_pipeline'
-        | 'customer_wins';
+        | 'customer_wins'
+        // Expanded coverage based on common Indian midcap concall patterns:
+        | 'order_book'
+        | 'utilization'
+        | 'volume_value'
+        | 'segment_mix'
+        | 'net_debt'
+        | 'pli_rodtep'
+        | 'pricing_action'
+        | 'mna'
+        | 'esg';
       quote: string;
     }>;
     sectorKpiHits: Array<{ label: string; value: string; quote: string }>;

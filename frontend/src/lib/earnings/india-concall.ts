@@ -46,7 +46,19 @@ export interface ConcallKeyMention {
     | 'geographic_mix'
     | 'capacity'
     | 'rd_pipeline'
-    | 'customer_wins';
+    | 'customer_wins'
+    // Expansion based on common Indian midcap concall patterns —
+    // these topics appear ubiquitously across earnings transcripts
+    // (industrials, FMCG, IT, pharma) and were previously missed.
+    | 'order_book'         // "Order book of ₹X cr" / "L1 in tenders worth Y"
+    | 'utilization'        // "Capacity utilization at X%" / "Plant utilization"
+    | 'volume_value'       // "Volume growth X%, value growth Y%" / "UVG"
+    | 'segment_mix'        // "Segment A grew X%, segment B Y%" / "vertical-wise"
+    | 'net_debt'           // "Net debt of ₹X cr" / "deleveraging"
+    | 'pli_rodtep'         // "PLI scheme" / "RoDTEP" / "export incentive"
+    | 'pricing_action'     // "Price hike of X%" / "Price-led growth"
+    | 'mna'                // M&A / acquisition / divestment / demerger
+    | 'esg';               // ESG / net-zero / renewable / sustainability commitments
   quote: string;
 }
 
@@ -195,6 +207,22 @@ function isTableNoise(s: string): boolean {
   if (/(?:\bQ[1-4]\s?FY\s?\d{2,4}\b\s*){3,}/.test(s)) return true;
   // Comma-separated number lists ("46 4,98,861 2.3 Q4FY26 571 3,31,763 18.9")
   if ((s.match(/\d[,.]\d{2,3}/g) || []).length >= 3) return true;
+
+  // Footnote-style sentences that snuck through previously:
+  //   "70 Crs as on 31st March 2026 10 Figures for the previous periods
+  //    have been re-grouped / re-classified to conform to the figures of
+  //    the current periods. *Excludes FD with maturity of more than 3 months..."
+  // Detect footnote markers + reclassification language + stub disclaimers.
+  if (/\b(Figures for the previous periods? have been re[- ]?grouped|re[- ]?classified to conform|to conform to the (figures? of the )?current periods?)\b/i.test(s)) return true;
+  if (/^\s*\*\s*(Excludes?|Includes?|Note|Refer)\b/i.test(s)) return true;
+  if (/\bExcludes? FD with maturity\b/i.test(s)) return true;
+  // Sentences that start with a bare number then "Crs as on" — that's a
+  // table cell concatenated into prose. Reject.
+  if (/^\s*\d{1,4}\s*Crs?\s+as\s+on\s+\d{1,2}(st|nd|rd|th)?\s+/i.test(s)) return true;
+  // Page-number / asterisk-only stubs.
+  if (/^\s*\*+\s*$/.test(s)) return true;
+  if (/^\s*Page\s+\d+\s+(of|\/)\s+\d+/i.test(s)) return true;
+
   return false;
 }
 
@@ -339,6 +367,39 @@ const TOPIC_PATTERNS: Array<{ topic: ConcallKeyMention['topic']; re: RegExp }> =
   { topic: 'geographic_mix', re: /[^.!?]*\b(domestic (\s*[:.]\s*|\s+vs\s+|\s+&\s+)?export|geographic(al)? (split|mix)|exports? (to|grew|declined|share)|Americas?|export (revenue|share|contribution))\b[^.!?]*[.!?]/i },
   { topic: 'rd_pipeline', re: /[^.!?]*\b(R\s*&\s*D (lab|spend|pipeline|cost|intensity)|research and development|products (under|in) R\s*&\s*D|R\s*&\s*D (centre|center))\b[^.!?]*[.!?]/i },
   { topic: 'customer_wins', re: /[^.!?]*\b(customer (wins?|additions?|onboard|relationships|base)|won (a|new) (contract|deal|customer)|client wins?|new geographies|new (region|market) entry)\b[^.!?]*[.!?]/i },
+
+  // ── Expanded coverage based on common Indian concall patterns ────────
+  // Order book / inflow with explicit numbers — critical for industrials,
+  // capital goods, EPC, defense, infra, real estate, pharma CDMO.
+  { topic: 'order_book', re: /[^.!?]*\b(order (book|inflow|backlog|intake|pipeline|book\s+(stood|as|of)|book[-\s]?to[-\s]?bill)|book[- ]to[- ]bill|outstanding orders?|pending orders?|unexecuted (order book|orders)|L1 (in|for|position)|tenders? worth|secured.{0,40}(order|contract))\b[^.!?]*[.!?]/i },
+
+  // Capacity utilization with explicit %, common across all manufacturing.
+  { topic: 'utilization', re: /[^.!?]*\b(capacity utili[sz]ation|plant utili[sz]ation|utili[sz]ation (of|at|rate|level|stood|currently|at\s+\d)|operating at\s+\d+\s*%|running at\s+\d+\s*%|plant.{0,30}\d+\s*%|nameplate capacity)\b[^.!?]*[.!?]/i },
+
+  // Volume vs value growth split — FMCG / Auto / Cement / Consumer Durables.
+  // Indian analysts watch this religiously because price-led growth is
+  // discounted vs underlying volume growth.
+  { topic: 'volume_value', re: /[^.!?]*\b(volume (growth|grew|increased|expanded|of\s+\d)|underlying volume|UVG\b|value (vs|versus|and) volume|price[- ](?:led|driven|mix) growth|realization (improvement|growth|stood))\b[^.!?]*[.!?]/i },
+
+  // Segmental revenue / vertical mix — most listed companies disclose.
+  { topic: 'segment_mix', re: /[^.!?]*\b((segment|vertical|division|business unit|category|product line)\s+(revenue|growth|grew|contribution|wise|mix|breakup|breakdown)|segment[- ]wise|vertical[- ]wise|consumer (vs|and) industrial|B2B (vs|and|to) B2C)\b[^.!?]*[.!?]/i },
+
+  // Net debt / leverage / deleveraging commentary.
+  { topic: 'net_debt', re: /[^.!?]*\b(net debt|gross debt|total debt|debt.{0,15}(reduced|increased|repaid|prepaid|maturity)|debt[- ]?to[- ]?(equity|EBITDA)|leverage (ratio|stood|reduced|increased)|deleveraging|debt[- ]free|cash and (equivalents?|bank balance)|net cash position|borrowings? (of|stood|reduced))\b[^.!?]*[.!?]/i },
+
+  // PLI / RoDTEP / FAME / production-linked incentive — Indian-specific
+  // government schemes that materially affect P&L for eligible companies.
+  { topic: 'pli_rodtep', re: /[^.!?]*\b(production[- ]linked incentive|PLI scheme|PLI (benefit|approval|eligibility|incentive)|RoDTEP|export incentive|FAME[- ]II|MEIS|SEIS|advance authorization|EPCG)\b[^.!?]*[.!?]/i },
+
+  // Pricing action — explicit price hikes / cuts / price-led growth.
+  { topic: 'pricing_action', re: /[^.!?]*\b(price hike|price increase|price cut|price (action|adjustment|revision)|price[- ]led growth|pass(ed|ing)? (on|through) (the )?(input|raw material) cost|raised prices|revised prices)\b[^.!?]*[.!?]/i },
+
+  // M&A / strategic — acquisitions / divestments / JVs / demergers.
+  { topic: 'mna', re: /[^.!?]*\b(acquired|acquisition (of|completed|announced)|merger|demerger|hive[- ]?off|divest(ed|ment|ing)?|strategic (partnership|alliance|investment)|stake (acquired|sold|bought)|joint venture (with|formed|signed)|signed (an?|a) (definitive|share (purchase|subscription)) agreement)\b[^.!?]*[.!?]/i },
+
+  // ESG / net-zero / renewable energy commitments — material for ESG-rated
+  // funds and an increasing focus area in Indian midcap commentary.
+  { topic: 'esg', re: /[^.!?]*\b(net[- ]zero|carbon neutral|renewable energy (mix|share|capacity|sourcing)|solar (capacity|installation|rooftop)|ESG (rating|score|policy|framework)|sustainability (target|goal|report)|green (bond|finance)|water positive|zero waste|reduced carbon)\b[^.!?]*[.!?]/i },
 ];
 
 // ── Sector KPI keyword maps ────────────────────────────────────────────────
@@ -371,9 +432,24 @@ const SECTOR_KPI_PATTERNS: Record<string, RegExp[]> = {
   'CASA': [/\bCASA\b|\b(savings|current account)\s+(growth|ratio)/i],
   'Credit Cost': [/\b(credit cost|provisioning|provision coverage|PCR)\b/i],
   // Auto / Industrials / Capital Goods
-  'Order Book': [/\b(order (book|inflow|backlog|intake)|book[- ]to[- ]bill)\b/i],
-  'Order Inflow': [/\b(order (inflow|intake|booking|new order|wins)|fresh orders|won orders|deal wins?|secured orders)\b/i],
-  'Order Book / Backlog': [/\b(order (book|backlog)|book[- ]to[- ]bill|backlog (of|stood))\b/i],
+  // Order Book / Inflow now matches: explicit numbers, L1 positions,
+  // tender pipelines, AND negative-disclosure language ("no order book
+  // disclosure" — important transparency signal that should still flag
+  // the KPI as touched).
+  'Order Book': [
+    /\b(order (book|inflow|backlog|intake)|book[- ]to[- ]bill)\b/i,
+    /\b(no order book disclosure|order book.{0,30}not disclosed)\b/i,
+    /\bbacklog (of|stood at|reached|touched)\s+(₹|Rs\.?|INR)?\s*\d/i,
+  ],
+  'Order Inflow': [
+    /\b(order (inflow|intake|booking|new order|wins)|fresh orders|won orders|deal wins?|secured orders|won.{0,30}contract|L1\s+(in|for|position))\b/i,
+    /\bnew orders.{0,30}(₹|Rs\.?|INR)?\s*\d/i,
+  ],
+  'Order Book / Backlog': [
+    /\b(order (book|backlog)|book[- ]to[- ]bill|backlog (of|stood))\b/i,
+    /\b(unexecuted orders?|pending orders?|outstanding orders?)\b/i,
+    /\b(no order book disclosure|backlog.{0,30}not disclosed)\b/i,
+  ],
   'Execution / Revenue': [/\b(execution|revenue conversion|backlog (conversion|burn|drawdown)|delivered (orders|revenue))\b/i, /\b(commission(ed|ing)|delivered|despatch(ed|es))\b.{0,40}(plant|capacity|skid|unit|order)/i],
   'Capex Plan': [/\b(capex plan|capital expenditure|capacity (expansion|addition)|new plant|new facility|brownfield|greenfield|scale up to|expanded.{0,40}capacity)\b/i],
   'Capacity Utilization': [/\b(capacity utili[sz]ation|plant utili[sz]ation|production volume|capacity (of|stood at|increased to))\b/i],
