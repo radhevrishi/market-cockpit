@@ -10,7 +10,12 @@ import { scoreAnchor, BOTTLENECK_ANCHOR_THRESHOLD, getSourceCredibility, detectR
 // PATCH 0051: 10-year semantic graph architecture
 import { scoreGraph, GRAPH_ANCHOR_THRESHOLD, NODE_DISPLAY } from '@/lib/news/semantic-graph';
 import { classifySourceTier, getTierContribution } from '@/lib/news/source-tiers';
-import { recordEvidence } from '@/lib/news/evidence-accumulator';
+import { recordEvidence, readEvidence } from '@/lib/news/evidence-accumulator';
+// PATCH 0052: Causal-honesty layer
+import {
+  classifyAssertion, frameImpact, hasDirectComputeLinkage, isGenericPowerStory,
+  classifyDefenseNarrative, computeFreshnessLayer, buildSignalConfidence,
+} from '@/lib/news/assertion-classifier';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -147,12 +152,12 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v13'; // v13: semantic graph + source tiers + evidence (patch 0051)
+const CACHE_KEY = 'news:articles:v14'; // v14: causal-honesty layer (patch 0052)
 const CACHE_TTL = 300; // 5 min
-// v12 → v13 bump: schema now includes graph_primary_node,
-// graph_event_class, graph_dependent_nodes, source_tier_v2,
-// source_multiplier. Older entries lack them.
-const BOTTLENECK_PERSISTENT_KEY = 'bottleneck:articles:persistent:v13';
+// v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
+// freshness_layer, signal_confidence (multi-dim), bottleneck_parent /
+// bottleneck_child hierarchy. Older entries lack them.
+const BOTTLENECK_PERSISTENT_KEY = 'bottleneck:articles:persistent:v14';
 const BOTTLENECK_TTL = 7776000; // 90 days in seconds
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1352,6 +1357,79 @@ async function fetchAllNews(): Promise<any[]> {
             base_importance: baseImportance,
           });
 
+          // ── PATCH 0052: Power-story compute-linkage gate ──
+          // Generic power articles (solar EPC, hydro commissioning, BESS
+          // contracts) only inherit COMPUTE_INFRA relevance if the text
+          // explicitly links to data center / hyperscaler / AI compute.
+          // Otherwise they stay in ENERGY_INFRA without compute crossover.
+          const fullText = title + ' ' + (desc || '');
+          const isGenericPower = isGenericPowerStory(fullText);
+          const hasComputeLinkage = hasDirectComputeLinkage(fullText);
+          // If category is COMPUTE/POWER but the article is generic power
+          // without compute linkage, demote the institutional impact to
+          // generic energy phrasing to avoid hallucinated AI bottleneck label.
+          let safeInstitutionalImpact = institutionalImpact;
+          if (isGenericPower && !hasComputeLinkage) {
+            safeInstitutionalImpact = 'Energy capacity addition — not directly tied to compute infrastructure';
+          }
+
+          // ── PATCH 0052: Defense narrative sub-ontology ──
+          // Defense articles are no longer all framed as bullish capex
+          // acceleration. Detect specific narrative (export momentum,
+          // execution risk, private competition, etc.) and emit
+          // narrative-aware impact.
+          let defenseNarrative: string | null = null;
+          let defenseImpact: string | null = null;
+          if (article_type === 'BOTTLENECK' && (bottleneck_sub_tag === 'DEFENSE_INFRA' || /defense|defence|hal|bel|bdl|drdo|isro/i.test(title))) {
+            const dn = classifyDefenseNarrative(title, desc);
+            defenseNarrative = dn.narrative;
+            defenseImpact = dn.impact;
+            // Override impact label with narrative-aware version unless GENERIC
+            if (dn.narrative !== 'GENERIC') safeInstitutionalImpact = dn.impact;
+          }
+
+          // ── PATCH 0052: Frame impact with assertion class ──
+          // Tag the impact line with FACT / INFERENCE / SPECULATION so
+          // users distinguish what the article said vs what the system
+          // inferred. Templated labels are inferences by default.
+          const framed = frameImpact({
+            raw_label: safeInstitutionalImpact || '',
+            title,
+            desc,
+            is_templated: !!safeInstitutionalImpact,
+          });
+
+          // ── PATCH 0052: Freshness layer ──
+          // Splits the structural feed into LIVE_STRUCTURE / PERSISTENT_THEME
+          // / ARCHIVAL_CONTEXT so 24-day-old TrendForce articles don't
+          // pollute the live feed.
+          const freshnessLayer = computeFreshnessLayer({
+            age_days: ageDays,
+            is_synthetic: false,
+            half_life: envelope.half_life,
+          });
+
+          // ── PATCH 0052: Multi-dimensional confidence (lookup later via evidence accumulator) ──
+          // We attach a placeholder built only from base + assertion class
+          // here. Evidence-count and persistence are computed from the KV
+          // ledger after the article batch is built (see post-loop step).
+          const baseConfidence = envelope.structural_confidence?.confidence_pct ?? 50;
+          const provisionalConfidence = buildSignalConfidence({
+            base_confidence_pct: baseConfidence,
+            evidence_count: 0,            // to be filled in post-loop
+            evidence_persistence_days: 0, // to be filled in post-loop
+            evidence_cross_source: false, // to be filled in post-loop
+            importance_rank: envelope.importance_rank,
+            assertion_class: framed.assertion,
+          });
+
+          // ── PATCH 0052: Bottleneck hierarchy parent ──
+          // BOTTLENECK is now a meta-layer over child sub-tags. Frontend
+          // can render parent (e.g. COMPUTE_INFRA) + child (HBM/CoWoS).
+          const hierarchyParent = (graph.primary_node && graph.primary_node !== 'NONE')
+            ? graph.primary_node
+            : (article_type === 'BOTTLENECK' ? 'NONE' : 'NONE');
+
           items.push({
             id: uniqueId,
             title,
@@ -1403,10 +1481,20 @@ async function fetchAllNews(): Promise<any[]> {
             structural_confidence: envelope.structural_confidence ?? null,
             macro_regime: envelope.macro_regime ?? null,
             // PATCH 0050: intelligence layer
-            institutional_impact_label: institutionalImpact,
+            institutional_impact_label: safeInstitutionalImpact,
             why_this_matters: whyThisMatters,
             consensus_variant: consensusVariant,
             causal_chain: causalChain,
+            // PATCH 0052: causal-honesty layer
+            impact_assertion: framed.assertion,           // FACT / INFERENCE / SPECULATION
+            impact_prefix: framed.prefix,                  // 'Reported:' / 'May imply:' / 'Speculative thematic:'
+            impact_label_safe: framed.label,
+            defense_narrative: defenseNarrative,
+            defense_impact_inline: defenseImpact,
+            freshness_layer: freshnessLayer,               // LIVE / PERSISTENT / ARCHIVAL
+            signal_confidence: provisionalConfidence,      // multi-dim confidence (will be enriched post-loop)
+            bottleneck_parent: hierarchyParent,            // parent in hierarchy (SystemNode)
+            bottleneck_child: bottleneck_sub_tag || null,  // child sub-tag
             tickers: tickers,
             primary_ticker: tickers[0] || null,
             // PATCH 0050: importance now uses half-life decay instead of
@@ -1674,13 +1762,54 @@ async function fetchAllNews(): Promise<any[]> {
 
   const withSynthetics = [...diversified, ...syntheticArticles];
 
-  // Add impact statements + investment tickers
-  const articlesWithImpact = withSynthetics.map(a => ({
-    ...a,
-    // PATCH 0050: prefer institutional impact label when set
-    impact_statement: a.institutional_impact_label || generateImpact(a.title, a.summary || '', a.article_type, a.region, a.bottleneck_sub_tag),
-    investment_tickers: a.article_type === 'BOTTLENECK' ? getInvestmentTickers(a.title + ' ' + (a.summary || '')) : [],
-  }));
+  // ── PATCH 0052: Enrich signal_confidence with evidence-ledger lookups ──
+  // Pre-fetch evidence for unique nodes hit so we can populate evidence_count,
+  // persistence_days, and cross_source_confirmation per article.
+  const uniqueNodes = Array.from(new Set(
+    withSynthetics
+      .map((a: any) => a.graph_primary_node)
+      .filter((n: string) => n && n !== 'NONE')
+  ));
+  const evidenceByNode: Record<string, { evidence_count: number; persistence_days: number; cross_source: boolean }> = {};
+  await Promise.all(
+    uniqueNodes.map(async (n) => {
+      try {
+        const e = await readEvidence(n as any);
+        if (e) {
+          const earliest = e.top_samples.length > 0
+            ? new Date(e.top_samples[e.top_samples.length - 1].recorded_at).getTime()
+            : new Date(e.last_seen).getTime();
+          const persistence = Math.max(0, Math.round((Date.now() - earliest) / 86400000));
+          const tiers = new Set(e.top_samples.map(s => s.tier));
+          const crossSource = (tiers.has('PRIMARY') || tiers.has('SPECIALIST')) && tiers.size >= 2;
+          evidenceByNode[n] = { evidence_count: e.sample_count, persistence_days: persistence, cross_source: crossSource };
+        }
+      } catch { /* non-fatal */ }
+    })
+  );
+
+  // Add impact statements + investment tickers + enriched confidence
+  const articlesWithImpact = withSynthetics.map(a => {
+    const ev = a.graph_primary_node ? evidenceByNode[a.graph_primary_node] : null;
+    let enrichedConfidence = a.signal_confidence;
+    if (ev && a.signal_confidence) {
+      enrichedConfidence = buildSignalConfidence({
+        base_confidence_pct: a.structural_confidence?.confidence_pct ?? 50,
+        evidence_count: ev.evidence_count,
+        evidence_persistence_days: ev.persistence_days,
+        evidence_cross_source: ev.cross_source,
+        importance_rank: a.importance_rank,
+        assertion_class: a.impact_assertion ?? 'INFERENCE',
+      });
+    }
+    return {
+      ...a,
+      // PATCH 0050: prefer institutional impact label when set
+      impact_statement: a.institutional_impact_label || generateImpact(a.title, a.summary || '', a.article_type, a.region, a.bottleneck_sub_tag),
+      investment_tickers: a.article_type === 'BOTTLENECK' ? getInvestmentTickers(a.title + ' ' + (a.summary || '')) : [],
+      signal_confidence: enrichedConfidence,
+    };
+  });
 
   // ── PHASE 3.12: Cross-Reference network ──
   // For each BOTTLENECK article with a sub-tag, append to the rolling

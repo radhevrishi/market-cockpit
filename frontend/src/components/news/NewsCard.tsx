@@ -216,6 +216,76 @@ export default function NewsCard({ article, onTickerClick }: Props) {
             </p>
           )}
 
+          {/* PATCH 0052: Assertion-classed impact line */}
+          {(article as any).impact_label_safe && (
+            <div className="flex items-start gap-1.5 mt-1 text-[11px] leading-relaxed">
+              <span
+                className={`shrink-0 text-[9px] font-bold px-1 py-0.5 rounded uppercase tracking-wide ${
+                  (article as any).impact_assertion === 'FACT'        ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/40' :
+                  (article as any).impact_assertion === 'SPECULATION' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' :
+                                                                         'bg-sky-500/20 text-sky-300 border border-sky-500/40'
+                }`}
+                title={`Assertion class: ${(article as any).impact_assertion}`}
+              >
+                {(article as any).impact_assertion === 'FACT' ? 'fact'
+                  : (article as any).impact_assertion === 'SPECULATION' ? 'spec'
+                  : 'infer'}
+              </span>
+              <span className="text-[#C4D2DD]">
+                <span className="text-[#6677AA] mr-1">{(article as any).impact_prefix}</span>
+                {(article as any).impact_label_safe}
+              </span>
+            </div>
+          )}
+
+          {/* PATCH 0052: Multi-dimensional confidence bar */}
+          {(article as any).signal_confidence && (article as any).signal_confidence.confidence_pct > 0 && (
+            <div className="flex items-center gap-2 mt-1.5 text-[10px]">
+              <span className={`shrink-0 font-bold px-1 py-0.5 rounded uppercase tracking-wide ${
+                (article as any).signal_confidence.level === 'HIGH'   ? 'bg-emerald-500/25 text-emerald-300' :
+                (article as any).signal_confidence.level === 'MEDIUM' ? 'bg-amber-500/20 text-amber-300' :
+                                                                        'bg-zinc-500/20 text-zinc-400'
+              }`}>conf {(article as any).signal_confidence.level.toLowerCase()}</span>
+              <span className="text-[#8899AA]">{(article as any).signal_confidence.confidence_pct}%</span>
+              {(article as any).signal_confidence.evidence_count > 0 && (
+                <span className="text-[#6677AA]">· {(article as any).signal_confidence.evidence_count} articles</span>
+              )}
+              {(article as any).signal_confidence.persistence_days >= 7 && (
+                <span className="text-[#6677AA]">· {(article as any).signal_confidence.persistence_days}d persistent</span>
+              )}
+              {(article as any).signal_confidence.cross_source_confirmation && (
+                <span className="text-emerald-400">✓ cross-source</span>
+              )}
+            </div>
+          )}
+
+          {/* PATCH 0052: Freshness layer + defense narrative pills */}
+          {((article as any).freshness_layer || (article as any).defense_narrative) && (
+            <div className="flex items-center gap-1.5 mt-1.5">
+              {(article as any).freshness_layer && (
+                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${
+                  (article as any).freshness_layer === 'LIVE_STRUCTURE'    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' :
+                  (article as any).freshness_layer === 'PERSISTENT_THEME'  ? 'bg-violet-500/15 text-violet-300 border-violet-500/30' :
+                                                                              'bg-zinc-500/10 text-zinc-400 border-zinc-500/20'
+                }`} title="Recency layer">
+                  {(article as any).freshness_layer === 'LIVE_STRUCTURE' ? '● live'
+                    : (article as any).freshness_layer === 'PERSISTENT_THEME' ? '◑ persistent'
+                    : '○ archival'}
+                </span>
+              )}
+              {(article as any).defense_narrative && (article as any).defense_narrative !== 'GENERIC' && (
+                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-300 border border-orange-500/30" title="Defense narrative">
+                  ⚔ {(article as any).defense_narrative.replace(/_/g, ' ').toLowerCase()}
+                </span>
+              )}
+              {(article as any).bottleneck_parent && (article as any).bottleneck_parent !== 'NONE' && (article as any).bottleneck_child && (
+                <span className="text-[10px] text-[#6677AA] font-mono">
+                  {(article as any).bottleneck_parent.replace(/_/g, ' ').toLowerCase()} › {(article as any).bottleneck_child.replace(/_/g, ' ').toLowerCase()}
+                </span>
+              )}
+            </div>
+          )}
+
           {/* PATCH 0049: Transmission chain — beneficiaries → losers → second-order */}
           {((article as any).transmission?.causal_path || ((article as any).transmission?.second_order || []).length > 0) && (
             <div className="text-[10px] mt-1 leading-relaxed border-l-2 border-[#0F7ABF]/40 pl-2 py-0.5 bg-[#0F7ABF]/5">
