@@ -50,6 +50,125 @@ async function safeJson<T = any>(url: string, timeoutMs = 8000): Promise<{ data:
   }
 }
 
+// ── NASDAQ.com fallback for small caps with no FMP coverage ─────────────
+// FMP /stable/earnings, /stable/grades, /stable/price-target-summary all
+// return empty for small caps like OSS. NASDAQ.com exposes the same
+// data publicly via api.nasdaq.com. We fall back to it ONLY when FMP
+// returns nothing — for liquid names, FMP wins (cleaner data).
+//
+// Endpoints used (all public, no key):
+//   /api/quote/{symbol}/eps?assetclass=stocks   → EPS forecast + last 4Q actuals
+//   /api/analyst/{symbol}/ratings               → analyst rating distribution
+//   /api/analyst/{symbol}/targetprice           → target price + buy/sell/hold
+async function fetchNasdaqSmallCap(symbol: string): Promise<{
+  consensusNextQ: any | null;
+  lastReportedSurprise: any | null;
+  surpriseHistory: any[];
+  sellSide: any | null;
+  source: string;
+} | null> {
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'application/json',
+  };
+  const safe = async (url: string) => {
+    try {
+      const r = await fetch(url, { headers, signal: AbortSignal.timeout(7000), next: { revalidate: 3600 } });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch { return null; }
+  };
+
+  const sym = encodeURIComponent(symbol.toUpperCase());
+  const [epsResp, ratingsResp, targetResp] = await Promise.all([
+    safe(`https://api.nasdaq.com/api/quote/${sym}/eps?assetclass=stocks`),
+    safe(`https://api.nasdaq.com/api/analyst/${sym}/ratings`),
+    safe(`https://api.nasdaq.com/api/analyst/${sym}/targetprice`),
+  ]);
+
+  if (!epsResp && !ratingsResp && !targetResp) return null;
+
+  // EPS series → lastReportedSurprise + consensusNextQ + surpriseHistory.
+  // NASDAQ format: each row has type ('PreviousQuarter' | 'UpcomingQuarter'),
+  // period ('Mar 2026'), consensus (number), earnings (actual or 0 for upcoming).
+  const epsArr: Array<{ type: string; period: string; consensus: number; earnings: number }> =
+    epsResp?.data?.earningsPerShare || [];
+
+  const previousRows = epsArr.filter((e) => e.type === 'PreviousQuarter' && e.earnings !== 0);
+  const upcomingRows = epsArr.filter((e) => e.type === 'UpcomingQuarter');
+
+  // Most recent reported (last 'PreviousQuarter' row by date).
+  // NASDAQ orders chronologically; last entry is newest.
+  const lastReported = previousRows.length > 0 ? previousRows[previousRows.length - 1] : null;
+  const lastReportedSurprise = lastReported
+    ? {
+        date: lastReported.period,
+        actualEps: lastReported.earnings,
+        estimateEps: lastReported.consensus,
+        // NASDAQ EPS endpoint doesn't expose revenue — leave null.
+        actualRevenue: null,
+        estimateRevenue: null,
+      }
+    : null;
+
+  // Next upcoming quarter's consensus.
+  const nextUpcoming = upcomingRows.length > 0 ? upcomingRows[0] : null;
+  const consensusNextQ = nextUpcoming
+    ? {
+        date: nextUpcoming.period,
+        revenueAvg: null,         // NASDAQ EPS endpoint doesn't carry revenue
+        revenueLow: null,
+        revenueHigh: null,
+        epsAvg: nextUpcoming.consensus,
+        epsLow: null,
+        epsHigh: null,
+        ebitdaAvg: null,
+        ebitAvg: null,
+        netIncomeAvg: null,
+        numAnalysts: null,
+      }
+    : null;
+
+  // Surprise history — last 4 reported quarters with both actual + estimate.
+  const surpriseHistory = previousRows.slice(-8).reverse().map((r) => ({
+    date: r.period,
+    actualEps: r.earnings,
+    estimateEps: r.consensus,
+    actualRevenue: null,
+    estimateRevenue: null,
+  }));
+
+  // Sell-side from NASDAQ ratings + target endpoints.
+  const ratingsObj = ratingsResp?.data;
+  const targetObj = targetResp?.data?.consensusOverview;
+  let sellSide: any = null;
+  if (ratingsObj || targetObj) {
+    // NASDAQ doesn't break down by strongBuy / strongSell — only buy / hold / sell counts in target endpoint.
+    const buy = targetObj?.buy ?? 0;
+    const hold = targetObj?.hold ?? 0;
+    const sell = targetObj?.sell ?? 0;
+    const total = buy + hold + sell;
+    sellSide = {
+      bucket: { strongBuy: 0, buy, hold, sell, strongSell: 0 },
+      total,
+      recentUpgrades30d: 0,
+      recentDowngrades30d: 0,
+      consensusTargetPrice: targetObj?.priceTarget ?? null,
+      targetHigh: targetObj?.highPriceTarget ?? null,
+      targetLow: targetObj?.lowPriceTarget ?? null,
+      targetMedian: targetObj?.priceTarget ?? null,
+    };
+  }
+
+  return {
+    consensusNextQ,
+    lastReportedSurprise,
+    surpriseHistory,
+    sellSide,
+    source: 'nasdaq_dotcom_fallback',
+  };
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const ticker = (searchParams.get('ticker') || '').trim().toUpperCase();
@@ -235,6 +354,38 @@ export async function GET(request: Request) {
     }
   }
 
+  // ── NASDAQ.com fallback for small caps with no FMP coverage ───────────
+  // FMP returns nothing for OSS-style small caps. NASDAQ.com exposes
+  // EPS forecast, sell-side ratings, and target prices via their public
+  // api.nasdaq.com — same data Bloomberg / TradingView surface for free.
+  // Fire this only when FMP came back empty on consensus AND sell-side,
+  // so liquid names don't pay an extra round-trip.
+  let consensusNextQOut = consensusNextQ;
+  let lastReportedSurpriseOut = lastReportedSurprise;
+  let surpriseHistoryOut = surpriseHistory;
+  let sellSideOut: any = { bucket, total, recentUpgrades30d, recentDowngrades30d, consensusTargetPrice, targetHigh, targetLow, targetMedian };
+  let nasdaqFallbackUsed = false;
+
+  const fmpEmpty =
+    !consensusNextQ &&
+    !lastReportedSurprise &&
+    surpriseHistory.length === 0 &&
+    total === 0 &&
+    !consensusTargetPrice;
+  if (fmpEmpty) {
+    const nasdaq = await fetchNasdaqSmallCap(ticker);
+    if (nasdaq) {
+      nasdaqFallbackUsed = true;
+      track('nasdaq_dotcom_fallback', { ok: true });
+      if (nasdaq.consensusNextQ) consensusNextQOut = nasdaq.consensusNextQ;
+      if (nasdaq.lastReportedSurprise) lastReportedSurpriseOut = nasdaq.lastReportedSurprise;
+      if (nasdaq.surpriseHistory.length > 0) surpriseHistoryOut = nasdaq.surpriseHistory;
+      if (nasdaq.sellSide) sellSideOut = nasdaq.sellSide;
+    } else {
+      track('nasdaq_dotcom_fallback', { ok: false, reason: 'unreachable_or_no_data' });
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     ticker,
@@ -273,7 +424,7 @@ export async function GET(request: Request) {
           sharesOutstanding: quoteObj.sharesOutstanding,
         }
       : null,
-    consensusNextQ,
+    consensusNextQ: consensusNextQOut,
     consensusFY: estFY
       ? {
           date: estFY.date,
@@ -284,18 +435,10 @@ export async function GET(request: Request) {
           numAnalysts: estFY.numAnalystsRevenue || null,
         }
       : null,
-    lastReportedSurprise,
-    surpriseHistory,
-    sellSide: {
-      bucket,
-      total,
-      recentUpgrades30d,
-      recentDowngrades30d,
-      consensusTargetPrice,
-      targetHigh,
-      targetLow,
-      targetMedian,
-    },
+    lastReportedSurprise: lastReportedSurpriseOut,
+    surpriseHistory: surpriseHistoryOut,
+    sellSide: sellSideOut,
+    nasdaqFallbackUsed,
     revisionTrajectory: {
       bias: revisionBias,
       magnitudePct: revisionMagnitudePct,

@@ -727,8 +727,12 @@ function MetricRow({ line, scaleLabel }: { line: MetricLine; scaleLabel: string 
   );
 }
 
-function ScoreCard({ title, score, grade, subtitle, children }: { title: string; score: number; grade: string; subtitle?: string; children?: React.ReactNode }) {
-  const c = scoreColor(score);
+function ScoreCard({ title, score, grade, subtitle, children }: { title: string; score: number | null; grade: string; subtitle?: string; children?: React.ReactNode }) {
+  // Render '—' / 'N/A' when scoring engine gated due to thin inputs.
+  // Color = MUTED in that case so the card doesn't read as a green/red
+  // recommendation.
+  const isNull = score === null;
+  const c = isNull ? MUTED : scoreColor(score);
   return (
     <div style={{ background: PANEL, border: `1px solid ${BORDER}`, borderLeft: `3px solid ${c}`, borderRadius: 8, padding: '14px 16px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
@@ -737,7 +741,7 @@ function ScoreCard({ title, score, grade, subtitle, children }: { title: string;
           {subtitle && <div style={{ fontSize: 10, color: FAINT, marginTop: 2 }}>{subtitle}</div>}
         </div>
         <div style={{ textAlign: 'right' }}>
-          <div style={{ fontSize: 26, fontWeight: 800, color: c, fontFamily: MONO, lineHeight: 1 }}>{score}</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: c, fontFamily: MONO, lineHeight: 1 }}>{isNull ? '—' : score}</div>
           <div style={{ fontSize: 11, color: MUTED, fontWeight: 600 }}>{grade}</div>
         </div>
       </div>

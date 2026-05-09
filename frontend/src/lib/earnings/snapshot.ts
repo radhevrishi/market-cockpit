@@ -153,10 +153,14 @@ export interface EarningsSnapshot {
     flags: string[];
   };
 
-  // Scores (deterministic, 0–100, with breakdown + confidence)
+  // Scores (deterministic, 0–100, with breakdown + confidence).
+  // reaction.score and jat.score are nullable: when input coverage is too
+  // thin (e.g. small caps with no consensus + minimal forward signals),
+  // we emit null + grade 'N/A' rather than fabricate an A+ score off
+  // narrative themes alone. UI should render '—' when score === null.
   scores: {
     reaction: {
-      score: number;
+      score: number | null;
       grade: string;
       confidence: number;
       breakdown: Record<string, { score: number | null; weight: number; reason?: string }>;
@@ -165,7 +169,7 @@ export interface EarningsSnapshot {
     accounting: { score: number; grade: string; confidence: number; flags: string[] };
     narrative: { score: number; grade: string; confidence: number; themes: string[] };
     jat: {
-      score: number;
+      score: number | null;
       grade: string;
       direction: Direction;
       confidence: 'low' | 'medium' | 'high';

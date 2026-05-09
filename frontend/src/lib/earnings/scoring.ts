@@ -104,22 +104,44 @@ export function computeReactionScore(snap: Pick<EarningsSnapshot, 'metrics' | 'q
   const present = Object.values(breakdown).filter((b) => b.score !== null);
   const totalPresentWeight = present.reduce((s, b) => s + b.weight, 0);
 
-  if (present.length === 0 || totalPresentWeight === 0) {
+  // Sanity gates — prevent A+ scores from skinny coverage.
+  //
+  // OSS exposed the bug: a small-cap with no consensus + no guidance + no
+  // mgmt-tone signal still had `narrative` populated (themes are
+  // deterministic and always present). The renormalizer divided one
+  // 100-scoring narrative component by its 0.05 weight → score = 100 →
+  // grade A+ with "Limited inputs: 1 of 6 components" caveat. The
+  // caveat is hidden in small text; the headline reads as a
+  // recommendation. Institutional readers should see N/A, not A+.
+  //
+  // Hard gates:
+  //   - present.length === 0           → score null (was: score=50 sentinel)
+  //   - present.length === 1 && only narrative → score null (the OSS case)
+  //   - coverage < 0.30                → score null (less than 30% of
+  //     declared weight is too thin to project a reaction)
+  // Above 30% coverage → score normally; flag "Limited inputs" if < 3
+  // components present.
+  const totalDeclaredWeight = Object.values(breakdown).reduce((s, b) => s + b.weight, 0);
+  const coverage = totalDeclaredWeight > 0 ? totalPresentWeight / totalDeclaredWeight : 0;
+  const onlyNarrative = present.length === 1 && breakdown.narrative.score !== null;
+
+  if (present.length === 0 || onlyNarrative || coverage < 0.30) {
     return {
-      score: 50,
-      grade: letter(50),
+      score: null,
+      grade: 'N/A',
       confidence: 0,
       breakdown,
-      unavailableReason: 'No reaction inputs available — cannot score',
+      unavailableReason:
+        present.length === 0
+          ? 'No reaction inputs available — cannot score'
+          : onlyNarrative
+            ? 'Only narrative theme matching available — insufficient for reaction projection (no consensus surprise / guidance / tone signals)'
+            : `Coverage too thin: ${(coverage * 100).toFixed(0)}% of declared weight. Need ≥30%.`,
     };
   }
 
   const weighted = present.reduce((s, b) => s + (b.score! * b.weight), 0);
   const score = clamp(Math.round(weighted / totalPresentWeight));
-
-  // Confidence proportional to coverage
-  const totalDeclaredWeight = Object.values(breakdown).reduce((s, b) => s + b.weight, 0);
-  const coverage = totalPresentWeight / totalDeclaredWeight;
   const confidence = Math.round(Math.min(95, 30 + coverage * 65));
 
   return {
@@ -217,35 +239,33 @@ export interface JatSignal {
 }
 
 export function computeJatScore(signals: JatSignal[]): {
-  score: number;
+  score: number | null;
   grade: string;
   direction: Direction;
   confidence: 'low' | 'medium' | 'high';
   signals: JatSignal[];
   unavailableReason: string | null;
 } {
-  if (signals.length === 0) {
+  // Hard gate: JAT (Just-Ahead Trajectory) is a forward-looking
+  // momentum read. Two improving signals on a small cap previously
+  // produced score 100 A+ (OSS case). That's noise dressed as signal.
+  // Require at least 3 forward signals with non-zero total weight before
+  // emitting any numeric score.
+  const totalWeight = signals.reduce((s, sg) => s + sg.weight, 0);
+  if (signals.length < 3 || totalWeight === 0) {
     return {
-      score: 50,
-      grade: letter(50),
+      score: null,
+      grade: 'N/A',
       direction: 'stable',
       confidence: 'low',
       signals,
-      unavailableReason: 'No forward signals available (no estimate revisions, no margin history, no rating actions)',
+      unavailableReason:
+        signals.length === 0
+          ? 'No forward signals available (no estimate revisions, no margin history, no rating actions)'
+          : `Insufficient forward signals: ${signals.length} of minimum 3 required`,
     };
   }
   const dirVal: Record<Direction, number> = { improving: 100, stable: 50, deteriorating: 0 };
-  const totalWeight = signals.reduce((s, sg) => s + sg.weight, 0);
-  if (totalWeight === 0) {
-    return {
-      score: 50,
-      grade: letter(50),
-      direction: 'stable',
-      confidence: 'low',
-      signals,
-      unavailableReason: 'All forward signals had zero weight',
-    };
-  }
   const weighted = signals.reduce((s, sg) => s + dirVal[sg.direction] * sg.weight, 0);
   const score = clamp(Math.round(weighted / totalWeight));
   const direction: Direction = score >= 60 ? 'improving' : score <= 40 ? 'deteriorating' : 'stable';
@@ -255,15 +275,18 @@ export function computeJatScore(signals: JatSignal[]): {
 }
 
 // ── Reaction probability (deterministic, from reaction score + confidence) ─
-export function computeReactionProbability(reactionScore: number, reactionConfidence: number): {
+// reactionScore can be null when computeReactionScore gated due to thin
+// input coverage (e.g. small caps with only narrative themes available).
+// In that case → flat / low confidence / clear "insufficient" message.
+export function computeReactionProbability(reactionScore: number | null, reactionConfidence: number): {
   expected: '+10%' | '+5%' | 'flat' | '-5%' | '-10%';
   confidence: 'low' | 'medium' | 'high';
   summary: string;
 } {
   let expected: '+10%' | '+5%' | 'flat' | '-5%' | '-10%';
   let summary: string;
-  // If reaction confidence is low (insufficient inputs), force flat regardless of score
-  if (reactionConfidence < 35) {
+  // If reaction is null OR confidence too low → force flat with explicit reason
+  if (reactionScore === null || reactionConfidence < 35) {
     return {
       expected: 'flat',
       confidence: 'low',

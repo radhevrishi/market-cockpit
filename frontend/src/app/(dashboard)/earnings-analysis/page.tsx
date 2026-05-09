@@ -2974,10 +2974,10 @@ export default function EarningsAnalysisPage() {
     lines.push(`Net Income:       ${fnum(m.netIncome.actual, 1)}`);
     lines.push(`FCF:              ${fnum(m.fcf.actual, 1)}`);
     lines.push('');
-    lines.push(`Reaction Score:   ${snap.scores.reaction.score} (${snap.scores.reaction.grade}) — expected ${snap.reactionProbability.expected}`);
+    lines.push(`Reaction Score:   ${snap.scores.reaction.score ?? '—'} (${snap.scores.reaction.grade}) — expected ${snap.reactionProbability.expected}`);
     lines.push(`Accounting:       ${snap.scores.accounting.score} (${snap.scores.accounting.grade})`);
     lines.push(`Narrative:        ${snap.scores.narrative.score} (${snap.scores.narrative.grade})`);
-    lines.push(`JAT:              ${snap.scores.jat.score} (${snap.scores.jat.grade}) — ${snap.scores.jat.direction}`);
+    lines.push(`JAT:              ${snap.scores.jat.score ?? '—'} (${snap.scores.jat.grade}) — ${snap.scores.jat.direction}`);
     if (snap.qualitative.keyTakeaways.length > 0) {
       lines.push('');
       lines.push('KEY TAKEAWAYS');
