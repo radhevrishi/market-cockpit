@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
-import { extractWithLlmCached } from '@/lib/news/llm-extractor';
 import { recordXRef } from '@/lib/news/cross-reference';
 
 export const dynamic = 'force-dynamic';
@@ -1218,34 +1217,6 @@ async function fetchAllNews(): Promise<any[]> {
         }),
       ),
   ).catch(() => { /* non-fatal */ });
-
-  // ── PHASE 3.11: LLM event extraction (gated on ANTHROPIC_API_KEY) ──
-  // For top consequence articles only — running Haiku on every article
-  // in every refresh would be wasteful. Pick the top 8 by consequence
-  // and fire async. Results merged into specific_impact_llm field.
-  // When the env var is absent, extractWithLlmCached returns null and
-  // articles keep their regex-derived specific_impact unchanged.
-  if (process.env.ANTHROPIC_API_KEY) {
-    const llmTargets = articlesWithImpact
-      .filter((a) => (a.consequence_score || 0) >= 50 && !a.is_synthetic)
-      .sort((a, b) => (b.consequence_score || 0) - (a.consequence_score || 0))
-      .slice(0, 8);
-
-    await Promise.all(
-      llmTargets.map(async (a) => {
-        const llm = await extractWithLlmCached(a.title || '', a.summary || '');
-        if (!llm) return;
-        a.specific_impact_llm = llm;
-        // If LLM gives richer beneficiary/at-risk than regex, prefer LLM.
-        if (llm.beneficiaries.length > 0 && (!a.exposure_beneficiaries || a.exposure_beneficiaries.length === 0)) {
-          a.exposure_beneficiaries = llm.beneficiaries;
-        }
-        if (llm.at_risk.length > 0 && (!a.exposure_at_risk || a.exposure_at_risk.length === 0)) {
-          a.exposure_at_risk = llm.at_risk;
-        }
-      }),
-    ).catch(() => { /* non-fatal */ });
-  }
 
   // ── Persistence: save structural bottleneck articles to KV ──
   const DAY = 86400;
