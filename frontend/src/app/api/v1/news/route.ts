@@ -67,6 +67,35 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
   { name: 'The Information Tech', url: 'https://www.theinformation.com/feed', region: 'US', tier: 'editorial' },
   // RBI speeches feed — primary source for India monetary policy
   { name: 'RBI Speeches', url: 'https://www.rbi.org.in/Scripts/RSS_Speeches.aspx', region: 'IN', tier: 'primary' },
+  // ── Additional high-quality India sources ──
+  // Moneycontrol — main feed has all market news
+  { name: 'Moneycontrol Markets', url: 'https://www.moneycontrol.com/rss/marketreports.xml', region: 'IN', tier: 'secondary' },
+  { name: 'Moneycontrol Business', url: 'https://www.moneycontrol.com/rss/business.xml', region: 'IN', tier: 'secondary' },
+  { name: 'Moneycontrol Results', url: 'https://www.moneycontrol.com/rss/results.xml', region: 'IN', tier: 'secondary' },
+  // Trendlyne — earnings + brokerage note aggregation
+  { name: 'Trendlyne News', url: 'https://trendlyne.com/feed/', region: 'IN', tier: 'secondary' },
+  // SEBI press releases — primary regulator filings
+  { name: 'SEBI Press Releases', url: 'https://www.sebi.gov.in/sebirss.xml', region: 'IN', tier: 'primary' },
+  // BSE corporate announcements — primary source for ALL listed-co disclosures
+  { name: 'BSE Corp Announcements', url: 'https://www.bseindia.com/data/xml/notices.xml', region: 'IN', tier: 'primary' },
+  // ── Additional India business news ──
+  { name: 'Financial Express Markets', url: 'https://www.financialexpress.com/market/feed/', region: 'IN', tier: 'secondary' },
+  { name: 'Business Today Markets', url: 'https://www.businesstoday.in/rss/markets', region: 'IN', tier: 'secondary' },
+  { name: 'CNBC TV18 Markets', url: 'https://www.cnbctv18.com/rss/market.xml', region: 'IN', tier: 'secondary' },
+  { name: 'CNBC TV18 Companies', url: 'https://www.cnbctv18.com/rss/business.xml', region: 'IN', tier: 'secondary' },
+  // Sector-specific Indian feeds
+  { name: 'ET Tech', url: 'https://economictimes.indiatimes.com/tech/technology/rssfeeds/13352306.cms', region: 'IN', tier: 'secondary' },
+  { name: 'ET Auto', url: 'https://economictimes.indiatimes.com/industry/auto/rssfeeds/64829342.cms', region: 'IN', tier: 'secondary' },
+  { name: 'ET Banking', url: 'https://economictimes.indiatimes.com/industry/banking/finance/rssfeeds/13358341.cms', region: 'IN', tier: 'secondary' },
+  { name: 'ET Pharma', url: 'https://economictimes.indiatimes.com/industry/healthcare/biotech/pharmaceuticals/rssfeeds/13358365.cms', region: 'IN', tier: 'secondary' },
+  // Analytical / commentary
+  { name: 'Equitymaster', url: 'https://www.equitymaster.com/detail.asp?date=&story=&id=&fmt=rss', region: 'IN', tier: 'editorial' },
+  { name: 'INDmoney', url: 'https://www.indmoney.com/blog/feed', region: 'IN', tier: 'tertiary' },
+  // ── US institutional sources we were missing ──
+  { name: 'WSJ Markets', url: 'https://feeds.a.dj.com/rss/RSSMarketsMain.xml', region: 'US', tier: 'primary' },
+  { name: 'Bloomberg Markets', url: 'https://feeds.bloomberg.com/markets/news.rss', region: 'US', tier: 'primary' },
+  { name: 'Bloomberg Politics', url: 'https://feeds.bloomberg.com/politics/news.rss', region: 'US', tier: 'primary' },
+  { name: 'FT Markets', url: 'https://www.ft.com/markets?format=rss', region: 'GLOBAL', tier: 'primary' },
 ];
 
 // Domain denylist for BOTTLENECK tier escalation. These sources can
@@ -295,7 +324,7 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
 
   // Generic market wraps + premarket movers + day-of stock chatter
   // ("Sensex falls 500 points", "Stocks making biggest moves", "premarket")
-  const MARKET_WRAP_RE = /\b(sensex (falls?|gains?|ends?|tanks?|drops?) \d|nifty \d{2}\s*ends?|nifty 50 ends? (below|above)|nifty bulls indecisive|stocks? making the biggest moves? (premarket|after.?hours)|premarket movers?|after.?hours? movers?|stocks? to (watch|buy|sell)|jim cramer (says|believes|thinks)|cramer says|cramer believes|cramer's (take|view)|tech stocks could offer|smaller (tech )?stocks are punching|insider trades?:?|notable names?|sa asks|ignore market noise|market wrap|day's losers?|day's gainers?)\b/i;
+  const MARKET_WRAP_RE = /\b(sensex (falls?|gains?|ends?|tanks?|drops?) \d|nifty \d{2}\s*ends?|nifty 50 ends? (below|above)|nifty bulls indecisive|stocks? making the biggest moves? (premarket|after.?hours)|premarket movers?|after.?hours? movers?|stocks? to (watch|buy|sell)|jim cramer (says|believes|thinks)|cramer says|cramer believes|cramer's (take|view)|tech stocks could offer|smaller (tech )?stocks are punching|insider trades?:?|notable names?|sa asks|ignore market noise|market wrap|day's losers?|day's gainers?|wall (st(reet)?) week ahead|pulse of the street|us stock market today|s&p 500.{0,20}futures? (advance|retreat)|nasdaq futures?|geopolitical tensions drag|nifty ends week|markets log modest|stock market today|opportunity to buy or wait|tanks 7% after q\d results today|share price tanks)\b/i;
 
   // Generic geopolitical filler — daily war / parade / ceasefire updates
   // WITHOUT specific company / sector / supply-chain consequence
@@ -304,7 +333,27 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
   // SEO content listicles
   const SEO_LISTICLE_RE = /\b(most overvalued (tech )?stocks?|nvidia has already committed|gpt.?\d.?\d may burn|here'?s what traders|here'?s what'?s ahead|no description|prestigious job|teflon market|just-ahead|jim cramer|next major deadline|how much further|how long can|how to recession.?proof)\b/i;
 
-  if (NOISE_RE.test(text) || PERSONAL_FINANCE_RE.test(text) || SPORTS_RE.test(text) || REGIONAL_POLITICS_RE.test(text) || FLUFF_RE.test(text) || MARKET_WRAP_RE.test(text) || GEOPOLITICAL_FILLER_RE.test(text) || SEO_LISTICLE_RE.test(text)) {
+  // SECTOR-WIDE EARNINGS AGGREGATIONS — "8 out of 9 X stocks beat",
+  // "Real estate stocks eke out gains", "Most healthcare companies".
+  // These are auto-generated weekly summaries, no actionable per-ticker
+  // signal. Drop entirely from feed.
+  const SECTOR_AGGREGATION_RE = /\b(\d{1,2} out of \d{1,2}|\d{1,2} of \d{1,2})\s+\w*\s*(stocks?|companies)\s+(beat|miss|reported|deliver|outperform|underperform|wins?)|most (\w+ )?companies report|seven \w+ stocks beat|all \w+ stocks beat|eke out gains on earnings|stocks (rise|fall|gain|drop|edge|tank|rally|surge|sink) on earnings releases|earnings scorecard|earnings recap|sector\s*(round|wrap|recap)|\w+ Q[1-4] earnings call highlights\b/i;
+
+  // ANALYST OPINION / "X says Y" pieces unless ticker-specific event
+  // ("Bank of America says stocks like Apple have plenty of upside" —
+  // generic talking head). Specific rating actions ("Citi downgrades
+  // India to Underweight", "JPM cuts target") still pass via
+  // RATING_CHANGE classifier path.
+  const ANALYST_OPINION_RE = /\b(bank of america says|goldman says|morgan stanley says|jp ?morgan says|credit suisse says|barclays says|wells fargo says|deutsche bank says|expert says|experts? bet high|d-?street bull(?:s)?|long-term story intact|brokerage view|brokers? (suggest|believe|recommend)|jefferies says|nomura says|hsbc says|moneycontrol says|cnbc-tv18 says|et now says|here'?s why|sees plenty of upside|advances? to|wait for valuation reset|markets log)\b/i;
+
+  // EVENT PREVIEWS — "Wall St Week Ahead", "What's coming next week",
+  // "Q4 results today live updates"-style aggregators
+  const PREVIEW_AGGREGATOR_RE = /\b(week ahead|coming this week|coming days?|outlook for the week|what to watch (this week|next week)|q[1-4] results today live|q[1-4] result today live|results today live updates|live updates|live blog|live coverage|recap and outlook)\b/i;
+
+  // SPECULATIVE / OPINION pieces with low actionability
+  const SPECULATIVE_RE = /\b(goodbye quarterly earnings|will the .{0,15}war|here'?s when|here'?s why|may be|might be|could be|may end up|might end up|here'?s how|reasons to (buy|sell|hold))\b/i;
+
+  if (NOISE_RE.test(text) || PERSONAL_FINANCE_RE.test(text) || SPORTS_RE.test(text) || REGIONAL_POLITICS_RE.test(text) || FLUFF_RE.test(text) || MARKET_WRAP_RE.test(text) || GEOPOLITICAL_FILLER_RE.test(text) || SEO_LISTICLE_RE.test(text) || SECTOR_AGGREGATION_RE.test(text) || ANALYST_OPINION_RE.test(text) || PREVIEW_AGGREGATOR_RE.test(text) || SPECULATIVE_RE.test(text)) {
     // Return tier 4 — filter layer downstream drops these from main feed.
     return { article_type: 'GENERAL', investment_tier: 4 };
   }
@@ -1381,19 +1430,41 @@ export async function GET(request: Request) {
       filtered.sort((a, b) => (b.importance_score || 0) - (a.importance_score || 0));
     }
 
-    // ── Phase 1.3: Must-Read curation ──
-    // Returns top 5 institutional must-read articles by composite score:
-    //   importance_score (consequence × recency) × source_tier_weight
+    // ── Phase 1.3: Must-Read curation (improved) ──
+    // Composite score weighted heavily toward:
+    //   - Specific impact extraction (article has structured pill)
+    //   - Recency (last 6h gets full weight, decays linearly to 24h)
+    //   - Watchlist match
+    //   - Primary/editorial source tier
+    // Penalised:
+    //   - Generic article_type='GENERAL' (fallback bucket)
+    //   - Stale articles (>24h)
+    //   - Articles with low consequence even when type passes
     if (mustRead) {
       const tierWeight: Record<string, number> = {
-        primary: 1.2, secondary: 1.0, tertiary: 0.8, editorial: 1.1, retail: 0.5,
+        primary: 1.3, secondary: 1.0, tertiary: 0.7, editorial: 1.2, retail: 0.4,
       };
+      const now = Date.now();
       const ranked = filtered
-        .filter(a => a.article_type !== 'COMMENTARY') // commentary has its own tab
-        .map(a => ({
-          ...a,
-          must_read_score: (a.importance_score || 0) * (tierWeight[a.source_tier] || 1.0),
-        }))
+        .filter(a => a.article_type !== 'COMMENTARY' && a.article_type !== 'GENERAL')
+        .filter(a => (a.consequence_score || 0) >= 35)
+        .map(a => {
+          const ageH = a.published_at ? (now - new Date(a.published_at).getTime()) / 3600000 : 100;
+          const recencyMult = ageH <= 6 ? 1.0 : ageH <= 24 ? 0.7 : ageH <= 72 ? 0.4 : 0.15;
+          const specificImpactBonus = (a.specific_impact?.label) ? 1.4 : 1.0;
+          const watchlistBonus = (a.watchlist_match && a.watchlist_match.length > 0) ? 1.5 : 1.0;
+          const tierMult = tierWeight[a.source_tier] || 1.0;
+          // Heavy penalty for BOTTLENECK that's actually retail-tier
+          // (escapes through if classifier let it through earlier)
+          const retailPenalty = a.source_tier === 'retail' ? 0.5 : 1.0;
+          const must_read_score = (a.consequence_score / 100)
+            * tierMult
+            * recencyMult
+            * specificImpactBonus
+            * watchlistBonus
+            * retailPenalty;
+          return { ...a, must_read_score };
+        })
         .sort((a, b) => (b.must_read_score || 0) - (a.must_read_score || 0))
         .slice(0, 5);
       return NextResponse.json(ranked);
