@@ -105,9 +105,12 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v8'; // v8: deep tech sub-taxonomy
+const CACHE_KEY = 'news:articles:v9'; // v9: bottleneck regression fix (patch 0046)
 const CACHE_TTL = 300; // 5 min
-const BOTTLENECK_PERSISTENT_KEY = 'bottleneck:articles:persistent:v7'; // v7: deep tech sub-taxonomy
+// v8 → v9 bump invalidates the 216-article regression bucket that
+// accumulated when INDIA_STRUCTURAL_HARD was firing too broadly. Old
+// data is GC'd on next read.
+const BOTTLENECK_PERSISTENT_KEY = 'bottleneck:articles:persistent:v9';
 const BOTTLENECK_TTL = 7776000; // 90 days in seconds
 
 // ══════════════════════════════════════════════════════════════════════
@@ -369,7 +372,10 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
 
   // Personal finance / retirement / advice columns — institutional readers
   // don't need "I'm 66, should I invest $100k" or "recession-proof retirement"
-  const PERSONAL_FINANCE_RE = /\b(i'?m \d{2}|should i invest|recession.?proof (your |my )?(retirement|income)|social security disability|my (mother|father|niece|nephew|aunt|uncle).{0,40}(invest|inherit|disability|insurance)|will i lose|should i buy|should i sell|am i wrong|am i right|americans are not great|paying social security|does this make sense)\b/i;
+  // PATCH 0046: extended to catch Indian personal-finance columns
+  // (SIP picks, ELSS guide, PPF vs NPS, tax-saving fund) and US
+  // retirement / advice fluff (suze orman, dave ramsey, fidelity advice).
+  const PERSONAL_FINANCE_RE = /\b(i'?m \d{2}|should i invest|recession.?proof (your |my )?(retirement|income)|social security disability|my (mother|father|niece|nephew|aunt|uncle).{0,40}(invest|inherit|disability|insurance)|will i lose|should i buy|should i sell|am i wrong|am i right|americans are not great|paying social security|does this make sense|how to save|how to invest|how to retire|ways to (save|grow|invest|retire)|tips to (save|invest|retire|grow your (wealth|money))|top \d+ (sip|elss|mutual fund|tax saving|nps|ppf)|best (sip|elss|mutual fund|tax.?saving|nps|ppf|life insurance|health insurance|term insurance|ulip|fd|fixed deposit) (?:for|of|to|picks?|funds?|plans?)|sip picks?|elss picks?|tax.?saving (fund|tip|investment|plan|guide)|retirement (planning|guide|tip|calculator)|ppf (vs|guide|interest rate|account)|nps (vs|guide|tier ?\d|return)|sukanya samriddhi|atal pension|kvp guide|mutual fund picks? for|mutual fund recommendation|monthly sip|sip vs lumpsum|lumpsum vs sip|ulip vs|term insurance vs|life insurance vs|health insurance (guide|picks?|comparison)|fixed deposit (vs|guide|rate|picks?)|gold (etf|sgb|bond) (guide|picks?|invest)|sovereign gold bond (guide|picks?|invest)|home loan (guide|tip|emi|tenure|prepay)|emi (calculator|guide|tip)|credit card (guide|tip|reward|points|review|comparison)|debt mutual fund|liquid fund picks?|hybrid fund picks?|focused fund picks?|smallcap fund picks?|midcap fund picks?|largecap fund picks?|index fund picks?|fund of fund|suze orman|dave ramsey|robert kiyosaki|how much (do you|should you) (need|save)|million dollar retirement|millionaire next door|frugal living|early retirement|fire movement|fatfire|coastfire|leanfire|side hustle|passive income (guide|stream|tip)|emergency fund|budget (template|tip|guide))\b/i;
 
   // Sports — require sports CONTEXT, not just "cricket" anywhere
   const SPORTS_RE = /\b(test (cricket|match|series)|odi (match|series)|t20 (match|series|world cup)|ipl (match|score|auction|playoff)|fifa|world cup (final|qualifier)|olympic|asian games|asia cup|kabaddi|wfi|vinesh phogat|rohit sharma|virat kohli|mahendra dhoni|wrestling federation|doping (rule|violation)|cricket (board|league|fixture|controversy|live updates|broadcast))\b/i;
@@ -380,7 +386,26 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
   const REGIONAL_POLITICS_RE = /\b(vck|tvk|iuml|admk|mdmk|pmk|ntk|dmdk|amma makkal|vijay (push|leader|tvk|party)|tamilnadu (election|politics|party|leader|chief minister)|stalin (election|cabinet|reshuffle)|president'?s? rule|local elections? defeat|show.?cause notice (to|against)|ww2 victory parade|russia (holds|scaled|parade))\b/i;
 
   // Pure tech trivia / lifestyle / product reviews / consumer fluff
-  const FLUFF_RE = /\b(rooftop swimming pool|tux the penguin|linux mascot|amiga emulating|retro gaming|reddit blocked|tricked.?out terminals?|share your shell|instant photography|instax|ars asks|build on|clips feed|tiktok.?like|whoop on.?demand|rooftop pool|bt tower|frontier plane|frog dies|teflon market|prestigious job|housing market lost|punching above)\b/i;
+  // PATCH 0046 EXPANSION: catches Bloomberg lifestyle videos, movie / film
+  // reviews, music / album / concert blurbs, celebrity auctions
+  // (Marilyn Monroe), royal-family fashion columns, food / restaurant
+  // columns, dating-app trend pieces. These were leaking into the
+  // BOTTLENECK feed via INDIA_STRUCTURAL_HARD's loose 'order'/'approval'
+  // matches in titles like "Court order on Marilyn Monroe auction" or
+  // "BSE approves new movie premiere advertising package".
+  const FLUFF_RE = /\b(rooftop swimming pool|tux the penguin|linux mascot|amiga emulating|retro gaming|reddit blocked|tricked.?out terminals?|share your shell|instant photography|instax|ars asks|build on|clips feed|tiktok.?like|whoop on.?demand|rooftop pool|bt tower|frontier plane|frog dies|teflon market|prestigious job|housing market lost|punching above|movie review|film review|box[- ]?office|premiere|trailer|box office collection|mortal kombat|marvel cinematic|dc universe|netflix series|amazon prime video|amazon prime original|disney\+ original|coachella|grammy|oscar|cannes|met gala|red carpet|fashion week|royal family|kate middleton|prince william|prince harry|meghan markle|marilyn monroe|elvis presley|beatles album|taylor swift|rihanna|beyonce|kim kardashian|celebrity auction|estate auction|memorabilia auction|christie'?s? auction|sotheby'?s? auction|wedding (gown|dress|ring|venue)|engagement ring|honeymoon (destination|resort)|recipe of the day|food review|restaurant review|michelin (star|guide)|tasting menu|wine (review|tasting|pairing)|cocktail (recipe|trend)|dating app|tinder|bumble|hinge|relationship advice|valentine'?s? day|raksha bandhan|holi|diwali (gift|sweet|rangoli|bonus)|pongal recipe|onam recipe|eid (recipe|fashion))\b/i;
+
+  // PATCH 0046: Exchange / regulator FILING NOISE — BSE corp announcements
+  // and SEBI press releases pump out hundreds of attachment-only PDFs
+  // (PAN updates, settlement programmes, intermediary registrations,
+  // KYC compliance circulars, complaint redressal stats, advisory
+  // bulletins). These have no investment signal. Drop entirely.
+  const FILING_NOISE_RE = /\b(settlement (programme|scheme|order document|notice attached)|intermediary registration|fee payment certificate|kyc (registration|extension|renewal|update circular)|inactive (account|client)|grievance redress(?:al)? (statistic|report)|complaint statistic|investor (charter|grievance|service)|standardised (procedure|format|norms)|disclosure (under|format|circular)|compliance (status|format|circular)|attachment (?:to|under|notice)|attached (?:document|herewith|circular|notice)|appendix [a-z]|annexure [a-z\d]|appendix \d|annexure \d|circular ref:?|circular no\.?|press release no\.?|reg\.?\s+\d+\/\d+\/\d+|\bisin\b.{0,15}(allot|change|merger)|corrigendum|errata|withdrawal of (notice|circular)|notice for (mutual fund|portfolio manager|stock broker|investment adviser|merchant banker|reit|invit) intermediar|adjudication order|interim order|consent order|appeal (filed|disposed|withdrawn)|sat order|securities appellate|board meeting outcome attached|outcome of board meeting|notice of (annual|extra ordinary|extra-ordinary) general meeting|agm notice|egm notice|postal ballot|e-?voting|book closure|record date for (dividend|bonus|split)|disclosure under (regulation|reg\.?) \d+|sebi (?:lodr|pit|sast|takeover) regulation|reg\. ?(?:30|29|31|7|13|24)|insider trading window|trading window (open|clos|notice)|press release (no|reference|number|dt\.?|dated))\b/i;
+
+  // PATCH 0046: Sports auctions / IPL bid noise. SPORTS_RE missed
+  // "BCCI auction list", "IPL franchise valuation", "team strategy
+  // meeting" because they don't say "match" or "score".
+  const SPORTS_BUSINESS_RE = /\b(ipl(?:\s+\d{4})?\s+(auction|franchise|valuation|sponsor|broadcast deal|media rights|sale|owner)|bcci(?:\s+\d{4})?\s+(auction|tender|broadcast|media rights|notice)|cricket\s+(broadcast|tournament|board meeting|franchise|league fee|auction)|wpl(?:\s+\d{4})?\s+(auction|franchise)|isl(?:\s+\d{4})?\s+(franchise|auction)|football\s+(auction|transfer|league fee)|hockey\s+(league|franchise)|tennis\s+(open|grand slam|wimbledon|french open|us open|australian open)|esports\s+(league|tournament|prize pool))\b/i;
 
   // Generic market wraps + premarket movers + day-of stock chatter
   // ("Sensex falls 500 points", "Stocks making biggest moves", "premarket")
@@ -413,7 +438,7 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
   // SPECULATIVE / OPINION pieces with low actionability
   const SPECULATIVE_RE = /\b(goodbye quarterly earnings|will the .{0,15}war|here'?s when|here'?s why|may be|might be|could be|may end up|might end up|here'?s how|reasons to (buy|sell|hold))\b/i;
 
-  if (NOISE_RE.test(text) || PERSONAL_FINANCE_RE.test(text) || SPORTS_RE.test(text) || REGIONAL_POLITICS_RE.test(text) || FLUFF_RE.test(text) || MARKET_WRAP_RE.test(text) || GEOPOLITICAL_FILLER_RE.test(text) || SEO_LISTICLE_RE.test(text) || SECTOR_AGGREGATION_RE.test(text) || ANALYST_OPINION_RE.test(text) || PREVIEW_AGGREGATOR_RE.test(text) || SPECULATIVE_RE.test(text)) {
+  if (NOISE_RE.test(text) || PERSONAL_FINANCE_RE.test(text) || SPORTS_RE.test(text) || SPORTS_BUSINESS_RE.test(text) || REGIONAL_POLITICS_RE.test(text) || FLUFF_RE.test(text) || FILING_NOISE_RE.test(text) || MARKET_WRAP_RE.test(text) || GEOPOLITICAL_FILLER_RE.test(text) || SEO_LISTICLE_RE.test(text) || SECTOR_AGGREGATION_RE.test(text) || ANALYST_OPINION_RE.test(text) || PREVIEW_AGGREGATOR_RE.test(text) || SPECULATIVE_RE.test(text)) {
     // Return tier 4 — filter layer downstream drops these from main feed.
     return { article_type: 'GENERAL', investment_tier: 4 };
   }
@@ -494,15 +519,50 @@ function classifyArticle(title: string, desc: string): { article_type: string; i
     return { article_type: 'BOTTLENECK', investment_tier: 1, bottleneck_sub_tag: getBottleneckSubTag(text), bottleneck_level: getBottleneckLevel(text) };
   }
 
-  // Rule 3a: India structural domains — HARD (always BOTTLENECK)
-  // Nuclear, defence orders, DRDO/ISRO commercial wins, PLI disbursements,
-  // semiconductor mission progress, refinery commissioning, etc.
-  // BUT exclude pure missile-test announcements without named company —
-  // those are platform-level news, not investing structural alpha.
+  // Rule 3a: India structural domains — HARD
+  // ─────────────────────────────────────────────────────────────────
+  // PATCH 0046: Tightened from "always BOTTLENECK on regex match" to
+  // "BOTTLENECK only when paired with a real signal". The previous
+  // version was matching on tokens like "order", "approval",
+  // "settlement" — which appear in BSE corporate filings, SEBI press
+  // attachments, NSE delisting circulars, Bloomberg lifestyle blurbs,
+  // movie premiere advertising approvals, etc.
+  //
+  // New requirement: HARD-pattern article must ALSO carry one of:
+  //   (a) a real physical-constraint signal (PHYSICAL_CONSTRAINT /
+  //       IMPLICIT_CONSTRAINT)
+  //   (b) a structural breakthrough signal (BREAKTHROUGH)
+  //   (c) a named structural-Indian-company anchor (HAL / BEL / BDL /
+  //       BHEL / NPCIL / L&T / Bharat Dynamics / Mazagon / Cochin
+  //       Shipyard / GRSE / Tata Advanced / Adani Defence / Paras /
+  //       BHEL / Coal India / Power Grid / NTPC / Reliance Refinery /
+  //       Vedanta Lithium / Tata Semiconductor / Kaynes / Syrma / Dixon)
+  //   (d) a quantified financial commitment (₹X cr / $X bn / N MW /
+  //       N GW / X tonnes / lakh tonnes — proves it's a real capital
+  //       allocation, not a routine filing)
+  //
+  // Articles that match HARD but carry NONE of (a)-(d) drop to tier 3
+  // GENERAL — they may still surface elsewhere if scoring rescues them,
+  // but they cannot reach the BOTTLENECK feed.
   if (INDIA_STRUCTURAL_HARD.test(text)) {
+    const NAMED_STRUCTURAL_CO = /\b(hal|bel|bdl|bhel|npcil|bhavini|brahmos aerospace|l&t|larsen ?\&? ?toubro|mazagon dock|cochin shipyard|grse|garden reach|bharat dynamics|bharat electronics|bharat earth movers|beml|tata advanced|adani defence|paras defence|astra microwave|data patterns|midhani|mishra dhatu|coal india|power grid corp|ntpc|nhpc|sjvn|reliance refinery|reliance industries refinery|ioc refinery|bpcl refinery|hpcl refinery|vedanta lithium|tata electronics|tata semiconductor|kaynes technology|syrma sgs|dixon technologies|isgec|polymatech|amkor india|micron gujarat|drdo|isro|antrix|new space india)\b/i;
+    const QUANTIFIED_COMMITMENT =
+      /(?:rs\.?|inr|₹)\s*\d[\d,]*\s*(?:cr|crore|lakh\s*crore)/i.test(text) ||
+      /\$\s*\d[\d.]*\s*(?:billion|bn|million|mn)\b/i.test(text) ||
+      /\b\d[\d,]*\s*(?:mw|gw|kva|kv|tonne|tonnes|lakh tonnes|million tonnes|mtpa|kwh|gwh)\b/i.test(text);
+    const hasRealSignal =
+      PHYSICAL_CONSTRAINT.test(text) ||
+      IMPLICIT_CONSTRAINT.test(text) ||
+      BREAKTHROUGH.test(text) ||
+      NAMED_STRUCTURAL_CO.test(text) ||
+      QUANTIFIED_COMMITMENT.test(text);
+    if (!hasRealSignal) {
+      // HARD pattern matched but no real signal — drop to GENERAL tier 3.
+      return { article_type: 'GENERAL', investment_tier: 3 };
+    }
+    // Even with a real signal, demote pure missile tests if no named co.
     const isMissileTestNoise =
-      MISSILE_TEST_NOISE_RE.test(text)
-      && !/\b(hal|bel|bdl|brahmos aerospace|l&t|larsen|mazagon|cochin shipyard|grse|bharat dynamics|bharat electronics|bharat earth movers|beml|tata advanced|adani defence|paras defence|astra microwave|data patterns|midhani|mishra dhatu|munjal showa|defence corridor|defence export.{0,20}\\$|order worth)\b/i.test(text);
+      MISSILE_TEST_NOISE_RE.test(text) && !NAMED_STRUCTURAL_CO.test(text);
     if (isMissileTestNoise) {
       return { article_type: 'GENERAL', investment_tier: 3 };
     }
@@ -838,11 +898,28 @@ function detectRegion(title: string, desc: string, feedRegion: string): string {
 // no India-specific bucket fits do we fall through to the global supply-
 // chain labels. The global list is also tightened so generic words don't
 // overmatch.
+// PATCH 0046: sub-tag-aware fallback so structural articles never land
+// on the generic "Physical system constraint" message. Each sub-tag
+// gets a domain-specific impact line instead.
+const SUBTAG_IMPACT_LABELS: Record<string, string> = {
+  MEMORY_STORAGE: 'Memory supply cycle — HBM / DRAM / NAND tightness',
+  INTERCONNECT_PHOTONICS: 'Optical interconnect — bandwidth bottleneck',
+  FABRICATION_PACKAGING: 'Advanced packaging / wafer capacity constraint',
+  COMPUTE_SCALING: 'Compute scaling — accelerator / data-center capacity',
+  POWER_GRID: 'Power / grid capacity constraint',
+  NUCLEAR_ENERGY: 'Nuclear / atomic energy structural milestone',
+  THERMAL_COOLING: 'Thermal / cooling design constraint',
+  MATERIALS_SUPPLY: 'Critical mineral supply constraint',
+  QUANTUM_CRYOGENICS: 'Quantum / cryogenic infrastructure milestone',
+  GENERAL_CONSTRAINT: 'Structural supply-chain signal',
+};
+
 function generateImpact(
   title: string,
   desc: string,
   article_type: string,
   region: string = 'IN',
+  bottleneckSubTag?: string | null,
 ): string {
   const text = (title + ' ' + desc).toLowerCase();
 
@@ -938,7 +1015,13 @@ function generateImpact(
   }
 
   // Fallback by article_type when no specific pattern matches.
-  if (article_type === 'BOTTLENECK') return 'Physical system constraint with structural implications';
+  if (article_type === 'BOTTLENECK') {
+    // PATCH 0046: prefer sub-tag-specific label over the generic line.
+    if (bottleneckSubTag && SUBTAG_IMPACT_LABELS[bottleneckSubTag]) {
+      return SUBTAG_IMPACT_LABELS[bottleneckSubTag];
+    }
+    return 'Structural supply-chain signal';
+  }
   if (article_type === 'EARNINGS') return region === 'IN' ? 'Quarterly earnings — track delta vs estimate' : 'Earnings — vs consensus';
   if (article_type === 'MACRO') return region === 'IN' ? 'India macro signal' : 'US macro signal';
   if (article_type === 'GEOPOLITICAL') return 'Geopolitical risk';
@@ -1315,7 +1398,7 @@ async function fetchAllNews(): Promise<any[]> {
   // Add impact statements + investment tickers
   const articlesWithImpact = withSynthetics.map(a => ({
     ...a,
-    impact_statement: generateImpact(a.title, a.summary || '', a.article_type, a.region),
+    impact_statement: generateImpact(a.title, a.summary || '', a.article_type, a.region, a.bottleneck_sub_tag),
     investment_tickers: a.article_type === 'BOTTLENECK' ? getInvestmentTickers(a.title + ' ' + (a.summary || '')) : [],
   }));
 
