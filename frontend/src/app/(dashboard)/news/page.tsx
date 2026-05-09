@@ -179,6 +179,56 @@ function useNews(search: string) {
   });
 }
 
+// ── Phase 1.3: Must Read curated top 5 ───────────────────────────────
+function useMustRead() {
+  return useQuery<NewsArticle[]>({
+    queryKey: ['news', 'must-read'],
+    queryFn: async () => {
+      const { data } = await api.get('/news?must_read=1');
+      return Array.isArray(data) ? data : [];
+    },
+    refetchInterval: 5 * 60_000,    // 5 min
+    staleTime: 5 * 60_000,
+    retry: 1,
+  });
+}
+
+// ── Phase 1.5: Forward Calendar ─────────────────────────────────────
+interface CalendarEvent {
+  date: string;
+  type: string;
+  region: string;
+  title: string;
+  ticker?: string;
+  importance: 'high' | 'medium';
+}
+function useCalendar() {
+  return useQuery<{ tomorrow: CalendarEvent[]; this_week: CalendarEvent[]; this_month: CalendarEvent[] }>({
+    queryKey: ['calendar', 'forward'],
+    queryFn: async () => {
+      const { data } = await api.get('/calendar');
+      return data?.buckets || { tomorrow: [], this_week: [], this_month: [] };
+    },
+    refetchInterval: 30 * 60_000,   // 30 min
+    staleTime: 30 * 60_000,
+    retry: 1,
+  });
+}
+
+// ── Phase 2.5: Anomaly detector ──────────────────────────────────────
+function useAnomalies() {
+  return useQuery<{ tickers: [string, number][]; themes: [string, number][] }>({
+    queryKey: ['news', 'anomalies'],
+    queryFn: async () => {
+      const { data } = await api.get('/news?anomalies=1');
+      return data || { tickers: [], themes: [] };
+    },
+    refetchInterval: 10 * 60_000,
+    staleTime: 10 * 60_000,
+    retry: 1,
+  });
+}
+
 // Client-side filter for instant filter switching
 function filterArticles(
   articles: NewsArticle[],
@@ -1323,6 +1373,11 @@ export default function NewsFeedPage() {
     ? new Date(dataUpdatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
     : null;
   const { data: rawInPlay, isLoading: inPlayLoading, refetch: refetchInPlay } = useInPlay();
+  // Phase 1.3 / 1.5 / 2.5: Must Read + Forward Calendar + Anomaly hooks
+  const { data: mustRead } = useMustRead();
+  const { data: calendar } = useCalendar();
+  const { data: anomalies } = useAnomalies();
+  const [showCalendar, setShowCalendar] = useState(false);
 
   // ── Market Bias: computed from last 24h articles ────────────────────────────
   const marketBias = useMemo(() => {
@@ -1595,6 +1650,157 @@ export default function NewsFeedPage() {
       {/* Loading shimmer for IN PLAY bar */}
       {inPlayLoading && (
         <div style={{ height: '36px', backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '12px', marginBottom: '16px' }} className="animate-shimmer" />
+      )}
+
+      {/* ── PHASE 1.3: MUST READ — Curated top 5 ─────────────────────── */}
+      {mustRead && mustRead.length > 0 && (
+        <div style={{
+          backgroundColor: '#0F1B2E', border: '1px solid #2A3B4C',
+          borderLeft: '3px solid #F59E0B', borderRadius: '12px',
+          padding: '12px 14px', marginBottom: '12px',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+            <span style={{ fontSize: '10px', fontWeight: 700, color: '#F59E0B', letterSpacing: '0.8px' }}>
+              ★ MUST READ
+            </span>
+            <span style={{ fontSize: '10px', color: '#4A5B6C' }}>
+              Top 5 institutional reads — consequence × source × recency
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {mustRead.slice(0, 5).map((art, idx) => {
+              const syms = getTickerSymbols(art);
+              const url = getUrl(art);
+              const time = art.published_at ? formatDistanceToNow(new Date(art.published_at), { addSuffix: true }) : '';
+              return (
+                <a
+                  key={art.id || idx}
+                  href={url !== '#' ? url : undefined}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '8px',
+                    padding: '6px 8px', borderRadius: '6px',
+                    backgroundColor: 'rgba(245, 158, 11, 0.04)',
+                    cursor: url !== '#' ? 'pointer' : 'default',
+                    textDecoration: 'none', color: 'inherit',
+                  }}
+                >
+                  <span style={{ fontSize: '10px', fontWeight: 700, color: '#F59E0B', minWidth: '14px' }}>
+                    {idx + 1}
+                  </span>
+                  {syms[0] && (
+                    <span style={{ fontSize: '10px', fontWeight: 700, color: '#38A9E8', backgroundColor: '#0F7ABF20', padding: '1px 5px', borderRadius: '3px', border: '1px solid #0F7ABF40' }}>
+                      {syms[0]}
+                    </span>
+                  )}
+                  <span style={{ fontSize: '12px', color: '#E6EDF3', flex: 1, lineHeight: 1.4 }}>
+                    {getTitle(art)}
+                  </span>
+                  {(art as any).specific_impact?.label && (
+                    <span style={{ fontSize: '10px', fontFamily: 'monospace', color: '#38A9E8', backgroundColor: '#0F7ABF15', padding: '1px 6px', borderRadius: '3px', border: '1px solid #0F7ABF30' }}>
+                      {(art as any).specific_impact.label}
+                    </span>
+                  )}
+                  <span style={{ fontSize: '10px', color: '#4A5B6C', flexShrink: 0 }}>{time}</span>
+                </a>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── PHASE 1.5: FORWARD CALENDAR — collapsible ────────────────── */}
+      {calendar && (calendar.tomorrow.length + calendar.this_week.length + calendar.this_month.length) > 0 && (
+        <div style={{
+          backgroundColor: '#0D1B2E', border: '1px solid #1E2D45',
+          borderRadius: '12px', padding: '10px 12px', marginBottom: '12px',
+        }}>
+          <button
+            onClick={() => setShowCalendar(s => !s)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px',
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: 0, margin: 0, width: '100%',
+              color: 'inherit', textAlign: 'left',
+            }}
+          >
+            <span style={{ fontSize: '10px', fontWeight: 700, color: '#10B981', letterSpacing: '0.8px' }}>
+              📅 FORWARD CALENDAR
+            </span>
+            <span style={{ fontSize: '10px', color: '#4A5B6C' }}>
+              Tomorrow: {calendar.tomorrow.length} · This week: {calendar.this_week.length} · This month: {calendar.this_month.length}
+            </span>
+            <span style={{ fontSize: '10px', color: '#4A5B6C', marginLeft: 'auto' }}>
+              {showCalendar ? '▼ collapse' : '▶ expand'}
+            </span>
+          </button>
+          {showCalendar && (
+            <div style={{ marginTop: '10px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+              {(['tomorrow', 'this_week', 'this_month'] as const).map(bucket => (
+                <div key={bucket}>
+                  <div style={{ fontSize: '10px', fontWeight: 700, color: '#8899AA', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: '6px' }}>
+                    {bucket === 'tomorrow' ? '⏰ Tomorrow' : bucket === 'this_week' ? '📅 This Week' : '🗓️ This Month'}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '180px', overflowY: 'auto' }}>
+                    {(calendar[bucket] || []).slice(0, 12).map((ev, i) => (
+                      <div key={i} style={{
+                        fontSize: '10px', padding: '4px 6px', borderRadius: '4px',
+                        backgroundColor: ev.importance === 'high' ? 'rgba(239, 68, 68, 0.08)' : 'rgba(255,255,255,0.03)',
+                        borderLeft: `2px solid ${ev.importance === 'high' ? '#EF4444' : '#4A5B6C'}`,
+                      }}>
+                        <div style={{ display: 'flex', gap: '6px', alignItems: 'baseline' }}>
+                          <span style={{ color: '#8899AA', fontFamily: 'monospace', flexShrink: 0 }}>
+                            {ev.date.slice(5)}
+                          </span>
+                          {ev.region && (
+                            <span style={{ color: ev.region === 'IN' ? '#fbbf24' : '#7dd3fc', fontSize: '9px' }}>
+                              {ev.region === 'IN' ? '🇮🇳' : ev.region === 'US' ? '🇺🇸' : '🌐'}
+                            </span>
+                          )}
+                          <span style={{ color: '#E6EDF3', lineHeight: 1.3 }}>
+                            {ev.title}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                    {(calendar[bucket] || []).length === 0 && (
+                      <span style={{ fontSize: '10px', color: '#4A5B6C', fontStyle: 'italic' }}>
+                        Nothing scheduled
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── PHASE 2.5: ANOMALY ALERTS — auto-detect concentration ─────── */}
+      {anomalies && (anomalies.tickers?.length > 0 || anomalies.themes?.length > 0) && (
+        <div style={{
+          backgroundColor: '#0D1B2E', border: '1px solid #1E2D45',
+          borderLeft: '3px solid #EF4444',
+          borderRadius: '12px', padding: '8px 12px', marginBottom: '12px',
+          display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap',
+        }}>
+          <span style={{ fontSize: '10px', fontWeight: 700, color: '#EF4444', letterSpacing: '0.8px', flexShrink: 0 }}>
+            🚨 ANOMALY · 24H
+          </span>
+          {(anomalies.tickers || []).slice(0, 5).map(([t, n]) => (
+            <span key={t} style={{ fontSize: '10px', color: '#E6EDF3' }}>
+              <strong style={{ color: '#F59E0B' }}>{t}</strong>
+              <span style={{ color: '#4A5B6C' }}> ×{n}</span>
+            </span>
+          ))}
+          {(anomalies.themes || []).slice(0, 3).map(([th, n]) => (
+            <span key={th} style={{ fontSize: '10px', color: '#E6EDF3' }}>
+              <strong style={{ color: '#10B981' }}>{th}</strong>
+              <span style={{ color: '#4A5B6C' }}> ×{n}</span>
+            </span>
+          ))}
+        </div>
       )}
 
       {/* ── Header ───────────────────────────────────────────────────── */}

@@ -1,49 +1,81 @@
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
+import { extractWithLlmCached } from '@/lib/news/llm-extractor';
+import { recordXRef } from '@/lib/news/cross-reference';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
 // ── RSS Feed Sources ──────────────────────────────────────────────────
-const RSS_FEEDS = [
+// Each feed gets a `tier` so the BOTTLENECK classifier can require
+// primary/secondary sources before assigning HIGH-tier institutional
+// labels. Newegg deal pages and retro-gaming sites can mention
+// "chip shortage" but should never become a $30k-terminal alert.
+//
+// tier='primary'  — central banks, regulators, IR transcripts (highest weight)
+// tier='secondary'— newswires (Reuters / Bloomberg / CNBC) and quality dailies
+// tier='tertiary' — broad business/tech press (TechCrunch / Yahoo / Investing.com)
+// tier='editorial'— curated commentary feeds (Stratechery / Doomberg / Substacks)
+// tier='retail'   — consumer-tech / hobby sites (Tom's Hardware / Anandtech / retro)
+//                   articles from these can only reach BOTTLENECK if they ALSO
+//                   pass a strict signal gate (CEO quote, named institution).
+const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'primary' | 'secondary' | 'tertiary' | 'editorial' | 'retail' }> = [
   // ── India Feeds ──
-  { name: 'ET Markets', url: 'https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms', region: 'IN' },
-  { name: 'ET Industry', url: 'https://economictimes.indiatimes.com/industry/rssfeeds/13352306.cms', region: 'IN' },
-  { name: 'Livemint Markets', url: 'https://www.livemint.com/rss/markets', region: 'IN' },
-  { name: 'Livemint Companies', url: 'https://www.livemint.com/rss/companies', region: 'IN' },
-  { name: 'Business Standard', url: 'https://www.business-standard.com/rss/markets-106.rss', region: 'IN' },
-  { name: 'BS Companies', url: 'https://www.business-standard.com/rss/companies-101.rss', region: 'IN' },
-  { name: 'NDTV Profit', url: 'https://feeds.feedburner.com/ndtvprofit-latest', region: 'IN' },
-  { name: 'Mint Economy', url: 'https://www.livemint.com/rss/economy', region: 'IN' },
+  { name: 'ET Markets', url: 'https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms', region: 'IN', tier: 'secondary' },
+  { name: 'ET Industry', url: 'https://economictimes.indiatimes.com/industry/rssfeeds/13352306.cms', region: 'IN', tier: 'secondary' },
+  { name: 'Livemint Markets', url: 'https://www.livemint.com/rss/markets', region: 'IN', tier: 'secondary' },
+  { name: 'Livemint Companies', url: 'https://www.livemint.com/rss/companies', region: 'IN', tier: 'secondary' },
+  { name: 'Business Standard', url: 'https://www.business-standard.com/rss/markets-106.rss', region: 'IN', tier: 'secondary' },
+  { name: 'BS Companies', url: 'https://www.business-standard.com/rss/companies-101.rss', region: 'IN', tier: 'secondary' },
+  { name: 'NDTV Profit', url: 'https://feeds.feedburner.com/ndtvprofit-latest', region: 'IN', tier: 'secondary' },
+  { name: 'Mint Economy', url: 'https://www.livemint.com/rss/economy', region: 'IN', tier: 'secondary' },
   // ── US / Global Feeds ──
-  { name: 'CNBC Top News', url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114', region: 'US' },
-  { name: 'CNBC World', url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100727362', region: 'US' },
-  { name: 'CNBC Finance', url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664', region: 'US' },
-  { name: 'CNBC Technology', url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19854910', region: 'US' },
-  { name: 'MarketWatch Top Stories', url: 'https://feeds.marketwatch.com/marketwatch/topstories/', region: 'US' },
-  { name: 'MarketWatch Markets', url: 'https://feeds.marketwatch.com/marketwatch/marketpulse/', region: 'US' },
-  { name: 'Yahoo Finance', url: 'https://finance.yahoo.com/news/rssindex', region: 'US' },
-  { name: 'Reuters Business', url: 'https://feeds.reuters.com/reuters/businessNews', region: 'US' },
-  { name: 'Reuters Technology', url: 'https://feeds.reuters.com/reuters/technologyNews', region: 'US' },
-  { name: 'Reuters India', url: 'https://feeds.reuters.com/reuters/INbusinessNews', region: 'GLOBAL' },
-  { name: 'Investing.com News', url: 'https://www.investing.com/rss/news.rss', region: 'US' },
-  { name: 'Seeking Alpha Market News', url: 'https://seekingalpha.com/market_currents.xml', region: 'US' },
+  { name: 'CNBC Top News', url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114', region: 'US', tier: 'secondary' },
+  { name: 'CNBC World', url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100727362', region: 'US', tier: 'secondary' },
+  { name: 'CNBC Finance', url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664', region: 'US', tier: 'secondary' },
+  { name: 'CNBC Technology', url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19854910', region: 'US', tier: 'secondary' },
+  { name: 'MarketWatch Top Stories', url: 'https://feeds.marketwatch.com/marketwatch/topstories/', region: 'US', tier: 'secondary' },
+  { name: 'MarketWatch Markets', url: 'https://feeds.marketwatch.com/marketwatch/marketpulse/', region: 'US', tier: 'secondary' },
+  { name: 'Yahoo Finance', url: 'https://finance.yahoo.com/news/rssindex', region: 'US', tier: 'tertiary' },
+  { name: 'Reuters Business', url: 'https://feeds.reuters.com/reuters/businessNews', region: 'US', tier: 'primary' },
+  { name: 'Reuters Technology', url: 'https://feeds.reuters.com/reuters/technologyNews', region: 'US', tier: 'primary' },
+  { name: 'Reuters India', url: 'https://feeds.reuters.com/reuters/INbusinessNews', region: 'GLOBAL', tier: 'primary' },
+  { name: 'Investing.com News', url: 'https://www.investing.com/rss/news.rss', region: 'US', tier: 'tertiary' },
+  { name: 'Seeking Alpha Market News', url: 'https://seekingalpha.com/market_currents.xml', region: 'US', tier: 'tertiary' },
   // ── Semiconductor / Tech Supply Chain Feeds ──
-  { name: 'Tom\'s Hardware', url: 'https://www.tomshardware.com/feeds/all', region: 'US' },
-  { name: 'AnandTech', url: 'https://www.anandtech.com/rss/', region: 'US' },
-  { name: 'The Register', url: 'https://www.theregister.com/headlines.atom', region: 'US' },
-  { name: 'Ars Technica', url: 'https://feeds.arstechnica.com/arstechnica/technology-lab', region: 'US' },
-  { name: 'TechCrunch', url: 'https://techcrunch.com/feed/', region: 'US' },
-  { name: 'SemiWiki', url: 'https://semiwiki.com/feed/', region: 'US' },
+  { name: 'Tom\'s Hardware', url: 'https://www.tomshardware.com/feeds/all', region: 'US', tier: 'retail' },
+  { name: 'AnandTech', url: 'https://www.anandtech.com/rss/', region: 'US', tier: 'retail' },
+  { name: 'The Register', url: 'https://www.theregister.com/headlines.atom', region: 'US', tier: 'tertiary' },
+  { name: 'Ars Technica', url: 'https://feeds.arstechnica.com/arstechnica/technology-lab', region: 'US', tier: 'tertiary' },
+  { name: 'TechCrunch', url: 'https://techcrunch.com/feed/', region: 'US', tier: 'tertiary' },
+  { name: 'SemiWiki', url: 'https://semiwiki.com/feed/', region: 'US', tier: 'tertiary' },
   // ── Memory / Storage Cycle Feeds ──
-  { name: 'DigiTimes Memory', url: 'https://www.digitimes.com/rss/memory.xml', region: 'GLOBAL' },
-  { name: 'Blocks & Files', url: 'https://blocksandfiles.com/feed/', region: 'GLOBAL' },
+  { name: 'DigiTimes Memory', url: 'https://www.digitimes.com/rss/memory.xml', region: 'GLOBAL', tier: 'tertiary' },
+  { name: 'Blocks & Files', url: 'https://blocksandfiles.com/feed/', region: 'GLOBAL', tier: 'tertiary' },
   // ── Photonics / Optical Interconnect Feeds ──
-  { name: 'Lightwave', url: 'https://www.lightwaveonline.com/rss', region: 'GLOBAL' },
-  { name: 'Photonics.com', url: 'https://www.photonics.com/RSS/feeds/industry.xml', region: 'GLOBAL' },
+  { name: 'Lightwave', url: 'https://www.lightwaveonline.com/rss', region: 'GLOBAL', tier: 'tertiary' },
+  { name: 'Photonics.com', url: 'https://www.photonics.com/RSS/feeds/industry.xml', region: 'GLOBAL', tier: 'tertiary' },
   // ── Power / Industry Feeds ──
-  { name: 'Power Technology', url: 'https://www.power-technology.com/feed/', region: 'GLOBAL' },
+  { name: 'Power Technology', url: 'https://www.power-technology.com/feed/', region: 'GLOBAL', tier: 'tertiary' },
+  // ── EDITORIAL / COMMENTARY (Phase 3 #13) ──
+  // Top buy-side reads — kept separate so they don't pollute the news
+  // feed but are accessible via the Commentary tab. Stratechery is
+  // paywalled but its public Daily Update RSS is free; Doomberg is
+  // partially open; Matt Levine's Bloomberg column has a public summary.
+  { name: 'Stratechery', url: 'https://stratechery.com/feed/', region: 'GLOBAL', tier: 'editorial' },
+  { name: 'Doomberg', url: 'https://newsletter.doomberg.com/feed', region: 'GLOBAL', tier: 'editorial' },
+  { name: 'Matt Levine (Money Stuff)', url: 'https://www.bloomberg.com/feeds/columns/4cb35e0d-fe22-4b29-bd64-5108f0b1cefa.rss', region: 'US', tier: 'editorial' },
+  { name: 'The Information Tech', url: 'https://www.theinformation.com/feed', region: 'US', tier: 'editorial' },
+  // RBI speeches feed — primary source for India monetary policy
+  { name: 'RBI Speeches', url: 'https://www.rbi.org.in/Scripts/RSS_Speeches.aspx', region: 'IN', tier: 'primary' },
 ];
+
+// Domain denylist for BOTTLENECK tier escalation. These sources can
+// surface in the GENERAL feed but cannot trigger a HIGH-signal
+// structural-bottleneck alert even if they mention "chip shortage" in
+// passing — the article is almost certainly a deal page, retro toy, or
+// gaming PC build.
+const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
 const CACHE_KEY = 'news:articles:v8'; // v8: deep tech sub-taxonomy
 const CACHE_TTL = 300; // 5 min
@@ -494,6 +526,180 @@ function computeConsequenceScore(title: string, desc: string, article_type: stri
   return Math.min(100, score);
 }
 
+// ── PHASE 1.5: Specific Impact Extraction ─────────────────────────────
+// Replaces generic "Earnings — vs consensus" with extracted figure.
+// E.g. "Toyota fourth-quarter profit misses by wide margin as U.S.
+// tariffs drive 49% slump" → "Toyota: profit miss · −49% on tariffs".
+//
+// Returns { ticker?, direction?, magnitude?, label? } when extractable.
+function extractSpecificImpact(title: string, desc: string): {
+  ticker?: string;
+  direction?: 'beat' | 'miss' | 'rise' | 'fall' | 'flat';
+  magnitudePct?: number;
+  label?: string;
+} {
+  const text = title + ' ' + desc;
+
+  // Pattern 1: "<NAME> beat/miss/exceeds by X%"
+  const beatMissMatch = text.match(/\b([A-Z][A-Za-z0-9& .]{1,30}?)\s+(?:Q[1-4]|first|second|third|fourth|quarterly|q[1-4])\s+(?:results?|profit|revenue|earnings|eps)?\s*(?:rises?|jumps?|grew|grows|gains?|surges?|falls?|drops?|declines?|misses?|beats?|tops?|exceeds?)\s+(?:expectations?\s+)?(?:by\s+)?(\d{1,3}(?:\.\d+)?)\s*%/i);
+  if (beatMissMatch) {
+    const verb = beatMissMatch[0].match(/(rises?|jumps?|grew|grows|gains?|surges?|falls?|drops?|declines?|misses?|beats?|tops?|exceeds?)/i)?.[0].toLowerCase() || '';
+    const direction: 'beat' | 'miss' | 'rise' | 'fall' = /miss/.test(verb) ? 'miss' : /beat|tops|exceed/.test(verb) ? 'beat' : /falls?|drops?|declines?/.test(verb) ? 'fall' : 'rise';
+    const mag = parseFloat(beatMissMatch[2]);
+    return { ticker: beatMissMatch[1].trim(), direction, magnitudePct: mag, label: `${beatMissMatch[1].trim()}: ${direction} ${mag.toFixed(1)}%` };
+  }
+
+  // Pattern 2: "stock soars/sinks/jumps X%" — price-action articles
+  const priceMatch = text.match(/\bstock\s+(soars?|sinks?|tanks?|jumps?|surges?|plunges?|tumbles?|crashes?|drops?|falls?|gains?|rises?)\s+(\d{1,3}(?:\.\d+)?)\s*%/i);
+  if (priceMatch) {
+    const verb = priceMatch[1].toLowerCase();
+    const dir: 'rise' | 'fall' = /soars?|jumps?|surges?|gains?|rises?/.test(verb) ? 'rise' : 'fall';
+    const mag = parseFloat(priceMatch[2]);
+    return { direction: dir, magnitudePct: mag, label: `Price action: ${dir === 'rise' ? '+' : '−'}${mag.toFixed(1)}%` };
+  }
+
+  // Pattern 3: "profit up/down X% YoY" or "revenue rises X%"
+  const profitMatch = text.match(/\b(profit|revenue|net (?:profit|income)|eps|ebitda|sales)\s+(?:up|down|rises?|falls?|grew|grows|jumps?|drops?)\s+(\d{1,3}(?:\.\d+)?)\s*%/i);
+  if (profitMatch) {
+    const isDown = /down|falls?|drops?/i.test(profitMatch[0]);
+    const mag = parseFloat(profitMatch[2]);
+    return {
+      direction: isDown ? 'fall' : 'rise',
+      magnitudePct: mag,
+      label: `${profitMatch[1].toUpperCase()} ${isDown ? '−' : '+'}${mag.toFixed(1)}% YoY`,
+    };
+  }
+
+  // Pattern 4: "guidance raised/cut/maintained"
+  const guidanceMatch = text.match(/\bguidance\s+(raised?|cut|lowered?|maintained?|reaffirmed?|withdrawn?)/i);
+  if (guidanceMatch) {
+    const action = guidanceMatch[1].toLowerCase();
+    const dir: 'rise' | 'fall' | 'flat' = /raise/i.test(action) ? 'rise' : /cut|lower|withdraw/i.test(action) ? 'fall' : 'flat';
+    return { direction: dir, label: `Guidance ${action}` };
+  }
+
+  return {};
+}
+
+// ── PHASE 2.7: Beneficiary / At-Risk Exposure Mapping ────────────────
+// When an article hits a structural theme, map to who benefits and who
+// is at risk. Bloomberg-style: "CoWoS shortage" → [+ TSMC ASE AMKR]
+// [- NVDA AVGO build risk]. Returns up to 3 of each.
+const EXPOSURE_MAP: Array<{
+  theme: RegExp;
+  beneficiaries: string[];
+  atRisk: string[];
+}> = [
+  // CoWoS / advanced packaging
+  {
+    theme: /\b(cowos|advanced packaging|chiplet|interposer|hybrid bonding|amkor|ase group)\b.{0,30}\b(shortage|tight|capacity|allocation|sold out|backlog)\b/i,
+    beneficiaries: ['TSM', 'ASE', 'AMKR', 'AMAT'],
+    atRisk: ['NVDA', 'AVGO', 'AMD'],
+  },
+  // HBM / DRAM tightness
+  {
+    theme: /\b(hbm|dram|sk hynix|micron|samsung memory)\b.{0,30}\b(tight|shortage|allocation|sold out|capacity hit zero|undersupply)\b/i,
+    beneficiaries: ['MU', '000660.KS', 'NVDA'],
+    atRisk: ['DELL', 'HPE', 'GOOGL'],
+  },
+  // Power grid / data-center power
+  {
+    theme: /\b(power grid|grid (capacity|stress|upgrade)|data center power|electricity (constraint|shortage))\b/i,
+    beneficiaries: ['GEV', 'ETN', 'PWR', 'BHEL', 'TRENT'],
+    atRisk: ['MSFT', 'GOOGL', 'AMZN'],
+  },
+  // EUV / lithography
+  {
+    theme: /\b(euv|asml|lithograph|wafer fab capacity)\b.{0,30}\b(tight|shortage|capacity|order)\b/i,
+    beneficiaries: ['ASML', 'TSM'],
+    atRisk: ['INTC'],
+  },
+  // Optical / photonics
+  {
+    theme: /\b(silicon photonics|co-packaged optics|optical interconnect|cpo)\b.{0,30}\b(adoption|deployment|breakthrough|traction|bandwidth limit)\b/i,
+    beneficiaries: ['COHR', 'LITE', 'AAOI', 'MRVL'],
+    atRisk: [],
+  },
+  // Tariffs / trade war
+  {
+    theme: /\b(tariff|trade war).{0,40}(steel|aluminium|aluminum|auto|electronics|pharma|chemicals)/i,
+    beneficiaries: [],
+    atRisk: ['TM', 'F', 'GM', 'BABA'],
+  },
+  // RBI rate cycle / banking
+  {
+    theme: /\brbi.{0,30}(repo (rate cut|cut)|monetary easing|liquidity injection)/i,
+    beneficiaries: ['HDFCBANK', 'AXISBANK', 'BAJFINANCE', 'BAJAJFINSV'],
+    atRisk: [],
+  },
+  // India infra capex
+  {
+    theme: /\b(india|domestic).{0,30}(highway|railway|infrastructure capex|nhai|rail vikas)/i,
+    beneficiaries: ['LT', 'KEC', 'IRB', 'GMRINFRA'],
+    atRisk: [],
+  },
+  // Crude oil spike
+  {
+    theme: /\b(crude oil|brent|wti).{0,30}(spike|surge|jump|rally|hike|above \$\d{2,3})/i,
+    beneficiaries: ['XOM', 'CVX', 'ONGC', 'OIL', 'GAIL'],
+    atRisk: ['IHCL', 'INDIGO', 'ASIANPAINT', 'MARUTI', 'BPCL', 'IOC', 'HPCL'],
+  },
+];
+
+function mapExposure(title: string, desc: string, _region: string): {
+  beneficiaries: string[];
+  atRisk: string[];
+} {
+  const text = title + ' ' + desc;
+  for (const { theme, beneficiaries, atRisk } of EXPOSURE_MAP) {
+    if (theme.test(text)) {
+      return { beneficiaries: beneficiaries.slice(0, 4), atRisk: atRisk.slice(0, 4) };
+    }
+  }
+  return { beneficiaries: [], atRisk: [] };
+}
+
+// ── PHASE 2.8: Sentiment Magnitude (1-10) ────────────────────────────
+// Replaces HIGH/MED/LOW with a continuous magnitude × direction tuple.
+// Lets the UI render +6 / -3 instead of identical "MEDIUM" tags.
+function computeSentimentMagnitude(title: string, desc: string): {
+  direction: 'positive' | 'negative' | 'neutral';
+  magnitude: number; // 1-10
+} {
+  const text = (title + ' ' + desc).toLowerCase();
+
+  // Strong-positive phrases (intensity 8-10)
+  const strongPos = /\b(record (high|profit|revenue|earnings|breakthrough)|all.?time high|blockbuster|stellar|outstanding|exceeds expectations significantly|crushed|smashed|surge[ds]?\s+(\d{2,3})|jumped\s+(\d{2,3})|soared|skyrocket)\b/i;
+  // Mild-positive (intensity 4-6)
+  const mildPos = /\b(beat|exceed|outperform|raised guidance|raises target|upgrade|positive|strong|growth|rise|gain|up\s+\d|increase)\b/i;
+  // Strong-negative (intensity 8-10)
+  const strongNeg = /\b(disaster|crash|tank(ed|s)|plunge|collapse|crisis|bankrupt|severe miss|massive miss|wide margin|cut\s+(\d{2,3})\s*%|loss(es)? widen(ed)?|all.?time low)\b/i;
+  // Mild-negative (intensity 4-6)
+  const mildNeg = /\b(miss(es|ed)?|fell|fall(s)?|drop(s|ped)?|decline|cut|lowered|reduce[ds]?|underperform|downgrade|negative|weak|loss|underweight)\b/i;
+
+  if (strongPos.test(text)) {
+    const m = text.match(/(\d{2,3})\s*%/);
+    const mag = m ? Math.min(10, Math.floor(parseInt(m[1], 10) / 10) + 6) : 8;
+    return { direction: 'positive', magnitude: mag };
+  }
+  if (strongNeg.test(text)) {
+    const m = text.match(/(\d{2,3})\s*%/);
+    const mag = m ? Math.min(10, Math.floor(parseInt(m[1], 10) / 10) + 6) : 8;
+    return { direction: 'negative', magnitude: mag };
+  }
+  if (mildPos.test(text)) {
+    const m = text.match(/(\d{1,2})\s*%/);
+    const mag = m ? Math.min(7, Math.floor(parseInt(m[1], 10) / 5) + 3) : 5;
+    return { direction: 'positive', magnitude: mag };
+  }
+  if (mildNeg.test(text)) {
+    const m = text.match(/(\d{1,2})\s*%/);
+    const mag = m ? Math.min(7, Math.floor(parseInt(m[1], 10) / 5) + 3) : 5;
+    return { direction: 'negative', magnitude: mag };
+  }
+  return { direction: 'neutral', magnitude: 0 };
+}
+
 // ── Region detection ─────────────────────────────────────────────────
 function detectRegion(title: string, desc: string, feedRegion: string): string {
   if (feedRegion === 'US') return 'US';
@@ -652,9 +858,42 @@ async function fetchAllNews(): Promise<any[]> {
 
           if (!title || title.length < 10) continue;
 
-          const { article_type, investment_tier, bottleneck_sub_tag, bottleneck_level } = classifyArticle(title, desc);
+          let { article_type, investment_tier, bottleneck_sub_tag, bottleneck_level } = classifyArticle(title, desc);
           const tickers = extractTickers(title);
           const region = detectRegion(title, desc, feed.region);
+
+          // ── PHASE 1.1: Source-tier denylist for BOTTLENECK escalation ──
+          // Retail / hobby / consumer-deal sources cannot trigger HIGH
+          // tier bottleneck even if they mention the right keywords.
+          // Demote to GENERAL/tier-3 unless a primary signal (named
+          // company + named institution) is present.
+          const isRetailFeed = feed.tier === 'retail';
+          const hasInstitutionalAnchor = /\b(tsmc|asml|sk hynix|micron|samsung|nvidia|amd|intel|broadcom|qualcomm|applied materials|lam research|earnings call|capacity (announced|expansion)|capex (announced|raised)|guidance (raised?|cut|maintained))\b/i.test(title + ' ' + desc);
+          if (article_type === 'BOTTLENECK' && isRetailFeed && !hasInstitutionalAnchor) {
+            article_type = 'GENERAL';
+            investment_tier = 3;
+            bottleneck_sub_tag = undefined;
+            bottleneck_level = undefined;
+          }
+
+          // ── PHASE 1.2: Domain content denylist ──
+          // Articles whose title/desc match deal-page / consumer-tech
+          // patterns cannot reach BOTTLENECK regardless of feed tier.
+          if (BOTTLENECK_DOMAIN_DENYLIST.test(title + ' ' + desc) && article_type === 'BOTTLENECK') {
+            article_type = 'GENERAL';
+            investment_tier = 3;
+            bottleneck_sub_tag = undefined;
+            bottleneck_level = undefined;
+          }
+
+          // ── PHASE 1.3: Editorial commentary segregation ──
+          // Articles from the editorial tier go to a separate
+          // 'COMMENTARY' bucket so they don't pollute the news feed.
+          if (feed.tier === 'editorial') {
+            article_type = 'COMMENTARY';
+            // Commentary always gets at least tier 2 — it's curated.
+            investment_tier = Math.min(investment_tier, 2);
+          }
 
           // Generate a unique ID from the full link+title — NOT just 20 chars
           // of base64 (which only encodes the domain prefix and collides).
@@ -668,21 +907,34 @@ async function fetchAllNews(): Promise<any[]> {
           // Drop noise/sports/regional-politics/fluff at ingestion time.
           if (investment_tier >= 4) continue;
 
+          // ── PHASE 1.4: Stale-article filter (>90 days) ──
+          // Only STRUCTURAL or BOTTLENECK articles can persist beyond
+          // 90 days; everything else decays. Stops the "Barclays 1
+          // year ago" persistence problem.
+          const pubMs = pubDate ? new Date(pubDate).getTime() : Date.now();
+          const ageDays = (Date.now() - pubMs) / 86400000;
+          const isPersistent = article_type === 'BOTTLENECK' || article_type === 'COMMENTARY';
+          if (ageDays > 90 && !isPersistent) continue;
+          if (ageDays > 365) continue; // hard cap, even structural
+
           // Consequence score — institutional weight on five dimensions.
-          // Articles scoring below 30 get demoted to tier 3 even if they
-          // passed type classification, so the HIGH-SIGNAL surface only
-          // surfaces things with real consequence.
           const consequence = computeConsequenceScore(title, desc, article_type);
           let effectiveTier = investment_tier;
           if (consequence < 30 && investment_tier <= 2) {
-            // Generic-feel article — demote one tier.
             effectiveTier = Math.min(3, investment_tier + 1);
           }
-          if (consequence < 15) {
-            // Low-consequence article that somehow passed classifier;
-            // drop to tier 4 (filter-eligible).
-            continue;
-          }
+          if (consequence < 15) continue;
+
+          // ── PHASE 1.5: Specific impact extraction ──
+          // Replace generic "Earnings — vs consensus" with extracted
+          // figure. Looks for "<TICKER> beat by 5%", "rises 35%", etc.
+          const specificImpact = extractSpecificImpact(title, desc);
+
+          // ── PHASE 2.7: Beneficiary / loser auto-mapping ──
+          const exposure = mapExposure(title, desc, region);
+
+          // ── PHASE 2.8: Sentiment magnitude (1-10 scale) ──
+          const sentiment = computeSentimentMagnitude(title, desc);
 
           items.push({
             id: uniqueId,
@@ -691,21 +943,24 @@ async function fetchAllNews(): Promise<any[]> {
             summary: desc.slice(0, 300),
             source_name: feed.name,
             source: feed.name,
+            source_tier: feed.tier,
             source_url: link,
             published_at: pubDate || new Date().toISOString(),
             region,
             article_type,
             investment_tier: effectiveTier,
             consequence_score: consequence,
+            specific_impact: specificImpact,
+            exposure_beneficiaries: exposure.beneficiaries,
+            exposure_at_risk: exposure.atRisk,
+            sentiment,
             bottleneck_sub_tag: bottleneck_sub_tag || null,
             bottleneck_level: bottleneck_level || null,
             tickers: tickers,
             primary_ticker: tickers[0] || null,
-            sentiment: null,
-            // importance_score now uses consequence directly (0-1) rather
-            // than the coarse tier-based 0.2/0.5/0.8 lookup. Lets the
-            // ranker order articles within a tier by structural weight.
-            importance_score: Math.round((consequence / 100) * 100) / 100,
+            // Final importance: consequence * recency-decay * (watchlist+if+match)
+            // recency_factor: 1.0 today → 0.5 at 7 days → 0.2 at 30 days
+            importance_score: Math.round((consequence / 100) * Math.max(0.2, 1 - ageDays / 30) * 100) / 100,
           });
         }
       } catch { /* skip failed feeds */ }
@@ -941,6 +1196,57 @@ async function fetchAllNews(): Promise<any[]> {
     investment_tickers: a.article_type === 'BOTTLENECK' ? getInvestmentTickers(a.title + ' ' + (a.summary || '')) : [],
   }));
 
+  // ── PHASE 3.12: Cross-Reference network ──
+  // For each BOTTLENECK article with a sub-tag, append to the rolling
+  // 90-day theme bucket so the UI can render "see also: 4 prior CoWoS
+  // articles" under each structural alert. Fire-and-forget — don't
+  // block response if KV is slow.
+  Promise.all(
+    articlesWithImpact
+      .filter((a) => a.article_type === 'BOTTLENECK' && a.bottleneck_sub_tag)
+      .slice(0, 30)
+      .map((a) =>
+        recordXRef(a.bottleneck_sub_tag!, {
+          id: a.id,
+          title: a.title,
+          source: a.source_name,
+          source_url: a.source_url,
+          published_at: a.published_at,
+          consequence_score: a.consequence_score || 0,
+          exposure_beneficiaries: a.exposure_beneficiaries,
+          exposure_at_risk: a.exposure_at_risk,
+        }),
+      ),
+  ).catch(() => { /* non-fatal */ });
+
+  // ── PHASE 3.11: LLM event extraction (gated on ANTHROPIC_API_KEY) ──
+  // For top consequence articles only — running Haiku on every article
+  // in every refresh would be wasteful. Pick the top 8 by consequence
+  // and fire async. Results merged into specific_impact_llm field.
+  // When the env var is absent, extractWithLlmCached returns null and
+  // articles keep their regex-derived specific_impact unchanged.
+  if (process.env.ANTHROPIC_API_KEY) {
+    const llmTargets = articlesWithImpact
+      .filter((a) => (a.consequence_score || 0) >= 50 && !a.is_synthetic)
+      .sort((a, b) => (b.consequence_score || 0) - (a.consequence_score || 0))
+      .slice(0, 8);
+
+    await Promise.all(
+      llmTargets.map(async (a) => {
+        const llm = await extractWithLlmCached(a.title || '', a.summary || '');
+        if (!llm) return;
+        a.specific_impact_llm = llm;
+        // If LLM gives richer beneficiary/at-risk than regex, prefer LLM.
+        if (llm.beneficiaries.length > 0 && (!a.exposure_beneficiaries || a.exposure_beneficiaries.length === 0)) {
+          a.exposure_beneficiaries = llm.beneficiaries;
+        }
+        if (llm.at_risk.length > 0 && (!a.exposure_at_risk || a.exposure_at_risk.length === 0)) {
+          a.exposure_at_risk = llm.at_risk;
+        }
+      }),
+    ).catch(() => { /* non-fatal */ });
+  }
+
   // ── Persistence: save structural bottleneck articles to KV ──
   const DAY = 86400;
   const bottleneckArticles = articlesWithImpact.filter(a => a.article_type === 'BOTTLENECK');
@@ -997,6 +1303,14 @@ export async function GET(request: Request) {
     const region = searchParams.get('region') || 'ALL';
     const search = searchParams.get('search') || '';
     const type = searchParams.get('type') || '';
+    // Phase 2.6: watchlist-weighted ranking. Frontend passes a comma-
+    // separated ticker list; matching articles get +20 importance boost.
+    const watchlist = (searchParams.get('watchlist') || '').toUpperCase().split(',').filter(Boolean);
+    // Phase 1.3: must-read mode. Returns top 5 curated articles.
+    const mustRead = searchParams.get('must_read') === '1';
+    // Phase 2.5: anomaly detector. Returns tickers/themes with unusual
+    // article concentration in the last 24h.
+    const anomalies = searchParams.get('anomalies') === '1';
 
     let articles: any[] | null = null;
     try {
@@ -1073,6 +1387,64 @@ export async function GET(request: Request) {
       }));
 
       filtered = [...taggedStructural, ...taggedEvents];
+    }
+
+    // ── Phase 2.6: Watchlist-weighted ranking ──
+    // Boost articles that mention any ticker in the user's watchlist by
+    // +0.20 importance (out of 1.0). Most articles end up in the 0.0–0.6
+    // range so a +0.2 bump materially repositions a watchlist match.
+    if (watchlist.length > 0) {
+      filtered = filtered.map(a => {
+        const text = (a.title + ' ' + (a.summary || '') + ' ' + (a.tickers || []).join(' ')).toUpperCase();
+        const matches = watchlist.filter(w => text.includes(w));
+        if (matches.length > 0) {
+          return {
+            ...a,
+            importance_score: Math.min(1.0, (a.importance_score || 0) + 0.20),
+            watchlist_match: matches,
+          };
+        }
+        return a;
+      });
+      // Re-sort by importance after boost
+      filtered.sort((a, b) => (b.importance_score || 0) - (a.importance_score || 0));
+    }
+
+    // ── Phase 1.3: Must-Read curation ──
+    // Returns top 5 institutional must-read articles by composite score:
+    //   importance_score (consequence × recency) × source_tier_weight
+    if (mustRead) {
+      const tierWeight: Record<string, number> = {
+        primary: 1.2, secondary: 1.0, tertiary: 0.8, editorial: 1.1, retail: 0.5,
+      };
+      const ranked = filtered
+        .filter(a => a.article_type !== 'COMMENTARY') // commentary has its own tab
+        .map(a => ({
+          ...a,
+          must_read_score: (a.importance_score || 0) * (tierWeight[a.source_tier] || 1.0),
+        }))
+        .sort((a, b) => (b.must_read_score || 0) - (a.must_read_score || 0))
+        .slice(0, 5);
+      return NextResponse.json(ranked);
+    }
+
+    // ── Phase 2.5 / 3.14: Anomaly detector ──
+    // Counts articles per ticker and per theme. Tickers/themes with
+    // ≥3 articles in the last 24h are flagged as "anomalous" — usually
+    // means something is developing.
+    if (anomalies) {
+      const tickerCount: Record<string, number> = {};
+      const themeCount: Record<string, number> = {};
+      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+      for (const a of filtered) {
+        const ts = new Date(a.published_at || 0).getTime();
+        if (ts < cutoff) continue;
+        for (const t of (a.tickers || [])) tickerCount[t] = (tickerCount[t] || 0) + 1;
+        if (a.bottleneck_sub_tag) themeCount[a.bottleneck_sub_tag] = (themeCount[a.bottleneck_sub_tag] || 0) + 1;
+      }
+      const tickerHot = Object.entries(tickerCount).filter(([_, n]) => n >= 3).sort((a, b) => b[1] - a[1]);
+      const themeHot = Object.entries(themeCount).filter(([_, n]) => n >= 3).sort((a, b) => b[1] - a[1]);
+      return NextResponse.json({ tickers: tickerHot, themes: themeHot });
     }
 
     return NextResponse.json(filtered);

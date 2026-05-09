@@ -46,7 +46,7 @@ export default function NewsCard({ article, onTickerClick }: Props) {
         <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${IMPORTANCE_DOT[tier]}`} />
 
         <div className="flex-1 min-w-0">
-          {/* Top row: tickers + badge + time */}
+          {/* Top row: tickers + badge + sentiment + time */}
           <div className="flex items-center gap-2 flex-wrap mb-1.5">
             {(article.ticker_symbols ?? article.tickers ?? []).slice(0, 3).map((t: any) => {
               const sym = typeof t === 'string' ? t : t?.ticker ?? '';
@@ -63,6 +63,26 @@ export default function NewsCard({ article, onTickerClick }: Props) {
             <span className={`text-[10px] font-medium px-2 py-0.5 rounded border ${badge.className}`}>
               {badge.label}
             </span>
+            {/* Sentiment magnitude pill — replaces undifferentiated HIGH/MED/LOW.
+                "+7" = strongly positive, "−5" = moderately negative. */}
+            {(article as any).sentiment && (article as any).sentiment.direction !== 'neutral' && (() => {
+              const s = (article as any).sentiment;
+              const sign = s.direction === 'positive' ? '+' : '−';
+              const cls = s.direction === 'positive'
+                ? (s.magnitude >= 7 ? 'bg-emerald-500/30 text-emerald-300 border-emerald-500/50' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30')
+                : (s.magnitude >= 7 ? 'bg-rose-500/30 text-rose-300 border-rose-500/50' : 'bg-rose-500/15 text-rose-300 border-rose-500/30');
+              return (
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${cls}`} title={`Sentiment magnitude (1–10): ${s.magnitude}`}>
+                  {sign}{s.magnitude}
+                </span>
+              );
+            })()}
+            {/* Watchlist match indicator */}
+            {(article as any).watchlist_match && (article as any).watchlist_match.length > 0 && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40" title={`Matches your watchlist: ${(article as any).watchlist_match.join(', ')}`}>
+                ★ WATCH
+              </span>
+            )}
             <span className="text-[#4A5B6C] text-[11px] ml-auto shrink-0">{timeAgo}</span>
           </div>
 
@@ -71,8 +91,36 @@ export default function NewsCard({ article, onTickerClick }: Props) {
             {article.headline}
           </p>
 
-          {/* Source */}
-          <span className="text-[#4A5B6C] text-[11px]">{article.source_name ?? article.source}</span>
+          {/* Specific impact strip — Bloomberg-style "TICKER ±X% vs cons" */}
+          {(article as any).specific_impact?.label && (
+            <p className="text-[11px] font-mono mt-1 mb-0.5 inline-block px-2 py-0.5 rounded bg-[#0F7ABF]/15 text-[#38A9E8] border border-[#0F7ABF]/30">
+              {(article as any).specific_impact.label}
+            </p>
+          )}
+
+          {/* Beneficiary / At-Risk exposure mapping */}
+          {((article as any).exposure_beneficiaries?.length > 0 || (article as any).exposure_at_risk?.length > 0) && (
+            <div className="text-[10px] mt-1 flex items-center flex-wrap gap-x-2 gap-y-1">
+              {(article as any).exposure_beneficiaries?.length > 0 && (
+                <span className="text-emerald-400">
+                  + {((article as any).exposure_beneficiaries || []).join(' ')}
+                </span>
+              )}
+              {(article as any).exposure_at_risk?.length > 0 && (
+                <span className="text-rose-400">
+                  − {((article as any).exposure_at_risk || []).join(' ')}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Source + tier */}
+          <span className="text-[#4A5B6C] text-[11px]">
+            {article.source_name ?? article.source}
+            {(article as any).source_tier && (article as any).source_tier !== 'secondary' && (
+              <span className="ml-1 opacity-60">· {(article as any).source_tier}</span>
+            )}
+          </span>
 
           {/* Expandable summary */}
           {article.summary && (
