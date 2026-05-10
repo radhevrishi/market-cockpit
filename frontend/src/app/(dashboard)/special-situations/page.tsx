@@ -90,6 +90,10 @@ function useLiveFeed() {
     },
     staleTime: 30 * 60_000,
     refetchInterval: 30 * 60_000,
+    // PATCH 0109 — BUG-04: force fetch on every mount so the page doesn't
+    // get stuck in 'Loading...' if a stale cache is in memory.
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
     retry: 1,
   });
 }
@@ -230,8 +234,19 @@ export default function SpecialSituationsPage() {
     : last <= 30 ? '#10B981' : last <= 120 ? '#F59E0B' : '#EF4444';
 
   // Aggregate stats per Category for the header
+  // PATCH 0109 — BUG-03 fix: badges read from canonical events when populated
+  // (otherwise the top counters showed 0 while the list rendered items below).
   const catCounts: Record<Category, number> = { SPIN: 0, MA: 0, TURN: 0, CAP: 0 };
-  for (const e of allEvents) catCounts[e.category]++;
+  if (canonicalEvents.length > 0) {
+    for (const e of canonicalEvents) catCounts[e.category as Category]++;
+  } else {
+    for (const e of allEvents) catCounts[e.category]++;
+  }
+  // Tier counts that sync with whichever pipeline is rendering
+  const tier1Count = canonicalEvents.length > 0 ? tier1Canonical.length : tier1.length;
+  const tier2Count = canonicalEvents.length > 0 ? tier2Canonical.length : tier2.length;
+  const tier3Count = canonicalEvents.length > 0 ? watchlistCanonical.length : archive.length;
+  const tier3Label = canonicalEvents.length > 0 ? 'Watchlist' : 'Archive';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: '#0A0E1A' }}>
@@ -255,9 +270,9 @@ export default function SpecialSituationsPage() {
 
         {/* Aggregate counts */}
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
-          <Stat label="Tier 1 (hard catalyst)" value={tier1.length} color="#EF4444" />
-          <Stat label="Tier 2 (watchlist)" value={tier2.length} color="#F59E0B" />
-          <Stat label="Archive" value={archive.length} color="#6B7A8D" />
+          <Stat label="Tier 1 (hard catalyst)" value={tier1Count} color="#EF4444" />
+          <Stat label="Tier 2 (tradable)" value={tier2Count} color="#F59E0B" />
+          <Stat label={tier3Label} value={tier3Count} color="#6B7A8D" />
           <span style={{ width: 1, backgroundColor: '#1A2840', margin: '4px 4px' }} />
           {(Object.keys(CAT_META) as Category[]).map((c) => (
             <Stat key={c} label={CAT_META[c].label} value={catCounts[c]} color={CAT_META[c].color} icon={CAT_META[c].icon} />
@@ -363,7 +378,24 @@ const EVENT_TYPE_META: Record<string, { icon: string; color: string }> = {
 };
 
 function AllSituationsCanonical({ isLoading, error, tier1, tier2, watchlist }: { isLoading: boolean; error: any; tier1: CanonicalEvent[]; tier2: CanonicalEvent[]; watchlist: CanonicalEvent[] }) {
-  if (isLoading) return <div style={{ color: '#6B7A8D', fontSize: 12, padding: 14 }}>Loading event-intelligence pipeline…</div>;
+  // PATCH 0109 — BUG-04: 10-second timeout state.  If still loading after
+  // 10s, surface a hint so user knows fetch is slow rather than broken.
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (!isLoading) { setSlow(false); return; }
+    const t = setTimeout(() => setSlow(true), 10000);
+    return () => clearTimeout(t);
+  }, [isLoading]);
+  if (isLoading) return (
+    <div style={{ color: '#6B7A8D', fontSize: 12, padding: 14 }}>
+      Loading event-intelligence pipeline…
+      {slow && (
+        <div style={{ marginTop: 6, color: '#F59E0B', fontSize: 11 }}>
+          ⏳ RSS fetch taking longer than expected. Click the Refresh button (top-right) to retry.
+        </div>
+      )}
+    </div>
+  );
   if (error) return <div style={{ color: '#EF4444', fontSize: 12, padding: 14 }}>Failed to load.</div>;
   if (!tier1.length && !tier2.length && !watchlist.length) {
     return (
