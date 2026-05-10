@@ -3021,6 +3021,51 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                         const col = passed>=6?GREEN:passed>=4?YELLOW:ORANGE;
                         return <span title="Kill-switch: N/8 tests pass" style={{fontSize:9,fontWeight:700,color:col}}>🛡{passed}/{tested.length}</span>;
                       })()}
+                      {/* PATCH 0056: Reinvestment Engine verdict (data from patch 0055) */}
+                      {r.reinvestment && r.reinvestment.verdict !== 'NA' && (() => {
+                        const verdict = r.reinvestment.verdict;
+                        const score = r.reinvestment.score;
+                        const col = verdict === 'COMPOUNDING' ? GREEN
+                                  : verdict === 'BUILDING' ? '#22d3ee'
+                                  : verdict === 'STALLING' ? RED
+                                  : MUTED;
+                        const icon = verdict === 'COMPOUNDING' ? '⚙' : verdict === 'BUILDING' ? '↗' : verdict === 'STALLING' ? '✗' : '·';
+                        const lbl = verdict === 'COMPOUNDING' ? 'COMP' : verdict === 'BUILDING' ? 'BUILD' : verdict === 'STALLING' ? 'STALL' : 'ord';
+                        return (
+                          <span title={`Reinvestment Engine ${score}/100 — ${r.reinvestment.note}`}
+                                style={{fontSize:9,fontWeight:700,color:col}}>
+                            {icon} {lbl} {score}
+                          </span>
+                        );
+                      })()}
+                      {/* PATCH 0056: Dilution verdict (data from patch 0055) */}
+                      {r.dilution && r.dilution.verdict !== 'NA' && r.dilution.verdict !== 'NEUTRAL' && (() => {
+                        const v = r.dilution.verdict;
+                        const drag = r.dilution.drag_pp;
+                        const col = v === 'SEVERELY_DILUTIVE' ? RED
+                                  : v === 'DILUTIVE' ? ORANGE
+                                  : GREEN;
+                        const icon = v === 'SEVERELY_DILUTIVE' || v === 'DILUTIVE' ? '⤓' : '⤒';
+                        const lbl = v === 'SEVERELY_DILUTIVE' ? 'DIL!!' : v === 'DILUTIVE' ? 'DIL' : 'ACCR';
+                        return (
+                          <span title={`Dilution: ${r.dilution.note}`}
+                                style={{fontSize:9,fontWeight:700,color:col}}>
+                            {icon} {lbl} {drag !== null ? (drag > 0 ? '+' : '') + drag.toFixed(1) + 'pp' : ''}
+                          </span>
+                        );
+                      })()}
+                      {/* PATCH 0056: Framework data coverage indicator */}
+                      {r.framework_coverage && (() => {
+                        const conf = r.framework_coverage.confidence;
+                        const pct = r.framework_coverage.coverage_pct;
+                        const col = conf === 'HIGH' ? GREEN : conf === 'MEDIUM' ? YELLOW : ORANGE;
+                        return (
+                          <span title={`Framework coverage: ${pct}% of ideal data present. ${r.framework_coverage.note}`}
+                                style={{fontSize:9,fontWeight:600,color:col,opacity:0.85}}>
+                            ◔ {pct}%
+                          </span>
+                        );
+                      })()}
                       {/* Score change vs prev upload */}
                       {(() => {
                         const prev = prevScoreMap[r.symbol];
@@ -3066,6 +3111,73 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                           <div style={{fontSize:F.sm,color:RED,fontWeight:700,letterSpacing:'0.8px',marginTop:12,marginBottom:6}}>🚨 RED FLAGS</div>
                           {r.redFlags.map((f,i)=><div key={i} style={{fontSize:F.md,color:f.severity==='CRITICAL'?RED:ORANGE,padding:'3px 0'}}>⛔ {f.label} <span style={{fontSize:F.xs,color:MUTED}}>[{f.source}]</span></div>)}
                         </>}
+
+                        {/* ── PATCH 0056: MULTIBAGGER FRAMEWORK PANEL ── */}
+                        {(r.dilution || r.reinvestment || r.framework_coverage) && (
+                          <div style={{marginTop:16,borderTop:`1px solid ${BORDER}`,paddingTop:12}}>
+                            <div style={{fontSize:F.sm,fontWeight:800,letterSpacing:'0.8px',color:'#22d3ee',marginBottom:10}}>
+                              🧬 MULTIBAGGER FRAMEWORK ANALYSIS
+                            </div>
+                            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:8}}>
+                              {r.reinvestment && r.reinvestment.verdict !== 'NA' && (() => {
+                                const v = r.reinvestment.verdict;
+                                const col = v==='COMPOUNDING'?GREEN:v==='BUILDING'?'#22d3ee':v==='STALLING'?RED:MUTED;
+                                return (
+                                  <div style={{backgroundColor:CARD2,border:`1px solid ${col}30`,borderLeft:`3px solid ${col}`,borderRadius:7,padding:'8px 10px'}}>
+                                    <div style={{display:'flex',alignItems:'baseline',gap:6,marginBottom:4}}>
+                                      <span style={{fontSize:F.xs,fontWeight:700,color:TEXT}}>⚙ Reinvestment Engine</span>
+                                      <span style={{fontSize:F.xs,fontWeight:800,color:col}}>{v}</span>
+                                      <span style={{fontSize:F.xs,color:MUTED,marginLeft:'auto'}}>{r.reinvestment.score}/100</span>
+                                    </div>
+                                    <div style={{fontSize:F.xs,color:MUTED,lineHeight:1.4}}>{r.reinvestment.note}</div>
+                                  </div>
+                                );
+                              })()}
+                              {r.dilution && r.dilution.verdict !== 'NA' && (() => {
+                                const v = r.dilution.verdict;
+                                const col = v==='SEVERELY_DILUTIVE'?RED:v==='DILUTIVE'?ORANGE:v==='ACCRETIVE'?GREEN:MUTED;
+                                return (
+                                  <div style={{backgroundColor:CARD2,border:`1px solid ${col}30`,borderLeft:`3px solid ${col}`,borderRadius:7,padding:'8px 10px'}}>
+                                    <div style={{display:'flex',alignItems:'baseline',gap:6,marginBottom:4}}>
+                                      <span style={{fontSize:F.xs,fontWeight:700,color:TEXT}}>{v.includes('DILUTIVE')?'⤓':'⤒'} Dilution Trajectory</span>
+                                      <span style={{fontSize:F.xs,fontWeight:800,color:col}}>{v.replace('_',' ')}</span>
+                                      {r.dilution.drag_pp !== null && (
+                                        <span style={{fontSize:F.xs,color:MUTED,marginLeft:'auto'}}>
+                                          {r.dilution.drag_pp > 0 ? '+' : ''}{r.dilution.drag_pp.toFixed(1)}pp drag
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div style={{fontSize:F.xs,color:MUTED,lineHeight:1.4}}>{r.dilution.note}</div>
+                                  </div>
+                                );
+                              })()}
+                              {r.framework_coverage && (() => {
+                                const c = r.framework_coverage;
+                                const col = c.confidence==='HIGH'?GREEN:c.confidence==='MEDIUM'?YELLOW:ORANGE;
+                                return (
+                                  <div style={{backgroundColor:CARD2,border:`1px solid ${col}30`,borderLeft:`3px solid ${col}`,borderRadius:7,padding:'8px 10px'}}>
+                                    <div style={{display:'flex',alignItems:'baseline',gap:6,marginBottom:4}}>
+                                      <span style={{fontSize:F.xs,fontWeight:700,color:TEXT}}>◔ Framework Coverage</span>
+                                      <span style={{fontSize:F.xs,fontWeight:800,color:col}}>{c.confidence}</span>
+                                      <span style={{fontSize:F.xs,color:MUTED,marginLeft:'auto'}}>{c.coverage_pct}%</span>
+                                    </div>
+                                    <div style={{fontSize:F.xs,color:MUTED,lineHeight:1.4,marginBottom:4}}>{c.note}</div>
+                                    {c.missing.length > 0 && c.missing.length <= 6 && (
+                                      <div style={{fontSize:9,color:'#64748b',lineHeight:1.4}}>
+                                        Missing: {c.missing.join(', ')}
+                                      </div>
+                                    )}
+                                    {c.missing.length > 6 && (
+                                      <div style={{fontSize:9,color:'#64748b',lineHeight:1.4}}>
+                                        Missing {c.missing.length} fields incl. {c.missing.slice(0,3).join(', ')}…
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          </div>
+                        )}
 
                         {/* ── 8-TEST KILL-SWITCH PANEL ── */}
                         {r.killSwitch && r.killSwitch.length > 0 && (() => {
