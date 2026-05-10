@@ -607,3 +607,207 @@ main aside [style*="maxWidth"],
 main [role="dialog"] [style*="maxWidth"] {
   max-width: revert !important;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PATCH 0078 — NUCLEAR LIGHT-THEME APPROACH
+   ─────────────────────────────────────────────────────────────────────────
+   The piecemeal hex-by-hex override missed too many colors (multibagger
+   #0a0a0f, earnings-AI specific colors, embedded gradients, etc.).
+   This uses CSS filter inversion + hue-rotate to flip ALL dark content
+   to light at once. Images/icons/SVG/charts get re-inverted so they
+   look normal.
+
+   Disables all the [style*=] light-theme overrides above (they fight the
+   filter). The filter alone gives a clean readable light theme.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+html[data-theme="light"] main {
+  filter: invert(0.92) hue-rotate(180deg);
+  background: #ffffff !important;
+}
+/* Re-invert images, videos, SVG, canvas so they look correct */
+html[data-theme="light"] main img,
+html[data-theme="light"] main video,
+html[data-theme="light"] main svg,
+html[data-theme="light"] main canvas,
+html[data-theme="light"] main picture,
+html[data-theme="light"] main iframe,
+html[data-theme="light"] main [data-no-invert],
+html[data-theme="light"] main [class*="recharts"],
+html[data-theme="light"] main [class*="lightweight-charts"] {
+  filter: invert(1) hue-rotate(180deg);
+}
+/* The Cowork header sidebar should also flip */
+html[data-theme="light"] aside {
+  filter: invert(0.92) hue-rotate(180deg);
+}
+html[data-theme="light"] aside img,
+html[data-theme="light"] aside svg {
+  filter: invert(1) hue-rotate(180deg);
+}
+html[data-theme="light"] header {
+  filter: invert(0.92) hue-rotate(180deg);
+}
+html[data-theme="light"] header img,
+html[data-theme="light"] header svg {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+/* The body itself stays white so any unrendered space is light */
+html[data-theme="light"] body {
+  background: #ffffff !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PATCH 0078 — RADICALLY DISTINCT PROFESSIONAL THEME
+   ─────────────────────────────────────────────────────────────────────────
+   Make Pro look like a real Bloomberg terminal — visually unmistakable
+   from Dark.
+     - Pure black bg
+     - Monospace EVERYWHERE
+     - SHARP CORNERS (no border-radius)
+     - Uppercase headings
+     - Orange/amber accent only
+     - Tight line-height
+     - Tabular numerics
+     - Higher letter-spacing on headers
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+html[data-theme="professional"] body {
+  background: #000000 !important;
+  color: #ffcc66 !important;
+  font-family: "JetBrains Mono", "SF Mono", "Menlo", Monaco, Consolas, "Roboto Mono", monospace !important;
+  letter-spacing: 0.02em;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+}
+
+/* Force monospace on every element — covers inline-styled font-family overrides */
+html[data-theme="professional"] *:not(svg):not(svg *) {
+  font-family: "JetBrains Mono", "SF Mono", "Menlo", Monaco, Consolas, "Roboto Mono", monospace !important;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+}
+
+/* Sharp corners — no rounded boxes */
+html[data-theme="professional"] *,
+html[data-theme="professional"] *::before,
+html[data-theme="professional"] *::after {
+  border-radius: 0 !important;
+}
+
+/* Uppercase + tracking on H1/H2/H3 */
+html[data-theme="professional"] h1,
+html[data-theme="professional"] h2,
+html[data-theme="professional"] h3 {
+  text-transform: uppercase !important;
+  letter-spacing: 0.08em !important;
+  font-weight: 700 !important;
+}
+
+/* Force pure black on EVERY container in pro mode */
+html[data-theme="professional"] main,
+html[data-theme="professional"] main > div,
+html[data-theme="professional"] aside,
+html[data-theme="professional"] header,
+html[data-theme="professional"] footer {
+  background: #000000 !important;
+}
+
+/* Panels in pro: very dark grey with orange-tinted border */
+html[data-theme="professional"] [style*="#0D1B2E"],
+html[data-theme="professional"] [style*="#0d1b2e"],
+html[data-theme="professional"] [style*="#0D1623"],
+html[data-theme="professional"] [style*="#0d1623"],
+html[data-theme="professional"] [style*="#111B35"],
+html[data-theme="professional"] [style*="#111b35"],
+html[data-theme="professional"] [style*="#1A2840"],
+html[data-theme="professional"] [style*="#1a2840"],
+html[data-theme="professional"] [style*="#1E2D45"],
+html[data-theme="professional"] [style*="#1e2d45"],
+html[data-theme="professional"] [style*="#1A2B3C"],
+html[data-theme="professional"] [style*="#1a2b3c"],
+html[data-theme="professional"] [style*="#0a0a0f"],
+html[data-theme="professional"] [style*="#0A0A0F"],
+html[data-theme="professional"] [style*="#13131a"],
+html[data-theme="professional"] [style*="#13131A"],
+html[data-theme="professional"] [style*="#191926"],
+html[data-theme="professional"] [style*="#161b22"],
+html[data-theme="professional"] [style*="#1c232c"] {
+  background-color: #0a0a0a !important;
+  border: 1px solid rgba(255,165,0,0.30) !important;
+  border-radius: 0 !important;
+}
+
+/* All blue/cyan/purple accents → orange in pro */
+html[data-theme="professional"] [style*="#0F7ABF"],
+html[data-theme="professional"] [style*="#0f7abf"],
+html[data-theme="professional"] [style*="#06B6D4"],
+html[data-theme="professional"] [style*="#06b6d4"],
+html[data-theme="professional"] [style*="#22D3EE"],
+html[data-theme="professional"] [style*="#22d3ee"],
+html[data-theme="professional"] [style*="#38A9E8"],
+html[data-theme="professional"] [style*="#38a9e8"],
+html[data-theme="professional"] [style*="#3B82F6"],
+html[data-theme="professional"] [style*="#3b82f6"],
+html[data-theme="professional"] [style*="#38bdf8"],
+html[data-theme="professional"] [style*="#38BDF8"],
+html[data-theme="professional"] [style*="#a78bfa"],
+html[data-theme="professional"] [style*="#A78BFA"],
+html[data-theme="professional"] [style*="#8B5CF6"],
+html[data-theme="professional"] [style*="#8b5cf6"] {
+  color: #ffa500 !important;
+  border-color: rgba(255,165,0,0.40) !important;
+}
+
+/* Text in pro */
+html[data-theme="professional"] [style*="#F5F7FA"],
+html[data-theme="professional"] [style*="#f5f7fa"],
+html[data-theme="professional"] [style*="#E6EDF3"],
+html[data-theme="professional"] [style*="#e6edf3"],
+html[data-theme="professional"] [style*="#E2E8F0"],
+html[data-theme="professional"] [style*="#e2e8f0"] {
+  color: #ffcc66 !important;
+}
+html[data-theme="professional"] [style*="#94A3B8"],
+html[data-theme="professional"] [style*="#94a3b8"],
+html[data-theme="professional"] [style*="#CBD5E1"],
+html[data-theme="professional"] [style*="#cbd5e1"],
+html[data-theme="professional"] [style*="#C9D4E0"],
+html[data-theme="professional"] [style*="#c9d4e0"],
+html[data-theme="professional"] [style*="#8BA3C1"],
+html[data-theme="professional"] [style*="#8ba3c1"],
+html[data-theme="professional"] [style*="#8A95A3"],
+html[data-theme="professional"] [style*="#8a95a3"],
+html[data-theme="professional"] [style*="#6B7A8D"],
+html[data-theme="professional"] [style*="#6b7a8d"],
+html[data-theme="professional"] [style*="#64748b"] {
+  color: #998866 !important;
+}
+html[data-theme="professional"] [style*="#4A5B6C"],
+html[data-theme="professional"] [style*="#4a5b6c"] {
+  color: #665544 !important;
+}
+
+/* Pro: scrollbar treatment */
+html[data-theme="professional"] ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+html[data-theme="professional"] ::-webkit-scrollbar-track {
+  background: #000;
+}
+html[data-theme="professional"] ::-webkit-scrollbar-thumb {
+  background: rgba(255,165,0,0.30);
+}
+html[data-theme="professional"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,165,0,0.50);
+}
+
+/* Pro: aggressive border separator on rows for terminal feel */
+html[data-theme="professional"] hr {
+  border-color: rgba(255,165,0,0.20) !important;
+}
+
+/* Pro: tighter, more dense */
+html[data-theme="professional"] body {
+  line-height: 1.35;
+}
