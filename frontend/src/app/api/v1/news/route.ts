@@ -16,6 +16,8 @@ import {
   classifyAssertion, frameImpact, hasDirectComputeLinkage, isGenericPowerStory,
   classifyDefenseNarrative, computeFreshnessLayer, buildSignalConfidence,
 } from '@/lib/news/assertion-classifier';
+// PATCH 0059: Structural state classifier (BOTTLENECK / CAPACITY_EXPANSION / etc)
+import { classifyStructuralState } from '@/lib/news/structural-state';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -152,7 +154,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v15'; // v15: ticker_symbols alias + concall fix (patch 0053b)
+const CACHE_KEY = 'news:articles:v16'; // v16: structural-state classifier (patch 0059)
 const CACHE_TTL = 300; // 5 min
 // v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
 // freshness_layer, signal_confidence (multi-dim), bottleneck_parent /
@@ -1430,6 +1432,9 @@ async function fetchAllNews(): Promise<any[]> {
             ? graph.primary_node
             : (article_type === 'BOTTLENECK' ? 'NONE' : 'NONE');
 
+          // PATCH 0059: structural state — compute once, reuse twice
+          const structuralStateResult = classifyStructuralState({ title, desc });
+
           items.push({
             id: uniqueId,
             title,
@@ -1505,6 +1510,12 @@ async function fetchAllNews(): Promise<any[]> {
             tickers: tickers,
             ticker_symbols: tickers,
             primary_ticker: tickers[0] || null,
+            // PATCH 0059: structural state — BOTTLENECK is no longer the
+            // meta-bucket. Articles split into BOTTLENECK / CAPACITY_EXPANSION
+            // / CAPEX_BUILDOUT / SUPPLY_RESPONSE / DEMAND_SURGE /
+            // POLICY_SUPPORT so the feed UX can color and filter by intent.
+            structural_state: structuralStateResult.state,
+            structural_state_confidence: structuralStateResult.confidence,
             // PATCH 0050: importance now uses half-life decay instead of
             // linear age divide. TRANSIENT articles fade in days; SECULAR
             // ones persist for ~18 months.

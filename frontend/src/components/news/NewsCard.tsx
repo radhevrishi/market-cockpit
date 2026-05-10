@@ -259,9 +259,9 @@ export default function NewsCard({ article, onTickerClick }: Props) {
             </div>
           )}
 
-          {/* PATCH 0052: Freshness layer + defense narrative pills */}
-          {((article as any).freshness_layer || (article as any).defense_narrative) && (
-            <div className="flex items-center gap-1.5 mt-1.5">
+          {/* PATCH 0052: Freshness layer + defense narrative pills + 0059 structural state */}
+          {((article as any).freshness_layer || (article as any).defense_narrative || ((article as any).structural_state && (article as any).structural_state !== 'NONE')) && (
+            <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
               {(article as any).freshness_layer && (
                 <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${
                   (article as any).freshness_layer === 'LIVE_STRUCTURE'    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' :
@@ -273,6 +273,36 @@ export default function NewsCard({ article, onTickerClick }: Props) {
                     : '○ archival'}
                 </span>
               )}
+              {/* PATCH 0059: structural state pill — replaces the implicit
+                  "everything is BOTTLENECK" framing with a precise state */}
+              {(article as any).structural_state && (article as any).structural_state !== 'NONE' && (() => {
+                const state = (article as any).structural_state;
+                const conf = (article as any).structural_state_confidence ?? 0;
+                const labelMap: Record<string, string> = {
+                  BOTTLENECK:         '🚧 bottleneck',
+                  CAPACITY_EXPANSION: '🏗 capacity expansion',
+                  CAPEX_BUILDOUT:     '💰 capex buildout',
+                  SUPPLY_RESPONSE:    '📈 supply response',
+                  DEMAND_SURGE:       '🔥 demand surge',
+                  POLICY_SUPPORT:     '📜 policy support',
+                };
+                const styleMap: Record<string, string> = {
+                  BOTTLENECK:         'bg-rose-500/20 text-rose-300 border-rose-500/40',
+                  CAPACITY_EXPANSION: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+                  CAPEX_BUILDOUT:     'bg-blue-500/20 text-blue-300 border-blue-500/40',
+                  SUPPLY_RESPONSE:    'bg-cyan-500/20 text-cyan-300 border-cyan-500/40',
+                  DEMAND_SURGE:       'bg-orange-500/20 text-orange-300 border-orange-500/40',
+                  POLICY_SUPPORT:     'bg-violet-500/20 text-violet-300 border-violet-500/40',
+                };
+                return (
+                  <span
+                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${styleMap[state] || ''}`}
+                    title={`Structural state — confidence ${conf}%. Bottleneck (constraint), Capacity Expansion (new supply), Capex Buildout (orders), Supply Response (easing), Demand Surge (orders rising), Policy Support (PLI/FDI/regulatory).`}
+                  >
+                    {labelMap[state] || state.toLowerCase()}
+                  </span>
+                );
+              })()}
               {(article as any).defense_narrative && (article as any).defense_narrative !== 'GENERIC' && (
                 <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-300 border border-orange-500/30" title="Defense narrative">
                   ⚔ {(article as any).defense_narrative.replace(/_/g, ' ').toLowerCase()}
