@@ -700,7 +700,7 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
         <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: importanceDot(article.importance_score), flexShrink: 0, marginTop: '7px' }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '11px', color: '#4A5B6C' }}>{regionFlag(article.region)}</span>
+            <span style={{ fontSize: '18px', color: '#4A5B6C' }}>{regionFlag(article.region)}</span>
             <span style={{
               fontSize: '10px', fontWeight: '600', padding: '3px 8px', borderRadius: '5px',
               backgroundColor: typeColor(article.article_type) + '22',
@@ -766,16 +766,16 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
               </span>
             ))}
           </div>
-          <p style={{ fontSize: '14px', fontWeight: '600', color: '#E8EDF2', margin: '0 0 4px', lineHeight: '1.45' }}>{title}</p>
+          <p style={{ fontSize: '17px', fontWeight: '600', color: '#E8EDF2', margin: '0 0 4px', lineHeight: '1.55' }}>{title}</p>
           {article.impact_statement && (
-            <p style={{ fontSize: '11px', color: '#F59E0B', margin: '0 0 6px', lineHeight: '1.4', fontWeight: '500', fontStyle: 'italic' }}>
+            <p style={{ fontSize: '18px', color: '#F59E0B', margin: '0 0 6px', lineHeight: '1.5', fontWeight: '500', fontStyle: 'italic' }}>
               Impact: {article.impact_statement}
             </p>
           )}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '12px', color: '#6A7B8C', fontWeight: '500' }}>{source}</span>
-            <span style={{ fontSize: '12px', color: '#2A3B4C' }}>·</span>
-            <span style={{ fontSize: '12px', color: '#4A5B6C' }}>{timeAgo(article.published_at)}</span>
+            <span style={{ fontSize: '17px', color: '#6A7B8C', fontWeight: '500' }}>{source}</span>
+            <span style={{ fontSize: '17px', color: '#2A3B4C' }}>·</span>
+            <span style={{ fontSize: '17px', color: '#4A5B6C' }}>{timeAgo(article.published_at)}</span>
             {url && url !== '#' && (
               <ExternalLink style={{ width: '11px', height: '11px', color: '#3A4B5C' }} />
             )}
@@ -1701,7 +1701,7 @@ export default function NewsFeedPage() {
   };
 
   return (
-    <div style={{ padding: '12px 16px', maxWidth: '1600px', margin: '0 auto', width: '100%' }}>
+    <div style={{ padding: '12px 20px', maxWidth: 'none', margin: '0', width: '100%', fontSize: 14 }}>
 
       {/* ── MARKET BIAS HEADER ────────────────────────────────────────── */}
       {marketBias && !isLoading && (
