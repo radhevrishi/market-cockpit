@@ -13,6 +13,8 @@ import { classifySourceTier, getTierContribution } from '@/lib/news/source-tiers
 import { recordEvidence, readEvidence } from '@/lib/news/evidence-accumulator';
 // PATCH 0081: beneficiary graph engine
 import { detectAdaptations, recordBeneficiary } from '@/lib/news/beneficiary-graph';
+// PATCH 0084: 6-layer beneficiary engine + transmission cascade
+import { deriveLayeredBeneficiaries } from '@/lib/news/beneficiary-layers';
 // PATCH 0052: Causal-honesty layer + 0061 evidence-bound impact + 0062 relevance
 import {
   classifyAssertion, frameImpact, hasDirectComputeLinkage, isGenericPowerStory,
@@ -191,7 +193,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v29'; // v29: exposure intensity + economic capture + duration + losers + small/mid caps + causal-relevance gate (0082)
+const CACHE_KEY = 'news:articles:v30'; // v30: 6-layer beneficiary engine (L1-L6) + auto-injection rules + T0-T4 transmission cascade (0084)
 const CACHE_TTL = 300; // 5 min
 // v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
 // freshness_layer, signal_confidence (multi-dim), bottleneck_parent /
@@ -1725,6 +1727,20 @@ async function fetchAllNews(): Promise<any[]> {
             // linear age divide. TRANSIENT articles fade in days; SECULAR
             // ones persist for ~18 months.
             importance_score: decayedImportance,
+            // PATCH 0084: 6-layer beneficiary engine + T0-T4 transmission cascade
+            // Maps the firing SystemNode (graph.primary_node) into the full
+            // L1-L6 pricing-power propagation, force-injecting mandatory
+            // members per node-class (e.g. AMD/INTC/ARM on COMPUTE_INFRA,
+            // AKAM/NET/CIEN/LITE on INTERCONNECT_INFRA, Sterlite-type
+            // transmission winners on fibre/grid bottlenecks).
+            layered_beneficiaries: (graph.primary_node && graph.primary_node !== 'NONE')
+              ? deriveLayeredBeneficiaries({
+                  primary_node: graph.primary_node,
+                  article_tickers: tickers,
+                  article_headline: title,
+                  per_layer_limit: 6,
+                })
+              : null,
           });
         }
       } catch { /* skip failed feeds */ }

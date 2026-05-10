@@ -544,6 +544,110 @@ export default function NewsCard({ article, onTickerClick }: Props) {
             </div>
           )}
 
+          {/* PATCH 0084: 6-layer beneficiary engine + T0-T4 transmission cascade
+              Collapsed view: one strip with L1..L6 icons + top 3 tickers per layer
+              Expanded view: per-layer chips with rationale tooltips + transmission timing */}
+          {(article as any).layered_beneficiaries && ((article as any).layered_beneficiaries.fired_layers || []).length > 0 && (() => {
+            const lb = (article as any).layered_beneficiaries as {
+              bottleneck: string;
+              bottleneck_label: string;
+              fired_layers: string[];
+              layers: Record<string, Array<{ ticker: string; rationale: string; pricing_leverage: 'STRONG'|'MEDIUM'|'WEAK'; size: 'LARGE_CAP'|'MID_CAP'|'SMALL_CAP'; mandatory?: boolean }>>;
+              transmission: { T0: string; T1: string; T2: string; T3: string; T4: string };
+            };
+            const LAYER_META: Record<string, { icon: string; label: string; tagline: string; color: string }> = {
+              L1: { icon: '🧱', label: 'Direct Scarcity Capture',     tagline: 'Input pricing power',                  color: 'bg-amber-500/15 text-amber-300 border-amber-500/40'   },
+              L2: { icon: '⚙️', label: 'Compute Substitutes',          tagline: 'GPU / CPU / ARM substitution',         color: 'bg-violet-500/15 text-violet-300 border-violet-500/40' },
+              L3: { icon: '🌐', label: 'Edge Distribution',            tagline: 'CDN / latency / bandwidth',             color: 'bg-sky-500/15 text-sky-300 border-sky-500/40'           },
+              L4: { icon: '🧪', label: 'Transmission Winners',         tagline: 'Sterlite-type pass-through',            color: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40' },
+              L5: { icon: '🏢', label: 'Platform Beneficiaries',       tagline: 'Hyperscaler demand aggregators',        color: 'bg-blue-500/15 text-blue-300 border-blue-500/40'        },
+              L6: { icon: '⚡', label: 'Infrastructure / Efficiency',  tagline: 'Power, thermal, perf-per-watt',         color: 'bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/40' },
+            };
+            const LEVERAGE_DOT: Record<string, string> = {
+              STRONG: 'bg-emerald-400', MEDIUM: 'bg-amber-400', WEAK: 'bg-zinc-500',
+            };
+            const SIZE_SUFFIX: Record<string, string> = { LARGE_CAP: '', MID_CAP: 'm', SMALL_CAP: 's' };
+
+            return (
+              <details className="mt-2 group/layers">
+                <summary className="flex items-center gap-1.5 flex-wrap text-[10px] cursor-pointer select-none list-none marker:hidden">
+                  <span className="text-[#4A5B6C] uppercase tracking-wide mr-1 group-open/layers:text-[#0F7ABF]">capital flow</span>
+                  {lb.fired_layers.map((L) => {
+                    const meta = LAYER_META[L];
+                    const top3 = (lb.layers[L] || []).slice(0, 3).map((t) => t.ticker).join(' · ');
+                    return (
+                      <span
+                        key={L}
+                        className={`px-1.5 py-0.5 rounded border font-medium ${meta.color}`}
+                        title={`${meta.label} — ${meta.tagline}`}
+                      >
+                        {meta.icon} {L}: <span className="font-mono">{top3 || '—'}</span>
+                      </span>
+                    );
+                  })}
+                  <span className="text-[#4A5B6C] ml-1 text-[9px] group-open/layers:hidden">(click to expand)</span>
+                </summary>
+
+                {/* Expanded: per-layer chip stack */}
+                <div className="mt-2 border-l-2 border-[#0F7ABF]/40 pl-2.5 space-y-2 bg-[#0D1B2E]/30 rounded-r py-2">
+                  {lb.fired_layers.map((L) => {
+                    const meta = LAYER_META[L];
+                    const tickers = lb.layers[L] || [];
+                    if (tickers.length === 0) return null;
+                    return (
+                      <div key={L}>
+                        <div className="flex items-baseline gap-2 mb-1">
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${meta.color}`}>
+                            {meta.icon} {L} — {meta.label}
+                          </span>
+                          <span className="text-[9px] text-[#6677AA] italic">{meta.tagline}</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {tickers.map((t) => (
+                            <span
+                              key={t.ticker}
+                              className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border bg-[#1A2B3C] ${
+                                t.mandatory ? 'border-amber-500/50 text-amber-200' : 'border-[#2A3B4C] text-[#C4D2DD]'
+                              }`}
+                              title={`${t.rationale}\nPricing leverage: ${t.pricing_leverage}${t.mandatory ? ' · Mandatory injection' : ''}`}
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full ${LEVERAGE_DOT[t.pricing_leverage] || 'bg-zinc-500'}`} />
+                              <span className="font-mono font-bold">{t.ticker}</span>
+                              {SIZE_SUFFIX[t.size] && (
+                                <span className="text-[8px] text-[#6677AA] uppercase">{SIZE_SUFFIX[t.size]}</span>
+                              )}
+                              {t.mandatory && <span className="text-[8px] text-amber-400" title="Mandatory injection — structurally required for this node-class">★</span>}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* Transmission cascade T0 → T4 */}
+                  <div className="mt-2 pt-2 border-t border-[#1E2D45]">
+                    <div className="text-[9px] text-[#6677AA] uppercase tracking-wide mb-1">Transmission cascade</div>
+                    <div className="flex flex-col gap-0.5 text-[10px]">
+                      {([
+                        ['T0', 'now',     lb.transmission.T0, 'text-cyan-300'],
+                        ['T1', '0–1Q',    lb.transmission.T1, 'text-sky-300'],
+                        ['T2', '1–3Q',    lb.transmission.T2, 'text-emerald-300'],
+                        ['T3', '3–6Q',    lb.transmission.T3, 'text-amber-300'],
+                        ['T4', '6–12Q',   lb.transmission.T4, 'text-fuchsia-300'],
+                      ] as const).map(([t, q, txt, cls]) => (
+                        <div key={t} className="flex gap-2">
+                          <span className={`shrink-0 font-mono font-bold ${cls}`}>{t}</span>
+                          <span className="shrink-0 text-[9px] text-[#6677AA] font-mono w-12">{q}</span>
+                          <span className="text-[#C4D2DD] leading-snug">{txt}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </details>
+            );
+          })()}
+
           {/* Source + tier */}
           <span className="text-[#4A5B6C] text-[11px]">
             {article.source_name ?? article.source}
