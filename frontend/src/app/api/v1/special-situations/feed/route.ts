@@ -11,9 +11,17 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
+import { kvGet, kvSet } from '@/lib/kv';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
+
+// PATCH 0103: rolling 90-day KV cache so classified items persist across pulls
+// (RSS feeds only carry 1-3 days of headlines; Vedanta-class events from
+// weeks ago fall off the live RSS but should still be visible).
+const ROLLING_KEY = 'special-situations:rolling:v2';
+const ROLLING_TTL_SECONDS = 95 * 86400;
+const ROLLING_RETAIN_DAYS = 90;
 
 // ─── Sources ────────────────────────────────────────────────────────────────
 // Mix of US + India + global feeds known to carry corporate-action coverage.
@@ -32,6 +40,11 @@ const SOURCES: ReadonlyArray<FeedSource> = [
   { name: 'MoneyControl Top',  url: 'https://www.moneycontrol.com/rss/MCtopnews.xml',                                  region: 'IN' },
   { name: 'MoneyControl Mkts', url: 'https://www.moneycontrol.com/rss/marketreports.xml',                              region: 'IN' },
   { name: 'MoneyControl Biz',  url: 'https://www.moneycontrol.com/rss/business.xml',                                   region: 'IN' },
+  // PATCH 0103: Indian sector-specific feeds with corporate-action heavy coverage
+  { name: 'Capital Market',    url: 'https://www.capitalmarket.com/rss/news.xml',                                       region: 'IN' },
+  { name: 'BL Companies',      url: 'https://www.thehindubusinessline.com/companies/feeder/default.rss',                region: 'IN' },
+  { name: 'BL Markets',        url: 'https://www.thehindubusinessline.com/markets/feeder/default.rss',                  region: 'IN' },
+  { name: 'Financial Express', url: 'https://www.financialexpress.com/feed/',                                           region: 'IN' },
   // US — corporate-action heavy
   { name: 'MarketWatch Top',   url: 'https://feeds.marketwatch.com/marketwatch/topstories/',                           region: 'US' },
   { name: 'MarketWatch Mkts',  url: 'https://feeds.marketwatch.com/marketwatch/marketpulse/',                          region: 'US' },
@@ -69,9 +82,12 @@ const CATEGORIES: ReadonlyArray<CategorySpec> = [
   {
     id: 'SPIN',
     label: 'Spin-offs / Demergers',
-    // PATCH 0100c: catch SEC form codes 10-12B / 10-12G (spin-off prospectuses) directly —
-    // their RSS titles are 'COMPANY NAME (Filer)' prefixed by the form code, not 'Form 10'.
-    pattern: /\b(spin.?off|spinoff|spun.?off|spinning off|demerg(?:e[rd]?|ing)|de.?merger|carve.?out|carved out|carving out|split.?off|hive.?off|hive[ -]off|10-12[BG](?:\/A)?\b|form\s*10(?:-12[BG])?\b|tax.?free distribution|business separation|breakup|break.?up\s+plan|separate (?:the|its) (?:business|division|segment|unit|operations)|to spin (?:off|out)|approves? (?:demerger|spin.?off|de-?merger|separation)|creates? (?:independent|separate|new) (?:company|entity|listed)|split into (?:two|three|four)|two separate companies|independent (?:public )?company|to be (?:demerged|separated|split)|sebi (?:demerger|spin)|nclt (?:approves|sanctions) (?:demerger|scheme of arrangement)|scheme of arrangement|business reorganis(?:e|ation)|listing of (?:the )?(?:demerged|spin))\b/i,
+    // PATCH 0103: catches Indian holdco patterns ('plan IPO for subsidiary',
+    // 'to list X arm/unit/division', '6k-crore IPO for X' style) which the
+    // earlier patterns missed. NTPC/IndianOil/Coal India IPO-ing Hindustan
+    // Urvarak is a spin-off pattern; Cipla pharma split, ITC hotels demerger,
+    // Reliance Capital insurance demerger all use these phrasings.
+    pattern: /\b(spin.?off|spinoff|spun.?off|spinning off|demerg(?:e[rd]?|ing)|de.?merger|carve.?out|carved out|carving out|split.?off|hive.?off|hive[ -]off|10-12[BG](?:\/A)?\b|form\s*10(?:-12[BG])?\b|tax.?free distribution|business separation|breakup|break.?up\s+plan|separate (?:the|its) (?:business|division|segment|unit|operations)|to spin (?:off|out)|approves? (?:demerger|spin.?off|de-?merger|separation)|creates? (?:independent|separate|new) (?:company|entity|listed)|split into (?:two|three|four)|two separate companies|independent (?:public )?company|to be (?:demerged|separated|split)|sebi (?:demerger|spin)|nclt (?:approves|sanctions) (?:demerger|scheme of arrangement)|scheme of arrangement|business reorganis(?:e|ation)|listing of (?:the )?(?:demerged|spin)|ipo (?:of|for) (?:its|the)?\s*(?:subsidiary|arm|unit|division|business|venture|jv|joint venture|spin)|plan\s+(?:rs\.?\s*[\d,]+\s*(?:crore|cr|lakh\s*crore)\s*)?ipo (?:of|for)\s+\w+|to list (?:its|the)?\s*(?:subsidiary|arm|unit|division|business)|list\s+(?:its|the)?\s*\w+\s+(?:arm|unit|division|business|subsidiary)|(?:subsidiary|arm|unit|division)\s+ipo|listing approval|sebi clears (?:demerger|spin|scheme)|\binitial\s+listing\b|reverse\s+merger)\b/i,
   },
   {
     id: 'MA',
@@ -262,17 +278,38 @@ function dedupeBy<T>(arr: T[], keyFn: (x: T) => string): T[] {
   return out;
 }
 
+interface RollingCache {
+  items: FeedItem[];
+  updated_at: string;
+}
+
+async function loadRolling(): Promise<FeedItem[]> {
+  try {
+    const c = await kvGet<RollingCache>(ROLLING_KEY);
+    return c?.items || [];
+  } catch { return []; }
+}
+
+async function saveRolling(items: FeedItem[]): Promise<void> {
+  try {
+    await kvSet(ROLLING_KEY, { items, updated_at: new Date().toISOString() }, ROLLING_TTL_SECONDS);
+  } catch { /* non-fatal */ }
+}
+
 async function buildFeed(): Promise<{
   last_updated: string;
   total: number;
   by_category: Record<Category, FeedItem[]>;
   source_status: Array<{ name: string; ok: boolean; items?: number }>;
+  rolling_kept: number;
+  fresh_added: number;
 }> {
   // Fetch all feeds in parallel
   const fetched = await Promise.all(SOURCES.map((s) => fetchFeedSafe(s)));
   const sourceStatus: Array<{ name: string; ok: boolean; items?: number }> = [];
-  const all: FeedItem[] = [];
+  const fresh: FeedItem[] = [];
   const now = Date.now();
+  const rollingCutoff = now - ROLLING_RETAIN_DAYS * 86400000;
 
   for (let i = 0; i < SOURCES.length; i++) {
     const src = SOURCES[i];
@@ -293,8 +330,10 @@ async function buildFeed(): Promise<{
         const d = new Date(it.pubDate);
         pubMs = isNaN(d.getTime()) ? NaN : d.getTime();
       }
+      // Drop items older than 30d if we have a date
+      if (!isNaN(pubMs) && pubMs < rollingCutoff) continue;
       const ageHours = isNaN(pubMs) ? 999 : Math.max(0, Math.round((now - pubMs) / 3600000));
-      all.push({
+      fresh.push({
         id: `${src.name}__${(it.link || it.title).slice(0, 200)}`,
         title: it.title,
         link: it.link || '',
@@ -310,8 +349,39 @@ async function buildFeed(): Promise<{
     }
   }
 
-  // Dedupe by canonical title (lowercased, trimmed)
-  const deduped = dedupeBy(all, (x) => x.title);
+  // PATCH 0103: rolling-30-day cache merge.  Fresh items take precedence on
+  // dedupe (so age_hours updates).  Rolling items older than 30d are dropped.
+  const rolling = await loadRolling();
+  const keptRolling = rolling.filter((r) => {
+    if (!r.pub_date) return false;
+    const t = new Date(r.pub_date).getTime();
+    return !isNaN(t) && t >= rollingCutoff;
+  });
+
+  // Dedupe by id (preferring fresh over rolling)
+  const seenIds = new Set<string>();
+  const merged: FeedItem[] = [];
+  for (const it of fresh) {
+    if (seenIds.has(it.id)) continue;
+    seenIds.add(it.id);
+    merged.push(it);
+  }
+  for (const it of keptRolling) {
+    if (seenIds.has(it.id)) continue;
+    seenIds.add(it.id);
+    // Recompute age_hours for the rolling entry
+    if (it.pub_date) {
+      const t = new Date(it.pub_date).getTime();
+      if (!isNaN(t)) it.age_hours = Math.max(0, Math.round((now - t) / 3600000));
+    }
+    merged.push(it);
+  }
+
+  // Also dedupe by canonical title across the merged set (in case sources rephrase)
+  const deduped = dedupeBy(merged, (x) => x.title);
+
+  // Persist for next request
+  await saveRolling(deduped);
 
   // Sort latest first within categories
   deduped.sort((a, b) => {
@@ -328,6 +398,8 @@ async function buildFeed(): Promise<{
     total: deduped.length,
     by_category,
     source_status: sourceStatus,
+    rolling_kept: keptRolling.length,
+    fresh_added: fresh.length,
   };
 }
 
