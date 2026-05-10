@@ -93,9 +93,15 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
   { name: 'The Register', url: 'https://www.theregister.com/headlines.atom', region: 'US', tier: 'tertiary' },
   { name: 'Ars Technica', url: 'https://feeds.arstechnica.com/arstechnica/technology-lab', region: 'US', tier: 'tertiary' },
   { name: 'TechCrunch', url: 'https://techcrunch.com/feed/', region: 'US', tier: 'tertiary' },
-  { name: 'SemiWiki', url: 'https://semiwiki.com/feed/', region: 'US', tier: 'tertiary' },
+  { name: 'SemiWiki', url: 'https://semiwiki.com/feed/', region: 'US', tier: 'secondary' },
+  // PATCH 0077: SemiAnalysis — the most important early-caller for AI compute
+  // bottlenecks. Dylan Patel called HBM3E + CoWoS shortage 6+ months before
+  // Tier-1 media. Adding as 'secondary' tier so it gets full institutional
+  // weight (the early-callers registry promotes it further on domain match).
+  { name: 'SemiAnalysis', url: 'https://www.semianalysis.com/feed', region: 'US', tier: 'secondary' },
   // ── Memory / Storage Cycle Feeds ──
-  { name: 'DigiTimes Memory', url: 'https://www.digitimes.com/rss/memory.xml', region: 'GLOBAL', tier: 'tertiary' },
+  { name: 'Digitimes', url: 'https://www.digitimes.com/news/rss.xml', region: 'GLOBAL', tier: 'secondary' },
+  { name: 'DigiTimes Memory', url: 'https://www.digitimes.com/rss/memory.xml', region: 'GLOBAL', tier: 'secondary' },
   { name: 'Blocks & Files', url: 'https://blocksandfiles.com/feed/', region: 'GLOBAL', tier: 'tertiary' },
   // ── Photonics / Optical Interconnect Feeds ──
   { name: 'Lightwave', url: 'https://www.lightwaveonline.com/rss', region: 'GLOBAL', tier: 'tertiary' },
@@ -1506,6 +1512,10 @@ async function fetchAllNews(): Promise<any[]> {
               source_name: feed.name,
               title,
               desc,
+              // PATCH 0077: pass graph node info so early-caller domain match works.
+              // SemiAnalysis on COMPUTE_INFRA gets EC tier; on NUCLEAR_INFRA stays C.
+              primary_node: graph.primary_node,
+              nodes_hit: (graph.nodes_hit || []).map((n: any) => (typeof n === 'string' ? n : n.node)),
             });
             svCapacityReserved = extractCapacityReserved(`${title} ${desc}`);
             svDependency = computeDependencyScore({

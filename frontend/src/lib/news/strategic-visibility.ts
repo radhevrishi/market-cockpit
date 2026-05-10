@@ -539,15 +539,27 @@ export function strategicRankScore(s: StrategicVisibilitySignal): number {
   return score;
 }
 
-// ─── PATCH 0067: Strategic Visibility v2 enhancements ──────────────────────
+// ─── PATCH 0067 + 0077: Strategic Visibility signal-quality tier ───────────
 
-// 1. SIGNAL QUALITY TIER — A/B/C/D based on source provenance
+// 1. SIGNAL QUALITY TIER
 //    A: primary filing confirmed (8-K / SEBI / investor deck)
-//    B: Tier-1 media confirmed (Reuters / Bloomberg News / FT / WSJ / ET / BS)
-//    C: industry/specialist source (SemiAnalysis / Power Eng / Defense News)
+//    B: Tier-1 media confirmed (Reuters / Bloomberg / FT / WSJ / ET / BS)
+//    EC: PATCH 0077 — domain-specialist EARLY-CALLER who has track record
+//        of breaking the bottleneck/event before Tier-1. SemiAnalysis on
+//        AI compute. Power Engineering on grid. World Nuclear News on
+//        HALEU. Treated as B-equivalent on domain-relevant signals.
+//    C: industry/specialist source (off-domain reads, Tom's Hardware etc.)
 //    D: speculative / single-source / blog / social
 
-export type SignalQualityTier = 'A_FILING' | 'B_TIER1_MEDIA' | 'C_INDUSTRY' | 'D_SPECULATIVE';
+import { classifyEarlyCaller, type EarlyCallerMatch } from './early-callers';
+import type { SystemNode } from './semantic-graph';
+
+export type SignalQualityTier =
+  | 'A_FILING'
+  | 'B_TIER1_MEDIA'
+  | 'EC_EARLY_CALLER'    // PATCH 0077 — domain-specialist with track record
+  | 'C_INDUSTRY'
+  | 'D_SPECULATIVE';
 
 const FILING_SOURCE_RE = /\b(sec filing|8-?k|10-?[qk]|6-?k|sebi (?:filing|circular|order)|investor (?:deck|presentation|day)|earnings (?:transcript|call|presentation)|press release.{0,15}company|nse (?:filing|announcement)|bse (?:filing|announcement))\b/i;
 const TIER1_MEDIA_NAMES = /^(reuters|bloomberg news|wall street journal|wsj|financial times|ft markets|ft news|economic times|business standard|mint|moneycontrol|cnbc top news|cnbc world|cnbc finance)/i;
@@ -557,8 +569,13 @@ export function classifySignalQuality(args: {
   source_name?: string;
   title?: string;
   desc?: string;
+  // PATCH 0077: pass primary_node + nodes_hit so the early-caller check
+  // can verify domain match. Optional — falls back to old behaviour when
+  // not provided.
+  primary_node?: SystemNode | string;
+  nodes_hit?: Array<SystemNode | string>;
 }): SignalQualityTier {
-  const { source_name = '', title = '', desc = '' } = args;
+  const { source_name = '', title = '', desc = '', primary_node, nodes_hit } = args;
   const fullText = `${title} ${desc}`.toLowerCase();
 
   // Tier A — primary filing language present in title/desc
@@ -567,10 +584,40 @@ export function classifySignalQuality(args: {
   // Tier B — recognised Tier-1 media
   if (TIER1_MEDIA_NAMES.test(source_name)) return 'B_TIER1_MEDIA';
 
-  // Tier C — recognised specialist / industry source
+  // PATCH 0077 — EC tier: domain-specialist early-caller with track record.
+  // Promoted ABOVE C_INDUSTRY when there's domain match between the source's
+  // expertise and the article's SystemNode. SemiAnalysis on COMPUTE_INFRA →
+  // EC (B-equivalent). SemiAnalysis on NUCLEAR_INFRA → C (off-domain).
+  const earlyCaller = classifyEarlyCaller({
+    source_name,
+    primary_node: primary_node as SystemNode | undefined,
+    nodes_hit: nodes_hit as SystemNode[] | undefined,
+  });
+  if (earlyCaller.is_early_caller && earlyCaller.vindication_score >= 75) {
+    return 'EC_EARLY_CALLER';
+  }
+
+  // Tier C — recognised specialist / industry source (off-domain or
+  // lower-vindication match)
   if (INDUSTRY_SOURCE_NAMES.test(source_name)) return 'C_INDUSTRY';
 
   return 'D_SPECULATIVE';
+}
+
+/**
+ * PATCH 0077: full early-caller match with vindication score + matched
+ * domains. Use this when you need the rationale, not just the tier.
+ */
+export function classifyEarlyCallerForArticle(args: {
+  source_name?: string;
+  primary_node?: SystemNode | string;
+  nodes_hit?: Array<SystemNode | string>;
+}): EarlyCallerMatch {
+  return classifyEarlyCaller({
+    source_name: args.source_name,
+    primary_node: args.primary_node as SystemNode | undefined,
+    nodes_hit: args.nodes_hit as SystemNode[] | undefined,
+  });
 }
 
 // 2. CAPACITY RESERVED tracker — extracts MW / GW / CoWoS / HBM / SWU /
