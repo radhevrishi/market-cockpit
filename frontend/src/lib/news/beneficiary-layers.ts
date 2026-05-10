@@ -78,6 +78,14 @@ export interface LayerTicker {
   // Formula: size_class bonus + leverage bonus + discovered bonus
   //          - PSU-megacap-pattern penalty
   convexity_score?: number;
+  // PATCH 0107: export-proxy flag. Indian midcaps that EXPORT to global themes
+  // (Aeroflex hoses → US DC cooling; DEE Dev process piping → US LNG / hydrogen;
+  // Welspun line pipes → global oil/gas; Walchandnagar → global nuclear heavy
+  // engineering).  Surfaces in BOTH India view AND the corresponding GLOBAL
+  // bottleneck card so the user sees them when looking at US AI DC, US grid,
+  // global nuclear, etc.
+  export_proxy?: boolean;
+  export_destination?: string;   // e.g. 'US AI DC' / 'global oil & gas'
 }
 
 export interface LayerMeta {
@@ -267,6 +275,21 @@ export const INDIA_ROSTER: LayerTicker[] = [
   { ticker: 'GENUSPOWER.NS', layer: 'L1', region: 'IN', rationale: 'Genus Power — smart meters; AMI rollout + grid modernisation',                                pricing_leverage: 'STRONG', size: 'MID_CAP'   },
   { ticker: 'KPIGREEN.NS',   layer: 'L1', region: 'IN', rationale: 'KPI Green — solar EPC + IPP; high RE capex torque',                                           pricing_leverage: 'STRONG', size: 'MID_CAP'   },
 
+  // ── PATCH 0107: India L4 — EXPORT PROXIES (sell to global AI / oil-gas / nuclear / industrial) ──
+  // These midcaps export to global hyperscalers / oil-gas majors / EPCs.
+  // Surface them in BOTH India view AND the corresponding GLOBAL theme card.
+  { ticker: 'AEROFLEX.NS',   layer: 'L4', region: 'IN', rationale: 'Aeroflex — stainless steel flexible hoses; exports to US data-center cooling, oil/gas, industrial',     pricing_leverage: 'STRONG', size: 'SMALL_CAP', export_proxy: true, export_destination: 'US AI DC + global oil & gas' },
+  { ticker: 'DEE.NS',        layer: 'L4', region: 'IN', rationale: 'DEE Development Engineers — process piping for oil/gas/hydrogen; exports to US/EU LNG + DC mechanical',  pricing_leverage: 'STRONG', size: 'MID_CAP',   export_proxy: true, export_destination: 'US/EU LNG + DC mechanical' },
+  { ticker: 'WELCORP.NS',    layer: 'L4', region: 'IN', rationale: 'Welspun Corp — line pipes for oil/gas/water; large US + Middle East orderbook',                          pricing_leverage: 'STRONG', size: 'MID_CAP',   export_proxy: true, export_destination: 'US + Middle East oil & gas' },
+  { ticker: 'JINDALSAW.NS',  layer: 'L4', region: 'IN', rationale: 'Jindal Saw — large-diameter pipes for oil/gas/water infrastructure; global exports',                     pricing_leverage: 'MEDIUM', size: 'MID_CAP',   export_proxy: true, export_destination: 'Global oil & gas pipelines' },
+  { ticker: 'ASTRAL.NS',     layer: 'L4', region: 'IN', rationale: 'Astral — pipe fittings + plumbing; growing export book to GCC + EU',                                      pricing_leverage: 'MEDIUM', size: 'MID_CAP',   export_proxy: true, export_destination: 'GCC + EU plumbing' },
+  { ticker: 'HONAUT.NS',     layer: 'L4', region: 'IN', rationale: 'Honeywell Automation India — exports embedded automation systems to global Honeywell parent',           pricing_leverage: 'STRONG', size: 'MID_CAP',   export_proxy: true, export_destination: 'Global Honeywell' },
+  { ticker: 'CENTUM.NS',     layer: 'L4', region: 'IN', rationale: 'Centum Electronics — avionics + defence + DC embedded electronics; majority export-led',                pricing_leverage: 'STRONG', size: 'SMALL_CAP', export_proxy: true, export_destination: 'Global aero/defence/DC' },
+  { ticker: 'SONACOMS.NS',   layer: 'L4', region: 'IN', rationale: 'Sona BLW Precision — EV differential gears + traction motors; global EV OEM export',                    pricing_leverage: 'STRONG', size: 'MID_CAP',   export_proxy: true, export_destination: 'Global EV OEMs' },
+  { ticker: 'WALCHANNAG.NS', layer: 'L4', region: 'IN', rationale: 'Walchandnagar Industries — nuclear + defence + sugar heavy engineering; nuclear vessel exports',         pricing_leverage: 'MEDIUM', size: 'SMALL_CAP', export_proxy: true, export_destination: 'Global nuclear + defence heavy eng' },
+  { ticker: 'AIAENG.NS',     layer: 'L4', region: 'IN', rationale: 'AIA Engineering — high-chrome grinding media; majority exports to global mining/cement',                pricing_leverage: 'STRONG', size: 'MID_CAP',   export_proxy: true, export_destination: 'Global mining/cement' },
+  { ticker: 'GRINDWELL.NS',  layer: 'L4', region: 'IN', rationale: 'Grindwell Norton — abrasives for industrial + auto + electronics; global Saint-Gobain affiliate',         pricing_leverage: 'MEDIUM', size: 'MID_CAP',   export_proxy: true, export_destination: 'Global Saint-Gobain' },
+
   // ── L3 — Edge / Distribution / Telco (India) ──────────────────────────────
   { ticker: 'BHARTIARTL.NS', layer: 'L3', region: 'IN', rationale: 'Bharti Airtel — mobile + fibre + edge nodes; AI-traffic carrier',                           pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
   { ticker: 'TATACOMM.NS',   layer: 'L3', region: 'IN', rationale: 'Tata Communications — global subsea + edge + DC interconnect',                              pricing_leverage: 'STRONG', size: 'MID_CAP'   },
@@ -307,7 +330,13 @@ export const INDIA_ROSTER: LayerTicker[] = [
 export const NODE_RULES_IN: Record<SystemNode, NodeRule> = {
   COMPUTE_INFRA: {
     fires: ['L1','L2','L4','L5','L6'],
-    mandatory: { L1: ['KAYNES.NS'], L2: ['TATAELXSI.NS','LTTS.NS','KPITTECH.NS'], L5: ['TCS.NS','INFY.NS','HCLTECH.NS'] },
+    // PATCH 0107: AEROFLEX / HONAUT / CENTUM are export proxies for US AI DC mechanical + electronics
+    mandatory: {
+      L1: ['KAYNES.NS'],
+      L2: ['TATAELXSI.NS','LTTS.NS','KPITTECH.NS'],
+      L4: ['AEROFLEX.NS','HONAUT.NS','CENTUM.NS'],
+      L5: ['TCS.NS','INFY.NS','HCLTECH.NS'],
+    },
   },
   MEMORY_INFRA: {
     fires: ['L1','L2','L4','L5'],
@@ -331,7 +360,12 @@ export const NODE_RULES_IN: Record<SystemNode, NodeRule> = {
   },
   COOLING_INFRA: {
     fires: ['L1','L4','L6'],
-    mandatory: { L1: ['ABB.NS','SIEMENS.NS'], L6: ['VOLTAS.NS','BLUESTARCO.NS','THERMAX.NS','KIRLOSKARP.NS'] },
+    // PATCH 0107: AEROFLEX hoses + HONAUT controls = direct US DC cooling export exposure
+    mandatory: {
+      L1: ['ABB.NS','SIEMENS.NS'],
+      L4: ['AEROFLEX.NS','HONAUT.NS'],
+      L6: ['VOLTAS.NS','BLUESTARCO.NS','THERMAX.NS','KIRLOSKARP.NS'],
+    },
   },
   ENERGY_INFRA: {
     // PATCH 0106: prioritise transformer midcaps (Shilchar/Voltamp/TRIL) +
@@ -347,15 +381,19 @@ export const NODE_RULES_IN: Record<SystemNode, NodeRule> = {
   NUCLEAR_INFRA: {
     // PATCH 0106: drop L5 (TCS/INFY/RELIANCE not nuclear beneficiaries — pure
     // theme dilution).  Surface specialist precision-component suppliers in L1.
+    // PATCH 0107: WALCHANNAG = global nuclear heavy-engineering export proxy
     fires: ['L1','L4','L6'],
     mandatory: {
       L1: ['MTARTECH.NS','BHEL.NS','PARASDEF.NS','APOLLO.NS','BHARATFORG.NS','NTPC.NS'],
-      L4: ['LINDEINDIA.NS','HEG.NS'],
+      L4: ['LINDEINDIA.NS','HEG.NS','WALCHANNAG.NS'],
     },
   },
   OIL_GAS_INFRA: {
     fires: ['L1','L4','L6'],
-    mandatory: { L4: ['LINDEINDIA.NS'] },
+    // PATCH 0107: WELCORP / JINDALSAW / DEE / AEROFLEX are global oil-gas export proxies
+    mandatory: {
+      L4: ['LINDEINDIA.NS','WELCORP.NS','JINDALSAW.NS','DEE.NS','AEROFLEX.NS'],
+    },
   },
   RENEWABLE_INFRA: {
     // PATCH 0106: surface execution-torque specialists ahead of generic PSUs.
@@ -731,6 +769,18 @@ const INDIA_ROSTER_BY_LAYER: Record<BeneficiaryLayer, LayerTicker[]> = (() => {
   return m;
 })();
 
+// PATCH 0107: India export-proxy index — surfaces in GLOBAL view too.
+// These are Indian midcaps whose revenue is dominantly export to global
+// hyperscalers / oil-gas / defence / nuclear customers.  When deriveLayeredBeneficiaries
+// runs region='GLOBAL', these get appended to the relevant layer alongside
+// the standard global roster so user sees Aeroflex/DEE/Welspun/Walchandnagar
+// when looking at US AI DC / US LNG / global nuclear cards.
+const INDIA_EXPORT_PROXIES_BY_LAYER: Record<BeneficiaryLayer, LayerTicker[]> = (() => {
+  const m: Record<BeneficiaryLayer, LayerTicker[]> = { L1: [], L2: [], L3: [], L4: [], L5: [], L6: [] };
+  for (const t of INDIA_ROSTER) if (t.export_proxy) m[t.layer].push(t);
+  return m;
+})();
+
 function nodeLabel(node: SystemNode): string {
   return node.replace(/_/g, ' ').toLowerCase();
 }
@@ -821,6 +871,24 @@ export function deriveLayeredBeneficiaries(args: {
       seen.add(meta.ticker.toUpperCase());
     }
 
+    // PATCH 0107: when in GLOBAL view, append India export proxies for this layer.
+    // Aeroflex / DEE / Welspun / Walchandnagar / Honaut etc. ship into global
+    // hyperscaler / oil-gas / nuclear customers so they belong on those cards.
+    if (region === 'GLOBAL') {
+      const exportProxies = INDIA_EXPORT_PROXIES_BY_LAYER[layer]
+        .filter((m) => !seen.has(m.ticker.toUpperCase()))
+        .sort((a, b) => leverageRank[b.pricing_leverage] - leverageRank[a.pricing_leverage]);
+      const exportRoom = Math.max(2, Math.floor(per_layer_limit / 2));   // reserve up to half of layer for proxies
+      let proxyAdded = 0;
+      for (const meta of exportProxies) {
+        if (proxyAdded >= exportRoom) break;
+        if (out.length >= per_layer_limit + exportRoom) break;
+        out.push({ ...meta });
+        seen.add(meta.ticker.toUpperCase());
+        proxyAdded += 1;
+      }
+    }
+
     layers[layer] = out.slice(0, per_layer_limit);
   }
 
@@ -902,6 +970,7 @@ export function deriveLayeredBeneficiaries(args: {
       conv += LEV_CONVEXITY[t.pricing_leverage] ?? 0;
       if (t.mandatory) conv += 10;
       if (t.discovered) conv += 5;
+      if (t.export_proxy) conv += 12;                          // PATCH 0107: export proxies get a convexity boost
       if (GENERIC_MEGACAP_RE.test(t.ticker)) conv -= 25;
       if ((t.accumulator_score ?? 0) > 100) conv -= 5;
       t.convexity_score = Math.max(0, Math.min(100, conv));
