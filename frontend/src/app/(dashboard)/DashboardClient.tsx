@@ -32,7 +32,7 @@ const NAV: NavItem[] = [
   { href: '/rrg',           label: 'RRG',             icon: <RefreshCw className="w-5 h-5" /> },
   { href: '/screener',      label: 'Screener',        icon: <Filter className="w-5 h-5" /> },
   { href: '/ipos',          label: 'IPOs',            icon: <Rocket className="w-5 h-5" /> },
-  { href: '/macro-maps',    label: 'Macro Maps',      icon: <Globe className="w-5 h-5" /> },
+  // PATCH 0089: macro-maps removed — header ticker covers global indices/currencies/commodities
   { href: '/calendars',     label: 'Calendar',        icon: <Calendar className="w-5 h-5" /> },
 ];
 
