@@ -12,6 +12,7 @@ import api from '@/lib/api';
 import TickerDrawer from '@/components/TickerDrawer';
 import GlobalSearch from '@/components/GlobalSearch';
 import { ThemeSwitcher } from '@/components/ThemeSwitcher';
+import { PdfExportButton } from '@/components/PdfExportButton';
 import MarketHours from '@/components/MarketHours';
 
 interface NavItem { href: string; label: string; icon: ReactNode; }
@@ -342,11 +343,15 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
               <span className="desktop-header-subtitle" style={{ fontSize: '11px', color: '#4A5B6C' }}>Bloomberg-lite · India + US</span>
             </div>
 
-            {/* Market hours + Search + User */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            {/* Market hours + Theme + PDF + Search + User */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <div className="desktop-market-hours">
                 <MarketHours />
               </div>
+
+              {/* PATCH 0074: theme cycler + PDF export — visible on every tab */}
+              <ThemeSwitcher compact={false} />
+              <PdfExportButton />
 
               <button
                 onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true } as any))}

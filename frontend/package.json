@@ -25,6 +25,7 @@
     "file-saver": "^2.0.5",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",
+    "html2canvas": "^1.4.1",
     "jszip": "^3.10.1",
     "lightweight-charts": "^4.1.6",
     "lucide-react": "^0.414.0",
