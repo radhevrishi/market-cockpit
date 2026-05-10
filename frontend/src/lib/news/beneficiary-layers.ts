@@ -73,6 +73,11 @@ export interface LayerTicker {
   // PATCH 0104: A/B/C/D exposure tier — Direct Capture / Mandatory Enabler /
   // Architectural Beneficiary / Narrative Sympathy
   tier?: 'A' | 'B' | 'C' | 'D';
+  // PATCH 0106: orderbook-torque / convexity score (0–100). Re-sorts layers so
+  // execution-sensitive small/midcaps surface above generic megacaps.
+  // Formula: size_class bonus + leverage bonus + discovered bonus
+  //          - PSU-megacap-pattern penalty
+  convexity_score?: number;
 }
 
 export interface LayerMeta {
@@ -238,6 +243,30 @@ export const INDIA_ROSTER: LayerTicker[] = [
   { ticker: 'PERSISTENT.NS', layer: 'L2', region: 'IN', rationale: 'Persistent Systems — AI-engineering services; substitution-tier integrator',                pricing_leverage: 'MEDIUM', size: 'MID_CAP'   },
   { ticker: 'COFORGE.NS',    layer: 'L2', region: 'IN', rationale: 'Coforge — BFSI + travel AI integration; mid-tier substitution play',                        pricing_leverage: 'MEDIUM', size: 'MID_CAP'   },
 
+  // ── PATCH 0106: India L1 — DEFENSE / AEROSPACE specialist midcaps ────────
+  // High-convexity scarce enablers (RF seekers, avionics, radar, propulsion,
+  // precision machining, drone warfare, EW). One order materially shifts
+  // earnings — what the user means by 'orderbook torque'.
+  { ticker: 'PARASDEF.NS',   layer: 'L1', region: 'IN', rationale: 'Paras Defence — defence optics + EW + naval systems; high convexity to MoD orders',          pricing_leverage: 'STRONG', size: 'SMALL_CAP' },
+  { ticker: 'MTARTECH.NS',   layer: 'L1', region: 'IN', rationale: 'MTAR Technologies — precision components for nuclear (NPCIL fuel handling), ISRO, defence',  pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'DATAPATTNS.NS', layer: 'L1', region: 'IN', rationale: 'Data Patterns — radar / EW / avionics electronics; orderbook torque on DRDO/IAF programs',   pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'ASTRAMICRO.NS', layer: 'L1', region: 'IN', rationale: 'Astra Microwave — RF seekers / radar subsystems; missile + naval electronics',               pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'ZENTEC.NS',     layer: 'L1', region: 'IN', rationale: 'Zen Technologies — combat training simulators; defence indigenisation cycle beneficiary',     pricing_leverage: 'STRONG', size: 'SMALL_CAP' },
+  { ticker: 'IDEAFORGE.NS',  layer: 'L1', region: 'IN', rationale: 'IdeaForge — military drones; Indian UAV indigenisation + Atmanirbhar drone policy',          pricing_leverage: 'STRONG', size: 'SMALL_CAP' },
+  { ticker: 'APOLLO.NS',     layer: 'L1', region: 'IN', rationale: 'Apollo Micro Systems — defence electronics + naval/aerospace mission systems',                pricing_leverage: 'STRONG', size: 'SMALL_CAP' },
+  { ticker: 'CYIENTDLM.NS',  layer: 'L1', region: 'IN', rationale: 'Cyient DLM — EMS for aerospace + defence + medical; high-mix low-volume torque',              pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'UNIMECH.NS',    layer: 'L1', region: 'IN', rationale: 'Unimech Aerospace — precision machining for aero + defence; recent listing',                  pricing_leverage: 'STRONG', size: 'SMALL_CAP' },
+  { ticker: 'BHARATFORG.NS', layer: 'L1', region: 'IN', rationale: 'Bharat Forge defence vertical — ATAGS / Kalyani M4; cycling capacity to defence orders',     pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'SOLARINDS.NS',  layer: 'L1', region: 'IN', rationale: 'Solar Industries — explosives + defence munitions; EW & rocket-propellant exposure',         pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+
+  // ── PATCH 0106: India L1 — POWER-EQUIPMENT specialist midcaps ────────────
+  { ticker: 'SHILCHTECH.NS', layer: 'L1', region: 'IN', rationale: 'Shilchar Technologies — distribution + furnace transformers; orderbook torque on grid capex',pricing_leverage: 'STRONG', size: 'SMALL_CAP' },
+  { ticker: 'VOLTAMP.NS',    layer: 'L1', region: 'IN', rationale: 'Voltamp Transformers — power transformers; lead-time pricing power on DC + RE evac',         pricing_leverage: 'STRONG', size: 'SMALL_CAP' },
+  { ticker: 'TRIL.NS',       layer: 'L1', region: 'IN', rationale: 'Transformers & Rectifiers India — EHV transformers; export + domestic capex beneficiary',    pricing_leverage: 'STRONG', size: 'SMALL_CAP' },
+  { ticker: 'SKIPPER.NS',    layer: 'L1', region: 'IN', rationale: 'Skipper — transmission towers + polymer pipes; T&D capex orderbook',                          pricing_leverage: 'STRONG', size: 'SMALL_CAP' },
+  { ticker: 'GENUSPOWER.NS', layer: 'L1', region: 'IN', rationale: 'Genus Power — smart meters; AMI rollout + grid modernisation',                                pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'KPIGREEN.NS',   layer: 'L1', region: 'IN', rationale: 'KPI Green — solar EPC + IPP; high RE capex torque',                                           pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+
   // ── L3 — Edge / Distribution / Telco (India) ──────────────────────────────
   { ticker: 'BHARTIARTL.NS', layer: 'L3', region: 'IN', rationale: 'Bharti Airtel — mobile + fibre + edge nodes; AI-traffic carrier',                           pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
   { ticker: 'TATACOMM.NS',   layer: 'L3', region: 'IN', rationale: 'Tata Communications — global subsea + edge + DC interconnect',                              pricing_leverage: 'STRONG', size: 'MID_CAP'   },
@@ -305,22 +334,40 @@ export const NODE_RULES_IN: Record<SystemNode, NodeRule> = {
     mandatory: { L1: ['ABB.NS','SIEMENS.NS'], L6: ['VOLTAS.NS','BLUESTARCO.NS','THERMAX.NS','KIRLOSKARP.NS'] },
   },
   ENERGY_INFRA: {
-    fires: ['L1','L4','L5','L6'],
-    // PATCH 0086: ABB.NS / SIEMENS.NS / BHEL / KEC + POWERGRID / NTPC mandatory
-    mandatory: { L1: ['POWERGRID.NS','NTPC.NS','BHEL.NS','ABB.NS','SIEMENS.NS','KECL.NS','CGPOWER.NS'], L4: ['POLYCAB.NS','KEI.NS'], L6: ['THERMAX.NS'] },
+    // PATCH 0106: prioritise transformer midcaps (Shilchar/Voltamp/TRIL) +
+    // grid midcaps (Skipper/Genus) ahead of POWERGRID/NTPC megacaps.
+    // Megacaps still present but sorted lower by convexity score.
+    fires: ['L1','L4','L6'],
+    mandatory: {
+      L1: ['SHILCHTECH.NS','VOLTAMP.NS','TRIL.NS','SKIPPER.NS','GENUSPOWER.NS','CGPOWER.NS','KECL.NS','ABB.NS','SIEMENS.NS','POWERGRID.NS','NTPC.NS','BHEL.NS'],
+      L4: ['POLYCAB.NS','KEI.NS'],
+      L6: ['THERMAX.NS'],
+    },
   },
   NUCLEAR_INFRA: {
-    fires: ['L1','L5','L6'],
-    mandatory: { L1: ['BHEL.NS','NTPC.NS','POWERGRID.NS'] },
+    // PATCH 0106: drop L5 (TCS/INFY/RELIANCE not nuclear beneficiaries — pure
+    // theme dilution).  Surface specialist precision-component suppliers in L1.
+    fires: ['L1','L4','L6'],
+    mandatory: {
+      L1: ['MTARTECH.NS','BHEL.NS','PARASDEF.NS','APOLLO.NS','BHARATFORG.NS','NTPC.NS'],
+      L4: ['LINDEINDIA.NS','HEG.NS'],
+    },
   },
   OIL_GAS_INFRA: {
     fires: ['L1','L4','L6'],
     mandatory: { L4: ['LINDEINDIA.NS'] },
   },
   RENEWABLE_INFRA: {
-    fires: ['L1','L4','L5','L6'],
-    // PATCH 0086: SPML / NTPC / BESS-style stories should surface POWERGRID + ADANIGREEN + cable chain
-    mandatory: { L1: ['POWERGRID.NS','NTPC.NS','BHEL.NS','ADANIGREEN.NS','TATAPOWER.NS','KECL.NS','SIEMENS.NS','ABB.NS'], L4: ['STL.NS','POLYCAB.NS','KEI.NS','HFCL.NS'], L6: ['THERMAX.NS'] },
+    // PATCH 0106: surface execution-torque specialists ahead of generic PSUs.
+    // KPIGREEN + Premier Energies + Waaree + Borosil renew = direct revenue
+    // sensitivity to RE capex; transformer midcaps (Voltamp / Shilchar / TRIL)
+    // are the actual scarce enablers vs grid megacaps.
+    fires: ['L1','L4','L6'],
+    mandatory: {
+      L1: ['KPIGREEN.NS','SHILCHTECH.NS','VOLTAMP.NS','TRIL.NS','SKIPPER.NS','GENUSPOWER.NS','ADANIGREEN.NS','POWERGRID.NS','NTPC.NS'],
+      L4: ['STL.NS','POLYCAB.NS','KEI.NS','HFCL.NS'],
+      L6: ['THERMAX.NS'],
+    },
   },
   LOGISTICS_INFRA: {
     fires: ['L1','L4','L5'],
@@ -330,13 +377,22 @@ export const NODE_RULES_IN: Record<SystemNode, NodeRule> = {
     fires: ['L1','L4','L6'],
     mandatory: { L1: ['SIEMENS.NS','BHEL.NS'] },
   },
+  // PATCH 0106: 'DEFENCE / MISSILES showing POWERGRID NTPC BHEL ABB SIEMENS
+  // is wrong' — drop L5 (TCS/INFY/WIPRO sympathy), surface execution-torque
+  // defence-electronics midcaps in L1.
   DEFENSE_INFRA: {
-    fires: ['L1','L4','L5'],
-    mandatory: {},
+    fires: ['L1','L4'],
+    mandatory: {
+      L1: ['DATAPATTNS.NS','PARASDEF.NS','ASTRAMICRO.NS','MTARTECH.NS','APOLLO.NS','ZENTEC.NS','IDEAFORGE.NS','CYIENTDLM.NS','UNIMECH.NS','BHARATFORG.NS','SOLARINDS.NS'],
+      L4: ['MIDHANI.NS'],
+    },
   },
   AEROSPACE_INFRA: {
-    fires: ['L1','L4','L5'],
-    mandatory: {},
+    // PATCH 0106: drop L5 platform sympathy, surface precision/EMS specialists
+    fires: ['L1','L4'],
+    mandatory: {
+      L1: ['MTARTECH.NS','PARASDEF.NS','DATAPATTNS.NS','UNIMECH.NS','CYIENTDLM.NS','BHARATFORG.NS'],
+    },
   },
   RESOURCE_SCARCITY: {
     fires: ['L1','L4','L6'],
@@ -808,10 +864,27 @@ export function deriveLayeredBeneficiaries(args: {
     }
   }
 
-  // PATCH 0104: TIER A/B/C/D classification.  Computed from existing
-  // pricing_leverage + mandatory + is_seed + accumulator_score.  Tier A
-  // = Direct Scarcity Capture (highest earnings torque), Tier D =
-  // Narrative Sympathy (weak correlation).
+  // PATCH 0104 + 0106: TIER A/B/C/D classification + CONVEXITY scoring.
+  // Convexity is what surfaces execution-torque small/midcaps above generic
+  // megacaps in the same layer.  Per user critique: 'BOTTLENECK -> SCARCE
+  // ENABLER, not THEME -> LARGE CAP'.
+  //
+  // Convexity formula (0-100):
+  //   +30 if SMALL_CAP, +18 if MID_CAP                  (size convexity)
+  //   +20 if STRONG leverage, +10 if MEDIUM             (pricing power)
+  //   +10 if mandatory                                   (structural fit)
+  //   +5  if discovered (news evidence)
+  //   -25 if ticker matches generic-PSU / megacap pattern (theme dilution)
+  //   - 5 per accumulator_score >100 (institutional saturation)
+  //
+  // Generic-PSU dilution patterns: ticker names that are India megacap
+  // proxies often appearing as 'thematic awareness' rather than direct
+  // earnings torque on the firing bottleneck.  Hand-crafted regex (NOT a
+  // hardcoded list of names — pattern-based).
+  const GENERIC_MEGACAP_RE = /^(POWERGRID\.NS|NTPC\.NS|RELIANCE\.NS|TCS\.NS|INFY\.NS|WIPRO\.NS|HCLTECH\.NS|ONGC\.NS|COALINDIA\.NS|SBIN\.NS|HDFC\.NS|ICICIBANK\.NS|HDFCBANK\.NS|KOTAKBANK\.NS|AXISBANK\.NS|HINDUNILVR\.NS|ITC\.NS|LT\.NS)$/i;
+  const SIZE_CONVEXITY: Record<LayerSize, number> = { SMALL_CAP: 30, MID_CAP: 18, LARGE_CAP: 0 };
+  const LEV_CONVEXITY: Record<PricingLeverage, number> = { STRONG: 20, MEDIUM: 10, WEAK: 0 };
+
   for (const L of rule.fires) {
     const layerArr = layers[L];
     for (const t of layerArr) {
@@ -822,15 +895,28 @@ export function deriveLayeredBeneficiaries(args: {
         accumulator_score: t.accumulator_score,
         mention_count: t.mention_count,
       });
+
+      // Convexity score
+      let conv = 0;
+      conv += SIZE_CONVEXITY[t.size] ?? 0;
+      conv += LEV_CONVEXITY[t.pricing_leverage] ?? 0;
+      if (t.mandatory) conv += 10;
+      if (t.discovered) conv += 5;
+      if (GENERIC_MEGACAP_RE.test(t.ticker)) conv -= 25;
+      if ((t.accumulator_score ?? 0) > 100) conv -= 5;
+      t.convexity_score = Math.max(0, Math.min(100, conv));
     }
-    // Re-sort within layer: Tier A first, then by leverage
+
+    // Re-sort within layer: Tier A first; within tier, by convexity desc.
+    // Net effect: execution-torque small/midcaps rise above generic megacaps.
     const tierRank: Record<'A'|'B'|'C'|'D', number> = { A: 4, B: 3, C: 2, D: 1 };
-    const levRank: Record<PricingLeverage, number> = { STRONG: 3, MEDIUM: 2, WEAK: 1 };
     layerArr.sort((a, b) => {
       const ta = tierRank[a.tier ?? 'D'];
       const tb = tierRank[b.tier ?? 'D'];
       if (ta !== tb) return tb - ta;
-      return levRank[b.pricing_leverage] - levRank[a.pricing_leverage];
+      const ca = a.convexity_score ?? 0;
+      const cb = b.convexity_score ?? 0;
+      return cb - ca;
     });
     layers[L] = layerArr;
   }
