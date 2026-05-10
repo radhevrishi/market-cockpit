@@ -194,7 +194,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v34'; // v34: 'Latest' 10-day surfacing window on persistent bottlenecks (0088)
+const CACHE_KEY = 'news:articles:v35'; // v35: India-specific semantic-graph expansion — PSU power, DC ops, nuclear/DAE, defense PSUs, fab/Tata/Vedanta-Foxconn, fibre, RE/SECI, ISRO, capex/PLI (0098)
 const CACHE_TTL = 300; // 5 min
 // v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
 // freshness_layer, signal_confidence (multi-dim), bottleneck_parent /

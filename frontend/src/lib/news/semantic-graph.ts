@@ -257,6 +257,137 @@ export const TOKEN_TO_NODE: TokenMapping[] = [
   { pattern: /\b(npa|gnpa|stressed asset|asset quality|sma[- ]?[12]|provision coverage)\b/i, node: 'CAPITAL_CONSTRAINT', weight: 5, event_hint: 'CYCLE' },
   { pattern: /\b(insolvency (resolution|admission)|ibc (admission|liquidation))\b/i, node: 'CAPITAL_CONSTRAINT', weight: 5, event_hint: 'EVENT' },
   { pattern: /\b(credit (crunch|squeeze)|nbfc (crisis|liquidity)|cost of funds)\b/i, node: 'CAPITAL_CONSTRAINT', weight: 5, event_hint: 'STRUCTURE' },
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // PATCH 0098 — INDIA-SPECIFIC EXPANSION
+  // 66% of Indian articles were firing graph_primary_node = NONE because the
+  // patterns above are US-centric. The block below covers Indian PSU power,
+  // domestic DC operators, NTPC/DAE nuclear, HAL/BEL/BDL/Mazagon defence,
+  // PLI/Make-in-India manufacturing, Tata fab + Vedanta-Foxconn, fibre rollout,
+  // SECI renewables, IREL critical minerals, ISRO/NSIL space.
+  //
+  // All pattern-based — NO hardcoded ticker→bottleneck dictionaries.
+  // ═════════════════════════════════════════════════════════════════════════
+
+  // ─── COMPUTE_INFRA — Indian DC operators + IndiaAI Mission ──────────────
+  { pattern: /\b(yotta|esds|ctrls|nxtgen|nxt-?gen|sify|nseit|adani ?connex|hiranandani (?:dc|data ?cent(?:re|er))|reliance jio cloud|airtel cloud|jio platforms cloud|web werks|web werks)\b/i,
+    node: 'COMPUTE_INFRA', weight: 7, event_hint: 'STRUCTURE' },
+  { pattern: /\b(india ?ai (?:mission|compute|gpu|cluster)|gpu cluster (?:in india|india)|ai compute (?:in india|india|fund)|india.{0,20}(?:hyperscale|hyperscaler)|national.{0,20}ai compute|sovereign ai)\b/i,
+    node: 'COMPUTE_INFRA', weight: 8, event_hint: 'SECULAR' },
+  { pattern: /\b(\d{2,4}\s*mw\s*(?:dc|data ?cent(?:re|er)|hyperscaler|capacity))\b/i,
+    node: 'COMPUTE_INFRA', weight: 6, event_hint: 'STRUCTURE' },
+  { pattern: /\b(data ?cent(?:re|er) (?:capacity|tender|allocation|expansion|build|capex|construction|approval|park|cluster))\b/i,
+    node: 'COMPUTE_INFRA', weight: 6, event_hint: 'STRUCTURE',
+    companion: /(india|mumbai|chennai|hyderabad|bengaluru|bangalore|noida|navi mumbai|pune|tamil nadu|maharashtra|gujarat|telangana|karnataka|hyperscaler|nvidia|aws|azure|gcp|psu)/i },
+
+  // ─── ENERGY_INFRA — Indian PSU power + transmission EPC ─────────────────
+  { pattern: /\b(ntpc(?!.{0,30}nuclear)|power ?grid (?:corp|corporation)|powergrid|tata power|adani power|adani transmission|adani green|nhpc|nlc india|sjvn|jsw energy|ntpc green)\b/i,
+    node: 'ENERGY_INFRA', weight: 5, event_hint: 'STRUCTURE',
+    companion: /(capex|order|tender|capacity|expansion|deal|win|backlog|ppa|transmission|allocation|gw|mw|approval)/i },
+  { pattern: /\b(kec international|sterlite power|tata projects|larsen.{0,10}(?:power|t&d)|cg power (?:transmission|t&d)|abb india|siemens india|hitachi energy india|abb power india)\b/i,
+    node: 'ENERGY_INFRA', weight: 6, event_hint: 'STRUCTURE',
+    companion: /(transmission|grid|order|tender|hvdc|win|backlog|epc|substation|line|kv\b)/i },
+  { pattern: /\b(rec ltd|pfc ltd|ireda|india energy exchange|iex india)\b/i,
+    node: 'ENERGY_INFRA', weight: 5, event_hint: 'STRUCTURE' },
+
+  // ─── NUCLEAR_INFRA — broader Indian patterns (DAE, NTPC nuclear, BARC) ──
+  { pattern: /\b(department of atomic energy|\bdae\b|atomic energy commission|aerb|igcar|barc|bhabha atomic)\b/i,
+    node: 'NUCLEAR_INFRA', weight: 8, event_hint: 'STRUCTURE' },
+  { pattern: /\b(ntpc.{0,30}nuclear|nuclear.{0,30}ntpc|nuclear ?project (?:study|feasibility|approval|nod|tender))\b/i,
+    node: 'NUCLEAR_INFRA', weight: 9, event_hint: 'STRUCTURE' },
+  { pattern: /\b(kakrapar|tarapur|kaiga|narora|rawatbhata|gorakhpur ?nuclear|bhavini ?nuclear)\b/i,
+    node: 'NUCLEAR_INFRA', weight: 7, event_hint: 'STRUCTURE' },
+  { pattern: /\b(prototype fast breeder|\bpfbr\b|advanced heavy water reactor|\bahwr\b|haleu india)\b/i,
+    node: 'NUCLEAR_INFRA', weight: 8, event_hint: 'SECULAR' },
+  { pattern: /\b(india.{0,20}smr (?:tender|deployment|approval|policy)|bharat ?smr)\b/i,
+    node: 'NUCLEAR_INFRA', weight: 8, event_hint: 'SECULAR' },
+
+  // ─── FABRICATION_INFRA — India semicon mission + Tata + Vedanta-Foxconn ─
+  { pattern: /\b(india semiconductor mission|isemicon|semicon india|sem ?2\.?0|sem ?ii\b)\b/i,
+    node: 'FABRICATION_INFRA', weight: 8, event_hint: 'SECULAR' },
+  { pattern: /\b(tata electronics|tata semiconductor|cg power semiconductor|tower india|powerchip india|kaynes semicon)\b/i,
+    node: 'FABRICATION_INFRA', weight: 7, event_hint: 'STRUCTURE' },
+  { pattern: /\b(fab in (?:india|gujarat|dholera|sanand|assam|jagiroad)|first (?:semiconductor|chip) fab.{0,20}india|micron sanand|micron.{0,15}india)\b/i,
+    node: 'FABRICATION_INFRA', weight: 8, event_hint: 'SECULAR' },
+  { pattern: /\b(vedanta.{0,15}foxconn|foxconn.{0,15}vedanta)\b/i,
+    node: 'FABRICATION_INFRA', weight: 6, event_hint: 'EVENT' },
+
+  // ─── PACKAGING_INFRA — Indian OSAT ──────────────────────────────────────
+  { pattern: /\b(kaynes (?:semicon|osat|technology)|tata.{0,15}osat|tata.{0,15}assembly|micron.{0,15}assembly|atmp india|test.{0,10}assembly.{0,10}package)\b/i,
+    node: 'PACKAGING_INFRA', weight: 7, event_hint: 'STRUCTURE' },
+
+  // ─── INTERCONNECT_INFRA — Indian fibre / optical ────────────────────────
+  { pattern: /\b(sterlite tech(?:nologies)?|stl tech|hfcl|tejas networks|polycab india|kei industries|finolex cables)\b/i,
+    node: 'INTERCONNECT_INFRA', weight: 5, event_hint: 'STRUCTURE',
+    companion: /(order|tender|capacity|capex|expansion|win|deal|fibre|fiber|optical|cable|preform|backlog)/i },
+
+  // ─── NETWORK_BANDWIDTH — Indian 5G + carrier edge + cable landings ──────
+  { pattern: /\b(jio (?:5g|fiber|fibre|airfiber)|airtel (?:5g|fiber|fibre|xstream|business)|bharti (?:5g|fiber|fibre|hexa))\b/i,
+    node: 'NETWORK_BANDWIDTH', weight: 6, event_hint: 'STRUCTURE' },
+  { pattern: /\b(india (?:5g|6g) (?:rollout|deployment|tender|allocation)|spectrum auction india|trai (?:5g|spectrum))\b/i,
+    node: 'NETWORK_BANDWIDTH', weight: 6, event_hint: 'STRUCTURE' },
+  { pattern: /\b(chennai cable landing|mumbai cable landing|trans.?asia.?europe|2africa cable|sea-?me-?we|nixi|ix india)\b/i,
+    node: 'NETWORK_BANDWIDTH', weight: 6, event_hint: 'STRUCTURE' },
+  { pattern: /\b(bharat ?net|bharatnet|gigafiber|fttx|ftth)\b/i,
+    node: 'NETWORK_BANDWIDTH', weight: 5, event_hint: 'STRUCTURE' },
+
+  // ─── COOLING_INFRA — Indian DC cooling + tropical climate ───────────────
+  { pattern: /\b(voltas|blue ?star|amber enterprises|epack durable|symphony ltd|crompton greaves|johnson controls.{0,15}india)\b/i,
+    node: 'COOLING_INFRA', weight: 5, event_hint: 'STRUCTURE',
+    companion: /(data ?cent(?:re|er)|hyperscaler|order|capacity|hvac|chiller|cooling|deal|win|tender)/i },
+
+  // ─── RENEWABLE_INFRA — Indian RE + SECI tenders ─────────────────────────
+  { pattern: /\b(renew (?:power|energy)|adani green|suzlon energy|inox wind|greenko|ntpc green|nhpc renewables|tata power renewables|jsw renew|borosil renewables|premier energies|waaree)\b/i,
+    node: 'RENEWABLE_INFRA', weight: 5, event_hint: 'STRUCTURE',
+    companion: /(capex|order|tender|capacity|win|backlog|ppa|gw|mw|allocation|deal|approval)/i },
+  { pattern: /\b(seci (?:tender|allocation|ppa|auction|sets)|seci.{0,20}gigawatt|solar park (?:in india|india)|isuw|wind.{0,5}solar (?:hybrid|tender))\b/i,
+    node: 'RENEWABLE_INFRA', weight: 6, event_hint: 'STRUCTURE' },
+
+  // ─── DEFENSE_INFRA — Indian defence PSUs + platforms (no companion) ─────
+  { pattern: /\b(hindustan aeronautics|\bhal\b|bharat electronics|\bbel\b|bharat dynamics|\bbdl\b|mazagon dock|\bmdl\b|cochin shipyard|\bcsl\b|garden reach shipbuilders|\bgrse\b|\bmidhani\b|mishra dhatu|bharat forge defen[cs]e|bharat earth movers|\bbeml\b|drdo|defence research)\b/i,
+    node: 'DEFENSE_INFRA', weight: 6, event_hint: 'STRUCTURE' },
+  { pattern: /\b(amca|\btedbf\b|su-?30 ?mki|mig-?29|tejas ?mk\d|tejas ?lca|prachand|dhruv|rudra|astra missile|\bnag\b ?missile|barak|akash ?ng|\bqrsam\b|\bsmarka\b|spike (?:er|missile)|nasams|man.?portable|atag|atags|nirbhay|shaurya|prithvi)\b/i,
+    node: 'DEFENSE_INFRA', weight: 6, event_hint: 'STRUCTURE' },
+  { pattern: /\b(ministry of defence (?:of india|india|approval|deal|grant)|\bmod\b.{0,15}clears|cabinet committee on security|\bccs\b.{0,10}clears|aon.{0,10}defence|acceptance of necessity)\b/i,
+    node: 'DEFENSE_INFRA', weight: 7, event_hint: 'EVENT' },
+
+  // ─── AEROSPACE_INFRA — Indian space ─────────────────────────────────────
+  { pattern: /\b(isro|nsil|in.?space|skyroot|agnikul|ananth technologies|pixxel|bellatrix aerospace|dhruva space|paras defence)\b/i,
+    node: 'AEROSPACE_INFRA', weight: 6, event_hint: 'STRUCTURE' },
+  { pattern: /\b(sslv|chandrayaan-?\d|gaganyaan|aditya-?l1|mangalyaan|navic|gsat|risat|cartosat)\b/i,
+    node: 'AEROSPACE_INFRA', weight: 6, event_hint: 'EVENT' },
+
+  // ─── MANUFACTURING_CAPACITY — Indian capex + PLI + EMS ──────────────────
+  { pattern: /\b(rs\.?\s*[\d,]+\s*(?:crore|cr|lakh crore)\s*(?:capex|investment|plant|facility|expansion))\b/i,
+    node: 'MANUFACTURING_CAPACITY', weight: 6, event_hint: 'STRUCTURE' },
+  { pattern: /₹\s*[\d,]+\s*(?:crore|cr|lakh crore)/,
+    node: 'MANUFACTURING_CAPACITY', weight: 4, event_hint: 'STRUCTURE',
+    companion: /(capex|investment|plant|facility|capacity|expansion|fab|order|capex of|capex plan)/i },
+  { pattern: /\b(make in india|atmanirbhar|assemble in india|china \+ ?one|electronics manufacturing services|\bems\b)\b/i,
+    node: 'MANUFACTURING_CAPACITY', weight: 5, event_hint: 'SECULAR' },
+  { pattern: /\b(dixon technologies|amber enterprises|kaynes technology|syrma sgs|cyient dlm|epack durable|elin electronics|optiemus|sahasra electronics)\b/i,
+    node: 'MANUFACTURING_CAPACITY', weight: 6, event_hint: 'STRUCTURE',
+    companion: /(capex|capacity|expansion|order|win|tender|plant|approval|pli)/i },
+
+  // ─── RESOURCE_SCARCITY — Indian rare earth / critical minerals ──────────
+  { pattern: /\b(\birel\b|indian rare earth|\bnmdc\b|\bmoil\b|hindustan zinc|\bhzl\b|\bkabil\b|gmdc|nalco)\b/i,
+    node: 'RESOURCE_SCARCITY', weight: 6, event_hint: 'STRUCTURE',
+    companion: /(supply|allocation|expansion|capacity|export|import|reserve|mine|bid|auction|block)/i },
+  { pattern: /\b(india.{0,20}critical mineral|chinese export ban india|india.{0,20}rare earth|critical mineral mission india|critical mineral.{0,10}india)\b/i,
+    node: 'RESOURCE_SCARCITY', weight: 7, event_hint: 'EVENT' },
+
+  // ─── LOGISTICS_INFRA — Indian ports + corridors ─────────────────────────
+  { pattern: /\b(adani ports|jnpt|mumbai port|chennai port|paradip|kandla|mundra|tuticorin|vizhinjam|vadhavan|deendayal port|krishnapatnam|gangavaram)\b/i,
+    node: 'LOGISTICS_INFRA', weight: 5, event_hint: 'STRUCTURE',
+    companion: /(capex|expansion|tender|order|capacity|congestion|throughput|deal|terminal)/i },
+  { pattern: /\b(dedicated freight corridor|\bdfc\b|sagarmala|inland waterway|bharatmala|gati shakti|pm gatishakti|multimodal logistics park|\bmmlp\b)\b/i,
+    node: 'LOGISTICS_INFRA', weight: 6, event_hint: 'STRUCTURE' },
+
+  // ─── CAPITAL_CONSTRAINT — Indian banking + fund-raising ─────────────────
+  { pattern: /\b(rbi (?:rate|repo|policy|monetary policy committee|mpc)|nbfc.{0,15}capital|ind.?as 109|\bcrar\b|liquidity coverage ratio|\blcr\b)\b/i,
+    node: 'CAPITAL_CONSTRAINT', weight: 5, event_hint: 'STRUCTURE' },
+  { pattern: /\b(qip|qualified institutional placement|rights issue|preferential allotment|fund.?rais(?:e|ing).{0,20}rs\.?)\b/i,
+    node: 'CAPITAL_CONSTRAINT', weight: 5, event_hint: 'EVENT' },
 ];
 
 // ─── Dependency edges — graph of how nodes depend on each other ───────────
