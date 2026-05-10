@@ -27,6 +27,7 @@ const NAV: NavItem[] = [
   { href: '/earnings-analysis', label: 'Earnings AI',    icon: <BarChart3 className="w-5 h-5" /> },
   { href: '/multibagger',       label: 'Multibagger',    icon: <Star className="w-5 h-5" /> },
   { href: '/bottleneck-intel', label: 'Bottleneck',     icon: <Microscope className="w-5 h-5" /> },
+  { href: '/strategic-visibility', label: 'Strategic Vis', icon: <Star className="w-5 h-5" /> },
   { href: '/rrg',           label: 'RRG',             icon: <RefreshCw className="w-5 h-5" /> },
   { href: '/screener',      label: 'Screener',        icon: <Filter className="w-5 h-5" /> },
   { href: '/ipos',          label: 'IPOs',            icon: <Rocket className="w-5 h-5" /> },

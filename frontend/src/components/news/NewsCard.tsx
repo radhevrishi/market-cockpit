@@ -393,6 +393,60 @@ export default function NewsCard({ article, onTickerClick }: Props) {
             </div>
           )}
 
+          {/* PATCH 0063: Dependency graph — primary node → 1-hop dependents
+              Shows the system map for any article whose semantic graph
+              fired. e.g. COMPUTE_INFRA → MEMORY / PACKAGING / FAB / etc.
+              Compressed to one line of pills with arrow separator. */}
+          {(article as any).graph_primary_node &&
+           (article as any).graph_primary_node !== 'NONE' &&
+           ((article as any).graph_dependent_nodes || []).length > 0 && (() => {
+             const NODE_LABEL: Record<string, string> = {
+               COMPUTE_INFRA: 'Compute', MEMORY_INFRA: 'Memory', PACKAGING_INFRA: 'Packaging',
+               FABRICATION_INFRA: 'Fab', INTERCONNECT_INFRA: 'Interconnect', COOLING_INFRA: 'Cooling',
+               NETWORK_BANDWIDTH: 'Network', ENERGY_INFRA: 'Energy', NUCLEAR_INFRA: 'Nuclear',
+               OIL_GAS_INFRA: 'Oil/Gas', RENEWABLE_INFRA: 'Renewable', LOGISTICS_INFRA: 'Logistics',
+               TRANSPORT_INFRA: 'Transport', DEFENSE_INFRA: 'Defense', AEROSPACE_INFRA: 'Aerospace',
+               RESOURCE_SCARCITY: 'Resource', AGRI_INFRA: 'Agri', MANUFACTURING_CAPACITY: 'Mfg',
+               LABOR_CONSTRAINT: 'Labor', CAPITAL_CONSTRAINT: 'Capital',
+             };
+             const NODE_COLOR: Record<string, string> = {
+               COMPUTE_INFRA: 'bg-violet-500/20 text-violet-300 border-violet-500/40',
+               MEMORY_INFRA: 'bg-fuchsia-500/20 text-fuchsia-300 border-fuchsia-500/40',
+               PACKAGING_INFRA: 'bg-purple-500/20 text-purple-300 border-purple-500/40',
+               FABRICATION_INFRA: 'bg-pink-500/20 text-pink-300 border-pink-500/40',
+               INTERCONNECT_INFRA: 'bg-blue-500/20 text-blue-300 border-blue-500/40',
+               COOLING_INFRA: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40',
+               ENERGY_INFRA: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+               NUCLEAR_INFRA: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40',
+               OIL_GAS_INFRA: 'bg-orange-500/20 text-orange-300 border-orange-500/40',
+               RENEWABLE_INFRA: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+               LOGISTICS_INFRA: 'bg-sky-500/20 text-sky-300 border-sky-500/40',
+               DEFENSE_INFRA: 'bg-red-500/20 text-red-300 border-red-500/40',
+               AEROSPACE_INFRA: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
+               RESOURCE_SCARCITY: 'bg-stone-500/20 text-stone-300 border-stone-500/40',
+             };
+             const primary = (article as any).graph_primary_node as string;
+             const dependents = ((article as any).graph_dependent_nodes as string[]).slice(0, 5);
+             const primaryStyle = NODE_COLOR[primary] || 'bg-zinc-500/20 text-zinc-300 border-zinc-500/40';
+             return (
+               <div
+                 className="mt-1.5 text-[10px] flex items-center gap-1.5 flex-wrap"
+                 title={`System map — this article fires on the ${NODE_LABEL[primary] || primary} node, which depends on ${dependents.length} downstream nodes.`}
+               >
+                 <span className="text-[#4A5B6C] uppercase tracking-wide mr-1">graph</span>
+                 <span className={`px-1.5 py-0.5 rounded border font-bold ${primaryStyle}`}>
+                   ⬢ {NODE_LABEL[primary] || primary}
+                 </span>
+                 <span className="text-[#0F7ABF]">→</span>
+                 {dependents.map((d, i) => (
+                   <span key={d} className={`px-1.5 py-0.5 rounded border ${NODE_COLOR[d] || 'bg-zinc-500/15 text-zinc-300 border-zinc-500/30'}`}>
+                     {NODE_LABEL[d] || d}
+                   </span>
+                 ))}
+               </div>
+             );
+           })()}
+
           {/* PATCH 0049: Structural confidence bar (BOTTLENECK only) */}
           {(article as any).structural_confidence && (
             <div className="flex items-center gap-2 mt-1.5 text-[10px]">

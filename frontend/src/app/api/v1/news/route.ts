@@ -19,6 +19,8 @@ import {
 } from '@/lib/news/assertion-classifier';
 // PATCH 0059: Structural state classifier (BOTTLENECK / CAPACITY_EXPANSION / etc)
 import { classifyStructuralState } from '@/lib/news/structural-state';
+// PATCH 0064: Strategic Visibility / Mega Frameworks engine
+import { classifyStrategicVisibility, strategicRankScore } from '@/lib/news/strategic-visibility';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -155,7 +157,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v18'; // v18: evidence-bound impact + structural relevance (0061+0062)
+const CACHE_KEY = 'news:articles:v19'; // v19: dependency graph render + strategic visibility (0063+0064)
 const CACHE_TTL = 300; // 5 min
 // v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
 // freshness_layer, signal_confidence (multi-dim), bottleneck_parent /
@@ -1455,6 +1457,11 @@ async function fetchAllNews(): Promise<any[]> {
           // PATCH 0059: structural state — compute once, reuse twice
           const structuralStateResult = classifyStructuralState({ title, desc });
 
+          // ── PATCH 0064: Strategic Visibility classification ──
+          // Run inline (cheap) so the same article batch can power both
+          // the BOTTLENECK feed and the new STRATEGIC VISIBILITY feed.
+          const strategicVisibility = classifyStrategicVisibility({ title, desc });
+
           // ── PATCH 0062: Structural Relevance Score (unified 0-100) ──
           // Now that all dependencies are in scope, compute the unified score.
           // Combines structural state + signal confidence + structural confidence
@@ -1538,6 +1545,8 @@ async function fetchAllNews(): Promise<any[]> {
             evidence_bound_impact: evidenceBoundImpact,    // { direct_effect, second_order_effect, confidence, evidence_quote }
             // PATCH 0062: unified structural relevance score (0-100)
             structural_relevance: structuralRelevance,     // { score, tier, tier_label, contributing }
+            // PATCH 0064: strategic visibility classification (parallel to bottleneck)
+            strategic_visibility: strategicVisibility,     // { qualifies, theme, counterparty_tier, contract_value_usd_m, ... }
             defense_narrative: defenseNarrative,
             defense_impact_inline: defenseImpact,
             freshness_layer: freshnessLayer,               // LIVE / PERSISTENT / ARCHIVAL
@@ -1983,6 +1992,9 @@ export async function GET(request: Request) {
     // Phase 2.5: anomaly detector. Returns tickers/themes with unusual
     // article concentration in the last 24h.
     const anomalies = searchParams.get('anomalies') === '1';
+    // PATCH 0064: ?strategic=1 — returns just the strategic-visibility-qualifying
+    // articles, sorted by strategicRankScore desc.
+    const strategicFlag = searchParams.get('strategic') === '1';
 
     let articles: any[] | null = null;
     try {
@@ -2162,6 +2174,24 @@ export async function GET(request: Request) {
     // Returns rolling 30-day theme confidence per SystemNode. Lets the
     // frontend build a "themes emerging" widget that surfaces what the
     // accumulated evidence says — independent of any single article.
+    // PATCH 0064: Strategic Visibility endpoint
+    if (strategicFlag) {
+      const qualifying = (articles ?? [])
+        .filter((a: any) => a.strategic_visibility?.qualifies === true)
+        .map((a: any) => ({
+          ...a,
+          _rank: strategicRankScore(a.strategic_visibility),
+        }))
+        .sort((a: any, b: any) => b._rank - a._rank)
+        .slice(0, 100);
+      return NextResponse.json({
+        section_title: 'Strategic Visibility',
+        section_subtitle: 'Multi-year frameworks, hyperscaler commitments, sovereign programs, transformational revenue locks',
+        count: qualifying.length,
+        articles: qualifying,
+      });
+    }
+
     const evidenceFlag = searchParams.get('evidence') === '1';
     if (evidenceFlag) {
       const { readAllEvidence } = await import('@/lib/news/evidence-accumulator');
