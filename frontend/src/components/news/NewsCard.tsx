@@ -138,7 +138,25 @@ export default function NewsCard({ article, onTickerClick }: Props) {
                 ★ WATCH
               </span>
             )}
-            <span className="text-[#4A5B6C] text-[11px] ml-auto shrink-0">{timeAgo}</span>
+            {/* PATCH 0062: Structural Relevance Score — single visible number 0-100
+                so users can prioritize at a glance. Color-coded by tier. */}
+            {(article as any).structural_relevance && (() => {
+              const sr = (article as any).structural_relevance as { score: number; tier: string; tier_label: string; contributing: string[] };
+              const tierColor = sr.tier === 'CONFIRMED'    ? 'bg-emerald-500/30 text-emerald-200 border-emerald-500/50'
+                              : sr.tier === 'RECURRING'    ? 'bg-violet-500/25 text-violet-200 border-violet-500/45'
+                              : sr.tier === 'THEMATIC'     ? 'bg-sky-500/20 text-sky-300 border-sky-500/40'
+                              : sr.tier === 'SPECULATIVE'  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                                                            : 'bg-zinc-700/15 text-zinc-400 border-zinc-700/30';
+              return (
+                <span
+                  className={`shrink-0 ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded border ${tierColor}`}
+                  title={`Structural relevance ${sr.score}/100 — ${sr.tier_label}.\nDrivers: ${sr.contributing.join(', ') || '—'}`}
+                >
+                  R {sr.score} · {sr.tier_label}
+                </span>
+              );
+            })()}
+            <span className="text-[#4A5B6C] text-[11px] shrink-0">{timeAgo}</span>
           </div>
 
           {/* Headline */}
@@ -216,8 +234,53 @@ export default function NewsCard({ article, onTickerClick }: Props) {
             </p>
           )}
 
-          {/* PATCH 0052: Assertion-classed impact line */}
-          {(article as any).impact_label_safe && (
+          {/* PATCH 0061: Evidence-bound impact (replaces single-line impact)
+              Three rows: Direct effect (FACT) → Second-order (INFERENCE)
+              → Evidence quote. Confidence pill on the side. Falls back to
+              the older impact_label_safe if the new field isn't present
+              (legacy cached articles). */}
+          {(article as any).evidence_bound_impact ? (() => {
+            const ebi = (article as any).evidence_bound_impact as {
+              direct_effect: string;
+              second_order_effect?: string;
+              confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+              evidence_quote?: string;
+            };
+            const confColor = ebi.confidence === 'HIGH' ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/40'
+                            : ebi.confidence === 'LOW'  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                                        : 'bg-sky-500/20 text-sky-300 border border-sky-500/40';
+            return (
+              <div className="mt-1.5 border border-[#1E2D45] rounded p-2 bg-[#0D1B2E]/40">
+                <div className="flex items-start gap-2">
+                  <span className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide ${confColor}`}
+                        title="Confidence — HIGH = article-FACT-anchored, MEDIUM = system inference, LOW = speculative thematic">
+                    {ebi.confidence}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    {/* Direct effect — what the article says */}
+                    <div className="text-[11px] leading-relaxed">
+                      <span className="text-[#22d3ee] font-bold mr-1">Direct:</span>
+                      <span className="text-[#E6EDF3]">{ebi.direct_effect}</span>
+                    </div>
+                    {/* Second-order effect — system inference */}
+                    {ebi.second_order_effect && (
+                      <div className="text-[10px] leading-relaxed mt-1">
+                        <span className="text-[#A78BFA] font-bold mr-1">2°:</span>
+                        <span className="text-[#A8B5C5]">{ebi.second_order_effect}</span>
+                      </div>
+                    )}
+                    {/* Evidence quote — verbatim text supporting direct */}
+                    {ebi.evidence_quote && (
+                      <div className="text-[10px] mt-1 text-[#6677AA] italic border-l-2 border-[#22d3ee]/30 pl-2 py-0.5">
+                        “{ebi.evidence_quote}”
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })() : (article as any).impact_label_safe && (
+            // Legacy fallback for cached articles without evidence_bound_impact
             <div className="flex items-start gap-1.5 mt-1 text-[11px] leading-relaxed">
               <span
                 className={`shrink-0 text-[9px] font-bold px-1 py-0.5 rounded uppercase tracking-wide ${

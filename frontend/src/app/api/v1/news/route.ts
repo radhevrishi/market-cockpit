@@ -11,10 +11,11 @@ import { scoreAnchor, BOTTLENECK_ANCHOR_THRESHOLD, getSourceCredibility, detectR
 import { scoreGraph, GRAPH_ANCHOR_THRESHOLD, NODE_DISPLAY } from '@/lib/news/semantic-graph';
 import { classifySourceTier, getTierContribution } from '@/lib/news/source-tiers';
 import { recordEvidence, readEvidence } from '@/lib/news/evidence-accumulator';
-// PATCH 0052: Causal-honesty layer
+// PATCH 0052: Causal-honesty layer + 0061 evidence-bound impact + 0062 relevance
 import {
   classifyAssertion, frameImpact, hasDirectComputeLinkage, isGenericPowerStory,
   classifyDefenseNarrative, computeFreshnessLayer, buildSignalConfidence,
+  buildEvidenceBoundImpact, computeStructuralRelevance,
 } from '@/lib/news/assertion-classifier';
 // PATCH 0059: Structural state classifier (BOTTLENECK / CAPACITY_EXPANSION / etc)
 import { classifyStructuralState } from '@/lib/news/structural-state';
@@ -154,7 +155,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v17'; // v17: missing domain tokens (patch 0060)
+const CACHE_KEY = 'news:articles:v18'; // v18: evidence-bound impact + structural relevance (0061+0062)
 const CACHE_TTL = 300; // 5 min
 // v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
 // freshness_layer, signal_confidence (multi-dim), bottleneck_parent /
@@ -1401,6 +1402,25 @@ async function fetchAllNews(): Promise<any[]> {
             is_templated: !!safeInstitutionalImpact,
           });
 
+          // ── PATCH 0061: Evidence-bound impact ──
+          // Restructures the impact into { direct_effect, second_order_effect,
+          // confidence, evidence_quote } so users can see at a glance what the
+          // article said vs what the system inferred.
+          const evidenceBoundImpact = buildEvidenceBoundImpact({
+            article_type,
+            framed_label: framed.label,
+            framed_assertion: framed.assertion,
+            transmission_causal_path: envelope.transmission?.causal_path,
+            transmission_second_order: envelope.transmission?.second_order,
+            why_this_matters: whyThisMatters,
+            title,
+            desc,
+          });
+
+          // ── PATCH 0062: Structural Relevance Score declared LATER ──
+          // (after structuralStateResult / provisionalConfidence / freshnessLayer
+          // are computed below — see the next block following structuralStateResult)
+
           // ── PATCH 0052: Freshness layer ──
           // Splits the structural feed into LIVE_STRUCTURE / PERSISTENT_THEME
           // / ARCHIVAL_CONTEXT so 24-day-old TrendForce articles don't
@@ -1434,6 +1454,26 @@ async function fetchAllNews(): Promise<any[]> {
 
           // PATCH 0059: structural state — compute once, reuse twice
           const structuralStateResult = classifyStructuralState({ title, desc });
+
+          // ── PATCH 0062: Structural Relevance Score (unified 0-100) ──
+          // Now that all dependencies are in scope, compute the unified score.
+          // Combines structural state + signal confidence + structural confidence
+          // + assertion class + importance rank + graph weight + transmission
+          // anchor + cross-source + freshness into ONE visible score per article.
+          // Tier mapping: 95+ CONFIRMED, 80+ RECURRING, 60+ THEMATIC,
+          // 40+ SPECULATIVE, else NOISE.
+          const structuralRelevance = computeStructuralRelevance({
+            structural_state: structuralStateResult.state,
+            structural_state_confidence: structuralStateResult.confidence,
+            signal_confidence_pct: provisionalConfidence.confidence_pct,
+            structural_confidence_pct: envelope.structural_confidence?.confidence_pct,
+            assertion_class: framed.assertion,
+            importance_rank: envelope.importance_rank,
+            graph_total_weight: graph.total_weight,
+            has_named_transmission: (exposure.beneficiaries.length + exposure.atRisk.length) > 0,
+            cross_source_confirmation: false,  // refined post-loop from KV
+            freshness_layer: freshnessLayer,
+          });
 
           items.push({
             id: uniqueId,
@@ -1494,6 +1534,10 @@ async function fetchAllNews(): Promise<any[]> {
             impact_assertion: framed.assertion,           // FACT / INFERENCE / SPECULATION
             impact_prefix: framed.prefix,                  // 'Reported:' / 'May imply:' / 'Speculative thematic:'
             impact_label_safe: framed.label,
+            // PATCH 0061: evidence-bound impact (structured)
+            evidence_bound_impact: evidenceBoundImpact,    // { direct_effect, second_order_effect, confidence, evidence_quote }
+            // PATCH 0062: unified structural relevance score (0-100)
+            structural_relevance: structuralRelevance,     // { score, tier, tier_label, contributing }
             defense_narrative: defenseNarrative,
             defense_impact_inline: defenseImpact,
             freshness_layer: freshnessLayer,               // LIVE / PERSISTENT / ARCHIVAL

@@ -294,3 +294,215 @@ export function buildSignalConfidence(args: {
     contributing_factors: factors,
   };
 }
+
+// ─── Evidence-bound impact (patch 0061) ────────────────────────────────────
+//
+// Replaces the single-line impact_statement with a structured object that
+// makes the difference between ARTICLE FACT and SYSTEM INFERENCE explicit:
+//
+//   {
+//     direct_effect:        — what the article DIRECTLY says (the FACT)
+//     second_order_effect?: — what the framework INFERS downstream (optional)
+//     confidence:           — HIGH (FACT-anchored) / MEDIUM (INFERENCE) / LOW (SPECULATION)
+//     evidence_quote?:      — short verbatim phrase from title/desc that supports
+//                              direct_effect (≤80 chars, when extractable)
+//   }
+//
+// This solves the institutional ask: 'institutional systems distinguish
+// confirmed, inferred, speculative.' Users now see all three layers
+// per article instead of one ambiguous sentence.
+
+export interface EvidenceBoundImpact {
+  direct_effect: string;
+  second_order_effect?: string;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  evidence_quote?: string;
+}
+
+// Try to extract a short verbatim quote from title or desc that supports
+// the impact claim. Looks for sentences containing constraint / commercial
+// language. Returns ≤80 chars, including ellipsis if truncated.
+function extractEvidenceQuote(title: string, desc: string): string | undefined {
+  const text = (title + '. ' + (desc || '')).replace(/\s+/g, ' ').trim();
+  // Sentences containing strong factual signals
+  const factSignals = /\b(shortage|sold out|capacity|tight|allocation|backlog|lead time|order worth|contract|commissioned|expansion|capex|guidance (?:raised|cut)|profit (?:rose|fell|jumped|dropped)|revenue (?:up|down)|wins .{0,30}\$\d|wins (?:rs|inr|₹)\s*\d)\b/i;
+  const sentences = text.split(/(?<=[.!?])\s+/);
+  for (const s of sentences) {
+    if (s.length < 12 || s.length > 200) continue;
+    if (factSignals.test(s)) {
+      const trimmed = s.length > 80 ? s.slice(0, 77) + '…' : s;
+      return trimmed;
+    }
+  }
+  // Fallback: first sentence of title if it's specific enough
+  const firstSentence = sentences[0];
+  if (firstSentence && firstSentence.length >= 20 && firstSentence.length <= 100) return firstSentence;
+  return undefined;
+}
+
+// Build the evidence-bound impact from raw signals collected elsewhere.
+// Inputs:
+//   - article_type, framed.assertion + framed.label (from frameImpact)
+//   - transmission.causal_path + second_order[] (from transmission chain)
+//   - title, desc (for evidence quote extraction)
+// Output: structured object the frontend can render in three rows.
+export function buildEvidenceBoundImpact(args: {
+  article_type: string;
+  framed_label?: string;          // institutional impact label (already framed)
+  framed_assertion?: AssertionClass;
+  transmission_causal_path?: string;
+  transmission_second_order?: string[];
+  why_this_matters?: string | null;
+  title: string;
+  desc: string;
+}): EvidenceBoundImpact {
+  const { article_type, framed_label, framed_assertion,
+          transmission_causal_path, transmission_second_order,
+          why_this_matters, title, desc } = args;
+
+  // direct_effect: prefer FACT-grade label. If assertion is FACT, use the
+  // framed_label as-is. If INFERENCE/SPECULATION, prefix with the article's
+  // primary observation extracted from the title.
+  let direct: string = framed_label || '';
+  if (!direct && article_type === 'BOTTLENECK') direct = 'Structural supply-chain signal';
+  if (!direct && article_type === 'EARNINGS')   direct = 'Quarterly earnings event';
+  if (!direct && article_type === 'MACRO')      direct = 'Macro signal';
+  if (!direct && article_type === 'GEOPOLITICAL') direct = 'Geopolitical event';
+  if (!direct) direct = 'Market-relevant event';
+
+  // second_order_effect: prefer the transmission chain's first downstream link
+  let secondOrder: string | undefined;
+  if (transmission_second_order && transmission_second_order.length > 0) {
+    secondOrder = transmission_second_order[0];
+  } else if (transmission_causal_path) {
+    // Take the SECOND hop of the causal path (after first arrow)
+    const parts = transmission_causal_path.split(/\s*→\s*/);
+    if (parts.length >= 2) secondOrder = parts.slice(1).join(' → ');
+  } else if (why_this_matters) {
+    // Truncate why-this-matters to a one-line second-order note
+    const trimmed = why_this_matters.length > 100 ? why_this_matters.slice(0, 97) + '…' : why_this_matters;
+    secondOrder = trimmed;
+  }
+
+  // confidence: derive from assertion class
+  let confidence: EvidenceBoundImpact['confidence'] = 'MEDIUM';
+  if (framed_assertion === 'FACT')        confidence = 'HIGH';
+  else if (framed_assertion === 'SPECULATION') confidence = 'LOW';
+
+  // evidence_quote: extract supporting verbatim text
+  const evidenceQuote = extractEvidenceQuote(title, desc);
+
+  return {
+    direct_effect: direct,
+    second_order_effect: secondOrder,
+    confidence,
+    evidence_quote: evidenceQuote,
+  };
+}
+
+// ─── Structural Relevance Score 0-100 (patch 0062) ─────────────────────────
+//
+// Single unified score per article so users can prioritize at a glance.
+// Combines six dimensions already computed:
+//
+//   Tier mapping:
+//     95-100  CONFIRMED  — confirmed active bottleneck (FACT + structural state
+//                          confirmed + named transmission + cross-source)
+//     80-94   RECURRING  — recurring structural pressure (PERSISTENT + multi-source)
+//     60-79   THEMATIC   — INFERENCE-level relevance (single source / loose match)
+//     40-59   SPECULATIVE — SPECULATION assertion or low confidence
+//     <40     NOISE      — surface only as background
+
+export type RelevanceTier = 'CONFIRMED' | 'RECURRING' | 'THEMATIC' | 'SPECULATIVE' | 'NOISE';
+
+export interface StructuralRelevance {
+  score: number;                // 0-100
+  tier: RelevanceTier;
+  tier_label: string;           // human-readable
+  contributing: string[];       // audit trail of what pushed the score
+}
+
+export function computeStructuralRelevance(args: {
+  structural_state?: string;                // e.g. 'BOTTLENECK'
+  structural_state_confidence?: number;     // 0-100 from classifyStructuralState
+  signal_confidence_pct?: number;           // 0-100 from buildSignalConfidence
+  structural_confidence_pct?: number;       // 0-100 from envelope.structural_confidence
+  assertion_class?: AssertionClass;
+  importance_rank?: 'TIER_1_ALPHA' | 'TIER_2_RELEVANT' | 'TIER_3_CONTEXT' | 'TIER_4_NOISE';
+  graph_total_weight?: number;              // 0-100ish from semantic graph score
+  has_named_transmission?: boolean;         // beneficiaries OR at_risk array non-empty
+  cross_source_confirmation?: boolean;      // PRIMARY + SPECIALIST both covered
+  freshness_layer?: 'LIVE_STRUCTURE' | 'PERSISTENT_THEME' | 'ARCHIVAL_CONTEXT';
+}): StructuralRelevance {
+  const {
+    structural_state, structural_state_confidence,
+    signal_confidence_pct, structural_confidence_pct,
+    assertion_class, importance_rank, graph_total_weight,
+    has_named_transmission, cross_source_confirmation, freshness_layer,
+  } = args;
+
+  let score = 30;                           // baseline for any classified article
+  const why: string[] = [];
+
+  // Structural state — biggest single contributor
+  if (structural_state && structural_state !== 'NONE') {
+    const ssc = structural_state_confidence ?? 50;
+    score += Math.round(ssc * 0.25);        // up to +25
+    why.push(`structural state ${structural_state} (${ssc}%)`);
+  }
+
+  // Signal confidence (multi-dim) — captures evidence count + cross-source
+  if (signal_confidence_pct !== undefined && signal_confidence_pct > 0) {
+    score += Math.round(signal_confidence_pct * 0.20);   // up to +20
+    why.push(`signal confidence ${signal_confidence_pct}%`);
+  }
+
+  // Structural confidence (BOTTLENECK only) — captures evidence-strength
+  if (structural_confidence_pct !== undefined && structural_confidence_pct > 0) {
+    score += Math.round(structural_confidence_pct * 0.15);   // up to +15
+    why.push(`structural confidence ${structural_confidence_pct}%`);
+  }
+
+  // Importance rank
+  if (importance_rank === 'TIER_1_ALPHA')        { score += 15; why.push('TIER_1_ALPHA'); }
+  else if (importance_rank === 'TIER_2_RELEVANT'){ score += 5;  why.push('TIER_2_RELEVANT'); }
+  else if (importance_rank === 'TIER_3_CONTEXT') { score -= 8; }
+  else if (importance_rank === 'TIER_4_NOISE')   { score -= 25; }
+
+  // Assertion class — modulates how trustworthy the impact framing is
+  if (assertion_class === 'FACT')        { score += 10; why.push('FACT-anchored'); }
+  else if (assertion_class === 'SPECULATION') { score -= 12; why.push('speculative framing'); }
+
+  // Graph weight — how strongly the semantic graph fired
+  if (graph_total_weight && graph_total_weight >= 30) {
+    score += Math.min(10, Math.round(graph_total_weight / 6));
+    why.push(`graph weight ${graph_total_weight}`);
+  }
+
+  // Transmission anchor — explicit beneficiary/loser tickers raise score
+  if (has_named_transmission) { score += 8; why.push('named transmission chain'); }
+
+  // Cross-source confirmation — PRIMARY + SPECIALIST both cover the theme
+  if (cross_source_confirmation) { score += 7; why.push('cross-source confirmed'); }
+
+  // Freshness layer — archival articles get a discount even if they were
+  // structurally important when fresh
+  if (freshness_layer === 'ARCHIVAL_CONTEXT') { score -= 10; }
+  else if (freshness_layer === 'LIVE_STRUCTURE') { score += 3; }
+
+  let finalScore = Math.max(0, Math.min(100, Math.round(score)));
+
+  // PATCH 0062 calibration: CONFIRMED tier (95+) requires FACT-anchored
+  // assertion. Without FACT, cap at 92 — keeps thematic-strong but
+  // unverified articles in the RECURRING bracket where they belong.
+  if (assertion_class !== 'FACT' && finalScore > 92) finalScore = 92;
+
+  let tier: RelevanceTier = 'NOISE';
+  let tierLabel = 'noise';
+  if (finalScore >= 95)      { tier = 'CONFIRMED';   tierLabel = 'confirmed bottleneck'; }
+  else if (finalScore >= 80) { tier = 'RECURRING';   tierLabel = 'recurring pressure'; }
+  else if (finalScore >= 60) { tier = 'THEMATIC';    tierLabel = 'thematic'; }
+  else if (finalScore >= 40) { tier = 'SPECULATIVE'; tierLabel = 'speculative'; }
+
+  return { score: finalScore, tier, tier_label: tierLabel, contributing: why };
+}
