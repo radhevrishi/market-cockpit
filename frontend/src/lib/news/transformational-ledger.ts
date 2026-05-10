@@ -19,11 +19,13 @@ import { kvGet, kvSet } from '@/lib/kv';
 import type { StrategicVisibilitySignal, SignalQualityTier, CapacityReserved } from '@/lib/news/strategic-visibility';
 import { strategicRankScore } from '@/lib/news/strategic-visibility';
 
-// PATCH 0068: 6-month rolling window. Transformational contracts arrive
-// at most a few times per week; a 90-day window can still feel sparse.
-// 180 days covers a full half-year for institutional review.
-const WINDOW_DAYS = 180;
-const TTL_SECONDS = WINDOW_DAYS * 24 * 60 * 60 + 14 * 24 * 60 * 60;  // 194 days = window + grace
+// PATCH 0070: 24-month rolling capacity. Default read window is 365d (1Y)
+// but the ledger can return up to 24M for institutional reference. KV TTL
+// keeps items 25 months so reads never hit a missing-item race after the
+// window cutoff edge.
+const WINDOW_DAYS = 365;             // default read window
+const MAX_RETENTION_DAYS = 24 * 30;  // 720 days — KV retention horizon
+const TTL_SECONDS = MAX_RETENTION_DAYS * 24 * 60 * 60 + 30 * 24 * 60 * 60;  // 750 days
 const INDEX_KEY = 'transformational:idx:v1';
 const ITEM_PREFIX = 'transformational:item:v1:';
 
@@ -82,13 +84,15 @@ export async function recordTransformational(item: TransformationalItem): Promis
     rank: strategicRankScore(item.strategic_visibility),
   });
 
-  // Prune entries older than window (cheap inline cleanup)
-  const cutoff = Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  // PATCH 0070: Prune entries older than MAX_RETENTION (24M) — NOT the
+  // default read window. Users can ask for 2Y views and we want those to
+  // actually return results from the seed file.
+  const cutoff = Date.now() - MAX_RETENTION_DAYS * 24 * 60 * 60 * 1000;
   const pruned = idx.filter((e) => e.ts >= cutoff);
 
-  // Cap at 500 most-recent — defensive bound
+  // Cap at 1000 most-recent — defensive bound
   pruned.sort((a, b) => b.ts - a.ts);
-  const capped = pruned.slice(0, 500);
+  const capped = pruned.slice(0, 1000);
 
   await kvSet(INDEX_KEY, capped, TTL_SECONDS);
 }
@@ -148,13 +152,17 @@ export async function readTransformational(opts: ReadOptions = {}): Promise<{
 export async function transformationalSummary(opts: ReadOptions = {}): Promise<{
   window_days: number;
   total: number;
+  total_in_ledger: number;       // PATCH 0070: full retention count
   by_theme: Record<string, number>;
   by_flag: Record<string, number>;
   by_quality_tier: Record<string, number>;
   newest_recorded_at: string | null;
   oldest_in_window_at: string | null;
 }> {
-  const { window_days, total, items } = await readTransformational({ ...opts, limit: 500 });
+  const { window_days, total, items } = await readTransformational({ ...opts, limit: 1000 });
+  // Total in ledger (full retention) — independent of read window
+  const idx = (await kvGet<IndexEntry[]>(INDEX_KEY)) || [];
+  const totalInLedger = idx.length;
   const by_theme: Record<string, number> = {};
   const by_flag: Record<string, number> = {};
   const by_quality_tier: Record<string, number> = {};
@@ -175,6 +183,7 @@ export async function transformationalSummary(opts: ReadOptions = {}): Promise<{
   return {
     window_days,
     total,
+    total_in_ledger: totalInLedger,
     by_theme,
     by_flag,
     by_quality_tier,

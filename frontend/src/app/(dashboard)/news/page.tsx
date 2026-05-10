@@ -332,7 +332,8 @@ function useTransformationalPreview() {
   return useQuery<TransformationalPreviewResp>({
     queryKey: ['news', 'transformational-preview'],
     queryFn: async () => {
-      const { data } = await api.get('/news?transformational=1&window_days=180&limit=6');
+      // PATCH 0070: 365d preview window — matches strategic-visibility default
+      const { data } = await api.get('/news?transformational=1&window_days=365&limit=8');
       return data;
     },
     refetchInterval: 5 * 60_000,

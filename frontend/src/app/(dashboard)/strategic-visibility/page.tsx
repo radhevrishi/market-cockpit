@@ -161,10 +161,10 @@ function fmtAge(iso?: string): string {
   } catch { return ''; }
 }
 
-// PATCH 0068: pull the rolling 180-day ledger by default, NOT just the
-// live 24-72h news window. Users can drop to 30 / 60 / 90 if they want
-// recency, but 180 is the spec ("last 6 months of contracts with date").
-function useStrategic(windowDays: number = 180) {
+// PATCH 0068 + 0070: pull the rolling ledger by default. Default 365d (1Y).
+// Users can drop to 30/90/6M for recency or extend to 24M (2Y) for full
+// backlog reference.
+function useStrategic(windowDays: number = 365) {
   return useQuery<SVResponse>({
     queryKey: ['news', 'transformational', windowDays],
     queryFn: async () => {
@@ -177,7 +177,7 @@ function useStrategic(windowDays: number = 180) {
 }
 
 export default function StrategicVisibilityPage() {
-  const [windowDays, setWindowDays] = React.useState<30 | 60 | 90 | 180>(180);
+  const [windowDays, setWindowDays] = React.useState<30 | 90 | 180 | 365 | 730>(365);
   const { data, isLoading } = useStrategic(windowDays);
   const articles = data?.articles ?? [];
 
@@ -206,13 +206,13 @@ export default function StrategicVisibilityPage() {
             Multi-year frameworks · hyperscaler commitments · sovereign programs · transformational revenue locks.
             Persisted to KV with a {windowDays}-day rolling window — independent of the live news feed.
           </p>
-          {/* PATCH 0068: window selector */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10 }}>
+          {/* PATCH 0068 + 0070: window selector with 1Y / 2Y options */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 10, color: '#4A5B6C', fontWeight: 700, letterSpacing: '0.5px' }}>WINDOW:</span>
-            {[30, 60, 90, 180].map((d) => (
+            {[30, 90, 180, 365, 730].map((d) => (
               <button
                 key={d}
-                onClick={() => setWindowDays(d as 30 | 60 | 90 | 180)}
+                onClick={() => setWindowDays(d as 30 | 90 | 180 | 365 | 730)}
                 style={{
                   fontSize: 10, fontWeight: 700,
                   color: windowDays === d ? '#22D3EE' : '#6B7A8D',
@@ -222,12 +222,23 @@ export default function StrategicVisibilityPage() {
                   letterSpacing: '0.4px',
                 }}
               >
-                {d === 30 ? '30D' : d === 60 ? '60D' : d === 90 ? '3M' : '6M'}
+                {d === 30 ? '30D' : d === 90 ? '3M' : d === 180 ? '6M' : d === 365 ? '1Y' : '2Y'}
               </button>
             ))}
+            {data?.total_in_ledger !== undefined && data.total_in_ledger > articles.length && (
+              <span style={{ fontSize: 10, color: '#F59E0B', marginLeft: 8, fontWeight: 700 }}>
+                {articles.length} in window · {data.total_in_ledger} total in ledger ·{' '}
+                <button
+                  onClick={() => setWindowDays(730)}
+                  style={{ fontSize: 10, fontWeight: 700, color: '#22D3EE', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+                >
+                  expand to 2Y
+                </button>
+              </span>
+            )}
             {data?.summary?.oldest_in_window_at && (
               <span style={{ fontSize: 10, color: '#4A5B6C', marginLeft: 8 }}>
-                Oldest contract in window: {new Date(data.summary.oldest_in_window_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                Oldest in window: {new Date(data.summary.oldest_in_window_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
               </span>
             )}
           </div>
@@ -284,12 +295,12 @@ export default function StrategicVisibilityPage() {
               India PSU orders ≥ ₹500 cr from NTPC / PGCIL / SECI / HAL / BEL with ≥3y visibility now qualify
               alongside the global ≥$300M Tier-1 path. Try a wider window above.
             </div>
-            {windowDays < 180 && (
+            {windowDays < 730 && (
               <button
-                onClick={() => setWindowDays(180)}
+                onClick={() => setWindowDays(730)}
                 style={{ fontSize: 11, fontWeight: 700, color: '#22D3EE', backgroundColor: '#22D3EE15', border: '1px solid #22D3EE60', borderRadius: 4, padding: '6px 14px', cursor: 'pointer' }}
               >
-                Switch to 6-month window
+                Switch to 2-year window
               </button>
             )}
           </div>

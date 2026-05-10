@@ -176,7 +176,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v22'; // v22: curated seed + unnamed-hyperscaler + neocloud-counterparty + capacity-based sizing (0069)
+const CACHE_KEY = 'news:articles:v23'; // v23: expanded seed (20 entries) + 1Y default + 2Y option + 24M ledger retention (0070)
 const CACHE_TTL = 300; // 5 min
 // v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
 // freshness_layer, signal_confidence (multi-dim), bottleneck_parent /
@@ -2328,7 +2328,7 @@ export async function GET(request: Request) {
         section_subtitle: `Multi-year frameworks · hyperscaler commitments · sovereign programs · transformational revenue locks (rolling ${windowDays}-day window)`,
         window_days: windowDays,
         count: items.length,
-        total_in_ledger: ledger.total,
+        total_in_ledger: summary.total_in_ledger ?? ledger.total,
         summary,
         articles: items,
       });
