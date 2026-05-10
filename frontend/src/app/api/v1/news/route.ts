@@ -30,6 +30,11 @@ import {
   buildSecondOrder as buildSvSecondOrder,
   formatStrategicLine,
   FLAG_DISPLAY,
+  // PATCH 0072: institutional dimensions
+  classifyFundingConfidence,
+  classifyExecutionStatus,
+  classifyRevenueProfile,
+  computeImpliedSecondaryDemand,
 } from '@/lib/news/strategic-visibility';
 // PATCH 0068: 90-day transformational contracts ledger
 import {
@@ -176,7 +181,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v24'; // v24: broadened theme patterns + capacity inference for solar/wind PPA + GW-scale (0071)
+const CACHE_KEY = 'news:articles:v25'; // v25: institutional dimensions — funding confidence, execution status, revenue profile, secondary demand (0072)
 const CACHE_TTL = 300; // 5 min
 // v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
 // freshness_layer, signal_confidence (multi-dim), bottleneck_parent /
@@ -1481,7 +1486,7 @@ async function fetchAllNews(): Promise<any[]> {
           // the BOTTLENECK feed and the new STRATEGIC VISIBILITY feed.
           const strategicVisibility = classifyStrategicVisibility({ title, desc });
 
-          // ── PATCH 0067: Strategic Visibility v2 enhancements ──
+          // ── PATCH 0067 + 0072: Strategic Visibility v2 + institutional dims ──
           // Compute these only when the article qualifies — keeps loop cheap.
           let svSignalQuality: ReturnType<typeof classifySignalQuality> | undefined;
           let svCapacityReserved: ReturnType<typeof extractCapacityReserved> | undefined;
@@ -1489,6 +1494,11 @@ async function fetchAllNews(): Promise<any[]> {
           let svWhyMatters: string | undefined;
           let svSecondOrder: ReturnType<typeof buildSvSecondOrder> | undefined;
           let svFormattedLine: string | undefined;
+          // PATCH 0072: institutional dims
+          let svFundingConfidence: ReturnType<typeof classifyFundingConfidence> | undefined;
+          let svExecutionStatus: ReturnType<typeof classifyExecutionStatus> | undefined;
+          let svRevenueProfile: ReturnType<typeof classifyRevenueProfile> | undefined;
+          let svSecondaryDemand: ReturnType<typeof computeImpliedSecondaryDemand> | undefined;
           if (strategicVisibility.qualifies) {
             svSignalQuality = classifySignalQuality({
               source_name: feed.name,
@@ -1524,6 +1534,29 @@ async function fetchAllNews(): Promise<any[]> {
               date_iso: pubDate || new Date().toISOString(),
               flags_str: flagsStr,
             });
+
+            // PATCH 0072: institutional dimensions
+            const fullText = `${title} ${desc}`;
+            svFundingConfidence = classifyFundingConfidence({
+              text: fullText,
+              source_name: feed.name,
+            });
+            svExecutionStatus = classifyExecutionStatus(fullText);
+            svRevenueProfile = classifyRevenueProfile({
+              theme: strategicVisibility.theme,
+              counterparty_tier: strategicVisibility.counterparty_tier,
+              text: fullText,
+            });
+            // Secondary demand only fires for AI infra with capacity reserved
+            if (svCapacityReserved && (svCapacityReserved.unit === 'MW' || svCapacityReserved.unit === 'GW')) {
+              const mwBasis = svCapacityReserved.unit === 'GW'
+                ? svCapacityReserved.amount * 1000
+                : svCapacityReserved.amount;
+              svSecondaryDemand = computeImpliedSecondaryDemand({
+                theme: strategicVisibility.theme,
+                capacity_mw: mwBasis,
+              });
+            }
           }
 
           // ── PATCH 0062: Structural Relevance Score (unified 0-100) ──
@@ -1619,6 +1652,16 @@ async function fetchAllNews(): Promise<any[]> {
             sv_why_this_matters: svWhyMatters ?? null,
             sv_second_order: svSecondOrder ?? null,                  // { beneficiaries[], risk[] }
             sv_formatted_line: svFormattedLine ?? null,
+            // PATCH 0072: institutional dimensions
+            funding_confidence: svFundingConfidence?.score ?? null,
+            funding_confidence_rationale: svFundingConfidence?.rationale ?? null,
+            execution_status: svExecutionStatus ?? null,
+            revenue_profile: svRevenueProfile?.profile ?? null,
+            revenue_profile_ebitda_band: svRevenueProfile?.ebitda_margin_band ?? null,
+            revenue_profile_cash_conversion: svRevenueProfile?.cash_conversion ?? null,
+            revenue_profile_working_capital: svRevenueProfile?.working_capital ?? null,
+            revenue_profile_rationale: svRevenueProfile?.rationale ?? null,
+            implied_secondary_demand: svSecondaryDemand ?? null,
             defense_narrative: defenseNarrative,
             defense_impact_inline: defenseImpact,
             freshness_layer: freshnessLayer,               // LIVE / PERSISTENT / ARCHIVAL
@@ -1690,6 +1733,16 @@ async function fetchAllNews(): Promise<any[]> {
           sv_why_this_matters: a.sv_why_this_matters ?? null,
           sv_second_order: a.sv_second_order ?? null,
           sv_formatted_line: a.sv_formatted_line ?? null,
+          // PATCH 0072: institutional dimensions
+          funding_confidence: a.funding_confidence ?? null,
+          funding_confidence_rationale: a.funding_confidence_rationale ?? null,
+          execution_status: a.execution_status ?? null,
+          revenue_profile: a.revenue_profile ?? null,
+          revenue_profile_ebitda_band: a.revenue_profile_ebitda_band ?? null,
+          revenue_profile_cash_conversion: a.revenue_profile_cash_conversion ?? null,
+          revenue_profile_working_capital: a.revenue_profile_working_capital ?? null,
+          revenue_profile_rationale: a.revenue_profile_rationale ?? null,
+          implied_secondary_demand: a.implied_secondary_demand ?? null,
         }),
       ),
     );

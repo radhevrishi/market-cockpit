@@ -821,14 +821,63 @@ export const TRANSFORMATIONAL_SEED: TransformationalItem[] = [
 //
 // Called once per news-fetch cycle. Idempotent — recordTransformational
 // de-dupes by id, so re-running is safe.
+//
+// PATCH 0072: enriches each seed entry with institutional dimensions
+// (funding confidence, execution status, revenue profile, secondary
+// demand) at write time using the classifiers. Avoids hand-editing all
+// 20 entries when classifier logic changes.
 
 import { recordTransformational } from './transformational-ledger';
+import {
+  classifyFundingConfidence,
+  classifyExecutionStatus,
+  classifyRevenueProfile,
+  computeImpliedSecondaryDemand,
+} from './strategic-visibility';
+
+function enrichSeedEntry(item: TransformationalItem): TransformationalItem {
+  // Skip if already has institutional dims (e.g. hand-curated entry)
+  if (item.funding_confidence) return item;
+
+  const text = `${item.title} ${item.strategic_visibility?.reason || ''}`;
+  const funding = classifyFundingConfidence({ text, source_name: item.source_name });
+  const execStatus = classifyExecutionStatus(text);
+  const revProfile = classifyRevenueProfile({
+    theme: item.strategic_visibility.theme as any,
+    counterparty_tier: item.strategic_visibility.counterparty_tier as any,
+    text,
+  });
+
+  // Secondary demand only fires for AI infra with MW capacity
+  let secondary;
+  const cap = item.sv_capacity_reserved;
+  if (cap && (cap.unit === 'MW' || cap.unit === 'GW')) {
+    const mwBasis = cap.unit === 'GW' ? cap.amount * 1000 : cap.amount;
+    secondary = computeImpliedSecondaryDemand({
+      theme: item.strategic_visibility.theme as any,
+      capacity_mw: mwBasis,
+    });
+  }
+
+  return {
+    ...item,
+    funding_confidence: funding.score,
+    funding_confidence_rationale: funding.rationale,
+    execution_status: execStatus,
+    revenue_profile: revProfile.profile,
+    revenue_profile_ebitda_band: revProfile.ebitda_margin_band,
+    revenue_profile_cash_conversion: revProfile.cash_conversion,
+    revenue_profile_working_capital: revProfile.working_capital,
+    revenue_profile_rationale: revProfile.rationale,
+    implied_secondary_demand: secondary ?? null,
+  };
+}
 
 export async function seedTransformational(): Promise<{ written: number }> {
   let written = 0;
   for (const item of TRANSFORMATIONAL_SEED) {
     try {
-      await recordTransformational(item);
+      await recordTransformational(enrichSeedEntry(item));
       written++;
     } catch (e) {
       // Best-effort — never fail the news loop on seed write

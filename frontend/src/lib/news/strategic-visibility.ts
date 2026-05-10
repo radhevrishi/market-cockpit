@@ -767,3 +767,332 @@ export function formatStrategicLine(args: {
   return `${ticker} → ${sz}${capStr}, ${themeLabel}, ${cp} ([${dateStr}] Impact: ${yrs}y visibility${pctMcap}${pctRev}) ${flags_str}`;
 }
 
+// ─── PATCH 0072: Institutional-grade dimensions ────────────────────────────
+// A ₹60,000 cr defence framework with 5% margins ≠ a hyperscaler annuity.
+// Same-size deals can have wildly different revenue realization curves,
+// funding certainty, and execution status. These four classifiers add the
+// dimensions an institutional investor actually cares about.
+
+// 1. FUNDING CONFIDENCE (1-5)
+//    5 = budget approved + signed framework + 8-K filed
+//    4 = approved but phased / tranche-based
+//    3 = MoU / cabinet expectation / pending approval
+//    2 = policy intent / "expected to be"
+//    1 = conceptual / under discussion / exploratory
+
+export type FundingConfidence = 1 | 2 | 3 | 4 | 5;
+
+export function classifyFundingConfidence(args: {
+  text: string;
+  source_name?: string;
+}): { score: FundingConfidence; rationale: string } {
+  const { text, source_name = '' } = args;
+  const lower = text.toLowerCase();
+
+  // 5 — definitive: budget approved + binding + filed
+  if (/\b(8[-\s]?k filed|sec filing|signed (?:framework|contract|agreement)|budget approved|cabinet approved|cabinet committee on security|ccs approved|approved by parliament|bse (?:filing|announcement)|nse (?:filing|announcement)|definitive agreement)\b/i.test(text)) {
+    return { score: 5, rationale: 'Definitive: budget approved + binding agreement / regulatory filing' };
+  }
+  // 4 — approved with phased rollout
+  if (/\b(phased|tranche|in stages|exercised option|extension awarded|order received|order placed|production order|loa issued|letter of award)\b/i.test(text)) {
+    return { score: 4, rationale: 'Approved with phased rollout — funding visibility staged' };
+  }
+  // 3 — MoU / cabinet expectation
+  if (/\b(mou|memorandum of understanding|cabinet (?:expectation|review|note)|expected to be approved|pending (?:approval|nod)|in-principle approval|aon (?:granted|expected))\b/i.test(text)) {
+    return { score: 3, rationale: 'MoU / pending approval / in-principle nod' };
+  }
+  // 2 — policy intent / framework discussion
+  if (/\b(policy (?:intent|guidance|framework)|may (?:be|sign|order)|could (?:be|sign|order)|expected (?:to|in)|plans to|considering|evaluating)\b/i.test(text)) {
+    return { score: 2, rationale: 'Policy intent / "expected to be" — soft signal' };
+  }
+  // 1 — conceptual
+  if (/\b(concept|conceptual|under discussion|exploring|preliminary|early.?stage|talks)\b/i.test(text)) {
+    return { score: 1, rationale: 'Conceptual / exploratory — high uncertainty' };
+  }
+  // Default — Tier-1 media reporting on a known framework defaults to 4
+  if (/^(reuters|bloomberg news|wall street journal|wsj|financial times|economic times|business standard|mint|moneycontrol)\b/i.test(source_name)) {
+    return { score: 4, rationale: 'Tier-1 media confirmation — assumed approved with phased execution' };
+  }
+  return { score: 3, rationale: 'Default — reported framework, approval status unclear' };
+}
+
+// 2. EXECUTION STATUS — where is the deal in its life-cycle?
+//    Announced → Signed → Financial Close → Power Secured → Under Construction → Operational
+
+export type ExecutionStatus =
+  | 'ANNOUNCED'
+  | 'SIGNED'
+  | 'FINANCIAL_CLOSE'
+  | 'POWER_SECURED'
+  | 'UNDER_CONSTRUCTION'
+  | 'OPERATIONAL';
+
+export function classifyExecutionStatus(text: string): ExecutionStatus {
+  const lower = text.toLowerCase();
+  if (/\b(operational|commissioned|in revenue|generating|first power|cod (?:achieved|reached)|commenced operations)\b/i.test(lower)) {
+    return 'OPERATIONAL';
+  }
+  if (/\b(under construction|construction underway|groundbreaking|broke ground|building (?:phase|underway)|civil works|foundation laid)\b/i.test(lower)) {
+    return 'UNDER_CONSTRUCTION';
+  }
+  if (/\b(power (?:secured|allocation|interconnection)|grid interconnection (?:approved|secured)|utility (?:approval|interconnect)|transformer (?:procured|allocated))\b/i.test(lower)) {
+    return 'POWER_SECURED';
+  }
+  if (/\b(financial close|fin close|debt closed|funding (?:secured|closed|finalized)|equity (?:closed|raised))\b/i.test(lower)) {
+    return 'FINANCIAL_CLOSE';
+  }
+  if (/\b(signed|executed|definitive agreement|binding (?:contract|agreement)|signed framework)\b/i.test(lower)) {
+    return 'SIGNED';
+  }
+  return 'ANNOUNCED';
+}
+
+// 3. REVENUE PROFILE — realization curve archetype.
+//    Tells you whether the headline value translates into earnings power
+//    quickly (annuity infra) or slowly (low-margin defence build).
+
+export type RevenueProfile =
+  | 'AI_TAKE_OR_PAY'           // 30%+ EBITDA, 15y annuity, low capex risk
+  | 'ANNUITY_INFRA'            // 25-year PPA / TBCB transmission / regulated
+  | 'MID_MARGIN_DEFENSE'       // 10-15% EBITDA, multi-year delivery
+  | 'LOW_MARGIN_BUILD'         // 5-8% EBITDA, EPC / shipbuilding / civil
+  | 'CAPITAL_INTENSIVE_FAB'    // semis — high upfront capex, depreciation drag
+  | 'OPTION_VALUE'             // pre-commercial / quantum / SMR
+  | 'UNCLASSIFIED';
+
+export interface RevenueProfileResult {
+  profile: RevenueProfile;
+  ebitda_margin_band: string;       // 'AI_TAKE_OR_PAY' → '30-40%'
+  cash_conversion: string;          // 'High / Medium / Low'
+  working_capital: string;          // 'Low / Medium / High'
+  rationale: string;
+}
+
+export function classifyRevenueProfile(args: {
+  theme: StrategicTheme;
+  counterparty_tier: CounterpartyTier;
+  text: string;
+}): RevenueProfileResult {
+  const { theme, counterparty_tier, text } = args;
+  const lower = text.toLowerCase();
+
+  // AI take-or-pay — best profile
+  if (theme === 'AI_INFRASTRUCTURE' || theme === 'HYPERSCALER_LEASE' || theme === 'NEOCLOUD_AI_INFRA') {
+    if (/\b(take.?or.?pay|triple.?net|no early termination)\b/i.test(text)) {
+      return {
+        profile: 'AI_TAKE_OR_PAY',
+        ebitda_margin_band: '30-40%',
+        cash_conversion: 'High',
+        working_capital: 'Low',
+        rationale: 'Take-or-pay AI lease — utility-grade economics, opex passed to tenant',
+      };
+    }
+    return {
+      profile: 'AI_TAKE_OR_PAY',
+      ebitda_margin_band: '25-35%',
+      cash_conversion: 'High',
+      working_capital: 'Low',
+      rationale: 'AI hyperscaler lease — annuity revenue with high cash conversion',
+    };
+  }
+
+  // Annuity infra — PPA / TBCB / power grid
+  if (theme === 'POWER_GRID' || theme === 'ENERGY_TRANSITION') {
+    if (/\b(tbcb|25.?year ppa|transmission tariff|regulated annuity|ppa)\b/i.test(text)) {
+      return {
+        profile: 'ANNUITY_INFRA',
+        ebitda_margin_band: '85-90% (asset-heavy)',
+        cash_conversion: 'High once operational',
+        working_capital: 'Low',
+        rationale: 'Long-tenor PPA / TBCB — regulated annuity with high asset-base returns',
+      };
+    }
+    return {
+      profile: 'ANNUITY_INFRA',
+      ebitda_margin_band: '15-25%',
+      cash_conversion: 'Medium',
+      working_capital: 'Medium',
+      rationale: 'Energy-transition order — moderate margins with multi-year revenue tail',
+    };
+  }
+
+  // Defence — mid-margin
+  if (theme === 'DEFENSE_AEROSPACE') {
+    if (/\b(submarine|frigate|destroyer|aircraft carrier|shipbuilding|naval)\b/i.test(text)) {
+      return {
+        profile: 'LOW_MARGIN_BUILD',
+        ebitda_margin_band: '6-10%',
+        cash_conversion: 'Low (milestone-paid)',
+        working_capital: 'Very High',
+        rationale: 'Naval shipbuilding — long milestones, high WC, lower margins than missile/electronics',
+      };
+    }
+    if (/\b(missile|radar|electronic warfare|c4isr|ammunition)\b/i.test(text)) {
+      return {
+        profile: 'MID_MARGIN_DEFENSE',
+        ebitda_margin_band: '15-25%',
+        cash_conversion: 'Medium',
+        working_capital: 'Medium',
+        rationale: 'Defence electronics / missiles — recurring production with decent margins',
+      };
+    }
+    return {
+      profile: 'MID_MARGIN_DEFENSE',
+      ebitda_margin_band: '10-15%',
+      cash_conversion: 'Medium',
+      working_capital: 'Medium-High',
+      rationale: 'Defence framework — multi-year delivery, moderate margins',
+    };
+  }
+
+  // Semi fab — capital intensive
+  if (theme === 'SEMI_SUPPLY_CHAIN') {
+    return {
+      profile: 'CAPITAL_INTENSIVE_FAB',
+      ebitda_margin_band: '40-50% (peak), 25-35% (build phase)',
+      cash_conversion: 'Low during build → High at scale',
+      working_capital: 'Medium',
+      rationale: 'Fab capex — heavy depreciation drag during build, exceptional returns at scale',
+    };
+  }
+
+  // Critical national program — varies; default to mid-margin annuity
+  if (theme === 'CRITICAL_NATIONAL_PROGRAM') {
+    if (/\b(rail|metro|vande bharat|sleeper|trainset)\b/i.test(text)) {
+      return {
+        profile: 'ANNUITY_INFRA',
+        ebitda_margin_band: '15-22%',
+        cash_conversion: 'Medium (milestone + maintenance)',
+        working_capital: 'Medium',
+        rationale: 'Rail infra with maintenance tail — annuity-like once delivered',
+      };
+    }
+    return {
+      profile: 'MID_MARGIN_DEFENSE',
+      ebitda_margin_band: '12-20%',
+      cash_conversion: 'Medium',
+      working_capital: 'Medium',
+      rationale: 'National program — varies by sub-segment; assume institutional infra economics',
+    };
+  }
+
+  // Quantum / option-value
+  if (theme === 'QUANTUM_CRYPTO') {
+    return {
+      profile: 'OPTION_VALUE',
+      ebitda_margin_band: 'Negative → 50%+ (if commercialised)',
+      cash_conversion: 'Negative until scale',
+      working_capital: 'High R&D burn',
+      rationale: 'Pre-commercial — option-value play on technology adoption',
+    };
+  }
+
+  return {
+    profile: 'UNCLASSIFIED',
+    ebitda_margin_band: '—',
+    cash_conversion: '—',
+    working_capital: '—',
+    rationale: 'No revenue profile match',
+  };
+}
+
+// 4. IMPLIED SECONDARY DEMAND — capex propagation engine.
+//    For AI/data center contracts, auto-list dependent equipment categories
+//    with rough $/MW estimates so the dashboard becomes a capex propagation
+//    engine, not just a contract aggregator.
+
+export interface SecondaryDemandLine {
+  category: string;
+  est_usd_per_mw_k: number;       // $K per MW (e.g. 1500 = $1.5M/MW)
+  rationale: string;
+  beneficiary_tickers?: string[];
+}
+
+export interface ImpliedSecondaryDemand {
+  basis_mw: number;
+  total_secondary_demand_usd_m: number;
+  lines: SecondaryDemandLine[];
+}
+
+// $/MW estimates from public hyperscaler capex disclosures + EPC industry pricing.
+const AI_CAMPUS_SECONDARY_DEMAND: SecondaryDemandLine[] = [
+  { category: 'Power equipment (transformers + switchgear)', est_usd_per_mw_k: 350, rationale: 'Step-up + medium-voltage gear; hyperscaler-grade redundancy', beneficiary_tickers: ['GEV', 'ETN', 'HUBB'] },
+  { category: 'Backup generation (gas-turbine + diesel)',     est_usd_per_mw_k: 250, rationale: 'N+1 standby for AI campus reliability spec',                       beneficiary_tickers: ['GEV', 'CMI', 'GNRC'] },
+  { category: 'Liquid cooling (immersion / direct-chip)',     est_usd_per_mw_k: 400, rationale: 'B100/B200 thermal density requires liquid cooling',               beneficiary_tickers: ['VRT', 'NVT', 'BOYD'] },
+  { category: 'Optical interconnect (800G / 1.6T)',           est_usd_per_mw_k: 180, rationale: 'AI superpod fabric — pluggables + DSP',                            beneficiary_tickers: ['COHR', 'LITE', 'AVGO'] },
+  { category: 'HBM memory + advanced packaging',              est_usd_per_mw_k: 600, rationale: 'GPU bill-of-materials per AI compute MW',                          beneficiary_tickers: ['MU', '000660.KS', 'TSM'] },
+  { category: 'Transmission upgrades (interconnect + sub)',   est_usd_per_mw_k: 220, rationale: 'Grid-side capacity expansion required for ≥100MW load',           beneficiary_tickers: ['GEV', 'QNTA', 'POWERGRID.NS'] },
+  { category: 'Networking + DCI (data-center-interconnect)',  est_usd_per_mw_k:  90, rationale: 'Spine + edge fabric for east-west AI traffic',                     beneficiary_tickers: ['ANET', 'CSCO', 'CIEN'] },
+];
+
+export function computeImpliedSecondaryDemand(args: {
+  theme: StrategicTheme;
+  capacity_mw?: number;
+}): ImpliedSecondaryDemand | undefined {
+  const { theme, capacity_mw } = args;
+  if (!capacity_mw || capacity_mw < 10) return undefined;
+  // Only AI infra / hyperscaler / neocloud get the AI propagation breakdown.
+  if (!(theme === 'AI_INFRASTRUCTURE' || theme === 'HYPERSCALER_LEASE' || theme === 'NEOCLOUD_AI_INFRA')) {
+    return undefined;
+  }
+  const lines = AI_CAMPUS_SECONDARY_DEMAND.map((l) => ({ ...l }));
+  const total = lines.reduce((s, l) => s + l.est_usd_per_mw_k * capacity_mw / 1000, 0);
+  return {
+    basis_mw: capacity_mw,
+    total_secondary_demand_usd_m: Math.round(total),
+    lines,
+  };
+}
+
+// Display helpers
+export const FUNDING_CONFIDENCE_LABEL: Record<FundingConfidence, string> = {
+  5: 'A · Definitive',
+  4: 'B · Approved/phased',
+  3: 'C · MoU/pending',
+  2: 'D · Policy intent',
+  1: 'E · Conceptual',
+};
+export const FUNDING_CONFIDENCE_COLOR: Record<FundingConfidence, string> = {
+  5: '#10B981',  // green
+  4: '#22D3EE',  // cyan
+  3: '#F59E0B',  // amber
+  2: '#EF4444',  // red
+  1: '#6B7A8D',  // gray
+};
+
+export const EXECUTION_STATUS_LABEL: Record<ExecutionStatus, string> = {
+  ANNOUNCED:           'Announced',
+  SIGNED:              'Signed',
+  FINANCIAL_CLOSE:     'Fin close',
+  POWER_SECURED:       'Power secured',
+  UNDER_CONSTRUCTION:  'Under construction',
+  OPERATIONAL:         'Operational',
+};
+export const EXECUTION_STATUS_COLOR: Record<ExecutionStatus, string> = {
+  ANNOUNCED:           '#6B7A8D',
+  SIGNED:              '#22D3EE',
+  FINANCIAL_CLOSE:     '#3B82F6',
+  POWER_SECURED:       '#8B5CF6',
+  UNDER_CONSTRUCTION:  '#F59E0B',
+  OPERATIONAL:         '#10B981',
+};
+
+export const REVENUE_PROFILE_LABEL: Record<RevenueProfile, string> = {
+  AI_TAKE_OR_PAY:        'AI take-or-pay',
+  ANNUITY_INFRA:         'Annuity infra',
+  MID_MARGIN_DEFENSE:    'Mid-margin defence',
+  LOW_MARGIN_BUILD:      'Low-margin build',
+  CAPITAL_INTENSIVE_FAB: 'Capital-intensive fab',
+  OPTION_VALUE:          'Option value',
+  UNCLASSIFIED:          '—',
+};
+export const REVENUE_PROFILE_COLOR: Record<RevenueProfile, string> = {
+  AI_TAKE_OR_PAY:        '#10B981',
+  ANNUITY_INFRA:         '#22D3EE',
+  MID_MARGIN_DEFENSE:    '#F59E0B',
+  LOW_MARGIN_BUILD:      '#EF4444',
+  CAPITAL_INTENSIVE_FAB: '#8B5CF6',
+  OPTION_VALUE:          '#94A3B8',
+  UNCLASSIFIED:          '#4A5B6C',
+};
+

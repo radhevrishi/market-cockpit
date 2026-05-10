@@ -16,7 +16,15 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { kvGet, kvSet } from '@/lib/kv';
-import type { StrategicVisibilitySignal, SignalQualityTier, CapacityReserved } from '@/lib/news/strategic-visibility';
+import type {
+  StrategicVisibilitySignal,
+  SignalQualityTier,
+  CapacityReserved,
+  FundingConfidence,
+  ExecutionStatus,
+  RevenueProfile,
+  ImpliedSecondaryDemand,
+} from '@/lib/news/strategic-visibility';
 import { strategicRankScore } from '@/lib/news/strategic-visibility';
 
 // PATCH 0070: 24-month rolling capacity. Default read window is 365d (1Y)
@@ -52,6 +60,17 @@ export interface TransformationalItem {
   sv_why_this_matters?: string | null;
   sv_second_order?: { beneficiaries: string[]; risk: string[] } | null;
   sv_formatted_line?: string | null;
+
+  // PATCH 0072: institutional dimensions
+  funding_confidence?: FundingConfidence | null;
+  funding_confidence_rationale?: string | null;
+  execution_status?: ExecutionStatus | null;
+  revenue_profile?: RevenueProfile | null;
+  revenue_profile_ebitda_band?: string | null;
+  revenue_profile_cash_conversion?: string | null;
+  revenue_profile_working_capital?: string | null;
+  revenue_profile_rationale?: string | null;
+  implied_secondary_demand?: ImpliedSecondaryDemand | null;
 }
 
 interface IndexEntry {

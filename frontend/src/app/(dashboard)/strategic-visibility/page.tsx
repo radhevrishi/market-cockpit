@@ -40,6 +40,19 @@ interface SVSecondOrder {
   risk: string[];
 }
 
+// PATCH 0072: institutional dimensions
+interface SVSecondaryDemandLine {
+  category: string;
+  est_usd_per_mw_k: number;
+  rationale: string;
+  beneficiary_tickers?: string[];
+}
+interface SVImpliedSecondaryDemand {
+  basis_mw: number;
+  total_secondary_demand_usd_m: number;
+  lines: SVSecondaryDemandLine[];
+}
+
 interface SVArticle {
   id: string;
   title: string;
@@ -58,6 +71,16 @@ interface SVArticle {
   sv_why_this_matters?: string | null;
   sv_second_order?: SVSecondOrder | null;
   sv_formatted_line?: string | null;
+  // PATCH 0072: institutional dimensions
+  funding_confidence?: 1 | 2 | 3 | 4 | 5 | null;
+  funding_confidence_rationale?: string | null;
+  execution_status?: 'ANNOUNCED' | 'SIGNED' | 'FINANCIAL_CLOSE' | 'POWER_SECURED' | 'UNDER_CONSTRUCTION' | 'OPERATIONAL' | null;
+  revenue_profile?: 'AI_TAKE_OR_PAY' | 'ANNUITY_INFRA' | 'MID_MARGIN_DEFENSE' | 'LOW_MARGIN_BUILD' | 'CAPITAL_INTENSIVE_FAB' | 'OPTION_VALUE' | 'UNCLASSIFIED' | null;
+  revenue_profile_ebitda_band?: string | null;
+  revenue_profile_cash_conversion?: string | null;
+  revenue_profile_working_capital?: string | null;
+  revenue_profile_rationale?: string | null;
+  implied_secondary_demand?: SVImpliedSecondaryDemand | null;
   _rank: number;
 }
 
@@ -144,6 +167,54 @@ function fmtCapacity(c?: SVCapacityReserved | null): string {
   const unitLabel = c.unit.replace('_', ' ').replace('pm', '/mo');
   return `${c.amount.toLocaleString()} ${unitLabel}`;
 }
+
+// PATCH 0072: institutional dimension display
+const FUNDING_LABEL: Record<number, string> = {
+  5: 'A · Definitive',
+  4: 'B · Approved/phased',
+  3: 'C · MoU/pending',
+  2: 'D · Policy intent',
+  1: 'E · Conceptual',
+};
+const FUNDING_COLOR: Record<number, string> = {
+  5: '#10B981', 4: '#22D3EE', 3: '#F59E0B', 2: '#EF4444', 1: '#6B7A8D',
+};
+
+const EXEC_LABEL: Record<string, string> = {
+  ANNOUNCED:           'Announced',
+  SIGNED:              'Signed',
+  FINANCIAL_CLOSE:     'Fin close',
+  POWER_SECURED:       'Power secured',
+  UNDER_CONSTRUCTION:  'Under constr.',
+  OPERATIONAL:         'Operational',
+};
+const EXEC_COLOR: Record<string, string> = {
+  ANNOUNCED:           '#6B7A8D',
+  SIGNED:              '#22D3EE',
+  FINANCIAL_CLOSE:     '#3B82F6',
+  POWER_SECURED:       '#8B5CF6',
+  UNDER_CONSTRUCTION:  '#F59E0B',
+  OPERATIONAL:         '#10B981',
+};
+
+const REVENUE_LABEL: Record<string, string> = {
+  AI_TAKE_OR_PAY:        'AI take-or-pay',
+  ANNUITY_INFRA:         'Annuity infra',
+  MID_MARGIN_DEFENSE:    'Mid-margin defence',
+  LOW_MARGIN_BUILD:      'Low-margin build',
+  CAPITAL_INTENSIVE_FAB: 'Capital-intensive fab',
+  OPTION_VALUE:          'Option value',
+  UNCLASSIFIED:          '—',
+};
+const REVENUE_COLOR: Record<string, string> = {
+  AI_TAKE_OR_PAY:        '#10B981',
+  ANNUITY_INFRA:         '#22D3EE',
+  MID_MARGIN_DEFENSE:    '#F59E0B',
+  LOW_MARGIN_BUILD:      '#EF4444',
+  CAPITAL_INTENSIVE_FAB: '#8B5CF6',
+  OPTION_VALUE:          '#94A3B8',
+  UNCLASSIFIED:          '#4A5B6C',
+};
 
 function fmtMoney(usdM?: number): string {
   if (usdM === undefined) return '—';
@@ -490,6 +561,84 @@ export default function StrategicVisibilityPage() {
                         </>
                       )}
                     </div>
+                    {/* PATCH 0072: institutional dimensions strip */}
+                    {(a.funding_confidence || a.execution_status || a.revenue_profile) && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6, marginBottom: 6, paddingTop: 6, borderTop: '1px solid #1A2840' }}>
+                        {a.funding_confidence != null && (
+                          <span
+                            title={a.funding_confidence_rationale || ''}
+                            style={{
+                              fontSize: 9, fontWeight: 700,
+                              color: FUNDING_COLOR[a.funding_confidence] || '#94A3B8',
+                              border: `1px solid ${FUNDING_COLOR[a.funding_confidence]}40`,
+                              backgroundColor: `${FUNDING_COLOR[a.funding_confidence]}10`,
+                              padding: '2px 6px', borderRadius: 3,
+                            }}
+                          >
+                            FUNDING: {FUNDING_LABEL[a.funding_confidence] || a.funding_confidence}
+                          </span>
+                        )}
+                        {a.execution_status && (
+                          <span
+                            style={{
+                              fontSize: 9, fontWeight: 700,
+                              color: EXEC_COLOR[a.execution_status] || '#94A3B8',
+                              border: `1px solid ${EXEC_COLOR[a.execution_status]}40`,
+                              backgroundColor: `${EXEC_COLOR[a.execution_status]}10`,
+                              padding: '2px 6px', borderRadius: 3,
+                            }}
+                          >
+                            STATUS: {EXEC_LABEL[a.execution_status] || a.execution_status}
+                          </span>
+                        )}
+                        {a.revenue_profile && a.revenue_profile !== 'UNCLASSIFIED' && (
+                          <span
+                            title={`${a.revenue_profile_rationale || ''} · EBITDA ${a.revenue_profile_ebitda_band || '—'} · Cash ${a.revenue_profile_cash_conversion || '—'} · WC ${a.revenue_profile_working_capital || '—'}`}
+                            style={{
+                              fontSize: 9, fontWeight: 700,
+                              color: REVENUE_COLOR[a.revenue_profile] || '#94A3B8',
+                              border: `1px solid ${REVENUE_COLOR[a.revenue_profile]}40`,
+                              backgroundColor: `${REVENUE_COLOR[a.revenue_profile]}10`,
+                              padding: '2px 6px', borderRadius: 3,
+                            }}
+                          >
+                            PROFILE: {REVENUE_LABEL[a.revenue_profile] || a.revenue_profile}
+                            {a.revenue_profile_ebitda_band && (
+                              <span style={{ marginLeft: 4, color: '#94A3B8', fontWeight: 400 }}>
+                                · {a.revenue_profile_ebitda_band}
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {/* PATCH 0072: IMPLIED SECONDARY DEMAND — capex propagation */}
+                    {a.implied_secondary_demand && a.implied_secondary_demand.lines.length > 0 && (
+                      <div style={{ fontSize: 10, color: '#94A3B8', backgroundColor: '#0A1422', border: '1px solid #22D3EE30', borderRadius: 6, padding: '6px 8px', marginBottom: 6, lineHeight: 1.5 }}>
+                        <div style={{ marginBottom: 4 }}>
+                          <strong style={{ color: '#22D3EE', letterSpacing: '0.4px' }}>↪ IMPLIED SECONDARY DEMAND</strong>
+                          <span style={{ marginLeft: 6, color: '#94A3B8' }}>
+                            {a.implied_secondary_demand.basis_mw}MW basis ·{' '}
+                            <strong style={{ color: '#10B981' }}>~${(a.implied_secondary_demand.total_secondary_demand_usd_m / 1000).toFixed(1)}B</strong> total capex propagation
+                          </span>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3px 10px' }}>
+                          {a.implied_secondary_demand.lines.map((line, i) => (
+                            <div key={i} style={{ fontSize: 9, lineHeight: 1.4 }}>
+                              <span style={{ color: '#CBD5E1' }}>{line.category}</span>
+                              <span style={{ marginLeft: 4, color: '#10B981', fontWeight: 700 }}>
+                                ~${((line.est_usd_per_mw_k * a.implied_secondary_demand!.basis_mw) / 1000).toFixed(0)}M
+                              </span>
+                              {line.beneficiary_tickers && line.beneficiary_tickers.length > 0 && (
+                                <span style={{ marginLeft: 4, color: '#38A9E8', fontSize: 8 }}>
+                                  ({line.beneficiary_tickers.slice(0, 3).join(', ')})
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     {/* PATCH 0067: WHY THIS MATTERS — institutional 1-liner */}
                     {a.sv_why_this_matters && (
                       <div style={{ fontSize: 10, color: '#94A3B8', borderTop: '1px solid #1A2840', paddingTop: 6, marginBottom: 6, lineHeight: 1.5 }}>
