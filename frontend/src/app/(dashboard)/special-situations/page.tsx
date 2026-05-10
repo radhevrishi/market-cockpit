@@ -197,9 +197,23 @@ export default function SpecialSituationsPage() {
 
   const { data: feed, isLoading, error, dataUpdatedAt, refetch, isFetching } = useLiveFeed();
 
-  // Flatten into a single list, score, tier, region-filter
+  // PATCH 0105: PRIMARY data source is now feed.events (canonical events with
+  // catalyst scoring, tradability filter, why_tradable blocks).  Old by_category
+  // FeedItems are still produced for back-compat + the Discover tab.
+  const canonicalEvents: CanonicalEvent[] = useMemo(() => {
+    if (!feed?.events) return [];
+    return feed.events.filter((e) => region === 'ALL' || e.region === region);
+  }, [feed, region]);
+
+  const tier1Canonical = canonicalEvents.filter((e) => e.tier === 'TIER_1');
+  const tier2Canonical = canonicalEvents.filter((e) => e.tier === 'TIER_2');
+  const watchlistCanonical = canonicalEvents.filter((e) => e.tier === 'WATCHLIST');
+  // NOISE tier hidden from primary view (fund housekeeping, rumors, unclassified)
+
+  // Legacy fallback: if events array is empty (cache pre-0105 deploy), fall back
+  // to the old per-item algorithmic tier classification so the page never blanks.
   const allEvents: ScoredEvent[] = useMemo(() => {
-    if (!feed) return [];
+    if (!feed || (feed.events && feed.events.length > 0)) return [];
     const flat = (Object.keys(feed.by_category) as Category[]).flatMap((c) => feed.by_category[c]);
     return flat
       .filter((it) => region === 'ALL' || it.region === region)
@@ -280,7 +294,11 @@ export default function SpecialSituationsPage() {
 
       {/* ── Body ─────────────────────────────────────────────────────────── */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-        {active === 'all' && <AllSituations isLoading={isLoading} error={error} tier1={tier1} tier2={tier2} archive={archive} />}
+        {active === 'all' && (
+          canonicalEvents.length > 0
+            ? <AllSituationsCanonical isLoading={isLoading} error={error} tier1={tier1Canonical} tier2={tier2Canonical} watchlist={watchlistCanonical} />
+            : <AllSituations isLoading={isLoading} error={error} tier1={tier1} tier2={tier2} archive={archive} />
+        )}
         {active === 'timing' && <TimingRules />}
         {active === 'playbook' && <Playbook />}
         {active === 'math' && <MathPanels />}
@@ -302,6 +320,176 @@ function Stat({ label, value, color, icon }: { label: string; value: number | st
 // ═══════════════════════════════════════════════════════════════════════════
 // ALL SITUATIONS — pure data-driven event cards
 // ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PATCH 0105b: ALL SITUATIONS — canonical event rendering
+// Renders events from feed.events (event-intelligence pipeline output) with
+// catalyst score, amendment count, "why tradable" expandable block.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const TIER_COLOR: Record<'TIER_1' | 'TIER_2' | 'WATCHLIST' | 'NOISE', string> = {
+  TIER_1: '#EF4444', TIER_2: '#F59E0B', WATCHLIST: '#94A3B8', NOISE: '#6B7A8D',
+};
+
+const TIER_LABEL: Record<'TIER_1' | 'TIER_2' | 'WATCHLIST' | 'NOISE', { label: string; tagline: string }> = {
+  TIER_1:    { label: 'Tier 1 — Hard Catalyst',  tagline: 'Definitive filing · named ticker · primary source · time-bounded' },
+  TIER_2:    { label: 'Tier 2 — Tradable',         tagline: 'Hard catalyst missing one of: ticker / primary source / decay' },
+  WATCHLIST: { label: 'Watchlist',                  tagline: 'Capital allocation / operating commentary — not actionable solo' },
+  NOISE:     { label: 'Noise (filtered)',           tagline: 'Fund housekeeping · rumours · unclassified' },
+};
+
+const EVENT_TYPE_META: Record<string, { icon: string; color: string }> = {
+  TENDER_OFFER:           { icon: '🤝', color: '#FBBF24' },
+  GOING_PRIVATE:          { icon: '🔒', color: '#FBBF24' },
+  MERGER_RECOMMENDATION:  { icon: '✉️', color: '#FBBF24' },
+  MERGER_DEFINITIVE:      { icon: '🤝', color: '#FBBF24' },
+  SPIN_OFF:               { icon: '🔀', color: '#22D3EE' },
+  OPEN_OFFER:             { icon: '🤝', color: '#FBBF24' },
+  BUYBACK_TENDER:         { icon: '💰', color: '#A78BFA' },
+  BUYBACK_OPEN_MARKET:    { icon: '💰', color: '#A78BFA' },
+  BONUS_ISSUE:            { icon: '🎁', color: '#A78BFA' },
+  STOCK_SPLIT:            { icon: '✂️', color: '#A78BFA' },
+  DIVIDEND_HIKE:          { icon: '💵', color: '#A78BFA' },
+  RIGHTS_ISSUE:           { icon: '📜', color: '#A78BFA' },
+  QIP_PLACEMENT:          { icon: '🏦', color: '#A78BFA' },
+  DEMERGER_INDIA:         { icon: '🇮🇳', color: '#22D3EE' },
+  IPO_SUBSIDIARY:         { icon: '🚀', color: '#22D3EE' },
+  TURNAROUND_OPERATING:   { icon: '↩️', color: '#10B981' },
+  TURNAROUND_NARRATIVE:   { icon: '↩️', color: '#94A3B8' },
+  STAKE_SALE:             { icon: '🤝', color: '#FBBF24' },
+  ACQUISITION_PUBLIC:     { icon: '🤝', color: '#FBBF24' },
+  NEWS_RUMOR:             { icon: '❓', color: '#94A3B8' },
+  UNCLASSIFIED:           { icon: '·',  color: '#6B7A8D' },
+};
+
+function AllSituationsCanonical({ isLoading, error, tier1, tier2, watchlist }: { isLoading: boolean; error: any; tier1: CanonicalEvent[]; tier2: CanonicalEvent[]; watchlist: CanonicalEvent[] }) {
+  if (isLoading) return <div style={{ color: '#6B7A8D', fontSize: 12, padding: 14 }}>Loading event-intelligence pipeline…</div>;
+  if (error) return <div style={{ color: '#EF4444', fontSize: 12, padding: 14 }}>Failed to load.</div>;
+  if (!tier1.length && !tier2.length && !watchlist.length) {
+    return (
+      <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: 10, padding: 24, color: '#6B7A8D', fontSize: 13, textAlign: 'center' }}>
+        <AlertTriangle style={{ width: 20, height: 20, marginBottom: 8, color: '#F59E0B' }} />
+        <div>No canonical events yet — RSS pipeline still warming up.</div>
+        <div style={{ fontSize: 11, marginTop: 4 }}>The event-intelligence engine collapses amendments under one event, scores catalysts (+30 definitive / -20 amendment), filters fund housekeeping, and auto-generates "why tradable" blocks.</div>
+      </div>
+    );
+  }
+  return (
+    <>
+      {tier1.length > 0 && <CanonicalSection meta={TIER_LABEL.TIER_1} color={TIER_COLOR.TIER_1} events={tier1} defaultExpanded />}
+      {tier2.length > 0 && <CanonicalSection meta={TIER_LABEL.TIER_2} color={TIER_COLOR.TIER_2} events={tier2} defaultExpanded />}
+      {watchlist.length > 0 && <CanonicalSection meta={TIER_LABEL.WATCHLIST} color={TIER_COLOR.WATCHLIST} events={watchlist} defaultExpanded={false} />}
+    </>
+  );
+}
+
+function CanonicalSection({ meta, color, events, defaultExpanded }: { meta: { label: string; tagline: string }; color: string; events: CanonicalEvent[]; defaultExpanded?: boolean }) {
+  const [collapsed, setCollapsed] = useState(!defaultExpanded);
+  return (
+    <div>
+      <button onClick={() => setCollapsed(!collapsed)} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', borderLeft: `3px solid ${color}`, paddingLeft: 12, marginBottom: 8 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color, letterSpacing: '0.4px' }}>{collapsed ? '▸' : '▾'} {meta.label} · {events.length}</div>
+        <div style={{ fontSize: 11, color: '#6B7A8D', marginTop: 2 }}>{meta.tagline}</div>
+      </button>
+      {!collapsed && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {events.slice(0, 30).map((e) => <CanonicalEventCard key={e.event_id} ev={e} />)}
+          {events.length > 30 && <div style={{ fontSize: 11, color: '#6B7A8D', textAlign: 'center' }}>Showing 30 of {events.length}.</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
+  const [expanded, setExpanded] = useState(false);
+  const meta = EVENT_TYPE_META[ev.event_type] || EVENT_TYPE_META.UNCLASSIFIED;
+  const ageLabel = ev.age_hours < 24 ? `${ev.age_hours}h` : `${Math.round(ev.age_hours / 24)}d`;
+  return (
+    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: `3px solid ${meta.color}`, borderRadius: 10 }}>
+      <button onClick={() => setExpanded((s) => !s)} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '12px 16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
+          <span style={{ fontSize: 11, fontWeight: 800, color: meta.color, padding: '2px 8px', borderRadius: 4, backgroundColor: `${meta.color}18`, border: `1px solid ${meta.color}40` }}>
+            {meta.icon} {ev.event_type.replace(/_/g, ' ')}
+          </span>
+          <span style={{ fontSize: 11, fontWeight: 700, color: ev.region === 'IN' ? '#FBBF24' : '#22D3EE' }}>
+            {ev.region === 'IN' ? '🇮🇳' : ev.region === 'US' ? '🇺🇸' : '🌐'}
+          </span>
+          {ev.target_name && (
+            <span style={{ fontSize: 13, fontWeight: 700, color: '#E6EDF3' }}>{ev.target_name}</span>
+          )}
+          {ev.tickers.slice(0, 4).map((t) => (
+            <span key={t} style={{ fontSize: 11, fontWeight: 700, color: '#38A9E8', backgroundColor: '#0F7ABF20', border: '1px solid #0F7ABF40', padding: '1px 6px', borderRadius: 3, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+              {t}
+            </span>
+          ))}
+          {ev.amendment_count > 0 && (
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#F59E0B', padding: '1px 7px', borderRadius: 3, backgroundColor: '#F59E0B18', border: '1px solid #F59E0B40' }}>
+              + {ev.amendment_count} amendment{ev.amendment_count > 1 ? 's' : ''}
+            </span>
+          )}
+          {ev.lifecycle && ev.lifecycle !== 'unknown' && (
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#94A3B8', padding: '1px 6px', borderRadius: 3, backgroundColor: '#1A2840' }}>
+              {ev.lifecycle}
+            </span>
+          )}
+          <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#6B7A8D' }}>
+            <span title="Catalyst score (decay-adjusted)">Score {ev.catalyst_score.decay_score.toFixed(0)}</span>
+            <span>{ev.primary_filing.source} · {ageLabel}</span>
+            <ExternalLink style={{ width: 11, height: 11 }} />
+          </span>
+        </div>
+        <div style={{ fontSize: 13, color: '#E6EDF3', fontWeight: 500, lineHeight: 1.4 }}>{ev.primary_filing.title}</div>
+        {!expanded && (
+          <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 4, fontStyle: 'italic' }}>
+            {ev.tradability_rationale}
+          </div>
+        )}
+      </button>
+      {expanded && (
+        <div style={{ padding: '0 16px 14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {/* Why tradable */}
+          <div style={{ backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 6, padding: '10px 14px' }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px', marginBottom: 6 }}>WHY TRADABLE</div>
+            <div style={{ fontSize: 11.5, color: '#C9D4E0', lineHeight: 1.6 }}>
+              <p style={{ margin: '0 0 6px' }}><strong style={{ color: '#10B981' }}>What happened:</strong> {ev.why_tradable.what_happened}</p>
+              <p style={{ margin: '0 0 6px' }}><strong style={{ color: '#FBBF24' }}>What matters:</strong> {ev.why_tradable.what_matters}</p>
+              <p style={{ margin: '0 0 6px' }}><strong style={{ color: '#22D3EE' }}>What to watch:</strong> {ev.why_tradable.what_to_watch}</p>
+              <p style={{ margin: 0 }}><strong style={{ color: '#EF4444' }}>What breaks thesis:</strong> {ev.why_tradable.what_breaks_thesis}</p>
+            </div>
+          </div>
+          {/* Catalyst score breakdown */}
+          <div style={{ backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 6, padding: '10px 14px' }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px', marginBottom: 6 }}>
+              CATALYST SCORE — raw {ev.catalyst_score.raw_score} · decay-adjusted {ev.catalyst_score.decay_score.toFixed(1)}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 11 }}>
+              {ev.catalyst_score.components.map((c, i) => (
+                <div key={i} style={{ color: c.pts > 0 ? '#10B981' : '#EF4444' }}>{c.label}</div>
+              ))}
+            </div>
+          </div>
+          {/* Filings list */}
+          {ev.filings.length > 1 && (
+            <div style={{ backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 6, padding: '10px 14px' }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: '#94A3B8', letterSpacing: '0.4px', marginBottom: 6 }}>ALL FILINGS ({ev.filings.length})</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {ev.filings.map((f, i) => (
+                  <a key={f.id} href={f.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: '#C9D4E0', textDecoration: 'none', display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                    <span style={{ color: '#6B7A8D', minWidth: 16 }}>{i + 1}.</span>
+                    <span style={{ flex: 1 }}>{f.title}</span>
+                    <span style={{ color: '#6B7A8D', fontSize: 10 }}>{f.source} · {f.age_hours < 24 ? `${f.age_hours}h` : `${Math.round(f.age_hours / 24)}d`}</span>
+                    <ExternalLink style={{ width: 10, height: 10, color: '#6B7A8D' }} />
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function AllSituations({ isLoading, error, tier1, tier2, archive }: { isLoading: boolean; error: any; tier1: ScoredEvent[]; tier2: ScoredEvent[]; archive: ScoredEvent[] }) {
   if (isLoading) return <div style={{ color: '#6B7A8D', fontSize: 12, padding: 14 }}>Loading live RSS feeds…</div>;
