@@ -1628,7 +1628,7 @@ export default function NewsFeedPage() {
   };
 
   return (
-    <div style={{ padding: '12px 10px', maxWidth: '1000px', margin: '0 auto' }}>
+    <div style={{ padding: '12px 16px', maxWidth: '1600px', margin: '0 auto', width: '100%' }}>
 
       {/* ── MARKET BIAS HEADER ────────────────────────────────────────── */}
       {marketBias && !isLoading && (

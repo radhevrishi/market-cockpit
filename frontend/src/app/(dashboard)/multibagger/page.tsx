@@ -2348,7 +2348,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   ];
 
   return (
-    <div style={{maxWidth:1100,margin:'0 auto',padding:'28px 20px'}}>
+    <div style={{maxWidth:1800,margin:'0 auto',padding:'28px 20px'}}>
       {/* Header info */}
       <div style={{marginBottom:20,padding:'18px 20px',backgroundColor:CARD_BG,border:`1px solid ${BORDER}`,borderRadius:12}}>
         <div style={{fontSize:F.lg,fontWeight:800,color:PURPLE,marginBottom:8}}>
@@ -3516,7 +3516,7 @@ function MultibaggerChecklist({excelRows}:{excelRows:ExcelResult[]}) {
   const grade:Grade=pct>=90?'A+':pct>=80?'A':pct>=68?'B+':pct>=55?'B':pct>=42?'C':'D';
 
   return (
-    <div style={{maxWidth:1100,margin:'0 auto',padding:'28px 20px'}}>
+    <div style={{maxWidth:1800,margin:'0 auto',padding:'28px 20px'}}>
       {excelRows.length>0&&(
         <div style={{marginBottom:14,padding:'12px 18px',backgroundColor:`${GREEN}08`,border:`1px solid ${GREEN}20`,borderRadius:10,fontSize:F.md,color:GREEN}}>
           🤖 {excelRows.length} stocks from uploaded Excel — click any to auto-verify {CHECKLIST.filter(i=>i.autoField).length} criteria · {autoPassed>0?`${autoPassed} already verified for ${activeSymbol||'selected stock'}`:'select a stock below'}
@@ -4343,7 +4343,7 @@ function USAChecklist() {
   };
 
   return (
-    <div style={{maxWidth:1100,margin:'0 auto',padding:'28px 20px'}}>
+    <div style={{maxWidth:1800,margin:'0 auto',padding:'28px 20px'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:24,flexWrap:'wrap',gap:12}}>
         <div>
           <div style={{fontSize:F.h2,fontWeight:800,color:'#38bdf8',marginBottom:4}}>🇺🇸 USA Research Checklist</div>
@@ -4551,7 +4551,7 @@ function USACompare() {
   });
 
   return (
-    <div style={{maxWidth:1100,margin:'0 auto',padding:'28px 20px'}}>
+    <div style={{maxWidth:1800,margin:'0 auto',padding:'28px 20px'}}>
       {/* Header */}
       <div style={{marginBottom:20,padding:'18px 20px',backgroundColor:CARD_BG,border:`1px solid ${BORDER}`,borderRadius:12}}>
         <div style={{fontSize:F.lg,fontWeight:800,color:'#38bdf8',marginBottom:8}}>🇺🇸 USA Multibagger — TradingView Export</div>
@@ -4898,7 +4898,7 @@ export default function MultibaggerPage() {
     <div style={{background:BG,minHeight:'100vh',color:TEXT,fontFamily:'system-ui,-apple-system,sans-serif'}}>
       {/* Header */}
       <div style={{backgroundColor:'#13131a',borderBottom:'1px solid rgba(255,255,255,0.08)',padding:'20px 24px 0'}}>
-        <div style={{maxWidth:1100,margin:'0 auto'}}>
+        <div style={{maxWidth:1800,margin:'0 auto'}}>
           <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:16,gap:12}}>
             <div>
               <h1 style={{fontSize:F.h1,fontWeight:900,color:PURPLE,margin:0}}>🚀 Multibagger Research Engine</h1>
@@ -5304,7 +5304,7 @@ function CapitalAllocationPanel() {
     setLoading(false);
   };
   return (
-    <div style={{ padding: '24px', maxWidth: 1100, margin: '0 auto' }}>
+    <div style={{ padding: '24px', maxWidth: 1800, margin: '0 auto' }}>
       <div style={{ fontSize: 13, color: MUTED, marginBottom: 16, lineHeight: 1.5 }}>
         How disciplined is management with shareholder capital? Capex efficiency · ROCE shift · dilution · buybacks · dividend rationality · reinvestment runway. Computed from Screener annual data.
       </div>

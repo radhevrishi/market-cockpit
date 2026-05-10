@@ -3137,7 +3137,7 @@ export default function EarningsAnalysisPage() {
     const hasEstimates = latestEpsEst !== null || revEstNum !== null || gmEstNum !== null;
 
     return (
-      <div style={{background:BG,minHeight:'100vh',color:TEXT,fontFamily:'system-ui,-apple-system,sans-serif',padding:'20px 16px',maxWidth:1200,margin:'0 auto'}}>
+      <div style={{background:BG,minHeight:'100vh',color:TEXT,fontFamily:'system-ui,-apple-system,sans-serif',padding:'20px 16px',maxWidth:1800,margin:'0 auto'}}>
 
         {/* ══════════════════════════════════════════════════════════════════════
             COMPANY IDENTITY + EARNINGS SCORECARD
