@@ -86,6 +86,10 @@ export interface LayerTicker {
   // global nuclear, etc.
   export_proxy?: boolean;
   export_destination?: string;   // e.g. 'US AI DC' / 'global oil & gas'
+  // PATCH 0110: contamination count — # of distinct SystemNodes this ticker
+  // appears in (via accumulator).  >7 = 'everything stock' = theme dilution.
+  // Used by deriveLayeredBeneficiaries to penalize convexity.
+  contamination_count?: number;
 }
 
 export interface LayerMeta {
@@ -800,7 +804,7 @@ function nodeLabel(node: SystemNode): string {
 // PATCH 0104: imported lazily (server-only) so client bundle stays small.
 // Discovered tickers from the per-node accumulator are appended to L1.
 import type { NodeTickerEntry } from '@/lib/news/node-ticker-accumulator';
-import { classifyTier } from '@/lib/news/node-ticker-accumulator';
+import { classifyTier, contaminationMultiplier } from '@/lib/news/node-ticker-accumulator';
 
 export function deriveLayeredBeneficiaries(args: {
   primary_node: SystemNode;
@@ -815,8 +819,11 @@ export function deriveLayeredBeneficiaries(args: {
   // by caller to avoid awaiting per-article).  Appended to L1 with
   // discovered: true marker.
   discovered_tickers?: NodeTickerEntry[];
+  // PATCH 0110: contamination map — { TICKER: distinct_node_count }.  Tickers
+  // appearing in 7+ nodes get convexity penalty (suppresses 'everything stocks').
+  contamination_map?: Record<string, number>;
 }): LayeredBeneficiaries {
-  const { primary_node, article_tickers = [], per_layer_limit = 8, article_headline, region = 'GLOBAL', discovered_tickers = [] } = args;
+  const { primary_node, article_tickers = [], per_layer_limit = 8, article_headline, region = 'GLOBAL', discovered_tickers = [], contamination_map = {} } = args;
   const rule = (region === 'IN' ? NODE_RULES_IN : NODE_RULES)[primary_node] ?? NODE_RULES.NONE;
   const rosterByLayer = region === 'IN' ? INDIA_ROSTER_BY_LAYER : ROSTER_BY_LAYER;
   const articleSet = new Set(article_tickers.map((t) => t.toUpperCase()));
@@ -977,6 +984,13 @@ export function deriveLayeredBeneficiaries(args: {
       if (t.export_proxy) conv += 12;                          // PATCH 0107: export proxies get a convexity boost
       if (GENERIC_MEGACAP_RE.test(t.ticker)) conv -= 25;
       if ((t.accumulator_score ?? 0) > 100) conv -= 5;
+      // PATCH 0110: contamination penalty — multiply by [0.4..1.0] based on
+      // distinct-node count.  Ticker in 8+ nodes = 'everything stock' = 0.4x.
+      const contamCount = contamination_map[t.ticker.toUpperCase()] ?? 0;
+      if (contamCount > 0) {
+        t.contamination_count = contamCount;
+        conv = Math.round(conv * contaminationMultiplier(contamCount));
+      }
       t.convexity_score = Math.max(0, Math.min(100, conv));
     }
 

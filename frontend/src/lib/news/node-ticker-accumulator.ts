@@ -202,6 +202,49 @@ export async function readNodeTickers(args: {
   }
 }
 
+// PATCH 0110: contamination scan — count distinct nodes a ticker appears in.
+// User: 'if ticker appears in 7+ unrelated nodes → suppress'.  Returns a map
+// of ticker → count of distinct buckets containing it (with score >= 2).
+const ALL_NODES_FOR_CONTAMINATION: SystemNode[] = [
+  'COMPUTE_INFRA','MEMORY_INFRA','PACKAGING_INFRA','FABRICATION_INFRA',
+  'INTERCONNECT_INFRA','COOLING_INFRA','NETWORK_BANDWIDTH',
+  'ENERGY_INFRA','NUCLEAR_INFRA','OIL_GAS_INFRA','RENEWABLE_INFRA',
+  'LOGISTICS_INFRA','TRANSPORT_INFRA','DEFENSE_INFRA','AEROSPACE_INFRA',
+  'RESOURCE_SCARCITY','AGRI_INFRA','MANUFACTURING_CAPACITY',
+  'LABOR_CONSTRAINT','CAPITAL_CONSTRAINT',
+];
+
+export async function buildContaminationMap(): Promise<Record<string, number>> {
+  const counts: Record<string, number> = {};
+  await Promise.all(ALL_NODES_FOR_CONTAMINATION.map(async (n) => {
+    try {
+      const bucket = await kvGet<NodeBucket>(bucketKey(n));
+      if (!bucket) return;
+      for (const e of bucket.entries) {
+        if (!isValidTickerCandidate(e.ticker)) continue;
+        // Only count if score is meaningful (>=2 = ~2 specialist mentions)
+        const liveScore = decay(e.score, e.last_seen);
+        if (liveScore < 2) continue;
+        const T = e.ticker.toUpperCase();
+        counts[T] = (counts[T] || 0) + 1;
+      }
+    } catch { /* skip failed nodes */ }
+  }));
+  return counts;
+}
+
+// Returns a multiplier in [0.4, 1.0] based on contamination count.
+// 1-3 nodes: 1.0 (clean)
+// 4-5 nodes: 0.85 (mild dilution)
+// 6-7 nodes: 0.65 (high dilution)
+// 8+ nodes: 0.40 ('everything stock' — heavy penalty)
+export function contaminationMultiplier(distinctNodes: number): number {
+  if (distinctNodes <= 3) return 1.0;
+  if (distinctNodes <= 5) return 0.85;
+  if (distinctNodes <= 7) return 0.65;
+  return 0.40;
+}
+
 // ─── Tier A/B/C/D classification ────────────────────────────────────────────
 // Computed from existing LayerTicker metadata + accumulator score:
 //

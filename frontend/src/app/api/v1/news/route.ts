@@ -18,7 +18,8 @@ import { detectAdaptations, recordBeneficiary } from '@/lib/news/beneficiary-gra
 import { deriveLayeredBeneficiaries, inferRegion } from '@/lib/news/beneficiary-layers';
 // PATCH 0104: per-SystemNode ticker auto-discovery accumulator
 // (so MTAR / any unhardcoded ticker auto-surfaces under nuclear when news mentions it)
-import { recordNodeTicker, readNodeTickers } from '@/lib/news/node-ticker-accumulator';
+// PATCH 0110: contamination map — penalize tickers in 7+ unrelated nodes
+import { recordNodeTicker, readNodeTickers, buildContaminationMap } from '@/lib/news/node-ticker-accumulator';
 // PATCH 0052: Causal-honesty layer + 0061 evidence-bound impact + 0062 relevance
 import {
   classifyAssertion, frameImpact, hasDirectComputeLinkage, isGenericPowerStory,
@@ -197,7 +198,26 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v35'; // v35: India-specific semantic-graph expansion — PSU power, DC ops, nuclear/DAE, defense PSUs, fab/Tata/Vedanta-Foxconn, fibre, RE/SECI, ISRO, capex/PLI (0098)
+const CACHE_KEY = 'news:articles:v36'; // v36: theme contamination + confidence cap + pseudo-ticker filter + contamination penalty (0109b/0110)
+
+// PATCH 0110: per-request contamination-map cache.  Built once on first call
+// in a request lifecycle, reused across the (potentially many) layered-
+// beneficiary computations in that request.
+let __CONTAM_MAP_CACHE: { data: Record<string, number>; ts: number } | null = null;
+async function getContamMapForRequest(): Promise<Record<string, number>> {
+  const now = Date.now();
+  // 60s in-process cache — covers a single request burst; fresh enough.
+  if (__CONTAM_MAP_CACHE && now - __CONTAM_MAP_CACHE.ts < 60_000) {
+    return __CONTAM_MAP_CACHE.data;
+  }
+  try {
+    const data = await buildContaminationMap();
+    __CONTAM_MAP_CACHE = { data, ts: now };
+    return data;
+  } catch {
+    return {};
+  }
+}
 const CACHE_TTL = 300; // 5 min
 // v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
 // freshness_layer, signal_confidence (multi-dim), bottleneck_parent /
@@ -2611,6 +2631,9 @@ export async function GET(request: Request) {
             min_mentions: 1,
           });
 
+          // PATCH 0110: lazy-cache contamination map (built once per request)
+          const contamMap = await getContamMapForRequest();
+
           const buildVariant = (region: 'IN' | 'GLOBAL', regionSamples: any[]) => {
             if (regionSamples.length === 0) return null;
             const tickerSet = Array.from(
@@ -2629,6 +2652,7 @@ export async function GET(request: Request) {
                 per_layer_limit: 5,
                 region,
                 discovered_tickers: discoveredForNode,
+                contamination_map: contamMap,
               }),
             };
             return variant;
@@ -2653,6 +2677,7 @@ export async function GET(request: Request) {
                 per_layer_limit: 5,
                 region: 'GLOBAL',
                 discovered_tickers: discoveredForNode,
+                contamination_map: contamMap,
               }),
             });
           }

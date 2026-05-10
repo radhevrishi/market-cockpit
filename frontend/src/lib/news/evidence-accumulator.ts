@@ -106,6 +106,35 @@ function scoreToConfidence(score: number): number {
   return Math.max(0, Math.min(100, Math.round(100 * (1 - Math.exp(-score / 10)))));
 }
 
+// PATCH 0110: evidence-quality cap.  User: "100% confidence on 1 article
+// is dangerous".  Caps confidence based on sample diversity:
+//   1 sample, single source                  → 60 (specialist) / 50 (generalist) / 35 (other)
+//   2 samples, same source                   → 70
+//   2 samples, cross-source                  → 80
+//   3+ samples, ≥2 distinct sources          → 95
+//   3+ samples, ≥3 distinct sources          → 100
+function evidenceQualityCap(samples: { tier: SourceTier; source: string }[]): number {
+  if (!samples || samples.length === 0) return 0;
+  const n = samples.length;
+  const distinctSources = new Set(samples.map((s) => s.source)).size;
+  const hasSpecialist = samples.some((s) => s.tier === 'PRIMARY' || s.tier === 'SPECIALIST');
+  const hasGeneralist = samples.some((s) => s.tier === 'GENERALIST');
+
+  if (n === 1) {
+    if (hasSpecialist) return 60;
+    if (hasGeneralist) return 50;
+    return 35;
+  }
+  if (n === 2) {
+    if (distinctSources >= 2) return hasSpecialist ? 80 : 70;
+    return hasSpecialist ? 70 : 60;
+  }
+  // n >= 3
+  if (distinctSources >= 3) return 100;
+  if (distinctSources >= 2) return 95;
+  return 85;  // 3 samples but all from one source — still suspicious
+}
+
 export async function recordEvidence(
   node: SystemNode,
   sample: { article_id: string; title: string; source: string; tier: SourceTier; raw_weight: number },
@@ -294,11 +323,19 @@ export async function readPersistentBottlenecks(args: {
       : undefined;
     const isLatest = firstSeenAgeDays !== undefined && firstSeenAgeDays <= 10;
 
+    // PATCH 0110: cap confidence by evidence quality (no more 100% on n=1).
+    const qualityCap = evidenceQualityCap(e.top_samples || []);
+    const effectiveConfidence = Math.min(e.confidence_pct, qualityCap);
+
+    // Re-gate by min_confidence using the EFFECTIVE (capped) confidence so
+    // n=1 dust doesn't slip through with a falsely-high raw score.
+    if (effectiveConfidence < min_confidence) continue;
+
     out.push({
       node: n,
       label: meta.label,
       sub: meta.sub,
-      confidence_pct: e.confidence_pct,
+      confidence_pct: effectiveConfidence,
       cumulative_score: e.cumulative_score,
       sample_count: e.sample_count,
       last_seen: e.last_seen,
