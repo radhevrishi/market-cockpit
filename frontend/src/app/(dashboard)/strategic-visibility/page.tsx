@@ -53,6 +53,8 @@ interface SVImpliedSecondaryDemand {
   lines: SVSecondaryDemandLine[];
 }
 
+type SVChokepointCategory = 'EUV_LITHO' | 'COWOS_PACKAGING' | 'HBM_MEMORY' | 'ABF_SUBSTRATES' | 'TRANSFORMERS_LARGE' | 'SWITCHGEAR_HV' | 'GAS_TURBINES_LARGE' | 'GRID_INTERCONNECT' | 'HALEU_ENRICHMENT' | 'NAVAL_PROPULSION' | 'AERO_ENGINES' | 'MISSILE_SEEKERS_RF' | 'AI_GPU_CLUSTERS' | 'LIQUID_COOLING_AI' | 'OPTICAL_INTERCONNECT_800G' | 'RARE_EARTH_MAGNETS' | 'URANIUM_WESTERN' | 'NONE';
+
 interface SVArticle {
   id: string;
   title: string;
@@ -81,6 +83,14 @@ interface SVArticle {
   revenue_profile_working_capital?: string | null;
   revenue_profile_rationale?: string | null;
   implied_secondary_demand?: SVImpliedSecondaryDemand | null;
+  // PATCH 0073: chokepoint + WC numeric
+  chokepoint_category?: SVChokepointCategory | null;
+  chokepoint_label?: string | null;
+  chokepoint_severity?: 0 | 1 | 2 | 3 | 4 | 5 | null;
+  chokepoint_competitors?: string | null;
+  chokepoint_rationale?: string | null;
+  chokepoint_primary_tickers?: string[] | null;
+  working_capital_intensity_pct?: number | null;
   _rank: number;
 }
 
@@ -215,6 +225,76 @@ const REVENUE_COLOR: Record<string, string> = {
   OPTION_VALUE:          '#94A3B8',
   UNCLASSIFIED:          '#4A5B6C',
 };
+
+// PATCH 0073: chokepoint severity helpers
+function chokepointSevColor(s: number): string {
+  if (s >= 5) return '#8B5CF6';
+  if (s >= 4) return '#22D3EE';
+  if (s >= 3) return '#10B981';
+  if (s >= 2) return '#F59E0B';
+  return '#6B7A8D';
+}
+function chokepointSevDots(s: number): string {
+  return '●'.repeat(Math.max(0, Math.min(5, s))) + '○'.repeat(Math.max(0, 5 - Math.max(0, Math.min(5, s))));
+}
+
+// PATCH 0073: macro-pattern banner derivation.
+// Returns a 1-line headline + sub-explanation auto-derived from the
+// distribution of qualifying contracts by theme + flag.
+function buildMacroInsight(articles: SVArticle[]): { headline: string; sub: string; accent: string } {
+  if (articles.length === 0) {
+    return { headline: '', sub: '', accent: '#22D3EE' };
+  }
+
+  const themeCounts: Record<string, number> = {};
+  const profileCounts: Record<string, number> = {};
+  let chokepointCount = 0;
+  let totalUsdM = 0;
+  for (const a of articles) {
+    const t = a.strategic_visibility?.theme || 'NONE';
+    themeCounts[t] = (themeCounts[t] || 0) + 1;
+    const p = a.revenue_profile || 'UNCLASSIFIED';
+    profileCounts[p] = (profileCounts[p] || 0) + 1;
+    if ((a.chokepoint_severity ?? 0) >= 4) chokepointCount++;
+    totalUsdM += a.strategic_visibility?.contract_value_usd_m || 0;
+  }
+
+  // Industrial-capacity themes (the user's macro insight pattern)
+  const industrialThemes = ['ENERGY_TRANSITION', 'POWER_GRID', 'DEFENSE_AEROSPACE', 'SEMI_SUPPLY_CHAIN', 'CRITICAL_NATIONAL_PROGRAM', 'AI_INFRASTRUCTURE', 'HYPERSCALER_LEASE', 'NEOCLOUD_AI_INFRA'];
+  const industrialCount = industrialThemes.reduce((s, t) => s + (themeCounts[t] || 0), 0);
+  const industrialPct = articles.length > 0 ? Math.round((industrialCount / articles.length) * 100) : 0;
+
+  const aiInfraCount = (themeCounts['AI_INFRASTRUCTURE'] || 0) + (themeCounts['HYPERSCALER_LEASE'] || 0) + (themeCounts['NEOCLOUD_AI_INFRA'] || 0);
+  const energyDefenceCount = (themeCounts['ENERGY_TRANSITION'] || 0) + (themeCounts['POWER_GRID'] || 0) + (themeCounts['DEFENSE_AEROSPACE'] || 0) + (themeCounts['CRITICAL_NATIONAL_PROGRAM'] || 0);
+  const totalFmt = totalUsdM >= 1000 ? `$${(totalUsdM / 1000).toFixed(1)}B` : `$${Math.round(totalUsdM)}M`;
+
+  if (industrialPct >= 80) {
+    return {
+      headline: 'Markets are repricing scarce industrial capacity — not software',
+      sub: `${industrialCount} of ${articles.length} contracts (${industrialPct}%) are AI infra / energy / defence / semi / sovereign. ${chokepointCount} are sub-3 chokepoints. Cumulative book ${totalFmt}.`,
+      accent: '#8B5CF6',
+    };
+  }
+  if (aiInfraCount >= energyDefenceCount && aiInfraCount >= 3) {
+    return {
+      headline: 'AI infrastructure capex dominating',
+      sub: `${aiInfraCount} hyperscaler / neocloud lease frameworks vs ${energyDefenceCount} energy + defence frameworks. ${chokepointCount} sub-3 chokepoints. Cumulative ${totalFmt}.`,
+      accent: '#22D3EE',
+    };
+  }
+  if (energyDefenceCount > aiInfraCount) {
+    return {
+      headline: 'Energy + defence sovereignty is the dominant capital cycle',
+      sub: `${energyDefenceCount} energy / defence / sovereign-program frameworks vs ${aiInfraCount} AI infra. ${chokepointCount} sub-3 chokepoints. Cumulative ${totalFmt}.`,
+      accent: '#F59E0B',
+    };
+  }
+  return {
+    headline: 'Mixed institutional capex backdrop',
+    sub: `${articles.length} qualifying contracts across ${Object.keys(themeCounts).length} themes. ${chokepointCount} sub-3 chokepoints. Cumulative ${totalFmt}.`,
+    accent: '#10B981',
+  };
+}
 
 function fmtMoney(usdM?: number): string {
   if (usdM === undefined) return '—';
@@ -394,6 +474,38 @@ export default function StrategicVisibilityPage() {
             <strong style={{ color: '#E6EDF3' }}>Overrides:</strong> 🔒 Chokepoint (sole producer + ≥5y policy-backed) · 🧭 Strategic Program (≥$300M + ≥5y national framework).
           </div>
         </div>
+
+        {/* PATCH 0073: MACRO INSIGHT BANNER — auto-derived dominant pattern */}
+        {!isLoading && articles.length > 0 && (() => {
+          const insight = buildMacroInsight(articles);
+          if (!insight.headline) return null;
+          return (
+            <div style={{
+              backgroundColor: '#0D1B2E',
+              border: `1px solid ${insight.accent}40`,
+              borderLeft: `3px solid ${insight.accent}`,
+              borderRadius: 10,
+              padding: '12px 16px',
+              marginBottom: 14,
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 12,
+            }}>
+              <span style={{ fontSize: 22, lineHeight: 1 }}>📡</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 9, fontWeight: 700, color: insight.accent, letterSpacing: '0.8px', marginBottom: 3 }}>
+                  MACRO PATTERN — derived from current ledger distribution
+                </div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#F5F7FA', marginBottom: 4 }}>
+                  {insight.headline}
+                </div>
+                <div style={{ fontSize: 11, color: '#94A3B8', lineHeight: 1.5 }}>
+                  {insight.sub}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Stats row */}
         {!isLoading && (
@@ -608,6 +720,41 @@ export default function StrategicVisibilityPage() {
                                 · {a.revenue_profile_ebitda_band}
                               </span>
                             )}
+                          </span>
+                        )}
+                        {/* PATCH 0073: chokepoint + WC numeric badges */}
+                        {a.chokepoint_severity != null && a.chokepoint_severity > 0 && (
+                          <span
+                            title={`${a.chokepoint_rationale || ''}\nCompetitors: ${a.chokepoint_competitors || '—'}`}
+                            style={{
+                              fontSize: 9, fontWeight: 700,
+                              color: chokepointSevColor(a.chokepoint_severity),
+                              border: `1px solid ${chokepointSevColor(a.chokepoint_severity)}40`,
+                              backgroundColor: `${chokepointSevColor(a.chokepoint_severity)}10`,
+                              padding: '2px 6px', borderRadius: 3,
+                              fontFamily: 'ui-monospace, SF Mono, Menlo, monospace',
+                            }}
+                          >
+                            🔒 {a.chokepoint_label || 'CHOKEPOINT'}
+                            <span style={{ marginLeft: 4, letterSpacing: '1px' }}>{chokepointSevDots(a.chokepoint_severity)}</span>
+                            <span style={{ marginLeft: 3, color: '#94A3B8', fontWeight: 400 }}>{a.chokepoint_severity}/5</span>
+                          </span>
+                        )}
+                        {a.working_capital_intensity_pct != null && (
+                          <span
+                            title={`Working capital intensity ${a.working_capital_intensity_pct}% — 0 = annuity / 100 = milestone-paid extreme`}
+                            style={{
+                              fontSize: 9, fontWeight: 700,
+                              color: a.working_capital_intensity_pct >= 70 ? '#EF4444'
+                                : a.working_capital_intensity_pct >= 40 ? '#F59E0B'
+                                : a.working_capital_intensity_pct >= 20 ? '#22D3EE'
+                                : '#10B981',
+                              border: `1px solid ${a.working_capital_intensity_pct >= 70 ? '#EF4444' : a.working_capital_intensity_pct >= 40 ? '#F59E0B' : '#22D3EE'}40`,
+                              backgroundColor: a.working_capital_intensity_pct >= 70 ? '#EF444410' : a.working_capital_intensity_pct >= 40 ? '#F59E0B10' : '#22D3EE10',
+                              padding: '2px 6px', borderRadius: 3,
+                            }}
+                          >
+                            WC: {a.working_capital_intensity_pct}%
                           </span>
                         )}
                       </div>

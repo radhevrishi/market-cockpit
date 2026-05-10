@@ -71,6 +71,15 @@ export interface TransformationalItem {
   revenue_profile_working_capital?: string | null;
   revenue_profile_rationale?: string | null;
   implied_secondary_demand?: ImpliedSecondaryDemand | null;
+
+  // PATCH 0073: chokepoint index + numeric WC intensity
+  chokepoint_category?: string | null;            // ChokepointCategory
+  chokepoint_label?: string | null;
+  chokepoint_severity?: 0 | 1 | 2 | 3 | 4 | 5 | null;
+  chokepoint_competitors?: string | null;
+  chokepoint_rationale?: string | null;
+  chokepoint_primary_tickers?: string[] | null;
+  working_capital_intensity_pct?: number | null;  // 0-100 numeric (sortable/filterable)
 }
 
 interface IndexEntry {

@@ -834,6 +834,7 @@ import {
   classifyRevenueProfile,
   computeImpliedSecondaryDemand,
 } from './strategic-visibility';
+import { classifyChokepoint, workingCapitalIntensityNumeric } from './chokepoint-index';
 
 function enrichSeedEntry(item: TransformationalItem): TransformationalItem {
   // Skip if already has institutional dims (e.g. hand-curated entry)
@@ -859,6 +860,17 @@ function enrichSeedEntry(item: TransformationalItem): TransformationalItem {
     });
   }
 
+  // PATCH 0073: chokepoint detection + WC numeric
+  const chokepoint = classifyChokepoint({
+    title: item.title,
+    desc: item.strategic_visibility?.reason,
+    ticker_symbols: item.ticker_symbols,
+  });
+  const wcIntensity = workingCapitalIntensityNumeric({
+    revenue_profile: revProfile.profile,
+    text,
+  });
+
   return {
     ...item,
     funding_confidence: funding.score,
@@ -870,6 +882,14 @@ function enrichSeedEntry(item: TransformationalItem): TransformationalItem {
     revenue_profile_working_capital: revProfile.working_capital,
     revenue_profile_rationale: revProfile.rationale,
     implied_secondary_demand: secondary ?? null,
+    // PATCH 0073
+    chokepoint_category: chokepoint.detected ? chokepoint.category : null,
+    chokepoint_label: chokepoint.detected ? chokepoint.label : null,
+    chokepoint_severity: chokepoint.severity ?? null,
+    chokepoint_competitors: chokepoint.detected ? chokepoint.global_competitors : null,
+    chokepoint_rationale: chokepoint.detected ? chokepoint.rationale : null,
+    chokepoint_primary_tickers: chokepoint.detected ? chokepoint.primary_tickers : null,
+    working_capital_intensity_pct: wcIntensity,
   };
 }
 

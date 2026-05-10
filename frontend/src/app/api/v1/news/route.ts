@@ -36,6 +36,8 @@ import {
   classifyRevenueProfile,
   computeImpliedSecondaryDemand,
 } from '@/lib/news/strategic-visibility';
+// PATCH 0073: chokepoint index + numeric WC intensity
+import { classifyChokepoint, workingCapitalIntensityNumeric } from '@/lib/news/chokepoint-index';
 // PATCH 0068: 90-day transformational contracts ledger
 import {
   recordTransformational,
@@ -181,7 +183,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v25'; // v25: institutional dimensions — funding confidence, execution status, revenue profile, secondary demand (0072)
+const CACHE_KEY = 'news:articles:v26'; // v26: Chokepoint Index + Macro insight banner + WC intensity numeric (0073)
 const CACHE_TTL = 300; // 5 min
 // v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
 // freshness_layer, signal_confidence (multi-dim), bottleneck_parent /
@@ -1559,6 +1561,21 @@ async function fetchAllNews(): Promise<any[]> {
             }
           }
 
+          // ── PATCH 0073: chokepoint index + WC intensity numeric ──
+          let svChokepoint: ReturnType<typeof classifyChokepoint> | undefined;
+          let svWcIntensity: number | undefined;
+          if (strategicVisibility.qualifies) {
+            svChokepoint = classifyChokepoint({
+              title,
+              desc,
+              ticker_symbols: tickers,
+            });
+            svWcIntensity = workingCapitalIntensityNumeric({
+              revenue_profile: svRevenueProfile?.profile,
+              text: `${title} ${desc}`,
+            });
+          }
+
           // ── PATCH 0062: Structural Relevance Score (unified 0-100) ──
           // Now that all dependencies are in scope, compute the unified score.
           // Combines structural state + signal confidence + structural confidence
@@ -1662,6 +1679,14 @@ async function fetchAllNews(): Promise<any[]> {
             revenue_profile_working_capital: svRevenueProfile?.working_capital ?? null,
             revenue_profile_rationale: svRevenueProfile?.rationale ?? null,
             implied_secondary_demand: svSecondaryDemand ?? null,
+            // PATCH 0073: chokepoint + WC numeric
+            chokepoint_category: svChokepoint?.detected ? svChokepoint.category : null,
+            chokepoint_label: svChokepoint?.detected ? svChokepoint.label : null,
+            chokepoint_severity: svChokepoint?.severity ?? null,
+            chokepoint_competitors: svChokepoint?.detected ? svChokepoint.global_competitors : null,
+            chokepoint_rationale: svChokepoint?.detected ? svChokepoint.rationale : null,
+            chokepoint_primary_tickers: svChokepoint?.detected ? svChokepoint.primary_tickers : null,
+            working_capital_intensity_pct: svWcIntensity ?? null,
             defense_narrative: defenseNarrative,
             defense_impact_inline: defenseImpact,
             freshness_layer: freshnessLayer,               // LIVE / PERSISTENT / ARCHIVAL
@@ -1743,6 +1768,14 @@ async function fetchAllNews(): Promise<any[]> {
           revenue_profile_working_capital: a.revenue_profile_working_capital ?? null,
           revenue_profile_rationale: a.revenue_profile_rationale ?? null,
           implied_secondary_demand: a.implied_secondary_demand ?? null,
+          // PATCH 0073: chokepoint + WC numeric
+          chokepoint_category: a.chokepoint_category ?? null,
+          chokepoint_label: a.chokepoint_label ?? null,
+          chokepoint_severity: a.chokepoint_severity ?? null,
+          chokepoint_competitors: a.chokepoint_competitors ?? null,
+          chokepoint_rationale: a.chokepoint_rationale ?? null,
+          chokepoint_primary_tickers: a.chokepoint_primary_tickers ?? null,
+          working_capital_intensity_pct: a.working_capital_intensity_pct ?? null,
         }),
       ),
     );
