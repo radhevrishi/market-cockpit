@@ -1,6 +1,13 @@
 'use client';
 
 import React, { useState, useMemo, useRef } from 'react';
+// PATCH 0055: Multibagger framework extensions — dilution / reinvestment /
+// coverage / historical reference panel.
+import {
+  analyzeDilution, computeReinvestmentEngine, computeFrameworkCoverage,
+  HISTORICAL_MULTIBAGGERS, type DilutionAnalysis, type ReinvestmentEngine,
+  type FrameworkCoverage,
+} from '@/lib/multibagger/framework-extensions';
 
 // Shared API base — respects NEXT_PUBLIC_API_URL env var so all fetch() calls
 // resolve consistently when the base URL changes (fixes #13: mixed /api/v1 vs /api)
@@ -258,6 +265,13 @@ interface ExcelRow {
   profitAcceleration?: number;    // yoyProfitGrowth - profitCagr → positive = accelerating
   recentOpLev?: number;           // yoyProfitGrowth / yoySalesGrowth (recent operating leverage)
   accelSignal?: 'ACCELERATING' | 'STABLE' | 'DECELERATING'; // composite trend signal
+  // ── PATCH 0055: framework extensions ─────────────────────────────────────
+  // Dilution trajectory (shareCount CAGR ≈ profitCagr − epsGrowth)
+  dilution?: DilutionAnalysis;
+  // Reinvestment engine score (combines incremental ROCE + profit growth − dilution)
+  reinvestment?: ReinvestmentEngine;
+  // Framework coverage (% of ideal data present)
+  framework_coverage?: FrameworkCoverage;
 }
 
 // ── OWNERSHIP INTELLIGENCE LAYER ─────────────────────────────────────────────
@@ -1413,6 +1427,30 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   // Capital trap compound (FCF negative + meaningful debt)
   if ((row.fcfAbsolute??1)<0 && (row.de??0)>0.7)        reratingBonus-=6;
 
+  // PATCH 0055: Dilution trajectory — penalty for share-count growth that
+  // dilutes per-share economics, bonus for buyback / accretive companies.
+  // Both signals NOT captured by any existing pillar.
+  if (row.dilution) {
+    reratingBonus -= row.dilution.penalty;
+    reratingBonus += row.dilution.bonus;
+    if (row.dilution.verdict === 'SEVERELY_DILUTIVE') {
+      risks.push(`Dilution −15: ${row.dilution.note}`);
+    } else if (row.dilution.verdict === 'DILUTIVE') {
+      risks.push(`Dilution −8: ${row.dilution.note}`);
+    } else if (row.dilution.verdict === 'ACCRETIVE' && row.dilution.bonus >= 8) {
+      // Show as positive trigger (we already pushed it as bonus above)
+    }
+  }
+  // PATCH 0055: Reinvestment Engine — small additive bonus when stock is
+  // genuinely compounding (incremental ROCE + profit growth + low dilution)
+  if (row.reinvestment && row.reinvestment.verdict === 'COMPOUNDING') {
+    reratingBonus += 5;
+  } else if (row.reinvestment && row.reinvestment.verdict === 'BUILDING') {
+    reratingBonus += 2;
+  } else if (row.reinvestment && row.reinvestment.verdict === 'STALLING') {
+    reratingBonus -= 5;
+  }
+
   // Expensive + decelerating = dangerous combination
   if (row.accelSignal==='DECELERATING' && (row.pe??0)>40) reratingBonus-=8;
 
@@ -1836,6 +1874,41 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
       if(delta>=5) return 'ACCELERATING';
       if(delta<=-5) return 'DECELERATING';
       return 'STABLE';
+    },
+    // PATCH 0055: framework extension getters — computed from data already collected
+    get dilution(): DilutionAnalysis {
+      return analyzeDilution({
+        profitCagr: n(m['profitCagr']?row[m['profitCagr']]:undefined),
+        epsGrowth:  n(m['epsGrowth']?row[m['epsGrowth']]:undefined),
+      });
+    },
+    get reinvestment(): ReinvestmentEngine {
+      const d = analyzeDilution({
+        profitCagr: n(m['profitCagr']?row[m['profitCagr']]:undefined),
+        epsGrowth:  n(m['epsGrowth']?row[m['epsGrowth']]:undefined),
+      });
+      const roce_cur=n(m['roce']?row[m['roce']]:undefined);
+      const roce3yr_v=n(m['roce3yr']?row[m['roce3yr']]:undefined);
+      const expansion = (roce_cur!==undefined && roce3yr_v!==undefined)
+        ? Math.round((roce_cur-roce3yr_v)*10)/10 : undefined;
+      return computeReinvestmentEngine({
+        roceExpansion: expansion,
+        profitCagr: n(m['profitCagr']?row[m['profitCagr']]:undefined),
+        dilutionDragPp: d.drag_pp,
+      });
+    },
+    get framework_coverage(): FrameworkCoverage {
+      // Build a flat object of present field values for the coverage check
+      const flat: Record<string, unknown> = {};
+      for (const k of ['roce','opm','cfoToPat','fcfAbsolute','gpm','roic',
+                       'revCagr','profitCagr','epsGrowth','yoySalesGrowth',
+                       'roce3yr','opm3yr','de','netDebt','ebitda','icr',
+                       'promoter','pledge','fii','dii','changeInPromoter',
+                       'pe','peg','high52w','marketCapCr']) {
+        const col = m[k];
+        flat[k] = col ? row[col] : undefined;
+      }
+      return computeFrameworkCoverage(flat);
     },
   };
 }
