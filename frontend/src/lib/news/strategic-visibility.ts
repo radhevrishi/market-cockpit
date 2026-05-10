@@ -270,9 +270,52 @@ export function classifyStrategicVisibility(args: {
     }
   }
 
+  // PATCH 0069: Generic-hyperscaler detection.
+  // Many transformational AI lease announcements name only "undisclosed
+  // hyperscaler" / "investment-grade hyperscaler" / "Tier-1 AI customer".
+  // When the deal language is otherwise institutional (lease/take-or-pay/
+  // triple-net + AI/data center context), accept HYPERSCALER tier with
+  // generic name so the article can qualify.
+  if (counterparty_tier === 'NONE') {
+    const hasHyperscalerKeyword = /\b(hyperscaler|hyperscale|investment.?grade.{0,30}(?:hyperscaler|tenant)|tier.?1\s*(?:ai\s*customer|cloud\s*customer)|undisclosed.{0,30}hyperscaler)\b/i.test(text);
+    const hasLeaseStructure = /\b(triple.?net|take.?or.?pay|colocation|data.?center lease|ai (?:campus|factory|infrastructure) lease|hosting agreement|capacity reservation)\b/i.test(text);
+    if (hasHyperscalerKeyword && hasLeaseStructure) {
+      counterparty_tier = 'HYPERSCALER';
+      counterparty_name = 'Hyperscaler (undisclosed)';
+    }
+  }
+  // Treat top neoclouds (CoreWeave / Crusoe / Lambda / Nebius) as
+  // HYPERSCALER counterparty when they're the customer in a lease deal.
+  if (counterparty_tier === 'NONE') {
+    const neoCustomer = text.match(/\b(coreweave|crusoe|lambda labs|nebius|wulf|terawulf)\b/i);
+    if (neoCustomer && /\b(lease|capacity reservation|hosting|colocation)\b/i.test(text)) {
+      counterparty_tier = 'HYPERSCALER';
+      counterparty_name = neoCustomer[1].replace(/^./, (c) => c.toUpperCase());
+    }
+  }
+
   // Step 3: Extract contract value + visibility
-  const contract_value_usd_m = extractContractValueUsdMillions(text);
+  let contract_value_usd_m = extractContractValueUsdMillions(text);
   let visibility_years = extractVisibilityYears(text);
+
+  // PATCH 0069: capacity-based size inference for AI/hyperscaler leases.
+  // When the article describes ≥100MW AI campus / data center capacity
+  // with ≥10y duration but doesn't disclose $ value, infer a conservative
+  // $30M/MW/year implicit value (industry benchmark for take-or-pay AI
+  // leases). 200MW × 15y × $30M = $90B (capped at $20B for sanity).
+  if (contract_value_usd_m === undefined) {
+    const mwM = text.match(/\b(\d[\d,.]*)\s*mw\b/i);
+    const isAiContext = /\b(ai (?:campus|factory|infrastructure|data ?center)|hyperscaler|colocation|hpc cluster)\b/i.test(text);
+    if (mwM && isAiContext) {
+      const mw = parseFloat(mwM[1].replace(/,/g, ''));
+      const yrs = visibility_years ?? 10;
+      if (mw >= 100 && yrs >= 10) {
+        // Conservative: $20M/MW/year ≈ $300/kW-month (take-or-pay)
+        const implicit = Math.min(20000, Math.round(mw * yrs * 20));
+        contract_value_usd_m = implicit;
+      }
+    }
+  }
 
   // PATCH 0068: Infer visibility for India PSU infra EPC orders that don't
   // mention years explicitly. Solar/BESS/hydro/transmission/defence EPC

@@ -38,6 +38,8 @@ import {
   transformationalSummary,
   type TransformationalItem,
 } from '@/lib/news/transformational-ledger';
+// PATCH 0069: curated seed of verified transformational contracts
+import { seedTransformational } from '@/lib/news/transformational-seed';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -174,7 +176,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v21'; // v21: India PSU tier-2 strategic-visibility path + 180d transformational ledger (0068)
+const CACHE_KEY = 'news:articles:v22'; // v22: curated seed + unnamed-hyperscaler + neocloud-counterparty + capacity-based sizing (0069)
 const CACHE_TTL = 300; // 5 min
 // v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
 // freshness_layer, signal_confidence (multi-dim), bottleneck_parent /
@@ -1656,8 +1658,13 @@ async function fetchAllNews(): Promise<any[]> {
     }
   }
 
+  // ── PATCH 0069: seed curated transformational contracts into the ledger.
+  //    Idempotent (de-dupes by id). This guarantees verified mega-deals
+  //    show up even when not in the live RSS feed. ──
+  try { await seedTransformational(); } catch { /* non-fatal */ }
+
   // ── PATCH 0068: persist qualifying strategic-visibility articles to the
-  //    90-day transformational-contracts ledger. Fire-and-forget so we
+  //    180-day transformational-contracts ledger. Fire-and-forget so we
   //    don't slow the response. KV de-dupes by id internally. ──
   try {
     const qualifying = articles.filter((a: any) => a?.strategic_visibility?.qualifies === true);
@@ -2290,6 +2297,9 @@ export async function GET(request: Request) {
       const themeFilter = searchParams.get('theme') || undefined;
       const regionFilter = (searchParams.get('region') as 'IN' | 'US' | 'GLOBAL' | 'ALL' | null) || undefined;
       const limit = parseInt(searchParams.get('limit') || '100', 10);
+
+      // PATCH 0069: ensure the seed is present before reading. Idempotent.
+      try { await seedTransformational(); } catch { /* non-fatal */ }
 
       const ledger = await readTransformational({
         window_days: windowDays,

@@ -242,9 +242,10 @@ export default function StrategicVisibilityPage() {
             INCLUSION CRITERIA — only articles meeting ALL of A + B + C qualify
           </div>
           <div style={{ fontSize: 11, color: '#94A3B8', lineHeight: 1.6 }}>
-            <strong style={{ color: '#E6EDF3' }}>A. Size:</strong> ≥$300M firm contract OR ≥10× backlog OR ≥20% LTM rev OR ≥10% mcap. Auto-include: 10y+ deal ≥30% mcap.<br/>
+            <strong style={{ color: '#E6EDF3' }}>A. Size:</strong> ≥$300M firm contract OR ≥10× backlog OR ≥20% LTM rev OR ≥10% mcap. Auto-include: 10y+ deal ≥30% mcap. India PSU path: ≥₹500 cr from NTPC / PGCIL / SECI / HAL / BEL with ≥3y visibility.<br/>
             <strong style={{ color: '#E6EDF3' }}>B. Theme:</strong> AI Infra / Energy Transition / Defense / Semi Supply Chain / Sovereign Program / Hyperscaler Lease / Quantum / Power.<br/>
-            <strong style={{ color: '#E6EDF3' }}>C. Duration:</strong> ≥3y firm visibility (prefer ≥5–10y) with Tier-1 counterparty (Hyperscaler / Gov / Top-3 Utility).<br/>
+            <strong style={{ color: '#E6EDF3' }}>C. Duration:</strong> ≥3y firm visibility (prefer ≥5–10y) with Tier-1 counterparty (Hyperscaler / Gov / Top-3 Utility). Generic "hyperscaler" / "investment-grade tenant" accepted with lease/take-or-pay structure.<br/>
+            <strong style={{ color: '#E6EDF3' }}>Capacity inference:</strong> ≥100MW AI campus + ≥10y → implicit ≥$200M (industry benchmark $20M/MW/y).<br/>
             <strong style={{ color: '#E6EDF3' }}>Overrides:</strong> 🔒 Chokepoint (sole producer + ≥5y policy-backed) · 🧭 Strategic Program (≥$300M + ≥5y national framework).
           </div>
         </div>
