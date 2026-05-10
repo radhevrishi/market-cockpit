@@ -98,17 +98,41 @@ export const TOKEN_TO_NODE: TokenMapping[] = [
     companion: /(capacity|tight|allocation|backlog|construction|expansion|shortage|sold out)/i },
   { pattern: /\b(foundry|tsmc|globalfoundries|samsung foundry|intel foundry)\b/i, node: 'FABRICATION_INFRA', weight: 6, event_hint: 'STRUCTURE' },
   { pattern: /\b(2nm|3nm|5nm|7nm|10nm|14nm)\b/i,                       node: 'FABRICATION_INFRA', weight: 5, event_hint: 'CYCLE' },
+  // PATCH 0060: semiconductor manufacturing chain — substrates, photoresists, gases, chemicals
+  { pattern: /\b(abf substrate|ajinomoto build.?up film|abf supply)\b/i, node: 'FABRICATION_INFRA', weight: 8, event_hint: 'STRUCTURE' },
+  { pattern: /\b(photoresist|euv resist|jsr|tokyo ohka|shin.?etsu chemical)\b/i, node: 'FABRICATION_INFRA', weight: 7, event_hint: 'STRUCTURE',
+    companion: /(supply|shortage|allocation|lead time|capacity|expansion|export|ban)/i },
+  { pattern: /\b(specialty gas|electronic gas|process gas|neon gas|nf3|wf6)\b/i, node: 'FABRICATION_INFRA', weight: 7, event_hint: 'STRUCTURE',
+    companion: /(supply|shortage|allocation|disruption|export|ban|spike)/i },
+  { pattern: /\b(silicon wafer|300mm wafer|polysilicon|wafer supply)\b/i, node: 'FABRICATION_INFRA', weight: 7, event_hint: 'STRUCTURE' },
+  { pattern: /\b(slurry|cmp slurry|advanced chemical|chip chemical|fluoropolymer)\b/i, node: 'FABRICATION_INFRA', weight: 5, event_hint: 'STRUCTURE',
+    companion: /(supply|allocation|capacity|shortage|expansion)/i },
 
   // ─── INTERCONNECT_INFRA ─────────────────────────────────────────────────
   { pattern: /\b(silicon photonics|co.?packaged optics|cpo)\b/i,       node: 'INTERCONNECT_INFRA', weight: 8, event_hint: 'SECULAR' },
   { pattern: /\b(optical interconnect|optical i\/o)\b/i,                node: 'INTERCONNECT_INFRA', weight: 7, event_hint: 'STRUCTURE' },
   { pattern: /\b(quantum interconnect|spinwave)\b/i,                    node: 'INTERCONNECT_INFRA', weight: 9, event_hint: 'SECULAR' },
   { pattern: /\b(infiniband|nvlink|dpu|smart nic)\b/i,                  node: 'INTERCONNECT_INFRA', weight: 5, event_hint: 'STRUCTURE' },
+  // PATCH 0060: fiber stack — coherent optics, DSP, fiber mfg, optical switching
+  { pattern: /\b(coherent optics|coherent dsp|optical dsp)\b/i,         node: 'INTERCONNECT_INFRA', weight: 7, event_hint: 'SECULAR' },
+  { pattern: /\b(800g (?:optics|module|transceiver)|1\.6t (?:optics|module))\b/i, node: 'INTERCONNECT_INFRA', weight: 7, event_hint: 'STRUCTURE' },
+  { pattern: /\b(fiber manufacturing|fiber capacity|fibre manufacturing|optical fiber)\b/i, node: 'INTERCONNECT_INFRA', weight: 6, event_hint: 'STRUCTURE',
+    companion: /(supply|shortage|capacity|expansion|allocation|tender|order)/i },
+  { pattern: /\b(optical switch|optical cross.?connect|ocs)\b/i,        node: 'INTERCONNECT_INFRA', weight: 6, event_hint: 'SECULAR' },
+  { pattern: /\b(amphenol|corning optical|prysmian|nexans|sterlite)\b/i, node: 'INTERCONNECT_INFRA', weight: 5, event_hint: 'STRUCTURE',
+    companion: /(order|capacity|expansion|tender|deal|supply)/i },
 
   // ─── COOLING_INFRA ──────────────────────────────────────────────────────
   { pattern: /\b(liquid cooling|immersion cooling|cdu)\b/i,            node: 'COOLING_INFRA',  weight: 7, event_hint: 'STRUCTURE' },
   { pattern: /\b(thermal management|rack cooling|direct-to-chip)\b/i,   node: 'COOLING_INFRA',  weight: 5, event_hint: 'STRUCTURE' },
   { pattern: /\b(thermal limit|cooling capacity)\b/i,                  node: 'COOLING_INFRA',  weight: 5, event_hint: 'STRUCTURE' },
+  // PATCH 0060: cooling depth — chillers, HVAC industrial, water constraints
+  { pattern: /\b(industrial chiller|precision chiller|crac unit|crah unit|hvac)\b/i, node: 'COOLING_INFRA', weight: 6, event_hint: 'STRUCTURE',
+    companion: /(data center|datacenter|hyperscaler|cooling|capacity|order)/i },
+  { pattern: /\b(water (?:constraint|cooling|withdrawal|consumption|risk))\b/i, node: 'COOLING_INFRA', weight: 6, event_hint: 'STRUCTURE',
+    companion: /(data center|datacenter|hyperscaler|drought|water (?:cooled|use))/i },
+  { pattern: /\b(vertiv|schneider electric|eaton cooling|nlight)\b/i,  node: 'COOLING_INFRA', weight: 5, event_hint: 'STRUCTURE',
+    companion: /(order|capacity|expansion|tender|win|deal)/i },
 
   // ─── NETWORK_BANDWIDTH ──────────────────────────────────────────────────
   { pattern: /\b(5g|6g|fiber|fibre)\b/i,                              node: 'NETWORK_BANDWIDTH', weight: 4, event_hint: 'CYCLE',
@@ -125,6 +149,17 @@ export const TOKEN_TO_NODE: TokenMapping[] = [
   { pattern: /\b(coal (stockpile|stock at|shortage|imports?|allocation)|coal india)\b/i, node: 'ENERGY_INFRA', weight: 6, event_hint: 'CYCLE' },
   { pattern: /\b(battery cell|gigafactory|electrolyser|green hydrogen|fusion)\b/i, node: 'ENERGY_INFRA', weight: 6, event_hint: 'SECULAR' },
   { pattern: /\b\d{2,4}\s*(mw|gw|kva)\b/i,                            node: 'ENERGY_INFRA',   weight: 4, event_hint: 'EVENT' },
+  // PATCH 0060: transformer / grid equipment depth
+  { pattern: /\b(transformer (?:lead time|shortage|backlog|order book|tender))\b/i, node: 'ENERGY_INFRA', weight: 8, event_hint: 'STRUCTURE' },
+  { pattern: /\b(switchgear|gis switchgear|hvdc|high.?voltage)\b/i,    node: 'ENERGY_INFRA',   weight: 6, event_hint: 'STRUCTURE',
+    companion: /(order|capacity|expansion|tender|shortage|backlog|deal|win)/i },
+  { pattern: /\b(copper winding|grain.?oriented steel|crgo|hrgo)\b/i,  node: 'ENERGY_INFRA',   weight: 7, event_hint: 'STRUCTURE',
+    companion: /(supply|shortage|capacity|allocation|import|export)/i },
+  { pattern: /\b(utility queue|interconnection queue|grid connection backlog)\b/i, node: 'ENERGY_INFRA', weight: 8, event_hint: 'STRUCTURE' },
+  { pattern: /\b(ge vernova|hitachi energy|prysmian|abb power|eaton)\b/i, node: 'ENERGY_INFRA', weight: 5, event_hint: 'STRUCTURE',
+    companion: /(order|capacity|expansion|tender|deal|win|backlog)/i },
+  { pattern: /\b(ppa|power purchase agreement)\b/i,                    node: 'ENERGY_INFRA',   weight: 6, event_hint: 'STRUCTURE',
+    companion: /(data center|hyperscaler|signed|gigawatt|gw)/i },
 
   // ─── NUCLEAR_INFRA ──────────────────────────────────────────────────────
   { pattern: /\b(nuclear (reactor|power|plant|fuel|capacity))\b/i,     node: 'NUCLEAR_INFRA',  weight: 8, event_hint: 'SECULAR' },
@@ -173,6 +208,16 @@ export const TOKEN_TO_NODE: TokenMapping[] = [
   // ─── AEROSPACE_INFRA ────────────────────────────────────────────────────
   { pattern: /\b(pslv|gslv|chandrayaan|gaganyaan)\b/i,                 node: 'AEROSPACE_INFRA', weight: 6, event_hint: 'EVENT' },
   { pattern: /\b(starlink|spacex|launch (cadence|capacity)|leo constellation)\b/i, node: 'AEROSPACE_INFRA', weight: 5, event_hint: 'SECULAR' },
+  // PATCH 0060: aerospace supply chain depth
+  { pattern: /\b(aero.?engine|jet engine|geared turbofan|gtf|leap engine|trent engine|cf6|cfm56)\b/i, node: 'AEROSPACE_INFRA', weight: 7, event_hint: 'STRUCTURE',
+    companion: /(shortage|backlog|lead time|maintenance|recall|delivery|order|capacity)/i },
+  { pattern: /\b(titanium forging|titanium ring|aerospace forging|nickel alloy)\b/i, node: 'AEROSPACE_INFRA', weight: 7, event_hint: 'STRUCTURE',
+    companion: /(supply|shortage|capacity|allocation|order)/i },
+  { pattern: /\b(avionics|cockpit display|fly.?by.?wire)\b/i,          node: 'AEROSPACE_INFRA', weight: 6, event_hint: 'STRUCTURE',
+    companion: /(supply|shortage|order|capacity|certification)/i },
+  { pattern: /\b(jet engine maintenance|engine mro|aircraft mro|maintenance backlog)\b/i, node: 'AEROSPACE_INFRA', weight: 8, event_hint: 'STRUCTURE' },
+  { pattern: /\b(boeing|airbus|embraer|atr)\b/i,                       node: 'AEROSPACE_INFRA', weight: 4, event_hint: 'STRUCTURE',
+    companion: /(order|delivery|backlog|production|cancellation|capacity|shortage)/i },
 
   // ─── RESOURCE_SCARCITY ──────────────────────────────────────────────────
   { pattern: /\brare earth\b/i,                                        node: 'RESOURCE_SCARCITY', weight: 8, event_hint: 'SECULAR' },
@@ -182,6 +227,17 @@ export const TOKEN_TO_NODE: TokenMapping[] = [
   { pattern: /\b(uranium|enrichment|fuel rod|cameco|kazatomprom)\b/i,  node: 'RESOURCE_SCARCITY', weight: 6, event_hint: 'STRUCTURE' },
   { pattern: /\b(copper|aluminium|aluminum|steel)\b/i,                 node: 'RESOURCE_SCARCITY', weight: 3, event_hint: 'CYCLE',
     companion: /(supply|shortage|inventory|capacity|stockpile|export ban)/i },
+  // PATCH 0060: rare earth depth — magnets, refining, processing
+  { pattern: /\b(rare earth (?:magnet|magnets|processing|refining|export|ban))\b/i, node: 'RESOURCE_SCARCITY', weight: 9, event_hint: 'SECULAR' },
+  { pattern: /\b(neodymium|dysprosium|terbium|samarium|praseodymium|ndfeb)\b/i, node: 'RESOURCE_SCARCITY', weight: 7, event_hint: 'SECULAR',
+    companion: /(supply|export|magnet|processing|allocation|ban|china)/i },
+  { pattern: /\b(lithium (?:refining|conversion|hydroxide|carbonate))\b/i, node: 'RESOURCE_SCARCITY', weight: 7, event_hint: 'STRUCTURE' },
+  { pattern: /\b(cobalt (?:refining|processing)|graphite (?:anode|refining))\b/i, node: 'RESOURCE_SCARCITY', weight: 7, event_hint: 'STRUCTURE' },
+  { pattern: /\b(copper (?:concentrate|smelting|refining|grade)|copper (?:ore|tightness))\b/i, node: 'RESOURCE_SCARCITY', weight: 7, event_hint: 'STRUCTURE' },
+  { pattern: /\b(uranium (?:enrichment|conversion|deconversion)|fuel cycle|sweu)\b/i, node: 'RESOURCE_SCARCITY', weight: 8, event_hint: 'SECULAR' },
+  { pattern: /\b(antimony|bismuth|indium|tellurium|hafnium|zirconium)\b/i, node: 'RESOURCE_SCARCITY', weight: 6, event_hint: 'SECULAR',
+    companion: /(supply|export|ban|allocation|shortage|sanction)/i },
+  { pattern: /\b(china (?:rare earth|export control|critical mineral)|china export ban)\b/i, node: 'RESOURCE_SCARCITY', weight: 9, event_hint: 'EVENT' },
 
   // ─── AGRI_INFRA ─────────────────────────────────────────────────────────
   { pattern: /\b(fertilizer (shortage|subsidy|import)|urea|dap|mop|nitrogen fertilizer)\b/i, node: 'AGRI_INFRA', weight: 5, event_hint: 'CYCLE' },
