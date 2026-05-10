@@ -59,6 +59,56 @@ const TIER_WEIGHT: Record<string, number> = {
   EDITORIAL: 0.5, PRESS_RELEASE: 0.5, SOCIAL: 0, UNKNOWN: 0.5,
 };
 
+// PATCH 0109b: pseudo-ticker blacklist — these are CONCEPT words / units /
+// acronyms / regulator names that the news ticker-extraction picks up as
+// "tickers" but aren't tradable equities.  Without this filter the L1 chips
+// show GW / DRAM / MW / BESS / TSMC / AMCA / EPC / IPO / NTPCm / SKm / DAE
+// as if they were stocks.  User: 'symbolic pseudo-tickers look messy'.
+const PSEUDO_TICKER_BLACKLIST = new Set([
+  // Units
+  'GW','MW','KW','GWH','MWH','KWH','TWH','BWH','MM','CM','KM','HZ','MHZ','GHZ','THZ','KV','MV','HV','VAC','HVAC','CFM',
+  // Concept / industry acronyms
+  'AI','ML','LLM','GPU','CPU','TPU','NPU','HBM','DRAM','NAND','SSD','HDD','CXL','DDR','DDR5','DDR6','NVME','SATA','PCIE','USB',
+  'IPO','QIP','M&A','MA','PE','VC','HF','SPV','REIT','ARR','MRR','EBITDA','PAT','EBIT','OPM','ROCE','ROIC','ROE','EPS','NPM','PEG','TAM','SAM','SOM',
+  'EV','EVS','HEV','BEV','PHEV','FCEV','ICE','OEM','EMS','ESDM','ATMP','OSAT','SMR','BESS','BWMS','EPC','BOT','BOOT','PPP','PPA','LCOE','GW',
+  'AMCA','TEDBF','HALEU','LEU','MOU','NDA','LOI','RFP','RFQ','BOQ','SOR','PMS','AMC','SIP',
+  // Regulator / programs
+  'SEBI','RBI','TRAI','CCI','PIB','GST','DAE','DRDO','ISRO','NPCIL','NHPC','AERB','CERC','NCLT','IBC','SECI','PLI','FDI','NHAI','DFC','MNRE','MOP','MORTH','MEA','MOD','PSU','PFC','REC','IREDA',
+  // Geography
+  'IN','US','UK','EU','UAE','USA','CN','JP','KR','TW','GCC','MENA','APAC','EMEA','LATAM',
+  // News verbs / common caps
+  'CEO','CFO','COO','CTO','CIO','MD','VP','EVP','SVP','BOD','MOA','AOA','KPI',
+  'BUY','SELL','HOLD','BULL','BEAR','HIGH','LOW','TOP','UP','DOWN','LIVE','BREAKING','UPDATE','FACT','SPEC','INFER','NEW','OLD',
+  'YEAR','YEARS','QTR','QUARTER','MONTH','WEEK','DAY','FY','FYTD','YTD','YOY','QOQ','MOM','HOH','TTM','LTM','CAGR',
+  // Currency
+  'USD','INR','EUR','GBP','JPY','KRW','RMB','CNY','AED','SAR','SGD','HKD','BTC','ETH','SOL',
+  // Months
+  'JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC',
+  // Common short words mistaken for tickers
+  'AND','OR','BUT','THE','FOR','WITH','FROM','ARE','HAS','HAD','OUT','OVER','INTO','MORE','LESS','BIG','SMALL','SAID','SAYS','TBD','NA','TBA',
+  // Bracket-y SEC stuff
+  'TSMC','SK','SKM','HZL','HBM3','HBM4','HBM3E','GAA','EUV','ASML',
+  'NTPC','HAL','BEL','BHEL','BDL',  // these ARE real Indian companies but appear as SUFFIX-LESS strings; we want NTPC.NS / HAL.NS form (the .NS roster entries already cover them)
+]);
+
+function isValidTickerCandidate(t: string): boolean {
+  if (!t) return false;
+  const T = t.toUpperCase().trim();
+  if (T.length < 2 || T.length > 12) return false;
+  // Indian tickers always have .NS / .BO / .NSE / .BSE suffix → accept
+  if (/\.(NS|BO|NSE|BSE)$/i.test(T)) return true;
+  // Japanese / Taiwan / HK Bloomberg-style suffixes → accept
+  if (/\.(T|TW|HK|TYO|KS|KQ)$/i.test(T)) return true;
+  // Multi-segment with dot (e.g. PRY.MI / AI.PA) → accept
+  if (/^[A-Z0-9]{1,6}\.[A-Z0-9]{1,4}$/i.test(T)) return true;
+  // Pure-caps US/global ticker (3-5 chars only — 1-2 are too noisy, 6+ is rare and usually concept)
+  if (T.length >= 3 && T.length <= 5 && /^[A-Z]+$/.test(T)) {
+    if (PSEUDO_TICKER_BLACKLIST.has(T)) return false;
+    return true;
+  }
+  return false;
+}
+
 export async function recordNodeTicker(args: {
   node: SystemNode;
   tickers: string[];
@@ -87,6 +137,8 @@ export async function recordNodeTicker(args: {
     for (const t of tickers) {
       const T = (t || '').toUpperCase().trim();
       if (!T || T.length < 1 || T.length > 20) continue;
+      // PATCH 0109b: drop pseudo-tickers (GW / DRAM / MW / BESS / etc.)
+      if (!isValidTickerCandidate(T)) continue;
       const existing = map.get(T);
       if (existing) {
         existing.score += w;
@@ -139,6 +191,9 @@ export async function readNodeTickers(args: {
     if (!bucket) return [];
     return bucket.entries
       .map((e) => ({ ...e, score: decay(e.score, e.last_seen) }))
+      // PATCH 0109b: re-filter on read so pseudo-tickers in older KV buckets
+      // (written before the write-side filter) don't bleed into the UI.
+      .filter((e) => isValidTickerCandidate(e.ticker))
       .filter((e) => e.score >= min_score && e.mention_count >= min_mentions)
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);

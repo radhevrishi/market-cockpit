@@ -379,10 +379,12 @@ export const NODE_RULES_IN: Record<SystemNode, NodeRule> = {
     },
   },
   NUCLEAR_INFRA: {
-    // PATCH 0106: drop L5 (TCS/INFY/RELIANCE not nuclear beneficiaries — pure
-    // theme dilution).  Surface specialist precision-component suppliers in L1.
-    // PATCH 0107: WALCHANNAG = global nuclear heavy-engineering export proxy
-    fires: ['L1','L4','L6'],
+    // PATCH 0106: drop L5 (TCS/INFY/RELIANCE not nuclear beneficiaries).
+    // PATCH 0107: WALCHANNAG = global nuclear heavy-engineering export proxy.
+    // PATCH 0109b: drop L6 too — Voltas/Bluestar/Thermax/Havells/Crompton are
+    // generic HVAC names, NOT nuclear beneficiaries.  User: 'Under Nuclear
+    // showing Voltas/Havells/Crompton destroys precision.'
+    fires: ['L1','L4'],
     mandatory: {
       L1: ['MTARTECH.NS','BHEL.NS','PARASDEF.NS','APOLLO.NS','BHARATFORG.NS','NTPC.NS'],
       L4: ['LINDEINDIA.NS','HEG.NS','WALCHANNAG.NS'],
@@ -441,8 +443,10 @@ export const NODE_RULES_IN: Record<SystemNode, NodeRule> = {
     mandatory: {},
   },
   MANUFACTURING_CAPACITY: {
-    fires: ['L1','L4','L5','L6'],
-    mandatory: { L1: ['KAYNES.NS','CGPOWER.NS'], L4: ['DIXON.NS'] },
+    // PATCH 0109b: drop L5 (TCS/INFY/RELIANCE/HCLTECH/WIPRO are theme dilution
+    // on Hyundai-style capex stories — not capex beneficiaries) and L6 (HVAC).
+    fires: ['L1','L4'],
+    mandatory: { L1: ['KAYNES.NS','CGPOWER.NS'], L4: ['DIXON.NS','AEROFLEX.NS'] },
   },
   LABOR_CONSTRAINT: {
     fires: ['L2','L5','L6'],
