@@ -210,8 +210,18 @@ async function fetchFeedSafe(src: FeedSource, timeoutMs = 8000): Promise<{ src: 
   try {
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), timeoutMs);
+    // PATCH 0100: SEC EDGAR requires identifying User-Agent (company name + contact email).
+    // Using browser UA gets 403.  Other feeds accept either.
+    const isSEC = /sec\.gov/.test(src.url);
+    const userAgent = isSEC
+      ? 'Market Cockpit Research admin@market-cockpit.app'
+      : 'Mozilla/5.0 (Market Cockpit Special Situations 1.0)';
     const res = await fetch(src.url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Market Cockpit Special Situations 1.0)' },
+      headers: {
+        'User-Agent': userAgent,
+        'Accept': isSEC ? 'application/atom+xml, application/xml' : 'application/rss+xml, application/xml, */*',
+        'Accept-Encoding': 'gzip, deflate',
+      },
       signal: ac.signal,
       cache: 'no-store',
     });
