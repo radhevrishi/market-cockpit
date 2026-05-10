@@ -64,7 +64,16 @@ interface SVArticle {
 interface SVResponse {
   section_title: string;
   section_subtitle: string;
+  window_days?: number;
   count: number;
+  total_in_ledger?: number;
+  summary?: {
+    by_theme?: Record<string, number>;
+    by_flag?: Record<string, number>;
+    by_quality_tier?: Record<string, number>;
+    newest_recorded_at?: string | null;
+    oldest_in_window_at?: string | null;
+  };
   articles: SVArticle[];
 }
 
@@ -152,11 +161,14 @@ function fmtAge(iso?: string): string {
   } catch { return ''; }
 }
 
-function useStrategic() {
+// PATCH 0068: pull the rolling 180-day ledger by default, NOT just the
+// live 24-72h news window. Users can drop to 30 / 60 / 90 if they want
+// recency, but 180 is the spec ("last 6 months of contracts with date").
+function useStrategic(windowDays: number = 180) {
   return useQuery<SVResponse>({
-    queryKey: ['news', 'strategic'],
+    queryKey: ['news', 'transformational', windowDays],
     queryFn: async () => {
-      const { data } = await api.get('/news?strategic=1');
+      const { data } = await api.get(`/news?transformational=1&window_days=${windowDays}`);
       return data;
     },
     refetchInterval: 5 * 60_000,   // 5 min
@@ -165,7 +177,8 @@ function useStrategic() {
 }
 
 export default function StrategicVisibilityPage() {
-  const { data, isLoading } = useStrategic();
+  const [windowDays, setWindowDays] = React.useState<30 | 60 | 90 | 180>(180);
+  const { data, isLoading } = useStrategic(windowDays);
   const articles = data?.articles ?? [];
 
   // Group by theme so users can scan by category
@@ -184,12 +197,40 @@ export default function StrategicVisibilityPage() {
       <div style={{ maxWidth: 1400, margin: '0 auto' }}>
         <header style={{ marginBottom: 18 }}>
           <h1 style={{ fontSize: 22, fontWeight: 800, color: '#F5F7FA', margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
-            🌟 <span style={{ background: 'linear-gradient(90deg,#8B5CF6,#22D3EE)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Strategic Visibility</span>
+            🌟 <span style={{ background: 'linear-gradient(90deg,#8B5CF6,#22D3EE)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Transformational Contracts</span>
+            <span style={{ fontSize: 10, fontWeight: 600, color: '#22D3EE', backgroundColor: '#22D3EE10', border: '1px solid #22D3EE40', padding: '3px 8px', borderRadius: 4, letterSpacing: '0.4px' }}>
+              ROLLING {windowDays}D LEDGER
+            </span>
           </h1>
           <p style={{ fontSize: 12, color: '#6B7A8D', margin: '4px 0 0', lineHeight: 1.5 }}>
             Multi-year frameworks · hyperscaler commitments · sovereign programs · transformational revenue locks.
-            Parallel layer to Bottlenecks — answers <em>'who locked in multi-year demand visibility'</em> rather than <em>'who benefits from scarcity'</em>.
+            Persisted to KV with a {windowDays}-day rolling window — independent of the live news feed.
           </p>
+          {/* PATCH 0068: window selector */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10 }}>
+            <span style={{ fontSize: 10, color: '#4A5B6C', fontWeight: 700, letterSpacing: '0.5px' }}>WINDOW:</span>
+            {[30, 60, 90, 180].map((d) => (
+              <button
+                key={d}
+                onClick={() => setWindowDays(d as 30 | 60 | 90 | 180)}
+                style={{
+                  fontSize: 10, fontWeight: 700,
+                  color: windowDays === d ? '#22D3EE' : '#6B7A8D',
+                  backgroundColor: windowDays === d ? '#22D3EE15' : 'transparent',
+                  border: `1px solid ${windowDays === d ? '#22D3EE60' : '#1E2D45'}`,
+                  borderRadius: 4, padding: '4px 10px', cursor: 'pointer',
+                  letterSpacing: '0.4px',
+                }}
+              >
+                {d === 30 ? '30D' : d === 60 ? '60D' : d === 90 ? '3M' : '6M'}
+              </button>
+            ))}
+            {data?.summary?.oldest_in_window_at && (
+              <span style={{ fontSize: 10, color: '#4A5B6C', marginLeft: 8 }}>
+                Oldest contract in window: {new Date(data.summary.oldest_in_window_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+              </span>
+            )}
+          </div>
         </header>
 
         {/* Inclusion criteria pinned at top */}
@@ -233,12 +274,23 @@ export default function StrategicVisibilityPage() {
 
         {!isLoading && articles.length === 0 && (
           <div style={{ padding: 60, textAlign: 'center', color: '#6B7A8D', backgroundColor: '#0D1B2E', borderRadius: 10, border: '1px solid #1E2D45' }}>
-            <div style={{ fontSize: 32, marginBottom: 8 }}>🔍</div>
-            <div style={{ fontSize: 14, color: '#94A3B8', marginBottom: 4 }}>No qualifying strategic visibility events in the current news window.</div>
-            <div style={{ fontSize: 11, lineHeight: 1.5 }}>
-              The engine is conservative by design — it requires ≥$300M firm contract AND a Tier-1 counterparty AND ≥3-year visibility,
-              OR a strategic-chokepoint / sovereign-program override. Most news doesn't qualify.
+            <div style={{ fontSize: 32, marginBottom: 8 }}>📭</div>
+            <div style={{ fontSize: 14, color: '#94A3B8', marginBottom: 4 }}>
+              No transformational contracts in the rolling {windowDays}-day ledger yet.
             </div>
+            <div style={{ fontSize: 11, lineHeight: 1.5, marginBottom: 12 }}>
+              The ledger fills as qualifying contracts come in across the news cycle.
+              India PSU orders ≥ ₹500 cr from NTPC / PGCIL / SECI / HAL / BEL with ≥3y visibility now qualify
+              alongside the global ≥$300M Tier-1 path. Try a wider window above.
+            </div>
+            {windowDays < 180 && (
+              <button
+                onClick={() => setWindowDays(180)}
+                style={{ fontSize: 11, fontWeight: 700, color: '#22D3EE', backgroundColor: '#22D3EE15', border: '1px solid #22D3EE60', borderRadius: 4, padding: '6px 14px', cursor: 'pointer' }}
+              >
+                Switch to 6-month window
+              </button>
+            )}
           </div>
         )}
 
@@ -292,7 +344,12 @@ export default function StrategicVisibilityPage() {
                           {FLAG_LABEL[f] || f}
                         </span>
                       ))}
-                      <span style={{ marginLeft: 'auto', fontSize: 10, color: '#4A5B6C' }}>{fmtAge(a.published_at)}</span>
+                      <span style={{ marginLeft: 'auto', fontSize: 10, color: '#4A5B6C', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.2 }}>
+                        <span style={{ color: '#94A3B8', fontWeight: 700 }}>
+                          {a.published_at ? new Date(a.published_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                        </span>
+                        <span style={{ color: '#4A5B6C', fontSize: 9 }}>{fmtAge(a.published_at)}</span>
+                      </span>
                     </div>
                     {/* Headline */}
                     <div style={{ fontSize: 12, fontWeight: 600, color: '#F5F7FA', lineHeight: 1.4, marginBottom: 8 }}>

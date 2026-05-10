@@ -298,6 +298,49 @@ function useBottleneckDashboard(enabled: boolean, region: string) {
   });
 }
 
+// PATCH 0068: 6-month Transformational Contracts ledger — for the
+// main-news preview band. Shows top 6 by rank.
+interface TransformationalPreviewItem {
+  id: string;
+  title: string;
+  source_name: string;
+  source_url: string;
+  published_at: string;
+  region: string;
+  ticker_symbols?: string[];
+  primary_ticker?: string | null;
+  strategic_visibility: {
+    qualifies: boolean;
+    theme: string;
+    counterparty_tier: string;
+    counterparty_name?: string;
+    contract_value_usd_m?: number;
+    visibility_years?: number;
+    flags: string[];
+    reason: string;
+  };
+  sv_signal_quality_tier?: string | null;
+  sv_dependency_score?: number | null;
+}
+interface TransformationalPreviewResp {
+  count: number;
+  total_in_ledger?: number;
+  window_days?: number;
+  articles: TransformationalPreviewItem[];
+}
+function useTransformationalPreview() {
+  return useQuery<TransformationalPreviewResp>({
+    queryKey: ['news', 'transformational-preview'],
+    queryFn: async () => {
+      const { data } = await api.get('/news?transformational=1&window_days=180&limit=6');
+      return data;
+    },
+    refetchInterval: 5 * 60_000,
+    staleTime: 5 * 60_000,
+    retry: 1,
+  });
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 // Decode HTML entities like &amp; → & , &lt; → <, etc.
@@ -1426,6 +1469,9 @@ export default function NewsFeedPage() {
   // Phase 1.3 / 1.5 / 2.5: Must Read + Forward Calendar + Anomaly hooks
   const { data: mustRead } = useMustRead();
   const { data: calendar } = useCalendar();
+  // PATCH 0068: 6-month Transformational Contracts preview band
+  const { data: transformationalPreview } = useTransformationalPreview();
+  const [showTransformational, setShowTransformational] = useState<boolean>(true);
   const { data: anomalies } = useAnomalies();
   const [showCalendar, setShowCalendar] = useState(false);
 
@@ -1757,6 +1803,99 @@ export default function NewsFeedPage() {
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* ── PATCH 0068: TRANSFORMATIONAL CONTRACTS — 6-month rolling band ── */}
+      {transformationalPreview && transformationalPreview.count > 0 && (
+        <div style={{
+          backgroundColor: '#0D1B2E', border: '1px solid #1E2D45',
+          borderLeft: '3px solid #8B5CF6',
+          borderRadius: '12px', padding: '10px 12px', marginBottom: '12px',
+        }}>
+          <button
+            onClick={() => setShowTransformational(s => !s)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px',
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: 0, margin: 0, width: '100%',
+              color: 'inherit', textAlign: 'left',
+            }}
+          >
+            <span style={{ fontSize: '10px', fontWeight: 700, color: '#8B5CF6', letterSpacing: '0.8px' }}>
+              🌟 TRANSFORMATIONAL CONTRACTS
+            </span>
+            <span style={{ fontSize: '10px', color: '#4A5B6C' }}>
+              {transformationalPreview.total_in_ledger || transformationalPreview.count} qualifying contracts in last {transformationalPreview.window_days || 180} days
+            </span>
+            <a
+              href="/strategic-visibility"
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                marginLeft: 8, fontSize: '10px', fontWeight: 700, color: '#22D3EE',
+                textDecoration: 'none', backgroundColor: '#22D3EE15',
+                border: '1px solid #22D3EE40', borderRadius: 4, padding: '2px 8px',
+                letterSpacing: '0.4px',
+              }}
+            >
+              FULL LEDGER →
+            </a>
+            <span style={{ fontSize: '10px', color: '#4A5B6C', marginLeft: 'auto' }}>
+              {showTransformational ? '▼ collapse' : '▶ expand'}
+            </span>
+          </button>
+          {showTransformational && (
+            <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 8 }}>
+              {transformationalPreview.articles.slice(0, 6).map((a) => (
+                <a
+                  key={a.id}
+                  href={a.source_url || '#'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    backgroundColor: '#0A1422', border: '1px solid #1A2840',
+                    borderRadius: 8, padding: '8px 10px',
+                    textDecoration: 'none', color: 'inherit',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}>
+                    {(a.ticker_symbols ?? []).slice(0, 2).map((t) => (
+                      <span key={t} style={{ fontSize: 9, fontWeight: 700, color: '#38A9E8', backgroundColor: '#0F7ABF20', padding: '1px 5px', borderRadius: 3, border: '1px solid #0F7ABF40' }}>
+                        {t}
+                      </span>
+                    ))}
+                    {a.strategic_visibility.contract_value_usd_m && (
+                      <span style={{ fontSize: 9, fontWeight: 700, color: '#10B981' }}>
+                        {a.strategic_visibility.contract_value_usd_m >= 1000
+                          ? `$${(a.strategic_visibility.contract_value_usd_m / 1000).toFixed(1)}B`
+                          : `$${a.strategic_visibility.contract_value_usd_m.toFixed(0)}M`}
+                      </span>
+                    )}
+                    {a.strategic_visibility.visibility_years && (
+                      <span style={{ fontSize: 9, fontWeight: 700, color: '#F59E0B' }}>
+                        {a.strategic_visibility.visibility_years}y
+                      </span>
+                    )}
+                    {a.strategic_visibility.flags.includes('STRATEGIC_CHOKEPOINT') && (
+                      <span style={{ fontSize: 9, fontWeight: 700, color: '#8B5CF6' }}>🔒</span>
+                    )}
+                    {a.strategic_visibility.flags.includes('POLICY_BACKED') && (
+                      <span style={{ fontSize: 9, fontWeight: 700, color: '#22D3EE' }}>🧭</span>
+                    )}
+                    <span style={{ marginLeft: 'auto', fontSize: 9, color: '#94A3B8', fontWeight: 600 }}>
+                      {a.published_at ? new Date(a.published_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '—'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11, color: '#E6EDF3', lineHeight: 1.35, fontWeight: 500 }}>
+                    {a.title}
+                  </div>
+                  <div style={{ fontSize: 9, color: '#6B7A8D', marginTop: 4 }}>
+                    {a.strategic_visibility.counterparty_name || '—'} · {a.source_name}
+                  </div>
+                </a>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

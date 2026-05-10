@@ -121,10 +121,39 @@ const COUNTERPARTY_PATTERNS: Array<{ tier: CounterpartyTier; pattern: RegExp; na
   { tier: 'TIER1_GOV_DEFENSE', pattern: /\b(dae|atomic energy commission)\b/i, name: 'DAE' },
   // TOP3_UTILITY
   { tier: 'TOP3_UTILITY', pattern: /\bntpc\b/i, name: 'NTPC' },
-  { tier: 'TOP3_UTILITY', pattern: /\bpower grid corp\b/i, name: 'Power Grid Corp' },
-  { tier: 'TOP3_UTILITY', pattern: /\b(nextera|duke energy|southern company|exelon)\b/i, name: 'US Utility' },
+  { tier: 'TOP3_UTILITY', pattern: /\b(power grid corp|powergrid|pgcil)\b/i, name: 'Power Grid' },
+  { tier: 'TOP3_UTILITY', pattern: /\bnhpc\b/i, name: 'NHPC' },
+  { tier: 'TOP3_UTILITY', pattern: /\bsjvn\b/i, name: 'SJVN' },
+  { tier: 'TOP3_UTILITY', pattern: /\bcoal india\b/i, name: 'Coal India' },
+  { tier: 'TOP3_UTILITY', pattern: /\bnlc india\b/i, name: 'NLC India' },
+  { tier: 'TOP3_UTILITY', pattern: /\b(ireda|rec ltd|pfc ltd|power finance corp)\b/i, name: 'India Energy Finance' },
+  { tier: 'TOP3_UTILITY', pattern: /\b(seci|solar energy corporation of india)\b/i, name: 'SECI' },
+  { tier: 'TOP3_UTILITY', pattern: /\b(nextera|duke energy|southern company|exelon|aep|dominion|edison)\b/i, name: 'US Utility' },
+  // PSU heavy industries → TIER1_GOV_DEFENSE (counted as Tier-1 counterparty)
+  { tier: 'TIER1_GOV_DEFENSE', pattern: /\bbhel\b/i, name: 'BHEL' },
+  { tier: 'TIER1_GOV_DEFENSE', pattern: /\b(hal|hindustan aeronautics)\b/i, name: 'HAL' },
+  { tier: 'TIER1_GOV_DEFENSE', pattern: /\b(bel|bharat electronics)\b/i, name: 'BEL' },
+  { tier: 'TIER1_GOV_DEFENSE', pattern: /\b(bdl|bharat dynamics)\b/i, name: 'BDL' },
+  { tier: 'TIER1_GOV_DEFENSE', pattern: /\b(cochin shipyard|garden reach|mazagon dock)\b/i, name: 'Indian Shipyard' },
+  { tier: 'TIER1_GOV_DEFENSE', pattern: /\b(npcil|bhavini|nuclear power corporation)\b/i, name: 'NPCIL' },
+  { tier: 'TIER1_GOV_DEFENSE', pattern: /\b(isro|antrix|ssld)\b/i, name: 'ISRO' },
+  { tier: 'TIER1_GOV_DEFENSE', pattern: /\b(ongc|oil india)\b/i, name: 'ONGC' },
+  { tier: 'TIER1_GOV_DEFENSE', pattern: /\bgail\b/i, name: 'GAIL' },
+  { tier: 'TIER1_GOV_DEFENSE', pattern: /\b(railway board|indian railways|irctc|rvnl|rites)\b/i, name: 'Indian Railways' },
   // MAJOR_FINANCIAL
   { tier: 'MAJOR_FINANCIAL', pattern: /\b(sovereign wealth|saudi pif|abu dhabi|adia|temasek|cppib|ontario teachers)\b/i, name: 'Sovereign Wealth' },
+];
+
+// PATCH 0068: Inferred visibility for India infra / PSU EPC orders.
+// Solar / BESS / hydro / transmission EPC contracts from NTPC / PGCIL /
+// SECI typically have 3-25y PPAs even when the headline doesn't say so.
+// We infer a default of 3y when (a) counterparty is TOP3_UTILITY or
+// TIER1_GOV_DEFENSE AND (b) the theme is energy / power / defence /
+// semi / national-program. This unblocks transformational signals that
+// were silently failing the visibility gate.
+const INFRA_INFERRED_VISIBILITY_THEMES: StrategicTheme[] = [
+  'ENERGY_TRANSITION', 'POWER_GRID', 'DEFENSE_AEROSPACE',
+  'SEMI_SUPPLY_CHAIN', 'CRITICAL_NATIONAL_PROGRAM', 'AI_INFRASTRUCTURE',
 ];
 
 // ─── Value extraction — money amounts ──────────────────────────────────────
@@ -243,7 +272,23 @@ export function classifyStrategicVisibility(args: {
 
   // Step 3: Extract contract value + visibility
   const contract_value_usd_m = extractContractValueUsdMillions(text);
-  const visibility_years = extractVisibilityYears(text);
+  let visibility_years = extractVisibilityYears(text);
+
+  // PATCH 0068: Infer visibility for India PSU infra EPC orders that don't
+  // mention years explicitly. Solar/BESS/hydro/transmission/defence EPC
+  // contracts from NTPC/PGCIL/SECI/HAL/BEL have 3-25y revenue tails.
+  let visibility_inferred = false;
+  if (visibility_years === undefined) {
+    const cpIsIndianPSU = (
+      counterparty_tier === 'TOP3_UTILITY' ||
+      (counterparty_tier === 'TIER1_GOV_DEFENSE' && /\b(india|goi|ministry|psu)\b/i.test(text))
+    );
+    const themeMatchesInfra = INFRA_INFERRED_VISIBILITY_THEMES.includes(theme);
+    if (cpIsIndianPSU && themeMatchesInfra) {
+      visibility_years = 3;          // conservative default — most are 5-25y
+      visibility_inferred = true;
+    }
+  }
 
   // Step 4: Compute % of mcap / LTM revenue (if known)
   let pct_of_mcap: number | undefined;
@@ -261,10 +306,25 @@ export function classifyStrategicVisibility(args: {
   const reasons: string[] = [];
 
   // Filter A — Size
+  // PATCH 0068: tier-2 India PSU path. ₹500 cr (~$60M) order from
+  // NTPC / PGCIL / SECI / HAL / BEL / Coal India / Indian Railways with
+  // ≥3y visibility counts as transformational for mid/small caps even
+  // though the absolute number is below the global $300M floor.
+  const isIndiaPSUTier1 = (
+    counterparty_tier === 'TOP3_UTILITY' ||
+    (counterparty_tier === 'TIER1_GOV_DEFENSE' && /\b(india|goi|ministry|psu|crore|₹|rs\.?\s*\d|inr)\b/i.test(text))
+  );
+  const indiaPSUSizeOK = (
+    isIndiaPSUTier1 &&
+    contract_value_usd_m !== undefined && contract_value_usd_m >= 60 &&   // ≥ ₹500 cr
+    (visibility_years ?? 0) >= 3
+  );
+
   const sizeOK = (
     (contract_value_usd_m !== undefined && contract_value_usd_m >= 300) ||
     (pct_of_ltm_revenue !== undefined && pct_of_ltm_revenue >= 20 && (visibility_years ?? 0) >= 3) ||
-    (pct_of_mcap !== undefined && pct_of_mcap >= 10 && (visibility_years ?? 0) >= 3)
+    (pct_of_mcap !== undefined && pct_of_mcap >= 10 && (visibility_years ?? 0) >= 3) ||
+    indiaPSUSizeOK
   );
 
   // AUTO INCLUDE — 10y+ agreement total ≥ 30% mcap
@@ -297,7 +357,13 @@ export function classifyStrategicVisibility(args: {
   // Standard inclusion — Size + Theme + Duration + Counterparty
   if (!qualifies && sizeOK && counterparty_tier !== 'NONE' && (visibility_years ?? 0) >= 3) {
     qualifies = true;
-    reasons.push(`Firm contract ${contract_value_usd_m}M with ${counterparty_name} (${visibility_years}y visibility)`);
+    const visTag = visibility_inferred ? `${visibility_years}y inferred` : `${visibility_years}y`;
+    if (indiaPSUSizeOK && (contract_value_usd_m ?? 0) < 300) {
+      flags.push('POLICY_BACKED');
+      reasons.push(`India PSU framework: ₹${Math.round((contract_value_usd_m ?? 0) * 83 / 10)} cr order from ${counterparty_name} (${visTag})`);
+    } else {
+      reasons.push(`Firm contract $${contract_value_usd_m}M with ${counterparty_name} (${visTag} visibility)`);
+    }
   }
 
   // Add ranked flags for qualifying signals

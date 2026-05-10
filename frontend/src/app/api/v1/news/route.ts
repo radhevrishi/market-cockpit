@@ -31,6 +31,13 @@ import {
   formatStrategicLine,
   FLAG_DISPLAY,
 } from '@/lib/news/strategic-visibility';
+// PATCH 0068: 90-day transformational contracts ledger
+import {
+  recordTransformational,
+  readTransformational,
+  transformationalSummary,
+  type TransformationalItem,
+} from '@/lib/news/transformational-ledger';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -167,7 +174,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v20'; // v20: strategic visibility v2 — signal quality tier, capacity reserved, dependency score, why-this-matters, second-order (0067)
+const CACHE_KEY = 'news:articles:v21'; // v21: India PSU tier-2 strategic-visibility path + 180d transformational ledger (0068)
 const CACHE_TTL = 300; // 5 min
 // v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
 // freshness_layer, signal_confidence (multi-dim), bottleneck_parent /
@@ -1649,6 +1656,40 @@ async function fetchAllNews(): Promise<any[]> {
     }
   }
 
+  // ── PATCH 0068: persist qualifying strategic-visibility articles to the
+  //    90-day transformational-contracts ledger. Fire-and-forget so we
+  //    don't slow the response. KV de-dupes by id internally. ──
+  try {
+    const qualifying = articles.filter((a: any) => a?.strategic_visibility?.qualifies === true);
+    // Limit per-request writes to 30 (defensive bound — usually 1-3 per cycle)
+    const toRecord = qualifying.slice(0, 30);
+    await Promise.allSettled(
+      toRecord.map((a: any) =>
+        recordTransformational({
+          id: a.id,
+          title: a.title,
+          source_name: a.source_name,
+          source_url: a.source_url,
+          published_at: a.published_at,
+          recorded_at: new Date().toISOString(),
+          region: a.region,
+          ticker_symbols: a.ticker_symbols || [],
+          primary_ticker: a.primary_ticker || null,
+          strategic_visibility: a.strategic_visibility,
+          sv_signal_quality_tier: a.sv_signal_quality_tier ?? null,
+          sv_capacity_reserved: a.sv_capacity_reserved ?? null,
+          sv_dependency_score: a.sv_dependency_score ?? null,
+          sv_dependency_rationale: a.sv_dependency_rationale ?? null,
+          sv_why_this_matters: a.sv_why_this_matters ?? null,
+          sv_second_order: a.sv_second_order ?? null,
+          sv_formatted_line: a.sv_formatted_line ?? null,
+        }),
+      ),
+    );
+  } catch {
+    // Never block the news response on ledger write failure
+  }
+
   // ── IBEF India Economy News (HTML scrape — no RSS available) ──
   try {
     const ibefRes = await fetch('https://www.ibef.org/indian-economy-news', {
@@ -2058,6 +2099,10 @@ export async function GET(request: Request) {
     // PATCH 0064: ?strategic=1 — returns just the strategic-visibility-qualifying
     // articles, sorted by strategicRankScore desc.
     const strategicFlag = searchParams.get('strategic') === '1';
+    // PATCH 0068: ?transformational=1 — returns the 90-day rolling ledger
+    // of transformational contracts. Independent of the live news window.
+    // Optional: ?window_days=N (default 90), ?theme=X, ?region=IN|US, ?limit=N
+    const transformationalFlag = searchParams.get('transformational') === '1';
 
     let articles: any[] | null = null;
     try {
@@ -2237,21 +2282,45 @@ export async function GET(request: Request) {
     // Returns rolling 30-day theme confidence per SystemNode. Lets the
     // frontend build a "themes emerging" widget that surfaces what the
     // accumulated evidence says — independent of any single article.
-    // PATCH 0064: Strategic Visibility endpoint
-    if (strategicFlag) {
-      const qualifying = (articles ?? [])
-        .filter((a: any) => a.strategic_visibility?.qualifies === true)
-        .map((a: any) => ({
-          ...a,
-          _rank: strategicRankScore(a.strategic_visibility),
-        }))
-        .sort((a: any, b: any) => b._rank - a._rank)
-        .slice(0, 100);
+    // PATCH 0064 + 0068: Strategic Visibility endpoint — backed by the
+    // 180-day rolling ledger, NOT just the live news window. Falls back
+    // to live qualifying articles only when ledger is empty (cold start).
+    if (strategicFlag || transformationalFlag) {
+      const windowDays = parseInt(searchParams.get('window_days') || '180', 10);
+      const themeFilter = searchParams.get('theme') || undefined;
+      const regionFilter = (searchParams.get('region') as 'IN' | 'US' | 'GLOBAL' | 'ALL' | null) || undefined;
+      const limit = parseInt(searchParams.get('limit') || '100', 10);
+
+      const ledger = await readTransformational({
+        window_days: windowDays,
+        theme: themeFilter,
+        region: regionFilter || 'ALL',
+        limit,
+      });
+      const summary = await transformationalSummary({ window_days: windowDays });
+
+      // Cold-start fallback — surface live qualifying articles when ledger empty
+      let items: any[] = ledger.items;
+      if (items.length === 0 && articles) {
+        items = articles
+          .filter((a: any) => a.strategic_visibility?.qualifies === true)
+          .map((a: any) => ({
+            ...a,
+            _rank: strategicRankScore(a.strategic_visibility),
+            recorded_at: new Date().toISOString(),
+          }))
+          .sort((a: any, b: any) => b._rank - a._rank)
+          .slice(0, limit);
+      }
+
       return NextResponse.json({
-        section_title: 'Strategic Visibility',
-        section_subtitle: 'Multi-year frameworks, hyperscaler commitments, sovereign programs, transformational revenue locks',
-        count: qualifying.length,
-        articles: qualifying,
+        section_title: 'Transformational Contracts',
+        section_subtitle: `Multi-year frameworks · hyperscaler commitments · sovereign programs · transformational revenue locks (rolling ${windowDays}-day window)`,
+        window_days: windowDays,
+        count: items.length,
+        total_in_ledger: ledger.total,
+        summary,
+        articles: items,
       });
     }
 
