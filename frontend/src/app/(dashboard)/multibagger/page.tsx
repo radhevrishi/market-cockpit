@@ -4,11 +4,13 @@ import React, { useState, useMemo, useRef } from 'react';
 // PATCH 0055: Multibagger framework extensions — dilution / reinvestment /
 // coverage / historical reference panel.
 // PATCH 0058: also archetype matcher
+// PATCH 0066: ROIC vs WACC + missing-dimensions
 import {
   analyzeDilution, computeReinvestmentEngine, computeFrameworkCoverage,
-  computeArchetypeMatch,
+  computeArchetypeMatch, analyzeRoicVsWacc, buildMissingDimensions,
   HISTORICAL_MULTIBAGGERS, type DilutionAnalysis, type ReinvestmentEngine,
   type FrameworkCoverage, type ArchetypeMatch,
+  type RoicWaccSpread, type MissingDimension,
 } from '@/lib/multibagger/framework-extensions';
 
 // Shared API base — respects NEXT_PUBLIC_API_URL env var so all fetch() calls
@@ -276,6 +278,9 @@ interface ExcelRow {
   framework_coverage?: FrameworkCoverage;
   // ── PATCH 0058: archetype match (auto-encoded historical lessons) ────────
   archetype?: ArchetypeMatch;
+  // ── PATCH 0066: ROIC vs WACC spread + missing dimensions ─────────────────
+  roic_vs_wacc?: RoicWaccSpread;
+  missing_dimensions?: MissingDimension[];
 }
 
 // ── OWNERSHIP INTELLIGENCE LAYER ─────────────────────────────────────────────
@@ -1634,9 +1639,31 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     bucket,
   });
 
+  // PATCH 0066: ROIC vs sector-default WACC spread (computable from existing data)
+  const roicVsWacc = analyzeRoicVsWacc({
+    roic: row.roic,
+    roce: row.roce,
+    sector: getSectorKey(row.sector),
+  });
+
+  // PATCH 0066: Missing dimensions panel — honest signaling of gaps
+  // (we can't measure customer concentration, founder tenure, etc., from
+  // Screener exports alone, but we tell the user explicitly so they can
+  // manually verify the high-stakes ones).
+  const missingDimensions = buildMissingDimensions({
+    hasGpm: row.gpm !== undefined,
+    hasRoic: row.roic !== undefined,
+    hasFcfTrend: false,                 // single-year only in Screener default
+    hasCustomerConcentration: false,    // not in standard export
+    hasFounderTenure: false,            // not in standard export
+    hasGpm5yTrend: false,               // would need custom 5y ratio
+  });
+
   return {
     ...row, score, grade, bucket, ownershipCategory, decisionStrip, reratingBonus, trajectoryScore, triggerBonus, inflectionSignal, coverage, strengths, risks, redFlags, killSwitch,
     archetype,
+    roic_vs_wacc: roicVsWacc,
+    missing_dimensions: missingDimensions,
     pillarScores: [
       {id:'QUALITY',    label:'Quality',      score:Math.round(qual),  color:'#a78bfa', weight:Math.round(bw[0]*100)},
       {id:'GROWTH',     label:'Growth',       score:Math.round(growth),color:'#38bdf8', weight:Math.round(bw[1]*100)},
@@ -3196,6 +3223,26 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                               </div>
                             )}
                             <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:8}}>
+                              {/* PATCH 0066: ROIC vs sector WACC */}
+                              {r.roic_vs_wacc && r.roic_vs_wacc.verdict !== 'NA' && (() => {
+                                const v = r.roic_vs_wacc.verdict;
+                                const col = v==='VALUE_CREATING'?GREEN:v==='VALUE_DESTROYING'?RED:MUTED;
+                                const label = v.replace('_',' ').toLowerCase();
+                                return (
+                                  <div style={{backgroundColor:CARD2,border:`1px solid ${col}30`,borderLeft:`3px solid ${col}`,borderRadius:7,padding:'8px 10px'}}>
+                                    <div style={{display:'flex',alignItems:'baseline',gap:6,marginBottom:4}}>
+                                      <span style={{fontSize:F.xs,fontWeight:700,color:TEXT}}>📈 ROIC vs WACC</span>
+                                      <span style={{fontSize:F.xs,fontWeight:800,color:col}}>{label}</span>
+                                      {r.roic_vs_wacc.spread_pp !== null && (
+                                        <span style={{fontSize:F.xs,color:MUTED,marginLeft:'auto'}}>
+                                          {r.roic_vs_wacc.spread_pp >= 0 ? '+' : ''}{r.roic_vs_wacc.spread_pp.toFixed(1)}pp
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div style={{fontSize:F.xs,color:MUTED,lineHeight:1.4}}>{r.roic_vs_wacc.note}</div>
+                                  </div>
+                                );
+                              })()}
                               {r.reinvestment && r.reinvestment.verdict !== 'NA' && (() => {
                                 const v = r.reinvestment.verdict;
                                 const col = v==='COMPOUNDING'?GREEN:v==='BUILDING'?'#22d3ee':v==='STALLING'?RED:MUTED;
@@ -3253,6 +3300,40 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                                 );
                               })()}
                             </div>
+
+                            {/* PATCH 0066: Missing Dimensions panel — honest signaling
+                                of what the framework CAN'T see for this stock. Shows
+                                which qualitative dimensions (founder tenure, customer
+                                concentration, etc.) need manual verification. */}
+                            {r.missing_dimensions && r.missing_dimensions.length > 0 && (
+                              <div style={{marginTop:10,padding:'10px 12px',backgroundColor:`${MUTED}08`,border:`1px solid ${MUTED}30`,borderLeft:`3px solid ${MUTED}`,borderRadius:7}}>
+                                <div style={{fontSize:F.xs,fontWeight:700,color:'#94A3B8',marginBottom:6,letterSpacing:'0.4px'}}>
+                                  🔍 FRAMEWORK BOUNDARY — DIMENSIONS NOT MEASURED
+                                </div>
+                                <div style={{fontSize:9,color:MUTED,marginBottom:8,lineHeight:1.5}}>
+                                  These qualitative dimensions matter for multibagger outcomes but cannot be measured from Screener export alone. Verify manually for high-conviction picks.
+                                </div>
+                                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(220px,1fr))',gap:6}}>
+                                  {r.missing_dimensions.map((d, i) => {
+                                    const col = d.status === 'MEASURED' ? GREEN : d.status === 'PROXY' ? YELLOW : ORANGE;
+                                    const icon = d.status === 'MEASURED' ? '✓' : d.status === 'PROXY' ? '~' : '?';
+                                    return (
+                                      <div key={i} style={{padding:'6px 8px',backgroundColor:CARD2,borderRadius:5,fontSize:9,lineHeight:1.4}}>
+                                        <div style={{display:'flex',alignItems:'baseline',gap:4,marginBottom:2}}>
+                                          <span style={{color:col,fontWeight:700}}>{icon}</span>
+                                          <span style={{color:TEXT,fontWeight:700}}>{d.dimension}</span>
+                                          <span style={{color:col,fontSize:8,marginLeft:'auto',fontWeight:700}}>{d.status}</span>
+                                        </div>
+                                        <div style={{color:MUTED,fontSize:9}}>{d.explanation}</div>
+                                        {d.upload_hint && d.status !== 'MEASURED' && (
+                                          <div style={{color:'#22d3ee',fontSize:8,marginTop:3,fontStyle:'italic'}}>→ {d.upload_hint}</div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
 

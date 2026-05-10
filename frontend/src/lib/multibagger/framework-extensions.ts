@@ -550,3 +550,197 @@ export const HISTORICAL_MULTIBAGGERS: HistoricalMultibagger[] = [
     framework_signals: ['Small cap (₹350Cr)', 'High ROCE (30%)', 'Profit acceleration', 'Founder-led'],
   },
 ];
+
+// ─── 6. ROIC vs Sector WACC Spread (patch 0066) ────────────────────────────
+//
+// True compounders earn ROIC > WACC consistently. Indian sector WACC table
+// based on long-term equity-risk-premium + default sector betas:
+//
+//   Tech / SaaS / IT services       — 10% (low capital intensity, beta < 1)
+//   Pharma / Healthcare              — 11% (medium beta, regulated cashflows)
+//   Banking / NBFC                   — 13% (financial leverage adjusted)
+//   Industrials                      — 12% (cyclical, mid beta)
+//   Consumer staples / FMCG          — 10% (low beta, premium PE)
+//   Specialty Chemicals              — 13% (capex heavy + cyclical)
+//   Auto / Auto Anc                  — 13% (cyclical)
+//   Infra / Power / Capital goods    — 14% (high capex, regulated)
+//   Metals / Mining / Commodities    — 14% (cyclical, high beta)
+//   Default                          — 12%
+
+const SECTOR_WACC_DEFAULTS: Record<string, number> = {
+  TECHNOLOGY: 10,
+  PHARMA:     11,
+  BANKING_FIN: 13,
+  INDUSTRIALS: 12,
+  CONSUMER:   10,
+  CHEMICALS:  13,
+  AUTO:       13,
+  INFRA:      14,
+  METALS:     14,
+  DEFAULT:    12,
+};
+
+export interface RoicWaccSpread {
+  roic_pct: number | null;
+  sector_wacc_pct: number;
+  spread_pp: number | null;
+  verdict: 'VALUE_CREATING' | 'VALUE_NEUTRAL' | 'VALUE_DESTROYING' | 'NA';
+  sector_used: string;
+  note: string;
+}
+
+export function analyzeRoicVsWacc(args: {
+  roic?: number;        // ROIC % (preferred)
+  roce?: number;        // ROCE % fallback (~75% of ROIC for most companies)
+  sector?: string;      // sector key from sector benchmarks
+}): RoicWaccSpread {
+  const { roic, roce, sector } = args;
+  const sectorKey = (sector || 'DEFAULT').toUpperCase();
+  const sector_wacc_pct = SECTOR_WACC_DEFAULTS[sectorKey] ?? SECTOR_WACC_DEFAULTS.DEFAULT;
+
+  // Use ROIC directly; if missing, ROCE × 0.75 is a reasonable proxy
+  const roic_pct = roic !== undefined ? roic
+                 : (roce !== undefined ? Math.round(roce * 0.75 * 10) / 10
+                                       : null);
+
+  if (roic_pct === null) {
+    return {
+      roic_pct: null,
+      sector_wacc_pct,
+      spread_pp: null,
+      verdict: 'NA',
+      sector_used: sectorKey,
+      note: `Add ROIC or ROCE column to compute spread vs sector WACC (${sector_wacc_pct}%)`,
+    };
+  }
+
+  const spread = Math.round((roic_pct - sector_wacc_pct) * 10) / 10;
+  let verdict: RoicWaccSpread['verdict'] = 'VALUE_NEUTRAL';
+  let note = '';
+  if (spread >= 8) {
+    verdict = 'VALUE_CREATING';
+    note = `ROIC ${roic_pct}% well above sector WACC ${sector_wacc_pct}% (+${spread}pp). Strong value creation — every reinvested rupee compounds.`;
+  } else if (spread >= 3) {
+    verdict = 'VALUE_CREATING';
+    note = `ROIC ${roic_pct}% beats sector WACC ${sector_wacc_pct}% (+${spread}pp). Positive economic value-add.`;
+  } else if (spread >= -2) {
+    verdict = 'VALUE_NEUTRAL';
+    note = `ROIC ${roic_pct}% close to sector WACC ${sector_wacc_pct}% (${spread >= 0 ? '+' : ''}${spread}pp). Marginal value creation.`;
+  } else {
+    verdict = 'VALUE_DESTROYING';
+    note = `ROIC ${roic_pct}% below sector WACC ${sector_wacc_pct}% (${spread}pp). Capital being destroyed; check moat or write-downs.`;
+  }
+  return { roic_pct, sector_wacc_pct, spread_pp: spread, verdict, sector_used: sectorKey, note };
+}
+
+// ─── 7. Missing Dimensions panel (patch 0066) ──────────────────────────────
+//
+// Honest signaling: tells users which framework dimensions are NOT measured
+// for this stock so they can interpret the score correctly. Each row:
+//   { dimension, status: 'MEASURED' | 'MISSING' | 'PROXY', explanation }
+//
+// Counterpart to FrameworkCoverage — covers the qualitative gaps that even
+// a fully-populated Screener export can't fill (founder tenure, customer
+// concentration, GPM trend, cash conversion trend, disruption resistance).
+
+export type DimensionStatus = 'MEASURED' | 'MISSING' | 'PROXY';
+
+export interface MissingDimension {
+  dimension: string;
+  status: DimensionStatus;
+  explanation: string;
+  upload_hint?: string;       // what column to add to Screener export
+}
+
+export function buildMissingDimensions(args: {
+  hasGpm?: boolean;
+  hasRoic?: boolean;
+  hasFcfTrend?: boolean;
+  hasCustomerConcentration?: boolean;
+  hasFounderTenure?: boolean;
+  hasGpm5yTrend?: boolean;
+}): MissingDimension[] {
+  const out: MissingDimension[] = [];
+
+  // GPM (gross margin) — pricing power proxy
+  if (args.hasGpm) {
+    out.push({
+      dimension: 'Pricing Power (GPM)',
+      status: 'MEASURED',
+      explanation: 'Gross margin captured. Multibaggers tend to show stable or expanding GPM.',
+    });
+  } else {
+    out.push({
+      dimension: 'Pricing Power (GPM)',
+      status: 'MISSING',
+      explanation: 'GPM not in upload. Stable/expanding GPM is a key multibagger trait.',
+      upload_hint: 'Add "Gross profit margin" column from Screener.in',
+    });
+  }
+
+  // ROIC
+  if (args.hasRoic) {
+    out.push({
+      dimension: 'ROIC vs WACC',
+      status: 'MEASURED',
+      explanation: 'ROIC captured directly. Spread vs sector WACC computed.',
+    });
+  } else {
+    out.push({
+      dimension: 'ROIC vs WACC',
+      status: 'PROXY',
+      explanation: 'Using ROCE × 0.75 as ROIC proxy. Sector WACC default applied.',
+      upload_hint: 'Add "Return on invested capital" column for direct ROIC.',
+    });
+  }
+
+  // GPM trend (5y)
+  out.push({
+    dimension: 'Margin Trend (5y)',
+    status: args.hasGpm5yTrend ? 'MEASURED' : 'MISSING',
+    explanation: args.hasGpm5yTrend
+      ? 'Multi-year margin trend available — durability check possible.'
+      : 'GPM 5y ago not in Screener export. Cannot validate margin durability over a cycle.',
+    upload_hint: 'Add custom Screener ratio: GPM 5 years ago.',
+  });
+
+  // Cash conversion trend
+  out.push({
+    dimension: 'Cash Conversion Trend',
+    status: args.hasFcfTrend ? 'MEASURED' : 'MISSING',
+    explanation: args.hasFcfTrend
+      ? 'Multi-year FCF/PAT trend captured.'
+      : 'Single-year CFO/PAT only. Trend is the better signal — 5+ years of >0.7 distinguishes Eicher / Page from earnings-management cases.',
+    upload_hint: 'Add custom Screener ratio: 5y avg CFO/PAT.',
+  });
+
+  // Founder tenure
+  out.push({
+    dimension: 'Founder Tenure',
+    status: args.hasFounderTenure ? 'MEASURED' : 'MISSING',
+    explanation: args.hasFounderTenure
+      ? 'Founder tenure captured.'
+      : '~80% of historical 100x baggers had a founder/family CEO with 10–25 yr tenure at entry. Not directly measurable from Screener data.',
+    upload_hint: 'Manual: check annual report — Director profile section.',
+  });
+
+  // Customer concentration
+  out.push({
+    dimension: 'Customer Concentration',
+    status: args.hasCustomerConcentration ? 'MEASURED' : 'MISSING',
+    explanation: args.hasCustomerConcentration
+      ? 'Top-customer % captured.'
+      : 'Top 1–3 customer % not in Screener. Customer concentration > 40% is a hidden risk; sub-15% indicates broad demand.',
+    upload_hint: 'Manual: check annual report — Customer concentration disclosure.',
+  });
+
+  // Disruption resistance
+  out.push({
+    dimension: 'Disruption Resistance',
+    status: 'MISSING',
+    explanation: 'Not algorithmically measurable. Industry exposure to AI / regulatory / commoditization risk requires qualitative judgment.',
+  });
+
+  return out;
+}
+
