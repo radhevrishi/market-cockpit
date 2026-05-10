@@ -29,6 +29,8 @@ const NAV: NavItem[] = [
   // PATCH 0091: Earnings + Earnings AI + Calendar merged into Earnings Hub (sub-tabs inside)
   { href: '/earnings-hub',  label: 'Earnings',        icon: <LineChart className="w-5 h-5" /> },
   { href: '/multibagger',   label: 'Multibagger',     icon: <Star className="w-5 h-5" /> },
+  // PATCH 0093: Single-Stock Sheet — 16-section institutional checklist runner
+  { href: '/stock-sheet',   label: 'Stock Sheet',     icon: <BookMarked className="w-5 h-5" /> },
   { href: '/bottleneck-intel', label: 'Bottleneck',   icon: <Microscope className="w-5 h-5" /> },
   { href: '/strategic-visibility', label: 'Strategic Vis', icon: <Star className="w-5 h-5" /> },
   { href: '/rrg',           label: 'RRG',             icon: <RefreshCw className="w-5 h-5" /> },
