@@ -342,9 +342,18 @@ function useTransformationalPreview() {
   });
 }
 
-// PATCH 0079: Persistent Bottleneck Reading hook
+// PATCH 0079 + 0080: Persistent Bottleneck Reading hook
+interface PersistentBottleneckSample {
+  article_id: string;
+  title: string;
+  source: string;
+  tier: string;
+  recorded_at?: string;
+}
 interface PersistentBottleneckItem {
   node: string;
+  label?: string;        // PATCH 0080: rich label
+  sub?: string;          // PATCH 0080: context line
   confidence_pct: number;
   cumulative_score: number;
   sample_count: number;
@@ -352,7 +361,8 @@ interface PersistentBottleneckItem {
   age_days: number;
   trend: 'rising' | 'steady' | 'falling' | 'cooling';
   is_structural: boolean;
-  top_samples: Array<{ article_id: string; title: string; source: string; tier: string }>;
+  top_samples: PersistentBottleneckSample[];
+  best_specialist_sample?: PersistentBottleneckSample | null;  // PATCH 0080
 }
 interface PersistentBottlenecksResp {
   section_title: string;
@@ -1878,14 +1888,17 @@ export default function NewsFeedPage() {
                   : b.trend === 'falling' ? '#22D3EE'
                   : '#6B7A8D';
                 const trendIcon = b.trend === 'rising' ? '↑' : b.trend === 'steady' ? '→' : b.trend === 'falling' ? '↓' : '·';
+                // PATCH 0080: prefer best specialist sample over most-recent
+                const bestSample = b.best_specialist_sample || b.top_samples[0];
+                const showLabel = b.label || b.node.replace(/_/g, ' ');
                 return (
                   <div key={b.node} style={{
                     backgroundColor: '#0A1422', border: '1px solid #1A2840',
                     borderRadius: 8, padding: '8px 10px',
                   }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: '#F5F7FA' }}>
-                        {b.node.replace(/_/g, ' ')}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                      <span style={{ fontSize: 11, fontWeight: 800, color: '#F5F7FA', letterSpacing: '0.3px' }}>
+                        {showLabel}
                       </span>
                       {b.is_structural && (
                         <span style={{ fontSize: 8, fontWeight: 700, color: '#8B5CF6', border: '1px solid #8B5CF640', backgroundColor: '#8B5CF610', padding: '1px 4px', borderRadius: 3 }}>
@@ -1896,6 +1909,11 @@ export default function NewsFeedPage() {
                         {trendIcon} {b.trend}
                       </span>
                     </div>
+                    {b.sub && (
+                      <div style={{ fontSize: 10, color: '#94A3B8', lineHeight: 1.3, marginBottom: 4 }}>
+                        {b.sub}
+                      </div>
+                    )}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, fontSize: 10, color: '#94A3B8' }}>
                       <span style={{ color: '#10B981', fontWeight: 700 }}>{b.confidence_pct}% conf</span>
                       <span>·</span>
@@ -1903,11 +1921,12 @@ export default function NewsFeedPage() {
                       <span>·</span>
                       <span>{b.age_days}d ago</span>
                     </div>
-                    {b.top_samples.length > 0 && (
-                      <div style={{ fontSize: 9, color: '#6B7A8D', lineHeight: 1.4 }}>
-                        Latest: <span style={{ color: '#94A3B8' }}>{b.top_samples[0].title.slice(0, 80)}</span>
+                    {bestSample && (
+                      <div style={{ fontSize: 9, color: '#6B7A8D', lineHeight: 1.4, borderTop: '1px solid #1A2840', paddingTop: 4 }}>
+                        <span style={{ color: '#22D3EE', fontWeight: 700 }}>Top signal:</span>{' '}
+                        <span style={{ color: '#CBD5E1' }}>{bestSample.title.slice(0, 90)}</span>
                         <br/>
-                        <span style={{ color: '#4A5B6C' }}>{b.top_samples[0].source} · {b.top_samples[0].tier}</span>
+                        <span style={{ color: '#4A5B6C' }}>{bestSample.source} · {bestSample.tier}</span>
                       </div>
                     )}
                   </div>

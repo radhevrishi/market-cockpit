@@ -56,7 +56,9 @@ function ttlSecondsFor(node: SystemNode): number {
 function halfLifeDaysFor(node: SystemNode): number {
   return STRUCTURAL_NODES.has(node) ? 90 : 14;
 }
-const KEY_PREFIX = 'evidence:v1:';
+// PATCH 0080: bump KV key to v2 — clears old ledger that accumulated
+// unfiltered evidence (Ryzen gaming deals tagged MEMORY_INFRA, etc.)
+const KEY_PREFIX = 'evidence:v2:';
 
 export interface NodeEvidenceSample {
   article_id: string;
@@ -185,8 +187,39 @@ export async function readAllEvidence(nodes: SystemNode[]): Promise<NodeEvidence
 // vs sample_count age distribution. This is the answer to "which
 // bottlenecks are STILL ACTIVE even when no fresh news arrived today".
 
+// PATCH 0080: Rich bottleneck labels — what the user actually wants to read
+// instead of the generic SystemNode name. "MEMORY_INFRA" → "HBM / DRAM SUPPLY".
+const BOTTLENECK_LABEL: Partial<Record<SystemNode, { label: string; sub: string }>> = {
+  COMPUTE_INFRA:        { label: 'AI COMPUTE / GPU',          sub: 'NVIDIA / AMD / custom silicon — training capacity' },
+  MEMORY_INFRA:         { label: 'HBM / DRAM SUPPLY',         sub: 'SK hynix / Samsung / Micron — HBM3E/HBM4 binding constraint' },
+  PACKAGING_INFRA:      { label: 'CoWoS / ADV PACKAGING',     sub: 'TSMC dominant — GPU build packaging-bound' },
+  FABRICATION_INFRA:    { label: 'TSMC / FAB CAPACITY',       sub: 'Leading-edge logic — N3/N2 demand outpacing fab supply' },
+  INTERCONNECT_INFRA:   { label: 'OPTICAL / 800G+ FABRIC',    sub: 'Coherent / Lumentum / Marvell — AI superpod interconnect' },
+  COOLING_INFRA:        { label: 'LIQUID COOLING (AI)',       sub: 'Vertiv / nVent — B100/B200 thermal density' },
+  NETWORK_BANDWIDTH:    { label: 'NETWORK / DCI BACKBONE',    sub: 'Hyperscaler east-west AI traffic + sub-sea cable' },
+  ENERGY_INFRA:         { label: 'GRID / TRANSFORMERS',       sub: 'Large transformer + switchgear lead times — AI campus power' },
+  NUCLEAR_INFRA:        { label: 'NUCLEAR / HALEU / SMR',     sub: 'Centrus HALEU + Naval reactors + SMR fuel cycle' },
+  OIL_GAS_INFRA:        { label: 'OIL / GAS / LNG',           sub: 'Crude pricing + LNG offtake + petrochem' },
+  RENEWABLE_INFRA:      { label: 'RENEWABLE / BESS / PPA',    sub: 'Solar/wind PPAs + battery storage frameworks' },
+  LOGISTICS_INFRA:      { label: 'SHIPPING / LOGISTICS',      sub: 'Container freight + port congestion + last-mile' },
+  TRANSPORT_INFRA:      { label: 'RAIL / EV CHARGING',        sub: 'High-speed rail + EV charging buildout' },
+  DEFENSE_INFRA:        { label: 'DEFENCE / MISSILES',        sub: 'Production lines + ammunition + RF seekers' },
+  AEROSPACE_INFRA:      { label: 'AEROSPACE / LAUNCH',        sub: 'Aero engines + space launch + satellite capacity' },
+  RESOURCE_SCARCITY:    { label: 'RARE EARTHS / CRITICAL MIN',sub: 'NdFeB magnets + uranium + lithium — China dependency' },
+  AGRI_INFRA:           { label: 'AGRI / FERTILIZER',         sub: 'Food + fertilizer + water + pesticides' },
+  MANUFACTURING_CAPACITY:{ label: 'MFG CAPACITY / PLI',       sub: 'Production-linked + reshoring + capex ramp' },
+  LABOR_CONSTRAINT:     { label: 'LABOUR / TALENT',           sub: 'Skilled-talent gap + strikes + visa friction' },
+  CAPITAL_CONSTRAINT:   { label: 'CAPITAL / CREDIT',          sub: 'Banking / NPA / payment rails / liquidity' },
+};
+
+export function bottleneckLabelFor(node: SystemNode): { label: string; sub: string } {
+  return BOTTLENECK_LABEL[node] || { label: node.replace(/_/g, ' '), sub: '' };
+}
+
 export interface PersistentBottleneck {
   node: SystemNode;
+  label: string;                    // PATCH 0080: rich human-readable label
+  sub: string;                      // PATCH 0080: 1-line context
   confidence_pct: number;
   cumulative_score: number;
   sample_count: number;
@@ -195,6 +228,7 @@ export interface PersistentBottleneck {
   trend: 'rising' | 'steady' | 'falling' | 'cooling';
   is_structural: boolean;
   top_samples: NodeEvidenceSample[];
+  best_specialist_sample?: NodeEvidenceSample | null;  // PATCH 0080: highest-tier sample
 }
 
 export async function readPersistentBottlenecks(args: {
@@ -224,8 +258,28 @@ export async function readPersistentBottlenecks(args: {
     else if (ageDays <= halfLife) trend = 'steady';
     else if (ageDays <= halfLife * 2) trend = 'falling';
     else trend = 'cooling';
+
+    // PATCH 0080: pick the highest-quality "latest" sample for display.
+    // Rank: PRIMARY/SPECIALIST > GENERALIST > everything else.
+    // Tie-break by recency. Falls back to top_samples[0] if nothing matches.
+    const tierRank: Record<string, number> = {
+      PRIMARY: 5, SPECIALIST: 5, GENERALIST: 3, EDITORIAL: 2,
+      PRESS_RELEASE: 1, SOCIAL: 0, UNKNOWN: 1,
+    };
+    const ranked = [...e.top_samples].sort((a, b) => {
+      const r = (tierRank[b.tier] ?? 0) - (tierRank[a.tier] ?? 0);
+      if (r !== 0) return r;
+      return new Date(b.recorded_at).getTime() - new Date(a.recorded_at).getTime();
+    });
+    const bestSpecialistSample = ranked.find((s) =>
+      s.tier === 'PRIMARY' || s.tier === 'SPECIALIST' || s.tier === 'GENERALIST',
+    ) || ranked[0] || null;
+
+    const meta = bottleneckLabelFor(n);
     out.push({
       node: n,
+      label: meta.label,
+      sub: meta.sub,
       confidence_pct: e.confidence_pct,
       cumulative_score: e.cumulative_score,
       sample_count: e.sample_count,
@@ -234,6 +288,7 @@ export async function readPersistentBottlenecks(args: {
       trend,
       is_structural: isStructural,
       top_samples: e.top_samples,
+      best_specialist_sample: bestSpecialistSample,
     });
   }
   // Rank: structural nodes get a +5 score boost so HBM / CoWoS / grid surface

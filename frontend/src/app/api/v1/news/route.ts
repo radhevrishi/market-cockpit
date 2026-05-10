@@ -189,7 +189,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v26'; // v26: Chokepoint Index + Macro insight banner + WC intensity numeric (0073)
+const CACHE_KEY = 'news:articles:v27'; // v27: persistent bottleneck quality fix — bottleneck-only filter + rich labels + smart latest (0080)
 const CACHE_TTL = 300; // 5 min
 // v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
 // freshness_layer, signal_confidence (multi-dim), bottleneck_parent /
@@ -2120,9 +2120,29 @@ async function fetchAllNews(): Promise<any[]> {
   // sample. Over time, themes emerge organically: HBM shortage articles
   // accumulate confidence in MEMORY_INFRA, photonics articles in
   // INTERCONNECT_INFRA, etc. Fire-and-forget.
+  // PATCH 0080: only accumulate evidence for articles that ARE structurally
+  // about a bottleneck/capacity/supply signal. Filter out gaming deals,
+  // consumer reviews, and unrelated tags that happen to mention HBM / DRAM
+  // / AI etc. as background. Three gates:
+  //   - structural_state ∈ {BOTTLENECK, CAPACITY_EXPANSION, SUPPLY_RESPONSE,
+  //     CAPEX_BUILDOUT, DEMAND_SURGE, POLICY_SUPPORT}, OR article_type=BOTTLENECK
+  //   - title/desc has bottleneck-language (shortage, tight, queue, capacity,
+  //     bottleneck, binding, allocation, pricing power, lead time, framework)
+  //   - source tier is not a retail/consumer signal (Tom's Hardware Ryzen
+  //     deal articles wouldn't qualify)
+  const BOTTLENECK_LANG = /\b(shortage|tight(?:ness)?|queue|capacity (?:constraint|binding|tight|reservation|allocation)|bottleneck|binding|allocation (?:queue)?|pricing power|lead time|framework|backlog|chokepoint|sole(?:.?source| supplier)|export control|embargo)\b/i;
+  const RETAIL_DEAL_LANG = /\b(save \$|deal|combo|bundle|coupon|discount|black friday|cyber monday|prime day|\d+%\s*off|review:|gift guide)\b/i;
   Promise.all(
     articlesWithImpact
       .filter((a: any) => a.graph_primary_node && a.graph_primary_node !== 'NONE')
+      .filter((a: any) => {
+        const text = `${a.title || ''} ${a.summary || ''}`;
+        if (RETAIL_DEAL_LANG.test(text)) return false;
+        const isStructural = a.article_type === 'BOTTLENECK' ||
+          ['BOTTLENECK','CAPACITY_EXPANSION','SUPPLY_RESPONSE','CAPEX_BUILDOUT','DEMAND_SURGE','POLICY_SUPPORT'].includes(a.structural_state);
+        const hasBottleneckLang = BOTTLENECK_LANG.test(text);
+        return isStructural || hasBottleneckLang;
+      })
       .slice(0, 40)
       .map((a: any) =>
         recordEvidence(a.graph_primary_node, {
