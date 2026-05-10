@@ -46,6 +46,29 @@ interface LiveFeedItem {
   description?: string;
 }
 
+// PATCH 0105: canonical event from event-intelligence pipeline
+interface CanonicalEvent {
+  event_id: string;
+  event_type: string;
+  category: Category;
+  target_name?: string;
+  primary_filing: LiveFeedItem;
+  amendments: LiveFeedItem[];
+  amendment_count: number;
+  filings: LiveFeedItem[];
+  catalyst_score: { raw_score: number; decay_score: number; components: Array<{ label: string; pts: number }> };
+  is_tradable: boolean;
+  tier: 'TIER_1' | 'TIER_2' | 'WATCHLIST' | 'NOISE';
+  tradability_rationale: string;
+  why_tradable: { what_happened: string; what_matters: string; what_to_watch: string; what_breaks_thesis: string };
+  lifecycle: 'rumor' | 'announced' | 'amended' | 'approved' | 'closed' | 'unknown';
+  region: 'IN' | 'US' | 'GLOBAL';
+  tickers: string[];
+  is_fund: boolean;
+  primary_source: boolean;
+  age_hours: number;
+}
+
 interface LiveFeedResp {
   last_updated: string;
   total: number;
@@ -53,6 +76,9 @@ interface LiveFeedResp {
   source_status: Array<{ name: string; ok: boolean; items?: number }>;
   cached?: boolean;
   cache_age_min?: number;
+  // PATCH 0105
+  events?: CanonicalEvent[];
+  by_tier?: Record<'TIER_1' | 'TIER_2' | 'WATCHLIST' | 'NOISE', number>;
 }
 
 function useLiveFeed() {

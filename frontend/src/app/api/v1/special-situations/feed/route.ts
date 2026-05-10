@@ -12,6 +12,18 @@
 
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet } from '@/lib/kv';
+// PATCH 0105: event intelligence pipeline (canonical events + scoring + tradability)
+import {
+  extractEventSignals,
+  canonicalEventId,
+  scoreCatalyst,
+  classifyTradability,
+  whyTradable,
+  inferLifecycleStage,
+  type EventType,
+  type LifecycleStage,
+  type CatalystScore,
+} from '@/lib/news/event-intelligence';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -296,6 +308,29 @@ async function saveRolling(items: FeedItem[]): Promise<void> {
   } catch { /* non-fatal */ }
 }
 
+// PATCH 0105: canonical event object (collapses amendments under one event)
+interface CanonicalEvent {
+  event_id: string;
+  event_type: EventType;
+  category: Category;                           // back-compat with old by_category
+  target_name?: string;
+  primary_filing: FeedItem;                     // earliest non-amendment item
+  amendments: FeedItem[];                       // /A filings
+  amendment_count: number;
+  filings: FeedItem[];                          // primary + amendments + media
+  catalyst_score: CatalystScore;                // raw + decay + components
+  is_tradable: boolean;
+  tier: 'TIER_1' | 'TIER_2' | 'WATCHLIST' | 'NOISE';
+  tradability_rationale: string;
+  why_tradable: ReturnType<typeof whyTradable>;
+  lifecycle: LifecycleStage;
+  region: 'IN' | 'US' | 'GLOBAL';
+  tickers: string[];
+  is_fund: boolean;
+  primary_source: boolean;
+  age_hours: number;
+}
+
 async function buildFeed(): Promise<{
   last_updated: string;
   total: number;
@@ -303,6 +338,8 @@ async function buildFeed(): Promise<{
   source_status: Array<{ name: string; ok: boolean; items?: number }>;
   rolling_kept: number;
   fresh_added: number;
+  events: CanonicalEvent[];                     // PATCH 0105 — canonical events
+  by_tier: Record<'TIER_1' | 'TIER_2' | 'WATCHLIST' | 'NOISE', number>;
 }> {
   // Fetch all feeds in parallel
   const fetched = await Promise.all(SOURCES.map((s) => fetchFeedSafe(s)));
@@ -393,6 +430,155 @@ async function buildFeed(): Promise<{
   const by_category: Record<Category, FeedItem[]> = { SPIN: [], MA: [], TURN: [], CAP: [] };
   for (const it of deduped) by_category[it.category].push(it);
 
+  // ── PATCH 0105: EVENT INTELLIGENCE PIPELINE ──
+  //
+  // Step 1: extract event signals per item (form code, /A amendment status,
+  //         target name) using the form-strict map first, headline patterns
+  //         as fallback.
+  // Step 2: assign canonical event ID = hash(event_type + first_ticker_or_target).
+  //         Same event ID = same deal across all amendments + media coverage.
+  // Step 3: group items into CanonicalEvent buckets, picking the earliest
+  //         non-amendment item as primary_filing.
+  // Step 4: score each event with the +30/+20/+15/-20 model + decay.
+  // Step 5: classify tradability — Tier 1 / Tier 2 / Watchlist / Noise.
+  // Step 6: generate "why tradable" auto-playbook per event type.
+
+  const tickerToCategory = (cat: Category): Category => cat;
+  const SEC_PRIMARY_RE = /sec\.gov/i;
+  const PR_RE = /prnewswire|globenewswire|business ?wire/i;
+
+  // Bucket by event ID
+  const eventBuckets = new Map<string, FeedItem[]>();
+  const itemSignals = new Map<string, ReturnType<typeof extractEventSignals>>();
+
+  for (const it of deduped) {
+    const sig = extractEventSignals({ title: it.title, description: it.description, link: it.link, source: it.source });
+    itemSignals.set(it.id, sig);
+
+    // Skip UNCLASSIFIED noise from canonical event grouping (still in by_category for backwards compat)
+    if (sig.event_type === 'UNCLASSIFIED') continue;
+
+    const eid = canonicalEventId({
+      event_type: sig.event_type,
+      target_name: sig.target_name,
+      tickers: it.tickers,
+    });
+    const bucket = eventBuckets.get(eid) || [];
+    bucket.push(it);
+    eventBuckets.set(eid, bucket);
+  }
+
+  // Build CanonicalEvent objects
+  const events: CanonicalEvent[] = [];
+  for (const [eventId, bucketItems] of eventBuckets.entries()) {
+    // Sort: primary filings first (non-amendment), then amendments, then media
+    const sorted = [...bucketItems].sort((a, b) => {
+      const sigA = itemSignals.get(a.id)!;
+      const sigB = itemSignals.get(b.id)!;
+      // Primary filings (SEC.gov non-amendment) take priority
+      const aIsPrimary = SEC_PRIMARY_RE.test(a.link) && !sigA.is_amendment;
+      const bIsPrimary = SEC_PRIMARY_RE.test(b.link) && !sigB.is_amendment;
+      if (aIsPrimary !== bIsPrimary) return aIsPrimary ? -1 : 1;
+      // Otherwise newest first
+      const ta = a.pub_date ? new Date(a.pub_date).getTime() : 0;
+      const tb = b.pub_date ? new Date(b.pub_date).getTime() : 0;
+      return tb - ta;
+    });
+
+    const primary = sorted[0];
+    const primarySig = itemSignals.get(primary.id)!;
+    const amendments = sorted.slice(1).filter((it) => itemSignals.get(it.id)?.is_amendment);
+
+    // Resolve event metadata
+    const eventType = primarySig.event_type;
+    const allTickers = Array.from(new Set(sorted.flatMap((it) => it.tickers))).slice(0, 6);
+    const region = primary.region;
+
+    // Detect fund-only events (e.g. "Bow River Capital Evergreen Fund" tender)
+    const allText = sorted.map((it) => `${it.title} ${it.description || ''}`).join(' ');
+    const isFund = /\b(fund|trust|capital evergreen|infrastructure income|private markets fund|closed-end|etf)\b/i.test(allText);
+
+    // Primary-source check
+    const hasPrimarySource = sorted.some((it) => SEC_PRIMARY_RE.test(it.link) || PR_RE.test(it.link));
+
+    // Catalyst score inputs
+    const ageHours = primary.age_hours;
+    const titleAndDesc = `${primary.title} ${primary.description || ''}`;
+    const hasDeadline = /\b(\d{1,2}\s*(?:may|jun|jul|aug|sep|oct|nov|dec|jan|feb|mar|apr)|record date|tender (?:expir|deadline)|effective date|listing date|hearing date|expir(?:y|es) (?:on|date)|by\s+\w+\s+\d+|deadline)\b/i.test(titleAndDesc);
+    const hasConsideration = /(\$\s*\d|rs\.?\s*\d|₹\s*\d|deal worth|offer price|per share|gross spread|consideration)/i.test(titleAndDesc);
+    const hasSpread = /\b(spread|premium of|trading at|effective consideration)\b/i.test(titleAndDesc);
+
+    const score = scoreCatalyst({
+      event_type: eventType,
+      is_amendment: primarySig.is_amendment && amendments.length === 0,  // primary itself is an /A and we have nothing earlier
+      is_fund: isFund,
+      has_named_ticker: allTickers.length > 0,
+      has_primary_source: hasPrimarySource,
+      has_explicit_deadline: hasDeadline,
+      has_consideration: hasConsideration,
+      has_spread_calc: hasSpread,
+      age_hours: ageHours,
+    });
+
+    const tradability = classifyTradability({
+      event_type: eventType,
+      is_amendment: primarySig.is_amendment,
+      amendment_count_in_event: amendments.length,
+      is_fund: isFund,
+      has_named_ticker: allTickers.length > 0,
+      has_primary_source: hasPrimarySource,
+      decay_score: score.decay_score,
+    });
+
+    const lifecycle = inferLifecycleStage({
+      is_amendment: primarySig.is_amendment,
+      amendment_count: amendments.length,
+      event_type: eventType,
+    });
+
+    const why = whyTradable({
+      event_type: eventType,
+      target_name: primarySig.target_name,
+      ticker: allTickers[0],
+    });
+
+    events.push({
+      event_id: eventId,
+      event_type: eventType,
+      category: tickerToCategory(primary.category),
+      target_name: primarySig.target_name,
+      primary_filing: primary,
+      amendments,
+      amendment_count: amendments.length,
+      filings: sorted,
+      catalyst_score: score,
+      is_tradable: tradability.is_tradable,
+      tier: tradability.tier,
+      tradability_rationale: tradability.rationale,
+      why_tradable: why,
+      lifecycle,
+      region,
+      tickers: allTickers,
+      is_fund: isFund,
+      primary_source: hasPrimarySource,
+      age_hours: ageHours,
+    });
+  }
+
+  // Sort events by decay_score desc, with Tier 1 first
+  const tierRank: Record<CanonicalEvent['tier'], number> = { TIER_1: 4, TIER_2: 3, WATCHLIST: 2, NOISE: 1 };
+  events.sort((a, b) => {
+    const ta = tierRank[a.tier];
+    const tb = tierRank[b.tier];
+    if (ta !== tb) return tb - ta;
+    return b.catalyst_score.decay_score - a.catalyst_score.decay_score;
+  });
+
+  const by_tier: Record<'TIER_1' | 'TIER_2' | 'WATCHLIST' | 'NOISE', number> = {
+    TIER_1: 0, TIER_2: 0, WATCHLIST: 0, NOISE: 0,
+  };
+  for (const e of events) by_tier[e.tier] += 1;
+
   return {
     last_updated: new Date().toISOString(),
     total: deduped.length,
@@ -400,6 +586,8 @@ async function buildFeed(): Promise<{
     source_status: sourceStatus,
     rolling_kept: keptRolling.length,
     fresh_added: fresh.length,
+    events,
+    by_tier,
   };
 }
 
