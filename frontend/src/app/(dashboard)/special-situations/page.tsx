@@ -1261,77 +1261,190 @@ function ResultCard({ title, color, rows }: { title: string; color: string; rows
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// DISCOVER TAB — keep the regex scanner as fallback for finding new events
+// DISCOVER TAB — LIVE corporate-action RSS scanner (patch 0097)
+//
+// Hits /api/v1/special-situations/feed which fetches RSS feeds INDEPENDENTLY
+// of the /news endpoint (which heavily filters to BOTTLENECK-only signals
+// and only has ~47 articles).  This endpoint hits ET / Livemint / BS /
+// Reuters / MarketWatch / SeekingAlpha / CNBC directly with classification
+// patterns tuned for SPIN / M&A / TURN / CAP.
+//
+// Cache: 30 min server-side.
 // ═══════════════════════════════════════════════════════════════════════════
 
-interface RawArticle {
+interface LiveFeedItem {
   id: string;
-  headline?: string;
-  title?: string;
-  summary?: string;
-  source?: string;
-  source_name?: string;
-  source_tier?: string;
-  published_at?: string;
-  source_url?: string;
-  url?: string;
-  tickers?: string[];
-  ticker_symbols?: string[];
-  region?: string;
+  title: string;
+  link: string;
+  source: string;
+  region: 'IN' | 'US' | 'GLOBAL';
+  pub_date: string;
+  age_hours: number;
+  category: 'SPIN' | 'MA' | 'TURN' | 'CAP';
+  category_label: string;
+  tickers: string[];
+  description?: string;
+}
+
+interface LiveFeedResp {
+  last_updated: string;
+  total: number;
+  by_category: Record<'SPIN' | 'MA' | 'TURN' | 'CAP', LiveFeedItem[]>;
+  source_status: Array<{ name: string; ok: boolean; items?: number }>;
+  cached?: boolean;
+  cache_age_min?: number;
 }
 
 function DiscoverScanner() {
-  const { data, isLoading, error } = useQuery<RawArticle[]>({
-    queryKey: ['special-situations', 'discover'],
+  const { data, isLoading, error, refetch, isFetching } = useQuery<LiveFeedResp>({
+    queryKey: ['special-situations', 'live-feed'],
     queryFn: async () => {
-      const { data } = await api.get('/news');
-      return Array.isArray(data) ? data : (data?.articles || data?.items || []);
+      const { data } = await api.get('/special-situations/feed');
+      return data;
     },
-    staleTime: 5 * 60_000,
-    refetchInterval: 5 * 60_000,
+    staleTime: 30 * 60_000,
+    refetchInterval: 30 * 60_000,
+    retry: 1,
   });
 
-  const PATTERNS = [
-    { id: 'SPIN', label: 'Spin-offs', color: '#22D3EE', re: /\b(spin.?off|spinoff|demerg|carve.?out|split.?off|hive.?off)\b/i },
-    { id: 'MA',   label: 'M&A',       color: '#FBBF24', re: /\b(open offer|takeover|tender offer|acquisition|merger|buyout|control change)\b/i },
-    { id: 'TURN', label: 'Turnaround',color: '#10B981', re: /\b(turnaround|back to profit|loss to profit|profit revival|debt restructur|debt reduction|deleverag)\b/i },
-    { id: 'CAP',  label: 'Capital',   color: '#A78BFA', re: /\b(buyback|share repurchase|special dividend|interim dividend|bonus issue|capital return|debt prepay)\b/i },
-  ];
+  const META: Record<'SPIN' | 'MA' | 'TURN' | 'CAP', { label: string; color: string; icon: string }> = {
+    SPIN: { label: 'Spin-offs / Demergers', color: '#22D3EE', icon: '🔀' },
+    MA:   { label: 'M&A / Open Offers',     color: '#FBBF24', icon: '🤝' },
+    TURN: { label: 'Turnarounds',           color: '#10B981', icon: '↩️' },
+    CAP:  { label: 'Capital Allocation',    color: '#A78BFA', icon: '💰' },
+  };
 
-  const arr = data || [];
+  // Region filter
+  const [feedRegion, setFeedRegion] = useState<'ALL' | 'IN' | 'US' | 'GLOBAL'>('ALL');
+
+  const filterByRegion = (items: LiveFeedItem[]) =>
+    feedRegion === 'ALL' ? items : items.filter((i) => i.region === feedRegion);
+
+  const lastUpdated = data?.last_updated;
+  const ageMin = lastUpdated ? Math.max(0, Math.round((Date.now() - new Date(lastUpdated).getTime()) / 60000)) : null;
+  const liveColor = ageMin == null ? '#6B7A8D'
+    : ageMin <= 30 ? '#10B981'
+    : ageMin <= 120 ? '#F59E0B'
+    : '#EF4444';
+  const liveLabel = ageMin == null ? 'LIVE' :
+    ageMin === 0 ? 'LIVE · just now' :
+    ageMin < 60 ? `LIVE · ${ageMin}m ago` :
+    `${Math.round(ageMin / 60)}h ago`;
+
+  const sourcesOk = data?.source_status.filter((s) => s.ok).length ?? 0;
+  const sourcesTotal = data?.source_status.length ?? 0;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: 12, padding: '14px 18px' }}>
-        <SectionLabel text="🔍 DISCOVER — News-feed regex scanner (find candidates for promotion to curated)" color="#22D3EE" />
-        <div style={{ marginTop: 8, fontSize: 11, color: '#6B7A8D', lineHeight: 1.5 }}>
-          Note: the upstream /news endpoint serves a curated bottleneck-tier feed (~50-100 articles), not a corporate-actions firehose. Counts here will be sparse. The CURATED tab above is the primary surface; this is for spotting new events to promote.
+      {/* Header banner */}
+      <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: '3px solid #22D3EE', borderRadius: 12, padding: '14px 18px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px' }}>
+            🔴 LIVE FEED — Corporate-Action Discovery
+          </span>
+          <span
+            style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.4px', color: liveColor, border: `1px solid ${liveColor}50`, backgroundColor: `${liveColor}15`, padding: '2px 8px', borderRadius: 4, display: 'inline-flex', alignItems: 'center', gap: 5 }}
+            title={lastUpdated ? `Server last_updated: ${new Date(lastUpdated).toLocaleString()}` : 'No timestamp'}
+          >
+            <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: liveColor, boxShadow: `0 0 6px ${liveColor}` }} />
+            {liveLabel.toUpperCase()}
+          </span>
+          <span style={{ fontSize: 11, color: '#6B7A8D' }}>
+            {data?.total ?? 0} matches · {sourcesOk}/{sourcesTotal} sources OK
+          </span>
+          <button onClick={() => refetch()} disabled={isFetching} style={{ marginLeft: 'auto', padding: '4px 12px', fontSize: 11, fontWeight: 700, borderRadius: 6, border: '1px solid #1A2840', backgroundColor: 'transparent', color: '#8A95A3', cursor: isFetching ? 'not-allowed' : 'pointer', opacity: isFetching ? 0.5 : 1 }}>
+            {isFetching ? 'Refreshing…' : '↻ Refresh now'}
+          </button>
+        </div>
+        <div style={{ fontSize: 11, color: '#6B7A8D', lineHeight: 1.55 }}>
+          Independent of /news — fetches ET / Livemint / Business Standard / NDTV Profit / Reuters / MarketWatch / SeekingAlpha / CNBC RSS feeds directly with corporate-action classifiers (no BOTTLENECK filter). Auto-refresh every 30 min.
+        </div>
+        <div style={{ marginTop: 8, display: 'flex', gap: 4 }}>
+          {(['ALL','IN','US','GLOBAL'] as const).map((r) => {
+            const isActive = feedRegion === r;
+            return (
+              <button key={r} onClick={() => setFeedRegion(r)}
+                style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700, border: isActive ? '1px solid #38A9E860' : '1px solid #1A2840', backgroundColor: isActive ? '#0F7ABF20' : 'transparent', color: isActive ? '#38A9E8' : '#6B7A8D', cursor: 'pointer' }}>
+                {r === 'IN' ? '🇮🇳 IN' : r === 'US' ? '🇺🇸 US' : r === 'GLOBAL' ? '🌐 Global' : 'ALL'}
+              </button>
+            );
+          })}
         </div>
       </div>
-      {isLoading && <div style={{ color: '#6B7A8D', fontSize: 12, padding: 14 }}>Loading news universe…</div>}
-      {error && <div style={{ color: '#EF4444', fontSize: 12, padding: 14 }}>Failed to load news.</div>}
-      {!isLoading && !error && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
-          {PATTERNS.map((p) => {
-            const matched = arr.filter((a) => p.re.test(`${a.headline || a.title || ''} ${a.summary || ''}`));
+
+      {isLoading && <div style={{ color: '#6B7A8D', fontSize: 12, padding: 14 }}>Loading live RSS feeds…</div>}
+      {error && <div style={{ color: '#EF4444', fontSize: 12, padding: 14 }}>Failed to load corporate-action feed.</div>}
+
+      {!isLoading && !error && data && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {(Object.keys(META) as Array<'SPIN' | 'MA' | 'TURN' | 'CAP'>).map((cat) => {
+            const meta = META[cat];
+            const items = filterByRegion(data.by_category[cat] || []);
             return (
-              <div key={p.id} style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: `3px solid ${p.color}`, borderRadius: 12, padding: '12px 16px' }}>
-                <div style={{ fontSize: 13, fontWeight: 800, color: p.color, letterSpacing: '0.4px', marginBottom: 6 }}>{p.label} · {matched.length}</div>
-                {matched.length === 0 ? (
-                  <div style={{ fontSize: 11, color: '#6B7A8D' }}>No matches in current feed.</div>
+              <div key={cat} style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: `3px solid ${meta.color}`, borderRadius: 12, padding: '12px 16px' }}>
+                <div style={{ fontSize: 14, fontWeight: 800, color: meta.color, letterSpacing: '0.4px', marginBottom: 8 }}>
+                  {meta.icon} {meta.label} · {items.length}
+                </div>
+                {items.length === 0 ? (
+                  <div style={{ fontSize: 11, color: '#6B7A8D' }}>No matches in last RSS pull{feedRegion !== 'ALL' && <> for {feedRegion === 'IN' ? '🇮🇳 India' : feedRegion === 'US' ? '🇺🇸 US' : '🌐 Global'}</>}.</div>
                 ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {matched.slice(0, 5).map((a) => (
-                      <a key={a.id} href={a.source_url || a.url || '#'} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: '#C9D4E0', lineHeight: 1.45, textDecoration: 'none', borderBottom: '1px solid #1A2840', paddingBottom: 4, display: 'flex', gap: 4 }}>
-                        <span style={{ flex: 1 }}>{a.headline || a.title}</span>
-                        <ExternalLink style={{ width: 11, height: 11, flexShrink: 0, color: '#6B7A8D' }} />
-                      </a>
-                    ))}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {items.slice(0, 12).map((it) => {
+                      const isFresh = it.age_hours <= 24;
+                      return (
+                        <a key={it.id} href={it.link} target="_blank" rel="noopener noreferrer" style={{ display: 'block', backgroundColor: '#0A1422', border: `1px solid ${isFresh ? meta.color + '40' : '#1A2840'}`, borderRadius: 6, padding: '10px 14px', textDecoration: 'none', color: 'inherit' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: it.region === 'IN' ? '#FBBF24' : '#22D3EE' }}>
+                              {it.region === 'IN' ? '🇮🇳' : it.region === 'US' ? '🇺🇸' : '🌐'}
+                            </span>
+                            {it.tickers.slice(0, 3).map((t) => (
+                              <span key={t} style={{ fontSize: 10, fontWeight: 700, color: '#38A9E8', backgroundColor: '#0F7ABF20', border: '1px solid #0F7ABF40', padding: '1px 6px', borderRadius: 3, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                                {t}
+                              </span>
+                            ))}
+                            {isFresh && (
+                              <span style={{ fontSize: 9, fontWeight: 800, color: '#0A1422', backgroundColor: '#FBBF24', padding: '1px 6px', borderRadius: 3 }}>
+                                🆕 {it.age_hours}h
+                              </span>
+                            )}
+                            <span style={{ marginLeft: 'auto', fontSize: 10, color: '#6B7A8D', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                              {it.source}
+                              <ExternalLink style={{ width: 10, height: 10 }} />
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 12.5, color: '#E6EDF3', lineHeight: 1.5, fontWeight: 500 }}>
+                            {it.title}
+                          </div>
+                          {it.description && (
+                            <div style={{ fontSize: 10.5, color: '#6B7A8D', lineHeight: 1.5, marginTop: 4 }}>
+                              {it.description.slice(0, 180)}{it.description.length > 180 ? '…' : ''}
+                            </div>
+                          )}
+                        </a>
+                      );
+                    })}
+                    {items.length > 12 && (
+                      <div style={{ fontSize: 10, color: '#6B7A8D', textAlign: 'center', marginTop: 4 }}>
+                        Showing latest 12 of {items.length} matches.
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
             );
           })}
+
+          {/* Source status (transparency) */}
+          <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: 12, padding: '10px 14px' }}>
+            <div style={{ fontSize: 11, color: '#6B7A8D', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 6 }}>RSS source health</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {data.source_status.map((s) => (
+                <span key={s.name} title={s.ok ? `${s.items ?? 0} items pulled` : 'Failed'} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 3, color: s.ok ? '#10B981' : '#EF4444', backgroundColor: s.ok ? '#10B98115' : '#EF444415', border: `1px solid ${s.ok ? '#10B98140' : '#EF444440'}` }}>
+                  {s.ok ? '✓' : '✗'} {s.name}{s.ok && s.items != null ? ` (${s.items})` : ''}
+                </span>
+              ))}
+            </div>
+          </div>
         </div>
       )}
     </div>
