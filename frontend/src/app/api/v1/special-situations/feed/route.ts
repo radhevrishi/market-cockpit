@@ -39,9 +39,15 @@ const SOURCES: ReadonlyArray<FeedSource> = [
   { name: 'CNBC Top',          url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114', region: 'US' },
   { name: 'CNBC Finance',      url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664',  region: 'US' },
   { name: 'CNBC Earnings',     url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839135',  region: 'US' },
-  // PATCH 0100: SEC EDGAR 8-K — primary source for US M&A / spin-off / buyback disclosures
-  { name: 'SEC EDGAR 8-K',     url: 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&company=&dateb=&owner=include&count=40&output=atom', region: 'US' },
-  { name: 'SEC EDGAR Form 10', url: 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=10-12B&company=&dateb=&owner=include&count=40&output=atom', region: 'US' },
+  // PATCH 0100c: SEC EDGAR — narrow to forms whose TITLE alone identifies the action.
+  // 8-K dropped (too noisy — title doesn't say what the filing is about; most are
+  // routine items 1.01/2.02/5.02 not M&A).  Kept the spin-off + tender-offer forms.
+  { name: 'SEC Form 10-12B',  url: 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=10-12B&company=&dateb=&owner=include&count=40&output=atom', region: 'US' },
+  { name: 'SEC Form 10-12G',  url: 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=10-12G&company=&dateb=&owner=include&count=40&output=atom', region: 'US' },
+  { name: 'SEC SC 14D-9',     url: 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=SC+14D-9&company=&dateb=&owner=include&count=40&output=atom', region: 'US' },
+  { name: 'SEC SC TO-T',      url: 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=SC+TO-T&company=&dateb=&owner=include&count=40&output=atom', region: 'US' },
+  { name: 'SEC SC TO-I',      url: 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=SC+TO-I&company=&dateb=&owner=include&count=40&output=atom', region: 'US' },
+  { name: 'SEC SC 13E-3',     url: 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=SC+13E3&company=&dateb=&owner=include&count=40&output=atom', region: 'US' },
   // Global / wires
   { name: 'Yahoo Finance',     url: 'https://finance.yahoo.com/news/rssindex',                                          region: 'GLOBAL' },
 ];
@@ -63,14 +69,16 @@ const CATEGORIES: ReadonlyArray<CategorySpec> = [
   {
     id: 'SPIN',
     label: 'Spin-offs / Demergers',
-    // PATCH 0100: broadened to catch headlines like "X to separate into two", "approves demerger",
-    // "split into X", "creates independent company", Form 10/10-12B SEC filings, "carve out unit"
-    pattern: /\b(spin.?off|spinoff|spun.?off|spinning off|demerg(?:e[rd]?|ing)|de.?merger|carve.?out|carved out|carving out|split.?off|hive.?off|hive[ -]off|form\s*10(?:-12B)?\b|tax.?free distribution|business separation|breakup|break.?up\s+plan|separate (?:the|its) (?:business|division|segment|unit|operations)|to spin (?:off|out)|approves? (?:demerger|spin.?off|de-?merger|separation)|creates? (?:independent|separate|new) (?:company|entity|listed)|split into (?:two|three|four)|two separate companies|independent (?:public )?company|to be (?:demerged|separated|split)|sebi (?:demerger|spin)|nclt (?:approves|sanctions) (?:demerger|scheme of arrangement)|scheme of arrangement|business reorganis(?:e|ation)|listing of (?:the )?(?:demerged|spin))\b/i,
+    // PATCH 0100c: catch SEC form codes 10-12B / 10-12G (spin-off prospectuses) directly —
+    // their RSS titles are 'COMPANY NAME (Filer)' prefixed by the form code, not 'Form 10'.
+    pattern: /\b(spin.?off|spinoff|spun.?off|spinning off|demerg(?:e[rd]?|ing)|de.?merger|carve.?out|carved out|carving out|split.?off|hive.?off|hive[ -]off|10-12[BG](?:\/A)?\b|form\s*10(?:-12[BG])?\b|tax.?free distribution|business separation|breakup|break.?up\s+plan|separate (?:the|its) (?:business|division|segment|unit|operations)|to spin (?:off|out)|approves? (?:demerger|spin.?off|de-?merger|separation)|creates? (?:independent|separate|new) (?:company|entity|listed)|split into (?:two|three|four)|two separate companies|independent (?:public )?company|to be (?:demerged|separated|split)|sebi (?:demerger|spin)|nclt (?:approves|sanctions) (?:demerger|scheme of arrangement)|scheme of arrangement|business reorganis(?:e|ation)|listing of (?:the )?(?:demerged|spin))\b/i,
   },
   {
     id: 'MA',
     label: 'M&A / Open Offers / Takeovers',
-    pattern: /\b(open offer|takeover bid|tender offer|hostile (?:bid|offer)|acquir(?:e|ed|es|ing)|acquisition|merger|merge with|merger agreement|all.?cash deal|all.?stock deal|strategic acquisition|control change|change of control|controlling stake|substantial acquisition|buyout offer|to (?:buy|acquire)\s+[A-Z]|deal worth|stake (?:sale|acquisition)|to sell (?:business|unit|division|stake)|sells (?:its|business|unit|division|stake)|cci approves?|definitive agreement|definitive merger)\b/i,
+    // PATCH 0100c: catch SEC tender-offer schedules (SC 14D-9 / SC TO-T / SC TO-I / SC 13E-3)
+    // by their form codes directly.
+    pattern: /\b(open offer|takeover bid|tender offer|hostile (?:bid|offer)|acquir(?:e|ed|es|ing)|acquisition|merger|merge with|merger agreement|all.?cash deal|all.?stock deal|strategic acquisition|control change|change of control|controlling stake|substantial acquisition|buyout offer|to (?:buy|acquire)\s+[A-Z]|deal worth|stake (?:sale|acquisition)|to sell (?:business|unit|division|stake)|sells (?:its|business|unit|division|stake)|cci approves?|definitive agreement|definitive merger|SC[\s-]?14D-?9|SC[\s-]?TO-[TI]|SC[\s-]?13E-?3)\b/i,
     reject: /\b(rumou?r(?:ed|s)?|may consider|reportedly weighing|in talks (?:to|with)|exploring|denied|reject(?:ed)?\s+(?:the\s+)?offer|terminated|called off|withdr(?:ew|awn)|antitrust block|deal collapse)\b/i,
   },
   {
