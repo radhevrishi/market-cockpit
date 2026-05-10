@@ -90,16 +90,30 @@ export interface StrategicVisibilitySignal {
 
 // ─── Theme classification — token tables ──────────────────────────────────
 
+// PATCH 0071: theme patterns broadened so live India PSU + US infra news
+// actually qualifies. The previous patterns required institutional terms
+// like "renewable EPC framework" — real headlines say "solar order" or
+// "BESS project". This caused real news to silently fall out at the theme
+// gate even after 0069's loosening.
 const THEME_PATTERNS: Array<{ theme: StrategicTheme; pattern: RegExp; weight: number }> = [
-  { theme: 'AI_INFRASTRUCTURE', weight: 9, pattern: /\b(ai infrastructure|ai infra|ai compute|ai cluster|ai training cluster|inference (?:capacity|cluster)|stargate|gpt(?:-|.)?\d|llm training|hyperscaler ai|gpu (?:cluster|deployment))\b/i },
-  { theme: 'HYPERSCALER_LEASE',  weight: 9, pattern: /\b((?:microsoft|amazon|google|alphabet|meta|aws|azure|oracle cloud|openai|anthropic).{0,30}(?:lease|capacity reservation|colocation|colo|hosting agreement|capacity deal|gigawatt|gw lease))\b/i },
-  { theme: 'NEOCLOUD_AI_INFRA',  weight: 8, pattern: /\b(coreweave|crusoe|lambda labs|nebius|wulf|terawulf|hut.?8|iren|applied digital|cipher mining)\b/i },
-  { theme: 'ENERGY_TRANSITION',  weight: 7, pattern: /\b(grid (?:upgrade|expansion|epc)|t&d epc|transmission (?:project|expansion)|renewable (?:project|epc|capacity)|bess|battery storage system|smr|small modular reactor|uranium offtake|haleu|enrichment framework|nuclear fuel agreement)\b/i },
-  { theme: 'DEFENSE_AEROSPACE',  weight: 7, pattern: /\b(defense (?:appropriation|framework|multi.?year)|defence (?:appropriation|framework|multi.?year)|cas-b|production line .{0,15}(?:fighter|missile|naval)|fms (?:contract|case)|naval shipbuilding contract|c4isr|space launch contract)\b/i },
-  { theme: 'SEMI_SUPPLY_CHAIN',  weight: 7, pattern: /\b(fab (?:capacity|construction).{0,30}(?:billion|bn)|chips act|semiconductor (?:capacity|fab)|cowos (?:framework|reservation|allocation)|hbm (?:framework|reservation|offtake)|advanced packaging (?:framework|allocation))\b/i },
-  { theme: 'CRITICAL_NATIONAL_PROGRAM', weight: 7, pattern: /\b(doe (?:framework|appropriation|grant)|dod (?:framework|appropriation)|chips act funding|infrastructure (?:investment|jobs) act|inflation reduction act|ira (?:tax credit|funding)|production (?:linked|tax) credit)\b/i },
-  { theme: 'POWER_GRID',         weight: 6, pattern: /\b(power purchase agreement|ppa.{0,40}(?:gigawatt|gw|10.?year|15.?year|20.?year)|grid interconnection (?:framework|queue)|hvdc framework|transformer multi.?year)\b/i },
-  { theme: 'QUANTUM_CRYPTO',     weight: 5, pattern: /\b(quantum (?:framework|funding|appropriation|nsf grant)|crypto (?:custody|reserve) (?:framework|deal))\b/i },
+  { theme: 'AI_INFRASTRUCTURE', weight: 9, pattern: /\b(ai infrastructure|ai infra|ai compute|ai cluster|ai training cluster|ai (?:campus|factory|datacenter|data ?center)|inference (?:capacity|cluster)|stargate|gpt(?:-|.)?\d|llm training|hyperscaler ai|gpu (?:cluster|deployment)|trainium|tpu (?:cluster|deployment))\b/i },
+  { theme: 'HYPERSCALER_LEASE',  weight: 9, pattern: /\b((?:microsoft|amazon|google|alphabet|meta|aws|azure|oracle cloud|openai|anthropic).{0,30}(?:lease|capacity reservation|colocation|colo|hosting agreement|capacity deal|gigawatt|gw lease)|(?:hyperscaler|investment.?grade tenant).{0,30}(?:lease|colo|capacity|deal|hosting|reservation))\b/i },
+  { theme: 'NEOCLOUD_AI_INFRA',  weight: 8, pattern: /\b(coreweave|crusoe|lambda labs|nebius|wulf|terawulf|hut.?8|iren|applied digital|cipher mining|vast data|fluidstack)\b/i },
+  // ENERGY_TRANSITION — broadened to catch India renewable EPC orders
+  // (solar / wind / BESS / hydro) from NTPC / SECI / state utilities.
+  { theme: 'ENERGY_TRANSITION',  weight: 7, pattern: /\b(grid (?:upgrade|expansion|epc)|t&d epc|transmission (?:project|expansion|order|epc|line)|renewable (?:project|epc|capacity|order)|solar (?:epc|order|project|park|plant|ppa)|wind (?:epc|order|project|farm|ppa)|hydro (?:project|epc|order)|bess|battery (?:storage|energy storage)|fgd|flue gas desulphur|smr|small modular reactor|uranium (?:offtake|supply)|haleu|enrichment (?:framework|contract)|nuclear (?:fuel|reactor) (?:agreement|order|contract)|emission control (?:order|framework))\b/i },
+  // DEFENSE_AEROSPACE — broadened: missile, submarine, frigate, destroyer,
+  // fighter, helicopter, radar, BVRAAM, ammunition, drone all detect.
+  { theme: 'DEFENSE_AEROSPACE',  weight: 7, pattern: /\b(defense (?:appropriation|framework|multi.?year|order|contract)|defence (?:appropriation|framework|multi.?year|order|contract)|missile (?:order|contract|production)|akash (?:ng|missile)?|astra (?:missile|mk\d|bvraam)|brahmos|nirbhay|submarine (?:order|contract|construction)|p75|p-?17|frigate (?:order|contract)|destroyer (?:order|contract)|aircraft carrier|fighter (?:order|production|contract)|tejas (?:mk\d|lca)?|amca|lca|production line .{0,15}(?:fighter|missile|naval)|fms (?:contract|case)|naval (?:shipbuilding|reactor|order|contract)|c4isr|space launch (?:contract|order)|drone (?:order|fleet)|ammunition (?:order|contract)|radar (?:order|contract))\b/i },
+  // SEMI_SUPPLY_CHAIN — broadened: fab expansion, foundry, chip plant.
+  { theme: 'SEMI_SUPPLY_CHAIN',  weight: 7, pattern: /\b(fab (?:capacity|construction|expansion|investment).{0,30}(?:billion|bn|cr|crore|\$|₹)|chips act|semiconductor (?:capacity|fab|plant|investment)|foundry (?:expansion|investment)|cowos (?:framework|reservation|allocation)|hbm (?:framework|reservation|offtake|allocation|order)|advanced packaging (?:framework|allocation|investment)|chip (?:plant|fab) (?:investment|expansion))\b/i },
+  // CRITICAL_NATIONAL_PROGRAM — broadened: India PIB programs, Vande
+  // Bharat, metro rail, shipyard, atmanirbhar.
+  { theme: 'CRITICAL_NATIONAL_PROGRAM', weight: 7, pattern: /\b(doe (?:framework|appropriation|grant|loan|extension)|dod (?:framework|appropriation)|chips act funding|infrastructure (?:investment|jobs) act|inflation reduction act|ira (?:tax credit|funding)|production (?:linked|tax) credit|pli scheme|atmanirbhar bharat|vande bharat|sleeper trainset|metro rail (?:order|project|epc)|metro project|bullet train|high.?speed rail|sagarmala|bharatmala|gati shakti|jal jeevan|smart city)\b/i },
+  // POWER_GRID — broadened: TBCB, transmission order, transformer order,
+  // HVDC, switchyard.
+  { theme: 'POWER_GRID',         weight: 6, pattern: /\b(power purchase agreement|ppa.{0,40}(?:gigawatt|gw|10.?year|15.?year|20.?year|25.?year)|grid interconnection (?:framework|queue|order)|hvdc (?:framework|order|project)|transmission (?:tariff|tbcb|order|line|epc)|transformer (?:multi.?year|order)|switchyard (?:order|project)|tariff.?based (?:bidding|competitive))\b/i },
+  { theme: 'QUANTUM_CRYPTO',     weight: 5, pattern: /\b(quantum (?:framework|funding|appropriation|nsf grant|computing investment)|crypto (?:custody|reserve) (?:framework|deal))\b/i },
 ];
 
 // ─── Counterparty detection ────────────────────────────────────────────────
@@ -301,8 +315,8 @@ export function classifyStrategicVisibility(args: {
   // PATCH 0069: capacity-based size inference for AI/hyperscaler leases.
   // When the article describes ≥100MW AI campus / data center capacity
   // with ≥10y duration but doesn't disclose $ value, infer a conservative
-  // $30M/MW/year implicit value (industry benchmark for take-or-pay AI
-  // leases). 200MW × 15y × $30M = $90B (capped at $20B for sanity).
+  // $20M/MW/year implicit value (industry benchmark for take-or-pay AI
+  // leases). 200MW × 15y × $20M = $60B (capped at $20B for sanity).
   if (contract_value_usd_m === undefined) {
     const mwM = text.match(/\b(\d[\d,.]*)\s*mw\b/i);
     const isAiContext = /\b(ai (?:campus|factory|infrastructure|data ?center)|hyperscaler|colocation|hpc cluster)\b/i.test(text);
@@ -313,6 +327,38 @@ export function classifyStrategicVisibility(args: {
         // Conservative: $20M/MW/year ≈ $300/kW-month (take-or-pay)
         const implicit = Math.min(20000, Math.round(mw * yrs * 20));
         contract_value_usd_m = implicit;
+      }
+    }
+  }
+
+  // PATCH 0071: capacity-based size inference for solar/wind PPA.
+  // ≥100MW solar/wind PPA with ≥10y duration and India PSU counterparty
+  // implies meaningful annuity revenue. ₹3.5/kWh × 100MW × 1750 hrs/yr
+  // × 25y × INR-USD ≈ $185M for a 100MW × 25y solar PPA. We infer at
+  // a conservative $1M/MW × visibility years (capped at $5B).
+  if (contract_value_usd_m === undefined) {
+    const mwM = text.match(/\b(\d[\d,.]*)\s*mw\b/i);
+    const isRenewablePPA = /\b(solar|wind|hydro|bess|battery storage)\b.{0,40}\b(ppa|epc|order|project|park|farm|plant)\b/i.test(text);
+    if (mwM && isRenewablePPA) {
+      const mw = parseFloat(mwM[1].replace(/,/g, ''));
+      const yrs = visibility_years ?? 25;  // PPA default 25y
+      if (mw >= 100 && yrs >= 10) {
+        // ~$1M/MW × visibility-year as conservative annuity proxy
+        const implicit = Math.min(5000, Math.round(mw * yrs * 1));
+        contract_value_usd_m = implicit;
+      }
+    }
+  }
+
+  // PATCH 0071: GW (gigawatt) detection for transmission / energy mega-orders.
+  // 5GW transmission TBCB ≈ $1.86B (PowerGrid example). Infer at $400M/GW.
+  if (contract_value_usd_m === undefined) {
+    const gwM = text.match(/\b(\d[\d,.]*)\s*gw\b/i);
+    const isInfraContext = /\b(transmission|tbcb|hvdc|grid|ppa|solar|wind|nuclear|baseload|datacenter|data ?center)\b/i.test(text);
+    if (gwM && isInfraContext) {
+      const gw = parseFloat(gwM[1].replace(/,/g, ''));
+      if (gw >= 1) {
+        contract_value_usd_m = Math.min(20000, Math.round(gw * 400));
       }
     }
   }

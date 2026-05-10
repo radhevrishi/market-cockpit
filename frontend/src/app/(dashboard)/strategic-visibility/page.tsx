@@ -178,8 +178,23 @@ function useStrategic(windowDays: number = 365) {
 
 export default function StrategicVisibilityPage() {
   const [windowDays, setWindowDays] = React.useState<30 | 90 | 180 | 365 | 730>(365);
+  // PATCH 0071: region filter + sort toggle
+  const [regionFilter, setRegionFilter] = React.useState<'ALL' | 'IN' | 'US'>('ALL');
+  const [sortMode, setSortMode] = React.useState<'rank' | 'recent'>('rank');
   const { data, isLoading } = useStrategic(windowDays);
-  const articles = data?.articles ?? [];
+
+  const articles = useMemo(() => {
+    const base = data?.articles ?? [];
+    // Region filter — match IN, US, or both (GLOBAL passes through ALL)
+    const filtered = regionFilter === 'ALL'
+      ? base
+      : base.filter((a) => a.region === regionFilter || (regionFilter === 'US' && a.region === 'GLOBAL'));
+    // Sort
+    if (sortMode === 'recent') {
+      return [...filtered].sort((a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime());
+    }
+    return filtered;  // server returns rank-sorted
+  }, [data?.articles, regionFilter, sortMode]);
 
   // Group by theme so users can scan by category
   const grouped = useMemo(() => {
@@ -191,6 +206,16 @@ export default function StrategicVisibilityPage() {
     }
     return out;
   }, [articles]);
+
+  // Per-region counts for filter chip badges
+  const regionCounts = useMemo(() => {
+    const all = data?.articles ?? [];
+    return {
+      ALL: all.length,
+      IN: all.filter((a) => a.region === 'IN').length,
+      US: all.filter((a) => a.region === 'US' || a.region === 'GLOBAL').length,
+    };
+  }, [data?.articles]);
 
   return (
     <div style={{ minHeight: '100%', backgroundColor: '#0A0E1A', padding: '20px 24px' }}>
@@ -242,6 +267,44 @@ export default function StrategicVisibilityPage() {
               </span>
             )}
           </div>
+          {/* PATCH 0071: Region filter + sort toggle */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 10, color: '#4A5B6C', fontWeight: 700, letterSpacing: '0.5px' }}>REGION:</span>
+            {(['ALL', 'IN', 'US'] as const).map((r) => (
+              <button
+                key={r}
+                onClick={() => setRegionFilter(r)}
+                style={{
+                  fontSize: 10, fontWeight: 700,
+                  color: regionFilter === r ? '#10B981' : '#6B7A8D',
+                  backgroundColor: regionFilter === r ? '#10B98115' : 'transparent',
+                  border: `1px solid ${regionFilter === r ? '#10B98160' : '#1E2D45'}`,
+                  borderRadius: 4, padding: '4px 10px', cursor: 'pointer',
+                  letterSpacing: '0.4px',
+                }}
+              >
+                {r === 'ALL' ? '🌐 ALL' : r === 'IN' ? '🇮🇳 IN' : '🇺🇸 US'}
+                <span style={{ marginLeft: 5, color: '#4A5B6C', fontWeight: 400 }}>{regionCounts[r]}</span>
+              </button>
+            ))}
+            <span style={{ fontSize: 10, color: '#4A5B6C', fontWeight: 700, letterSpacing: '0.5px', marginLeft: 12 }}>SORT:</span>
+            {(['rank', 'recent'] as const).map((s) => (
+              <button
+                key={s}
+                onClick={() => setSortMode(s)}
+                style={{
+                  fontSize: 10, fontWeight: 700,
+                  color: sortMode === s ? '#F59E0B' : '#6B7A8D',
+                  backgroundColor: sortMode === s ? '#F59E0B15' : 'transparent',
+                  border: `1px solid ${sortMode === s ? '#F59E0B60' : '#1E2D45'}`,
+                  borderRadius: 4, padding: '4px 10px', cursor: 'pointer',
+                  letterSpacing: '0.4px',
+                }}
+              >
+                {s === 'rank' ? '▲ By Rank' : '🕒 By Recent'}
+              </button>
+            ))}
+          </div>
         </header>
 
         {/* Inclusion criteria pinned at top */}
@@ -288,21 +351,33 @@ export default function StrategicVisibilityPage() {
           <div style={{ padding: 60, textAlign: 'center', color: '#6B7A8D', backgroundColor: '#0D1B2E', borderRadius: 10, border: '1px solid #1E2D45' }}>
             <div style={{ fontSize: 32, marginBottom: 8 }}>📭</div>
             <div style={{ fontSize: 14, color: '#94A3B8', marginBottom: 4 }}>
-              No transformational contracts in the rolling {windowDays}-day ledger yet.
+              {regionFilter !== 'ALL'
+                ? `No ${regionFilter} contracts in the rolling ${windowDays}-day window.`
+                : `No transformational contracts in the rolling ${windowDays}-day ledger yet.`}
             </div>
             <div style={{ fontSize: 11, lineHeight: 1.5, marginBottom: 12 }}>
               The ledger fills as qualifying contracts come in across the news cycle.
-              India PSU orders ≥ ₹500 cr from NTPC / PGCIL / SECI / HAL / BEL with ≥3y visibility now qualify
-              alongside the global ≥$300M Tier-1 path. Try a wider window above.
+              India PSU orders ≥ ₹500 cr from NTPC / PGCIL / SECI / HAL / BEL with ≥3y visibility qualify
+              alongside the global ≥$300M Tier-1 path.
             </div>
-            {windowDays < 730 && (
-              <button
-                onClick={() => setWindowDays(730)}
-                style={{ fontSize: 11, fontWeight: 700, color: '#22D3EE', backgroundColor: '#22D3EE15', border: '1px solid #22D3EE60', borderRadius: 4, padding: '6px 14px', cursor: 'pointer' }}
-              >
-                Switch to 2-year window
-              </button>
-            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+              {regionFilter !== 'ALL' && (
+                <button
+                  onClick={() => setRegionFilter('ALL')}
+                  style={{ fontSize: 11, fontWeight: 700, color: '#10B981', backgroundColor: '#10B98115', border: '1px solid #10B98160', borderRadius: 4, padding: '6px 14px', cursor: 'pointer' }}
+                >
+                  Show all regions
+                </button>
+              )}
+              {windowDays < 730 && (
+                <button
+                  onClick={() => setWindowDays(730)}
+                  style={{ fontSize: 11, fontWeight: 700, color: '#22D3EE', backgroundColor: '#22D3EE15', border: '1px solid #22D3EE60', borderRadius: 4, padding: '6px 14px', cursor: 'pointer' }}
+                >
+                  Switch to 2-year window
+                </button>
+              )}
+            </div>
           </div>
         )}
 
