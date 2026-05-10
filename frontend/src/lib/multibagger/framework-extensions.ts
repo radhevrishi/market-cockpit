@@ -294,6 +294,188 @@ export interface HistoricalMultibagger {
   framework_signals: string[];   // which dimensions caught it
 }
 
+// ─── 5. Archetype Match — patch 0058 ──────────────────────────────────────
+// Auto-encodes the per-stock audit logic. Every stock receives a closest
+// historical archetype and a match strength so the user no longer needs to
+// manually compare against canonical multibaggers.
+
+export type ArchetypeMatchStrength = 'STRONG' | 'PARTIAL' | 'WEAK' | 'NO_MATCH';
+
+export interface ArchetypeMatch {
+  closest_archetype?: string;          // 'Astral Pipes 2010' etc.
+  closest_pattern?: string;            // 'CATEGORY_PIONEER' etc.
+  ten_year_return_x?: number;          // historical multiple at exit (10y)
+  match_score: number;                 // 0-100
+  strength: ArchetypeMatchStrength;
+  matching_dimensions: string[];       // ['cap 1.4× of Astral', 'ROCE within 5pp', ...]
+  missing_dimensions: string[];        // ['EPS growth far below archetype', ...]
+  verdict: string;                     // human-readable action recommendation
+}
+
+// Pattern category — encodes WHAT KIND of multibagger setup the stock looks like
+const ARCHETYPE_TAGS: Record<string, string> = {
+  EICHER:   'TURNAROUND_FOUNDER_LED',
+  BAJFIN:   'OPERATIONAL_LEVERAGE',
+  PAGEIND:  'CAPITAL_LIGHT_BRAND',
+  ASTRAL:   'CATEGORY_PIONEER',
+  SYMPHONY: 'ASSET_LIGHT_FOUNDER',
+  LAOPALA:  'PREMIUM_PRICING_INFLECTION',
+  AVANTI:   'EXPORT_TAILWIND_MICROCAP',
+  CAPLIN:   'GEOGRAPHIC_EXPANSION',
+};
+
+export function computeArchetypeMatch(args: {
+  marketCapCr?: number;
+  roce?: number;
+  profitCagr?: number;
+  epsGrowth?: number;
+  promoter?: number;
+  fiiPlusDii?: number;
+  dilutionDragPp?: number | null;
+  accelSignal?: 'ACCELERATING' | 'STABLE' | 'DECELERATING';
+  bucket?: 'CORE_COMPOUNDER' | 'EMERGING_MULTIBAGGER' | 'HIGH_RISK' | 'MONITOR';
+}): ArchetypeMatch {
+  const {
+    marketCapCr, roce, profitCagr, epsGrowth, promoter, fiiPlusDii,
+    dilutionDragPp, accelSignal, bucket,
+  } = args;
+
+  let bestMatch: HistoricalMultibagger | null = null;
+  let bestScore = 0;
+  let bestSigs: string[] = [];
+  let bestMissing: string[] = [];
+
+  for (const h of HISTORICAL_MULTIBAGGERS) {
+    let pts = 0;
+    const sigs: string[] = [];
+    const missing: string[] = [];
+
+    // 1. Market cap proximity (most important — multibaggers are sub-₹1000Cr at entry)
+    if (marketCapCr !== undefined) {
+      const ratio = marketCapCr / h.market_cap_cr;
+      if (ratio >= 0.3 && ratio <= 5) {
+        pts += 3;
+        sigs.push(`MCap ${ratio.toFixed(1)}× of ${h.name}`);
+      } else if (ratio >= 0.1 && ratio <= 10) {
+        pts += 1;
+      } else {
+        missing.push(`MCap ${ratio < 0.1 ? 'far below' : 'far above'} archetype band`);
+      }
+    }
+
+    // 2. ROCE proximity (within ±8pp)
+    if (roce !== undefined) {
+      if (Math.abs(roce - h.roce_pct) <= 8) {
+        pts += 2;
+        sigs.push(`ROCE ${roce}% (≈${h.roce_pct}%)`);
+      } else if (roce < h.roce_pct - 8) {
+        missing.push(`ROCE ${roce}% well below archetype ${h.roce_pct}%`);
+      }
+    }
+
+    // 3. Profit CAGR proximity (within ±15pp — multibaggers all had 22-65% at entry)
+    if (profitCagr !== undefined) {
+      if (Math.abs(profitCagr - h.profit_cagr_pct) <= 15) {
+        pts += 2;
+        sigs.push(`Profit CAGR ${profitCagr}% (≈${h.profit_cagr_pct}%)`);
+      } else if (profitCagr < h.profit_cagr_pct - 15) {
+        missing.push(`Profit CAGR ${profitCagr}% well below archetype ${h.profit_cagr_pct}%`);
+      }
+    }
+
+    // 4. EPS growth proximity (uses dilution drag implicitly)
+    if (epsGrowth !== undefined && Math.abs(epsGrowth - h.eps_growth_pct) <= 15) {
+      pts += 1;
+      sigs.push(`EPS growth ${epsGrowth}% (≈${h.eps_growth_pct}%)`);
+    }
+
+    // 5. Promoter holding match (multibaggers all founder/family-led, 50-75%)
+    if (promoter !== undefined) {
+      if (Math.abs(promoter - h.promoter_pct) <= 15) {
+        pts += 2;
+        sigs.push(`Promoter ${promoter}% (≈${h.promoter_pct}%)`);
+      } else if (promoter < 35) {
+        missing.push(`Promoter ${promoter}% well below founder-led archetype`);
+      }
+    }
+
+    // 6. FII+DII low (undiscovered) — multibaggers all <8% at entry
+    if (fiiPlusDii !== undefined) {
+      if (Math.abs(fiiPlusDii - h.fii_dii_pct) <= 10) {
+        pts += 1;
+        sigs.push(`FII+DII ${fiiPlusDii}% (≈${h.fii_dii_pct}% — undiscovered)`);
+      } else if (fiiPlusDii > 35) {
+        missing.push(`FII+DII ${fiiPlusDii}% — already discovered, sweet spot missed`);
+      }
+    }
+
+    // 7. Dilution drag proximity (multibaggers all between -3 and +5pp)
+    if (dilutionDragPp !== null && dilutionDragPp !== undefined &&
+        Math.abs(dilutionDragPp - h.dilution_drag_pp) <= 3) {
+      pts += 1;
+      sigs.push(`Dilution drag matches (${dilutionDragPp.toFixed(1)}pp)`);
+    } else if (dilutionDragPp !== null && dilutionDragPp !== undefined && dilutionDragPp > 12) {
+      missing.push(`Dilution drag ${dilutionDragPp.toFixed(0)}pp — eats per-share growth`);
+    }
+
+    // 8. Acceleration matches inflection-year profit acceleration
+    if (accelSignal === 'ACCELERATING' && h.profit_cagr_pct >= 25) {
+      pts += 2;
+      sigs.push('ACCELERATING — matches inflection-year archetype');
+    } else if (accelSignal === 'STABLE' && h.profit_cagr_pct < 25) {
+      pts += 1;
+    } else if (accelSignal === 'DECELERATING') {
+      pts -= 2;
+      missing.push('DECELERATING — does NOT match any historical multibagger setup');
+    }
+
+    // 9. Bucket alignment
+    if (bucket === 'CORE_COMPOUNDER' || bucket === 'EMERGING_MULTIBAGGER') {
+      pts += 1;
+    } else if (bucket === 'MONITOR') {
+      pts -= 3;
+      missing.push('Monitor bucket — fails kill-switch tests');
+    }
+
+    if (pts > bestScore) {
+      bestScore = pts;
+      bestMatch = h;
+      bestSigs = sigs;
+      bestMissing = missing;
+    }
+  }
+
+  // Match strength tier
+  let strength: ArchetypeMatchStrength = 'NO_MATCH';
+  let verdict = 'No canonical multibagger archetype matches this stock setup.';
+  if (bestScore >= 8) {
+    strength = 'STRONG';
+    verdict = `Closest archetype to a 100× setup. Study the ${bestMatch?.name} ${bestMatch?.entry_year} playbook deeply — same market cap zone, similar growth profile, similar ownership structure.`;
+  } else if (bestScore >= 5) {
+    strength = 'PARTIAL';
+    verdict = `Worth tracking — partial archetype fit. Watch the missing dimensions: ${bestMissing.slice(0, 2).join('; ')}.`;
+  } else if (bestScore >= 2) {
+    strength = 'WEAK';
+    verdict = 'Low conviction — only loose archetype overlap. May still compound, but not the canonical multibagger setup.';
+  } else {
+    verdict = 'Stock setup does not match any historical multibagger pattern. May be value, dividend, or thematic — not 100× compounding.';
+  }
+
+  // Normalize match score to 0-100 (max possible ~14 points, so multiply by 7)
+  const normalized = Math.max(0, Math.min(100, bestScore * 7));
+
+  return {
+    closest_archetype: bestMatch ? `${bestMatch.name} ${bestMatch.entry_year}` : undefined,
+    closest_pattern: bestMatch ? ARCHETYPE_TAGS[bestMatch.ticker] : undefined,
+    ten_year_return_x: bestMatch?.ten_year_return_x,
+    match_score: normalized,
+    strength,
+    matching_dimensions: bestSigs,
+    missing_dimensions: bestMissing,
+    verdict,
+  };
+}
+
 export const HISTORICAL_MULTIBAGGERS: HistoricalMultibagger[] = [
   {
     ticker: 'EICHERMOT', name: 'Eicher Motors', entry_year: 2003,

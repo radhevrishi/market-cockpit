@@ -3,10 +3,12 @@
 import React, { useState, useMemo, useRef } from 'react';
 // PATCH 0055: Multibagger framework extensions — dilution / reinvestment /
 // coverage / historical reference panel.
+// PATCH 0058: also archetype matcher
 import {
   analyzeDilution, computeReinvestmentEngine, computeFrameworkCoverage,
+  computeArchetypeMatch,
   HISTORICAL_MULTIBAGGERS, type DilutionAnalysis, type ReinvestmentEngine,
-  type FrameworkCoverage,
+  type FrameworkCoverage, type ArchetypeMatch,
 } from '@/lib/multibagger/framework-extensions';
 
 // Shared API base — respects NEXT_PUBLIC_API_URL env var so all fetch() calls
@@ -272,6 +274,8 @@ interface ExcelRow {
   reinvestment?: ReinvestmentEngine;
   // Framework coverage (% of ideal data present)
   framework_coverage?: FrameworkCoverage;
+  // ── PATCH 0058: archetype match (auto-encoded historical lessons) ────────
+  archetype?: ArchetypeMatch;
 }
 
 // ── OWNERSHIP INTELLIGENCE LAYER ─────────────────────────────────────────────
@@ -1615,8 +1619,24 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   // Compute kill-switch AFTER all scoring is settled
   const killSwitch = computeKillSwitch(row);
 
+  // PATCH 0058: Auto-compute archetype match — encodes historical lessons.
+  // This pulls together the bucket assignment + dilution + acceleration to
+  // tell the user which canonical multibagger this stock most resembles.
+  const archetype = computeArchetypeMatch({
+    marketCapCr: row.marketCapCr,
+    roce: row.roce,
+    profitCagr: row.profitCagr,
+    epsGrowth: row.epsGrowth,
+    promoter: row.promoter,
+    fiiPlusDii: row.fiiPlusDii,
+    dilutionDragPp: row.dilution?.drag_pp ?? null,
+    accelSignal: row.accelSignal,
+    bucket,
+  });
+
   return {
     ...row, score, grade, bucket, ownershipCategory, decisionStrip, reratingBonus, trajectoryScore, triggerBonus, inflectionSignal, coverage, strengths, risks, redFlags, killSwitch,
+    archetype,
     pillarScores: [
       {id:'QUALITY',    label:'Quality',      score:Math.round(qual),  color:'#a78bfa', weight:Math.round(bw[0]*100)},
       {id:'GROWTH',     label:'Growth',       score:Math.round(growth),color:'#38bdf8', weight:Math.round(bw[1]*100)},
@@ -3066,6 +3086,19 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                           </span>
                         );
                       })()}
+                      {/* PATCH 0058: Archetype match badge — most important addition */}
+                      {r.archetype && r.archetype.strength !== 'NO_MATCH' && (() => {
+                        const s = r.archetype.strength;
+                        const col = s === 'STRONG' ? PURPLE : s === 'PARTIAL' ? '#22d3ee' : MUTED;
+                        const icon = s === 'STRONG' ? '🎯' : s === 'PARTIAL' ? '◓' : '○';
+                        const archShort = (r.archetype.closest_archetype ?? '').replace(/\s\d+$/, '');
+                        return (
+                          <span title={`Closest historical 100× archetype: ${r.archetype.closest_archetype} (${r.archetype.ten_year_return_x}×). Match strength ${s}. Score ${r.archetype.match_score}/100.\n\n${r.archetype.verdict}`}
+                                style={{fontSize:9,fontWeight:700,color:col}}>
+                            {icon} {archShort.length > 14 ? archShort.slice(0, 12) + '…' : archShort} ({r.archetype.match_score})
+                          </span>
+                        );
+                      })()}
                       {/* Score change vs prev upload */}
                       {(() => {
                         const prev = prevScoreMap[r.symbol];
@@ -3112,12 +3145,56 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                           {r.redFlags.map((f,i)=><div key={i} style={{fontSize:F.md,color:f.severity==='CRITICAL'?RED:ORANGE,padding:'3px 0'}}>⛔ {f.label} <span style={{fontSize:F.xs,color:MUTED}}>[{f.source}]</span></div>)}
                         </>}
 
-                        {/* ── PATCH 0056: MULTIBAGGER FRAMEWORK PANEL ── */}
-                        {(r.dilution || r.reinvestment || r.framework_coverage) && (
+                        {/* ── PATCH 0056+0058: MULTIBAGGER FRAMEWORK PANEL ── */}
+                        {(r.dilution || r.reinvestment || r.framework_coverage || r.archetype) && (
                           <div style={{marginTop:16,borderTop:`1px solid ${BORDER}`,paddingTop:12}}>
                             <div style={{fontSize:F.sm,fontWeight:800,letterSpacing:'0.8px',color:'#22d3ee',marginBottom:10}}>
                               🧬 MULTIBAGGER FRAMEWORK ANALYSIS
                             </div>
+                            {/* PATCH 0058: Archetype card — featured first */}
+                            {r.archetype && r.archetype.strength !== 'NO_MATCH' && (() => {
+                              const s = r.archetype.strength;
+                              const col = s === 'STRONG' ? PURPLE : s === 'PARTIAL' ? '#22d3ee' : MUTED;
+                              return (
+                                <div style={{marginBottom:8,padding:'10px 12px',backgroundColor:`${col}10`,border:`1px solid ${col}40`,borderLeft:`3px solid ${col}`,borderRadius:7}}>
+                                  <div style={{display:'flex',alignItems:'baseline',gap:8,marginBottom:6}}>
+                                    <span style={{fontSize:F.sm,fontWeight:800,color:col,letterSpacing:'0.5px'}}>
+                                      🎯 ARCHETYPE MATCH: {s}
+                                    </span>
+                                    <span style={{fontSize:F.xs,fontWeight:700,color:TEXT}}>{r.archetype.closest_archetype}</span>
+                                    <span style={{fontSize:F.xs,color:GREEN,fontWeight:700}}>{r.archetype.ten_year_return_x}× in 10y</span>
+                                    <span style={{fontSize:F.xs,color:MUTED,marginLeft:'auto'}}>match score {r.archetype.match_score}/100</span>
+                                  </div>
+                                  <div style={{fontSize:F.xs,color:TEXT,lineHeight:1.5,marginBottom:8}}>{r.archetype.verdict}</div>
+                                  {r.archetype.matching_dimensions.length > 0 && (
+                                    <div style={{marginBottom:6}}>
+                                      <div style={{fontSize:9,color:GREEN,fontWeight:700,marginBottom:3}}>✓ MATCHING DIMENSIONS</div>
+                                      <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
+                                        {r.archetype.matching_dimensions.map((d,i) => (
+                                          <span key={i} style={{fontSize:9,padding:'2px 6px',backgroundColor:`${GREEN}15`,color:GREEN,border:`1px solid ${GREEN}30`,borderRadius:4}}>{d}</span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {r.archetype.missing_dimensions.length > 0 && (
+                                    <div>
+                                      <div style={{fontSize:9,color:ORANGE,fontWeight:700,marginBottom:3}}>⚠ MISSING vs ARCHETYPE</div>
+                                      <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
+                                        {r.archetype.missing_dimensions.map((d,i) => (
+                                          <span key={i} style={{fontSize:9,padding:'2px 6px',backgroundColor:`${ORANGE}15`,color:ORANGE,border:`1px solid ${ORANGE}30`,borderRadius:4}}>{d}</span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                            {r.archetype && r.archetype.strength === 'NO_MATCH' && (
+                              <div style={{marginBottom:8,padding:'10px 12px',backgroundColor:`${MUTED}10`,border:`1px solid ${MUTED}40`,borderLeft:`3px solid ${MUTED}`,borderRadius:7}}>
+                                <div style={{fontSize:F.xs,fontWeight:700,color:MUTED,marginBottom:4}}>○ NO ARCHETYPE MATCH</div>
+                                <div style={{fontSize:F.xs,color:MUTED,lineHeight:1.5}}>{r.archetype.verdict}</div>
+                              </div>
+                            )}
                             <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:8}}>
                               {r.reinvestment && r.reinvestment.verdict !== 'NA' && (() => {
                                 const v = r.reinvestment.verdict;
