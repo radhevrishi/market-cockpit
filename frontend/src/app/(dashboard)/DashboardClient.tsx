@@ -24,6 +24,8 @@ const NAV: NavItem[] = [
   { href: '/portfolio',     label: 'Portfolio',       icon: <Briefcase className="w-5 h-5" /> },
   { href: '/watchlists',    label: 'Watchlist',       icon: <BookMarked className="w-5 h-5" /> },
   { href: '/orders',        label: 'Intelligence',    icon: <Shield className="w-5 h-5" /> },
+  // PATCH 0092: Special Situations pillar (SPIN / M&A / TURN / CAP scanners)
+  { href: '/special-situations', label: 'Spec Sit',   icon: <Compass className="w-5 h-5" /> },
   // PATCH 0091: Earnings + Earnings AI + Calendar merged into Earnings Hub (sub-tabs inside)
   { href: '/earnings-hub',  label: 'Earnings',        icon: <LineChart className="w-5 h-5" /> },
   { href: '/multibagger',   label: 'Multibagger',     icon: <Star className="w-5 h-5" /> },
