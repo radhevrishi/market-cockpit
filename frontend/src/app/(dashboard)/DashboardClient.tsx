@@ -31,6 +31,8 @@ const NAV: NavItem[] = [
   { href: '/multibagger',   label: 'Multibagger',     icon: <Star className="w-5 h-5" /> },
   // PATCH 0093: Single-Stock Sheet — 16-section institutional checklist runner
   { href: '/stock-sheet',   label: 'Stock Sheet',     icon: <BookMarked className="w-5 h-5" /> },
+  // PATCH 0094: Re-rating Screener — margin expansion + model shift + multiple expansion
+  { href: '/rerating',      label: 'Re-rating',       icon: <TrendingUp className="w-5 h-5" /> },
   { href: '/bottleneck-intel', label: 'Bottleneck',   icon: <Microscope className="w-5 h-5" /> },
   { href: '/strategic-visibility', label: 'Strategic Vis', icon: <Star className="w-5 h-5" /> },
   { href: '/rrg',           label: 'RRG',             icon: <RefreshCw className="w-5 h-5" /> },
