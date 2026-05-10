@@ -385,6 +385,7 @@ interface LayerTickerLite {
   pricing_leverage: 'STRONG' | 'MEDIUM' | 'WEAK';
   size: 'LARGE_CAP' | 'MID_CAP' | 'SMALL_CAP';
   mandatory?: boolean;
+  sub_layer?: 'GPU_SUB' | 'CPU_CYCLE';   // PATCH 0087 — only meaningful for L2
 }
 interface LayeredBeneficiariesLite {
   bottleneck: string;
@@ -2188,6 +2189,29 @@ export default function NewsFeedPage() {
                             const meta = LAYER_META[L];
                             const tickers = lb.layers[L] || [];
                             if (!meta || tickers.length === 0) return null;
+                            // PATCH 0087: chip renderer extracted so L2 can render two sub-clusters
+                            const renderChip = (t: LayerTickerLite) => {
+                              const sizeMark = SIZE_SUFFIX[t.size];
+                              return (
+                                <span
+                                  key={`${t.ticker}-${t.sub_layer ?? ''}`}
+                                  title={`${t.rationale}\nPricing leverage: ${t.pricing_leverage}${t.mandatory ? ' · Mandatory injection (structurally required for ' + lb.bottleneck_label + ')' : ''}`}
+                                  style={{
+                                    fontSize: 13, fontWeight: 700,
+                                    color: t.mandatory ? '#FCD34D' : '#E6EDF3',
+                                    border: t.mandatory ? '1px solid #F59E0B70' : '1px solid #2A3B4C',
+                                    backgroundColor: t.mandatory ? '#F59E0B12' : '#0F1B2E',
+                                    padding: '3px 8px', borderRadius: 4,
+                                    display: 'inline-flex', alignItems: 'center', gap: 5,
+                                  }}
+                                >
+                                  <span style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: LEV_DOT[t.pricing_leverage] || '#6B7A8D' }} />
+                                  <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{t.ticker}</span>
+                                  {sizeMark && <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 400 }}>{sizeMark}</span>}
+                                  {t.mandatory && <span style={{ fontSize: 10, color: '#F59E0B' }}>★</span>}
+                                </span>
+                              );
+                            };
                             return (
                               <div key={L} style={{ marginBottom: 8 }}>
                                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
@@ -2202,30 +2226,36 @@ export default function NewsFeedPage() {
                                   </span>
                                   <span style={{ fontSize: 11, color: '#6B7A8D', fontStyle: 'italic' }}>{meta.tag}</span>
                                 </div>
-                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                                  {tickers.map((t) => {
-                                    const sizeMark = SIZE_SUFFIX[t.size];
-                                    return (
-                                      <span
-                                        key={t.ticker}
-                                        title={`${t.rationale}\nPricing leverage: ${t.pricing_leverage}${t.mandatory ? ' · Mandatory injection (structurally required for ' + lb.bottleneck_label + ')' : ''}`}
-                                        style={{
-                                          fontSize: 13, fontWeight: 700,
-                                          color: t.mandatory ? '#FCD34D' : '#E6EDF3',
-                                          border: t.mandatory ? '1px solid #F59E0B70' : '1px solid #2A3B4C',
-                                          backgroundColor: t.mandatory ? '#F59E0B12' : '#0F1B2E',
-                                          padding: '3px 8px', borderRadius: 4,
-                                          display: 'inline-flex', alignItems: 'center', gap: 5,
-                                        }}
-                                      >
-                                        <span style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: LEV_DOT[t.pricing_leverage] || '#6B7A8D' }} />
-                                        <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{t.ticker}</span>
-                                        {sizeMark && <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 400 }}>{sizeMark}</span>}
-                                        {t.mandatory && <span style={{ fontSize: 10, color: '#F59E0B' }}>★</span>}
-                                      </span>
-                                    );
-                                  })}
-                                </div>
+                                {L === 'L2' ? (() => {
+                                  const gpuSub = tickers.filter((t) => t.sub_layer === 'GPU_SUB');
+                                  const cpuCycle = tickers.filter((t) => t.sub_layer === 'CPU_CYCLE');
+                                  const untagged = tickers.filter((t) => !t.sub_layer);
+                                  return (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                      {gpuSub.length > 0 && (
+                                        <div>
+                                          <div style={{ fontSize: 11, color: '#A78BFA', marginBottom: 3 }}>
+                                            ⚙️ L2A · GPU substitution <span style={{ color: '#6B7A8D' }}>(in-stack share displacement)</span>
+                                          </div>
+                                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{gpuSub.map(renderChip)}</div>
+                                        </div>
+                                      )}
+                                      {cpuCycle.length > 0 && (
+                                        <div>
+                                          <div style={{ fontSize: 11, color: '#E879F9', marginBottom: 3 }}>
+                                            🧠 L2B · CPU cycle <span style={{ color: '#6B7A8D' }}>(GPU scarcity → CPU attach + AI-PC + perf/watt)</span>
+                                          </div>
+                                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{cpuCycle.map(renderChip)}</div>
+                                        </div>
+                                      )}
+                                      {untagged.length > 0 && (
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{untagged.map(renderChip)}</div>
+                                      )}
+                                    </div>
+                                  );
+                                })() : (
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{tickers.map(renderChip)}</div>
+                                )}
                               </div>
                             );
                           })}

@@ -46,6 +46,13 @@ export type LayerSize = 'LARGE_CAP' | 'MID_CAP' | 'SMALL_CAP';
 // bottleneck card and vice versa. Each ticker is exclusively tagged.
 export type LayerRegion = 'IN' | 'GLOBAL';
 
+// PATCH 0087: L2 sub-layer split. Compute substitution and CPU-cycle revival are
+// driven by different mechanisms (in-stack share displacement vs GPU-scarcity →
+// CPU-attach increase + perf/watt architecture shift) and should not be lumped
+// together. Each L2 ticker carries a sub_layer; AMD has TWO rows (GPU substitution
+// for MI-series + CPU cycle for EPYC) so it surfaces in both sub-clusters.
+export type ComputeSubLayer = 'GPU_SUB' | 'CPU_CYCLE';
+
 export interface LayerTicker {
   ticker: string;
   layer: BeneficiaryLayer;
@@ -53,6 +60,8 @@ export interface LayerTicker {
   pricing_leverage: PricingLeverage;
   size: LayerSize;
   region?: LayerRegion;          // PATCH 0086 — defaults to GLOBAL
+  // PATCH 0087 — only meaningful for L2 entries (other layers ignore it)
+  sub_layer?: ComputeSubLayer;
   // True if this ticker is force-injected (mandatory) for the firing node-class,
   // independent of whether it co-occurs in the article. Lets the UI mark it as
   // "structurally required" vs. evidence-driven.
@@ -96,17 +105,20 @@ export const LAYER_ROSTER: LayerTicker[] = [
   { ticker: 'ABBNY',layer: 'L1', rationale: 'ABB electrification + motion + grid automation — global infra capacity capturer',       pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
   { ticker: 'AMKR', layer: 'L1', rationale: 'Amkor OSAT — advanced packaging capacity capture (CoWoS adjacent, FOWLP scale)',        pricing_leverage: 'STRONG', size: 'MID_CAP'   },
 
-  // ── L2 — Compute Substitutes ─────────────────────────────────────────────
-  { ticker: 'AMD',  layer: 'L2', rationale: 'MI300/MI325 — only credible second-source for hyperscaler training',                   pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
-  { ticker: 'INTC', layer: 'L2', rationale: 'Gaudi + Foundry optionality — secondary CPU/GPU substitution',                        pricing_leverage: 'WEAK',   size: 'LARGE_CAP' },
-  { ticker: 'ARM',  layer: 'L2', rationale: 'IP royalty on every ARM-based AI/edge core; perf/watt leader',                        pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
-  { ticker: 'QCOM', layer: 'L2', rationale: 'Inference on Snapdragon + custom Oryon ARM cores; data-centre push',                   pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
-  { ticker: 'AAPL', layer: 'L2', rationale: 'Apple Silicon validates ARM at scale — strategic anchor for the substitution thesis',pricing_leverage: 'WEAK',   size: 'LARGE_CAP' },
-  { ticker: 'AMZN', layer: 'L2', rationale: 'Trainium / Inferentia — internal silicon substitution + cost lever',                  pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
-  { ticker: 'GOOGL',layer: 'L2', rationale: 'TPU generations — internal substitution + Gemini training capacity',                  pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
-  { ticker: 'MSFT', layer: 'L2', rationale: 'Maia / Cobalt — Azure-internal silicon substitution',                                  pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
-  { ticker: 'AVGO', layer: 'L2', rationale: 'Custom-silicon partner for Google TPU + Meta MTIA — substitution enabler',            pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
-  { ticker: 'MRVL', layer: 'L2', rationale: 'AWS Trainium + custom DPU partner — design-win volume rising',                        pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  // ── L2 — Compute Substitutes (split into GPU_SUB + CPU_CYCLE per 0087) ───
+  // GPU substitution: in-stack share displacement of NVDA
+  { ticker: 'AMD',   layer: 'L2', sub_layer: 'GPU_SUB', rationale: 'MI300/MI325 — only credible second-source for hyperscaler training; GPU-substitution leader',                                pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'AVGO',  layer: 'L2', sub_layer: 'GPU_SUB', rationale: 'Custom-silicon partner for Google TPU + Meta MTIA — substitution enabler',                                                  pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'MRVL',  layer: 'L2', sub_layer: 'GPU_SUB', rationale: 'AWS Trainium + custom DPU partner — design-win volume rising',                                                              pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'AMZN',  layer: 'L2', sub_layer: 'GPU_SUB', rationale: 'Trainium / Inferentia — internal silicon substitution + cost lever',                                                        pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
+  { ticker: 'GOOGL', layer: 'L2', sub_layer: 'GPU_SUB', rationale: 'TPU generations — internal substitution + Gemini training capacity',                                                        pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
+  { ticker: 'MSFT',  layer: 'L2', sub_layer: 'GPU_SUB', rationale: 'Maia / Cobalt — Azure-internal silicon substitution',                                                                       pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
+  { ticker: 'AAPL',  layer: 'L2', sub_layer: 'GPU_SUB', rationale: 'Apple Silicon validates ARM at scale — strategic anchor for the substitution thesis',                                       pricing_leverage: 'WEAK',   size: 'LARGE_CAP' },
+  // CPU cycle: GPU scarcity → CPU-attach increase + AI-PC + perf/watt architecture shift
+  { ticker: 'AMD',   layer: 'L2', sub_layer: 'CPU_CYCLE', rationale: 'EPYC server CPU share-gain cycle — GPU scarcity drives CPU-attach increase + AI inference pre-processing',                pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'INTC',  layer: 'L2', sub_layer: 'CPU_CYCLE', rationale: 'Xeon DC + AI-PC rebound — CPU-attach beneficiary as GPU lead-times extend; foundry optionality (secondary)',              pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
+  { ticker: 'ARM',   layer: 'L2', sub_layer: 'CPU_CYCLE', rationale: 'Neoverse server cores — perf/watt-driven hyperscaler ARM substitution; royalty on every AI/edge ARM core',                pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'QCOM',  layer: 'L2', sub_layer: 'CPU_CYCLE', rationale: 'Oryon / X Elite — DC + AI-PC ARM expansion; mobile edge inference',                                                       pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
 
   // ── L3 — Edge / Latency / Distribution ───────────────────────────────────
   { ticker: 'AKAM', layer: 'L3', rationale: 'Akamai pivot to edge compute + generalised AI inference layer',                       pricing_leverage: 'STRONG', size: 'MID_CAP'   },
@@ -117,6 +129,10 @@ export const LAYER_ROSTER: LayerTicker[] = [
   { ticker: 'COHR', layer: 'L3', rationale: 'Coherent 800G/1.6T optical pluggables — AI fabric + edge volume',                     pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
   { ticker: 'CCOI', layer: 'L3', rationale: 'Cogent IP transit — beneficiary of decentralised inference traffic',                  pricing_leverage: 'MEDIUM', size: 'MID_CAP'   },
   { ticker: 'EQIX', layer: 'L3', rationale: 'Equinix interconnect — edge cabinets and inference cross-connects',                   pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  // PATCH 0087: carrier-edge additions — IP backbone + 5G MEC + cell-site footprint
+  { ticker: 'LUMN', layer: 'L3', rationale: 'Lumen IP backbone + edge — long-haul fibre + DC interconnect; carrier-edge inference',  pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
+  { ticker: 'VZ',   layer: 'L3', rationale: 'Verizon — 5G mobile edge compute (MEC) + private-network inference offload',           pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
+  { ticker: 'T',    layer: 'L3', rationale: 'AT&T — cell-site footprint + FirstNet edge; mobile inference + private 5G',           pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
 
   // ── L4 — Sterlite-type Transmission Winners ──────────────────────────────
   // Optical fibre / preform chain
@@ -138,6 +154,38 @@ export const LAYER_ROSTER: LayerTicker[] = [
   // Semis fab consumables (carry-over from FAB chain)
   { ticker: '4901.T',   layer: 'L4', rationale: 'Shin-Etsu silicon wafers + photoresist — semis pricing pass-through',             pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
 
+  // ── L4 (cont.) — EPC / project-backlog inflation chain (PATCH 0087) ──────
+  // The "boring industrials" pricing transmission: AI-DC + grid + RE buildout
+  // pushes EPC backlog 18→36 months, drives contract repricing, expands EBITDA
+  // margins ahead of revenue volume peaks. EPS rerates on a 2-4 quarter lag.
+  { ticker: 'PWR',  layer: 'L4', rationale: 'Quanta Services — largest US T&D EPC + DC infra; backlog repricing on AI grid + RE buildout',                                pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'MTZ',  layer: 'L4', rationale: 'MasTec — utility + pipeline + telecom EPC; AI grid + RE-evac backlog inflation',                                              pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'PRIM', layer: 'L4', rationale: 'Primoris — utilities + RE + DC EPC; smaller-cap leverage to backlog repricing',                                              pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'FLR',  layer: 'L4', rationale: 'Fluor — global EPC + nuclear (NuScale) + DC mega-projects',                                                                  pricing_leverage: 'MEDIUM', size: 'MID_CAP'   },
+  { ticker: 'J',    layer: 'L4', rationale: 'Jacobs Engineering — critical-infra + DC + nuclear advisory; backlog beneficiary',                                            pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
+
+  // ── L4 (cont.) — Connector / passive-component pricing chain (PATCH 0087) ─
+  { ticker: 'APH',  layer: 'L4', rationale: 'Amphenol — connectors + cables for DC + AI servers; pricing pass-through on backlog',                                         pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'TEL',  layer: 'L4', rationale: 'TE Connectivity — connectors + sensors; AI server + EV + grid pricing transmission',                                          pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+
+  // ── L4 (cont.) — Cooling / thermal pass-through chain (PATCH 0087) ───────
+  { ticker: 'TT',   layer: 'L4', rationale: 'Trane Technologies — DC cooling + applied HVAC; backlog repricing in AI thermal-density era',                                 pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+
+  // ── L4 (cont.) — Grid / power-equipment dual-tag (PATCH 0087) ─────────────
+  // These names are L1 input-pricing capturers (kept above) AND L4 backlog
+  // pass-through winners. Dual rendering surfaces both economic mechanisms.
+  { ticker: 'GEV',   layer: 'L4', rationale: 'GE Vernova — turbine + grid backlog 18→36mo; ASP repricing → margin expansion ahead of volume',                              pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'SMNEY', layer: 'L4', rationale: 'Siemens Energy — global grid + transformer multi-year backlog; contract repricing → EBITDA expansion',                       pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'HTHIY', layer: 'L4', rationale: 'Hitachi Energy — HVDC + transformers; backlog inflation + ASP step-up',                                                       pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'ABBNY', layer: 'L4', rationale: 'ABB — electrification + automation backlog; pricing transmission on industrial capex super-cycle',                            pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+
+  // ── L4 (cont.) — Cooling/thermal dual-tag (PATCH 0087) ────────────────────
+  // VRT / JCI / CARR live primarily in L6 (efficiency) but also belong at L4
+  // for the backlog-repricing mechanism (CDU lead-times, retrofit pricing).
+  { ticker: 'VRT',  layer: 'L4', rationale: 'Vertiv — liquid CDU + busway backlog inflation; AI thermal-density retrofit pricing power',                                   pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'JCI',  layer: 'L4', rationale: 'Johnson Controls — DC cooling + HVAC backlog; retrofit + new-build pricing pass-through',                                     pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
+  { ticker: 'CARR', layer: 'L4', rationale: 'Carrier — chillers + DC cooling backlog; multi-year retrofit window',                                                          pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
+
   // ── L5 — Platform Beneficiaries ──────────────────────────────────────────
   { ticker: 'MSFT', layer: 'L5', rationale: 'Azure + Copilot — demand aggregator monetising the AI capex super-cycle',             pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
   { ticker: 'AMZN', layer: 'L5', rationale: 'AWS Bedrock + Anthropic — full-stack hyperscaler monetisation',                       pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
@@ -152,6 +200,8 @@ export const LAYER_ROSTER: LayerTicker[] = [
   { ticker: '2308.TW', layer: 'L6', rationale: 'Delta Electronics — power + thermal modules in every AI server',                    pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
   { ticker: 'NVT',     layer: 'L6', rationale: 'nVent thermal + Schroff — cold plate adoption; AI-cluster volume',                  pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
   { ticker: 'EMR',     layer: 'L6', rationale: 'Emerson process / Liebert thermal — hyperscaler retrofits',                         pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
+  // PATCH 0087: Trane was missing from the global thermal roster
+  { ticker: 'TT',      layer: 'L6', rationale: 'Trane Technologies — applied DC cooling + commercial HVAC efficiency leader',       pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
 ];
 
 // ─── INDIA roster — patch 0086 ─────────────────────────────────────────────
@@ -197,6 +247,9 @@ export const INDIA_ROSTER: LayerTicker[] = [
   { ticker: 'HEG.NS',        layer: 'L4', region: 'IN', rationale: 'HEG — graphite electrodes; industrial intermediate margin transmission',                    pricing_leverage: 'STRONG', size: 'MID_CAP'   },
   { ticker: 'GRAPHITE.NS',   layer: 'L4', region: 'IN', rationale: 'Graphite India — electrodes peer; commodity converter pricing pass-through',                pricing_leverage: 'MEDIUM', size: 'MID_CAP'   },
   { ticker: 'DIXON.NS',      layer: 'L4', region: 'IN', rationale: 'Dixon Technologies — EMS scale; PLI + import-substitution backbone',                         pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  // PATCH 0087: India EPC / project-backlog chain
+  { ticker: 'LT.NS',         layer: 'L4', region: 'IN', rationale: 'L&T — flagship EPC scale; AI-DC + grid + transport + nuclear backlog repricing',             pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'HCC.NS',        layer: 'L4', region: 'IN', rationale: 'Hindustan Construction — heavy civil + hydro + nuclear EPC; backlog inflation beneficiary',  pricing_leverage: 'MEDIUM', size: 'SMALL_CAP' },
 
   // ── L5 — Platform / Demand Aggregators (India) ─────────────────────────────
   { ticker: 'TCS.NS',        layer: 'L5', region: 'IN', rationale: 'Tata Consultancy Services — enterprise AI integrator; demand aggregator',                   pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
@@ -361,17 +414,33 @@ export const NODE_RULES: Record<SystemNode, NodeRule> = {
   // Compute / memory / packaging — full L1-L6 with AMD/INTC/ARM injection
   COMPUTE_INFRA: {
     fires: ['L1','L2','L3','L4','L5','L6'],
-    mandatory: { L2: ['AMD','INTC','ARM'], L4: ['4062.T','6981.T'], L5: ['MSFT','AMZN','GOOGL','META'], L6: ['VRT','ETN'] },
+    // PATCH 0087: L3 carrier-edge (AKAM/NET/LUMN) + L4 connectors + EPC mandatory
+    mandatory: {
+      L2: ['AMD','INTC','ARM','AVGO','MRVL'],
+      L3: ['AKAM','NET','LUMN'],
+      L4: ['APH','TEL','PWR','MTZ','TT','VRT','4062.T','6981.T'],
+      L5: ['MSFT','AMZN','GOOGL','META'],
+      L6: ['VRT','ETN','TT'],
+    },
   },
   MEMORY_INFRA: {
     fires: ['L1','L2','L4','L5','L6'],
-    mandatory: { L1: ['MU','TSM'], L2: ['AMD','INTC','ARM'], L4: ['4901.T','6981.T'], L5: ['MSFT','AMZN','GOOGL'] },
+    mandatory: {
+      L1: ['MU','TSM'],
+      L2: ['AMD','INTC','ARM'],
+      L4: ['4901.T','6981.T','APH','TEL'],
+      L5: ['MSFT','AMZN','GOOGL'],
+    },
   },
   PACKAGING_INFRA: {
     fires: ['L1','L2','L4','L5'],
     // PATCH 0085: AMKR mandatory — Amkor OSAT capacity is the explicit
     // CoWoS / FOWLP volume capture layer the user flagged as missing.
-    mandatory: { L1: ['TSM','AMAT','KLAC','AMKR'], L2: ['AMD','AVGO','MRVL','AMZN','GOOGL','MSFT'], L4: ['4062.T','6967.T','3711.TW'] },
+    mandatory: {
+      L1: ['TSM','AMAT','KLAC','AMKR'],
+      L2: ['AMD','AVGO','MRVL','AMZN','GOOGL','MSFT'],
+      L4: ['4062.T','6967.T','3711.TW','APH','TEL'],
+    },
   },
   FABRICATION_INFRA: {
     fires: ['L1','L2','L4','L5'],
@@ -380,23 +449,43 @@ export const NODE_RULES: Record<SystemNode, NodeRule> = {
   // Interconnect / network — L3 spine + AKAM/NET/CIEN/LITE injection
   INTERCONNECT_INFRA: {
     fires: ['L1','L3','L4','L6'],
-    mandatory: { L3: ['AKAM','NET','CIEN','LITE','COHR'], L4: ['STL.NS','PRY.MI','GLW','6005.HK'] },
+    // PATCH 0087: carrier-edge LUMN + connectors APH/TEL
+    mandatory: {
+      L3: ['AKAM','NET','CIEN','LITE','COHR','LUMN'],
+      L4: ['STL.NS','PRY.MI','GLW','6005.HK','APH','TEL'],
+    },
   },
   NETWORK_BANDWIDTH: {
     fires: ['L3','L4','L5','L6'],
-    mandatory: { L3: ['AKAM','NET','CIEN','LITE'], L4: ['STL.NS','PRY.MI','GLW'], L5: ['MSFT','AMZN','GOOGL'] },
+    // PATCH 0087: full carrier-edge spine + connectors
+    mandatory: {
+      L3: ['AKAM','NET','CIEN','LITE','LUMN','VZ','T'],
+      L4: ['STL.NS','PRY.MI','GLW','APH','TEL'],
+      L5: ['MSFT','AMZN','GOOGL'],
+    },
   },
-  // Cooling — L1 power-build + L6 thermal injection
+  // Cooling — L1 power-build + L4 backlog pass-through + L6 thermal injection
   COOLING_INFRA: {
     fires: ['L1','L4','L6'],
-    // PATCH 0085: ABB mandatory in L1 — electrification + motion alongside ETN/SBGSY
-    mandatory: { L1: ['ETN','SBGSY','ABBNY'], L6: ['VRT','JCI','CARR','2308.TW','NVT','EMR'] },
+    // PATCH 0085: ABB mandatory in L1
+    // PATCH 0087: thermal names dual-tagged into L4 for backlog repricing,
+    //             plus TT (Trane) explicit in L6 efficiency stack
+    mandatory: {
+      L1: ['ETN','SBGSY','ABBNY'],
+      L4: ['VRT','JCI','CARR','TT','APH','TEL'],
+      L6: ['VRT','JCI','CARR','TT','2308.TW','NVT','EMR'],
+    },
   },
-  // Energy — L1 grid build + L6 efficiency
+  // Energy — L1 grid build + L4 EPC backlog + L6 efficiency
   ENERGY_INFRA: {
     fires: ['L1','L4','L5','L6'],
-    // PATCH 0085: ABB mandatory in L1 — global grid automation + HVDC peer to GEV/SMNEY/HTHIY
-    mandatory: { L1: ['GEV','SMNEY','HTHIY','ETN','SBGSY','ABBNY'], L6: ['VRT','ETN','ARM'] },
+    // PATCH 0085: ABB mandatory in L1
+    // PATCH 0087: EPC chain (PWR/MTZ/PRIM/FLR/J) + grid dual-tag (GEV/SMNEY/HTHIY/ABBNY) in L4
+    mandatory: {
+      L1: ['GEV','SMNEY','HTHIY','ETN','SBGSY','ABBNY'],
+      L4: ['PWR','MTZ','PRIM','FLR','J','GEV','SMNEY','HTHIY','ABBNY','APH','TEL'],
+      L6: ['VRT','ETN','ARM','TT'],
+    },
   },
   NUCLEAR_INFRA: {
     fires: ['L1','L5','L6'],
@@ -471,46 +560,46 @@ export interface TransmissionCascade {
 // class fires. Generic enough to not over-promise, specific enough to be useful.
 const CASCADE_BY_NODE: Partial<Record<SystemNode, Omit<TransmissionCascade, 'T0'>>> = {
   COMPUTE_INFRA: {
-    T1: 'Order books rotate to alt-accelerators (AMD MI-class, custom silicon); GPU lead-times referenced in commentary',
-    T2: 'AMD / AVGO / MRVL revenue acceleration; hyperscaler capex disclosures lift L5 platform forecasts',
-    T3: 'Memory + packaging ASPs drag L1/L4 EBITDA margins higher (HBM, ABF, OSAT pricing)',
-    T4: 'Multiple expansion in L2 substitutes + L4 transmission winners; consensus EPS revision cycle',
+    T1: 'GPU lead-times extend → CPU-attach increases (L2 CPU-cycle: AMD-EPYC / INTC / ARM); inference begins shifting to edge (L3: AKAM/NET caching, request compression, latency arbitrage, "avoid GPU call" architectures); alt-accelerator order rotation begins (L2 GPU-sub: AMD / AVGO / MRVL)',
+    T2: 'L1 capacity capturers + L4 industrial pass-through revenue acceleration; OSAT + connector + EPC backlogs extend 18→36 months; hyperscaler capex disclosures lift L5 forecasts; AMD-EPYC + INTC AI-PC cycle inflects',
+    T3: 'Backlog repricing flows to EBITDA — Sterlite-type margin expansion 300-800bps in fibre + connectors (APH/TEL) + thermal (VRT/TT) + EPC (PWR/MTZ); advanced packaging ASPs lift OSAT margins (4062.T / 3711.TW)',
+    T4: 'EPS rerating cycle on 2-4Q lag — multiple expansion in L4 transmission winners (PWR/MTZ/APH/TT/SMNEY-backlog), L2 CPU-cycle (INTC/ARM perf-watt), L3 edge platforms (AKAM/NET/LUMN); consensus revision cycle',
   },
   MEMORY_INFRA: {
-    T1: 'HBM/DRAM contract pricing referenced; MU/SK Hynix preannounce upside',
-    T2: 'Micron revenue acceleration; substrate + packaging pull-through (Ibiden, Shinko)',
-    T3: 'Memory gross margins step up 500-1500bps as pricing flows through inventories',
-    T4: 'EPS rerating in MU + foundry chain; capex surprise disclosed by hyperscalers',
+    T1: 'HBM / DRAM contract pricing referenced; MU + SK Hynix preannounce upside; CPU-attach uplift on memory-bandwidth-bound workloads',
+    T2: 'Micron revenue acceleration; substrate + packaging pull-through (Ibiden 4062.T, Shinko 6967.T); connectors (APH/TEL) backlog inflates',
+    T3: 'Memory gross margins step up 500-1500bps as pricing flows through inventories; L4 substrate ASPs lift (preform → ABF → margin cascade); EPC capex (PWR / FLR) repriced on memory-fab buildout',
+    T4: 'EPS rerating in MU + foundry chain on 2-4Q lag; capex surprise disclosed by hyperscalers; L4 EBITDA expansion peaks ahead of revenue volume',
   },
   PACKAGING_INFRA: {
-    T1: 'CoWoS / ABF allocation + lead-time references in supplier commentary',
-    T2: 'TSMC packaging revenue mix shifts; Ibiden / Shinko utilisation inflects',
-    T3: 'OSAT ASPs rise (3711.TW, 4062.T) — margin expansion in advanced packaging',
-    T4: 'L2 substitution accelerates as packaging stays tight; AMD / custom-silicon design-wins disclosed',
+    T1: 'CoWoS / ABF allocation + lead-time references in supplier commentary; AMKR / 3711.TW utilisation tightens',
+    T2: 'TSMC packaging revenue mix shifts; Ibiden / Shinko utilisation inflects; connectors (APH/TEL) AI-server pull-through accelerates',
+    T3: 'OSAT ASPs rise (3711.TW / 4062.T) — margin expansion in advanced packaging; substrate backlog 18→36 months drives ASP repricing',
+    T4: 'L2 substitution accelerates as packaging stays tight; AMD / custom-silicon design-wins disclosed; EPS rerating in OSAT + substrate cluster',
   },
   INTERCONNECT_INFRA: {
-    T1: 'Fibre / optical pricing referenced; AKAM / NET / CIEN positive prints',
-    T2: 'Sterlite-type preform tightness flows to fibre ASPs; Prysmian / GLW order book grows',
-    T3: 'Optical EBITDA margins expand 300-800bps (preform → fibre → cable cascade)',
-    T4: 'EPS revision cycle in L4 transmission winners; multiple expansion in L3 leaders',
+    T1: 'Fibre / optical pricing referenced; AKAM / NET / CIEN positive prints; carrier-edge (LUMN) order book inflects',
+    T2: 'Sterlite-type preform tightness flows to fibre ASPs; Prysmian / GLW / 6005.HK order books grow; connectors (APH/TEL) pull-through',
+    T3: 'Optical EBITDA margins expand 300-800bps (preform → fibre → cable cascade); contract repricing on multi-year fibre backlog',
+    T4: 'EPS rerating cycle 2-4Q lag in L4 transmission winners (STL/PRY/GLW); multiple expansion in L3 leaders + carrier-edge (LUMN/VZ/T)',
   },
   NETWORK_BANDWIDTH: {
-    T1: 'CDN / inference-edge demand cited; Cloudflare / Akamai see acceleration',
-    T2: 'L3 revenue inflects as inference distributes; backbone (CIEN, LITE) order books rise',
-    T3: 'Fibre + DCI ASPs lift L4 transmission winners',
-    T4: 'EPS rerating in edge platforms + optical chain',
+    T1: 'CDN / inference-edge demand cited; Cloudflare / Akamai / Lumen see acceleration; "avoid-GPU-call" architectures referenced',
+    T2: 'L3 revenue inflects as inference distributes; backbone (CIEN / LITE) order books rise; carrier-edge (VZ MEC / T FirstNet) backlog grows',
+    T3: 'Fibre + DCI ASPs lift L4 transmission winners (PRY/STL/GLW + APH/TEL connectors); margin expansion on 18→36mo backlog repricing',
+    T4: 'EPS rerating in edge platforms + optical chain on 2-4Q lag; multiple expansion in carrier-edge + L4 connectors',
   },
   COOLING_INFRA: {
-    T1: 'CDU / liquid-cooling allocation referenced in DC operator commentary',
-    T2: 'Vertiv / nVent / Delta Electronics revenue acceleration',
-    T3: 'Cold-plate + heat-rejection ASPs rise; thermal margin step-up',
-    T4: 'L6 multiple expansion; L2 perf/watt names (ARM, AMD) re-rate on energy gating',
+    T1: 'CDU / liquid-cooling allocation referenced in DC operator commentary; VRT / NVT lead-times extend',
+    T2: 'Vertiv / nVent / Delta Electronics / Trane revenue acceleration; CDU + cold-plate backlog inflates 18→36mo; APH/TEL pull-through',
+    T3: 'Cold-plate + heat-rejection + chiller ASPs rise; thermal margin step-up 300-800bps as backlog repricing flows through (Sterlite-type)',
+    T4: 'L6 multiple expansion (VRT / TT / JCI); L4 thermal-pass-through EPS rerating on 2-4Q lag; L2 perf/watt names (ARM / AMD) re-rate on energy gating',
   },
   ENERGY_INFRA: {
-    T1: 'Interconnect queue / transformer lead-time disclosed',
-    T2: 'GEV / SMNEY / Hitachi Energy book-to-bill rises; ETN order book inflects',
-    T3: 'Transformer + switchgear ASPs lift; project margins expand',
-    T4: 'Multi-year backlog flows into earnings; L6 efficiency winners re-rate',
+    T1: 'Interconnect queue / transformer lead-time disclosed; AI-DC + RE-evac capex commentary; EPC (PWR/MTZ) order books inflect',
+    T2: 'GEV / SMNEY / HTHIY / ABBNY book-to-bill rises; ETN order book inflects; EPC (PWR / MTZ / FLR / J) backlog 18→36mo extension; L4 connectors + cables pull-through',
+    T3: 'Transformer + switchgear + cable + EPC ASPs lift; project margin expansion 300-800bps as multi-year backlog reprices (input scarcity → ASP repricing → EBITDA expansion)',
+    T4: 'Multi-year backlog flows into earnings on 2-4Q lag; L4 transmission winners (PWR / MTZ / APH / TT / GEV-backlog) EPS rerating; L6 efficiency winners (VRT / TT) re-rate',
   },
   NUCLEAR_INFRA: {
     T1: 'Reactor / fuel allocation referenced; SMR partnership disclosures',
@@ -557,9 +646,12 @@ export interface LayeredBeneficiaries {
 
 // ─── Derive ─────────────────────────────────────────────────────────────────
 
-const ROSTER_BY_TICKER: Map<string, LayerTicker> = (() => {
+// PATCH 0087: keyed by (layer, ticker) so dual-tagged tickers (e.g. GEV in
+// both L1 and L4 with different rationales) resolve to the right metadata
+// when mandatory-injected into a target layer.
+const ROSTER_BY_LAYER_TICKER: Map<string, LayerTicker> = (() => {
   const m = new Map<string, LayerTicker>();
-  for (const t of [...LAYER_ROSTER, ...INDIA_ROSTER]) m.set(t.ticker.toUpperCase(), t);
+  for (const t of [...LAYER_ROSTER, ...INDIA_ROSTER]) m.set(`${t.layer}:${t.ticker.toUpperCase()}`, t);
   return m;
 })();
 
@@ -615,7 +707,8 @@ export function deriveLayeredBeneficiaries(args: {
     for (const tk of mand) {
       const T = tk.toUpperCase();
       if (seen.has(T)) continue;
-      const meta = ROSTER_BY_TICKER.get(T);
+      // PATCH 0087: layer-scoped lookup so dual-tagged tickers pick the right rationale
+      const meta = ROSTER_BY_LAYER_TICKER.get(`${layer}:${T}`);
       if (meta) {
         out.push({ ...meta, mandatory: true });
         seen.add(T);

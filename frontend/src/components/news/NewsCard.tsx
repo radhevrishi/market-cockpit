@@ -552,7 +552,7 @@ export default function NewsCard({ article, onTickerClick }: Props) {
               bottleneck: string;
               bottleneck_label: string;
               fired_layers: string[];
-              layers: Record<string, Array<{ ticker: string; rationale: string; pricing_leverage: 'STRONG'|'MEDIUM'|'WEAK'; size: 'LARGE_CAP'|'MID_CAP'|'SMALL_CAP'; mandatory?: boolean }>>;
+              layers: Record<string, Array<{ ticker: string; rationale: string; pricing_leverage: 'STRONG'|'MEDIUM'|'WEAK'; size: 'LARGE_CAP'|'MID_CAP'|'SMALL_CAP'; mandatory?: boolean; sub_layer?: 'GPU_SUB'|'CPU_CYCLE' }>>;
               transmission: { T0: string; T1: string; T2: string; T3: string; T4: string };
             };
             const LAYER_META: Record<string, { icon: string; label: string; tagline: string; color: string }> = {
@@ -588,12 +588,31 @@ export default function NewsCard({ article, onTickerClick }: Props) {
                   <span className="text-[#4A5B6C] ml-1 text-[9px] group-open/layers:hidden">(click to expand)</span>
                 </summary>
 
-                {/* Expanded: per-layer chip stack */}
+                {/* Expanded: per-layer chip stack
+                    PATCH 0087: when layer === 'L2', split chips into GPU_SUB and
+                    CPU_CYCLE sub-clusters with their own sub-headers. Other layers
+                    render flat. */}
                 <div className="mt-2 border-l-2 border-[#0F7ABF]/40 pl-2.5 space-y-2 bg-[#0D1B2E]/30 rounded-r py-2">
                   {lb.fired_layers.map((L) => {
                     const meta = LAYER_META[L];
                     const tickers = lb.layers[L] || [];
                     if (tickers.length === 0) return null;
+                    const renderChip = (t: typeof tickers[number]) => (
+                      <span
+                        key={`${t.ticker}-${t.sub_layer ?? ''}`}
+                        className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border bg-[#1A2B3C] ${
+                          t.mandatory ? 'border-amber-500/50 text-amber-200' : 'border-[#2A3B4C] text-[#C4D2DD]'
+                        }`}
+                        title={`${t.rationale}\nPricing leverage: ${t.pricing_leverage}${t.mandatory ? ' · Mandatory injection' : ''}`}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${LEVERAGE_DOT[t.pricing_leverage] || 'bg-zinc-500'}`} />
+                        <span className="font-mono font-bold">{t.ticker}</span>
+                        {SIZE_SUFFIX[t.size] && (
+                          <span className="text-[8px] text-[#6677AA] uppercase">{SIZE_SUFFIX[t.size]}</span>
+                        )}
+                        {t.mandatory && <span className="text-[8px] text-amber-400" title="Mandatory injection — structurally required for this node-class">★</span>}
+                      </span>
+                    );
                     return (
                       <div key={L}>
                         <div className="flex items-baseline gap-2 mb-1">
@@ -602,24 +621,32 @@ export default function NewsCard({ article, onTickerClick }: Props) {
                           </span>
                           <span className="text-[9px] text-[#6677AA] italic">{meta.tagline}</span>
                         </div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {tickers.map((t) => (
-                            <span
-                              key={t.ticker}
-                              className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border bg-[#1A2B3C] ${
-                                t.mandatory ? 'border-amber-500/50 text-amber-200' : 'border-[#2A3B4C] text-[#C4D2DD]'
-                              }`}
-                              title={`${t.rationale}\nPricing leverage: ${t.pricing_leverage}${t.mandatory ? ' · Mandatory injection' : ''}`}
-                            >
-                              <span className={`w-1.5 h-1.5 rounded-full ${LEVERAGE_DOT[t.pricing_leverage] || 'bg-zinc-500'}`} />
-                              <span className="font-mono font-bold">{t.ticker}</span>
-                              {SIZE_SUFFIX[t.size] && (
-                                <span className="text-[8px] text-[#6677AA] uppercase">{SIZE_SUFFIX[t.size]}</span>
+                        {L === 'L2' ? (() => {
+                          const gpuSub = tickers.filter((t) => t.sub_layer === 'GPU_SUB');
+                          const cpuCycle = tickers.filter((t) => t.sub_layer === 'CPU_CYCLE');
+                          const untagged = tickers.filter((t) => !t.sub_layer);
+                          return (
+                            <div className="space-y-1.5">
+                              {gpuSub.length > 0 && (
+                                <div>
+                                  <div className="text-[9px] text-violet-300/80 mb-0.5">⚙️ L2A · GPU substitution <span className="text-[#6677AA]">(in-stack share displacement)</span></div>
+                                  <div className="flex flex-wrap gap-1.5">{gpuSub.map(renderChip)}</div>
+                                </div>
                               )}
-                              {t.mandatory && <span className="text-[8px] text-amber-400" title="Mandatory injection — structurally required for this node-class">★</span>}
-                            </span>
-                          ))}
-                        </div>
+                              {cpuCycle.length > 0 && (
+                                <div>
+                                  <div className="text-[9px] text-fuchsia-300/80 mb-0.5">🧠 L2B · CPU cycle <span className="text-[#6677AA]">(GPU scarcity → CPU attach + AI-PC + perf/watt)</span></div>
+                                  <div className="flex flex-wrap gap-1.5">{cpuCycle.map(renderChip)}</div>
+                                </div>
+                              )}
+                              {untagged.length > 0 && (
+                                <div className="flex flex-wrap gap-1.5">{untagged.map(renderChip)}</div>
+                              )}
+                            </div>
+                          );
+                        })() : (
+                          <div className="flex flex-wrap gap-1.5">{tickers.map(renderChip)}</div>
+                        )}
                       </div>
                     );
                   })}
