@@ -87,6 +87,9 @@ export const LAYER_ROSTER: LayerTicker[] = [
   { ticker: 'HTHIY',layer: 'L1', rationale: 'Hitachi Energy — HVDC + transformers, AI-DC-interconnect winner',                     pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
   { ticker: 'ETN',  layer: 'L1', rationale: 'Eaton power chain — direct beneficiary of grid + DC capex',                            pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
   { ticker: 'SBGSY',layer: 'L1', rationale: 'Schneider Electric — DC power management + microgrid leader',                         pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  // PATCH 0085: ABB + AMKR direct-capture additions
+  { ticker: 'ABBNY',layer: 'L1', rationale: 'ABB electrification + motion + grid automation — global infra capacity capturer',       pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'AMKR', layer: 'L1', rationale: 'Amkor OSAT — advanced packaging capacity capture (CoWoS adjacent, FOWLP scale)',        pricing_leverage: 'STRONG', size: 'MID_CAP'   },
 
   // ── L2 — Compute Substitutes ─────────────────────────────────────────────
   { ticker: 'AMD',  layer: 'L2', rationale: 'MI300/MI325 — only credible second-source for hyperscaler training',                   pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
@@ -168,7 +171,9 @@ export const NODE_RULES: Record<SystemNode, NodeRule> = {
   },
   PACKAGING_INFRA: {
     fires: ['L1','L2','L4','L5'],
-    mandatory: { L1: ['TSM','AMAT','KLAC'], L2: ['AMD','AVGO','MRVL','AMZN','GOOGL','MSFT'], L4: ['4062.T','6967.T','3711.TW'] },
+    // PATCH 0085: AMKR mandatory — Amkor OSAT capacity is the explicit
+    // CoWoS / FOWLP volume capture layer the user flagged as missing.
+    mandatory: { L1: ['TSM','AMAT','KLAC','AMKR'], L2: ['AMD','AVGO','MRVL','AMZN','GOOGL','MSFT'], L4: ['4062.T','6967.T','3711.TW'] },
   },
   FABRICATION_INFRA: {
     fires: ['L1','L2','L4','L5'],
@@ -186,12 +191,14 @@ export const NODE_RULES: Record<SystemNode, NodeRule> = {
   // Cooling — L1 power-build + L6 thermal injection
   COOLING_INFRA: {
     fires: ['L1','L4','L6'],
-    mandatory: { L1: ['ETN','SBGSY'], L6: ['VRT','JCI','CARR','2308.TW','NVT','EMR'] },
+    // PATCH 0085: ABB mandatory in L1 — electrification + motion alongside ETN/SBGSY
+    mandatory: { L1: ['ETN','SBGSY','ABBNY'], L6: ['VRT','JCI','CARR','2308.TW','NVT','EMR'] },
   },
   // Energy — L1 grid build + L6 efficiency
   ENERGY_INFRA: {
     fires: ['L1','L4','L5','L6'],
-    mandatory: { L1: ['GEV','SMNEY','HTHIY','ETN','SBGSY'], L6: ['VRT','ETN','ARM'] },
+    // PATCH 0085: ABB mandatory in L1 — global grid automation + HVDC peer to GEV/SMNEY/HTHIY
+    mandatory: { L1: ['GEV','SMNEY','HTHIY','ETN','SBGSY','ABBNY'], L6: ['VRT','ETN','ARM'] },
   },
   NUCLEAR_INFRA: {
     fires: ['L1','L5','L6'],

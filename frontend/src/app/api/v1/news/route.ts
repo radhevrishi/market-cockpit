@@ -193,7 +193,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v30'; // v30: 6-layer beneficiary engine (L1-L6) + auto-injection rules + T0-T4 transmission cascade (0084)
+const CACHE_KEY = 'news:articles:v31'; // v31: persistent-bottleneck panel now carries layered_beneficiaries (L1-L6) + ABB/AMKR roster + 2x cards (0085)
 const CACHE_TTL = 300; // 5 min
 // v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
 // freshness_layer, signal_confidence (multi-dim), bottleneck_parent /
@@ -2544,6 +2544,18 @@ export async function GET(request: Request) {
               it.architectural_adaptations = cb.adaptations.filter(
                 (a: any) => a.beneficiaries.length > 0,
               );
+              // PATCH 0085: also attach the L1-L6 layered transmission engine
+              // so the persistent-bottleneck panel surfaces AKAM (L3) /
+              // Sterlite-type (L4) / ABB / AMKR — names that the older
+              // adaptation buckets group under different headers.
+              it.layered_beneficiaries = deriveLayeredBeneficiaries({
+                primary_node: it.node,
+                article_tickers: (it.top_samples || [])
+                  .flatMap((s: any) => s.tickers || s.ticker_symbols || [])
+                  .slice(0, 12),
+                article_headline: it.label || it.sub || '',
+                per_layer_limit: 5,
+              });
             }),
           );
         }
