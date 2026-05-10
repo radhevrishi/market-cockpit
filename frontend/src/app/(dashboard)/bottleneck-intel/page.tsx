@@ -1345,13 +1345,29 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
   const [expSignal, setExpSignal] = useState<string | null>(null);
   const [activeBucket, setActiveBucket] = useState<string | null>(null); // which pill is selected
 
+  // PATCH: Move ALL hook calls BEFORE early returns to satisfy React's
+  // rules-of-hooks. The previous version called useEffect at the bottom of
+  // the function body, AFTER `if (isLoading) return ...`. When isLoading
+  // flipped from true → false the hook count changed → React #310.
+  // Wrapping velocities in useMemo also lets us reference it from the
+  // useEffect without re-doing the work later in the render.
+  const velocities = useMemo(() => {
+    if (!dashboard?.buckets?.length) return {} as Record<string, ReturnType<typeof calcBucketVelocity>>;
+    return Object.fromEntries(
+      dashboard.buckets.map(b => [b.bucket_id, calcBucketVelocity(articles, b.bucket_id)])
+    );
+  }, [dashboard?.buckets, articles]);
+
+  useEffect(() => {
+    if (dashboard?.buckets?.length && Object.keys(velocities).length > 0) {
+      saveSnapshot(dashboard.buckets, velocities);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dashboard?.buckets?.length]);
+
+  // ── Now safe to early-return: all hooks have already been called ──
   if (isLoading) return <SkeletonGrid count={6} height={150} />;
   if (!dashboard?.buckets?.length) return <EmptyState msg="No bottleneck dashboard data. Check backend." />;
-
-  // Live velocity per bucket — shows which layers are gaining/losing momentum right now
-  const velocities = Object.fromEntries(
-    (dashboard.buckets ?? []).map(b => [b.bucket_id, calcBucketVelocity(articles, b.bucket_id)])
-  );
 
   // Apply decay to severity scores before sorting
   const decayedSeverities = Object.fromEntries(
@@ -1370,11 +1386,6 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
 
   // What changed since last session
   const changes = getChanges(dashboard.buckets, velocities);
-  // Save snapshot for next session
-  useEffect(() => {
-    if (dashboard.buckets.length > 0) saveSnapshot(dashboard.buckets, velocities);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dashboard.buckets.length]);
 
   return (
     <div style={{ padding: '20px' }}>

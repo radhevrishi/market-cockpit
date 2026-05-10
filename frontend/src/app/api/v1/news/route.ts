@@ -152,7 +152,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v14'; // v14: causal-honesty layer (patch 0052)
+const CACHE_KEY = 'news:articles:v15'; // v15: ticker_symbols alias + concall fix (patch 0053b)
 const CACHE_TTL = 300; // 5 min
 // v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
 // freshness_layer, signal_confidence (multi-dim), bottleneck_parent /
@@ -1495,7 +1495,15 @@ async function fetchAllNews(): Promise<any[]> {
             signal_confidence: provisionalConfidence,      // multi-dim confidence (will be enriched post-loop)
             bottleneck_parent: hierarchyParent,            // parent in hierarchy (SystemNode)
             bottleneck_child: bottleneck_sub_tag || null,  // child sub-tag
+            // PATCH 0053b: emit BOTH `tickers` (legacy) and `ticker_symbols`
+            // (canonical type field). Many consumers (Concall Intel,
+            // Multibagger, Bottleneck-Intel, NewsCard, news/page) read
+            // `ticker_symbols`. The API previously only emitted `tickers`,
+            // causing those consumers to silently see empty arrays
+            // and tag every stock with "0 articles". Aliasing both keeps
+            // every consumer working without rewriting them.
             tickers: tickers,
+            ticker_symbols: tickers,
             primary_ticker: tickers[0] || null,
             // PATCH 0050: importance now uses half-life decay instead of
             // linear age divide. TRANSIENT articles fade in days; SECULAR
@@ -1749,7 +1757,9 @@ async function fetchAllNews(): Promise<any[]> {
         macro_regime: synthEnvelope.macro_regime ?? null,
         anchor_score: synthAnchor.total,
         anchor_categories: synthAnchor.categories_hit,
+        // PATCH 0053b: alias tickers / ticker_symbols (see above)
         tickers: synth.tickers,
+        ticker_symbols: synth.tickers,
         primary_ticker: synth.tickers[0] || null,
         sentiment: null,
         importance_score: synth.status === 'CRITICAL' ? 0.95 : 0.85,
