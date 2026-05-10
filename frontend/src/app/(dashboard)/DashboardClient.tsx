@@ -24,16 +24,16 @@ const NAV: NavItem[] = [
   { href: '/portfolio',     label: 'Portfolio',       icon: <Briefcase className="w-5 h-5" /> },
   { href: '/watchlists',    label: 'Watchlist',       icon: <BookMarked className="w-5 h-5" /> },
   { href: '/orders',        label: 'Intelligence',    icon: <Shield className="w-5 h-5" /> },
-  { href: '/earnings',          label: 'Earnings',        icon: <LineChart className="w-5 h-5" /> },
-  { href: '/earnings-analysis', label: 'Earnings AI',    icon: <BarChart3 className="w-5 h-5" /> },
-  { href: '/multibagger',       label: 'Multibagger',    icon: <Star className="w-5 h-5" /> },
-  { href: '/bottleneck-intel', label: 'Bottleneck',     icon: <Microscope className="w-5 h-5" /> },
+  // PATCH 0091: Earnings + Earnings AI + Calendar merged into Earnings Hub (sub-tabs inside)
+  { href: '/earnings-hub',  label: 'Earnings',        icon: <LineChart className="w-5 h-5" /> },
+  { href: '/multibagger',   label: 'Multibagger',     icon: <Star className="w-5 h-5" /> },
+  { href: '/bottleneck-intel', label: 'Bottleneck',   icon: <Microscope className="w-5 h-5" /> },
   { href: '/strategic-visibility', label: 'Strategic Vis', icon: <Star className="w-5 h-5" /> },
   { href: '/rrg',           label: 'RRG',             icon: <RefreshCw className="w-5 h-5" /> },
   { href: '/screener',      label: 'Screener',        icon: <Filter className="w-5 h-5" /> },
   { href: '/ipos',          label: 'IPOs',            icon: <Rocket className="w-5 h-5" /> },
   // PATCH 0089: macro-maps removed — header ticker covers global indices/currencies/commodities
-  { href: '/calendars',     label: 'Calendar',        icon: <Calendar className="w-5 h-5" /> },
+  // PATCH 0091: standalone /calendars also merged into Earnings Hub above
 ];
 
 // Static fallback shown while live data loads — no hardcoded prices to avoid showing stale data
