@@ -19,8 +19,8 @@ interface NavItem { href: string; label: string; icon: ReactNode; }
 
 const NAV: NavItem[] = [
   { href: '/news',          label: 'News Feed',       icon: <Newspaper className="w-5 h-5" /> },
-  { href: '/heatmap',       label: 'Heatmap',         icon: <Grid3X3 className="w-5 h-5" /> },
-  { href: '/movers',        label: 'Movers',          icon: <TrendingUp className="w-5 h-5" /> },
+  // PATCH 0090: heatmap + movers merged into Market Snapshot (toggle inside)
+  { href: '/market-snapshot', label: 'Market Snap',   icon: <Grid3X3 className="w-5 h-5" /> },
   { href: '/portfolio',     label: 'Portfolio',       icon: <Briefcase className="w-5 h-5" /> },
   { href: '/watchlists',    label: 'Watchlist',       icon: <BookMarked className="w-5 h-5" /> },
   { href: '/orders',        label: 'Intelligence',    icon: <Shield className="w-5 h-5" /> },
