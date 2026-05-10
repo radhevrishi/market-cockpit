@@ -411,6 +411,9 @@ interface PersistentBottleneckItem {
   architectural_adaptations?: ArchitecturalAdaptation[];        // PATCH 0081
   layered_beneficiaries?: LayeredBeneficiariesLite;             // PATCH 0085
   region?: 'IN' | 'GLOBAL';                                     // PATCH 0086
+  first_seen?: string;                                          // PATCH 0088
+  first_seen_age_days?: number;                                 // PATCH 0088
+  is_latest?: boolean;                                          // PATCH 0088 — first_seen_age_days <= 10
 }
 interface PersistentBottlenecksResp {
   section_title: string;
@@ -1908,9 +1911,24 @@ export default function NewsFeedPage() {
         // PATCH 0086: split items into India / Global panels.  Each card carries
         // a region tag from the API; default to GLOBAL when missing so legacy
         // cached responses keep working.
+        // PATCH 0088: within each region, sort latest-first (is_latest === true
+        // first, by ascending first_seen_age_days), so newly-emerged bottlenecks
+        // surface at the top for 10 days then drop back into the normal sort.
+        const sortLatestFirst = (a: PersistentBottleneckItem, b: PersistentBottleneckItem) => {
+          const aLatest = a.is_latest ? 1 : 0;
+          const bLatest = b.is_latest ? 1 : 0;
+          if (aLatest !== bLatest) return bLatest - aLatest;
+          if (aLatest && bLatest) {
+            return (a.first_seen_age_days ?? 999) - (b.first_seen_age_days ?? 999);
+          }
+          return 0;  // preserve server-side confidence/structural sort
+        };
         const allItems = persistentBottlenecks.items;
-        const indiaItems = allItems.filter((i) => i.region === 'IN');
-        const globalItems = allItems.filter((i) => i.region !== 'IN');
+        const indiaItems = allItems.filter((i) => i.region === 'IN').slice().sort(sortLatestFirst);
+        const globalItems = allItems.filter((i) => i.region !== 'IN').slice().sort(sortLatestFirst);
+        const newInLast10dIN = indiaItems.filter((i) => i.is_latest).length;
+        const newInLast10dGL = globalItems.filter((i) => i.is_latest).length;
+        const totalLatest = newInLast10dIN + newInLast10dGL;
 
         // PATCH 0086: liveness pill — green ≤10min, amber ≤24h, red older.
         const lastUpdatedIso = persistentBottlenecks.last_updated;
@@ -1931,11 +1949,11 @@ export default function NewsFeedPage() {
         // render headers + cards. Avoids duplicating the (large) card JSX.
         const flatList: any[] = [];
         if (indiaItems.length > 0) {
-          flatList.push({ __divider: 'IN', count: indiaItems.length });
+          flatList.push({ __divider: 'IN', count: indiaItems.length, newCount: newInLast10dIN });
           flatList.push(...indiaItems);
         }
         if (globalItems.length > 0) {
-          flatList.push({ __divider: 'GLOBAL', count: globalItems.length });
+          flatList.push({ __divider: 'GLOBAL', count: globalItems.length, newCount: newInLast10dGL });
           flatList.push(...globalItems);
         }
 
@@ -1962,6 +1980,22 @@ export default function NewsFeedPage() {
             <span style={{ fontSize: '13px', color: '#4A5B6C' }}>
               🇮🇳 {indiaItems.length} India · 🌐 {globalItems.length} Global · auto-detected from accumulated evidence
             </span>
+            {/* PATCH 0088: 'Latest' pill — bottlenecks first seen in the last 10 days */}
+            {totalLatest > 0 && (
+              <span
+                title={`${totalLatest} bottleneck${totalLatest === 1 ? '' : 's'} first detected in the last 10 days. They surface at the top of each region panel for 10 days, then drop back into normal confidence/structural ranking.`}
+                style={{
+                  fontSize: 12, fontWeight: 800, letterSpacing: '0.5px',
+                  color: '#0A1422',
+                  border: '1px solid #FBBF24',
+                  backgroundColor: '#FBBF24',
+                  padding: '2px 8px', borderRadius: 4,
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                }}
+              >
+                🆕 LATEST · {totalLatest} new in 10d
+              </span>
+            )}
             {/* PATCH 0086: liveness pill — proves the panel is live, not stale */}
             <span
               title={lastUpdatedIso ? `Server-side last_updated: ${lastUpdatedIso}\nAuto-refresh every 5 min` : 'Live data'}
@@ -2008,6 +2042,22 @@ export default function NewsFeedPage() {
                           ? 'NSE-listed beneficiaries only — Indian sources / ₹ / PSU patterns'
                           : 'global L1–L6 roster — US / EU / Japan / Taiwan / Korea names'}
                       </span>
+                      {/* PATCH 0088: per-region 'new in last 10 days' counter */}
+                      {rowAny.newCount > 0 && (
+                        <span
+                          title={`${rowAny.newCount} ${isIN ? 'Indian' : 'global'} bottleneck${rowAny.newCount === 1 ? '' : 's'} first detected in the last 10 days — sorted to top of this panel.`}
+                          style={{
+                            marginLeft: 'auto',
+                            fontSize: 11, fontWeight: 700, letterSpacing: '0.4px',
+                            color: '#0A1422',
+                            backgroundColor: '#FBBF24',
+                            border: '1px solid #FBBF24',
+                            padding: '2px 8px', borderRadius: 4,
+                          }}
+                        >
+                          🆕 {rowAny.newCount} new in 10d
+                        </span>
+                      )}
                     </div>
                   );
                 }
@@ -2035,6 +2085,22 @@ export default function NewsFeedPage() {
                       {b.is_structural && (
                         <span style={{ fontSize: 11, fontWeight: 700, color: '#8B5CF6', border: '1px solid #8B5CF640', backgroundColor: '#8B5CF610', padding: '2px 6px', borderRadius: 4 }}>
                           STRUCTURAL
+                        </span>
+                      )}
+                      {/* PATCH 0088: LATEST pill — bottleneck first detected ≤10d ago */}
+                      {b.is_latest && (
+                        <span
+                          title={`First detected ${b.first_seen_age_days ?? '?'} day${b.first_seen_age_days === 1 ? '' : 's'} ago. Surfaces at top of panel for the first 10 days, then drops to confidence/structural ranking.`}
+                          style={{
+                            fontSize: 11, fontWeight: 800, letterSpacing: '0.4px',
+                            color: '#0A1422',
+                            backgroundColor: '#FBBF24',
+                            border: '1px solid #FBBF24',
+                            padding: '2px 7px', borderRadius: 4,
+                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                          }}
+                        >
+                          🆕 LATEST · {b.first_seen_age_days ?? 0}d
                         </span>
                       )}
                       <span style={{ marginLeft: 'auto', fontSize: 15, fontWeight: 700, color: trendColor }}>

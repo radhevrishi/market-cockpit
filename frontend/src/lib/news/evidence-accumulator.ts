@@ -229,6 +229,10 @@ export interface PersistentBottleneck {
   is_structural: boolean;
   top_samples: NodeEvidenceSample[];
   best_specialist_sample?: NodeEvidenceSample | null;  // PATCH 0080: highest-tier sample
+  // PATCH 0088: "Latest" 10-day surfacing window
+  first_seen?: string;              // ISO of earliest top_samples.recorded_at
+  first_seen_age_days?: number;     // days since first_seen (proxy via top_samples)
+  is_latest?: boolean;              // first_seen_age_days <= 10
 }
 
 export async function readPersistentBottlenecks(args: {
@@ -276,6 +280,20 @@ export async function readPersistentBottlenecks(args: {
     ) || ranked[0] || null;
 
     const meta = bottleneckLabelFor(n);
+
+    // PATCH 0088: compute "first seen" proxy from earliest top_samples.recorded_at.
+    // Used to flag bottlenecks that surfaced in the last 10 days as "Latest" so
+    // the UI can sort them to the top of each region panel.
+    const recordedTimes = (e.top_samples || [])
+      .map((s) => (s.recorded_at ? new Date(s.recorded_at).getTime() : NaN))
+      .filter((t) => Number.isFinite(t));
+    const firstSeenMs = recordedTimes.length > 0 ? Math.min(...recordedTimes) : NaN;
+    const firstSeenIso = Number.isFinite(firstSeenMs) ? new Date(firstSeenMs).toISOString() : undefined;
+    const firstSeenAgeDays = Number.isFinite(firstSeenMs)
+      ? Math.round((now - firstSeenMs) / 86400000)
+      : undefined;
+    const isLatest = firstSeenAgeDays !== undefined && firstSeenAgeDays <= 10;
+
     out.push({
       node: n,
       label: meta.label,
@@ -289,6 +307,9 @@ export async function readPersistentBottlenecks(args: {
       is_structural: isStructural,
       top_samples: e.top_samples,
       best_specialist_sample: bestSpecialistSample,
+      first_seen: firstSeenIso,
+      first_seen_age_days: firstSeenAgeDays,
+      is_latest: isLatest,
     });
   }
   // Rank: structural nodes get a +5 score boost so HBM / CoWoS / grid surface
