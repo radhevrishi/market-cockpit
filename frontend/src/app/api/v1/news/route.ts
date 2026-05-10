@@ -11,6 +11,8 @@ import { scoreAnchor, BOTTLENECK_ANCHOR_THRESHOLD, getSourceCredibility, detectR
 import { scoreGraph, GRAPH_ANCHOR_THRESHOLD, NODE_DISPLAY } from '@/lib/news/semantic-graph';
 import { classifySourceTier, getTierContribution } from '@/lib/news/source-tiers';
 import { recordEvidence, readEvidence } from '@/lib/news/evidence-accumulator';
+// PATCH 0081: beneficiary graph engine
+import { detectAdaptations, recordBeneficiary } from '@/lib/news/beneficiary-graph';
 // PATCH 0052: Causal-honesty layer + 0061 evidence-bound impact + 0062 relevance
 import {
   classifyAssertion, frameImpact, hasDirectComputeLinkage, isGenericPowerStory,
@@ -189,7 +191,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v27'; // v27: persistent bottleneck quality fix — bottleneck-only filter + rich labels + smart latest (0080)
+const CACHE_KEY = 'news:articles:v28'; // v28: beneficiary graph engine — second-order winners through 8 adaptation patterns + celebrity-noise filter (0081)
 const CACHE_TTL = 300; // 5 min
 // v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
 // freshness_layer, signal_confidence (multi-dim), bottleneck_parent /
@@ -2132,12 +2134,16 @@ async function fetchAllNews(): Promise<any[]> {
   //     deal articles wouldn't qualify)
   const BOTTLENECK_LANG = /\b(shortage|tight(?:ness)?|queue|capacity (?:constraint|binding|tight|reservation|allocation)|bottleneck|binding|allocation (?:queue)?|pricing power|lead time|framework|backlog|chokepoint|sole(?:.?source| supplier)|export control|embargo)\b/i;
   const RETAIL_DEAL_LANG = /\b(save \$|deal|combo|bundle|coupon|discount|black friday|cyber monday|prime day|\d+%\s*off|review:|gift guide)\b/i;
+  // PATCH 0081: also exclude celebrity-legal noise. "Dua Lipa sues Samsung"
+  // does not represent an HBM bottleneck; it just has Samsung as a defendant.
+  const CELEBRITY_LEGAL_NOISE = /\b(sue[sd]?|lawsuit|defamation|alleg(?:ed|ing)|copyright (?:infringement|claim)|royalt(?:y|ies)|unauthori[sz]ed (?:image|use)|grammy|oscar|red carpet|divorce|songwriter|musician)\b/i;
   Promise.all(
     articlesWithImpact
       .filter((a: any) => a.graph_primary_node && a.graph_primary_node !== 'NONE')
       .filter((a: any) => {
         const text = `${a.title || ''} ${a.summary || ''}`;
         if (RETAIL_DEAL_LANG.test(text)) return false;
+        if (CELEBRITY_LEGAL_NOISE.test(text)) return false;
         const isStructural = a.article_type === 'BOTTLENECK' ||
           ['BOTTLENECK','CAPACITY_EXPANSION','SUPPLY_RESPONSE','CAPEX_BUILDOUT','DEMAND_SURGE','POLICY_SUPPORT'].includes(a.structural_state);
         const hasBottleneckLang = BOTTLENECK_LANG.test(text);
@@ -2153,6 +2159,40 @@ async function fetchAllNews(): Promise<any[]> {
           raw_weight: Math.min(10, Math.round((a.graph_total_weight || 0) / 4)),
         }),
       ),
+  ).catch(() => { /* non-fatal */ });
+
+  // PATCH 0081: Beneficiary graph — detect adaptations in articles and
+  // accumulate (ticker → adaptation) co-occurrences. Dynamic discovery of
+  // second-order winners. Same noise filter as evidence — gaming deals,
+  // celebrity-legal, retail content excluded.
+  // Plus celebrity-suit noise filter: "Dua Lipa sues Samsung" should NOT
+  // accumulate Samsung under SEMI_MEMORY adaptations.
+  const CELEBRITY_NOISE = /\b(sue[sd]?|lawsuit|defamation|alleg(?:ed|ing)|copyright (?:infringement|claim)|royalt(?:y|ies)|unauthori[sz]ed (?:image|use)|model release|celebrity|musician|singer|actor|actress|songwriter|grammy|oscar|red carpet|divorce)\b/i;
+  Promise.all(
+    articlesWithImpact
+      .filter((a: any) => {
+        const text = `${a.title || ''} ${a.summary || ''}`;
+        if (RETAIL_DEAL_LANG.test(text)) return false;
+        if (CELEBRITY_NOISE.test(text)) return false;
+        const tickers = a.ticker_symbols || [];
+        if (tickers.length === 0) return false;
+        return true;
+      })
+      .slice(0, 60)
+      .flatMap((a: any) => {
+        const text = `${a.title || ''} ${a.summary || ''}`;
+        const adaptations = detectAdaptations({ title: a.title || '', desc: a.summary || '' });
+        if (adaptations.length === 0) return [];
+        const tickers: string[] = a.ticker_symbols || [];
+        return adaptations.map((adapt) =>
+          recordBeneficiary({
+            adaptation: adapt,
+            tickers,
+            source: a.source_name,
+            source_tier: a.source_tier_v2 || 'UNKNOWN',
+          }),
+        );
+      }),
   ).catch(() => { /* non-fatal */ });
 
   // ── Persistence: save structural bottleneck articles to KV ──
@@ -2473,9 +2513,25 @@ export async function GET(request: Request) {
           min_confidence: minConf,
           limit,
         });
+        // PATCH 0081: include beneficiary graph for each constraint
+        const includeBeneficiaries = searchParams.get('beneficiaries') !== '0';
+        if (includeBeneficiaries) {
+          const { readConstraintBeneficiaries } = await import('@/lib/news/beneficiary-graph');
+          await Promise.all(
+            items.map(async (it: any) => {
+              const cb = await readConstraintBeneficiaries({
+                constraint: it.node,
+                per_adaptation_limit: 5,
+              });
+              it.architectural_adaptations = cb.adaptations.filter(
+                (a: any) => a.beneficiaries.length > 0,
+              );
+            }),
+          );
+        }
         return NextResponse.json({
           section_title: 'Persistent Bottleneck Reading',
-          section_subtitle: 'Auto-detected from accumulated evidence — structural nodes (HBM/CoWoS/grid/HALEU/defence) use 90-day decay so multi-year shifts persist beyond the news cycle',
+          section_subtitle: 'Auto-detected from accumulated evidence — structural nodes (HBM/CoWoS/grid/HALEU/defence) use 90-day decay so multi-year shifts persist beyond the news cycle. Each constraint shows architectural-adaptation second-order beneficiaries.',
           count: items.length,
           items,
         });

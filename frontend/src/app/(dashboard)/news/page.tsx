@@ -350,6 +350,19 @@ interface PersistentBottleneckSample {
   tier: string;
   recorded_at?: string;
 }
+// PATCH 0081: architectural beneficiary entry
+interface AdaptationBeneficiary {
+  ticker: string;
+  score: number;
+  sample_count: number;
+}
+interface ArchitecturalAdaptation {
+  adaptation: string;
+  label: string;
+  rationale: string;
+  beneficiaries: AdaptationBeneficiary[];
+}
+
 interface PersistentBottleneckItem {
   node: string;
   label?: string;        // PATCH 0080: rich label
@@ -363,6 +376,7 @@ interface PersistentBottleneckItem {
   is_structural: boolean;
   top_samples: PersistentBottleneckSample[];
   best_specialist_sample?: PersistentBottleneckSample | null;  // PATCH 0080
+  architectural_adaptations?: ArchitecturalAdaptation[];        // PATCH 0081
 }
 interface PersistentBottlenecksResp {
   section_title: string;
@@ -1927,6 +1941,28 @@ export default function NewsFeedPage() {
                         <span style={{ color: '#CBD5E1' }}>{bestSample.title.slice(0, 90)}</span>
                         <br/>
                         <span style={{ color: '#4A5B6C' }}>{bestSample.source} · {bestSample.tier}</span>
+                      </div>
+                    )}
+                    {/* PATCH 0081: ARCHITECTURAL BENEFICIARIES — second-order winners */}
+                    {b.architectural_adaptations && b.architectural_adaptations.length > 0 && (
+                      <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px dashed #1A2840' }}>
+                        <div style={{ fontSize: 9, color: '#F59E0B', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+                          ↪ ARCHITECTURAL BENEFICIARIES (2nd-order)
+                        </div>
+                        {b.architectural_adaptations.map((adapt) => (
+                          <div key={adapt.adaptation} style={{ marginBottom: 4, fontSize: 9, lineHeight: 1.4 }}>
+                            <div style={{ color: '#CBD5E1' }}>
+                              <span style={{ color: '#10B981', fontWeight: 700 }}>· {adapt.label}</span>
+                              {' '}
+                              <span style={{ color: '#94A3B8' }}>
+                                {adapt.beneficiaries.slice(0, 5).map((bn) => bn.ticker).join(', ')}
+                              </span>
+                            </div>
+                            <div style={{ color: '#6B7A8D', fontSize: 8, lineHeight: 1.3, marginTop: 1 }} title={adapt.rationale}>
+                              {adapt.rationale.slice(0, 90)}…
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>
