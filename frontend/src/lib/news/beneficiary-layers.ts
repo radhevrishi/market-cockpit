@@ -66,6 +66,13 @@ export interface LayerTicker {
   // independent of whether it co-occurs in the article. Lets the UI mark it as
   // "structurally required" vs. evidence-driven.
   mandatory?: boolean;
+  // PATCH 0104: auto-discovered (from news accumulator) vs seed (hand-rostered)
+  discovered?: boolean;
+  mention_count?: number;        // raw mention count from accumulator
+  accumulator_score?: number;    // tier-weighted decayed score
+  // PATCH 0104: A/B/C/D exposure tier — Direct Capture / Mandatory Enabler /
+  // Architectural Beneficiary / Narrative Sympathy
+  tier?: 'A' | 'B' | 'C' | 'D';
 }
 
 export interface LayerMeta {
@@ -680,6 +687,11 @@ function nodeLabel(node: SystemNode): string {
  *
  * Limit per layer: 8 tickers (mandatory > article > seed remainder).
  */
+// PATCH 0104: imported lazily (server-only) so client bundle stays small.
+// Discovered tickers from the per-node accumulator are appended to L1.
+import type { NodeTickerEntry } from '@/lib/news/node-ticker-accumulator';
+import { classifyTier } from '@/lib/news/node-ticker-accumulator';
+
 export function deriveLayeredBeneficiaries(args: {
   primary_node: SystemNode;
   article_tickers?: string[];
@@ -689,8 +701,12 @@ export function deriveLayeredBeneficiaries(args: {
   // PATCH 0086: when 'IN' the function uses INDIA_ROSTER + NODE_RULES_IN
   // exclusively, so an Indian story does not surface US-listed names.
   region?: LayerRegion;
+  // PATCH 0104: auto-discovered tickers from news accumulator (pre-fetched
+  // by caller to avoid awaiting per-article).  Appended to L1 with
+  // discovered: true marker.
+  discovered_tickers?: NodeTickerEntry[];
 }): LayeredBeneficiaries {
-  const { primary_node, article_tickers = [], per_layer_limit = 8, article_headline, region = 'GLOBAL' } = args;
+  const { primary_node, article_tickers = [], per_layer_limit = 8, article_headline, region = 'GLOBAL', discovered_tickers = [] } = args;
   const rule = (region === 'IN' ? NODE_RULES_IN : NODE_RULES)[primary_node] ?? NODE_RULES.NONE;
   const rosterByLayer = region === 'IN' ? INDIA_ROSTER_BY_LAYER : ROSTER_BY_LAYER;
   const articleSet = new Set(article_tickers.map((t) => t.toUpperCase()));
@@ -750,6 +766,73 @@ export function deriveLayeredBeneficiaries(args: {
     }
 
     layers[layer] = out.slice(0, per_layer_limit);
+  }
+
+  // PATCH 0104: AUTO-DISCOVERY MERGE.  Append tickers from the per-node news
+  // accumulator into L1 (the natural home for "this name kept showing up
+  // alongside <node>-classified articles").  Skips tickers already present
+  // in any layer, so seed names aren't doubled.  No hardcoding — pure
+  // evidence-based.
+  if (discovered_tickers.length > 0 && rule.fires.includes('L1')) {
+    const allLayerTickers = new Set<string>();
+    for (const L of rule.fires) {
+      for (const t of layers[L]) allLayerTickers.add(t.ticker.toUpperCase());
+    }
+    const l1Limit = per_layer_limit + 4;  // give discovered names a bit more room in L1
+    for (const d of discovered_tickers) {
+      if (layers.L1.length >= l1Limit) break;
+      const T = d.ticker.toUpperCase();
+      if (allLayerTickers.has(T)) {
+        // already a seed member — annotate with accumulator data
+        for (const L of rule.fires) {
+          const existing = layers[L].find((x) => x.ticker.toUpperCase() === T);
+          if (existing) {
+            existing.mention_count = d.mention_count;
+            existing.accumulator_score = Math.round(d.score * 10) / 10;
+          }
+        }
+        continue;
+      }
+      // Brand new — add to L1 as discovered
+      layers.L1.push({
+        ticker: T,
+        layer: 'L1',
+        rationale: `Auto-discovered via news evidence (${d.mention_count} mentions across ${(d.top_sources || []).length} sources, score ${d.score.toFixed(1)}). Confirm with fundamentals before sizing.`,
+        pricing_leverage: 'MEDIUM',
+        size: 'MID_CAP',
+        discovered: true,
+        mention_count: d.mention_count,
+        accumulator_score: Math.round(d.score * 10) / 10,
+      });
+      allLayerTickers.add(T);
+    }
+  }
+
+  // PATCH 0104: TIER A/B/C/D classification.  Computed from existing
+  // pricing_leverage + mandatory + is_seed + accumulator_score.  Tier A
+  // = Direct Scarcity Capture (highest earnings torque), Tier D =
+  // Narrative Sympathy (weak correlation).
+  for (const L of rule.fires) {
+    const layerArr = layers[L];
+    for (const t of layerArr) {
+      t.tier = classifyTier({
+        pricing_leverage: t.pricing_leverage,
+        mandatory: t.mandatory,
+        is_seed: !t.discovered,
+        accumulator_score: t.accumulator_score,
+        mention_count: t.mention_count,
+      });
+    }
+    // Re-sort within layer: Tier A first, then by leverage
+    const tierRank: Record<'A'|'B'|'C'|'D', number> = { A: 4, B: 3, C: 2, D: 1 };
+    const levRank: Record<PricingLeverage, number> = { STRONG: 3, MEDIUM: 2, WEAK: 1 };
+    layerArr.sort((a, b) => {
+      const ta = tierRank[a.tier ?? 'D'];
+      const tb = tierRank[b.tier ?? 'D'];
+      if (ta !== tb) return tb - ta;
+      return levRank[b.pricing_leverage] - levRank[a.pricing_leverage];
+    });
+    layers[L] = layerArr;
   }
 
   // Cascade

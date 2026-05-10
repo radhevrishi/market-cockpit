@@ -16,6 +16,9 @@ import { detectAdaptations, recordBeneficiary } from '@/lib/news/beneficiary-gra
 // PATCH 0084: 6-layer beneficiary engine + transmission cascade
 // PATCH 0086: region inference for clean India / Global split
 import { deriveLayeredBeneficiaries, inferRegion } from '@/lib/news/beneficiary-layers';
+// PATCH 0104: per-SystemNode ticker auto-discovery accumulator
+// (so MTAR / any unhardcoded ticker auto-surfaces under nuclear when news mentions it)
+import { recordNodeTicker, readNodeTickers } from '@/lib/news/node-ticker-accumulator';
 // PATCH 0052: Causal-honesty layer + 0061 evidence-bound impact + 0062 relevance
 import {
   classifyAssertion, frameImpact, hasDirectComputeLinkage, isGenericPowerStory,
@@ -2214,6 +2217,33 @@ async function fetchAllNews(): Promise<any[]> {
       }),
   ).catch(() => { /* non-fatal */ });
 
+  // PATCH 0104: per-SystemNode ticker accumulator.  EVERY article whose
+  // primary_node fires on a real bottleneck records its ticker mentions to
+  // the node bucket.  Over time the bucket builds a discovered roster
+  // (e.g. MTAR.NS gets recorded under NUCLEAR_INFRA whenever an article
+  // mentions it alongside nuclear-classified content).  No hardcoding.
+  Promise.all(
+    articlesWithImpact
+      .filter((a: any) => {
+        const text = `${a.title || ''} ${a.summary || ''}`;
+        if (RETAIL_DEAL_LANG.test(text)) return false;
+        if (CELEBRITY_NOISE.test(text)) return false;
+        if (!a.graph_primary_node || a.graph_primary_node === 'NONE') return false;
+        const tickers = a.ticker_symbols || [];
+        if (tickers.length === 0) return false;
+        return true;
+      })
+      .slice(0, 80)
+      .map((a: any) =>
+        recordNodeTicker({
+          node: a.graph_primary_node,
+          tickers: a.ticker_symbols || [],
+          source: a.source_name,
+          source_tier: a.source_tier_v2 || 'UNKNOWN',
+        }),
+      ),
+  ).catch(() => { /* non-fatal */ });
+
   // ── Persistence: save structural bottleneck articles to KV ──
   const DAY = 86400;
   const bottleneckArticles = articlesWithImpact.filter(a => a.article_type === 'BOTTLENECK');
@@ -2572,6 +2602,15 @@ export async function GET(request: Request) {
           const bestOf = (arr: any[]) =>
             arr.find((s) => s.tier === 'SPECIALIST' || s.tier === 'PRIMARY') || arr[0] || null;
 
+          // PATCH 0104: pre-fetch auto-discovered tickers for THIS bottleneck's
+          // SystemNode once, then pass to both region variants.
+          const discoveredForNode = await readNodeTickers({
+            node: it.node,
+            limit: 12,
+            min_score: 1.5,
+            min_mentions: 1,
+          });
+
           const buildVariant = (region: 'IN' | 'GLOBAL', regionSamples: any[]) => {
             if (regionSamples.length === 0) return null;
             const tickerSet = Array.from(
@@ -2589,6 +2628,7 @@ export async function GET(request: Request) {
                 article_headline: it.label || it.sub || '',
                 per_layer_limit: 5,
                 region,
+                discovered_tickers: discoveredForNode,
               }),
             };
             return variant;
@@ -2612,6 +2652,7 @@ export async function GET(request: Request) {
                 article_headline: it.label || '',
                 per_layer_limit: 5,
                 region: 'GLOBAL',
+                discovered_tickers: discoveredForNode,
               }),
             });
           }
