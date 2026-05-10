@@ -2431,8 +2431,11 @@ export async function GET(request: Request) {
     }
 
     const evidenceFlag = searchParams.get('evidence') === '1';
-    if (evidenceFlag) {
-      const { readAllEvidence } = await import('@/lib/news/evidence-accumulator');
+    // PATCH 0079: persistent bottleneck reading endpoint
+    const persistentFlag = searchParams.get('persistent') === '1';
+
+    if (evidenceFlag || persistentFlag) {
+      const { readAllEvidence, readPersistentBottlenecks } = await import('@/lib/news/evidence-accumulator');
       const allNodes: Array<import('@/lib/news/semantic-graph').SystemNode> = [
         'COMPUTE_INFRA','MEMORY_INFRA','PACKAGING_INFRA','FABRICATION_INFRA',
         'INTERCONNECT_INFRA','COOLING_INFRA','NETWORK_BANDWIDTH',
@@ -2441,11 +2444,28 @@ export async function GET(request: Request) {
         'RESOURCE_SCARCITY','AGRI_INFRA','MANUFACTURING_CAPACITY',
         'LABOR_CONSTRAINT','CAPITAL_CONSTRAINT',
       ];
+
+      if (persistentFlag) {
+        const limit = parseInt(searchParams.get('limit') || '8', 10);
+        const minConf = parseInt(searchParams.get('min_confidence') || '20', 10);
+        const items = await readPersistentBottlenecks({
+          nodes: allNodes,
+          min_confidence: minConf,
+          limit,
+        });
+        return NextResponse.json({
+          section_title: 'Persistent Bottleneck Reading',
+          section_subtitle: 'Auto-detected from accumulated evidence — structural nodes (HBM/CoWoS/grid/HALEU/defence) use 90-day decay so multi-year shifts persist beyond the news cycle',
+          count: items.length,
+          items,
+        });
+      }
+
       const all = await readAllEvidence(allNodes);
       return NextResponse.json({
         nodes: all,
         section_title: 'Theme Confidence Ledger',
-        section_subtitle: 'Source-weighted evidence accumulation, 30-day rolling decay',
+        section_subtitle: 'Source-weighted evidence accumulation — 90-day decay for structural, 14-day for cyclical',
       });
     }
 

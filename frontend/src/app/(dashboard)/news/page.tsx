@@ -342,6 +342,37 @@ function useTransformationalPreview() {
   });
 }
 
+// PATCH 0079: Persistent Bottleneck Reading hook
+interface PersistentBottleneckItem {
+  node: string;
+  confidence_pct: number;
+  cumulative_score: number;
+  sample_count: number;
+  last_seen: string;
+  age_days: number;
+  trend: 'rising' | 'steady' | 'falling' | 'cooling';
+  is_structural: boolean;
+  top_samples: Array<{ article_id: string; title: string; source: string; tier: string }>;
+}
+interface PersistentBottlenecksResp {
+  section_title: string;
+  section_subtitle: string;
+  count: number;
+  items: PersistentBottleneckItem[];
+}
+function usePersistentBottlenecks() {
+  return useQuery<PersistentBottlenecksResp>({
+    queryKey: ['news', 'persistent-bottlenecks'],
+    queryFn: async () => {
+      const { data } = await api.get('/news?persistent=1&limit=8&min_confidence=20');
+      return data;
+    },
+    refetchInterval: 5 * 60_000,
+    staleTime: 5 * 60_000,
+    retry: 1,
+  });
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 // Decode HTML entities like &amp; → & , &lt; → <, etc.
@@ -1473,6 +1504,9 @@ export default function NewsFeedPage() {
   // PATCH 0068: 6-month Transformational Contracts preview band
   const { data: transformationalPreview } = useTransformationalPreview();
   const [showTransformational, setShowTransformational] = useState<boolean>(true);
+  // PATCH 0079: Persistent Bottleneck Reading
+  const { data: persistentBottlenecks } = usePersistentBottlenecks();
+  const [showPersistent, setShowPersistent] = useState<boolean>(true);
   const { data: anomalies } = useAnomalies();
   const [showCalendar, setShowCalendar] = useState(false);
 
@@ -1804,6 +1838,83 @@ export default function NewsFeedPage() {
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* ── PATCH 0079: PERSISTENT BOTTLENECK READING — auto-detected from
+              accumulated evidence with per-domain decay (90d structural,
+              14d cyclical). Surfaces HBM/CoWoS/grid/HALEU even when no
+              fresh news today. ── */}
+      {persistentBottlenecks && persistentBottlenecks.count > 0 && (
+        <div style={{
+          backgroundColor: '#0D1B2E', border: '1px solid #1E2D45',
+          borderLeft: '3px solid #EF4444',
+          borderRadius: '12px', padding: '10px 12px', marginBottom: '12px',
+        }}>
+          <button
+            onClick={() => setShowPersistent(s => !s)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px',
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: 0, margin: 0, width: '100%',
+              color: 'inherit', textAlign: 'left',
+            }}
+          >
+            <span style={{ fontSize: '10px', fontWeight: 700, color: '#EF4444', letterSpacing: '0.8px' }}>
+              🚧 PERSISTENT BOTTLENECK READING
+            </span>
+            <span style={{ fontSize: '10px', color: '#4A5B6C' }}>
+              {persistentBottlenecks.count} active structural bottlenecks · auto-detected from accumulated evidence
+            </span>
+            <span style={{ marginLeft: 'auto', fontSize: '10px', color: '#4A5B6C' }}>
+              {showPersistent ? '▼ collapse' : '▶ expand'}
+            </span>
+          </button>
+          {showPersistent && (
+            <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
+              {persistentBottlenecks.items.map((b) => {
+                const trendColor = b.trend === 'rising' ? '#EF4444'
+                  : b.trend === 'steady' ? '#F59E0B'
+                  : b.trend === 'falling' ? '#22D3EE'
+                  : '#6B7A8D';
+                const trendIcon = b.trend === 'rising' ? '↑' : b.trend === 'steady' ? '→' : b.trend === 'falling' ? '↓' : '·';
+                return (
+                  <div key={b.node} style={{
+                    backgroundColor: '#0A1422', border: '1px solid #1A2840',
+                    borderRadius: 8, padding: '8px 10px',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: '#F5F7FA' }}>
+                        {b.node.replace(/_/g, ' ')}
+                      </span>
+                      {b.is_structural && (
+                        <span style={{ fontSize: 8, fontWeight: 700, color: '#8B5CF6', border: '1px solid #8B5CF640', backgroundColor: '#8B5CF610', padding: '1px 4px', borderRadius: 3 }}>
+                          STRUCTURAL
+                        </span>
+                      )}
+                      <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: trendColor }}>
+                        {trendIcon} {b.trend}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, fontSize: 10, color: '#94A3B8' }}>
+                      <span style={{ color: '#10B981', fontWeight: 700 }}>{b.confidence_pct}% conf</span>
+                      <span>·</span>
+                      <span>{b.sample_count} articles</span>
+                      <span>·</span>
+                      <span>{b.age_days}d ago</span>
+                    </div>
+                    {b.top_samples.length > 0 && (
+                      <div style={{ fontSize: 9, color: '#6B7A8D', lineHeight: 1.4 }}>
+                        Latest: <span style={{ color: '#94A3B8' }}>{b.top_samples[0].title.slice(0, 80)}</span>
+                        <br/>
+                        <span style={{ color: '#4A5B6C' }}>{b.top_samples[0].source} · {b.top_samples[0].tier}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
