@@ -72,29 +72,99 @@ interface Article {
 
 // ─── Hooks ──────────────────────────────────────────────────────────────────
 
-function useUniverseSymbols() {
-  return useQuery<string[]>({
-    queryKey: ['rerating', 'universe'],
+// PATCH 0108 — BUG-02: universe selector with Multibagger fallback.
+// Old behaviour: used portfolio + watchlist (often empty). New: Multibagger
+// uploaded list (mb3_symbols localStorage) is the default if non-empty,
+// then watchlist/portfolio. User can switch via UI dropdown.
+
+type UniverseChoice = 'AUTO' | 'MULTIBAGGER' | 'PORTFOLIO' | 'WATCHLIST' | 'NSE500' | 'CUSTOM';
+
+function readMultibaggerSymbols(): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem('mb3_symbols');
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map((s) => typeof s === 'string' ? s : (s?.symbol || s?.ticker || ''))
+        .filter(Boolean)
+        .map((s) => String(s).toUpperCase());
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+// NSE500 small-cap proxy list — fetched once if user picks that universe
+async function fetchNSE500(): Promise<string[]> {
+  try {
+    const { data } = await api.get('/market/nse500');
+    if (Array.isArray(data)) return data.map((s: any) => typeof s === 'string' ? s : s?.symbol).filter(Boolean);
+  } catch {}
+  return [];
+}
+
+function useUniverseSymbols(choice: UniverseChoice, customCsv: string) {
+  return useQuery<{ symbols: string[]; source: string }>({
+    queryKey: ['rerating', 'universe', choice, customCsv],
     queryFn: async () => {
-      // portfolio + watchlist union
       const out = new Set<string>();
-      try {
-        const { data } = await api.get('/portfolio');
-        const positions = data?.positions || data?.holdings || data || [];
-        for (const p of positions) {
-          const s = p.symbol || p.ticker || p.ticker_symbol;
-          if (s) out.add(String(s).toUpperCase());
+
+      const addPortfolio = async () => {
+        try {
+          const { data } = await api.get('/portfolio');
+          const positions = data?.positions || data?.holdings || data || [];
+          for (const p of positions) {
+            const s = p.symbol || p.ticker || p.ticker_symbol;
+            if (s) out.add(String(s).toUpperCase());
+          }
+        } catch {}
+      };
+      const addWatchlist = async () => {
+        try {
+          const { data } = await api.get('/watchlist');
+          const items = data?.items || data?.tickers || data || [];
+          for (const w of items) {
+            const s = typeof w === 'string' ? w : (w.symbol || w.ticker || w.ticker_symbol);
+            if (s) out.add(String(s).toUpperCase());
+          }
+        } catch {}
+      };
+      const addMultibagger = () => {
+        for (const s of readMultibaggerSymbols()) out.add(s);
+      };
+
+      let source = 'auto';
+      if (choice === 'MULTIBAGGER') {
+        addMultibagger();
+        source = `multibagger (${out.size})`;
+      } else if (choice === 'PORTFOLIO') {
+        await addPortfolio();
+        source = `portfolio (${out.size})`;
+      } else if (choice === 'WATCHLIST') {
+        await addWatchlist();
+        source = `watchlist (${out.size})`;
+      } else if (choice === 'NSE500') {
+        const list = await fetchNSE500();
+        for (const s of list) out.add(s);
+        source = `NSE500 (${out.size})`;
+      } else if (choice === 'CUSTOM') {
+        for (const t of customCsv.split(/[,\s]+/).map((s) => s.trim().toUpperCase()).filter(Boolean)) out.add(t);
+        source = `custom (${out.size})`;
+      } else {
+        // AUTO: prefer Multibagger upload; if empty, fall back to portfolio + watchlist union
+        addMultibagger();
+        if (out.size === 0) {
+          await addPortfolio();
+          await addWatchlist();
+          source = `portfolio + watchlist (${out.size})`;
+        } else {
+          source = `multibagger upload (${out.size})`;
         }
-      } catch {}
-      try {
-        const { data } = await api.get('/watchlist');
-        const items = data?.items || data?.tickers || data || [];
-        for (const w of items) {
-          const s = typeof w === 'string' ? w : (w.symbol || w.ticker || w.ticker_symbol);
-          if (s) out.add(String(s).toUpperCase());
-        }
-      } catch {}
-      return Array.from(out);
+      }
+      return { symbols: Array.from(out), source };
     },
     staleTime: 5 * 60_000,
   });
@@ -207,7 +277,12 @@ interface ModelShiftRow {
   most_recent_age_days?: number;
 }
 
-const MODEL_SHIFT_PATTERN = /\b(saas|software.as.a.service|subscription model|recurring revenue|annualized recurring revenue|arr\b|platform model|platform play|recurring|net revenue retention|nrr|expansion revenue|land.and.expand|usage based pricing|metered)\b/i;
+// PATCH 0108 — BUG-02 fix C: expanded for Indian business-model shifts.
+// Old US-centric SaaS regex missed 90% of Indian model-shift signals.
+// Indian context uses: order book / AMC / annuity / channel partner /
+// long-term contract / maintenance / managed services / subscription /
+// recurring / platform / SaaS.
+const MODEL_SHIFT_PATTERN = /\b(saas|software.as.a.service|subscription (?:model|revenue|business)|recurring revenue|annualized recurring revenue|arr\b|platform (?:model|play|business|revenue)|recurring|net revenue retention|nrr|expansion revenue|land.and.expand|usage based pricing|metered|annuity (?:revenue|business|model)|retainer|long.?term contract|order ?book|amc\b|maintenance contract|maintenance services|managed services|channel partner|after.?market services|services revenue|service revenue|aftermarket|asset.?light|licensing model|royalty model|capex.?to.?opex|gross margin expansion|operating leverage|run.?rate revenue)\b/i;
 
 function computeModelShift(articles: Article[]): ModelShiftRow[] {
   const now = Date.now();
@@ -303,6 +378,9 @@ export default function RerratingPage() {
   const initial = (searchParams?.get('tab') as Tab) || 'margin';
   const [active, setActive] = useState<Tab>(TABS.some((t) => t.id === initial) ? initial : 'margin');
   const [region, setRegion] = useState<'ALL' | 'IN' | 'GLOBAL'>('ALL');
+  // PATCH 0108 — BUG-02: universe selector
+  const [universeChoice, setUniverseChoice] = useState<UniverseChoice>('AUTO');
+  const [customCsv, setCustomCsv] = useState('');
 
   // Sync active tab to URL
   useEffect(() => {
@@ -313,7 +391,9 @@ export default function RerratingPage() {
     }
   }, [active, searchParams, router]);
 
-  const { data: universe = [] } = useUniverseSymbols();
+  const { data: universeData = { symbols: [], source: 'loading' } } = useUniverseSymbols(universeChoice, customCsv);
+  const universe = universeData.symbols;
+  const universeSource = universeData.source;
   const { data: earnings = [], isLoading: loadingE } = useEarningsScan(universe);
   const { data: quotes = {}, isLoading: loadingQ } = useQuotes(universe);
   const { data: feed, isLoading: loadingN } = useNewsFeed();
@@ -338,7 +418,28 @@ export default function RerratingPage() {
             ⚖️ RE-RATING SCREENER
           </span>
           <span style={{ fontSize: 12, color: '#4A5B6C' }}>Margin Expansion · Model Shift · Multiple Expansion</span>
-          <span style={{ fontSize: 11, color: '#6B7A8D' }}>Universe: portfolio + watchlist ({universe.length} symbols)</span>
+          <span style={{ fontSize: 11, color: '#6B7A8D' }}>Universe: {universeSource}</span>
+          {/* PATCH 0108 — BUG-02: universe selector */}
+          <select
+            value={universeChoice}
+            onChange={(e) => setUniverseChoice(e.target.value as UniverseChoice)}
+            style={{ padding: '3px 8px', fontSize: 11, fontWeight: 700, borderRadius: 4, border: '1px solid #1A2840', backgroundColor: '#0A1422', color: '#E6EDF3', cursor: 'pointer' }}
+          >
+            <option value="AUTO">Auto (MB → Portfolio + Watchlist)</option>
+            <option value="MULTIBAGGER">Multibagger Upload</option>
+            <option value="PORTFOLIO">My Portfolio</option>
+            <option value="WATCHLIST">My Watchlist</option>
+            <option value="NSE500">NSE 500</option>
+            <option value="CUSTOM">Custom (CSV)</option>
+          </select>
+          {universeChoice === 'CUSTOM' && (
+            <input
+              value={customCsv}
+              onChange={(e) => setCustomCsv(e.target.value)}
+              placeholder="POWERGRID.NS, NTPC.NS, ..."
+              style={{ padding: '3px 8px', fontSize: 11, borderRadius: 4, border: '1px solid #1A2840', backgroundColor: '#0A1422', color: '#E6EDF3', width: 240 }}
+            />
+          )}
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
             {([
               { v: 'ALL', label: 'ALL' },

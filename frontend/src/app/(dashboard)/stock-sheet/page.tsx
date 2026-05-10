@@ -33,11 +33,68 @@
 //   16. Final Questions              — strategic asset, hold-through-drawdown
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useEffect, useMemo, useState } from 'react';
+import { Component, ErrorInfo, ReactNode, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Search, Save, Trash2, FileDown, ChevronDown, ChevronRight } from 'lucide-react';
+import { Search, Save, Trash2, FileDown, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import api from '@/lib/api';
+
+// PATCH 0108 — BUG-01 fix: defensive scalar extraction.  Some quote APIs
+// return signed-numeric fields as `{direction, magnitude}` objects (their
+// internal sentiment shape).  Rendering an object as a JSX child throws
+// React Error #31.  This helper unwraps the magnitude with a sign.
+function safeScalar(v: any): number | null {
+  if (v == null) return null;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v === 'string') {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  if (typeof v === 'object') {
+    if ('magnitude' in v) {
+      const mag = Number(v.magnitude);
+      if (!Number.isFinite(mag)) return null;
+      const dir = String(v.direction ?? '').toLowerCase();
+      const sign = (dir === 'down' || dir === 'negative' || dir === 'bear' || dir === 'down_strong') ? -1 : 1;
+      return mag * sign;
+    }
+    if ('value' in v) return safeScalar(v.value);
+  }
+  return null;
+}
+
+// PATCH 0108 — BUG-01: ErrorBoundary so a malformed API row doesn't kill the page.
+class StockSheetErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; message?: string }> {
+  state = { hasError: false, message: undefined as string | undefined };
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, message: error?.message?.slice(0, 240) || 'Unknown error' };
+  }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    // eslint-disable-next-line no-console
+    console.error('[StockSheet] crash:', error, info?.componentStack);
+  }
+  reset = () => this.setState({ hasError: false, message: undefined });
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ margin: 18, padding: 16, backgroundColor: '#0D1B2E', border: '1px solid #EF4444', borderRadius: 10, color: '#FCA5A5', fontSize: 13, lineHeight: 1.55 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, marginBottom: 6, color: '#EF4444' }}>
+            <AlertTriangle style={{ width: 16, height: 16 }} />
+            Stock Sheet — render error
+          </div>
+          <div style={{ marginBottom: 8 }}>{this.state.message}</div>
+          <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 8 }}>
+            One section returned an unexpected payload shape. The header above is still usable; try a different ticker or click reset.
+          </div>
+          <button onClick={this.reset} style={{ padding: '4px 12px', fontSize: 11, fontWeight: 700, borderRadius: 4, border: '1px solid #EF444460', backgroundColor: '#EF444420', color: '#EF4444', cursor: 'pointer' }}>
+            Reset
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -599,6 +656,7 @@ export default function StockSheetPage() {
       </div>
 
       {/* ── Body ───────────────────────────────────────────────────── */}
+      <StockSheetErrorBoundary>
       {!activeTicker ? (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6B7A8D', fontSize: 14, padding: 24, textAlign: 'center' }}>
           <div>
@@ -621,16 +679,21 @@ export default function StockSheetPage() {
               <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 4, backgroundColor: region === 'IN' ? '#FBBF2420' : '#22D3EE20', color: region === 'IN' ? '#FBBF24' : '#22D3EE', border: `1px solid ${region === 'IN' ? '#FBBF2440' : '#22D3EE40'}` }}>
                 {region === 'IN' ? '🇮🇳 India' : '🌐 Global'}
               </span>
-              {quote?.price != null && (
-                <span style={{ fontSize: 13, color: '#94A3B8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-                  {Number(quote.price).toLocaleString()}
-                  {quote.change_pct != null && (
-                    <span style={{ marginLeft: 8, color: Number(quote.change_pct) >= 0 ? '#10B981' : '#EF4444' }}>
-                      {Number(quote.change_pct) >= 0 ? '+' : ''}{Number(quote.change_pct).toFixed(2)}%
-                    </span>
-                  )}
-                </span>
-              )}
+              {(() => {
+                const px = safeScalar((quote as any)?.price);
+                const ch = safeScalar((quote as any)?.change_pct);
+                if (px == null) return null;
+                return (
+                  <span style={{ fontSize: 13, color: '#94A3B8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                    {px.toLocaleString()}
+                    {ch != null && (
+                      <span style={{ marginLeft: 8, color: ch >= 0 ? '#10B981' : '#EF4444' }}>
+                        {ch >= 0 ? '+' : ''}{ch.toFixed(2)}%
+                      </span>
+                    )}
+                  </span>
+                );
+              })()}
               <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 12 }}>
                 <span style={{ fontSize: 24, fontWeight: 900, color: VERDICT_COLOR[score.verdict], letterSpacing: '0.8px' }}>
                   {score.verdict}
@@ -733,6 +796,7 @@ export default function StockSheetPage() {
           })}
         </div>
       )}
+      </StockSheetErrorBoundary>
     </div>
   );
 }
