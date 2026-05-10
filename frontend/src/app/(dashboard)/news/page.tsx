@@ -409,12 +409,14 @@ interface PersistentBottleneckItem {
   best_specialist_sample?: PersistentBottleneckSample | null;  // PATCH 0080
   architectural_adaptations?: ArchitecturalAdaptation[];        // PATCH 0081
   layered_beneficiaries?: LayeredBeneficiariesLite;             // PATCH 0085
+  region?: 'IN' | 'GLOBAL';                                     // PATCH 0086
 }
 interface PersistentBottlenecksResp {
   section_title: string;
   section_subtitle: string;
   count: number;
   items: PersistentBottleneckItem[];
+  last_updated?: string;                                        // PATCH 0086 — server-side ISO timestamp for liveness pill
 }
 function usePersistentBottlenecks() {
   return useQuery<PersistentBottlenecksResp>({
@@ -1901,7 +1903,42 @@ export default function NewsFeedPage() {
               accumulated evidence with per-domain decay (90d structural,
               14d cyclical). Surfaces HBM/CoWoS/grid/HALEU even when no
               fresh news today. ── */}
-      {persistentBottlenecks && persistentBottlenecks.count > 0 && (
+      {persistentBottlenecks && persistentBottlenecks.count > 0 && (() => {
+        // PATCH 0086: split items into India / Global panels.  Each card carries
+        // a region tag from the API; default to GLOBAL when missing so legacy
+        // cached responses keep working.
+        const allItems = persistentBottlenecks.items;
+        const indiaItems = allItems.filter((i) => i.region === 'IN');
+        const globalItems = allItems.filter((i) => i.region !== 'IN');
+
+        // PATCH 0086: liveness pill — green ≤10min, amber ≤24h, red older.
+        const lastUpdatedIso = persistentBottlenecks.last_updated;
+        const ageMin = lastUpdatedIso
+          ? Math.max(0, Math.round((Date.now() - new Date(lastUpdatedIso).getTime()) / 60000))
+          : null;
+        const liveColor = ageMin == null ? '#6B7A8D'
+          : ageMin <= 10 ? '#10B981'
+          : ageMin <= 24 * 60 ? '#F59E0B'
+          : '#EF4444';
+        const liveLabel = ageMin == null ? 'live'
+          : ageMin < 1 ? 'live · just now'
+          : ageMin < 60 ? `live · ${ageMin}m ago`
+          : ageMin < 24 * 60 ? `live · ${Math.round(ageMin / 60)}h ago`
+          : `stale · ${Math.round(ageMin / 1440)}d ago`;
+
+        // Build a flat list with region-divider sentinels so one .map() can
+        // render headers + cards. Avoids duplicating the (large) card JSX.
+        const flatList: any[] = [];
+        if (indiaItems.length > 0) {
+          flatList.push({ __divider: 'IN', count: indiaItems.length });
+          flatList.push(...indiaItems);
+        }
+        if (globalItems.length > 0) {
+          flatList.push({ __divider: 'GLOBAL', count: globalItems.length });
+          flatList.push(...globalItems);
+        }
+
+        return (
         <div style={{
           backgroundColor: '#0D1B2E', border: '1px solid #1E2D45',
           borderLeft: '4px solid #EF4444',
@@ -1922,7 +1959,21 @@ export default function NewsFeedPage() {
               🚧 PERSISTENT BOTTLENECK READING
             </span>
             <span style={{ fontSize: '13px', color: '#4A5B6C' }}>
-              {persistentBottlenecks.count} active structural bottlenecks · auto-detected from accumulated evidence
+              🇮🇳 {indiaItems.length} India · 🌐 {globalItems.length} Global · auto-detected from accumulated evidence
+            </span>
+            {/* PATCH 0086: liveness pill — proves the panel is live, not stale */}
+            <span
+              title={lastUpdatedIso ? `Server-side last_updated: ${lastUpdatedIso}\nAuto-refresh every 5 min` : 'Live data'}
+              style={{
+                fontSize: 11, fontWeight: 700, letterSpacing: '0.4px',
+                color: liveColor, border: `1px solid ${liveColor}50`,
+                backgroundColor: `${liveColor}15`,
+                padding: '2px 8px', borderRadius: 4,
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+              }}
+            >
+              <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: liveColor, boxShadow: `0 0 6px ${liveColor}` }} />
+              {liveLabel.toUpperCase()}
             </span>
             <span style={{ marginLeft: 'auto', fontSize: '13px', color: '#4A5B6C' }}>
               {showPersistent ? '▼ collapse' : '▶ expand'}
@@ -1932,7 +1983,35 @@ export default function NewsFeedPage() {
             // PATCH 0085: doubled card width (280→440) and gap so larger cards
             // don't crush each other.
             <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(440px, 1fr))', gap: 14 }}>
-              {persistentBottlenecks.items.map((b) => {
+              {flatList.map((rowAny: any, idx: number) => {
+                // PATCH 0086: region divider sentinel — full-width sub-header
+                if (rowAny && rowAny.__divider) {
+                  const isIN = rowAny.__divider === 'IN';
+                  const accent = isIN ? '#FBBF24' : '#22D3EE';
+                  return (
+                    <div
+                      key={`__div_${rowAny.__divider}_${idx}`}
+                      style={{
+                        gridColumn: '1 / -1',
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        marginTop: idx === 0 ? 0 : 12,
+                        paddingBottom: 6,
+                        borderBottom: `1px dashed ${accent}50`,
+                      }}
+                    >
+                      <span style={{ fontSize: 16, fontWeight: 800, color: accent, letterSpacing: '0.6px' }}>
+                        {isIN ? '🇮🇳 INDIA' : '🌐 GLOBAL'}
+                      </span>
+                      <span style={{ fontSize: 12, color: '#6B7A8D' }}>
+                        {rowAny.count} {rowAny.count === 1 ? 'bottleneck' : 'bottlenecks'} · {isIN
+                          ? 'NSE-listed beneficiaries only — Indian sources / ₹ / PSU patterns'
+                          : 'global L1–L6 roster — US / EU / Japan / Taiwan / Korea names'}
+                      </span>
+                    </div>
+                  );
+                }
+                // Type-narrow back to PersistentBottleneckItem for the card render
+                const b = rowAny as PersistentBottleneckItem;
                 const trendColor = b.trend === 'rising' ? '#EF4444'
                   : b.trend === 'steady' ? '#F59E0B'
                   : b.trend === 'falling' ? '#22D3EE'
@@ -2178,7 +2257,8 @@ export default function NewsFeedPage() {
             </div>
           )}
         </div>
-      )}
+        );
+      })()}
 
       {/* ── PATCH 0068: TRANSFORMATIONAL CONTRACTS — 6-month rolling band
               PATCH 0085: typography + card padding doubled to match the larger

@@ -42,12 +42,17 @@ export type PricingLeverage = 'STRONG' | 'MEDIUM' | 'WEAK';
 
 export type LayerSize = 'LARGE_CAP' | 'MID_CAP' | 'SMALL_CAP';
 
+// PATCH 0086: region tagging — keep the India view from leaking into a US/Global
+// bottleneck card and vice versa. Each ticker is exclusively tagged.
+export type LayerRegion = 'IN' | 'GLOBAL';
+
 export interface LayerTicker {
   ticker: string;
   layer: BeneficiaryLayer;
   rationale: string;
   pricing_leverage: PricingLeverage;
   size: LayerSize;
+  region?: LayerRegion;          // PATCH 0086 — defaults to GLOBAL
   // True if this ticker is force-injected (mandatory) for the firing node-class,
   // independent of whether it co-occurs in the article. Lets the UI mark it as
   // "structurally required" vs. evidence-driven.
@@ -148,6 +153,199 @@ export const LAYER_ROSTER: LayerTicker[] = [
   { ticker: 'NVT',     layer: 'L6', rationale: 'nVent thermal + Schroff — cold plate adoption; AI-cluster volume',                  pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
   { ticker: 'EMR',     layer: 'L6', rationale: 'Emerson process / Liebert thermal — hyperscaler retrofits',                         pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
 ];
+
+// ─── INDIA roster — patch 0086 ─────────────────────────────────────────────
+// Separate, exclusive roster so an Indian bottleneck story (NTPC, ₹/Rs, Power Line,
+// Mint, Economic Times) does not surface US-listed names like GEV / HTHIY / PRY.MI
+// in the same card. Indian view is rendered next to the Global view with strict
+// region separation per the user's explicit ask.
+
+export const INDIA_ROSTER: LayerTicker[] = [
+  // ── L1 — Direct Scarcity Capture (India) ─────────────────────────────────
+  { ticker: 'POWERGRID.NS',  layer: 'L1', region: 'IN', rationale: 'Power Grid Corp — central transmission monopoly; AI-DC + RE-evac backbone',                pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'NTPC.NS',       layer: 'L1', region: 'IN', rationale: 'NTPC — largest power generator + REL/NGEL pipeline; PPA backbone',                         pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'BHEL.NS',       layer: 'L1', region: 'IN', rationale: 'BHEL — heavy electricals + thermal/hydro/nuclear; capex super-cycle beneficiary',           pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'COALINDIA.NS',  layer: 'L1', region: 'IN', rationale: 'Coal India — fuel monopoly into thermal capacity tightness',                                pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
+  { ticker: 'TATAPOWER.NS',  layer: 'L1', region: 'IN', rationale: 'Tata Power — generation + T&D + EV ecosystem; integrated infra',                            pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
+  { ticker: 'ABB.NS',        layer: 'L1', region: 'IN', rationale: 'ABB India — electrification + grid automation; HV switchgear pricing power',                pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'SIEMENS.NS',    layer: 'L1', region: 'IN', rationale: 'Siemens India — power + industrial automation; HVDC + rail orders',                         pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'CGPOWER.NS',    layer: 'L1', region: 'IN', rationale: 'CG Power — transformers + motors + railway; semicon JV optionality',                        pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'KAYNES.NS',     layer: 'L1', region: 'IN', rationale: 'Kaynes Technology — EMS + OSAT JV; India advanced packaging capacity capture',              pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'KECL.NS',       layer: 'L1', region: 'IN', rationale: 'KEC International — global T&D EPC; transmission backlog beneficiary',                      pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'ADANIGREEN.NS', layer: 'L1', region: 'IN', rationale: 'Adani Green — largest RE PPA pipeline; battery + solar capacity',                           pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
+
+  // ── L2 — Compute Substitutes / Design Services (India) ────────────────────
+  { ticker: 'TATAELXSI.NS',  layer: 'L2', region: 'IN', rationale: 'Tata Elxsi — semis design + autonomous systems engineering',                                pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'LTTS.NS',       layer: 'L2', region: 'IN', rationale: 'L&T Technology Services — chip design + ER&D; advanced-node design wins',                   pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'KPITTECH.NS',   layer: 'L2', region: 'IN', rationale: 'KPIT — automotive software + AI; auto-grade compute architecture',                           pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'PERSISTENT.NS', layer: 'L2', region: 'IN', rationale: 'Persistent Systems — AI-engineering services; substitution-tier integrator',                pricing_leverage: 'MEDIUM', size: 'MID_CAP'   },
+  { ticker: 'COFORGE.NS',    layer: 'L2', region: 'IN', rationale: 'Coforge — BFSI + travel AI integration; mid-tier substitution play',                        pricing_leverage: 'MEDIUM', size: 'MID_CAP'   },
+
+  // ── L3 — Edge / Distribution / Telco (India) ──────────────────────────────
+  { ticker: 'BHARTIARTL.NS', layer: 'L3', region: 'IN', rationale: 'Bharti Airtel — mobile + fibre + edge nodes; AI-traffic carrier',                           pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'TATACOMM.NS',   layer: 'L3', region: 'IN', rationale: 'Tata Communications — global subsea + edge + DC interconnect',                              pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'TEJASNET.NS',   layer: 'L3', region: 'IN', rationale: 'Tejas Networks — 5G/optical equipment; PLI + BSNL beneficiary',                              pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'CYIENT.NS',     layer: 'L3', region: 'IN', rationale: 'Cyient — networks + comms ER&D; edge/RAN integration',                                       pricing_leverage: 'MEDIUM', size: 'MID_CAP'   },
+
+  // ── L4 — Sterlite-type Transmission Winners (India) ───────────────────────
+  { ticker: 'STL.NS',        layer: 'L4', region: 'IN', rationale: 'Sterlite Tech — preform → fibre ASP cascade; the canonical Sterlite-type name',             pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'HFCL.NS',       layer: 'L4', region: 'IN', rationale: 'HFCL — optical fibre + cable; defence + telecom backlog',                                    pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'POLYCAB.NS',    layer: 'L4', region: 'IN', rationale: 'Polycab — wires + cables leader; DC-build + RE-evac pricing pass-through',                  pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'KEI.NS',        layer: 'L4', region: 'IN', rationale: 'KEI Industries — EHV + control cables; T&D + industrial capex beneficiary',                 pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'FINCABLES.NS',  layer: 'L4', region: 'IN', rationale: 'Finolex Cables — communication + power cables; pricing transmission',                       pricing_leverage: 'MEDIUM', size: 'MID_CAP'   },
+  { ticker: 'LINDEINDIA.NS', layer: 'L4', region: 'IN', rationale: 'Linde India — industrial + electronic gases; long-cycle pricing power',                     pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'HEG.NS',        layer: 'L4', region: 'IN', rationale: 'HEG — graphite electrodes; industrial intermediate margin transmission',                    pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'GRAPHITE.NS',   layer: 'L4', region: 'IN', rationale: 'Graphite India — electrodes peer; commodity converter pricing pass-through',                pricing_leverage: 'MEDIUM', size: 'MID_CAP'   },
+  { ticker: 'DIXON.NS',      layer: 'L4', region: 'IN', rationale: 'Dixon Technologies — EMS scale; PLI + import-substitution backbone',                         pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+
+  // ── L5 — Platform / Demand Aggregators (India) ─────────────────────────────
+  { ticker: 'TCS.NS',        layer: 'L5', region: 'IN', rationale: 'Tata Consultancy Services — enterprise AI integrator; demand aggregator',                   pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'INFY.NS',       layer: 'L5', region: 'IN', rationale: 'Infosys — enterprise AI + Topaz; large-deal monetisation',                                   pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'RELIANCE.NS',   layer: 'L5', region: 'IN', rationale: 'Reliance — Jio + retail + AI Compute platform; multi-channel demand aggregator',            pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'WIPRO.NS',      layer: 'L5', region: 'IN', rationale: 'Wipro — AI360 + GenAI consulting; mid-tier platform monetisation',                          pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
+  { ticker: 'HCLTECH.NS',    layer: 'L5', region: 'IN', rationale: 'HCL Tech — products + services + cloud; enterprise demand aggregator',                       pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+
+  // ── L6 — Infrastructure / Efficiency (India) ───────────────────────────────
+  { ticker: 'VOLTAS.NS',     layer: 'L6', region: 'IN', rationale: 'Voltas — HVAC + DC cooling solutions; infra-cooling efficiency play',                       pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'BLUESTARCO.NS', layer: 'L6', region: 'IN', rationale: 'Blue Star — DC + commercial HVAC; thermal infra leader',                                    pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'HAVELLS.NS',    layer: 'L6', region: 'IN', rationale: 'Havells — electricals + cables + cooling; integrated efficiency portfolio',                 pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'CROMPTON.NS',   layer: 'L6', region: 'IN', rationale: 'Crompton Greaves Consumer — fans + appliances + LED; efficiency tier',                       pricing_leverage: 'MEDIUM', size: 'MID_CAP'   },
+  { ticker: 'KIRLOSKARP.NS', layer: 'L6', region: 'IN', rationale: 'Kirloskar Pneumatic — air compressors + cryogenics; thermal + industrial efficiency',        pricing_leverage: 'MEDIUM', size: 'MID_CAP'   },
+  { ticker: 'THERMAX.NS',    layer: 'L6', region: 'IN', rationale: 'Thermax — industrial heating/cooling/water/energy; efficiency capex play',                  pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+];
+
+// India-specific NODE_RULES — same SystemNodes, India-listed mandatory injects.
+export const NODE_RULES_IN: Record<SystemNode, NodeRule> = {
+  COMPUTE_INFRA: {
+    fires: ['L1','L2','L4','L5','L6'],
+    mandatory: { L1: ['KAYNES.NS'], L2: ['TATAELXSI.NS','LTTS.NS','KPITTECH.NS'], L5: ['TCS.NS','INFY.NS','HCLTECH.NS'] },
+  },
+  MEMORY_INFRA: {
+    fires: ['L1','L2','L4','L5'],
+    mandatory: { L1: ['KAYNES.NS'], L2: ['TATAELXSI.NS','LTTS.NS'], L4: ['DIXON.NS'] },
+  },
+  PACKAGING_INFRA: {
+    fires: ['L1','L2','L4','L5'],
+    mandatory: { L1: ['KAYNES.NS','CGPOWER.NS'], L4: ['DIXON.NS'] },
+  },
+  FABRICATION_INFRA: {
+    fires: ['L1','L4','L5'],
+    mandatory: { L1: ['KAYNES.NS','CGPOWER.NS'], L4: ['LINDEINDIA.NS'] },
+  },
+  INTERCONNECT_INFRA: {
+    fires: ['L1','L3','L4','L6'],
+    mandatory: { L3: ['BHARTIARTL.NS','TATACOMM.NS','TEJASNET.NS'], L4: ['STL.NS','HFCL.NS','POLYCAB.NS'] },
+  },
+  NETWORK_BANDWIDTH: {
+    fires: ['L3','L4','L5'],
+    mandatory: { L3: ['BHARTIARTL.NS','TATACOMM.NS','TEJASNET.NS'], L4: ['STL.NS','HFCL.NS'], L5: ['RELIANCE.NS'] },
+  },
+  COOLING_INFRA: {
+    fires: ['L1','L4','L6'],
+    mandatory: { L1: ['ABB.NS','SIEMENS.NS'], L6: ['VOLTAS.NS','BLUESTARCO.NS','THERMAX.NS','KIRLOSKARP.NS'] },
+  },
+  ENERGY_INFRA: {
+    fires: ['L1','L4','L5','L6'],
+    // PATCH 0086: ABB.NS / SIEMENS.NS / BHEL / KEC + POWERGRID / NTPC mandatory
+    mandatory: { L1: ['POWERGRID.NS','NTPC.NS','BHEL.NS','ABB.NS','SIEMENS.NS','KECL.NS','CGPOWER.NS'], L4: ['POLYCAB.NS','KEI.NS'], L6: ['THERMAX.NS'] },
+  },
+  NUCLEAR_INFRA: {
+    fires: ['L1','L5','L6'],
+    mandatory: { L1: ['BHEL.NS','NTPC.NS','POWERGRID.NS'] },
+  },
+  OIL_GAS_INFRA: {
+    fires: ['L1','L4','L6'],
+    mandatory: { L4: ['LINDEINDIA.NS'] },
+  },
+  RENEWABLE_INFRA: {
+    fires: ['L1','L4','L5','L6'],
+    // PATCH 0086: SPML / NTPC / BESS-style stories should surface POWERGRID + ADANIGREEN + cable chain
+    mandatory: { L1: ['POWERGRID.NS','NTPC.NS','BHEL.NS','ADANIGREEN.NS','TATAPOWER.NS','KECL.NS','SIEMENS.NS','ABB.NS'], L4: ['STL.NS','POLYCAB.NS','KEI.NS','HFCL.NS'], L6: ['THERMAX.NS'] },
+  },
+  LOGISTICS_INFRA: {
+    fires: ['L1','L4','L5'],
+    mandatory: {},
+  },
+  TRANSPORT_INFRA: {
+    fires: ['L1','L4','L6'],
+    mandatory: { L1: ['SIEMENS.NS','BHEL.NS'] },
+  },
+  DEFENSE_INFRA: {
+    fires: ['L1','L4','L5'],
+    mandatory: {},
+  },
+  AEROSPACE_INFRA: {
+    fires: ['L1','L4','L5'],
+    mandatory: {},
+  },
+  RESOURCE_SCARCITY: {
+    fires: ['L1','L4','L6'],
+    mandatory: { L4: ['LINDEINDIA.NS','HEG.NS','GRAPHITE.NS'] },
+  },
+  AGRI_INFRA: {
+    fires: ['L1','L4','L5'],
+    mandatory: {},
+  },
+  MANUFACTURING_CAPACITY: {
+    fires: ['L1','L4','L5','L6'],
+    mandatory: { L1: ['KAYNES.NS','CGPOWER.NS'], L4: ['DIXON.NS'] },
+  },
+  LABOR_CONSTRAINT: {
+    fires: ['L2','L5','L6'],
+    mandatory: { L5: ['TCS.NS','INFY.NS'] },
+  },
+  CAPITAL_CONSTRAINT: {
+    fires: ['L5'],
+    mandatory: {},
+  },
+  NONE: {
+    fires: [],
+    mandatory: {},
+  },
+};
+
+// ─── Region inference ───────────────────────────────────────────────────────
+// PATCH 0086: classify a sample / article as Indian or Global so the persistent
+// bottleneck panel can be split cleanly. Heuristics combine:
+//   - source name patterns (Indian publishers + government/exchange portals)
+//   - currency & magnitude tokens (Rs, ₹, crore, lakh)
+//   - Indian ticker suffixes (.NS, .BO)
+//   - PSU + Indian-issuer name patterns
+
+const IN_SOURCE_PATTERNS = [
+  /mint\b/i, /economic times|et now\b|et bureau/i, /business standard/i, /power line/i,
+  /moneycontrol/i, /livemint/i, /hindu businessline|the hindu/i, /financial express/i,
+  /bse\b|nse\b|sebi\b|rbi\b|pib\b|pti\b|ani\b/i, /cnbc.?tv18\b/i, /zee business/i,
+  /pib\.gov\.in|pib gov/i, /mygov\.in/i, /nseindia\.com|bseindia\.com/i,
+  /etmarkets/i, /smartinvestor/i, /capital ?market/i, /equitymaster/i,
+];
+const IN_TEXT_PATTERNS = [
+  /\bRs\.?\s*\d/, /₹/, /\b(?:crore|lakh|cr\.?|lakhs?)\b/i,
+  /\b(?:NSE|BSE|SEBI|RBI|NTPC|BHEL|POWERGRID|COAL\s+INDIA|RELIANCE|TATA|ADANI|MAHINDRA|HINDUSTAN|GOI|ISRO|DRDO|HAL|BEL|BEML)\b/,
+  /\b(?:Mumbai|Bengaluru|Bangalore|Delhi|Chennai|Hyderabad|Kolkata|Pune|Ahmedabad)\b/,
+  /\b(?:CCI|Niti Aayog|PLI|UPI|GST|NCLT)\b/,
+];
+
+export function inferRegion(args: { sources?: string[]; titles?: string[]; tickers?: string[] }): LayerRegion {
+  const { sources = [], titles = [], tickers = [] } = args;
+
+  // Strong signal: any Indian-suffix ticker
+  for (const t of tickers) {
+    const T = (t || '').toUpperCase();
+    if (T.endsWith('.NS') || T.endsWith('.BO')) return 'IN';
+  }
+  // Strong signal: source name matches Indian publisher
+  for (const src of sources) {
+    if (!src) continue;
+    if (IN_SOURCE_PATTERNS.some((re) => re.test(src))) return 'IN';
+  }
+  // Medium signal: currency / magnitude / PSU tokens in headlines
+  for (const t of titles) {
+    if (!t) continue;
+    if (IN_TEXT_PATTERNS.some((re) => re.test(t))) return 'IN';
+  }
+  return 'GLOBAL';
+}
 
 // ─── Node → Layers + Mandatory Injection map ────────────────────────────────
 // Per the v2.0 spec: every bottleneck propagates through ALL six layers, but
@@ -361,13 +559,20 @@ export interface LayeredBeneficiaries {
 
 const ROSTER_BY_TICKER: Map<string, LayerTicker> = (() => {
   const m = new Map<string, LayerTicker>();
-  for (const t of LAYER_ROSTER) m.set(t.ticker.toUpperCase(), t);
+  for (const t of [...LAYER_ROSTER, ...INDIA_ROSTER]) m.set(t.ticker.toUpperCase(), t);
   return m;
 })();
 
 const ROSTER_BY_LAYER: Record<BeneficiaryLayer, LayerTicker[]> = (() => {
   const m: Record<BeneficiaryLayer, LayerTicker[]> = { L1: [], L2: [], L3: [], L4: [], L5: [], L6: [] };
   for (const t of LAYER_ROSTER) m[t.layer].push(t);
+  return m;
+})();
+
+// PATCH 0086: India-only by-layer index — used when region === 'IN'.
+const INDIA_ROSTER_BY_LAYER: Record<BeneficiaryLayer, LayerTicker[]> = (() => {
+  const m: Record<BeneficiaryLayer, LayerTicker[]> = { L1: [], L2: [], L3: [], L4: [], L5: [], L6: [] };
+  for (const t of INDIA_ROSTER) m[t.layer].push(t);
   return m;
 })();
 
@@ -389,9 +594,13 @@ export function deriveLayeredBeneficiaries(args: {
   per_layer_limit?: number;
   // Article headline at T0 — used to fill TransmissionCascade.T0.
   article_headline?: string;
+  // PATCH 0086: when 'IN' the function uses INDIA_ROSTER + NODE_RULES_IN
+  // exclusively, so an Indian story does not surface US-listed names.
+  region?: LayerRegion;
 }): LayeredBeneficiaries {
-  const { primary_node, article_tickers = [], per_layer_limit = 8, article_headline } = args;
-  const rule = NODE_RULES[primary_node] ?? NODE_RULES.NONE;
+  const { primary_node, article_tickers = [], per_layer_limit = 8, article_headline, region = 'GLOBAL' } = args;
+  const rule = (region === 'IN' ? NODE_RULES_IN : NODE_RULES)[primary_node] ?? NODE_RULES.NONE;
+  const rosterByLayer = region === 'IN' ? INDIA_ROSTER_BY_LAYER : ROSTER_BY_LAYER;
   const articleSet = new Set(article_tickers.map((t) => t.toUpperCase()));
 
   // Build per-layer ticker list with priority: mandatory > article > seed remainder
@@ -425,8 +634,8 @@ export function deriveLayeredBeneficiaries(args: {
       }
     }
 
-    // 2. Article tickers that map into this layer's roster
-    for (const meta of ROSTER_BY_LAYER[layer]) {
+    // 2. Article tickers that map into this layer's roster (region-scoped)
+    for (const meta of rosterByLayer[layer]) {
       const T = meta.ticker.toUpperCase();
       if (seen.has(T)) continue;
       if (articleSet.has(T)) {
@@ -436,8 +645,9 @@ export function deriveLayeredBeneficiaries(args: {
     }
 
     // 3. Top seed remainder by pricing leverage to fill out the layer
+    //    (region-scoped — INDIA_ROSTER when region==='IN')
     const leverageRank: Record<PricingLeverage, number> = { STRONG: 3, MEDIUM: 2, WEAK: 1 };
-    const remainder = ROSTER_BY_LAYER[layer]
+    const remainder = rosterByLayer[layer]
       .filter((m) => !seen.has(m.ticker.toUpperCase()))
       .sort((a, b) => leverageRank[b.pricing_leverage] - leverageRank[a.pricing_leverage]);
     for (const meta of remainder) {

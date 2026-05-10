@@ -14,7 +14,8 @@ import { recordEvidence, readEvidence } from '@/lib/news/evidence-accumulator';
 // PATCH 0081: beneficiary graph engine
 import { detectAdaptations, recordBeneficiary } from '@/lib/news/beneficiary-graph';
 // PATCH 0084: 6-layer beneficiary engine + transmission cascade
-import { deriveLayeredBeneficiaries } from '@/lib/news/beneficiary-layers';
+// PATCH 0086: region inference for clean India / Global split
+import { deriveLayeredBeneficiaries, inferRegion } from '@/lib/news/beneficiary-layers';
 // PATCH 0052: Causal-honesty layer + 0061 evidence-bound impact + 0062 relevance
 import {
   classifyAssertion, frameImpact, hasDirectComputeLinkage, isGenericPowerStory,
@@ -193,7 +194,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v31'; // v31: persistent-bottleneck panel now carries layered_beneficiaries (L1-L6) + ABB/AMKR roster + 2x cards (0085)
+const CACHE_KEY = 'news:articles:v32'; // v32: India / Global region split on persistent-bottleneck + INDIA_ROSTER (0086)
 const CACHE_TTL = 300; // 5 min
 // v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
 // freshness_layer, signal_confidence (multi-dim), bottleneck_parent /
@@ -2544,26 +2545,84 @@ export async function GET(request: Request) {
               it.architectural_adaptations = cb.adaptations.filter(
                 (a: any) => a.beneficiaries.length > 0,
               );
-              // PATCH 0085: also attach the L1-L6 layered transmission engine
-              // so the persistent-bottleneck panel surfaces AKAM (L3) /
-              // Sterlite-type (L4) / ABB / AMKR — names that the older
-              // adaptation buckets group under different headers.
-              it.layered_beneficiaries = deriveLayeredBeneficiaries({
-                primary_node: it.node,
-                article_tickers: (it.top_samples || [])
-                  .flatMap((s: any) => s.tickers || s.ticker_symbols || [])
-                  .slice(0, 12),
-                article_headline: it.label || it.sub || '',
-                per_layer_limit: 5,
-              });
             }),
           );
         }
+
+        // PATCH 0086: India / Global region split.
+        //   For each persistent bottleneck, partition top_samples by region.
+        //   If both regions are present we EMIT TWO ITEMS — one IN, one GLOBAL —
+        //   each with its own region-scoped layered_beneficiaries + region-scoped
+        //   top sample. This guarantees an Indian SPML/NTPC story never surfaces
+        //   US-listed beneficiaries on the same card and vice versa.
+        const split: any[] = [];
+        for (const it of items) {
+          const samples = (it.top_samples || []) as any[];
+          const tagged = samples.map((s) => ({
+            sample: s,
+            region: inferRegion({
+              sources: [s.source || ''],
+              titles: [s.title || ''],
+              tickers: s.tickers || s.ticker_symbols || [],
+            }),
+          }));
+          const inSamples = tagged.filter((t) => t.region === 'IN').map((t) => t.sample);
+          const glSamples = tagged.filter((t) => t.region === 'GLOBAL').map((t) => t.sample);
+
+          const bestOf = (arr: any[]) =>
+            arr.find((s) => s.tier === 'SPECIALIST' || s.tier === 'PRIMARY') || arr[0] || null;
+
+          const buildVariant = (region: 'IN' | 'GLOBAL', regionSamples: any[]) => {
+            if (regionSamples.length === 0) return null;
+            const tickerSet = Array.from(
+              new Set(regionSamples.flatMap((s: any) => s.tickers || s.ticker_symbols || [])),
+            ).slice(0, 12);
+            const variant: any = {
+              ...it,
+              region,
+              top_samples: regionSamples,
+              best_specialist_sample: bestOf(regionSamples),
+              sample_count: regionSamples.length,
+              layered_beneficiaries: deriveLayeredBeneficiaries({
+                primary_node: it.node,
+                article_tickers: tickerSet,
+                article_headline: it.label || it.sub || '',
+                per_layer_limit: 5,
+                region,
+              }),
+            };
+            return variant;
+          };
+
+          const inItem = buildVariant('IN', inSamples);
+          const glItem = buildVariant('GLOBAL', glSamples);
+
+          // Emit whichever variants have evidence.  When neither classifies
+          // (e.g. no usable samples), fall back to the GLOBAL view so we
+          // never silently drop a bottleneck reading.
+          if (inItem) split.push(inItem);
+          if (glItem) split.push(glItem);
+          if (!inItem && !glItem) {
+            split.push({
+              ...it,
+              region: 'GLOBAL',
+              layered_beneficiaries: deriveLayeredBeneficiaries({
+                primary_node: it.node,
+                article_tickers: [],
+                article_headline: it.label || '',
+                per_layer_limit: 5,
+                region: 'GLOBAL',
+              }),
+            });
+          }
+        }
+
         return NextResponse.json({
           section_title: 'Persistent Bottleneck Reading',
-          section_subtitle: 'Auto-detected from accumulated evidence — structural nodes (HBM/CoWoS/grid/HALEU/defence) use 90-day decay so multi-year shifts persist beyond the news cycle. Each constraint shows architectural-adaptation second-order beneficiaries.',
-          count: items.length,
-          items,
+          section_subtitle: 'Auto-detected from accumulated evidence — structural nodes use 90-day decay so multi-year shifts persist beyond the news cycle. India and Global views are split exclusively per region — Indian sources/tickers/currency surface NSE-listed beneficiaries; everything else uses the global L1–L6 roster.',
+          count: split.length,
+          items: split,
+          last_updated: new Date().toISOString(),  // PATCH 0086: liveness probe
         });
       }
 
