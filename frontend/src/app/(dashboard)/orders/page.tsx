@@ -416,6 +416,14 @@ interface CompanyConcallSummary {
   whyItMatters: string; // auto-generated "why this matters" statement
   // Article headlines for display even when no signals extracted
   recentHeadlines: { title: string; source: string; date: string; url?: string }[];
+  // ─── PATCH 0065: Fidelity tier — what KIND of evidence drives this card ───
+  // HIGH_MANUAL       → user pasted a real concall transcript (best fidelity)
+  // MEDIUM_NEWS_ALPHA → news headlines with ≥3 articles AND ≥1 alpha signal
+  // LOW_NEWS_ONLY     → news headlines but no alpha signals (low fidelity)
+  // NONE              → no coverage at all
+  fidelity_tier?: 'HIGH_MANUAL' | 'MEDIUM_NEWS_ALPHA' | 'LOW_NEWS_ONLY' | 'NONE';
+  manual_signals_count?: number;
+  manual_paste_iso?: string;            // when the manual paste was added
 }
 
 // ── Hybrid Pattern Library (Layer 1: keywords, Layer 2: semantic rules) ───────
@@ -1515,6 +1523,13 @@ function ConcallIntelligence() {
 
       // Match articles to screener stocks
       const result: CompanyConcallSummary[] = [];
+      // PATCH 0065: load any cached manual-paste signals BEFORE the loop so
+      // we can merge them per stock + tag fidelity tier accurately.
+      let manualStore: Record<string, { text?: string; signals?: ExtractedSignal[]; timestamp?: number }> = {};
+      try {
+        manualStore = JSON.parse(localStorage.getItem('mb_concall_manual_v1') || '{}');
+      } catch { manualStore = {}; }
+
       for (const stock of screenerStocks) {
         const sym = stock.symbol.toUpperCase().replace(/\.NS$|\.BO$/i,'');
         // Build alias list for better Indian small-cap matching
@@ -1651,8 +1666,18 @@ function ConcallIntelligence() {
           }
         }
 
+        // PATCH 0065: merge cached manual concall signals if present.
+        // Manual signals tagged with source: 'Manual Concall Input' so we can
+        // count them separately for the fidelity tier.
+        const manualEntry = manualStore[stock.symbol.toUpperCase()];
+        const manualSignals: ExtractedSignal[] = (manualEntry?.signals ?? []).map(s => ({
+          ...s,
+          source: 'Manual Concall Input',
+        }));
+        const combinedRaw = [...rawSignals, ...manualSignals];
+
         // DEDUPLICATION: merge same-type signals, preventing DEMAND_CONSTRAINT × 3
-        const allSignals = deduplicateSignals(rawSignals);
+        const allSignals = deduplicateSignals(combinedRaw);
 
         const composite = buildCompositeSignals(allSignals);
         const signalScore = computeSignalScore(allSignals);
@@ -1696,6 +1721,19 @@ function ConcallIntelligence() {
           }))
           .filter(h => h.title.length > 10);
 
+        // PATCH 0065: Fidelity tier — what kind of evidence drives this card.
+        // HIGH_MANUAL > MEDIUM_NEWS_ALPHA > LOW_NEWS_ONLY > NONE.
+        // This becomes the primary sort key so manual transcripts always rise
+        // to the top regardless of news-derived signal score.
+        const manualSignalsCount = manualSignals.length;
+        const hasManual = manualSignalsCount > 0;
+        const newsArticleCount = relevant.length;
+        let fidelity_tier: 'HIGH_MANUAL' | 'MEDIUM_NEWS_ALPHA' | 'LOW_NEWS_ONLY' | 'NONE';
+        if (hasManual)                                          fidelity_tier = 'HIGH_MANUAL';
+        else if (newsArticleCount >= 3 && alphaCount >= 1)      fidelity_tier = 'MEDIUM_NEWS_ALPHA';
+        else if (newsArticleCount >= 1)                         fidelity_tier = 'LOW_NEWS_ONLY';
+        else                                                    fidelity_tier = 'NONE';
+
         result.push({
           symbol: stock.symbol, company: stock.company, sector: stock.sector,
           grade: stock.grade, score: stock.score, source: (stock as any).source||'Screener',
@@ -1705,11 +1743,24 @@ function ConcallIntelligence() {
           lastDate: latestDate, articleCount: relevant.length,
           alphaCount, noiseCount: allSignals.filter(s=>!s.isAlpha).length,
           recentHeadlines,
+          // PATCH 0065: fidelity fields
+          fidelity_tier,
+          manual_signals_count: manualSignalsCount,
+          manual_paste_iso: manualEntry?.timestamp ? new Date(manualEntry.timestamp).toISOString() : undefined,
         } as any);
       }
 
-      // Sort by signal score desc
-      setSummaries(result.sort((a,b)=>b.signalScore - a.signalScore));
+      // PATCH 0065: Sort by fidelity tier FIRST, then signal score.
+      // Manual-transcript stocks always rise above news-only regardless of
+      // news signal strength — so users always see their highest-confidence
+      // evidence first.
+      const FIDELITY_ORDER = { HIGH_MANUAL: 0, MEDIUM_NEWS_ALPHA: 1, LOW_NEWS_ONLY: 2, NONE: 3 };
+      setSummaries(result.sort((a,b) => {
+        const fa = FIDELITY_ORDER[(a as any).fidelity_tier as keyof typeof FIDELITY_ORDER] ?? 4;
+        const fb = FIDELITY_ORDER[(b as any).fidelity_tier as keyof typeof FIDELITY_ORDER] ?? 4;
+        if (fa !== fb) return fa - fb;
+        return b.signalScore - a.signalScore;
+      }));
       setLastFetched(new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}));
     } catch(e) { console.error('[Concall]',e); }
     setLoading(false);
@@ -1813,12 +1864,16 @@ function ConcallIntelligence() {
             <div style={{display:'flex',gap:16,marginTop:10,flexWrap:'wrap'}}>
               {[
                 {label:'Companies tracked',value:summaries.length,color:ACCENT2},
-                {label:'With alpha signals',value:summaries.filter(s=>s.alphaCount>0).length,color:'#10b981'},
+                // PATCH 0065: surface fidelity counts so user sees coverage
+                // quality at a glance — manual transcripts are the high-fidelity
+                // source; news-only is the fallback.
+                {label:'📝 Manual transcript',value:summaries.filter((s:any)=>s.fidelity_tier==='HIGH_MANUAL').length,color:'#10b981'},
+                {label:'📰 News + alpha',value:summaries.filter((s:any)=>s.fidelity_tier==='MEDIUM_NEWS_ALPHA').length,color:'#22d3ee'},
+                {label:'📰 News only',value:summaries.filter((s:any)=>s.fidelity_tier==='LOW_NEWS_ONLY').length,color:'#f59e0b'},
+                {label:'📭 No coverage',value:summaries.filter((s:any)=>s.fidelity_tier==='NONE').length,color:'#64748b'},
                 {label:'Improving',value:summaries.filter(s=>s.trend==='IMPROVING').length,color:'#10b981'},
-                {label:'Deteriorating',value:summaries.filter(s=>s.trend==='DETERIORATING').length,color:'#ef4444'},
                 {label:'High surprise',value:summaries.filter(s=>s.surprisePotential==='HIGH').length,color:'#f59e0b'},
                 {label:'Missed by market',value:summaries.filter(s=>s.missedByMarket).length,color:'#8b5cf6'},
-                {label:'Conservative mgmt',value:summaries.filter(s=>s.signals.some(sg=>sg.type==='CONSERVATIVE_GUIDANCE')).length,color:'#06b6d4'},
               ].map(({label,value,color})=>(
                 <div key={label} style={{textAlign:'center'}}>
                   <div style={{fontSize:18,fontWeight:900,color}}>{value}</div>
@@ -1943,6 +1998,33 @@ function ConcallIntelligence() {
                     </div>
                   </div>
 
+                  {/* PATCH 0065: Fidelity tier badge — what kind of evidence drives this card */}
+                  {(() => {
+                    const ft = (s as any).fidelity_tier as string | undefined;
+                    if (!ft) return null;
+                    const cfg: Record<string, { label: string; color: string; bg: string }> = {
+                      HIGH_MANUAL:        { label: '📝 manual', color: '#10b981', bg: '#10b98115' },
+                      MEDIUM_NEWS_ALPHA:  { label: '📰 news+α',  color: '#22d3ee', bg: '#22d3ee15' },
+                      LOW_NEWS_ONLY:      { label: '📰 news',    color: '#f59e0b', bg: '#f59e0b15' },
+                      NONE:               { label: '📭 none',    color: '#64748b', bg: '#64748b15' },
+                    };
+                    const c = cfg[ft] ?? cfg.NONE;
+                    const titleText = ft === 'HIGH_MANUAL'
+                      ? `Manual transcript pasted${(s as any).manual_paste_iso ? ' on ' + new Date((s as any).manual_paste_iso).toLocaleDateString('en-IN', { day:'numeric', month:'short' }) : ''}. ${(s as any).manual_signals_count} signals from concall text. HIGH fidelity.`
+                      : ft === 'MEDIUM_NEWS_ALPHA' ? `${s.articleCount} news articles with ${s.alphaCount} alpha signals. MEDIUM fidelity. Paste a real concall transcript for HIGH fidelity.`
+                      : ft === 'LOW_NEWS_ONLY'    ? `${s.articleCount} news articles, no alpha signals. LOW fidelity. Paste concall transcript for higher confidence.`
+                      : 'No coverage. Paste a concall transcript to populate.';
+                    return (
+                      <span title={titleText} style={{
+                        flexShrink: 0, fontSize: 9, fontWeight: 700, padding: '2px 6px',
+                        borderRadius: 4, color: c.color, backgroundColor: c.bg,
+                        border: `1px solid ${c.color}40`, letterSpacing: '0.3px',
+                      }}>
+                        {c.label}
+                      </span>
+                    );
+                  })()}
+
                   {/* Company + Sector */}
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:11,fontWeight:600,color:'#C9D4E0',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.company}</div>
@@ -2024,14 +2106,22 @@ function ConcallIntelligence() {
                       </div>
                     </div>
                   ) : (
-                    // PATCH 0054: 0 ARTICLES — actionable empty state
-                    // Old text was cryptic; new copy explicitly explains
-                    // (a) why the row is empty, and (b) what the user can
-                    // do to populate it (paste a transcript).
+                    // PATCH 0054 + 0065: 0 ARTICLES — actionable empty state
+                    // with click-to-prefill manual-paste flow. Clicking the
+                    // CTA opens the panel AND fills in the symbol.
                     <div style={{fontSize:9,color:'#475569',display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
                       <span>📭 No news + no concall transcript for {s.symbol}.</span>
-                      <span style={{color:'#0F7ABF',fontWeight:600,cursor:'pointer'}}>
-                        ↑ Click <strong>📝 Paste Concall</strong> above to get high-fidelity signals.
+                      <span
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          setManualSymbol(s.symbol);
+                          setShowManualInput(true);
+                          // Scroll to top so the paste form is visible
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        style={{color:'#0F7ABF',fontWeight:600,cursor:'pointer',textDecoration:'underline'}}
+                      >
+                        ↑ Click here to paste {s.symbol}'s concall transcript →
                       </span>
                     </div>
                   )}
@@ -2041,18 +2131,32 @@ function ConcallIntelligence() {
               {isExp && (
                 <div style={{padding:'0 16px 16px',borderTop:`1px solid ${BORDER}`}}>
                   {s.signals.length === 0 ? (
-                    // PATCH 0054: explain what's actually going on so the
-                    // user knows whether to paste a transcript or wait.
+                    // PATCH 0054 + 0065: actionable empty state with prefilled
+                    // manual-paste CTA (clicks open the panel + sets symbol).
                     <div style={{padding:'16px 0',color:TEXT3,fontSize:11,textAlign:'left'}}>
                       <div style={{marginBottom:8,color:'#94A3B8',fontWeight:600}}>
                         {s.articleCount === 0 ? '📭 No coverage in 30D window' : `📰 ${s.articleCount} article${s.articleCount !== 1 ? 's' : ''} found, but none matched a forward-looking management signal`}
                       </div>
-                      <div style={{color:'#64748B',fontSize:10,lineHeight:1.5}}>
+                      <div style={{color:'#64748B',fontSize:10,lineHeight:1.5,marginBottom:10}}>
                         Concall Intel processes earnings news AND optional concall transcripts. News headlines often use past tense
                         ('reported', 'achieved') which makes them low-confidence signals. <strong style={{color:'#94A3B8'}}>For a high-fidelity read</strong>, paste
-                        the latest earnings call transcript (Q4 / Q3 of FY26) into <strong style={{color:'#0F7ABF'}}>📝 Paste Concall</strong> above.
-                        Manual transcripts give 5-10× more actionable signals than news-only coverage.
+                        the latest earnings call transcript (Q4 / Q3 of FY26). Manual transcripts give 5–10× more actionable signals than news-only coverage.
                       </div>
+                      <button
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          setManualSymbol(s.symbol);
+                          setShowManualInput(true);
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        style={{
+                          fontSize: 11, fontWeight: 700, padding: '6px 14px', borderRadius: 7,
+                          border: '1px solid #10b98140', backgroundColor: '#10b98115',
+                          color: '#10b981', cursor: 'pointer',
+                        }}
+                      >
+                        📝 Paste {s.symbol}'s concall transcript
+                      </button>
                     </div>
                   ) : (
                     <div style={{marginTop:12}}>
