@@ -20,7 +20,17 @@ import {
 // PATCH 0059: Structural state classifier (BOTTLENECK / CAPACITY_EXPANSION / etc)
 import { classifyStructuralState } from '@/lib/news/structural-state';
 // PATCH 0064: Strategic Visibility / Mega Frameworks engine
-import { classifyStrategicVisibility, strategicRankScore } from '@/lib/news/strategic-visibility';
+import {
+  classifyStrategicVisibility,
+  strategicRankScore,
+  classifySignalQuality,
+  extractCapacityReserved,
+  computeDependencyScore,
+  buildWhyThisMatters as buildSvWhyThisMatters,
+  buildSecondOrder as buildSvSecondOrder,
+  formatStrategicLine,
+  FLAG_DISPLAY,
+} from '@/lib/news/strategic-visibility';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -157,7 +167,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v19'; // v19: dependency graph render + strategic visibility (0063+0064)
+const CACHE_KEY = 'news:articles:v20'; // v20: strategic visibility v2 — signal quality tier, capacity reserved, dependency score, why-this-matters, second-order (0067)
 const CACHE_TTL = 300; // 5 min
 // v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
 // freshness_layer, signal_confidence (multi-dim), bottleneck_parent /
@@ -1462,6 +1472,51 @@ async function fetchAllNews(): Promise<any[]> {
           // the BOTTLENECK feed and the new STRATEGIC VISIBILITY feed.
           const strategicVisibility = classifyStrategicVisibility({ title, desc });
 
+          // ── PATCH 0067: Strategic Visibility v2 enhancements ──
+          // Compute these only when the article qualifies — keeps loop cheap.
+          let svSignalQuality: ReturnType<typeof classifySignalQuality> | undefined;
+          let svCapacityReserved: ReturnType<typeof extractCapacityReserved> | undefined;
+          let svDependency: ReturnType<typeof computeDependencyScore> | undefined;
+          let svWhyMatters: string | undefined;
+          let svSecondOrder: ReturnType<typeof buildSvSecondOrder> | undefined;
+          let svFormattedLine: string | undefined;
+          if (strategicVisibility.qualifies) {
+            svSignalQuality = classifySignalQuality({
+              source_name: feed.name,
+              title,
+              desc,
+            });
+            svCapacityReserved = extractCapacityReserved(`${title} ${desc}`);
+            svDependency = computeDependencyScore({
+              is_chokepoint_override: strategicVisibility.is_chokepoint_override,
+              theme: strategicVisibility.theme,
+              counterparty_tier: strategicVisibility.counterparty_tier,
+              title,
+              desc,
+            });
+            svWhyMatters = buildSvWhyThisMatters({
+              signal: strategicVisibility,
+              dependency_score: svDependency.score,
+            });
+            svSecondOrder = buildSvSecondOrder({
+              theme: strategicVisibility.theme,
+              counterparty_name: strategicVisibility.counterparty_name,
+              contract_value_usd_m: strategicVisibility.contract_value_usd_m,
+            });
+            const flagsStr = strategicVisibility.flags
+              .map((f) => FLAG_DISPLAY[f])
+              .filter(Boolean)
+              .join(' ');
+            svFormattedLine = formatStrategicLine({
+              ticker: tickers[0] || '—',
+              signal: strategicVisibility,
+              capacity: svCapacityReserved,
+              dependency_score: svDependency.score,
+              date_iso: pubDate || new Date().toISOString(),
+              flags_str: flagsStr,
+            });
+          }
+
           // ── PATCH 0062: Structural Relevance Score (unified 0-100) ──
           // Now that all dependencies are in scope, compute the unified score.
           // Combines structural state + signal confidence + structural confidence
@@ -1547,6 +1602,14 @@ async function fetchAllNews(): Promise<any[]> {
             structural_relevance: structuralRelevance,     // { score, tier, tier_label, contributing }
             // PATCH 0064: strategic visibility classification (parallel to bottleneck)
             strategic_visibility: strategicVisibility,     // { qualifies, theme, counterparty_tier, contract_value_usd_m, ... }
+            // PATCH 0067: Strategic Visibility v2 enhancements
+            sv_signal_quality_tier: svSignalQuality ?? null,        // A_FILING / B_TIER1_MEDIA / C_INDUSTRY / D_SPECULATIVE
+            sv_capacity_reserved: svCapacityReserved ?? null,        // { unit, amount, raw_phrase }
+            sv_dependency_score: svDependency?.score ?? null,        // 1-5
+            sv_dependency_rationale: svDependency?.rationale ?? null,
+            sv_why_this_matters: svWhyMatters ?? null,
+            sv_second_order: svSecondOrder ?? null,                  // { beneficiaries[], risk[] }
+            sv_formatted_line: svFormattedLine ?? null,
             defense_narrative: defenseNarrative,
             defense_impact_inline: defenseImpact,
             freshness_layer: freshnessLayer,               // LIVE / PERSISTENT / ARCHIVAL

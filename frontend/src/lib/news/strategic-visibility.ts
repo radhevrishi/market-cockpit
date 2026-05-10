@@ -383,3 +383,232 @@ export function strategicRankScore(s: StrategicVisibilitySignal): number {
   if (s.visibility_years && s.visibility_years >= 5) score += Math.min(20, s.visibility_years);
   return score;
 }
+
+// ─── PATCH 0067: Strategic Visibility v2 enhancements ──────────────────────
+
+// 1. SIGNAL QUALITY TIER — A/B/C/D based on source provenance
+//    A: primary filing confirmed (8-K / SEBI / investor deck)
+//    B: Tier-1 media confirmed (Reuters / Bloomberg News / FT / WSJ / ET / BS)
+//    C: industry/specialist source (SemiAnalysis / Power Eng / Defense News)
+//    D: speculative / single-source / blog / social
+
+export type SignalQualityTier = 'A_FILING' | 'B_TIER1_MEDIA' | 'C_INDUSTRY' | 'D_SPECULATIVE';
+
+const FILING_SOURCE_RE = /\b(sec filing|8-?k|10-?[qk]|6-?k|sebi (?:filing|circular|order)|investor (?:deck|presentation|day)|earnings (?:transcript|call|presentation)|press release.{0,15}company|nse (?:filing|announcement)|bse (?:filing|announcement))\b/i;
+const TIER1_MEDIA_NAMES = /^(reuters|bloomberg news|wall street journal|wsj|financial times|ft markets|ft news|economic times|business standard|mint|moneycontrol|cnbc top news|cnbc world|cnbc finance)/i;
+const INDUSTRY_SOURCE_NAMES = /^(semianalysis|semiwiki|tom'?s hardware|the register|power engineering|utility dive|world nuclear news|defense news|breaking defense|spacenews|aviation week|datacenter dynamics|trendforce|digitimes|servethehome|nextplatform|et infra|et energyworld|powerline|power line|renewable watch)/i;
+
+export function classifySignalQuality(args: {
+  source_name?: string;
+  title?: string;
+  desc?: string;
+}): SignalQualityTier {
+  const { source_name = '', title = '', desc = '' } = args;
+  const fullText = `${title} ${desc}`.toLowerCase();
+
+  // Tier A — primary filing language present in title/desc
+  if (FILING_SOURCE_RE.test(fullText)) return 'A_FILING';
+
+  // Tier B — recognised Tier-1 media
+  if (TIER1_MEDIA_NAMES.test(source_name)) return 'B_TIER1_MEDIA';
+
+  // Tier C — recognised specialist / industry source
+  if (INDUSTRY_SOURCE_NAMES.test(source_name)) return 'C_INDUSTRY';
+
+  return 'D_SPECULATIVE';
+}
+
+// 2. CAPACITY RESERVED tracker — extracts MW / GW / CoWoS / HBM / SWU /
+//    transmission GW / data center MW from text. Returns the highest-density
+//    reservation found in the article.
+
+export interface CapacityReserved {
+  unit: 'MW' | 'GW' | 'CoWoS_wafer_pm' | 'HBM_kpcs_pm' | 'SWU_tonnes' | 'fab_pct' | 'tcap_GW' | 'unspecified';
+  amount: number;
+  raw_phrase: string;
+}
+
+export function extractCapacityReserved(text: string): CapacityReserved | undefined {
+  // GW reserved (data center / power)
+  const gwM = text.match(/(\d[\d,.]*)\s*gw\b(?:[\s-]*(?:reserv|capacity|power|datacenter|data center|baseload))/i);
+  if (gwM) {
+    return { unit: 'GW', amount: parseFloat(gwM[1].replace(/,/g, '')), raw_phrase: gwM[0] };
+  }
+  // MW reserved
+  const mwM = text.match(/(\d[\d,.]*)\s*mw\b(?:[\s-]*(?:reserv|capacity|power|datacenter|data center|hyperscaler))/i);
+  if (mwM) {
+    return { unit: 'MW', amount: parseFloat(mwM[1].replace(/,/g, '')), raw_phrase: mwM[0] };
+  }
+  // CoWoS wafer per month
+  const cowM = text.match(/(\d[\d,.]*)\s*(?:cowos\s+)?wafers?\s*(?:per month|\/mo|pm|monthly)/i);
+  if (cowM && /cowos|advanced packaging/i.test(text)) {
+    return { unit: 'CoWoS_wafer_pm', amount: parseFloat(cowM[1].replace(/,/g, '')), raw_phrase: cowM[0] };
+  }
+  // SWU (uranium enrichment)
+  const swuM = text.match(/(\d[\d,.]*)\s*(?:tonnes?|metric tons?|kg)\s*(?:swu|enrichment|haleu)/i);
+  if (swuM) {
+    return { unit: 'SWU_tonnes', amount: parseFloat(swuM[1].replace(/,/g, '')), raw_phrase: swuM[0] };
+  }
+  // Transmission GW (grid)
+  const tgwM = text.match(/(\d[\d,.]*)\s*gw\b.{0,30}(?:transmission|grid|t&d|hvdc)/i);
+  if (tgwM) {
+    return { unit: 'tcap_GW', amount: parseFloat(tgwM[1].replace(/,/g, '')), raw_phrase: tgwM[0] };
+  }
+  return undefined;
+}
+
+// 3. STRATEGIC DEPENDENCY SCORE — how hard is the company to replace? (1-5)
+//
+//   5 — extremely hard (LEU-style chokepoint, sole producer)
+//   4 — very hard (TSMC CoWoS, ASML EUV, sub-3 global competitors)
+//   3 — hard (Tier-1 specialist with ~5 competitors)
+//   2 — moderate (generic specialist, 5-10 competitors)
+//   1 — easy (commodity vendor, replaceable)
+
+export function computeDependencyScore(args: {
+  is_chokepoint_override?: boolean;
+  theme?: StrategicTheme;
+  counterparty_tier?: CounterpartyTier;
+  title?: string;
+  desc?: string;
+}): { score: number; rationale: string } {
+  const { is_chokepoint_override, theme, counterparty_tier, title = '', desc = '' } = args;
+  const text = `${title} ${desc}`.toLowerCase();
+
+  // Hard 5 — chokepoint override fired = sole producer
+  if (is_chokepoint_override) {
+    return { score: 5, rationale: 'Strategic chokepoint — sole / near-sole producer in critical chain.' };
+  }
+  // 4 — TSMC CoWoS / ASML EUV / NDFEB rare-earth named
+  if (/\b(tsmc|asml|leu|haleu|euv|cowos exclusive|sub.?3 global)\b/i.test(text)) {
+    return { score: 4, rationale: 'Sub-3 global competitors in this capability — very hard to replace.' };
+  }
+  // 3 — Tier-1 specialist + AI / Energy / Defense theme
+  if (counterparty_tier === 'HYPERSCALER' || counterparty_tier === 'TIER1_GOV_DEFENSE') {
+    if (theme === 'AI_INFRASTRUCTURE' || theme === 'DEFENSE_AEROSPACE' || theme === 'SEMI_SUPPLY_CHAIN') {
+      return { score: 3, rationale: 'Tier-1 specialist with technical embedment in mission-critical theme.' };
+    }
+  }
+  // 2 — moderate: hyperscaler relationship but commoditizable theme
+  if (counterparty_tier === 'HYPERSCALER' || counterparty_tier === 'TOP3_UTILITY') {
+    return { score: 2, rationale: 'Strategic counterparty but the capability has multiple suppliers.' };
+  }
+  return { score: 1, rationale: 'Replaceable — competitive market with multiple alternatives.' };
+}
+
+// 4. WHY-THIS-MATTERS per card
+//    For each strategic-visibility article, generate a 1-line institutional
+//    explanation: what constraint changed / who benefits / what gets delayed.
+
+export function buildWhyThisMatters(args: {
+  signal: StrategicVisibilitySignal;
+  dependency_score: number;
+}): string {
+  const { signal, dependency_score } = args;
+  const t = signal.theme;
+  const cp = signal.counterparty_name || '—';
+  const yrs = signal.visibility_years ?? 0;
+  const val = signal.contract_value_usd_m;
+
+  if (t === 'AI_INFRASTRUCTURE' || t === 'HYPERSCALER_LEASE' || t === 'NEOCLOUD_AI_INFRA') {
+    return `Locks ${yrs}y AI compute capacity with ${cp}; supply tightens for non-reserved buyers; revenue base resets from cyclical to annuity. ${dependency_score >= 4 ? 'Counterparty cannot easily switch — pricing power.' : 'Watch for additional reservations from same counterparty.'}`;
+  }
+  if (t === 'ENERGY_TRANSITION' || t === 'POWER_GRID') {
+    return `Multi-year ${cp} commitment de-risks earnings; pulls ${val ? `$${(val/1000).toFixed(1)}B` : 'capex'} forward in funding; downstream T&D / transformer / EPC vendors benefit. ${signal.is_chokepoint_override ? 'Strategic chokepoint — federal cumulative support adds duration.' : ''}`.trim();
+  }
+  if (t === 'DEFENSE_AEROSPACE') {
+    return `Multi-year defence framework lifts order-book visibility 3-10y; reduces earnings cyclicality; PSU / private peers without similar wins lose share. ${dependency_score >= 4 ? 'Strategic embedment — switching cost very high.' : ''}`.trim();
+  }
+  if (t === 'SEMI_SUPPLY_CHAIN' || t === 'CRITICAL_NATIONAL_PROGRAM') {
+    return `Strategic capacity reservation in semiconductor chain; downstream buyers face longer waits; this counterparty becomes critical-path supplier through ${yrs}y. ${signal.is_chokepoint_override ? 'Sole-source dependency.' : ''}`.trim();
+  }
+  if (t === 'QUANTUM_CRYPTO') {
+    return `Pre-commercial program funding; revenue lift in 5-10y if technology commercialises; option-value play on quantum/crypto adoption.`;
+  }
+  return `${cp} commitment of ${val ? `$${val}M` : 'undisclosed size'} over ${yrs}y resets future revenue base. Watch for follow-on tranches.`;
+}
+
+// 5. SECOND-ORDER EFFECTS per card
+//    Lists the downstream beneficiaries / losers from the framework.
+
+export function buildSecondOrder(args: {
+  theme: StrategicTheme;
+  counterparty_name?: string;
+  contract_value_usd_m?: number;
+}): { beneficiaries: string[]; risk: string[] } {
+  const { theme } = args;
+
+  if (theme === 'AI_INFRASTRUCTURE' || theme === 'HYPERSCALER_LEASE' || theme === 'NEOCLOUD_AI_INFRA') {
+    return {
+      beneficiaries: ['Power equipment makers (GE Vernova / Eaton)', 'Cooling specialists (Vertiv / nVent)', 'Optical interconnect (Coherent / Lumentum)', 'HBM memory (Micron / Hynix)'],
+      risk: ['Non-hyperscaler GPU buyers face longer wait times', 'Pricing power shifts to capacity holders', 'Smaller cloud players priced out'],
+    };
+  }
+  if (theme === 'ENERGY_TRANSITION' || theme === 'POWER_GRID') {
+    return {
+      beneficiaries: ['Transformer / switchgear (BHEL / GEV / Hitachi)', 'Copper miners (uplift via grid demand)', 'EPC contractors (L&T / Quanta)'],
+      risk: ['Non-IPP utilities face stranded asset risk if PPA terms shift', 'Long-tenor capex vendors face execution risk'],
+    };
+  }
+  if (theme === 'DEFENSE_AEROSPACE') {
+    return {
+      beneficiaries: ['Tier-2 defence component suppliers', 'Titanium / nickel-alloy forge specialists', 'Aerospace MRO operators'],
+      risk: ['PSU defence peers without orders lose share', 'Private-sector entrants face certification timeline drag'],
+    };
+  }
+  if (theme === 'SEMI_SUPPLY_CHAIN') {
+    return {
+      beneficiaries: ['ABF substrate makers (Ajinomoto)', 'Specialty gas / photoresist (JSR / Tokyo Ohka)', 'Equipment makers (AMAT / LRCX)'],
+      risk: ['Non-reserved fab customers face allocation queue', 'Commodity foundries face share loss'],
+    };
+  }
+  if (theme === 'CRITICAL_NATIONAL_PROGRAM') {
+    return {
+      beneficiaries: ['Domestic supply-chain vendors aligned with policy', 'Sovereign-program-eligible contractors'],
+      risk: ['Foreign vendors face market-access friction', 'Non-aligned suppliers lose pipeline'],
+    };
+  }
+  return { beneficiaries: [], risk: [] };
+}
+
+// 6. CUMULATIVE FEDERAL TRACKER — for chokepoint companies
+//    Estimates total federal awards + loans + price-floor offtakes over a
+//    rolling 36/48-month window. Used for the chokepoint override.
+
+export interface FederalCumulative {
+  rolling_36m_usd_m: number;
+  rolling_48m_usd_m: number;
+  meets_36m_threshold: boolean;   // ≥ $250M
+  meets_48m_threshold: boolean;   // ≥ $500M
+  components: { source: string; amount_usd_m: number; date_iso: string }[];
+}
+
+// 7. OUTPUT FORMAT — matches user spec exactly
+//    [Ticker] → [Contract size, program, counterparty]
+//    ([Order date: YYYY-MM-DD] Impact: ...)
+//    [Flags]
+
+export function formatStrategicLine(args: {
+  ticker: string;
+  signal: StrategicVisibilitySignal;
+  capacity?: CapacityReserved;
+  dependency_score?: number;
+  date_iso?: string;
+  flags_str: string;
+}): string {
+  const { ticker, signal, capacity, date_iso, flags_str } = args;
+  const sz = signal.contract_value_usd_m
+    ? signal.contract_value_usd_m >= 1000 ? `$${(signal.contract_value_usd_m/1000).toFixed(1)}B` : `$${signal.contract_value_usd_m}M`
+    : 'undisclosed';
+  const cp = signal.counterparty_name || COUNTERPARTY_DISPLAY[signal.counterparty_tier] || '—';
+  const dateStr = date_iso ? date_iso.slice(0, 10) : '—';
+  const yrs = signal.visibility_years ?? 0;
+
+  const themeLabel = THEME_DISPLAY[signal.theme] || signal.theme;
+  const capStr = capacity ? `, ${capacity.amount}${capacity.unit.replace('_', ' ')}` : '';
+  const pctMcap = signal.pct_of_mcap !== undefined ? ` / ${signal.pct_of_mcap}% mcap` : '';
+  const pctRev = signal.pct_of_ltm_revenue !== undefined ? ` / ${signal.pct_of_ltm_revenue}% LTM rev` : '';
+
+  return `${ticker} → ${sz}${capStr}, ${themeLabel}, ${cp} ([${dateStr}] Impact: ${yrs}y visibility${pctMcap}${pctRev}) ${flags_str}`;
+}
+

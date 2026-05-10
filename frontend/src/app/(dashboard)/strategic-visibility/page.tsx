@@ -29,6 +29,17 @@ interface SVSignal {
   reason: string;
 }
 
+interface SVCapacityReserved {
+  unit: string;
+  amount: number;
+  raw_phrase: string;
+}
+
+interface SVSecondOrder {
+  beneficiaries: string[];
+  risk: string[];
+}
+
 interface SVArticle {
   id: string;
   title: string;
@@ -39,6 +50,14 @@ interface SVArticle {
   ticker_symbols?: string[];
   primary_ticker?: string | null;
   strategic_visibility: SVSignal;
+  // PATCH 0067: v2 enhancements
+  sv_signal_quality_tier?: 'A_FILING' | 'B_TIER1_MEDIA' | 'C_INDUSTRY' | 'D_SPECULATIVE' | null;
+  sv_capacity_reserved?: SVCapacityReserved | null;
+  sv_dependency_score?: number | null;
+  sv_dependency_rationale?: string | null;
+  sv_why_this_matters?: string | null;
+  sv_second_order?: SVSecondOrder | null;
+  sv_formatted_line?: string | null;
   _rank: number;
 }
 
@@ -84,6 +103,38 @@ const COUNTERPARTY_LABEL: Record<string, string> = {
   MAJOR_FINANCIAL:    'Major Financial',
   OTHER:              'Other',
 };
+
+// PATCH 0067: Signal Quality Tier display
+const SQ_LABEL: Record<string, string> = {
+  A_FILING:       'A · Filing',
+  B_TIER1_MEDIA:  'B · Tier-1 Media',
+  C_INDUSTRY:     'C · Industry',
+  D_SPECULATIVE:  'D · Speculative',
+};
+const SQ_COLOR: Record<string, string> = {
+  A_FILING:       '#10B981',  // green — primary filing
+  B_TIER1_MEDIA:  '#22D3EE',  // cyan — Tier-1 media
+  C_INDUSTRY:     '#F59E0B',  // amber — industry / specialist
+  D_SPECULATIVE:  '#EF4444',  // red — speculative / single-source
+};
+
+// Dependency Score (1-5) display
+function depDots(score: number): string {
+  return '●'.repeat(Math.max(0, Math.min(5, score))) + '○'.repeat(Math.max(0, 5 - Math.max(0, Math.min(5, score))));
+}
+function depColor(score: number): string {
+  if (score >= 5) return '#8B5CF6';     // chokepoint
+  if (score >= 4) return '#10B981';     // very hard to replace
+  if (score >= 3) return '#22D3EE';     // hard
+  if (score >= 2) return '#F59E0B';     // moderate
+  return '#6B7A8D';                     // easy / replaceable
+}
+
+function fmtCapacity(c?: SVCapacityReserved | null): string {
+  if (!c) return '';
+  const unitLabel = c.unit.replace('_', ' ').replace('pm', '/mo');
+  return `${c.amount.toLocaleString()} ${unitLabel}`;
+}
 
 function fmtMoney(usdM?: number): string {
   if (usdM === undefined) return '—';
@@ -214,13 +265,28 @@ export default function StrategicVisibilityPage() {
                       transition: 'border-color 0.15s',
                     }}
                   >
-                    {/* Top row: ticker + flags */}
+                    {/* Top row: ticker + signal quality + flags */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
                       {(a.ticker_symbols ?? []).slice(0, 3).map(t => (
                         <span key={t} style={{ fontSize: 10, fontWeight: 700, color: '#38A9E8', backgroundColor: '#0F7ABF20', padding: '2px 6px', borderRadius: 4, border: '1px solid #0F7ABF40' }}>
                           {t}
                         </span>
                       ))}
+                      {/* PATCH 0067: Signal Quality Tier badge */}
+                      {a.sv_signal_quality_tier && (
+                        <span
+                          title="Signal source quality — A: company filing, B: Tier-1 media, C: industry/specialist, D: speculative/single-source"
+                          style={{
+                            fontSize: 9, fontWeight: 700,
+                            color: SQ_COLOR[a.sv_signal_quality_tier] || '#94A3B8',
+                            border: `1px solid ${SQ_COLOR[a.sv_signal_quality_tier] || '#94A3B8'}40`,
+                            backgroundColor: `${SQ_COLOR[a.sv_signal_quality_tier] || '#94A3B8'}10`,
+                            padding: '2px 5px', borderRadius: 3,
+                          }}
+                        >
+                          {SQ_LABEL[a.sv_signal_quality_tier] || a.sv_signal_quality_tier}
+                        </span>
+                      )}
                       {sv.flags.map(f => (
                         <span key={f} style={{ fontSize: 9, fontWeight: 700, color: FLAG_COLOR[f] || '#94A3B8' }}>
                           {FLAG_LABEL[f] || f}
@@ -232,7 +298,7 @@ export default function StrategicVisibilityPage() {
                     <div style={{ fontSize: 12, fontWeight: 600, color: '#F5F7FA', lineHeight: 1.4, marginBottom: 8 }}>
                       {a.title}
                     </div>
-                    {/* Metadata grid */}
+                    {/* Metadata grid (4 cells × 2 rows when capacity / dependency present) */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4, fontSize: 10, color: '#94A3B8', marginBottom: 6 }}>
                       <div>
                         <div style={{ color: '#4A5B6C' }}>VALUE</div>
@@ -252,10 +318,61 @@ export default function StrategicVisibilityPage() {
                           {sv.pct_of_mcap !== undefined ? `${sv.pct_of_mcap}%` : '—'}
                         </div>
                       </div>
+                      {/* PATCH 0067: row 2 — Capacity Reserved + Dependency Score */}
+                      {(a.sv_capacity_reserved || a.sv_dependency_score) && (
+                        <>
+                          <div style={{ gridColumn: 'span 2' }}>
+                            <div style={{ color: '#4A5B6C' }}>CAPACITY RESERVED</div>
+                            <div style={{ color: a.sv_capacity_reserved ? '#10B981' : '#4A5B6C', fontWeight: 700 }}>
+                              {a.sv_capacity_reserved ? fmtCapacity(a.sv_capacity_reserved) : '—'}
+                            </div>
+                          </div>
+                          <div style={{ gridColumn: 'span 2' }}>
+                            <div style={{ color: '#4A5B6C' }}>
+                              DEPENDENCY <span style={{ color: '#6B7A8D', fontWeight: 400 }}>(1–5)</span>
+                            </div>
+                            <div
+                              title={a.sv_dependency_rationale || ''}
+                              style={{
+                                color: depColor(a.sv_dependency_score ?? 1),
+                                fontWeight: 700,
+                                fontFamily: 'ui-monospace, SF Mono, Menlo, monospace',
+                                letterSpacing: '1px',
+                              }}
+                            >
+                              {depDots(a.sv_dependency_score ?? 1)} <span style={{ marginLeft: 4 }}>{a.sv_dependency_score ?? 1}/5</span>
+                            </div>
+                          </div>
+                        </>
+                      )}
                     </div>
-                    {/* Why it qualifies */}
+                    {/* PATCH 0067: WHY THIS MATTERS — institutional 1-liner */}
+                    {a.sv_why_this_matters && (
+                      <div style={{ fontSize: 10, color: '#94A3B8', borderTop: '1px solid #1A2840', paddingTop: 6, marginBottom: 6, lineHeight: 1.5 }}>
+                        <strong style={{ color: '#F59E0B', letterSpacing: '0.4px' }}>WHY THIS MATTERS:</strong>{' '}
+                        <span style={{ color: '#CBD5E1' }}>{a.sv_why_this_matters}</span>
+                      </div>
+                    )}
+                    {/* PATCH 0067: SECOND-ORDER EFFECTS */}
+                    {a.sv_second_order && ((a.sv_second_order.beneficiaries?.length ?? 0) > 0 || (a.sv_second_order.risk?.length ?? 0) > 0) && (
+                      <div style={{ fontSize: 10, color: '#94A3B8', backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 6, padding: '6px 8px', marginBottom: 6, lineHeight: 1.5 }}>
+                        {(a.sv_second_order.beneficiaries?.length ?? 0) > 0 && (
+                          <div style={{ marginBottom: 3 }}>
+                            <strong style={{ color: '#10B981' }}>↗ DOWNSTREAM BENEFICIARIES:</strong>{' '}
+                            <span style={{ color: '#CBD5E1' }}>{a.sv_second_order.beneficiaries.join(' · ')}</span>
+                          </div>
+                        )}
+                        {(a.sv_second_order.risk?.length ?? 0) > 0 && (
+                          <div>
+                            <strong style={{ color: '#EF4444' }}>↘ AT-RISK:</strong>{' '}
+                            <span style={{ color: '#CBD5E1' }}>{a.sv_second_order.risk.join(' · ')}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {/* WHY IT QUALIFIES (engine reason) */}
                     <div style={{ fontSize: 10, color: '#22D3EE', borderTop: '1px solid #1A2840', paddingTop: 6 }}>
-                      <strong style={{ color: '#22D3EE' }}>WHY:</strong> <span style={{ color: '#94A3B8' }}>{sv.reason}</span>
+                      <strong style={{ color: '#22D3EE' }}>QUALIFIES:</strong> <span style={{ color: '#94A3B8' }}>{sv.reason}</span>
                     </div>
                     <div style={{ marginTop: 4, fontSize: 9, color: '#4A5B6C' }}>
                       {a.source_name}
