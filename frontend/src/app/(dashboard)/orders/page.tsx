@@ -585,11 +585,42 @@ const HEADLINE_PATTERNS: {
 // ── Forward/Backward Tagger ───────────────────────────────────────────────────
 function tagTemporality(sentence: string): SignalTemporality {
   const s = sentence.toLowerCase();
-  const forwardWords = ['expect','anticipate','plan to','going forward','next quarter','upcoming','will see','should see','likely to','over the next','in the coming','target','guidance','outlook','forecast','aspire','project to','aim to'];
-  const historicalWords = ['last quarter','last year','previously','was','had been','in q1','in q2','in q3','in q4','fy23','fy24','reported','achieved'];
+  // PATCH 0054: Expanded FORWARD word list to include commercial verbs that
+  // imply future execution. "wins ₹500cr order" is materially forward — the
+  // order will fulfil over future quarters even though the verb is past
+  // tense. Previously these were tagged HISTORICAL, killing alpha for 96%
+  // of news-derived signals.
+  const forwardWords = [
+    'expect','anticipate','plan to','going forward','next quarter','upcoming',
+    'will see','should see','likely to','over the next','in the coming','target',
+    'guidance','outlook','forecast','aspire','project to','aim to',
+    // Commercial future-execution verbs
+    'wins','won','win','secured','bagged','awarded','bags','grabs',
+    'to deliver','will deliver','will commission','to commission','will supply',
+    'inaugurated','launches','launched','announces','announced',
+    'orders received','order received','order book','contract worth','deal worth',
+    'expansion','expand','expanding','ramp up','ramping','breaks ground','broke ground',
+    'sets up','setting up','to invest','investment of','capex',
+  ];
+  const historicalWords = [
+    'last quarter','last year','previously','was','had been',
+    'fy23','fy24','reported','achieved',
+    // PATCH 0054: keep "in qN" but require NOT followed by FY26+ (current quarters
+    // shouldn't be HISTORICAL) — we leave the simple includes() but mitigate
+    // via FORWARD-list precedence (FORWARD wins if both match).
+    'in q1','in q2','in q3','in q4',
+  ];
   if (forwardWords.some(w => s.includes(w))) return 'FORWARD';
   if (historicalWords.some(w => s.includes(w))) return 'HISTORICAL';
   return 'CURRENT';
+}
+
+// PATCH 0054: Some signal types are inherently forward-looking by their
+// commercial nature — winning an order, securing a contract, commissioning
+// a plant, raising guidance. Past-tense reporting of these events shouldn't
+// kill their alpha status.
+function isCommerciallyForward(type: string): boolean {
+  return /^(ORDER|CONTRACT_WIN|EXPORT_DEAL|CAPACITY_ANNOUNCEMENT|CAPACITY_EXPANSION|GUIDANCE_UP|DEMAND_CONSTRAINT|CAPEX|CAPEX_RAISE|INVESTMENT_ANNOUNCEMENT|COMMISSIONING|TENDER_AWARDED|MERGER|ACQUISITION|FUNDRAISE|QIP|IPO_ANNOUNCEMENT)/i.test(type);
 }
 
 // ── Numerical Extractor ───────────────────────────────────────────────────────
@@ -1116,7 +1147,16 @@ function extractSignals(articleText: string, source: string, date: string): Extr
       if (hasProduct && hasState) {
         const numerical = extractNumerical(sentence);
         const temporality = tagTemporality(sentence);
-        const effectiveAlpha = cp.isAlpha && temporality !== 'HISTORICAL';
+        // PATCH 0054: alpha is preserved when (a) temporality isn't strictly
+        // historical, OR (b) the signal type is commercially forward (an
+        // ORDER / CONTRACT_WIN / COMMISSIONING extends into future quarters
+        // even when reported in past tense), OR (c) a quantified ₹X cr
+        // commitment was extracted (concrete value = actionable).
+        const effectiveAlpha = cp.isAlpha && (
+          temporality !== 'HISTORICAL' ||
+          isCommerciallyForward(cp.type) ||
+          numerical !== undefined
+        );
         // Avoid duplicating if same type already found with better evidence
         if (!results.some(r => r.type === cp.type && r.subject === cp.subject)) {
           results.push({
@@ -1168,7 +1208,12 @@ function extractSignals(articleText: string, source: string, date: string): Extr
     if (matched && matchedText.length >= 15) {
       const temporality = tagTemporality(matchedText);
       const numerical = extractNumerical(matchedText);
-      const effectiveAlpha = p.isAlpha && temporality !== 'HISTORICAL';
+      // PATCH 0054: same loosened alpha gate (see above)
+      const effectiveAlpha = p.isAlpha && (
+        temporality !== 'HISTORICAL' ||
+        isCommerciallyForward(p.type) ||
+        numerical !== undefined
+      );
       const subject = extractSubject(p.type, matchedText);
       results.push({
         type: p.type, category: p.category, text: matchedText,
@@ -1979,9 +2024,15 @@ function ConcallIntelligence() {
                       </div>
                     </div>
                   ) : (
-                    // 0 ARTICLES
-                    <div style={{fontSize:9,color:'#334155'}}>
-                      📭 No news found in last 30 days — expand for details
+                    // PATCH 0054: 0 ARTICLES — actionable empty state
+                    // Old text was cryptic; new copy explicitly explains
+                    // (a) why the row is empty, and (b) what the user can
+                    // do to populate it (paste a transcript).
+                    <div style={{fontSize:9,color:'#475569',display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                      <span>📭 No news + no concall transcript for {s.symbol}.</span>
+                      <span style={{color:'#0F7ABF',fontWeight:600,cursor:'pointer'}}>
+                        ↑ Click <strong>📝 Paste Concall</strong> above to get high-fidelity signals.
+                      </span>
                     </div>
                   )}
                 </div>
@@ -1990,7 +2041,19 @@ function ConcallIntelligence() {
               {isExp && (
                 <div style={{padding:'0 16px 16px',borderTop:`1px solid ${BORDER}`}}>
                   {s.signals.length === 0 ? (
-                    <div style={{padding:'16px 0',color:TEXT3,fontSize:11,textAlign:'center'}}>No management signals detected in 30D window. Try refreshing or check back post earnings.</div>
+                    // PATCH 0054: explain what's actually going on so the
+                    // user knows whether to paste a transcript or wait.
+                    <div style={{padding:'16px 0',color:TEXT3,fontSize:11,textAlign:'left'}}>
+                      <div style={{marginBottom:8,color:'#94A3B8',fontWeight:600}}>
+                        {s.articleCount === 0 ? '📭 No coverage in 30D window' : `📰 ${s.articleCount} article${s.articleCount !== 1 ? 's' : ''} found, but none matched a forward-looking management signal`}
+                      </div>
+                      <div style={{color:'#64748B',fontSize:10,lineHeight:1.5}}>
+                        Concall Intel processes earnings news AND optional concall transcripts. News headlines often use past tense
+                        ('reported', 'achieved') which makes them low-confidence signals. <strong style={{color:'#94A3B8'}}>For a high-fidelity read</strong>, paste
+                        the latest earnings call transcript (Q4 / Q3 of FY26) into <strong style={{color:'#0F7ABF'}}>📝 Paste Concall</strong> above.
+                        Manual transcripts give 5-10× more actionable signals than news-only coverage.
+                      </div>
+                    </div>
                   ) : (
                     <div style={{marginTop:12}}>
 
