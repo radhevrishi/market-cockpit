@@ -110,9 +110,26 @@ interface Article {
   importance_score?: number;
 }
 
-interface NewsResp {
-  articles: Article[];
-  count?: number;
+// PATCH 0095: the default /news GET returns an ARRAY directly (line ~2666 of
+// route.ts: `return NextResponse.json(filtered)`).  Some other branches
+// (transformational / persistent / anomalies) return `{ articles, items, ... }`.
+// Normalize so this page works regardless of which branch the backend hits.
+type NewsResp = Article[] | { articles?: Article[]; items?: Article[] };
+
+function normalizeNews(data: any): Article[] {
+  if (Array.isArray(data)) return data;
+  if (data?.articles && Array.isArray(data.articles)) return data.articles;
+  if (data?.items && Array.isArray(data.items)) return data.items;
+  return [];
+}
+
+// Client-side date filter — the default /news path doesn't honour ?days,
+// so we filter to the last N days here.
+function isWithinDays(a: Article, days: number): boolean {
+  if (!a.published_at) return true;   // accept undated rather than drop
+  const t = new Date(a.published_at).getTime();
+  if (isNaN(t)) return true;
+  return (Date.now() - t) / 86400000 <= days;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -180,13 +197,14 @@ function aggregateTickers(matched: Article[]): TickerAgg[] {
 // ─── Hooks ──────────────────────────────────────────────────────────────────
 
 function useSpecialSituationsFeed() {
-  return useQuery<NewsResp>({
+  return useQuery<Article[]>({
     queryKey: ['special-situations', 'feed'],
     queryFn: async () => {
-      // Pull last 90 days of news — the universe to filter against.
-      // Same endpoint the rest of the cockpit uses; no new server route needed.
-      const { data } = await api.get('/news', { params: { days: 90, limit: 2000 } });
-      return data;
+      // PATCH 0095: hit /news (default branch returns the article array directly).
+      // The endpoint ignores `days` / `limit` on this branch, so we filter to the
+      // last 90 days client-side below.
+      const { data } = await api.get('/news');
+      return normalizeNews(data);
     },
     staleTime: 5 * 60_000,
     refetchInterval: 5 * 60_000,
@@ -215,7 +233,11 @@ export default function SpecialSituationsPage() {
   }, [active, searchParams, router]);
 
   const { data: feed, isLoading, error, dataUpdatedAt } = useSpecialSituationsFeed();
-  const allArticles: Article[] = feed?.articles || [];
+  // PATCH 0095: feed is now Article[] directly. Apply 90-day client-side filter.
+  const allArticles: Article[] = useMemo(
+    () => (feed || []).filter((a) => isWithinDays(a, 90)),
+    [feed],
+  );
 
   // Derive matched articles per category
   const matchesByCategory = useMemo(() => {

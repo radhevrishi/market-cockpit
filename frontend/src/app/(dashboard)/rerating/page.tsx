@@ -145,8 +145,18 @@ function useNewsFeed() {
   return useQuery<{ articles: Article[] }>({
     queryKey: ['rerating', 'news-feed'],
     queryFn: async () => {
-      const { data } = await api.get('/news', { params: { days: 180, limit: 3000 } });
-      return data;
+      // PATCH 0095: default /news returns ARRAY (not { articles }).  Normalize
+      // and filter to last 180 days client-side (the endpoint ignores `days`
+      // on the default branch).
+      const { data } = await api.get('/news');
+      const arr: any[] = Array.isArray(data) ? data : (data?.articles || data?.items || []);
+      const cutoff = Date.now() - 180 * 86400000;
+      const filtered = arr.filter((a: any) => {
+        if (!a?.published_at) return true;
+        const t = new Date(a.published_at).getTime();
+        return isNaN(t) || t >= cutoff;
+      });
+      return { articles: filtered };
     },
     staleTime: 5 * 60_000,
     refetchInterval: 5 * 60_000,

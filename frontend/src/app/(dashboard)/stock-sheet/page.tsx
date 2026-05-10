@@ -297,9 +297,19 @@ function useTickerNews(ticker: string) {
   return useQuery({
     queryKey: ['ticker-news', ticker],
     queryFn: async () => {
-      if (!ticker) return [];
-      const { data } = await api.get('/news', { params: { ticker, days: 90, limit: 100 } });
-      return data?.articles || [];
+      if (!ticker) return [] as any[];
+      // PATCH 0095: default /news returns ARRAY (not { articles }).  Use
+      // `watchlist` param (CSV of tickers) which the backend honours — that
+      // restricts the feed to articles mentioning the requested ticker.
+      // Then filter to last 90 days client-side.
+      const { data } = await api.get('/news', { params: { watchlist: ticker } });
+      const arr: any[] = Array.isArray(data) ? data : (data?.articles || data?.items || []);
+      const cutoff = Date.now() - 90 * 86400000;
+      return arr.filter((a: any) => {
+        if (!a?.published_at) return true;
+        const t = new Date(a.published_at).getTime();
+        return isNaN(t) || t >= cutoff;
+      });
     },
     enabled: !!ticker,
     staleTime: 5 * 60_000,
