@@ -350,17 +350,32 @@ interface PersistentBottleneckSample {
   tier: string;
   recorded_at?: string;
 }
-// PATCH 0081: architectural beneficiary entry
+// PATCH 0081 + 0082: architectural beneficiary entry with institutional dims
 interface AdaptationBeneficiary {
   ticker: string;
   score: number;
   sample_count: number;
+  // PATCH 0082
+  exposure_intensity?: 'DIRECT' | 'STRONG' | 'MEDIUM' | 'INDIRECT' | 'STRATEGIC';
+  exposure_score?: number;
+  economic_capture?: 'MASSIVE' | 'HIGH' | 'MODERATE' | 'MARGINAL' | 'STRATEGIC_ONLY';
+  capture_score?: number;
+  size_class?: 'LARGE_CAP' | 'MID_CAP' | 'SMALL_CAP';
+  rationale?: string;
+  composite_score?: number;
+}
+interface StructuralLoserItem {
+  ticker: string;
+  rationale: string;
+  severity: 'HIGH' | 'MEDIUM' | 'LOW';
 }
 interface ArchitecturalAdaptation {
   adaptation: string;
   label: string;
   rationale: string;
+  duration?: 'MULTI_YEAR_STRUCTURAL' | 'SECULAR' | 'CYCLICAL' | 'POLICY_SENSITIVE' | 'TRADING';
   beneficiaries: AdaptationBeneficiary[];
+  structural_losers?: StructuralLoserItem[];
 }
 
 interface PersistentBottleneckItem {
@@ -1943,26 +1958,98 @@ export default function NewsFeedPage() {
                         <span style={{ color: '#4A5B6C' }}>{bestSample.source} · {bestSample.tier}</span>
                       </div>
                     )}
-                    {/* PATCH 0081: ARCHITECTURAL BENEFICIARIES — second-order winners */}
+                    {/* PATCH 0081 + 0082: ARCHITECTURAL BENEFICIARIES — second-order winners */}
                     {b.architectural_adaptations && b.architectural_adaptations.length > 0 && (
                       <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px dashed #1A2840' }}>
                         <div style={{ fontSize: 9, color: '#F59E0B', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
                           ↪ ARCHITECTURAL BENEFICIARIES (2nd-order)
                         </div>
-                        {b.architectural_adaptations.map((adapt) => (
-                          <div key={adapt.adaptation} style={{ marginBottom: 4, fontSize: 9, lineHeight: 1.4 }}>
-                            <div style={{ color: '#CBD5E1' }}>
-                              <span style={{ color: '#10B981', fontWeight: 700 }}>· {adapt.label}</span>
-                              {' '}
-                              <span style={{ color: '#94A3B8' }}>
-                                {adapt.beneficiaries.slice(0, 5).map((bn) => bn.ticker).join(', ')}
-                              </span>
+                        {b.architectural_adaptations.map((adapt) => {
+                          // PATCH 0082: duration badge color
+                          const durColor = adapt.duration === 'MULTI_YEAR_STRUCTURAL' ? '#10B981'
+                            : adapt.duration === 'SECULAR' ? '#22D3EE'
+                            : adapt.duration === 'CYCLICAL' ? '#F59E0B'
+                            : adapt.duration === 'POLICY_SENSITIVE' ? '#8B5CF6'
+                            : '#6B7A8D';
+                          const durLabel = adapt.duration === 'MULTI_YEAR_STRUCTURAL' ? 'Multi-year structural'
+                            : adapt.duration === 'SECULAR' ? 'Secular'
+                            : adapt.duration === 'CYCLICAL' ? 'Cyclical'
+                            : adapt.duration === 'POLICY_SENSITIVE' ? 'Policy-sensitive'
+                            : adapt.duration === 'TRADING' ? 'Trading'
+                            : '';
+                          return (
+                            <div key={adapt.adaptation} style={{ marginBottom: 8, fontSize: 9, lineHeight: 1.4 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 2 }}>
+                                <span style={{ color: '#10B981', fontWeight: 700 }}>· {adapt.label}</span>
+                                {durLabel && (
+                                  <span style={{
+                                    fontSize: 7, fontWeight: 700, letterSpacing: '0.3px',
+                                    color: durColor, border: `1px solid ${durColor}40`,
+                                    backgroundColor: `${durColor}10`,
+                                    padding: '1px 4px', borderRadius: 2,
+                                  }}>
+                                    {durLabel.toUpperCase()}
+                                  </span>
+                                )}
+                              </div>
+                              {/* PATCH 0082: per-ticker chips with exposure + capture + size */}
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 2 }}>
+                                {adapt.beneficiaries.slice(0, 6).map((bn) => {
+                                  const expColor = bn.exposure_intensity === 'DIRECT' ? '#10B981'
+                                    : bn.exposure_intensity === 'STRONG' ? '#22D3EE'
+                                    : bn.exposure_intensity === 'MEDIUM' ? '#F59E0B'
+                                    : bn.exposure_intensity === 'INDIRECT' ? '#94A3B8'
+                                    : '#6B7A8D';
+                                  const sizeMarker = bn.size_class === 'SMALL_CAP' ? 's'
+                                    : bn.size_class === 'MID_CAP' ? 'm'
+                                    : '';
+                                  return (
+                                    <span
+                                      key={bn.ticker}
+                                      title={`${bn.rationale || ''}\nExposure: ${bn.exposure_intensity || '—'} (${bn.exposure_score || 0}/100)\nCapture: ${bn.economic_capture || '—'} (${bn.capture_score || 0}/100)\nSize: ${bn.size_class || '—'}\nComposite: ${bn.composite_score || 0}`}
+                                      style={{
+                                        fontSize: 9, fontWeight: 700,
+                                        color: expColor,
+                                        border: `1px solid ${expColor}40`,
+                                        backgroundColor: `${expColor}10`,
+                                        padding: '1px 5px', borderRadius: 3,
+                                        display: 'inline-flex', alignItems: 'baseline', gap: 3,
+                                      }}
+                                    >
+                                      <span>{bn.ticker}</span>
+                                      {sizeMarker && (
+                                        <span style={{ fontSize: 7, color: '#6B7A8D', fontWeight: 400 }}>{sizeMarker}</span>
+                                      )}
+                                      {bn.composite_score !== undefined && (
+                                        <span style={{ fontSize: 7, color: '#94A3B8', fontWeight: 400 }}>
+                                          {Math.round((bn.composite_score || 0) / 10) / 10}
+                                        </span>
+                                      )}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                              <div style={{ color: '#6B7A8D', fontSize: 8, lineHeight: 1.3, marginTop: 1 }} title={adapt.rationale}>
+                                {adapt.rationale.slice(0, 90)}…
+                              </div>
+                              {/* PATCH 0082: structural losers per adaptation */}
+                              {adapt.structural_losers && adapt.structural_losers.length > 0 && (
+                                <div style={{ marginTop: 3, fontSize: 8, color: '#94A3B8', lineHeight: 1.3 }}>
+                                  <span style={{ color: '#EF4444', fontWeight: 700 }}>↘ Losers: </span>
+                                  {adapt.structural_losers.map((l, i) => (
+                                    <span key={l.ticker} title={l.rationale} style={{ color: '#94A3B8' }}>
+                                      {l.ticker}
+                                      <span style={{ color: l.severity === 'HIGH' ? '#EF4444' : l.severity === 'MEDIUM' ? '#F59E0B' : '#6B7A8D', marginLeft: 2 }}>
+                                        ({l.severity[0]})
+                                      </span>
+                                      {i < (adapt.structural_losers?.length ?? 0) - 1 ? ', ' : ''}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
                             </div>
-                            <div style={{ color: '#6B7A8D', fontSize: 8, lineHeight: 1.3, marginTop: 1 }} title={adapt.rationale}>
-                              {adapt.rationale.slice(0, 90)}…
-                            </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>

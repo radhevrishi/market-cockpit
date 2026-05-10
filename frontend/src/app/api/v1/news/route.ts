@@ -191,7 +191,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v28'; // v28: beneficiary graph engine — second-order winners through 8 adaptation patterns + celebrity-noise filter (0081)
+const CACHE_KEY = 'news:articles:v29'; // v29: exposure intensity + economic capture + duration + losers + small/mid caps + causal-relevance gate (0082)
 const CACHE_TTL = 300; // 5 min
 // v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
 // freshness_layer, signal_confidence (multi-dim), bottleneck_parent /
@@ -2180,7 +2180,6 @@ async function fetchAllNews(): Promise<any[]> {
       })
       .slice(0, 60)
       .flatMap((a: any) => {
-        const text = `${a.title || ''} ${a.summary || ''}`;
         const adaptations = detectAdaptations({ title: a.title || '', desc: a.summary || '' });
         if (adaptations.length === 0) return [];
         const tickers: string[] = a.ticker_symbols || [];
@@ -2190,6 +2189,9 @@ async function fetchAllNews(): Promise<any[]> {
             tickers,
             source: a.source_name,
             source_tier: a.source_tier_v2 || 'UNKNOWN',
+            // PATCH 0082: causal relevance gate — adaptation must align
+            // with article's primary semantic node
+            primary_node: a.graph_primary_node,
           }),
         );
       }),
