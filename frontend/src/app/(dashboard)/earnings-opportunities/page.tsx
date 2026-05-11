@@ -39,16 +39,107 @@ interface CalendarPayload {
   empty_reason?: string;
 }
 
-function useEarningsCalendar(from: string, to: string) {
-  return useQuery<CalendarPayload>({
-    queryKey: ['earnings-calendar', from, to],
+// PATCH 0152 — switch to the Earnings Hub canonical source.
+// /api/market/earnings is the SAME endpoint Earnings Hub Calendar uses (NSE
+// Financial Results API + BSE proxy with quality rating). Each result has
+// ticker + resultDate + quality. We join this with the worker's v1 calendar
+// (which holds Screener+Yahoo enrichment) by ticker → enriched grading.
+type MarketEarningsResult = {
+  ticker: string;
+  company: string;
+  resultDate: string;
+  quarter: string;
+  quality: 'Excellent' | 'Great' | 'Good' | 'OK' | 'Weak' | 'Upcoming' | 'Preview';
+  sector?: string;
+  industry?: string;
+  marketCap?: string;
+  edp?: number | null;
+  cmp?: number | null;
+  priceMove?: number | null;
+  timing?: string;
+  source?: string;
+};
+type MarketEarningsResponse = {
+  results: MarketEarningsResult[];
+  summary?: { total: number; excellent?: number; great?: number; good?: number; ok?: number; weak?: number; upcoming?: number };
+  quarter?: string;
+  source?: string;
+  updatedAt?: string;
+};
+
+// Hub source — single month or two months stitched
+function useMarketEarnings(months: string[]) {
+  return useQuery<MarketEarningsResponse>({
+    queryKey: ['market-earnings-hub', months.join(',')],
     queryFn: async () => {
-      const { data } = await api.get(`/earnings/calendar?from=${from}&to=${to}`);
-      return data;
+      // months is array of YYYY-MM strings, deduped
+      const responses = await Promise.all(
+        months.map((m) => fetch(`/api/market/earnings?market=india&month=${m}`).then((r) => r.ok ? r.json() : { results: [] }))
+      );
+      const all: MarketEarningsResult[] = [];
+      const seen = new Set<string>();
+      for (const r of responses) {
+        for (const e of (r?.results || []) as MarketEarningsResult[]) {
+          const k = `${e.ticker}|${e.resultDate}`;
+          if (seen.has(k)) continue;
+          seen.add(k);
+          all.push(e);
+        }
+      }
+      return { results: all, source: responses[0]?.source || 'NSE + BSE' };
+    },
+    staleTime: 5 * 60_000,
+    refetchInterval: 15 * 60_000,
+  });
+}
+
+// Worker enrichment — fetched separately; we use it as a lookup table by ticker.
+function useWorkerEnrichmentMap() {
+  return useQuery<Record<string, any>>({
+    queryKey: ['worker-enrichment-map'],
+    queryFn: async () => {
+      const { data } = await api.get('/earnings/calendar');
+      const map: Record<string, any> = {};
+      const items: any[] = Object.values(data?.by_date || {}).flat() as any[];
+      for (const it of items) {
+        if (!it?.symbol) continue;
+        // Keep the most-recently-enriched entry per ticker
+        const prev = map[it.symbol];
+        const prevAt = prev?.financials_scraped_at || '';
+        const curAt  = it.financials_scraped_at || '';
+        if (!prev || curAt > prevAt) map[it.symbol] = it;
+      }
+      return map;
     },
     staleTime: 10 * 60_000,
     refetchInterval: 30 * 60_000,
   });
+}
+
+// Build the same { by_date, total } shape the Calendar view expects.
+function buildCalendarFromHub(hub: MarketEarningsResponse | undefined, fromIso: string, toIso: string): CalendarPayload {
+  const by_date: Record<string, CalendarItem[]> = {};
+  let total = 0;
+  if (hub?.results) {
+    for (const e of hub.results) {
+      if (!e.resultDate || e.resultDate < fromIso || e.resultDate > toIso) continue;
+      if (!by_date[e.resultDate]) by_date[e.resultDate] = [];
+      by_date[e.resultDate].push({
+        symbol: e.ticker,
+        company: e.company,
+        filing_date: e.resultDate,
+        filing_dt_iso: null,
+        quarter: e.quarter || '',
+        source_url: `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(e.ticker)}`,
+        exchange: 'NSE',
+      });
+      total++;
+    }
+  }
+  for (const k of Object.keys(by_date)) {
+    by_date[k].sort((a, b) => a.symbol.localeCompare(b.symbol));
+  }
+  return { total, by_date };
 }
 
 type EarningsTier = 'BLOCKBUSTER' | 'STRONG' | 'MIXED' | 'AVOID';
@@ -293,60 +384,110 @@ function gradeRow(row: any): ParsedEarning | null {
   };
 }
 
-function useEarningsOpportunities(date: string) {
-  return useQuery<OpportunitiesPayload>({
-    queryKey: ['earnings-opportunities-from-calendar', date || 'all'],
-    queryFn: async () => {
-      // PATCH 0137: read from worker-enriched calendar, not the old news endpoint
-      const url = date ? `/earnings/calendar?date=${date}` : '/earnings/calendar';
-      const { data } = await api.get(url);
-      const todayIso = new Date().toISOString().slice(0, 10);
+// PATCH 0152 — Opportunities now JOIN /api/market/earnings (canonical filed
+// list, same as Earnings Hub Calendar) with /api/v1/earnings/calendar
+// (Screener+Yahoo enrichment) by ticker. The hub tells us WHO filed when;
+// the worker tells us the financials. If no enrichment available, the
+// market data still provides quality+sector+marketCap.
+function useEarningsOpportunitiesJoined(
+  date: string,
+  hub: MarketEarningsResponse | undefined,
+  enrichmentMap: Record<string, any> | undefined,
+): OpportunitiesPayload {
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const hubResults = hub?.results || [];
+  const enrich = enrichmentMap || {};
 
-      // PATCH 0145.3: when no date is selected ("Latest available"), pick the
-      // most recent PAST date with ≥3 enriched filings, NOT a flat union of
-      // every event in the calendar (which would mix already-filed companies
-      // with future-scheduled board meetings whose Screener data is stale).
-      let items: any[] = [];
-      let resolvedDate: string | null = date || null;
-      if (date) {
-        items = (data?.items || []) as any[];
-      } else {
-        const byDate = (data?.by_date || {}) as Record<string, any[]>;
-        const pastDates = Object.keys(byDate).filter((d) => d <= todayIso).sort().reverse();
-        for (const d of pastDates) {
-          const dayItems = (byDate[d] || []).filter((r) =>
-            r?.sales_curr_cr != null || r?.pat_curr_cr != null || r?.eps_curr != null
-          );
-          if (dayItems.length >= 3) {
-            items = byDate[d];   // full set (gradeRow will filter inside)
-            resolvedDate = d;
-            break;
-          }
-        }
+  // Step 1: scope to the date the user wants.
+  // When date='' (Latest), auto-pick the most recent past date with ≥1 filing.
+  let resolvedDate: string | null = date || null;
+  let dayList: MarketEarningsResult[] = [];
+  if (date) {
+    dayList = hubResults.filter((r) => r.resultDate === date && r.quality !== 'Upcoming');
+  } else {
+    // Group by date, find most recent past date with at least one filed (non-Upcoming)
+    const byDate: Record<string, MarketEarningsResult[]> = {};
+    for (const r of hubResults) {
+      if (!r.resultDate || r.resultDate > todayIso) continue;
+      if (r.quality === 'Upcoming') continue;
+      (byDate[r.resultDate] = byDate[r.resultDate] || []).push(r);
+    }
+    const pastDates = Object.keys(byDate).sort().reverse();
+    for (const d of pastDates) {
+      if ((byDate[d] || []).length >= 1) {
+        resolvedDate = d;
+        dayList = byDate[d];
+        break;
       }
+    }
+  }
 
-      const graded: ParsedEarning[] = [];
-      for (const row of items as any[]) {
-        const g = gradeRow(row);
-        if (g) graded.push(g);
-      }
-      const by_tier: Record<EarningsTier, ParsedEarning[]> = {
-        BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [],
-      };
-      for (const g of graded) by_tier[g.tier].push(g);
-      for (const t of TIER_ORDER) by_tier[t].sort((a, b) => b.composite_score - a.composite_score);
-      return {
-        filing_date: resolvedDate,
-        candidates_total: graded.length,
-        raw_items_total: items.length,
-        by_tier,
-        generated_at: data?.scraped_at || new Date().toISOString(),
-        sources_polled: 1,
-      };
-    },
-    staleTime: 5 * 60_000,
-    refetchInterval: 10 * 60_000,
+  // Step 2: join each filed company with worker enrichment
+  const joined = dayList.map((m) => {
+    const e = enrich[m.ticker] || {};
+    return {
+      // Identity (from market source — authoritative)
+      symbol: m.ticker,
+      company: m.company,
+      filing_date: m.resultDate,
+      quarter: m.quarter || e.quarter || 'Q4',
+      sector: m.sector || e.sector,
+      market_cap_bucket: e.market_cap_bucket
+        || (m.marketCap === 'L' ? 'LARGE' : m.marketCap === 'M' ? 'MID' : m.marketCap === 'S' ? 'SMALL' : m.marketCap === 'Micro' ? 'MICRO' : null),
+      source_url: e.source_url || `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(m.ticker)}`,
+      // Financials (from Screener via worker)
+      sales_curr_cr: e.sales_curr_cr ?? null,
+      sales_prev_cr: e.sales_prev_cr ?? null,
+      sales_yoy_pct: e.sales_yoy_pct ?? null,
+      pat_curr_cr: e.pat_curr_cr ?? null,
+      pat_prev_cr: e.pat_prev_cr ?? null,
+      pat_yoy_pct: e.pat_yoy_pct ?? null,
+      eps_curr: e.eps_curr ?? null,
+      eps_prev: e.eps_prev ?? null,
+      eps_yoy_pct: e.eps_yoy_pct ?? null,
+      op_profit_yoy_pct: e.op_profit_yoy_pct ?? null,
+      opm_pct: e.opm_pct ?? null,
+      opm_prev_pct: e.opm_prev_pct ?? null,
+      pe: e.pe ?? null,
+      // Yahoo overlay
+      current_price: e.current_price ?? m.cmp ?? null,
+      gap_pct: e.gap_pct ?? null,
+      d1_pct: e.d1_pct ?? null,
+      move_pct: e.move_pct ?? m.priceMove ?? null,
+      pct_from_52w_high: e.pct_from_52w_high ?? null,
+      rs_rating: e.rs_rating ?? null,
+      stage: e.stage ?? null,
+      trend_template_passes: e.trend_template_passes ?? false,
+      // OCF (annual)
+      ocf_annual_cr: e.ocf_annual_cr ?? null,
+      pat_annual_cr: e.pat_annual_cr ?? null,
+      ocf_to_pat_ratio: e.ocf_to_pat_ratio ?? null,
+      // Period match
+      period_ended: e.period_ended,
+      latest_quarter_end_iso: e.latest_quarter_end_iso,
+      financials_source: e.financials_source,
+    };
   });
+
+  const graded: ParsedEarning[] = [];
+  for (const row of joined) {
+    const g = gradeRow(row);
+    if (g) graded.push(g);
+  }
+  const by_tier: Record<EarningsTier, ParsedEarning[]> = {
+    BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [],
+  };
+  for (const g of graded) by_tier[g.tier].push(g);
+  for (const t of TIER_ORDER) by_tier[t].sort((a, b) => b.composite_score - a.composite_score);
+
+  return {
+    filing_date: resolvedDate,
+    candidates_total: graded.length,
+    raw_items_total: dayList.length,
+    by_tier,
+    generated_at: hub?.updatedAt || new Date().toISOString(),
+    sources_polled: 2,
+  };
 }
 
 type ViewMode = 'CALENDAR' | 'GRADED';
@@ -359,9 +500,24 @@ export default function EarningsOpportunitiesPage() {
     BLOCKBUSTER: true, STRONG: true, MIXED: false, AVOID: false,
   });
 
-  const { data, isLoading, error, refetch } = useEarningsOpportunities(filterDate);
+  // PATCH 0152 — drive everything from the hub source-of-truth.
+  // Months to fetch: cover the current filterDate's month + the previous
+  // month (so the calendar grid view can show ~6 weeks of history).
+  const monthsToFetch = useMemo(() => {
+    const baseDate = filterDate || todayISO();
+    const cur = new Date(baseDate);
+    const prev = new Date(baseDate); prev.setDate(1); prev.setMonth(prev.getMonth() - 1);
+    const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    return Array.from(new Set([fmt(prev), fmt(cur)]));
+  }, [filterDate]);
+  const { data: hub, isLoading: hubLoading, error: hubError, refetch: refetchHub } = useMarketEarnings(monthsToFetch);
+  const { data: enrichmentMap } = useWorkerEnrichmentMap();
+  const data = useEarningsOpportunitiesJoined(filterDate, hub, enrichmentMap);
+  const isLoading = hubLoading;
+  const error = hubError;
+  const refetch = refetchHub;
 
-  // Calendar view: last 60 days back, next 14 forward
+  // Calendar view: last 28 days back, next 14 forward — built from hub data
   const calRange = useMemo(() => {
     const d = new Date(filterDate || todayISO());
     const from = new Date(d); from.setDate(from.getDate() - 28);
@@ -369,7 +525,11 @@ export default function EarningsOpportunitiesPage() {
     const fmt = (x: Date) => x.toISOString().slice(0, 10);
     return { from: fmt(from), to: fmt(to) };
   }, [filterDate]);
-  const { data: calData, isLoading: calLoading } = useEarningsCalendar(calRange.from, calRange.to);
+  const calData: CalendarPayload | undefined = useMemo(
+    () => hub ? buildCalendarFromHub(hub, calRange.from, calRange.to) : undefined,
+    [hub, calRange.from, calRange.to],
+  );
+  const calLoading = hubLoading;
 
   const view: OpportunitiesPayload = data || {
     filing_date: filterDate || null,
@@ -504,18 +664,32 @@ export default function EarningsOpportunitiesPage() {
             Error fetching earnings pipeline. Retry in a moment.
           </div>
         )}
-        {viewMode === 'GRADED' && !isLoading && view.candidates_total === 0 && !error && (
-          <div style={{ color: '#6B7A8D', fontSize: 13, padding: 40, textAlign: 'center', backgroundColor: '#0D1623', border: '1px solid #1A2840', borderRadius: 10 }}>
-            <div style={{ fontSize: 32, marginBottom: 10 }}>📭</div>
-            No earnings filings parsed for <strong style={{ color: '#94A3B8' }}>{filingDateLabel}</strong>.<br/>
-            <span style={{ fontSize: 11 }}>Server polled {view.sources_polled} feeds and found {view.raw_items_total} earnings articles — parser couldn't extract structured Q4 financials.<br/>Try a different date or clear the filter.</span>
-            <div style={{ marginTop: 12 }}>
-              <button onClick={() => setFilterDate('')} style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #22D3EE60', backgroundColor: '#22D3EE15', color: '#22D3EE', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
-                Show latest available
-              </button>
+        {viewMode === 'GRADED' && !isLoading && view.candidates_total === 0 && !error && (() => {
+          // PATCH 0152.2 — when picked date has nothing, find a nearby past
+          // date that DOES have filings and offer a one-click jump.
+          const todayIso = new Date().toISOString().slice(0, 10);
+          const allDatesWithFilings = Array.from(new Set((hub?.results || []).filter((r) => r.resultDate && r.quality !== 'Upcoming' && r.resultDate <= todayIso).map((r) => r.resultDate))).sort();
+          const mostRecent = allDatesWithFilings.length ? allDatesWithFilings[allDatesWithFilings.length - 1] : null;
+          // Auto-shift when user explicitly picked a date — but only after a
+          // small delay so they can navigate freely. We just SHOW the option.
+          return (
+            <div style={{ color: '#6B7A8D', fontSize: 13, padding: 40, textAlign: 'center', backgroundColor: '#0D1623', border: '1px solid #1A2840', borderRadius: 10 }}>
+              <div style={{ fontSize: 32, marginBottom: 10 }}>📭</div>
+              No earnings filings for <strong style={{ color: '#94A3B8' }}>{filingDateLabel}</strong>.<br/>
+              <span style={{ fontSize: 11 }}>This date had no Q4 results announced. NSE + BSE pipeline polled.</span>
+              {mostRecent && (
+                <div style={{ marginTop: 12, display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <button onClick={() => setFilterDate(mostRecent)} style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #22D3EE60', backgroundColor: '#22D3EE15', color: '#22D3EE', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+                    → Jump to {new Date(mostRecent).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })} ({allDatesWithFilings.length > 0 ? 'most recent with filings' : 'latest'})
+                  </button>
+                  <button onClick={() => setFilterDate('')} style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #1A2840', backgroundColor: 'transparent', color: '#8A95A3', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+                    Auto-pick latest
+                  </button>
+                </div>
+              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
         {viewMode === 'GRADED' && TIER_ORDER.map((tier) => {
           const stocks = view.by_tier[tier] || [];
           if (stocks.length === 0) return null;
