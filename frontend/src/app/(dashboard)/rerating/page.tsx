@@ -97,6 +97,53 @@ function readMultibaggerSymbols(): string[] {
   }
 }
 
+// PATCH 0112: read FULL Multibagger upload data from mb_excel_scored_v2.
+// Each row carries opm/opmPrev/opmExpansion/pe/peg/epsGrowth/accelSignal/
+// fii/dii/roce/roceExpansion — exactly what Re-rating screeners need.
+interface MBStockRow {
+  symbol: string;
+  company?: string;
+  sector?: string;
+  // Margin / profitability
+  opm?: number;            // current OPM %
+  opmPrev?: number;        // OPM last year %
+  opmExpansion?: number;   // current - 3yr-ago
+  roce?: number;
+  roceExpansion?: number;
+  // Growth + acceleration
+  revCagr?: number;
+  profitCagr?: number;
+  epsGrowth?: number;
+  yoySalesGrowth?: number;
+  yoyProfitGrowth?: number;
+  revenueAcceleration?: number;
+  profitAcceleration?: number;
+  accelSignal?: 'ACCELERATING' | 'STABLE' | 'DECELERATING';
+  // Valuation
+  pe?: number;
+  peg?: number;
+  marketCapCr?: number;
+  // Ownership
+  fii?: number;
+  dii?: number;
+  fiiPlusDii?: number;
+  // Score
+  score?: number;
+  grade?: string;
+}
+
+export function readMultibaggerStocks(): MBStockRow[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem('mb_excel_scored_v2');
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 // NSE500 small-cap proxy list — fetched once if user picks that universe
 async function fetchNSE500(): Promise<string[]> {
   try {
@@ -107,10 +154,18 @@ async function fetchNSE500(): Promise<string[]> {
 }
 
 function useUniverseSymbols(choice: UniverseChoice, customCsv: string) {
-  return useQuery<{ symbols: string[]; source: string }>({
+  return useQuery<{ symbols: string[]; source: string; mbStocks: MBStockRow[] }>({
     queryKey: ['rerating', 'universe', choice, customCsv],
     queryFn: async () => {
       const out = new Set<string>();
+      // PATCH 0112: also surface the full MB stock data so screeners can read
+      // opmPrev / epsGrowth / peg / accelSignal directly from the upload.
+      const mbStocks = readMultibaggerStocks();
+      for (const s of mbStocks) {
+        if (!s.symbol) continue;
+        // Normalize BSE:NNNNNN → ticker symbol via lookup if available
+        // (kept simple here — Multibagger upload already normalizes)
+      }
 
       const addPortfolio = async () => {
         try {
@@ -137,34 +192,36 @@ function useUniverseSymbols(choice: UniverseChoice, customCsv: string) {
       };
 
       let source = 'auto';
+      // PATCH 0112: format source label with PROPER stock count
+      // (not '(1)' which means 1 upload batch — confusing)
       if (choice === 'MULTIBAGGER') {
         addMultibagger();
-        source = `multibagger (${out.size})`;
+        source = `Multibagger Upload · ${out.size} stocks`;
       } else if (choice === 'PORTFOLIO') {
         await addPortfolio();
-        source = `portfolio (${out.size})`;
+        source = `My Portfolio · ${out.size} stocks`;
       } else if (choice === 'WATCHLIST') {
         await addWatchlist();
-        source = `watchlist (${out.size})`;
+        source = `My Watchlist · ${out.size} stocks`;
       } else if (choice === 'NSE500') {
         const list = await fetchNSE500();
         for (const s of list) out.add(s);
-        source = `NSE500 (${out.size})`;
+        source = `NSE 500 · ${out.size} stocks`;
       } else if (choice === 'CUSTOM') {
         for (const t of customCsv.split(/[,\s]+/).map((s) => s.trim().toUpperCase()).filter(Boolean)) out.add(t);
-        source = `custom (${out.size})`;
+        source = `Custom · ${out.size} stocks`;
       } else {
         // AUTO: prefer Multibagger upload; if empty, fall back to portfolio + watchlist union
         addMultibagger();
         if (out.size === 0) {
           await addPortfolio();
           await addWatchlist();
-          source = `portfolio + watchlist (${out.size})`;
+          source = `Portfolio + Watchlist · ${out.size} stocks`;
         } else {
-          source = `multibagger upload (${out.size})`;
+          source = `Multibagger Upload · ${out.size} stocks`;
         }
       }
-      return { symbols: Array.from(out), source };
+      return { symbols: Array.from(out), source, mbStocks };
     },
     staleTime: 5 * 60_000,
   });
@@ -268,6 +325,70 @@ function computeMarginExpansion(rows: EarningsRow[]): MarginRow[] {
   return out.sort((a, b) => b.delta_opm_bps - a.delta_opm_bps);
 }
 
+// PATCH 0112: Margin Expansion from Multibagger upload CSV — primary source
+// for Indian small/midcaps where live earnings-scan has no data.
+// User: '25 stocks uploaded with opm/opmPrev/accelSignal — must use these.'
+function computeMarginExpansionFromMB(mbStocks: MBStockRow[]): MarginRow[] {
+  const out: MarginRow[] = [];
+  for (const s of mbStocks) {
+    if (!s.symbol) continue;
+    const opmCurr = s.opm;
+    const opmPrev = s.opmPrev;
+    const opmExpansion = s.opmExpansion;
+    const accel = s.accelSignal;
+    const profitAccel = s.profitAcceleration ?? 0;
+
+    // Qualify if ANY of these hold:
+    //   - opm > opmPrev (YoY margin expansion)
+    //   - opmExpansion > 0 (3yr cumulative expansion)
+    //   - accelSignal === ACCELERATING
+    //   - profitAcceleration > 0
+    const opmYoyExpand = opmCurr != null && opmPrev != null && opmCurr > opmPrev;
+    const expansionPositive = opmExpansion != null && opmExpansion > 0;
+    const accelerating = accel === 'ACCELERATING';
+    if (!opmYoyExpand && !expansionPositive && !accelerating && profitAccel <= 0) continue;
+
+    // delta = prefer YoY if available, else 3yr expansion, else profit accel proxy
+    let deltaBps = 0;
+    if (opmYoyExpand) deltaBps = Math.round((opmCurr! - opmPrev!) * 100);
+    else if (expansionPositive) deltaBps = Math.round(opmExpansion! * 100);
+    else if (profitAccel > 0) deltaBps = Math.round(profitAccel * 100);
+    else if (accelerating) deltaBps = 50;  // sentinel for accelSignal-only matches
+
+    out.push({
+      ticker: s.symbol.toUpperCase(),
+      delta_opm_bps: deltaBps,
+      latest_opm: opmCurr ?? null,
+      oldest_opm: opmPrev ?? null,
+      latest_rev_yoy: s.yoySalesGrowth ?? null,
+      quarters: opmPrev != null ? 4 : (opmExpansion != null ? 12 : 0),
+    });
+  }
+  return out.sort((a, b) => b.delta_opm_bps - a.delta_opm_bps);
+}
+
+function computeMultipleExpansionFromMB(mbStocks: MBStockRow[]): MultipleExpandRow[] {
+  const out: MultipleExpandRow[] = [];
+  for (const s of mbStocks) {
+    if (!s.symbol) continue;
+    const pe = s.pe;
+    const peg = s.peg;
+    const epsGrowth = s.epsGrowth ?? s.yoyProfitGrowth ?? s.profitCagr ?? 0;
+    if (!(pe != null && pe > 0 && pe < 200)) continue;
+    if (!(epsGrowth > 0)) continue;
+    const computedPeg = peg ?? (pe / Math.max(1, epsGrowth));
+    if (computedPeg > 5) continue;  // too expensive
+    out.push({
+      ticker: s.symbol.toUpperCase(),
+      pe,
+      eps_yoy: epsGrowth,
+      peg: computedPeg,
+      latest_opm: s.opm ?? null,
+    });
+  }
+  return out.sort((a, b) => (a.peg ?? 999) - (b.peg ?? 999));
+}
+
 interface ModelShiftRow {
   ticker: string;
   recent_count: number;        // mentions in last 90d
@@ -284,16 +405,35 @@ interface ModelShiftRow {
 // recurring / platform / SaaS.
 const MODEL_SHIFT_PATTERN = /\b(saas|software.as.a.service|subscription (?:model|revenue|business)|recurring revenue|annualized recurring revenue|arr\b|platform (?:model|play|business|revenue)|recurring|net revenue retention|nrr|expansion revenue|land.and.expand|usage based pricing|metered|annuity (?:revenue|business|model)|retainer|long.?term contract|order ?book|amc\b|maintenance contract|maintenance services|managed services|channel partner|after.?market services|services revenue|service revenue|aftermarket|asset.?light|licensing model|royalty model|capex.?to.?opex|gross margin expansion|operating leverage|run.?rate revenue)\b/i;
 
+// PATCH 0112 — BUG-NEW-03: tickers that are CONTRACT TYPES not companies.
+// User: "EPC in a solar order article ≠ a company called EPC".
+const MODEL_SHIFT_TICKER_BLACKLIST = new Set([
+  'EPC','IPO','MW','GW','KW','MWH','GWH','SPV','PPA','BESS','HBM','AMC','AGM',
+  'CSR','ESG','DAE','NTPC','NHPC','POWERGRID','COALINDIA','RELIANCE','TCS','INFY','WIPRO','HCLTECH',
+  // PSU utilities that are NOT changing business model — they always were
+  // public utilities, so a 'platform' or 'recurring' mention in their context
+  // is keyword leak, not a real model shift.
+]);
+// Require strong evidence — the model-shift keyword must appear WITH a
+// model-shift VERB in the same sentence ("transitioning to / launches /
+// pivots to / shifts to / introduces / building").
+const MODEL_SHIFT_VERB_NEARBY = /\b(transition\w*\s+to|pivots?\s+to|shifts?\s+to|launch(?:es|ed|ing)?\s+\w*\s*(?:subscription|recurring|platform|saas)|moves?\s+to\s+(?:subscription|recurring|platform|saas|annuity)|building\s+(?:its|a|an)\s+\w*\s*(?:subscription|recurring|platform|saas)|introduces?\s+(?:subscription|recurring|platform|saas)|business\s+model\s+(?:change|shift|transition)|recurring\s+revenue\s+grows|arr\s+(?:reaches|crosses|exceeds))/i;
+
 function computeModelShift(articles: Article[]): ModelShiftRow[] {
   const now = Date.now();
   const map = new Map<string, { recent: number; prior: number; latest_headline?: string; latest_age?: number }>();
   for (const a of articles) {
     const text = `${a.headline || a.title || ''} ${a.summary || ''}`;
     if (!MODEL_SHIFT_PATTERN.test(text)) continue;
+    // PATCH 0112: require model-shift VERB near the keyword (kills 'EPC contract'
+    // false positives on PSU utility orders).
+    if (!MODEL_SHIFT_VERB_NEARBY.test(text)) continue;
     const date = a.published_at ? new Date(a.published_at).getTime() : now;
     const ageDays = Math.round((now - date) / 86400000);
     const tickers = (a.ticker_symbols || a.tickers || []).map((t) => String(t).toUpperCase());
     for (const t of tickers) {
+      // PATCH 0112: drop pseudo-tickers + PSU utility false positives
+      if (MODEL_SHIFT_TICKER_BLACKLIST.has(t)) continue;
       const cur = map.get(t) || { recent: 0, prior: 0 };
       if (ageDays <= 90) {
         cur.recent += 1;
@@ -391,16 +531,38 @@ export default function RerratingPage() {
     }
   }, [active, searchParams, router]);
 
-  const { data: universeData = { symbols: [], source: 'loading' } } = useUniverseSymbols(universeChoice, customCsv);
+  const { data: universeData = { symbols: [], source: 'loading', mbStocks: [] as MBStockRow[] } } = useUniverseSymbols(universeChoice, customCsv);
   const universe = universeData.symbols;
   const universeSource = universeData.source;
+  const mbStocks = universeData.mbStocks;
   const { data: earnings = [], isLoading: loadingE } = useEarningsScan(universe);
   const { data: quotes = {}, isLoading: loadingQ } = useQuotes(universe);
   const { data: feed, isLoading: loadingN } = useNewsFeed();
 
-  const marginRows = useMemo(() => computeMarginExpansion(earnings), [earnings]);
+  // PATCH 0112: PRIMARY = read from Multibagger upload CSV data
+  // (which already has opm/opmPrev/pe/peg/epsGrowth/accelSignal computed
+  // from Screener.in export). Live earnings-scan is SECONDARY enrichment
+  // only — small/mid caps usually don't have live data so user saw 0 candidates.
+  const marginRowsMB = useMemo(() => computeMarginExpansionFromMB(mbStocks), [mbStocks]);
+  const marginRowsAPI = useMemo(() => computeMarginExpansion(earnings), [earnings]);
+  const marginRows = useMemo(() => {
+    // Merge — MB rows take priority; API rows fill in for unseen tickers
+    const seen = new Set(marginRowsMB.map((r) => r.ticker));
+    const merged = [...marginRowsMB];
+    for (const r of marginRowsAPI) if (!seen.has(r.ticker)) merged.push(r);
+    return merged.sort((a, b) => b.delta_opm_bps - a.delta_opm_bps);
+  }, [marginRowsMB, marginRowsAPI]);
+
+  const multipleRowsMB = useMemo(() => computeMultipleExpansionFromMB(mbStocks), [mbStocks]);
+  const multipleRowsAPI = useMemo(() => computeMultipleExpansion(quotes, earnings), [quotes, earnings]);
+  const multipleRows = useMemo(() => {
+    const seen = new Set(multipleRowsMB.map((r) => r.ticker));
+    const merged = [...multipleRowsMB];
+    for (const r of multipleRowsAPI) if (!seen.has(r.ticker)) merged.push(r);
+    return merged.sort((a, b) => (a.peg ?? 999) - (b.peg ?? 999));
+  }, [multipleRowsMB, multipleRowsAPI]);
+
   const modelRows = useMemo(() => computeModelShift(feed?.articles || []), [feed]);
-  const multipleRows = useMemo(() => computeMultipleExpansion(quotes, earnings), [quotes, earnings]);
 
   const filterByRegion = <T extends { ticker: string }>(rows: T[]): T[] => {
     if (region === 'ALL') return rows;

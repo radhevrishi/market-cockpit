@@ -397,7 +397,22 @@ function loadSheet(ticker: string): StoredSheet | null {
   if (typeof window === 'undefined') return null;
   try {
     const raw = localStorage.getItem(STORAGE_KEY + ticker.toUpperCase());
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as StoredSheet;
+    // PATCH 0112: sanitize state — coerce evidence to string in case any
+    // older save poisoned the field with an object (root cause of the
+    // persistent React Error #31 crashes).
+    if (parsed?.state) {
+      for (const k of Object.keys(parsed.state)) {
+        const ans = parsed.state[k];
+        if (ans && typeof ans.evidence !== 'string') {
+          ans.evidence = typeof ans.evidence === 'object'
+            ? JSON.stringify(ans.evidence).slice(0, 240)
+            : String(ans.evidence ?? '');
+        }
+      }
+    }
+    return parsed;
   } catch { return null; }
 }
 function saveSheet(s: StoredSheet) {
@@ -599,6 +614,7 @@ export default function StockSheetPage() {
   };
 
   return (
+    <StockSheetErrorBoundary>
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: '#0A0E1A' }}>
       {/* ── Header ─────────────────────────────────────────────────── */}
       <div style={{ backgroundColor: '#0D1B2E', borderBottom: '1px solid #1E2D45', padding: '14px 20px', flexShrink: 0 }}>
@@ -780,7 +796,7 @@ export default function StockSheetPage() {
                               </div>
                             </div>
                             <input
-                              value={ans?.evidence || ''}
+                              value={typeof ans?.evidence === 'string' ? ans.evidence : ''}
                               onChange={(e) => handleEvidence(c.id, e.target.value)}
                               placeholder="Evidence / source / 1-line note…"
                               style={{ marginTop: 6, width: '100%', padding: '5px 8px', backgroundColor: '#0D1623', border: '1px solid #1A2840', borderRadius: 4, color: '#94A3B8', fontSize: 11, outline: 'none' }}
@@ -798,5 +814,6 @@ export default function StockSheetPage() {
       )}
       </StockSheetErrorBoundary>
     </div>
+    </StockSheetErrorBoundary>
   );
 }
