@@ -352,10 +352,10 @@ function isValidSymbol(s: string): boolean {
 //   1. NSE structured /api/corporates-financial-results (primary, XBRL)
 //   2. BSE corporate filings + Screener (fallback for BSE-only stocks)
 //   3. Yahoo Finance v8 (always overlaid for price/RS/Stage)
-async function enrichOne(symbol: string, filedHint?: string): Promise<any> {
+async function enrichOne(symbol: string, filedHint?: string, bypassCache = false): Promise<any> {
   // Cache key includes filed date so a new filing busts old cache
   const cacheKey = filedHint ? `enrich:v4:${symbol}:${filedHint}` : `enrich:v4:${symbol}`;
-  if (isRedisAvailable()) {
+  if (isRedisAvailable() && !bypassCache) {
     try {
       const cached = await kvGet(cacheKey);
       if (cached) return cached;
@@ -395,13 +395,15 @@ export async function GET(req: Request) {
   // Optional cache-bust hint — when frontend knows the filing date, pass it
   // so the cache key includes it and a fresh filing automatically invalidates.
   const filedHint = searchParams.get('filed') || undefined;
+  // PATCH 0160 — nocache=1 forces fresh fetch (used by partial-refresh mode)
+  const bypassCache = searchParams.get('nocache') === '1';
   const symbols = symbolsParam.split(',').map((s) => s.trim().toUpperCase()).filter(isValidSymbol).slice(0, 80);
   if (symbols.length === 0) {
     return NextResponse.json({ data: {}, generated_at: new Date().toISOString(), error: 'no valid symbols' });
   }
   const t0 = Date.now();
   const entries: Array<[string, any]> = await Promise.all(symbols.map(async (sym): Promise<[string, any]> => {
-    try { return [sym, await enrichOne(sym, filedHint)]; }
+    try { return [sym, await enrichOne(sym, filedHint, bypassCache)]; }
     catch { return [sym, null]; }
   }));
   const data: Record<string, any> = {};

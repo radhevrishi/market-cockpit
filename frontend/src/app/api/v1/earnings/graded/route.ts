@@ -227,6 +227,11 @@ function gradeRow(row: any): ParsedEarning | null {
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const date = searchParams.get('date') || '';
+  // PATCH 0160 — refreshMissing=1 means: load existing payload, find cards
+  // with no financials (sales_curr_cr null AND pat_curr_cr null), re-enrich
+  // ONLY those tickers with cache bypass, merge back. Leaves populated cards
+  // 100% untouched.
+  const refreshMissing = searchParams.get('refreshMissing') === '1';
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return NextResponse.json({ error: 'date param required (YYYY-MM-DD)' }, { status: 400 });
   }
@@ -236,13 +241,100 @@ export async function GET(req: Request) {
   const cacheKey = `graded:v1:${date}`;
 
   // Try cache first (past dates are immutable, 90-day TTL — practically forever for our use)
-  if (isRedisAvailable()) {
+  if (isRedisAvailable() && !refreshMissing) {
     try {
       const cached = await kvGet(cacheKey);
       if (cached) {
         return NextResponse.json({ ...cached, _cache: 'hit' });
       }
     } catch {}
+  }
+
+  // ── PARTIAL REFRESH PATH ──────────────────────────────────────────────
+  // Read cached payload, identify cards needing enrichment, refetch only those.
+  if (refreshMissing && isRedisAvailable()) {
+    try {
+      const existing: any = await kvGet(cacheKey);
+      if (existing?.by_tier) {
+        const allCards: any[] = (TIER_ORDER as EarningsTier[]).flatMap((t) => existing.by_tier[t] || []);
+        const needTickers = allCards.filter((c) => c.sales_curr_cr == null && c.pat_curr_cr == null).map((c) => c.ticker);
+        if (needTickers.length === 0) {
+          return NextResponse.json({ ...existing, _cache: 'hit', _refresh: 'no-op (all populated)' });
+        }
+        const base = new URL(req.url);
+        const chunks: string[][] = [];
+        for (let i = 0; i < needTickers.length; i += 40) chunks.push(needTickers.slice(i, i + 40));
+        const responses = await Promise.all(chunks.map((ch) =>
+          fetch(`${base.protocol}//${base.host}/api/v1/earnings/enrich?symbols=${ch.join(',')}&filed=${date}&nocache=1`, { cache: 'no-store' })
+            .then((r) => r.ok ? r.json() : { data: {} })
+            .catch(() => ({ data: {} }))
+        ));
+        const enrich: Record<string, any> = {};
+        for (const r of responses) Object.assign(enrich, r.data || {});
+
+        // Re-grade ONLY the missing-data cards
+        const replacedTickers = new Set<string>();
+        const updatedCards: ParsedEarning[] = [];
+        for (const c of allCards) {
+          if (c.sales_curr_cr != null || c.pat_curr_cr != null) {
+            updatedCards.push(c);  // keep populated card as-is (untouched)
+            continue;
+          }
+          const e = enrich[c.ticker];
+          if (!e || (e.sales_curr_cr == null && e.pat_curr_cr == null)) {
+            updatedCards.push(c);  // still no data → keep preview
+            continue;
+          }
+          // Re-grade with new enrichment data
+          const row = {
+            hub_quality: undefined,                    // we have financials now, no preview path
+            symbol: c.ticker, company: c.company, filing_date: c.filing_date,
+            quarter: c.quarter, sector: e.sector || c.sector,
+            market_cap_bucket: e.market_cap_bucket || c.market_cap_bucket,
+            source_url: c.filing_url,
+            sales_curr_cr: e.sales_curr_cr, sales_prev_cr: e.sales_prev_cr, sales_yoy_pct: e.sales_yoy_pct,
+            pat_curr_cr: e.pat_curr_cr, pat_prev_cr: e.pat_prev_cr, pat_yoy_pct: e.pat_yoy_pct,
+            eps_curr: e.eps_curr, eps_prev: e.eps_prev, eps_yoy_pct: e.eps_yoy_pct,
+            op_profit_yoy_pct: e.op_profit_yoy_pct, opm_pct: e.opm_pct, opm_prev_pct: e.opm_prev_pct,
+            pe: e.pe, current_price: e.current_price ?? c.price,
+            gap_pct: e.gap_pct ?? c.gap_pct, d1_pct: e.d1_pct ?? c.d1_pct, move_pct: e.move_pct ?? c.move_pct,
+            pct_from_52w_high: e.pct_from_52w_high ?? c.pct_from_52w_high,
+            rs_rating: e.rs_rating ?? c.rs_rating, stage: e.stage ?? c.stage,
+            trend_template_passes: e.trend_template_passes,
+            ocf_annual_cr: e.ocf_annual_cr, pat_annual_cr: e.pat_annual_cr, ocf_to_pat_ratio: e.ocf_to_pat_ratio,
+            period_ended: e.period_ended, latest_quarter_end_iso: e.latest_quarter_end_iso,
+            financials_source: e.financials_source,
+          };
+          const g = gradeRow(row);
+          if (g) {
+            updatedCards.push(g);
+            replacedTickers.add(c.ticker);
+          } else {
+            updatedCards.push(c);
+          }
+        }
+
+        // Rebuild by_tier and re-sort
+        const by_tier: Record<EarningsTier, ParsedEarning[]> = { BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [] };
+        for (const g of updatedCards) by_tier[g.tier].push(g);
+        for (const t of TIER_ORDER) by_tier[t].sort((a, b) => b.composite_score - a.composite_score);
+
+        const payload = {
+          ...existing,
+          by_tier,
+          candidates_total: updatedCards.length,
+          generated_at: new Date().toISOString(),
+          _cache: 'partial-refresh',
+          _refresh: `${replacedTickers.size}/${needTickers.length} updated`,
+        };
+        // Write back with same TTL strategy
+        const ttl = isPast ? 90 * 24 * 3600 : 15 * 60;
+        try { await kvSet(cacheKey, payload, ttl); } catch {}
+        return NextResponse.json(payload);
+      }
+    } catch (e) {
+      // Fall through to full-rebuild path
+    }
   }
 
   // Fetch hub for the month

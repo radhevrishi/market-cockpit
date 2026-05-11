@@ -714,6 +714,26 @@ export default function EarningsOpportunitiesPage() {
             style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #1A2840', background: 'transparent', color: '#8A95A3', fontSize: 11, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
             <RefreshCw style={{ width: 11, height: 11 }} /> Refresh
           </button>
+          {/* PATCH 0160 — Partial refresh: only re-fetch missing-data cards */}
+          {resolvedDateForGrading && (() => {
+            const missing = ((view.by_tier?.BLOCKBUSTER ?? []) as ParsedEarning[])
+              .concat(view.by_tier?.STRONG ?? [])
+              .concat(view.by_tier?.MIXED ?? [])
+              .concat(view.by_tier?.AVOID ?? [])
+              .filter((c) => c.sales_curr_cr == null && c.pat_curr_cr == null).length;
+            if (missing === 0) return null;
+            return (
+              <button
+                onClick={async () => {
+                  await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}&refreshMissing=1`);
+                  refetch();
+                }}
+                title={`Fetch financials for ${missing} cards that don't have data yet — leaves populated cards untouched`}
+                style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #F59E0B60', background: '#F59E0B15', color: '#F59E0B', fontSize: 11, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 700 }}>
+                <RefreshCw style={{ width: 11, height: 11 }} /> Refresh {missing} missing
+              </button>
+            );
+          })()}
           <span style={{ marginLeft: 'auto', fontSize: 11, color: '#6B7A8D' }}>
             Live BSE/NSE results pipeline · {view.sources_polled} sources polled
           </span>
