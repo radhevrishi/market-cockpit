@@ -431,6 +431,67 @@ function listSavedTickers(): string[] {
   return out.sort();
 }
 
+// PATCH 0114 — IMP-11: Stock Sheet blank-state shortcuts.
+// Reads top Multibagger upload tickers from localStorage (mb_excel_scored_v2)
+// so the user can jump straight from "I just uploaded my Excel" → "run sheet
+// on my best-scoring stock" without typing.  Returns up to N entries sorted
+// by composite score descending.
+interface MBTopPick { symbol: string; score?: number; opmExpansion?: number; epsGrowth?: number; }
+function listTopMultibaggerTickers(limit = 5): MBTopPick[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem('mb_excel_scored_v2');
+    if (!raw) return [];
+    const rows = JSON.parse(raw);
+    if (!Array.isArray(rows)) return [];
+    const picks: MBTopPick[] = [];
+    for (const r of rows) {
+      const sym = (r?.symbol || r?.ticker || r?.Symbol || '').toString().trim().toUpperCase();
+      if (!sym) continue;
+      const score = Number(r?.composite_score ?? r?.score ?? r?.compositeScore ?? 0) || 0;
+      picks.push({
+        symbol: sym,
+        score,
+        opmExpansion: Number(r?.opm_expansion ?? r?.opmExpansion ?? 0) || 0,
+        epsGrowth: Number(r?.eps_growth ?? r?.epsGrowth ?? 0) || 0,
+      });
+    }
+    return picks.sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, limit);
+  } catch { return []; }
+}
+
+// PATCH 0114 — recently viewed ring (last 5 tickers loaded in this browser).
+// Distinct from "saved" — these are tickers the user opened even briefly,
+// useful when they're flipping between candidates without committing a save.
+const RECENT_KEY = 'mc:stock-sheet:recent:v1';
+function loadRecentTickers(): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(RECENT_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.filter((s) => typeof s === 'string').slice(0, 8) : [];
+  } catch { return []; }
+}
+function pushRecentTicker(ticker: string) {
+  if (typeof window === 'undefined' || !ticker) return;
+  try {
+    const cur = loadRecentTickers().filter((t) => t !== ticker);
+    cur.unshift(ticker);
+    localStorage.setItem(RECENT_KEY, JSON.stringify(cur.slice(0, 8)));
+  } catch {}
+}
+
+// Example launches for fully empty sessions — covers US AI-DC, India PSU
+// nuclear, India defense, India IT for diversity.
+const EXAMPLE_TICKERS: { sym: string; label: string }[] = [
+  { sym: 'LEU',          label: 'US · Nuclear fuel' },
+  { sym: 'NBIS',         label: 'US · Sovereign AI' },
+  { sym: 'NTPC.NS',      label: 'IN · Power' },
+  { sym: 'HAL.NS',       label: 'IN · Defense' },
+  { sym: 'MTARTECH.NS',  label: 'IN · Nuclear midcap' },
+];
+
 // ─── Scoring ────────────────────────────────────────────────────────────────
 
 interface Score {
@@ -541,8 +602,15 @@ export default function StockSheetPage() {
   const [state, setState] = useState<SheetState>({});
   const [openSections, setOpenSections] = useState<Record<number, boolean>>({});
   const [savedList, setSavedList] = useState<string[]>([]);
+  // PATCH 0114 — IMP-11: blank-state shortcuts state
+  const [recentList, setRecentList] = useState<string[]>([]);
+  const [mbTopList, setMbTopList] = useState<MBTopPick[]>([]);
 
-  useEffect(() => { setSavedList(listSavedTickers()); }, [activeTicker]);
+  useEffect(() => {
+    setSavedList(listSavedTickers());
+    setRecentList(loadRecentTickers());
+    setMbTopList(listTopMultibaggerTickers(5));
+  }, [activeTicker]);
 
   // Load from storage when activeTicker changes
   useEffect(() => {
@@ -551,6 +619,8 @@ export default function StockSheetPage() {
     setState(stored?.state || {});
     // Open first 3 sections by default
     setOpenSections({ 1: true, 2: true, 3: true });
+    // PATCH 0114 — record into recents ring
+    pushRecentTicker(activeTicker);
   }, [activeTicker]);
 
   // Sync URL
@@ -674,13 +744,88 @@ export default function StockSheetPage() {
       {/* ── Body ───────────────────────────────────────────────────── */}
       <StockSheetErrorBoundary>
       {!activeTicker ? (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6B7A8D', fontSize: 14, padding: 24, textAlign: 'center' }}>
-          <div>
-            <div style={{ fontSize: 48, marginBottom: 12 }}>📋</div>
-            Enter a ticker above to run the 16-section institutional checklist.
-            <div style={{ fontSize: 11, color: '#4A5B6C', marginTop: 8 }}>
-              Live data auto-fills theme / catalyst / sentiment / financial-quality where available.<br/>
-              Remaining sections are manual research with evidence notes.
+        <div style={{ flex: 1, overflowY: 'auto', padding: '24px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <div style={{ width: '100%', maxWidth: 880 }}>
+            <div style={{ textAlign: 'center', marginBottom: 28 }}>
+              <div style={{ fontSize: 44, marginBottom: 8 }}>📋</div>
+              <div style={{ fontSize: 17, color: '#E6EDF3', fontWeight: 700, marginBottom: 4 }}>
+                Enter a ticker to run the 16-section institutional checklist
+              </div>
+              <div style={{ fontSize: 12, color: '#6B7A8D', lineHeight: 1.55 }}>
+                Live data auto-fills theme / catalyst / sentiment / financial-quality where available.<br/>
+                Remaining sections are manual research with evidence notes.
+              </div>
+            </div>
+
+            {/* PATCH 0114 — IMP-11: Top from Multibagger upload (if any) */}
+            {mbTopList.length > 0 && (
+              <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: 10, padding: 14, marginBottom: 14 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 12, color: '#FACC15', fontWeight: 800, letterSpacing: '0.6px' }}>⭐ FROM YOUR MULTIBAGGER UPLOAD</div>
+                    <div style={{ fontSize: 10, color: '#6B7A8D', marginTop: 2 }}>Top {mbTopList.length} by composite score</div>
+                  </div>
+                  <button onClick={() => { setTickerInput(mbTopList[0].symbol); setActiveTicker(mbTopList[0].symbol); }}
+                    style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid #FACC1560', backgroundColor: '#FACC1520', color: '#FACC15', fontSize: 11, fontWeight: 800, cursor: 'pointer' }}>
+                    RUN #1
+                  </button>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 8 }}>
+                  {mbTopList.map((p) => (
+                    <button key={p.symbol} onClick={() => { setTickerInput(p.symbol); setActiveTicker(p.symbol); }}
+                      style={{ textAlign: 'left', padding: '10px 12px', borderRadius: 8, border: '1px solid #1A2840', backgroundColor: '#0A1422', color: '#E6EDF3', cursor: 'pointer', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: '#FACC15' }}>{p.symbol}</div>
+                      <div style={{ fontSize: 10, color: '#6B7A8D', marginTop: 2 }}>
+                        {p.score ? `score ${p.score.toFixed(1)}` : ''}{p.opmExpansion ? ` · Δ OPM ${p.opmExpansion.toFixed(1)}pp` : ''}{p.epsGrowth ? ` · EPS ${p.epsGrowth.toFixed(0)}%` : ''}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* PATCH 0114 — IMP-11: Recently viewed */}
+            {recentList.length > 0 && (
+              <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: 10, padding: 14, marginBottom: 14 }}>
+                <div style={{ fontSize: 12, color: '#22D3EE', fontWeight: 800, letterSpacing: '0.6px', marginBottom: 8 }}>🕒 RECENTLY VIEWED</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {recentList.map((t) => (
+                    <button key={t} onClick={() => { setTickerInput(t); setActiveTicker(t); }}
+                      style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid #22D3EE40', backgroundColor: '#22D3EE15', color: '#22D3EE', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* PATCH 0114 — IMP-11: Saved sheets shortcut (when blank) */}
+            {savedList.length > 0 && (
+              <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: 10, padding: 14, marginBottom: 14 }}>
+                <div style={{ fontSize: 12, color: '#10B981', fontWeight: 800, letterSpacing: '0.6px', marginBottom: 8 }}>💾 SAVED SHEETS</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {savedList.map((t) => (
+                    <button key={t} onClick={() => { setTickerInput(t); setActiveTicker(t); }}
+                      style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid #10B98140', backgroundColor: '#10B98115', color: '#10B981', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* PATCH 0114 — IMP-11: Examples (always shown) */}
+            <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: 10, padding: 14 }}>
+              <div style={{ fontSize: 12, color: '#8A95A3', fontWeight: 800, letterSpacing: '0.6px', marginBottom: 8 }}>🚀 START WITH AN EXAMPLE</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 8 }}>
+                {EXAMPLE_TICKERS.map((e) => (
+                  <button key={e.sym} onClick={() => { setTickerInput(e.sym); setActiveTicker(e.sym); }}
+                    style={{ textAlign: 'left', padding: '10px 12px', borderRadius: 8, border: '1px solid #1A2840', backgroundColor: '#0A1422', color: '#E6EDF3', cursor: 'pointer' }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{e.sym}</div>
+                    <div style={{ fontSize: 10, color: '#6B7A8D', marginTop: 2 }}>{e.label}</div>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </div>
