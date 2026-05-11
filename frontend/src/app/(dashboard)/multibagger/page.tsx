@@ -3098,6 +3098,44 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                                                 `₹${mcap.toFixed(0)}Cr`}
                             </span>
                           }
+                          {/* PATCH 0166 — MC-Efficiency = rev_growth × ROCE / log10(MCap_Cr)
+                              Higher = small company growing fast at high ROCE = great compounding setup.
+                              ROCE/FCF Quality = ROCE / (FCF/Revenue) — high ROCE backed by strong FCF wins. */}
+                          {(() => {
+                            const roce = (r as any).roce as number | undefined;
+                            const revG = (r as any).revenue_growth as number | undefined ?? (r as any).rev_g as number | undefined;
+                            const fcf = (r as any).fcfAbsolute as number | undefined;
+                            const rev = (r as any).revenue_cr as number | undefined ?? (r as any).sales as number | undefined;
+                            if (roce != null && revG != null && mcap != null && mcap > 0) {
+                              const denom = Math.log10(Math.max(mcap, 10));
+                              const mcEff = (revG * roce) / denom;
+                              const col = mcEff >= 200 ? GREEN : mcEff >= 100 ? YELLOW : mcEff >= 50 ? ORANGE : MUTED;
+                              return (
+                                <span title={`MC-Efficiency = revG × ROCE / log(MCap). ${mcEff.toFixed(0)} (rev growth ${revG.toFixed(0)}% × ROCE ${roce.toFixed(0)}% / log MCap ${denom.toFixed(2)}).`}
+                                  style={{fontSize:9, color: col, fontWeight: 700, marginTop: 2}}>
+                                  MC-Eff {mcEff.toFixed(0)}
+                                </span>
+                              );
+                            }
+                            return null;
+                          })()}
+                          {(() => {
+                            const roce = (r as any).roce as number | undefined;
+                            const fcf = (r as any).fcfAbsolute as number | undefined;
+                            const rev = (r as any).revenue_cr as number | undefined ?? (r as any).sales as number | undefined;
+                            if (roce != null && fcf != null && rev != null && rev > 0) {
+                              const fcfPct = (fcf / rev) * 100;
+                              const ratio = fcfPct > 0 ? roce / fcfPct : 0;
+                              const col = fcfPct >= 8 ? GREEN : fcfPct >= 3 ? YELLOW : RED;
+                              return (
+                                <span title={`ROCE/FCF Quality. ROCE ${roce.toFixed(0)}%, FCF/Rev ${fcfPct.toFixed(1)}% → ratio ${ratio.toFixed(2)} (closer-to-1 = high-quality earnings backed by cash).`}
+                                  style={{fontSize:9, color: col, fontWeight: 700}}>
+                                  ROCE/FCF {fcfPct.toFixed(1)}%
+                                </span>
+                              );
+                            }
+                            return null;
+                          })()}
                         </div>
                       );
                     })()}
