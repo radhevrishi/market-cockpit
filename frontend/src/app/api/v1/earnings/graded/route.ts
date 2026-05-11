@@ -250,7 +250,9 @@ export async function GET(req: Request) {
     try {
       const cached = await kvGet(cacheKey);
       if (cached) {
-        return NextResponse.json({ ...cached, _cache: 'hit' });
+        // PATCH 0165 — edge cache: past dates immutable for an hour, today fresh-on-demand
+        const swr = isPast ? 's-maxage=3600, stale-while-revalidate=86400' : 's-maxage=60, stale-while-revalidate=300';
+        return NextResponse.json({ ...cached, _cache: 'hit' }, { headers: { 'Cache-Control': swr } });
       }
     } catch {}
   }

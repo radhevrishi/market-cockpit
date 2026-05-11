@@ -13,7 +13,7 @@
 // getting correct data'.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Calendar as CalendarIcon, ExternalLink, RefreshCw, ChevronDown, ChevronRight, Grid3X3, FileText } from 'lucide-react';
 import api from '@/lib/api';
@@ -643,8 +643,8 @@ export default function EarningsOpportunitiesPage() {
     return pastDates[0] || '';
   }, [hub, filterDate, todayIso]);
 
-  // PATCH 0161 — capture the graded query's own refetch so the Refresh
-  // buttons can actually re-pull the server payload after a partial refresh.
+  // PATCH 0161/0165 — graded query keeps previous data while loading the
+  // next date (no blank flash on navigation) + prefetches adjacent dates.
   const { data: gradedData, refetch: refetchGraded, isFetching: gradedFetching } = useQuery<OpportunitiesPayload>({
     queryKey: ['graded-by-date', resolvedDateForGrading],
     enabled: !!resolvedDateForGrading,
@@ -655,7 +655,23 @@ export default function EarningsOpportunitiesPage() {
     },
     staleTime: resolvedDateForGrading < todayIso ? 24 * 60 * 60_000 : 5 * 60_000,
     refetchInterval: false,
+    placeholderData: (prev) => prev,  // keep showing previous date while next loads
   });
+
+  // PATCH 0165 — prefetch the date before and after when user lands on a date
+  useEffect(() => {
+    if (!resolvedDateForGrading) return;
+    const d = new Date(resolvedDateForGrading);
+    const prev = new Date(d); prev.setDate(d.getDate() - 1);
+    const next = new Date(d); next.setDate(d.getDate() + 1);
+    const prevIso = prev.toISOString().slice(0, 10);
+    const nextIso = next.toISOString().slice(0, 10);
+    const timer = setTimeout(() => {
+      fetch(`/api/v1/earnings/graded?date=${prevIso}`).catch(() => {});
+      if (nextIso <= todayIso) fetch(`/api/v1/earnings/graded?date=${nextIso}`).catch(() => {});
+    }, 800);  // delay so current date renders first
+    return () => clearTimeout(timer);
+  }, [resolvedDateForGrading, todayIso]);
 
   const data: OpportunitiesPayload = gradedData || {
     filing_date: resolvedDateForGrading || null,
