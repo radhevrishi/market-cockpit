@@ -23,7 +23,14 @@ export const dynamic = 'force-dynamic';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 const SCREENER_TIMEOUT_MS = 6000;
 const YAHOO_TIMEOUT_MS = 5000;
-const ENRICH_TTL_S = 7 * 24 * 3600;
+// PATCH 0157 — staleness defense:
+// • Cache TTL reduced from 7 days → 6 hours. Quarterly filings come every
+//   90 days but the SAME stock can release amendments/clarifications same-
+//   day; 6h means at most a stale view until the next refetch.
+// • Cache key bumped v3 → v4 — fully busts older cached entries on deploy.
+// • Cache key now optionally includes `&filed=YYYY-MM-DD` from the caller
+//   so a fresh filing date naturally invalidates the cache.
+const ENRICH_TTL_S = 6 * 3600;
 
 // ─── HTML helpers ──────────────────────────────────────────────────────────
 function decodeHtml(s: string): string {
@@ -345,8 +352,9 @@ function isValidSymbol(s: string): boolean {
 //   1. NSE structured /api/corporates-financial-results (primary, XBRL)
 //   2. BSE corporate filings + Screener (fallback for BSE-only stocks)
 //   3. Yahoo Finance v8 (always overlaid for price/RS/Stage)
-async function enrichOne(symbol: string): Promise<any> {
-  const cacheKey = `enrich:v3:${symbol}`;
+async function enrichOne(symbol: string, filedHint?: string): Promise<any> {
+  // Cache key includes filed date so a new filing busts old cache
+  const cacheKey = filedHint ? `enrich:v4:${symbol}:${filedHint}` : `enrich:v4:${symbol}`;
   if (isRedisAvailable()) {
     try {
       const cached = await kvGet(cacheKey);
@@ -384,13 +392,16 @@ async function enrichOne(symbol: string): Promise<any> {
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const symbolsParam = searchParams.get('symbols') || '';
+  // Optional cache-bust hint — when frontend knows the filing date, pass it
+  // so the cache key includes it and a fresh filing automatically invalidates.
+  const filedHint = searchParams.get('filed') || undefined;
   const symbols = symbolsParam.split(',').map((s) => s.trim().toUpperCase()).filter(isValidSymbol).slice(0, 80);
   if (symbols.length === 0) {
     return NextResponse.json({ data: {}, generated_at: new Date().toISOString(), error: 'no valid symbols' });
   }
   const t0 = Date.now();
   const entries: Array<[string, any]> = await Promise.all(symbols.map(async (sym): Promise<[string, any]> => {
-    try { return [sym, await enrichOne(sym)]; }
+    try { return [sym, await enrichOne(sym, filedHint)]; }
     catch { return [sym, null]; }
   }));
   const data: Record<string, any> = {};

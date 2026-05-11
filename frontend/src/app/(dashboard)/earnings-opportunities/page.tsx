@@ -93,31 +93,30 @@ function useMarketEarnings(months: string[]) {
   });
 }
 
-// PATCH 0155 — Live enrichment via /api/v1/earnings/enrich (bypasses dead worker).
-// Fetches Screener financials + Yahoo price data directly from Vercel for any
-// given symbol list, with 7-day KV caching per-symbol.
-function useLiveEnrichmentMap(symbols: string[]) {
+// PATCH 0155 / 0157 — Live enrichment via /api/v1/earnings/enrich.
+// Fetches NSE structured + Screener + Yahoo data directly from Vercel,
+// caching per-symbol+filed-date in KV (6h TTL). Cache key includes the
+// filing date so a fresh filing naturally busts the old cache.
+function useLiveEnrichmentMap(symbols: string[], filed?: string) {
   // Stable key from sorted symbol list so the cache hits across renders
-  const key = useMemo(() => [...symbols].sort().join(','), [symbols]);
+  const key = useMemo(() => `${[...symbols].sort().join(',')}|${filed || ''}`, [symbols, filed]);
   return useQuery<Record<string, any>>({
     queryKey: ['live-enrichment', key],
     enabled: symbols.length > 0,
     queryFn: async () => {
-      // Chunk to 40 symbols per request to stay under Vercel 60s timeout
       const chunks: string[][] = [];
       for (let i = 0; i < symbols.length; i += 40) chunks.push(symbols.slice(i, i + 40));
+      const filedParam = filed ? `&filed=${encodeURIComponent(filed)}` : '';
       const responses = await Promise.all(chunks.map((chunk) =>
-        fetch(`/api/v1/earnings/enrich?symbols=${chunk.join(',')}`)
+        fetch(`/api/v1/earnings/enrich?symbols=${chunk.join(',')}${filedParam}`)
           .then((r) => r.ok ? r.json() : { data: {} })
           .catch(() => ({ data: {} }))
       ));
       const merged: Record<string, any> = {};
-      for (const r of responses) {
-        Object.assign(merged, r.data || {});
-      }
+      for (const r of responses) Object.assign(merged, r.data || {});
       return merged;
     },
-    staleTime: 60 * 60_000,        // 1 hour client-side (KV is 7-day)
+    staleTime: 30 * 60_000,        // 30 min client-side (KV is 6h)
     refetchInterval: false,
   });
 }
@@ -571,13 +570,14 @@ export default function EarningsOpportunitiesPage() {
   }, [filterDate]);
   const { data: hub, isLoading: hubLoading, error: hubError, refetch: refetchHub } = useMarketEarnings(monthsToFetch);
 
-  // PATCH 0155 — derive ticker list from hub for the currently-visible date(s)
-  // and request live Screener+Yahoo enrichment.
+  // PATCH 0155 / 0157 — derive ticker list AND the filing date being viewed
+  // so the enrich cache key includes the date (fresh filing → fresh cache).
   const todayIso = new Date().toISOString().slice(0, 10);
-  const symbolsToEnrich = useMemo(() => {
-    if (!hub?.results) return [];
+  const { symbolsToEnrich, resolvedFilingDate } = useMemo(() => {
+    if (!hub?.results) return { symbolsToEnrich: [], resolvedFilingDate: '' };
     if (filterDate) {
-      return hub.results.filter((r) => r.resultDate === filterDate && r.quality !== 'Upcoming').map((r) => r.ticker);
+      const syms = hub.results.filter((r) => r.resultDate === filterDate && r.quality !== 'Upcoming').map((r) => r.ticker);
+      return { symbolsToEnrich: syms, resolvedFilingDate: filterDate };
     }
     // Latest mode — enrich the most recent past date with filings
     const byDate: Record<string, string[]> = {};
@@ -586,10 +586,11 @@ export default function EarningsOpportunitiesPage() {
       (byDate[r.resultDate] = byDate[r.resultDate] || []).push(r.ticker);
     }
     const pastDates = Object.keys(byDate).sort().reverse();
-    return pastDates[0] ? byDate[pastDates[0]] : [];
+    const d = pastDates[0];
+    return { symbolsToEnrich: d ? byDate[d] : [], resolvedFilingDate: d || '' };
   }, [hub, filterDate, todayIso]);
 
-  const { data: enrichmentMap, isLoading: enrichLoading } = useLiveEnrichmentMap(symbolsToEnrich);
+  const { data: enrichmentMap, isLoading: enrichLoading } = useLiveEnrichmentMap(symbolsToEnrich, resolvedFilingDate);
   const data = useEarningsOpportunitiesJoined(filterDate, hub, enrichmentMap);
   const isLoading = hubLoading;
   const error = hubError;
