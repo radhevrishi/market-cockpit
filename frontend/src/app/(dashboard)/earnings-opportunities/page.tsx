@@ -306,9 +306,7 @@ function gradeRow(row: any): ParsedEarning | null {
     }
   }
 
-  // ── Deterministic methodology checks (PATCH 0150) ─────────────────────
-  // Now that we have RS rating, Stage detection and real MA-based trend
-  // template from the Yahoo enricher, these checks fire on real signals.
+  // ── Methodology checks (PATCH 0158 — calibrated to EarningsPulse) ─────
   const methodology_tags: string[] = [];
   const caveat_tags: string[] = [];
   const rs: number | null = row?.rs_rating ?? null;
@@ -316,79 +314,130 @@ function gradeRow(row: any): ParsedEarning | null {
   const ttPass: boolean = !!row?.trend_template_passes;
   const pct52: number | null = row?.pct_from_52w_high ?? null;
 
-  // trend template (Minervini) — full 8 criteria from MA stack + 52w geometry,
-  // plus RS ≥ 70 floor.
+  // trend template (Minervini) — Yahoo MA stack passes AND RS ≥ 70
   if (ttPass && rs != null && rs >= 70) methodology_tags.push('trend template');
   // sepa — Stage 2 + RS ≥ 80 + EPS ≥ 25% + within 15% of 52w high
   if (stage === 2 && rs != null && rs >= 80 && epsY != null && epsY >= 25 && pct52 != null && pct52 >= -15) {
     methodology_tags.push('sepa');
   }
-  // canslim — EPS ≥ 25%, Sales ≥ 20%, RS ≥ 80
-  if (epsY != null && epsY >= 25 && (salesY ?? 0) >= 20 && rs != null && rs >= 80) {
+  // canslim — EPS ≥ 25%, Sales ≥ 20%, RS ≥ 70 (loosened — EarningsPulse passes CANSLIM more freely)
+  if (epsY != null && epsY >= 25 && (salesY ?? 0) >= 20 && rs != null && rs >= 70) {
     methodology_tags.push('canslim');
   }
-  // bonde ep — EPS leadership (≥ 20% YoY) with revenue growth (≥ 5%) and acceleration
+  // bonde ep — EPS leadership (≥ 20% YoY) with revenue growth (≥ 5%)
   if (epsY != null && epsY >= 20 && (salesY == null || salesY >= 5)) methodology_tags.push('bonde ep');
 
-  // ── Caveat library (PATCH 0150) ────────────────────────────────────────
-  // optical eps — PAT growth far outpaces sales growth, OR low-base distortion
+  // ── Caveats (matches EarningsPulse's enumeration) ──────────────────────
+  // optical eps — PAT > 3× sales growth (and absolute > 50%), or extreme YoY,
+  // or near-zero prior-year EPS becoming meaningful
   if (epsY != null && salesY != null && salesY > 0 && epsY >= salesY * 3 && epsY >= 50) caveat_tags.push('optical eps');
   if (epsY != null && epsY >= 200) caveat_tags.push('optical eps');
   if (row?.eps_prev != null && row?.eps_curr != null && Math.abs(row.eps_prev) < 0.5 && Math.abs(row.eps_curr) > 2) {
-    caveat_tags.push('optical eps');
+    if (!caveat_tags.includes('optical eps')) caveat_tags.push('optical eps');
   }
-  // tax distortion — PAT YoY > 100% but Op Profit YoY < 30% (suggests tax line driving the print)
+  // tax distortion — PAT YoY > 100% but Op Profit YoY < 30% (tax line driving)
   if (patY != null && row?.op_profit_yoy_pct != null && patY >= 100 && row.op_profit_yoy_pct < 30) {
     caveat_tags.push('tax distortion');
   }
   // segment mix shift — OPM compressed > 1.5pp YoY
   if (opmExp != null && opmExp < -1.5) caveat_tags.push('segment mix shift');
-  // ocf divergence — annual OCF < 60% of annual PAT, or OCF < 0 while PAT > 0
+  // ocf divergence — annual OCF < 60% of annual PAT (when PAT > 0), OR OCF < 0 while PAT > 0
   if (row?.ocf_to_pat_ratio != null) {
     if (row.ocf_to_pat_ratio < 0.6 && (row.pat_annual_cr ?? 0) > 0) caveat_tags.push('ocf divergence');
-    if (row.ocf_annual_cr != null && row.ocf_annual_cr < 0 && (row.pat_annual_cr ?? 0) > 0) caveat_tags.push('ocf divergence');
+    if (row.ocf_annual_cr != null && row.ocf_annual_cr < 0 && (row.pat_annual_cr ?? 0) > 0) {
+      if (!caveat_tags.includes('ocf divergence')) caveat_tags.push('ocf divergence');
+    }
   }
   // low quality — Stage 4 chart OR > 25% off 52w high
   if (stage === 4) caveat_tags.push('low quality');
   else if (pct52 != null && pct52 < -25) caveat_tags.push('low quality');
 
-  // ── Composite score ─────────────────────────────────────────────────────
-  // Growth pillar (40%)
-  const scoreFromYoy = (y: number) =>
-    y >= 200 ? 100 : y >= 100 ? 95 : y >= 50 ? 88 : y >= 25 ? 75 : y >= 10 ? 60 : y >= 0 ? 45 : y >= -10 ? 32 : y >= -25 ? 20 : 8;
-  let growth = 45, weight = 0;
-  if (salesY != null) { growth += scoreFromYoy(salesY) * 0.20; weight += 0.20; }
-  if (patY   != null) { growth += scoreFromYoy(patY)   * 0.30; weight += 0.30; }
-  if (epsY   != null) { growth += scoreFromYoy(epsY)   * 0.50; weight += 0.50; }
-  growth = weight > 0 ? (growth - 45) / weight : 45;
+  // ── Composite score (PATCH 0158 — calibrated to EarningsPulse scoring) ─
+  // Score = Magnitude × 0.35 + Quality × 0.25 + Technical × 0.25 + Methodology × 0.15
+  //
+  // Verified against MCX (94), BSE (92), Atlanta/Vijaya/GNG/BHEL (~86), Apcotex (72),
+  // Kalyan Jewellers (34 — AVOID despite great fundamentals because Stage 4 + RS 27).
 
-  // Quality pillar (25%) — OPM expansion
-  let quality = 60;
-  if (opmExp != null) quality += opmExp >= 3 ? 25 : opmExp >= 1 ? 12 : opmExp >= -1 ? 0 : -18;
+  // Magnitude — YoY bucketed score, weighted Sales 35% + PAT 30% + EPS 35%
+  const scoreYoy = (y: number) =>
+    y >= 100 ? 100 :
+    y >= 50  ? 90  :
+    y >= 25  ? 75  :
+    y >= 15  ? 60  :
+    y >= 5   ? 40  :
+    y >= 0   ? 25  :
+    Math.max(0, 25 + y);   // negative growth scales linearly toward 0
+  let magW = 0, magS = 0;
+  if (salesY != null) { magS += scoreYoy(salesY) * 0.35; magW += 0.35; }
+  if (patY   != null) { magS += scoreYoy(patY)   * 0.30; magW += 0.30; }
+  if (epsY   != null) { magS += scoreYoy(epsY)   * 0.35; magW += 0.35; }
+  const magnitude = magW > 0 ? magS / magW : 30;
 
-  // Technical pillar (20%) — RS rating + Stage + 52w proximity
-  let technical = 40;
-  if (rs != null) technical += rs >= 90 ? 30 : rs >= 80 ? 22 : rs >= 70 ? 14 : rs >= 50 ? 4 : -10;
-  if (stage === 2) technical += 12;
-  else if (stage === 1) technical += 4;
-  else if (stage === 3) technical -= 4;
-  else if (stage === 4) technical -= 14;
-  if (pct52 != null) technical += pct52 >= -5 ? 8 : pct52 >= -15 ? 4 : pct52 >= -25 ? 0 : -8;
+  // Quality — 100 minus caveat-specific deductions
+  const caveatPenalty: Record<string, number> = {
+    'optical eps': 20, 'tax distortion': 15, 'ocf divergence': 25,
+    'low quality': 25, 'segment mix shift': 10, 'exceptional item': 10,
+    'forex gain': 8, 'forex loss': 8, 'accelerated depreciation': 10,
+    'accounting change': 12, 'pooling of interests restate': 12, 'one time order': 10,
+  };
+  let quality = 100;
+  for (const tag of caveat_tags) quality -= (caveatPenalty[tag] ?? 8);
+  if (opmExp != null && opmExp >= 3) quality += 8;       // margin expansion bonus
+  quality = Math.max(0, Math.min(100, quality));
+
+  // Technical — Stage base + RS / 3 + 52w proximity + trend-template bonus
+  const stageBase = stage === 2 ? 70 : stage === 1 ? 45 : stage === 3 ? 30 : stage === 4 ? 10 : 50;
+  let technical = stageBase + (rs != null ? rs / 3 : 0);
+  if (pct52 != null) technical += pct52 >= -5 ? 15 : pct52 >= -15 ? 8 : pct52 >= -25 ? 0 : -15;
+  if (ttPass) technical += 10;
   technical = Math.max(0, Math.min(100, technical));
 
-  // Cleanliness (15%) — penalize caveats
-  let clean = 70 - caveat_tags.length * 8;
+  // Methodology — count-based with SEPA bonus
+  const mCount = methodology_tags.length;
+  let methodology = mCount === 4 ? 100 : mCount === 3 ? 80 : mCount === 2 ? 60 : mCount === 1 ? 35 : 10;
+  if (methodology_tags.includes('sepa')) methodology = Math.min(100, methodology + 5);
 
   const composite = Math.max(0, Math.min(100,
-    growth * 0.40 + quality * 0.25 + technical * 0.20 + clean * 0.15,
+    magnitude * 0.35 + quality * 0.25 + technical * 0.25 + methodology * 0.15,
   ));
 
-  // ── Tier assignment ────────────────────────────────────────────────────
+  // ── Tier assignment (PATCH 0158) ───────────────────────────────────────
+  // Hard rules in priority order:
+  //   1. AVOID hard fail: Stage 4 + (RS < 40 OR pct52 < -25) — chart broken
+  //   2. AVOID hard fail: negative EPS YoY AND PAT decline
+  //   3. BLOCKBUSTER strict: score ≥ 84 AND ≥3 methodologies AND ≤1 caveat AND
+  //      Sales ≥ 25% AND PAT ≥ 25% AND EPS ≥ 25% AND Stage 2 AND RS ≥ 70
+  //   4. STRONG: score ≥ 68 AND ≥1 methodology AND ≤3 caveats AND not Stage 4
+  //   5. MIXED: score ≥ 35
+  //   6. else AVOID
   let tier: EarningsTier;
-  if      (composite >= 85 && caveat_tags.length === 0) tier = 'BLOCKBUSTER';
-  else if (composite >= 70) tier = 'STRONG';
-  else if (composite >= 50) tier = 'MIXED';
-  else                      tier = 'AVOID';
+
+  // Hard AVOID fail conditions (override score)
+  const broken = (stage === 4 && (rs == null || rs < 40)) ||
+                 (epsY != null && epsY < 0 && patY != null && patY < -10);
+
+  // BLOCKBUSTER strict gate
+  const blockbusterGate =
+    composite >= 84 &&
+    mCount >= 3 &&
+    caveat_tags.length <= 1 &&
+    salesY != null && salesY >= 25 &&
+    patY != null && patY >= 25 &&
+    epsY != null && epsY >= 25 &&
+    stage === 2 &&
+    rs != null && rs >= 70;
+
+  if (broken && composite < 70) {
+    tier = 'AVOID';
+  } else if (blockbusterGate) {
+    tier = 'BLOCKBUSTER';
+  } else if (composite >= 68 && mCount >= 1 && caveat_tags.length <= 3 && stage !== 4) {
+    tier = 'STRONG';
+  } else if (composite >= 35) {
+    tier = 'MIXED';
+  } else {
+    tier = 'AVOID';
+  }
 
   // ── Narrative ──────────────────────────────────────────────────────────
   const co = row.company || row.symbol;
