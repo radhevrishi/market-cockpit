@@ -821,6 +821,51 @@ function applyForcedRanking(results: ExcelResult[]): ExcelResult[] {
       if (ksFailed >= 5 && grade === 'B+') grade = 'B';
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // PATCH 0116 — BUG-06: explicit hard-threshold grade rules.
+    // The percentile-based ranking above can hand A+ to mediocre stocks in
+    // weak universes (10 stocks → top 1 gets A+ even if margins are flat).
+    // These are absolute gates — A+ requires PROVING margin expansion
+    // AND earnings acceleration AND reasonable valuation.
+    //   A+ : opmExpansion ≥ 3pp AND eps_growth ≥ 30% AND peg ≤ 1.5
+    //   A  : opmExpansion ≥ 1pp AND eps_growth ≥ 20% AND peg ≤ 2.5
+    //   ≤B : decelerating (profitAcceleration < 0)
+    //   ≤C : decelerating AND margin contracting
+    // Rules only fire when the relevant fields are populated — data-gap
+    // safety: missing field cannot block, but also cannot promote.
+    // ─────────────────────────────────────────────────────────────────────
+    const opmExp = r.opmExpansion;
+    const epsG   = r.epsGrowth;
+    const peg    = r.peg;
+    const pa     = r.profitAcceleration;
+
+    if (grade === 'A+') {
+      // A+ HARD GATE — three-way confirmation required
+      const aplusOPM  = opmExp !== undefined ? opmExp >= 3   : null;
+      const aplusEPS  = epsG   !== undefined ? epsG   >= 30  : null;
+      const aplusPEG  = peg    !== undefined ? peg    <= 1.5 : null;
+      // any explicit FAIL drops to A (any null is treated as 'unknown, allow')
+      if (aplusOPM === false || aplusEPS === false || aplusPEG === false) {
+        grade = 'A';
+      }
+    }
+    if (grade === 'A') {
+      const aOPM = opmExp !== undefined ? opmExp >= 1  : null;
+      const aEPS = epsG   !== undefined ? epsG   >= 20 : null;
+      const aPEG = peg    !== undefined ? peg    <= 2.5 : null;
+      if (aOPM === false || aEPS === false || aPEG === false) {
+        grade = 'B+';
+      }
+    }
+    // Decelerating profit caps everything below A
+    if (pa !== undefined && pa < 0) {
+      if (['A+','A','B+'].includes(grade)) grade = 'B';
+      // decel + margin contracting = no rerate setup, cap at C
+      if (opmExp !== undefined && opmExp < 0 && !['D'].includes(grade)) {
+        grade = 'C';
+      }
+    }
+
     return { ...r, grade };
   });
 }
@@ -1030,6 +1075,44 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     longS+=s; longC++;
     if (row.fiiPlusDii<10) strengths.push(`FII+DII ${row.fiiPlusDii.toFixed(1)}% — largely undiscovered`);
     else if (row.fiiPlusDii>40) risks.push(`FII+DII ${row.fiiPlusDii.toFixed(1)}% — heavily institutionalised`);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // PATCH 0116 — BUG-07: Long/Mark sub-scores use real discriminating
+  // inputs.  Existing FII+DII level signal alone is too coarse — many
+  // stocks share 5-15% institutional holding.  Add three more inputs:
+  //   (a) acceleration bonus — ACCELERATING + low FII+DII is the
+  //       early-discovery setup (institutional gap before they pile in)
+  //   (b) founder conviction — promoter ≥45% AND changeInPromoter ≥ 0
+  //       is the long-term-aligned operator pattern
+  //   (c) track-record gate — revCagr ≥ 12% over published history
+  //       proves the business actually compounds, not a one-quarter pop
+  // Each fires only when data is present; missing fields don't count.
+  // ─────────────────────────────────────────────────────────────────────
+  if (row.accelSignal === 'ACCELERATING' && (row.fiiPlusDii ?? 50) < 15) {
+    longS += 88; longC++;
+    strengths.push(`Early-discovery setup: ACCELERATING growth + FII+DII ${(row.fiiPlusDii ?? 0).toFixed(1)}% — institutional gap`);
+  } else if (row.accelSignal === 'DECELERATING') {
+    longS += 30; longC++;
+    risks.push(`Longevity downgraded — DECELERATING growth signal`);
+  }
+  if (row.promoter !== undefined && row.changeInPromoter !== undefined) {
+    if (row.promoter >= 45 && row.changeInPromoter >= 0) {
+      longS += 85; longC++;
+      if (row.changeInPromoter > 0) strengths.push(`Long-term operator pattern: promoter ${row.promoter.toFixed(0)}% +${row.changeInPromoter.toFixed(1)}pp (buying)`);
+    } else if (row.promoter < 30 && row.changeInPromoter < 0) {
+      longS += 25; longC++;
+      risks.push(`Operator pattern weak: promoter ${row.promoter.toFixed(0)}% selling ${row.changeInPromoter.toFixed(1)}pp`);
+    }
+  }
+  if (row.revCagr !== undefined) {
+    const trackScore = row.revCagr >= 25 ? 95 :
+                       row.revCagr >= 18 ? 82 :
+                       row.revCagr >= 12 ? 68 :
+                       row.revCagr >= 6  ? 48 : 25;
+    longS += trackScore; longC++;
+    if (row.revCagr >= 18) strengths.push(`Track record: rev CAGR ${row.revCagr.toFixed(1)}% — proven compounding`);
+    else if (row.revCagr < 6) risks.push(`Track record weak: rev CAGR ${row.revCagr.toFixed(1)}% — not a compounder yet`);
   }
 
   // ── FINANCIAL STRENGTH ────────────────────────────────────────────────────
