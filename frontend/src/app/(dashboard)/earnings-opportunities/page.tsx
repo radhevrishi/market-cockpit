@@ -227,9 +227,59 @@ function gradeRow(row: any): ParsedEarning | null {
   const patY:   number | null = row?.pat_yoy_pct ?? null;
   const epsY:   number | null = row?.eps_yoy_pct ?? null;
   const opmExp: number | null = row?.opm_pct != null && row?.opm_prev_pct != null ? row.opm_pct - row.opm_prev_pct : null;
+  const hasFinancials = salesY != null || patY != null || epsY != null;
 
-  // Skip un-enriched rows (no Sales/PAT) — they're calendar-only and would clutter Graded view
-  if (salesY == null && patY == null && epsY == null) return null;
+  // PATCH 0153: when worker enrichment is missing but hub already has a
+  // quality rating from /api/market/earnings (computed from priceMove on
+  // the filing day), produce a PREVIEW card from hub data alone.
+  // Excellent → BLOCKBUSTER, Great → STRONG, Good/OK → MIXED, Weak → AVOID.
+  const hubQuality: string | undefined = row?.hub_quality;
+  if (!hasFinancials) {
+    if (!hubQuality || hubQuality === 'Upcoming') return null;
+    const tier: EarningsTier =
+      hubQuality === 'Excellent' ? 'BLOCKBUSTER' :
+      hubQuality === 'Great'     ? 'STRONG' :
+      hubQuality === 'Good'      ? 'MIXED' :
+      hubQuality === 'OK'        ? 'MIXED' :
+                                   'AVOID';
+    const score =
+      hubQuality === 'Excellent' ? 88 :
+      hubQuality === 'Great'     ? 76 :
+      hubQuality === 'Good'      ? 58 :
+      hubQuality === 'OK'        ? 42 :
+                                   22;
+    const move = row?.move_pct ?? null;
+    const moveLabel = move != null ? ` (${move >= 0 ? '+' : ''}${move.toFixed(1)}% on the day)` : '';
+    return {
+      ticker: row.symbol,
+      company: row.company || row.symbol,
+      sector: row.sector,
+      filing_date: row.filing_date,
+      quarter: row.quarter || 'Q4',
+      market_cap_bucket: row.market_cap_bucket,
+      pe: null,
+      price: row.current_price ?? null,
+      sales_yoy_pct: null,
+      net_profit_yoy_pct: null,
+      eps_yoy_pct: null,
+      sales_curr_cr: null, sales_prev_cr: null,
+      pat_curr_cr: null, pat_prev_cr: null,
+      eps_curr: null, eps_prev: null,
+      gap_pct: row.gap_pct ?? null,
+      d1_pct: row.d1_pct ?? null,
+      move_pct: move,
+      rs_rating: row.rs_rating ?? null,
+      stage: row.stage ?? null,
+      pct_from_52w_high: row.pct_from_52w_high ?? null,
+      composite_score: score,
+      tier,
+      methodology_tags: [],
+      caveat_tags: [],
+      narrative: `${row.company || row.symbol} reported Q4 results${moveLabel}. Financial detail awaiting enrichment.`,
+      filing_url: row.source_url,
+      source: 'NSE+BSE',
+    };
+  }
 
   // PATCH 0145.1: filing_date must be ≤ today. Future-scheduled board meetings
   // are NOT actual filings — grading Screener's historic Q3 data would mislead.
@@ -426,6 +476,9 @@ function useEarningsOpportunitiesJoined(
   const joined = dayList.map((m) => {
     const e = enrich[m.ticker] || {};
     return {
+      // PATCH 0153: pass hub quality so gradeRow can produce preview cards
+      // even when worker hasn't enriched this ticker yet
+      hub_quality: m.quality,
       // Identity (from market source — authoritative)
       symbol: m.ticker,
       company: m.company,
@@ -870,6 +923,9 @@ function EarningsCard({ stock }: { stock: ParsedEarning }) {
 
 // ─── CalendarView ───────────────────────────────────────────────────────────
 function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarPayload | undefined; loading: boolean; from: string; to: string; onPickDate: (d: string) => void }) {
+  // PATCH 0154 — per-date expand-all toggle
+  const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
+
   // Build all dates in [from, to] range (inclusive)
   const dates = useMemo(() => {
     const out: string[] = [];
@@ -941,7 +997,7 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
               <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 {items.length === 0 ? (
                   <span style={{ fontSize: 10.5, color: '#6B7A8D' }}>No filings</span>
-                ) : items.slice(0, 12).map((it) => (
+                ) : (expandedDates[d] ? items : items.slice(0, 12)).map((it) => (
                   <a key={it.symbol} href={it.source_url} target="_blank" rel="noopener noreferrer"
                     onClick={(e) => e.stopPropagation()}
                     title={`${it.company} · ${it.quarter || ''}`}
@@ -950,7 +1006,14 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
                   </a>
                 ))}
                 {items.length > 12 && (
-                  <span style={{ fontSize: 10, color: '#6B7A8D' }}>+{items.length - 12} more</span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setExpandedDates((s) => ({ ...s, [d]: !s[d] }));
+                    }}
+                    style={{ fontSize: 10, color: '#22D3EE', background: 'transparent', border: '1px solid #22D3EE40', padding: '1px 6px', borderRadius: 3, cursor: 'pointer', fontWeight: 700 }}>
+                    {expandedDates[d] ? '− show less' : `+${items.length - 12} more`}
+                  </button>
                 )}
               </div>
             </div>
