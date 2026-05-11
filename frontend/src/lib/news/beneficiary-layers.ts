@@ -279,6 +279,25 @@ export const INDIA_ROSTER: LayerTicker[] = [
   { ticker: 'GENUSPOWER.NS', layer: 'L1', region: 'IN', rationale: 'Genus Power — smart meters; AMI rollout + grid modernisation',                                pricing_leverage: 'STRONG', size: 'MID_CAP'   },
   { ticker: 'KPIGREEN.NS',   layer: 'L1', region: 'IN', rationale: 'KPI Green — solar EPC + IPP; high RE capex torque',                                           pricing_leverage: 'STRONG', size: 'MID_CAP'   },
 
+  // ── PATCH 0124: India L1 — FERTILIZER / AGRI-CHEM specialists ────────────
+  // Fix for QA: NTPC fertilizer IPO mis-classified as power.  Now AGRI fires
+  // pull from this actual fertilizer roster instead of falling back to BHEL /
+  // ABB / SIEMENS via generic L1 seed remainder.  Covers:
+  //   - Urea / complex fertilizer makers (COROMANDEL, CHAMBLFERT, DEEPAKFERT,
+  //     GSFC, GNFC, RCF, NFL, FACT, PARADEEP, MADRASFERT, ZUARIIND)
+  //   - Agrochem / crop-protection (UPL, PIIND, RALLIS, BAYERCROP, SUMICHEM)
+  { ticker: 'COROMANDEL.NS', layer: 'L1', region: 'IN', rationale: 'Coromandel International — largest private complex-fertilizer + crop-protection; pricing power on NPK',     pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'CHAMBLFERT.NS', layer: 'L1', region: 'IN', rationale: 'Chambal Fertilisers — urea + DAP capacity; raw-material pass-through + capacity expansion',                pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'DEEPAKFERT.NS', layer: 'L1', region: 'IN', rationale: 'Deepak Fertilisers — complex fertilizer + TAN + industrial chemicals; integrated chain',                   pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'GSFC.NS',       layer: 'L1', region: 'IN', rationale: 'Gujarat State Fertilizers — urea + caprolactam + industrial products; PSU operating leverage',              pricing_leverage: 'MEDIUM', size: 'MID_CAP'   },
+  { ticker: 'GNFC.NS',       layer: 'L1', region: 'IN', rationale: 'Gujarat Narmada Valley Fertilizers — urea + TDI; chemicals/fertilizer hybrid',                              pricing_leverage: 'MEDIUM', size: 'MID_CAP'   },
+  { ticker: 'RCF.NS',        layer: 'L1', region: 'IN', rationale: 'Rashtriya Chemicals & Fertilizers — PSU urea + complex; subsidy-linked but capacity beneficiary',           pricing_leverage: 'MEDIUM', size: 'MID_CAP'   },
+  { ticker: 'NFL.NS',        layer: 'L1', region: 'IN', rationale: 'National Fertilizers — urea PSU; new policy + JV restructure stories',                                      pricing_leverage: 'MEDIUM', size: 'SMALL_CAP' },
+  { ticker: 'FACT.NS',       layer: 'L1', region: 'IN', rationale: 'Fertilisers and Chemicals Travancore — phosphatic fertilizer PSU; turnaround story',                        pricing_leverage: 'MEDIUM', size: 'SMALL_CAP' },
+  { ticker: 'PARADEEP.NS',   layer: 'L1', region: 'IN', rationale: 'Paradeep Phosphates — DAP/NPK player; Zuari acquired, integration synergies',                               pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'MADRASFERT.NS', layer: 'L1', region: 'IN', rationale: 'Madras Fertilizers — South India urea; capacity restoration + complex expansion',                            pricing_leverage: 'WEAK',   size: 'SMALL_CAP' },
+  { ticker: 'ZUARIIND.NS',   layer: 'L1', region: 'IN', rationale: 'Zuari Industries — Adventz group fertilizer holding; restructuring catalyst',                               pricing_leverage: 'WEAK',   size: 'SMALL_CAP' },
+
   // ── PATCH 0107: India L4 — EXPORT PROXIES (sell to global AI / oil-gas / nuclear / industrial) ──
   // These midcaps export to global hyperscalers / oil-gas majors / EPCs.
   // Surface them in BOTH India view AND the corresponding GLOBAL theme card.
@@ -310,6 +329,14 @@ export const INDIA_ROSTER: LayerTicker[] = [
   { ticker: 'HEG.NS',        layer: 'L4', region: 'IN', rationale: 'HEG — graphite electrodes; industrial intermediate margin transmission',                    pricing_leverage: 'STRONG', size: 'MID_CAP'   },
   { ticker: 'GRAPHITE.NS',   layer: 'L4', region: 'IN', rationale: 'Graphite India — electrodes peer; commodity converter pricing pass-through',                pricing_leverage: 'MEDIUM', size: 'MID_CAP'   },
   { ticker: 'DIXON.NS',      layer: 'L4', region: 'IN', rationale: 'Dixon Technologies — EMS scale; PLI + import-substitution backbone',                         pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  // ── PATCH 0124: India L4 — AGROCHEM / CROP PROTECTION transmission ───────
+  // These convert raw input price into priced agri solutions — classic L4
+  // pricing pass-through on AGRI bottleneck.
+  { ticker: 'UPL.NS',        layer: 'L4', region: 'IN', rationale: 'UPL — global crop-protection scale; raw-material pass-through cycle play',                    pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'PIIND.NS',      layer: 'L4', region: 'IN', rationale: 'PI Industries — agrochem CSM + branded formulations; pricing power on patented chemistry',     pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'RALLIS.NS',     layer: 'L4', region: 'IN', rationale: 'Rallis India — Tata crop protection + seeds; rural distribution leverage',                     pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'BAYERCROP.NS',  layer: 'L4', region: 'IN', rationale: 'Bayer Crop Science — global parent + India branded seeds + crop protection',                   pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'SUMICHEM.NS',   layer: 'L4', region: 'IN', rationale: 'Sumitomo Chemical India — branded agrochem + animal nutrition; export upside',                 pricing_leverage: 'STRONG', size: 'MID_CAP'   },
   // PATCH 0087: India EPC / project-backlog chain
   { ticker: 'LT.NS',         layer: 'L4', region: 'IN', rationale: 'L&T — flagship EPC scale; AI-DC + grid + transport + nuclear backlog repricing',             pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
   { ticker: 'HCC.NS',        layer: 'L4', region: 'IN', rationale: 'Hindustan Construction — heavy civil + hydro + nuclear EPC; backlog inflation beneficiary',  pricing_leverage: 'MEDIUM', size: 'SMALL_CAP' },
@@ -443,8 +470,15 @@ export const NODE_RULES_IN: Record<SystemNode, NodeRule> = {
     mandatory: { L4: ['LINDEINDIA.NS','HEG.NS','GRAPHITE.NS'] },
   },
   AGRI_INFRA: {
-    fires: ['L1','L4','L5'],
-    mandatory: {},
+    // PATCH 0124: drop L5 (TCS/INFY/RELIANCE/HCLTECH/WIPRO have nothing to do
+    // with fertilizer + agrochem — they were pure theme dilution on AGRI).
+    // Mandatory L1 = fertilizer specialists, L4 = agrochem transmission.
+    // Stops the "NTPC fertilizer IPO" beneficiary card from showing BHEL / ABB / SIEMENS.
+    fires: ['L1','L4'],
+    mandatory: {
+      L1: ['COROMANDEL.NS','CHAMBLFERT.NS','DEEPAKFERT.NS','GSFC.NS','GNFC.NS','RCF.NS','NFL.NS','PARADEEP.NS'],
+      L4: ['UPL.NS','PIIND.NS','RALLIS.NS','BAYERCROP.NS','SUMICHEM.NS'],
+    },
   },
   MANUFACTURING_CAPACITY: {
     // PATCH 0109b: drop L5 (TCS/INFY/RELIANCE/HCLTECH/WIPRO are theme dilution
@@ -632,7 +666,8 @@ export const NODE_RULES: Record<SystemNode, NodeRule> = {
     mandatory: { L4: ['LIN','AI.PA','HON'] },
   },
   AGRI_INFRA: {
-    fires: ['L1','L4','L5'],
+    // PATCH 0124: drop L5 (no IT-services L5 belongs on a fertilizer story).
+    fires: ['L1','L4'],
     mandatory: {},
   },
   // Macro / capital

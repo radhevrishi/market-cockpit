@@ -212,7 +212,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v38'; // v38: + 10 India RSS sources (Earnings / PLI / PIB / BL / BS) (0119/IMP-01)
+const CACHE_KEY = 'news:articles:v39'; // v39: AGRI roster — fertilizer specialists + agrochem L4, drop L5 IT dilution (0124)
 
 // PATCH 0110: per-request contamination-map cache.  Built once on first call
 // in a request lifecycle, reused across the (potentially many) layered-
