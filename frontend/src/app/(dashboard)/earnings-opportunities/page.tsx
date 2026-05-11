@@ -93,26 +93,32 @@ function useMarketEarnings(months: string[]) {
   });
 }
 
-// Worker enrichment — fetched separately; we use it as a lookup table by ticker.
-function useWorkerEnrichmentMap() {
+// PATCH 0155 — Live enrichment via /api/v1/earnings/enrich (bypasses dead worker).
+// Fetches Screener financials + Yahoo price data directly from Vercel for any
+// given symbol list, with 7-day KV caching per-symbol.
+function useLiveEnrichmentMap(symbols: string[]) {
+  // Stable key from sorted symbol list so the cache hits across renders
+  const key = useMemo(() => [...symbols].sort().join(','), [symbols]);
   return useQuery<Record<string, any>>({
-    queryKey: ['worker-enrichment-map'],
+    queryKey: ['live-enrichment', key],
+    enabled: symbols.length > 0,
     queryFn: async () => {
-      const { data } = await api.get('/earnings/calendar');
-      const map: Record<string, any> = {};
-      const items: any[] = Object.values(data?.by_date || {}).flat() as any[];
-      for (const it of items) {
-        if (!it?.symbol) continue;
-        // Keep the most-recently-enriched entry per ticker
-        const prev = map[it.symbol];
-        const prevAt = prev?.financials_scraped_at || '';
-        const curAt  = it.financials_scraped_at || '';
-        if (!prev || curAt > prevAt) map[it.symbol] = it;
+      // Chunk to 40 symbols per request to stay under Vercel 60s timeout
+      const chunks: string[][] = [];
+      for (let i = 0; i < symbols.length; i += 40) chunks.push(symbols.slice(i, i + 40));
+      const responses = await Promise.all(chunks.map((chunk) =>
+        fetch(`/api/v1/earnings/enrich?symbols=${chunk.join(',')}`)
+          .then((r) => r.ok ? r.json() : { data: {} })
+          .catch(() => ({ data: {} }))
+      ));
+      const merged: Record<string, any> = {};
+      for (const r of responses) {
+        Object.assign(merged, r.data || {});
       }
-      return map;
+      return merged;
     },
-    staleTime: 10 * 60_000,
-    refetchInterval: 30 * 60_000,
+    staleTime: 60 * 60_000,        // 1 hour client-side (KV is 7-day)
+    refetchInterval: false,
   });
 }
 
@@ -564,7 +570,26 @@ export default function EarningsOpportunitiesPage() {
     return Array.from(new Set([fmt(prev), fmt(cur)]));
   }, [filterDate]);
   const { data: hub, isLoading: hubLoading, error: hubError, refetch: refetchHub } = useMarketEarnings(monthsToFetch);
-  const { data: enrichmentMap } = useWorkerEnrichmentMap();
+
+  // PATCH 0155 — derive ticker list from hub for the currently-visible date(s)
+  // and request live Screener+Yahoo enrichment.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const symbolsToEnrich = useMemo(() => {
+    if (!hub?.results) return [];
+    if (filterDate) {
+      return hub.results.filter((r) => r.resultDate === filterDate && r.quality !== 'Upcoming').map((r) => r.ticker);
+    }
+    // Latest mode — enrich the most recent past date with filings
+    const byDate: Record<string, string[]> = {};
+    for (const r of hub.results) {
+      if (!r.resultDate || r.resultDate > todayIso || r.quality === 'Upcoming') continue;
+      (byDate[r.resultDate] = byDate[r.resultDate] || []).push(r.ticker);
+    }
+    const pastDates = Object.keys(byDate).sort().reverse();
+    return pastDates[0] ? byDate[pastDates[0]] : [];
+  }, [hub, filterDate, todayIso]);
+
+  const { data: enrichmentMap, isLoading: enrichLoading } = useLiveEnrichmentMap(symbolsToEnrich);
   const data = useEarningsOpportunitiesJoined(filterDate, hub, enrichmentMap);
   const isLoading = hubLoading;
   const error = hubError;
