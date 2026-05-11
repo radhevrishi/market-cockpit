@@ -231,6 +231,12 @@ const TICKER_BLACKLIST = new Set([
   'BUZZING','STOCKS','RALLY','SURGE','PLUNGE','GAIN','LOSS','GAINER','LOSER',
   'ANNOUNCED','APPROVED','EXPECTED','PLANS','SET','SAYS','TOLD','ADDED',
   'NEWS','MARKET','MARKETS','TRADE','TRADING','PORTFOLIO','REPORT',
+  // PATCH 0164b: specific tokens that keep leaking from "X to sell" / "Buzzing
+  // stocks: X" headlines — these aren't usable Indian tradable symbols even
+  // though they appear as bare caps.  Real Indian listings have longer
+  // suffixes (PNCINFRA, not PNC; etc).
+  'FMC','PNC','UPL','BSE',  // BSE is the EXCHANGE not a tradable symbol in this context
+  'GROWW','LENSKART','MEESHO','SWIGGY','OYO',  // recent IPOs / unicorns that appear as names not tickers
   // 'FMC' is US Fertilizer Corp ticker but contextually appears as 'FMC Corp' (parent
   // selling India unit) in headlines — when followed by 'to sell India' it's not the
   // tradable Indian symbol; we filter this in context-checking below
