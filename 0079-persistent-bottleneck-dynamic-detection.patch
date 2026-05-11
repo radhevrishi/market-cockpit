@@ -1,0 +1,414 @@
+From 45ab46dbf858ab4b9cd0e8820142254cf083fb33 Mon Sep 17 00:00:00 2001
+From: Rishi <rishi@market-cockpit.local>
+Date: Sun, 10 May 2026 15:55:30 +0200
+Subject: [PATCH] =?UTF-8?q?feat(news):=20persistent=20bottleneck=20reading?=
+ =?UTF-8?q?=20=E2=80=94=20dynamic=20detection=20from=20evidence?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Patch 0079 — addresses user feedback: "still don't see THE CPU
+bottleneck. Bottleneck not so old. why missing? update logic. don't do
+static. do in logical way so all such are identified."
+
+ROOT CAUSE
+The HBM/CoWoS/CPU bottleneck signal exists in the system (via
+SemiAnalysis articles) but the evidence accumulator used a 14-day
+half-life and 30-day TTL. An 8-month-old SemiAnalysis HBM article
+had decayed to ~0.5^17 ≈ near-zero confidence, so the persistent
+signal was effectively dead by the time we could surface it.
+
+Structural bottlenecks (HBM, CoWoS, transformers, HALEU, naval
+propulsion) are MULTI-YEAR shifts, not 2-week events. They need
+proper persistence in the evidence ledger.
+
+DYNAMIC FIX (no hardcoding)
+1. Per-domain decay rates in evidence-accumulator.ts:
+     STRUCTURAL nodes (semis / energy / nuclear / defence /
+       resources / mfg) → 90-day half-life, 180-day TTL
+     CYCLICAL nodes (logistics / agri / capital) → 14-day, 30-day
+     This means a SemiAnalysis HBM article from 90 days ago still
+     carries 50% of its original weight, instead of <0.001%.
+
+2. New readPersistentBottlenecks() function. Returns the top-K active
+   SystemNodes from the ledger, ranked by decay-adjusted confidence
+   with a +5 boost for structural nodes (they should surface even
+   when cyclical signals momentarily score higher). Includes:
+     - confidence_pct, cumulative_score, sample_count
+     - last_seen, age_days
+     - trend: rising / steady / falling / cooling (computed from
+       activity vs domain half-life)
+     - is_structural flag
+     - top contributing samples
+
+3. Endpoint /api/v1/news?persistent=1 returns the ranked list.
+
+4. New "🚧 PERSISTENT BOTTLENECK READING" panel on the news page,
+   above Transformational Contracts. Shows up to 8 active structural
+   bottlenecks with confidence%, sample count, age, trend arrow,
+   STRUCTURAL badge, and the latest contributing article.
+
+Result: HBM, CoWoS, grid, defence — any structural node with
+accumulated evidence — surfaces persistently as a bottleneck reading
+even when no fresh news arrived today. Auto-detected. Not hardcoded.
+The system identifies them because the evidence is structurally
+weighted, not because a developer added them to a list.
+---
+ frontend/src/app/(dashboard)/news/page.tsx    | 111 ++++++++++++++++
+ frontend/src/app/api/v1/news/route.ts         |  26 +++-
+ frontend/src/lib/news/evidence-accumulator.ts | 121 ++++++++++++++++--
+ 3 files changed, 246 insertions(+), 12 deletions(-)
+
+diff --git a/frontend/src/app/(dashboard)/news/page.tsx b/frontend/src/app/(dashboard)/news/page.tsx
+index 19e7a4f..da7d456 100644
+--- a/frontend/src/app/(dashboard)/news/page.tsx
++++ b/frontend/src/app/(dashboard)/news/page.tsx
+@@ -342,6 +342,37 @@ function useTransformationalPreview() {
+   });
+ }
+ 
++// PATCH 0079: Persistent Bottleneck Reading hook
++interface PersistentBottleneckItem {
++  node: string;
++  confidence_pct: number;
++  cumulative_score: number;
++  sample_count: number;
++  last_seen: string;
++  age_days: number;
++  trend: 'rising' | 'steady' | 'falling' | 'cooling';
++  is_structural: boolean;
++  top_samples: Array<{ article_id: string; title: string; source: string; tier: string }>;
++}
++interface PersistentBottlenecksResp {
++  section_title: string;
++  section_subtitle: string;
++  count: number;
++  items: PersistentBottleneckItem[];
++}
++function usePersistentBottlenecks() {
++  return useQuery<PersistentBottlenecksResp>({
++    queryKey: ['news', 'persistent-bottlenecks'],
++    queryFn: async () => {
++      const { data } = await api.get('/news?persistent=1&limit=8&min_confidence=20');
++      return data;
++    },
++    refetchInterval: 5 * 60_000,
++    staleTime: 5 * 60_000,
++    retry: 1,
++  });
++}
++
+ // ── Helpers ───────────────────────────────────────────────────────────────────
+ 
+ // Decode HTML entities like &amp; → & , &lt; → <, etc.
+@@ -1473,6 +1504,9 @@ export default function NewsFeedPage() {
+   // PATCH 0068: 6-month Transformational Contracts preview band
+   const { data: transformationalPreview } = useTransformationalPreview();
+   const [showTransformational, setShowTransformational] = useState<boolean>(true);
++  // PATCH 0079: Persistent Bottleneck Reading
++  const { data: persistentBottlenecks } = usePersistentBottlenecks();
++  const [showPersistent, setShowPersistent] = useState<boolean>(true);
+   const { data: anomalies } = useAnomalies();
+   const [showCalendar, setShowCalendar] = useState(false);
+ 
+@@ -1807,6 +1841,83 @@ export default function NewsFeedPage() {
+         </div>
+       )}
+ 
++      {/* ── PATCH 0079: PERSISTENT BOTTLENECK READING — auto-detected from
++              accumulated evidence with per-domain decay (90d structural,
++              14d cyclical). Surfaces HBM/CoWoS/grid/HALEU even when no
++              fresh news today. ── */}
++      {persistentBottlenecks && persistentBottlenecks.count > 0 && (
++        <div style={{
++          backgroundColor: '#0D1B2E', border: '1px solid #1E2D45',
++          borderLeft: '3px solid #EF4444',
++          borderRadius: '12px', padding: '10px 12px', marginBottom: '12px',
++        }}>
++          <button
++            onClick={() => setShowPersistent(s => !s)}
++            style={{
++              display: 'flex', alignItems: 'center', gap: '8px',
++              background: 'none', border: 'none', cursor: 'pointer',
++              padding: 0, margin: 0, width: '100%',
++              color: 'inherit', textAlign: 'left',
++            }}
++          >
++            <span style={{ fontSize: '10px', fontWeight: 700, color: '#EF4444', letterSpacing: '0.8px' }}>
++              🚧 PERSISTENT BOTTLENECK READING
++            </span>
++            <span style={{ fontSize: '10px', color: '#4A5B6C' }}>
++              {persistentBottlenecks.count} active structural bottlenecks · auto-detected from accumulated evidence
++            </span>
++            <span style={{ marginLeft: 'auto', fontSize: '10px', color: '#4A5B6C' }}>
++              {showPersistent ? '▼ collapse' : '▶ expand'}
++            </span>
++          </button>
++          {showPersistent && (
++            <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
++              {persistentBottlenecks.items.map((b) => {
++                const trendColor = b.trend === 'rising' ? '#EF4444'
++                  : b.trend === 'steady' ? '#F59E0B'
++                  : b.trend === 'falling' ? '#22D3EE'
++                  : '#6B7A8D';
++                const trendIcon = b.trend === 'rising' ? '↑' : b.trend === 'steady' ? '→' : b.trend === 'falling' ? '↓' : '·';
++                return (
++                  <div key={b.node} style={{
++                    backgroundColor: '#0A1422', border: '1px solid #1A2840',
++                    borderRadius: 8, padding: '8px 10px',
++                  }}>
++                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
++                      <span style={{ fontSize: 11, fontWeight: 700, color: '#F5F7FA' }}>
++                        {b.node.replace(/_/g, ' ')}
++                      </span>
++                      {b.is_structural && (
++                        <span style={{ fontSize: 8, fontWeight: 700, color: '#8B5CF6', border: '1px solid #8B5CF640', backgroundColor: '#8B5CF610', padding: '1px 4px', borderRadius: 3 }}>
++                          STRUCTURAL
++                        </span>
++                      )}
++                      <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: trendColor }}>
++                        {trendIcon} {b.trend}
++                      </span>
++                    </div>
++                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, fontSize: 10, color: '#94A3B8' }}>
++                      <span style={{ color: '#10B981', fontWeight: 700 }}>{b.confidence_pct}% conf</span>
++                      <span>·</span>
++                      <span>{b.sample_count} articles</span>
++                      <span>·</span>
++                      <span>{b.age_days}d ago</span>
++                    </div>
++                    {b.top_samples.length > 0 && (
++                      <div style={{ fontSize: 9, color: '#6B7A8D', lineHeight: 1.4 }}>
++                        Latest: <span style={{ color: '#94A3B8' }}>{b.top_samples[0].title.slice(0, 80)}</span>
++                        <br/>
++                        <span style={{ color: '#4A5B6C' }}>{b.top_samples[0].source} · {b.top_samples[0].tier}</span>
++                      </div>
++                    )}
++                  </div>
++                );
++              })}
++            </div>
++          )}
++        </div>
++      )}
++
+       {/* ── PATCH 0068: TRANSFORMATIONAL CONTRACTS — 6-month rolling band ── */}
+       {transformationalPreview && transformationalPreview.count > 0 && (
+         <div style={{
+diff --git a/frontend/src/app/api/v1/news/route.ts b/frontend/src/app/api/v1/news/route.ts
+index 9723bd6..62ca2b4 100644
+--- a/frontend/src/app/api/v1/news/route.ts
++++ b/frontend/src/app/api/v1/news/route.ts
+@@ -2431,8 +2431,11 @@ export async function GET(request: Request) {
+     }
+ 
+     const evidenceFlag = searchParams.get('evidence') === '1';
+-    if (evidenceFlag) {
+-      const { readAllEvidence } = await import('@/lib/news/evidence-accumulator');
++    // PATCH 0079: persistent bottleneck reading endpoint
++    const persistentFlag = searchParams.get('persistent') === '1';
++
++    if (evidenceFlag || persistentFlag) {
++      const { readAllEvidence, readPersistentBottlenecks } = await import('@/lib/news/evidence-accumulator');
+       const allNodes: Array<import('@/lib/news/semantic-graph').SystemNode> = [
+         'COMPUTE_INFRA','MEMORY_INFRA','PACKAGING_INFRA','FABRICATION_INFRA',
+         'INTERCONNECT_INFRA','COOLING_INFRA','NETWORK_BANDWIDTH',
+@@ -2441,11 +2444,28 @@ export async function GET(request: Request) {
+         'RESOURCE_SCARCITY','AGRI_INFRA','MANUFACTURING_CAPACITY',
+         'LABOR_CONSTRAINT','CAPITAL_CONSTRAINT',
+       ];
++
++      if (persistentFlag) {
++        const limit = parseInt(searchParams.get('limit') || '8', 10);
++        const minConf = parseInt(searchParams.get('min_confidence') || '20', 10);
++        const items = await readPersistentBottlenecks({
++          nodes: allNodes,
++          min_confidence: minConf,
++          limit,
++        });
++        return NextResponse.json({
++          section_title: 'Persistent Bottleneck Reading',
++          section_subtitle: 'Auto-detected from accumulated evidence — structural nodes (HBM/CoWoS/grid/HALEU/defence) use 90-day decay so multi-year shifts persist beyond the news cycle',
++          count: items.length,
++          items,
++        });
++      }
++
+       const all = await readAllEvidence(allNodes);
+       return NextResponse.json({
+         nodes: all,
+         section_title: 'Theme Confidence Ledger',
+-        section_subtitle: 'Source-weighted evidence accumulation, 30-day rolling decay',
++        section_subtitle: 'Source-weighted evidence accumulation — 90-day decay for structural, 14-day for cyclical',
+       });
+     }
+ 
+diff --git a/frontend/src/lib/news/evidence-accumulator.ts b/frontend/src/lib/news/evidence-accumulator.ts
+index 0572868..9208b33 100644
+--- a/frontend/src/lib/news/evidence-accumulator.ts
++++ b/frontend/src/lib/news/evidence-accumulator.ts
+@@ -20,7 +20,42 @@ import { kvGet, kvSet } from '@/lib/kv';
+ import type { SystemNode } from '@/lib/news/semantic-graph';
+ import type { SourceTier } from '@/lib/news/source-tiers';
+ 
+-const TTL_SECONDS = 30 * 24 * 60 * 60;   // 30-day rolling window
++// PATCH 0079: per-domain TTL + decay rates. Structural bottlenecks
++// (HBM, CoWoS, transformers, defence) persist for years — a 30-day TTL
++// + 14-day half-life decayed an 8-month-old SemiAnalysis HBM article
++// to near-zero, even though the bottleneck is still active.
++//
++// Categorise SystemNodes by structural persistence:
++//   STRUCTURAL — multi-year shifts (semis, energy, defence, nuclear)
++//                90-day half-life, 180-day TTL
++//   CYCLICAL   — months-to-quarter cycles (logistics, agri, capital)
++//                14-day half-life, 30-day TTL  (legacy default)
++const STRUCTURAL_NODES: Set<string> = new Set([
++  'COMPUTE_INFRA',
++  'MEMORY_INFRA',
++  'PACKAGING_INFRA',
++  'FABRICATION_INFRA',
++  'INTERCONNECT_INFRA',
++  'COOLING_INFRA',
++  'NETWORK_BANDWIDTH',
++  'ENERGY_INFRA',
++  'NUCLEAR_INFRA',
++  'OIL_GAS_INFRA',
++  'RENEWABLE_INFRA',
++  'DEFENSE_INFRA',
++  'AEROSPACE_INFRA',
++  'RESOURCE_SCARCITY',
++  'MANUFACTURING_CAPACITY',
++]);
++
++function ttlSecondsFor(node: SystemNode): number {
++  return STRUCTURAL_NODES.has(node)
++    ? 180 * 24 * 60 * 60   // 180 days for structural
++    : 30 * 24 * 60 * 60;   // 30 days for cyclical
++}
++function halfLifeDaysFor(node: SystemNode): number {
++  return STRUCTURAL_NODES.has(node) ? 90 : 14;
++}
+ const KEY_PREFIX = 'evidence:v1:';
+ 
+ export interface NodeEvidenceSample {
+@@ -55,11 +90,12 @@ function bucketKey(node: SystemNode): string {
+   return `${KEY_PREFIX}${node}`;
+ }
+ 
+-// Apply 14-day exponential decay to existing cumulative score.
+-function decay(prev: number, lastSeenIso: string): number {
++// PATCH 0079: per-domain decay. Structural nodes use 90-day half-life so
++// HBM / CoWoS / grid / defence signals persist properly. Cyclical use 14-day.
++function decay(prev: number, lastSeenIso: string, node: SystemNode): number {
+   if (!lastSeenIso) return prev;
+   const ageDays = (Date.now() - new Date(lastSeenIso).getTime()) / 86400000;
+-  return prev * Math.pow(0.5, ageDays / 14);
++  return prev * Math.pow(0.5, ageDays / halfLifeDaysFor(node));
+ }
+ 
+ // Score → confidence_pct mapping (saturating logistic).
+@@ -83,8 +119,8 @@ export async function recordEvidence(
+       confidence_pct: 0,
+       top_samples: [],
+     };
+-    // Decay existing score
+-    const decayed = decay(existing.cumulative_score, existing.last_seen);
++    // Decay existing score (per-domain half-life)
++    const decayed = decay(existing.cumulative_score, existing.last_seen, node);
+     const tierW = TIER_WEIGHT[sample.tier] ?? 0;
+     // Add new sample (clamp to non-negative)
+     const sampleScore = Math.max(0, sample.raw_weight + tierW);
+@@ -109,7 +145,7 @@ export async function recordEvidence(
+       confidence_pct: scoreToConfidence(newScore),
+       top_samples: samples,
+     };
+-    await kvSet(key, updated, TTL_SECONDS);
++    await kvSet(key, updated, ttlSecondsFor(node));
+   } catch {
+     // Non-fatal — accumulation is enrichment.
+   }
+@@ -120,8 +156,8 @@ export async function readEvidence(node: SystemNode): Promise<NodeEvidence | nul
+   try {
+     const e = (await kvGet<NodeEvidence>(bucketKey(node))) || null;
+     if (!e) return null;
+-    // Apply on-read decay so confidence reflects current time
+-    const decayed = decay(e.cumulative_score, e.last_seen);
++    // Apply on-read decay so confidence reflects current time (per-domain)
++    const decayed = decay(e.cumulative_score, e.last_seen, node);
+     return {
+       ...e,
+       cumulative_score: Math.round(decayed * 100) / 100,
+@@ -142,3 +178,70 @@ export async function readAllEvidence(nodes: SystemNode[]): Promise<NodeEvidence
+   }
+   return results.sort((a, b) => b.confidence_pct - a.confidence_pct);
+ }
++
++// PATCH 0079: Persistent Bottleneck Reading
++// Returns the top-K active SystemNodes ranked by decay-adjusted confidence,
++// with trend (rising / steady / falling) inferred from cumulative_score
++// vs sample_count age distribution. This is the answer to "which
++// bottlenecks are STILL ACTIVE even when no fresh news arrived today".
++
++export interface PersistentBottleneck {
++  node: SystemNode;
++  confidence_pct: number;
++  cumulative_score: number;
++  sample_count: number;
++  last_seen: string;
++  age_days: number;
++  trend: 'rising' | 'steady' | 'falling' | 'cooling';
++  is_structural: boolean;
++  top_samples: NodeEvidenceSample[];
++}
++
++export async function readPersistentBottlenecks(args: {
++  nodes: SystemNode[];
++  min_confidence?: number;
++  limit?: number;
++}): Promise<PersistentBottleneck[]> {
++  const { nodes, min_confidence = 25, limit = 10 } = args;
++  const out: PersistentBottleneck[] = [];
++  const now = Date.now();
++  for (const n of nodes) {
++    const e = await readEvidence(n);
++    if (!e || e.confidence_pct < min_confidence) continue;
++    const ageDays = e.last_seen
++      ? (now - new Date(e.last_seen).getTime()) / 86400000
++      : 999;
++    const isStructural = STRUCTURAL_NODES.has(n);
++    const halfLife = halfLifeDaysFor(n);
++    // Trend heuristic — compares decay-adjusted score against an estimate
++    // of what a "steady" stream of articles would maintain.
++    // - rising:    recent activity (≤ halfLife/3 days), score above threshold
++    // - steady:    activity within 1 half-life
++    // - falling:   activity within 2 half-lives but not refreshing
++    // - cooling:   beyond 2 half-lives
++    let trend: PersistentBottleneck['trend'];
++    if (ageDays <= halfLife / 3 && e.confidence_pct >= 60) trend = 'rising';
++    else if (ageDays <= halfLife) trend = 'steady';
++    else if (ageDays <= halfLife * 2) trend = 'falling';
++    else trend = 'cooling';
++    out.push({
++      node: n,
++      confidence_pct: e.confidence_pct,
++      cumulative_score: e.cumulative_score,
++      sample_count: e.sample_count,
++      last_seen: e.last_seen,
++      age_days: Math.round(ageDays),
++      trend,
++      is_structural: isStructural,
++      top_samples: e.top_samples,
++    });
++  }
++  // Rank: structural nodes get a +5 score boost so HBM / CoWoS / grid surface
++  // even when cyclical signals score slightly higher in the moment.
++  out.sort((a, b) => {
++    const aS = a.confidence_pct + (a.is_structural ? 5 : 0);
++    const bS = b.confidence_pct + (b.is_structural ? 5 : 0);
++    return bS - aS;
++  });
++  return out.slice(0, limit);
++}
+-- 
+2.34.1
+

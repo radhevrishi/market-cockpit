@@ -1,0 +1,366 @@
+From aab2bf0cfc55f8fb8a63c3a5ddec01c751a2c2bd Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Sun, 10 May 2026 20:11:14 +0000
+Subject: [PATCH] fix(P0): Stock Sheet React Error #31 + Re-rating empty
+ universe (0108)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+QA report:
+  BUG-01 (P0) Stock Sheet crashes with React Error #31 on every ticker
+              run, args=[object with keys {direction, magnitude}]
+  BUG-02 (P0) Re-rating shows 0 candidates because universe is hardcoded
+              to portfolio+watchlist (both empty for most users)
+
+BUG-01 FIX
+  Root: /market/quotes returns price/change_pct as {direction, magnitude}
+  for some tickers (the API's signed-numeric convention).  Number(obj)
+  becomes NaN safely BUT React still throws if the value reaches JSX.
+  +Added safeScalar(v) helper that handles number / string / {direction,
+   magnitude} / {value} shapes and returns a signed number or null
+  +Defensively unwrapped quote.price + quote.change_pct in the header
+  +Added StockSheetErrorBoundary class component wrapping the body so
+   a malformed payload anywhere in the sheet shows an inline error
+   instead of crashing the whole page.  Reset button restores normal flow.
+
+BUG-02 FIX (3 sub-fixes A/B/C)
+  A. Universe selector dropdown: Auto / Multibagger Upload / Portfolio /
+     Watchlist / NSE500 / Custom CSV
+  B. Multibagger bridge — readMultibaggerSymbols() reads mb3_symbols
+     localStorage key.  AUTO mode prefers Multibagger if non-empty.
+  C. Model-shift regex expanded for Indian context.
+     Was: only US SaaS terms (recurring / ARR / NRR / land-and-expand)
+     Now also matches: subscription / annuity / retainer / long-term
+     contract / order book / AMC / maintenance contract / managed services
+     / channel partner / aftermarket / asset-light / licensing / royalty /
+     capex-to-opex / gross margin expansion / operating leverage /
+     run-rate revenue.  Catches Indian model-shift signals that the
+     US-centric regex missed (~90% of Indian cases per QA).
+
+  Universe-source tag rendered next to count: 'multibagger upload (25)'
+  / 'portfolio + watchlist (8)' / 'custom (5)' so user knows what
+  universe is being scanned.
+
+Type-check clean.
+---
+ .../src/app/(dashboard)/rerating/page.tsx     | 147 +++++++++++++++---
+ .../src/app/(dashboard)/stock-sheet/page.tsx  |  88 +++++++++--
+ 2 files changed, 200 insertions(+), 35 deletions(-)
+
+diff --git a/frontend/src/app/(dashboard)/rerating/page.tsx b/frontend/src/app/(dashboard)/rerating/page.tsx
+index 97df393..a344cd6 100644
+--- a/frontend/src/app/(dashboard)/rerating/page.tsx
++++ b/frontend/src/app/(dashboard)/rerating/page.tsx
+@@ -72,29 +72,99 @@ interface Article {
+ 
+ // ─── Hooks ──────────────────────────────────────────────────────────────────
+ 
+-function useUniverseSymbols() {
+-  return useQuery<string[]>({
+-    queryKey: ['rerating', 'universe'],
++// PATCH 0108 — BUG-02: universe selector with Multibagger fallback.
++// Old behaviour: used portfolio + watchlist (often empty). New: Multibagger
++// uploaded list (mb3_symbols localStorage) is the default if non-empty,
++// then watchlist/portfolio. User can switch via UI dropdown.
++
++type UniverseChoice = 'AUTO' | 'MULTIBAGGER' | 'PORTFOLIO' | 'WATCHLIST' | 'NSE500' | 'CUSTOM';
++
++function readMultibaggerSymbols(): string[] {
++  if (typeof window === 'undefined') return [];
++  try {
++    const raw = localStorage.getItem('mb3_symbols');
++    if (!raw) return [];
++    const parsed = JSON.parse(raw);
++    if (Array.isArray(parsed)) {
++      return parsed
++        .map((s) => typeof s === 'string' ? s : (s?.symbol || s?.ticker || ''))
++        .filter(Boolean)
++        .map((s) => String(s).toUpperCase());
++    }
++    return [];
++  } catch {
++    return [];
++  }
++}
++
++// NSE500 small-cap proxy list — fetched once if user picks that universe
++async function fetchNSE500(): Promise<string[]> {
++  try {
++    const { data } = await api.get('/market/nse500');
++    if (Array.isArray(data)) return data.map((s: any) => typeof s === 'string' ? s : s?.symbol).filter(Boolean);
++  } catch {}
++  return [];
++}
++
++function useUniverseSymbols(choice: UniverseChoice, customCsv: string) {
++  return useQuery<{ symbols: string[]; source: string }>({
++    queryKey: ['rerating', 'universe', choice, customCsv],
+     queryFn: async () => {
+-      // portfolio + watchlist union
+       const out = new Set<string>();
+-      try {
+-        const { data } = await api.get('/portfolio');
+-        const positions = data?.positions || data?.holdings || data || [];
+-        for (const p of positions) {
+-          const s = p.symbol || p.ticker || p.ticker_symbol;
+-          if (s) out.add(String(s).toUpperCase());
+-        }
+-      } catch {}
+-      try {
+-        const { data } = await api.get('/watchlist');
+-        const items = data?.items || data?.tickers || data || [];
+-        for (const w of items) {
+-          const s = typeof w === 'string' ? w : (w.symbol || w.ticker || w.ticker_symbol);
+-          if (s) out.add(String(s).toUpperCase());
++
++      const addPortfolio = async () => {
++        try {
++          const { data } = await api.get('/portfolio');
++          const positions = data?.positions || data?.holdings || data || [];
++          for (const p of positions) {
++            const s = p.symbol || p.ticker || p.ticker_symbol;
++            if (s) out.add(String(s).toUpperCase());
++          }
++        } catch {}
++      };
++      const addWatchlist = async () => {
++        try {
++          const { data } = await api.get('/watchlist');
++          const items = data?.items || data?.tickers || data || [];
++          for (const w of items) {
++            const s = typeof w === 'string' ? w : (w.symbol || w.ticker || w.ticker_symbol);
++            if (s) out.add(String(s).toUpperCase());
++          }
++        } catch {}
++      };
++      const addMultibagger = () => {
++        for (const s of readMultibaggerSymbols()) out.add(s);
++      };
++
++      let source = 'auto';
++      if (choice === 'MULTIBAGGER') {
++        addMultibagger();
++        source = `multibagger (${out.size})`;
++      } else if (choice === 'PORTFOLIO') {
++        await addPortfolio();
++        source = `portfolio (${out.size})`;
++      } else if (choice === 'WATCHLIST') {
++        await addWatchlist();
++        source = `watchlist (${out.size})`;
++      } else if (choice === 'NSE500') {
++        const list = await fetchNSE500();
++        for (const s of list) out.add(s);
++        source = `NSE500 (${out.size})`;
++      } else if (choice === 'CUSTOM') {
++        for (const t of customCsv.split(/[,\s]+/).map((s) => s.trim().toUpperCase()).filter(Boolean)) out.add(t);
++        source = `custom (${out.size})`;
++      } else {
++        // AUTO: prefer Multibagger upload; if empty, fall back to portfolio + watchlist union
++        addMultibagger();
++        if (out.size === 0) {
++          await addPortfolio();
++          await addWatchlist();
++          source = `portfolio + watchlist (${out.size})`;
++        } else {
++          source = `multibagger upload (${out.size})`;
+         }
+-      } catch {}
+-      return Array.from(out);
++      }
++      return { symbols: Array.from(out), source };
+     },
+     staleTime: 5 * 60_000,
+   });
+@@ -207,7 +277,12 @@ interface ModelShiftRow {
+   most_recent_age_days?: number;
+ }
+ 
+-const MODEL_SHIFT_PATTERN = /\b(saas|software.as.a.service|subscription model|recurring revenue|annualized recurring revenue|arr\b|platform model|platform play|recurring|net revenue retention|nrr|expansion revenue|land.and.expand|usage based pricing|metered)\b/i;
++// PATCH 0108 — BUG-02 fix C: expanded for Indian business-model shifts.
++// Old US-centric SaaS regex missed 90% of Indian model-shift signals.
++// Indian context uses: order book / AMC / annuity / channel partner /
++// long-term contract / maintenance / managed services / subscription /
++// recurring / platform / SaaS.
++const MODEL_SHIFT_PATTERN = /\b(saas|software.as.a.service|subscription (?:model|revenue|business)|recurring revenue|annualized recurring revenue|arr\b|platform (?:model|play|business|revenue)|recurring|net revenue retention|nrr|expansion revenue|land.and.expand|usage based pricing|metered|annuity (?:revenue|business|model)|retainer|long.?term contract|order ?book|amc\b|maintenance contract|maintenance services|managed services|channel partner|after.?market services|services revenue|service revenue|aftermarket|asset.?light|licensing model|royalty model|capex.?to.?opex|gross margin expansion|operating leverage|run.?rate revenue)\b/i;
+ 
+ function computeModelShift(articles: Article[]): ModelShiftRow[] {
+   const now = Date.now();
+@@ -303,6 +378,9 @@ export default function RerratingPage() {
+   const initial = (searchParams?.get('tab') as Tab) || 'margin';
+   const [active, setActive] = useState<Tab>(TABS.some((t) => t.id === initial) ? initial : 'margin');
+   const [region, setRegion] = useState<'ALL' | 'IN' | 'GLOBAL'>('ALL');
++  // PATCH 0108 — BUG-02: universe selector
++  const [universeChoice, setUniverseChoice] = useState<UniverseChoice>('AUTO');
++  const [customCsv, setCustomCsv] = useState('');
+ 
+   // Sync active tab to URL
+   useEffect(() => {
+@@ -313,7 +391,9 @@ export default function RerratingPage() {
+     }
+   }, [active, searchParams, router]);
+ 
+-  const { data: universe = [] } = useUniverseSymbols();
++  const { data: universeData = { symbols: [], source: 'loading' } } = useUniverseSymbols(universeChoice, customCsv);
++  const universe = universeData.symbols;
++  const universeSource = universeData.source;
+   const { data: earnings = [], isLoading: loadingE } = useEarningsScan(universe);
+   const { data: quotes = {}, isLoading: loadingQ } = useQuotes(universe);
+   const { data: feed, isLoading: loadingN } = useNewsFeed();
+@@ -338,7 +418,28 @@ export default function RerratingPage() {
+             ⚖️ RE-RATING SCREENER
+           </span>
+           <span style={{ fontSize: 12, color: '#4A5B6C' }}>Margin Expansion · Model Shift · Multiple Expansion</span>
+-          <span style={{ fontSize: 11, color: '#6B7A8D' }}>Universe: portfolio + watchlist ({universe.length} symbols)</span>
++          <span style={{ fontSize: 11, color: '#6B7A8D' }}>Universe: {universeSource}</span>
++          {/* PATCH 0108 — BUG-02: universe selector */}
++          <select
++            value={universeChoice}
++            onChange={(e) => setUniverseChoice(e.target.value as UniverseChoice)}
++            style={{ padding: '3px 8px', fontSize: 11, fontWeight: 700, borderRadius: 4, border: '1px solid #1A2840', backgroundColor: '#0A1422', color: '#E6EDF3', cursor: 'pointer' }}
++          >
++            <option value="AUTO">Auto (MB → Portfolio + Watchlist)</option>
++            <option value="MULTIBAGGER">Multibagger Upload</option>
++            <option value="PORTFOLIO">My Portfolio</option>
++            <option value="WATCHLIST">My Watchlist</option>
++            <option value="NSE500">NSE 500</option>
++            <option value="CUSTOM">Custom (CSV)</option>
++          </select>
++          {universeChoice === 'CUSTOM' && (
++            <input
++              value={customCsv}
++              onChange={(e) => setCustomCsv(e.target.value)}
++              placeholder="POWERGRID.NS, NTPC.NS, ..."
++              style={{ padding: '3px 8px', fontSize: 11, borderRadius: 4, border: '1px solid #1A2840', backgroundColor: '#0A1422', color: '#E6EDF3', width: 240 }}
++            />
++          )}
+           <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+             {([
+               { v: 'ALL', label: 'ALL' },
+diff --git a/frontend/src/app/(dashboard)/stock-sheet/page.tsx b/frontend/src/app/(dashboard)/stock-sheet/page.tsx
+index 82b124a..043063e 100644
+--- a/frontend/src/app/(dashboard)/stock-sheet/page.tsx
++++ b/frontend/src/app/(dashboard)/stock-sheet/page.tsx
+@@ -33,12 +33,69 @@
+ //   16. Final Questions              — strategic asset, hold-through-drawdown
+ // ═══════════════════════════════════════════════════════════════════════════
+ 
+-import { useEffect, useMemo, useState } from 'react';
++import { Component, ErrorInfo, ReactNode, useEffect, useMemo, useState } from 'react';
+ import { useQuery } from '@tanstack/react-query';
+ import { useRouter, useSearchParams } from 'next/navigation';
+-import { Search, Save, Trash2, FileDown, ChevronDown, ChevronRight } from 'lucide-react';
++import { Search, Save, Trash2, FileDown, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
+ import api from '@/lib/api';
+ 
++// PATCH 0108 — BUG-01 fix: defensive scalar extraction.  Some quote APIs
++// return signed-numeric fields as `{direction, magnitude}` objects (their
++// internal sentiment shape).  Rendering an object as a JSX child throws
++// React Error #31.  This helper unwraps the magnitude with a sign.
++function safeScalar(v: any): number | null {
++  if (v == null) return null;
++  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
++  if (typeof v === 'string') {
++    const n = Number(v);
++    return Number.isFinite(n) ? n : null;
++  }
++  if (typeof v === 'object') {
++    if ('magnitude' in v) {
++      const mag = Number(v.magnitude);
++      if (!Number.isFinite(mag)) return null;
++      const dir = String(v.direction ?? '').toLowerCase();
++      const sign = (dir === 'down' || dir === 'negative' || dir === 'bear' || dir === 'down_strong') ? -1 : 1;
++      return mag * sign;
++    }
++    if ('value' in v) return safeScalar(v.value);
++  }
++  return null;
++}
++
++// PATCH 0108 — BUG-01: ErrorBoundary so a malformed API row doesn't kill the page.
++class StockSheetErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; message?: string }> {
++  state = { hasError: false, message: undefined as string | undefined };
++  static getDerivedStateFromError(error: Error) {
++    return { hasError: true, message: error?.message?.slice(0, 240) || 'Unknown error' };
++  }
++  componentDidCatch(error: Error, info: ErrorInfo) {
++    // eslint-disable-next-line no-console
++    console.error('[StockSheet] crash:', error, info?.componentStack);
++  }
++  reset = () => this.setState({ hasError: false, message: undefined });
++  render() {
++    if (this.state.hasError) {
++      return (
++        <div style={{ margin: 18, padding: 16, backgroundColor: '#0D1B2E', border: '1px solid #EF4444', borderRadius: 10, color: '#FCA5A5', fontSize: 13, lineHeight: 1.55 }}>
++          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, marginBottom: 6, color: '#EF4444' }}>
++            <AlertTriangle style={{ width: 16, height: 16 }} />
++            Stock Sheet — render error
++          </div>
++          <div style={{ marginBottom: 8 }}>{this.state.message}</div>
++          <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 8 }}>
++            One section returned an unexpected payload shape. The header above is still usable; try a different ticker or click reset.
++          </div>
++          <button onClick={this.reset} style={{ padding: '4px 12px', fontSize: 11, fontWeight: 700, borderRadius: 4, border: '1px solid #EF444460', backgroundColor: '#EF444420', color: '#EF4444', cursor: 'pointer' }}>
++            Reset
++          </button>
++        </div>
++      );
++    }
++    return this.props.children;
++  }
++}
++
+ // ─── Types ──────────────────────────────────────────────────────────────────
+ 
+ type Signal = 'YES' | 'NO' | 'N/A';
+@@ -599,6 +656,7 @@ export default function StockSheetPage() {
+       </div>
+ 
+       {/* ── Body ───────────────────────────────────────────────────── */}
++      <StockSheetErrorBoundary>
+       {!activeTicker ? (
+         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6B7A8D', fontSize: 14, padding: 24, textAlign: 'center' }}>
+           <div>
+@@ -621,16 +679,21 @@ export default function StockSheetPage() {
+               <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 4, backgroundColor: region === 'IN' ? '#FBBF2420' : '#22D3EE20', color: region === 'IN' ? '#FBBF24' : '#22D3EE', border: `1px solid ${region === 'IN' ? '#FBBF2440' : '#22D3EE40'}` }}>
+                 {region === 'IN' ? '🇮🇳 India' : '🌐 Global'}
+               </span>
+-              {quote?.price != null && (
+-                <span style={{ fontSize: 13, color: '#94A3B8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+-                  {Number(quote.price).toLocaleString()}
+-                  {quote.change_pct != null && (
+-                    <span style={{ marginLeft: 8, color: Number(quote.change_pct) >= 0 ? '#10B981' : '#EF4444' }}>
+-                      {Number(quote.change_pct) >= 0 ? '+' : ''}{Number(quote.change_pct).toFixed(2)}%
+-                    </span>
+-                  )}
+-                </span>
+-              )}
++              {(() => {
++                const px = safeScalar((quote as any)?.price);
++                const ch = safeScalar((quote as any)?.change_pct);
++                if (px == null) return null;
++                return (
++                  <span style={{ fontSize: 13, color: '#94A3B8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
++                    {px.toLocaleString()}
++                    {ch != null && (
++                      <span style={{ marginLeft: 8, color: ch >= 0 ? '#10B981' : '#EF4444' }}>
++                        {ch >= 0 ? '+' : ''}{ch.toFixed(2)}%
++                      </span>
++                    )}
++                  </span>
++                );
++              })()}
+               <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 12 }}>
+                 <span style={{ fontSize: 24, fontWeight: 900, color: VERDICT_COLOR[score.verdict], letterSpacing: '0.8px' }}>
+                   {score.verdict}
+@@ -733,6 +796,7 @@ export default function StockSheetPage() {
+           })}
+         </div>
+       )}
++      </StockSheetErrorBoundary>
+     </div>
+   );
+ }
+-- 
+2.34.1
+

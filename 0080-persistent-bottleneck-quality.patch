@@ -1,0 +1,300 @@
+From 062352d4ca72d0a45b967f7c11876eefe4b66e85 Mon Sep 17 00:00:00 2001
+From: Rishi <rishi@market-cockpit.local>
+Date: Sun, 10 May 2026 16:04:28 +0200
+Subject: [PATCH] =?UTF-8?q?fix(news):=20persistent=20bottleneck=20quality?=
+ =?UTF-8?q?=20=E2=80=94=20bottleneck-only=20filter=20+=20rich=20labels?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Patch 0080 — addresses user feedback: "still showing same crap. Ryzen
+gaming deal as latest MEMORY_INFRA signal? Why aren't real CPU/HBM
+bottleneck articles surfacing? Make it live, not stale."
+
+THREE QUALITY ISSUES FIXED
+
+(1) RYZEN GAMING DEALS POLLUTING THE LEDGER
+    Tom's Hardware "Save $290 on Ryzen 7 9800X3D + 32GB DDR5" was
+    accumulating evidence in MEMORY_INFRA because DDR5/Samsung 9100 Pro
+    matched the semantic graph tokens — but it's not a bottleneck signal.
+
+    Fix: at recordEvidence() write time, articles must pass BOTH:
+      - structural_state ∈ {BOTTLENECK, CAPACITY_EXPANSION,
+        SUPPLY_RESPONSE, CAPEX_BUILDOUT, DEMAND_SURGE, POLICY_SUPPORT}
+        OR article_type=BOTTLENECK
+        OR title/desc contains bottleneck-language (shortage, tight,
+        queue, capacity constraint, binding, allocation, pricing power,
+        lead time, framework, backlog, chokepoint, sole-source)
+      - title/desc does NOT contain retail-deal language (save $,
+        deal, combo, bundle, coupon, %off, prime day, review:, gift guide)
+
+    Bumped KV key evidence:v1: → evidence:v2: so the polluted ledger
+    starts clean.
+
+(2) GENERIC SYSTEM-NODE NAMES ARE OPAQUE
+    "MEMORY INFRA" / "FABRICATION INFRA" doesn't tell the user what
+    actual bottleneck this is. Added BOTTLENECK_LABEL map:
+      COMPUTE_INFRA      → "AI COMPUTE / GPU"
+      MEMORY_INFRA       → "HBM / DRAM SUPPLY"
+      PACKAGING_INFRA    → "CoWoS / ADV PACKAGING"
+      FABRICATION_INFRA  → "TSMC / FAB CAPACITY"
+      INTERCONNECT_INFRA → "OPTICAL / 800G+ FABRIC"
+      COOLING_INFRA      → "LIQUID COOLING (AI)"
+      ENERGY_INFRA       → "GRID / TRANSFORMERS"
+      NUCLEAR_INFRA      → "NUCLEAR / HALEU / SMR"
+      DEFENSE_INFRA      → "DEFENCE / MISSILES"
+      RESOURCE_SCARCITY  → "RARE EARTHS / CRITICAL MIN"
+      ... 20 entries total
+    Each with a 1-line sub-explanation rendered under the title.
+
+(3) "LATEST" SAMPLE WAS JUST MOST-RECENT — got Ryzen deals
+    Replaced with smart pick: rank top_samples by tier (PRIMARY/
+    SPECIALIST > GENERALIST > everything), tie-break by recency.
+    Returns best_specialist_sample. UI now shows "Top signal:" with
+    the highest-quality match — SemiAnalysis HBM article surfaces
+    instead of Tom's Hardware deal.
+
+Cache key v26 → v27. KV key evidence:v1 → evidence:v2. tsc clean.
+
+Combined with the 0080 write-time filter, this means:
+  - Ryzen deals never accumulate (filtered at write)
+  - HBM / CoWoS / TSMC articles from SemiAnalysis / TrendForce /
+    Digitimes / Power-Eng accumulate (specialist + bottleneck-language)
+  - The panel shows real bottleneck readings with proper labels and
+    the actual high-quality contributing article
+---
+ frontend/src/app/(dashboard)/news/page.tsx    | 37 +++++++++---
+ frontend/src/app/api/v1/news/route.ts         | 22 ++++++-
+ frontend/src/lib/news/evidence-accumulator.ts | 57 ++++++++++++++++++-
+ 3 files changed, 105 insertions(+), 11 deletions(-)
+
+diff --git a/frontend/src/app/(dashboard)/news/page.tsx b/frontend/src/app/(dashboard)/news/page.tsx
+index da7d456..e15411d 100644
+--- a/frontend/src/app/(dashboard)/news/page.tsx
++++ b/frontend/src/app/(dashboard)/news/page.tsx
+@@ -342,9 +342,18 @@ function useTransformationalPreview() {
+   });
+ }
+ 
+-// PATCH 0079: Persistent Bottleneck Reading hook
++// PATCH 0079 + 0080: Persistent Bottleneck Reading hook
++interface PersistentBottleneckSample {
++  article_id: string;
++  title: string;
++  source: string;
++  tier: string;
++  recorded_at?: string;
++}
+ interface PersistentBottleneckItem {
+   node: string;
++  label?: string;        // PATCH 0080: rich label
++  sub?: string;          // PATCH 0080: context line
+   confidence_pct: number;
+   cumulative_score: number;
+   sample_count: number;
+@@ -352,7 +361,8 @@ interface PersistentBottleneckItem {
+   age_days: number;
+   trend: 'rising' | 'steady' | 'falling' | 'cooling';
+   is_structural: boolean;
+-  top_samples: Array<{ article_id: string; title: string; source: string; tier: string }>;
++  top_samples: PersistentBottleneckSample[];
++  best_specialist_sample?: PersistentBottleneckSample | null;  // PATCH 0080
+ }
+ interface PersistentBottlenecksResp {
+   section_title: string;
+@@ -1878,14 +1888,17 @@ export default function NewsFeedPage() {
+                   : b.trend === 'falling' ? '#22D3EE'
+                   : '#6B7A8D';
+                 const trendIcon = b.trend === 'rising' ? '↑' : b.trend === 'steady' ? '→' : b.trend === 'falling' ? '↓' : '·';
++                // PATCH 0080: prefer best specialist sample over most-recent
++                const bestSample = b.best_specialist_sample || b.top_samples[0];
++                const showLabel = b.label || b.node.replace(/_/g, ' ');
+                 return (
+                   <div key={b.node} style={{
+                     backgroundColor: '#0A1422', border: '1px solid #1A2840',
+                     borderRadius: 8, padding: '8px 10px',
+                   }}>
+-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+-                      <span style={{ fontSize: 11, fontWeight: 700, color: '#F5F7FA' }}>
+-                        {b.node.replace(/_/g, ' ')}
++                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
++                      <span style={{ fontSize: 11, fontWeight: 800, color: '#F5F7FA', letterSpacing: '0.3px' }}>
++                        {showLabel}
+                       </span>
+                       {b.is_structural && (
+                         <span style={{ fontSize: 8, fontWeight: 700, color: '#8B5CF6', border: '1px solid #8B5CF640', backgroundColor: '#8B5CF610', padding: '1px 4px', borderRadius: 3 }}>
+@@ -1896,6 +1909,11 @@ export default function NewsFeedPage() {
+                         {trendIcon} {b.trend}
+                       </span>
+                     </div>
++                    {b.sub && (
++                      <div style={{ fontSize: 10, color: '#94A3B8', lineHeight: 1.3, marginBottom: 4 }}>
++                        {b.sub}
++                      </div>
++                    )}
+                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, fontSize: 10, color: '#94A3B8' }}>
+                       <span style={{ color: '#10B981', fontWeight: 700 }}>{b.confidence_pct}% conf</span>
+                       <span>·</span>
+@@ -1903,11 +1921,12 @@ export default function NewsFeedPage() {
+                       <span>·</span>
+                       <span>{b.age_days}d ago</span>
+                     </div>
+-                    {b.top_samples.length > 0 && (
+-                      <div style={{ fontSize: 9, color: '#6B7A8D', lineHeight: 1.4 }}>
+-                        Latest: <span style={{ color: '#94A3B8' }}>{b.top_samples[0].title.slice(0, 80)}</span>
++                    {bestSample && (
++                      <div style={{ fontSize: 9, color: '#6B7A8D', lineHeight: 1.4, borderTop: '1px solid #1A2840', paddingTop: 4 }}>
++                        <span style={{ color: '#22D3EE', fontWeight: 700 }}>Top signal:</span>{' '}
++                        <span style={{ color: '#CBD5E1' }}>{bestSample.title.slice(0, 90)}</span>
+                         <br/>
+-                        <span style={{ color: '#4A5B6C' }}>{b.top_samples[0].source} · {b.top_samples[0].tier}</span>
++                        <span style={{ color: '#4A5B6C' }}>{bestSample.source} · {bestSample.tier}</span>
+                       </div>
+                     )}
+                   </div>
+diff --git a/frontend/src/app/api/v1/news/route.ts b/frontend/src/app/api/v1/news/route.ts
+index 62ca2b4..f75f715 100644
+--- a/frontend/src/app/api/v1/news/route.ts
++++ b/frontend/src/app/api/v1/news/route.ts
+@@ -189,7 +189,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
+ // gaming PC build.
+ const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
+ 
+-const CACHE_KEY = 'news:articles:v26'; // v26: Chokepoint Index + Macro insight banner + WC intensity numeric (0073)
++const CACHE_KEY = 'news:articles:v27'; // v27: persistent bottleneck quality fix — bottleneck-only filter + rich labels + smart latest (0080)
+ const CACHE_TTL = 300; // 5 min
+ // v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
+ // freshness_layer, signal_confidence (multi-dim), bottleneck_parent /
+@@ -2120,9 +2120,29 @@ async function fetchAllNews(): Promise<any[]> {
+   // sample. Over time, themes emerge organically: HBM shortage articles
+   // accumulate confidence in MEMORY_INFRA, photonics articles in
+   // INTERCONNECT_INFRA, etc. Fire-and-forget.
++  // PATCH 0080: only accumulate evidence for articles that ARE structurally
++  // about a bottleneck/capacity/supply signal. Filter out gaming deals,
++  // consumer reviews, and unrelated tags that happen to mention HBM / DRAM
++  // / AI etc. as background. Three gates:
++  //   - structural_state ∈ {BOTTLENECK, CAPACITY_EXPANSION, SUPPLY_RESPONSE,
++  //     CAPEX_BUILDOUT, DEMAND_SURGE, POLICY_SUPPORT}, OR article_type=BOTTLENECK
++  //   - title/desc has bottleneck-language (shortage, tight, queue, capacity,
++  //     bottleneck, binding, allocation, pricing power, lead time, framework)
++  //   - source tier is not a retail/consumer signal (Tom's Hardware Ryzen
++  //     deal articles wouldn't qualify)
++  const BOTTLENECK_LANG = /\b(shortage|tight(?:ness)?|queue|capacity (?:constraint|binding|tight|reservation|allocation)|bottleneck|binding|allocation (?:queue)?|pricing power|lead time|framework|backlog|chokepoint|sole(?:.?source| supplier)|export control|embargo)\b/i;
++  const RETAIL_DEAL_LANG = /\b(save \$|deal|combo|bundle|coupon|discount|black friday|cyber monday|prime day|\d+%\s*off|review:|gift guide)\b/i;
+   Promise.all(
+     articlesWithImpact
+       .filter((a: any) => a.graph_primary_node && a.graph_primary_node !== 'NONE')
++      .filter((a: any) => {
++        const text = `${a.title || ''} ${a.summary || ''}`;
++        if (RETAIL_DEAL_LANG.test(text)) return false;
++        const isStructural = a.article_type === 'BOTTLENECK' ||
++          ['BOTTLENECK','CAPACITY_EXPANSION','SUPPLY_RESPONSE','CAPEX_BUILDOUT','DEMAND_SURGE','POLICY_SUPPORT'].includes(a.structural_state);
++        const hasBottleneckLang = BOTTLENECK_LANG.test(text);
++        return isStructural || hasBottleneckLang;
++      })
+       .slice(0, 40)
+       .map((a: any) =>
+         recordEvidence(a.graph_primary_node, {
+diff --git a/frontend/src/lib/news/evidence-accumulator.ts b/frontend/src/lib/news/evidence-accumulator.ts
+index 9208b33..10da1ca 100644
+--- a/frontend/src/lib/news/evidence-accumulator.ts
++++ b/frontend/src/lib/news/evidence-accumulator.ts
+@@ -56,7 +56,9 @@ function ttlSecondsFor(node: SystemNode): number {
+ function halfLifeDaysFor(node: SystemNode): number {
+   return STRUCTURAL_NODES.has(node) ? 90 : 14;
+ }
+-const KEY_PREFIX = 'evidence:v1:';
++// PATCH 0080: bump KV key to v2 — clears old ledger that accumulated
++// unfiltered evidence (Ryzen gaming deals tagged MEMORY_INFRA, etc.)
++const KEY_PREFIX = 'evidence:v2:';
+ 
+ export interface NodeEvidenceSample {
+   article_id: string;
+@@ -185,8 +187,39 @@ export async function readAllEvidence(nodes: SystemNode[]): Promise<NodeEvidence
+ // vs sample_count age distribution. This is the answer to "which
+ // bottlenecks are STILL ACTIVE even when no fresh news arrived today".
+ 
++// PATCH 0080: Rich bottleneck labels — what the user actually wants to read
++// instead of the generic SystemNode name. "MEMORY_INFRA" → "HBM / DRAM SUPPLY".
++const BOTTLENECK_LABEL: Partial<Record<SystemNode, { label: string; sub: string }>> = {
++  COMPUTE_INFRA:        { label: 'AI COMPUTE / GPU',          sub: 'NVIDIA / AMD / custom silicon — training capacity' },
++  MEMORY_INFRA:         { label: 'HBM / DRAM SUPPLY',         sub: 'SK hynix / Samsung / Micron — HBM3E/HBM4 binding constraint' },
++  PACKAGING_INFRA:      { label: 'CoWoS / ADV PACKAGING',     sub: 'TSMC dominant — GPU build packaging-bound' },
++  FABRICATION_INFRA:    { label: 'TSMC / FAB CAPACITY',       sub: 'Leading-edge logic — N3/N2 demand outpacing fab supply' },
++  INTERCONNECT_INFRA:   { label: 'OPTICAL / 800G+ FABRIC',    sub: 'Coherent / Lumentum / Marvell — AI superpod interconnect' },
++  COOLING_INFRA:        { label: 'LIQUID COOLING (AI)',       sub: 'Vertiv / nVent — B100/B200 thermal density' },
++  NETWORK_BANDWIDTH:    { label: 'NETWORK / DCI BACKBONE',    sub: 'Hyperscaler east-west AI traffic + sub-sea cable' },
++  ENERGY_INFRA:         { label: 'GRID / TRANSFORMERS',       sub: 'Large transformer + switchgear lead times — AI campus power' },
++  NUCLEAR_INFRA:        { label: 'NUCLEAR / HALEU / SMR',     sub: 'Centrus HALEU + Naval reactors + SMR fuel cycle' },
++  OIL_GAS_INFRA:        { label: 'OIL / GAS / LNG',           sub: 'Crude pricing + LNG offtake + petrochem' },
++  RENEWABLE_INFRA:      { label: 'RENEWABLE / BESS / PPA',    sub: 'Solar/wind PPAs + battery storage frameworks' },
++  LOGISTICS_INFRA:      { label: 'SHIPPING / LOGISTICS',      sub: 'Container freight + port congestion + last-mile' },
++  TRANSPORT_INFRA:      { label: 'RAIL / EV CHARGING',        sub: 'High-speed rail + EV charging buildout' },
++  DEFENSE_INFRA:        { label: 'DEFENCE / MISSILES',        sub: 'Production lines + ammunition + RF seekers' },
++  AEROSPACE_INFRA:      { label: 'AEROSPACE / LAUNCH',        sub: 'Aero engines + space launch + satellite capacity' },
++  RESOURCE_SCARCITY:    { label: 'RARE EARTHS / CRITICAL MIN',sub: 'NdFeB magnets + uranium + lithium — China dependency' },
++  AGRI_INFRA:           { label: 'AGRI / FERTILIZER',         sub: 'Food + fertilizer + water + pesticides' },
++  MANUFACTURING_CAPACITY:{ label: 'MFG CAPACITY / PLI',       sub: 'Production-linked + reshoring + capex ramp' },
++  LABOR_CONSTRAINT:     { label: 'LABOUR / TALENT',           sub: 'Skilled-talent gap + strikes + visa friction' },
++  CAPITAL_CONSTRAINT:   { label: 'CAPITAL / CREDIT',          sub: 'Banking / NPA / payment rails / liquidity' },
++};
++
++export function bottleneckLabelFor(node: SystemNode): { label: string; sub: string } {
++  return BOTTLENECK_LABEL[node] || { label: node.replace(/_/g, ' '), sub: '' };
++}
++
+ export interface PersistentBottleneck {
+   node: SystemNode;
++  label: string;                    // PATCH 0080: rich human-readable label
++  sub: string;                      // PATCH 0080: 1-line context
+   confidence_pct: number;
+   cumulative_score: number;
+   sample_count: number;
+@@ -195,6 +228,7 @@ export interface PersistentBottleneck {
+   trend: 'rising' | 'steady' | 'falling' | 'cooling';
+   is_structural: boolean;
+   top_samples: NodeEvidenceSample[];
++  best_specialist_sample?: NodeEvidenceSample | null;  // PATCH 0080: highest-tier sample
+ }
+ 
+ export async function readPersistentBottlenecks(args: {
+@@ -224,8 +258,28 @@ export async function readPersistentBottlenecks(args: {
+     else if (ageDays <= halfLife) trend = 'steady';
+     else if (ageDays <= halfLife * 2) trend = 'falling';
+     else trend = 'cooling';
++
++    // PATCH 0080: pick the highest-quality "latest" sample for display.
++    // Rank: PRIMARY/SPECIALIST > GENERALIST > everything else.
++    // Tie-break by recency. Falls back to top_samples[0] if nothing matches.
++    const tierRank: Record<string, number> = {
++      PRIMARY: 5, SPECIALIST: 5, GENERALIST: 3, EDITORIAL: 2,
++      PRESS_RELEASE: 1, SOCIAL: 0, UNKNOWN: 1,
++    };
++    const ranked = [...e.top_samples].sort((a, b) => {
++      const r = (tierRank[b.tier] ?? 0) - (tierRank[a.tier] ?? 0);
++      if (r !== 0) return r;
++      return new Date(b.recorded_at).getTime() - new Date(a.recorded_at).getTime();
++    });
++    const bestSpecialistSample = ranked.find((s) =>
++      s.tier === 'PRIMARY' || s.tier === 'SPECIALIST' || s.tier === 'GENERALIST',
++    ) || ranked[0] || null;
++
++    const meta = bottleneckLabelFor(n);
+     out.push({
+       node: n,
++      label: meta.label,
++      sub: meta.sub,
+       confidence_pct: e.confidence_pct,
+       cumulative_score: e.cumulative_score,
+       sample_count: e.sample_count,
+@@ -234,6 +288,7 @@ export async function readPersistentBottlenecks(args: {
+       trend,
+       is_structural: isStructural,
+       top_samples: e.top_samples,
++      best_specialist_sample: bestSpecialistSample,
+     });
+   }
+   // Rank: structural nodes get a +5 score boost so HBM / CoWoS / grid surface
+-- 
+2.34.1
+

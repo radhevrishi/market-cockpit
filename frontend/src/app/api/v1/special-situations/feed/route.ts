@@ -528,6 +528,9 @@ async function buildFeed(): Promise<{
       has_named_ticker: allTickers.length > 0,
       has_primary_source: hasPrimarySource,
       decay_score: score.decay_score,
+      // PATCH 0120 — IMP-03: content-based reject for REIT/VRS/EU-bank/SPAC/NCLT
+      title: primary.title,
+      description: primary.description,
     });
 
     const lifecycle = inferLifecycleStage({

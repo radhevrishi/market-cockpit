@@ -1,0 +1,297 @@
+From f88a0358245e1e98745a3b6b7eb7abf1c135d32a Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Sun, 10 May 2026 20:19:50 +0000
+Subject: [PATCH] =?UTF-8?q?fix(news):=20graph=20hygiene=20=E2=80=94=20conf?=
+ =?UTF-8?q?idence=20cap=20on=20n=3D1=20+=20contamination=20penalty=20(0110?=
+ =?UTF-8?q?)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+User architectural critique: 'graph contamination problems · taxonomy
+leakage · weak entity resolution · confidence inflation'.
+
+THREE STRUCTURAL FIXES:
+
+1. CONFIDENCE QUALITY CAP (no more 100% on 1 article)
+   evidenceQualityCap(samples) gates confidence_pct by sample diversity:
+     n=1 specialist source       →  60% cap
+     n=1 generalist source       →  50% cap
+     n=1 other                    →  35% cap
+     n=2 same source              →  60-70% cap
+     n=2 cross-source             →  70-80% cap
+     n>=3 with 2+ distinct sources→  95-100% cap
+     n>=3 single source           →  85% cap (still suspicious)
+   Applied in readPersistentBottlenecks AFTER score-to-confidence calc.
+   Also re-gates min_confidence using the EFFECTIVE (capped) confidence
+   so n=1 dust doesn't slip through with falsely-high raw score.
+
+2. CONTAMINATION MAP + PENALTY MULTIPLIER
+   Counts how many distinct SystemNodes each ticker appears in (with
+   live decay >=2).  buildContaminationMap() reads all 20 node buckets
+   once per request, returns { TICKER: count }.
+
+   contaminationMultiplier(count) returns [0.4..1.0]:
+     1-3 nodes     1.0x (clean — sector-coherent)
+     4-5 nodes     0.85x (mild dilution)
+     6-7 nodes     0.65x (high dilution)
+     8+ nodes      0.40x ('everything stock' — heavy penalty)
+
+   Convexity score multiplied by this factor in deriveLayeredBeneficiaries.
+   Net effect: a name like RELIANCE that appears in COMPUTE/MEMORY/ENERGY/
+   RENEWABLE/MFG/LOGISTICS/CAPITAL nodes gets convexity halved or worse,
+   so it surfaces lower than scarce-enabler midcaps with focused exposure.
+
+   contamination_count exposed on every LayerTicker so UI can display
+   '(in 8 nodes — likely theme dilution)' marker in a follow-up patch.
+
+   Per-request cache (60s) so 20-key KV scan only runs once even across
+   many bottleneck cards in a single endpoint call.
+
+3. CACHE BUMP v35 → v36 so reclassified articles propagate.
+
+Type-check clean.
+---
+ frontend/src/app/api/v1/news/route.ts         | 29 ++++++++++++-
+ frontend/src/lib/news/beneficiary-layers.ts   | 18 +++++++-
+ frontend/src/lib/news/evidence-accumulator.ts | 39 ++++++++++++++++-
+ .../src/lib/news/node-ticker-accumulator.ts   | 43 +++++++++++++++++++
+ 4 files changed, 124 insertions(+), 5 deletions(-)
+
+diff --git a/frontend/src/app/api/v1/news/route.ts b/frontend/src/app/api/v1/news/route.ts
+index 2227df4..1762961 100644
+--- a/frontend/src/app/api/v1/news/route.ts
++++ b/frontend/src/app/api/v1/news/route.ts
+@@ -18,7 +18,8 @@ import { detectAdaptations, recordBeneficiary } from '@/lib/news/beneficiary-gra
+ import { deriveLayeredBeneficiaries, inferRegion } from '@/lib/news/beneficiary-layers';
+ // PATCH 0104: per-SystemNode ticker auto-discovery accumulator
+ // (so MTAR / any unhardcoded ticker auto-surfaces under nuclear when news mentions it)
+-import { recordNodeTicker, readNodeTickers } from '@/lib/news/node-ticker-accumulator';
++// PATCH 0110: contamination map — penalize tickers in 7+ unrelated nodes
++import { recordNodeTicker, readNodeTickers, buildContaminationMap } from '@/lib/news/node-ticker-accumulator';
+ // PATCH 0052: Causal-honesty layer + 0061 evidence-bound impact + 0062 relevance
+ import {
+   classifyAssertion, frameImpact, hasDirectComputeLinkage, isGenericPowerStory,
+@@ -197,7 +198,26 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
+ // gaming PC build.
+ const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
+ 
+-const CACHE_KEY = 'news:articles:v35'; // v35: India-specific semantic-graph expansion — PSU power, DC ops, nuclear/DAE, defense PSUs, fab/Tata/Vedanta-Foxconn, fibre, RE/SECI, ISRO, capex/PLI (0098)
++const CACHE_KEY = 'news:articles:v36'; // v36: theme contamination + confidence cap + pseudo-ticker filter + contamination penalty (0109b/0110)
++
++// PATCH 0110: per-request contamination-map cache.  Built once on first call
++// in a request lifecycle, reused across the (potentially many) layered-
++// beneficiary computations in that request.
++let __CONTAM_MAP_CACHE: { data: Record<string, number>; ts: number } | null = null;
++async function getContamMapForRequest(): Promise<Record<string, number>> {
++  const now = Date.now();
++  // 60s in-process cache — covers a single request burst; fresh enough.
++  if (__CONTAM_MAP_CACHE && now - __CONTAM_MAP_CACHE.ts < 60_000) {
++    return __CONTAM_MAP_CACHE.data;
++  }
++  try {
++    const data = await buildContaminationMap();
++    __CONTAM_MAP_CACHE = { data, ts: now };
++    return data;
++  } catch {
++    return {};
++  }
++}
+ const CACHE_TTL = 300; // 5 min
+ // v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
+ // freshness_layer, signal_confidence (multi-dim), bottleneck_parent /
+@@ -2611,6 +2631,9 @@ export async function GET(request: Request) {
+             min_mentions: 1,
+           });
+ 
++          // PATCH 0110: lazy-cache contamination map (built once per request)
++          const contamMap = await getContamMapForRequest();
++
+           const buildVariant = (region: 'IN' | 'GLOBAL', regionSamples: any[]) => {
+             if (regionSamples.length === 0) return null;
+             const tickerSet = Array.from(
+@@ -2629,6 +2652,7 @@ export async function GET(request: Request) {
+                 per_layer_limit: 5,
+                 region,
+                 discovered_tickers: discoveredForNode,
++                contamination_map: contamMap,
+               }),
+             };
+             return variant;
+@@ -2653,6 +2677,7 @@ export async function GET(request: Request) {
+                 per_layer_limit: 5,
+                 region: 'GLOBAL',
+                 discovered_tickers: discoveredForNode,
++                contamination_map: contamMap,
+               }),
+             });
+           }
+diff --git a/frontend/src/lib/news/beneficiary-layers.ts b/frontend/src/lib/news/beneficiary-layers.ts
+index 7c718f0..a6d293c 100644
+--- a/frontend/src/lib/news/beneficiary-layers.ts
++++ b/frontend/src/lib/news/beneficiary-layers.ts
+@@ -86,6 +86,10 @@ export interface LayerTicker {
+   // global nuclear, etc.
+   export_proxy?: boolean;
+   export_destination?: string;   // e.g. 'US AI DC' / 'global oil & gas'
++  // PATCH 0110: contamination count — # of distinct SystemNodes this ticker
++  // appears in (via accumulator).  >7 = 'everything stock' = theme dilution.
++  // Used by deriveLayeredBeneficiaries to penalize convexity.
++  contamination_count?: number;
+ }
+ 
+ export interface LayerMeta {
+@@ -800,7 +804,7 @@ function nodeLabel(node: SystemNode): string {
+ // PATCH 0104: imported lazily (server-only) so client bundle stays small.
+ // Discovered tickers from the per-node accumulator are appended to L1.
+ import type { NodeTickerEntry } from '@/lib/news/node-ticker-accumulator';
+-import { classifyTier } from '@/lib/news/node-ticker-accumulator';
++import { classifyTier, contaminationMultiplier } from '@/lib/news/node-ticker-accumulator';
+ 
+ export function deriveLayeredBeneficiaries(args: {
+   primary_node: SystemNode;
+@@ -815,8 +819,11 @@ export function deriveLayeredBeneficiaries(args: {
+   // by caller to avoid awaiting per-article).  Appended to L1 with
+   // discovered: true marker.
+   discovered_tickers?: NodeTickerEntry[];
++  // PATCH 0110: contamination map — { TICKER: distinct_node_count }.  Tickers
++  // appearing in 7+ nodes get convexity penalty (suppresses 'everything stocks').
++  contamination_map?: Record<string, number>;
+ }): LayeredBeneficiaries {
+-  const { primary_node, article_tickers = [], per_layer_limit = 8, article_headline, region = 'GLOBAL', discovered_tickers = [] } = args;
++  const { primary_node, article_tickers = [], per_layer_limit = 8, article_headline, region = 'GLOBAL', discovered_tickers = [], contamination_map = {} } = args;
+   const rule = (region === 'IN' ? NODE_RULES_IN : NODE_RULES)[primary_node] ?? NODE_RULES.NONE;
+   const rosterByLayer = region === 'IN' ? INDIA_ROSTER_BY_LAYER : ROSTER_BY_LAYER;
+   const articleSet = new Set(article_tickers.map((t) => t.toUpperCase()));
+@@ -977,6 +984,13 @@ export function deriveLayeredBeneficiaries(args: {
+       if (t.export_proxy) conv += 12;                          // PATCH 0107: export proxies get a convexity boost
+       if (GENERIC_MEGACAP_RE.test(t.ticker)) conv -= 25;
+       if ((t.accumulator_score ?? 0) > 100) conv -= 5;
++      // PATCH 0110: contamination penalty — multiply by [0.4..1.0] based on
++      // distinct-node count.  Ticker in 8+ nodes = 'everything stock' = 0.4x.
++      const contamCount = contamination_map[t.ticker.toUpperCase()] ?? 0;
++      if (contamCount > 0) {
++        t.contamination_count = contamCount;
++        conv = Math.round(conv * contaminationMultiplier(contamCount));
++      }
+       t.convexity_score = Math.max(0, Math.min(100, conv));
+     }
+ 
+diff --git a/frontend/src/lib/news/evidence-accumulator.ts b/frontend/src/lib/news/evidence-accumulator.ts
+index e365e63..33338a4 100644
+--- a/frontend/src/lib/news/evidence-accumulator.ts
++++ b/frontend/src/lib/news/evidence-accumulator.ts
+@@ -106,6 +106,35 @@ function scoreToConfidence(score: number): number {
+   return Math.max(0, Math.min(100, Math.round(100 * (1 - Math.exp(-score / 10)))));
+ }
+ 
++// PATCH 0110: evidence-quality cap.  User: "100% confidence on 1 article
++// is dangerous".  Caps confidence based on sample diversity:
++//   1 sample, single source                  → 60 (specialist) / 50 (generalist) / 35 (other)
++//   2 samples, same source                   → 70
++//   2 samples, cross-source                  → 80
++//   3+ samples, ≥2 distinct sources          → 95
++//   3+ samples, ≥3 distinct sources          → 100
++function evidenceQualityCap(samples: { tier: SourceTier; source: string }[]): number {
++  if (!samples || samples.length === 0) return 0;
++  const n = samples.length;
++  const distinctSources = new Set(samples.map((s) => s.source)).size;
++  const hasSpecialist = samples.some((s) => s.tier === 'PRIMARY' || s.tier === 'SPECIALIST');
++  const hasGeneralist = samples.some((s) => s.tier === 'GENERALIST');
++
++  if (n === 1) {
++    if (hasSpecialist) return 60;
++    if (hasGeneralist) return 50;
++    return 35;
++  }
++  if (n === 2) {
++    if (distinctSources >= 2) return hasSpecialist ? 80 : 70;
++    return hasSpecialist ? 70 : 60;
++  }
++  // n >= 3
++  if (distinctSources >= 3) return 100;
++  if (distinctSources >= 2) return 95;
++  return 85;  // 3 samples but all from one source — still suspicious
++}
++
+ export async function recordEvidence(
+   node: SystemNode,
+   sample: { article_id: string; title: string; source: string; tier: SourceTier; raw_weight: number },
+@@ -294,11 +323,19 @@ export async function readPersistentBottlenecks(args: {
+       : undefined;
+     const isLatest = firstSeenAgeDays !== undefined && firstSeenAgeDays <= 10;
+ 
++    // PATCH 0110: cap confidence by evidence quality (no more 100% on n=1).
++    const qualityCap = evidenceQualityCap(e.top_samples || []);
++    const effectiveConfidence = Math.min(e.confidence_pct, qualityCap);
++
++    // Re-gate by min_confidence using the EFFECTIVE (capped) confidence so
++    // n=1 dust doesn't slip through with a falsely-high raw score.
++    if (effectiveConfidence < min_confidence) continue;
++
+     out.push({
+       node: n,
+       label: meta.label,
+       sub: meta.sub,
+-      confidence_pct: e.confidence_pct,
++      confidence_pct: effectiveConfidence,
+       cumulative_score: e.cumulative_score,
+       sample_count: e.sample_count,
+       last_seen: e.last_seen,
+diff --git a/frontend/src/lib/news/node-ticker-accumulator.ts b/frontend/src/lib/news/node-ticker-accumulator.ts
+index 46da519..9fde0df 100644
+--- a/frontend/src/lib/news/node-ticker-accumulator.ts
++++ b/frontend/src/lib/news/node-ticker-accumulator.ts
+@@ -202,6 +202,49 @@ export async function readNodeTickers(args: {
+   }
+ }
+ 
++// PATCH 0110: contamination scan — count distinct nodes a ticker appears in.
++// User: 'if ticker appears in 7+ unrelated nodes → suppress'.  Returns a map
++// of ticker → count of distinct buckets containing it (with score >= 2).
++const ALL_NODES_FOR_CONTAMINATION: SystemNode[] = [
++  'COMPUTE_INFRA','MEMORY_INFRA','PACKAGING_INFRA','FABRICATION_INFRA',
++  'INTERCONNECT_INFRA','COOLING_INFRA','NETWORK_BANDWIDTH',
++  'ENERGY_INFRA','NUCLEAR_INFRA','OIL_GAS_INFRA','RENEWABLE_INFRA',
++  'LOGISTICS_INFRA','TRANSPORT_INFRA','DEFENSE_INFRA','AEROSPACE_INFRA',
++  'RESOURCE_SCARCITY','AGRI_INFRA','MANUFACTURING_CAPACITY',
++  'LABOR_CONSTRAINT','CAPITAL_CONSTRAINT',
++];
++
++export async function buildContaminationMap(): Promise<Record<string, number>> {
++  const counts: Record<string, number> = {};
++  await Promise.all(ALL_NODES_FOR_CONTAMINATION.map(async (n) => {
++    try {
++      const bucket = await kvGet<NodeBucket>(bucketKey(n));
++      if (!bucket) return;
++      for (const e of bucket.entries) {
++        if (!isValidTickerCandidate(e.ticker)) continue;
++        // Only count if score is meaningful (>=2 = ~2 specialist mentions)
++        const liveScore = decay(e.score, e.last_seen);
++        if (liveScore < 2) continue;
++        const T = e.ticker.toUpperCase();
++        counts[T] = (counts[T] || 0) + 1;
++      }
++    } catch { /* skip failed nodes */ }
++  }));
++  return counts;
++}
++
++// Returns a multiplier in [0.4, 1.0] based on contamination count.
++// 1-3 nodes: 1.0 (clean)
++// 4-5 nodes: 0.85 (mild dilution)
++// 6-7 nodes: 0.65 (high dilution)
++// 8+ nodes: 0.40 ('everything stock' — heavy penalty)
++export function contaminationMultiplier(distinctNodes: number): number {
++  if (distinctNodes <= 3) return 1.0;
++  if (distinctNodes <= 5) return 0.85;
++  if (distinctNodes <= 7) return 0.65;
++  return 0.40;
++}
++
+ // ─── Tier A/B/C/D classification ────────────────────────────────────────────
+ // Computed from existing LayerTicker metadata + accumulator score:
+ //
+-- 
+2.34.1
+

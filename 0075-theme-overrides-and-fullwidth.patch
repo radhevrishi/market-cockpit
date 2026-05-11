@@ -1,0 +1,385 @@
+From ce06292fe93e19bde880824acf7f6052c1599d54 Mon Sep 17 00:00:00 2001
+From: Rishi <rishi@market-cockpit.local>
+Date: Sun, 10 May 2026 15:14:02 +0200
+Subject: [PATCH] fix(ui): make light/professional themes actually visible +
+ kill narrow gutters
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Patch 0075 — fixes two high-visibility UX bugs reported by user:
+  1. "Pressing LIGHT but still shows all dark background"
+  2. "Some dark space on left and right why compressing text"
+
+ROOT CAUSE — themes
+  ThemeContext sets data-theme on <html> + exposes CSS variables, but
+  every dashboard page uses HARDCODED inline-style hex (#0A0E1A,
+  #0D1B2E, #1A2840, #F5F7FA, etc.) that ignores CSS variables. So
+  clicking LIGHT changed only theme-aware components — the rest stayed
+  dark.
+
+  FIX — global override layer in globals.css. When html[data-theme="light"]
+  or "professional" is active, [style*="..."] attribute selectors with
+  !important override every common hardcoded hex code. Both forms
+  matched (hex AND rgb(...) since browsers normalize inline styles).
+
+  Light theme overrides (20+ rules):
+    page bg #0A0E1A → #ffffff
+    panel bg #0D1B2E / #111B35 → #f7f8fa
+    inner panel #1A2840 / #1E2D45 → #f0f3f7
+    primary text #F5F7FA → #0f172a
+    muted #94A3B8 → #475569
+    accent #0F7ABF → #0369a1
+    aside / header → light variants
+
+  Professional theme (Bloomberg-terminal black + orange):
+    page bg → #000000
+    panel → #0f0f0f
+    blue accents → orange (#ffa500 / #ff8800)
+    body font → "Roboto Mono"
+
+ROOT CAUSE — narrow gutters
+  News page had maxWidth:1000, multibagger maxWidth:1100, earnings-AI
+  maxWidth:1200, watchlists maxWidth:1200. On wide screens this created
+  200-400px of empty dark space on each side while text was compressed
+  in the middle.
+
+  FIX — bumped all to maxWidth:1800 in source AND added a global CSS
+  selector `main > div[style*="margin: 0 auto"] { max-width: 1800px !important }`
+  so any future page with a narrow constraint also stretches.
+
+UI-only patch — no API contract changes, cache key not bumped.
+---
+ .../(dashboard)/earnings-analysis/page.tsx    |   2 +-
+ .../src/app/(dashboard)/multibagger/page.tsx  |  12 +-
+ frontend/src/app/(dashboard)/news/page.tsx    |   2 +-
+ frontend/src/app/globals.css                  | 232 ++++++++++++++++++
+ 4 files changed, 240 insertions(+), 8 deletions(-)
+
+diff --git a/frontend/src/app/(dashboard)/earnings-analysis/page.tsx b/frontend/src/app/(dashboard)/earnings-analysis/page.tsx
+index 6b15a10..9390ff9 100644
+--- a/frontend/src/app/(dashboard)/earnings-analysis/page.tsx
++++ b/frontend/src/app/(dashboard)/earnings-analysis/page.tsx
+@@ -3137,7 +3137,7 @@ export default function EarningsAnalysisPage() {
+     const hasEstimates = latestEpsEst !== null || revEstNum !== null || gmEstNum !== null;
+ 
+     return (
+-      <div style={{background:BG,minHeight:'100vh',color:TEXT,fontFamily:'system-ui,-apple-system,sans-serif',padding:'20px 16px',maxWidth:1200,margin:'0 auto'}}>
++      <div style={{background:BG,minHeight:'100vh',color:TEXT,fontFamily:'system-ui,-apple-system,sans-serif',padding:'20px 16px',maxWidth:1800,margin:'0 auto'}}>
+ 
+         {/* ══════════════════════════════════════════════════════════════════════
+             COMPANY IDENTITY + EARNINGS SCORECARD
+diff --git a/frontend/src/app/(dashboard)/multibagger/page.tsx b/frontend/src/app/(dashboard)/multibagger/page.tsx
+index d6b6ce9..f9759f2 100644
+--- a/frontend/src/app/(dashboard)/multibagger/page.tsx
++++ b/frontend/src/app/(dashboard)/multibagger/page.tsx
+@@ -2348,7 +2348,7 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
+   ];
+ 
+   return (
+-    <div style={{maxWidth:1100,margin:'0 auto',padding:'28px 20px'}}>
++    <div style={{maxWidth:1800,margin:'0 auto',padding:'28px 20px'}}>
+       {/* Header info */}
+       <div style={{marginBottom:20,padding:'18px 20px',backgroundColor:CARD_BG,border:`1px solid ${BORDER}`,borderRadius:12}}>
+         <div style={{fontSize:F.lg,fontWeight:800,color:PURPLE,marginBottom:8}}>
+@@ -3516,7 +3516,7 @@ function MultibaggerChecklist({excelRows}:{excelRows:ExcelResult[]}) {
+   const grade:Grade=pct>=90?'A+':pct>=80?'A':pct>=68?'B+':pct>=55?'B':pct>=42?'C':'D';
+ 
+   return (
+-    <div style={{maxWidth:1100,margin:'0 auto',padding:'28px 20px'}}>
++    <div style={{maxWidth:1800,margin:'0 auto',padding:'28px 20px'}}>
+       {excelRows.length>0&&(
+         <div style={{marginBottom:14,padding:'12px 18px',backgroundColor:`${GREEN}08`,border:`1px solid ${GREEN}20`,borderRadius:10,fontSize:F.md,color:GREEN}}>
+           🤖 {excelRows.length} stocks from uploaded Excel — click any to auto-verify {CHECKLIST.filter(i=>i.autoField).length} criteria · {autoPassed>0?`${autoPassed} already verified for ${activeSymbol||'selected stock'}`:'select a stock below'}
+@@ -4343,7 +4343,7 @@ function USAChecklist() {
+   };
+ 
+   return (
+-    <div style={{maxWidth:1100,margin:'0 auto',padding:'28px 20px'}}>
++    <div style={{maxWidth:1800,margin:'0 auto',padding:'28px 20px'}}>
+       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:24,flexWrap:'wrap',gap:12}}>
+         <div>
+           <div style={{fontSize:F.h2,fontWeight:800,color:'#38bdf8',marginBottom:4}}>🇺🇸 USA Research Checklist</div>
+@@ -4551,7 +4551,7 @@ function USACompare() {
+   });
+ 
+   return (
+-    <div style={{maxWidth:1100,margin:'0 auto',padding:'28px 20px'}}>
++    <div style={{maxWidth:1800,margin:'0 auto',padding:'28px 20px'}}>
+       {/* Header */}
+       <div style={{marginBottom:20,padding:'18px 20px',backgroundColor:CARD_BG,border:`1px solid ${BORDER}`,borderRadius:12}}>
+         <div style={{fontSize:F.lg,fontWeight:800,color:'#38bdf8',marginBottom:8}}>🇺🇸 USA Multibagger — TradingView Export</div>
+@@ -4898,7 +4898,7 @@ export default function MultibaggerPage() {
+     <div style={{background:BG,minHeight:'100vh',color:TEXT,fontFamily:'system-ui,-apple-system,sans-serif'}}>
+       {/* Header */}
+       <div style={{backgroundColor:'#13131a',borderBottom:'1px solid rgba(255,255,255,0.08)',padding:'20px 24px 0'}}>
+-        <div style={{maxWidth:1100,margin:'0 auto'}}>
++        <div style={{maxWidth:1800,margin:'0 auto'}}>
+           <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:16,gap:12}}>
+             <div>
+               <h1 style={{fontSize:F.h1,fontWeight:900,color:PURPLE,margin:0}}>🚀 Multibagger Research Engine</h1>
+@@ -5304,7 +5304,7 @@ function CapitalAllocationPanel() {
+     setLoading(false);
+   };
+   return (
+-    <div style={{ padding: '24px', maxWidth: 1100, margin: '0 auto' }}>
++    <div style={{ padding: '24px', maxWidth: 1800, margin: '0 auto' }}>
+       <div style={{ fontSize: 13, color: MUTED, marginBottom: 16, lineHeight: 1.5 }}>
+         How disciplined is management with shareholder capital? Capex efficiency · ROCE shift · dilution · buybacks · dividend rationality · reinvestment runway. Computed from Screener annual data.
+       </div>
+diff --git a/frontend/src/app/(dashboard)/news/page.tsx b/frontend/src/app/(dashboard)/news/page.tsx
+index 45c8da0..19e7a4f 100644
+--- a/frontend/src/app/(dashboard)/news/page.tsx
++++ b/frontend/src/app/(dashboard)/news/page.tsx
+@@ -1628,7 +1628,7 @@ export default function NewsFeedPage() {
+   };
+ 
+   return (
+-    <div style={{ padding: '12px 10px', maxWidth: '1000px', margin: '0 auto' }}>
++    <div style={{ padding: '12px 16px', maxWidth: '1600px', margin: '0 auto', width: '100%' }}>
+ 
+       {/* ── MARKET BIAS HEADER ────────────────────────────────────────── */}
+       {marketBias && !isLoading && (
+diff --git a/frontend/src/app/globals.css b/frontend/src/app/globals.css
+index 696264c..6f06b12 100644
+--- a/frontend/src/app/globals.css
++++ b/frontend/src/app/globals.css
+@@ -248,3 +248,235 @@ button[title], a[title] {
+ .animate-pulse-soft {
+   animation: pulse-soft 2s ease-in-out infinite;
+ }
++
++/* ═══════════════════════════════════════════════════════════════════════════
++   PATCH 0075 — global theme override layer
++   ─────────────────────────────────────────────────────────────────────────
++   The dashboard pages use hardcoded inline-style hex colours (#0A0E1A,
++   #0D1B2E, #1A2840, #F5F7FA, etc.) instead of CSS variables. These don't
++   respond to ThemeContext changes on their own. This layer uses
++   [style*="..."] attribute selectors to override the most common ones when
++   data-theme="light" or "professional" is active.
++   Note: browsers normalize hex inline styles to rgb(R, G, B) at runtime,
++   so we match both forms.
++   ═══════════════════════════════════════════════════════════════════════════ */
++
++/* Body-level fallback so the page background flips even if no inline style matches */
++html[data-theme="light"] {
++  color-scheme: light;
++  background: #ffffff !important;
++}
++html[data-theme="light"] body {
++  background: #ffffff !important;
++  color: #0f172a;
++}
++html[data-theme="professional"] {
++  color-scheme: dark;
++  background: #000000 !important;
++}
++html[data-theme="professional"] body {
++  background: #000000 !important;
++  color: #e8e8e8;
++}
++
++/* ─── LIGHT THEME OVERRIDES ─────────────────────────────────────────── */
++
++/* Page bg #0A0E1A → white */
++html[data-theme="light"] [style*="#0A0E1A"],
++html[data-theme="light"] [style*="#0a0e1a"],
++html[data-theme="light"] [style*="rgb(10, 14, 26)"] {
++  background-color: #ffffff !important;
++  color: #0f172a !important;
++}
++/* Page bg #060E1A (markets ticker bg) */
++html[data-theme="light"] [style*="#060E1A"],
++html[data-theme="light"] [style*="#060e1a"],
++html[data-theme="light"] [style*="rgb(6, 14, 26)"] {
++  background-color: #f0f3f7 !important;
++}
++/* Header bg #0D1623, #0D1B2E → light panel */
++html[data-theme="light"] [style*="#0D1623"],
++html[data-theme="light"] [style*="#0d1623"],
++html[data-theme="light"] [style*="#0D1B2E"],
++html[data-theme="light"] [style*="#0d1b2e"],
++html[data-theme="light"] [style*="#111B35"],
++html[data-theme="light"] [style*="#111b35"],
++html[data-theme="light"] [style*="rgb(13, 22, 35)"],
++html[data-theme="light"] [style*="rgb(13, 27, 46)"],
++html[data-theme="light"] [style*="rgb(17, 27, 53)"] {
++  background-color: #f7f8fa !important;
++  border-color: rgba(0,0,0,0.08) !important;
++}
++/* Inner panel #1A2840, #1E2D45, #1A2B3C → softer light panel */
++html[data-theme="light"] [style*="#1A2840"],
++html[data-theme="light"] [style*="#1a2840"],
++html[data-theme="light"] [style*="#1E2D45"],
++html[data-theme="light"] [style*="#1e2d45"],
++html[data-theme="light"] [style*="#1A2B3C"],
++html[data-theme="light"] [style*="#1a2b3c"],
++html[data-theme="light"] [style*="#1e293b"],
++html[data-theme="light"] [style*="rgb(26, 40, 64)"],
++html[data-theme="light"] [style*="rgb(30, 45, 69)"] {
++  background-color: #f0f3f7 !important;
++  border-color: rgba(0,0,0,0.10) !important;
++  color: #0f172a;
++}
++/* Primary text #F5F7FA → dark text */
++html[data-theme="light"] [style*="#F5F7FA"],
++html[data-theme="light"] [style*="#f5f7fa"],
++html[data-theme="light"] [style*="#E6EDF3"],
++html[data-theme="light"] [style*="#e6edf3"],
++html[data-theme="light"] [style*="rgb(245, 247, 250)"],
++html[data-theme="light"] [style*="rgb(230, 237, 243)"] {
++  color: #0f172a !important;
++}
++/* Muted text #94A3B8, #6B7A8D, #8A95A3 → mid-slate */
++html[data-theme="light"] [style*="#94A3B8"],
++html[data-theme="light"] [style*="#94a3b8"],
++html[data-theme="light"] [style*="#6B7A8D"],
++html[data-theme="light"] [style*="#6b7a8d"],
++html[data-theme="light"] [style*="#8A95A3"],
++html[data-theme="light"] [style*="#8a95a3"],
++html[data-theme="light"] [style*="rgb(148, 163, 184)"],
++html[data-theme="light"] [style*="rgb(107, 122, 141)"] {
++  color: #475569 !important;
++}
++/* Faint text #4A5B6C, #C9D4E0 */
++html[data-theme="light"] [style*="#4A5B6C"],
++html[data-theme="light"] [style*="#4a5b6c"],
++html[data-theme="light"] [style*="#C9D4E0"],
++html[data-theme="light"] [style*="#c9d4e0"],
++html[data-theme="light"] [style*="rgb(74, 91, 108)"] {
++  color: #64748b !important;
++}
++/* Accent blue #0F7ABF / #38A9E8 — keep but tone down */
++html[data-theme="light"] [style*="#0F7ABF"],
++html[data-theme="light"] [style*="#0f7abf"] {
++  color: #0369a1 !important;
++}
++/* Body text fallback */
++html[data-theme="light"] [style*="#CBD5E1"],
++html[data-theme="light"] [style*="#cbd5e1"] {
++  color: #334155 !important;
++}
++
++/* ─── PROFESSIONAL THEME OVERRIDES (Bloomberg-terminal black + orange) ── */
++
++/* Page bg #0A0E1A → pure black */
++html[data-theme="professional"] [style*="#0A0E1A"],
++html[data-theme="professional"] [style*="#0a0e1a"],
++html[data-theme="professional"] [style*="rgb(10, 14, 26)"] {
++  background-color: #000000 !important;
++  color: #e8e8e8 !important;
++}
++html[data-theme="professional"] [style*="#060E1A"],
++html[data-theme="professional"] [style*="#060e1a"] {
++  background-color: #000000 !important;
++}
++/* Header / panel #0D1623, #0D1B2E → dark grey */
++html[data-theme="professional"] [style*="#0D1623"],
++html[data-theme="professional"] [style*="#0d1623"],
++html[data-theme="professional"] [style*="#0D1B2E"],
++html[data-theme="professional"] [style*="#0d1b2e"],
++html[data-theme="professional"] [style*="#111B35"],
++html[data-theme="professional"] [style*="#111b35"] {
++  background-color: #0f0f0f !important;
++  border-color: rgba(255,165,0,0.10) !important;
++}
++/* Inner panel borders */
++html[data-theme="professional"] [style*="#1A2840"],
++html[data-theme="professional"] [style*="#1a2840"],
++html[data-theme="professional"] [style*="#1E2D45"],
++html[data-theme="professional"] [style*="#1e2d45"],
++html[data-theme="professional"] [style*="#1A2B3C"],
++html[data-theme="professional"] [style*="#1a2b3c"] {
++  background-color: #161616 !important;
++  border-color: rgba(255,165,0,0.20) !important;
++}
++/* Primary accent: replace blue gradient with orange in pro theme */
++html[data-theme="professional"] [style*="#0F7ABF"],
++html[data-theme="professional"] [style*="#0f7abf"] {
++  color: #ffa500 !important;
++}
++html[data-theme="professional"] [style*="#06B6D4"],
++html[data-theme="professional"] [style*="#06b6d4"] {
++  color: #ff8800 !important;
++}
++/* Text colors stay readable on black */
++html[data-theme="professional"] [style*="#F5F7FA"],
++html[data-theme="professional"] [style*="#f5f7fa"] {
++  color: #e8e8e8 !important;
++}
++html[data-theme="professional"] [style*="#94A3B8"],
++html[data-theme="professional"] [style*="#94a3b8"] {
++  color: #888888 !important;
++}
++html[data-theme="professional"] [style*="#4A5B6C"],
++html[data-theme="professional"] [style*="#4a5b6c"] {
++  color: #555555 !important;
++}
++html[data-theme="professional"] {
++  font-family: "Roboto Mono", "SF Mono", Monaco, Consolas, monospace;
++}
++
++/* ─── LIGHT THEME — sidebar + scrollbar polish ──────────────────────── */
++html[data-theme="light"] aside {
++  background: #f7f8fa !important;
++  border-right: 1px solid rgba(0,0,0,0.08) !important;
++}
++html[data-theme="light"] header {
++  background: #ffffff !important;
++  border-bottom: 1px solid rgba(0,0,0,0.08) !important;
++}
++
++/* ─── PROFESSIONAL — Bloomberg-style polish ──────────────────────────── */
++html[data-theme="professional"] aside {
++  background: #0a0a0a !important;
++  border-right: 1px solid rgba(255,165,0,0.10) !important;
++}
++html[data-theme="professional"] header {
++  background: #0a0a0a !important;
++  border-bottom: 1px solid rgba(255,165,0,0.20) !important;
++}
++
++/* No transitions on theme change body — looks janky on slow devices */
++html[data-theme] body {
++  transition: background-color 0.15s ease;
++}
++
++/* ═══════════════════════════════════════════════════════════════════════════
++   PATCH 0075 — kill the narrow maxWidth gutters
++   ─────────────────────────────────────────────────────────────────────────
++   Many pages wrap content in <div style={{maxWidth:1000-1200, margin:'0 auto'}}>
++   which leaves big dark gutters on wide screens. Force any direct-child
++   wrapper of <main> to fill the available width up to 1800px.
++   ═══════════════════════════════════════════════════════════════════════════ */
++main > div[style*="margin: 0 auto"],
++main > div[style*="margin:0 auto"] {
++  max-width: 1800px !important;
++  width: 100% !important;
++}
++/* Some pages nest one more level deep */
++main > div > div[style*="margin: 0 auto"][style*="max-width"],
++main > div > div[style*="margin:0 auto"][style*="maxWidth"] {
++  max-width: 1800px !important;
++  width: 100% !important;
++}
++/* Strategic Visibility / Multibagger / Earnings AI all use this pattern */
++main [style*="maxWidth: 1100"],
++main [style*="maxWidth:1100"],
++main [style*="max-width: 1100"],
++main [style*="maxWidth: 1200"],
++main [style*="maxWidth:1200"],
++main [style*="max-width: 1200"],
++main [style*="maxWidth: 1400"],
++main [style*="maxWidth:1400"],
++main [style*="max-width: 1400"] {
++  max-width: 1800px !important;
++}
++
++/* Keep modal / drawer maxWidths intact (they should stay narrow) */
++main aside [style*="maxWidth"],
++main [role="dialog"] [style*="maxWidth"] {
++  max-width: revert !important;
++}
+-- 
+2.34.1
+

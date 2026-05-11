@@ -1,0 +1,345 @@
+From 925a49deb599f4005a4e315c49852194c68fd051 Mon Sep 17 00:00:00 2001
+From: Rishi <rishi@market-cockpit.local>
+Date: Sun, 10 May 2026 15:25:06 +0200
+Subject: [PATCH] fix(ui): light readability + Professional truly distinct +
+ earnings still-dark fix
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Patch 0076 — three issues from user testing of 0075:
+
+(1) "Light text so so light and cant read"
+    Faint gray-blue text colors (#4A5B6C used 171×, #C9D4E0, #8BA3C1,
+    #8A95A3, #6B7A8D, #94A3B8, #CBD5E1) all rendered nearly invisible
+    on the new white background. Now forced to mid-dark slate #334155.
+    Bright text (#F5F7FA, #E6EDF3, #E2E8F0, #FFFFFF) forced to near-
+    black #0f172a for headings.
+
+(2) "Dark and Professional same — bad. didnt expected, make it better"
+    Professional was visually too close to Dark. Overhauled:
+      - Pure #000 page bg (was just dark grey before)
+      - All blue accents (#0F7ABF, #06B6D4, #22D3EE, #38A9E8, #3B82F6,
+        #38BDF8) → orange/amber (#ffa500)
+      - Purple accents (#8B5CF6, #6366F1) → amber yellow (#ffcc00)
+      - Panel bg #0a0a0a + border-color rgba(255,165,0,0.30)
+      - MONOSPACE FONT applied to every element via * selector
+      - Tight letter-spacing 0.01em characteristic of terminals
+
+(3) "Earnings Intelligence still dark in light mode"
+    Earnings-analysis page used local BG = '#0a0a0f' constant — that
+    hex wasn't in patch 0075's override set. Added:
+      #0a0a0f, #0d1117, #0a0f1a, #060a14, #13131a, #2A3B4C, #1A2540,
+      #0A1422, #0A1628, #1e293b, #161b22, #1c232c (all variants)
+    Plus a SAFETY NET: html[data-theme="light"] main { bg:white } so
+    even unmatched inline styles fall through to the main container bg.
+    Direct children of main are forced transparent so the safety net
+    actually shows.
+
+Files: globals.css only — pure CSS UI patch, no API changes.
+---
+ frontend/src/app/globals.css | 205 ++++++++++++++++++++++++++++-------
+ 1 file changed, 166 insertions(+), 39 deletions(-)
+
+diff --git a/frontend/src/app/globals.css b/frontend/src/app/globals.css
+index 6f06b12..ece7c75 100644
+--- a/frontend/src/app/globals.css
++++ b/frontend/src/app/globals.css
+@@ -250,15 +250,13 @@ button[title], a[title] {
+ }
+ 
+ /* ═══════════════════════════════════════════════════════════════════════════
+-   PATCH 0075 — global theme override layer
++   PATCH 0075/0076 — global theme override layer (comprehensive)
+    ─────────────────────────────────────────────────────────────────────────
+-   The dashboard pages use hardcoded inline-style hex colours (#0A0E1A,
+-   #0D1B2E, #1A2840, #F5F7FA, etc.) instead of CSS variables. These don't
+-   respond to ThemeContext changes on their own. This layer uses
+-   [style*="..."] attribute selectors to override the most common ones when
+-   data-theme="light" or "professional" is active.
+-   Note: browsers normalize hex inline styles to rgb(R, G, B) at runtime,
+-   so we match both forms.
++   Comprehensive override of every common dark hex used in inline styles.
++   The substring matcher [style*="..."] catches them. Both upper and lower
++   case forms must be enumerated (HTML attribute matching IS case-insensitive
++   for the value when using lowercase patterns, but matchings can vary, so
++   we enumerate both for safety).
+    ═══════════════════════════════════════════════════════════════════════════ */
+ 
+ /* Body-level fallback so the page background flips even if no inline style matches */
+@@ -280,11 +278,22 @@ html[data-theme="professional"] body {
+ }
+ 
+ /* ─── LIGHT THEME OVERRIDES ─────────────────────────────────────────── */
++/* The CSS attribute selector [style*=X] is case-SENSITIVE, so we enumerate
++   uppercase + lowercase forms for every hex. */
+ 
+-/* Page bg #0A0E1A → white */
++/* ALL near-black page backgrounds → white */
+ html[data-theme="light"] [style*="#0A0E1A"],
+ html[data-theme="light"] [style*="#0a0e1a"],
+-html[data-theme="light"] [style*="rgb(10, 14, 26)"] {
++html[data-theme="light"] [style*="#0a0a0f"],
++html[data-theme="light"] [style*="#0A0A0F"],
++html[data-theme="light"] [style*="#0d1117"],
++html[data-theme="light"] [style*="#0D1117"],
++html[data-theme="light"] [style*="#0a0f1a"],
++html[data-theme="light"] [style*="#0A0F1A"],
++html[data-theme="light"] [style*="#060a14"],
++html[data-theme="light"] [style*="#060A14"],
++html[data-theme="light"] [style*="#13131a"],
++html[data-theme="light"] [style*="#13131A"] {
+   background-color: #ffffff !important;
+   color: #0f172a !important;
+ }
+@@ -307,7 +316,7 @@ html[data-theme="light"] [style*="rgb(17, 27, 53)"] {
+   background-color: #f7f8fa !important;
+   border-color: rgba(0,0,0,0.08) !important;
+ }
+-/* Inner panel #1A2840, #1E2D45, #1A2B3C → softer light panel */
++/* Inner panel #1A2840, #1E2D45, #1A2B3C, #2A3B4C, #1A2540, #0A1422, #0A1628 etc */
+ html[data-theme="light"] [style*="#1A2840"],
+ html[data-theme="light"] [style*="#1a2840"],
+ html[data-theme="light"] [style*="#1E2D45"],
+@@ -315,6 +324,15 @@ html[data-theme="light"] [style*="#1e2d45"],
+ html[data-theme="light"] [style*="#1A2B3C"],
+ html[data-theme="light"] [style*="#1a2b3c"],
+ html[data-theme="light"] [style*="#1e293b"],
++html[data-theme="light"] [style*="#1E293B"],
++html[data-theme="light"] [style*="#2A3B4C"],
++html[data-theme="light"] [style*="#2a3b4c"],
++html[data-theme="light"] [style*="#1A2540"],
++html[data-theme="light"] [style*="#1a2540"],
++html[data-theme="light"] [style*="#0A1422"],
++html[data-theme="light"] [style*="#0a1422"],
++html[data-theme="light"] [style*="#0A1628"],
++html[data-theme="light"] [style*="#0a1628"],
+ html[data-theme="light"] [style*="rgb(26, 40, 64)"],
+ html[data-theme="light"] [style*="rgb(30, 45, 69)"] {
+   background-color: #f0f3f7 !important;
+@@ -341,13 +359,38 @@ html[data-theme="light"] [style*="rgb(148, 163, 184)"],
+ html[data-theme="light"] [style*="rgb(107, 122, 141)"] {
+   color: #475569 !important;
+ }
+-/* Faint text #4A5B6C, #C9D4E0 */
++/* PATCH 0076: ALL faint text colors → readable dark slate on white.
++   These were near-invisible on white in patch 0075. */
+ html[data-theme="light"] [style*="#4A5B6C"],
+ html[data-theme="light"] [style*="#4a5b6c"],
+ html[data-theme="light"] [style*="#C9D4E0"],
+ html[data-theme="light"] [style*="#c9d4e0"],
++html[data-theme="light"] [style*="#8BA3C1"],
++html[data-theme="light"] [style*="#8ba3c1"],
++html[data-theme="light"] [style*="#8A95A3"],
++html[data-theme="light"] [style*="#8a95a3"],
++html[data-theme="light"] [style*="#7d8590"],
++html[data-theme="light"] [style*="#7D8590"],
++html[data-theme="light"] [style*="#475569"],
++html[data-theme="light"] [style*="#334155"],
++html[data-theme="light"] [style*="#3B4754"],
++html[data-theme="light"] [style*="#3b4754"],
+ html[data-theme="light"] [style*="rgb(74, 91, 108)"] {
+-  color: #64748b !important;
++  color: #334155 !important;        /* mid-dark slate — readable */
++}
++/* And brighter text colors that are too pale on white */
++html[data-theme="light"] [style*="#E6EDF3"],
++html[data-theme="light"] [style*="#e6edf3"],
++html[data-theme="light"] [style*="#E2E8F0"],
++html[data-theme="light"] [style*="#e2e8f0"],
++html[data-theme="light"] [style*="#F5F7FA"],
++html[data-theme="light"] [style*="#f5f7fa"] {
++  color: #0f172a !important;        /* near-black — primary heading */
++}
++/* Catch-all aggressive: any element whose inline style uses a near-white
++   text color in light mode loses readability — force it dark. */
++html[data-theme="light"] [style*="#FFFFFF"] {
++  color: #0f172a !important;
+ }
+ /* Accent blue #0F7ABF / #38A9E8 — keep but tone down */
+ html[data-theme="light"] [style*="#0F7ABF"],
+@@ -360,64 +403,127 @@ html[data-theme="light"] [style*="#cbd5e1"] {
+   color: #334155 !important;
+ }
+ 
+-/* ─── PROFESSIONAL THEME OVERRIDES (Bloomberg-terminal black + orange) ── */
++/* ─── PROFESSIONAL THEME — Bloomberg-terminal black + orange + monospace ── */
++/* PATCH 0076: Make Pro VISIBLY distinct from Dark.
++   Dark = grey-blue panels (#0d1117, #161b22). Professional = pure black bg
++   with orange-tinted borders, all blue accents flipped to orange/amber,
++   monospace font everywhere. */
+ 
+-/* Page bg #0A0E1A → pure black */
++/* Force pure black on EVERY common page background */
+ html[data-theme="professional"] [style*="#0A0E1A"],
+ html[data-theme="professional"] [style*="#0a0e1a"],
+-html[data-theme="professional"] [style*="rgb(10, 14, 26)"] {
+-  background-color: #000000 !important;
+-  color: #e8e8e8 !important;
+-}
++html[data-theme="professional"] [style*="#0a0a0f"],
++html[data-theme="professional"] [style*="#0A0A0F"],
++html[data-theme="professional"] [style*="#0d1117"],
++html[data-theme="professional"] [style*="#0D1117"],
++html[data-theme="professional"] [style*="#0a0f1a"],
++html[data-theme="professional"] [style*="#0A0F1A"],
++html[data-theme="professional"] [style*="#060a14"],
++html[data-theme="professional"] [style*="#060A14"],
++html[data-theme="professional"] [style*="#13131a"],
++html[data-theme="professional"] [style*="#13131A"],
+ html[data-theme="professional"] [style*="#060E1A"],
+ html[data-theme="professional"] [style*="#060e1a"] {
+   background-color: #000000 !important;
++  color: #ffcc66 !important;
+ }
+-/* Header / panel #0D1623, #0D1B2E → dark grey */
++/* Panels → very dark grey with orange-tinted border */
+ html[data-theme="professional"] [style*="#0D1623"],
+ html[data-theme="professional"] [style*="#0d1623"],
+ html[data-theme="professional"] [style*="#0D1B2E"],
+ html[data-theme="professional"] [style*="#0d1b2e"],
+ html[data-theme="professional"] [style*="#111B35"],
+-html[data-theme="professional"] [style*="#111b35"] {
+-  background-color: #0f0f0f !important;
+-  border-color: rgba(255,165,0,0.10) !important;
++html[data-theme="professional"] [style*="#111b35"],
++html[data-theme="professional"] [style*="#161b22"],
++html[data-theme="professional"] [style*="#1c232c"] {
++  background-color: #0a0a0a !important;
++  border-color: rgba(255,165,0,0.18) !important;
+ }
+-/* Inner panel borders */
++/* Inner panels */
+ html[data-theme="professional"] [style*="#1A2840"],
+ html[data-theme="professional"] [style*="#1a2840"],
+ html[data-theme="professional"] [style*="#1E2D45"],
+ html[data-theme="professional"] [style*="#1e2d45"],
+ html[data-theme="professional"] [style*="#1A2B3C"],
+-html[data-theme="professional"] [style*="#1a2b3c"] {
+-  background-color: #161616 !important;
+-  border-color: rgba(255,165,0,0.20) !important;
++html[data-theme="professional"] [style*="#1a2b3c"],
++html[data-theme="professional"] [style*="#2A3B4C"],
++html[data-theme="professional"] [style*="#2a3b4c"],
++html[data-theme="professional"] [style*="#1A2540"],
++html[data-theme="professional"] [style*="#1a2540"],
++html[data-theme="professional"] [style*="#0A1422"],
++html[data-theme="professional"] [style*="#0a1422"],
++html[data-theme="professional"] [style*="#0A1628"],
++html[data-theme="professional"] [style*="#0a1628"],
++html[data-theme="professional"] [style*="#1e293b"],
++html[data-theme="professional"] [style*="#1E293B"] {
++  background-color: #0f0f0f !important;
++  border-color: rgba(255,165,0,0.30) !important;
++  color: #e8e8e8 !important;
+ }
+-/* Primary accent: replace blue gradient with orange in pro theme */
++/* ALL blue/cyan accent colors → orange/amber */
+ html[data-theme="professional"] [style*="#0F7ABF"],
+-html[data-theme="professional"] [style*="#0f7abf"] {
++html[data-theme="professional"] [style*="#0f7abf"],
++html[data-theme="professional"] [style*="#0E6DAD"],
++html[data-theme="professional"] [style*="#0e6dad"],
++html[data-theme="professional"] [style*="#06B6D4"],
++html[data-theme="professional"] [style*="#06b6d4"],
++html[data-theme="professional"] [style*="#22D3EE"],
++html[data-theme="professional"] [style*="#22d3ee"],
++html[data-theme="professional"] [style*="#38A9E8"],
++html[data-theme="professional"] [style*="#38a9e8"],
++html[data-theme="professional"] [style*="#3B82F6"],
++html[data-theme="professional"] [style*="#3b82f6"],
++html[data-theme="professional"] [style*="#38bdf8"],
++html[data-theme="professional"] [style*="#38BDF8"] {
+   color: #ffa500 !important;
++  border-color: #ffa500 !important;
+ }
+-html[data-theme="professional"] [style*="#06B6D4"],
+-html[data-theme="professional"] [style*="#06b6d4"] {
+-  color: #ff8800 !important;
++/* Purple → amber (Bloomberg uses orange/amber spectrum, not purple) */
++html[data-theme="professional"] [style*="#8B5CF6"],
++html[data-theme="professional"] [style*="#8b5cf6"],
++html[data-theme="professional"] [style*="#6366F1"],
++html[data-theme="professional"] [style*="#6366f1"] {
++  color: #ffcc00 !important;
+ }
+-/* Text colors stay readable on black */
++/* Text colors */
+ html[data-theme="professional"] [style*="#F5F7FA"],
+-html[data-theme="professional"] [style*="#f5f7fa"] {
+-  color: #e8e8e8 !important;
++html[data-theme="professional"] [style*="#f5f7fa"],
++html[data-theme="professional"] [style*="#E6EDF3"],
++html[data-theme="professional"] [style*="#e6edf3"],
++html[data-theme="professional"] [style*="#E2E8F0"],
++html[data-theme="professional"] [style*="#e2e8f0"] {
++  color: #ffffff !important;
+ }
+ html[data-theme="professional"] [style*="#94A3B8"],
+-html[data-theme="professional"] [style*="#94a3b8"] {
+-  color: #888888 !important;
++html[data-theme="professional"] [style*="#94a3b8"],
++html[data-theme="professional"] [style*="#CBD5E1"],
++html[data-theme="professional"] [style*="#cbd5e1"],
++html[data-theme="professional"] [style*="#C9D4E0"],
++html[data-theme="professional"] [style*="#c9d4e0"],
++html[data-theme="professional"] [style*="#8BA3C1"],
++html[data-theme="professional"] [style*="#8ba3c1"],
++html[data-theme="professional"] [style*="#8A95A3"],
++html[data-theme="professional"] [style*="#8a95a3"],
++html[data-theme="professional"] [style*="#6B7A8D"],
++html[data-theme="professional"] [style*="#6b7a8d"] {
++  color: #aaaa88 !important;
+ }
+ html[data-theme="professional"] [style*="#4A5B6C"],
+ html[data-theme="professional"] [style*="#4a5b6c"] {
+-  color: #555555 !important;
++  color: #777755 !important;
+ }
++/* Make EVERYTHING monospace in professional mode */
++html[data-theme="professional"],
++html[data-theme="professional"] body,
++html[data-theme="professional"] * {
++  font-family: "Roboto Mono", "SF Mono", "Menlo", Monaco, Consolas, monospace !important;
++}
++/* Tighter letter spacing characteristic of Bloomberg terminals */
+ html[data-theme="professional"] {
+-  font-family: "Roboto Mono", "SF Mono", Monaco, Consolas, monospace;
++  letter-spacing: 0.01em;
+ }
++/* Aggressive: any element with #ffffff text in professional → keep white but
++   add subtle text-shadow for terminal feel — actually skip, keep simple. */
+ 
+ /* ─── LIGHT THEME — sidebar + scrollbar polish ──────────────────────── */
+ html[data-theme="light"] aside {
+@@ -444,6 +550,27 @@ html[data-theme] body {
+   transition: background-color 0.15s ease;
+ }
+ 
++/* ─── PATCH 0076: SAFETY NET — force main scroll container bg ─────────
++   Even if specific page-level inline styles slip through, force the
++   <main> container to show the theme background. */
++html[data-theme="light"] main {
++  background: #ffffff !important;
++  color: #0f172a !important;
++}
++html[data-theme="professional"] main {
++  background: #000000 !important;
++  color: #ffcc66 !important;
++}
++/* Force any direct child of main that has its own bg to inherit */
++html[data-theme="light"] main > div {
++  background-color: transparent !important;
++}
++html[data-theme="professional"] main > div {
++  background-color: transparent !important;
++}
++/* But cards INSIDE main keep their bg overrides from the rules above —
++   the [style*=""] selectors are more specific and still apply. */
++
+ /* ═══════════════════════════════════════════════════════════════════════════
+    PATCH 0075 — kill the narrow maxWidth gutters
+    ─────────────────────────────────────────────────────────────────────────
+-- 
+2.34.1
+

@@ -1,0 +1,824 @@
+From 80f32a99390c2226f9eeb1278fb66a84a8081cf8 Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Sun, 10 May 2026 17:14:42 +0000
+Subject: [PATCH] =?UTF-8?q?feat(dashboard):=20Single-Stock=20Sheet=20?=
+ =?UTF-8?q?=E2=80=94=2016-section=20institutional=20checklist=20(0093)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Runs the user's complete 16-section stock-buying checklist on any ticker.
+Type a ticker, hit 'Run sheet', work through the criteria.
+
+Sections (mirror the user's framework):
+   1. Theme / Macro            (7 criteria)
+   2. Catalyst / Inflection    (7)
+   3. Sentiment                (5)
+   4. Price / Volume           (6)
+   5. Financial Quality        (10)
+   6. Business Model           (5)
+   7. Moat / Competitive Adv   (8)
+   8. Competition / Industry   (5)
+   9. Management / Insider     (6)
+  10. Dilution / Share Struct  (6)
+  11. Red Flags                (8, NEGATIVE polarity)
+  12. TAM / Optionality        (5)
+  13. Valuation                (7)
+  14. Rarity Premium           (5)
+  15. Portfolio Classification (4)
+  16. Final Questions          (5)
+
+Total: 99 criteria across 16 sections.
+
+PER CRITERION:
+  - YES / NO / N/A signal
+  - Evidence note field
+  - Weight (1 light / 2 standard / 3 heavy ★)
+  - Some criteria are 'disqualifying' — NO answer flips verdict to SKIP
+    regardless of overall alignment %
+  - Red Flags section uses NEGATIVE polarity (YES = bad, scored inverted)
+
+AUTO-PRE-FILL where the cockpit's existing endpoints provide answers:
+  - Catalyst c1 (mega contracts)  ← strategic-visibility hits in last 90d
+  - Catalyst c2 (earnings inflect) ← earnings-scan grade
+  - Sentiment s2 (mentions)        ← /api/v1/news?ticker=&days=90 count
+  - Moat m6 (national security)    ← DEFENSE/AEROSPACE_INFRA bottleneck membership
+  Auto-filled criteria are tagged 'auto-filled' in the UI; user can override.
+  Manual fields stay empty until the user fills them.
+
+SCORECARD:
+  - Verdict: BUY / WATCH / SKIP / INCOMPLETE
+  - BUY  >= 70% weighted YES alignment
+  - WATCH 50-70%
+  - SKIP  <50% OR any disqualifying criterion failed
+  - INCOMPLETE if <60% of 99 criteria answered
+  - Visible alignment % bar + raw counts (✓ / ✗ / N/A / unanswered)
+  - Disqualifier red box surfacing the killer criteria
+
+PERSISTENCE:
+  - localStorage keyed by ticker (mc:stock-sheet:v1:TICKER)
+  - Save / Delete buttons
+  - Saved-tickers chip row at top — click to reload that thesis
+  - Region auto-inferred from ticker suffix (.NS / .BO -> 🇮🇳 IN, else 🌐 Global)
+
+EXPORT:
+  - 'Print / PDF' uses native window.print() — clean printable layout
+
+Sidebar: 'Stock Sheet' entry added between Multibagger and Bottleneck (the
+forensic / fundamental cluster). Nav 13 -> 14 entries.
+---
+ .../src/app/(dashboard)/DashboardClient.tsx   |   2 +
+ .../src/app/(dashboard)/stock-sheet/page.tsx  | 728 ++++++++++++++++++
+ 2 files changed, 730 insertions(+)
+ create mode 100644 frontend/src/app/(dashboard)/stock-sheet/page.tsx
+
+diff --git a/frontend/src/app/(dashboard)/DashboardClient.tsx b/frontend/src/app/(dashboard)/DashboardClient.tsx
+index 2be8fa3..9f8b576 100644
+--- a/frontend/src/app/(dashboard)/DashboardClient.tsx
++++ b/frontend/src/app/(dashboard)/DashboardClient.tsx
+@@ -29,6 +29,8 @@ const NAV: NavItem[] = [
+   // PATCH 0091: Earnings + Earnings AI + Calendar merged into Earnings Hub (sub-tabs inside)
+   { href: '/earnings-hub',  label: 'Earnings',        icon: <LineChart className="w-5 h-5" /> },
+   { href: '/multibagger',   label: 'Multibagger',     icon: <Star className="w-5 h-5" /> },
++  // PATCH 0093: Single-Stock Sheet — 16-section institutional checklist runner
++  { href: '/stock-sheet',   label: 'Stock Sheet',     icon: <BookMarked className="w-5 h-5" /> },
+   { href: '/bottleneck-intel', label: 'Bottleneck',   icon: <Microscope className="w-5 h-5" /> },
+   { href: '/strategic-visibility', label: 'Strategic Vis', icon: <Star className="w-5 h-5" /> },
+   { href: '/rrg',           label: 'RRG',             icon: <RefreshCw className="w-5 h-5" /> },
+diff --git a/frontend/src/app/(dashboard)/stock-sheet/page.tsx b/frontend/src/app/(dashboard)/stock-sheet/page.tsx
+new file mode 100644
+index 0000000..15d3f1c
+--- /dev/null
++++ b/frontend/src/app/(dashboard)/stock-sheet/page.tsx
+@@ -0,0 +1,728 @@
++'use client';
++
++// ═══════════════════════════════════════════════════════════════════════════
++// SINGLE-STOCK SHEET — patch 0093
++//
++// Runs the user's 16-section institutional stock-buying checklist on any
++// ticker.  Per section, each criterion is a yes / no / N/A signal with an
++// evidence note.  Where the data exists, signals are auto-pre-filled from
++// the cockpit's existing endpoints (quotes, earnings-scan, news, beneficiary
++// layers).  The rest are manual research fields.
++//
++// At the top: summary scorecard — YES count, NO count, % aligned, and a
++// final verdict (BUY / WATCH / SKIP) computed from weighted YES/NO across
++// the 16 sections.  All state is persisted to localStorage keyed by ticker
++// so the user can come back to a thesis.
++//
++// 16 sections (mirror the user's framework):
++//   1.  Theme / Macro                — policy, secular trend, supply, capital flow
++//   2.  Catalyst / Inflection        — earnings, contracts, regulation
++//   3.  Sentiment / Market Interest  — analyst upgrades, retail attention
++//   4.  Price / Volume Action        — RS, breakout, sector breadth
++//   5.  Financial Quality            — growth, ROIC, gross margin, FCF
++//   6.  Business Model               — segments, customers, geography
++//   7.  Moat / Competitive Advantage — IP, regulatory, scale, switching cost
++//   8.  Competition / Industry       — fragmentation, cycle, share gain
++//   9.  Management / Insider         — founder-led, ownership, alignment
++//   10. Dilution / Share Structure   — share count trend, SBC, raises
++//   11. Red Flags                    — concentration, accounting, legal
++//   12. TAM / Optionality            — runway, adjacencies, internationality
++//   13. Valuation                    — PEG, EV/Rev, P/E, peer + history + private
++//   14. Rarity Premium Multipliers   — policy alignment, monopoly, irreplaceability
++//   15. Portfolio Classification     — Speculative / P&S / Leader / Rarity
++//   16. Final Questions              — strategic asset, hold-through-drawdown
++// ═══════════════════════════════════════════════════════════════════════════
++
++import { useEffect, useMemo, useState } from 'react';
++import { useQuery } from '@tanstack/react-query';
++import { useRouter, useSearchParams } from 'next/navigation';
++import { Search, Save, Trash2, FileDown, ChevronDown, ChevronRight } from 'lucide-react';
++import api from '@/lib/api';
++
++// ─── Types ──────────────────────────────────────────────────────────────────
++
++type Signal = 'YES' | 'NO' | 'N/A';
++
++interface CriterionSpec {
++  id: string;
++  label: string;
++  weight: number;          // 1 (light), 2 (standard), 3 (heavy)
++  // If true, the criterion is treated as DISQUALIFYING when answered NO
++  // (or when answered YES, depending on polarity below).
++  disqualifying?: boolean;
++  // 'POSITIVE' = YES is good. 'NEGATIVE' = YES is bad (red-flag style).
++  polarity?: 'POSITIVE' | 'NEGATIVE';
++  hint?: string;           // tooltip / placeholder
++}
++
++interface SectionSpec {
++  id: number;
++  title: string;
++  emoji: string;
++  color: string;
++  rationale: string;
++  criteria: CriterionSpec[];
++}
++
++interface AnswerState {
++  signal: Signal | null;
++  evidence: string;
++}
++
++type SheetState = Record<string, AnswerState>;   // keyed by criterion id
++
++interface StoredSheet {
++  ticker: string;
++  region: 'IN' | 'GLOBAL';
++  saved_at: string;
++  state: SheetState;
++}
++
++// ─── Sections ──────────────────────────────────────────────────────────────
++
++const SECTIONS: ReadonlyArray<SectionSpec> = [
++  {
++    id: 1, title: 'Theme / Macro', emoji: '🌐', color: '#22D3EE',
++    rationale: 'Policy alignment + secular tailwind = the multi-year wind at your back. Without theme, multiples compress regardless of execution.',
++    criteria: [
++      { id: 't1', label: 'Policy aligned (EOs / DoD / IRA / subsidies / export controls)?', weight: 3 },
++      { id: 't2', label: 'Multi-year secular trend (not cyclical)?', weight: 3 },
++      { id: 't3', label: 'Supply-constrained industry?', weight: 2 },
++      { id: 't4', label: 'Strategic / national importance?', weight: 2 },
++      { id: 't5', label: 'Multi-theme exposure (≥2 megatrends)?', weight: 2 },
++      { id: 't6', label: 'Capital flowing into theme (capex visible)?', weight: 2 },
++      { id: 't7', label: 'Theme activation visible in ordering / news?', weight: 2 },
++    ],
++  },
++  {
++    id: 2, title: 'Catalyst / Inflection', emoji: '⚡', color: '#FBBF24',
++    rationale: 'A clean catalyst within 6-18 months separates timely from "theoretically good". Earnings inflection or contract-led re-rating is the dominant alpha trigger.',
++    criteria: [
++      { id: 'c1', label: 'Government / mega contracts disclosed?', weight: 3 },
++      { id: 'c2', label: 'Earnings inflection visible (rising rev × improving margin)?', weight: 3 },
++      { id: 'c3', label: 'Strategic partnership / JV announced?', weight: 2 },
++      { id: 'c4', label: 'Product / capacity launch within 12 months?', weight: 2 },
++      { id: 'c5', label: 'Regulatory tailwind (PLI / FDI / approvals)?', weight: 2 },
++      { id: 'c6', label: 'Estimate revisions accelerating up?', weight: 2 },
++      { id: 'c7', label: 'Verifiable re-rating event within 6-18 months?', weight: 3 },
++    ],
++  },
++  {
++    id: 3, title: 'Sentiment / Market Interest', emoji: '📡', color: '#A78BFA',
++    rationale: 'Underfollowed + accumulating quietly = best setup. Crowded trades cap upside.',
++    criteria: [
++      { id: 's1', label: 'Analyst upgrades / target hikes recent?', weight: 2 },
++      { id: 's2', label: 'Conference / industry mentions rising?', weight: 1 },
++      { id: 's3', label: 'Twitter / Reddit / institutional commentary increasing?', weight: 1 },
++      { id: 's4', label: 'Institutional accumulation (FII / DII flows positive)?', weight: 2 },
++      { id: 's5', label: 'Underfollowed by Wall Street / sell-side (<10 analysts)?', weight: 2 },
++    ],
++  },
++  {
++    id: 4, title: 'Price / Volume Action', emoji: '📈', color: '#38BDF8',
++    rationale: 'Confirms the institutional read. If price/volume disagrees, the thesis is early — or wrong.',
++    criteria: [
++      { id: 'p1', label: 'Chart setup constructive (no broken structure)?', weight: 2 },
++      { id: 'p2', label: 'Relative strength leading the broad market?', weight: 2 },
++      { id: 'p3', label: 'High-volume breakout in last 60 days?', weight: 2 },
++      { id: 'p4', label: 'Sector breadth participating (peers also strong)?', weight: 2 },
++      { id: 'p5', label: 'Dark-pool / block-deal activity flagged?', weight: 1 },
++      { id: 'p6', label: 'Real money entering the sector (not just retail)?', weight: 2 },
++    ],
++  },
++  {
++    id: 5, title: 'Financial Quality', emoji: '💎', color: '#10B981',
++    rationale: 'Hard numerical bar. Misses here = high mortality even with great theme.',
++    criteria: [
++      { id: 'f1', label: 'Revenue growth >20% (last 4 quarters)?', weight: 3 },
++      { id: 'f2', label: 'EPS growth accelerating?', weight: 3 },
++      { id: 'f3', label: 'ROIC > 15%?', weight: 2 },
++      { id: 'f4', label: 'Gross margin > 40%?', weight: 2 },
++      { id: 'f5', label: 'Gross margins stable or expanding?', weight: 2 },
++      { id: 'f6', label: 'Operating leverage visible (margin > revenue growth)?', weight: 2 },
++      { id: 'f7', label: 'FCF positive OR clear path within 12 months?', weight: 3 },
++      { id: 'f8', label: 'Debt / Equity < 1.5?', weight: 2 },
++      { id: 'f9', label: 'Strong liquidity / cash runway?', weight: 2 },
++      { id: 'f10', label: 'Can avoid emergency dilution / raise?', weight: 2 },
++    ],
++  },
++  {
++    id: 6, title: 'Business Model', emoji: '🏗️', color: '#06B6D4',
++    rationale: 'Understand WHAT they sell, to WHOM, HOW. Concentration kills.',
++    criteria: [
++      { id: 'b1', label: '2-3 products generate ≥80% of revenue (clear focus)?', weight: 2 },
++      { id: 'b2', label: 'Customer concentration < 30%?', weight: 2 },
++      { id: 'b3', label: 'Blue-chip customers / partners?', weight: 2 },
++      { id: 'b4', label: 'Geography diversified (not single-region risk)?', weight: 1 },
++      { id: 'b5', label: 'Recurring / contracted revenue base?', weight: 2 },
++    ],
++  },
++  {
++    id: 7, title: 'Moat / Competitive Advantage', emoji: '🏰', color: '#8B5CF6',
++    rationale: 'Without moat, growth gets competed away. Rarity premium > theme premium.',
++    criteria: [
++      { id: 'm1', label: 'Technology or IP advantage?', weight: 3 },
++      { id: 'm2', label: 'Regulatory moat (license / approval barrier)?', weight: 3 },
++      { id: 'm3', label: 'Scale advantage?', weight: 2 },
++      { id: 'm4', label: 'High switching costs?', weight: 2 },
++      { id: 'm5', label: 'Scarcity / monopoly asset?', weight: 3 },
++      { id: 'm6', label: 'National security relevance?', weight: 2 },
++      { id: 'm7', label: 'Competitive advantage WIDENING (not just present)?', weight: 3 },
++      { id: 'm8', label: 'Rarity premium credibly exists (vs commodity peers)?', weight: 3 },
++    ],
++  },
++  {
++    id: 8, title: 'Competition / Industry Structure', emoji: '⚔️', color: '#F59E0B',
++    rationale: 'Where is the cycle, who is gaining share, how fragmented?',
++    criteria: [
++      { id: 'co1', label: 'Direct competitor count manageable (≤5 serious players)?', weight: 2 },
++      { id: 'co2', label: 'Industry consolidating (not fragmenting)?', weight: 2 },
++      { id: 'co3', label: 'Secular vs cyclical (preference: secular)?', weight: 2 },
++      { id: 'co4', label: 'Early in cycle (capacity tight, prices firm)?', weight: 2 },
++      { id: 'co5', label: 'Market share INCREASING?', weight: 3 },
++    ],
++  },
++  {
++    id: 9, title: 'Management / Insider', emoji: '👤', color: '#EC4899',
++    rationale: 'Skin in game + capital discipline = compounding edge.',
++    criteria: [
++      { id: 'mg1', label: 'Founder-led OR long-tenured operator CEO?', weight: 2 },
++      { id: 'mg2', label: 'Insider ownership > 5%?', weight: 2 },
++      { id: 'mg3', label: 'CEO / founder skin in the game (recent buys)?', weight: 2 },
++      { id: 'mg4', label: 'Recent insider transactions are NET BUYS?', weight: 2 },
++      { id: 'mg5', label: 'Capital allocation history disciplined?', weight: 3 },
++      { id: 'mg6', label: 'Track record of hitting / raising guidance?', weight: 2 },
++    ],
++  },
++  {
++    id: 10, title: 'Dilution / Share Structure', emoji: '🧾', color: '#94A3B8',
++    rationale: 'Best business gets ruined by serial dilution. Watch the share count, not the buzz.',
++    criteria: [
++      { id: 'd1', label: 'Share count flat or shrinking over 3-5 years?', weight: 3 },
++      { id: 'd2', label: 'Stock-based comp moderate (≤8% of revenue)?', weight: 2 },
++      { id: 'd3', label: 'No frequent equity raises?', weight: 2 },
++      { id: 'd4', label: 'No convertible-debt overhang?', weight: 2 },
++      { id: 'd5', label: 'Warrants / outstanding dilution manageable?', weight: 1 },
++      { id: 'd6', label: 'Company can self-fund growth (no forced raises)?', weight: 2 },
++    ],
++  },
++  {
++    id: 11, title: 'Red Flags', emoji: '🚩', color: '#EF4444',
++    rationale: 'YES on these is BAD. Polarity inverted in scoring.',
++    criteria: [
++      { id: 'r1', label: 'Customer over-concentration?', weight: 2, polarity: 'NEGATIVE' },
++      { id: 'r2', label: 'Accounting complexity / restatements?', weight: 3, polarity: 'NEGATIVE', disqualifying: true },
++      { id: 'r3', label: 'Active legal / regulatory issues?', weight: 2, polarity: 'NEGATIVE' },
++      { id: 'r4', label: 'Weak / stressed balance sheet?', weight: 3, polarity: 'NEGATIVE' },
++      { id: 'r5', label: 'Cyclical earnings risk mispriced as secular?', weight: 2, polarity: 'NEGATIVE' },
++      { id: 'r6', label: 'Commodity exposure mispriced?', weight: 2, polarity: 'NEGATIVE' },
++      { id: 'r7', label: 'High execution / delivery risk?', weight: 2, polarity: 'NEGATIVE' },
++      { id: 'r8', label: 'Heavy dependency on subsidies / single policy?', weight: 2, polarity: 'NEGATIVE' },
++    ],
++  },
++  {
++    id: 12, title: 'TAM / Optionality', emoji: '🌍', color: '#10B981',
++    rationale: 'You want a small share of a giant pond, with adjacencies you didnt pay for.',
++    criteria: [
++      { id: 'tam1', label: 'TAM > 10x current revenue?', weight: 3 },
++      { id: 'tam2', label: 'Large adjacencies (next leg of growth visible)?', weight: 2 },
++      { id: 'tam3', label: 'International expansion runway?', weight: 2 },
++      { id: 'tam4', label: 'Optional future products / services?', weight: 2 },
++      { id: 'tam5', label: 'Multiple growth vectors (≥3 levers)?', weight: 2 },
++    ],
++  },
++  {
++    id: 13, title: 'Valuation', emoji: '⚖️', color: '#F59E0B',
++    rationale: 'Even great businesses are bad investments at the wrong price. Use the right framework per business type.',
++    criteria: [
++      { id: 'v1', label: 'PEG < 1.5 (or appropriate alternative metric clears bar)?', weight: 3 },
++      { id: 'v2', label: 'EV / Revenue reasonable for growth profile?', weight: 2 },
++      { id: 'v3', label: 'Forward P/E < 30 with EPS growth > 25%?', weight: 2 },
++      { id: 'v4', label: 'Cheap vs peers?', weight: 2 },
++      { id: 'v5', label: 'Cheap vs own historical multiples?', weight: 2 },
++      { id: 'v6', label: 'Cheap vs private-market value?', weight: 1 },
++      { id: 'v7', label: 'Cheap vs strategic value (mispriced rarity)?', weight: 2 },
++    ],
++  },
++  {
++    id: 14, title: 'Rarity Premium Multipliers', emoji: '👑', color: '#FBBF24',
++    rationale: 'Multiplier on top of standard valuation when policy + irreplaceability + monopoly stack.',
++    criteria: [
++      { id: 'rp1', label: 'Policy alignment confirmed (specific EO / law)?', weight: 3 },
++      { id: 'rp2', label: 'Theme activation visible (orders / contracts)?', weight: 2 },
++      { id: 'rp3', label: 'Irreplaceability confirmed (no near-term substitute)?', weight: 3 },
++      { id: 'rp4', label: 'Strategic monopoly status (regulator / customer locked-in)?', weight: 3 },
++      { id: 'rp5', label: 'National security importance?', weight: 2 },
++    ],
++  },
++  {
++    id: 15, title: 'Portfolio Classification', emoji: '🗂️', color: '#06B6D4',
++    rationale: 'Pick the bucket honestly — sizing depends on it. Speculative gets small; Rarity Premium gets concentrated.',
++    criteria: [
++      { id: 'pc1', label: 'Speculative (early, optionality, binary)?', weight: 1 },
++      { id: 'pc2', label: 'Picks & Shovels (enabler of theme winners)?', weight: 2 },
++      { id: 'pc3', label: 'Industry Leader (dominant share, durable)?', weight: 2 },
++      { id: 'pc4', label: 'Rarity Premium (strategic monopoly / irreplaceable)?', weight: 3 },
++    ],
++  },
++  {
++    id: 16, title: 'Final Questions', emoji: '🎯', color: '#10B981',
++    rationale: 'The kill-switch layer. If any of these is NO, reconsider.',
++    criteria: [
++      { id: 'fq1', label: 'Genuine strategic asset (not narrative hype)?', weight: 3, disqualifying: true },
++      { id: 'fq2', label: 'Would I hold through a 50% drawdown?', weight: 3, disqualifying: true },
++      { id: 'fq3', label: 'Institutionally ownable in 3-5 years?', weight: 2 },
++      { id: 'fq4', label: 'Can re-rate into a category leader?', weight: 2 },
++      { id: 'fq5', label: 'Wall Street still early here?', weight: 2 },
++    ],
++  },
++];
++
++// ─── Hooks ──────────────────────────────────────────────────────────────────
++
++function useTickerQuote(ticker: string) {
++  return useQuery({
++    queryKey: ['ticker-quote', ticker],
++    queryFn: async () => {
++      if (!ticker) return null;
++      const { data } = await api.post('/market/quotes', { symbols: [ticker] });
++      return Array.isArray(data) ? data[0] : data?.[ticker] || null;
++    },
++    enabled: !!ticker,
++    staleTime: 60_000,
++  });
++}
++
++function useTickerNews(ticker: string) {
++  return useQuery({
++    queryKey: ['ticker-news', ticker],
++    queryFn: async () => {
++      if (!ticker) return [];
++      const { data } = await api.get('/news', { params: { ticker, days: 90, limit: 100 } });
++      return data?.articles || [];
++    },
++    enabled: !!ticker,
++    staleTime: 5 * 60_000,
++  });
++}
++
++function useTickerEarnings(ticker: string) {
++  return useQuery({
++    queryKey: ['ticker-earnings', ticker],
++    queryFn: async () => {
++      if (!ticker) return null;
++      try {
++        const { data } = await api.get(`/market/earnings-scan`, { params: { symbols: ticker } });
++        return data;
++      } catch { return null; }
++    },
++    enabled: !!ticker,
++    staleTime: 5 * 60_000,
++    retry: 0,
++  });
++}
++
++// ─── Storage ────────────────────────────────────────────────────────────────
++
++const STORAGE_KEY = 'mc:stock-sheet:v1:';
++
++function loadSheet(ticker: string): StoredSheet | null {
++  if (typeof window === 'undefined') return null;
++  try {
++    const raw = localStorage.getItem(STORAGE_KEY + ticker.toUpperCase());
++    return raw ? JSON.parse(raw) : null;
++  } catch { return null; }
++}
++function saveSheet(s: StoredSheet) {
++  try { localStorage.setItem(STORAGE_KEY + s.ticker.toUpperCase(), JSON.stringify(s)); } catch {}
++}
++function deleteSheet(ticker: string) {
++  try { localStorage.removeItem(STORAGE_KEY + ticker.toUpperCase()); } catch {}
++}
++function listSavedTickers(): string[] {
++  if (typeof window === 'undefined') return [];
++  const out: string[] = [];
++  for (let i = 0; i < localStorage.length; i++) {
++    const k = localStorage.key(i);
++    if (k && k.startsWith(STORAGE_KEY)) out.push(k.slice(STORAGE_KEY.length));
++  }
++  return out.sort();
++}
++
++// ─── Scoring ────────────────────────────────────────────────────────────────
++
++interface Score {
++  yes: number;
++  no: number;
++  na: number;
++  unanswered: number;
++  weighted_yes: number;
++  weighted_no: number;
++  total_weight: number;
++  alignment_pct: number;
++  verdict: 'BUY' | 'WATCH' | 'SKIP' | 'INCOMPLETE';
++  disqualifiers: string[];
++}
++
++function scoreSheet(state: SheetState): Score {
++  let yes = 0, no = 0, na = 0, unanswered = 0;
++  let weightedYes = 0, weightedNo = 0, totalWeight = 0;
++  const disqualifiers: string[] = [];
++  for (const s of SECTIONS) {
++    for (const c of s.criteria) {
++      const ans = state[c.id]?.signal;
++      const polarityFlipped = c.polarity === 'NEGATIVE';
++      if (ans === 'YES') {
++        yes++;
++        if (polarityFlipped) {
++          weightedNo += c.weight;
++          if (c.disqualifying) disqualifiers.push(`${s.emoji} ${c.label}`);
++        } else {
++          weightedYes += c.weight;
++        }
++        totalWeight += c.weight;
++      } else if (ans === 'NO') {
++        no++;
++        if (polarityFlipped) {
++          weightedYes += c.weight;
++        } else {
++          weightedNo += c.weight;
++          if (c.disqualifying) disqualifiers.push(`${s.emoji} ${c.label}`);
++        }
++        totalWeight += c.weight;
++      } else if (ans === 'N/A') {
++        na++;
++      } else {
++        unanswered++;
++      }
++    }
++  }
++  const alignment = totalWeight > 0 ? Math.round((weightedYes / totalWeight) * 100) : 0;
++  let verdict: Score['verdict'] = 'INCOMPLETE';
++  const totalCriteria = SECTIONS.reduce((s, sec) => s + sec.criteria.length, 0);
++  const answered = yes + no + na;
++  if (answered < totalCriteria * 0.6) verdict = 'INCOMPLETE';
++  else if (disqualifiers.length > 0) verdict = 'SKIP';
++  else if (alignment >= 70) verdict = 'BUY';
++  else if (alignment >= 50) verdict = 'WATCH';
++  else verdict = 'SKIP';
++  return { yes, no, na, unanswered, weighted_yes: weightedYes, weighted_no: weightedNo, total_weight: totalWeight, alignment_pct: alignment, verdict, disqualifiers };
++}
++
++// ─── Auto-prefill from existing data ────────────────────────────────────────
++
++interface PrefillBundle {
++  region: 'IN' | 'GLOBAL';
++  hasRecentNews: boolean;
++  newsCount90d: number;
++  hasMegaContract: boolean;
++  hasEarningsBeat: boolean;
++  defenseRelevance: boolean;
++  layeredMembership: string[];   // e.g. ['L1 (Direct Scarcity Capture)']
++}
++
++function autoPrefill(prefill: PrefillBundle, current: SheetState): SheetState {
++  // Only fill criteria that are still null — never overwrite user input.
++  const next = { ...current };
++  const set = (id: string, signal: Signal, evidence: string) => {
++    if (!next[id] || next[id].signal == null) {
++      next[id] = { signal, evidence: `[auto] ${evidence}` };
++    }
++  };
++  if (prefill.hasMegaContract) set('c1', 'YES', 'Mega-contract / strategic visibility hit detected in last 90d');
++  if (prefill.hasEarningsBeat) set('c2', 'YES', 'Earnings-scan grade indicates revenue × margin inflection');
++  if (prefill.newsCount90d >= 5) set('s2', 'YES', `${prefill.newsCount90d} news mentions in last 90d`);
++  if (prefill.defenseRelevance) set('m6', 'YES', 'Defense / national-security cluster membership');
++  return next;
++}
++
++// ─── UI ─────────────────────────────────────────────────────────────────────
++
++function inferRegionFromTicker(t: string): 'IN' | 'GLOBAL' {
++  const T = t.toUpperCase();
++  return T.endsWith('.NS') || T.endsWith('.BO') ? 'IN' : 'GLOBAL';
++}
++
++const VERDICT_COLOR: Record<Score['verdict'], string> = {
++  BUY: '#10B981',
++  WATCH: '#F59E0B',
++  SKIP: '#EF4444',
++  INCOMPLETE: '#6B7A8D',
++};
++
++export default function StockSheetPage() {
++  const searchParams = useSearchParams();
++  const router = useRouter();
++  const initialTicker = (searchParams?.get('ticker') || '').toUpperCase();
++  const [tickerInput, setTickerInput] = useState(initialTicker);
++  const [activeTicker, setActiveTicker] = useState(initialTicker);
++  const [state, setState] = useState<SheetState>({});
++  const [openSections, setOpenSections] = useState<Record<number, boolean>>({});
++  const [savedList, setSavedList] = useState<string[]>([]);
++
++  useEffect(() => { setSavedList(listSavedTickers()); }, [activeTicker]);
++
++  // Load from storage when activeTicker changes
++  useEffect(() => {
++    if (!activeTicker) { setState({}); return; }
++    const stored = loadSheet(activeTicker);
++    setState(stored?.state || {});
++    // Open first 3 sections by default
++    setOpenSections({ 1: true, 2: true, 3: true });
++  }, [activeTicker]);
++
++  // Sync URL
++  useEffect(() => {
++    if (!activeTicker) return;
++    const sp = new URLSearchParams(searchParams?.toString() || '');
++    if (sp.get('ticker') !== activeTicker) {
++      sp.set('ticker', activeTicker);
++      router.replace(`/stock-sheet?${sp.toString()}`, { scroll: false });
++    }
++  }, [activeTicker, searchParams, router]);
++
++  const region = useMemo(() => activeTicker ? inferRegionFromTicker(activeTicker) : 'GLOBAL', [activeTicker]);
++  const { data: quote } = useTickerQuote(activeTicker);
++  const { data: news } = useTickerNews(activeTicker);
++  const { data: earningsData } = useTickerEarnings(activeTicker);
++
++  // Auto-prefill bundle
++  const prefill = useMemo<PrefillBundle>(() => ({
++    region,
++    hasRecentNews: (news?.length || 0) > 0,
++    newsCount90d: news?.length || 0,
++    hasMegaContract: (news || []).some((a: any) => a?.strategic_visibility?.qualifies),
++    hasEarningsBeat: !!earningsData && JSON.stringify(earningsData).includes('Beat'),
++    defenseRelevance: (news || []).some((a: any) => a?.graph_primary_node === 'DEFENSE_INFRA' || a?.graph_primary_node === 'AEROSPACE_INFRA'),
++    layeredMembership: [],
++  }), [region, news, earningsData]);
++
++  // Apply auto-prefill once when news loads (only fills empty fields)
++  useEffect(() => {
++    if (!activeTicker) return;
++    if (!news) return;
++    setState((cur) => autoPrefill(prefill, cur));
++  // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [activeTicker, news, earningsData]);
++
++  const score = useMemo(() => scoreSheet(state), [state]);
++
++  const handleAnswer = (id: string, signal: Signal | null) => {
++    setState((s) => ({ ...s, [id]: { signal: signal as Signal, evidence: s[id]?.evidence || '' } }));
++  };
++  const handleEvidence = (id: string, evidence: string) => {
++    setState((s) => ({ ...s, [id]: { signal: s[id]?.signal ?? null, evidence } }));
++  };
++  const handleSave = () => {
++    if (!activeTicker) return;
++    saveSheet({ ticker: activeTicker, region, saved_at: new Date().toISOString(), state });
++    setSavedList(listSavedTickers());
++  };
++  const handleDelete = () => {
++    if (!activeTicker) return;
++    if (!confirm(`Delete saved sheet for ${activeTicker}?`)) return;
++    deleteSheet(activeTicker);
++    setState({});
++    setSavedList(listSavedTickers());
++  };
++  const handleSubmit = () => {
++    const T = tickerInput.trim().toUpperCase();
++    if (!T) return;
++    setActiveTicker(T);
++  };
++
++  return (
++    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: '#0A0E1A' }}>
++      {/* ── Header ─────────────────────────────────────────────────── */}
++      <div style={{ backgroundColor: '#0D1B2E', borderBottom: '1px solid #1E2D45', padding: '14px 20px', flexShrink: 0 }}>
++        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
++          <span style={{ fontSize: 15, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.6px' }}>
++            🧠 SINGLE-STOCK SHEET
++          </span>
++          <span style={{ fontSize: 12, color: '#4A5B6C' }}>16-section institutional checklist · auto-pre-fill where data exists</span>
++        </div>
++
++        <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
++          <div style={{ position: 'relative', flex: '1 1 320px', minWidth: 220 }}>
++            <Search style={{ position: 'absolute', left: 10, top: 12, width: 14, height: 14, color: '#6B7A8D' }} />
++            <input
++              value={tickerInput}
++              onChange={(e) => setTickerInput(e.target.value)}
++              placeholder="Enter ticker (e.g. LEU, NBIS, RELIANCE.NS, POWERGRID.NS)"
++              style={{
++                width: '100%', padding: '10px 12px 10px 34px',
++                backgroundColor: '#0A1422', border: '1px solid #1A2840',
++                borderRadius: 8, color: '#E6EDF3', fontSize: 14, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
++                outline: 'none',
++              }}
++            />
++          </div>
++          <button type="submit" style={{ padding: '10px 18px', borderRadius: 8, border: '1px solid #22D3EE60', backgroundColor: '#22D3EE20', color: '#22D3EE', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
++            Run sheet
++          </button>
++          {activeTicker && (
++            <>
++              <button type="button" onClick={handleSave} style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid #10B98160', backgroundColor: '#10B98120', color: '#10B981', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
++                <Save style={{ width: 14, height: 14 }} />Save
++              </button>
++              <button type="button" onClick={handleDelete} style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid #EF444460', backgroundColor: '#EF444420', color: '#EF4444', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
++                <Trash2 style={{ width: 14, height: 14 }} />Delete
++              </button>
++              <button type="button" onClick={() => window.print()} style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid #1A2840', backgroundColor: 'transparent', color: '#8A95A3', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
++                <FileDown style={{ width: 14, height: 14 }} />Print / PDF
++              </button>
++            </>
++          )}
++        </form>
++
++        {savedList.length > 0 && (
++          <div style={{ marginTop: 10, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
++            <span style={{ fontSize: 11, color: '#6B7A8D' }}>SAVED:</span>
++            {savedList.map((t) => (
++              <button key={t} onClick={() => { setTickerInput(t); setActiveTicker(t); }}
++                style={{ padding: '3px 10px', borderRadius: 4, border: t === activeTicker ? '1px solid #22D3EE60' : '1px solid #1A2840', backgroundColor: t === activeTicker ? '#22D3EE15' : '#0A1422', color: t === activeTicker ? '#22D3EE' : '#8A95A3', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
++                {t}
++              </button>
++            ))}
++          </div>
++        )}
++      </div>
++
++      {/* ── Body ───────────────────────────────────────────────────── */}
++      {!activeTicker ? (
++        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6B7A8D', fontSize: 14, padding: 24, textAlign: 'center' }}>
++          <div>
++            <div style={{ fontSize: 48, marginBottom: 12 }}>📋</div>
++            Enter a ticker above to run the 16-section institutional checklist.
++            <div style={{ fontSize: 11, color: '#4A5B6C', marginTop: 8 }}>
++              Live data auto-fills theme / catalyst / sentiment / financial-quality where available.<br/>
++              Remaining sections are manual research with evidence notes.
++            </div>
++          </div>
++        </div>
++      ) : (
++        <div style={{ flex: 1, overflowY: 'auto', padding: '14px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
++          {/* Scorecard */}
++          <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: `4px solid ${VERDICT_COLOR[score.verdict]}`, borderRadius: 12, padding: '14px 18px' }}>
++            <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
++              <span style={{ fontSize: 22, fontWeight: 900, color: '#F5F7FA', letterSpacing: '0.5px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
++                {activeTicker}
++              </span>
++              <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 4, backgroundColor: region === 'IN' ? '#FBBF2420' : '#22D3EE20', color: region === 'IN' ? '#FBBF24' : '#22D3EE', border: `1px solid ${region === 'IN' ? '#FBBF2440' : '#22D3EE40'}` }}>
++                {region === 'IN' ? '🇮🇳 India' : '🌐 Global'}
++              </span>
++              {quote?.price != null && (
++                <span style={{ fontSize: 13, color: '#94A3B8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
++                  {Number(quote.price).toLocaleString()}
++                  {quote.change_pct != null && (
++                    <span style={{ marginLeft: 8, color: Number(quote.change_pct) >= 0 ? '#10B981' : '#EF4444' }}>
++                      {Number(quote.change_pct) >= 0 ? '+' : ''}{Number(quote.change_pct).toFixed(2)}%
++                    </span>
++                  )}
++                </span>
++              )}
++              <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 12 }}>
++                <span style={{ fontSize: 24, fontWeight: 900, color: VERDICT_COLOR[score.verdict], letterSpacing: '0.8px' }}>
++                  {score.verdict}
++                </span>
++                <span style={{ fontSize: 13, color: '#94A3B8' }}>
++                  {score.alignment_pct}% aligned · {score.yes} ✓ / {score.no} ✗ / {score.na} N/A · {score.unanswered} unanswered
++                </span>
++              </span>
++            </div>
++            {/* Alignment bar */}
++            <div style={{ marginTop: 10, height: 6, backgroundColor: '#1A2840', borderRadius: 3, overflow: 'hidden' }}>
++              <div style={{ width: `${score.alignment_pct}%`, height: '100%', backgroundColor: VERDICT_COLOR[score.verdict], transition: 'width 0.3s' }} />
++            </div>
++            {score.disqualifiers.length > 0 && (
++              <div style={{ marginTop: 10, padding: 10, borderRadius: 6, backgroundColor: '#EF444415', border: '1px solid #EF444440', color: '#FCA5A5', fontSize: 12 }}>
++                <strong style={{ color: '#EF4444' }}>Disqualifiers:</strong> {score.disqualifiers.join(' · ')}
++              </div>
++            )}
++          </div>
++
++          {/* Sections */}
++          {SECTIONS.map((sec) => {
++            const sectionAns = sec.criteria.map((c) => state[c.id]?.signal).filter(Boolean) as Signal[];
++            const sectionYes = sectionAns.filter((s) => s === 'YES').length;
++            const sectionNo = sectionAns.filter((s) => s === 'NO').length;
++            const isOpen = openSections[sec.id] ?? false;
++            return (
++              <div key={sec.id} style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: `3px solid ${sec.color}`, borderRadius: 12 }}>
++                <button
++                  onClick={() => setOpenSections((s) => ({ ...s, [sec.id]: !s[sec.id] }))}
++                  style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '12px 18px', background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', textAlign: 'left' }}
++                >
++                  {isOpen ? <ChevronDown style={{ width: 16, height: 16, color: '#6B7A8D' }} /> : <ChevronRight style={{ width: 16, height: 16, color: '#6B7A8D' }} />}
++                  <span style={{ fontSize: 14, fontWeight: 800, color: sec.color, letterSpacing: '0.4px' }}>
++                    {sec.emoji} {sec.id}. {sec.title.toUpperCase()}
++                  </span>
++                  <span style={{ marginLeft: 'auto', fontSize: 11, color: '#6B7A8D' }}>
++                    {sectionYes} ✓ · {sectionNo} ✗ · {sec.criteria.length - sectionAns.length} ·
++                  </span>
++                </button>
++                {isOpen && (
++                  <div style={{ padding: '0 18px 14px 18px' }}>
++                    <div style={{ fontSize: 11, color: '#6B7A8D', fontStyle: 'italic', marginBottom: 12, lineHeight: 1.5 }}>
++                      {sec.rationale}
++                    </div>
++                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
++                      {sec.criteria.map((c) => {
++                        const ans = state[c.id];
++                        const isAuto = ans?.evidence?.startsWith('[auto]');
++                        return (
++                          <div key={c.id} style={{ padding: '8px 10px', backgroundColor: '#0A1422', borderRadius: 6, border: '1px solid #1A2840' }}>
++                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
++                              <span style={{ flex: 1, fontSize: 13, color: '#E6EDF3', lineHeight: 1.5, minWidth: 240 }}>
++                                {c.label}
++                                {c.weight === 3 && <span style={{ color: '#FBBF24', fontSize: 10, marginLeft: 6 }}>★ heavy</span>}
++                                {c.disqualifying && <span style={{ color: '#EF4444', fontSize: 10, marginLeft: 6 }}>⚠ disqualifying</span>}
++                                {c.polarity === 'NEGATIVE' && <span style={{ color: '#94A3B8', fontSize: 10, marginLeft: 6 }}>(YES = bad)</span>}
++                                {isAuto && <span style={{ color: '#22D3EE', fontSize: 10, marginLeft: 6 }}>auto-filled</span>}
++                              </span>
++                              <div style={{ display: 'inline-flex', gap: 4 }}>
++                                {(['YES','NO','N/A'] as const).map((sig) => {
++                                  const isPicked = ans?.signal === sig;
++                                  const colorBy: Record<Signal, string> = {
++                                    'YES': c.polarity === 'NEGATIVE' ? '#EF4444' : '#10B981',
++                                    'NO':  c.polarity === 'NEGATIVE' ? '#10B981' : '#EF4444',
++                                    'N/A': '#6B7A8D',
++                                  };
++                                  return (
++                                    <button
++                                      key={sig}
++                                      onClick={() => handleAnswer(c.id, isPicked ? null : sig)}
++                                      style={{
++                                        padding: '3px 10px', borderRadius: 4,
++                                        border: isPicked ? `1px solid ${colorBy[sig]}80` : '1px solid #2A3B4C',
++                                        backgroundColor: isPicked ? `${colorBy[sig]}25` : 'transparent',
++                                        color: isPicked ? colorBy[sig] : '#6B7A8D',
++                                        fontSize: 11, fontWeight: 800, letterSpacing: '0.4px', cursor: 'pointer',
++                                      }}
++                                    >
++                                      {sig}
++                                    </button>
++                                  );
++                                })}
++                              </div>
++                            </div>
++                            <input
++                              value={ans?.evidence || ''}
++                              onChange={(e) => handleEvidence(c.id, e.target.value)}
++                              placeholder="Evidence / source / 1-line note…"
++                              style={{ marginTop: 6, width: '100%', padding: '5px 8px', backgroundColor: '#0D1623', border: '1px solid #1A2840', borderRadius: 4, color: '#94A3B8', fontSize: 11, outline: 'none' }}
++                            />
++                          </div>
++                        );
++                      })}
++                    </div>
++                  </div>
++                )}
++              </div>
++            );
++          })}
++        </div>
++      )}
++    </div>
++  );
++}
+-- 
+2.34.1
+

@@ -1,0 +1,709 @@
+From 1bb2cb89a3ae0575fed826139c8e66040c1da0fe Mon Sep 17 00:00:00 2001
+From: Rishi <rishi@market-cockpit.local>
+Date: Sun, 10 May 2026 14:29:20 +0200
+Subject: [PATCH 1/2] feat(strategic-vis): Chokepoint Index + Macro insight
+ banner + WC numeric
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Patch 0073 — closes the three remaining items from the institutional review.
+
+(1) CHOKEPOINT INDEX (lib/news/chokepoint-index.ts)
+    Dedicated 1-5 severity scale per canonical chokepoint category,
+    separate from the binary STRATEGIC_CHOKEPOINT flag. 17 categories:
+      Severity 5  EUV Litho (ASML), HALEU (LEU), Naval Reactor (BWXT)
+      Severity 4  CoWoS (TSM), HBM (SKH/Samsung/Micron), AI GPU (NVDA),
+                  Aero Engines (GE/RR/RTX)
+      Severity 3  Transformers, Switchgear HV, Gas Turbines Large,
+                  Liquid Cooling AI, Optical Interconnect 800G+,
+                  Grid Interconnect, Missile RF Seekers,
+                  Rare Earth Magnets, Western Uranium, ABF Substrates
+    Detected by text pattern OR by primary-ticker match. Returns
+    {severity, label, competitors, rationale, beneficiary tickers}.
+
+(2) MACRO INSIGHT BANNER (auto-derived)
+    Top of /strategic-visibility now shows a 1-line headline + sub-line
+    derived from the by-theme + by-flag + by-chokepoint distribution.
+    Three primary patterns it detects:
+      "Markets are repricing scarce industrial capacity — not software"
+        (when ≥80% of contracts are AI infra / energy / defence / semi)
+      "AI infrastructure capex dominating"
+        (when AI infra > energy+defence)
+      "Energy + defence sovereignty is the dominant capital cycle"
+        (when energy+defence > AI infra)
+    Sub-line shows counts + cumulative book value + chokepoint-of-3.
+
+(3) WORKING CAPITAL INTENSITY — numeric (0-100)
+    Replaces the string "Low / Medium / High" with a sortable/filterable
+    integer score. Naval shipbuilding 90, fab 60, mid-margin defence 50,
+    annuity infra 15, AI take-or-pay 5. Coloured badge (green→amber→red).
+
+Wiring: classifyChokepoint + workingCapitalIntensityNumeric called
+inside the SV qualification block; emitted on items.push; persisted to
+ledger; backfilled into seed entries via enrichSeedEntry.
+
+Cache key bumped v25 → v26. tsc clean.
+---
+ .../(dashboard)/strategic-visibility/page.tsx | 147 ++++++++
+ frontend/src/app/api/v1/news/route.ts         |  35 +-
+ frontend/src/lib/news/chokepoint-index.ts     | 320 ++++++++++++++++++
+ .../src/lib/news/transformational-ledger.ts   |   9 +
+ .../src/lib/news/transformational-seed.ts     |  20 ++
+ 5 files changed, 530 insertions(+), 1 deletion(-)
+ create mode 100644 frontend/src/lib/news/chokepoint-index.ts
+
+diff --git a/frontend/src/app/(dashboard)/strategic-visibility/page.tsx b/frontend/src/app/(dashboard)/strategic-visibility/page.tsx
+index 8143cbf..3d01ee2 100644
+--- a/frontend/src/app/(dashboard)/strategic-visibility/page.tsx
++++ b/frontend/src/app/(dashboard)/strategic-visibility/page.tsx
+@@ -53,6 +53,8 @@ interface SVImpliedSecondaryDemand {
+   lines: SVSecondaryDemandLine[];
+ }
+ 
++type SVChokepointCategory = 'EUV_LITHO' | 'COWOS_PACKAGING' | 'HBM_MEMORY' | 'ABF_SUBSTRATES' | 'TRANSFORMERS_LARGE' | 'SWITCHGEAR_HV' | 'GAS_TURBINES_LARGE' | 'GRID_INTERCONNECT' | 'HALEU_ENRICHMENT' | 'NAVAL_PROPULSION' | 'AERO_ENGINES' | 'MISSILE_SEEKERS_RF' | 'AI_GPU_CLUSTERS' | 'LIQUID_COOLING_AI' | 'OPTICAL_INTERCONNECT_800G' | 'RARE_EARTH_MAGNETS' | 'URANIUM_WESTERN' | 'NONE';
++
+ interface SVArticle {
+   id: string;
+   title: string;
+@@ -81,6 +83,14 @@ interface SVArticle {
+   revenue_profile_working_capital?: string | null;
+   revenue_profile_rationale?: string | null;
+   implied_secondary_demand?: SVImpliedSecondaryDemand | null;
++  // PATCH 0073: chokepoint + WC numeric
++  chokepoint_category?: SVChokepointCategory | null;
++  chokepoint_label?: string | null;
++  chokepoint_severity?: 0 | 1 | 2 | 3 | 4 | 5 | null;
++  chokepoint_competitors?: string | null;
++  chokepoint_rationale?: string | null;
++  chokepoint_primary_tickers?: string[] | null;
++  working_capital_intensity_pct?: number | null;
+   _rank: number;
+ }
+ 
+@@ -216,6 +226,76 @@ const REVENUE_COLOR: Record<string, string> = {
+   UNCLASSIFIED:          '#4A5B6C',
+ };
+ 
++// PATCH 0073: chokepoint severity helpers
++function chokepointSevColor(s: number): string {
++  if (s >= 5) return '#8B5CF6';
++  if (s >= 4) return '#22D3EE';
++  if (s >= 3) return '#10B981';
++  if (s >= 2) return '#F59E0B';
++  return '#6B7A8D';
++}
++function chokepointSevDots(s: number): string {
++  return '●'.repeat(Math.max(0, Math.min(5, s))) + '○'.repeat(Math.max(0, 5 - Math.max(0, Math.min(5, s))));
++}
++
++// PATCH 0073: macro-pattern banner derivation.
++// Returns a 1-line headline + sub-explanation auto-derived from the
++// distribution of qualifying contracts by theme + flag.
++function buildMacroInsight(articles: SVArticle[]): { headline: string; sub: string; accent: string } {
++  if (articles.length === 0) {
++    return { headline: '', sub: '', accent: '#22D3EE' };
++  }
++
++  const themeCounts: Record<string, number> = {};
++  const profileCounts: Record<string, number> = {};
++  let chokepointCount = 0;
++  let totalUsdM = 0;
++  for (const a of articles) {
++    const t = a.strategic_visibility?.theme || 'NONE';
++    themeCounts[t] = (themeCounts[t] || 0) + 1;
++    const p = a.revenue_profile || 'UNCLASSIFIED';
++    profileCounts[p] = (profileCounts[p] || 0) + 1;
++    if ((a.chokepoint_severity ?? 0) >= 4) chokepointCount++;
++    totalUsdM += a.strategic_visibility?.contract_value_usd_m || 0;
++  }
++
++  // Industrial-capacity themes (the user's macro insight pattern)
++  const industrialThemes = ['ENERGY_TRANSITION', 'POWER_GRID', 'DEFENSE_AEROSPACE', 'SEMI_SUPPLY_CHAIN', 'CRITICAL_NATIONAL_PROGRAM', 'AI_INFRASTRUCTURE', 'HYPERSCALER_LEASE', 'NEOCLOUD_AI_INFRA'];
++  const industrialCount = industrialThemes.reduce((s, t) => s + (themeCounts[t] || 0), 0);
++  const industrialPct = articles.length > 0 ? Math.round((industrialCount / articles.length) * 100) : 0;
++
++  const aiInfraCount = (themeCounts['AI_INFRASTRUCTURE'] || 0) + (themeCounts['HYPERSCALER_LEASE'] || 0) + (themeCounts['NEOCLOUD_AI_INFRA'] || 0);
++  const energyDefenceCount = (themeCounts['ENERGY_TRANSITION'] || 0) + (themeCounts['POWER_GRID'] || 0) + (themeCounts['DEFENSE_AEROSPACE'] || 0) + (themeCounts['CRITICAL_NATIONAL_PROGRAM'] || 0);
++  const totalFmt = totalUsdM >= 1000 ? `$${(totalUsdM / 1000).toFixed(1)}B` : `$${Math.round(totalUsdM)}M`;
++
++  if (industrialPct >= 80) {
++    return {
++      headline: 'Markets are repricing scarce industrial capacity — not software',
++      sub: `${industrialCount} of ${articles.length} contracts (${industrialPct}%) are AI infra / energy / defence / semi / sovereign. ${chokepointCount} are sub-3 chokepoints. Cumulative book ${totalFmt}.`,
++      accent: '#8B5CF6',
++    };
++  }
++  if (aiInfraCount >= energyDefenceCount && aiInfraCount >= 3) {
++    return {
++      headline: 'AI infrastructure capex dominating',
++      sub: `${aiInfraCount} hyperscaler / neocloud lease frameworks vs ${energyDefenceCount} energy + defence frameworks. ${chokepointCount} sub-3 chokepoints. Cumulative ${totalFmt}.`,
++      accent: '#22D3EE',
++    };
++  }
++  if (energyDefenceCount > aiInfraCount) {
++    return {
++      headline: 'Energy + defence sovereignty is the dominant capital cycle',
++      sub: `${energyDefenceCount} energy / defence / sovereign-program frameworks vs ${aiInfraCount} AI infra. ${chokepointCount} sub-3 chokepoints. Cumulative ${totalFmt}.`,
++      accent: '#F59E0B',
++    };
++  }
++  return {
++    headline: 'Mixed institutional capex backdrop',
++    sub: `${articles.length} qualifying contracts across ${Object.keys(themeCounts).length} themes. ${chokepointCount} sub-3 chokepoints. Cumulative ${totalFmt}.`,
++    accent: '#10B981',
++  };
++}
++
+ function fmtMoney(usdM?: number): string {
+   if (usdM === undefined) return '—';
+   if (usdM >= 1000) return `$${(usdM / 1000).toFixed(1)}B`;
+@@ -395,6 +475,38 @@ export default function StrategicVisibilityPage() {
+           </div>
+         </div>
+ 
++        {/* PATCH 0073: MACRO INSIGHT BANNER — auto-derived dominant pattern */}
++        {!isLoading && articles.length > 0 && (() => {
++          const insight = buildMacroInsight(articles);
++          if (!insight.headline) return null;
++          return (
++            <div style={{
++              backgroundColor: '#0D1B2E',
++              border: `1px solid ${insight.accent}40`,
++              borderLeft: `3px solid ${insight.accent}`,
++              borderRadius: 10,
++              padding: '12px 16px',
++              marginBottom: 14,
++              display: 'flex',
++              alignItems: 'flex-start',
++              gap: 12,
++            }}>
++              <span style={{ fontSize: 22, lineHeight: 1 }}>📡</span>
++              <div style={{ flex: 1 }}>
++                <div style={{ fontSize: 9, fontWeight: 700, color: insight.accent, letterSpacing: '0.8px', marginBottom: 3 }}>
++                  MACRO PATTERN — derived from current ledger distribution
++                </div>
++                <div style={{ fontSize: 14, fontWeight: 700, color: '#F5F7FA', marginBottom: 4 }}>
++                  {insight.headline}
++                </div>
++                <div style={{ fontSize: 11, color: '#94A3B8', lineHeight: 1.5 }}>
++                  {insight.sub}
++                </div>
++              </div>
++            </div>
++          );
++        })()}
++
+         {/* Stats row */}
+         {!isLoading && (
+           <div style={{ display: 'flex', gap: 14, marginBottom: 14 }}>
+@@ -610,6 +722,41 @@ export default function StrategicVisibilityPage() {
+                             )}
+                           </span>
+                         )}
++                        {/* PATCH 0073: chokepoint + WC numeric badges */}
++                        {a.chokepoint_severity != null && a.chokepoint_severity > 0 && (
++                          <span
++                            title={`${a.chokepoint_rationale || ''}\nCompetitors: ${a.chokepoint_competitors || '—'}`}
++                            style={{
++                              fontSize: 9, fontWeight: 700,
++                              color: chokepointSevColor(a.chokepoint_severity),
++                              border: `1px solid ${chokepointSevColor(a.chokepoint_severity)}40`,
++                              backgroundColor: `${chokepointSevColor(a.chokepoint_severity)}10`,
++                              padding: '2px 6px', borderRadius: 3,
++                              fontFamily: 'ui-monospace, SF Mono, Menlo, monospace',
++                            }}
++                          >
++                            🔒 {a.chokepoint_label || 'CHOKEPOINT'}
++                            <span style={{ marginLeft: 4, letterSpacing: '1px' }}>{chokepointSevDots(a.chokepoint_severity)}</span>
++                            <span style={{ marginLeft: 3, color: '#94A3B8', fontWeight: 400 }}>{a.chokepoint_severity}/5</span>
++                          </span>
++                        )}
++                        {a.working_capital_intensity_pct != null && (
++                          <span
++                            title={`Working capital intensity ${a.working_capital_intensity_pct}% — 0 = annuity / 100 = milestone-paid extreme`}
++                            style={{
++                              fontSize: 9, fontWeight: 700,
++                              color: a.working_capital_intensity_pct >= 70 ? '#EF4444'
++                                : a.working_capital_intensity_pct >= 40 ? '#F59E0B'
++                                : a.working_capital_intensity_pct >= 20 ? '#22D3EE'
++                                : '#10B981',
++                              border: `1px solid ${a.working_capital_intensity_pct >= 70 ? '#EF4444' : a.working_capital_intensity_pct >= 40 ? '#F59E0B' : '#22D3EE'}40`,
++                              backgroundColor: a.working_capital_intensity_pct >= 70 ? '#EF444410' : a.working_capital_intensity_pct >= 40 ? '#F59E0B10' : '#22D3EE10',
++                              padding: '2px 6px', borderRadius: 3,
++                            }}
++                          >
++                            WC: {a.working_capital_intensity_pct}%
++                          </span>
++                        )}
+                       </div>
+                     )}
+                     {/* PATCH 0072: IMPLIED SECONDARY DEMAND — capex propagation */}
+diff --git a/frontend/src/app/api/v1/news/route.ts b/frontend/src/app/api/v1/news/route.ts
+index a3cf960..c4c4bbe 100644
+--- a/frontend/src/app/api/v1/news/route.ts
++++ b/frontend/src/app/api/v1/news/route.ts
+@@ -36,6 +36,8 @@ import {
+   classifyRevenueProfile,
+   computeImpliedSecondaryDemand,
+ } from '@/lib/news/strategic-visibility';
++// PATCH 0073: chokepoint index + numeric WC intensity
++import { classifyChokepoint, workingCapitalIntensityNumeric } from '@/lib/news/chokepoint-index';
+ // PATCH 0068: 90-day transformational contracts ledger
+ import {
+   recordTransformational,
+@@ -181,7 +183,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
+ // gaming PC build.
+ const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
+ 
+-const CACHE_KEY = 'news:articles:v25'; // v25: institutional dimensions — funding confidence, execution status, revenue profile, secondary demand (0072)
++const CACHE_KEY = 'news:articles:v26'; // v26: Chokepoint Index + Macro insight banner + WC intensity numeric (0073)
+ const CACHE_TTL = 300; // 5 min
+ // v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
+ // freshness_layer, signal_confidence (multi-dim), bottleneck_parent /
+@@ -1559,6 +1561,21 @@ async function fetchAllNews(): Promise<any[]> {
+             }
+           }
+ 
++          // ── PATCH 0073: chokepoint index + WC intensity numeric ──
++          let svChokepoint: ReturnType<typeof classifyChokepoint> | undefined;
++          let svWcIntensity: number | undefined;
++          if (strategicVisibility.qualifies) {
++            svChokepoint = classifyChokepoint({
++              title,
++              desc,
++              ticker_symbols: tickers,
++            });
++            svWcIntensity = workingCapitalIntensityNumeric({
++              revenue_profile: svRevenueProfile?.profile,
++              text: `${title} ${desc}`,
++            });
++          }
++
+           // ── PATCH 0062: Structural Relevance Score (unified 0-100) ──
+           // Now that all dependencies are in scope, compute the unified score.
+           // Combines structural state + signal confidence + structural confidence
+@@ -1662,6 +1679,14 @@ async function fetchAllNews(): Promise<any[]> {
+             revenue_profile_working_capital: svRevenueProfile?.working_capital ?? null,
+             revenue_profile_rationale: svRevenueProfile?.rationale ?? null,
+             implied_secondary_demand: svSecondaryDemand ?? null,
++            // PATCH 0073: chokepoint + WC numeric
++            chokepoint_category: svChokepoint?.detected ? svChokepoint.category : null,
++            chokepoint_label: svChokepoint?.detected ? svChokepoint.label : null,
++            chokepoint_severity: svChokepoint?.severity ?? null,
++            chokepoint_competitors: svChokepoint?.detected ? svChokepoint.global_competitors : null,
++            chokepoint_rationale: svChokepoint?.detected ? svChokepoint.rationale : null,
++            chokepoint_primary_tickers: svChokepoint?.detected ? svChokepoint.primary_tickers : null,
++            working_capital_intensity_pct: svWcIntensity ?? null,
+             defense_narrative: defenseNarrative,
+             defense_impact_inline: defenseImpact,
+             freshness_layer: freshnessLayer,               // LIVE / PERSISTENT / ARCHIVAL
+@@ -1743,6 +1768,14 @@ async function fetchAllNews(): Promise<any[]> {
+           revenue_profile_working_capital: a.revenue_profile_working_capital ?? null,
+           revenue_profile_rationale: a.revenue_profile_rationale ?? null,
+           implied_secondary_demand: a.implied_secondary_demand ?? null,
++          // PATCH 0073: chokepoint + WC numeric
++          chokepoint_category: a.chokepoint_category ?? null,
++          chokepoint_label: a.chokepoint_label ?? null,
++          chokepoint_severity: a.chokepoint_severity ?? null,
++          chokepoint_competitors: a.chokepoint_competitors ?? null,
++          chokepoint_rationale: a.chokepoint_rationale ?? null,
++          chokepoint_primary_tickers: a.chokepoint_primary_tickers ?? null,
++          working_capital_intensity_pct: a.working_capital_intensity_pct ?? null,
+         }),
+       ),
+     );
+diff --git a/frontend/src/lib/news/chokepoint-index.ts b/frontend/src/lib/news/chokepoint-index.ts
+new file mode 100644
+index 0000000..7cb08ef
+--- /dev/null
++++ b/frontend/src/lib/news/chokepoint-index.ts
+@@ -0,0 +1,320 @@
++// ═══════════════════════════════════════════════════════════════════════════
++// CHOKEPOINT INDEX — patch 0073
++//
++// Formalizes the chokepoint concept that was previously a binary flag
++// (STRATEGIC_CHOKEPOINT) + a generic dependency_score (1-5). This module
++// adds a dedicated 1-5 SEVERITY scale per canonical chokepoint category.
++//
++// Why this matters
++//   Pricing power, margin expansion, and delivery scarcity often accrue
++//   MORE to chokepoint suppliers than to prime contractors. NVIDIA gets
++//   the headline; SK hynix HBM, TSMC CoWoS, and ASML EUV capture the
++//   margin. This index makes the bottleneck-control signal explicit.
++//
++// Severity
++//   5 — Sole producer (no alternative at scale)
++//   4 — 2 viable suppliers globally (sub-3)
++//   3 — 3-5 specialized suppliers
++//   2 — 5-10 suppliers, technical moat
++//   1 — Replaceable / commodity competitive
++// ═══════════════════════════════════════════════════════════════════════════
++
++export type ChokepointCategory =
++  // Semiconductors
++  | 'EUV_LITHO'                  // ASML — sole
++  | 'COWOS_PACKAGING'            // TSMC dominant
++  | 'HBM_MEMORY'                 // SKH / Samsung / Micron
++  | 'ABF_SUBSTRATES'             // Ajinomoto / Showa Denko
++  // Energy / Power
++  | 'TRANSFORMERS_LARGE'         // GE / Hitachi / Siemens / CG / Hitachi Energy
++  | 'SWITCHGEAR_HV'              // Eaton / ABB / Siemens
++  | 'GAS_TURBINES_LARGE'         // GE Vernova / Siemens Energy / Mitsubishi
++  | 'GRID_INTERCONNECT'          // Quanta / MasTec / KEC
++  // Nuclear
++  | 'HALEU_ENRICHMENT'           // Centrus — sole Western
++  | 'NAVAL_PROPULSION'           // BWXT — sole US
++  // Defence / Aerospace
++  | 'AERO_ENGINES'               // GE / Rolls-Royce / Pratt
++  | 'MISSILE_SEEKERS_RF'         // BEL / Raytheon / Astra Microwave
++  // AI infrastructure
++  | 'AI_GPU_CLUSTERS'            // NVIDIA — dominant
++  | 'LIQUID_COOLING_AI'          // Vertiv / nVent / Boyd
++  | 'OPTICAL_INTERCONNECT_800G'  // Coherent / Lumentum / Marvell
++  // Critical materials
++  | 'RARE_EARTH_MAGNETS'         // China-dominant / MP Materials / Lynas
++  | 'URANIUM_WESTERN'            // Cameco / Kazatomprom
++
++  | 'NONE';
++
++export interface ChokepointDefinition {
++  category: ChokepointCategory;
++  label: string;
++  severity: 1 | 2 | 3 | 4 | 5;
++  global_competitors: string;
++  rationale: string;
++  primary_tickers: string[];
++  // Pattern that triggers detection — matched against title+desc lowercased
++  detect_pattern: RegExp;
++}
++
++const CHOKEPOINT_REGISTRY: ChokepointDefinition[] = [
++  // ── Severity 5 — sole / near-sole producer ─────────────────────────
++  {
++    category: 'EUV_LITHO',
++    label: 'EUV Lithography',
++    severity: 5,
++    global_competitors: 'ASML — sole producer',
++    rationale: 'Sole supplier of EUV scanners; no alternative for ≤7nm logic. Backlog-bound for years.',
++    primary_tickers: ['ASML'],
++    detect_pattern: /\b(asml|euv (?:scanner|lithography|tool|machine)|extreme ultraviolet)\b/i,
++  },
++  {
++    category: 'HALEU_ENRICHMENT',
++    label: 'HALEU Enrichment',
++    severity: 5,
++    global_competitors: 'Centrus — sole Western commercial; TENEX (Russia) blocked',
++    rationale: 'Sole Western HALEU producer; bottleneck for advanced reactors / SMRs / Naval. State-backed.',
++    primary_tickers: ['LEU'],
++    detect_pattern: /\b(haleu|centrus|leu enrichment|advanced fuel cycle|nuclear fuel sovereignty)\b/i,
++  },
++  {
++    category: 'NAVAL_PROPULSION',
++    label: 'Naval Reactor Propulsion',
++    severity: 5,
++    global_competitors: 'BWXT — sole US Naval reactor producer',
++    rationale: 'Sole US producer of Naval reactor cores. Chokepoint for SSBN/SSN program.',
++    primary_tickers: ['BWXT'],
++    detect_pattern: /\b(bwxt|bwx technologies|naval reactor|columbia.?class|virginia.?class)\b/i,
++  },
++
++  // ── Severity 4 — sub-3 global suppliers ─────────────────────────────
++  {
++    category: 'COWOS_PACKAGING',
++    label: 'CoWoS Advanced Packaging',
++    severity: 4,
++    global_competitors: 'TSMC dominant; ASE / Samsung distant',
++    rationale: 'Advanced packaging chokepoint for AI GPUs; TSMC capacity controls GPU build pace.',
++    primary_tickers: ['TSM'],
++    detect_pattern: /\b(cowos|chip[-\s]on[-\s]wafer|advanced packaging|tsmc packaging)\b/i,
++  },
++  {
++    category: 'HBM_MEMORY',
++    label: 'HBM Memory (HBM3E / HBM4)',
++    severity: 4,
++    global_competitors: 'SKH leads; Samsung / Micron lag',
++    rationale: 'Sub-3 global HBM suppliers. Binding constraint for AI GPU build.',
++    primary_tickers: ['MU', '000660.KS', '005930.KS'],
++    detect_pattern: /\b(hbm[34]?[ea]?|high.?bandwidth memory|sk hynix.{0,30}(?:memory|hbm)|micron.{0,30}hbm)\b/i,
++  },
++  {
++    category: 'AI_GPU_CLUSTERS',
++    label: 'AI GPU Clusters',
++    severity: 4,
++    global_competitors: 'NVIDIA dominant; AMD MI300 + custom silicon trail',
++    rationale: 'NVIDIA captures most AI training spend; switching cost from CUDA is high.',
++    primary_tickers: ['NVDA', 'AMD'],
++    detect_pattern: /\b(nvidia|h100|h200|b100|b200|gb200|gb300|cuda|tensorrt|nvidia gpu cluster)\b/i,
++  },
++  {
++    category: 'AERO_ENGINES',
++    label: 'Commercial Aero Engines',
++    severity: 4,
++    global_competitors: 'GE / Rolls-Royce / Pratt — three players for wide-body',
++    rationale: 'Sub-3 wide-body engine OEMs. Long certification cycles + service annuity.',
++    primary_tickers: ['GE', 'RR.L', 'RTX'],
++    detect_pattern: /\b(geno?x|leap engine|trent (?:1000|7000|xwb)|pw1100g|aero engine|jet engine (?:order|maintenance))\b/i,
++  },
++
++  // ── Severity 3 — 3-5 specialized suppliers ──────────────────────────
++  {
++    category: 'TRANSFORMERS_LARGE',
++    label: 'Large Power Transformers',
++    severity: 3,
++    global_competitors: 'GE Vernova / Hitachi / Siemens / CG Power / Hyosung',
++    rationale: 'Large-power-transformer lead times >2y; pricing power for grid + AI campus.',
++    primary_tickers: ['GEV', 'CGPOWER.NS', 'HBL.NS', 'HEM.HE'],
++    detect_pattern: /\b(transformer (?:order|backlog|capacity|shortage)|large power transformer|hvdc transformer|step.?up transformer|grid transformer)\b/i,
++  },
++  {
++    category: 'GAS_TURBINES_LARGE',
++    label: 'Large Gas Turbines',
++    severity: 3,
++    global_competitors: 'GE Vernova / Siemens Energy / Mitsubishi Power',
++    rationale: 'Three-supplier oligopoly; backlog-bound for AI campus / data center power.',
++    primary_tickers: ['GEV', 'ENR.DE', 'MHI.T'],
++    detect_pattern: /\b(gas turbine (?:order|backlog|deployment)|hrsg|combined cycle|h.?class turbine|9ha|m701)\b/i,
++  },
++  {
++    category: 'SWITCHGEAR_HV',
++    label: 'High-Voltage Switchgear',
++    severity: 3,
++    global_competitors: 'Eaton / ABB / Siemens / Schneider',
++    rationale: 'AI-grade switchgear backlog rising; lead times 18+ months.',
++    primary_tickers: ['ETN', 'ABBN.SW', 'SIE.DE', 'SU.PA'],
++    detect_pattern: /\b(switchgear|medium.?voltage|gis (?:order|capacity)|gas insulated switchgear)\b/i,
++  },
++  {
++    category: 'LIQUID_COOLING_AI',
++    label: 'Liquid Cooling (Direct-chip / Immersion)',
++    severity: 3,
++    global_competitors: 'Vertiv leads; nVent / Boyd / Asetek follow',
++    rationale: 'B100/B200 thermal density requires liquid cooling; specification lock-in.',
++    primary_tickers: ['VRT', 'NVT', 'BOYD'],
++    detect_pattern: /\b(liquid cooling|direct.?chip cooling|immersion cooling|cdu (?:order|capacity)|cold plate)\b/i,
++  },
++  {
++    category: 'OPTICAL_INTERCONNECT_800G',
++    label: 'Optical Interconnect 800G / 1.6T',
++    severity: 3,
++    global_competitors: 'Coherent / Lumentum / Marvell DSP',
++    rationale: 'AI fabric pluggables — limited scale producers for 800G+; DSPs are sub-3.',
++    primary_tickers: ['COHR', 'LITE', 'AVGO', 'MRVL'],
++    detect_pattern: /\b(800g (?:optical|transceiver|pluggable)|1\.6t (?:optical|transceiver)|optical interconnect|silicon photonics|coherent.{0,10}optical|lumentum)\b/i,
++  },
++  {
++    category: 'GRID_INTERCONNECT',
++    label: 'Grid Interconnect / Substation EPC',
++    severity: 3,
++    global_competitors: 'Quanta / MasTec / KEC / Sterlite Power / Larsen',
++    rationale: 'AI campus grid-interconnect lead times >24 months; EPC moat is geographic.',
++    primary_tickers: ['PWR', 'MTZ', 'KEC.NS', 'STRTECH.NS'],
++    detect_pattern: /\b(grid interconnection|substation (?:epc|construction)|transmission interconnect|utility (?:approval|interconnect))\b/i,
++  },
++  {
++    category: 'MISSILE_SEEKERS_RF',
++    label: 'Missile RF Seekers / Radar',
++    severity: 3,
++    global_competitors: 'Raytheon / Lockheed / BEL / Astra Microwave / IAI',
++    rationale: 'RF seekers + AESA radar — limited qualified suppliers; defence chokepoint.',
++    primary_tickers: ['RTX', 'LMT', 'BEL.NS', 'ASTRAMICRO.NS'],
++    detect_pattern: /\b(rf seeker|aesa radar|active electronically scanned|ku.?band|x.?band radar|seeker head)\b/i,
++  },
++  {
++    category: 'RARE_EARTH_MAGNETS',
++    label: 'Rare Earth NdFeB Magnets',
++    severity: 3,
++    global_competitors: 'China dominant (~85%); MP Materials / Lynas / Iluka',
++    rationale: 'Critical-mineral chokepoint for EV motors, defence, wind turbines.',
++    primary_tickers: ['MP', 'LYC.AX', 'ILU.AX'],
++    detect_pattern: /\b(rare earth|ndfeb|neodymium|dysprosium|terbium|samarium cobalt|rare earth magnet)\b/i,
++  },
++  {
++    category: 'URANIUM_WESTERN',
++    label: 'Western Uranium Supply',
++    severity: 3,
++    global_competitors: 'Cameco / Kazatomprom / Orano / Western miners',
++    rationale: 'Western uranium chokepoint as TENEX/Russia is blocked; SMR demand pulling forward.',
++    primary_tickers: ['CCJ', 'KAP.IL', 'DNN', 'NXE', 'UEC'],
++    detect_pattern: /\b(cameco|kazatomprom|uranium offtake|u3o8|spot uranium|uranium mining|uranium fuel)\b/i,
++  },
++  {
++    category: 'ABF_SUBSTRATES',
++    label: 'ABF Substrates',
++    severity: 3,
++    global_competitors: 'Ajinomoto Build-up / Showa Denko / Sumitomo Bakelite',
++    rationale: 'Advanced packaging substrate chokepoint; Japan-dominant.',
++    primary_tickers: ['2802.T', '4004.T', '4203.T'],
++    detect_pattern: /\b(abf (?:substrate|build.?up)|ajinomoto build|fc.?bga substrate)\b/i,
++  },
++];
++
++// ─── Detection result ──────────────────────────────────────────────────────
++
++export interface ChokepointResult {
++  detected: boolean;
++  category: ChokepointCategory;
++  label: string;
++  severity: 1 | 2 | 3 | 4 | 5 | 0;     // 0 if not detected
++  global_competitors: string;
++  rationale: string;
++  primary_tickers: string[];
++}
++
++export function classifyChokepoint(args: {
++  title: string;
++  desc?: string;
++  ticker_symbols?: string[];
++}): ChokepointResult {
++  const text = `${args.title} ${args.desc || ''}`;
++  const tickers = (args.ticker_symbols || []).map((t) => t.toUpperCase());
++
++  // First pass — text pattern match
++  for (const def of CHOKEPOINT_REGISTRY) {
++    if (def.detect_pattern.test(text)) {
++      return {
++        detected: true,
++        category: def.category,
++        label: def.label,
++        severity: def.severity,
++        global_competitors: def.global_competitors,
++        rationale: def.rationale,
++        primary_tickers: def.primary_tickers,
++      };
++    }
++  }
++
++  // Second pass — ticker match (if a primary ticker appears in the article tickers)
++  for (const def of CHOKEPOINT_REGISTRY) {
++    if (def.primary_tickers.some((t) => tickers.includes(t.toUpperCase()))) {
++      return {
++        detected: true,
++        category: def.category,
++        label: def.label,
++        severity: def.severity,
++        global_competitors: def.global_competitors,
++        rationale: def.rationale,
++        primary_tickers: def.primary_tickers,
++      };
++    }
++  }
++
++  return {
++    detected: false,
++    category: 'NONE',
++    label: '',
++    severity: 0,
++    global_competitors: '',
++    rationale: '',
++    primary_tickers: [],
++  };
++}
++
++// ─── Display helpers ──────────────────────────────────────────────────────
++
++export function chokepointSeverityColor(severity: number): string {
++  if (severity >= 5) return '#8B5CF6';   // purple — sole producer
++  if (severity >= 4) return '#22D3EE';   // cyan — sub-3
++  if (severity >= 3) return '#10B981';   // green — 3-5 suppliers
++  if (severity >= 2) return '#F59E0B';   // amber — moderate
++  return '#6B7A8D';                       // gray — replaceable
++}
++export function chokepointSeverityDots(severity: number): string {
++  return '●'.repeat(Math.max(0, Math.min(5, severity))) + '○'.repeat(Math.max(0, 5 - Math.max(0, Math.min(5, severity))));
++}
++
++// ─── Working capital intensity (numeric) — patch 0073 ─────────────────────
++//
++// 0  — annuity / pre-paid (e.g., AI take-or-pay)
++// 25 — moderate (defence electronics / transmission EPC)
++// 50 — defence systems / mid-margin builds
++// 75 — long-cycle naval / shipbuilding
++// 100 — extreme milestone/lump-sum exposure
++
++export function workingCapitalIntensityNumeric(args: {
++  revenue_profile?: string;
++  text?: string;
++}): number {
++  const profile = args.revenue_profile || '';
++  const text = (args.text || '').toLowerCase();
++  if (profile === 'AI_TAKE_OR_PAY') return 5;
++  if (profile === 'ANNUITY_INFRA') {
++    return /\b(epc|construction|build phase)\b/i.test(text) ? 30 : 15;
++  }
++  if (profile === 'MID_MARGIN_DEFENSE') return 50;
++  if (profile === 'LOW_MARGIN_BUILD') {
++    return /\b(submarine|frigate|destroyer|aircraft carrier|shipbuilding)\b/i.test(text) ? 90 : 70;
++  }
++  if (profile === 'CAPITAL_INTENSIVE_FAB') return 60;
++  if (profile === 'OPTION_VALUE') return 70;
++  return 40;
++}
+diff --git a/frontend/src/lib/news/transformational-ledger.ts b/frontend/src/lib/news/transformational-ledger.ts
+index c63a0a3..b8c643a 100644
+--- a/frontend/src/lib/news/transformational-ledger.ts
++++ b/frontend/src/lib/news/transformational-ledger.ts
+@@ -71,6 +71,15 @@ export interface TransformationalItem {
+   revenue_profile_working_capital?: string | null;
+   revenue_profile_rationale?: string | null;
+   implied_secondary_demand?: ImpliedSecondaryDemand | null;
++
++  // PATCH 0073: chokepoint index + numeric WC intensity
++  chokepoint_category?: string | null;            // ChokepointCategory
++  chokepoint_label?: string | null;
++  chokepoint_severity?: 0 | 1 | 2 | 3 | 4 | 5 | null;
++  chokepoint_competitors?: string | null;
++  chokepoint_rationale?: string | null;
++  chokepoint_primary_tickers?: string[] | null;
++  working_capital_intensity_pct?: number | null;  // 0-100 numeric (sortable/filterable)
+ }
+ 
+ interface IndexEntry {
+diff --git a/frontend/src/lib/news/transformational-seed.ts b/frontend/src/lib/news/transformational-seed.ts
+index cd41b4c..1d0efc4 100644
+--- a/frontend/src/lib/news/transformational-seed.ts
++++ b/frontend/src/lib/news/transformational-seed.ts
+@@ -834,6 +834,7 @@ import {
+   classifyRevenueProfile,
+   computeImpliedSecondaryDemand,
+ } from './strategic-visibility';
++import { classifyChokepoint, workingCapitalIntensityNumeric } from './chokepoint-index';
+ 
+ function enrichSeedEntry(item: TransformationalItem): TransformationalItem {
+   // Skip if already has institutional dims (e.g. hand-curated entry)
+@@ -859,6 +860,17 @@ function enrichSeedEntry(item: TransformationalItem): TransformationalItem {
+     });
+   }
+ 
++  // PATCH 0073: chokepoint detection + WC numeric
++  const chokepoint = classifyChokepoint({
++    title: item.title,
++    desc: item.strategic_visibility?.reason,
++    ticker_symbols: item.ticker_symbols,
++  });
++  const wcIntensity = workingCapitalIntensityNumeric({
++    revenue_profile: revProfile.profile,
++    text,
++  });
++
+   return {
+     ...item,
+     funding_confidence: funding.score,
+@@ -870,6 +882,14 @@ function enrichSeedEntry(item: TransformationalItem): TransformationalItem {
+     revenue_profile_working_capital: revProfile.working_capital,
+     revenue_profile_rationale: revProfile.rationale,
+     implied_secondary_demand: secondary ?? null,
++    // PATCH 0073
++    chokepoint_category: chokepoint.detected ? chokepoint.category : null,
++    chokepoint_label: chokepoint.detected ? chokepoint.label : null,
++    chokepoint_severity: chokepoint.severity ?? null,
++    chokepoint_competitors: chokepoint.detected ? chokepoint.global_competitors : null,
++    chokepoint_rationale: chokepoint.detected ? chokepoint.rationale : null,
++    chokepoint_primary_tickers: chokepoint.detected ? chokepoint.primary_tickers : null,
++    working_capital_intensity_pct: wcIntensity,
+   };
+ }
+ 
+-- 
+2.34.1
+

@@ -1,0 +1,567 @@
+From 7da2c8b4134b2b0082a94185262ce1d8579066e7 Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Sun, 10 May 2026 15:33:07 +0000
+Subject: [PATCH] feat(news): L1-L6 layers on persistent-bottleneck panel +
+ ABB/AMKR + 2x cards
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Patch 0085 closes the gaps you flagged on the Persistent Bottleneck Reading
+panel and Transformational Contracts list:
+
+1. PERSISTENT BOTTLENECK PANEL — new L1-L6 block per card
+   The architectural-adaptation block grouped beneficiaries by causal pattern
+   (POWER_EFFICIENCY / ALT_ACCELERATOR / ...) which made AKAM (edge),
+   Sterlite-type names (industrial pass-through), AMD/INTC/ARM (CPU + sub),
+   and ABB / AMKR feel missing on cards like HBM/DRAM and GRID/TRANSFORMERS.
+
+   Now every persistent bottleneck card also renders the canonical 6-layer
+   pricing-power transmission stack:
+     L1 Direct Scarcity Capture     - TSM/MU/ASML/AMAT/KLAC/GEV/ABB/AMKR
+     L2 Compute Substitutes         - AMD/INTC/ARM/QCOM/AVGO/MRVL
+     L3 Edge Distribution           - AKAM/NET/CIEN/LITE/COHR
+     L4 Transmission Winners        - STL/PRY/GLW/Murata/Ibiden/Shinko
+     L5 Platform Beneficiaries      - MSFT/AMZN/GOOGL/META/ORCL
+     L6 Infrastructure / Efficiency - VRT/JCI/CARR/Delta/nVent
+
+   Mandatory injects render with amber star + amber border so 'AKAM is
+   mandatory on INTERCONNECT' is visually unambiguous. T0->T4 transmission
+   cascade is rendered below the layers.
+
+2. ROSTER ADDITIONS
+   - ABB (ABBNY) added to L1; mandatory on ENERGY_INFRA + COOLING_INFRA
+     alongside ETN, SBGSY, GEV, SMNEY, HTHIY.
+   - AMKR (Amkor) added to L1; mandatory on PACKAGING_INFRA alongside
+     TSM, AMAT, KLAC.
+
+3. 2x CARD SIZES
+   Persistent Bottleneck cards: title 11->17, sub 10->14, meta 10->13,
+   top-signal 9->12, ticker chips 9->13, rationale 8->11, losers 8->11,
+   adaptation header 9->14, padding 8/10->14/18, grid minWidth 280->440.
+
+   Transformational Contracts cards: title 11->16, value$ 9->14, ticker
+   chip 9->13, counterparty 9->13, padding 8/10->14/18, minWidth 360->520.
+
+   Section headers: 10 -> 15.
+
+Cache key bumped v30 -> v31.
+---
+ frontend/src/app/(dashboard)/news/page.tsx  | 239 +++++++++++++++-----
+ frontend/src/app/api/v1/news/route.ts       |  14 +-
+ frontend/src/lib/news/beneficiary-layers.ts |  13 +-
+ 3 files changed, 207 insertions(+), 59 deletions(-)
+
+diff --git a/frontend/src/app/(dashboard)/news/page.tsx b/frontend/src/app/(dashboard)/news/page.tsx
+index 37f01ea..a6fcba7 100644
+--- a/frontend/src/app/(dashboard)/news/page.tsx
++++ b/frontend/src/app/(dashboard)/news/page.tsx
+@@ -378,6 +378,22 @@ interface ArchitecturalAdaptation {
+   structural_losers?: StructuralLoserItem[];
+ }
+ 
++// PATCH 0085: 6-layer beneficiary engine on the persistent-bottleneck panel
++interface LayerTickerLite {
++  ticker: string;
++  rationale: string;
++  pricing_leverage: 'STRONG' | 'MEDIUM' | 'WEAK';
++  size: 'LARGE_CAP' | 'MID_CAP' | 'SMALL_CAP';
++  mandatory?: boolean;
++}
++interface LayeredBeneficiariesLite {
++  bottleneck: string;
++  bottleneck_label: string;
++  fired_layers: string[];
++  layers: Record<string, LayerTickerLite[]>;
++  transmission: { T0: string; T1: string; T2: string; T3: string; T4: string };
++}
++
+ interface PersistentBottleneckItem {
+   node: string;
+   label?: string;        // PATCH 0080: rich label
+@@ -392,6 +408,7 @@ interface PersistentBottleneckItem {
+   top_samples: PersistentBottleneckSample[];
+   best_specialist_sample?: PersistentBottleneckSample | null;  // PATCH 0080
+   architectural_adaptations?: ArchitecturalAdaptation[];        // PATCH 0081
++  layered_beneficiaries?: LayeredBeneficiariesLite;             // PATCH 0085
+ }
+ interface PersistentBottlenecksResp {
+   section_title: string;
+@@ -1887,30 +1904,34 @@ export default function NewsFeedPage() {
+       {persistentBottlenecks && persistentBottlenecks.count > 0 && (
+         <div style={{
+           backgroundColor: '#0D1B2E', border: '1px solid #1E2D45',
+-          borderLeft: '3px solid #EF4444',
+-          borderRadius: '12px', padding: '10px 12px', marginBottom: '12px',
++          borderLeft: '4px solid #EF4444',
++          // PATCH 0085: doubled padding so the section breathes at larger card sizes
++          borderRadius: '14px', padding: '16px 20px', marginBottom: '16px',
+         }}>
+           <button
+             onClick={() => setShowPersistent(s => !s)}
+             style={{
+-              display: 'flex', alignItems: 'center', gap: '8px',
++              display: 'flex', alignItems: 'center', gap: '10px',
+               background: 'none', border: 'none', cursor: 'pointer',
+               padding: 0, margin: 0, width: '100%',
+               color: 'inherit', textAlign: 'left',
+             }}
+           >
+-            <span style={{ fontSize: '10px', fontWeight: 700, color: '#EF4444', letterSpacing: '0.8px' }}>
++            {/* PATCH 0085: section header doubled — 10px → 15px */}
++            <span style={{ fontSize: '15px', fontWeight: 700, color: '#EF4444', letterSpacing: '0.8px' }}>
+               🚧 PERSISTENT BOTTLENECK READING
+             </span>
+-            <span style={{ fontSize: '10px', color: '#4A5B6C' }}>
++            <span style={{ fontSize: '13px', color: '#4A5B6C' }}>
+               {persistentBottlenecks.count} active structural bottlenecks · auto-detected from accumulated evidence
+             </span>
+-            <span style={{ marginLeft: 'auto', fontSize: '10px', color: '#4A5B6C' }}>
++            <span style={{ marginLeft: 'auto', fontSize: '13px', color: '#4A5B6C' }}>
+               {showPersistent ? '▼ collapse' : '▶ expand'}
+             </span>
+           </button>
+           {showPersistent && (
+-            <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
++            // PATCH 0085: doubled card width (280→440) and gap so larger cards
++            // don't crush each other.
++            <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(440px, 1fr))', gap: 14 }}>
+               {persistentBottlenecks.items.map((b) => {
+                 const trendColor = b.trend === 'rising' ? '#EF4444'
+                   : b.trend === 'steady' ? '#F59E0B'
+@@ -1921,29 +1942,33 @@ export default function NewsFeedPage() {
+                 const bestSample = b.best_specialist_sample || b.top_samples[0];
+                 const showLabel = b.label || b.node.replace(/_/g, ' ');
+                 return (
++                  // PATCH 0085: card padding 8/10 → 14/18, radius 8 → 12
+                   <div key={b.node} style={{
+                     backgroundColor: '#0A1422', border: '1px solid #1A2840',
+-                    borderRadius: 8, padding: '8px 10px',
++                    borderRadius: 12, padding: '14px 18px',
+                   }}>
+-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+-                      <span style={{ fontSize: 11, fontWeight: 800, color: '#F5F7FA', letterSpacing: '0.3px' }}>
++                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
++                      {/* PATCH 0085: card title 11 → 17 */}
++                      <span style={{ fontSize: 17, fontWeight: 800, color: '#F5F7FA', letterSpacing: '0.3px' }}>
+                         {showLabel}
+                       </span>
+                       {b.is_structural && (
+-                        <span style={{ fontSize: 8, fontWeight: 700, color: '#8B5CF6', border: '1px solid #8B5CF640', backgroundColor: '#8B5CF610', padding: '1px 4px', borderRadius: 3 }}>
++                        <span style={{ fontSize: 11, fontWeight: 700, color: '#8B5CF6', border: '1px solid #8B5CF640', backgroundColor: '#8B5CF610', padding: '2px 6px', borderRadius: 4 }}>
+                           STRUCTURAL
+                         </span>
+                       )}
+-                      <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: trendColor }}>
++                      <span style={{ marginLeft: 'auto', fontSize: 15, fontWeight: 700, color: trendColor }}>
+                         {trendIcon} {b.trend}
+                       </span>
+                     </div>
+                     {b.sub && (
+-                      <div style={{ fontSize: 10, color: '#94A3B8', lineHeight: 1.3, marginBottom: 4 }}>
++                      // PATCH 0085: sub 10 → 14
++                      <div style={{ fontSize: 14, color: '#94A3B8', lineHeight: 1.4, marginBottom: 8 }}>
+                         {b.sub}
+                       </div>
+                     )}
+-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, fontSize: 10, color: '#94A3B8' }}>
++                    {/* PATCH 0085: meta row 10 → 13 */}
++                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, fontSize: 13, color: '#94A3B8' }}>
+                       <span style={{ color: '#10B981', fontWeight: 700 }}>{b.confidence_pct}% conf</span>
+                       <span>·</span>
+                       <span>{b.sample_count} articles</span>
+@@ -1951,17 +1976,20 @@ export default function NewsFeedPage() {
+                       <span>{b.age_days}d ago</span>
+                     </div>
+                     {bestSample && (
+-                      <div style={{ fontSize: 9, color: '#6B7A8D', lineHeight: 1.4, borderTop: '1px solid #1A2840', paddingTop: 4 }}>
++                      // PATCH 0085: top signal 9 → 12
++                      <div style={{ fontSize: 12, color: '#6B7A8D', lineHeight: 1.5, borderTop: '1px solid #1A2840', paddingTop: 8 }}>
+                         <span style={{ color: '#22D3EE', fontWeight: 700 }}>Top signal:</span>{' '}
+-                        <span style={{ color: '#CBD5E1' }}>{bestSample.title.slice(0, 90)}</span>
++                        <span style={{ color: '#CBD5E1' }}>{bestSample.title.slice(0, 110)}</span>
+                         <br/>
+                         <span style={{ color: '#4A5B6C' }}>{bestSample.source} · {bestSample.tier}</span>
+                       </div>
+                     )}
+-                    {/* PATCH 0081 + 0082: ARCHITECTURAL BENEFICIARIES — second-order winners */}
++                    {/* PATCH 0081 + 0082: ARCHITECTURAL BENEFICIARIES — second-order winners
++                        PATCH 0085: typography all bumped ~70% larger so the card actually reads
++                        at desk distance. */}
+                     {b.architectural_adaptations && b.architectural_adaptations.length > 0 && (
+-                      <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px dashed #1A2840' }}>
+-                        <div style={{ fontSize: 9, color: '#F59E0B', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
++                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed #1A2840' }}>
++                        <div style={{ fontSize: 12, color: '#F59E0B', fontWeight: 700, letterSpacing: '0.5px', marginBottom: 8 }}>
+                           ↪ ARCHITECTURAL BENEFICIARIES (2nd-order)
+                         </div>
+                         {b.architectural_adaptations.map((adapt) => {
+@@ -1978,22 +2006,22 @@ export default function NewsFeedPage() {
+                             : adapt.duration === 'TRADING' ? 'Trading'
+                             : '';
+                           return (
+-                            <div key={adapt.adaptation} style={{ marginBottom: 8, fontSize: 9, lineHeight: 1.4 }}>
+-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 2 }}>
+-                                <span style={{ color: '#10B981', fontWeight: 700 }}>· {adapt.label}</span>
++                            <div key={adapt.adaptation} style={{ marginBottom: 12, fontSize: 13, lineHeight: 1.5 }}>
++                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
++                                <span style={{ color: '#10B981', fontWeight: 700, fontSize: 14 }}>· {adapt.label}</span>
+                                 {durLabel && (
+                                   <span style={{
+-                                    fontSize: 7, fontWeight: 700, letterSpacing: '0.3px',
++                                    fontSize: 10, fontWeight: 700, letterSpacing: '0.3px',
+                                     color: durColor, border: `1px solid ${durColor}40`,
+                                     backgroundColor: `${durColor}10`,
+-                                    padding: '1px 4px', borderRadius: 2,
++                                    padding: '2px 6px', borderRadius: 3,
+                                   }}>
+                                     {durLabel.toUpperCase()}
+                                   </span>
+                                 )}
+                               </div>
+-                              {/* PATCH 0082: per-ticker chips with exposure + capture + size */}
+-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 2 }}>
++                              {/* PATCH 0082 + 0085: per-ticker chips with exposure + capture + size, doubled */}
++                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 4 }}>
+                                 {adapt.beneficiaries.slice(0, 6).map((bn) => {
+                                   const expColor = bn.exposure_intensity === 'DIRECT' ? '#10B981'
+                                     : bn.exposure_intensity === 'STRONG' ? '#22D3EE'
+@@ -2008,20 +2036,20 @@ export default function NewsFeedPage() {
+                                       key={bn.ticker}
+                                       title={`${bn.rationale || ''}\nExposure: ${bn.exposure_intensity || '—'} (${bn.exposure_score || 0}/100)\nCapture: ${bn.economic_capture || '—'} (${bn.capture_score || 0}/100)\nSize: ${bn.size_class || '—'}\nComposite: ${bn.composite_score || 0}`}
+                                       style={{
+-                                        fontSize: 9, fontWeight: 700,
++                                        fontSize: 13, fontWeight: 700,
+                                         color: expColor,
+                                         border: `1px solid ${expColor}40`,
+                                         backgroundColor: `${expColor}10`,
+-                                        padding: '1px 5px', borderRadius: 3,
+-                                        display: 'inline-flex', alignItems: 'baseline', gap: 3,
++                                        padding: '2px 8px', borderRadius: 4,
++                                        display: 'inline-flex', alignItems: 'baseline', gap: 4,
+                                       }}
+                                     >
+                                       <span>{bn.ticker}</span>
+                                       {sizeMarker && (
+-                                        <span style={{ fontSize: 7, color: '#6B7A8D', fontWeight: 400 }}>{sizeMarker}</span>
++                                        <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 400 }}>{sizeMarker}</span>
+                                       )}
+                                       {bn.composite_score !== undefined && (
+-                                        <span style={{ fontSize: 7, color: '#94A3B8', fontWeight: 400 }}>
++                                        <span style={{ fontSize: 10, color: '#94A3B8', fontWeight: 400 }}>
+                                           {Math.round((bn.composite_score || 0) / 10) / 10}
+                                         </span>
+                                       )}
+@@ -2029,12 +2057,12 @@ export default function NewsFeedPage() {
+                                   );
+                                 })}
+                               </div>
+-                              <div style={{ color: '#6B7A8D', fontSize: 8, lineHeight: 1.3, marginTop: 1 }} title={adapt.rationale}>
+-                                {adapt.rationale.slice(0, 90)}…
++                              <div style={{ color: '#6B7A8D', fontSize: 11, lineHeight: 1.45, marginTop: 3 }} title={adapt.rationale}>
++                                {adapt.rationale.slice(0, 110)}…
+                               </div>
+-                              {/* PATCH 0082: structural losers per adaptation */}
++                              {/* PATCH 0082 + 0085: structural losers per adaptation, doubled */}
+                               {adapt.structural_losers && adapt.structural_losers.length > 0 && (
+-                                <div style={{ marginTop: 3, fontSize: 8, color: '#94A3B8', lineHeight: 1.3 }}>
++                                <div style={{ marginTop: 4, fontSize: 11, color: '#94A3B8', lineHeight: 1.4 }}>
+                                   <span style={{ color: '#EF4444', fontWeight: 700 }}>↘ Losers: </span>
+                                   {adapt.structural_losers.map((l, i) => (
+                                     <span key={l.ticker} title={l.rationale} style={{ color: '#94A3B8' }}>
+@@ -2052,6 +2080,98 @@ export default function NewsFeedPage() {
+                         })}
+                       </div>
+                     )}
++
++                    {/* ── PATCH 0085: PRICING TRANSMISSION (L1–L6) ──
++                          The architectural-adaptation block above groups beneficiaries by causal pattern
++                          (POWER_EFFICIENCY / ALT_ACCELERATOR / etc.). The block below maps the SAME
++                          bottleneck through the canonical 6-layer pricing-power transmission stack so
++                          AKAM (L3 edge), Sterlite-type names (L4 industrial pass-through), AMD/INTC/ARM
++                          (L2 substitution), ABB / AMKR (L1 capture) all surface explicitly.
++                          Mandatory injects render with an amber star ★ and amber border. */}
++                    {b.layered_beneficiaries && b.layered_beneficiaries.fired_layers.length > 0 && (() => {
++                      const lb = b.layered_beneficiaries;
++                      const LAYER_META: Record<string, { icon: string; label: string; tag: string; color: string }> = {
++                        L1: { icon: '🧱', label: 'Direct Scarcity Capture',     tag: 'Input pricing power',                  color: '#F59E0B' },
++                        L2: { icon: '⚙️', label: 'Compute Substitutes',          tag: 'GPU / CPU / ARM substitution',         color: '#8B5CF6' },
++                        L3: { icon: '🌐', label: 'Edge Distribution',            tag: 'CDN / latency / bandwidth',             color: '#38BDF8' },
++                        L4: { icon: '🧪', label: 'Transmission Winners',         tag: 'Sterlite-type pass-through',            color: '#10B981' },
++                        L5: { icon: '🏢', label: 'Platform Beneficiaries',       tag: 'Hyperscaler demand aggregators',        color: '#3B82F6' },
++                        L6: { icon: '⚡', label: 'Infrastructure / Efficiency',  tag: 'Power, thermal, perf-per-watt',         color: '#D946EF' },
++                      };
++                      const LEV_DOT: Record<string, string> = { STRONG: '#10B981', MEDIUM: '#F59E0B', WEAK: '#6B7A8D' };
++                      const SIZE_SUFFIX: Record<string, string> = { LARGE_CAP: '', MID_CAP: 'm', SMALL_CAP: 's' };
++                      return (
++                        <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed #1A2840' }}>
++                          <div style={{ fontSize: 12, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.5px', marginBottom: 8 }}>
++                            🔁 PRICING TRANSMISSION (L1–L6)
++                          </div>
++                          {lb.fired_layers.map((L) => {
++                            const meta = LAYER_META[L];
++                            const tickers = lb.layers[L] || [];
++                            if (!meta || tickers.length === 0) return null;
++                            return (
++                              <div key={L} style={{ marginBottom: 8 }}>
++                                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
++                                  <span style={{
++                                    fontSize: 12, fontWeight: 700,
++                                    color: meta.color,
++                                    border: `1px solid ${meta.color}50`,
++                                    backgroundColor: `${meta.color}15`,
++                                    padding: '2px 7px', borderRadius: 4,
++                                  }}>
++                                    {meta.icon} {L} · {meta.label}
++                                  </span>
++                                  <span style={{ fontSize: 11, color: '#6B7A8D', fontStyle: 'italic' }}>{meta.tag}</span>
++                                </div>
++                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
++                                  {tickers.map((t) => {
++                                    const sizeMark = SIZE_SUFFIX[t.size];
++                                    return (
++                                      <span
++                                        key={t.ticker}
++                                        title={`${t.rationale}\nPricing leverage: ${t.pricing_leverage}${t.mandatory ? ' · Mandatory injection (structurally required for ' + lb.bottleneck_label + ')' : ''}`}
++                                        style={{
++                                          fontSize: 13, fontWeight: 700,
++                                          color: t.mandatory ? '#FCD34D' : '#E6EDF3',
++                                          border: t.mandatory ? '1px solid #F59E0B70' : '1px solid #2A3B4C',
++                                          backgroundColor: t.mandatory ? '#F59E0B12' : '#0F1B2E',
++                                          padding: '3px 8px', borderRadius: 4,
++                                          display: 'inline-flex', alignItems: 'center', gap: 5,
++                                        }}
++                                      >
++                                        <span style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: LEV_DOT[t.pricing_leverage] || '#6B7A8D' }} />
++                                        <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{t.ticker}</span>
++                                        {sizeMark && <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 400 }}>{sizeMark}</span>}
++                                        {t.mandatory && <span style={{ fontSize: 10, color: '#F59E0B' }}>★</span>}
++                                      </span>
++                                    );
++                                  })}
++                                </div>
++                              </div>
++                            );
++                          })}
++                          {/* Transmission cascade T0 → T4 */}
++                          <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #1A2840' }}>
++                            <div style={{ fontSize: 11, color: '#6B7A8D', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>Transmission cascade</div>
++                            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 12 }}>
++                              {([
++                                ['T0', 'now',    lb.transmission.T0, '#22D3EE'],
++                                ['T1', '0–1Q',   lb.transmission.T1, '#38BDF8'],
++                                ['T2', '1–3Q',   lb.transmission.T2, '#10B981'],
++                                ['T3', '3–6Q',   lb.transmission.T3, '#F59E0B'],
++                                ['T4', '6–12Q',  lb.transmission.T4, '#D946EF'],
++                              ] as const).map(([t, q, txt, color]) => (
++                                <div key={t} style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
++                                  <span style={{ color, fontWeight: 700, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', minWidth: 22 }}>{t}</span>
++                                  <span style={{ color: '#6B7A8D', fontSize: 10, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', minWidth: 50 }}>{q}</span>
++                                  <span style={{ color: '#CBD5E1', lineHeight: 1.45 }}>{txt}</span>
++                                </div>
++                              ))}
++                            </div>
++                          </div>
++                        </div>
++                      );
++                    })()}
+                   </div>
+                 );
+               })}
+@@ -2060,46 +2180,50 @@ export default function NewsFeedPage() {
+         </div>
+       )}
+ 
+-      {/* ── PATCH 0068: TRANSFORMATIONAL CONTRACTS — 6-month rolling band ── */}
++      {/* ── PATCH 0068: TRANSFORMATIONAL CONTRACTS — 6-month rolling band
++              PATCH 0085: typography + card padding doubled to match the larger
++              persistent-bottleneck panel above. ── */}
+       {transformationalPreview && transformationalPreview.count > 0 && (
+         <div style={{
+           backgroundColor: '#0D1B2E', border: '1px solid #1E2D45',
+-          borderLeft: '3px solid #8B5CF6',
+-          borderRadius: '12px', padding: '10px 12px', marginBottom: '12px',
++          borderLeft: '4px solid #8B5CF6',
++          borderRadius: '14px', padding: '16px 20px', marginBottom: '16px',
+         }}>
+           <button
+             onClick={() => setShowTransformational(s => !s)}
+             style={{
+-              display: 'flex', alignItems: 'center', gap: '8px',
++              display: 'flex', alignItems: 'center', gap: '10px',
+               background: 'none', border: 'none', cursor: 'pointer',
+               padding: 0, margin: 0, width: '100%',
+               color: 'inherit', textAlign: 'left',
+             }}
+           >
+-            <span style={{ fontSize: '10px', fontWeight: 700, color: '#8B5CF6', letterSpacing: '0.8px' }}>
++            {/* PATCH 0085: section header 10 → 15 */}
++            <span style={{ fontSize: '15px', fontWeight: 700, color: '#8B5CF6', letterSpacing: '0.8px' }}>
+               🌟 TRANSFORMATIONAL CONTRACTS
+             </span>
+-            <span style={{ fontSize: '10px', color: '#4A5B6C' }}>
++            <span style={{ fontSize: '13px', color: '#4A5B6C' }}>
+               {transformationalPreview.total_in_ledger || transformationalPreview.count} qualifying contracts in last {transformationalPreview.window_days || 180} days
+             </span>
+             <a
+               href="/strategic-visibility"
+               onClick={(e) => e.stopPropagation()}
+               style={{
+-                marginLeft: 8, fontSize: '10px', fontWeight: 700, color: '#22D3EE',
++                marginLeft: 8, fontSize: '13px', fontWeight: 700, color: '#22D3EE',
+                 textDecoration: 'none', backgroundColor: '#22D3EE15',
+-                border: '1px solid #22D3EE40', borderRadius: 4, padding: '2px 8px',
++                border: '1px solid #22D3EE40', borderRadius: 5, padding: '3px 10px',
+                 letterSpacing: '0.4px',
+               }}
+             >
+               FULL LEDGER →
+             </a>
+-            <span style={{ fontSize: '10px', color: '#4A5B6C', marginLeft: 'auto' }}>
++            <span style={{ fontSize: '13px', color: '#4A5B6C', marginLeft: 'auto' }}>
+               {showTransformational ? '▼ collapse' : '▶ expand'}
+             </span>
+           </button>
+           {showTransformational && (
+-            <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 8 }}>
++            // PATCH 0085: card minWidth 360 → 520, gap 8 → 14
++            <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(520px, 1fr))', gap: 14 }}>
+               {transformationalPreview.articles.slice(0, 6).map((a) => (
+                 <a
+                   key={a.id}
+@@ -2107,43 +2231,48 @@ export default function NewsFeedPage() {
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   style={{
++                    // PATCH 0085: card padding 8/10 → 14/18, radius 8 → 12
+                     backgroundColor: '#0A1422', border: '1px solid #1A2840',
+-                    borderRadius: 8, padding: '8px 10px',
++                    borderRadius: 12, padding: '14px 18px',
+                     textDecoration: 'none', color: 'inherit',
+                   }}
+                 >
+-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}>
++                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
+                     {(a.ticker_symbols ?? []).slice(0, 2).map((t) => (
+-                      <span key={t} style={{ fontSize: 9, fontWeight: 700, color: '#38A9E8', backgroundColor: '#0F7ABF20', padding: '1px 5px', borderRadius: 3, border: '1px solid #0F7ABF40' }}>
++                      // PATCH 0085: ticker chips 9 → 13
++                      <span key={t} style={{ fontSize: 13, fontWeight: 700, color: '#38A9E8', backgroundColor: '#0F7ABF20', padding: '3px 8px', borderRadius: 4, border: '1px solid #0F7ABF40' }}>
+                         {t}
+                       </span>
+                     ))}
+                     {a.strategic_visibility.contract_value_usd_m && (
+-                      <span style={{ fontSize: 9, fontWeight: 700, color: '#10B981' }}>
++                      // PATCH 0085: $ value 9 → 14
++                      <span style={{ fontSize: 14, fontWeight: 700, color: '#10B981' }}>
+                         {a.strategic_visibility.contract_value_usd_m >= 1000
+                           ? `$${(a.strategic_visibility.contract_value_usd_m / 1000).toFixed(1)}B`
+                           : `$${a.strategic_visibility.contract_value_usd_m.toFixed(0)}M`}
+                       </span>
+                     )}
+                     {a.strategic_visibility.visibility_years && (
+-                      <span style={{ fontSize: 9, fontWeight: 700, color: '#F59E0B' }}>
++                      <span style={{ fontSize: 14, fontWeight: 700, color: '#F59E0B' }}>
+                         {a.strategic_visibility.visibility_years}y
+                       </span>
+                     )}
+                     {a.strategic_visibility.flags.includes('STRATEGIC_CHOKEPOINT') && (
+-                      <span style={{ fontSize: 9, fontWeight: 700, color: '#8B5CF6' }}>🔒</span>
++                      <span style={{ fontSize: 14, fontWeight: 700, color: '#8B5CF6' }}>🔒</span>
+                     )}
+                     {a.strategic_visibility.flags.includes('POLICY_BACKED') && (
+-                      <span style={{ fontSize: 9, fontWeight: 700, color: '#22D3EE' }}>🧭</span>
++                      <span style={{ fontSize: 14, fontWeight: 700, color: '#22D3EE' }}>🧭</span>
+                     )}
+-                    <span style={{ marginLeft: 'auto', fontSize: 9, color: '#94A3B8', fontWeight: 600 }}>
++                    <span style={{ marginLeft: 'auto', fontSize: 12, color: '#94A3B8', fontWeight: 600 }}>
+                       {a.published_at ? new Date(a.published_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '—'}
+                     </span>
+                   </div>
+-                  <div style={{ fontSize: 11, color: '#E6EDF3', lineHeight: 1.35, fontWeight: 500 }}>
++                  {/* PATCH 0085: title 11 → 16 */}
++                  <div style={{ fontSize: 16, color: '#E6EDF3', lineHeight: 1.4, fontWeight: 500 }}>
+                     {a.title}
+                   </div>
+-                  <div style={{ fontSize: 9, color: '#6B7A8D', marginTop: 4 }}>
++                  {/* PATCH 0085: counterparty meta 9 → 13 */}
++                  <div style={{ fontSize: 13, color: '#6B7A8D', marginTop: 8 }}>
+                     {a.strategic_visibility.counterparty_name || '—'} · {a.source_name}
+                   </div>
+                 </a>
+diff --git a/frontend/src/app/api/v1/news/route.ts b/frontend/src/app/api/v1/news/route.ts
+index ac90898..dc4fbc2 100644
+--- a/frontend/src/app/api/v1/news/route.ts
++++ b/frontend/src/app/api/v1/news/route.ts
+@@ -193,7 +193,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
+ // gaming PC build.
+ const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
+ 
+-const CACHE_KEY = 'news:articles:v30'; // v30: 6-layer beneficiary engine (L1-L6) + auto-injection rules + T0-T4 transmission cascade (0084)
++const CACHE_KEY = 'news:articles:v31'; // v31: persistent-bottleneck panel now carries layered_beneficiaries (L1-L6) + ABB/AMKR roster + 2x cards (0085)
+ const CACHE_TTL = 300; // 5 min
+ // v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
+ // freshness_layer, signal_confidence (multi-dim), bottleneck_parent /
+@@ -2544,6 +2544,18 @@ export async function GET(request: Request) {
+               it.architectural_adaptations = cb.adaptations.filter(
+                 (a: any) => a.beneficiaries.length > 0,
+               );
++              // PATCH 0085: also attach the L1-L6 layered transmission engine
++              // so the persistent-bottleneck panel surfaces AKAM (L3) /
++              // Sterlite-type (L4) / ABB / AMKR — names that the older
++              // adaptation buckets group under different headers.
++              it.layered_beneficiaries = deriveLayeredBeneficiaries({
++                primary_node: it.node,
++                article_tickers: (it.top_samples || [])
++                  .flatMap((s: any) => s.tickers || s.ticker_symbols || [])
++                  .slice(0, 12),
++                article_headline: it.label || it.sub || '',
++                per_layer_limit: 5,
++              });
+             }),
+           );
+         }
+diff --git a/frontend/src/lib/news/beneficiary-layers.ts b/frontend/src/lib/news/beneficiary-layers.ts
+index b0c7159..3602e99 100644
+--- a/frontend/src/lib/news/beneficiary-layers.ts
++++ b/frontend/src/lib/news/beneficiary-layers.ts
+@@ -87,6 +87,9 @@ export const LAYER_ROSTER: LayerTicker[] = [
+   { ticker: 'HTHIY',layer: 'L1', rationale: 'Hitachi Energy — HVDC + transformers, AI-DC-interconnect winner',                     pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
+   { ticker: 'ETN',  layer: 'L1', rationale: 'Eaton power chain — direct beneficiary of grid + DC capex',                            pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+   { ticker: 'SBGSY',layer: 'L1', rationale: 'Schneider Electric — DC power management + microgrid leader',                         pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
++  // PATCH 0085: ABB + AMKR direct-capture additions
++  { ticker: 'ABBNY',layer: 'L1', rationale: 'ABB electrification + motion + grid automation — global infra capacity capturer',       pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
++  { ticker: 'AMKR', layer: 'L1', rationale: 'Amkor OSAT — advanced packaging capacity capture (CoWoS adjacent, FOWLP scale)',        pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+ 
+   // ── L2 — Compute Substitutes ─────────────────────────────────────────────
+   { ticker: 'AMD',  layer: 'L2', rationale: 'MI300/MI325 — only credible second-source for hyperscaler training',                   pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+@@ -168,7 +171,9 @@ export const NODE_RULES: Record<SystemNode, NodeRule> = {
+   },
+   PACKAGING_INFRA: {
+     fires: ['L1','L2','L4','L5'],
+-    mandatory: { L1: ['TSM','AMAT','KLAC'], L2: ['AMD','AVGO','MRVL','AMZN','GOOGL','MSFT'], L4: ['4062.T','6967.T','3711.TW'] },
++    // PATCH 0085: AMKR mandatory — Amkor OSAT capacity is the explicit
++    // CoWoS / FOWLP volume capture layer the user flagged as missing.
++    mandatory: { L1: ['TSM','AMAT','KLAC','AMKR'], L2: ['AMD','AVGO','MRVL','AMZN','GOOGL','MSFT'], L4: ['4062.T','6967.T','3711.TW'] },
+   },
+   FABRICATION_INFRA: {
+     fires: ['L1','L2','L4','L5'],
+@@ -186,12 +191,14 @@ export const NODE_RULES: Record<SystemNode, NodeRule> = {
+   // Cooling — L1 power-build + L6 thermal injection
+   COOLING_INFRA: {
+     fires: ['L1','L4','L6'],
+-    mandatory: { L1: ['ETN','SBGSY'], L6: ['VRT','JCI','CARR','2308.TW','NVT','EMR'] },
++    // PATCH 0085: ABB mandatory in L1 — electrification + motion alongside ETN/SBGSY
++    mandatory: { L1: ['ETN','SBGSY','ABBNY'], L6: ['VRT','JCI','CARR','2308.TW','NVT','EMR'] },
+   },
+   // Energy — L1 grid build + L6 efficiency
+   ENERGY_INFRA: {
+     fires: ['L1','L4','L5','L6'],
+-    mandatory: { L1: ['GEV','SMNEY','HTHIY','ETN','SBGSY'], L6: ['VRT','ETN','ARM'] },
++    // PATCH 0085: ABB mandatory in L1 — global grid automation + HVDC peer to GEV/SMNEY/HTHIY
++    mandatory: { L1: ['GEV','SMNEY','HTHIY','ETN','SBGSY','ABBNY'], L6: ['VRT','ETN','ARM'] },
+   },
+   NUCLEAR_INFRA: {
+     fires: ['L1','L5','L6'],
+-- 
+2.34.1
+

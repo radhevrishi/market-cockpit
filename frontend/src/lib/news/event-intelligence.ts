@@ -245,7 +245,31 @@ export interface TradabilityInputs {
   has_named_ticker: boolean;
   has_primary_source: boolean;
   decay_score: number;
+  // PATCH 0120 — IMP-03: optional title/desc for content-based rejection
+  title?: string;
+  description?: string;
 }
+
+// PATCH 0120 — IMP-03: untradable-for-India-retail patterns.
+// Spec Sit Tier 2 was surfacing events the user can't actually trade:
+//   - REIT / InvIT consolidation (different instrument class)
+//   - European bank consolidation (no listing on NSE/BSE, no GDR)
+//   - VRS (voluntary retirement scheme) — operating noise, not catalyst
+//   - SPAC merger announcements with no India listing
+//   - Distressed-debt / NCLT-only proceedings (resolution prof, not equity)
+// Each pattern uses word boundaries to avoid false positives.
+const UNTRADABLE_FOR_INDIA_RETAIL: Array<{ pattern: RegExp; reason: string }> = [
+  { pattern: /\b(reit|invit|real estate investment trust|infrastructure investment trust)\b/i,
+    reason: 'REIT / InvIT — different instrument class, separate analysis frame' },
+  { pattern: /\b(vrs|voluntary retirement scheme|voluntary separation)\b/i,
+    reason: 'VRS — operating restructuring, not a discrete equity catalyst' },
+  { pattern: /\b(commerzbank|deutsche bank|bnp paribas|credit suisse|ubs|santander|hsbc holdings|barclays plc|natwest|lloyds)\b.*\b(merger|consolidation|tie[- ]?up|takeover)\b/i,
+    reason: 'European bank consolidation — no NSE/BSE/GDR listing for India retail' },
+  { pattern: /\b(spac|special purpose acquisition company)\b.*\b(combination|merger|business combination)\b/i,
+    reason: 'SPAC combination — US-listed only, no India retail access' },
+  { pattern: /\b(nclt|insolvency.{0,20}resolution|corporate insolvency resolution|cirp|liquidation order)\b/i,
+    reason: 'NCLT insolvency — equity typically extinguished, no upside trade' },
+];
 
 export interface TradabilityResult {
   is_tradable: boolean;
@@ -254,6 +278,17 @@ export interface TradabilityResult {
 }
 
 export function classifyTradability(inp: TradabilityInputs): TradabilityResult {
+  // PATCH 0120 — IMP-03: untradable-for-India-retail content reject.
+  // Runs first so REIT / European bank / VRS / SPAC / NCLT events drop
+  // straight to NOISE before any tier classification.
+  const blob = `${inp.title || ''} ${inp.description || ''}`;
+  if (blob.trim()) {
+    for (const rule of UNTRADABLE_FOR_INDIA_RETAIL) {
+      if (rule.pattern.test(blob)) {
+        return { is_tradable: false, tier: 'NOISE', rationale: rule.reason };
+      }
+    }
+  }
   // Hard reject: fund-only events without explicit user request
   if (inp.is_fund) {
     return { is_tradable: false, tier: 'NOISE', rationale: 'Fund / closed-end housekeeping — not a public-equity catalyst' };

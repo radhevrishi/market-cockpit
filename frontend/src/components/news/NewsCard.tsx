@@ -64,6 +64,32 @@ function articleMatchesWatchlist(article: NewsArticle): boolean {
   return false;
 }
 
+// PATCH 0120 — IMP-09: per-article strategy relevance tags.
+// Each tag fires when the article matches a strategy pattern the cockpit
+// already tracks elsewhere — [MB] cross-references Multibagger upload,
+// [BN] indicates a bottleneck article (the news pipeline already tags
+// article_type=BOTTLENECK or bottleneck_sub_tag), [RR] indicates a re-
+// rating catalyst (model shift / margin expansion / multiple expansion).
+type StrategyTag = 'MB' | 'BN' | 'RR';
+function articleStrategyTags(article: NewsArticle, isMB: boolean): StrategyTag[] {
+  const tags: StrategyTag[] = [];
+  if (isMB) tags.push('MB');
+  const t = (article as any).article_type;
+  const subTag = (article as any).bottleneck_sub_tag;
+  if (t === 'BOTTLENECK' || subTag) tags.push('BN');
+  // Re-rating catalyst proxies: model-shift verbs in title OR earnings + guidance beat
+  const titleLower = (article.title || '').toLowerCase();
+  const RR_PATTERNS = /\b(re-?rating|multiple expansion|margin expansion|model shift|business model.{0,20}(reclassif|transition)|cyclical.{0,20}compounder|sum-of-parts|hidden value|conglomerate (?:discount|unlock))\b/;
+  if (RR_PATTERNS.test(titleLower)) tags.push('RR');
+  else if (t === 'EARNINGS' && /\b(beat|guidance.{0,20}(raised|upgraded|hiked))\b/i.test(article.title || '')) tags.push('RR');
+  return tags;
+}
+const STRATEGY_TAG_META: Record<StrategyTag, { label: string; className: string; title: string }> = {
+  MB: { label: 'MB',  className: 'bg-yellow-400/20 text-yellow-300 border-yellow-400/40', title: 'Multibagger — matches uploaded watchlist ticker' },
+  BN: { label: 'BN',  className: 'bg-rose-500/20 text-rose-300 border-rose-500/40',       title: 'Bottleneck — structural supply constraint article' },
+  RR: { label: 'RR',  className: 'bg-violet-500/20 text-violet-300 border-violet-500/40', title: 'Re-rating — model shift / margin or multiple expansion catalyst' },
+};
+
 interface Props {
   article: NewsArticle;
   onTickerClick?: (ticker: string) => void;
@@ -142,8 +168,14 @@ export default function NewsCard({ article, onTickerClick }: Props) {
   const tier = importanceTier(article.importance_score ?? 0);
   const badge = TYPE_BADGE[article.article_type ?? 'GENERAL'] ?? TYPE_BADGE.GENERAL;
   // PATCH 0119 — IMP-02: cross-reference uploaded Multibagger tickers
+  // PATCH 0120 — IMP-09: also derive [BN][RR] strategy tags
   const [isWatchlist, setIsWatchlist] = useState(false);
-  useEffect(() => { setIsWatchlist(articleMatchesWatchlist(article)); }, [article]);
+  const [strategyTags, setStrategyTags] = useState<StrategyTag[]>([]);
+  useEffect(() => {
+    const mb = articleMatchesWatchlist(article);
+    setIsWatchlist(mb);
+    setStrategyTags(articleStrategyTags(article, mb));
+  }, [article]);
   // Defensive: some new RSS feeds (BSE / SEBI / WSJ) emit malformed
   // pubDate strings that crash formatDistanceToNow with "Invalid time
   // value". Validate before formatting; fallback to '' on bad input.
@@ -165,12 +197,18 @@ export default function NewsCard({ article, onTickerClick }: Props) {
         <div className="flex-1 min-w-0">
           {/* Top row: tickers + badge + sentiment + time */}
           <div className="flex items-center gap-2 flex-wrap mb-1.5">
-            {/* PATCH 0119 — IMP-02: Watchlist (MB upload) cross-reference */}
-            {isWatchlist && (
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-yellow-400/20 text-yellow-300 border border-yellow-400/40" title="Article touches a ticker in your Multibagger upload">
-                ⭐ WATCHLIST
-              </span>
-            )}
+            {/* PATCH 0119/0120 — IMP-02/09: Strategy relevance tags [MB][BN][RR] */}
+            {strategyTags.map((t) => {
+              const meta = STRATEGY_TAG_META[t];
+              return (
+                <span key={t}
+                  className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${meta.className}`}
+                  title={meta.title}
+                >
+                  {meta.label}
+                </span>
+              );
+            })}
             {(article.ticker_symbols ?? article.tickers ?? []).slice(0, 3).map((t: any) => {
               const sym = typeof t === 'string' ? t : t?.ticker ?? '';
               return (

@@ -1,0 +1,231 @@
+From 158e8e563fc4a004c5551ab0efcf195ad1d1e7fd Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Sun, 10 May 2026 15:58:12 +0000
+Subject: [PATCH] feat(news): 'Latest' 10-day surfacing window on persistent
+ bottlenecks
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Patch 0088 implements the 'In play today' surface — show NEW persistent
+bottlenecks at the top of each region panel for 10 days, then drop them
+back into normal confidence/structural ranking.
+
+EVIDENCE ACCUMULATOR
+  PersistentBottleneck now carries:
+    first_seen           ISO of earliest top_samples.recorded_at
+    first_seen_age_days  days since first_seen
+    is_latest            first_seen_age_days <= 10
+  Computed in readPersistentBottlenecks() — proxy via top_samples since the
+  raw evidence record doesn't store first_seen explicitly. Good enough as
+  a UX hint; misses only the rare case where a multi-year bottleneck
+  resurfaces with a fresh sample (which is the right behaviour anyway —
+  the renewed activity makes it 'latest' again).
+
+PERSISTENT BOTTLENECK PANEL UI
+  - Section header: amber 'LATEST · N new in 10d' pill alongside the live
+    indicator and India/Global counts.
+  - Region dividers (🇮🇳 INDIA / 🌐 GLOBAL): per-region 'N new in 10d'
+    counter on the right side of each divider row.
+  - Card title: amber 'LATEST · Xd' pill on every card whose is_latest=true.
+    Shows exact age (e.g. '🆕 LATEST · 3d').  Tooltip explains the 10-day
+    surface window.
+  - Sort: within each region, latest items surface FIRST (sorted by ascending
+    first_seen_age_days). Non-latest items keep server-side confidence
+    + structural ranking.
+  - After 10 days the bottleneck loses is_latest, drops the pill, and falls
+    back into normal ranking — exactly per spec.
+
+Cache key bumped v33 -> v34.
+---
+ frontend/src/app/(dashboard)/news/page.tsx    | 74 ++++++++++++++++++-
+ frontend/src/app/api/v1/news/route.ts         |  2 +-
+ frontend/src/lib/news/evidence-accumulator.ts | 21 ++++++
+ 3 files changed, 92 insertions(+), 5 deletions(-)
+
+diff --git a/frontend/src/app/(dashboard)/news/page.tsx b/frontend/src/app/(dashboard)/news/page.tsx
+index d645c4b..a19fc32 100644
+--- a/frontend/src/app/(dashboard)/news/page.tsx
++++ b/frontend/src/app/(dashboard)/news/page.tsx
+@@ -411,6 +411,9 @@ interface PersistentBottleneckItem {
+   architectural_adaptations?: ArchitecturalAdaptation[];        // PATCH 0081
+   layered_beneficiaries?: LayeredBeneficiariesLite;             // PATCH 0085
+   region?: 'IN' | 'GLOBAL';                                     // PATCH 0086
++  first_seen?: string;                                          // PATCH 0088
++  first_seen_age_days?: number;                                 // PATCH 0088
++  is_latest?: boolean;                                          // PATCH 0088 — first_seen_age_days <= 10
+ }
+ interface PersistentBottlenecksResp {
+   section_title: string;
+@@ -1908,9 +1911,24 @@ export default function NewsFeedPage() {
+         // PATCH 0086: split items into India / Global panels.  Each card carries
+         // a region tag from the API; default to GLOBAL when missing so legacy
+         // cached responses keep working.
++        // PATCH 0088: within each region, sort latest-first (is_latest === true
++        // first, by ascending first_seen_age_days), so newly-emerged bottlenecks
++        // surface at the top for 10 days then drop back into the normal sort.
++        const sortLatestFirst = (a: PersistentBottleneckItem, b: PersistentBottleneckItem) => {
++          const aLatest = a.is_latest ? 1 : 0;
++          const bLatest = b.is_latest ? 1 : 0;
++          if (aLatest !== bLatest) return bLatest - aLatest;
++          if (aLatest && bLatest) {
++            return (a.first_seen_age_days ?? 999) - (b.first_seen_age_days ?? 999);
++          }
++          return 0;  // preserve server-side confidence/structural sort
++        };
+         const allItems = persistentBottlenecks.items;
+-        const indiaItems = allItems.filter((i) => i.region === 'IN');
+-        const globalItems = allItems.filter((i) => i.region !== 'IN');
++        const indiaItems = allItems.filter((i) => i.region === 'IN').slice().sort(sortLatestFirst);
++        const globalItems = allItems.filter((i) => i.region !== 'IN').slice().sort(sortLatestFirst);
++        const newInLast10dIN = indiaItems.filter((i) => i.is_latest).length;
++        const newInLast10dGL = globalItems.filter((i) => i.is_latest).length;
++        const totalLatest = newInLast10dIN + newInLast10dGL;
+ 
+         // PATCH 0086: liveness pill — green ≤10min, amber ≤24h, red older.
+         const lastUpdatedIso = persistentBottlenecks.last_updated;
+@@ -1931,11 +1949,11 @@ export default function NewsFeedPage() {
+         // render headers + cards. Avoids duplicating the (large) card JSX.
+         const flatList: any[] = [];
+         if (indiaItems.length > 0) {
+-          flatList.push({ __divider: 'IN', count: indiaItems.length });
++          flatList.push({ __divider: 'IN', count: indiaItems.length, newCount: newInLast10dIN });
+           flatList.push(...indiaItems);
+         }
+         if (globalItems.length > 0) {
+-          flatList.push({ __divider: 'GLOBAL', count: globalItems.length });
++          flatList.push({ __divider: 'GLOBAL', count: globalItems.length, newCount: newInLast10dGL });
+           flatList.push(...globalItems);
+         }
+ 
+@@ -1962,6 +1980,22 @@ export default function NewsFeedPage() {
+             <span style={{ fontSize: '13px', color: '#4A5B6C' }}>
+               🇮🇳 {indiaItems.length} India · 🌐 {globalItems.length} Global · auto-detected from accumulated evidence
+             </span>
++            {/* PATCH 0088: 'Latest' pill — bottlenecks first seen in the last 10 days */}
++            {totalLatest > 0 && (
++              <span
++                title={`${totalLatest} bottleneck${totalLatest === 1 ? '' : 's'} first detected in the last 10 days. They surface at the top of each region panel for 10 days, then drop back into normal confidence/structural ranking.`}
++                style={{
++                  fontSize: 12, fontWeight: 800, letterSpacing: '0.5px',
++                  color: '#0A1422',
++                  border: '1px solid #FBBF24',
++                  backgroundColor: '#FBBF24',
++                  padding: '2px 8px', borderRadius: 4,
++                  display: 'inline-flex', alignItems: 'center', gap: 5,
++                }}
++              >
++                🆕 LATEST · {totalLatest} new in 10d
++              </span>
++            )}
+             {/* PATCH 0086: liveness pill — proves the panel is live, not stale */}
+             <span
+               title={lastUpdatedIso ? `Server-side last_updated: ${lastUpdatedIso}\nAuto-refresh every 5 min` : 'Live data'}
+@@ -2008,6 +2042,22 @@ export default function NewsFeedPage() {
+                           ? 'NSE-listed beneficiaries only — Indian sources / ₹ / PSU patterns'
+                           : 'global L1–L6 roster — US / EU / Japan / Taiwan / Korea names'}
+                       </span>
++                      {/* PATCH 0088: per-region 'new in last 10 days' counter */}
++                      {rowAny.newCount > 0 && (
++                        <span
++                          title={`${rowAny.newCount} ${isIN ? 'Indian' : 'global'} bottleneck${rowAny.newCount === 1 ? '' : 's'} first detected in the last 10 days — sorted to top of this panel.`}
++                          style={{
++                            marginLeft: 'auto',
++                            fontSize: 11, fontWeight: 700, letterSpacing: '0.4px',
++                            color: '#0A1422',
++                            backgroundColor: '#FBBF24',
++                            border: '1px solid #FBBF24',
++                            padding: '2px 8px', borderRadius: 4,
++                          }}
++                        >
++                          🆕 {rowAny.newCount} new in 10d
++                        </span>
++                      )}
+                     </div>
+                   );
+                 }
+@@ -2037,6 +2087,22 @@ export default function NewsFeedPage() {
+                           STRUCTURAL
+                         </span>
+                       )}
++                      {/* PATCH 0088: LATEST pill — bottleneck first detected ≤10d ago */}
++                      {b.is_latest && (
++                        <span
++                          title={`First detected ${b.first_seen_age_days ?? '?'} day${b.first_seen_age_days === 1 ? '' : 's'} ago. Surfaces at top of panel for the first 10 days, then drops to confidence/structural ranking.`}
++                          style={{
++                            fontSize: 11, fontWeight: 800, letterSpacing: '0.4px',
++                            color: '#0A1422',
++                            backgroundColor: '#FBBF24',
++                            border: '1px solid #FBBF24',
++                            padding: '2px 7px', borderRadius: 4,
++                            display: 'inline-flex', alignItems: 'center', gap: 4,
++                          }}
++                        >
++                          🆕 LATEST · {b.first_seen_age_days ?? 0}d
++                        </span>
++                      )}
+                       <span style={{ marginLeft: 'auto', fontSize: 15, fontWeight: 700, color: trendColor }}>
+                         {trendIcon} {b.trend}
+                       </span>
+diff --git a/frontend/src/app/api/v1/news/route.ts b/frontend/src/app/api/v1/news/route.ts
+index 5be1154..ee05658 100644
+--- a/frontend/src/app/api/v1/news/route.ts
++++ b/frontend/src/app/api/v1/news/route.ts
+@@ -194,7 +194,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
+ // gaming PC build.
+ const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
+ 
+-const CACHE_KEY = 'news:articles:v33'; // v33: L4 expansion (EPC/connectors/cooling dual-tag) + L2 GPU_SUB/CPU_CYCLE split + L3 carrier-edge + cascade copy upgrade (0087)
++const CACHE_KEY = 'news:articles:v34'; // v34: 'Latest' 10-day surfacing window on persistent bottlenecks (0088)
+ const CACHE_TTL = 300; // 5 min
+ // v13 → v14 bump: schema now includes impact_assertion, defense_narrative,
+ // freshness_layer, signal_confidence (multi-dim), bottleneck_parent /
+diff --git a/frontend/src/lib/news/evidence-accumulator.ts b/frontend/src/lib/news/evidence-accumulator.ts
+index 10da1ca..e365e63 100644
+--- a/frontend/src/lib/news/evidence-accumulator.ts
++++ b/frontend/src/lib/news/evidence-accumulator.ts
+@@ -229,6 +229,10 @@ export interface PersistentBottleneck {
+   is_structural: boolean;
+   top_samples: NodeEvidenceSample[];
+   best_specialist_sample?: NodeEvidenceSample | null;  // PATCH 0080: highest-tier sample
++  // PATCH 0088: "Latest" 10-day surfacing window
++  first_seen?: string;              // ISO of earliest top_samples.recorded_at
++  first_seen_age_days?: number;     // days since first_seen (proxy via top_samples)
++  is_latest?: boolean;              // first_seen_age_days <= 10
+ }
+ 
+ export async function readPersistentBottlenecks(args: {
+@@ -276,6 +280,20 @@ export async function readPersistentBottlenecks(args: {
+     ) || ranked[0] || null;
+ 
+     const meta = bottleneckLabelFor(n);
++
++    // PATCH 0088: compute "first seen" proxy from earliest top_samples.recorded_at.
++    // Used to flag bottlenecks that surfaced in the last 10 days as "Latest" so
++    // the UI can sort them to the top of each region panel.
++    const recordedTimes = (e.top_samples || [])
++      .map((s) => (s.recorded_at ? new Date(s.recorded_at).getTime() : NaN))
++      .filter((t) => Number.isFinite(t));
++    const firstSeenMs = recordedTimes.length > 0 ? Math.min(...recordedTimes) : NaN;
++    const firstSeenIso = Number.isFinite(firstSeenMs) ? new Date(firstSeenMs).toISOString() : undefined;
++    const firstSeenAgeDays = Number.isFinite(firstSeenMs)
++      ? Math.round((now - firstSeenMs) / 86400000)
++      : undefined;
++    const isLatest = firstSeenAgeDays !== undefined && firstSeenAgeDays <= 10;
++
+     out.push({
+       node: n,
+       label: meta.label,
+@@ -289,6 +307,9 @@ export async function readPersistentBottlenecks(args: {
+       is_structural: isStructural,
+       top_samples: e.top_samples,
+       best_specialist_sample: bestSpecialistSample,
++      first_seen: firstSeenIso,
++      first_seen_age_days: firstSeenAgeDays,
++      is_latest: isLatest,
+     });
+   }
+   // Rank: structural nodes get a +5 score boost so HBM / CoWoS / grid surface
+-- 
+2.34.1
+

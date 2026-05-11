@@ -1,0 +1,168 @@
+From e1d8c143966cb3f7be4dcc0b1136f3fd21d52e52 Mon Sep 17 00:00:00 2001
+From: radhevrishi <radhev.232@gmail.com>
+Date: Sun, 10 May 2026 17:06:54 +0000
+Subject: [PATCH] =?UTF-8?q?feat(dashboard):=20Market=20Snapshot=20?=
+ =?UTF-8?q?=E2=80=94=20merge=20heatmap=20+=20movers=20behind=20one=20tab?=
+ =?UTF-8?q?=20(0090)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+New /market-snapshot route with internal toggle (Heatmap | Movers). Both
+sub-tabs draw from the same /api/market/quotes endpoint with different
+visual treatment, so two separate sidebar entries was redundant.
+
+Implementation:
+- /market-snapshot/page.tsx tab-bar component with URL state (?tab=heatmap|movers)
+- Dynamic-imports the existing /heatmap and /movers page components
+  (only the active tab mounts, so the hidden tab does not run its queries)
+- Original /heatmap and /movers routes kept alive for deeplink compatibility
+
+Sidebar: 'Heatmap' + 'Movers' replaced by single 'Market Snap' entry
+(reduces nav 15 -> 14 entries; combined with 0089's macro-maps + portfolios
+removal, sidebar has gone 16 -> 14 in two patches).
+---
+ .../src/app/(dashboard)/DashboardClient.tsx   |   4 +-
+ .../app/(dashboard)/market-snapshot/page.tsx  | 115 ++++++++++++++++++
+ 2 files changed, 117 insertions(+), 2 deletions(-)
+ create mode 100644 frontend/src/app/(dashboard)/market-snapshot/page.tsx
+
+diff --git a/frontend/src/app/(dashboard)/DashboardClient.tsx b/frontend/src/app/(dashboard)/DashboardClient.tsx
+index acd11a5..884abd8 100644
+--- a/frontend/src/app/(dashboard)/DashboardClient.tsx
++++ b/frontend/src/app/(dashboard)/DashboardClient.tsx
+@@ -19,8 +19,8 @@ interface NavItem { href: string; label: string; icon: ReactNode; }
+ 
+ const NAV: NavItem[] = [
+   { href: '/news',          label: 'News Feed',       icon: <Newspaper className="w-5 h-5" /> },
+-  { href: '/heatmap',       label: 'Heatmap',         icon: <Grid3X3 className="w-5 h-5" /> },
+-  { href: '/movers',        label: 'Movers',          icon: <TrendingUp className="w-5 h-5" /> },
++  // PATCH 0090: heatmap + movers merged into Market Snapshot (toggle inside)
++  { href: '/market-snapshot', label: 'Market Snap',   icon: <Grid3X3 className="w-5 h-5" /> },
+   { href: '/portfolio',     label: 'Portfolio',       icon: <Briefcase className="w-5 h-5" /> },
+   { href: '/watchlists',    label: 'Watchlist',       icon: <BookMarked className="w-5 h-5" /> },
+   { href: '/orders',        label: 'Intelligence',    icon: <Shield className="w-5 h-5" /> },
+diff --git a/frontend/src/app/(dashboard)/market-snapshot/page.tsx b/frontend/src/app/(dashboard)/market-snapshot/page.tsx
+new file mode 100644
+index 0000000..be0c72c
+--- /dev/null
++++ b/frontend/src/app/(dashboard)/market-snapshot/page.tsx
+@@ -0,0 +1,115 @@
++'use client';
++
++// ═══════════════════════════════════════════════════════════════════════════
++// MARKET SNAPSHOT — patch 0090
++//
++// Merges /heatmap and /movers into a single tab with a toggle.  Both tabs draw
++// from the same /api/market/quotes endpoint with different visual treatment;
++// keeping them as separate sidebar entries was redundant.
++//
++// The original routes /heatmap and /movers are KEPT alive for deeplink
++// compatibility — this page just dynamic-imports their components and
++// conditionally renders one based on a ?tab=heatmap|movers URL param.
++// Only the active tab mounts, so the hidden tab does not run its queries.
++// ═══════════════════════════════════════════════════════════════════════════
++
++import { Suspense, useEffect, useState } from 'react';
++import dynamic from 'next/dynamic';
++import { Grid3X3, TrendingUp } from 'lucide-react';
++import { useRouter, useSearchParams } from 'next/navigation';
++
++const HeatmapPage = dynamic(() => import('../heatmap/page'), {
++  ssr: false,
++  loading: () => <PanelLoader label="Heatmap" />,
++});
++const MoversPage = dynamic(() => import('../movers/page'), {
++  ssr: false,
++  loading: () => <PanelLoader label="Movers" />,
++});
++
++type Tab = 'heatmap' | 'movers';
++
++function PanelLoader({ label }: { label: string }) {
++  return (
++    <div style={{ padding: 24, color: '#6B7A8D', fontSize: 12 }}>
++      Loading {label}…
++    </div>
++  );
++}
++
++export default function MarketSnapshotPage() {
++  const searchParams = useSearchParams();
++  const router = useRouter();
++  const initialTab = (searchParams?.get('tab') as Tab) || 'heatmap';
++  const [active, setActive] = useState<Tab>(initialTab);
++
++  // Keep URL in sync so a refresh / share preserves the active sub-tab
++  useEffect(() => {
++    const sp = new URLSearchParams(searchParams?.toString() || '');
++    if (sp.get('tab') !== active) {
++      sp.set('tab', active);
++      router.replace(`/market-snapshot?${sp.toString()}`, { scroll: false });
++    }
++  }, [active, searchParams, router]);
++
++  return (
++    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
++      {/* Tab bar */}
++      <div
++        style={{
++          backgroundColor: '#0D1B2E',
++          borderBottom: '1px solid #1E2D45',
++          padding: '10px 16px',
++          display: 'flex',
++          alignItems: 'center',
++          gap: 8,
++          flexShrink: 0,
++        }}
++      >
++        <span style={{ fontSize: 13, fontWeight: 700, color: '#22D3EE', letterSpacing: '0.6px', marginRight: 12 }}>
++          📊 MARKET SNAPSHOT
++        </span>
++        {([
++          { id: 'heatmap', label: 'Heatmap', Icon: Grid3X3 },
++          { id: 'movers',  label: 'Movers',  Icon: TrendingUp },
++        ] as const).map(({ id, label, Icon }) => {
++          const isActive = active === id;
++          return (
++            <button
++              key={id}
++              onClick={() => setActive(id)}
++              style={{
++                display: 'inline-flex',
++                alignItems: 'center',
++                gap: 6,
++                padding: '6px 12px',
++                borderRadius: 8,
++                border: isActive ? '1px solid #0F7ABF60' : '1px solid #1A2840',
++                backgroundColor: isActive ? '#0F7ABF20' : 'transparent',
++                color: isActive ? '#38A9E8' : '#8A95A3',
++                fontSize: 12,
++                fontWeight: 700,
++                letterSpacing: '0.4px',
++                cursor: 'pointer',
++                transition: 'all 0.15s',
++              }}
++            >
++              <Icon style={{ width: 14, height: 14 }} />
++              {label.toUpperCase()}
++            </button>
++          );
++        })}
++        <span style={{ marginLeft: 'auto', fontSize: 11, color: '#4A5B6C' }}>
++          Same data — different lens. Heatmap = sector treemap · Movers = top gainers / losers grid.
++        </span>
++      </div>
++
++      {/* Active panel */}
++      <div style={{ flex: 1, overflowY: 'auto' }}>
++        <Suspense fallback={<PanelLoader label={active} />}>
++          {active === 'heatmap' ? <HeatmapPage /> : <MoversPage />}
++        </Suspense>
++      </div>
++    </div>
++  );
++}
+-- 
+2.34.1
+
