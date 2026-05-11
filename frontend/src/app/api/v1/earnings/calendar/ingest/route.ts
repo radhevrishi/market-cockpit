@@ -91,22 +91,32 @@ function normaliseRow(r: any): CanonicalItem | null {
   let filing_date: string | null = null;
   let filing_dt_iso: string | null = null;
   if (broadcastRaw) {
+    // PATCH 0146: anchor filing_date to IST calendar day, not UTC slice.
+    // Trendlyne's broadcast_date_time is IST-formatted ("08-May-2026 18:45").
+    // A late-evening IST filing (22:00 IST May 8 = 16:30 UTC May 8) was correct
+    // before, but an after-midnight IST filing (02:00 IST May 9 = 20:30 UTC May 8)
+    // was wrongly bucketed under May 8 in UTC. EarningsPulse and every Indian
+    // exchange anchor to IST calendar — so should we.
     const m = broadcastRaw.match(/(\d{1,2})[- /]([A-Za-z]{3,9}|\d{2})[- /](\d{4})\s*(\d{2}):?(\d{2})?/);
     if (m) {
       const months: Record<string, number> = { JAN:0, FEB:1, MAR:2, APR:3, MAY:4, JUN:5, JUL:6, AUG:7, SEP:8, OCT:9, NOV:10, DEC:11 };
       const mm = isNaN(+m[2]) ? months[m[2].toUpperCase().slice(0, 3)] : (+m[2] - 1);
       if (mm !== undefined) {
-        const d = new Date(Date.UTC(+m[3], mm, +m[1], +m[4] - 5, (+(m[5] || 0)) - 30));
-        if (!isNaN(d.getTime())) {
-          filing_dt_iso = d.toISOString();
-          filing_date = filing_dt_iso.slice(0, 10);
-        }
+        const istDay = +m[1], istYear = +m[3];
+        // Calendar day in IST — never shifted to UTC
+        filing_date = `${istYear}-${String(mm + 1).padStart(2, '0')}-${String(istDay).padStart(2, '0')}`;
+        // Precise timestamp: convert IST → UTC for filing_dt_iso
+        const d = new Date(Date.UTC(istYear, mm, istDay, +m[4] - 5, (+(m[5] || 0)) - 30));
+        if (!isNaN(d.getTime())) filing_dt_iso = d.toISOString();
       }
     } else {
+      // Fallback: plain Date parse — used when broadcast string is an ISO timestamp
       const d = new Date(broadcastRaw);
       if (!isNaN(d.getTime())) {
         filing_dt_iso = d.toISOString();
-        filing_date = filing_dt_iso.slice(0, 10);
+        // Compute the IST calendar day by shifting +5:30 then slicing
+        const istMs = d.getTime() + (5 * 60 + 30) * 60_000;
+        filing_date = new Date(istMs).toISOString().slice(0, 10);
       }
     }
   }
