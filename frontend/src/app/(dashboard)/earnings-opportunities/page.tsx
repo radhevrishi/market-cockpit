@@ -15,8 +15,41 @@
 
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Calendar as CalendarIcon, ExternalLink, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react';
+import { Calendar as CalendarIcon, ExternalLink, RefreshCw, ChevronDown, ChevronRight, Grid3X3, FileText } from 'lucide-react';
 import api from '@/lib/api';
+
+// ─── Calendar payload types ────────────────────────────────────────────────
+interface CalendarItem {
+  symbol: string;
+  company: string;
+  filing_date: string;
+  filing_dt_iso?: string | null;
+  quarter?: string;
+  period_ended?: string;
+  audited?: boolean;
+  consolidated?: boolean;
+  attachment?: string | null;
+  source_url?: string;
+  exchange?: string;
+}
+interface CalendarPayload {
+  scraped_at?: string;
+  total: number;
+  by_date: Record<string, CalendarItem[]>;
+  empty_reason?: string;
+}
+
+function useEarningsCalendar(from: string, to: string) {
+  return useQuery<CalendarPayload>({
+    queryKey: ['earnings-calendar', from, to],
+    queryFn: async () => {
+      const { data } = await api.get(`/earnings/calendar?from=${from}&to=${to}`);
+      return data;
+    },
+    staleTime: 10 * 60_000,
+    refetchInterval: 30 * 60_000,
+  });
+}
 
 type EarningsTier = 'BLOCKBUSTER' | 'STRONG' | 'MIXED' | 'AVOID';
 
@@ -84,7 +117,10 @@ function useEarningsOpportunities(date: string) {
   });
 }
 
+type ViewMode = 'CALENDAR' | 'GRADED';
+
 export default function EarningsOpportunitiesPage() {
+  const [viewMode, setViewMode] = useState<ViewMode>('CALENDAR');
   const [filterDate, setFilterDate] = useState<string>(todayISO());
   const [showAbout, setShowAbout] = useState(false);
   const [expanded, setExpanded] = useState<Record<EarningsTier, boolean>>({
@@ -92,6 +128,16 @@ export default function EarningsOpportunitiesPage() {
   });
 
   const { data, isLoading, error, refetch } = useEarningsOpportunities(filterDate);
+
+  // Calendar view: last 60 days back, next 14 forward
+  const calRange = useMemo(() => {
+    const d = new Date(filterDate || todayISO());
+    const from = new Date(d); from.setDate(from.getDate() - 28);
+    const to   = new Date(d); to.setDate(to.getDate() + 14);
+    const fmt = (x: Date) => x.toISOString().slice(0, 10);
+    return { from: fmt(from), to: fmt(to) };
+  }, [filterDate]);
+  const { data: calData, isLoading: calLoading } = useEarningsCalendar(calRange.from, calRange.to);
 
   const view: OpportunitiesPayload = data || {
     filing_date: filterDate || null,
@@ -193,17 +239,35 @@ export default function EarningsOpportunitiesPage() {
         </div>
       </div>
 
+      {/* ── Tab toggle ──────────────────────────────────────────────────── */}
+      <div style={{ padding: '10px 24px', borderBottom: '1px solid #1A2540', backgroundColor: '#0A1422', display: 'flex', gap: 6 }}>
+        <button onClick={() => setViewMode('CALENDAR')}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 6, border: `1px solid ${viewMode === 'CALENDAR' ? '#22D3EE60' : '#1E2D45'}`, backgroundColor: viewMode === 'CALENDAR' ? '#22D3EE15' : 'transparent', color: viewMode === 'CALENDAR' ? '#22D3EE' : '#8A95A3', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+          <Grid3X3 style={{ width: 12, height: 12 }} /> Calendar
+        </button>
+        <button onClick={() => setViewMode('GRADED')}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 6, border: `1px solid ${viewMode === 'GRADED' ? '#22D3EE60' : '#1E2D45'}`, backgroundColor: viewMode === 'GRADED' ? '#22D3EE15' : 'transparent', color: viewMode === 'GRADED' ? '#22D3EE' : '#8A95A3', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+          <FileText style={{ width: 12, height: 12 }} /> Graded Tiers
+        </button>
+        <span style={{ marginLeft: 'auto', fontSize: 10.5, color: '#6B7A8D', alignSelf: 'center' }}>
+          {viewMode === 'CALENDAR' ? `${calRange.from} → ${calRange.to} · ${calData?.total ?? 0} filings` : `${view.candidates_total} graded`}
+        </span>
+      </div>
+
       {/* ── Body ──────────────────────────────────────────────────────────── */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '18px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-        {isLoading && view.candidates_total === 0 && (
+        {viewMode === 'CALENDAR' && (
+          <CalendarView data={calData} loading={calLoading} from={calRange.from} to={calRange.to} onPickDate={(d) => { setFilterDate(d); setViewMode('GRADED'); }} />
+        )}
+        {viewMode === 'GRADED' && isLoading && view.candidates_total === 0 && (
           <div style={{ color: '#6B7A8D', fontSize: 13, padding: 40, textAlign: 'center' }}>Fetching live results from BSE/NSE + 12 Indian results feeds…</div>
         )}
-        {error && (
+        {viewMode === 'GRADED' && error && (
           <div style={{ color: '#EF4444', fontSize: 13, padding: 40, textAlign: 'center', backgroundColor: '#0D1623', border: '1px solid #EF444440', borderRadius: 10 }}>
             Error fetching earnings pipeline. Retry in a moment.
           </div>
         )}
-        {!isLoading && view.candidates_total === 0 && !error && (
+        {viewMode === 'GRADED' && !isLoading && view.candidates_total === 0 && !error && (
           <div style={{ color: '#6B7A8D', fontSize: 13, padding: 40, textAlign: 'center', backgroundColor: '#0D1623', border: '1px solid #1A2840', borderRadius: 10 }}>
             <div style={{ fontSize: 32, marginBottom: 10 }}>📭</div>
             No earnings filings parsed for <strong style={{ color: '#94A3B8' }}>{filingDateLabel}</strong>.<br/>
@@ -215,7 +279,7 @@ export default function EarningsOpportunitiesPage() {
             </div>
           </div>
         )}
-        {TIER_ORDER.map((tier) => {
+        {viewMode === 'GRADED' && TIER_ORDER.map((tier) => {
           const stocks = view.by_tier[tier] || [];
           if (stocks.length === 0) return null;
           const meta = TIER_META[tier];
@@ -289,6 +353,99 @@ function EarningsCard({ stock }: { stock: ParsedEarning }) {
           </a>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── CalendarView ───────────────────────────────────────────────────────────
+function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarPayload | undefined; loading: boolean; from: string; to: string; onPickDate: (d: string) => void }) {
+  // Build all dates in [from, to] range (inclusive)
+  const dates = useMemo(() => {
+    const out: string[] = [];
+    const start = new Date(from);
+    const end = new Date(to);
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      out.push(d.toISOString().slice(0, 10));
+    }
+    return out;
+  }, [from, to]);
+
+  if (loading && !data) {
+    return <div style={{ color: '#6B7A8D', fontSize: 13, padding: 40, textAlign: 'center' }}>Loading calendar from KV…</div>;
+  }
+  if (data?.empty_reason === 'scraper_has_not_run_yet') {
+    return (
+      <div style={{ color: '#94A3B8', fontSize: 13, padding: 30, backgroundColor: '#0D1623', border: '1px solid #F59E0B40', borderRadius: 10 }}>
+        <div style={{ fontSize: 24, marginBottom: 10 }}>⏳</div>
+        <strong style={{ color: '#F59E0B' }}>Scraper has not run yet.</strong>
+        <p style={{ marginTop: 8, lineHeight: 1.6 }}>
+          The NSE Earnings Calendar GitHub Action needs to run at least once to populate the KV cache. Either:
+        </p>
+        <ol style={{ marginTop: 6, paddingLeft: 22, lineHeight: 1.7, fontSize: 12 }}>
+          <li>Wait for the next 30-minute cron tick (runs 03:00–13:00 UTC on weekdays)</li>
+          <li>Trigger manually: GitHub repo → Actions → "NSE Earnings Calendar Scrape" → Run workflow</li>
+        </ol>
+        <p style={{ marginTop: 8, fontSize: 11, color: '#6B7A8D' }}>
+          Make sure these GitHub repo secrets are set: <code>UPSTASH_REDIS_REST_URL</code>, <code>UPSTASH_REDIS_REST_TOKEN</code>.
+        </p>
+      </div>
+    );
+  }
+
+  const byDate = data?.by_date || {};
+  return (
+    <div style={{ backgroundColor: '#0D1623', border: '1px solid #1A2540', borderRadius: 10, padding: '14px 18px' }}>
+      <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <h2 style={{ margin: 0, fontSize: 14, fontWeight: 800, color: '#E6EDF3', letterSpacing: '0.4px' }}>📅 NSE EARNINGS CALENDAR</h2>
+        <span style={{ fontSize: 11, color: '#6B7A8D' }}>{from} → {to} · {Object.values(byDate).reduce((a, b) => a + b.length, 0)} filings</span>
+        {data?.scraped_at && (
+          <span style={{ marginLeft: 'auto', fontSize: 10, color: '#6B7A8D' }}>scraped {new Date(data.scraped_at).toLocaleString('en-IN')}</span>
+        )}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 10 }}>
+        {dates.map((d) => {
+          const items = byDate[d] || [];
+          const dt = new Date(d);
+          const weekday = dt.toLocaleDateString('en-IN', { weekday: 'short' });
+          const dayLabel = dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+          const isToday = d === new Date().toISOString().slice(0, 10);
+          return (
+            <div key={d} onClick={() => items.length > 0 && onPickDate(d)}
+              style={{
+                padding: '10px 12px',
+                backgroundColor: '#0A1422',
+                border: `1px solid ${isToday ? '#22D3EE40' : '#1A2840'}`,
+                borderRadius: 8,
+                cursor: items.length > 0 ? 'pointer' : 'default',
+                opacity: items.length === 0 ? 0.5 : 1,
+              }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 6 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: isToday ? '#22D3EE' : '#94A3B8' }}>
+                  {weekday} {dayLabel}
+                </span>
+                {items.length > 0 && (
+                  <span style={{ fontSize: 11, fontWeight: 800, color: '#F59E0B' }}>{items.length}</span>
+                )}
+              </div>
+              <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {items.length === 0 ? (
+                  <span style={{ fontSize: 10.5, color: '#6B7A8D' }}>No filings</span>
+                ) : items.slice(0, 12).map((it) => (
+                  <a key={it.symbol} href={it.source_url} target="_blank" rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    title={`${it.company} · ${it.quarter || ''}`}
+                    style={{ fontSize: 10, padding: '1px 5px', borderRadius: 3, backgroundColor: '#0F7ABF15', color: '#38A9E8', border: '1px solid #0F7ABF40', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', textDecoration: 'none', fontWeight: 700 }}>
+                    {it.symbol}
+                  </a>
+                ))}
+                {items.length > 12 && (
+                  <span style={{ fontSize: 10, color: '#6B7A8D' }}>+{items.length - 12} more</span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
