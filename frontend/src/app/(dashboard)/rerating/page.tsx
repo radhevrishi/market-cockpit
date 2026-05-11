@@ -79,6 +79,41 @@ interface Article {
 
 type UniverseChoice = 'AUTO' | 'MULTIBAGGER' | 'PORTFOLIO' | 'WATCHLIST' | 'NSE500' | 'CUSTOM';
 
+// PATCH 0117 — IMP-06: BSE code → NSE ticker normalization.
+// Screener exports sometimes carry the BSE security-code form 'BSE:523850'
+// for stocks dual-listed on BSE + NSE.  Our entire pipeline (quotes, news,
+// API) keys on NSE tickers.  Translate the common dual-listed mid-caps here.
+// (Source: BSE-NSE dual-listing map — extend as more codes surface.)
+const BSE_TO_NSE: Record<string, string> = {
+  '523850': 'AXTEL',       // AXTEL Industries
+  '500425': 'AMBUJACEM',   // Ambuja Cements
+  '500087': 'CIPLA',
+  '500096': 'DABUR',
+  '500114': 'TITAN',
+  '500180': 'HDFCBANK',
+  '500209': 'INFY',
+  '500247': 'KOTAKBANK',
+  '500325': 'RELIANCE',
+  '500570': 'TATAMOTORS',
+  '500875': 'ITC',
+  '532174': 'ICICIBANK',
+  '532540': 'TCS',
+  '532555': 'NTPC',
+  '532898': 'POWERGRID',
+  '532978': 'BAJAJFINSV',
+  '533278': 'COALINDIA',
+  '500302': 'PIIND',       // PI Industries
+  '532809': 'IDEAFORGE',
+  '543272': 'MTARTECH',
+};
+function normalizeBseTicker(raw: string): string {
+  if (!raw) return raw;
+  const m = /^BSE\s*:\s*(\d{4,7})$/i.exec(raw.trim());
+  if (!m) return raw.toUpperCase();
+  const nse = BSE_TO_NSE[m[1]];
+  return nse ? `${nse}.NS` : raw.toUpperCase();
+}
+
 function readMultibaggerSymbols(): string[] {
   if (typeof window === 'undefined') return [];
   try {
@@ -89,7 +124,7 @@ function readMultibaggerSymbols(): string[] {
       return parsed
         .map((s) => typeof s === 'string' ? s : (s?.symbol || s?.ticker || ''))
         .filter(Boolean)
-        .map((s) => String(s).toUpperCase());
+        .map((s) => normalizeBseTicker(String(s).toUpperCase()));
     }
     return [];
   } catch {
@@ -138,7 +173,13 @@ export function readMultibaggerStocks(): MBStockRow[] {
     const raw = localStorage.getItem('mb_excel_scored_v2');
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    // PATCH 0117 — IMP-06: normalize each row's symbol from BSE:NNNNNN
+    // to NSE.NS form so quotes / earnings-scan / news cross-reference work.
+    return parsed.map((r: any) => ({
+      ...r,
+      symbol: normalizeBseTicker(String(r?.symbol || r?.ticker || '').toUpperCase()),
+    }));
   } catch {
     return [];
   }
