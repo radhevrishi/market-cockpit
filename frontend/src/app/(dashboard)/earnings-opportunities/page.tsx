@@ -619,28 +619,42 @@ export default function EarningsOpportunitiesPage() {
   }, [filterDate]);
   const { data: hub, isLoading: hubLoading, error: hubError, refetch: refetchHub } = useMarketEarnings(monthsToFetch);
 
-  // PATCH 0155 / 0157 — derive ticker list AND the filing date being viewed
-  // so the enrich cache key includes the date (fresh filing → fresh cache).
+  // PATCH 0159 — resolve which date to grade (filter-date OR latest-past-with-filings)
+  // and fetch the FULLY-GRADED payload from /api/v1/earnings/graded which caches
+  // per-date in KV (90d for past, 15m for today). One server call, zero client join.
   const todayIso = new Date().toISOString().slice(0, 10);
-  const { symbolsToEnrich, resolvedFilingDate } = useMemo(() => {
-    if (!hub?.results) return { symbolsToEnrich: [], resolvedFilingDate: '' };
-    if (filterDate) {
-      const syms = hub.results.filter((r) => r.resultDate === filterDate && r.quality !== 'Upcoming').map((r) => r.ticker);
-      return { symbolsToEnrich: syms, resolvedFilingDate: filterDate };
-    }
-    // Latest mode — enrich the most recent past date with filings
-    const byDate: Record<string, string[]> = {};
+  const resolvedDateForGrading = useMemo(() => {
+    if (filterDate) return filterDate;
+    if (!hub?.results) return '';
+    const byDate: Record<string, number> = {};
     for (const r of hub.results) {
       if (!r.resultDate || r.resultDate > todayIso || r.quality === 'Upcoming') continue;
-      (byDate[r.resultDate] = byDate[r.resultDate] || []).push(r.ticker);
+      byDate[r.resultDate] = (byDate[r.resultDate] || 0) + 1;
     }
     const pastDates = Object.keys(byDate).sort().reverse();
-    const d = pastDates[0];
-    return { symbolsToEnrich: d ? byDate[d] : [], resolvedFilingDate: d || '' };
+    return pastDates[0] || '';
   }, [hub, filterDate, todayIso]);
 
-  const { data: enrichmentMap, isLoading: enrichLoading } = useLiveEnrichmentMap(symbolsToEnrich, resolvedFilingDate);
-  const data = useEarningsOpportunitiesJoined(filterDate, hub, enrichmentMap);
+  const { data: gradedData } = useQuery<OpportunitiesPayload>({
+    queryKey: ['graded-by-date', resolvedDateForGrading],
+    enabled: !!resolvedDateForGrading,
+    queryFn: async () => {
+      const res = await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}`);
+      if (!res.ok) throw new Error('graded fetch failed');
+      return res.json();
+    },
+    staleTime: resolvedDateForGrading < todayIso ? 24 * 60 * 60_000 : 5 * 60_000,
+    refetchInterval: false,
+  });
+
+  const data: OpportunitiesPayload = gradedData || {
+    filing_date: resolvedDateForGrading || null,
+    candidates_total: 0,
+    raw_items_total: 0,
+    by_tier: { BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [] },
+    generated_at: '',
+    sources_polled: 0,
+  };
   const isLoading = hubLoading;
   const error = hubError;
   const refetch = refetchHub;
