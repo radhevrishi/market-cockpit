@@ -1527,6 +1527,12 @@ export default function NewsFeedPage() {
   const [search,        setSearch]        = useState('');
   const [showFilters,   setShowFilters]   = useState(false);
   const [selectedArticle, setSelectedArticle] = useState<NewsArticle | null>(null);
+  // PATCH 0121 — IMP-08: Q4 FY26 earnings season quick-filter.
+  // null = no date window applied.  When active, both article_type and the
+  // published_at window are forced to the earnings season.
+  const [earningsSeasonActive, setEarningsSeasonActive] = useState<boolean>(false);
+  const EARNINGS_WINDOW_START = new Date('2026-04-01').getTime();
+  const EARNINGS_WINDOW_END   = new Date('2026-07-31').getTime();
   const [drilldownSubTag, setDrilldownSubTag] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing]   = useState(false);
   const [groupByLayer,  setGroupByLayer]  = useState(true); // Group articles by layer
@@ -1613,10 +1619,18 @@ export default function NewsFeedPage() {
 
   const articles = useMemo(() => {
     const now = Date.now();
-    const base = filterArticles(allArticles || [], region, articleType, signalFilter, sourceName);
+    // PATCH 0121 — IMP-08: Q4 FY26 earnings season chip forces article_type=EARNINGS
+    const effectiveType = earningsSeasonActive ? 'EARNINGS' : articleType;
+    const base = filterArticles(allArticles || [], region, effectiveType, signalFilter, sourceName);
 
     const filtered = base.filter(a => {
       if (!isMarketRelevant(a)) return false;
+      // PATCH 0121 — IMP-08: when the Q4 FY26 chip is on, restrict to the
+      // Apr 1 → Jul 31 2026 window (Indian Q4 results season).
+      if (earningsSeasonActive) {
+        const pub = new Date(a.published_at || a.ingested_at || 0).getTime();
+        if (!(pub >= EARNINGS_WINDOW_START && pub <= EARNINGS_WINDOW_END)) return false;
+      }
       // Bottleneck level sub-filter (only active when viewing BOTTLENECK)
       if (bottleneckLevel !== 'ALL' && articleType === 'BOTTLENECK') {
         if (a.bottleneck_level !== bottleneckLevel) return false;
@@ -2661,6 +2675,15 @@ export default function NewsFeedPage() {
                 ))}
               </div>
             </div>
+            {/* PATCH 0121 — IMP-08: Q4 FY26 Earnings Season quick filter */}
+            <div>
+              <p style={{ fontSize: '10px', fontWeight: '600', color: '#4A5B6C', margin: '0 0 8px', letterSpacing: '0.5px' }}>EARNINGS SEASON</p>
+              <button onClick={() => setEarningsSeasonActive(v => !v)}
+                style={{ padding: '5px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer', border: `1px solid ${earningsSeasonActive ? '#10B981' : '#1E2D45'}`, backgroundColor: earningsSeasonActive ? '#10B98120' : 'transparent', color: earningsSeasonActive ? '#10B981' : '#8A95A3' }}
+                title="Filter to Q4 FY26 results window (Apr 1 → Jul 31 2026), category locked to EARNINGS">
+                📊 Q4 FY26 Earnings {earningsSeasonActive ? '✓' : ''}
+              </button>
+            </div>
             <div>
               <p style={{ fontSize: '10px', fontWeight: '600', color: '#4A5B6C', margin: '0 0 8px', letterSpacing: '0.5px' }}>SIGNAL STRENGTH</p>
               <div style={{ display: 'flex', gap: '6px' }}>
@@ -2685,7 +2708,7 @@ export default function NewsFeedPage() {
             </div>
           </div>
           <button
-            onClick={() => { setRegion('ALL'); setArticleType('ALL'); setSourceName('ALL'); setSignalFilter('ALL'); setBottleneckLevel('ALL'); setBottleneckCategory('ALL'); setStructuralOnly(false); setSearch(''); }}
+            onClick={() => { setRegion('ALL'); setArticleType('ALL'); setSourceName('ALL'); setSignalFilter('ALL'); setBottleneckLevel('ALL'); setBottleneckCategory('ALL'); setStructuralOnly(false); setSearch(''); setEarningsSeasonActive(false); }}
             style={{ marginTop: '12px', fontSize: '11px', color: '#4A5B6C', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
           >
             <X style={{ width: '10px', height: '10px' }} /> Clear filters

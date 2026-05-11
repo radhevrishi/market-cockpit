@@ -366,6 +366,22 @@ function computeMarginExpansion(rows: EarningsRow[]): MarginRow[] {
   return out.sort((a, b) => b.delta_opm_bps - a.delta_opm_bps);
 }
 
+// PATCH 0121 — 0101: size-conditional revenue-growth gate.
+// User: 'ignore companies with less than 10% revenue growth if it's only large cap'.
+// For LARGE_CAP (>₹20,000Cr) we require rev YoY ≥ 10% — at that size only
+// genuine top-line growth justifies the bigger-base entry.  Mid/small caps
+// pass this gate (their thesis is differently structured — they qualify via
+// margin expansion or acceleration even at lower absolute growth).
+const LARGE_CAP_THRESHOLD_CR = 20_000;
+const LARGE_CAP_MIN_REV_GROWTH = 10;
+function passesSizeConditionalGrowth(s: MBStockRow): boolean {
+  const mcap = s.marketCapCr ?? 0;
+  if (mcap < LARGE_CAP_THRESHOLD_CR) return true;            // small/mid cap — bypass
+  const revG = s.yoySalesGrowth ?? s.revCagr ?? null;
+  if (revG == null) return true;                              // unknown growth — don't punish data gap
+  return revG >= LARGE_CAP_MIN_REV_GROWTH;
+}
+
 // PATCH 0112: Margin Expansion from Multibagger upload CSV — primary source
 // for Indian small/midcaps where live earnings-scan has no data.
 // User: '25 stocks uploaded with opm/opmPrev/accelSignal — must use these.'
@@ -373,6 +389,8 @@ function computeMarginExpansionFromMB(mbStocks: MBStockRow[]): MarginRow[] {
   const out: MarginRow[] = [];
   for (const s of mbStocks) {
     if (!s.symbol) continue;
+    // PATCH 0121 — drop large caps that aren't growing
+    if (!passesSizeConditionalGrowth(s)) continue;
     const opmCurr = s.opm;
     const opmPrev = s.opmPrev;
     const opmExpansion = s.opmExpansion;
@@ -412,6 +430,8 @@ function computeMultipleExpansionFromMB(mbStocks: MBStockRow[]): MultipleExpandR
   const out: MultipleExpandRow[] = [];
   for (const s of mbStocks) {
     if (!s.symbol) continue;
+    // PATCH 0121 — drop large caps with <10% rev growth from Multiple Expansion too
+    if (!passesSizeConditionalGrowth(s)) continue;
     const pe = s.pe;
     const peg = s.peg;
     const epsGrowth = s.epsGrowth ?? s.yoyProfitGrowth ?? s.profitCagr ?? 0;
