@@ -61,13 +61,27 @@ function parseTopRatios(html: string): Record<string, number | null> {
 }
 
 // ─── #quarters table extractor ────────────────────────────────────────────
+// PATCH 0140: don't rely on </section> (Screener has nested sections inside
+// the quarters block which broke the non-greedy match). Instead, locate the
+// section opening tag and slice forward to find the first <table>...</table>.
 function parseQuartersTable(html: string): {
   quarter_labels: string[];
   rows: Record<string, (number | null)[]>;
 } | null {
-  // The quarters section may have id="quarters" or be in a <section> with that id
-  const sec = html.match(/<section[^>]*\bid=["']quarters["'][^>]*>([\s\S]*?)<\/section>/i);
-  const block = sec ? sec[1] : html;
+  // Find the opening of the quarters section
+  const openRe = /<section[^>]*\bid=["']quarters["'][^>]*>/i;
+  const open = html.match(openRe);
+  let block: string;
+  if (open && open.index !== undefined) {
+    // Slice from after the opening tag forward (capped to 80KB — quarters
+    // tables are <10KB). Stop at the next <section id="..."> tag if found.
+    const start = open.index + open[0].length;
+    const tail = html.slice(start, start + 80_000);
+    const nextSec = tail.search(/<section\s+[^>]*\bid=["']/i);
+    block = nextSec > 0 ? tail.slice(0, nextSec) : tail;
+  } else {
+    block = html;
+  }
   const tbl = block.match(/<table[\s\S]*?<\/table>/i);
   if (!tbl) return null;
 
@@ -113,7 +127,11 @@ function parseSector(html: string): string | null {
 }
 
 // ─── Public API: enrich a single canonical event ─────────────────────────
-async function fetchScreenerHtml(symbol: string): Promise<string | null> {
+// PATCH 0141: return the FIRST URL that not only has top-ratios but whose
+// quarterly results table actually has columns. Many companies (TVSELECT,
+// KREBSBIO, AMAGI etc.) only file standalone numbers; the /consolidated/
+// page exists but its quarters table is empty.
+async function* iterScreenerHtml(symbol: string): AsyncGenerator<string> {
   const urls = [
     `${SCREENER_BASE}/company/${encodeURIComponent(symbol)}/consolidated/`,
     `${SCREENER_BASE}/company/${encodeURIComponent(symbol)}/`,
@@ -128,13 +146,11 @@ async function fetchScreenerHtml(symbol: string): Promise<string | null> {
       });
       if (!res.ok) continue;
       const html = await res.text();
-      // Quick sanity check — Screener pages always have these
       if (!/id=["']top-ratios["']/.test(html)) continue;
-      return html;
+      yield html;
     } catch { /* try next */ }
     finally { clearTimeout(t); }
   }
-  return null;
 }
 
 function bucketMarketCap(mcap: number | null): 'MEGA' | 'LARGE' | 'MID' | 'SMALL' | 'MICRO' | null {
@@ -151,77 +167,116 @@ function pct(curr: number | null, prev: number | null): number | null {
   return Math.round(((curr - prev) / Math.abs(prev)) * 1000) / 10;
 }
 
-export async function fetchScreenerFinancials(symbol: string): Promise<Partial<CanonicalEvent> | null> {
-  const html = await fetchScreenerHtml(symbol);
-  if (!html) return null;
+// PATCH 0140: structured outcome so we can see WHICH step fails per symbol
+export type EnrichOutcome =
+  | { ok: true; data: Partial<CanonicalEvent> }
+  | { ok: false; reason: 'no-html' | 'no-quarters' | 'too-few-quarters' | 'no-rows' };
+
+export async function fetchScreenerFinancials(symbol: string): Promise<EnrichOutcome> {
+  // PATCH 0141: iterate consolidated → standalone and pick the variant whose
+  // quarters table actually has columns. Companies that only file standalone
+  // results (e.g. TVSELECT, KREBSBIO) have an empty quarterly table on the
+  // /consolidated/ page even though id="quarters" is present.
+  let html: string | null = null;
+  let q: ReturnType<typeof parseQuartersTable> = null;
+  let firstFailReason: 'no-quarters' | 'too-few-quarters' | null = null;
+  for await (const candidate of iterScreenerHtml(symbol)) {
+    const parsed = parseQuartersTable(candidate);
+    if (!parsed) {
+      if (!firstFailReason) firstFailReason = 'no-quarters';
+      continue;
+    }
+    if (parsed.quarter_labels.length < 5) {
+      if (!firstFailReason) firstFailReason = 'too-few-quarters';
+      continue;
+    }
+    html = candidate;
+    q = parsed;
+    break;
+  }
+  if (!html) {
+    // Either we got no HTML at all (no top-ratios on either URL) or both
+    // variants had unusable quarters tables. Use the more specific reason.
+    return { ok: false, reason: firstFailReason ?? 'no-html' };
+  }
+  if (!q) return { ok: false, reason: 'no-quarters' };
+  const qNN = q;  // capture for closure narrowing
 
   const ratios = parseTopRatios(html);
   const sector = parseSector(html);
-  const q = parseQuartersTable(html);
-  if (!q || q.quarter_labels.length < 5) return null;
 
   // Resolve row labels (Screener uses fuzzy variants depending on company type)
   const get = (labelKeyword: string, idx: number): number | null => {
-    const keys = Object.keys(q.rows);
+    const keys = Object.keys(qNN.rows);
     const k = keys.find((kk) => kk.toLowerCase().includes(labelKeyword.toLowerCase()));
     if (!k) return null;
-    return q.rows[k]?.[idx] ?? null;
+    return qNN.rows[k]?.[idx] ?? null;
   };
 
-  const N = q.quarter_labels.length;
+  const N = qNN.quarter_labels.length;
   const latestIdx = N - 1;
   const priorYearIdx = N - 5;
-  if (priorYearIdx < 0) return null;
 
+  // Top-line: Sales / Revenue / Income / Interest Earned (banks) / Premium Earned (insurers)
   const salesCurr =
-    get('Revenue', latestIdx) ??
     get('Sales', latestIdx) ??
-    get('Income', latestIdx);
+    get('Revenue', latestIdx) ??
+    get('Income', latestIdx) ??
+    get('Interest', latestIdx) ??
+    get('Premium', latestIdx);
   const salesPrev =
-    get('Revenue', priorYearIdx) ??
     get('Sales', priorYearIdx) ??
-    get('Income', priorYearIdx);
+    get('Revenue', priorYearIdx) ??
+    get('Income', priorYearIdx) ??
+    get('Interest', priorYearIdx) ??
+    get('Premium', priorYearIdx);
   const opCurr   = get('Operating Profit', latestIdx);
   const opPrev   = get('Operating Profit', priorYearIdx);
   const opmCurr  = get('OPM', latestIdx);
   const opmPrev  = get('OPM', priorYearIdx);
-  const patCurr  = get('Net Profit', latestIdx);
-  const patPrev  = get('Net Profit', priorYearIdx);
+  // Bottom-line: Net Profit / Profit (banks: "Profit" or "PAT")
+  const patCurr  = get('Net Profit', latestIdx) ?? get('Profit', latestIdx);
+  const patPrev  = get('Net Profit', priorYearIdx) ?? get('Profit', priorYearIdx);
   const epsCurr  = get('EPS', latestIdx);
   const epsPrev  = get('EPS', priorYearIdx);
 
-  // Require at least one of salesYoY / patYoY / epsYoY to be derivable
-  if (salesCurr == null && patCurr == null && epsCurr == null) return null;
+  // Require at least one of salesCurr / patCurr / epsCurr to be derivable
+  if (salesCurr == null && patCurr == null && epsCurr == null) {
+    return { ok: false, reason: 'no-rows' };
+  }
 
   const cp = ratios['Current Price'];
   const hi = ratios['High'] ?? ratios['52w High'];
   return {
-    sector: sector || undefined,
-    pe: ratios['Stock P/E'] ?? ratios['P/E'] ?? null,
-    market_cap_cr: ratios['Market Cap'] ?? null,
-    market_cap_bucket: bucketMarketCap(ratios['Market Cap'] ?? null),
-    current_price: cp ?? null,
-    high_52w: hi ?? null,
-    low_52w: ratios['Low'] ?? ratios['52w Low'] ?? null,
-    pct_from_52w_high: (cp != null && hi != null && hi > 0)
-      ? Math.round(((cp - hi) / hi) * 1000) / 10
-      : null,
-    sales_curr_cr: salesCurr,
-    sales_prev_cr: salesPrev,
-    op_profit_curr_cr: opCurr,
-    op_profit_prev_cr: opPrev,
-    opm_pct: opmCurr,
-    opm_prev_pct: opmPrev,
-    pat_curr_cr: patCurr,
-    pat_prev_cr: patPrev,
-    eps_curr: epsCurr,
-    eps_prev: epsPrev,
-    sales_yoy_pct: pct(salesCurr, salesPrev),
-    op_profit_yoy_pct: pct(opCurr, opPrev),
-    pat_yoy_pct: pct(patCurr, patPrev),
-    eps_yoy_pct: pct(epsCurr, epsPrev),
-    financials_source: 'screener',
-    financials_scraped_at: new Date().toISOString(),
+    ok: true,
+    data: {
+      sector: sector || undefined,
+      pe: ratios['Stock P/E'] ?? ratios['P/E'] ?? null,
+      market_cap_cr: ratios['Market Cap'] ?? null,
+      market_cap_bucket: bucketMarketCap(ratios['Market Cap'] ?? null),
+      current_price: cp ?? null,
+      high_52w: hi ?? null,
+      low_52w: ratios['Low'] ?? ratios['52w Low'] ?? null,
+      pct_from_52w_high: (cp != null && hi != null && hi > 0)
+        ? Math.round(((cp - hi) / hi) * 1000) / 10
+        : null,
+      sales_curr_cr: salesCurr,
+      sales_prev_cr: salesPrev,
+      op_profit_curr_cr: opCurr,
+      op_profit_prev_cr: opPrev,
+      opm_pct: opmCurr,
+      opm_prev_pct: opmPrev,
+      pat_curr_cr: patCurr,
+      pat_prev_cr: patPrev,
+      eps_curr: epsCurr,
+      eps_prev: epsPrev,
+      sales_yoy_pct: pct(salesCurr, salesPrev),
+      op_profit_yoy_pct: pct(opCurr, opPrev),
+      pat_yoy_pct: pct(patCurr, patPrev),
+      eps_yoy_pct: pct(epsCurr, epsPrev),
+      financials_source: 'screener',
+      financials_scraped_at: new Date().toISOString(),
+    },
   };
 }
 
@@ -261,6 +316,15 @@ export async function enrichEvents(
   console.log(`[enrich] cache hits=${cacheHits}, skipped (bad symbol)=${skipped}, queued=${todo.length}`);
 
   let fetched = 0, failed = 0;
+  // PATCH 0140: track failure reasons + sample failing symbols
+  const failReasons: Record<string, number> = {};
+  const failSamples: Record<string, string[]> = {};
+  const recordFail = (reason: string, sym: string) => {
+    failReasons[reason] = (failReasons[reason] || 0) + 1;
+    if (!failSamples[reason]) failSamples[reason] = [];
+    if (failSamples[reason].length < 5) failSamples[reason].push(sym);
+  };
+
   for (let i = 0; i < todo.length; i++) {
     const ev = todo[i];
     if (Date.now() - startedAt > budgetMs) {
@@ -269,16 +333,17 @@ export async function enrichEvents(
       break;
     }
     try {
-      const fin = await fetchScreenerFinancials(ev.symbol);
-      if (fin) {
-        out.push({ ...ev, ...fin });
+      const result = await fetchScreenerFinancials(ev.symbol);
+      if (result.ok) {
+        out.push({ ...ev, ...result.data });
         fetched++;
         if (kv) {
-          await kv.kvSet(`earnings:enrichment:v1:${ev.symbol}:${ev.filing_date}`, fin, ENRICHMENT_TTL_S).catch(() => {});
+          await kv.kvSet(`earnings:enrichment:v1:${ev.symbol}:${ev.filing_date}`, result.data, ENRICHMENT_TTL_S).catch(() => {});
         }
       } else {
         out.push(ev);
         failed++;
+        recordFail(result.reason, ev.symbol);
       }
       // Polite delay
       await new Promise((r) => setTimeout(r, REQUEST_DELAY_MS));
@@ -288,11 +353,18 @@ export async function enrichEvents(
         console.log(`[enrich] ${fetched + failed}/${todo.length} (ok=${fetched}, fail=${failed}, ${elapsed}s, last=${ev.symbol})`);
       }
     } catch (e: any) {
-      console.warn(`[enrich] ${ev.symbol} failed: ${e?.message || e}`);
+      console.warn(`[enrich] ${ev.symbol} threw: ${e?.message || e}`);
       out.push(ev);
       failed++;
+      recordFail('exception', ev.symbol);
     }
   }
   console.log(`[enrich] DONE — fetched=${fetched}, failed=${failed}, cached=${cacheHits}, skipped=${skipped}, total=${out.length}`);
+  if (failed > 0) {
+    console.log(`[enrich] failure breakdown:`);
+    for (const [reason, count] of Object.entries(failReasons).sort((a, b) => b[1] - a[1])) {
+      console.log(`  ${reason}: ${count}  (e.g. ${failSamples[reason].join(', ')})`);
+    }
+  }
   return out;
 }
