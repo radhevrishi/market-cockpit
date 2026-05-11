@@ -116,20 +116,36 @@ function normalizeBseTicker(raw: string): string {
 
 function readMultibaggerSymbols(): string[] {
   if (typeof window === 'undefined') return [];
+  // PATCH 0126 — BUG: '1 stocks' in universe counter when user has 84.
+  // Root cause: mb3_symbols was a legacy 1-stock array, the full upload
+  // lives in mb_excel_scored_v2.  Union BOTH localStorage keys so the
+  // universe always reflects the largest available upload set.
+  const out = new Set<string>();
   try {
     const raw = localStorage.getItem('mb3_symbols');
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      return parsed
-        .map((s) => typeof s === 'string' ? s : (s?.symbol || s?.ticker || ''))
-        .filter(Boolean)
-        .map((s) => normalizeBseTicker(String(s).toUpperCase()));
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        for (const s of parsed) {
+          const sym = typeof s === 'string' ? s : (s?.symbol || s?.ticker || '');
+          if (sym) out.add(normalizeBseTicker(String(sym).toUpperCase()));
+        }
+      }
     }
-    return [];
-  } catch {
-    return [];
-  }
+  } catch {}
+  try {
+    const raw = localStorage.getItem('mb_excel_scored_v2');
+    if (raw) {
+      const rows = JSON.parse(raw);
+      if (Array.isArray(rows)) {
+        for (const r of rows) {
+          const sym = r?.symbol || r?.ticker;
+          if (sym) out.add(normalizeBseTicker(String(sym).toUpperCase()));
+        }
+      }
+    }
+  } catch {}
+  return Array.from(out);
 }
 
 // PATCH 0112: read FULL Multibagger upload data from mb_excel_scored_v2.
@@ -237,29 +253,31 @@ function useUniverseSymbols(choice: UniverseChoice, customCsv: string) {
       // (not '(1)' which means 1 upload batch — confusing)
       if (choice === 'MULTIBAGGER') {
         addMultibagger();
-        source = `Multibagger Upload · ${out.size} stocks`;
+        source = `Multibagger Upload · ${out.size} ${out.size === 1 ? 'stock' : 'stocks'}`;
       } else if (choice === 'PORTFOLIO') {
         await addPortfolio();
-        source = `My Portfolio · ${out.size} stocks`;
+        source = `My Portfolio · ${out.size} ${out.size === 1 ? 'stock' : 'stocks'}`;
       } else if (choice === 'WATCHLIST') {
         await addWatchlist();
-        source = `My Watchlist · ${out.size} stocks`;
+        source = `My Watchlist · ${out.size} ${out.size === 1 ? 'stock' : 'stocks'}`;
       } else if (choice === 'NSE500') {
         const list = await fetchNSE500();
         for (const s of list) out.add(s);
-        source = `NSE 500 · ${out.size} stocks`;
+        source = `NSE 500 · ${out.size} ${out.size === 1 ? 'stock' : 'stocks'}`;
       } else if (choice === 'CUSTOM') {
         for (const t of customCsv.split(/[,\s]+/).map((s) => s.trim().toUpperCase()).filter(Boolean)) out.add(t);
-        source = `Custom · ${out.size} stocks`;
+        source = `Custom · ${out.size} ${out.size === 1 ? 'stock' : 'stocks'}`;
       } else {
         // AUTO: prefer Multibagger upload; if empty, fall back to portfolio + watchlist union
         addMultibagger();
         if (out.size === 0) {
           await addPortfolio();
           await addWatchlist();
-          source = `Portfolio + Watchlist · ${out.size} stocks`;
+          const n0: number = out.size;
+          source = `Portfolio + Watchlist · ${n0} ${n0 === 1 ? 'stock' : 'stocks'}`;
         } else {
-          source = `Multibagger Upload · ${out.size} stocks`;
+          const n0 = out.size;
+          source = `Multibagger Upload · ${n0} ${n0 === 1 ? 'stock' : 'stocks'}`;
         }
       }
       return { symbols: Array.from(out), source, mbStocks };
@@ -414,13 +432,25 @@ function computeMarginExpansionFromMB(mbStocks: MBStockRow[]): MarginRow[] {
     else if (profitAccel > 0) deltaBps = Math.round(profitAccel * 100);
     else if (accelerating) deltaBps = 50;  // sentinel for accelSignal-only matches
 
+    // PATCH 0126 — BUG#2 fix: derive oldest_opm from any available baseline.
+    // Many MB CSV rows have opmExpansion but not opmPrev → was rendering '—'.
+    // Priority: opmPrev (1yr) > opm - opmExpansion (3yr derived) > null.
+    const oldestOpm: number | null =
+      opmPrev != null ? opmPrev :
+      (opmCurr != null && opmExpansion != null) ? +(opmCurr - opmExpansion).toFixed(2) :
+      null;
+    const quartersCount: number =
+      opmPrev != null ? 4 :
+      opmExpansion != null ? 12 :
+      profitAccel > 0 ? 4 :
+      accelerating ? 4 : 0;
     out.push({
       ticker: s.symbol.toUpperCase(),
       delta_opm_bps: deltaBps,
       latest_opm: opmCurr ?? null,
-      oldest_opm: opmPrev ?? null,
+      oldest_opm: oldestOpm,
       latest_rev_yoy: s.yoySalesGrowth ?? null,
-      quarters: opmPrev != null ? 4 : (opmExpansion != null ? 12 : 0),
+      quarters: quartersCount,
     });
   }
   return out.sort((a, b) => b.delta_opm_bps - a.delta_opm_bps);
@@ -439,6 +469,11 @@ function computeMultipleExpansionFromMB(mbStocks: MBStockRow[]): MultipleExpandR
     if (!(epsGrowth > 0)) continue;
     const computedPeg = peg ?? (pe / Math.max(1, epsGrowth));
     if (computedPeg > 5) continue;  // too expensive
+    // PATCH 0126 — exclude negative PEG (shrinking earnings ≠ re-rating
+    // candidate).  User QA: 'PEG −308 / −12.86 / −9.06 are NOT re-rating
+    // candidates — they are loss-making or shrinking-EPS distressed stocks'.
+    // Also exclude PEG below 0.1 — a genuine re-rating setup has PEG > 0.1.
+    if (computedPeg < 0.1) continue;
     out.push({
       ticker: s.symbol.toUpperCase(),
       pe,
@@ -478,7 +513,13 @@ const MODEL_SHIFT_TICKER_BLACKLIST = new Set([
 // Require strong evidence — the model-shift keyword must appear WITH a
 // model-shift VERB in the same sentence ("transitioning to / launches /
 // pivots to / shifts to / introduces / building").
-const MODEL_SHIFT_VERB_NEARBY = /\b(transition\w*\s+to|pivots?\s+to|shifts?\s+to|launch(?:es|ed|ing)?\s+\w*\s*(?:subscription|recurring|platform|saas)|moves?\s+to\s+(?:subscription|recurring|platform|saas|annuity)|building\s+(?:its|a|an)\s+\w*\s*(?:subscription|recurring|platform|saas)|introduces?\s+(?:subscription|recurring|platform|saas)|business\s+model\s+(?:change|shift|transition)|recurring\s+revenue\s+grows|arr\s+(?:reaches|crosses|exceeds))/i;
+// PATCH 0126 — BUG#3: expanded for Indian business-model shifts.
+// Old pattern only matched SaaS-centric verbs; QA flagged this as the reason
+// Model Shift was empty for Indian universe.  Added India-relevant transitions:
+// EPC → product, trading → manufacturing, domestic → export, project → annuity,
+// B2B → B2C, contract manufacturing → own brand, asset-heavy → asset-light,
+// capex → maintenance, services → product, distributor → direct.
+const MODEL_SHIFT_VERB_NEARBY = /\b(transition\w*\s+to|pivots?\s+to|shifts?\s+to|launch(?:es|ed|ing)?\s+\w*\s*(?:subscription|recurring|platform|saas)|moves?\s+to\s+(?:subscription|recurring|platform|saas|annuity)|building\s+(?:its|a|an)\s+\w*\s*(?:subscription|recurring|platform|saas)|introduces?\s+(?:subscription|recurring|platform|saas)|business\s+model\s+(?:change|shift|transition)|recurring\s+revenue\s+grows|arr\s+(?:reaches|crosses|exceeds)|epc\s+to\s+product|services?\s+to\s+product|trading\s+to\s+manufactur|domestic\s+to\s+export|project[- ]based?\s+to\s+annuity|b2b\s+to\s+b2c|contract\s+manufactur\w+\s+to\s+(?:own\s+brand|branded)|asset[- ]heavy\s+to\s+asset[- ]light|capex\s+to\s+maintenance|channel\s+to\s+direct|distributor\s+to\s+direct|wholesale\s+to\s+retail|licensee\s+to\s+manufactur|moving\s+up\s+the\s+value\s+chain|forward\s+integrat\w+|backward\s+integrat\w+|launches?\s+own\s+brand|enter(?:s|ing|ed)?\s+(?:exports?|us|europe)\s+market|annuity\s+(?:stream|revenue|business)\s+(?:grows|builds|emerges|crosses))/i;
 
 function computeModelShift(articles: Article[]): ModelShiftRow[] {
   const now = Date.now();
