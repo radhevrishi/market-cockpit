@@ -675,11 +675,19 @@ export default function NewsCard({ article, onTickerClick }: Props) {
             );
           })()}
 
-          {/* Source + tier */}
+          {/* Source + tier + also-reported (PATCH 0115 — BUG-04 dedup) */}
           <span className="text-[#4A5B6C] text-[11px]">
             {article.source_name ?? article.source}
             {(article as any).source_tier && (article as any).source_tier !== 'secondary' && (
               <span className="ml-1 opacity-60">· {(article as any).source_tier}</span>
+            )}
+            {(article as any).also_reported_by_count > 0 && (
+              <span
+                className="ml-2 px-1.5 py-[1px] rounded bg-[#1A2840] text-[#8A95A3] text-[10px] font-semibold"
+                title={`Also reported by: ${((article as any).also_reported_sources || []).join(', ')}`}
+              >
+                + {(article as any).also_reported_by_count} {(article as any).also_reported_by_count === 1 ? 'source' : 'sources'}
+              </span>
             )}
           </span>
 

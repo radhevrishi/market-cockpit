@@ -198,7 +198,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v36'; // v36: theme contamination + confidence cap + pseudo-ticker filter + contamination penalty (0109b/0110)
+const CACHE_KEY = 'news:articles:v37'; // v37: 72h ticker × Jaccard clustering dedup + also-reported-by counters (0115/BUG-04)
 
 // PATCH 0110: per-request contamination-map cache.  Built once on first call
 // in a request lifecycle, reused across the (potentially many) layered-
@@ -1951,14 +1951,74 @@ async function fetchAllNews(): Promise<any[]> {
     return scoreB - scoreA;
   });
 
-  // Dedup by title similarity
-  const seen = new Set<string>();
-  const deduped = articles.filter(a => {
-    const key = a.title.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 50);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  // ─────────────────────────────────────────────────────────────────────
+  // PATCH 0115 — BUG-04: 72h + ticker + Jaccard clustering dedup.
+  //
+  // Old logic was a 50-char title slice in a Set — far too aggressive for
+  // distinct catalysts that share opening words, far too permissive for
+  // the same story relayed from 12 sources with reworded headlines.
+  //
+  // New behaviour:
+  //   - bucket articles by (primary_ticker × 72h window)
+  //   - within a bucket, compute Jaccard similarity on 3+ char title
+  //     tokens.  ≥ 0.50 → cluster together
+  //   - keep the highest-scoring representative; expose
+  //     also_reported_by_count + also_reported_sources so the UI can
+  //     show 'Reuters + 11 more'.
+  //   - articles with no primary_ticker still dedup'd intra-bucket
+  //     with a synthetic 'TKR:NONE' key (still clustered by Jaccard).
+  // Articles are pre-sorted by recency × severity × structural already,
+  // so the first-seen-in-cluster is always the strongest rep.
+  // ─────────────────────────────────────────────────────────────────────
+  const titleTokens = (t: string): Set<string> => {
+    const tokens = (t || '').toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.length >= 3 && !/^(the|and|for|with|from|that|this|will|has|have|are|its|but|not|all|new)$/.test(w));
+    return new Set(tokens);
+  };
+  const jaccard = (a: Set<string>, b: Set<string>): number => {
+    if (a.size === 0 || b.size === 0) return 0;
+    let inter = 0;
+    for (const t of a) if (b.has(t)) inter++;
+    const union = a.size + b.size - inter;
+    return union === 0 ? 0 : inter / union;
+  };
+  const JACCARD_THRESHOLD = 0.50;
+  const WINDOW_72H_MS = 72 * 3600 * 1000;
+
+  interface ClusterRep {
+    article: any;
+    tokens: Set<string>;
+    ts: number;
+    also: Set<string>; // source names of folded duplicates
+  }
+  const clustersByTicker: Map<string, ClusterRep[]> = new Map();
+  const deduped: any[] = [];
+  for (const a of articles) {
+    const tkr = (a.primary_ticker || 'TKR:NONE').toUpperCase();
+    const ts = new Date(a.published_at || 0).getTime() || 0;
+    const tokens = titleTokens(a.title);
+    let buckets = clustersByTicker.get(tkr);
+    if (!buckets) { buckets = []; clustersByTicker.set(tkr, buckets); }
+
+    let matched: ClusterRep | null = null;
+    for (const rep of buckets) {
+      if (Math.abs(rep.ts - ts) > WINDOW_72H_MS) continue;
+      if (jaccard(tokens, rep.tokens) >= JACCARD_THRESHOLD) { matched = rep; break; }
+    }
+    if (matched) {
+      const src = a.source_name || a.source || 'unknown';
+      matched.also.add(src);
+      // attach growing list back onto the kept representative
+      matched.article.also_reported_by_count = matched.also.size;
+      matched.article.also_reported_sources = Array.from(matched.also).slice(0, 12);
+    } else {
+      const rep: ClusterRep = { article: a, tokens, ts, also: new Set() };
+      buckets.push(rep);
+      deduped.push(a);
+    }
+  }
 
   // Per-source cap for diversity
   const PER_SOURCE_CAP = 8;
