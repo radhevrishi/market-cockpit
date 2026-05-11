@@ -28,6 +28,11 @@ const NAV: NavItem[] = [
   { href: '/special-situations', label: 'Spec Sit',   icon: <Compass className="w-5 h-5" /> },
   // PATCH 0091: Earnings + Earnings AI + Calendar merged into Earnings Hub (sub-tabs inside)
   { href: '/earnings-hub',  label: 'Earnings',        icon: <LineChart className="w-5 h-5" /> },
+  // PATCH 0123: bring back the legacy /earnings page (Portfolio + Watchlist + 750-company
+  // custom universe earnings cards with YoY/QoQ + EPS deltas).  The page file was never
+  // deleted, only the sidebar link.  Restored as a separate entry so Earnings Hub is
+  // untouched.  User: 'don't change earnings hub — that is my best use functionality'.
+  { href: '/earnings',      label: 'Earnings Cards',  icon: <BarChart3 className="w-5 h-5" /> },
   { href: '/multibagger',   label: 'Multibagger',     icon: <Star className="w-5 h-5" /> },
   // PATCH 0093: Single-Stock Sheet — 16-section institutional checklist runner
   { href: '/stock-sheet',   label: 'Stock Sheet',     icon: <BookMarked className="w-5 h-5" /> },
