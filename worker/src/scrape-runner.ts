@@ -19,6 +19,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { nseAdapter } from './sources/nse.js';
 import { trendlyneAdapter } from './sources/trendlyne.js';
+import { bseAdapter } from './sources/bse.js';
 import { enrichEvents, EnrichmentClient } from './sources/screener.js';
 import { reconcile, validate } from './aggregator.js';
 import { pushToVercel } from './ingest-client.js';
@@ -61,13 +62,13 @@ const STATE_DIR = process.env.STATE_DIR || '/var/lib/mc-worker';
 const ALL_ADAPTERS: Record<string, SourceAdapter> = {
   nse: nseAdapter,
   trendlyne: trendlyneAdapter,
-  // bse: bseAdapter,          // TODO: similar pattern to NSE
+  bse: bseAdapter,             // PATCH 0147: catches filings Trendlyne misses
   // tickertape: tickertapeAdapter, // TODO: public results page
   // rss: rssAdapter,          // TODO: fallback news scraper
 };
 
 async function runOnePass(): Promise<{ total: number; results: RunResult[]; pushed?: any }> {
-  const activeNames = (process.env.ACTIVE_SOURCES || 'trendlyne,nse')
+  const activeNames = (process.env.ACTIVE_SOURCES || 'bse,trendlyne,nse')
     .split(',').map((s) => s.trim()).filter(Boolean);
   const lookback = +(process.env.LOOKBACK_DAYS || '70');
   const lookahead = +(process.env.LOOKAHEAD_DAYS || '14');
