@@ -579,6 +579,99 @@ function autoPrefill(prefill: PrefillBundle, current: SheetState): SheetState {
   return next;
 }
 
+// ─── PATCH 0118 — IMP-12: Decision Memo (Section 17) auto-generation ──────
+// Synthesizes the YES/NO/NA pattern into a 3-paragraph institutional memo:
+//   1. THESIS         — section 1-5 YES signals (theme / catalyst / quality)
+//   2. KEY RISKS      — section 9-11 NO signals + any disqualifiers
+//   3. CATALYST PATH  — section 2 + section 14 + watchitems
+// Read-only output; regenerates on every state change.
+interface DecisionMemo {
+  thesis: string;
+  risks: string;
+  catalystPath: string;
+  alignmentLabel: string;
+}
+
+function buildDecisionMemo(ticker: string, state: SheetState, score: Score): DecisionMemo {
+  const yesEvidence = (ids: string[]): string[] => {
+    const out: string[] = [];
+    for (const id of ids) {
+      const ans = state[id];
+      if (ans?.signal === 'YES') {
+        const ev = (ans.evidence || '').replace(/^\[auto\]\s*/, '').trim();
+        // Find criterion label for this id
+        for (const s of SECTIONS) {
+          const c = s.criteria.find((x) => x.id === id);
+          if (c) {
+            out.push(ev ? `${c.label.replace(/\?$/, '')} — ${ev}` : c.label.replace(/\?$/, ''));
+            break;
+          }
+        }
+      }
+    }
+    return out;
+  };
+  const noEvidence = (ids: string[]): string[] => {
+    const out: string[] = [];
+    for (const id of ids) {
+      const ans = state[id];
+      if (ans?.signal === 'NO') {
+        for (const s of SECTIONS) {
+          const c = s.criteria.find((x) => x.id === id);
+          if (c && c.polarity !== 'NEGATIVE') {
+            // For positive-polarity criteria a NO is a concern
+            out.push(c.label.replace(/\?$/, ''));
+            break;
+          }
+        }
+      }
+      // For negative-polarity criteria a YES is the concern (already disqualifier path)
+    }
+    return out;
+  };
+
+  // Collect section IDs
+  const thesisIds: string[] = [];
+  const riskIds: string[] = [];
+  const catalystIds: string[] = [];
+  for (const s of SECTIONS) {
+    if (s.id >= 1 && s.id <= 5)  thesisIds.push(...s.criteria.map((c) => c.id));
+    if (s.id >= 9 && s.id <= 11) riskIds.push(...s.criteria.map((c) => c.id));
+    if (s.id === 2 || s.id === 14) catalystIds.push(...s.criteria.map((c) => c.id));
+  }
+
+  const thesisHits = yesEvidence(thesisIds).slice(0, 5);
+  const riskHits   = noEvidence(riskIds).slice(0, 5);
+  const catHits    = yesEvidence(catalystIds).slice(0, 4);
+
+  const sym = ticker.toUpperCase();
+  const verdictLine = score.verdict === 'BUY'        ? `${sym} screens as a BUY candidate`
+                    : score.verdict === 'WATCH'      ? `${sym} sits on the WATCH list`
+                    : score.verdict === 'SKIP'       ? `${sym} fails the institutional bar`
+                    :                                  `${sym} thesis is INCOMPLETE`;
+
+  const thesis = thesisHits.length === 0
+    ? `${verdictLine}.  Insufficient YES signals across theme / catalyst / quality (sections 1-5) to articulate a thesis — fill in those sections first.`
+    : `${verdictLine} at ${score.alignment_pct.toFixed(0)}% alignment.  The case rests on: ${thesisHits.join('; ')}.`;
+
+  const risks = riskHits.length === 0 && score.disqualifiers.length === 0
+    ? `No disqualifiers flagged; sections 9-11 (management, dilution, red flags) clear.  Verify cyclical / industry-specific risk via section 8.`
+    : score.disqualifiers.length > 0
+      ? `Disqualifiers present: ${score.disqualifiers.join('; ')}.  Additional concerns: ${riskHits.join('; ') || 'none recorded'}.`
+      : `Open concerns: ${riskHits.join('; ')}.`;
+
+  const catalystPath = catHits.length === 0
+    ? `No explicit catalyst signal in section 2 / section 14.  Position is a slow compounder bet, not a re-rating setup.  Re-test on next earnings.`
+    : `Catalyst path: ${catHits.join('; ')}.  Monitor section 2 (inflection) and section 14 (rarity multipliers) on each earnings print.`;
+
+  return {
+    thesis,
+    risks,
+    catalystPath,
+    alignmentLabel: `${score.verdict} · ${score.alignment_pct.toFixed(0)}% aligned · ${score.yes} ✓ / ${score.no} ✗ / ${score.unanswered} unanswered`,
+  };
+}
+
 // ─── UI ─────────────────────────────────────────────────────────────────────
 
 function inferRegionFromTicker(t: string): 'IN' | 'GLOBAL' {
@@ -658,6 +751,8 @@ export default function StockSheetPage() {
   }, [activeTicker, news, earningsData]);
 
   const score = useMemo(() => scoreSheet(state), [state]);
+  // PATCH 0118 — IMP-12: Section 17 decision memo auto-generates from state
+  const memo = useMemo(() => buildDecisionMemo(activeTicker, state, score), [activeTicker, state, score]);
 
   const handleAnswer = (id: string, signal: Signal | null) => {
     setState((s) => ({ ...s, [id]: { signal: signal as Signal, evidence: s[id]?.evidence || '' } }));
@@ -955,6 +1050,42 @@ export default function StockSheetPage() {
               </div>
             );
           })}
+
+          {/* ─── PATCH 0118 — IMP-12: Section 17 Decision Memo ─────── */}
+          <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: '3px solid #22D3EE', borderRadius: 12, padding: '14px 18px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 14, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px' }}>
+                🧾 17. DECISION MEMO
+              </span>
+              <span style={{ fontSize: 11, color: '#6B7A8D' }}>auto-generated · regenerates on every change</span>
+              <span style={{ marginLeft: 'auto', fontSize: 11, color: '#94A3B8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                {memo.alignmentLabel}
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ padding: '10px 12px', backgroundColor: '#0A1422', borderRadius: 6, border: '1px solid #1A2840' }}>
+                <div style={{ fontSize: 10, color: '#10B981', fontWeight: 800, letterSpacing: '0.6px', marginBottom: 4 }}>① THESIS</div>
+                <div style={{ fontSize: 12, color: '#E6EDF3', lineHeight: 1.65 }}>{memo.thesis}</div>
+              </div>
+              <div style={{ padding: '10px 12px', backgroundColor: '#0A1422', borderRadius: 6, border: '1px solid #1A2840' }}>
+                <div style={{ fontSize: 10, color: '#EF4444', fontWeight: 800, letterSpacing: '0.6px', marginBottom: 4 }}>② KEY RISKS</div>
+                <div style={{ fontSize: 12, color: '#E6EDF3', lineHeight: 1.65 }}>{memo.risks}</div>
+              </div>
+              <div style={{ padding: '10px 12px', backgroundColor: '#0A1422', borderRadius: 6, border: '1px solid #1A2840' }}>
+                <div style={{ fontSize: 10, color: '#FACC15', fontWeight: 800, letterSpacing: '0.6px', marginBottom: 4 }}>③ CATALYST PATH</div>
+                <div style={{ fontSize: 12, color: '#E6EDF3', lineHeight: 1.65 }}>{memo.catalystPath}</div>
+              </div>
+              <button
+                onClick={() => {
+                  const txt = `# ${activeTicker} — Decision Memo\n\n**${memo.alignmentLabel}**\n\n## Thesis\n${memo.thesis}\n\n## Key Risks\n${memo.risks}\n\n## Catalyst Path\n${memo.catalystPath}\n`;
+                  try { navigator.clipboard.writeText(txt); } catch {}
+                }}
+                style={{ alignSelf: 'flex-start', padding: '5px 12px', borderRadius: 4, border: '1px solid #1A2840', backgroundColor: 'transparent', color: '#8A95A3', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
+              >
+                Copy memo as Markdown
+              </button>
+            </div>
+          </div>
         </div>
       )}
       </StockSheetErrorBoundary>
