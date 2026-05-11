@@ -461,7 +461,10 @@ function listSavedTickers(): string[] {
 // Runs once per session.  Eliminates the lingering React Error #31 caused
 // by older saves containing {direction, magnitude} sentiment objects in
 // signal / evidence fields.  Re-uses loadSheet() sanitizer + saves back.
-const SCRUB_KEY = 'mc:stock-sheet:v1:scrub-2025-11';
+// PATCH 0163 — bump scrub key to force re-sanitise EVERY localStorage entry
+// on next page load.  This catches any legacy {direction, magnitude} or
+// object-typed signal/evidence values that slipped past previous scrubs.
+const SCRUB_KEY = 'mc:stock-sheet:v3:scrub-2026-05';
 function scrubAllSavedSheets() {
   if (typeof window === 'undefined') return;
   try {
