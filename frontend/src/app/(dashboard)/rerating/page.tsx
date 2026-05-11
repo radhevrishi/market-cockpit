@@ -84,9 +84,12 @@ type UniverseChoice = 'AUTO' | 'MULTIBAGGER' | 'PORTFOLIO' | 'WATCHLIST' | 'NSE5
 // for stocks dual-listed on BSE + NSE.  Our entire pipeline (quotes, news,
 // API) keys on NSE tickers.  Translate the common dual-listed mid-caps here.
 // (Source: BSE-NSE dual-listing map — extend as more codes surface.)
+// PATCH 0117/0127 — BSE security code → NSE symbol map.  Expanded with the
+// codes the user has surfaced in Multibagger uploads (BSE:514330, etc.).
 const BSE_TO_NSE: Record<string, string> = {
   '523850': 'AXTEL',       // AXTEL Industries
-  '500425': 'AMBUJACEM',   // Ambuja Cements
+  '514330': 'NITTAGELA',   // Nitta Gelatin India
+  '500425': 'AMBUJACEM',
   '500087': 'CIPLA',
   '500096': 'DABUR',
   '500114': 'TITAN',
@@ -102,9 +105,45 @@ const BSE_TO_NSE: Record<string, string> = {
   '532898': 'POWERGRID',
   '532978': 'BAJAJFINSV',
   '533278': 'COALINDIA',
-  '500302': 'PIIND',       // PI Industries
+  '500302': 'PIIND',
   '532809': 'IDEAFORGE',
   '543272': 'MTARTECH',
+  '500031': 'BAJAJELEC',   // Bajaj Electricals
+  '500049': 'BEL',         // Bharat Electronics
+  '500103': 'BHEL',
+  '500300': 'GRASIM',
+  '500390': 'RELINFRA',
+  '500470': 'TATASTEEL',
+  '500510': 'LT',          // Larsen & Toubro
+  '500520': 'M&M',         // Mahindra & Mahindra
+  '500770': 'TATACHEM',
+  '500790': 'NESTLEIND',
+  '500800': 'TATACONSUM',
+  '500820': 'ASIANPAINT',
+  '500830': 'COLPAL',
+  '500850': 'INDHOTEL',
+  '532129': 'IDFC',
+  '532215': 'AXISBANK',
+  '532321': 'CADILAHC',    // Zydus (Cadila)
+  '532424': 'GODREJCP',
+  '532500': 'MARUTI',
+  '532644': 'DIVISLAB',
+  '532648': 'YESBANK',
+  '532720': 'EMAMILTD',
+  '532868': 'DLF',
+  '532921': 'ADANIPORTS',
+  '533155': 'JUBLFOOD',
+  '533398': 'COROMANDEL',
+  '540595': 'AVANTI',      // Avanti Feeds
+  '540975': 'HAL',         // Hindustan Aeronautics
+  '541557': 'BHARATFORG',
+  '542652': 'CAMS',
+  '542801': 'METROPOLIS',
+  '543177': 'BARBEQUE',    // Barbeque Nation
+  '543528': 'PARASDEF',
+  '543320': 'DATAPATTNS',
+  '543425': 'EPACKPEB',    // EPACK Durable / Prefab
+  '543719': 'TIPSMUSIC',
 };
 function normalizeBseTicker(raw: string): string {
   if (!raw) return raw;

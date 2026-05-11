@@ -759,8 +759,10 @@ export default function StockSheetPage() {
     setState(stored?.state || {});
     // Open first 3 sections by default
     setOpenSections({ 1: true, 2: true, 3: true });
-    // PATCH 0114 — record into recents ring
-    pushRecentTicker(activeTicker);
+    // PATCH 0127 — Recently Viewed no longer pushed here; moved to a
+    // separate effect that only fires after the sheet has rendered AND
+    // at least one data probe came back.  Prevents crashed sessions
+    // from polluting the recents ring.
   }, [activeTicker]);
 
   // Sync URL
@@ -777,6 +779,17 @@ export default function StockSheetPage() {
   const { data: quote } = useTickerQuote(activeTicker);
   const { data: news } = useTickerNews(activeTicker);
   const { data: earningsData } = useTickerEarnings(activeTicker);
+
+  // PATCH 0127 — save to Recently Viewed only AFTER at least one data probe
+  // settles for the active ticker.  Crashed render = no quote arrives = no
+  // recents pollution.  User QA: 'HBLENGINE shows in Recently Viewed even
+  // though the sheet crashed before rendering anything meaningful'.
+  useEffect(() => {
+    if (!activeTicker) return;
+    if (quote !== undefined || news !== undefined || earningsData !== undefined) {
+      pushRecentTicker(activeTicker);
+    }
+  }, [activeTicker, quote, news, earningsData]);
 
   // Auto-prefill bundle
   const prefill = useMemo<PrefillBundle>(() => ({

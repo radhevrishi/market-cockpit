@@ -2066,6 +2066,9 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   const [gradeFilter, setGradeFilter] = useState<Set<string>>(new Set(['ALL']));
   const [goodOnly, setGoodOnly] = useState(false);
   const [bucketFilter, setBucketFilter] = useState<Bucket|'ALL'>('ALL');
+  // PATCH 0127 — sector dropdown so the analyst can rank within a single
+  // industry (e.g. compare HBLENGINE only against Defence peers, not all 84).
+  const [sectorFilter, setSectorFilter] = useState<string>('ALL');
   const [accelOnly, setAccelOnly] = useState(false);
   const [fcfOnly, setFcfOnly] = useState(false);
   const [discoveryOnly, setDiscoveryOnly] = useState(false);
@@ -2363,6 +2366,9 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   // Apply all active filters in order
   let baseRows = goodOnly ? goodCompanies : rows;
   if (bucketFilter !== 'ALL') baseRows = baseRows.filter(r => r.bucket === bucketFilter);
+  // PATCH 0127 — sector filter: institutional users want to compare within
+  // sector (e.g. all Defence stocks ranked together, not all 84 mixed).
+  if (sectorFilter !== 'ALL') baseRows = baseRows.filter(r => r.sector === sectorFilter);
   if (accelOnly)      baseRows = baseRows.filter(r => r.decisionStrip.acceleration.pass);
   if (fcfOnly)        baseRows = baseRows.filter(r => (r.fcfAbsolute ?? -1) > 0 || (r.cfoToPat ?? 0) >= 0.8);
   if (discoveryOnly)   baseRows = baseRows.filter(r => (r.fiiPlusDii ?? 100) < 15);
@@ -2612,6 +2618,24 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                 </button>
               );
             })}
+            <div style={{width:1,background:BORDER,height:20}}/>
+            {/* PATCH 0127 — Sector filter dropdown */}
+            <span style={{fontSize:F.xs,color:MUTED,fontWeight:700,letterSpacing:'0.5px'}}>SECTOR:</span>
+            <select
+              value={sectorFilter}
+              onChange={(e) => setSectorFilter(e.target.value)}
+              style={{fontSize:F.xs,fontWeight:700,padding:'5px 8px',borderRadius:7,border:`1px solid ${sectorFilter==='ALL'?BORDER:'#22D3EE60'}`,background:sectorFilter==='ALL'?'transparent':'#22D3EE15',color:sectorFilter==='ALL'?MUTED:'#22D3EE',cursor:'pointer'}}>
+              <option value="ALL">All sectors</option>
+              {(() => {
+                const counts: Record<string, number> = {};
+                for (const r of rows) counts[r.sector] = (counts[r.sector] ?? 0) + 1;
+                return Object.entries(counts)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([s, c]) => (
+                    <option key={s} value={s}>{s} ({c})</option>
+                  ));
+              })()}
+            </select>
             <div style={{width:1,background:BORDER,height:20}}/>
             <span style={{fontSize:F.xs,color:MUTED,fontWeight:700,letterSpacing:'0.5px'}}>QUICK:</span>
             {[
