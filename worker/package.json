@@ -1,0 +1,25 @@
+{
+  "name": "market-cockpit-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Persistent earnings-data worker for Market Cockpit. Lives outside Vercel; scrapes NSE/BSE/Trendlyne/Tickertape with browser pool + cookie persistence and pushes canonical payloads to Upstash KV via the /api/v1/earnings/calendar/ingest endpoint.",
+  "main": "dist/scrape-runner.js",
+  "scripts": {
+    "build": "tsc",
+    "scrape:once": "tsx src/scrape-runner.ts --mode once",
+    "scrape:loop": "tsx src/scrape-runner.ts --mode loop",
+    "start": "node dist/scrape-runner.js --mode loop",
+    "test": "tsx src/aggregator.test.ts"
+  },
+  "dependencies": {
+    "playwright": "^1.49.0",
+    "tsx": "^4.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

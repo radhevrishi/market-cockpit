@@ -1,32 +1,24 @@
 import { NextResponse } from 'next/server';
-import { Redis } from '@upstash/redis';
+import { kvGet, isRedisAvailable } from '@/lib/kv';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 // ═══════════════════════════════════════════════════════════════════════════
-// /api/v1/earnings/calendar — read endpoint (patch 0133)
+// /api/v1/earnings/calendar — read endpoint (patch 0135)
 //
-// Reads the canonical NSE filings calendar from Upstash KV.  Data is
-// populated by .github/workflows/scrape-nse-earnings.yml every 30 min
-// during IST market hours.  Vercel does NO scraping — it just renders
-// what the GitHub Action prepared.
+// PURE READ — Vercel does NO scraping.  Data is populated by an external
+// worker (worker/ directory, deploy to Hetzner / Railway / Render / fly.io)
+// that pushes canonical payloads via /api/v1/earnings/calendar/ingest.
 //
-// Query params:
-//   date=YYYY-MM-DD   → returns filings for that single date
-//   from=YYYY-MM-DD&to=YYYY-MM-DD  → returns filings in date range
-//   (no params)       → returns full payload (last 90d + next 30d)
+// Architecture (10-yr durable stack):
+//   Tier 1: Persistent worker w/ Playwright + cookie jar (external host)
+//   Tier 2: Multi-source aggregator (NSE + BSE + Trendlyne + Tickertape)
+//   Tier 3: Reconciliation + dedup
+//   Tier 4: AI = analyst layer (scoring, classification) — NOT transport
+//
+// Chrome-MCP path is one-time seed / emergency fallback only.
 // ═══════════════════════════════════════════════════════════════════════════
-
-let redis: Redis | null = null;
-try {
-  if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
-    redis = new Redis({
-      url: process.env.UPSTASH_REDIS_REST_URL!,
-      token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-    });
-  }
-} catch {}
 
 interface CalendarItem {
   symbol: string;
@@ -57,9 +49,9 @@ function emptyPayload(): FullPayload {
 }
 
 export async function GET(req: Request) {
-  if (!redis) {
+  if (!isRedisAvailable()) {
     return NextResponse.json({
-      error: 'KV not configured. Set UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN.',
+      error: 'KV not configured.',
       ...emptyPayload(),
     }, { status: 503 });
   }
@@ -72,9 +64,8 @@ export async function GET(req: Request) {
   try {
     // Fast path: single-date lookup
     if (date) {
-      const day: any = await redis.get(`earnings:calendar:nse:v1:date:${date}`);
+      const day: any = await kvGet(`earnings:calendar:nse:v1:date:${date}`);
       if (day) {
-        // Upstash returns parsed JSON when the key was set via SET <json-string>
         const parsed = typeof day === 'string' ? JSON.parse(day) : day;
         return NextResponse.json({
           date: parsed.date || date,
@@ -88,12 +79,12 @@ export async function GET(req: Request) {
     }
 
     // Full payload
-    const full: any = await redis.get('earnings:calendar:nse:v1');
+    const full: any = await kvGet('earnings:calendar:nse:v1');
     if (!full) {
       return NextResponse.json({
         ...emptyPayload(),
-        empty_reason: 'scraper_has_not_run_yet',
-        next_step: 'Trigger the NSE Earnings Calendar Scrape GitHub Action manually, or wait for the 30-min cron.',
+        empty_reason: 'worker_has_not_pushed_yet',
+        next_step: 'Run the worker (worker/scrape-runner.ts) on a persistent host. Chrome-MCP seed is one-time only.',
       });
     }
     const parsed: FullPayload = typeof full === 'string' ? JSON.parse(full) : full;

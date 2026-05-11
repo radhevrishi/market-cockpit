@@ -1,8 +1,21 @@
 import { NextResponse } from 'next/server';
-import { Redis } from '@upstash/redis';
+import { kvSet, isRedisAvailable } from '@/lib/kv';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+// ─── CORS (lets the worker — or one-time Chrome seed — POST cross-origin) ───
+function corsHeaders() {
+  return {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Ingest-Secret',
+    'Access-Control-Max-Age': '86400',
+  };
+}
+export async function OPTIONS() {
+  return new Response(null, { status: 204, headers: corsHeaders() });
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // /api/v1/earnings/calendar/ingest — POST (patch 0134)
@@ -21,15 +34,7 @@ export const dynamic = 'force-dynamic';
 //   { quarterly?: [...], annual?: [...] } — when scraped per-period
 // ═══════════════════════════════════════════════════════════════════════════
 
-let redis: Redis | null = null;
-try {
-  if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
-    redis = new Redis({
-      url: process.env.UPSTASH_REDIS_REST_URL!,
-      token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-    });
-  }
-} catch {}
+// KV helper is used directly (kvSet / isRedisAvailable)
 
 interface CanonicalItem {
   symbol: string;
@@ -122,15 +127,15 @@ export async function POST(req: Request) {
   const expected = process.env.EARNINGS_INGEST_SECRET || 'dev-only';
   const provided = req.headers.get('x-ingest-secret') || '';
   if (provided !== expected) {
-    return NextResponse.json({ error: 'Unauthorized — missing or wrong X-Ingest-Secret header' }, { status: 401 });
+    return NextResponse.json({ error: 'Unauthorized — missing or wrong X-Ingest-Secret header' }, { status: 401, headers: corsHeaders() });
   }
-  if (!redis) {
-    return NextResponse.json({ error: 'KV not configured' }, { status: 503 });
+  if (!isRedisAvailable()) {
+    return NextResponse.json({ error: 'KV not configured' }, { status: 503, headers: corsHeaders() });
   }
 
   let body: any;
   try { body = await req.json(); }
-  catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }); }
+  catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400, headers: corsHeaders() }); }
 
   // Collect raw rows from any of the accepted shapes
   let rawRows: any[] = [];
@@ -143,7 +148,7 @@ export async function POST(req: Request) {
     if (Array.isArray(body?.['half-yearly'])) rawRows.push(...body['half-yearly'].map((r: any) => ({ ...r, _period: 'Half-Yearly' })));
   }
   if (rawRows.length === 0) {
-    return NextResponse.json({ error: 'No rows in payload — expected { rows | items | quarterly | annual }' }, { status: 400 });
+    return NextResponse.json({ error: 'No rows in payload — expected { rows | items | quarterly | annual }' }, { status: 400, headers: corsHeaders() });
   }
 
   // Normalise
@@ -188,17 +193,16 @@ export async function POST(req: Request) {
   // Write to KV (7d TTL)
   const ttl = 7 * 24 * 3600;
   try {
-    await redis.set('earnings:calendar:nse:v1', JSON.stringify(payload), { ex: ttl });
-    // Per-date keys
+    await kvSet('earnings:calendar:nse:v1', payload, ttl);
     for (const [date, dayItems] of Object.entries(byDate)) {
-      await redis.set(
+      await kvSet(
         `earnings:calendar:nse:v1:date:${date}`,
-        JSON.stringify({ date, items: dayItems, total: dayItems.length, scraped_at: payload.scraped_at }),
-        { ex: ttl },
+        { date, items: dayItems, total: dayItems.length, scraped_at: payload.scraped_at },
+        ttl,
       );
     }
   } catch (e: any) {
-    return NextResponse.json({ error: `KV write failed: ${e.message}` }, { status: 500 });
+    return NextResponse.json({ error: `KV write failed: ${e.message}` }, { status: 500, headers: corsHeaders() });
   }
 
   return NextResponse.json({
@@ -208,5 +212,5 @@ export async function POST(req: Request) {
     dates_covered: allDates.length,
     from, to,
     scraped_at: payload.scraped_at,
-  });
+  }, { headers: corsHeaders() });
 }
