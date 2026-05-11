@@ -167,7 +167,7 @@ interface MBStockRow {
   grade?: string;
 }
 
-export function readMultibaggerStocks(): MBStockRow[] {
+function readMultibaggerStocks(): MBStockRow[] {
   if (typeof window === 'undefined') return [];
   try {
     const raw = localStorage.getItem('mb_excel_scored_v2');

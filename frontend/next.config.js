@@ -2,6 +2,23 @@
 const nextConfig = {
   reactStrictMode: false, // disable double-render in dev to avoid chunk race conditions
   swcMinify: true,
+  // PATCH 0122 — fix Vercel build failure (all 10 deploys 0112-0121 errored
+  // at ~45s with webpack 'Module not found: pdf-parse / mammoth').  Both are
+  // Node-only libraries (binary deps + fs reads); webpack cannot bundle them
+  // for the /api/concall/parse server route.  Marking them external leaves
+  // them as runtime imports — Node resolves them normally on Vercel.
+  experimental: {
+    serverComponentsExternalPackages: ['pdf-parse', 'mammoth'],
+  },
+  // Belt-and-braces: also tell webpack to not try and bundle these on the
+  // server build pass.  Some Next.js versions need both signals.
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      config.externals = config.externals || [];
+      config.externals.push('pdf-parse', 'mammoth');
+    }
+    return config;
+  },
   // Keep compiled pages in dev server memory much longer to prevent chunk 404s on refresh
   onDemandEntries: {
     maxInactiveAge: 3600 * 1000,  // keep pages alive for 1 hour (default 15s)
