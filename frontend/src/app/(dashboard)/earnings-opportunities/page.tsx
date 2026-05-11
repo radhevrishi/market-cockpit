@@ -416,16 +416,24 @@ function gradeRow(row: any): ParsedEarning | null {
   const broken = (stage === 4 && (rs == null || rs < 40)) ||
                  (epsY != null && epsY < 0 && patY != null && patY < -10);
 
-  // BLOCKBUSTER strict gate
-  const blockbusterGate =
-    composite >= 84 &&
-    mCount >= 3 &&
-    caveat_tags.length <= 1 &&
+  // PATCH 0162 — BLOCKBUSTER gate (two paths):
+  //   A) CLEAN: 3+ methodologies + ≤1 caveat + clean magnitude (Sales/PAT/EPS all ≥25%)
+  //   B) EXCEPTIONAL: 2+ methodologies + ≤3 caveats + exceptional magnitude (all ≥50%)
+  //      [matches EarningsPulse's Atlanta Electric (2 methods, 0 caveats, +82/+127/+115)
+  //       and Antelopus (4 methods, 3 caveats, +65/+139/+157)]
+  // Both paths require Stage 2 AND RS ≥ 70 AND composite ≥ 84.
+  const cleanMagnitude =
     salesY != null && salesY >= 25 &&
     patY != null && patY >= 25 &&
-    epsY != null && epsY >= 25 &&
-    stage === 2 &&
-    rs != null && rs >= 70;
+    epsY != null && epsY >= 25;
+  const exceptionalMagnitude =
+    salesY != null && salesY >= 50 &&
+    patY != null && patY >= 50 &&
+    epsY != null && epsY >= 50;
+  const stage2RS70 = stage === 2 && rs != null && rs >= 70;
+  const blockbusterPathA = mCount >= 3 && caveat_tags.length <= 1 && cleanMagnitude && stage2RS70;
+  const blockbusterPathB = mCount >= 2 && caveat_tags.length <= 3 && exceptionalMagnitude && stage2RS70;
+  const blockbusterGate = composite >= 84 && (blockbusterPathA || blockbusterPathB);
 
   if (broken && composite < 70) {
     tier = 'AVOID';

@@ -11,7 +11,7 @@
 // CACHING strategy (key insight: past filings are immutable):
 //   • Past dates (< today_IST): cache 90 days. Once a Q4 is filed, the
 //     numbers don't change — re-fetching is pure waste. KV key
-//     'graded:v1:<YYYY-MM-DD>' is hit on every subsequent visit (<100ms).
+//     'graded:v2:<YYYY-MM-DD>' is hit on every subsequent visit (<100ms).
 //   • Today's date: cache 15 min. New filings come throughout the day,
 //     so we accept brief staleness for freshness.
 //   • Future dates: not cached (Upcoming only).
@@ -179,10 +179,15 @@ function gradeRow(row: any): ParsedEarning | null {
 
   const composite = Math.max(0, Math.min(100, magnitude * 0.35 + quality * 0.25 + technical * 0.25 + methodology * 0.15));
 
-  // Tier rules
+  // Tier rules — PATCH 0162 BLOCKBUSTER two-path gate
   let tier: EarningsTier;
   const broken = (stage === 4 && (rs == null || rs < 40)) || (epsY != null && epsY < 0 && patY != null && patY < -10);
-  const blockbusterGate = composite >= 84 && mCount >= 3 && caveat_tags.length <= 1 && salesY != null && salesY >= 25 && patY != null && patY >= 25 && epsY != null && epsY >= 25 && stage === 2 && rs != null && rs >= 70;
+  const cleanMag = salesY != null && salesY >= 25 && patY != null && patY >= 25 && epsY != null && epsY >= 25;
+  const exceptMag = salesY != null && salesY >= 50 && patY != null && patY >= 50 && epsY != null && epsY >= 50;
+  const s2rs70 = stage === 2 && rs != null && rs >= 70;
+  const bbPathA = mCount >= 3 && caveat_tags.length <= 1 && cleanMag && s2rs70;
+  const bbPathB = mCount >= 2 && caveat_tags.length <= 3 && exceptMag && s2rs70;
+  const blockbusterGate = composite >= 84 && (bbPathA || bbPathB);
   if (broken && composite < 70) tier = 'AVOID';
   else if (blockbusterGate) tier = 'BLOCKBUSTER';
   else if (composite >= 68 && mCount >= 1 && caveat_tags.length <= 3 && stage !== 4) tier = 'STRONG';
@@ -238,7 +243,7 @@ export async function GET(req: Request) {
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const isPast = date < todayIso;
-  const cacheKey = `graded:v1:${date}`;
+  const cacheKey = `graded:v2:${date}`;
 
   // Try cache first (past dates are immutable, 90-day TTL — practically forever for our use)
   if (isRedisAvailable() && !refreshMissing) {
