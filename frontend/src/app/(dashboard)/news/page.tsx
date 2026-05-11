@@ -5,6 +5,8 @@ import { useQuery } from '@tanstack/react-query';
 import { RefreshCw, Filter, X, ExternalLink, AlertCircle, Zap, ChevronDown, ChevronRight } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import api from '@/lib/api';
+// PATCH 0129 — strategy filter helper
+import { articleMatchesStrategy } from '@/components/news/NewsCard';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1533,6 +1535,9 @@ export default function NewsFeedPage() {
   const [earningsSeasonActive, setEarningsSeasonActive] = useState<boolean>(false);
   const EARNINGS_WINDOW_START = new Date('2026-04-01').getTime();
   const EARNINGS_WINDOW_END   = new Date('2026-07-31').getTime();
+  // PATCH 0129 — IMP: strategy filter chips ([MB] / [BN] / [RR]) layered on
+  // top of existing region/type/signal filters.  'ALL' shows everything.
+  const [strategyFilter, setStrategyFilter] = useState<'ALL' | 'MB' | 'BN' | 'RR'>('ALL');
   const [drilldownSubTag, setDrilldownSubTag] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing]   = useState(false);
   const [groupByLayer,  setGroupByLayer]  = useState(true); // Group articles by layer
@@ -1630,6 +1635,10 @@ export default function NewsFeedPage() {
       if (earningsSeasonActive) {
         const pub = new Date(a.published_at || a.ingested_at || 0).getTime();
         if (!(pub >= EARNINGS_WINDOW_START && pub <= EARNINGS_WINDOW_END)) return false;
+      }
+      // PATCH 0129 — strategy filter ([MB] / [BN] / [RR])
+      if (strategyFilter !== 'ALL') {
+        if (!articleMatchesStrategy(a as any, strategyFilter)) return false;
       }
       // Bottleneck level sub-filter (only active when viewing BOTTLENECK)
       if (bottleneckLevel !== 'ALL' && articleType === 'BOTTLENECK') {
@@ -2684,6 +2693,24 @@ export default function NewsFeedPage() {
                 📊 Q4 FY26 Earnings {earningsSeasonActive ? '✓' : ''}
               </button>
             </div>
+            {/* PATCH 0129 — Strategy filter ([MB] / [BN] / [RR]) */}
+            <div>
+              <p style={{ fontSize: '10px', fontWeight: '600', color: '#4A5B6C', margin: '0 0 8px', letterSpacing: '0.5px' }}>STRATEGY</p>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {([
+                  { v: 'ALL', label: 'All', color: '#8A95A3' },
+                  { v: 'MB',  label: '⭐ MB · Multibagger',  color: '#FACC15' },
+                  { v: 'BN',  label: '🛑 BN · Bottleneck',   color: '#F87171' },
+                  { v: 'RR',  label: '↗ RR · Re-rating',     color: '#A78BFA' },
+                ] as const).map((s) => (
+                  <button key={s.v} onClick={() => setStrategyFilter(s.v as any)}
+                    style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer', border: `1px solid ${strategyFilter === s.v ? s.color : '#1E2D45'}`, backgroundColor: strategyFilter === s.v ? s.color + '20' : 'transparent', color: strategyFilter === s.v ? s.color : '#8A95A3' }}
+                    title={`Show only articles tagged ${s.label}`}>
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div>
               <p style={{ fontSize: '10px', fontWeight: '600', color: '#4A5B6C', margin: '0 0 8px', letterSpacing: '0.5px' }}>SIGNAL STRENGTH</p>
               <div style={{ display: 'flex', gap: '6px' }}>
@@ -2708,7 +2735,7 @@ export default function NewsFeedPage() {
             </div>
           </div>
           <button
-            onClick={() => { setRegion('ALL'); setArticleType('ALL'); setSourceName('ALL'); setSignalFilter('ALL'); setBottleneckLevel('ALL'); setBottleneckCategory('ALL'); setStructuralOnly(false); setSearch(''); setEarningsSeasonActive(false); }}
+            onClick={() => { setRegion('ALL'); setArticleType('ALL'); setSourceName('ALL'); setSignalFilter('ALL'); setBottleneckLevel('ALL'); setBottleneckCategory('ALL'); setStructuralOnly(false); setSearch(''); setEarningsSeasonActive(false); setStrategyFilter('ALL'); }}
             style={{ marginTop: '12px', fontSize: '11px', color: '#4A5B6C', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
           >
             <X style={{ width: '10px', height: '10px' }} /> Clear filters

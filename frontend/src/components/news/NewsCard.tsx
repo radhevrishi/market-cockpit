@@ -45,6 +45,25 @@ function loadWatchlistSet(): Set<string> {
   __MB_WATCHLIST_CACHE = out;
   return out;
 }
+// PATCH 0129 — IMP: Save-to-Watchlist from NewsCard.  Adds the article's
+// primary ticker (or first ticker_symbol) to mb3_symbols localStorage so the
+// Multibagger upload / Re-rating universe / Stock Sheet recents all pick it
+// up.  Also invalidates the module-level cache so the WATCHLIST tag refreshes.
+function saveTickerToWatchlist(sym: string): boolean {
+  if (typeof window === 'undefined' || !sym) return false;
+  const T = String(sym).toUpperCase();
+  try {
+    const raw = localStorage.getItem('mb3_symbols');
+    const cur: string[] = raw ? JSON.parse(raw) : [];
+    const set = new Set(Array.isArray(cur) ? cur.map((s: any) => typeof s === 'string' ? s : s?.symbol || s?.ticker || '') : []);
+    if (set.has(T)) return false;
+    set.add(T);
+    localStorage.setItem('mb3_symbols', JSON.stringify(Array.from(set)));
+    __MB_WATCHLIST_CACHE = null;  // bust cache so other NewsCards refresh
+    return true;
+  } catch { return false; }
+}
+
 function articleMatchesWatchlist(article: NewsArticle): boolean {
   const wl = loadWatchlistSet();
   if (wl.size === 0) return false;
@@ -70,7 +89,11 @@ function articleMatchesWatchlist(article: NewsArticle): boolean {
 // [BN] indicates a bottleneck article (the news pipeline already tags
 // article_type=BOTTLENECK or bottleneck_sub_tag), [RR] indicates a re-
 // rating catalyst (model shift / margin expansion / multiple expansion).
-type StrategyTag = 'MB' | 'BN' | 'RR';
+export type StrategyTag = 'MB' | 'BN' | 'RR';
+export function articleMatchesStrategy(article: NewsArticle, tag: StrategyTag): boolean {
+  const isMB = articleMatchesWatchlist(article);
+  return articleStrategyTags(article, isMB).includes(tag);
+}
 function articleStrategyTags(article: NewsArticle, isMB: boolean): StrategyTag[] {
   const tags: StrategyTag[] = [];
   if (isMB) tags.push('MB');
@@ -782,19 +805,47 @@ export default function NewsCard({ article, onTickerClick }: Props) {
           })()}
 
           {/* Source + tier + also-reported (PATCH 0115 — BUG-04 dedup) */}
-          <span className="text-[#4A5B6C] text-[11px]">
-            {article.source_name ?? article.source}
-            {(article as any).source_tier && (article as any).source_tier !== 'secondary' && (
-              <span className="ml-1 opacity-60">· {(article as any).source_tier}</span>
-            )}
-            {(article as any).also_reported_by_count > 0 && (
-              <span
-                className="ml-2 px-1.5 py-[1px] rounded bg-[#1A2840] text-[#8A95A3] text-[10px] font-semibold"
-                title={`Also reported by: ${((article as any).also_reported_sources || []).join(', ')}`}
-              >
-                + {(article as any).also_reported_by_count} {(article as any).also_reported_by_count === 1 ? 'source' : 'sources'}
-              </span>
-            )}
+          <span className="text-[#4A5B6C] text-[11px] inline-flex items-center gap-2">
+            <span>
+              {article.source_name ?? article.source}
+              {(article as any).source_tier && (article as any).source_tier !== 'secondary' && (
+                <span className="ml-1 opacity-60">· {(article as any).source_tier}</span>
+              )}
+              {(article as any).also_reported_by_count > 0 && (
+                <span
+                  className="ml-2 px-1.5 py-[1px] rounded bg-[#1A2840] text-[#8A95A3] text-[10px] font-semibold"
+                  title={`Also reported by: ${((article as any).also_reported_sources || []).join(', ')}`}
+                >
+                  + {(article as any).also_reported_by_count} {(article as any).also_reported_by_count === 1 ? 'source' : 'sources'}
+                </span>
+              )}
+            </span>
+            {/* PATCH 0129 — Save-to-Watchlist button on each NewsCard */}
+            {(() => {
+              const pt = (article as any).primary_ticker;
+              const ts = (article as any).ticker_symbols ?? (article as any).tickers ?? [];
+              const fallback = ts[0] ? (typeof ts[0] === 'string' ? ts[0] : ts[0]?.ticker) : null;
+              const sym = pt || fallback;
+              if (!sym) return null;
+              if (isWatchlist) {
+                return <span className="text-[10px] text-yellow-500 opacity-70">★ saved</span>;
+              }
+              return (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (saveTickerToWatchlist(sym)) {
+                      setIsWatchlist(true);
+                      setStrategyTags(articleStrategyTags(article, true));
+                    }
+                  }}
+                  className="text-[10px] px-1.5 py-[1px] rounded border border-yellow-400/30 text-yellow-300/80 hover:bg-yellow-400/20 hover:border-yellow-400/60 hover:text-yellow-300 transition-colors"
+                  title={`Add ${sym} to Multibagger watchlist`}
+                >
+                  ☆ Save {sym}
+                </button>
+              );
+            })()}
           </span>
 
           {/* Expandable summary */}
