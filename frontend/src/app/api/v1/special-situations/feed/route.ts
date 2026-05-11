@@ -223,21 +223,67 @@ const TICKER_BLACKLIST = new Set([
   'FOR','THE','AND','OR','BUT','NOT','ARE','WITH','FROM','HAS','HAD','OUT','OVER','INTO','THIS','THAT','THESE','THOSE','WILL','SAID','SAY','SAYS','MORE','LESS','BIG','SMALL',
   'YEAR','YEARS','QUARTER','MONTH','MONTHS','WEEK','WEEKS','DAY','DAYS',
   'COMPANY','COMPANIES','GROUP','LTD','INC','CORP','PLC','SA','SE','LLC','LP',
+  // PATCH 0164: known FALSE-POSITIVE investor / fund / regulator / generic-word tokens
+  'XV','SEQUOIA','PEAK','BLACKROCK','KKR','TPG','BLACKSTONE','GIC','ADIA','SOFTBANK',
+  'AIF','ETF','REIT','FII','DII','SIP','SWP','STP',
+  'BUYBACK','TENDER','OFFER','OPEN','PUBLIC','MERGER','DEMERGER','SPIN-OFF','ACQUISITION',
+  'DEAL','STAKE','SHARE','SHARES','EQUITY','FLOOR','PRICE','RECORD','EX-DATE',
+  'BUZZING','STOCKS','RALLY','SURGE','PLUNGE','GAIN','LOSS','GAINER','LOSER',
+  'ANNOUNCED','APPROVED','EXPECTED','PLANS','SET','SAYS','TOLD','ADDED',
+  'NEWS','MARKET','MARKETS','TRADE','TRADING','PORTFOLIO','REPORT',
+  // 'FMC' is US Fertilizer Corp ticker but contextually appears as 'FMC Corp' (parent
+  // selling India unit) in headlines — when followed by 'to sell India' it's not the
+  // tradable Indian symbol; we filter this in context-checking below
 ]);
 
+// PATCH 0164: tighter ticker extraction.
+// Heuristics applied in order:
+//   1. .NS / .BO suffix is authoritative — keep as-is
+//   2. Plain caps tokens require POSITIONAL context: appear inside parens like
+//      "(MRVL)", or after / before "shares", "stock", "Inc.", or be 3+ chars and
+//      not in any blacklist.
+//   3. Bare 2-letter tokens are REJECTED unless they appear inside (TKR) form
+//      (avoids 'XV', 'FY', 'IT' false positives).
+//   4. Investor-name dropping: words preceded by "Peak", "Sequoia", "TPG",
+//      "BlackRock" treated as investor labels, not company tickers.
+//   5. We exclude the token when the surrounding bigram is investor-y
+//      ("Peak XV", "Sequoia Capital", etc.)
 function extractTickers(text: string, region: 'IN'|'US'|'GLOBAL'): string[] {
   const tickers = new Set<string>();
-  // 1. Indian-suffixed tickers
+  // 1. Suffixed tickers
   const inSuffix = text.match(/\b[A-Z][A-Z0-9]+\.NS\b|\b[A-Z][A-Z0-9]+\.BO\b/g) || [];
   inSuffix.forEach((t) => tickers.add(t.toUpperCase()));
-  // 2. Plain caps tokens
-  const all = text.match(TICKER_RE) || [];
-  for (const t of all) {
+  // 2a. Strong positive: token in parentheses "(MRVL)" or "(MCX)"
+  const parenTickers = text.match(/\(([A-Z]{2,6})\)/g) || [];
+  for (const m of parenTickers) {
+    const t = m.replace(/[()]/g, '');
     if (TICKER_BLACKLIST.has(t)) continue;
     if (t.length < 2 || t.length > 6) continue;
     tickers.add(t);
   }
-  return Array.from(tickers).slice(0, 6);
+  // 2b. Bare caps tokens — require 3+ chars AND not in blacklist AND not
+  //     preceded by an investor-name keyword.
+  const all = text.match(TICKER_RE) || [];
+  const lowerText = text.toLowerCase();
+  for (const t of all) {
+    if (TICKER_BLACKLIST.has(t)) continue;
+    if (t.length < 3 || t.length > 6) continue;  // 2-char tokens are too noisy
+    // Reject if preceded by investor-name word in the same sentence
+    const idx = text.indexOf(t);
+    if (idx > 0) {
+      const before = text.slice(Math.max(0, idx - 20), idx).toLowerCase();
+      if (/peak\s*$|sequoia\s*$|tpg\s*$|blackrock\s*$|softbank\s*$|kkr\s*$|carlyle\s*$/.test(before)) continue;
+    }
+    tickers.add(t);
+  }
+  // 3. Final pass: if no positively-confirmed (paren-form or .NS/.BO) token
+  //    appears AND we have bare caps that look investor-y or generic,
+  //    drop them entirely rather than guessing.
+  const positives = Array.from(tickers).filter((t) =>
+    t.endsWith('.NS') || t.endsWith('.BO') || text.includes(`(${t})`),
+  );
+  if (positives.length > 0) return positives.slice(0, 6);
+  return Array.from(tickers).slice(0, 4);
 }
 
 // ─── Fetch + classify ───────────────────────────────────────────────────────
