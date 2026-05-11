@@ -62,6 +62,24 @@ export async function pushToVercel(
     latest_quarter_end_iso: e.latest_quarter_end_iso,
     financials_source: e.financials_source,
     financials_scraped_at: e.financials_scraped_at,
+    // PATCH 0148 — Yahoo price enrichment
+    gap_pct: (e as any).gap_pct,
+    d1_pct: (e as any).d1_pct,
+    move_pct: (e as any).move_pct,
+    ma_50: (e as any).ma_50,
+    ma_150: (e as any).ma_150,
+    ma_200: (e as any).ma_200,
+    ma_200_slope_30d: (e as any).ma_200_slope_30d,
+    return_1y_pct: (e as any).return_1y_pct,
+    return_12w_pct: (e as any).return_12w_pct,
+    stage: (e as any).stage,
+    trend_template_passes: (e as any).trend_template_passes,
+    rs_rating: (e as any).rs_rating,
+    price_scraped_at: (e as any).price_scraped_at,
+    // PATCH 0149 — OCF / accrual quality
+    ocf_annual_cr: (e as any).ocf_annual_cr,
+    pat_annual_cr: (e as any).pat_annual_cr,
+    ocf_to_pat_ratio: (e as any).ocf_to_pat_ratio,
   }));
 
   try {

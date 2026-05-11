@@ -71,8 +71,13 @@ interface ParsedEarning {
   pat_prev_cr: number | null;
   eps_curr: number | null;
   eps_prev: number | null;
+  // PATCH 0150 — price / RS / stage overlay
   gap_pct: number | null;
   d1_pct: number | null;
+  move_pct: number | null;
+  rs_rating: number | null;
+  stage: 1 | 2 | 3 | 4 | null;
+  pct_from_52w_high: number | null;
   composite_score: number;
   tier: EarningsTier;
   methodology_tags: string[];
@@ -155,37 +160,51 @@ function gradeRow(row: any): ParsedEarning | null {
     }
   }
 
-  // ── Deterministic methodology checks ──────────────────────────────────
+  // ── Deterministic methodology checks (PATCH 0150) ─────────────────────
+  // Now that we have RS rating, Stage detection and real MA-based trend
+  // template from the Yahoo enricher, these checks fire on real signals.
   const methodology_tags: string[] = [];
   const caveat_tags: string[] = [];
+  const rs: number | null = row?.rs_rating ?? null;
+  const stage: 1 | 2 | 3 | 4 | null = row?.stage ?? null;
+  const ttPass: boolean = !!row?.trend_template_passes;
+  const pct52: number | null = row?.pct_from_52w_high ?? null;
 
-  // bonde ep — EPS leadership with revenue growth
+  // trend template (Minervini) — full 8 criteria from MA stack + 52w geometry,
+  // plus RS ≥ 70 floor.
+  if (ttPass && rs != null && rs >= 70) methodology_tags.push('trend template');
+  // sepa — Stage 2 + RS ≥ 80 + EPS ≥ 25% + within 15% of 52w high
+  if (stage === 2 && rs != null && rs >= 80 && epsY != null && epsY >= 25 && pct52 != null && pct52 >= -15) {
+    methodology_tags.push('sepa');
+  }
+  // canslim — EPS ≥ 25%, Sales ≥ 20%, RS ≥ 80
+  if (epsY != null && epsY >= 25 && (salesY ?? 0) >= 20 && rs != null && rs >= 80) {
+    methodology_tags.push('canslim');
+  }
+  // bonde ep — EPS leadership (≥ 20% YoY) with revenue growth (≥ 5%) and acceleration
   if (epsY != null && epsY >= 20 && (salesY == null || salesY >= 5)) methodology_tags.push('bonde ep');
-  // canslim — annual + quarterly leadership
-  if (epsY != null && epsY >= 25 && (salesY ?? 0) >= 15) methodology_tags.push('canslim');
-  // trend template — strong growth AND price > some implicit moving avg.  Without RS data
-  // we approximate via 52w-high proximity: < 25% off ATH = trend intact
-  const pct52 = row?.pct_from_52w_high;
-  if (epsY != null && epsY >= 25 && pct52 != null && pct52 >= -25) methodology_tags.push('trend template');
-  // sepa — strict superset
-  if (epsY != null && epsY >= 30 && (salesY ?? 0) >= 15 && pct52 != null && pct52 >= -15) methodology_tags.push('sepa');
 
-  // ── Caveat detection ───────────────────────────────────────────────────
-  // Optical EPS — PAT > 3x sales growth AND PAT > 50% OR prior-year EPS near zero
+  // ── Caveat library (PATCH 0150) ────────────────────────────────────────
+  // optical eps — PAT growth far outpaces sales growth, OR low-base distortion
   if (epsY != null && salesY != null && salesY > 0 && epsY >= salesY * 3 && epsY >= 50) caveat_tags.push('optical eps');
   if (epsY != null && epsY >= 200) caveat_tags.push('optical eps');
   if (row?.eps_prev != null && row?.eps_curr != null && Math.abs(row.eps_prev) < 0.5 && Math.abs(row.eps_curr) > 2) {
     caveat_tags.push('optical eps');
   }
-  // OCF / accruals — not available in screener feed; placeholder for future
-  // Tax distortion — heuristic: pat YoY > 100% but op profit YoY < 30%
+  // tax distortion — PAT YoY > 100% but Op Profit YoY < 30% (suggests tax line driving the print)
   if (patY != null && row?.op_profit_yoy_pct != null && patY >= 100 && row.op_profit_yoy_pct < 30) {
     caveat_tags.push('tax distortion');
   }
-  // OPM compression — currOPM < prevOPM by > 1.5pp
+  // segment mix shift — OPM compressed > 1.5pp YoY
   if (opmExp != null && opmExp < -1.5) caveat_tags.push('segment mix shift');
-  // Stage 4 chart heuristic — > 25% off 52w high
-  if (pct52 != null && pct52 < -25) caveat_tags.push('low quality');
+  // ocf divergence — annual OCF < 60% of annual PAT, or OCF < 0 while PAT > 0
+  if (row?.ocf_to_pat_ratio != null) {
+    if (row.ocf_to_pat_ratio < 0.6 && (row.pat_annual_cr ?? 0) > 0) caveat_tags.push('ocf divergence');
+    if (row.ocf_annual_cr != null && row.ocf_annual_cr < 0 && (row.pat_annual_cr ?? 0) > 0) caveat_tags.push('ocf divergence');
+  }
+  // low quality — Stage 4 chart OR > 25% off 52w high
+  if (stage === 4) caveat_tags.push('low quality');
+  else if (pct52 != null && pct52 < -25) caveat_tags.push('low quality');
 
   // ── Composite score ─────────────────────────────────────────────────────
   // Growth pillar (40%)
@@ -201,9 +220,15 @@ function gradeRow(row: any): ParsedEarning | null {
   let quality = 60;
   if (opmExp != null) quality += opmExp >= 3 ? 25 : opmExp >= 1 ? 12 : opmExp >= -1 ? 0 : -18;
 
-  // Technical pillar (20%) — methodology count + 52w proximity
-  let technical = 50 + methodology_tags.length * 10;
-  if (pct52 != null) technical += pct52 >= -5 ? 12 : pct52 >= -15 ? 6 : pct52 >= -25 ? 0 : -10;
+  // Technical pillar (20%) — RS rating + Stage + 52w proximity
+  let technical = 40;
+  if (rs != null) technical += rs >= 90 ? 30 : rs >= 80 ? 22 : rs >= 70 ? 14 : rs >= 50 ? 4 : -10;
+  if (stage === 2) technical += 12;
+  else if (stage === 1) technical += 4;
+  else if (stage === 3) technical -= 4;
+  else if (stage === 4) technical -= 14;
+  if (pct52 != null) technical += pct52 >= -5 ? 8 : pct52 >= -15 ? 4 : pct52 >= -25 ? 0 : -8;
+  technical = Math.max(0, Math.min(100, technical));
 
   // Cleanliness (15%) — penalize caveats
   let clean = 70 - caveat_tags.length * 8;
@@ -252,8 +277,12 @@ function gradeRow(row: any): ParsedEarning | null {
     pat_prev_cr: row.pat_prev_cr ?? null,
     eps_curr: row.eps_curr ?? null,
     eps_prev: row.eps_prev ?? null,
-    gap_pct: null,
-    d1_pct: null,
+    gap_pct: row.gap_pct ?? null,
+    d1_pct: row.d1_pct ?? null,
+    move_pct: row.move_pct ?? null,
+    rs_rating: rs,
+    stage,
+    pct_from_52w_high: pct52,
     composite_score: Math.round(composite),
     tier,
     methodology_tags: [...new Set(methodology_tags)],
@@ -593,14 +622,33 @@ function EarningsCard({ stock }: { stock: ParsedEarning }) {
         )}
       </div>
 
-      {/* ── Intraday move row (Move/Gap/D1) ───────────────────────────────── */}
-      {(stock.gap_pct != null || stock.d1_pct != null) && (
-        <div style={{ display: 'flex', gap: 8, fontSize: 10, color: '#94A3B8', marginBottom: 8 }}>
+      {/* ── Intraday move + RS + Stage row ────────────────────────────────── */}
+      {(stock.gap_pct != null || stock.d1_pct != null || stock.move_pct != null || stock.rs_rating != null || stock.stage != null) && (
+        <div style={{ display: 'flex', gap: 10, fontSize: 10, color: '#94A3B8', marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          {stock.move_pct != null && (
+            <span>Move <strong style={{ color: stock.move_pct >= 0 ? '#10B981' : '#EF4444' }}>{fmtPct(stock.move_pct)}</strong></span>
+          )}
           {stock.gap_pct != null && (
             <span>Gap <strong style={{ color: stock.gap_pct >= 0 ? '#10B981' : '#EF4444' }}>{fmtPct(stock.gap_pct)}</strong></span>
           )}
           {stock.d1_pct != null && (
             <span>D1 <strong style={{ color: stock.d1_pct >= 0 ? '#10B981' : '#EF4444' }}>{fmtPct(stock.d1_pct)}</strong></span>
+          )}
+          {stock.rs_rating != null && (
+            <span style={{
+              padding: '1px 6px', borderRadius: 3,
+              backgroundColor: stock.rs_rating >= 80 ? '#10B98115' : stock.rs_rating >= 50 ? '#F59E0B15' : '#EF444415',
+              color:           stock.rs_rating >= 80 ? '#10B981'    : stock.rs_rating >= 50 ? '#F59E0B'    : '#EF4444',
+              border: '1px solid currentColor', fontWeight: 700,
+            }}>RS {stock.rs_rating}</span>
+          )}
+          {stock.stage != null && (
+            <span style={{
+              padding: '1px 6px', borderRadius: 3,
+              backgroundColor: stock.stage === 2 ? '#10B98115' : stock.stage === 4 ? '#EF444415' : '#6B7A8D15',
+              color:           stock.stage === 2 ? '#10B981'    : stock.stage === 4 ? '#EF4444'    : '#94A3B8',
+              border: '1px solid currentColor', fontWeight: 700,
+            }}>Stage {stock.stage}</span>
           )}
         </div>
       )}

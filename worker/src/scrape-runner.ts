@@ -21,6 +21,7 @@ import { nseAdapter } from './sources/nse.js';
 import { trendlyneAdapter } from './sources/trendlyne.js';
 import { bseAdapter } from './sources/bse.js';
 import { enrichEvents, EnrichmentClient } from './sources/screener.js';
+import { enrichWithPrices } from './sources/yahoo-price.js';
 import { reconcile, validate } from './aggregator.js';
 import { pushToVercel } from './ingest-client.js';
 import { CanonicalEvent, RunResult, SourceAdapter } from './types.js';
@@ -117,8 +118,20 @@ async function runOnePass(): Promise<{ total: number; results: RunResult[]; push
     enriched = clean;
   }
 
+  // PATCH 0148 — overlay Yahoo Finance price data: gap_pct, d1_pct, move_pct,
+  // 52w high/low, MA50/150/200, RS rating, Weinstein stage, trend template.
+  // This is the layer that gives us EarningsPulse-style Move/Gap/D1 + RS.
+  const priceEnabled = (process.env.ENRICH_PRICES ?? '1') !== '0';
+  let priceEnriched = enriched;
+  if (priceEnabled) {
+    const t0 = Date.now();
+    priceEnriched = await enrichWithPrices(enriched, { budgetMs: 5 * 60_000 });
+    const withPrice = priceEnriched.filter((e) => (e as any).current_price != null).length;
+    console.log(`[price] ${withPrice}/${priceEnriched.length} have price in ${Date.now() - t0}ms`);
+  }
+
   // Push to Vercel
-  const pushResult = await pushToVercel(enriched);
+  const pushResult = await pushToVercel(priceEnriched);
   console.log(`[run] push → status=${pushResult.status} ok=${pushResult.ok} ingested=${pushResult.ingested ?? '?'}`);
 
   return { total: clean.length, results, pushed: pushResult };

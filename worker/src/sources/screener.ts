@@ -108,6 +108,66 @@ function parseQuartersTable(html: string): {
   return { quarter_labels, rows };
 }
 
+// PATCH 0149: pull annual cash-flow + P&L for accrual-quality check.
+// Screener's #cash-flow section has a table like:
+//   <th>Mar 2022</th>  <th>Mar 2023</th>  ...  <th>Mar 2026</th>
+//   <td>Cash from Operating Activity +</td><td>...</td>...
+// We extract the latest "Cash from Operating" row and pair it with the
+// matching year's Net Profit from #profit-loss.
+function parseAnnualSection(html: string, sectionId: string): {
+  labels: string[];
+  rows: Record<string, (number | null)[]>;
+} | null {
+  const openRe = new RegExp(`<section[^>]*\\bid=["']${sectionId}["'][^>]*>`, 'i');
+  const open = html.match(openRe);
+  if (!open || open.index === undefined) return null;
+  const start = open.index + open[0].length;
+  const tail = html.slice(start, start + 80_000);
+  const nextSec = tail.search(/<section\s+[^>]*\bid=["']/i);
+  const block = nextSec > 0 ? tail.slice(0, nextSec) : tail;
+  const tblM = block.match(/<table[\s\S]*?<\/table>/i);
+  if (!tblM) return null;
+  const thead = tblM[0].match(/<thead[\s\S]*?<\/thead>/i);
+  if (!thead) return null;
+  const ths = Array.from(thead[0].matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi)).map((m) => stripTags(m[1]));
+  const labels = ths.slice(1);
+  const tbody = tblM[0].match(/<tbody[\s\S]*?<\/tbody>/i);
+  const rows: Record<string, (number | null)[]> = {};
+  if (!tbody) return { labels, rows };
+  for (const tr of Array.from(tbody[0].matchAll(/<tr[\s\S]*?<\/tr>/gi))) {
+    const tds = Array.from(tr[0].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)).map((m) => stripTags(m[1]));
+    if (!tds[0]) continue;
+    rows[tds[0]] = tds.slice(1).map((v) => numeric(v));
+  }
+  return { labels, rows };
+}
+
+function extractOcfQuality(html: string): {
+  ocf_annual_cr: number | null;
+  pat_annual_cr: number | null;
+  ocf_to_pat_ratio: number | null;
+} {
+  const cf = parseAnnualSection(html, 'cash-flow');
+  const pl = parseAnnualSection(html, 'profit-loss');
+  if (!cf || !pl) return { ocf_annual_cr: null, pat_annual_cr: null, ocf_to_pat_ratio: null };
+  const findRow = (rows: Record<string, (number | null)[]>, kw: string) =>
+    Object.keys(rows).find((k) => k.toLowerCase().includes(kw.toLowerCase()));
+  const cfKey = findRow(cf.rows, 'Cash from Operating');
+  const patKey = findRow(pl.rows, 'Net Profit') || findRow(pl.rows, 'Profit');
+  if (!cfKey || !patKey) return { ocf_annual_cr: null, pat_annual_cr: null, ocf_to_pat_ratio: null };
+  // Latest annual column (last column in both)
+  const cfRow = cf.rows[cfKey];
+  const plRow = pl.rows[patKey];
+  // Use last column where both have a value
+  let ocf: number | null = null, pat: number | null = null;
+  for (let i = Math.min(cfRow.length, plRow.length) - 1; i >= 0; i--) {
+    const c = cfRow[i], p = plRow[i];
+    if (c != null && p != null) { ocf = c; pat = p; break; }
+  }
+  const ratio = (ocf != null && pat != null && pat !== 0) ? ocf / pat : null;
+  return { ocf_annual_cr: ocf, pat_annual_cr: pat, ocf_to_pat_ratio: ratio };
+}
+
 // ─── Sector extractor (best-effort) ───────────────────────────────────────
 function parseSector(html: string): string | null {
   // Screener page header has: <a href="/company/compare/...">Compare with FII / DII</a> etc.
@@ -248,6 +308,9 @@ export async function fetchScreenerFinancials(symbol: string): Promise<EnrichOut
   const cp = ratios['Current Price'];
   const hi = ratios['High'] ?? ratios['52w High'];
 
+  // PATCH 0149: pull OCF + annual PAT for accrual-quality check
+  const ocfQuality = extractOcfQuality(html);
+
   // PATCH 0145: capture Screener's latest quarter label + period-end date.
   // Used downstream to detect "scheduled but not yet filed" companies whose
   // Trendlyne calendar entry promised Q4FY26 (Mar 2026) but whose Screener
@@ -300,6 +363,10 @@ export async function fetchScreenerFinancials(symbol: string): Promise<EnrichOut
       op_profit_yoy_pct: pct(opCurr, opPrev),
       pat_yoy_pct: pct(patCurr, patPrev),
       eps_yoy_pct: pct(epsCurr, epsPrev),
+      // PATCH 0149 — annual OCF + PAT for accrual quality
+      ocf_annual_cr: ocfQuality.ocf_annual_cr,
+      pat_annual_cr: ocfQuality.pat_annual_cr,
+      ocf_to_pat_ratio: ocfQuality.ocf_to_pat_ratio,
       financials_source: 'screener',
       financials_scraped_at: new Date().toISOString(),
     },

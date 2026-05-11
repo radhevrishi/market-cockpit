@@ -58,6 +58,26 @@ export interface CanonicalEvent {
   // Enrichment provenance
   financials_source?: 'screener' | null;
   financials_scraped_at?: string;
+
+  // PATCH 0148: Yahoo Finance price enrichment
+  gap_pct?: number | null;            // (today open - prev close) / prev close
+  d1_pct?: number | null;             // close-to-close last bar
+  move_pct?: number | null;           // earnings-day-close to latest close
+  ma_50?: number | null;
+  ma_150?: number | null;
+  ma_200?: number | null;
+  ma_200_slope_30d?: number | null;   // % change in MA200 over last 30 trading days
+  return_1y_pct?: number | null;
+  return_12w_pct?: number | null;
+  stage?: 1 | 2 | 3 | 4 | null;       // Weinstein stage
+  trend_template_passes?: boolean;    // Minervini 8 criteria
+  rs_rating?: number | null;          // 1-99 percentile-rank within batch
+  price_scraped_at?: string;
+
+  // PATCH 0149: Screener cash-flow annual figures (for OCF/accrual quality)
+  ocf_annual_cr?: number | null;       // Operating cash flow (latest annual)
+  pat_annual_cr?: number | null;       // Annual PAT for same period
+  ocf_to_pat_ratio?: number | null;
 }
 
 export type SourceName = 'nse' | 'bse' | 'trendlyne' | 'tickertape' | 'rss';

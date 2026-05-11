@@ -79,6 +79,24 @@ interface CanonicalItem {
   // still has only the prior quarter.
   latest_quarter_label?: string;
   latest_quarter_end_iso?: string;
+  // PATCH 0148: Yahoo Finance price overlay
+  gap_pct?: number | null;
+  d1_pct?: number | null;
+  move_pct?: number | null;
+  ma_50?: number | null;
+  ma_150?: number | null;
+  ma_200?: number | null;
+  ma_200_slope_30d?: number | null;
+  return_1y_pct?: number | null;
+  return_12w_pct?: number | null;
+  stage?: 1 | 2 | 3 | 4 | null;
+  trend_template_passes?: boolean;
+  rs_rating?: number | null;
+  price_scraped_at?: string;
+  // PATCH 0149: OCF / accrual quality
+  ocf_annual_cr?: number | null;
+  pat_annual_cr?: number | null;
+  ocf_to_pat_ratio?: number | null;
 }
 
 // Normalise one NSE raw row → canonical
@@ -193,6 +211,24 @@ function normaliseRow(r: any): CanonicalItem | null {
     latest_quarter_end_iso: r?.latest_quarter_end_iso || undefined,
     financials_source: r?.financials_source,
     financials_scraped_at: r?.financials_scraped_at,
+    // PATCH 0148 — Yahoo price overlay
+    gap_pct: num(r?.gap_pct),
+    d1_pct: num(r?.d1_pct),
+    move_pct: num(r?.move_pct),
+    ma_50: num(r?.ma_50),
+    ma_150: num(r?.ma_150),
+    ma_200: num(r?.ma_200),
+    ma_200_slope_30d: num(r?.ma_200_slope_30d),
+    return_1y_pct: num(r?.return_1y_pct),
+    return_12w_pct: num(r?.return_12w_pct),
+    stage: (typeof r?.stage === 'number' && r.stage >= 1 && r.stage <= 4) ? r.stage : null,
+    trend_template_passes: !!r?.trend_template_passes,
+    rs_rating: num(r?.rs_rating),
+    price_scraped_at: r?.price_scraped_at,
+    // PATCH 0149 — OCF
+    ocf_annual_cr: num(r?.ocf_annual_cr),
+    pat_annual_cr: num(r?.pat_annual_cr),
+    ocf_to_pat_ratio: num(r?.ocf_to_pat_ratio),
   };
 }
 
