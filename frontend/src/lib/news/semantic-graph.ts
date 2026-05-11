@@ -446,6 +446,47 @@ export interface GraphScore {
 
 const TITLE_BONUS = 2.0;
 
+// PATCH 0113 — BUG-03 ANTI-CONTAMINATION RULES.
+// User: 'NTPC fertilizer IPO should NOT be tagged as power bottleneck.'
+// Each rule penalizes a node's weight when its anti-pattern matches the
+// article text — semantic-domain conflict.  Multiplier <1.0 reduces the
+// score so a different (correct) node wins primary.
+interface AntiContamination {
+  node: SystemNode;
+  antiPattern: RegExp;
+  multiplier: number;     // 0.0 = veto, 0.3 = heavy penalty, 0.7 = mild
+}
+const ANTI_CONTAMINATION_RULES: AntiContamination[] = [
+  // ENERGY_INFRA: utility tickers (NTPC, COALINDIA) appear in fertilizer / IPO /
+  // movie / cricket stories — penalize when those domains dominate the text
+  { node: 'ENERGY_INFRA',
+    antiPattern: /\b(fertili[sz]er|urvarak|urea|ammonia|phosphate|nitrogen fertili|hindustan urvarak)\b/i,
+    multiplier: 0.20 },
+  { node: 'ENERGY_INFRA',
+    antiPattern: /\bipo\s+(?:of|for)\s+(?:its\s+)?(?:subsidiary|fertili[sz]er|venture|joint venture|arm)\b/i,
+    multiplier: 0.25 },
+  // NUCLEAR_INFRA: NPCIL appears in non-nuclear infrastructure / property news
+  { node: 'NUCLEAR_INFRA',
+    antiPattern: /\b(real estate|property|residential|hospitality|hotel)\b/i,
+    multiplier: 0.15 },
+  // DEFENSE_INFRA: HAL/BEL appear in equity-fundraising stories not order news
+  { node: 'DEFENSE_INFRA',
+    antiPattern: /\b(qip|rights issue|preferential allotment|dividend declared|bonus issue)\b/i,
+    multiplier: 0.40 },
+  // RENEWABLE_INFRA: ReNew / Adani Green appear in fundraising / FII flow context
+  { node: 'RENEWABLE_INFRA',
+    antiPattern: /\b(qip|rights issue|fii\s+flow|dii\s+flow|mutual fund holding)\b/i,
+    multiplier: 0.50 },
+  // COMPUTE_INFRA: TCS/INFY mentioned in cricket/sports/entertainment context
+  { node: 'COMPUTE_INFRA',
+    antiPattern: /\b(cricket|bollywood|movie|film|sports|entertainment|wedding)\b/i,
+    multiplier: 0.10 },
+  // FABRICATION_INFRA: foundry mentioned in metal/iron/steel context
+  { node: 'FABRICATION_INFRA',
+    antiPattern: /\b(iron foundry|steel foundry|ferrous foundry|casting industry)\b/i,
+    multiplier: 0.20 },
+];
+
 export function scoreGraph(title: string, desc: string): GraphScore {
   const titleLower = title.toLowerCase();
   const fullLower = (title + ' ' + (desc || '')).toLowerCase();
@@ -467,6 +508,20 @@ export function scoreGraph(title: string, desc: string): GraphScore {
     nodeWeights[tok.node] = (nodeWeights[tok.node] || 0) + w;
     // First hit wins for event_class (could be improved with median later)
     if (!nodeEventClass[tok.node]) nodeEventClass[tok.node] = tok.event_hint;
+  }
+
+  // PATCH 0113: apply anti-contamination penalties before picking primary.
+  // Example: 'NTPC plans IPO of fertilizer subsidiary' fires ENERGY_INFRA via
+  // NTPC token, but matches the fertilizer anti-pattern → ENERGY_INFRA score
+  // multiplied by 0.20 so MANUFACTURING_CAPACITY (IPO/subsidiary) or
+  // AGRI_INFRA (fertilizer) wins primary.
+  for (const rule of ANTI_CONTAMINATION_RULES) {
+    if (rule.antiPattern.test(fullLower)) {
+      const current = nodeWeights[rule.node];
+      if (current != null && current > 0) {
+        nodeWeights[rule.node] = current * rule.multiplier;
+      }
+    }
   }
 
   // Determine primary node (highest weight)
