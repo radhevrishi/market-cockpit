@@ -57,6 +57,9 @@ export async function pushToVercel(
     pat_yoy_pct: e.pat_yoy_pct,
     eps_yoy_pct: e.eps_yoy_pct,
     op_profit_yoy_pct: e.op_profit_yoy_pct,
+    // PATCH 0145: pass latest quarter so frontend can detect not-yet-filed
+    latest_quarter_label: e.latest_quarter_label,
+    latest_quarter_end_iso: e.latest_quarter_end_iso,
     financials_source: e.financials_source,
     financials_scraped_at: e.financials_scraped_at,
   }));

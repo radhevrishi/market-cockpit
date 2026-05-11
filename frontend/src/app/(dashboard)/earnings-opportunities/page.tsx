@@ -105,8 +105,27 @@ function todayISO(): string {
   return d.toISOString().slice(0, 10);
 }
 
+// PATCH 0145: parse Trendlyne's period_ended (e.g. "31-Mar-2026") → YYYY-MM-DD
+function parseTrendlynePeriodEnd(s: string): string | null {
+  if (!s) return null;
+  const m = s.match(/(\d{1,2})[- /]([A-Za-z]{3,9})[- /](\d{4})/);
+  if (!m) return null;
+  const months: Record<string, number> = {
+    JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5,
+    JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11,
+  };
+  const mm = months[m[2].toUpperCase().slice(0, 3)];
+  if (mm === undefined) return null;
+  const day = parseInt(m[1], 10);
+  const yr = parseInt(m[3], 10);
+  return new Date(Date.UTC(yr, mm, day)).toISOString().slice(0, 10);
+}
+
 // PATCH 0137: derive opportunities from the worker-enriched calendar.
 // Replaces the old news-regex grader with calendar-driven grading.
+// PATCH 0145: additionally skip rows whose company hasn't actually filed yet
+//  — either filing_date is in the future, OR Screener's latest quarter
+//  doesn't match the period Trendlyne promised.
 function gradeRow(row: any): ParsedEarning | null {
   const salesY: number | null = row?.sales_yoy_pct ?? null;
   const patY:   number | null = row?.pat_yoy_pct ?? null;
@@ -115,6 +134,26 @@ function gradeRow(row: any): ParsedEarning | null {
 
   // Skip un-enriched rows (no Sales/PAT) — they're calendar-only and would clutter Graded view
   if (salesY == null && patY == null && epsY == null) return null;
+
+  // PATCH 0145.1: filing_date must be ≤ today. Future-scheduled board meetings
+  // are NOT actual filings — grading Screener's historic Q3 data would mislead.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  if (row?.filing_date && row.filing_date > todayIso) return null;
+
+  // PATCH 0145.2: quarter alignment. Trendlyne's period_ended tells us the
+  // quarter that was supposed to be reported. Screener's latest_quarter_end_iso
+  // tells us what quarter is actually live on the stock page. If those don't
+  // match (Screener still shows the PRIOR quarter), the company hasn't filed.
+  if (row?.period_ended && row?.latest_quarter_end_iso) {
+    const promised = parseTrendlynePeriodEnd(row.period_ended);  // returns YYYY-MM-DD or null
+    if (promised && promised !== row.latest_quarter_end_iso) {
+      // Allow a 1-month look-back tolerance — sometimes Screener period-end
+      // is reported as the *announcement* month not the quarter-close month.
+      const pd = new Date(promised), ld = new Date(row.latest_quarter_end_iso);
+      const diffDays = Math.abs((pd.getTime() - ld.getTime()) / (24 * 3600_000));
+      if (diffDays > 45) return null;
+    }
+  }
 
   // ── Deterministic methodology checks ──────────────────────────────────
   const methodology_tags: string[] = [];
@@ -232,9 +271,31 @@ function useEarningsOpportunities(date: string) {
       // PATCH 0137: read from worker-enriched calendar, not the old news endpoint
       const url = date ? `/earnings/calendar?date=${date}` : '/earnings/calendar';
       const { data } = await api.get(url);
-      const items = date
-        ? (data?.items || [])
-        : Object.values(data?.by_date || {}).flat();
+      const todayIso = new Date().toISOString().slice(0, 10);
+
+      // PATCH 0145.3: when no date is selected ("Latest available"), pick the
+      // most recent PAST date with ≥3 enriched filings, NOT a flat union of
+      // every event in the calendar (which would mix already-filed companies
+      // with future-scheduled board meetings whose Screener data is stale).
+      let items: any[] = [];
+      let resolvedDate: string | null = date || null;
+      if (date) {
+        items = (data?.items || []) as any[];
+      } else {
+        const byDate = (data?.by_date || {}) as Record<string, any[]>;
+        const pastDates = Object.keys(byDate).filter((d) => d <= todayIso).sort().reverse();
+        for (const d of pastDates) {
+          const dayItems = (byDate[d] || []).filter((r) =>
+            r?.sales_curr_cr != null || r?.pat_curr_cr != null || r?.eps_curr != null
+          );
+          if (dayItems.length >= 3) {
+            items = byDate[d];   // full set (gradeRow will filter inside)
+            resolvedDate = d;
+            break;
+          }
+        }
+      }
+
       const graded: ParsedEarning[] = [];
       for (const row of items as any[]) {
         const g = gradeRow(row);
@@ -246,7 +307,7 @@ function useEarningsOpportunities(date: string) {
       for (const g of graded) by_tier[g.tier].push(g);
       for (const t of TIER_ORDER) by_tier[t].sort((a, b) => b.composite_score - a.composite_score);
       return {
-        filing_date: date || null,
+        filing_date: resolvedDate,
         candidates_total: graded.length,
         raw_items_total: items.length,
         by_tier,
@@ -290,12 +351,17 @@ export default function EarningsOpportunitiesPage() {
     sources_polled: 0,
   };
 
+  // PATCH 0145.4: when no manual date is picked, fall back to whatever the
+  // query resolver picked as the most-recent past date with filings, so the
+  // header reflects what's actually being graded.
+  const effectiveDate = filterDate || view.filing_date || '';
   const filingDateLabel = (() => {
-    if (!filterDate) return 'Latest available';
+    if (!effectiveDate) return 'Latest available';
     try {
-      const d = new Date(filterDate);
-      return d.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-    } catch { return filterDate; }
+      const d = new Date(effectiveDate);
+      const formatted = d.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+      return !filterDate ? `${formatted} · auto-picked` : formatted;
+    } catch { return effectiveDate; }
   })();
 
   const counts = TIER_ORDER.map((t) => ({ tier: t, n: view.by_tier[t]?.length || 0 }));

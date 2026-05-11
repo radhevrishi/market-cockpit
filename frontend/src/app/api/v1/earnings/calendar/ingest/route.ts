@@ -74,6 +74,11 @@ interface CanonicalItem {
   op_profit_yoy_pct?: number | null;
   financials_source?: string;
   financials_scraped_at?: string;
+  // PATCH 0145: Screener's latest quarter — used by frontend to skip
+  // not-yet-filed companies whose board meeting is scheduled but Screener
+  // still has only the prior quarter.
+  latest_quarter_label?: string;
+  latest_quarter_end_iso?: string;
 }
 
 // Normalise one NSE raw row → canonical
@@ -174,6 +179,8 @@ function normaliseRow(r: any): CanonicalItem | null {
     pat_yoy_pct: num(r?.pat_yoy_pct),
     eps_yoy_pct: num(r?.eps_yoy_pct),
     op_profit_yoy_pct: num(r?.op_profit_yoy_pct),
+    latest_quarter_label: r?.latest_quarter_label || undefined,
+    latest_quarter_end_iso: r?.latest_quarter_end_iso || undefined,
     financials_source: r?.financials_source,
     financials_scraped_at: r?.financials_scraped_at,
   };

@@ -49,6 +49,12 @@ export interface CanonicalEvent {
   high_52w?: number | null;
   low_52w?: number | null;
   pct_from_52w_high?: number | null;
+  // PATCH 0145: track Screener's latest quarter so the grader can detect
+  // companies whose board meeting is scheduled but who haven't actually
+  // filed Q4 yet (Screener still shows the previous quarter as latest).
+  latest_quarter_label?: string;    // e.g. 'Mar 2026', 'Dec 2025'
+  latest_quarter_end_iso?: string;  // 'YYYY-MM-DD' for the last day of the quarter
+
   // Enrichment provenance
   financials_source?: 'screener' | null;
   financials_scraped_at?: string;

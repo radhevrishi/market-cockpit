@@ -247,10 +247,36 @@ export async function fetchScreenerFinancials(symbol: string): Promise<EnrichOut
 
   const cp = ratios['Current Price'];
   const hi = ratios['High'] ?? ratios['52w High'];
+
+  // PATCH 0145: capture Screener's latest quarter label + period-end date.
+  // Used downstream to detect "scheduled but not yet filed" companies whose
+  // Trendlyne calendar entry promised Q4FY26 (Mar 2026) but whose Screener
+  // page still shows Q3FY26 (Dec 2025) as latest — they haven't reported.
+  const latestLabel = qNN.quarter_labels[latestIdx];   // e.g. "Mar 2026"
+  let latestEndIso: string | undefined;
+  if (latestLabel) {
+    const lm = latestLabel.match(/([A-Za-z]{3,9})\s+(\d{4})/);
+    if (lm) {
+      const monthMap: Record<string, number> = {
+        JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6,
+        JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12,
+      };
+      const mm = monthMap[lm[1].toUpperCase().slice(0, 3)];
+      if (mm) {
+        // Last day of that month
+        const yr = Number(lm[2]);
+        const last = new Date(Date.UTC(yr, mm, 0));   // mm here is 1-indexed → trick gives last day
+        latestEndIso = last.toISOString().slice(0, 10);
+      }
+    }
+  }
+
   return {
     ok: true,
     data: {
       sector: sector || undefined,
+      latest_quarter_label: latestLabel || undefined,
+      latest_quarter_end_iso: latestEndIso,
       pe: ratios['Stock P/E'] ?? ratios['P/E'] ?? null,
       market_cap_cr: ratios['Market Cap'] ?? null,
       market_cap_bucket: bucketMarketCap(ratios['Market Cap'] ?? null),
