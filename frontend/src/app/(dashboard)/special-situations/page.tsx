@@ -27,6 +27,27 @@ import { ExternalLink, AlertTriangle } from 'lucide-react';
 import api from '@/lib/api';
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PATCH 0167 — Rejected Reasons (persistent per-event notes)
+// localStorage backed.  Survives every "Refresh" / "Clear" action.  Only
+// removable via the explicit delete (✕) icon on the rejection chip.
+// ═══════════════════════════════════════════════════════════════════════════
+const REJECTED_LS_KEY = 'mc:specsit:rejected:v1';
+interface RejectionRecord { reason: string; ts: number; }
+type RejectionMap = Record<string, RejectionRecord>;
+
+function loadRejections(): RejectionMap {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(REJECTED_LS_KEY);
+    return raw ? (JSON.parse(raw) as RejectionMap) : {};
+  } catch { return {}; }
+}
+function saveRejections(map: RejectionMap) {
+  if (typeof window === 'undefined') return;
+  try { window.localStorage.setItem(REJECTED_LS_KEY, JSON.stringify(map)); } catch {}
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // LIVE FEED — single source of truth
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -479,6 +500,30 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
   const [expanded, setExpanded] = useState(false);
   const meta = EVENT_TYPE_META[ev.event_type] || EVENT_TYPE_META.UNCLASSIFIED;
   const ageLabel = ev.age_hours < 24 ? `${ev.age_hours}h` : `${Math.round(ev.age_hours / 24)}d`;
+  // PATCH 0167 — Rejected reason persistence
+  const [rejection, setRejection] = useState<RejectionRecord | null>(null);
+  const [showRejectInput, setShowRejectInput] = useState(false);
+  const [draftReason, setDraftReason] = useState('');
+  useEffect(() => {
+    const all = loadRejections();
+    setRejection(all[ev.event_id] || null);
+  }, [ev.event_id]);
+  const saveRejection = () => {
+    const txt = draftReason.trim();
+    if (!txt) return;
+    const all = loadRejections();
+    all[ev.event_id] = { reason: txt, ts: Date.now() };
+    saveRejections(all);
+    setRejection(all[ev.event_id]);
+    setShowRejectInput(false);
+    setDraftReason('');
+  };
+  const deleteRejection = () => {
+    const all = loadRejections();
+    delete all[ev.event_id];
+    saveRejections(all);
+    setRejection(null);
+  };
   // PATCH 0128 — inline deal spread + annualized return strip
   const primaryTicker = ev.tickers[0];
   const dealPrice = useMemo(() => parseDealPrice(ev.primary_filing.title), [ev.primary_filing.title]);
@@ -497,7 +542,35 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
     ev.event_type === 'SPIN_OFF' || ev.event_type === 'DEMERGER_INDIA' || ev.event_type === 'IPO_SUBSIDIARY' ? 120 : 60;
   const annualizedPct = spreadPct != null ? spreadPct * (365 / daysToCloseGuess) : null;
   return (
-    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: `3px solid ${meta.color}`, borderRadius: 10 }}>
+    <div style={{
+      backgroundColor: rejection ? '#1A0E10' : '#0D1B2E',
+      border: `1px solid ${rejection ? '#EF444440' : '#1E2D45'}`,
+      borderLeft: `3px solid ${rejection ? '#EF4444' : meta.color}`,
+      borderRadius: 10,
+      opacity: rejection ? 0.85 : 1,
+    }}>
+      {/* PATCH 0167 — Rejection chip + edit form (sticky, above the click target) */}
+      {rejection && (
+        <div style={{ padding: '8px 16px 0', display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
+          <span style={{ color: '#EF4444', fontWeight: 800, letterSpacing: '0.4px' }}>REJECTED</span>
+          <span style={{ color: '#C9D4E0', flex: 1, fontStyle: 'italic' }}>{rejection.reason}</span>
+          <span style={{ color: '#6B7A8D', fontSize: 10 }}>{new Date(rejection.ts).toLocaleDateString('en-IN')}</span>
+          <button onClick={(e) => { e.stopPropagation(); deleteRejection(); }}
+            title="Delete rejection reason"
+            style={{ padding: '2px 6px', borderRadius: 3, border: '1px solid #EF444460', background: 'transparent', color: '#EF4444', cursor: 'pointer', fontWeight: 700, fontSize: 11 }}>
+            ✕
+          </button>
+        </div>
+      )}
+      {showRejectInput && (
+        <div onClick={(e) => e.stopPropagation()} style={{ padding: '8px 16px 0', display: 'flex', gap: 6, alignItems: 'center' }}>
+          <input autoFocus value={draftReason} onChange={(e) => setDraftReason(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') saveRejection(); if (e.key === 'Escape') setShowRejectInput(false); }}
+            placeholder="Why reject? (Enter to save, Esc to cancel)"
+            style={{ flex: 1, padding: '4px 8px', backgroundColor: '#0D1623', border: '1px solid #EF444440', borderRadius: 4, color: '#E6EDF3', fontSize: 11, outline: 'none' }} />
+          <button onClick={saveRejection} style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid #EF444460', background: '#EF444415', color: '#EF4444', fontSize: 11, cursor: 'pointer', fontWeight: 700 }}>Save</button>
+        </div>
+      )}
       <button onClick={() => setExpanded((s) => !s)} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '12px 16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
           <span style={{ fontSize: 11, fontWeight: 800, color: meta.color, padding: '2px 8px', borderRadius: 4, backgroundColor: `${meta.color}18`, border: `1px solid ${meta.color}40` }}>
@@ -550,8 +623,16 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
           </div>
         )}
         {!expanded && (
-          <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 4, fontStyle: 'italic' }}>
-            {ev.tradability_rationale}
+          <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 4, fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ flex: 1 }}>{ev.tradability_rationale}</span>
+            {!rejection && !showRejectInput && (
+              <span
+                role="button"
+                onClick={(e) => { e.stopPropagation(); setShowRejectInput(true); }}
+                style={{ fontSize: 10, padding: '1px 7px', borderRadius: 3, border: '1px solid #EF444460', color: '#EF4444', cursor: 'pointer', fontWeight: 700, letterSpacing: '0.4px' }}>
+                ⊘ REJECT
+              </span>
+            )}
           </div>
         )}
       </button>
