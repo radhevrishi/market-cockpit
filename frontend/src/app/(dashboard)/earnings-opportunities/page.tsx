@@ -105,12 +105,154 @@ function todayISO(): string {
   return d.toISOString().slice(0, 10);
 }
 
+// PATCH 0137: derive opportunities from the worker-enriched calendar.
+// Replaces the old news-regex grader with calendar-driven grading.
+function gradeRow(row: any): ParsedEarning | null {
+  const salesY: number | null = row?.sales_yoy_pct ?? null;
+  const patY:   number | null = row?.pat_yoy_pct ?? null;
+  const epsY:   number | null = row?.eps_yoy_pct ?? null;
+  const opmExp: number | null = row?.opm_pct != null && row?.opm_prev_pct != null ? row.opm_pct - row.opm_prev_pct : null;
+
+  // Skip un-enriched rows (no Sales/PAT) — they're calendar-only and would clutter Graded view
+  if (salesY == null && patY == null && epsY == null) return null;
+
+  // ── Deterministic methodology checks ──────────────────────────────────
+  const methodology_tags: string[] = [];
+  const caveat_tags: string[] = [];
+
+  // bonde ep — EPS leadership with revenue growth
+  if (epsY != null && epsY >= 20 && (salesY == null || salesY >= 5)) methodology_tags.push('bonde ep');
+  // canslim — annual + quarterly leadership
+  if (epsY != null && epsY >= 25 && (salesY ?? 0) >= 15) methodology_tags.push('canslim');
+  // trend template — strong growth AND price > some implicit moving avg.  Without RS data
+  // we approximate via 52w-high proximity: < 25% off ATH = trend intact
+  const pct52 = row?.pct_from_52w_high;
+  if (epsY != null && epsY >= 25 && pct52 != null && pct52 >= -25) methodology_tags.push('trend template');
+  // sepa — strict superset
+  if (epsY != null && epsY >= 30 && (salesY ?? 0) >= 15 && pct52 != null && pct52 >= -15) methodology_tags.push('sepa');
+
+  // ── Caveat detection ───────────────────────────────────────────────────
+  // Optical EPS — PAT > 3x sales growth AND PAT > 50% OR prior-year EPS near zero
+  if (epsY != null && salesY != null && salesY > 0 && epsY >= salesY * 3 && epsY >= 50) caveat_tags.push('optical eps');
+  if (epsY != null && epsY >= 200) caveat_tags.push('optical eps');
+  if (row?.eps_prev != null && row?.eps_curr != null && Math.abs(row.eps_prev) < 0.5 && Math.abs(row.eps_curr) > 2) {
+    caveat_tags.push('optical eps');
+  }
+  // OCF / accruals — not available in screener feed; placeholder for future
+  // Tax distortion — heuristic: pat YoY > 100% but op profit YoY < 30%
+  if (patY != null && row?.op_profit_yoy_pct != null && patY >= 100 && row.op_profit_yoy_pct < 30) {
+    caveat_tags.push('tax distortion');
+  }
+  // OPM compression — currOPM < prevOPM by > 1.5pp
+  if (opmExp != null && opmExp < -1.5) caveat_tags.push('segment mix shift');
+  // Stage 4 chart heuristic — > 25% off 52w high
+  if (pct52 != null && pct52 < -25) caveat_tags.push('low quality');
+
+  // ── Composite score ─────────────────────────────────────────────────────
+  // Growth pillar (40%)
+  const scoreFromYoy = (y: number) =>
+    y >= 200 ? 100 : y >= 100 ? 95 : y >= 50 ? 88 : y >= 25 ? 75 : y >= 10 ? 60 : y >= 0 ? 45 : y >= -10 ? 32 : y >= -25 ? 20 : 8;
+  let growth = 45, weight = 0;
+  if (salesY != null) { growth += scoreFromYoy(salesY) * 0.20; weight += 0.20; }
+  if (patY   != null) { growth += scoreFromYoy(patY)   * 0.30; weight += 0.30; }
+  if (epsY   != null) { growth += scoreFromYoy(epsY)   * 0.50; weight += 0.50; }
+  growth = weight > 0 ? (growth - 45) / weight : 45;
+
+  // Quality pillar (25%) — OPM expansion
+  let quality = 60;
+  if (opmExp != null) quality += opmExp >= 3 ? 25 : opmExp >= 1 ? 12 : opmExp >= -1 ? 0 : -18;
+
+  // Technical pillar (20%) — methodology count + 52w proximity
+  let technical = 50 + methodology_tags.length * 10;
+  if (pct52 != null) technical += pct52 >= -5 ? 12 : pct52 >= -15 ? 6 : pct52 >= -25 ? 0 : -10;
+
+  // Cleanliness (15%) — penalize caveats
+  let clean = 70 - caveat_tags.length * 8;
+
+  const composite = Math.max(0, Math.min(100,
+    growth * 0.40 + quality * 0.25 + technical * 0.20 + clean * 0.15,
+  ));
+
+  // ── Tier assignment ────────────────────────────────────────────────────
+  let tier: EarningsTier;
+  if      (composite >= 85 && caveat_tags.length === 0) tier = 'BLOCKBUSTER';
+  else if (composite >= 70) tier = 'STRONG';
+  else if (composite >= 50) tier = 'MIXED';
+  else                      tier = 'AVOID';
+
+  // ── Narrative ──────────────────────────────────────────────────────────
+  const co = row.company || row.symbol;
+  const q = row.quarter || 'Q4';
+  const fmtP = (lbl: string, v: number | null) => v == null ? '' : `${lbl} ${v >= 0 ? '+' : ''}${Math.round(v)}% YoY`;
+  const head =
+    tier === 'BLOCKBUSTER' ? `${co} prints a blockbuster ${q}` :
+    tier === 'STRONG'      ? `${co} delivers strong ${q}` :
+    tier === 'MIXED'       ? `${co} ${q} is a mixed print` :
+                             `${co} ${q} fails the bar`;
+  const metrics = [fmtP('revenue', salesY), fmtP('PAT', patY), fmtP('EPS', epsY)].filter(Boolean).join(', ');
+  const flavor =
+    caveat_tags.length > 0 ? ` with caveat${caveat_tags.length > 1 ? 's' : ''}: ${[...new Set(caveat_tags)].slice(0, 3).join(' + ')}.` :
+    methodology_tags.length >= 2 ? ` and ${[...new Set(methodology_tags)].join('/')} all passing.` : '.';
+  const narrative = `${head} (${metrics})${flavor}`;
+
+  return {
+    ticker: row.symbol,
+    company: row.company || row.symbol,
+    sector: row.sector,
+    filing_date: row.filing_date,
+    quarter: row.quarter || 'Q4',
+    market_cap_bucket: row.market_cap_bucket,
+    pe: row.pe ?? null,
+    price: row.current_price ?? null,
+    sales_yoy_pct: salesY,
+    net_profit_yoy_pct: patY,
+    eps_yoy_pct: epsY,
+    sales_curr_cr: row.sales_curr_cr ?? null,
+    sales_prev_cr: row.sales_prev_cr ?? null,
+    pat_curr_cr: row.pat_curr_cr ?? null,
+    pat_prev_cr: row.pat_prev_cr ?? null,
+    eps_curr: row.eps_curr ?? null,
+    eps_prev: row.eps_prev ?? null,
+    gap_pct: null,
+    d1_pct: null,
+    composite_score: Math.round(composite),
+    tier,
+    methodology_tags: [...new Set(methodology_tags)],
+    caveat_tags: [...new Set(caveat_tags)],
+    narrative,
+    filing_url: row.source_url || row.attachment,
+    source: row.financials_source || 'worker',
+  };
+}
+
 function useEarningsOpportunities(date: string) {
   return useQuery<OpportunitiesPayload>({
-    queryKey: ['earnings-opportunities', date || 'all'],
+    queryKey: ['earnings-opportunities-from-calendar', date || 'all'],
     queryFn: async () => {
-      const { data } = await api.get(`/earnings/opportunities${date ? `?date=${date}` : ''}`);
-      return data;
+      // PATCH 0137: read from worker-enriched calendar, not the old news endpoint
+      const url = date ? `/earnings/calendar?date=${date}` : '/earnings/calendar';
+      const { data } = await api.get(url);
+      const items = date
+        ? (data?.items || [])
+        : Object.values(data?.by_date || {}).flat();
+      const graded: ParsedEarning[] = [];
+      for (const row of items as any[]) {
+        const g = gradeRow(row);
+        if (g) graded.push(g);
+      }
+      const by_tier: Record<EarningsTier, ParsedEarning[]> = {
+        BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [],
+      };
+      for (const g of graded) by_tier[g.tier].push(g);
+      for (const t of TIER_ORDER) by_tier[t].sort((a, b) => b.composite_score - a.composite_score);
+      return {
+        filing_date: date || null,
+        candidates_total: graded.length,
+        raw_items_total: items.length,
+        by_tier,
+        generated_at: data?.scraped_at || new Date().toISOString(),
+        sources_polled: 1,
+      };
     },
     staleTime: 5 * 60_000,
     refetchInterval: 10 * 60_000,

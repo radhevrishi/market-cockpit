@@ -19,10 +19,42 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { nseAdapter } from './sources/nse.js';
 import { trendlyneAdapter } from './sources/trendlyne.js';
+import { enrichEvents, EnrichmentClient } from './sources/screener.js';
 import { reconcile, validate } from './aggregator.js';
 import { pushToVercel } from './ingest-client.js';
 import { CanonicalEvent, RunResult, SourceAdapter } from './types.js';
 import { persistAll, shutdown } from './browser-pool.js';
+
+// ─── KV client for the enrichment cache ────────────────────────────────────
+// Worker writes directly to Upstash REST API so we don't double-hop through
+// Vercel for cache lookups during enrichment.  Same env vars as Vercel.
+function getKvClient(): EnrichmentClient | undefined {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return undefined;
+  return {
+    async kvGet(key: string) {
+      try {
+        const res = await fetch(`${url}/get/${encodeURIComponent(key)}`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (!res.ok) return null;
+        const j = await res.json();
+        return j?.result ? JSON.parse(j.result) : null;
+      } catch { return null; }
+    },
+    async kvSet(key: string, value: any, ttlSeconds: number) {
+      try {
+        const body = JSON.stringify(value);
+        await fetch(`${url}/set/${encodeURIComponent(key)}?EX=${ttlSeconds}`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'text/plain' },
+          body,
+        });
+      } catch {}
+    },
+  };
+}
 
 const STATE_DIR = process.env.STATE_DIR || '/var/lib/mc-worker';
 
@@ -69,8 +101,23 @@ async function runOnePass(): Promise<{ total: number; results: RunResult[]; push
   const clean = validate(merged);
   console.log(`[run] reconciled ${merged.length} → ${clean.length} valid`);
 
+  // PATCH 0137 — enrich each event with Screener.in financials.
+  // Per-event KV cache means we only fetch new (symbol, filing_date) tuples.
+  // Budgeted to 8 minutes per pass — remaining events ship unenriched.
+  const enrichEnabled = (process.env.ENRICH_FINANCIALS ?? '1') !== '0';
+  let enriched: CanonicalEvent[];
+  if (enrichEnabled) {
+    const kv = getKvClient();
+    const t0 = Date.now();
+    enriched = await enrichEvents(clean, kv, { budgetMs: 8 * 60_000 });
+    const withFin = enriched.filter((e) => e.sales_curr_cr != null).length;
+    console.log(`[enrich] ${withFin}/${enriched.length} enriched with financials in ${Date.now() - t0}ms`);
+  } else {
+    enriched = clean;
+  }
+
   // Push to Vercel
-  const pushResult = await pushToVercel(clean);
+  const pushResult = await pushToVercel(enriched);
   console.log(`[run] push → status=${pushResult.status} ok=${pushResult.ok} ingested=${pushResult.ingested ?? '?'}`);
 
   return { total: clean.length, results, pushed: pushResult };

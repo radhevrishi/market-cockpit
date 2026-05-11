@@ -49,6 +49,31 @@ interface CanonicalItem {
   attachment?: string | null;
   source_url?: string;
   exchange?: string;
+  // PATCH 0137: enrichment fields
+  sector?: string;
+  pe?: number | null;
+  market_cap_cr?: number | null;
+  market_cap_bucket?: string | null;
+  current_price?: number | null;
+  high_52w?: number | null;
+  low_52w?: number | null;
+  pct_from_52w_high?: number | null;
+  sales_curr_cr?: number | null;
+  sales_prev_cr?: number | null;
+  op_profit_curr_cr?: number | null;
+  op_profit_prev_cr?: number | null;
+  opm_pct?: number | null;
+  opm_prev_pct?: number | null;
+  pat_curr_cr?: number | null;
+  pat_prev_cr?: number | null;
+  eps_curr?: number | null;
+  eps_prev?: number | null;
+  sales_yoy_pct?: number | null;
+  pat_yoy_pct?: number | null;
+  eps_yoy_pct?: number | null;
+  op_profit_yoy_pct?: number | null;
+  financials_source?: string;
+  financials_scraped_at?: string;
 }
 
 // Normalise one NSE raw row → canonical
@@ -106,6 +131,13 @@ function normaliseRow(r: any): CanonicalItem | null {
     ? (attachment.startsWith('http') ? attachment : `https://www.nseindia.com/${attachment.replace(/^\//, '')}`)
     : null;
 
+  // Pull through enrichment fields when present
+  const num = (v: any): number | null => {
+    if (v == null || v === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+
   return {
     symbol,
     company,
@@ -118,7 +150,32 @@ function normaliseRow(r: any): CanonicalItem | null {
     period_type: r?.period_type || r?._period || '',
     attachment: fullAttachment,
     source_url: fullAttachment || `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(symbol)}`,
-    exchange: 'NSE',
+    exchange: r?.exchange || 'NSE',
+    // PATCH 0137: enrichment passthrough
+    sector: r?.sector || undefined,
+    pe: num(r?.pe),
+    market_cap_cr: num(r?.market_cap_cr),
+    market_cap_bucket: r?.market_cap_bucket || null,
+    current_price: num(r?.current_price),
+    high_52w: num(r?.high_52w),
+    low_52w: num(r?.low_52w),
+    pct_from_52w_high: num(r?.pct_from_52w_high),
+    sales_curr_cr: num(r?.sales_curr_cr),
+    sales_prev_cr: num(r?.sales_prev_cr),
+    op_profit_curr_cr: num(r?.op_profit_curr_cr),
+    op_profit_prev_cr: num(r?.op_profit_prev_cr),
+    opm_pct: num(r?.opm_pct),
+    opm_prev_pct: num(r?.opm_prev_pct),
+    pat_curr_cr: num(r?.pat_curr_cr),
+    pat_prev_cr: num(r?.pat_prev_cr),
+    eps_curr: num(r?.eps_curr),
+    eps_prev: num(r?.eps_prev),
+    sales_yoy_pct: num(r?.sales_yoy_pct),
+    pat_yoy_pct: num(r?.pat_yoy_pct),
+    eps_yoy_pct: num(r?.eps_yoy_pct),
+    op_profit_yoy_pct: num(r?.op_profit_yoy_pct),
+    financials_source: r?.financials_source,
+    financials_scraped_at: r?.financials_scraped_at,
   };
 }
 
