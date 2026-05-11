@@ -3,7 +3,7 @@
 # Deploy to: Hetzner / Railway / Render / fly.io
 # DO NOT deploy to Vercel — this needs a long-lived process.
 
-FROM mcr.microsoft.com/playwright:v1.49.0-jammy AS base
+FROM mcr.microsoft.com/playwright:v1.59.1-jammy AS base
 WORKDIR /app
 
 # Cache deps separately
