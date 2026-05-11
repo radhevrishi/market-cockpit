@@ -635,7 +635,9 @@ export default function EarningsOpportunitiesPage() {
     return pastDates[0] || '';
   }, [hub, filterDate, todayIso]);
 
-  const { data: gradedData } = useQuery<OpportunitiesPayload>({
+  // PATCH 0161 — capture the graded query's own refetch so the Refresh
+  // buttons can actually re-pull the server payload after a partial refresh.
+  const { data: gradedData, refetch: refetchGraded, isFetching: gradedFetching } = useQuery<OpportunitiesPayload>({
     queryKey: ['graded-by-date', resolvedDateForGrading],
     enabled: !!resolvedDateForGrading,
     queryFn: async () => {
@@ -655,9 +657,27 @@ export default function EarningsOpportunitiesPage() {
     generated_at: '',
     sources_polled: 0,
   };
-  const isLoading = hubLoading;
+  const isLoading = hubLoading || gradedFetching;
   const error = hubError;
-  const refetch = refetchHub;
+  // PATCH 0161 — Refresh button now refetches BOTH hub AND graded payload
+  const refetch = async () => {
+    await Promise.all([refetchHub(), refetchGraded()]);
+  };
+  // Local UI state for partial-refresh button
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshMissingMutate = async () => {
+    if (!resolvedDateForGrading || refreshing) return;
+    setRefreshing(true);
+    try {
+      const res = await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}&refreshMissing=1`, { cache: 'no-store' });
+      if (!res.ok) {
+        console.warn('refreshMissing failed', res.status);
+      }
+      await refetchGraded();
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   // Calendar view: last 28 days back, next 14 forward — built from hub data
   const calRange = useMemo(() => {
@@ -714,7 +734,7 @@ export default function EarningsOpportunitiesPage() {
             style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #1A2840', background: 'transparent', color: '#8A95A3', fontSize: 11, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
             <RefreshCw style={{ width: 11, height: 11 }} /> Refresh
           </button>
-          {/* PATCH 0160 — Partial refresh: only re-fetch missing-data cards */}
+          {/* PATCH 0160 / 0161 — Partial refresh button (refetches missing-data cards only) */}
           {resolvedDateForGrading && (() => {
             const missing = ((view.by_tier?.BLOCKBUSTER ?? []) as ParsedEarning[])
               .concat(view.by_tier?.STRONG ?? [])
@@ -724,13 +744,20 @@ export default function EarningsOpportunitiesPage() {
             if (missing === 0) return null;
             return (
               <button
-                onClick={async () => {
-                  await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}&refreshMissing=1`);
-                  refetch();
-                }}
+                onClick={refreshMissingMutate}
+                disabled={refreshing}
                 title={`Fetch financials for ${missing} cards that don't have data yet — leaves populated cards untouched`}
-                style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #F59E0B60', background: '#F59E0B15', color: '#F59E0B', fontSize: 11, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 700 }}>
-                <RefreshCw style={{ width: 11, height: 11 }} /> Refresh {missing} missing
+                style={{
+                  padding: '4px 10px', borderRadius: 6,
+                  border: '1px solid #F59E0B60',
+                  background: refreshing ? '#F59E0B30' : '#F59E0B15',
+                  color: '#F59E0B', fontSize: 11,
+                  cursor: refreshing ? 'wait' : 'pointer',
+                  display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 700,
+                  opacity: refreshing ? 0.8 : 1,
+                }}>
+                <RefreshCw style={{ width: 11, height: 11 }} />
+                {refreshing ? `Refreshing ${missing}…` : `Refresh ${missing} missing`}
               </button>
             );
           })()}
