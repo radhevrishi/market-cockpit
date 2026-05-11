@@ -448,50 +448,131 @@ export default function EarningsOpportunitiesPage() {
   );
 }
 
+// PATCH 0144 — Pro card matching EarningsPulse layout:
+// COMPANY  ·  PE · Q4 · CAP-BUCKET · SECTOR · ☀️/🌙 · ₹PRICE
+// [Move %] [Gap %] [D1 %]   (intraday placeholders until price feed wired)
+// [Sales YoY %  curr Cr vs prev Cr]   [Net Profit YoY % curr vs prev]   [EPS YoY % curr vs prev]   [Score]
+// Brief narrative  ·  methodology pills (✓)  ·  caveat pills (⚠)  ·  Filing link
+// ─────────────────────────────────────────────────────────────────────────────
+// Format helpers — match EarningsPulse Cr convention ("₹181.1K Cr" / "₹3184 Cr" / "₹4.2 Cr")
+function fmtCr(v: number | null | undefined): string | null {
+  if (v == null) return null;
+  const abs = Math.abs(v);
+  if (abs >= 10_000)  return `₹${(v / 1_000).toFixed(1)}K Cr`;  // 181.1K
+  if (abs >= 100)     return `₹${Math.round(v)} Cr`;             // 3184
+  if (abs >= 10)      return `₹${v.toFixed(1)} Cr`;              // 47.4
+  return                     `₹${v.toFixed(2)} Cr`;              // 4.20
+}
+function fmtPx(v: number | null | undefined): string | null {
+  if (v == null) return null;
+  return Math.abs(v) >= 100 ? `₹${Math.round(v)}` : `₹${v.toFixed(2)}`;
+}
+function fmtPct(p: number | null | undefined, digits = 0): string {
+  if (p == null) return '—';
+  return `${p >= 0 ? '+' : ''}${p.toFixed(digits)}%`;
+}
+
 function EarningsCard({ stock }: { stock: ParsedEarning }) {
-  const fmtCr = (v: number | null) => v == null ? null : `₹${v.toLocaleString()} Cr`;
-  const fmtPx = (v: number | null) => v == null ? null : `₹${v.toFixed(2)}`;
+  const tierColor = TIER_META[stock.tier].color;
+  // ☀️ daytime filing (09:15–15:30 IST) vs 🌙 outside-hours
+  const timing: '☀️' | '🌙' | null = (() => {
+    if (!stock.filing_url) return null;
+    // We don't have filing_dt_iso here directly — could be added. Default 🌙 (most filings are AMC).
+    return '🌙';
+  })();
+
   return (
-    <div style={{ backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 10, padding: '14px 16px' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 800, color: '#E6EDF3', lineHeight: 1.2 }}>{stock.company}</div>
-          <div style={{ marginTop: 2, fontSize: 10.5, color: '#6B7A8D', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-            {stock.ticker}{stock.quarter ? ` · ${stock.quarter}` : ''}{stock.sector ? ` · ${stock.sector}` : ''}{stock.market_cap_bucket && stock.market_cap_bucket !== 'UNKNOWN' ? ` · ${stock.market_cap_bucket}` : ''}
-          </div>
+    <div style={{
+      backgroundColor: '#0A1422',
+      border: '1px solid #1A2840',
+      borderLeft: `3px solid ${tierColor}`,
+      borderRadius: 10,
+      padding: '12px 14px',
+    }}>
+      {/* ── Header: COMPANY + pill row ────────────────────────────────────── */}
+      <div style={{ fontSize: 14, fontWeight: 800, color: '#E6EDF3', lineHeight: 1.2, marginBottom: 4 }}>
+        {stock.company}
+        <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 600, marginLeft: 6, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+          {stock.ticker}
+        </span>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', fontSize: 10.5, marginBottom: 8 }}>
+        {stock.pe != null && (
+          <span style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: '#0D1623', border: '1px solid #1A2840', color: '#C9D4E0', fontWeight: 700 }}>
+            PE {stock.pe.toFixed(1)}
+          </span>
+        )}
+        {stock.quarter && (
+          <span style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: '#0D1623', border: '1px solid #1A2840', color: '#94A3B8', fontWeight: 700 }}>
+            {stock.quarter}
+          </span>
+        )}
+        {stock.market_cap_bucket && stock.market_cap_bucket !== 'UNKNOWN' && (
+          <span style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: '#1E293B', border: '1px solid #334155', color: '#94A3B8', fontWeight: 800, letterSpacing: '0.3px' }}>
+            {stock.market_cap_bucket}
+          </span>
+        )}
+        {stock.sector && (
+          <span style={{ padding: '1px 6px', borderRadius: 3, backgroundColor: '#0D1623', border: '1px solid #1A2840', color: '#94A3B8' }}>
+            {stock.sector}
+          </span>
+        )}
+        {timing && (
+          <span style={{ fontSize: 12 }}>{timing}</span>
+        )}
+        {stock.price != null && (
+          <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 800, color: '#E6EDF3' }}>
+            {fmtPx(stock.price)}
+          </span>
+        )}
+      </div>
+
+      {/* ── Intraday move row (Move/Gap/D1) ───────────────────────────────── */}
+      {(stock.gap_pct != null || stock.d1_pct != null) && (
+        <div style={{ display: 'flex', gap: 8, fontSize: 10, color: '#94A3B8', marginBottom: 8 }}>
+          {stock.gap_pct != null && (
+            <span>Gap <strong style={{ color: stock.gap_pct >= 0 ? '#10B981' : '#EF4444' }}>{fmtPct(stock.gap_pct)}</strong></span>
+          )}
+          {stock.d1_pct != null && (
+            <span>D1 <strong style={{ color: stock.d1_pct >= 0 ? '#10B981' : '#EF4444' }}>{fmtPct(stock.d1_pct)}</strong></span>
+          )}
+        </div>
+      )}
+
+      {/* ── Three metric tiles + score ────────────────────────────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+        <MetricTile label="SALES YOY"  pct={stock.sales_yoy_pct}      curr={fmtCr(stock.sales_curr_cr)} prev={fmtCr(stock.sales_prev_cr)} />
+        <MetricTile label="NET PROFIT" pct={stock.net_profit_yoy_pct} curr={fmtCr(stock.pat_curr_cr)}   prev={fmtCr(stock.pat_prev_cr)} />
+        <MetricTile label="EPS YOY"    pct={stock.eps_yoy_pct}        curr={fmtPx(stock.eps_curr)}     prev={fmtPx(stock.eps_prev)} />
+        <div style={{ padding: '6px 10px', backgroundColor: '#0D1623', borderRadius: 6, border: `1px solid ${tierColor}40`, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+          <div style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.6px' }}>SCORE</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: tierColor, lineHeight: 1, marginTop: 2 }}>{stock.composite_score}</div>
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
-        <MetricTile label="SALES YOY" pct={stock.sales_yoy_pct} curr={fmtCr(stock.sales_curr_cr)} prev={fmtCr(stock.sales_prev_cr)} />
-        <MetricTile label="NET PROFIT" pct={stock.net_profit_yoy_pct} curr={fmtCr(stock.pat_curr_cr)} prev={fmtCr(stock.pat_prev_cr)} />
-        <MetricTile label="EPS YOY" pct={stock.eps_yoy_pct} curr={fmtPx(stock.eps_curr)} prev={fmtPx(stock.eps_prev)} />
-        <div style={{ padding: '8px 10px', backgroundColor: '#0D1623', borderRadius: 6, border: '1px solid #1A2840' }}>
-          <div style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.6px' }}>SCORE</div>
-          <div style={{ fontSize: 18, fontWeight: 900, color: TIER_META[stock.tier].color, marginTop: 2 }}>{stock.composite_score}</div>
-        </div>
+      {/* ── Brief narrative ───────────────────────────────────────────────── */}
+      <div style={{ marginTop: 8, fontSize: 11, color: '#C9D4E0', lineHeight: 1.5, fontStyle: 'italic', backgroundColor: '#0D1623', border: '1px solid #1A2840', borderRadius: 6, padding: '6px 9px' }}>
+        📝 {stock.narrative}
       </div>
 
-      <div style={{ marginTop: 10, fontSize: 11.5, color: '#C9D4E0', lineHeight: 1.6, fontStyle: 'italic', backgroundColor: '#0D1623', border: '1px solid #1A2840', borderRadius: 6, padding: '8px 10px' }}>
-        {stock.narrative}
-      </div>
-
+      {/* ── Methodology + caveat pills ────────────────────────────────────── */}
       {(stock.methodology_tags.length > 0 || stock.caveat_tags.length > 0) && (
-        <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 5 }}>
           {stock.methodology_tags.map((t) => (
-            <span key={t} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 3, backgroundColor: '#10B98115', color: '#10B981', border: '1px solid #10B98140', fontWeight: 700 }}>✓ {t}</span>
+            <span key={t} style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 3, backgroundColor: '#10B98115', color: '#10B981', border: '1px solid #10B98140', fontWeight: 700 }}>✓ {t}</span>
           ))}
           {stock.caveat_tags.map((t) => (
-            <span key={t} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 3, backgroundColor: '#F59E0B15', color: '#F59E0B', border: '1px solid #F59E0B40', fontWeight: 700 }}>⚠ {t}</span>
+            <span key={t} style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 3, backgroundColor: '#F59E0B15', color: '#F59E0B', border: '1px solid #F59E0B40', fontWeight: 700 }}>⚠ {t}</span>
           ))}
         </div>
       )}
 
+      {/* ── Filing link ───────────────────────────────────────────────────── */}
       {stock.filing_url && (
-        <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid #1A2840' }}>
+        <div style={{ marginTop: 8, paddingTop: 7, borderTop: '1px solid #1A2840' }}>
           <a href={stock.filing_url} target="_blank" rel="noopener noreferrer"
-            style={{ fontSize: 10.5, color: '#22D3EE', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <ExternalLink style={{ width: 10, height: 10 }} /> {stock.source}
+            style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <ExternalLink style={{ width: 10, height: 10 }} /> 📄 Filing · {stock.source}
           </a>
         </div>
       )}

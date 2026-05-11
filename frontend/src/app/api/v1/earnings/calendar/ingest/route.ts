@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { kvSet, isRedisAvailable } from '@/lib/kv';
+import { kvSet, kvGet, isRedisAvailable } from '@/lib/kv';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -247,14 +247,76 @@ export async function POST(req: Request) {
     items: deduped,
   };
 
-  // Write to KV (7d TTL)
-  const ttl = 7 * 24 * 3600;
+  // ── Write to KV ──────────────────────────────────────────────────────────
+  // PATCH 0143: incremental calendar — past-date entries are sticky.
+  //
+  //   • Past dates (< today): MERGE new entries with existing KV.
+  //     Existing items stay; new items are appended; items that already
+  //     exist with same (symbol, period_ended) are UPGRADED if the new
+  //     entry has financials (sales_curr_cr) and the old one didn't.
+  //   • Today + future: overwrite (Trendlyne is source of truth here).
+  //
+  // The full-payload key (earnings:calendar:nse:v1) is overwritten too —
+  // it's only used by the latest-pass diagnostic, not by the read path.
+  // Per-date keys are the canonical read source and they get the merge.
+  //
+  // Bumped TTL 7d → 35d so past dates survive a long worker outage.
+  const ttl = 35 * 24 * 3600;
+  const todayIso = new Date().toISOString().slice(0, 10);
+  type AnyItem = CanonicalItem & { symbol: string; filing_date: string; period_ended?: string };
+
+  function mergeDayItems(existing: AnyItem[], incoming: AnyItem[]): AnyItem[] {
+    const keyOf = (x: AnyItem) => `${x.symbol}|${x.period_ended || ''}`;
+    const out = new Map<string, AnyItem>();
+    for (const e of existing) out.set(keyOf(e), e);
+    for (const n of incoming) {
+      const k = keyOf(n);
+      const prev = out.get(k);
+      if (!prev) {
+        out.set(k, n);
+      } else {
+        // Upgrade-on-financials: if new entry has Sales/PAT data and prev didn't, take new.
+        const newHasFin  = n.sales_curr_cr != null || n.pat_curr_cr != null || n.eps_curr != null;
+        const prevHasFin = prev.sales_curr_cr != null || prev.pat_curr_cr != null || prev.eps_curr != null;
+        if (newHasFin && !prevHasFin) {
+          out.set(k, n);
+        } else if (newHasFin && prevHasFin) {
+          // Both enriched — prefer the one scraped more recently
+          const nT = n.financials_scraped_at || '';
+          const pT = prev.financials_scraped_at || '';
+          if (nT > pT) out.set(k, n);
+        }
+        // else: keep existing (which already has financials)
+      }
+    }
+    return Array.from(out.values()).sort(
+      (a, b) => (b.filing_dt_iso || '').localeCompare(a.filing_dt_iso || ''),
+    );
+  }
+
+  let mergedCount = 0;
+  let overwroteCount = 0;
   try {
     await kvSet('earnings:calendar:nse:v1', payload, ttl);
     for (const [date, dayItems] of Object.entries(byDate)) {
+      let finalItems: AnyItem[] = dayItems as AnyItem[];
+      if (date < todayIso) {
+        // Past date — merge with existing
+        const existing = (await kvGet(`earnings:calendar:nse:v1:date:${date}`)) as
+          | { items?: AnyItem[] }
+          | null;
+        if (existing?.items?.length) {
+          finalItems = mergeDayItems(existing.items, dayItems as AnyItem[]);
+          mergedCount++;
+        } else {
+          overwroteCount++;
+        }
+      } else {
+        overwroteCount++;
+      }
       await kvSet(
         `earnings:calendar:nse:v1:date:${date}`,
-        { date, items: dayItems, total: dayItems.length, scraped_at: payload.scraped_at },
+        { date, items: finalItems, total: finalItems.length, scraped_at: payload.scraped_at },
         ttl,
       );
     }
