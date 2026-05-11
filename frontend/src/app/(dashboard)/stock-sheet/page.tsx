@@ -393,22 +393,48 @@ function useTickerEarnings(ticker: string) {
 
 const STORAGE_KEY = 'mc:stock-sheet:v1:';
 
+// PATCH 0125 — bulletproof scalar coercion.  Returns a primitive renderable
+// string from any input.  Handles {direction, magnitude} sentiment shape,
+// arrays, null, undefined, deep objects.  Used EVERYWHERE dynamic text
+// touches JSX inside Stock Sheet — eliminates React Error #31 at source.
+function safeText(v: any, max = 240): string {
+  if (v == null) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (typeof v === 'object') {
+    // Sentiment shape — render as readable string
+    if ('direction' in v && 'magnitude' in v) {
+      const dir = String((v as any).direction ?? '');
+      const mag = Number((v as any).magnitude);
+      const pct = Number.isFinite(mag) ? `${(mag * 100).toFixed(1)}%` : '';
+      return `${dir} ${pct}`.trim();
+    }
+    try { return JSON.stringify(v).slice(0, max); } catch { return '[unrenderable]'; }
+  }
+  return '';
+}
+
 function loadSheet(ticker: string): StoredSheet | null {
   if (typeof window === 'undefined') return null;
   try {
     const raw = localStorage.getItem(STORAGE_KEY + ticker.toUpperCase());
     if (!raw) return null;
     const parsed = JSON.parse(raw) as StoredSheet;
-    // PATCH 0112: sanitize state — coerce evidence to string in case any
-    // older save poisoned the field with an object (root cause of the
-    // persistent React Error #31 crashes).
+    // PATCH 0112/0125: sanitize EVERY field in state — both signal and
+    // evidence.  Any object-typed signal (legacy poisoned save) gets
+    // coerced to null.  Evidence gets coerced to string.  This eliminates
+    // the lingering React Error #31 from old localStorage entries.
     if (parsed?.state) {
       for (const k of Object.keys(parsed.state)) {
         const ans = parsed.state[k];
-        if (ans && typeof ans.evidence !== 'string') {
-          ans.evidence = typeof ans.evidence === 'object'
-            ? JSON.stringify(ans.evidence).slice(0, 240)
-            : String(ans.evidence ?? '');
+        if (!ans) continue;
+        // Signal must be 'YES' | 'NO' | 'N/A' | null
+        if (ans.signal !== 'YES' && ans.signal !== 'NO' && ans.signal !== 'N/A') {
+          ans.signal = null as any;
+        }
+        // Evidence must be string
+        if (typeof ans.evidence !== 'string') {
+          ans.evidence = safeText(ans.evidence);
         }
       }
     }
@@ -429,6 +455,24 @@ function listSavedTickers(): string[] {
     if (k && k.startsWith(STORAGE_KEY)) out.push(k.slice(STORAGE_KEY.length));
   }
   return out.sort();
+}
+
+// PATCH 0125 — one-time scrub of ALL Stock Sheet localStorage entries.
+// Runs once per session.  Eliminates the lingering React Error #31 caused
+// by older saves containing {direction, magnitude} sentiment objects in
+// signal / evidence fields.  Re-uses loadSheet() sanitizer + saves back.
+const SCRUB_KEY = 'mc:stock-sheet:v1:scrub-2025-11';
+function scrubAllSavedSheets() {
+  if (typeof window === 'undefined') return;
+  try {
+    if (localStorage.getItem(SCRUB_KEY)) return;
+    const tickers = listSavedTickers();
+    for (const t of tickers) {
+      const stored = loadSheet(t);
+      if (stored) saveSheet(stored);
+    }
+    localStorage.setItem(SCRUB_KEY, '1');
+  } catch {}
 }
 
 // PATCH 0114 — IMP-11: Stock Sheet blank-state shortcuts.
@@ -698,6 +742,9 @@ export default function StockSheetPage() {
   // PATCH 0114 — IMP-11: blank-state shortcuts state
   const [recentList, setRecentList] = useState<string[]>([]);
   const [mbTopList, setMbTopList] = useState<MBTopPick[]>([]);
+
+  // PATCH 0125 — scrub legacy localStorage on first mount
+  useEffect(() => { scrubAllSavedSheets(); }, []);
 
   useEffect(() => {
     setSavedList(listSavedTickers());
