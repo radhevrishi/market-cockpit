@@ -189,6 +189,20 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
   { name: 'IDRW',                  url: 'https://www.idrw.org/feed/',           region: 'IN',     tier: 'secondary' },
   // India electronics / EMS
   { name: 'ElectronicsB2B',        url: 'https://www.electronicsb2b.com/feed/', region: 'IN',     tier: 'secondary' },
+  // ─── PATCH 0119 — IMP-01: India earnings + policy/PLI coverage ─────
+  // Add primary sources for the two coverage gaps QA flagged:
+  //   (1) Q4 FY26 earnings flow — Mint Earnings, Business Standard markets
+  //   (2) PLI / policy / capex announcements — PIB Economy, ET Government
+  { name: 'Mint Companies Earnings', url: 'https://www.livemint.com/rss/markets', region: 'IN', tier: 'secondary' },
+  { name: 'Business Standard Markets', url: 'https://www.business-standard.com/rss/markets-106.rss', region: 'IN', tier: 'secondary' },
+  { name: 'Business Standard Companies', url: 'https://www.business-standard.com/rss/companies-101.rss', region: 'IN', tier: 'secondary' },
+  { name: 'BL Markets',            url: 'https://www.thehindubusinessline.com/markets/feeder/default.rss', region: 'IN', tier: 'secondary' },
+  { name: 'BL Companies',          url: 'https://www.thehindubusinessline.com/companies/feeder/default.rss', region: 'IN', tier: 'secondary' },
+  { name: 'BL Economy',            url: 'https://www.thehindubusinessline.com/economy/feeder/default.rss', region: 'IN', tier: 'secondary' },
+  { name: 'PIB Economy',           url: 'https://www.pib.gov.in/RssMain.aspx?ModId=8&Lang=1&Regid=3', region: 'IN', tier: 'primary' },
+  { name: 'ET Government',         url: 'https://government.economictimes.indiatimes.com/rss/topstories', region: 'IN', tier: 'secondary' },
+  { name: 'Financial Express Industry', url: 'https://www.financialexpress.com/business/industry/feed/', region: 'IN', tier: 'secondary' },
+  { name: 'Capital Market News',   url: 'https://www.capitalmarket.com/Mark/marketwatch.aspx?type=rss', region: 'IN', tier: 'secondary' },
 ];
 
 // Domain denylist for BOTTLENECK tier escalation. These sources can
@@ -198,7 +212,7 @@ const RSS_FEEDS: Array<{ name: string; url: string; region: string; tier: 'prima
 // gaming PC build.
 const BOTTLENECK_DOMAIN_DENYLIST = /\b(newegg|bestbuy|amazon\.com\/dp|microcenter|tigerdirect|reddit\.com|youtube\.com\/watch|retro.?gaming|amiga|commodore|nintendo|playstation|xbox|gaming pc|deal|combo|bundle (?:includes|deal)|coupon|discount|black friday|cyber monday|prime day|save \$\d|usd\d{3}\.?\d*|\d+%\s*off)\b/i;
 
-const CACHE_KEY = 'news:articles:v37'; // v37: 72h ticker × Jaccard clustering dedup + also-reported-by counters (0115/BUG-04)
+const CACHE_KEY = 'news:articles:v38'; // v38: + 10 India RSS sources (Earnings / PLI / PIB / BL / BS) (0119/IMP-01)
 
 // PATCH 0110: per-request contamination-map cache.  Built once on first call
 // in a request lifecycle, reused across the (potentially many) layered-

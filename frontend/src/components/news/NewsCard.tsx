@@ -1,9 +1,68 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import type { NewsArticle } from '@/types';
+
+// PATCH 0119 — IMP-02: Watchlist (Multibagger upload) cross-reference.
+// Cache the user's MB symbols at module level — refreshed once per mount
+// so we don't re-parse localStorage on every NewsCard render.
+let __MB_WATCHLIST_CACHE: Set<string> | null = null;
+function loadWatchlistSet(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  if (__MB_WATCHLIST_CACHE) return __MB_WATCHLIST_CACHE;
+  const out = new Set<string>();
+  try {
+    const raw = localStorage.getItem('mb_excel_scored_v2');
+    if (raw) {
+      const rows = JSON.parse(raw);
+      if (Array.isArray(rows)) {
+        for (const r of rows) {
+          const sym = String(r?.symbol || r?.ticker || '').trim().toUpperCase();
+          if (sym) out.add(sym);
+          // Also add stripped form: AXTEL.NS → AXTEL
+          const stripped = sym.replace(/\.(NS|BO)$/i, '');
+          if (stripped) out.add(stripped);
+        }
+      }
+    }
+    const syms = localStorage.getItem('mb3_symbols');
+    if (syms) {
+      const parsed = JSON.parse(syms);
+      if (Array.isArray(parsed)) {
+        for (const s of parsed) {
+          const v = typeof s === 'string' ? s : s?.symbol || s?.ticker;
+          if (v) {
+            const up = String(v).toUpperCase();
+            out.add(up);
+            out.add(up.replace(/\.(NS|BO)$/i, ''));
+          }
+        }
+      }
+    }
+  } catch {}
+  __MB_WATCHLIST_CACHE = out;
+  return out;
+}
+function articleMatchesWatchlist(article: NewsArticle): boolean {
+  const wl = loadWatchlistSet();
+  if (wl.size === 0) return false;
+  const candidates: string[] = [];
+  const pt = (article as any).primary_ticker;
+  if (pt) candidates.push(String(pt).toUpperCase());
+  const ts = (article as any).ticker_symbols ?? (article as any).tickers ?? [];
+  for (const t of ts) {
+    const sym = typeof t === 'string' ? t : t?.ticker;
+    if (sym) candidates.push(String(sym).toUpperCase());
+  }
+  for (const c of candidates) {
+    if (wl.has(c)) return true;
+    const stripped = c.replace(/\.(NS|BO)$/i, '');
+    if (wl.has(stripped)) return true;
+  }
+  return false;
+}
 
 interface Props {
   article: NewsArticle;
@@ -82,6 +141,9 @@ export default function NewsCard({ article, onTickerClick }: Props) {
   const [expanded, setExpanded] = useState(false);
   const tier = importanceTier(article.importance_score ?? 0);
   const badge = TYPE_BADGE[article.article_type ?? 'GENERAL'] ?? TYPE_BADGE.GENERAL;
+  // PATCH 0119 — IMP-02: cross-reference uploaded Multibagger tickers
+  const [isWatchlist, setIsWatchlist] = useState(false);
+  useEffect(() => { setIsWatchlist(articleMatchesWatchlist(article)); }, [article]);
   // Defensive: some new RSS feeds (BSE / SEBI / WSJ) emit malformed
   // pubDate strings that crash formatDistanceToNow with "Invalid time
   // value". Validate before formatting; fallback to '' on bad input.
@@ -95,7 +157,7 @@ export default function NewsCard({ article, onTickerClick }: Props) {
   })();
 
   return (
-    <div className="bg-[#1A2B3C] border border-[#2A3B4C] rounded-lg p-4 hover:border-[#0F7ABF]/50 transition-colors group">
+    <div className={`bg-[#1A2B3C] border rounded-lg p-4 hover:border-[#0F7ABF]/50 transition-colors group ${isWatchlist ? 'border-l-4 border-l-yellow-400 border-[#2A3B4C]' : 'border-[#2A3B4C]'}`}>
       <div className="flex items-start gap-3">
         {/* Importance dot */}
         <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${IMPORTANCE_DOT[tier]}`} />
@@ -103,6 +165,12 @@ export default function NewsCard({ article, onTickerClick }: Props) {
         <div className="flex-1 min-w-0">
           {/* Top row: tickers + badge + sentiment + time */}
           <div className="flex items-center gap-2 flex-wrap mb-1.5">
+            {/* PATCH 0119 — IMP-02: Watchlist (MB upload) cross-reference */}
+            {isWatchlist && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-yellow-400/20 text-yellow-300 border border-yellow-400/40" title="Article touches a ticker in your Multibagger upload">
+                ⭐ WATCHLIST
+              </span>
+            )}
             {(article.ticker_symbols ?? article.tickers ?? []).slice(0, 3).map((t: any) => {
               const sym = typeof t === 'string' ? t : t?.ticker ?? '';
               return (
