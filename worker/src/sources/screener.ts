@@ -227,14 +227,18 @@ export async function enrichEvents(
   const budgetMs = opts?.budgetMs ?? 8 * 60_000;
   const startedAt = Date.now();
   const out: CanonicalEvent[] = [];
-
   // Filter to NSE-symbol events with reasonable ticker (not raw BSE numeric codes)
   const isValidSymbol = (s: string) => /^[A-Z][A-Z0-9&\-]{1,15}$/.test(s);
 
-  for (const ev of events) {
-    if (!isValidSymbol(ev.symbol)) { out.push(ev); continue; }
-    if (Date.now() - startedAt > budgetMs) { out.push(ev); continue; }
+  // Two-pass approach for visibility:
+  //   Pass 1 (fast): consult KV cache for every valid symbol, merge what we have
+  //   Pass 2 (slow): fetch Screener.in for the remaining ones, up to budget
+  const todo: CanonicalEvent[] = [];
+  let cacheHits = 0;
+  let skipped = 0;
 
+  for (const ev of events) {
+    if (!isValidSymbol(ev.symbol)) { out.push(ev); skipped++; continue; }
     const cacheKey = `earnings:enrichment:v1:${ev.symbol}:${ev.filing_date}`;
     let cached: Partial<CanonicalEvent> | null = null;
     if (kv) {
@@ -243,28 +247,50 @@ export async function enrichEvents(
         if (got) cached = typeof got === 'string' ? JSON.parse(got) : got;
       } catch {}
     }
-
     if (cached) {
       out.push({ ...ev, ...cached });
-      continue;
+      cacheHits++;
+    } else {
+      todo.push(ev);
     }
+  }
+  console.log(`[enrich] cache hits=${cacheHits}, skipped (bad symbol)=${skipped}, queued=${todo.length}`);
 
+  // Slow pass — fetch Screener.in with budget
+  let fetched = 0;
+  let failed = 0;
+  for (let i = 0; i < todo.length; i++) {
+    const ev = todo[i];
+    if (Date.now() - startedAt > budgetMs) {
+      console.log(`[enrich] budget exhausted at ${i}/${todo.length}, deferring remainder to next pass`);
+      // Push remainder un-enriched
+      for (let j = i; j < todo.length; j++) out.push(todo[j]);
+      break;
+    }
     try {
       const fin = await fetchScreenerFinancials(ev.symbol);
       if (fin) {
         const enriched = { ...ev, ...fin };
         out.push(enriched);
+        fetched++;
         if (kv) {
-          await kv.kvSet(cacheKey, fin, ENRICHMENT_TTL_S).catch(() => {});
+          await kv.kvSet(`earnings:enrichment:v1:${ev.symbol}:${ev.filing_date}`, fin, ENRICHMENT_TTL_S).catch(() => {});
+        }
+        // Visible heartbeat — every 5 stocks
+        if (fetched % 5 === 0) {
+          const elapsed = Math.round((Date.now() - startedAt) / 1000);
+          console.log(`[enrich] ${fetched}/${todo.length} fetched (${elapsed}s elapsed, last=${ev.symbol})`);
         }
       } else {
         out.push(ev);
+        failed++;
       }
     } catch (e: any) {
       console.warn(`[enrich] ${ev.symbol} failed: ${e?.message || e}`);
       out.push(ev);
+      failed++;
     }
   }
-
+  console.log(`[enrich] DONE — fetched=${fetched}, failed=${failed}, cached=${cacheHits}, skipped=${skipped}, total=${out.length}`);
   return out;
 }
