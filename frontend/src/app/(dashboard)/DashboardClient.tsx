@@ -45,6 +45,8 @@ const NAV: NavItem[] = [
   { href: '/strategic-visibility', label: 'Strategic Vis', icon: <Star className="w-5 h-5" /> },
   { href: '/rrg',           label: 'RRG',             icon: <RefreshCw className="w-5 h-5" /> },
   { href: '/screener',      label: 'Screener',        icon: <Filter className="w-5 h-5" /> },
+  // PATCH 0168: Market Breadth Indicator
+  { href: '/breadth',       label: 'Breadth',         icon: <BarChart3 className="w-5 h-5" /> },
   { href: '/ipos',          label: 'IPOs',            icon: <Rocket className="w-5 h-5" /> },
   // PATCH 0089: macro-maps removed — header ticker covers global indices/currencies/commodities
   // PATCH 0091: standalone /calendars also merged into Earnings Hub above
