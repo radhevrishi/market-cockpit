@@ -433,10 +433,69 @@ function CanonicalSection({ meta, color, events, defaultExpanded }: { meta: { la
   );
 }
 
+// PATCH 0128 — extract offer price / consideration from filing title text.
+// Returns USD or INR amount as a number, plus currency symbol.  Crude but
+// effective: regex catches '$23.50 per share', 'Rs 750', '₹1,250', '750/-'
+// patterns we see in tender / open-offer titles.
+function parseDealPrice(text: string): { amount: number; currency: string } | null {
+  if (!text) return null;
+  // USD: $XX.XX or USD XX.XX per share
+  let m = text.match(/(?:\$|USD\s*)\s*([\d,]+\.?\d*)\s*(?:per\s+share|\/share)?/i);
+  if (m) {
+    const n = Number(m[1].replace(/,/g, ''));
+    if (Number.isFinite(n) && n > 0 && n < 100000) return { amount: n, currency: '$' };
+  }
+  // INR: Rs / ₹ / INR
+  m = text.match(/(?:rs\.?|₹|inr)\s*([\d,]+\.?\d*)\s*(?:per\s+share|\/-?)?/i);
+  if (m) {
+    const n = Number(m[1].replace(/,/g, ''));
+    if (Number.isFinite(n) && n > 0 && n < 1000000) return { amount: n, currency: '₹' };
+  }
+  return null;
+}
+
+// PATCH 0128 — fetch a single quote for the first ticker on an event card.
+// Reuses the same /market/quotes endpoint other tabs use.  Returns null
+// when no ticker / no live quote available.
+function useDealQuote(ticker: string | undefined) {
+  return useQuery<{ price: number | null }>({
+    queryKey: ['spec-sit', 'quote', ticker || ''],
+    queryFn: async () => {
+      if (!ticker) return { price: null };
+      try {
+        const { data } = await api.post('/market/quotes', { symbols: [ticker] });
+        const px = Array.isArray(data) ? data[0]?.price : data?.[ticker]?.price ?? data?.price;
+        const n = Number(px);
+        return { price: Number.isFinite(n) && n > 0 ? n : null };
+      } catch { return { price: null }; }
+    },
+    enabled: !!ticker,
+    staleTime: 5 * 60_000,
+    retry: 0,
+  });
+}
+
 function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
   const [expanded, setExpanded] = useState(false);
   const meta = EVENT_TYPE_META[ev.event_type] || EVENT_TYPE_META.UNCLASSIFIED;
   const ageLabel = ev.age_hours < 24 ? `${ev.age_hours}h` : `${Math.round(ev.age_hours / 24)}d`;
+  // PATCH 0128 — inline deal spread + annualized return strip
+  const primaryTicker = ev.tickers[0];
+  const dealPrice = useMemo(() => parseDealPrice(ev.primary_filing.title), [ev.primary_filing.title]);
+  const { data: dealQuote } = useDealQuote(
+    ev.tier === 'TIER_1' || ev.tier === 'TIER_2' ? primaryTicker : undefined
+  );
+  const cmp = dealQuote?.price ?? null;
+  const offer = dealPrice?.amount ?? null;
+  const spreadPct = offer != null && cmp != null && cmp > 0 ? ((offer - cmp) / cmp) * 100 : null;
+  // Crude time-to-close estimate: tender offers typically 30-60d, going-private
+  // ~120d, M&A definitive ~180d.  Fallback 60d if no event_type hint.
+  const daysToCloseGuess =
+    ev.event_type === 'TENDER_OFFER' || ev.event_type === 'BUYBACK_TENDER' ? 35 :
+    ev.event_type === 'OPEN_OFFER' || ev.event_type === 'GOING_PRIVATE'    ? 90 :
+    ev.event_type === 'MERGER_DEFINITIVE' || ev.event_type === 'ACQUISITION_PUBLIC' ? 180 :
+    ev.event_type === 'SPIN_OFF' || ev.event_type === 'DEMERGER_INDIA' || ev.event_type === 'IPO_SUBSIDIARY' ? 120 : 60;
+  const annualizedPct = spreadPct != null ? spreadPct * (365 / daysToCloseGuess) : null;
   return (
     <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: `3px solid ${meta.color}`, borderRadius: 10 }}>
       <button onClick={() => setExpanded((s) => !s)} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '12px 16px' }}>
@@ -472,6 +531,24 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
           </span>
         </div>
         <div style={{ fontSize: 13, color: '#E6EDF3', fontWeight: 500, lineHeight: 1.4 }}>{ev.primary_filing.title}</div>
+        {/* PATCH 0128 — Inline deal spread / annualized return strip */}
+        {(offer != null || cmp != null) && (
+          <div style={{ marginTop: 6, display: 'flex', gap: 12, fontSize: 11, flexWrap: 'wrap', color: '#94A3B8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+            {offer != null && (
+              <span><span style={{ color: '#6B7A8D' }}>Offer:</span> <strong style={{ color: '#E6EDF3' }}>{dealPrice?.currency}{offer.toLocaleString()}</strong></span>
+            )}
+            {cmp != null && (
+              <span><span style={{ color: '#6B7A8D' }}>CMP:</span> <strong style={{ color: '#E6EDF3' }}>{dealPrice?.currency || (ev.region === 'IN' ? '₹' : '$')}{cmp.toLocaleString()}</strong></span>
+            )}
+            {spreadPct != null && (
+              <span><span style={{ color: '#6B7A8D' }}>Spread:</span> <strong style={{ color: spreadPct >= 0 ? '#10B981' : '#EF4444' }}>{spreadPct >= 0 ? '+' : ''}{spreadPct.toFixed(2)}%</strong></span>
+            )}
+            {annualizedPct != null && (
+              <span title={`Assumes ${daysToCloseGuess}d close`}><span style={{ color: '#6B7A8D' }}>Ann:</span> <strong style={{ color: annualizedPct >= 0 ? '#22D3EE' : '#EF4444' }}>{annualizedPct >= 0 ? '+' : ''}{annualizedPct.toFixed(1)}%/yr</strong></span>
+            )}
+            <span style={{ color: '#6B7A8D' }}>~{daysToCloseGuess}d est. close</span>
+          </div>
+        )}
         {!expanded && (
           <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 4, fontStyle: 'italic' }}>
             {ev.tradability_rationale}
