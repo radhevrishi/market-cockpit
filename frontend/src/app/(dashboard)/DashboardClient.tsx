@@ -33,6 +33,9 @@ const NAV: NavItem[] = [
   // deleted, only the sidebar link.  Restored as a separate entry so Earnings Hub is
   // untouched.  User: 'don't change earnings hub — that is my best use functionality'.
   { href: '/earnings',      label: 'Earnings Cards',  icon: <BarChart3 className="w-5 h-5" /> },
+  // PATCH 0130: Earnings Opportunities Pro — BLOCKBUSTER/STRONG/MIXED/AVOID
+  // grading of Indian earnings filings, modelled on earningspulse.ai.
+  { href: '/earnings-opportunities', label: 'Earnings Ops', icon: <Star className="w-5 h-5" /> },
   { href: '/multibagger',   label: 'Multibagger',     icon: <Star className="w-5 h-5" /> },
   // PATCH 0093: Single-Stock Sheet — 16-section institutional checklist runner
   { href: '/stock-sheet',   label: 'Stock Sheet',     icon: <BookMarked className="w-5 h-5" /> },
