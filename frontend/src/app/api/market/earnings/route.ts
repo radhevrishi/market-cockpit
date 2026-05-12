@@ -627,16 +627,16 @@ export async function GET(request: Request) {
 
       const isPast = meetingDate < today;
 
-      // PATCH 0174 — Relaxed past-meeting filter.
-      // Original code dropped past meetings without outcome/filing confirmation,
-      // which silently removed companies whose NSE announcement feed hadn't
-      // propagated yet (Syrma SGS, Atlanta, MCX etc. on EarningsPulse but missing
-      // here). Now we keep past meetings if they're within the last 14 days
-      // (likely confirmed via Yahoo price-move on the announce day, which the
-      // hub-quality fallback can still grade). For older meetings we still
-      // require explicit confirmation to avoid stale entries.
+      // PATCH 0187 — KEEP past board meetings within 14 days WITHOUT confirmation
+      // (so they appear in the Calendar view for visibility), but mark them
+      // quality='Upcoming' so the graded-tier pipeline SKIPS them (it only
+      // grades quality !== 'Upcoming'). This stops GARUDA/SATIN-style
+      // wrong-date attribution: a scheduled board meeting doesn't prove a
+      // filing occurred, so we never let it inherit Screener's latest Q4 data.
+      // For older meetings (>14 days), still drop entirely.
       const ageDays = Math.floor((today.getTime() - meetingDate.getTime()) / (24 * 3600_000));
-      if (isPast && !isConfirmed(ticker) && ageDays > 14) continue;
+      const confirmed = isConfirmed(ticker);
+      if (isPast && !confirmed && ageDays > 14) continue;
 
       const stockInfo = priceLookup[ticker];
       const marketCapCr = (stockInfo?.marketCap || 0) / 10000000;
@@ -650,7 +650,10 @@ export async function GET(request: Request) {
         company: meeting.bm_companyName || meeting.sm_name || ticker,
         resultDate: meetingDate.toISOString().split('T')[0],
         quarter,
-        quality: isPast ? rateQualityFromPriceMove(stockInfo?.changePercent || 0) : 'Upcoming',
+        // CRITICAL FIX: only grade as filed (quality != Upcoming) when we
+        // have explicit confirmation (outcomeAnn / financialResults / sub_cat
+        // filing). Otherwise stays 'Upcoming' → Graded Tiers filters it out.
+        quality: (isPast && confirmed) ? rateQualityFromPriceMove(stockInfo?.changePercent || 0) : 'Upcoming',
         sector: normalizeSector(stockInfo?.industry) || '',
         industry: stockInfo?.industry || '',
         marketCap: getCapCategory(marketCapCr),

@@ -70,11 +70,15 @@ type MarketEarningsResponse = {
 };
 
 // Hub source — single month or two months stitched
+// PATCH 0187 — localStorage cache for hub data (per month set). Repeat
+// visits load INSTANTLY from disk. Server still revalidates in background
+// only when stale beyond 15 min for "today's month", 6h for past months.
 function useMarketEarnings(months: string[]) {
+  const HUB_LS_PREFIX = 'mc:hub:v2:';
+  const key = months.join(',');
   return useQuery<MarketEarningsResponse>({
-    queryKey: ['market-earnings-hub', months.join(',')],
+    queryKey: ['market-earnings-hub', key],
     queryFn: async () => {
-      // months is array of YYYY-MM strings, deduped
       const responses = await Promise.all(
         months.map((m) => fetch(`/api/market/earnings?market=india&month=${m}`).then((r) => r.ok ? r.json() : { results: [] }))
       );
@@ -88,10 +92,35 @@ function useMarketEarnings(months: string[]) {
           all.push(e);
         }
       }
-      return { results: all, source: responses[0]?.source || 'NSE + BSE' };
+      const payload = { results: all, source: responses[0]?.source || 'NSE + BSE', updatedAt: new Date().toISOString() } as MarketEarningsResponse;
+      try { if (typeof window !== 'undefined') localStorage.setItem(HUB_LS_PREFIX + key, JSON.stringify({ ...payload, _cachedAt: Date.now() })); } catch {}
+      return payload;
     },
-    staleTime: 5 * 60_000,
-    refetchInterval: 15 * 60_000,
+    // Aggressive caching: hub data is mostly stable. Refetch only every 15 min for current month, 6h for past.
+    staleTime: 15 * 60_000,
+    refetchInterval: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    initialData: () => {
+      if (typeof window === 'undefined') return undefined;
+      try {
+        const raw = localStorage.getItem(HUB_LS_PREFIX + key);
+        if (!raw) return undefined;
+        const parsed = JSON.parse(raw);
+        // Treat as fresh for 6h after caching
+        if (parsed?._cachedAt && Date.now() - parsed._cachedAt < 6 * 3600_000) return parsed;
+      } catch {}
+      return undefined;
+    },
+    initialDataUpdatedAt: () => {
+      if (typeof window === 'undefined') return undefined;
+      try {
+        const raw = localStorage.getItem(HUB_LS_PREFIX + key);
+        if (!raw) return undefined;
+        const p = JSON.parse(raw);
+        return p?._cachedAt;
+      } catch { return undefined; }
+    },
   });
 }
 
@@ -761,21 +790,25 @@ export default function EarningsOpportunitiesPage() {
     return pastDates[0] || '';
   }, [hub, filterDate, todayIso]);
 
-  // PATCH 0185 — localStorage cache layer for INSTANT date navigation.
-  // User complaint: "always loading calendar always loading all earnings".
-  // Now: every successful graded payload is persisted to localStorage under
-  // key `mc:graded:v7:<date>`. On page mount or date change, the query reads
-  // that cache as initialData → renders instantly from disk → revalidates
-  // in background. Past dates effectively never re-fetch (immutable in KV).
-  const LS_PREFIX = 'mc:graded:v7:';
+  // PATCH 0187 — localStorage cache (v8). Past dates: 7 days fresh, today: 15 min.
+  // User: "I always open link all loads even when data is there before."
+  // Aggressive caching so repeat visits to past dates are zero-network.
+  const LS_PREFIX = 'mc:graded:v8:';
   const readLsCache = (date: string): OpportunitiesPayload | undefined => {
     if (!date || typeof window === 'undefined') return undefined;
     try {
       const raw = localStorage.getItem(LS_PREFIX + date);
       if (!raw) return undefined;
       const parsed = JSON.parse(raw);
-      // Skip stale today-data older than 15 min
-      if (date === todayIso && parsed?._cachedAt && Date.now() - parsed._cachedAt > 15 * 60_000) return undefined;
+      const cachedAt = parsed?._cachedAt || 0;
+      const ageMs = Date.now() - cachedAt;
+      // Today: 15 min freshness (since today's filings can change intraday)
+      if (date === todayIso) {
+        if (ageMs > 15 * 60_000) return undefined;
+      } else {
+        // Past dates: 7 days fresh. They're immutable on the server side anyway.
+        if (ageMs > 7 * 24 * 3600_000) return undefined;
+      }
       return parsed;
     } catch { return undefined; }
   };
@@ -799,8 +832,9 @@ export default function EarningsOpportunitiesPage() {
       writeLsCache(resolvedDateForGrading, payload);
       return payload;
     },
-    // Past dates: cache for 24h (immutable). Today: 5 min.
-    staleTime: resolvedDateForGrading < todayIso ? 24 * 60 * 60_000 : 5 * 60_000,
+    // PATCH 0187 — past dates: 7-day stale. Today: 15 min. React Query won't
+    // even try to refetch if the cached payload is within the stale window.
+    staleTime: resolvedDateForGrading < todayIso ? 7 * 24 * 60 * 60_000 : 15 * 60_000,
     // Aggressive: don't refetch on window focus or reconnect for past dates.
     refetchOnWindowFocus: resolvedDateForGrading >= todayIso,
     refetchOnReconnect: resolvedDateForGrading >= todayIso,
