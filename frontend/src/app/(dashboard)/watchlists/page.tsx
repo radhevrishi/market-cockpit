@@ -166,6 +166,32 @@ function EmptyState() {
       <div style={{ fontSize: '48px', marginBottom: '16px' }}>📊</div>
       <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#F5F7FA', margin: '0 0 8px' }}>Your watchlist is empty</h2>
       <p style={{ fontSize: '14px', color: '#8BA3C1', margin: '0 0 24px' }}>Add stock tickers to start tracking them. Popular tickers: RELIANCE, TCS, HDFCBANK, INFY, ICICIBANK</p>
+      {/* PATCH 0303 — Cross-link the institutional channels users can populate
+          the watchlist from, so the empty state never feels like a dead end. */}
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 14, flexWrap: 'wrap', marginBottom: 14 }}>
+        <a
+          href="/earnings-opportunities"
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding: '6px 12px', borderRadius: 8,
+            border: '1px solid rgba(245,158,11,0.4)',
+            backgroundColor: 'rgba(245,158,11,0.10)',
+            color: '#F59E0B', fontSize: 12, fontWeight: 700,
+            textDecoration: 'none',
+          }}
+        >🏆 Auto-populate from Conviction Beats →</a>
+        <a
+          href="/screener"
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding: '6px 12px', borderRadius: 8,
+            border: '1px solid rgba(15,122,191,0.4)',
+            backgroundColor: 'rgba(15,122,191,0.10)',
+            color: '#0F7ABF', fontSize: 12, fontWeight: 700,
+            textDecoration: 'none',
+          }}
+        >🔍 Find tickers in Screener →</a>
+      </div>
       <p style={{ fontSize: '12px', color: '#4A5B6C', margin: 0 }}>💬 Your watchlist syncs with @mc_watchlist_pulse_bot</p>
     </div>
   );
