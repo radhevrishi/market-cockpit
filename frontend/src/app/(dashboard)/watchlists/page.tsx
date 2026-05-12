@@ -1,12 +1,16 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Plus, Trash2, TrendingUp, TrendingDown, RefreshCw, Download, ArrowUpDown, AlertTriangle } from 'lucide-react';
+import { Plus, Trash2, TrendingUp, TrendingDown, RefreshCw, Download, ArrowUpDown, AlertTriangle, Award } from 'lucide-react';
 import toast from 'react-hot-toast';
 import TickerSearch, { type TickerSuggestion } from '@/components/TickerSearch';
 import { normalizeTicker } from '@/lib/tickers';
 import { isPriceSuspect } from '@/lib/nse';
 import { CHAT_ID, BOT_SECRET } from '@/lib/config';
+import {
+  getConvictionList, removeConviction,
+  type ConvictionEntry,
+} from '@/lib/conviction-beats';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -319,6 +323,24 @@ export default function WatchlistsPage() {
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [watchlistFlags, setWatchlistFlags] = useState<Record<string, string>>({});
+
+  // PATCH 0186 — Tab switcher: 'main' (existing user watchlist) vs 'conviction'
+  // (auto-populated from Earnings Ops BLOCKBUSTER + STRONG cards).
+  const [activeTab, setActiveTab] = useState<'main' | 'conviction'>('main');
+  const [convictionEntries, setConvictionEntries] = useState<ConvictionEntry[]>(() => getConvictionList());
+  // Re-read on mount + listen for cross-tab updates
+  useEffect(() => {
+    setConvictionEntries(getConvictionList());
+    if (typeof window === 'undefined') return;
+    const refresh = () => setConvictionEntries(getConvictionList());
+    window.addEventListener('conviction-beats:updated', refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener('conviction-beats:updated', refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, []);
+  const convictionCount = convictionEntries.length;
 
   // Flag cycle: ⚪ → 🟢 → 🟠 → 🔴 → ⚪
   const handleToggleFlag = useCallback(async (ticker: string) => {
@@ -646,7 +668,7 @@ export default function WatchlistsPage() {
   return (
     <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
       {/* ── Header ────────────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#F5F7FA', margin: '0 0 4px' }}>Watchlist</h1>
           <p style={{ fontSize: '12px', color: '#8BA3C1', margin: 0 }}>Tracking universe · Observation only · No P&L</p>
@@ -705,6 +727,42 @@ export default function WatchlistsPage() {
         </div>
       </div>
 
+      {/* ── Tab switcher (PATCH 0186) ──────────────────────────────────────── */}
+      <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid #2A3B4C', marginBottom: '20px' }}>
+        <button onClick={() => setActiveTab('main')}
+          style={{
+            padding: '10px 16px', background: 'none',
+            border: 'none', borderBottom: `2px solid ${activeTab === 'main' ? '#22D3EE' : 'transparent'}`,
+            color: activeTab === 'main' ? '#22D3EE' : '#8BA3C1',
+            fontSize: 13, fontWeight: 700, cursor: 'pointer',
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}>
+          📋 My Watchlist
+          <span style={{ fontSize: 10, color: '#6B7A8D' }}>{tickers.length}</span>
+        </button>
+        <button onClick={() => setActiveTab('conviction')}
+          style={{
+            padding: '10px 16px', background: 'none',
+            border: 'none', borderBottom: `2px solid ${activeTab === 'conviction' ? '#F59E0B' : 'transparent'}`,
+            color: activeTab === 'conviction' ? '#F59E0B' : '#8BA3C1',
+            fontSize: 13, fontWeight: 700, cursor: 'pointer',
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}>
+          <Award style={{ width: 13, height: 13 }} />
+          Conviction Beats
+          <span style={{
+            fontSize: 10, fontWeight: 800,
+            padding: '1px 6px', borderRadius: 8,
+            backgroundColor: convictionCount > 0 ? '#F59E0B22' : '#1A2B3C',
+            color: convictionCount > 0 ? '#F59E0B' : '#6B7A8D',
+          }}>{convictionCount}</span>
+        </button>
+      </div>
+
+      {activeTab === 'conviction' ? (
+        <ConvictionBeatsPanel entries={convictionEntries} onRemove={(t) => { removeConviction(t); setConvictionEntries(getConvictionList()); }} />
+      ) : (
+      <>
       {/* ── Add Ticker Search ──────────────────────────────────────────────── */}
       <div style={{ marginBottom: '24px' }}>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
@@ -770,6 +828,8 @@ export default function WatchlistsPage() {
           </p>
         </div>
       )}
+      </>
+      )}
 
       {/* ── CSS Animation ─────────────────────────────────────────────────── */}
       <style>{`
@@ -778,6 +838,126 @@ export default function WatchlistsPage() {
           50% { opacity: 1; }
         }
       `}</style>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONVICTION BEATS PANEL (PATCH 0186)
+// Auto-populated bench of BLOCKBUSTER + STRONG earnings prints from
+// /earnings-opportunities. localStorage-backed via lib/conviction-beats.ts.
+// ═══════════════════════════════════════════════════════════════════════════
+function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[]; onRemove: (t: string) => void }) {
+  if (entries.length === 0) {
+    return (
+      <div style={{
+        padding: '40px 24px', textAlign: 'center',
+        backgroundColor: '#1A2B3C', border: '1px solid #2A3B4C', borderRadius: 12,
+      }}>
+        <div style={{ fontSize: 32, marginBottom: 10 }}>🏆</div>
+        <h3 style={{ fontSize: 15, fontWeight: 700, color: '#F5F7FA', margin: '0 0 6px' }}>
+          Conviction Beats — empty
+        </h3>
+        <p style={{ fontSize: 12, color: '#8BA3C1', margin: '0 0 12px', lineHeight: 1.5 }}>
+          This bench auto-fills with stocks that print BLOCKBUSTER or STRONG earnings in <strong style={{ color: '#22D3EE' }}>/earnings-opportunities</strong>.
+          <br />Visit that page after a day of filings; this list will populate automatically.
+        </p>
+        <a href="/earnings-opportunities" style={{
+          display: 'inline-block', padding: '8px 16px',
+          backgroundColor: '#F59E0B15', border: '1px solid #F59E0B60',
+          borderRadius: 6, color: '#F59E0B', fontSize: 12, fontWeight: 700,
+          textDecoration: 'none',
+        }}>Open Earnings Opportunities →</a>
+      </div>
+    );
+  }
+  const blockbusters = entries.filter((e) => e.tier === 'BLOCKBUSTER');
+  const strongs = entries.filter((e) => e.tier === 'STRONG');
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{
+        padding: '10px 14px', backgroundColor: '#0A1422',
+        border: '1px solid #1A2840', borderRadius: 8,
+        fontSize: 11.5, color: '#8BA3C1', lineHeight: 1.5,
+      }}>
+        Institutional bench of high-quality post-earnings setups.
+        Auto-populated from <strong style={{ color: '#22D3EE' }}>Earnings Opportunities</strong> whenever a stock prints BLOCKBUSTER or STRONG.
+        Removed entries don't auto-readd — use × to permanently prune.
+      </div>
+      {blockbusters.length > 0 && (
+        <div style={{
+          backgroundColor: '#0D1623',
+          border: '1px solid #F59E0B40', borderLeft: '4px solid #F59E0B',
+          borderRadius: 12, padding: '14px 18px',
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#F59E0B', marginBottom: 10, letterSpacing: '0.5px' }}>
+            ⭐ BLOCKBUSTER · {blockbusters.length}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
+            {blockbusters.map((e) => <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} />)}
+          </div>
+        </div>
+      )}
+      {strongs.length > 0 && (
+        <div style={{
+          backgroundColor: '#0D1623',
+          border: '1px solid #10B98140', borderLeft: '4px solid #10B981',
+          borderRadius: 12, padding: '14px 18px',
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#10B981', marginBottom: 10, letterSpacing: '0.5px' }}>
+            🟢 STRONG · {strongs.length}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
+            {strongs.map((e) => <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} />)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConvictionRow({ entry, onRemove }: { entry: ConvictionEntry; onRemove: (t: string) => void }) {
+  const tierColor = entry.tier === 'BLOCKBUSTER' ? '#F59E0B' : '#10B981';
+  const pct = (v: number | null) => v == null ? '—' : `${v >= 0 ? '+' : ''}${Math.round(v)}%`;
+  return (
+    <div style={{
+      padding: '10px 12px', backgroundColor: '#0A1422',
+      border: '1px solid #1A2840', borderLeft: `3px solid ${tierColor}`,
+      borderRadius: 8, display: 'flex', flexDirection: 'column', gap: 6,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 6 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#E6EDF3', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {entry.company}
+          </div>
+          <div style={{ fontSize: 10, fontFamily: 'ui-monospace, monospace', color: '#8BA3C1', display: 'flex', gap: 6 }}>
+            <span style={{ fontWeight: 700 }}>{entry.ticker}</span>
+            <span style={{ color: '#6B7A8D' }}>·</span>
+            <span>filed {entry.filing_date}</span>
+            {entry.sector && (<><span style={{ color: '#6B7A8D' }}>·</span><span>{entry.sector}</span></>)}
+          </div>
+        </div>
+        <div style={{
+          fontSize: 14, fontWeight: 900, color: tierColor,
+          fontFamily: 'ui-monospace, monospace',
+        }}>{entry.composite_score}</div>
+        <button onClick={() => onRemove(entry.ticker)} title="Remove from Conviction Beats"
+          style={{
+            background: 'none', border: 'none', color: '#6B7A8D',
+            cursor: 'pointer', padding: '2px 6px', fontSize: 14,
+          }}>×</button>
+      </div>
+      <div style={{ display: 'flex', gap: 10, fontSize: 10.5 }}>
+        <span><span style={{ color: '#6B7A8D' }}>Sales</span> <strong style={{ color: (entry.sales_yoy_pct ?? 0) >= 0 ? '#10B981' : '#EF4444' }}>{pct(entry.sales_yoy_pct)}</strong></span>
+        <span><span style={{ color: '#6B7A8D' }}>PAT</span> <strong style={{ color: (entry.net_profit_yoy_pct ?? 0) >= 0 ? '#10B981' : '#EF4444' }}>{pct(entry.net_profit_yoy_pct)}</strong></span>
+        <span><span style={{ color: '#6B7A8D' }}>EPS</span> <strong style={{ color: (entry.eps_yoy_pct ?? 0) >= 0 ? '#10B981' : '#EF4444' }}>{pct(entry.eps_yoy_pct)}</strong></span>
+      </div>
+      {entry.source_url && (
+        <a href={entry.source_url} target="_blank" rel="noreferrer"
+          style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none' }}>
+          📄 Filing →
+        </a>
+      )}
     </div>
   );
 }

@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Download, AlertTriangle } from 'lucide-react';
+import { Download, AlertTriangle, Award } from 'lucide-react';
 import { CHAT_ID, BOT_SECRET } from '@/lib/config';
+import { getConvictionTickers } from '@/lib/conviction-beats';
 
 // ══════════════════════════════════════════════
 // EARNINGS PAGE — Custom Universe Only
@@ -102,7 +103,9 @@ interface EarningsScanCard {
   screenerUrl: string;
   nseUrl: string;
   // Extended: which universe the stock belongs to
-  universeTag?: 'portfolio' | 'watchlist' | 'both' | 'screener';
+  universeTag?: 'portfolio' | 'watchlist' | 'both' | 'screener' | 'conviction';
+  // PATCH 0186 — orthogonal flag: ticker is on the Conviction Beats list
+  isConviction?: boolean;
 }
 
 interface ScanResponse {
@@ -135,7 +138,7 @@ interface ScanResponse {
   requestedSymbols?: string[];
 }
 
-type ViewMode = 'portfolio' | 'watchlist' | 'both' | 'screener';
+type ViewMode = 'portfolio' | 'watchlist' | 'both' | 'screener' | 'conviction';
 
 // ── Aggregation Types ──
 
@@ -960,6 +963,21 @@ export default function EarningsPage() {
   const [updatedAt, setUpdatedAt] = useState('');
   const [sortBy, setSortBy] = useState<'score' | 'symbol' | 'revenueYoY' | 'patYoY'>('score');
   const [filterGrades, setFilterGrades] = useState<string[]>(['ALL']);
+  // PATCH 0186 — Conviction Beats filter (composable with all other filters).
+  // When ON, only cards whose ticker is in localStorage conviction list are shown.
+  // Works AND-style with viewMode, filterGrades, dateRange, guidanceFilter.
+  const [convictionOnly, setConvictionOnly] = useState<boolean>(false);
+  const [convictionTickersState, setConvictionTickersState] = useState<Set<string>>(() => getConvictionTickers());
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const refresh = () => setConvictionTickersState(getConvictionTickers());
+    window.addEventListener('conviction-beats:updated', refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener('conviction-beats:updated', refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, []);
   const [viewMode, setViewMode] = useState<ViewMode>('watchlist');
   // Date range filter — defaults to last 30 days → today
   const [dateFrom, setDateFrom] = useState(() => {
@@ -1035,12 +1053,19 @@ export default function EarningsPage() {
       portfolio = portfolio.map(normalizeSymbol).filter(s => s.length > 0);
       watchlist = watchlist.map(normalizeSymbol).filter(s => s.length > 0);
 
+      // PATCH 0186 — Conviction Beats are an additional universe source.
+      // Auto-populated from /earnings-opportunities (BLOCKBUSTER + STRONG cards),
+      // these stocks get scanned alongside portfolio + watchlist so the user can
+      // filter to them without having to manually add to watchlist.
+      const convictionSet = getConvictionTickers();
+      const convictionList = [...convictionSet];
+
       // Always scan ALL symbols (union) regardless of viewMode — display filters later
       const portfolioSet = new Set(portfolio);
       const watchlistSet = new Set(watchlist);
-      const symbols = [...new Set([...portfolio, ...watchlist])];
+      const symbols = [...new Set([...portfolio, ...watchlist, ...convictionList])];
 
-      console.log(`[Earnings] Scanning ALL symbols: ${symbols.length} (portfolio: ${portfolio.length}, watchlist: ${watchlist.length})`);
+      console.log(`[Earnings] Scanning ALL symbols: ${symbols.length} (portfolio: ${portfolio.length}, watchlist: ${watchlist.length}, conviction: ${convictionList.length})`);
 
       if (symbols.length === 0) {
         setCards([]);
@@ -1086,13 +1111,19 @@ export default function EarningsPage() {
         }
       }
 
-      // Tag each card with universe membership
-      allCards = allCards.map(c => ({
-        ...c,
-        universeTag: (portfolioSet.has(c.symbol) && watchlistSet.has(c.symbol)) ? 'both'
-          : portfolioSet.has(c.symbol) ? 'portfolio'
-          : 'watchlist',
-      }));
+      // Tag each card with universe membership (legacy universeTag for
+      // portfolio/watchlist/both/conviction-only) PLUS a separate
+      // isConviction flag so multi-membership doesn't lose data.
+      allCards = allCards.map(c => {
+        const inP = portfolioSet.has(c.symbol);
+        const inW = watchlistSet.has(c.symbol);
+        const inC = convictionSet.has(c.symbol);
+        return {
+          ...c,
+          universeTag: (inP && inW) ? 'both' : inP ? 'portfolio' : inW ? 'watchlist' : inC ? 'conviction' : 'watchlist',
+          isConviction: inC,
+        };
+      });
 
       // Enrich cards with live CMP/MCap data from quotes APIs
       try {
@@ -1271,10 +1302,13 @@ export default function EarningsPage() {
 
     return [...sourceCards]
       .filter(c => {
-        // Filter by viewMode (universe membership)
+        // Filter by viewMode (universe membership) — composes with conviction filter
         if (viewMode === 'screener') { /* show all screener cards */ }
         else if (viewMode === 'portfolio' && c.universeTag !== 'portfolio' && c.universeTag !== 'both') return false;
         else if (viewMode === 'watchlist' && c.universeTag !== 'watchlist' && c.universeTag !== 'both') return false;
+        else if (viewMode === 'conviction' && !convictionTickersState.has(c.symbol)) return false;
+        // PATCH 0186 — Conviction Beats filter (composable). Active = card MUST be in conviction.
+        if (convictionOnly && !convictionTickersState.has(c.symbol)) return false;
         // Filter by grade
         if (!filterGrades.includes('ALL') && !filterGrades.includes(c.grade)) return false;
         // ── Reporting Period Filter ──
@@ -1331,7 +1365,7 @@ export default function EarningsPage() {
         }
       });
     },
-    [cards, screenerCards, filterGrades, sortBy, viewMode, dateFrom, dateTo, guidanceFilter]
+    [cards, screenerCards, filterGrades, sortBy, viewMode, dateFrom, dateTo, guidanceFilter, convictionOnly, convictionTickersState]
   );
 
   // ── Visible cards: filtered by viewMode + date, but NOT grade ──
@@ -1347,6 +1381,9 @@ export default function EarningsPage() {
       if (viewMode === 'screener') { /* show all */ }
       else if (viewMode === 'portfolio' && c.universeTag !== 'portfolio' && c.universeTag !== 'both') return false;
       else if (viewMode === 'watchlist' && c.universeTag !== 'watchlist' && c.universeTag !== 'both') return false;
+      else if (viewMode === 'conviction' && !convictionTickersState.has(c.symbol)) return false;
+      // PATCH 0186 — Conviction-only filter composes with viewMode
+      if (convictionOnly && !convictionTickersState.has(c.symbol)) return false;
       // Date filter (same logic as sortedCards)
       if (fromDate || toDate) {
         let reportDate: Date | null = null;
@@ -1421,10 +1458,14 @@ export default function EarningsPage() {
   const watchlistCardCount = visibleCards.filter(c => c.universeTag === 'watchlist' || c.universeTag === 'both').length;
   const bothCardCount = visibleCards.length;
 
+  // PATCH 0186 — Count of cards in conviction (post-filter, respecting other filters)
+  const convictionCardCount = cards.filter((c) => convictionTickersState.has(c.symbol)).length;
+
   const VIEW_TABS: { key: ViewMode; label: string; emoji: string; count: number; total: number }[] = [
     { key: 'portfolio', label: 'Portfolio', emoji: '💼', count: portfolioCardCount, total: portfolioSymbols.length },
     { key: 'watchlist', label: 'Watchlist', emoji: '📋', count: watchlistCardCount, total: watchlistSymbols.length },
     { key: 'both', label: 'Both', emoji: '🔗', count: bothCardCount, total: new Set([...portfolioSymbols, ...watchlistSymbols]).size },
+    { key: 'conviction', label: 'Conviction Beats', emoji: '🏆', count: convictionCardCount, total: convictionTickersState.size },
     { key: 'screener', label: 'Screener', emoji: '🔍', count: screenerCards.length, total: screenerSymbolCount },
   ];
 
@@ -1617,6 +1658,27 @@ export default function EarningsPage() {
             </button>
           ))}
         </div>
+
+        {/* PATCH 0186 — Conviction Beats composable filter (AND-style on top of viewMode/grades/date/sentiment) */}
+        <button onClick={() => setConvictionOnly((v) => !v)}
+          title="Composable filter: restricts current view to stocks auto-tagged as Conviction Beats (BLOCKBUSTER / STRONG from Earnings Opportunities). Works alongside all other filters."
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding: '8px 14px', borderRadius: 8,
+            border: `1px solid ${convictionOnly ? '#F59E0B' : CARD_BORDER}`,
+            backgroundColor: convictionOnly ? '#F59E0B22' : CARD,
+            color: convictionOnly ? '#F59E0B' : TEXT,
+            fontSize: 12, fontWeight: 700, cursor: 'pointer',
+          }}>
+          <Award style={{ width: 13, height: 13 }} />
+          Conviction Beats only
+          <span style={{
+            fontSize: 10, fontWeight: 800,
+            padding: '1px 5px', borderRadius: 3,
+            backgroundColor: convictionOnly ? '#F59E0B' : '#1A2840',
+            color: convictionOnly ? '#000' : '#6B7A8D',
+          }}>{convictionTickersState.size}</span>
+        </button>
 
         <select value={sortBy} onChange={e => setSortBy(e.target.value as any)} style={{
           backgroundColor: CARD, border: `1px solid ${CARD_BORDER}`, color: TEXT,

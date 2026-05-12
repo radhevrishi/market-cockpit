@@ -17,6 +17,8 @@ import { useMemo, useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Calendar as CalendarIcon, ExternalLink, RefreshCw, ChevronDown, ChevronRight, Grid3X3, FileText } from 'lucide-react';
 import api from '@/lib/api';
+// PATCH 0186 — Auto-sync BLOCKBUSTER/STRONG cards into Conviction Beats pipeline
+import { syncFromEarningsOps, type ConvictionTier } from '@/lib/conviction-beats';
 
 // ─── Calendar payload types ────────────────────────────────────────────────
 interface CalendarItem {
@@ -901,125 +903,35 @@ export default function EarningsOpportunitiesPage() {
     }
   };
 
-  // PATCH 0185 — FORWARD GUIDANCE ONLY. Past-quarter prints (revenue beat,
-  // record quarter, profit miss) are NOT guidance — they're history, shown
-  // already as YoY tiles. Guidance = what management commits to for next
-  // quarter / year. Keyword set rewritten to capture forward-looking phrases:
-  //   - explicit guidance: raised/cut/maintained guidance, outlook upgrade
-  //   - capex plans: new plant, capacity expansion, brownfield, greenfield
-  //   - pipeline / order book: record order book, healthy pipeline
-  //   - margin guidance: margin to expand, margin guidance of X%
-  //   - geography / product: new product launch, US entry, EU expansion
-  //   - tone: confident, optimistic, structural tailwind, headwind, cautious
-  const GUIDANCE_POSITIVE = [
-    // Explicit guidance moves
-    'raised guidance', 'guidance upgrade', 'guidance raised', 'raised outlook',
-    'upgraded outlook', 'raised target', 'raised forecast', 'maintained guidance',
-    // Forward-looking statements
-    'expect strong', 'expect robust', 'guide to', 'targeting', 'aiming for',
-    'on track to', 'on track for', 'project growth',
-    // Capacity / capex
-    'capacity expansion', 'new plant', 'brownfield', 'greenfield', 'commissioning',
-    'capex of', 'planned capex', 'capex plan',
-    // Pipeline / order book
-    'record order book', 'order book of', 'healthy pipeline', 'strong pipeline',
-    'order inflow', 'order win', 'book to bill',
-    // Margin guidance
-    'margin to expand', 'margin guidance', 'operating leverage', 'margin expansion guidance',
-    'expanding margin',
-    // Demand / structural
-    'demand recovery', 'structural tailwind', 'broad based growth', 'broad-based growth',
-    'multi-year growth', 'long runway', 'confident', 'optimistic about',
-    // New product / geography
-    'new product launch', 'pipeline launch', 'us expansion', 'eu expansion',
-    'new geography', 'export ramp',
-  ];
-  const GUIDANCE_NEGATIVE = [
-    // Explicit guidance moves
-    'cut guidance', 'lowered guidance', 'guidance cut', 'lowered outlook',
-    'withdrew guidance', 'suspended guidance', 'revised down', 'downgraded outlook',
-    // Forward-looking statements
-    'expect weak', 'expect soft', 'demand soft', 'demand weak', 'sluggish demand',
-    'headwind', 'cautious outlook', 'cautious on', 'guidance miss',
-    // Margin pressure
-    'margin pressure', 'margin compression', 'cost inflation', 'input cost pressure',
-    // Structural negatives
-    'destock', 'inventory correction', 'moderation', 'slowdown ahead',
-    'warning', 'profit warning',
-  ];
-  function guidanceBonus(score: number): number {
-    if (score === undefined || score === -1) return 0;
-    if (score >= 0.85) return 14;
-    if (score >= 0.70) return 8;
-    if (score >= 0.55) return 3;
-    if (score <= 0.15) return -14;
-    if (score <= 0.30) return -8;
-    if (score <= 0.45) return -3;
-    return 0;
-  }
-  function guidanceColor(score: number): string {
-    if (score === undefined || score === -1) return '#6B7A8D';
-    if (score >= 0.70) return '#10B981';
-    if (score >= 0.55) return '#34d399';
-    if (score <= 0.30) return '#EF4444';
-    if (score <= 0.45) return '#F97316';
-    return '#8A95A3';
-  }
-  function guidanceLabel(score: number): string {
-    if (score === undefined || score === -1) return '';
-    if (score >= 0.85) return '▲ Strong';
-    if (score >= 0.70) return '▲ Positive';
-    if (score >= 0.55) return '↑ Mild +';
-    if (score <= 0.15) return '▼ Weak';
-    if (score <= 0.30) return '▼ Negative';
-    if (score <= 0.45) return '↓ Mild −';
-    return '→ Neutral';
-  }
-  // Collect all unique tickers from the current view
-  const viewTickers = useMemo(() => {
-    const set = new Set<string>();
-    for (const t of TIER_ORDER) {
-      for (const c of (data?.by_tier?.[t] || [])) set.add(c.ticker.toUpperCase());
+  // PATCH 0186 — Guidance logic removed. Guidance now lives in /watchlists
+  // → Conviction Beats tab + /earnings-hub → Scan filter, both fed from
+  // the BLOCKBUSTER/STRONG cards graded here. See lib/conviction-beats.ts.
+
+  // Auto-sync BLOCKBUSTER + STRONG cards into the Conviction Beats pipeline
+  // every time the graded payload changes. Fires whenever a fresh date is
+  // viewed — the storage layer dedupes by ticker + filing_date so this is
+  // safe to call repeatedly.
+  useEffect(() => {
+    if (!data?.by_tier) return;
+    const entries: Array<{
+      ticker: string; company: string; tier: ConvictionTier;
+      composite_score: number;
+      sales_yoy_pct: number | null; net_profit_yoy_pct: number | null; eps_yoy_pct: number | null;
+      filing_date: string; sector?: string; market_cap_bucket?: string; source_url?: string;
+    }> = [];
+    for (const tier of ['BLOCKBUSTER', 'STRONG'] as const) {
+      for (const c of (data.by_tier[tier] || [])) {
+        entries.push({
+          ticker: c.ticker, company: c.company, tier,
+          composite_score: c.composite_score,
+          sales_yoy_pct: c.sales_yoy_pct, net_profit_yoy_pct: c.net_profit_yoy_pct, eps_yoy_pct: c.eps_yoy_pct,
+          filing_date: c.filing_date, sector: c.sector, market_cap_bucket: c.market_cap_bucket,
+          source_url: c.filing_url,
+        });
+      }
     }
-    return [...set];
+    if (entries.length > 0) syncFromEarningsOps(entries);
   }, [data]);
-  const { data: guidanceScores = {} } = useQuery<Record<string, number>>({
-    queryKey: ['earnings-guidance-scores', resolvedDateForGrading, viewTickers.join(',')],
-    enabled: viewTickers.length > 0 && !!resolvedDateForGrading,
-    queryFn: async () => {
-      try {
-        // Fetch recent earnings news once for the whole view
-        const res = await fetch('/api/news?limit=500&importance_min=1&article_type=EARNINGS', { cache: 'force-cache' });
-        if (!res.ok) return {};
-        const j = await res.json();
-        const articles: any[] = j?.articles || j?.data || [];
-        const scores: Record<string, number> = {};
-        for (const sym of viewTickers) {
-          const symLower = sym.toLowerCase();
-          const relevant = articles.filter((a: any) => {
-            const tickers: string[] = a.tickers || a.related_tickers || [];
-            const titleText = ((a.title ?? '') + ' ' + (a.headline ?? '')).toLowerCase();
-            return tickers.some((t: any) => String(t).toUpperCase() === sym) ||
-                   titleText.includes(symLower);
-          });
-          if (relevant.length === 0) { scores[sym] = -1; continue; }
-          let score = 0.5;
-          for (const a of relevant.slice(0, 8)) {
-            const text = ((a.title ?? '') + ' ' + (a.headline ?? '') + ' ' + (a.summary ?? '')).toLowerCase();
-            const pos = GUIDANCE_POSITIVE.some((kw) => text.includes(kw));
-            const neg = GUIDANCE_NEGATIVE.some((kw) => text.includes(kw));
-            if (pos && !neg) score = Math.min(1.0, score + 0.15);
-            else if (neg && !pos) score = Math.max(0.0, score - 0.15);
-            else if (pos && neg) score = Math.min(0.75, score + 0.04);
-          }
-          scores[sym] = Math.round(score * 10) / 10;
-        }
-        return scores;
-      } catch { return {}; }
-    },
-    staleTime: 15 * 60_000,
-    refetchInterval: false,
-  });
 
   // PATCH 0179 — Auto-fill DISABLED.
   // The 0177 auto-fill scanned Nifty100 + priority watchlist and included any
@@ -1722,7 +1634,7 @@ export default function EarningsOpportunitiesPage() {
               </button>
               {isOpen && (
                 <div style={{ padding: '0 18px 16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 12 }}>
-                  {stocks.map((s) => <EarningsCard key={s.ticker + ':' + s.company} stock={s} guidanceScore={guidanceScores[s.ticker.toUpperCase()]} />)}
+                  {stocks.map((s) => <EarningsCard key={s.ticker + ':' + s.company} stock={s} />)}
                 </div>
               )}
             </div>
@@ -1757,38 +1669,8 @@ function fmtPct(p: number | null | undefined, digits = 0): string {
   return `${p >= 0 ? '+' : ''}${p.toFixed(digits)}%`;
 }
 
-function EarningsCard({ stock, guidanceScore }: { stock: ParsedEarning; guidanceScore?: number }) {
+function EarningsCard({ stock }: { stock: ParsedEarning }) {
   const tierColor = TIER_META[stock.tier].color;
-  // PATCH 0185 — Guidance = FORWARD-LOOKING only.
-  // No more magnitude fallback. Past-quarter YoY numbers are NOT guidance —
-  // they're history (already shown in the SALES/PAT/EPS tiles).
-  // Guidance comes ONLY from news articles with forward-looking phrases:
-  // raised guidance, capex plans, order book, FY targets, margin guidance, etc.
-  // If no news article mentions the ticker with such phrases, we don't fake it.
-  const gScore = guidanceScore ?? -1;
-  const hasGuidance = gScore !== -1;
-  const gAdj = (() => {
-    if (!hasGuidance) return 0;
-    if (gScore >= 0.85) return 14;
-    if (gScore >= 0.70) return 8;
-    if (gScore >= 0.55) return 3;
-    if (gScore <= 0.15) return -14;
-    if (gScore <= 0.30) return -8;
-    if (gScore <= 0.45) return -3;
-    return 0;
-  })();
-  const gColor = !hasGuidance ? '#6B7A8D' :
-    gScore >= 0.70 ? '#10B981' :
-    gScore >= 0.55 ? '#34d399' :
-    gScore <= 0.30 ? '#EF4444' :
-    gScore <= 0.45 ? '#F97316' : '#8A95A3';
-  const gLabel = !hasGuidance ? '— No forward guidance data' :
-    gScore >= 0.85 ? '▲ Strong' :
-    gScore >= 0.70 ? '▲ Positive' :
-    gScore >= 0.55 ? '↑ Mild +' :
-    gScore <= 0.15 ? '▼ Weak' :
-    gScore <= 0.30 ? '▼ Negative' :
-    gScore <= 0.45 ? '↓ Mild −' : '→ Neutral';
   // ☀️ daytime filing (09:15–15:30 IST) vs 🌙 outside-hours
   const timing: '☀️' | '🌙' | null = (() => {
     if (!stock.filing_url) return null;
@@ -1881,18 +1763,6 @@ function EarningsCard({ stock, guidanceScore }: { stock: ParsedEarning; guidance
         <div style={{ padding: '6px 10px', backgroundColor: '#0D1623', borderRadius: 6, border: `1px solid ${tierColor}40`, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
           <div style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.6px' }}>SCORE</div>
           <div style={{ fontSize: 22, fontWeight: 900, color: tierColor, lineHeight: 1, marginTop: 2 }}>{stock.composite_score}</div>
-          {/* PATCH 0185 — Forward Guidance row (real news-derived only) */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4, lineHeight: 1.1, flexWrap: 'wrap' }}>
-            <span title="Forward-looking guidance scanned from news (raised guidance, capex plans, order book, FY targets, margin guidance)"
-              style={{ fontSize: 9, fontWeight: 700, color: gColor, letterSpacing: '0.3px' }}>
-              {gLabel}
-            </span>
-            {hasGuidance && (
-              <span style={{ fontSize: 9, fontWeight: 800, color: gColor, fontFamily: 'ui-monospace, monospace' }}>
-                ({gAdj > 0 ? '+' : ''}{gAdj}pts)
-              </span>
-            )}
-          </div>
         </div>
       </div>
 
