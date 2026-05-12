@@ -863,6 +863,95 @@ export default function EarningsOpportunitiesPage() {
     }
   };
 
+  // PATCH 0183 — Guidance pts (copied from /multibagger lines 2089-2226).
+  // Scans recent news articles for each ticker on the page, applies keyword
+  // scoring to compute guidance score 0.0–1.0, then maps to a ±14/8/3/0 pt
+  // adjustment displayed next to the composite score.
+  const GUIDANCE_POSITIVE = [
+    'raised guidance', 'guidance upgrade', 'raised outlook', 'beats estimates',
+    'above estimates', 'record quarter', 'record revenue', 'strong beat',
+    'raised earnings', 'margin expansion', 'strong growth', 'upgraded',
+    'rerating', 'guidance raised',
+  ];
+  const GUIDANCE_NEGATIVE = [
+    'cut guidance', 'lowered guidance', 'below estimates', 'disappointing',
+    'warning', 'cautious', 'revenue miss', 'profit miss', 'guidance cut',
+    'margin pressure', 'revised down', 'lowered outlook',
+  ];
+  function guidanceBonus(score: number): number {
+    if (score === undefined || score === -1) return 0;
+    if (score >= 0.85) return 14;
+    if (score >= 0.70) return 8;
+    if (score >= 0.55) return 3;
+    if (score <= 0.15) return -14;
+    if (score <= 0.30) return -8;
+    if (score <= 0.45) return -3;
+    return 0;
+  }
+  function guidanceColor(score: number): string {
+    if (score === undefined || score === -1) return '#6B7A8D';
+    if (score >= 0.70) return '#10B981';
+    if (score >= 0.55) return '#34d399';
+    if (score <= 0.30) return '#EF4444';
+    if (score <= 0.45) return '#F97316';
+    return '#8A95A3';
+  }
+  function guidanceLabel(score: number): string {
+    if (score === undefined || score === -1) return '';
+    if (score >= 0.85) return '▲ Strong';
+    if (score >= 0.70) return '▲ Positive';
+    if (score >= 0.55) return '↑ Mild +';
+    if (score <= 0.15) return '▼ Weak';
+    if (score <= 0.30) return '▼ Negative';
+    if (score <= 0.45) return '↓ Mild −';
+    return '→ Neutral';
+  }
+  // Collect all unique tickers from the current view
+  const viewTickers = useMemo(() => {
+    const set = new Set<string>();
+    for (const t of TIER_ORDER) {
+      for (const c of (data?.by_tier?.[t] || [])) set.add(c.ticker.toUpperCase());
+    }
+    return [...set];
+  }, [data]);
+  const { data: guidanceScores = {} } = useQuery<Record<string, number>>({
+    queryKey: ['earnings-guidance-scores', resolvedDateForGrading, viewTickers.join(',')],
+    enabled: viewTickers.length > 0 && !!resolvedDateForGrading,
+    queryFn: async () => {
+      try {
+        // Fetch recent earnings news once for the whole view
+        const res = await fetch('/api/news?limit=500&importance_min=1&article_type=EARNINGS', { cache: 'force-cache' });
+        if (!res.ok) return {};
+        const j = await res.json();
+        const articles: any[] = j?.articles || j?.data || [];
+        const scores: Record<string, number> = {};
+        for (const sym of viewTickers) {
+          const symLower = sym.toLowerCase();
+          const relevant = articles.filter((a: any) => {
+            const tickers: string[] = a.tickers || a.related_tickers || [];
+            const titleText = ((a.title ?? '') + ' ' + (a.headline ?? '')).toLowerCase();
+            return tickers.some((t: any) => String(t).toUpperCase() === sym) ||
+                   titleText.includes(symLower);
+          });
+          if (relevant.length === 0) { scores[sym] = -1; continue; }
+          let score = 0.5;
+          for (const a of relevant.slice(0, 8)) {
+            const text = ((a.title ?? '') + ' ' + (a.headline ?? '') + ' ' + (a.summary ?? '')).toLowerCase();
+            const pos = GUIDANCE_POSITIVE.some((kw) => text.includes(kw));
+            const neg = GUIDANCE_NEGATIVE.some((kw) => text.includes(kw));
+            if (pos && !neg) score = Math.min(1.0, score + 0.15);
+            else if (neg && !pos) score = Math.max(0.0, score - 0.15);
+            else if (pos && neg) score = Math.min(0.75, score + 0.04);
+          }
+          scores[sym] = Math.round(score * 10) / 10;
+        }
+        return scores;
+      } catch { return {}; }
+    },
+    staleTime: 15 * 60_000,
+    refetchInterval: false,
+  });
+
   // PATCH 0179 — Auto-fill DISABLED.
   // The 0177 auto-fill scanned Nifty100 + priority watchlist and included any
   // ticker with recent Q4 financials. Critical bug: it had no way to verify
@@ -1070,10 +1159,11 @@ export default function EarningsOpportunitiesPage() {
     };
   }, [baseView, forcedCards]);
 
-  // PATCH 0145.4: when no manual date is picked, fall back to whatever the
-  // query resolver picked as the most-recent past date with filings, so the
-  // header reflects what's actually being graded.
-  const effectiveDate = filterDate || view.filing_date || '';
+  // PATCH 0183: header date label now uses resolvedDateForGrading FIRST so the
+  // navigation header updates INSTANTLY when user clicks ←/→. Previous logic
+  // used view.filing_date which lagged behind by the entire fetch duration —
+  // user saw stale "future date" while waiting 30+ seconds for new data.
+  const effectiveDate = resolvedDateForGrading || filterDate || view.filing_date || '';
   const filingDateLabel = (() => {
     if (!effectiveDate) return 'Latest available';
     try {
@@ -1082,6 +1172,10 @@ export default function EarningsOpportunitiesPage() {
       return !filterDate ? `${formatted} · auto-picked` : formatted;
     } catch { return effectiveDate; }
   })();
+  // Detect "stale view": showing data from a previous date while new date loads.
+  // True when graded query is fetching AND view.filing_date doesn't match the
+  // date the user just navigated to.
+  const isStaleView = gradedFetching && view.filing_date && view.filing_date !== resolvedDateForGrading;
 
   const counts = TIER_ORDER.map((t) => ({ tier: t, n: view.by_tier[t]?.length || 0 }));
 
@@ -1163,9 +1257,25 @@ export default function EarningsOpportunitiesPage() {
         </div>
 
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: '1px solid #1A2840', borderRadius: 8, padding: '2px 2px 2px 12px', backgroundColor: '#0A1422' }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: `1px solid ${isStaleView ? '#F59E0B60' : '#1A2840'}`, borderRadius: 8, padding: '2px 2px 2px 12px', backgroundColor: '#0A1422' }}>
             <span style={{ fontSize: 11, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.4px' }}>FILING DATE</span>
             <span style={{ fontSize: 12, color: '#22D3EE', fontWeight: 700 }}>· {filingDateLabel}</span>
+            {isStaleView && (
+              <span style={{
+                fontSize: 9.5, fontWeight: 800, color: '#F59E0B',
+                padding: '1px 6px', borderRadius: 3,
+                backgroundColor: '#F59E0B22', border: '1px solid #F59E0B60',
+                display: 'inline-flex', alignItems: 'center', gap: 3,
+                marginLeft: 6,
+              }}>
+                <span style={{
+                  display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
+                  backgroundColor: '#F59E0B', animation: 'pulse 1s infinite',
+                }} />
+                LOADING
+                <style>{`@keyframes pulse { 0%,100%{opacity:1}50%{opacity:.3} }`}</style>
+              </span>
+            )}
             <button onClick={() => shiftDate(-1)} style={{ padding: '6px 10px', background: 'none', border: 'none', color: '#94A3B8', fontSize: 14, cursor: 'pointer' }}>←</button>
             <button onClick={() => shiftDate(1)}  style={{ padding: '6px 10px', background: 'none', border: 'none', color: '#94A3B8', fontSize: 14, cursor: 'pointer' }}>→</button>
           </div>
@@ -1483,7 +1593,13 @@ export default function EarningsOpportunitiesPage() {
       </div>
 
       {/* ── Body ──────────────────────────────────────────────────────────── */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '18px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{
+        flex: 1, overflowY: 'auto', padding: '18px 24px',
+        display: 'flex', flexDirection: 'column', gap: 14,
+        opacity: isStaleView ? 0.5 : 1,
+        transition: 'opacity 0.2s',
+        pointerEvents: isStaleView ? 'none' : 'auto',
+      }}>
         {viewMode === 'CALENDAR' && (
           <CalendarView data={calData} loading={calLoading} from={calRange.from} to={calRange.to} onPickDate={(d) => { setFilterDate(d); setViewMode('GRADED'); }} />
         )}
@@ -1537,7 +1653,7 @@ export default function EarningsOpportunitiesPage() {
               </button>
               {isOpen && (
                 <div style={{ padding: '0 18px 16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 12 }}>
-                  {stocks.map((s) => <EarningsCard key={s.ticker + ':' + s.company} stock={s} />)}
+                  {stocks.map((s) => <EarningsCard key={s.ticker + ':' + s.company} stock={s} guidanceScore={guidanceScores[s.ticker.toUpperCase()]} />)}
                 </div>
               )}
             </div>
@@ -1572,8 +1688,34 @@ function fmtPct(p: number | null | undefined, digits = 0): string {
   return `${p >= 0 ? '+' : ''}${p.toFixed(digits)}%`;
 }
 
-function EarningsCard({ stock }: { stock: ParsedEarning }) {
+function EarningsCard({ stock, guidanceScore }: { stock: ParsedEarning; guidanceScore?: number }) {
   const tierColor = TIER_META[stock.tier].color;
+  // PATCH 0183 — guidance pts (copied from /multibagger lines 3159-3165 + 2216-2226)
+  const gScore = guidanceScore ?? -1;
+  const gAdj = (() => {
+    if (gScore === -1) return 0;
+    if (gScore >= 0.85) return 14;
+    if (gScore >= 0.70) return 8;
+    if (gScore >= 0.55) return 3;
+    if (gScore <= 0.15) return -14;
+    if (gScore <= 0.30) return -8;
+    if (gScore <= 0.45) return -3;
+    return 0;
+  })();
+  const gColor =
+    gScore === -1 ? '#6B7A8D' :
+    gScore >= 0.70 ? '#10B981' :
+    gScore >= 0.55 ? '#34d399' :
+    gScore <= 0.30 ? '#EF4444' :
+    gScore <= 0.45 ? '#F97316' : '#8A95A3';
+  const gLabel =
+    gScore === -1 ? '' :
+    gScore >= 0.85 ? '▲ Strong' :
+    gScore >= 0.70 ? '▲ Positive' :
+    gScore >= 0.55 ? '↑ Mild +' :
+    gScore <= 0.15 ? '▼ Weak' :
+    gScore <= 0.30 ? '▼ Negative' :
+    gScore <= 0.45 ? '↓ Mild −' : '→ Neutral';
   // ☀️ daytime filing (09:15–15:30 IST) vs 🌙 outside-hours
   const timing: '☀️' | '🌙' | null = (() => {
     if (!stock.filing_url) return null;
@@ -1666,6 +1808,19 @@ function EarningsCard({ stock }: { stock: ParsedEarning }) {
         <div style={{ padding: '6px 10px', backgroundColor: '#0D1623', borderRadius: 6, border: `1px solid ${tierColor}40`, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
           <div style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.6px' }}>SCORE</div>
           <div style={{ fontSize: 22, fontWeight: 900, color: tierColor, lineHeight: 1, marginTop: 2 }}>{stock.composite_score}</div>
+          {/* PATCH 0183 — Guidance pts (same logic as /multibagger column) */}
+          {gScore !== -1 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4, lineHeight: 1 }}>
+              <span style={{ fontSize: 9, fontWeight: 700, color: gColor, letterSpacing: '0.3px' }}>
+                {gLabel}
+              </span>
+              {gAdj !== 0 && (
+                <span style={{ fontSize: 9, fontWeight: 800, color: gColor, fontFamily: 'ui-monospace, monospace' }}>
+                  ({gAdj > 0 ? '+' : ''}{gAdj}pts)
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
