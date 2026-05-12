@@ -756,7 +756,7 @@ const COMMENTARY_COLORS: Record<CommentarySignal, { bg: string; border: string; 
 // CARD COMPONENT
 // ══════════════════════════════════════════════
 
-function EarningsCardComponent({ card, postGap }: { card: EarningsScanCard; postGap?: { gap_pct: number | null; close_move_pct: number | null; live_move_pct: number | null; is_live: boolean; target_date: string | null } }) {
+function EarningsCardComponent({ card, postGap }: { card: EarningsScanCard; postGap?: { gap_pct: number | null; close_move_pct: number | null; live_move_pct: number | null; is_live: boolean; target_date: string | null; filing_date?: string; filing_date_source?: 'explicit' | 'detected' } }) {
   const tagColor = card.universeTag === 'portfolio' ? '#10B981' : card.universeTag === 'both' ? '#8B5CF6' : card.universeTag === 'screener' ? '#F59E0B' : ACCENT;
   const tagLabel = card.universeTag === 'portfolio' ? 'PORTFOLIO' : card.universeTag === 'both' ? 'BOTH' : card.universeTag === 'screener' ? 'SCREENER' : 'WATCHLIST';
 
@@ -868,6 +868,15 @@ function EarningsCardComponent({ card, postGap }: { card: EarningsScanCard; post
                   fontWeight: 600,
                 }}>
                   1d close {postGap.close_move_pct >= 0 ? '+' : ''}{postGap.close_move_pct.toFixed(1)}%
+                </div>
+              )}
+              {/* PATCH 0205 — Filing-date provenance. Always show which date
+                  the badge is anchored to. '~' prefix when date was detected
+                  from price action (high confidence but inferred), no prefix
+                  when explicitly known. Lets the user audit at a glance. */}
+              {postGap.filing_date && (
+                <div style={{ fontSize: 8, color: TEXT_DIM, fontFamily: 'ui-monospace, monospace', opacity: 0.7 }}>
+                  {postGap.filing_date_source === 'detected' ? '~' : ''}filed {postGap.filing_date.slice(5)}
                 </div>
               )}
             </div>
@@ -2213,6 +2222,8 @@ interface PostGap {
   live_move_pct: number | null;
   is_live: boolean;
   target_date: string | null;
+  filing_date?: string;                            // PATCH 0205
+  filing_date_source?: 'explicit' | 'detected';   // PATCH 0205
 }
 function PostGapProvider({ cards, children }: {
   cards: EarningsScanCard[];
@@ -2236,8 +2247,11 @@ function PostGapProvider({ cards, children }: {
     return cards.slice(0, 80).map((c) => ({
       ticker: c.symbol,
       filing_date: toFilingOrEstimate(c.resultDate, c.period),
+      // PATCH 0205 — send period so the server can detect the real filing date
+      // from Yahoo price action when our client estimate is wrong.
+      period: c.period || '',
       timing: 'post' as const,
-    })).filter((x): x is { ticker: string; filing_date: string; timing: 'post' } => !!x.ticker && !!x.filing_date);
+    })).filter((x): x is { ticker: string; filing_date: string; period: string; timing: 'post' } => !!x.ticker && !!x.filing_date);
   }, [cards]);
 
   const key = useMemo(() => items.map((i) => `${i.ticker}|${i.filing_date}`).join(','), [items]);

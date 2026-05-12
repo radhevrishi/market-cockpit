@@ -29,6 +29,7 @@ export const maxDuration = 30;
 interface GapResult {
   ticker: string;
   filing_date: string;
+  filing_date_source?: 'explicit' | 'detected'; // PATCH 0205 — provenance flag
   target_date: string | null;
   filing_close: number | null;
   target_open: number | null;
@@ -40,6 +41,73 @@ interface GapResult {
   is_live: boolean;                // true = target day still trading; close_move null
   source: 'yahoo' | null;
   error?: string;
+}
+
+// ─── PATCH 0205 ────────────────────────────────────────────────────────────
+// Filing-date detection from Yahoo daily chart "footprint".
+// When the client provides a `period` (e.g. "Mar 2026") instead of a known
+// filing_date, we look at the actual price action to find when results were
+// filed. Filings produce a characteristic signature: a significant overnight
+// gap at market open (typically Mon/Tue if weekend-filed). We score each
+// candidate day in the reporting window and pick the strongest signal.
+// ───────────────────────────────────────────────────────────────────────────
+function parsePeriodToQuarterEnd(period: string): Date | null {
+  if (!period) return null;
+  const parts = period.trim().split(/\s+/);
+  if (parts.length < 2) return null;
+  const year = parseInt(parts[parts.length - 1]);
+  if (isNaN(year)) return null;
+  const months: Record<string, number> = {
+    'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
+    'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11,
+    'January': 0, 'February': 1, 'March': 2, 'April': 3, 'June': 5,
+    'July': 6, 'August': 7, 'September': 8, 'October': 9, 'November': 10, 'December': 11,
+  };
+  const monthKey = parts[0].slice(0, 3);
+  const m = months[monthKey] ?? months[parts[0]];
+  if (m === undefined) return null;
+  // End-of-quarter-month = last day of that month (Mar → Mar 31, Sep → Sep 30)
+  return new Date(Date.UTC(year, m + 1, 0));  // day 0 of next month = last day of this month
+}
+
+function detectFilingDateFromYahoo(
+  timestamps: number[],
+  opens: number[],
+  closes: number[],
+  period: string,
+): { isoDate: string; gap_pct: number; reason: string } | null {
+  const quarterEnd = parsePeriodToQuarterEnd(period);
+  if (!quarterEnd) return null;
+  const windowStartMs = quarterEnd.getTime();                       // quarter-end (Mar 31 etc.)
+  const windowEndMs = Math.min(Date.now(), windowStartMs + 90 * 86400_000);
+
+  const candidates: { idx: number; gap: number; score: number; reason: string }[] = [];
+  for (let i = 1; i < timestamps.length; i++) {
+    const tMs = timestamps[i] * 1000;
+    if (tMs < windowStartMs || tMs > windowEndMs) continue;
+    const prevClose = closes[i - 1];
+    const open = opens[i];
+    if (prevClose == null || open == null || prevClose === 0) continue;
+    const gap = ((open - prevClose) / prevClose) * 100;
+    if (Math.abs(gap) < 3) continue;                                // significance threshold
+
+    const dow = new Date(tMs).getUTCDay();                           // 0=Sun, 1=Mon, 2=Tue
+    let dowBonus = 0;
+    if (dow === 1) dowBonus = 5;       // Monday after weekend filing
+    else if (dow === 2) dowBonus = 3;  // Tuesday (Monday holiday case)
+    const recency = ((tMs - windowStartMs) / (windowEndMs - windowStartMs)) * 10;
+    const gapMag = Math.abs(gap) * 0.3;
+    const score = dowBonus + recency + gapMag;
+    candidates.push({ idx: i, gap, score, reason: `gap${gap > 0 ? '+' : ''}${gap.toFixed(1)}% ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dow]}` });
+  }
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => b.score - a.score);
+  const winner = candidates[0];
+  const priorIdx = winner.idx - 1;
+  if (priorIdx < 0) return null;
+  const priorTs = timestamps[priorIdx];
+  const isoDate = new Date(priorTs * 1000).toISOString().slice(0, 10);
+  return { isoDate, gap_pct: winner.gap, reason: winner.reason };
 }
 
 function pct(a: number | null, b: number | null): number | null {
@@ -106,8 +174,14 @@ function nextTradingDayIso(timestamps: number[], filingIso: string): string | nu
   return null;
 }
 
-async function computeGap(ticker: string, filing_date: string, timing?: string): Promise<GapResult> {
-  const cacheKey = `post-gap:v1:${ticker}:${filing_date}:${timing || 'pre'}`;
+async function computeGap(
+  ticker: string,
+  filing_date: string,
+  timing?: string,
+  period?: string,
+): Promise<GapResult> {
+  // PATCH 0205 — include period in cache key so detected dates are cached per-period
+  const cacheKey = `post-gap:v2:${ticker}:${filing_date}:${timing || 'pre'}:${period || ''}`;
   if (isRedisAvailable()) {
     try {
       const cached = await kvGet<GapResult>(cacheKey);
@@ -117,6 +191,7 @@ async function computeGap(ticker: string, filing_date: string, timing?: string):
 
   const result: GapResult = {
     ticker, filing_date,
+    filing_date_source: 'explicit',
     target_date: null,
     filing_close: null, target_open: null, target_close: null, live_price: null,
     gap_pct: null, close_move_pct: null, live_move_pct: null,
@@ -130,6 +205,22 @@ async function computeGap(ticker: string, filing_date: string, timing?: string):
   }
   result.source = 'yahoo';
   result.live_price = yahoo.lastPrice;
+
+  // PATCH 0205 — if period is provided, ALWAYS run filing-date detection from
+  // the price chart. Real filings produce a characteristic overnight-gap
+  // signature. We override the client's heuristic estimate when we find one,
+  // because a price-action signal is materially more reliable than the
+  // "quarter-end + 15 days" formula. If detection finds nothing (small mover
+  // or filing not yet visible in the chart), we fall back to the explicit
+  // filing_date the client supplied.
+  if (period) {
+    const detected = detectFilingDateFromYahoo(yahoo.timestamps, yahoo.opens, yahoo.closes, period);
+    if (detected) {
+      filing_date = detected.isoDate;
+      result.filing_date = detected.isoDate;
+      result.filing_date_source = 'detected';
+    }
+  }
 
   // Resolve filing day bar (closest on-or-before the filing_date)
   const filingIdx = findBarIndex(yahoo.timestamps, filing_date, 'on-or-before');
@@ -186,13 +277,15 @@ async function computeGap(ticker: string, filing_date: string, timing?: string):
 export async function POST(req: Request) {
   let body: any = {};
   try { body = await req.json(); } catch {}
-  const items: Array<{ ticker: string; filing_date: string; timing?: string }> =
+  // PATCH 0205 — accept optional `period` so the server can detect the real
+  // filing date from Yahoo price action when the client only has an estimate.
+  const items: Array<{ ticker: string; filing_date: string; timing?: string; period?: string }> =
     Array.isArray(body?.items) ? body.items.slice(0, 200) : [];
   if (items.length === 0) return NextResponse.json({ data: {}, count: 0 });
 
   const results = await Promise.all(items.map(async (it) => {
     try {
-      const r = await computeGap(it.ticker, it.filing_date, it.timing);
+      const r = await computeGap(it.ticker, it.filing_date, it.timing, it.period);
       return [it.ticker, r] as const;
     } catch (e: any) {
       return [it.ticker, { ticker: it.ticker, filing_date: it.filing_date, error: e?.message || 'compute failed' } as any] as const;
