@@ -25,27 +25,29 @@ const RED = '#F44336';
 const HEADER_BG = '#0A1628';
 
 
-// Tab cache: avoid refetching on every tab switch
-// Uses a module-level variable scoped to THIS tab via a per-tab ID stored in sessionStorage.
-// sessionStorage is per-tab, so two tabs running the earnings page cannot share/corrupt data.
-// Includes "month" field — cache auto-invalidates when calendar month changes.
-const EARNINGS_CACHE_TTL = 180000; // 3 min
+// PATCH 0199 — Persistent localStorage cache (was per-tab in-memory only,
+// which meant every fresh browser tab re-scanned 685 stocks from scratch).
+// Now: cache survives across browser sessions for 1 hour, auto-invalidates
+// on calendar-month change, and renders cards INSTANTLY from disk while a
+// background refresh runs in parallel (stale-while-revalidate pattern).
+const EARNINGS_CACHE_TTL = 60 * 60 * 1000;  // 1 hour
 const _cacheMonth = () => new Date().toISOString().slice(0, 7); // "2026-05"
+const LS_CACHE_KEY = 'mc:earnings-scan:v1';
 
-// Generate a per-tab ID on first use — survives page refresh within same tab (session),
-// but each new tab gets its own ID, preventing cross-tab cache corruption.
-const _getTabId = () => {
-  if (typeof sessionStorage === 'undefined') return 'ssr';
-  let id = sessionStorage.getItem('mc_earnings_tab_id');
-  if (!id) { id = Math.random().toString(36).slice(2); sessionStorage.setItem('mc_earnings_tab_id', id); }
-  return id;
-};
-
-// Per-tab in-memory cache — keyed by tabId so parallel tabs never collide
-const _perTabCache = new Map<string, { data: any; timestamp: number; month: string }>();
 const _earningsCache = {
-  get: () => _perTabCache.get(_getTabId()) ?? null,
-  set: (v: { data: any; timestamp: number; month: string }) => _perTabCache.set(_getTabId(), v),
+  get: (): { data: any; timestamp: number; month: string } | null => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const raw = localStorage.getItem(LS_CACHE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch { return null; }
+  },
+  set: (v: { data: any; timestamp: number; month: string }) => {
+    if (typeof window === 'undefined') return;
+    try { localStorage.setItem(LS_CACHE_KEY, JSON.stringify(v)); } catch {}
+  },
 };
 
 // ── Types matching earnings-scan API ──
@@ -956,12 +958,24 @@ function computeAggregation(cards: EarningsScanCard[], label: string): UniverseA
 // ══════════════════════════════════════════════
 
 export default function EarningsPage() {
-  const [cards, setCards] = useState<EarningsScanCard[]>([]);
-  const [loading, setLoading] = useState(true);
+  // PATCH 0199 — Hydrate from localStorage IMMEDIATELY on mount.
+  // If we have a fresh cached payload, render it instantly (no loading screen)
+  // while the background refresh runs in parallel.
+  const _initial = (() => {
+    if (typeof window === 'undefined') return null;
+    const cached = _earningsCache.get();
+    if (!cached) return null;
+    if (cached.month !== _cacheMonth()) return null;  // month changed → stale
+    if (Date.now() - cached.timestamp > EARNINGS_CACHE_TTL) return null;
+    return cached;
+  })();
+  const [cards, setCards] = useState<EarningsScanCard[]>(_initial?.data?.cards || []);
+  // Don't show loading screen if we have cached data to render immediately
+  const [loading, setLoading] = useState(!_initial);
   const [error, setError] = useState('');
-  const [summary, setSummary] = useState<ScanResponse['summary'] | null>(null);
-  const [source, setSource] = useState('');
-  const [updatedAt, setUpdatedAt] = useState('');
+  const [summary, setSummary] = useState<ScanResponse['summary'] | null>(_initial?.data?.summary || null);
+  const [source, setSource] = useState<string>(_initial?.data?.source || '');
+  const [updatedAt, setUpdatedAt] = useState<string>(_initial?.data?.updatedAt || '');
   const [sortBy, setSortBy] = useState<'score' | 'symbol' | 'revenueYoY' | 'patYoY'>('score');
   const [filterGrades, setFilterGrades] = useState<string[]>(['ALL']);
   // PATCH 0186 — Conviction Beats filter (composable with all other filters).
