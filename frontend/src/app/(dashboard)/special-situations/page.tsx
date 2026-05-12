@@ -25,6 +25,38 @@ import { useQuery } from '@tanstack/react-query';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ExternalLink, AlertTriangle } from 'lucide-react';
 import api from '@/lib/api';
+// PATCH 0254 — Source-tier classifier (PRIMARY / SPECIALIST / SECONDARY / AGGREGATOR)
+import { classifySource, TIER_VISUAL } from '@/lib/source-tiers';
+
+/** PATCH 0254 — Map an event_type to its likely institutional alpha source.
+ *  Surfaced as a single inline tag so users know WHY this event is tradable
+ *  before reading the full card. */
+function expectedAlphaFor(eventType: string): { label: string; tone: { solid: string; bg: string; border: string } } | null {
+  const yellow = { solid: '#F59E0B', bg: '#F59E0B15', border: '#F59E0B40' };
+  const cyan   = { solid: '#22D3EE', bg: '#22D3EE15', border: '#22D3EE40' };
+  const green  = { solid: '#10B981', bg: '#10B98115', border: '#10B98140' };
+  const violet = { solid: '#A78BFA', bg: '#A78BFA15', border: '#A78BFA40' };
+  const map: Record<string, { label: string; tone: typeof yellow }> = {
+    OPEN_OFFER:           { label: 'Spread capture',         tone: cyan },
+    TENDER_OFFER:         { label: 'Spread capture',         tone: cyan },
+    BUYBACK_TENDER:       { label: 'Spread + odd-lot capture', tone: cyan },
+    BUYBACK:              { label: 'Float reduction',        tone: green },
+    GOING_PRIVATE:        { label: 'Spread + forced exit',   tone: cyan },
+    MERGER_DEFINITIVE:    { label: 'Spread capture',         tone: cyan },
+    ACQUISITION_PUBLIC:   { label: 'Spread capture',         tone: cyan },
+    SPIN_OFF:             { label: 'SoP unlock + re-rating', tone: violet },
+    DEMERGER_INDIA:       { label: 'HoldCo discount → SoP',  tone: violet },
+    IPO_SUBSIDIARY:       { label: 'SoP unlock',             tone: violet },
+    PREFERENTIAL_ALLOTMENT: { label: 'Conviction signal · float +', tone: yellow },
+    PROMOTER_STAKE_UP:    { label: 'Insider conviction',     tone: yellow },
+    INDEX_INCLUSION:      { label: 'Forced buying',          tone: green },
+    INDEX_EXCLUSION:      { label: 'Forced selling',         tone: green },
+    DELISTING:            { label: 'Forced delisting price', tone: cyan },
+    NCLT_RESOLUTION:      { label: 'Distressed re-rating',   tone: violet },
+    REVERSE_MERGER:       { label: 'Backdoor listing',       tone: violet },
+  };
+  return map[eventType] || null;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PATCH 0167 — Rejected Reasons (persistent per-event notes)
@@ -596,15 +628,15 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
       borderRadius: 10,
       opacity: rejection ? 0.85 : 1,
     }}>
-      {/* PATCH 0167 — Rejection chip + edit form (sticky, above the click target) */}
+      {/* PATCH 0167/0254 — 'MONITOR' chip (was 'REJECTED' — softer, institutional). */}
       {rejection && (
         <div style={{ padding: '8px 16px 0', display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
-          <span style={{ color: '#EF4444', fontWeight: 800, letterSpacing: '0.4px' }}>REJECTED</span>
+          <span style={{ color: '#94A3B8', fontWeight: 800, letterSpacing: '0.4px' }}>◯ MONITOR</span>
           <span style={{ color: '#C9D4E0', flex: 1, fontStyle: 'italic' }}>{rejection.reason}</span>
           <span style={{ color: '#6B7A8D', fontSize: 10 }}>{new Date(rejection.ts).toLocaleDateString('en-IN')}</span>
           <button onClick={(e) => { e.stopPropagation(); deleteRejection(); }}
-            title="Delete rejection reason"
-            style={{ padding: '2px 6px', borderRadius: 3, border: '1px solid #EF444460', background: 'transparent', color: '#EF4444', cursor: 'pointer', fontWeight: 700, fontSize: 11 }}>
+            title="Remove monitor flag"
+            style={{ padding: '2px 6px', borderRadius: 3, border: '1px solid #94A3B860', background: 'transparent', color: '#94A3B8', cursor: 'pointer', fontWeight: 700, fontSize: 11 }}>
             ✕
           </button>
         </div>
@@ -613,9 +645,9 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
         <div onClick={(e) => e.stopPropagation()} style={{ padding: '8px 16px 0', display: 'flex', gap: 6, alignItems: 'center' }}>
           <input autoFocus value={draftReason} onChange={(e) => setDraftReason(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') saveRejection(); if (e.key === 'Escape') setShowRejectInput(false); }}
-            placeholder="Why reject? (Enter to save, Esc to cancel)"
-            style={{ flex: 1, padding: '4px 8px', backgroundColor: '#0D1623', border: '1px solid #EF444440', borderRadius: 4, color: '#E6EDF3', fontSize: 11, outline: 'none' }} />
-          <button onClick={saveRejection} style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid #EF444460', background: '#EF444415', color: '#EF4444', fontSize: 11, cursor: 'pointer', fontWeight: 700 }}>Save</button>
+            placeholder="Reason for monitoring (e.g. await filing, no spread, low confidence)…  Enter to save, Esc to cancel"
+            style={{ flex: 1, padding: '4px 8px', backgroundColor: '#0D1623', border: '1px solid #94A3B840', borderRadius: 4, color: '#E6EDF3', fontSize: 11, outline: 'none' }} />
+          <button onClick={saveRejection} style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid #94A3B860', background: '#94A3B815', color: '#94A3B8', fontSize: 11, cursor: 'pointer', fontWeight: 700 }}>Save</button>
         </div>
       )}
       <button onClick={() => setExpanded((s) => !s)} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '12px 16px' }}>
@@ -644,8 +676,40 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
               {ev.lifecycle}
             </span>
           )}
+          {/* PATCH 0254 — Expected-alpha tag derived from event_type. Tells the
+              user WHAT KIND of trade this is before they read the full card. */}
+          {(() => {
+            const alpha = expectedAlphaFor(ev.event_type);
+            if (!alpha) return null;
+            return (
+              <span title="Expected source of alpha for this event type"
+                style={{ fontSize: 10, fontWeight: 700,
+                  color: alpha.tone.solid, backgroundColor: alpha.tone.bg,
+                  border: `1px solid ${alpha.tone.border}`,
+                  padding: '1px 7px', borderRadius: 3,
+                }}>
+                α {alpha.label}
+              </span>
+            );
+          })()}
           <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#6B7A8D' }}>
             <span title="Catalyst score (decay-adjusted)">Score {ev.catalyst_score.decay_score.toFixed(0)}</span>
+            {/* PATCH 0254 — Source-tier badge (PRIMARY/SPECIALIST/SECONDARY/AGGREGATOR) */}
+            {(() => {
+              const src = ev.primary_filing.source || '';
+              const url = (ev.primary_filing as any).url || '';
+              const tier = classifySource(src, url);
+              const v = TIER_VISUAL[tier];
+              return (
+                <span title={`${v.label} source — ${v.description}`}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 3,
+                    fontSize: 9, fontWeight: 700, fontFamily: 'ui-monospace, monospace',
+                    color: v.tone.solid, backgroundColor: v.tone.bg,
+                    border: `1px solid ${v.tone.border}`,
+                    padding: '1px 5px', borderRadius: 3, letterSpacing: '0.3px',
+                  }}>{v.glyph} {v.label}</span>
+              );
+            })()}
             <span>{ev.primary_filing.source} · {ageLabel}</span>
             <ExternalLink style={{ width: 11, height: 11 }} />
           </span>
@@ -676,8 +740,9 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
               <span
                 role="button"
                 onClick={(e) => { e.stopPropagation(); setShowRejectInput(true); }}
-                style={{ fontSize: 10, padding: '1px 7px', borderRadius: 3, border: '1px solid #EF444460', color: '#EF4444', cursor: 'pointer', fontWeight: 700, letterSpacing: '0.4px' }}>
-                ⊘ REJECT
+                title="Mark as Monitor — defers acting on this event without deleting it"
+                style={{ fontSize: 10, padding: '1px 7px', borderRadius: 3, border: '1px solid #94A3B860', color: '#94A3B8', cursor: 'pointer', fontWeight: 700, letterSpacing: '0.4px' }}>
+                ◯ MONITOR
               </span>
             )}
           </div>
