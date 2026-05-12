@@ -159,6 +159,64 @@ export default function NewsAlertsPage() {
   const toggleRule = (id: string) => setRules(rs => rs.map(r => r.id === id ? { ...r, enabled: !r.enabled } : r));
   const deleteRule = (id: string) => { if (window.confirm('Delete this alert rule?')) setRules(rs => rs.filter(r => r.id !== id)); };
 
+  // PATCH 0279 — Import / export rules as JSON so users can move them across
+  // browsers and machines without depending on cloud sync. Export downloads
+  // a timestamped file; import merges by `id` (existing rules with the same
+  // id are overwritten; new ids are appended).
+  const exportRules = () => {
+    try {
+      const payload = JSON.stringify(rules, null, 2);
+      const blob = new Blob([payload], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      a.href = url;
+      a.download = `news-alerts-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('exportRules failed', err);
+      window.alert('Export failed. See console.');
+    }
+  };
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+  const importRules = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const text = String(reader.result || '');
+        const parsed = JSON.parse(text) as AlertRule[];
+        if (!Array.isArray(parsed)) throw new Error('Not an array');
+        // Light validation — skip entries that don't look like rules.
+        const valid = parsed.filter((r) =>
+          r && typeof r === 'object' &&
+          typeof r.id === 'string' &&
+          typeof r.name === 'string' &&
+          r.conditions && typeof r.conditions === 'object'
+        );
+        if (valid.length === 0) { window.alert('No valid rules found in file.'); return; }
+        setRules((current) => {
+          const byId = new Map(current.map(r => [r.id, r]));
+          for (const r of valid) {
+            byId.set(r.id, {
+              ...r,
+              enabled: typeof r.enabled === 'boolean' ? r.enabled : true,
+              lastFiredArticleIds: Array.isArray(r.lastFiredArticleIds) ? r.lastFiredArticleIds : [],
+            } as AlertRule);
+          }
+          return Array.from(byId.values());
+        });
+        window.alert(`Imported ${valid.length} rules.`);
+      } catch (err) {
+        console.error('importRules failed', err);
+        window.alert('Import failed — invalid JSON or wrong shape. See console.');
+      }
+    };
+    reader.readAsText(file);
+  };
+
   const testCounts = useMemo(() => {
     const out: Record<string, number> = {};
     for (const r of rules) out[r.id] = (stream || []).filter(a => matches(a, r.conditions)).length;
@@ -171,12 +229,56 @@ export default function NewsAlertsPage() {
       backgroundColor: TOKENS.surface.canvas, color: TOKENS.surface.text,
       fontFamily: 'system-ui, -apple-system, sans-serif',
     }}>
-      <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, marginBottom: 4 }}>News Alert Rules</h1>
-      <p style={{ fontSize: 13, color: TOKENS.surface.textDim, margin: '0 0 16px' }}>
-        Watch the live /news stream from this tab. When a new article matches one of your rules,
-        a browser notification + on-screen toast fires. Rules persist locally; cross-channel
-        delivery (Slack/Email/Webhook) is the P1 follow-up.
-      </p>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, marginBottom: 4 }}>News Alert Rules</h1>
+          <p style={{ fontSize: 13, color: TOKENS.surface.textDim, margin: '0 0 16px', maxWidth: 760 }}>
+            Watch the live /news stream from this tab. When a new article matches one of your rules,
+            a browser notification + on-screen toast fires. Rules persist locally; cross-channel
+            delivery (Slack/Email/Webhook) is the P1 follow-up.
+          </p>
+        </div>
+        {/* PATCH 0279 — Import / Export controls so rules portable across browsers. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button
+            onClick={exportRules}
+            disabled={rules.length === 0}
+            title={rules.length === 0 ? 'No rules to export yet.' : `Download ${rules.length} rules as JSON.`}
+            style={{
+              backgroundColor: 'transparent',
+              border: `1px solid ${TOKENS.surface.cardBorder}`,
+              color: rules.length === 0 ? TOKENS.surface.textMuted : TOKENS.surface.text,
+              borderRadius: 6, padding: '6px 12px',
+              fontSize: 11, fontWeight: 700, letterSpacing: '0.5px',
+              cursor: rules.length === 0 ? 'not-allowed' : 'pointer',
+              opacity: rules.length === 0 ? 0.5 : 1,
+            }}
+          >↓ EXPORT JSON ({rules.length})</button>
+          <button
+            onClick={() => importInputRef.current?.click()}
+            title="Merge rules from a previously-exported JSON file."
+            style={{
+              backgroundColor: 'transparent',
+              border: `1px solid ${TOKENS.surface.cardBorder}`,
+              color: TOKENS.surface.text,
+              borderRadius: 6, padding: '6px 12px',
+              fontSize: 11, fontWeight: 700, letterSpacing: '0.5px',
+              cursor: 'pointer',
+            }}
+          >↑ IMPORT JSON</button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json,.json"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) importRules(f);
+              if (importInputRef.current) importInputRef.current.value = '';
+            }}
+          />
+        </div>
+      </div>
 
       {permission !== 'granted' && (
         <div style={{
