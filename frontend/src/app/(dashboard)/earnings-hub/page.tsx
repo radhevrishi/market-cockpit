@@ -22,6 +22,9 @@ import { Suspense, useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { Calendar, LineChart, BarChart3, Microscope } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
+// PATCH 0273 — Surface the institutional Conviction Beats count in the hub
+// header so the bench is one click away regardless of which sub-tab is active.
+import { getConvictionTickers } from '@/lib/conviction-beats';
 
 const CalendarPage  = dynamic(() => import('../calendars/page'),         { ssr: false, loading: () => <PanelLoader label="Calendar" /> });
 const ScanPage      = dynamic(() => import('../earnings/page'),          { ssr: false, loading: () => <PanelLoader label="Scan" /> });
@@ -55,6 +58,22 @@ export default function EarningsHubPage() {
   const router = useRouter();
   const initial = (searchParams?.get('tab') as Tab) || 'calendar';
   const [active, setActive] = useState<Tab>(initial);
+  // PATCH 0273 — track Conviction Beats bench count + live-sync across tabs.
+  const [convictionCount, setConvictionCount] = useState<number>(0);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const refresh = () => {
+      try { setConvictionCount(getConvictionTickers().size); }
+      catch { setConvictionCount(0); }
+    };
+    refresh();
+    window.addEventListener('storage', refresh);
+    window.addEventListener('conviction-beats:updated', refresh);
+    return () => {
+      window.removeEventListener('storage', refresh);
+      window.removeEventListener('conviction-beats:updated', refresh);
+    };
+  }, []);
 
   // Keep URL in sync so refresh / share preserves the active sub-tab
   useEffect(() => {
@@ -112,6 +131,21 @@ export default function EarningsHubPage() {
             </button>
           );
         })}
+        {/* PATCH 0273 — Conviction Beats count chip. Clicking jumps to the
+            Scan sub-tab where the Conviction universe filter lives. */}
+        {convictionCount > 0 && (
+          <button
+            onClick={() => setActive('scan')}
+            title="Conviction Beats bench — institutional BLOCKBUSTER/STRONG list. Click to open Scan with Conviction filter."
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              padding: '5px 10px', borderRadius: 8,
+              border: '1px solid #F59E0B60', backgroundColor: 'rgba(245,158,11,0.10)',
+              color: '#F59E0B', fontSize: 11, fontWeight: 800, letterSpacing: '0.4px',
+              cursor: 'pointer', marginLeft: 8,
+            }}
+          >🏆 CB {convictionCount}</button>
+        )}
         <span style={{ marginLeft: 'auto', fontSize: 11, color: '#4A5B6C', maxWidth: 480, textAlign: 'right' }}>
           {activeMeta.tagline}
         </span>

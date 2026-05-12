@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Activity, Filter, ChevronDown, ChevronUp } from 'lucide-react';
 import { CHAT_ID, BOT_SECRET } from '@/lib/config';
+// PATCH 0273 — Conviction Beats overlay on Earnings Guidance.
+import { getConvictionTickers } from '@/lib/conviction-beats';
 
 // ══════════════════════════════════════════════
 // EARNINGS GUIDANCE TAB — Historical + Real-time Guidance Intelligence
@@ -87,6 +89,28 @@ export default function EarningsGuidancePage() {
   const [viewMode, setViewMode] = useState<'cards' | 'timeline'>('cards');
 
   const symbolsRef = useRef<string[]>([]);
+
+  // PATCH 0273 — Conviction Beats overlay. Loads the institutional bench
+  // and live-syncs across tabs via the storage + custom event.
+  const [convictionSet, setConvictionSet] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set();
+    try { return new Set(Array.from(getConvictionTickers()).map((t: string) => t.toUpperCase())); }
+    catch { return new Set(); }
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const refresh = () => {
+      try { setConvictionSet(new Set(Array.from(getConvictionTickers()).map((t: string) => t.toUpperCase()))); }
+      catch {}
+    };
+    window.addEventListener('storage', refresh);
+    window.addEventListener('conviction-beats:updated', refresh);
+    return () => {
+      window.removeEventListener('storage', refresh);
+      window.removeEventListener('conviction-beats:updated', refresh);
+    };
+  }, []);
+  const isCb = useCallback((sym: string) => convictionSet.has((sym || '').toUpperCase().replace(/\.NS$|\.BO$/i, '')), [convictionSet]);
 
   const fetchData = useCallback(async (isPolling = false) => {
     if (!isPolling) { setLoading(true); setError(''); }
@@ -317,7 +341,8 @@ export default function EarningsGuidancePage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {filteredEvents.map(event => (
             <GuidanceCard key={event.id} event={event} expanded={expandedId === event.id}
-              onToggle={() => setExpandedId(expandedId === event.id ? null : event.id)} />
+              onToggle={() => setExpandedId(expandedId === event.id ? null : event.id)}
+              isConviction={isCb(event.symbol)} />
           ))}
         </div>
       )}
@@ -343,7 +368,8 @@ export default function EarningsGuidancePage() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {events.map(event => (
                   <GuidanceCard key={event.id} event={event} expanded={expandedId === event.id}
-                    onToggle={() => setExpandedId(expandedId === event.id ? null : event.id)} compact />
+                    onToggle={() => setExpandedId(expandedId === event.id ? null : event.id)} compact
+                    isConviction={isCb(event.symbol)} />
                 ))}
               </div>
             </div>
@@ -367,7 +393,7 @@ export default function EarningsGuidancePage() {
 }
 
 // ── Guidance Card Component ──
-function GuidanceCard({ event, expanded, onToggle, compact }: { event: GuidanceEvent; expanded: boolean; onToggle: () => void; compact?: boolean }) {
+function GuidanceCard({ event, expanded, onToggle, compact, isConviction }: { event: GuidanceEvent; expanded: boolean; onToggle: () => void; compact?: boolean; isConviction?: boolean }) {
   const gradeColor = GRADE_COLORS[event.grade] || TEXT_DIM;
   const isPositive = event.sentimentScore > 50;
   const isNegative = event.sentimentScore < 40;
@@ -389,6 +415,19 @@ function GuidanceCard({ event, expanded, onToggle, compact }: { event: GuidanceE
             padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700,
           }}>{event.grade}</span>
           <span style={{ fontWeight: 700, fontSize: compact ? '13px' : '14px' }}>{event.symbol}</span>
+          {/* PATCH 0273 — Conviction Beats overlay badge. Amber 🏆 means the
+              ticker is on the institutional Conviction Beats bench so users
+              know guidance is landing on a high-conviction name. */}
+          {isConviction && (
+            <span
+              title="On Conviction Beats bench (BLOCKBUSTER/STRONG earnings)"
+              style={{
+                fontSize: 10, fontWeight: 800, color: '#F59E0B',
+                border: '1px solid #F59E0B60', backgroundColor: 'rgba(245,158,11,0.10)',
+                padding: '1px 5px', borderRadius: 3, letterSpacing: 0.3,
+              }}
+            >🏆 CB</span>
+          )}
           <span style={{ color: TEXT_DIM, fontSize: '12px' }}>{event.companyName}</span>
           <span style={{
             backgroundColor: '#1A2540', padding: '2px 8px', borderRadius: '4px',
