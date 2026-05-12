@@ -99,94 +99,118 @@ export default function TickerExportToolbar({
   const btnBase = {
     display: 'inline-flex',
     alignItems: 'center',
-    gap: 5,
-    padding: compact ? '4px 10px' : '6px 12px',
-    fontSize: compact ? 10.5 : 11.5,
-    fontWeight: 700,
-    borderRadius: 6,
+    gap: 6,
+    padding: compact ? '6px 12px' : '9px 16px',
+    fontSize: compact ? 11.5 : 13,
+    fontWeight: 800,
+    borderRadius: 8,
     cursor: n > 0 ? 'pointer' as const : 'not-allowed' as const,
     opacity: n > 0 ? 1 : 0.4,
+    transition: 'all 0.15s',
   } as const;
 
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
-      padding: compact ? '6px 10px' : '8px 12px',
-      backgroundColor: '#0A1422',
-      border: '1px solid #1A2840',
-      borderRadius: 8,
+      display: 'flex', flexDirection: 'column', gap: 10,
+      padding: compact ? '10px 14px' : '14px 18px',
+      backgroundColor: '#0D1623',
+      border: '2px solid #22D3EE40',
+      borderRadius: 12,
+      boxShadow: '0 0 0 1px #22D3EE15',
     }}>
-      <span style={{ fontSize: 10, fontWeight: 800, color: '#6B7A8D', letterSpacing: '0.5px', marginRight: 4 }}>
-        EXPORT · {n}
-      </span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          padding: '4px 10px', borderRadius: 6,
+          backgroundColor: '#22D3EE22', border: '1px solid #22D3EE60',
+        }}>
+          <Copy style={{ width: 13, height: 13, color: '#22D3EE' }} />
+          <span style={{ fontSize: 12, fontWeight: 900, color: '#22D3EE', letterSpacing: '0.6px' }}>
+            EXPORT {n} TICKER{n === 1 ? '' : 'S'}
+          </span>
+        </div>
+        <span style={{ fontSize: 11, color: '#8BA3C1', flex: 1 }}>
+          Copy/download the current filtered list — paste into TradingView, Excel, or anywhere
+        </span>
+      </div>
 
-      <button
-        onClick={() => copyCsv(safeTickers, 'All')}
-        disabled={n === 0}
-        title={`Copy ${n} tickers as plain comma-separated list (Excel, sheets)`}
-        style={{ ...btnBase, border: '1px solid #1A2840', background: '#0D1623', color: '#C9D4E0' }}
-      >
-        <Copy style={{ width: 11, height: 11 }} />
-        Copy CSV
-      </button>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <button
+          onClick={() => copyTradingView(safeTickers, 'All')}
+          disabled={n === 0}
+          title={`Copy all ${n} tickers with ${exchange}: prefix — paste directly into TradingView watchlist`}
+          style={{ ...btnBase, border: '1px solid #22D3EE', background: '#22D3EE', color: '#0A0E1A' }}
+        >
+          <Copy style={{ width: 14, height: 14 }} />
+          Copy for TradingView
+        </button>
 
-      <button
-        onClick={() => copyTradingView(safeTickers, 'All')}
-        disabled={n === 0}
-        title={`Copy ${n} tickers with ${exchange}: prefix — paste into TradingView watchlist`}
-        style={{ ...btnBase, border: '1px solid #22D3EE60', background: '#22D3EE15', color: '#22D3EE' }}
-      >
-        <Copy style={{ width: 11, height: 11 }} />
-        Copy TradingView
-      </button>
+        <button
+          onClick={() => copyCsv(safeTickers, 'All')}
+          disabled={n === 0}
+          title={`Copy ${n} tickers as plain comma-separated list (no prefix) — for Excel, sheets, or other tools`}
+          style={{ ...btnBase, border: '1px solid #1A2840', background: '#0A1422', color: '#C9D4E0' }}
+        >
+          <Copy style={{ width: 14, height: 14 }} />
+          Copy CSV
+        </button>
 
-      <button
-        onClick={() => downloadTxt(safeTickers, 'All')}
-        disabled={n === 0}
-        title={`Download ${n} tickers as .txt file (with ${exchange}: prefix)`}
-        style={{ ...btnBase, border: '1px solid #1A2840', background: '#0D1623', color: '#C9D4E0' }}
-      >
-        <Download style={{ width: 11, height: 11 }} />
-        .txt
-      </button>
+        <button
+          onClick={() => downloadTxt(safeTickers, 'All')}
+          disabled={n === 0}
+          title={`Download ${n} tickers as .txt file (with ${exchange}: prefix)`}
+          style={{ ...btnBase, border: '1px solid #1A2840', background: '#0A1422', color: '#C9D4E0' }}
+        >
+          <Download style={{ width: 14, height: 14 }} />
+          Download .txt
+        </button>
 
-      <button
-        onClick={() => openInTradingView(safeTickers)}
-        disabled={n === 0}
-        title="Open first ticker in TradingView chart + copy full list for paste into a new watchlist"
-        style={{ ...btnBase, border: '1px solid #10B98160', background: '#10B98115', color: '#10B981' }}
-      >
-        <ExternalLink style={{ width: 11, height: 11 }} />
-        Open in TradingView
-      </button>
+        <button
+          onClick={() => openInTradingView(safeTickers)}
+          disabled={n === 0}
+          title="Open first ticker in TradingView chart + copy full list for paste into a new watchlist"
+          style={{ ...btnBase, border: '1px solid #10B981', background: '#10B98120', color: '#10B981' }}
+        >
+          <ExternalLink style={{ width: 14, height: 14 }} />
+          Open in TradingView
+        </button>
+      </div>
 
       {/* Tier-grouped quick copy chips */}
-      {groups && groups.length > 0 && (
-        <>
-          <span style={{ fontSize: 9, color: '#6B7A8D', marginLeft: 6, marginRight: 2 }}>by tier:</span>
+      {groups && groups.length > 0 && groups.some((g) => g.tickers.length > 0) && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+          paddingTop: 6, borderTop: '1px dashed #1A2840',
+        }}>
+          <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.4px', marginRight: 2 }}>
+            COPY BY TIER (TradingView fmt):
+          </span>
           {groups.map((g) => {
             const count = g.tickers.length;
+            if (count === 0) return null;
             const color = g.color || '#94A3B8';
             return (
               <button key={g.label}
                 onClick={() => copyTradingView(g.tickers.map((t) => t.toUpperCase()), g.label)}
-                disabled={count === 0}
                 title={`Copy ${count} ${g.label} ticker${count === 1 ? '' : 's'} in TradingView format`}
                 style={{
-                  ...btnBase,
-                  padding: compact ? '3px 8px' : '4px 9px',
-                  border: `1px solid ${color}50`,
-                  background: `${color}15`,
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  padding: '5px 11px',
+                  fontSize: 11.5, fontWeight: 800,
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  border: `1px solid ${color}80`,
+                  background: `${color}20`,
                   color,
                 }}
               >
                 {g.emoji && <span>{g.emoji}</span>}
-                {g.label}
-                <span style={{ fontSize: 9, opacity: 0.7 }}>{count}</span>
+                Copy {g.label}
+                <span style={{ fontSize: 10, opacity: 0.85, fontFamily: 'ui-monospace, monospace' }}>{count}</span>
               </button>
             );
           })}
-        </>
+        </div>
       )}
     </div>
   );
