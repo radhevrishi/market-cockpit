@@ -1136,7 +1136,13 @@ export default function EarningsOpportunitiesPage() {
     setRefreshing(true);
     setRefreshFeedback(null);
     try {
-      const res = await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}&refreshMissing=1`, { cache: 'no-store' });
+      // PATCH 0255 — Be more aggressive. refreshMissing=1 sometimes returns
+      // a 'no-op' because the cached payload looks complete from the
+      // server's perspective even if the user can see missing tickers.
+      // Adding force=1 alongside busts the KV cache and rebuilds from
+      // scratch, which actually pulls in newly-filed companies + re-runs
+      // enrichment for tickers that previously returned null.
+      const res = await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}&refreshMissing=1&force=1`, { cache: 'no-store' });
       if (!res.ok) {
         setRefreshFeedback(`⚠ Refresh failed (HTTP ${res.status})`);
         console.warn('refreshMissing failed', res.status);
@@ -1146,8 +1152,6 @@ export default function EarningsOpportunitiesPage() {
         const m = msg.match(/^(\d+)\/(\d+)\s+updated/);
         const updated = m ? parseInt(m[1], 10) : 0;
         const total = m ? parseInt(m[2], 10) : 0;
-        // PATCH 0192 — use the EXACT failed tickers from server response
-        // instead of computing from stale client-side data.
         const failedTickers: string[] = Array.isArray(j?._failed_tickers) ? j._failed_tickers : [];
         const tickerListFromServer = (n = 8) => {
           if (failedTickers.length === 0) return 'these tickers';
@@ -1155,22 +1159,32 @@ export default function EarningsOpportunitiesPage() {
           const more = failedTickers.length > n ? ` +${failedTickers.length - n} more` : '';
           return `${shown}${more}`;
         };
-        // PATCH 0190/0192 — also WIPE localStorage on every refreshMissing so
-        // the new server payload is the source of truth (no stale leftovers).
+        // PATCH 0190/0192 — wipe localStorage so the fresh server payload is
+        // the source of truth.
         try { localStorage.removeItem('mc:graded:v8:' + resolvedDateForGrading); } catch {}
         if (msg.includes('no-op')) {
-          setRefreshFeedback(`✓ Server has fresh data for this date — syncing your view…`);
+          setRefreshFeedback(`✓ All cards already have financial data — server returned same set. If you expected new tickers, they're probably not yet in NSE/BSE filings for this date.`);
         } else if (updated > 0 && failedTickers.length === 0) {
           setRefreshFeedback(`✓ Updated ${updated}/${total} cards with fresh financials`);
         } else if (updated > 0) {
-          setRefreshFeedback(`✓ Updated ${updated}/${total} cards. Still no data for: ${tickerListFromServer()}.`);
+          setRefreshFeedback(`✓ Updated ${updated}/${total} cards. Still no data for: ${tickerListFromServer()}. Re-checking in 60s…`);
         } else {
-          setRefreshFeedback(`⚠ 0/${total} updated. No Q4 data yet for: ${tickerListFromServer()}. Worker pass typically takes 6–24h. Use Coverage Probe ↓ to add manually.`);
+          setRefreshFeedback(`⚠ 0/${total} updated. No Q4 data yet for: ${tickerListFromServer()}. Worker re-checks in 60s + 5min — leave this page open or use Coverage Probe ↓ to add manually.`);
         }
-        setTimeout(() => setRefreshFeedback(null), 20000);
+        // PATCH 0255 — Don't auto-hide if there are still pending tickers; the
+        // user needs to see this message until something actually completes.
+        if (failedTickers.length === 0) {
+          setTimeout(() => setRefreshFeedback(null), 20000);
+        }
       }
       // Force a fresh fetch — bypass any client-side caches
       await refetchGraded();
+
+      // PATCH 0255 — Delayed follow-up refetches to catch async worker
+      // completions. The worker re-tries upstream sources (NSE/BSE/Screener
+      // /Yahoo) which can take 30s-5min on cold-cache misses.
+      setTimeout(() => { refetchGraded(); }, 60_000);
+      setTimeout(() => { refetchGraded(); }, 5 * 60_000);
     } finally {
       setRefreshing(false);
     }
