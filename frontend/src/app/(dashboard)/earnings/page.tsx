@@ -2138,10 +2138,35 @@ export default function EarningsPage() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// POST-EARNINGS GAP PROVIDER (PATCH 0201)
+// POST-EARNINGS GAP PROVIDER (PATCH 0201, normalizer added in 0202)
 // Fetches Yahoo-based post-earnings price action for the visible cards.
 // Render-prop pattern so the same hook lives once per visible set, not per card.
 // ═══════════════════════════════════════════════════════════════════════════
+
+/** Convert Screener-style resultDate strings into ISO YYYY-MM-DD.
+ *  Accepts:
+ *    "2026-04-15" / "2026-04-15T17:30:00"        → already ISO, slice to date
+ *    "15-Apr-2026" / "15-Apr-2026 17:30:00"      → human format, parse + emit ISO
+ *    "Mar 2026" / "-" / "N/A" / empty / null     → null (no real filing date) */
+function toIsoFilingDate(resultDate?: string | null): string | null {
+  if (!resultDate) return null;
+  const trimmed = resultDate.trim();
+  if (!trimmed || trimmed === '-' || trimmed === 'N/A') return null;
+  // Already ISO?
+  if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) return trimmed.slice(0, 10);
+  // Just a quarter period like "Mar 2026" — no real filing date. Skip.
+  if (/^[A-Za-z]{3,9}\s+\d{4}$/.test(trimmed)) return null;
+  // Human format like "15-Apr-2026 17:30:00" → "Apr 15, 2026 17:30:00"
+  const normalized = trimmed.replace(/(\d{1,2})-([A-Za-z]{3})-(\d{4})/, '$2 $1, $3');
+  const parsed = new Date(normalized);
+  if (isNaN(parsed.getTime())) return null;
+  // Local-day components — filing date is calendar-day specific; safe for IST/UTC.
+  const y = parsed.getFullYear();
+  const m = String(parsed.getMonth() + 1).padStart(2, '0');
+  const d = String(parsed.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 interface PostGap {
   gap_pct: number | null;
   close_move_pct: number | null;
@@ -2156,12 +2181,19 @@ function PostGapProvider({ cards, children }: {
   // Build the (ticker, filing_date, timing) request list. Default timing='post'
   // since most Indian companies file after-market — Yahoo daily candle for
   // NEXT trading day is the right comparable.
+  //
+  // PATCH 0202 — Normalize `resultDate` to ISO before posting. Source data is
+  // Screener-style like "15-Apr-2026 17:30:00" (sometimes "15-Apr-2026"), or
+  // a bare quarter period like "Mar 2026". The previous filter required the
+  // string to START with YYYY-MM-DD, so it silently dropped 95%+ of cards.
+  // Now: if we can resolve a real calendar filing date, include it;
+  // period-only cards are skipped (no fabricated dates — see CLAUDE.md §13.5).
   const items = useMemo(() => {
     return cards.slice(0, 80).map((c) => ({
       ticker: c.symbol,
-      filing_date: c.resultDate || c.period || '',
+      filing_date: toIsoFilingDate(c.resultDate),
       timing: 'post' as const,
-    })).filter((x) => x.ticker && x.filing_date && /^\d{4}-\d{2}-\d{2}/.test(x.filing_date));
+    })).filter((x): x is { ticker: string; filing_date: string; timing: 'post' } => !!x.ticker && !!x.filing_date);
   }, [cards]);
 
   const key = useMemo(() => items.map((i) => `${i.ticker}|${i.filing_date}`).join(','), [items]);
