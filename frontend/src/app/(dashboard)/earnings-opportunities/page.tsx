@@ -392,18 +392,32 @@ function gradeRow(row: any): ParsedEarning | null {
   if (ttPass) technical += 10;
   technical = Math.max(0, Math.min(100, technical));
 
-  // Methodology — count-based with SEPA bonus
+  // Methodology — count-based with SEPA bonus.
+  // PATCH 0173: count Tier-1 methods (TT/SEPA/CANSLIM) separately from bonde ep
+  // since bonde ep is auto-satisfied by magnitude. Composite shouldn't punish
+  // cards for missing bonde ep alone.
   const mCount = methodology_tags.length;
+  const _t1MethodCount =
+    (methodology_tags.includes('trend template') ? 1 : 0) +
+    (methodology_tags.includes('sepa') ? 1 : 0) +
+    (methodology_tags.includes('canslim') ? 1 : 0);
   let methodology = mCount === 4 ? 100 : mCount === 3 ? 80 : mCount === 2 ? 60 : mCount === 1 ? 35 : 10;
+  // Bonus: any Tier-1 method present → floor at 55 (don't sink composite for
+  // cards that pass TT/SEPA/CANSLIM but happened to miss the others)
+  if (_t1MethodCount >= 1) methodology = Math.max(methodology, 55);
   if (methodology_tags.includes('sepa')) methodology = Math.min(100, methodology + 5);
-  // PATCH 0172 — magnitude-aware methodology floor.
-  // When growth is THIS extreme (Sales≥40+PAT≥75+EPS≥75 = mega triple-beat),
-  // the magnitude IS itself a methodology signal — don't punish low method count.
+  // PATCH 0172 — magnitude-aware methodology floor (mega triple-beat).
   const _megaMagnitudeFloor =
     salesY != null && salesY >= 40 &&
     patY != null && patY >= 75 &&
     epsY != null && epsY >= 75;
-  if (_megaMagnitudeFloor) methodology = Math.max(methodology, 70);
+  if (_megaMagnitudeFloor) methodology = Math.max(methodology, 75);
+  // PATCH 0173 — exceptional magnitude (≥40/50/50) also gets a moderate floor
+  const _exceptionalMagFloor =
+    salesY != null && salesY >= 40 &&
+    patY != null && patY >= 50 &&
+    epsY != null && epsY >= 50;
+  if (_exceptionalMagFloor) methodology = Math.max(methodology, 65);
 
   const composite = Math.max(0, Math.min(100,
     magnitude * 0.35 + quality * 0.25 + technical * 0.25 + methodology * 0.15,
@@ -424,32 +438,95 @@ function gradeRow(row: any): ParsedEarning | null {
   const broken = (stage === 4 && (rs == null || rs < 40)) ||
                  (epsY != null && epsY < 0 && patY != null && patY < -10);
 
-  // PATCH 0172 — BLOCKBUSTER gate (THREE paths):
-  //   A) CLEAN:     3+ methodologies + ≤1 caveat + clean magnitude (all ≥25%) + Stage 2 + RS ≥ 70
-  //   B) EXCEPTIONAL: 2+ methodologies + ≤3 caveats + exceptional magnitude (all ≥50%) + Stage 2 + RS ≥ 70
-  //   C) MEGA MAGNITUDE (NEW): 1+ methodology + ≤1 caveat + mega magnitude (Sales ≥40 + PAT ≥75 + EPS ≥75)
-  //      + chart not broken. EarningsPulse logic: when the print is THIS extreme
-  //      (Atlanta Electric +82/+127/+113), the magnitude IS the methodology signal —
-  //      technical setup is allowed to lag because the move just started.
-  // Paths A/B require composite ≥ 84; Path C requires composite ≥ 70 (relaxed because
-  // RS / Stage haven't caught up to the fundamentals yet).
+  // PATCH 0173 — BLOCKBUSTER gate v3 (EarningsPulse-matched).
+  // Per user spec: IGNORE bonde ep, RS, Stage 2 as hard gates. These are
+  // worker-enriched fields that are frequently null on fresh prints, killing
+  // the gate. EarningsPulse classifies on:
+  //   1) Magnitude (Sales / PAT / EPS triple-beat)
+  //   2) Quality (caveats)
+  //   3) Methodology fit — TT / SEPA / CANSLIM (NOT bonde ep, which is auto-satisfied
+  //      by magnitude itself)
+  //   4) Guidance signal (capacity expansion, order book, margin expansion, etc.)
+  //   5) Chart not broken (not Stage 4, not >25% off 52w high)
+  //
+  // Verified against EarningsPulse BLOCKBUSTER set:
+  //   Syrma SGS (+58/+67/+43), MCX (+205/+291/+292), Atlanta (+82/+127/+115),
+  //   BSE (+85/+61/+62), Vijaya Diag (+27/+38/+38), GNG Elec (+43/+181/+147),
+  //   Antelopus (+65/+139/+157), BHEL (+37/+156/+164)
+  // BLOCKBUSTER is RARE: typically 0-3 per day.
+  //
+  // Tier-1 methodology count = TT / SEPA / CANSLIM only (drop bonde ep — magnitude
+  // implies bonde ep, so it's never the differentiator).
+  const tier1MethodCount =
+    (methodology_tags.includes('trend template') ? 1 : 0) +
+    (methodology_tags.includes('sepa') ? 1 : 0) +
+    (methodology_tags.includes('canslim') ? 1 : 0);
+
   const cleanMagnitude =
     salesY != null && salesY >= 25 &&
     patY != null && patY >= 25 &&
     epsY != null && epsY >= 25;
   const exceptionalMagnitude =
-    salesY != null && salesY >= 50 &&
+    salesY != null && salesY >= 40 &&
     patY != null && patY >= 50 &&
     epsY != null && epsY >= 50;
   const megaMagnitude =
     salesY != null && salesY >= 40 &&
     patY != null && patY >= 75 &&
     epsY != null && epsY >= 75;
-  const stage2RS70 = stage === 2 && rs != null && rs >= 70;
-  const blockbusterPathA = composite >= 84 && mCount >= 3 && caveat_tags.length <= 1 && cleanMagnitude && stage2RS70;
-  const blockbusterPathB = composite >= 84 && mCount >= 2 && caveat_tags.length <= 3 && exceptionalMagnitude && stage2RS70;
-  const blockbusterPathC = composite >= 70 && mCount >= 1 && caveat_tags.length <= 1 && megaMagnitude && stage !== 4;
+
+  // Guidance signal — scan available text (narrative, announcement, attachment
+  // title) for forward-looking positives. EarningsPulse weights this heavily for
+  // Atlanta-style cases.
+  const guidanceText = [
+    row?.guidance_text, row?.narrative_text, row?.announcement_text,
+    row?.attachment, row?.headline, row?.title,
+  ].filter(Boolean).join(' ').toLowerCase();
+  const guidancePatterns = [
+    /capacity expansion/, /order book/, /record (?:quarter|order|revenue|book)/,
+    /margin expansion/, /operating leverage/, /commission(?:ed|ing)?/,
+    /capex/, /demand recovery/, /broad[- ]based/, /tailwind/, /confident/,
+    /guidance rais/, /upgrade(?:d)? guidance/, /outlook strong/,
+    /(?:vadod|new plant|new line|brownfield|greenfield)/,
+  ];
+  const guidanceMatches = guidancePatterns.filter((p) => p.test(guidanceText)).length;
+  const positiveGuidance = guidanceMatches >= 2;
+
+  // Chart not broken — independent of Stage 2 / RS 70 requirement
+  const chartOk = stage !== 4 && (pct52 == null || pct52 >= -25);
+  const chartHealthy = chartOk && stage !== 3;  // Bonus signal — actively in uptrend
+
+  // ── Three paths to BLOCKBUSTER (RS / Stage / bonde NOT required):
+  // Path A — CLEAN MAGNITUDE + STRUCTURE: clean triple-beat + ≤1 caveat +
+  //   composite ≥ 78 + (Tier-1 method ≥ 1 OR positive guidance) + chart OK
+  const blockbusterPathA =
+    composite >= 78 &&
+    cleanMagnitude &&
+    caveat_tags.length <= 1 &&
+    (tier1MethodCount >= 1 || positiveGuidance) &&
+    chartOk;
+
+  // Path B — EXCEPTIONAL MAGNITUDE: ≥40/50/50 triple-beat + ≤2 caveats +
+  //   composite ≥ 72 + chart OK (no methodology requirement)
+  const blockbusterPathB =
+    composite >= 72 &&
+    exceptionalMagnitude &&
+    caveat_tags.length <= 2 &&
+    chartOk;
+
+  // Path C — MEGA MAGNITUDE: ≥40/75/75 triple-beat + ≤3 caveats + chart not Stage 4
+  //   (the magnitude IS the signal — EarningsPulse Atlanta & Antelopus cases.
+  //    Antelopus had 3 caveats — accelerated depreciation + pooling + exceptional
+  //    item — but magnitude was still extreme +65/+139/+157 = BLOCKBUSTER.)
+  const blockbusterPathC =
+    megaMagnitude &&
+    caveat_tags.length <= 3 &&
+    stage !== 4;
+
   const blockbusterGate = blockbusterPathA || blockbusterPathB || blockbusterPathC;
+
+  // (suppress unused variable warning for chartHealthy — reserved for future tier-bonus)
+  void chartHealthy;
 
   if (broken && composite < 70) {
     tier = 'AVOID';
