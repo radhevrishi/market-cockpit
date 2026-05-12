@@ -1577,7 +1577,7 @@ function partialDataPenalty(quarters: QuarterFinancials[]): number {
 }
 
 /** Build earnings card — NEVER returns null. All symbols get a card. */
-async function buildEarningsCard(symbol: string): Promise<EarningsScanCard> {
+async function buildEarningsCard(symbol: string, origin?: string): Promise<EarningsScanCard> {
   const store = getGlobalStore();
   let dataAge: 'fresh' | 'stale' | 'missing' = 'missing';
   const failureReasons: string[] = [];
@@ -1792,9 +1792,130 @@ async function buildEarningsCard(symbol: string): Promise<EarningsScanCard> {
     }
   }
 
+  // PATCH 0208 — Tier-4 fallback before giving up.
+  // /api/v1/earnings/enrich uses a different (and currently more robust)
+  // Screener path. For tickers like SMLMAH where this route fails but
+  // Screener has the data, enrich recovers them.
+  if (origin) {
+    try {
+      const enrichCard = await buildCardFromEnrichFallback(symbol, origin, failureReasons);
+      if (enrichCard) {
+        console.log(`[Earnings Scan] ${symbol}: recovered via /api/v1/earnings/enrich fallback`);
+        return enrichCard;
+      }
+    } catch (e) {
+      console.warn(`[Earnings Scan] ${symbol}: enrich fallback threw:`, (e as Error).message);
+    }
+  }
+
   // ── LAST RESORT: Return DATA_MISSING placeholder — NEVER drop a company ──
   console.warn(`[Earnings Scan] ${symbol}: ALL SOURCES FAILED — returning DATA_MISSING placeholder`);
   return buildMissingCard(symbol, failureReasons);
+}
+
+// ─── PATCH 0208 ────────────────────────────────────────────────────────────
+// Tier-4 fallback: when this route's own Screener/MC/NSE parsers all return
+// "no data returned" but the symbol is actually live on Screener (verified
+// for SMLMAH, MACPOWER, KARURVYSYA, BAJAJ-AUTO, NAM-INDIA, NIVABUPA, etc.),
+// re-route to /api/v1/earnings/enrich which uses a more robust Screener
+// fetcher + symbol-master resolver. enrich currently succeeds for cases this
+// route silently misses — so we use it as the final source of truth before
+// surfacing DATA MISSING to the user.
+//
+// We keep the data shape compatible with the existing UI: two quarters
+// (current + prior) constructed from enrich's curr/prev fields, YoY values
+// passed through directly, dataStatus='PARTIAL' (not FULL — we don't have
+// the full 4-quarter trail that the Screener HTML parser would produce).
+// ───────────────────────────────────────────────────────────────────────────
+async function buildCardFromEnrichFallback(
+  symbol: string,
+  origin: string,
+  failureReasons: string[],
+): Promise<EarningsScanCard | null> {
+  try {
+    const url = `${origin}/api/v1/earnings/enrich?symbols=${encodeURIComponent(symbol)}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    if (!res.ok) return null;
+    const json: any = await res.json();
+    const e = json?.data?.[symbol];
+    // Need at minimum a current-quarter sales figure for the card to be useful
+    if (!e || e.sales_curr_cr == null) return null;
+
+    const periodLabel: string = e.latest_quarter_label || 'Mar 2026';
+    const prevPeriodLabel: string = periodLabel.replace(/(\d{4})$/, (y) => String(parseInt(y) - 1));
+
+    const quarters: QuarterFinancials[] = [
+      {
+        period: periodLabel,
+        revenue: Number(e.sales_curr_cr) || 0,
+        operatingProfit: Number(e.op_profit_curr_cr) || 0,
+        opm: Number(e.opm_pct) || 0,
+        pat: Number(e.pat_curr_cr) || 0,
+        npm: (e.pat_curr_cr && e.sales_curr_cr) ? (e.pat_curr_cr / e.sales_curr_cr) * 100 : 0,
+        eps: Number(e.eps_curr) || 0,
+      },
+      {
+        period: prevPeriodLabel,
+        revenue: Number(e.sales_prev_cr) || 0,
+        operatingProfit: Number(e.op_profit_prev_cr) || 0,
+        opm: Number(e.opm_prev_pct) || 0,
+        pat: Number(e.pat_prev_cr) || 0,
+        npm: (e.pat_prev_cr && e.sales_prev_cr) ? (e.pat_prev_cr / e.sales_prev_cr) * 100 : 0,
+        eps: Number(e.eps_prev) || 0,
+      },
+    ];
+
+    // Grade-bucket: enrich gave us data, so it's not MISSING. We use moderate
+    // scoring (we don't have the methodology depth the full scan computes,
+    // so don't overstate). UI date-range filters still work because we set
+    // resultDate from broadcastDate when available.
+    const revYoY = e.sales_yoy_pct ?? null;
+    const patYoY = e.pat_yoy_pct ?? null;
+    let totalScore = 50;
+    if (revYoY != null && revYoY > 20) totalScore += 10;
+    if (revYoY != null && revYoY > 40) totalScore += 5;
+    if (patYoY != null && patYoY > 25) totalScore += 10;
+    if (patYoY != null && patYoY > 75) totalScore += 5;
+    const grade =
+      totalScore >= 80 ? 'EXCELLENT' :
+      totalScore >= 70 ? 'STRONG'    :
+      totalScore >= 60 ? 'GOOD'      :
+      totalScore >= 45 ? 'OK'        : 'BAD';
+
+    return {
+      symbol,
+      company: e.company_name || symbol,
+      period: periodLabel,
+      resultDate: e.broadcastDate || periodLabel,
+      reportType: 'Consolidated',
+      quarters,
+      revenueYoY: revYoY, revenueQoQ: null,
+      opProfitYoY: e.op_profit_yoy_pct ?? null, opProfitQoQ: null,
+      patYoY: patYoY, patQoQ: null,
+      epsYoY: e.eps_yoy_pct ?? null, epsQoQ: null,
+      fundamentalsScore: 50, priceScore: 50, totalScore,
+      grade, gradeColor:
+        grade === 'EXCELLENT' ? '#F59E0B' :
+        grade === 'STRONG'    ? '#10B981' :
+        grade === 'GOOD'      ? '#3B82F6' :
+        grade === 'OK'        ? '#94A3B8' : '#F44336',
+      dataQuality: 'PARTIAL',
+      dataAge: 'fresh',
+      mcap: e.market_cap_cr ?? null,
+      pe: e.pe ?? null,
+      cmp: e.current_price ?? null,
+      isBanking: false,
+      source: 'screener.in',
+      sourceConfidence: 75,
+      dataStatus: 'PARTIAL',
+      failureReasons: [...failureReasons, 'recovered via /api/v1/earnings/enrich fallback'],
+      screenerUrl: `https://www.screener.in/company/${symbol}/consolidated/#quarters`,
+      nseUrl: `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(symbol)}`,
+    } as EarningsScanCard;
+  } catch (err) {
+    console.warn(`[Earnings Scan] ${symbol}: enrich fallback failed:`, (err as Error).message);
+    return null;
+  }
 }
 
 /** Build a DATA_MISSING placeholder card — ensures every symbol appears in results */
@@ -1985,7 +2106,11 @@ function buildCardFromData(data: ScreenerData, guidanceData?: GuidanceData | nul
 // ══════════════════════════════════════════════
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
+  const reqUrl = new URL(request.url);
+  const { searchParams } = reqUrl;
+  // PATCH 0208 — origin needed so buildEarningsCard can call the local
+  // /api/v1/earnings/enrich endpoint as a recovery path.
+  const origin = `${reqUrl.protocol}//${reqUrl.host}`;
   const symbolsParam = searchParams.get('symbols');
   const watchlistOnly = searchParams.get('watchlist') === 'true';
   const debug = searchParams.get('debug') === 'true';
@@ -2018,9 +2143,9 @@ export async function GET(request: Request) {
       const batchResults = await Promise.all(
         batch.map(sym =>
           Promise.race([
-            buildEarningsCard(sym),
-            // Per-symbol timeout: 12s max — prevents one slow symbol from blocking the batch
-            new Promise<EarningsScanCard>((_, reject) => setTimeout(() => reject(new Error('Timeout (12s)')), 12000)),
+            buildEarningsCard(sym, origin),
+            // Per-symbol timeout: bumped to 18s — enrich fallback adds 3-5s
+            new Promise<EarningsScanCard>((_, reject) => setTimeout(() => reject(new Error('Timeout (18s)')), 18000)),
           ]).catch((err) => {
             console.warn(`[Earnings Scan] ${sym} crashed/timed out:`, err);
             // Even on crash, return a DATA_MISSING card
