@@ -1690,10 +1690,38 @@ function fmtPct(p: number | null | undefined, digits = 0): string {
 
 function EarningsCard({ stock, guidanceScore }: { stock: ParsedEarning; guidanceScore?: number }) {
   const tierColor = TIER_META[stock.tier].color;
-  // PATCH 0183 — guidance pts (copied from /multibagger lines 3159-3165 + 2216-2226)
-  const gScore = guidanceScore ?? -1;
+  // PATCH 0184 — Guidance pts with MAGNITUDE FALLBACK.
+  // News-based score (passed via prop). When news has no coverage for this
+  // ticker (score = -1 or undefined), derive a proxy from the magnitude itself
+  // — strong triple-beat = positive forward signal, deep miss = negative.
+  // Result: every card shows a guidance read, never blank.
+  let gScore = guidanceScore ?? -1;
+  let gSource: 'news' | 'magnitude' = 'news';
+  if (gScore === -1) {
+    gSource = 'magnitude';
+    const sales = stock.sales_yoy_pct ?? 0;
+    const pat = stock.net_profit_yoy_pct ?? 0;
+    const eps = stock.eps_yoy_pct ?? 0;
+    // Mega beat (Sales≥40 AND PAT≥75 AND EPS≥75) → very positive 0.85
+    if (sales >= 40 && pat >= 75 && eps >= 75) gScore = 0.85;
+    // Exceptional (Sales≥30 AND PAT≥50 AND EPS≥50) → positive 0.72
+    else if (sales >= 30 && pat >= 50 && eps >= 50) gScore = 0.72;
+    // Clean triple-beat (all ≥25) → mild positive 0.6
+    else if (sales >= 25 && pat >= 25 && eps >= 25) gScore = 0.6;
+    // Solid (all ≥15) → 0.55
+    else if (sales >= 15 && pat >= 15 && eps >= 15) gScore = 0.55;
+    // Mostly positive (≥2 of 3 ≥10) → 0.52
+    else if ([sales, pat, eps].filter((v) => v >= 10).length >= 2) gScore = 0.52;
+    // Deep miss — all negative → -8 (0.28)
+    else if (sales < 0 && pat < 0 && eps < 0) gScore = 0.28;
+    // Big PAT/EPS decline → 0.35
+    else if (pat <= -20 || eps <= -20) gScore = 0.35;
+    // Mild negative (≥2 of 3 < 0) → 0.42
+    else if ([sales, pat, eps].filter((v) => v < 0).length >= 2) gScore = 0.42;
+    // Otherwise neutral
+    else gScore = 0.5;
+  }
   const gAdj = (() => {
-    if (gScore === -1) return 0;
     if (gScore >= 0.85) return 14;
     if (gScore >= 0.70) return 8;
     if (gScore >= 0.55) return 3;
@@ -1703,13 +1731,11 @@ function EarningsCard({ stock, guidanceScore }: { stock: ParsedEarning; guidance
     return 0;
   })();
   const gColor =
-    gScore === -1 ? '#6B7A8D' :
     gScore >= 0.70 ? '#10B981' :
     gScore >= 0.55 ? '#34d399' :
     gScore <= 0.30 ? '#EF4444' :
     gScore <= 0.45 ? '#F97316' : '#8A95A3';
   const gLabel =
-    gScore === -1 ? '' :
     gScore >= 0.85 ? '▲ Strong' :
     gScore >= 0.70 ? '▲ Positive' :
     gScore >= 0.55 ? '↑ Mild +' :
@@ -1808,19 +1834,21 @@ function EarningsCard({ stock, guidanceScore }: { stock: ParsedEarning; guidance
         <div style={{ padding: '6px 10px', backgroundColor: '#0D1623', borderRadius: 6, border: `1px solid ${tierColor}40`, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
           <div style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.6px' }}>SCORE</div>
           <div style={{ fontSize: 22, fontWeight: 900, color: tierColor, lineHeight: 1, marginTop: 2 }}>{stock.composite_score}</div>
-          {/* PATCH 0183 — Guidance pts (same logic as /multibagger column) */}
-          {gScore !== -1 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4, lineHeight: 1 }}>
-              <span style={{ fontSize: 9, fontWeight: 700, color: gColor, letterSpacing: '0.3px' }}>
-                {gLabel}
-              </span>
-              {gAdj !== 0 && (
-                <span style={{ fontSize: 9, fontWeight: 800, color: gColor, fontFamily: 'ui-monospace, monospace' }}>
-                  ({gAdj > 0 ? '+' : ''}{gAdj}pts)
-                </span>
-              )}
-            </div>
-          )}
+          {/* PATCH 0184 — Guidance pts ALWAYS visible (magnitude-fallback when no news) */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4, lineHeight: 1.1, flexWrap: 'wrap' }}>
+            <span
+              title={gSource === 'magnitude' ? 'Derived from earnings magnitude (no news coverage)' : 'Derived from news article scan'}
+              style={{ fontSize: 9, fontWeight: 700, color: gColor, letterSpacing: '0.3px' }}>
+              {gLabel}
+            </span>
+            <span style={{ fontSize: 9, fontWeight: 800, color: gColor, fontFamily: 'ui-monospace, monospace' }}>
+              ({gAdj > 0 ? '+' : ''}{gAdj}pts)
+            </span>
+            {gSource === 'magnitude' && (
+              <span title="Magnitude-based proxy (news has no coverage)"
+                style={{ fontSize: 8, color: '#6B7A8D', fontWeight: 600 }}>·proxy</span>
+            )}
+          </div>
         </div>
       </div>
 
