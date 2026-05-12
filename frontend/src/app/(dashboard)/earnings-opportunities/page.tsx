@@ -886,6 +886,15 @@ export default function EarningsOpportunitiesPage() {
     }
     setHardRefreshing(true);
     try {
+      // PATCH 0190 — Hard Refresh now wipes ALL local caches for this date
+      // before hitting the server with force=1, so user gets a guaranteed
+      // fresh view (no stale localStorage interfering).
+      try {
+        localStorage.removeItem('mc:graded:v8:' + resolvedDateForGrading);
+        // Also clear hub cache so /api/market/earnings re-fetches
+        const monthKeys = monthsToFetch.join(',');
+        localStorage.removeItem('mc:hub:v2:' + monthKeys);
+      } catch {}
       // Hit force=1 server-side to rebuild graded payload from a fresh hub fetch
       await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}&force=1`, { cache: 'no-store' });
       // Then refetch via React Query so the UI picks up the new data
@@ -1113,15 +1122,23 @@ export default function EarningsOpportunitiesPage() {
         const m = msg.match(/^(\d+)\/(\d+)\s+updated/);
         const updated = m ? parseInt(m[1], 10) : 0;
         const total = m ? parseInt(m[2], 10) : 0;
-        if (updated > 0) {
+        // PATCH 0190 — when server says "no-op", it means the SERVER's KV cache
+        // is already populated. But the user's localStorage may have a stale
+        // version. WIPE the local cache and force a fresh refetch so the
+        // populated data from server replaces stale local view.
+        if (msg.includes('no-op')) {
+          try {
+            localStorage.removeItem('mc:graded:v8:' + resolvedDateForGrading);
+          } catch {}
+          setRefreshFeedback(`✓ Server has fresh data for this date — syncing your view…`);
+        } else if (updated > 0) {
           setRefreshFeedback(`✓ Updated ${updated}/${total} cards with fresh financials`);
-        } else if (msg.includes('no-op')) {
-          setRefreshFeedback(`✓ All cards already populated — nothing to refresh`);
         } else {
           setRefreshFeedback(`⚠ 0/${total} updated — Screener / NSE structured feeds have no Q4 data for these tickers yet. Worker pass typically takes 6–24h. Use Coverage Probe ↓ to add a specific ticker manually.`);
         }
         setTimeout(() => setRefreshFeedback(null), 15000);
       }
+      // Force a fresh fetch — bypass any client-side caches
       await refetchGraded();
     } finally {
       setRefreshing(false);
