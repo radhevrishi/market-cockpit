@@ -22,7 +22,25 @@
 // list.  Region filter: ALL / 🇮🇳 IN / 🌐 GLOBAL.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
+// PATCH 0277 — Conviction Beats overlay on Re-rating Screener.
+import { getConvictionTickers } from '@/lib/conviction-beats';
+
+// PATCH 0277 — Shared inline CB badge so all 3 sub-panels render the same chip.
+function CbBadge({ ticker, convictionSet }: { ticker: string; convictionSet: Set<string> }) {
+  const sym = (ticker || '').toUpperCase().replace(/\.NS$|\.BO$/i, '');
+  if (!convictionSet.has(sym)) return null;
+  return (
+    <span
+      title="On Conviction Beats bench (BLOCKBUSTER/STRONG earnings)"
+      style={{
+        marginLeft: 6, fontSize: 9, fontWeight: 800, color: '#F59E0B',
+        border: '1px solid #F59E0B60', backgroundColor: 'rgba(245,158,11,0.10)',
+        padding: '1px 5px', borderRadius: 3, letterSpacing: 0.3,
+      }}
+    >🏆 CB</span>
+  );
+}
 import { useQuery } from '@tanstack/react-query';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { TrendingUp, RefreshCw, Rocket } from 'lucide-react';
@@ -663,6 +681,26 @@ export default function RerratingPage() {
   const [universeChoice, setUniverseChoice] = useState<UniverseChoice>('AUTO');
   const [customCsv, setCustomCsv] = useState('');
 
+  // PATCH 0277 — Conviction Beats set + cross-tab sync.
+  const [convictionSet, setConvictionSet] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set();
+    try { return new Set(Array.from(getConvictionTickers()).map((t: string) => t.toUpperCase())); }
+    catch { return new Set(); }
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const refresh = () => {
+      try { setConvictionSet(new Set(Array.from(getConvictionTickers()).map((t: string) => t.toUpperCase()))); }
+      catch {}
+    };
+    window.addEventListener('storage', refresh);
+    window.addEventListener('conviction-beats:updated', refresh);
+    return () => {
+      window.removeEventListener('storage', refresh);
+      window.removeEventListener('conviction-beats:updated', refresh);
+    };
+  }, []);
+
   // Sync active tab to URL
   useEffect(() => {
     const sp = new URLSearchParams(searchParams?.toString() || '');
@@ -781,13 +819,13 @@ export default function RerratingPage() {
       {/* ── Body ───────────────────────────────────────────────────── */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
         {active === 'margin' && (
-          <MarginExpansionPanel rows={filterByRegion(marginRows).slice(0, 30)} loading={loadingE} color={activeMeta.color} />
+          <MarginExpansionPanel rows={filterByRegion(marginRows).slice(0, 30)} loading={loadingE} color={activeMeta.color} convictionSet={convictionSet} />
         )}
         {active === 'model' && (
-          <ModelShiftPanel rows={filterByRegion(modelRows).slice(0, 30)} loading={loadingN} color={activeMeta.color} />
+          <ModelShiftPanel rows={filterByRegion(modelRows).slice(0, 30)} loading={loadingN} color={activeMeta.color} convictionSet={convictionSet} />
         )}
         {active === 'multiple' && (
-          <MultipleExpansionPanel rows={filterByRegion(multipleRows).slice(0, 30)} loading={loadingE || loadingQ} color={activeMeta.color} />
+          <MultipleExpansionPanel rows={filterByRegion(multipleRows).slice(0, 30)} loading={loadingE || loadingQ} color={activeMeta.color} convictionSet={convictionSet} />
         )}
       </div>
     </div>
@@ -796,7 +834,7 @@ export default function RerratingPage() {
 
 // ─── Sub-panels ─────────────────────────────────────────────────────────────
 
-function MarginExpansionPanel({ rows, loading, color }: { rows: MarginRow[]; loading: boolean; color: string }) {
+function MarginExpansionPanel({ rows, loading, color, convictionSet }: { rows: MarginRow[]; loading: boolean; color: string; convictionSet: Set<string> }) {
   if (loading) return <Loader label="Loading earnings-scan…" />;
   if (rows.length === 0) return <Empty label="No margin-expansion candidates in the universe yet. Add tickers to portfolio / watchlist or wait for next earnings cycle." />;
   return (
@@ -822,7 +860,7 @@ function MarginExpansionPanel({ rows, loading, color }: { rows: MarginRow[]; loa
             {rows.map((r, i) => (
               <tr key={r.ticker} style={{ borderTop: '1px solid #1A2840' }}>
                 <td style={td()}>{i + 1}</td>
-                <td style={tdMono()}>{r.ticker}</td>
+                <td style={tdMono()}>{r.ticker}<CbBadge ticker={r.ticker} convictionSet={convictionSet} /></td>
                 <td style={{ ...td(), color: r.delta_opm_bps > 0 ? '#10B981' : '#EF4444', fontWeight: 700 }}>
                   {r.delta_opm_bps > 0 ? '+' : ''}{r.delta_opm_bps}
                 </td>
@@ -841,7 +879,7 @@ function MarginExpansionPanel({ rows, loading, color }: { rows: MarginRow[]; loa
   );
 }
 
-function ModelShiftPanel({ rows, loading, color }: { rows: ModelShiftRow[]; loading: boolean; color: string }) {
+function ModelShiftPanel({ rows, loading, color, convictionSet }: { rows: ModelShiftRow[]; loading: boolean; color: string; convictionSet: Set<string> }) {
   if (loading) return <Loader label="Loading 180-day news universe…" />;
   if (rows.length === 0) return <Empty label="No model-shift signals in the last 90 days. Concept-detection regex matches SaaS / recurring / platform / ARR / NRR / land-and-expand." />;
   return (
@@ -855,7 +893,7 @@ function ModelShiftPanel({ rows, loading, color }: { rows: ModelShiftRow[]; load
           <div key={r.ticker} style={{ padding: '10px 14px', backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 8 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
               <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 14, fontWeight: 800, color: '#E6EDF3' }}>
-                {r.ticker}
+                {r.ticker}<CbBadge ticker={r.ticker} convictionSet={convictionSet} />
               </span>
               <span style={{ fontSize: 11, color: '#94A3B8' }}>
                 Recent <span style={{ color: '#10B981', fontWeight: 800 }}>×{r.recent_count}</span> · Prior ×{r.prior_count}
@@ -879,7 +917,7 @@ function ModelShiftPanel({ rows, loading, color }: { rows: ModelShiftRow[]; load
   );
 }
 
-function MultipleExpansionPanel({ rows, loading, color }: { rows: MultipleExpandRow[]; loading: boolean; color: string }) {
+function MultipleExpansionPanel({ rows, loading, color, convictionSet }: { rows: MultipleExpandRow[]; loading: boolean; color: string; convictionSet: Set<string> }) {
   if (loading) return <Loader label="Loading quotes + earnings…" />;
   if (rows.length === 0) return <Empty label="No multiple-expansion candidates yet. Need positive EPS YoY + valid P/E ratio in your universe." />;
   return (
@@ -904,7 +942,7 @@ function MultipleExpansionPanel({ rows, loading, color }: { rows: MultipleExpand
             {rows.map((r, i) => (
               <tr key={r.ticker} style={{ borderTop: '1px solid #1A2840' }}>
                 <td style={td()}>{i + 1}</td>
-                <td style={tdMono()}>{r.ticker}</td>
+                <td style={tdMono()}>{r.ticker}<CbBadge ticker={r.ticker} convictionSet={convictionSet} /></td>
                 <td style={td()}>{r.pe != null ? r.pe.toFixed(1) : '—'}</td>
                 <td style={{ ...td(), color: '#10B981' }}>{r.eps_yoy != null ? '+' + r.eps_yoy.toFixed(1) + '%' : '—'}</td>
                 <td style={{ ...td(), color: r.peg != null && r.peg < 1.0 ? '#10B981' : r.peg != null && r.peg < 1.5 ? '#F59E0B' : '#94A3B8', fontWeight: 700 }}>
