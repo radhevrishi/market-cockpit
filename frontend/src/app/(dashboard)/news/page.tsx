@@ -1489,7 +1489,8 @@ function BottleneckDashboard({
                               style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 0', textDecoration: 'none', borderBottom: aidx < signal.articles.length - 1 ? '1px solid #15213a' : 'none' }}
                             >
                               <span style={{ fontSize: '11px', color: '#C9D4E0', flex: 1 }}>
-                                {decodeHtml(art.headline).slice(0, 90)}{art.headline.length > 90 ? '…' : ''}
+                                {/* PATCH 0267 — defend against null headline */}
+                                {decodeHtml((art.headline || '')).slice(0, 90)}{(art.headline || '').length > 90 ? '…' : ''}
                               </span>
                               <span style={{ fontSize: '10px', color: '#4A5B6C', flexShrink: 0 }}>{art.source_name}</span>
                               <ExternalLink style={{ width: '10px', height: '10px', color: '#3A4B5C', flexShrink: 0 }} />

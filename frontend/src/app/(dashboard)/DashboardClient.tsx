@@ -213,13 +213,18 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
   }
 
   // Shape live data into ticker format
+  // PATCH 0268 — Distinguish 'genuinely 0%' from 'change_pct missing'. The
+  // top strip showing '+0.00%' on every symbol was misleading — actually
+  // meant the API didn't return a change for that symbol. Now we render
+  // an em-dash instead so the user knows the change is unknown.
   const markets = liveIndices && liveIndices.length > 0
     ? liveIndices.map((m) => {
-        const pct = typeof m.change_pct === 'number' ? m.change_pct : 0;
+        const hasChange = typeof m.change_pct === 'number' && Number.isFinite(m.change_pct);
+        const pct = hasChange ? m.change_pct! : 0;
         const price = typeof m.price === 'number'
           ? m.price.toLocaleString(undefined, { maximumFractionDigits: 2 })
           : String(m.price);
-        const changeStr = `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
+        const changeStr = hasChange ? `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` : '—';
         return { symbol: m.symbol, price, change: changeStr, up: pct >= 0 };
       })
     : showLoadingSkeleton || isLoading
