@@ -4,6 +4,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Search, Loader } from 'lucide-react';
 // PATCH 0275 — Shared freshness chip helper.
 import { PanelFreshness } from '@/components/PanelFreshness';
+// PATCH 0276 — Conviction Beats overlay on Screener results.
+import { getConvictionTickers } from '@/lib/conviction-beats';
 
 interface Quote {
   ticker: string;
@@ -189,6 +191,32 @@ export default function ScreenerPage() {
   const [error, setError] = useState<string | null>(null);
   // PATCH 0275 — stamp epoch on successful fetch so we can render PanelFreshness.
   const [dataUpdatedAt, setDataUpdatedAt] = useState<number>(0);
+
+  // PATCH 0276 — Conviction Beats overlay. Subscribes to the institutional
+  // bench + cross-tab sync. Filter chip toggles a CB-only universe.
+  const [convictionSet, setConvictionSet] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set();
+    try { return new Set(Array.from(getConvictionTickers()).map((t: string) => t.toUpperCase())); }
+    catch { return new Set(); }
+  });
+  const [convictionOnly, setConvictionOnly] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const refresh = () => {
+      try { setConvictionSet(new Set(Array.from(getConvictionTickers()).map((t: string) => t.toUpperCase()))); }
+      catch {}
+    };
+    window.addEventListener('storage', refresh);
+    window.addEventListener('conviction-beats:updated', refresh);
+    return () => {
+      window.removeEventListener('storage', refresh);
+      window.removeEventListener('conviction-beats:updated', refresh);
+    };
+  }, []);
+  const isCb = useCallback((sym?: string) => {
+    if (!sym) return false;
+    return convictionSet.has(sym.toUpperCase().replace(/\.NS$|\.BO$/i, ''));
+  }, [convictionSet]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSector, setSelectedSector] = useState('All');
   const [sortBy, setSortBy] = useState('Name');
@@ -412,7 +440,9 @@ export default function ScreenerPage() {
       const matchesSearch = quote.ticker.toLowerCase().includes(searchTerm.toLowerCase()) ||
         quote.company.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesSector = selectedSector === 'All' || quote.sector === selectedSector;
-      return matchesSearch && matchesSector;
+      // PATCH 0276 — Conviction-only filter narrows to the institutional bench.
+      const matchesConviction = !convictionOnly || isCb(quote.ticker);
+      return matchesSearch && matchesSector && matchesConviction;
     });
 
     filtered.sort((a, b) => {
@@ -444,7 +474,7 @@ export default function ScreenerPage() {
     });
 
     return filtered;
-  }, [data, searchTerm, selectedSector, sortBy, sortAscending]);
+  }, [data, searchTerm, selectedSector, sortBy, sortAscending, convictionOnly, isCb]);
 
   const filteredEarnings = React.useMemo(() => {
     if (!earningsData) return [];
@@ -452,7 +482,9 @@ export default function ScreenerPage() {
     let filtered = (earningsData.earnings || []).filter((earning) => {
       const matchesSearch = earning.symbol.toLowerCase().includes(searchTerm.toLowerCase()) ||
         earning.company.toLowerCase().includes(searchTerm.toLowerCase());
-      return matchesSearch;
+      // PATCH 0276 — Conviction-only filter applies to earnings tab too.
+      const matchesConviction = !convictionOnly || isCb(earning.symbol);
+      return matchesSearch && matchesConviction;
     });
 
     // Basic sort by company name or symbol
@@ -465,7 +497,7 @@ export default function ScreenerPage() {
     }
 
     return filtered;
-  }, [earningsData, searchTerm, sortBy, sortAscending]);
+  }, [earningsData, searchTerm, sortBy, sortAscending, convictionOnly, isCb]);
 
   const totalPages = Math.ceil((screenerMode === 'stocks' ? filteredQuotes : filteredEarnings).length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
@@ -614,6 +646,26 @@ export default function ScreenerPage() {
                 </select>
               </div>
             )}
+
+            {/* PATCH 0276 — Conviction-only toggle. Lives in the toolbar so
+                users can intersect Screener output with the institutional bench. */}
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: THEME.textSecondary, marginBottom: '8px', textTransform: 'uppercase' }}>
+                Conviction
+              </label>
+              <button
+                onClick={() => { setConvictionOnly(v => !v); setCurrentPage(1); }}
+                title={`Conviction Beats bench (${convictionSet.size} tickers). Toggle to show only Conviction names.`}
+                style={{
+                  width: '100%', padding: '8px 12px',
+                  background: convictionOnly ? 'rgba(245,158,11,0.10)' : THEME.background,
+                  color: convictionOnly ? '#F59E0B' : THEME.textPrimary,
+                  border: `1px solid ${convictionOnly ? '#F59E0B60' : THEME.border}`,
+                  borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 700,
+                  letterSpacing: '0.4px',
+                }}
+              >🏆 CB Only ({convictionSet.size})</button>
+            </div>
 
             {/* Sort By */}
             <div>
@@ -868,7 +920,21 @@ export default function ScreenerPage() {
                             {quote.company}
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '12px', color: THEME.accent, fontWeight: '600' }}>
-                            {quote.ticker}
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                              {quote.ticker}
+                              {/* PATCH 0276 — Conviction Beats badge. */}
+                              {isCb(quote.ticker) && (
+                                <span
+                                  title="On Conviction Beats bench (BLOCKBUSTER/STRONG earnings)"
+                                  style={{
+                                    fontSize: 9, fontWeight: 800, color: '#F59E0B',
+                                    border: '1px solid #F59E0B60',
+                                    backgroundColor: 'rgba(245,158,11,0.10)',
+                                    padding: '1px 5px', borderRadius: 3, letterSpacing: 0.3,
+                                  }}
+                                >🏆 CB</span>
+                              )}
+                            </span>
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '12px', color: THEME.textSecondary }}>
                             {quote.sector}
@@ -1038,7 +1104,21 @@ export default function ScreenerPage() {
                             {earning.company}
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '12px', color: THEME.accent, fontWeight: '600' }}>
-                            {earning.symbol}
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                              {earning.symbol}
+                              {/* PATCH 0276 — Conviction Beats badge. */}
+                              {isCb(earning.symbol) && (
+                                <span
+                                  title="On Conviction Beats bench (BLOCKBUSTER/STRONG earnings)"
+                                  style={{
+                                    fontSize: 9, fontWeight: 800, color: '#F59E0B',
+                                    border: '1px solid #F59E0B60',
+                                    backgroundColor: 'rgba(245,158,11,0.10)',
+                                    padding: '1px 5px', borderRadius: 3, letterSpacing: 0.3,
+                                  }}
+                                >🏆 CB</span>
+                              )}
+                            </span>
                           </td>
                           <td style={{ padding: '12px 16px', fontSize: '12px' }}>
                             <span style={{
