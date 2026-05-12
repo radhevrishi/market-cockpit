@@ -199,15 +199,39 @@ export default function NewsCard({ article, onTickerClick }: Props) {
     setIsWatchlist(mb);
     setStrategyTags(articleStrategyTags(article, mb));
   }, [article]);
-  // Defensive: some new RSS feeds (BSE / SEBI / WSJ) emit malformed
-  // pubDate strings that crash formatDistanceToNow with "Invalid time
-  // value". Validate before formatting; fallback to '' on bad input.
+  // PATCH 0211 — Single deterministic time-format rule matching the rest of
+  // the news feed. <60m: 'Xm ago' / <24h: 'Xh ago' / ≤7d: 'Xd ago' / else
+  // absolute date. Defensive against malformed pubDate strings.
   const timeAgo = (() => {
     if (!article.published_at) return '';
     try {
       const d = new Date(article.published_at);
       if (isNaN(d.getTime())) return '';
-      return formatDistanceToNow(d, { addSuffix: true });
+      const deltaMs = Date.now() - d.getTime();
+      if (deltaMs < 0) {
+        return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      }
+      const sec = Math.floor(deltaMs / 1000);
+      if (sec < 60) return 'now';
+      const min = Math.floor(sec / 60);
+      if (min < 60) return `${min}m ago`;
+      const hr = Math.floor(min / 60);
+      if (hr < 24) return `${hr}h ago`;
+      const day = Math.floor(hr / 24);
+      if (day <= 7) return `${day}d ago`;
+      const yearOpt = d.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' as const } : {};
+      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...yearOpt });
+    } catch { return ''; }
+  })();
+  const timeAbsolute = (() => {
+    if (!article.published_at) return '';
+    try {
+      const d = new Date(article.published_at);
+      if (isNaN(d.getTime())) return '';
+      return d.toLocaleString(undefined, {
+        month: 'short', day: 'numeric', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', hour12: true,
+      });
     } catch { return ''; }
   })();
 
@@ -285,7 +309,7 @@ export default function NewsCard({ article, onTickerClick }: Props) {
                 </span>
               );
             })()}
-            <span className="text-[#4A5B6C] text-[11px] shrink-0">{timeAgo}</span>
+            <span className="text-[#4A5B6C] text-[11px] shrink-0" title={timeAbsolute}>{timeAgo}</span>
           </div>
 
           {/* Headline */}

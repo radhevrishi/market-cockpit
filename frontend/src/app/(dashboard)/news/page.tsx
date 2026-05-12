@@ -524,29 +524,58 @@ function safeDate(iso: string | undefined | null): Date | null {
     return d;
   } catch { return null; }
 }
+// PATCH 0211 — Single time-formatting rule for the entire news feed.
+// The previous mix ("about 4 hours ago" / "01:19 PM · 3 minutes ago" /
+// "May 11, 12:53 PM · 1 day ago") looked inconsistent and unprofessional.
+// Now one deterministic ladder:
+//   < 60 sec  → "now"
+//   < 60 min  → "Xm ago"
+//   < 24 hr   → "Xh ago"
+//   ≤ 7 days  → "Xd ago"
+//   > 7 days  → "MMM D" (absolute date, current year implied)
+//   > 1 year  → "MMM D, YYYY"
+// Use formatRelativeTight() everywhere. The wrapper functions safeRelative
+// and timeAgo are retained as adapters so callers don't need to be touched
+// in this patch — but both delegate to the same rule.
+function formatRelativeTight(d: Date): string {
+  const nowMs = Date.now();
+  const ts = d.getTime();
+  const deltaMs = nowMs - ts;
+  // Future dates → absolute
+  if (deltaMs < 0) {
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
+           ', ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: true });
+  }
+  const sec = Math.floor(deltaMs / 1000);
+  if (sec < 60) return 'now';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day <= 7) return `${day}d ago`;
+  const yearOpt = d.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' as const } : {};
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...yearOpt });
+}
+
+/** Absolute "tooltip" form — used when the caller wants hover detail. */
+function formatAbsoluteTooltip(d: Date): string {
+  return d.toLocaleString(undefined, {
+    month: 'short', day: 'numeric', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true,
+  });
+}
+
 function safeRelative(iso: string | undefined | null): string {
   const d = safeDate(iso);
   if (!d) return '';
-  try { return formatDistanceToNow(d, { addSuffix: true }); }
-  catch { return ''; }
+  try { return formatRelativeTight(d); } catch { return ''; }
 }
 const timeAgo = (iso: string) => {
   try {
     const d = safeDate(iso);
     if (!d) return '—';
-    const now = new Date();
-    // If date is in the future, just show the absolute time
-    if (d > now) {
-      const absolute = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: true });
-      const day = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-      return `${day}, ${absolute}`;
-    }
-    const relative = formatDistanceToNow(d, { addSuffix: true });
-    // Show absolute time like "10:23 AM" alongside relative
-    const absolute = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: true });
-    const day = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    const isToday = d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-    return isToday ? `${absolute} · ${relative}` : `${day}, ${absolute} · ${relative}`;
+    return formatRelativeTight(d);
   } catch { return ''; }
 };
 
