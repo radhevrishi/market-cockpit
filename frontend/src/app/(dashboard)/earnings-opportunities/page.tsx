@@ -808,6 +808,24 @@ export default function EarningsOpportunitiesPage() {
   // Local UI state for partial-refresh button
   const [refreshing, setRefreshing] = useState(false);
   const [refreshFeedback, setRefreshFeedback] = useState<string | null>(null);
+  // PATCH 0180 — Audit state (validation against EarningsPulse Week Ahead seed)
+  const [auditing, setAuditing] = useState(false);
+  const [auditResult, setAuditResult] = useState<any>(null);
+  const runAudit = async () => {
+    if (!resolvedDateForGrading || auditing) return;
+    setAuditing(true);
+    setAuditResult(null);
+    try {
+      const res = await fetch(`/api/v1/earnings/audit?date=${resolvedDateForGrading}`, { cache: 'no-store' });
+      const j = await res.json();
+      setAuditResult(j);
+    } catch (e: any) {
+      setAuditResult({ error: e?.message || 'audit failed' });
+    } finally {
+      setAuditing(false);
+    }
+  };
+
   // PATCH 0174 — Coverage probe state
   const [probeTicker, setProbeTicker] = useState('');
   const [probing, setProbing] = useState(false);
@@ -1215,7 +1233,81 @@ export default function EarningsOpportunitiesPage() {
             >
               + Add to page
             </button>
+            <button
+              onClick={runAudit}
+              disabled={auditing || !resolvedDateForGrading}
+              title="Validate this date's coverage against the EarningsPulse Week Ahead reference list (May 12–18 seeded). Shows missing tickers — diagnostic only, does NOT auto-inject."
+              style={{
+                padding: '5px 14px', borderRadius: 6, border: '1px solid #F59E0B60',
+                backgroundColor: auditing ? '#F59E0B30' : '#F59E0B15',
+                color: '#F59E0B', fontSize: 11, fontWeight: 700,
+                cursor: auditing ? 'wait' : 'pointer',
+              }}
+            >
+              {auditing ? 'Auditing…' : '✓ Validate Coverage'}
+            </button>
           </div>
+
+          {/* Audit Result */}
+          {auditResult && (
+            <div style={{
+              marginTop: 4, padding: '8px 12px',
+              backgroundColor: '#0D1623', border: '1px solid #1A2840', borderRadius: 6,
+              fontSize: 11, color: '#C9D4E0', lineHeight: 1.5,
+            }}>
+              {auditResult.error ? (
+                <span style={{ color: '#EF4444' }}>⚠ {auditResult.error}</span>
+              ) : auditResult.expected_total === 0 ? (
+                <span style={{ color: '#6B7A8D', fontSize: 10.5 }}>{auditResult.note}</span>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6, flexWrap: 'wrap' }}>
+                    <span style={{
+                      fontSize: 11, fontWeight: 800,
+                      color: auditResult.gap === 0 ? '#10B981' : '#F59E0B',
+                    }}>
+                      {auditResult.gap === 0 ? '✓' : '⚠'} Coverage: {auditResult.matched}/{auditResult.expected_total} ({auditResult.coverage_pct}%)
+                    </span>
+                    <span style={{ fontSize: 10, color: '#6B7A8D' }}>{auditResult.note}</span>
+                  </div>
+                  {auditResult.missing && auditResult.missing.length > 0 && (
+                    <div style={{ marginTop: 4 }}>
+                      <div style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+                        MISSING ({auditResult.missing.length}):
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                        {auditResult.missing.map((t: string) => (
+                          <button
+                            key={t}
+                            onClick={() => { setProbeTicker(t); setAuditResult(null); }}
+                            title="Click to load into probe for diagnosis"
+                            style={{
+                              padding: '2px 8px', fontSize: 10, fontWeight: 700,
+                              borderRadius: 4, backgroundColor: '#EF444418',
+                              border: '1px solid #EF444440', color: '#EF4444',
+                              fontFamily: 'ui-monospace, monospace', cursor: 'pointer',
+                            }}
+                          >
+                            {t}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {auditResult.we_have && auditResult.we_have.length > 0 && auditResult.we_have.length <= 30 && (
+                    <details style={{ marginTop: 6 }}>
+                      <summary style={{ fontSize: 10, color: '#6B7A8D', cursor: 'pointer' }}>
+                        ✓ {auditResult.we_have.length} matched
+                      </summary>
+                      <div style={{ marginTop: 4, fontSize: 9.5, color: '#10B981', fontFamily: 'ui-monospace, monospace' }}>
+                        {auditResult.we_have.join(', ')}
+                      </div>
+                    </details>
+                  )}
+                </>
+              )}
+            </div>
+          )}
 
           {/* Auto-fill status + Force-included chips */}
           {(autoFillTickers.length > 0 || userForceIncludeForDate.length > 0) && (

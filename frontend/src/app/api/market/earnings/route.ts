@@ -13,6 +13,8 @@ import {
   normalizeSector,
   nseApiFetch,
 } from '@/lib/nse';
+// PATCH 0181 — Self-updating earnings calendar (populated by daily Vercel Cron)
+import { getCalendarEntriesInRange } from '@/lib/earnings-week-seed';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -792,6 +794,50 @@ export async function GET(request: Request) {
     } catch (bseErr) {
       console.log('BSE proxy unavailable:', String(bseErr));
     }
+
+    // ═══════════════════════════════════════════
+    // STEP 6.4: Self-updating earnings calendar (PATCH 0181)
+    // ═══════════════════════════════════════════
+    // Read pre-computed calendar entries from KV — populated daily by
+    // /api/v1/cron/refresh-earnings-calendar which scans Nifty500 + Smallcap250
+    // per-symbol board meetings. Any ticker scheduled to file within our date
+    // range that isn't already in eventsMap gets added as 'Upcoming' (or
+    // graded by priceMove if past). No hardcoded data — pure KV reads.
+    let kvCalendarAdded = 0;
+    try {
+      const fromIso = fromDate.toISOString().slice(0, 10);
+      const toIso = toDate.toISOString().slice(0, 10);
+      const calEntries = await getCalendarEntriesInRange(fromIso, toIso);
+      for (const entry of calEntries) {
+        const ticker = entry.ticker;
+        if (eventsMap.has(ticker)) continue;
+        if (TICKER_BLOCKLIST.has(ticker)) continue;
+        const entryDate = new Date(entry.date);
+        if (isNaN(entryDate.getTime())) continue;
+        const isPast = entryDate < today;
+        const stockInfo = priceLookup[ticker];
+        const marketCapCr = (stockInfo?.marketCap || 0) / 10000000;
+        eventsMap.set(ticker, {
+          ticker,
+          company: ticker,  // worker doesn't store company name; will be enriched later
+          resultDate: entry.date,
+          quarter: expectedQuarter,
+          quality: isPast ? rateQualityFromPriceMove(stockInfo?.changePercent || 0) : 'Upcoming',
+          sector: normalizeSector(stockInfo?.industry) || '',
+          industry: stockInfo?.industry || '',
+          marketCap: getCapCategory(marketCapCr),
+          edp: null,
+          cmp: stockInfo?.price || null,
+          priceMove: null,
+          timing: 'pre',
+          source: 'AutoCron',
+        });
+        kvCalendarAdded++;
+      }
+    } catch (kvErr) {
+      console.log('KV calendar read failed:', String(kvErr));
+    }
+    void kvCalendarAdded;  // surface in debug if needed
 
     // ═══════════════════════════════════════════
     // STEP 6.5: Enrich missing price/sector/cap via individual stock quotes
