@@ -1,7 +1,7 @@
 # Market Cockpit — Claude Handoff Memory
 
 > Read this FIRST when starting any new chat. Saves you 30 minutes of context-rebuilding.
-> Last updated: 2026-05-12 (after Patch 0222 — institutional readiness pass complete).
+> Last updated: 2026-05-12 (after Patch 0231 — institutional readiness pass complete).
 
 ---
 
@@ -258,7 +258,32 @@ ontology + buy-side PM). Full review lives in chat history.
          SPECIALIST (◇ vertical trade press) / SECONDARY (◯ general
          business news) / AGGREGATOR (· reprints + blogs). Hover
          reveals tier definition.
-  0222 — This documentation update (final).
+  0222 — Documentation update (post-batch-1).
+  0223 — Single-refetch contract on /news/refresh. Replaces the 3-shot
+         polling at 0s/8s/20s with one coordinated refetch after the
+         backend POST returns. Bounded, observable, debouncible.
+  0224 — Lifecycle state dot + 3px left-edge on every NewsCard.
+         LIVE cyan / WARM teal / STALE amber / PERSISTENT violet so
+         the bucket is scannable across the whole feed.
+  0225 — Named Saved Views (localStorage 'mc:saved-views:v1'). ☆ SAVE
+         VIEW button + VIEWS (N) ▾ dropdown. Cross-tab sync via storage
+         event. Sits on top of Patch 0218 URL state.
+  0226 — Demoted stale strip beneath the main feed. When lifecycleFilter
+         hides 48h–7d items, a compact '◐ Recent — N stale items hidden'
+         strip surfaces them in one click. Never silently delete data.
+  0227 — Visible SORT chip in the SIGNALS summary bar. PRIORITY/TIME
+         toggle exposed in the main feed (was only in BOTTLENECK before).
+  0228 — Mobile-aware collapse defaults. Persistent Bottleneck +
+         Transformational Contracts default to collapsed on ≤768px so
+         above-the-fold density drops from 8 panels to 3 on mobile.
+  0229 — Inline expansion of also-reporting sources. '+ N sources'
+         chip is now a button that toggles a panel showing the source
+         list inline. First step toward proper Evidence Panel.
+  0230 — Amber stale-strip when panel data is >3× the freshness window.
+         Full-width banner at the top of /news with click-to-refresh.
+         Builds on Patch 0212 (soft per-panel chip) and 0223 (single-
+         refetch contract).
+  0231 — This documentation update (final, end of batch-2).
 
 ## 10.7 · Open institutional follow-ups (NOT YET SHIPPED — schema work)
 
@@ -317,7 +342,16 @@ Pre-session patches existed (0073–0095). Recent session highlights:
 - 0219 — `/status` page with per-pipeline health probes
 - 0220 — Visible priority score on NewsCard (rank transparency)
 - 0221 — Source-tier badges (PRIMARY/SPECIALIST/SECONDARY/AGGREGATOR)
-- 0222 — CLAUDE.md final update for institutional readiness pass
+- 0222 — CLAUDE.md update (post-batch-1)
+- 0223 — Single-refetch contract on /news/refresh (replaces 3-shot poll)
+- 0224 — Lifecycle state dot + left-edge on NewsCard
+- 0225 — Named Saved Views (localStorage)
+- 0226 — Demoted Stale strip beneath main feed
+- 0227 — Visible SORT chip (PRIORITY/TIME) in main feed
+- 0228 — Mobile-responsive collapse defaults on dense panels
+- 0229 — Inline expansion of also-reporting sources
+- 0230 — Amber stale-strip when panel data >3× freshness window
+- 0231 — CLAUDE.md final update (end of batch-2)
 
 **Other features:**
 - 0089–0094 — Earnings Hub merge, Special Situations pillar, Stock Sheet, Re-rating Screener
