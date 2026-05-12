@@ -28,6 +28,78 @@ import api from '@/lib/api';
 // PATCH 0254 — Source-tier classifier (PRIMARY / SPECIALIST / SECONDARY / AGGREGATOR)
 import { classifySource, TIER_VISUAL } from '@/lib/source-tiers';
 
+/** PATCH 0258 — Next-catalyst inference. If the payload has an explicit
+ *  next_catalyst field, use it. Otherwise fall back to event-type-specific
+ *  conventions (open offer opens 30d after announcement, etc.).
+ *  Returns null when nothing reasonable can be inferred. */
+function nextCatalystFor(ev: any): { label: string; daysOut: number | null } | null {
+  if (ev.next_catalyst_date) {
+    try {
+      const dt = new Date(ev.next_catalyst_date);
+      const days = Math.round((dt.getTime() - Date.now()) / 86400_000);
+      return { label: `${ev.next_catalyst_label || 'Next catalyst'}: ${dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}`, daysOut: days };
+    } catch {}
+  }
+  // Event-type heuristic from typical Indian/US conventions
+  const map: Record<string, { label: string; days: number }> = {
+    OPEN_OFFER:          { label: 'Open offer typically opens',   days: 30 },
+    TENDER_OFFER:        { label: 'Tender expected to close',      days: 35 },
+    BUYBACK_TENDER:      { label: 'Buyback record date typical',   days: 21 },
+    BUYBACK:             { label: 'Record date typically',         days: 30 },
+    GOING_PRIVATE:       { label: 'Delisting offer typical',       days: 90 },
+    MERGER_DEFINITIVE:   { label: 'Regulatory review ~',           days: 180 },
+    ACQUISITION_PUBLIC:  { label: 'Close target',                   days: 180 },
+    SPIN_OFF:            { label: 'Record date typical',           days: 120 },
+    DEMERGER_INDIA:      { label: 'NCLT + record date',            days: 120 },
+    IPO_SUBSIDIARY:      { label: 'IPO typical window',            days: 90 },
+    NCLT_RESOLUTION:     { label: 'NCLT decision typical',         days: 45 },
+    INDEX_INCLUSION:     { label: 'Effective date',                days: 30 },
+  };
+  const m = map[ev.event_type];
+  if (m) {
+    const dt = new Date(Date.now() + m.days * 86400_000);
+    return { label: `${m.label} ${dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })} (~${m.days}d est.)`, daysOut: m.days };
+  }
+  return null;
+}
+
+/** PATCH 0259 — Decay color for the age chip based on event-specific
+ *  half-life. Tender offers decay fastest, mergers slowest. */
+function ageColorFor(eventType: string, ageHours: number): string {
+  const halfLifeDays: Record<string, number> = {
+    TENDER_OFFER: 15, BUYBACK_TENDER: 15, OPEN_OFFER: 21, GOING_PRIVATE: 30,
+    MERGER_DEFINITIVE: 60, ACQUISITION_PUBLIC: 60,
+    SPIN_OFF: 45, DEMERGER_INDIA: 45, IPO_SUBSIDIARY: 30,
+    BUYBACK: 30, NCLT_RESOLUTION: 30, INDEX_INCLUSION: 14,
+    PREFERENTIAL_ALLOTMENT: 30, PROMOTER_STAKE_UP: 60,
+  };
+  const hl = (halfLifeDays[eventType] || 30) * 24;
+  const ratio = ageHours / hl;
+  if (ratio < 0.3) return '#10B981';  // fresh
+  if (ratio < 0.7) return '#22D3EE';  // warm
+  if (ratio < 1.0) return '#F59E0B';  // aging
+  return '#EF4444';                    // expired
+}
+
+/** PATCH 0260 — India-specific sub-category refinement from headline. */
+function inferIndiaSubcategory(title: string, eventType: string): string | null {
+  const t = (title || '').toLowerCase();
+  if (/preferential\s+allotment|preferential\s+issue/.test(t)) return 'Preferential allotment';
+  if (/warrant.*convert|warrants?\s+conversion/.test(t)) return 'Warrants conversion';
+  if (/\bofs\b|offer for sale/.test(t)) return 'OFS (offer for sale)';
+  if (/promoter.*(stake|holding).*(increase|up|hike|rise)|promoter\s+buy/.test(t)) return 'Promoter stake hike';
+  if (/(nclt|insolvency|resolution\s+plan|cirp)/.test(t)) return 'NCLT / CIRP';
+  if (/delist(ing)?/.test(t)) return 'Delisting attempt';
+  if (/sme\s+(migration|to\s+main)/.test(t)) return 'SME → Main Board';
+  if (/(index\s+inclusion|added to|joining\s+nifty|joining\s+bse)/.test(t)) return 'Index inclusion';
+  if (/(index\s+exclusion|removed from)/.test(t)) return 'Index exclusion';
+  if (/holding\s+company|hold\s*co|holdco/.test(t)) return 'HoldCo discount';
+  if (/sum.?of.?parts|sotp/.test(t)) return 'SoP arbitrage';
+  if (/qip|qualified\s+institutional/.test(t)) return 'QIP';
+  if (/rights\s+issue/.test(t)) return 'Rights issue';
+  return null;
+}
+
 /** PATCH 0254 — Map an event_type to its likely institutional alpha source.
  *  Surfaced as a single inline tag so users know WHY this event is tradable
  *  before reading the full card. */
@@ -270,7 +342,35 @@ export default function SpecialSituationsPage() {
   // FeedItems are still produced for back-compat + the Discover tab.
   const canonicalEvents: CanonicalEvent[] = useMemo(() => {
     if (!feed?.events) return [];
-    return feed.events.filter((e) => region === 'ALL' || e.region === region);
+    // PATCH 0257 — Client-side duplicate collapse. Same canonical event
+    // reported by Yahoo + Reuters + Bloomberg syndicates produces N duplicate
+    // rows. Group by (target_name + event_type + 7d date bucket) and keep
+    // the highest-confidence row; stamp a `__source_count` on it so the
+    // renderer can show '×N sources'.
+    const filtered = feed.events.filter((e) => region === 'ALL' || e.region === region);
+    const groups = new Map<string, CanonicalEvent[]>();
+    for (const ev of filtered) {
+      const pf = ev.primary_filing as any;
+      const publishedAt = pf?.published_at || pf?.date || pf?.timestamp || null;
+      const dateBucket = publishedAt
+        ? Math.floor(new Date(publishedAt).getTime() / (7 * 86400_000))
+        : 0;
+      const target = (ev.target_name || ev.tickers[0] || '').trim().toLowerCase();
+      const key = `${target}|${ev.event_type}|${dateBucket}`;
+      const bucket = groups.get(key);
+      if (bucket) bucket.push(ev);
+      else groups.set(key, [ev]);
+    }
+    const deduped: CanonicalEvent[] = [];
+    for (const bucket of groups.values()) {
+      // Keep highest-score event in each bucket
+      bucket.sort((a, b) => (b.catalyst_score?.decay_score ?? 0) - (a.catalyst_score?.decay_score ?? 0));
+      const head = bucket[0];
+      (head as any).__source_count = bucket.length;
+      (head as any).__source_list = bucket.map(e => e.primary_filing?.source).filter(Boolean);
+      deduped.push(head);
+    }
+    return deduped;
   }, [feed, region]);
 
   // PATCH 0252 — Apply user-selected tier + category filters before deriving
@@ -579,6 +679,10 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
   const [expanded, setExpanded] = useState(false);
   const meta = EVENT_TYPE_META[ev.event_type] || EVENT_TYPE_META.UNCLASSIFIED;
   const ageLabel = ev.age_hours < 24 ? `${ev.age_hours}h` : `${Math.round(ev.age_hours / 24)}d`;
+  // PATCH 0259 — decay color, 0258 — next catalyst, 0260 — india subcat
+  const ageColor = ageColorFor(ev.event_type, ev.age_hours);
+  const nextCat = nextCatalystFor(ev as any);
+  const indiaSubcat = ev.region === 'IN' ? inferIndiaSubcategory(ev.primary_filing?.title || '', ev.event_type) : null;
   // PATCH 0167 — Rejected reason persistence
   const [rejection, setRejection] = useState<RejectionRecord | null>(null);
   const [showRejectInput, setShowRejectInput] = useState(false);
@@ -671,6 +775,20 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
               + {ev.amendment_count} amendment{ev.amendment_count > 1 ? 's' : ''}
             </span>
           )}
+          {/* PATCH 0257 — '×N sources' chip when the event was deduplicated
+              from multiple syndicated reports. Higher count = stronger
+              corroboration. */}
+          {(() => {
+            const n = (ev as any).__source_count as number | undefined;
+            const srcs = (ev as any).__source_list as string[] | undefined;
+            if (!n || n < 2) return null;
+            return (
+              <span title={`Corroborated by ${n} sources: ${(srcs || []).join(', ')}`}
+                style={{ fontSize: 10, fontWeight: 700, color: '#22D3EE', padding: '1px 7px', borderRadius: 3, backgroundColor: '#22D3EE18', border: '1px solid #22D3EE40' }}>
+                ×{n} sources
+              </span>
+            );
+          })()}
           {ev.lifecycle && ev.lifecycle !== 'unknown' && (
             <span style={{ fontSize: 10, fontWeight: 700, color: '#94A3B8', padding: '1px 6px', borderRadius: 3, backgroundColor: '#1A2840' }}>
               {ev.lifecycle}
@@ -692,6 +810,13 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
               </span>
             );
           })()}
+          {/* PATCH 0260 — India sub-category tag */}
+          {indiaSubcat && (
+            <span title="India-specific event sub-type inferred from headline keywords"
+              style={{ fontSize: 10, fontWeight: 700, color: '#FBBF24', padding: '1px 7px', borderRadius: 3, backgroundColor: '#FBBF2418', border: '1px solid #FBBF2440' }}>
+              🇮🇳 {indiaSubcat}
+            </span>
+          )}
           <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#6B7A8D' }}>
             <span title="Catalyst score (decay-adjusted)">Score {ev.catalyst_score.decay_score.toFixed(0)}</span>
             {/* PATCH 0254 — Source-tier badge (PRIMARY/SPECIALIST/SECONDARY/AGGREGATOR) */}
@@ -710,9 +835,26 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
                   }}>{v.glyph} {v.label}</span>
               );
             })()}
-            <span>{ev.primary_filing.source} · {ageLabel}</span>
+            {/* PATCH 0259 — Decay-color age chip */}
+            <span title={`Age vs typical half-life for ${ev.event_type}`}
+              style={{ fontFamily: 'ui-monospace, monospace', color: ageColor, fontWeight: 700 }}>
+              {ageLabel}
+            </span>
+            <span>{ev.primary_filing.source}</span>
             <ExternalLink style={{ width: 11, height: 11 }} />
           </span>
+        </div>
+        {/* PATCH 0258 — Next-catalyst chip on its own line for visibility */}
+        {nextCat && (
+          <div style={{ marginTop: 4, marginBottom: 6, fontSize: 11, color: '#94A3B8', fontFamily: 'ui-monospace, monospace' }}>
+            <span style={{ color: '#22D3EE', fontWeight: 700, marginRight: 6 }}>→</span>
+            <span>{nextCat.label}</span>
+            {nextCat.daysOut !== null && nextCat.daysOut >= 0 && (
+              <span style={{ marginLeft: 8, fontSize: 10, color: '#6B7A8D' }}>· {nextCat.daysOut}d away</span>
+            )}
+          </div>
+        )}
+        <div style={{ display: 'none' }}>{/* placeholder to keep JSX shape from previous code */}
         </div>
         <div style={{ fontSize: 13, color: '#E6EDF3', fontWeight: 500, lineHeight: 1.4 }}>{ev.primary_filing.title}</div>
         {/* PATCH 0128 — Inline deal spread / annualized return strip */}
