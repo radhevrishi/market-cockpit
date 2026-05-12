@@ -1264,8 +1264,36 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   const accel = accelS; // already a single score
   const longe = longC>0?longS/longC:50;
   const fin   = finC>0?finS/finC:50;
-  const val   = valComponents.length>0?valS:50;
+  let val     = valComponents.length>0?valS:50;
   const mkt   = mktS;
+
+  // PATCH 0265 — Valuation cap when 'PEG illusion' detected: cheap on PEG but
+  // ROIC < WACC AND margin-of-safety < −50%. Cap valuation score at 45 to
+  // prevent the framework rewarding cheap-looking growth on poor economics.
+  if (
+    row.marginOfSafety !== undefined && row.marginOfSafety < -50 &&
+    row.roic !== undefined && row.roic < 10
+  ) {
+    if (val > 45) {
+      risks.push(`Valuation capped at 45: MoS ${row.marginOfSafety.toFixed(0)}% < −50% AND ROIC ${row.roic.toFixed(1)}% < WACC — DCF says expensive even if PEG looks cheap`);
+      val = 45;
+    }
+  }
+
+  // PATCH 0265 — Growth Quality offset: reward inflection on already-high
+  // economics. Even with modest historical CAGR, if ROCE>20% AND CFO/PAT>1
+  // AND FCF>0 AND recent YoY growth>25%, add +5 to growth pillar.
+  let growthFinal = growth;
+  const isOnBaseInflection = (
+    (row.roce ?? 0) > 20 &&
+    (row.cfoToPat ?? 0) > 1.0 &&
+    (row.fcfAbsolute ?? 0) > 0 &&
+    (row.yoySalesGrowth ?? 0) > 25
+  );
+  if (isOnBaseInflection) {
+    growthFinal = Math.min(100, growth + 5);
+    strengths.push('Growth Quality +5: inflection on already-high economics (ROCE>20%, CFO/PAT>1, FCF+)');
+  }
 
   const filledFields=[row.roce,row.roe,row.opm,row.cfoToPat,row.promoter,row.de,
     row.netDebtEbitda,row.revCagr,row.profitCagr,row.yoySalesGrowth,row.yoyProfitGrowth,
@@ -1360,9 +1388,36 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     hardPenalty += 5;
     risks.push(`Hard −5: OPM ${row.opm.toFixed(1)}% below sector p25 (${b.opm[0]}%)`);
   }
+  // PATCH 0265 — Soften op leverage penalty.
+  // Original: −10 if opLev<1.0, −5 if opLev<1.5 (both with growth>15%).
+  // The −5 was firing on cases like 1.3× lev with 31% growth, which is
+  // perfectly acceptable (profit growing faster than sales). User spec:
+  //   Reserve hard −5 for growth>25% AND opLev≤1.0 (already covered by −10)
+  //   or multi-year margin trend clearly declining.
+  // For 1.0 ≤ opLev < 1.5 with growing PAT, apply only a soft −1.
   if (row.recentOpLev !== undefined && row.yoySalesGrowth !== undefined && row.yoySalesGrowth > 15) {
-    if (row.recentOpLev < 1.0) { hardPenalty += 10; risks.push(`Hard −10: Op leverage ${row.recentOpLev.toFixed(2)}x < 1.0 — costs growing faster than revenue`); }
-    else if (row.recentOpLev < 1.5) { hardPenalty += 5; risks.push(`Hard −5: Op leverage ${row.recentOpLev.toFixed(2)}x weak despite ${row.yoySalesGrowth.toFixed(0)}% growth`); }
+    if (row.recentOpLev < 1.0) {
+      hardPenalty += 10;
+      risks.push(`Hard −10: Op leverage ${row.recentOpLev.toFixed(2)}x < 1.0 — costs growing faster than revenue`);
+    } else if (row.recentOpLev < 1.5 && row.yoyProfitGrowth !== undefined && row.yoyProfitGrowth < row.yoySalesGrowth) {
+      // Only penalise if profit actually grew SLOWER than sales (margin compression)
+      hardPenalty += 1;
+      risks.push(`Soft −1: Op leverage ${row.recentOpLev.toFixed(2)}x — PAT growth (${row.yoyProfitGrowth.toFixed(0)}%) trails sales (${row.yoySalesGrowth.toFixed(0)}%)`);
+    }
+    // 1.3-1.5× with PAT > sales = healthy operating leverage; no penalty.
+  }
+
+  // PATCH 0265 — ROIC < WACC kill switch. Stacked penalty when growth is being
+  // funded by leverage on sub-WACC returns AND no cash generation.
+  // 'Textbook growth-that-destroys-value' per Fisher.
+  if (
+    row.roic !== undefined && row.roic < 10 &&        // sub-WACC
+    (row.fcfAbsolute ?? 0) < 0 &&                      // burning cash
+    (row.de ?? 0) >= 0.5 &&                            // leveraged
+    (row.yoySalesGrowth ?? 0) > 25                     // hiding behind growth
+  ) {
+    hardPenalty += 10;
+    risks.push(`Hard −10: KILL SWITCH — ROIC ${row.roic.toFixed(1)}% < WACC, FCF negative, D/E ${(row.de ?? 0).toFixed(2)}, growth ${row.yoySalesGrowth?.toFixed(0)}% masking value destruction`);
   }
 
   // ── CAPITAL ALLOCATION QUALITY ───────────────────────────────────────────────
@@ -1748,13 +1803,13 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     roic_vs_wacc: roicVsWacc,
     missing_dimensions: missingDimensions,
     pillarScores: [
-      {id:'QUALITY',    label:'Quality',      score:Math.round(qual),  color:'#a78bfa', weight:Math.round(bw[0]*100)},
-      {id:'GROWTH',     label:'Growth',       score:Math.round(growth),color:'#38bdf8', weight:Math.round(bw[1]*100)},
-      {id:'ACCEL',      label:'Accel',        score:Math.round(accel), color:'#10b981', weight:Math.round(bw[2]*100)},
-      {id:'LONGEVITY',  label:'Longevity',    score:Math.round(longe), color:'#06b6d4', weight:Math.round(bw[3]*100)},
-      {id:'FIN_STR',    label:'Fin Str',      score:Math.round(fin),   color:'#34d399', weight:Math.round(bw[4]*100)},
-      {id:'VALUATION',  label:'Valuation',    score:Math.round(val),   color:'#f59e0b', weight:Math.round(bw[5]*100)},
-      {id:'MARKET',     label:'Market',       score:Math.round(mkt),   color:'#f97316', weight:Math.round(bw[6]*100)},
+      {id:'QUALITY',    label:'Quality',      score:Math.round(qual),       color:'#a78bfa', weight:Math.round(bw[0]*100)},
+      {id:'GROWTH',     label:'Growth',       score:Math.round(growthFinal),color:'#38bdf8', weight:Math.round(bw[1]*100)},
+      {id:'ACCEL',      label:'Accel',        score:Math.round(accel),      color:'#10b981', weight:Math.round(bw[2]*100)},
+      {id:'LONGEVITY',  label:'Longevity',    score:Math.round(longe),      color:'#06b6d4', weight:Math.round(bw[3]*100)},
+      {id:'FIN_STR',    label:'Fin Str',      score:Math.round(fin),        color:'#34d399', weight:Math.round(bw[4]*100)},
+      {id:'VALUATION',  label:'Valuation',    score:Math.round(val),        color:'#f59e0b', weight:Math.round(bw[5]*100)},
+      {id:'MARKET',     label:'Market',       score:Math.round(mkt),        color:'#f97316', weight:Math.round(bw[6]*100)},
     ],
   };
 }
