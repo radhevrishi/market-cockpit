@@ -608,6 +608,72 @@ main [role="dialog"] [style*="maxWidth"] {
   max-width: revert !important;
 }
 
+/* ─────────────────────────────────────────────────────────────────────── */
+/* PATCH 0263 — Mobile-responsive baseline                                 */
+/* ─────────────────────────────────────────────────────────────────────── */
+@media (max-width: 767px) {
+  /* 1. Collapse multi-column dashboards to single column.
+        Targets the common 'grid-template-columns: 230px 1fr 280px' pattern
+        used on /transmission and any future 3-column workstation. */
+  main div[style*="gridTemplateColumns:"][style*="230px"],
+  main div[style*="grid-template-columns:"][style*="230px"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* 2. Force any inline-flex with 'gap' to wrap so chips don't overflow. */
+  main [style*="display: flex"][style*="gap:"]:not([style*="flex-wrap"]):not([style*="overflow"]) {
+    flex-wrap: wrap;
+  }
+
+  /* 3. Hide the sticky right-rail (Transmission Intelligence) on mobile;
+        keep only the main column. */
+  main aside[style*="position: sticky"] {
+    display: none !important;
+  }
+
+  /* 4. Reduce padding on heavy pages so content gets more room. */
+  main > div[style*="padding: '24px"],
+  main > div[style*="padding:'24px"],
+  main > div[style*="padding: 24px"] {
+    padding: 12px 14px !important;
+  }
+
+  /* 5. Reduce 22px H1 font on narrow viewports — accidental overflow. */
+  main h1[style*="fontSize: 22"],
+  main h1[style*="fontSize:22"],
+  main h1[style*="font-size: 22"] {
+    font-size: 17px !important;
+  }
+
+  /* 6. Reduce 20px H2 font similarly. */
+  main h2[style*="fontSize: 20"],
+  main h2[style*="fontSize:20"] {
+    font-size: 16px !important;
+  }
+
+  /* 7. Allow horizontal scroll on any wide table or grid that has no
+        explicit wrap rule. Prevents tearing. */
+  main div[style*="display: grid"][style*="auto-fill"],
+  main div[style*="display:grid"][style*="auto-fill"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* 8. News page bottleneck reading panel: collapse the multi-region
+        side-by-side grids to stack. */
+  .bottleneck-reading-region {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* ─── PATCH 0263 — Tablet (768-1023) tweaks ─────────────────────────── */
+@media (min-width: 768px) and (max-width: 1023px) {
+  /* Drop 280px right rail to 220px on tablets so center column survives */
+  main div[style*="gridTemplateColumns:"][style*="280px"]:not([style*="1fr 280px"]),
+  main div[style*="grid-template-columns:"][style*="280px"]:not([style*="1fr 280px"]) {
+    grid-template-columns: 200px 1fr 220px !important;
+  }
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    PATCH 0078 — NUCLEAR LIGHT-THEME APPROACH
    ─────────────────────────────────────────────────────────────────────────
