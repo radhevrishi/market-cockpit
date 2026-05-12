@@ -889,19 +889,36 @@ export default function EarningsOpportunitiesPage() {
     }
     setHardRefreshing(true);
     try {
-      // PATCH 0190 — Hard Refresh now wipes ALL local caches for this date
-      // before hitting the server with force=1, so user gets a guaranteed
-      // fresh view (no stale localStorage interfering).
+      // PATCH 0190 — Hard Refresh wipes localStorage for this date + month
+      // hub key so user gets a guaranteed fresh view (no stale interference).
       try {
         localStorage.removeItem('mc:graded:v8:' + resolvedDateForGrading);
-        // Also clear hub cache so /api/market/earnings re-fetches
         const monthKeys = monthsToFetch.join(',');
         localStorage.removeItem('mc:hub:v2:' + monthKeys);
       } catch {}
       // Hit force=1 server-side to rebuild graded payload from a fresh hub fetch
-      await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}&force=1`, { cache: 'no-store' });
+      const res = await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}&force=1`, { cache: 'no-store' });
+      let payload: any = null;
+      try { payload = await res.json(); } catch {}
       // Then refetch via React Query so the UI picks up the new data
       await Promise.all([refetchHub(), refetchGraded()]);
+      // PATCH 0193 — if the current date is genuinely empty (weekend / no
+      // filings), auto-jump to the most recent past date that DOES have
+      // filings, so the user isn't stuck on a blank screen after refresh.
+      const stillEmpty = !payload || !payload.by_tier ||
+        (payload.candidates_total ?? 0) === 0;
+      if (stillEmpty && hub?.results) {
+        const todayIso2 = new Date().toISOString().slice(0, 10);
+        const byDate: Record<string, number> = {};
+        for (const r of hub.results) {
+          if (!r.resultDate || r.resultDate > todayIso2 || r.quality === 'Upcoming') continue;
+          byDate[r.resultDate] = (byDate[r.resultDate] || 0) + 1;
+        }
+        const recentDate = Object.keys(byDate).sort().reverse()[0];
+        if (recentDate && recentDate !== resolvedDateForGrading) {
+          setFilterDate(recentDate);
+        }
+      }
     } finally {
       setHardRefreshing(false);
     }
@@ -1226,10 +1243,19 @@ export default function EarningsOpportunitiesPage() {
 
   const counts = TIER_ORDER.map((t) => ({ tier: t, n: view.by_tier[t]?.length || 0 }));
 
+  // PATCH 0193 — Skip Saturdays and Sundays when stepping with ← / →.
+  // Indian markets don't trade on weekends so filings never appear then.
+  // If user explicitly picks a weekend date via the date input, we leave it.
   function shiftDate(delta: number) {
     const base = filterDate || todayISO();
     const d = new Date(base);
     d.setDate(d.getDate() + delta);
+    // Skip weekend days: 0 = Sunday, 6 = Saturday
+    let safety = 0;
+    while ((d.getDay() === 0 || d.getDay() === 6) && safety < 7) {
+      d.setDate(d.getDate() + (delta > 0 ? 1 : -1));
+      safety++;
+    }
     setFilterDate(d.toISOString().slice(0, 10));
   }
 
