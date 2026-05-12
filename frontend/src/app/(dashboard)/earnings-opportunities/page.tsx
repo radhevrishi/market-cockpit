@@ -830,32 +830,33 @@ export default function EarningsOpportunitiesPage() {
     }
   };
 
-  // PATCH 0177 — Auto-fill: server-side scan of Nifty100 + priority watchlist.
-  // Discovers tickers that filed Q4 results but were dropped by NSE's limited
-  // /api/corporates-financial-results feed. Auto-merged into view silently.
-  const { data: autoFillData } = useQuery<{ tickers: Array<{ ticker: string }> }>({
-    queryKey: ['earnings-auto-fill', resolvedDateForGrading],
-    enabled: !!resolvedDateForGrading,
-    queryFn: async () => {
-      const res = await fetch(`/api/v1/earnings/auto-fill?date=${resolvedDateForGrading}`, { cache: 'force-cache' });
-      if (!res.ok) return { tickers: [] };
-      return res.json();
-    },
-    staleTime: 6 * 60 * 60_000,  // 6h client-side (server KV is 24h)
-    refetchInterval: false,
-  });
-  const autoFillTickers = useMemo(
-    () => (autoFillData?.tickers || []).map((t) => t.ticker.toUpperCase()),
-    [autoFillData]
-  );
+  // PATCH 0179 — Auto-fill DISABLED.
+  // The 0177 auto-fill scanned Nifty100 + priority watchlist and included any
+  // ticker with recent Q4 financials. Critical bug: it had no way to verify
+  // the ticker actually FILED ON the target date — it just checked that
+  // latest_quarter_end_iso was within 90 days. Result: HINDZINC and ETERNAL
+  // appearing as BLOCKBUSTER on May 11 even though they filed weeks earlier.
+  // This is worse than missing data — it's wrong date attribution.
+  // Set enabled: false until we have a reliable filing-date verification
+  // path (NSE per-symbol announce-date check or Trendlyne lookup).
+  const autoFillTickers: string[] = [];
 
   // PATCH 0176 — Force-include: list of tickers manually added by user.
   // Persists in localStorage per-date. These tickers get injected into the
   // page even if /api/market/earnings doesn't surface them (NSE feed gap).
   const FORCE_INCLUDE_KEY = 'mc:earnings:force-include:v1';
+  // PATCH 0179 — one-shot scrub key. If user has stale force-includes from the
+  // buggy 0177 auto-fill (HINDZINC/ETERNAL on wrong dates), wipe them once.
+  const SCRUB_KEY = 'mc:earnings:force-include:scrub:2026-05-12';
   const [forceIncludeMap, setForceIncludeMap] = useState<Record<string, string[]>>(() => {
     if (typeof window === 'undefined') return {};
     try {
+      // One-time scrub: clear stale buggy auto-fill data
+      if (!localStorage.getItem(SCRUB_KEY)) {
+        localStorage.removeItem(FORCE_INCLUDE_KEY);
+        localStorage.setItem(SCRUB_KEY, '1');
+        return {};
+      }
       const raw = localStorage.getItem(FORCE_INCLUDE_KEY);
       return raw ? JSON.parse(raw) : {};
     } catch { return {}; }
