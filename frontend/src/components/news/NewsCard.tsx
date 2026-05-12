@@ -256,18 +256,39 @@ export default function NewsCard({ article, onTickerClick }: Props) {
                 </span>
               );
             })}
-            {(article.ticker_symbols ?? article.tickers ?? []).slice(0, 3).map((t: any) => {
-              const sym = typeof t === 'string' ? t : t?.ticker ?? '';
+            {/* PATCH 0216 — Cap visible ticker chips at 3; surface overflow
+                as a "+N more" badge with the full list in the title for
+                hover/inspection. Prevents card-row layout breakage when an
+                article tags 10+ tickers. */}
+            {(() => {
+              const allTickers = (article.ticker_symbols ?? article.tickers ?? []) as any[];
+              const visible = allTickers.slice(0, 3);
+              const overflow = Math.max(0, allTickers.length - 3);
               return (
-                <button
-                  key={sym}
-                  onClick={() => onTickerClick?.(sym)}
-                  className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#0F7ABF]/20 text-[#38A9E8] border border-[#0F7ABF]/30 hover:bg-[#0F7ABF]/40 transition-colors"
-                >
-                  {sym}
-                </button>
+                <>
+                  {visible.map((t: any) => {
+                    const sym = typeof t === 'string' ? t : t?.ticker ?? '';
+                    return (
+                      <button
+                        key={sym}
+                        onClick={() => onTickerClick?.(sym)}
+                        className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#0F7ABF]/20 text-[#38A9E8] border border-[#0F7ABF]/30 hover:bg-[#0F7ABF]/40 transition-colors"
+                      >
+                        {sym}
+                      </button>
+                    );
+                  })}
+                  {overflow > 0 && (
+                    <span
+                      className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#0F7ABF]/10 text-[#6677AA] border border-[#1E2D45]"
+                      title={allTickers.map(t => typeof t === 'string' ? t : t?.ticker).filter(Boolean).join(', ')}
+                    >
+                      +{overflow} more
+                    </span>
+                  )}
+                </>
               );
-            })}
+            })()}
             <span className={`text-[10px] font-medium px-2 py-0.5 rounded border ${badge.className}`}>
               {badge.label}
             </span>
@@ -312,8 +333,21 @@ export default function NewsCard({ article, onTickerClick }: Props) {
             <span className="text-[#4A5B6C] text-[11px] shrink-0" title={timeAbsolute}>{timeAgo}</span>
           </div>
 
-          {/* Headline */}
-          <p className="text-white text-sm font-medium leading-snug mb-1 group-hover:text-[#38A9E8] transition-colors">
+          {/* Headline — PATCH 0216 clamps to 3 lines so over-long headlines
+              don't push the rest of the card content out of alignment. Full
+              headline still available via the hover title. */}
+          <p
+            className="text-white text-sm font-medium leading-snug mb-1 group-hover:text-[#38A9E8] transition-colors"
+            title={article.headline}
+            style={{
+              display: '-webkit-box',
+              WebkitLineClamp: 3,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              wordBreak: 'break-word',
+            }}
+          >
             {article.headline}
           </p>
 
@@ -447,7 +481,19 @@ export default function NewsCard({ article, onTickerClick }: Props) {
                   : (article as any).impact_assertion === 'SPECULATION' ? 'spec'
                   : 'infer'}
               </span>
-              <span className="text-[#C4D2DD]">
+              {/* PATCH 0216 — clamp Impact to 2 lines so long copy doesn't break
+                  card alignment. Full text on hover via the title attribute. */}
+              <span
+                className="text-[#C4D2DD] overflow-hidden"
+                title={[(article as any).impact_prefix, (article as any).impact_label_safe].filter(Boolean).join(' ')}
+                style={{
+                  display: '-webkit-box',
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: 'vertical',
+                  textOverflow: 'ellipsis',
+                  wordBreak: 'break-word',
+                }}
+              >
                 <span className="text-[#6677AA] mr-1">{(article as any).impact_prefix}</span>
                 {(article as any).impact_label_safe}
               </span>
