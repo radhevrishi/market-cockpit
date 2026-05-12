@@ -1,7 +1,7 @@
 # Market Cockpit — Claude Handoff Memory
 
 > Read this FIRST when starting any new chat. Saves you 30 minutes of context-rebuilding.
-> Last updated: 2026-05-12 (after Patch 0217 — institutional readiness pass).
+> Last updated: 2026-05-12 (after Patch 0222 — institutional readiness pass complete).
 
 ---
 
@@ -241,7 +241,24 @@ ontology + buy-side PM). Full review lives in chat history.
   0216 — Truncation guards. Headlines clamp to 3 lines, Impact text to
          2 lines, ticker chips capped at 3 with '+N more' overflow
          badge. Card row-height now bounded.
-  0217 — This documentation update.
+  0217 — Documentation update (mid-pass).
+  0218 — URL-persistent filter state on /news. All filters (region,
+         type, source, signal, sort, lifecycle, search) hydrate from
+         and write back to the URL via router.replace(). Bookmarkable
+         filter combos. First step toward 'Saved Views'.
+  0219 — /status page with per-pipeline health probes. Bloomberg-style
+         status board for News In-Play, News Bottleneck, Earnings
+         Post-Gap / Enrich / Graded / Scan. Click any row to re-probe;
+         60s auto-refresh toggle. Linked from side nav as 'System Status'.
+  0220 — Visible priority score on every NewsCard. 'P N' badge with
+         per-component breakdown in title (importance/severity/structural/
+         recency). Makes the impact-based sort auditable.
+  0221 — Source-tier badges. lib/source-tiers.ts classifies sources by
+         domain into PRIMARY (◆ exchange filings, regulators) /
+         SPECIALIST (◇ vertical trade press) / SECONDARY (◯ general
+         business news) / AGGREGATOR (· reprints + blogs). Hover
+         reveals tier definition.
+  0222 — This documentation update (final).
 
 ## 10.7 · Open institutional follow-ups (NOT YET SHIPPED — schema work)
 
@@ -295,6 +312,12 @@ Pre-session patches existed (0073–0095). Recent session highlights:
 - 0214 — `lib/design-tokens.ts` semantic/state/severity orthogonal palettes
 - 0215 — Explicit error / empty / partial states on news panels
 - 0216 — Truncation guards on headlines / Impact / ticker chips
+- 0217 — CLAUDE.md mid-pass update
+- 0218 — URL-persistent filter state on /news (Saved Views v0)
+- 0219 — `/status` page with per-pipeline health probes
+- 0220 — Visible priority score on NewsCard (rank transparency)
+- 0221 — Source-tier badges (PRIMARY/SPECIALIST/SECONDARY/AGGREGATOR)
+- 0222 — CLAUDE.md final update for institutional readiness pass
 
 **Other features:**
 - 0089–0094 — Earnings Hub merge, Special Situations pillar, Stock Sheet, Re-rating Screener
