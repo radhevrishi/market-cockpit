@@ -9,6 +9,39 @@ import { classifySource, TIER_VISUAL } from '@/lib/source-tiers';
 // PATCH 0224 — Lifecycle state dot (LIVE / WARM / STALE / PERSISTENT)
 import { TOKENS } from '@/lib/design-tokens';
 
+/** PATCH 0290 — Impact↔Headline relevance check (audit IMP-02).
+ *  The server-side classifier sometimes pastes a theme-wide impact label onto
+ *  an article whose headline is about something unrelated (e.g. a Dixon JV
+ *  earnings article shows "GPU deployment bottleneck shifting upstream"
+ *  because both got tagged BOTTLENECK). We compute a cheap word-overlap
+ *  score; when the overlap is too low we suppress the Impact strip and
+ *  render a neutral fallback. The check is conservative — it only fires
+ *  when the impact label is highly specific (3+ uncommon tokens) yet has
+ *  zero overlap with the headline.
+ */
+const STOPWORDS = new Set([
+  'the','a','an','of','to','in','for','on','at','by','with','and','or','as','is','are','was','were','be','been','has','have','had','will','its','it','this','that','from','up','down','over','into','off','out','about','than','then','also','vs','vs.','&'
+]);
+function tokenize(s: string): Set<string> {
+  return new Set(
+    (s || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, ' ')
+      .split(/\s+/)
+      .filter(t => t.length >= 4 && !STOPWORDS.has(t))
+  );
+}
+function impactMismatch(impact?: string, headline?: string): boolean {
+  if (!impact || !headline) return false;
+  const ig = tokenize(impact);
+  const hg = tokenize(headline);
+  if (ig.size < 3) return false;          // impact too short to judge
+  if (hg.size < 3) return false;          // headline too short to judge
+  let overlap = 0;
+  for (const w of ig) if (hg.has(w)) overlap++;
+  return overlap === 0;                   // zero overlap = stale theme paste
+}
+
 /** PATCH 0224 — Compute lifecycle bucket from published_at + persistence flags.
  *  Mirrors the filter logic in news/page.tsx (Patch 0213). */
 function lifecycleFor(article: NewsArticle): { key: 'LIVE'|'WARM'|'STALE'|'PERSISTENT'|'UNKNOWN'; tone: { solid: string; bg: string; border: string }; label: string; hint: string } {
@@ -535,6 +568,15 @@ export default function NewsCard({ article, onTickerClick }: Props) {
               confidence: 'HIGH' | 'MEDIUM' | 'LOW';
               evidence_quote?: string;
             };
+            // PATCH 0290 — Suppress when the direct_effect has zero word
+            // overlap with the headline (theme-paste false positive).
+            if (impactMismatch(ebi.direct_effect, (article as any).title || (article as any).headline)) {
+              return (
+                <div className="mt-1.5 text-[10px] text-[#6677AA] italic">
+                  Related to: {(article as any).bottleneck_sub_tag || (article as any).article_type}
+                </div>
+              );
+            }
             const confColor = ebi.confidence === 'HIGH' ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/40'
                             : ebi.confidence === 'LOW'  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
                                                         : 'bg-sky-500/20 text-sky-300 border border-sky-500/40';
@@ -568,7 +610,10 @@ export default function NewsCard({ article, onTickerClick }: Props) {
                 </div>
               </div>
             );
-          })() : (article as any).impact_label_safe && (
+          })() : (article as any).impact_label_safe && !impactMismatch(
+            (article as any).impact_label_safe,
+            (article as any).title || (article as any).headline
+          ) && (
             // Legacy fallback for cached articles without evidence_bound_impact
             <div className="flex items-start gap-1.5 mt-1 text-[11px] leading-relaxed">
               <span

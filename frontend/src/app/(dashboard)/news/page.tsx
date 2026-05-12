@@ -749,6 +749,17 @@ const JUNK_HEADLINE_PATTERNS = [
   // Lifestyle / trivia
   /\b(pokémon|pokemon|logan paul)\b/i,
   /\bviral food trend/i,
+
+  // PATCH 0289 — Block consumer-deal noise (audit IMP-01). Tom's Hardware
+  // bundle deals were leaking into the BOTTLENECK feed and destroying trust.
+  /\bsave \$[\d,]+\s+on\b/i,                               // 'Save $210 on...'
+  /\b(bundle|combo)\s+(deal|offer|that includes)/i,         // bundle deals
+  /\b(coupon code|promo code|discount code|use code)\b/i,
+  /\b(prime day|black friday|cyber monday|cyber week)\b/i,
+  /\b(best buy|deal of the day|today'?s deal)\b/i,
+  /\b\d+%\s+off\b/i,                                        // '25% off'
+  /\bgrab .* (for|at) \$[\d,]+/i,                           // 'grab a... for $X'
+  /\b(samsung|corsair|logitech|sandisk|wd|western digital)\s+(ssd|nvme|ram|memory|keyboard|mouse|monitor)\s+(bundle|deal|discount)/i,
 ];
 
 const JUNK_SOURCE_PATTERNS = [
