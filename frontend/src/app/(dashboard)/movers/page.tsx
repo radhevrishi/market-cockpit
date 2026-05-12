@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { RefreshCw, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, ChevronUp, ChevronDown, Zap } from 'lucide-react';
+// PATCH 0284 — Shared freshness chip.
+import { PanelFreshness } from '@/components/PanelFreshness';
 
 interface Stock {
   ticker: string;
@@ -433,9 +435,17 @@ export default function MoversPage() {
         marginBottom: '14px',
       }}>
         <div>
-          <h1 style={{ fontSize: isMobile ? '18px' : '22px', fontWeight: '700', margin: 0, letterSpacing: '-0.3px' }}>
-            Market Movers
-          </h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <h1 style={{ fontSize: isMobile ? '18px' : '22px', fontWeight: '700', margin: 0, letterSpacing: '-0.3px' }}>
+              Market Movers
+            </h1>
+            {/* PATCH 0284 — Freshness chip from the lastUpdated stamp. */}
+            <PanelFreshness
+              dataUpdatedAt={lastUpdated ? lastUpdated.getTime() : 0}
+              isFetching={isRefreshing}
+              staleAfterMs={10 * 60_000}
+            />
+          </div>
           <p style={{ fontSize: '11px', color: TEXT3, margin: '2px 0 0' }}>
             NIFTY 500 + Midcap 250 + Smallcap 250 — Live from NSE
             {!isMobile && allStocks.length > 0 && (

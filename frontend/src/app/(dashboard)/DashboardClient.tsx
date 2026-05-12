@@ -14,6 +14,8 @@ import GlobalSearch from '@/components/GlobalSearch';
 import { ThemeSwitcher } from '@/components/ThemeSwitcher';
 import { PdfExportButton } from '@/components/PdfExportButton';
 import MarketHours from '@/components/MarketHours';
+// PATCH 0283 — Surface Conviction Beats count in the global header.
+import { getConvictionTickers } from '@/lib/conviction-beats';
 
 interface NavItem { href: string; label: string; icon: ReactNode; }
 
@@ -110,6 +112,25 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
   const [drawerTicker, setDrawerTicker] = useState<{ symbol: string; exchange?: string } | null>(null);
   const [showLoadingSkeleton, setShowLoadingSkeleton] = useState(true);
   const [authChecked, setAuthChecked] = useState(false);
+
+  // PATCH 0283 — Global Conviction Beats count chip. Reads bench size from
+  // the existing lib + listens for cross-tab updates. Clicking jumps to
+  // /earnings-opportunities where the bench lives.
+  const [convictionCount, setConvictionCount] = useState<number>(0);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const refresh = () => {
+      try { setConvictionCount(getConvictionTickers().size); }
+      catch { setConvictionCount(0); }
+    };
+    refresh();
+    window.addEventListener('storage', refresh);
+    window.addEventListener('conviction-beats:updated', refresh);
+    return () => {
+      window.removeEventListener('storage', refresh);
+      window.removeEventListener('conviction-beats:updated', refresh);
+    };
+  }, []);
 
   // ── Auth check: mark as checked (public data loads regardless) ──────────
   useEffect(() => {
@@ -387,6 +408,25 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
               <div className="desktop-market-hours">
                 <MarketHours />
               </div>
+
+              {/* PATCH 0283 — Global Conviction Beats count chip. Always
+                  visible across every dashboard route so the bench size is
+                  never more than one glance away. */}
+              {convictionCount > 0 && (
+                <Link
+                  href="/earnings-opportunities"
+                  title={`Conviction Beats bench (${convictionCount} tickers). Open Earnings Opportunities to view the bench.`}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5,
+                    padding: '5px 10px', borderRadius: 8,
+                    border: '1px solid rgba(245,158,11,0.4)',
+                    backgroundColor: 'rgba(245,158,11,0.10)',
+                    color: '#F59E0B', fontSize: 11, fontWeight: 800,
+                    letterSpacing: '0.4px', textDecoration: 'none',
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >🏆 CB {convictionCount}</Link>
+              )}
 
               {/* PATCH 0074: theme cycler + PDF export — visible on every tab */}
               <ThemeSwitcher compact={false} />

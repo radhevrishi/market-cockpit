@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { RefreshCw, Search } from 'lucide-react';
+// PATCH 0284 — Shared freshness chip.
+import { PanelFreshness } from '@/components/PanelFreshness';
 
 interface Deal {
   symbol: string;
@@ -157,7 +159,15 @@ export default function SmartMoneyPage() {
       {/* Header */}
       <div style={{ marginBottom: '32px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-          <h1 style={{ fontSize: '32px', fontWeight: 'bold', margin: 0 }}>Smart Money Radar</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <h1 style={{ fontSize: '32px', fontWeight: 'bold', margin: 0 }}>Smart Money Radar</h1>
+            {/* PATCH 0284 — Freshness chip from the lastUpdated stamp. */}
+            <PanelFreshness
+              dataUpdatedAt={lastUpdated ? lastUpdated.getTime() : 0}
+              isFetching={isRefreshing}
+              staleAfterMs={15 * 60_000}
+            />
+          </div>
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
             {/* Refresh Button */}
             <button
