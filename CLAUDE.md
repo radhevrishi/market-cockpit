@@ -1,7 +1,7 @@
 # Market Cockpit — Claude Handoff Memory
 
 > Read this FIRST when starting any new chat. Saves you 30 minutes of context-rebuilding.
-> Last updated: 2026-05-13 (after Patch 0263 — mobile baseline + multi-page institutional polish session).
+> Last updated: 2026-05-13 (after Patch 0280 — CB overlay spread to Multibagger/Earnings-Guidance/Screener/Re-rating + shared PanelFreshness).
 
 ---
 
@@ -495,7 +495,69 @@ new tables / pipelines and are intentionally deferred:
 If picking these up, start with the Signal/SignalEvidence schema
 (blocks several others) and the Auth boundary.
 
-## 11 · Patch Log Summary (0073 → 0265)
+## 10.6.4 · Batch-4 — Conviction Beats spread + shared freshness chip (Patches 0272–0280)
+
+Picked up while user slept. Second-pass loop after the v0-stubs batch.
+Theme: spread the institutional Conviction Beats overlay across every
+result surface (Multibagger, Earnings Guidance + Hub, Screener,
+Re-rating) and extract the news/page.tsx `PanelFreshness` into a shared
+component so every dashboard with `dataUpdatedAt` can render the same
+"as of HH:MM · Xm ago" chip without duplicating the timer / formatter.
+
+  0272 — Conviction Beats badge + filter chip on Multibagger results.
+         Reads `getConvictionTickers()` + listens for cross-tab updates.
+         Amber 🏆 CB next to symbol when on the bench; toolbar adds a
+         "🏆 Conviction (N)" filter alongside the existing chips.
+
+  0273 — Conviction Beats overlay on Earnings Guidance card list
+         (both card view + timeline view) and Earnings Hub header chip
+         that jumps to the Scan tab where the existing Conviction
+         universe filter lives.
+
+  0274 — `<PanelFreshness>` extracted from /news into
+         `frontend/src/components/PanelFreshness.tsx`. Single source of
+         truth for the freshness chip used by /news (3 panels), now
+         also /breadth and /strategic-visibility. Component re-renders
+         once a minute internally so consumers don't need their own
+         timer; turns amber when age > `staleAfterMs`.
+
+  0275 — `<PanelFreshness>` wired into /screener and /ipos (both
+         pages use plain `useState`+`fetch`, so we stamp Date.now() on
+         every successful fetch). Multibagger skipped (Excel-upload
+         driven, no live data); Concall Intel skipped (one-shot tool).
+
+  0276 — Conviction Beats overlay on Screener results — badge on
+         ticker cell in both Stocks and Earnings tabs + "🏆 CB Only"
+         toolbar toggle that narrows the filtered universe.
+
+  0277 — Conviction Beats overlay on Re-rating Screener — shared
+         `<CbBadge>` component injected into all three panels (Margin
+         Expansion, Model Shift, Multiple Expansion). Same amber chip.
+
+  0278 — Bottleneck Workbench polish: theme-picker search box,
+         severity-sorted theme grid, and an explicit "Theme not found"
+         state (previously the page spun indefinitely on a stale
+         `?theme=` param pointing to a rolled-off bucket).
+
+  0279 — News Alerts JSON import/export. Adds ↓ EXPORT JSON / ↑ IMPORT
+         JSON buttons next to the page header. Export downloads a
+         timestamped `news-alerts-YYYY-MM-DDTHH-mm-ss.json`; import
+         merges by `id` (existing ids overwritten, new ids appended)
+         with light validation. Makes the localStorage-only rules
+         portable across browsers without depending on Auth/cloud sync.
+
+  0280 — This documentation update.
+
+Behaviour notes:
+- `@/components/PanelFreshness` lives at
+  `frontend/src/components/PanelFreshness.tsx`. New pages should import
+  from there rather than re-implementing the age chip.
+- Conviction overlay pattern: every page does
+  `Set<string>` derived from `getConvictionTickers()`, refreshed by
+  `window.addEventListener('storage', …)` AND
+  `window.addEventListener('conviction-beats:updated', …)`.
+
+## 11 · Patch Log Summary (0073 → 0280)
 
 Pre-session patches existed (0073–0095). Recent session highlights:
 
@@ -574,6 +636,21 @@ Pre-session patches existed (0073–0095). Recent session highlights:
 - 0264 — CLAUDE.md end-of-session update
 - 0265 — Multibagger scoring: ROIC<WACC kill switch + op-leverage soften
          + valuation cap on PEG-illusion + growth quality offset
+- 0266 — Quality + Longevity caps when ROIC<WACC (later renumber 0269)
+- 0267 — News article-list null headline defense
+- 0268 — Dashboard top-strip missing-vs-zero change distinction
+- 0269 — Multibagger Quality/Longevity 60-cap when ROIC<WACC
+- 0270 — Bottleneck Workbench bucket.key_tickers null-guards
+- 0271 — IPOs + Screener null-guards (loop iteration 12)
+- 0272 — Conviction Beats overlay on Multibagger (badge + filter chip)
+- 0273 — Conviction Beats overlay on Earnings Guidance + Hub header chip
+- 0274 — Extract PanelFreshness to shared component (+ Breadth + StratVis)
+- 0275 — PanelFreshness wired into Screener + IPOs
+- 0276 — Conviction Beats overlay on Screener (badge + CB-only toggle)
+- 0277 — Conviction Beats overlay on Re-rating Screener (all 3 panels)
+- 0278 — Bottleneck Workbench: theme-picker search + theme-not-found state
+- 0279 — News Alerts JSON import/export (rules portable across browsers)
+- 0280 — CLAUDE.md update (end of batch-4)
 
 **Other features:**
 - 0089–0094 — Earnings Hub merge, Special Situations pillar, Stock Sheet, Re-rating Screener
