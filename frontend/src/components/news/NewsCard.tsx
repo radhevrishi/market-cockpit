@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import type { NewsArticle } from '@/types';
+// PATCH 0221 — Source-tier classification (PRIMARY / SPECIALIST / SECONDARY / AGGREGATOR)
+import { classifySource, TIER_VISUAL } from '@/lib/source-tiers';
 
 // PATCH 0119 — IMP-02: Watchlist (Multibagger upload) cross-reference.
 // Cache the user's MB symbols at module level — refreshed once per mount
@@ -902,6 +904,26 @@ export default function NewsCard({ article, onTickerClick }: Props) {
 
           {/* Source + tier + also-reported (PATCH 0115 — BUG-04 dedup) */}
           <span className="text-[#4A5B6C] text-[11px] inline-flex items-center gap-2">
+            {/* PATCH 0221 — Source-tier badge: PRIMARY / SPECIALIST / SECONDARY / AGGREGATOR.
+                Hover reveals the tier definition so users learn what each glyph means
+                without reading docs. */}
+            {(() => {
+              const tier = classifySource(article.source_name ?? article.source, article.source_url ?? article.url);
+              const v = TIER_VISUAL[tier];
+              return (
+                <span
+                  title={`${v.label} source — ${v.description}`}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 3,
+                    backgroundColor: v.tone.bg, color: v.tone.solid,
+                    border: `1px solid ${v.tone.border}`,
+                    padding: '1px 5px', borderRadius: 3,
+                    fontSize: 9, fontWeight: 700, letterSpacing: '0.3px',
+                    fontFamily: 'ui-monospace, monospace',
+                  }}
+                >{v.glyph} {v.label}</span>
+              );
+            })()}
             <span>
               {article.source_name ?? article.source}
               {(article as any).source_tier && (article as any).source_tier !== 'secondary' && (
