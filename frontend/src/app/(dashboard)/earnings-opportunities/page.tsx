@@ -776,9 +776,26 @@ export default function EarningsOpportunitiesPage() {
   };
   const isLoading = hubLoading || gradedFetching;
   const error = hubError;
-  // PATCH 0161 — Refresh button now refetches BOTH hub AND graded payload
+  // PATCH 0175 — Hard refresh: force=1 busts BOTH the KV cache for the graded
+  // payload AND the in-memory cache on /api/market/earnings. This is what
+  // actually pulls in newly-filed companies. Soft refetch only invalidates
+  // React Query, which then hits the same cached server response.
+  const [hardRefreshing, setHardRefreshing] = useState(false);
   const refetch = async () => {
-    await Promise.all([refetchHub(), refetchGraded()]);
+    if (!resolvedDateForGrading || hardRefreshing) {
+      // Soft refetch when no date resolved yet
+      await Promise.all([refetchHub(), refetchGraded()]);
+      return;
+    }
+    setHardRefreshing(true);
+    try {
+      // Hit force=1 server-side to rebuild graded payload from a fresh hub fetch
+      await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}&force=1`, { cache: 'no-store' });
+      // Then refetch via React Query so the UI picks up the new data
+      await Promise.all([refetchHub(), refetchGraded()]);
+    } finally {
+      setHardRefreshing(false);
+    }
   };
   // Local UI state for partial-refresh button
   const [refreshing, setRefreshing] = useState(false);
@@ -868,9 +885,11 @@ export default function EarningsOpportunitiesPage() {
       <div style={{ padding: '20px 24px 14px', borderBottom: '1px solid #1A2540', backgroundColor: '#0D1623' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
           <h1 style={{ fontSize: 22, fontWeight: 900, color: '#E6EDF3', margin: 0 }}>Earnings Opportunities</h1>
-          <button onClick={() => refetch()} title="Refresh"
-            style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #1A2840', background: 'transparent', color: '#8A95A3', fontSize: 11, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <RefreshCw style={{ width: 11, height: 11 }} /> Refresh
+          <button onClick={() => refetch()} disabled={hardRefreshing} title="Hard refresh — busts cache, re-fetches NSE/BSE feeds, pulls in newly-filed tickers"
+            style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #22D3EE60', background: hardRefreshing ? '#22D3EE30' : '#22D3EE15', color: '#22D3EE', fontSize: 11, fontWeight: 700, cursor: hardRefreshing ? 'wait' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, opacity: hardRefreshing ? 0.8 : 1 }}>
+            <RefreshCw style={{ width: 11, height: 11, animation: hardRefreshing ? 'spin 0.8s linear infinite' : 'none' }} />
+            {hardRefreshing ? 'Refetching…' : 'Hard Refresh'}
+            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
           </button>
           {/* PATCH 0160 / 0161 — Partial refresh button (refetches missing-data cards only) */}
           {resolvedDateForGrading && (() => {

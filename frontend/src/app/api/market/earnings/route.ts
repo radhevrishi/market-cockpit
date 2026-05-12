@@ -411,11 +411,15 @@ export async function GET(request: Request) {
   const month = searchParams.get('month');
   const indexFilter = searchParams.get('index');
   const debug = searchParams.get('debug') === 'true';
+  // PATCH 0175 — force=1 bypasses the 5min in-memory cache so a user-initiated
+  // "Hard Refresh" actually re-hits NSE/BSE feeds and picks up newly-filed
+  // companies missed on the prior pass.
+  const force = searchParams.get('force') === 'true' || searchParams.get('force') === '1';
 
   // Route-level cache check (5 min TTL per month+index combo)
   const cacheKey = `${market}_${month || 'current'}_${indexFilter || 'all'}`;
   const cached = _earningsRouteCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < EARNINGS_ROUTE_CACHE_TTL) {
+  if (!force && cached && Date.now() - cached.ts < EARNINGS_ROUTE_CACHE_TTL) {
     return NextResponse.json(cached.data);
   }
 

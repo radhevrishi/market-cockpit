@@ -267,6 +267,10 @@ export async function GET(req: Request) {
   // ONLY those tickers with cache bypass, merge back. Leaves populated cards
   // 100% untouched.
   const refreshMissing = searchParams.get('refreshMissing') === '1';
+  // PATCH 0175 — force=1 BUSTS the KV cache and rebuilds from scratch (with
+  // a fresh hub fetch). Used by the top "Refresh" button so the user can
+  // pull in newly-discovered tickers that the previous cached pass missed.
+  const force = searchParams.get('force') === '1';
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return NextResponse.json({ error: 'date param required (YYYY-MM-DD)' }, { status: 400 });
   }
@@ -276,7 +280,8 @@ export async function GET(req: Request) {
   const cacheKey = `graded:v4:${date}`;
 
   // Try cache first (past dates are immutable, 90-day TTL — practically forever for our use)
-  if (isRedisAvailable() && !refreshMissing) {
+  // ── BUT bypass cache when refreshMissing or force is set ────────────────
+  if (isRedisAvailable() && !refreshMissing && !force) {
     try {
       const cached = await kvGet(cacheKey);
       if (cached) {
@@ -285,6 +290,11 @@ export async function GET(req: Request) {
         return NextResponse.json({ ...cached, _cache: 'hit' }, { headers: { 'Cache-Control': swr } });
       }
     } catch {}
+  }
+  // PATCH 0175 — on force=1, also delete the existing KV entry so the
+  // post-rebuild kvSet writes a clean payload (avoids stale shape merge).
+  if (force && isRedisAvailable()) {
+    try { await kvSet(cacheKey, null, 1); } catch {}  // null + 1s TTL = effective delete
   }
 
   // ── PARTIAL REFRESH PATH ──────────────────────────────────────────────
@@ -377,7 +387,8 @@ export async function GET(req: Request) {
   // Fetch hub for the month
   const base = new URL(req.url);
   const month = date.slice(0, 7);
-  const hubUrl = `${base.protocol}//${base.host}/api/market/earnings?market=india&month=${month}`;
+  // PATCH 0175 — when force=1, propagate to the hub so its in-memory cache also gets bypassed
+  const hubUrl = `${base.protocol}//${base.host}/api/market/earnings?market=india&month=${month}${force ? '&force=1' : ''}`;
   const hubRes = await fetch(hubUrl, { cache: 'no-store' });
   if (!hubRes.ok) {
     return NextResponse.json({ error: 'hub fetch failed', status: hubRes.status }, { status: 502 });
