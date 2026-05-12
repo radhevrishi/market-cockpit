@@ -360,7 +360,11 @@ async function fetchNseFinancials(symbol: string): Promise<any | null> {
 
 // ─── Main handler ──────────────────────────────────────────────────────────
 function isValidSymbol(s: string): boolean {
-  return /^[A-Z][A-Z0-9&\-]{1,15}$/.test(s);
+  // PATCH 0195 — allow digit-leading tickers (3IINFOLTD, 3MINDIA, 5PAISA,
+  // 63MOONS, 21STCENMGM, 360ONE etc.). Old regex required leading [A-Z]
+  // which silently rejected these and made /enrich return empty data —
+  // refresh would say "0/1 updated" for ever.
+  return /^[A-Z0-9][A-Z0-9&\-]{1,15}$/.test(s);
 }
 
 // PATCH 0155.2 — three-tier source-of-truth chain:
