@@ -1,7 +1,7 @@
 # Market Cockpit — Claude Handoff Memory
 
 > Read this FIRST when starting any new chat. Saves you 30 minutes of context-rebuilding.
-> Last updated: 2026-05-12 (after Patch 0231 — institutional readiness pass complete).
+> Last updated: 2026-05-12 (after Patch 0239 — batch-3 v0 stubs of backend-blocked items).
 
 ---
 
@@ -285,6 +285,59 @@ ontology + buy-side PM). Full review lives in chat history.
          refetch contract).
   0231 — This documentation update (final, end of batch-2).
 
+## 10.6.2 · Batch-3 v0 stubs of backend-blocked items (Patches 0232–0239)
+
+These ship **frontend-only approximations** of items in §10.7 so users
+get the UX today while the proper schema-backed implementations are
+planned. Each is clearly marked v0 in code + UI. When the real backend
+lands, the v0 stubs swap in transparently.
+
+  0232 — Evidence Panel v0 inside ArticleDetail. New 'EVIDENCE &
+         PROVENANCE' section surfaces source-tier, corroboration count
+         + source list, existing classifier output fields, lifecycle.
+         Full classifier feature trace still pending SignalEvidence schema.
+
+  0233 — Thesis Notebooks v0. Per-article markdown notes saved to
+         localStorage 'mc:notes:v1:<id>'. 600ms autosave + 'saved
+         HH:MM:SS' indicator. Cross-tab via storage event. Real
+         multi-user notebooks with @-mentions need Auth + notes table.
+
+  0234 — Ticker role glyphs v0 (heuristic from article sentiment).
+         ▲ BENEFICIARY (green) / ▼ LOSER (red) / ◆ NEUTRAL (grey)
+         on every ticker chip. '~' prefix flags inference. Real role
+         classification needs ticker_roles table + upstream classifier.
+
+  0235 — Bottleneck Workbench v0 at /bottleneck-workbench[?theme=<id>].
+         Per-theme page with severity header, implicated tickers grid,
+         active signals, articles timeline. Uses existing bottleneck-
+         dashboard + /news endpoints; no schema change. Proper L1–L6
+         transmission ladder + theme-filtered contracts ledger pending.
+
+  0236 — /status page 24h history ring buffer. Each probe result is
+         appended to localStorage 'mc:status-history:v1' under the
+         probe id; older than 24h evicts on read; max 200 per probe.
+         Sparkline + uptime % shown per row. Server-side heartbeat
+         with cross-user aggregation still pending.
+
+  0237 — Client-side News Alert Rules v0 at /news-alerts. Define
+         simple rules (article_type/region/min_importance/ticker/
+         theme/headline substring). Watches /news stream every 60s;
+         fires browser Notification + on-screen toast. Rules persist
+         in localStorage 'mc:news-alerts:v1'. Slack/Email/Webhook
+         delivery + server-side rule evaluation still pending.
+
+  0238 — Severity 'why' explainability tooltip. Hover the severity
+         badge on any NewsCard to see the existing payload fields
+         that drove the tier (importance_score, bottleneck_level,
+         corroboration count, structural_score, confidence). Full
+         classifier feature trace pending classifier_features JSONB.
+
+  0239 — This documentation update.
+
+The v0 stubs all use localStorage so they're per-browser-tab today;
+when Auth lands they migrate to per-user/per-org server-side storage
+in one swap.
+
 ## 10.7 · Open institutional follow-ups (NOT YET SHIPPED — schema work)
 
 These all need backend / data-model changes beyond the surgical UI
@@ -351,7 +404,15 @@ Pre-session patches existed (0073–0095). Recent session highlights:
 - 0228 — Mobile-responsive collapse defaults on dense panels
 - 0229 — Inline expansion of also-reporting sources
 - 0230 — Amber stale-strip when panel data >3× freshness window
-- 0231 — CLAUDE.md final update (end of batch-2)
+- 0231 — CLAUDE.md update (end of batch-2)
+- 0232 — Evidence Panel v0 inside ArticleDetail
+- 0233 — Thesis Notebooks v0 (localStorage)
+- 0234 — Ticker role glyph heuristic (~▲/▼/◆)
+- 0235 — Bottleneck Workbench v0 (/bottleneck-workbench)
+- 0236 — /status page 24h history ring buffer + sparkline
+- 0237 — Client-side News Alert Rules v0 (/news-alerts)
+- 0238 — Severity 'why' explainability tooltip
+- 0239 — CLAUDE.md final update (end of batch-3)
 
 **Other features:**
 - 0089–0094 — Earnings Hub merge, Special Situations pillar, Stock Sheet, Re-rating Screener
