@@ -1280,6 +1280,24 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     }
   }
 
+  // PATCH 0269 — Cap Quality and Longevity pillars at 60 when ROIC < WACC.
+  // Per Fisher: 'a business reinvesting at sub-WACC returns is not a
+  // long-term quality business no matter how good the OPM looks today'.
+  // Without trailing 3-yr data we apply on current-period ROIC.
+  // Limits the framework from blessing weak-economics names as 'high quality'.
+  let qualCapped = qual;
+  let longeCapped = longe;
+  if (row.roic !== undefined && row.roic < 10) {
+    if (qualCapped > 60) {
+      risks.push(`Quality capped at 60: ROIC ${row.roic.toFixed(1)}% < WACC — sub-par capital allocation overrides margin/balance-sheet strength`);
+      qualCapped = 60;
+    }
+    if (longeCapped > 60) {
+      risks.push(`Longevity capped at 60: ROIC ${row.roic.toFixed(1)}% < WACC — durable moat unlikely without value-add reinvestment`);
+      longeCapped = 60;
+    }
+  }
+
   // PATCH 0265 — Growth Quality offset: reward inflection on already-high
   // economics. Even with modest historical CAGR, if ROCE>20% AND CFO/PAT>1
   // AND FCF>0 AND recent YoY growth>25%, add +5 to growth pillar.
@@ -1803,13 +1821,13 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     roic_vs_wacc: roicVsWacc,
     missing_dimensions: missingDimensions,
     pillarScores: [
-      {id:'QUALITY',    label:'Quality',      score:Math.round(qual),       color:'#a78bfa', weight:Math.round(bw[0]*100)},
-      {id:'GROWTH',     label:'Growth',       score:Math.round(growthFinal),color:'#38bdf8', weight:Math.round(bw[1]*100)},
-      {id:'ACCEL',      label:'Accel',        score:Math.round(accel),      color:'#10b981', weight:Math.round(bw[2]*100)},
-      {id:'LONGEVITY',  label:'Longevity',    score:Math.round(longe),      color:'#06b6d4', weight:Math.round(bw[3]*100)},
-      {id:'FIN_STR',    label:'Fin Str',      score:Math.round(fin),        color:'#34d399', weight:Math.round(bw[4]*100)},
-      {id:'VALUATION',  label:'Valuation',    score:Math.round(val),        color:'#f59e0b', weight:Math.round(bw[5]*100)},
-      {id:'MARKET',     label:'Market',       score:Math.round(mkt),        color:'#f97316', weight:Math.round(bw[6]*100)},
+      {id:'QUALITY',    label:'Quality',      score:Math.round(qualCapped),  color:'#a78bfa', weight:Math.round(bw[0]*100)},
+      {id:'GROWTH',     label:'Growth',       score:Math.round(growthFinal), color:'#38bdf8', weight:Math.round(bw[1]*100)},
+      {id:'ACCEL',      label:'Accel',        score:Math.round(accel),       color:'#10b981', weight:Math.round(bw[2]*100)},
+      {id:'LONGEVITY',  label:'Longevity',    score:Math.round(longeCapped), color:'#06b6d4', weight:Math.round(bw[3]*100)},
+      {id:'FIN_STR',    label:'Fin Str',      score:Math.round(fin),         color:'#34d399', weight:Math.round(bw[4]*100)},
+      {id:'VALUATION',  label:'Valuation',    score:Math.round(val),         color:'#f59e0b', weight:Math.round(bw[5]*100)},
+      {id:'MARKET',     label:'Market',       score:Math.round(mkt),         color:'#f97316', weight:Math.round(bw[6]*100)},
     ],
   };
 }
