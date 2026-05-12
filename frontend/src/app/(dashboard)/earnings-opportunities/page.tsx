@@ -825,10 +825,13 @@ export default function EarningsOpportunitiesPage() {
     queryKey: ['graded-by-date', resolvedDateForGrading],
     enabled: !!resolvedDateForGrading,
     queryFn: async () => {
-      const res = await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}`);
+      // PATCH 0192 — `cache: 'no-store'` so the browser doesn't serve a stale
+      // HTTP cache when refetchGraded() runs after refreshMissing has updated
+      // the server-side KV. Without this, the client could keep seeing the
+      // pre-refresh response even after server data has changed.
+      const res = await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}`, { cache: 'no-store' });
       if (!res.ok) throw new Error('graded fetch failed');
       const payload = await res.json();
-      // Persist to localStorage for next time
       writeLsCache(resolvedDateForGrading, payload);
       return payload;
     },
@@ -1110,22 +1113,6 @@ export default function EarningsOpportunitiesPage() {
     if (!resolvedDateForGrading || refreshing) return;
     setRefreshing(true);
     setRefreshFeedback(null);
-    // PATCH 0191 — Capture which tickers are currently missing BEFORE refresh,
-    // so we can show them by name in the error message.
-    const missingTickers: string[] = [];
-    for (const t of TIER_ORDER) {
-      for (const c of (data?.by_tier?.[t] || [])) {
-        if (c.sales_curr_cr == null && c.pat_curr_cr == null) {
-          missingTickers.push(c.ticker);
-        }
-      }
-    }
-    const tickerList = (n = 8) => {
-      if (missingTickers.length === 0) return '';
-      const shown = missingTickers.slice(0, n).join(', ');
-      const more = missingTickers.length > n ? ` +${missingTickers.length - n} more` : '';
-      return `${shown}${more}`;
-    };
     try {
       const res = await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}&refreshMissing=1`, { cache: 'no-store' });
       if (!res.ok) {
@@ -1134,24 +1121,29 @@ export default function EarningsOpportunitiesPage() {
       } else {
         const j = await res.json();
         const msg: string = j?._refresh || 'completed';
-        // Parse "X/Y updated" pattern
         const m = msg.match(/^(\d+)\/(\d+)\s+updated/);
         const updated = m ? parseInt(m[1], 10) : 0;
         const total = m ? parseInt(m[2], 10) : 0;
-        // PATCH 0190 — when server says "no-op", it means the SERVER's KV cache
-        // is already populated. But the user's localStorage may have a stale
-        // version. WIPE the local cache and force a fresh refetch so the
-        // populated data from server replaces stale local view.
+        // PATCH 0192 — use the EXACT failed tickers from server response
+        // instead of computing from stale client-side data.
+        const failedTickers: string[] = Array.isArray(j?._failed_tickers) ? j._failed_tickers : [];
+        const tickerListFromServer = (n = 8) => {
+          if (failedTickers.length === 0) return 'these tickers';
+          const shown = failedTickers.slice(0, n).join(', ');
+          const more = failedTickers.length > n ? ` +${failedTickers.length - n} more` : '';
+          return `${shown}${more}`;
+        };
+        // PATCH 0190/0192 — also WIPE localStorage on every refreshMissing so
+        // the new server payload is the source of truth (no stale leftovers).
+        try { localStorage.removeItem('mc:graded:v8:' + resolvedDateForGrading); } catch {}
         if (msg.includes('no-op')) {
-          try {
-            localStorage.removeItem('mc:graded:v8:' + resolvedDateForGrading);
-          } catch {}
           setRefreshFeedback(`✓ Server has fresh data for this date — syncing your view…`);
-        } else if (updated > 0) {
+        } else if (updated > 0 && failedTickers.length === 0) {
           setRefreshFeedback(`✓ Updated ${updated}/${total} cards with fresh financials`);
+        } else if (updated > 0) {
+          setRefreshFeedback(`✓ Updated ${updated}/${total} cards. Still no data for: ${tickerListFromServer()}.`);
         } else {
-          const list = tickerList();
-          setRefreshFeedback(`⚠ 0/${total} updated. No Q4 data yet for: ${list || 'these tickers'}. Worker pass typically takes 6–24h. Use Coverage Probe ↓ to add manually.`);
+          setRefreshFeedback(`⚠ 0/${total} updated. No Q4 data yet for: ${tickerListFromServer()}. Worker pass typically takes 6–24h. Use Coverage Probe ↓ to add manually.`);
         }
         setTimeout(() => setRefreshFeedback(null), 20000);
       }

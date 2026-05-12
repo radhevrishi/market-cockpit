@@ -389,6 +389,11 @@ export async function GET(req: Request) {
         for (const g of updatedCards) by_tier[g.tier].push(g);
         for (const t of TIER_ORDER) by_tier[t].sort((a, b) => b.composite_score - a.composite_score);
 
+        // PATCH 0192 — Return the exact tickers that were attempted but failed
+        // (still missing financials after the refresh). Client uses this for
+        // accurate error messages instead of relying on its potentially stale
+        // local view.
+        const failedTickers = needTickers.filter((t) => !replacedTickers.has(t));
         const payload = {
           ...existing,
           by_tier,
@@ -396,6 +401,9 @@ export async function GET(req: Request) {
           generated_at: new Date().toISOString(),
           _cache: 'partial-refresh',
           _refresh: `${replacedTickers.size}/${needTickers.length} updated`,
+          _attempted_tickers: needTickers,
+          _failed_tickers: failedTickers,
+          _updated_tickers: [...replacedTickers],
         };
         // Write back with same TTL strategy
         const ttl = isPast ? 90 * 24 * 3600 : 15 * 60;
