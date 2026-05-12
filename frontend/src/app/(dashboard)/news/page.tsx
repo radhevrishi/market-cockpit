@@ -1605,6 +1605,14 @@ export default function NewsFeedPage() {
   const [bottleneckCategory, setBottleneckCategory] = useState<string>('ALL'); // Sub-tag: MEMORY_STORAGE, INTERCONNECT_PHOTONICS, etc.
   const [structuralOnly, setStructuralOnly] = useState<boolean>(false); // Show only synthetic/structural signals
   const [sortBy,        setSortBy]        = useState<'impact' | 'time'>('impact'); // Default: impact-based sort
+  // PATCH 0213 — Lifecycle filter. Defaults to 'LIVE_WARM' (last 48h) so
+  // STALE / PERSISTENT items don't pollute the LIVE feed. Tabs let the user
+  // explicitly request the older buckets when they want them.
+  //   LIVE_WARM : published_at within 48h
+  //   STALE     : 48h to 7d
+  //   PERSISTENT: older than 7d AND flagged structural / persistent_theme
+  //   ALL       : no lifecycle filter (legacy behaviour)
+  const [lifecycleFilter, setLifecycleFilter] = useState<'LIVE_WARM'|'STALE'|'PERSISTENT'|'ALL'>('LIVE_WARM');
   const [search,        setSearch]        = useState('');
   const [showFilters,   setShowFilters]   = useState(false);
   const [selectedArticle, setSelectedArticle] = useState<NewsArticle | null>(null);
@@ -1740,6 +1748,19 @@ export default function NewsFeedPage() {
         const pubTime = new Date(a.published_at || a.ingested_at || 0).getTime();
         if (now - pubTime > STALE_MS) return false;
       }
+      // PATCH 0213 — Lifecycle filter
+      if (lifecycleFilter !== 'ALL') {
+        const pubTime = new Date(a.published_at || a.ingested_at || 0).getTime();
+        const age = now - pubTime;
+        const LIVE_WARM_MS = 48 * 3600_000;     // ≤ 48h
+        const STALE_END_MS = 7 * 24 * 3600_000; // 48h → 7d
+        const isPersistentTheme = (a as any).freshness_layer === 'PERSISTENT_THEME'
+          || (a as any).is_synthetic
+          || (a as any).feed_layer === 'STRUCTURAL_ALPHA';
+        if (lifecycleFilter === 'LIVE_WARM' && age > LIVE_WARM_MS && !isPersistentTheme) return false;
+        if (lifecycleFilter === 'STALE' && !(age > LIVE_WARM_MS && age <= STALE_END_MS)) return false;
+        if (lifecycleFilter === 'PERSISTENT' && !(age > STALE_END_MS && isPersistentTheme)) return false;
+      }
       return true;
     });
 
@@ -1798,6 +1819,7 @@ export default function NewsFeedPage() {
     bottleneckCategory,
     structuralOnly,
     sortBy,
+    lifecycleFilter,  // PATCH 0213
   ]);
   // PATCH 0210 — Dedupe IN PLAY TODAY by ticker.
   // Root cause of the DEEDEV×2, INOXINDIA×2, CEINSYS×2 rendering: rawInPlay
@@ -2725,6 +2747,34 @@ export default function NewsFeedPage() {
             {/* PATCH 0212 — consolidated freshness indicator */}
             <PanelFreshness dataUpdatedAt={dataUpdatedAt} isFetching={isLoading} staleAfterMs={5 * 60_000} />
           </div>
+        </div>
+        {/* PATCH 0213 — Lifecycle filter row (separate from other filter pills
+            so it always stands at the top of the controls). Defaults to
+            'Live + Warm' so the main feed never shows soup. */}
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8, fontSize: 10, color: '#6B7B8C', fontWeight: 700, letterSpacing: '0.5px' }}>
+          <span>LIFECYCLE:</span>
+          {([
+            { key: 'LIVE_WARM',  label: '● Live + Warm',  hint: 'Published in the last 48 hours',  bg: '#10B98120', border: '#10B981', text: '#10B981' },
+            { key: 'STALE',      label: '◐ Stale',        hint: '48 hours to 7 days old',           bg: '#F59E0B20', border: '#F59E0B', text: '#F59E0B' },
+            { key: 'PERSISTENT', label: '◑ Persistent',   hint: 'Older than 7d + structural theme', bg: '#A78BFA20', border: '#A78BFA', text: '#A78BFA' },
+            { key: 'ALL',        label: '○ All',          hint: 'No lifecycle filter',              bg: '#1E2D45',   border: '#1E2D45', text: '#8A95A3' },
+          ] as const).map(f => {
+            const active = lifecycleFilter === f.key;
+            return (
+              <button
+                key={f.key}
+                onClick={() => setLifecycleFilter(f.key)}
+                title={f.hint}
+                style={{
+                  backgroundColor: active ? f.bg : 'transparent',
+                  border: `1px solid ${active ? f.border : '#1E2D45'}`,
+                  color: active ? f.text : '#6B7B8C',
+                  borderRadius: 5, padding: '4px 8px', cursor: 'pointer',
+                  fontSize: 10, fontWeight: 700, letterSpacing: '0.4px',
+                }}
+              >{f.label}</button>
+            );
+          })}
         </div>
         {/* Controls row — horizontally scrollable on mobile */}
         <div className="scrollbar-hide mobile-scroll" style={{ display: 'flex', gap: '8px', alignItems: 'center', overflowX: 'auto', paddingBottom: '4px' }}>
