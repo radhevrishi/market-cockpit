@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Download, AlertTriangle, Award } from 'lucide-react';
 import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 import { getConvictionTickers } from '@/lib/conviction-beats';
+import TickerExportToolbar from '@/components/TickerExportToolbar';
 
 // ══════════════════════════════════════════════
 // EARNINGS PAGE — Custom Universe Only
@@ -1971,6 +1972,34 @@ export default function EarningsPage() {
           </div>
         </div>
       )}
+
+      {/* PATCH 0196 — Export toolbar above cards. Uses sortedCards (post-filter)
+          so it always exports what the user is actually looking at. Tier groups
+          derived from EXCELLENT/STRONG/GOOD/OK grades, plus a 'Conviction Beats'
+          group when those tickers are present in the current filtered view. */}
+      {!loading && !error && sortedCards.length > 0 && (() => {
+        const visibleTickers = sortedCards.map((c) => c.symbol);
+        const gradeGroups: { label: string; emoji?: string; tickers: string[]; color?: string }[] = [];
+        const gExcellent = sortedCards.filter((c) => c.grade === 'EXCELLENT').map((c) => c.symbol);
+        const gStrong = sortedCards.filter((c) => c.grade === 'STRONG').map((c) => c.symbol);
+        const gGood = sortedCards.filter((c) => c.grade === 'GOOD').map((c) => c.symbol);
+        if (gExcellent.length > 0) gradeGroups.push({ label: 'EXCELLENT', emoji: '⭐', tickers: gExcellent, color: '#F59E0B' });
+        if (gStrong.length > 0) gradeGroups.push({ label: 'STRONG', emoji: '🟢', tickers: gStrong, color: '#10B981' });
+        if (gGood.length > 0) gradeGroups.push({ label: 'GOOD', emoji: '🔵', tickers: gGood, color: '#3B82F6' });
+        // Conviction overlay
+        const conviction = sortedCards.filter((c) => convictionTickersState.has(c.symbol)).map((c) => c.symbol);
+        if (conviction.length > 0) gradeGroups.push({ label: 'Conviction', emoji: '🏆', tickers: conviction, color: '#F59E0B' });
+        return (
+          <div style={{ marginBottom: '12px' }}>
+            <TickerExportToolbar
+              tickers={visibleTickers}
+              groups={gradeGroups}
+              exchange="NSE"
+              filenameHint="earnings-scan"
+            />
+          </div>
+        );
+      })()}
 
       {/* Cards Grid */}
       {!loading && !error && sortedCards.length > 0 && (

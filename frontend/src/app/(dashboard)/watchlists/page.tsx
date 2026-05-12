@@ -11,6 +11,7 @@ import {
   getConvictionList, removeConviction,
   type ConvictionEntry,
 } from '@/lib/conviction-beats';
+import TickerExportToolbar from '@/components/TickerExportToolbar';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -873,6 +874,7 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
   }
   const blockbusters = entries.filter((e) => e.tier === 'BLOCKBUSTER');
   const strongs = entries.filter((e) => e.tier === 'STRONG');
+  const allTickers = entries.map((e) => e.ticker);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{
@@ -884,6 +886,17 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
         Auto-populated from <strong style={{ color: '#22D3EE' }}>Earnings Opportunities</strong> whenever a stock prints BLOCKBUSTER or STRONG.
         Removed entries don't auto-readd — use × to permanently prune.
       </div>
+
+      {/* PATCH 0196 — Export toolbar (CSV, TradingView, .txt, Open chart). Tier-grouped. */}
+      <TickerExportToolbar
+        tickers={allTickers}
+        groups={[
+          { label: 'BLOCKBUSTER', emoji: '⭐', tickers: blockbusters.map((e) => e.ticker), color: '#F59E0B' },
+          { label: 'STRONG', emoji: '🟢', tickers: strongs.map((e) => e.ticker), color: '#10B981' },
+        ]}
+        exchange="NSE"
+        filenameHint="conviction-beats"
+      />
       {blockbusters.length > 0 && (
         <div style={{
           backgroundColor: '#0D1623',
