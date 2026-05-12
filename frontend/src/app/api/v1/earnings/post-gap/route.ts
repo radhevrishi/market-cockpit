@@ -26,10 +26,19 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
+// PATCH 0206 — Tier 1 source flag enum.
+// Hierarchy by confidence (highest first):
+//   'kv-calendar' — authoritative; pulled from existing graded:v8:<date> KV
+//                   which was built from NSE+BSE corp filings.
+//   'detected'    — inferred from Yahoo daily chart's overnight-gap signature.
+//                   Used only when Tier 1 (and future Tier 2 NSE API) miss.
+//   'explicit'    — passed directly by the caller; legacy path.
+type FilingDateSource = 'explicit' | 'kv-calendar' | 'detected';
+
 interface GapResult {
   ticker: string;
   filing_date: string;
-  filing_date_source?: 'explicit' | 'detected'; // PATCH 0205 — provenance flag
+  filing_date_source?: FilingDateSource; // PATCH 0205/0206 — provenance flag
   target_date: string | null;
   filing_close: number | null;
   target_open: number | null;
@@ -174,14 +183,70 @@ function nextTradingDayIso(timestamps: number[], filingIso: string): string | nu
   return null;
 }
 
+// ─── PATCH 0206 ────────────────────────────────────────────────────────────
+// Tier 1 filing-date source: the existing graded:v8:<date> KV calendar.
+// Each graded payload contains by_tier.{BLOCKBUSTER,STRONG,MIXED,AVOID}[] of
+// ParsedEarning rows with authoritative `ticker` + `filing_date` fields,
+// originally derived from NSE + BSE corporate filings.
+//
+// Strategy: scan the reporting window (quarter-end → today, capped at +90d),
+// parallel-fetch each graded:v8:<date> payload, flatten all tickers across
+// all tiers into a single {ticker → filing_date} map, and cache it in KV for
+// 6h under filing-index:v1:<period>. Subsequent calls skip the scan.
+// ───────────────────────────────────────────────────────────────────────────
+async function buildOrFetchFilingIndex(period: string): Promise<Record<string, string>> {
+  const indexKey = `filing-index:v1:${period}`;
+  if (isRedisAvailable()) {
+    try {
+      const cached = await kvGet<Record<string, string>>(indexKey);
+      if (cached && typeof cached === 'object') return cached;
+    } catch {}
+  }
+  const quarterEnd = parsePeriodToQuarterEnd(period);
+  if (!quarterEnd) return {};
+  const startMs = quarterEnd.getTime() + 86400_000;  // day after quarter-end
+  const endMs = Math.min(Date.now(), startMs + 90 * 86400_000);
+  const dates: string[] = [];
+  for (let ms = startMs; ms <= endMs; ms += 86400_000) {
+    dates.push(new Date(ms).toISOString().slice(0, 10));
+  }
+  // Parallel-fetch all graded payloads. Missing dates return null and are skipped.
+  const payloads = await Promise.all(
+    dates.map(d => kvGet<any>(`graded:v8:${d}`).catch(() => null))
+  );
+  const index: Record<string, string> = {};
+  for (const p of payloads) {
+    if (!p?.by_tier) continue;
+    for (const tier of ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID']) {
+      const rows = (p.by_tier as any)[tier] || [];
+      for (const row of rows) {
+        const t = row?.ticker;
+        const fd = row?.filing_date;
+        if (t && typeof fd === 'string' && /^\d{4}-\d{2}-\d{2}/.test(fd)) {
+          // Keep the EARLIEST filing date seen for a ticker — protects against
+          // duplicates where the same ticker shows up across multiple date keys.
+          if (!index[t] || fd < index[t]) index[t] = fd;
+        }
+      }
+    }
+  }
+  if (isRedisAvailable()) {
+    try { await kvSet(indexKey, index, 6 * 3600); } catch {}
+  }
+  return index;
+}
+
 async function computeGap(
   ticker: string,
   filing_date: string,
   timing?: string,
   period?: string,
+  knownFromCalendar?: boolean,
 ): Promise<GapResult> {
-  // PATCH 0205 — include period in cache key so detected dates are cached per-period
-  const cacheKey = `post-gap:v2:${ticker}:${filing_date}:${timing || 'pre'}:${period || ''}`;
+  // PATCH 0206 — cache key bumped to v3, includes calendar provenance so a
+  // calendar-resolved date doesn't share a slot with a detector-resolved one.
+  const initialSource: FilingDateSource = knownFromCalendar ? 'kv-calendar' : 'explicit';
+  const cacheKey = `post-gap:v3:${ticker}:${filing_date}:${timing || 'pre'}:${period || ''}:${initialSource}`;
   if (isRedisAvailable()) {
     try {
       const cached = await kvGet<GapResult>(cacheKey);
@@ -191,7 +256,7 @@ async function computeGap(
 
   const result: GapResult = {
     ticker, filing_date,
-    filing_date_source: 'explicit',
+    filing_date_source: initialSource,
     target_date: null,
     filing_close: null, target_open: null, target_close: null, live_price: null,
     gap_pct: null, close_move_pct: null, live_move_pct: null,
@@ -206,14 +271,12 @@ async function computeGap(
   result.source = 'yahoo';
   result.live_price = yahoo.lastPrice;
 
-  // PATCH 0205 — if period is provided, ALWAYS run filing-date detection from
-  // the price chart. Real filings produce a characteristic overnight-gap
-  // signature. We override the client's heuristic estimate when we find one,
-  // because a price-action signal is materially more reliable than the
-  // "quarter-end + 15 days" formula. If detection finds nothing (small mover
-  // or filing not yet visible in the chart), we fall back to the explicit
-  // filing_date the client supplied.
-  if (period) {
+  // PATCH 0205/0206 — Tier 3 fallback only.
+  // If Tier 1 (kv-calendar) already gave us an authoritative filing_date,
+  // skip the price-action detector — calendar wins. Otherwise, if period is
+  // provided and we have no exact date, scan the chart for the overnight-gap
+  // signature characteristic of a real filing event.
+  if (period && !knownFromCalendar) {
     const detected = detectFilingDateFromYahoo(yahoo.timestamps, yahoo.opens, yahoo.closes, period);
     if (detected) {
       filing_date = detected.isoDate;
@@ -283,9 +346,26 @@ export async function POST(req: Request) {
     Array.isArray(body?.items) ? body.items.slice(0, 200) : [];
   if (items.length === 0) return NextResponse.json({ data: {}, count: 0 });
 
+  // PATCH 0206 — Tier 1 resolution.
+  // Build one filing-date index per unique period upfront (parallel). This
+  // amortizes the KV calendar scan across all tickers sharing a period
+  // (typically all tickers in a quarter scan use the same period like
+  // "Mar 2026"). Each index is a {ticker → filing_date} map sourced from
+  // graded:v8:<date> KV entries — i.e., the authoritative NSE+BSE-derived
+  // filings already in your earnings-opportunities pipeline.
+  const uniquePeriods = Array.from(new Set(items.map(i => (i.period || '').trim()).filter(Boolean)));
+  const periodIndexEntries = await Promise.all(
+    uniquePeriods.map(async p => [p, await buildOrFetchFilingIndex(p).catch(() => ({}))] as const)
+  );
+  const indexByPeriod: Record<string, Record<string, string>> = {};
+  for (const [p, idx] of periodIndexEntries) indexByPeriod[p] = idx;
+
   const results = await Promise.all(items.map(async (it) => {
     try {
-      const r = await computeGap(it.ticker, it.filing_date, it.timing, it.period);
+      // Tier 1: authoritative calendar lookup
+      const calendarDate = it.period ? indexByPeriod[it.period]?.[it.ticker] : undefined;
+      const filingDate = calendarDate || it.filing_date;
+      const r = await computeGap(it.ticker, filingDate, it.timing, it.period, !!calendarDate);
       return [it.ticker, r] as const;
     } catch (e: any) {
       return [it.ticker, { ticker: it.ticker, filing_date: it.filing_date, error: e?.message || 'compute failed' } as any] as const;
@@ -293,5 +373,16 @@ export async function POST(req: Request) {
   }));
   const data: Record<string, GapResult> = {};
   for (const [t, r] of results) data[t] = r as GapResult;
-  return NextResponse.json({ data, count: results.length, generated_at: new Date().toISOString() });
+  // Telemetry: how many tickers were resolved by each tier?
+  const sourceCounts = { 'kv-calendar': 0, 'detected': 0, 'explicit': 0 } as Record<FilingDateSource, number>;
+  for (const r of Object.values(data)) {
+    const s = (r as any).filing_date_source as FilingDateSource | undefined;
+    if (s) sourceCounts[s] = (sourceCounts[s] || 0) + 1;
+  }
+  return NextResponse.json({
+    data,
+    count: results.length,
+    source_counts: sourceCounts,
+    generated_at: new Date().toISOString(),
+  });
 }
