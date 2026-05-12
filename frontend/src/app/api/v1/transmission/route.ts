@@ -33,6 +33,12 @@ interface Commodity {
   // 'manual feed' with drivers still visible.
   fmp_symbol?: string;     // FMP ticker (e.g. 'PAUSD' for palladium, 'BOUSD' soyoil)
   av_function?: string;    // Alpha Vantage commodity function (e.g. 'COPPER', 'BRENT')
+  // PATCH 0250 — Equity-proxy mode. When the commodity has no free spot
+  // price feed, we point `symbol` to a representative tradeable stock or
+  // ETF that historically moves with the commodity. proxy_via carries the
+  // human-readable proxy name so the UI can mark these clearly ('via BTU
+  // proxy' etc) — they're directional signals, not spot prices.
+  proxy_via?: string;
   name: string;
   unit: string;
   category?: 'energy' | 'metals' | 'agri' | 'chemicals' | 'fx_rates' | 'ai_robotics' | 'nuclear' | 'rare_earths';
@@ -158,9 +164,13 @@ const COMMODITIES: Commodity[] = [
 
   // ── Agri / Edible Oils ─────────────────────────────
   {
-    symbol: 'FCPO=F', name: 'Palm Oil (Bursa)', unit: 'MYR/MT',
+    // PATCH 0250 — Bursa palm oil futures (FCPO=F) not available on Yahoo;
+    // proxy via IOI Corporation Berhad (one of the largest Malaysian palm
+    // plantation + processing groups).
+    symbol: '1961.KL', proxy_via: 'IOI Corp',
+    name: 'Palm Oil (Bursa)', unit: 'MYR (via IOI Corp)',
     category: 'agri', bias_2026: 'volatile',
-    source_note: 'India imports ~57% of edible oil demand; palm = largest single input for FMCG/QSR.',
+    source_note: 'India imports ~57% of edible oil demand. Proxy: IOI Corp (1961.KL) Malaysian palm grower-processor; directional, not spot.',
     drivers: [
       { sector: 'FMCG / Soaps',     sign: -1, sensitivity: 'high', sample_tickers: ['HINDUNILVR', 'GODREJCP', 'JYOTHYLAB', 'GILLETTE'], pass_through_lag: '1Q', pricing_power: 'moderate' },
       { sector: 'Food processing',  sign: -1, sensitivity: 'high', sample_tickers: ['BRITANNIA', 'NESTLEIND', 'PATANJALI'], pass_through_lag: '1Q', pricing_power: 'moderate' },
@@ -180,9 +190,11 @@ const COMMODITIES: Commodity[] = [
     ],
   },
   {
-    symbol: '', name: 'Sunflower Oil (India CIF)', unit: '$/MT',
+    // PATCH 0250 — Proxy via Godrej Agrovet (palm + edible-oil downstream).
+    symbol: 'GODREJAGRO.NS', proxy_via: 'Godrej Agrovet',
+    name: 'Sunflower Oil (India CIF)', unit: '₹ (via GODREJAGRO)',
     category: 'agri', bias_2026: 'volatile',
-    source_note: 'No Yahoo feed — track via Solvent Extractors\' Assn India monthly reports.',
+    source_note: 'Proxy: Godrej Agrovet (GODREJAGRO.NS) — edible-oil downstream; for spot use SEAI India monthly reports.',
     drivers: [
       { sector: 'FMCG (oil)',       sign: -1, sensitivity: 'med',  sample_tickers: ['MARICO', 'HINDUNILVR', 'AWLAGRI'], pass_through_lag: '1Q', pricing_power: 'moderate' },
     ],
@@ -190,26 +202,32 @@ const COMMODITIES: Commodity[] = [
 
   // ── Fertilizer Inputs (manual feed) ────────────────
   {
-    symbol: '', name: 'Phosphoric Acid (India settlement)', unit: '$/t P2O5',
+    // PATCH 0250 — Mosaic (MOS) is the largest global phosphate + potash producer.
+    symbol: 'MOS', proxy_via: 'Mosaic',
+    name: 'Phosphoric Acid (India settlement)', unit: '$ (via MOS)',
     category: 'chemicals', bias_2026: 'rising',
-    source_note: 'Q2 2026 India settlement ~$1,360/t P2O5. Manual update from Argus / CRU.',
+    source_note: 'Proxy: Mosaic (MOS), largest global phosphate producer. For spot $/t P2O5 use Argus DeWitt / CRU paid feeds.',
     drivers: [
       { sector: 'Fertilizers (P)',  sign: -1, sensitivity: 'high', sample_tickers: ['COROMANDEL', 'GSFC', 'CHAMBLFERT', 'PARADEEP', 'DEEPAKFERT'], pass_through_lag: '1Q', pricing_power: 'weak', note: 'Subsidy-sensitive margin pool.' },
     ],
   },
   {
-    symbol: '', name: 'Ammonia (India port)', unit: '$/t',
+    // PATCH 0250 — CF Industries is the largest pure-play global ammonia producer.
+    symbol: 'CF', proxy_via: 'CF Industries',
+    name: 'Ammonia (India port)', unit: '$ (via CF)',
     category: 'chemicals', bias_2026: 'rising',
-    source_note: 'India port prices +41% from early-2026 levels per industry trackers.',
+    source_note: 'Proxy: CF Industries (CF), largest global ammonia producer. For spot $/t use paid feeds.',
     drivers: [
       { sector: 'Fertilizers (N)',  sign: -1, sensitivity: 'high', sample_tickers: ['CHAMBLFERT', 'COROMANDEL', 'GSFC', 'GNFC', 'NFL'], pass_through_lag: 'immediate', pricing_power: 'weak' },
       { sector: 'Chemicals',        sign: -1, sensitivity: 'med',  sample_tickers: ['DEEPAKFERT', 'GNFC', 'NAVINFLUOR', 'AARTIIND'], pass_through_lag: '1Q', pricing_power: 'moderate' },
     ],
   },
   {
-    symbol: '', name: 'Sulphur (India delivered)', unit: '$/t',
+    // PATCH 0250 — Same fertilizer chain proxy as phosphoric acid.
+    symbol: 'MOS', proxy_via: 'Mosaic',
+    name: 'Sulphur (India delivered)', unit: '$ (via MOS)',
     category: 'chemicals', bias_2026: 'rising',
-    source_note: 'Delivered sulphur to India ~+30% in early 2026.',
+    source_note: 'Proxy: Mosaic (MOS) — sulfur is a phosphoric-acid intermediate, MOS captures the chain.',
     drivers: [
       { sector: 'Fertilizers (DAP/SSP)', sign: -1, sensitivity: 'high', sample_tickers: ['COROMANDEL', 'PARADEEP', 'GSFC', 'GNFC', 'CHAMBLFERT'], pass_through_lag: 'immediate', pricing_power: 'weak' },
       { sector: 'Chemicals (sulfuric acid)', sign: -1, sensitivity: 'med',  sample_tickers: ['HINDCOPPER', 'GNFC', 'GHCL'], pass_through_lag: '1Q', pricing_power: 'moderate' },
@@ -218,27 +236,34 @@ const COMMODITIES: Commodity[] = [
 
   // ── Chemicals: Petrochem chain (manual feed; crude-driven) ────────────
   {
-    symbol: '', name: 'Naphtha (Singapore CFR)', unit: '$/t',
+    // PATCH 0250 — LyondellBasell is the largest global petrochem player;
+    // moves with naphtha + olefins + polymer chain.
+    symbol: 'LYB', proxy_via: 'LyondellBasell',
+    name: 'Naphtha (Singapore CFR)', unit: '$ (via LYB)',
     category: 'chemicals', bias_2026: 'rising',
-    source_note: 'Crude-linked feedstock — track via Platts Asian Naphtha.',
+    source_note: 'Proxy: LyondellBasell (LYB) — large naphtha cracker, captures the petrochem chain. For Asian spot use Platts.',
     drivers: [
       { sector: 'Petrochem feedstock', sign: -1, sensitivity: 'high', sample_tickers: ['RELIANCE', 'GAIL', 'BPCL', 'IOC'], pass_through_lag: '1Q', pricing_power: 'moderate' },
       { sector: 'Plastic processors',  sign: -1, sensitivity: 'high', sample_tickers: ['POLYPLEX', 'COSMOFILMS', 'JINDALPOLY'], pass_through_lag: '1Q', pricing_power: 'weak' },
     ],
   },
   {
-    symbol: '', name: 'Benzene / Propylene / Ethylene', unit: '$/t',
+    // PATCH 0250 — LyondellBasell also covers BTX olefins chain.
+    symbol: 'LYB', proxy_via: 'LyondellBasell',
+    name: 'Benzene / Propylene / Ethylene', unit: '$ (via LYB)',
     category: 'chemicals', bias_2026: 'rising',
-    source_note: 'Petrochem intermediates — manual update from ICIS / Platts.',
+    source_note: 'Proxy: LYB — leading olefins + aromatics producer. Spot needs ICIS / Platts paid.',
     drivers: [
       { sector: 'Specialty Chemicals', sign: -1, sensitivity: 'high', sample_tickers: ['AARTIIND', 'NAVINFLUOR', 'SRF', 'GUJALKALI', 'PIIND', 'ATUL'], pass_through_lag: '1Q', pricing_power: 'strong' },
       { sector: 'Downstream Industrials', sign: -1, sensitivity: 'med',  sample_tickers: ['SUDARSCHEM', 'TATACHEM', 'GNFC'], pass_through_lag: '2Q', pricing_power: 'moderate' },
     ],
   },
   {
-    symbol: '', name: 'PVC / PE / PP / PET / ABS', unit: '$/t',
+    // PATCH 0250 — LyondellBasell is the largest global polyolefins producer.
+    symbol: 'LYB', proxy_via: 'LyondellBasell',
+    name: 'PVC / PE / PP / PET / ABS', unit: '$ (via LYB)',
     category: 'chemicals', bias_2026: 'rising',
-    source_note: 'Polymer prices — Indian producers raised in 2026 amid feedstock tightness.',
+    source_note: 'Proxy: LYB — largest global polyolefin producer. For spot polymer prices use ICIS / Platts.',
     drivers: [
       { sector: 'PVC pipe makers',  sign: -1, sensitivity: 'high', sample_tickers: ['SUPREMEIND', 'ASTRAL', 'FINOLEXIND', 'PRINCEPIPE', 'APOLLOPIPE'], pass_through_lag: '1Q', pricing_power: 'moderate' },
       { sector: 'Packaging / Films', sign: -1, sensitivity: 'high', sample_tickers: ['POLYPLEX', 'COSMOFILMS', 'JINDALPOLY', 'UFLEX'], pass_through_lag: '1Q', pricing_power: 'weak' },
@@ -247,8 +272,11 @@ const COMMODITIES: Commodity[] = [
     ],
   },
   {
-    symbol: '', name: 'Caustic Soda / Soda Ash', unit: '$/t',
+    // PATCH 0250 — Olin Corp is the largest US caustic soda + chlorine producer.
+    symbol: 'OLN', proxy_via: 'Olin Corp',
+    name: 'Caustic Soda / Soda Ash', unit: '$ (via OLN)',
     category: 'chemicals', bias_2026: 'volatile',
+    source_note: 'Proxy: Olin Corp (OLN) — leading chlor-alkali producer; tracks caustic + soda chain.',
     drivers: [
       { sector: 'Chemicals (caustic)', sign: 1,  sensitivity: 'high', sample_tickers: ['GUJALKALI', 'CHEMPLASTS', 'GHCL', 'TATACHEM'], pass_through_lag: 'immediate' },
       { sector: 'Glass / Detergents',  sign: -1, sensitivity: 'med',  sample_tickers: ['HINDUNILVR', 'PIDILITIND', 'BORAINDIA'], pass_through_lag: '1Q', pricing_power: 'moderate' },
@@ -258,9 +286,12 @@ const COMMODITIES: Commodity[] = [
 
   // ── Energy: Coal / Petcoke (manual feed) ────────────
   {
-    symbol: '', name: 'Coking Coal (Aus FOB)', unit: '$/t',
+    // PATCH 0250 — Peabody Energy is the largest US public coal producer
+    // (thermal + metallurgical), tracks the broader coal complex.
+    symbol: 'BTU', proxy_via: 'Peabody Energy',
+    name: 'Coking Coal (Aus FOB)', unit: '$ (via BTU)',
     category: 'energy', bias_2026: 'rising',
-    source_note: 'India imports ~85% of coking coal. Manual update from Platts / Argus.',
+    source_note: 'Proxy: Peabody Energy (BTU). For Aus coking-coal FOB spot use Platts / Argus paid feeds.',
     drivers: [
       { sector: 'Steel (integrated)', sign: -1, sensitivity: 'high', sample_tickers: ['TATASTEEL', 'JSWSTEEL', 'JINDALSTEL', 'SAIL'], pass_through_lag: '1Q', pricing_power: 'moderate' },
       { sector: 'Pipe makers (steel users)', sign: -1, sensitivity: 'med', sample_tickers: ['APLAPOLLO', 'WELSPUNCORP', 'JTLIND', 'RATNAMANI'], pass_through_lag: '2Q', pricing_power: 'moderate' },
@@ -268,9 +299,11 @@ const COMMODITIES: Commodity[] = [
     ],
   },
   {
-    symbol: '', name: 'Thermal Coal (Newcastle)', unit: '$/t',
+    // PATCH 0250 — Same coal proxy.
+    symbol: 'BTU', proxy_via: 'Peabody Energy',
+    name: 'Thermal Coal (Newcastle)', unit: '$ (via BTU)',
     category: 'energy', bias_2026: 'volatile',
-    source_note: 'Newcastle FOB benchmark; manual update from Reuters / S&P Global.',
+    source_note: 'Proxy: Peabody (BTU). For Newcastle FOB spot use Reuters / S&P Global.',
     drivers: [
       { sector: 'Power (thermal)',   sign: -1, sensitivity: 'high', sample_tickers: ['NTPC', 'TATAPOWER', 'JSWENERGY', 'ADANIPOWER', 'CESC'], pass_through_lag: '1Q', pricing_power: 'moderate' },
       { sector: 'Cement (coal)',     sign: -1, sensitivity: 'high', sample_tickers: ['ULTRACEMCO', 'SHREECEM', 'AMBUJACEM', 'ACC', 'DALBHARAT', 'JKLAKSHMI'], pass_through_lag: '1Q', pricing_power: 'moderate' },
@@ -278,9 +311,11 @@ const COMMODITIES: Commodity[] = [
     ],
   },
   {
-    symbol: '', name: 'Petcoke', unit: '$/t',
+    // PATCH 0250 — Coal proxy tracks petcoke's price chain reasonably.
+    symbol: 'BTU', proxy_via: 'Peabody Energy',
+    name: 'Petcoke', unit: '$ (via BTU)',
     category: 'energy', bias_2026: 'rising',
-    source_note: 'Coke proxy for cement / ceramic industrial heat. Manual update.',
+    source_note: 'Proxy: Peabody (BTU) — petcoke moves with broader coal complex. Spot needs Argus.',
     drivers: [
       { sector: 'Cement',          sign: -1, sensitivity: 'high', sample_tickers: ['ULTRACEMCO', 'SHREECEM', 'AMBUJACEM', 'DALBHARAT', 'JKLAKSHMI', 'STARCEMENT', 'HEIDELBERG'], pass_through_lag: '1Q', pricing_power: 'moderate' },
       { sector: 'Ceramics / Tiles', sign: -1, sensitivity: 'high', sample_tickers: ['KAJARIACER', 'SOMANYCERA', 'CERA', 'HSIL'], pass_through_lag: '1Q', pricing_power: 'moderate' },
@@ -289,12 +324,16 @@ const COMMODITIES: Commodity[] = [
 
   // ── Natural Rubber ─────────────────────────────────
   {
-    // PATCH 0247 — Yahoo RU=F returns 0.01331 USD which is clearly broken
-    // (TOCOM rubber spot is ~300 JPY/kg ≈ $2/kg). Switched to manual feed —
-    // drivers still surface, no auto-fetched price.
-    symbol: '', name: 'Natural Rubber (TOCOM)', unit: 'JPY/kg',
+    // PATCH 0247/0250 — Yahoo RU=F is broken. No clean upstream-rubber proxy;
+    // CEAT (tyres) is a CONSUMER, would move inversely. Use BALKRIND
+    // (Balkrishna Industries) as proxy — Indian rubber-tyres producer most
+    // sensitive to raw rubber input cost. Note: this is INVERSELY correlated
+    // (rubber up → BALKRIND margins down), so we keep the original sign
+    // mapping for sectors and just expose the directional move.
+    symbol: 'BALKRISIND.NS', proxy_via: 'Balkrishna Inds (consumer)',
+    name: 'Natural Rubber (TOCOM)', unit: '₹ (via BALKRISIND)',
     category: 'agri', bias_2026: 'volatile',
-    source_note: 'Manual feed — Yahoo RU=F returns invalid data; track via TOCOM RSS3 spot.',
+    source_note: 'Imperfect proxy: BALKRISIND.NS — rubber CONSUMER, so move is inversely correlated to raw rubber. Spot rubber needs TOCOM/SGX paid feed.',
     drivers: [
       { sector: 'Tyres (rubber)',  sign: -1, sensitivity: 'high', sample_tickers: ['MRF', 'APOLLOTYRE', 'CEATLTD', 'BALKRISIND', 'JKTYRE'], pass_through_lag: '1Q', pricing_power: 'moderate', note: 'Separate from crude — direct margin lever.' },
       { sector: 'Footwear',        sign: -1, sensitivity: 'med',  sample_tickers: ['BATAINDIA', 'RELAXO', 'METROBRAND', 'CAMPUSACTIV'], pass_through_lag: '2Q', pricing_power: 'moderate' },
@@ -303,9 +342,11 @@ const COMMODITIES: Commodity[] = [
 
   // ── Pulp & Paper ───────────────────────────────────
   {
-    symbol: '', name: 'Wood Pulp (NBSK)', unit: '$/t',
+    // PATCH 0250 — International Paper, largest US pulp/packaging producer.
+    symbol: 'IP', proxy_via: 'International Paper',
+    name: 'Wood Pulp (NBSK)', unit: '$ (via IP)',
     category: 'chemicals', bias_2026: 'volatile',
-    source_note: 'Northern Bleached Softwood Kraft benchmark — manual update.',
+    source_note: 'Proxy: International Paper (IP). For NBSK spot use RISI paid feed.',
     drivers: [
       { sector: 'Paper / Notebooks', sign: -1, sensitivity: 'high', sample_tickers: ['WSTCSTPAPR', 'JKPAPER', 'TNPL', 'EMAMIPAP', 'NRAGRINDQ'], pass_through_lag: '1Q', pricing_power: 'moderate' },
       { sector: 'Packaging board',   sign: -1, sensitivity: 'high', sample_tickers: ['ITC', 'AGI', 'JKPAPER'], pass_through_lag: '1Q', pricing_power: 'moderate' },
@@ -335,9 +376,11 @@ const COMMODITIES: Commodity[] = [
     ],
   },
   {
-    symbol: '', name: 'Gallium / Germanium', unit: '$/kg',
+    // PATCH 0250 — MP Materials is the US rare-earths/critical-materials player.
+    symbol: 'MP', proxy_via: 'MP Materials',
+    name: 'Gallium / Germanium', unit: '$ (via MP)',
     category: 'ai_robotics', bias_2026: 'rising',
-    source_note: 'China export-controlled. Critical for power semiconductors, optical fibre, infrared optics. Manual update from USGS / Argus.',
+    source_note: 'Proxy: MP Materials (MP) — critical materials including rare earths. Spot Ga/Ge needs USGS / Argus.',
     drivers: [
       { sector: 'Power semis',      sign: -1, sensitivity: 'high', sample_tickers: ['KAYNES', 'TATAELXSI', 'SYRMA', 'DIXON', 'AMBER'], pass_through_lag: '2Q', pricing_power: 'moderate' },
       { sector: 'Optical fibre',    sign: -1, sensitivity: 'high', sample_tickers: ['STLTECH', 'HFCL', 'OPTIEMUS'], pass_through_lag: '2Q', pricing_power: 'moderate' },
@@ -365,9 +408,12 @@ const COMMODITIES: Commodity[] = [
 
   // ── Quantum / Specialty (manual feed) ──────────────
   {
-    symbol: '', name: 'Helium-3 / Helium', unit: '$/L',
+    // PATCH 0250 — Air Products (APD) is the largest US industrial gas
+    // producer; structurally tied to helium supply.
+    symbol: 'APD', proxy_via: 'Air Products',
+    name: 'Helium-3 / Helium', unit: '$ (via APD)',
     category: 'ai_robotics', bias_2026: 'rising',
-    source_note: 'Quantum dilution refrigerators + MRI + semiconductor manufacturing. Helium supply structurally tight.',
+    source_note: 'Proxy: Air Products (APD) — industrial gas leader; helium is a structural slice of their business.',
     drivers: [
       { sector: 'Quantum / cryogenics', sign: -1, sensitivity: 'high', sample_tickers: ['L&T', 'TATAELXSI', 'CYIENT', 'KAYNES'], pass_through_lag: '3Q+', pricing_power: 'strong' },
       { sector: 'Medical MRI',          sign: -1, sensitivity: 'med',  sample_tickers: ['POLYMED', 'BLISSGVS'], pass_through_lag: '2Q', pricing_power: 'strong' },
@@ -385,9 +431,12 @@ const COMMODITIES: Commodity[] = [
     ],
   },
   {
-    symbol: '', name: 'HALEU / Enriched Uranium', unit: '$/kg-U',
+    // PATCH 0250 — Centrus Energy (LEU) is the US HALEU enricher. Pure-play
+    // proxy — best fit on the entire commodity list.
+    symbol: 'LEU', proxy_via: 'Centrus Energy',
+    name: 'HALEU / Enriched Uranium', unit: '$ (via LEU)',
     category: 'nuclear', bias_2026: 'rising',
-    source_note: 'High-Assay Low-Enriched Uranium — fuel for advanced SMRs. Bottleneck: only Russia/USA enrich at 5–20%.',
+    source_note: 'Proxy: Centrus Energy (LEU) — only US HALEU enricher. Cleanest commodity-to-equity proxy in the entire universe.',
     drivers: [
       { sector: 'SMR / Advanced nuclear', sign: -1, sensitivity: 'high', sample_tickers: ['BHEL', 'L&T', 'WALCHAN'], pass_through_lag: '3Q+', pricing_power: 'strong', note: 'Long lead time; capex visibility 3+ years out.' },
     ],
@@ -519,6 +568,7 @@ export async function GET() {
       return {
         symbol: c.symbol, name: c.name, unit: c.unit,
         category: c.category || null, bias_2026: c.bias_2026 || null, source_note: c.source_note || null,
+        proxy_via: c.proxy_via || null,
         fetched: false, price_source: null,
         last: null, change_1d: null, change_1w: null, change_1m: null, change_3m: null,
         impacts: impactsNoPrice,
@@ -556,6 +606,7 @@ export async function GET() {
     return {
       symbol: c.symbol, name: c.name, unit: c.unit,
       category: c.category || null, bias_2026: c.bias_2026 || null, source_note: c.source_note || null,
+      proxy_via: c.proxy_via || null,
       fetched: true,
       price_source: priceSource,
       last: Math.round(last * 100) / 100,

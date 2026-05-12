@@ -39,6 +39,7 @@ interface CommodityRow {
   category?: Category | null;
   bias_2026?: 'rising' | 'falling' | 'volatile' | 'stable' | null;
   source_note?: string | null;
+  proxy_via?: string | null;     // PATCH 0250 — equity-proxy mode
   fetched: boolean;
   price_source?: 'yahoo' | 'fmp' | 'alphavantage' | null;
   last: number | null;
@@ -618,9 +619,21 @@ export default function TransmissionPage() {
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                     {cat && <span title={cat.label} style={{ fontSize: 13 }}>{cat.glyph}</span>}
                     <span style={{ fontSize: 13, fontWeight: 800 }}>{c.name}</span>
+                    {/* PATCH 0250 — Equity-proxy badge. Cleanly tells user the
+                        % move is from a stock proxy, not the spot commodity. */}
+                    {c.proxy_via && (
+                      <span
+                        title={`Equity proxy — uses ${c.proxy_via} stock to give directional signal. No free spot-price feed available for this commodity.`}
+                        style={{
+                          fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
+                          backgroundColor: '#F59E0B15', color: '#F59E0B',
+                          border: '1px solid #F59E0B40', letterSpacing: '0.3px',
+                        }}
+                      >via {c.proxy_via}</span>
+                    )}
                     {/* PATCH 0248 — Price source provenance: y=Yahoo, f=FMP, a=AV */}
                     {c.price_source && (
                       <span
