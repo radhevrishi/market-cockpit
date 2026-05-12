@@ -351,16 +351,41 @@ export default function MoversPage() {
       onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}>
       <td style={{ padding: '10px 12px', color: TEXT3, fontSize: '12px', width: '36px' }}>{rank}</td>
       <td style={{ padding: '10px 8px' }}>
-        <div style={{ fontWeight: '600', fontSize: '13px', color: ACCENT }}>{stock.ticker}<EarningsBadge ticker={stock.ticker} /></div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontWeight: '600', fontSize: '13px', color: ACCENT }}>{stock.ticker}</span>
+          <EarningsBadge ticker={stock.ticker} />
+          {/* PATCH 0291 — 'Why moving?' shortcut. Opens /news with this
+              ticker pre-filtered so the analyst can see what's driving the move. */}
+          <a
+            href={`/news?search=${encodeURIComponent(stock.ticker)}`}
+            onClick={(e) => e.stopPropagation()}
+            title={`Open news feed filtered to ${stock.ticker}`}
+            style={{
+              fontSize: 9, color: TEXT3, padding: '1px 4px', borderRadius: 3,
+              border: `1px solid ${BORDER}`, textDecoration: 'none', cursor: 'pointer',
+            }}
+          >📰</a>
+        </div>
         <div style={{ fontSize: '10px', color: TEXT3, maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{stock.company}</div>
       </td>
       {!isTablet && <td style={{ padding: '10px 8px', fontSize: '12px', color: TEXT2 }}>{stock.sector}</td>}
       <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-        <span style={{
-          fontSize: '9px', fontWeight: '600', padding: '2px 6px', borderRadius: '3px',
-          backgroundColor: stock.cap === 'Large' ? 'rgba(99,102,241,0.15)' : stock.cap === 'Mid' ? 'rgba(59,130,246,0.15)' : 'rgba(234,179,8,0.15)',
-          color: stock.cap === 'Large' ? '#818CF8' : stock.cap === 'Mid' ? '#60A5FA' : '#FBBF24',
-        }}>{stock.cap === 'Large' ? 'LRG' : stock.cap === 'Mid' ? 'MID' : 'SML'}</span>
+        {/* PATCH 0291 — Cap chip now also shows the ₹Cr market cap inline so
+            users get an actual size signal, not just S/M/L. */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+          <span style={{
+            fontSize: '9px', fontWeight: '600', padding: '2px 6px', borderRadius: '3px',
+            backgroundColor: stock.cap === 'Large' ? 'rgba(99,102,241,0.15)' : stock.cap === 'Mid' ? 'rgba(59,130,246,0.15)' : 'rgba(234,179,8,0.15)',
+            color: stock.cap === 'Large' ? '#818CF8' : stock.cap === 'Mid' ? '#60A5FA' : '#FBBF24',
+          }}>{stock.cap === 'Large' ? 'LRG' : stock.cap === 'Mid' ? 'MID' : 'SML'}</span>
+          {stock.marketCap > 0 && (
+            <span style={{ fontSize: 9, color: TEXT3, fontVariantNumeric: 'tabular-nums' }}>
+              {stock.marketCap >= 100000 ? `₹${(stock.marketCap / 100000).toFixed(1)}L Cr` :
+               stock.marketCap >= 1000   ? `₹${(stock.marketCap / 1000).toFixed(1)}k Cr` :
+                                            `₹${Math.round(stock.marketCap)}Cr`}
+            </span>
+          )}
+        </div>
       </td>
       <td style={{ padding: '10px 8px', textAlign: 'right', fontSize: '13px', color: TEXT1, fontWeight: '500', fontVariantNumeric: 'tabular-nums' }}>
         ₹{stock.price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
