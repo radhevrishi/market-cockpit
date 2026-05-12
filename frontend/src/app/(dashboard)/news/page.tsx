@@ -1905,26 +1905,35 @@ export default function NewsFeedPage() {
   const { data: bnDashboard, isLoading: bnLoading, refetch: refetchBn, dataUpdatedAt: bnUpdatedAt, isFetching: bnFetching } = useBottleneckDashboard(articleType === 'BOTTLENECK', region);
   const showBottleneckDashboard = articleType === 'BOTTLENECK';
 
-  // Trigger backend to fetch fresh articles from RSS feeds, then refresh UI
+  // PATCH 0223 — Replace the previous 3-shot polling (refetch at 0s + 8s + 20s)
+  // with a deterministic single-refetch contract:
+  //   1. Trigger backend ingestion; wait up to 12s for the POST to return.
+  //   2. Once the POST returns, fire ONE coordinated refetch of all panels.
+  //   3. Show 'still ingesting' overlay for a max of 30s OR until the new
+  //      data arrives (whichever comes first). No silent extra refetches.
+  // Cleaner contract than 'guess and re-poll'. The backend ideally returns a
+  // job_id and the client polls a /jobs/:id endpoint for completion — that
+  // change is on the backend backlog. Until then this is at least
+  // observable and bounded.
   const handleRefresh = async () => {
     setIsRefreshing(true);
+    const refetchAll = () => Promise.all([
+      refetch(),
+      refetchInPlay(),
+      ...(showBottleneckDashboard ? [refetchBn()] : []),
+    ]);
     try {
-      // Backend kicks off ingestion in background and returns immediately
-      await api.post('/news/refresh', {}, { timeout: 15_000 });
+      // Wait for backend to confirm ingestion was kicked off
+      await api.post('/news/refresh', {}, { timeout: 12_000 });
     } catch (e) {
       console.warn('News refresh trigger failed:', e);
     }
-    // Poll for new data: immediate refetch + delayed refetch after ingestion completes
-    await Promise.all([refetch(), refetchInPlay(), ...(showBottleneckDashboard ? [refetchBn()] : [])]);
-    // Second refetch after 8s to catch articles ingested in the background
-    setTimeout(async () => {
-      await Promise.all([refetch(), refetchInPlay(), ...(showBottleneckDashboard ? [refetchBn()] : [])]);
-    }, 8_000);
-    // Third refetch after 20s for slower RSS sources
-    setTimeout(async () => {
-      await Promise.all([refetch(), refetchInPlay(), ...(showBottleneckDashboard ? [refetchBn()] : [])]);
+    // One coordinated refetch — no second/third surprise polls
+    try {
+      await refetchAll();
+    } finally {
       setIsRefreshing(false);
-    }, 20_000);
+    }
   };
 
   return (
