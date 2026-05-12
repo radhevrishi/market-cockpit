@@ -2011,6 +2011,30 @@ export default function NewsFeedPage() {
     sortBy,
     lifecycleFilter,  // PATCH 0213
   ]);
+
+  // PATCH 0226 — Count how many STALE items are being hidden by the
+  // lifecycle filter. Surface them as a collapsed "Recent" strip beneath
+  // the main feed so they're never silently deleted from the user's view.
+  const staleHiddenCount = useMemo(() => {
+    if (lifecycleFilter !== 'LIVE_WARM') return 0;
+    if (!allArticles) return 0;
+    const now = Date.now();
+    const LIVE_WARM_MS = 48 * 3600_000;
+    const STALE_END_MS = 7 * 24 * 3600_000;
+    const base = filterArticles(allArticles, region, earningsSeasonActive ? 'EARNINGS' : articleType, signalFilter, sourceName);
+    let count = 0;
+    for (const a of base) {
+      if (!isMarketRelevant(a)) continue;
+      const pubTime = new Date(a.published_at || a.ingested_at || 0).getTime();
+      const age = now - pubTime;
+      const isPersistentTheme = (a as any).freshness_layer === 'PERSISTENT_THEME'
+        || (a as any).is_synthetic
+        || (a as any).feed_layer === 'STRUCTURAL_ALPHA';
+      // STALE bucket: 48h to 7d, not promoted to persistent
+      if (age > LIVE_WARM_MS && age <= STALE_END_MS && !isPersistentTheme) count++;
+    }
+    return count;
+  }, [allArticles, lifecycleFilter, region, articleType, signalFilter, sourceName, earningsSeasonActive]);
   // PATCH 0210 — Dedupe IN PLAY TODAY by ticker.
   // Root cause of the DEEDEV×2, INOXINDIA×2, CEINSYS×2 rendering: rawInPlay
   // returns one row per (article × ticker mention). Multiple articles
@@ -3455,6 +3479,29 @@ export default function NewsFeedPage() {
               Showing {articles.length} articles
             </div>
           </>
+        )}
+
+        {/* PATCH 0226 — Demoted stale strip. When lifecycleFilter='LIVE_WARM'
+            (default) AND the dataset contains stale items the user would have
+            seen with 'ALL', surface them as a compact strip beneath the feed
+            so they're never invisible — just visually demoted. */}
+        {staleHiddenCount > 0 && lifecycleFilter === 'LIVE_WARM' && !isLoading && (
+          <button
+            onClick={() => setLifecycleFilter('STALE')}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              width: '100%', marginTop: 8, padding: '10px 14px',
+              backgroundColor: '#F59E0B0A',
+              border: '1px solid #F59E0B30',
+              borderRadius: 8, cursor: 'pointer',
+              color: '#F59E0B', fontSize: 12, fontWeight: 600,
+              textAlign: 'left', fontFamily: 'inherit',
+            }}
+            title="Switch the lifecycle filter to STALE to view these"
+          >
+            <span>◐ Recent (48h–7d) — {staleHiddenCount} stale {staleHiddenCount === 1 ? 'item' : 'items'} hidden by current filter</span>
+            <span style={{ fontSize: 11, opacity: 0.8 }}>View stale →</span>
+          </button>
         )}
       </div>
 
