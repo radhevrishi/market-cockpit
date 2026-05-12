@@ -345,7 +345,27 @@ export default function NewsCard({ article, onTickerClick }: Props) {
                 </>
               );
             })()}
-            <span className={`text-[10px] font-medium px-2 py-0.5 rounded border ${badge.className}`}>
+            {/* PATCH 0238 — Severity 'why' tooltip. Surfaces the existing
+                article fields that drove the badge so users can audit
+                without leaving the card. Real classifier feature trace
+                lands once classifier_features JSONB is stored upstream. */}
+            <span
+              className={`text-[10px] font-medium px-2 py-0.5 rounded border cursor-help ${badge.className}`}
+              title={(() => {
+                const lines: string[] = [`Severity tier: ${badge.label}`];
+                lines.push('  Inputs (existing payload fields):');
+                if (article.importance_score != null) lines.push(`    importance_score: ${article.importance_score}/5`);
+                if ((article as any).investment_tier != null) lines.push(`    investment_tier:  ${(article as any).investment_tier}`);
+                if ((article as any).bottleneck_level) lines.push(`    bottleneck_level: ${(article as any).bottleneck_level}`);
+                if ((article as any).also_reported_by_count != null) lines.push(`    corroboration:    ${(article as any).also_reported_by_count} other sources`);
+                if ((article as any).structural_relevance?.score != null) lines.push(`    structural_score: ${(article as any).structural_relevance.score}/100`);
+                if ((article as any).signal_confidence?.confidence_pct != null) lines.push(`    confidence:       ${(article as any).signal_confidence.confidence_pct}%`);
+                if ((article as any).is_synthetic) lines.push('    is_synthetic:     true');
+                lines.push('');
+                lines.push('  Full classifier feature trace pending the SignalEvidence schema.');
+                return lines.join('\n');
+              })()}
+            >
               {badge.label}
             </span>
             {/* Sentiment magnitude pill — replaces undifferentiated HIGH/MED/LOW.
