@@ -37,6 +37,9 @@ function useAlertRules() {
   return useQuery<AlertRule[]>({
     queryKey: ['alerts', 'rules'],
     queryFn: async () => { const { data } = await api.get('/alerts/rules'); return data; },
+    staleTime: 30 * 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 }
 
@@ -45,6 +48,9 @@ function useAlertInstances() {
     queryKey: ['alerts', 'instances'],
     queryFn: async () => { const { data } = await api.get('/alerts/instances?limit=30'); return data; },
     refetchInterval: 30_000,
+    staleTime: 2 * 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 }
 

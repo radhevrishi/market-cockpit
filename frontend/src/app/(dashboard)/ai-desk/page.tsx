@@ -63,6 +63,9 @@ function useSavedBriefs() {
       return Array.isArray(data) ? data : (data?.briefs ?? []);
     },
     retry: 1,
+    staleTime: 15 * 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 }
 
