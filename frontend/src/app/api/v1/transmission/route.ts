@@ -26,12 +26,25 @@ const YH = 'https://query1.finance.yahoo.com/v8/finance/chart';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 interface Commodity {
-  symbol: string;
+  symbol: string;       // Yahoo ticker; empty string = no live feed (manual update / static)
   name: string;
   unit: string;
+  // PATCH 0240 — Optional metadata layers added for premium decision workflow:
+  category?: 'energy' | 'metals' | 'agri' | 'chemicals' | 'fx_rates' | 'ai_robotics' | 'nuclear' | 'rare_earths';
+  bias_2026?: 'rising' | 'falling' | 'volatile' | 'stable';  // narrative tag from market notes
+  source_note?: string;  // where the manual price update / sentiment would be sourced from
   // Sector mappings: positive = sector benefits from this commodity rising,
   // negative = sector hurt. Magnitude = approximate elasticity of EBIT margin.
-  drivers: { sector: string; sign: 1 | -1; sensitivity: 'high' | 'med' | 'low'; sample_tickers: string[] }[];
+  drivers: {
+    sector: string;
+    sign: 1 | -1;
+    sensitivity: 'high' | 'med' | 'low';
+    sample_tickers: string[];
+    // PATCH 0240 — Additional metadata for institutional users
+    pass_through_lag?: 'immediate' | '1Q' | '2Q' | '3Q+';
+    pricing_power?: 'strong' | 'moderate' | 'weak';
+    note?: string;
+  }[];
 }
 
 // Curated exposure matrix — derived from sector-cost-of-goods structure and
@@ -40,6 +53,7 @@ interface Commodity {
 const COMMODITIES: Commodity[] = [
   {
     symbol: 'CL=F', name: 'Crude Oil (WTI)', unit: '$/bbl',
+    category: 'energy', bias_2026: 'rising',
     drivers: [
       { sector: 'Aviation',      sign: -1, sensitivity: 'high', sample_tickers: ['INDIGO', 'SPICEJET'] },
       { sector: 'Paints',        sign: -1, sensitivity: 'high', sample_tickers: ['ASIANPAINT', 'BERGEPAINT', 'KANSAINER'] },
@@ -52,6 +66,7 @@ const COMMODITIES: Commodity[] = [
   },
   {
     symbol: 'HG=F', name: 'Copper', unit: '$/lb',
+    category: 'metals', bias_2026: 'rising',
     drivers: [
       { sector: 'Copper miners',  sign: 1,  sensitivity: 'high', sample_tickers: ['HINDCOPPER', 'VEDL'] },
       { sector: 'Wires & Cables', sign: -1, sensitivity: 'high', sample_tickers: ['POLYCAB', 'KEI', 'HAVELLS', 'FINCABLES', 'RRKABEL'] },
@@ -61,6 +76,7 @@ const COMMODITIES: Commodity[] = [
   },
   {
     symbol: 'ALI=F', name: 'Aluminum', unit: '$/lb',
+    category: 'metals', bias_2026: 'volatile',
     drivers: [
       { sector: 'Aluminum miners', sign: 1,  sensitivity: 'high', sample_tickers: ['HINDALCO', 'NATIONALUM', 'VEDL'] },
       { sector: 'Auto (lightweighting)', sign: -1, sensitivity: 'med', sample_tickers: ['MARUTI', 'TATAMOTORS', 'M&M'] },
@@ -69,6 +85,7 @@ const COMMODITIES: Commodity[] = [
   },
   {
     symbol: 'GC=F', name: 'Gold', unit: '$/oz',
+    category: 'metals', bias_2026: 'rising',
     drivers: [
       { sector: 'Jewellery',     sign: -1, sensitivity: 'high', sample_tickers: ['TITAN', 'KALYANKJIL', 'SENCO', 'PCJEWELLER'] },
       { sector: 'Bullion / Refining', sign: 1, sensitivity: 'high', sample_tickers: ['MMTC', 'RAJESHEXPO'] },
@@ -77,6 +94,7 @@ const COMMODITIES: Commodity[] = [
   },
   {
     symbol: 'SI=F', name: 'Silver', unit: '$/oz',
+    category: 'metals', bias_2026: 'rising',
     drivers: [
       { sector: 'Silver miners',  sign: 1,  sensitivity: 'high', sample_tickers: ['HINDZINC', 'VEDL'] },
       { sector: 'Solar panel (silver paste)', sign: -1, sensitivity: 'med', sample_tickers: ['WAAREEENER', 'PREMIERENE', 'TATAPOWER'] },
@@ -84,6 +102,7 @@ const COMMODITIES: Commodity[] = [
   },
   {
     symbol: 'INR=X', name: 'USD/INR', unit: '₹/$',
+    category: 'fx_rates', bias_2026: 'volatile',
     drivers: [
       { sector: 'IT Services (USD revenue)', sign: 1,  sensitivity: 'high', sample_tickers: ['TCS', 'INFY', 'HCLTECH', 'WIPRO', 'LTIM', 'PERSISTENT', 'COFORGE', 'MPHASIS'] },
       { sector: 'Pharma (US generics)',      sign: 1,  sensitivity: 'high', sample_tickers: ['SUNPHARMA', 'DRREDDY', 'CIPLA', 'LUPIN', 'AUROPHARMA'] },
@@ -93,6 +112,7 @@ const COMMODITIES: Commodity[] = [
   },
   {
     symbol: 'NG=F', name: 'Natural Gas', unit: '$/MMBtu',
+    category: 'energy', bias_2026: 'volatile',
     drivers: [
       { sector: 'City gas',        sign: -1, sensitivity: 'high', sample_tickers: ['IGL', 'MGL', 'GUJGASLTD', 'ADANIGAS', 'IRMENERGY'] },
       { sector: 'Fertilizers',     sign: -1, sensitivity: 'high', sample_tickers: ['CHAMBLFERT', 'COROMANDEL', 'GSFC', 'GNFC'] },
@@ -101,6 +121,7 @@ const COMMODITIES: Commodity[] = [
   },
   {
     symbol: 'ZN=F', name: 'Zinc', unit: '$/lb',
+    category: 'metals', bias_2026: 'volatile',
     drivers: [
       { sector: 'Zinc miners',    sign: 1,  sensitivity: 'high', sample_tickers: ['HINDZINC', 'VEDL'] },
       { sector: 'Galvanizing',    sign: -1, sensitivity: 'med',  sample_tickers: ['APLAPOLLO', 'TATASTEEL'] },
@@ -108,10 +129,247 @@ const COMMODITIES: Commodity[] = [
   },
   {
     symbol: '^TNX', name: '10Y US Yield', unit: '%',
+    category: 'fx_rates',
     drivers: [
-      { sector: 'Banks (NIM)',      sign: 1,  sensitivity: 'med', sample_tickers: ['HDFCBANK', 'ICICIBANK', 'AXISBANK', 'KOTAKBANK', 'SBIN'] },
-      { sector: 'Realty (rates)',   sign: -1, sensitivity: 'high', sample_tickers: ['DLF', 'OBEROIRLTY', 'GODREJPROP', 'LODHA'] },
-      { sector: 'NBFC (cost-funds)', sign: -1, sensitivity: 'high', sample_tickers: ['BAJFINANCE', 'CHOLAFIN', 'AAVAS', 'CANFINHOME', 'PNBHOUSING'] },
+      { sector: 'Banks (NIM)',      sign: 1,  sensitivity: 'med', sample_tickers: ['HDFCBANK', 'ICICIBANK', 'AXISBANK', 'KOTAKBANK', 'SBIN'], pass_through_lag: '1Q', pricing_power: 'strong' },
+      { sector: 'Realty (rates)',   sign: -1, sensitivity: 'high', sample_tickers: ['DLF', 'OBEROIRLTY', 'GODREJPROP', 'LODHA'], pass_through_lag: '2Q', pricing_power: 'moderate' },
+      { sector: 'NBFC (cost-funds)', sign: -1, sensitivity: 'high', sample_tickers: ['BAJFINANCE', 'CHOLAFIN', 'AAVAS', 'CANFINHOME', 'PNBHOUSING'], pass_through_lag: '1Q', pricing_power: 'moderate' },
+    ],
+  },
+
+  // ── PATCH 0240: New commodities ─────────────────────────────────────────
+  // Indian-relevant raw materials called out by the institutional review:
+  // edible oils (palm/soybean/sun), fertilizer inputs (phos acid, ammonia,
+  // sulphur), chemical chain (naphtha → BTX → polymers), energy (coking
+  // coal, thermal coal, petcoke), natural rubber, paper pulp, caustic / soda.
+  // Plus AI/Robotics/Quantum/Nuclear strategic materials.
+  // ───────────────────────────────────────────────────────────────────────
+
+  // ── Agri / Edible Oils ─────────────────────────────
+  {
+    symbol: 'FCPO=F', name: 'Palm Oil (Bursa)', unit: 'MYR/MT',
+    category: 'agri', bias_2026: 'volatile',
+    source_note: 'India imports ~57% of edible oil demand; palm = largest single input for FMCG/QSR.',
+    drivers: [
+      { sector: 'FMCG / Soaps',     sign: -1, sensitivity: 'high', sample_tickers: ['HINDUNILVR', 'GODREJCP', 'JYOTHYLAB', 'GILLETTE'], pass_through_lag: '1Q', pricing_power: 'moderate' },
+      { sector: 'Food processing',  sign: -1, sensitivity: 'high', sample_tickers: ['BRITANNIA', 'NESTLEIND', 'PATANJALI'], pass_through_lag: '1Q', pricing_power: 'moderate' },
+      { sector: 'QSR / Bakeries',   sign: -1, sensitivity: 'high', sample_tickers: ['JUBLFOOD', 'WESTLIFE', 'DEVYANI'], pass_through_lag: '2Q', pricing_power: 'weak' },
+      { sector: 'Palm growers',     sign: 1,  sensitivity: 'high', sample_tickers: ['GODREJAGRO', 'RUCHIRA'], pass_through_lag: 'immediate' },
+    ],
+  },
+  {
+    symbol: 'ZL=F', name: 'Soybean Oil', unit: '$/lb',
+    category: 'agri', bias_2026: 'volatile',
+    drivers: [
+      { sector: 'FMCG (oil)',       sign: -1, sensitivity: 'high', sample_tickers: ['HINDUNILVR', 'MARICO', 'AWLAGRI'], pass_through_lag: '1Q', pricing_power: 'moderate' },
+      { sector: 'Food / Restaurants', sign: -1, sensitivity: 'med', sample_tickers: ['JUBLFOOD', 'BRITANNIA', 'NESTLEIND'], pass_through_lag: '2Q', pricing_power: 'weak' },
+    ],
+  },
+  {
+    symbol: '', name: 'Sunflower Oil (India CIF)', unit: '$/MT',
+    category: 'agri', bias_2026: 'volatile',
+    source_note: 'No Yahoo feed — track via Solvent Extractors\' Assn India monthly reports.',
+    drivers: [
+      { sector: 'FMCG (oil)',       sign: -1, sensitivity: 'med',  sample_tickers: ['MARICO', 'HINDUNILVR', 'AWLAGRI'], pass_through_lag: '1Q', pricing_power: 'moderate' },
+    ],
+  },
+
+  // ── Fertilizer Inputs (manual feed) ────────────────
+  {
+    symbol: '', name: 'Phosphoric Acid (India settlement)', unit: '$/t P2O5',
+    category: 'chemicals', bias_2026: 'rising',
+    source_note: 'Q2 2026 India settlement ~$1,360/t P2O5. Manual update from Argus / CRU.',
+    drivers: [
+      { sector: 'Fertilizers (P)',  sign: -1, sensitivity: 'high', sample_tickers: ['COROMANDEL', 'GSFC', 'CHAMBLFERT', 'PARADEEP', 'DEEPAKFERT'], pass_through_lag: '1Q', pricing_power: 'weak', note: 'Subsidy-sensitive margin pool.' },
+    ],
+  },
+  {
+    symbol: '', name: 'Ammonia (India port)', unit: '$/t',
+    category: 'chemicals', bias_2026: 'rising',
+    source_note: 'India port prices +41% from early-2026 levels per industry trackers.',
+    drivers: [
+      { sector: 'Fertilizers (N)',  sign: -1, sensitivity: 'high', sample_tickers: ['CHAMBLFERT', 'COROMANDEL', 'GSFC', 'GNFC', 'NFL'], pass_through_lag: 'immediate', pricing_power: 'weak' },
+      { sector: 'Chemicals',        sign: -1, sensitivity: 'med',  sample_tickers: ['DEEPAKFERT', 'GNFC', 'NAVINFLUOR', 'AARTIIND'], pass_through_lag: '1Q', pricing_power: 'moderate' },
+    ],
+  },
+  {
+    symbol: '', name: 'Sulphur (India delivered)', unit: '$/t',
+    category: 'chemicals', bias_2026: 'rising',
+    source_note: 'Delivered sulphur to India ~+30% in early 2026.',
+    drivers: [
+      { sector: 'Fertilizers (DAP/SSP)', sign: -1, sensitivity: 'high', sample_tickers: ['COROMANDEL', 'PARADEEP', 'GSFC', 'GNFC', 'CHAMBLFERT'], pass_through_lag: 'immediate', pricing_power: 'weak' },
+      { sector: 'Chemicals (sulfuric acid)', sign: -1, sensitivity: 'med',  sample_tickers: ['HINDCOPPER', 'GNFC', 'GHCL'], pass_through_lag: '1Q', pricing_power: 'moderate' },
+    ],
+  },
+
+  // ── Chemicals: Petrochem chain (manual feed; crude-driven) ────────────
+  {
+    symbol: '', name: 'Naphtha (Singapore CFR)', unit: '$/t',
+    category: 'chemicals', bias_2026: 'rising',
+    source_note: 'Crude-linked feedstock — track via Platts Asian Naphtha.',
+    drivers: [
+      { sector: 'Petrochem feedstock', sign: -1, sensitivity: 'high', sample_tickers: ['RELIANCE', 'GAIL', 'BPCL', 'IOC'], pass_through_lag: '1Q', pricing_power: 'moderate' },
+      { sector: 'Plastic processors',  sign: -1, sensitivity: 'high', sample_tickers: ['POLYPLEX', 'COSMOFILMS', 'JINDALPOLY'], pass_through_lag: '1Q', pricing_power: 'weak' },
+    ],
+  },
+  {
+    symbol: '', name: 'Benzene / Propylene / Ethylene', unit: '$/t',
+    category: 'chemicals', bias_2026: 'rising',
+    source_note: 'Petrochem intermediates — manual update from ICIS / Platts.',
+    drivers: [
+      { sector: 'Specialty Chemicals', sign: -1, sensitivity: 'high', sample_tickers: ['AARTIIND', 'NAVINFLUOR', 'SRF', 'GUJALKALI', 'PIIND', 'ATUL'], pass_through_lag: '1Q', pricing_power: 'strong' },
+      { sector: 'Downstream Industrials', sign: -1, sensitivity: 'med',  sample_tickers: ['SUDARSCHEM', 'TATACHEM', 'GNFC'], pass_through_lag: '2Q', pricing_power: 'moderate' },
+    ],
+  },
+  {
+    symbol: '', name: 'PVC / PE / PP / PET / ABS', unit: '$/t',
+    category: 'chemicals', bias_2026: 'rising',
+    source_note: 'Polymer prices — Indian producers raised in 2026 amid feedstock tightness.',
+    drivers: [
+      { sector: 'PVC pipe makers',  sign: -1, sensitivity: 'high', sample_tickers: ['SUPREMEIND', 'ASTRAL', 'FINOLEXIND', 'PRINCEPIPE', 'APOLLOPIPE'], pass_through_lag: '1Q', pricing_power: 'moderate' },
+      { sector: 'Packaging / Films', sign: -1, sensitivity: 'high', sample_tickers: ['POLYPLEX', 'COSMOFILMS', 'JINDALPOLY', 'UFLEX'], pass_through_lag: '1Q', pricing_power: 'weak' },
+      { sector: 'Consumer durables',  sign: -1, sensitivity: 'med',  sample_tickers: ['BAJAJELEC', 'CROMPTON', 'WHIRLPOOL', 'TTKPRESTIG'], pass_through_lag: '2Q', pricing_power: 'moderate' },
+      { sector: 'Polymer producers',  sign: 1,  sensitivity: 'high', sample_tickers: ['RELIANCE', 'GAIL', 'HALDYN'], pass_through_lag: 'immediate' },
+    ],
+  },
+  {
+    symbol: '', name: 'Caustic Soda / Soda Ash', unit: '$/t',
+    category: 'chemicals', bias_2026: 'volatile',
+    drivers: [
+      { sector: 'Chemicals (caustic)', sign: 1,  sensitivity: 'high', sample_tickers: ['GUJALKALI', 'CHEMPLASTS', 'GHCL', 'TATACHEM'], pass_through_lag: 'immediate' },
+      { sector: 'Glass / Detergents',  sign: -1, sensitivity: 'med',  sample_tickers: ['HINDUNILVR', 'PIDILITIND', 'BORAINDIA'], pass_through_lag: '1Q', pricing_power: 'moderate' },
+      { sector: 'Textiles / Alumina',  sign: -1, sensitivity: 'low',  sample_tickers: ['NATIONALUM', 'HINDALCO'], pass_through_lag: '2Q', pricing_power: 'moderate' },
+    ],
+  },
+
+  // ── Energy: Coal / Petcoke (manual feed) ────────────
+  {
+    symbol: '', name: 'Coking Coal (Aus FOB)', unit: '$/t',
+    category: 'energy', bias_2026: 'rising',
+    source_note: 'India imports ~85% of coking coal. Manual update from Platts / Argus.',
+    drivers: [
+      { sector: 'Steel (integrated)', sign: -1, sensitivity: 'high', sample_tickers: ['TATASTEEL', 'JSWSTEEL', 'JINDALSTEL', 'SAIL'], pass_through_lag: '1Q', pricing_power: 'moderate' },
+      { sector: 'Pipe makers (steel users)', sign: -1, sensitivity: 'med', sample_tickers: ['APLAPOLLO', 'WELSPUNCORP', 'JTLIND', 'RATNAMANI'], pass_through_lag: '2Q', pricing_power: 'moderate' },
+      { sector: 'Capital goods (steel-heavy)', sign: -1, sensitivity: 'low', sample_tickers: ['BHEL', 'L&T', 'CUMMINSIND'], pass_through_lag: '2Q', pricing_power: 'strong' },
+    ],
+  },
+  {
+    symbol: '', name: 'Thermal Coal (Newcastle)', unit: '$/t',
+    category: 'energy', bias_2026: 'volatile',
+    source_note: 'Newcastle FOB benchmark; manual update from Reuters / S&P Global.',
+    drivers: [
+      { sector: 'Power (thermal)',   sign: -1, sensitivity: 'high', sample_tickers: ['NTPC', 'TATAPOWER', 'JSWENERGY', 'ADANIPOWER', 'CESC'], pass_through_lag: '1Q', pricing_power: 'moderate' },
+      { sector: 'Cement (coal)',     sign: -1, sensitivity: 'high', sample_tickers: ['ULTRACEMCO', 'SHREECEM', 'AMBUJACEM', 'ACC', 'DALBHARAT', 'JKLAKSHMI'], pass_through_lag: '1Q', pricing_power: 'moderate' },
+      { sector: 'Coal miners',       sign: 1,  sensitivity: 'high', sample_tickers: ['COALINDIA', 'NMDC'], pass_through_lag: 'immediate' },
+    ],
+  },
+  {
+    symbol: '', name: 'Petcoke', unit: '$/t',
+    category: 'energy', bias_2026: 'rising',
+    source_note: 'Coke proxy for cement / ceramic industrial heat. Manual update.',
+    drivers: [
+      { sector: 'Cement',          sign: -1, sensitivity: 'high', sample_tickers: ['ULTRACEMCO', 'SHREECEM', 'AMBUJACEM', 'DALBHARAT', 'JKLAKSHMI', 'STARCEMENT', 'HEIDELBERG'], pass_through_lag: '1Q', pricing_power: 'moderate' },
+      { sector: 'Ceramics / Tiles', sign: -1, sensitivity: 'high', sample_tickers: ['KAJARIACER', 'SOMANYCERA', 'CERA', 'HSIL'], pass_through_lag: '1Q', pricing_power: 'moderate' },
+    ],
+  },
+
+  // ── Natural Rubber ─────────────────────────────────
+  {
+    symbol: 'RU=F', name: 'Natural Rubber (TOCOM)', unit: 'JPY/kg',
+    category: 'agri', bias_2026: 'volatile',
+    drivers: [
+      { sector: 'Tyres (rubber)',  sign: -1, sensitivity: 'high', sample_tickers: ['MRF', 'APOLLOTYRE', 'CEATLTD', 'BALKRISIND', 'JKTYRE'], pass_through_lag: '1Q', pricing_power: 'moderate', note: 'Separate from crude — direct margin lever.' },
+      { sector: 'Footwear',        sign: -1, sensitivity: 'med',  sample_tickers: ['BATAINDIA', 'RELAXO', 'METROBRAND', 'CAMPUSACTIV'], pass_through_lag: '2Q', pricing_power: 'moderate' },
+    ],
+  },
+
+  // ── Pulp & Paper ───────────────────────────────────
+  {
+    symbol: '', name: 'Wood Pulp (NBSK)', unit: '$/t',
+    category: 'chemicals', bias_2026: 'volatile',
+    source_note: 'Northern Bleached Softwood Kraft benchmark — manual update.',
+    drivers: [
+      { sector: 'Paper / Notebooks', sign: -1, sensitivity: 'high', sample_tickers: ['WSTCSTPAPR', 'JKPAPER', 'TNPL', 'EMAMIPAP', 'NRAGRINDQ'], pass_through_lag: '1Q', pricing_power: 'moderate' },
+      { sector: 'Packaging board',   sign: -1, sensitivity: 'high', sample_tickers: ['ITC', 'AGI', 'JKPAPER'], pass_through_lag: '1Q', pricing_power: 'moderate' },
+    ],
+  },
+
+  // ── AI / Robotics: Strategic Materials ─────────────
+  {
+    symbol: 'LIT', name: 'Lithium (Global X ETF proxy)', unit: '$',
+    category: 'ai_robotics', bias_2026: 'volatile',
+    source_note: 'LIT ETF as proxy for lithium-chain prices. EV + grid storage demand.',
+    drivers: [
+      { sector: 'EV battery makers',    sign: -1, sensitivity: 'high', sample_tickers: ['TATAPOWER', 'EXIDEIND', 'AMARAJABAT', 'OLAELEC'], pass_through_lag: '1Q', pricing_power: 'moderate' },
+      { sector: 'Grid storage / Solar', sign: -1, sensitivity: 'med',  sample_tickers: ['WAAREEENER', 'TATAPOWER', 'KPIGREEN', 'ACMESOLAR', 'PREMIERENE'], pass_through_lag: '2Q', pricing_power: 'moderate' },
+      { sector: 'Auto OEMs (EV)',       sign: -1, sensitivity: 'med',  sample_tickers: ['TATAMOTORS', 'M&M', 'BAJAJ-AUTO', 'OLAELEC'], pass_through_lag: '2Q', pricing_power: 'moderate' },
+    ],
+  },
+  {
+    symbol: 'REMX', name: 'Rare Earths (VanEck ETF proxy)', unit: '$',
+    category: 'rare_earths', bias_2026: 'rising',
+    source_note: 'Rare Earth Metals ETF — proxy for neodymium / dysprosium / praseodymium pricing. Critical for EV motors, wind turbines, defence guidance, AI/HBM.',
+    drivers: [
+      { sector: 'Wind turbines',    sign: -1, sensitivity: 'high', sample_tickers: ['SUZLON', 'INOXWIND', 'WAAREEENER'], pass_through_lag: '2Q', pricing_power: 'moderate' },
+      { sector: 'EV motors',        sign: -1, sensitivity: 'high', sample_tickers: ['TATAMOTORS', 'BAJAJ-AUTO', 'OLAELEC', 'M&M'], pass_through_lag: '2Q', pricing_power: 'moderate' },
+      { sector: 'Defence (guidance)', sign: -1, sensitivity: 'high', sample_tickers: ['HAL', 'BEL', 'BDL', 'PARAS', 'MAZDOCK', 'DATAPATTNS'], pass_through_lag: '3Q+', pricing_power: 'strong' },
+      { sector: 'AI semis (magnets/HBM cooling)', sign: -1, sensitivity: 'med',  sample_tickers: ['TATAELXSI', 'KAYNES', 'SYRMA', 'CYIENT'], pass_through_lag: '2Q', pricing_power: 'moderate' },
+    ],
+  },
+  {
+    symbol: '', name: 'Gallium / Germanium', unit: '$/kg',
+    category: 'ai_robotics', bias_2026: 'rising',
+    source_note: 'China export-controlled. Critical for power semiconductors, optical fibre, infrared optics. Manual update from USGS / Argus.',
+    drivers: [
+      { sector: 'Power semis',      sign: -1, sensitivity: 'high', sample_tickers: ['KAYNES', 'TATAELXSI', 'SYRMA', 'DIXON', 'AMBER'], pass_through_lag: '2Q', pricing_power: 'moderate' },
+      { sector: 'Optical fibre',    sign: -1, sensitivity: 'high', sample_tickers: ['STLTECH', 'HFCL', 'OPTIEMUS'], pass_through_lag: '2Q', pricing_power: 'moderate' },
+      { sector: 'Defence optronics', sign: -1, sensitivity: 'med',  sample_tickers: ['BEL', 'DATAPATTNS', 'PARAS'], pass_through_lag: '3Q+', pricing_power: 'strong' },
+    ],
+  },
+  {
+    symbol: 'PA=F', name: 'Palladium', unit: '$/oz',
+    category: 'ai_robotics', bias_2026: 'volatile',
+    source_note: 'Catalytic converters, semiconductor inks, hydrogen fuel cells.',
+    drivers: [
+      { sector: 'Auto catalysts',   sign: -1, sensitivity: 'high', sample_tickers: ['BOSCHLTD', 'MOTHERSON', 'EXIDEIND'], pass_through_lag: '1Q', pricing_power: 'strong' },
+    ],
+  },
+  {
+    symbol: 'PL=F', name: 'Platinum', unit: '$/oz',
+    category: 'ai_robotics', bias_2026: 'rising',
+    source_note: 'Hydrogen electrolyser PEM catalyst; H2 economy driver.',
+    drivers: [
+      { sector: 'Hydrogen / Electrolysers', sign: -1, sensitivity: 'high', sample_tickers: ['L&T', 'RELIANCE', 'NTPC', 'ADANIGREEN'], pass_through_lag: '3Q+', pricing_power: 'moderate' },
+    ],
+  },
+
+  // ── Quantum / Specialty (manual feed) ──────────────
+  {
+    symbol: '', name: 'Helium-3 / Helium', unit: '$/L',
+    category: 'ai_robotics', bias_2026: 'rising',
+    source_note: 'Quantum dilution refrigerators + MRI + semiconductor manufacturing. Helium supply structurally tight.',
+    drivers: [
+      { sector: 'Quantum / cryogenics', sign: -1, sensitivity: 'high', sample_tickers: ['L&T', 'TATAELXSI', 'CYIENT', 'KAYNES'], pass_through_lag: '3Q+', pricing_power: 'strong' },
+      { sector: 'Medical MRI',          sign: -1, sensitivity: 'med',  sample_tickers: ['POLYMED', 'BLISSGVS'], pass_through_lag: '2Q', pricing_power: 'strong' },
+    ],
+  },
+
+  // ── Nuclear ────────────────────────────────────────
+  {
+    symbol: 'URA', name: 'Uranium (Global X ETF)', unit: '$',
+    category: 'nuclear', bias_2026: 'rising',
+    source_note: 'Global X URA — uranium miners + nuclear-fuel processors. SMR demand pulling forward.',
+    drivers: [
+      { sector: 'Nuclear / power equipment', sign: 1,  sensitivity: 'high', sample_tickers: ['BHEL', 'L&T', 'NTPC', 'WALCHAN'], pass_through_lag: 'immediate' },
+      { sector: 'Nuclear utilities (host)',  sign: -1, sensitivity: 'med',  sample_tickers: ['NTPC', 'NHPC'], pass_through_lag: '3Q+', pricing_power: 'strong' },
+    ],
+  },
+  {
+    symbol: '', name: 'HALEU / Enriched Uranium', unit: '$/kg-U',
+    category: 'nuclear', bias_2026: 'rising',
+    source_note: 'High-Assay Low-Enriched Uranium — fuel for advanced SMRs. Bottleneck: only Russia/USA enrich at 5–20%.',
+    drivers: [
+      { sector: 'SMR / Advanced nuclear', sign: -1, sensitivity: 'high', sample_tickers: ['BHEL', 'L&T', 'WALCHAN'], pass_through_lag: '3Q+', pricing_power: 'strong', note: 'Long lead time; capex visibility 3+ years out.' },
     ],
   },
 ];
@@ -146,10 +404,34 @@ function pctChange(pts: YahooPoint[], daysBack: number): number | null {
 export async function GET() {
   const t0 = Date.now();
 
-  const seriesArr = await Promise.all(COMMODITIES.map((c) => fetchSeries(c.symbol)));
+  // PATCH 0240 — only fetch for commodities with a non-empty Yahoo symbol.
+  // Manually-tracked items (no Yahoo feed) still surface their sector drivers.
+  const seriesArr = await Promise.all(
+    COMMODITIES.map((c) => c.symbol ? fetchSeries(c.symbol) : Promise.resolve(null)),
+  );
   const out = COMMODITIES.map((c, i) => {
     const pts = seriesArr[i];
-    if (!pts) return { ...c, fetched: false, last: null, change_1d: null, change_1w: null, change_1m: null, change_3m: null, impacts: [] };
+    if (!pts) {
+      // Keep drivers visible even without a price feed so the transmission
+      // matrix doesn't disappear for items the upstream doesn't expose.
+      const impactsNoPrice = c.drivers.map((d) => ({
+        sector: d.sector,
+        sign: d.sign,
+        sensitivity: d.sensitivity,
+        margin_pressure_pp_1m: null,
+        margin_pressure_pp_3m: null,
+        sample_tickers: d.sample_tickers,
+        pass_through_lag: d.pass_through_lag || null,
+        pricing_power: d.pricing_power || null,
+        note: d.note || null,
+      }));
+      return {
+        symbol: c.symbol, name: c.name, unit: c.unit,
+        category: c.category || null, bias_2026: c.bias_2026 || null, source_note: c.source_note || null,
+        fetched: false, last: null, change_1d: null, change_1w: null, change_1m: null, change_3m: null,
+        impacts: impactsNoPrice,
+      };
+    }
     const last = pts[pts.length - 1].close;
     const c1d = pctChange(pts, 1);
     const c1w = pctChange(pts, 5);
@@ -170,16 +452,25 @@ export async function GET() {
         margin_pressure_pp_1m: mPressure1m != null ? Math.round(mPressure1m * 10) / 10 : null,
         margin_pressure_pp_3m: mPressure3m != null ? Math.round(mPressure3m * 10) / 10 : null,
         sample_tickers: d.sample_tickers,
+        // PATCH 0240 — pass-through metadata for institutional users
+        pass_through_lag: d.pass_through_lag || null,
+        pricing_power: d.pricing_power || null,
+        note: d.note || null,
       };
     });
+    // PATCH 0240 — surface the last 60 closes as a series so the frontend can
+    // render a sparkline without re-fetching.
+    const sparkline = pts.slice(-60).map(p => Math.round(p.close * 100) / 100);
     return {
       symbol: c.symbol, name: c.name, unit: c.unit,
+      category: c.category || null, bias_2026: c.bias_2026 || null, source_note: c.source_note || null,
       fetched: true,
       last: Math.round(last * 100) / 100,
       change_1d: c1d != null ? Math.round(c1d * 100) / 100 : null,
       change_1w: c1w != null ? Math.round(c1w * 100) / 100 : null,
       change_1m: c1m != null ? Math.round(c1m * 100) / 100 : null,
       change_3m: c3m != null ? Math.round(c3m * 100) / 100 : null,
+      sparkline,
       impacts,
     };
   });
