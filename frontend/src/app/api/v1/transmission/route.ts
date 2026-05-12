@@ -26,21 +26,23 @@ const YH = 'https://query1.finance.yahoo.com/v8/finance/chart';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 interface Commodity {
-  symbol: string;       // Yahoo ticker; empty string = no live feed (manual update / static)
+  symbol: string;          // Yahoo ticker; empty string = no Yahoo feed
+  // PATCH 0248 — Multi-source fallback. When Yahoo fails (or symbol is empty)
+  // the fetcher tries FMP next, then Alpha Vantage. If a commodity has NO
+  // free public price source we leave both empty and the card surfaces as
+  // 'manual feed' with drivers still visible.
+  fmp_symbol?: string;     // FMP ticker (e.g. 'PAUSD' for palladium, 'BOUSD' soyoil)
+  av_function?: string;    // Alpha Vantage commodity function (e.g. 'COPPER', 'BRENT')
   name: string;
   unit: string;
-  // PATCH 0240 — Optional metadata layers added for premium decision workflow:
   category?: 'energy' | 'metals' | 'agri' | 'chemicals' | 'fx_rates' | 'ai_robotics' | 'nuclear' | 'rare_earths';
-  bias_2026?: 'rising' | 'falling' | 'volatile' | 'stable';  // narrative tag from market notes
-  source_note?: string;  // where the manual price update / sentiment would be sourced from
-  // Sector mappings: positive = sector benefits from this commodity rising,
-  // negative = sector hurt. Magnitude = approximate elasticity of EBIT margin.
+  bias_2026?: 'rising' | 'falling' | 'volatile' | 'stable';
+  source_note?: string;
   drivers: {
     sector: string;
     sign: 1 | -1;
     sensitivity: 'high' | 'med' | 'low';
     sample_tickers: string[];
-    // PATCH 0240 — Additional metadata for institutional users
     pass_through_lag?: 'immediate' | '1Q' | '2Q' | '3Q+';
     pricing_power?: 'strong' | 'moderate' | 'weak';
     note?: string;
@@ -52,7 +54,8 @@ interface Commodity {
 // of marquee Indian tickers in each sector.
 const COMMODITIES: Commodity[] = [
   {
-    symbol: 'CL=F', name: 'Crude Oil (WTI)', unit: '$/bbl',
+    symbol: 'CL=F', fmp_symbol: 'CLUSD', av_function: 'WTI',
+    name: 'Crude Oil (WTI)', unit: '$/bbl',
     category: 'energy', bias_2026: 'rising',
     drivers: [
       { sector: 'Aviation',      sign: -1, sensitivity: 'high', sample_tickers: ['INDIGO', 'SPICEJET'] },
@@ -65,7 +68,8 @@ const COMMODITIES: Commodity[] = [
     ],
   },
   {
-    symbol: 'HG=F', name: 'Copper', unit: '$/lb',
+    symbol: 'HG=F', fmp_symbol: 'HGUSD', av_function: 'COPPER',
+    name: 'Copper', unit: '$/lb',
     category: 'metals', bias_2026: 'rising',
     drivers: [
       { sector: 'Copper miners',  sign: 1,  sensitivity: 'high', sample_tickers: ['HINDCOPPER', 'VEDL'] },
@@ -77,7 +81,8 @@ const COMMODITIES: Commodity[] = [
   {
     // PATCH 0247 — Yahoo ALI=F returns LME Aluminum in $/MT, not $/lb.
     // Per-pound would be ~$1.60; the ~$3,520 figure is per tonne.
-    symbol: 'ALI=F', name: 'Aluminum', unit: '$/MT',
+    symbol: 'ALI=F', av_function: 'ALUMINUM',
+    name: 'Aluminum', unit: '$/MT',
     category: 'metals', bias_2026: 'volatile',
     drivers: [
       { sector: 'Aluminum miners', sign: 1,  sensitivity: 'high', sample_tickers: ['HINDALCO', 'NATIONALUM', 'VEDL'] },
@@ -86,7 +91,8 @@ const COMMODITIES: Commodity[] = [
     ],
   },
   {
-    symbol: 'GC=F', name: 'Gold', unit: '$/oz',
+    symbol: 'GC=F', fmp_symbol: 'GCUSD',
+    name: 'Gold', unit: '$/oz',
     category: 'metals', bias_2026: 'rising',
     drivers: [
       { sector: 'Jewellery',     sign: -1, sensitivity: 'high', sample_tickers: ['TITAN', 'KALYANKJIL', 'SENCO', 'PCJEWELLER'] },
@@ -95,7 +101,8 @@ const COMMODITIES: Commodity[] = [
     ],
   },
   {
-    symbol: 'SI=F', name: 'Silver', unit: '$/oz',
+    symbol: 'SI=F', fmp_symbol: 'SIUSD',
+    name: 'Silver', unit: '$/oz',
     category: 'metals', bias_2026: 'rising',
     drivers: [
       { sector: 'Silver miners',  sign: 1,  sensitivity: 'high', sample_tickers: ['HINDZINC', 'VEDL'] },
@@ -113,7 +120,8 @@ const COMMODITIES: Commodity[] = [
     ],
   },
   {
-    symbol: 'NG=F', name: 'Natural Gas', unit: '$/MMBtu',
+    symbol: 'NG=F', fmp_symbol: 'NGUSD', av_function: 'NATURAL_GAS',
+    name: 'Natural Gas', unit: '$/MMBtu',
     category: 'energy', bias_2026: 'volatile',
     drivers: [
       { sector: 'City gas',        sign: -1, sensitivity: 'high', sample_tickers: ['IGL', 'MGL', 'GUJGASLTD', 'ADANIGAS', 'IRMENERGY'] },
@@ -163,7 +171,8 @@ const COMMODITIES: Commodity[] = [
   {
     // PATCH 0247 — Yahoo ZL=F returns CBOT Soybean Oil in cents per pound
     // (Yahoo currency = 'USX'). 74.7¢/lb = $0.747/lb.
-    symbol: 'ZL=F', name: 'Soybean Oil', unit: '¢/lb',
+    symbol: 'ZL=F', fmp_symbol: 'BOUSD',
+    name: 'Soybean Oil', unit: '¢/lb',
     category: 'agri', bias_2026: 'volatile',
     drivers: [
       { sector: 'FMCG (oil)',       sign: -1, sensitivity: 'high', sample_tickers: ['HINDUNILVR', 'MARICO', 'AWLAGRI'], pass_through_lag: '1Q', pricing_power: 'moderate' },
@@ -336,7 +345,8 @@ const COMMODITIES: Commodity[] = [
     ],
   },
   {
-    symbol: 'PA=F', name: 'Palladium', unit: '$/oz',
+    symbol: 'PA=F', fmp_symbol: 'PAUSD',
+    name: 'Palladium', unit: '$/oz',
     category: 'ai_robotics', bias_2026: 'volatile',
     source_note: 'Catalytic converters, semiconductor inks, hydrogen fuel cells.',
     drivers: [
@@ -344,7 +354,8 @@ const COMMODITIES: Commodity[] = [
     ],
   },
   {
-    symbol: 'PL=F', name: 'Platinum', unit: '$/oz',
+    symbol: 'PL=F', fmp_symbol: 'PLUSD',
+    name: 'Platinum', unit: '$/oz',
     category: 'ai_robotics', bias_2026: 'rising',
     source_note: 'Hydrogen electrolyser PEM catalyst; H2 economy driver.',
     drivers: [
@@ -384,7 +395,9 @@ const COMMODITIES: Commodity[] = [
 ];
 
 interface YahooPoint { ts: number; close: number; }
-async function fetchSeries(symbol: string): Promise<YahooPoint[] | null> {
+interface FetchResult { points: YahooPoint[]; source: 'yahoo' | 'fmp' | 'alphavantage'; }
+
+async function fetchFromYahoo(symbol: string): Promise<YahooPoint[] | null> {
   try {
     const res = await fetch(`${YH}/${encodeURIComponent(symbol)}?range=3mo&interval=1d`, { headers: { 'User-Agent': UA }, cache: 'no-store' });
     if (!res.ok) return null;
@@ -401,6 +414,76 @@ async function fetchSeries(symbol: string): Promise<YahooPoint[] | null> {
   } catch { return null; }
 }
 
+// PATCH 0248 — Financial Modeling Prep fallback.
+// Endpoint: /api/v3/historical-price-full/<symbol>?apikey=<key>
+// Returns: { historical: [{ date: 'YYYY-MM-DD', close: number, ... }] }
+async function fetchFromFMP(symbol: string): Promise<YahooPoint[] | null> {
+  const key = process.env.FMP_KEY;
+  if (!key || !symbol) return null;
+  try {
+    const url = `https://financialmodelingprep.com/api/v3/historical-price-full/${encodeURIComponent(symbol)}?serietype=line&timeseries=90&apikey=${key}`;
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) return null;
+    const j = await res.json();
+    const arr: any[] = j?.historical || [];
+    if (!Array.isArray(arr) || arr.length === 0) return null;
+    // FMP returns most-recent-first; reverse for chronological order.
+    const reversed = [...arr].reverse();
+    const out: YahooPoint[] = [];
+    for (const row of reversed) {
+      const ts = Date.parse(row.date) / 1000;
+      const cl = Number(row.close);
+      if (Number.isFinite(ts) && Number.isFinite(cl)) out.push({ ts, close: cl });
+    }
+    return out.length > 0 ? out : null;
+  } catch { return null; }
+}
+
+// PATCH 0248 — Alpha Vantage fallback for the few commodities AV covers.
+// Endpoint: /query?function=<FN>&interval=daily&apikey=<key>
+// AV functions: WTI, BRENT, NATURAL_GAS, COPPER, ALUMINUM, WHEAT, CORN,
+//               COTTON, SUGAR, COFFEE, ALL_COMMODITIES.
+async function fetchFromAlphaVantage(fn: string): Promise<YahooPoint[] | null> {
+  const key = process.env.AV_KEY || process.env.ALPHA_VANTAGE_KEY;
+  if (!key || !fn) return null;
+  try {
+    const url = `https://www.alphavantage.co/query?function=${encodeURIComponent(fn)}&interval=daily&apikey=${key}`;
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) return null;
+    const j = await res.json();
+    const arr: any[] = j?.data || [];
+    if (!Array.isArray(arr) || arr.length === 0) return null;
+    // AV returns most-recent-first; reverse + take last 90 days
+    const reversed = [...arr].reverse().slice(-90);
+    const out: YahooPoint[] = [];
+    for (const row of reversed) {
+      const ts = Date.parse(row.date) / 1000;
+      const cl = Number(row.value);
+      if (Number.isFinite(ts) && Number.isFinite(cl)) out.push({ ts, close: cl });
+    }
+    return out.length > 0 ? out : null;
+  } catch { return null; }
+}
+
+// PATCH 0248 — Multi-source dispatch with fallback chain.
+// Order: Yahoo (cheapest, most coverage) → FMP (good for tracked commodities)
+//        → Alpha Vantage (limited universe, last resort).
+async function fetchSeries(commodity: Commodity): Promise<FetchResult | null> {
+  if (commodity.symbol) {
+    const y = await fetchFromYahoo(commodity.symbol);
+    if (y) return { points: y, source: 'yahoo' };
+  }
+  if (commodity.fmp_symbol) {
+    const f = await fetchFromFMP(commodity.fmp_symbol);
+    if (f) return { points: f, source: 'fmp' };
+  }
+  if (commodity.av_function) {
+    const a = await fetchFromAlphaVantage(commodity.av_function);
+    if (a) return { points: a, source: 'alphavantage' };
+  }
+  return null;
+}
+
 function pctChange(pts: YahooPoint[], daysBack: number): number | null {
   if (pts.length < 2) return null;
   const last = pts[pts.length - 1].close;
@@ -413,13 +496,12 @@ function pctChange(pts: YahooPoint[], daysBack: number): number | null {
 export async function GET() {
   const t0 = Date.now();
 
-  // PATCH 0240 — only fetch for commodities with a non-empty Yahoo symbol.
-  // Manually-tracked items (no Yahoo feed) still surface their sector drivers.
-  const seriesArr = await Promise.all(
-    COMMODITIES.map((c) => c.symbol ? fetchSeries(c.symbol) : Promise.resolve(null)),
-  );
+  // PATCH 0248 — Multi-source fetcher (Yahoo → FMP → AV with fallback).
+  const seriesArr = await Promise.all(COMMODITIES.map((c) => fetchSeries(c)));
   const out = COMMODITIES.map((c, i) => {
-    const pts = seriesArr[i];
+    const fetched = seriesArr[i];
+    const pts = fetched?.points || null;
+    const priceSource = fetched?.source || null;
     if (!pts) {
       // Keep drivers visible even without a price feed so the transmission
       // matrix doesn't disappear for items the upstream doesn't expose.
@@ -437,7 +519,8 @@ export async function GET() {
       return {
         symbol: c.symbol, name: c.name, unit: c.unit,
         category: c.category || null, bias_2026: c.bias_2026 || null, source_note: c.source_note || null,
-        fetched: false, last: null, change_1d: null, change_1w: null, change_1m: null, change_3m: null,
+        fetched: false, price_source: null,
+        last: null, change_1d: null, change_1w: null, change_1m: null, change_3m: null,
         impacts: impactsNoPrice,
       };
     }
@@ -474,6 +557,7 @@ export async function GET() {
       symbol: c.symbol, name: c.name, unit: c.unit,
       category: c.category || null, bias_2026: c.bias_2026 || null, source_note: c.source_note || null,
       fetched: true,
+      price_source: priceSource,
       last: Math.round(last * 100) / 100,
       change_1d: c1d != null ? Math.round(c1d * 100) / 100 : null,
       change_1w: c1w != null ? Math.round(c1w * 100) / 100 : null,

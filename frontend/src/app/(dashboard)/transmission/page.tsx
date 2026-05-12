@@ -40,6 +40,7 @@ interface CommodityRow {
   bias_2026?: 'rising' | 'falling' | 'volatile' | 'stable' | null;
   source_note?: string | null;
   fetched: boolean;
+  price_source?: 'yahoo' | 'fmp' | 'alphavantage' | null;
   last: number | null;
   change_1d: number | null;
   change_1w: number | null;
@@ -202,13 +203,16 @@ function DrilldownPanel({ commodity, onClose }: { commodity: CommodityRow; onClo
 
 // ── Scenario Lab ──────────────────────────────────────────────────────────
 function ScenarioLab({ commodities }: { commodities: CommodityRow[] }) {
-  // Pick the 6 highest-impact commodities by 1m abs change
-  const scenarioInputs = useMemo(() =>
-    [...commodities]
-      .filter(c => c.fetched && c.change_1m != null && c.impacts.length > 0)
-      .sort((a, b) => (Math.abs(b.change_1m ?? 0) - Math.abs(a.change_1m ?? 0)))
-      .slice(0, 6),
-    [commodities]);
+  // PATCH 0249 — Toggle between 1d (most recent shock) and 1m (trend) base.
+  const [base, setBase] = useState<'1d' | '1m'>('1m');
+  // Pick the 6 highest-impact commodities by abs change for the selected base
+  const scenarioInputs = useMemo(() => {
+    const key = base === '1d' ? 'change_1d' : 'change_1m';
+    return [...commodities]
+      .filter(c => c.fetched && (c as any)[key] != null && c.impacts.length > 0)
+      .sort((a, b) => (Math.abs((b as any)[key] ?? 0) - Math.abs((a as any)[key] ?? 0)))
+      .slice(0, 6);
+  }, [commodities, base]);
 
   // User-applied delta per commodity (% on top of live move). Default 0.
   const [deltas, setDeltas] = useState<Record<string, number>>(() => Object.fromEntries(scenarioInputs.map(c => [c.symbol, 0])));
@@ -217,7 +221,7 @@ function ScenarioLab({ commodities }: { commodities: CommodityRow[] }) {
   const sectorAgg = useMemo(() => {
     const agg = new Map<string, { pressure: number; tickers: Set<string> }>();
     for (const c of scenarioInputs) {
-      const baseMove = c.change_1m ?? 0;
+      const baseMove = (base === '1d' ? c.change_1d : c.change_1m) ?? 0;
       const userDelta = deltas[c.symbol] ?? 0;
       const totalMove = baseMove + userDelta;
       for (const imp of c.impacts) {
@@ -232,7 +236,7 @@ function ScenarioLab({ commodities }: { commodities: CommodityRow[] }) {
     return Array.from(agg.entries())
       .map(([sector, v]) => ({ sector, pressure: Math.round(v.pressure * 10) / 10, tickers: Array.from(v.tickers).slice(0, 6) }))
       .sort((a, b) => Math.abs(b.pressure) - Math.abs(a.pressure));
-  }, [scenarioInputs, deltas]);
+  }, [scenarioInputs, deltas, base]);
 
   const reset = () => setDeltas(Object.fromEntries(scenarioInputs.map(c => [c.symbol, 0])));
   const anyDelta = Object.values(deltas).some(v => v !== 0);
@@ -242,18 +246,30 @@ function ScenarioLab({ commodities }: { commodities: CommodityRow[] }) {
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
         <div style={{ fontSize: 12, fontWeight: 800, color: TOKENS.severity.high.solid, letterSpacing: '0.4px' }}>🧪 SCENARIO LAB</div>
         <div style={{ fontSize: 10, color: TOKENS.surface.textMuted }}>
-          Drag a slider to layer an extra move on top of the live 1m change. Sector pressure recomputes instantly.
+          Drag a slider to layer extra move on the live {base} change. Sector pressure recomputes instantly.
+        </div>
+        {/* PATCH 0249 — Toggle 1d ('today's shock') vs 1m (trend) as the base */}
+        <div style={{ marginLeft: 'auto', display: 'inline-flex', gap: 4 }}>
+          {(['1d', '1m'] as const).map(b => (
+            <button key={b} onClick={() => { setBase(b); }} style={{
+              backgroundColor: base === b ? TOKENS.severity.high.bg : 'transparent',
+              border: `1px solid ${base === b ? TOKENS.severity.high.solid : TOKENS.surface.cardBorder}`,
+              color: base === b ? TOKENS.severity.high.solid : TOKENS.surface.textDim,
+              borderRadius: 5, padding: '3px 10px', fontSize: 10, fontWeight: 700, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.4px',
+            }}>{b}</button>
+          ))}
         </div>
         {anyDelta && (
-          <button onClick={reset} style={{ marginLeft: 'auto', backgroundColor: 'transparent', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.textDim, borderRadius: 5, padding: '3px 10px', fontSize: 10, fontWeight: 700, cursor: 'pointer' }}>Reset</button>
+          <button onClick={reset} style={{ backgroundColor: 'transparent', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.textDim, borderRadius: 5, padding: '3px 10px', fontSize: 10, fontWeight: 700, cursor: 'pointer' }}>Reset</button>
         )}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
         <div>
-          <div style={{ fontSize: 10, color: TOKENS.surface.textMuted, fontWeight: 700, letterSpacing: '0.4px', marginBottom: 8 }}>INPUT SHOCKS</div>
+          <div style={{ fontSize: 10, color: TOKENS.surface.textMuted, fontWeight: 700, letterSpacing: '0.4px', marginBottom: 8 }}>INPUT SHOCKS ({base.toUpperCase()})</div>
           {scenarioInputs.map(c => {
             const delta = deltas[c.symbol] ?? 0;
-            const baseMove = c.change_1m ?? 0;
+            const baseMove = (base === '1d' ? c.change_1d : c.change_1m) ?? 0;
+            const otherMove = (base === '1d' ? c.change_1m : c.change_1d) ?? 0;
             const total = baseMove + delta;
             return (
               <div key={c.symbol} style={{ marginBottom: 8, fontSize: 11 }}>
@@ -267,8 +283,9 @@ function ScenarioLab({ commodities }: { commodities: CommodityRow[] }) {
                   onChange={e => setDeltas(d => ({ ...d, [c.symbol]: Number(e.target.value) }))}
                   style={{ width: '100%', cursor: 'pointer' }}
                 />
+                {/* PATCH 0249 — show both 1d and 1m beneath each slider so user sees both horizons */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: TOKENS.surface.textMuted, ...NUM }}>
-                  <span>base 1m: {pct(baseMove)}</span>
+                  <span>base {base}: {pct(baseMove)} · {base === '1d' ? '1m' : '1d'}: {pct(otherMove)}</span>
                   <span>delta: {delta >= 0 ? '+' : ''}{delta}%</span>
                 </div>
               </div>
@@ -321,13 +338,22 @@ function TransmissionIntelligence({ data }: { data: TransmissionPayload }) {
       <div style={{ fontSize: 10, color: TOKENS.surface.textMuted, marginBottom: 12 }}>What changed · who's hit · who benefits</div>
 
       <div style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 10, color: TOKENS.surface.textMuted, fontWeight: 700, letterSpacing: '0.4px', marginBottom: 6 }}>TOP MOVERS (1m)</div>
+        {/* PATCH 0249 — Show both 1d (today's shock) and 1m (trend) per mover */}
+        <div style={{ fontSize: 10, color: TOKENS.surface.textMuted, fontWeight: 700, letterSpacing: '0.4px', marginBottom: 6, display: 'flex', justifyContent: 'space-between' }}>
+          <span>TOP MOVERS</span>
+          <span style={{ display: 'inline-flex', gap: 10 }}>
+            <span style={{ width: 36, textAlign: 'right' }}>1D</span>
+            <span style={{ width: 40, textAlign: 'right' }}>1M</span>
+          </span>
+        </div>
         {movers.map(m => {
-          const col = (m.change_1m ?? 0) >= 0 ? TOKENS.semantic.bullish.solid : TOKENS.semantic.bearish.solid;
+          const col1m = (m.change_1m ?? 0) >= 0 ? TOKENS.semantic.bullish.solid : TOKENS.semantic.bearish.solid;
+          const col1d = (m.change_1d ?? 0) >= 0 ? TOKENS.semantic.bullish.solid : TOKENS.semantic.bearish.solid;
           return (
-            <div key={m.symbol} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0', fontSize: 11 }}>
-              <span style={{ color: TOKENS.surface.text }}>{m.name}</span>
-              <span style={{ ...NUM, color: col, fontWeight: 700 }}>{pct(m.change_1m)}</span>
+            <div key={m.symbol} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0', fontSize: 11, gap: 8 }}>
+              <span style={{ color: TOKENS.surface.text, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.name}</span>
+              <span style={{ ...NUM, color: col1d, fontWeight: 600, width: 36, textAlign: 'right', fontSize: 10 }}>{pct(m.change_1d)}</span>
+              <span style={{ ...NUM, color: col1m, fontWeight: 700, width: 40, textAlign: 'right' }}>{pct(m.change_1m)}</span>
             </div>
           );
         })}
@@ -595,6 +621,19 @@ export default function TransmissionPage() {
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                     {cat && <span title={cat.label} style={{ fontSize: 13 }}>{cat.glyph}</span>}
                     <span style={{ fontSize: 13, fontWeight: 800 }}>{c.name}</span>
+                    {/* PATCH 0248 — Price source provenance: y=Yahoo, f=FMP, a=AV */}
+                    {c.price_source && (
+                      <span
+                        title={`Price feed: ${c.price_source === 'yahoo' ? 'Yahoo Finance' : c.price_source === 'fmp' ? 'Financial Modeling Prep (fallback)' : 'Alpha Vantage (fallback)'}`}
+                        style={{
+                          fontSize: 8, fontWeight: 700, padding: '1px 4px', borderRadius: 3,
+                          backgroundColor: c.price_source === 'yahoo' ? '#1A2540' : c.price_source === 'fmp' ? '#22D3EE15' : '#A78BFA15',
+                          color: c.price_source === 'yahoo' ? TOKENS.surface.textMuted : c.price_source === 'fmp' ? '#22D3EE' : '#A78BFA',
+                          border: `1px solid ${c.price_source === 'yahoo' ? TOKENS.surface.cardBorder : c.price_source === 'fmp' ? '#22D3EE40' : '#A78BFA40'}`,
+                          letterSpacing: '0.3px', textTransform: 'uppercase',
+                        }}
+                      >{c.price_source === 'yahoo' ? 'y' : c.price_source === 'fmp' ? 'fmp' : 'av'}</span>
+                    )}
                   </span>
                   <span style={{ fontSize: 11, color: TOKENS.surface.textDim, ...NUM }}>
                     {c.last != null ? `${c.last.toLocaleString()} ${c.unit}` : <span style={{ color: TOKENS.surface.textMuted, fontStyle: 'italic' }}>manual feed</span>}
