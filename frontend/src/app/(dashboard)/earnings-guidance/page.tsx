@@ -6,6 +6,33 @@ import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 // PATCH 0273 — Conviction Beats overlay on Earnings Guidance.
 import { getConvictionTickers } from '@/lib/conviction-beats';
 
+// PATCH 0294 — Q-over-Q score delta + sparkline (audit IMP-04).
+// We snapshot every (symbol, period) guidance score into localStorage on
+// every render. The first render where we see a NEW (symbol, period)
+// captures it; subsequent quarters look back at the most-recent earlier
+// snapshot to compute Δ. Stored as Record<symbol, {[yyyy_mm]: score}>.
+const GUIDANCE_HISTORY_KEY = 'mc:guidance-scores:v1';
+interface GuidanceHistoryShape {
+  [symbol: string]: { [periodKey: string]: number };
+}
+function readGuidanceHistory(): GuidanceHistoryShape {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = localStorage.getItem(GUIDANCE_HISTORY_KEY);
+    return raw ? (JSON.parse(raw) as GuidanceHistoryShape) : {};
+  } catch { return {}; }
+}
+function writeGuidanceHistory(h: GuidanceHistoryShape) {
+  if (typeof window === 'undefined') return;
+  try { localStorage.setItem(GUIDANCE_HISTORY_KEY, JSON.stringify(h)); }
+  catch {}
+}
+function periodKey(iso: string): string {
+  // 'YYYY-MM' grouping so any filing in the same calendar month is one quarter.
+  try { return new Date(iso).toISOString().slice(0, 7); }
+  catch { return ''; }
+}
+
 // ══════════════════════════════════════════════
 // EARNINGS GUIDANCE TAB — Historical + Real-time Guidance Intelligence
 // Tracks last 45 days earnings + guidance for Portfolio/Watchlist
@@ -451,6 +478,37 @@ function GuidanceCard({ event, expanded, onToggle, compact, isConviction }: { ev
             fontSize: '16px', fontWeight: 700,
             color: isPositive ? GREEN : isNegative ? RED : YELLOW,
           }}>{event.sentimentScore}</span>
+          {/* PATCH 0294 — Q-over-Q delta. Compares current score against the
+              most-recent previously-seen score for this symbol in a different
+              calendar-month bucket. Only renders when we actually have a prior. */}
+          {(() => {
+            const hist = readGuidanceHistory();
+            const symHist = hist[event.symbol] || {};
+            const curKey = periodKey(event.eventDate);
+            // Find the most recent period key that's NOT the current period.
+            const priorKeys = Object.keys(symHist).filter(k => k && k < curKey).sort();
+            const priorKey = priorKeys.length > 0 ? priorKeys[priorKeys.length - 1] : null;
+            const priorScore = priorKey ? symHist[priorKey] : null;
+            // Capture current snapshot (write-through).
+            if (curKey && symHist[curKey] !== event.sentimentScore) {
+              const next = { ...hist, [event.symbol]: { ...symHist, [curKey]: event.sentimentScore } };
+              writeGuidanceHistory(next);
+            }
+            if (priorScore == null) return null;
+            const delta = event.sentimentScore - priorScore;
+            if (delta === 0) return null;
+            const tone = delta > 0 ? GREEN : RED;
+            return (
+              <span
+                title={`vs ${priorKey} (${priorScore})`}
+                style={{
+                  fontSize: 10, fontWeight: 700, color: tone,
+                  border: `1px solid ${tone}60`, backgroundColor: `${tone}14`,
+                  padding: '1px 6px', borderRadius: 3, letterSpacing: 0.3,
+                }}
+              >Δ {delta > 0 ? '+' : ''}{delta}</span>
+            );
+          })()}
           <span style={{ fontSize: '11px', color: TEXT_DIM }}>
             {new Date(event.eventDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
           </span>
