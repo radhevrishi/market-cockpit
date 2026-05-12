@@ -284,6 +284,56 @@ function useInPlay() {
   });
 }
 
+// PATCH 0212 — Reusable panel-freshness chip.
+// Every data panel on /news should expose when it was last successfully
+// refreshed. We pull this from React Query's `dataUpdatedAt` rather than
+// requiring server payloads to carry a generated_at field. Turns amber
+// when older than `staleAfterMs` to surface KV-cache lag explicitly.
+function PanelFreshness({
+  dataUpdatedAt,
+  isFetching,
+  staleAfterMs = 5 * 60_000,
+  label = 'as of',
+}: {
+  dataUpdatedAt: number;
+  isFetching?: boolean;
+  staleAfterMs?: number;
+  label?: string;
+}) {
+  // Re-render once a minute so the chip stays accurate without polling.
+  const [, force] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => force(n => n + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  if (!dataUpdatedAt) return null;
+  const age = Date.now() - dataUpdatedAt;
+  const isStale = age > staleAfterMs;
+  const d = new Date(dataUpdatedAt);
+  const hhmm = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+  const ageStr =
+    age < 60_000 ? 'now' :
+    age < 3_600_000 ? `${Math.floor(age / 60_000)}m ago` :
+    age < 86_400_000 ? `${Math.floor(age / 3_600_000)}h ago` :
+    `${Math.floor(age / 86_400_000)}d ago`;
+  return (
+    <span
+      title={`Last successful refresh: ${d.toLocaleString()}\nClick the Refresh button to pull fresh data.`}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 4,
+        fontSize: 9, fontFamily: 'ui-monospace, monospace',
+        color: isStale ? '#F59E0B' : '#6B7B8C',
+        padding: '2px 6px', borderRadius: 4,
+        backgroundColor: isStale ? '#F59E0B14' : 'transparent',
+        border: `1px solid ${isStale ? '#F59E0B40' : '#1E2D45'}`,
+        letterSpacing: '0.3px',
+      }}
+    >
+      {isFetching ? '↻ ' : ''}{label} {hhmm} · {ageStr}
+    </span>
+  );
+}
+
 function useBottleneckDashboard(enabled: boolean, region: string) {
   return useQuery<BnDashboard>({
     queryKey: ['news', 'bottleneck-dashboard', region],
@@ -1599,7 +1649,7 @@ export default function NewsFeedPage() {
   const newsFetchedAt = dataUpdatedAt
     ? new Date(dataUpdatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
     : null;
-  const { data: rawInPlay, isLoading: inPlayLoading, refetch: refetchInPlay } = useInPlay();
+  const { data: rawInPlay, isLoading: inPlayLoading, refetch: refetchInPlay, dataUpdatedAt: inPlayUpdatedAt, isFetching: inPlayFetching } = useInPlay();
   // Phase 1.3 / 1.5 / 2.5: Must Read + Forward Calendar + Anomaly hooks
   const { data: mustRead } = useMustRead();
   const { data: calendar } = useCalendar();
@@ -1784,7 +1834,7 @@ export default function NewsFeedPage() {
     });
     return [...merged, ...untickered];
   })();
-  const { data: bnDashboard, isLoading: bnLoading, refetch: refetchBn } = useBottleneckDashboard(articleType === 'BOTTLENECK', region);
+  const { data: bnDashboard, isLoading: bnLoading, refetch: refetchBn, dataUpdatedAt: bnUpdatedAt, isFetching: bnFetching } = useBottleneckDashboard(articleType === 'BOTTLENECK', region);
   const showBottleneckDashboard = articleType === 'BOTTLENECK';
 
   // Trigger backend to fetch fresh articles from RSS feeds, then refresh UI
@@ -1894,6 +1944,8 @@ export default function NewsFeedPage() {
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '10px', fontWeight: '700', color: '#F59E0B', flexShrink: 0 }}>
             <Zap style={{ width: '10px', height: '10px' }} /> IN PLAY TODAY
           </span>
+          {/* PATCH 0212 — freshness indicator */}
+          <PanelFreshness dataUpdatedAt={inPlayUpdatedAt} isFetching={inPlayFetching} staleAfterMs={3 * 60_000} />
 
           {(inPlay?.length ?? 0) > 0 ? (
             inPlay!.map(art => {
@@ -2071,6 +2123,8 @@ export default function NewsFeedPage() {
             <span style={{ fontSize: '13px', color: '#4A5B6C' }}>
               🇮🇳 {indiaItems.length} India · 🌐 {globalItems.length} Global · auto-detected from accumulated evidence
             </span>
+            {/* PATCH 0212 — freshness chip for bottleneck dashboard */}
+            <PanelFreshness dataUpdatedAt={bnUpdatedAt} isFetching={bnFetching} staleAfterMs={5 * 60_000} />
             {/* PATCH 0088: 'Latest' pill — bottlenecks first seen in the last 10 days */}
             {totalLatest > 0 && (
               <span
@@ -2666,10 +2720,11 @@ export default function NewsFeedPage() {
       {/* ── Header ───────────────────────────────────────────────────── */}
       <div style={{ marginBottom: '12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-          <h1 style={{ fontSize: '15px', fontWeight: '700', color: '#F5F7FA', margin: 0 }}>News Feed</h1>
-          {newsFetchedAt && (
-            <span style={{ fontSize: '11px', color: '#4A5B6C' }}>Updated {newsFetchedAt}</span>
-          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <h1 style={{ fontSize: '15px', fontWeight: '700', color: '#F5F7FA', margin: 0 }}>News Feed</h1>
+            {/* PATCH 0212 — consolidated freshness indicator */}
+            <PanelFreshness dataUpdatedAt={dataUpdatedAt} isFetching={isLoading} staleAfterMs={5 * 60_000} />
+          </div>
         </div>
         {/* Controls row — horizontally scrollable on mobile */}
         <div className="scrollbar-hide mobile-scroll" style={{ display: 'flex', gap: '8px', alignItems: 'center', overflowX: 'auto', paddingBottom: '4px' }}>
