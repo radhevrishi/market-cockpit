@@ -50,6 +50,8 @@ const NAV: NavItem[] = [
   // PATCH 0094: Re-rating Screener — margin expansion + model shift + multiple expansion
   { href: '/rerating',      label: 'Re-rating',          icon: <TrendingUp className="w-5 h-5" /> },
   { href: '/bottleneck-intel', label: 'Bottleneck Intel', icon: <Microscope className="w-5 h-5" /> },
+  // PATCH 0235 — Per-theme workbench (frontend v0 on existing data)
+  { href: '/bottleneck-workbench', label: 'Bottleneck Workbench', icon: <Microscope className="w-5 h-5" /> },
   { href: '/strategic-visibility', label: 'Strategic Visibility', icon: <Star className="w-5 h-5" /> },
   { href: '/rrg',           label: 'RRG',                icon: <RefreshCw className="w-5 h-5" /> },
   { href: '/screener',      label: 'Screener',           icon: <Filter className="w-5 h-5" /> },
