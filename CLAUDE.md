@@ -1,0 +1,249 @@
+# Market Cockpit — Claude Handoff Memory
+
+> Read this FIRST when starting any new chat. Saves you 30 minutes of context-rebuilding.
+> Last updated: 2026-05-12 (after Patch 0201).
+
+---
+
+## 1 · Identity & Goal
+
+- **Project:** Market Cockpit — Bloomberg-lite dashboard for Indian + US equities (NSE focus).
+- **Repo:** `https://github.com/radhevrishi/market-cockpit` (branch: `main`).
+- **Owner:** Rishi (`radhev.232@gmail.com`).
+- **Stack:** Next.js 14 App Router (TypeScript), React Query v5, Vercel hosting, Upstash Redis KV, Railway worker (occasionally stale).
+- **Live URL:** `https://market-cockpit.vercel.app`
+- **The bar:** EarningsPulse.ai quality. User often compares to it. No hallucinations, no stale data, must feel like a paid product.
+
+---
+
+## 2 · Working-Folder Map (CRITICAL)
+
+```
+/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/   ← repo root (the user's selected folder)
+├── frontend/                                                          ← Next.js app
+│   ├── src/app/(dashboard)/                                           ← all dashboard pages
+│   ├── src/app/api/                                                   ← Next.js API routes
+│   ├── src/lib/                                                       ← shared libs (kv, nse, conviction-beats etc.)
+│   ├── src/components/                                                ← shared React components
+│   └── vercel.json                                                    ← cron schedule + edge rewrites
+└── 00XX-*.patch                                                       ← historical patch files (informational only)
+```
+
+**File-tool paths use this prefix.** Bash sees them under `/sessions/zen-epic-bardeen/mnt/market-cockpit/`.
+
+---
+
+## 3 · Architecture (what runs where)
+
+| Tier | Service | What it does |
+|---|---|---|
+| Edge | Vercel | All Next.js routes (`/api/v1/*`, `/api/market/*`), SSR pages |
+| KV | Upstash Redis | Hot cache: `graded:v8:<date>`, `enrich:v5:<sym>:<date>`, `earnings-cal:auto:<date>`, `post-gap:v1:<sym>:<date>:<timing>`, `auto-fill:v1:<date>`, scheduled-tasks state |
+| Cron | Vercel Cron | Daily refresh of earnings calendar (06:30 IST), market intelligence, watchlist alerts |
+| Worker | Railway (`mc-pulse-bots.onrender.com` BSE proxy, separate Railway scraper) | Background Screener scrape — often goes stale; we built Vercel-side enrichment to bypass |
+| External API rewrite | `vercel.json` rewrites `/api/v1/*` → Render backend `https://market-cockpit-api.onrender.com` BUT file-based routes win first, so locally-implemented `/api/v1/*` endpoints take precedence over the rewrite |
+
+**Two routes you'll touch most:**
+- `frontend/src/app/api/market/earnings/route.ts` — universe builder (NSE + BSE + KV calendar)
+- `frontend/src/app/api/v1/earnings/graded/route.ts` — per-date grading with KV cache
+
+---
+
+## 4 · Required Env Vars (Vercel project)
+
+Don't ask the user for actual VALUES — they're already set in Vercel. Just know the **names**:
+
+| Env var | Purpose |
+|---|---|
+| `KV_REST_API_URL` + `KV_REST_API_TOKEN` (or `UPSTASH_REDIS_REST_URL` + `_TOKEN`) | Upstash Redis KV (read via `@/lib/kv` → `kvGet`, `kvSet`, `isRedisAvailable`) |
+| `CRON_SECRET` (optional) | Auth gate on `/api/v1/cron/refresh-earnings-calendar` |
+| `ANTHROPIC_API_KEY` (optional, future) | Concall Intelligence v2 (`/api/v1/concall/analyze`) currently uses pure regex/lexicon, no LLM. If env added, can route through Claude for deeper analysis. |
+
+All others are in `vercel.json` `crons` array — secrets passed as URL query params (`?secret=mc-bot-2026` for example).
+
+---
+
+## 5 · Key Pages and Their Caching
+
+| Page | Cache layer | TTL |
+|---|---|---|
+| `/earnings-opportunities` | localStorage `mc:graded:v8:<date>` + `mc:hub:v2:<months>` + KV `graded:v8:<date>` | past 7d, today 15m |
+| `/earnings` (Earnings Hub Scan) | localStorage `mc:earnings-scan:v1` + React Query staleTime | 1h, auto-invalidates on month change |
+| `/watchlists` | localStorage `mc_watchlist_tickers` + `mc:conviction-beats:v1` | manual |
+| `/stock-sheet` | localStorage `mc:stock-sheet:v3:scrub-2026-05:<ticker>` | per-ticker |
+| `/special-situations` | localStorage `mc:specsit:rejected:v1` | manual |
+| `/breadth`, `/transmission`, `/strategic-visibility` | React Query staleTime 5-10min | rolling |
+
+**Always cache-bust strategy when shape changes:** bump the version suffix (`v7 → v8`).
+
+---
+
+## 6 · Critical Data Quirks (THINGS THAT BIT ME)
+
+1. **Digit-leading tickers** (`3IINFOLTD`, `5PAISA`, `63MOONS`, `360ONE`): `isValidSymbol` in `/enrich` historically used `/^[A-Z][A-Z0-9&-]/` which **silently dropped** them. Now uses `/^[A-Z0-9][A-Z0-9&-]/`. ALWAYS check other regex validators when adding new endpoints.
+2. **Date attribution**: a scheduled board meeting is NOT proof of filing. KV calendar entries from `0181` cron must be `quality: 'Upcoming'` regardless of date until explicit confirmation arrives. See `/api/market/earnings/route.ts` Step 6.4.
+3. **Empty `/enrich` cache poisoning**: when NSE/Screener returns null for a ticker, cache TTL is **5min** (not 6h) so retries actually retry. See Patch 0194.
+4. **Vercel.json rewrite gotcha**: `/api/v1/:path*` is rewritten to `market-cockpit-api.onrender.com`, BUT Next.js file-based routes take priority. So if you add a file at `src/app/api/v1/foo/route.ts` it works locally. If you don't, requests go to Render backend (which may not have `/api/v1/foo`).
+5. **Indian markets weekend skip**: `shiftDate(-1)` in `/earnings-opportunities` skips Sat/Sun — don't break that.
+6. **React #31 error history**: `{direction, magnitude}` objects rendered as JSX children. `safeText()` + `safeScalar()` helpers exist in `/stock-sheet/page.tsx`. Always coerce at boundary (load/save).
+7. **Browser cache vs server KV**: refetch fetches need `cache: 'no-store'` or browser can serve stale HTTP responses even when KV is fresh. See Patch 0192.
+8. **Stale localStorage**: when server returns "no-op" on refresh, wipe localStorage for that key and force a refetch. Patch 0190.
+
+---
+
+## 7 · Conviction Beats Pipeline (custom architecture)
+
+User's institutional bench, auto-populated from `/earnings-opportunities`.
+
+- **Storage:** `lib/conviction-beats.ts` — localStorage `mc:conviction-beats:v1`
+- **Writer:** `useEffect` in `/earnings-opportunities` calls `syncFromEarningsOps()` on every graded payload. Dedup: newer filing_date or BLOCKBUSTER tier upgrade wins.
+- **Readers:**
+  1. `/watchlists` → "Conviction Beats" tab (next to "My Watchlist"). Renders BLOCKBUSTER/STRONG sections.
+  2. `/earnings` (Scan) → "Conviction Beats" universe option in the multi-select + a separate "Conviction Beats only" composable AND-filter toggle.
+- **Cross-tab sync:** `window.dispatchEvent(new CustomEvent('conviction-beats:updated'))` from writers; readers listen.
+
+---
+
+## 8 · TradingView Export Toolbar (`/components/TickerExportToolbar.tsx`)
+
+Reusable component dropped into Conviction Beats panel + Earnings Scan.
+
+Buttons:
+- **Copy for TradingView** (primary, solid cyan) — `NSE:JTLIND,NSE:GARUDA,...` to clipboard
+- **Copy CSV** — `JTLIND,GARUDA,...` (Excel-friendly)
+- **Download .txt** — one ticker per line with `NSE:` prefix
+- **Open in TradingView** — opens first ticker's chart + copies full list
+- **Tier-grouped chips** when `groups` prop supplied: `⭐ Copy BLOCKBUSTER 25`, `🟢 Copy STRONG 49`, `🏆 Copy Conviction 20`
+
+Filter-respecting: `/earnings` passes `sortedCards.map(c => c.symbol)` so only currently-visible tickers get exported.
+
+---
+
+## 9 · Multi-Select Universe (Earnings Scan)
+
+State: `selectedUniverses: Set<'portfolio' | 'watchlist' | 'conviction' | 'screener'>` plus legacy `viewMode` kept for non-filter code paths.
+
+Helper: `matchesSelectedUniverses(card)` → OR-union of selected sources.
+
+Each universe has its accent color:
+- 💼 Portfolio: `#10B981` (green)
+- 📋 Watchlist: `#22D3EE` (cyan)
+- 🏆 Conviction Beats: `#F59E0B` (amber)
+- 🔍 Screener: `#8B5CF6` (purple)
+
+Default: just Watchlist.
+
+---
+
+## 10 · BLOCKBUSTER Gate (current v3 — Patch 0185)
+
+`/api/v1/earnings/graded` and the client-side `gradeRow` both apply the same logic.
+
+Three paths (any one qualifies):
+
+**Path A — Clean magnitude + structure**
+- composite ≥ 78
+- cleanMagnitude (Sales/PAT/EPS ≥ 25)
+- ≤ 1 caveat
+- (≥ 1 Tier-1 method OR positive guidance signal)
+- chart OK (stage ≠ 4, pct52 ≥ -25)
+
+**Path B — Exceptional magnitude**
+- composite ≥ 72
+- exceptionalMagnitude (Sales ≥ 40, PAT ≥ 50, EPS ≥ 50)
+- ≤ 2 caveats
+- chart OK
+
+**Path C — Mega magnitude (escape hatch)**
+- megaMagnitude (Sales ≥ 40, PAT ≥ 75, EPS ≥ 75)
+- ≤ 3 caveats
+- stage ≠ 4
+- (no composite floor — magnitude IS the signal)
+
+**Tier-1 methods** = Trend Template, SEPA, CANSLIM (NOT Bonde EP — that's auto-satisfied by magnitude).
+
+**Methodology score floor:** 55 if any Tier-1 present, 65 if exceptional mag, 75 if mega mag.
+
+**Forward guidance signal:** regex scan of `narrative_text` / `announcement_text` for `capacity expansion`, `order book`, `record`, `margin expansion`, `capex`, `tailwind`, `Vadod`, etc. (≥ 2 matches = positive guidance).
+
+---
+
+## 11 · Patch Log Summary (0073 → 0201)
+
+Pre-session patches existed (0073–0095). Recent session highlights:
+
+**Earnings/Filings pipeline:**
+- 0130–0150 — Earnings Opps pro page + BSE/NSE pipeline + Screener enricher
+- 0155–0158 — Live Vercel enrichment, calibrated grading to EarningsPulse
+- 0160–0162 — Partial refresh, BLOCKBUSTER gate refinement
+- 0172–0185 — BLOCKBUSTER v3, guidance, force-include, audit, KV calendar cron, announce-date verification
+- 0186 — **Conviction Beats** watchlist tab + Scan filter
+- 0187–0194 — Date attribution + zero-loading + empty-cache + 3IINFOLTD digit-leading regex fix
+- 0195–0198 — Symbol regex, TradingView toolbar, multi-select universe
+- 0199–0200 — Persistent localStorage cache on /earnings + cross-page staleTime audit
+- 0201 — **Post-earnings price gap** badge on Earnings Scan cards (`/api/v1/earnings/post-gap`)
+
+**Other features:**
+- 0089–0094 — Earnings Hub merge, Special Situations pillar, Stock Sheet, Re-rating Screener
+- 0096 — Live Input Cost → Equity Transmission Engine (`/transmission`)
+- 0107 — **Concall Intelligence v2** (`/concall-intel` + `/api/v1/concall/analyze`) — pure regex/lexicon
+- 0168 — Market Breadth Indicator (`/breadth`) — 5-pillar composite
+
+---
+
+## 12 · Known Open Issues (`pending` tasks)
+
+- **#90** — Verify Graded Tiers match EarningsPulse semantics after worker pass
+- **#93** — Verify BSE adapter pulls May 8/9 filings on Railway (next 30-min cycle)
+- **#101** — Worker stale tracker: Railway worker last run 16:36 UTC; we built Vercel-side enrichment to bypass
+
+---
+
+## 13 · Hard Rules for ALL Future Sessions
+
+1. **Always type-check before commit:** `cd /sessions/zen-epic-bardeen/mnt/market-cockpit/frontend && timeout 35 npx tsc --noEmit`
+2. **Don't reduce cache TTLs for past dates** — they're immutable, 7d localStorage / 90d KV is correct.
+3. **Don't add regex validators that reject digit-leading tickers.** Always use `[A-Z0-9]` for first char of NSE symbols.
+4. **Don't cache empty enrich results for 6h** — 5min only. See Patch 0194.
+5. **Don't attribute earnings data to dates not backed by confirmation.** Board meeting alone ≠ filing. See Patch 0179, 0187.
+6. **Don't fabricate guidance.** Real forward signals from news/concall text only, never from past YoY tiles. See Patch 0185.
+7. **Always show inline feedback near the button user clicked.** Toasts far from the action get missed. See Patch 0189.
+8. **Hard Refresh must wipe BOTH localStorage and KV.** Refresh-without-bust is a footgun.
+9. **Date navigation arrows skip weekends.** Indian markets only trade Mon-Fri.
+10. **The user's tone is direct. Don't over-apologize. Diagnose deeply, fix at root cause, ship.**
+
+---
+
+## 14 · Quick Commands
+
+```bash
+# Type-check
+cd /sessions/zen-epic-bardeen/mnt/market-cockpit/frontend && timeout 35 npx tsc --noEmit
+
+# Commit + push
+cd /sessions/zen-epic-bardeen/mnt/market-cockpit && git add -A && git commit -m "..." && git push origin main
+
+# Trigger calendar cron manually (after deploy)
+curl 'https://market-cockpit.vercel.app/api/v1/cron/refresh-earnings-calendar'
+
+# Probe a specific ticker's coverage
+curl 'https://market-cockpit.vercel.app/api/v1/earnings/coverage?ticker=SYRMA&date=2026-05-11'
+
+# Force-rebuild graded for a date
+curl 'https://market-cockpit.vercel.app/api/v1/earnings/graded?date=2026-05-11&force=1'
+
+# Post-earnings gap probe
+curl -X POST 'https://market-cockpit.vercel.app/api/v1/earnings/post-gap' \
+  -H 'Content-Type: application/json' \
+  -d '{"items":[{"ticker":"JTLIND","filing_date":"2026-05-11","timing":"post"}]}'
+```
+
+---
+
+## 15 · How to Start a New Chat
+
+Paste this into the new chat as the first message:
+
+> Read `/Users/radhevrishi/Desktop/Python/Imp Marketcockpit/market-cockpit/CLAUDE.md` before doing anything. It has the full project context from the previous session. Then [your actual request].
+
+That's it. The new agent will load the memory and you skip the 30-min rebuild.
