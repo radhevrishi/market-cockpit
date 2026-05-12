@@ -156,9 +156,22 @@ export default function CalendarPage() {
     <div style={{ backgroundColor: THEME.background, minHeight: '100vh', padding: '24px', color: THEME.textPrimary, fontFamily: 'system-ui, -apple-system, sans-serif' }}>
       {/* Header */}
       <div style={{ marginBottom: '24px' }}>
-        <h1 style={{ fontSize: '28px', fontWeight: '700', margin: '0 0 8px 0' }}>
-          Earnings Calendar
-        </h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
+          <h1 style={{ fontSize: '28px', fontWeight: '700', margin: 0 }}>
+            Earnings Calendar
+          </h1>
+          {/* PATCH 0302 — Index-filter chip surfaces the active filter prominently
+              when it's narrowed below 'All'. Helps users notice when a low result
+              count is filter-driven vs genuinely empty. */}
+          {indexFilter !== 'All' && (
+            <span style={{
+              fontSize: 11, fontWeight: 700, color: '#F59E0B',
+              border: '1px solid rgba(245,158,11,0.4)',
+              backgroundColor: 'rgba(245,158,11,0.10)',
+              padding: '3px 10px', borderRadius: 6, letterSpacing: '0.4px',
+            }}>FILTER: {indexFilter}</span>
+          )}
+        </div>
         <p style={{ color: THEME.textSecondary, margin: 0, fontSize: '13px' }}>
           Indian quarterly results with AI quality ratings
           {data ? ` • 1 ${viewMonth.toLocaleDateString('en-US', { month: 'short' })} — ${daysInMonth} ${viewMonth.toLocaleDateString('en-US', { month: 'short' })} (${data.summary.total} results)` : ''}
