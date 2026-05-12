@@ -221,6 +221,8 @@ export default function NewsCard({ article, onTickerClick }: Props) {
   // PATCH 0119 — IMP-02: cross-reference uploaded Multibagger tickers
   // PATCH 0120 — IMP-09: also derive [BN][RR] strategy tags
   const [isWatchlist, setIsWatchlist] = useState(false);
+  // PATCH 0229 — click-to-expand also-reporting sources inline
+  const [showAlsoReported, setShowAlsoReported] = useState(false);
   const [strategyTags, setStrategyTags] = useState<StrategyTag[]>([]);
   useEffect(() => {
     const mb = articleMatchesWatchlist(article);
@@ -967,12 +969,14 @@ export default function NewsCard({ article, onTickerClick }: Props) {
                 <span className="ml-1 opacity-60">· {(article as any).source_tier}</span>
               )}
               {(article as any).also_reported_by_count > 0 && (
-                <span
-                  className="ml-2 px-1.5 py-[1px] rounded bg-[#1A2840] text-[#8A95A3] text-[10px] font-semibold"
-                  title={`Also reported by: ${((article as any).also_reported_sources || []).join(', ')}`}
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowAlsoReported(s => !s); }}
+                  className="ml-2 px-1.5 py-[1px] rounded bg-[#1A2840] text-[#8A95A3] text-[10px] font-semibold hover:bg-[#22D3EE20] hover:text-[#22D3EE] transition-colors"
+                  title={showAlsoReported ? 'Hide source list' : 'Click to view the corroborating sources'}
+                  style={{ border: 'none', cursor: 'pointer' }}
                 >
-                  + {(article as any).also_reported_by_count} {(article as any).also_reported_by_count === 1 ? 'source' : 'sources'}
-                </span>
+                  + {(article as any).also_reported_by_count} {(article as any).also_reported_by_count === 1 ? 'source' : 'sources'} {showAlsoReported ? '▴' : '▾'}
+                </button>
               )}
             </span>
             {/* PATCH 0129 — Save-to-Watchlist button on each NewsCard */}
@@ -1002,6 +1006,42 @@ export default function NewsCard({ article, onTickerClick }: Props) {
               );
             })()}
           </span>
+
+          {/* PATCH 0229 — Inline expansion of also-reporting sources.
+              Click the '+ N sources' chip in the source line to toggle. */}
+          {showAlsoReported && (article as any).also_reported_sources && (article as any).also_reported_sources.length > 0 && (
+            <div
+              className="mt-2 px-3 py-2 rounded border text-[10px]"
+              style={{
+                backgroundColor: '#22D3EE08',
+                borderColor: '#22D3EE40',
+                color: '#C9D4E0',
+              }}
+            >
+              <div style={{ fontSize: 9, fontWeight: 700, color: '#22D3EE', letterSpacing: '0.4px', marginBottom: 6 }}>
+                CORROBORATED BY {((article as any).also_reported_sources as string[]).length} OTHER SOURCE{((article as any).also_reported_sources as string[]).length === 1 ? '' : 'S'}
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {((article as any).also_reported_sources as string[]).map((src, i) => (
+                  <span
+                    key={`${src}-${i}`}
+                    style={{
+                      backgroundColor: '#0D1B2E',
+                      border: '1px solid #1E2D45',
+                      borderRadius: 4,
+                      padding: '2px 6px',
+                      fontSize: 10,
+                      color: '#8A95A3',
+                    }}
+                  >{src}</span>
+                ))}
+              </div>
+              <div style={{ fontSize: 9, color: '#4A5B6C', marginTop: 6, lineHeight: 1.4 }}>
+                Higher corroboration = lower probability of a one-off / fabricated story.
+                Click '+ N sources' again to collapse.
+              </div>
+            </div>
+          )}
 
           {/* Expandable summary */}
           {article.summary && (
