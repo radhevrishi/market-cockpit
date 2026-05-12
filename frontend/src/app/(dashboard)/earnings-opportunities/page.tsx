@@ -107,8 +107,13 @@ function useMarketEarnings(months: string[]) {
         const raw = localStorage.getItem(HUB_LS_PREFIX + key);
         if (!raw) return undefined;
         const parsed = JSON.parse(raw);
-        // Treat as fresh for 6h after caching
-        if (parsed?._cachedAt && Date.now() - parsed._cachedAt < 6 * 3600_000) return parsed;
+        // PATCH 0253 — Hub data for PAST months is immutable; for the current
+        // month it still gets a background refetch via staleTime (15 min).
+        // Previously we rejected cached data >6h old → 'Loading calendar from
+        // KV…' spinner on every visit. Now we always return cached data on
+        // mount; React Query handles freshness in background. User sees the
+        // calendar instantly + the freshness chip on the page shows the age.
+        if (parsed && parsed.results) return parsed;
       } catch {}
       return undefined;
     },
@@ -1920,7 +1925,17 @@ function CalendarView({ data, loading, from, to, onPickDate }: { data: CalendarP
   }, [from, to]);
 
   if (loading && !data) {
-    return <div style={{ color: '#6B7A8D', fontSize: 13, padding: 40, textAlign: 'center' }}>Loading calendar from KV…</div>;
+    // PATCH 0253 — Calendar loads from localStorage instantly when cached
+    // (which is the typical case after first visit). Reaching this state
+    // means no cache exists yet; show a more honest message + skeleton.
+    return (
+      <div style={{ color: '#6B7A8D', fontSize: 13, padding: 40, textAlign: 'center' }}>
+        <div style={{ marginBottom: 8 }}>Fetching the earnings calendar for the first time…</div>
+        <div style={{ fontSize: 11, color: '#4A5B6C' }}>
+          This is a one-time fetch per month. Subsequent visits hit cache instantly.
+        </div>
+      </div>
+    );
   }
   if (data?.empty_reason === 'scraper_has_not_run_yet') {
     return (
