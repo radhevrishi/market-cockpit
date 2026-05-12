@@ -10,6 +10,8 @@ import api from '@/lib/api';
 import { articleMatchesStrategy } from '@/components/news/NewsCard';
 // PATCH 0214 — semantic color tokens (state / semantic / severity orthogonal)
 import { TOKENS, chipStyle } from '@/lib/design-tokens';
+// PATCH 0232 — Source-tier visuals for Evidence Panel
+import { classifySource, TIER_VISUAL } from '@/lib/source-tiers';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1061,6 +1063,89 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
           </div>
         )}
 
+        {/* PATCH 0232 — Evidence Panel v0 section. Surfaces the data the
+            article payload already carries so users can audit a signal's
+            provenance without leaving the page. Real evidence chain (with
+            classifier feature traces + cross-article corroboration timeline)
+            lands once the SignalEvidence schema is in place. */}
+        <div style={{
+          marginTop: 20, paddingTop: 16, borderTop: '1px solid #1E2D45',
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#22D3EE', letterSpacing: '0.6px', marginBottom: 10 }}>
+            EVIDENCE & PROVENANCE
+          </div>
+          {/* Source tier */}
+          {(() => {
+            const tier = classifySource(article.source_name ?? article.source, article.source_url ?? article.url);
+            const v = TIER_VISUAL[tier];
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <span style={{ fontSize: 10, color: '#6B7B8C', fontWeight: 600, minWidth: 88 }}>SOURCE TIER</span>
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  backgroundColor: v.tone.bg, color: v.tone.solid,
+                  border: `1px solid ${v.tone.border}`,
+                  padding: '3px 8px', borderRadius: 4, fontSize: 10, fontWeight: 700,
+                  fontFamily: 'ui-monospace, monospace',
+                }}>{v.glyph} {v.label}</span>
+                <span style={{ fontSize: 11, color: '#8A95A3' }}>{v.description}</span>
+              </div>
+            );
+          })()}
+          {/* Corroboration */}
+          {(article as any).also_reported_by_count > 0 && (
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
+              <span style={{ fontSize: 10, color: '#6B7B8C', fontWeight: 600, minWidth: 88 }}>CORROBORATED</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 11, color: '#C9D4E0', marginBottom: 4 }}>
+                  By {(article as any).also_reported_by_count} other source{(article as any).also_reported_by_count === 1 ? '' : 's'}:
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {(((article as any).also_reported_sources || []) as string[]).map((s, i) => (
+                    <span key={`${s}-${i}`} style={{
+                      backgroundColor: '#0A1422', border: '1px solid #1E2D45',
+                      borderRadius: 4, padding: '2px 6px', fontSize: 10, color: '#8A95A3',
+                    }}>{s}</span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+          {/* Severity contributors (what fields drove the rank) */}
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
+            <span style={{ fontSize: 10, color: '#6B7B8C', fontWeight: 600, minWidth: 88 }}>WHY RANKED</span>
+            <div style={{ flex: 1, fontSize: 11, color: '#C9D4E0', fontFamily: 'ui-monospace, monospace', lineHeight: 1.6 }}>
+              <div>  importance: {article.importance_score ?? '—'} / 5</div>
+              {article.bottleneck_level && <div>  bottleneck:  {article.bottleneck_level.replace(/_/g, ' ')}</div>}
+              {(article as any).investment_tier && <div>  tier:        {(article as any).investment_tier}</div>}
+              {(article as any).structural_relevance?.score != null && (
+                <div>  structural:  {(article as any).structural_relevance.score} ({(article as any).structural_relevance.tier_label})</div>
+              )}
+              {(article as any).signal_confidence?.confidence_pct != null && (
+                <div>  confidence:  {(article as any).signal_confidence.confidence_pct}%</div>
+              )}
+              <div style={{ marginTop: 4, color: '#6B7B8C', fontFamily: 'inherit' }}>
+                Full classifier feature trace lands once the SignalEvidence schema ships (P0 follow-up).
+              </div>
+            </div>
+          </div>
+          {/* Lifecycle */}
+          {(() => {
+            const ts = new Date(article.published_at || (article as any).ingested_at || 0).getTime();
+            const age = Date.now() - ts;
+            const ageH = age / 3600_000;
+            const bucket = ageH <= 24 ? 'LIVE' : ageH <= 48 ? 'WARM' : ageH <= 168 ? 'STALE' : 'PERSISTENT';
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 10, color: '#6B7B8C', fontWeight: 600, minWidth: 88 }}>LIFECYCLE</span>
+                <span style={{ fontSize: 11, color: '#C9D4E0' }}>
+                  {bucket} · published {article.published_at ? new Date(article.published_at).toLocaleString() : '—'}
+                </span>
+              </div>
+            );
+          })()}
+        </div>
+
         {/* External link */}
         {url && url !== '#' && (
           <a
@@ -1069,7 +1154,7 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
               display: 'inline-flex', alignItems: 'center', gap: '6px',
               fontSize: '12px', fontWeight: '600', color: '#0F7ABF', textDecoration: 'none',
               padding: '8px 16px', borderRadius: '8px', border: '1px solid #0F7ABF40',
-              backgroundColor: '#0F7ABF10',
+              backgroundColor: '#0F7ABF10', marginTop: 16,
             }}
           >
             Open original article <ExternalLink style={{ width: '12px', height: '12px' }} />
