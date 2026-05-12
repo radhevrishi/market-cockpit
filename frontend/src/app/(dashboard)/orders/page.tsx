@@ -3614,6 +3614,7 @@ export default function CompanyIntelligencePage() {
                 <div key={`qt-${i}`} style={{ fontSize: '11px', color: TEXT2, marginBottom: '4px', paddingLeft: '8px', borderLeft: `2px solid ${PURPLE}40` }}>
                   <span style={{ fontWeight: 600, color: '#3B82F6' }}>{t.symbol}</span>
                   {t.isPortfolio && <span style={{ fontSize: '8px', color: PURPLE, marginLeft: '4px' }}>PF</span>}
+                  {(t as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '8px', color: '#F59E0B', marginLeft: '4px', fontWeight: 700 }}>CB</span>}
                   {' — '}{t.theme.narrative}
                 </div>
               ))}
@@ -3627,6 +3628,7 @@ export default function CompanyIntelligencePage() {
                 <div key={`qm-${i}`} style={{ fontSize: '11px', color: TEXT2, marginBottom: '4px', paddingLeft: '8px', borderLeft: `2px solid ${ACCENT}40` }}>
                   <span style={{ fontWeight: 600, color: '#3B82F6' }}>{s.symbol}</span>
                   {s.isPortfolio && <span style={{ fontSize: '8px', color: PURPLE, marginLeft: '4px' }}>PF</span>}
+                  {(s as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '8px', color: '#F59E0B', marginLeft: '4px', fontWeight: 700 }}>CB</span>}
                   {' — '}{s.whatHappened || s.whyItMatters || s.eventType}
                   <span style={{ fontSize: '9px', color: TEXT3, marginLeft: '6px' }}>{fmtDate(s.date)}</span>
                 </div>
@@ -3848,6 +3850,7 @@ export default function CompanyIntelligencePage() {
                   )}
                   {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600 }}>PF</span>}
                   {s.isWatchlist && !s.isPortfolio && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600 }}>WL</span>}
+                  {(s as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '9px', color: '#F59E0B', fontWeight: 700, padding: '0 4px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.15)' }}>CB</span>}
                   {s.tag && <span style={{ 
   fontSize: '9px', 
   fontWeight: 700, 
@@ -4152,6 +4155,7 @@ export default function CompanyIntelligencePage() {
                         )}
                         {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600 }}>PF</span>}
                         {s.isWatchlist && !s.isPortfolio && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600 }}>WL</span>}
+                        {(s as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '9px', color: '#F59E0B', fontWeight: 700, padding: '0 4px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.15)' }}>CB</span>}
                         {s.tag && <span style={{ 
   fontSize: '9px', 
   fontWeight: 700, 
@@ -4372,6 +4376,7 @@ export default function CompanyIntelligencePage() {
                         )}
                         {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600 }}>PF</span>}
                         {s.isWatchlist && !s.isPortfolio && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600 }}>WL</span>}
+                        {(s as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '9px', color: '#F59E0B', fontWeight: 700, padding: '0 4px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.15)' }}>CB</span>}
                         {s.tag && <span style={{ 
   fontSize: '9px', 
   fontWeight: 700, 
@@ -4600,6 +4605,7 @@ export default function CompanyIntelligencePage() {
                     )}
                     {s.isPortfolio && <span style={{ fontSize: '8px', color: PURPLE, fontWeight: 700, padding: '1px 4px', borderRadius: '3px', backgroundColor: 'rgba(139,92,246,0.15)' }}>PF</span>}
                     {s.isWatchlist && !s.isPortfolio && <span style={{ fontSize: '8px', color: ACCENT, fontWeight: 700, padding: '1px 4px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.15)' }}>WL</span>}
+                    {(s as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '8px', color: '#F59E0B', fontWeight: 700, padding: '1px 4px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.15)' }}>CB</span>}
                     <span style={{ fontSize: '9px', padding: '1px 6px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.08)', color: ACCENT, fontWeight: 600 }}>
                       {s.eventType}
                     </span>
