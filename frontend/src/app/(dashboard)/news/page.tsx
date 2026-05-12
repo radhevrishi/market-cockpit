@@ -1651,7 +1651,7 @@ export default function NewsFeedPage() {
   const newsFetchedAt = dataUpdatedAt
     ? new Date(dataUpdatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
     : null;
-  const { data: rawInPlay, isLoading: inPlayLoading, refetch: refetchInPlay, dataUpdatedAt: inPlayUpdatedAt, isFetching: inPlayFetching } = useInPlay();
+  const { data: rawInPlay, isLoading: inPlayLoading, refetch: refetchInPlay, dataUpdatedAt: inPlayUpdatedAt, isFetching: inPlayFetching, isError: inPlayError } = useInPlay();
   // Phase 1.3 / 1.5 / 2.5: Must Read + Forward Calendar + Anomaly hooks
   const { data: mustRead } = useMustRead();
   const { data: calendar } = useCalendar();
@@ -1991,6 +1991,20 @@ export default function NewsFeedPage() {
                 </a>
               );
             })
+          ) : inPlayError ? (
+            // PATCH 0215 — explicit error state with retry, never silent
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
+              <AlertCircle style={{ width: 12, height: 12, color: TOKENS.semantic.bearish.solid }} />
+              <span style={{ color: TOKENS.semantic.bearish.solid }}>Couldn't load IN PLAY items.</span>
+              <button
+                onClick={() => refetchInPlay()}
+                style={{
+                  background: 'none', border: `1px solid ${TOKENS.semantic.bearish.border}`,
+                  color: TOKENS.semantic.bearish.solid, padding: '2px 8px', borderRadius: 4,
+                  fontSize: 10, fontWeight: 700, cursor: 'pointer',
+                }}
+              >Retry</button>
+            </span>
           ) : (
             <span style={{ fontSize: '11px', color: '#4A5B6C', fontStyle: 'italic' }}>
               No high-importance stories in the last 12 hours
@@ -3174,19 +3188,30 @@ export default function NewsFeedPage() {
         ) : !articles?.length ? (
           <div style={{ textAlign: 'center', padding: '60px 20px' }}>
             <p style={{ fontSize: '32px', marginBottom: '12px' }}>📰</p>
-            <p style={{ fontSize: '15px', fontWeight: '600', color: '#F5F7FA', margin: '0 0 8px' }}>No articles found</p>
+            <p style={{ fontSize: '15px', fontWeight: '600', color: '#F5F7FA', margin: '0 0 8px' }}>No articles match your filters</p>
             <p style={{ fontSize: '13px', color: '#4A5B6C', margin: '0 0 16px' }}>
-              {search || region !== 'ALL' || articleType !== 'ALL' || sourceName !== 'ALL'
-                ? 'Try adjusting your filters'
-                : 'Articles load automatically every 90 seconds'}
+              {/* PATCH 0215 — explicit guidance about which filter likely caused this */}
+              {lifecycleFilter !== 'ALL'
+                ? `Lifecycle filter set to "${lifecycleFilter === 'LIVE_WARM' ? 'Live + Warm (≤48h)' : lifecycleFilter}". Try widening to "All" or selecting a different bucket.`
+                : (search || region !== 'ALL' || articleType !== 'ALL' || sourceName !== 'ALL'
+                    ? 'Try clearing the search box or relaxing your region / type / source filters'
+                    : 'No articles in the feed yet — they refresh every 90 seconds')}
             </p>
-            <button
-              onClick={handleRefresh}
-              disabled={isRefreshing}
-              style={{ backgroundColor: '#0F7ABF', color: 'white', border: 'none', borderRadius: '8px', padding: '8px 16px', fontSize: '12px', cursor: isRefreshing ? 'wait' : 'pointer', opacity: isRefreshing ? 0.7 : 1 }}
-            >
-              {isRefreshing ? 'Fetching news…' : 'Refresh Now'}
-            </button>
+            <div style={{ display: 'inline-flex', gap: 8 }}>
+              {lifecycleFilter !== 'ALL' && (
+                <button
+                  onClick={() => setLifecycleFilter('ALL')}
+                  style={{ backgroundColor: 'transparent', color: TOKENS.surface.text, border: `1px solid ${TOKENS.surface.cardBorder}`, borderRadius: '8px', padding: '8px 16px', fontSize: '12px', cursor: 'pointer' }}
+                >Clear lifecycle filter</button>
+              )}
+              <button
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                style={{ backgroundColor: '#0F7ABF', color: 'white', border: 'none', borderRadius: '8px', padding: '8px 16px', fontSize: '12px', cursor: isRefreshing ? 'wait' : 'pointer', opacity: isRefreshing ? 0.7 : 1 }}
+              >
+                {isRefreshing ? 'Fetching news…' : 'Refresh Now'}
+              </button>
+            </div>
           </div>
         ) : showBottleneckDashboard && articles?.length > 0 ? (
           // Bottleneck articles already shown at top — don't duplicate
