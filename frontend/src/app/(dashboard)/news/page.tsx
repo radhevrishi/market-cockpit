@@ -3401,10 +3401,27 @@ export default function NewsFeedPage() {
           <span style={{ fontSize: '11px', color: '#4A5B6C' }}>
             {articles.length} total
           </span>
+          {/* PATCH 0227 — Visible sort chip with click-to-toggle. Previously
+              the impact/time sort was only exposed in the bottleneck dashboard
+              header; the main feed had no UI for it. */}
+          <button
+            onClick={() => setSortBy(sortBy === 'impact' ? 'time' : 'impact')}
+            style={{ marginLeft: 'auto', fontSize: '10px', fontWeight: '700', cursor: 'pointer', borderRadius: '6px', padding: '3px 9px',
+              backgroundColor: sortBy === 'impact' ? '#F59E0B15' : '#22D3EE15',
+              border: `1px solid ${sortBy === 'impact' ? '#F59E0B60' : '#22D3EE60'}`,
+              color: sortBy === 'impact' ? '#F59E0B' : '#22D3EE',
+              letterSpacing: '0.4px',
+            }}
+            title={sortBy === 'impact'
+              ? 'Sorted by Priority score (see the P N badge on each card). Click to switch to chronological.'
+              : 'Sorted chronologically (newest first). Click to switch to Priority sort.'}
+          >
+            SORT: {sortBy === 'impact' ? '▲ PRIORITY' : '🕒 TIME'}
+          </button>
           {/* Layer grouping toggle */}
           <button
             onClick={() => setGroupByLayer(g => !g)}
-            style={{ marginLeft: 'auto', fontSize: '10px', fontWeight: '600', color: groupByLayer ? '#0F7ABF' : '#4A5B6C', background: 'none', border: `1px solid ${groupByLayer ? '#0F7ABF40' : '#1E2D45'}`, borderRadius: '6px', padding: '3px 8px', cursor: 'pointer' }}
+            style={{ fontSize: '10px', fontWeight: '600', color: groupByLayer ? '#0F7ABF' : '#4A5B6C', background: 'none', border: `1px solid ${groupByLayer ? '#0F7ABF40' : '#1E2D45'}`, borderRadius: '6px', padding: '3px 8px', cursor: 'pointer' }}
           >
             {groupByLayer ? 'Grouped' : 'Timeline'}
           </button>
