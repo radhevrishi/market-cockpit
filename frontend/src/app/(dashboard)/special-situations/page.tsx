@@ -211,6 +211,17 @@ export default function SpecialSituationsPage() {
   const initial = (searchParams?.get('tab') as Tab) || 'all';
   const [active, setActive] = useState<Tab>(TABS.some((t) => t.id === initial) ? initial : 'all');
   const [region, setRegion] = useState<'ALL' | 'IN' | 'US' | 'GLOBAL'>('ALL');
+  // PATCH 0252 — Clickable tier/category filters. Clicking a Stat box toggles
+  // the filter; multiple categories may be selected (OR semantics).
+  const [tierFilter, setTierFilter] = useState<'ALL' | 'TIER_1' | 'TIER_2' | 'WATCHLIST'>('ALL');
+  const [catFilterSet, setCatFilterSet] = useState<Set<Category>>(new Set());
+  const toggleCat = (c: Category) => setCatFilterSet(prev => {
+    const next = new Set(prev);
+    if (next.has(c)) next.delete(c); else next.add(c);
+    return next;
+  });
+  const clearFilters = () => { setTierFilter('ALL'); setCatFilterSet(new Set()); };
+  const anyFilterActive = tierFilter !== 'ALL' || catFilterSet.size > 0;
 
   useEffect(() => {
     const sp = new URLSearchParams(searchParams?.toString() || '');
@@ -230,9 +241,21 @@ export default function SpecialSituationsPage() {
     return feed.events.filter((e) => region === 'ALL' || e.region === region);
   }, [feed, region]);
 
-  const tier1Canonical = canonicalEvents.filter((e) => e.tier === 'TIER_1');
-  const tier2Canonical = canonicalEvents.filter((e) => e.tier === 'TIER_2');
-  const watchlistCanonical = canonicalEvents.filter((e) => e.tier === 'WATCHLIST');
+  // PATCH 0252 — Apply user-selected tier + category filters before deriving
+  // tier1/tier2/watchlist lists. Counts stay computed on `canonicalEvents` so
+  // the Stat boxes always show the total available; only the rendered list
+  // shrinks.
+  const filteredCanonicalEvents: CanonicalEvent[] = useMemo(() => {
+    return canonicalEvents.filter((e) => {
+      if (tierFilter !== 'ALL' && e.tier !== tierFilter) return false;
+      if (catFilterSet.size > 0 && !catFilterSet.has(e.category as Category)) return false;
+      return true;
+    });
+  }, [canonicalEvents, tierFilter, catFilterSet]);
+
+  const tier1Canonical = filteredCanonicalEvents.filter((e) => e.tier === 'TIER_1');
+  const tier2Canonical = filteredCanonicalEvents.filter((e) => e.tier === 'TIER_2');
+  const watchlistCanonical = filteredCanonicalEvents.filter((e) => e.tier === 'WATCHLIST');
   // NOISE tier hidden from primary view (fund housekeeping, rumors, unclassified)
 
   // Legacy fallback: if events array is empty (cache pre-0105 deploy), fall back
@@ -291,13 +314,25 @@ export default function SpecialSituationsPage() {
 
         {/* Aggregate counts */}
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
-          <Stat label="Tier 1 (hard catalyst)" value={tier1Count} color="#EF4444" />
-          <Stat label="Tier 2 (tradable)" value={tier2Count} color="#F59E0B" />
-          <Stat label={tier3Label} value={tier3Count} color="#6B7A8D" />
+          {/* PATCH 0252 — Clickable filters. Toggle on click; visual active state. */}
+          <Stat label="Tier 1 (hard catalyst)" value={tier1Count} color="#EF4444"
+            active={tierFilter === 'TIER_1'}
+            onClick={() => setTierFilter(tierFilter === 'TIER_1' ? 'ALL' : 'TIER_1')} />
+          <Stat label="Tier 2 (tradable)" value={tier2Count} color="#F59E0B"
+            active={tierFilter === 'TIER_2'}
+            onClick={() => setTierFilter(tierFilter === 'TIER_2' ? 'ALL' : 'TIER_2')} />
+          <Stat label={tier3Label} value={tier3Count} color="#6B7A8D"
+            active={tierFilter === 'WATCHLIST'}
+            onClick={() => setTierFilter(tierFilter === 'WATCHLIST' ? 'ALL' : 'WATCHLIST')} />
           <span style={{ width: 1, backgroundColor: '#1A2840', margin: '4px 4px' }} />
           {(Object.keys(CAT_META) as Category[]).map((c) => (
-            <Stat key={c} label={CAT_META[c].label} value={catCounts[c]} color={CAT_META[c].color} icon={CAT_META[c].icon} />
+            <Stat key={c} label={CAT_META[c].label} value={catCounts[c]} color={CAT_META[c].color} icon={CAT_META[c].icon}
+              active={catFilterSet.has(c)}
+              onClick={() => toggleCat(c)} />
           ))}
+          {anyFilterActive && (
+            <button onClick={clearFilters} style={{ marginLeft: 6, alignSelf: 'center', backgroundColor: 'transparent', border: '1px solid #1A2840', color: '#8A95A3', borderRadius: 5, padding: '4px 10px', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>Clear filters ×</button>
+          )}
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' }}>
             <span style={{ fontSize: 11, color: '#6B7A8D', marginRight: 6 }}>Region:</span>
             {(['ALL','IN','US','GLOBAL'] as const).map((r) => {
@@ -344,13 +379,25 @@ export default function SpecialSituationsPage() {
   );
 }
 
-function Stat({ label, value, color, icon }: { label: string; value: number | string; color: string; icon?: string }) {
-  return (
-    <div style={{ backgroundColor: '#0A1422', border: `1px solid ${color}30`, borderLeft: `3px solid ${color}`, borderRadius: 6, padding: '6px 12px' }}>
+function Stat({ label, value, color, icon, onClick, active }: { label: string; value: number | string; color: string; icon?: string; onClick?: () => void; active?: boolean }) {
+  // PATCH 0252 — Clickable Stat boxes. When onClick is supplied, render as
+  // button; active state lifts the box visually (fill + bolder border).
+  const baseStyle: React.CSSProperties = {
+    backgroundColor: active ? `${color}25` : '#0A1422',
+    border: `1px solid ${active ? color : `${color}30`}`,
+    borderLeft: `3px solid ${color}`,
+    borderRadius: 6, padding: '6px 12px',
+    cursor: onClick ? 'pointer' : 'default',
+    fontFamily: 'inherit', color: 'inherit', textAlign: 'left',
+    transition: 'background-color 120ms, border-color 120ms',
+  };
+  const inner = (
+    <>
       <div style={{ fontSize: 18, fontWeight: 800, color, lineHeight: 1.1 }}>{icon ? `${icon} ` : ''}{value}</div>
-      <div style={{ fontSize: 9.5, color: '#6B7A8D', textTransform: 'uppercase', letterSpacing: '0.4px', marginTop: 2 }}>{label}</div>
-    </div>
+      <div style={{ fontSize: 9.5, color: active ? color : '#6B7A8D', textTransform: 'uppercase', letterSpacing: '0.4px', marginTop: 2, fontWeight: active ? 700 : 500 }}>{label}{active ? ' ✓' : ''}</div>
+    </>
   );
+  return onClick ? <button onClick={onClick} style={baseStyle}>{inner}</button> : <div style={baseStyle}>{inner}</div>;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
