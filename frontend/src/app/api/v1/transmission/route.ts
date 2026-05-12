@@ -75,7 +75,9 @@ const COMMODITIES: Commodity[] = [
     ],
   },
   {
-    symbol: 'ALI=F', name: 'Aluminum', unit: '$/lb',
+    // PATCH 0247 — Yahoo ALI=F returns LME Aluminum in $/MT, not $/lb.
+    // Per-pound would be ~$1.60; the ~$3,520 figure is per tonne.
+    symbol: 'ALI=F', name: 'Aluminum', unit: '$/MT',
     category: 'metals', bias_2026: 'volatile',
     drivers: [
       { sector: 'Aluminum miners', sign: 1,  sensitivity: 'high', sample_tickers: ['HINDALCO', 'NATIONALUM', 'VEDL'] },
@@ -120,7 +122,8 @@ const COMMODITIES: Commodity[] = [
     ],
   },
   {
-    symbol: 'ZN=F', name: 'Zinc', unit: '$/lb',
+    // PATCH 0247 — Yahoo ZN=F returns cents per pound (110¢ = $1.10/lb).
+    symbol: 'ZN=F', name: 'Zinc', unit: '¢/lb',
     category: 'metals', bias_2026: 'volatile',
     drivers: [
       { sector: 'Zinc miners',    sign: 1,  sensitivity: 'high', sample_tickers: ['HINDZINC', 'VEDL'] },
@@ -158,7 +161,9 @@ const COMMODITIES: Commodity[] = [
     ],
   },
   {
-    symbol: 'ZL=F', name: 'Soybean Oil', unit: '$/lb',
+    // PATCH 0247 — Yahoo ZL=F returns CBOT Soybean Oil in cents per pound
+    // (Yahoo currency = 'USX'). 74.7¢/lb = $0.747/lb.
+    symbol: 'ZL=F', name: 'Soybean Oil', unit: '¢/lb',
     category: 'agri', bias_2026: 'volatile',
     drivers: [
       { sector: 'FMCG (oil)',       sign: -1, sensitivity: 'high', sample_tickers: ['HINDUNILVR', 'MARICO', 'AWLAGRI'], pass_through_lag: '1Q', pricing_power: 'moderate' },
@@ -275,8 +280,12 @@ const COMMODITIES: Commodity[] = [
 
   // ── Natural Rubber ─────────────────────────────────
   {
-    symbol: 'RU=F', name: 'Natural Rubber (TOCOM)', unit: 'JPY/kg',
+    // PATCH 0247 — Yahoo RU=F returns 0.01331 USD which is clearly broken
+    // (TOCOM rubber spot is ~300 JPY/kg ≈ $2/kg). Switched to manual feed —
+    // drivers still surface, no auto-fetched price.
+    symbol: '', name: 'Natural Rubber (TOCOM)', unit: 'JPY/kg',
     category: 'agri', bias_2026: 'volatile',
+    source_note: 'Manual feed — Yahoo RU=F returns invalid data; track via TOCOM RSS3 spot.',
     drivers: [
       { sector: 'Tyres (rubber)',  sign: -1, sensitivity: 'high', sample_tickers: ['MRF', 'APOLLOTYRE', 'CEATLTD', 'BALKRISIND', 'JKTYRE'], pass_through_lag: '1Q', pricing_power: 'moderate', note: 'Separate from crude — direct margin lever.' },
       { sector: 'Footwear',        sign: -1, sensitivity: 'med',  sample_tickers: ['BATAINDIA', 'RELAXO', 'METROBRAND', 'CAMPUSACTIV'], pass_through_lag: '2Q', pricing_power: 'moderate' },
