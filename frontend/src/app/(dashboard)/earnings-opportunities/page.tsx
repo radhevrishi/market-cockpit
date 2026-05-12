@@ -822,6 +822,25 @@ export default function EarningsOpportunitiesPage() {
     }
   };
 
+  // PATCH 0177 — Auto-fill: server-side scan of Nifty100 + priority watchlist.
+  // Discovers tickers that filed Q4 results but were dropped by NSE's limited
+  // /api/corporates-financial-results feed. Auto-merged into view silently.
+  const { data: autoFillData } = useQuery<{ tickers: Array<{ ticker: string }> }>({
+    queryKey: ['earnings-auto-fill', resolvedDateForGrading],
+    enabled: !!resolvedDateForGrading,
+    queryFn: async () => {
+      const res = await fetch(`/api/v1/earnings/auto-fill?date=${resolvedDateForGrading}`, { cache: 'force-cache' });
+      if (!res.ok) return { tickers: [] };
+      return res.json();
+    },
+    staleTime: 6 * 60 * 60_000,  // 6h client-side (server KV is 24h)
+    refetchInterval: false,
+  });
+  const autoFillTickers = useMemo(
+    () => (autoFillData?.tickers || []).map((t) => t.ticker.toUpperCase()),
+    [autoFillData]
+  );
+
   // PATCH 0176 — Force-include: list of tickers manually added by user.
   // Persists in localStorage per-date. These tickers get injected into the
   // page even if /api/market/earnings doesn't surface them (NSE feed gap).
@@ -837,10 +856,15 @@ export default function EarningsOpportunitiesPage() {
     setForceIncludeMap(next);
     try { localStorage.setItem(FORCE_INCLUDE_KEY, JSON.stringify(next)); } catch {}
   };
-  const forceIncludeForDate = useMemo(
+  const userForceIncludeForDate = useMemo(
     () => (resolvedDateForGrading ? (forceIncludeMap[resolvedDateForGrading] || []) : []),
     [forceIncludeMap, resolvedDateForGrading],
   );
+  // Merge user's manual list with auto-discovered list — dedupe
+  const forceIncludeForDate = useMemo(() => {
+    const set = new Set<string>([...userForceIncludeForDate, ...autoFillTickers]);
+    return [...set];
+  }, [userForceIncludeForDate, autoFillTickers]);
 
   // Fetch enrichment for force-included tickers and grade them client-side
   const { data: forcedCards } = useQuery<ParsedEarning[]>({
@@ -1184,28 +1208,43 @@ export default function EarningsOpportunitiesPage() {
             </button>
           </div>
 
-          {/* Force-included tickers chips */}
-          {forceIncludeForDate.length > 0 && (
+          {/* Auto-fill status + Force-included chips */}
+          {(autoFillTickers.length > 0 || userForceIncludeForDate.length > 0) && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 2 }}>
-              <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.4px' }}>
-                FORCE-INCLUDED THIS DATE:
-              </span>
-              {forceIncludeForDate.map((t) => (
-                <span key={t} style={{
+              {autoFillTickers.length > 0 && (
+                <span style={{
                   display: 'inline-flex', alignItems: 'center', gap: 4,
-                  padding: '2px 4px 2px 8px', fontSize: 10, fontWeight: 700,
-                  borderRadius: 4, backgroundColor: '#10B98118',
-                  border: '1px solid #10B98140', color: '#10B981',
-                  fontFamily: 'ui-monospace, monospace',
+                  padding: '2px 8px', fontSize: 10, fontWeight: 800,
+                  borderRadius: 4, backgroundColor: '#22D3EE15',
+                  border: '1px solid #22D3EE40', color: '#22D3EE',
+                  letterSpacing: '0.4px',
                 }}>
-                  {t}
-                  <button onClick={() => removeForceInclude(t)} title="Remove"
-                    style={{
-                      background: 'none', border: 'none', color: '#10B981',
-                      cursor: 'pointer', padding: '0 4px', fontSize: 12, lineHeight: 1,
-                    }}>×</button>
+                  🤖 AUTO-DISCOVERED: {autoFillTickers.length}
                 </span>
-              ))}
+              )}
+              {userForceIncludeForDate.length > 0 && (
+                <>
+                  <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.4px' }}>
+                    MANUALLY ADDED:
+                  </span>
+                  {userForceIncludeForDate.map((t) => (
+                    <span key={t} style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                      padding: '2px 4px 2px 8px', fontSize: 10, fontWeight: 700,
+                      borderRadius: 4, backgroundColor: '#10B98118',
+                      border: '1px solid #10B98140', color: '#10B981',
+                      fontFamily: 'ui-monospace, monospace',
+                    }}>
+                      {t}
+                      <button onClick={() => removeForceInclude(t)} title="Remove"
+                        style={{
+                          background: 'none', border: 'none', color: '#10B981',
+                          cursor: 'pointer', padding: '0 4px', fontSize: 12, lineHeight: 1,
+                        }}>×</button>
+                    </span>
+                  ))}
+                </>
+              )}
             </div>
           )}
 
