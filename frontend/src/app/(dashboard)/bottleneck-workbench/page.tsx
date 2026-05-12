@@ -123,6 +123,28 @@ export default function BottleneckWorkbenchPage() {
   const buckets = dashboard?.buckets || [];
   const bucket = useMemo(() => buckets.find(b => b.bucket_id === activeBucket), [buckets, activeBucket]);
 
+  // PATCH 0278 — Theme-picker search box, sorted by severity desc.
+  const [themeSearch, setThemeSearch] = useState('');
+  const sortedBuckets = useMemo(() => {
+    const sevOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
+    return [...buckets].sort((a, b) => {
+      const sa = sevOrder[(a.severity_label || '').toLowerCase()] ?? 99;
+      const sb = sevOrder[(b.severity_label || '').toLowerCase()] ?? 99;
+      if (sa !== sb) return sa - sb;
+      return (b.article_count || 0) - (a.article_count || 0);
+    });
+  }, [buckets]);
+  const visibleBuckets = useMemo(() => {
+    const q = themeSearch.trim().toLowerCase();
+    if (!q) return sortedBuckets;
+    return sortedBuckets.filter(b =>
+      (b.label || '').toLowerCase().includes(q) ||
+      (b.description || '').toLowerCase().includes(q) ||
+      (b.bucket_id || '').toLowerCase().includes(q) ||
+      (b.key_tickers || []).some(t => (t || '').toLowerCase().includes(q))
+    );
+  }, [sortedBuckets, themeSearch]);
+
   const { data: relatedArticles, isLoading: artLoading } = useThemedArticles(activeBucket);
 
   const tickerRoleMap = useMemo(() => {
@@ -141,17 +163,42 @@ export default function BottleneckWorkbenchPage() {
     return (
       <div style={{ padding: '40px', backgroundColor: TOKENS.surface.canvas, minHeight: '100vh', color: TOKENS.surface.text }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 16 }}>Bottleneck Workbench</h1>
-        <p style={{ fontSize: 13, color: TOKENS.surface.textDim, marginBottom: 24 }}>
+        <p style={{ fontSize: 13, color: TOKENS.surface.textDim, marginBottom: 16 }}>
           Pick a bottleneck theme below to open its workbench. Each theme aggregates the persistent
           signals, the related articles timeline, and the implicated tickers across the active feed.
         </p>
+        {/* PATCH 0278 — Search-filter input + severity-sorted theme list. */}
+        {!isLoading && buckets.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+            <input
+              type="search"
+              value={themeSearch}
+              onChange={(e) => setThemeSearch(e.target.value)}
+              placeholder={`Search ${buckets.length} themes by name, ticker, or description…`}
+              style={{
+                flex: '1 1 320px', maxWidth: 480,
+                padding: '8px 12px', borderRadius: 6,
+                border: `1px solid ${TOKENS.surface.cardBorder}`,
+                backgroundColor: TOKENS.surface.card,
+                color: TOKENS.surface.text, fontSize: 13,
+              }}
+            />
+            <span style={{ fontSize: 11, color: TOKENS.surface.textMuted }}>
+              {visibleBuckets.length} / {buckets.length} themes · sorted by severity
+            </span>
+          </div>
+        )}
         {isLoading ? (
           <p style={{ fontSize: 13, color: TOKENS.surface.textDim }}>Loading themes…</p>
         ) : buckets.length === 0 ? (
           <p style={{ fontSize: 13, color: TOKENS.surface.textDim }}>No active bottlenecks at this time.</p>
+        ) : visibleBuckets.length === 0 ? (
+          <p style={{ fontSize: 13, color: TOKENS.surface.textDim }}>
+            No themes match &ldquo;{themeSearch}&rdquo;. Try clearing the search.
+          </p>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 12 }}>
-            {buckets.map(b => (
+            {visibleBuckets.map(b => (
               <button
                 key={b.bucket_id}
                 onClick={() => router.push(`${pathname}?theme=${encodeURIComponent(b.bucket_id)}`)}
@@ -189,8 +236,27 @@ export default function BottleneckWorkbenchPage() {
         }}
       >← All bottlenecks</button>
 
-      {isLoading || !bucket ? (
+      {isLoading ? (
         <p style={{ fontSize: 13, color: TOKENS.surface.textDim }}>Loading theme…</p>
+      ) : !bucket ? (
+        // PATCH 0278 — Explicit "theme not found" state. Previously the page
+        // showed an indefinite "Loading theme…" spinner when the theme query
+        // param pointed to a bucket id that no longer exists.
+        <div style={{ backgroundColor: TOKENS.surface.card, border: `1px solid ${TOKENS.surface.cardBorder}`, borderRadius: 10, padding: '20px 24px' }}>
+          <h2 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 8px' }}>Theme not found</h2>
+          <p style={{ fontSize: 13, color: TOKENS.surface.textDim, margin: '0 0 14px' }}>
+            The theme &ldquo;{activeBucket}&rdquo; isn&rsquo;t in the active bottleneck list. It may have
+            rolled off the rolling window or been renamed. Pick another theme from the workbench index.
+          </p>
+          <button
+            onClick={() => router.push(pathname)}
+            style={{
+              backgroundColor: 'transparent', border: `1px solid ${TOKENS.surface.cardBorder}`,
+              color: TOKENS.surface.text, borderRadius: 6, padding: '6px 14px',
+              fontSize: 12, fontWeight: 700, cursor: 'pointer',
+            }}
+          >Browse all bottlenecks →</button>
+        </div>
       ) : (
         <>
           {/* Header */}
