@@ -759,19 +759,57 @@ export default function EarningsOpportunitiesPage() {
     return pastDates[0] || '';
   }, [hub, filterDate, todayIso]);
 
-  // PATCH 0161/0165 — graded query keeps previous data while loading the
-  // next date (no blank flash on navigation) + prefetches adjacent dates.
+  // PATCH 0185 — localStorage cache layer for INSTANT date navigation.
+  // User complaint: "always loading calendar always loading all earnings".
+  // Now: every successful graded payload is persisted to localStorage under
+  // key `mc:graded:v7:<date>`. On page mount or date change, the query reads
+  // that cache as initialData → renders instantly from disk → revalidates
+  // in background. Past dates effectively never re-fetch (immutable in KV).
+  const LS_PREFIX = 'mc:graded:v7:';
+  const readLsCache = (date: string): OpportunitiesPayload | undefined => {
+    if (!date || typeof window === 'undefined') return undefined;
+    try {
+      const raw = localStorage.getItem(LS_PREFIX + date);
+      if (!raw) return undefined;
+      const parsed = JSON.parse(raw);
+      // Skip stale today-data older than 15 min
+      if (date === todayIso && parsed?._cachedAt && Date.now() - parsed._cachedAt > 15 * 60_000) return undefined;
+      return parsed;
+    } catch { return undefined; }
+  };
+  const writeLsCache = (date: string, data: OpportunitiesPayload) => {
+    if (!date || typeof window === 'undefined') return;
+    try { localStorage.setItem(LS_PREFIX + date, JSON.stringify({ ...data, _cachedAt: Date.now() })); } catch {}
+  };
+
+  // PATCH 0161/0165/0185 — graded query reads from localStorage initialData
+  // so navigation is INSTANT for previously-visited dates, then revalidates
+  // from server in background. Past dates are immutable so revalidation is
+  // basically a no-op (KV hit). No more 30s waits per click.
   const { data: gradedData, refetch: refetchGraded, isFetching: gradedFetching } = useQuery<OpportunitiesPayload>({
     queryKey: ['graded-by-date', resolvedDateForGrading],
     enabled: !!resolvedDateForGrading,
     queryFn: async () => {
       const res = await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}`);
       if (!res.ok) throw new Error('graded fetch failed');
-      return res.json();
+      const payload = await res.json();
+      // Persist to localStorage for next time
+      writeLsCache(resolvedDateForGrading, payload);
+      return payload;
     },
+    // Past dates: cache for 24h (immutable). Today: 5 min.
     staleTime: resolvedDateForGrading < todayIso ? 24 * 60 * 60_000 : 5 * 60_000,
+    // Aggressive: don't refetch on window focus or reconnect for past dates.
+    refetchOnWindowFocus: resolvedDateForGrading >= todayIso,
+    refetchOnReconnect: resolvedDateForGrading >= todayIso,
     refetchInterval: false,
     placeholderData: (prev) => prev,  // keep showing previous date while next loads
+    // Hydrate from localStorage so the screen never goes blank on navigation
+    initialData: () => readLsCache(resolvedDateForGrading),
+    initialDataUpdatedAt: () => {
+      const cached = readLsCache(resolvedDateForGrading);
+      return cached ? (cached as any)._cachedAt : undefined;
+    },
   });
 
   // PATCH 0165 — prefetch the date before and after when user lands on a date
@@ -863,20 +901,51 @@ export default function EarningsOpportunitiesPage() {
     }
   };
 
-  // PATCH 0183 — Guidance pts (copied from /multibagger lines 2089-2226).
-  // Scans recent news articles for each ticker on the page, applies keyword
-  // scoring to compute guidance score 0.0–1.0, then maps to a ±14/8/3/0 pt
-  // adjustment displayed next to the composite score.
+  // PATCH 0185 — FORWARD GUIDANCE ONLY. Past-quarter prints (revenue beat,
+  // record quarter, profit miss) are NOT guidance — they're history, shown
+  // already as YoY tiles. Guidance = what management commits to for next
+  // quarter / year. Keyword set rewritten to capture forward-looking phrases:
+  //   - explicit guidance: raised/cut/maintained guidance, outlook upgrade
+  //   - capex plans: new plant, capacity expansion, brownfield, greenfield
+  //   - pipeline / order book: record order book, healthy pipeline
+  //   - margin guidance: margin to expand, margin guidance of X%
+  //   - geography / product: new product launch, US entry, EU expansion
+  //   - tone: confident, optimistic, structural tailwind, headwind, cautious
   const GUIDANCE_POSITIVE = [
-    'raised guidance', 'guidance upgrade', 'raised outlook', 'beats estimates',
-    'above estimates', 'record quarter', 'record revenue', 'strong beat',
-    'raised earnings', 'margin expansion', 'strong growth', 'upgraded',
-    'rerating', 'guidance raised',
+    // Explicit guidance moves
+    'raised guidance', 'guidance upgrade', 'guidance raised', 'raised outlook',
+    'upgraded outlook', 'raised target', 'raised forecast', 'maintained guidance',
+    // Forward-looking statements
+    'expect strong', 'expect robust', 'guide to', 'targeting', 'aiming for',
+    'on track to', 'on track for', 'project growth',
+    // Capacity / capex
+    'capacity expansion', 'new plant', 'brownfield', 'greenfield', 'commissioning',
+    'capex of', 'planned capex', 'capex plan',
+    // Pipeline / order book
+    'record order book', 'order book of', 'healthy pipeline', 'strong pipeline',
+    'order inflow', 'order win', 'book to bill',
+    // Margin guidance
+    'margin to expand', 'margin guidance', 'operating leverage', 'margin expansion guidance',
+    'expanding margin',
+    // Demand / structural
+    'demand recovery', 'structural tailwind', 'broad based growth', 'broad-based growth',
+    'multi-year growth', 'long runway', 'confident', 'optimistic about',
+    // New product / geography
+    'new product launch', 'pipeline launch', 'us expansion', 'eu expansion',
+    'new geography', 'export ramp',
   ];
   const GUIDANCE_NEGATIVE = [
-    'cut guidance', 'lowered guidance', 'below estimates', 'disappointing',
-    'warning', 'cautious', 'revenue miss', 'profit miss', 'guidance cut',
-    'margin pressure', 'revised down', 'lowered outlook',
+    // Explicit guidance moves
+    'cut guidance', 'lowered guidance', 'guidance cut', 'lowered outlook',
+    'withdrew guidance', 'suspended guidance', 'revised down', 'downgraded outlook',
+    // Forward-looking statements
+    'expect weak', 'expect soft', 'demand soft', 'demand weak', 'sluggish demand',
+    'headwind', 'cautious outlook', 'cautious on', 'guidance miss',
+    // Margin pressure
+    'margin pressure', 'margin compression', 'cost inflation', 'input cost pressure',
+    // Structural negatives
+    'destock', 'inventory correction', 'moderation', 'slowdown ahead',
+    'warning', 'profit warning',
   ];
   function guidanceBonus(score: number): number {
     if (score === undefined || score === -1) return 0;
@@ -1690,38 +1759,16 @@ function fmtPct(p: number | null | undefined, digits = 0): string {
 
 function EarningsCard({ stock, guidanceScore }: { stock: ParsedEarning; guidanceScore?: number }) {
   const tierColor = TIER_META[stock.tier].color;
-  // PATCH 0184 — Guidance pts with MAGNITUDE FALLBACK.
-  // News-based score (passed via prop). When news has no coverage for this
-  // ticker (score = -1 or undefined), derive a proxy from the magnitude itself
-  // — strong triple-beat = positive forward signal, deep miss = negative.
-  // Result: every card shows a guidance read, never blank.
-  let gScore = guidanceScore ?? -1;
-  let gSource: 'news' | 'magnitude' = 'news';
-  if (gScore === -1) {
-    gSource = 'magnitude';
-    const sales = stock.sales_yoy_pct ?? 0;
-    const pat = stock.net_profit_yoy_pct ?? 0;
-    const eps = stock.eps_yoy_pct ?? 0;
-    // Mega beat (Sales≥40 AND PAT≥75 AND EPS≥75) → very positive 0.85
-    if (sales >= 40 && pat >= 75 && eps >= 75) gScore = 0.85;
-    // Exceptional (Sales≥30 AND PAT≥50 AND EPS≥50) → positive 0.72
-    else if (sales >= 30 && pat >= 50 && eps >= 50) gScore = 0.72;
-    // Clean triple-beat (all ≥25) → mild positive 0.6
-    else if (sales >= 25 && pat >= 25 && eps >= 25) gScore = 0.6;
-    // Solid (all ≥15) → 0.55
-    else if (sales >= 15 && pat >= 15 && eps >= 15) gScore = 0.55;
-    // Mostly positive (≥2 of 3 ≥10) → 0.52
-    else if ([sales, pat, eps].filter((v) => v >= 10).length >= 2) gScore = 0.52;
-    // Deep miss — all negative → -8 (0.28)
-    else if (sales < 0 && pat < 0 && eps < 0) gScore = 0.28;
-    // Big PAT/EPS decline → 0.35
-    else if (pat <= -20 || eps <= -20) gScore = 0.35;
-    // Mild negative (≥2 of 3 < 0) → 0.42
-    else if ([sales, pat, eps].filter((v) => v < 0).length >= 2) gScore = 0.42;
-    // Otherwise neutral
-    else gScore = 0.5;
-  }
+  // PATCH 0185 — Guidance = FORWARD-LOOKING only.
+  // No more magnitude fallback. Past-quarter YoY numbers are NOT guidance —
+  // they're history (already shown in the SALES/PAT/EPS tiles).
+  // Guidance comes ONLY from news articles with forward-looking phrases:
+  // raised guidance, capex plans, order book, FY targets, margin guidance, etc.
+  // If no news article mentions the ticker with such phrases, we don't fake it.
+  const gScore = guidanceScore ?? -1;
+  const hasGuidance = gScore !== -1;
   const gAdj = (() => {
+    if (!hasGuidance) return 0;
     if (gScore >= 0.85) return 14;
     if (gScore >= 0.70) return 8;
     if (gScore >= 0.55) return 3;
@@ -1730,12 +1777,12 @@ function EarningsCard({ stock, guidanceScore }: { stock: ParsedEarning; guidance
     if (gScore <= 0.45) return -3;
     return 0;
   })();
-  const gColor =
+  const gColor = !hasGuidance ? '#6B7A8D' :
     gScore >= 0.70 ? '#10B981' :
     gScore >= 0.55 ? '#34d399' :
     gScore <= 0.30 ? '#EF4444' :
     gScore <= 0.45 ? '#F97316' : '#8A95A3';
-  const gLabel =
+  const gLabel = !hasGuidance ? '— No forward guidance data' :
     gScore >= 0.85 ? '▲ Strong' :
     gScore >= 0.70 ? '▲ Positive' :
     gScore >= 0.55 ? '↑ Mild +' :
@@ -1834,19 +1881,16 @@ function EarningsCard({ stock, guidanceScore }: { stock: ParsedEarning; guidance
         <div style={{ padding: '6px 10px', backgroundColor: '#0D1623', borderRadius: 6, border: `1px solid ${tierColor}40`, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
           <div style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.6px' }}>SCORE</div>
           <div style={{ fontSize: 22, fontWeight: 900, color: tierColor, lineHeight: 1, marginTop: 2 }}>{stock.composite_score}</div>
-          {/* PATCH 0184 — Guidance pts ALWAYS visible (magnitude-fallback when no news) */}
+          {/* PATCH 0185 — Forward Guidance row (real news-derived only) */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4, lineHeight: 1.1, flexWrap: 'wrap' }}>
-            <span
-              title={gSource === 'magnitude' ? 'Derived from earnings magnitude (no news coverage)' : 'Derived from news article scan'}
+            <span title="Forward-looking guidance scanned from news (raised guidance, capex plans, order book, FY targets, margin guidance)"
               style={{ fontSize: 9, fontWeight: 700, color: gColor, letterSpacing: '0.3px' }}>
               {gLabel}
             </span>
-            <span style={{ fontSize: 9, fontWeight: 800, color: gColor, fontFamily: 'ui-monospace, monospace' }}>
-              ({gAdj > 0 ? '+' : ''}{gAdj}pts)
-            </span>
-            {gSource === 'magnitude' && (
-              <span title="Magnitude-based proxy (news has no coverage)"
-                style={{ fontSize: 8, color: '#6B7A8D', fontWeight: 600 }}>·proxy</span>
+            {hasGuidance && (
+              <span style={{ fontSize: 9, fontWeight: 800, color: gColor, fontFamily: 'ui-monospace, monospace' }}>
+                ({gAdj > 0 ? '+' : ''}{gAdj}pts)
+              </span>
             )}
           </div>
         </div>

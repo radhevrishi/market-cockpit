@@ -796,13 +796,22 @@ export async function GET(request: Request) {
     }
 
     // ═══════════════════════════════════════════
-    // STEP 6.4: Self-updating earnings calendar (PATCH 0181)
+    // STEP 6.4: Self-updating earnings calendar (PATCH 0181, REFINED 0185)
     // ═══════════════════════════════════════════
-    // Read pre-computed calendar entries from KV — populated daily by
-    // /api/v1/cron/refresh-earnings-calendar which scans Nifty500 + Smallcap250
-    // per-symbol board meetings. Any ticker scheduled to file within our date
-    // range that isn't already in eventsMap gets added as 'Upcoming' (or
-    // graded by priceMove if past). No hardcoded data — pure KV reads.
+    // KV calendar entries are SCHEDULED board meetings — not actual filings.
+    // A May 11 board meeting doesn't guarantee the company filed on May 11.
+    // Therefore we ALWAYS mark KV entries as 'Upcoming' regardless of date,
+    // and dayList filtering downstream drops them so they never get attributed
+    // wrong financials. They show in the Calendar view as a schedule reference
+    // but never appear in the Graded Tiers.
+    // STRICT WINDOW: only inject KV calendar entries for TODAY or TOMORROW.
+    // User: "avoid them being populated if earnings is not today or tomorrow".
+    // Past dates rely entirely on actual NSE/BSE filing confirmation (Sources A-D).
+    // This prevents GARUDA-style cards (scheduled meeting but no actual filing
+    // on that date) from polluting historical date views.
+    const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+    const todayIsoStr = today.toISOString().slice(0, 10);
+    const tomorrowIsoStr = tomorrow.toISOString().slice(0, 10);
     let kvCalendarAdded = 0;
     try {
       const fromIso = fromDate.toISOString().slice(0, 10);
@@ -812,17 +821,18 @@ export async function GET(request: Request) {
         const ticker = entry.ticker;
         if (eventsMap.has(ticker)) continue;
         if (TICKER_BLOCKLIST.has(ticker)) continue;
+        // STRICT WINDOW: skip if not today or tomorrow.
+        if (entry.date !== todayIsoStr && entry.date !== tomorrowIsoStr) continue;
         const entryDate = new Date(entry.date);
         if (isNaN(entryDate.getTime())) continue;
-        const isPast = entryDate < today;
         const stockInfo = priceLookup[ticker];
         const marketCapCr = (stockInfo?.marketCap || 0) / 10000000;
         eventsMap.set(ticker, {
           ticker,
-          company: ticker,  // worker doesn't store company name; will be enriched later
+          company: ticker,
           resultDate: entry.date,
           quarter: expectedQuarter,
-          quality: isPast ? rateQualityFromPriceMove(stockInfo?.changePercent || 0) : 'Upcoming',
+          quality: 'Upcoming',  // KV entries are scheduled, never auto-graded
           sector: normalizeSector(stockInfo?.industry) || '',
           industry: stockInfo?.industry || '',
           marketCap: getCapCategory(marketCapCr),
@@ -837,7 +847,7 @@ export async function GET(request: Request) {
     } catch (kvErr) {
       console.log('KV calendar read failed:', String(kvErr));
     }
-    void kvCalendarAdded;  // surface in debug if needed
+    void kvCalendarAdded;
 
     // ═══════════════════════════════════════════
     // STEP 6.5: Enrich missing price/sector/cap via individual stock quotes
