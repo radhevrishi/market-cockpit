@@ -1055,7 +1055,10 @@ function buildEnrichedStocks(articles: NewsArticle[], quotes: QuoteStock[]): Enr
     }
   }
   // Build quote map
-  const qm = new Map<string, QuoteStock>(quotes.map(q => [q.ticker.toUpperCase(), q]));
+  // PATCH 0261 — defend against undefined/null quote tickers
+  const qm = new Map<string, QuoteStock>(
+    (quotes || []).filter(q => q?.ticker).map(q => [q.ticker.toUpperCase(), q])
+  );
 
   return UNIVERSE_DEDUPED.map((u): EnrichedStock => {
     // Match quotes by short ticker (strip exchange suffix like 6315, 322310)
@@ -1782,7 +1785,10 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
         if (!r.latest_at || (a.published_at && a.published_at > r.latest_at)) r.latest_at = a.published_at;
       }
     }
-    const qm = new Map<string, QuoteStock>(quotes.map(q => [q.ticker.toUpperCase(), q]));
+    // PATCH 0261 — defend against undefined/null quote tickers
+  const qm = new Map<string, QuoteStock>(
+    (quotes || []).filter(q => q?.ticker).map(q => [q.ticker.toUpperCase(), q])
+  );
     return Array.from(map.values())
       .filter(r => r.inUniverse ? r.evidence_count >= 1 : r.evidence_count >= 2) // New picks need 2+ articles to filter news noise
       .map(r => ({
