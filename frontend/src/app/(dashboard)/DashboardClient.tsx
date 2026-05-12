@@ -49,6 +49,8 @@ const NAV: NavItem[] = [
   { href: '/breadth',       label: 'Breadth',         icon: <BarChart3 className="w-5 h-5" /> },
   // PATCH 0096 / 0170: Live Input Cost → Equity Transmission
   { href: '/transmission',  label: 'Transmission',    icon: <TrendingUp className="w-5 h-5" /> },
+  // PATCH 0107 / 0171: Concall Intelligence Engine v2
+  { href: '/concall-intel', label: 'Concall Intel',   icon: <Microscope className="w-5 h-5" /> },
   { href: '/ipos',          label: 'IPOs',            icon: <Rocket className="w-5 h-5" /> },
   // PATCH 0089: macro-maps removed — header ticker covers global indices/currencies/commodities
   // PATCH 0091: standalone /calendars also merged into Earnings Hub above
