@@ -12,6 +12,8 @@ import {
   type FrameworkCoverage, type ArchetypeMatch,
   type RoicWaccSpread, type MissingDimension,
 } from '@/lib/multibagger/framework-extensions';
+// PATCH 0272 — Conviction Beats overlay on Multibagger results.
+import { getConvictionTickers } from '@/lib/conviction-beats';
 
 // Shared API base — respects NEXT_PUBLIC_API_URL env var so all fetch() calls
 // resolve consistently when the base URL changes (fixes #13: mixed /api/v1 vs /api)
@@ -2162,6 +2164,31 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   const [guidanceScores, setGuidanceScores] = useState<Record<string, number>>({}); // symbol → 0.0-1.0
   const [guidanceArticleCounts, setGuidanceArticleCounts] = useState<Record<string, number>>({});
 
+  // PATCH 0272 — Conviction Beats overlay. Subscribes to the institutional
+  // bench so we can mark rows that have already passed the BLOCKBUSTER /
+  // STRONG earnings filter on /earnings-opportunities. Cross-tab sync via
+  // the storage event + the 'conviction-beats:updated' custom event.
+  const [convictionSet, setConvictionSet] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set();
+    try { return new Set(Array.from(getConvictionTickers()).map((t: string) => t.toUpperCase())); }
+    catch { return new Set(); }
+  });
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const refresh = () => {
+      try { setConvictionSet(new Set(Array.from(getConvictionTickers()).map((t: string) => t.toUpperCase()))); }
+      catch {}
+    };
+    window.addEventListener('storage', refresh);
+    window.addEventListener('conviction-beats:updated', refresh);
+    return () => {
+      window.removeEventListener('storage', refresh);
+      window.removeEventListener('conviction-beats:updated', refresh);
+    };
+  }, []);
+  // Conviction-only filter chip in the toolbar.
+  const [convictionOnly, setConvictionOnly] = useState(false);
+
   const GUIDANCE_POSITIVE = ['raised guidance','guidance upgrade','raised outlook','beats estimates','above estimates','record quarter','record revenue','strong beat','raised earnings','margin expansion','strong growth','upgraded','rerating','guidance raised'];
   const GUIDANCE_NEGATIVE = ['cut guidance','lowered guidance','below estimates','disappointing','warning','cautious','revenue miss','profit miss','guidance cut','margin pressure','revised down','lowered outlook'];
 
@@ -2446,6 +2473,9 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   if (fcfOnly)        baseRows = baseRows.filter(r => (r.fcfAbsolute ?? -1) > 0 || (r.cfoToPat ?? 0) >= 0.8);
   if (discoveryOnly)   baseRows = baseRows.filter(r => (r.fiiPlusDii ?? 100) < 15);
   if (inflectionOnly)  baseRows = baseRows.filter(r => r.inflectionSignal || r.triggerBonus >= 10);
+  // PATCH 0272 — Conviction-only filter. When ON, narrows the universe to
+  // tickers already on the Conviction Beats bench (synced from /earnings-opportunities).
+  if (convictionOnly) baseRows = baseRows.filter(r => convictionSet.has((r.symbol || '').toUpperCase()));
   // P/E and PEG filters — only apply when data is available for a stock
   if (peMax  !== 'ALL') baseRows = baseRows.filter(r => r.pe  !== undefined && r.pe  > 0 && r.pe  <= peMax);
   if (pegMax !== 'ALL') baseRows = baseRows.filter(r => r.peg !== undefined && r.peg > 0 && r.peg <= pegMax);
@@ -2716,6 +2746,10 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
               {key:'fcf',    label:'💰 FCF+',         active:fcfOnly,    toggle:()=>setFcfOnly(v=>!v),    count:rows.filter(r=>(r.fcfAbsolute??-1)>0||(r.cfoToPat??0)>=0.8).length},
               {key:'disc',    label:'🔍 Discovery <15%', active:discoveryOnly,  toggle:()=>setDiscoveryOnly(v=>!v),  count:rows.filter(r=>(r.fiiPlusDii??100)<15).length},
       {key:'inflect', label:'💥 Inflection',     active:inflectionOnly, toggle:()=>setInflectionOnly(v=>!v), count:rows.filter(r=>r.inflectionSignal||r.triggerBonus>=10).length},
+      // PATCH 0272 — Conviction-only chip. Counts how many uploaded rows
+      // intersect the Conviction Beats bench so users can see at a glance
+      // which of their multibagger candidates ALSO just printed a BLOCKBUSTER/STRONG.
+      {key:'cb',     label:'🏆 Conviction',     active:convictionOnly, toggle:()=>setConvictionOnly(v=>!v), count:rows.filter(r=>convictionSet.has((r.symbol||'').toUpperCase())).length},
       // Guidance button — separate from regular toggles, has its own fetch action
             ].map(f=>(
               <button key={f.key} onClick={f.toggle} style={{fontSize:F.xs,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${f.active?ACCENT+'60':BORDER}`,background:f.active?ACCENT+'14':'transparent',color:f.active?ACCENT:MUTED,cursor:'pointer'}}>
@@ -3104,6 +3138,19 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                       <div style={{display:'flex',alignItems:'center',gap:5}}>
                         <span style={{fontSize:F.lg,fontWeight:800,color:hasCrit?RED:r.bucket==='MONITOR'?MUTED:TEXT}}>{r.symbol}</span>
                         {idx<3&&r.bucket!=='MONITOR'&&<span style={{fontSize:F.md}}>⭐</span>}
+                        {/* PATCH 0272 — Conviction Beats overlay badge. Amber 🏆 means
+                            this ticker is on the institutional Conviction Beats bench
+                            (synced from /earnings-opportunities BLOCKBUSTER/STRONG output). */}
+                        {convictionSet.has((r.symbol || '').toUpperCase()) && (
+                          <span
+                            title="On Conviction Beats bench (BLOCKBUSTER/STRONG earnings)"
+                            style={{
+                              fontSize: 9, fontWeight: 800, color: '#F59E0B',
+                              border: '1px solid #F59E0B60', backgroundColor: 'rgba(245,158,11,0.10)',
+                              padding: '1px 5px', borderRadius: 3, letterSpacing: 0.3,
+                            }}
+                          >🏆 CB</span>
+                        )}
                       </div>
                       {/* Bucket badge */}
                       <span style={{fontSize:F.xs,fontWeight:700,color:BUCKET_CONFIG[r.bucket].color,border:`1px solid ${BUCKET_CONFIG[r.bucket].color}40`,padding:'1px 5px',borderRadius:3,width:'fit-content'}}>
