@@ -291,18 +291,26 @@ function gradeRow(row: any): ParsedEarning | null {
   const todayIso = new Date().toISOString().slice(0, 10);
   if (row?.filing_date && row.filing_date > todayIso) return null;
 
-  // PATCH 0145.2: quarter alignment. Trendlyne's period_ended tells us the
-  // quarter that was supposed to be reported. Screener's latest_quarter_end_iso
-  // tells us what quarter is actually live on the stock page. If those don't
-  // match (Screener still shows the PRIOR quarter), the company hasn't filed.
+  // PATCH 0178 — RELAXED quarter alignment.
+  // OLD logic compared Trendlyne period_ended vs Screener latest_quarter_end_iso
+  // and dropped the row if diff > 45 days. This silently dropped fresh filings
+  // like SYRMA where Screener hadn't ingested Q4 yet (still showing Q3) — even
+  // though NSE-structured XBRL had returned valid Sales/PAT/EPS YoY.
+  //
+  // New logic: if we have financials from a non-Screener source (NSE structured
+  // or BSE direct), trust them. The data IS the proof of filing. Only apply
+  // the strict mismatch check when financials_source === 'screener' AND the
+  // mismatch is more than 95 days (3+ months — clearly wrong quarter).
   if (row?.period_ended && row?.latest_quarter_end_iso) {
     const promised = parseTrendlynePeriodEnd(row.period_ended);  // returns YYYY-MM-DD or null
     if (promised && promised !== row.latest_quarter_end_iso) {
-      // Allow a 1-month look-back tolerance — sometimes Screener period-end
-      // is reported as the *announcement* month not the quarter-close month.
       const pd = new Date(promised), ld = new Date(row.latest_quarter_end_iso);
       const diffDays = Math.abs((pd.getTime() - ld.getTime()) / (24 * 3600_000));
-      if (diffDays > 45) return null;
+      const src = (row?.financials_source || '').toLowerCase();
+      const isScreenerOnly = src === 'screener' || src === '';
+      // Only drop if Screener-only source AND extreme mismatch (>95 days = > one quarter)
+      if (isScreenerOnly && diffDays > 95) return null;
+      // Otherwise: trust the financials (NSE/BSE structured = authoritative)
     }
   }
 

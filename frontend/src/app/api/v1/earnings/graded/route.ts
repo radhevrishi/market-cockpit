@@ -11,7 +11,7 @@
 // CACHING strategy (key insight: past filings are immutable):
 //   • Past dates (< today_IST): cache 90 days. Once a Q4 is filed, the
 //     numbers don't change — re-fetching is pure waste. KV key
-//     'graded:v4:<YYYY-MM-DD>' is hit on every subsequent visit (<100ms).
+//     'graded:v5:<YYYY-MM-DD>' is hit on every subsequent visit (<100ms).
 //   • Today's date: cache 15 min. New filings come throughout the day,
 //     so we accept brief staleness for freshness.
 //   • Future dates: not cached (Upcoming only).
@@ -114,12 +114,17 @@ function gradeRow(row: any): ParsedEarning | null {
   const todayIso = new Date().toISOString().slice(0, 10);
   if (row?.filing_date && row.filing_date > todayIso) return null;
 
-  // Quarter alignment guard
+  // PATCH 0178 — RELAXED quarter alignment.
+  // Only drop on screener-only source with extreme mismatch (>95 days).
+  // NSE/BSE-structured financials are authoritative — trust them even when
+  // Screener latest_quarter_end_iso still shows the prior quarter.
   if (row?.period_ended && row?.latest_quarter_end_iso) {
     const promised = parseTrendlynePeriodEnd(row.period_ended);
     if (promised && promised !== row.latest_quarter_end_iso) {
       const diffDays = Math.abs((new Date(promised).getTime() - new Date(row.latest_quarter_end_iso).getTime()) / 86_400_000);
-      if (diffDays > 45) return null;
+      const src = (row?.financials_source || '').toLowerCase();
+      const isScreenerOnly = src === 'screener' || src === '';
+      if (isScreenerOnly && diffDays > 95) return null;
     }
   }
 
@@ -277,7 +282,7 @@ export async function GET(req: Request) {
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const isPast = date < todayIso;
-  const cacheKey = `graded:v4:${date}`;
+  const cacheKey = `graded:v5:${date}`;
 
   // Try cache first (past dates are immutable, 90-day TTL — practically forever for our use)
   // ── BUT bypass cache when refreshMissing or force is set ────────────────
