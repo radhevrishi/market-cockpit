@@ -344,21 +344,29 @@ export default function WatchlistsPage() {
   const convictionCount = convictionEntries.length;
 
   // Flag cycle: ⚪ → 🟢 → 🟠 → 🔴 → ⚪
+  // PATCH 0297 — Functional setState so rapid double-clicks always read the
+  // latest flag state. The previous closure read `watchlistFlags[ticker]`
+  // captured at render time, which could race when two clicks fired
+  // back-to-back before re-render.
   const handleToggleFlag = useCallback(async (ticker: string) => {
     const cycle = ['', '🟢', '🟠', '🔴'];
-    const current = watchlistFlags[ticker] || '';
-    const idx = cycle.indexOf(current);
-    const next = cycle[(idx + 1) % cycle.length];
-    setWatchlistFlags(prev => ({ ...prev, [ticker]: next }));
-    // Persist to API
+    let nextFlag = '';
+    setWatchlistFlags(prev => {
+      const current = prev[ticker] || '';
+      const idx = cycle.indexOf(current);
+      nextFlag = cycle[(idx + 1) % cycle.length];
+      return { ...prev, [ticker]: nextFlag };
+    });
+    // Persist to API — fire after state update; reads `nextFlag` from the
+    // closure populated inside the setState callback above.
     try {
       await fetch('/api/watchlist', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chatId: CHAT_ID, action: 'set-flag', symbol: ticker, flag: next }),
+        body: JSON.stringify({ chatId: CHAT_ID, action: 'set-flag', symbol: ticker, flag: nextFlag }),
       });
     } catch {}
-  }, [watchlistFlags]);
+  }, []);
 
   // Initialize tickers from API first, fallback to localStorage
   useEffect(() => {

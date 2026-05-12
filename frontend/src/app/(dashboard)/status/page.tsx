@@ -268,9 +268,15 @@ export default function StatusPage() {
   const summary = useMemo(() => {
     const results = Object.values(states).map(s => s.result).filter(Boolean) as ProbeResult[];
     const ok = results.filter(r => r.ok).length;
+    // PATCH 0299 — Granular STALE / FAIL breakdown. A probe is STALE when
+    // it returned ok=true but no fresh data (status 2xx with empty payload),
+    // and FAIL when ok=false. We surface both counts so the user sees the
+    // shape of the failure at a glance, not just an OK/total ratio.
+    const fail = results.filter(r => !r.ok).length;
+    const stale = results.filter(r => r.ok && (r.note || '').toLowerCase().includes('stale')).length;
     const total = PROBES.length;
     const allDone = Object.values(states).every(s => s.status === 'done');
-    return { ok, total, allDone };
+    return { ok, fail, stale, total, allDone };
   }, [states]);
 
   const overallColor =
@@ -293,14 +299,28 @@ export default function StatusPage() {
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            fontSize: 12, fontWeight: 700, padding: '6px 12px', borderRadius: 6,
-            backgroundColor: `${overallColor}15`, color: overallColor,
-            border: `1px solid ${overallColor}40`,
-          }}>
+          <span
+            title={summary.allDone
+              ? `${summary.ok} OK · ${summary.stale} STALE · ${summary.fail} FAIL out of ${summary.total} probes`
+              : 'Running probes…'
+            }
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              fontSize: 12, fontWeight: 700, padding: '6px 12px', borderRadius: 6,
+              backgroundColor: `${overallColor}15`, color: overallColor,
+              border: `1px solid ${overallColor}40`,
+            }}
+          >
             <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: overallColor }} />
             {summary.allDone ? `${summary.ok}/${summary.total} healthy` : 'Running…'}
+            {/* PATCH 0299 — Granular OK·STALE·FAIL breakdown. */}
+            {summary.allDone && (summary.fail > 0 || summary.stale > 0) && (
+              <span style={{ fontSize: 10, fontWeight: 600, opacity: 0.85, marginLeft: 4 }}>
+                · {summary.fail > 0 && `${summary.fail} FAIL`}
+                {summary.fail > 0 && summary.stale > 0 && ' · '}
+                {summary.stale > 0 && `${summary.stale} STALE`}
+              </span>
+            )}
           </span>
           <button
             onClick={() => setAutoRefresh(v => !v)}
