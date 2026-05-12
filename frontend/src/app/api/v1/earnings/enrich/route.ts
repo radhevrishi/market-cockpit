@@ -398,8 +398,18 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     financials_source: nse ? 'nse' : (screener ? 'screener' : null),
     _enriched_at: new Date().toISOString(),
   };
+  // PATCH 0194 — don't cache an empty result for the full 6h TTL.
+  // If financials came back null, cache for only 5 minutes so the next
+  // refresh actually re-tries the upstream sources (NSE / Screener may
+  // have just propagated the data). This is the difference between
+  // "data permanently missing" and "data temporarily slow" — fast-retry
+  // for the latter.
+  const hasFinancials = (out as any).sales_curr_cr != null ||
+                        (out as any).pat_curr_cr != null ||
+                        (out as any).eps_curr != null;
+  const ttl = hasFinancials ? ENRICH_TTL_S : 5 * 60;  // 6h vs 5min
   if (isRedisAvailable()) {
-    try { await kvSet(cacheKey, out, ENRICH_TTL_S); } catch {}
+    try { await kvSet(cacheKey, out, ttl); } catch {}
   }
   return out;
 }

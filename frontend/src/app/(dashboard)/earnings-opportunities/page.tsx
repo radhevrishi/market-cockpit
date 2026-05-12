@@ -1239,7 +1239,14 @@ export default function EarningsOpportunitiesPage() {
   // Detect "stale view": showing data from a previous date while new date loads.
   // True when graded query is fetching AND view.filing_date doesn't match the
   // date the user just navigated to.
-  const isStaleView = gradedFetching && view.filing_date && view.filing_date !== resolvedDateForGrading;
+  // PATCH 0194 — isStaleView ONLY when DATE changed mid-fetch. Refresh/HardRefresh
+  // on the SAME date shouldn't dim the view (the data is being refined in place).
+  // Previous code dimmed forever whenever gradedFetching was true after a refresh
+  // because view.filing_date never matched resolvedDateForGrading exactly.
+  const isStaleView = gradedFetching &&
+    !!view.filing_date &&
+    !!resolvedDateForGrading &&
+    view.filing_date !== resolvedDateForGrading;
 
   const counts = TIER_ORDER.map((t) => ({ tier: t, n: view.by_tier[t]?.length || 0 }));
 
