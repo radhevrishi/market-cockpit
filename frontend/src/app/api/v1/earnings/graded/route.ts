@@ -11,7 +11,7 @@
 // CACHING strategy (key insight: past filings are immutable):
 //   • Past dates (< today_IST): cache 90 days. Once a Q4 is filed, the
 //     numbers don't change — re-fetching is pure waste. KV key
-//     'graded:v2:<YYYY-MM-DD>' is hit on every subsequent visit (<100ms).
+//     'graded:v3:<YYYY-MM-DD>' is hit on every subsequent visit (<100ms).
 //   • Today's date: cache 15 min. New filings come throughout the day,
 //     so we accept brief staleness for freshness.
 //   • Future dates: not cached (Upcoming only).
@@ -176,18 +176,23 @@ function gradeRow(row: any): ParsedEarning | null {
   const mCount = methodology_tags.length;
   let methodology = mCount === 4 ? 100 : mCount === 3 ? 80 : mCount === 2 ? 60 : mCount === 1 ? 35 : 10;
   if (methodology_tags.includes('sepa')) methodology = Math.min(100, methodology + 5);
+  // PATCH 0172 — magnitude-aware methodology floor for mega triple-beats.
+  const _megaMagFloor = salesY != null && salesY >= 40 && patY != null && patY >= 75 && epsY != null && epsY >= 75;
+  if (_megaMagFloor) methodology = Math.max(methodology, 70);
 
   const composite = Math.max(0, Math.min(100, magnitude * 0.35 + quality * 0.25 + technical * 0.25 + methodology * 0.15));
 
-  // Tier rules — PATCH 0162 BLOCKBUSTER two-path gate
+  // Tier rules — PATCH 0172 BLOCKBUSTER three-path gate
   let tier: EarningsTier;
   const broken = (stage === 4 && (rs == null || rs < 40)) || (epsY != null && epsY < 0 && patY != null && patY < -10);
   const cleanMag = salesY != null && salesY >= 25 && patY != null && patY >= 25 && epsY != null && epsY >= 25;
   const exceptMag = salesY != null && salesY >= 50 && patY != null && patY >= 50 && epsY != null && epsY >= 50;
+  const megaMag = salesY != null && salesY >= 40 && patY != null && patY >= 75 && epsY != null && epsY >= 75;
   const s2rs70 = stage === 2 && rs != null && rs >= 70;
-  const bbPathA = mCount >= 3 && caveat_tags.length <= 1 && cleanMag && s2rs70;
-  const bbPathB = mCount >= 2 && caveat_tags.length <= 3 && exceptMag && s2rs70;
-  const blockbusterGate = composite >= 84 && (bbPathA || bbPathB);
+  const bbPathA = composite >= 84 && mCount >= 3 && caveat_tags.length <= 1 && cleanMag && s2rs70;
+  const bbPathB = composite >= 84 && mCount >= 2 && caveat_tags.length <= 3 && exceptMag && s2rs70;
+  const bbPathC = composite >= 70 && mCount >= 1 && caveat_tags.length <= 1 && megaMag && stage !== 4;
+  const blockbusterGate = bbPathA || bbPathB || bbPathC;
   if (broken && composite < 70) tier = 'AVOID';
   else if (blockbusterGate) tier = 'BLOCKBUSTER';
   else if (composite >= 68 && mCount >= 1 && caveat_tags.length <= 3 && stage !== 4) tier = 'STRONG';
@@ -243,7 +248,7 @@ export async function GET(req: Request) {
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const isPast = date < todayIso;
-  const cacheKey = `graded:v2:${date}`;
+  const cacheKey = `graded:v3:${date}`;
 
   // Try cache first (past dates are immutable, 90-day TTL — practically forever for our use)
   if (isRedisAvailable() && !refreshMissing) {

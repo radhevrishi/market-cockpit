@@ -396,6 +396,14 @@ function gradeRow(row: any): ParsedEarning | null {
   const mCount = methodology_tags.length;
   let methodology = mCount === 4 ? 100 : mCount === 3 ? 80 : mCount === 2 ? 60 : mCount === 1 ? 35 : 10;
   if (methodology_tags.includes('sepa')) methodology = Math.min(100, methodology + 5);
+  // PATCH 0172 — magnitude-aware methodology floor.
+  // When growth is THIS extreme (Sales≥40+PAT≥75+EPS≥75 = mega triple-beat),
+  // the magnitude IS itself a methodology signal — don't punish low method count.
+  const _megaMagnitudeFloor =
+    salesY != null && salesY >= 40 &&
+    patY != null && patY >= 75 &&
+    epsY != null && epsY >= 75;
+  if (_megaMagnitudeFloor) methodology = Math.max(methodology, 70);
 
   const composite = Math.max(0, Math.min(100,
     magnitude * 0.35 + quality * 0.25 + technical * 0.25 + methodology * 0.15,
@@ -416,12 +424,15 @@ function gradeRow(row: any): ParsedEarning | null {
   const broken = (stage === 4 && (rs == null || rs < 40)) ||
                  (epsY != null && epsY < 0 && patY != null && patY < -10);
 
-  // PATCH 0162 — BLOCKBUSTER gate (two paths):
-  //   A) CLEAN: 3+ methodologies + ≤1 caveat + clean magnitude (Sales/PAT/EPS all ≥25%)
-  //   B) EXCEPTIONAL: 2+ methodologies + ≤3 caveats + exceptional magnitude (all ≥50%)
-  //      [matches EarningsPulse's Atlanta Electric (2 methods, 0 caveats, +82/+127/+115)
-  //       and Antelopus (4 methods, 3 caveats, +65/+139/+157)]
-  // Both paths require Stage 2 AND RS ≥ 70 AND composite ≥ 84.
+  // PATCH 0172 — BLOCKBUSTER gate (THREE paths):
+  //   A) CLEAN:     3+ methodologies + ≤1 caveat + clean magnitude (all ≥25%) + Stage 2 + RS ≥ 70
+  //   B) EXCEPTIONAL: 2+ methodologies + ≤3 caveats + exceptional magnitude (all ≥50%) + Stage 2 + RS ≥ 70
+  //   C) MEGA MAGNITUDE (NEW): 1+ methodology + ≤1 caveat + mega magnitude (Sales ≥40 + PAT ≥75 + EPS ≥75)
+  //      + chart not broken. EarningsPulse logic: when the print is THIS extreme
+  //      (Atlanta Electric +82/+127/+113), the magnitude IS the methodology signal —
+  //      technical setup is allowed to lag because the move just started.
+  // Paths A/B require composite ≥ 84; Path C requires composite ≥ 70 (relaxed because
+  // RS / Stage haven't caught up to the fundamentals yet).
   const cleanMagnitude =
     salesY != null && salesY >= 25 &&
     patY != null && patY >= 25 &&
@@ -430,10 +441,15 @@ function gradeRow(row: any): ParsedEarning | null {
     salesY != null && salesY >= 50 &&
     patY != null && patY >= 50 &&
     epsY != null && epsY >= 50;
+  const megaMagnitude =
+    salesY != null && salesY >= 40 &&
+    patY != null && patY >= 75 &&
+    epsY != null && epsY >= 75;
   const stage2RS70 = stage === 2 && rs != null && rs >= 70;
-  const blockbusterPathA = mCount >= 3 && caveat_tags.length <= 1 && cleanMagnitude && stage2RS70;
-  const blockbusterPathB = mCount >= 2 && caveat_tags.length <= 3 && exceptionalMagnitude && stage2RS70;
-  const blockbusterGate = composite >= 84 && (blockbusterPathA || blockbusterPathB);
+  const blockbusterPathA = composite >= 84 && mCount >= 3 && caveat_tags.length <= 1 && cleanMagnitude && stage2RS70;
+  const blockbusterPathB = composite >= 84 && mCount >= 2 && caveat_tags.length <= 3 && exceptionalMagnitude && stage2RS70;
+  const blockbusterPathC = composite >= 70 && mCount >= 1 && caveat_tags.length <= 1 && megaMagnitude && stage !== 4;
+  const blockbusterGate = blockbusterPathA || blockbusterPathB || blockbusterPathC;
 
   if (broken && composite < 70) {
     tier = 'AVOID';
