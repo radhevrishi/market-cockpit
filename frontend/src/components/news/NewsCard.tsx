@@ -330,6 +330,32 @@ export default function NewsCard({ article, onTickerClick }: Props) {
                 </span>
               );
             })()}
+            {/* PATCH 0220 — Priority score badge so the sort order is auditable.
+                Total + per-component breakdown lives in __priorityParts. */}
+            {typeof (article as any).__priority === 'number' && (() => {
+              const p = (article as any).__priority as number;
+              const parts = (article as any).__priorityParts as Record<string, number> | undefined;
+              const tier = p >= 10 ? 'high' : p >= 5 ? 'med' : 'low';
+              const cls = tier === 'high'
+                ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                : tier === 'med'
+                  ? 'bg-sky-500/15 text-sky-300 border-sky-500/40'
+                  : 'bg-zinc-700/30 text-zinc-400 border-zinc-700/40';
+              const breakdown = parts
+                ? `Priority ${p}\n` +
+                  `  importance: ${parts.importance ?? 0}\n` +
+                  `  severity:   ${parts.severity ?? 0}\n` +
+                  `  structural: ${parts.structural ?? 0}\n` +
+                  `  recency:    ${parts.recency ?? 0}`
+                : `Priority ${p}`;
+              return (
+                <span
+                  className={`shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded border ${cls}`}
+                  title={breakdown}
+                  style={{ fontFamily: 'ui-monospace, monospace' }}
+                >P {p}</span>
+              );
+            })()}
             <span className="text-[#4A5B6C] text-[11px] shrink-0" title={timeAbsolute}>{timeAgo}</span>
           </div>
 

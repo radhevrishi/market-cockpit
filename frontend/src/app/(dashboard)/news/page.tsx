@@ -1802,7 +1802,11 @@ export default function NewsFeedPage() {
       RESOLVED_EASING: 0,
     };
 
-    const scoreOf = (a: NewsArticle): number => {
+    // PATCH 0220 — Surface the priority score on every card.
+    // Components: importance, bottleneck severity, structural boost, recency.
+    // Annotated onto the article so NewsCard can render a 'P N' badge with
+    // a per-component tooltip — institutional rank transparency.
+    const scoreOf = (a: NewsArticle): { total: number; parts: Record<string, number> } => {
       const imp = a.importance_score || 0;
       const sev = SEVERITY_BOOST[a.bottleneck_level || ''] || 0;
       const structural = (a.is_synthetic || a.feed_layer === 'STRUCTURAL_ALPHA') ? 2 : 0;
@@ -1812,11 +1816,24 @@ export default function NewsFeedPage() {
           return Math.max(0, 3 - age / 24); // 3 points today, 0 after ~3 days
         } catch { return 0; }
       })();
-      return imp * 2 + sev * 1.5 + structural + recency;
+      const parts = {
+        importance:    Math.round(imp * 2 * 10) / 10,
+        severity:      Math.round(sev * 1.5 * 10) / 10,
+        structural,
+        recency:       Math.round(recency * 10) / 10,
+      };
+      return { total: parts.importance + parts.severity + parts.structural + parts.recency, parts };
     };
 
+    // Annotate before sorting so the score is stable.
+    for (const a of filtered) {
+      const { total, parts } = scoreOf(a);
+      (a as any).__priority = Math.round(total * 10) / 10;
+      (a as any).__priorityParts = parts;
+    }
+
     if (sortBy === 'impact') {
-      filtered.sort((a, b) => scoreOf(b) - scoreOf(a));
+      filtered.sort((a, b) => ((b as any).__priority || 0) - ((a as any).__priority || 0));
     } else {
       filtered.sort((a, b) => {
         try {
