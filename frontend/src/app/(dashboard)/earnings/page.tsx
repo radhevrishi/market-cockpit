@@ -1092,6 +1092,16 @@ export default function EarningsPage() {
   });
   const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
   const [guidanceFilter, setGuidanceFilter] = useState<'ALL' | 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL'>('ALL'); // Filter by forward guidance sentiment
+  // PATCH 0207 — Day-1 close threshold filter. Multi-select with OR semantics.
+  // Empty set = no filter (show all cards regardless of close_move_pct).
+  const [dayOneFilters, setDayOneFilters] = useState<Set<DayOneFilter>>(new Set());
+  const toggleDayOneFilter = (k: DayOneFilter) => {
+    setDayOneFilters(prev => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k); else next.add(k);
+      return next;
+    });
+  };
   const [portfolioSymbols, setPortfolioSymbols] = useState<string[]>([]);
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>([]);
   const [failedSymbols, setFailedSymbols] = useState<string[]>([]);
@@ -1478,6 +1488,20 @@ export default function EarningsPage() {
     [cards, screenerCards, filterGrades, sortBy, viewMode, selectedUniverses, dateFrom, dateTo, guidanceFilter, convictionOnly, convictionTickersState]
   );
 
+  // PATCH 0207 — Day-1 close filter pipeline.
+  // 1. sortedCards above = base set after universe/date/grade/guidance/conviction
+  //    filters. Stable input for the post-gap fetch (refetches only when this
+  //    base set changes, not when the Day-1 chip is toggled).
+  // 2. gapMap is fetched from /api/v1/earnings/post-gap for the base set.
+  // 3. filteredCards = base set ∩ matchesDayOneFilter(gapMap, dayOneFilters).
+  //    All downstream consumers (card grid, summary, export toolbar) use this
+  //    so every filter composes correctly.
+  const gapMap = usePostGapData(sortedCards);
+  const filteredCards = useMemo(() => {
+    if (dayOneFilters.size === 0) return sortedCards;
+    return sortedCards.filter(c => matchesDayOneFilter(gapMap[c.symbol], dayOneFilters));
+  }, [sortedCards, gapMap, dayOneFilters]);
+
   // ── Visible cards: filtered by viewMode + date, but NOT grade ──
   // Used for summary counts so the grade buttons show accurate numbers.
   const visibleCards = useMemo(() => {
@@ -1581,7 +1605,8 @@ export default function EarningsPage() {
 
   // ── PDF Download ──
   const handleDownloadPDF = useCallback(async () => {
-    if (sortedCards.length === 0) return;
+    // PATCH 0207 — PDF reflects the user's visible set (includes Day-1 filter).
+    if (filteredCards.length === 0) return;
     const { default: jsPDF } = await import('jspdf');
     const autoTable = (await import('jspdf-autotable')).default;
 
@@ -1600,7 +1625,7 @@ export default function EarningsPage() {
     doc.setFontSize(8);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(180);
-    doc.text(`${modeLabel} · ${sortedCards.length} companies · ${now}`, pageW - 14, 11, { align: 'right' });
+    doc.text(`${modeLabel} · ${filteredCards.length} companies · ${now}`, pageW - 14, 11, { align: 'right' });
 
     // ── Summary bar ──
     doc.setTextColor(60);
@@ -1629,7 +1654,7 @@ export default function EarningsPage() {
 
     // ── Table ──
     const headers = [['#', 'Symbol', 'Company', 'Grade', 'Score', 'Period', 'Rev Cr', 'Rev YoY', 'OP Cr', 'OP YoY', 'OPM%', 'PAT Cr', 'PAT YoY', 'EPS', 'EPS YoY', 'CMP', 'MCap Cr', 'P/E']];
-    const body = sortedCards.map((c, i) => {
+    const body = filteredCards.map((c, i) => {
       const q = c.quarters[0];
       const fmtPct = (v: number | null) => v != null ? `${v >= 0 ? '+' : ''}${v.toFixed(1)}%` : '—';
       return [
@@ -1725,7 +1750,7 @@ export default function EarningsPage() {
     }
 
     doc.save(`earnings-${viewMode}-${new Date().toISOString().slice(0, 10)}.pdf`);
-  }, [sortedCards, viewMode, summary, source, failedSymbols]);
+  }, [filteredCards, viewMode, summary, source, failedSymbols]);
 
   return (
     <div style={{ backgroundColor: BG, minHeight: '100vh', padding: '24px', color: TEXT, fontFamily: 'system-ui, -apple-system, sans-serif' }}>
@@ -1961,6 +1986,44 @@ export default function EarningsPage() {
           );
         })}
 
+        {/* PATCH 0207 — Day-1 close threshold (multi-select OR). Composes with
+            every other filter. Click a chip to add it; click again to remove.
+            Example combinations: '≥ +4%' alone = strong Day-1 winners only.
+            '≥ +4%' + '≤ -5%' = both extreme winners AND losers. */}
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', paddingLeft: '4px', borderLeft: `1px solid ${CARD_BORDER}`, marginLeft: '4px' }}>
+          <span style={{ fontSize: '10px', color: TEXT_DIM, fontWeight: 700, letterSpacing: '0.5px', marginRight: '4px' }}>1D CLOSE:</span>
+          {DAY_ONE_FILTERS.map(f => {
+            const isActive = dayOneFilters.has(f.key);
+            return (
+              <button
+                key={f.key}
+                onClick={() => toggleDayOneFilter(f.key)}
+                title={`Day-1 close ${f.label} — toggle to combine`}
+                style={{
+                  backgroundColor: isActive ? `${f.color}20` : CARD,
+                  border: `1px solid ${isActive ? f.color : CARD_BORDER}`,
+                  color: isActive ? f.color : TEXT_DIM,
+                  padding: '8px 10px', borderRadius: '6px', cursor: 'pointer',
+                  fontSize: '11px', fontWeight: 600, fontFamily: 'ui-monospace, monospace',
+                }}
+              >{f.label}</button>
+            );
+          })}
+          {dayOneFilters.size > 0 && (
+            <button
+              onClick={() => setDayOneFilters(new Set())}
+              title="Clear Day-1 filter"
+              style={{
+                backgroundColor: 'transparent',
+                border: `1px solid ${CARD_BORDER}`,
+                color: TEXT_DIM,
+                padding: '8px 8px', borderRadius: '6px', cursor: 'pointer',
+                fontSize: '10px', fontWeight: 600,
+              }}
+            >clear</button>
+          )}
+        </div>
+
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
           {cards.length > 0 && (
             <button onClick={handleDownloadPDF} style={{
@@ -2051,7 +2114,7 @@ export default function EarningsPage() {
           <span style={{ color: GREEN }}>● Full: {liveSummary.dataQualityBreakdown.full}</span>
           <span style={{ color: YELLOW }}>● Partial: {liveSummary.dataQualityBreakdown.partial}</span>
           <span style={{ color: RED }}>● Price Only: {liveSummary.dataQualityBreakdown.priceOnly}</span>
-          <span>Showing {sortedCards.length} of {visibleCards.length}{viewMode !== 'screener' && visibleCards.length < cards.length ? ` (${cards.length} total)` : ''}{viewMode === 'screener' ? ` (screener universe)` : ''}</span>
+          <span>Showing {filteredCards.length} of {visibleCards.length}{viewMode !== 'screener' && visibleCards.length < cards.length ? ` (${cards.length} total)` : ''}{viewMode === 'screener' ? ` (screener universe)` : ''}{dayOneFilters.size > 0 && filteredCards.length < sortedCards.length ? ` · 1d filter trimmed ${sortedCards.length - filteredCards.length}` : ''}</span>
           {/* Data completeness ratio */}
           {(() => {
             const totalRequested = viewMode === 'portfolio' ? portfolioSymbols.length : viewMode === 'watchlist' ? watchlistSymbols.length : new Set([...portfolioSymbols, ...watchlistSymbols]).size;
@@ -2114,17 +2177,19 @@ export default function EarningsPage() {
           so it always exports what the user is actually looking at. Tier groups
           derived from EXCELLENT/STRONG/GOOD/OK grades, plus a 'Conviction Beats'
           group when those tickers are present in the current filtered view. */}
-      {!loading && !error && sortedCards.length > 0 && (() => {
-        const visibleTickers = sortedCards.map((c) => c.symbol);
+      {!loading && !error && filteredCards.length > 0 && (() => {
+        // PATCH 0207 — Export toolbar uses filteredCards so the exported list
+        // matches exactly what's visible to the user (Day-1 filter included).
+        const visibleTickers = filteredCards.map((c) => c.symbol);
         const gradeGroups: { label: string; emoji?: string; tickers: string[]; color?: string }[] = [];
-        const gExcellent = sortedCards.filter((c) => c.grade === 'EXCELLENT').map((c) => c.symbol);
-        const gStrong = sortedCards.filter((c) => c.grade === 'STRONG').map((c) => c.symbol);
-        const gGood = sortedCards.filter((c) => c.grade === 'GOOD').map((c) => c.symbol);
+        const gExcellent = filteredCards.filter((c) => c.grade === 'EXCELLENT').map((c) => c.symbol);
+        const gStrong = filteredCards.filter((c) => c.grade === 'STRONG').map((c) => c.symbol);
+        const gGood = filteredCards.filter((c) => c.grade === 'GOOD').map((c) => c.symbol);
         if (gExcellent.length > 0) gradeGroups.push({ label: 'EXCELLENT', emoji: '⭐', tickers: gExcellent, color: '#F59E0B' });
         if (gStrong.length > 0) gradeGroups.push({ label: 'STRONG', emoji: '🟢', tickers: gStrong, color: '#10B981' });
         if (gGood.length > 0) gradeGroups.push({ label: 'GOOD', emoji: '🔵', tickers: gGood, color: '#3B82F6' });
         // Conviction overlay
-        const conviction = sortedCards.filter((c) => convictionTickersState.has(c.symbol)).map((c) => c.symbol);
+        const conviction = filteredCards.filter((c) => convictionTickersState.has(c.symbol)).map((c) => c.symbol);
         if (conviction.length > 0) gradeGroups.push({ label: 'Conviction', emoji: '🏆', tickers: conviction, color: '#F59E0B' });
         return (
           <div style={{ marginBottom: '12px' }}>
@@ -2138,30 +2203,30 @@ export default function EarningsPage() {
         );
       })()}
 
-      {/* PATCH 0201 — Post-earnings price gap. Maps each visible ticker to
-          { gap_pct, close_move_pct, live_move_pct, is_live } derived from
-          Yahoo daily candles + filing timing. Background fetch; rendered
-          inside each card when available. */}
-      <PostGapProvider cards={sortedCards}>
-        {(gapMap) => (
-          /* Cards Grid */
-          !loading && !error && sortedCards.length > 0 ? (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: '16px' }}>
-              {sortedCards.map(card => <EarningsCardComponent key={card.symbol} card={card} postGap={gapMap[card.symbol]} />)}
-            </div>
-          ) : null
-        )}
-      </PostGapProvider>
+      {/* PATCH 0201/0207 — Post-earnings price gap. gapMap is lifted up via
+          usePostGapData hook so the Day-1 close filter (and any future
+          gap-aware filters) compose with the rest of the filter pipeline. */}
+      {!loading && !error && filteredCards.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: '16px' }}>
+          {filteredCards.map(card => <EarningsCardComponent key={card.symbol} card={card} postGap={gapMap[card.symbol]} />)}
+        </div>
+      )}
 
       {/* Empty State */}
-      {!loading && !error && sortedCards.length === 0 && (
+      {!loading && !error && filteredCards.length === 0 && (
         <div style={{ backgroundColor: CARD, border: `1px solid ${CARD_BORDER}`, borderRadius: '8px', padding: '60px 20px', textAlign: 'center', color: TEXT_DIM }}>
           <div style={{ fontSize: '48px', marginBottom: '16px' }}>📊</div>
           <p style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: 500 }}>
-            {cards.length > 0 ? `${cards.length} cards loaded but none match "${filterGrades.join(', ')}" filter` : viewMode === 'portfolio' ? 'No portfolio holdings found' : 'No watchlist stocks found'}
+            {dayOneFilters.size > 0 && sortedCards.length > 0
+              ? `${sortedCards.length} cards passed other filters but none match the Day-1 close threshold`
+              : cards.length > 0
+                ? `${cards.length} cards loaded but none match "${filterGrades.join(', ')}" filter`
+                : viewMode === 'portfolio' ? 'No portfolio holdings found' : 'No watchlist stocks found'}
           </p>
           <p style={{ margin: 0, fontSize: '13px' }}>
-            {cards.length > 0 ? 'Try selecting "ALL" grade filter.' : `Add stocks to your ${viewMode === 'portfolio' ? 'portfolio' : 'watchlist'} first.`}
+            {dayOneFilters.size > 0 && sortedCards.length > 0
+              ? 'Try a lower threshold or clear the 1d-close filter.'
+              : cards.length > 0 ? 'Try selecting "ALL" grade filter.' : `Add stocks to your ${viewMode === 'portfolio' ? 'portfolio' : 'watchlist'} first.`}
           </p>
         </div>
       )}
@@ -2235,30 +2300,14 @@ interface PostGap {
   filing_date?: string;                                                  // PATCH 0205
   filing_date_source?: 'explicit' | 'kv-calendar' | 'detected';          // PATCH 0205/0206
 }
-function PostGapProvider({ cards, children }: {
-  cards: EarningsScanCard[];
-  children: (gapMap: Record<string, PostGap>) => React.ReactNode;
-}) {
-  // Build the (ticker, filing_date, timing) request list. Default timing='post'
-  // since most Indian companies file after-market — Yahoo daily candle for
-  // NEXT trading day is the right comparable.
-  //
-  // PATCH 0202/0203 — Normalize the filing date before posting.
-  // Source data is Screener-style — `resultDate` is sometimes a real date like
-  // "15-Apr-2026 17:30:00", but for most cards it's just the quarter string
-  // "Mar 2026" (Screener doesn't always expose broadcastDate). The previous
-  // filter required ISO and silently dropped ~all cards.
-  // Now: try real `resultDate` first; if it's only a period, fall back to the
-  // same "quarter-end + 15-day reporting lag" estimate the date-range filter
-  // already uses (lines 1416 / 1476). The post-gap server pins to the nearest
-  // Yahoo trading day on/before that date, so a few days of imprecision still
-  // produces a directionally-correct "% move since the result was filed".
+// PATCH 0207 — Converted from render-prop component to a hook so `gapMap` is
+// available to the filter pipeline (Day-1 close threshold). Behaviour
+// otherwise identical to the previous PostGapProvider.
+function usePostGapData(cards: EarningsScanCard[]): Record<string, PostGap> {
   const items = useMemo(() => {
     return cards.slice(0, 80).map((c) => ({
       ticker: c.symbol,
       filing_date: toFilingOrEstimate(c.resultDate, c.period),
-      // PATCH 0205 — send period so the server can detect the real filing date
-      // from Yahoo price action when our client estimate is wrong.
       period: c.period || '',
       timing: 'post' as const,
     })).filter((x): x is { ticker: string; filing_date: string; period: string; timing: 'post' } => !!x.ticker && !!x.filing_date);
@@ -2283,5 +2332,28 @@ function PostGapProvider({ cards, children }: {
     refetchOnReconnect: false,
   });
 
-  return <>{children(data || {})}</>;
+  return data || {};
+}
+
+// PATCH 0207 — Day-1 close threshold filter. Multi-select with OR semantics;
+// a card passes if its close_move_pct satisfies ANY selected threshold.
+// Cards without resolved gap data are excluded when any filter is active.
+type DayOneFilter = 'GE2' | 'GE4' | 'GE7' | 'GE10' | 'NEG2' | 'NEG5';
+const DAY_ONE_FILTERS: { key: DayOneFilter; label: string; predicate: (v: number) => boolean; color: string }[] = [
+  { key: 'GE2',  label: '≥ +2%',  predicate: v => v >= 2,   color: '#22D3EE' },
+  { key: 'GE4',  label: '≥ +4%',  predicate: v => v >= 4,   color: '#10B981' },
+  { key: 'GE7',  label: '≥ +7%',  predicate: v => v >= 7,   color: '#10B981' },
+  { key: 'GE10', label: '≥ +10%', predicate: v => v >= 10,  color: '#F59E0B' },
+  { key: 'NEG2', label: '≤ -2%',  predicate: v => v <= -2,  color: '#F87171' },
+  { key: 'NEG5', label: '≤ -5%',  predicate: v => v <= -5,  color: '#EF4444' },
+];
+function matchesDayOneFilter(postGap: PostGap | undefined, filters: Set<DayOneFilter>): boolean {
+  if (filters.size === 0) return true;
+  const v = postGap?.close_move_pct;
+  if (v == null) return false;
+  for (const f of filters) {
+    const def = DAY_ONE_FILTERS.find(d => d.key === f);
+    if (def && def.predicate(v)) return true;
+  }
+  return false;
 }
