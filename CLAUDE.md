@@ -1,7 +1,7 @@
 # Market Cockpit — Claude Handoff Memory
 
 > Read this FIRST when starting any new chat. Saves you 30 minutes of context-rebuilding.
-> Last updated: 2026-05-13 (after Patch 0285 — global CB count chip + PanelFreshness everywhere).
+> Last updated: 2026-05-13 (after Patch 0295 — institutional QA-audit fixes; CB overlay everywhere; PanelFreshness everywhere).
 
 ---
 
@@ -597,7 +597,71 @@ deliberately skipped: /multibagger (Excel-upload driven, not live),
 /concall-intel (one-shot analyze), /settings, /stock-sheet (no
 query), /portfolio, /watchlists (use their own custom freshness).
 
-## 11 · Patch Log Summary (0073 → 0285)
+## 10.6.6 · Batch-6 — Institutional QA-audit fixes (Patches 0286–0295)
+
+User pasted a 12-bug + 6-improvement institutional QA audit mid-sleep.
+Many "wrong-component-mounted" claims (BUG-01/02/03/05/06) were
+verified as false positives — the routes are correctly mapped in code
+and the user was looking at a stale Vercel deploy or cached page.
+The genuine bugs and quality gaps shipped here:
+
+  0286 — EO refresh feedback rewrite. The "⚠ 0/N updated · Worker
+         re-checks in 60s + 5min" message looked like a broken state
+         even when working as designed (upstream NSE/BSE genuinely
+         hadn't published yet). New message branches on date-age:
+         > 14 days ago = "sources rarely backfill"; near-today =
+         "re-checking automatically"; future date = "wait for filings".
+         Each adds a HH:MM timestamp so consecutive refreshes are
+         visibly different.
+
+  0287 — Settings profile section: bounded 5s timeout via
+         AbortController. If /auth/me hangs or 401s, show a graceful
+         "Profile unavailable" message instead of the indefinite
+         "Loading profile…" spinner.
+
+  0288 — IPO page graceful TBA fallback. When priceBand / lotSize /
+         issueSize are TBA/missing, render an amber "Check NSE / BSE →"
+         banner with deep-links to the official IPO calendars instead
+         of just showing blank "TBA" everywhere. Individual fields
+         also coerce to em-dash if missing.
+
+  0289 — News junk filter strengthened. Added 9 new regex patterns to
+         JUNK_HEADLINE_PATTERNS targeting consumer-deal noise the
+         audit flagged: "Save $X on", "bundle deal", "Black Friday",
+         "X% off", and product-specific patterns for Samsung/Corsair/
+         WD/SanDisk SSD bundles. The "Tom's Hardware 9800X3D bundle"
+         article that polluted the BOTTLENECK feed now never makes
+         it past isMarketRelevant().
+
+  0290 — Impact↔Headline relevance check. Cheap word-overlap test:
+         when the server-generated Impact text shares zero non-stop
+         words with the headline AND the Impact is specific (≥3
+         uncommon tokens), suppress it and render "Related to: theme"
+         instead. Fixes the audit complaint that a Dixon Vivo JV
+         article showed "GPU deployment bottleneck shifting upstream"
+         as its Impact label. Applied to both evidence_bound_impact
+         and impact_label_safe render paths in NewsCard.
+
+  0291 — Market Movers row enrichment. Cap chip now shows actual
+         ₹ Cr market cap inline below the L/M/S badge, and each
+         ticker row has a "📰" button that opens /news?search=<ticker>
+         so analysts can immediately see what's driving the move
+         without leaving the page.
+
+  0292 — This documentation update.
+
+  0293 — (planned) RRG sector tooltip showing recent headline.
+
+  0294 — (planned) Earnings Guidance QoQ delta + sparkline.
+
+  0295 — Bottleneck Intel: auto-collapses STALE themes. Themes with
+         0 articles this week + 0 last week + not structural are
+         hidden behind a "X stale themes hidden — click to expand"
+         toggle. Audit complaint: 15+ of 21 themes were rendering as
+         STALE/VERY LOW which polluted the Conviction Matrix and
+         signalled broken coverage when the matrix was actually fine.
+
+## 11 · Patch Log Summary (0073 → 0295)
 
 Pre-session patches existed (0073–0095). Recent session highlights:
 
@@ -696,6 +760,14 @@ Pre-session patches existed (0073–0095). Recent session highlights:
 - 0283 — Global Conviction Beats count chip in dashboard header
 - 0284 — PanelFreshness on /smart-money + /movers
 - 0285 — CLAUDE.md update (end of batch-5)
+- 0286 — EO refresh feedback rewrite (date-age aware, timestamped)
+- 0287 — Settings: bounded 5s timeout + graceful "Profile unavailable"
+- 0288 — IPO TBA fallback: amber "Check NSE/BSE →" deeplink banner
+- 0289 — News junk filter: 9 new consumer-deal patterns
+- 0290 — Impact↔Headline relevance check suppresses theme-paste mismatch
+- 0291 — Movers row: ₹Cr market cap inline + 📰 'Why moving?' shortcut
+- 0292 — CLAUDE.md update (end of batch-6)
+- 0295 — Bottleneck Intel auto-collapses stale themes
 
 **Other features:**
 - 0089–0094 — Earnings Hub merge, Special Situations pillar, Stock Sheet, Re-rating Screener
