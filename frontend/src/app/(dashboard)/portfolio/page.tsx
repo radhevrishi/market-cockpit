@@ -6,6 +6,8 @@ import toast from 'react-hot-toast';
 import TickerSearch, { type TickerSuggestion } from '@/components/TickerSearch';
 import { normalizeTicker } from '@/lib/tickers';
 import { CHAT_ID, BOT_SECRET } from '@/lib/config';
+// PATCH 0300 — Shared freshness chip for the quote refresh state.
+import { PanelFreshness } from '@/components/PanelFreshness';
 
 /* ── Types ──────────────────────────────────────────────────────────── */
 
@@ -562,8 +564,17 @@ export default function PortfolioPage() {
       {/* ── Header ──────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
         <div>
-          <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#F5F7FA', margin: '0 0 4px' }}>Portfolio</h1>
-          <p style={{ fontSize: '12px', color: '#8BA3C1', margin: 0 }}>Active holdings · Capital deployed · P&L tracking</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#F5F7FA', margin: 0 }}>Portfolio</h1>
+            {/* PATCH 0300 — Quote freshness chip from existing lastRefresh state. */}
+            <PanelFreshness
+              dataUpdatedAt={lastRefresh ? lastRefresh.getTime() : 0}
+              isFetching={isRefreshing}
+              staleAfterMs={5 * 60_000}
+              label="quotes"
+            />
+          </div>
+          <p style={{ fontSize: '12px', color: '#8BA3C1', margin: '4px 0 0' }}>Active holdings · Capital deployed · P&L tracking</p>
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
           <button onClick={() => setShowAdd(!showAdd)} style={{
