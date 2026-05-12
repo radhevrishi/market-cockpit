@@ -1,7 +1,7 @@
 # Market Cockpit — Claude Handoff Memory
 
 > Read this FIRST when starting any new chat. Saves you 30 minutes of context-rebuilding.
-> Last updated: 2026-05-12 (after Patch 0201).
+> Last updated: 2026-05-12 (after Patch 0217 — institutional readiness pass).
 
 ---
 
@@ -168,7 +168,105 @@ Three paths (any one qualifies):
 
 ---
 
-## 11 · Patch Log Summary (0073 → 0201)
+## 10.5 · Post-Earnings Price Gap pipeline (Patches 0201–0208)
+
+Visible on `/earnings` cards as a 3-line badge:
+
+```
+POST-EARNINGS (CLOSE)
+▲ 36.8%          ← cumulative since filing (live_move_pct)
+gap +2.6%        ← overnight gap (open vs prior close)
+1d close +5.0%   ← Day-1 close (T+1 reaction)
+✓ filed 05-08    ← filing-date provenance (✓=kv-calendar, ~=detected, blank=explicit)
+```
+
+Filing-date resolution is tiered (institutional framework — patches
+0205/0206 implement Tier 3 + Tier 1; Tier 2 NSE API is future work):
+
+  Tier 1 — KV calendar (`graded:v8:<date>` payloads from NSE+BSE).
+           Authoritative. ✓ prefix on the badge.
+  Tier 2 — NSE corp announcements API. Not yet implemented.
+  Tier 3 — Price-action inference from Yahoo daily chart. Fallback.
+           ~ prefix on the badge.
+
+Endpoint: `POST /api/v1/earnings/post-gap`
+Body items: `{ ticker, filing_date, period, timing }`
+Cache key: `post-gap:v3:<ticker>:<filing>:<timing>:<period>:<source>` 7d/5m
+Response includes `source_counts` for telemetry.
+
+Also wired (Patch 0207): a `1D CLOSE:` filter row on `/earnings` with
+multi-select chips (`≥+2%`, `≥+4%`, `≥+7%`, `≥+10%`, `≤-2%`, `≤-5%`)
+that compose AND-style with the universe / grade / date / guidance
+filters and trim the visible cards in real time.
+
+DATA MISSING recovery (Patch 0208): `/api/market/earnings-scan` now
+falls back to `/api/v1/earnings/enrich` when its own Screener parser
+returns null. Recovers SMLMAH, MACPOWER, KARURVYSYA, BAJAJ-AUTO,
+NAM-INDIA, NIVABUPA, UJJIVANSFB, etc.
+
+## 10.6 · Institutional readiness pass (Patches 0209–0217)
+
+Triggered by a cross-functional review (senior QA + staff PE + UX +
+ontology + buy-side PM). Full review lives in chat history.
+
+  0209 — Nav cleanup. Full labels everywhere (no 'Spec Sit', 'Strategic
+         Vis', 'Market Snap'). 'Intelligence' label renamed 'Signals'
+         (it routed to /orders which is a signals workbench, not a
+         trade-order page).
+  0210 — IN PLAY TODAY dedup. Client-side groupBy(ticker), keeps the
+         most-recent article, adds '×N' mention-count badge inline.
+         Fixes DEEDEV×2, INOXINDIA×2, CEINSYS×2.
+  0211 — Single time-format rule. Replaces 'about 4 hours ago' / '01:19
+         PM · 3 minutes ago' / 'May 11, 12:53 PM · 1 day ago' soup with
+         a deterministic ladder:
+            <60s 'now' · <60m 'Xm ago' · <24h 'Xh ago' · ≤7d 'Xd ago'
+            · else absolute date. Tooltip always shows the absolute time.
+  0212 — `<PanelFreshness>` chip. Renders 'as of HH:MM · Xm ago' per
+         panel using React Query's dataUpdatedAt. Turns amber when
+         older than staleAfterMs. Applied to IN PLAY, Bottleneck
+         Reading, and main News Feed.
+  0213 — Lifecycle filter row (LIVE+WARM / STALE / PERSISTENT / ALL).
+         Defaults to LIVE+WARM so the main feed doesn't mix soup.
+         UI-only; proper signals.lifecycle_state DB column scheduled
+         for backend work later.
+  0214 — Design tokens. lib/design-tokens.ts defines three orthogonal
+         palettes: semantic (bullish/bearish/neutral), state (live/
+         warm/stale/persistent/archived), severity (high/medium/low).
+         Same red never collides between 'bearish', 'stale', 'bad'.
+         Applied to STALE/PERSISTENT badges; rest is incremental.
+  0215 — Explicit error / empty / partial states on news panels.
+         IN PLAY error path now shows Retry. Main feed empty state
+         diagnoses the cause (lifecycle filter? other filter? source?)
+         and offers a one-click clear button.
+  0216 — Truncation guards. Headlines clamp to 3 lines, Impact text to
+         2 lines, ticker chips capped at 3 with '+N more' overflow
+         badge. Card row-height now bounded.
+  0217 — This documentation update.
+
+## 10.7 · Open institutional follow-ups (NOT YET SHIPPED — schema work)
+
+These all need backend / data-model changes beyond the surgical UI
+patches above. They were called out explicitly in the institutional
+review as P0 for the 300k EUR portal positioning, but they require
+new tables / pipelines and are intentionally deferred:
+
+  - Signal entity + SignalEvidence with classifier_features jsonb
+  - Evidence Panel UI (click any confidence chip → side panel)
+  - Source tier table + 'PRIMARY/SPECIALIST/SECONDARY/AGGREGATOR' badges
+  - Theme revisions table + diff view
+  - ticker_roles table + role-glyph chips with evidence count
+  - Auth + RBAC + audit log
+  - Status page with per-pipeline heartbeats
+  - Alert rules engine (Slack/Email/Webhook)
+  - Read-only public API
+  - Bottleneck Workbench page per theme (L1–L6, ticker grid, contracts)
+  - Thesis Notebooks
+  - Saved Views in URL
+
+If picking these up, start with the Signal/SignalEvidence schema
+(blocks several others) and the Auth boundary.
+
+## 11 · Patch Log Summary (0073 → 0217)
 
 Pre-session patches existed (0073–0095). Recent session highlights:
 
@@ -182,6 +280,21 @@ Pre-session patches existed (0073–0095). Recent session highlights:
 - 0195–0198 — Symbol regex, TradingView toolbar, multi-select universe
 - 0199–0200 — Persistent localStorage cache on /earnings + cross-page staleTime audit
 - 0201 — **Post-earnings price gap** badge on Earnings Scan cards (`/api/v1/earnings/post-gap`)
+- 0202 — Fix post-gap badges silently dropping cards (regex too strict)
+- 0203 — Period-fallback when only quarter is known
+- 0204 — Day-1 close (T+1 reaction) line added to badge
+- 0205 — Server-side filing-date detection from Yahoo price action (Tier 3)
+- 0206 — Tier 1 KV-calendar filing-date resolver (graded:v8:* scan)
+- 0207 — Day-1 close threshold filter (multi-select, composable)
+- 0208 — DATA MISSING recovery via `/api/v1/earnings/enrich` fallback
+- 0209 — Institutional nav cleanup (full labels, Intelligence→Signals)
+- 0210 — IN PLAY TODAY dedup by ticker, ×N mention badge
+- 0211 — Single deterministic time-format rule for the entire news feed
+- 0212 — `<PanelFreshness>` 'as-of HH:MM · Xm ago' chip per panel
+- 0213 — Lifecycle filter chips (LIVE+WARM / STALE / PERSISTENT / ALL)
+- 0214 — `lib/design-tokens.ts` semantic/state/severity orthogonal palettes
+- 0215 — Explicit error / empty / partial states on news panels
+- 0216 — Truncation guards on headlines / Impact / ticker chips
 
 **Other features:**
 - 0089–0094 — Earnings Hub merge, Special Situations pillar, Stock Sheet, Re-rating Screener
