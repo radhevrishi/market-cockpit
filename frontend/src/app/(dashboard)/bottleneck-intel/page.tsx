@@ -1347,6 +1347,10 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
   const [expBucket, setExpBucket] = useState<string | null>(null);
   const [expSignal, setExpSignal] = useState<string | null>(null);
   const [activeBucket, setActiveBucket] = useState<string | null>(null); // which pill is selected
+  // PATCH 0295 — Hide stale themes (0 articles this week, 0 last week, not
+  // structural) behind a toggle. Audit feedback: 15/21 themes showing as
+  // STALE was polluting the Conviction Matrix and signaling broken coverage.
+  const [showStale, setShowStale] = useState(false);
 
   // PATCH: Move ALL hook calls BEFORE early returns to satisfy React's
   // rules-of-hooks. The previous version called useEffect at the bottom of
@@ -1591,9 +1595,50 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
         })}
         <span style={{ fontSize: '10px', color: '#4A5B6C', marginLeft: 'auto' }}>Click any layer to focus</span>
       </div>
-      {/* Grid — filtered by activeBucket if one is selected */}
+      {/* PATCH 0295 — Partition into active vs stale themes. A theme is
+          "stale" when it has 0 articles this week + 0 last week + isn't
+          marked structural. We hide stale themes by default to keep the
+          matrix scannable; users can expand via the toggle below. */}
+      {(() => {
+        const isStale = (b: BnBucket) => {
+          const v = velocities[b.bucket_id];
+          const isStructural = STRUCTURAL_THEMES.has(b.bucket_id);
+          return !isStructural && (v?.week ?? 0) === 0 && (v?.prev ?? 0) === 0;
+        };
+        const staleBuckets = sorted.filter(isStale);
+        const activeOnly = activeBucket ? sorted.filter(b => b.bucket_id === activeBucket) : sorted.filter(b => !isStale(b));
+        return staleBuckets.length > 0 && !activeBucket ? (
+          <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <button
+              onClick={() => setShowStale(v => !v)}
+              style={{
+                fontSize: 10, fontWeight: 700, color: '#8A95A3',
+                padding: '4px 10px', borderRadius: 6,
+                border: '1px solid #1A2840', backgroundColor: showStale ? '#1A2840' : 'transparent',
+                cursor: 'pointer', letterSpacing: '0.5px',
+              }}
+            >{showStale ? '▼' : '▶'} {staleBuckets.length} stale themes hidden</button>
+            <span style={{ fontSize: 10, color: '#4A5B6C' }}>
+              0 articles this week + last week · {showStale ? 'showing all' : 'click to expand'}
+            </span>
+          </div>
+        ) : null;
+      })()}
+
+      {/* Grid — filtered by activeBucket if one is selected. PATCH 0295: also
+          hides stale themes unless showStale toggle is on. */}
       <div style={{ display: 'grid', gridTemplateColumns: activeBucket ? '1fr' : 'repeat(auto-fill, minmax(320px, 1fr))', gap: '12px' }}>
-        {(activeBucket ? sorted.filter(b => b.bucket_id === activeBucket) : sorted).map((b) => {
+        {(() => {
+          const isStale = (b: BnBucket) => {
+            const v = velocities[b.bucket_id];
+            const isStructural = STRUCTURAL_THEMES.has(b.bucket_id);
+            return !isStructural && (v?.week ?? 0) === 0 && (v?.prev ?? 0) === 0;
+          };
+          const list = activeBucket
+            ? sorted.filter(b => b.bucket_id === activeBucket)
+            : (showStale ? sorted : sorted.filter(b => !isStale(b)));
+          return list;
+        })().map((b) => {
           const sty = getSev(b.severity_label);
           const isExp = expBucket === b.bucket_id;
           const vel = velocities[b.bucket_id];
