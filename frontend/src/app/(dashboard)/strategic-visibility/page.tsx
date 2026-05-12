@@ -11,6 +11,8 @@
 
 import React, { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+// PATCH 0274 — Shared freshness chip.
+import { PanelFreshness } from '@/components/PanelFreshness';
 import api from '@/lib/api';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -332,7 +334,7 @@ export default function StrategicVisibilityPage() {
   // PATCH 0071: region filter + sort toggle
   const [regionFilter, setRegionFilter] = React.useState<'ALL' | 'IN' | 'US'>('ALL');
   const [sortMode, setSortMode] = React.useState<'rank' | 'recent'>('rank');
-  const { data, isLoading } = useStrategic(windowDays);
+  const { data, isLoading, isFetching, dataUpdatedAt } = useStrategic(windowDays);
 
   const articles = useMemo(() => {
     const base = data?.articles ?? [];
@@ -377,6 +379,8 @@ export default function StrategicVisibilityPage() {
             <span style={{ fontSize: 10, fontWeight: 600, color: '#22D3EE', backgroundColor: '#22D3EE10', border: '1px solid #22D3EE40', padding: '3px 8px', borderRadius: 4, letterSpacing: '0.4px' }}>
               ROLLING {windowDays}D LEDGER
             </span>
+            {/* PATCH 0274 — Freshness chip. Turns amber if the 5-min refresh stalls. */}
+            <PanelFreshness dataUpdatedAt={dataUpdatedAt} isFetching={isFetching} staleAfterMs={10 * 60_000} />
           </h1>
           <p style={{ fontSize: 12, color: '#6B7A8D', margin: '4px 0 0', lineHeight: 1.5 }}>
             Multi-year frameworks · hyperscaler commitments · sovereign programs · transformational revenue locks.

@@ -8,6 +8,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useQuery } from '@tanstack/react-query';
+// PATCH 0274 — Surface refresh freshness so the 5-min cron lag is visible.
+import { PanelFreshness } from '@/components/PanelFreshness';
 
 interface BreadthPayload {
   composite: number;
@@ -28,7 +30,7 @@ interface BreadthPayload {
 }
 
 export default function BreadthPage() {
-  const { data, isLoading } = useQuery<BreadthPayload>({
+  const { data, isLoading, isFetching, dataUpdatedAt } = useQuery<BreadthPayload>({
     queryKey: ['market-breadth'],
     queryFn: async () => {
       const r = await fetch('/api/v1/breadth');
@@ -57,7 +59,11 @@ export default function BreadthPage() {
 
   return (
     <div style={{ padding: '20px 24px', backgroundColor: '#0A0E1A', minHeight: '100%', color: '#E6EDF3' }}>
-      <h1 style={{ fontSize: 22, fontWeight: 900, margin: 0, marginBottom: 6 }}>📊 Market Breadth Indicator</h1>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6, flexWrap: 'wrap' }}>
+        <h1 style={{ fontSize: 22, fontWeight: 900, margin: 0 }}>📊 Market Breadth Indicator</h1>
+        {/* PATCH 0274 — Freshness chip; turns amber when the 5-min cron lags. */}
+        <PanelFreshness dataUpdatedAt={dataUpdatedAt} isFetching={isFetching} staleAfterMs={10 * 60_000} />
+      </div>
       <p style={{ fontSize: 12, color: '#94A3B8', margin: 0, marginBottom: 18 }}>
         Composite of 5 breadth pillars · Updates every 5 min · Modify stock scores by regime
       </p>

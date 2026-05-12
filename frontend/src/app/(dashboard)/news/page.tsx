@@ -290,54 +290,10 @@ function useInPlay() {
 }
 
 // PATCH 0212 — Reusable panel-freshness chip.
-// Every data panel on /news should expose when it was last successfully
-// refreshed. We pull this from React Query's `dataUpdatedAt` rather than
-// requiring server payloads to carry a generated_at field. Turns amber
-// when older than `staleAfterMs` to surface KV-cache lag explicitly.
-function PanelFreshness({
-  dataUpdatedAt,
-  isFetching,
-  staleAfterMs = 5 * 60_000,
-  label = 'as of',
-}: {
-  dataUpdatedAt: number;
-  isFetching?: boolean;
-  staleAfterMs?: number;
-  label?: string;
-}) {
-  // Re-render once a minute so the chip stays accurate without polling.
-  const [, force] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => force(n => n + 1), 60_000);
-    return () => clearInterval(id);
-  }, []);
-  if (!dataUpdatedAt) return null;
-  const age = Date.now() - dataUpdatedAt;
-  const isStale = age > staleAfterMs;
-  const d = new Date(dataUpdatedAt);
-  const hhmm = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
-  const ageStr =
-    age < 60_000 ? 'now' :
-    age < 3_600_000 ? `${Math.floor(age / 60_000)}m ago` :
-    age < 86_400_000 ? `${Math.floor(age / 3_600_000)}h ago` :
-    `${Math.floor(age / 86_400_000)}d ago`;
-  return (
-    <span
-      title={`Last successful refresh: ${d.toLocaleString()}\nClick the Refresh button to pull fresh data.`}
-      style={{
-        display: 'inline-flex', alignItems: 'center', gap: 4,
-        fontSize: 9, fontFamily: 'ui-monospace, monospace',
-        color: isStale ? '#F59E0B' : '#6B7B8C',
-        padding: '2px 6px', borderRadius: 4,
-        backgroundColor: isStale ? '#F59E0B14' : 'transparent',
-        border: `1px solid ${isStale ? '#F59E0B40' : '#1E2D45'}`,
-        letterSpacing: '0.3px',
-      }}
-    >
-      {isFetching ? '↻ ' : ''}{label} {hhmm} · {ageStr}
-    </span>
-  );
-}
+// PATCH 0274 — Extracted into a shared component @/components/PanelFreshness
+// so every dashboard surface gets the same chip semantics. Kept the import
+// re-export here for back-compat with the inline references on this page.
+import { PanelFreshness } from '@/components/PanelFreshness';
 
 // PATCH 0230 — Hard-stale strip.
 // Companion to PanelFreshness: when data is older than staleAfterMs × 3 we
