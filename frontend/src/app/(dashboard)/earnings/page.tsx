@@ -980,6 +980,34 @@ export default function EarningsPage() {
     };
   }, []);
   const [viewMode, setViewMode] = useState<ViewMode>('watchlist');
+  // PATCH 0198 — Multi-select universe sources. Lets user combine ANY of
+  // Portfolio + Watchlist + Conviction Beats + Screener. A card is included
+  // when it belongs to ANY of the selected universes (OR/union semantics).
+  // Default: just Watchlist (preserves prior single-select behaviour).
+  type UniverseSource = 'portfolio' | 'watchlist' | 'conviction' | 'screener';
+  const [selectedUniverses, setSelectedUniverses] = useState<Set<UniverseSource>>(() => new Set(['watchlist']));
+  const toggleUniverse = (u: UniverseSource) => {
+    setSelectedUniverses((prev) => {
+      const next = new Set(prev);
+      if (next.has(u)) next.delete(u);
+      else next.add(u);
+      // Never leave the set empty — fall back to watchlist
+      if (next.size === 0) next.add('watchlist');
+      return next;
+    });
+  };
+  // Helper: does this card match ANY selected universe (OR-union)?
+  const matchesSelectedUniverses = (c: { symbol: string; universeTag?: string }): boolean => {
+    if (selectedUniverses.has('screener')) {
+      // Screener is a separate dataset; if selected, all screener cards pass.
+      // For non-screener cards, fall through to other checks.
+      if (c.universeTag === 'screener') return true;
+    }
+    if (selectedUniverses.has('portfolio') && (c.universeTag === 'portfolio' || c.universeTag === 'both')) return true;
+    if (selectedUniverses.has('watchlist') && (c.universeTag === 'watchlist' || c.universeTag === 'both')) return true;
+    if (selectedUniverses.has('conviction') && convictionTickersState.has(c.symbol)) return true;
+    return false;
+  };
   // Date range filter — defaults to last 30 days → today
   const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 30);
@@ -1299,16 +1327,20 @@ export default function EarningsPage() {
     const toDate = dateTo ? new Date(dateTo + 'T23:59:59') : null;
 
     // Screener tab uses completely separate data — never mixed
-    const sourceCards = viewMode === 'screener' ? screenerCards : cards;
+    // PATCH 0198 — Multi-select: source pool = screenerCards (when screener selected
+    // alone) OR cards (the normal scan universe). When multiple selected, we use
+    // cards plus optionally union with screenerCards.
+    const sourceCards = selectedUniverses.has('screener') && selectedUniverses.size === 1
+      ? screenerCards
+      : selectedUniverses.has('screener')
+        ? [...cards, ...screenerCards]
+        : cards;
 
     return [...sourceCards]
       .filter(c => {
-        // Filter by viewMode (universe membership) — composes with conviction filter
-        if (viewMode === 'screener') { /* show all screener cards */ }
-        else if (viewMode === 'portfolio' && c.universeTag !== 'portfolio' && c.universeTag !== 'both') return false;
-        else if (viewMode === 'watchlist' && c.universeTag !== 'watchlist' && c.universeTag !== 'both') return false;
-        else if (viewMode === 'conviction' && !convictionTickersState.has(c.symbol)) return false;
-        // PATCH 0186 — Conviction Beats filter (composable). Active = card MUST be in conviction.
+        // Multi-select universe filter — OR/union of selected sources
+        if (!matchesSelectedUniverses(c)) return false;
+        // PATCH 0186 — Conviction-only standalone toggle still composes (AND)
         if (convictionOnly && !convictionTickersState.has(c.symbol)) return false;
         // Filter by grade
         if (!filterGrades.includes('ALL') && !filterGrades.includes(c.grade)) return false;
@@ -1366,7 +1398,7 @@ export default function EarningsPage() {
         }
       });
     },
-    [cards, screenerCards, filterGrades, sortBy, viewMode, dateFrom, dateTo, guidanceFilter, convictionOnly, convictionTickersState]
+    [cards, screenerCards, filterGrades, sortBy, viewMode, selectedUniverses, dateFrom, dateTo, guidanceFilter, convictionOnly, convictionTickersState]
   );
 
   // ── Visible cards: filtered by viewMode + date, but NOT grade ──
@@ -1375,15 +1407,15 @@ export default function EarningsPage() {
     const fromDate = dateFrom ? new Date(dateFrom) : null;
     const toDate = dateTo ? new Date(dateTo + 'T23:59:59') : null;
 
-    const sourceCards = viewMode === 'screener' ? screenerCards : cards;
+    // PATCH 0198 — same multi-select logic as sortedCards
+    const sourceCards = selectedUniverses.has('screener') && selectedUniverses.size === 1
+      ? screenerCards
+      : selectedUniverses.has('screener')
+        ? [...cards, ...screenerCards]
+        : cards;
 
     return sourceCards.filter(c => {
-      // Filter by viewMode
-      if (viewMode === 'screener') { /* show all */ }
-      else if (viewMode === 'portfolio' && c.universeTag !== 'portfolio' && c.universeTag !== 'both') return false;
-      else if (viewMode === 'watchlist' && c.universeTag !== 'watchlist' && c.universeTag !== 'both') return false;
-      else if (viewMode === 'conviction' && !convictionTickersState.has(c.symbol)) return false;
-      // PATCH 0186 — Conviction-only filter composes with viewMode
+      if (!matchesSelectedUniverses(c)) return false;
       if (convictionOnly && !convictionTickersState.has(c.symbol)) return false;
       // Date filter (same logic as sortedCards)
       if (fromDate || toDate) {
@@ -1645,20 +1677,48 @@ export default function EarningsPage() {
         </p>
       </div>
 
-      {/* View Mode Toggle */}
+      {/* View Mode Toggle (PATCH 0198 — multi-select)
+          User can pick ANY combination of Portfolio + Watchlist + Conviction + Screener.
+          The 'Both' option is removed since it's now P+W via multi-select. */}
       <div style={{ display: 'flex', gap: '12px', marginBottom: '24px', flexWrap: 'wrap', alignItems: 'center' }}>
-        <div style={{ display: 'flex', borderRadius: '8px', overflow: 'hidden', border: `1px solid ${CARD_BORDER}` }}>
-          {VIEW_TABS.map(tab => (
-            <button key={tab.key} onClick={() => setViewMode(tab.key)} style={{
-              backgroundColor: viewMode === tab.key ? ACCENT : CARD,
-              border: 'none', color: viewMode === tab.key ? '#000' : TEXT,
-              padding: '10px 18px', cursor: 'pointer', fontSize: '12px', fontWeight: 600,
-              transition: 'all 0.2s', borderRight: `1px solid ${CARD_BORDER}`,
-            }}>
-              {tab.emoji} {tab.label} ({loading ? '...' : tab.count === tab.total ? tab.count : `${tab.count}/${tab.total}`})
+        <span style={{ fontSize: 10, fontWeight: 800, color: TEXT_DIM, letterSpacing: '0.5px' }}>UNIVERSE:</span>
+        {(['portfolio', 'watchlist', 'conviction', 'screener'] as const).map((key) => {
+          const meta = ({
+            portfolio: { emoji: '💼', label: 'Portfolio', accent: '#10B981' },
+            watchlist: { emoji: '📋', label: 'Watchlist', accent: '#22D3EE' },
+            conviction: { emoji: '🏆', label: 'Conviction Beats', accent: '#F59E0B' },
+            screener: { emoji: '🔍', label: 'Screener', accent: '#8B5CF6' },
+          } as const)[key];
+          const tab = VIEW_TABS.find((t) => t.key === key);
+          const count = tab?.count ?? 0;
+          const total = tab?.total ?? 0;
+          const on = selectedUniverses.has(key);
+          return (
+            <button key={key} onClick={() => { toggleUniverse(key); setViewMode(key); /* keep legacy for some flows */ }}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '9px 16px', borderRadius: 8,
+                border: `1.5px solid ${on ? meta.accent : CARD_BORDER}`,
+                background: on ? `${meta.accent}25` : CARD,
+                color: on ? meta.accent : TEXT,
+                cursor: 'pointer', fontSize: 12.5, fontWeight: 700,
+                transition: 'all 0.15s',
+              }}>
+              <span style={{
+                width: 14, height: 14, borderRadius: 3,
+                border: `1.5px solid ${on ? meta.accent : '#4A5B6C'}`,
+                background: on ? meta.accent : 'transparent',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 10, color: on ? '#0A0E1A' : 'transparent', fontWeight: 900,
+              }}>{on ? '✓' : ''}</span>
+              <span>{meta.emoji}</span>
+              <span>{meta.label}</span>
+              <span style={{ fontSize: 10.5, opacity: 0.85, fontFamily: 'ui-monospace, monospace' }}>
+                {loading ? '...' : count === total ? count : `${count}/${total}`}
+              </span>
             </button>
-          ))}
-        </div>
+          );
+        })}
 
         {/* PATCH 0186 — Conviction Beats composable filter (AND-style on top of viewMode/grades/date/sentiment) */}
         <button onClick={() => setConvictionOnly((v) => !v)}
