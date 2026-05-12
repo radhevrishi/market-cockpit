@@ -1,7 +1,7 @@
 # Market Cockpit — Claude Handoff Memory
 
 > Read this FIRST when starting any new chat. Saves you 30 minutes of context-rebuilding.
-> Last updated: 2026-05-13 (after Patch 0280 — CB overlay spread to Multibagger/Earnings-Guidance/Screener/Re-rating + shared PanelFreshness).
+> Last updated: 2026-05-13 (after Patch 0285 — global CB count chip + PanelFreshness everywhere).
 
 ---
 
@@ -557,7 +557,47 @@ Behaviour notes:
   `window.addEventListener('storage', …)` AND
   `window.addEventListener('conviction-beats:updated', …)`.
 
-## 11 · Patch Log Summary (0073 → 0280)
+## 10.6.5 · Batch-5 — Sweep of remaining pages + global CB chip (Patches 0281–0285)
+
+Continued the never-ending loop after batch-4. Theme: fix
+small-page null-safety gaps, wire `PanelFreshness` everywhere it
+fits, and surface the institutional Conviction Beats count globally
+so users always know how big the bench is without navigating.
+
+  0281 — Heatmap null-guards. `dailyData.stocks` and
+         `earningsData.results` were accessed without nullish guards;
+         a partial API payload would crash the treemap. Added
+         optional-chaining on both, plus an extra `!dailyData.stocks`
+         clause in the empty-state check. Also confirmed Movers /
+         Themes already safe (covered by Patch 0270/0271 patterns).
+
+  0282 — `<PanelFreshness>` wired into /themes (useThemeQuotes),
+         /ai-desk (max of morning/evening brief timestamps with a
+         6-hour `staleAfterMs`), and /alerts (max of rules /
+         instances timestamps with a 10-minute window).
+
+  0283 — Global Conviction Beats count chip in the dashboard header.
+         Lives in `DashboardClient.tsx` between MarketHours and
+         ThemeSwitcher. Clickable — routes to /earnings-opportunities
+         where the bench is curated. Cross-tab sync via storage event
+         + 'conviction-beats:updated'. Hidden when count is 0.
+
+  0284 — `<PanelFreshness>` wired into /smart-money and /movers.
+         Both pages use plain `useState`+`fetch` so we read their
+         existing `lastUpdated: Date` state, convert to epoch ms, and
+         pass that in. Smart Money gets a 15-min `staleAfterMs`
+         (bulk/block deals only land at EOD); Movers gets 10-min.
+
+  0285 — This documentation update.
+
+Sweep coverage after batch-5: every dashboard page that has a
+meaningful "live data" loop now exposes a freshness chip in its
+header, and the global header always shows the bench size. Pages
+deliberately skipped: /multibagger (Excel-upload driven, not live),
+/concall-intel (one-shot analyze), /settings, /stock-sheet (no
+query), /portfolio, /watchlists (use their own custom freshness).
+
+## 11 · Patch Log Summary (0073 → 0285)
 
 Pre-session patches existed (0073–0095). Recent session highlights:
 
@@ -651,6 +691,11 @@ Pre-session patches existed (0073–0095). Recent session highlights:
 - 0278 — Bottleneck Workbench: theme-picker search + theme-not-found state
 - 0279 — News Alerts JSON import/export (rules portable across browsers)
 - 0280 — CLAUDE.md update (end of batch-4)
+- 0281 — Heatmap null-guards on `dailyData.stocks` / `earningsData.results`
+- 0282 — PanelFreshness on /themes, /ai-desk, /alerts
+- 0283 — Global Conviction Beats count chip in dashboard header
+- 0284 — PanelFreshness on /smart-money + /movers
+- 0285 — CLAUDE.md update (end of batch-5)
 
 **Other features:**
 - 0089–0094 — Earnings Hub merge, Special Situations pillar, Stock Sheet, Re-rating Screener
