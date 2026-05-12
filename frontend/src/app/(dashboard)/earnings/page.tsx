@@ -849,9 +849,25 @@ function EarningsCardComponent({ card, postGap }: { card: EarningsScanCard; post
                   {postGap.live_move_pct >= 0 ? '▲' : '▼'} {Math.abs(postGap.live_move_pct).toFixed(1)}%
                 </span>
               </div>
+              {/* Overnight gap (target-day open vs filing-day close).
+                  Hidden when same as live cumulative (no extra info). */}
               {postGap.gap_pct != null && postGap.gap_pct !== postGap.live_move_pct && (
                 <div style={{ fontSize: 9, color: TEXT_DIM, fontFamily: 'ui-monospace, monospace' }}>
                   gap {postGap.gap_pct >= 0 ? '+' : ''}{postGap.gap_pct.toFixed(1)}%
+                </div>
+              )}
+              {/* PATCH 0204 — Day 1 close (T+1 reaction): close of first
+                  trading day after filing vs filing-day close. The market's
+                  first full verdict on the print — the metric institutional
+                  desks quote most. Hidden when target day is still trading
+                  (is_live=true) or when it equals the live cumulative. */}
+              {!postGap.is_live && postGap.close_move_pct != null && postGap.close_move_pct !== postGap.live_move_pct && (
+                <div style={{
+                  fontSize: 9, fontFamily: 'ui-monospace, monospace',
+                  color: postGap.close_move_pct >= 0 ? GREEN : RED,
+                  fontWeight: 600,
+                }}>
+                  1d close {postGap.close_move_pct >= 0 ? '+' : ''}{postGap.close_move_pct.toFixed(1)}%
                 </div>
               )}
             </div>
