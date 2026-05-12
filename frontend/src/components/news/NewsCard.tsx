@@ -6,6 +6,32 @@ import { formatDistanceToNow } from 'date-fns';
 import type { NewsArticle } from '@/types';
 // PATCH 0221 — Source-tier classification (PRIMARY / SPECIALIST / SECONDARY / AGGREGATOR)
 import { classifySource, TIER_VISUAL } from '@/lib/source-tiers';
+// PATCH 0224 — Lifecycle state dot (LIVE / WARM / STALE / PERSISTENT)
+import { TOKENS } from '@/lib/design-tokens';
+
+/** PATCH 0224 — Compute lifecycle bucket from published_at + persistence flags.
+ *  Mirrors the filter logic in news/page.tsx (Patch 0213). */
+function lifecycleFor(article: NewsArticle): { key: 'LIVE'|'WARM'|'STALE'|'PERSISTENT'|'UNKNOWN'; tone: { solid: string; bg: string; border: string }; label: string; hint: string } {
+  try {
+    const ts = new Date(article.published_at || (article as any).ingested_at || 0).getTime();
+    if (!Number.isFinite(ts) || ts === 0) {
+      return { key: 'UNKNOWN', tone: TOKENS.state.archived, label: 'UNKNOWN', hint: 'No published_at on this article' };
+    }
+    const age = Date.now() - ts;
+    const isPersistent = (article as any).freshness_layer === 'PERSISTENT_THEME'
+      || (article as any).is_synthetic
+      || (article as any).feed_layer === 'STRUCTURAL_ALPHA';
+    if (age <= 24 * 3600_000) return { key: 'LIVE', tone: TOKENS.state.live, label: 'LIVE', hint: 'Published in the last 24 hours' };
+    if (age <= 48 * 3600_000) return { key: 'WARM', tone: TOKENS.state.warm, label: 'WARM', hint: 'Published 24–48 hours ago' };
+    if (isPersistent && age > 7 * 24 * 3600_000) {
+      return { key: 'PERSISTENT', tone: TOKENS.state.persistent, label: 'PERSISTENT', hint: 'Structural theme, >7 days old' };
+    }
+    if (age <= 7 * 24 * 3600_000) return { key: 'STALE', tone: TOKENS.state.stale, label: 'STALE', hint: '48 hours to 7 days old' };
+    return { key: 'PERSISTENT', tone: TOKENS.state.persistent, label: 'PERSISTENT', hint: 'Older than 7 days' };
+  } catch {
+    return { key: 'UNKNOWN', tone: TOKENS.state.archived, label: 'UNKNOWN', hint: 'Unparseable date' };
+  }
+}
 
 // PATCH 0119 — IMP-02: Watchlist (Multibagger upload) cross-reference.
 // Cache the user's MB symbols at module level — refreshed once per mount
@@ -237,11 +263,22 @@ export default function NewsCard({ article, onTickerClick }: Props) {
     } catch { return ''; }
   })();
 
+  // PATCH 0224 — Lifecycle bucket (LIVE/WARM/STALE/PERSISTENT/UNKNOWN)
+  const lc = lifecycleFor(article);
   return (
-    <div className={`bg-[#1A2B3C] border rounded-lg p-4 hover:border-[#0F7ABF]/50 transition-colors group ${isWatchlist ? 'border-l-4 border-l-yellow-400 border-[#2A3B4C]' : 'border-[#2A3B4C]'}`}>
+    <div
+      className={`bg-[#1A2B3C] border rounded-lg p-4 hover:border-[#0F7ABF]/50 transition-colors group ${isWatchlist ? 'border-l-4 border-l-yellow-400 border-[#2A3B4C]' : 'border-[#2A3B4C]'}`}
+      style={!isWatchlist ? { borderLeft: `3px solid ${lc.tone.solid}` } : undefined}
+    >
       <div className="flex items-start gap-3">
         {/* Importance dot */}
-        <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${IMPORTANCE_DOT[tier]}`} />
+        <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${IMPORTANCE_DOT[tier]}`} title={`Importance tier: ${tier}`} />
+        {/* PATCH 0224 — Lifecycle dot: hover reveals the bucket + age rule */}
+        <span
+          className="mt-1.5 w-2 h-2 rounded-full shrink-0"
+          style={{ backgroundColor: lc.tone.solid, boxShadow: `0 0 4px ${lc.tone.solid}40` }}
+          title={`${lc.label} — ${lc.hint}`}
+        />
 
         <div className="flex-1 min-w-0">
           {/* Top row: tickers + badge + sentiment + time */}
