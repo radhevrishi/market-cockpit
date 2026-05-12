@@ -168,7 +168,7 @@ export default function BottleneckWorkbenchPage() {
                 </div>
                 <div style={{ fontSize: 11, color: TOKENS.surface.textDim, marginBottom: 6, lineHeight: 1.4 }}>{b.description}</div>
                 <div style={{ fontSize: 10, color: TOKENS.surface.textMuted, fontFamily: 'ui-monospace, monospace' }}>
-                  {b.article_count} articles · {b.signal_count} signals · {b.key_tickers.length} tickers
+                  {b.article_count} articles · {b.signal_count} signals · {(b.key_tickers || []).length} tickers
                 </div>
               </button>
             ))}
@@ -214,21 +214,21 @@ export default function BottleneckWorkbenchPage() {
             <div style={{ display: 'flex', gap: 18, fontSize: 11, color: TOKENS.surface.textMuted, fontFamily: 'ui-monospace, monospace' }}>
               <span>{bucket.article_count} articles</span>
               <span>{bucket.signal_count} signals</span>
-              <span>{bucket.key_tickers.length} implicated tickers</span>
+              <span>{(bucket.key_tickers || []).length} implicated tickers</span>
             </div>
           </div>
 
           {/* Tickers grid */}
-          {bucket.key_tickers.length > 0 && (
+          {(bucket.key_tickers || []).length > 0 && (
             <div style={{
               backgroundColor: TOKENS.surface.card, border: `1px solid ${TOKENS.surface.cardBorder}`,
               borderRadius: 12, padding: '16px 20px', marginBottom: 20,
             }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: TOKENS.semantic.bullish.solid, letterSpacing: '0.6px', marginBottom: 10 }}>
-                IMPLICATED TICKERS  ·  {bucket.key_tickers.length}
+                IMPLICATED TICKERS  ·  {(bucket.key_tickers || []).length}
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {bucket.key_tickers.map(t => {
+                {(bucket.key_tickers || []).map(t => {
                   const role = tickerRoleMap.get(t.toUpperCase());
                   const glyph = role === 'BENEFICIARY' ? '▲' : '◆';
                   const color = role === 'BENEFICIARY' ? TOKENS.semantic.bullish.solid : TOKENS.surface.textDim;
