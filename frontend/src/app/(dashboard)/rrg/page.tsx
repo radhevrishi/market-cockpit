@@ -423,6 +423,12 @@ export default function RRGPage() {
                             setHoveredSector(null);
                             setTooltip(null);
                           }}
+                          onClick={() => {
+                            // PATCH 0293 — Drill into sector news via /news?search=
+                            try {
+                              window.open(`/news?search=${encodeURIComponent(sector.name)}`, '_blank', 'noopener,noreferrer');
+                            } catch {}
+                          }}
                         />
                         <text
                           x={cx}
@@ -440,10 +446,12 @@ export default function RRGPage() {
                     );
                   })}
 
-                  {/* Tooltip */}
+                  {/* PATCH 0293 — Tooltip now also surfaces a 'View sector news →'
+                      hint so analysts can immediately drill into what's driving
+                      the position (audit IMP-05). Tooltip box grew to 95px high. */}
                   {tooltip && (() => {
-                    const tw = 180;
-                    const th = 75;
+                    const tw = 200;
+                    const th = 95;
                     let tx = tooltip.x + 15;
                     let ty = tooltip.y - th - 10;
                     if (tx + tw > chartWidth) tx = tooltip.x - tw - 15;
@@ -460,6 +468,10 @@ export default function RRGPage() {
                         </text>
                         <text x={tx + 12} y={ty + 68} fill={tooltip.sector.changePercent >= 0 ? THEME.green : THEME.red} fontSize="10" fontWeight="600">
                           {tooltip.sector.changePercent >= 0 ? '+' : ''}{tooltip.sector.changePercent.toFixed(2)}% today
+                        </text>
+                        {/* PATCH 0293 — Sector-news drill-through hint */}
+                        <text x={tx + 12} y={ty + 86} fill={THEME.accent} fontSize="10" fontWeight="600">
+                          📰 Click dot for sector news →
                         </text>
                       </g>
                     );
