@@ -1720,7 +1720,41 @@ export default function NewsFeedPage() {
     structuralOnly,
     sortBy,
   ]);
-  const inPlay = (rawInPlay || []).filter(isMarketRelevant);
+  // PATCH 0210 — Dedupe IN PLAY TODAY by ticker.
+  // Root cause of the DEEDEV×2, INOXINDIA×2, CEINSYS×2 rendering: rawInPlay
+  // returns one row per (article × ticker mention). Multiple articles
+  // mentioning the same ticker produce duplicate rail cards. Group by
+  // primary-ticker; keep the article with the most recent published_at;
+  // expose mention count downstream for an "N mentions" affordance.
+  const inPlay = (() => {
+    const relevant = (rawInPlay || []).filter(isMarketRelevant);
+    const byTicker = new Map<string, { article: typeof relevant[number]; count: number }>();
+    const untickered: typeof relevant = [];
+    for (const art of relevant) {
+      const syms = getTickerSymbols(art);
+      const key = syms[0]?.toUpperCase();
+      if (!key) {
+        untickered.push(art);
+        continue;
+      }
+      const existing = byTicker.get(key);
+      if (!existing) {
+        byTicker.set(key, { article: art, count: 1 });
+      } else {
+        existing.count += 1;
+        // Prefer the most recently published article
+        const aTs = new Date((art as any).published_at || (art as any).pub_date || 0).getTime();
+        const bTs = new Date((existing.article as any).published_at || (existing.article as any).pub_date || 0).getTime();
+        if (aTs > bTs) existing.article = art;
+      }
+    }
+    // Annotate the kept article with its mention count so the renderer can show it
+    const merged = Array.from(byTicker.values()).map(({ article, count }) => {
+      (article as any).__mentionCount = count;
+      return article;
+    });
+    return [...merged, ...untickered];
+  })();
   const { data: bnDashboard, isLoading: bnLoading, refetch: refetchBn } = useBottleneckDashboard(articleType === 'BOTTLENECK', region);
   const showBottleneckDashboard = articleType === 'BOTTLENECK';
 
@@ -1835,17 +1869,22 @@ export default function NewsFeedPage() {
           {(inPlay?.length ?? 0) > 0 ? (
             inPlay!.map(art => {
               const syms = getTickerSymbols(art);
+              const mentionCount = (art as any).__mentionCount as number | undefined;
               return (
                 <a
                   key={art.id}
                   href={getUrl(art) !== '#' ? getUrl(art) : undefined}
                   target="_blank"
                   rel="noopener noreferrer"
+                  title={mentionCount && mentionCount > 1 ? `${mentionCount} articles mention ${syms[0]} today — open the latest` : undefined}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', marginRight: '12px', cursor: 'pointer', verticalAlign: 'middle', flexShrink: 0, textDecoration: 'none', color: 'inherit' }}
                 >
                   {syms[0] && (
                     <span style={{ fontSize: '10px', fontWeight: '700', backgroundColor: '#EF444420', color: '#EF4444', padding: '1px 5px', borderRadius: '4px', border: '1px solid #EF444440' }}>
                       {syms[0]}
+                      {mentionCount && mentionCount > 1 && (
+                        <span style={{ marginLeft: 4, fontSize: 9, opacity: 0.85, fontWeight: 600 }}>×{mentionCount}</span>
+                      )}
                     </span>
                   )}
                   <span style={{ fontSize: '11px', color: '#C9D4E0' }}>
