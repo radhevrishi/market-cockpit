@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Shield, RefreshCw, TrendingUp, TrendingDown, Minus, Eye, Filter, Zap, AlertTriangle } from 'lucide-react';
 import { CHAT_ID, BOT_SECRET } from '@/lib/config';
+// PATCH 0251 — Conviction Beats overlay on Intelligence/Signals page
+import { getConvictionTickers } from '@/lib/conviction-beats';
 
 // Theme
 const BG = '#0A0E1A';
@@ -85,6 +87,7 @@ interface Signal {
   isWatchlist: boolean;
   isPortfolio: boolean;
   isExcel?: boolean;          // from Multibagger Excel Score & Rank engine
+  isConviction?: boolean;     // PATCH 0251 — from Conviction Beats (lib/conviction-beats.ts)
   lastPrice?: number | null;       // Current stock price for performance tracking
   dataSource?: string;             // 'NSE' | 'Moneycontrol' | 'Google News' | 'Block Deal' | 'Bulk Deal'
   signalStackCount?: number;
@@ -211,6 +214,7 @@ interface ThematicIdea {
   signals: number;
   isPortfolio: boolean;
   isWatchlist: boolean;
+  isConviction?: boolean;  // PATCH 0251
   lastPrice?: number | null;
   segment?: string | null;
 }
@@ -243,6 +247,7 @@ interface CompanyTrend {
   isExcel?: boolean;   // tagged client-side from Multibagger engine
   isPortfolio?: boolean;
   isWatchlist?: boolean;
+  isConviction?: boolean;  // PATCH 0251
 }
 
 interface DailyBias {
@@ -332,7 +337,7 @@ const eventTypeIcon = (t: string) => {
 };
 
 type FilterType = 'ALL' | 'BUY' | 'ADD' | 'HOLD' | 'WATCH' | 'TRIM' | 'ORDERS' | 'CAPEX' | 'DEALS' | 'STRATEGIC' | 'NEGATIVE' | 'HIGH_IMPACT' | 'NOTABLE';
-type UniverseFilter = 'ALL' | 'PORTFOLIO' | 'WATCHLIST' | 'EXCEL';
+type UniverseFilter = 'ALL' | 'PORTFOLIO' | 'WATCHLIST' | 'EXCEL' | 'CONVICTION';  // PATCH 0251
 
 
 /** Filter out GOVERNANCE / Mgmt Change signals — not useful for portfolio decisions */
@@ -2388,11 +2393,16 @@ export default function CompanyIntelligencePage() {
       }
     } catch {}
     const _excelSet = new Set(_excelSymbols);
+    // PATCH 0251 — Conviction Beats tickers from localStorage 'mc:conviction-beats:v1'
+    const _convictionSet = getConvictionTickers();
     // Generic tagger — works for Signal[], CompanyTrend[], ThematicIdea[], or any {symbol:string}[]
-    const _tagExcel = <T extends { symbol: string }>(arr: T[]): T[] => arr.map(s =>
-      _excelSet.has((s.symbol || '').toString().trim().toUpperCase())
-        ? { ...s, isExcel: true } : s
-    );
+    const _tagExcel = <T extends { symbol: string }>(arr: T[]): T[] => arr.map(s => {
+      const sym = (s.symbol || '').toString().trim().toUpperCase();
+      const next: any = { ...s };
+      if (_excelSet.has(sym)) next.isExcel = true;
+      if (_convictionSet.has(sym)) next.isConviction = true;
+      return next as T;
+    });
 
     // Tab cache: if data was fetched recently and not forcing refresh, use cached data
     if (!forceRefresh && _cache && _cache.daysFilter === daysFilter && (Date.now() - _cache.timestamp) < CACHE_TTL) {
@@ -2462,7 +2472,7 @@ export default function CompanyIntelligencePage() {
       // Merged portfolio = real portfolio + excel-only symbols (backend enriches all)
       const mergedPortfolio = [...portfolio, ...excelOnlySymbols];
 
-      // Full re-tagger: correctly sets all three flags based on original sets
+      // Full re-tagger: correctly sets all four flags based on original sets
       const _retag = <T extends { symbol: string }>(arr: T[]): T[] => arr.map(s => {
         const sym = (s.symbol || '').toString().trim().toUpperCase();
         return {
@@ -2470,6 +2480,7 @@ export default function CompanyIntelligencePage() {
           isPortfolio: portfolioSet.has(sym),
           isWatchlist: watchlistSet.has(sym),
           isExcel: _excelSet.has(sym),
+          isConviction: _convictionSet.has(sym),  // PATCH 0251
         };
       });
 
@@ -2648,6 +2659,7 @@ export default function CompanyIntelligencePage() {
     if (universeFilter === 'PORTFOLIO') list = list.filter(s => s.isPortfolio);
     if (universeFilter === 'WATCHLIST') list = list.filter(s => s.isWatchlist);
     if (universeFilter === 'EXCEL')     list = list.filter(s => s.isExcel);
+    if (universeFilter === 'CONVICTION') list = list.filter(s => (s as any).isConviction);  // PATCH 0251
     // Type filter
     if (typeFilter === 'BUY') list = list.filter(s => s.action === 'BUY');
     if (typeFilter === 'ADD') list = list.filter(s => s.action === 'ADD');
@@ -2704,6 +2716,7 @@ export default function CompanyIntelligencePage() {
     if (s.isPortfolio) universes.push('Portfolio');
     if (s.isWatchlist) universes.push('Watchlist');
     if (s.isExcel)     universes.push('Excel Picks');
+    if (s.isConviction) universes.push('Conviction Beats');  // PATCH 0251
     if (universes.length >= 2 && !overlapMap.has(s.symbol)) {
       overlapMap.set(s.symbol, { signal: s, universes });
     }
@@ -2812,7 +2825,7 @@ export default function CompanyIntelligencePage() {
         <span>Materiality: <span style={{ color: GREEN }}>■75+</span> <span style={{ color: '#3B82F6' }}>■60</span> <span style={{ color: '#F59E0B' }}>■45</span> <span style={{ color: TEXT3 }}>■&lt;45</span></span>
         <span>Conf: <span style={{ color: GREEN }}>70+</span> <span style={{ color: YELLOW }}>50+</span> <span style={{ color: ORANGE }}>&lt;50</span></span>
         <span>Evidence: <span style={{ color: '#059669' }}>A</span>=Filed <span style={{ color: '#D97706' }}>B</span>=Likely <span style={{ color: '#DC2626' }}>C</span>=Probable <span style={{ color: '#6B7280' }}>D</span>=Weak</span>
-        <span><span style={{ color: PURPLE }}>PF</span>=Portfolio <span style={{ color: ACCENT }}>WL</span>=Watchlist <span style={{ color: '#F59E0B' }}>EST</span>=Estimated</span>
+        <span><span style={{ color: PURPLE }}>PF</span>=Portfolio <span style={{ color: ACCENT }}>WL</span>=Watchlist <span style={{ color: '#F59E0B' }}>CB</span>=Conviction Beats <span style={{ color: '#F59E0B' }}>EST</span>=Estimated</span>
       </div>
 
       {/* ── DAILY DECISION SUMMARY ── */}
@@ -3216,6 +3229,7 @@ export default function CompanyIntelligencePage() {
                     )}
                     {idea.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(139,92,246,0.15)' }}>PF</span>}
                     {idea.isWatchlist && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.15)' }}>WL</span>}
+                    {(idea as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '9px', color: '#F59E0B', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)' }}>CB</span>}
                     {idea.segment && <span style={{ fontSize: '9px', color: TEXT3, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(100,116,139,0.08)' }}>{idea.segment}</span>}
                     <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px' }}>
                       <span style={{ fontSize: '9px', fontWeight: 700, color: confColor, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(167,139,250,0.08)' }}>
@@ -3271,6 +3285,7 @@ export default function CompanyIntelligencePage() {
                   </span>
                   {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(139,92,246,0.15)' }}>PF</span>}
                   {s.isWatchlist && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.15)' }}>WL</span>}
+                  {(s as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '9px', color: '#F59E0B', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)' }}>CB</span>}
                   {s.tag && <span style={{ 
   fontSize: '9px', 
   fontWeight: 700, 
@@ -3523,6 +3538,7 @@ export default function CompanyIntelligencePage() {
                     )}
                     {s.isPortfolio && <span style={{ fontSize: '9px', color: PURPLE, fontWeight: 600, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(139,92,246,0.15)' }}>PF</span>}
                     {s.isWatchlist && <span style={{ fontSize: '9px', color: ACCENT, fontWeight: 600, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.15)' }}>WL</span>}
+                    {(s as any).isConviction && <span title="Conviction Beats" style={{ fontSize: '9px', color: '#F59E0B', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', backgroundColor: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)' }}>CB</span>}
                     <span style={{ fontSize: '10px', color: ACCENT, padding: '1px 6px', borderRadius: '3px', backgroundColor: 'rgba(15,122,191,0.08)' }}>{s.eventType}</span>
                     {s.valueCr > 0 && <span style={{ fontSize: '11px', fontWeight: 700, color: CYAN }}>{fmtCr(s.valueCr)}{s.inferenceUsed ? '*' : ''}</span>}
                     {s.impactPct > 0 && (
