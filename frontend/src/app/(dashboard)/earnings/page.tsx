@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Download, AlertTriangle, Award } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 import { getConvictionTickers } from '@/lib/conviction-beats';
 import TickerExportToolbar from '@/components/TickerExportToolbar';
@@ -755,7 +756,7 @@ const COMMENTARY_COLORS: Record<CommentarySignal, { bg: string; border: string; 
 // CARD COMPONENT
 // ══════════════════════════════════════════════
 
-function EarningsCardComponent({ card }: { card: EarningsScanCard }) {
+function EarningsCardComponent({ card, postGap }: { card: EarningsScanCard; postGap?: { gap_pct: number | null; close_move_pct: number | null; live_move_pct: number | null; is_live: boolean; target_date: string | null } }) {
   const tagColor = card.universeTag === 'portfolio' ? '#10B981' : card.universeTag === 'both' ? '#8B5CF6' : card.universeTag === 'screener' ? '#F59E0B' : ACCENT;
   const tagLabel = card.universeTag === 'portfolio' ? 'PORTFOLIO' : card.universeTag === 'both' ? 'BOTH' : card.universeTag === 'screener' ? 'SCREENER' : 'WATCHLIST';
 
@@ -828,6 +829,33 @@ function EarningsCardComponent({ card }: { card: EarningsScanCard }) {
         </div>
         <div style={{ textAlign: 'right' }}>
           {card.cmp && <div style={{ fontSize: '18px', fontWeight: 700, color: TEXT }}>₹{card.cmp.toLocaleString('en-IN')}</div>}
+          {/* PATCH 0201 — Post-earnings price gap (next-trading-day vs filing-day close) */}
+          {postGap && postGap.live_move_pct != null && (
+            <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+              <div style={{ fontSize: 9, color: TEXT_DIM, fontWeight: 700, letterSpacing: '0.4px' }}>
+                POST-EARNINGS {postGap.is_live ? '(LIVE)' : '(CLOSE)'}
+              </div>
+              <div style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                padding: '2px 8px', borderRadius: 4,
+                backgroundColor: (postGap.live_move_pct >= 0 ? GREEN : RED) + '20',
+                border: `1px solid ${(postGap.live_move_pct >= 0 ? GREEN : RED)}50`,
+              }}>
+                <span style={{
+                  fontSize: 13, fontWeight: 900,
+                  color: postGap.live_move_pct >= 0 ? GREEN : RED,
+                  fontFamily: 'ui-monospace, monospace',
+                }}>
+                  {postGap.live_move_pct >= 0 ? '▲' : '▼'} {Math.abs(postGap.live_move_pct).toFixed(1)}%
+                </span>
+              </div>
+              {postGap.gap_pct != null && postGap.gap_pct !== postGap.live_move_pct && (
+                <div style={{ fontSize: 9, color: TEXT_DIM, fontFamily: 'ui-monospace, monospace' }}>
+                  gap {postGap.gap_pct >= 0 ? '+' : ''}{postGap.gap_pct.toFixed(1)}%
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -2075,12 +2103,20 @@ export default function EarningsPage() {
         );
       })()}
 
-      {/* Cards Grid */}
-      {!loading && !error && sortedCards.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: '16px' }}>
-          {sortedCards.map(card => <EarningsCardComponent key={card.symbol} card={card} />)}
-        </div>
-      )}
+      {/* PATCH 0201 — Post-earnings price gap. Maps each visible ticker to
+          { gap_pct, close_move_pct, live_move_pct, is_live } derived from
+          Yahoo daily candles + filing timing. Background fetch; rendered
+          inside each card when available. */}
+      <PostGapProvider cards={sortedCards}>
+        {(gapMap) => (
+          /* Cards Grid */
+          !loading && !error && sortedCards.length > 0 ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: '16px' }}>
+              {sortedCards.map(card => <EarningsCardComponent key={card.symbol} card={card} postGap={gapMap[card.symbol]} />)}
+            </div>
+          ) : null
+        )}
+      </PostGapProvider>
 
       {/* Empty State */}
       {!loading && !error && sortedCards.length === 0 && (
@@ -2099,4 +2135,53 @@ export default function EarningsPage() {
       {!loading && cards.length > 0 && <BottomSummary cards={cards} />}
     </div>
   );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POST-EARNINGS GAP PROVIDER (PATCH 0201)
+// Fetches Yahoo-based post-earnings price action for the visible cards.
+// Render-prop pattern so the same hook lives once per visible set, not per card.
+// ═══════════════════════════════════════════════════════════════════════════
+interface PostGap {
+  gap_pct: number | null;
+  close_move_pct: number | null;
+  live_move_pct: number | null;
+  is_live: boolean;
+  target_date: string | null;
+}
+function PostGapProvider({ cards, children }: {
+  cards: EarningsScanCard[];
+  children: (gapMap: Record<string, PostGap>) => React.ReactNode;
+}) {
+  // Build the (ticker, filing_date, timing) request list. Default timing='post'
+  // since most Indian companies file after-market — Yahoo daily candle for
+  // NEXT trading day is the right comparable.
+  const items = useMemo(() => {
+    return cards.slice(0, 80).map((c) => ({
+      ticker: c.symbol,
+      filing_date: c.resultDate || c.period || '',
+      timing: 'post' as const,
+    })).filter((x) => x.ticker && x.filing_date && /^\d{4}-\d{2}-\d{2}/.test(x.filing_date));
+  }, [cards]);
+
+  const key = useMemo(() => items.map((i) => `${i.ticker}|${i.filing_date}`).join(','), [items]);
+  const { data } = useQuery<Record<string, PostGap>>({
+    queryKey: ['post-earnings-gap', key],
+    enabled: items.length > 0,
+    queryFn: async () => {
+      const res = await fetch('/api/v1/earnings/post-gap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items }),
+      });
+      if (!res.ok) return {};
+      const j = await res.json();
+      return j?.data || {};
+    },
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+
+  return <>{children(data || {})}</>;
 }
