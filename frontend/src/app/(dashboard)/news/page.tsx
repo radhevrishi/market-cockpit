@@ -954,12 +954,52 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
 }
 
 /** Full-screen article detail overlay — shows when user clicks a news card. */
+// PATCH 0233 — Thesis Notebooks v0.
+// Free-text notes saved per article in localStorage under
+// 'mc:notes:v1:<article_id>'. Survives page refresh, syncs cross-tab.
+// Real version (per-user notebooks server-side, @-mentions, version history)
+// requires Auth + notes table — frontend-only v0 here.
+const NOTE_KEY_PREFIX = 'mc:notes:v1:';
+function loadNote(articleId: string): string {
+  if (typeof window === 'undefined') return '';
+  try { return localStorage.getItem(NOTE_KEY_PREFIX + articleId) || ''; } catch { return ''; }
+}
+function saveNote(articleId: string, text: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    if (text.trim()) localStorage.setItem(NOTE_KEY_PREFIX + articleId, text);
+    else localStorage.removeItem(NOTE_KEY_PREFIX + articleId);
+  } catch {}
+}
+function listNoteIds(): string[] {
+  if (typeof window === 'undefined') return [];
+  const out: string[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(NOTE_KEY_PREFIX)) out.push(k.slice(NOTE_KEY_PREFIX.length));
+    }
+  } catch {}
+  return out;
+}
+
 function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: () => void }) {
   const symbols = getTickerSymbols(article);
   const title = getTitle(article);
   const source = getSource(article);
   const url = getUrl(article);
   const sentiment = sentimentBadge(article.sentiment);
+  // PATCH 0233 — Per-article notebook
+  const [noteText, setNoteText] = useState(() => loadNote(article.id));
+  const [noteSavedAt, setNoteSavedAt] = useState<number | null>(null);
+  // Debounced autosave
+  useEffect(() => {
+    const id = setTimeout(() => {
+      saveNote(article.id, noteText);
+      setNoteSavedAt(Date.now());
+    }, 600);
+    return () => clearTimeout(id);
+  }, [noteText, article.id]);
 
   return (
     <div
@@ -1144,6 +1184,43 @@ function ArticleDetail({ article, onClose }: { article: NewsArticle; onClose: ()
               </div>
             );
           })()}
+        </div>
+
+        {/* PATCH 0233 — Thesis Notebook v0 (per-article notes, localStorage) */}
+        <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid #1E2D45' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: '#22D3EE', letterSpacing: '0.6px' }}>
+              📝 ANALYST NOTE
+            </span>
+            <span style={{ fontSize: 9, color: '#6B7B8C', fontFamily: 'ui-monospace, monospace' }}>
+              {noteSavedAt ? `saved ${new Date(noteSavedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : 'autosaves to this browser'}
+            </span>
+          </div>
+          <textarea
+            value={noteText}
+            onChange={(e) => setNoteText(e.target.value)}
+            placeholder="Thesis, decision rationale, ticker tags, follow-ups…  (Markdown supported. Local to this browser until Notebooks server-side ships.)"
+            style={{
+              width: '100%', minHeight: 96, resize: 'vertical',
+              backgroundColor: '#0A1422', border: '1px solid #1E2D45',
+              borderRadius: 6, padding: '8px 10px', color: '#F5F7FA',
+              fontSize: 12, fontFamily: 'ui-monospace, monospace',
+              lineHeight: 1.5, outline: 'none',
+            }}
+          />
+          {noteText.trim().length > 0 && (
+            <div style={{ display: 'flex', gap: 8, marginTop: 6, alignItems: 'center' }}>
+              <span style={{ fontSize: 10, color: '#6B7B8C' }}>{noteText.length} chars</span>
+              <button
+                onClick={() => { if (window.confirm('Delete this note?')) setNoteText(''); }}
+                style={{
+                  marginLeft: 'auto', background: 'none', border: '1px solid #1E2D45',
+                  color: '#6B7B8C', borderRadius: 4, padding: '2px 8px',
+                  fontSize: 10, cursor: 'pointer',
+                }}
+              >Clear</button>
+            </div>
+          )}
         </div>
 
         {/* External link */}
