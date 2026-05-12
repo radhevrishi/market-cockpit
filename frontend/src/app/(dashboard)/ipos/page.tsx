@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+// PATCH 0275 — Shared freshness chip helper.
+import { PanelFreshness } from '@/components/PanelFreshness';
 
 interface Subscription {
   retail?: number;
@@ -50,12 +52,15 @@ export default function IPOsPage() {
   const [ipos, setIpos] = useState<IPO[]>([]);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<string>('');
+  const [lastUpdatedMs, setLastUpdatedMs] = useState<number>(0); // PATCH 0275
+  const [isFetchingState, setIsFetchingState] = useState<boolean>(false); // PATCH 0275
   const [dataSource, setDataSource] = useState<string>('');
   const [error, setError] = useState<string>('');
 
   const fetchIPOs = async () => {
     try {
       setLoading(true);
+      setIsFetchingState(true);
       const response = await fetch('/api/market/ipos');
 
       if (!response.ok) {
@@ -65,6 +70,7 @@ export default function IPOsPage() {
       const data: IPOResponse = await response.json();
       setIpos(data.ipos);
       setLastUpdated(data.updatedAt);
+      setLastUpdatedMs(Date.now()); // PATCH 0275 — stamp success time for freshness chip
       setDataSource(data.source);
       setError('');
     } catch (err) {
@@ -72,6 +78,7 @@ export default function IPOsPage() {
       console.error('Error fetching IPOs:', err);
     } finally {
       setLoading(false);
+      setIsFetchingState(false);
     }
   };
 
@@ -128,13 +135,17 @@ export default function IPOsPage() {
     }}>
       {/* Header */}
       <div style={{ marginBottom: '32px' }}>
-        <h1 style={{
-          fontSize: '32px',
-          fontWeight: 'bold',
-          margin: '0 0 8px 0',
-        }}>
-          IPO Market
-        </h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
+          <h1 style={{
+            fontSize: '32px',
+            fontWeight: 'bold',
+            margin: 0,
+          }}>
+            IPO Market
+          </h1>
+          {/* PATCH 0275 — Shared freshness chip; amber once the 5-min interval slips. */}
+          <PanelFreshness dataUpdatedAt={lastUpdatedMs} isFetching={isFetchingState} staleAfterMs={10 * 60_000} />
+        </div>
         <p style={{
           color: THEME.textSecondary,
           margin: 0,

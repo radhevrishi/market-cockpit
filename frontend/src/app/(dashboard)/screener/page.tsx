@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Search, Loader } from 'lucide-react';
+// PATCH 0275 — Shared freshness chip helper.
+import { PanelFreshness } from '@/components/PanelFreshness';
 
 interface Quote {
   ticker: string;
@@ -185,6 +187,8 @@ export default function ScreenerPage() {
   const [earningsData, setEarningsData] = useState<EarningsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // PATCH 0275 — stamp epoch on successful fetch so we can render PanelFreshness.
+  const [dataUpdatedAt, setDataUpdatedAt] = useState<number>(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSector, setSelectedSector] = useState('All');
   const [sortBy, setSortBy] = useState('Name');
@@ -208,6 +212,7 @@ export default function ScreenerPage() {
       if (!response.ok) throw new Error('Failed to fetch quotes');
       const result: QuotesData = await response.json();
       setData(result);
+      setDataUpdatedAt(Date.now()); // PATCH 0275
 
       // Derive sectors from the stocks data
       const uniqueSectors = new Set(result.stocks.map(stock => stock.sector));
@@ -297,6 +302,7 @@ export default function ScreenerPage() {
           updatedAt: currentRes?.updatedAt || new Date().toISOString(),
         };
         setEarningsData(mapped);
+        setDataUpdatedAt(Date.now()); // PATCH 0275
         setCurrentPage(1);
       };
 
@@ -494,9 +500,13 @@ export default function ScreenerPage() {
       <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
         {/* Header */}
         <div style={{ marginBottom: '32px' }}>
-          <h1 style={{ color: THEME.textPrimary, fontSize: '28px', fontWeight: '700', margin: '0 0 8px 0' }}>
-            Market Screener
-          </h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
+            <h1 style={{ color: THEME.textPrimary, fontSize: '28px', fontWeight: '700', margin: 0 }}>
+              Market Screener
+            </h1>
+            {/* PATCH 0275 — Shared freshness chip. */}
+            <PanelFreshness dataUpdatedAt={dataUpdatedAt} isFetching={loading} staleAfterMs={10 * 60_000} />
+          </div>
           <p style={{ color: THEME.textSecondary, fontSize: '14px', margin: 0 }}>
             Real-time stock data powered by NSE India
           </p>
