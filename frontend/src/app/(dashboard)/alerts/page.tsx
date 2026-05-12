@@ -7,6 +7,8 @@ import toast from 'react-hot-toast';
 import api from '@/lib/api';
 import { Skeleton, TableRowSkeleton } from '@/components/ui/Skeleton';
 import { timeAgo } from '@/lib/utils';
+// PATCH 0282 — Shared freshness chip.
+import { PanelFreshness } from '@/components/PanelFreshness';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -314,8 +316,8 @@ export default function AlertsPage() {
   const [activeTab, setActiveTab] = useState<'rules' | 'history'>('rules');
   const qc = useQueryClient();
 
-  const { data: rules, isLoading: rulesLoading, error: rulesError, refetch: refetchRules } = useAlertRules();
-  const { data: instances, isLoading: histLoading, error: histError, refetch: refetchHist } = useAlertInstances();
+  const { data: rules, isLoading: rulesLoading, error: rulesError, refetch: refetchRules, isFetching: rulesFetching, dataUpdatedAt: rulesUpdatedAt } = useAlertRules();
+  const { data: instances, isLoading: histLoading, error: histError, refetch: refetchHist, isFetching: histFetching, dataUpdatedAt: histUpdatedAt } = useAlertInstances();
 
   const toggleMutation = useMutation({
     mutationFn: async ({ id, is_active }: { id: string; is_active: boolean }) => {
@@ -343,7 +345,16 @@ export default function AlertsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-bold text-white">Smart Alerts</h1>
+          <div className="flex items-center gap-3 flex-wrap">
+            <h1 className="text-lg font-bold text-white">Smart Alerts</h1>
+            {/* PATCH 0282 — Freshness chip taking the most-recently-loaded of
+                the two queries (rules vs instances). */}
+            <PanelFreshness
+              dataUpdatedAt={Math.max(rulesUpdatedAt || 0, histUpdatedAt || 0)}
+              isFetching={rulesFetching || histFetching}
+              staleAfterMs={10 * 60_000}
+            />
+          </div>
           <p className="text-[#4A5B6C] text-xs mt-0.5">Get notified on price moves and breaking news</p>
         </div>
         <button onClick={() => setShowCreate(true)}

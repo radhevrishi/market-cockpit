@@ -6,6 +6,8 @@ import { useSearchParams } from 'next/navigation';
 import { TrendingUp, TrendingDown, ExternalLink } from 'lucide-react';
 import api from '@/lib/api';
 import TickerDrawer from '@/components/TickerDrawer';
+// PATCH 0282 — Shared freshness chip.
+import { PanelFreshness } from '@/components/PanelFreshness';
 
 // ── Static theme definitions ──────────────────────────────────────────────────
 
@@ -201,7 +203,7 @@ export default function ThemesPage() {
   const searchParams = useSearchParams();
   const [active, setActive] = useState<string | null>(null);
   const [drawerTicker, setDrawerTicker] = useState<{ symbol: string; exchange: string } | null>(null);
-  const { data: quotes, isLoading: quotesLoading, isError: quotesError } = useThemeQuotes();
+  const { data: quotes, isLoading: quotesLoading, isError: quotesError, isFetching: quotesFetching, dataUpdatedAt: quotesUpdatedAt } = useThemeQuotes();
 
   // Auto-select theme and open drawer if ticker parameter is present
   useEffect(() => {
@@ -225,7 +227,11 @@ export default function ThemesPage() {
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-xl font-bold text-white">Thematic Dashboards</h1>
+        <div className="flex items-center gap-3 flex-wrap">
+          <h1 className="text-xl font-bold text-white">Thematic Dashboards</h1>
+          {/* PATCH 0282 — Live freshness chip from the theme-quotes query. */}
+          <PanelFreshness dataUpdatedAt={quotesUpdatedAt} isFetching={quotesFetching} staleAfterMs={5 * 60_000} />
+        </div>
         <p className="text-[#8899AA] text-sm mt-1">
           Pre-built baskets for your focus themes. Click a theme to expand; click any ticker for details.
           {quotesLoading && <span className="ml-2 text-[#4A5B6C] text-xs animate-pulse">Loading live prices…</span>}

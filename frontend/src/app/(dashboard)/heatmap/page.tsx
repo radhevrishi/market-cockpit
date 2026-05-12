@@ -316,7 +316,9 @@ export default function HeatmapPage() {
     rects: { x: number; y: number; w: number; h: number; stock: Stock; sector: string }[];
     sectorRects: { x: number; y: number; w: number; h: number; data: any }[];
   } | null => {
-    if (!dailyData || !dailyData.stocks.length || isEarningsMode) return null;
+    // PATCH 0281 — defensive: dailyData can be non-null but .stocks missing
+    // when the server returns a partial / errored payload.
+    if (!dailyData || !dailyData.stocks || !dailyData.stocks.length || isEarningsMode) return null;
 
     const sectorMap = new Map<string, Stock[]>();
     for (const s of dailyData.stocks) {
@@ -392,12 +394,14 @@ export default function HeatmapPage() {
 
   const formatTime = (d: Date | null) => d ? d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '--:--';
 
-  const hoveredDailyStock = !isEarningsMode && hoveredTicker && dailyData ? dailyData.stocks.find(s => s.ticker === hoveredTicker) : null;
-  const hoveredEarningsResult = isEarningsMode && hoveredTicker && earningsData ? earningsData.results.find(r => r.ticker === hoveredTicker) : null;
+  // PATCH 0281 — guard .stocks / .results before .find/.filter; the server
+  // sometimes returns an envelope without the inner array on transient errors.
+  const hoveredDailyStock = !isEarningsMode && hoveredTicker && dailyData?.stocks ? dailyData.stocks.find(s => s.ticker === hoveredTicker) : null;
+  const hoveredEarningsResult = isEarningsMode && hoveredTicker && earningsData?.results ? earningsData.results.find(r => r.ticker === hoveredTicker) : null;
 
   // Earnings summary stats
   const earningsSummary = useMemo(() => {
-    if (!earningsData) return null;
+    if (!earningsData || !earningsData.results) return null;
     const results = earningsData.results;
     const gainers = results.filter(r => (r.priceMove || 0) > 0).length;
     const losers = results.filter(r => (r.priceMove || 0) < 0).length;

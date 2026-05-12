@@ -6,6 +6,8 @@ import { Send, RefreshCw, Copy, Bot, User, AlertCircle, Sparkles, Key, Sun, Moon
 import { format } from 'date-fns';
 import api from '@/lib/api';
 import { Skeleton } from '@/components/ui/Skeleton';
+// PATCH 0282 — Shared freshness chip.
+import { PanelFreshness } from '@/components/PanelFreshness';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -497,9 +499,17 @@ export default function AIDeskPage() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
-      <div className="flex items-center gap-2 mb-5">
+      <div className="flex items-center gap-2 mb-5 flex-wrap">
         <Bot className="w-5 h-5 text-[#0F7ABF]" />
         <h1 className="text-lg font-bold text-white">AI Desk</h1>
+        {/* PATCH 0282 — Freshness chip from whichever brief was loaded most
+            recently (morning or evening). Helps users see how fresh the AI
+            output they're reading actually is. */}
+        <PanelFreshness
+          dataUpdatedAt={Math.max(morning.dataUpdatedAt || 0, evening.dataUpdatedAt || 0)}
+          isFetching={morning.isFetching || evening.isFetching}
+          staleAfterMs={6 * 60 * 60_000}
+        />
         {aiStatus ? (
           <span className={`ml-2 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
             aiAvailable && !briefHasError
