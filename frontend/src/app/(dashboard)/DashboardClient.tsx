@@ -62,6 +62,8 @@ const NAV: NavItem[] = [
   // PATCH 0107 / 0171: Concall Intelligence Engine v2
   { href: '/concall-intel', label: 'Concall Intelligence', icon: <Microscope className="w-5 h-5" /> },
   { href: '/ipos',          label: 'IPOs',               icon: <Rocket className="w-5 h-5" /> },
+  // PATCH 0237: Client-side news alert rules v0
+  { href: '/news-alerts',   label: 'News Alerts',        icon: <Bell className="w-5 h-5" /> },
   // PATCH 0219: System Status — per-pipeline heartbeats for institutional trust.
   { href: '/status',        label: 'System Status',      icon: <Bell className="w-5 h-5" /> },
   // PATCH 0089: macro-maps removed — header ticker covers global indices/currencies/commodities

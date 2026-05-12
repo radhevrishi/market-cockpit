@@ -1,0 +1,354 @@
+'use client';
+
+/**
+ * PATCH 0237 — Client-side News Alert Rules v0.
+ *
+ * Distinct from the existing /alerts page (which is server-backed earnings
+ * / market alerts). This page lets the user define rules that watch the
+ * /news live stream and fire a browser Notification + on-screen toast
+ * when a new article matches. Rules persist in localStorage.
+ *
+ * Real cross-channel delivery (Slack/Email/Webhook) needs the proper
+ * server-side Alert Rules engine — frontend v0 here, fires only while
+ * this tab is open.
+ */
+
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import api from '@/lib/api';
+import { TOKENS } from '@/lib/design-tokens';
+
+interface AlertCondition {
+  article_type?: string;
+  region?: 'IN' | 'US' | 'ALL';
+  min_importance?: number;
+  ticker?: string;
+  theme_substring?: string;
+  headline_substring?: string;
+}
+interface AlertRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  conditions: AlertCondition;
+  lastFiredArticleIds: string[];
+  lastFiredAt: number;
+  createdAt: number;
+}
+
+const STORE_KEY = 'mc:news-alerts:v1';
+
+function loadRules(): AlertRule[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+}
+function saveRules(rules: AlertRule[]) {
+  if (typeof window === 'undefined') return;
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(rules)); } catch {}
+}
+function matches(article: any, c: AlertCondition): boolean {
+  if (c.article_type && article.article_type !== c.article_type) return false;
+  if (c.region && c.region !== 'ALL' && article.region !== c.region) return false;
+  if (c.min_importance && (article.importance_score || 0) < c.min_importance) return false;
+  if (c.ticker) {
+    const haystack = (article.ticker_symbols || []).map((t: any) => (typeof t === 'string' ? t : t?.ticker || '')).join(' ').toUpperCase();
+    if (!haystack.includes(c.ticker.toUpperCase())) return false;
+  }
+  if (c.theme_substring && !((article.bottleneck_sub_tag || '').toLowerCase().includes(c.theme_substring.toLowerCase()))) return false;
+  if (c.headline_substring) {
+    const h = (article.headline || article.title || '').toLowerCase();
+    if (!h.includes(c.headline_substring.toLowerCase())) return false;
+  }
+  return true;
+}
+
+function useNewsStream() {
+  return useQuery<any[]>({
+    queryKey: ['news-alerts', 'stream'],
+    queryFn: async () => {
+      const { data } = await api.get('/news?limit=100');
+      return Array.isArray(data) ? data : (data?.items || []);
+    },
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+}
+
+export default function NewsAlertsPage() {
+  const [rules, setRules] = useState<AlertRule[]>(() => loadRules());
+  const [draft, setDraft] = useState<Partial<AlertRule>>({});
+  const [permission, setPermission] = useState<NotificationPermission>(typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default');
+  const [toasts, setToasts] = useState<Array<{ id: string; rule: string; headline: string; ts: number }>>([]);
+  const lastSeenIds = useRef<Set<string>>(new Set());
+
+  const { data: stream } = useNewsStream();
+
+  useEffect(() => { saveRules(rules); }, [rules]);
+
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => { if (e.key === STORE_KEY) setRules(loadRules()); };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  useEffect(() => {
+    if (!stream || stream.length === 0) return;
+    if (lastSeenIds.current.size === 0) {
+      for (const a of stream) lastSeenIds.current.add(a.id);
+      return;
+    }
+    for (const article of stream) {
+      if (lastSeenIds.current.has(article.id)) continue;
+      lastSeenIds.current.add(article.id);
+      if (lastSeenIds.current.size > 500) {
+        const arr = Array.from(lastSeenIds.current);
+        lastSeenIds.current = new Set(arr.slice(-300));
+      }
+      for (const rule of rules) {
+        if (!rule.enabled) continue;
+        if (rule.lastFiredArticleIds.includes(article.id)) continue;
+        if (!matches(article, rule.conditions)) continue;
+        const headline = article.headline || article.title || '(no headline)';
+        setToasts(t => [{ id: `${rule.id}-${article.id}`, rule: rule.name, headline, ts: Date.now() }, ...t.slice(0, 19)]);
+        if (permission === 'granted' && 'Notification' in window) {
+          try {
+            new Notification(`Alert: ${rule.name}`, { body: headline.slice(0, 200), tag: rule.id });
+          } catch {}
+        }
+        setRules(rs => rs.map(r => r.id === rule.id ? {
+          ...r,
+          lastFiredAt: Date.now(),
+          lastFiredArticleIds: [article.id, ...r.lastFiredArticleIds].slice(0, 50),
+        } : r));
+      }
+    }
+  }, [stream, rules, permission]);
+
+  useEffect(() => {
+    if (toasts.length === 0) return;
+    const id = setTimeout(() => setToasts(t => t.slice(0, -1)), 8000);
+    return () => clearTimeout(id);
+  }, [toasts]);
+
+  const requestPerm = async () => {
+    if (!('Notification' in window)) return;
+    const result = await Notification.requestPermission();
+    setPermission(result);
+  };
+
+  const addRule = () => {
+    if (!draft.name?.trim()) return;
+    const r: AlertRule = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name: draft.name.trim().slice(0, 60),
+      enabled: true,
+      conditions: draft.conditions || {},
+      lastFiredArticleIds: [],
+      lastFiredAt: 0,
+      createdAt: Date.now(),
+    };
+    setRules(rs => [r, ...rs]);
+    setDraft({});
+  };
+
+  const toggleRule = (id: string) => setRules(rs => rs.map(r => r.id === id ? { ...r, enabled: !r.enabled } : r));
+  const deleteRule = (id: string) => { if (window.confirm('Delete this alert rule?')) setRules(rs => rs.filter(r => r.id !== id)); };
+
+  const testCounts = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const r of rules) out[r.id] = (stream || []).filter(a => matches(a, r.conditions)).length;
+    return out;
+  }, [rules, stream]);
+
+  return (
+    <div style={{
+      padding: '24px 32px', minHeight: '100vh',
+      backgroundColor: TOKENS.surface.canvas, color: TOKENS.surface.text,
+      fontFamily: 'system-ui, -apple-system, sans-serif',
+    }}>
+      <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, marginBottom: 4 }}>News Alert Rules</h1>
+      <p style={{ fontSize: 13, color: TOKENS.surface.textDim, margin: '0 0 16px' }}>
+        Watch the live /news stream from this tab. When a new article matches one of your rules,
+        a browser notification + on-screen toast fires. Rules persist locally; cross-channel
+        delivery (Slack/Email/Webhook) is the P1 follow-up.
+      </p>
+
+      {permission !== 'granted' && (
+        <div style={{
+          padding: '10px 14px', marginBottom: 16,
+          backgroundColor: TOKENS.severity.high.bg, border: `1px solid ${TOKENS.severity.high.border}`,
+          color: TOKENS.severity.high.solid, borderRadius: 8,
+          display: 'flex', alignItems: 'center', gap: 10, fontSize: 12,
+        }}>
+          <span>⚠ Browser notifications are {permission}. On-screen toasts still work; enable notifications for background alerts.</span>
+          {permission === 'default' && (
+            <button onClick={requestPerm} style={{ marginLeft: 'auto', backgroundColor: 'transparent', border: `1px solid ${TOKENS.severity.high.solid}`, color: TOKENS.severity.high.solid, borderRadius: 5, padding: '4px 10px', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+              Enable notifications
+            </button>
+          )}
+        </div>
+      )}
+
+      <div style={{ marginBottom: 24 }}>
+        {rules.length === 0 ? (
+          <p style={{ fontSize: 13, color: TOKENS.surface.textDim, fontStyle: 'italic' }}>No rules yet. Add one below.</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {rules.map(r => (
+              <div key={r.id} style={{
+                backgroundColor: TOKENS.surface.card,
+                border: `1px solid ${TOKENS.surface.cardBorder}`,
+                borderLeft: `3px solid ${r.enabled ? TOKENS.state.live.solid : TOKENS.state.archived.solid}`,
+                borderRadius: 8, padding: '10px 14px',
+                display: 'grid', gridTemplateColumns: '1fr 1fr 100px 100px 80px',
+                gap: 12, alignItems: 'center',
+              }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{r.name}</div>
+                  <div style={{ fontSize: 10, color: TOKENS.surface.textMuted, fontFamily: 'ui-monospace, monospace', marginTop: 2 }}>
+                    {Object.entries(r.conditions).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`).join(' · ') || '(no conditions — matches all)'}
+                  </div>
+                </div>
+                <div style={{ fontSize: 10, color: TOKENS.surface.textDim, fontFamily: 'ui-monospace, monospace' }}>
+                  {r.lastFiredAt
+                    ? `last fired ${new Date(r.lastFiredAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+                    : 'never fired'}
+                </div>
+                <div style={{ fontSize: 11, color: TOKENS.surface.textDim, fontFamily: 'ui-monospace, monospace', textAlign: 'center' }}>
+                  matches now: <strong style={{ color: TOKENS.surface.text }}>{testCounts[r.id] ?? 0}</strong>
+                </div>
+                <button onClick={() => toggleRule(r.id)} style={{
+                  backgroundColor: r.enabled ? `${TOKENS.state.live.solid}20` : 'transparent',
+                  border: `1px solid ${r.enabled ? TOKENS.state.live.solid : TOKENS.surface.cardBorder}`,
+                  color: r.enabled ? TOKENS.state.live.solid : TOKENS.surface.textDim,
+                  borderRadius: 5, padding: '4px 10px', fontSize: 10, fontWeight: 700, cursor: 'pointer',
+                }}>{r.enabled ? '● ARMED' : '○ paused'}</button>
+                <button onClick={() => deleteRule(r.id)} style={{
+                  background: 'none', border: 'none', color: TOKENS.semantic.bearish.solid,
+                  cursor: 'pointer', fontSize: 12, fontWeight: 700,
+                }}>delete</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div style={{
+        backgroundColor: TOKENS.surface.card, border: `1px solid ${TOKENS.surface.cardBorder}`,
+        borderRadius: 10, padding: '14px 16px',
+      }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: TOKENS.surface.accent, letterSpacing: '0.6px', marginBottom: 10 }}>
+          NEW RULE
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <input
+            placeholder="Rule name (e.g. 'Defence bottlenecks · HIGH only')"
+            value={draft.name || ''}
+            onChange={e => setDraft({ ...draft, name: e.target.value })}
+            style={{ gridColumn: '1 / -1', backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, borderRadius: 6, padding: '8px 10px', fontSize: 13 }}
+          />
+          <select
+            value={draft.conditions?.article_type || ''}
+            onChange={e => setDraft({ ...draft, conditions: { ...draft.conditions, article_type: e.target.value || undefined } })}
+            style={{ backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, borderRadius: 6, padding: '8px 10px', fontSize: 13 }}
+          >
+            <option value="">Any article type</option>
+            <option value="BOTTLENECK">BOTTLENECK</option>
+            <option value="EARNINGS">EARNINGS</option>
+            <option value="RATING_CHANGE">RATING CHANGE</option>
+            <option value="MACRO">MACRO</option>
+            <option value="GEOPOLITICAL">GEOPOLITICAL</option>
+            <option value="TARIFF">TARIFF</option>
+            <option value="CORPORATE">CORPORATE</option>
+          </select>
+          <select
+            value={draft.conditions?.region || 'ALL'}
+            onChange={e => setDraft({ ...draft, conditions: { ...draft.conditions, region: e.target.value as any } })}
+            style={{ backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, borderRadius: 6, padding: '8px 10px', fontSize: 13 }}
+          >
+            <option value="ALL">Any region</option>
+            <option value="IN">India only</option>
+            <option value="US">US only</option>
+          </select>
+          <input
+            placeholder="Ticker substring (e.g. HAL, BEL)"
+            value={draft.conditions?.ticker || ''}
+            onChange={e => setDraft({ ...draft, conditions: { ...draft.conditions, ticker: e.target.value || undefined } })}
+            style={{ backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, borderRadius: 6, padding: '8px 10px', fontSize: 13 }}
+          />
+          <input
+            placeholder="Theme substring (e.g. memory_storage)"
+            value={draft.conditions?.theme_substring || ''}
+            onChange={e => setDraft({ ...draft, conditions: { ...draft.conditions, theme_substring: e.target.value || undefined } })}
+            style={{ backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, borderRadius: 6, padding: '8px 10px', fontSize: 13 }}
+          />
+          <input
+            placeholder="Headline contains…"
+            value={draft.conditions?.headline_substring || ''}
+            onChange={e => setDraft({ ...draft, conditions: { ...draft.conditions, headline_substring: e.target.value || undefined } })}
+            style={{ backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, borderRadius: 6, padding: '8px 10px', fontSize: 13 }}
+          />
+          <select
+            value={draft.conditions?.min_importance ?? ''}
+            onChange={e => setDraft({ ...draft, conditions: { ...draft.conditions, min_importance: e.target.value ? Number(e.target.value) : undefined } })}
+            style={{ backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`, color: TOKENS.surface.text, borderRadius: 6, padding: '8px 10px', fontSize: 13 }}
+          >
+            <option value="">Any importance</option>
+            <option value="5">≥ 5 (critical)</option>
+            <option value="4">≥ 4</option>
+            <option value="3">≥ 3</option>
+            <option value="2">≥ 2</option>
+          </select>
+        </div>
+        <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
+          <button
+            onClick={addRule}
+            disabled={!draft.name?.trim()}
+            style={{
+              backgroundColor: TOKENS.surface.accent, border: 'none', color: '#000',
+              borderRadius: 6, padding: '8px 18px', fontSize: 12, fontWeight: 700, cursor: draft.name?.trim() ? 'pointer' : 'not-allowed',
+              opacity: draft.name?.trim() ? 1 : 0.5,
+            }}
+          >Add Rule</button>
+        </div>
+      </div>
+
+      <p style={{ fontSize: 11, color: TOKENS.surface.textMuted, marginTop: 16, lineHeight: 1.6 }}>
+        Alerts v0 — fires from this browser tab while it's open. Slack / Email / Webhook delivery
+        and server-side rule evaluation require the proper Alert Rules engine (P1 follow-up).
+      </p>
+
+      {toasts.length > 0 && (
+        <div style={{
+          position: 'fixed', right: 24, bottom: 24, zIndex: 100,
+          display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 360,
+        }}>
+          {toasts.map(t => (
+            <div key={t.id} style={{
+              backgroundColor: TOKENS.surface.card,
+              border: `1px solid ${TOKENS.severity.high.border}`,
+              borderLeft: `3px solid ${TOKENS.severity.high.solid}`,
+              borderRadius: 8, padding: '10px 14px',
+              boxShadow: '0 6px 20px rgba(0,0,0,0.45)',
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: TOKENS.severity.high.solid, letterSpacing: '0.5px' }}>
+                ★ ALERT · {t.rule}
+              </div>
+              <div style={{ fontSize: 12, color: TOKENS.surface.text, marginTop: 4, lineHeight: 1.4 }}>
+                {t.headline.slice(0, 200)}
+              </div>
+              <div style={{ fontSize: 10, color: TOKENS.surface.textMuted, marginTop: 4, fontFamily: 'ui-monospace, monospace' }}>
+                {new Date(t.ts).toLocaleTimeString()}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
