@@ -227,7 +227,21 @@ export default function StatusPage() {
 
   const runOne = async (probe: ProbeDef) => {
     setStates(s => ({ ...s, [probe.id]: { ...s[probe.id], status: 'loading' } }));
-    const result = await probe.run();
+    // PATCH 0296 — Catch probe-side throws so a single failure can't leave
+    // a row stuck in 'loading' state. Probes already return `ok: false`
+    // for handled failures; this guards against unexpected crashes inside
+    // the probe (network exception, JSON parse error, etc.).
+    let result: ProbeResult;
+    try {
+      result = await probe.run();
+    } catch (err) {
+      result = {
+        ok: false,
+        status: 0,
+        ms: 0,
+        note: `Probe threw: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
     setStates(s => ({ ...s, [probe.id]: { status: 'done', result, checkedAt: Date.now() } }));
     // PATCH 0236 — record into 24h ring buffer
     const entry: ProbeHistoryEntry = { t: Date.now(), ok: result.ok, ms: result.ms, status: result.status };
@@ -235,8 +249,9 @@ export default function StatusPage() {
     setHistory(loadHistory());
   };
 
+  // PATCH 0296 — Promise.allSettled so one stuck probe can't hold up others.
   const runAll = () => {
-    PROBES.forEach(p => { runOne(p); });
+    Promise.allSettled(PROBES.map(p => runOne(p)));
   };
 
   // Auto-run on mount
