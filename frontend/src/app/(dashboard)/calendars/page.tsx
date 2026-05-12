@@ -85,7 +85,9 @@ export default function CalendarPage() {
   const monthStr = `${viewMonth.getFullYear()}-${(viewMonth.getMonth() + 1).toString().padStart(2, '0')}`;
   const monthLabel = viewMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
-  const fetchData = async () => {
+  // PATCH 0298 — AbortController so a stale fetch from a previous
+  // monthOffset/indexFilter never overwrites a fresher in-flight fetch.
+  const fetchData = async (signal?: AbortSignal) => {
     const cacheKey = `${monthStr}_${indexFilter}`;
     const cached = _calendarCache.get(cacheKey);
     if (cached && Date.now() - cached.ts < CALENDAR_CACHE_TTL) {
@@ -96,20 +98,27 @@ export default function CalendarPage() {
     try {
       setLoading(true);
       const indexParam = indexFilter !== 'All' ? `&index=${indexFilter}` : '';
-      const res = await fetch(`/api/market/earnings?market=india&month=${monthStr}${indexParam}`);
+      const res = await fetch(`/api/market/earnings?market=india&month=${monthStr}${indexParam}`, { signal });
       if (!res.ok) throw new Error('Failed to fetch earnings data');
       const json: EarningsResponse = await res.json();
+      if (signal?.aborted) return;
       setData(json);
       calendarCacheSet(cacheKey, { data: json, ts: Date.now() });
       setError('');
     } catch (err) {
+      if ((err as Error)?.name === 'AbortError') return; // ignore aborted
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   };
 
-  useEffect(() => { fetchData(); }, [monthOffset, indexFilter]);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchData(controller.signal);
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monthOffset, indexFilter]);
 
   // Build calendar grid
   const firstDay = new Date(viewMonth.getFullYear(), viewMonth.getMonth(), 1);
@@ -252,7 +261,7 @@ export default function CalendarPage() {
       {error && !loading && (
         <div style={{ backgroundColor: THEME.card, border: `1px solid ${THEME.red}`, borderRadius: '8px', padding: '14px 16px', color: THEME.red, marginBottom: '24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
           <span>⚠ {error} — NSE API may be temporarily unavailable.</span>
-          <button onClick={fetchData} style={{ padding: '6px 14px', borderRadius: '6px', border: `1px solid ${THEME.red}`, backgroundColor: `${THEME.red}18`, color: THEME.red, cursor: 'pointer', fontSize: '12px', fontWeight: '700', flexShrink: 0 }}>
+          <button onClick={() => fetchData()} style={{ padding: '6px 14px', borderRadius: '6px', border: `1px solid ${THEME.red}`, backgroundColor: `${THEME.red}18`, color: THEME.red, cursor: 'pointer', fontSize: '12px', fontWeight: '700', flexShrink: 0 }}>
             ↻ Retry
           </button>
         </div>
