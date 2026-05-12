@@ -7,6 +7,8 @@ import { formatDistanceToNow } from 'date-fns';
 import api from '@/lib/api';
 // PATCH 0129 — strategy filter helper
 import { articleMatchesStrategy } from '@/components/news/NewsCard';
+// PATCH 0214 — semantic color tokens (state / semantic / severity orthogonal)
+import { TOKENS, chipStyle } from '@/lib/design-tokens';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -814,20 +816,12 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
               {article.article_type?.replace(/_/g, ' ')}
             </span>
             {isStale && !isPersistent && (
-              <span style={{
-                fontSize: '9px', fontWeight: '700', padding: '3px 8px', borderRadius: '5px',
-                backgroundColor: '#78350F20', color: '#F59E0B', border: '1px solid #F59E0B30',
-                letterSpacing: '0.3px',
-              }}>
+              <span style={chipStyle(TOKENS.state.stale)} title="Published 48 hours to 7 days ago">
                 STALE
               </span>
             )}
             {isPersistent && (
-              <span style={{
-                fontSize: '9px', fontWeight: '700', padding: '3px 8px', borderRadius: '5px',
-                backgroundColor: '#8B5CF615', color: '#A78BFA', border: '1px solid #8B5CF640',
-                letterSpacing: '0.3px',
-              }}>
+              <span style={chipStyle(TOKENS.state.persistent)} title="Older than 7 days; persistent structural theme">
                 PERSISTENT
               </span>
             )}
