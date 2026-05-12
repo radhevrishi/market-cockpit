@@ -95,6 +95,8 @@ export default function IPOsPage() {
   };
 
   const getStatusLabel = (status: string) => {
+    // PATCH 0271 — defend against undefined status
+    if (!status || typeof status !== 'string') return 'Unknown';
     return status.charAt(0).toUpperCase() + status.slice(1);
   };
 

@@ -40,8 +40,9 @@ function generateVerdict(e: EarningsInsight): { label: string; driver: string; f
   const hasRev = rev !== null, hasPat = pat !== null;
   const profitConversion = (hasRev && hasPat && rev! > 0) ? pat! / rev! : 1;
 
-  const posKeys = e.keyPhrasesPositive.map(k => k.toLowerCase());
-  const negKeys = e.keyPhrasesNegative.map(k => k.toLowerCase());
+  // PATCH 0271 — defend against undefined keyPhrases arrays
+  const posKeys = (e.keyPhrasesPositive || []).map(k => k.toLowerCase());
+  const negKeys = (e.keyPhrasesNegative || []).map(k => k.toLowerCase());
   const isDebtFree = posKeys.some(k => k.includes('debt free') || k.includes('zero debt'));
   const hasOrderBook = posKeys.some(k => k.includes('order'));
   const hasHighDebt = negKeys.some(k => k.includes('debt') || k.includes('borrowing'));
