@@ -1836,10 +1836,20 @@ export default function NewsFeedPage() {
   const { data: calendar } = useCalendar();
   // PATCH 0068: 6-month Transformational Contracts preview band
   const { data: transformationalPreview } = useTransformationalPreview();
-  const [showTransformational, setShowTransformational] = useState<boolean>(true);
+  // PATCH 0228 — Mobile-aware default for the Transformational Contracts panel.
+  const [showTransformational, setShowTransformational] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    return window.innerWidth > 768;
+  });
   // PATCH 0079: Persistent Bottleneck Reading
   const { data: persistentBottlenecks } = usePersistentBottlenecks();
-  const [showPersistent, setShowPersistent] = useState<boolean>(true);
+  // PATCH 0228 — Mobile-aware default. On viewports ≤768px the Persistent
+  // Bottleneck panel is dense (L1-L6 transmission, multi-region ticker
+  // grids), so default it collapsed; desktop stays expanded.
+  const [showPersistent, setShowPersistent] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    return window.innerWidth > 768;
+  });
   const { data: anomalies } = useAnomalies();
   const [showCalendar, setShowCalendar] = useState(false);
 
