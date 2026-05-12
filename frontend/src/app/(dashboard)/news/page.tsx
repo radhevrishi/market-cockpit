@@ -337,6 +337,64 @@ function PanelFreshness({
   );
 }
 
+// PATCH 0230 — Hard-stale strip.
+// Companion to PanelFreshness: when data is older than staleAfterMs × 3 we
+// render a full-width amber strip across the top of the panel so the user
+// can't miss that they're looking at very-old data. Click-to-refresh.
+function PanelStaleStrip({
+  dataUpdatedAt,
+  staleAfterMs,
+  onRefresh,
+  label = 'data',
+}: {
+  dataUpdatedAt: number;
+  staleAfterMs: number;
+  onRefresh?: () => void;
+  label?: string;
+}) {
+  const [, force] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => force(n => n + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  if (!dataUpdatedAt) return null;
+  const age = Date.now() - dataUpdatedAt;
+  const veryStaleAfterMs = staleAfterMs * 3;
+  if (age <= veryStaleAfterMs) return null;
+  const d = new Date(dataUpdatedAt);
+  const hhmm = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+  const ageMin = Math.floor(age / 60_000);
+  return (
+    <div
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '6px 14px', marginBottom: 8,
+        backgroundColor: '#F59E0B14',
+        border: '1px solid #F59E0B40',
+        borderRadius: 8,
+        color: '#F59E0B',
+        fontSize: 11, fontWeight: 600,
+      }}
+      title={`This panel's data is from ${d.toLocaleString()} — refresh to pull fresh.`}
+    >
+      <span>⚠ Showing {label} as of {hhmm} ({ageMin} min ago). Older than the freshness window.</span>
+      {onRefresh && (
+        <button
+          onClick={onRefresh}
+          style={{
+            marginLeft: 'auto',
+            backgroundColor: 'transparent',
+            border: '1px solid #F59E0B',
+            color: '#F59E0B',
+            borderRadius: 5, padding: '3px 10px', fontSize: 10, fontWeight: 700, cursor: 'pointer',
+            letterSpacing: '0.3px',
+          }}
+        >REFRESH</button>
+      )}
+    </div>
+  );
+}
+
 function useBottleneckDashboard(enabled: boolean, region: string) {
   return useQuery<BnDashboard>({
     queryKey: ['news', 'bottleneck-dashboard', region],
@@ -2189,6 +2247,14 @@ export default function NewsFeedPage() {
           )}
         </div>
       )}
+
+      {/* PATCH 0230 — global stale strip when ANY critical panel is very stale */}
+      <PanelStaleStrip
+        dataUpdatedAt={Math.min(inPlayUpdatedAt || Date.now(), dataUpdatedAt || Date.now())}
+        staleAfterMs={5 * 60_000}
+        label="news"
+        onRefresh={handleRefresh}
+      />
 
       {/* ── IN PLAY TODAY bar ─────────────────────────────────────────── */}
       {!inPlayLoading && (
