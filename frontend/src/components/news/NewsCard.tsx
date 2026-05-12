@@ -297,14 +297,30 @@ export default function NewsCard({ article, onTickerClick }: Props) {
                 </span>
               );
             })}
-            {/* PATCH 0216 — Cap visible ticker chips at 3; surface overflow
-                as a "+N more" badge with the full list in the title for
-                hover/inspection. Prevents card-row layout breakage when an
-                article tags 10+ tickers. */}
+            {/* PATCH 0216 / 0234 — Cap visible ticker chips at 3; show role
+                glyph (~▲ beneficiary / ~▼ loser / ◆ neutral exposure) derived
+                from article sentiment. '~' prefix denotes inference-only;
+                proper roles need the ticker_roles pipeline. */}
             {(() => {
               const allTickers = (article.ticker_symbols ?? article.tickers ?? []) as any[];
               const visible = allTickers.slice(0, 3);
               const overflow = Math.max(0, allTickers.length - 3);
+              // PATCH 0234 — heuristic role per article from sentiment direction
+              const sentObj = (article as any).sentiment;
+              const sentDir = typeof sentObj === 'object' && sentObj?.direction
+                ? sentObj.direction
+                : (typeof article.sentiment === 'string' ? article.sentiment.toLowerCase() : '');
+              const sentMag = (typeof sentObj === 'object' && sentObj?.magnitude) ?? null;
+              const role: 'BENEFICIARY' | 'LOSER' | 'NEUTRAL' =
+                (sentDir === 'positive' || sentDir === 'bullish') ? 'BENEFICIARY' :
+                (sentDir === 'negative' || sentDir === 'bearish') ? 'LOSER' :
+                'NEUTRAL';
+              const glyph = role === 'BENEFICIARY' ? '▲' : role === 'LOSER' ? '▼' : '◆';
+              const roleColor =
+                role === 'BENEFICIARY' ? 'text-[#10B981]' :
+                role === 'LOSER'       ? 'text-[#EF4444]' :
+                                          'text-[#8A95A3]';
+              const roleTip = `~${role.toLowerCase()} (heuristic from article sentiment${sentMag != null ? `, magnitude ${sentMag}` : ''}). Proper role classification needs the ticker_roles pipeline.`;
               return (
                 <>
                   {visible.map((t: any) => {
@@ -313,10 +329,9 @@ export default function NewsCard({ article, onTickerClick }: Props) {
                       <button
                         key={sym}
                         onClick={() => onTickerClick?.(sym)}
-                        className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#0F7ABF]/20 text-[#38A9E8] border border-[#0F7ABF]/30 hover:bg-[#0F7ABF]/40 transition-colors"
-                      >
-                        {sym}
-                      </button>
+                        title={roleTip}
+                        className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#0F7ABF]/20 text-[#38A9E8] border border-[#0F7ABF]/30 hover:bg-[#0F7ABF]/40 transition-colors inline-flex items-center gap-1"
+                      ><span className={`${roleColor}`}>{glyph}</span><span>{sym}</span></button>
                     );
                   })}
                   {overflow > 0 && (
