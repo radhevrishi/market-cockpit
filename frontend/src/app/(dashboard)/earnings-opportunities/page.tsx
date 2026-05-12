@@ -799,6 +799,7 @@ export default function EarningsOpportunitiesPage() {
   };
   // Local UI state for partial-refresh button
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshFeedback, setRefreshFeedback] = useState<string | null>(null);
   // PATCH 0174 — Coverage probe state
   const [probeTicker, setProbeTicker] = useState('');
   const [probing, setProbing] = useState(false);
@@ -820,13 +821,130 @@ export default function EarningsOpportunitiesPage() {
       setProbing(false);
     }
   };
+
+  // PATCH 0176 — Force-include: list of tickers manually added by user.
+  // Persists in localStorage per-date. These tickers get injected into the
+  // page even if /api/market/earnings doesn't surface them (NSE feed gap).
+  const FORCE_INCLUDE_KEY = 'mc:earnings:force-include:v1';
+  const [forceIncludeMap, setForceIncludeMap] = useState<Record<string, string[]>>(() => {
+    if (typeof window === 'undefined') return {};
+    try {
+      const raw = localStorage.getItem(FORCE_INCLUDE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  });
+  const persistForceInclude = (next: Record<string, string[]>) => {
+    setForceIncludeMap(next);
+    try { localStorage.setItem(FORCE_INCLUDE_KEY, JSON.stringify(next)); } catch {}
+  };
+  const forceIncludeForDate = useMemo(
+    () => (resolvedDateForGrading ? (forceIncludeMap[resolvedDateForGrading] || []) : []),
+    [forceIncludeMap, resolvedDateForGrading],
+  );
+
+  // Fetch enrichment for force-included tickers and grade them client-side
+  const { data: forcedCards } = useQuery<ParsedEarning[]>({
+    queryKey: ['force-included', resolvedDateForGrading, forceIncludeForDate.join(',')],
+    enabled: forceIncludeForDate.length > 0 && !!resolvedDateForGrading,
+    queryFn: async () => {
+      const symbolsCsv = forceIncludeForDate.join(',');
+      const res = await fetch(
+        `/api/v1/earnings/enrich?symbols=${symbolsCsv}&filed=${resolvedDateForGrading}&nocache=1`,
+        { cache: 'no-store' }
+      );
+      if (!res.ok) return [];
+      const j = await res.json();
+      const enrich = j?.data || {};
+      const out: ParsedEarning[] = [];
+      for (const ticker of forceIncludeForDate) {
+        const e = enrich[ticker] || {};
+        if (e.sales_curr_cr == null && e.pat_curr_cr == null) {
+          // No financials available even via direct fetch — still inject preview
+          out.push({
+            ticker, company: e.company || ticker, sector: e.sector,
+            filing_date: resolvedDateForGrading, quarter: e.quarter || 'Q4',
+            market_cap_bucket: e.market_cap_bucket || null,
+            pe: null, price: e.current_price ?? null,
+            sales_yoy_pct: null, net_profit_yoy_pct: null, eps_yoy_pct: null,
+            sales_curr_cr: null, sales_prev_cr: null,
+            pat_curr_cr: null, pat_prev_cr: null,
+            eps_curr: null, eps_prev: null,
+            gap_pct: null, d1_pct: null, move_pct: null,
+            rs_rating: null, stage: null, pct_from_52w_high: null,
+            composite_score: 0, tier: 'MIXED',
+            methodology_tags: [], caveat_tags: [],
+            narrative: `${ticker} added manually — Screener has no Q4 data yet, will populate next worker pass.`,
+            filing_url: `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(ticker)}`,
+            source: 'force-included',
+          });
+          continue;
+        }
+        // Grade via gradeRow with synthetic row
+        const row = {
+          symbol: ticker, company: e.company || ticker,
+          filing_date: resolvedDateForGrading,
+          quarter: e.quarter || 'Q4', sector: e.sector,
+          market_cap_bucket: e.market_cap_bucket,
+          source_url: e.source_url || `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(ticker)}`,
+          sales_curr_cr: e.sales_curr_cr ?? null, sales_prev_cr: e.sales_prev_cr ?? null,
+          sales_yoy_pct: e.sales_yoy_pct ?? null,
+          pat_curr_cr: e.pat_curr_cr ?? null, pat_prev_cr: e.pat_prev_cr ?? null,
+          pat_yoy_pct: e.pat_yoy_pct ?? null,
+          eps_curr: e.eps_curr ?? null, eps_prev: e.eps_prev ?? null,
+          eps_yoy_pct: e.eps_yoy_pct ?? null,
+          op_profit_yoy_pct: e.op_profit_yoy_pct ?? null,
+          opm_pct: e.opm_pct ?? null, opm_prev_pct: e.opm_prev_pct ?? null,
+          pe: e.pe ?? null, current_price: e.current_price ?? null,
+          gap_pct: e.gap_pct ?? null, d1_pct: e.d1_pct ?? null, move_pct: e.move_pct ?? null,
+          pct_from_52w_high: e.pct_from_52w_high ?? null,
+          rs_rating: e.rs_rating ?? null, stage: e.stage ?? null,
+          trend_template_passes: e.trend_template_passes ?? false,
+          ocf_annual_cr: e.ocf_annual_cr ?? null,
+          pat_annual_cr: e.pat_annual_cr ?? null,
+          ocf_to_pat_ratio: e.ocf_to_pat_ratio ?? null,
+          period_ended: e.period_ended,
+          latest_quarter_end_iso: e.latest_quarter_end_iso,
+          financials_source: e.financials_source,
+        };
+        const g = gradeRow(row);
+        if (g) {
+          g.source = `force-included · ${g.source}`;
+          out.push(g);
+        }
+      }
+      return out;
+    },
+    staleTime: 5 * 60_000,
+    refetchInterval: false,
+  });
+
+  const addForceInclude = (ticker: string) => {
+    if (!resolvedDateForGrading) return;
+    const cur = forceIncludeMap[resolvedDateForGrading] || [];
+    const t = ticker.trim().toUpperCase();
+    if (!t || cur.includes(t)) return;
+    persistForceInclude({ ...forceIncludeMap, [resolvedDateForGrading]: [...cur, t] });
+  };
+  const removeForceInclude = (ticker: string) => {
+    if (!resolvedDateForGrading) return;
+    const cur = forceIncludeMap[resolvedDateForGrading] || [];
+    persistForceInclude({ ...forceIncludeMap, [resolvedDateForGrading]: cur.filter((x) => x !== ticker) });
+  };
+
   const refreshMissingMutate = async () => {
     if (!resolvedDateForGrading || refreshing) return;
     setRefreshing(true);
+    setRefreshFeedback(null);
     try {
       const res = await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}&refreshMissing=1`, { cache: 'no-store' });
       if (!res.ok) {
+        setRefreshFeedback(`⚠ Refresh failed (HTTP ${res.status})`);
         console.warn('refreshMissing failed', res.status);
+      } else {
+        const j = await res.json();
+        const msg = j?._refresh || 'completed';
+        setRefreshFeedback(`✓ Partial refresh: ${msg}. ${msg.includes('0/') || msg.includes('no-op') ? 'Screener has no Q4 data yet for these — try again in 6h or use Add Ticker below.' : ''}`);
+        setTimeout(() => setRefreshFeedback(null), 12000);
       }
       await refetchGraded();
     } finally {
@@ -848,7 +966,7 @@ export default function EarningsOpportunitiesPage() {
   );
   const calLoading = hubLoading;
 
-  const view: OpportunitiesPayload = data || {
+  const baseView: OpportunitiesPayload = data || {
     filing_date: filterDate || null,
     candidates_total: 0,
     raw_items_total: 0,
@@ -856,6 +974,35 @@ export default function EarningsOpportunitiesPage() {
     generated_at: '',
     sources_polled: 0,
   };
+
+  // PATCH 0176 — Merge force-included tickers into the view. Dedupe by ticker
+  // so a force-included one doesn't appear twice if the server also picks it up.
+  const view: OpportunitiesPayload = useMemo(() => {
+    if (!forcedCards || forcedCards.length === 0) return baseView;
+    const seenTickers = new Set<string>();
+    const merged: Record<EarningsTier, ParsedEarning[]> = { BLOCKBUSTER: [], STRONG: [], MIXED: [], AVOID: [] };
+    for (const t of TIER_ORDER) {
+      for (const c of (baseView.by_tier[t] || [])) {
+        seenTickers.add(c.ticker.toUpperCase());
+        merged[t].push(c);
+      }
+    }
+    let injected = 0;
+    for (const f of forcedCards) {
+      if (seenTickers.has(f.ticker.toUpperCase())) continue;
+      merged[f.tier].push(f);
+      seenTickers.add(f.ticker.toUpperCase());
+      injected++;
+    }
+    if (injected > 0) {
+      for (const t of TIER_ORDER) merged[t].sort((a, b) => b.composite_score - a.composite_score);
+    }
+    return {
+      ...baseView,
+      by_tier: merged,
+      candidates_total: baseView.candidates_total + injected,
+    };
+  }, [baseView, forcedCards]);
 
   // PATCH 0145.4: when no manual date is picked, fall back to whatever the
   // query resolver picked as the most-recent past date with filings, so the
@@ -1021,7 +1168,59 @@ export default function EarningsOpportunitiesPage() {
             >
               {probing ? 'Probing…' : 'Probe'}
             </button>
+            <button
+              onClick={() => { if (probeTicker.trim()) { addForceInclude(probeTicker.trim()); setProbeTicker(''); setProbeResult(null); } }}
+              disabled={!probeTicker.trim() || !resolvedDateForGrading}
+              title="Bypass NSE/BSE universe entirely — fetch financials direct from Screener via /enrich and inject this ticker into the page. Persists in localStorage."
+              style={{
+                padding: '5px 14px', borderRadius: 6, border: '1px solid #10B98160',
+                backgroundColor: '#10B98115',
+                color: '#10B981', fontSize: 11, fontWeight: 700,
+                cursor: probeTicker.trim() ? 'pointer' : 'not-allowed',
+                opacity: probeTicker.trim() ? 1 : 0.5,
+              }}
+            >
+              + Add to page
+            </button>
           </div>
+
+          {/* Force-included tickers chips */}
+          {forceIncludeForDate.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 2 }}>
+              <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.4px' }}>
+                FORCE-INCLUDED THIS DATE:
+              </span>
+              {forceIncludeForDate.map((t) => (
+                <span key={t} style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  padding: '2px 4px 2px 8px', fontSize: 10, fontWeight: 700,
+                  borderRadius: 4, backgroundColor: '#10B98118',
+                  border: '1px solid #10B98140', color: '#10B981',
+                  fontFamily: 'ui-monospace, monospace',
+                }}>
+                  {t}
+                  <button onClick={() => removeForceInclude(t)} title="Remove"
+                    style={{
+                      background: 'none', border: 'none', color: '#10B981',
+                      cursor: 'pointer', padding: '0 4px', fontSize: 12, lineHeight: 1,
+                    }}>×</button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Refresh feedback toast */}
+          {refreshFeedback && (
+            <div style={{
+              padding: '6px 10px', fontSize: 10.5,
+              backgroundColor: refreshFeedback.startsWith('✓') ? '#10B98115' : '#EF444415',
+              border: `1px solid ${refreshFeedback.startsWith('✓') ? '#10B98140' : '#EF444440'}`,
+              borderRadius: 4,
+              color: refreshFeedback.startsWith('✓') ? '#10B981' : '#EF4444',
+            }}>
+              {refreshFeedback}
+            </div>
+          )}
 
           {probeResult && (
             <div style={{
@@ -1033,13 +1232,34 @@ export default function EarningsOpportunitiesPage() {
                 <span style={{ color: '#EF4444' }}>⚠ {probeResult.error}</span>
               ) : (
                 <>
-                  <div style={{
-                    fontSize: 11.5, fontWeight: 800,
-                    color: probeResult.diagnosis?.startsWith('✓') ? '#10B981' :
-                           probeResult.diagnosis?.startsWith('⚠') ? '#F59E0B' : '#EF4444',
-                    marginBottom: 8,
-                  }}>
-                    {probeResult.diagnosis}
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 8 }}>
+                    <div style={{
+                      flex: 1,
+                      fontSize: 11.5, fontWeight: 800,
+                      color: probeResult.diagnosis?.startsWith('✓') ? '#10B981' :
+                             probeResult.diagnosis?.startsWith('⚠') ? '#F59E0B' : '#EF4444',
+                    }}>
+                      {probeResult.diagnosis}
+                    </div>
+                    {/* One-click force-include when Layer 1 dropped it but enrichment has data */}
+                    {!probeResult.layers?.graded?.found && probeResult.ticker && (
+                      <button
+                        onClick={() => {
+                          addForceInclude(probeResult.ticker);
+                          setProbeResult(null);
+                          setProbeTicker('');
+                        }}
+                        style={{
+                          padding: '4px 10px', borderRadius: 6,
+                          border: '1px solid #10B98160',
+                          backgroundColor: '#10B98115',
+                          color: '#10B981', fontSize: 10.5, fontWeight: 800,
+                          cursor: 'pointer', whiteSpace: 'nowrap',
+                        }}
+                      >
+                        + Force-include {probeResult.ticker}
+                      </button>
+                    )}
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
                     <div style={{ padding: '6px 8px', backgroundColor: '#0A1422', borderRadius: 4, borderLeft: `3px solid ${probeResult.layers?.universe?.found ? '#10B981' : '#EF4444'}` }}>
