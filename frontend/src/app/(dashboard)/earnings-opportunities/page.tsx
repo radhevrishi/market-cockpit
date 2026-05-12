@@ -1110,6 +1110,22 @@ export default function EarningsOpportunitiesPage() {
     if (!resolvedDateForGrading || refreshing) return;
     setRefreshing(true);
     setRefreshFeedback(null);
+    // PATCH 0191 — Capture which tickers are currently missing BEFORE refresh,
+    // so we can show them by name in the error message.
+    const missingTickers: string[] = [];
+    for (const t of TIER_ORDER) {
+      for (const c of (data?.by_tier?.[t] || [])) {
+        if (c.sales_curr_cr == null && c.pat_curr_cr == null) {
+          missingTickers.push(c.ticker);
+        }
+      }
+    }
+    const tickerList = (n = 8) => {
+      if (missingTickers.length === 0) return '';
+      const shown = missingTickers.slice(0, n).join(', ');
+      const more = missingTickers.length > n ? ` +${missingTickers.length - n} more` : '';
+      return `${shown}${more}`;
+    };
     try {
       const res = await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}&refreshMissing=1`, { cache: 'no-store' });
       if (!res.ok) {
@@ -1134,9 +1150,10 @@ export default function EarningsOpportunitiesPage() {
         } else if (updated > 0) {
           setRefreshFeedback(`✓ Updated ${updated}/${total} cards with fresh financials`);
         } else {
-          setRefreshFeedback(`⚠ 0/${total} updated — Screener / NSE structured feeds have no Q4 data for these tickers yet. Worker pass typically takes 6–24h. Use Coverage Probe ↓ to add a specific ticker manually.`);
+          const list = tickerList();
+          setRefreshFeedback(`⚠ 0/${total} updated. No Q4 data yet for: ${list || 'these tickers'}. Worker pass typically takes 6–24h. Use Coverage Probe ↓ to add manually.`);
         }
-        setTimeout(() => setRefreshFeedback(null), 15000);
+        setTimeout(() => setRefreshFeedback(null), 20000);
       }
       // Force a fresh fetch — bypass any client-side caches
       await refetchGraded();
