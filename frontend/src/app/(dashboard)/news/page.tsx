@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { RefreshCw, Filter, X, ExternalLink, AlertCircle, Zap, ChevronDown, ChevronRight } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
@@ -1591,14 +1592,26 @@ function BottleneckDrilldown({
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function NewsFeedPage() {
-  const [region,        setRegion]        = useState<'ALL' | 'IN' | 'US'>('ALL');
-  const [articleType,   setArticleType]   = useState<string>('ALL');
-  const [sourceName,    setSourceName]    = useState<string>('ALL');
-  const [signalFilter,  setSignalFilter]  = useState<string>('ALL'); // 'ALL' = HIGH+MEDIUM (hides noise), 'HIGH' = only high, 'MEDIUM' = only medium
+  // PATCH 0218 — URL-persistent filter state.
+  // Filters hydrate from `searchParams` on mount and write back on change so:
+  //   1. Refresh keeps the user's view.
+  //   2. Users can bookmark e.g. /news?lc=LIVE_WARM&region=IN&type=BOTTLENECK.
+  //   3. Filter combos can be shared via link.
+  // First step toward the 'Saved Views' feature from the institutional review.
+  const router = useRouter();
+  const pathname = usePathname();
+  const initialParams = useSearchParams();
+  const initParam = (key: string, fallback: string) =>
+    (typeof initialParams?.get === 'function' && initialParams.get(key)) || fallback;
+
+  const [region,        setRegion]        = useState<'ALL' | 'IN' | 'US'>(initParam('region','ALL') as any);
+  const [articleType,   setArticleType]   = useState<string>(initParam('type','ALL'));
+  const [sourceName,    setSourceName]    = useState<string>(initParam('source','ALL'));
+  const [signalFilter,  setSignalFilter]  = useState<string>(initParam('signal','ALL')); // 'ALL' = HIGH+MEDIUM (hides noise), 'HIGH' = only high, 'MEDIUM' = only medium
   const [bottleneckLevel, setBottleneckLevel] = useState<string>('ALL'); // Bottleneck sub-filter: ALL, CRITICAL_BOTTLENECK, BOTTLENECK, WATCH, RESOLVED_EASING
   const [bottleneckCategory, setBottleneckCategory] = useState<string>('ALL'); // Sub-tag: MEMORY_STORAGE, INTERCONNECT_PHOTONICS, etc.
   const [structuralOnly, setStructuralOnly] = useState<boolean>(false); // Show only synthetic/structural signals
-  const [sortBy,        setSortBy]        = useState<'impact' | 'time'>('impact'); // Default: impact-based sort
+  const [sortBy,        setSortBy]        = useState<'impact' | 'time'>(initParam('sort','impact') as any); // Default: impact-based sort
   // PATCH 0213 — Lifecycle filter. Defaults to 'LIVE_WARM' (last 48h) so
   // STALE / PERSISTENT items don't pollute the LIVE feed. Tabs let the user
   // explicitly request the older buckets when they want them.
@@ -1606,8 +1619,30 @@ export default function NewsFeedPage() {
   //   STALE     : 48h to 7d
   //   PERSISTENT: older than 7d AND flagged structural / persistent_theme
   //   ALL       : no lifecycle filter (legacy behaviour)
-  const [lifecycleFilter, setLifecycleFilter] = useState<'LIVE_WARM'|'STALE'|'PERSISTENT'|'ALL'>('LIVE_WARM');
-  const [search,        setSearch]        = useState('');
+  const [lifecycleFilter, setLifecycleFilter] = useState<'LIVE_WARM'|'STALE'|'PERSISTENT'|'ALL'>(initParam('lc','LIVE_WARM') as any);
+  const [search,        setSearch]        = useState(initParam('q',''));
+
+  // PATCH 0218 — Reflect filter state back to the URL (without adding history
+  // entries — replaceState keeps Back button intuitive). Debounced via
+  // useEffect dependencies; only writes when any filter actually changes.
+  useEffect(() => {
+    const params = new URLSearchParams();
+    const setIf = (k: string, v: string, def: string) => { if (v && v !== def) params.set(k, v); };
+    setIf('region', region, 'ALL');
+    setIf('type', articleType, 'ALL');
+    setIf('source', sourceName, 'ALL');
+    setIf('signal', signalFilter, 'ALL');
+    setIf('sort', sortBy, 'impact');
+    setIf('lc', lifecycleFilter, 'LIVE_WARM');
+    if (search) params.set('q', search);
+    const qs = params.toString();
+    const newUrl = qs ? `${pathname}?${qs}` : pathname;
+    // Avoid pushing if URL is already equal (prevents extra history entries
+    // and re-render loops).
+    if (typeof window !== 'undefined' && window.location.pathname + window.location.search !== newUrl) {
+      router.replace(newUrl, { scroll: false });
+    }
+  }, [region, articleType, sourceName, signalFilter, sortBy, lifecycleFilter, search, pathname, router]);
   const [showFilters,   setShowFilters]   = useState(false);
   const [selectedArticle, setSelectedArticle] = useState<NewsArticle | null>(null);
   // PATCH 0121 — IMP-08: Q4 FY26 earnings season quick-filter.
