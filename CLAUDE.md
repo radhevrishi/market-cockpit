@@ -1,7 +1,7 @@
 # Market Cockpit — Claude Handoff Memory
 
 > Read this FIRST when starting any new chat. Saves you 30 minutes of context-rebuilding.
-> Last updated: 2026-05-12 (after Patch 0246 — Transmission premium-workstation rewrite).
+> Last updated: 2026-05-13 (after Patch 0263 — mobile baseline + multi-page institutional polish session).
 
 ---
 
@@ -383,6 +383,72 @@ on time-lag transmission, real-time price feeds for the 'manual feed'
 inputs, earnings-overlay join). Manual feed inputs would benefit from
 a scheduled scraper hitting Argus / Platts / CRU / industry trackers.
 
+## 10.6.4 · Cross-cutting bug-fix + mobile + scoring batch (Patches 0247–0265)
+
+  0247 — Transmission unit labels (Aluminum $/MT, Zinc/Soybean ¢/lb,
+         Rubber moved to manual feed after Yahoo returned 0.01331).
+  0248 — Yahoo → FMP → AlphaVantage multi-source fallback chain.
+  0249 — 1d move alongside 1m in Scenario Lab + Intelligence rail.
+  0250 — Equity-proxy mode for 17 manual-feed commodities (Peabody for
+         coal, CF for ammonia, MOS for phosphate, LYB for petrochem
+         chain, OLN for caustic, IP for pulp, MP for rare-earth,
+         APD for helium, LEU for HALEU, IOI Corp for palm oil, etc.).
+  0251 — Conviction Beats overlay on Intelligence/Signals page (basic).
+  0252 — Clickable Tier 1 / 2 / SPIN / M&A / TURN / CAP filter chips
+         on Special Situations header.
+  0253 — Fix EO calendar stuck-loading. initialData now returns cached
+         localStorage payload regardless of age (past months are
+         immutable); React Query handles freshness in background.
+  0254 — Special Situations institutional polish: REJECT → MONITOR
+         (soft slate tone), expected-alpha tag per event_type
+         (spread capture / SoP unlock / float reduction / forced
+         buying / etc.), source-tier badge on each row.
+  0255 — EO Refresh button no-op fix. force=1 alongside refreshMissing=1
+         + delayed follow-up refetches at 60s and 5min to catch async
+         worker completions. Honest 'no-op' message + don't auto-hide
+         when failed tickers remain.
+  0256 — Conviction Beats CB badge added to ALL 8 Intelligence card
+         render sites (quiet-day, thematic developments, monitoring
+         list, top idea, action panel, trend, monitor list).
+  0257 — Special Situations client-side duplicate event collapse.
+         Group by (target + event_type + 7d date bucket); render
+         '×N sources' chip for corroborated events.
+  0258 — Special Situations next-catalyst timeline. Uses payload
+         next_catalyst_date if present; else event-type heuristic
+         ('Open offer typically opens +30d', 'Tender close +35d',
+         'NCLT decision +45d', etc).
+  0259 — Special Situations decay-color age chip. Each event_type has
+         a half-life (tender 15d / merger 60d / index inclusion 14d);
+         chip color shifts green→cyan→amber→red as the event ages.
+  0260 — Special Situations India sub-category refinement from headline.
+         Detects preferential allotment, warrants conversion, OFS,
+         promoter stake hike, NCLT/CIRP, delisting, SME→Main, index
+         inclusion/exclusion, HoldCo, SoP, QIP, rights issue.
+  0261 — Bottleneck Intel quote-mapping defense. Filter quotes for
+         valid ticker before .toUpperCase() to prevent the rare
+         Yahoo-incomplete-payload crash.
+  0262 — Stock Sheet investigation (already defensive — StockSheet
+         ErrorBoundary + safeText + safeScalar). No concrete crash
+         found without runtime repro; deferred.
+  0263 — Mobile-responsive baseline. CSS-only, 8 @media rules in
+         globals.css. Three-column transmission collapses to single
+         column on mobile; sticky right rails hidden; H1/H2 sizes
+         shrink; chips wrap; padding compresses. Tablet (768-1023)
+         right rail shrinks 280→220.
+  0264 — This documentation update.
+  0265 — Multibagger scoring tweaks per user audit:
+           • Soften op-leverage penalty: 1.0–1.5× w/ growing PAT now
+             gets only soft −1 (was hard −5). Hard penalty reserved
+             for actual margin compression.
+           • ROIC<WACC KILL SWITCH (−10) when ROIC<10 AND FCF<0 AND
+             D/E≥0.5 AND yoy sales>25% — Fisher's growth-that-destroys
+             value case.
+           • Valuation pillar capped at 45 when MoS<−50% AND ROIC<WACC
+             (prevents PEG illusion rewards).
+           • Growth Quality +5 offset when ROCE>20% AND CFO/PAT>1 AND
+             FCF>0 AND yoy sales>25% (rewards inflection on already-
+             high economics).
+
 ## 10.7 · Open institutional follow-ups (NOT YET SHIPPED — schema work)
 
 These all need backend / data-model changes beyond the surgical UI
@@ -391,22 +457,45 @@ review as P0 for the 300k EUR portal positioning, but they require
 new tables / pipelines and are intentionally deferred:
 
   - Signal entity + SignalEvidence with classifier_features jsonb
-  - Evidence Panel UI (click any confidence chip → side panel)
-  - Source tier table + 'PRIMARY/SPECIALIST/SECONDARY/AGGREGATOR' badges
+    (Evidence Panel v0 in 0232; full version blocked)
+  - Source tier table — frontend v0 shipped (0221, 0254); proper
+    editor-curated table still pending
   - Theme revisions table + diff view
-  - ticker_roles table + role-glyph chips with evidence count
+  - ticker_roles table + role-glyph chips — heuristic v0 in 0234
   - Auth + RBAC + audit log
-  - Status page with per-pipeline heartbeats
-  - Alert rules engine (Slack/Email/Webhook)
+  - Per-pipeline server-side heartbeats with KV history (client v0 in
+    0219/0236)
+  - Alert rules engine — client v0 in 0237; Slack/Email/Webhook
+    delivery still pending
   - Read-only public API
-  - Bottleneck Workbench page per theme (L1–L6, ticker grid, contracts)
-  - Thesis Notebooks
-  - Saved Views in URL
+  - Bottleneck Workbench page per theme — frontend v0 shipped (0235);
+    proper L1–L6 ladder + contracts join still pending
+  - Thesis Notebooks — localStorage v0 in 0233; multi-user pending
+  - Saved Views — URL state v0 in 0218 + named saves in 0225;
+    server-side persistence pending Auth
+
+  Special Situations institutional review (still backend-blocked):
+  - SEC filing parser (SC TO-T, Schedule TO, 10-12B → structured)
+  - Merger-arb spread math from filing terms (offer price, IRR, close)
+  - Deal-probability engine
+  - Full lifecycle state machine (rumor → board → binding → regulatory
+    → vote → court → open → tender → listing → completed/terminated)
+  - India-specific event ingest (demerger / OFS / preferential /
+    promoter stake hike / NCLT — heuristic v0 in 0260)
+  - Liquidity intelligence (ADV / free-float / slippage)
+  - Playbook intelligence (historical pattern templates)
+
+  Transmission (still backend-blocked):
+  - Server-side z-score + historical regression for time-lag transmission
+  - Real-time scrapers for the 14 paid-feed items (Argus / Platts / CRU
+    / ICIS) — equity-proxy mode (0250) gives directional signal until
+    these land
+  - Earnings overlay join (schema dependency on earnings calendar)
 
 If picking these up, start with the Signal/SignalEvidence schema
 (blocks several others) and the Auth boundary.
 
-## 11 · Patch Log Summary (0073 → 0217)
+## 11 · Patch Log Summary (0073 → 0265)
 
 Pre-session patches existed (0073–0095). Recent session highlights:
 
@@ -465,6 +554,26 @@ Pre-session patches existed (0073–0095). Recent session highlights:
 - 0244 — Sparklines + tabular-nums + freshness pill on transmission
 - 0245 — Right-rail Transmission Intelligence panel
 - 0246 — CLAUDE.md final update (end of transmission batch)
+- 0247 — Transmission unit labels fixed (Aluminum/Zinc/Soybean/Rubber)
+- 0248 — Yahoo → FMP → AlphaVantage fallback chain
+- 0249 — 1d move alongside 1m on transmission
+- 0250 — Equity-proxy mode for 17 manual-feed commodities
+- 0251 — Conviction Beats overlay on Intelligence/Signals (basic)
+- 0252 — Special Situations clickable Tier/Category filter chips
+- 0253 — EO calendar stuck-loading fix (cached payload always served)
+- 0254 — Special Situations: REJECT→MONITOR, alpha tag, source-tier badge
+- 0255 — EO Refresh button no-op fix + delayed worker follow-ups
+- 0256 — Conviction Beats CB badge on ALL 8 Intelligence render sites
+- 0257 — Special Situations client-side duplicate event collapse
+- 0258 — Special Situations next-catalyst timeline rendering
+- 0259 — Special Situations decay-color age chip
+- 0260 — Special Situations India sub-category headline heuristic
+- 0261 — Bottleneck Intel quote-mapping defense (undefined ticker crash)
+- 0262 — Stock Sheet investigation (already defensive, no fix needed)
+- 0263 — Mobile-responsive baseline (CSS-only, 8 @media rules)
+- 0264 — CLAUDE.md end-of-session update
+- 0265 — Multibagger scoring: ROIC<WACC kill switch + op-leverage soften
+         + valuation cap on PEG-illusion + growth quality offset
 
 **Other features:**
 - 0089–0094 — Earnings Hub merge, Special Situations pillar, Stock Sheet, Re-rating Screener
