@@ -2154,7 +2154,8 @@ function toIsoFilingDate(resultDate?: string | null): string | null {
   if (!trimmed || trimmed === '-' || trimmed === 'N/A') return null;
   // Already ISO?
   if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) return trimmed.slice(0, 10);
-  // Just a quarter period like "Mar 2026" — no real filing date. Skip.
+  // Just a quarter period like "Mar 2026" — no real filing date. Caller decides
+  // whether to fall back to an estimate (see toFilingOrEstimate).
   if (/^[A-Za-z]{3,9}\s+\d{4}$/.test(trimmed)) return null;
   // Human format like "15-Apr-2026 17:30:00" → "Apr 15, 2026 17:30:00"
   const normalized = trimmed.replace(/(\d{1,2})-([A-Za-z]{3})-(\d{4})/, '$2 $1, $3');
@@ -2165,6 +2166,29 @@ function toIsoFilingDate(resultDate?: string | null): string | null {
   const m = String(parsed.getMonth() + 1).padStart(2, '0');
   const d = String(parsed.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
+}
+
+/** Estimate an approximate filing date from a quarter period string like
+ *  "Mar 2026". Uses end-of-quarter + 15-day reporting lag — the SAME rule
+ *  applied by the date-range filter at /earnings (lines 1416 / 1476).
+ *  Returns null if the period is unparseable or if the estimated date is in
+ *  the future (filing hasn't happened yet → no post-gap to show). */
+function estimateFilingFromPeriod(period?: string | null): string | null {
+  if (!period) return null;
+  const quarterEnd = parseQuarterDate(period);
+  if (!quarterEnd) return null;
+  const endOfMonth = new Date(quarterEnd.getFullYear(), quarterEnd.getMonth() + 1, 0);
+  const est = new Date(endOfMonth.getTime() + 15 * 24 * 60 * 60 * 1000);
+  if (est.getTime() > Date.now()) return null;  // filing not yet expected
+  const y = est.getFullYear();
+  const m = String(est.getMonth() + 1).padStart(2, '0');
+  const d = String(est.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/** Best-effort filing date: prefer the real date, fall back to quarter estimate. */
+function toFilingOrEstimate(resultDate?: string | null, period?: string | null): string | null {
+  return toIsoFilingDate(resultDate) || estimateFilingFromPeriod(period);
 }
 
 interface PostGap {
@@ -2182,16 +2206,20 @@ function PostGapProvider({ cards, children }: {
   // since most Indian companies file after-market — Yahoo daily candle for
   // NEXT trading day is the right comparable.
   //
-  // PATCH 0202 — Normalize `resultDate` to ISO before posting. Source data is
-  // Screener-style like "15-Apr-2026 17:30:00" (sometimes "15-Apr-2026"), or
-  // a bare quarter period like "Mar 2026". The previous filter required the
-  // string to START with YYYY-MM-DD, so it silently dropped 95%+ of cards.
-  // Now: if we can resolve a real calendar filing date, include it;
-  // period-only cards are skipped (no fabricated dates — see CLAUDE.md §13.5).
+  // PATCH 0202/0203 — Normalize the filing date before posting.
+  // Source data is Screener-style — `resultDate` is sometimes a real date like
+  // "15-Apr-2026 17:30:00", but for most cards it's just the quarter string
+  // "Mar 2026" (Screener doesn't always expose broadcastDate). The previous
+  // filter required ISO and silently dropped ~all cards.
+  // Now: try real `resultDate` first; if it's only a period, fall back to the
+  // same "quarter-end + 15-day reporting lag" estimate the date-range filter
+  // already uses (lines 1416 / 1476). The post-gap server pins to the nearest
+  // Yahoo trading day on/before that date, so a few days of imprecision still
+  // produces a directionally-correct "% move since the result was filed".
   const items = useMemo(() => {
     return cards.slice(0, 80).map((c) => ({
       ticker: c.symbol,
-      filing_date: toIsoFilingDate(c.resultDate),
+      filing_date: toFilingOrEstimate(c.resultDate, c.period),
       timing: 'post' as const,
     })).filter((x): x is { ticker: string; filing_date: string; timing: 'post' } => !!x.ticker && !!x.filing_date);
   }, [cards]);
