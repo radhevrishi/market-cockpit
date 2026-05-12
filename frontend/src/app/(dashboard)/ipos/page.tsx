@@ -423,6 +423,31 @@ export default function IPOsPage() {
                 marginBottom: '16px',
               }} />
 
+              {/* PATCH 0288 — Detect missing fields so we can surface a single
+                  'Check NSE/BSE →' deeplink instead of repeating TBA / em-dash. */}
+              {(() => {
+                const missing = (v: any) => !v || v === '-' || v === '—' || v === 'TBA' || v === 'tba' || v === 'N/A';
+                const hasMissing = missing(ipo.priceBand) || missing(ipo.lotSize) || missing(ipo.issueSize);
+                return hasMissing ? (
+                  <div style={{
+                    marginBottom: '12px', padding: '8px 12px', borderRadius: 6,
+                    border: '1px solid rgba(245,158,11,0.30)',
+                    backgroundColor: 'rgba(245,158,11,0.08)',
+                    color: '#F59E0B', fontSize: 12, lineHeight: 1.5,
+                  }}>
+                    ⚠ Some fields are still TBA — RHP often lists them late. <a
+                      href={`https://www.nseindia.com/market-data/all-upcoming-issues-ipo`}
+                      target="_blank" rel="noopener noreferrer"
+                      style={{ color: '#F59E0B', textDecoration: 'underline', fontWeight: 700 }}
+                    >Check NSE →</a> · <a
+                      href={`https://www.bseindia.com/markets/PublicIssues/IPOIssues_new.aspx`}
+                      target="_blank" rel="noopener noreferrer"
+                      style={{ color: '#F59E0B', textDecoration: 'underline', fontWeight: 700 }}
+                    >BSE →</a>
+                  </div>
+                ) : null;
+              })()}
+
               {/* Details Grid */}
               <div style={{
                 display: 'grid',
@@ -445,7 +470,7 @@ export default function IPOsPage() {
                     fontSize: '14px',
                     fontWeight: 'bold',
                   }}>
-                    {ipo.priceBand}
+                    {ipo.priceBand && ipo.priceBand !== 'TBA' && ipo.priceBand !== 'tba' ? ipo.priceBand : <span style={{ color: THEME.textSecondary }}>—</span>}
                   </div>
                 </div>
 
@@ -464,7 +489,7 @@ export default function IPOsPage() {
                     fontSize: '14px',
                     fontWeight: 'bold',
                   }}>
-                    {ipo.lotSize}
+                    {ipo.lotSize && ipo.lotSize !== '-' && ipo.lotSize !== '—' ? ipo.lotSize : <span style={{ color: THEME.textSecondary }}>—</span>}
                   </div>
                 </div>
 
@@ -483,7 +508,7 @@ export default function IPOsPage() {
                     fontSize: '14px',
                     fontWeight: 'bold',
                   }}>
-                    {ipo.issueSize}
+                    {ipo.issueSize && ipo.issueSize !== '-' && ipo.issueSize !== '—' ? ipo.issueSize : <span style={{ color: THEME.textSecondary }}>—</span>}
                   </div>
                 </div>
 

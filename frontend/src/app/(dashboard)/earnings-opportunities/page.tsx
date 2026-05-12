@@ -1162,14 +1162,36 @@ export default function EarningsOpportunitiesPage() {
         // PATCH 0190/0192 — wipe localStorage so the fresh server payload is
         // the source of truth.
         try { localStorage.removeItem('mc:graded:v8:' + resolvedDateForGrading); } catch {}
+        // PATCH 0286 — Clearer messaging when upstream genuinely has no data.
+        // User feedback: the previous "0/N updated · Worker re-checks in 60s + 5min"
+        // message looked like a bug because it never changed on retry. The real
+        // cause is usually that NSE/BSE/Screener simply haven't published yet
+        // for the requested filing date — no amount of client retries fixes that.
+        const stamp = new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
         if (msg.includes('no-op')) {
-          setRefreshFeedback(`✓ All cards already have financial data — server returned same set. If you expected new tickers, they're probably not yet in NSE/BSE filings for this date.`);
+          setRefreshFeedback(`✓ ${stamp} · All cards already have financials. If you expected new tickers they aren't in NSE/BSE filings for this date yet.`);
         } else if (updated > 0 && failedTickers.length === 0) {
-          setRefreshFeedback(`✓ Updated ${updated}/${total} cards with fresh financials`);
+          setRefreshFeedback(`✓ ${stamp} · Updated ${updated}/${total} cards with fresh financials.`);
         } else if (updated > 0) {
-          setRefreshFeedback(`✓ Updated ${updated}/${total} cards. Still no data for: ${tickerListFromServer()}. Re-checking in 60s…`);
+          setRefreshFeedback(`✓ ${stamp} · Updated ${updated}/${total} cards. Background worker still chasing: ${tickerListFromServer()}.`);
         } else {
-          setRefreshFeedback(`⚠ 0/${total} updated. No Q4 data yet for: ${tickerListFromServer()}. Worker re-checks in 60s + 5min — leave this page open or use Coverage Probe ↓ to add manually.`);
+          // Distinguish "old past date" (sources unlikely to ever fill) from
+          // "today or near-today" (worker may resolve over the next few minutes).
+          const ageDays = (() => {
+            try {
+              const d = new Date(resolvedDateForGrading);
+              const today = new Date();
+              return Math.round((today.getTime() - d.getTime()) / 86_400_000);
+            } catch { return 0; }
+          })();
+          if (ageDays > 14) {
+            setRefreshFeedback(`⚠ ${stamp} · 0/${total} updated — sources have no Q-data for ${resolvedDateForGrading} (${ageDays}d ago). Filings for older dates rarely backfill. Use Coverage Probe ↓ to add manually or move on to a fresher date.`);
+          } else if (ageDays >= 0) {
+            setRefreshFeedback(`⚠ ${stamp} · 0/${total} updated — NSE/BSE/Screener haven't published Q-data yet for ${tickerListFromServer()}. Re-checking automatically at 60s and 5min; press Refresh again later if still missing.`);
+          } else {
+            // ageDays < 0 — future date
+            setRefreshFeedback(`⚠ ${stamp} · 0/${total} updated — ${resolvedDateForGrading} is in the future; companies haven't reported yet. Wait for actual filings or move to a past date.`);
+          }
         }
         // PATCH 0255 — Don't auto-hide if there are still pending tickers; the
         // user needs to see this message until something actually completes.

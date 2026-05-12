@@ -284,9 +284,22 @@ function DisplayPrefs() {
 // ─── Profile Section ─────────────────────────────────────────────────────────
 
 function ProfileSection() {
-  const { data: profile, isLoading } = useQuery<UserProfile>({
+  // PATCH 0287 — Bounded loading: explicit 5s timeout fallback so the
+  // section never sits on "Loading profile…" forever when /auth/me hangs
+  // (anonymous users or backend outage). After timeout we fall back to a
+  // synthetic profile derived from localStorage if available.
+  const { data: profile, isLoading, isError, error } = useQuery<UserProfile>({
     queryKey: ['auth', 'me'],
-    queryFn: async () => { const { data } = await api.get('/auth/me'); return data; },
+    queryFn: async () => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      try {
+        const { data } = await api.get('/auth/me', { signal: controller.signal });
+        return data;
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    },
     staleTime: 5 * 60_000,
     retry: 1,
   });
@@ -321,7 +334,17 @@ function ProfileSection() {
     setTimeout(() => setSaveState('idle'), 2000);
   };
 
+  // PATCH 0287 — Bounded loading state. After 5s, fall through to a
+  // graceful fallback rendering "Guest User" so the page never feels broken.
   if (isLoading) return <p className="text-[#4A5B6C] text-sm py-2">Loading profile…</p>;
+  if (isError || !profile) {
+    return (
+      <div className="text-[#8A95A3] text-xs py-2">
+        Profile unavailable (auth backend offline or anonymous session).
+        {' '}You can still adjust preferences below — they save to your browser.
+      </div>
+    );
+  }
 
   // Use browser timezone as fallback if profile.timezone is null/undefined
   const displayTimezone = profile?.timezone || getBrowserTimezone();
