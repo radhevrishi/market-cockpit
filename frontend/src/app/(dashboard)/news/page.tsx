@@ -1591,6 +1591,150 @@ function BottleneckDrilldown({
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
+// PATCH 0225 — Named Saved Views.
+// Sits on top of Patch 0218 (URL-persistent filter state). The full URL
+// query string IS the view; we just give the user a way to name it and
+// jump back via localStorage. No backend, no schema migration.
+interface SavedView { id: string; name: string; query: string; createdAt: number; }
+const SAVED_VIEWS_KEY = 'mc:saved-views:v1';
+
+function loadSavedViews(): SavedView[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(SAVED_VIEWS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+}
+function persistSavedViews(views: SavedView[]) {
+  if (typeof window === 'undefined') return;
+  try { localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(views)); } catch {}
+}
+
+function SavedViewsControl() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [views, setViews] = useState<SavedView[]>(() => loadSavedViews());
+  const [open, setOpen] = useState(false);
+
+  // Cross-tab sync
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === SAVED_VIEWS_KEY) setViews(loadSavedViews());
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  const currentQuery = typeof window !== 'undefined' ? window.location.search : '';
+  const isDefault = !currentQuery || currentQuery === '?' || currentQuery === '';
+  const alreadySaved = views.find(v => v.query === currentQuery);
+
+  const onSave = () => {
+    if (isDefault) {
+      alert('No filters are active. Set at least one filter before saving the view.');
+      return;
+    }
+    if (alreadySaved) {
+      alert(`This filter combo is already saved as "${alreadySaved.name}".`);
+      return;
+    }
+    const name = window.prompt('Name this view (e.g. "IN bottlenecks · live"):');
+    if (!name?.trim()) return;
+    const next: SavedView = { id: `${Date.now()}-${Math.random().toString(36).slice(2,6)}`, name: name.trim().slice(0, 60), query: currentQuery, createdAt: Date.now() };
+    const updated = [next, ...views];
+    setViews(updated);
+    persistSavedViews(updated);
+  };
+
+  const onApply = (v: SavedView) => {
+    router.replace(pathname + v.query, { scroll: false });
+    setOpen(false);
+  };
+
+  const onRename = (v: SavedView) => {
+    const name = window.prompt('Rename view:', v.name);
+    if (!name?.trim()) return;
+    const updated = views.map(x => x.id === v.id ? { ...x, name: name.trim().slice(0, 60) } : x);
+    setViews(updated);
+    persistSavedViews(updated);
+  };
+
+  const onDelete = (v: SavedView) => {
+    if (!window.confirm(`Delete saved view "${v.name}"?`)) return;
+    const updated = views.filter(x => x.id !== v.id);
+    setViews(updated);
+    persistSavedViews(updated);
+  };
+
+  return (
+    <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 8 }}>
+      <button
+        onClick={onSave}
+        title={alreadySaved ? `Already saved as "${alreadySaved.name}"` : isDefault ? 'Apply filters first, then save the view' : 'Save the current filter combination as a named view'}
+        style={{
+          backgroundColor: alreadySaved ? '#22D3EE20' : 'transparent',
+          border: `1px solid ${alreadySaved ? '#22D3EE' : '#1E2D45'}`,
+          color: alreadySaved ? '#22D3EE' : '#6B7B8C',
+          borderRadius: 5, padding: '4px 8px', cursor: isDefault ? 'not-allowed' : 'pointer',
+          fontSize: 10, fontWeight: 700, letterSpacing: '0.4px',
+          opacity: isDefault ? 0.5 : 1,
+        }}
+      >{alreadySaved ? '★ SAVED' : '☆ SAVE VIEW'}</button>
+      <button
+        onClick={() => setOpen(v => !v)}
+        title={`${views.length} saved view${views.length === 1 ? '' : 's'}`}
+        style={{
+          backgroundColor: open ? '#22D3EE20' : 'transparent',
+          border: `1px solid ${open ? '#22D3EE' : '#1E2D45'}`,
+          color: open ? '#22D3EE' : '#6B7B8C',
+          borderRadius: 5, padding: '4px 8px', cursor: 'pointer',
+          fontSize: 10, fontWeight: 700, letterSpacing: '0.4px',
+        }}
+      >VIEWS ({views.length}) {open ? '▴' : '▾'}</button>
+      {open && (
+        <div
+          style={{
+            position: 'absolute', top: '100%', right: 0, marginTop: 6, zIndex: 50,
+            backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: 8,
+            padding: 6, minWidth: 280, maxWidth: 360, maxHeight: 320, overflowY: 'auto',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+          }}
+        >
+          {views.length === 0 ? (
+            <div style={{ padding: '12px 10px', fontSize: 11, color: '#6B7B8C' }}>
+              No saved views yet. Apply some filters and click ☆ SAVE VIEW.
+            </div>
+          ) : (
+            views.map(v => (
+              <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: 4, borderRadius: 5 }}>
+                <button
+                  onClick={() => onApply(v)}
+                  style={{
+                    flex: 1, textAlign: 'left',
+                    backgroundColor: 'transparent', border: 'none',
+                    color: '#F5F7FA', fontSize: 12, fontWeight: 500,
+                    cursor: 'pointer', padding: '4px 6px',
+                  }}
+                  title={`Apply view\n${v.query || '(default)'}`}
+                >
+                  <div>{v.name}</div>
+                  <div style={{ fontSize: 9, color: '#6B7B8C', fontFamily: 'ui-monospace, monospace', marginTop: 2 }}>
+                    {v.query.length > 50 ? v.query.slice(0, 48) + '…' : v.query || '(default)'}
+                  </div>
+                </button>
+                <button onClick={() => onRename(v)} title="Rename" style={{ background: 'none', border: 'none', color: '#6B7B8C', fontSize: 11, cursor: 'pointer', padding: '2px 4px' }}>✎</button>
+                <button onClick={() => onDelete(v)} title="Delete" style={{ background: 'none', border: 'none', color: '#EF4444', fontSize: 12, cursor: 'pointer', padding: '2px 4px' }}>✕</button>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function NewsFeedPage() {
   // PATCH 0218 — URL-persistent filter state.
   // Filters hydrate from `searchParams` on mount and write back on change so:
@@ -2844,6 +2988,9 @@ export default function NewsFeedPage() {
               >{f.label}</button>
             );
           })}
+          {/* PATCH 0225 — Named Saved Views (localStorage-backed) on top of
+              the URL-persistent state from Patch 0218. */}
+          <SavedViewsControl />
         </div>
         {/* Controls row — horizontally scrollable on mobile */}
         <div className="scrollbar-hide mobile-scroll" style={{ display: 'flex', gap: '8px', alignItems: 'center', overflowX: 'auto', paddingBottom: '4px' }}>
