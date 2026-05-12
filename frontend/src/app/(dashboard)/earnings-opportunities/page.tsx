@@ -1108,9 +1108,19 @@ export default function EarningsOpportunitiesPage() {
         console.warn('refreshMissing failed', res.status);
       } else {
         const j = await res.json();
-        const msg = j?._refresh || 'completed';
-        setRefreshFeedback(`✓ Partial refresh: ${msg}. ${msg.includes('0/') || msg.includes('no-op') ? 'Screener has no Q4 data yet for these — try again in 6h or use Add Ticker below.' : ''}`);
-        setTimeout(() => setRefreshFeedback(null), 12000);
+        const msg: string = j?._refresh || 'completed';
+        // Parse "X/Y updated" pattern
+        const m = msg.match(/^(\d+)\/(\d+)\s+updated/);
+        const updated = m ? parseInt(m[1], 10) : 0;
+        const total = m ? parseInt(m[2], 10) : 0;
+        if (updated > 0) {
+          setRefreshFeedback(`✓ Updated ${updated}/${total} cards with fresh financials`);
+        } else if (msg.includes('no-op')) {
+          setRefreshFeedback(`✓ All cards already populated — nothing to refresh`);
+        } else {
+          setRefreshFeedback(`⚠ 0/${total} updated — Screener / NSE structured feeds have no Q4 data for these tickers yet. Worker pass typically takes 6–24h. Use Coverage Probe ↓ to add a specific ticker manually.`);
+        }
+        setTimeout(() => setRefreshFeedback(null), 15000);
       }
       await refetchGraded();
     } finally {
@@ -1209,31 +1219,50 @@ export default function EarningsOpportunitiesPage() {
             {hardRefreshing ? 'Refetching…' : 'Hard Refresh'}
             <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
           </button>
-          {/* PATCH 0160 / 0161 — Partial refresh button (refetches missing-data cards only) */}
+          {/* PATCH 0189 — Partial refresh button with INLINE feedback */}
           {resolvedDateForGrading && (() => {
             const missing = ((view.by_tier?.BLOCKBUSTER ?? []) as ParsedEarning[])
               .concat(view.by_tier?.STRONG ?? [])
               .concat(view.by_tier?.MIXED ?? [])
               .concat(view.by_tier?.AVOID ?? [])
               .filter((c) => c.sales_curr_cr == null && c.pat_curr_cr == null).length;
-            if (missing === 0) return null;
+            // Show button if missing > 0 OR a feedback message is currently displayed.
+            // Don't hide button just because data isn't there to fetch.
+            if (missing === 0 && !refreshFeedback) return null;
             return (
-              <button
-                onClick={refreshMissingMutate}
-                disabled={refreshing}
-                title={`Fetch financials for ${missing} cards that don't have data yet — leaves populated cards untouched`}
-                style={{
-                  padding: '4px 10px', borderRadius: 6,
-                  border: '1px solid #F59E0B60',
-                  background: refreshing ? '#F59E0B30' : '#F59E0B15',
-                  color: '#F59E0B', fontSize: 11,
-                  cursor: refreshing ? 'wait' : 'pointer',
-                  display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 700,
-                  opacity: refreshing ? 0.8 : 1,
-                }}>
-                <RefreshCw style={{ width: 11, height: 11 }} />
-                {refreshing ? `Refreshing ${missing}…` : `Refresh ${missing} missing`}
-              </button>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                {missing > 0 && (
+                  <button
+                    onClick={refreshMissingMutate}
+                    disabled={refreshing}
+                    title={`Fetch financials for ${missing} cards that don't have data yet — leaves populated cards untouched`}
+                    style={{
+                      padding: '4px 10px', borderRadius: 6,
+                      border: '1px solid #F59E0B60',
+                      background: refreshing ? '#F59E0B30' : '#F59E0B15',
+                      color: '#F59E0B', fontSize: 11,
+                      cursor: refreshing ? 'wait' : 'pointer',
+                      display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 700,
+                      opacity: refreshing ? 0.8 : 1,
+                    }}>
+                    <RefreshCw style={{ width: 11, height: 11, animation: refreshing ? 'spin 0.8s linear infinite' : 'none' }} />
+                    {refreshing ? `Refreshing ${missing}…` : `Refresh ${missing} missing`}
+                  </button>
+                )}
+                {/* Inline feedback right next to the button — impossible to miss */}
+                {refreshFeedback && (
+                  <span style={{
+                    fontSize: 10.5, fontWeight: 700,
+                    padding: '3px 8px', borderRadius: 4,
+                    backgroundColor: refreshFeedback.startsWith('✓') ? '#10B98118' : '#EF444418',
+                    border: `1px solid ${refreshFeedback.startsWith('✓') ? '#10B98140' : '#EF444440'}`,
+                    color: refreshFeedback.startsWith('✓') ? '#10B981' : '#EF4444',
+                    maxWidth: 480, lineHeight: 1.3,
+                  }}>
+                    {refreshFeedback}
+                  </span>
+                )}
+              </div>
             );
           })()}
           <span style={{ marginLeft: 'auto', fontSize: 11, color: '#6B7A8D' }}>
@@ -1485,18 +1514,7 @@ export default function EarningsOpportunitiesPage() {
             </div>
           )}
 
-          {/* Refresh feedback toast */}
-          {refreshFeedback && (
-            <div style={{
-              padding: '6px 10px', fontSize: 10.5,
-              backgroundColor: refreshFeedback.startsWith('✓') ? '#10B98115' : '#EF444415',
-              border: `1px solid ${refreshFeedback.startsWith('✓') ? '#10B98140' : '#EF444440'}`,
-              borderRadius: 4,
-              color: refreshFeedback.startsWith('✓') ? '#10B981' : '#EF4444',
-            }}>
-              {refreshFeedback}
-            </div>
-          )}
+          {/* Refresh feedback now rendered inline next to the Refresh button (0189) */}
 
           {probeResult && (
             <div style={{
