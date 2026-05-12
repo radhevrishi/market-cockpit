@@ -967,15 +967,11 @@ export default function EarningsOpportunitiesPage() {
     if (entries.length > 0) syncFromEarningsOps(entries);
   }, [data]);
 
-  // PATCH 0179 — Auto-fill DISABLED.
-  // The 0177 auto-fill scanned Nifty100 + priority watchlist and included any
-  // ticker with recent Q4 financials. Critical bug: it had no way to verify
-  // the ticker actually FILED ON the target date — it just checked that
-  // latest_quarter_end_iso was within 90 days. Result: HINDZINC and ETERNAL
-  // appearing as BLOCKBUSTER on May 11 even though they filed weeks earlier.
-  // This is worse than missing data — it's wrong date attribution.
-  // Set enabled: false until we have a reliable filing-date verification
-  // path (NSE per-symbol announce-date check or Trendlyne lookup).
+  // PATCH 0188 — Auto-fill REMOVED entirely (was 0177, disabled in 0179).
+  // It had no way to verify a ticker actually filed on the target date —
+  // produced HINDZINC/ETERNAL-style wrong-date attribution bugs. Use the
+  // manual force-include via Coverage Probe or the auto-cron calendar
+  // (lib/conviction-beats + /api/v1/cron/refresh-earnings-calendar) instead.
   const autoFillTickers: string[] = [];
 
   // PATCH 0176 — Force-include: list of tickers manually added by user.
