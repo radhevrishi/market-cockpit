@@ -17,41 +17,49 @@ import MarketHours from '@/components/MarketHours';
 
 interface NavItem { href: string; label: string; icon: ReactNode; }
 
+// PATCH 0209 — Institutional nav cleanup:
+// - Full labels (no 'Spec Sit' / 'Strategic Vis' / 'Market Snap' / 'Earnings Ops')
+// - Misleading 'Intelligence' label that routed to /orders renamed to 'Signals'
+//   so the label matches the user's mental model (the route name is legacy).
+// - 'Earnings Cards' renamed 'Earnings Scan' to match the in-page heading.
+// - Acronym 'RRG' kept (industry-standard term).
 const NAV: NavItem[] = [
-  { href: '/news',          label: 'News Feed',       icon: <Newspaper className="w-5 h-5" /> },
+  { href: '/news',          label: 'News Feed',          icon: <Newspaper className="w-5 h-5" /> },
   // PATCH 0090: heatmap + movers merged into Market Snapshot (toggle inside)
-  { href: '/market-snapshot', label: 'Market Snap',   icon: <Grid3X3 className="w-5 h-5" /> },
-  { href: '/portfolio',     label: 'Portfolio',       icon: <Briefcase className="w-5 h-5" /> },
-  { href: '/watchlists',    label: 'Watchlist',       icon: <BookMarked className="w-5 h-5" /> },
-  { href: '/orders',        label: 'Intelligence',    icon: <Shield className="w-5 h-5" /> },
+  { href: '/market-snapshot', label: 'Market Snapshot',  icon: <Grid3X3 className="w-5 h-5" /> },
+  { href: '/portfolio',     label: 'Portfolio',          icon: <Briefcase className="w-5 h-5" /> },
+  { href: '/watchlists',    label: 'Watchlist',          icon: <BookMarked className="w-5 h-5" /> },
+  // PATCH 0209: 'Intelligence' was confusing — it routed to /orders, suggesting a
+  // trade-order page, but the content is a signals workbench. Relabel to 'Signals'.
+  { href: '/orders',        label: 'Signals',            icon: <Shield className="w-5 h-5" /> },
   // PATCH 0092: Special Situations pillar (SPIN / M&A / TURN / CAP scanners)
-  { href: '/special-situations', label: 'Spec Sit',   icon: <Compass className="w-5 h-5" /> },
+  { href: '/special-situations', label: 'Special Situations', icon: <Compass className="w-5 h-5" /> },
   // PATCH 0091: Earnings + Earnings AI + Calendar merged into Earnings Hub (sub-tabs inside)
-  { href: '/earnings-hub',  label: 'Earnings',        icon: <LineChart className="w-5 h-5" /> },
+  { href: '/earnings-hub',  label: 'Earnings Hub',       icon: <LineChart className="w-5 h-5" /> },
   // PATCH 0123: bring back the legacy /earnings page (Portfolio + Watchlist + 750-company
   // custom universe earnings cards with YoY/QoQ + EPS deltas).  The page file was never
   // deleted, only the sidebar link.  Restored as a separate entry so Earnings Hub is
   // untouched.  User: 'don't change earnings hub — that is my best use functionality'.
-  { href: '/earnings',      label: 'Earnings Cards',  icon: <BarChart3 className="w-5 h-5" /> },
+  { href: '/earnings',      label: 'Earnings Scan',      icon: <BarChart3 className="w-5 h-5" /> },
   // PATCH 0130: Earnings Opportunities Pro — BLOCKBUSTER/STRONG/MIXED/AVOID
   // grading of Indian earnings filings, modelled on earningspulse.ai.
-  { href: '/earnings-opportunities', label: 'Earnings Ops', icon: <Star className="w-5 h-5" /> },
-  { href: '/multibagger',   label: 'Multibagger',     icon: <Star className="w-5 h-5" /> },
+  { href: '/earnings-opportunities', label: 'Earnings Opportunities', icon: <Star className="w-5 h-5" /> },
+  { href: '/multibagger',   label: 'Multibagger',        icon: <Star className="w-5 h-5" /> },
   // PATCH 0093: Single-Stock Sheet — 16-section institutional checklist runner
-  { href: '/stock-sheet',   label: 'Stock Sheet',     icon: <BookMarked className="w-5 h-5" /> },
+  { href: '/stock-sheet',   label: 'Stock Sheet',        icon: <BookMarked className="w-5 h-5" /> },
   // PATCH 0094: Re-rating Screener — margin expansion + model shift + multiple expansion
-  { href: '/rerating',      label: 'Re-rating',       icon: <TrendingUp className="w-5 h-5" /> },
-  { href: '/bottleneck-intel', label: 'Bottleneck',   icon: <Microscope className="w-5 h-5" /> },
-  { href: '/strategic-visibility', label: 'Strategic Vis', icon: <Star className="w-5 h-5" /> },
-  { href: '/rrg',           label: 'RRG',             icon: <RefreshCw className="w-5 h-5" /> },
-  { href: '/screener',      label: 'Screener',        icon: <Filter className="w-5 h-5" /> },
+  { href: '/rerating',      label: 'Re-rating',          icon: <TrendingUp className="w-5 h-5" /> },
+  { href: '/bottleneck-intel', label: 'Bottleneck Intel', icon: <Microscope className="w-5 h-5" /> },
+  { href: '/strategic-visibility', label: 'Strategic Visibility', icon: <Star className="w-5 h-5" /> },
+  { href: '/rrg',           label: 'RRG',                icon: <RefreshCw className="w-5 h-5" /> },
+  { href: '/screener',      label: 'Screener',           icon: <Filter className="w-5 h-5" /> },
   // PATCH 0168: Market Breadth Indicator
-  { href: '/breadth',       label: 'Breadth',         icon: <BarChart3 className="w-5 h-5" /> },
+  { href: '/breadth',       label: 'Breadth',            icon: <BarChart3 className="w-5 h-5" /> },
   // PATCH 0096 / 0170: Live Input Cost → Equity Transmission
-  { href: '/transmission',  label: 'Transmission',    icon: <TrendingUp className="w-5 h-5" /> },
+  { href: '/transmission',  label: 'Transmission',       icon: <TrendingUp className="w-5 h-5" /> },
   // PATCH 0107 / 0171: Concall Intelligence Engine v2
-  { href: '/concall-intel', label: 'Concall Intel',   icon: <Microscope className="w-5 h-5" /> },
-  { href: '/ipos',          label: 'IPOs',            icon: <Rocket className="w-5 h-5" /> },
+  { href: '/concall-intel', label: 'Concall Intelligence', icon: <Microscope className="w-5 h-5" /> },
+  { href: '/ipos',          label: 'IPOs',               icon: <Rocket className="w-5 h-5" /> },
   // PATCH 0089: macro-maps removed — header ticker covers global indices/currencies/commodities
   // PATCH 0091: standalone /calendars also merged into Earnings Hub above
 ];
