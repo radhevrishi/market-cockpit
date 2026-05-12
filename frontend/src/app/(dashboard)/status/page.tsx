@@ -162,16 +162,77 @@ interface ProbeState {
   checkedAt?: number;
 }
 
+// PATCH 0236 — 24h history ring buffer in localStorage.
+// Each probe result is appended; entries older than 24h are evicted on read.
+// Renders a tiny sparkline per row so reliability is visible across the
+// session. Real uptime % (24h/7d/30d) needs a server-side recorder.
+interface ProbeHistoryEntry { t: number; ok: boolean; ms: number; status: number; }
+const HISTORY_KEY = 'mc:status-history:v1';
+const HISTORY_WINDOW_MS = 24 * 3600_000;
+function loadHistory(): Record<string, ProbeHistoryEntry[]> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    const cutoff = Date.now() - HISTORY_WINDOW_MS;
+    const out: Record<string, ProbeHistoryEntry[]> = {};
+    for (const [k, arr] of Object.entries(parsed || {})) {
+      if (Array.isArray(arr)) out[k] = (arr as ProbeHistoryEntry[]).filter(e => e?.t >= cutoff);
+    }
+    return out;
+  } catch { return {}; }
+}
+function appendHistory(id: string, entry: ProbeHistoryEntry) {
+  if (typeof window === 'undefined') return;
+  try {
+    const all = loadHistory();
+    const arr = all[id] || [];
+    arr.push(entry);
+    // keep last 200 per probe to bound size
+    const trimmed = arr.slice(-200);
+    all[id] = trimmed;
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(all));
+  } catch {}
+}
+function uptimePct(arr: ProbeHistoryEntry[]): number {
+  if (!arr.length) return -1;
+  const okCount = arr.filter(e => e.ok).length;
+  return Math.round((okCount / arr.length) * 1000) / 10;
+}
+function Sparkline({ data, color, fail }: { data: ProbeHistoryEntry[]; color: string; fail: string }) {
+  if (!data.length) return <span style={{ fontSize: 9, color: '#4A5B6C', fontFamily: 'ui-monospace, monospace' }}>no history</span>;
+  const w = 80, h = 14;
+  const cellW = Math.max(2, Math.floor(w / Math.max(1, data.length)));
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${data.length * cellW} ${h}`} style={{ display: 'block' }}>
+      {data.map((e, i) => (
+        <rect
+          key={i} x={i * cellW} y={0} width={cellW - 1} height={h}
+          fill={e.ok ? color : fail}
+          opacity={e.ok ? 0.9 : 1}
+        />
+      ))}
+    </svg>
+  );
+}
+
 export default function StatusPage() {
   const [states, setStates] = useState<Record<string, ProbeState>>(() =>
     Object.fromEntries(PROBES.map(p => [p.id, { status: 'idle' as const }])),
   );
   const [autoRefresh, setAutoRefresh] = useState(false);
+  // PATCH 0236 — history per probe id
+  const [history, setHistory] = useState<Record<string, ProbeHistoryEntry[]>>(() => loadHistory());
 
   const runOne = async (probe: ProbeDef) => {
     setStates(s => ({ ...s, [probe.id]: { ...s[probe.id], status: 'loading' } }));
     const result = await probe.run();
     setStates(s => ({ ...s, [probe.id]: { status: 'done', result, checkedAt: Date.now() } }));
+    // PATCH 0236 — record into 24h ring buffer
+    const entry: ProbeHistoryEntry = { t: Date.now(), ok: result.ok, ms: result.ms, status: result.status };
+    appendHistory(probe.id, entry);
+    setHistory(loadHistory());
   };
 
   const runAll = () => {
@@ -269,7 +330,7 @@ export default function StatusPage() {
                 border: `1px solid ${TOKENS.surface.cardBorder}`,
                 borderLeft: `3px solid ${tone.solid}`,
                 borderRadius: 10, padding: '12px 16px',
-                display: 'grid', gridTemplateColumns: '14px 1fr 1fr 110px 90px 120px',
+                display: 'grid', gridTemplateColumns: '14px 1fr 1fr 90px 110px 90px 120px',
                 gap: 14, alignItems: 'center',
                 textAlign: 'left', cursor: 'pointer', color: 'inherit',
                 fontFamily: 'inherit',
@@ -282,6 +343,23 @@ export default function StatusPage() {
               </div>
               <div style={{ fontSize: 11, color: TOKENS.surface.textDim, fontFamily: 'ui-monospace, monospace' }}>
                 {result?.note || (s?.status === 'loading' ? 'probing…' : '—')}
+              </div>
+              {/* PATCH 0236 — 24h sparkline + uptime % */}
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}
+                   title={(() => {
+                     const arr = history[probe.id] || [];
+                     const pct = uptimePct(arr);
+                     return `${arr.length} probes in last 24h${pct >= 0 ? ` — ${pct}% green` : ''}`;
+                   })()}
+              >
+                <Sparkline data={(history[probe.id] || []).slice(-40)} color={TOKENS.semantic.bullish.solid} fail={TOKENS.semantic.bearish.solid} />
+                <span style={{ fontSize: 9, color: TOKENS.surface.textMuted, fontFamily: 'ui-monospace, monospace' }}>
+                  {(() => {
+                    const arr = history[probe.id] || [];
+                    const pct = uptimePct(arr);
+                    return arr.length === 0 ? 'no history' : `${pct}% · ${arr.length}p`;
+                  })()}
+                </span>
               </div>
               <div style={{ fontSize: 11, color: TOKENS.surface.textDim, fontFamily: 'ui-monospace, monospace', textAlign: 'right' }}>
                 {result ? `${result.status || '—'} · ${result.ms}ms` : '—'}
@@ -304,9 +382,9 @@ export default function StatusPage() {
       </div>
 
       <p style={{ fontSize: 11, color: TOKENS.surface.textMuted, marginTop: 24, lineHeight: 1.6 }}>
-        Probes execute from your browser, so they reflect what you can reach right now. A server-side
-        heartbeat with KV-persisted history (uptime % over 24h / 7d / 30d) is the long-term plan and
-        pairs with the alerts engine. Until then, this page gives a precise live read.
+        Probes execute from your browser and history is stored in this tab's localStorage (24h
+        rolling window). A server-side heartbeat with KV-persisted history (uptime % over 7d/30d
+        and cross-user aggregation) is the long-term plan and pairs with the alerts engine.
       </p>
     </div>
   );
