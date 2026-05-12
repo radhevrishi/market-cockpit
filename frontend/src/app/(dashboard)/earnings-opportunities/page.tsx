@@ -291,6 +291,20 @@ function gradeRow(row: any): ParsedEarning | null {
   const todayIso = new Date().toISOString().slice(0, 10);
   if (row?.filing_date && row.filing_date > todayIso) return null;
 
+  // PATCH 0182 — STRICT announce-date attribution guard.
+  // /enrich (NSE source) returns announce_date_iso = re_broadcastDt = when the
+  // company actually filed with the exchange. If that doesn't match the date
+  // we're displaying (±3 days), drop the row to prevent attributing OLD
+  // financials to a NEW date (JTLIND/GARUDA/SATIN bug).
+  if (row?.announce_date_iso && row?.filing_date) {
+    const announceD = new Date(row.announce_date_iso);
+    const filingD = new Date(row.filing_date);
+    if (!isNaN(announceD.getTime()) && !isNaN(filingD.getTime())) {
+      const diffDays = Math.abs((announceD.getTime() - filingD.getTime()) / 86_400_000);
+      if (diffDays > 3) return null;
+    }
+  }
+
   // PATCH 0178 — RELAXED quarter alignment.
   // OLD logic compared Trendlyne period_ended vs Screener latest_quarter_end_iso
   // and dropped the row if diff > 45 days. This silently dropped fresh filings
@@ -681,6 +695,7 @@ function useEarningsOpportunitiesJoined(
       // Period match
       period_ended: e.period_ended,
       latest_quarter_end_iso: e.latest_quarter_end_iso,
+      announce_date_iso: e.announce_date_iso,
       financials_source: e.financials_source,
     };
   });

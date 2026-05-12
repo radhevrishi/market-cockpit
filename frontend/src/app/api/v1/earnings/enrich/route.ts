@@ -322,10 +322,25 @@ async function fetchNseFinancials(symbol: string): Promise<any | null> {
       return '';
     })();
 
+    // PATCH 0182 — capture the actual ANNOUNCE date (when the company filed
+    // the result), not just the quarter-end. NSE's re_broadcastDt is the
+    // timestamp when the XBRL was submitted to the exchange — this is the
+    // authoritative filing date.
+    const announceRaw =
+      latest.re_broadcastDt || latest.broadcastDate ||
+      latest.re_date || latest.date ||
+      latest.re_submissionDate;
+    let announce_date_iso: string | null = null;
+    if (announceRaw) {
+      const ad = new Date(announceRaw);
+      if (!isNaN(ad.getTime())) announce_date_iso = ad.toISOString().slice(0, 10);
+    }
+
     return {
       company: latest.re_companyName || latest.companyName,
       quarter: qNumber,
       period_ended: latest._toDate,
+      announce_date_iso,
       audited: /^(audited|yes)/i.test(latest.re_ind_auditedUnAudited || ''),
       sales_curr_cr: salesCurr, sales_prev_cr: salesPrev,
       pat_curr_cr: patCurr, pat_prev_cr: patPrev,
@@ -354,7 +369,7 @@ function isValidSymbol(s: string): boolean {
 //   3. Yahoo Finance v8 (always overlaid for price/RS/Stage)
 async function enrichOne(symbol: string, filedHint?: string, bypassCache = false): Promise<any> {
   // Cache key includes filed date so a new filing busts old cache
-  const cacheKey = filedHint ? `enrich:v4:${symbol}:${filedHint}` : `enrich:v4:${symbol}`;
+  const cacheKey = filedHint ? `enrich:v5:${symbol}:${filedHint}` : `enrich:v5:${symbol}`;
   if (isRedisAvailable() && !bypassCache) {
     try {
       const cached = await kvGet(cacheKey);

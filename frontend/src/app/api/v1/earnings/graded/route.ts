@@ -11,7 +11,7 @@
 // CACHING strategy (key insight: past filings are immutable):
 //   • Past dates (< today_IST): cache 90 days. Once a Q4 is filed, the
 //     numbers don't change — re-fetching is pure waste. KV key
-//     'graded:v5:<YYYY-MM-DD>' is hit on every subsequent visit (<100ms).
+//     'graded:v6:<YYYY-MM-DD>' is hit on every subsequent visit (<100ms).
 //   • Today's date: cache 15 min. New filings come throughout the day,
 //     so we accept brief staleness for freshness.
 //   • Future dates: not cached (Upcoming only).
@@ -113,6 +113,23 @@ function gradeRow(row: any): ParsedEarning | null {
   // Future date guard
   const todayIso = new Date().toISOString().slice(0, 10);
   if (row?.filing_date && row.filing_date > todayIso) return null;
+
+  // PATCH 0182 — STRICT announce-date attribution guard.
+  // The previous data flow attributed Screener's LATEST Q4 financials to whatever
+  // date /api/market/earnings reported as the resultDate. This produced wrong
+  // dates when a company's actual filing was weeks earlier (JTLIND/GARUDA/SATIN
+  // appearing on May 12 when they filed in April).
+  // Now: if /enrich returned an announce_date_iso (NSE re_broadcastDt — the
+  // authoritative filing timestamp), it MUST match the page's filing_date
+  // within ±3 days. Outside that window = wrong attribution, drop the row.
+  if (row?.announce_date_iso && row?.filing_date) {
+    const announceD = new Date(row.announce_date_iso);
+    const filingD = new Date(row.filing_date);
+    if (!isNaN(announceD.getTime()) && !isNaN(filingD.getTime())) {
+      const diffDays = Math.abs((announceD.getTime() - filingD.getTime()) / 86_400_000);
+      if (diffDays > 3) return null;
+    }
+  }
 
   // PATCH 0178 — RELAXED quarter alignment.
   // Only drop on screener-only source with extreme mismatch (>95 days).
@@ -282,7 +299,7 @@ export async function GET(req: Request) {
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const isPast = date < todayIso;
-  const cacheKey = `graded:v5:${date}`;
+  const cacheKey = `graded:v6:${date}`;
 
   // Try cache first (past dates are immutable, 90-day TTL — practically forever for our use)
   // ── BUT bypass cache when refreshMissing or force is set ────────────────
@@ -355,6 +372,7 @@ export async function GET(req: Request) {
             trend_template_passes: e.trend_template_passes,
             ocf_annual_cr: e.ocf_annual_cr, pat_annual_cr: e.pat_annual_cr, ocf_to_pat_ratio: e.ocf_to_pat_ratio,
             period_ended: e.period_ended, latest_quarter_end_iso: e.latest_quarter_end_iso,
+            announce_date_iso: e.announce_date_iso,
             financials_source: e.financials_source,
           };
           const g = gradeRow(row);
@@ -456,6 +474,7 @@ export async function GET(req: Request) {
       trend_template_passes: e.trend_template_passes ?? false,
       ocf_annual_cr: e.ocf_annual_cr ?? null, pat_annual_cr: e.pat_annual_cr ?? null, ocf_to_pat_ratio: e.ocf_to_pat_ratio ?? null,
       period_ended: e.period_ended, latest_quarter_end_iso: e.latest_quarter_end_iso,
+            announce_date_iso: e.announce_date_iso,
       financials_source: e.financials_source,
     };
     const g = gradeRow(row);
