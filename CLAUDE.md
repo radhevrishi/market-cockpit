@@ -1,7 +1,7 @@
 # Market Cockpit — Claude Handoff Memory
 
 > Read this FIRST when starting any new chat. Saves you 30 minutes of context-rebuilding.
-> Last updated: 2026-05-13 (after Patch 0295 — institutional QA-audit fixes; CB overlay everywhere; PanelFreshness everywhere).
+> Last updated: 2026-05-13 (after Patch 0300 — race-condition hardening + drill-through enrichments across whole dashboard).
 
 ---
 
@@ -661,7 +661,56 @@ The genuine bugs and quality gaps shipped here:
          STALE/VERY LOW which polluted the Conviction Matrix and
          signalled broken coverage when the matrix was actually fine.
 
-## 11 · Patch Log Summary (0073 → 0295)
+## 10.6.7 · Batch-7 — Drill-throughs + race-condition hardening (Patches 0293–0300)
+
+Loop continued after batch-6 audit fixes. Theme: surface drill-through
+paths from summary pages into the underlying news/data, and harden
+the race-prone callbacks/fetches across high-traffic pages.
+
+  0293 — RRG sector dots now clickable. Clicking any sector dot opens
+         /news?search=<sector_name> in a new tab so analysts can
+         immediately answer "I see Banking is Lagging — but why?".
+         Tooltip also grew a "📰 Click dot for sector news →" hint.
+
+  0294 — Earnings Guidance Q-over-Q delta. Per-symbol score history
+         persisted in localStorage 'mc:guidance-scores:v1', keyed by
+         YYYY-MM period bucket. On each render we look back at the
+         most-recent earlier period for the same symbol and render a
+         "Δ+N" or "Δ-N" badge next to the current score. Cumulative
+         over time, since each user session contributes one snapshot.
+
+  0295 — Bottleneck Intel auto-collapses stale themes. A theme is
+         "stale" when it has 0 articles this week + 0 last week + not
+         structural; those get hidden behind a "X stale themes hidden
+         — click to expand" toggle. Audit complaint was that 15+/21
+         themes showing as STALE polluted the Conviction Matrix and
+         signalled broken coverage when the system was working fine.
+
+  0296 — Status page hardened. Switched to Promise.allSettled +
+         per-probe try/catch so a single throwing probe can't wedge
+         the dashboard with a stuck "Loading…" spinner.
+
+  0297 — Watchlist flag toggle race fixed. Replaced closure-captured
+         `watchlistFlags[ticker]` with functional setState so rapid
+         double-clicks always cycle from the latest state, not the
+         render-snapshot. Removes the dependency-array trap entirely.
+
+  0298 — Calendars AbortController. Fast filter changes
+         (monthOffset / indexFilter) no longer race; a stale fetch
+         from a prior filter is aborted before its setData fires.
+
+  0299 — Status page granular OK/STALE/FAIL breakdown chip. The
+         header pill now shows "13/15 healthy · 1 FAIL · 1 STALE"
+         so analysts see the failure shape at a glance instead of
+         just the OK ratio.
+
+  0300 — Portfolio header freshness chip. Wired the existing
+         lastRefresh state into PanelFreshness with a 5-min staleAfter
+         so analysts see "quotes 14:32 · 3m ago" alongside the title.
+
+  0301 — This documentation update.
+
+## 11 · Patch Log Summary (0073 → 0300)
 
 Pre-session patches existed (0073–0095). Recent session highlights:
 
@@ -768,6 +817,14 @@ Pre-session patches existed (0073–0095). Recent session highlights:
 - 0291 — Movers row: ₹Cr market cap inline + 📰 'Why moving?' shortcut
 - 0292 — CLAUDE.md update (end of batch-6)
 - 0295 — Bottleneck Intel auto-collapses stale themes
+- 0293 — RRG sector dot opens /news?search=<sector>; tooltip hint
+- 0294 — Earnings Guidance Q-over-Q score delta (localStorage history)
+- 0296 — Status page Promise.allSettled + per-probe try/catch
+- 0297 — Watchlist flag toggle race fix (functional setState)
+- 0298 — Calendars AbortController on fetch (no stale overwrite)
+- 0299 — Status page granular OK/STALE/FAIL breakdown chip
+- 0300 — Portfolio header freshness chip from existing lastRefresh
+- 0301 — CLAUDE.md update (end of batch-7)
 
 **Other features:**
 - 0089–0094 — Earnings Hub merge, Special Situations pillar, Stock Sheet, Re-rating Screener
