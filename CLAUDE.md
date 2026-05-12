@@ -1,7 +1,7 @@
 # Market Cockpit — Claude Handoff Memory
 
 > Read this FIRST when starting any new chat. Saves you 30 minutes of context-rebuilding.
-> Last updated: 2026-05-12 (after Patch 0239 — batch-3 v0 stubs of backend-blocked items).
+> Last updated: 2026-05-12 (after Patch 0246 — Transmission premium-workstation rewrite).
 
 ---
 
@@ -338,6 +338,51 @@ The v0 stubs all use localStorage so they're per-browser-tab today;
 when Auth lands they migrate to per-user/per-org server-side storage
 in one swap.
 
+## 10.6.3 · Transmission premium workstation (Patches 0240–0246)
+
+Triggered by an institutional review of /transmission noting it 'reads
+like a powerful internal tool, not a premium decision terminal'.
+
+  0240 — COMMODITY UNIVERSE EXPANSION. /api/v1/transmission grew from 9
+         to 34 inputs. Categorized into: energy / metals / agri /
+         chemicals / fx_rates / ai_robotics / nuclear / rare_earths.
+         Each commodity carries category + bias_2026 + source_note.
+         Each driver carries pass_through_lag + pricing_power + note.
+         Items without Yahoo symbol surface as 'manual feed' with
+         drivers still visible. New: palm/soybean/sunflower oil,
+         phosphoric acid, ammonia, sulphur, naphtha, BTX, polymers,
+         caustic/soda, coking/thermal coal, petcoke, rubber, pulp,
+         lithium (LIT), rare earths (REMX), gallium/germanium,
+         palladium/platinum, helium-3, uranium (URA), HALEU.
+         Route also returns 60-day price sparkline per commodity.
+
+  0241-0245 — TRANSMISSION PAGE REWRITE.
+         Three-column grid: 230px filter rail | main | 280px intel rail
+         Filter rail (sticky, URL-persistent):
+           Category chips (8) · sensitivity (high/med/low) ·
+           sector search · ticker search · horizon (1m/3m) · Clear all
+         Scenario Lab: 6 sliders for top movers, sector-aggregate
+           pressure recomputes instantly under user-applied deltas
+         Top-15 shocks summary (existing) wired to new payload
+         Commodity grid: card per commodity with category glyph,
+           inline 1d/1m/3m + 70px sparkline, top-4 sector impacts
+         Click any card → 720px drilldown panel with:
+           5-column KPI strip · 60-day sparkline · 2026 bias note ·
+           full sector matrix sorted by abs impact · per-row pass-
+           through lag / pricing power / 1m+3m pressure / tickers / note
+         Right rail (sticky) 'Transmission Intelligence':
+           Top 5 movers · top 6 margin casualties · top 6 beneficiaries
+         Premium polish: tabular-nums, freshness chip ('as of HH:MM ·
+           Xm ago' amber when >15min), category glyphs, 'manual feed'
+           italics for items without Yahoo symbol.
+
+  0246 — This documentation update.
+
+Still pending (server-side z-score, historical regression coefficients
+on time-lag transmission, real-time price feeds for the 'manual feed'
+inputs, earnings-overlay join). Manual feed inputs would benefit from
+a scheduled scraper hitting Argus / Platts / CRU / industry trackers.
+
 ## 10.7 · Open institutional follow-ups (NOT YET SHIPPED — schema work)
 
 These all need backend / data-model changes beyond the surgical UI
@@ -412,7 +457,14 @@ Pre-session patches existed (0073–0095). Recent session highlights:
 - 0236 — /status page 24h history ring buffer + sparkline
 - 0237 — Client-side News Alert Rules v0 (/news-alerts)
 - 0238 — Severity 'why' explainability tooltip
-- 0239 — CLAUDE.md final update (end of batch-3)
+- 0239 — CLAUDE.md update (end of batch-3)
+- 0240 — Transmission commodity universe expanded (9 → 34 inputs)
+- 0241 — Transmission sticky filter rail (URL-persistent)
+- 0242 — Transmission shock drilldown side panel
+- 0243 — Transmission Scenario Lab with sliders
+- 0244 — Sparklines + tabular-nums + freshness pill on transmission
+- 0245 — Right-rail Transmission Intelligence panel
+- 0246 — CLAUDE.md final update (end of transmission batch)
 
 **Other features:**
 - 0089–0094 — Earnings Hub merge, Special Situations pillar, Stock Sheet, Re-rating Screener
