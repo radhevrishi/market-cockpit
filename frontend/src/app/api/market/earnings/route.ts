@@ -621,8 +621,16 @@ export async function GET(request: Request) {
 
       const isPast = meetingDate < today;
 
-      // Past meetings MUST have confirmation from outcomes/filings
-      if (isPast && !isConfirmed(ticker)) continue;
+      // PATCH 0174 — Relaxed past-meeting filter.
+      // Original code dropped past meetings without outcome/filing confirmation,
+      // which silently removed companies whose NSE announcement feed hadn't
+      // propagated yet (Syrma SGS, Atlanta, MCX etc. on EarningsPulse but missing
+      // here). Now we keep past meetings if they're within the last 14 days
+      // (likely confirmed via Yahoo price-move on the announce day, which the
+      // hub-quality fallback can still grade). For older meetings we still
+      // require explicit confirmation to avoid stale entries.
+      const ageDays = Math.floor((today.getTime() - meetingDate.getTime()) / (24 * 3600_000));
+      if (isPast && !isConfirmed(ticker) && ageDays > 14) continue;
 
       const stockInfo = priceLookup[ticker];
       const marketCapCr = (stockInfo?.marketCap || 0) / 10000000;

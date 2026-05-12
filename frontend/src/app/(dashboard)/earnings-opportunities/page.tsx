@@ -782,6 +782,27 @@ export default function EarningsOpportunitiesPage() {
   };
   // Local UI state for partial-refresh button
   const [refreshing, setRefreshing] = useState(false);
+  // PATCH 0174 — Coverage probe state
+  const [probeTicker, setProbeTicker] = useState('');
+  const [probing, setProbing] = useState(false);
+  const [probeResult, setProbeResult] = useState<any>(null);
+  const runCoverageProbe = async () => {
+    if (!probeTicker.trim() || !resolvedDateForGrading) return;
+    setProbing(true);
+    setProbeResult(null);
+    try {
+      const res = await fetch(
+        `/api/v1/earnings/coverage?ticker=${encodeURIComponent(probeTicker.trim())}&date=${resolvedDateForGrading}`,
+        { cache: 'no-store' }
+      );
+      const j = await res.json();
+      setProbeResult(j);
+    } catch (e: any) {
+      setProbeResult({ error: e?.message || 'probe failed' });
+    } finally {
+      setProbing(false);
+    }
+  };
   const refreshMissingMutate = async () => {
     if (!resolvedDateForGrading || refreshing) return;
     setRefreshing(true);
@@ -939,6 +960,116 @@ export default function EarningsOpportunitiesPage() {
               {TIER_META[c.tier].icon} {TIER_META[c.tier].label} {c.n}
             </span>
           ))}
+        </div>
+
+        {/* ── Coverage Probe (PATCH 0174) ─────────────────────────────────── */}
+        <div style={{
+          marginTop: 10, padding: '10px 14px',
+          backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 8,
+          display: 'flex', flexDirection: 'column', gap: 6,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.6px' }}>
+              🔍 COVERAGE PROBE
+            </span>
+            <span style={{ fontSize: 10.5, color: '#8A95A3' }}>
+              Missing a ticker that's on EarningsPulse for this date? Probe our pipeline to see which layer dropped it.
+            </span>
+            <input
+              type="text"
+              value={probeTicker}
+              onChange={(e) => setProbeTicker(e.target.value.toUpperCase())}
+              onKeyDown={(e) => { if (e.key === 'Enter') runCoverageProbe(); }}
+              placeholder="e.g. SYRMA, ATLANTAELE, MCX"
+              style={{
+                flex: 1, minWidth: 180,
+                padding: '5px 10px', backgroundColor: '#0D1623',
+                border: '1px solid #1A2840', borderRadius: 6, color: '#E6EDF3',
+                fontSize: 11.5, fontWeight: 700, fontFamily: 'ui-monospace, monospace',
+                letterSpacing: '0.5px', outline: 'none',
+              }}
+            />
+            <button
+              onClick={runCoverageProbe}
+              disabled={!probeTicker.trim() || probing || !resolvedDateForGrading}
+              style={{
+                padding: '5px 14px', borderRadius: 6, border: '1px solid #22D3EE60',
+                backgroundColor: probing ? '#22D3EE30' : '#22D3EE15',
+                color: '#22D3EE', fontSize: 11, fontWeight: 700,
+                cursor: probing ? 'wait' : (probeTicker.trim() ? 'pointer' : 'not-allowed'),
+                opacity: probeTicker.trim() ? 1 : 0.5,
+              }}
+            >
+              {probing ? 'Probing…' : 'Probe'}
+            </button>
+          </div>
+
+          {probeResult && (
+            <div style={{
+              marginTop: 4, padding: '10px 12px',
+              backgroundColor: '#0D1623', border: '1px solid #1A2840', borderRadius: 6,
+              fontSize: 11, color: '#C9D4E0', lineHeight: 1.5,
+            }}>
+              {probeResult.error ? (
+                <span style={{ color: '#EF4444' }}>⚠ {probeResult.error}</span>
+              ) : (
+                <>
+                  <div style={{
+                    fontSize: 11.5, fontWeight: 800,
+                    color: probeResult.diagnosis?.startsWith('✓') ? '#10B981' :
+                           probeResult.diagnosis?.startsWith('⚠') ? '#F59E0B' : '#EF4444',
+                    marginBottom: 8,
+                  }}>
+                    {probeResult.diagnosis}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                    <div style={{ padding: '6px 8px', backgroundColor: '#0A1422', borderRadius: 4, borderLeft: `3px solid ${probeResult.layers?.universe?.found ? '#10B981' : '#EF4444'}` }}>
+                      <div style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.4px' }}>L1 · UNIVERSE</div>
+                      <div style={{ fontSize: 10.5, marginTop: 2 }}>
+                        {probeResult.layers?.universe?.found ? (
+                          <span style={{ color: '#10B981' }}>
+                            ✓ Found{probeResult.layers.universe.exact === false ? ` (date ${probeResult.layers.universe.resultDate})` : ''}
+                          </span>
+                        ) : (
+                          <span style={{ color: '#EF4444' }}>
+                            ✗ Not in /api/market/earnings (NSE/BSE feeds for {probeResult.date?.slice(0, 7)} have {probeResult.layers?.universe?.totalInMonth ?? '?'} companies)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div style={{ padding: '6px 8px', backgroundColor: '#0A1422', borderRadius: 4, borderLeft: `3px solid ${probeResult.layers?.enrichment?.found && probeResult.layers?.enrichment?.sales_yoy_pct != null ? '#10B981' : '#F59E0B'}` }}>
+                      <div style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.4px' }}>L2 · ENRICHMENT</div>
+                      <div style={{ fontSize: 10.5, marginTop: 2 }}>
+                        {probeResult.layers?.enrichment?.found && probeResult.layers?.enrichment?.sales_yoy_pct != null ? (
+                          <span style={{ color: '#10B981' }}>
+                            ✓ Rev {probeResult.layers.enrichment.sales_yoy_pct >= 0 ? '+' : ''}{Math.round(probeResult.layers.enrichment.sales_yoy_pct)}% · PAT {probeResult.layers.enrichment.pat_yoy_pct >= 0 ? '+' : ''}{Math.round(probeResult.layers.enrichment.pat_yoy_pct)}% · EPS {probeResult.layers.enrichment.eps_yoy_pct >= 0 ? '+' : ''}{Math.round(probeResult.layers.enrichment.eps_yoy_pct)}%
+                          </span>
+                        ) : (
+                          <span style={{ color: '#F59E0B' }}>
+                            ⚠ Screener/NSE financials missing
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div style={{ padding: '6px 8px', backgroundColor: '#0A1422', borderRadius: 4, borderLeft: `3px solid ${probeResult.layers?.graded?.found ? '#10B981' : '#EF4444'}` }}>
+                      <div style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.4px' }}>L3 · GRADED</div>
+                      <div style={{ fontSize: 10.5, marginTop: 2 }}>
+                        {probeResult.layers?.graded?.found ? (
+                          <span style={{ color: '#10B981' }}>
+                            ✓ {probeResult.layers.graded.tier} · score {probeResult.layers.graded.score}
+                          </span>
+                        ) : (
+                          <span style={{ color: '#EF4444' }}>
+                            ✗ Not in graded payload ({probeResult.layers?.graded?.total ?? 0} cards on this date)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
