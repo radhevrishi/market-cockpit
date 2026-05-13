@@ -25,6 +25,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ExternalLink, AlertTriangle } from 'lucide-react';
 import api from '@/lib/api';
+import { computeMergerArb, fmtPct } from '@/lib/merger-arb';
 // PATCH 0254 — Source-tier classifier (PRIMARY / SPECIALIST / SECONDARY / AGGREGATOR)
 import { classifySource, TIER_VISUAL } from '@/lib/source-tiers';
 
@@ -1199,8 +1200,59 @@ function computeFloating(args: { statedPrice: number; cashPct: number; stockShar
 function MathPanels() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <SimpleArbCalc />
       <AcceptanceCalc />
       <FloatingCalc />
+    </div>
+  );
+}
+
+// PATCH 0305 — Simple merger-arb calculator. Wraps lib/merger-arb.ts so
+// the institutional "offer / spot / close date → IRR" math has a visible
+// surface inside Special Situations. Complements the existing tender-
+// buyback and floating-deal calculators.
+function SimpleArbCalc() {
+  const [offerPrice, setOfferPrice] = useState(250);
+  const [spotPrice, setSpotPrice] = useState(240);
+  const [closeDate, setCloseDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 45);
+    return d.toISOString().slice(0, 10);
+  });
+  const [probability, setProbability] = useState(85);
+  const m = useMemo(() => computeMergerArb({
+    offerPrice, spotPrice, expectedCloseDate: closeDate,
+    probability: probability / 100,
+  }), [offerPrice, spotPrice, closeDate, probability]);
+  return (
+    <div style={{ backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderLeft: '3px solid #22D3EE', borderRadius: 12, padding: '14px 18px' }}>
+      <div style={{ fontSize: 14, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px', marginBottom: 12 }}>📐 SIMPLE MERGER-ARB CALCULATOR</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 8, marginBottom: 14 }}>
+        <NumIn label="Offer price" value={offerPrice} onChange={setOfferPrice} step={1} />
+        <NumIn label="Spot price (CMP)" value={spotPrice} onChange={setSpotPrice} step={1} />
+        <div>
+          <div style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.5px', marginBottom: 4 }}>EXPECTED CLOSE</div>
+          <input
+            type="date"
+            value={closeDate}
+            onChange={(e) => setCloseDate(e.target.value)}
+            style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid #1E2D45', backgroundColor: '#060E1A', color: '#E6EDF3', fontSize: 13 }}
+          />
+        </div>
+        <NumIn label="Probability %" value={probability} onChange={setProbability} step={5} />
+      </div>
+      {m ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 8 }}>
+          <KV label="Spread (abs)" value={`${m.spreadAbs >= 0 ? '+' : ''}${m.spreadAbs.toFixed(2)}`} />
+          <KV label="Spread (%)" value={fmtPct(m.spreadPct)} color={m.tightnessColor} highlight />
+          <KV label="Days to close" value={`${m.daysToClose}d`} />
+          <KV label="Annualized IRR" value={fmtPct(m.annualizedIRR)} color={m.annualizedIRR && m.annualizedIRR >= 15 ? '#10B981' : '#F59E0B'} highlight />
+          <KV label="Expected IRR (prob-weighted)" value={fmtPct(m.expectedIRR)} hint={`@ ${probability}% probability`} />
+          <KV label="Tightness" value={m.tightness} color={m.tightnessColor} />
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: '#6B7A8D' }}>Provide valid offer, spot, and close date.</div>
+      )}
     </div>
   );
 }
