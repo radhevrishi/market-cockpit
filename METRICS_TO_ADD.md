@@ -1,5 +1,86 @@
 # Screener.in columns to add to the Multibagger Excel upload
 
+## ⚠️ STATUS AFTER YOUR LATEST EXPORT (recent-ipos-8.csv, 54 columns)
+
+The model auto-parses your current export. Most Tier A working-capital
+columns are present. The summary below tells you what's wired and what
+would unlock additional rules.
+
+### ✅ Already in your export — picked up automatically
+
+- Debtor days · **Tier A**
+- Days Inventory Outstanding · **Tier A**
+- Days Payable Outstanding · **Tier A**
+- Days Receivable Outstanding (alt for debtor days)
+- Working Capital Days · **Tier A**
+- **Debtor days 3years back** · trend signal (new in Patch 0332)
+- **Average Working Capital Days 3years** · trend signal (new)
+- Interest Coverage Ratio · **Tier A**
+- Other income (₹ Cr) — model derives Other Income % of PBT via EPS + Equity Capital
+- Equity capital — model derives share count from this (₹10 par)
+- Promoter / DII / FII holding (current snapshot)
+- Pledged percentage
+- All quality / growth / valuation / momentum pillars
+- High price, From 52w high, **High/Low price all time** (volatility range derived)
+- Industry PE, EPS, Sales growth 3Years, ROCE/ROIC, EVEBITDA, FCF Yield
+- GPM latest quarter
+
+### 🟡 Auto-derived from what you have (no need to add)
+
+- **Free Float %** ≈ 100 - Promoter holding
+- **52 Week Range %** ≈ (High Price All Time - Low Price All Time) / Low × 100
+- **Number of equity shares** ≈ Equity Capital × 10 (₹10 par convention)
+- **Other Income % of PBT** ≈ Other Income / (EPS × shares / 0.75)
+
+### ❌ Still missing — adding these unlocks specific rules
+
+These are the columns NOT in your current export. Listed in priority order.
+
+#### Most-valuable to add (Tier B trends)
+
+1. **Promoter holding 1/2/3/4 quarters back** (4 separate columns)
+   - Unlocks: multi-quarter promoter sell-down detection
+   - Without these: only the current `Change in promoter holding` single-delta is used
+
+2. **FII holding 1/2/3/4 quarters back** (4 separate columns)
+3. **DII holding 1/2/3/4 quarters back** (4 separate columns)
+   - Unlocks: institutional accumulation/exit trend signal
+   - Without these: only the current snapshot is checked
+
+4. **Tax rate %** (effective tax rate)
+   - Unlocks: aggressive-accounting flag (<12% in non-SEZ)
+   - Without it: this check skips
+
+#### Useful but optional
+
+5. **Capex 3Yrs** — value-destroying-reinvestment flag
+6. **Dividend Yield** — zero-dividend-with-FCF check
+7. **Cash and equivalents** + **Cash and equivalents preceding year** — paper-profits-vs-cash forensic check
+
+#### Forensic Tier E (only if you want stronger pump detection)
+
+8. **Related Party Transactions %** — value-transfer flag
+9. **Number of Subsidiaries** — multi-layer scheme detector
+10. **Auditor Changes Last 3Y** — governance flag
+11. **Number of equity shares preceding 3 years** — 3Y dilution trail (more accurate than the Equity-Capital-derived current count alone)
+
+### How to add Screener custom ratios
+
+For the 4-quarter ownership history columns, Screener.in supports adding
+columns via the "Customize columns" gear icon on any saved screen. Search
+for the column name exactly as listed above and enable them.
+
+For ratios that aren't pre-built (Other Income % of PBT, etc.), use
+Screener's "Add new ratio" feature in the screen builder:
+```
+Other Income % of PBT = Other Income / Profit before tax * 100
+```
+
+Then re-export. The model alias-tolerates spaces, capitalization, and
+common variants.
+
+
+
 The Multibagger scoring model picks up these columns **automatically** when
 they appear in the Excel export. Every rule skips gracefully when the
 field is missing, so you can add them one at a time. Order is by
