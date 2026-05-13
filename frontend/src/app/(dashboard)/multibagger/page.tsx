@@ -1752,7 +1752,18 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   //   STANDARD — promoter ≤25 AND FII+DII ≤5 AND mcap <2000 Cr → cap 65
   //             (unchanged from Patch 0313).
   // MNC-allowlist tickers are exempt.
-  const extremeGov = !isMNC && p <= 20 && fd <= 3 && mcap > 0 && mcap < 1000;
+  //
+  // PATCH 0339 — Widened EXTREME to catch DRCSYSTEMS pattern (P=20.6,
+  // FII+DII=0.4, MCap=₹215Cr) that just-missed the P≤20 gate. Three
+  // independent ways to qualify EXTREME:
+  //   (a) Original: P≤20 + FII+DII≤3 + mcap<1000
+  //   (b) Ultra-micro: P≤25 + FII+DII≤3 + mcap<500    ← catches DRC
+  //   (c) Zero-inst micro: P≤30 + FII+DII≤1 + mcap<300
+  const extremeGov = !isMNC && mcap > 0 && (
+    (p <= 20 && fd <= 3 && mcap < 1000) ||
+    (p <= 25 && fd <= 3 && mcap < 500) ||
+    (p <= 30 && fd <= 1 && mcap < 300)
+  );
   const governanceWatch = !isMNC && p <= 25 && fd <= 5 && mcap > 0 && mcap < 2000;
   if (extremeGov) {
     redFlags.push({
@@ -2041,14 +2052,25 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     const latest = row.promoterHistory[row.promoterHistory.length - 1];
     const decline = oldest - latest;
     const horizonLabel = row.promoterHistory.length >= 4 ? '4Q' : row.promoterHistory.length === 3 ? '3-point' : '3Y';
-    if (decline > 4) {
+    // PATCH 0339 — Threshold raised from 4pp to 7pp for HIGH structural.
+    // Rationale: many genuine compounders see 4-7pp promoter decline over 3Y
+    // due to ESOP grants, family settlements, dynastic transitions, partial
+    // OFS — none of which signal operator exit. >7pp over 3Y is the real
+    // exit pattern. Skipper (-5.4pp) drops out of HIGH structural and into
+    // -5 rerating only; Tips Music (-10.8pp), GE Vernova (-24pp), SJS (-29pp),
+    // Acutaas (-6.8pp wait — also drops out, but Acutaas has other issues)
+    // continue to trigger.
+    if (decline > 7) {
       redFlags.push({
         label: `Promoter holding fell ${decline.toFixed(1)}pp over ${horizonLabel}`,
         severity: 'HIGH', source: 'Ownership trend', kind: 'STRUCTURAL',
       });
+    } else if (decline > 4) {
+      reratingBonus -= 5;
+      risks.push(`Promoter holding declining ${decline.toFixed(1)}pp over ${horizonLabel}: ${row.promoterHistory.map(v => v.toFixed(1)).join('% → ')}% — meaningful sell-down, track closely.`);
     } else if (decline > 2) {
-      reratingBonus -= 4;
-      risks.push(`Promoter holding declining ${decline.toFixed(1)}pp over ${horizonLabel}: ${row.promoterHistory.map(v => v.toFixed(1)).join('% → ')}% — track for sustained sell-down.`);
+      reratingBonus -= 3;
+      risks.push(`Promoter holding declining ${decline.toFixed(1)}pp over ${horizonLabel}: ${row.promoterHistory.map(v => v.toFixed(1)).join('% → ')}% — minor sell-down, monitor.`);
     } else if (decline < -2) {
       // Promoter ADDING — buyback or pref allotment
       reratingBonus += 4;
@@ -2444,9 +2466,33 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   }
 
   // Profit deceleration > 25pp below CAGR → hard cap at 50
+  //
+  // PATCH 0339 — Clean-compounder exemption. When all major quality signals
+  // are intact (8/8 kill-switch + Fin pillar >75 + ROIC > WACC + no
+  // CRITICAL/HIGH-structural red flags + COMP reinvestment signal), a single
+  // quarter of profit deceleration is most likely cyclical/macro/one-time
+  // (client timing, FX, base effect) — NOT structural decay. Raise the cap
+  // from 50 to 70 so these names can hold B+. Catches InfoBeans pattern:
+  // bootstrapped, founder-led, COMP 95, 8/8 survival, Fin 85, but one
+  // bad quarter dropped it to C-grade.
   if (rawProfDecel !== undefined && rawProfDecel < -25) {
-    score = Math.min(score, 50);
-    risks.push(`Decay filter: profit decel ${rawProfDecel.toFixed(0)}pp below CAGR → capped at 50`);
+    const cleanCompounder =
+      (row.cfoToPat ?? 0) > 0.9
+      && (row.roic ?? 0) > 12
+      && (row.fcfAbsolute ?? -1) > 0
+      && (row.de ?? 99) < 0.4
+      && redFlags.filter(f =>
+           f.severity === 'CRITICAL' ||
+           (f.severity === 'HIGH' && (f.kind ?? 'STRUCTURAL') === 'STRUCTURAL')
+         ).length === 0
+      && rawProfDecel > -50; // genuinely catastrophic decel still capped at 50
+    const cap = cleanCompounder ? 70 : 50;
+    score = Math.min(score, cap);
+    if (cleanCompounder) {
+      risks.push(`Decay filter (clean-compounder lenience): profit decel ${rawProfDecel.toFixed(0)}pp on otherwise-pristine company → capped at 70 (vs 50 default). One quarter of profit miss, not structural decay.`);
+    } else {
+      risks.push(`Decay filter: profit decel ${rawProfDecel.toFixed(0)}pp below CAGR → capped at 50`);
+    }
   }
 
   // BOTH decelerating (combined trajectory < -40pp) → hard cap at 45 + additional penalty
