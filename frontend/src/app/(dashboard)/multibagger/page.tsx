@@ -5717,6 +5717,94 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
     strengths.push(`Elite R40 ${row.ruleOf40?.toFixed(0)} with ${effGM?.toFixed(0)}% GPM — top-decile growth-plus-economics. +5 bonus.`);
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PATCH 0343 — FINAL ENFORCEMENT CAPS (applied AFTER bonuses to bind hard).
+  // Audit of deployed output found multiple operator/sub-multibagger-DNA names
+  // scoring A+/A despite obvious failure on the core growth-multibagger gates.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // (9) RULE OF 40 TIERED HARD CAPS.
+  // For a US multibagger engine, R40 is THE primary growth-stock-economics
+  // gate. Old code only warned when R40<20; the deployed output showed
+  // CXW R40=15→80A+, GCT R40=25→85A+, VMD R40=25→80A+, TER R40=27→80A+,
+  // STRL R40=32→80A+, ELA R40=34→85A+, UAN R40=32→85A+. All wrong for
+  // multibagger thesis. Tiered hard caps:
+  //   R40 < 10  → cap 55 (B max)
+  //   R40 < 20  → cap 65 (B/B+ boundary)
+  //   R40 < 30  → cap 72 (B+ ceiling, no A grades)
+  //   R40 < 40  → cap 78 (A ceiling, no A+ grades)
+  // Names with elite R40 (≥80) bypass these caps via the elite-R40 bonus.
+  if (row.ruleOf40 !== undefined) {
+    if (row.ruleOf40 < 10)      score = Math.min(score, 55);
+    else if (row.ruleOf40 < 20) score = Math.min(score, 65);
+    else if (row.ruleOf40 < 30) score = Math.min(score, 72);
+    else if (row.ruleOf40 < 40) score = Math.min(score, 78);
+  }
+
+  // (10) GROWTH-RATE HARD CAPS.
+  // Multibagger thesis fundamentally requires meaningful base growth (15-20%+
+  // sustained). Below 15% annual = "value pick" not multibagger. Below 10% =
+  // mature/declining. Don't let momentum or quality push these to A+.
+  //   Growth < 10% → cap 55 (B max)
+  //   Growth < 15% → cap 70 (B+ ceiling)
+  if (row.revenueGrowthAnn !== undefined) {
+    if (row.revenueGrowthAnn < 10)       score = Math.min(score, 55);
+    else if (row.revenueGrowthAnn < 15)  score = Math.min(score, 70);
+  }
+
+  // (11) CYCLE-PEAK SPIKE DETECTOR (US equivalent of India 0337).
+  // When annual revenue growth > 1.5× the 3yr CAGR AND 3yr CAGR <15%, the
+  // recent growth is a cyclical spike from a low base — not sustainable
+  // compounding. Cap at 72 (B+ ceiling). Catches ELA (34% annual vs 16% 3yr),
+  // STRL (18% vs 0% 3yr), WDC (51% vs -11% 3yr), TER (13% vs 0% 3yr).
+  if (row.revenueGrowthAnn !== undefined && row.revGrowth3yr !== undefined
+      && row.revGrowth3yr < 15
+      && row.revenueGrowthAnn > row.revGrowth3yr * 1.8
+      && row.revenueGrowthAnn > 15) {
+    score = Math.min(score, 72);
+    risks.push(`Cycle-peak / base-effect cap: annual growth ${row.revenueGrowthAnn.toFixed(0)}% is ${(row.revenueGrowthAnn/Math.max(row.revGrowth3yr,1)).toFixed(1)}× the 3yr CAGR ${row.revGrowth3yr.toFixed(0)}% — recent surge unlikely to sustain. Capped at 72.`);
+  }
+
+  // (12) SELL / STRONG SELL ANALYST RATING — HARD CAP at 50.
+  // Old code only -10 mktS; that's insufficient for a US engine. Analyst
+  // "Sell" or "Strong Sell" reflects professional community broadly negative.
+  // Cap composite at 50 (C/D boundary). Caught: FCEL (Sell rating + R40 -50
+  // but still scored 60 B+ — that's wrong).
+  if (row.analystRating) {
+    const rt = row.analystRating.toLowerCase();
+    if (rt.includes('strong sell')) {
+      score = Math.min(score, 38);
+      risks.push(`Analyst consensus 'Strong Sell' — composite hard-capped at 38 (D-grade). Professional community broadly negative.`);
+    } else if (rt.includes('sell')) {
+      score = Math.min(score, 50);
+      risks.push(`Analyst consensus 'Sell' — composite hard-capped at 50 (C-grade). Professional community sees downside risk.`);
+    }
+  }
+
+  // (13) ABSOLUTE OTC CAP — re-apply at the end so elite-R40 bonus can't
+  // bypass it. Deployed output showed ATZAF (OTC) scored 80A+ despite cap 78.
+  if (isOTC) score = Math.min(score, 78);
+
+  // (14) ABSOLUTE GOVERNANCE CRITICAL CAPS — re-apply after bonuses.
+  // R40 catastrophic (< -50) speculative cap (set in section 1) and CRITICAL
+  // ICR (set in forensic section) must bind absolutely. If they were set,
+  // we already applied them in those sections; re-apply here in case any
+  // subsequent bonus pushed score back up.
+  if (row.ruleOf40 !== undefined && row.ruleOf40 < -50
+      && (row.marketCapB ?? 0) > 0.2) {
+    score = Math.min(score, 45);
+  }
+  if (typeof row.interestCoverage === 'number' && row.interestCoverage > 0
+      && row.interestCoverage < 1.5) {
+    score = Math.min(score, 38);
+  }
+  if (typeof row.runwayMonths === 'number' && row.runwayMonths < 12) {
+    score = Math.min(score, 35);
+  }
+  if (typeof row.piotroskiFScore === 'number' && row.piotroskiFScore <= 2) {
+    score = Math.min(score, 50);
+  }
+
   score = Math.max(0, Math.min(100, Math.round(score/5)*5));
 
   // Grade
