@@ -1,7 +1,7 @@
 # Market Cockpit — Claude Handoff Memory
 
 > Read this FIRST when starting any new chat. Saves you 30 minutes of context-rebuilding.
-> Last updated: 2026-05-13 (after Patch 0312 — backend-batch lift: merger-arb, deal-prob, heartbeat, source-tier KV, NSE adapter, ticker-roles, public API).
+> Last updated: 2026-05-13 (after Patch 0325 — Multibagger scoring overhaul: forensic pump-detector, severity tier split, audit panel, 20 new metric scaffolds. See METRICS_TO_ADD.md for Screener columns to add).
 
 ---
 
@@ -806,7 +806,132 @@ The remaining items in §10.7 genuinely need user input:
 These are listed in priority order. **Auth first** unlocks the most
 downstream features.
 
-## 11 · Patch Log Summary (0073 → 0312)
+## 10.7 · Batch-10 — Multibagger scoring overhaul + backend lifts (0313–0325)
+
+User pushed back hard on score compression: "21% quarterly sales growth
+and many goods is scoring 60, while Kirloskar Pneumatic is also 60 —
+why?". Diagnosis: single HIGH red flag was capping all stocks at 60
+regardless of fundamental quality. Plus institutional gaps in detecting
+governance / forensic / pump patterns. This batch addresses both.
+
+  0313 — Governance Watch: detects low promoter + zero institutional +
+         microcap (operator-driven pump fingerprint). Caps composite at
+         65 regardless of fundamentals. Discovery bonus now gated on
+         promoter ≥ 40%. 🛑 GOV⚠ badge visible on row.
+
+  0314 — Six additional institutional red flags:
+         (1) Story-stock pattern: sales >80% + cfoToPat <0.5 → HIGH
+         (2) Cycle-peak margins: OPM >1.7× sector p75 + profit CAGR >60%
+             → -6 rerating
+         (3) Capex burn without ROCE return → -7 rerating
+         (4) Pledge severity tiering: ≥50% CRITICAL, 35-50% HIGH
+         (5) Falling-knife + premium combo (Stage 4 + PEG > 2.5) → -8
+         (6) Zero-dividend with free cash → -3 + check related-party
+
+  0315 — HIGH severity tier split (the headline fix). Splits HIGH red
+         flags into STRUCTURAL (governance/leverage — cap 60, -12 pt)
+         vs CYCLICAL (revenue decel, one-quarter pressure — cap 72, -6 pt).
+         Lets fundamentally strong names with one cyclical concern still
+         grade B+ instead of getting flattened. Bucket hard-fail also
+         tightened to require structural flags.
+
+  0316 — Per-row SCORE AUDIT chip strip. Shows every active cap and
+         severity bucket on row expand. Each red flag now displays its
+         point cost (-25/-12/-6/-5), kind (structural/cyclical), severity.
+         Makes "why did this stock score X?" debuggable in one glance.
+
+  0317 — Scaffold for 9 new institutional metrics:
+         debtorDays, inventoryDays, creditorDays, workingCapitalDays
+         interestCoverage, effectiveTaxRate, capex3yr
+         promoterHistory[], fiiHistory[], diiHistory[]
+         dividendYield, avgDailyValueCr
+         Each rule skips gracefully when field is undefined. Parser
+         accepts Screener column aliases. User pulls columns from
+         Screener.in into Excel and the model picks them up automatically.
+
+  0318 — SEC EDGAR M&A filings adapter (Tier 1 US filing parser).
+         GET /api/v1/edgar/filings?cik=<CIK>&form=<form>. Returns
+         SC TO-T / SC TO-I / SC 13E3 / DEFM14A / 425 / 10-12B by default.
+         Counterpart to /api/v1/earnings/nse-announcements (Patch 0309).
+
+  0319 — Theme revisions KV snapshot log. POST snapshot → diff vs prior
+         + ticker added/removed deltas appended to revision log. GET
+         returns newest-first history. 50-entry cap, 365-day TTL.
+
+  0320 — Special Situations lifecycle state machine.
+         RUMOR → BOARD_APPROVED → BINDING → REGULATORY → VOTE → COURT →
+         OPEN → TENDER → LISTING → COMPLETED, with terminal failure
+         states (TERMINATED / ABANDONED / BLOCKED). Validates legal
+         transitions. Records timestamp + source + note per transition.
+         Stalled-deal detection via expected-days-per-state priors.
+
+  0321 — Special Situations playbook intelligence library (16 event
+         types). Each playbook: avg close days + p25/p75 range, success
+         rate %, typical spread, dominant failure modes with priors,
+         friction points, tactical entry/exit guidance, retail-overhang
+         flag. Pure static library; consumers import getPlaybook().
+
+  0322 — Multibagger FORENSIC PUMP DETECTOR (MosChip / RIR Power
+         pattern). 11 forensic signals, each scoring 1-3 points:
+         - Other Income > 25% of PBT (PBT inflation)
+         - Cash declining > 30% YoY despite profit growth (paper profits)
+         - Share count grew > 25% over 3Y (dilution-funded growth)
+         - Related-party transactions > 5% of revenue (value transfer)
+         - Auditor changes >= 2 in 3Y (governance flag)
+         - >= 10 subsidiaries on a sub-1000Cr microcap (multi-layer scheme)
+         - 52w range > 200% (operator-induced volatility)
+         - Free float < 15% (thin float manipulable)
+         - Sales surging > 35% CAGR with CFO/PAT < 0.7 (paper growth)
+         - Promoter < 30% + 1m return > 30% (pump pattern signature)
+         - Promoter group entities >= 15 (structure obfuscation)
+
+         Total pump score:
+           >= 5  -> CRITICAL red flag (cap 38)
+           >= 3  -> HIGH structural red flag (cap 60)
+           >= 1  -> -2 rerating + risk note
+
+         Only fires for microcap (mcap < ₹3000 Cr). All checks gracefully
+         skip when field undefined; user adds Screener columns to turn
+         each signal on independently. Catches operator-pumped names
+         that pass conventional fundamental screens.
+
+  0323 — METRICS_TO_ADD.md user-facing doc. Tier A/B/C/D/E columns to
+         add to Screener.in export, ranked by institutional impact.
+         Tier E specifically covers the 11 forensic-detector columns.
+
+  0324 — Transmission server-side z-score statistical layer.
+         GET /api/v1/transmission/zscore/<commodity>?window=60|180|365|1825
+         Pulls Yahoo daily history for 21 commodities; returns mean,
+         median, std_dev, z-score, percentile, sample size, and a
+         one-line institutional interpretation. KV-cached 1h.
+
+  0325 — This documentation update.
+
+### Status of §10.7 backlog after this batch
+
+  - Auth provider — still blocked (user decision needed)
+  - Postgres DB — still blocked (user provision needed)
+  - Slack/SMTP/webhook creds — still blocked
+  - Paid data feeds (Argus/Platts/CRU) — still blocked
+  - SEC EDGAR parser — SHIPPED in 0318 (basic submissions API; deeper
+    extraction of merger terms / offer prices still pending)
+  - Merger-arb math — SHIPPED in 0305
+  - Deal-probability engine — SHIPPED in 0306
+  - Lifecycle state machine — SHIPPED in 0320
+  - India events ingest — heuristic v0 shipped in 0260; canonical
+    state machine shipped in 0320
+  - Playbook intelligence — SHIPPED in 0321
+  - Liquidity intelligence — partial (avgDailyValueCr in 0317)
+  - Per-pipeline heartbeats — SHIPPED in 0307
+  - Theme revisions diff log — SHIPPED in 0319
+  - Public read-only API — SHIPPED in 0311
+  - Ticker roles real classifier — SHIPPED in 0310 (KV-backed)
+  - Source tier curation table — SHIPPED in 0308
+  - Transmission z-score / regression — z-score SHIPPED in 0324;
+    regression still pending (needs Postgres for coefficient storage)
+  - Earnings overlay join — still pending
+
+## 11 · Patch Log Summary (0073 → 0325)
 
 Pre-session patches existed (0073–0095). Recent session highlights:
 
@@ -932,6 +1057,19 @@ Pre-session patches existed (0073–0095). Recent session highlights:
 - 0310 — /api/v1/ticker-roles/<ticker> server-side classifier
 - 0311 — /api/v1/public/graded/<date> public API with rate-limit
 - 0312 — CLAUDE.md update (end of batch-9)
+- 0313 — Multibagger Governance Watch (low promoter + zero institutional)
+- 0314 — Multibagger six institutional red flags
+- 0315 — HIGH severity tier split (STRUCTURAL vs CYCLICAL)
+- 0316 — Per-row SCORE AUDIT chip strip
+- 0317 — 9 new institutional metrics scaffold + scoring rules
+- 0318 — SEC EDGAR M&A filings adapter
+- 0319 — Theme revisions KV snapshot log
+- 0320 — Special Situations lifecycle state machine
+- 0321 — Special Situations playbook intelligence library
+- 0322 — Multibagger forensic pump-detector (11 signals)
+- 0323 — METRICS_TO_ADD.md user-facing doc
+- 0324 — Transmission z-score statistical layer
+- 0325 — CLAUDE.md update (end of batch-10)
 
 **Other features:**
 - 0089–0094 — Earnings Hub merge, Special Situations pillar, Stock Sheet, Re-rating Screener
