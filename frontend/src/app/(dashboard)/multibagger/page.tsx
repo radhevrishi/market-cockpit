@@ -1577,9 +1577,18 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
 
   // Discovery premium — institutional ownership not yet arrived (not double-counted:
   // longevity uses FII/DII for runway, but rerating uses it for future demand catalyst)
-  if ((row.fiiPlusDii??100)<5)       reratingBonus+=8;  // essentially zero institutional
-  else if ((row.fiiPlusDii??100)<12) reratingBonus+=5;  // very early institutional
-  else if ((row.fiiPlusDii??100)<22) reratingBonus+=2;  // early discovery
+  // PATCH 0313 — Discovery bonus REQUIRES meaningful promoter holding. Without
+  // it, "zero institutional" is the operator-driven small-cap setup, not the
+  // pre-institutional discovery zone — they look identical on FII+DII alone.
+  // Gate: promoter ≥ 40% is the minimum for "founder skin in the game".
+  const promoterAnchorOK = (row.promoter ?? 0) >= 40;
+  if (promoterAnchorOK) {
+    if ((row.fiiPlusDii??100)<5)       reratingBonus+=8;  // essentially zero institutional
+    else if ((row.fiiPlusDii??100)<12) reratingBonus+=5;  // very early institutional
+    else if ((row.fiiPlusDii??100)<22) reratingBonus+=2;  // early discovery
+  }
+  // When promoter < 40% AND FII+DII < 5%, the OWNERSHIP_VACUUM / GOVERNANCE_WATCH
+  // penalties already apply below — this just denies the offsetting bonus.
 
   // Promoter buying is pure insider conviction signal (not in any pillar)
   if ((row.changeInPromoter??0) > 2 && (row.promoter??0) >= 40)  reratingBonus+=4;
@@ -1650,6 +1659,50 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   }
   // MATURE gets no bonus/penalty — already priced in by institutions
 
+  // ── PATCH 0313: GOVERNANCE WATCH — pump-and-dump pattern detector ─────────
+  //
+  // The specific combo of (low promoter + zero institutional + microcap)
+  // is the classic Indian operator-driven small-cap setup. Vakrangee,
+  // Manpasand, PC Jeweller, et al. all carried this fingerprint pre-collapse:
+  //   - promoter ≤ 25% (operators dump easily into the float)
+  //   - FII+DII ≤ 5% (no independent due diligence done)
+  //   - mcap < ₹2000 Cr (institutional radar starts here)
+  //
+  // Strong reported financials INCREASE the suspicion here, not decrease it:
+  // operator-run companies present the cleanest possible recent numbers
+  // before the pump. Without institutional auditor pressure the financials
+  // can't be trusted on face value.
+  //
+  // When this fires:
+  //   - Cap composite score at 65 (cannot be A+/A regardless of magnitude)
+  //   - Apply -8 reratingBonus on top of OWNERSHIP_VACUUM
+  //   - Add explicit risk note
+  //   - Set row.governanceWatch flag for the UI badge
+  const p = row.promoter ?? 100;
+  const fd = row.fiiPlusDii ?? 100;
+  const mcap = row.marketCapCr ?? 0;
+  const governanceWatch =
+    p <= 25 &&
+    fd <= 5 &&
+    mcap > 0 && mcap < 2000;
+  if (governanceWatch) {
+    reratingBonus -= 8;
+    risks.push(
+      `GOVERNANCE WATCH: Promoter ${p.toFixed(0)}% + FII+DII ${fd.toFixed(1)}% + MCap ₹${mcap.toFixed(0)} Cr — classic operator-driven small-cap setup. Strong reported numbers without institutional scrutiny carry pump-and-dump risk. Score capped at 65.`
+    );
+  }
+  (row as any).governanceWatch = governanceWatch;
+
+  // ── PATCH 0313: Institutional-vacuum demerit for mid-caps that institutions
+  // had a chance to discover and passed on. Below ₹500 Cr the absence is
+  // explained by size; above ₹500 Cr it's a deliberate institutional pass.
+  if (fd <= 1 && mcap >= 500 && mcap < 5000) {
+    reratingBonus -= 5;
+    risks.push(
+      `Institutional vacuum at ₹${mcap.toFixed(0)} Cr mcap — institutions had access and passed. Diligence gap.`
+    );
+  }
+
   // Delta signal: promoter buying from high base = strongest insider signal
   if ((row.changeInPromoter??0) > 2 && ownershipCategory === 'FOUNDER_CONTROLLED') {
     reratingBonus += 3; // founder buying more when already >50% = very high conviction
@@ -1657,6 +1710,13 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   } else if ((row.changeInPromoter??0) < -3 && (row.promoter??0) > 40) {
     reratingBonus -= 4; // significant promoter selling = watch closely
     risks.push(`Insider selling: promoter sold ${Math.abs(row.changeInPromoter??0).toFixed(1)}% — exit signal if trend continues`);
+  }
+  // PATCH 0313 — Stronger penalty when promoter is ALREADY low and still
+  // selling. Cumulative dilution from a low base is the most predictive
+  // operator-exit signal in Indian small-caps.
+  if ((row.changeInPromoter??0) < -2 && (row.promoter??0) <= 30) {
+    reratingBonus -= 10;
+    risks.push(`Promoter exit pattern: ${row.promoter?.toFixed(0)}% holding declining by ${Math.abs(row.changeInPromoter??0).toFixed(1)}pp — operator may be cashing out into retail float.`);
   }
 
   // ── GAP 3: INDUSTRY TAILWIND BONUS ──────────────────────────────────────────
@@ -1700,6 +1760,14 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   else if (highCnt >= 1)  score = Math.min(score, 60);
   if (row.accelSignal === 'DECELERATING') score = Math.min(score, 52);
   if (bucket === 'MONITOR') score = Math.min(score, 45);
+
+  // ── PATCH 0313: GOVERNANCE WATCH SCORE CAP ───────────────────────────────
+  // The pump-and-dump fingerprint caps composite at 65 regardless of
+  // financial-quality magnitude. Setup risk dominates fundamental quality
+  // when the fundamentals themselves can't be independently verified.
+  if (governanceWatch) {
+    score = Math.min(score, 65);
+  }
 
   // ── DECAY FILTER — binding caps from RAW numbers, not derived fields ─────────
   // These fire even when accelSignal/profitAcceleration failed to compute (column mapping issue).
@@ -3161,6 +3229,22 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                         <span title={OWNERSHIP_CONFIG[r.ownershipCategory].strategy} style={{fontSize:9,fontWeight:700,color:OWNERSHIP_CONFIG[r.ownershipCategory].color,border:`1px solid ${OWNERSHIP_CONFIG[r.ownershipCategory].color}40`,padding:'1px 4px',borderRadius:3,width:'fit-content'}}>
                           {OWNERSHIP_CONFIG[r.ownershipCategory].icon} {r.ownershipCategory === 'FOUNDER_CONTROLLED' ? 'Founder' : r.ownershipCategory === 'INSTITUTIONALIZING' ? 'Institutnlzg' : r.ownershipCategory === 'MATURE' ? 'Mature' : 'Vac⚠'}
                         </span>
+                      )}
+                      {/* PATCH 0313 — Governance Watch badge. Fires when the
+                          pump-and-dump fingerprint is present (promoter ≤25%,
+                          FII+DII ≤5%, mcap <₹2000Cr). Composite score is
+                          capped at 65 in this state. */}
+                      {(r as any).governanceWatch && (
+                        <span
+                          title={`GOVERNANCE WATCH: classic operator-driven small-cap setup (low promoter + zero institutional + small mcap). Score capped at 65 regardless of fundamentals because the financial quality itself can't be independently verified without institutional auditor pressure.`}
+                          style={{
+                            fontSize: 9, fontWeight: 800, color: '#EF4444',
+                            border: '1px solid #EF444460',
+                            backgroundColor: 'rgba(239,68,68,0.12)',
+                            padding: '1px 4px', borderRadius: 3, width: 'fit-content',
+                            letterSpacing: 0.3,
+                          }}
+                        >🛑 GOV⚠</span>
                       )}
                       {/* Signals: inflection/trigger/trajectory/rerating */}
                       <div style={{display:'flex',gap:3,flexWrap:'wrap',marginTop:2}}>
