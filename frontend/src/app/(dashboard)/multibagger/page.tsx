@@ -5870,8 +5870,14 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
 
   // Recompute derived fields every time — fixes stale localStorage data where
   // these were undefined because they were added after the original upload.
-  const computedRuleOf40 = (row.revenueGrowthAnn !== undefined && row.fcfMarginAnn !== undefined)
-    ? Math.round(row.revenueGrowthAnn + row.fcfMarginAnn)
+  //
+  // PATCH 0346 — Rule of 40 now uses QUARTERLY revenue growth (QoQ YoY) +
+  // FCF margin, per user spec. This is the forward-looking R40 variant used
+  // by SaaS investors: gives a more current run-rate view than annual.
+  // Falls back to annual if quarterly is missing.
+  const r40RevInput = row.revenueGrowthQtr ?? row.revenueGrowthAnn;
+  const computedRuleOf40 = (r40RevInput !== undefined && row.fcfMarginAnn !== undefined)
+    ? Math.round(r40RevInput + row.fcfMarginAnn)
     : row.ruleOf40;
   // Gross margin expansion: TTM vs Annual. If user only has TTM (new CSV format),
   // expansion can't be computed — returns undefined (handled gracefully in scoring).
@@ -6150,8 +6156,10 @@ function parseUSARow(row: Record<string,unknown>): USARow | null {
       ? (revQtr - revAnn >= 5 ? 'ACCELERATING' : revQtr - revAnn <= -5 ? 'DECELERATING' : 'STABLE')
       : undefined,
     // Rule of 40 = revenue growth + FCF margin (≥40 = institutional benchmark)
-    ruleOf40: (revAnn !== undefined && n(row['Free cash flow margin %, Annual']) !== undefined)
-      ? Math.round(revAnn + (n(row['Free cash flow margin %, Annual']) as number))
+    // PATCH 0346 — R40 uses Quarterly Rev + FCF margin (more current view).
+    // Falls back to Annual when Quarterly missing.
+    ruleOf40: ((revQtr ?? revAnn) !== undefined && n(row['Free cash flow margin %, Annual']) !== undefined)
+      ? Math.round(((revQtr ?? revAnn) as number) + (n(row['Free cash flow margin %, Annual']) as number))
       : undefined,
     // Gross margin expansion = TTM vs Annual (positive = improving pricing power)
     grossMarginExpansion: (() => {
@@ -6789,12 +6797,15 @@ function USACompare() {
           </div>
 
           {/* Table Header — sortable */}
-          <div style={{display:'grid',gridTemplateColumns:'120px 150px 65px 65px 100px 110px 1fr 70px',gap:8,padding:'10px 14px',fontSize:F.xs,fontWeight:700,letterSpacing:'0.6px',color:MUTED,borderBottom:`1px solid ${BORDER}`}}>
+          {/* PATCH 0346 — Added dedicated R40 column (Quarterly Rev + FCF margin),
+              made sortable. Grid now has 9 columns instead of 8. */}
+          <div style={{display:'grid',gridTemplateColumns:'120px 140px 60px 55px 90px 100px 70px 1fr 60px',gap:8,padding:'10px 14px',fontSize:F.xs,fontWeight:700,letterSpacing:'0.6px',color:MUTED,borderBottom:`1px solid ${BORDER}`}}>
             <span>TICKER</span><span>COMPANY</span>
             <span onClick={()=>handleUSASort('score')} style={{cursor:'pointer',color:usSortField==='score'?ACCENT:MUTED}}>SCORE{usSortIcon('score')}</span>
             <span>GRADE</span>
             <span onClick={()=>handleUSASort('fwdPe')} style={{cursor:'pointer',color:usSortField==='fwdPe'||usSortField==='peg'?YELLOW:MUTED}}>VAL{usSortIcon('fwdPe')}</span>
-            <span onClick={()=>handleUSASort('revGrowthAnn')} style={{cursor:'pointer',color:usSortField==='revGrowthAnn'||usSortField==='ruleOf40'?GREEN:MUTED}}>ACCEL / R40{usSortIcon('revGrowthAnn')}</span>
+            <span onClick={()=>handleUSASort('revGrowthAnn')} style={{cursor:'pointer',color:usSortField==='revGrowthAnn'?GREEN:MUTED}}>ACCEL{usSortIcon('revGrowthAnn')}</span>
+            <span onClick={()=>handleUSASort('ruleOf40')} style={{cursor:'pointer',color:usSortField==='ruleOf40'?'#a78bfa':MUTED}} title="Rule of 40 = Quarterly Rev Growth + FCF Margin (≥40 = institutional benchmark)">R40{usSortIcon('ruleOf40')}</span>
             <span onClick={()=>handleUSASort('grossMargin')} style={{cursor:'pointer',color:usSortField==='grossMargin'||usSortField==='fcfMargin'?'#a78bfa':MUTED}}>PILLARS{usSortIcon('grossMargin')}</span>
             <span onClick={()=>handleUSASort('marketCapB')} style={{cursor:'pointer',color:usSortField==='marketCapB'?ORANGE:MUTED}}>COV{usSortIcon('marketCapB')}</span>
           </div>
@@ -6804,7 +6815,7 @@ function USACompare() {
             return (
               <div key={r.symbol+idx} style={{borderBottom:`1px solid rgba(255,255,255,0.05)`}}>
                 <button onClick={()=>setExpRow(isExp?null:r.symbol)} style={{width:'100%',background:isExp?CARD_BG:'transparent',border:'none',cursor:'pointer',textAlign:'left',padding:'12px 14px'}}>
-                  <div style={{display:'grid',gridTemplateColumns:'120px 150px 65px 65px 100px 110px 1fr 70px',gap:8,alignItems:'center'}}>
+                  <div style={{display:'grid',gridTemplateColumns:'120px 140px 60px 55px 90px 100px 70px 1fr 60px',gap:8,alignItems:'center'}}>
                     <div>
                       <div style={{display:'flex',alignItems:'center',gap:5}}>
                         <span style={{fontSize:F.lg,fontWeight:800,color:TEXT}}>{r.symbol}</span>
@@ -6833,19 +6844,33 @@ function USACompare() {
                         : null}
                       {r.marketCapB !== undefined && <span style={{fontSize:9,color:MUTED}}>${r.marketCapB >= 1 ? r.marketCapB.toFixed(1)+'B' : (r.marketCapB*1000).toFixed(0)+'M'}</span>}
                     </div>
+                    {/* ACCEL cell — signal + QoQ/Annual % only (R40 moved to own column) */}
                     <div style={{display:'flex',flexDirection:'column',gap:2}}>
                       <span style={{fontSize:F.xs,fontWeight:700,color:r.accelSignal==='ACCELERATING'?GREEN:r.accelSignal==='DECELERATING'?RED:MUTED}}>
                         {r.accelSignal??'—'}
                       </span>
                       {r.revenueGrowthQtr !== undefined && <span style={{fontSize:10,color:MUTED}}>QoQ +{r.revenueGrowthQtr.toFixed(0)}%</span>}
                       {r.revenueGrowthAnn !== undefined && <span style={{fontSize:10,color:MUTED}}>Ann +{r.revenueGrowthAnn.toFixed(0)}%</span>}
-                      {/* Rule of 40 badge */}
-                      {r.ruleOf40 !== undefined && (
-                        <span style={{fontSize:9,fontWeight:700,
-                          color:r.ruleOf40>=60?GREEN:r.ruleOf40>=40?YELLOW:r.ruleOf40>=20?ORANGE:RED,
-                          border:`1px solid ${r.ruleOf40>=40?GREEN:ORANGE}30`,padding:'0 4px',borderRadius:3}}>
-                          R40:{r.ruleOf40}
-                        </span>
+                    </div>
+                    {/* PATCH 0346 — R40 dedicated column: big number + tier color + composition */}
+                    <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:2}}>
+                      {r.ruleOf40 !== undefined ? (
+                        <>
+                          <span style={{fontSize:F.lg,fontWeight:900,
+                            color:r.ruleOf40>=80?GREEN:r.ruleOf40>=60?'#34d399':r.ruleOf40>=40?YELLOW:r.ruleOf40>=20?ORANGE:RED}}>
+                            {r.ruleOf40}
+                          </span>
+                          <span style={{fontSize:9,color:MUTED}}>
+                            {r.ruleOf40>=80?'🏆 elite':r.ruleOf40>=60?'strong':r.ruleOf40>=40?'passes':r.ruleOf40>=20?'weak':'fail'}
+                          </span>
+                          {r.revenueGrowthQtr !== undefined && r.fcfMarginAnn !== undefined && (
+                            <span style={{fontSize:9,color:`${MUTED}90`}} title={`R40 = Qtr Rev ${r.revenueGrowthQtr.toFixed(0)}% + FCF ${r.fcfMarginAnn.toFixed(0)}%`}>
+                              {r.revenueGrowthQtr.toFixed(0)}+{r.fcfMarginAnn.toFixed(0)}
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <span style={{fontSize:F.xs,color:`${MUTED}60`}}>—</span>
                       )}
                     </div>
                     <div style={{display:'flex',gap:4,alignItems:'center',flexWrap:'wrap'}}>
