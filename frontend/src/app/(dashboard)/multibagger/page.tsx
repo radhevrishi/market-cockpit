@@ -3850,6 +3850,46 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                           );
                         })}
                       </div>
+                      {/* PATCH 0316 — SCORING AUDIT BREAKDOWN. Shows the caps
+                          that fired and the count of each severity tier so
+                          the user can see at-a-glance why a stock landed at
+                          its score (e.g. "1 STRUCTURAL HIGH → cap 60"). */}
+                      {(() => {
+                        const crit = r.redFlags.filter(f => f.severity === 'CRITICAL').length;
+                        const structHigh = r.redFlags.filter(f => f.severity === 'HIGH' && (f.kind ?? 'STRUCTURAL') === 'STRUCTURAL').length;
+                        const cycHigh = r.redFlags.filter(f => f.severity === 'HIGH' && f.kind === 'CYCLICAL').length;
+                        const meds = r.redFlags.filter(f => f.severity === 'MEDIUM').length;
+                        const cap = crit > 0 ? 38
+                          : structHigh >= 2 ? 48
+                          : structHigh >= 1 ? 60
+                          : cycHigh >= 2 ? 62
+                          : cycHigh >= 1 ? 72
+                          : 100;
+                        const govWatch = (r as any).governanceWatch;
+                        return (
+                          <div style={{marginBottom:12,padding:'10px 12px',backgroundColor:CARD_BG,border:`1px solid ${BORDER}`,borderRadius:8}}>
+                            <div style={{fontSize:F.xs,fontWeight:800,letterSpacing:'0.7px',color:ACCENT,marginBottom:8}}>📋 SCORE AUDIT — WHY {r.score}?</div>
+                            <div style={{display:'flex',flexWrap:'wrap',gap:8,fontSize:F.xs}}>
+                              <span style={{padding:'2px 8px',borderRadius:4,border:`1px solid ${BORDER}`,color:TEXT}}>Composite: <strong>{r.score}</strong> · Grade <strong style={{color:GRADE_COLOR[r.grade]}}>{r.grade}</strong></span>
+                              {crit > 0 && <span style={{padding:'2px 8px',borderRadius:4,border:`1px solid ${RED}60`,backgroundColor:`${RED}14`,color:RED,fontWeight:700}}>{crit} CRITICAL · cap 38</span>}
+                              {structHigh > 0 && <span style={{padding:'2px 8px',borderRadius:4,border:`1px solid ${ORANGE}60`,backgroundColor:`${ORANGE}14`,color:ORANGE,fontWeight:700}}>{structHigh} HIGH structural · cap {structHigh>=2?48:60}</span>}
+                              {cycHigh > 0 && <span style={{padding:'2px 8px',borderRadius:4,border:`1px solid ${YELLOW}60`,backgroundColor:`${YELLOW}14`,color:YELLOW,fontWeight:700}}>{cycHigh} HIGH cyclical · cap {cycHigh>=2?62:72}</span>}
+                              {meds > 0 && <span style={{padding:'2px 8px',borderRadius:4,border:`1px solid ${MUTED}60`,color:MUTED,fontWeight:700}}>{meds} MEDIUM · −{meds*5}</span>}
+                              {govWatch && <span style={{padding:'2px 8px',borderRadius:4,border:`1px solid ${RED}60`,backgroundColor:`${RED}14`,color:RED,fontWeight:700}}>🛑 GOVERNANCE WATCH · cap 65</span>}
+                              {r.accelSignal === 'DECELERATING' && <span style={{padding:'2px 8px',borderRadius:4,border:`1px solid ${RED}60`,color:RED,fontWeight:700}}>DECELERATING · cap 52</span>}
+                              {r.bucket === 'MONITOR' && <span style={{padding:'2px 8px',borderRadius:4,border:`1px solid ${MUTED}60`,color:MUTED,fontWeight:700}}>MONITOR bucket · cap 45</span>}
+                              {cap < 100 && (
+                                <span style={{padding:'2px 8px',borderRadius:4,border:`1px solid ${ACCENT}60`,backgroundColor:`${ACCENT}14`,color:ACCENT,fontWeight:700}}>
+                                  Active cap: {cap}{r.score < cap ? '' : ' (binding)'}
+                                </span>
+                              )}
+                              {cap === 100 && r.redFlags.length === 0 && (
+                                <span style={{padding:'2px 8px',borderRadius:4,color:GREEN,fontWeight:700}}>No red-flag caps active — score is uncapped</span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
                       {/* Analysis */}
                       <div>
                         {r.strengths.length>0&&<>
@@ -3862,7 +3902,17 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                         </>}
                         {r.redFlags.length>0&&<>
                           <div style={{fontSize:F.sm,color:RED,fontWeight:700,letterSpacing:'0.8px',marginTop:12,marginBottom:6}}>🚨 RED FLAGS</div>
-                          {r.redFlags.map((f,i)=><div key={i} style={{fontSize:F.md,color:f.severity==='CRITICAL'?RED:ORANGE,padding:'3px 0'}}>⛔ {f.label} <span style={{fontSize:F.xs,color:MUTED}}>[{f.source}]</span></div>)}
+                          {r.redFlags.map((f,i)=>{
+                            const isStruct = (f.kind ?? 'STRUCTURAL') === 'STRUCTURAL';
+                            const cost = f.severity === 'CRITICAL' ? -25 : f.severity === 'HIGH' ? (isStruct ? -12 : -6) : -5;
+                            return (
+                              <div key={i} style={{fontSize:F.md,color:f.severity==='CRITICAL'?RED:ORANGE,padding:'3px 0'}}>
+                                ⛔ {f.label}
+                                <span style={{fontSize:F.xs,color:f.severity==='CRITICAL'?RED:ORANGE,fontWeight:700,marginLeft:6}}>{cost} pts</span>
+                                <span style={{fontSize:F.xs,color:MUTED,marginLeft:6}}>[{f.severity} · {isStruct?'structural':'cyclical'} · {f.source}]</span>
+                              </div>
+                            );
+                          })}
                         </>}
 
                         {/* ── PATCH 0056+0058: MULTIBAGGER FRAMEWORK PANEL ── */}
