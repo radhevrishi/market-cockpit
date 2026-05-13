@@ -3171,6 +3171,14 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   // P/E and PEG range filters — 'ALL' means no filter
   const [peMax, setPeMax] = useState<'ALL'|15|25|40|60|100>('ALL');
   const [pegMax, setPegMax] = useState<'ALL'|0.8|1.0|1.5|2.0>('ALL');
+  // PATCH 0345 — India institutional-quality composite filters (analogs of USA R40/Piotroski/GPM):
+  // "Quality of 50": ROCE + Profit CAGR ≥ threshold — India equivalent of Rule of 40.
+  // Captures both moat (ROCE) and growth in one metric.
+  const [indQualityMin, setIndQualityMin] = useState<'ALL'|50|75|100>('ALL');
+  // ROCE filter standalone — moat signature (>25% = elite, >20% = strong)
+  const [indRoceMin, setIndRoceMin] = useState<'ALL'|20|25|30>('ALL');
+  // Cash conversion — CFO/PAT ≥ 1.0 = earnings fully cash-backed (≥0.8 = clean, ≥1.0 = elite)
+  const [indCfoMin, setIndCfoMin] = useState<'ALL'|0.8|1.0>('ALL');
   // Guidance tier filter — only applies when guidanceMode is ON
   type GuidanceTier = 'ALL'|'STRONG'|'POS'|'NEUTRAL'|'NEG'|'WEAK';
   const [guidanceTier, setGuidanceTier] = useState<GuidanceTier>('ALL');
@@ -3536,6 +3544,14 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   // P/E and PEG filters — only apply when data is available for a stock
   if (peMax  !== 'ALL') baseRows = baseRows.filter(r => r.pe  !== undefined && r.pe  > 0 && r.pe  <= peMax);
   if (pegMax !== 'ALL') baseRows = baseRows.filter(r => r.peg !== undefined && r.peg > 0 && r.peg <= pegMax);
+  // PATCH 0345 — India institutional-quality composite filters (AND-style).
+  // "Quality of 50": ROCE + Profit CAGR ≥ threshold — India equivalent of USA Rule of 40.
+  if (indQualityMin !== 'ALL') baseRows = baseRows.filter(r => {
+    const score = (r.roce ?? 0) + (r.profitCagr ?? 0);
+    return score >= indQualityMin;
+  });
+  if (indRoceMin !== 'ALL') baseRows = baseRows.filter(r => (r.roce ?? 0) >= indRoceMin);
+  if (indCfoMin !== 'ALL')  baseRows = baseRows.filter(r => (r.cfoToPat ?? 0) >= indCfoMin);
   // Guidance tier filter — only meaningful when guidance mode is ON
   if (guidanceTier !== 'ALL' && guidanceMode) {
     baseRows = baseRows.filter(r => {
@@ -3811,6 +3827,40 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
             ].map(f=>(
               <button key={f.key} onClick={f.toggle} style={{fontSize:F.xs,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${f.active?ACCENT+'60':BORDER}`,background:f.active?ACCENT+'14':'transparent',color:f.active?ACCENT:MUTED,cursor:'pointer'}}>
                 {f.label} ({f.count})
+              </button>
+            ))}
+            {/* PATCH 0345 — India "Quality of 50" composite filter (analog of USA R40).
+                ROCE + Profit CAGR ≥ threshold. ≥50 = passes (MOSL elite baseline);
+                ≥75 = strong compounder; ≥100 = 100-bagger DNA tier.
+                Composes AND-style with all other filters. */}
+            <div style={{width:1,background:BORDER,height:20}}/>
+            <span style={{fontSize:F.xs,color:'#a78bfa',fontWeight:700,letterSpacing:'0.5px'}}>Q50:</span>
+            {(['ALL',50,75,100] as const).map(v=>(
+              <button key={String(v)} onClick={()=>setIndQualityMin(p=>p===v?'ALL':v)} style={{fontSize:F.xs,fontWeight:700,padding:'4px 9px',borderRadius:6,
+                border:`1px solid ${indQualityMin===v?'#a78bfa60':BORDER}`,background:indQualityMin===v?'#a78bfa14':'transparent',color:indQualityMin===v?'#a78bfa':MUTED,cursor:'pointer'}}
+                title={v==='ALL'?'No quality filter':`ROCE + Profit CAGR ≥ ${v}${v===100?' = 100-bagger DNA tier':v===75?' = strong compounder':' = MOSL elite baseline'}`}>
+                {v==='ALL'?'All':`≥${v}${v===100?' 🏆':''}`}
+                {v!=='ALL' && ` (${rows.filter(r=>(r.roce??0)+(r.profitCagr??0)>=v).length})`}
+              </button>
+            ))}
+            {/* PATCH 0345 — ROCE filter standalone (moat signature) */}
+            <div style={{width:1,background:BORDER,height:20}}/>
+            <span style={{fontSize:F.xs,color:'#10b981',fontWeight:700,letterSpacing:'0.5px'}}>ROCE:</span>
+            {(['ALL',20,25,30] as const).map(v=>(
+              <button key={String(v)} onClick={()=>setIndRoceMin(p=>p===v?'ALL':v)} style={{fontSize:F.xs,fontWeight:700,padding:'4px 9px',borderRadius:6,
+                border:`1px solid ${indRoceMin===v?'#10b98160':BORDER}`,background:indRoceMin===v?'#10b98114':'transparent',color:indRoceMin===v?'#10b981':MUTED,cursor:'pointer'}}>
+                {v==='ALL'?'All':`≥${v}%${v===30?' 💎':''}`}
+                {v!=='ALL' && ` (${rows.filter(r=>(r.roce??0)>=v).length})`}
+              </button>
+            ))}
+            {/* PATCH 0345 — CFO/PAT filter (cash conversion / earnings quality) */}
+            <div style={{width:1,background:BORDER,height:20}}/>
+            <span style={{fontSize:F.xs,color:'#34d399',fontWeight:700,letterSpacing:'0.5px'}}>CFO/PAT:</span>
+            {(['ALL',0.8,1.0] as const).map(v=>(
+              <button key={String(v)} onClick={()=>setIndCfoMin(p=>p===v?'ALL':v)} style={{fontSize:F.xs,fontWeight:700,padding:'4px 9px',borderRadius:6,
+                border:`1px solid ${indCfoMin===v?'#34d39960':BORDER}`,background:indCfoMin===v?'#34d39914':'transparent',color:indCfoMin===v?'#34d399':MUTED,cursor:'pointer'}}>
+                {v==='ALL'?'All':`≥${v.toFixed(1)}${v===1.0?'× 💎':'×'}`}
+                {v!=='ALL' && ` (${rows.filter(r=>(r.cfoToPat??0)>=v).length})`}
               </button>
             ))}
             {/* Guidance tier filter — only shown when guidance mode is ON */}
@@ -6447,6 +6497,13 @@ function USACompare() {
   const [usPegMax,      setUsPegMax]      = React.useState<'ALL'|0.8|1.0|1.5|2.0>('ALL');
   const [usFcfOnly,     setUsFcfOnly]     = React.useState(false);
   const [usRatingFilter,setUsRatingFilter]= React.useState<'ALL'|'BUY'|'STRONG_BUY'>('ALL');
+  // PATCH 0345 — Rule of 40 tiered filter. R40 is the canonical SaaS/growth
+  // institutional benchmark. ≥40 = passes; ≥60 = strong; ≥80 = elite (NVDA/PLTR tier).
+  const [usR40Min,      setUsR40Min]      = React.useState<'ALL'|40|60|80>('ALL');
+  // PATCH 0345 — Piotroski quality filter (≥7 = elite Greenblatt/Piotroski tier)
+  const [usPiotroskiMin,setUsPiotroskiMin]= React.useState<'ALL'|5|7>('ALL');
+  // PATCH 0345 — GPM quality filter (≥50% = real moat; ≥70% = elite SaaS)
+  const [usGpmMin,      setUsGpmMin]      = React.useState<'ALL'|40|60|70>('ALL');
   // USA sortable columns
   type USASort = 'score'|'fwdPe'|'peg'|'revGrowthAnn'|'ruleOf40'|'fcfMargin'|'marketCapB'|'grossMargin';
   const [usSortField, setUsSortField] = React.useState<USASort>('score');
@@ -6503,6 +6560,13 @@ function USACompare() {
   let filtered = gradeFilter.has('ALL') ? rows : rows.filter(r=>gradeFilter.has(r.grade));
   if (accelOnly)        filtered = filtered.filter(r=>r.accelSignal==='ACCELERATING');
   if (usFcfOnly)        filtered = filtered.filter(r=>(r.fcfMarginAnn ?? -99) >= 10);
+  // PATCH 0345 — Rule of 40 / Piotroski / GPM filters compose AND-style
+  if (usR40Min !== 'ALL')       filtered = filtered.filter(r=>(r.ruleOf40 ?? -999) >= usR40Min);
+  if (usPiotroskiMin !== 'ALL') filtered = filtered.filter(r=>(r.piotroskiFScore ?? -1) >= usPiotroskiMin);
+  if (usGpmMin !== 'ALL')       filtered = filtered.filter(r=>{
+    const gm = r.grossMarginTtm ?? r.grossMarginAnn;
+    return gm !== undefined && gm >= usGpmMin;
+  });
   // Analyst Rating filter
   if (usRatingFilter === 'BUY')       filtered = filtered.filter(r => r.analystRating?.toLowerCase().includes('buy'));
   if (usRatingFilter === 'STRONG_BUY')filtered = filtered.filter(r => r.analystRating?.toLowerCase().includes('strong buy'));
@@ -6616,6 +6680,41 @@ function USACompare() {
               <button onClick={()=>setUsFcfOnly(v=>!v)} style={{fontSize:F.xs,fontWeight:700,padding:'5px 12px',borderRadius:7,border:`1px solid ${usFcfOnly?'#38bdf8'+'60':BORDER}`,background:usFcfOnly?`${'#38bdf8'}14`:'transparent',color:usFcfOnly?'#38bdf8':MUTED,cursor:'pointer'}}>
                 💰 FCF≥10% ({rows.filter(r=>(r.fcfMarginAnn??-99)>=10).length})
               </button>
+
+              {/* PATCH 0345 — Rule of 40 tiered filter (composes AND-style with others) */}
+              <div style={{width:1,background:BORDER,height:18}}/>
+              <span style={{fontSize:F.xs,color:'#a78bfa',fontWeight:700}}>R40:</span>
+              {(['ALL',40,60,80] as const).map(v=>(
+                <button key={String(v)} onClick={()=>setUsR40Min(p=>p===v?'ALL':v)} style={{fontSize:F.xs,fontWeight:700,padding:'4px 9px',borderRadius:6,
+                  border:`1px solid ${usR40Min===v?'#a78bfa60':BORDER}`,background:usR40Min===v?'#a78bfa14':'transparent',color:usR40Min===v?'#a78bfa':MUTED,cursor:'pointer'}}>
+                  {v==='ALL'?'All':`≥${v}${v===80?' 🏆':''}`}
+                  {v!=='ALL' && ` (${rows.filter(r=>(r.ruleOf40 ?? -999) >= v).length})`}
+                </button>
+              ))}
+
+              {/* PATCH 0345 — Piotroski F-score filter (≥5 clean, ≥7 elite) */}
+              {rows.some(r=>r.piotroskiFScore !== undefined) && <>
+                <div style={{width:1,background:BORDER,height:18}}/>
+                <span style={{fontSize:F.xs,color:'#10b981',fontWeight:700}}>Piotroski:</span>
+                {(['ALL',5,7] as const).map(v=>(
+                  <button key={String(v)} onClick={()=>setUsPiotroskiMin(p=>p===v?'ALL':v)} style={{fontSize:F.xs,fontWeight:700,padding:'4px 9px',borderRadius:6,
+                    border:`1px solid ${usPiotroskiMin===v?'#10b98160':BORDER}`,background:usPiotroskiMin===v?'#10b98114':'transparent',color:usPiotroskiMin===v?'#10b981':MUTED,cursor:'pointer'}}>
+                    {v==='ALL'?'All':`≥${v}${v===7?'/9 💎':''}`}
+                    {v!=='ALL' && ` (${rows.filter(r=>(r.piotroskiFScore ?? -1) >= v).length})`}
+                  </button>
+                ))}
+              </>}
+
+              {/* PATCH 0345 — Gross margin filter (moat signature) */}
+              <div style={{width:1,background:BORDER,height:18}}/>
+              <span style={{fontSize:F.xs,color:'#34d399',fontWeight:700}}>GPM:</span>
+              {(['ALL',40,60,70] as const).map(v=>(
+                <button key={String(v)} onClick={()=>setUsGpmMin(p=>p===v?'ALL':v)} style={{fontSize:F.xs,fontWeight:700,padding:'4px 9px',borderRadius:6,
+                  border:`1px solid ${usGpmMin===v?'#34d39960':BORDER}`,background:usGpmMin===v?'#34d39914':'transparent',color:usGpmMin===v?'#34d399':MUTED,cursor:'pointer'}}>
+                  {v==='ALL'?'All':`≥${v}%`}
+                  {v!=='ALL' && ` (${rows.filter(r=>{const gm=r.grossMarginTtm??r.grossMarginAnn;return gm!==undefined && gm>=v;}).length})`}
+                </button>
+              ))}
 
               {/* Analyst Rating filter — only shown when data has ratings */}
               {rows.some(r=>r.analystRating) && <>
