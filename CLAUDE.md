@@ -1,7 +1,7 @@
 # Market Cockpit — Claude Handoff Memory
 
 > Read this FIRST when starting any new chat. Saves you 30 minutes of context-rebuilding.
-> Last updated: 2026-05-13 (after Patch 0347 — full scoring engine discipline + Decision logbook + cross-market upload detection. Patches 0332-0347 are detailed in section 10.9 below — read that section if continuing scoring work.)
+> Last updated: 2026-05-13 (after Patch 0349 — USA post-mortem fixes from PAYS 16% drop. Section 10.10 (batch-13) has the diagnosis + fixes. Section 10.9 (batch-12) has the prior scoring overhaul. Read both if continuing scoring work.)
 > **Sandbox-name caveat:** This file references the OLD sandbox `zen-epic-bardeen` in section 2. New sessions get a new sandbox name like `sleepy-serene-brahmagupta`. The repo path mapping pattern is `/Users/.../market-cockpit/` → `/sessions/<sandbox>/mnt/market-cockpit/` — substitute the active sandbox name from your bash mounts.
 
 ---
@@ -1159,7 +1159,111 @@ mc:decisions:v1             — PATCH 0347 personal decision logbook
    accountability. Add new tickers to the `MNC_ALLOWLIST` Set in page.tsx
    when discovered.
 
-## 11 · Patch Log Summary (0073 → 0347)
+## 10.10 · Batch-13 — USA post-mortem fixes from PAYS 16% drop (Patch 0349)
+
+User bought PAYS (Paysign, score 90 A+, the #2 USA pick) after Q1 earnings;
+stock dropped 16% immediately. Engine showed 17 strengths + 1 risk on PAYS —
+clearly broken signal-to-noise. Diagnosis identified five gaps in the USA
+scoring chain, all shipped in Patch 0349.
+
+### Root-cause analysis of PAYS A+ grade
+
+PAYS data the engine had:
+- FCF margin 54.2% on **Operating margin 9.0%** (ratio 6.0×)
+- Net profit margin 9.2%
+- +138% past year (1Y Performance)
+- Forward P/E 28×
+- Microcap (\$370M market cap)
+- Strong Buy analyst rating (after the 138% run)
+- Next earnings within reach of the user's purchase window
+
+Engine outcomes that were wrong:
+1. Awarded SaaS DNA bonus (+6) AND Elite R40 bonus (+5) on the basis of
+   the 54% FCF margin — but that FCF was almost certainly inflated by
+   working-capital release / SBC add-back / deferred revenue, not
+   sustainable from a 9% operating margin.
+2. Treated "+138% past year — momentum confirming fundamentals" as a
+   STRENGTH. After a 2× run at FwdPE 28×, the stock is priced for
+   perfection — any disappointment leads to 15-20% mean reversion.
+3. Gave Strong Buy full +8 to Market pillar despite the 138% run
+   already having happened. Per Womack 1996, post-run analyst upgrades
+   have near-zero predictive value.
+4. No position-size guidance — \$370M microcap volatility is structurally
+   2-3× large-cap. Score 90 microcap ≠ score 90 megacap.
+5. No earnings-proximity check — user bought near the print without
+   warning.
+
+### Patch 0349 — surgical fixes in `multibagger/page.tsx` (USA side)
+
+  0349a — **FCF / Op-Income divergence detector.** When `fcfMargin > 0`
+          AND `opmTtm > 0` AND `fcfMargin / opmTtm > 2.0` AND
+          `netProfitMargin < 15`, fire structural risk + suppress R40/DNA
+          bonuses via `noSpeculativeCap` gate + cap composite at 70.
+          Visible chip `🚨 FCF SUSPECT` with hover tooltip showing both
+          margins and the ratio. PAYS now caps at 70 (was 90).
+
+  0349b — **Post-run reversal cap.** If `perf1y > 100%` AND effective
+          P/E (forward preferred, fallback to trailing) > 25 (or > 30
+          when only trailing available), cap composite at 75. Visible
+          chip `🌡 STRETCHED` with hover showing perf1y and PE.
+
+  0349c — **Analyst-after-run discount.** When `perf1y > 50%` AND rating
+          ∈ {Buy, Strong Buy}, halve the Market-pillar boost (8 → 4,
+          4 → 2). Strength bullet rewrites to flag the discount + cite
+          Womack 1996. Sell/Strong Sell paths unchanged (those are
+          stronger signals when the stock is already up).
+
+  0349d — **Earnings-proximity warning.** Parses `nextEarnings` date
+          (handles both ISO and "MMM DD, YYYY" via `new Date()`). If
+          within 7 days from today, surfaces inline chip `⚠ EARNINGS Nd`
+          + risk bullet. Doesn't affect composite — pure timing-risk
+          surface.
+
+  0349e — **Position-size guidance chip.** Tiered by market cap:
+          `<\$0.5B → 1.5%`, `<\$1B → 2.5%`, `<\$5B → 5%`,
+          `<\$20B → 8%`, else 15%. Numeric chip `MAX X%` in the ticker
+          cell. Display-only — no score impact. Reasoning: institutional
+          position-sizing reflects liquidity / volatility, not just
+          composite score.
+
+### Retroactive re-score
+
+Existing loaded data picks up the new rules automatically on next page
+load via the existing `parsed.map(r => scoreUSARow(r as USARow))` flow
+at line 6527-6531. No localStorage migration needed.
+
+### New USAResult fields (returned from `scoreUSARow`)
+
+```ts
+fcfOpDivergence?: boolean;        // P0a flag — for chip rendering
+postRunStretched?: boolean;       // P0b flag — for chip rendering
+earningsProximityDays?: number;   // P1a — days to next earnings
+suggestedMaxPositionPct?: number; // P1b — tiered by market cap
+```
+
+### Architecture lesson — additive strengths, exception-only risks
+
+The scoring engine was systemically biased: every good metric stacked into
+strengths; risks only fired on specific exception rules. So a row with
+15 mediocre-but-not-flagged metrics + 2 great ones scored like the 2
+great ones existed alone. PAYS had 17 strength bullets — including FCF
+margin counted three times (once in strengths, once in R40, once in
+DNA bonus). The 0349 fixes don't address this fully; future work should
+de-duplicate same-data-point bonuses.
+
+### Open work for next pass (not yet shipped)
+
+- Single-source duplicate-bonus check: every score component should fire
+  on a unique data point. FCF margin currently contributes to R40 calc,
+  DNA bonus, AND standalone strength bullet — that's triple-counting.
+- Stale-fundamentals-vs-fresh-price detector: when most recent reported
+  quarter is > 60 days old AND price has moved > 15% in that window,
+  flag "data may be stale relative to recent price action."
+- Liquidity intelligence: average daily traded value column from
+  TradingView would let the position-size guidance be dynamic per row
+  rather than just mcap-tiered.
+
+## 11 · Patch Log Summary (0073 → 0349)
 
 Pre-session patches existed (0073–0095). Recent session highlights:
 
@@ -1320,6 +1424,10 @@ Pre-session patches existed (0073–0095). Recent session highlights:
 - 0345 — R40 filter (USA tiered) + Q50 composite filter (India)
 - 0346 — R40 = Quarterly Rev + FCF margin; dedicated sortable column
 - 0347 — Decision logbook (BUY/WATCH/NEUTRAL/REJECTED) + cross-market detection
+- 0348 — CLAUDE.md handoff memory update (section 10.9, batch-12 docs)
+- 0349 — USA scoring discipline: FCF/Op divergence cap, post-run reversal cap,
+         earnings-proximity warning, position-size guidance chip, analyst
+         after-run discount. Triggered by PAYS 16% drop post-earnings.
 
 **Other features:**
 - 0089–0094 — Earnings Hub merge, Special Situations pillar, Stock Sheet, Re-rating Screener
