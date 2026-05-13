@@ -263,6 +263,8 @@ interface ExcelRow {
   inventoryDays?: number;         // Screener "Inventory Days" — demand-slowdown leading indicator
   creditorDays?: number;          // Screener "Creditor Days" — supplier financing
   workingCapitalDays?: number;    // = debtor + inventory - creditor; if direct Screener field
+  debtorDays3y?: number;          // PATCH 0332 — Screener "Debtor days 3years back" — trend
+  workingCapitalDays3y?: number;  // PATCH 0332 — Screener "Average Working Capital Days 3years"
   interestCoverage?: number;      // Screener "Interest Coverage Ratio" — EBIT / Interest
   effectiveTaxRate?: number;      // Screener "Tax Rate %" or computed 3yr avg
   capex3yr?: number;              // Screener "Capex 3Yrs" (cumulative absolute capex)
@@ -1881,6 +1883,26 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
       }
     }
   }
+  // PATCH 0332 — Working-capital TREND signal (Screener 3yr-back columns).
+  // If debtor days or WC days have grown materially from 3y-ago, that's a
+  // multi-year deterioration — much more meaningful than a single quarter.
+  if (typeof row.debtorDays === 'number' && typeof row.debtorDays3y === 'number') {
+    const delta = row.debtorDays - row.debtorDays3y;
+    if (delta > 40 && row.debtorDays > 90) {
+      reratingBonus -= 5;
+      risks.push(`Debtor days deteriorating: ${row.debtorDays3y.toFixed(0)}d → ${row.debtorDays.toFixed(0)}d over 3Y (+${delta.toFixed(0)}d). Multi-year receivables buildup.`);
+    } else if (delta < -20 && row.debtorDays3y > 60) {
+      reratingBonus += 2;
+      strengths.push(`Debtor days improving: ${row.debtorDays3y.toFixed(0)}d → ${row.debtorDays.toFixed(0)}d over 3Y — collection discipline strengthening.`);
+    }
+  }
+  if (typeof row.workingCapitalDays === 'number' && typeof row.workingCapitalDays3y === 'number') {
+    const wcDelta = row.workingCapitalDays - row.workingCapitalDays3y;
+    if (wcDelta > 60 && row.workingCapitalDays > 90) {
+      reratingBonus -= 4;
+      risks.push(`Working capital expanding: ${row.workingCapitalDays3y.toFixed(0)}d → ${row.workingCapitalDays.toFixed(0)}d over 3Y. Capital efficiency degrading.`);
+    }
+  }
 
   // (B) INTEREST COVERAGE — below 3× is leverage distress regardless of D/E.
   if (typeof row.interestCoverage === 'number' && row.interestCoverage > 0) {
@@ -2399,15 +2421,39 @@ function buildColMap(sampleRow: Record<string,unknown>): Record<string,string> {
     // ── GAP 5: FCF Yield direct — user added as custom ratio ("FCF Yield") ──
     else if (o==='FCF Yield'||o==='FCF Yield %'||o==='Free cash flow yield'||o==='FCF yield')
       m['fcfYieldDirect']=col;
-    // ── PATCH 0317: New institutional metrics ──────────────────────────────
-    else if (o==='Debtor Days'||o==='Debtor days'||o==='Days sales outstanding'||o==='DSO')
+    // ── PATCH 0317 / 0332: New institutional metrics ────────────────────────
+    // Aliases align with the actual Screener.in export column names
+    // (see sample upload analysis). Includes both Screener's "Debtor days"
+    // and the alternate "Days Receivable Outstanding" naming.
+    else if (o==='Debtor Days'||o==='Debtor days'||o==='Days sales outstanding'||o==='DSO'||
+             o==='Days Receivable Outstanding')
       m['debtorDays']=col;
-    else if (o==='Inventory Days'||o==='Inventory days'||o==='Days inventory outstanding'||o==='DIO')
+    else if (o==='Inventory Days'||o==='Inventory days'||o==='Days inventory outstanding'||
+             o==='Days Inventory Outstanding'||o==='DIO')
       m['inventoryDays']=col;
-    else if (o==='Creditor Days'||o==='Creditor days'||o==='Days payable outstanding'||o==='DPO')
+    else if (o==='Creditor Days'||o==='Creditor days'||o==='Days payable outstanding'||
+             o==='Days Payable Outstanding'||o==='DPO')
       m['creditorDays']=col;
-    else if (o==='Working Capital Days'||o==='Working capital days'||o==='WC Days'||o==='Cash Conversion Cycle'||o==='CCC')
+    else if (o==='Working Capital Days'||o==='Working capital days'||o==='WC Days'||
+             o==='Cash Conversion Cycle'||o==='CCC')
       m['workingCapitalDays']=col;
+    // PATCH 0332 — Trend metrics from Screener
+    else if (o==='Debtor days 3years back'||o==='Debtor Days 3Y back')
+      m['debtorDays3y']=col;
+    else if (o==='Average Working Capital Days 3years'||o==='Working Capital Days 3Y avg')
+      m['workingCapitalDays3y']=col;
+    // PATCH 0332 — Other Income raw (Screener exposes as "Other income" ₹ Cr)
+    // We use it directly when % vs PBT isn't separately available.
+    else if (o==='Other income'||o==='Other Income')
+      m['otherIncome']=col;
+    // PATCH 0332 — 5Y high/low for volatility range computation
+    else if (o==='Low price all time'||o==='Low Price All Time')
+      m['lowPriceAllTime']=col;
+    else if (o==='High price all time'||o==='High Price All Time')
+      m['highPriceAllTime']=col;
+    // PATCH 0332 — Equity capital → share count proxy (Equity capital ₹ Cr / par value 10 = share count Cr)
+    else if (o==='Equity capital'||o==='Equity Capital'||o==='Equity Share Capital')
+      m['equityCapital']=col;
     else if (o==='Interest Coverage Ratio'||o==='Interest Coverage'||o==='Interest coverage'||o==='ICR')
       m['interestCoverage']=col;
     else if (o==='Tax rate %'||o==='Tax Rate %'||o==='Effective Tax Rate'||o==='Effective tax rate')
@@ -2579,6 +2625,8 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
     inventoryDays: n(m['inventoryDays']?row[m['inventoryDays']]:undefined),
     creditorDays: n(m['creditorDays']?row[m['creditorDays']]:undefined),
     workingCapitalDays: n(m['workingCapitalDays']?row[m['workingCapitalDays']]:undefined),
+    debtorDays3y: n(m['debtorDays3y']?row[m['debtorDays3y']]:undefined),
+    workingCapitalDays3y: n(m['workingCapitalDays3y']?row[m['workingCapitalDays3y']]:undefined),
     interestCoverage: n(m['interestCoverage']?row[m['interestCoverage']]:undefined),
     effectiveTaxRate: n(m['effectiveTaxRate']?row[m['effectiveTaxRate']]:undefined),
     capex3yr: n(m['capex3yr']?row[m['capex3yr']]:undefined),
@@ -2626,16 +2674,65 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
       return entries.map(([, v]) => v);
     })(),
     // PATCH 0322: Forensic fields
-    otherIncomePctPbt: n(m['otherIncomePctPbt']?row[m['otherIncomePctPbt']]:undefined),
+    otherIncomePctPbt: (() => {
+      // Prefer explicit % column.
+      const explicit = n(m['otherIncomePctPbt']?row[m['otherIncomePctPbt']]:undefined);
+      if (explicit !== undefined) return explicit;
+      // PATCH 0332 — derive from raw "Other Income" (₹ Cr) + EPS + Equity Capital.
+      // Net Profit ≈ EPS × share_count (where share_count = EqCap / 10).
+      // PBT ≈ Net Profit / (1 - tax_rate); use 0.25 as the standard Indian rate.
+      const otherInc = n(m['otherIncome']?row[m['otherIncome']]:undefined);
+      const epsVal = n(m['eps']?row[m['eps']]:undefined);
+      const eqCap = n(m['equityCapital']?row[m['equityCapital']]:undefined);
+      if (otherInc !== undefined && epsVal !== undefined && eqCap !== undefined && eqCap > 0) {
+        const shares = eqCap * 10; // crore shares at ₹10 par
+        const netProfit = epsVal * shares; // ₹ Cr
+        if (netProfit <= 0) return undefined;
+        const pbtApprox = netProfit / (1 - 0.25);
+        if (pbtApprox <= 0) return undefined;
+        return (otherInc / pbtApprox) * 100;
+      }
+      return undefined;
+    })(),
     cashAndEq: n(m['cashAndEq']?row[m['cashAndEq']]:undefined),
     cashAndEqPrev: n(m['cashAndEqPrev']?row[m['cashAndEqPrev']]:undefined),
-    numSharesNow: n(m['numSharesNow']?row[m['numSharesNow']]:undefined),
+    numSharesNow: (() => {
+      // PATCH 0332 — derive from Equity Capital (₹ Cr) ÷ par value (10 INR default)
+      // when Screener doesn't expose share count directly.
+      const explicit = n(m['numSharesNow']?row[m['numSharesNow']]:undefined);
+      if (explicit !== undefined) return explicit;
+      const eqCap = n(m['equityCapital']?row[m['equityCapital']]:undefined);
+      if (eqCap !== undefined) return eqCap * 10; // crore shares assuming ₹10 face value (most common)
+      return undefined;
+    })(),
     numShares3y: n(m['numShares3y']?row[m['numShares3y']]:undefined),
     rptRevenuePct: n(m['rptRevenuePct']?row[m['rptRevenuePct']]:undefined),
     auditorChangesLast3y: n(m['auditorChangesLast3y']?row[m['auditorChangesLast3y']]:undefined),
     subsidiaryCount: n(m['subsidiaryCount']?row[m['subsidiaryCount']]:undefined),
-    freeFloatPct: n(m['freeFloatPct']?row[m['freeFloatPct']]:undefined),
-    highLowRangePct: n(m['highLowRangePct']?row[m['highLowRangePct']]:undefined),
+    freeFloatPct: (() => {
+      // PATCH 0332 — derive from promoter holding: free float = 100 - promoter - pledged
+      const explicit = n(m['freeFloatPct']?row[m['freeFloatPct']]:undefined);
+      if (explicit !== undefined) return explicit;
+      const prom = n(m['promoter']?row[m['promoter']]:undefined);
+      const plg = n(m['pledge']?row[m['pledge']]:undefined);
+      if (prom !== undefined) {
+        // promoter's pledged shares are also locked, but conservatively
+        // subtract only the unpledged promoter % to get effective public float
+        return Math.max(0, 100 - prom);
+      }
+      return undefined;
+    })(),
+    highLowRangePct: (() => {
+      // PATCH 0332 — compute from High price all time / Low price all time if available.
+      const explicit = n(m['highLowRangePct']?row[m['highLowRangePct']]:undefined);
+      if (explicit !== undefined) return explicit;
+      const hi = n(m['highPriceAllTime']?row[m['highPriceAllTime']]:undefined);
+      const lo = n(m['lowPriceAllTime']?row[m['lowPriceAllTime']]:undefined);
+      if (hi !== undefined && lo !== undefined && lo > 0) {
+        return ((hi - lo) / lo) * 100;
+      }
+      return undefined;
+    })(),
     promoterEntityCount: n(m['promoterEntityCount']?row[m['promoterEntityCount']]:undefined),
     // Derived
     marginOfSafety:(iv!==undefined&&price!==undefined&&price>0)?Math.round((iv-price)/price*100):undefined,
