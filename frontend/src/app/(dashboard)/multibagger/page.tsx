@@ -1759,11 +1759,33 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   // (1) STORY-STOCK PATTERN — top-line growth without cash backing.
   //     Operator playbook: aggressive revenue recognition, weak collections,
   //     constant capital raises. Hard cap at composite ≤ 60 via HIGH red flag.
-  if ((row.yoySalesGrowth ?? 0) > 80 && (row.cfoToPat ?? 99) < 0.5) {
+  //
+  // PATCH 0337 — Threshold widened to catch Jeena Sikho / Insolation Energy
+  // pattern: 90% sales growth with CFO/PAT 0.76, FCF negative, microcap, and
+  // promoter declining 2-4pp over 3Y. The old gate (YoY > 80% AND CFO/PAT < 0.5)
+  // missed the more common variant where cash conversion is merely weak (not
+  // catastrophic) but combined with capital burn + microcap = same operator
+  // setup. Two-tier detector:
+  //   Severe — YoY > 80% AND CFO/PAT < 0.5         → HIGH structural (cap 60)
+  //   Pattern — YoY > 50% AND CFO/PAT < 0.8 AND FCF < 0 AND mcap < ₹10000 Cr
+  //              → HIGH structural (cap 60)
+  const sevStory = (row.yoySalesGrowth ?? 0) > 80 && (row.cfoToPat ?? 99) < 0.5;
+  const patternStory = !sevStory
+    && (row.yoySalesGrowth ?? 0) > 50
+    && (row.cfoToPat ?? 99) < 0.8
+    && (row.fcfAbsolute ?? 1) < 0
+    && (row.marketCapCr ?? 99999) < 10000;
+  if (sevStory) {
     redFlags.push({
       label: 'Story stock',
-      severity: 'HIGH',
+      severity: 'HIGH', kind: 'STRUCTURAL',
       source: `Sales +${row.yoySalesGrowth?.toFixed(0)}% YoY but CFO/PAT only ${row.cfoToPat?.toFixed(2)} — revenue isn't converting to cash, classic operator pattern.`,
+    });
+  } else if (patternStory) {
+    redFlags.push({
+      label: 'Story-stock pattern',
+      severity: 'HIGH', kind: 'STRUCTURAL',
+      source: `Sales +${row.yoySalesGrowth?.toFixed(0)}% + CFO/PAT ${row.cfoToPat?.toFixed(2)} + FCF negative + microcap ₹${(row.marketCapCr ?? 0).toFixed(0)} Cr — growth without cash backing on capital-burning microcap.`,
     });
   }
 
@@ -1888,7 +1910,17 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   // multi-year deterioration — much more meaningful than a single quarter.
   if (typeof row.debtorDays === 'number' && typeof row.debtorDays3y === 'number') {
     const delta = row.debtorDays - row.debtorDays3y;
-    if (delta > 40 && row.debtorDays > 90) {
+    // PATCH 0337 — Multi-year receivables deterioration is a top-3 institutional
+    // blowup predictor. Kwality Pharma pattern (55d → 152d over 3Y) was only a
+    // soft −5 rerating penalty; should be HIGH structural cap-60 because the
+    // trend is the signal even if current value is still under the 180d HIGH
+    // threshold (which applies to single-snapshot extreme).
+    if (delta > 60 && row.debtorDays > 90) {
+      redFlags.push({
+        label: `Debtor days ${row.debtorDays3y.toFixed(0)}d→${row.debtorDays.toFixed(0)}d over 3Y`,
+        severity: 'HIGH', source: 'Working capital trend', kind: 'STRUCTURAL',
+      });
+    } else if (delta > 40 && row.debtorDays > 90) {
       reratingBonus -= 5;
       risks.push(`Debtor days deteriorating: ${row.debtorDays3y.toFixed(0)}d → ${row.debtorDays.toFixed(0)}d over 3Y (+${delta.toFixed(0)}d). Multi-year receivables buildup.`);
     } else if (delta < -20 && row.debtorDays3y > 60) {
@@ -2230,6 +2262,32 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   // when the fundamentals themselves can't be independently verified.
   if (governanceWatch) {
     score = Math.min(score, 65);
+  }
+
+  // ── PATCH 0337: OP-LEVERAGE <1.0 COMPOSITE CAP ────────────────────────────
+  // 3B Blackbio pattern: op-lev 0.6 with great growth/quality pillars still
+  // scored 89 because the −10 hardPenalty wasn't enough to override the
+  // pillar magnitude. Costs growing faster than revenue means the company is
+  // scaling its way to lower returns — even great fundamentals don't justify
+  // A-grade if unit economics are deteriorating. Cap composite at 75 when
+  // op-lev < 1.0 with meaningful growth (excludes flat businesses).
+  if (row.recentOpLev !== undefined && row.recentOpLev < 1.0
+      && (row.yoySalesGrowth ?? 0) > 15) {
+    score = Math.min(score, 75);
+  }
+
+  // ── PATCH 0337: CYCLICAL-PEAK MARGINS COMPOSITE CAP ───────────────────────
+  // CEAT / Disa India pattern: cyclical sectors at margin peaks score A-grade
+  // because pillars don't discount for mean-reversion risk. The reratingBonus
+  // already takes −4 (cyclical) + −6 (cycle-peak) but pillar magnitude can
+  // still push past 80. Cap composite at 80 when (cyclical sector + OPM ≥ 1.5×
+  // sector p75 + profit CAGR > 40%) — the textbook "looks great at the peak"
+  // setup that mean-reverts.
+  if (cyclical
+      && row.opm !== undefined && b.opm[2] > 0
+      && row.opm > b.opm[2] * 1.5
+      && (row.profitCagr ?? 0) > 40) {
+    score = Math.min(score, 80);
   }
 
   // ── DECAY FILTER — binding caps from RAW numbers, not derived fields ─────────
@@ -3140,6 +3198,19 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
     // Re-apply decelerating + monitor bucket caps
     if (r.accelSignal === 'DECELERATING') newScore = Math.min(newScore, 52);
     if (r.bucket === 'MONITOR')           newScore = Math.min(newScore, 45);
+
+    // PATCH 0337 — Mirror the new op-lev <1.0 and cyclical-peak caps so
+    // guidance bonus can't slip an A-grade past them.
+    if (r.recentOpLev !== undefined && r.recentOpLev < 1.0
+        && (r.yoySalesGrowth ?? 0) > 15) {
+      newScore = Math.min(newScore, 75);
+    }
+    const b2cyc = (r.sector || '').match(/METAL|CHEMICAL|TEXTILE|OIL|SHIPPING|CEMENT|TIRE|RUBBER|PAPER/i) !== null;
+    if (b2cyc && r.opm !== undefined && (b2.opm?.[2] ?? 0) > 0
+        && r.opm > b2.opm[2] * 1.5
+        && (r.profitCagr ?? 0) > 40) {
+      newScore = Math.min(newScore, 80);
+    }
 
     // Re-apply A+ gate — guidance articles cannot grant A+ if quality gates fail
     if (newScore >= 90) {
