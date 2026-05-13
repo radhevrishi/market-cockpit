@@ -228,9 +228,7 @@ export default function StatusPage() {
   const runOne = async (probe: ProbeDef) => {
     setStates(s => ({ ...s, [probe.id]: { ...s[probe.id], status: 'loading' } }));
     // PATCH 0296 — Catch probe-side throws so a single failure can't leave
-    // a row stuck in 'loading' state. Probes already return `ok: false`
-    // for handled failures; this guards against unexpected crashes inside
-    // the probe (network exception, JSON parse error, etc.).
+    // a row stuck in 'loading' state.
     let result: ProbeResult;
     try {
       result = await probe.run();
@@ -243,10 +241,20 @@ export default function StatusPage() {
       };
     }
     setStates(s => ({ ...s, [probe.id]: { status: 'done', result, checkedAt: Date.now() } }));
-    // PATCH 0236 — record into 24h ring buffer
+    // PATCH 0236 — record into 24h local ring buffer for instant display.
     const entry: ProbeHistoryEntry = { t: Date.now(), ok: result.ok, ms: result.ms, status: result.status };
     appendHistory(probe.id, entry);
     setHistory(loadHistory());
+    // PATCH 0329 — Also POST to server-side heartbeat KV so health
+    // history is cross-user / cross-device. Fire-and-forget; failure
+    // doesn't block the local display.
+    try {
+      fetch(`/api/v1/heartbeat/${encodeURIComponent(probe.id)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ok: result.ok, ms: result.ms, status: String(result.status ?? 'unknown'), note: result.note }),
+      }).catch(() => { /* silent */ });
+    } catch { /* silent */ }
   };
 
   // PATCH 0296 — Promise.allSettled so one stuck probe can't hold up others.
