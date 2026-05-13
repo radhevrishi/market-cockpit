@@ -5805,7 +5805,15 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
     score = Math.min(score, 50);
   }
 
-  score = Math.max(0, Math.min(100, Math.round(score/5)*5));
+  // PATCH 0344 — Use Math.floor(score/5)*5 instead of Math.round(score/5)*5.
+  // Old Math.round meant cap=78 would round UP to 80 (jumping the A-grade
+  // boundary at >=80), bypassing the cap. Visible bugs in deployed output:
+  //   ATZAF (OTC cap 78) → 80 A+
+  //   UAN, STRL (R40<40 cap 78) → 80 A+
+  //   VMD (R40<30 cap 72) → 70 (correct) but grade A+ shows (stale render?)
+  //   Cap 72 was nondeterministically rounding to 70 or 75
+  // Math.floor ensures caps bind exactly. 78 stays 75. 72 stays 70.
+  score = Math.max(0, Math.min(100, Math.floor(score/5)*5));
 
   // Grade
   const grade: USAGrade = score>=90?'A+':score>=80?'A':score>=68?'B+':score>=55?'B':score>=42?'C':'D';
@@ -5845,17 +5853,37 @@ type USAResult = ReturnType<typeof scoreUSARow>;
 
 function applyUSARanking(results: USAResult[]): USAResult[] {
   if (!results.length) return results;
-  const n = results.length;
-  return results.map((r, idx) => {
-    const pct = idx / n;
-    let grade: USAGrade =
-      pct < 0.10 ? 'A+' : pct < 0.28 ? 'A' : pct < 0.55 ? 'B+' : pct < 0.75 ? 'B' : pct < 0.88 ? 'C' : 'D';
-    // Hard caps — mathematically derived
-    // $150B+ = cannot 100× realistically (PLTR $349B, NVDA $3T etc.)
-    if (r.marketCapB !== undefined && r.marketCapB > 150 && ['A+','A'].includes(grade)) grade = 'B+';
-    if (r.marketCapB !== undefined && r.marketCapB > 500 && grade === 'B+') grade = 'B';
-    if (r.revenueGrowthAnn !== undefined && r.revenueGrowthAnn < 10 && ['A+','A'].includes(grade)) grade = 'B+';
-    if (r.accelSignal === 'DECELERATING' && ['A+','A'].includes(grade)) grade = 'B+';
+  // PATCH 0344 — REWRITTEN. Old logic reassigned grade by percentile rank
+  // ("top 10% always A+"), which OVERROAD the score-based grade computed in
+  // scoreUSARow. Visible bugs in deployed output:
+  //   VMD at score 70 displayed as A+ (top 10% by rank, but score is B+ territory)
+  //   UAN, ATZAF at score 80 displayed as A+ (rank-pushed past score)
+  //   PLTR at score 95 displayed as B+ (mcap>150B downgrade was forcing this)
+  //
+  // New: use the SCORE-BASED grade (which already respects all the caps from
+  // Patch 0340-0343). Apply only hard-cap grade adjustments for cases where
+  // we want to demote regardless of pillar score: mega-cap (limited 100x
+  // runway from here), sub-10% growth, decelerating revenue.
+  return results.map(r => {
+    // Score-based grade is the source of truth (computed in scoreUSARow)
+    let grade: USAGrade = r.grade;
+
+    // Mega-cap downgrade: >$150B mcap cannot reasonably 100× — limit to B+ tier
+    if (r.marketCapB !== undefined && r.marketCapB > 150 && (grade === 'A+' || grade === 'A')) {
+      grade = 'B+';
+    }
+    // Mega-mega-cap downgrade: >$500B mcap can't realistically be a multibagger pick
+    if (r.marketCapB !== undefined && r.marketCapB > 500 && grade === 'B+') {
+      grade = 'B';
+    }
+    // Sub-10% growth in multibagger engine = not the thesis
+    if (r.revenueGrowthAnn !== undefined && r.revenueGrowthAnn < 10 && (grade === 'A+' || grade === 'A')) {
+      grade = 'B+';
+    }
+    // Decelerating revenue = momentum broken
+    if (r.accelSignal === 'DECELERATING' && (grade === 'A+' || grade === 'A')) {
+      grade = 'B+';
+    }
     return { ...r, grade };
   });
 }
