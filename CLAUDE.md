@@ -1,7 +1,7 @@
 # Market Cockpit — Claude Handoff Memory
 
 > Read this FIRST when starting any new chat. Saves you 30 minutes of context-rebuilding.
-> Last updated: 2026-05-13 (after Patch 0325 — Multibagger scoring overhaul: forensic pump-detector, severity tier split, audit panel, 20 new metric scaffolds. See METRICS_TO_ADD.md for Screener columns to add).
+> Last updated: 2026-05-13 (after Patch 0331 — backend wiring: playbooks → SS cards, z-scores → transmission drilldown, pump-score → row chip, score-Δ chip, heartbeat KV. See METRICS_TO_ADD.md for Screener columns to add).
 
 ---
 
@@ -931,7 +931,45 @@ governance / forensic / pump patterns. This batch addresses both.
     regression still pending (needs Postgres for coefficient storage)
   - Earnings overlay join — still pending
 
-## 11 · Patch Log Summary (0073 → 0325)
+## 10.8 · Batch-11 — Backend wiring + UX visibility (0326–0331)
+
+After batch-10 built the backend primitives (lifecycle, playbooks, z-score,
+heartbeat, EDGAR adapter), this batch wires them into the user-facing UI
+and surfaces the previously-hidden scoring signals as visible chips.
+
+  0326 — Forensic pump-score chip on row. Pump score >= 1 now renders
+         as a visible chip on the row (yellow/orange/red tiered). Hover
+         tooltip lists the firing forensic flags. Lets the analyst spot
+         operator-driven names at a glance without expanding the row.
+
+  0327 — Score-change vs prior upload chip upgraded. Was a tiny ↑/↓
+         arrow; now a proper chip with NEW (purple) / = (muted) /
+         ▲+N (green) / ▼-N (red). Tooltip shows the prior score.
+
+  0328 — Special Situations playbook intelligence panel. When user
+         expands a Special Situations event card, the new 📐 PLAYBOOK
+         panel surfaces institutional priors for the event type:
+         avg close days + p25-p75 range, success rate %, typical spread,
+         retail-overhang flag, tactics paragraph, failure modes. 16
+         event types covered from lib/specsit-playbooks.ts.
+
+  0329 — Status page POSTs to server-side heartbeat KV. Every probe
+         result now also fires a background POST to
+         /api/v1/heartbeat/<probe-id> so health history accumulates
+         cross-device. Local ring buffer remains for instant display.
+
+  0330 — Transmission z-score chips in commodity drilldown. New
+         ZScoreChips component lazy-fetches 60d/180d/365d/5yr z-scores
+         when a commodity drilldown opens. Renders chip strip with
+         color tiering (red/orange/grey/cyan/green by extreme),
+         percentile, and 1y institutional interpretation summary.
+         Z-score endpoint also accepts ?symbol= override so the
+         transmission page passes each commodity's actual Yahoo symbol
+         without re-deriving the keying.
+
+  0331 — This documentation update.
+
+## 11 · Patch Log Summary (0073 → 0331)
 
 Pre-session patches existed (0073–0095). Recent session highlights:
 
@@ -1070,6 +1108,12 @@ Pre-session patches existed (0073–0095). Recent session highlights:
 - 0323 — METRICS_TO_ADD.md user-facing doc
 - 0324 — Transmission z-score statistical layer
 - 0325 — CLAUDE.md update (end of batch-10)
+- 0326 — Forensic pump-score chip visible on Multibagger row
+- 0327 — Score-change chip (NEW / = / ▲+N / ▼-N) on row
+- 0328 — Special Situations playbook intelligence panel
+- 0329 — Status page POSTs to server-side heartbeat KV
+- 0330 — Transmission z-score chips in commodity drilldown
+- 0331 — CLAUDE.md update (end of batch-11)
 
 **Other features:**
 - 0089–0094 — Earnings Hub merge, Special Situations pillar, Stock Sheet, Re-rating Screener
