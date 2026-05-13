@@ -373,7 +373,10 @@ interface ExcelResult extends ExcelRow {
   bucket: Bucket;
   decisionStrip: DecisionStrip;
   pillarScores: { id: string; label: string; score: number; color: string; weight: number }[];
-  redFlags: { label: string; severity: 'CRITICAL'|'HIGH'|'MEDIUM'; source: string }[];
+  // PATCH 0315 — `kind` distinguishes STRUCTURAL (governance / leverage /
+  // capital-allocation / pattern) from CYCLICAL (single-quarter or mean-
+  // revertable concern). Caps differ: STRUCTURAL HIGH → 60, CYCLICAL HIGH → 72.
+  redFlags: { label: string; severity: 'CRITICAL'|'HIGH'|'MEDIUM'; source: string; kind?: 'STRUCTURAL'|'CYCLICAL' }[];
   strengths: string[]; risks: string[];
   coverage: number;
   reratingBonus: number;
@@ -877,7 +880,7 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   const cyclical = isCyclicalSector(row.sector);
   const strengths: string[] = [];
   const risks: string[] = [];
-  const redFlags: { label:string; severity:'CRITICAL'|'HIGH'|'MEDIUM'; source:string }[] = [];
+  const redFlags: { label:string; severity:'CRITICAL'|'HIGH'|'MEDIUM'; source:string; kind?: 'STRUCTURAL'|'CYCLICAL' }[] = [];
 
   // PRE-BUCKET: rough classification used to relax thresholds for Emerging bucket
   // (Full bucket classification happens after scoring)
@@ -1029,7 +1032,7 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
       strengths.push(`Revenue ACCELERATING: +${row.yoySalesGrowth?.toFixed(0)}% vs CAGR ${row.revCagr?.toFixed(0)}% (+${row.revenueAcceleration?.toFixed(0)}pp) — Framework Core Signal`);
     } else if (row.accelSignal === 'DECELERATING') {
       risks.push(`Revenue DECELERATING: ${row.yoySalesGrowth?.toFixed(0)}% vs CAGR ${row.revCagr?.toFixed(0)}% (${row.revenueAcceleration?.toFixed(0)}pp) — Framework rejection filter`);
-      redFlags.push({ label: `Revenue decelerating`, severity: 'HIGH', source: 'Framework' });
+      redFlags.push({ label: `Revenue decelerating`, severity: 'HIGH', source: 'Framework', kind: 'CYCLICAL' });
     }
   }
   // FIX #2+#3: Operating leverage as primary scored input in acceleration pillar
@@ -1524,10 +1527,14 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   const hasCrit  = redFlags.some(f=>f.severity==='CRITICAL');
   const highCnt  = redFlags.filter(f=>f.severity==='HIGH').length;
   const medCnt   = redFlags.filter(f=>f.severity==='MEDIUM').length;
+  // PATCH 0315 — structural-vs-cyclical split used by both bucket logic and
+  // final score caps. Bucket hard-fail should require structural failures,
+  // not single-quarter cyclical noise.
+  const highStructPre = redFlags.filter(f=>f.severity==='HIGH' && (f.kind ?? 'STRUCTURAL') === 'STRUCTURAL').length;
 
-  const isHardFail = hasCrit || highCnt>=2 || (row.accelSignal==='DECELERATING'&&highCnt>=1) || (row.de??0)>2.5 || (row.pledge??0)>40;
-  const isCoreCompounder = !isHardFail && (row.roce??0)>=18 && (row.cfoToPat??0)>=0.8 && (row.de??999)<=0.5 && (row.revCagr??0)>=15 && (row.promoter??0)>=40 && highCnt===0;
-  const isEmergingMultibagger = !isHardFail && !isCoreCompounder && (row.accelSignal==='ACCELERATING'||(row.yoySalesGrowth??0)>=25) && (row.recentOpLev??0)>=1.0 && (row.marketCapCr??99999)<=10000 && highCnt<=1;
+  const isHardFail = hasCrit || highStructPre>=2 || (row.accelSignal==='DECELERATING'&&highStructPre>=1) || (row.de??0)>2.5 || (row.pledge??0)>40;
+  const isCoreCompounder = !isHardFail && (row.roce??0)>=18 && (row.cfoToPat??0)>=0.8 && (row.de??999)<=0.5 && (row.revCagr??0)>=15 && (row.promoter??0)>=40 && highStructPre===0;
+  const isEmergingMultibagger = !isHardFail && !isCoreCompounder && (row.accelSignal==='ACCELERATING'||(row.yoySalesGrowth??0)>=25) && (row.recentOpLev??0)>=1.0 && (row.marketCapCr??99999)<=10000 && highStructPre<=1;
   const bucket: Bucket = isHardFail?'MONITOR':isCoreCompounder?'CORE_COMPOUNDER':isEmergingMultibagger?'EMERGING_MULTIBAGGER':'HIGH_RISK';
 
   // 7-pillar weight sets [qual, growth, accel, longe, fin, val, mkt]
@@ -1832,7 +1839,15 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   // ── FINAL SCORE ───────────────────────────────────────────────────────────
   const rawAfterPenalty = Math.max(0, raw - hardPenalty);
   const penalized = rawAfterPenalty * (0.5 + coverageRatio * 0.5);
-  const redFlagPenalty = (hasCrit?25:0) + (highCnt*12) + (medCnt*5);
+  // PATCH 0315 — HIGH severity is now tier-split. Structural HIGH (governance,
+  // leverage, capital-allocation) carries full -12 penalty + cap 60. Cyclical
+  // HIGH (single-quarter margin slip, revenue decel) carries -6 penalty + cap 72.
+  // Lets fundamentally strong names that ran into one mean-revertable issue
+  // still grade B+ instead of getting flattened to B.
+  // (highStructPre was computed at bucket time — reuse it.)
+  const highStructuralCnt = highStructPre;
+  const highCyclicalCnt   = redFlags.filter(f => f.severity === 'HIGH' && f.kind === 'CYCLICAL').length;
+  const redFlagPenalty = (hasCrit?25:0) + (highStructuralCnt*12) + (highCyclicalCnt*6) + (medCnt*5);
 
   // Block trigger bonuses entirely when in deceleration phase.
   // Op leverage 3.7x on a decelerating stock is a LAGGING signal, not a forward one.
@@ -1844,10 +1859,13 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
 
   let score = Math.round((penalized - redFlagPenalty + totalBonus) / 5) * 5;
 
-  // ── STANDARD RED FLAG CAPS ─────────────────────────────────────────────────
-  if (hasCrit)            score = Math.min(score, 38);
-  else if (highCnt >= 2)  score = Math.min(score, 48);
-  else if (highCnt >= 1)  score = Math.min(score, 60);
+  // ── STANDARD RED FLAG CAPS (PATCH 0315 — kind-aware) ─────────────────────
+  if (hasCrit)                          score = Math.min(score, 38);
+  else if (highStructuralCnt >= 2)      score = Math.min(score, 48);   // 2+ structural flags = structural failure
+  else if (highStructuralCnt >= 1)      score = Math.min(score, 60);   // 1 structural flag = ceiling at B
+  else if (highCyclicalCnt >= 2)        score = Math.min(score, 62);   // 2+ cyclical flags = clear pressure
+  else if (highCyclicalCnt >= 1)        score = Math.min(score, 72);   // 1 cyclical flag = still B+ ceiling
+  // Mixed case (1 of each) hits the structural cap first (60) since structural dominates.
   if (row.accelSignal === 'DECELERATING') score = Math.min(score, 52);
   if (bucket === 'MONITOR') score = Math.min(score, 45);
 
