@@ -1,7 +1,7 @@
 # Market Cockpit — Claude Handoff Memory
 
 > Read this FIRST when starting any new chat. Saves you 30 minutes of context-rebuilding.
-> Last updated: 2026-05-13 (after Patch 0304 — session close; ~30 patches in this round).
+> Last updated: 2026-05-13 (after Patch 0312 — backend-batch lift: merger-arb, deal-prob, heartbeat, source-tier KV, NSE adapter, ticker-roles, public API).
 
 ---
 
@@ -730,7 +730,83 @@ Session end-state: ~30 patches shipped this round (0272–0303). All
 12 SEV1 audit items and 6 IMP items either fixed or verified as
 false positives. Type-check clean. Deployed to main.
 
-## 11 · Patch Log Summary (0073 → 0303)
+## 10.6.9 · Batch-9 — Backend-batch lift (Patches 0305–0312)
+
+User asked: "fix all these" backend-blocked items from §10.7. Of those
+items, the ones that can be done with the existing Vercel + Upstash KV
+stack (no new Postgres, no Auth provider, no paid feeds) shipped in
+this batch. Each is wired so that when the schema-backed versions
+eventually land, the existing endpoint can become a thin proxy.
+
+  0305 — `lib/merger-arb.ts` — pure offer/spot/close-date → IRR math
+         with tightness labels + probability-weighted expected IRR.
+         New `SimpleArbCalc` panel on Special Situations alongside the
+         existing AcceptanceCalc + FloatingCalc.
+
+  0306 — `lib/deal-probability.ts` — heuristic deal-probability engine.
+         Takes filing tier + spread + days since announcement +
+         regulatory hurdles + friendliness + financing + insider
+         ownership → score 0-100 with factor-by-factor explainability.
+
+  0307 — `/api/v1/heartbeat/<pipeline>` POST/GET — KV-backed ring
+         buffer per pipeline (240 entries, 7-day TTL). Replaces the
+         per-browser localStorage mc:status-history:v1 (Patch 0236)
+         with cross-user persistent log so the Status page can show
+         shared health history across devices.
+
+  0308 — Source-tier KV override table.
+            POST/GET/DELETE /api/v1/admin/source-tiers (secret-gated)
+            GET            /api/v1/source-tier (public resolver)
+         Hardcoded lib/source-tiers.ts heuristic remains the fallback;
+         KV overrides win when present. Editors can curate without
+         redeploying.
+
+  0309 — `/api/v1/earnings/nse-announcements` — Tier 2 of the
+         institutional filing-date resolver. Hits NSE corp-announcements,
+         finds the most-recent "Quarterly/Financial Results" filing,
+         caches in KV 24h. Returns NSE_DIRECT / NSE_BLOCKED / NSE_EMPTY
+         / KV_CACHED so callers know provenance.
+
+  0310 — `/api/v1/ticker-roles/<ticker>` — server-side classifier that
+         reads last 30d of news for the ticker, weights by importance
+         + sentiment + article_type, returns BENEFICIARY/LOSER/NEUTRAL
+         with -100..+100 score and evidence breakdown. KV-cached 24h.
+         Replaces the per-browser client v0 (Patch 0234).
+
+  0311 — Public read-only API scaffold at `/api/v1/public/graded/<date>`.
+         Shared-key auth via PUBLIC_API_KEYS env var (or anonymous when
+         PUBLIC_API_ANON=1). Rate-limited 60/h per key in KV. Redacted
+         response (no internal scoring, no news URLs). README in
+         frontend/src/app/api/v1/public/README.md.
+
+  0312 — This documentation update.
+
+### Still requiring infra decisions
+
+The remaining items in §10.7 genuinely need user input:
+
+  - **Auth provider** (Clerk / Supabase Auth / NextAuth) — blocks
+    server-side persistence of Notebooks, Saved Views, Alert Rules,
+    and the audit log.
+  - **Postgres / Supabase DB** — needed for Signal + SignalEvidence,
+    ticker_roles real table, theme_revisions diff log, lifecycle
+    state machine. Once we have a DB, migrations from the existing
+    KV pattern are straightforward.
+  - **Slack / SMTP / webhook creds** — to deliver Alert Rules
+    server-side. The client v0 (Patch 0237) + import/export (0279)
+    keeps rules portable in the meantime.
+  - **Paid data subscriptions** (Argus / Platts / CRU / ICIS) — equity
+    proxy mode (Patch 0250) gives directional signal for the 14
+    manual-feed transmission inputs until real feeds land.
+  - **SEC EDGAR + India MCA parsers** for SEC TO-T / Schedule TO /
+    10-12B / NCLT scheme docs — needs a Vercel cron + parsing pipeline.
+    Patch 0309 gets the NSE corp-announcements adapter going; the
+    EDGAR side is the next building block.
+
+These are listed in priority order. **Auth first** unlocks the most
+downstream features.
+
+## 11 · Patch Log Summary (0073 → 0312)
 
 Pre-session patches existed (0073–0095). Recent session highlights:
 
@@ -848,6 +924,14 @@ Pre-session patches existed (0073–0095). Recent session highlights:
 - 0302 — Calendars: prominent index-filter chip in header
 - 0303 — Watchlist empty-state cross-links to Conviction Beats + Screener
 - 0304 — CLAUDE.md update (end of batch-8 / session close)
+- 0305 — lib/merger-arb.ts + SimpleArbCalc panel on Special Situations
+- 0306 — lib/deal-probability.ts heuristic engine
+- 0307 — /api/v1/heartbeat/<pipeline> KV ring buffer
+- 0308 — Source-tier KV override table (admin + public resolver)
+- 0309 — /api/v1/earnings/nse-announcements Tier 2 resolver
+- 0310 — /api/v1/ticker-roles/<ticker> server-side classifier
+- 0311 — /api/v1/public/graded/<date> public API with rate-limit
+- 0312 — CLAUDE.md update (end of batch-9)
 
 **Other features:**
 - 0089–0094 — Earnings Hub merge, Special Situations pillar, Stock Sheet, Re-rating Screener
