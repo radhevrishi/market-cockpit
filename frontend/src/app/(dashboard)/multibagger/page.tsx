@@ -1727,26 +1727,80 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   const p = row.promoter ?? 100;
   const fd = row.fiiPlusDii ?? 100;
   const mcap = row.marketCapCr ?? 0;
-  const governanceWatch =
-    p <= 25 &&
-    fd <= 5 &&
-    mcap > 0 && mcap < 2000;
-  if (governanceWatch) {
+
+  // PATCH 0338 — MNC / Foreign-parent allowlist. These tickers have foreign
+  // parent governance (US/UK/Japan/EU-listed parent companies) and are
+  // exempt from the institutional-vacuum and governance-watch penalties.
+  // Their low Indian-institutional ownership is structural (parent holds
+  // majority) and does NOT reflect a diligence-failure. Adding them keeps
+  // genuinely clean MNC subs (Kennametal India, Carraro India, Nitta
+  // Gelatin's foreign-anchored variant) from being penalized.
+  const MNC_ALLOWLIST = new Set<string>([
+    'KENNAMET','CARRARO','NITTAGELA','GRINDWELL','BOSCHLTD','ABB','SIEMENS',
+    '3MINDIA','HONAUT','CASTROLIND','CASTROL','NESTLEIND','HUL','HINDUNILVR',
+    'COLPAL','GILLETTE','GSK','SANOFI','PFIZER','PROCTER','PGHH','PROCTERG',
+    'WHIRLPOOL','ASTRAZEN','THOMASCOOK','TIMKEN','SKFINDIA','FAGBEAR','MAHSCOOTER',
+    'CUMMINSIND','SCHAEFFLER','CASTROL','SULZER','LINDEINDIA','ESABINDIA',
+  ]);
+  const isMNC = MNC_ALLOWLIST.has((row.symbol || '').toUpperCase());
+
+  // PATCH 0338 — Governance Watch tiering. Old code was a single bucket
+  // (cap 65). Now split:
+  //   EXTREME — promoter ≤20 AND FII+DII ≤3 AND mcap <1000 Cr → CRITICAL
+  //             red flag (cap 38). This is the unambiguous operator-driven
+  //             microcap fingerprint (Vakrangee / Manpasand / PC Jeweller).
+  //   STANDARD — promoter ≤25 AND FII+DII ≤5 AND mcap <2000 Cr → cap 65
+  //             (unchanged from Patch 0313).
+  // MNC-allowlist tickers are exempt.
+  const extremeGov = !isMNC && p <= 20 && fd <= 3 && mcap > 0 && mcap < 1000;
+  const governanceWatch = !isMNC && p <= 25 && fd <= 5 && mcap > 0 && mcap < 2000;
+  if (extremeGov) {
+    redFlags.push({
+      label: `Governance Watch EXTREME: P ${p.toFixed(0)}% + Inst ${fd.toFixed(1)}% + ₹${mcap.toFixed(0)} Cr`,
+      severity: 'CRITICAL', kind: 'STRUCTURAL', source: 'Operator setup'
+    });
+    risks.push(
+      `🛑 GOVERNANCE WATCH EXTREME: Promoter ${p.toFixed(0)}% + FII+DII ${fd.toFixed(1)}% + MCap ₹${mcap.toFixed(0)} Cr — classic Vakrangee/Manpasand operator setup. Trust reported numbers minimally.`
+    );
+  } else if (governanceWatch) {
     reratingBonus -= 8;
     risks.push(
       `GOVERNANCE WATCH: Promoter ${p.toFixed(0)}% + FII+DII ${fd.toFixed(1)}% + MCap ₹${mcap.toFixed(0)} Cr — classic operator-driven small-cap setup. Strong reported numbers without institutional scrutiny carry pump-and-dump risk. Score capped at 65.`
     );
   }
   (row as any).governanceWatch = governanceWatch;
+  (row as any).extremeGov = extremeGov;
+
+  // PATCH 0338 — MNC governance boost. Foreign-parent subsidiaries get a
+  // small +3 reratingBonus because parent's listing-exchange governance
+  // (US 10-K, UK Listing Rules, Japan TSE disclosure, etc.) is a stronger
+  // backstop than typical Indian small-cap promoter accountability.
+  if (isMNC) {
+    reratingBonus += 3;
+    strengths.push(`MNC governance: foreign-listed parent provides Tier-1 disclosure/audit backstop.`);
+  }
+  (row as any).mncSubsidiary = isMNC;
 
   // ── PATCH 0313: Institutional-vacuum demerit for mid-caps that institutions
   // had a chance to discover and passed on. Below ₹500 Cr the absence is
   // explained by size; above ₹500 Cr it's a deliberate institutional pass.
-  if (fd <= 1 && mcap >= 500 && mcap < 5000) {
+  //
+  // PATCH 0338 — Exemption for (a) MNC subsidiaries, (b) clean compounders
+  // with 8/8 survival + ROCE >20 + CFO/PAT >1 (institutions haven't reached
+  // these YET — they aren't "passing", they're "not yet aware"). Catches
+  // INA, Borana, InfoBeans type names that look "passed-over" by the raw
+  // metric but are genuinely under-the-radar quality.
+  const instVacuumExempt =
+    isMNC
+    || ((row.cfoToPat ?? 0) > 1.0 && (row.roce ?? 0) > 20 && (row.fcfAbsolute ?? -1) > 0
+        && redFlags.filter(f => f.severity === 'CRITICAL' || f.severity === 'HIGH').length === 0);
+  if (fd <= 1 && mcap >= 500 && mcap < 5000 && !instVacuumExempt) {
     reratingBonus -= 5;
     risks.push(
       `Institutional vacuum at ₹${mcap.toFixed(0)} Cr mcap — institutions had access and passed. Diligence gap.`
     );
+  } else if (fd <= 1 && mcap >= 500 && mcap < 5000 && instVacuumExempt && !isMNC) {
+    strengths.push(`Genuinely undiscovered: low institutional but clean cash conversion + ROCE — likely pre-discovery quality compounder, not a passed-over name.`);
   }
 
   // ── PATCH 0314: INSTITUTIONAL RED FLAGS — six additional detectors ─────────
@@ -2152,21 +2206,28 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   (row as any).pumpScore = pumpScore;
   (row as any).pumpFlags = pumpFlags;
 
-  // Apply pump-score consequences. ≥5 = CRITICAL (cap 38). ≥3 = HIGH structural
-  // (cap 60). ≥1 = MEDIUM (mild penalty). Each pump flag also goes into risks.
-  if (pumpScore >= 5) {
+  // PATCH 0338 — Forensic pump-detector thresholds tightened. The deployed
+  // output showed multiple "pump 2" tagged stocks (Dolphin Offshore, Garuda,
+  // Prostarm, Yash Highvoltage, Vincofe, Sigma Solve at pumpScore=2) scoring
+  // mid-table C-grade because the detector only fired HIGH at ≥3 and CRITICAL
+  // at ≥5. In an operator-heavy market, pumpScore ≥2 is already enough
+  // independent signals to warrant HIGH structural treatment. Lowered:
+  //   ≥4 = CRITICAL (cap 38)   ← was ≥5
+  //   ≥2 = HIGH structural (cap 60)   ← was ≥3
+  //   1  = MEDIUM (−2 rerating)        ← unchanged
+  if (pumpScore >= 4) {
     redFlags.push({
       label: `Forensic pump signals: ${pumpScore} red flags`,
       severity: 'CRITICAL',
-      source: 'Forensic forensics',
+      source: 'Forensic detector',
       kind: 'STRUCTURAL',
     });
     risks.push(`🚨 FORENSIC ALERT — Multiple operator-pump signals detected: ${pumpFlags.slice(0, 5).join(' · ')}. Treat reported fundamentals with extreme skepticism.`);
-  } else if (pumpScore >= 3) {
+  } else if (pumpScore >= 2) {
     redFlags.push({
       label: `Forensic pump signals: ${pumpScore} flags`,
       severity: 'HIGH',
-      source: 'Forensic forensics',
+      source: 'Forensic detector',
       kind: 'STRUCTURAL',
     });
     risks.push(`Forensic flags: ${pumpFlags.join(' · ')}. Surface fundamentals may not reflect underlying reality.`);
@@ -2191,6 +2252,83 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   if ((row.changeInPromoter??0) < -2 && (row.promoter??0) <= 30) {
     reratingBonus -= 10;
     risks.push(`Promoter exit pattern: ${row.promoter?.toFixed(0)}% holding declining by ${Math.abs(row.changeInPromoter??0).toFixed(1)}pp — operator may be cashing out into retail float.`);
+  }
+
+  // ── PATCH 0338: 500-BAGGER DNA BONUS ───────────────────────────────────────
+  // Mining the archetypes already in the engine (Page Industries 2008, Astral
+  // Pipes 2010, Avanti Feeds 2011, Caplin Point 2014, Symphony 2010, Bajaj
+  // Finance 2010, Eicher Motors 2003), every single one had this exact DNA at
+  // its 100x setup point:
+  //
+  //   (1) Promoter 50-75% — sweet spot. Below 50 = operator risk. Above 85 =
+  //       sleepy holding, no float for institutional re-rating.
+  //   (2) ROCE > 25% sustained — pricing power confirmed.
+  //   (3) CFO/PAT > 1.0 — earnings fully cash-backed.
+  //   (4) FCF positive — self-funding growth (no dilution).
+  //   (5) D/E < 0.3 — clean balance sheet (or zero for asset-light).
+  //   (6) Non-cyclical sector — durable economics.
+  //   (7) Sales CAGR > 18% — meaningful base growth runway.
+  //
+  // When ALL seven align, this is the canonical setup. Add +6 reratingBonus
+  // (substantial — comparable to a tier-1 sector tailwind). This is the
+  // "looks like Page Industries 2008" signature reward.
+  //
+  // Critical: if ANY operator/governance red flag fires (CRITICAL or HIGH
+  // structural), this bonus does NOT apply — clean people first, then DNA.
+  const hasHighStructEarly = redFlags.some(f =>
+    f.severity === 'CRITICAL' ||
+    (f.severity === 'HIGH' && (f.kind ?? 'STRUCTURAL') === 'STRUCTURAL')
+  );
+  const dnaPromoter   = (row.promoter ?? 0) >= 50 && (row.promoter ?? 0) <= 75;
+  const dnaRoce       = (row.roce ?? 0) > 25;
+  const dnaCfo        = (row.cfoToPat ?? 0) > 1.0;
+  const dnaFcf        = (row.fcfAbsolute ?? -1) > 0;
+  const dnaDe         = (row.de ?? 99) < 0.3;
+  const dnaNonCyclic  = !cyclical;
+  const dnaGrowth     = (row.revCagr ?? 0) >= 18;
+  const dnaPledgeZero = (row.pledge ?? 0) === 0;
+  const dnaPromoterStable = (row.changeInPromoter ?? 0) >= -1; // not declining materially
+  const dnaCount = [dnaPromoter, dnaRoce, dnaCfo, dnaFcf, dnaDe, dnaNonCyclic, dnaGrowth, dnaPledgeZero, dnaPromoterStable].filter(Boolean).length;
+
+  if (dnaCount >= 8 && !hasHighStructEarly) {
+    reratingBonus += 6;
+    strengths.push(`💎 500-BAGGER DNA (${dnaCount}/9): Promoter ${row.promoter?.toFixed(0)}% + ROCE ${row.roce?.toFixed(0)}% + CFO/PAT ${row.cfoToPat?.toFixed(2)} + FCF+ + D/E ${row.de?.toFixed(2)} + non-cyclical + CAGR ${row.revCagr?.toFixed(0)}% — canonical Page/Astral/Avanti compounder setup.`);
+  } else if (dnaCount >= 7 && !hasHighStructEarly) {
+    reratingBonus += 3;
+    strengths.push(`Strong DNA (${dnaCount}/9): matches multibagger archetype on most dimensions.`);
+  }
+
+  // ── PATCH 0338: NICHE PRICING POWER (non-cyclical premium-margin bonus) ──
+  // 500-baggers have OPM > sector p75 SUSTAINED — that's the durable-moat
+  // signature (Page, Astral, Caplin, Avanti). In a cyclical sector, premium
+  // OPM is a peak-earnings warning. In a non-cyclical sector, it's a moat.
+  // Add +4 reratingBonus when (OPM > 1.3× sector p75) + non-cyclical + 3yr
+  // profit CAGR >25%. Distinguishes "real pricing power" from "cycle peak".
+  if (!cyclical && row.opm !== undefined && b.opm[2] > 0
+      && row.opm > b.opm[2] * 1.3
+      && (row.profitCagr ?? 0) > 25
+      && !hasHighStructEarly) {
+    reratingBonus += 4;
+    strengths.push(`Niche pricing power: OPM ${row.opm.toFixed(1)}% is ${(row.opm / b.opm[2]).toFixed(1)}× sector p75 in non-cyclical — durable moat signature, not cycle peak.`);
+  }
+
+  // ── PATCH 0338: CYCLICAL-RECOVERY DISTINGUISHER ─────────────────────────
+  // Override the cyclical-peak cap (added in Patch 0337) when the pattern is
+  // recovery-from-low-base, not peak-earnings. Telltale: revCagr < 15%
+  // (multi-year flat/declining base) but recent YoY > 40% (sharp recovery
+  // year). This is Mayur Uniquoters / CEAT-style cyclical recovery, NOT the
+  // peak-earnings setup that mean-reverts.
+  // We can't override the cap here directly (it's applied later), so we set
+  // a row flag that the cap section reads.
+  const isCyclicRecovery = cyclical
+    && (row.revCagr ?? 0) < 15
+    && (row.yoySalesGrowth ?? 0) > 40
+    && (row.cfoToPat ?? 0) > 0.8
+    && (row.fcfAbsolute ?? -1) > 0
+    && !hasHighStructEarly;
+  (row as any).isCyclicRecovery = isCyclicRecovery;
+  if (isCyclicRecovery) {
+    strengths.push(`Cyclical recovery (not peak): revCagr ${row.revCagr?.toFixed(0)}% with sharp YoY ${row.yoySalesGrowth?.toFixed(0)}% rebound — recovery year off low base, not earnings peak.`);
   }
 
   // ── GAP 3: INDUSTRY TAILWIND BONUS ──────────────────────────────────────────
@@ -2283,10 +2421,14 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   // still push past 80. Cap composite at 80 when (cyclical sector + OPM ≥ 1.5×
   // sector p75 + profit CAGR > 40%) — the textbook "looks great at the peak"
   // setup that mean-reverts.
+  //
+  // PATCH 0338 — Exemption for cyclical-recovery pattern (Mayur Uniquoters
+  // style): recovery from low base is NOT peak earnings, so don't cap.
   if (cyclical
       && row.opm !== undefined && b.opm[2] > 0
       && row.opm > b.opm[2] * 1.5
-      && (row.profitCagr ?? 0) > 40) {
+      && (row.profitCagr ?? 0) > 40
+      && !(row as any).isCyclicRecovery) {
     score = Math.min(score, 80);
   }
 
@@ -3208,7 +3350,8 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
     const b2cyc = (r.sector || '').match(/METAL|CHEMICAL|TEXTILE|OIL|SHIPPING|CEMENT|TIRE|RUBBER|PAPER/i) !== null;
     if (b2cyc && r.opm !== undefined && (b2.opm?.[2] ?? 0) > 0
         && r.opm > b2.opm[2] * 1.5
-        && (r.profitCagr ?? 0) > 40) {
+        && (r.profitCagr ?? 0) > 40
+        && !(r as any).isCyclicRecovery) {
       newScore = Math.min(newScore, 80);
     }
 
