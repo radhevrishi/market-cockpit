@@ -254,6 +254,26 @@ interface ExcelRow {
   opm3yr?: number;       // OPM 3 years ago — custom Screener ratio (Gap 2)
   opmPrev?: number;      // OPM last year (Screener "OPM last year") → 1yr margin change (Gap 2)
   high52w?: number;      // 52-week High price (Screener "High price") (Gap 7)
+
+  // ── PATCH 0317: Additional institutional metrics ─────────────────────────
+  // These are optional and scoring rules skip gracefully when undefined.
+  // User pulls these from Screener.in into their export and the model picks
+  // them up automatically. Mapping doc lives in METRICS_TO_ADD.md.
+  debtorDays?: number;            // Screener "Debtor Days" — receivable buildup detection
+  inventoryDays?: number;         // Screener "Inventory Days" — demand-slowdown leading indicator
+  creditorDays?: number;          // Screener "Creditor Days" — supplier financing
+  workingCapitalDays?: number;    // = debtor + inventory - creditor; if direct Screener field
+  interestCoverage?: number;      // Screener "Interest Coverage Ratio" — EBIT / Interest
+  effectiveTaxRate?: number;      // Screener "Tax Rate %" or computed 3yr avg
+  capex3yr?: number;              // Screener "Capex 3Yrs" (cumulative absolute capex)
+  // Multi-quarter ownership history. Order: oldest first → latest. Any length OK.
+  promoterHistory?: number[];     // last 4 quarters of promoter %
+  fiiHistory?: number[];          // last 4 quarters of FII %
+  diiHistory?: number[];          // last 4 quarters of DII %
+  dividendYield?: number;         // Screener "Dividend Yield" — already referenced via (row as any)
+  // Free-float / liquidity (optional; defaults skip)
+  avgDailyValueCr?: number;       // average daily traded value in ₹ Cr (last 30d)
+
   // Derived
   marginOfSafety?: number;
   aboveDMA200?: number;
@@ -1789,7 +1809,7 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   //     yet pays zero dividend AND has no clear reinvestment story (ROCE flat
   //     or down), the cash is going somewhere unaccounted for. Soft signal.
   //     Note: row.dividendYield is often available from Screener.
-  const divYield = (row as any).dividendYield;
+  const divYield = row.dividendYield ?? (row as any).dividendYield;
   if (typeof divYield === 'number' && divYield === 0
       && (row.fcfAbsolute ?? -1) > 0
       && (row.roceExpansion ?? 0) < 0
@@ -1798,6 +1818,144 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     risks.push(
       `Zero dividend despite +FCF and ROCE not expanding — cash being deployed without visible return. Check related-party transactions and capital allocation.`
     );
+  }
+
+  // ── PATCH 0317: NEW-METRIC SCORING RULES ────────────────────────────────────
+  // Each rule runs only when the corresponding field is present in the row.
+  // When missing, the rule contributes nothing (no penalty, no bonus). The
+  // mapping from Screener columns is documented in METRICS_TO_ADD.md.
+
+  // (A) WORKING-CAPITAL STRAIN — receivables piling up. This is the single best
+  //     pre-blowup earnings-quality indicator in Indian small-caps.
+  if (typeof row.debtorDays === 'number') {
+    if (row.debtorDays > 180) {
+      redFlags.push({
+        label: `Debtor days ${row.debtorDays.toFixed(0)} — extreme`,
+        severity: 'HIGH', source: 'Working Capital', kind: 'STRUCTURAL',
+      });
+    } else if (row.debtorDays > 120) {
+      reratingBonus -= 5;
+      risks.push(`Working capital strain: Debtor days ${row.debtorDays.toFixed(0)} — receivables piling up faster than collections.`);
+    } else if (row.debtorDays < 30 && (row.sector || '').match(/CONSUMER|TECHNOLOGY/i)) {
+      reratingBonus += 2;
+      strengths.push(`Tight working capital: Debtor days ${row.debtorDays.toFixed(0)} — strong collection discipline.`);
+    }
+  }
+  if (typeof row.inventoryDays === 'number') {
+    if (row.inventoryDays > 240) {
+      redFlags.push({
+        label: `Inventory days ${row.inventoryDays.toFixed(0)} — pile-up`,
+        severity: 'HIGH', source: 'Working Capital', kind: 'CYCLICAL',
+      });
+    } else if (row.inventoryDays > 150) {
+      reratingBonus -= 3;
+      risks.push(`Inventory days ${row.inventoryDays.toFixed(0)} — demand-slowdown leading indicator or seasonality?`);
+    }
+  }
+  if (typeof row.workingCapitalDays === 'number') {
+    if (row.workingCapitalDays < 0) {
+      // Negative WC is only positive for consumer/retail/SaaS — for industrials it's unpaid bills.
+      if ((row.sector || '').match(/CONSUMER|TECHNOLOGY|PHARMA/i)) {
+        reratingBonus += 3;
+        strengths.push(`Negative working capital ${row.workingCapitalDays.toFixed(0)}d — supplier-funded growth (Asian Paints-style).`);
+      } else {
+        reratingBonus -= 2;
+        risks.push(`Negative working capital ${row.workingCapitalDays.toFixed(0)}d in a non-consumer sector — verify supplier-payable accumulation isn't masking stress.`);
+      }
+    }
+  }
+
+  // (B) INTEREST COVERAGE — below 3× is leverage distress regardless of D/E.
+  if (typeof row.interestCoverage === 'number' && row.interestCoverage > 0) {
+    if (row.interestCoverage < 1.5) {
+      redFlags.push({
+        label: `ICR ${row.interestCoverage.toFixed(1)}× — distress`,
+        severity: 'CRITICAL', source: 'Leverage', kind: 'STRUCTURAL',
+      });
+    } else if (row.interestCoverage < 3) {
+      redFlags.push({
+        label: `ICR ${row.interestCoverage.toFixed(1)}× — leverage tight`,
+        severity: 'HIGH', source: 'Leverage', kind: 'STRUCTURAL',
+      });
+    } else if (row.interestCoverage > 15) {
+      reratingBonus += 2;
+      strengths.push(`Interest coverage ${row.interestCoverage.toFixed(0)}× — debt service trivial.`);
+    }
+  }
+
+  // (C) EFFECTIVE TAX RATE — sustained <15% in non-SEZ-eligible sectors flags
+  //     aggressive accounting. ~25% is statutory; <15% needs SEZ / R&D justification.
+  if (typeof row.effectiveTaxRate === 'number') {
+    const inSEZSector = /TECHNOLOGY|PHARMA|EXPORT|SEZ/i.test(row.sector || '');
+    if (row.effectiveTaxRate < 12 && !inSEZSector) {
+      reratingBonus -= 4;
+      risks.push(`Effective tax rate ${row.effectiveTaxRate.toFixed(1)}% in non-SEZ sector — investigate sustainability and accounting policy.`);
+    } else if (row.effectiveTaxRate > 30) {
+      reratingBonus -= 1; // mild — high tax = no shelters but also no inflated post-tax PAT
+    }
+  }
+
+  // (D) CAPEX EFFICIENCY (3yr) — capital deployed should earn a return.
+  //     Capex3yr / Revenue3yr > 30% with ROCE expansion < 0 = burning capital.
+  if (typeof row.capex3yr === 'number' && row.capex3yr > 0 && (row.revCagr ?? 0) > 0) {
+    // Approximate revenue base from current revenue / capex ratio
+    const approxRevenue3yrBase = (row.marketCapCr ?? 0) * 2; // rough: revenue ≈ 0.5× mcap as floor
+    const capexIntensity = approxRevenue3yrBase > 0 ? (row.capex3yr / approxRevenue3yrBase) * 100 : 0;
+    if (capexIntensity > 30 && (row.roceExpansion ?? 0) < 0) {
+      reratingBonus -= 5;
+      risks.push(`Capex burn: 3yr capex ~${capexIntensity.toFixed(0)}% of revenue base with ROCE declining ${(row.roceExpansion ?? 0).toFixed(1)}pp — value-destroying reinvestment.`);
+    }
+  }
+
+  // (E) PROMOTER 4-QUARTER TREND — steady decline > 4pp over 4 quarters is
+  //     the cleanest operator-exit signal. Differentiates one-quarter blip
+  //     from sustained sell-down.
+  if (Array.isArray(row.promoterHistory) && row.promoterHistory.length >= 3) {
+    const oldest = row.promoterHistory[0];
+    const latest = row.promoterHistory[row.promoterHistory.length - 1];
+    const decline = oldest - latest;
+    if (decline > 4) {
+      redFlags.push({
+        label: `Promoter holding fell ${decline.toFixed(1)}pp over ${row.promoterHistory.length}Q`,
+        severity: 'HIGH', source: 'Ownership trend', kind: 'STRUCTURAL',
+      });
+    } else if (decline > 2) {
+      reratingBonus -= 4;
+      risks.push(`Promoter holding declining: ${row.promoterHistory.join('% → ')}% — track for sustained sell-down.`);
+    } else if (decline < -2) {
+      // Promoter ADDING — buyback or pref allotment
+      reratingBonus += 4;
+      strengths.push(`Promoter accumulating: ${row.promoterHistory.join('% → ')}% — insider conviction signal.`);
+    }
+  }
+
+  // (F) FII+DII 4-QUARTER TREND — smart-money walking away is the second-
+  //     cleanest distress signal after promoter selling. Detects EXITS that
+  //     a snapshot misses.
+  if (Array.isArray(row.fiiHistory) && Array.isArray(row.diiHistory)
+      && row.fiiHistory.length >= 3 && row.diiHistory.length >= 3) {
+    const fiiOld = row.fiiHistory[0]; const fiiNew = row.fiiHistory[row.fiiHistory.length - 1];
+    const diiOld = row.diiHistory[0]; const diiNew = row.diiHistory[row.diiHistory.length - 1];
+    const fiiDelta = fiiNew - fiiOld;
+    const diiDelta = diiNew - diiOld;
+    const totalDelta = fiiDelta + diiDelta;
+    if (totalDelta < -3) {
+      reratingBonus -= 5;
+      risks.push(`Institutions exiting: FII ${fiiDelta.toFixed(1)}pp + DII ${diiDelta.toFixed(1)}pp over ${row.fiiHistory.length}Q — smart money walking away.`);
+    } else if (totalDelta > 4) {
+      reratingBonus += 4;
+      strengths.push(`Institutions accumulating: FII +${fiiDelta.toFixed(1)}pp + DII +${diiDelta.toFixed(1)}pp — institutional discovery in progress.`);
+    }
+  }
+
+  // (G) FREE-FLOAT LIQUIDITY — below ₹50L/day = essentially untradeable.
+  if (typeof row.avgDailyValueCr === 'number') {
+    if (row.avgDailyValueCr < 0.5) {
+      reratingBonus -= 3;
+      risks.push(`Illiquid: avg daily traded value ₹${(row.avgDailyValueCr * 100).toFixed(0)}L — institutional sizing impossible.`);
+    } else if (row.avgDailyValueCr < 1) {
+      reratingBonus -= 1;
+    }
   }
 
   // Delta signal: promoter buying from high base = strongest insider signal
@@ -2078,6 +2236,33 @@ function buildColMap(sampleRow: Record<string,unknown>): Record<string,string> {
     // ── GAP 5: FCF Yield direct — user added as custom ratio ("FCF Yield") ──
     else if (o==='FCF Yield'||o==='FCF Yield %'||o==='Free cash flow yield'||o==='FCF yield')
       m['fcfYieldDirect']=col;
+    // ── PATCH 0317: New institutional metrics ──────────────────────────────
+    else if (o==='Debtor Days'||o==='Debtor days'||o==='Days sales outstanding'||o==='DSO')
+      m['debtorDays']=col;
+    else if (o==='Inventory Days'||o==='Inventory days'||o==='Days inventory outstanding'||o==='DIO')
+      m['inventoryDays']=col;
+    else if (o==='Creditor Days'||o==='Creditor days'||o==='Days payable outstanding'||o==='DPO')
+      m['creditorDays']=col;
+    else if (o==='Working Capital Days'||o==='Working capital days'||o==='WC Days'||o==='Cash Conversion Cycle'||o==='CCC')
+      m['workingCapitalDays']=col;
+    else if (o==='Interest Coverage Ratio'||o==='Interest Coverage'||o==='Interest coverage'||o==='ICR')
+      m['interestCoverage']=col;
+    else if (o==='Tax rate %'||o==='Tax Rate %'||o==='Effective Tax Rate'||o==='Effective tax rate')
+      m['effectiveTaxRate']=col;
+    else if (o==='Capex 3Yrs'||o==='Capex 3Years'||o==='Capex 3 Years'||o==='Capex 3yr')
+      m['capex3yr']=col;
+    else if (o==='Dividend Yield'||o==='Dividend yield'||o==='Div Yield'||o==='DY')
+      m['dividendYield']=col;
+    // Promoter / FII / DII multi-quarter history. Screener export style:
+    // "Promoter holding 1 quarters back", "Promoter holding 2 quarters back" …
+    else if (/^Promoter holding\s+(\d+)\s+quarters?\s+back$/i.test(o))
+      m['promoterHistory_'+o.match(/^Promoter holding\s+(\d+)/i)![1]]=col;
+    else if (/^FII\s+holding\s+(\d+)\s+quarters?\s+back$/i.test(o))
+      m['fiiHistory_'+o.match(/^FII\s+holding\s+(\d+)/i)![1]]=col;
+    else if (/^DII\s+holding\s+(\d+)\s+quarters?\s+back$/i.test(o))
+      m['diiHistory_'+o.match(/^DII\s+holding\s+(\d+)/i)![1]]=col;
+    else if (o==='Avg traded value'||o==='Average Daily Volume'||o==='ADV'||o==='Avg Daily Value (Cr)')
+      m['avgDailyValueCr']=col;
     // Generic fallbacks
     else if (!m['symbol']&&(c.includes('nsecode')||c.includes('symbol')||c.includes('ticker'))) m['symbol']=col;
     else if (!m['company']&&c.includes('name')&&!c.includes('sector')) m['company']=col;
@@ -2201,6 +2386,57 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
     opm3yr,
     opmPrev,
     high52w,
+    // ── PATCH 0317: Additional institutional metrics ──
+    debtorDays: n(m['debtorDays']?row[m['debtorDays']]:undefined),
+    inventoryDays: n(m['inventoryDays']?row[m['inventoryDays']]:undefined),
+    creditorDays: n(m['creditorDays']?row[m['creditorDays']]:undefined),
+    workingCapitalDays: n(m['workingCapitalDays']?row[m['workingCapitalDays']]:undefined),
+    interestCoverage: n(m['interestCoverage']?row[m['interestCoverage']]:undefined),
+    effectiveTaxRate: n(m['effectiveTaxRate']?row[m['effectiveTaxRate']]:undefined),
+    capex3yr: n(m['capex3yr']?row[m['capex3yr']]:undefined),
+    dividendYield: n(m['dividendYield']?row[m['dividendYield']]:undefined),
+    avgDailyValueCr: n(m['avgDailyValueCr']?row[m['avgDailyValueCr']]:undefined),
+    // Multi-quarter history — collected from m['promoterHistory_N'] entries.
+    // Sorted oldest first (highest N back) → latest (1 quarter back / current).
+    promoterHistory: (() => {
+      const entries: Array<[number, number]> = [];
+      for (const k of Object.keys(m)) {
+        if (k.startsWith('promoterHistory_')) {
+          const qBack = parseInt(k.slice('promoterHistory_'.length), 10);
+          const v = n(row[m[k]]);
+          if (v !== undefined && Number.isFinite(qBack)) entries.push([qBack, v]);
+        }
+      }
+      if (entries.length === 0) return undefined;
+      entries.sort((a, b) => b[0] - a[0]); // oldest (highest N) → newest
+      return entries.map(([, v]) => v);
+    })(),
+    fiiHistory: (() => {
+      const entries: Array<[number, number]> = [];
+      for (const k of Object.keys(m)) {
+        if (k.startsWith('fiiHistory_')) {
+          const qBack = parseInt(k.slice('fiiHistory_'.length), 10);
+          const v = n(row[m[k]]);
+          if (v !== undefined && Number.isFinite(qBack)) entries.push([qBack, v]);
+        }
+      }
+      if (entries.length === 0) return undefined;
+      entries.sort((a, b) => b[0] - a[0]);
+      return entries.map(([, v]) => v);
+    })(),
+    diiHistory: (() => {
+      const entries: Array<[number, number]> = [];
+      for (const k of Object.keys(m)) {
+        if (k.startsWith('diiHistory_')) {
+          const qBack = parseInt(k.slice('diiHistory_'.length), 10);
+          const v = n(row[m[k]]);
+          if (v !== undefined && Number.isFinite(qBack)) entries.push([qBack, v]);
+        }
+      }
+      if (entries.length === 0) return undefined;
+      entries.sort((a, b) => b[0] - a[0]);
+      return entries.map(([, v]) => v);
+    })(),
     // Derived
     marginOfSafety:(iv!==undefined&&price!==undefined&&price>0)?Math.round((iv-price)/price*100):undefined,
     aboveDMA200:(dma!==undefined&&price!==undefined&&dma>0)?Math.round((price-dma)/dma*100):undefined,
