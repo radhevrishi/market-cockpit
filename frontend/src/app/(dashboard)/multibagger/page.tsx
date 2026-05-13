@@ -5280,7 +5280,7 @@ function svUS(v: number|undefined, bench: number[], hiGood=true): number {
   return Math.max(0, 30+Math.max(0,val)/Math.max(lo,1)*20);
 }
 
-function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; coverage: number; strengths: string[]; risks: string[]; pillarScores: {id:string;label:string;score:number;color:string}[] } {
+function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; coverage: number; strengths: string[]; risks: string[]; pillarScores: {id:string;label:string;score:number;color:string}[]; fcfOpDivergence?: boolean; postRunStretched?: boolean; earningsProximityDays?: number; suggestedMaxPositionPct?: number } {
   const b = getUSABench(row.sector);
   const strengths: string[] = [];
   const risks: string[] = [];
@@ -5451,14 +5451,23 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
   if (tailwind.score >= 70) { mktS = Math.min(100, mktS+6); strengths.push(`Sector tailwind (${tailwind.label}): ${tailwind.drivers.slice(0,50)}`); }
 
   // ── Analyst Rating (TradingView consensus) ───────────────────────────────
+  // PATCH 0349c — Analyst-after-run discount. When 1yr return > 50%, analyst
+  // Buy/Strong Buy carries near-zero predictive value (Womack 1996, Stickel
+  // 1995). Analysts upgrade AFTER run-ups — the rating is a lagging signal
+  // with career-risk biases. Halve the Market-pillar boost in that regime.
   if (row.analystRating) {
     const rating = row.analystRating.toLowerCase().trim();
+    const afterRun = (row.perf1y ?? 0) > 50;
     if (rating.includes('strong buy')) {
-      mktS = Math.min(100, mktS + 8);
-      strengths.push(`Analyst consensus: Strong Buy — institutional conviction signal`);
+      const boost = afterRun ? 4 : 8;
+      mktS = Math.min(100, mktS + boost);
+      if (afterRun) strengths.push(`Analyst consensus: Strong Buy — discounted to +${boost} (vs +8) — lagging after +${row.perf1y?.toFixed(0)}% run (Womack 1996: post-run upgrades have near-zero predictive value)`);
+      else strengths.push(`Analyst consensus: Strong Buy — institutional conviction signal`);
     } else if (rating.includes('buy')) {
-      mktS = Math.min(100, mktS + 4);
-      strengths.push(`Analyst consensus: Buy — positive professional outlook`);
+      const boost = afterRun ? 2 : 4;
+      mktS = Math.min(100, mktS + boost);
+      if (afterRun) strengths.push(`Analyst consensus: Buy — discounted to +${boost} (vs +4) — lagging after +${row.perf1y?.toFixed(0)}% run`);
+      else strengths.push(`Analyst consensus: Buy — positive professional outlook`);
     } else if (rating.includes('strong sell')) {
       mktS = Math.max(0, mktS - 10);
       risks.push(`Analyst consensus: Strong Sell — professional community broadly negative`);
@@ -5772,9 +5781,32 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
   //
   // Either flavor → +6 reratingBonus equivalent (apply as score boost).
   // Gate: no speculative/stratospheric/base-effect cap fired above.
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PATCH 0349a — FCF / OPERATING-INCOME DIVERGENCE DETECTOR.
+  // When FCF margin >> Operating margin (ratio > 2.0×) AND net margin < 15%,
+  // FCF is almost certainly inflated by working-capital release, SBC add-back,
+  // or deferred-revenue / customer-prepayment swing — not sustainable economics.
+  // Real-world failure: PAYS scored 90 A+ with FCF margin 54% on Op margin 9%
+  // (6× ratio) and dropped 16% after Q1 earnings. The SaaS DNA bonus + Elite
+  // R40 bonus were both awarded to a row where FCF was an accrual artifact.
+  // Action: suppress R40 / DNA bonuses (via noSpeculativeCap gate) AND cap
+  // composite at 70 at the end of the cap chain.
+  // ═══════════════════════════════════════════════════════════════════════════
+  const fcfOpDivergence = (
+       row.fcfMarginAnn !== undefined && row.fcfMarginAnn > 0
+    && row.opmTtm !== undefined && row.opmTtm > 0
+    && row.fcfMarginAnn / Math.max(row.opmTtm, 1) > 2.0
+    && (row.netProfitMargin ?? 0) < 15
+  );
+  if (fcfOpDivergence) {
+    const ratio = (row.fcfMarginAnn! / Math.max(row.opmTtm!, 1)).toFixed(1);
+    risks.push(`🚨 FCF/Op-Income divergence: FCF margin ${row.fcfMarginAnn!.toFixed(0)}% but Op margin ${row.opmTtm!.toFixed(0)}% (ratio ${ratio}×) — FCF likely inflated by working-capital release / SBC add-back / deferred revenue, not sustainable from operations. R40 / DNA bonuses suppressed. Capped at 70.`);
+  }
+
   const noSpeculativeCap = !(row.ruleOf40 !== undefined && row.ruleOf40 < -50)
                         && !baseEffect
-                        && !(row.forwardPe !== undefined && row.forwardPe > 100 && !elitePremium);
+                        && !(row.forwardPe !== undefined && row.forwardPe > 100 && !elitePremium)
+                        && !fcfOpDivergence;
   const saasDna =
        (row.ruleOf40 ?? 0) >= 40
     && (effGM ?? 0) >= 60
@@ -5894,6 +5926,70 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
     score = Math.min(score, 50);
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PATCH 0349a — ABSOLUTE FCF/OP-INCOME DIVERGENCE CAP (re-apply post bonus).
+  // Even with all bonuses applied, a row with inflated FCF cannot score above 70.
+  // ═══════════════════════════════════════════════════════════════════════════
+  if (fcfOpDivergence) score = Math.min(score, 70);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PATCH 0349b — POST-RUN REVERSAL CAP.
+  // When 1yr return > 100% AND forward P/E > 25 (or P/E > 30 absent forward),
+  // stock is priced for perfection. Any disappointment → 15-20% retrace.
+  // Mean-reversion drag historically -15% to -20% from these setups. Caught:
+  // PAYS (+138% past year, FwdPE 28×, dropped 16% post-earnings). The engine
+  // was treating "+138% past year — momentum confirming fundamentals" as a
+  // STRENGTH; it's actually a setup for mean reversion.
+  // ═══════════════════════════════════════════════════════════════════════════
+  const effPEForCap = row.forwardPe ?? row.pe;
+  const postRunStretched =
+       (row.perf1y ?? 0) > 100
+    && effPEForCap !== undefined
+    && effPEForCap > (row.forwardPe !== undefined ? 25 : 30);
+  if (postRunStretched) {
+    score = Math.min(score, 75);
+    risks.push(`🌡 STRETCHED post-run: +${row.perf1y!.toFixed(0)}% in 12mo at ${row.forwardPe !== undefined ? `FwdPE ${row.forwardPe.toFixed(0)}×` : `P/E ${row.pe!.toFixed(0)}×`} — priced for perfection. Mean-reversion drag historically -15-20% from this setup. Capped at 75.`);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PATCH 0349d — EARNINGS-PROXIMITY WARNING (display + risk bullet).
+  // If next earnings is within 7 calendar days, raise an EARNINGS WEEK risk.
+  // Institutional desks routinely halve position size in this window because
+  // gap risk is structurally elevated. Doesn't change score, just surfaces the
+  // timing risk so the user can decide to wait for the print.
+  // ═══════════════════════════════════════════════════════════════════════════
+  let earningsProximityDays: number | undefined;
+  if (row.nextEarnings) {
+    const d = new Date(row.nextEarnings);
+    if (!isNaN(d.getTime())) {
+      const now = new Date();
+      // Compare at day granularity to avoid hour-of-day flutter
+      const dDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      const nDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      earningsProximityDays = Math.round((dDate.getTime() - nDate.getTime()) / 86400000);
+    }
+  }
+  if (earningsProximityDays !== undefined && earningsProximityDays >= 0 && earningsProximityDays <= 7) {
+    risks.push(`⚠ EARNINGS in ${earningsProximityDays} day${earningsProximityDays===1?'':'s'} (${row.nextEarnings}) — gap risk elevated; institutional desks halve position size in this window. Consider waiting for the print.`);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PATCH 0349e — POSITION-SIZE GUIDANCE (display only, no score impact).
+  // Microcap volatility is structurally 2-3× large-cap. A "score 90" microcap
+  // and "score 90" megacap are NOT equivalent risk-adjusted bets. Render a
+  // suggested max position size based on market cap so position-sizing is
+  // visible alongside conviction.
+  // ═══════════════════════════════════════════════════════════════════════════
+  let suggestedMaxPositionPct: number | undefined;
+  const mcapBForPos = row.marketCapUsd !== undefined ? row.marketCapUsd / 1e9 : row.marketCapB;
+  if (mcapBForPos !== undefined) {
+    if (mcapBForPos < 0.5)       suggestedMaxPositionPct = 1.5;
+    else if (mcapBForPos < 1.0)  suggestedMaxPositionPct = 2.5;
+    else if (mcapBForPos < 5.0)  suggestedMaxPositionPct = 5.0;
+    else if (mcapBForPos < 20.0) suggestedMaxPositionPct = 8.0;
+    else                          suggestedMaxPositionPct = 15.0;
+  }
+
   // PATCH 0344 — Use Math.floor(score/5)*5 instead of Math.round(score/5)*5.
   // Old Math.round meant cap=78 would round UP to 80 (jumping the A-grade
   // boundary at >=80), bypassing the cap. Visible bugs in deployed output:
@@ -5934,6 +6030,11 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
     accelSignal: revAccel !== undefined ? (revAccel>=5?'ACCELERATING':revAccel<=-5?'DECELERATING':'STABLE') : row.accelSignal,
     marketCapB: row.marketCapUsd !== undefined ? Math.round(row.marketCapUsd/1e9*100)/100 : row.marketCapB,
     strengths, risks,
+    // PATCH 0349 — surfaced flags for chip rendering in JSX
+    fcfOpDivergence,
+    postRunStretched,
+    earningsProximityDays,
+    suggestedMaxPositionPct,
     pillarScores: [
       {id:'QUALITY',   label:'Quality',    score:Math.round(qual),   color:'#a78bfa'},
       {id:'GROWTH',    label:'Growth',     score:Math.round(growth), color:'#38bdf8'},
@@ -6909,6 +7010,31 @@ function USACompare() {
                         {idx<3&&<span style={{fontSize:F.md}}>⭐</span>}
                       </div>
                       <span style={{fontSize:F.xs,color:MUTED}}>{r.exchange}</span>
+                      {/* PATCH 0349 — risk + position-size chips, surfaced inline */}
+                      {r.earningsProximityDays !== undefined && r.earningsProximityDays >= 0 && r.earningsProximityDays <= 7 && (
+                        <div title={`Earnings in ${r.earningsProximityDays} day${r.earningsProximityDays===1?'':'s'} (${r.nextEarnings}). Gap risk elevated — institutional desks halve position size in this window.`}
+                             style={{fontSize:9,fontWeight:800,color:RED,background:`${RED}18`,border:`1px solid ${RED}40`,padding:'1px 5px',borderRadius:4,marginTop:2,display:'inline-block'}}>
+                          ⚠ EARNINGS {r.earningsProximityDays}d
+                        </div>
+                      )}
+                      {r.postRunStretched && (
+                        <div title={`+${r.perf1y?.toFixed(0)}% past year at FwdPE ${(r.forwardPe ?? r.pe)?.toFixed(0)}× — priced for perfection. Mean-reversion drag historically -15% to -20% from this setup.`}
+                             style={{fontSize:9,fontWeight:800,color:YELLOW,background:`${YELLOW}18`,border:`1px solid ${YELLOW}40`,padding:'1px 5px',borderRadius:4,marginTop:2,display:'inline-block'}}>
+                          🌡 STRETCHED
+                        </div>
+                      )}
+                      {r.fcfOpDivergence && (
+                        <div title={`FCF margin ${r.fcfMarginAnn?.toFixed(0)}% vs Op margin ${r.opmTtm?.toFixed(0)}% — FCF likely inflated by working-capital release / SBC add-back / deferred revenue, not sustainable from operations.`}
+                             style={{fontSize:9,fontWeight:800,color:RED,background:`${RED}18`,border:`1px solid ${RED}40`,padding:'1px 5px',borderRadius:4,marginTop:2,display:'inline-block'}}>
+                          🚨 FCF SUSPECT
+                        </div>
+                      )}
+                      {r.suggestedMaxPositionPct !== undefined && (
+                        <div title={`Position-size guidance based on market cap. Microcap volatility is structurally 2-3× large-cap, so size should reflect liquidity, not just composite score.`}
+                             style={{fontSize:9,fontWeight:700,color:'#94a3b8',background:'rgba(148,163,184,0.10)',border:'1px solid rgba(148,163,184,0.25)',padding:'1px 5px',borderRadius:4,marginTop:2,display:'inline-block'}}>
+                          MAX {r.suggestedMaxPositionPct}%
+                        </div>
+                      )}
                       {r.nextEarnings&&<div style={{fontSize:9,color:'#f59e0b'}}>📅 {r.nextEarnings}</div>}
                       {r.analystRating && (() => {
                         const rating = r.analystRating.toLowerCase();
