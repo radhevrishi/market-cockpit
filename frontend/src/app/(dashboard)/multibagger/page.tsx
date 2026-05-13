@@ -4041,13 +4041,49 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                           </span>
                         );
                       })()}
-                      {/* Score change vs prev upload */}
+                      {/* PATCH 0327 — Score-change vs prev upload, upgraded to
+                          institutional-visible chip. Shows prior score in
+                          hover tooltip. "NEW" chip for stocks with no prior. */}
                       {(() => {
                         const prev = prevScoreMap[r.symbol];
-                        if (prev===undefined) return null;
+                        if (prev === undefined) {
+                          return (
+                            <span
+                              title="No prior score on file — this is a new entry since the last Multibagger upload."
+                              style={{
+                                fontSize: 9, fontWeight: 700, color: PURPLE,
+                                border: `1px solid ${PURPLE}60`,
+                                backgroundColor: `${PURPLE}14`,
+                                padding: '1px 5px', borderRadius: 3,
+                                letterSpacing: 0.3,
+                              }}
+                            >NEW</span>
+                          );
+                        }
                         const delta = r.score - prev;
-                        if (delta===0) return null;
-                        return <span style={{fontSize:9,fontWeight:700,color:delta>0?GREEN:RED}}>{delta>0?`↑${delta}`:`↓${Math.abs(delta)}`}</span>;
+                        if (delta === 0) {
+                          return (
+                            <span
+                              title={`Score unchanged from prior upload (${prev}).`}
+                              style={{ fontSize: 9, fontWeight: 700, color: MUTED }}
+                            >=</span>
+                          );
+                        }
+                        const tone = delta > 0 ? GREEN : RED;
+                        const arrow = delta > 0 ? '▲' : '▼';
+                        return (
+                          <span
+                            title={`Score changed from ${prev} → ${r.score} since prior upload (${delta > 0 ? '+' : ''}${delta} pts).`}
+                            style={{
+                              fontSize: 10, fontWeight: 800, color: tone,
+                              border: `1px solid ${tone}60`,
+                              backgroundColor: `${tone}14`,
+                              padding: '1px 6px', borderRadius: 3,
+                              letterSpacing: 0.3,
+                              fontVariantNumeric: 'tabular-nums',
+                            }}
+                          >{arrow} {delta > 0 ? '+' : ''}{delta}</span>
+                        );
                       })()}
                     </div>
                   </div>
