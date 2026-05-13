@@ -121,6 +121,143 @@ walk-aways before the snapshot shows them.
 
 ---
 
+## Tier E — Forensic pump-detection (MosChip / RIR Power style)
+
+**Read this section carefully.** These are the columns that catch the
+operator-pumped names that look fundamentally clean. Patch 0322 ships
+an 11-signal forensic detector; when 3+ signals fire the model
+auto-applies a HIGH structural red flag (composite cap 60), and when
+5+ fire it goes CRITICAL (cap 38). All checks gate on microcap (mcap
+< ₹3000 Cr) since the pump pattern is microcap-specific.
+
+The forensic detector handles cases like:
+
+- **MosChip Technologies**: real revenue growth, expanding margins, but
+  growth funded by repeated QIPs (share count grew >50% in 3Y),
+  high other-income share of PBT, related-party transactions, and
+  promoter holding declined while price ran.
+- **RIR Power Electronics**: hot-sector defense pure-play, but with low
+  cash conversion despite reported profits, high 52w volatility range,
+  small free float, and price action driven by retail flow during pump
+  cycles.
+
+Without these columns, conventional fundamental screening (ROCE, OPM,
+CFO/PAT) WILL classify these names as A+/A and they will pollute the
+Conviction Beats bench. With these columns, the model catches them
+forensically before they make the list.
+
+### Forensic columns (please add ALL, in this priority order)
+
+#### F1. `Other Income / PBT %`
+
+- **Screener.in column name**: `Other Income / PBT %` (or `Other Income % of PBT`)
+- **What it catches**: Non-operating PBT inflation. When a company books
+  treasury gains, FX, sale of investments, or one-off items as part of PBT,
+  the headline profit growth is fake. Often used to hide stagnant
+  operating performance.
+- **Scoring rule**: > 25% adds 2 pump points. Sustained > 25% is the
+  cleanest accounting-inflation signal.
+
+#### F2. `Cash and equivalents` + `Cash and equivalents preceding year`
+
+- **Screener.in column names** (add BOTH):
+  - `Cash and equivalents`
+  - `Cash and equivalents preceding year`
+- **What it catches**: Cash balance declining despite reported profit
+  growth — paper profits not converting to balance-sheet cash. Strongest
+  signal that PAT is real on paper but fictional in execution.
+- **Scoring rule**: Cash declined > 30% YoY while profit grew > 20% YoY
+  adds 2 pump points.
+
+#### F3. `Number of equity shares` + `Number of equity shares preceding 3 years`
+
+- **Screener.in column names** (add BOTH):
+  - `Number of equity shares`
+  - `Number of equity shares preceding 3 years`
+- **What it catches**: Dilution-funded growth. When share count grew
+  > 25% over 3Y, the "revenue growth" was funded by issuing new equity
+  (QIPs, preferential allotments), not by the underlying business
+  earning more. EPS growth is partly fictional.
+- **Scoring rule**: > 50% dilution → 3 pump points (extreme). > 25% → 2.
+
+#### F4. `Related Party Transactions %` (% of revenue)
+
+- **Screener.in column name**: `Related Party Transactions %`
+  (or `RPT % Revenue`, `Related Party % Revenue`)
+- **What it catches**: Value transfer to / from promoter group via
+  related-party deals. > 5% of revenue = material; > 20% = the company
+  is largely a value-extraction vehicle.
+- **Scoring rule**: > 20% adds 3 pump points; > 10% adds 2; > 5% adds 1.
+
+#### F5. `Auditor Changes Last 3Y`
+
+- **Screener.in column name**: `Auditor Changes Last 3Y`
+  (Screener exposes this as a flag in the company info page)
+- **What it catches**: Frequent auditor rotation. Real companies change
+  auditors rarely; companies hiding things change them when the
+  current auditor starts asking hard questions. ≥ 2 changes in 3Y is
+  a major governance flag.
+- **Scoring rule**: ≥ 2 changes → 2 pump points. 1 change → 1.
+
+#### F6. `Number of Subsidiaries`
+
+- **Screener.in column name**: `Number of Subsidiaries`
+  (or `Subsidiary Count`)
+- **What it catches**: Multi-layer subsidiary structures favored by
+  operator-driven schemes for value extraction. ≥ 10 subsidiaries on
+  a sub-₹1000Cr microcap is a structural red flag — there's almost no
+  business reason for that complexity at that size.
+- **Scoring rule**: ≥ 10 subsidiaries on mcap < ₹1000Cr → 2 pump points.
+
+#### F7. `52 Week Range %` (high vs low)
+
+- **Screener.in column name**: `52 Week Range %`
+  (or `High Low Range %`, or compute: (52wHigh - 52wLow) / 52wLow × 100)
+- **What it catches**: Operator-induced volatility. Real businesses
+  don't 3× then halve in a year. Range > 200% is consistent with
+  coordinated activity (pumps and rinses).
+- **Scoring rule**: > 200% adds 2 pump points; > 120% adds 1.
+
+#### F8. `Free Float %`
+
+- **Screener.in column name**: `Free Float %` (or `Public Float %`)
+- **What it catches**: Thin floats are vulnerable to coordinated
+  activity. < 15% free float means a small group can move price
+  meaningfully on low capital.
+- **Scoring rule**: < 15% adds 1 pump point.
+
+#### F9. `Promoter Group Entities` (count of entities in promoter group)
+
+- **Screener.in column name**: `Promoter Group Entities`
+  (or `Promoter Entities Count`)
+- **What it catches**: Complex group structures with many promoter-
+  affiliated entities obscure stake tracking and enable invisible
+  related-party transactions.
+- **Scoring rule**: ≥ 15 entities → 1 pump point.
+
+#### F10. Sector growth rate (for relative-growth check)
+
+- **Screener.in column name**: Not directly available. Can be
+  approximated by adding a custom "Industry / Sector Sales CAGR"
+  column if Screener supports it for your selection.
+- **What it catches**: A 60% sales CAGR is great in a sector growing
+  10%. The same 60% in a sector also growing 50% is just riding the
+  wave. Distinguishes the company from the sector. (Currently we
+  use absolute thresholds; sector-relative thresholds are better.)
+- **Scoring rule**: Will be wired in a future patch when this data
+  is available.
+
+#### F11. Promoter pledge with non-bank flag
+
+- **Screener.in column name**: Not directly available. Current
+  `Pledged percentage` doesn't distinguish bank vs NBFC vs HNI.
+  Pledging with NBFCs/HNIs at high interest rates is a distress
+  signal that pledging with banks isn't.
+- **Scoring rule**: Will be wired when this distinction is
+  available; currently we just track total pledge.
+
+---
+
 ## Tier D — liquidity (optional)
 
 ### 10. Average Daily Traded Value
@@ -167,6 +304,26 @@ If a column you added isn't being picked up, check the strengths/risks
 panels for the column name — the parser will not silently drop a column
 it doesn't recognize; it will simply leave the field undefined and the
 rule will skip.
+
+---
+
+## Forensic detector — confidence scale
+
+When you've added the Tier E columns and re-uploaded, the model
+computes a hidden **pump score** for every microcap. Severity tiers:
+
+- **0–1 pump points**: clean profile, no forensic concerns
+- **2 pump points**: −2 rerating, one risk-note (mild caution)
+- **3–4 pump points**: HIGH structural red flag → composite capped at 60
+- **5+ pump points**: CRITICAL red flag → composite capped at 38
+
+The forensic score is independently visible in the **SCORE AUDIT** chip
+strip on each row's expand panel — you'll see the specific signals
+that fired so you can verify them yourself.
+
+The detector ONLY fires on microcaps (mcap < ₹3000 Cr). Mid- and
+large-caps are governed by the other quality checks because the pump
+pattern requires manipulable float (small mcap + low free float).
 
 ---
 
