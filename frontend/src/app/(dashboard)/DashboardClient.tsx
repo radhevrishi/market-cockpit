@@ -46,6 +46,11 @@ const NAV: NavItem[] = [
   // PATCH 0130: Earnings Opportunities Pro — BLOCKBUSTER/STRONG/MIXED/AVOID
   // grading of Indian earnings filings, modelled on earningspulse.ai.
   { href: '/earnings-opportunities', label: 'Earnings Opportunities', icon: <Star className="w-5 h-5" /> },
+  // PATCH 0350 — Strategic Visibility moved next to the earnings intelligence
+  // cluster (it surfaces transformational-contract / mega-deal wins which is
+  // an earnings-adjacent decision surface). Was previously sandwiched between
+  // Bottleneck Workbench and RRG which obscured its connection to earnings.
+  { href: '/strategic-visibility', label: 'Strategic Visibility', icon: <Star className="w-5 h-5" /> },
   { href: '/multibagger',   label: 'Multibagger',        icon: <Star className="w-5 h-5" /> },
   // PATCH 0093: Single-Stock Sheet — 16-section institutional checklist runner
   { href: '/stock-sheet',   label: 'Stock Sheet',        icon: <BookMarked className="w-5 h-5" /> },
@@ -54,7 +59,6 @@ const NAV: NavItem[] = [
   { href: '/bottleneck-intel', label: 'Bottleneck Intel', icon: <Microscope className="w-5 h-5" /> },
   // PATCH 0235 — Per-theme workbench (frontend v0 on existing data)
   { href: '/bottleneck-workbench', label: 'Bottleneck Workbench', icon: <Microscope className="w-5 h-5" /> },
-  { href: '/strategic-visibility', label: 'Strategic Visibility', icon: <Star className="w-5 h-5" /> },
   { href: '/rrg',           label: 'RRG',                icon: <RefreshCw className="w-5 h-5" /> },
   { href: '/screener',      label: 'Screener',           icon: <Filter className="w-5 h-5" /> },
   // PATCH 0168: Market Breadth Indicator

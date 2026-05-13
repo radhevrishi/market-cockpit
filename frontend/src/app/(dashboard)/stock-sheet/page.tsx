@@ -420,21 +420,26 @@ function loadSheet(ticker: string): StoredSheet | null {
     const raw = localStorage.getItem(STORAGE_KEY + ticker.toUpperCase());
     if (!raw) return null;
     const parsed = JSON.parse(raw) as StoredSheet;
-    // PATCH 0112/0125: sanitize EVERY field in state — both signal and
+    // PATCH 0112/0125/0350: sanitize EVERY field in state — both signal and
     // evidence.  Any object-typed signal (legacy poisoned save) gets
     // coerced to null.  Evidence gets coerced to string.  This eliminates
     // the lingering React Error #31 from old localStorage entries.
+    // PATCH 0350: nuke ANY extra object-typed fields on an AnswerState (old
+    // schemas may have had `confidence`, `sentiment`, etc. as {direction,
+    // magnitude} objects). Strip them entirely so they can't reach JSX.
     if (parsed?.state) {
       for (const k of Object.keys(parsed.state)) {
-        const ans = parsed.state[k];
+        const ans = parsed.state[k] as any;
         if (!ans) continue;
-        // Signal must be 'YES' | 'NO' | 'N/A' | null
         if (ans.signal !== 'YES' && ans.signal !== 'NO' && ans.signal !== 'N/A') {
-          ans.signal = null as any;
+          ans.signal = null;
         }
-        // Evidence must be string
         if (typeof ans.evidence !== 'string') {
           ans.evidence = safeText(ans.evidence);
+        }
+        // Strip every other field — only signal + evidence may live here.
+        for (const f of Object.keys(ans)) {
+          if (f !== 'signal' && f !== 'evidence') delete ans[f];
         }
       }
     }
@@ -464,7 +469,7 @@ function listSavedTickers(): string[] {
 // PATCH 0163 — bump scrub key to force re-sanitise EVERY localStorage entry
 // on next page load.  This catches any legacy {direction, magnitude} or
 // object-typed signal/evidence values that slipped past previous scrubs.
-const SCRUB_KEY = 'mc:stock-sheet:v3:scrub-2026-05';
+const SCRUB_KEY = 'mc:stock-sheet:v4:scrub-2026-05-13';
 function scrubAllSavedSheets() {
   if (typeof window === 'undefined') return;
   try {
@@ -1028,7 +1033,7 @@ export default function StockSheetPage() {
             </div>
             {score.disqualifiers.length > 0 && (
               <div style={{ marginTop: 10, padding: 10, borderRadius: 6, backgroundColor: '#EF444415', border: '1px solid #EF444440', color: '#FCA5A5', fontSize: 12 }}>
-                <strong style={{ color: '#EF4444' }}>Disqualifiers:</strong> {score.disqualifiers.join(' · ')}
+                <strong style={{ color: '#EF4444' }}>Disqualifiers:</strong> {safeText(score.disqualifiers.map((d) => safeText(d)).join(' · '))}
               </div>
             )}
           </div>
@@ -1122,21 +1127,21 @@ export default function StockSheetPage() {
               </span>
               <span style={{ fontSize: 11, color: '#6B7A8D' }}>auto-generated · regenerates on every change</span>
               <span style={{ marginLeft: 'auto', fontSize: 11, color: '#94A3B8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-                {memo.alignmentLabel}
+                {safeText(memo.alignmentLabel)}
               </span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <div style={{ padding: '10px 12px', backgroundColor: '#0A1422', borderRadius: 6, border: '1px solid #1A2840' }}>
                 <div style={{ fontSize: 10, color: '#10B981', fontWeight: 800, letterSpacing: '0.6px', marginBottom: 4 }}>① THESIS</div>
-                <div style={{ fontSize: 12, color: '#E6EDF3', lineHeight: 1.65 }}>{memo.thesis}</div>
+                <div style={{ fontSize: 12, color: '#E6EDF3', lineHeight: 1.65 }}>{safeText(memo.thesis)}</div>
               </div>
               <div style={{ padding: '10px 12px', backgroundColor: '#0A1422', borderRadius: 6, border: '1px solid #1A2840' }}>
                 <div style={{ fontSize: 10, color: '#EF4444', fontWeight: 800, letterSpacing: '0.6px', marginBottom: 4 }}>② KEY RISKS</div>
-                <div style={{ fontSize: 12, color: '#E6EDF3', lineHeight: 1.65 }}>{memo.risks}</div>
+                <div style={{ fontSize: 12, color: '#E6EDF3', lineHeight: 1.65 }}>{safeText(memo.risks)}</div>
               </div>
               <div style={{ padding: '10px 12px', backgroundColor: '#0A1422', borderRadius: 6, border: '1px solid #1A2840' }}>
                 <div style={{ fontSize: 10, color: '#FACC15', fontWeight: 800, letterSpacing: '0.6px', marginBottom: 4 }}>③ CATALYST PATH</div>
-                <div style={{ fontSize: 12, color: '#E6EDF3', lineHeight: 1.65 }}>{memo.catalystPath}</div>
+                <div style={{ fontSize: 12, color: '#E6EDF3', lineHeight: 1.65 }}>{safeText(memo.catalystPath)}</div>
               </div>
               <button
                 onClick={() => {
