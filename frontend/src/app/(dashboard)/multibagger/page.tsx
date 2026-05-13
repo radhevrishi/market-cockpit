@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 // PATCH 0055: Multibagger framework extensions — dilution / reinvestment /
 // coverage / historical reference panel.
 // PATCH 0058: also archetype matcher
@@ -14,6 +14,7 @@ import {
 } from '@/lib/multibagger/framework-extensions';
 // PATCH 0272 — Conviction Beats overlay on Multibagger results.
 import { getConvictionTickers } from '@/lib/conviction-beats';
+import { getDecision, setDecision, clearDecision, subscribeDecisions, DECISION_META, type DecisionStatus } from '@/lib/decisions';
 
 // Shared API base — respects NEXT_PUBLIC_API_URL env var so all fetch() calls
 // resolve consistently when the base URL changes (fixes #13: mixed /api/v1 vs /api)
@@ -3179,6 +3180,12 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   const [indRoceMin, setIndRoceMin] = useState<'ALL'|20|25|30>('ALL');
   // Cash conversion — CFO/PAT ≥ 1.0 = earnings fully cash-backed (≥0.8 = clean, ≥1.0 = elite)
   const [indCfoMin, setIndCfoMin] = useState<'ALL'|0.8|1.0>('ALL');
+  // PATCH 0347 — Decision filter (filter India rows by user's logbook status)
+  const [indDecisionFilter, setIndDecisionFilter] = useState<'ALL'|'WITH'|'NONE'|DecisionStatus>('ALL');
+  // PATCH 0347 — Bump to force re-render when decisions change (cross-tab/edit sync)
+  const [decisionsVersion, setDecisionsVersion] = useState(0);
+  const bumpDecisions = useCallback(() => setDecisionsVersion(v => v + 1), []);
+  useEffect(() => subscribeDecisions(() => bumpDecisions()), [bumpDecisions]);
   // Guidance tier filter — only applies when guidanceMode is ON
   type GuidanceTier = 'ALL'|'STRONG'|'POS'|'NEUTRAL'|'NEG'|'WEAK';
   const [guidanceTier, setGuidanceTier] = useState<GuidanceTier>('ALL');
@@ -3479,6 +3486,27 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
       const newRows: ExcelRow[] = [];
       const seenNew = new Set<string>();
 
+      // PATCH 0347 — Cross-market detection on India upload (peek first file)
+      if (arr.length > 0) {
+        const peekBuf = await arr[0].arrayBuffer();
+        const peekWb = XLSX.read(peekBuf, { type:'array' });
+        const peekRaw = XLSX.utils.sheet_to_json<Record<string,unknown>>(peekWb.Sheets[peekWb.SheetNames[0]], { defval:'' });
+        if (peekRaw.length > 0) {
+          const headers = Object.keys(peekRaw[0]);
+          const detected = detectCsvMarket(headers);
+          if (detected === 'US') {
+            const proceed = window.confirm(
+              `⚠️ This CSV looks like a USA TradingView export (found USA-specific columns like Forward non-GAAP P/E, Piotroski F-score, Altman Z-score).\n\nYou're currently on the India tab.\n\nClick OK to switch to USA Multibagger tab and upload there.\nClick Cancel to upload here anyway (may produce empty/wrong scores).`
+            );
+            if (proceed) {
+              window.dispatchEvent(new CustomEvent('mc:switch-multibagger-tab', { detail: { tab: 'usa' } }));
+              setLoading(false);
+              return;
+            }
+          }
+        }
+      }
+
       for (const file of arr) {
         const raw=await parseSingleFile(file,XLSX);
         if(!raw.length) continue;
@@ -3552,6 +3580,15 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
   });
   if (indRoceMin !== 'ALL') baseRows = baseRows.filter(r => (r.roce ?? 0) >= indRoceMin);
   if (indCfoMin !== 'ALL')  baseRows = baseRows.filter(r => (r.cfoToPat ?? 0) >= indCfoMin);
+  // PATCH 0347 — decision filter
+  if (indDecisionFilter !== 'ALL') {
+    baseRows = baseRows.filter(r => {
+      const d = getDecision(r.symbol);
+      if (indDecisionFilter === 'WITH') return !!d;
+      if (indDecisionFilter === 'NONE') return !d;
+      return d?.status === indDecisionFilter;
+    });
+  }
   // Guidance tier filter — only meaningful when guidance mode is ON
   if (guidanceTier !== 'ALL' && guidanceMode) {
     baseRows = baseRows.filter(r => {
@@ -4586,6 +4623,8 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
 
                 {isExp&&(
                   <div style={{padding:'16px 14px 20px',backgroundColor:`${CARD_BG}CC`,borderTop:`1px solid ${BORDER}`}}>
+                    {/* PATCH 0347 — Decision logbook bar (per-stock BUY/WATCH/NEUTRAL/REJECTED + reason) */}
+                    <DecisionBar symbol={r.symbol} company={r.company} market="IN" score={r.score} grade={r.grade} bump={bumpDecisions} />
                     <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))',gap:16}}>
                       {/* Metrics by group */}
                       <div>
@@ -6512,6 +6551,13 @@ function USACompare() {
   const [usPiotroskiMin,setUsPiotroskiMin]= React.useState<'ALL'|5|7>('ALL');
   // PATCH 0345 — GPM quality filter (≥50% = real moat; ≥70% = elite SaaS)
   const [usGpmMin,      setUsGpmMin]      = React.useState<'ALL'|40|60|70>('ALL');
+  // PATCH 0347 — Decision filter for USA tab
+  const [usDecisionFilter, setUsDecisionFilter] = React.useState<'ALL'|'WITH'|'NONE'|DecisionStatus>('ALL');
+  const [usDecisionsV, setUsDecisionsV] = React.useState(0);
+  const bumpUsDecisions = React.useCallback(() => setUsDecisionsV(v => v + 1), []);
+  React.useEffect(() => subscribeDecisions(() => bumpUsDecisions()), [bumpUsDecisions]);
+  // Touch usDecisionsV so it's read on render (avoids unused-var lint)
+  void usDecisionsV;
   // USA sortable columns
   type USASort = 'score'|'fwdPe'|'peg'|'revGrowthAnn'|'ruleOf40'|'fcfMargin'|'marketCapB'|'grossMargin';
   const [usSortField, setUsSortField] = React.useState<USASort>('score');
@@ -6541,15 +6587,31 @@ function USACompare() {
       const arr = Array.from(files);
       const allRows: USARow[] = [];
       const seenSymbols = new Set(rows.map(r=>r.symbol));
+      // PATCH 0347 — Cross-market detection on USA upload
+      const allHeaders: string[] = [];
       for (const file of arr) {
         const buf = await file.arrayBuffer();
         const wb = XLSX.read(buf, { type:'array' });
-        const raw = XLSX.utils.sheet_to_json<Record<string,unknown>>(wb.Sheets[wb.SheetNames[0]], { defval:'' });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const raw = XLSX.utils.sheet_to_json<Record<string,unknown>>(sheet, { defval:'' });
+        if (raw.length > 0) allHeaders.push(...Object.keys(raw[0]));
         for (const r of raw) {
           const parsed = parseUSARow(r as Record<string,unknown>);
           if (!parsed || seenSymbols.has(parsed.symbol)) continue;
           seenSymbols.add(parsed.symbol);
           allRows.push(parsed);
+        }
+      }
+      const detectedMarket = detectCsvMarket(allHeaders);
+      if (detectedMarket === 'IN') {
+        const proceed = window.confirm(
+          `⚠️ This CSV looks like an INDIA Screener.in export (found Indian-specific columns like Promoter holding, ROCE, Sales growth).\n\nYou're currently on the USA tab.\n\nClick OK to switch to India Multibagger tab and upload there.\nClick Cancel to upload here anyway (may produce empty/wrong scores).`
+        );
+        if (proceed) {
+          // Dispatch a custom event the parent page can listen to
+          window.dispatchEvent(new CustomEvent('mc:switch-multibagger-tab', { detail: { tab: 'excel' } }));
+          setLoading(false);
+          return;
         }
       }
       if (!allRows.length) { setParseError('No valid rows found. Ensure the file has a Symbol column.'); setLoading(false); return; }
@@ -6575,6 +6637,15 @@ function USACompare() {
     const gm = r.grossMarginTtm ?? r.grossMarginAnn;
     return gm !== undefined && gm >= usGpmMin;
   });
+  // PATCH 0347 — decision filter for USA
+  if (usDecisionFilter !== 'ALL') {
+    filtered = filtered.filter(r => {
+      const d = getDecision(r.symbol);
+      if (usDecisionFilter === 'WITH') return !!d;
+      if (usDecisionFilter === 'NONE') return !d;
+      return d?.status === usDecisionFilter;
+    });
+  }
   // Analyst Rating filter
   if (usRatingFilter === 'BUY')       filtered = filtered.filter(r => r.analystRating?.toLowerCase().includes('buy'));
   if (usRatingFilter === 'STRONG_BUY')filtered = filtered.filter(r => r.analystRating?.toLowerCase().includes('strong buy'));
@@ -6721,6 +6792,22 @@ function USACompare() {
                   border:`1px solid ${usGpmMin===v?'#34d39960':BORDER}`,background:usGpmMin===v?'#34d39914':'transparent',color:usGpmMin===v?'#34d399':MUTED,cursor:'pointer'}}>
                   {v==='ALL'?'All':`≥${v}%`}
                   {v!=='ALL' && ` (${rows.filter(r=>{const gm=r.grossMarginTtm??r.grossMarginAnn;return gm!==undefined && gm>=v;}).length})`}
+                </button>
+              ))}
+
+              {/* PATCH 0347 — Decision logbook filter */}
+              <div style={{width:1,background:BORDER,height:18}}/>
+              <span style={{fontSize:F.xs,color:'#38bdf8',fontWeight:700}}>📒 Decision:</span>
+              {([
+                {k:'ALL' as const, label:'All', col:MUTED},
+                {k:'BUY' as const, label:'✅ BUY', col:'#10b981'},
+                {k:'WATCH' as const, label:'👁 WATCH', col:'#f59e0b'},
+                {k:'NEUTRAL' as const, label:'⚪ NEUTRAL', col:'#94a3b8'},
+                {k:'REJECTED' as const, label:'❌ REJECTED', col:'#ef4444'},
+              ]).map(({k,label,col})=>(
+                <button key={k} onClick={()=>setUsDecisionFilter(p=>p===k?'ALL':k)} style={{fontSize:F.xs,fontWeight:700,padding:'4px 9px',borderRadius:6,
+                  border:`1px solid ${usDecisionFilter===k?col+'60':BORDER}`,background:usDecisionFilter===k?col+'18':'transparent',color:usDecisionFilter===k?col:MUTED,cursor:'pointer'}}>
+                  {label} {k!=='ALL' && `(${rows.filter(r=>getDecision(r.symbol)?.status===k).length})`}
                 </button>
               ))}
 
@@ -6899,6 +6986,8 @@ function USACompare() {
                 </button>
                 {isExp&&(
                   <div style={{padding:'16px 14px 20px',backgroundColor:`${CARD_BG}CC`,borderTop:`1px solid ${BORDER}`}}>
+                    {/* PATCH 0347 — Decision logbook bar (USA) */}
+                    <DecisionBar symbol={r.symbol} company={r.company} market="US" score={r.score} grade={r.grade} bump={bumpUsDecisions} />
                     <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:16}}>
                       <div>
                         <div style={{fontSize:F.sm,color:MUTED,fontWeight:700,letterSpacing:'0.8px',marginBottom:8}}>KEY METRICS</div>
@@ -6955,8 +7044,156 @@ function USACompare() {
 const STORAGE_KEY = 'mb_excel_scored_v2';
 const STORAGE_META = 'mb_excel_meta_v2';
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PATCH 0347 — DECISION BAR COMPONENT
+// Used in both India and USA expanded rows.
+// Shows 4 status buttons (BUY/WATCH/NEUTRAL/REJECTED) + reason input.
+// Persists to localStorage via lib/decisions.ts — survives data clears.
+// ═══════════════════════════════════════════════════════════════════════════
+function DecisionBar({ symbol, company, market, score, grade, bump }: {
+  symbol: string; company?: string; market: 'IN' | 'US';
+  score?: number; grade?: string; bump: () => void;
+}) {
+  const existing = getDecision(symbol);
+  const [reason, setReason] = React.useState(existing?.reason ?? '');
+  const [status, setStatus] = React.useState<DecisionStatus | undefined>(existing?.status);
+  React.useEffect(() => {
+    // Re-sync when symbol changes
+    const e = getDecision(symbol);
+    setReason(e?.reason ?? '');
+    setStatus(e?.status);
+  }, [symbol]);
+
+  const apply = (newStatus: DecisionStatus) => {
+    setStatus(newStatus);
+    setDecision({
+      symbol, market, status: newStatus, reason,
+      company, scoreAtDecision: score, gradeAtDecision: grade,
+    });
+    bump();
+  };
+  const onSaveReason = () => {
+    if (!status) return;
+    setDecision({
+      symbol, market, status, reason,
+      company, scoreAtDecision: score, gradeAtDecision: grade,
+    });
+    bump();
+  };
+  const onClear = () => {
+    clearDecision(symbol);
+    setStatus(undefined);
+    setReason('');
+    bump();
+  };
+
+  return (
+    <div style={{
+      marginBottom: 12, padding: '10px 14px',
+      backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: 8,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.7px', color: '#38bdf8' }}>
+          📒 DECISION LOG{existing && ` · last updated ${new Date(existing.date).toLocaleDateString()}`}
+        </span>
+        {(['BUY', 'WATCH', 'NEUTRAL', 'REJECTED'] as DecisionStatus[]).map(s => {
+          const meta = DECISION_META[s];
+          const active = status === s;
+          return (
+            <button key={s} onClick={() => apply(s)}
+              style={{
+                fontSize: 11, fontWeight: 800, padding: '5px 11px', borderRadius: 6, cursor: 'pointer',
+                border: `1px solid ${active ? meta.color + 'AA' : '#1e293b'}`,
+                background: active ? `${meta.color}25` : 'transparent',
+                color: active ? meta.color : '#94a3b8',
+              }}>
+              {meta.emoji} {meta.label}
+            </button>
+          );
+        })}
+        {status && (
+          <button onClick={onClear} style={{
+            fontSize: 10, padding: '4px 9px', borderRadius: 5, cursor: 'pointer',
+            border: '1px solid #1e293b', background: 'transparent', color: '#94a3b8', marginLeft: 'auto',
+          }} title="Remove this decision">
+            ✕ Clear
+          </button>
+        )}
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input
+          type="text"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          onBlur={onSaveReason}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onSaveReason(); } }}
+          placeholder="Why? Add your reason — saved permanently even if you clear the list"
+          style={{
+            flex: 1, fontSize: 12, padding: '7px 10px', borderRadius: 6,
+            background: '#0a1124', border: '1px solid #1e293b', color: '#e2e8f0', outline: 'none',
+          }}
+        />
+        <button onClick={onSaveReason}
+          style={{
+            fontSize: 11, fontWeight: 700, padding: '6px 14px', borderRadius: 6, cursor: 'pointer',
+            border: '1px solid #38bdf860', background: '#38bdf818', color: '#38bdf8',
+          }}>
+          💾 Save
+        </button>
+      </div>
+      {existing && (
+        <div style={{ marginTop: 6, fontSize: 10, color: '#64748b' }}>
+          Decision recorded when score was <strong style={{ color: '#94a3b8' }}>{existing.scoreAtDecision ?? '—'} {existing.gradeAtDecision ?? ''}</strong>.
+          This persists even after you clear your upload — useful as a personal logbook.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Compact decision badge for collapsed rows
+function DecisionBadge({ symbol }: { symbol: string }) {
+  const d = getDecision(symbol);
+  if (!d) return null;
+  const meta = DECISION_META[d.status];
+  return (
+    <span
+      title={`${meta.label}${d.reason ? ' — ' + d.reason : ''} · ${new Date(d.date).toLocaleDateString()}`}
+      style={{
+        fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 4,
+        color: meta.color, background: meta.color + '20', border: `1px solid ${meta.color}50`,
+      }}>
+      {meta.emoji} {meta.label}
+    </span>
+  );
+}
+
+// PATCH 0347 — Cross-market upload detection.
+// USA TradingView CSV has these unique headers; India Screener CSV does not.
+function detectCsvMarket(headers: string[]): 'IN' | 'US' | 'UNKNOWN' {
+  const h = headers.map(x => x.toLowerCase());
+  // USA-specific TradingView column names
+  const usaSignals = ['forward non-gaap', 'piotroski f-score', 'altman z-score', 'free cash flow margin', 'analyst rating'];
+  // India-specific Screener.in column names
+  const indiaSignals = ['promoter holding', 'promoter %', 'sales growth', 'roce', 'pledged', 'change in promoter'];
+  const usaHits = usaSignals.filter(s => h.some(x => x.includes(s))).length;
+  const indiaHits = indiaSignals.filter(s => h.some(x => x.includes(s))).length;
+  if (usaHits >= 2 && usaHits > indiaHits) return 'US';
+  if (indiaHits >= 2 && indiaHits > usaHits) return 'IN';
+  return 'UNKNOWN';
+}
+
 export default function MultibaggerPage() {
   const [activeTab, setActiveTab] = useState<'excel'|'usa'|'usa-checklist'|'checklist'|'capital-alloc'|'reference'>('excel');
+  // PATCH 0347 — Listen for cross-market tab-switch events fired from upload handlers
+  React.useEffect(() => {
+    const onSwitch = (e: Event) => {
+      const ce = e as CustomEvent<{ tab: 'excel' | 'usa' }>;
+      if (ce.detail?.tab === 'usa' || ce.detail?.tab === 'excel') setActiveTab(ce.detail.tab);
+    };
+    window.addEventListener('mc:switch-multibagger-tab', onSwitch);
+    return () => window.removeEventListener('mc:switch-multibagger-tab', onSwitch);
+  }, []);
 
   // Lazy-init from localStorage — data survives navigation and page refresh.
   // Only cleared when user explicitly clicks "Clear All Data".
