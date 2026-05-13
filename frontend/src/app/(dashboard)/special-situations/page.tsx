@@ -26,6 +26,10 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { ExternalLink, AlertTriangle } from 'lucide-react';
 import api from '@/lib/api';
 import { computeMergerArb, fmtPct } from '@/lib/merger-arb';
+// PATCH 0328 — Wire lifecycle + playbook intelligence into event cards
+import { getPlaybook } from '@/lib/specsit-playbooks';
+import type { LifecycleState } from '@/lib/special-sit-lifecycle';
+import { LIFECYCLE_CONFIG } from '@/lib/special-sit-lifecycle';
 // PATCH 0254 — Source-tier classifier (PRIMARY / SPECIALIST / SECONDARY / AGGREGATOR)
 import { classifySource, TIER_VISUAL } from '@/lib/source-tiers';
 
@@ -893,6 +897,51 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
       </button>
       {expanded && (
         <div style={{ padding: '0 16px 14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {/* PATCH 0328 — Playbook intelligence: institutional priors for
+              this event type (avg close, success rate, typical spread,
+              dominant failure modes, retail-overhang flag). */}
+          {(() => {
+            const pb = getPlaybook(ev.event_type);
+            if (!pb) return null;
+            return (
+              <div style={{ backgroundColor: '#0A1422', border: '1px solid #1A2840', borderLeft: '3px solid #8B5CF6', borderRadius: 6, padding: '10px 14px' }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: '#8B5CF6', letterSpacing: '0.4px', marginBottom: 8 }}>
+                  📐 PLAYBOOK — {pb.label}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8, marginBottom: 8 }}>
+                  <div style={{ backgroundColor: '#0D1623', padding: '6px 10px', borderRadius: 4 }}>
+                    <div style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.5px' }}>AVG CLOSE</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: '#E6EDF3' }}>{pb.avg_close_days}d</div>
+                    <div style={{ fontSize: 9, color: '#6B7A8D' }}>p25–p75: {pb.close_days_range[0]}–{pb.close_days_range[1]}d</div>
+                  </div>
+                  <div style={{ backgroundColor: '#0D1623', padding: '6px 10px', borderRadius: 4 }}>
+                    <div style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.5px' }}>SUCCESS RATE</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: pb.success_rate_pct >= 90 ? '#10B981' : pb.success_rate_pct >= 75 ? '#FBBF24' : '#EF4444' }}>
+                      {pb.success_rate_pct}%
+                    </div>
+                  </div>
+                  <div style={{ backgroundColor: '#0D1623', padding: '6px 10px', borderRadius: 4 }}>
+                    <div style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.5px' }}>TYPICAL SPREAD</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: '#22D3EE' }}>{pb.typical_spread_pct >= 0 ? '+' : ''}{pb.typical_spread_pct}%</div>
+                  </div>
+                  <div style={{ backgroundColor: '#0D1623', padding: '6px 10px', borderRadius: 4 }}>
+                    <div style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.5px' }}>RETAIL OVERHANG</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: pb.retail_overhang === 'YES' ? '#10B981' : pb.retail_overhang === 'SOMETIMES' ? '#FBBF24' : '#6B7A8D' }}>
+                      {pb.retail_overhang === 'YES' ? 'YES — arb capture' : pb.retail_overhang}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: '#C9D4E0', lineHeight: 1.5, marginBottom: 6 }}>
+                  <strong style={{ color: '#22D3EE' }}>Tactics:</strong> {pb.tactics}
+                </div>
+                {pb.failure_modes.length > 0 && (
+                  <div style={{ fontSize: 10, color: '#94A3B8', lineHeight: 1.5 }}>
+                    <strong style={{ color: '#EF4444' }}>Failure modes:</strong> {pb.failure_modes.join(' · ')}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           {/* Why tradable */}
           <div style={{ backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 6, padding: '10px 14px' }}>
             <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', letterSpacing: '0.4px', marginBottom: 6 }}>WHY TRADABLE</div>
