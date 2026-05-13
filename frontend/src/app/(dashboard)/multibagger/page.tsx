@@ -5150,6 +5150,7 @@ interface USARow {
   totalSharesOutstanding?: number;// "Total common shares outstanding"
   numEmployees?: number;          // "Number of employees, Annual"
   ebitdaPerEmployee?: number;     // "EBITDA per employee, Annual" (USD)
+  fcfPerShareTtm?: number;        // PATCH 0342: "Free cash flow per share, TTM" (USD) — fallback for files w/o absolute FCF
   roce?: number;                  // "Return on capital employed %, Annual" (TTM was retired)
   // Derived
   revenueAccel?: number;          // revenueGrowthQtr - revenueGrowthAnn
@@ -5780,7 +5781,13 @@ function parseUSARow(row: Record<string,unknown>): USARow | null {
   const sym = String(row['Symbol']??'').trim().toUpperCase();
   if (!sym) return null;
   const mcapRaw = n(row['Market capitalization']);
-  const cashRaw = n(row['Cash & equivalents, Annual']);
+  // PATCH 0342: TradingView exports use "Cash and equivalents" (with "and"),
+  // not "Cash & equivalents" (with ampersand). Old parser missed this column.
+  const cashRaw = n(
+    row['Cash and equivalents, Annual'] ??
+    row['Cash & equivalents, Annual'] ??
+    row['Cash and equivalents']
+  );
   const ltDebtRaw = n(row['Long term debt, Annual']);
   const netDebtRaw = n(row['Net debt, Annual']);
   const revQtr = n(row['Revenue growth %, Quarterly YoY']);
@@ -5888,6 +5895,7 @@ function parseUSARow(row: Record<string,unknown>): USARow | null {
     ),
     altmanZScore: n(
       row['Altman Z-score, Annual'] ??
+      row['Altman Z-score, Trailing 12 months'] ??  // PATCH 0342: NVDIA-format file uses TTM
       row['Altman Z-score']
     ),
     sloanRatio: n(
@@ -5952,6 +5960,14 @@ function parseUSARow(row: Record<string,unknown>): USARow | null {
     ebitdaPerEmployee: n(
       row['EBITDA per employee, Annual'] ??
       row['EBITDA per employee']
+    ),
+    // PATCH 0342: FCF per share TTM (NVDIA-style export has this instead
+    // of absolute FCF). Wired as a separate signal — positive value is a
+    // clean cash-generation signal even without absolute FCF.
+    fcfPerShareTtm: n(
+      row['Free cash flow per share, Trailing 12 months'] ??
+      row['Free cash flow per share, TTM'] ??
+      row['Free cash flow per share']
     ),
     roce: n(
       row['Return on capital employed %, Annual'] ??
