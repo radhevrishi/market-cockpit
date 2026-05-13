@@ -104,6 +104,90 @@ function Sparkline({ data, color, width = 80, height = 24 }: { data: number[]; c
 }
 
 // ── Drilldown panel ───────────────────────────────────────────────────────
+// PATCH 0330 — Z-Score panel inside Drilldown. Lazy-fetches z-scores
+// across 60d / 180d / 365d / 5yr windows on panel open, renders chip
+// strip with interpretation tooltips.
+interface ZScoreData {
+  window_days: number; z_score: number; percentile: number;
+  mean: number; std_dev: number; sample_size: number;
+  interpretation: string; source: string;
+}
+function ZScoreChips({ commodity }: { commodity: CommodityRow }) {
+  const [data, setData] = useState<ZScoreData[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    const fetchAll = async () => {
+      const windows = [60, 180, 365, 1825];
+      const slug = commodity.name.toLowerCase().replace(/\s+/g, '_');
+      const sym = encodeURIComponent(commodity.symbol);
+      try {
+        const results = await Promise.all(
+          windows.map(w =>
+            fetch(`/api/v1/transmission/zscore/${encodeURIComponent(slug)}?window=${w}&symbol=${sym}`)
+              .then(r => r.ok ? r.json() : null).catch(() => null)
+          )
+        );
+        if (cancelled) return;
+        setData(results.filter(r => r && r.source !== 'INSUFFICIENT_DATA'));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    fetchAll();
+    return () => { cancelled = true; };
+  }, [commodity.name, commodity.symbol]);
+  if (loading) {
+    return <div style={{ fontSize: 11, color: TOKENS.surface.textMuted, padding: '8px 14px' }}>Computing z-scores…</div>;
+  }
+  if (!data || data.length === 0) {
+    return <div style={{ fontSize: 11, color: TOKENS.surface.textMuted, padding: '8px 14px', fontStyle: 'italic' }}>z-score history unavailable for this commodity</div>;
+  }
+  const horizonLabel = (d: number) => d === 60 ? '3m' : d === 180 ? '6m' : d === 365 ? '1y' : '5y';
+  const zoneColor = (z: number) => {
+    if (z > 2) return TOKENS.semantic.bullish.solid;     // extremely elevated → mean-rev risk
+    if (z > 1) return '#F59E0B';                          // elevated
+    if (z > -1) return TOKENS.surface.textDim;            // normal
+    if (z > -2) return '#22D3EE';                         // value zone
+    return TOKENS.semantic.bearish.solid;                 // extreme low → capitulation
+  };
+  return (
+    <div style={{ marginBottom: 18, backgroundColor: '#0A1422', border: `1px solid ${TOKENS.surface.cardBorder}`, borderRadius: 6, padding: '10px 14px' }}>
+      <div style={{ fontSize: 10, color: TOKENS.surface.textMuted, fontWeight: 700, marginBottom: 8, letterSpacing: '0.5px' }}>
+        STATISTICAL CONTEXT  ·  current price vs historical distribution
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
+        {data.map(z => (
+          <div
+            key={z.window_days}
+            title={z.interpretation}
+            style={{
+              border: `1px solid ${zoneColor(z.z_score)}40`,
+              backgroundColor: `${zoneColor(z.z_score)}14`,
+              borderRadius: 5, padding: '6px 10px', fontSize: 11,
+            }}
+          >
+            <div style={{ fontSize: 9, color: TOKENS.surface.textMuted, fontWeight: 700, marginBottom: 2 }}>
+              vs {horizonLabel(z.window_days)} ({z.sample_size}d)
+            </div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, fontVariantNumeric: 'tabular-nums' }}>
+              <strong style={{ fontSize: 14, color: zoneColor(z.z_score) }}>
+                {z.z_score >= 0 ? '+' : ''}{z.z_score.toFixed(2)}σ
+              </strong>
+              <span style={{ fontSize: 10, color: TOKENS.surface.textDim }}>p{z.percentile.toFixed(0)}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      {data[2] && (
+        <div style={{ fontSize: 10, color: TOKENS.surface.textDim, marginTop: 8, lineHeight: 1.5 }}>
+          {data[2].interpretation}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DrilldownPanel({ commodity, onClose }: { commodity: CommodityRow; onClose: () => void }) {
   const sortedImpacts = [...commodity.impacts].sort((a, b) => {
     const pa = Math.abs(a.margin_pressure_pp_1m ?? 0);
@@ -151,6 +235,8 @@ function DrilldownPanel({ commodity, onClose }: { commodity: CommodityRow; onClo
             <Sparkline data={commodity.sparkline} color={TOKENS.surface.accent} width={680} height={70} />
           </div>
         )}
+        {/* PATCH 0330 — Z-Score statistical context */}
+        {commodity.symbol && !commodity.symbol.startsWith('MANUAL') && <ZScoreChips commodity={commodity} />}
         {commodity.bias_2026 && (
           <div style={{ marginBottom: 14, fontSize: 11, color: TOKENS.surface.textDim }}>
             <strong style={{ color: TOKENS.surface.text }}>2026 bias:</strong> {commodity.bias_2026}

@@ -65,7 +65,7 @@ function interpretZ(z: number, windowDays: number): string {
   return `Extreme below ${horizon} mean (${z.toFixed(1)}σ) — historically rare; capitulation likely if cyclical.`;
 }
 
-async function fetchPriceHistory(commodity: string, windowDays: number, signal?: AbortSignal): Promise<number[]> {
+async function fetchPriceHistory(commodity: string, windowDays: number, overrideSymbol: string | null, signal?: AbortSignal): Promise<number[]> {
   // Try Yahoo Finance first; it has reliable history for most commodities.
   // The transmission endpoint maps each commodity to its Yahoo symbol.
   const symbolMap: Record<string, string> = {
@@ -91,7 +91,10 @@ async function fetchPriceHistory(commodity: string, windowDays: number, signal?:
     palladium:   'PA=F',
     platinum:    'PL=F',
   };
-  const symbol = symbolMap[commodity.toLowerCase()];
+  // PATCH 0330 — accept Yahoo symbol directly via ?symbol= override.
+  // Lets the Transmission page pass each commodity's actual Yahoo symbol
+  // without needing to know the internal keying.
+  const symbol = overrideSymbol || symbolMap[commodity.toLowerCase()];
   if (!symbol) return [];
 
   const period2 = Math.floor(Date.now() / 1000);
@@ -125,14 +128,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ comm
   const windowDays = (VALID_WINDOWS.has(windowRaw as Window) ? windowRaw : 365) as Window;
   const force = req.nextUrl.searchParams.get('force') === '1';
 
+  const overrideSymbol = req.nextUrl.searchParams.get('symbol');
+  const cacheKey = overrideSymbol ? `${commodity}__${overrideSymbol}` : commodity;
   if (isRedisAvailable() && !force) {
-    const cached = await kvGet<ZScoreResult>(KEY(commodity, windowDays));
+    const cached = await kvGet<ZScoreResult>(KEY(cacheKey, windowDays));
     if (cached) return NextResponse.json({ ...cached, source: 'CACHED' });
   }
 
   const controller = new AbortController();
   const tid = setTimeout(() => controller.abort(), 8000);
-  const prices = await fetchPriceHistory(commodity, windowDays, controller.signal);
+  const prices = await fetchPriceHistory(commodity, windowDays, overrideSymbol, controller.signal);
   clearTimeout(tid);
 
   if (prices.length < 30) {
@@ -177,7 +182,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ comm
     generated_at: new Date().toISOString(),
   };
   if (isRedisAvailable()) {
-    await kvSet(KEY(commodity, windowDays), result, TTL_SECONDS);
+    await kvSet(KEY(cacheKey, windowDays), result, TTL_SECONDS);
   }
   return NextResponse.json(result);
 }
