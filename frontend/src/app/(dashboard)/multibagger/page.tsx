@@ -2091,6 +2091,11 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     }
   }
 
+  // Expose pump score on the row so the UI can render a chip without
+  // having to re-run the detector logic. (Patch 0326)
+  (row as any).pumpScore = pumpScore;
+  (row as any).pumpFlags = pumpFlags;
+
   // Apply pump-score consequences. ≥5 = CRITICAL (cap 38). ≥3 = HIGH structural
   // (cap 60). ≥1 = MEDIUM (mild penalty). Each pump flag also goes into risks.
   if (pumpScore >= 5) {
@@ -3785,6 +3790,28 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                           }}
                         >🛑 GOV⚠</span>
                       )}
+                      {/* PATCH 0326 — Forensic pump-score chip. Visible on
+                          row when forensic signals fire. Hover shows the
+                          individual flags. Red ≥5 = CRITICAL, orange ≥3 =
+                          HIGH, yellow ≥1 = soft signal. */}
+                      {(r as any).pumpScore > 0 && (() => {
+                        const ps = (r as any).pumpScore;
+                        const flags = ((r as any).pumpFlags as string[]) || [];
+                        const tone = ps >= 5 ? '#EF4444' : ps >= 3 ? '#F97316' : '#F59E0B';
+                        const label = ps >= 5 ? `🔥 PUMP ${ps}` : ps >= 3 ? `⚠ PUMP ${ps}` : `· pump ${ps}`;
+                        return (
+                          <span
+                            title={`Forensic pump-detector: ${ps} signals fired. ${flags.length > 0 ? '\n\n' + flags.slice(0, 6).map(f => '• ' + f).join('\n') : ''}`}
+                            style={{
+                              fontSize: 9, fontWeight: 800, color: tone,
+                              border: `1px solid ${tone}60`,
+                              backgroundColor: `${tone}14`,
+                              padding: '1px 4px', borderRadius: 3, width: 'fit-content',
+                              letterSpacing: 0.3,
+                            }}
+                          >{label}</span>
+                        );
+                      })()}
                       {/* Signals: inflection/trigger/trajectory/rerating */}
                       <div style={{display:'flex',gap:3,flexWrap:'wrap',marginTop:2}}>
                         {r.inflectionSignal&&<span title="Early inflection phase: low-base high profit growth" style={{fontSize:9,fontWeight:800,color:'#F59E0B',border:'1px solid #F59E0B40',padding:'0 4px',borderRadius:3}}>💥 INFLECT</span>}
