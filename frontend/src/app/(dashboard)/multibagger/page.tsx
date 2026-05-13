@@ -274,6 +274,23 @@ interface ExcelRow {
   // Free-float / liquidity (optional; defaults skip)
   avgDailyValueCr?: number;       // average daily traded value in ₹ Cr (last 30d)
 
+  // ── PATCH 0322: Forensic pump-detection fields ──────────────────────────
+  // These detect operator-pumped names with surface-clean fundamentals.
+  // MosChip / RIR Power pattern: reported sales jumps + clean profit margins
+  // BUT underlying signals show other-income inflation, dilution-funded
+  // growth, related-party revenue, suspicious share-count expansion, etc.
+  otherIncomePctPbt?: number;     // Other Income / PBT × 100 — > 25% is non-operating PBT
+  cashAndEq?: number;             // Cash + Cash Equivalents ₹ Cr (current)
+  cashAndEqPrev?: number;         // Cash 1Y ago — to detect cash decline despite profits
+  numSharesNow?: number;          // Number of equity shares (current, Cr)
+  numShares3y?: number;           // Number of equity shares 3Y ago (Cr) — dilution trail
+  rptRevenuePct?: number;         // Related-party transactions as % of revenue
+  auditorChangesLast3y?: number;  // Count of auditor changes last 3Y (Screener flags it)
+  subsidiaryCount?: number;       // Number of subsidiaries (multi-layer structure check)
+  freeFloatPct?: number;          // Free-float % (100 - promoter - locked-in)
+  highLowRangePct?: number;       // 52w (high - low) / low × 100 — extreme volatility check
+  promoterEntityCount?: number;   // Count of promoter group entities — restructuring sniff
+
   // Derived
   marginOfSafety?: number;
   aboveDMA200?: number;
@@ -1958,6 +1975,147 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     }
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // PATCH 0322: FORENSIC PUMP DETECTOR (MosChip / RIR Power pattern)
+  // ══════════════════════════════════════════════════════════════════════════
+  // These checks identify operator-pumped microcaps where clean reported
+  // fundamentals mask underlying manipulation. The pattern is real
+  // accounting tricks (other-income inflation, dilution-funded growth,
+  // related-party revenue, sudden share-count expansion, treasury gains
+  // booked as PAT) that bypass standard quality screens like CFO/PAT.
+  //
+  // Track a "pump score" 0-100 — number of forensic signals triggered.
+  // When pump score ≥ 3, fire a HIGH structural redflag (cap 60). When
+  // ≥ 5, fire CRITICAL (cap 38). All under-microcap (mcap < ₹3000 Cr).
+  let pumpScore = 0;
+  const pumpFlags: string[] = [];
+  const isMicrocapPump = (row.marketCapCr ?? 0) < 3000 && (row.marketCapCr ?? 0) > 0;
+
+  if (isMicrocapPump) {
+    // (1) Other Income > 25% of PBT — non-operating gains pumping bottom line.
+    //     Detected when otherIncomePctPbt is directly provided OR when CFO/PAT
+    //     is suspiciously high (>1.3) without explanation in a non-cash-rich
+    //     sector (cash-rich = SaaS, asset-light services).
+    if (typeof row.otherIncomePctPbt === 'number' && row.otherIncomePctPbt > 25) {
+      pumpScore += 2;
+      pumpFlags.push(`Other Income ${row.otherIncomePctPbt.toFixed(0)}% of PBT — operating PBT is inflated by non-recurring items`);
+    }
+
+    // (2) Cash declining despite reported profits — paper profits not converting.
+    if (typeof row.cashAndEq === 'number' && typeof row.cashAndEqPrev === 'number'
+        && row.cashAndEqPrev > 0
+        && (row.cashAndEq - row.cashAndEqPrev) / row.cashAndEqPrev < -0.3
+        && (row.profitCagr ?? 0) > 20) {
+      pumpScore += 2;
+      pumpFlags.push(`Cash declined ${(((row.cashAndEqPrev - row.cashAndEq) / row.cashAndEqPrev) * 100).toFixed(0)}% YoY despite ${row.profitCagr?.toFixed(0)}% profit growth — earnings not converting to cash on balance sheet`);
+    }
+
+    // (3) Sudden share-count expansion — dilution-funded growth pattern.
+    //     If shares grew >25% over 3Y, the reported "EPS growth" is partly
+    //     fictional (revenue growth funded by capital infusion, not earnings).
+    if (typeof row.numSharesNow === 'number' && typeof row.numShares3y === 'number'
+        && row.numShares3y > 0) {
+      const dilutionPct = ((row.numSharesNow - row.numShares3y) / row.numShares3y) * 100;
+      if (dilutionPct > 50) {
+        pumpScore += 3; // very aggressive dilution
+        pumpFlags.push(`Share count grew ${dilutionPct.toFixed(0)}% over 3Y — growth funded by capital infusion, not earnings`);
+      } else if (dilutionPct > 25) {
+        pumpScore += 2;
+        pumpFlags.push(`Share count grew ${dilutionPct.toFixed(0)}% over 3Y — meaningful equity dilution`);
+      }
+    }
+
+    // (4) Related-party transactions > 5% of revenue — value-transfer risk.
+    if (typeof row.rptRevenuePct === 'number') {
+      if (row.rptRevenuePct > 20) {
+        pumpScore += 3;
+        pumpFlags.push(`Related-party transactions ${row.rptRevenuePct.toFixed(0)}% of revenue — extreme related-party dependence`);
+      } else if (row.rptRevenuePct > 10) {
+        pumpScore += 2;
+        pumpFlags.push(`Related-party transactions ${row.rptRevenuePct.toFixed(0)}% of revenue — material related-party exposure`);
+      } else if (row.rptRevenuePct > 5) {
+        pumpScore += 1;
+      }
+    }
+
+    // (5) Auditor changes — frequent rotation = governance flag.
+    if (typeof row.auditorChangesLast3y === 'number' && row.auditorChangesLast3y >= 2) {
+      pumpScore += 2;
+      pumpFlags.push(`${row.auditorChangesLast3y} auditor changes in 3Y — frequent rotation correlates with governance issues`);
+    } else if (row.auditorChangesLast3y === 1) {
+      pumpScore += 1;
+    }
+
+    // (6) Subsidiary structure complexity — multi-layer = value-extraction.
+    if (typeof row.subsidiaryCount === 'number' && row.subsidiaryCount >= 10
+        && (row.marketCapCr ?? 0) < 1000) {
+      pumpScore += 2;
+      pumpFlags.push(`${row.subsidiaryCount} subsidiaries on a sub-₹1000Cr microcap — multi-layer structure favored by operator-driven schemes`);
+    }
+
+    // (7) Extreme 52-week price range — operator-induced volatility.
+    if (typeof row.highLowRangePct === 'number' && row.highLowRangePct > 200) {
+      pumpScore += 2;
+      pumpFlags.push(`52w range ${row.highLowRangePct.toFixed(0)}% (high vs low) — extreme volatility consistent with operator activity`);
+    } else if (row.highLowRangePct !== undefined && row.highLowRangePct > 120) {
+      pumpScore += 1;
+    }
+
+    // (8) Free float < 15% — operators can move thin floats easily.
+    if (typeof row.freeFloatPct === 'number' && row.freeFloatPct < 15) {
+      pumpScore += 1;
+      pumpFlags.push(`Free float ${row.freeFloatPct.toFixed(0)}% — thin float vulnerable to coordinated activity`);
+    }
+
+    // (9) Sales growth >> Industry growth by sustained margin = either real
+    //     winner or accounting acrobatics. Without a sector-growth field,
+    //     we use the proxy: yoySales > 60% AND revCagr > 35% (i.e., the
+    //     surge is sustained over multiple years).
+    if ((row.yoySalesGrowth ?? 0) > 60 && (row.revCagr ?? 0) > 35
+        && (row.cfoToPat ?? 99) < 0.7) {
+      pumpScore += 2;
+      pumpFlags.push(`Reported sales surging >35% CAGR with CFO/PAT only ${row.cfoToPat?.toFixed(2)} — growth not converting to cash`);
+    }
+
+    // (10) Promoter holding < 30% AND price 5×+ over 5Y — classic pump signature.
+    //      Hard to detect without 5Y return; we use return1m > 30 as proxy.
+    if ((row.promoter ?? 100) < 30 && (row.return1m ?? 0) > 30) {
+      pumpScore += 2;
+      pumpFlags.push(`Promoter ${row.promoter?.toFixed(0)}% + 1m return ${row.return1m?.toFixed(0)}% — low-promoter + sharp move = pump pattern signature`);
+    }
+
+    // (11) Promoter group entity count high — group restructuring obfuscation.
+    if (typeof row.promoterEntityCount === 'number' && row.promoterEntityCount >= 15) {
+      pumpScore += 1;
+      pumpFlags.push(`${row.promoterEntityCount} entities in promoter group — complex group structure makes stake-tracking opaque`);
+    }
+  }
+
+  // Apply pump-score consequences. ≥5 = CRITICAL (cap 38). ≥3 = HIGH structural
+  // (cap 60). ≥1 = MEDIUM (mild penalty). Each pump flag also goes into risks.
+  if (pumpScore >= 5) {
+    redFlags.push({
+      label: `Forensic pump signals: ${pumpScore} red flags`,
+      severity: 'CRITICAL',
+      source: 'Forensic forensics',
+      kind: 'STRUCTURAL',
+    });
+    risks.push(`🚨 FORENSIC ALERT — Multiple operator-pump signals detected: ${pumpFlags.slice(0, 5).join(' · ')}. Treat reported fundamentals with extreme skepticism.`);
+  } else if (pumpScore >= 3) {
+    redFlags.push({
+      label: `Forensic pump signals: ${pumpScore} flags`,
+      severity: 'HIGH',
+      source: 'Forensic forensics',
+      kind: 'STRUCTURAL',
+    });
+    risks.push(`Forensic flags: ${pumpFlags.join(' · ')}. Surface fundamentals may not reflect underlying reality.`);
+  } else if (pumpScore >= 1) {
+    reratingBonus -= 2;
+    if (pumpFlags.length > 0) {
+      risks.push(`Forensic signal: ${pumpFlags[0]}`);
+    }
+  }
+
   // Delta signal: promoter buying from high base = strongest insider signal
   if ((row.changeInPromoter??0) > 2 && ownershipCategory === 'FOUNDER_CONTROLLED') {
     reratingBonus += 3; // founder buying more when already >50% = very high conviction
@@ -2263,6 +2421,31 @@ function buildColMap(sampleRow: Record<string,unknown>): Record<string,string> {
       m['diiHistory_'+o.match(/^DII\s+holding\s+(\d+)/i)![1]]=col;
     else if (o==='Avg traded value'||o==='Average Daily Volume'||o==='ADV'||o==='Avg Daily Value (Cr)')
       m['avgDailyValueCr']=col;
+    // ── PATCH 0322: Forensic pump-detection columns ──────────────────────────
+    else if (o==='Other Income'||o==='Other income'||o==='Other Inc')
+      m['otherIncome']=col;  // raw value; we compute the % ourselves if PBT is available
+    else if (o==='Other Income / PBT %'||o==='Other Income % of PBT'||o==='Other Income to PBT')
+      m['otherIncomePctPbt']=col;
+    else if (o==='Cash and equivalents'||o==='Cash & Equivalents'||o==='Cash Equivalents'||o==='Cash')
+      m['cashAndEq']=col;
+    else if (o==='Cash and equivalents preceding year'||o==='Cash 1Y ago'||o==='Cash Preceding Year')
+      m['cashAndEqPrev']=col;
+    else if (o==='Number of equity shares'||o==='Equity Shares'||o==='Shares Outstanding')
+      m['numSharesNow']=col;
+    else if (o==='Number of equity shares preceding 3 years'||o==='Equity Shares 3Y ago'||o==='Shares 3Y back')
+      m['numShares3y']=col;
+    else if (o==='Related Party Transactions %'||o==='RPT % Revenue'||o==='Related Party % Revenue')
+      m['rptRevenuePct']=col;
+    else if (o==='Auditor Changes Last 3Y'||o==='Auditor changes')
+      m['auditorChangesLast3y']=col;
+    else if (o==='Number of Subsidiaries'||o==='Subsidiary Count'||o==='Subsidiaries')
+      m['subsidiaryCount']=col;
+    else if (o==='Free Float %'||o==='Free Float'||o==='Public Float %')
+      m['freeFloatPct']=col;
+    else if (o==='52 Week Range %'||o==='High Low Range %'||o==='52W Range Pct')
+      m['highLowRangePct']=col;
+    else if (o==='Promoter Group Entities'||o==='Promoter Entities Count')
+      m['promoterEntityCount']=col;
     // Generic fallbacks
     else if (!m['symbol']&&(c.includes('nsecode')||c.includes('symbol')||c.includes('ticker'))) m['symbol']=col;
     else if (!m['company']&&c.includes('name')&&!c.includes('sector')) m['company']=col;
@@ -2437,6 +2620,18 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
       entries.sort((a, b) => b[0] - a[0]);
       return entries.map(([, v]) => v);
     })(),
+    // PATCH 0322: Forensic fields
+    otherIncomePctPbt: n(m['otherIncomePctPbt']?row[m['otherIncomePctPbt']]:undefined),
+    cashAndEq: n(m['cashAndEq']?row[m['cashAndEq']]:undefined),
+    cashAndEqPrev: n(m['cashAndEqPrev']?row[m['cashAndEqPrev']]:undefined),
+    numSharesNow: n(m['numSharesNow']?row[m['numSharesNow']]:undefined),
+    numShares3y: n(m['numShares3y']?row[m['numShares3y']]:undefined),
+    rptRevenuePct: n(m['rptRevenuePct']?row[m['rptRevenuePct']]:undefined),
+    auditorChangesLast3y: n(m['auditorChangesLast3y']?row[m['auditorChangesLast3y']]:undefined),
+    subsidiaryCount: n(m['subsidiaryCount']?row[m['subsidiaryCount']]:undefined),
+    freeFloatPct: n(m['freeFloatPct']?row[m['freeFloatPct']]:undefined),
+    highLowRangePct: n(m['highLowRangePct']?row[m['highLowRangePct']]:undefined),
+    promoterEntityCount: n(m['promoterEntityCount']?row[m['promoterEntityCount']]:undefined),
     // Derived
     marginOfSafety:(iv!==undefined&&price!==undefined&&price>0)?Math.round((iv-price)/price*100):undefined,
     aboveDMA200:(dma!==undefined&&price!==undefined&&dma>0)?Math.round((price-dma)/dma*100):undefined,
