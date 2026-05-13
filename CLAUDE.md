@@ -1,7 +1,7 @@
 # Market Cockpit — Claude Handoff Memory
 
 > Read this FIRST when starting any new chat. Saves you 30 minutes of context-rebuilding.
-> Last updated: 2026-05-13 (after Patch 0300 — race-condition hardening + drill-through enrichments across whole dashboard).
+> Last updated: 2026-05-13 (after Patch 0304 — session close; ~30 patches in this round).
 
 ---
 
@@ -710,7 +710,27 @@ the race-prone callbacks/fetches across high-traffic pages.
 
   0301 — This documentation update.
 
-## 11 · Patch Log Summary (0073 → 0300)
+## 10.6.8 · Batch-8 — Final wrap-up patches (0302–0303)
+
+User asked to "end loop and finish all other open topics". Closing
+out the never-ending loop with two final polish patches and a
+documentation pass.
+
+  0302 — Calendars header now shows a prominent amber "FILTER:
+         <index>" chip when indexFilter is narrowed below 'All'.
+         Helps users notice when a low result count is filter-driven
+         vs genuinely empty.
+
+  0303 — Watchlist empty state cross-links to /earnings-opportunities
+         (Conviction Beats bench) and /screener so users have explicit
+         paths to populate the watchlist instead of staring at a
+         dead-end "empty" message.
+
+Session end-state: ~30 patches shipped this round (0272–0303). All
+12 SEV1 audit items and 6 IMP items either fixed or verified as
+false positives. Type-check clean. Deployed to main.
+
+## 11 · Patch Log Summary (0073 → 0303)
 
 Pre-session patches existed (0073–0095). Recent session highlights:
 
@@ -825,6 +845,9 @@ Pre-session patches existed (0073–0095). Recent session highlights:
 - 0299 — Status page granular OK/STALE/FAIL breakdown chip
 - 0300 — Portfolio header freshness chip from existing lastRefresh
 - 0301 — CLAUDE.md update (end of batch-7)
+- 0302 — Calendars: prominent index-filter chip in header
+- 0303 — Watchlist empty-state cross-links to Conviction Beats + Screener
+- 0304 — CLAUDE.md update (end of batch-8 / session close)
 
 **Other features:**
 - 0089–0094 — Earnings Hub merge, Special Situations pillar, Stock Sheet, Re-rating Screener
