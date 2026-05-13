@@ -2189,10 +2189,20 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   // HIGH (single-quarter margin slip, revenue decel) carries -6 penalty + cap 72.
   // Lets fundamentally strong names that ran into one mean-revertable issue
   // still grade B+ instead of getting flattened to B.
-  // (highStructPre was computed at bucket time — reuse it.)
-  const highStructuralCnt = highStructPre;
+  //
+  // PATCH 0335 — CRITICAL BUG FIX. Previously read highStructPre (the
+  // bucket-classification snapshot taken at line ~1572 before the rule
+  // blocks at lines 1762-2146 had run). After Patches 0317/0322/0334 added
+  // many late-stage red-flag pushes (ICR, working-capital, ownership-trend,
+  // forensic pump signals), the cap never bound because the count was stale.
+  // Visible symptom: SCORE AUDIT panel showed "2 HIGH structural · cap 48 ·
+  // Active cap: 48 (binding)" but the actual score landed at 89. Recompute
+  // freshly here over the FINAL redFlags array so caps actually bind.
+  const hasCritFinal      = redFlags.some(f => f.severity === 'CRITICAL');
+  const highStructuralCnt = redFlags.filter(f => f.severity === 'HIGH' && (f.kind ?? 'STRUCTURAL') === 'STRUCTURAL').length;
   const highCyclicalCnt   = redFlags.filter(f => f.severity === 'HIGH' && f.kind === 'CYCLICAL').length;
-  const redFlagPenalty = (hasCrit?25:0) + (highStructuralCnt*12) + (highCyclicalCnt*6) + (medCnt*5);
+  const medCntFinal       = redFlags.filter(f => f.severity === 'MEDIUM').length;
+  const redFlagPenalty = (hasCritFinal?25:0) + (highStructuralCnt*12) + (highCyclicalCnt*6) + (medCntFinal*5);
 
   // Block trigger bonuses entirely when in deceleration phase.
   // Op leverage 3.7x on a decelerating stock is a LAGGING signal, not a forward one.
@@ -2204,8 +2214,8 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
 
   let score = Math.round((penalized - redFlagPenalty + totalBonus) / 5) * 5;
 
-  // ── STANDARD RED FLAG CAPS (PATCH 0315 — kind-aware) ─────────────────────
-  if (hasCrit)                          score = Math.min(score, 38);
+  // ── STANDARD RED FLAG CAPS (PATCH 0315 — kind-aware, PATCH 0335 — fresh counts) ───
+  if (hasCritFinal)                     score = Math.min(score, 38);
   else if (highStructuralCnt >= 2)      score = Math.min(score, 48);   // 2+ structural flags = structural failure
   else if (highStructuralCnt >= 1)      score = Math.min(score, 60);   // 1 structural flag = ceiling at B
   else if (highCyclicalCnt >= 2)        score = Math.min(score, 62);   // 2+ cyclical flags = clear pressure
