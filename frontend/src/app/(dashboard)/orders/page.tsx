@@ -5,6 +5,8 @@ import { Shield, RefreshCw, TrendingUp, TrendingDown, Minus, Eye, Filter, Zap, A
 import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 // PATCH 0251 — Conviction Beats overlay on Intelligence/Signals page
 import { getConvictionTickers } from '@/lib/conviction-beats';
+// PATCH 0351 — coerce sentiment shape (string OR {direction, magnitude}) at render boundary
+import { coerceSentiment } from '@/lib/safeSentiment';
 
 // Theme
 const BG = '#0A0E1A';
@@ -3021,7 +3023,8 @@ export default function CompanyIntelligencePage() {
           {!excelNewsLoading && excelNewsDigest.length > 0 && (
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               {excelNewsDigest.map(item => {
-                const sentColor = item.sentiment === 'Bullish' ? GREEN : item.sentiment === 'Bearish' ? RED : TEXT3;
+                const itemSent = coerceSentiment(item.sentiment);
+                const sentColor = itemSent === 'Bullish' || itemSent === 'BULLISH' ? GREEN : itemSent === 'Bearish' || itemSent === 'BEARISH' ? RED : TEXT3;
                 const relDate = item.published ? (() => {
                   const d = new Date(item.published);
                   const days = Math.floor((Date.now() - d.getTime()) / 86400000);
@@ -3035,7 +3038,7 @@ export default function CompanyIntelligencePage() {
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
                       <span style={{ fontSize: '12px', fontWeight: 800, color: TEXT1 }}>{item.symbol}</span>
-                      <span style={{ fontSize: '9px', fontWeight: 700, color: sentColor, padding: '1px 5px', borderRadius: '3px', backgroundColor: `${sentColor}15` }}>{item.sentiment}</span>
+                      <span style={{ fontSize: '9px', fontWeight: 700, color: sentColor, padding: '1px 5px', borderRadius: '3px', backgroundColor: `${sentColor}15` }}>{itemSent}</span>
                       {relDate && <span style={{ fontSize: '9px', color: TEXT3, marginLeft: 'auto' }}>{relDate}</span>}
                     </div>
                     <div style={{ fontSize: '10px', color: TEXT3, marginBottom: '4px' }}>{item.company}</div>
@@ -3106,7 +3109,8 @@ export default function CompanyIntelligencePage() {
                   {isExpanded && t.signals && t.signals.length > 0 && (
                     <div style={{ marginTop: '10px', borderTop: `1px solid ${stackColor}20`, paddingTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       {t.signals.map((sig, idx) => {
-                        const sigSentColor = sig.sentiment === 'Bullish' ? GREEN : sig.sentiment === 'Bearish' ? RED : YELLOW;
+                        const sigSent = coerceSentiment(sig.sentiment);
+                        const sigSentColor = sigSent === 'Bullish' || sigSent === 'BULLISH' ? GREEN : sigSent === 'Bearish' || sigSent === 'BEARISH' ? RED : YELLOW;
                         const sigImpColor = sig.impactLevel === 'HIGH' ? RED : sig.impactLevel === 'MEDIUM' ? YELLOW : TEXT3;
                         return (
                           <div key={`${t.symbol}-sig-${idx}`} style={{
@@ -3118,7 +3122,7 @@ export default function CompanyIntelligencePage() {
                                 fontSize: '8px', fontWeight: 700, color: sigSentColor,
                                 padding: '1px 4px', borderRadius: '3px', backgroundColor: `${sigSentColor}15`,
                                 flexShrink: 0, marginTop: '2px',
-                              }}>{sig.sentiment}</span>
+                              }}>{coerceSentiment(sig.sentiment)}</span>
                               <span style={{ fontSize: '11px', fontWeight: 600, color: TEXT1, lineHeight: 1.3 }}>{sig.headline}</span>
                             </div>
                             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', fontSize: '9px', marginBottom: '4px' }}>
@@ -3486,7 +3490,7 @@ export default function CompanyIntelligencePage() {
                   {s.client && <span style={{ fontSize: '10px', color: PURPLE }}>Client: {s.client}</span>}
                   {s.segment && <span style={{ fontSize: '10px', color: ACCENT }}>Sector: {s.segment}</span>}
                   {s.timeline && <span style={{ fontSize: '10px', color: ORANGE }}>Timeline: {s.timeline}</span>}
-                  <span style={{ fontSize: '10px', color: sentimentColor(s.sentiment) }}>{s.sentiment}</span>
+                  <span style={{ fontSize: '10px', color: sentimentColor(coerceSentiment(s.sentiment)) }}>{coerceSentiment(s.sentiment)}</span>
                   <span style={{ fontSize: '10px', color: TEXT3 }}>{fmtDate(s.date)}</span>
                   {s.freshness && (
                     <span style={{
@@ -3578,7 +3582,7 @@ export default function CompanyIntelligencePage() {
                         Conf:{s.confidenceScore}
                       </span>
                     )}
-                    <span style={{ fontSize: '10px', color: sentimentColor(s.sentiment) }}>{s.sentiment}</span>
+                    <span style={{ fontSize: '10px', color: sentimentColor(coerceSentiment(s.sentiment)) }}>{coerceSentiment(s.sentiment)}</span>
                     {s.dataSource && <span style={{ fontSize: '9px', color: TEXT3 }}>· {s.dataSource}</span>}
                   </div>
                 </div>
@@ -4072,7 +4076,7 @@ export default function CompanyIntelligencePage() {
                   {s.client && <span style={{ fontSize: '10px', color: PURPLE }}>Client: {s.client}</span>}
                   {s.segment && <span style={{ fontSize: '10px', color: ACCENT }}>{s.segment}</span>}
                   {s.timeline && <span style={{ fontSize: '10px', color: ORANGE }}>{s.timeline}</span>}
-                  <span style={{ fontSize: '10px', color: sentimentColor(s.sentiment) }}>{s.sentiment}</span>
+                  <span style={{ fontSize: '10px', color: sentimentColor(coerceSentiment(s.sentiment)) }}>{coerceSentiment(s.sentiment)}</span>
                   {s.signalStackLevel && s.signalStackLevel !== 'WEAK' && (
                     <span style={{ fontSize: '9px', color: s.signalStackLevel === 'STRONG' ? GREEN : YELLOW }}>
                       ⚡{s.signalStackCount}
@@ -4295,7 +4299,7 @@ export default function CompanyIntelligencePage() {
                         {s.client && <span style={{ fontSize: '10px', color: PURPLE }}>Client: {s.client}</span>}
                         {s.segment && <span style={{ fontSize: '10px', color: ACCENT }}>{s.segment}</span>}
                         {s.timeline && <span style={{ fontSize: '10px', color: ORANGE }}>{s.timeline}</span>}
-                        <span style={{ fontSize: '10px', color: sentimentColor(s.sentiment) }}>{s.sentiment}</span>
+                        <span style={{ fontSize: '10px', color: sentimentColor(coerceSentiment(s.sentiment)) }}>{coerceSentiment(s.sentiment)}</span>
                         {s.signalStackLevel && s.signalStackLevel !== 'WEAK' && (
                           <span style={{ fontSize: '9px', color: s.signalStackLevel === 'STRONG' ? GREEN : YELLOW }}>
                             ⚡{s.signalStackCount}
@@ -4516,7 +4520,7 @@ export default function CompanyIntelligencePage() {
                         {s.client && <span style={{ fontSize: '10px', color: PURPLE }}>Client: {s.client}</span>}
                         {s.segment && <span style={{ fontSize: '10px', color: ACCENT }}>{s.segment}</span>}
                         {s.timeline && <span style={{ fontSize: '10px', color: ORANGE }}>{s.timeline}</span>}
-                        <span style={{ fontSize: '10px', color: sentimentColor(s.sentiment) }}>{s.sentiment}</span>
+                        <span style={{ fontSize: '10px', color: sentimentColor(coerceSentiment(s.sentiment)) }}>{coerceSentiment(s.sentiment)}</span>
                         {s.signalStackLevel && s.signalStackLevel !== 'WEAK' && (
                           <span style={{ fontSize: '9px', color: s.signalStackLevel === 'STRONG' ? GREEN : YELLOW }}>
                             ⚡{s.signalStackCount}
@@ -4684,7 +4688,7 @@ export default function CompanyIntelligencePage() {
                   {s.dataType === 'FACT' && (
                     <span style={{ fontSize: '7px', fontWeight: 700, padding: '1px 4px', borderRadius: '2px', color: GREEN, backgroundColor: 'rgba(16,185,129,0.08)' }}>CONFIRMED</span>
                   )}
-                  <span style={{ fontSize: '9px', color: sentimentColor(s.sentiment), marginLeft: 'auto' }}>{s.sentiment}</span>
+                  <span style={{ fontSize: '9px', color: sentimentColor(coerceSentiment(s.sentiment)), marginLeft: 'auto' }}>{coerceSentiment(s.sentiment)}</span>
                 </div>
               </div>
             );

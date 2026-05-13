@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { X, TrendingUp, TrendingDown, ExternalLink, AlertCircle, RefreshCw } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import api from '@/lib/api';
+import { coerceSentiment } from '@/lib/safeSentiment';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -34,7 +35,10 @@ interface NewsItem {
   url?: string;
   source_url?: string;
   published_at: string;
-  sentiment?: string;
+  // PATCH 0351 — sentiment may be a string label ('BULLISH' / 'BEARISH' /
+  // 'NEUTRAL') OR a {direction, magnitude} object from the institutional
+  // news engine. Coerce via coerceSentiment() at render time.
+  sentiment?: string | { direction?: string; magnitude?: number } | unknown;
   article_type?: string;
 }
 
@@ -51,6 +55,10 @@ const fmt = (n: number | undefined | null, decimals = 2) =>
 
 const sentimentColor = (s?: string) =>
   s === 'BULLISH' ? '#10B981' : s === 'BEARISH' ? '#EF4444' : '#8A95A3';
+
+// PATCH 0351 — coerce news API sentiment via shared helper. Centralised
+// in lib/safeSentiment.ts so every consumer (TickerDrawer, /orders, etc.)
+// uses one source of truth.
 
 const timeAgo = (iso: string) => {
   try { return formatDistanceToNow(new Date(iso), { addSuffix: true }); }
@@ -200,11 +208,14 @@ export default function TickerDrawer({ symbol, exchange = 'NASDAQ', onClose }: T
                     style={{ display: 'block', padding: '10px 12px', backgroundColor: '#0D1B2E', border: '1px solid #1E2D45', borderRadius: '10px', textDecoration: 'none', transition: 'border-color 0.15s' }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                      {n.sentiment && (
-                        <span style={{ fontSize: '9px', fontWeight: '700', color: sentimentColor(n.sentiment), border: `1px solid ${sentimentColor(n.sentiment)}40`, padding: '1px 5px', borderRadius: '4px' }}>
-                          {n.sentiment}
-                        </span>
-                      )}
+                      {(() => {
+                        const sentLabel = coerceSentiment(n.sentiment);
+                        return sentLabel ? (
+                          <span style={{ fontSize: '9px', fontWeight: '700', color: sentimentColor(sentLabel), border: `1px solid ${sentimentColor(sentLabel)}40`, padding: '1px 5px', borderRadius: '4px' }}>
+                            {sentLabel}
+                          </span>
+                        ) : null;
+                      })()}
                       <span style={{ fontSize: '10px', color: '#4A5B6C', marginLeft: 'auto', flexShrink: 0 }}>{timeAgo(n.published_at)}</span>
                     </div>
                     <p style={{ fontSize: '12px', color: '#C9D4E0', margin: 0, lineHeight: '1.4' }}>
