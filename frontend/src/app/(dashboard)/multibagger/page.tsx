@@ -5406,6 +5406,136 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
   const raw = qual*0.30 + growth*0.25 + accel*0.20 + val*0.15 + mkt*0.10;
   let score = Math.max(0, Math.min(100, Math.round(raw/5)*5));
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PATCH 0340 — US-SPECIFIC SCORE CAPS & DNA BONUS
+  // Inspired by the India scoring discipline (patches 0335-0339): disqualify
+  // operator/speculative/hype names first, then rank the clean universe.
+  // US-specific DNA differs from India:
+  //   - High GPM (>50%) is the moat signature (vs India's ROCE >25%)
+  //   - Rule of 40 ≥40 is the SaaS/tech premium gate (no India equivalent)
+  //   - Negative R40 = burning cash with no growth justification → speculative
+  //   - Stratospheric multiples (FwdPE>100, EV/EBITDA>100) = bubble pricing
+  //   - Hyper-base-effect arithmetic (QoQ>200%, Ann<100%) = low-base illusion
+  //   - OTC listings = lower disclosure quality vs NYSE/NASDAQ
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // (1) SPECULATIVE PRE-REVENUE / NEGATIVE-R40 CAP.
+  // Names like LWLG, HGRAF, ASTS, ONDS, RCAT, HUT, AMPX, POET were scoring
+  // B+/B despite massively negative R40 and pre-profit status. Cap at 45 (D-grade
+  // ceiling) when R40 deeply negative + market cap >$200M (institutional radar).
+  if (row.ruleOf40 !== undefined && row.ruleOf40 < -50
+      && (row.marketCapB ?? 0) > 0.2) {
+    score = Math.min(score, 45);
+    risks.push(`Speculative cap: R40 ${row.ruleOf40.toFixed(0)} (deeply negative) + mcap $${(row.marketCapB ?? 0).toFixed(1)}B — burning cash without growth justification → capped at 45.`);
+  }
+  // (1b) R40 < 0 (but not catastrophic) = HIGH cyclical equivalent → cap 62.
+  else if (row.ruleOf40 !== undefined && row.ruleOf40 < 0
+           && (row.fcfMarginAnn ?? 0) < -15) {
+    score = Math.min(score, 62);
+    risks.push(`R40 ${row.ruleOf40.toFixed(0)} + FCF margin ${(row.fcfMarginAnn ?? 0).toFixed(0)}% — sub-zero growth-vs-economics → capped at 62.`);
+  }
+
+  // (2) STRATOSPHERIC MULTIPLE CAP.
+  // SITM Fwd P/E 108× EV/EBITDA 4351×, OSS Fwd P/E 1555×, SEDG Fwd P/E 4712×
+  // were scoring B/C despite obvious bubble pricing. Cap at 60 unless R40 ≥ 60
+  // (genuinely premium-justified by elite growth-plus-economics).
+  const elitePremium = (row.ruleOf40 ?? 0) >= 60;
+  if (!elitePremium && (
+        (row.forwardPe !== undefined && row.forwardPe > 100)
+        || (row.evEbitda !== undefined && row.evEbitda > 100)
+        || (row.pe !== undefined && row.pe > 150)
+      )) {
+    score = Math.min(score, 60);
+    risks.push(`Stratospheric multiple cap: ${row.forwardPe ? `FwdPE ${row.forwardPe.toFixed(0)}×` : ''}${row.evEbitda && row.evEbitda > 100 ? ` EV/EBITDA ${row.evEbitda.toFixed(0)}×` : ''} without elite R40 → capped at 60.`);
+  }
+
+  // (3) HYPER-BASE-EFFECT DETECTOR.
+  // POET "QoQ +1075% Ann +2495%", T1 Energy "R40:25574", SNDK "QoQ +251% Ann +10%"
+  // are arithmetic illusions, not real acceleration. When QoQ >200% AND
+  // annual <100%, the QoQ is base-effect noise. Don't credit ACCELERATING signal.
+  const baseEffect = (row.revenueGrowthQtr ?? 0) > 200 && (row.revenueGrowthAnn ?? 999) < 100;
+  if (baseEffect) {
+    score = Math.min(score, 65);
+    risks.push(`Base-effect arithmetic: QoQ ${row.revenueGrowthQtr?.toFixed(0)}% + Annual ${row.revenueGrowthAnn?.toFixed(0)}% — QoQ surge is low-base math, not real acceleration → capped at 65.`);
+  }
+
+  // (4) OTC LISTING PENALTY.
+  // HGRAF, AEGXF, NSKFF, ATZAF, ABXXF, PRBZF, DAIUF, CPXWF are OTC-listed
+  // (often foreign or ADRs). Lower disclosure quality vs NYSE/NASDAQ. Cap at 78.
+  const isOTC = (row.exchange || '').toUpperCase().includes('OTC');
+  if (isOTC) {
+    score = Math.min(score, 78);
+    risks.push(`OTC listing: lower disclosure quality vs NYSE/NASDAQ → capped at 78. Verify foreign-filing equivalents (20-F, 6-K).`);
+  }
+
+  // (5) TECH/SOFTWARE-WITHOUT-MARGIN CAP.
+  // Software/tech companies should have GPM > 40% (real software co). When
+  // GPM < 30% in a tech-classified sector, it's not a real SaaS/software co —
+  // it's hardware-services or reseller masquerading as tech. Cap at 65.
+  const isTech = /TECHNOLOGY|SOFTWARE|SAAS|INTERNET|SEMICONDUCT/i.test(row.sector || '');
+  const effGM = row.grossMarginTtm ?? row.grossMarginAnn;
+  if (isTech && effGM !== undefined && effGM < 30 && (row.marketCapB ?? 0) > 0.5) {
+    score = Math.min(score, 65);
+    risks.push(`Tech without margin: sector=${row.sector} but GPM ${effGM.toFixed(0)}% — not a real software economics co → capped at 65.`);
+  }
+
+  // (6) LOW-COVERAGE CAP.
+  // When coverage <60% AND score >70, don't over-credit incomplete data.
+  // HGRAF, ABXXF, OTC names often have 40-50% coverage.
+  if (coverage < 60 && score > 70) {
+    score = Math.min(score, 70);
+    risks.push(`Low data coverage ${coverage}% — score capped at 70 until more columns added (need GPM, ROIC, FCF margin minimum).`);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // (7) US 100-BAGGER DNA BONUS — Phelps/Mayer canonical pattern.
+  // Tom Phelps "100 to 1 in the Stock Market" + Christopher Mayer "100 Baggers":
+  // every US 100-bagger had this DNA at its setup point. Two flavors:
+  //
+  //   SaaS PREMIUM DNA (NVDA early, CRM early, NOW, MSFT):
+  //     Rule of 40 ≥ 40  +  GPM ≥ 60  +  Rev growth ≥ 20  +  FCF margin ≥ 10
+  //
+  //   BUFFETT COMPOUNDER DNA (BRK, JNJ, KO, COST, HD long-run):
+  //     ROE ≥ 18  +  ROIC ≥ 15  +  FCF margin ≥ 15  +  D/E < 0.5  +  Rev growth ≥ 12
+  //
+  // Either flavor → +6 reratingBonus equivalent (apply as score boost).
+  // Gate: no speculative/stratospheric/base-effect cap fired above.
+  const noSpeculativeCap = !(row.ruleOf40 !== undefined && row.ruleOf40 < -50)
+                        && !baseEffect
+                        && !(row.forwardPe !== undefined && row.forwardPe > 100 && !elitePremium);
+  const saasDna =
+       (row.ruleOf40 ?? 0) >= 40
+    && (effGM ?? 0) >= 60
+    && (row.revenueGrowthAnn ?? 0) >= 20
+    && (row.fcfMarginAnn ?? 0) >= 10;
+  const buffettDna =
+       (row.roe ?? 0) >= 18
+    && (row.roic ?? 0) >= 15
+    && (row.fcfMarginAnn ?? 0) >= 15
+    && (row.de ?? 99) < 0.5
+    && (row.revenueGrowthAnn ?? 0) >= 12;
+  if (noSpeculativeCap && (saasDna || buffettDna)) {
+    score = Math.min(100, score + 6);
+    if (saasDna) strengths.push(`💎 SaaS PREMIUM DNA: R40 ${row.ruleOf40?.toFixed(0)} + GPM ${effGM?.toFixed(0)}% + Rev growth ${row.revenueGrowthAnn?.toFixed(0)}% + FCF margin ${row.fcfMarginAnn?.toFixed(0)}% — NVDA/CRM/NOW canonical setup. +6 DNA bonus.`);
+    if (buffettDna && !saasDna) strengths.push(`💎 BUFFETT COMPOUNDER DNA: ROE ${row.roe?.toFixed(0)}% + ROIC ${row.roic?.toFixed(0)}% + FCF margin ${row.fcfMarginAnn?.toFixed(0)}% + D/E ${row.de?.toFixed(2)} + growth ${row.revenueGrowthAnn?.toFixed(0)}% — Berkshire/JNJ/KO long-compounder setup. +6 DNA bonus.`);
+  } else if (noSpeculativeCap && (
+              ((row.ruleOf40 ?? 0) >= 30 && (effGM ?? 0) >= 50 && (row.revenueGrowthAnn ?? 0) >= 15)
+              || ((row.roe ?? 0) >= 15 && (row.roic ?? 0) >= 12 && (row.fcfMarginAnn ?? 0) >= 10)
+            )) {
+    score = Math.min(100, score + 3);
+    strengths.push(`Strong DNA partial-match: 4/5 quality signals aligned → +3 bonus.`);
+  }
+
+  // (8) ELITE-R40 BONUS — overrides stratospheric cap when truly premium.
+  // R40 ≥ 80 = elite (NVDA, PLTR-style hypergrowth-with-economics). Soft +5
+  // bonus even past caps. ASTERA LABS, PLTR-quality names.
+  if ((row.ruleOf40 ?? 0) >= 80 && (effGM ?? 0) >= 40 && noSpeculativeCap) {
+    score = Math.min(100, score + 5);
+    strengths.push(`Elite R40 ${row.ruleOf40?.toFixed(0)} with ${effGM?.toFixed(0)}% GPM — top-decile growth-plus-economics. +5 bonus.`);
+  }
+
+  score = Math.max(0, Math.min(100, Math.round(score/5)*5));
+
   // Grade
   const grade: USAGrade = score>=90?'A+':score>=80?'A':score>=68?'B+':score>=55?'B':score>=42?'C':'D';
 
