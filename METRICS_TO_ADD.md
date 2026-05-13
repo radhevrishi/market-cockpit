@@ -6,19 +6,25 @@ The model auto-parses your current export. Most Tier A working-capital
 columns are present. The summary below tells you what's wired and what
 would unlock additional rules.
 
-### ✅ Already in your export — picked up automatically
+### ✅ Already in your export — picked up automatically (final CSV, 59 cols)
 
 - Debtor days · **Tier A**
 - Days Inventory Outstanding · **Tier A**
 - Days Payable Outstanding · **Tier A**
 - Days Receivable Outstanding (alt for debtor days)
 - Working Capital Days · **Tier A**
-- **Debtor days 3years back** · trend signal (new in Patch 0332)
-- **Average Working Capital Days 3years** · trend signal (new)
+- **Debtor days 3years back** · trend signal
+- **Average Working Capital Days 3years** · trend signal
 - Interest Coverage Ratio · **Tier A**
-- Other income (₹ Cr) — model derives Other Income % of PBT via EPS + Equity Capital
-- Equity capital — model derives share count from this (₹10 par)
+- Other income (₹ Cr) — derives Other Income % of PBT via EPS + Equity Capital
+- Equity capital — derives share count (₹10 par)
 - Promoter / DII / FII holding (current snapshot)
+- **Change in promoter holding** (1Q snapshot)
+- **Change in promoter holding 3Years** · trend signal (Patch 0334) ✓
+- **Change in FII holding** (1Y) ✓
+- **Change in FII holding 3Years** · trend signal (Patch 0334) ✓
+- **Change in DII holding** (1Y) ✓
+- **Change in DII holding 3Years** · trend signal (Patch 0334) ✓
 - Pledged percentage
 - All quality / growth / valuation / momentum pillars
 - High price, From 52w high, **High/Low price all time** (volatility range derived)
@@ -36,18 +42,16 @@ would unlock additional rules.
 
 These are the columns NOT in your current export. Listed in priority order.
 
-#### Most-valuable to add (Tier B trends)
+#### Tier B trend signals — ✅ DONE via Change-3Years columns
 
-1. **Promoter holding 1/2/3/4 quarters back** (4 separate columns)
-   - Unlocks: multi-quarter promoter sell-down detection
-   - Without these: only the current `Change in promoter holding` single-delta is used
+The Change-1Y + Change-3Years deltas you added let the model synthesize
+3-point ownership histories (3Y-ago → 1Y-ago → current) which trigger
+the same trend rules that 4Q-history columns would. No further work
+needed on ownership trends.
 
-2. **FII holding 1/2/3/4 quarters back** (4 separate columns)
-3. **DII holding 1/2/3/4 quarters back** (4 separate columns)
-   - Unlocks: institutional accumulation/exit trend signal
-   - Without these: only the current snapshot is checked
+#### Most-valuable to add next
 
-4. **Tax rate %** (effective tax rate)
+1. **Tax rate %** (effective tax rate)
    - Unlocks: aggressive-accounting flag (<12% in non-SEZ)
    - Without it: this check skips
 

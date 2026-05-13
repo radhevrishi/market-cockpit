@@ -1946,33 +1946,34 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     }
   }
 
-  // (E) PROMOTER 4-QUARTER TREND — steady decline > 4pp over 4 quarters is
-  //     the cleanest operator-exit signal. Differentiates one-quarter blip
-  //     from sustained sell-down.
-  if (Array.isArray(row.promoterHistory) && row.promoterHistory.length >= 3) {
+  // (E) PROMOTER TREND — steady decline over 3Y is the cleanest operator-exit
+  //     signal. PATCH 0334 — also accepts the 2-point synthesized history
+  //     from "Change in promoter holding 3Years" since it's the same signal
+  //     at lower resolution.
+  if (Array.isArray(row.promoterHistory) && row.promoterHistory.length >= 2) {
     const oldest = row.promoterHistory[0];
     const latest = row.promoterHistory[row.promoterHistory.length - 1];
     const decline = oldest - latest;
+    const horizonLabel = row.promoterHistory.length >= 4 ? '4Q' : row.promoterHistory.length === 3 ? '3-point' : '3Y';
     if (decline > 4) {
       redFlags.push({
-        label: `Promoter holding fell ${decline.toFixed(1)}pp over ${row.promoterHistory.length}Q`,
+        label: `Promoter holding fell ${decline.toFixed(1)}pp over ${horizonLabel}`,
         severity: 'HIGH', source: 'Ownership trend', kind: 'STRUCTURAL',
       });
     } else if (decline > 2) {
       reratingBonus -= 4;
-      risks.push(`Promoter holding declining: ${row.promoterHistory.join('% → ')}% — track for sustained sell-down.`);
+      risks.push(`Promoter holding declining ${decline.toFixed(1)}pp over ${horizonLabel}: ${row.promoterHistory.map(v => v.toFixed(1)).join('% → ')}% — track for sustained sell-down.`);
     } else if (decline < -2) {
       // Promoter ADDING — buyback or pref allotment
       reratingBonus += 4;
-      strengths.push(`Promoter accumulating: ${row.promoterHistory.join('% → ')}% — insider conviction signal.`);
+      strengths.push(`Promoter accumulating ${Math.abs(decline).toFixed(1)}pp over ${horizonLabel}: ${row.promoterHistory.map(v => v.toFixed(1)).join('% → ')}% — insider conviction signal.`);
     }
   }
 
-  // (F) FII+DII 4-QUARTER TREND — smart-money walking away is the second-
-  //     cleanest distress signal after promoter selling. Detects EXITS that
-  //     a snapshot misses.
+  // (F) FII+DII TREND — smart-money walking away. PATCH 0334 — also accepts
+  //     the 2-point synthesized history from Change in FII/DII holding 3Y.
   if (Array.isArray(row.fiiHistory) && Array.isArray(row.diiHistory)
-      && row.fiiHistory.length >= 3 && row.diiHistory.length >= 3) {
+      && row.fiiHistory.length >= 2 && row.diiHistory.length >= 2) {
     const fiiOld = row.fiiHistory[0]; const fiiNew = row.fiiHistory[row.fiiHistory.length - 1];
     const diiOld = row.diiHistory[0]; const diiNew = row.diiHistory[row.diiHistory.length - 1];
     const fiiDelta = fiiNew - fiiOld;
@@ -1980,7 +1981,8 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     const totalDelta = fiiDelta + diiDelta;
     if (totalDelta < -3) {
       reratingBonus -= 5;
-      risks.push(`Institutions exiting: FII ${fiiDelta.toFixed(1)}pp + DII ${diiDelta.toFixed(1)}pp over ${row.fiiHistory.length}Q — smart money walking away.`);
+      const horizon = row.fiiHistory.length >= 4 ? `${row.fiiHistory.length}Q` : row.fiiHistory.length === 3 ? '3-point' : '3Y';
+      risks.push(`Institutions exiting: FII ${fiiDelta.toFixed(1)}pp + DII ${diiDelta.toFixed(1)}pp over ${horizon} — smart money walking away.`);
     } else if (totalDelta > 4) {
       reratingBonus += 4;
       strengths.push(`Institutions accumulating: FII +${fiiDelta.toFixed(1)}pp + DII +${diiDelta.toFixed(1)}pp — institutional discovery in progress.`);
@@ -2454,6 +2456,19 @@ function buildColMap(sampleRow: Record<string,unknown>): Record<string,string> {
     // PATCH 0332 — Equity capital → share count proxy (Equity capital ₹ Cr / par value 10 = share count Cr)
     else if (o==='Equity capital'||o==='Equity Capital'||o==='Equity Share Capital')
       m['equityCapital']=col;
+    // PATCH 0334 — Ownership-change-3Years columns from Screener. These let us
+    // synthesize multi-period history from a 3Y delta instead of needing 4
+    // separate quarter-back columns.
+    else if (o==='Change in promoter holding 3Years'||o==='Change in Promoter Holding 3Years'||o==='Promoter holding change 3Y')
+      m['changeInPromoter3y']=col;
+    else if (o==='Change in FII holding'||o==='Change in FII Holding'||o==='FII change 1Y')
+      m['changeInFii1y']=col;
+    else if (o==='Change in FII holding 3Years'||o==='Change in FII Holding 3Years'||o==='FII change 3Y')
+      m['changeInFii3y']=col;
+    else if (o==='Change in DII holding'||o==='Change in DII Holding'||o==='DII change 1Y')
+      m['changeInDii1y']=col;
+    else if (o==='Change in DII holding 3Years'||o==='Change in DII Holding 3Years'||o==='DII change 3Y')
+      m['changeInDii3y']=col;
     else if (o==='Interest Coverage Ratio'||o==='Interest Coverage'||o==='Interest coverage'||o==='ICR')
       m['interestCoverage']=col;
     else if (o==='Tax rate %'||o==='Tax Rate %'||o==='Effective Tax Rate'||o==='Effective tax rate')
@@ -2634,6 +2649,9 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
     avgDailyValueCr: n(m['avgDailyValueCr']?row[m['avgDailyValueCr']]:undefined),
     // Multi-quarter history — collected from m['promoterHistory_N'] entries.
     // Sorted oldest first (highest N back) → latest (1 quarter back / current).
+    // PATCH 0334 — fall back to synthesizing a 2-point history from
+    // "Change in promoter holding 3Years" + current promoter when 4Q
+    // columns aren't present (most users don't add all 4 quarters).
     promoterHistory: (() => {
       const entries: Array<[number, number]> = [];
       for (const k of Object.keys(m)) {
@@ -2643,9 +2661,17 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
           if (v !== undefined && Number.isFinite(qBack)) entries.push([qBack, v]);
         }
       }
-      if (entries.length === 0) return undefined;
-      entries.sort((a, b) => b[0] - a[0]); // oldest (highest N) → newest
-      return entries.map(([, v]) => v);
+      if (entries.length > 0) {
+        entries.sort((a, b) => b[0] - a[0]); // oldest (highest N) → newest
+        return entries.map(([, v]) => v);
+      }
+      // PATCH 0334 — synthesize [3Y-ago, current] from change-3Y delta
+      const current = n(m['promoter']?row[m['promoter']]:undefined);
+      const change3y = n(m['changeInPromoter3y']?row[m['changeInPromoter3y']]:undefined);
+      if (current !== undefined && change3y !== undefined) {
+        return [current - change3y, current];
+      }
+      return undefined;
     })(),
     fiiHistory: (() => {
       const entries: Array<[number, number]> = [];
@@ -2656,9 +2682,24 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
           if (v !== undefined && Number.isFinite(qBack)) entries.push([qBack, v]);
         }
       }
-      if (entries.length === 0) return undefined;
-      entries.sort((a, b) => b[0] - a[0]);
-      return entries.map(([, v]) => v);
+      if (entries.length > 0) {
+        entries.sort((a, b) => b[0] - a[0]);
+        return entries.map(([, v]) => v);
+      }
+      // PATCH 0334 — synthesize 3-point [3Y-ago, 1Y-ago, current] when
+      // Change-1Y + Change-3Y are present. Otherwise just 2 points.
+      const current = n(m['fii']?row[m['fii']]:undefined);
+      const change1y = n(m['changeInFii1y']?row[m['changeInFii1y']]:undefined);
+      const change3y = n(m['changeInFii3y']?row[m['changeInFii3y']]:undefined);
+      if (current !== undefined && change3y !== undefined && change1y !== undefined) {
+        const oneYearAgo = current - change1y;
+        const threeYearsAgo = current - change3y;
+        return [threeYearsAgo, oneYearAgo, current];
+      }
+      if (current !== undefined && change3y !== undefined) {
+        return [current - change3y, current];
+      }
+      return undefined;
     })(),
     diiHistory: (() => {
       const entries: Array<[number, number]> = [];
@@ -2669,9 +2710,23 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
           if (v !== undefined && Number.isFinite(qBack)) entries.push([qBack, v]);
         }
       }
-      if (entries.length === 0) return undefined;
-      entries.sort((a, b) => b[0] - a[0]);
-      return entries.map(([, v]) => v);
+      if (entries.length > 0) {
+        entries.sort((a, b) => b[0] - a[0]);
+        return entries.map(([, v]) => v);
+      }
+      // PATCH 0334 — synthesize from Change-1Y + Change-3Y for DII too.
+      const current = n(m['dii']?row[m['dii']]:undefined);
+      const change1y = n(m['changeInDii1y']?row[m['changeInDii1y']]:undefined);
+      const change3y = n(m['changeInDii3y']?row[m['changeInDii3y']]:undefined);
+      if (current !== undefined && change3y !== undefined && change1y !== undefined) {
+        const oneYearAgo = current - change1y;
+        const threeYearsAgo = current - change3y;
+        return [threeYearsAgo, oneYearAgo, current];
+      }
+      if (current !== undefined && change3y !== undefined) {
+        return [current - change3y, current];
+      }
+      return undefined;
     })(),
     // PATCH 0322: Forensic fields
     otherIncomePctPbt: (() => {
