@@ -1703,6 +1703,96 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     );
   }
 
+  // ── PATCH 0314: INSTITUTIONAL RED FLAGS — six additional detectors ─────────
+  //
+  // The model already catches blunt failures (deceleration, ROIC<WACC, ownership
+  // vacuum). These six are the more subtle institutional checks that
+  // distinguish "real compounder" from "growth at any cost / cycle peak /
+  // earnings-managed" pattern.
+
+  // (1) STORY-STOCK PATTERN — top-line growth without cash backing.
+  //     Operator playbook: aggressive revenue recognition, weak collections,
+  //     constant capital raises. Hard cap at composite ≤ 60 via HIGH red flag.
+  if ((row.yoySalesGrowth ?? 0) > 80 && (row.cfoToPat ?? 99) < 0.5) {
+    redFlags.push({
+      label: 'Story stock',
+      severity: 'HIGH',
+      source: `Sales +${row.yoySalesGrowth?.toFixed(0)}% YoY but CFO/PAT only ${row.cfoToPat?.toFixed(2)} — revenue isn't converting to cash, classic operator pattern.`,
+    });
+  }
+
+  // (2) CYCLICAL-PEAK MARGINS — OPM running well above sector p75 in
+  //     commodity-leaning sectors typically reverts on input-cost reset.
+  //     Penalize the rerating bonus and flag the asymmetry. The decay
+  //     filter catches this AFTER reversal; this catches it BEFORE.
+  if (row.opm !== undefined && b.opm[2] > 0
+      && row.opm > b.opm[2] * 1.7
+      && (row.profitCagr ?? 0) > 60
+      && cyclical) {
+    reratingBonus -= 6;
+    risks.push(
+      `Cycle-peak margins: OPM ${row.opm.toFixed(1)}% is ${(row.opm / b.opm[2]).toFixed(1)}× sector p75 (${b.opm[2]}%) — typical commodity boom margin spike, mean-reverts on input reset.`
+    );
+  }
+
+  // (3) CAPEX BURN WITHOUT ROCE RETURN — Fisher value-destroying-reinvestment
+  //     red flag. Heavy negative FCF (capex-intensive) WITHOUT incremental
+  //     ROCE expansion = capital is being deployed but not earning a return.
+  if ((row.fcfAbsolute ?? 1) < 0
+      && (row.roceExpansion ?? 0) < -1
+      && (row.de ?? 0) > 0.3) {
+    reratingBonus -= 7;
+    risks.push(
+      `Capex burn without ROCE return: FCF negative, ROCE ${(row.roceExpansion ?? 0).toFixed(1)}pp lower than 3yr avg, D/E ${row.de?.toFixed(2)} — capital is being deployed at sub-return rates.`
+    );
+  }
+
+  // (4) PLEDGE SEVERITY TIERING — existing logic flags pledge > 25% as HIGH.
+  //     Add CRITICAL at pledge ≥ 50% (operator margin-call risk imminent),
+  //     and a separate distress-trend flag when pledge is rising. The Excel
+  //     export only carries the current snapshot; trend handling requires
+  //     row.pledge history (not always present).
+  if ((row.pledge ?? 0) >= 50) {
+    redFlags.push({
+      label: 'Pledge ≥50%',
+      severity: 'CRITICAL',
+      source: `Promoter pledge ${row.pledge?.toFixed(0)}% — extreme distress signal; margin-call risk dominates fundamental thesis.`,
+    });
+  } else if ((row.pledge ?? 0) >= 35) {
+    redFlags.push({
+      label: 'Pledge 35-50%',
+      severity: 'HIGH',
+      source: `Promoter pledge ${row.pledge?.toFixed(0)}% — financial-stress signal; track quarterly.`,
+    });
+  }
+
+  // (5) FALLING-KNIFE + EXPENSIVE COMBO — Stage 4 (below 200 DMA AND down >25%)
+  //     with PEG > 2.5 is "catching a knife at premium valuation". Each piece
+  //     is penalized in its own pillar, but the combo amplifies risk.
+  if ((row.aboveDMA200 ?? 0) < -25
+      && (row.peg ?? 0) > 2.5
+      && (row.return1m ?? 0) < -10) {
+    reratingBonus -= 8;
+    risks.push(
+      `Falling knife at premium valuation: ${row.aboveDMA200?.toFixed(0)}% below 200-DMA, 1m return ${row.return1m?.toFixed(0)}%, PEG ${row.peg?.toFixed(2)} — trend and valuation both unfavourable.`
+    );
+  }
+
+  // (6) DIVIDEND-ABSENCE WITH FREE CASH — when a company has +ve FCF for years
+  //     yet pays zero dividend AND has no clear reinvestment story (ROCE flat
+  //     or down), the cash is going somewhere unaccounted for. Soft signal.
+  //     Note: row.dividendYield is often available from Screener.
+  const divYield = (row as any).dividendYield;
+  if (typeof divYield === 'number' && divYield === 0
+      && (row.fcfAbsolute ?? -1) > 0
+      && (row.roceExpansion ?? 0) < 0
+      && (row.marketCapCr ?? 0) > 200) {
+    reratingBonus -= 3;
+    risks.push(
+      `Zero dividend despite +FCF and ROCE not expanding — cash being deployed without visible return. Check related-party transactions and capital allocation.`
+    );
+  }
+
   // Delta signal: promoter buying from high base = strongest insider signal
   if ((row.changeInPromoter??0) > 2 && ownershipCategory === 'FOUNDER_CONTROLLED') {
     reratingBonus += 3; // founder buying more when already >50% = very high conviction
