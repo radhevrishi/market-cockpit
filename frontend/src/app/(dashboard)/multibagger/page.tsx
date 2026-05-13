@@ -3118,6 +3118,29 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
     if ((r.cfoToPat ?? 1) < 0.5)                     newScore = Math.min(newScore, 80);
     if ((r.marginOfSafety ?? 0) < -50)               newScore = Math.min(newScore, 80);
     else if ((r.marginOfSafety ?? 0) < -30)          newScore = Math.min(newScore, 90);
+
+    // PATCH 0336 — Re-apply red-flag structural/cyclical caps after guidance.
+    // Without this, a +3 guidance bonus could push a "1 HIGH structural · cap 60"
+    // stock to 63, contradicting the audit-panel claim that the cap was binding.
+    // Visible symptom (post-0335 deployment): Tips Music score=63 with audit
+    // "Active cap: 60 (binding)"; Skipper score=51 with audit "Active cap: 48
+    // (binding)". The audit count is correct; the score evaluation also caps
+    // correctly inside computeOne(), but applyGuidance() runs afterward and
+    // bypasses the structural/cyclical caps. Re-apply them here.
+    const critG = r.redFlags.some(f => f.severity === 'CRITICAL');
+    const structHighG = r.redFlags.filter(f => f.severity === 'HIGH' && (f.kind ?? 'STRUCTURAL') === 'STRUCTURAL').length;
+    const cycHighG    = r.redFlags.filter(f => f.severity === 'HIGH' && f.kind === 'CYCLICAL').length;
+    if (critG)                       newScore = Math.min(newScore, 38);
+    else if (structHighG >= 2)       newScore = Math.min(newScore, 48);
+    else if (structHighG >= 1)       newScore = Math.min(newScore, 60);
+    else if (cycHighG >= 2)          newScore = Math.min(newScore, 62);
+    else if (cycHighG >= 1)          newScore = Math.min(newScore, 72);
+    // Re-apply governance watch cap (Patch 0313)
+    if ((r as any).governanceWatch)  newScore = Math.min(newScore, 65);
+    // Re-apply decelerating + monitor bucket caps
+    if (r.accelSignal === 'DECELERATING') newScore = Math.min(newScore, 52);
+    if (r.bucket === 'MONITOR')           newScore = Math.min(newScore, 45);
+
     // Re-apply A+ gate — guidance articles cannot grant A+ if quality gates fail
     if (newScore >= 90) {
       const passGate = (r.cfoToPat ?? 0) > 1.0 && (r.roce ?? 0) > 20 &&
