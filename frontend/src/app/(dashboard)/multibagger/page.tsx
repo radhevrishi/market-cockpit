@@ -5131,12 +5131,33 @@ interface USARow {
   analystRating?: string;         // TradingView "Analyst Rating": Strong buy/Buy/Neutral/Sell
   rsi14?: number;                 // TradingView "Relative strength index, 14"
   pFcf?: number;                  // TradingView "Price to free cash flow, TTM"
+  // ── PATCH 0341: NEW FORENSIC COLUMNS (TradingView confirmed available) ─────
+  piotroskiFScore?: number;       // "Piotroski F-score, Annual" — 0-9 quality score
+  altmanZScore?: number;          // "Altman Z-score, Annual" — bankruptcy predictor (SPARSE — only ~5% have it)
+  sloanRatio?: number;            // "Sloan ratio %, TTM" — earnings quality / accrual measure
+  sharesBuybackRatio?: number;    // "Shares buyback ratio %, Annual" — positive=buyback, negative=dilution
+  buybackYield?: number;          // "Buyback yield %" — capital return signal
+  rdRatio?: number;               // "Research and development ratio, TTM" — innovation reinvestment
+  interestCoverage?: number;      // "Interest coverage, Annual" — distress / leverage health
+  netDebtEbitda?: number;         // "Net debt to EBITDA ratio, TTM"
+  cashStInvest?: number;          // "Cash and short-term investments, Annual" (USD)
+  revPerEmployee?: number;        // "Revenue per employee, Annual" (USD)
+  sustainableGrowth?: number;     // "Sustainable growth rate, Annual" — reinvestment-driven growth ceiling
+  freeFloatPct?: number;          // "Free float %"
+  fcfPerEmployee?: number;        // "Free cash flow per employee, Annual" (USD)
+  fcfAnnUsd?: number;             // "Free cash flow, Annual" (USD, absolute) — for runway calc
+  fcfTtmUsd?: number;             // "Free cash flow, TTM" (USD, absolute) — fresher than Annual
+  totalSharesOutstanding?: number;// "Total common shares outstanding"
+  numEmployees?: number;          // "Number of employees, Annual"
+  ebitdaPerEmployee?: number;     // "EBITDA per employee, Annual" (USD)
+  roce?: number;                  // "Return on capital employed %, Annual" (TTM was retired)
   // Derived
   revenueAccel?: number;          // revenueGrowthQtr - revenueGrowthAnn
   accelSignal?: 'ACCELERATING'|'STABLE'|'DECELERATING';
   marketCapB?: number;            // marketCapUsd / 1e9 (in billions)
   ruleOf40?: number;              // revenueGrowthAnn + fcfMarginAnn (≥40 = excellent)
   grossMarginExpansion?: number;  // grossMarginTtm - grossMarginAnn (positive = expanding)
+  runwayMonths?: number;          // PATCH 0341: cashStInvest / (annual FCF burn) × 12 — for distress flag
 }
 type USAGrade = 'A+'|'A'|'B+'|'B'|'C'|'D';
 
@@ -5405,6 +5426,167 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
 
   const raw = qual*0.30 + growth*0.25 + accel*0.20 + val*0.15 + mkt*0.10;
   let score = Math.max(0, Math.min(100, Math.round(raw/5)*5));
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PATCH 0341 — FORENSIC COLUMN INTEGRATION (TradingView institutional scores)
+  // These rules apply BEFORE the cap section because some of them push score
+  // adjustments (positive or negative) that should flow into the cap logic.
+  // ═══════════════════════════════════════════════════════════════════════════
+  let forensicAdj = 0;
+  let forensicCap: number | undefined;
+  const isTechSector = /TECHNOLOGY|SOFTWARE|SAAS|INTERNET|SEMICONDUCT|ELECTRONIC/i.test(row.sector || '');
+
+  // (A) PIOTROSKI F-SCORE (0-9). The institutional 9-point quality screen.
+  //     F≥7 = top-quality, F≤2 = distress, mid = neutral. Annual data.
+  if (typeof row.piotroskiFScore === 'number') {
+    if (row.piotroskiFScore >= 7) {
+      forensicAdj += 5;
+      strengths.push(`Piotroski F-score ${row.piotroskiFScore}/9 — top-quality institutional screen (≥7 is the Greenblatt/Piotroski elite tier).`);
+    } else if (row.piotroskiFScore <= 2) {
+      forensicCap = Math.min(forensicCap ?? 100, 50);
+      risks.push(`🛑 Piotroski F-score ${row.piotroskiFScore}/9 — distress zone (≤2). Profitability + leverage + efficiency all failing. Cap at 50.`);
+    } else if (row.piotroskiFScore <= 4) {
+      forensicAdj -= 3;
+      risks.push(`Piotroski F-score ${row.piotroskiFScore}/9 — weak (need ≥5 for clean compounder).`);
+    }
+  }
+
+  // (B) ALTMAN Z-SCORE (SOFT GATE — sparse data: ~5% of stocks have it).
+  //     Z<1.8 = distress zone. Apply SOFT penalty (-5) not hard cap,
+  //     because most stocks don't publish this and we can't penalize absence.
+  if (typeof row.altmanZScore === 'number') {
+    if (row.altmanZScore < 1.8) {
+      forensicAdj -= 5;
+      risks.push(`⚠ Altman Z-score ${row.altmanZScore.toFixed(2)} — distress zone (<1.8) per Altman 1968. Bankruptcy risk elevated. −5 rerating.`);
+    } else if (row.altmanZScore >= 3.0) {
+      forensicAdj += 2;
+      strengths.push(`Altman Z-score ${row.altmanZScore.toFixed(2)} — financial-health safe zone (≥3.0).`);
+    }
+  }
+
+  // (C) SLOAN RATIO. Earnings-quality measure. |Sloan| > 25% = high accruals
+  //     = earnings driven by non-cash items (manipulation risk per Sloan 1996).
+  if (typeof row.sloanRatio === 'number' && Math.abs(row.sloanRatio) > 25) {
+    forensicAdj -= 4;
+    risks.push(`Sloan ratio ${row.sloanRatio.toFixed(1)}% — extreme accruals (>${Math.abs(row.sloanRatio).toFixed(0)}%). Sloan 1996 study: high-accrual firms underperform 10%/yr.`);
+  }
+
+  // (D) SHARES BUYBACK RATIO. Positive = net buyback (shareholder-friendly),
+  //     negative = net dilution. Annual data is the right frequency.
+  if (typeof row.sharesBuybackRatio === 'number') {
+    if (row.sharesBuybackRatio <= -5) {
+      // Heavy dilution — HIGH structural red flag equivalent
+      forensicCap = Math.min(forensicCap ?? 100, 60);
+      risks.push(`🛑 Share count growing ${Math.abs(row.sharesBuybackRatio).toFixed(1)}%/yr — heavy dilution funding growth. Cap at 60.`);
+    } else if (row.sharesBuybackRatio <= -2) {
+      forensicAdj -= 4;
+      risks.push(`Net dilution ${Math.abs(row.sharesBuybackRatio).toFixed(1)}%/yr — per-share value being diluted.`);
+    } else if (row.sharesBuybackRatio >= 3) {
+      forensicAdj += 4;
+      strengths.push(`Net buyback ${row.sharesBuybackRatio.toFixed(1)}%/yr — shareholder-friendly capital allocation.`);
+    } else if (row.sharesBuybackRatio >= 1) {
+      forensicAdj += 2;
+    }
+  }
+
+  // (E) BUYBACK YIELD. Direct capital-return signal. ≥3% sustained + FCF
+  //     positive = Buffett-tier capital allocation discipline.
+  if (typeof row.buybackYield === 'number' && row.buybackYield >= 3
+      && (row.fcfMarginAnn ?? 0) > 0) {
+    forensicAdj += 3;
+    strengths.push(`Buyback yield ${row.buybackYield.toFixed(1)}% + FCF positive — Buffett-tier capital return discipline.`);
+  }
+
+  // (F) R&D / REVENUE RATIO. Innovation reinvestment signal. In tech sector,
+  //     <5% = coasting (no future pipeline); ≥15% = strong reinvestment.
+  if (typeof row.rdRatio === 'number' && isTechSector) {
+    if (row.rdRatio < 5) {
+      forensicAdj -= 5;
+      risks.push(`R&D only ${row.rdRatio.toFixed(1)}% of revenue in tech sector — no future product pipeline, coasting on legacy.`);
+    } else if (row.rdRatio >= 15) {
+      forensicAdj += 2;
+      strengths.push(`R&D ${row.rdRatio.toFixed(1)}% of revenue — strong innovation reinvestment for tech.`);
+    }
+  }
+
+  // (G) INTEREST COVERAGE (Annual). Same tier as India:
+  //     ICR < 1.5 = CRITICAL distress (cap 38)
+  //     ICR 1.5-3 = HIGH structural (cap 60)
+  //     ICR ≥ 15 = trivial debt service (+2 bonus)
+  if (typeof row.interestCoverage === 'number' && row.interestCoverage > 0) {
+    if (row.interestCoverage < 1.5) {
+      forensicCap = Math.min(forensicCap ?? 100, 38);
+      risks.push(`🛑 CRITICAL: Interest coverage ${row.interestCoverage.toFixed(1)}× — distress, can't service debt from operating income.`);
+    } else if (row.interestCoverage < 3) {
+      forensicCap = Math.min(forensicCap ?? 100, 60);
+      risks.push(`Interest coverage ${row.interestCoverage.toFixed(1)}× — leverage tight, EBIT barely covers interest.`);
+    } else if (row.interestCoverage >= 15) {
+      forensicAdj += 2;
+      strengths.push(`Interest coverage ${row.interestCoverage.toFixed(0)}× — debt service trivial relative to operating income.`);
+    }
+  }
+
+  // (H) NET DEBT / EBITDA. Investment-grade health: <2 safe, 3-5 stretched,
+  //     >5 = leverage tight, >7 = distress.
+  if (typeof row.netDebtEbitda === 'number') {
+    if (row.netDebtEbitda > 7) {
+      forensicCap = Math.min(forensicCap ?? 100, 50);
+      risks.push(`Net debt/EBITDA ${row.netDebtEbitda.toFixed(1)}× — leverage distress zone. Cap at 50.`);
+    } else if (row.netDebtEbitda > 5) {
+      forensicAdj -= 5;
+      risks.push(`Net debt/EBITDA ${row.netDebtEbitda.toFixed(1)}× — stretched leverage, refinancing risk.`);
+    } else if (row.netDebtEbitda < 0) {
+      forensicAdj += 2;
+      strengths.push(`Net cash position (net debt/EBITDA ${row.netDebtEbitda.toFixed(1)}) — no debt risk.`);
+    }
+  }
+
+  // (I) CASH RUNWAY. For burning growth names, runway < 18 months at current
+  //     burn = CRITICAL distress (analog to "speculative pre-revenue" cap).
+  if (typeof row.runwayMonths === 'number') {
+    if (row.runwayMonths < 12) {
+      forensicCap = Math.min(forensicCap ?? 100, 35);
+      risks.push(`🛑 CRITICAL: Cash runway only ${row.runwayMonths} months at current burn rate. Forced dilution or distress imminent.`);
+    } else if (row.runwayMonths < 24) {
+      forensicAdj -= 8;
+      risks.push(`Cash runway ${row.runwayMonths} months — needs to raise capital within ~2 years.`);
+    } else if (row.runwayMonths >= 60) {
+      forensicAdj += 2;
+      strengths.push(`Cash runway ${row.runwayMonths > 200 ? '5+ years' : `${Math.round(row.runwayMonths/12)} years`} — financially resilient through downcycles.`);
+    }
+  }
+
+  // (J) REVENUE PER EMPLOYEE — "real software economics" gate.
+  //     Tech sector: <$200K/emp = labor-intensive (not real SaaS); ≥$500K = elite.
+  if (typeof row.revPerEmployee === 'number' && isTechSector) {
+    if (row.revPerEmployee < 200000) {
+      forensicAdj -= 4;
+      risks.push(`Revenue per employee $${(row.revPerEmployee/1000).toFixed(0)}K — labor-intensive for tech sector. Not real software economics.`);
+    } else if (row.revPerEmployee >= 800000) {
+      forensicAdj += 3;
+      strengths.push(`Revenue per employee $${(row.revPerEmployee/1000).toFixed(0)}K — elite operational leverage (NVDA/AAPL tier).`);
+    } else if (row.revPerEmployee >= 500000) {
+      forensicAdj += 1;
+    }
+  }
+
+  // (K) SUSTAINABLE GROWTH RATE vs ACTUAL GROWTH.
+  //     When actual revenue growth >> sustainable growth rate for multiple
+  //     years, growth is being funded by external capital (dilution/debt).
+  //     Sustainable growth = ROE × (1 - payout); reflects what can be funded
+  //     organically.
+  if (typeof row.sustainableGrowth === 'number'
+      && row.sustainableGrowth > 0
+      && row.revenueGrowthAnn !== undefined
+      && row.revenueGrowthAnn > row.sustainableGrowth * 2.5
+      && row.sustainableGrowth < 15) {
+    forensicAdj -= 4;
+    risks.push(`Actual growth ${row.revenueGrowthAnn.toFixed(0)}% >> sustainable ${row.sustainableGrowth.toFixed(0)}% (organic ceiling). Excess being funded externally (dilution/debt risk).`);
+  }
+
+  // Apply forensic adjustments to score before caps
+  score = Math.max(0, Math.min(100, score + forensicAdj));
+  if (forensicCap !== undefined) score = Math.min(score, forensicCap);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // PATCH 0340 — US-SPECIFIC SCORE CAPS & DNA BONUS
@@ -5698,6 +5880,84 @@ function parseUSARow(row: Record<string,unknown>): USARow | null {
       row['Price to free cash flow ratio, TTM'] ??
       row['P/FCF']
     ),
+    // ── PATCH 0341: NEW FORENSIC COLUMNS (TradingView confirmed names) ───────
+    piotroskiFScore: n(
+      row['Piotroski F-score, Annual'] ??
+      row['Piotroski F-score, Trailing 12 months'] ??
+      row['Piotroski F-score']
+    ),
+    altmanZScore: n(
+      row['Altman Z-score, Annual'] ??
+      row['Altman Z-score']
+    ),
+    sloanRatio: n(
+      row['Sloan ratio %, Trailing 12 months'] ??
+      row['Sloan ratio %, Annual'] ??
+      row['Sloan ratio %']
+    ),
+    sharesBuybackRatio: n(
+      row['Shares buyback ratio %, Annual'] ??
+      row['Shares buyback ratio %, Quarterly'] ??
+      row['Shares buyback ratio %']
+    ),
+    buybackYield: n(row['Buyback yield %']),
+    rdRatio: n(
+      row['Research and development ratio, Trailing 12 months'] ??
+      row['Research and development ratio, Annual'] ??
+      row['Research and development ratio'] ??
+      row['Research & development to revenue ratio %']
+    ),
+    interestCoverage: n(
+      row['Interest coverage, Annual'] ??
+      row['Interest coverage, Trailing 12 months'] ??
+      row['Interest coverage']
+    ),
+    netDebtEbitda: n(
+      row['Net debt to EBITDA ratio, Trailing 12 months'] ??
+      row['Net debt to EBITDA ratio, Annual'] ??
+      row['Net debt to EBITDA ratio']
+    ),
+    cashStInvest: n(
+      row['Cash and short-term investments, Annual'] ??
+      row['Cash and short-term investments, Quarterly'] ??
+      row['Cash and short-term investments']
+    ),
+    revPerEmployee: n(
+      row['Revenue per employee, Annual'] ??
+      row['Revenue per employee']
+    ),
+    sustainableGrowth: n(
+      row['Sustainable growth rate, Annual'] ??
+      row['Sustainable growth rate']
+    ),
+    freeFloatPct: n(row['Free float %']),
+    fcfPerEmployee: n(
+      row['Free cash flow per employee, Annual'] ??
+      row['Free cash flow per employee']
+    ),
+    fcfAnnUsd: n(row['Free cash flow, Annual']),
+    fcfTtmUsd: n(
+      row['Free cash flow, Trailing 12 months'] ??
+      row['Free cash flow, TTM']
+    ),
+    totalSharesOutstanding: n(
+      row['Total common shares outstanding'] ??
+      row['Total common shares outstanding, Quarterly'] ??
+      row['Shares outstanding']
+    ),
+    numEmployees: n(
+      row['Number of employees, Annual'] ??
+      row['Number of employees']
+    ),
+    ebitdaPerEmployee: n(
+      row['EBITDA per employee, Annual'] ??
+      row['EBITDA per employee']
+    ),
+    roce: n(
+      row['Return on capital employed %, Annual'] ??
+      row['Return on capital employed %, Trailing 12 months'] ??
+      row['Return on capital employed %']
+    ),
     // ── Kept for forward compatibility but not standard in TradingView ───────
     insiderOwnership: n(row['Insider ownership, %'] ?? row['Insider ownership %']),
     analystCount:     n(row['Number of analyst estimates'] ?? row['Analysts']),
@@ -5716,6 +5976,18 @@ function parseUSARow(row: Record<string,unknown>): USARow | null {
       const ttm = n(row['Gross margin %, TTM'] ?? row['Gross margin %, Trailing 12 months']);
       const ann = n(row['Gross margin %, Annual']);
       return (ttm !== undefined && ann !== undefined) ? Math.round((ttm - ann) * 10) / 10 : undefined;
+    })(),
+    // PATCH 0341: RUNWAY MONTHS = cash / (annual FCF burn rate, only meaningful when FCF<0)
+    runwayMonths: (() => {
+      const cash = n(row['Cash and short-term investments, Annual'])
+                ?? n(row['Cash and short-term investments, Quarterly']);
+      const fcfTtm = n(row['Free cash flow, Trailing 12 months'])
+                  ?? n(row['Free cash flow, TTM']);
+      const fcfAnn = n(row['Free cash flow, Annual']);
+      const fcf = fcfTtm ?? fcfAnn;
+      if (cash === undefined || fcf === undefined || fcf >= 0) return undefined;
+      const annualBurn = Math.abs(fcf);
+      return Math.round(cash / annualBurn * 12); // months of runway at current burn
     })(),
   };
 }
