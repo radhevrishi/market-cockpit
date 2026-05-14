@@ -187,6 +187,48 @@ export default function TickerExportToolbar({
     toast.success(`${subset.length} entries copied (one per line) · paste into your Screener.in watchlist`);
   };
 
+  // PATCH 0371 — Download a Screener-friendly CSV. User reported Screener.in
+  // serving 502 Bad Gateway on bulk-import; this gives them a portable file
+  // they can keep, open in Excel, re-upload later, or paste anywhere.
+  //
+  // Format:
+  //   Header row:  Name,Ticker
+  //   Data rows:   "Acutaas Chemicals",ACUTAAS
+  //                "Lloyds Metals & Energy",LLOYDSME    ← entities decoded, suffix stripped
+  //                "KRISHANA",KRISHANA                   ← bare-ticker fallback when no name
+  const downloadScreenerCsv = (subset: string[], label: string) => {
+    if (subset.length === 0) { toast.error(`No ${label} tickers to download`); return; }
+    const rows: string[] = ['Name,Ticker'];
+    let nameCount = 0;
+    for (const t of subset) {
+      const upT = t.toUpperCase();
+      const co = tickerCompanyMap?.[upT];
+      let name: string;
+      if (co && co.trim() && co.trim().toUpperCase() !== upT) {
+        name = normalizeForScreener(co);
+        nameCount++;
+      } else {
+        name = upT;
+      }
+      // CSV-quote any value containing commas, quotes, or newlines
+      const csvQuote = (s: string) => {
+        if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+        return s;
+      };
+      rows.push(`${csvQuote(name)},${csvQuote(upT)}`);
+    }
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filenameHint}_screener_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success(`Downloaded ${subset.length} rows (${nameCount} as names, ${subset.length - nameCount} as tickers)`);
+  };
+
   const btnBase = {
     display: 'inline-flex',
     alignItems: 'center',
@@ -289,6 +331,18 @@ export default function TickerExportToolbar({
         >
           <ExternalLink style={{ width: 14, height: 14 }} />
           {n === 1 ? 'Open on Screener' : 'Open in Screener.in'}
+        </button>
+        {/* PATCH 0371 — Portable CSV for Screener. Useful when Screener.in
+            web import is down (502/timeout) or for offline backup. Two
+            columns: Name (resolved + decoded + suffix-stripped), Ticker. */}
+        <button
+          onClick={() => downloadScreenerCsv(safeTickers, 'All')}
+          disabled={n === 0}
+          title={`Download ${n} rows as CSV — columns: Name, Ticker. Use as backup when Screener.in is slow or as portable list.`}
+          style={{ ...btnBase, border: '1px solid #A78BFA', background: '#A78BFA10', color: '#A78BFA' }}
+        >
+          <Download style={{ width: 14, height: 14 }} />
+          Download Screener CSV
         </button>
       </div>
 
