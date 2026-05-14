@@ -24,15 +24,28 @@ import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { fetchNSEAnnouncements, fetchBSEAnnouncements, type FilingRecord } from '@/lib/nse-bse-feed';
 import { classifyFiling, scoreBullish, isHighBullishRaw, type BullishScore, type ConcallFilingType } from '@/lib/concall-bullish';
+import { extractFirstPdf } from '@/lib/pdf-text-extractor';
 
-const CACHE_KEY = (days: number) => `concall-feed:v1:days:${days}`;
+const CACHE_KEY = (days: number) => `concall-feed:v2:days:${days}`;   // v2 bump: PDF extraction enabled
 const CACHE_TTL_SHORT = 5 * 60;        // 5 min for fresh data
 const CACHE_TTL_LONG = 30 * 60;        // 30 min for older lookback
+
+// PATCH 0388 — extract PDFs in parallel for top N most-recent filings.
+// Pure subject-line scoring was producing 0 high-bullish on user's 681
+// relevant filings because subjects like "Transcript of Q2 Earnings Call"
+// don't contain guidance/order-book/margin keywords. Bullish content is
+// inside the PDF.
+// Budget: Vercel maxDuration 45s, each PDF takes 2-5s with cache, ~10
+// PDFs in parallel is safe. Cached PDFs hit instantly.
+const MAX_PDF_EXTRACTS_PER_REQUEST = 12;
 
 interface ScoredFiling extends FilingRecord {
   filing_type: ConcallFilingType;
   bullish: BullishScore;
   is_high_bullish: boolean;
+  scored_from: 'PDF' | 'SUBJECT';
+  pdf_pages?: number;
+  pdf_failure_reason?: string;
 }
 
 interface FeedPayload {
@@ -49,7 +62,7 @@ interface FeedPayload {
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 45;
+export const maxDuration = 60;  // PATCH 0388: extended for PDF extraction budget
 
 export async function GET(req: NextRequest) {
   const days = Math.min(7, Math.max(1, parseInt(req.nextUrl.searchParams.get('days') || '2')));
@@ -94,19 +107,87 @@ export async function GET(req: NextRequest) {
     if (!merged.has(f.content_hash)) merged.set(f.content_hash, f);
   }
 
-  // Classify + score every filing
-  const all: ScoredFiling[] = [];
+  // Phase 1: classify + identify candidates for PDF extraction
+  const candidates: Array<{ filing: FilingRecord; filing_type: ConcallFilingType }> = [];
   for (const f of merged.values()) {
     const filing_type = classifyFiling(f.subject);
-    if (!filing_type) continue;  // not concall-relevant
-    const bullish = scoreBullish(f.subject);
-    const is_high_bullish = isHighBullishRaw(bullish, rawThreshold);
-    all.push({ ...f, filing_type, bullish, is_high_bullish });
+    if (!filing_type) continue;
+    candidates.push({ filing: f, filing_type });
   }
 
-  // Sort: high bullish first, then by score desc, then by date desc
+  // Sort by recency so we extract PDFs for the freshest filings first
+  candidates.sort((a, b) =>
+    new Date(b.filing.filing_datetime).getTime() - new Date(a.filing.filing_datetime).getTime(),
+  );
+
+  // PATCH 0388 — PRIORITY EXTRACTION TIERS for PDF text
+  // Transcript and investor presentation get highest priority (most likely
+  // to contain rich bullish content). Audio recordings and webcasts get
+  // none (no text). Press releases are middle tier.
+  const PDF_PRIORITY: Record<ConcallFilingType, number> = {
+    TRANSCRIPT: 1,
+    INVESTOR_PRESENTATION: 1,
+    RESULTS_PRESENTATION: 1,
+    PRESS_RELEASE: 2,
+    CONCALL_INVITE: 3,
+    ANALYST_MEET: 3,
+    AUDIO_RECORDING: 9,  // skip — no text
+    WEBCAST: 9,          // skip — no text
+  };
+
+  const extractable = candidates
+    .filter(c => PDF_PRIORITY[c.filing_type] <= 3 && c.filing.attachment_urls.length > 0)
+    .sort((a, b) => PDF_PRIORITY[a.filing_type] - PDF_PRIORITY[b.filing_type])
+    .slice(0, MAX_PDF_EXTRACTS_PER_REQUEST);
+
+  const extractedTexts = new Map<string, { text: string; pages?: number; failure?: string }>();
+  if (extractable.length > 0) {
+    const results = await Promise.allSettled(
+      extractable.map(async (c) => {
+        const ext = await extractFirstPdf(c.filing.attachment_urls);
+        return { hash: c.filing.content_hash, ext };
+      }),
+    );
+    for (const r of results) {
+      if (r.status !== 'fulfilled') continue;
+      const { hash, ext } = r.value;
+      if (!ext) {
+        extractedTexts.set(hash, { text: '', failure: 'no PDF in attachments' });
+        continue;
+      }
+      extractedTexts.set(hash, {
+        text: ext.text,
+        pages: ext.pages,
+        failure: ext.source === 'FAILED' ? ext.failure_reason : undefined,
+      });
+    }
+  }
+
+  // Phase 2: score each filing using PDF text if available, else subject
+  const all: ScoredFiling[] = [];
+  for (const { filing: f, filing_type } of candidates) {
+    const ext = extractedTexts.get(f.content_hash);
+    const usePdf = ext && ext.text.length >= 200;
+    const scoredFrom: 'PDF' | 'SUBJECT' = usePdf ? 'PDF' : 'SUBJECT';
+    const scoringText = usePdf ? `${f.subject}\n\n${ext!.text}` : f.subject;
+    const bullish = scoreBullish(scoringText);
+    const is_high_bullish = isHighBullishRaw(bullish, rawThreshold);
+    all.push({
+      ...f,
+      filing_type,
+      bullish,
+      is_high_bullish,
+      scored_from: scoredFrom,
+      pdf_pages: ext?.pages,
+      pdf_failure_reason: ext?.failure,
+    });
+  }
+
+  // Sort: high bullish first, PDF-scored before subject-scored within tier,
+  // then by raw score desc, then by date desc
   all.sort((a, b) => {
     if (a.is_high_bullish !== b.is_high_bullish) return a.is_high_bullish ? -1 : 1;
+    if (a.scored_from !== b.scored_from) return a.scored_from === 'PDF' ? -1 : 1;
     if (b.bullish.raw_score !== a.bullish.raw_score) return b.bullish.raw_score - a.bullish.raw_score;
     return new Date(b.filing_datetime).getTime() - new Date(a.filing_datetime).getTime();
   });

@@ -199,6 +199,10 @@ interface LiveFeedFiling {
     components: { management_confidence: number; business_evidence: number; blockers: number };
   };
   is_high_bullish: boolean;
+  // PATCH 0388
+  scored_from?: 'PDF' | 'SUBJECT';
+  pdf_pages?: number;
+  pdf_failure_reason?: string;
 }
 
 interface LiveFeedPayload {
@@ -326,6 +330,8 @@ function LiveBullishFeed() {
                   <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#1A2540', color: '#94A3B8', fontWeight: 700 }}>{f.exchange}</span>
                   <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: `${scoreColor}20`, color: scoreColor, fontWeight: 700 }}>{filingTypeLabel[f.filing_type] || f.filing_type}</span>
                   {f.is_high_bullish && <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#10B98125', color: '#10B981', fontWeight: 800, border: '1px solid #10B981' }}>★ HIGH BULLISH</span>}
+                  {f.scored_from === 'PDF' && <span title={`Scored from extracted PDF text${f.pdf_pages ? ` (${f.pdf_pages}p)` : ''}`} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#22D3EE15', color: '#22D3EE', fontWeight: 700 }}>📄 PDF</span>}
+                  {f.scored_from === 'SUBJECT' && f.pdf_failure_reason && <span title={`PDF extraction failed: ${f.pdf_failure_reason}`} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#94A3B815', color: '#94A3B8', fontWeight: 700 }}>📝 subject only</span>}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                   <span style={{ fontSize: 16, fontWeight: 900, color: scoreColor }}>{f.bullish.raw_score.toFixed(1)}</span>
