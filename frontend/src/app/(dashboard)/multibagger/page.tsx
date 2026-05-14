@@ -7510,6 +7510,8 @@ function TurnaroundCompare() {
   const [fileName, setFileName] = useState<string>('');
   const [parseError, setParseError] = useState<string | null>(null);
   const [expRow, setExpRow] = useState<string | null>(null);
+  // PATCH 0386 — Expand All toggle (matches Multibagger India/USA tabs)
+  const [expandAll, setExpandAll] = useState(false);
   const [stageFilter, setStageFilter] = useState<TurnaroundStage | 'BUY-ZONE' | 'ALL'>('ALL');
   // PATCH 0374 — Archetype filter so user can hide growth/quality/value-trap rows
   const [archetypeFilter, setArchetypeFilter] = useState<TurnaroundArchetype | 'ALL'>('ALL');
@@ -7856,6 +7858,10 @@ function TurnaroundCompare() {
             <button onClick={() => setShowLossRecovery(v => !v)} style={{ fontSize: F.xs, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: `1px solid ${showLossRecovery ? '#FBBF24' : BORDER}`, background: showLossRecovery ? '#FBBF2420' : 'transparent', color: showLossRecovery ? '#FBBF24' : MUTED, cursor: 'pointer' }}>
               💎 Loss→Profit recovery {showLossRecovery ? '✓' : ''}
             </button>
+            {/* PATCH 0386 — Expand All / Collapse All toggle */}
+            <button onClick={() => { setExpandAll(v => !v); setExpRow(null); }} style={{ fontSize: F.xs, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: `1px solid ${expandAll ? '#22D3EE' : BORDER}`, background: expandAll ? '#22D3EE20' : 'transparent', color: expandAll ? '#22D3EE' : MUTED, cursor: 'pointer' }}>
+              {expandAll ? '▲ Collapse All' : '▼ Expand All'}
+            </button>
             <span style={{ marginLeft: 'auto', fontSize: F.xs, color: MUTED }}>{filtered.length} showing</span>
           </div>
 
@@ -7957,7 +7963,7 @@ function TurnaroundCompare() {
           {/* Rows */}
           <div style={{ marginTop: 6 }}>
             {filtered.map((r) => {
-              const isExp = expRow === r.symbol;
+              const isExp = expandAll || expRow === r.symbol;
               return (
                 <div key={r.symbol} style={{ borderBottom: `1px solid rgba(255,255,255,0.05)`, background: isExp ? '#13131a' : 'transparent' }}>
                   <button onClick={() => setExpRow(isExp ? null : r.symbol)} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '12px 14px', color: 'inherit' }}>
@@ -8160,6 +8166,135 @@ function TurnaroundCompare() {
                           )) : <div style={{ fontSize: 11, color: MUTED, fontStyle: 'italic' }}>No specific risks flagged</div>}
                         </div>
                       </div>
+
+                      {/* PATCH 0386 — SIX-FACTOR MASTER CHECKLIST (playbook Ch.5) */}
+                      <div style={{ marginTop: 14, padding: 12, background: '#0A1422', border: `1px solid #A78BFA40`, borderRadius: 6 }}>
+                        <div style={{ fontSize: 11, fontWeight: 900, color: '#A78BFA', letterSpacing: '0.5px', marginBottom: 8 }}>📋 SIX-FACTOR MASTER CHECKLIST (Ch.5)</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, fontSize: 11 }}>
+                          {(() => {
+                            const factors = [
+                              { name: 'F1 Balance Sheet Survival', score: `${r.survivalScore}/8`, pass: r.survivalScore >= 6, note: 'gate condition — see survival panel' },
+                              { name: 'F2 Earnings Inflection', score: `${r.earningsScore.toFixed(0)}/20`, pass: r.earningsScore >= 8, note: 'most important for timing' },
+                              { name: 'F3 Industry Cycle Turn', score: `${r.industryScore.toFixed(0)}/10`, pass: r.industryScore >= 5, note: 'sector-wide vs company-specific' },
+                              { name: 'F4 Management Quality', score: `${r.governanceScore.toFixed(0)}/10`, pass: r.governanceScore >= 5, note: 'check pledge, promoter buying' },
+                              { name: 'F5 Liquidity Tailwind', score: `${r.balanceSheetScore.toFixed(0)}/15`, pass: r.balanceSheetScore >= 7, note: 'macro + credit spreads + sector' },
+                              { name: 'F6 Concall / Narrative', score: `${r.concallScore.toFixed(0)}/25`, pass: r.concallScore >= 10, note: 'paste-text confirms thesis' },
+                            ];
+                            return factors.map((f, i) => (
+                              <div key={i} style={{ padding: '8px 10px', background: '#13131a', border: `1px solid ${f.pass ? '#10B98140' : '#94A3B840'}`, borderRadius: 5 }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: f.pass ? '#10B981' : '#94A3B8', marginBottom: 2 }}>{f.pass ? '✓' : '○'} {f.name}</div>
+                                <div style={{ fontSize: 13, fontWeight: 900, color: f.pass ? '#10B981' : '#C9D4E0' }}>{f.score}</div>
+                                <div style={{ fontSize: 9, color: MUTED, marginTop: 1, lineHeight: 1.3 }}>{f.note}</div>
+                              </div>
+                            ));
+                          })()}
+                        </div>
+                      </div>
+
+                      {/* PATCH 0386 — ENTRY / EXIT STAGING (playbook Ch.6) */}
+                      <div style={{ marginTop: 14, padding: 12, background: '#0A1422', border: `1px solid #10B98140`, borderRadius: 6 }}>
+                        <div style={{ fontSize: 11, fontWeight: 900, color: '#10B981', letterSpacing: '0.5px', marginBottom: 8 }}>🎯 ENTRY & EXIT STAGING (Ch.6)</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, fontSize: 11 }}>
+                          {(() => {
+                            const max = r.suggestedPositionPct;
+                            const cur = r.phase === 3 && r.isBestCandidate ? 'NOW' : r.phase === 2 ? 'NOW' : r.phase === 1 ? 'WAIT' : '—';
+                            const stages = [
+                              { label: '🪨 STAGE 1 STARTER', pct: (max * 0.225).toFixed(1), trigger: 'Stabilisation confirmed; balance sheet survival clear; rate of deterioration slowing', active: r.phase === 2 && cur === 'NOW' },
+                              { label: '🧱 STAGE 2 CONFIRM', pct: (max * 0.325).toFixed(1), trigger: 'First estimate revision up; insider buying confirmed; higher lows on chart', active: r.phase === 3 && !r.isBestCandidate },
+                              { label: '🏛️ STAGE 3 FULL', pct: (max * 0.45).toFixed(1), trigger: 'Recovery thesis clearly underway; sequential rev growth; margin expansion visible', active: r.phase === 3 && r.isBestCandidate },
+                            ];
+                            return stages.map((s, i) => (
+                              <div key={i} style={{ padding: '8px 10px', background: s.active ? '#10B98115' : '#13131a', border: `1px solid ${s.active ? '#10B981' : '#94A3B840'}`, borderRadius: 5 }}>
+                                <div style={{ fontSize: 10, fontWeight: 800, color: s.active ? '#10B981' : MUTED, marginBottom: 3 }}>{s.label}{s.active ? ' · ACTIVE' : ''}</div>
+                                <div style={{ fontSize: 14, fontWeight: 900, color: s.active ? '#10B981' : '#C9D4E0' }}>{s.pct}% of portfolio</div>
+                                <div style={{ fontSize: 9, color: MUTED, marginTop: 2, lineHeight: 1.4 }}>{s.trigger}</div>
+                              </div>
+                            ));
+                          })()}
+                        </div>
+                        <div style={{ marginTop: 10, padding: '8px 10px', background: '#EF444412', border: '1px solid #EF444440', borderRadius: 5 }}>
+                          <div style={{ fontSize: 10, fontWeight: 800, color: '#EF4444', marginBottom: 4 }}>🚪 EXIT TRIGGERS</div>
+                          <div style={{ fontSize: 10, color: '#C9D4E0', lineHeight: 1.5 }}>
+                            <strong>TRIM</strong> when stock up 100%+ and valuation approaching normalised fair value · <strong>SELL</strong> if thesis broken, material new negative, management credibility destroyed · <strong>IMMEDIATE EXIT</strong> on covenant breach, surprise maturity, CCC downgrade, accounting restatement, key contract loss
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* PATCH 0386 — ALL METRICS table (matches Multibagger India depth) */}
+                      <details style={{ marginTop: 14, padding: 12, background: '#0A1422', border: `1px solid ${BORDER}`, borderRadius: 6 }}>
+                        <summary style={{ cursor: 'pointer', fontSize: 11, fontWeight: 900, color: '#22D3EE', letterSpacing: '0.5px' }}>📐 ALL METRICS (click to expand raw data)</summary>
+                        <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 }}>
+                          {(() => {
+                            const sections: Array<{ title: string; fields: Array<[string, unknown, string?]> }> = [
+                              { title: 'Spot', fields: [
+                                ['CMP', r.cmp, '₹'],
+                                ['Mar Cap', r.marketCapCr, '₹Cr'],
+                                ['P/E', r.pe],
+                                ['P/E 5y med', r.pe5yMedian],
+                                ['EV/EBITDA', r.evEbitda],
+                                ['1Y perf', r.perf1y, '%'],
+                              ]},
+                              { title: 'Quarterly', fields: [
+                                ['Sales Q1', r.salesQ1, '₹Cr'],
+                                ['Sales Q2', r.salesQ2, '₹Cr'],
+                                ['OPM Q1', r.opmQ1, '%'],
+                                ['OPM Q2', r.opmQ2, '%'],
+                                ['PAT Q1', r.patQ1, '₹Cr'],
+                                ['PAT Q2', r.patQ2, '₹Cr'],
+                                ['EPS Q1', r.epsQ1, '₹'],
+                                ['Qtr PAT YoY', r.patQ1Yoy != null && r.patQ1 != null ? ((r.patQ1 - r.patQ1Yoy) / Math.abs(r.patQ1Yoy) * 100) : null, '%'],
+                              ]},
+                              { title: 'Annual', fields: [
+                                ['Rev growth 1y', r.revenueGrowth1y, '%'],
+                                ['Rev growth 3y', r.revenueGrowth3y, '%'],
+                                ['Rev growth 5y', r.revenueGrowth5y, '%'],
+                                ['PAT growth 1y', r.patGrowth1y, '%'],
+                                ['PAT growth 3y', r.patGrowth3y, '%'],
+                                ['Sales Y1', r.salesY1, '₹Cr'],
+                                ['Sales Y2', r.salesY2, '₹Cr'],
+                                ['PAT Y1', r.patY1, '₹Cr'],
+                                ['PAT Y2', r.patY2, '₹Cr'],
+                                ['Loss years', r.lossMakingYears5y, '/5'],
+                              ]},
+                              { title: 'Balance Sheet', fields: [
+                                ['Debt', r.debtCurr, '₹Cr'],
+                                ['Debt 3y back', r.debt3yBack, '₹Cr'],
+                                ['D/E', r.de],
+                                ['Int Coverage', r.interestCoverage, 'x'],
+                                ['Int Cov 3y', r.interestCoverage3yBack, 'x'],
+                                ['WC days', r.workingCapitalDays],
+                                ['WC days 3y', r.workingCapitalDays3yBack],
+                              ]},
+                              { title: 'Returns', fields: [
+                                ['ROCE', r.roce, '%'],
+                                ['ROCE 3y', r.roce3yBack, '%'],
+                                ['ROE', r.roe, '%'],
+                              ]},
+                              { title: 'Governance', fields: [
+                                ['Promoter', r.promoterHolding, '%'],
+                                ['Prom 3y back', r.promoterHolding3yBack, '%'],
+                                ['Pledge', r.promoterPledgePct, '%'],
+                              ]},
+                            ];
+                            return sections.map((s, i) => (
+                              <div key={i}>
+                                <div style={{ fontSize: 9, fontWeight: 800, color: MUTED, letterSpacing: '0.4px', marginBottom: 4 }}>{s.title.toUpperCase()}</div>
+                                {s.fields.map(([k, v, suf], j) => {
+                                  const display = v == null || (typeof v === 'number' && isNaN(v as number))
+                                    ? '—'
+                                    : typeof v === 'number' ? `${(v as number).toFixed(Math.abs(v as number) >= 100 ? 0 : 1)}${suf ? ' ' + suf : ''}` : String(v);
+                                  return (
+                                    <div key={j} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, padding: '2px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                      <span style={{ color: MUTED }}>{k}</span>
+                                      <span style={{ color: display === '—' ? MUTED : '#C9D4E0', fontWeight: 700 }}>{display}</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ));
+                          })()}
+                        </div>
+                      </details>
                     </div>
                   )}
                 </div>
