@@ -321,24 +321,64 @@ export interface BullishScore {
 // PATCH 0396 — Earnings anchoring patterns. A filing can score >6 ONLY if
 // it explicitly mentions one of these (revenue/margin/order book numbers).
 // Prevents buzzword-only inflation per institutional spec.
+// PATCH 0398 — Broadened to catch real-world phrasings: 'highest-ever
+// revenue/EBITDA/PAT', 'record FY/Q', 'best-ever quarter', plus more
+// varied YoY% patterns.
 const EARNINGS_ANCHOR_PATTERNS: Array<{ re: RegExp; label: string }> = [
   // Revenue / sales growth %
-  { re: /(?:revenue|sales|topline)[\s\w]{0,40}(?:grew?|growth|increased?|up)\s+(?:by\s+)?\d{1,3}(?:\.\d+)?\s*%/i,                  label: 'Revenue growth % stated' },
-  { re: /\b\d{1,3}(?:\.\d+)?\s*%\s+(?:YoY|year[-\s]?on[-\s]?year|QoQ)\s+(?:revenue|sales|topline)/i,                                 label: 'Revenue YoY% stated' },
+  { re: /(?:revenue|sales|topline)[\s\w]{0,40}(?:grew?|growth|increased?|up|rose|jumped)\s+(?:by\s+)?\d{1,3}(?:\.\d+)?\s*%/i,         label: 'Revenue growth % stated' },
+  { re: /\b\d{1,3}(?:\.\d+)?\s*%\s+(?:YoY|year[-\s]?on[-\s]?year|QoQ|growth)\s+(?:revenue|sales|topline)/i,                          label: 'Revenue YoY% stated' },
+  // PATCH 0398 — superlatives that imply concrete financial achievement
+  { re: /\bhighest[-\s]?ever\s+(?:annual\s+|quarterly\s+|FY\s*\d+\s+)?(?:revenue|sales|EBITDA|PAT|profit|earnings|topline)/i,         label: 'Highest-ever financial stated' },
+  { re: /\brecord[-\s]+(?:FY|Q[1-4]|quarterly|annual)?\s*(?:revenue|sales|EBITDA|PAT|profit|earnings|topline|quarter|year|performance)/i, label: 'Record FY/Q performance' },
+  { re: /\bbest[-\s]?ever\s+(?:quarter|year|annual|FY|Q[1-4])/i,                                                                       label: 'Best-ever period stated' },
+  { re: /\ball[-\s]?time\s+high\b/i,                                                                                                    label: 'All-time high stated' },
+  // PATCH 0398 — Q4/Q3/Q2/Q1 +X% YoY pattern (common in industry stats / company refs)
+  { re: /\bQ[1-4]\s+[+]?\d{1,3}(?:\.\d+)?\s*%\s*(?:Q4|YoY|QoQ|year)/i,                                                                  label: 'Quarterly +X% YoY' },
+  { re: /\bFY\s*\d+\s+(?:closed|delivered|reported|posted|registered)\s+(?:at|with)?\s*(?:highest|record|best|strong)/i,                label: 'FY closed with milestone' },
+  // PATCH 0398 — explicit value: "revenue of ₹X cr", "EBITDA at ₹X cr"
+  { re: /(?:revenue|sales|EBITDA|PAT|profit)[\s\w]{0,15}(?:of|at|stood\s+at|reached|reported)\s+(?:Rs\.?|₹|INR)?\s*\d+[\,\.\d]*\s*(?:cr|crore|bn|billion|mn|million)/i, label: '₹Cr value stated' },
   // EBITDA / margin in bps / pp
   { re: /(?:EBITDA|operating|gross|net)\s+margin[\s\w]{0,40}(?:expanded?|improved?|increased?|recovered?)\s+(?:by\s+)?\d+\s*(?:bps|basis\s+points|pp|percentage\s+points)/i, label: 'Margin expansion bps' },
   { re: /\d+\s*(?:bps|basis\s+points|pp)\s+(?:margin|EBITDA|gross)/i,                                                                label: 'Margin bps stated' },
+  // PATCH 0398 — "margin recovered to X.X%" pattern (CMSINFO style)
+  { re: /margin[\s\w]{0,30}(?:recovered|improved|expanded)\s+(?:by\s+)?\d+\s*(?:bps|basis\s+points)\s+to\s+\d+(?:\.\d+)?\s*%/i,         label: 'Margin recovered bps to %' },
   // PAT / EBITDA / profit growth
-  { re: /(?:PAT|profit|EBITDA)[\s\w]{0,40}(?:grew?|growth|increased?|up)\s+(?:by\s+)?\d{1,3}(?:\.\d+)?\s*%/i,                       label: 'PAT/EBITDA growth %' },
-  { re: /\d{1,3}(?:\.\d+)?\s*%\s+(?:YoY|year[-\s]?on[-\s]?year|QoQ)\s+(?:PAT|profit|EBITDA)/i,                                       label: 'Profit YoY% stated' },
+  { re: /(?:PAT|profit|EBITDA)[\s\w]{0,40}(?:grew?|growth|increased?|up|rose|jumped)\s+(?:by\s+)?\d{1,3}(?:\.\d+)?\s*%/i,             label: 'PAT/EBITDA growth %' },
+  { re: /\d{1,3}(?:\.\d+)?\s*%\s+(?:YoY|year[-\s]?on[-\s]?year|QoQ|growth)\s+(?:PAT|profit|EBITDA)/i,                                  label: 'Profit YoY% stated' },
   // Order book value
-  { re: /order\s+book[\s\w]{0,15}(?:of|at|stood\s+at|reached|crossed)\s+(?:Rs\.?|₹|INR)?\s*\d+[\,\.\d]*\s*(?:cr|crore)/i,           label: 'Order book ₹Cr stated' },
+  { re: /order\s+book[\s\w]{0,15}(?:of|at|stood\s+at|reached|crossed|above)\s+(?:Rs\.?|₹|INR)?\s*\d+[\,\.\d]*\s*(?:cr|crore)/i,       label: 'Order book ₹Cr stated' },
   { re: /(?:Rs\.?|₹|INR)\s*\d+[\,\.\d]*\s*(?:cr|crore)\s+order\s+book/i,                                                              label: 'Order book ₹Cr stated' },
   // Capex value
-  { re: /capex[\s\w]{0,15}(?:of|at)\s+(?:Rs\.?|₹|INR)?\s*\d+[\,\.\d]*\s*(?:cr|crore)/i,                                              label: 'Capex ₹Cr stated' },
+  { re: /capex[\s\w]{0,15}(?:of|at|plan|planned)\s+(?:Rs\.?|₹|INR)?\s*\d+[\,\.\d]*\s*(?:cr|crore)/i,                                  label: 'Capex ₹Cr stated' },
   // Specific double-digit growth with number
-  { re: /\b\d{2,3}\s*%\s+(?:growth|increase|expansion|gain)/i,                                                                       label: 'Double-digit % growth' },
+  { re: /\b\d{2,3}\s*%\s+(?:growth|increase|expansion|gain)/i,                                                                        label: 'Double-digit % growth' },
+  { re: /\bdouble[-\s]?digit\s+(?:revenue|sales|profit|EBITDA|growth|expansion)/i,                                                     label: 'Double-digit growth' },
 ];
+
+// PATCH 0398 — Boilerplate / accounting-footnote patterns that pollute RISK
+// evidence. Sentences matching these are common disclosure boilerplate, not
+// management bearish commentary. Per user: PGIL's risks showed three
+// 'EBITDA excludes ESOP expenses' lines — these are footnotes, not signals.
+const RISK_BOILERPLATE_PATTERNS: RegExp[] = [
+  /\bEBITDA\s+excludes\b/i,
+  /\b(?:Adj|Adjusted)\s+(?:PBT|PAT|EBITDA)\s+excludes\b/i,
+  /\bexcludes?\s+(?:exceptional|ESOP|one[-\s]?off|exceptional\s+items?)/i,
+  /^\s*\*\s+(?:Excludes?|Ratio|Figures|Key\s+ratios)/i,
+  /\bratio\s+calculated\s+(?:excluding|after)/i,
+  /\bfigures?\s+(?:are\s+on\s+)?consolidated\s+basis/i,
+  /\brounded\s+off\s+to\s+nearest/i,
+  /\bkey\s+ratios?\s+FY\s*\d+/i,
+  /\bcash\s+flow\s+from\s+operating\s+activities/i,  // cash flow statement headers
+  /\b(?:operating|profit\s+before)\s+working\s+capital\s+changes/i,
+  /\bnet\s+cash\s+flows?\s+generated/i,
+  /\bdepreciation\s+\d+/i,
+  /\bfinance\s+cost\s+\d+/i,
+];
+
+function isRiskBoilerplate(sentence: string): boolean {
+  return RISK_BOILERPLATE_PATTERNS.some(re => re.test(sentence));
+}
 
 function detectEarningsAnchors(text: string): { anchored: boolean; evidence: string[] } {
   const evidence: string[] = [];
@@ -545,6 +585,10 @@ export function scoreBullish(text: string): BullishScore {
     // Track which blocker patterns have already fired (by tag) to dedupe
     const firedBlockers = new Set<string>();
     for (const sent of sentences) {
+      // PATCH 0398 — Skip accounting footnote / boilerplate sentences. They
+      // shouldn't surface as RISK evidence (e.g. 'EBITDA excludes ESOP
+      // expenses' is a disclosure note, not bearish commentary).
+      if (isRiskBoilerplate(sent)) continue;
       for (const b of NEG_BLOCKERS) {
         if (b.re.test(sent)) {
           // Always capture evidence (so user sees multiple supporting quotes)

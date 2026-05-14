@@ -418,7 +418,7 @@ function LiveBullishFeed() {
                         <span style={{ fontSize: 9, color: '#F59E0B', fontWeight: 900, marginRight: 6 }}>#{i + 1}</span>
                         <span style={{ fontSize: 13, fontWeight: 900, color: '#E6EDF3' }}>{r.symbol || r.company_name}</span>
                       </div>
-                      <span style={{ fontSize: 16, fontWeight: 900, color: tierColor }}>{r.bullish.raw_score.toFixed(1)}</span>
+                      <span title={`Composite = 0.5×Q + 0.3×C + 0.2×S. Raw bullish: ${r.bullish.raw_score.toFixed(1)}`} style={{ fontSize: 16, fontWeight: 900, color: tierColor }}>{((r.bullish.components as any).composite_score ?? r.bullish.raw_score).toFixed(1)}</span>
                     </div>
                     <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 4 }}>{r.company_name}</div>
                     <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', fontSize: 8 }}>
@@ -478,8 +478,21 @@ function LiveBullishFeed() {
                   {f.scored_from === 'SUBJECT' && f.pdf_failure_reason && <span title={`PDF extraction failed: ${f.pdf_failure_reason}`} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#94A3B815', color: '#94A3B8', fontWeight: 700 }}>📝 subject only</span>}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                  <span style={{ fontSize: 16, fontWeight: 900, color: scoreColor }}>{f.bullish.raw_score.toFixed(1)}</span>
-                  <span style={{ fontSize: 10, color: '#94A3B8' }}>· {f.bullish.confidence}</span>
+                  {/* PATCH 0398 — Composite is the primary score now per
+                      institutional spec. raw_score becomes diagnostic. */}
+                  {(() => {
+                    const composite = (f.bullish.components as any).composite_score;
+                    const primary = composite != null ? composite : f.bullish.raw_score;
+                    return (
+                      <>
+                        <span title={`Composite = 0.5×Quality + 0.3×Cycle + 0.2×Sentiment. Raw bullish score: ${f.bullish.raw_score.toFixed(1)}`} style={{ fontSize: 16, fontWeight: 900, color: scoreColor }}>{primary.toFixed(1)}</span>
+                        {composite != null && (
+                          <span style={{ fontSize: 9, color: '#6B7A8D' }}>· raw {f.bullish.raw_score.toFixed(1)}</span>
+                        )}
+                        <span style={{ fontSize: 10, color: '#94A3B8' }}>· {f.bullish.confidence}</span>
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
               <div style={{ fontSize: 11, color: '#C9D4E0', marginBottom: 6, lineHeight: 1.4 }}>{f.subject}</div>
