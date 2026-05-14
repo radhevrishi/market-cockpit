@@ -65,6 +65,9 @@ export default function ConcallIntelPage() {
         🔥 LIVE bullish NSE/BSE concall + investor-presentation filings (auto-poll). ⬇️ Plus manual transcript / PDF analyser below.
       </p>
 
+      {/* PATCH 0400 — MOVERS panel (daily delta detection) */}
+      <MoversPanel />
+
       {/* PATCH 0387 — LIVE BULLISH FEED */}
       <LiveBullishFeed />
 
@@ -1103,6 +1106,110 @@ function KeywordWatchFeed() {
             </div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PATCH 0400 — MOVERS PANEL (daily delta detection)
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface MoverEntry {
+  symbol: string;
+  company_name: string;
+  tier: string;
+  composite_today: number;
+  composite_yesterday: number | null;
+  delta: number | null;
+  rank_today: number;
+  rank_yesterday: number | null;
+}
+interface MoversPayload {
+  generated_at: string;
+  today_date: string;
+  reference_date: string | null;
+  new_entries: MoverEntry[];
+  big_jumps: MoverEntry[];
+  lost_momentum: MoverEntry[];
+  ranking_today: MoverEntry[];
+}
+
+function MoversPanel() {
+  const [data, setData] = useState<MoversPayload | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      setLoading(true);
+      try {
+        const r = await fetch('/api/v1/concall-intel/movers', { cache: 'no-store' });
+        if (!r.ok) return;
+        const j = await r.json();
+        if (mounted) setData(j);
+      } catch {} finally { if (mounted) setLoading(false); }
+    };
+    load();
+    const t = setInterval(load, 15 * 60 * 1000);
+    return () => { mounted = false; clearInterval(t); };
+  }, []);
+
+  if (!data || (data.new_entries.length === 0 && data.big_jumps.length === 0 && data.lost_momentum.length === 0)) {
+    return null;
+  }
+
+  const tierColor = (tier: string): string => {
+    if (tier === 'ULTRA_BULLISH') return '#22D3EE';
+    if (tier === 'BULLISH') return '#10B981';
+    if (tier === 'MIXED_POSITIVE') return '#F59E0B';
+    return '#94A3B8';
+  };
+
+  const Section = ({ title, items, icon, color }: { title: string; items: MoverEntry[]; icon: string; color: string }) => {
+    if (items.length === 0) return null;
+    return (
+      <div style={{ flex: '1 1 280px', minWidth: 240 }}>
+        <div style={{ fontSize: 10, fontWeight: 800, color, letterSpacing: '0.4px', marginBottom: 5 }}>{icon} {title} ({items.length})</div>
+        {items.slice(0, 6).map(m => {
+          const tc = tierColor(m.tier);
+          return (
+            <div key={m.symbol} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '3px 6px', borderRadius: 4, marginBottom: 3, background: '#0A1422', border: `1px solid ${tc}30`, fontSize: 11 }}>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', minWidth: 0 }}>
+                <span style={{ fontWeight: 800, color: '#E6EDF3' }}>{m.symbol}</span>
+                <span style={{ color: '#94A3B8', fontSize: 9, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.company_name}</span>
+              </div>
+              <div style={{ display: 'flex', gap: 5, alignItems: 'baseline' }}>
+                {m.delta != null && (
+                  <span style={{ fontSize: 9, color: m.delta > 0 ? '#10B981' : m.delta < 0 ? '#EF4444' : '#94A3B8', fontWeight: 700 }}>
+                    {m.delta > 0 ? '+' : ''}{m.delta.toFixed(1)}
+                  </span>
+                )}
+                <span style={{ fontSize: 11, fontWeight: 900, color: tc }}>
+                  {m.composite_today > 0 ? m.composite_today.toFixed(1) : '—'}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ backgroundColor: '#0D1623', border: '1px solid #A78BFA40', borderLeft: '4px solid #A78BFA', borderRadius: 10, padding: '14px 18px', marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 900, color: '#A78BFA', letterSpacing: '0.4px' }}>📈 MOVERS — daily delta vs last snapshot</div>
+          <div style={{ fontSize: 10, color: '#94A3B8', marginTop: 2 }}>
+            today {data.today_date} vs {data.reference_date || 'no prior snapshot'} · {loading ? 'loading…' : `${data.new_entries.length} new · ${data.big_jumps.length} big jumps · ${data.lost_momentum.length} lost momentum`}
+          </div>
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        <Section title="NEW ENTRIES" items={data.new_entries} icon="🆕" color="#10B981" />
+        <Section title="BIG JUMPS" items={data.big_jumps} icon="⬆️" color="#22D3EE" />
+        <Section title="LOST MOMENTUM" items={data.lost_momentum} icon="⬇️" color="#EF4444" />
       </div>
     </div>
   );

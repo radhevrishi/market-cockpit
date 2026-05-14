@@ -23,6 +23,10 @@
     {
       "path": "/api/v1/cron/concall-intel-warm?secret=mc-bot-2026",
       "schedule": "*/30 3-15 * * 1-5"
+    },
+    {
+      "path": "/api/v1/cron/concall-intel-snapshot?secret=mc-bot-2026",
+      "schedule": "30 14 * * 1-5"
     }
   ],
   "rewrites": [
