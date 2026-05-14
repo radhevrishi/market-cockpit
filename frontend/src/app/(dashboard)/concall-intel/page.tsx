@@ -1,14 +1,17 @@
 'use client';
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CONCALL INTELLIGENCE ENGINE v2 (PATCH 0107 / 0171)
+// CONCALL INTELLIGENCE ENGINE v3 (PATCH 0107 / 0171 / 0387)
 //
-// Paste a concall transcript (or supply a PDF URL) and get structured
-// analysis: tone score, guidance map, key themes, red flags, key numbers.
-// Pure heuristic — runs entirely on Vercel, no LLM dependency.
+// PATCH 0387 — Added LIVE NSE/BSE BULLISH FEED at top of page. Polls
+// /api/v1/concall-intel/live-feed every 5 min during market hours, shows
+// only high-bullish filings (≥ raw 4 score, ≥1 mgmt confidence phrase,
+// ≥1 business evidence phrase, no critical blockers).
+//
+// Plus the original manual transcript-paste analyser below.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 
 interface Analysis {
   ticker: string;
@@ -57,8 +60,16 @@ export default function ConcallIntelPage() {
 
   return (
     <div style={{ padding: '20px 24px', backgroundColor: '#0A0E1A', minHeight: '100%', color: '#E6EDF3' }}>
-      <h1 style={{ fontSize: 22, fontWeight: 900, margin: 0, marginBottom: 6 }}>🎙️ Concall Intelligence v2</h1>
+      <h1 style={{ fontSize: 22, fontWeight: 900, margin: 0, marginBottom: 6 }}>🎙️ Concall Intelligence v3</h1>
       <p style={{ fontSize: 12, color: '#94A3B8', margin: 0, marginBottom: 18 }}>
+        🔥 LIVE bullish NSE/BSE concall + investor-presentation filings (auto-poll). ⬇️ Plus manual transcript / PDF analyser below.
+      </p>
+
+      {/* PATCH 0387 — LIVE BULLISH FEED */}
+      <LiveBullishFeed />
+
+      <h2 style={{ fontSize: 16, fontWeight: 900, margin: '32px 0 8px' }}>📝 Manual Transcript / PDF Analyser</h2>
+      <p style={{ fontSize: 11, color: '#94A3B8', margin: 0, marginBottom: 14 }}>
         Paste a concall transcript OR enter a public PDF URL. Output: tone score, guidance map, key themes, red flags, key numbers.
       </p>
 
@@ -159,6 +170,198 @@ export default function ConcallIntelPage() {
             </div>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PATCH 0387 — LIVE BULLISH FEED (auto-poll NSE/BSE)
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface LiveFeedFiling {
+  exchange: 'NSE' | 'BSE';
+  symbol: string;
+  company_name: string;
+  subject: string;
+  filing_datetime: string;
+  attachment_urls: string[];
+  source_url: string;
+  filing_type: string;
+  bullish: {
+    score: number;
+    raw_score: number;
+    sentiment: string;
+    confidence: string;
+    tags: string[];
+    bullish_phrases: string[];
+    red_flags: string[];
+    components: { management_confidence: number; business_evidence: number; blockers: number };
+  };
+  is_high_bullish: boolean;
+}
+
+interface LiveFeedPayload {
+  generated_at: string;
+  count_total: number;
+  count_relevant: number;
+  count_high_bullish: number;
+  filings: LiveFeedFiling[];
+  sources: { nse: string; bse: string };
+}
+
+function LiveBullishFeed() {
+  const [data, setData] = useState<LiveFeedPayload | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [bullishOnly, setBullishOnly] = useState(true);
+  const [exchange, setExchange] = useState<'ALL' | 'NSE' | 'BSE'>('ALL');
+  const [days, setDays] = useState(2);
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+
+  const fetchFeed = async (force = false) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({
+        days: String(days),
+        ...(force ? { force: '1' } : {}),
+      });
+      const res = await fetch(`/api/v1/concall-intel/live-feed?${params}`, { cache: 'no-store' });
+      if (!res.ok) {
+        setError(`HTTP ${res.status}`);
+        return;
+      }
+      const j = await res.json();
+      setData(j);
+      setLastRefresh(new Date());
+    } catch (e: any) {
+      setError(e?.message || 'fetch failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Initial fetch + auto-poll every 5 min
+  useEffect(() => {
+    fetchFeed();
+    const t = setInterval(() => fetchFeed(), 5 * 60 * 1000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [days]);
+
+  const filtered = useMemo(() => {
+    if (!data) return [];
+    let out = data.filings;
+    if (exchange !== 'ALL') out = out.filter(f => f.exchange === exchange);
+    if (bullishOnly) out = out.filter(f => f.is_high_bullish);
+    return out;
+  }, [data, exchange, bullishOnly]);
+
+  return (
+    <div style={{ backgroundColor: '#0D1623', border: '1px solid #F59E0B30', borderLeft: '4px solid #F59E0B', borderRadius: 10, padding: '14px 18px', marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 900, color: '#F59E0B', letterSpacing: '0.4px' }}>🔥 LIVE BULLISH FEED — NSE / BSE concall + presentation filings</div>
+          <div style={{ fontSize: 10, color: '#94A3B8', marginTop: 2 }}>
+            {data ? (
+              <>
+                {data.count_total} total · {data.count_relevant} concall-relevant · <strong style={{ color: '#10B981' }}>{data.count_high_bullish} high bullish</strong> · sources: NSE <strong style={{ color: data.sources.nse === 'NSE_OK' ? '#10B981' : '#EF4444' }}>{data.sources.nse}</strong> · BSE <strong style={{ color: data.sources.bse === 'BSE_OK' ? '#10B981' : '#94A3B8' }}>{data.sources.bse}</strong>
+                {lastRefresh && <> · refreshed {lastRefresh.toLocaleTimeString()}</>}
+              </>
+            ) : loading ? 'Loading…' : '—'}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button onClick={() => setBullishOnly(v => !v)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: `1px solid ${bullishOnly ? '#10B981' : '#1A2540'}`, background: bullishOnly ? '#10B98120' : 'transparent', color: bullishOnly ? '#10B981' : '#94A3B8', cursor: 'pointer' }}>
+            ★ Bullish only {bullishOnly ? '✓' : ''}
+          </button>
+          {(['ALL', 'NSE', 'BSE'] as const).map(e => (
+            <button key={e} onClick={() => setExchange(e)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: `1px solid ${exchange === e ? '#22D3EE' : '#1A2540'}`, background: exchange === e ? '#22D3EE20' : 'transparent', color: exchange === e ? '#22D3EE' : '#94A3B8', cursor: 'pointer' }}>
+              {e}
+            </button>
+          ))}
+          <select value={days} onChange={(e) => setDays(parseInt(e.target.value))} style={{ fontSize: 11, padding: '4px 8px', borderRadius: 5, border: '1px solid #1A2540', background: '#0A1422', color: '#E6EDF3' }}>
+            <option value={1}>1 day</option>
+            <option value={2}>2 days</option>
+            <option value={3}>3 days</option>
+            <option value={5}>5 days</option>
+            <option value={7}>7 days</option>
+          </select>
+          <button onClick={() => fetchFeed(true)} disabled={loading} style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 5, border: '1px solid #22D3EE', background: '#22D3EE20', color: '#22D3EE', cursor: loading ? 'wait' : 'pointer' }}>
+            {loading ? '…' : '↻ Refresh'}
+          </button>
+        </div>
+      </div>
+
+      {error && <div style={{ fontSize: 11, color: '#EF4444', marginBottom: 8 }}>⚠ {error}</div>}
+
+      {filtered.length === 0 && !loading && (
+        <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic', padding: '12px 0' }}>
+          {data && data.count_relevant > 0
+            ? `No high-bullish filings in current filter. Total relevant: ${data.count_relevant}. Try toggling "Bullish only" off or expanding the date range.`
+            : 'No concall-related filings yet. NSE/BSE may be blocking the request (try refresh in a few minutes).'}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {filtered.slice(0, 50).map((f, i) => {
+          const scoreColor = f.bullish.raw_score >= 8 ? '#10B981' : f.bullish.raw_score >= 5 ? '#22D3EE' : f.bullish.raw_score >= 2 ? '#F59E0B' : '#94A3B8';
+          const filingTypeLabel: Record<string, string> = {
+            TRANSCRIPT: '📜 Transcript',
+            INVESTOR_PRESENTATION: '📊 Investor Pres',
+            CONCALL_INVITE: '📞 Concall',
+            ANALYST_MEET: '🤝 Analyst Meet',
+            AUDIO_RECORDING: '🎧 Audio',
+            RESULTS_PRESENTATION: '📈 Results Pres',
+            WEBCAST: '📡 Webcast',
+            PRESS_RELEASE: '📰 Press Release',
+          };
+          return (
+            <div key={f.symbol + '-' + i} style={{ padding: '10px 12px', background: '#0A1422', border: `1px solid ${f.is_high_bullish ? '#10B98140' : '#1A2540'}`, borderLeft: `3px solid ${scoreColor}`, borderRadius: 6 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, marginBottom: 4 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 13, fontWeight: 900, color: '#E6EDF3' }}>{f.symbol || f.company_name}</span>
+                  {f.symbol && <span style={{ fontSize: 11, color: '#94A3B8' }}>{f.company_name}</span>}
+                  <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#1A2540', color: '#94A3B8', fontWeight: 700 }}>{f.exchange}</span>
+                  <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: `${scoreColor}20`, color: scoreColor, fontWeight: 700 }}>{filingTypeLabel[f.filing_type] || f.filing_type}</span>
+                  {f.is_high_bullish && <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#10B98125', color: '#10B981', fontWeight: 800, border: '1px solid #10B981' }}>★ HIGH BULLISH</span>}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                  <span style={{ fontSize: 16, fontWeight: 900, color: scoreColor }}>{f.bullish.raw_score.toFixed(1)}</span>
+                  <span style={{ fontSize: 10, color: '#94A3B8' }}>· {f.bullish.confidence}</span>
+                </div>
+              </div>
+              <div style={{ fontSize: 11, color: '#C9D4E0', marginBottom: 6, lineHeight: 1.4 }}>{f.subject}</div>
+              {f.bullish.tags.length > 0 && (
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 4 }}>
+                  {f.bullish.tags.map((t, j) => (
+                    <span key={j} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: '#10B981', fontWeight: 700 }}>{t}</span>
+                  ))}
+                </div>
+              )}
+              {f.bullish.red_flags.length > 0 && (
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 4 }}>
+                  {f.bullish.red_flags.map((t, j) => (
+                    <span key={j} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#EF444415', color: '#EF4444', fontWeight: 700 }}>⚠ {t}</span>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, color: '#6B7A8D' }}>
+                <span>{new Date(f.filing_datetime).toLocaleString()}</span>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {f.attachment_urls.slice(0, 2).map((u, j) => (
+                    <a key={j} href={u} target="_blank" rel="noopener noreferrer" style={{ color: '#22D3EE', textDecoration: 'none' }}>📎 attachment</a>
+                  ))}
+                  <a href={f.source_url} target="_blank" rel="noopener noreferrer" style={{ color: '#22D3EE', textDecoration: 'none' }}>↗ {f.exchange} filing</a>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {filtered.length > 50 && (
+        <div style={{ fontSize: 10, color: '#94A3B8', marginTop: 8, textAlign: 'center' }}>… {filtered.length - 50} more (showing top 50 by score)</div>
       )}
     </div>
   );
