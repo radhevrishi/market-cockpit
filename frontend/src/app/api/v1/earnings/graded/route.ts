@@ -498,7 +498,50 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'hub fetch failed', status: hubRes.status }, { status: 502 });
   }
   const hub = await hubRes.json();
-  const dayList = (hub?.results || []).filter((r: any) => r.resultDate === date && r.quality !== 'Upcoming');
+  let dayList: any[] = (hub?.results || []).filter((r: any) => r.resultDate === date && r.quality !== 'Upcoming');
+
+  // PATCH 0363 — Augment with live NSE corp-announcements for today's
+  // date. User's complaint: "today's companies not showing at all" because
+  // the hub aggregator lags actual NSE filings by hours. We hit NSE's
+  // corporate-announcements feed directly for today + yesterday and merge
+  // any quarterly-results filings into dayList. Dedupe by ticker so we
+  // don't double-count companies that ARE already in the hub.
+  if (date === todayIso || date === new Date(Date.now() - 86400000).toISOString().slice(0, 10)) {
+    try {
+      const liveUrl = `${base.protocol}//${base.host}/api/v1/earnings/today-live?date=${date}`;
+      const liveRes = await fetch(liveUrl, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(10000),
+      });
+      if (liveRes.ok) {
+        const live: any = await liveRes.json();
+        const liveFilings: any[] = Array.isArray(live?.filings) ? live.filings : [];
+        const existingTickers = new Set<string>(dayList.map((r: any) => String(r.ticker || '').toUpperCase()));
+        let addedFromLive = 0;
+        for (const f of liveFilings) {
+          const sym = String(f.symbol || '').toUpperCase();
+          if (!sym || existingTickers.has(sym)) continue;
+          dayList.push({
+            ticker: sym,
+            company: f.company || sym,
+            resultDate: date,
+            quarter: 'Q4',  // default; gradeRow can still process it
+            sector: null,
+            marketCap: null,
+            quality: 'Confirmed',  // it's a real NSE filing, not a board-meeting forecast
+            source_url: f.attachment_url || `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(sym)}`,
+            filing_iso: f.filing_iso,
+            __source: 'nse-live',
+          });
+          existingTickers.add(sym);
+          addedFromLive++;
+        }
+        console.log(`[graded] ${date}: augmented dayList with ${addedFromLive} live NSE filings (hub had ${dayList.length - addedFromLive}, live total ${liveFilings.length})`);
+      }
+    } catch (err) {
+      console.warn(`[graded] today-live fetch failed for ${date}:`, (err as Error).message);
+    }
+  }
 
   if (dayList.length === 0) {
     const empty = {
