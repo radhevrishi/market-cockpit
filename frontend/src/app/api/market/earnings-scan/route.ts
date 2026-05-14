@@ -1882,6 +1882,20 @@ async function buildCardFromEnrichFallback(
       totalScore >= 60 ? 'GOOD'      :
       totalScore >= 45 ? 'OK'        : 'BAD';
 
+    // PATCH 0356 — derive guidance from earnings deltas. The enrich path
+    // has no narrative text to keyword-scan, so we ALWAYS compute from
+    // metrics here. This eliminates the "no guidance line" bug for every
+    // Partial / SCR 75% card.
+    const opmExpansion = (e.opm_pct != null && e.opm_prev_pct != null)
+      ? Number(e.opm_pct) - Number(e.opm_prev_pct)
+      : null;
+    const derivedGuidance = guidanceFromMetrics({
+      revYoY: revYoY,
+      patYoY: patYoY,
+      epsYoY: e.eps_yoy_pct ?? null,
+      opmExpansion,
+    });
+
     return {
       symbol,
       company: e.company_name || symbol,
@@ -1908,6 +1922,9 @@ async function buildCardFromEnrichFallback(
       source: 'screener.in',
       sourceConfidence: 75,
       dataStatus: 'PARTIAL',
+      // PATCH 0356 — universal guidance coverage
+      guidance: derivedGuidance.guidance,
+      sentimentScore: derivedGuidance.sentimentScore,
       failureReasons: [...failureReasons, 'recovered via /api/v1/earnings/enrich fallback'],
       screenerUrl: `https://www.screener.in/company/${symbol}/consolidated/#quarters`,
       nseUrl: `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(symbol)}`,
@@ -1916,6 +1933,73 @@ async function buildCardFromEnrichFallback(
     console.warn(`[Earnings Scan] ${symbol}: enrich fallback failed:`, (err as Error).message);
     return null;
   }
+}
+
+// ─── PATCH 0356 ─────────────────────────────────────────────────────────────
+// Guidance fallback derived from earnings deltas (revenue YoY + PAT YoY +
+// OPM expansion). Used whenever the Screener pros/cons keyword extractor
+// is unavailable — e.g. the enrich-fallback path which has no narrative
+// text. Ensures EVERY card has a guidance label per user spec: "every
+// company should go through logic and have positive / neutral / negative".
+//
+// Sentiment math is multi-factor so a stock with strong revenue + strong
+// PAT + OPM expansion scores higher than one with only revenue growth.
+// Output is clamped to ±1 to match the keyword-based path.
+// ────────────────────────────────────────────────────────────────────────────
+function guidanceFromMetrics(input: {
+  revYoY?: number | null;
+  patYoY?: number | null;
+  epsYoY?: number | null;
+  opmExpansion?: number | null;   // pp change in OPM YoY
+}): { guidance: 'Positive' | 'Neutral' | 'Negative'; sentimentScore: number } {
+  let s = 0;
+  const rev = input.revYoY ?? null;
+  const pat = input.patYoY ?? null;
+  const eps = input.epsYoY ?? null;
+  const opmDelta = input.opmExpansion ?? null;
+
+  // Revenue YoY tier (0 → ±0.20)
+  if (rev != null) {
+    if (rev >= 40)        s += 0.18;
+    else if (rev >= 20)   s += 0.12;
+    else if (rev >= 10)   s += 0.06;
+    else if (rev >= 0)    s += 0.02;
+    else if (rev >= -10)  s -= 0.06;
+    else if (rev >= -20)  s -= 0.12;
+    else                  s -= 0.20;
+  }
+  // PAT YoY tier (0 → ±0.20)
+  if (pat != null) {
+    if (pat >= 50)        s += 0.20;
+    else if (pat >= 25)   s += 0.12;
+    else if (pat >= 10)   s += 0.06;
+    else if (pat >= 0)    s += 0.02;
+    else if (pat >= -15)  s -= 0.08;
+    else if (pat >= -30)  s -= 0.15;
+    else                  s -= 0.22;
+  }
+  // EPS YoY tier (smaller weight; 0 → ±0.10)
+  if (eps != null) {
+    if (eps >= 40)        s += 0.08;
+    else if (eps >= 15)   s += 0.04;
+    else if (eps >= 0)    s += 0.01;
+    else if (eps >= -25)  s -= 0.05;
+    else                  s -= 0.10;
+  }
+  // OPM expansion (0 → ±0.10)
+  if (opmDelta != null) {
+    if (opmDelta >= 2)    s += 0.08;
+    else if (opmDelta >= 0.5) s += 0.03;
+    else if (opmDelta <= -2)  s -= 0.08;
+    else if (opmDelta <= -0.5) s -= 0.03;
+  }
+
+  const sentimentScore = Math.max(-1, Math.min(1, parseFloat(s.toFixed(3))));
+  let guidance: 'Positive' | 'Neutral' | 'Negative';
+  if (sentimentScore > 0.05) guidance = 'Positive';
+  else if (sentimentScore < -0.05) guidance = 'Negative';
+  else guidance = 'Neutral';
+  return { guidance, sentimentScore };
 }
 
 /** Build a DATA_MISSING placeholder card — ensures every symbol appears in results */
@@ -2082,9 +2166,20 @@ function buildCardFromData(data: ScreenerData, guidanceData?: GuidanceData | nul
     pe: data.pe,
     cmp: data.currentPrice,
     isBanking: data.isBanking || false,
-    // Guidance & Sentiment fields
-    guidance: guidanceData?.guidance,
-    sentimentScore: guidanceData?.sentimentScore,
+    // ── Guidance & Sentiment fields ──
+    // PATCH 0356 — guarantee universal guidance coverage. When Screener
+    // pros/cons keyword extraction returns null (e.g. company page has no
+    // narrative text), fall back to a metrics-derived guidance so every
+    // card surfaces a Positive / Neutral / Negative label rather than
+    // a missing one.
+    guidance: guidanceData?.guidance ?? guidanceFromMetrics({
+      revYoY: revenueYoY, patYoY, epsYoY,
+      opmExpansion: (latest.opm != null && yoyQ?.opm != null) ? latest.opm - yoyQ.opm : null,
+    }).guidance,
+    sentimentScore: guidanceData?.sentimentScore ?? guidanceFromMetrics({
+      revYoY: revenueYoY, patYoY, epsYoY,
+      opmExpansion: (latest.opm != null && yoyQ?.opm != null) ? latest.opm - yoyQ.opm : null,
+    }).sentimentScore,
     revenueOutlook: guidanceData?.revenueOutlook,
     marginOutlook: guidanceData?.marginOutlook,
     capexSignal: guidanceData?.capexSignal,
