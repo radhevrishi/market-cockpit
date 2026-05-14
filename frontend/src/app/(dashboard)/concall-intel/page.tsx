@@ -242,12 +242,15 @@ function LiveBullishFeed() {
   const [data, setData] = useState<LiveFeedPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [bullishOnly, setBullishOnly] = useState(true);
+  // PATCH 0395 — bullish-only toggle defaults to FALSE (no selection bias).
+  // User flagged that defaulting to bullish-only is a confirmation-bias risk.
+  // Full universe is now the default lens; bullish-only is opt-in.
+  const [bullishOnly, setBullishOnly] = useState(false);
   const [exchange, setExchange] = useState<'ALL' | 'NSE' | 'BSE'>('ALL');
-  const [days, setDays] = useState(2);
+  const [days, setDays] = useState(7);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
-  // PATCH 0391 — tier filter chips
-  const [tierFilter, setTierFilter] = useState<Set<string>>(new Set(['ULTRA_BULLISH', 'BULLISH', 'MIXED_POSITIVE']));
+  // PATCH 0391 — tier filter chips. Default to ALL TIERS for full-universe view.
+  const [tierFilter, setTierFilter] = useState<Set<string>>(new Set(['ULTRA_BULLISH', 'BULLISH', 'MIXED_POSITIVE', 'NEUTRAL', 'BEARISH']));
   const toggleTier = (t: string) => {
     setTierFilter(prev => {
       const next = new Set(prev);
@@ -317,7 +320,13 @@ function LiveBullishFeed() {
           <div style={{ fontSize: 10, color: '#94A3B8', marginTop: 2 }}>
             {data ? (
               <>
-                {data.count_total} total · {data.count_relevant} concall-relevant · <strong style={{ color: '#10B981' }}>{data.count_high_bullish} high bullish</strong> · sources: NSE <strong style={{ color: data.sources.nse === 'NSE_OK' ? '#10B981' : '#EF4444' }}>{data.sources.nse}</strong> · BSE <strong style={{ color: data.sources.bse === 'BSE_OK' ? '#10B981' : '#94A3B8' }}>{data.sources.bse}</strong>
+                {data.count_total} total · {data.count_relevant} concall-relevant ·
+                {' '}<strong style={{ color: '#22D3EE' }}>{tierCounts.ULTRA_BULLISH || 0} 🚀</strong> ·
+                {' '}<strong style={{ color: '#10B981' }}>{tierCounts.BULLISH || 0} 🟢</strong> ·
+                {' '}<strong style={{ color: '#F59E0B' }}>{tierCounts.MIXED_POSITIVE || 0} 🟡</strong> ·
+                {' '}<strong style={{ color: '#94A3B8' }}>{tierCounts.NEUTRAL || 0} ⚪</strong> ·
+                {' '}<strong style={{ color: '#EF4444' }}>{tierCounts.BEARISH || 0} 🔴</strong>
+                {' '}· sources: NSE <strong style={{ color: data.sources.nse === 'NSE_OK' ? '#10B981' : '#EF4444' }}>{data.sources.nse}</strong> · BSE <strong style={{ color: data.sources.bse === 'BSE_OK' ? '#10B981' : '#94A3B8' }}>{data.sources.bse}</strong>
                 {lastRefresh && <> · refreshed {lastRefresh.toLocaleTimeString()}</>}
               </>
             ) : loading ? 'Loading…' : '—'}
@@ -378,6 +387,43 @@ function LiveBullishFeed() {
             : 'No concall-related filings yet. NSE/BSE may be blocking the request (try refresh in a few minutes).'}
         </div>
       )}
+
+      {/* PATCH 0395 — Top 3 Ranked Ideas pinned panel */}
+      {data && (() => {
+        const ranked = [...data.filings]
+          .filter(f => f.bullish.tier && ['ULTRA_BULLISH', 'BULLISH', 'MIXED_POSITIVE'].includes(f.bullish.tier))
+          .sort((a, b) => b.bullish.raw_score - a.bullish.raw_score)
+          .slice(0, 3);
+        if (ranked.length === 0) return null;
+        return (
+          <div style={{ marginBottom: 12, padding: 12, background: 'linear-gradient(135deg, #10B98110, #22D3EE10)', border: '1px solid #10B98150', borderRadius: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 900, color: '#10B981', letterSpacing: '0.5px', marginBottom: 8 }}>★ TOP 3 RANKED — institutional shortlist (highest raw_score, all tiers)</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 8 }}>
+              {ranked.map((r, i) => {
+                const tierColor = r.bullish.tier === 'ULTRA_BULLISH' ? '#22D3EE' : r.bullish.tier === 'BULLISH' ? '#10B981' : '#F59E0B';
+                return (
+                  <div key={r.symbol + '-rank-' + i} style={{ padding: 10, background: '#0A1422', border: `1px solid ${tierColor}50`, borderRadius: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                      <div>
+                        <span style={{ fontSize: 9, color: '#F59E0B', fontWeight: 900, marginRight: 6 }}>#{i + 1}</span>
+                        <span style={{ fontSize: 13, fontWeight: 900, color: '#E6EDF3' }}>{r.symbol || r.company_name}</span>
+                      </div>
+                      <span style={{ fontSize: 16, fontWeight: 900, color: tierColor }}>{r.bullish.raw_score.toFixed(1)}</span>
+                    </div>
+                    <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 4 }}>{r.company_name}</div>
+                    <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', fontSize: 8 }}>
+                      <span style={{ padding: '1px 5px', borderRadius: 3, background: `${tierColor}20`, color: tierColor, fontWeight: 800 }}>{r.bullish.tier?.replace('_', ' ')}</span>
+                      <span style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: '#10B981' }}>Mgmt {r.bullish.components.management_confidence.toFixed(1)}</span>
+                      <span style={{ padding: '1px 5px', borderRadius: 3, background: '#22D3EE15', color: '#22D3EE' }}>Biz {r.bullish.components.business_evidence.toFixed(1)}</span>
+                      {(r.bullish.components.blockers || 0) > 0 && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#EF444415', color: '#EF4444' }}>Risk {r.bullish.components.blockers.toFixed(1)}</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {filtered.slice(0, 50).map((f, i) => {
@@ -469,8 +515,28 @@ function LiveBullishFeed() {
                   </div>
                 );
               })()}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, color: '#6B7A8D' }}>
-                <span>{new Date(f.filing_datetime).toLocaleString()}</span>
+              {/* PATCH 0395 — Decomposed score breakdown (transparency) */}
+              <div style={{ marginTop: 6, padding: '6px 8px', background: '#13131a', border: '1px solid #1A2540', borderRadius: 4 }}>
+                <div style={{ fontSize: 9, color: '#94A3B8', fontWeight: 700, marginBottom: 3, letterSpacing: '0.4px' }}>SCORE DECOMPOSITION (raw {f.bullish.raw_score.toFixed(1)} / 10)</div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', fontSize: 9 }}>
+                  <span title="Sum of bullish combo points before penalties" style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: '#10B981', fontWeight: 700 }}>Positive {(f.bullish.components.positive_score ?? f.bullish.raw_score).toFixed(1)}</span>
+                  <span title="Management confidence pillar (Guidance + Demand + Margin + Outlook)" style={{ padding: '1px 5px', borderRadius: 3, background: '#22D3EE15', color: '#22D3EE', fontWeight: 700 }}>Mgmt {f.bullish.components.management_confidence.toFixed(1)}</span>
+                  <span title="Business evidence pillar (Order Book + Capacity + Customer + Capex + etc.)" style={{ padding: '1px 5px', borderRadius: 3, background: '#A78BFA15', color: '#A78BFA', fontWeight: 700 }}>Biz {f.bullish.components.business_evidence.toFixed(1)}</span>
+                  <span title="Total blocker weight (LOW + MEDIUM + FATAL)" style={{ padding: '1px 5px', borderRadius: 3, background: f.bullish.components.blockers > 0 ? '#EF444415' : '#94A3B815', color: f.bullish.components.blockers > 0 ? '#EF4444' : '#94A3B8', fontWeight: 700 }}>Risk -{f.bullish.components.blockers.toFixed(1)}</span>
+                  {(f.bullish.components.blocker_severity_fatal ?? 0) > 0 && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#EF444430', color: '#EF4444', fontWeight: 800 }}>FATAL -{(f.bullish.components.blocker_severity_fatal ?? 0).toFixed(1)}</span>}
+                  {(f.bullish.components.blocker_severity_medium ?? 0) > 0 && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#F59E0B15', color: '#F59E0B', fontWeight: 700 }}>MED -{(f.bullish.components.blocker_severity_medium ?? 0).toFixed(1)}</span>}
+                  {(f.bullish.components.blocker_severity_low ?? 0) > 0 && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#94A3B815', color: '#94A3B8', fontWeight: 700 }}>LOW -{(f.bullish.components.blocker_severity_low ?? 0).toFixed(1)}</span>}
+                </div>
+                <div style={{ fontSize: 9, color: '#6B7A8D', marginTop: 3, fontStyle: 'italic' }}>
+                  Formula: positive − (blockers × 0.65) · ULTRA requires 0 red flags · BULLISH ≤ 1 red flag · Score capped at 10
+                </div>
+              </div>
+              {/* PATCH 0395 — Traceability footer */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, color: '#6B7A8D', marginTop: 6 }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <span title="Filing timestamp (ISO)">{new Date(f.filing_datetime).toLocaleString()}</span>
+                  {f.pdf_pages != null && <span title="PDF page count">📄 {f.pdf_pages}p</span>}
+                </div>
                 <div style={{ display: 'flex', gap: 8 }}>
                   {f.attachment_urls.slice(0, 2).map((u, j) => (
                     <a key={j} href={u} target="_blank" rel="noopener noreferrer" style={{ color: '#22D3EE', textDecoration: 'none' }}>📎 attachment</a>
@@ -700,6 +766,22 @@ function WarrantMomentumFeed() {
                   📜 {f.conviction.history_summary}
                 </div>
               )}
+
+              {/* PATCH 0395 — Warrant scoring transparency: full component breakdown */}
+              <div style={{ marginTop: 6, padding: '6px 8px', background: '#13131a', border: '1px solid #1A2540', borderRadius: 4 }}>
+                <div style={{ fontSize: 9, color: '#94A3B8', fontWeight: 700, marginBottom: 3, letterSpacing: '0.4px' }}>SCORE DECOMPOSITION (raw {f.conviction.raw_score.toFixed(1)} / 10)</div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', fontSize: 9 }}>
+                  <span title="Promoter / promoter-group participation (0-3, MANDATORY)" style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: '#10B981', fontWeight: 700 }}>Promoter {f.conviction.components.promoter_participation.toFixed(1)}/3</span>
+                  <span title="Issue price vs CMP. Premium = good (+3), -10% OK (+1), deeper discount = bad" style={{ padding: '1px 5px', borderRadius: 3, background: '#22D3EE15', color: '#22D3EE', fontWeight: 700 }}>Pricing {f.conviction.components.pricing_premium >= 0 ? '+' : ''}{f.conviction.components.pricing_premium.toFixed(1)}</span>
+                  <span title="Near 52w high or strong 90d perf = +2; weak structure = -" style={{ padding: '1px 5px', borderRadius: 3, background: '#A78BFA15', color: '#A78BFA', fontWeight: 700 }}>Breakout {f.conviction.components.breakout_relative_strength.toFixed(1)}/2</span>
+                  <span title="Concall bullish score: ≥6 = +2; 4-6 = +1; <2 = negative" style={{ padding: '1px 5px', borderRadius: 3, background: '#F59E0B15', color: '#F59E0B', fontWeight: 700 }}>Momentum {f.conviction.components.business_momentum.toFixed(1)}/2</span>
+                  {f.conviction.components.history_boost > 0 && <span title="Prior warrants rallied ≥25% = boost" style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: '#10B981', fontWeight: 700 }}>History +{f.conviction.components.history_boost.toFixed(1)}</span>}
+                  {f.conviction.components.governance_penalty < 0 && <span title="Microcap / pledge / dilution pattern penalty" style={{ padding: '1px 5px', borderRadius: 3, background: '#EF444415', color: '#EF4444', fontWeight: 700 }}>Govern {f.conviction.components.governance_penalty.toFixed(1)}</span>}
+                </div>
+                <div style={{ fontSize: 9, color: '#6B7A8D', marginTop: 3, fontStyle: 'italic' }}>
+                  Gate (≥ 8/10): A) promoter present · B) pricing ≥ -10% · C) no critical governance · D) breakout OR momentum present
+                </div>
+              </div>
 
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, color: '#6B7A8D', marginTop: 6 }}>
                 <span>{new Date(f.filing_datetime).toLocaleString()}</span>
