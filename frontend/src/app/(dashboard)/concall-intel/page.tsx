@@ -71,6 +71,9 @@ export default function ConcallIntelPage() {
       {/* PATCH 0390 — WARRANT MOMENTUM INTELLIGENCE (separate lane) */}
       <WarrantMomentumFeed />
 
+      {/* PATCH 0394 — KEYWORD WATCH (third intelligence lane) */}
+      <KeywordWatchFeed />
+
       <h2 style={{ fontSize: 16, fontWeight: 900, margin: '32px 0 8px' }}>📝 Manual Transcript / PDF Analyser</h2>
       <p style={{ fontSize: 11, color: '#94A3B8', margin: 0, marginBottom: 14 }}>
         Paste a concall transcript OR enter a public PDF URL. Output: tone score, guidance map, key themes, red flags, key numbers.
@@ -710,6 +713,247 @@ function WarrantMomentumFeed() {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PATCH 0394 — KEYWORD WATCH FEED (third intelligence lane)
+// User-defined keyword/phrase watchlist scanning all concall PDFs.
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface KeywordSpec {
+  id: string; display: string; group: string; sentiment: string;
+}
+interface KeywordHit {
+  keyword_id: string; display: string; group: string;
+  sentiment: 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL';
+  sentence: string;
+}
+interface KwWatchFiling {
+  exchange: 'NSE' | 'BSE';
+  symbol: string;
+  company_name: string;
+  subject: string;
+  filing_datetime: string;
+  attachment_urls: string[];
+  source_url: string;
+  filing_type: string;
+  hits: KeywordHit[];
+  hit_keywords: string[];
+  hit_groups: string[];
+  hit_count: number;
+}
+interface KwWatchPayload {
+  generated_at: string;
+  count_total: number;
+  count_relevant: number;
+  count_matched: number;
+  filings: KwWatchFiling[];
+  totals: {
+    total_hits: number;
+    by_group: Record<string, number>;
+    by_sentiment: Record<string, number>;
+  };
+  sources: { nse: string; bse: string };
+  catalog: KeywordSpec[];
+}
+
+const KW_GROUP_COLORS: Record<string, string> = {
+  RISK: '#EF4444',
+  OPPORTUNITY: '#10B981',
+  THEME: '#A78BFA',
+  REGULATORY: '#F59E0B',
+  SECTOR: '#22D3EE',
+};
+
+function KeywordWatchFeed() {
+  const [data, setData] = useState<KwWatchPayload | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [days, setDays] = useState(14);
+  const [selectedKeywords, setSelectedKeywords] = useState<Set<string>>(new Set());
+  const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set());
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [showCatalog, setShowCatalog] = useState(false);
+
+  const fetchFeed = async (force = false) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({
+        days: String(days),
+        ...(selectedKeywords.size > 0 ? { keywords: Array.from(selectedKeywords).join(',') } : {}),
+        ...(selectedGroups.size > 0 ? { groups: Array.from(selectedGroups).join(',') } : {}),
+        ...(force ? { force: '1' } : {}),
+      });
+      const res = await fetch(`/api/v1/concall-intel/keyword-watch?${params}`, { cache: 'no-store' });
+      if (!res.ok) { setError(`HTTP ${res.status}`); return; }
+      const j = await res.json();
+      setData(j);
+      setLastRefresh(new Date());
+    } catch (e: any) { setError(e?.message || 'fetch failed'); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => {
+    fetchFeed();
+    const t = setInterval(() => fetchFeed(), 5 * 60 * 1000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [days, selectedKeywords.size, selectedGroups.size]);
+
+  const toggleKeyword = (id: string) => {
+    setSelectedKeywords(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+  const toggleGroup = (g: string) => {
+    setSelectedGroups(prev => {
+      const next = new Set(prev);
+      next.has(g) ? next.delete(g) : next.add(g);
+      return next;
+    });
+  };
+
+  const catalog = data?.catalog || [];
+  const groupedCatalog = useMemo(() => {
+    const groups: Record<string, KeywordSpec[]> = {};
+    for (const k of catalog) (groups[k.group] = groups[k.group] || []).push(k);
+    return groups;
+  }, [catalog]);
+
+  return (
+    <div style={{ backgroundColor: '#0D1623', border: '1px solid #22D3EE40', borderLeft: '4px solid #22D3EE', borderRadius: 10, padding: '14px 18px', marginBottom: 14, marginTop: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 900, color: '#22D3EE', letterSpacing: '0.4px' }}>🔎 KEYWORD WATCH — scan every concall for theme / risk / regulatory phrases</div>
+          <div style={{ fontSize: 10, color: '#94A3B8', marginTop: 2 }}>
+            {data ? (
+              <>
+                {data.count_relevant} concall-relevant · <strong style={{ color: '#22D3EE' }}>{data.count_matched} matched</strong> · {data.totals.total_hits} total hits ·
+                {' '}<span style={{ color: '#EF4444' }}>{data.totals.by_group.RISK || 0} RISK</span> ·
+                {' '}<span style={{ color: '#10B981' }}>{data.totals.by_group.OPPORTUNITY || 0} OPP</span> ·
+                {' '}<span style={{ color: '#A78BFA' }}>{data.totals.by_group.THEME || 0} THEME</span> ·
+                {' '}<span style={{ color: '#F59E0B' }}>{data.totals.by_group.REGULATORY || 0} REG</span> ·
+                {' '}<span style={{ color: '#22D3EE' }}>{data.totals.by_group.SECTOR || 0} SECTOR</span>
+                {lastRefresh && <> · refreshed {lastRefresh.toLocaleTimeString()}</>}
+              </>
+            ) : loading ? 'Loading…' : '—'}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button onClick={() => setShowCatalog(v => !v)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: '1px solid #22D3EE', background: '#22D3EE20', color: '#22D3EE', cursor: 'pointer' }}>
+            {showCatalog ? '▲ Hide keywords' : '▼ Edit watchlist'}
+          </button>
+          <select value={days} onChange={(e) => setDays(parseInt(e.target.value))} style={{ fontSize: 11, padding: '4px 8px', borderRadius: 5, border: '1px solid #1A2540', background: '#0A1422', color: '#E6EDF3' }}>
+            <option value={3}>3 days</option>
+            <option value={7}>7 days</option>
+            <option value={14}>14 days</option>
+            <option value={30}>30 days</option>
+            <option value={60}>60 days</option>
+          </select>
+          <button onClick={() => fetchFeed(true)} disabled={loading} style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 5, border: '1px solid #22D3EE', background: '#22D3EE20', color: '#22D3EE', cursor: loading ? 'wait' : 'pointer' }}>
+            {loading ? '…' : '↻ Refresh'}
+          </button>
+        </div>
+      </div>
+
+      {/* Group filter row — always visible */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+        <span style={{ fontSize: 10, color: '#94A3B8', fontWeight: 700, marginRight: 4 }}>GROUPS:</span>
+        {Object.keys(KW_GROUP_COLORS).map(g => {
+          const active = selectedGroups.has(g);
+          const color = KW_GROUP_COLORS[g];
+          const count = data?.totals.by_group[g] || 0;
+          return (
+            <button key={g} onClick={() => toggleGroup(g)} style={{ fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 5, border: `1px solid ${active ? color : '#1A2540'}`, background: active ? `${color}20` : 'transparent', color: active ? color : '#94A3B8', cursor: 'pointer' }}>
+              {g} · {count}
+            </button>
+          );
+        })}
+        {selectedGroups.size > 0 && (
+          <button onClick={() => setSelectedGroups(new Set())} style={{ fontSize: 10, color: '#94A3B8', background: 'transparent', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+            clear groups
+          </button>
+        )}
+      </div>
+
+      {/* Keyword catalog editor (collapsible) */}
+      {showCatalog && (
+        <div style={{ marginBottom: 10, padding: 10, background: '#0A1422', border: '1px solid #1A2540', borderRadius: 6 }}>
+          <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 6 }}>Click keywords to filter. Empty = all keywords active. {selectedKeywords.size > 0 && <button onClick={() => setSelectedKeywords(new Set())} style={{ fontSize: 10, color: '#22D3EE', background: 'transparent', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>clear all</button>}</div>
+          {Object.entries(groupedCatalog).map(([group, kws]) => (
+            <div key={group} style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 9, fontWeight: 800, color: KW_GROUP_COLORS[group] || '#94A3B8', letterSpacing: '0.5px', marginBottom: 4 }}>{group}</div>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                {kws.map(k => {
+                  const active = selectedKeywords.has(k.id);
+                  const color = KW_GROUP_COLORS[group] || '#94A3B8';
+                  return (
+                    <button key={k.id} onClick={() => toggleKeyword(k.id)} style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4, border: `1px solid ${active ? color : '#1A2540'}`, background: active ? `${color}20` : 'transparent', color: active ? color : '#94A3B8', cursor: 'pointer' }}>
+                      {k.display}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {error && <div style={{ fontSize: 11, color: '#EF4444', marginBottom: 8 }}>⚠ {error}</div>}
+
+      {data && data.filings.length === 0 && !loading && (
+        <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic', padding: '12px 0' }}>
+          No matches for selected keywords / groups in last {days} days. Try widening the window or selecting different groups.
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {(data?.filings || []).slice(0, 60).map((f, i) => (
+          <div key={f.symbol + '-' + i} style={{ padding: '10px 12px', background: '#0A1422', border: '1px solid #1A2540', borderRadius: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, marginBottom: 4 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 13, fontWeight: 900, color: '#E6EDF3' }}>{f.symbol || f.company_name}</span>
+                {f.symbol && <span style={{ fontSize: 11, color: '#94A3B8' }}>{f.company_name}</span>}
+                <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#1A2540', color: '#94A3B8', fontWeight: 700 }}>{f.exchange}</span>
+              </div>
+              <span style={{ fontSize: 12, fontWeight: 900, color: '#22D3EE' }}>{f.hit_count} hit{f.hit_count > 1 ? 's' : ''}</span>
+            </div>
+            <div style={{ fontSize: 11, color: '#C9D4E0', marginBottom: 6, lineHeight: 1.4 }}>{f.subject}</div>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 6 }}>
+              {Array.from(new Set(f.hits.map(h => `${h.keyword_id}|${h.display}|${h.group}|${h.sentiment}`))).slice(0, 10).map((tag, j) => {
+                const [, display, group, sent] = tag.split('|');
+                const color = sent === 'NEGATIVE' ? '#EF4444' : sent === 'POSITIVE' ? '#10B981' : KW_GROUP_COLORS[group] || '#94A3B8';
+                return <span key={j} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: `${color}15`, color, fontWeight: 700, border: `1px solid ${color}40` }}>{sent === 'NEGATIVE' ? '⚠ ' : sent === 'POSITIVE' ? '★ ' : ''}{display}</span>;
+              })}
+            </div>
+            <div style={{ marginTop: 4, fontSize: 10, lineHeight: 1.5 }}>
+              {f.hits.slice(0, 5).map((h, j) => {
+                const c = h.sentiment === 'NEGATIVE' ? '#EF4444' : h.sentiment === 'POSITIVE' ? '#10B981' : KW_GROUP_COLORS[h.group];
+                return (
+                  <div key={j} style={{ padding: '2px 0', color: '#C9D4E0' }}>
+                    › <span style={{ color: c, fontWeight: 700 }}>[{h.display}]</span> &ldquo;{h.sentence}&rdquo;
+                  </div>
+                );
+              })}
+              {f.hits.length > 5 && <div style={{ color: '#94A3B8', fontStyle: 'italic', padding: '2px 0' }}>+ {f.hits.length - 5} more matches</div>}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, color: '#6B7A8D', marginTop: 6 }}>
+              <span>{new Date(f.filing_datetime).toLocaleString()}</span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {f.attachment_urls.slice(0, 1).map((u, j) => (
+                  <a key={j} href={u} target="_blank" rel="noopener noreferrer" style={{ color: '#22D3EE', textDecoration: 'none' }}>📎 attachment</a>
+                ))}
+                <a href={f.source_url} target="_blank" rel="noopener noreferrer" style={{ color: '#22D3EE', textDecoration: 'none' }}>↗ {f.exchange}</a>
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
