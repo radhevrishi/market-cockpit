@@ -318,12 +318,29 @@ const CONTRADICTION_CONNECTORS = /\b(but|however|yet|though|although|while|despi
 // Forward-looking softeners that weaken bullish phrases when present
 const SOFTENERS = /\b(temporary|transitory|short[- ]term|near[- ]term|cautious|uncertain|may\s+improve|hope\s+to|expect\s+to\s+recover)\b/i;
 
+// PATCH 0393 — Junk filter for evidence sentences. Catches what the
+// sanitizer missed: slide-template fragments like '03Where Platform
+// Meets Possibilitiescms.com' that bled through pdf-parse.
+const EVIDENCE_JUNK_PATTERNS: RegExp[] = [
+  /\b\w+\.com\b/i,                                // URLs
+  /^[\d\s]{0,5}(?:where|why|how|what)\s+(?:platform|company|business)\s+meets/i,  // template tagline pattern
+  /^[\d\s]{0,5}[A-Z][a-z]+(?:[A-Z][a-z]+){2,}/,  // CamelCaseSlideTitle pattern
+  /^\s*\d+\s+(?:where|page|section|slide|chapter)/i,  // "12 Where Platform..." / "12 Page..."
+  /(?:©|copyright)\s*\d{4}/i,                     // copyright lines
+  /\b(?:safe\s+harbor|disclaimer|cautionary\s+statement)\b/i,  // legal blocks
+];
+
+function isJunkEvidence(s: string): boolean {
+  return EVIDENCE_JUNK_PATTERNS.some(re => re.test(s));
+}
+
 function splitSentences(text: string): string[] {
   // Split on sentence terminators, keep reasonable length
   return text
     .split(/(?<=[.!?])\s+/)
     .map(s => s.trim())
-    .filter(s => s.length >= 25 && s.length <= 1000);
+    .filter(s => s.length >= 25 && s.length <= 1000)
+    .filter(s => !isJunkEvidence(s));
 }
 
 function truncate(s: string, n: number): string {
@@ -347,16 +364,18 @@ function emptyScore(): BullishScore {
   };
 }
 
-function classifyTier(positive: number, weightedNeg: number, fatal: boolean, mgmt: number, biz: number, tagDiversity: number): BullishTier {
+function classifyTier(positive: number, weightedNeg: number, fatal: boolean, mgmt: number, biz: number, tagDiversity: number, redFlagCount: number = 0): BullishTier {
   if (fatal) return 'BEARISH';
   const net = positive - weightedNeg;
-  // PATCH 0392 — loosened tiers per user feedback. Real-market filings
-  // shouldn't fall to NEUTRAL just because they're "not perfect."
-  // ULTRA_BULLISH — exceptional setups (rare, 1-3/week)
-  if (positive >= 12 && net >= 10 && mgmt >= 3 && biz >= 3 && tagDiversity >= 4) return 'ULTRA_BULLISH';
-  // BULLISH — clean net positive with both pillars (10-25/week)
-  if (net >= 4 && mgmt >= 1.5 && biz >= 1.5) return 'BULLISH';
-  // MIXED_POSITIVE — softer signal, the realistic bulk (30-50/week)
+  // PATCH 0393 — Calibrate per user feedback: CMSINFO with 2 red flags
+  // (Slowdown + Delay) was hitting ULTRA_BULLISH 10.0 but should be
+  // MIXED_POSITIVE ~6.5 per institutional spec. Red flag count gates the
+  // upper tiers.
+  // ULTRA_BULLISH — requires ZERO red flags (truly clean upside)
+  if (positive >= 12 && net >= 10 && mgmt >= 3 && biz >= 3 && tagDiversity >= 4 && redFlagCount === 0) return 'ULTRA_BULLISH';
+  // BULLISH — allowed 1 red flag (mild friction)
+  if (net >= 4 && mgmt >= 1.5 && biz >= 1.5 && redFlagCount <= 1) return 'BULLISH';
+  // MIXED_POSITIVE — softer signal, friction tolerated (real-world bulk)
   if (positive >= 2.5 && net >= 0.5) return 'MIXED_POSITIVE';
   // BEARISH — clearly negative or fatal blocker
   if (net <= -2) return 'BEARISH';
@@ -490,6 +509,10 @@ export function scoreBullish(text: string): BullishScore {
       else if (tagDiversity === 2) raw = Math.min(raw, 7);
       else raw = Math.min(raw, 12);
     }
+    // PATCH 0393 — Red-flag dampening: 2+ red flags cap raw at 7 so the
+    // filing can't enter ULTRA_BULLISH territory. 3+ red flags cap at 6.
+    if (redFlagSet.size >= 3) raw = Math.min(raw, 6);
+    else if (redFlagSet.size >= 2) raw = Math.min(raw, 7);
     // PATCH 0392 — hard cap raw_score at 10 per user spec: 'Never exceed 10'
     raw = Math.max(-5, Math.min(10, raw));
     const score = Math.max(0, Math.min(10, raw));
@@ -502,8 +525,8 @@ export function scoreBullish(text: string): BullishScore {
     else if (raw >= 6) sentiment = 'BULLISH';
     else sentiment = 'NEUTRAL';
 
-    // PATCH 0391 — Multi-tier classifier
-    const tier = classifyTier(positiveScore, weightedNeg, criticalBlocker, mgmtConfidence, businessEvidence, tagDiversity);
+    // PATCH 0391 — Multi-tier classifier (PATCH 0393: red flag count)
+    const tier = classifyTier(positiveScore, weightedNeg, criticalBlocker, mgmtConfidence, businessEvidence, tagDiversity, redFlagSet.size);
 
     let confidence: BullishScore['confidence'];
     if (mgmtConfidence >= 3 && businessEvidence >= 3 && !criticalBlocker && tagDiversity >= 3) confidence = 'HIGH';
@@ -579,7 +602,7 @@ export function scoreBullish(text: string): BullishScore {
   else if (mgmtConfidence > 0 && businessEvidence > 0 && raw >= 4) sentiment = 'BULLISH';
   else if (raw >= 5) sentiment = 'BULLISH';
   else sentiment = 'NEUTRAL';
-  const tier = classifyTier(positiveScore, weightedNeg * NEG_WEIGHT_MULTIPLIER, criticalBlocker, mgmtConfidence, businessEvidence, tagSet.size);
+  const tier = classifyTier(positiveScore, weightedNeg * NEG_WEIGHT_MULTIPLIER, criticalBlocker, mgmtConfidence, businessEvidence, tagSet.size, redFlagSet.size);
   return {
     score: Math.round(score * 10) / 10,
     raw_score: Math.round(raw * 10) / 10,

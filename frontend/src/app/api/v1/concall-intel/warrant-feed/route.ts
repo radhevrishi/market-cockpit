@@ -22,7 +22,7 @@ import {
   type WarrantFilingType, type WarrantDetails, type WarrantConvictionScore,
 } from '@/lib/warrant-momentum';
 
-const CACHE_KEY = (days: number) => `warrant-feed:v2:days:${days}`;  // v2: ranking mode + 30d
+const CACHE_KEY = (days: number) => `warrant-feed:v3:days:${days}`;  // v3: 60d + ranking
 const CACHE_TTL_SHORT = 5 * 60;
 const CACHE_TTL_LONG = 30 * 60;
 const MAX_PDF_EXTRACTS = 15;
@@ -123,8 +123,8 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
-  // PATCH 0392 — max lookback bumped 14 → 30 days per user request
-  const days = Math.min(30, Math.max(1, parseInt(req.nextUrl.searchParams.get('days') || '14')));
+  // PATCH 0393 — max lookback bumped 30 → 60 days per user request
+  const days = Math.min(60, Math.max(1, parseInt(req.nextUrl.searchParams.get('days') || '14')));
   // PATCH 0392 — threshold default dropped 8 → 5 (ranking, not hard gate)
   const threshold = parseFloat(req.nextUrl.searchParams.get('threshold') || '5');
   const passingOnly = req.nextUrl.searchParams.get('passingOnly') === '1';
