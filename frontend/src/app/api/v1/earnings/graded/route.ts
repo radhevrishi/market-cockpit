@@ -303,16 +303,52 @@ export async function GET(req: Request) {
 
   // Try cache first (past dates are immutable, 90-day TTL — practically forever for our use)
   // ── BUT bypass cache when refreshMissing or force is set ────────────────
+  //
+  // PATCH 0360 — Auto-heal preview-heavy past-date caches.
+  //
+  // Symptom we're fixing: user visits /earnings-opportunities for an old date.
+  // The cached payload was written weeks ago when the day's filings hadn't
+  // propagated to Screener yet. Most cards in cache are preview-shape (no
+  // YoY data, narrative='Financial detail awaiting enrichment'). Cache-hit
+  // serves them as-is, so user sees stale previews and must click Refresh.
+  //
+  // Fix: on cache hit for a past date, count how many cards lack YoY data.
+  // If more than 30% are previews AND the date is past, internally promote
+  // this request to a refreshMissing pass — which targets just those preview
+  // tickers and returns enriched results. Subsequent visits hit the now-
+  // fully-enriched cache.
+  //
+  // No automatic re-enrich for today's date — those are expected to be
+  // preview-heavy until filings propagate (we still respect manual Refresh).
+  let autoPromoteToRefreshMissing = false;
   if (isRedisAvailable() && !refreshMissing && !force) {
     try {
       const cached = await kvGet(cacheKey);
       if (cached) {
-        // PATCH 0165 — edge cache: past dates immutable for an hour, today fresh-on-demand
-        const swr = isPast ? 's-maxage=3600, stale-while-revalidate=86400' : 's-maxage=60, stale-while-revalidate=300';
-        return NextResponse.json({ ...cached, _cache: 'hit' }, { headers: { 'Cache-Control': swr } });
+        const allCards: any[] = (TIER_ORDER as EarningsTier[])
+          .flatMap((t) => (cached as any)?.by_tier?.[t] || []);
+        const totalCards = allCards.length;
+        const previewCards = allCards.filter((c) =>
+          c.sales_yoy_pct == null && c.net_profit_yoy_pct == null && c.eps_yoy_pct == null
+        ).length;
+        const previewRatio = totalCards > 0 ? previewCards / totalCards : 0;
+        // Auto-heal threshold: past date, ≥3 cards in payload, ≥30% previews
+        if (isPast && totalCards >= 3 && previewRatio >= 0.30) {
+          autoPromoteToRefreshMissing = true;
+          // Fall through — partial-refresh block below will see the cached
+          // payload, target the preview cards, run enrich, and write the
+          // healed payload back to KV. No client retry needed.
+        } else {
+          const swr = isPast ? 's-maxage=3600, stale-while-revalidate=86400' : 's-maxage=60, stale-while-revalidate=300';
+          return NextResponse.json({ ...cached, _cache: 'hit' }, { headers: { 'Cache-Control': swr } });
+        }
       }
     } catch {}
   }
+  // Promote in-request when auto-heal fires. From this point on, treat
+  // the request as refreshMissing=1 (but keep force=false so we don't
+  // delete the cache before reading it).
+  const effectiveRefreshMissing = refreshMissing || autoPromoteToRefreshMissing;
   // PATCH 0175 / 0358 — on force=1, delete the existing KV entry so the
   // post-rebuild kvSet writes a clean payload (avoids stale shape merge).
   // CRITICAL: only delete when force=1 WITHOUT refreshMissing=1. The
@@ -326,12 +362,22 @@ export async function GET(req: Request) {
 
   // ── PARTIAL REFRESH PATH ──────────────────────────────────────────────
   // Read cached payload, identify cards needing enrichment, refetch only those.
-  if (refreshMissing && isRedisAvailable()) {
+  // PATCH 0360 — also fires when auto-heal promoted the request.
+  if (effectiveRefreshMissing && isRedisAvailable()) {
     try {
       const existing: any = await kvGet(cacheKey);
       if (existing?.by_tier) {
         const allCards: any[] = (TIER_ORDER as EarningsTier[]).flatMap((t) => existing.by_tier[t] || []);
-        const needTickers = allCards.filter((c) => c.sales_curr_cr == null && c.pat_curr_cr == null).map((c) => c.ticker);
+        // PATCH 0360 — broadened "missing" criterion. A card with raw
+        // sales_curr_cr but no YoY data renders identical to a preview
+        // (all dashes), so it should be re-enriched too.
+        const needTickers = allCards
+          .filter((c) =>
+            c.sales_yoy_pct == null &&
+            c.net_profit_yoy_pct == null &&
+            c.eps_yoy_pct == null
+          )
+          .map((c) => c.ticker);
         if (needTickers.length === 0) {
           return NextResponse.json({ ...existing, _cache: 'hit', _refresh: 'no-op (all populated)' });
         }
@@ -350,13 +396,26 @@ export async function GET(req: Request) {
         const replacedTickers = new Set<string>();
         const updatedCards: ParsedEarning[] = [];
         for (const c of allCards) {
-          if (c.sales_curr_cr != null || c.pat_curr_cr != null) {
-            updatedCards.push(c);  // keep populated card as-is (untouched)
+          // PATCH 0360 — keep card unchanged ONLY when it already has YoY
+          // data (matches the new preview-detection criterion). A card with
+          // sales_curr_cr=N but null YoY is preview-shape and should re-enrich.
+          const cardAlreadyHasYoY =
+            c.sales_yoy_pct != null ||
+            c.net_profit_yoy_pct != null ||
+            c.eps_yoy_pct != null;
+          if (cardAlreadyHasYoY) {
+            updatedCards.push(c);
             continue;
           }
           const e = enrich[c.ticker];
-          if (!e || (e.sales_curr_cr == null && e.pat_curr_cr == null)) {
-            updatedCards.push(c);  // still no data → keep preview
+          // PATCH 0360 — enrich-success criterion also uses YoY presence.
+          const enrichHasYoY = !!e && (
+            e.sales_yoy_pct != null ||
+            e.pat_yoy_pct != null ||
+            e.eps_yoy_pct != null
+          );
+          if (!enrichHasYoY) {
+            updatedCards.push(c);  // still no useful data → keep preview
             continue;
           }
           // Re-grade with new enrichment data
@@ -420,7 +479,7 @@ export async function GET(req: Request) {
           _updated_tickers: [...replacedTickers],
         };
         // Write back with same TTL strategy
-        const ttl = isPast ? 90 * 24 * 3600 : 15 * 60;
+        const ttl = isPast ? 365 * 24 * 3600 : 15 * 60;
         try { await kvSet(cacheKey, payload, ttl); } catch {}
         return NextResponse.json(payload);
       }
@@ -451,7 +510,7 @@ export async function GET(req: Request) {
       sources_polled: 1,
     };
     if (isPast && isRedisAvailable()) {
-      try { await kvSet(cacheKey, empty, 90 * 24 * 3600); } catch {}
+      try { await kvSet(cacheKey, empty, 365 * 24 * 3600); } catch {}
     }
     return NextResponse.json(empty);
   }
@@ -541,7 +600,7 @@ export async function GET(req: Request) {
 
   // Cache: past dates 90 days (immutable), today 15 min
   if (isRedisAvailable()) {
-    const ttl = isPast ? 90 * 24 * 3600 : 15 * 60;
+    const ttl = isPast ? 365 * 24 * 3600 : 15 * 60;
     try { await kvSet(cacheKey, payload, ttl); } catch {}
   }
 

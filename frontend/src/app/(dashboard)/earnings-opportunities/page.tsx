@@ -931,6 +931,10 @@ export default function EarningsOpportunitiesPage() {
   // Local UI state for partial-refresh button
   const [refreshing, setRefreshing] = useState(false);
   const [refreshFeedback, setRefreshFeedback] = useState<string | null>(null);
+  // PATCH 0360 — 90-day backfill state. Runs in batches via the
+  // /api/v1/earnings/backfill endpoint, chaining cursor_next until done.
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillProgress, setBackfillProgress] = useState<string | null>(null);
   // PATCH 0180 — Audit state (validation against EarningsPulse Week Ahead seed)
   const [auditing, setAuditing] = useState(false);
   const [auditResult, setAuditResult] = useState<any>(null);
@@ -1131,6 +1135,68 @@ export default function EarningsOpportunitiesPage() {
     persistForceInclude({ ...forceIncludeMap, [resolvedDateForGrading]: cur.filter((x) => x !== ticker) });
   };
 
+  // PATCH 0360 — Bulk backfill last 90 days. One-shot operation: chains
+  // /api/v1/earnings/backfill batches (6 dates per call) until done. Each
+  // batch calls graded?refreshMissing=1 internally for each date, so any
+  // preview-shape cached payloads get healed permanently. Subsequent visits
+  // to those dates are instant cache hits — no Refresh button needed.
+  //
+  // Skips weekends and today. Stops as soon as the server reports done=true.
+  const runBackfill = async () => {
+    if (backfilling) return;
+    setBackfilling(true);
+    setBackfillProgress('Starting…');
+    const today = new Date();
+    const from = new Date(today); from.setDate(today.getDate() - 90);
+    const to = new Date(today); to.setDate(today.getDate() - 1);
+    const fromIso = from.toISOString().slice(0, 10);
+    const toIso = to.toISOString().slice(0, 10);
+    let cursor = fromIso;
+    let processedTotal = 0;
+    let enrichedTotal = 0;
+    let previewOnlyTotal = 0;
+    try {
+      // Safety: cap at 20 batches (= 120 days max) so a server bug can't loop forever
+      for (let iter = 0; iter < 20; iter++) {
+        setBackfillProgress(`Backfilling ${cursor}… (${processedTotal} dates done)`);
+        const res = await fetch(`/api/v1/earnings/backfill?from=${cursor}&to=${toIso}`, { cache: 'no-store' });
+        if (!res.ok) {
+          setBackfillProgress(`⚠ Backfill failed at ${cursor} (HTTP ${res.status})`);
+          break;
+        }
+        const j = await res.json();
+        processedTotal += j.processed || 0;
+        for (const r of (j.results || [])) {
+          if (r.status === 'enriched') enrichedTotal++;
+          if (r.status === 'preview-only') previewOnlyTotal++;
+        }
+        if (j.done) {
+          setBackfillProgress(`✓ Backfill complete · ${enrichedTotal} dates enriched · ${previewOnlyTotal} had no Screener data · scanned ${processedTotal} weekdays in ${fromIso}–${toIso}`);
+          // Invalidate all client caches so the user's next navigation hits fresh data
+          try {
+            const keys: string[] = [];
+            for (let i = 0; i < localStorage.length; i++) {
+              const k = localStorage.key(i);
+              if (k && k.startsWith('mc:graded:v8:')) keys.push(k);
+            }
+            for (const k of keys) localStorage.removeItem(k);
+          } catch {}
+          // Refetch current page so user sees the now-healed data
+          await refetchGraded();
+          break;
+        }
+        cursor = j.cursor_next;
+        if (!cursor) break;
+      }
+    } catch (e: any) {
+      setBackfillProgress(`⚠ Backfill threw: ${e?.message || 'unknown error'}`);
+    } finally {
+      setBackfilling(false);
+      // Leave the success message up for 30s
+      setTimeout(() => setBackfillProgress((s) => (s && s.startsWith('✓')) ? null : s), 30_000);
+    }
+  };
+
   const refreshMissingMutate = async () => {
     if (!resolvedDateForGrading || refreshing) return;
     setRefreshing(true);
@@ -1319,6 +1385,29 @@ export default function EarningsOpportunitiesPage() {
             {hardRefreshing ? 'Refetching…' : 'Hard Refresh'}
             <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
           </button>
+          {/* PATCH 0360 — One-shot backfill of the last 90 weekdays. Heals
+              all preview-shape cached payloads so every past date becomes
+              instant cache-hit going forward. */}
+          <button
+            onClick={runBackfill}
+            disabled={backfilling}
+            title="One-time fill of the last 90 weekdays. Once done, past-date pages serve from cache instantly with no Refresh needed."
+            style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #A78BFA60', background: backfilling ? '#A78BFA30' : '#A78BFA15', color: '#A78BFA', fontSize: 11, fontWeight: 700, cursor: backfilling ? 'wait' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, opacity: backfilling ? 0.8 : 1 }}>
+            <RefreshCw style={{ width: 11, height: 11, animation: backfilling ? 'spin 0.8s linear infinite' : 'none' }} />
+            {backfilling ? 'Backfilling…' : 'Backfill 90d'}
+          </button>
+          {backfillProgress && (
+            <span style={{
+              fontSize: 10.5, fontWeight: 700,
+              padding: '3px 8px', borderRadius: 4,
+              backgroundColor: backfillProgress.startsWith('✓') ? '#10B98118' : backfillProgress.startsWith('⚠') ? '#EF444418' : '#A78BFA18',
+              border: `1px solid ${backfillProgress.startsWith('✓') ? '#10B98140' : backfillProgress.startsWith('⚠') ? '#EF444440' : '#A78BFA40'}`,
+              color: backfillProgress.startsWith('✓') ? '#10B981' : backfillProgress.startsWith('⚠') ? '#EF4444' : '#A78BFA',
+              maxWidth: 480, lineHeight: 1.3,
+            }}>
+              {backfillProgress}
+            </span>
+          )}
           {/* PATCH 0189 — Partial refresh button with INLINE feedback */}
           {resolvedDateForGrading && (() => {
             const missing = ((view.by_tier?.BLOCKBUSTER ?? []) as ParsedEarning[])
