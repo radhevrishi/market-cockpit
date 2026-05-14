@@ -27,9 +27,10 @@ import { classifyFiling, scoreBullish, isHighBullishRaw, type BullishScore, type
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
 import { extractSections } from '@/lib/concall-sections';
 
-const CACHE_KEY = (days: number) => `concall-feed:v6:days:${days}`;   // v6: red-flag tier dampening + evidence junk filter + 60d
-const CACHE_TTL_SHORT = 5 * 60;        // 5 min for fresh data
-const CACHE_TTL_LONG = 30 * 60;        // 30 min for older lookback
+const CACHE_KEY = (days: number) => `concall-feed:v7:days:${days}`;   // v7: earnings anchoring + 3-layer scoring + DATA_PENDING
+// PATCH 0396 — Aggressive live-cache per user spec: 'always take live data'
+const CACHE_TTL_SHORT = 2 * 60;        // 2 min for fresh data (was 5)
+const CACHE_TTL_LONG = 10 * 60;        // 10 min for older lookback (was 30)
 
 // PATCH 0388 — extract PDFs in parallel for top N most-recent filings.
 // Pure subject-line scoring was producing 0 high-bullish on user's 681

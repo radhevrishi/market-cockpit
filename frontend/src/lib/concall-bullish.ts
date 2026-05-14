@@ -282,7 +282,10 @@ export interface EvidenceSentence {
 }
 
 // PATCH 0391 — multi-tier classification per user spec
-export type BullishTier = 'ULTRA_BULLISH' | 'BULLISH' | 'MIXED_POSITIVE' | 'NEUTRAL' | 'BEARISH' | 'INSUFFICIENT';
+// PATCH 0396 — Added DATA_PENDING for filings without PDF extraction yet,
+// so they don't pollute NEUTRAL (which should mean "we DID look at content
+// and it was genuinely neutral").
+export type BullishTier = 'ULTRA_BULLISH' | 'BULLISH' | 'MIXED_POSITIVE' | 'NEUTRAL' | 'BEARISH' | 'INSUFFICIENT' | 'DATA_PENDING';
 
 export interface BullishScore {
   score: number;                         // 0-10 normalized
@@ -303,10 +306,59 @@ export interface BullishScore {
     blocker_severity_low: number;        // PATCH 0391 — pts subtracted at LOW
     blocker_severity_medium: number;
     blocker_severity_fatal: number;
+    // PATCH 0396 — 3-layer score decomposition (Quality / Cycle / Sentiment)
+    quality_score: number;               // 0-10 — margin stability, cashflow, deleveraging, no FATAL
+    cycle_score: number;                 // 0-10 — order book, capex, capacity, utilization, demand
+    sentiment_score: number;             // 0-10 — guidance, management tone, outlook
+    composite_score: number;             // 0-10 — 0.5*Q + 0.3*C + 0.2*S
+    earnings_anchored: boolean;          // does the filing have explicit financial numbers?
+    anchor_evidence: string[];           // ['Revenue +12% YoY', 'Margin +280bps', 'Order book ₹3000Cr']
   };
   // PATCH 0389 — evidence sentences extracted from the source text
   evidence: EvidenceSentence[];
 }
+
+// PATCH 0396 — Earnings anchoring patterns. A filing can score >6 ONLY if
+// it explicitly mentions one of these (revenue/margin/order book numbers).
+// Prevents buzzword-only inflation per institutional spec.
+const EARNINGS_ANCHOR_PATTERNS: Array<{ re: RegExp; label: string }> = [
+  // Revenue / sales growth %
+  { re: /(?:revenue|sales|topline)[\s\w]{0,40}(?:grew?|growth|increased?|up)\s+(?:by\s+)?\d{1,3}(?:\.\d+)?\s*%/i,                  label: 'Revenue growth % stated' },
+  { re: /\b\d{1,3}(?:\.\d+)?\s*%\s+(?:YoY|year[-\s]?on[-\s]?year|QoQ)\s+(?:revenue|sales|topline)/i,                                 label: 'Revenue YoY% stated' },
+  // EBITDA / margin in bps / pp
+  { re: /(?:EBITDA|operating|gross|net)\s+margin[\s\w]{0,40}(?:expanded?|improved?|increased?|recovered?)\s+(?:by\s+)?\d+\s*(?:bps|basis\s+points|pp|percentage\s+points)/i, label: 'Margin expansion bps' },
+  { re: /\d+\s*(?:bps|basis\s+points|pp)\s+(?:margin|EBITDA|gross)/i,                                                                label: 'Margin bps stated' },
+  // PAT / EBITDA / profit growth
+  { re: /(?:PAT|profit|EBITDA)[\s\w]{0,40}(?:grew?|growth|increased?|up)\s+(?:by\s+)?\d{1,3}(?:\.\d+)?\s*%/i,                       label: 'PAT/EBITDA growth %' },
+  { re: /\d{1,3}(?:\.\d+)?\s*%\s+(?:YoY|year[-\s]?on[-\s]?year|QoQ)\s+(?:PAT|profit|EBITDA)/i,                                       label: 'Profit YoY% stated' },
+  // Order book value
+  { re: /order\s+book[\s\w]{0,15}(?:of|at|stood\s+at|reached|crossed)\s+(?:Rs\.?|₹|INR)?\s*\d+[\,\.\d]*\s*(?:cr|crore)/i,           label: 'Order book ₹Cr stated' },
+  { re: /(?:Rs\.?|₹|INR)\s*\d+[\,\.\d]*\s*(?:cr|crore)\s+order\s+book/i,                                                              label: 'Order book ₹Cr stated' },
+  // Capex value
+  { re: /capex[\s\w]{0,15}(?:of|at)\s+(?:Rs\.?|₹|INR)?\s*\d+[\,\.\d]*\s*(?:cr|crore)/i,                                              label: 'Capex ₹Cr stated' },
+  // Specific double-digit growth with number
+  { re: /\b\d{2,3}\s*%\s+(?:growth|increase|expansion|gain)/i,                                                                       label: 'Double-digit % growth' },
+];
+
+function detectEarningsAnchors(text: string): { anchored: boolean; evidence: string[] } {
+  const evidence: string[] = [];
+  for (const p of EARNINGS_ANCHOR_PATTERNS) {
+    if (p.re.test(text) && !evidence.includes(p.label)) {
+      evidence.push(p.label);
+    }
+  }
+  return { anchored: evidence.length >= 1, evidence };
+}
+
+// Buzzword tags that need financial anchoring (per user spec: AI/EV/solar/
+// renewable boost score without economics linkage = false positive)
+const BUZZWORD_TAGS = new Set(['Demand']);  // soft Demand variants flagged
+
+// Tags grouped into 3 layers for the institutional score
+const QUALITY_TAGS = new Set(['Margin', 'Cash Flow', 'Deleveraging', 'Premiumization']);
+const CYCLE_TAGS   = new Set(['Order Book', 'Capacity', 'Demand', 'New Customer', 'Market Share', 'Export', 'Capex']);
+const SENTIMENT_TAGS = new Set(['Guidance']);
+
 
 const MGMT_CONFIDENCE_TAGS = new Set(['Guidance', 'Demand', 'Margin', 'Premiumization']);
 const BUSINESS_EVIDENCE_TAGS = new Set(['Order Book', 'Capacity', 'New Customer', 'Market Share', 'Export', 'Cash Flow', 'Deleveraging', 'Capex']);
@@ -350,17 +402,43 @@ function truncate(s: string, n: number): string {
 // PATCH 0391 — Negative penalty multiplier per user spec (weighted net scoring)
 const NEG_WEIGHT_MULTIPLIER = 0.65;
 
-function emptyScore(): BullishScore {
+function emptyScore(tier: BullishTier = 'INSUFFICIENT'): BullishScore {
   return {
     score: 0, raw_score: 0,
-    sentiment: 'INSUFFICIENT', tier: 'INSUFFICIENT', confidence: 'LOW',
+    sentiment: 'INSUFFICIENT', tier, confidence: 'LOW',
     tags: [], bullish_phrases: [], red_flags: [],
     critical_blocker: false, fatal_blockers: [],
     components: {
       management_confidence: 0, business_evidence: 0, positive_score: 0,
       blockers: 0, blocker_severity_low: 0, blocker_severity_medium: 0, blocker_severity_fatal: 0,
+      quality_score: 0, cycle_score: 0, sentiment_score: 0, composite_score: 0,
+      earnings_anchored: false, anchor_evidence: [],
     },
     evidence: [],
+  };
+}
+
+// PATCH 0396 — Compute 3-layer scores from tag distribution
+function compute3LayerScores(
+  qualityPts: number,
+  cyclePts: number,
+  sentimentPts: number,
+  totalPositive: number,
+  weightedNeg: number,
+  fatal: boolean,
+): { quality: number; cycle: number; sentiment: number; composite: number } {
+  if (fatal) return { quality: 0, cycle: 0, sentiment: 0, composite: 1 };
+  // Normalize each layer to 0-10 with reasonable scale
+  const quality = Math.max(0, Math.min(10, qualityPts * 1.8 - weightedNeg * 0.3));
+  const cycle = Math.max(0, Math.min(10, cyclePts * 1.5 - weightedNeg * 0.2));
+  const sentiment = Math.max(0, Math.min(10, sentimentPts * 2 - weightedNeg * 0.25));
+  // Institutional composite: 0.5 Q + 0.3 C + 0.2 S
+  const composite = Math.max(0, Math.min(10, 0.5 * quality + 0.3 * cycle + 0.2 * sentiment));
+  return {
+    quality: Math.round(quality * 10) / 10,
+    cycle: Math.round(cycle * 10) / 10,
+    sentiment: Math.round(sentiment * 10) / 10,
+    composite: Math.round(composite * 10) / 10,
   };
 }
 
@@ -513,6 +591,14 @@ export function scoreBullish(text: string): BullishScore {
     // filing can't enter ULTRA_BULLISH territory. 3+ red flags cap at 6.
     if (redFlagSet.size >= 3) raw = Math.min(raw, 6);
     else if (redFlagSet.size >= 2) raw = Math.min(raw, 7);
+    // PATCH 0396 — EARNINGS ANCHORING RULE per institutional spec:
+    // 'A company cannot score >6 unless revenue growth OR margin expansion
+    // OR order book growth is explicitly mentioned.' Prevents buzzword-only
+    // inflation (CMSINFO without numeric anchor at 7.0 was the trigger).
+    const anchors = detectEarningsAnchors(t);
+    if (!anchors.anchored) {
+      raw = Math.min(raw, 6);
+    }
     // PATCH 0392 — hard cap raw_score at 10 per user spec: 'Never exceed 10'
     raw = Math.max(-5, Math.min(10, raw));
     const score = Math.max(0, Math.min(10, raw));
@@ -524,6 +610,19 @@ export function scoreBullish(text: string): BullishScore {
     else if (raw >= 4 && mgmtConfidence >= 1.5 && businessEvidence >= 1.5) sentiment = 'BULLISH';
     else if (raw >= 6) sentiment = 'BULLISH';
     else sentiment = 'NEUTRAL';
+
+    // PATCH 0396 — Compute 3-layer scores from tag distribution
+    // Re-aggregate points per tag bucket. Walk evidence and bucket by tag.
+    let qPts = 0, cPts = 0, sPts = 0;
+    for (const e of evidence) {
+      if (e.polarity !== 'BULL' || e.negated) continue;
+      const combo = BULLISH_COMBOS.find(b => b.tag === e.tag);
+      if (!combo) continue;
+      if (QUALITY_TAGS.has(combo.tag)) qPts += combo.weight;
+      if (CYCLE_TAGS.has(combo.tag)) cPts += combo.weight;
+      if (SENTIMENT_TAGS.has(combo.tag)) sPts += combo.weight;
+    }
+    const layers = compute3LayerScores(qPts, cPts, sPts, positiveScore, weightedNeg, criticalBlocker);
 
     // PATCH 0391 — Multi-tier classifier (PATCH 0393: red flag count)
     const tier = classifyTier(positiveScore, weightedNeg, criticalBlocker, mgmtConfidence, businessEvidence, tagDiversity, redFlagSet.size);
@@ -550,6 +649,12 @@ export function scoreBullish(text: string): BullishScore {
         blocker_severity_low: Math.round(blockerLow * 10) / 10,
         blocker_severity_medium: Math.round(blockerMed * 10) / 10,
         blocker_severity_fatal: Math.round(blockerFatal * 10) / 10,
+        quality_score: layers.quality,
+        cycle_score: layers.cycle,
+        sentiment_score: layers.sentiment,
+        composite_score: layers.composite,
+        earnings_anchored: anchors.anchored,
+        anchor_evidence: anchors.evidence,
       },
       evidence: evidence.slice(0, 12),
     };
@@ -603,10 +708,13 @@ export function scoreBullish(text: string): BullishScore {
   else if (raw >= 5) sentiment = 'BULLISH';
   else sentiment = 'NEUTRAL';
   const tier = classifyTier(positiveScore, weightedNeg * NEG_WEIGHT_MULTIPLIER, criticalBlocker, mgmtConfidence, businessEvidence, tagSet.size, redFlagSet.size);
+  // PATCH 0396 — Short-text scoring uses DATA_PENDING tier when subject-only
+  // (no PDF extracted yet). Distinguishes from genuine NEUTRAL.
+  const dataPendingTier: BullishTier = tier === 'NEUTRAL' ? 'DATA_PENDING' : tier;
   return {
     score: Math.round(score * 10) / 10,
     raw_score: Math.round(raw * 10) / 10,
-    sentiment, tier, confidence: 'LOW',
+    sentiment, tier: dataPendingTier, confidence: 'LOW',
     tags: Array.from(tagSet),
     bullish_phrases: Array.from(phraseSet),
     red_flags: Array.from(redFlagSet),
@@ -620,6 +728,9 @@ export function scoreBullish(text: string): BullishScore {
       blocker_severity_low: Math.round(blockerLow * 10) / 10,
       blocker_severity_medium: Math.round(blockerMed * 10) / 10,
       blocker_severity_fatal: Math.round(blockerFatal * 10) / 10,
+      quality_score: 0, cycle_score: 0, sentiment_score: 0,
+      composite_score: Math.max(0, Math.min(10, raw / 1.4)),
+      earnings_anchored: false, anchor_evidence: [],
     },
     evidence: [],
   };
