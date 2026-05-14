@@ -313,9 +313,14 @@ export async function GET(req: Request) {
       }
     } catch {}
   }
-  // PATCH 0175 — on force=1, also delete the existing KV entry so the
+  // PATCH 0175 / 0358 — on force=1, delete the existing KV entry so the
   // post-rebuild kvSet writes a clean payload (avoids stale shape merge).
-  if (force && isRedisAvailable()) {
+  // CRITICAL: only delete when force=1 WITHOUT refreshMissing=1. The
+  // refreshMissing path needs the existing payload to identify which
+  // tickers need re-enrichment; deleting it first makes that block fall
+  // through to full rebuild, which returns no `_refresh` field and
+  // produces a meaningless "0/0 updated" message on the client.
+  if (force && !refreshMissing && isRedisAvailable()) {
     try { await kvSet(cacheKey, null, 1); } catch {}  // null + 1s TTL = effective delete
   }
 
@@ -466,7 +471,7 @@ export async function GET(req: Request) {
       sector: e.sector || m.sector,
       market_cap_bucket: e.market_cap_bucket ||
         (m.marketCap === 'L' ? 'LARGE' : m.marketCap === 'M' ? 'MID' : m.marketCap === 'S' ? 'SMALL' : m.marketCap === 'Micro' ? 'MICRO' : null),
-      source_url: e.source_url || `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(m.ticker)}`,
+      source_url: e.source_url || `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(m.ticker)}`,
       sales_curr_cr: e.sales_curr_cr ?? null, sales_prev_cr: e.sales_prev_cr ?? null,
       sales_yoy_pct: e.sales_yoy_pct ?? null,
       pat_curr_cr: e.pat_curr_cr ?? null, pat_prev_cr: e.pat_prev_cr ?? null,
@@ -493,6 +498,18 @@ export async function GET(req: Request) {
   for (const g of graded) by_tier[g.tier].push(g);
   for (const t of TIER_ORDER) by_tier[t].sort((a, b) => b.composite_score - a.composite_score);
 
+  // PATCH 0358 — compute how many tickers got real financials vs. how many
+  // came through as preview-only. Surface as _refresh so the client message
+  // (which parses /^(\d+)\/(\d+)\s+updated/) renders accurate counts. Without
+  // this, the client falls back to a meaningless "0/0 updated" string.
+  const populated = graded.filter(g => g.sales_curr_cr != null || g.pat_curr_cr != null).length;
+  const failedTickers = dayList
+    .filter((m: any) => {
+      const e = enrich[m.ticker];
+      return !e || (e.sales_curr_cr == null && e.pat_curr_cr == null);
+    })
+    .map((m: any) => m.ticker);
+
   const payload = {
     filing_date: date,
     candidates_total: graded.length,
@@ -501,6 +518,9 @@ export async function GET(req: Request) {
     generated_at: new Date().toISOString(),
     sources_polled: 2,
     _cache: 'miss',
+    _refresh: `${populated}/${dayList.length} updated`,
+    _attempted_tickers: dayList.map((m: any) => m.ticker),
+    _failed_tickers: failedTickers,
   };
 
   // Cache: past dates 90 days (immutable), today 15 min

@@ -171,7 +171,7 @@ function buildCalendarFromHub(hub: MarketEarningsResponse | undefined, fromIso: 
         filing_date: e.resultDate,
         filing_dt_iso: null,
         quarter: e.quarter || '',
-        source_url: `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(e.ticker)}`,
+        source_url: `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(e.ticker)}`,
         exchange: 'NSE',
       });
       total++;
@@ -700,7 +700,7 @@ function useEarningsOpportunitiesJoined(
       sector: m.sector || e.sector,
       market_cap_bucket: e.market_cap_bucket
         || (m.marketCap === 'L' ? 'LARGE' : m.marketCap === 'M' ? 'MID' : m.marketCap === 'S' ? 'SMALL' : m.marketCap === 'Micro' ? 'MICRO' : null),
-      source_url: e.source_url || `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(m.ticker)}`,
+      source_url: e.source_url || `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(m.ticker)}`,
       // Financials (from Screener via worker)
       sales_curr_cr: e.sales_curr_cr ?? null,
       sales_prev_cr: e.sales_prev_cr ?? null,
@@ -1074,7 +1074,7 @@ export default function EarningsOpportunitiesPage() {
             composite_score: 0, tier: 'MIXED',
             methodology_tags: [], caveat_tags: [],
             narrative: `${ticker} added manually — Screener has no Q4 data yet, will populate next worker pass.`,
-            filing_url: `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(ticker)}`,
+            filing_url: `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(ticker)}`,
             source: 'force-included',
           });
           continue;
@@ -1085,7 +1085,7 @@ export default function EarningsOpportunitiesPage() {
           filing_date: resolvedDateForGrading,
           quarter: e.quarter || 'Q4', sector: e.sector,
           market_cap_bucket: e.market_cap_bucket,
-          source_url: e.source_url || `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(ticker)}`,
+          source_url: e.source_url || `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(ticker)}`,
           sales_curr_cr: e.sales_curr_cr ?? null, sales_prev_cr: e.sales_prev_cr ?? null,
           sales_yoy_pct: e.sales_yoy_pct ?? null,
           pat_curr_cr: e.pat_curr_cr ?? null, pat_prev_cr: e.pat_prev_cr ?? null,
