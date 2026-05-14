@@ -1090,9 +1090,11 @@ export default function EarningsPage() {
     if (selectedUniverses.has('conviction') && convictionTickersState.has(c.symbol)) return true;
     return false;
   };
-  // Date range filter — defaults to last 30 days → today
+  // Date range filter — defaults to last 7 days → today (PATCH 0355).
+  // Earlier default was 30 days; user prefers a tighter window so the
+  // freshest earnings prints surface first.
   const [dateFrom, setDateFrom] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - 30);
+    const d = new Date(); d.setDate(d.getDate() - 7);
     return d.toISOString().slice(0, 10);
   });
   const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
