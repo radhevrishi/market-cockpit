@@ -8,8 +8,10 @@
 
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { createHash } from 'crypto';
+import { sanitizePdfText } from '@/lib/pdf-sanitizer';
 
 const CACHE_TTL = 30 * 24 * 60 * 60;  // 30 days
+const CACHE_KEY_PREFIX = 'pdf-text:v2';   // v2: post-sanitization
 const MAX_TEXT_BYTES = 80_000;        // Cap extracted text size
 const FETCH_TIMEOUT_MS = 7000;        // Per-PDF fetch budget
 const MAX_PDF_BYTES = 5 * 1024 * 1024; // 5MB cap — skip huge PDFs
@@ -25,7 +27,7 @@ export interface ExtractedPdf {
 
 function cacheKey(url: string): string {
   const h = createHash('sha256').update(url).digest('hex').slice(0, 24);
-  return `pdf-text:v1:${h}`;
+  return `${CACHE_KEY_PREFIX}:${h}`;
 }
 
 export async function extractPdfText(url: string, opts: { signal?: AbortSignal } = {}): Promise<ExtractedPdf> {
@@ -80,7 +82,9 @@ export async function extractPdfText(url: string, opts: { signal?: AbortSignal }
       }
     }
 
-    const truncated = pdfText.slice(0, MAX_TEXT_BYTES);
+    // PATCH 0391 — sanitize before caching so subsequent runs use clean text
+    const sanitized = sanitizePdfText(pdfText);
+    const truncated = sanitized.text.slice(0, MAX_TEXT_BYTES);
     const result: ExtractedPdf = {
       url,
       text: truncated,

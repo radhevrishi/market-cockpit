@@ -168,31 +168,47 @@ export const BULLISH_COMBOS: BullishCombo[] = [
 ];
 
 // ─── Layer 3: Negative blockers ────────────────────────────────────────────
-// If any of these fire, the score is heavily penalized regardless of positive
-// signals. Filing is excluded from "high bullish" if a critical blocker hits.
+// PATCH 0391 — Three severity tiers per user spec.
+// LOW    (-0.5): temporary softness / delays / seasonal — normal market noise
+// MEDIUM (-2):   weak demand / margin pressure / pricing pressure / slowdown
+// FATAL  (auto-reject): guidance cut / auditor change / governance / debt stress
+
+export type BlockerSeverity = 'LOW' | 'MEDIUM' | 'FATAL';
 
 interface NegBlocker {
   re: RegExp;
-  weight: number;       // points subtracted
-  critical: boolean;    // if true, kills the bullish tag even if score >=6
+  weight: number;       // points subtracted (only for non-FATAL)
+  severity: BlockerSeverity;
+  critical: boolean;    // legacy alias for FATAL (kept for compat)
   tag: string;
 }
 
 export const NEG_BLOCKERS: NegBlocker[] = [
-  { re: /one[-\s]?off|exceptional\s+(?:gain|item)/i,           weight: 4, critical: true,  tag: 'One-off gain' },
-  { re: /weak\s+demand|demand\s+softness|muted\s+demand/i,     weight: 4, critical: true,  tag: 'Weak demand' },
-  { re: /margin\s+pressure|margin\s+compression|margin\s+contraction/i, weight: 4, critical: true, tag: 'Margin pressure' },
-  { re: /pricing\s+pressure|price\s+erosion|pricing\s+decline/i, weight: 3, critical: true, tag: 'Pricing pressure' },
-  { re: /inventory\s+correction|destocking|inventory\s+(?:overhang|build[-\s]?up)/i, weight: 3, critical: false, tag: 'Inventory correction' },
-  { re: /\b(?:delay(?:ed|s)?|postpone(?:d|ment)?|deferred?|deferment)\b/i, weight: 2, critical: false, tag: 'Delay' },
-  { re: /\bcancel(?:l(?:ed|ation))?\b/i,                       weight: 3, critical: true,  tag: 'Cancellation' },
-  { re: /shutdown|plant\s+closure|production\s+halt/i,         weight: 3, critical: true,  tag: 'Shutdown' },
-  { re: /cost\s+inflation|raw[-\s]?material\s+pressure/i,      weight: 2, critical: false, tag: 'Cost inflation' },
-  { re: /muted\s+outlook|cautious\s+outlook|uncertain\s+outlook/i, weight: 3, critical: true, tag: 'Cautious outlook' },
-  { re: /lower\s+utilization|lower\s+utilisation|under[-\s]?utiliz/i, weight: 2, critical: false, tag: 'Lower utilization' },
-  { re: /receivable\s+stress|working\s+capital\s+stretch/i,    weight: 2, critical: false, tag: 'Receivable stress' },
-  { re: /slowdown|deceleration|sluggish/i,                     weight: 2, critical: false, tag: 'Slowdown' },
-  { re: /geopolitical\s+headwind|adverse\s+macro/i,            weight: 1.5, critical: false, tag: 'Macro headwind' },
+  // FATAL — auto-reject from bullish classification
+  { re: /guidance\s+(?:cut|lowered|reduced|withdrawn|miss(?:ed)?)/i, weight: 5, severity: 'FATAL', critical: true,  tag: 'Guidance cut' },
+  { re: /auditor\s+(?:resign|change|withdraw)|qualified\s+(?:audit|opinion)|audit\s+qualification/i, weight: 5, severity: 'FATAL', critical: true, tag: 'Auditor issue' },
+  { re: /accounting\s+(?:irregularit|restate|fraud)|SEBI\s+investigation|enforcement\s+action/i, weight: 5, severity: 'FATAL', critical: true, tag: 'Governance / regulatory' },
+  { re: /covenant\s+breach|debt\s+default|going\s+concern|insolvency|liquidity\s+crisis/i, weight: 5, severity: 'FATAL', critical: true, tag: 'Debt stress' },
+  { re: /promoter\s+(?:exit|stake\s+sale)\s+(?:on|of)\s+stress|pledge\s+invoked/i, weight: 5, severity: 'FATAL', critical: true, tag: 'Promoter exit under stress' },
+  { re: /shutdown|plant\s+closure|production\s+halt/i,         weight: 4, severity: 'FATAL', critical: true,  tag: 'Shutdown' },
+  { re: /\bmajor\s+contract\s+(?:cancel|loss)|key\s+customer\s+loss/i, weight: 4, severity: 'FATAL', critical: true, tag: 'Major contract loss' },
+  // MEDIUM — significant headwinds, not deal-killers
+  { re: /weak\s+demand|demand\s+softness|muted\s+demand/i,     weight: 2.0, severity: 'MEDIUM', critical: false, tag: 'Weak demand' },
+  { re: /margin\s+pressure|margin\s+compression|margin\s+contraction/i, weight: 2.0, severity: 'MEDIUM', critical: false, tag: 'Margin pressure' },
+  { re: /pricing\s+pressure|price\s+erosion|pricing\s+decline/i, weight: 1.8, severity: 'MEDIUM', critical: false, tag: 'Pricing pressure' },
+  { re: /muted\s+outlook|cautious\s+outlook|uncertain\s+outlook/i, weight: 1.8, severity: 'MEDIUM', critical: false, tag: 'Cautious outlook' },
+  { re: /inventory\s+correction|destocking|inventory\s+(?:overhang|build[-\s]?up)/i, weight: 1.5, severity: 'MEDIUM', critical: false, tag: 'Inventory correction' },
+  { re: /receivable\s+stress|working\s+capital\s+stretch/i,    weight: 1.5, severity: 'MEDIUM', critical: false, tag: 'Receivable stress' },
+  { re: /lower\s+utilization|lower\s+utilisation|under[-\s]?utiliz/i, weight: 1.5, severity: 'MEDIUM', critical: false, tag: 'Lower utilization' },
+  { re: /cost\s+inflation|raw[-\s]?material\s+pressure/i,      weight: 1.2, severity: 'MEDIUM', critical: false, tag: 'Cost inflation' },
+  { re: /one[-\s]?off|exceptional\s+(?:gain|item)/i,           weight: 1.2, severity: 'MEDIUM', critical: false, tag: 'One-off gain' },
+  // LOW — normal market noise, real businesses always have some of these
+  { re: /\b(?:delay(?:ed|s)?|postpone(?:d|ment)?|deferred?|deferment)\b/i, weight: 0.5, severity: 'LOW', critical: false, tag: 'Delay' },
+  { re: /\bslowdown|deceleration|sluggish/i,                   weight: 0.5, severity: 'LOW', critical: false, tag: 'Slowdown' },
+  { re: /temporary\s+(?:softness|weakness)|seasonal\s+(?:weakness|softness)/i, weight: 0.5, severity: 'LOW', critical: false, tag: 'Temporary softness' },
+  { re: /near[-\s]?term\s+(?:headwind|challenge|pressure)/i,   weight: 0.5, severity: 'LOW', critical: false, tag: 'Near-term headwind' },
+  { re: /geopolitical\s+headwind|adverse\s+macro/i,            weight: 0.5, severity: 'LOW', critical: false, tag: 'Macro headwind' },
+  { re: /\bcancel(?:l(?:ed|ation))?\b/i,                       weight: 1.5, severity: 'MEDIUM', critical: false, tag: 'Cancellation' },
 ];
 
 // ─── Scoring engine ────────────────────────────────────────────────────────
@@ -207,19 +223,28 @@ export interface EvidenceSentence {
   negated: boolean;           // was this overridden by a contradiction connector?
 }
 
+// PATCH 0391 — multi-tier classification per user spec
+export type BullishTier = 'ULTRA_BULLISH' | 'BULLISH' | 'MIXED_POSITIVE' | 'NEUTRAL' | 'BEARISH' | 'INSUFFICIENT';
+
 export interface BullishScore {
   score: number;                         // 0-10 normalized
   raw_score: number;                     // raw points (post-cap, post-negation)
   sentiment: 'BULLISH' | 'NEUTRAL' | 'BEARISH' | 'INSUFFICIENT';
+  tier: BullishTier;                     // PATCH 0391 — multi-tier classifier
   confidence: 'HIGH' | 'MEDIUM' | 'LOW';
   tags: string[];                        // matched combo tags
   bullish_phrases: string[];
   red_flags: string[];
-  critical_blocker: boolean;
+  critical_blocker: boolean;             // any FATAL blocker
+  fatal_blockers: string[];              // PATCH 0391
   components: {
     management_confidence: number;
     business_evidence: number;
+    positive_score: number;              // PATCH 0391 — total positive (before negs)
     blockers: number;
+    blocker_severity_low: number;        // PATCH 0391 — pts subtracted at LOW
+    blocker_severity_medium: number;
+    blocker_severity_fatal: number;
   };
   // PATCH 0389 — evidence sentences extracted from the source text
   evidence: EvidenceSentence[];
@@ -247,18 +272,40 @@ function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n) + '…';
 }
 
+// PATCH 0391 — Negative penalty multiplier per user spec (weighted net scoring)
+const NEG_WEIGHT_MULTIPLIER = 0.65;
+
+function emptyScore(): BullishScore {
+  return {
+    score: 0, raw_score: 0,
+    sentiment: 'INSUFFICIENT', tier: 'INSUFFICIENT', confidence: 'LOW',
+    tags: [], bullish_phrases: [], red_flags: [],
+    critical_blocker: false, fatal_blockers: [],
+    components: {
+      management_confidence: 0, business_evidence: 0, positive_score: 0,
+      blockers: 0, blocker_severity_low: 0, blocker_severity_medium: 0, blocker_severity_fatal: 0,
+    },
+    evidence: [],
+  };
+}
+
+function classifyTier(positive: number, weightedNeg: number, fatal: boolean, mgmt: number, biz: number, tagDiversity: number): BullishTier {
+  if (fatal) return 'BEARISH';
+  const net = positive - weightedNeg;
+  // ULTRA_BULLISH — rare exceptional setups (positive >= 14, net >= 12, multi-dimensional)
+  if (positive >= 14 && net >= 12 && mgmt >= 4 && biz >= 4 && tagDiversity >= 4) return 'ULTRA_BULLISH';
+  // BULLISH — clean net positive with both pillars
+  if (net >= 6 && mgmt >= 2 && biz >= 2) return 'BULLISH';
+  // MIXED_POSITIVE — positive content present, some friction, net still positive
+  if (positive >= 4 && net >= 1) return 'MIXED_POSITIVE';
+  // BEARISH — net negative
+  if (net <= -3) return 'BEARISH';
+  return 'NEUTRAL';
+}
+
 export function scoreBullish(text: string): BullishScore {
   const t = text || '';
-  if (t.length < 40) {
-    return {
-      score: 0, raw_score: 0,
-      sentiment: 'INSUFFICIENT', confidence: 'LOW',
-      tags: [], bullish_phrases: [], red_flags: [],
-      critical_blocker: false,
-      components: { management_confidence: 0, business_evidence: 0, blockers: 0 },
-      evidence: [],
-    };
-  }
+  if (t.length < 40) return emptyScore();
 
   let raw = 0;
   const tagSet = new Set<string>();
@@ -324,18 +371,32 @@ export function scoreBullish(text: string): BullishScore {
       }
     }
 
-    // Negative blockers — sentence-level so we can pull the actual bearish quote
+    // PATCH 0391 — Negative blockers with SEVERITY TIERS, not single weight
     const blockerEvidence: EvidenceSentence[] = [];
-    let blockerWeight = 0;
+    let totalBlockerWeight = 0;
+    let weightedNegPenalty = 0;
+    let blockerLow = 0;
+    let blockerMed = 0;
+    let blockerFatal = 0;
     let criticalBlocker = false;
     const redFlagSet = new Set<string>();
+    const fatalBlockers: string[] = [];
     for (const sent of sentences) {
       for (const b of NEG_BLOCKERS) {
         if (b.re.test(sent)) {
-          raw -= b.weight;
-          blockerWeight += b.weight;
+          totalBlockerWeight += b.weight;
           redFlagSet.add(b.tag);
-          if (b.critical) criticalBlocker = true;
+          if (b.severity === 'FATAL') {
+            blockerFatal += b.weight;
+            criticalBlocker = true;
+            if (!fatalBlockers.includes(b.tag)) fatalBlockers.push(b.tag);
+          } else if (b.severity === 'MEDIUM') {
+            blockerMed += b.weight;
+            weightedNegPenalty += b.weight;
+          } else {
+            blockerLow += b.weight;
+            weightedNegPenalty += b.weight;
+          }
           if (blockerEvidence.length < 6) {
             blockerEvidence.push({
               text: truncate(sent, 250),
@@ -349,31 +410,39 @@ export function scoreBullish(text: string): BullishScore {
     }
     evidence.push(...blockerEvidence);
 
-    // PATCH 0389 — Score-inflation cap based on blocker presence
-    // Per user feedback: 25.0 score with delay+slowdown blockers is nonsense.
+    // PATCH 0391 — Weighted net scoring per user spec
+    // final_score = positive_score * 1.0 - weighted_negative_score
+    // Only FATAL auto-rejects. MEDIUM/LOW are penalties but don't kill the score.
+    const positiveScore = raw;  // raw at this point is just sum of bullish combo points
+    const weightedNeg = weightedNegPenalty * NEG_WEIGHT_MULTIPLIER;
+
     if (criticalBlocker) {
-      raw = Math.min(raw, 4);  // cap at low-bullish; blockers dominate
-    } else if (redFlagSet.size >= 2) {
-      raw = raw * 0.6;  // discount when multiple non-critical blockers
-    } else if (redFlagSet.size === 1) {
-      raw = raw * 0.85;
+      // FATAL — cap raw at a low value so tier classifier produces BEARISH
+      raw = Math.max(-5, raw - blockerFatal * 2);
+    } else {
+      raw = positiveScore - weightedNeg;
     }
 
-    // Diminishing returns — at most one credit per tag (already deduped via tagSet)
-    // Now we cap the raw score based on tag diversity
+    // Diminishing returns — tag diversity cap (only when no FATAL)
     const tagDiversity = tagSet.size;
-    if (tagDiversity <= 1) raw = Math.min(raw, 4);
-    else if (tagDiversity === 2) raw = Math.min(raw, 8);
-    else raw = Math.min(raw, 14);  // hard cap regardless of keyword density
+    if (!criticalBlocker) {
+      if (tagDiversity <= 1) raw = Math.min(raw, 5);
+      else if (tagDiversity === 2) raw = Math.min(raw, 9);
+      else raw = Math.min(raw, 16);
+    }
 
-    const score = Math.max(0, Math.min(10, raw / 1.4));
+    const score = Math.max(0, Math.min(10, raw / 1.6));
 
+    // Legacy 3-state sentiment for backward compat (some callers use this)
     let sentiment: BullishScore['sentiment'];
-    if (raw < -2) sentiment = 'BEARISH';
-    else if (criticalBlocker) sentiment = 'NEUTRAL';
-    else if (mgmtConfidence >= 2 && businessEvidence >= 2 && raw >= 4) sentiment = 'BULLISH';
-    else if (raw >= 5) sentiment = 'BULLISH';
+    if (criticalBlocker) sentiment = 'BEARISH';
+    else if (raw <= -2) sentiment = 'BEARISH';
+    else if (raw >= 4 && mgmtConfidence >= 1.5 && businessEvidence >= 1.5) sentiment = 'BULLISH';
+    else if (raw >= 6) sentiment = 'BULLISH';
     else sentiment = 'NEUTRAL';
+
+    // PATCH 0391 — Multi-tier classifier
+    const tier = classifyTier(positiveScore, weightedNeg, criticalBlocker, mgmtConfidence, businessEvidence, tagDiversity);
 
     let confidence: BullishScore['confidence'];
     if (mgmtConfidence >= 3 && businessEvidence >= 3 && !criticalBlocker && tagDiversity >= 3) confidence = 'HIGH';
@@ -383,15 +452,20 @@ export function scoreBullish(text: string): BullishScore {
     return {
       score: Math.round(score * 10) / 10,
       raw_score: Math.round(raw * 10) / 10,
-      sentiment, confidence,
+      sentiment, tier, confidence,
       tags: Array.from(tagSet),
       bullish_phrases: Array.from(phraseSet),
       red_flags: Array.from(redFlagSet),
       critical_blocker: criticalBlocker,
+      fatal_blockers: fatalBlockers,
       components: {
         management_confidence: Math.round(mgmtConfidence * 10) / 10,
         business_evidence: Math.round(businessEvidence * 10) / 10,
-        blockers: Math.round(blockerWeight * 10) / 10,
+        positive_score: Math.round(positiveScore * 10) / 10,
+        blockers: Math.round(totalBlockerWeight * 10) / 10,
+        blocker_severity_low: Math.round(blockerLow * 10) / 10,
+        blocker_severity_medium: Math.round(blockerMed * 10) / 10,
+        blocker_severity_fatal: Math.round(blockerFatal * 10) / 10,
       },
       evidence: evidence.slice(0, 12),
     };
@@ -413,35 +487,55 @@ export function scoreBullish(text: string): BullishScore {
   const redFlagSet = new Set<string>();
   let blockerWeight = 0;
   let criticalBlocker = false;
+  let blockerLow = 0, blockerMed = 0, blockerFatal = 0;
+  let weightedNeg = 0;
+  const fatalBlockers: string[] = [];
   for (const b of NEG_BLOCKERS) {
     if (b.re.test(t)) {
-      raw -= b.weight;
       blockerWeight += b.weight;
       redFlagSet.add(b.tag);
-      if (b.critical) criticalBlocker = true;
+      if (b.severity === 'FATAL') {
+        blockerFatal += b.weight;
+        criticalBlocker = true;
+        if (!fatalBlockers.includes(b.tag)) fatalBlockers.push(b.tag);
+      } else if (b.severity === 'MEDIUM') {
+        blockerMed += b.weight;
+        weightedNeg += b.weight;
+      } else {
+        blockerLow += b.weight;
+        weightedNeg += b.weight;
+      }
     }
   }
-  if (criticalBlocker) raw = Math.min(raw, 3);
+  const positiveScore = raw;
+  if (criticalBlocker) raw = Math.max(-5, raw - blockerFatal * 2);
+  else raw = positiveScore - weightedNeg * NEG_WEIGHT_MULTIPLIER;
   raw = Math.min(raw, 8);  // hard cap for short text
-  const score = Math.max(0, Math.min(10, raw / 1.4));
+  const score = Math.max(0, Math.min(10, raw / 1.6));
   let sentiment: BullishScore['sentiment'];
-  if (raw < -2) sentiment = 'BEARISH';
-  else if (criticalBlocker) sentiment = 'NEUTRAL';
+  if (criticalBlocker) sentiment = 'BEARISH';
+  else if (raw <= -2) sentiment = 'BEARISH';
   else if (mgmtConfidence > 0 && businessEvidence > 0 && raw >= 4) sentiment = 'BULLISH';
   else if (raw >= 5) sentiment = 'BULLISH';
   else sentiment = 'NEUTRAL';
+  const tier = classifyTier(positiveScore, weightedNeg * NEG_WEIGHT_MULTIPLIER, criticalBlocker, mgmtConfidence, businessEvidence, tagSet.size);
   return {
     score: Math.round(score * 10) / 10,
     raw_score: Math.round(raw * 10) / 10,
-    sentiment, confidence: 'LOW',
+    sentiment, tier, confidence: 'LOW',
     tags: Array.from(tagSet),
     bullish_phrases: Array.from(phraseSet),
     red_flags: Array.from(redFlagSet),
     critical_blocker: criticalBlocker,
+    fatal_blockers: fatalBlockers,
     components: {
       management_confidence: Math.round(mgmtConfidence * 10) / 10,
       business_evidence: Math.round(businessEvidence * 10) / 10,
+      positive_score: Math.round(positiveScore * 10) / 10,
       blockers: Math.round(blockerWeight * 10) / 10,
+      blocker_severity_low: Math.round(blockerLow * 10) / 10,
+      blocker_severity_medium: Math.round(blockerMed * 10) / 10,
+      blocker_severity_fatal: Math.round(blockerFatal * 10) / 10,
     },
     evidence: [],
   };
@@ -464,10 +558,15 @@ export function isHighBullish(s: BullishScore, threshold = 6): boolean {
 // Stricter version that operates on raw score so users can configure threshold 6 = raw 6 directly
 export function isHighBullishRaw(s: BullishScore, rawThreshold = 6): boolean {
   return (
-    s.sentiment === 'BULLISH' &&
+    (s.tier === 'ULTRA_BULLISH' || s.tier === 'BULLISH') &&
     s.components.management_confidence > 0 &&
     s.components.business_evidence > 0 &&
     !s.critical_blocker &&
     s.raw_score >= rawThreshold
   );
+}
+
+// PATCH 0391 — tier-based filter helper
+export function tierIncluded(s: BullishScore, allowedTiers: BullishTier[]): boolean {
+  return allowedTiers.includes(s.tier);
 }

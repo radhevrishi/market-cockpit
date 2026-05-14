@@ -27,7 +27,7 @@ import { classifyFiling, scoreBullish, isHighBullishRaw, type BullishScore, type
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
 import { extractSections } from '@/lib/concall-sections';
 
-const CACHE_KEY = (days: number) => `concall-feed:v3:days:${days}`;   // v3: section extraction + sentence-level scoring + cross-exchange dedup
+const CACHE_KEY = (days: number) => `concall-feed:v4:days:${days}`;   // v4: multi-tier classifier + severity-weighted blockers + sanitized PDFs
 const CACHE_TTL_SHORT = 5 * 60;        // 5 min for fresh data
 const CACHE_TTL_LONG = 30 * 60;        // 30 min for older lookback
 

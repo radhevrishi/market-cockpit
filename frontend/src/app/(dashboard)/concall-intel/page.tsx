@@ -202,11 +202,21 @@ interface LiveFeedFiling {
     score: number;
     raw_score: number;
     sentiment: string;
+    tier?: 'ULTRA_BULLISH' | 'BULLISH' | 'MIXED_POSITIVE' | 'NEUTRAL' | 'BEARISH' | 'INSUFFICIENT';  // PATCH 0391
     confidence: string;
     tags: string[];
     bullish_phrases: string[];
     red_flags: string[];
-    components: { management_confidence: number; business_evidence: number; blockers: number };
+    fatal_blockers?: string[];        // PATCH 0391
+    components: {
+      management_confidence: number;
+      business_evidence: number;
+      positive_score?: number;
+      blockers: number;
+      blocker_severity_low?: number;
+      blocker_severity_medium?: number;
+      blocker_severity_fatal?: number;
+    };
     evidence?: EvidenceSentence[];     // PATCH 0389
   };
   is_high_bullish: boolean;
@@ -233,6 +243,15 @@ function LiveBullishFeed() {
   const [exchange, setExchange] = useState<'ALL' | 'NSE' | 'BSE'>('ALL');
   const [days, setDays] = useState(2);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  // PATCH 0391 — tier filter chips
+  const [tierFilter, setTierFilter] = useState<Set<string>>(new Set(['ULTRA_BULLISH', 'BULLISH', 'MIXED_POSITIVE']));
+  const toggleTier = (t: string) => {
+    setTierFilter(prev => {
+      const next = new Set(prev);
+      next.has(t) ? next.delete(t) : next.add(t);
+      return next;
+    });
+  };
 
   const fetchFeed = async (force = false) => {
     setLoading(true);
@@ -269,9 +288,23 @@ function LiveBullishFeed() {
     if (!data) return [];
     let out = data.filings;
     if (exchange !== 'ALL') out = out.filter(f => f.exchange === exchange);
-    if (bullishOnly) out = out.filter(f => f.is_high_bullish);
+    if (bullishOnly) {
+      // PATCH 0391 — when bullishOnly toggled, use tier filter
+      out = out.filter(f => f.bullish.tier && tierFilter.has(f.bullish.tier));
+    }
     return out;
-  }, [data, exchange, bullishOnly]);
+  }, [data, exchange, bullishOnly, tierFilter]);
+
+  // Tier counts for the filter chip badges
+  const tierCounts = useMemo(() => {
+    const counts: Record<string, number> = { ULTRA_BULLISH: 0, BULLISH: 0, MIXED_POSITIVE: 0, NEUTRAL: 0, BEARISH: 0 };
+    if (!data) return counts;
+    for (const f of data.filings) {
+      const t = f.bullish.tier;
+      if (t && counts[t] != null) counts[t]++;
+    }
+    return counts;
+  }, [data]);
 
   return (
     <div style={{ backgroundColor: '#0D1623', border: '1px solid #F59E0B30', borderLeft: '4px solid #F59E0B', borderRadius: 10, padding: '14px 18px', marginBottom: 14 }}>
@@ -311,10 +344,31 @@ function LiveBullishFeed() {
 
       {error && <div style={{ fontSize: 11, color: '#EF4444', marginBottom: 8 }}>⚠ {error}</div>}
 
+      {/* PATCH 0391 — Tier filter chips */}
+      {data && bullishOnly && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+          {[
+            { id: 'ULTRA_BULLISH',  label: '🚀 Ultra Bullish',    color: '#22D3EE' },
+            { id: 'BULLISH',        label: '🟢 Bullish',           color: '#10B981' },
+            { id: 'MIXED_POSITIVE', label: '🟡 Mixed Positive',    color: '#F59E0B' },
+            { id: 'NEUTRAL',        label: '⚪ Neutral',            color: '#94A3B8' },
+            { id: 'BEARISH',        label: '🔴 Bearish',           color: '#EF4444' },
+          ].map(t => {
+            const active = tierFilter.has(t.id);
+            const count = tierCounts[t.id] || 0;
+            return (
+              <button key={t.id} onClick={() => toggleTier(t.id)} style={{ fontSize: 10, fontWeight: 700, padding: '4px 9px', borderRadius: 5, border: `1px solid ${active ? t.color : '#1A2540'}`, background: active ? `${t.color}20` : 'transparent', color: active ? t.color : '#94A3B8', cursor: 'pointer' }}>
+                {t.label} · {count}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {filtered.length === 0 && !loading && (
         <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic', padding: '12px 0' }}>
           {data && data.count_relevant > 0
-            ? `No high-bullish filings in current filter. Total relevant: ${data.count_relevant}. Try toggling "Bullish only" off or expanding the date range.`
+            ? `No filings match the selected tiers. Try enabling more tiers above (e.g. Mixed Positive surfaces realistic mid-quality bullish setups).`
             : 'No concall-related filings yet. NSE/BSE may be blocking the request (try refresh in a few minutes).'}
         </div>
       )}
@@ -340,7 +394,23 @@ function LiveBullishFeed() {
                   {f.symbol && <span style={{ fontSize: 11, color: '#94A3B8' }}>{f.company_name}</span>}
                   <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#1A2540', color: '#94A3B8', fontWeight: 700 }}>{f.exchange}</span>
                   <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: `${scoreColor}20`, color: scoreColor, fontWeight: 700 }}>{filingTypeLabel[f.filing_type] || f.filing_type}</span>
-                  {f.is_high_bullish && <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#10B98125', color: '#10B981', fontWeight: 800, border: '1px solid #10B981' }}>★ HIGH BULLISH</span>}
+                  {/* PATCH 0391 — tier badge replaces single HIGH BULLISH */}
+                  {(() => {
+                    const tier = f.bullish.tier;
+                    const tierLabel: Record<string, { label: string; color: string }> = {
+                      ULTRA_BULLISH:  { label: '🚀 ULTRA BULLISH', color: '#22D3EE' },
+                      BULLISH:        { label: '🟢 BULLISH',        color: '#10B981' },
+                      MIXED_POSITIVE: { label: '🟡 MIXED POSITIVE', color: '#F59E0B' },
+                      NEUTRAL:        { label: '⚪ NEUTRAL',         color: '#94A3B8' },
+                      BEARISH:        { label: '🔴 BEARISH',         color: '#EF4444' },
+                    };
+                    const t = tier ? tierLabel[tier] : null;
+                    if (!t) return null;
+                    return <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: `${t.color}20`, color: t.color, fontWeight: 800, border: `1px solid ${t.color}` }}>{t.label}</span>;
+                  })()}
+                  {f.bullish.fatal_blockers && f.bullish.fatal_blockers.length > 0 && (
+                    <span title={`Fatal blockers: ${f.bullish.fatal_blockers.join(', ')}`} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#EF444425', color: '#EF4444', fontWeight: 800, border: '1px solid #EF4444' }}>☠ FATAL</span>
+                  )}
                   {f.scored_from === 'PDF' && <span title={`Scored from extracted PDF text${f.pdf_pages ? ` (${f.pdf_pages}p)` : ''}`} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#22D3EE15', color: '#22D3EE', fontWeight: 700 }}>📄 PDF</span>}
                   {f.scored_from === 'SUBJECT' && f.pdf_failure_reason && <span title={`PDF extraction failed: ${f.pdf_failure_reason}`} style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#94A3B815', color: '#94A3B8', fontWeight: 700 }}>📝 subject only</span>}
                 </div>
