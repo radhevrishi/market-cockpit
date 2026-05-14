@@ -195,6 +195,17 @@ interface EvidenceSentence {
   negated: boolean;
 }
 
+// PATCH 0401 — sector overlay payload
+interface SectorOverlayResult {
+  sector: string;
+  sector_confidence: number;
+  overlay_score: number;
+  positive_signals: string[];
+  negative_signals: string[];
+  positive_evidence: Array<{ tag: string; sentence: string }>;
+  negative_evidence: Array<{ tag: string; sentence: string }>;
+}
+
 interface LiveFeedFiling {
   exchange: 'NSE' | 'BSE';
   symbol: string;
@@ -208,7 +219,7 @@ interface LiveFeedFiling {
     score: number;
     raw_score: number;
     sentiment: string;
-    tier?: 'ULTRA_BULLISH' | 'BULLISH' | 'MIXED_POSITIVE' | 'NEUTRAL' | 'BEARISH' | 'INSUFFICIENT';  // PATCH 0391
+    tier?: 'ULTRA_BULLISH' | 'BULLISH' | 'MIXED_POSITIVE' | 'NEUTRAL' | 'BEARISH' | 'INSUFFICIENT' | 'DATA_PENDING';  // PATCH 0391+0397
     confidence: string;
     tags: string[];
     bullish_phrases: string[];
@@ -230,6 +241,8 @@ interface LiveFeedFiling {
   scored_from?: 'PDF' | 'SUBJECT';
   pdf_pages?: number;
   pdf_failure_reason?: string;
+  // PATCH 0401
+  sector_overlay?: SectorOverlayResult;
 }
 
 interface LiveFeedPayload {
@@ -579,6 +592,25 @@ function LiveBullishFeed() {
                     <span style={{ marginLeft: 8, color: '#F59E0B', fontWeight: 700 }}>· ⚠ no financial anchor (capped at 6)</span>
                   )}
                 </div>
+                {/* PATCH 0401 — Sector overlay chip + signals */}
+                {f.sector_overlay && f.sector_overlay.sector !== 'UNKNOWN' && (
+                  <div style={{ marginBottom: 4, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', fontSize: 9 }}>
+                    <span title={`Sector confidence: ${f.sector_overlay.sector_confidence}/10`} style={{ padding: '1px 6px', borderRadius: 3, background: '#A78BFA20', color: '#A78BFA', fontWeight: 800 }}>
+                      🏷 {f.sector_overlay.sector.replace('_', ' ')}
+                    </span>
+                    {f.sector_overlay.overlay_score !== 0 && (
+                      <span title="Sector overlay adjusts base score by +/-3 based on sector-specific signals" style={{ padding: '1px 6px', borderRadius: 3, background: f.sector_overlay.overlay_score > 0 ? '#10B98120' : '#EF444420', color: f.sector_overlay.overlay_score > 0 ? '#10B981' : '#EF4444', fontWeight: 800 }}>
+                        overlay {f.sector_overlay.overlay_score > 0 ? '+' : ''}{f.sector_overlay.overlay_score.toFixed(1)}
+                      </span>
+                    )}
+                    {f.sector_overlay.positive_signals.slice(0, 3).map((s, j) => (
+                      <span key={j} title="Sector positive signal" style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: '#10B981', fontWeight: 700 }}>✓ {s}</span>
+                    ))}
+                    {f.sector_overlay.negative_signals.slice(0, 2).map((s, j) => (
+                      <span key={j} title="Sector negative signal" style={{ padding: '1px 5px', borderRadius: 3, background: '#EF444415', color: '#EF4444', fontWeight: 700 }}>✗ {s}</span>
+                    ))}
+                  </div>
+                )}
                 {/* PATCH 0397 — 3-LAYER score bars (Quality / Cycle / Sentiment) */}
                 {(f.bullish.components as any).quality_score != null && (
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', fontSize: 9, marginBottom: 4 }}>

@@ -26,8 +26,9 @@ import { fetchNSEAnnouncements, fetchBSEAnnouncements, type FilingRecord } from 
 import { classifyFiling, scoreBullish, isHighBullishRaw, type BullishScore, type ConcallFilingType } from '@/lib/concall-bullish';
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
 import { extractSections } from '@/lib/concall-sections';
+import { applySectorOverlay, type SectorOverlayResult } from '@/lib/concall-sector-overlays';
 
-const CACHE_KEY = (days: number) => `concall-feed:v9:days:${days}`;   // v9: composite-first + broadened anchors + boilerplate filter
+const CACHE_KEY = (days: number) => `concall-feed:v10:days:${days}`;  // v10: sector overlays
 // PATCH 0396 — Aggressive live-cache per user spec: 'always take live data'
 const CACHE_TTL_SHORT = 2 * 60;        // 2 min for fresh data (was 5)
 const CACHE_TTL_LONG = 10 * 60;        // 10 min for older lookback (was 30)
@@ -52,6 +53,7 @@ interface ScoredFiling extends FilingRecord {
   scored_from: 'PDF' | 'SUBJECT';
   pdf_pages?: number;
   pdf_failure_reason?: string;
+  sector_overlay?: SectorOverlayResult;   // PATCH 0401
 }
 
 interface FeedPayload {
@@ -187,6 +189,19 @@ export async function GET(req: NextRequest) {
       scoringText = f.subject;
     }
     const bullish = scoreBullish(scoringText);
+    // PATCH 0401 — Apply sector overlay (detects sector + applies +/-0-3 delta)
+    const sector_overlay = applySectorOverlay(scoringText);
+    if (sector_overlay.overlay_score !== 0) {
+      // Apply overlay to raw_score (cap at 0-10)
+      const newRaw = Math.max(-5, Math.min(10, bullish.raw_score + sector_overlay.overlay_score));
+      const newScore = Math.max(0, Math.min(10, newRaw));
+      bullish.raw_score = Math.round(newRaw * 10) / 10;
+      bullish.score = Math.round(newScore * 10) / 10;
+      // Also nudge composite by 60% of overlay (overlay is supplemental signal)
+      const compNudge = sector_overlay.overlay_score * 0.6;
+      const newComp = Math.max(0, Math.min(10, (bullish.components as any).composite_score + compNudge));
+      (bullish.components as any).composite_score = Math.round(newComp * 10) / 10;
+    }
     const is_high_bullish = isHighBullishRaw(bullish, rawThreshold);
     all.push({
       ...f,
@@ -196,6 +211,7 @@ export async function GET(req: NextRequest) {
       scored_from: scoredFrom,
       pdf_pages: ext?.pages,
       pdf_failure_reason: ext?.failure,
+      sector_overlay,
     });
   }
 
