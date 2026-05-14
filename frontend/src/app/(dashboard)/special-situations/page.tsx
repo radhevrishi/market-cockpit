@@ -30,6 +30,10 @@ import { computeMergerArb, fmtPct } from '@/lib/merger-arb';
 import { getPlaybook } from '@/lib/specsit-playbooks';
 import type { LifecycleState } from '@/lib/special-sit-lifecycle';
 import { LIFECYCLE_CONFIG } from '@/lib/special-sit-lifecycle';
+// PATCH 0353 — Phase 1 institutional rebuild: wire deal-probability for
+// per-row prob chip + the Best Risk/Reward leaderboard at top of feed.
+import { computeDealProbability } from '@/lib/deal-probability';
+import type { FilingTier } from '@/lib/deal-probability';
 // PATCH 0254 — Source-tier classifier (PRIMARY / SPECIALIST / SECONDARY / AGGREGATOR)
 import { classifySource, TIER_VISUAL } from '@/lib/source-tiers';
 
@@ -538,6 +542,193 @@ function Stat({ label, value, color, icon, onClick, active }: { label: string; v
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PATCH 0353 — INSTITUTIONAL ANALYTICS HELPERS (Phase 1)
+//
+// Single source of truth for every per-event derived metric:
+//   - filing tier (drives deal-probability)
+//   - lifecycle stage (where the event is in its journey)
+//   - playbook prior (typical spread + close days + success rate)
+//   - synthetic spread / IRR / probability / EV (when no live quote)
+//   - rankable EV score for the Best Risk/Reward leaderboard
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Maps event_type → FilingTier for the deal-probability engine. */
+function inferFilingTier(eventType: string): FilingTier {
+  switch (eventType) {
+    case 'MERGER_DEFINITIVE':
+    case 'OPEN_OFFER':
+    case 'TENDER_OFFER':
+    case 'BUYBACK_TENDER':
+    case 'GOING_PRIVATE':
+    case 'ACQUISITION_PUBLIC':
+      return 'BINDING_AGREEMENT';
+    case 'MERGER_RECOMMENDATION':
+    case 'SPIN_OFF':
+    case 'DEMERGER_INDIA':
+    case 'BUYBACK_OPEN_MARKET':
+    case 'IPO_SUBSIDIARY':
+      return 'BOARD_APPROVED';
+    case 'STAKE_SALE':
+    case 'QIP_PLACEMENT':
+    case 'RIGHTS_ISSUE':
+      return 'PRELIMINARY_OFFER';
+    case 'NEWS_RUMOR':
+      return 'RUMOR';
+    default:
+      return 'EXPLORATORY';
+  }
+}
+
+/** Heuristic: infer lifecycle state from event_type + age. The pipeline
+ *  doesn't carry an explicit lifecycle column yet (Patch 0320 lib exists,
+ *  but Postgres-backed lifecycle records still pending). This gets us 80%
+ *  of the institutional read in the meantime. */
+function inferLifecycleState(eventType: string, ageDays: number, amendmentCount: number): LifecycleState {
+  switch (eventType) {
+    case 'OPEN_OFFER':
+    case 'TENDER_OFFER':
+      return ageDays > 21 ? 'OPEN' : 'BINDING';
+    case 'BUYBACK_TENDER':
+      return ageDays > 14 ? 'TENDER' : 'BINDING';
+    case 'MERGER_DEFINITIVE':
+    case 'ACQUISITION_PUBLIC':
+      return 'REGULATORY';
+    case 'GOING_PRIVATE':
+      return ageDays > 30 ? 'REGULATORY' : 'BINDING';
+    case 'SPIN_OFF':
+    case 'DEMERGER_INDIA':
+      // Amendment count suggests record-date approaching → VOTE
+      return amendmentCount > 0 ? 'VOTE' : 'REGULATORY';
+    case 'IPO_SUBSIDIARY':
+      return 'REGULATORY';
+    case 'NEWS_RUMOR':
+      return 'RUMOR';
+    case 'MERGER_RECOMMENDATION':
+      return 'BOARD_APPROVED';
+    default:
+      return 'BINDING';
+  }
+}
+
+/** Map event_type → expected close days (best estimate when no playbook). */
+function defaultCloseDays(eventType: string): number {
+  switch (eventType) {
+    case 'TENDER_OFFER':
+    case 'BUYBACK_TENDER':
+      return 35;
+    case 'OPEN_OFFER':
+    case 'GOING_PRIVATE':
+      return 90;
+    case 'MERGER_DEFINITIVE':
+    case 'ACQUISITION_PUBLIC':
+      return 180;
+    case 'SPIN_OFF':
+    case 'DEMERGER_INDIA':
+    case 'IPO_SUBSIDIARY':
+      return 120;
+    default:
+      return 60;
+  }
+}
+
+interface EventAnalytics {
+  filingTier: FilingTier;
+  lifecycleState: LifecycleState;
+  lifecycleLabel: string;
+  lifecycleColor: string;
+  /** Spread % — live if cmp+offer provided, else playbook prior. */
+  spreadPct: number | null;
+  /** Expected days to close. */
+  daysToClose: number;
+  /** Probability of completion (0-100) from deal-probability engine. */
+  probability: number;
+  probabilityLabel: string;
+  probabilityColor: string;
+  /** Annualized IRR (%) — null when spread is null. */
+  annIRR: number | null;
+  /** Probability-weighted annualized IRR (%) — null when annIRR is null. */
+  expectedIRR: number | null;
+  /** Single rankable scalar for the leaderboard. Combines expectedIRR
+   *  (preferred) with catalyst_score fallback for non-arb events. Always
+   *  finite — higher = better. */
+  evScore: number;
+  /** True when this event is arb-style (has spread/IRR meaning). */
+  isArbEvent: boolean;
+  /** True when at least one playbook prior was used (vs raw event_type heuristic). */
+  hasPlaybook: boolean;
+}
+
+/** Compute the institutional analytics bundle for one event. */
+function computeEventAnalytics(
+  ev: { event_type: string; primary_filing?: { title?: string }; tier?: string; region?: string; amendment_count?: number; catalyst_score?: { decay_score?: number } },
+  opts: { cmp?: number | null; offer?: number | null; ageDays?: number } = {},
+): EventAnalytics {
+  const playbook = getPlaybook(ev.event_type as any);
+  const filingTier = inferFilingTier(ev.event_type);
+  const ageDays = opts.ageDays ?? 0;
+  const lifecycleState = inferLifecycleState(ev.event_type, ageDays, ev.amendment_count ?? 0);
+  const lcCfg = LIFECYCLE_CONFIG[lifecycleState];
+
+  // Spread: live (cmp + offer) if available, else playbook prior, else null.
+  let spreadPct: number | null = null;
+  if (opts.cmp != null && opts.offer != null && opts.cmp > 0) {
+    spreadPct = ((opts.offer - opts.cmp) / opts.cmp) * 100;
+  } else if (playbook) {
+    spreadPct = playbook.typical_spread_pct;
+  }
+
+  const daysToClose = playbook ? playbook.avg_close_days : defaultCloseDays(ev.event_type);
+
+  // Probability via deal-probability engine.
+  const hurdles: any = {};
+  if (ev.region === 'IN') {
+    if (['MERGER_DEFINITIVE','ACQUISITION_PUBLIC','GOING_PRIVATE','OPEN_OFFER'].includes(ev.event_type)) {
+      hurdles.cci = true; hurdles.sebi = true;
+    }
+    if (['SPIN_OFF','DEMERGER_INDIA'].includes(ev.event_type)) hurdles.nclt = true;
+  }
+  const probR = computeDealProbability({
+    filingTier,
+    spreadPct: spreadPct ?? undefined,
+    daysSinceAnnounced: ageDays,
+    expectedCloseDays: daysToClose,
+    hurdles: Object.keys(hurdles).length ? hurdles : undefined,
+  });
+
+  const annIRR = (spreadPct != null && daysToClose > 0)
+    ? spreadPct * (365 / daysToClose)
+    : null;
+  const expectedIRR = (annIRR != null) ? annIRR * (probR.score / 100) : null;
+
+  // EV scalar for leaderboard ranking:
+  //   - Arb-style events with computable expectedIRR: use it (typically 1-50).
+  //   - Otherwise fall back to catalyst_score.decay_score / 2 so it's roughly
+  //     on the same 0-50 scale.
+  const isArbEvent = ['OPEN_OFFER','TENDER_OFFER','BUYBACK_TENDER','GOING_PRIVATE','MERGER_DEFINITIVE','ACQUISITION_PUBLIC'].includes(ev.event_type);
+  const catalystFallback = (ev.catalyst_score?.decay_score ?? 0) / 2;
+  const evScore = isArbEvent && expectedIRR != null
+    ? Math.max(0, expectedIRR)
+    : catalystFallback;
+
+  return {
+    filingTier,
+    lifecycleState,
+    lifecycleLabel: lcCfg.label,
+    lifecycleColor: lcCfg.color,
+    spreadPct,
+    daysToClose,
+    probability: probR.score,
+    probabilityLabel: probR.label.replace('_', ' '),
+    probabilityColor: probR.color,
+    annIRR,
+    expectedIRR,
+    evScore,
+    isArbEvent,
+    hasPlaybook: !!playbook,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // ALL SITUATIONS — pure data-driven event cards
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -582,6 +773,107 @@ const EVENT_TYPE_META: Record<string, { icon: string; color: string }> = {
   UNCLASSIFIED:           { icon: '·',  color: '#6B7A8D' },
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PATCH 0353 — BEST RISK/REWARD LEADERBOARD
+//
+// Top 5 events ranked by EV score (probability-weighted annualized IRR for
+// arb events; catalyst decay-score fallback otherwise). Shows the same
+// chip strip the per-row cards show (spread / IRR / prob / days / state)
+// so the user can scan the top opportunities at a glance without scrolling
+// the full feed.
+// ═══════════════════════════════════════════════════════════════════════════
+
+function BestRiskRewardBoard({ events }: { events: CanonicalEvent[] }) {
+  const ranked = useMemo(() => {
+    return events
+      .map(ev => {
+        const ageDays = (ev.age_hours ?? 0) / 24;
+        const a = computeEventAnalytics(ev as any, { ageDays });
+        return { ev, a };
+      })
+      // Drop events with no analytic signal at all
+      .filter(({ a }) => a.evScore > 0)
+      // Rank descending
+      .sort((x, y) => y.a.evScore - x.a.evScore)
+      .slice(0, 5);
+  }, [events]);
+
+  if (ranked.length === 0) return null;
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 900, color: '#FBBF24', letterSpacing: '0.5px' }}>
+          🏆 BEST RISK / REWARD
+        </span>
+        <span style={{ fontSize: 10, color: '#6B7A8D' }}>
+          ranked by probability-weighted annualized IRR · arb events first · catalyst-score fallback for non-arb
+        </span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 8 }}>
+        {ranked.map(({ ev, a }, idx) => {
+          const meta = EVENT_TYPE_META[ev.event_type] || EVENT_TYPE_META.UNCLASSIFIED;
+          const ticker = ev.tickers[0];
+          return (
+            <div key={ev.event_id}
+              style={{
+                backgroundColor: '#0D1B2E',
+                border: '1px solid #1E2D45',
+                borderLeft: `3px solid ${a.lifecycleColor}`,
+                borderRadius: 8, padding: '10px 12px',
+                display: 'flex', flexDirection: 'column', gap: 6,
+              }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 10, fontWeight: 900, color: '#FBBF24',
+                  backgroundColor: '#FBBF2418', border: '1px solid #FBBF2440',
+                  padding: '1px 6px', borderRadius: 3, fontFamily: 'ui-monospace, monospace' }}>
+                  #{idx + 1}
+                </span>
+                <span style={{ fontSize: 11, fontWeight: 700, color: meta.color }}>
+                  {meta.icon} {ev.event_type.replace(/_/g, ' ')}
+                </span>
+                {ticker && (
+                  <span style={{ fontSize: 11, fontWeight: 800, color: '#38A9E8', backgroundColor: '#0F7ABF20',
+                    border: '1px solid #0F7ABF40', padding: '1px 6px', borderRadius: 3, fontFamily: 'ui-monospace, monospace' }}>
+                    {ticker}
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: 11.5, color: '#E6EDF3', lineHeight: 1.35, overflow: 'hidden',
+                display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                {ev.primary_filing.title}
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, fontSize: 10, fontFamily: 'ui-monospace, monospace' }}>
+                {a.expectedIRR != null && (
+                  <span style={{ color: '#FBBF24', fontWeight: 800, backgroundColor: '#FBBF2415',
+                    border: '1px solid #FBBF2440', padding: '1px 5px', borderRadius: 3 }}
+                    title={`Expected IRR = annualized IRR (${a.annIRR?.toFixed(0)}%/yr) × probability (${a.probability}%)`}>
+                    EV {a.expectedIRR >= 0 ? '+' : ''}{a.expectedIRR.toFixed(1)}%/yr
+                  </span>
+                )}
+                {a.spreadPct != null && (
+                  <span style={{ color: a.spreadPct >= 0 ? '#10B981' : '#EF4444', fontWeight: 700 }}>
+                    sp {a.spreadPct >= 0 ? '+' : ''}{a.spreadPct.toFixed(1)}%
+                  </span>
+                )}
+                <span style={{ color: a.probabilityColor, fontWeight: 700 }} title={`Deal probability: ${a.probabilityLabel}`}>
+                  P {a.probability}%
+                </span>
+                <span style={{ color: '#94A3B8' }}>~{a.daysToClose}d</span>
+                <span style={{ color: a.lifecycleColor, fontWeight: 700, padding: '0 4px',
+                  border: `1px solid ${a.lifecycleColor}40`, borderRadius: 3 }}
+                  title={LIFECYCLE_CONFIG[a.lifecycleState].description}>
+                  ▶ {a.lifecycleLabel}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function AllSituationsCanonical({ isLoading, error, tier1, tier2, watchlist }: { isLoading: boolean; error: any; tier1: CanonicalEvent[]; tier2: CanonicalEvent[]; watchlist: CanonicalEvent[] }) {
   // PATCH 0109 — BUG-04: 10-second timeout state.  If still loading after
   // 10s, surface a hint so user knows fetch is slow rather than broken.
@@ -613,6 +905,10 @@ function AllSituationsCanonical({ isLoading, error, tier1, tier2, watchlist }: {
   }
   return (
     <>
+      {/* PATCH 0353 — Top-of-feed leaderboard. Combines Tier 1 + Tier 2 so
+          the best risk/reward events surface regardless of which tier the
+          classifier landed them in. */}
+      <BestRiskRewardBoard events={[...tier1, ...tier2]} />
       {tier1.length > 0 && <CanonicalSection meta={TIER_LABEL.TIER_1} color={TIER_COLOR.TIER_1} events={tier1} defaultExpanded />}
       {tier2.length > 0 && <CanonicalSection meta={TIER_LABEL.TIER_2} color={TIER_COLOR.TIER_2} events={tier2} defaultExpanded />}
       {watchlist.length > 0 && <CanonicalSection meta={TIER_LABEL.WATCHLIST} color={TIER_COLOR.WATCHLIST} events={watchlist} defaultExpanded={false} />}
@@ -729,6 +1025,14 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
     ev.event_type === 'MERGER_DEFINITIVE' || ev.event_type === 'ACQUISITION_PUBLIC' ? 180 :
     ev.event_type === 'SPIN_OFF' || ev.event_type === 'DEMERGER_INDIA' || ev.event_type === 'IPO_SUBSIDIARY' ? 120 : 60;
   const annualizedPct = spreadPct != null ? spreadPct * (365 / daysToCloseGuess) : null;
+  // PATCH 0353 — Per-row analytics bundle. Uses live CMP+offer when
+  // available, falls back to playbook prior. Drives the new prob /
+  // EV / lifecycle chips on the card header.
+  const analytics = useMemo(() => computeEventAnalytics(ev as any, {
+    cmp: cmp ?? undefined,
+    offer: offer ?? undefined,
+    ageDays: (ev.age_hours ?? 0) / 24,
+  }), [ev, cmp, offer]);
   return (
     <div style={{
       backgroundColor: rejection ? '#1A0E10' : '#0D1B2E',
@@ -880,6 +1184,37 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
             <span style={{ color: '#6B7A8D' }}>~{daysToCloseGuess}d est. close</span>
           </div>
         )}
+        {/* PATCH 0353 — Institutional analytics chip strip. Always rendered
+            (uses playbook priors when no live quote). Adds the per-row
+            equivalent of the BestRiskRewardBoard chips: probability,
+            lifecycle stage, EV. Lets the user grade an event without
+            expanding it. */}
+        <div style={{ marginTop: 6, display: 'flex', gap: 6, fontSize: 10, flexWrap: 'wrap', alignItems: 'center', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+          <span title={`Filing tier inferred from event_type: ${analytics.filingTier}. Deal-probability heuristic per lib/deal-probability.ts`}
+            style={{ color: analytics.probabilityColor, fontWeight: 800, padding: '1px 6px', borderRadius: 3,
+              border: `1px solid ${analytics.probabilityColor}40`, backgroundColor: `${analytics.probabilityColor}12` }}>
+            P {analytics.probability}% · {analytics.probabilityLabel.toLowerCase()}
+          </span>
+          <span title={`Inferred lifecycle stage. ${LIFECYCLE_CONFIG[analytics.lifecycleState].description}`}
+            style={{ color: analytics.lifecycleColor, fontWeight: 800, padding: '1px 6px', borderRadius: 3,
+              border: `1px solid ${analytics.lifecycleColor}40`, backgroundColor: `${analytics.lifecycleColor}12` }}>
+            ▶ {analytics.lifecycleLabel}
+          </span>
+          {analytics.expectedIRR != null && (
+            <span title={`Expected IRR = annualized IRR (${analytics.annIRR?.toFixed(0)}%/yr) × probability (${analytics.probability}%). Uses ${analytics.spreadPct != null && cmp != null ? 'LIVE spread + CMP' : 'playbook prior typical spread'}.`}
+              style={{ color: '#FBBF24', fontWeight: 800, padding: '1px 6px', borderRadius: 3,
+                border: '1px solid #FBBF2440', backgroundColor: '#FBBF2412' }}>
+              EV {analytics.expectedIRR >= 0 ? '+' : ''}{analytics.expectedIRR.toFixed(1)}%/yr
+            </span>
+          )}
+          {!analytics.expectedIRR && analytics.hasPlaybook && (
+            <span title="Non-arb event — using catalyst-score as EV proxy"
+              style={{ color: '#94A3B8', fontWeight: 700, padding: '1px 6px', borderRadius: 3,
+                border: '1px solid #94A3B840', backgroundColor: '#94A3B812' }}>
+              EV n/a (non-arb)
+            </span>
+          )}
+        </div>
         {!expanded && (
           <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 4, fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ flex: 1 }}>{ev.tradability_rationale}</span>

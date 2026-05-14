@@ -282,7 +282,29 @@ export const PLAYBOOKS: Record<EventType, Playbook> = {
   },
 };
 
-/** Helper: get the playbook for an event type. */
+// PATCH 0353 — Feed-event-type → playbook-key alias map.
+// The /special-situations/feed pipeline emits event_types that don't 1:1
+// match the playbook keys above (e.g. MERGER_DEFINITIVE in the feed maps
+// to STRATEGIC_MERGER in the playbook, DEMERGER_INDIA → NCLT_SCHEME). The
+// alias map keeps the playbook prior visible on every applicable row.
+const EVENT_TYPE_ALIAS: Record<string, EventType> = {
+  TENDER_OFFER:          'OPEN_OFFER',
+  MERGER_DEFINITIVE:     'STRATEGIC_MERGER',
+  MERGER_RECOMMENDATION: 'STRATEGIC_MERGER',
+  ACQUISITION_PUBLIC:    'STRATEGIC_MERGER',
+  DEMERGER_INDIA:        'NCLT_SCHEME',
+  IPO_SUBSIDIARY:        'IPO_LISTING',
+  STAKE_SALE:            'PREFERENTIAL_ALLOTMENT',
+  QIP_PLACEMENT:         'PREFERENTIAL_ALLOTMENT',
+  // BUYBACK alone (no _TENDER / _OPEN_MARKET suffix) defaults to tender path
+  BUYBACK:               'BUYBACK_TENDER',
+};
+
+/** Helper: get the playbook for an event type, honouring the alias map. */
 export function getPlaybook(eventType: string): Playbook | undefined {
-  return PLAYBOOKS[eventType as EventType];
+  // Direct hit first
+  if (PLAYBOOKS[eventType as EventType]) return PLAYBOOKS[eventType as EventType];
+  // Alias fallback
+  const aliased = EVENT_TYPE_ALIAS[eventType];
+  return aliased ? PLAYBOOKS[aliased] : undefined;
 }
