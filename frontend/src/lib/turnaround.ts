@@ -8,11 +8,11 @@
 //     not red flag, when paired with recovery)
 //   - Stage classifier determines BUY-ZONE vs HOLD vs EXIT
 //
-// 7 Dimensions (total 100 points):
-//   1. Earnings Trajectory Reversal     (25 pts) — PAT/Revenue/EPS inflection
-//   2. Operational Reset                (15 pts) — OPM expansion, ROCE turn, op-leverage
+// 7 Dimensions (total 100 points) — PATCH 0380 rebalanced for playbook:
+//   1. Earnings Trajectory Reversal     (20 pts) — PAT/Revenue/EPS inflection
+//   2. Operational Reset                (10 pts) — OPM expansion, ROCE turn, op-leverage
 //   3. Balance Sheet Repair             (15 pts) — D/E trend, interest coverage, debt reduction
-//   4. Concall/Guidance Quality         (15 pts) — paste-text auto-parse (KEY signal)
+//   4. Concall/Guidance Quality         (25 pts) — paste-text NLP (PRIMARY per playbook)
 //   5. Industry Tailwind                (10 pts) — sector momentum proxy
 //   6. Management/Governance            (10 pts) — promoter buying, pledge reduction
 //   7. Valuation Rerating Setup         (10 pts) — PE vs 5y median, EV/EBITDA vs sector
@@ -106,11 +106,11 @@ export type TurnaroundArchetype =
   | 'NEUTRAL';         // ❓ No strong thesis either way
 
 export interface TurnaroundResult extends TurnaroundRow {
-  // Dimension scores (raw)
-  earningsScore: number;       // 0-25
-  operationalScore: number;    // 0-15
+  // Dimension scores (raw) — PATCH 0380 rebalanced for playbook
+  earningsScore: number;       // 0-20 (was 25)
+  operationalScore: number;    // 0-10 (was 15)
   balanceSheetScore: number;   // 0-15
-  concallScore: number;        // 0-15
+  concallScore: number;        // 0-25 (PATCH 0380 — primary signal per playbook)
   industryScore: number;       // 0-10
   governanceScore: number;     // 0-10
   valuationScore: number;      // 0-10
@@ -135,7 +135,7 @@ export interface TurnaroundResult extends TurnaroundRow {
   missingFields: string[];     // PATCH 0374 — what's missing from this row's data
 }
 
-// ─── CONCALL PHRASE LEXICON (15 pts max) ─────────────────────────────────────
+// ─── CONCALL PHRASE LEXICON (25 pts max — PATCH 0380, playbook primary signal) ──
 // Positive institutional phrases that signal real turnaround narrative.
 const CONCALL_POSITIVE: Array<{ pattern: RegExp; weight: number; label: string }> = [
   // Operational recovery
@@ -245,7 +245,8 @@ function scoreEarningsTrajectory(row: TurnaroundRow, signals: string[]): number 
     signals.push(`Annual PAT positive after recent loss year(s)`);
   }
 
-  return Math.min(25, Math.max(0, s));
+  // PATCH 0380 — Rescaled from 25 → 20 to make room for Concall 15 → 25
+  return Math.min(20, Math.max(0, s * (20 / 25)));
 }
 
 function scoreOperationalReset(row: TurnaroundRow, signals: string[]): number {
@@ -309,7 +310,8 @@ function scoreOperationalReset(row: TurnaroundRow, signals: string[]): number {
     else if (leverage >= 10) s += 1;
   }
 
-  return Math.min(15, Math.max(0, s));
+  // PATCH 0380 — Rescaled 15 → 10 to make room for Concall 15 → 25
+  return Math.min(10, Math.max(0, s * (10 / 15)));
 }
 
 function scoreBalanceSheetRepair(row: TurnaroundRow, signals: string[]): number {
@@ -376,14 +378,18 @@ function scoreConcallNarrative(row: TurnaroundRow, signals: string[], phrasesOut
       phrasesOut.push(`⚠ ${label}`);
     }
   }
-  // Cap raw at ~15 with diminishing returns: above 8, log-compress
+  // PATCH 0380 — Concall dimension reweighted from 15 → 25 max.
+  // Per Turnaround_Investor_Master_Playbook: "Institutional turnaround
+  // investing is heavily narrative-driven. This dimension should be 25-30%
+  // of total score." So concall now carries the dominant signal weight.
+  // Diminishing returns from 12 upward (log-compress).
   let pts: number;
-  if (raw <= 8) pts = raw;
-  else pts = 8 + Math.log2(raw - 7) * 2;
-  pts = Math.max(0, Math.min(15, pts));
+  if (raw <= 12) pts = raw * (25 / 15);  // scale to /25
+  else pts = 20 + Math.log2(raw - 11) * 2;
+  pts = Math.max(0, Math.min(25, pts));
 
-  if (pts >= 8) signals.push(`Strong concall narrative (${phrasesOut.length} institutional phrases)`);
-  else if (pts >= 4) signals.push(`Moderate concall narrative (${phrasesOut.length} phrases)`);
+  if (pts >= 15) signals.push(`Strong concall narrative (${phrasesOut.length} institutional phrases) — playbook PRIMARY signal`);
+  else if (pts >= 7) signals.push(`Moderate concall narrative (${phrasesOut.length} phrases)`);
 
   return pts;
 }
@@ -556,22 +562,28 @@ function classifyStage(row: TurnaroundRow): { stage: TurnaroundStage; color: str
 // quality compounders, value traps, declining businesses) vs real
 // turnaround candidates.
 function classifyArchetype(row: TurnaroundRow): { archetype: TurnaroundArchetype; label: string; note: string; color: string } {
-  // PATCH 0377 — Rewritten classifier. The previous version had gates that
-  // required revenueGrowth3y / patGrowth3y, which are frequently null in
-  // Screener exports. The result was that 67 of 87 rows fell through to
-  // NEUTRAL, zero rows hit GROWTH/QUALITY/TURNAROUND. This rewrite uses
-  // pragmatic fallbacks across quarterly / annual / multi-year fields so a
-  // row with ANY usable data lands in a sensible bucket.
+  // PATCH 0380 — Rebuild per Turnaround_Investor_Master_Playbook.docx.
+  // The previous classifier (Patches 0377-0379) was over-classifying
+  // "cheap + weak + cyclical" as TURNAROUND. Per the playbook, a real
+  // turnaround requires FIVE things simultaneously:
+  //   1. Prior damage (loss yrs, ROCE collapse, debt stress, etc.)
+  //   2. Evidence the damage is reversing (PAT inflection, OPM expansion)
+  //   3. Management capability (Form 4 buying, credible plan)
+  //   4. Balance sheet survival (debt manageable, runway >12mo)
+  //   5. Scalable earnings engine post-recovery
+  // Our static-data engine can score #1, #2, #4 properly. We mark #3 and
+  // #5 as data-pending and lower confidence accordingly.
+  // The classifier now applies HARD PRE-SCREENING (operator pumps, recent
+  // IPOs, secular decline) BEFORE looking at the archetype gates.
+
   const patQ1 = row.patQ1;
   const patY1 = row.patY1;
+  const patY2 = row.patY2;
   const pe = row.pe ?? null;
-  // PATCH 0378 — PE > 0 is itself proof of positive earnings (Screener
-  // leaves PE blank for loss-makers). So treat positive PE as a fallback
-  // for positiveLatestPAT when patQ1/patY1 columns are missing.
   const positiveLatestPAT = (patQ1 != null && patQ1 > 0) || (patY1 != null && patY1 > 0) || (pe != null && pe > 0);
   const negLatestPAT = (patQ1 != null && patQ1 < 0) ||
                        (patQ1 == null && patY1 != null && patY1 < 0) ||
-                       (patQ1 == null && patY1 == null && pe == null);  // no PE = likely loss-maker
+                       (patQ1 == null && patY1 == null && pe == null);
   const lossYears = row.lossMakingYears5y ?? 0;
   const roce = row.roce ?? null;
   const roce3y = row.roce3yBack ?? null;
@@ -580,74 +592,120 @@ function classifyArchetype(row: TurnaroundRow): { archetype: TurnaroundArchetype
   const revG1y = row.revenueGrowth1y ?? null;
   const patG1y = row.patGrowth1y ?? null;
   const de = row.de ?? null;
+  const promoter = row.promoterHolding ?? null;
+  const mcapCr = row.marketCapCr ?? null;
   const opmYoYQ = (row.opmQ1 != null && row.opmQ2 != null) ? row.opmQ1 - row.opmQ2 : null;
   const debtReduction3y = (row.debtCurr != null && row.debt3yBack != null && row.debt3yBack > 0)
     ? (row.debt3yBack - row.debtCurr) / row.debt3yBack : null;
-
-  // Quarterly YoY PAT change — derived from patQ1Yoy if present
   const patQQYoY = (row.patQ1 != null && row.patQ1Yoy != null && row.patQ1Yoy !== 0)
     ? (row.patQ1 - row.patQ1Yoy) / Math.abs(row.patQ1Yoy) * 100 : null;
-  const salesQQYoY = (row.salesQ1 != null && row.salesQ1Yoy != null && row.salesQ1Yoy !== 0)
-    ? (row.salesQ1 - row.salesQ1Yoy) / Math.abs(row.salesQ1Yoy) * 100 : null;
 
-  // 🔄 TURNAROUND CANDIDATE — fire FIRST so the tab's primary archetype
-  // gets priority. Multiple distress + recovery combos qualify.
-  const recoverySignals: string[] = [];
-  if (opmYoYQ != null && opmYoYQ >= 3) recoverySignals.push(`OPM +${opmYoYQ.toFixed(1)}pp Q/Q`);
-  if (patQ1 != null && patQ1 > 0 && row.patQ2 != null && row.patQ2 <= 0) recoverySignals.push('Qtr PAT turned positive');
-  if (patY1 != null && patY1 > 0 && row.patY2 != null && row.patY2 <= 0) recoverySignals.push('Annual PAT turned positive');
-  if (debtReduction3y != null && debtReduction3y >= 0.15) recoverySignals.push(`Debt -${(debtReduction3y*100).toFixed(0)}% 3y`);
-  if (roce != null && roce3y != null && (roce - roce3y) >= 5) recoverySignals.push(`ROCE +${(roce - roce3y).toFixed(0)}pp 3y`);
-  if (patG3y != null && patG3y >= 40 && positiveLatestPAT) recoverySignals.push(`PAT 3y +${patG3y.toFixed(0)}%`);
-  if (patQQYoY != null && patQQYoY >= 50 && positiveLatestPAT) recoverySignals.push(`Qtr PAT YoY +${patQQYoY.toFixed(0)}%`);
+  // ───────────────────────────────────────────────────────────────────────
+  // STEP 1: HARD PRE-SCREENING (playbook PART VIII: Pre-Screening Filter)
+  // These disqualify before any archetype gate. Per playbook:
+  //   "These eliminate 80% of bad candidates."
+  // ───────────────────────────────────────────────────────────────────────
 
-  const distressContext: string[] = [];
-  if (lossYears >= 1) distressContext.push(`${lossYears}/5 loss yrs`);
-  if (negLatestPAT) distressContext.push('neg PAT recent');
-  if (roce != null && roce < 10) distressContext.push(`low ROCE ${roce.toFixed(0)}%`);
-  if (roce3y != null && roce3y < 8) distressContext.push(`weak hist ROCE ${roce3y.toFixed(0)}%`);
-  if (row.patQ4 != null && row.patQ4 < 0) distressContext.push('neg PAT 4Q ago');
-  if (row.patY2 != null && row.patY2 < 0) distressContext.push('neg PAT prev yr');
-  if (debtReduction3y != null && debtReduction3y >= 0.15) distressContext.push('was-heavy debt');
+  // OPERATOR PUMP — microcap + low promoter + zero institutional accountability
+  // Per playbook killers #6 (Platform irrelevance) + general microcap risk
+  const isOperatorPump = (
+    mcapCr != null && mcapCr < 500 &&
+    promoter != null && promoter < 30 &&
+    (row.promoterPledgePct == null || row.promoterPledgePct === 0)  // not even pledge data
+  );
+  if (isOperatorPump) {
+    return {
+      archetype: 'VALUE-TRAP',
+      label: '🧊 OPERATOR PUMP',
+      note: `Microcap ${mcapCr?.toFixed(0)}Cr + promoter ${promoter?.toFixed(0)}% — operator-driven, no institutional accountability. NOT a turnaround (playbook Killer #6).`,
+      color: '#EF4444',
+    };
+  }
 
-  if (recoverySignals.length >= 1 && distressContext.length >= 1) {
+  // RECENT IPO NORMALIZATION — high PE on a small-cap with low ROCE
+  // = post-listing valuation reset, not a turnaround. Per user feedback:
+  // "Yatharth, Entero, Blackbuck are not turnarounds, they are post-listing
+  //  growth normalization phases."
+  const isLikelyRecentIPO = (
+    pe != null && pe >= 30 &&
+    roce != null && roce < 18 &&
+    mcapCr != null && mcapCr < 5000 &&
+    lossYears === 0
+  );
+  if (isLikelyRecentIPO) {
+    return {
+      archetype: 'NEUTRAL',
+      label: '🆕 RECENT IPO',
+      note: `Likely post-IPO normalization — PE ${pe?.toFixed(0)} + ROCE ${roce?.toFixed(0)}% + mcap ${mcapCr?.toFixed(0)}Cr. Valuation reset, not a turnaround (playbook: false signal).`,
+      color: '#A78BFA',
+    };
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // STEP 2: PRIOR DAMAGE EVIDENCE (playbook Ch.4 — turnaround prerequisite)
+  // Per playbook: "A turnaround MUST show at least one of: 3-year profit
+  // collapse >50%, negative PAT phase, ROCE collapse, debt stress, margin
+  // collapse, market share loss, restructuring, dilution, plant shutdown,
+  // insolvency risk, sector downturn."
+  // ───────────────────────────────────────────────────────────────────────
+  const priorDamage: string[] = [];
+  if (lossYears >= 1) priorDamage.push(`${lossYears}/5 loss yrs`);
+  if (negLatestPAT) priorDamage.push('current losses');
+  if (patY2 != null && patY2 < 0) priorDamage.push('neg PAT prev yr');
+  if (row.patY3 != null && row.patY3 < 0) priorDamage.push('neg PAT 3yr ago');
+  if (roce != null && roce3y != null && roce3y < 5 && roce - roce3y >= 5) priorDamage.push(`ROCE rose from ${roce3y.toFixed(0)}% (collapse history)`);
+  if (patG3y != null && patG3y < -30) priorDamage.push(`PAT 3y collapsed ${patG3y.toFixed(0)}%`);
+  if (row.workingCapitalDays3yBack != null && row.workingCapitalDays3yBack > 90) priorDamage.push('WC stretch history');
+  if (row.perf1y != null && row.perf1y < -30) priorDamage.push(`1y price ${row.perf1y.toFixed(0)}% (capitulation)`);
+  if (row.promoterPledgePct != null && row.promoterPledgePct >= 5) priorDamage.push(`pledge ${row.promoterPledgePct.toFixed(0)}%`);
+  if (row.interestCoverage3yBack != null && row.interestCoverage3yBack < 2) priorDamage.push('hist int-coverage stress');
+
+  // ───────────────────────────────────────────────────────────────────────
+  // STEP 3: RECOVERY PROOF (playbook Ch.5 Factor 2 — Earnings Inflection)
+  // Per playbook: "Recovery requires at least 3 of: EBITDA margin improving
+  // 3 quarters, CFO positive, debt falling, interest coverage improving,
+  // promoter buying, utilization improving, guidance upgraded, order book
+  // improving, export recovery, operating leverage visible."
+  // ───────────────────────────────────────────────────────────────────────
+  const recoveryProof: string[] = [];
+  if (opmYoYQ != null && opmYoYQ >= 3) recoveryProof.push(`OPM +${opmYoYQ.toFixed(1)}pp Q/Q`);
+  if (patQ1 != null && patQ1 > 0 && row.patQ2 != null && row.patQ2 <= 0) recoveryProof.push('Qtr PAT inflected positive');
+  if (patY1 != null && patY1 > 0 && patY2 != null && patY2 <= 0) recoveryProof.push('Annual PAT inflected positive');
+  if (debtReduction3y != null && debtReduction3y >= 0.15) recoveryProof.push(`Debt -${(debtReduction3y*100).toFixed(0)}% 3y`);
+  if (roce != null && roce3y != null && roce - roce3y >= 5 && roce >= 8) recoveryProof.push(`ROCE +${(roce - roce3y).toFixed(0)}pp 3y`);
+  if (patG3y != null && patG3y >= 30 && positiveLatestPAT) recoveryProof.push(`PAT 3y +${patG3y.toFixed(0)}%`);
+  if (patQQYoY != null && patQQYoY >= 50 && positiveLatestPAT) recoveryProof.push(`Qtr PAT YoY +${patQQYoY.toFixed(0)}%`);
+  if (row.interestCoverage != null && row.interestCoverage3yBack != null &&
+      row.interestCoverage > row.interestCoverage3yBack * 1.5 && row.interestCoverage >= 2) {
+    recoveryProof.push('Int coverage improving');
+  }
+  if (row.workingCapitalDays != null && row.workingCapitalDays3yBack != null &&
+      row.workingCapitalDays < row.workingCapitalDays3yBack - 15) {
+    recoveryProof.push('WC days improving');
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // STEP 4: TURNAROUND — STRICT GATE per playbook
+  // Requires BOTH prior damage AND ≥2 recovery proof signals.
+  // Per playbook: "Your engine is failing because it is detecting 'distress'
+  // but not 'restoration capability.' A turnaround requires 5 things
+  // simultaneously."
+  // ───────────────────────────────────────────────────────────────────────
+  if (priorDamage.length >= 1 && recoveryProof.length >= 2) {
     return {
       archetype: 'TURNAROUND',
       label: '🔄 TURNAROUND',
-      note: `Real turnaround — distress (${distressContext.slice(0, 2).join(', ')}) + recovery (${recoverySignals.slice(0, 2).join(', ')}).`,
+      note: `Real turnaround — prior damage (${priorDamage.slice(0, 2).join(', ')}) + recovery proof ≥2 (${recoveryProof.slice(0, 3).join(', ')}).`,
       color: '#F59E0B',
     };
   }
 
-  // PATCH 0379 — 🔄 TURNAROUND EMERGING — data-poor detection.
-  // When the CSV doesn't have historical/quarterly trend columns
-  // (patY2, debt3yBack, opmQ2, Qtr Profit Var %) we can't prove
-  // recovery from prior-period inflection. Fall back to "ROCE in
-  // 3-15% zone + positive earnings" as a proxy for "company has
-  // emerged from losses but hasn't reached quality tier yet".
-  // This is the exact pattern in the user's
-  // Turnaround_Investor_Master_Playbook.docx — buy before market
-  // re-rates from "distressed" to "quality compounder".
-  // Excludes ultra-high PE (>60) which signals either narrative
-  // froth or near-zero earnings denominator.
-  if (
-    positiveLatestPAT &&
-    roce != null && roce >= 3 && roce < 15 &&
-    lossYears <= 1 &&
-    (pe == null || pe < 60)
-  ) {
-    return {
-      archetype: 'TURNAROUND',
-      label: '🔄 TURNAROUND',
-      note: `Emerging recovery — ROCE ${roce.toFixed(0)}% (3-15% zone, not yet quality), positive earnings. Likely emerged from distress; needs concall/news to confirm trajectory. Add prior-quarter PAT + debt columns from Screener for stronger classification.`,
-      color: '#F59E0B',
-    };
-  }
+  // ───────────────────────────────────────────────────────────────────────
+  // STEP 5: NON-TURNAROUND ARCHETYPES
+  // ───────────────────────────────────────────────────────────────────────
 
-  // 💎 QUALITY COMPOUNDER — high sustained ROCE, no distress.
-  // NO growth gate (a quality compounder may grow at 8-15%; that's fine).
-  // Treat null lossYears as 0 (Screener often omits the column).
-  if (positiveLatestPAT && lossYears === 0 && (roce ?? 0) >= 18 && (de ?? 0) <= 1.5) {
+  // 💎 QUALITY COMPOUNDER — high ROCE 18+, no damage
+  if (positiveLatestPAT && lossYears === 0 && (roce ?? 0) >= 18 && (de ?? 0) <= 1.5 && priorDamage.length === 0) {
     const growthHint = revG3y != null
       ? ` (rev 3y +${revG3y.toFixed(0)}%)`
       : revG1y != null
@@ -656,65 +714,75 @@ function classifyArchetype(row: TurnaroundRow): { archetype: TurnaroundArchetype
     return {
       archetype: 'QUALITY',
       label: '💎 QUALITY',
-      note: `Established compounder — ROCE ${roce?.toFixed(0)}%${growthHint}, no loss years. Not in distress, not a turnaround setup.`,
+      note: `Established compounder — ROCE ${roce?.toFixed(0)}%${growthHint}, no damage history. Not a turnaround setup.`,
       color: '#22D3EE',
     };
   }
 
-  // 🚀 GROWTH STOCK — strong growth signal on ANY horizon + decent ROCE.
-  // Permissive: accepts 3y, 1y, or quarterly YoY growth as the signal.
+  // 🚀 GROWTH STOCK — strong growth + decent ROCE, no damage
   const strongGrowth = (
     (revG3y != null && revG3y >= 25) ||
     (patG3y != null && patG3y >= 25) ||
-    (revG1y != null && revG1y >= 25 && patG1y != null && patG1y >= 25) ||
-    (salesQQYoY != null && salesQQYoY >= 30 && patQQYoY != null && patQQYoY >= 30)
+    (revG1y != null && revG1y >= 25 && patG1y != null && patG1y >= 25)
   );
-  if (positiveLatestPAT && lossYears === 0 && (roce ?? 0) >= 15 && strongGrowth) {
+  if (positiveLatestPAT && lossYears === 0 && (roce ?? 0) >= 15 && strongGrowth && priorDamage.length === 0) {
     const bestGrowth = patG3y ?? patG1y ?? patQQYoY ?? 0;
     return {
       archetype: 'GROWTH',
       label: '🚀 GROWTH',
-      note: `Growth stock — PAT +${bestGrowth.toFixed(0)}%, ROCE ${roce?.toFixed(0)}%. Not a turnaround. Use the India Multibagger tab instead.`,
+      note: `Growth stock — PAT +${bestGrowth.toFixed(0)}%, ROCE ${roce?.toFixed(0)}%. Not a turnaround. Use India Multibagger tab.`,
       color: '#10B981',
     };
   }
 
-  // 🧊 VALUE TRAP RISK — deep distress, no recovery, high debt
+  // ❓ MID-QUALITY / CYCLICAL — ROCE 10-18 + positive PAT + no damage history.
+  // Per user feedback: "Sansera, Muthootfin, Aegislog, Navnet, Hatsun are NOT
+  // turnarounds — they're mid-quality stable businesses or cyclicals at
+  // mid-cycle. Engine should not call them turnarounds."
+  if (positiveLatestPAT && (roce ?? 0) >= 10 && (roce ?? 0) < 18 && lossYears === 0 && priorDamage.length === 0) {
+    return {
+      archetype: 'NEUTRAL',
+      label: '❓ MID-QUALITY',
+      note: `Mid-quality business — ROCE ${roce?.toFixed(0)}% (decent, not elite), no damage history. Cyclical or stable mid-cap. NOT a turnaround setup.`,
+      color: '#6B7A8D',
+    };
+  }
+
+  // 🧊 VALUE TRAP — distressed without recovery proof
   if ((lossYears >= 3 || (roce != null && roce < 0)) && negLatestPAT && (de ?? 0) > 1.5) {
     return {
       archetype: 'VALUE-TRAP',
       label: '🧊 VALUE TRAP',
-      note: `Deep distress: ${lossYears}/5 loss years, D/E ${de?.toFixed(1)}, ROCE ${roce?.toFixed(0) ?? '—'}%. No clear recovery signal — capital trap risk.`,
+      note: `Deep distress: ${lossYears}/5 loss yrs, D/E ${de?.toFixed(1)}, ROCE ${roce?.toFixed(0) ?? '—'}%. No recovery proof — capital trap risk (playbook Killer #1/#3).`,
       color: '#EF4444',
     };
   }
 
-  // 📉 DECLINING — top-line + bottom-line both falling
+  // 📉 DECLINING — both top + bottom line falling
   if ((revG1y ?? 0) < -5 && (patG1y ?? 0) < -10) {
     return {
       archetype: 'DECLINING',
       label: '📉 DECLINING',
-      note: `Revenue ${revG1y?.toFixed(0)}% YoY, profit ${patG1y?.toFixed(0)}% — accelerating decline, not turnaround material.`,
+      note: `Revenue ${revG1y?.toFixed(0)}% YoY, PAT ${patG1y?.toFixed(0)}% YoY — accelerating decline, not turnaround material. Could be secular (playbook Killer #2).`,
       color: '#EF4444',
     };
   }
 
-  // ⏸ WAIT — distress visible but no signal yet
-  if (distressContext.length >= 1) {
+  // ⏸ WAIT — damage visible but no recovery proof yet (PHASE 1/2 per playbook)
+  if (priorDamage.length >= 1) {
     return {
       archetype: 'WAIT',
       label: '⏸ WAIT',
-      note: `Distress visible (${distressContext.slice(0, 2).join(', ')}) but no recovery signal yet — watch quarterly OPM +3pp or PAT turning positive.`,
+      note: `Damaged (${priorDamage.slice(0, 2).join(', ')}) but no recovery proof yet. Phase 1/2 per playbook — build watchlist, don't buy. Watch for OPM Q/Q +3pp, PAT inflection, debt falling.`,
       color: '#94A3B8',
     };
   }
 
-  // ❓ NEUTRAL — last resort: nothing distressed, nothing strong-growth,
-  // not quality either (likely middling row or insufficient data coverage).
+  // ❓ NEUTRAL — nothing fires
   return {
     archetype: 'NEUTRAL',
     label: '❓ NEUTRAL',
-    note: `Insufficient signal — PAT ${patQ1?.toFixed(0) ?? patY1?.toFixed(0) ?? '—'} Cr, ROCE ${roce?.toFixed(0) ?? '—'}%, rev 1y ${revG1y?.toFixed(0) ?? '—'}%. Check that your CSV includes quarterly + 3y growth columns.`,
+    note: `Insufficient signal — ROCE ${roce?.toFixed(0) ?? '—'}%, PE ${pe?.toFixed(0) ?? '—'}, rev 1y ${revG1y?.toFixed(0) ?? '—'}%. Could be cyclical mid-cycle or data-poor row. Not a turnaround.`,
     color: '#6B7A8D',
   };
 }
