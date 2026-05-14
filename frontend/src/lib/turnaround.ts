@@ -50,6 +50,9 @@ export interface TurnaroundRow {
   salesY1?: number; salesY2?: number; salesY3?: number; salesY4?: number; salesY5?: number;
   patY1?: number; patY2?: number; patY3?: number; patY4?: number; patY5?: number;
   opmY1?: number; opmY2?: number; opmY3?: number; opmY4?: number; opmY5?: number;
+  // PATCH 0373 — 5-year median OPM (Screener's "5Yr OPM %") used as
+  // baseline for current OPM expansion signal.
+  opm5yMedian?: number;
   // Annualised metrics
   revenueGrowth1y?: number;     // most recent FY revenue growth
   revenueGrowth3y?: number;     // 3y CAGR
@@ -237,14 +240,34 @@ function scoreOperationalReset(row: TurnaroundRow, signals: string[]): number {
     else if (opmYoY <= -2) s -= 2;
   }
 
-  // Sequential OPM improvement
-  if (row.opmQ1 != null && row.opmQ2 != null && row.opmQ3 != null) {
-    if (row.opmQ1 > row.opmQ2 && row.opmQ2 > row.opmQ3) {
-      s += 3;
-      signals.push(`OPM trending up: ${row.opmQ3.toFixed(0)}% → ${row.opmQ2.toFixed(0)}% → ${row.opmQ1.toFixed(0)}%`);
-    } else if (row.opmQ1 > row.opmQ2) {
+  // PATCH 0373 — Sequential OPM improvement using Q-1 vs Q-2 (works without Q-3).
+  // Three-quarter sustained trend = extra bonus when Q-3 also available.
+  if (row.opmQ1 != null && row.opmQ2 != null) {
+    const delta = row.opmQ1 - row.opmQ2;
+    if (delta >= 4)      { s += 3; signals.push(`OPM sequential up: ${row.opmQ2.toFixed(0)}% → ${row.opmQ1.toFixed(0)}% (+${delta.toFixed(1)}pp Q/Q)`); }
+    else if (delta >= 2) { s += 2; signals.push(`OPM Q/Q +${delta.toFixed(1)}pp`); }
+    else if (delta >= 0.5) s += 1;
+    else if (delta <= -3) s -= 2;
+    // Bonus for sustained 3-quarter trend if Q-3 available
+    if (row.opmQ3 != null && row.opmQ1 > row.opmQ2 && row.opmQ2 > row.opmQ3) {
       s += 1;
     }
+  }
+
+  // PATCH 0373 — Annual OPM expansion vs 5-year baseline. Tells us whether
+  // current OPM is at a structurally NEW high vs distress-era median.
+  // Strong signal when OPM Ann > OPM Prev Ann > 5Y median.
+  if (row.opmY1 != null && row.opm5yMedian != null) {
+    const above5y = row.opmY1 - row.opm5yMedian;
+    if (above5y >= 5)      { s += 3; signals.push(`Annual OPM ${row.opmY1.toFixed(0)}% is ${above5y.toFixed(1)}pp ABOVE 5y median ${row.opm5yMedian.toFixed(0)}% — structural margin shift`); }
+    else if (above5y >= 2) { s += 2; signals.push(`Annual OPM expanding from 5y baseline (+${above5y.toFixed(1)}pp)`); }
+    else if (above5y <= -3) s -= 1;
+  }
+  if (row.opmY1 != null && row.opmY2 != null) {
+    const yoyDelta = row.opmY1 - row.opmY2;
+    if (yoyDelta >= 3)      s += 2;  // already may have captured via quarterly path, soft cap below
+    else if (yoyDelta >= 1) s += 1;
+    else if (yoyDelta <= -2) s -= 1;
   }
 
   // ROCE inflection — 3yr improvement
@@ -585,7 +608,8 @@ export function parseTurnaroundRow(row: Record<string, unknown>): TurnaroundRow 
     cmp: num(row['CMP Rs.'] || row['CMP'] || row['Current Price'] || row['Price']),
     marketCapCr: num(row['Mar Cap Rs.Cr.'] || row['Market Capitalization'] || row['Market Cap'] || row['Mar Cap']),
     pe: num(row['P/E'] || row['Price to Earning'] || row['PE']),
-    pe5yMedian: num(row['PE 5Yrs Median'] || row['Median PE 5Y'] || row['PE 5Y median']),
+    // PATCH 0373 — actual Screener field name
+    pe5yMedian: num(row['5Yrs PE'] || row['PE 5Yrs Median'] || row['Median PE 5Y']),
     evEbitda: num(row['EV / EBITDA'] || row['EV/EBITDA']),
     evEbitdaSectorMedian: num(row['Sector EV/EBITDA'] || row['Sector median EV/EBITDA'] || row['Ind PE']),
 
@@ -602,9 +626,9 @@ export function parseTurnaroundRow(row: Record<string, unknown>): TurnaroundRow 
     opProfitQ2: num(row['OpProfit Prev Qtr Rs.Cr.']),
     opProfitQ3: num(row['OpProfit 2Qtr Bk Rs.Cr.']),
     opProfitQ4: num(row['OpProfit 3Qtr Bk Rs.Cr.']),
-    // OPM — Screener exposes ONLY current quarter ('OPM Qtr %') and annual.
-    // Sequential OPM trend signal therefore degrades to 0 unless you add
-    // OPM Prev Qtr / OPM 2Qtr Bk / OPM 3Qtr Bk if Screener ever exposes them.
+    // PATCH 0373 — Screener exposes OPM Qtr % and OPM Prev Qtr %.
+    // Sequential OPM trend now scores using just Q-1 + Q-2 (no longer
+    // requiring Q-3 / Q-4).
     opmQ1: num(row['OPM Qtr %'] || row['OPM Qtr'] || row['OPM latest quarter'] || row['OPM Q-1']),
     opmQ2: num(row['OPM Prev Qtr %'] || row['OPM Prev Qtr']),
     opmQ3: num(row['OPM 2Qtr Bk %'] || row['OPM 2Qtr Bk']),
@@ -648,9 +672,11 @@ export function parseTurnaroundRow(row: Record<string, unknown>): TurnaroundRow 
     patY3: num(row['PAT 3 year back'] || row['PAT Y-3']),
     patY4: num(row['PAT 4 year back'] || row['PAT Y-4']),
     patY5: num(row['PAT 5 year back'] || row['PAT Y-5']),
-    opmY1: num(row['OPM last year'] || row['OPM Y-1']),
-    opmY2: num(row['OPM 2 year back'] || row['OPM Y-2']),
+    // PATCH 0373 — actual Screener fields
+    opmY1: num(row['OPM Ann %'] || row['OPM last year'] || row['OPM Y-1']),
+    opmY2: num(row['OPM Prev Ann %'] || row['OPM 2 year back'] || row['OPM Y-2']),
     opmY3: num(row['OPM 3 year back'] || row['OPM Y-3']),
+    opm5yMedian: num(row['5Yr OPM %'] || row['OPM 5Y median'] || row['5Yrs OPM %']),
 
     // PATCH 0372 — match real Screener column names ('Sales growth %',
     // 'Profit growth %', 'Sales Var 3Yrs %', 'Profit Var 3Yrs %', etc.)
@@ -663,8 +689,9 @@ export function parseTurnaroundRow(row: Record<string, unknown>): TurnaroundRow 
     lossMakingYears5y: num(row['Loss making years'] || row['Loss years 5Y']),
 
     debtCurr: num(row['Debt Rs.Cr.'] || row['Debt'] || row['Total Debt']),
-    debt3yBack: num(row['Debt 3 year back'] || row['Debt 3Yr back'] || row['Debt 3Y back']),
-    debt5yBack: num(row['Debt 5 year back'] || row['Debt 5Y back']),
+    // PATCH 0373 — actual Screener field name
+    debt3yBack: num(row['Debt 3Yrs Rs.Cr.'] || row['Debt 3 year back'] || row['Debt 3Yr back']),
+    debt5yBack: num(row['Debt 5Yrs Rs.Cr.'] || row['Debt 5 year back'] || row['Debt 5Y back']),
     de: num(row['Debt / Eq'] || row['Debt to equity'] || row['D/E']),
     interestCoverage: num(row['Int Coverage'] || row['Interest Coverage Ratio'] || row['Interest coverage']),
     interestCoverage3yBack: num(row['Int Coverage 3yrs back'] || row['Interest coverage 3Y back']),
