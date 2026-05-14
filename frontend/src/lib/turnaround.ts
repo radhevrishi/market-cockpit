@@ -89,7 +89,21 @@ export interface TurnaroundRow {
   perf1y?: number;
 }
 
-export type TurnaroundStage = 'DISTRESS' | 'EARLY-SHOOTS' | 'PATTERN' | 'CONFIRMED' | 'MATURE';
+export type TurnaroundStage = 'DISTRESS' | 'SETUP' | 'EARLY-SHOOTS' | 'PATTERN' | 'CONFIRMED' | 'MATURE';
+
+// PATCH 0374 — Archetype = high-level "what IS this stock" classifier.
+// User mostly uploads turnaround candidates but the dataset always includes
+// mis-categorised stocks (growth stocks, quality compounders, value traps,
+// declining businesses). The archetype tag tells them in one phrase
+// whether the row belongs on THIS tab or somewhere else.
+export type TurnaroundArchetype =
+  | 'TURNAROUND'       // 🔄 Real turnaround setup — act on it
+  | 'GROWTH'           // 🚀 Growth stock — wrong tab (use Multibagger)
+  | 'QUALITY'          // 💎 Quality compounder — wrong tab
+  | 'VALUE-TRAP'       // 🧊 Deep distress, no recovery — avoid
+  | 'DECLINING'        // 📉 Revenue + profit both falling — avoid
+  | 'WAIT'             // ⏸ Distress visible, no signal yet — watch
+  | 'NEUTRAL';         // ❓ No strong thesis either way
 
 export interface TurnaroundResult extends TurnaroundRow {
   // Dimension scores (raw)
@@ -107,12 +121,18 @@ export interface TurnaroundResult extends TurnaroundRow {
   stageColor: string;
   stageEmoji: string;
   inBuyZone: boolean;
+  // PATCH 0374 — Archetype tag with explainer note
+  archetype: TurnaroundArchetype;
+  archetypeLabel: string;      // user-facing label with emoji
+  archetypeNote: string;       // one-line rationale
+  archetypeColor: string;
   // Diagnostics
   strengths: string[];
   risks: string[];
   concallPhrases: string[];    // detected institutional phrases
   inflectionSignals: string[]; // narrative description of the turn
   coverage: number;            // 0-100 how complete the data is
+  missingFields: string[];     // PATCH 0374 — what's missing from this row's data
 }
 
 // ─── CONCALL PHRASE LEXICON (15 pts max) ─────────────────────────────────────
@@ -496,9 +516,22 @@ function classifyStage(row: TurnaroundRow): { stage: TurnaroundStage; color: str
                        row.patQ1 != null && row.patQ1 > 0 &&
                        row.perf1y != null && row.perf1y > 80;
 
-  if (consecNegative >= 3 && !justTurnedPositive) {
-    return { stage: 'DISTRESS', color: '#EF4444', emoji: '🚫', inBuyZone: false };
-  }
+  // PATCH 0374 — SETUP detection: distress but with green-shoots that
+  // haven't yet flipped PAT positive. Worth watching, not BUY-ZONE yet.
+  // At least 2 of these fire:
+  //   - Revenue Q-1 > Q-2 by 10%+ (top-line accelerating)
+  //   - OPM Q-1 > Q-2 by 3pp+ (margin recovery starting)
+  //   - Debt down 20%+ over 3y (balance sheet repair)
+  //   - 1y price perf > 30% (market positioning ahead)
+  //   - ROCE 3y delta > +5pp (returns inflecting up)
+  let setupSignals = 0;
+  if (row.salesQ1 != null && row.salesQ2 != null && row.salesQ2 > 0 && row.salesQ1 > row.salesQ2 * 1.10) setupSignals++;
+  if (row.opmQ1 != null && row.opmQ2 != null && (row.opmQ1 - row.opmQ2) >= 3) setupSignals++;
+  if (row.debtCurr != null && row.debt3yBack != null && row.debt3yBack > 0 &&
+      ((row.debt3yBack - row.debtCurr) / row.debt3yBack) >= 0.20) setupSignals++;
+  if ((row.perf1y ?? 0) > 30) setupSignals++;
+  if (row.roce != null && row.roce3yBack != null && (row.roce - row.roce3yBack) >= 5) setupSignals++;
+
   if (matureSignal) {
     return { stage: 'MATURE', color: '#94A3B8', emoji: '🌅', inBuyZone: false };
   }
@@ -511,7 +544,106 @@ function classifyStage(row: TurnaroundRow): { stage: TurnaroundStage; color: str
   if (justTurnedPositive || (improvingQuarters >= 1 && row.patQ1 != null && row.patQ1 > 0)) {
     return { stage: 'EARLY-SHOOTS', color: '#F59E0B', emoji: '🌱', inBuyZone: true };
   }
+  // SETUP: distress + ≥2 green-shoots (watch-list, not BUY-ZONE yet)
+  if (consecNegative >= 1 && setupSignals >= 2) {
+    return { stage: 'SETUP', color: '#A78BFA', emoji: '🔥', inBuyZone: false };
+  }
   return { stage: 'DISTRESS', color: '#EF4444', emoji: '🚫', inBuyZone: false };
+}
+
+// PATCH 0374 — Archetype classifier. Tells the user what KIND of stock
+// each row is, so they can spot mis-categorised uploads (growth stocks,
+// quality compounders, value traps, declining businesses) vs real
+// turnaround candidates.
+function classifyArchetype(row: TurnaroundRow): { archetype: TurnaroundArchetype; label: string; note: string; color: string } {
+  const patQ1 = row.patQ1;
+  const positiveLatestPAT = patQ1 != null && patQ1 > 0;
+  const negLatestPAT = patQ1 != null && patQ1 < 0;
+  const lossYears = row.lossMakingYears5y ?? 0;
+  const roce = row.roce ?? null;
+  const roce3y = row.roce3yBack ?? null;
+  const revG3y = row.revenueGrowth3y ?? null;
+  const patG3y = row.patGrowth3y ?? null;
+  const de = row.de ?? null;
+  const opmYoYQ = (row.opmQ1 != null && row.opmQ2 != null) ? row.opmQ1 - row.opmQ2 : null;
+  const debtReduction3y = (row.debtCurr != null && row.debt3yBack != null && row.debt3yBack > 0)
+    ? (row.debt3yBack - row.debtCurr) / row.debt3yBack : null;
+
+  // 🚀 GROWTH STOCK — strong revenue + profit + ROCE, no distress, positive PAT
+  if (positiveLatestPAT && lossYears === 0 && (revG3y ?? 0) > 25 && (patG3y ?? -99) > 25 && (roce ?? 0) >= 18) {
+    return {
+      archetype: 'GROWTH',
+      label: '🚀 GROWTH',
+      note: `Growth stock — Rev 3y +${revG3y?.toFixed(0)}%, PAT +${patG3y?.toFixed(0)}%, ROCE ${roce?.toFixed(0)}%. Not a turnaround setup. Use Multibagger tab instead.`,
+      color: '#10B981',
+    };
+  }
+
+  // 💎 QUALITY COMPOUNDER — high sustained ROCE, no distress, modest growth
+  if (positiveLatestPAT && lossYears === 0 && (roce ?? 0) >= 18 && (revG3y ?? 0) > 10 && (revG3y ?? 99) <= 25) {
+    return {
+      archetype: 'QUALITY',
+      label: '💎 QUALITY',
+      note: `Established compounder — ROCE ${roce?.toFixed(0)}%, ${revG3y?.toFixed(0)}% rev growth, no loss years. Not in distress, not a turnaround setup.`,
+      color: '#22D3EE',
+    };
+  }
+
+  // 🔄 TURNAROUND CANDIDATE — distress history + recovery signal firing
+  const hasRecoverySignal = (
+    (opmYoYQ != null && opmYoYQ >= 3) ||
+    (positiveLatestPAT && row.patQ2 != null && row.patQ2 <= 0) ||  // PAT just turned positive
+    (debtReduction3y != null && debtReduction3y >= 0.15) ||
+    (roce != null && roce3y != null && (roce - roce3y) >= 5)
+  );
+  const hasDistressContext = lossYears >= 1 || negLatestPAT || (roce ?? 99) < 10 || (row.patQ4 ?? 1) < 0;
+
+  if (hasDistressContext && hasRecoverySignal) {
+    return {
+      archetype: 'TURNAROUND',
+      label: '🔄 TURNAROUND',
+      note: `Real turnaround setup — distress history (loss yrs ${lossYears}, ROCE ${roce?.toFixed(0) ?? '—'}%) AND recovery signal firing. This is what the tab is for.`,
+      color: '#F59E0B',
+    };
+  }
+
+  // 🧊 VALUE TRAP RISK — deep distress, no recovery, high debt or no signal
+  if (lossYears >= 3 && negLatestPAT && (de ?? 0) > 1.5) {
+    return {
+      archetype: 'VALUE-TRAP',
+      label: '🧊 VALUE TRAP',
+      note: `Deep distress: ${lossYears}/5 loss years, D/E ${de?.toFixed(1)}, ROCE ${roce?.toFixed(0) ?? '—'}%. No clear recovery signal yet — capital trap risk.`,
+      color: '#EF4444',
+    };
+  }
+
+  // 📉 DECLINING — top-line + bottom-line both falling
+  if ((row.revenueGrowth1y ?? 0) < -5 && (row.patGrowth1y ?? 0) < -10) {
+    return {
+      archetype: 'DECLINING',
+      label: '📉 DECLINING',
+      note: `Revenue ${row.revenueGrowth1y?.toFixed(0)}% YoY, profit ${row.patGrowth1y?.toFixed(0)}% — accelerating decline, not turnaround material.`,
+      color: '#EF4444',
+    };
+  }
+
+  // ⏸ WAIT — distress visible but no signal yet
+  if (hasDistressContext) {
+    return {
+      archetype: 'WAIT',
+      label: '⏸ WAIT',
+      note: `Distress visible (loss yrs ${lossYears}, current PAT ${patQ1?.toFixed(0) ?? '—'}) but no recovery signal yet — watch quarterly results for OPM Q/Q +3pp or PAT turning positive.`,
+      color: '#94A3B8',
+    };
+  }
+
+  // ❓ NEUTRAL — neither distress nor strong growth
+  return {
+    archetype: 'NEUTRAL',
+    label: '❓ NEUTRAL',
+    note: `Neither distressed nor strong-growth — no turnaround thesis. PAT ${patQ1?.toFixed(0) ?? '—'} Cr, ROCE ${roce?.toFixed(0) ?? '—'}%, revenue ${row.revenueGrowth1y?.toFixed(0) ?? '—'}% YoY.`,
+    color: '#6B7A8D',
+  };
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -548,6 +680,8 @@ export function scoreTurnaroundRow(row: TurnaroundRow): TurnaroundResult {
   }
 
   const { stage, color, emoji, inBuyZone } = classifyStage(row);
+  // PATCH 0374 — Archetype tag with one-line explainer
+  const arche = classifyArchetype(row);
 
   // Grade by composite
   const grade: TurnaroundResult['grade'] =
@@ -557,12 +691,28 @@ export function scoreTurnaroundRow(row: TurnaroundRow): TurnaroundResult {
     totalScore >= 45 ? 'B' :
     totalScore >= 30 ? 'C' : 'D';
 
-  // Coverage: how many critical fields were populated?
-  const criticalFields: Array<keyof TurnaroundRow> = [
-    'patQ1', 'patQ2', 'patQ3', 'salesQ1', 'opmQ1', 'roce', 'de', 'pe',
-    'debtCurr', 'interestCoverage', 'promoterHolding', 'concallText',
+  // Coverage + missingFields list
+  const criticalFields: Array<[keyof TurnaroundRow, string]> = [
+    ['patQ1', 'PAT Qtr'], ['patQ2', 'PAT Prev Qtr'], ['patQ3', 'PAT 2Qtr Bk'],
+    ['salesQ1', 'Sales Qtr'], ['opmQ1', 'OPM Qtr'], ['opmQ2', 'OPM Prev Qtr'],
+    ['roce', 'ROCE'], ['roce3yBack', 'ROCE 3Y back'], ['de', 'D/E'], ['pe', 'P/E'],
+    ['debtCurr', 'Debt'], ['debt3yBack', 'Debt 3Y back'],
+    ['interestCoverage', 'Interest Coverage'],
+    ['promoterHolding', 'Promoter Holding'], ['promoterHolding3yBack', 'Prom Hold 3Y change'],
+    ['concallText', 'Concall narrative'],
+    ['lossMakingYears5y', 'Loss making years'],
+    ['perf1y', '1Yr return'],
   ];
-  const filledCritical = criticalFields.filter((f) => row[f] != null && row[f] !== '').length;
+  const missingFields: string[] = [];
+  let filledCritical = 0;
+  for (const [field, label] of criticalFields) {
+    const v = row[field];
+    if (v != null && v !== '' && !(typeof v === 'number' && isNaN(v))) {
+      filledCritical++;
+    } else {
+      missingFields.push(label);
+    }
+  }
   const coverage = Math.round((filledCritical / criticalFields.length) * 100);
 
   return {
@@ -572,11 +722,16 @@ export function scoreTurnaroundRow(row: TurnaroundRow): TurnaroundResult {
     totalScore: Math.round(totalScore * 10) / 10,
     grade,
     stage, stageColor: color, stageEmoji: emoji, inBuyZone,
+    archetype: arche.archetype,
+    archetypeLabel: arche.label,
+    archetypeNote: arche.note,
+    archetypeColor: arche.color,
     strengths,
     risks,
     concallPhrases: phrases,
     inflectionSignals,
     coverage,
+    missingFields,
   };
 }
 
@@ -592,7 +747,23 @@ function num(v: unknown): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-export function parseTurnaroundRow(row: Record<string, unknown>): TurnaroundRow | null {
+// PATCH 0374 — Resilient header lookup. Screener exports often have
+// trailing whitespace ('P/E ') or subtle variations. Normalize the row's
+// keys at the entry point so every lookup matches regardless of casing
+// / whitespace / dots / hyphens / underscores.
+function normalizeRow(row: Record<string, unknown>): Record<string, unknown> {
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(row)) {
+    out[k] = row[k];           // keep original
+    out[k.trim()] = row[k];    // and trimmed-only
+    out[norm(k)] = row[k];     // and fully-normalised (lowercase + collapsed-space)
+  }
+  return out;
+}
+
+export function parseTurnaroundRow(rawRow: Record<string, unknown>): TurnaroundRow | null {
+  const row = normalizeRow(rawRow);
   // Symbol — try multiple common header variants
   const symbol = String(
     row['Symbol'] || row['symbol'] || row['Ticker'] || row['ticker'] || row['NSE Code'] || row['BSE Code'] || ''

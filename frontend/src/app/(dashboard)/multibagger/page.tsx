@@ -18,7 +18,7 @@ import { getDecision, setDecision, clearDecision, subscribeDecisions, DECISION_M
 // PATCH 0367 — Export toolbar (TradingView + Screener.in) reused from earnings Scan
 import TickerExportToolbar from '@/components/TickerExportToolbar';
 // PATCH 0370 — Turnaround scoring engine
-import { scoreTurnaroundRow, parseTurnaroundRow, type TurnaroundResult, type TurnaroundStage } from '@/lib/turnaround';
+import { scoreTurnaroundRow, parseTurnaroundRow, type TurnaroundResult, type TurnaroundStage, type TurnaroundArchetype } from '@/lib/turnaround';
 
 // Shared API base — respects NEXT_PUBLIC_API_URL env var so all fetch() calls
 // resolve consistently when the base URL changes (fixes #13: mixed /api/v1 vs /api)
@@ -7511,6 +7511,8 @@ function TurnaroundCompare() {
   const [parseError, setParseError] = useState<string | null>(null);
   const [expRow, setExpRow] = useState<string | null>(null);
   const [stageFilter, setStageFilter] = useState<TurnaroundStage | 'BUY-ZONE' | 'ALL'>('ALL');
+  // PATCH 0374 — Archetype filter so user can hide growth/quality/value-trap rows
+  const [archetypeFilter, setArchetypeFilter] = useState<TurnaroundArchetype | 'ALL'>('ALL');
   const [showOnlyHighConcall, setShowOnlyHighConcall] = useState(false);
   const [showLossRecovery, setShowLossRecovery] = useState(false);
   // Concall map: ticker -> pasted text
@@ -7533,23 +7535,33 @@ function TurnaroundCompare() {
     }).sort((a, b) => b.totalScore - a.totalScore));
   }, []);
 
+  // PATCH 0374 — Multi-CSV upload: APPEND new rows to existing, dedupe by symbol
+  // (most recent upload wins). User typically has several Screener screens
+  // (e.g. 'Loss recovery candidates', 'Sector turnaround', 'Microcap turnaround')
+  // and wants to pool them into one analysis.
   const handleFile = async (file: File) => {
     setParseError(null);
-    setFileName(file.name);
     try {
       const text = await file.text();
-      // Reuse simple CSV parser — handles quoted commas
       const parsed = parseCsvFlexible(text);
       if (parsed.length === 0) throw new Error('No rows parsed from CSV');
       const tRows = parsed
         .map(r => parseTurnaroundRow(r))
         .filter((r): r is NonNullable<typeof r> => r != null)
-        // Apply persisted concall text
         .map(r => ({ ...r, concallText: concallMap[r.symbol] || '' }));
       if (tRows.length === 0) throw new Error('No valid tickers found in CSV');
-      const scored = tRows.map(scoreTurnaroundRow).sort((a, b) => b.totalScore - a.totalScore);
-      setRows(scored);
-      try { localStorage.setItem(TURNAROUND_STORAGE_KEY, JSON.stringify(scored)); } catch {}
+      const newScored = tRows.map(scoreTurnaroundRow);
+
+      // Dedupe: build a map by symbol, new CSV wins
+      const merged = new Map<string, TurnaroundResult>();
+      for (const r of rows) merged.set(r.symbol, r);  // existing
+      for (const r of newScored) merged.set(r.symbol, r);  // new overrides
+      const finalRows = Array.from(merged.values()).sort((a, b) => b.totalScore - a.totalScore);
+
+      setRows(finalRows);
+      const fileList = fileName ? `${fileName}, ${file.name}` : file.name;
+      setFileName(fileList);
+      try { localStorage.setItem(TURNAROUND_STORAGE_KEY, JSON.stringify(finalRows)); } catch {}
     } catch (e: any) {
       setParseError(e?.message || 'CSV parse failed');
     }
@@ -7563,26 +7575,36 @@ function TurnaroundCompare() {
     } else if (stageFilter !== 'ALL') {
       out = out.filter(r => r.stage === stageFilter);
     }
+    // PATCH 0374 — archetype filter
+    if (archetypeFilter !== 'ALL') {
+      out = out.filter(r => r.archetype === archetypeFilter);
+    }
     if (showOnlyHighConcall) {
       out = out.filter(r => r.concallScore >= 8);
     }
     if (showLossRecovery) {
-      // Stocks with prior loss-making years that just turned profitable
       out = out.filter(r =>
         (r.lossMakingYears5y ?? 0) >= 1 &&
         r.patQ1 != null && r.patQ1 > 0
       );
     }
     return out;
-  }, [rows, stageFilter, showOnlyHighConcall, showLossRecovery]);
+  }, [rows, stageFilter, archetypeFilter, showOnlyHighConcall, showLossRecovery]);
 
-  // Stage counts
+  // Stage + archetype counts
   const stageCounts = useMemo(() => {
-    const c: Record<string, number> = { ALL: rows.length, 'BUY-ZONE': 0, DISTRESS: 0, 'EARLY-SHOOTS': 0, PATTERN: 0, CONFIRMED: 0, MATURE: 0 };
+    const c: Record<string, number> = { ALL: rows.length, 'BUY-ZONE': 0, DISTRESS: 0, SETUP: 0, 'EARLY-SHOOTS': 0, PATTERN: 0, CONFIRMED: 0, MATURE: 0 };
     for (const r of rows) {
       c[r.stage]++;
       if (r.inBuyZone) c['BUY-ZONE']++;
     }
+    return c;
+  }, [rows]);
+
+  // PATCH 0374 — Archetype counts for the new filter rail
+  const archetypeCounts = useMemo(() => {
+    const c: Record<string, number> = { ALL: rows.length, TURNAROUND: 0, GROWTH: 0, QUALITY: 0, 'VALUE-TRAP': 0, DECLINING: 0, WAIT: 0, NEUTRAL: 0 };
+    for (const r of rows) c[r.archetype]++;
     return c;
   }, [rows]);
 
@@ -7608,13 +7630,13 @@ function TurnaroundCompare() {
         </p>
       </div>
 
-      {/* Upload */}
+      {/* PATCH 0374 — Upload + Add Another CSV (multi-file pool) */}
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 18px', backgroundColor: '#22D3EE', color: '#0A0E1A', borderRadius: 8, fontWeight: 800, fontSize: F.sm, cursor: 'pointer' }}>
-          📁 Upload Screener.in CSV
-          <input type="file" accept=".csv" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} style={{ display: 'none' }} />
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 18px', backgroundColor: rows.length === 0 ? '#22D3EE' : '#A78BFA', color: '#0A0E1A', borderRadius: 8, fontWeight: 800, fontSize: F.sm, cursor: 'pointer' }}>
+          📁 {rows.length === 0 ? 'Upload Screener.in CSV' : `+ Add another CSV (pool with ${rows.length} existing)`}
+          <input type="file" accept=".csv" onChange={(e) => { const f = e.target.files?.[0]; if (f) { handleFile(f); e.target.value = ''; } }} style={{ display: 'none' }} />
         </label>
-        {fileName && <span style={{ fontSize: F.xs, color: MUTED }}>{fileName} · {rows.length} rows scored</span>}
+        {fileName && <span style={{ fontSize: F.xs, color: MUTED }}>{fileName} · {rows.length} unique rows</span>}
         {parseError && <span style={{ fontSize: F.xs, color: RED, fontWeight: 700 }}>⚠ {parseError}</span>}
         {rows.length > 0 && (
           <button
@@ -7688,12 +7710,36 @@ function TurnaroundCompare() {
             ))}
           </div>
 
+          {/* PATCH 0374 — Archetype filter rail (TOP — most useful for user
+              who mostly uploads turnarounds but wants to spot mis-categorised
+              rows like growth stocks, quality compounders, value traps). */}
+          <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontSize: F.xs, color: MUTED, fontWeight: 700, marginRight: 4 }}>ARCHETYPE:</span>
+            {([
+              { id: 'ALL',         label: 'All',           color: '#94A3B8' },
+              { id: 'TURNAROUND',  label: '🔄 Turnaround', color: '#F59E0B' },
+              { id: 'GROWTH',      label: '🚀 Growth',     color: '#10B981' },
+              { id: 'QUALITY',     label: '💎 Quality',    color: '#22D3EE' },
+              { id: 'WAIT',        label: '⏸ Wait',        color: '#94A3B8' },
+              { id: 'VALUE-TRAP',  label: '🧊 Value trap', color: '#EF4444' },
+              { id: 'DECLINING',   label: '📉 Declining',  color: '#EF4444' },
+              { id: 'NEUTRAL',     label: '❓ Neutral',    color: '#6B7A8D' },
+            ] as const).map(a => {
+              const active = archetypeFilter === a.id;
+              return (
+                <button key={a.id} onClick={() => setArchetypeFilter(a.id)} style={{ fontSize: F.xs, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: `1px solid ${active ? a.color : BORDER}`, background: active ? `${a.color}20` : 'transparent', color: active ? a.color : MUTED, cursor: 'pointer' }}>
+                  {a.label} · {archetypeCounts[a.id] ?? 0}
+                </button>
+              );
+            })}
+          </div>
+
           {/* Filter chips */}
           <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
             <span style={{ fontSize: F.xs, color: MUTED, fontWeight: 700, marginRight: 4 }}>STAGE:</span>
-            {(['ALL', 'BUY-ZONE', 'EARLY-SHOOTS', 'PATTERN', 'CONFIRMED', 'MATURE', 'DISTRESS'] as const).map(s => {
+            {(['ALL', 'BUY-ZONE', 'EARLY-SHOOTS', 'PATTERN', 'CONFIRMED', 'MATURE', 'SETUP', 'DISTRESS'] as const).map(s => {
               const active = stageFilter === s;
-              const color = s === 'BUY-ZONE' ? '#10B981' : s === 'EARLY-SHOOTS' ? '#F59E0B' : s === 'PATTERN' ? '#22D3EE' : s === 'CONFIRMED' ? '#10B981' : s === 'MATURE' ? '#94A3B8' : s === 'DISTRESS' ? '#EF4444' : '#94A3B8';
+              const color = s === 'BUY-ZONE' ? '#10B981' : s === 'EARLY-SHOOTS' ? '#F59E0B' : s === 'PATTERN' ? '#22D3EE' : s === 'CONFIRMED' ? '#10B981' : s === 'SETUP' ? '#A78BFA' : s === 'MATURE' ? '#94A3B8' : s === 'DISTRESS' ? '#EF4444' : '#94A3B8';
               return (
                 <button key={s} onClick={() => setStageFilter(s)} style={{ fontSize: F.xs, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: `1px solid ${active ? color : BORDER}`, background: active ? `${color}20` : 'transparent', color: active ? color : MUTED, cursor: 'pointer' }}>
                   {s} {stageCounts[s] !== undefined && `· ${stageCounts[s]}`}
@@ -7748,6 +7794,11 @@ function TurnaroundCompare() {
                           {r.stageEmoji} {r.stage}
                         </span>
                         {r.inBuyZone && <div style={{ fontSize: 9, fontWeight: 800, color: '#10B981', marginTop: 3 }}>🎯 BUY-ZONE</div>}
+                        {/* PATCH 0374 — Archetype badge */}
+                        <div title={r.archetypeNote}
+                          style={{ fontSize: 9, fontWeight: 800, color: r.archetypeColor, marginTop: 3, padding: '1px 5px', display: 'inline-block', borderRadius: 3, background: `${r.archetypeColor}15`, border: `1px solid ${r.archetypeColor}40` }}>
+                          {r.archetypeLabel}
+                        </div>
                       </div>
                       {/* Dimension bars */}
                       <div style={{ display: 'flex', gap: 5 }}>
@@ -7783,6 +7834,26 @@ function TurnaroundCompare() {
                   </button>
                   {isExp && (
                     <div style={{ padding: '4px 14px 16px', background: '#13131a' }}>
+                      {/* PATCH 0374 — Archetype diagnostic block: tells the user
+                          IMMEDIATELY whether this row belongs in the Turnaround
+                          tab, and if not, what it actually is. */}
+                      <div style={{ marginBottom: 12, padding: '10px 12px', background: `${r.archetypeColor}10`, border: `1px solid ${r.archetypeColor}40`, borderRadius: 6 }}>
+                        <div style={{ fontSize: 11, fontWeight: 900, color: r.archetypeColor, letterSpacing: '0.4px', marginBottom: 3 }}>
+                          {r.archetypeLabel} — verdict
+                        </div>
+                        <div style={{ fontSize: 11, color: '#C9D4E0', lineHeight: 1.5 }}>{r.archetypeNote}</div>
+                      </div>
+                      {/* PATCH 0374 — Missing-fields hint when coverage is low */}
+                      {r.coverage < 70 && r.missingFields.length > 0 && (
+                        <div style={{ marginBottom: 12, padding: '8px 12px', background: '#F59E0B12', border: '1px solid #F59E0B40', borderRadius: 6 }}>
+                          <div style={{ fontSize: 10, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.4px', marginBottom: 4 }}>
+                            ⚠ DATA COVERAGE {r.coverage}% — {r.missingFields.length} fields missing
+                          </div>
+                          <div style={{ fontSize: 10, color: MUTED, lineHeight: 1.5 }}>
+                            Not in this CSV: <strong style={{ color: '#C9D4E0' }}>{r.missingFields.join(' · ')}</strong>
+                          </div>
+                        </div>
+                      )}
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 14 }}>
                         {/* Inflection Signals */}
                         <div>
