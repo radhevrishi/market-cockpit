@@ -133,7 +133,22 @@ export interface TurnaroundResult extends TurnaroundRow {
   inflectionSignals: string[]; // narrative description of the turn
   coverage: number;            // 0-100 how complete the data is
   missingFields: string[];     // PATCH 0374 — what's missing from this row's data
+
+  // PATCH 0381 — Institutional upgrades per Turnaround_Investor_Master_Playbook
+  turnaroundType: TurnaroundType;     // CYCLICAL / OPERATIONAL / DISTRESSED / UNKNOWN
+  turnaroundTypeNote: string;         // one-line rationale
+  phase: TurnaroundPhase;             // 1=Collapse / 2=Stabilisation / 3=Inflection BUY / 4=Re-rating
+  phaseLabel: string;                 // 'Phase 3 INFLECTION' etc
+  phaseAction: string;                // 'AVOID' / 'WATCH' / 'BUY-ZONE' / 'HOLD/TRIM'
+  survivalScore: number;              // 0-8 (playbook Ch.4 gate filter)
+  survivalChecks: Array<{ label: string; pass: boolean; note: string }>;
+  killers: string[];                  // Top-10 killers from playbook PART VII
+  suggestedPositionPct: number;       // Position size guidance, e.g. 2 / 5 / 8 (max %)
+  isBestCandidate: boolean;           // Convenience: passes the institutional 'good only' filter
 }
+
+export type TurnaroundType = 'CYCLICAL' | 'OPERATIONAL' | 'DISTRESSED' | 'UNKNOWN';
+export type TurnaroundPhase = 1 | 2 | 3 | 4;
 
 // ─── CONCALL PHRASE LEXICON (25 pts max — PATCH 0380, playbook primary signal) ──
 // Positive institutional phrases that signal real turnaround narrative.
@@ -788,6 +803,232 @@ function classifyArchetype(row: TurnaroundRow): { archetype: TurnaroundArchetype
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// PATCH 0381 — INSTITUTIONAL CLASSIFIERS per playbook Parts I, IV, VII
+// ────────────────────────────────────────────────────────────────────────────
+
+// Ch.1 Type Classifier — CYCLICAL / OPERATIONAL / DISTRESSED
+function classifyTurnaroundType(row: TurnaroundRow): { type: TurnaroundType; note: string } {
+  const de = row.de ?? null;
+  const lossYears = row.lossMakingYears5y ?? 0;
+  const roce = row.roce ?? null;
+  const mcap = row.marketCapCr ?? null;
+  const debt = row.debtCurr ?? null;
+  const pledge = row.promoterPledgePct ?? 0;
+  const interestCov = row.interestCoverage ?? null;
+
+  // DISTRESSED — capital structure broken
+  // Per playbook Killer #3: mcap < ~15% of EV means creditors own the recovery.
+  // Approximate EV = mcap + debt (no cash data); if mcap/(mcap+debt) < 0.2 → distressed.
+  if (mcap != null && debt != null && debt > 0) {
+    const equityShare = mcap / (mcap + debt);
+    if (equityShare < 0.2) {
+      return { type: 'DISTRESSED', note: `mcap ${(equityShare*100).toFixed(0)}% of EV — creditors own the recovery (Killer #3)` };
+    }
+  }
+  if (de != null && de >= 2.5) {
+    return { type: 'DISTRESSED', note: `D/E ${de.toFixed(1)} — capital structure stress` };
+  }
+  if (pledge >= 30) {
+    return { type: 'DISTRESSED', note: `promoter pledge ${pledge.toFixed(0)}% — financial distress signal` };
+  }
+  if (interestCov != null && interestCov < 1.5) {
+    return { type: 'DISTRESSED', note: `interest coverage ${interestCov.toFixed(1)}x — covenant breach risk` };
+  }
+
+  // OPERATIONAL — business itself broken (chronic underperformance)
+  if (lossYears >= 3) {
+    return { type: 'OPERATIONAL', note: `${lossYears}/5 loss yrs — operational broken, needs internal fix` };
+  }
+  if (roce != null && roce < 5 && (row.patY1 ?? 0) <= 0) {
+    return { type: 'OPERATIONAL', note: `ROCE ${roce.toFixed(0)}% + negative PAT — sustained operational weakness` };
+  }
+
+  // CYCLICAL — business intact, crushed by macro/sector cycle
+  // This is the default for survivable companies with some distress markers
+  if (lossYears >= 1 || (roce != null && roce < 12)) {
+    return { type: 'CYCLICAL', note: 'Macro/sector-driven setback, business franchise intact — playbook base-rate 70%' };
+  }
+
+  return { type: 'UNKNOWN', note: 'Insufficient distress markers to classify' };
+}
+
+// Ch.2 Phase Classifier — 1 COLLAPSE / 2 STABILISATION / 3 INFLECTION (BUY ★) / 4 RE-RATING
+function classifyPhase(
+  recoveryCount: number,
+  damageCount: number,
+  row: TurnaroundRow
+): { phase: TurnaroundPhase; label: string; action: string } {
+  const perf1y = row.perf1y ?? null;
+  const roce = row.roce ?? null;
+  const positivePAT = (row.patQ1 ?? 0) > 0 || (row.patY1 ?? 0) > 0 || (row.pe ?? 0) > 0;
+
+  // Phase 4 — RE-RATING (recovery confirmed, multiple expansion happening)
+  if (recoveryCount >= 4 && perf1y != null && perf1y >= 40) {
+    return { phase: 4, label: 'Phase 4 RE-RATING', action: 'HOLD / TRIM' };
+  }
+  // Phase 3 — INFLECTION (BUY ZONE ★)
+  if (recoveryCount >= 2 && positivePAT && damageCount >= 1) {
+    return { phase: 3, label: 'Phase 3 INFLECTION ★', action: 'BUY-ZONE — stage in' };
+  }
+  // Phase 2 — STABILISATION (rate of deterioration slowing)
+  if (recoveryCount >= 1) {
+    return { phase: 2, label: 'Phase 2 STABILISATION', action: 'WATCH — research deeply' };
+  }
+  // Phase 1 — COLLAPSE
+  if (damageCount >= 1) {
+    return { phase: 1, label: 'Phase 1 COLLAPSE', action: 'AVOID — watchlist only' };
+  }
+  // Not in turnaround — default to Phase 4 (no action needed)
+  return { phase: 4, label: 'Not in turnaround', action: '—' };
+}
+
+// Ch.4 Survival Filter — 8 checks, all must pass for buy candidate
+function scoreSurvival(row: TurnaroundRow): {
+  score: number;
+  checks: Array<{ label: string; pass: boolean; note: string }>;
+} {
+  const de = row.de ?? null;
+  const interestCov = row.interestCoverage ?? null;
+  const mcap = row.marketCapCr ?? null;
+  const debt = row.debtCurr ?? null;
+  const pledge = row.promoterPledgePct ?? null;
+  const pe = row.pe ?? null;
+  const debtReduction3y = (debt != null && row.debt3yBack != null && row.debt3yBack > 0)
+    ? (row.debt3yBack - debt) / row.debt3yBack : null;
+  const checks: Array<{ label: string; pass: boolean; note: string }> = [];
+
+  // 1. Debt maturity — proxy via D/E < 1.5 (no maturity data in Screener)
+  checks.push({
+    label: 'Manageable leverage',
+    pass: de == null || de < 1.5,
+    note: de == null ? 'D/E unknown' : `D/E ${de.toFixed(1)}`,
+  });
+  // 2. Interest coverage > 2x on trough
+  checks.push({
+    label: 'Interest coverage >2x',
+    pass: interestCov == null || interestCov >= 2,
+    note: interestCov == null ? 'unknown' : `${interestCov.toFixed(1)}x`,
+  });
+  // 3. Market cap >= 20% of EV (proxy: mcap/(mcap+debt))
+  let equityShare: number | null = null;
+  if (mcap != null && debt != null) {
+    equityShare = debt > 0 ? mcap / (mcap + debt) : 1;
+    checks.push({
+      label: 'Equity ≥ 20% of EV',
+      pass: equityShare >= 0.2,
+      note: `${(equityShare * 100).toFixed(0)}% equity share`,
+    });
+  } else {
+    checks.push({ label: 'Equity ≥ 20% of EV', pass: true, note: 'data unavailable' });
+  }
+  // 4. No active pledge stress
+  checks.push({
+    label: 'No pledge stress',
+    pass: pledge == null || pledge < 25,
+    note: pledge == null ? 'unknown' : `${pledge.toFixed(0)}% pledged`,
+  });
+  // 5. Capital market access — positive PE signals access
+  checks.push({
+    label: 'Capital market access',
+    pass: pe != null && pe > 0 && pe < 200,
+    note: pe == null ? 'no PE / loss-maker' : `PE ${pe.toFixed(0)}`,
+  });
+  // 6. Debt trajectory — falling or stable
+  checks.push({
+    label: 'Debt trajectory OK',
+    pass: debtReduction3y == null || debtReduction3y >= -0.1,
+    note: debtReduction3y == null ? 'unknown' : debtReduction3y >= 0 ? `−${(debtReduction3y*100).toFixed(0)}%` : `+${(-debtReduction3y*100).toFixed(0)}%`,
+  });
+  // 7. ROCE not deeply negative
+  const roce = row.roce ?? null;
+  checks.push({
+    label: 'ROCE survivable',
+    pass: roce == null || roce >= -5,
+    note: roce == null ? 'unknown' : `${roce.toFixed(0)}%`,
+  });
+  // 8. Microcap operator risk
+  checks.push({
+    label: 'Institutional ownership',
+    pass: !(mcap != null && mcap < 500 && (row.promoterHolding ?? 100) < 30),
+    note: mcap != null && mcap < 500 ? 'microcap — verify' : 'OK',
+  });
+
+  const score = checks.filter(c => c.pass).length;
+  return { score, checks };
+}
+
+// Part VII — Top 10 Killers detection (red flag risk markers)
+function detectKillers(row: TurnaroundRow): string[] {
+  const killers: string[] = [];
+  const mcap = row.marketCapCr ?? null;
+  const debt = row.debtCurr ?? null;
+  const de = row.de ?? null;
+  const interestCov = row.interestCoverage ?? null;
+  const pledge = row.promoterPledgePct ?? 0;
+  const lossYears = row.lossMakingYears5y ?? 0;
+  const roce = row.roce ?? null;
+  const pe = row.pe ?? null;
+  const revG3y = row.revenueGrowth3y ?? null;
+  const revG1y = row.revenueGrowth1y ?? null;
+  const patG1y = row.patGrowth1y ?? null;
+
+  // Killer #1: Debt cannot be refinanced — interest coverage <1.5x
+  if (interestCov != null && interestCov < 1.5) {
+    killers.push(`#1 debt-refinance risk (int-cov ${interestCov.toFixed(1)}x)`);
+  }
+  // Killer #2: Secular decline mistaken for cyclical — 3y AND 1y both negative
+  if (revG3y != null && revG3y < -10 && revG1y != null && revG1y < -10) {
+    killers.push(`#2 secular decline risk (rev 3y ${revG3y.toFixed(0)}%, 1y ${revG1y.toFixed(0)}%)`);
+  }
+  // Killer #3: Market cap vs EV trap — equity < 15% of EV
+  if (mcap != null && debt != null && debt > 0 && mcap / (mcap + debt) < 0.15) {
+    killers.push(`#3 creditors own upside (mcap ${(mcap/(mcap+debt)*100).toFixed(0)}% of EV)`);
+  }
+  // Killer #7: Pension/legal tail (proxy: very high pledge OR D/E)
+  if (de != null && de > 3) {
+    killers.push(`#7 obligations exceed equity (D/E ${de.toFixed(1)})`);
+  }
+  if (pledge >= 50) {
+    killers.push(`#7 promoter pledge ${pledge.toFixed(0)}% — control risk`);
+  }
+  // Killer #10: Commodity recovery thesis — sector check would need explicit tagging
+  // Proxy via ultra-cyclical sectors with negative ROCE
+  if (roce != null && roce < 0 && pe == null && lossYears >= 2) {
+    killers.push(`#10 unhedged cycle exposure (ROCE ${roce.toFixed(0)}%, ${lossYears}y losses)`);
+  }
+  // Generic operator-pump red flag
+  if (mcap != null && mcap < 300 && (row.promoterHolding ?? 100) < 25) {
+    killers.push(`operator-pump pattern (mcap ${mcap.toFixed(0)}Cr, promoter ${(row.promoterHolding ?? 0).toFixed(0)}%)`);
+  }
+  // Fake signal: cheap-on-current-earnings without growth
+  if (pe != null && pe < 8 && patG1y != null && patG1y < -20) {
+    killers.push(`fake-signal: cheap PE on declining PAT (-${(-patG1y).toFixed(0)}%)`);
+  }
+
+  return killers;
+}
+
+// Ch.6 Position Sizing
+function suggestPositionSize(type: TurnaroundType, survivalScore: number, killers: number): number {
+  // Per playbook Ch.6:
+  //   Cyclical: 8-10% with confirmation
+  //   Operational: 5-7%
+  //   Distressed: 2-3% max
+  let max: number;
+  if (type === 'DISTRESSED') max = 2.5;
+  else if (type === 'OPERATIONAL') max = 6;
+  else if (type === 'CYCLICAL') max = 9;
+  else max = 4;
+  // Penalize for failed survival checks
+  if (survivalScore <= 4) max *= 0.5;
+  else if (survivalScore <= 6) max *= 0.75;
+  // Penalize for killers
+  if (killers >= 2) max *= 0.5;
+  else if (killers === 1) max *= 0.75;
+  return Math.round(max * 10) / 10;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // PUBLIC: score a single row
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -877,6 +1118,45 @@ export function scoreTurnaroundRow(row: TurnaroundRow): TurnaroundResult {
   }
   const coverage = Math.round((filledCritical / criticalFields.length) * 100);
 
+  // PATCH 0381 — Institutional classifiers (Type/Phase/Survival/Killers)
+  const typeInfo = classifyTurnaroundType(row);
+  // Count recovery and damage signals (matches the local logic in
+  // classifyArchetype; recomputed here for phase classification).
+  const _damageCount = (() => {
+    let n = 0;
+    if ((row.lossMakingYears5y ?? 0) >= 1) n++;
+    if ((row.patQ1 ?? 0) < 0) n++;
+    if ((row.patY2 ?? 0) < 0) n++;
+    if ((row.patY3 ?? 0) < 0) n++;
+    if (row.roce != null && row.roce3yBack != null && row.roce3yBack < 5 && row.roce - row.roce3yBack >= 5) n++;
+    if ((row.perf1y ?? 0) < -30) n++;
+    if ((row.promoterPledgePct ?? 0) >= 5) n++;
+    return n;
+  })();
+  const _recoveryCount = (() => {
+    let n = 0;
+    if (row.opmQ1 != null && row.opmQ2 != null && row.opmQ1 - row.opmQ2 >= 3) n++;
+    if ((row.patQ1 ?? 0) > 0 && (row.patQ2 ?? 1) <= 0) n++;
+    if ((row.patY1 ?? 0) > 0 && (row.patY2 ?? 1) <= 0) n++;
+    if (row.debtCurr != null && row.debt3yBack != null && row.debt3yBack > 0 &&
+        (row.debt3yBack - row.debtCurr) / row.debt3yBack >= 0.15) n++;
+    if (row.roce != null && row.roce3yBack != null && row.roce - row.roce3yBack >= 5 && row.roce >= 8) n++;
+    if ((row.patGrowth3y ?? -99) >= 30 && ((row.patQ1 ?? 0) > 0 || (row.patY1 ?? 0) > 0)) n++;
+    return n;
+  })();
+  const phaseInfo = classifyPhase(_recoveryCount, _damageCount, row);
+  const survival = scoreSurvival(row);
+  const killers = detectKillers(row);
+  const suggestedPositionPct = suggestPositionSize(typeInfo.type, survival.score, killers.length);
+
+  // "Best candidate" = institutional buy-zone filter (like Multibagger BLOCKBUSTER)
+  const isBestCandidate =
+    arche.archetype === 'TURNAROUND' &&
+    phaseInfo.phase === 3 &&
+    survival.score >= 6 &&
+    killers.length === 0 &&
+    totalScore >= 50;
+
   return {
     ...row,
     earningsScore, operationalScore, balanceSheetScore,
@@ -894,6 +1174,17 @@ export function scoreTurnaroundRow(row: TurnaroundRow): TurnaroundResult {
     inflectionSignals,
     coverage,
     missingFields,
+    // PATCH 0381 institutional fields
+    turnaroundType: typeInfo.type,
+    turnaroundTypeNote: typeInfo.note,
+    phase: phaseInfo.phase,
+    phaseLabel: phaseInfo.label,
+    phaseAction: phaseInfo.action,
+    survivalScore: survival.score,
+    survivalChecks: survival.checks,
+    killers,
+    suggestedPositionPct,
+    isBestCandidate,
   };
 }
 

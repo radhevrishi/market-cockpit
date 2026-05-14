@@ -7515,6 +7515,11 @@ function TurnaroundCompare() {
   const [archetypeFilter, setArchetypeFilter] = useState<TurnaroundArchetype | 'ALL'>('ALL');
   const [showOnlyHighConcall, setShowOnlyHighConcall] = useState(false);
   const [showLossRecovery, setShowLossRecovery] = useState(false);
+  // PATCH 0381 — "Best candidates only" filter — institutional buy-zone shortlist
+  const [showBestOnly, setShowBestOnly] = useState(false);
+  // PATCH 0381 — turnaround Type and Phase filters
+  const [typeFilter, setTypeFilter] = useState<'ALL' | 'CYCLICAL' | 'OPERATIONAL' | 'DISTRESSED'>('ALL');
+  const [phaseFilter, setPhaseFilter] = useState<'ALL' | 1 | 2 | 3 | 4>('ALL');
   // Concall map: ticker -> pasted text
   const [concallMap, setConcallMap] = useState<Record<string, string>>(() => {
     if (typeof window === 'undefined') return {};
@@ -7599,7 +7604,7 @@ function TurnaroundCompare() {
       out = out.filter(r => r.archetype === archetypeFilter);
     }
     if (showOnlyHighConcall) {
-      out = out.filter(r => r.concallScore >= 8);
+      out = out.filter(r => r.concallScore >= 12);  // 0381: threshold tracks new /25 max
     }
     if (showLossRecovery) {
       out = out.filter(r =>
@@ -7607,8 +7612,18 @@ function TurnaroundCompare() {
         r.patQ1 != null && r.patQ1 > 0
       );
     }
+    // PATCH 0381 — institutional filters
+    if (showBestOnly) {
+      out = out.filter(r => r.isBestCandidate);
+    }
+    if (typeFilter !== 'ALL') {
+      out = out.filter(r => r.turnaroundType === typeFilter);
+    }
+    if (phaseFilter !== 'ALL') {
+      out = out.filter(r => r.phase === phaseFilter);
+    }
     return out;
-  }, [rows, stageFilter, archetypeFilter, showOnlyHighConcall, showLossRecovery]);
+  }, [rows, stageFilter, archetypeFilter, showOnlyHighConcall, showLossRecovery, showBestOnly, typeFilter, phaseFilter]);
 
   // Stage + archetype counts
   const stageCounts = useMemo(() => {
@@ -7844,6 +7859,88 @@ function TurnaroundCompare() {
             <span style={{ marginLeft: 'auto', fontSize: F.xs, color: MUTED }}>{filtered.length} showing</span>
           </div>
 
+          {/* PATCH 0381 — Institutional filter row (Best/Type/Phase per playbook) */}
+          <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center', padding: '8px 10px', background: '#0A1422', border: `1px solid #F59E0B40`, borderRadius: 8 }}>
+            <span style={{ fontSize: F.xs, color: '#F59E0B', fontWeight: 800, letterSpacing: '0.5px', marginRight: 4 }}>★ INSTITUTIONAL:</span>
+            <button
+              onClick={() => setShowBestOnly(v => !v)}
+              title="Best candidates only: TURNAROUND + Phase 3 INFLECTION + Survival ≥ 6/8 + zero killers + score ≥ 50"
+              style={{
+                fontSize: F.xs, fontWeight: 800, padding: '6px 12px', borderRadius: 6,
+                border: `2px solid ${showBestOnly ? '#F59E0B' : '#F59E0B80'}`,
+                background: showBestOnly ? '#F59E0B30' : 'transparent',
+                color: showBestOnly ? '#F59E0B' : '#F59E0BC0',
+                cursor: 'pointer',
+              }}>
+              ★ BEST ONLY {showBestOnly ? '✓' : ''} · {rows.filter(r => r.isBestCandidate).length}
+            </button>
+            <span style={{ width: 1, height: 18, background: BORDER, margin: '0 6px' }} />
+            <span style={{ fontSize: F.xs, color: MUTED, fontWeight: 700 }}>TYPE:</span>
+            {(['ALL', 'CYCLICAL', 'OPERATIONAL', 'DISTRESSED'] as const).map(t => {
+              const active = typeFilter === t;
+              const color = t === 'CYCLICAL' ? '#10B981' : t === 'OPERATIONAL' ? '#F59E0B' : t === 'DISTRESSED' ? '#EF4444' : '#94A3B8';
+              const count = t === 'ALL' ? rows.length : rows.filter(r => r.turnaroundType === t).length;
+              return (
+                <button key={t} onClick={() => setTypeFilter(t)} style={{ fontSize: F.xs, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: `1px solid ${active ? color : BORDER}`, background: active ? `${color}20` : 'transparent', color: active ? color : MUTED, cursor: 'pointer' }}>
+                  {t === 'ALL' ? 'All' : t} · {count}
+                </button>
+              );
+            })}
+            <span style={{ width: 1, height: 18, background: BORDER, margin: '0 6px' }} />
+            <span style={{ fontSize: F.xs, color: MUTED, fontWeight: 700 }}>PHASE:</span>
+            {([
+              { id: 'ALL' as const, label: 'All',                    color: '#94A3B8' },
+              { id: 1 as const,     label: '1 Collapse',             color: '#EF4444' },
+              { id: 2 as const,     label: '2 Stabilisation',        color: '#A78BFA' },
+              { id: 3 as const,     label: '3 INFLECTION ★ (BUY)',   color: '#10B981' },
+              { id: 4 as const,     label: '4 Re-rating',            color: '#22D3EE' },
+            ]).map(p => {
+              const active = phaseFilter === p.id;
+              const count = p.id === 'ALL' ? rows.length : rows.filter(r => r.phase === p.id).length;
+              return (
+                <button key={String(p.id)} onClick={() => setPhaseFilter(p.id)} style={{ fontSize: F.xs, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: `1px solid ${active ? p.color : BORDER}`, background: active ? `${p.color}20` : 'transparent', color: active ? p.color : MUTED, cursor: 'pointer' }}>
+                  {p.label} · {count}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* PATCH 0381 — Best Candidates Leaderboard (top 5 institutional picks) */}
+          {(() => {
+            const best = [...rows].filter(r => r.isBestCandidate).sort((a, b) => b.totalScore - a.totalScore).slice(0, 5);
+            if (best.length === 0) return null;
+            return (
+              <div style={{ marginBottom: 14, padding: 12, background: 'linear-gradient(135deg, #F59E0B10, #F59E0B05)', border: '1px solid #F59E0B50', borderRadius: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 900, color: '#F59E0B', letterSpacing: '0.5px' }}>★ BEST RISK/REWARD — INSTITUTIONAL SHORTLIST</div>
+                    <div style={{ fontSize: 10, color: MUTED, marginTop: 2 }}>TURNAROUND archetype · Phase 3 INFLECTION · Survival ≥ 6/8 · Zero killers · Score ≥ 50</div>
+                  </div>
+                  <button onClick={() => { setShowBestOnly(true); }} style={{ fontSize: 11, fontWeight: 700, padding: '6px 12px', borderRadius: 6, border: '1px solid #F59E0B', background: '#F59E0B20', color: '#F59E0B', cursor: 'pointer' }}>
+                    View all {rows.filter(r => r.isBestCandidate).length} →
+                  </button>
+                </div>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  {best.map(b => (
+                    <div key={b.symbol} style={{ flex: '1 1 240px', minWidth: 240, padding: 10, background: '#0A1422', border: '1px solid #F59E0B40', borderRadius: 8 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                        <div style={{ fontSize: 14, fontWeight: 900, color: '#F8FAFC' }}>{b.symbol}</div>
+                        <div style={{ fontSize: 16, fontWeight: 900, color: '#F59E0B' }}>{b.totalScore.toFixed(0)}</div>
+                      </div>
+                      <div style={{ fontSize: 10, color: MUTED, marginBottom: 6 }}>{b.company}</div>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', fontSize: 9 }}>
+                        <span style={{ padding: '2px 6px', borderRadius: 4, background: '#F59E0B20', color: '#F59E0B', fontWeight: 700 }}>{b.turnaroundType}</span>
+                        <span style={{ padding: '2px 6px', borderRadius: 4, background: '#10B98120', color: '#10B981', fontWeight: 700 }}>Surv {b.survivalScore}/8</span>
+                        <span style={{ padding: '2px 6px', borderRadius: 4, background: '#22D3EE20', color: '#22D3EE', fontWeight: 700 }}>Max {b.suggestedPositionPct}%</span>
+                        {b.concallScore >= 12 && <span style={{ padding: '2px 6px', borderRadius: 4, background: '#A78BFA20', color: '#A78BFA', fontWeight: 700 }}>🎙 CC {b.concallScore.toFixed(0)}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Export toolbar */}
           {filtered.length > 0 && (
             <div style={{ margin: '10px 0' }}>
@@ -7887,14 +7984,46 @@ function TurnaroundCompare() {
                           style={{ fontSize: 9, fontWeight: 800, color: r.archetypeColor, marginTop: 3, padding: '1px 5px', display: 'inline-block', borderRadius: 3, background: `${r.archetypeColor}15`, border: `1px solid ${r.archetypeColor}40` }}>
                           {r.archetypeLabel}
                         </div>
+                        {/* PATCH 0381 — Institutional chips: BEST + Type + Phase + Survival */}
+                        <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginTop: 4 }}>
+                          {r.isBestCandidate && (
+                            <span title="Best Risk/Reward candidate: TURNAROUND + Phase 3 + Survival ≥ 6/8 + zero killers" style={{ fontSize: 8, fontWeight: 900, color: '#F59E0B', padding: '1px 4px', borderRadius: 3, background: '#F59E0B25', border: '1px solid #F59E0B' }}>★ BEST</span>
+                          )}
+                          {r.turnaroundType !== 'UNKNOWN' && (
+                            <span title={r.turnaroundTypeNote} style={{
+                              fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 3,
+                              color: r.turnaroundType === 'CYCLICAL' ? '#10B981' : r.turnaroundType === 'OPERATIONAL' ? '#F59E0B' : '#EF4444',
+                              background: r.turnaroundType === 'CYCLICAL' ? '#10B98115' : r.turnaroundType === 'OPERATIONAL' ? '#F59E0B15' : '#EF444415',
+                              border: `1px solid ${r.turnaroundType === 'CYCLICAL' ? '#10B98140' : r.turnaroundType === 'OPERATIONAL' ? '#F59E0B40' : '#EF444440'}`,
+                            }}>{r.turnaroundType.slice(0, 4)}</span>
+                          )}
+                          <span title={`${r.phaseLabel} — ${r.phaseAction}`} style={{
+                            fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 3,
+                            color: r.phase === 3 ? '#10B981' : r.phase === 4 ? '#22D3EE' : r.phase === 2 ? '#A78BFA' : '#EF4444',
+                            background: '#13131a',
+                            border: `1px solid ${r.phase === 3 ? '#10B98140' : r.phase === 4 ? '#22D3EE40' : r.phase === 2 ? '#A78BFA40' : '#EF444440'}`,
+                          }}>Ph{r.phase}{r.phase === 3 ? '★' : ''}</span>
+                          <span title={`Survival ${r.survivalScore}/8 — playbook Ch.4 gate`} style={{
+                            fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 3,
+                            color: r.survivalScore >= 7 ? '#10B981' : r.survivalScore >= 5 ? '#22D3EE' : '#EF4444',
+                            background: '#13131a',
+                            border: `1px solid ${r.survivalScore >= 7 ? '#10B98140' : r.survivalScore >= 5 ? '#22D3EE40' : '#EF444440'}`,
+                          }}>S {r.survivalScore}/8</span>
+                          {r.suggestedPositionPct > 0 && (
+                            <span title="Max position size suggestion (playbook Ch.6)" style={{ fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 3, color: '#94A3B8', border: '1px solid #94A3B840' }}>Max {r.suggestedPositionPct}%</span>
+                          )}
+                          {r.killers.length > 0 && (
+                            <span title={`Killers: ${r.killers.join(' · ')}`} style={{ fontSize: 8, fontWeight: 900, padding: '1px 4px', borderRadius: 3, color: '#EF4444', background: '#EF444420', border: '1px solid #EF4444' }}>⚠ {r.killers.length} killer{r.killers.length > 1 ? 's' : ''}</span>
+                          )}
+                        </div>
                       </div>
-                      {/* Dimension bars */}
+                      {/* Dimension bars — PATCH 0381: max values rebalanced (E 20, O 10, CC 25) */}
                       <div style={{ display: 'flex', gap: 5 }}>
                         {[
-                          { label: 'EARN', val: r.earningsScore, max: 25, color: '#10B981' },
-                          { label: 'OPS', val: r.operationalScore, max: 15, color: '#22D3EE' },
+                          { label: 'EARN', val: r.earningsScore, max: 20, color: '#10B981' },
+                          { label: 'OPS', val: r.operationalScore, max: 10, color: '#22D3EE' },
                           { label: 'BAL', val: r.balanceSheetScore, max: 15, color: '#A78BFA' },
-                          { label: 'CC', val: r.concallScore, max: 15, color: '#F59E0B' },
+                          { label: 'CC', val: r.concallScore, max: 25, color: '#F59E0B' },
                           { label: 'IND', val: r.industryScore, max: 10, color: '#34d399' },
                           { label: 'GOV', val: r.governanceScore, max: 10, color: '#fbbf24' },
                           { label: 'VAL', val: r.valuationScore, max: 10, color: '#f97316' },
@@ -7930,6 +8059,46 @@ function TurnaroundCompare() {
                           {r.archetypeLabel} — verdict
                         </div>
                         <div style={{ fontSize: 11, color: '#C9D4E0', lineHeight: 1.5 }}>{r.archetypeNote}</div>
+                      </div>
+
+                      {/* PATCH 0381 — Institutional panel: Type / Phase / Survival / Killers / Position */}
+                      <div style={{ marginBottom: 12, padding: '12px', background: '#0A1422', border: '1px solid #F59E0B30', borderRadius: 6 }}>
+                        <div style={{ fontSize: 11, fontWeight: 900, color: '#F59E0B', letterSpacing: '0.5px', marginBottom: 8 }}>★ INSTITUTIONAL PLAYBOOK READING</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, fontSize: 11, color: '#C9D4E0' }}>
+                          <div>
+                            <div style={{ fontSize: 9, fontWeight: 800, color: MUTED, letterSpacing: '0.4px', marginBottom: 4 }}>TURNAROUND TYPE (Ch.1)</div>
+                            <div style={{ fontWeight: 800, color: r.turnaroundType === 'CYCLICAL' ? '#10B981' : r.turnaroundType === 'OPERATIONAL' ? '#F59E0B' : r.turnaroundType === 'DISTRESSED' ? '#EF4444' : '#94A3B8', marginBottom: 2 }}>{r.turnaroundType}</div>
+                            <div style={{ fontSize: 10, color: MUTED, lineHeight: 1.4 }}>{r.turnaroundTypeNote}</div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 9, fontWeight: 800, color: MUTED, letterSpacing: '0.4px', marginBottom: 4 }}>PHASE (Ch.2)</div>
+                            <div style={{ fontWeight: 800, color: r.phase === 3 ? '#10B981' : r.phase === 4 ? '#22D3EE' : r.phase === 2 ? '#A78BFA' : '#EF4444', marginBottom: 2 }}>{r.phaseLabel}</div>
+                            <div style={{ fontSize: 10, color: MUTED }}>Action: <strong style={{ color: '#C9D4E0' }}>{r.phaseAction}</strong></div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 9, fontWeight: 800, color: MUTED, letterSpacing: '0.4px', marginBottom: 4 }}>SURVIVAL FILTER (Ch.4) — {r.survivalScore}/8</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                              {r.survivalChecks.map((c, i) => (
+                                <div key={i} title={c.note} style={{ fontSize: 10, color: c.pass ? '#10B981' : '#EF4444' }}>
+                                  {c.pass ? '✓' : '✗'} {c.label} <span style={{ color: MUTED }}>({c.note})</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 9, fontWeight: 800, color: MUTED, letterSpacing: '0.4px', marginBottom: 4 }}>POSITION SIZE (Ch.6)</div>
+                            <div style={{ fontSize: 14, fontWeight: 900, color: '#22D3EE' }}>Max {r.suggestedPositionPct}% of portfolio</div>
+                            <div style={{ fontSize: 10, color: MUTED, marginTop: 2 }}>Based on type + survival + killers</div>
+                          </div>
+                          {r.killers.length > 0 && (
+                            <div style={{ gridColumn: '1 / -1' }}>
+                              <div style={{ fontSize: 9, fontWeight: 800, color: '#EF4444', letterSpacing: '0.4px', marginBottom: 4 }}>⚠ KILLERS DETECTED (PART VII) — {r.killers.length}</div>
+                              {r.killers.map((k, i) => (
+                                <div key={i} style={{ fontSize: 11, color: '#FCA5A5', padding: '2px 0' }}>› {k}</div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
                       {/* PATCH 0374 — Missing-fields hint when coverage is low */}
                       {r.coverage < 70 && r.missingFields.length > 0 && (
