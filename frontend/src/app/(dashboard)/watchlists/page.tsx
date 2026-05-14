@@ -921,7 +921,8 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
         Removed entries don't auto-readd — use × to permanently prune.
       </div>
 
-      {/* PATCH 0196 — Export toolbar (CSV, TradingView, .txt, Open chart). Tier-grouped. */}
+      {/* PATCH 0196 — Export toolbar (CSV, TradingView, .txt, Open chart). Tier-grouped.
+          PATCH 0366 — tickerCompanyMap wired for Screener.in name-based matching. */}
       <TickerExportToolbar
         tickers={allTickers}
         groups={[
@@ -930,6 +931,12 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
         ]}
         exchange="NSE"
         filenameHint="conviction-beats"
+        tickerCompanyMap={
+          [...blockbusters, ...strongs].reduce<Record<string, string>>((acc, e) => {
+            if (e.ticker && e.company) acc[e.ticker.toUpperCase()] = e.company;
+            return acc;
+          }, {})
+        }
       />
       {blockbusters.length > 0 && (
         <div style={{

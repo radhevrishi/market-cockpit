@@ -36,6 +36,10 @@ interface Props {
   filenameHint?: string;
   /** Compact mode: smaller buttons, fewer labels */
   compact?: boolean;
+  /** PATCH 0366 — Optional mapping ticker -> company name. Used by the
+   *  Screener.in export buttons to copy human-readable names (which
+   *  Screener matches better than NSE tickers like 'EBGNG' or '360ONE'). */
+  tickerCompanyMap?: Record<string, string>;
 }
 
 export default function TickerExportToolbar({
@@ -44,6 +48,7 @@ export default function TickerExportToolbar({
   exchange = 'NSE',
   filenameHint = 'tickers',
   compact = false,
+  tickerCompanyMap,
 }: Props) {
   const safeTickers = tickers.map((t) => t.toUpperCase().trim()).filter(Boolean);
   const n = safeTickers.length;
@@ -96,26 +101,46 @@ export default function TickerExportToolbar({
     toast.success(`Opened ${first} · ${subset.length} tickers copied for paste`);
   };
 
-  // PATCH 0364 / 0365 — Screener.in export.
+  // PATCH 0364 / 0365 / 0366 — Screener.in export.
   //
   // CRITICAL FORMAT: Screener.in's "Add stocks" bulk-import field treats
-  // each LINE as one company name. A comma-separated string is interpreted
-  // as a single company name → "Found automatically: 0, Unmatched: 1".
-  // Tickers must be NEWLINE-separated, one per line. Patch 0365 fixed the
-  // initial 0364 implementation which used commas.
+  // each LINE as one entry. A comma-separated string is interpreted as a
+  // single name → "Found automatically: 0, Unmatched: 1".
   //
-  // Two actions:
-  //   (1) Copy for Screener — newline-separated bare symbols
-  //   (2) Open in Screener.in — copy list AND open screener.in/watchlist/
-  //       in a new tab so the user can paste into their custom watchlist.
-  //       For a single ticker, opens the company page directly.
+  // PATCH 0366 — Use COMPANY NAMES (when available) not raw NSE tickers.
+  // Screener's fuzzy matcher is built around company-name matching, not
+  // tickers. Symbols like 'EBGNG', '360ONE', 'KIRLPNU' are NSE-internal
+  // codes that Screener.in may not recognize. Names like 'GNG Electronics
+  // Ltd', '360 ONE WAM Ltd', 'Kirloskar Pneumatic Company Ltd' match.
+  // Falls back to ticker when company name isn't available.
+  //
+  // Stripped suffixes ('Limited', 'Ltd', '.', 'Inc.', etc.) per Screener's
+  // own normalisation; otherwise their fuzzy match drops too many.
+  const normalizeForScreener = (name: string): string => {
+    return name
+      .replace(/\s+(Limited|Ltd\.?|Inc\.?|Corporation|Corp\.?|Company|Co\.?|PLC)$/i, '')
+      .replace(/[\.,]/g, '')
+      .trim();
+  };
+  const screenerLine = (ticker: string): string => {
+    const co = tickerCompanyMap?.[ticker.toUpperCase()];
+    if (co && co.trim()) return normalizeForScreener(co);
+    return ticker.toUpperCase();
+  };
+
   const copyForScreener = async (subset: string[], label: string) => {
     if (subset.length === 0) { toast.error(`No ${label} tickers to copy`); return; }
-    // Newline-separated, one ticker per line — Screener.in's expected format
-    const text = subset.join('\n');
+    // Newline-separated, one entry per line — Screener.in's expected format.
+    // Use company names when we have them (much better Screener match rate).
+    const text = subset.map(screenerLine).join('\n');
+    const havingNames = subset.filter(t => tickerCompanyMap?.[t.toUpperCase()]).length;
     try {
       await navigator.clipboard.writeText(text);
-      toast.success(`Copied ${subset.length} ticker${subset.length === 1 ? '' : 's'} (one per line) — paste into Screener.in`);
+      toast.success(
+        havingNames > 0
+          ? `Copied ${subset.length} names (${havingNames} as company names, ${subset.length - havingNames} as tickers) — paste into Screener.in`
+          : `Copied ${subset.length} tickers (one per line) — paste into Screener.in`
+      );
     } catch {
       toast.error('Clipboard write failed — check browser permission');
     }
@@ -123,18 +148,19 @@ export default function TickerExportToolbar({
 
   const openInScreener = (subset: string[]) => {
     if (subset.length === 0) { toast.error(`No tickers to open`); return; }
-    // For a single ticker, jump straight to its Screener page.
+    // For a single ticker, jump straight to its Screener page using the
+    // bare ticker — Screener's URL format expects the symbol, not the name.
     if (subset.length === 1) {
       const url = `https://www.screener.in/company/${encodeURIComponent(subset[0])}/consolidated/`;
       window.open(url, '_blank', 'noopener,noreferrer');
       toast.success(`Opened ${subset[0]} on Screener.in`);
       return;
     }
-    // For multiple, copy list (newline-separated!) + open watchlist page
-    const text = subset.join('\n');
+    // For multiple: copy as company names (newline-separated!), open watchlist.
+    const text = subset.map(screenerLine).join('\n');
     navigator.clipboard.writeText(text).catch(() => {});
     window.open('https://www.screener.in/watchlist/', '_blank', 'noopener,noreferrer');
-    toast.success(`${subset.length} tickers copied (one per line) · paste into your Screener.in watchlist`);
+    toast.success(`${subset.length} entries copied (one per line) · paste into your Screener.in watchlist`);
   };
 
   const btnBase = {

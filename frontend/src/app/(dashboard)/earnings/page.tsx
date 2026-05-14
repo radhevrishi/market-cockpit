@@ -2295,6 +2295,12 @@ export default function EarningsPage() {
         // Conviction overlay
         const conviction = filteredCards.filter((c) => convictionTickersState.has(c.symbol)).map((c) => c.symbol);
         if (conviction.length > 0) gradeGroups.push({ label: 'Conviction', emoji: '🏆', tickers: conviction, color: '#F59E0B' });
+        // PATCH 0366 — Build ticker -> company map so Screener.in export
+        // uses readable company names instead of cryptic NSE symbols.
+        const tickerCompanyMap: Record<string, string> = {};
+        for (const c of filteredCards) {
+          if (c.symbol && c.company) tickerCompanyMap[c.symbol.toUpperCase()] = c.company;
+        }
         return (
           <div style={{ marginBottom: '12px' }}>
             <TickerExportToolbar
@@ -2302,6 +2308,7 @@ export default function EarningsPage() {
               groups={gradeGroups}
               exchange="NSE"
               filenameHint="earnings-scan"
+              tickerCompanyMap={tickerCompanyMap}
             />
           </div>
         );
