@@ -96,6 +96,42 @@ export default function TickerExportToolbar({
     toast.success(`Opened ${first} · ${subset.length} tickers copied for paste`);
   };
 
+  // PATCH 0364 — Screener.in export. Screener doesn't accept a TradingView-
+  // style EXCHANGE:TICKER prefix; it wants bare NSE symbols separated by
+  // commas (or newlines). Two actions:
+  //
+  //   (1) Copy for Screener — bare symbols (RELIANCE,TCS,INFY)
+  //   (2) Open in Screener.in — copy list AND open screener.in/watchlist/
+  //       in a new tab so the user can paste into their custom watchlist.
+  //       For a single ticker, opens the company page directly.
+  const copyForScreener = async (subset: string[], label: string) => {
+    if (subset.length === 0) { toast.error(`No ${label} tickers to copy`); return; }
+    // Screener accepts bare symbols
+    const text = subset.join(',');
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`Copied ${subset.length} ticker${subset.length === 1 ? '' : 's'} for Screener.in (bare symbols)`);
+    } catch {
+      toast.error('Clipboard write failed — check browser permission');
+    }
+  };
+
+  const openInScreener = (subset: string[]) => {
+    if (subset.length === 0) { toast.error(`No tickers to open`); return; }
+    // For a single ticker, jump straight to its Screener page.
+    if (subset.length === 1) {
+      const url = `https://www.screener.in/company/${encodeURIComponent(subset[0])}/consolidated/`;
+      window.open(url, '_blank', 'noopener,noreferrer');
+      toast.success(`Opened ${subset[0]} on Screener.in`);
+      return;
+    }
+    // For multiple, copy list to clipboard + open watchlist page so user can paste
+    const text = subset.join(',');
+    navigator.clipboard.writeText(text).catch(() => {});
+    window.open('https://www.screener.in/watchlist/', '_blank', 'noopener,noreferrer');
+    toast.success(`${subset.length} tickers copied · paste into your Screener.in watchlist`);
+  };
+
   const btnBase = {
     display: 'inline-flex',
     alignItems: 'center',
@@ -173,6 +209,31 @@ export default function TickerExportToolbar({
         >
           <ExternalLink style={{ width: 14, height: 14 }} />
           Open in TradingView
+        </button>
+
+        {/* PATCH 0364 — Screener.in export. Two buttons mirroring the
+            TradingView pair: 'Copy for Screener' (bare symbols, paste-ready)
+            and 'Open in Screener.in' (one ticker → company page, many tickers
+            → opens watchlist page with list copied). */}
+        <button
+          onClick={() => copyForScreener(safeTickers, 'All')}
+          disabled={n === 0}
+          title={`Copy ${n} tickers as bare comma-separated symbols — paste into a Screener.in watchlist`}
+          style={{ ...btnBase, border: '1px solid #A78BFA', background: '#A78BFA20', color: '#A78BFA' }}
+        >
+          <Copy style={{ width: 14, height: 14 }} />
+          Copy for Screener
+        </button>
+        <button
+          onClick={() => openInScreener(safeTickers)}
+          disabled={n === 0}
+          title={n === 1
+            ? `Open ${safeTickers[0]} on Screener.in`
+            : `Copy ${n} tickers + open Screener.in watchlist page`}
+          style={{ ...btnBase, border: '1px solid #A78BFA', background: '#A78BFA15', color: '#A78BFA' }}
+        >
+          <ExternalLink style={{ width: 14, height: 14 }} />
+          {n === 1 ? 'Open on Screener' : 'Open in Screener.in'}
         </button>
       </div>
 
