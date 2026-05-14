@@ -7636,20 +7636,33 @@ function TurnaroundCompare() {
             <li>Expand any row to paste concall narrative (unlocks 15-pt Concall dimension)</li>
           </ol>
           <details style={{ marginTop: 12 }}>
-            <summary style={{ cursor: 'pointer', color: '#FBBF24', fontWeight: 700 }}>📚 Required + Recommended Screener fields</summary>
+            <summary style={{ cursor: 'pointer', color: '#FBBF24', fontWeight: 700 }}>📚 Screener.in column names (use these exact strings in 'Edit Columns')</summary>
             <div style={{ marginTop: 10, fontSize: F.xs, lineHeight: 1.6 }}>
-              <p><strong style={{ color: '#22D3EE' }}>Critical (earnings inflection detection):</strong></p>
-              <code style={{ fontSize: 10, color: '#94A3B8' }}>Sales latest quarter · OpProfit latest quarter · OPM latest quarter · PAT latest quarter · EPS latest quarter</code>
-              <p style={{ marginTop: 8 }}>And the same for <code>preceding quarter</code> (Q-2), <code>3 quarter back</code> (Q-3), <code>4 quarter back</code> (Q-4).</p>
-              <p style={{ marginTop: 8 }}><strong style={{ color: '#22D3EE' }}>Important (distress duration):</strong></p>
-              <code style={{ fontSize: 10, color: '#94A3B8' }}>Sales 5 year back · PAT 5 year back · OPM 5 year back · Loss making years</code>
-              <p style={{ marginTop: 8 }}><strong style={{ color: '#22D3EE' }}>Balance sheet trajectory:</strong></p>
-              <code style={{ fontSize: 10, color: '#94A3B8' }}>Debt · Debt 3 year back · Interest Coverage · Working Capital Days · Debt to equity</code>
-              <p style={{ marginTop: 8 }}><strong style={{ color: '#22D3EE' }}>Governance:</strong></p>
-              <code style={{ fontSize: 10, color: '#94A3B8' }}>Promoter holding · Promoter holding 3 year back · Promoter Pledged percentage · Auditor changes</code>
-              <p style={{ marginTop: 8 }}><strong style={{ color: '#22D3EE' }}>Valuation:</strong></p>
-              <code style={{ fontSize: 10, color: '#94A3B8' }}>P/E · Median PE 5Y · EV/EBITDA · ROCE · ROCE 3 year back · Return over 1year</code>
-              <p style={{ marginTop: 8, color: MUTED }}>Missing columns are skipped gracefully — that dimension scores 0 but won't penalise the overall composite.</p>
+              <p><strong style={{ color: '#10B981' }}>✅ AVAILABLE in Screener — add these (engine-critical):</strong></p>
+              <ul style={{ margin: '4px 0 8px 18px', padding: 0 }}>
+                <li><strong>Quarterly trail:</strong> <code style={{ fontSize: 10, color: '#94A3B8' }}>Sales Qtr Rs.Cr. · Sales Prev Qtr Rs.Cr. · Sales 2Qtr Bk Rs.Cr. · Sales 3Qtr Bk Rs.Cr.</code></li>
+                <li><strong>PAT trail:</strong> <code style={{ fontSize: 10, color: '#94A3B8' }}>PAT Qtr Rs.Cr. · PAT Prev Qtr Rs.Cr. · NP 2Qtr Bk Rs.Cr. · NP 3Qtr Bk Rs.Cr.</code></li>
+                <li><strong>YoY signals:</strong> <code style={{ fontSize: 10, color: '#94A3B8' }}>Qtr Profit Var % · Qtr Sales Var % · Profit Var 3Yrs % · Sales Var 3Yrs %</code></li>
+                <li><strong>Operating:</strong> <code style={{ fontSize: 10, color: '#94A3B8' }}>OPM % · OPM Qtr % · ROCE % · ROCE 3Yr % · ROIC % · CFO/PAT</code></li>
+                <li><strong>Balance sheet:</strong> <code style={{ fontSize: 10, color: '#94A3B8' }}>Debt Rs.Cr. · Debt / Eq · Int Coverage · WC Days · WC Days 3yrs</code></li>
+                <li><strong>Governance:</strong> <code style={{ fontSize: 10, color: '#94A3B8' }}>Prom. Hold. % · Chg in Prom Hold 3Yr % · Pledged % · FII Hold % · DII Hold %</code></li>
+                <li><strong>Valuation:</strong> <code style={{ fontSize: 10, color: '#94A3B8' }}>P/E · PEG · EV / EBITDA · From 52w high · Ind PE · CMP / BV</code></li>
+                <li><strong>Returns:</strong> <code style={{ fontSize: 10, color: '#94A3B8' }}>1Yr return %</code></li>
+                <li><strong>Annual:</strong> <code style={{ fontSize: 10, color: '#94A3B8' }}>Sales Rs.Cr. · Mar Cap Rs.Cr. · EPS 12M Rs. · Free Cash Flow Rs.Cr. · Sales growth % · Profit growth %</code></li>
+              </ul>
+
+              <p style={{ marginTop: 10 }}><strong style={{ color: '#F59E0B' }}>⚠️ NOT in Screener (engine scores 0 for these dimensions — that's OK):</strong></p>
+              <ul style={{ margin: '4px 0 8px 18px', padding: 0, color: MUTED }}>
+                <li><code style={{ fontSize: 10 }}>OPM Prev Qtr / OPM 2Qtr Bk / OPM 3Qtr Bk</code> — Screener only exposes current quarter OPM. Sequential OPM trend signal (3 pts) will be 0.</li>
+                <li><code style={{ fontSize: 10 }}>EPS Prev Qtr / EPS 2Qtr Bk / EPS 3Qtr Bk</code> — same, EPS trail not available.</li>
+                <li><code style={{ fontSize: 10 }}>Loss making years</code> — Screener may have this; check 'Edit Columns' search. If not, add manually for distressed candidates.</li>
+                <li><code style={{ fontSize: 10 }}>PE 5Yrs Median</code> — Screener has this internally but may not export. Falls back to absolute-PE buckets.</li>
+                <li><code style={{ fontSize: 10 }}>Debt 3yrs back / Interest Coverage 3yrs back</code> — debt-reduction trajectory degrades. Can still score from current values.</li>
+                <li><code style={{ fontSize: 10 }}>Sales/PAT 5Yr back annual values</code> — annual 5y trail not in Screener export.</li>
+                <li><code style={{ fontSize: 10 }}>Auditor changes</code> — not exposed by Screener; manual flag only.</li>
+              </ul>
+
+              <p style={{ marginTop: 10 }}><strong style={{ color: '#22D3EE' }}>Smart aliases:</strong> the parser already maps your real column names — just upload the CSV as-is from Screener and the engine will recognise everything.</p>
             </div>
           </details>
         </div>

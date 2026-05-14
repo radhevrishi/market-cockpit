@@ -581,37 +581,61 @@ export function parseTurnaroundRow(row: Record<string, unknown>): TurnaroundRow 
     symbol, company,
     sector: String(row['Industry'] || row['Sector'] || '').trim() || undefined,
     exchange: 'NSE',
-    cmp: num(row['Current Price'] || row['CMP'] || row['Price']),
-    marketCapCr: num(row['Market Capitalization'] || row['Market Cap'] || row['Mar Cap']),
-    pe: num(row['Price to Earning'] || row['P/E'] || row['PE']),
-    pe5yMedian: num(row['Median PE 5Y'] || row['PE 5Y median'] || row['5Y median PE']),
+    // PATCH 0372 — real Screener.in header names
+    cmp: num(row['CMP Rs.'] || row['CMP'] || row['Current Price'] || row['Price']),
+    marketCapCr: num(row['Mar Cap Rs.Cr.'] || row['Market Capitalization'] || row['Market Cap'] || row['Mar Cap']),
+    pe: num(row['P/E'] || row['Price to Earning'] || row['PE']),
+    pe5yMedian: num(row['PE 5Yrs Median'] || row['Median PE 5Y'] || row['PE 5Y median']),
     evEbitda: num(row['EV / EBITDA'] || row['EV/EBITDA']),
-    evEbitdaSectorMedian: num(row['Sector EV/EBITDA'] || row['Sector median EV/EBITDA']),
+    evEbitdaSectorMedian: num(row['Sector EV/EBITDA'] || row['Sector median EV/EBITDA'] || row['Ind PE']),
 
-    // Quarterly
-    salesQ1: num(row['Sales latest quarter'] || row['Sales Q-1'] || row['Sales last quarter'] || row['Sales']),
-    salesQ2: num(row['Sales Q-2'] || row['Sales preceding quarter'] || row['Sales 2 quarter back']),
-    salesQ3: num(row['Sales Q-3'] || row['Sales 3 quarter back']),
-    salesQ4: num(row['Sales Q-4'] || row['Sales 4 quarter back']),
-    opProfitQ1: num(row['Operating Profit latest quarter'] || row['OpProfit Q-1'] || row['Op Profit']),
-    opProfitQ2: num(row['OpProfit Q-2'] || row['Operating profit preceding quarter']),
-    opProfitQ3: num(row['OpProfit Q-3']),
-    opProfitQ4: num(row['OpProfit Q-4']),
-    opmQ1: num(row['OPM latest quarter'] || row['OPM Q-1'] || row['OPM']),
-    opmQ2: num(row['OPM Q-2'] || row['OPM preceding quarter']),
-    opmQ3: num(row['OPM Q-3']),
-    opmQ4: num(row['OPM Q-4']),
-    patQ1: num(row['Net Profit latest quarter'] || row['PAT Q-1'] || row['Profit after tax']),
-    patQ2: num(row['PAT Q-2'] || row['Net profit preceding quarter']),
-    patQ3: num(row['PAT Q-3']),
-    patQ4: num(row['PAT Q-4']),
-    epsQ1: num(row['EPS latest quarter'] || row['EPS Q-1'] || row['EPS']),
-    epsQ2: num(row['EPS Q-2']),
-    epsQ3: num(row['EPS Q-3']),
-    epsQ4: num(row['EPS Q-4']),
-    patQ1Yoy: num(row['PAT Q-1 YoY'] || row['Net profit YoY same quarter'] || row['PAT YoY quarter']),
-    salesQ1Yoy: num(row['Sales Q-1 YoY'] || row['Sales YoY quarter']),
-    opmQ1Yoy: num(row['OPM Q-1 YoY']),
+    // PATCH 0372 — actual Screener.in column names (the user's real export
+    // headers). Each field now lists Screener's canonical name FIRST,
+    // followed by older guesses for backwards compatibility.
+    salesQ1: num(row['Sales Qtr Rs.Cr.'] || row['Sales Qtr'] || row['Sales latest quarter'] || row['Sales Q-1']),
+    salesQ2: num(row['Sales Prev Qtr Rs.Cr.'] || row['Sales Prev Qtr'] || row['Sales preceding quarter'] || row['Sales Q-2']),
+    salesQ3: num(row['Sales 2Qtr Bk Rs.Cr.'] || row['Sales 2Qtr Bk'] || row['Sales 2 quarter back'] || row['Sales Q-3']),
+    salesQ4: num(row['Sales 3Qtr Bk Rs.Cr.'] || row['Sales 3Qtr Bk'] || row['Sales 3 quarter back'] || row['Sales Q-4']),
+    // Op profit quarterly — Screener doesn't have these as separate columns
+    // beyond the current quarter; we leave them as optional.
+    opProfitQ1: num(row['OpProfit Qtr Rs.Cr.'] || row['Operating Profit latest quarter'] || row['Op Profit']),
+    opProfitQ2: num(row['OpProfit Prev Qtr Rs.Cr.']),
+    opProfitQ3: num(row['OpProfit 2Qtr Bk Rs.Cr.']),
+    opProfitQ4: num(row['OpProfit 3Qtr Bk Rs.Cr.']),
+    // OPM — Screener exposes ONLY current quarter ('OPM Qtr %') and annual.
+    // Sequential OPM trend signal therefore degrades to 0 unless you add
+    // OPM Prev Qtr / OPM 2Qtr Bk / OPM 3Qtr Bk if Screener ever exposes them.
+    opmQ1: num(row['OPM Qtr %'] || row['OPM Qtr'] || row['OPM latest quarter'] || row['OPM Q-1']),
+    opmQ2: num(row['OPM Prev Qtr %'] || row['OPM Prev Qtr']),
+    opmQ3: num(row['OPM 2Qtr Bk %'] || row['OPM 2Qtr Bk']),
+    opmQ4: num(row['OPM 3Qtr Bk %'] || row['OPM 3Qtr Bk']),
+    // PAT quarterly — Screener uses 'PAT Qtr' / 'PAT Prev Qtr' / 'NP 2Qtr Bk' / 'NP 3Qtr Bk'
+    patQ1: num(row['PAT Qtr Rs.Cr.'] || row['PAT Qtr'] || row['Net Profit latest quarter'] || row['PAT Q-1']),
+    patQ2: num(row['PAT Prev Qtr Rs.Cr.'] || row['PAT Prev Qtr'] || row['Net profit preceding quarter'] || row['PAT Q-2']),
+    patQ3: num(row['NP 2Qtr Bk Rs.Cr.'] || row['NP 2Qtr Bk'] || row['PAT 2Qtr Bk'] || row['PAT Q-3']),
+    patQ4: num(row['NP 3Qtr Bk Rs.Cr.'] || row['NP 3Qtr Bk'] || row['PAT 3Qtr Bk'] || row['PAT Q-4']),
+    epsQ1: num(row['EPS Qtr Rs.'] || row['EPS Qtr'] || row['EPS latest quarter'] || row['EPS Q-1']),
+    epsQ2: num(row['EPS Prev Qtr Rs.'] || row['EPS Prev Qtr']),
+    epsQ3: num(row['EPS 2Qtr Bk Rs.'] || row['EPS 2Qtr Bk']),
+    epsQ4: num(row['EPS 3Qtr Bk Rs.'] || row['EPS 3Qtr Bk']),
+    // PATCH 0372 — YoY signals via 'Qtr Profit Var %' / 'Qtr Sales Var %'
+    // which Screener provides directly. These ARE the YoY %, so we treat
+    // them as YoY change rather than absolute prior-period values.
+    // The scorer reads patQ1Yoy/salesQ1Yoy as YOY ABSOLUTES — so we derive
+    // them from current * (1 / (1 + var/100)).
+    patQ1Yoy: (() => {
+      const cur = num(row['PAT Qtr Rs.Cr.'] || row['PAT Qtr']);
+      const varPct = num(row['Qtr Profit Var %'] || row['Qtr Profit Var']);
+      if (cur != null && varPct != null && varPct !== -100) return cur / (1 + varPct / 100);
+      return num(row['PAT Q-1 YoY'] || row['Net profit YoY same quarter']);
+    })(),
+    salesQ1Yoy: (() => {
+      const cur = num(row['Sales Qtr Rs.Cr.'] || row['Sales Qtr']);
+      const varPct = num(row['Qtr Sales Var %'] || row['Qtr Sales Var']);
+      if (cur != null && varPct != null && varPct !== -100) return cur / (1 + varPct / 100);
+      return num(row['Sales Q-1 YoY']);
+    })(),
+    opmQ1Yoy: num(row['OPM Q-1 YoY'] || row['OPM YoY change']),
 
     // Annual
     salesY1: num(row['Sales last year'] || row['Sales Y-1']),
@@ -628,34 +652,43 @@ export function parseTurnaroundRow(row: Record<string, unknown>): TurnaroundRow 
     opmY2: num(row['OPM 2 year back'] || row['OPM Y-2']),
     opmY3: num(row['OPM 3 year back'] || row['OPM Y-3']),
 
-    revenueGrowth1y: num(row['Sales growth'] || row['Sales growth %']),
-    revenueGrowth3y: num(row['Sales growth 3Years'] || row['Sales 3Y CAGR']),
-    revenueGrowth5y: num(row['Sales growth 5Years'] || row['Sales 5Y CAGR']),
-    patGrowth1y: num(row['Profit growth'] || row['PAT growth']),
-    patGrowth3y: num(row['Profit growth 3Years'] || row['PAT 3Y CAGR']),
+    // PATCH 0372 — match real Screener column names ('Sales growth %',
+    // 'Profit growth %', 'Sales Var 3Yrs %', 'Profit Var 3Yrs %', etc.)
+    revenueGrowth1y: num(row['Sales growth %'] || row['Sales growth'] || row['Sales Var %']),
+    revenueGrowth3y: num(row['Sales Var 3Yrs %'] || row['Sales growth 3Years'] || row['Sales 3Y CAGR']),
+    revenueGrowth5y: num(row['Sales Var 5Yrs %'] || row['Sales growth 5Years'] || row['Sales 5Y CAGR']),
+    patGrowth1y: num(row['Profit growth %'] || row['Profit growth'] || row['PAT growth']),
+    patGrowth3y: num(row['Profit Var 3Yrs %'] || row['Profit growth 3Years'] || row['PAT 3Y CAGR']),
 
     lossMakingYears5y: num(row['Loss making years'] || row['Loss years 5Y']),
 
-    debtCurr: num(row['Debt'] || row['Total Debt']),
-    debt3yBack: num(row['Debt 3 year back'] || row['Debt 3Y back']),
+    debtCurr: num(row['Debt Rs.Cr.'] || row['Debt'] || row['Total Debt']),
+    debt3yBack: num(row['Debt 3 year back'] || row['Debt 3Yr back'] || row['Debt 3Y back']),
     debt5yBack: num(row['Debt 5 year back'] || row['Debt 5Y back']),
-    de: num(row['Debt to equity'] || row['D/E'] || row['Debt / Equity']),
-    interestCoverage: num(row['Interest Coverage Ratio'] || row['Interest coverage'] || row['Interest cover']),
-    interestCoverage3yBack: num(row['Interest coverage 3Y back']),
-    workingCapitalDays: num(row['Working Capital Days'] || row['Working capital days']),
-    workingCapitalDays3yBack: num(row['Working capital days 3Y back']),
+    de: num(row['Debt / Eq'] || row['Debt to equity'] || row['D/E']),
+    interestCoverage: num(row['Int Coverage'] || row['Interest Coverage Ratio'] || row['Interest coverage']),
+    interestCoverage3yBack: num(row['Int Coverage 3yrs back'] || row['Interest coverage 3Y back']),
+    workingCapitalDays: num(row['WC Days'] || row['Working Capital Days']),
+    workingCapitalDays3yBack: num(row['WC Days 3yrs'] || row['WC Days 3yrs back'] || row['Working capital days 3Y back']),
 
-    roce: num(row['Return on capital employed'] || row['ROCE']),
-    roce3yBack: num(row['ROCE 3 year back'] || row['ROCE 3Y back']),
-    roe: num(row['Return on equity'] || row['ROE']),
+    roce: num(row['ROCE %'] || row['Return on capital employed'] || row['ROCE']),
+    roce3yBack: num(row['ROCE 3Yr %'] || row['ROCE 3 year back'] || row['ROCE 3Y back']),
+    roe: num(row['Return on equity'] || row['ROE %'] || row['ROE']),
 
-    promoterHolding: num(row['Promoter holding'] || row['Promoter holding %']),
-    promoterHolding3yBack: num(row['Promoter holding 3 year back'] || row['Change in promoter holding 3Years']),
-    promoterPledgePct: num(row['Promoter Pledged percentage'] || row['Pledged percentage'] || row['Promoter pledge']),
+    promoterHolding: num(row['Prom. Hold. %'] || row['Promoter holding %'] || row['Promoter holding']),
+    // Screener gives a 3yr CHANGE (delta), not the 3yr-back absolute. The scorer
+    // reads holding3yBack as the prior value; back-compute it from current - delta.
+    promoterHolding3yBack: (() => {
+      const cur = num(row['Prom. Hold. %'] || row['Promoter holding %']);
+      const delta = num(row['Chg in Prom Hold 3Yr %'] || row['Change in promoter holding 3Years']);
+      if (cur != null && delta != null) return cur - delta;
+      return num(row['Promoter holding 3 year back']);
+    })(),
+    promoterPledgePct: num(row['Pledged %'] || row['Promoter Pledged percentage'] || row['Pledged percentage']),
     auditorChangesLast5y: num(row['Auditor changes'] || row['Auditor changes 5Y']),
 
     sectorCycleScore: num(row['Sector cycle score']),
-    perf1y: num(row['Return over 1year'] || row['1Y Return']),
+    perf1y: num(row['1Yr return %'] || row['Return over 1year'] || row['1Y Return']),
 
     concallText: '',  // populated by user via paste field in UI
   };
