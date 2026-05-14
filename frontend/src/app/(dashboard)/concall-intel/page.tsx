@@ -335,6 +335,8 @@ function LiveBullishFeed() {
             <option value={3}>3 days</option>
             <option value={5}>5 days</option>
             <option value={7}>7 days</option>
+            <option value={14}>14 days</option>
+            <option value={30}>30 days</option>
           </select>
           <button onClick={() => fetchFeed(true)} disabled={loading} style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 5, border: '1px solid #22D3EE', background: '#22D3EE20', color: '#22D3EE', cursor: loading ? 'wait' : 'pointer' }}>
             {loading ? '…' : '↻ Refresh'}
@@ -600,6 +602,7 @@ function WarrantMomentumFeed() {
             <option value={3}>3 days</option>
             <option value={7}>7 days</option>
             <option value={14}>14 days</option>
+            <option value={30}>30 days</option>
           </select>
           <button onClick={() => fetchFeed(true)} disabled={loading} style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 5, border: '1px solid #A78BFA', background: '#A78BFA20', color: '#A78BFA', cursor: loading ? 'wait' : 'pointer' }}>
             {loading ? '…' : '↻ Refresh'}

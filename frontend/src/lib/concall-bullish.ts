@@ -165,6 +165,61 @@ export const BULLISH_COMBOS: BullishCombo[] = [
     qualifiers: [/₹\s*\d+\s*(?:cr|crore)/i],
     reason: 'Capacity expansion capex',
   },
+  // PATCH 0392 — SOFT-BULLISH indirect phrases. Per user feedback:
+  // companies rarely say "we are extremely bullish". They say "demand
+  // environment improved", "visibility remains strong", "margin
+  // trajectory improving" — these are bullish but indirect.
+  {
+    tag: 'Demand',
+    weight: 1.5,
+    anchors: [/demand\s+environment/i, /demand\s+trajectory/i, /\bdemand\b/i],
+    supports: [/\b(?:improved?|improving|recovering|strengthen|holding\s+up|broad[-\s]?based|encourag|positive)\b/i],
+    reason: 'Demand environment improving (soft signal)',
+  },
+  {
+    tag: 'Order Book',
+    weight: 1.5,
+    anchors: [/\bpipeline\b/i, /\bvisibility\b/i, /\bbacklog\b/i],
+    supports: [/\b(?:healthy|remains?\s+strong|building|growing|expand|encourag|positive)\b/i],
+    reason: 'Pipeline / visibility holding up (soft signal)',
+  },
+  {
+    tag: 'Margin',
+    weight: 1.5,
+    anchors: [/margin\s+(?:trajectory|profile|outlook)/i, /\boperating\s+margin/i, /gross\s+margin/i, /\bEBITDA\s+margin/i, /margin\s+(?:level|recovery)/i],
+    supports: [/\b(?:improving|on\s+track|holding|stable\s+to\s+improving|expansion\s+ahead|recover)\b/i],
+    reason: 'Margin trajectory improving (soft signal)',
+  },
+  {
+    tag: 'Capacity',
+    weight: 1.5,
+    anchors: [/\butilization\b/i, /\butilisation\b/i, /capacity\s+ramp/i],
+    supports: [/\b(?:improved?|increased?|trending\s+up|steady|moving\s+up|inching\s+up|gradually\s+improving)\b/i],
+    reason: 'Utilization improving (soft signal)',
+  },
+  {
+    tag: 'Guidance',
+    weight: 1.5,
+    anchors: [/\boutlook\b/i, /way\s+forward/i, /near[-\s]?term/i, /medium[-\s]?term/i, /going\s+forward/i],
+    supports: [/\b(?:remains?\s+(?:strong|robust|healthy|positive)|confident|encouraging|constructive|positive)\b/i],
+    reason: 'Outlook commentary constructive (soft signal)',
+  },
+  // Broad-based positivity
+  {
+    tag: 'Margin',
+    weight: 1.0,
+    anchors: [/operating\s+leverage|cost\s+(?:efficienc|optimiz|control)|cost\s+management/i],
+    supports: [/\b(?:visible|playing\s+out|coming\s+through|kicking\s+in|driving|deliver)\b/i],
+    reason: 'Operating leverage / cost discipline visible',
+  },
+  // Order book / revenue acceleration mentioned indirectly
+  {
+    tag: 'Demand',
+    weight: 1.0,
+    anchors: [/\b(?:double[-\s]?digit|high\s+single[-\s]?digit)\b/i],
+    supports: [/\b(?:growth|expansion|increase|delivery)\b/i],
+    reason: 'Double-digit growth referenced',
+  },
 ];
 
 // ─── Layer 3: Negative blockers ────────────────────────────────────────────
@@ -202,12 +257,15 @@ export const NEG_BLOCKERS: NegBlocker[] = [
   { re: /lower\s+utilization|lower\s+utilisation|under[-\s]?utiliz/i, weight: 1.5, severity: 'MEDIUM', critical: false, tag: 'Lower utilization' },
   { re: /cost\s+inflation|raw[-\s]?material\s+pressure/i,      weight: 1.2, severity: 'MEDIUM', critical: false, tag: 'Cost inflation' },
   { re: /one[-\s]?off|exceptional\s+(?:gain|item)/i,           weight: 1.2, severity: 'MEDIUM', critical: false, tag: 'One-off gain' },
-  // LOW — normal market noise, real businesses always have some of these
-  { re: /\b(?:delay(?:ed|s)?|postpone(?:d|ment)?|deferred?|deferment)\b/i, weight: 0.5, severity: 'LOW', critical: false, tag: 'Delay' },
-  { re: /\bslowdown|deceleration|sluggish/i,                   weight: 0.5, severity: 'LOW', critical: false, tag: 'Slowdown' },
-  { re: /temporary\s+(?:softness|weakness)|seasonal\s+(?:weakness|softness)/i, weight: 0.5, severity: 'LOW', critical: false, tag: 'Temporary softness' },
-  { re: /near[-\s]?term\s+(?:headwind|challenge|pressure)/i,   weight: 0.5, severity: 'LOW', critical: false, tag: 'Near-term headwind' },
-  { re: /geopolitical\s+headwind|adverse\s+macro/i,            weight: 0.5, severity: 'LOW', critical: false, tag: 'Macro headwind' },
+  // LOW — normal market noise, real businesses always have some of these.
+  // PATCH 0392: weight dropped from 0.5 → 0.25 per user feedback.
+  // 'every cyclical business mentions temporary slowdowns; most large
+  // companies discuss delays. These are normal.'
+  { re: /\b(?:delay(?:ed|s)?|postpone(?:d|ment)?|deferred?|deferment)\b/i, weight: 0.25, severity: 'LOW', critical: false, tag: 'Delay' },
+  { re: /\bslowdown|deceleration|sluggish/i,                   weight: 0.25, severity: 'LOW', critical: false, tag: 'Slowdown' },
+  { re: /temporary\s+(?:softness|weakness)|seasonal\s+(?:weakness|softness)/i, weight: 0.25, severity: 'LOW', critical: false, tag: 'Temporary softness' },
+  { re: /near[-\s]?term\s+(?:headwind|challenge|pressure)/i,   weight: 0.25, severity: 'LOW', critical: false, tag: 'Near-term headwind' },
+  { re: /geopolitical\s+headwind|adverse\s+macro/i,            weight: 0.25, severity: 'LOW', critical: false, tag: 'Macro headwind' },
   { re: /\bcancel(?:l(?:ed|ation))?\b/i,                       weight: 1.5, severity: 'MEDIUM', critical: false, tag: 'Cancellation' },
 ];
 
@@ -292,14 +350,16 @@ function emptyScore(): BullishScore {
 function classifyTier(positive: number, weightedNeg: number, fatal: boolean, mgmt: number, biz: number, tagDiversity: number): BullishTier {
   if (fatal) return 'BEARISH';
   const net = positive - weightedNeg;
-  // ULTRA_BULLISH — rare exceptional setups (positive >= 14, net >= 12, multi-dimensional)
-  if (positive >= 14 && net >= 12 && mgmt >= 4 && biz >= 4 && tagDiversity >= 4) return 'ULTRA_BULLISH';
-  // BULLISH — clean net positive with both pillars
-  if (net >= 6 && mgmt >= 2 && biz >= 2) return 'BULLISH';
-  // MIXED_POSITIVE — positive content present, some friction, net still positive
-  if (positive >= 4 && net >= 1) return 'MIXED_POSITIVE';
-  // BEARISH — net negative
-  if (net <= -3) return 'BEARISH';
+  // PATCH 0392 — loosened tiers per user feedback. Real-market filings
+  // shouldn't fall to NEUTRAL just because they're "not perfect."
+  // ULTRA_BULLISH — exceptional setups (rare, 1-3/week)
+  if (positive >= 12 && net >= 10 && mgmt >= 3 && biz >= 3 && tagDiversity >= 4) return 'ULTRA_BULLISH';
+  // BULLISH — clean net positive with both pillars (10-25/week)
+  if (net >= 4 && mgmt >= 1.5 && biz >= 1.5) return 'BULLISH';
+  // MIXED_POSITIVE — softer signal, the realistic bulk (30-50/week)
+  if (positive >= 2.5 && net >= 0.5) return 'MIXED_POSITIVE';
+  // BEARISH — clearly negative or fatal blocker
+  if (net <= -2) return 'BEARISH';
   return 'NEUTRAL';
 }
 
@@ -426,12 +486,13 @@ export function scoreBullish(text: string): BullishScore {
     // Diminishing returns — tag diversity cap (only when no FATAL)
     const tagDiversity = tagSet.size;
     if (!criticalBlocker) {
-      if (tagDiversity <= 1) raw = Math.min(raw, 5);
-      else if (tagDiversity === 2) raw = Math.min(raw, 9);
-      else raw = Math.min(raw, 16);
+      if (tagDiversity <= 1) raw = Math.min(raw, 4);
+      else if (tagDiversity === 2) raw = Math.min(raw, 7);
+      else raw = Math.min(raw, 12);
     }
-
-    const score = Math.max(0, Math.min(10, raw / 1.6));
+    // PATCH 0392 — hard cap raw_score at 10 per user spec: 'Never exceed 10'
+    raw = Math.max(-5, Math.min(10, raw));
+    const score = Math.max(0, Math.min(10, raw));
 
     // Legacy 3-state sentiment for backward compat (some callers use this)
     let sentiment: BullishScore['sentiment'];

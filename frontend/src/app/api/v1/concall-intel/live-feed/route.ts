@@ -27,7 +27,7 @@ import { classifyFiling, scoreBullish, isHighBullishRaw, type BullishScore, type
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
 import { extractSections } from '@/lib/concall-sections';
 
-const CACHE_KEY = (days: number) => `concall-feed:v4:days:${days}`;   // v4: multi-tier classifier + severity-weighted blockers + sanitized PDFs
+const CACHE_KEY = (days: number) => `concall-feed:v5:days:${days}`;   // v5: probabilistic ranking + soft-bullish phrases + 30d lookback
 const CACHE_TTL_SHORT = 5 * 60;        // 5 min for fresh data
 const CACHE_TTL_LONG = 30 * 60;        // 30 min for older lookback
 
@@ -38,7 +38,9 @@ const CACHE_TTL_LONG = 30 * 60;        // 30 min for older lookback
 // inside the PDF.
 // Budget: Vercel maxDuration 45s, each PDF takes 2-5s with cache, ~10
 // PDFs in parallel is safe. Cached PDFs hit instantly.
-const MAX_PDF_EXTRACTS_PER_REQUEST = 12;
+// PATCH 0392 — bumped from 12 → 18 for 30-day window; subsequent refreshes
+// hit cached PDFs so the next-poll cost is near-zero
+const MAX_PDF_EXTRACTS_PER_REQUEST = 18;
 
 interface ScoredFiling extends FilingRecord {
   filing_type: ConcallFilingType;
@@ -66,7 +68,8 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;  // PATCH 0388: extended for PDF extraction budget
 
 export async function GET(req: NextRequest) {
-  const days = Math.min(7, Math.max(1, parseInt(req.nextUrl.searchParams.get('days') || '2')));
+  // PATCH 0392 — max lookback bumped 7 → 30 days per user request
+  const days = Math.min(30, Math.max(1, parseInt(req.nextUrl.searchParams.get('days') || '7')));
   const exchangeFilter = (req.nextUrl.searchParams.get('exchange') || '').toUpperCase();
   const rawThreshold = parseFloat(req.nextUrl.searchParams.get('threshold') || '4');
   const bullishOnly = req.nextUrl.searchParams.get('bullishOnly') === '1';

@@ -22,7 +22,7 @@ import {
   type WarrantFilingType, type WarrantDetails, type WarrantConvictionScore,
 } from '@/lib/warrant-momentum';
 
-const CACHE_KEY = (days: number) => `warrant-feed:v1:days:${days}`;
+const CACHE_KEY = (days: number) => `warrant-feed:v2:days:${days}`;  // v2: ranking mode + 30d
 const CACHE_TTL_SHORT = 5 * 60;
 const CACHE_TTL_LONG = 30 * 60;
 const MAX_PDF_EXTRACTS = 15;
@@ -123,15 +123,19 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
-  const days = Math.min(14, Math.max(1, parseInt(req.nextUrl.searchParams.get('days') || '7')));
-  const threshold = parseFloat(req.nextUrl.searchParams.get('threshold') || '8');
+  // PATCH 0392 — max lookback bumped 14 → 30 days per user request
+  const days = Math.min(30, Math.max(1, parseInt(req.nextUrl.searchParams.get('days') || '14')));
+  // PATCH 0392 — threshold default dropped 8 → 5 (ranking, not hard gate)
+  const threshold = parseFloat(req.nextUrl.searchParams.get('threshold') || '5');
   const passingOnly = req.nextUrl.searchParams.get('passingOnly') === '1';
+  // PATCH 0392 — top-N ranking mode (returns best N regardless of threshold)
+  const topN = parseInt(req.nextUrl.searchParams.get('topN') || '0');
   const force = req.nextUrl.searchParams.get('force') === '1';
 
   const cacheKey = CACHE_KEY(days);
   if (!force && isRedisAvailable()) {
     const cached = await kvGet<WarrantFeedPayload>(cacheKey);
-    if (cached) return NextResponse.json(applyWarrantFilters(cached, { passingOnly, threshold }));
+    if (cached) return NextResponse.json(applyWarrantFilters(cached, { passingOnly, threshold, topN }));
   }
 
   // Fetch NSE + BSE filings
@@ -265,12 +269,16 @@ export async function GET(req: NextRequest) {
     await kvSet(cacheKey, payload, ttl);
   }
 
-  return NextResponse.json(applyWarrantFilters(payload, { passingOnly, threshold }));
+  return NextResponse.json(applyWarrantFilters(payload, { passingOnly, threshold, topN }));
 }
 
-function applyWarrantFilters(payload: WarrantFeedPayload, opts: { passingOnly: boolean; threshold: number }): WarrantFeedPayload {
+function applyWarrantFilters(payload: WarrantFeedPayload, opts: { passingOnly: boolean; threshold: number; topN: number }): WarrantFeedPayload {
   let filings = payload.filings;
   if (opts.passingOnly) filings = filings.filter(f => f.conviction.passes_gate);
   if (opts.threshold > 0) filings = filings.filter(f => f.conviction.conviction >= opts.threshold);
+  // PATCH 0392 — top-N ranking. When topN > 0, return the best N regardless
+  // of absolute threshold. Lets the UI show 'top 10 warrant setups this
+  // month' even when no filing crosses the strict gate.
+  if (opts.topN > 0) filings = filings.slice(0, opts.topN);
   return { ...payload, filings };
 }
