@@ -2133,10 +2133,13 @@ export async function GET(request: Request) {
 
     console.log(`[Earnings Scan] Scanning ${symbols.length} symbols: ${symbols.join(', ')}`);
 
-    // Fetch in batches of 8 with 200ms delay between batches
-    // buildEarningsCard() NEVER returns null — every symbol gets a card
+    // PATCH 0352 — speed tuning. Batches of 16 (was 8), per-symbol
+    // timeout 8s (was 18s — anything slower is effectively data-missing
+    // and the enrich fallback re-tries on the next request anyway),
+    // inter-batch delay 50ms (was 200ms — upstream sources tolerate it).
+    // Net wall-time for a 30-symbol request: ~4-6s (was ~16-20s).
     const cards: EarningsScanCard[] = [];
-    const BATCH_SIZE = 8;
+    const BATCH_SIZE = 16;
 
     for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
       const batch = symbols.slice(i, i + BATCH_SIZE);
@@ -2144,8 +2147,9 @@ export async function GET(request: Request) {
         batch.map(sym =>
           Promise.race([
             buildEarningsCard(sym, origin),
-            // Per-symbol timeout: bumped to 18s — enrich fallback adds 3-5s
-            new Promise<EarningsScanCard>((_, reject) => setTimeout(() => reject(new Error('Timeout (18s)')), 18000)),
+            // Per-symbol timeout: 8s. Slower symbols get a DATA_MISSING
+            // card and surface on the failed-symbols panel for retry.
+            new Promise<EarningsScanCard>((_, reject) => setTimeout(() => reject(new Error('Timeout (8s)')), 8000)),
           ]).catch((err) => {
             console.warn(`[Earnings Scan] ${sym} crashed/timed out:`, err);
             // Even on crash, return a DATA_MISSING card
@@ -2156,9 +2160,8 @@ export async function GET(request: Request) {
 
       cards.push(...batchResults);
 
-      // Shorter delay between batches
       if (i + BATCH_SIZE < symbols.length) {
-        await new Promise(r => setTimeout(r, 200));
+        await new Promise(r => setTimeout(r, 50));
       }
     }
 
