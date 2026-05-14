@@ -27,7 +27,7 @@ import { classifyFiling, scoreBullish, isHighBullishRaw, type BullishScore, type
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
 import { extractSections } from '@/lib/concall-sections';
 
-const CACHE_KEY = (days: number) => `concall-feed:v7:days:${days}`;   // v7: earnings anchoring + 3-layer scoring + DATA_PENDING
+const CACHE_KEY = (days: number) => `concall-feed:v8:days:${days}`;   // v8: blocker dedup per tag + DATA_PENDING UI + composite ranking
 // PATCH 0396 — Aggressive live-cache per user spec: 'always take live data'
 const CACHE_TTL_SHORT = 2 * 60;        // 2 min for fresh data (was 5)
 const CACHE_TTL_LONG = 10 * 60;        // 10 min for older lookback (was 30)

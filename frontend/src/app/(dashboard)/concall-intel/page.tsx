@@ -250,7 +250,8 @@ function LiveBullishFeed() {
   const [days, setDays] = useState(7);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   // PATCH 0391 — tier filter chips. Default to ALL TIERS for full-universe view.
-  const [tierFilter, setTierFilter] = useState<Set<string>>(new Set(['ULTRA_BULLISH', 'BULLISH', 'MIXED_POSITIVE', 'NEUTRAL', 'BEARISH']));
+  // PATCH 0397 — Added DATA_PENDING to default set.
+  const [tierFilter, setTierFilter] = useState<Set<string>>(new Set(['ULTRA_BULLISH', 'BULLISH', 'MIXED_POSITIVE', 'NEUTRAL', 'BEARISH', 'DATA_PENDING']));
   const toggleTier = (t: string) => {
     setTierFilter(prev => {
       const next = new Set(prev);
@@ -303,7 +304,7 @@ function LiveBullishFeed() {
 
   // Tier counts for the filter chip badges
   const tierCounts = useMemo(() => {
-    const counts: Record<string, number> = { ULTRA_BULLISH: 0, BULLISH: 0, MIXED_POSITIVE: 0, NEUTRAL: 0, BEARISH: 0 };
+    const counts: Record<string, number> = { ULTRA_BULLISH: 0, BULLISH: 0, MIXED_POSITIVE: 0, NEUTRAL: 0, BEARISH: 0, DATA_PENDING: 0 };
     if (!data) return counts;
     for (const f of data.filings) {
       const t = f.bullish.tier;
@@ -325,7 +326,8 @@ function LiveBullishFeed() {
                 {' '}<strong style={{ color: '#10B981' }}>{tierCounts.BULLISH || 0} 🟢</strong> ·
                 {' '}<strong style={{ color: '#F59E0B' }}>{tierCounts.MIXED_POSITIVE || 0} 🟡</strong> ·
                 {' '}<strong style={{ color: '#94A3B8' }}>{tierCounts.NEUTRAL || 0} ⚪</strong> ·
-                {' '}<strong style={{ color: '#EF4444' }}>{tierCounts.BEARISH || 0} 🔴</strong>
+                {' '}<strong style={{ color: '#EF4444' }}>{tierCounts.BEARISH || 0} 🔴</strong> ·
+                {' '}<strong style={{ color: '#3B82F6' }}>{tierCounts.DATA_PENDING || 0} 🟦</strong>
                 {' '}· sources: NSE <strong style={{ color: data.sources.nse === 'NSE_OK' ? '#10B981' : '#EF4444' }}>{data.sources.nse}</strong> · BSE <strong style={{ color: data.sources.bse === 'BSE_OK' ? '#10B981' : '#94A3B8' }}>{data.sources.bse}</strong>
                 {lastRefresh && <> · refreshed {lastRefresh.toLocaleTimeString()}</>}
               </>
@@ -368,6 +370,7 @@ function LiveBullishFeed() {
             { id: 'MIXED_POSITIVE', label: '🟡 Mixed Positive',    color: '#F59E0B' },
             { id: 'NEUTRAL',        label: '⚪ Neutral',            color: '#94A3B8' },
             { id: 'BEARISH',        label: '🔴 Bearish',           color: '#EF4444' },
+            { id: 'DATA_PENDING',   label: '🟦 Data Pending',      color: '#3B82F6' },
           ].map(t => {
             const active = tierFilter.has(t.id);
             const count = tierCounts[t.id] || 0;
@@ -388,16 +391,23 @@ function LiveBullishFeed() {
         </div>
       )}
 
-      {/* PATCH 0395 — Top 3 Ranked Ideas pinned panel */}
+      {/* PATCH 0395 — Top 3 Ranked Ideas pinned panel
+          PATCH 0397: Now ranks by composite_score (0.5*Quality + 0.3*Cycle +
+          0.2*Sentiment), the institutional-grade weighting per spec, instead
+          of raw_score which over-favors narrative density. */}
       {data && (() => {
         const ranked = [...data.filings]
           .filter(f => f.bullish.tier && ['ULTRA_BULLISH', 'BULLISH', 'MIXED_POSITIVE'].includes(f.bullish.tier))
-          .sort((a, b) => b.bullish.raw_score - a.bullish.raw_score)
+          .sort((a, b) => {
+            const compA = (a.bullish.components as any).composite_score ?? a.bullish.raw_score;
+            const compB = (b.bullish.components as any).composite_score ?? b.bullish.raw_score;
+            return compB - compA;
+          })
           .slice(0, 3);
         if (ranked.length === 0) return null;
         return (
           <div style={{ marginBottom: 12, padding: 12, background: 'linear-gradient(135deg, #10B98110, #22D3EE10)', border: '1px solid #10B98150', borderRadius: 10 }}>
-            <div style={{ fontSize: 12, fontWeight: 900, color: '#10B981', letterSpacing: '0.5px', marginBottom: 8 }}>★ TOP 3 RANKED — institutional shortlist (highest raw_score, all tiers)</div>
+            <div style={{ fontSize: 12, fontWeight: 900, color: '#10B981', letterSpacing: '0.5px', marginBottom: 8 }}>★ TOP 3 RANKED — institutional shortlist (by composite: 0.5×Quality + 0.3×Cycle + 0.2×Sentiment)</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 8 }}>
               {ranked.map((r, i) => {
                 const tierColor = r.bullish.tier === 'ULTRA_BULLISH' ? '#22D3EE' : r.bullish.tier === 'BULLISH' ? '#10B981' : '#F59E0B';
@@ -455,6 +465,7 @@ function LiveBullishFeed() {
                       MIXED_POSITIVE: { label: '🟡 MIXED POSITIVE', color: '#F59E0B' },
                       NEUTRAL:        { label: '⚪ NEUTRAL',         color: '#94A3B8' },
                       BEARISH:        { label: '🔴 BEARISH',         color: '#EF4444' },
+                      DATA_PENDING:   { label: '🟦 DATA PENDING',   color: '#3B82F6' },
                     };
                     const t = tier ? tierLabel[tier] : null;
                     if (!t) return null;
@@ -515,20 +526,40 @@ function LiveBullishFeed() {
                   </div>
                 );
               })()}
-              {/* PATCH 0395 — Decomposed score breakdown (transparency) */}
+              {/* PATCH 0395+0397 — Decomposed score breakdown (transparency) */}
               <div style={{ marginTop: 6, padding: '6px 8px', background: '#13131a', border: '1px solid #1A2540', borderRadius: 4 }}>
-                <div style={{ fontSize: 9, color: '#94A3B8', fontWeight: 700, marginBottom: 3, letterSpacing: '0.4px' }}>SCORE DECOMPOSITION (raw {f.bullish.raw_score.toFixed(1)} / 10)</div>
+                <div style={{ fontSize: 9, color: '#94A3B8', fontWeight: 700, marginBottom: 3, letterSpacing: '0.4px' }}>
+                  SCORE DECOMPOSITION (raw {f.bullish.raw_score.toFixed(1)} / 10)
+                  {(f.bullish.components as any).composite_score != null && (
+                    <span style={{ marginLeft: 8, color: '#10B981' }}>· composite {(f.bullish.components as any).composite_score.toFixed(1)} / 10</span>
+                  )}
+                  {(f.bullish.components as any).earnings_anchored && (
+                    <span title={`Anchors: ${((f.bullish.components as any).anchor_evidence || []).join(' · ')}`} style={{ marginLeft: 8, color: '#10B981', fontWeight: 800 }}>· ⚓ EARNINGS-ANCHORED</span>
+                  )}
+                  {!(f.bullish.components as any).earnings_anchored && (
+                    <span style={{ marginLeft: 8, color: '#F59E0B', fontWeight: 700 }}>· ⚠ no financial anchor (capped at 6)</span>
+                  )}
+                </div>
+                {/* PATCH 0397 — 3-LAYER score bars (Quality / Cycle / Sentiment) */}
+                {(f.bullish.components as any).quality_score != null && (
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', fontSize: 9, marginBottom: 4 }}>
+                    <span title="Quality layer: margin stability + cash flow + deleveraging" style={{ padding: '1px 6px', borderRadius: 3, background: '#22D3EE20', color: '#22D3EE', fontWeight: 800 }}>Q {((f.bullish.components as any).quality_score ?? 0).toFixed(1)}/10</span>
+                    <span title="Cycle layer: order book + capacity + demand + new customer + capex" style={{ padding: '1px 6px', borderRadius: 3, background: '#A78BFA20', color: '#A78BFA', fontWeight: 800 }}>C {((f.bullish.components as any).cycle_score ?? 0).toFixed(1)}/10</span>
+                    <span title="Sentiment layer: guidance + management tone + outlook" style={{ padding: '1px 6px', borderRadius: 3, background: '#F59E0B20', color: '#F59E0B', fontWeight: 800 }}>S {((f.bullish.components as any).sentiment_score ?? 0).toFixed(1)}/10</span>
+                    <span style={{ fontSize: 9, color: '#6B7A8D', fontStyle: 'italic', alignSelf: 'center' }}>composite = 0.5×Q + 0.3×C + 0.2×S</span>
+                  </div>
+                )}
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', fontSize: 9 }}>
                   <span title="Sum of bullish combo points before penalties" style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: '#10B981', fontWeight: 700 }}>Positive {(f.bullish.components.positive_score ?? f.bullish.raw_score).toFixed(1)}</span>
                   <span title="Management confidence pillar (Guidance + Demand + Margin + Outlook)" style={{ padding: '1px 5px', borderRadius: 3, background: '#22D3EE15', color: '#22D3EE', fontWeight: 700 }}>Mgmt {f.bullish.components.management_confidence.toFixed(1)}</span>
                   <span title="Business evidence pillar (Order Book + Capacity + Customer + Capex + etc.)" style={{ padding: '1px 5px', borderRadius: 3, background: '#A78BFA15', color: '#A78BFA', fontWeight: 700 }}>Biz {f.bullish.components.business_evidence.toFixed(1)}</span>
-                  <span title="Total blocker weight (LOW + MEDIUM + FATAL)" style={{ padding: '1px 5px', borderRadius: 3, background: f.bullish.components.blockers > 0 ? '#EF444415' : '#94A3B815', color: f.bullish.components.blockers > 0 ? '#EF4444' : '#94A3B8', fontWeight: 700 }}>Risk -{f.bullish.components.blockers.toFixed(1)}</span>
+                  <span title="Total blocker weight (LOW + MEDIUM + FATAL) — deduped per tag" style={{ padding: '1px 5px', borderRadius: 3, background: f.bullish.components.blockers > 0 ? '#EF444415' : '#94A3B815', color: f.bullish.components.blockers > 0 ? '#EF4444' : '#94A3B8', fontWeight: 700 }}>Risk -{f.bullish.components.blockers.toFixed(1)}</span>
                   {(f.bullish.components.blocker_severity_fatal ?? 0) > 0 && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#EF444430', color: '#EF4444', fontWeight: 800 }}>FATAL -{(f.bullish.components.blocker_severity_fatal ?? 0).toFixed(1)}</span>}
                   {(f.bullish.components.blocker_severity_medium ?? 0) > 0 && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#F59E0B15', color: '#F59E0B', fontWeight: 700 }}>MED -{(f.bullish.components.blocker_severity_medium ?? 0).toFixed(1)}</span>}
                   {(f.bullish.components.blocker_severity_low ?? 0) > 0 && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#94A3B815', color: '#94A3B8', fontWeight: 700 }}>LOW -{(f.bullish.components.blocker_severity_low ?? 0).toFixed(1)}</span>}
                 </div>
                 <div style={{ fontSize: 9, color: '#6B7A8D', marginTop: 3, fontStyle: 'italic' }}>
-                  Formula: positive − (blockers × 0.65) · ULTRA requires 0 red flags · BULLISH ≤ 1 red flag · Score capped at 10
+                  Formula: positive − (blockers × 0.65) · blockers deduped per tag · ULTRA requires 0 red flags · score capped at 6 without earnings anchor
                 </div>
               </div>
               {/* PATCH 0395 — Traceability footer */}

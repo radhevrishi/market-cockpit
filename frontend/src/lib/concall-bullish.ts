@@ -529,6 +529,10 @@ export function scoreBullish(text: string): BullishScore {
     }
 
     // PATCH 0391 — Negative blockers with SEVERITY TIERS, not single weight
+    // PATCH 0397 — Dedupe blocker hits per filing. Per user feedback:
+    // Pearl Global got -14.4 weight from triple-counting 'exceptional item'
+    // in legal boilerplate. Each blocker tag should count ONCE per filing
+    // (i.e., once per blocker pattern), not once per matched sentence.
     const blockerEvidence: EvidenceSentence[] = [];
     let totalBlockerWeight = 0;
     let weightedNegPenalty = 0;
@@ -538,9 +542,23 @@ export function scoreBullish(text: string): BullishScore {
     let criticalBlocker = false;
     const redFlagSet = new Set<string>();
     const fatalBlockers: string[] = [];
+    // Track which blocker patterns have already fired (by tag) to dedupe
+    const firedBlockers = new Set<string>();
     for (const sent of sentences) {
       for (const b of NEG_BLOCKERS) {
         if (b.re.test(sent)) {
+          // Always capture evidence (so user sees multiple supporting quotes)
+          if (blockerEvidence.length < 6) {
+            blockerEvidence.push({
+              text: truncate(sent, 250),
+              tag: b.tag,
+              polarity: 'BEAR',
+              negated: false,
+            });
+          }
+          // But only weight the blocker ONCE per filing per tag
+          if (firedBlockers.has(b.tag)) continue;
+          firedBlockers.add(b.tag);
           totalBlockerWeight += b.weight;
           redFlagSet.add(b.tag);
           if (b.severity === 'FATAL') {
@@ -553,14 +571,6 @@ export function scoreBullish(text: string): BullishScore {
           } else {
             blockerLow += b.weight;
             weightedNegPenalty += b.weight;
-          }
-          if (blockerEvidence.length < 6) {
-            blockerEvidence.push({
-              text: truncate(sent, 250),
-              tag: b.tag,
-              polarity: 'BEAR',
-              negated: false,
-            });
           }
         }
       }
