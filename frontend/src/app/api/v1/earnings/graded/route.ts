@@ -421,7 +421,14 @@ export async function GET(req: Request) {
           // Re-grade with new enrichment data
           const row = {
             hub_quality: undefined,                    // we have financials now, no preview path
-            symbol: c.ticker, company: c.company, filing_date: c.filing_date,
+            // PATCH 0369 — prefer enrich's resolved company name (it now
+            // queries Screener.in search when NSE name was missing/junk).
+            // Falls back to the cached card name if enrich didn't resolve.
+            symbol: c.ticker,
+            company: (e.company && e.company !== c.ticker && e.company.toUpperCase() !== String(c.ticker).toUpperCase())
+              ? e.company
+              : (c.company || e.company_name || c.ticker),
+            filing_date: c.filing_date,
             quarter: c.quarter, sector: e.sector || c.sector,
             market_cap_bucket: e.market_cap_bucket || c.market_cap_bucket,
             source_url: c.filing_url,
@@ -577,7 +584,14 @@ export async function GET(req: Request) {
     const e = enrich[m.ticker] || {};
     const row = {
       hub_quality: m.quality,
-      symbol: m.ticker, company: m.company, filing_date: m.resultDate,
+      // PATCH 0369 — Prefer enrich's resolved company name over the
+      // hub's raw name when (a) hub returned blank/ticker, OR (b) enrich
+      // has a real, non-ticker name from Screener search.
+      symbol: m.ticker,
+      company: (e.company && e.company !== m.ticker && e.company.toUpperCase() !== String(m.ticker).toUpperCase())
+        ? e.company
+        : (m.company && m.company.toUpperCase() !== String(m.ticker).toUpperCase() ? m.company : (e.company || m.company || m.ticker)),
+      filing_date: m.resultDate,
       quarter: m.quarter || e.quarter || 'Q4',
       sector: e.sector || m.sector,
       market_cap_bucket: e.market_cap_bucket ||

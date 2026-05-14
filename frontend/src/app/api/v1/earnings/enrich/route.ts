@@ -371,6 +371,62 @@ function isValidSymbol(s: string): boolean {
 //   1. NSE structured /api/corporates-financial-results (primary, XBRL)
 //   2. BSE corporate filings + Screener (fallback for BSE-only stocks)
 //   3. Yahoo Finance v8 (always overlaid for price/RS/Stage)
+// PATCH 0369 — Resolve company name via Screener.in's own search API when
+// the financial-data fetchers don't have a clean company_name. NSE often
+// returns names with junk suffixes; Screener doesn't return anything for
+// micro/small-caps. Without a real company name, the Screener.in export
+// in the UI falls back to the bare ticker which Screener's fuzzy match
+// can't resolve for many small-caps.
+//
+// Cache the resolved name in KV for 180 days — company names rarely change.
+async function resolveCompanyNameFromScreenerSearch(symbol: string): Promise<string | null> {
+  const cacheKey = `co-name:v1:${symbol.toUpperCase()}`;
+  if (isRedisAvailable()) {
+    try {
+      const cached = await kvGet<string>(cacheKey);
+      if (cached && typeof cached === 'string' && cached.trim()) return cached;
+    } catch {}
+  }
+  try {
+    const url = `https://www.screener.in/api/company/search/?q=${encodeURIComponent(symbol)}`;
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(4500),
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://www.screener.in/',
+      },
+    });
+    if (!res.ok) return null;
+    const json: any = await res.json();
+    const arr: any[] = Array.isArray(json) ? json : (Array.isArray(json?.companies) ? json.companies : []);
+    if (arr.length === 0) return null;
+
+    // Best match priority:
+    //   1. URL path contains /SYMBOL/ exactly (means Screener's symbol equals ours)
+    //   2. Name starts with the symbol letters (acronym-style names)
+    //   3. First result (Screener's default ranking)
+    const symUp = symbol.toUpperCase();
+    const exact = arr.find((c) => {
+      const u = String(c.url || '').toUpperCase();
+      return u.includes(`/${symUp}/`) || u.endsWith(`/${symUp}`);
+    });
+    const winner = exact || arr[0];
+    const name = String(winner.name || winner.company_name || '').trim();
+    if (!name) return null;
+    // Don't cache the bare ticker as the "name" (that means search returned the ticker itself)
+    if (name.toUpperCase() === symUp) return null;
+
+    if (isRedisAvailable()) {
+      try { await kvSet(cacheKey, name, 180 * 24 * 3600); } catch {}
+    }
+    return name;
+  } catch {
+    return null;
+  }
+}
+
 async function enrichOne(symbol: string, filedHint?: string, bypassCache = false): Promise<any> {
   // Cache key includes filed date so a new filing busts old cache
   const cacheKey = filedHint ? `enrich:v5:${symbol}:${filedHint}` : `enrich:v5:${symbol}`;
@@ -395,13 +451,27 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     market_cap_cr: screener.market_cap_cr,
     pe: screener.pe,
   } : {};
-  const out = {
+  const out: any = {
     ...fin,
     ...meta,
     ...(yahoo || {}),
     financials_source: nse ? 'nse' : (screener ? 'screener' : null),
     _enriched_at: new Date().toISOString(),
   };
+
+  // PATCH 0369 — If NSE/Screener fetchers didn't give us a real company
+  // name (or returned the ticker as the name), resolve via Screener.in
+  // search API. Costs one extra HTTP call per missing-name symbol, only
+  // on cache miss, results cached 180 days. Stamp both `company` and
+  // `company_name` so consumers reading either field work.
+  const currentName = String(out.company || '').trim();
+  const needsName = !currentName || currentName.toUpperCase() === symbol.toUpperCase();
+  if (needsName) {
+    const resolved = await resolveCompanyNameFromScreenerSearch(symbol);
+    if (resolved) out.company = resolved;
+  }
+  // Mirror onto company_name field (some consumers in earnings-scan read this).
+  if (out.company) out.company_name = out.company;
   // PATCH 0194 — don't cache an empty result for the full 6h TTL.
   // If financials came back null, cache for only 5 minutes so the next
   // refresh actually re-tries the upstream sources (NSE / Screener may
