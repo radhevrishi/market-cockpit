@@ -35,7 +35,17 @@ import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
 
-const MAX_DAYS_PER_CALL = 6;
+// PATCH 0361 — reduced from 6 → 2. A graded?refreshMissing=1 call can
+// take 12-20s per date (30 tickers × ~500ms enrich). 6 dates = 90s, way
+// over Vercel's 55s budget → 504. With 2 dates/batch we're at ~30-40s
+// worst case, leaving comfortable margin. Frontend chains via cursor_next
+// so total wall-time is unchanged (~3 min for 90 weekdays).
+const MAX_DAYS_PER_CALL = 2;
+
+// Per-date timeout for the internal graded fetch. If a single date hangs,
+// we skip it (return 'error') and the next iteration moves on rather than
+// blocking the whole batch.
+const PER_DATE_TIMEOUT_MS = 22_000;
 
 function isoNDaysAgo(n: number): string {
   const d = new Date();
@@ -70,7 +80,9 @@ export async function GET(req: Request) {
   const origin = `${reqUrl.protocol}//${reqUrl.host}`;
 
   const todayIso = new Date().toISOString().slice(0, 10);
-  const fromParam = searchParams.get('from') || isoNDaysAgo(90);
+  // PATCH 0361 — default backfill window 60 days (was 90). User feedback:
+  // 60 is enough for their workflow and improves total backfill latency.
+  const fromParam = searchParams.get('from') || isoNDaysAgo(60);
   const toParam = searchParams.get('to') || isoNDaysAgo(1);  // default: yesterday
   const skipWeekends = searchParams.get('skipWeekends') !== '0';  // default true
 
@@ -110,8 +122,13 @@ export async function GET(req: Request) {
     try {
       // Hit graded with refreshMissing=1 so the partial-refresh path runs
       // and enriches all preview-shape cards into real graded ones.
+      // PATCH 0361 — per-date AbortSignal timeout. If one date hangs we
+      // skip it instead of letting it eat the whole 55s function budget.
       const url = `${origin}/api/v1/earnings/graded?date=${date}&refreshMissing=1`;
-      const res = await fetch(url, { cache: 'no-store' });
+      const res = await fetch(url, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(PER_DATE_TIMEOUT_MS),
+      });
       if (!res.ok) {
         results.push({ date, status: 'error', message: `graded ${res.status}` });
         continue;

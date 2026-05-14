@@ -1147,7 +1147,8 @@ export default function EarningsOpportunitiesPage() {
     setBackfilling(true);
     setBackfillProgress('Starting…');
     const today = new Date();
-    const from = new Date(today); from.setDate(today.getDate() - 90);
+    // PATCH 0361 — 60-day window (was 90). User said 60 is enough.
+    const from = new Date(today); from.setDate(today.getDate() - 60);
     const to = new Date(today); to.setDate(today.getDate() - 1);
     const fromIso = from.toISOString().slice(0, 10);
     const toIso = to.toISOString().slice(0, 10);
@@ -1155,23 +1156,70 @@ export default function EarningsOpportunitiesPage() {
     let processedTotal = 0;
     let enrichedTotal = 0;
     let previewOnlyTotal = 0;
+    let errorDates: string[] = [];
+    let consecutiveErrors = 0;
+    // PATCH 0361 — helper: advance cursor by N days when a batch fails so
+    // we don't get stuck on the same problematic date forever.
+    const advanceCursor = (iso: string, days: number) => {
+      const d = new Date(iso); d.setDate(d.getDate() + days);
+      return d.toISOString().slice(0, 10);
+    };
     try {
-      // Safety: cap at 20 batches (= 120 days max) so a server bug can't loop forever
-      for (let iter = 0; iter < 20; iter++) {
-        setBackfillProgress(`Backfilling ${cursor}… (${processedTotal} dates done)`);
-        const res = await fetch(`/api/v1/earnings/backfill?from=${cursor}&to=${toIso}`, { cache: 'no-store' });
-        if (!res.ok) {
-          setBackfillProgress(`⚠ Backfill failed at ${cursor} (HTTP ${res.status})`);
-          break;
+      // Safety: cap at 40 batches (60 days / 2 dates per batch = 30 calls,
+      // +10 retries headroom).
+      for (let iter = 0; iter < 40; iter++) {
+        setBackfillProgress(`Backfilling ${cursor}… (${processedTotal} dates done${errorDates.length ? ` · ${errorDates.length} timed out` : ''})`);
+        let res: Response | null = null;
+        let lastErr: string | null = null;
+        // PATCH 0361 — retry once on 5xx/timeout before skipping the batch.
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            res = await fetch(`/api/v1/earnings/backfill?from=${cursor}&to=${toIso}`, {
+              cache: 'no-store',
+              signal: AbortSignal.timeout(50_000),
+            });
+            if (res.ok) break;
+            lastErr = `HTTP ${res.status}`;
+            // 504/timeout: wait a beat and try again. Other errors: skip immediately.
+            if (res.status >= 500 && attempt === 0) {
+              await new Promise(r => setTimeout(r, 1500));
+              continue;
+            }
+            break;
+          } catch (e: any) {
+            lastErr = e?.message || 'fetch error';
+            if (attempt === 0) {
+              await new Promise(r => setTimeout(r, 1500));
+              continue;
+            }
+            break;
+          }
         }
+        if (!res || !res.ok) {
+          errorDates.push(cursor);
+          consecutiveErrors++;
+          // Skip past this batch's dates (2 weekdays) and try the next chunk
+          cursor = advanceCursor(cursor, 4);  // 4 calendar days = ~2 weekdays
+          if (cursor > toIso) break;
+          if (consecutiveErrors >= 5) {
+            setBackfillProgress(`⚠ Backfill aborted after ${consecutiveErrors} consecutive failures · last err: ${lastErr} · ${enrichedTotal} dates enriched before failure · ${errorDates.length} dates skipped`);
+            break;
+          }
+          continue;
+        }
+        consecutiveErrors = 0;
         const j = await res.json();
         processedTotal += j.processed || 0;
         for (const r of (j.results || [])) {
           if (r.status === 'enriched') enrichedTotal++;
           if (r.status === 'preview-only') previewOnlyTotal++;
+          if (r.status === 'error') errorDates.push(r.date);
         }
         if (j.done) {
-          setBackfillProgress(`✓ Backfill complete · ${enrichedTotal} dates enriched · ${previewOnlyTotal} had no Screener data · scanned ${processedTotal} weekdays in ${fromIso}–${toIso}`);
+          const errorTail = errorDates.length
+            ? ` · ${errorDates.length} dates timed out (re-click Backfill to retry just those)`
+            : '';
+          setBackfillProgress(`✓ Backfill complete · ${enrichedTotal} dates enriched · ${previewOnlyTotal} had no Screener data · scanned ${processedTotal} weekdays in ${fromIso}–${toIso}${errorTail}`);
           // Invalidate all client caches so the user's next navigation hits fresh data
           try {
             const keys: string[] = [];
@@ -1181,7 +1229,6 @@ export default function EarningsOpportunitiesPage() {
             }
             for (const k of keys) localStorage.removeItem(k);
           } catch {}
-          // Refetch current page so user sees the now-healed data
           await refetchGraded();
           break;
         }
@@ -1385,16 +1432,16 @@ export default function EarningsOpportunitiesPage() {
             {hardRefreshing ? 'Refetching…' : 'Hard Refresh'}
             <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
           </button>
-          {/* PATCH 0360 — One-shot backfill of the last 90 weekdays. Heals
-              all preview-shape cached payloads so every past date becomes
-              instant cache-hit going forward. */}
+          {/* PATCH 0360 / 0361 — One-shot backfill of the last 60 weekdays.
+              Heals all preview-shape cached payloads so every past date
+              becomes instant cache-hit going forward. */}
           <button
             onClick={runBackfill}
             disabled={backfilling}
-            title="One-time fill of the last 90 weekdays. Once done, past-date pages serve from cache instantly with no Refresh needed."
+            title="One-time fill of the last 60 weekdays. Chains 2-date batches with retry. Once done, past-date pages serve from cache instantly with no Refresh needed."
             style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #A78BFA60', background: backfilling ? '#A78BFA30' : '#A78BFA15', color: '#A78BFA', fontSize: 11, fontWeight: 700, cursor: backfilling ? 'wait' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, opacity: backfilling ? 0.8 : 1 }}>
             <RefreshCw style={{ width: 11, height: 11, animation: backfilling ? 'spin 0.8s linear infinite' : 'none' }} />
-            {backfilling ? 'Backfilling…' : 'Backfill 90d'}
+            {backfilling ? 'Backfilling…' : 'Backfill 60d'}
           </button>
           {backfillProgress && (
             <span style={{
