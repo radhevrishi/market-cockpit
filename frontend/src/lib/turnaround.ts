@@ -657,23 +657,33 @@ function classifyArchetype(row: TurnaroundRow): { archetype: TurnaroundArchetype
   }
 
   // ───────────────────────────────────────────────────────────────────────
-  // STEP 2: PRIOR DAMAGE EVIDENCE (playbook Ch.4 — turnaround prerequisite)
-  // Per playbook: "A turnaround MUST show at least one of: 3-year profit
-  // collapse >50%, negative PAT phase, ROCE collapse, debt stress, margin
-  // collapse, market share loss, restructuring, dilution, plant shutdown,
-  // insolvency risk, sector downturn."
+  // STEP 2: PRIOR DAMAGE EVIDENCE — PATCH 0383 tightened.
+  // User feedback: GANESHHOU (RE franchise ROCE 44), KSCL (agri),
+  // SAFARI (luggage growth), JYOTI CNC (capex growth) are NOT turnarounds.
+  // Engine was over-firing 'damage' on weak signals (perf1y price drop,
+  // small pledge, WC stretch history). A growth stock that corrected 30%
+  // is NOT damaged. A franchise with 5% historical pledge is NOT damaged.
+  // Only HARD damage counts now — real impairment events that the
+  // company had to recover from.
   // ───────────────────────────────────────────────────────────────────────
   const priorDamage: string[] = [];
-  if (lossYears >= 1) priorDamage.push(`${lossYears}/5 loss yrs`);
+  // HARD damage — any one = real impairment
+  if (lossYears >= 2) priorDamage.push(`${lossYears}/5 loss yrs`);
   if (negLatestPAT) priorDamage.push('current losses');
   if (patY2 != null && patY2 < 0) priorDamage.push('neg PAT prev yr');
   if (row.patY3 != null && row.patY3 < 0) priorDamage.push('neg PAT 3yr ago');
-  if (roce != null && roce3y != null && roce3y < 5 && roce - roce3y >= 5) priorDamage.push(`ROCE rose from ${roce3y.toFixed(0)}% (collapse history)`);
-  if (patG3y != null && patG3y < -30) priorDamage.push(`PAT 3y collapsed ${patG3y.toFixed(0)}%`);
-  if (row.workingCapitalDays3yBack != null && row.workingCapitalDays3yBack > 90) priorDamage.push('WC stretch history');
-  if (row.perf1y != null && row.perf1y < -30) priorDamage.push(`1y price ${row.perf1y.toFixed(0)}% (capitulation)`);
-  if (row.promoterPledgePct != null && row.promoterPledgePct >= 5) priorDamage.push(`pledge ${row.promoterPledgePct.toFixed(0)}%`);
-  if (row.interestCoverage3yBack != null && row.interestCoverage3yBack < 2) priorDamage.push('hist int-coverage stress');
+  if (roce != null && roce3y != null && roce3y < 3 && roce - roce3y >= 8) priorDamage.push(`ROCE was ${roce3y.toFixed(0)}% (severe collapse)`);
+  if (patG3y != null && patG3y < -50) priorDamage.push(`PAT 3y crashed ${patG3y.toFixed(0)}%`);
+  if (row.promoterPledgePct != null && row.promoterPledgePct >= 25) priorDamage.push(`heavy pledge ${row.promoterPledgePct.toFixed(0)}%`);
+  // Severe leverage stress (BOTH D/E and interest coverage together)
+  if (de != null && de > 1.5 && row.interestCoverage != null && row.interestCoverage < 2) {
+    priorDamage.push(`leverage stress D/E ${de.toFixed(1)} + int-cov ${row.interestCoverage.toFixed(1)}x`);
+  }
+  // Severe price collapse — only when combined with another distress marker
+  // (price drop alone is NOT damage; growth correction ≠ turnaround)
+  if (row.perf1y != null && row.perf1y < -50 && (lossYears >= 1 || (de ?? 0) > 1.5 || (row.promoterPledgePct ?? 0) >= 10)) {
+    priorDamage.push(`1y price ${row.perf1y.toFixed(0)}% + stress markers`);
+  }
 
   // ───────────────────────────────────────────────────────────────────────
   // STEP 3: RECOVERY PROOF (playbook Ch.5 Factor 2 — Earnings Inflection)
@@ -812,7 +822,19 @@ function classifyArchetype(row: TurnaroundRow): { archetype: TurnaroundArchetype
   }
 
   // ⏸ WAIT — damage visible but no recovery proof yet (PHASE 1/2 per playbook)
+  // PATCH 0383: split into DEEP DISTRESS (bimodal outcome, special situations
+  // territory per user feedback on PC Jeweller) vs ordinary WAIT.
   if (priorDamage.length >= 1) {
+    const isDeepDistress = priorDamage.length >= 2 || negLatestPAT || lossYears >= 3 ||
+      (row.promoterPledgePct ?? 0) >= 25;
+    if (isDeepDistress) {
+      return {
+        archetype: 'WAIT',
+        label: '🆘 DEEP DISTRESS',
+        note: `Special-situations / deep-distress — bimodal outcome (5-10× or permanent impairment). Signals: ${priorDamage.slice(0, 3).join(', ')}. Different asset class from ordinary turnaround; tiny position only.`,
+        color: '#EF4444',
+      };
+    }
     return {
       archetype: 'WAIT',
       label: '⏸ WAIT',
