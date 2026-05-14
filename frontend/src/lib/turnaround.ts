@@ -619,6 +619,31 @@ function classifyArchetype(row: TurnaroundRow): { archetype: TurnaroundArchetype
     };
   }
 
+  // PATCH 0379 — 🔄 TURNAROUND EMERGING — data-poor detection.
+  // When the CSV doesn't have historical/quarterly trend columns
+  // (patY2, debt3yBack, opmQ2, Qtr Profit Var %) we can't prove
+  // recovery from prior-period inflection. Fall back to "ROCE in
+  // 3-15% zone + positive earnings" as a proxy for "company has
+  // emerged from losses but hasn't reached quality tier yet".
+  // This is the exact pattern in the user's
+  // Turnaround_Investor_Master_Playbook.docx — buy before market
+  // re-rates from "distressed" to "quality compounder".
+  // Excludes ultra-high PE (>60) which signals either narrative
+  // froth or near-zero earnings denominator.
+  if (
+    positiveLatestPAT &&
+    roce != null && roce >= 3 && roce < 15 &&
+    lossYears <= 1 &&
+    (pe == null || pe < 60)
+  ) {
+    return {
+      archetype: 'TURNAROUND',
+      label: '🔄 TURNAROUND',
+      note: `Emerging recovery — ROCE ${roce.toFixed(0)}% (3-15% zone, not yet quality), positive earnings. Likely emerged from distress; needs concall/news to confirm trajectory. Add prior-quarter PAT + debt columns from Screener for stronger classification.`,
+      color: '#F59E0B',
+    };
+  }
+
   // 💎 QUALITY COMPOUNDER — high sustained ROCE, no distress.
   // NO growth gate (a quality compounder may grow at 8-15%; that's fine).
   // Treat null lossYears as 0 (Screener often omits the column).
