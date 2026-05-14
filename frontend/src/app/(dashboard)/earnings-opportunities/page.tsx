@@ -1932,14 +1932,28 @@ function EarningsCard({ stock }: { stock: ParsedEarning }) {
       )}
 
       {/* ── Filing link ───────────────────────────────────────────────────── */}
-      {stock.filing_url && (
-        <div style={{ marginTop: 8, paddingTop: 7, borderTop: '1px solid #1A2840' }}>
-          <a href={stock.filing_url} target="_blank" rel="noopener noreferrer"
-            style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <ExternalLink style={{ width: 10, height: 10 }} /> 📄 Filing · {stock.source}
-          </a>
-        </div>
-      )}
+      {/* PATCH 0359 — Always render NSE filing URL fresh from ticker. Old
+          cached payloads (generated pre-Patch 0358) baked the old
+          /get-quotes/equity URL into stock.filing_url which redirects to
+          a generic quote page, not the financial-results filings page.
+          Generating at render time means stale caches don't poison the link. */}
+      <div style={{ marginTop: 8, paddingTop: 7, borderTop: '1px solid #1A2840' }}>
+        <a
+          href={`https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(stock.ticker)}`}
+          target="_blank" rel="noopener noreferrer"
+          title="Open NSE financial-results filings filter for this ticker"
+          style={{ fontSize: 10, color: '#22D3EE', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <ExternalLink style={{ width: 10, height: 10 }} /> 📄 NSE Filings · {stock.ticker}
+        </a>
+        {' '}
+        <a
+          href={`https://www.bseindia.com/corporates/ann.html?scrip=${encodeURIComponent(stock.ticker)}`}
+          target="_blank" rel="noopener noreferrer"
+          title="Open BSE corporate announcements filter for this ticker"
+          style={{ fontSize: 10, color: '#94A3B8', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 10 }}>
+          <ExternalLink style={{ width: 10, height: 10 }} /> 📄 BSE
+        </a>
+      </div>
     </div>
   );
 }

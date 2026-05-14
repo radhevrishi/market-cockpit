@@ -381,7 +381,16 @@ export async function GET(req: Request) {
             financials_source: e.financials_source,
           };
           const g = gradeRow(row);
-          if (g) {
+          // PATCH 0359 — only count a card as "replaced" when enrich produced
+          // a card with meaningful financial data (YoY %s present, not just
+          // a raw sales_curr_cr). Previously gradeRow could return a card
+          // with sales_curr_cr=N but YoY=null which counts as "updated" in
+          // the message but renders identical to the preview card on screen.
+          // The user sees "Updated 11/11" while staring at preview cards.
+          const hasRealFinancials = !!g && (
+            g.sales_yoy_pct != null || g.net_profit_yoy_pct != null || g.eps_yoy_pct != null
+          );
+          if (g && hasRealFinancials) {
             updatedCards.push(g);
             replacedTickers.add(c.ticker);
           } else {
@@ -498,15 +507,22 @@ export async function GET(req: Request) {
   for (const g of graded) by_tier[g.tier].push(g);
   for (const t of TIER_ORDER) by_tier[t].sort((a, b) => b.composite_score - a.composite_score);
 
-  // PATCH 0358 — compute how many tickers got real financials vs. how many
-  // came through as preview-only. Surface as _refresh so the client message
-  // (which parses /^(\d+)\/(\d+)\s+updated/) renders accurate counts. Without
-  // this, the client falls back to a meaningless "0/0 updated" string.
-  const populated = graded.filter(g => g.sales_curr_cr != null || g.pat_curr_cr != null).length;
+  // PATCH 0358 + 0359 — compute how many tickers got REAL financials with
+  // YoY data attached (not just preview-shape cards). Previously this only
+  // checked sales_curr_cr/pat_curr_cr presence which let preview cards
+  // (sales_curr_cr=null, but hub_quality stamped) leak into the "updated"
+  // count, producing the lying "Updated 11/11" message while the UI showed
+  // 11 preview cards. New criterion mirrors what the user sees on screen:
+  // YoY data present = real financials = counted as populated.
+  const populated = graded.filter(g =>
+    g.sales_yoy_pct != null || g.net_profit_yoy_pct != null || g.eps_yoy_pct != null
+  ).length;
   const failedTickers = dayList
     .filter((m: any) => {
       const e = enrich[m.ticker];
-      return !e || (e.sales_curr_cr == null && e.pat_curr_cr == null);
+      return !e || (
+        e.sales_yoy_pct == null && e.pat_yoy_pct == null && e.eps_yoy_pct == null
+      );
     })
     .map((m: any) => m.ticker);
 
