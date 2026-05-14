@@ -564,8 +564,14 @@ function classifyArchetype(row: TurnaroundRow): { archetype: TurnaroundArchetype
   // row with ANY usable data lands in a sensible bucket.
   const patQ1 = row.patQ1;
   const patY1 = row.patY1;
-  const positiveLatestPAT = (patQ1 != null && patQ1 > 0) || (patY1 != null && patY1 > 0);
-  const negLatestPAT = (patQ1 != null && patQ1 < 0) || (patQ1 == null && patY1 != null && patY1 < 0);
+  const pe = row.pe ?? null;
+  // PATCH 0378 — PE > 0 is itself proof of positive earnings (Screener
+  // leaves PE blank for loss-makers). So treat positive PE as a fallback
+  // for positiveLatestPAT when patQ1/patY1 columns are missing.
+  const positiveLatestPAT = (patQ1 != null && patQ1 > 0) || (patY1 != null && patY1 > 0) || (pe != null && pe > 0);
+  const negLatestPAT = (patQ1 != null && patQ1 < 0) ||
+                       (patQ1 == null && patY1 != null && patY1 < 0) ||
+                       (patQ1 == null && patY1 == null && pe == null);  // no PE = likely loss-maker
   const lossYears = row.lossMakingYears5y ?? 0;
   const roce = row.roce ?? null;
   const roce3y = row.roce3yBack ?? null;

@@ -7745,24 +7745,57 @@ function TurnaroundCompare() {
             return null;
           })()}
 
-          {/* Summary strip */}
+          {/* Summary strip — PATCH 0378: clickable filters. Total clears all
+              filters; archetype cells set archetypeFilter; stage cells set
+              stageFilter. Active cell ring shows current selection. */}
           <div style={{ display: 'flex', gap: 14, marginBottom: 14, flexWrap: 'wrap' }}>
-            {[
-              { label: 'Total', value: rows.length, color: '#94A3B8' },
-              { label: 'BUY-ZONE', value: stageCounts['BUY-ZONE'], color: '#10B981' },
-              { label: '🔄 Turnarounds', value: archetypeCounts['TURNAROUND'] || 0, color: '#F59E0B' },
-              { label: '🔥 SETUP', value: stageCounts.SETUP || 0, color: '#A78BFA' },
-              { label: '🌱 EARLY-SHOOTS', value: stageCounts['EARLY-SHOOTS'], color: '#F59E0B' },
-              { label: '📈 PATTERN', value: stageCounts.PATTERN, color: '#22D3EE' },
-              { label: '✅ CONFIRMED', value: stageCounts.CONFIRMED, color: '#10B981' },
-              { label: 'Not-Turnaround', value: stageCounts['NOT-TURNAROUND'] || 0, color: '#94A3B8' },
-              { label: '🚫 DISTRESS', value: stageCounts.DISTRESS, color: '#EF4444' },
-            ].map(s => (
-              <div key={s.label} style={{ padding: '8px 14px', backgroundColor: '#13131a', border: `1px solid ${s.color}40`, borderRadius: 8 }}>
-                <div style={{ fontSize: 9, color: MUTED, fontWeight: 700, letterSpacing: '0.4px' }}>{s.label}</div>
-                <div style={{ fontSize: 18, fontWeight: 900, color: s.color }}>{s.value}</div>
-              </div>
-            ))}
+            {([
+              { label: 'Total', value: rows.length, color: '#94A3B8', kind: 'reset' as const },
+              { label: 'BUY-ZONE', value: stageCounts['BUY-ZONE'], color: '#10B981', kind: 'stage' as const, target: 'BUY-ZONE' as const },
+              { label: '🔄 Turnarounds', value: archetypeCounts['TURNAROUND'] || 0, color: '#F59E0B', kind: 'archetype' as const, target: 'TURNAROUND' as const },
+              { label: '🔥 SETUP', value: stageCounts.SETUP || 0, color: '#A78BFA', kind: 'stage' as const, target: 'SETUP' as const },
+              { label: '🌱 EARLY-SHOOTS', value: stageCounts['EARLY-SHOOTS'], color: '#F59E0B', kind: 'stage' as const, target: 'EARLY-SHOOTS' as const },
+              { label: '📈 PATTERN', value: stageCounts.PATTERN, color: '#22D3EE', kind: 'stage' as const, target: 'PATTERN' as const },
+              { label: '✅ CONFIRMED', value: stageCounts.CONFIRMED, color: '#10B981', kind: 'stage' as const, target: 'CONFIRMED' as const },
+              { label: 'Not-Turnaround', value: stageCounts['NOT-TURNAROUND'] || 0, color: '#94A3B8', kind: 'stage' as const, target: 'NOT-TURNAROUND' as const },
+              { label: '🚫 DISTRESS', value: stageCounts.DISTRESS, color: '#EF4444', kind: 'stage' as const, target: 'DISTRESS' as const },
+            ]).map(s => {
+              const isActive =
+                (s.kind === 'reset' && stageFilter === 'ALL' && archetypeFilter === 'ALL') ||
+                (s.kind === 'stage' && stageFilter === (s as any).target) ||
+                (s.kind === 'archetype' && archetypeFilter === (s as any).target);
+              const onClick = () => {
+                if (s.kind === 'reset') {
+                  setStageFilter('ALL');
+                  setArchetypeFilter('ALL');
+                } else if (s.kind === 'stage') {
+                  setStageFilter(isActive ? 'ALL' : (s as any).target);
+                  setArchetypeFilter('ALL');
+                } else if (s.kind === 'archetype') {
+                  setArchetypeFilter(isActive ? 'ALL' : (s as any).target);
+                  setStageFilter('ALL');
+                }
+              };
+              return (
+                <button
+                  key={s.label}
+                  onClick={onClick}
+                  title={s.kind === 'reset' ? 'Clear all filters' : `Filter to ${s.label}`}
+                  style={{
+                    padding: '8px 14px',
+                    backgroundColor: isActive ? `${s.color}22` : '#13131a',
+                    border: `2px solid ${isActive ? s.color : s.color + '40'}`,
+                    borderRadius: 8,
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  <div style={{ fontSize: 9, color: isActive ? s.color : MUTED, fontWeight: 700, letterSpacing: '0.4px' }}>{s.label}</div>
+                  <div style={{ fontSize: 18, fontWeight: 900, color: s.color }}>{s.value}</div>
+                </button>
+              );
+            })}
           </div>
 
           {/* PATCH 0374 — Archetype filter rail (TOP — most useful for user
