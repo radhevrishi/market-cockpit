@@ -699,18 +699,46 @@ function classifyArchetype(row: TurnaroundRow): { archetype: TurnaroundArchetype
     recoveryProof.push('WC days improving');
   }
 
+  // PATCH 0382 — IMPLICIT RECOVERY signal. The user's static CSV lacks
+  // most quarterly/historical trend columns needed to prove explicit
+  // recovery (patY2, debt3yBack, opmQ2, ROCE 3y back). But a row with
+  // PRIOR DAMAGE + currently positive earnings + decent ROCE has clearly
+  // emerged from problems even if we can't see the exact trajectory.
+  // This catches the playbook's named examples: INOX WIND (ROCE 12 from
+  // negative), TI Tilaknagar (ROCE 28 post-restructuring), Suzlon (ROCE
+  // 33 from deep losses), Kamat Hotels (ROCE 16 post-COVID), JYOTI CNC
+  // (ROCE 24 from prior cycle).
+  const implicitRecoveryFromCurrent = positiveLatestPAT && roce != null && roce >= 8;
+  if (implicitRecoveryFromCurrent && priorDamage.length >= 1) {
+    recoveryProof.push(`current ROCE ${roce!.toFixed(0)}% + profitable (recovered from damage)`);
+  }
+  // Concall narrative paste-text counts as a recovery proof — playbook says
+  // narrative is 25-30% of the institutional signal.
+  if ((row.concallText || '').trim().length > 50) {
+    // Score the concall narrative inline (mirrored from scoreConcallNarrative)
+    // to count it as a recovery signal regardless of paste size.
+    let ccPositive = 0;
+    const t = (row.concallText || '').toLowerCase();
+    for (const { pattern, weight } of CONCALL_POSITIVE) {
+      if (pattern.test(t)) ccPositive += weight;
+    }
+    if (ccPositive >= 6) recoveryProof.push('Strong concall narrative');
+    else if (ccPositive >= 3) recoveryProof.push('Moderate concall narrative');
+  }
+
   // ───────────────────────────────────────────────────────────────────────
-  // STEP 4: TURNAROUND — STRICT GATE per playbook
-  // Requires BOTH prior damage AND ≥2 recovery proof signals.
-  // Per playbook: "Your engine is failing because it is detecting 'distress'
-  // but not 'restoration capability.' A turnaround requires 5 things
-  // simultaneously."
+  // STEP 4: TURNAROUND GATE per playbook
+  // PATCH 0382: relaxed to damage >= 1 AND recovery >= 1 (was >= 2). The
+  // implicit-recovery signal above ensures that data-poor rows with
+  // genuine recovery (positive earnings + decent ROCE + damage history)
+  // qualify. Without this relaxation, only ~0-3 rows pass per upload —
+  // which is too strict given that the user's CSV lacks trend columns.
   // ───────────────────────────────────────────────────────────────────────
-  if (priorDamage.length >= 1 && recoveryProof.length >= 2) {
+  if (priorDamage.length >= 1 && recoveryProof.length >= 1) {
     return {
       archetype: 'TURNAROUND',
       label: '🔄 TURNAROUND',
-      note: `Real turnaround — prior damage (${priorDamage.slice(0, 2).join(', ')}) + recovery proof ≥2 (${recoveryProof.slice(0, 3).join(', ')}).`,
+      note: `Turnaround — prior damage (${priorDamage.slice(0, 2).join(', ')}) + recovery (${recoveryProof.slice(0, 2).join(', ')}). Paste concall narrative on row to upgrade confidence.`,
       color: '#F59E0B',
     };
   }
@@ -863,15 +891,18 @@ function classifyPhase(
   const positivePAT = (row.patQ1 ?? 0) > 0 || (row.patY1 ?? 0) > 0 || (row.pe ?? 0) > 0;
 
   // Phase 4 — RE-RATING (recovery confirmed, multiple expansion happening)
-  if (recoveryCount >= 4 && perf1y != null && perf1y >= 40) {
+  // Per playbook: stock already up 40%+ from base + multiple recovery signals
+  if (recoveryCount >= 3 && perf1y != null && perf1y >= 40) {
     return { phase: 4, label: 'Phase 4 RE-RATING', action: 'HOLD / TRIM' };
   }
   // Phase 3 — INFLECTION (BUY ZONE ★)
-  if (recoveryCount >= 2 && positivePAT && damageCount >= 1) {
+  // PATCH 0382: relaxed recoveryCount >= 2 → >= 1 (was unreachable for
+  // data-poor rows). Still requires damage history + positive PAT.
+  if (recoveryCount >= 1 && positivePAT && damageCount >= 1) {
     return { phase: 3, label: 'Phase 3 INFLECTION ★', action: 'BUY-ZONE — stage in' };
   }
   // Phase 2 — STABILISATION (rate of deterioration slowing)
-  if (recoveryCount >= 1) {
+  if (damageCount >= 1 && positivePAT) {
     return { phase: 2, label: 'Phase 2 STABILISATION', action: 'WATCH — research deeply' };
   }
   // Phase 1 — COLLAPSE
@@ -1142,6 +1173,10 @@ export function scoreTurnaroundRow(row: TurnaroundRow): TurnaroundResult {
         (row.debt3yBack - row.debtCurr) / row.debt3yBack >= 0.15) n++;
     if (row.roce != null && row.roce3yBack != null && row.roce - row.roce3yBack >= 5 && row.roce >= 8) n++;
     if ((row.patGrowth3y ?? -99) >= 30 && ((row.patQ1 ?? 0) > 0 || (row.patY1 ?? 0) > 0)) n++;
+    // PATCH 0382 — implicit recovery (mirrors classifyArchetype)
+    const _posPAT = (row.patQ1 ?? 0) > 0 || (row.patY1 ?? 0) > 0 || (row.pe ?? 0) > 0;
+    if (_posPAT && (row.roce ?? 0) >= 8) n++;
+    if ((row.concallText || '').trim().length > 50) n++;
     return n;
   })();
   const phaseInfo = classifyPhase(_recoveryCount, _damageCount, row);
@@ -1150,12 +1185,14 @@ export function scoreTurnaroundRow(row: TurnaroundRow): TurnaroundResult {
   const suggestedPositionPct = suggestPositionSize(typeInfo.type, survival.score, killers.length);
 
   // "Best candidate" = institutional buy-zone filter (like Multibagger BLOCKBUSTER)
+  // PATCH 0382: relaxed totalScore floor 50 → 40 since dimensions are sparser
+  // when concall paste hasn't been added yet.
   const isBestCandidate =
     arche.archetype === 'TURNAROUND' &&
     phaseInfo.phase === 3 &&
     survival.score >= 6 &&
     killers.length === 0 &&
-    totalScore >= 50;
+    totalScore >= 40;
 
   return {
     ...row,
