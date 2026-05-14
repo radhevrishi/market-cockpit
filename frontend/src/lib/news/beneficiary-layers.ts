@@ -355,6 +355,49 @@ export const INDIA_ROSTER: LayerTicker[] = [
   { ticker: 'CROMPTON.NS',   layer: 'L6', region: 'IN', rationale: 'Crompton Greaves Consumer — fans + appliances + LED; efficiency tier',                       pricing_leverage: 'MEDIUM', size: 'MID_CAP'   },
   { ticker: 'KIRLOSKARP.NS', layer: 'L6', region: 'IN', rationale: 'Kirloskar Pneumatic — air compressors + cryogenics; thermal + industrial efficiency',        pricing_leverage: 'MEDIUM', size: 'MID_CAP'   },
   { ticker: 'THERMAX.NS',    layer: 'L6', region: 'IN', rationale: 'Thermax — industrial heating/cooling/water/energy; efficiency capex play',                  pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+
+  // ── PATCH 0384: India L1 — RARE EARTHS / CRITICAL MINERALS specialists ───
+  // Fix for user feedback: 'RARE EARTHS / CRITICAL MIN' theme was showing
+  // BHEL/ABB/SIEMENS/POWERGRID/NTPC — wrong. These are the real Indian
+  // rare-earth + critical-minerals + base-metals miners + refiners.
+  { ticker: 'IREL.NS',       layer: 'L1', region: 'IN', rationale: 'IREL India — only Indian rare-earth processor (NdFeB feedstock); strategic critical mineral monopoly', pricing_leverage: 'STRONG', size: 'SMALL_CAP' },
+  { ticker: 'NMDC.NS',       layer: 'L1', region: 'IN', rationale: 'NMDC — largest Indian iron-ore + critical minerals; base for ferro alloys, magnets',           pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'NLCINDIA.NS',   layer: 'L1', region: 'IN', rationale: 'NLC India — lignite + critical minerals + power; rare-earth feedstock processing',            pricing_leverage: 'MEDIUM', size: 'MID_CAP'   },
+  { ticker: 'GMDC.NS',       layer: 'L1', region: 'IN', rationale: 'Gujarat Mineral Dev Corp — bauxite + manganese + lignite; strategic minerals PSU',            pricing_leverage: 'MEDIUM', size: 'MID_CAP'   },
+  { ticker: 'MOIL.NS',       layer: 'L1', region: 'IN', rationale: 'MOIL — only Indian manganese-ore producer; ferro alloy + battery cathode feedstock',         pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'HINDCOPPER.NS', layer: 'L1', region: 'IN', rationale: 'Hindustan Copper — only Indian integrated copper miner; capex super-cycle beneficiary',      pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'HINDZINC.NS',   layer: 'L1', region: 'IN', rationale: 'Hindustan Zinc — global zinc + silver + lead leader; Vedanta group critical metals',         pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'VEDL.NS',       layer: 'L1', region: 'IN', rationale: 'Vedanta — zinc + aluminium + copper + iron ore + oil&gas; integrated base-metals',           pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+
+  // ── PATCH 0384: India L1 — OIL & GAS / LNG specialists ────────────────────
+  // Fix: 'OIL / GAS / LNG' theme was leaking global semis (TSM/MU/ASML/AMAT).
+  // These are real Indian E&P, refining, gas + LNG names.
+  { ticker: 'ONGC.NS',       layer: 'L1', region: 'IN', rationale: 'ONGC — flagship Indian E&P; upstream oil + gas; crude price + production beneficiary',        pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'OIL.NS',        layer: 'L1', region: 'IN', rationale: 'Oil India — NE-focused upstream PSU; gas + crude production growth',                          pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'GAIL.NS',       layer: 'L1', region: 'IN', rationale: 'GAIL India — gas pipeline monopoly + LPG + petrochem; gas-economy backbone',                  pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'IOC.NS',        layer: 'L1', region: 'IN', rationale: 'Indian Oil — largest refiner + retail network; petrochemicals downstream',                    pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
+  { ticker: 'HPCL.NS',       layer: 'L1', region: 'IN', rationale: 'HPCL — integrated refining + marketing; LPG + lubes downstream',                              pricing_leverage: 'MEDIUM', size: 'LARGE_CAP' },
+  { ticker: 'MRPL.NS',       layer: 'L1', region: 'IN', rationale: 'Mangalore Refinery — ONGC subsidiary; export-oriented refining margins',                      pricing_leverage: 'MEDIUM', size: 'MID_CAP'   },
+  { ticker: 'CHENNPETRO.NS', layer: 'L1', region: 'IN', rationale: 'Chennai Petroleum — IOC subsidiary; product mix + petchem integration',                        pricing_leverage: 'MEDIUM', size: 'SMALL_CAP' },
+  { ticker: 'PETRONET.NS',   layer: 'L1', region: 'IN', rationale: 'Petronet LNG — largest Indian LNG regas terminal operator; gas-import backbone',              pricing_leverage: 'STRONG', size: 'LARGE_CAP' },
+  { ticker: 'IGL.NS',        layer: 'L1', region: 'IN', rationale: 'Indraprastha Gas — Delhi CGD monopoly; CNG + PNG volume growth',                              pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'MGL.NS',        layer: 'L1', region: 'IN', rationale: 'Mahanagar Gas — Mumbai CGD monopoly; CNG/PNG volume + margin steady',                          pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'GUJGASLTD.NS',  layer: 'L1', region: 'IN', rationale: 'Gujarat Gas — Western India CGD player; industrial gas mix',                                    pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'GSPL.NS',       layer: 'L1', region: 'IN', rationale: 'Gujarat State Petronet — gas transmission pipeline operator',                                  pricing_leverage: 'MEDIUM', size: 'MID_CAP'   },
+
+  // ── PATCH 0384: India L1 — RENEWABLE / WIND / SOLAR specialists ──────────
+  // Fix: RENEWABLE/BESS/PPA theme was missing the actual wind + solar
+  // OEMs. Add Suzlon, Inox Wind, Waaree, Premier Energies — pure-play RE
+  // OEMs which directly capture sector capex.
+  { ticker: 'SUZLON.NS',     layer: 'L1', region: 'IN', rationale: 'Suzlon Energy — wind OEM leader; deleveraging + sector tailwind + repower cycle',             pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'INOXWIND.NS',   layer: 'L1', region: 'IN', rationale: 'Inox Wind — wind OEM #2; orderbook torque + execution comeback',                              pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'WAAREE.NS',     layer: 'L1', region: 'IN', rationale: 'Waaree Energies — largest Indian solar PV module maker; capacity expansion + exports',         pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'PREMIERENE.NS', layer: 'L1', region: 'IN', rationale: 'Premier Energies — integrated cell + module solar; vertical integration moat',                pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'WEBELSOLAR.NS', layer: 'L1', region: 'IN', rationale: 'Websol Energy — solar cells + modules; specialised n-type technology',                          pricing_leverage: 'MEDIUM', size: 'SMALL_CAP' },
+
+  // ── PATCH 0384: India L1 — ELECTRONICS / PACKAGING (CoWoS adjacencies) ───
+  { ticker: 'SYRMA.NS',      layer: 'L1', region: 'IN', rationale: 'Syrma SGS — EMS for industrial/automotive/medical; PLI semicon ATMP adjacency',               pricing_leverage: 'STRONG', size: 'MID_CAP'   },
+  { ticker: 'AMBER.NS',      layer: 'L1', region: 'IN', rationale: 'Amber Enterprises — PCB + electronics for HVAC + appliances; backward integration',           pricing_leverage: 'STRONG', size: 'MID_CAP'   },
 ];
 
 // India-specific NODE_RULES — same SystemNodes, India-listed mandatory injects.
@@ -374,12 +417,14 @@ export const NODE_RULES_IN: Record<SystemNode, NodeRule> = {
     mandatory: { L1: ['KAYNES.NS'], L2: ['TATAELXSI.NS','LTTS.NS'], L4: ['DIXON.NS'] },
   },
   PACKAGING_INFRA: {
+    // PATCH 0384: add SYRMA / AMBER as semi-adjacent EMS proxies
     fires: ['L1','L2','L4','L5'],
-    mandatory: { L1: ['KAYNES.NS','CGPOWER.NS'], L4: ['DIXON.NS'] },
+    mandatory: { L1: ['KAYNES.NS','CGPOWER.NS','SYRMA.NS','AMBER.NS'], L4: ['DIXON.NS'] },
   },
   FABRICATION_INFRA: {
+    // PATCH 0384: add SYRMA as PLI ATMP adjacency
     fires: ['L1','L4','L5'],
-    mandatory: { L1: ['KAYNES.NS','CGPOWER.NS'], L4: ['LINDEINDIA.NS'] },
+    mandatory: { L1: ['KAYNES.NS','CGPOWER.NS','SYRMA.NS'], L4: ['LINDEINDIA.NS'] },
   },
   INTERCONNECT_INFRA: {
     fires: ['L1','L3','L4','L6'],
@@ -422,20 +467,22 @@ export const NODE_RULES_IN: Record<SystemNode, NodeRule> = {
     },
   },
   OIL_GAS_INFRA: {
-    fires: ['L1','L4','L6'],
-    // PATCH 0107: WELCORP / JINDALSAW / DEE / AEROFLEX are global oil-gas export proxies
+    // PATCH 0384: fix L1 leaking global semis (TSM/MU/ASML/AMAT/KLAC).
+    // Surface real Indian E&P (ONGC/OIL), refiners (IOC/HPCL/MRPL/CHENNPETRO),
+    // gas pipeline (GAIL/PETRONET/GSPL), CGD distributors (IGL/MGL/GUJGASLTD).
+    fires: ['L1','L4'],
     mandatory: {
+      L1: ['ONGC.NS','OIL.NS','GAIL.NS','IOC.NS','HPCL.NS','MRPL.NS','CHENNPETRO.NS','PETRONET.NS','IGL.NS','MGL.NS','GUJGASLTD.NS','GSPL.NS'],
       L4: ['LINDEINDIA.NS','WELCORP.NS','JINDALSAW.NS','DEE.NS','AEROFLEX.NS'],
     },
   },
   RENEWABLE_INFRA: {
-    // PATCH 0106: surface execution-torque specialists ahead of generic PSUs.
-    // KPIGREEN + Premier Energies + Waaree + Borosil renew = direct revenue
-    // sensitivity to RE capex; transformer midcaps (Voltamp / Shilchar / TRIL)
-    // are the actual scarce enablers vs grid megacaps.
+    // PATCH 0384: add real wind+solar OEMs (Suzlon, Inox Wind, Waaree,
+    // Premier Energies, Websol) ahead of generic infra. These are pure-play
+    // RE capex capturers vs PSU megacaps.
     fires: ['L1','L4','L6'],
     mandatory: {
-      L1: ['KPIGREEN.NS','SHILCHTECH.NS','VOLTAMP.NS','TRIL.NS','SKIPPER.NS','GENUSPOWER.NS','ADANIGREEN.NS','POWERGRID.NS','NTPC.NS'],
+      L1: ['SUZLON.NS','INOXWIND.NS','WAAREE.NS','PREMIERENE.NS','WEBELSOLAR.NS','KPIGREEN.NS','SHILCHTECH.NS','VOLTAMP.NS','TRIL.NS','SKIPPER.NS','GENUSPOWER.NS','ADANIGREEN.NS','POWERGRID.NS','NTPC.NS'],
       L4: ['STL.NS','POLYCAB.NS','KEI.NS','HFCL.NS'],
       L6: ['THERMAX.NS'],
     },
@@ -466,8 +513,15 @@ export const NODE_RULES_IN: Record<SystemNode, NodeRule> = {
     },
   },
   RESOURCE_SCARCITY: {
-    fires: ['L1','L4','L6'],
-    mandatory: { L4: ['LINDEINDIA.NS','HEG.NS','GRAPHITE.NS'] },
+    // PATCH 0384: surface real Indian rare-earth / critical-minerals miners
+    // and refiners (IREL/NMDC/NLCINDIA/GMDC/MOIL/HINDCOPPER/HINDZINC/VEDL)
+    // ahead of generic infra megacaps. Drop L6 (HVAC tickers irrelevant to
+    // rare-earths theme — same fix as NUCLEAR_INFRA in Patch 0109b).
+    fires: ['L1','L4'],
+    mandatory: {
+      L1: ['IREL.NS','NMDC.NS','NLCINDIA.NS','GMDC.NS','MOIL.NS','HINDCOPPER.NS','HINDZINC.NS','VEDL.NS'],
+      L4: ['LINDEINDIA.NS','HEG.NS','GRAPHITE.NS'],
+    },
   },
   AGRI_INFRA: {
     // PATCH 0124: drop L5 (TCS/INFY/RELIANCE/HCLTECH/WIPRO have nothing to do

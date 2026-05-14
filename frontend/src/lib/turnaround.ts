@@ -738,17 +738,54 @@ function classifyArchetype(row: TurnaroundRow): { archetype: TurnaroundArchetype
 
   // ───────────────────────────────────────────────────────────────────────
   // STEP 4: TURNAROUND GATE per playbook
-  // PATCH 0382: relaxed to damage >= 1 AND recovery >= 1 (was >= 2). The
-  // implicit-recovery signal above ensures that data-poor rows with
-  // genuine recovery (positive earnings + decent ROCE + damage history)
-  // qualify. Without this relaxation, only ~0-3 rows pass per upload —
-  // which is too strict given that the user's CSV lacks trend columns.
+  // PATCH 0385 — Bring back legitimate recovering turnarounds that 0383
+  // over-restricted. Per user: 'best opportunity zone = Late Phase 2 →
+  // Early Phase 3 — after distress peaks but BEFORE consensus recognises
+  // normalisation.' If we only count CURRENT hard damage, we miss every
+  // recovering name once it shows initial signs (Inox Wind, Tilaknagar,
+  // Kamat Hotels disappeared after 0383). Solution: SECONDARY gate that
+  // recognises 'recovery zone' (ROCE 8-18 = company climbing back from
+  // low base, not at quality tier yet) combined with ANY weak history
+  // hint. Tight enough to exclude steady compounders, loose enough to
+  // capture mid-recovery names.
   // ───────────────────────────────────────────────────────────────────────
+
+  // Strict gate (preferred — hard damage + clear recovery)
   if (priorDamage.length >= 1 && recoveryProof.length >= 1) {
     return {
       archetype: 'TURNAROUND',
       label: '🔄 TURNAROUND',
       note: `Turnaround — prior damage (${priorDamage.slice(0, 2).join(', ')}) + recovery (${recoveryProof.slice(0, 2).join(', ')}). Paste concall narrative on row to upgrade confidence.`,
+      color: '#F59E0B',
+    };
+  }
+
+  // PATCH 0385 — Recovery-zone gate. ROCE 8-18 = the "climbing back from
+  // low base" band. A company at ROCE 12 is NOT a steady compounder
+  // (those are 18+); it's mid-recovery. Combine with ANY soft historical
+  // hint to confirm.
+  const inRecoveryZone = positiveLatestPAT && roce != null && roce >= 8 && roce < 18;
+  const softHistoryHints: string[] = [];
+  if (lossYears === 1) softHistoryHints.push('1/5 loss yr (light damage)');
+  if (row.perf1y != null && row.perf1y < -25) softHistoryHints.push(`1y price ${row.perf1y.toFixed(0)}% (correction)`);
+  if (row.promoterPledgePct != null && row.promoterPledgePct >= 10 && row.promoterPledgePct < 25) softHistoryHints.push(`pledge ${row.promoterPledgePct.toFixed(0)}%`);
+  if (de != null && de > 1) softHistoryHints.push(`D/E ${de.toFixed(1)} (leverage hist)`);
+  if (row.workingCapitalDays != null && row.workingCapitalDays > 100) softHistoryHints.push(`WC ${row.workingCapitalDays.toFixed(0)} days (stretched)`);
+
+  // Governance gate — block operator-driven microcaps from the
+  // recovery-zone path (per user: Arihant Super / Vintage Coffee false
+  // positives, want stronger governance filters)
+  const isWeakGovernance = (
+    mcapCr != null && mcapCr < 1500 &&
+    (promoter ?? 0) < 40 &&
+    (row.promoterPledgePct ?? 0) < 5  // no pledge data is suspicious for microcaps
+  );
+
+  if (inRecoveryZone && softHistoryHints.length >= 1 && !isWeakGovernance) {
+    return {
+      archetype: 'TURNAROUND',
+      label: '🔄 TURNAROUND',
+      note: `Recovery zone — ROCE ${roce!.toFixed(0)}% (8-18 band, climbing back) + ${softHistoryHints.slice(0, 2).join(', ')}. Mid-cycle recovery candidate; verify with concall.`,
       color: '#F59E0B',
     };
   }
