@@ -13,7 +13,7 @@
 // getting correct data'.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Calendar as CalendarIcon, ExternalLink, RefreshCw, ChevronDown, ChevronRight, Grid3X3, FileText } from 'lucide-react';
 import api from '@/lib/api';
@@ -840,13 +840,24 @@ export default function EarningsOpportunitiesPage() {
       writeLsCache(resolvedDateForGrading, payload);
       return payload;
     },
-    // PATCH 0187 — past dates: 7-day stale. Today: 15 min. React Query won't
-    // even try to refetch if the cached payload is within the stale window.
-    staleTime: resolvedDateForGrading < todayIso ? 7 * 24 * 60 * 60_000 : 15 * 60_000,
-    // Aggressive: don't refetch on window focus or reconnect for past dates.
+    // PATCH 0362 — Past dates: 7-day stale (immutable). Today: 3 min so
+    // any small action (click Refresh, tab focus) gets a fresh fetch.
+    // User feedback: 'price action plays out before data updates'.
+    staleTime: resolvedDateForGrading < todayIso ? 7 * 24 * 60 * 60_000 : 3 * 60_000,
     refetchOnWindowFocus: resolvedDateForGrading >= todayIso,
     refetchOnReconnect: resolvedDateForGrading >= todayIso,
-    refetchInterval: false,
+    // PATCH 0362 — Auto-poll every 4 minutes when viewing today's date,
+    // ONLY during Indian market hours (9 AM - 4 PM IST). This is the
+    // key fix for 'always late' — user no longer has to manually refresh
+    // to catch freshly-filed results. Past dates never poll.
+    refetchInterval: () => {
+      if (resolvedDateForGrading !== todayIso) return false;
+      // Indian market hours check (IST UTC+5:30)
+      const now = new Date();
+      const istHours = (now.getUTCHours() + 5.5) % 24;
+      const inMarketHours = istHours >= 9 && istHours <= 17;  // 9 AM - 5 PM IST
+      return inMarketHours ? 4 * 60_000 : false;
+    },
     placeholderData: (prev) => prev,  // keep showing previous date while next loads
     // Hydrate from localStorage so the screen never goes blank on navigation
     initialData: () => readLsCache(resolvedDateForGrading),
@@ -855,6 +866,55 @@ export default function EarningsOpportunitiesPage() {
       return cached ? (cached as any)._cachedAt : undefined;
     },
   });
+
+  // PATCH 0362 — Reset baseline on date change so we don't flag every card
+  // as "new" the moment user navigates to a different date.
+  useEffect(() => {
+    seenTickersRef.current = new Set();
+    setFreshTickers(new Set());
+  }, [resolvedDateForGrading]);
+
+  // PATCH 0362 — Track ticker set across renders to highlight new arrivals.
+  // Fires whenever the gradedData payload changes. The first time the page
+  // loads we just record the baseline set (no badges). On subsequent updates
+  // (auto-refresh, manual refresh) any ticker not in the previous set gets
+  // the "NEW" badge for 10 minutes.
+  useEffect(() => {
+    if (!gradedData?.by_tier) return;
+    const currentTickers = new Set<string>();
+    for (const tier of ['BLOCKBUSTER', 'STRONG', 'MIXED', 'AVOID'] as const) {
+      for (const c of (gradedData.by_tier[tier] || []) as any[]) {
+        if (c.ticker) currentTickers.add(c.ticker);
+      }
+    }
+    // First load: just record baseline, no NEW badges
+    if (seenTickersRef.current.size === 0) {
+      seenTickersRef.current = currentTickers;
+      return;
+    }
+    // Subsequent loads: anything new since last render gets the badge
+    const newOnes = new Set<string>();
+    for (const t of currentTickers) {
+      if (!seenTickersRef.current.has(t)) newOnes.add(t);
+    }
+    if (newOnes.size > 0) {
+      setFreshTickers((prev) => {
+        const merged = new Set(prev);
+        for (const t of newOnes) merged.add(t);
+        return merged;
+      });
+      // Auto-expire fresh markers after 10 minutes
+      setTimeout(() => {
+        setFreshTickers((prev) => {
+          const cleaned = new Set(prev);
+          for (const t of newOnes) cleaned.delete(t);
+          return cleaned;
+        });
+      }, 10 * 60_000);
+    }
+    seenTickersRef.current = currentTickers;
+    setLastAutoRefreshMs(Date.now());
+  }, [gradedData]);
 
   // PATCH 0165 — prefetch the date before and after when user lands on a date
   useEffect(() => {
@@ -935,6 +995,13 @@ export default function EarningsOpportunitiesPage() {
   // /api/v1/earnings/backfill endpoint, chaining cursor_next until done.
   const [backfilling, setBackfilling] = useState(false);
   const [backfillProgress, setBackfillProgress] = useState<string | null>(null);
+  // PATCH 0362 — Track tickers seen across renders so we can highlight
+  // newly-arrived cards as "NEW since last refresh". Persists across the
+  // session via window in-memory ref (not localStorage — we want it to
+  // reset when user closes tab so refresh-on-reopen is clean).
+  const seenTickersRef = useRef<Set<string>>(new Set());
+  const [freshTickers, setFreshTickers] = useState<Set<string>>(new Set());
+  const [lastAutoRefreshMs, setLastAutoRefreshMs] = useState<number>(Date.now());
   // PATCH 0180 — Audit state (validation against EarningsPulse Week Ahead seed)
   const [auditing, setAuditing] = useState(false);
   const [auditResult, setAuditResult] = useState<any>(null);
@@ -1455,6 +1522,36 @@ export default function EarningsOpportunitiesPage() {
               {backfillProgress}
             </span>
           )}
+          {/* PATCH 0362 — Live indicator. Only renders when viewing today's
+              date during market hours. Tells the user the page is auto-
+              refreshing every 4 min, with the last refresh timestamp so
+              they can see freshness at a glance. */}
+          {resolvedDateForGrading === todayIso && (() => {
+            const now = new Date();
+            const istHours = (now.getUTCHours() + 5.5) % 24;
+            const inMarketHours = istHours >= 9 && istHours <= 17;
+            const minutesAgo = Math.floor((Date.now() - lastAutoRefreshMs) / 60_000);
+            return (
+              <span title={inMarketHours
+                ? 'Auto-refreshing every 4 min during Indian market hours (9 AM - 5 PM IST). New filings light up with NEW badges.'
+                : 'Market closed — manual refresh only. Re-opens 9 AM IST.'}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                  fontSize: 10.5, fontWeight: 700,
+                  padding: '3px 9px', borderRadius: 4,
+                  backgroundColor: inMarketHours ? '#10B98118' : '#94A3B815',
+                  border: `1px solid ${inMarketHours ? '#10B98160' : '#94A3B840'}`,
+                  color: inMarketHours ? '#10B981' : '#94A3B8',
+                  fontFamily: 'ui-monospace, monospace',
+                }}>
+                {inMarketHours
+                  ? <><span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: 3, backgroundColor: '#10B981', animation: 'pulse 1.5s ease-in-out infinite' }} /> LIVE · auto-refresh 4m · last {minutesAgo}m ago</>
+                  : <>● MARKET CLOSED · manual refresh only</>
+                }
+                <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.35} }`}</style>
+              </span>
+            );
+          })()}
           {/* PATCH 0189 — Partial refresh button with INLINE feedback */}
           {resolvedDateForGrading && (() => {
             const missing = ((view.by_tier?.BLOCKBUSTER ?? []) as ParsedEarning[])
@@ -1918,7 +2015,7 @@ export default function EarningsOpportunitiesPage() {
               </button>
               {isOpen && (
                 <div style={{ padding: '0 18px 16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 12 }}>
-                  {stocks.map((s) => <EarningsCard key={s.ticker + ':' + s.company} stock={s} />)}
+                  {stocks.map((s) => <EarningsCard key={s.ticker + ':' + s.company} stock={s} isFresh={freshTickers.has(s.ticker)} />)}
                 </div>
               )}
             </div>
@@ -1953,7 +2050,7 @@ function fmtPct(p: number | null | undefined, digits = 0): string {
   return `${p >= 0 ? '+' : ''}${p.toFixed(digits)}%`;
 }
 
-function EarningsCard({ stock }: { stock: ParsedEarning }) {
+function EarningsCard({ stock, isFresh }: { stock: ParsedEarning; isFresh?: boolean }) {
   const tierColor = TIER_META[stock.tier].color;
   // ☀️ daytime filing (09:15–15:30 IST) vs 🌙 outside-hours
   const timing: '☀️' | '🌙' | null = (() => {
@@ -1976,6 +2073,18 @@ function EarningsCard({ stock }: { stock: ParsedEarning }) {
         <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 600, marginLeft: 6, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
           {stock.ticker}
         </span>
+        {/* PATCH 0362 — NEW badge: card arrived since last auto-refresh */}
+        {isFresh && (
+          <span title="Filed since your last auto-refresh — under 10 minutes ago"
+            style={{
+              marginLeft: 8, padding: '1px 7px', borderRadius: 4,
+              fontSize: 9, fontWeight: 900, letterSpacing: '0.5px',
+              backgroundColor: '#10B981', color: '#0A0E1A',
+              animation: 'pulse 1.5s ease-in-out infinite',
+            }}>
+            ⚡ NEW
+          </span>
+        )}
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', fontSize: 10.5, marginBottom: 8 }}>
         {stock.pe != null && (

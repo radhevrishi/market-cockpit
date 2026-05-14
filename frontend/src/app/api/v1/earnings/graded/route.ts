@@ -479,7 +479,7 @@ export async function GET(req: Request) {
           _updated_tickers: [...replacedTickers],
         };
         // Write back with same TTL strategy
-        const ttl = isPast ? 365 * 24 * 3600 : 15 * 60;
+        const ttl = isPast ? 365 * 24 * 3600 : 5 * 60;
         try { await kvSet(cacheKey, payload, ttl); } catch {}
         return NextResponse.json(payload);
       }
@@ -600,7 +600,7 @@ export async function GET(req: Request) {
 
   // Cache: past dates 90 days (immutable), today 15 min
   if (isRedisAvailable()) {
-    const ttl = isPast ? 365 * 24 * 3600 : 15 * 60;
+    const ttl = isPast ? 365 * 24 * 3600 : 5 * 60;
     try { await kvSet(cacheKey, payload, ttl); } catch {}
   }
 
