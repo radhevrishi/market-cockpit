@@ -17,6 +17,8 @@ import { getConvictionTickers } from '@/lib/conviction-beats';
 import { getDecision, setDecision, clearDecision, subscribeDecisions, DECISION_META, type DecisionStatus } from '@/lib/decisions';
 // PATCH 0367 — Export toolbar (TradingView + Screener.in) reused from earnings Scan
 import TickerExportToolbar from '@/components/TickerExportToolbar';
+// PATCH 0370 — Turnaround scoring engine
+import { scoreTurnaroundRow, parseTurnaroundRow, type TurnaroundResult, type TurnaroundStage } from '@/lib/turnaround';
 
 // Shared API base — respects NEXT_PUBLIC_API_URL env var so all fetch() calls
 // resolve consistently when the base URL changes (fixes #13: mixed /api/v1 vs /api)
@@ -7356,7 +7358,7 @@ function detectCsvMarket(headers: string[]): 'IN' | 'US' | 'UNKNOWN' {
 }
 
 export default function MultibaggerPage() {
-  const [activeTab, setActiveTab] = useState<'excel'|'usa'|'usa-checklist'|'checklist'|'capital-alloc'|'reference'>('excel');
+  const [activeTab, setActiveTab] = useState<'excel'|'usa'|'turnaround'|'usa-checklist'|'checklist'|'capital-alloc'|'reference'>('excel');
   // PATCH 0347 — Listen for cross-market tab-switch events fired from upload handlers
   React.useEffect(() => {
     const onSwitch = (e: Event) => {
@@ -7448,6 +7450,8 @@ export default function MultibaggerPage() {
             {([
               {id:'excel',    label:'🇮🇳 India Multibagger Ranking'},
               {id:'usa',           label:'🇺🇸 USA Multibagger'},
+              // PATCH 0370 — Turnaround tab (specialized scoring for distressed-to-recovery setups)
+              {id:'turnaround',    label:'🔄 Turnarounds'},
               {id:'usa-checklist', label:'🇺🇸 USA Checklist'},
               {id:'checklist',label:`📋 Research Checklist${excelRows.length?` (${excelRows.length} loaded)`:''}`},
               {id:'capital-alloc', label:'💰 Capital Allocation'},
@@ -7466,12 +7470,391 @@ export default function MultibaggerPage() {
 
       {activeTab==='excel'     && <ExcelCompare rows={excelRows} setRows={setExcelRows} />}
       {activeTab==='usa'          && <USACompare />}
+      {activeTab==='turnaround'    && <TurnaroundCompare />}
       {activeTab==='usa-checklist'&& <USAChecklist />}
       {activeTab==='checklist' && <MultibaggerChecklist excelRows={excelRows} />}
       {activeTab==='capital-alloc' && <CapitalAllocationPanel />}
       {activeTab==='reference'     && <MultibaggerReference excelRows={excelRows} />}
     </div>
   );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PATCH 0370 — TURNAROUND COMPARE TAB
+//
+// Specialised view for distressed-to-recovery setups. Different from
+// regular Multibagger because:
+//   - 7-dimension scoring (earnings inflection / op reset / balance sheet
+//     repair / concall narrative / industry tailwind / governance / valuation)
+//   - Stage classifier: DISTRESS → EARLY-SHOOTS → PATTERN → CONFIRMED → MATURE
+//   - BUY-ZONE filter highlights Early-Shoots + Pattern stages (the alpha
+//     window before consensus arrives)
+//   - Concall paste-text per row contributes to scoring (15 of 100 pts)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const TURNAROUND_STORAGE_KEY = 'mb_turnaround_scored_v1';
+const TURNAROUND_CONCALLS_KEY = 'mb_turnaround_concalls_v1';
+
+function TurnaroundCompare() {
+  const [rows, setRows] = useState<TurnaroundResult[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const saved = localStorage.getItem(TURNAROUND_STORAGE_KEY);
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      if (!Array.isArray(parsed)) return [];
+      // Re-score on load so any code changes apply
+      return parsed.map((r: any) => scoreTurnaroundRow(r)).sort((a, b) => b.totalScore - a.totalScore);
+    } catch { return []; }
+  });
+  const [fileName, setFileName] = useState<string>('');
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [expRow, setExpRow] = useState<string | null>(null);
+  const [stageFilter, setStageFilter] = useState<TurnaroundStage | 'BUY-ZONE' | 'ALL'>('ALL');
+  const [showOnlyHighConcall, setShowOnlyHighConcall] = useState(false);
+  const [showLossRecovery, setShowLossRecovery] = useState(false);
+  // Concall map: ticker -> pasted text
+  const [concallMap, setConcallMap] = useState<Record<string, string>>(() => {
+    if (typeof window === 'undefined') return {};
+    try { return JSON.parse(localStorage.getItem(TURNAROUND_CONCALLS_KEY) || '{}'); } catch { return {}; }
+  });
+
+  // Persist concall map and trigger re-score when concall changes for a symbol
+  const updateConcall = useCallback((symbol: string, text: string) => {
+    setConcallMap(prev => {
+      const next = { ...prev, [symbol]: text };
+      try { localStorage.setItem(TURNAROUND_CONCALLS_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+    // Re-score this row
+    setRows(prev => prev.map(r => {
+      if (r.symbol !== symbol) return r;
+      return scoreTurnaroundRow({ ...r, concallText: text });
+    }).sort((a, b) => b.totalScore - a.totalScore));
+  }, []);
+
+  const handleFile = async (file: File) => {
+    setParseError(null);
+    setFileName(file.name);
+    try {
+      const text = await file.text();
+      // Reuse simple CSV parser — handles quoted commas
+      const parsed = parseCsvFlexible(text);
+      if (parsed.length === 0) throw new Error('No rows parsed from CSV');
+      const tRows = parsed
+        .map(r => parseTurnaroundRow(r))
+        .filter((r): r is NonNullable<typeof r> => r != null)
+        // Apply persisted concall text
+        .map(r => ({ ...r, concallText: concallMap[r.symbol] || '' }));
+      if (tRows.length === 0) throw new Error('No valid tickers found in CSV');
+      const scored = tRows.map(scoreTurnaroundRow).sort((a, b) => b.totalScore - a.totalScore);
+      setRows(scored);
+      try { localStorage.setItem(TURNAROUND_STORAGE_KEY, JSON.stringify(scored)); } catch {}
+    } catch (e: any) {
+      setParseError(e?.message || 'CSV parse failed');
+    }
+  };
+
+  // Filter chain
+  const filtered = useMemo(() => {
+    let out = rows;
+    if (stageFilter === 'BUY-ZONE') {
+      out = out.filter(r => r.inBuyZone);
+    } else if (stageFilter !== 'ALL') {
+      out = out.filter(r => r.stage === stageFilter);
+    }
+    if (showOnlyHighConcall) {
+      out = out.filter(r => r.concallScore >= 8);
+    }
+    if (showLossRecovery) {
+      // Stocks with prior loss-making years that just turned profitable
+      out = out.filter(r =>
+        (r.lossMakingYears5y ?? 0) >= 1 &&
+        r.patQ1 != null && r.patQ1 > 0
+      );
+    }
+    return out;
+  }, [rows, stageFilter, showOnlyHighConcall, showLossRecovery]);
+
+  // Stage counts
+  const stageCounts = useMemo(() => {
+    const c: Record<string, number> = { ALL: rows.length, 'BUY-ZONE': 0, DISTRESS: 0, 'EARLY-SHOOTS': 0, PATTERN: 0, CONFIRMED: 0, MATURE: 0 };
+    for (const r of rows) {
+      c[r.stage]++;
+      if (r.inBuyZone) c['BUY-ZONE']++;
+    }
+    return c;
+  }, [rows]);
+
+  // Company-name map for Screener export
+  const tickerCompanyMap = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const r of filtered) {
+      if (r.symbol && r.company) m[r.symbol.toUpperCase()] = r.company;
+    }
+    return m;
+  }, [filtered]);
+
+  return (
+    <div style={{ padding: '20px 24px 60px', maxWidth: 1800, margin: '0 auto' }}>
+      {/* Header */}
+      <div style={{ marginBottom: 18 }}>
+        <h2 style={{ fontSize: F.h2, fontWeight: 800, color: '#22D3EE', margin: 0, marginBottom: 5 }}>
+          🔄 Turnaround Research Engine
+        </h2>
+        <p style={{ fontSize: F.sm, color: MUTED, margin: 0, lineHeight: 1.5 }}>
+          Earnings power restoration scoring · 7 dimensions · Stage classifier · Concall narrative weighted heavily.
+          Upload Screener.in CSV with quarterly P&L columns. Paste concall narrative per row to unlock the full 15-point Concall dimension.
+        </p>
+      </div>
+
+      {/* Upload */}
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 18px', backgroundColor: '#22D3EE', color: '#0A0E1A', borderRadius: 8, fontWeight: 800, fontSize: F.sm, cursor: 'pointer' }}>
+          📁 Upload Screener.in CSV
+          <input type="file" accept=".csv" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} style={{ display: 'none' }} />
+        </label>
+        {fileName && <span style={{ fontSize: F.xs, color: MUTED }}>{fileName} · {rows.length} rows scored</span>}
+        {parseError && <span style={{ fontSize: F.xs, color: RED, fontWeight: 700 }}>⚠ {parseError}</span>}
+        {rows.length > 0 && (
+          <button
+            onClick={() => { if (window.confirm(`Clear all ${rows.length} turnaround rows?`)) { setRows([]); localStorage.removeItem(TURNAROUND_STORAGE_KEY); setFileName(''); } }}
+            style={{ marginLeft: 'auto', padding: '6px 14px', backgroundColor: `${RED}14`, border: `1px solid ${RED}40`, borderRadius: 6, color: RED, fontSize: F.xs, fontWeight: 700, cursor: 'pointer' }}>
+            🗑 Clear All
+          </button>
+        )}
+      </div>
+
+      {rows.length === 0 && (
+        <div style={{ padding: 24, border: '1px dashed #1A2840', borderRadius: 10, color: MUTED, fontSize: F.sm, lineHeight: 1.6 }}>
+          <strong style={{ color: '#22D3EE' }}>How to use:</strong>
+          <ol style={{ marginTop: 8, paddingLeft: 22 }}>
+            <li>Build a Screener.in custom screen (e.g. "PAT growth &gt; 50%" or "Loss making years &gt; 0 AND latest qtr PAT &gt; 0")</li>
+            <li>Export columns to CSV — see <strong style={{ color: '#FBBF24' }}>📚 Required Fields</strong> below</li>
+            <li>Upload here — every row gets scored across 7 dimensions and classified into a stage</li>
+            <li>BUY-ZONE = Early-Shoots + Pattern stages. These are the alpha entries before consensus arrives.</li>
+            <li>Expand any row to paste concall narrative (unlocks 15-pt Concall dimension)</li>
+          </ol>
+          <details style={{ marginTop: 12 }}>
+            <summary style={{ cursor: 'pointer', color: '#FBBF24', fontWeight: 700 }}>📚 Required + Recommended Screener fields</summary>
+            <div style={{ marginTop: 10, fontSize: F.xs, lineHeight: 1.6 }}>
+              <p><strong style={{ color: '#22D3EE' }}>Critical (earnings inflection detection):</strong></p>
+              <code style={{ fontSize: 10, color: '#94A3B8' }}>Sales latest quarter · OpProfit latest quarter · OPM latest quarter · PAT latest quarter · EPS latest quarter</code>
+              <p style={{ marginTop: 8 }}>And the same for <code>preceding quarter</code> (Q-2), <code>3 quarter back</code> (Q-3), <code>4 quarter back</code> (Q-4).</p>
+              <p style={{ marginTop: 8 }}><strong style={{ color: '#22D3EE' }}>Important (distress duration):</strong></p>
+              <code style={{ fontSize: 10, color: '#94A3B8' }}>Sales 5 year back · PAT 5 year back · OPM 5 year back · Loss making years</code>
+              <p style={{ marginTop: 8 }}><strong style={{ color: '#22D3EE' }}>Balance sheet trajectory:</strong></p>
+              <code style={{ fontSize: 10, color: '#94A3B8' }}>Debt · Debt 3 year back · Interest Coverage · Working Capital Days · Debt to equity</code>
+              <p style={{ marginTop: 8 }}><strong style={{ color: '#22D3EE' }}>Governance:</strong></p>
+              <code style={{ fontSize: 10, color: '#94A3B8' }}>Promoter holding · Promoter holding 3 year back · Promoter Pledged percentage · Auditor changes</code>
+              <p style={{ marginTop: 8 }}><strong style={{ color: '#22D3EE' }}>Valuation:</strong></p>
+              <code style={{ fontSize: 10, color: '#94A3B8' }}>P/E · Median PE 5Y · EV/EBITDA · ROCE · ROCE 3 year back · Return over 1year</code>
+              <p style={{ marginTop: 8, color: MUTED }}>Missing columns are skipped gracefully — that dimension scores 0 but won't penalise the overall composite.</p>
+            </div>
+          </details>
+        </div>
+      )}
+
+      {rows.length > 0 && (
+        <>
+          {/* Summary strip */}
+          <div style={{ display: 'flex', gap: 14, marginBottom: 14, flexWrap: 'wrap' }}>
+            {[
+              { label: 'Total', value: rows.length, color: '#94A3B8' },
+              { label: 'BUY-ZONE', value: stageCounts['BUY-ZONE'], color: '#10B981' },
+              { label: '🚫 DISTRESS', value: stageCounts.DISTRESS, color: '#EF4444' },
+              { label: '🌱 EARLY-SHOOTS', value: stageCounts['EARLY-SHOOTS'], color: '#F59E0B' },
+              { label: '📈 PATTERN', value: stageCounts.PATTERN, color: '#22D3EE' },
+              { label: '✅ CONFIRMED', value: stageCounts.CONFIRMED, color: '#10B981' },
+              { label: '🌅 MATURE', value: stageCounts.MATURE, color: '#94A3B8' },
+            ].map(s => (
+              <div key={s.label} style={{ padding: '8px 14px', backgroundColor: '#13131a', border: `1px solid ${s.color}40`, borderRadius: 8 }}>
+                <div style={{ fontSize: 9, color: MUTED, fontWeight: 700, letterSpacing: '0.4px' }}>{s.label}</div>
+                <div style={{ fontSize: 18, fontWeight: 900, color: s.color }}>{s.value}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Filter chips */}
+          <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontSize: F.xs, color: MUTED, fontWeight: 700, marginRight: 4 }}>STAGE:</span>
+            {(['ALL', 'BUY-ZONE', 'EARLY-SHOOTS', 'PATTERN', 'CONFIRMED', 'MATURE', 'DISTRESS'] as const).map(s => {
+              const active = stageFilter === s;
+              const color = s === 'BUY-ZONE' ? '#10B981' : s === 'EARLY-SHOOTS' ? '#F59E0B' : s === 'PATTERN' ? '#22D3EE' : s === 'CONFIRMED' ? '#10B981' : s === 'MATURE' ? '#94A3B8' : s === 'DISTRESS' ? '#EF4444' : '#94A3B8';
+              return (
+                <button key={s} onClick={() => setStageFilter(s)} style={{ fontSize: F.xs, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: `1px solid ${active ? color : BORDER}`, background: active ? `${color}20` : 'transparent', color: active ? color : MUTED, cursor: 'pointer' }}>
+                  {s} {stageCounts[s] !== undefined && `· ${stageCounts[s]}`}
+                </button>
+              );
+            })}
+            <span style={{ width: 1, height: 18, background: BORDER, margin: '0 6px' }} />
+            <button onClick={() => setShowOnlyHighConcall(v => !v)} style={{ fontSize: F.xs, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: `1px solid ${showOnlyHighConcall ? '#A78BFA' : BORDER}`, background: showOnlyHighConcall ? '#A78BFA20' : 'transparent', color: showOnlyHighConcall ? '#A78BFA' : MUTED, cursor: 'pointer' }}>
+              🎙 High Concall {showOnlyHighConcall ? '✓' : ''}
+            </button>
+            <button onClick={() => setShowLossRecovery(v => !v)} style={{ fontSize: F.xs, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: `1px solid ${showLossRecovery ? '#FBBF24' : BORDER}`, background: showLossRecovery ? '#FBBF2420' : 'transparent', color: showLossRecovery ? '#FBBF24' : MUTED, cursor: 'pointer' }}>
+              💎 Loss→Profit recovery {showLossRecovery ? '✓' : ''}
+            </button>
+            <span style={{ marginLeft: 'auto', fontSize: F.xs, color: MUTED }}>{filtered.length} showing</span>
+          </div>
+
+          {/* Export toolbar */}
+          {filtered.length > 0 && (
+            <div style={{ margin: '10px 0' }}>
+              <TickerExportToolbar
+                tickers={filtered.map(r => r.symbol).filter(Boolean)}
+                exchange="NSE"
+                filenameHint="turnarounds"
+                tickerCompanyMap={tickerCompanyMap}
+                compact
+              />
+            </div>
+          )}
+
+          {/* Rows */}
+          <div style={{ marginTop: 6 }}>
+            {filtered.map((r) => {
+              const isExp = expRow === r.symbol;
+              return (
+                <div key={r.symbol} style={{ borderBottom: `1px solid rgba(255,255,255,0.05)`, background: isExp ? '#13131a' : 'transparent' }}>
+                  <button onClick={() => setExpRow(isExp ? null : r.symbol)} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '12px 14px', color: 'inherit' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr 70px 70px 1fr 110px 70px', gap: 10, alignItems: 'center' }}>
+                      <div>
+                        <div style={{ fontSize: F.md, fontWeight: 800, color: TEXT }}>{r.symbol}</div>
+                        <div style={{ fontSize: 9, color: MUTED }}>{r.exchange}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: F.sm, color: TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</div>
+                        <div style={{ fontSize: 9, color: MUTED }}>{r.sector || '—'}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: F.h2, fontWeight: 900, color: '#A78BFA' }}>{r.totalScore}</div>
+                        <div style={{ fontSize: 9, color: MUTED, fontWeight: 700 }}>{r.grade}</div>
+                      </div>
+                      <div>
+                        <span style={{ fontSize: 10, fontWeight: 800, padding: '2px 7px', borderRadius: 4, background: `${r.stageColor}20`, color: r.stageColor, border: `1px solid ${r.stageColor}40` }}>
+                          {r.stageEmoji} {r.stage}
+                        </span>
+                        {r.inBuyZone && <div style={{ fontSize: 9, fontWeight: 800, color: '#10B981', marginTop: 3 }}>🎯 BUY-ZONE</div>}
+                      </div>
+                      {/* Dimension bars */}
+                      <div style={{ display: 'flex', gap: 5 }}>
+                        {[
+                          { label: 'EARN', val: r.earningsScore, max: 25, color: '#10B981' },
+                          { label: 'OPS', val: r.operationalScore, max: 15, color: '#22D3EE' },
+                          { label: 'BAL', val: r.balanceSheetScore, max: 15, color: '#A78BFA' },
+                          { label: 'CC', val: r.concallScore, max: 15, color: '#F59E0B' },
+                          { label: 'IND', val: r.industryScore, max: 10, color: '#34d399' },
+                          { label: 'GOV', val: r.governanceScore, max: 10, color: '#fbbf24' },
+                          { label: 'VAL', val: r.valuationScore, max: 10, color: '#f97316' },
+                        ].map(d => {
+                          const pct = (d.val / d.max) * 100;
+                          return (
+                            <div key={d.label} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, minWidth: 30 }}>
+                              <span style={{ fontSize: 10, fontWeight: 800, color: d.color }}>{Math.round(d.val)}</span>
+                              <div style={{ width: 24, height: 4, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 2 }}>
+                                <div style={{ height: '100%', width: `${pct}%`, backgroundColor: d.color, borderRadius: 2 }} />
+                              </div>
+                              <span style={{ fontSize: 8, color: MUTED }}>{d.label}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div style={{ fontSize: 10, color: MUTED, textAlign: 'center' }}>
+                        <div style={{ color: r.pe != null ? TEXT : MUTED }}>PE {r.pe?.toFixed(0) ?? '—'}</div>
+                        <div>ROCE {r.roce?.toFixed(0) ?? '—'}</div>
+                      </div>
+                      <div style={{ fontSize: 10, color: r.coverage >= 70 ? GREEN : r.coverage >= 50 ? '#FBBF24' : '#EF4444', textAlign: 'center', fontWeight: 700 }}>
+                        {r.coverage}%
+                      </div>
+                    </div>
+                  </button>
+                  {isExp && (
+                    <div style={{ padding: '4px 14px 16px', background: '#13131a' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 14 }}>
+                        {/* Inflection Signals */}
+                        <div>
+                          <div style={{ fontSize: 10, color: '#10B981', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 6 }}>📈 INFLECTION SIGNALS</div>
+                          {r.inflectionSignals.length > 0 ? r.inflectionSignals.map((s, i) => (
+                            <div key={i} style={{ fontSize: 11, color: '#C9D4E0', padding: '2px 0' }}>› {s}</div>
+                          )) : <div style={{ fontSize: 11, color: MUTED, fontStyle: 'italic' }}>No earnings inflection detected yet</div>}
+                        </div>
+                        {/* Quarterly trail */}
+                        <div>
+                          <div style={{ fontSize: 10, color: '#22D3EE', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 6 }}>📊 QUARTERLY TRAIL</div>
+                          <div style={{ fontSize: 10, color: MUTED, fontFamily: 'ui-monospace, monospace' }}>
+                            <div>Sales: {r.salesQ4?.toFixed(0) ?? '—'} → {r.salesQ3?.toFixed(0) ?? '—'} → {r.salesQ2?.toFixed(0) ?? '—'} → <span style={{ color: TEXT }}>{r.salesQ1?.toFixed(0) ?? '—'}</span></div>
+                            <div>OPM: {r.opmQ4?.toFixed(0) ?? '—'}% → {r.opmQ3?.toFixed(0) ?? '—'}% → {r.opmQ2?.toFixed(0) ?? '—'}% → <span style={{ color: TEXT }}>{r.opmQ1?.toFixed(0) ?? '—'}%</span></div>
+                            <div>PAT: {r.patQ4?.toFixed(0) ?? '—'} → {r.patQ3?.toFixed(0) ?? '—'} → {r.patQ2?.toFixed(0) ?? '—'} → <span style={{ color: (r.patQ1 ?? 0) > 0 ? '#10B981' : '#EF4444' }}>{r.patQ1?.toFixed(0) ?? '—'}</span></div>
+                            <div>EPS: {r.epsQ4?.toFixed(1) ?? '—'} → {r.epsQ3?.toFixed(1) ?? '—'} → {r.epsQ2?.toFixed(1) ?? '—'} → <span style={{ color: TEXT }}>{r.epsQ1?.toFixed(1) ?? '—'}</span></div>
+                          </div>
+                        </div>
+                        {/* Concall paste */}
+                        <div>
+                          <div style={{ fontSize: 10, color: '#F59E0B', fontWeight: 800, letterSpacing: '0.5px', marginBottom: 6 }}>🎙 CONCALL NARRATIVE — paste to unlock score</div>
+                          <textarea
+                            value={concallMap[r.symbol] || ''}
+                            onChange={(e) => updateConcall(r.symbol, e.target.value)}
+                            placeholder="Paste recent concall transcript / Q&A / management commentary. Engine auto-detects institutional phrases (capacity expansion, margin recovery, deleveraging, demand recovery, etc.) and scores up to 15 points."
+                            style={{ width: '100%', minHeight: 90, padding: '6px 9px', backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 4, color: '#E6EDF3', fontSize: 11, outline: 'none', resize: 'vertical', fontFamily: 'inherit' }}
+                          />
+                          <div style={{ fontSize: 10, color: MUTED, marginTop: 4 }}>
+                            Concall score: <span style={{ color: r.concallScore >= 8 ? '#10B981' : r.concallScore >= 4 ? '#F59E0B' : MUTED, fontWeight: 700 }}>{r.concallScore.toFixed(1)} / 15</span>
+                            {r.concallPhrases.length > 0 && <> · phrases: {r.concallPhrases.join(', ')}</>}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Strengths + Risks */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 14 }}>
+                        <div>
+                          <div style={{ fontSize: 10, color: '#10B981', fontWeight: 800, marginBottom: 5 }}>✅ STRENGTHS</div>
+                          {r.strengths.length > 0 ? r.strengths.map((s, i) => (
+                            <div key={i} style={{ fontSize: 11, color: '#C9D4E0', padding: '2px 0' }}>› {s}</div>
+                          )) : <div style={{ fontSize: 11, color: MUTED, fontStyle: 'italic' }}>No notable strengths captured yet</div>}
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 10, color: '#EF4444', fontWeight: 800, marginBottom: 5 }}>⚠️ RISKS</div>
+                          {r.risks.length > 0 ? r.risks.map((s, i) => (
+                            <div key={i} style={{ fontSize: 11, color: '#C9D4E0', padding: '2px 0' }}>› {s}</div>
+                          )) : <div style={{ fontSize: 11, color: MUTED, fontStyle: 'italic' }}>No specific risks flagged</div>}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Lightweight CSV parser used by TurnaroundCompare. Handles quoted commas, BOM, trimming.
+function parseCsvFlexible(text: string): Record<string, string>[] {
+  const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) return [];
+  const splitLine = (line: string): string[] => {
+    const out: string[] = [];
+    let cur = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') { inQuotes = !inQuotes; continue; }
+      if (ch === ',' && !inQuotes) { out.push(cur); cur = ''; continue; }
+      cur += ch;
+    }
+    out.push(cur);
+    return out.map(s => s.trim());
+  };
+  const headers = splitLine(lines[0]);
+  return lines.slice(1).map(line => {
+    const vals = splitLine(line);
+    const row: Record<string, string> = {};
+    headers.forEach((h, i) => { row[h] = vals[i] ?? ''; });
+    return row;
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
