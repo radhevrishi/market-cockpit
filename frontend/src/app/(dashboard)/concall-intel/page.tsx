@@ -333,6 +333,29 @@ function LiveBullishFeed() {
               </>
             ) : loading ? 'Loading…' : '—'}
           </div>
+          {/* PATCH 0399 — Universe distribution bar chart (visual baseline) */}
+          {data && (() => {
+            const total = Object.values(tierCounts).reduce((s, n) => s + n, 0);
+            if (total === 0) return null;
+            const segments = [
+              { key: 'ULTRA_BULLISH', color: '#22D3EE' },
+              { key: 'BULLISH',       color: '#10B981' },
+              { key: 'MIXED_POSITIVE',color: '#F59E0B' },
+              { key: 'NEUTRAL',       color: '#94A3B8' },
+              { key: 'BEARISH',       color: '#EF4444' },
+              { key: 'DATA_PENDING',  color: '#3B82F6' },
+            ];
+            return (
+              <div style={{ display: 'flex', height: 5, width: '100%', borderRadius: 2, overflow: 'hidden', marginTop: 4, background: '#0A1422' }}>
+                {segments.map(s => {
+                  const n = tierCounts[s.key] || 0;
+                  const pct = total > 0 ? (n / total) * 100 : 0;
+                  if (pct === 0) return null;
+                  return <div key={s.key} title={`${s.key} ${n} (${pct.toFixed(1)}%)`} style={{ width: `${pct}%`, background: s.color }} />;
+                })}
+              </div>
+            );
+          })()}
         </div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
           <button onClick={() => setBullishOnly(v => !v)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: `1px solid ${bullishOnly ? '#10B981' : '#1A2540'}`, background: bullishOnly ? '#10B98120' : 'transparent', color: bullishOnly ? '#10B981' : '#94A3B8', cursor: 'pointer' }}>
