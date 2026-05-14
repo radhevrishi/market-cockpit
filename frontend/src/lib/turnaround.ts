@@ -89,7 +89,7 @@ export interface TurnaroundRow {
   perf1y?: number;
 }
 
-export type TurnaroundStage = 'DISTRESS' | 'SETUP' | 'EARLY-SHOOTS' | 'PATTERN' | 'CONFIRMED' | 'MATURE';
+export type TurnaroundStage = 'DISTRESS' | 'SETUP' | 'EARLY-SHOOTS' | 'PATTERN' | 'CONFIRMED' | 'MATURE' | 'NOT-TURNAROUND';
 
 // PATCH 0374 — Archetype = high-level "what IS this stock" classifier.
 // User mostly uploads turnaround candidates but the dataset always includes
@@ -679,9 +679,30 @@ export function scoreTurnaroundRow(row: TurnaroundRow): TurnaroundResult {
     risks.push(`No concall narrative pasted — concall dimension scored 0`);
   }
 
-  const { stage, color, emoji, inBuyZone } = classifyStage(row);
   // PATCH 0374 — Archetype tag with one-line explainer
   const arche = classifyArchetype(row);
+  // PATCH 0376 — Stage classifier respects archetype. Quality/Growth/Neutral
+  // companies are NOT turnarounds, so don't apply turnaround stages to them.
+  // Otherwise a great compounder like Cummins or BEL gets mislabelled as
+  // 'DISTRESS' just because there's no PAT inflection visible (there's no
+  // inflection because the company has been good all along).
+  let stage: TurnaroundStage;
+  let color: string;
+  let emoji: string;
+  let inBuyZone: boolean;
+  if (arche.archetype === 'GROWTH' || arche.archetype === 'QUALITY' || arche.archetype === 'NEUTRAL') {
+    stage = 'NOT-TURNAROUND';
+    color = arche.color;
+    emoji = arche.archetype === 'GROWTH' ? '🚀' : arche.archetype === 'QUALITY' ? '💎' : '❓';
+    inBuyZone = false;  // Wrong tab; user should move to Multibagger India
+  } else {
+    // TURNAROUND / WAIT / VALUE-TRAP / DECLINING → run turnaround stage logic
+    const s = classifyStage(row);
+    stage = s.stage;
+    color = s.color;
+    emoji = s.emoji;
+    inBuyZone = s.inBuyZone;
+  }
 
   // Grade by composite
   const grade: TurnaroundResult['grade'] =

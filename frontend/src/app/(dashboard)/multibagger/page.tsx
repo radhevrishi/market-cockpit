@@ -7535,35 +7535,54 @@ function TurnaroundCompare() {
     }).sort((a, b) => b.totalScore - a.totalScore));
   }, []);
 
-  // PATCH 0374 — Multi-CSV upload: APPEND new rows to existing, dedupe by symbol
-  // (most recent upload wins). User typically has several Screener screens
-  // (e.g. 'Loss recovery candidates', 'Sector turnaround', 'Microcap turnaround')
-  // and wants to pool them into one analysis.
-  const handleFile = async (file: File) => {
+  // PATCH 0374 / 0375 — Multi-CSV upload. Accepts MULTIPLE files in one
+  // picker, processes them all, then merges into existing rows via
+  // functional setState (avoids stale closure on rows).
+  // User typically has several Screener screens (e.g. 'Loss recovery
+  // candidates', 'Sector turnaround', 'Microcap turnaround') and wants to
+  // pool them into one analysis.
+  const handleFiles = async (files: File[]) => {
     setParseError(null);
-    try {
-      const text = await file.text();
-      const parsed = parseCsvFlexible(text);
-      if (parsed.length === 0) throw new Error('No rows parsed from CSV');
-      const tRows = parsed
-        .map(r => parseTurnaroundRow(r))
-        .filter((r): r is NonNullable<typeof r> => r != null)
-        .map(r => ({ ...r, concallText: concallMap[r.symbol] || '' }));
-      if (tRows.length === 0) throw new Error('No valid tickers found in CSV');
-      const newScored = tRows.map(scoreTurnaroundRow);
-
-      // Dedupe: build a map by symbol, new CSV wins
+    if (files.length === 0) return;
+    const allNewScored: TurnaroundResult[] = [];
+    const fileNames: string[] = [];
+    const failed: string[] = [];
+    for (const file of files) {
+      try {
+        const text = await file.text();
+        const parsed = parseCsvFlexible(text);
+        if (parsed.length === 0) { failed.push(`${file.name}: empty`); continue; }
+        const tRows = parsed
+          .map(r => parseTurnaroundRow(r))
+          .filter((r): r is NonNullable<typeof r> => r != null)
+          .map(r => ({ ...r, concallText: concallMap[r.symbol] || '' }));
+        if (tRows.length === 0) { failed.push(`${file.name}: no valid tickers`); continue; }
+        for (const r of tRows) allNewScored.push(scoreTurnaroundRow(r));
+        fileNames.push(file.name);
+      } catch (e: any) {
+        failed.push(`${file.name}: ${e?.message || 'parse failed'}`);
+      }
+    }
+    if (allNewScored.length === 0) {
+      setParseError(`No valid rows in ${files.length} file(s)${failed.length ? ': ' + failed.join('; ') : ''}`);
+      return;
+    }
+    // Merge with existing rows — functional setState so we don't capture
+    // a stale rows snapshot when multiple files come through one batch.
+    setRows(prev => {
       const merged = new Map<string, TurnaroundResult>();
-      for (const r of rows) merged.set(r.symbol, r);  // existing
-      for (const r of newScored) merged.set(r.symbol, r);  // new overrides
+      for (const r of prev) merged.set(r.symbol, r);
+      for (const r of allNewScored) merged.set(r.symbol, r);
       const finalRows = Array.from(merged.values()).sort((a, b) => b.totalScore - a.totalScore);
-
-      setRows(finalRows);
-      const fileList = fileName ? `${fileName}, ${file.name}` : file.name;
-      setFileName(fileList);
       try { localStorage.setItem(TURNAROUND_STORAGE_KEY, JSON.stringify(finalRows)); } catch {}
-    } catch (e: any) {
-      setParseError(e?.message || 'CSV parse failed');
+      return finalRows;
+    });
+    setFileName(prev => {
+      const joined = fileNames.join(', ');
+      return prev ? `${prev}, ${joined}` : joined;
+    });
+    if (failed.length > 0) {
+      setParseError(`Loaded ${allNewScored.length} rows from ${fileNames.length} file(s). ${failed.length} file(s) failed: ${failed.join('; ')}`);
     }
   };
 
@@ -7593,7 +7612,7 @@ function TurnaroundCompare() {
 
   // Stage + archetype counts
   const stageCounts = useMemo(() => {
-    const c: Record<string, number> = { ALL: rows.length, 'BUY-ZONE': 0, DISTRESS: 0, SETUP: 0, 'EARLY-SHOOTS': 0, PATTERN: 0, CONFIRMED: 0, MATURE: 0 };
+    const c: Record<string, number> = { ALL: rows.length, 'BUY-ZONE': 0, DISTRESS: 0, SETUP: 0, 'EARLY-SHOOTS': 0, PATTERN: 0, CONFIRMED: 0, MATURE: 0, 'NOT-TURNAROUND': 0 };
     for (const r of rows) {
       c[r.stage]++;
       if (r.inBuyZone) c['BUY-ZONE']++;
@@ -7633,8 +7652,22 @@ function TurnaroundCompare() {
       {/* PATCH 0374 — Upload + Add Another CSV (multi-file pool) */}
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 18px', backgroundColor: rows.length === 0 ? '#22D3EE' : '#A78BFA', color: '#0A0E1A', borderRadius: 8, fontWeight: 800, fontSize: F.sm, cursor: 'pointer' }}>
-          📁 {rows.length === 0 ? 'Upload Screener.in CSV' : `+ Add another CSV (pool with ${rows.length} existing)`}
-          <input type="file" accept=".csv" onChange={(e) => { const f = e.target.files?.[0]; if (f) { handleFile(f); e.target.value = ''; } }} style={{ display: 'none' }} />
+          📁 {rows.length === 0 ? 'Upload Screener.in CSV(s) — multi-select OK' : `+ Add more CSVs (pool with ${rows.length} existing) — multi-select OK`}
+          {/* PATCH 0375 — multiple attr lets user pick several CSVs at once.
+              All files in the selection get parsed + merged in a single batch. */}
+          <input
+            type="file"
+            accept=".csv"
+            multiple
+            onChange={(e) => {
+              const files = Array.from(e.target.files || []);
+              if (files.length > 0) {
+                handleFiles(files);
+                e.target.value = '';
+              }
+            }}
+            style={{ display: 'none' }}
+          />
         </label>
         {fileName && <span style={{ fontSize: F.xs, color: MUTED }}>{fileName} · {rows.length} unique rows</span>}
         {parseError && <span style={{ fontSize: F.xs, color: RED, fontWeight: 700 }}>⚠ {parseError}</span>}
@@ -7692,16 +7725,38 @@ function TurnaroundCompare() {
 
       {rows.length > 0 && (
         <>
+          {/* PATCH 0376 — "Not turnarounds" hint banner. Surfaces when user
+              uploaded a screen that's mostly quality/growth compounders. */}
+          {(() => {
+            const nonTurnaroundCount = (archetypeCounts['GROWTH'] || 0) + (archetypeCounts['QUALITY'] || 0) + (archetypeCounts['NEUTRAL'] || 0);
+            const turnaroundCount = (archetypeCounts['TURNAROUND'] || 0) + (archetypeCounts['WAIT'] || 0) + (archetypeCounts['VALUE-TRAP'] || 0) + (archetypeCounts['DECLINING'] || 0);
+            if (rows.length >= 5 && nonTurnaroundCount / rows.length >= 0.5) {
+              return (
+                <div style={{ marginBottom: 14, padding: '10px 14px', backgroundColor: '#22D3EE12', border: '1px solid #22D3EE40', borderRadius: 8 }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: '#22D3EE', marginBottom: 4 }}>💡 Heads-up — most of your uploaded rows aren&apos;t turnarounds</div>
+                  <div style={{ fontSize: 11, color: '#C9D4E0', lineHeight: 1.5 }}>
+                    {nonTurnaroundCount} of {rows.length} rows are quality/growth compounders or neutral — not turnaround setups. Only <strong style={{ color: '#F59E0B' }}>{turnaroundCount}</strong> rows match the turnaround pattern (TURNAROUND / WAIT / VALUE-TRAP / DECLINING).
+                    <br />
+                    <strong>What to do:</strong> Click <code style={{ background: '#0A1422', padding: '1px 5px', borderRadius: 3, color: '#F59E0B' }}>🔄 Turnaround</code> in the ARCHETYPE filter above to see only real turnaround candidates. The quality/growth ones belong on the <strong>🇮🇳 India Multibagger</strong> tab.
+                  </div>
+                </div>
+              );
+            }
+            return null;
+          })()}
+
           {/* Summary strip */}
           <div style={{ display: 'flex', gap: 14, marginBottom: 14, flexWrap: 'wrap' }}>
             {[
               { label: 'Total', value: rows.length, color: '#94A3B8' },
               { label: 'BUY-ZONE', value: stageCounts['BUY-ZONE'], color: '#10B981' },
-              { label: '🚫 DISTRESS', value: stageCounts.DISTRESS, color: '#EF4444' },
+              { label: '🔄 Turnarounds', value: archetypeCounts['TURNAROUND'] || 0, color: '#F59E0B' },
+              { label: '🔥 SETUP', value: stageCounts.SETUP || 0, color: '#A78BFA' },
               { label: '🌱 EARLY-SHOOTS', value: stageCounts['EARLY-SHOOTS'], color: '#F59E0B' },
               { label: '📈 PATTERN', value: stageCounts.PATTERN, color: '#22D3EE' },
               { label: '✅ CONFIRMED', value: stageCounts.CONFIRMED, color: '#10B981' },
-              { label: '🌅 MATURE', value: stageCounts.MATURE, color: '#94A3B8' },
+              { label: 'Not-Turnaround', value: stageCounts['NOT-TURNAROUND'] || 0, color: '#94A3B8' },
+              { label: '🚫 DISTRESS', value: stageCounts.DISTRESS, color: '#EF4444' },
             ].map(s => (
               <div key={s.label} style={{ padding: '8px 14px', backgroundColor: '#13131a', border: `1px solid ${s.color}40`, borderRadius: 8 }}>
                 <div style={{ fontSize: 9, color: MUTED, fontWeight: 700, letterSpacing: '0.4px' }}>{s.label}</div>
