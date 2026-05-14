@@ -68,6 +68,9 @@ export default function ConcallIntelPage() {
       {/* PATCH 0387 — LIVE BULLISH FEED */}
       <LiveBullishFeed />
 
+      {/* PATCH 0390 — WARRANT MOMENTUM INTELLIGENCE (separate lane) */}
+      <WarrantMomentumFeed />
+
       <h2 style={{ fontSize: 16, fontWeight: 900, margin: '32px 0 8px' }}>📝 Manual Transcript / PDF Analyser</h2>
       <p style={{ fontSize: 11, color: '#94A3B8', margin: 0, marginBottom: 14 }}>
         Paste a concall transcript OR enter a public PDF URL. Output: tone score, guidance map, key themes, red flags, key numbers.
@@ -406,6 +409,233 @@ function LiveBullishFeed() {
       {filtered.length > 50 && (
         <div style={{ fontSize: 10, color: '#94A3B8', marginTop: 8, textAlign: 'center' }}>… {filtered.length - 50} more (showing top 50 by score)</div>
       )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PATCH 0390 — WARRANT MOMENTUM INTELLIGENCE
+// Separate intelligence lane. Warrants are slow-moving structural signals
+// vs concall's short-term narrative — different alpha category.
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface WarrantFiling {
+  exchange: 'NSE' | 'BSE';
+  symbol: string;
+  company_name: string;
+  subject: string;
+  filing_datetime: string;
+  attachment_urls: string[];
+  source_url: string;
+  warrant_type: string;
+  details: {
+    issue_price: number | null;
+    warrant_count: number | null;
+    conversion_period_months: number | null;
+    promoter_participation_pct: number | null;
+    total_size_cr: number | null;
+    is_promoter_subscribed: boolean;
+  };
+  price: { cmp: number | null; perf_90d_pct: number | null; perf_52w_high_pct: number | null };
+  conviction: {
+    conviction: number;
+    raw_score: number;
+    passes_gate: boolean;
+    signals: string[];
+    red_flags: string[];
+    components: {
+      promoter_participation: number;
+      pricing_premium: number;
+      business_momentum: number;
+      breakout_relative_strength: number;
+      history_boost: number;
+      governance_penalty: number;
+    };
+    premium_pct: number | null;
+    history_summary?: string;
+  };
+  business_momentum_score: number | null;
+  prior_warrants: Array<{ date: string; price_at_filing: number | null; current_perf_pct: number | null }>;
+}
+
+interface WarrantFeedPayload {
+  generated_at: string;
+  count_total: number;
+  count_relevant: number;
+  count_passing: number;
+  filings: WarrantFiling[];
+  sources: { nse: string; bse: string };
+}
+
+function WarrantMomentumFeed() {
+  const [data, setData] = useState<WarrantFeedPayload | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [passingOnly, setPassingOnly] = useState(true);
+  const [days, setDays] = useState(7);
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+
+  const fetchFeed = async (force = false) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({
+        days: String(days),
+        threshold: passingOnly ? '8' : '0',
+        ...(passingOnly ? { passingOnly: '1' } : {}),
+        ...(force ? { force: '1' } : {}),
+      });
+      const res = await fetch(`/api/v1/concall-intel/warrant-feed?${params}`, { cache: 'no-store' });
+      if (!res.ok) {
+        setError(`HTTP ${res.status}`);
+        return;
+      }
+      const j = await res.json();
+      setData(j);
+      setLastRefresh(new Date());
+    } catch (e: any) {
+      setError(e?.message || 'fetch failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchFeed();
+    // Warrants are slow-moving — refresh every 15 min
+    const t = setInterval(() => fetchFeed(), 15 * 60 * 1000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [days, passingOnly]);
+
+  return (
+    <div style={{ backgroundColor: '#0D1623', border: '1px solid #A78BFA40', borderLeft: '4px solid #A78BFA', borderRadius: 10, padding: '14px 18px', marginBottom: 14, marginTop: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 900, color: '#A78BFA', letterSpacing: '0.4px' }}>🚀 WARRANT MOMENTUM — promoter warrants + post-breakout + business momentum</div>
+          <div style={{ fontSize: 10, color: '#94A3B8', marginTop: 2 }}>
+            {data ? (
+              <>
+                {data.count_total} filings · {data.count_relevant} warrant-related · <strong style={{ color: '#10B981' }}>{data.count_passing} passing strict gate (≥8/10)</strong>
+                {lastRefresh && <> · refreshed {lastRefresh.toLocaleTimeString()}</>}
+              </>
+            ) : loading ? 'Loading…' : '—'}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button onClick={() => setPassingOnly(v => !v)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: `1px solid ${passingOnly ? '#10B981' : '#1A2540'}`, background: passingOnly ? '#10B98120' : 'transparent', color: passingOnly ? '#10B981' : '#94A3B8', cursor: 'pointer' }}>
+            ★ High conviction only {passingOnly ? '✓' : ''}
+          </button>
+          <select value={days} onChange={(e) => setDays(parseInt(e.target.value))} style={{ fontSize: 11, padding: '4px 8px', borderRadius: 5, border: '1px solid #1A2540', background: '#0A1422', color: '#E6EDF3' }}>
+            <option value={3}>3 days</option>
+            <option value={7}>7 days</option>
+            <option value={14}>14 days</option>
+          </select>
+          <button onClick={() => fetchFeed(true)} disabled={loading} style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 5, border: '1px solid #A78BFA', background: '#A78BFA20', color: '#A78BFA', cursor: loading ? 'wait' : 'pointer' }}>
+            {loading ? '…' : '↻ Refresh'}
+          </button>
+        </div>
+      </div>
+
+      {error && <div style={{ fontSize: 11, color: '#EF4444', marginBottom: 8 }}>⚠ {error}</div>}
+
+      {data && data.filings.length === 0 && !loading && (
+        <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic', padding: '12px 0' }}>
+          {data.count_relevant > 0
+            ? `No warrants passing the strict gate in current filter. Total relevant: ${data.count_relevant}. Toggle "High conviction only" off to inspect.`
+            : 'No warrant filings detected yet. Try widening the date range.'}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {(data?.filings || []).slice(0, 50).map((f, i) => {
+          const cvColor = f.conviction.conviction >= 8 ? '#10B981' : f.conviction.conviction >= 5 ? '#22D3EE' : f.conviction.conviction >= 3 ? '#F59E0B' : '#94A3B8';
+          const premium = f.conviction.premium_pct;
+          const premiumColor = premium == null ? '#94A3B8' : premium >= 0 ? '#10B981' : premium >= -10 ? '#F59E0B' : '#EF4444';
+          return (
+            <div key={f.symbol + '-' + i} style={{ padding: '10px 12px', background: '#0A1422', border: `1px solid ${f.conviction.passes_gate ? '#10B98140' : '#1A2540'}`, borderLeft: `3px solid ${cvColor}`, borderRadius: 6 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, marginBottom: 4 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 13, fontWeight: 900, color: '#E6EDF3' }}>{f.symbol || f.company_name}</span>
+                  {f.symbol && <span style={{ fontSize: 11, color: '#94A3B8' }}>{f.company_name}</span>}
+                  <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#1A2540', color: '#94A3B8', fontWeight: 700 }}>{f.exchange}</span>
+                  <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: `${cvColor}20`, color: cvColor, fontWeight: 700 }}>{f.warrant_type.replace(/_/g, ' ')}</span>
+                  {f.conviction.passes_gate && <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: '#10B98125', color: '#10B981', fontWeight: 800, border: '1px solid #10B981' }}>★ PASSES GATE</span>}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                  <span style={{ fontSize: 16, fontWeight: 900, color: cvColor }}>{f.conviction.conviction.toFixed(1)}</span>
+                  <span style={{ fontSize: 10, color: '#94A3B8' }}>/10</span>
+                </div>
+              </div>
+
+              <div style={{ fontSize: 11, color: '#C9D4E0', marginBottom: 6, lineHeight: 1.4 }}>{f.subject}</div>
+
+              {/* Key facts */}
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 6, fontSize: 10 }}>
+                {f.details.issue_price != null && (
+                  <div><span style={{ color: '#94A3B8' }}>Issue:</span> <strong style={{ color: '#E6EDF3' }}>₹{f.details.issue_price.toFixed(0)}</strong></div>
+                )}
+                {f.price.cmp != null && (
+                  <div><span style={{ color: '#94A3B8' }}>CMP:</span> <strong style={{ color: '#E6EDF3' }}>₹{f.price.cmp.toFixed(0)}</strong></div>
+                )}
+                {premium != null && (
+                  <div><span style={{ color: '#94A3B8' }}>vs CMP:</span> <strong style={{ color: premiumColor }}>{premium >= 0 ? '+' : ''}{premium.toFixed(1)}%</strong></div>
+                )}
+                {f.details.total_size_cr != null && (
+                  <div><span style={{ color: '#94A3B8' }}>Size:</span> <strong style={{ color: '#E6EDF3' }}>₹{f.details.total_size_cr.toFixed(0)}Cr</strong></div>
+                )}
+                {f.details.promoter_participation_pct != null && (
+                  <div><span style={{ color: '#94A3B8' }}>Promoter:</span> <strong style={{ color: '#10B981' }}>{f.details.promoter_participation_pct.toFixed(0)}%</strong></div>
+                )}
+                {f.price.perf_52w_high_pct != null && (
+                  <div><span style={{ color: '#94A3B8' }}>vs 52wH:</span> <strong style={{ color: f.price.perf_52w_high_pct >= -5 ? '#10B981' : '#94A3B8' }}>{f.price.perf_52w_high_pct.toFixed(1)}%</strong></div>
+                )}
+                {f.price.perf_90d_pct != null && (
+                  <div><span style={{ color: '#94A3B8' }}>90d:</span> <strong style={{ color: f.price.perf_90d_pct >= 20 ? '#10B981' : f.price.perf_90d_pct >= 0 ? '#22D3EE' : '#EF4444' }}>{f.price.perf_90d_pct >= 0 ? '+' : ''}{f.price.perf_90d_pct.toFixed(0)}%</strong></div>
+                )}
+                {f.business_momentum_score != null && (
+                  <div><span style={{ color: '#94A3B8' }}>Momentum:</span> <strong style={{ color: f.business_momentum_score >= 6 ? '#10B981' : '#94A3B8' }}>{f.business_momentum_score.toFixed(1)}/10</strong></div>
+                )}
+              </div>
+
+              {/* Signals + risks */}
+              {f.conviction.signals.length > 0 && (
+                <div style={{ marginBottom: 4 }}>
+                  <span style={{ fontSize: 10, color: '#10B981', fontWeight: 700, marginRight: 4 }}>WHY:</span>
+                  {f.conviction.signals.slice(0, 5).map((s, j) => (
+                    <span key={j} style={{ fontSize: 10, color: '#C9D4E0', marginRight: 8 }}>› {s}</span>
+                  ))}
+                </div>
+              )}
+              {f.conviction.red_flags.length > 0 && (
+                <div style={{ marginBottom: 4 }}>
+                  <span style={{ fontSize: 10, color: '#EF4444', fontWeight: 700, marginRight: 4 }}>RISKS:</span>
+                  {f.conviction.red_flags.slice(0, 3).map((s, j) => (
+                    <span key={j} style={{ fontSize: 10, color: '#C9D4E0', marginRight: 8 }}>› {s}</span>
+                  ))}
+                </div>
+              )}
+
+              {/* Historical memory */}
+              {f.conviction.history_summary && (
+                <div style={{ marginTop: 4, fontSize: 10, color: '#A78BFA', fontStyle: 'italic' }}>
+                  📜 {f.conviction.history_summary}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, color: '#6B7A8D', marginTop: 6 }}>
+                <span>{new Date(f.filing_datetime).toLocaleString()}</span>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {f.attachment_urls.slice(0, 2).map((u, j) => (
+                    <a key={j} href={u} target="_blank" rel="noopener noreferrer" style={{ color: '#22D3EE', textDecoration: 'none' }}>📎 attachment</a>
+                  ))}
+                  <a href={f.source_url} target="_blank" rel="noopener noreferrer" style={{ color: '#22D3EE', textDecoration: 'none' }}>↗ {f.exchange} filing</a>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
