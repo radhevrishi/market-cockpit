@@ -1950,6 +1950,22 @@ export default function EarningsPage() {
               colorScheme: 'dark',
             }}
           />
+          {/* PATCH 0354 — Last 7 days quick-set */}
+          <button
+            onClick={() => {
+              const d = new Date(); d.setDate(d.getDate() - 7);
+              setDateFrom(d.toISOString().slice(0, 10));
+              setDateTo(new Date().toISOString().slice(0, 10));
+            }}
+            style={{
+              background: 'none', border: `1px solid ${CARD_BORDER}`, borderRadius: '4px',
+              color: TEXT_DIM, padding: '2px 6px', cursor: 'pointer', fontSize: '10px',
+              whiteSpace: 'nowrap',
+            }}
+            title="Reset to last 7 days"
+          >
+            7D
+          </button>
           <button
             onClick={() => {
               const d = new Date(); d.setDate(d.getDate() - 30);
