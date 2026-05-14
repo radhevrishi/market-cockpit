@@ -96,21 +96,26 @@ export default function TickerExportToolbar({
     toast.success(`Opened ${first} · ${subset.length} tickers copied for paste`);
   };
 
-  // PATCH 0364 — Screener.in export. Screener doesn't accept a TradingView-
-  // style EXCHANGE:TICKER prefix; it wants bare NSE symbols separated by
-  // commas (or newlines). Two actions:
+  // PATCH 0364 / 0365 — Screener.in export.
   //
-  //   (1) Copy for Screener — bare symbols (RELIANCE,TCS,INFY)
+  // CRITICAL FORMAT: Screener.in's "Add stocks" bulk-import field treats
+  // each LINE as one company name. A comma-separated string is interpreted
+  // as a single company name → "Found automatically: 0, Unmatched: 1".
+  // Tickers must be NEWLINE-separated, one per line. Patch 0365 fixed the
+  // initial 0364 implementation which used commas.
+  //
+  // Two actions:
+  //   (1) Copy for Screener — newline-separated bare symbols
   //   (2) Open in Screener.in — copy list AND open screener.in/watchlist/
   //       in a new tab so the user can paste into their custom watchlist.
   //       For a single ticker, opens the company page directly.
   const copyForScreener = async (subset: string[], label: string) => {
     if (subset.length === 0) { toast.error(`No ${label} tickers to copy`); return; }
-    // Screener accepts bare symbols
-    const text = subset.join(',');
+    // Newline-separated, one ticker per line — Screener.in's expected format
+    const text = subset.join('\n');
     try {
       await navigator.clipboard.writeText(text);
-      toast.success(`Copied ${subset.length} ticker${subset.length === 1 ? '' : 's'} for Screener.in (bare symbols)`);
+      toast.success(`Copied ${subset.length} ticker${subset.length === 1 ? '' : 's'} (one per line) — paste into Screener.in`);
     } catch {
       toast.error('Clipboard write failed — check browser permission');
     }
@@ -125,11 +130,11 @@ export default function TickerExportToolbar({
       toast.success(`Opened ${subset[0]} on Screener.in`);
       return;
     }
-    // For multiple, copy list to clipboard + open watchlist page so user can paste
-    const text = subset.join(',');
+    // For multiple, copy list (newline-separated!) + open watchlist page
+    const text = subset.join('\n');
     navigator.clipboard.writeText(text).catch(() => {});
     window.open('https://www.screener.in/watchlist/', '_blank', 'noopener,noreferrer');
-    toast.success(`${subset.length} tickers copied · paste into your Screener.in watchlist`);
+    toast.success(`${subset.length} tickers copied (one per line) · paste into your Screener.in watchlist`);
   };
 
   const btnBase = {
