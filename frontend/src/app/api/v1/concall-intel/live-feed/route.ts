@@ -25,8 +25,9 @@ import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 import { fetchNSEAnnouncements, fetchBSEAnnouncements, type FilingRecord } from '@/lib/nse-bse-feed';
 import { classifyFiling, scoreBullish, isHighBullishRaw, type BullishScore, type ConcallFilingType } from '@/lib/concall-bullish';
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
+import { extractSections } from '@/lib/concall-sections';
 
-const CACHE_KEY = (days: number) => `concall-feed:v2:days:${days}`;   // v2 bump: PDF extraction enabled
+const CACHE_KEY = (days: number) => `concall-feed:v3:days:${days}`;   // v3: section extraction + sentence-level scoring + cross-exchange dedup
 const CACHE_TTL_SHORT = 5 * 60;        // 5 min for fresh data
 const CACHE_TTL_LONG = 30 * 60;        // 30 min for older lookback
 
@@ -163,13 +164,22 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Phase 2: score each filing using PDF text if available, else subject
+  // Phase 2: score each filing using PDF text if available, else subject.
+  // PATCH 0389 — extract forward-looking sections from PDF text before
+  // scoring. Avoids boilerplate/legal/ESG inflating bullish counts.
   const all: ScoredFiling[] = [];
   for (const { filing: f, filing_type } of candidates) {
     const ext = extractedTexts.get(f.content_hash);
     const usePdf = ext && ext.text.length >= 200;
     const scoredFrom: 'PDF' | 'SUBJECT' = usePdf ? 'PDF' : 'SUBJECT';
-    const scoringText = usePdf ? `${f.subject}\n\n${ext!.text}` : f.subject;
+    let scoringText: string;
+    if (usePdf) {
+      const sections = extractSections(ext!.text);
+      // Score the forward-looking sections + subject for context
+      scoringText = `${f.subject}\n\n${sections.forward_text}`;
+    } else {
+      scoringText = f.subject;
+    }
     const bullish = scoreBullish(scoringText);
     const is_high_bullish = isHighBullishRaw(bullish, rawThreshold);
     all.push({
@@ -183,9 +193,14 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  // PATCH 0389 — Cross-exchange dedup. Same company often files identical
+  // disclosures on both NSE + BSE within minutes. Group by normalized
+  // company name + filing_type, keep the highest-scoring per cluster.
+  const deduped = mergeNSEBSE(all);
+
   // Sort: high bullish first, PDF-scored before subject-scored within tier,
   // then by raw score desc, then by date desc
-  all.sort((a, b) => {
+  deduped.sort((a, b) => {
     if (a.is_high_bullish !== b.is_high_bullish) return a.is_high_bullish ? -1 : 1;
     if (a.scored_from !== b.scored_from) return a.scored_from === 'PDF' ? -1 : 1;
     if (b.bullish.raw_score !== a.bullish.raw_score) return b.bullish.raw_score - a.bullish.raw_score;
@@ -195,9 +210,9 @@ export async function GET(req: NextRequest) {
   const payload: FeedPayload = {
     generated_at: new Date().toISOString(),
     count_total: merged.size,
-    count_relevant: all.length,
-    count_high_bullish: all.filter(x => x.is_high_bullish).length,
-    filings: all,
+    count_relevant: deduped.length,
+    count_high_bullish: deduped.filter(x => x.is_high_bullish).length,
+    filings: deduped,
     sources: { nse: nseResult.source, bse: bseResult.source },
   };
 
@@ -208,6 +223,45 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json(applyFilters(payload, { exchangeFilter, bullishOnly }));
+}
+
+// PATCH 0389 — Cross-exchange dedup. Same disclosure often filed on both
+// NSE + BSE within minutes. Cluster by normalized company name + filing
+// type within 24h window, keep the highest-scoring (NSE preferred on ties).
+function mergeNSEBSE(filings: ScoredFiling[]): ScoredFiling[] {
+  const normalizeCompany = (n: string): string =>
+    (n || '').toLowerCase()
+      .replace(/\b(ltd|limited|pvt|private|corp(?:oration)?|inc|company)\b/g, '')
+      .replace(/[^a-z0-9]/g, '')
+      .trim();
+
+  const clusters = new Map<string, ScoredFiling[]>();
+  for (const f of filings) {
+    const company = normalizeCompany(f.company_name) || normalizeCompany(f.symbol);
+    const day = f.filing_datetime.slice(0, 10);  // YYYY-MM-DD
+    const key = `${company}|${f.filing_type}|${day}`;
+    const arr = clusters.get(key) || [];
+    arr.push(f);
+    clusters.set(key, arr);
+  }
+
+  const out: ScoredFiling[] = [];
+  for (const arr of clusters.values()) {
+    if (arr.length === 1) { out.push(arr[0]); continue; }
+    // Multiple filings same company/type/day — collapse to winner
+    arr.sort((a, b) => {
+      // Prefer PDF-scored over subject
+      if (a.scored_from !== b.scored_from) return a.scored_from === 'PDF' ? -1 : 1;
+      // Prefer higher raw score
+      if (b.bullish.raw_score !== a.bullish.raw_score) return b.bullish.raw_score - a.bullish.raw_score;
+      // Prefer NSE
+      if (a.exchange !== b.exchange) return a.exchange === 'NSE' ? -1 : 1;
+      // More recent timestamp
+      return new Date(b.filing_datetime).getTime() - new Date(a.filing_datetime).getTime();
+    });
+    out.push(arr[0]);
+  }
+  return out;
 }
 
 function applyFilters(payload: FeedPayload, opts: { exchangeFilter: string; bullishOnly: boolean }): FeedPayload {

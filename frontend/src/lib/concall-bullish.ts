@@ -196,46 +196,208 @@ export const NEG_BLOCKERS: NegBlocker[] = [
 ];
 
 // ─── Scoring engine ────────────────────────────────────────────────────────
+// PATCH 0389 — Sentence-level scoring with negation/contradiction detection
+// and evidence quotes. Per user feedback: "strong demand last quarter but
+// current slowdown expected" must NOT score bullish.
+
+export interface EvidenceSentence {
+  text: string;               // truncated to 250 chars
+  tag: string;                // which combo it matched
+  polarity: 'BULL' | 'BEAR';
+  negated: boolean;           // was this overridden by a contradiction connector?
+}
 
 export interface BullishScore {
   score: number;                         // 0-10 normalized
-  raw_score: number;                     // raw points (pre-clamp)
+  raw_score: number;                     // raw points (post-cap, post-negation)
   sentiment: 'BULLISH' | 'NEUTRAL' | 'BEARISH' | 'INSUFFICIENT';
   confidence: 'HIGH' | 'MEDIUM' | 'LOW';
-  tags: string[];                        // matched combo tags (Guidance, Order Book, etc.)
-  bullish_phrases: string[];             // narrative reasons
-  red_flags: string[];                   // matched negative tags
-  critical_blocker: boolean;             // any critical blocker?
+  tags: string[];                        // matched combo tags
+  bullish_phrases: string[];
+  red_flags: string[];
+  critical_blocker: boolean;
   components: {
-    management_confidence: number;       // sum of weights for Guidance/Demand/Margin/Outlook
-    business_evidence: number;           // sum of weights for Order Book / Capacity / New Customer / Market Share
-    blockers: number;                    // total negative weight
+    management_confidence: number;
+    business_evidence: number;
+    blockers: number;
   };
+  // PATCH 0389 — evidence sentences extracted from the source text
+  evidence: EvidenceSentence[];
 }
 
 const MGMT_CONFIDENCE_TAGS = new Set(['Guidance', 'Demand', 'Margin', 'Premiumization']);
 const BUSINESS_EVIDENCE_TAGS = new Set(['Order Book', 'Capacity', 'New Customer', 'Market Share', 'Export', 'Cash Flow', 'Deleveraging', 'Capex']);
+
+// Contradiction connectors — when a sentence contains these, the polarity of
+// content AFTER the connector is what counts (often a "but X is bad" reversal)
+const CONTRADICTION_CONNECTORS = /\b(but|however|yet|though|although|while|despite|notwithstanding|whereas)\b/i;
+
+// Forward-looking softeners that weaken bullish phrases when present
+const SOFTENERS = /\b(temporary|transitory|short[- ]term|near[- ]term|cautious|uncertain|may\s+improve|hope\s+to|expect\s+to\s+recover)\b/i;
+
+function splitSentences(text: string): string[] {
+  // Split on sentence terminators, keep reasonable length
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .map(s => s.trim())
+    .filter(s => s.length >= 25 && s.length <= 1000);
+}
+
+function truncate(s: string, n: number): string {
+  return s.length <= n ? s : s.slice(0, n) + '…';
+}
 
 export function scoreBullish(text: string): BullishScore {
   const t = text || '';
   if (t.length < 40) {
     return {
       score: 0, raw_score: 0,
-      sentiment: 'INSUFFICIENT',
-      confidence: 'LOW',
+      sentiment: 'INSUFFICIENT', confidence: 'LOW',
       tags: [], bullish_phrases: [], red_flags: [],
       critical_blocker: false,
       components: { management_confidence: 0, business_evidence: 0, blockers: 0 },
+      evidence: [],
     };
   }
 
   let raw = 0;
-  const tags: string[] = [];
-  const phrases: string[] = [];
+  const tagSet = new Set<string>();
+  const phraseSet = new Set<string>();
+  const evidence: EvidenceSentence[] = [];
   let mgmtConfidence = 0;
   let businessEvidence = 0;
 
-  // Bullish combos — anchor + support must both match
+  // PATCH 0389 — sentence-level scan
+  const sentences = splitSentences(t);
+  const useSentences = sentences.length >= 3;
+
+  if (useSentences) {
+    // Score each sentence independently. Track which combos fire per sentence
+    // so we can pull representative evidence quotes.
+    for (const sent of sentences) {
+      const hasContradiction = CONTRADICTION_CONNECTORS.test(sent);
+      const hasSoftener = SOFTENERS.test(sent);
+      // If the sentence contains a contradiction connector, the polarity is
+      // determined by the SECOND half (after the connector) per the user's
+      // example: "strong demand last quarter BUT current slowdown expected"
+      let effectiveText = sent;
+      if (hasContradiction) {
+        const parts = sent.split(CONTRADICTION_CONNECTORS);
+        if (parts.length >= 3) {
+          effectiveText = parts.slice(2).join(' ').trim() || sent;
+        }
+      }
+
+      // Bullish combos — anchor + support must match in effective text
+      for (const combo of BULLISH_COMBOS) {
+        const anchorHit = combo.anchors.some(re => re.test(effectiveText));
+        const supportHit = combo.supports.some(re => re.test(effectiveText));
+        if (!anchorHit || !supportHit) continue;
+        // Skip if sentence contains a critical blocker — contradiction
+        const sentBlocker = NEG_BLOCKERS.find(b => b.critical && b.re.test(sent));
+        if (sentBlocker) {
+          // Bullish phrase NEGATED — record as bear-flipped evidence
+          evidence.push({
+            text: truncate(sent, 250),
+            tag: combo.tag,
+            polarity: 'BEAR',
+            negated: true,
+          });
+          continue;
+        }
+        let pts = combo.weight;
+        if (combo.qualifiers && combo.qualifiers.some(re => re.test(effectiveText))) pts += 1;
+        if (hasSoftener) pts *= 0.5;  // soften vague positivity
+        raw += pts;
+        tagSet.add(combo.tag);
+        phraseSet.add(combo.reason);
+        if (MGMT_CONFIDENCE_TAGS.has(combo.tag)) mgmtConfidence += pts;
+        if (BUSINESS_EVIDENCE_TAGS.has(combo.tag)) businessEvidence += pts;
+        if (evidence.length < 12) {
+          evidence.push({
+            text: truncate(sent, 250),
+            tag: combo.tag,
+            polarity: 'BULL',
+            negated: false,
+          });
+        }
+      }
+    }
+
+    // Negative blockers — sentence-level so we can pull the actual bearish quote
+    const blockerEvidence: EvidenceSentence[] = [];
+    let blockerWeight = 0;
+    let criticalBlocker = false;
+    const redFlagSet = new Set<string>();
+    for (const sent of sentences) {
+      for (const b of NEG_BLOCKERS) {
+        if (b.re.test(sent)) {
+          raw -= b.weight;
+          blockerWeight += b.weight;
+          redFlagSet.add(b.tag);
+          if (b.critical) criticalBlocker = true;
+          if (blockerEvidence.length < 6) {
+            blockerEvidence.push({
+              text: truncate(sent, 250),
+              tag: b.tag,
+              polarity: 'BEAR',
+              negated: false,
+            });
+          }
+        }
+      }
+    }
+    evidence.push(...blockerEvidence);
+
+    // PATCH 0389 — Score-inflation cap based on blocker presence
+    // Per user feedback: 25.0 score with delay+slowdown blockers is nonsense.
+    if (criticalBlocker) {
+      raw = Math.min(raw, 4);  // cap at low-bullish; blockers dominate
+    } else if (redFlagSet.size >= 2) {
+      raw = raw * 0.6;  // discount when multiple non-critical blockers
+    } else if (redFlagSet.size === 1) {
+      raw = raw * 0.85;
+    }
+
+    // Diminishing returns — at most one credit per tag (already deduped via tagSet)
+    // Now we cap the raw score based on tag diversity
+    const tagDiversity = tagSet.size;
+    if (tagDiversity <= 1) raw = Math.min(raw, 4);
+    else if (tagDiversity === 2) raw = Math.min(raw, 8);
+    else raw = Math.min(raw, 14);  // hard cap regardless of keyword density
+
+    const score = Math.max(0, Math.min(10, raw / 1.4));
+
+    let sentiment: BullishScore['sentiment'];
+    if (raw < -2) sentiment = 'BEARISH';
+    else if (criticalBlocker) sentiment = 'NEUTRAL';
+    else if (mgmtConfidence >= 2 && businessEvidence >= 2 && raw >= 4) sentiment = 'BULLISH';
+    else if (raw >= 5) sentiment = 'BULLISH';
+    else sentiment = 'NEUTRAL';
+
+    let confidence: BullishScore['confidence'];
+    if (mgmtConfidence >= 3 && businessEvidence >= 3 && !criticalBlocker && tagDiversity >= 3) confidence = 'HIGH';
+    else if (mgmtConfidence >= 1.5 && businessEvidence >= 1.5) confidence = 'MEDIUM';
+    else confidence = 'LOW';
+
+    return {
+      score: Math.round(score * 10) / 10,
+      raw_score: Math.round(raw * 10) / 10,
+      sentiment, confidence,
+      tags: Array.from(tagSet),
+      bullish_phrases: Array.from(phraseSet),
+      red_flags: Array.from(redFlagSet),
+      critical_blocker: criticalBlocker,
+      components: {
+        management_confidence: Math.round(mgmtConfidence * 10) / 10,
+        business_evidence: Math.round(businessEvidence * 10) / 10,
+        blockers: Math.round(blockerWeight * 10) / 10,
+      },
+      evidence: evidence.slice(0, 12),
+    };
+  }
+
+  // ─── Short-text fallback (subject-only): preserve original behavior ─────
   for (const combo of BULLISH_COMBOS) {
     const anchorHit = combo.anchors.some(re => re.test(t));
     const supportHit = combo.supports.some(re => re.test(t));
@@ -243,55 +405,45 @@ export function scoreBullish(text: string): BullishScore {
     let pts = combo.weight;
     if (combo.qualifiers && combo.qualifiers.some(re => re.test(t))) pts += 1;
     raw += pts;
-    tags.push(combo.tag);
-    phrases.push(combo.reason);
+    tagSet.add(combo.tag);
+    phraseSet.add(combo.reason);
     if (MGMT_CONFIDENCE_TAGS.has(combo.tag)) mgmtConfidence += pts;
     if (BUSINESS_EVIDENCE_TAGS.has(combo.tag)) businessEvidence += pts;
   }
-
-  // Negative blockers
-  const redFlags: string[] = [];
+  const redFlagSet = new Set<string>();
   let blockerWeight = 0;
   let criticalBlocker = false;
   for (const b of NEG_BLOCKERS) {
     if (b.re.test(t)) {
       raw -= b.weight;
       blockerWeight += b.weight;
-      redFlags.push(b.tag);
+      redFlagSet.add(b.tag);
       if (b.critical) criticalBlocker = true;
     }
   }
-
-  // Normalize to 0-10
-  const score = Math.max(0, Math.min(10, raw / 2));
-
-  // Sentiment classification
+  if (criticalBlocker) raw = Math.min(raw, 3);
+  raw = Math.min(raw, 8);  // hard cap for short text
+  const score = Math.max(0, Math.min(10, raw / 1.4));
   let sentiment: BullishScore['sentiment'];
   if (raw < -2) sentiment = 'BEARISH';
-  else if (criticalBlocker && raw < 6) sentiment = 'NEUTRAL';
-  else if (mgmtConfidence >= 2.5 && businessEvidence >= 2 && !criticalBlocker) sentiment = 'BULLISH';
-  else if (raw >= 4) sentiment = 'BULLISH';
+  else if (criticalBlocker) sentiment = 'NEUTRAL';
+  else if (mgmtConfidence > 0 && businessEvidence > 0 && raw >= 4) sentiment = 'BULLISH';
+  else if (raw >= 5) sentiment = 'BULLISH';
   else sentiment = 'NEUTRAL';
-
-  // Confidence
-  let confidence: BullishScore['confidence'];
-  if (mgmtConfidence >= 4 && businessEvidence >= 4 && !criticalBlocker) confidence = 'HIGH';
-  else if (mgmtConfidence >= 2 && businessEvidence >= 2) confidence = 'MEDIUM';
-  else confidence = 'LOW';
-
   return {
     score: Math.round(score * 10) / 10,
     raw_score: Math.round(raw * 10) / 10,
-    sentiment, confidence,
-    tags: Array.from(new Set(tags)),
-    bullish_phrases: Array.from(new Set(phrases)),
-    red_flags: Array.from(new Set(redFlags)),
+    sentiment, confidence: 'LOW',
+    tags: Array.from(tagSet),
+    bullish_phrases: Array.from(phraseSet),
+    red_flags: Array.from(redFlagSet),
     critical_blocker: criticalBlocker,
     components: {
       management_confidence: Math.round(mgmtConfidence * 10) / 10,
       business_evidence: Math.round(businessEvidence * 10) / 10,
       blockers: Math.round(blockerWeight * 10) / 10,
     },
+    evidence: [],
   };
 }
 

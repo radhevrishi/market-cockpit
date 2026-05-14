@@ -179,6 +179,13 @@ export default function ConcallIntelPage() {
 // PATCH 0387 — LIVE BULLISH FEED (auto-poll NSE/BSE)
 // ═══════════════════════════════════════════════════════════════════════════
 
+interface EvidenceSentence {
+  text: string;
+  tag: string;
+  polarity: 'BULL' | 'BEAR';
+  negated: boolean;
+}
+
 interface LiveFeedFiling {
   exchange: 'NSE' | 'BSE';
   symbol: string;
@@ -197,6 +204,7 @@ interface LiveFeedFiling {
     bullish_phrases: string[];
     red_flags: string[];
     components: { management_confidence: number; business_evidence: number; blockers: number };
+    evidence?: EvidenceSentence[];     // PATCH 0389
   };
   is_high_bullish: boolean;
   // PATCH 0388
@@ -353,6 +361,35 @@ function LiveBullishFeed() {
                   ))}
                 </div>
               )}
+              {/* PATCH 0389 — Evidence sentences pulled from PDF */}
+              {f.bullish.evidence && f.bullish.evidence.length > 0 && (() => {
+                const bull = f.bullish.evidence.filter(e => e.polarity === 'BULL' && !e.negated);
+                const bear = f.bullish.evidence.filter(e => e.polarity === 'BEAR' || e.negated);
+                return (
+                  <div style={{ marginTop: 6, marginBottom: 4, fontSize: 10, lineHeight: 1.5 }}>
+                    {bull.length > 0 && (
+                      <div style={{ marginBottom: 4 }}>
+                        <span style={{ color: '#10B981', fontWeight: 700, marginRight: 4 }}>WHY BULLISH:</span>
+                        <div style={{ marginLeft: 0, marginTop: 2 }}>
+                          {bull.slice(0, 4).map((e, k) => (
+                            <div key={k} style={{ color: '#C9D4E0', padding: '1px 0' }}>› <span style={{ color: '#10B98180', fontWeight: 700 }}>[{e.tag}]</span> &ldquo;{e.text}&rdquo;</div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {bear.length > 0 && (
+                      <div style={{ marginBottom: 4 }}>
+                        <span style={{ color: '#EF4444', fontWeight: 700, marginRight: 4 }}>RISKS:</span>
+                        <div style={{ marginLeft: 0, marginTop: 2 }}>
+                          {bear.slice(0, 3).map((e, k) => (
+                            <div key={k} style={{ color: '#C9D4E0', padding: '1px 0' }}>› <span style={{ color: '#EF444480', fontWeight: 700 }}>[{e.tag}{e.negated ? ' — negated' : ''}]</span> &ldquo;{e.text}&rdquo;</div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, color: '#6B7A8D' }}>
                 <span>{new Date(f.filing_datetime).toLocaleString()}</span>
                 <div style={{ display: 'flex', gap: 8 }}>
