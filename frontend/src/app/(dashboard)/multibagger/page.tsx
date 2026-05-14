@@ -15,6 +15,8 @@ import {
 // PATCH 0272 — Conviction Beats overlay on Multibagger results.
 import { getConvictionTickers } from '@/lib/conviction-beats';
 import { getDecision, setDecision, clearDecision, subscribeDecisions, DECISION_META, type DecisionStatus } from '@/lib/decisions';
+// PATCH 0367 — Export toolbar (TradingView + Screener.in) reused from earnings Scan
+import TickerExportToolbar from '@/components/TickerExportToolbar';
 
 // Shared API base — respects NEXT_PUBLIC_API_URL env var so all fetch() calls
 // resolve consistently when the base URL changes (fixes #13: mixed /api/v1 vs /api)
@@ -4257,6 +4259,28 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
             );
           })()}
 
+          {/* PATCH 0367 — India export toolbar. Filtered tickers from `filtered`.
+              Builds ticker -> company map for Screener.in name-based matching
+              (NSE symbols like '360ONE' don't match Screener fuzzy search;
+              'Three Sixty One Capital' / '360 ONE WAM Ltd' does). */}
+          {filtered.length > 0 && (() => {
+            const tickerCompanyMap: Record<string, string> = {};
+            for (const r of filtered) {
+              if (r.symbol && r.company) tickerCompanyMap[r.symbol.toUpperCase()] = r.company;
+            }
+            return (
+              <div style={{ margin: '10px 0' }}>
+                <TickerExportToolbar
+                  tickers={filtered.map(r => r.symbol).filter(Boolean)}
+                  exchange="NSE"
+                  filenameHint="multibagger-india"
+                  tickerCompanyMap={tickerCompanyMap}
+                  compact
+                />
+              </div>
+            );
+          })()}
+
           {/* Table header */}
           <div style={{display:'grid',gridTemplateColumns:'130px 130px 65px 65px 96px 86px 120px 1fr 76px',gap:8,padding:'10px 14px',fontSize:F.xs,fontWeight:700,letterSpacing:'0.6px',color:MUTED,borderBottom:`1px solid ${BORDER}`}}>
             {/* Clickable sort headers */}
@@ -6983,6 +7007,28 @@ function USACompare() {
               </button>
             </div>
           </div>
+
+          {/* PATCH 0367 — USA export toolbar. NSE/NYSE/NASDAQ tickers go to
+              TradingView with the exchange prefix. Screener.in is India-only
+              so no company-name remap here — TradingView handles it natively
+              for US listings. Screener button still works (bare ticker
+              fallback) but is mostly unused for US workflow. */}
+          {filtered.length > 0 && (() => {
+            // Use the first row's exchange to pick the TradingView prefix.
+            // Most USA rows are NASDAQ; NYSE is the only common alternative.
+            const firstExch = (filtered[0]?.exchange || '').toUpperCase();
+            const tvExchange: 'NASDAQ' | 'NYSE' = firstExch.includes('NYSE') ? 'NYSE' : 'NASDAQ';
+            return (
+              <div style={{ margin: '10px 0' }}>
+                <TickerExportToolbar
+                  tickers={filtered.map(r => r.symbol).filter(Boolean)}
+                  exchange={tvExchange}
+                  filenameHint="multibagger-usa"
+                  compact
+                />
+              </div>
+            );
+          })()}
 
           {/* Table Header — sortable */}
           {/* PATCH 0346 — Added dedicated R40 column (Quarterly Rev + FCF margin),

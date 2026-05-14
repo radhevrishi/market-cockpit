@@ -101,31 +101,55 @@ export default function TickerExportToolbar({
     toast.success(`Opened ${first} · ${subset.length} tickers copied for paste`);
   };
 
-  // PATCH 0364 / 0365 / 0366 — Screener.in export.
+  // PATCH 0364 / 0365 / 0366 / 0368 — Screener.in export.
   //
   // CRITICAL FORMAT: Screener.in's "Add stocks" bulk-import field treats
   // each LINE as one entry. A comma-separated string is interpreted as a
   // single name → "Found automatically: 0, Unmatched: 1".
   //
   // PATCH 0366 — Use COMPANY NAMES (when available) not raw NSE tickers.
-  // Screener's fuzzy matcher is built around company-name matching, not
-  // tickers. Symbols like 'EBGNG', '360ONE', 'KIRLPNU' are NSE-internal
-  // codes that Screener.in may not recognize. Names like 'GNG Electronics
-  // Ltd', '360 ONE WAM Ltd', 'Kirloskar Pneumatic Company Ltd' match.
-  // Falls back to ticker when company name isn't available.
+  // Screener's fuzzy matcher is built around company-name matching.
   //
-  // Stripped suffixes ('Limited', 'Ltd', '.', 'Inc.', etc.) per Screener's
-  // own normalisation; otherwise their fuzzy match drops too many.
+  // PATCH 0368 — Two fixes from user import-failure report:
+  //   (A) Decode HTML entities. Company names scraped from HTML pages
+  //       retain encoded ampersands etc. ('Lloyds Metals &amp; Energy').
+  //       Screener doesn't decode them, the match fails. Decode at the
+  //       boundary so the output is clean text.
+  //   (B) Detect ticker-as-company fallback. When the enrich path can't
+  //       find a real company name it defaults to ticker (so
+  //       tickerCompanyMap['KRISHANA'] === 'KRISHANA'). Emitting that
+  //       sends a bare ticker to Screener which its fuzzy matcher rejects
+  //       for many small-caps. Trim the suffixes anyway but if we get
+  //       just the ticker back, still emit it — at least the user can
+  //       manually pick from Screener's unmatched list.
+
+  const decodeHtmlEntities = (s: string): string => {
+    return s
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&apos;/g, "'")
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)));
+  };
   const normalizeForScreener = (name: string): string => {
-    return name
+    return decodeHtmlEntities(name)
       .replace(/\s+(Limited|Ltd\.?|Inc\.?|Corporation|Corp\.?|Company|Co\.?|PLC)$/i, '')
       .replace(/[\.,]/g, '')
       .trim();
   };
   const screenerLine = (ticker: string): string => {
     const co = tickerCompanyMap?.[ticker.toUpperCase()];
-    if (co && co.trim()) return normalizeForScreener(co);
-    return ticker.toUpperCase();
+    const upTicker = ticker.toUpperCase();
+    // (B) when company name equals the ticker (or is empty), there's no
+    // real name to send — emit the bare ticker so user can manually
+    // match it in Screener's unmatched panel.
+    if (!co || !co.trim() || co.trim().toUpperCase() === upTicker) {
+      return upTicker;
+    }
+    return normalizeForScreener(co);
   };
 
   const copyForScreener = async (subset: string[], label: string) => {
