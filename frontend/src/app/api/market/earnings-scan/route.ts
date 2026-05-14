@@ -1121,6 +1121,17 @@ const POSITIVE_KEYWORDS: [string, number][] = [
   ['new orders', 0.10], ['record revenue', 0.15], ['record order', 0.14], ['healthy pipeline', 0.10],
   ['robust growth', 0.14], ['high growth', 0.12], ['double digit growth', 0.14],
   ['volume growth', 0.10], ['improving demand', 0.10], ['strong traction', 0.10],
+  // PATCH 0357 — institutional phrases Screener actually writes in pros lists.
+  // Expands beyond the original ~30-phrase list so clean compounders without
+  // 'debt free' don't get stuck on Neutral 0.00.
+  ['pat growth', 0.10], ['profit growth', 0.10], ['revenue grew', 0.08], ['sales grew', 0.08],
+  ['ebitda growth', 0.10], ['ebitda growing', 0.08], ['ebitda margin expansion', 0.12],
+  ['consistent performance', 0.08], ['consistent growth', 0.10], ['strong execution', 0.10],
+  ['record profit', 0.14], ['record quarter', 0.12], ['record performance', 0.12],
+  ['roe of', 0.08], ['roce of', 0.08], ['return on equity', 0.06], ['return on capital', 0.06],
+  ['dividend yield', 0.06], ['rewarding shareholders', 0.06], ['free cash flow positive', 0.10],
+  ['cash flow positive', 0.08], ['operating cash flow', 0.06], ['ebitda positive', 0.08],
+  ['capex announced', 0.08], ['capacity utilization', 0.06], ['volume growth strong', 0.10],
   // Margin/Profitability
   ['margin expansion', 0.14], ['improving margin', 0.12], ['margin improvement', 0.12],
   ['operating leverage', 0.12], ['cost efficiency', 0.10], ['cost reduction', 0.08],
@@ -1238,32 +1249,54 @@ function parseGuidanceSentiment(html: string): GuidanceData | null {
   const prosLower = prosText.toLowerCase();
   const consLower = consText.toLowerCase();
 
-  // Score calculation
+  // Score calculation with PATCH 0357 — diminishing returns per keyword.
+  // Each subsequent occurrence of the SAME phrase contributes less:
+  //   1st hit: 1.00× | 2nd: 0.50× | 3rd: 0.25× | 4th+: 0.10×
+  // This prevents 'debt free' mentioned 3× in pros from dominating a
+  // company with otherwise weak fundamentals, while still rewarding
+  // genuinely strong narrative (e.g. multiple distinct positive phrases).
   let totalScore = 0;
   const keyPhrasesPositive: string[] = [];
   const keyPhrasesNegative: string[] = [];
 
+  const countOccurrences = (haystack: string, needle: string): number => {
+    if (!haystack || !needle) return 0;
+    let n = 0;
+    let pos = 0;
+    while ((pos = haystack.indexOf(needle, pos)) !== -1) { n++; pos += needle.length; }
+    return n;
+  };
+  const diminishingMultiplier = (count: number): number => {
+    if (count <= 0) return 0;
+    if (count === 1) return 1.0;
+    if (count === 2) return 1.5;   // 1.0 + 0.5
+    if (count === 3) return 1.75;  // 1.0 + 0.5 + 0.25
+    return 1.85 + 0.10 * (count - 3); // 4th+ contributes 0.10 each, capped softly
+  };
+
   for (const [keyword, weight] of POSITIVE_KEYWORDS) {
     const kw = keyword.toLowerCase();
-    // Check in Pros (full weight) and Cons (reduced — might be comparing negatively)
-    if (prosLower.includes(kw)) {
-      totalScore += weight;
+    const prosCount = countOccurrences(prosLower, kw);
+    const consCount = countOccurrences(consLower, kw);
+    if (prosCount > 0) {
+      totalScore += weight * diminishingMultiplier(prosCount);
       keyPhrasesPositive.push(keyword);
-    } else if (consLower.includes(kw)) {
-      // Positive keyword in Cons section: could be "despite strong growth, margins fell"
-      // Give reduced positive weight
-      totalScore += weight * 0.3;
+    } else if (consCount > 0) {
+      // Positive keyword in Cons: 'despite strong growth, margins fell'.
+      // Give reduced positive weight, also diminishing.
+      totalScore += weight * 0.3 * diminishingMultiplier(consCount);
     }
   }
 
   for (const [keyword, weight] of NEGATIVE_KEYWORDS) {
     const kw = keyword.toLowerCase();
-    if (consLower.includes(kw)) {
-      totalScore += weight; // weight is already negative
+    const consCount = countOccurrences(consLower, kw);
+    const prosCount = countOccurrences(prosLower, kw);
+    if (consCount > 0) {
+      totalScore += weight * diminishingMultiplier(consCount); // weight already negative
       keyPhrasesNegative.push(keyword);
-    } else if (prosLower.includes(kw)) {
-      // Negative keyword in Pros: could be "despite debt, company is growing"
-      totalScore += weight * 0.3;
+    } else if (prosCount > 0) {
+      totalScore += weight * 0.3 * diminishingMultiplier(prosCount);
     }
   }
 
@@ -1882,10 +1915,11 @@ async function buildCardFromEnrichFallback(
       totalScore >= 60 ? 'GOOD'      :
       totalScore >= 45 ? 'OK'        : 'BAD';
 
-    // PATCH 0356 — derive guidance from earnings deltas. The enrich path
-    // has no narrative text to keyword-scan, so we ALWAYS compute from
-    // metrics here. This eliminates the "no guidance line" bug for every
-    // Partial / SCR 75% card.
+    // PATCH 0356 + 0357 — derive guidance from earnings deltas. The enrich
+    // path has no narrative text, so we ALWAYS compute from metrics here.
+    // PATCH 0357 also passes absolute PAT to enable low-base swing detection
+    // (-10 -> +5 is a 150% YoY swing but should be dampened, not rewarded
+    // as a 1.5× compounder).
     const opmExpansion = (e.opm_pct != null && e.opm_prev_pct != null)
       ? Number(e.opm_pct) - Number(e.opm_prev_pct)
       : null;
@@ -1894,6 +1928,8 @@ async function buildCardFromEnrichFallback(
       patYoY: patYoY,
       epsYoY: e.eps_yoy_pct ?? null,
       opmExpansion,
+      patAbsCurr: e.pat_curr_cr != null ? Number(e.pat_curr_cr) : null,
+      patAbsPrev: e.pat_prev_cr != null ? Number(e.pat_prev_cr) : null,
     });
 
     return {
@@ -1951,12 +1987,30 @@ function guidanceFromMetrics(input: {
   patYoY?: number | null;
   epsYoY?: number | null;
   opmExpansion?: number | null;   // pp change in OPM YoY
+  /** PATCH 0357 — pass through for low-base-swing detection. */
+  patAbsCurr?: number | null;
+  patAbsPrev?: number | null;
 }): { guidance: 'Positive' | 'Neutral' | 'Negative'; sentimentScore: number } {
   let s = 0;
   const rev = input.revYoY ?? null;
   const pat = input.patYoY ?? null;
   const eps = input.epsYoY ?? null;
   const opmDelta = input.opmExpansion ?? null;
+
+  // ── PATCH 0357 — Low-base swing detector (applied as a dampener on the
+  // PAT contribution). When prior-period PAT was negative or near-zero and
+  // current jumped, the YoY % is mathematically large but not meaningful.
+  // Example: -10 → +5 = 150% YoY but it's not a 1.5× compounder — it's a
+  // tiny denominator. Dampen the PAT positive contribution by 0.5×.
+  let patBoostMultiplier = 1.0;
+  const patPrev = input.patAbsPrev ?? null;
+  const patCurr = input.patAbsCurr ?? null;
+  if (patPrev != null && pat != null && pat > 100) {
+    // 'Low base' = prior absolute below 10 (in Cr) OR prior was negative
+    if (patPrev <= 0 || Math.abs(patPrev) < 10) {
+      patBoostMultiplier = 0.5;
+    }
+  }
 
   // Revenue YoY tier (0 → ±0.20)
   if (rev != null) {
@@ -1968,30 +2022,52 @@ function guidanceFromMetrics(input: {
     else if (rev >= -20)  s -= 0.12;
     else                  s -= 0.20;
   }
-  // PAT YoY tier (0 → ±0.20)
+  // PAT YoY tier (0 → ±0.22). Positive contribution dampened by
+  // patBoostMultiplier when low-base swing detected.
   if (pat != null) {
-    if (pat >= 50)        s += 0.20;
-    else if (pat >= 25)   s += 0.12;
-    else if (pat >= 10)   s += 0.06;
-    else if (pat >= 0)    s += 0.02;
-    else if (pat >= -15)  s -= 0.08;
-    else if (pat >= -30)  s -= 0.15;
-    else                  s -= 0.22;
+    let patAdd = 0;
+    if (pat >= 50)        patAdd = 0.20;
+    else if (pat >= 25)   patAdd = 0.12;
+    else if (pat >= 10)   patAdd = 0.06;
+    else if (pat >= 0)    patAdd = 0.02;
+    else if (pat >= -15)  patAdd = -0.08;
+    else if (pat >= -30)  patAdd = -0.15;
+    else                  patAdd = -0.22;
+    // Apply dampener only to POSITIVE contribution (negatives are still real)
+    if (patAdd > 0) patAdd *= patBoostMultiplier;
+    s += patAdd;
   }
-  // EPS YoY tier (smaller weight; 0 → ±0.10)
+  // EPS YoY tier (smaller weight; 0 → ±0.10), also dampened on positive side
   if (eps != null) {
-    if (eps >= 40)        s += 0.08;
-    else if (eps >= 15)   s += 0.04;
-    else if (eps >= 0)    s += 0.01;
-    else if (eps >= -25)  s -= 0.05;
-    else                  s -= 0.10;
+    let epsAdd = 0;
+    if (eps >= 40)        epsAdd = 0.08;
+    else if (eps >= 15)   epsAdd = 0.04;
+    else if (eps >= 0)    epsAdd = 0.01;
+    else if (eps >= -25)  epsAdd = -0.05;
+    else                  epsAdd = -0.10;
+    if (epsAdd > 0) epsAdd *= patBoostMultiplier;
+    s += epsAdd;
   }
   // OPM expansion (0 → ±0.10)
   if (opmDelta != null) {
-    if (opmDelta >= 2)    s += 0.08;
+    if (opmDelta >= 2)        s += 0.08;
     else if (opmDelta >= 0.5) s += 0.03;
     else if (opmDelta <= -2)  s -= 0.08;
     else if (opmDelta <= -0.5) s -= 0.03;
+  }
+
+  // ── PATCH 0357 — Quality-of-growth flag: when revenue surge isn't
+  // flowing through to earnings (rev > 25% AND PAT < 5%), that's a
+  // degradation signal. Cap the metrics score at neutral-positive 0.05.
+  if (rev != null && pat != null && rev > 25 && pat < 5) {
+    if (s > 0.05) s = 0.05;
+  }
+
+  // ── PATCH 0357 — Catastrophic decline override: PAT YoY < -25% AND
+  // revenue YoY < +5% (i.e. no offsetting top-line growth) → force the
+  // score to be at least -0.20 negative regardless of other factors.
+  if (pat != null && rev != null && pat < -25 && rev < 5) {
+    if (s > -0.20) s = -0.20;
   }
 
   const sentimentScore = Math.max(-1, Math.min(1, parseFloat(s.toFixed(3))));
@@ -2167,19 +2243,41 @@ function buildCardFromData(data: ScreenerData, guidanceData?: GuidanceData | nul
     cmp: data.currentPrice,
     isBanking: data.isBanking || false,
     // ── Guidance & Sentiment fields ──
-    // PATCH 0356 — guarantee universal guidance coverage. When Screener
-    // pros/cons keyword extraction returns null (e.g. company page has no
-    // narrative text), fall back to a metrics-derived guidance so every
-    // card surfaces a Positive / Neutral / Negative label rather than
-    // a missing one.
-    guidance: guidanceData?.guidance ?? guidanceFromMetrics({
-      revYoY: revenueYoY, patYoY, epsYoY,
-      opmExpansion: (latest.opm != null && yoyQ?.opm != null) ? latest.opm - yoyQ.opm : null,
-    }).guidance,
-    sentimentScore: guidanceData?.sentimentScore ?? guidanceFromMetrics({
-      revYoY: revenueYoY, patYoY, epsYoY,
-      opmExpansion: (latest.opm != null && yoyQ?.opm != null) ? latest.opm - yoyQ.opm : null,
-    }).sentimentScore,
+    // PATCH 0357 — blended scoring. Compute BOTH the keyword-derived
+    // score (when available) and the metrics-derived score (always),
+    // then blend: 0.7 × metrics + 0.3 × keyword. Metrics is the primary
+    // signal because actual earnings deltas are ground truth; keywords
+    // are color commentary. Override safeties below force Negative for
+    // critical-phrase or catastrophic-decline cases.
+    ...(() => {
+      const metricsResult = guidanceFromMetrics({
+        revYoY: revenueYoY, patYoY, epsYoY,
+        opmExpansion: (latest.opm != null && yoyQ?.opm != null) ? latest.opm - yoyQ.opm : null,
+        patAbsCurr: latest.pat ?? null,
+        patAbsPrev: yoyQ?.pat ?? null,
+      });
+      const keywordScore = guidanceData?.sentimentScore;
+      const haveKeyword = keywordScore != null && Number.isFinite(keywordScore);
+      let blended = haveKeyword
+        ? 0.7 * metricsResult.sentimentScore + 0.3 * keywordScore!
+        : metricsResult.sentimentScore;
+
+      // Critical-phrase override (downside). Audit / qualified-opinion /
+      // going-concern / cash-burn / negative-cash-flow in cons forces
+      // guidance Negative regardless of metrics.
+      const cons = (guidanceData?.consText || '').toLowerCase();
+      const criticalNegativeRe = /(audit concern|qualified opinion|going concern|cash burn|negative cash flow)/;
+      if (criticalNegativeRe.test(cons)) {
+        if (blended > -0.15) blended = -0.15;
+      }
+
+      const finalScore = Math.max(-1, Math.min(1, parseFloat(blended.toFixed(3))));
+      let finalGuidance: 'Positive' | 'Neutral' | 'Negative';
+      if (finalScore > 0.05) finalGuidance = 'Positive';
+      else if (finalScore < -0.05) finalGuidance = 'Negative';
+      else finalGuidance = 'Neutral';
+      return { guidance: finalGuidance, sentimentScore: finalScore };
+    })(),
     revenueOutlook: guidanceData?.revenueOutlook,
     marginOutlook: guidanceData?.marginOutlook,
     capexSignal: guidanceData?.capexSignal,

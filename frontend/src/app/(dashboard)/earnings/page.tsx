@@ -377,13 +377,23 @@ function BottomSummary({ cards }: { cards: EarningsScanCard[] }) {
     if (c.quarters.length < 2) return false;
     return c.quarters[0].opm > c.quarters[1].opm;
   }).length;
-  const riskCount = withData.filter(c => (c.patYoY || 0) < -10 && (c.revenueYoY || 0) < 0).length;
+  // PATCH 0357 — loosen risk-flag detector. Old condition required BOTH
+  // PAT < -10% AND revenue < 0% — too narrow (missed JSWINFRA PAT -167%
+  // when rev was still +20%, DIXON PAT -36% when rev was barely positive).
+  // New condition fires when any of: PAT YoY < -20% OR revenue YoY < -10%
+  // OR an earnings/guidance divergence is flagged on the card.
+  const riskCount = withData.filter(c => {
+    const patBad = (c.patYoY ?? 0) < -20;
+    const revBad = (c.revenueYoY ?? 0) < -10;
+    const divergence = !!c.divergence && c.divergence !== 'None';
+    return patBad || revBad || divergence;
+  }).length;
 
   const items = [
     { label: 'Total Analyzed', value: `${withData.length}`, color: ACCENT },
     { label: 'Rising Earnings', value: `${risingCount} (${withData.length > 0 ? ((risingCount / withData.length) * 100).toFixed(0) : 0}%)`, color: GREEN },
     { label: 'Margin Expansion', value: `${marginExpCount} (${withData.length > 0 ? ((marginExpCount / withData.length) * 100).toFixed(0) : 0}%)`, color: marginExpCount > withData.length / 2 ? GREEN : YELLOW },
-    { label: 'Risk Flags', value: `${riskCount}`, color: riskCount > 0 ? RED : GREEN, sub: 'Negative growth + declining revenue' },
+    { label: 'Risk Flags', value: `${riskCount}`, color: riskCount > 0 ? RED : GREEN, sub: 'PAT decline > 20% · revenue decline > 10% · or guidance divergence' },
   ];
 
   return (
@@ -1000,7 +1010,14 @@ function computeAggregation(cards: EarningsScanCard[], label: string): UniverseA
     if (c.quarters.length < 2) return false;
     return c.quarters[0].opm > c.quarters[1].opm;
   }).length;
-  const riskCount = withData.filter(c => (c.patYoY || 0) < -10 && (c.revenueYoY || 0) < 0).length;
+  // PATCH 0357 — broadened risk-flag detector (matches the system-summary
+  // detector above): fires on PAT < -20% OR rev < -10% OR divergence.
+  const riskCount = withData.filter(c => {
+    const patBad = (c.patYoY ?? 0) < -20;
+    const revBad = (c.revenueYoY ?? 0) < -10;
+    const divergence = !!c.divergence && c.divergence !== 'None';
+    return patBad || revBad || divergence;
+  }).length;
 
   return {
     label,
