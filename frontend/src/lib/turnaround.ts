@@ -556,92 +556,134 @@ function classifyStage(row: TurnaroundRow): { stage: TurnaroundStage; color: str
 // quality compounders, value traps, declining businesses) vs real
 // turnaround candidates.
 function classifyArchetype(row: TurnaroundRow): { archetype: TurnaroundArchetype; label: string; note: string; color: string } {
+  // PATCH 0377 — Rewritten classifier. The previous version had gates that
+  // required revenueGrowth3y / patGrowth3y, which are frequently null in
+  // Screener exports. The result was that 67 of 87 rows fell through to
+  // NEUTRAL, zero rows hit GROWTH/QUALITY/TURNAROUND. This rewrite uses
+  // pragmatic fallbacks across quarterly / annual / multi-year fields so a
+  // row with ANY usable data lands in a sensible bucket.
   const patQ1 = row.patQ1;
-  const positiveLatestPAT = patQ1 != null && patQ1 > 0;
-  const negLatestPAT = patQ1 != null && patQ1 < 0;
+  const patY1 = row.patY1;
+  const positiveLatestPAT = (patQ1 != null && patQ1 > 0) || (patY1 != null && patY1 > 0);
+  const negLatestPAT = (patQ1 != null && patQ1 < 0) || (patQ1 == null && patY1 != null && patY1 < 0);
   const lossYears = row.lossMakingYears5y ?? 0;
   const roce = row.roce ?? null;
   const roce3y = row.roce3yBack ?? null;
   const revG3y = row.revenueGrowth3y ?? null;
   const patG3y = row.patGrowth3y ?? null;
+  const revG1y = row.revenueGrowth1y ?? null;
+  const patG1y = row.patGrowth1y ?? null;
   const de = row.de ?? null;
   const opmYoYQ = (row.opmQ1 != null && row.opmQ2 != null) ? row.opmQ1 - row.opmQ2 : null;
   const debtReduction3y = (row.debtCurr != null && row.debt3yBack != null && row.debt3yBack > 0)
     ? (row.debt3yBack - row.debtCurr) / row.debt3yBack : null;
 
-  // 🚀 GROWTH STOCK — strong revenue + profit + ROCE, no distress, positive PAT
-  if (positiveLatestPAT && lossYears === 0 && (revG3y ?? 0) > 25 && (patG3y ?? -99) > 25 && (roce ?? 0) >= 18) {
-    return {
-      archetype: 'GROWTH',
-      label: '🚀 GROWTH',
-      note: `Growth stock — Rev 3y +${revG3y?.toFixed(0)}%, PAT +${patG3y?.toFixed(0)}%, ROCE ${roce?.toFixed(0)}%. Not a turnaround setup. Use Multibagger tab instead.`,
-      color: '#10B981',
-    };
-  }
+  // Quarterly YoY PAT change — derived from patQ1Yoy if present
+  const patQQYoY = (row.patQ1 != null && row.patQ1Yoy != null && row.patQ1Yoy !== 0)
+    ? (row.patQ1 - row.patQ1Yoy) / Math.abs(row.patQ1Yoy) * 100 : null;
+  const salesQQYoY = (row.salesQ1 != null && row.salesQ1Yoy != null && row.salesQ1Yoy !== 0)
+    ? (row.salesQ1 - row.salesQ1Yoy) / Math.abs(row.salesQ1Yoy) * 100 : null;
 
-  // 💎 QUALITY COMPOUNDER — high sustained ROCE, no distress, modest growth
-  if (positiveLatestPAT && lossYears === 0 && (roce ?? 0) >= 18 && (revG3y ?? 0) > 10 && (revG3y ?? 99) <= 25) {
-    return {
-      archetype: 'QUALITY',
-      label: '💎 QUALITY',
-      note: `Established compounder — ROCE ${roce?.toFixed(0)}%, ${revG3y?.toFixed(0)}% rev growth, no loss years. Not in distress, not a turnaround setup.`,
-      color: '#22D3EE',
-    };
-  }
+  // 🔄 TURNAROUND CANDIDATE — fire FIRST so the tab's primary archetype
+  // gets priority. Multiple distress + recovery combos qualify.
+  const recoverySignals: string[] = [];
+  if (opmYoYQ != null && opmYoYQ >= 3) recoverySignals.push(`OPM +${opmYoYQ.toFixed(1)}pp Q/Q`);
+  if (patQ1 != null && patQ1 > 0 && row.patQ2 != null && row.patQ2 <= 0) recoverySignals.push('Qtr PAT turned positive');
+  if (patY1 != null && patY1 > 0 && row.patY2 != null && row.patY2 <= 0) recoverySignals.push('Annual PAT turned positive');
+  if (debtReduction3y != null && debtReduction3y >= 0.15) recoverySignals.push(`Debt -${(debtReduction3y*100).toFixed(0)}% 3y`);
+  if (roce != null && roce3y != null && (roce - roce3y) >= 5) recoverySignals.push(`ROCE +${(roce - roce3y).toFixed(0)}pp 3y`);
+  if (patG3y != null && patG3y >= 40 && positiveLatestPAT) recoverySignals.push(`PAT 3y +${patG3y.toFixed(0)}%`);
+  if (patQQYoY != null && patQQYoY >= 50 && positiveLatestPAT) recoverySignals.push(`Qtr PAT YoY +${patQQYoY.toFixed(0)}%`);
 
-  // 🔄 TURNAROUND CANDIDATE — distress history + recovery signal firing
-  const hasRecoverySignal = (
-    (opmYoYQ != null && opmYoYQ >= 3) ||
-    (positiveLatestPAT && row.patQ2 != null && row.patQ2 <= 0) ||  // PAT just turned positive
-    (debtReduction3y != null && debtReduction3y >= 0.15) ||
-    (roce != null && roce3y != null && (roce - roce3y) >= 5)
-  );
-  const hasDistressContext = lossYears >= 1 || negLatestPAT || (roce ?? 99) < 10 || (row.patQ4 ?? 1) < 0;
+  const distressContext: string[] = [];
+  if (lossYears >= 1) distressContext.push(`${lossYears}/5 loss yrs`);
+  if (negLatestPAT) distressContext.push('neg PAT recent');
+  if (roce != null && roce < 10) distressContext.push(`low ROCE ${roce.toFixed(0)}%`);
+  if (roce3y != null && roce3y < 8) distressContext.push(`weak hist ROCE ${roce3y.toFixed(0)}%`);
+  if (row.patQ4 != null && row.patQ4 < 0) distressContext.push('neg PAT 4Q ago');
+  if (row.patY2 != null && row.patY2 < 0) distressContext.push('neg PAT prev yr');
+  if (debtReduction3y != null && debtReduction3y >= 0.15) distressContext.push('was-heavy debt');
 
-  if (hasDistressContext && hasRecoverySignal) {
+  if (recoverySignals.length >= 1 && distressContext.length >= 1) {
     return {
       archetype: 'TURNAROUND',
       label: '🔄 TURNAROUND',
-      note: `Real turnaround setup — distress history (loss yrs ${lossYears}, ROCE ${roce?.toFixed(0) ?? '—'}%) AND recovery signal firing. This is what the tab is for.`,
+      note: `Real turnaround — distress (${distressContext.slice(0, 2).join(', ')}) + recovery (${recoverySignals.slice(0, 2).join(', ')}).`,
       color: '#F59E0B',
     };
   }
 
-  // 🧊 VALUE TRAP RISK — deep distress, no recovery, high debt or no signal
-  if (lossYears >= 3 && negLatestPAT && (de ?? 0) > 1.5) {
+  // 💎 QUALITY COMPOUNDER — high sustained ROCE, no distress.
+  // NO growth gate (a quality compounder may grow at 8-15%; that's fine).
+  // Treat null lossYears as 0 (Screener often omits the column).
+  if (positiveLatestPAT && lossYears === 0 && (roce ?? 0) >= 18 && (de ?? 0) <= 1.5) {
+    const growthHint = revG3y != null
+      ? ` (rev 3y +${revG3y.toFixed(0)}%)`
+      : revG1y != null
+        ? ` (rev 1y +${revG1y.toFixed(0)}%)`
+        : '';
+    return {
+      archetype: 'QUALITY',
+      label: '💎 QUALITY',
+      note: `Established compounder — ROCE ${roce?.toFixed(0)}%${growthHint}, no loss years. Not in distress, not a turnaround setup.`,
+      color: '#22D3EE',
+    };
+  }
+
+  // 🚀 GROWTH STOCK — strong growth signal on ANY horizon + decent ROCE.
+  // Permissive: accepts 3y, 1y, or quarterly YoY growth as the signal.
+  const strongGrowth = (
+    (revG3y != null && revG3y >= 25) ||
+    (patG3y != null && patG3y >= 25) ||
+    (revG1y != null && revG1y >= 25 && patG1y != null && patG1y >= 25) ||
+    (salesQQYoY != null && salesQQYoY >= 30 && patQQYoY != null && patQQYoY >= 30)
+  );
+  if (positiveLatestPAT && lossYears === 0 && (roce ?? 0) >= 15 && strongGrowth) {
+    const bestGrowth = patG3y ?? patG1y ?? patQQYoY ?? 0;
+    return {
+      archetype: 'GROWTH',
+      label: '🚀 GROWTH',
+      note: `Growth stock — PAT +${bestGrowth.toFixed(0)}%, ROCE ${roce?.toFixed(0)}%. Not a turnaround. Use the India Multibagger tab instead.`,
+      color: '#10B981',
+    };
+  }
+
+  // 🧊 VALUE TRAP RISK — deep distress, no recovery, high debt
+  if ((lossYears >= 3 || (roce != null && roce < 0)) && negLatestPAT && (de ?? 0) > 1.5) {
     return {
       archetype: 'VALUE-TRAP',
       label: '🧊 VALUE TRAP',
-      note: `Deep distress: ${lossYears}/5 loss years, D/E ${de?.toFixed(1)}, ROCE ${roce?.toFixed(0) ?? '—'}%. No clear recovery signal yet — capital trap risk.`,
+      note: `Deep distress: ${lossYears}/5 loss years, D/E ${de?.toFixed(1)}, ROCE ${roce?.toFixed(0) ?? '—'}%. No clear recovery signal — capital trap risk.`,
       color: '#EF4444',
     };
   }
 
   // 📉 DECLINING — top-line + bottom-line both falling
-  if ((row.revenueGrowth1y ?? 0) < -5 && (row.patGrowth1y ?? 0) < -10) {
+  if ((revG1y ?? 0) < -5 && (patG1y ?? 0) < -10) {
     return {
       archetype: 'DECLINING',
       label: '📉 DECLINING',
-      note: `Revenue ${row.revenueGrowth1y?.toFixed(0)}% YoY, profit ${row.patGrowth1y?.toFixed(0)}% — accelerating decline, not turnaround material.`,
+      note: `Revenue ${revG1y?.toFixed(0)}% YoY, profit ${patG1y?.toFixed(0)}% — accelerating decline, not turnaround material.`,
       color: '#EF4444',
     };
   }
 
   // ⏸ WAIT — distress visible but no signal yet
-  if (hasDistressContext) {
+  if (distressContext.length >= 1) {
     return {
       archetype: 'WAIT',
       label: '⏸ WAIT',
-      note: `Distress visible (loss yrs ${lossYears}, current PAT ${patQ1?.toFixed(0) ?? '—'}) but no recovery signal yet — watch quarterly results for OPM Q/Q +3pp or PAT turning positive.`,
+      note: `Distress visible (${distressContext.slice(0, 2).join(', ')}) but no recovery signal yet — watch quarterly OPM +3pp or PAT turning positive.`,
       color: '#94A3B8',
     };
   }
 
-  // ❓ NEUTRAL — neither distress nor strong growth
+  // ❓ NEUTRAL — last resort: nothing distressed, nothing strong-growth,
+  // not quality either (likely middling row or insufficient data coverage).
   return {
     archetype: 'NEUTRAL',
     label: '❓ NEUTRAL',
-    note: `Neither distressed nor strong-growth — no turnaround thesis. PAT ${patQ1?.toFixed(0) ?? '—'} Cr, ROCE ${roce?.toFixed(0) ?? '—'}%, revenue ${row.revenueGrowth1y?.toFixed(0) ?? '—'}% YoY.`,
+    note: `Insufficient signal — PAT ${patQ1?.toFixed(0) ?? patY1?.toFixed(0) ?? '—'} Cr, ROCE ${roce?.toFixed(0) ?? '—'}%, rev 1y ${revG1y?.toFixed(0) ?? '—'}%. Check that your CSV includes quarterly + 3y growth columns.`,
     color: '#6B7A8D',
   };
 }
