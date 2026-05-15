@@ -527,8 +527,17 @@ function LiveBullishFeed() {
             return compB - compA;
           });
         let ranked = strict.slice(0, 10);
-        if (strict.length < 5) {
-          // Pad with top NEUTRAL by composite ≥ 2.0 — shown as "Below threshold"
+        if (strict.length < 10) {
+          // PATCH 0412 — Window-scaled fallback threshold. Longer windows
+          // need a lower bar because time decay + filing-type cap crush
+          // older composites. 7d=2.0 (current calibration), 30d=1.5,
+          // 90d=1.0, 180d=0.5. Without this scaling, 180d showed Top 3
+          // identical to 7d because older filings couldn't clear 2.0.
+          const fallbackThreshold =
+            days <= 7  ? 2.0 :
+            days <= 30 ? 1.5 :
+            days <= 90 ? 1.0 :
+                         0.5;
           const fallback = [...data.filings]
             .filter(f => f.bullish.tier === 'NEUTRAL')
             .sort((a, b) => {
@@ -536,7 +545,7 @@ function LiveBullishFeed() {
               const compB = (b.bullish.components as any).composite_score ?? b.bullish.raw_score;
               return compB - compA;
             })
-            .filter(f => ((f.bullish.components as any).composite_score ?? f.bullish.raw_score) >= 2.0)
+            .filter(f => ((f.bullish.components as any).composite_score ?? f.bullish.raw_score) >= fallbackThreshold)
             .slice(0, 10 - strict.length);
           ranked = [...strict, ...fallback];
         }

@@ -35,7 +35,7 @@ import { scanBottleneck, type BottleneckSignal } from '@/lib/bottleneck-scanner'
 // + boilerplate suppression + strict ULTRA gate.
 import { applyEvidenceHierarchy, type EvidenceHierarchyResult } from '@/lib/evidence-hierarchy';
 
-const CACHE_KEY = (days: number) => `concall-feed:v15:days:${days}`;  // v15: time decay + sector KPI + WC blockers
+const CACHE_KEY = (days: number) => `concall-feed:v16:days:${days}`;  // v16: per-filing scored cache + scaled PDF cap + window-aware fallback
 // PATCH 0396 — Aggressive live-cache per user spec: 'always take live data'
 const CACHE_TTL_SHORT = 2 * 60;        // 2 min for fresh data (was 5)
 const CACHE_TTL_LONG = 10 * 60;        // 10 min for older lookback (was 30)
@@ -51,7 +51,19 @@ const CACHE_TTL_LONG = 10 * 60;        // 10 min for older lookback (was 30)
 // hit cached PDFs so the next-poll cost is near-zero. Each refresh adds
 // 25 more PDFs to KV cache, so within ~5 refreshes the top 100+ filings
 // in any window are fully PDF-scored.
-const MAX_PDF_EXTRACTS_PER_REQUEST = 25;
+// PATCH 0412 — Scaled PDF extraction cap. Previously fixed at 25 which
+// meant 180d windows had identical Top-N to 7d windows (only 25 most-
+// recent PDFs ever got parsed; thousands stayed DATA_PENDING). Now we
+// scale with window: short windows = 30 (recent filings matter most),
+// long windows = 80 (broader universe). PDFs are KV-cached so the cost
+// is paid once per filing — subsequent visits use the cache.
+function maxPdfExtractsForWindow(days: number): number {
+  if (days <= 7)   return 35;
+  if (days <= 30)  return 50;
+  if (days <= 60)  return 65;
+  if (days <= 90)  return 75;
+  return 90;                          // 180d
+}
 
 interface ScoredFiling extends FilingRecord {
   filing_type: ConcallFilingType;
@@ -199,6 +211,15 @@ export async function GET(req: NextRequest) {
   const nseResult = { filings: [] as FilingRecord[], source: nseStatus as any };
   const bseResult = { filings: [] as FilingRecord[], source: bseStatus as any };
 
+  // PATCH 0412 — Per-filing scored cache. User feedback: "have some concept
+  // to save already saved in our website and then only look new in every
+  // refresh." Each scored filing is persisted to KV by content_hash with
+  // 90-day TTL. On every request we check cache for ALL candidates first,
+  // only extract + score NEW filings (not seen before) within the budget.
+  // Universe grows monotonically across refreshes.
+  const SCORED_KEY = (hash: string) => `scored-filing:v2:${hash}`;
+  const SCORED_TTL = 90 * 24 * 60 * 60;
+
   // Phase 1: classify + identify candidates for PDF extraction
   const candidates: Array<{ filing: FilingRecord; filing_type: ConcallFilingType }> = [];
   for (const f of merged.values()) {
@@ -211,6 +232,29 @@ export async function GET(req: NextRequest) {
   candidates.sort((a, b) =>
     new Date(b.filing.filing_datetime).getTime() - new Date(a.filing.filing_datetime).getTime(),
   );
+
+  // PATCH 0412 — Look up cached scored payloads for every candidate.
+  // KV-cached filings are returned immediately; only cache-misses go into
+  // the extraction queue. This is the architectural fix to the "same
+  // names across windows" issue — the universe grows monotonically.
+  let cacheHits = 0;
+  const cachedScored = new Map<string, ScoredFiling>();
+  if (isRedisAvailable()) {
+    const hashes = candidates.map(c => c.filing.content_hash);
+    // Parallel KV reads — Upstash handles this fine in batches
+    const batchSize = 40;
+    for (let i = 0; i < hashes.length; i += batchSize) {
+      const batch = hashes.slice(i, i + batchSize);
+      const reads = await Promise.all(batch.map(h => kvGet<ScoredFiling>(SCORED_KEY(h)).catch(() => null)));
+      for (let j = 0; j < batch.length; j++) {
+        if (reads[j]) {
+          cachedScored.set(batch[j], reads[j]!);
+          cacheHits++;
+        }
+      }
+    }
+  }
+  console.log(`[live-feed] ${cacheHits}/${candidates.length} cached, ${candidates.length - cacheHits} need extraction`);
 
   // PATCH 0388 — PRIORITY EXTRACTION TIERS for PDF text
   // Transcript and investor presentation get highest priority (most likely
@@ -227,10 +271,23 @@ export async function GET(req: NextRequest) {
     WEBCAST: 9,          // skip — no text
   };
 
+  // PATCH 0412 — Within the same priority tier, prefer the MOST RECENT
+  // filings so longer windows still see fresh content first. Previously
+  // a 180d window could waste extraction budget on 5-month-old filings
+  // and never reach the past week's transcripts.
+  const maxPdfExtracts = maxPdfExtractsForWindow(days);
+  // PATCH 0412 — Exclude cache hits from the extraction queue. The budget
+  // is now spent ONLY on filings we haven't scored before.
   const extractable = candidates
+    .filter(c => !cachedScored.has(c.filing.content_hash))
     .filter(c => PDF_PRIORITY[c.filing_type] <= 3 && c.filing.attachment_urls.length > 0)
-    .sort((a, b) => PDF_PRIORITY[a.filing_type] - PDF_PRIORITY[b.filing_type])
-    .slice(0, MAX_PDF_EXTRACTS_PER_REQUEST);
+    .sort((a, b) => {
+      const tierDiff = PDF_PRIORITY[a.filing_type] - PDF_PRIORITY[b.filing_type];
+      if (tierDiff !== 0) return tierDiff;
+      // Within the same tier, most-recent first
+      return new Date(b.filing.filing_datetime).getTime() - new Date(a.filing.filing_datetime).getTime();
+    })
+    .slice(0, maxPdfExtracts);
 
   const extractedTexts = new Map<string, { text: string; pages?: number; failure?: string }>();
   if (extractable.length > 0) {
@@ -259,7 +316,16 @@ export async function GET(req: NextRequest) {
   // PATCH 0389 — extract forward-looking sections from PDF text before
   // scoring. Avoids boilerplate/legal/ESG inflating bullish counts.
   const all: ScoredFiling[] = [];
+  // Track which hashes we score fresh this request (for KV write-back)
+  const freshlyScored: ScoredFiling[] = [];
   for (const { filing: f, filing_type } of candidates) {
+    // PATCH 0412 — Cache hit short-circuit. If we've scored this filing
+    // before, use the persisted payload directly. Skip extraction + scoring.
+    const cached = cachedScored.get(f.content_hash);
+    if (cached) {
+      all.push(cached);
+      continue;
+    }
     const ext = extractedTexts.get(f.content_hash);
     const usePdf = ext && ext.text.length >= 200;
     const scoredFrom: 'PDF' | 'SUBJECT' = usePdf ? 'PDF' : 'SUBJECT';
@@ -316,17 +382,19 @@ export async function GET(req: NextRequest) {
     // weight more than 6-month-old ones. λ depends on filing type —
     // transcripts decay slowly (high signal lasts months), investor
     // presentations decay faster (often re-issued each quarter).
-    // multiplier = exp(-λ × days_old). For transcripts: λ=0.008/day → 30d ≈ 0.79, 90d ≈ 0.49.
-    // For presentations: λ=0.014/day → 30d ≈ 0.66, 90d ≈ 0.28.
+    // PATCH 0412 — Softened decay rates after user feedback that 180d
+    // window showed near-identical Top-N to 7d (older filings vanishing).
+    // multiplier = exp(-λ × days_old). For transcripts: λ=0.005/day → 30d ≈ 0.86, 90d ≈ 0.64, 180d ≈ 0.41.
+    // For presentations: λ=0.009/day → 30d ≈ 0.76, 90d ≈ 0.44, 180d ≈ 0.20.
     const filingTs = new Date(f.filing_datetime).getTime();
     const daysOld = Math.max(0, (Date.now() - filingTs) / 86_400_000);
     const lambda =
-      filing_type === 'TRANSCRIPT' ? 0.008 :
-      filing_type === 'CONCALL_INVITE' ? 0.008 :
-      filing_type === 'RESULTS_PRESENTATION' ? 0.010 :
-      filing_type === 'ANALYST_MEET' ? 0.012 :
-      filing_type === 'INVESTOR_PRESENTATION' ? 0.014 :
-      0.012;
+      filing_type === 'TRANSCRIPT' ? 0.005 :
+      filing_type === 'CONCALL_INVITE' ? 0.005 :
+      filing_type === 'RESULTS_PRESENTATION' ? 0.007 :
+      filing_type === 'ANALYST_MEET' ? 0.008 :
+      filing_type === 'INVESTOR_PRESENTATION' ? 0.009 :
+      0.008;
     const timeDecay = Math.exp(-lambda * daysOld);
     if (timeDecay < 0.99) {
       evidence.adjusted_composite = Math.round(evidence.adjusted_composite * timeDecay * 10) / 10;
@@ -349,7 +417,7 @@ export async function GET(req: NextRequest) {
     const is_high_bullish =
       evidence.adjusted_tier === 'ULTRA_BULLISH' ||
       evidence.adjusted_tier === 'BULLISH';
-    all.push({
+    const scored: ScoredFiling = {
       ...f,
       filing_type,
       bullish,
@@ -360,7 +428,21 @@ export async function GET(req: NextRequest) {
       sector_overlay,
       bottleneck: bottleneck.detected ? bottleneck : undefined,
       evidence,
-    });
+    };
+    all.push(scored);
+    // PATCH 0412 — track for KV write-back so future requests skip extraction
+    freshlyScored.push(scored);
+  }
+
+  // PATCH 0412 — Persist newly-scored filings to KV (fire-and-forget batched).
+  // Each scored filing keyed by content_hash with 90-day TTL. Next request
+  // for any window containing this filing will pick it up instantly.
+  if (isRedisAvailable() && freshlyScored.length > 0) {
+    const writes = freshlyScored.map(s =>
+      kvSet(SCORED_KEY(s.content_hash), s, SCORED_TTL).catch(() => {})
+    );
+    // Fire and forget — we don't block the response on cache writes
+    Promise.all(writes).catch(() => {});
   }
 
   // PATCH 0389 — Cross-exchange dedup. Same company often files identical
