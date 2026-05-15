@@ -35,7 +35,7 @@ import { scanBottleneck, type BottleneckSignal } from '@/lib/bottleneck-scanner'
 // + boilerplate suppression + strict ULTRA gate.
 import { applyEvidenceHierarchy, type EvidenceHierarchyResult } from '@/lib/evidence-hierarchy';
 
-const CACHE_KEY = (days: number) => `concall-feed:v21:days:${days}`;  // v21: theme clusters filtered to actionable tiers only (no NEUTRAL dilution)
+const CACHE_KEY = (days: number) => `concall-feed:v22:days:${days}`;  // v22: loosened filing-type weights + lower BULLISH/MIXED gates so legit transcripts surface
 // PATCH 0396 — Aggressive live-cache per user spec: 'always take live data'
 const CACHE_TTL_SHORT = 2 * 60;        // 2 min for fresh data (was 5)
 const CACHE_TTL_LONG = 10 * 60;        // 10 min for older lookback (was 30)

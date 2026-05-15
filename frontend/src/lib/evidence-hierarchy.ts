@@ -24,15 +24,20 @@ import type { SectorOverlayResult } from './concall-sector-overlays';
 // User spec: "Earnings call transcript 1.00, Result presentation 0.80,
 // Investor presentation / corporate deck 0.45, Analyst meet intimation 0.10,
 // Subject only 0.00 for bullish ranking"
+// PATCH 0418 — Loosened weights after user feedback that real
+// transcript-backed signals (ARTEMISMED, ADVENZYMES) were scoring NEUTRAL.
+// Analyst-meet PDFs that DO contain full Q&A transcripts deserve much
+// more credit than the prior 0.30. Investor presentations with hard
+// numbers should be able to clear BULLISH.
 export const FILING_TYPE_WEIGHTS: Record<ConcallFilingType, number> = {
   TRANSCRIPT:            1.00,
   CONCALL_INVITE:        0.95,
-  RESULTS_PRESENTATION:  0.80,
-  AUDIO_RECORDING:       0.65,
-  WEBCAST:               0.55,
-  INVESTOR_PRESENTATION: 0.45,
-  ANALYST_MEET:          0.30,
-  PRESS_RELEASE:         0.20,
+  RESULTS_PRESENTATION:  0.85,
+  ANALYST_MEET:          0.75,   // bumped 0.30 → 0.75 (often contains full Q&A)
+  AUDIO_RECORDING:       0.70,
+  INVESTOR_PRESENTATION: 0.65,   // bumped 0.45 → 0.65
+  WEBCAST:               0.60,
+  PRESS_RELEASE:         0.35,
 };
 
 // ─── Numeric anchor extractor ──────────────────────────────────────────────
@@ -235,14 +240,16 @@ export function applyEvidenceHierarchy(
     cap_reason = `Filing-type confidence ${filing_type_weight.toFixed(2)}× (${filing_type.replace(/_/g, ' ')})`;
   }
 
-  // Cap C: No earnings anchor — composite hard-capped at 5.5. Even with
-  // bottleneck/sector overlay boosts. This is the leak fix.
+  // Cap C: No earnings anchor — composite hard-capped at 4.0.
+  // PATCH 0418 — loosened 5.5 → 4.0 so investor-presentation filings
+  // with strong evidence (but no explicit anchor phrase) can still
+  // surface as MIXED_POSITIVE.
   const anchored = (bullish.components as any).earnings_anchored;
   if (!anchored) {
-    const cap = 5.5;
+    const cap = 4.0;
     if (composite > cap) {
       composite = cap;
-      cap_reason = `No financial anchor (hard cap 5.5)`;
+      cap_reason = `No financial anchor (hard cap 4.0)`;
     }
   }
 
@@ -290,15 +297,16 @@ export function applyEvidenceHierarchy(
     bullish.critical_blocker !== true &&
     (bullish.fatal_blockers || []).length === 0 &&
     numeric_evidence_count >= 2 &&
-    composite >= 7.0;
+    composite >= 6.0;
 
   // ─── BULLISH gate ──────────────────────────────────────────────────────
-  // ≥1 financial OR business evidence + ≥1 numeric anchor + composite ≥5.5
+  // PATCH 0418 — loosened composite floor 5.5 → 3.5 so legitimate transcripts
+  // with Tier-1 evidence + numeric anchors don't all collapse to NEUTRAL.
   const passes_bullish_gate =
     (has_financial_evidence || has_business_evidence) &&
     numeric_evidence_count >= 1 &&
     bullish.critical_blocker !== true &&
-    composite >= 5.5 &&
+    composite >= 3.5 &&
     !passes_ultra_gate;
 
   // ─── Tier classification ────────────────────────────────────────────────
@@ -309,10 +317,8 @@ export function applyEvidenceHierarchy(
     adjusted_tier = 'ULTRA_BULLISH';
   } else if (passes_bullish_gate) {
     adjusted_tier = 'BULLISH';
-  } else if (composite >= 3.5 && numeric_evidence_count >= 1) {
+  } else if (composite >= 2.0 && numeric_evidence_count >= 1) {
     adjusted_tier = 'MIXED_POSITIVE';
-  } else if (composite >= 2.0) {
-    adjusted_tier = 'NEUTRAL';
   } else {
     adjusted_tier = 'NEUTRAL';
   }
