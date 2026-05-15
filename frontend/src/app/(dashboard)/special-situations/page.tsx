@@ -337,13 +337,20 @@ export default function SpecialSituationsPage() {
   // the filter; multiple categories may be selected (OR semantics).
   const [tierFilter, setTierFilter] = useState<'ALL' | 'TIER_1' | 'TIER_2' | 'WATCHLIST'>('ALL');
   const [catFilterSet, setCatFilterSet] = useState<Set<Category>>(new Set());
+  // PATCH 0433 — Coverage-bucket filter (clickable institutional categories)
+  const [coverageFilterSet, setCoverageFilterSet] = useState<Set<string>>(new Set());
   const toggleCat = (c: Category) => setCatFilterSet(prev => {
     const next = new Set(prev);
     if (next.has(c)) next.delete(c); else next.add(c);
     return next;
   });
-  const clearFilters = () => { setTierFilter('ALL'); setCatFilterSet(new Set()); };
-  const anyFilterActive = tierFilter !== 'ALL' || catFilterSet.size > 0;
+  const toggleCoverageBucket = (bucket: string) => setCoverageFilterSet(prev => {
+    const next = new Set(prev);
+    if (next.has(bucket)) next.delete(bucket); else next.add(bucket);
+    return next;
+  });
+  const clearFilters = () => { setTierFilter('ALL'); setCatFilterSet(new Set()); setCoverageFilterSet(new Set()); };
+  const anyFilterActive = tierFilter !== 'ALL' || catFilterSet.size > 0 || coverageFilterSet.size > 0;
 
   useEffect(() => {
     const sp = new URLSearchParams(searchParams?.toString() || '');
@@ -391,17 +398,37 @@ export default function SpecialSituationsPage() {
     return deduped;
   }, [feed, region]);
 
-  // PATCH 0252 — Apply user-selected tier + category filters before deriving
-  // tier1/tier2/watchlist lists. Counts stay computed on `canonicalEvents` so
-  // the Stat boxes always show the total available; only the rendered list
-  // shrinks.
+  // PATCH 0433 — Map each event_type to its institutional coverage bucket
+  // (mirrors lib/specsit-institutional.ts computeCoverageDiagnostic).
+  const eventTypeToBucket = (et: string): string => {
+    if (['TENDER_OFFER','MERGER_DEFINITIVE','MERGER_RECOMMENDATION','GOING_PRIVATE','OPEN_OFFER','ACQUISITION_PUBLIC'].includes(et)) return 'M&A / Merger Arb';
+    if (['SPIN_OFF','DEMERGER_INDIA','IPO_SUBSIDIARY'].includes(et)) return 'Spin-offs / Demergers';
+    if (['RIGHTS_ISSUE','RIGHTS_ISSUE_DEEP','CONVERTIBLE_PIPE','PROMOTER_BACKSTOP','QIP_PLACEMENT'].includes(et)) return 'Rights / Warrants / PIPE';
+    if (['BUYBACK_TENDER','BUYBACK_OPEN_MARKET','DIVIDEND_HIKE'].includes(et)) return 'Buybacks / Capital Return';
+    if (['ASSET_SALE_MONETIZATION','STAKE_SALE'].includes(et)) return 'Asset Sales / Monetization';
+    if (['NCLT_IBC_ADMISSION','NCLT_IBC_RESOLUTION','TURNAROUND_OPERATING'].includes(et)) return 'NCLT / IBC / Distressed';
+    if (['INDEX_INCLUSION','INDEX_EXCLUSION'].includes(et)) return 'Index Arbitrage';
+    if (['HOLDCO_ARB_TRIGGER','STUB_TRADE_TRIGGER'].includes(et)) return 'HoldCo / Stub Trades';
+    if (['GOVERNANCE_CRISIS','SEBI_REGULATORY_ACTION','AUDITOR_QUALIFIED','PROMOTER_PLEDGE_UNWIND'].includes(et)) return 'Governance / Regulatory';
+    if (['BONUS_ISSUE','STOCK_SPLIT'].includes(et)) return 'Bonus / Split / Other';
+    return '';
+  };
+
+  // PATCH 0252/0433 — Apply user-selected tier + category + coverage-bucket
+  // filters before deriving tier1/tier2/watchlist lists. Counts stay computed
+  // on `canonicalEvents` so the Stat boxes always show the total available;
+  // only the rendered list shrinks.
   const filteredCanonicalEvents: CanonicalEvent[] = useMemo(() => {
     return canonicalEvents.filter((e) => {
       if (tierFilter !== 'ALL' && e.tier !== tierFilter) return false;
       if (catFilterSet.size > 0 && !catFilterSet.has(e.category as Category)) return false;
+      if (coverageFilterSet.size > 0) {
+        const bucket = eventTypeToBucket(String(e.event_type));
+        if (!bucket || !coverageFilterSet.has(bucket)) return false;
+      }
       return true;
     });
-  }, [canonicalEvents, tierFilter, catFilterSet]);
+  }, [canonicalEvents, tierFilter, catFilterSet, coverageFilterSet]);
 
   const tier1Canonical = filteredCanonicalEvents.filter((e) => e.tier === 'TIER_1');
   const tier2Canonical = filteredCanonicalEvents.filter((e) => e.tier === 'TIER_2');
@@ -510,20 +537,50 @@ export default function SpecialSituationsPage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
               <span style={{ fontSize: 11, fontWeight: 800, color: '#38A9E8', letterSpacing: '0.4px' }}>
                 📋 INSTITUTIONAL COVERAGE — 9 alpha categories
+                {coverageFilterSet.size > 0 && (
+                  <span style={{ marginLeft: 8, color: '#10B981', fontSize: 10 }}>
+                    · filtering on {coverageFilterSet.size} bucket{coverageFilterSet.size === 1 ? '' : 's'}
+                  </span>
+                )}
               </span>
               <span style={{ fontSize: 9, color: '#6B7A8D', fontStyle: 'italic' }}>
-                empty bucket = either no events in window OR detector gap; verify both
+                click bucket to filter list · empty = no events in window OR detector gap
               </span>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 6 }}>
               {((feed as any).coverage_diagnostic as Array<{ bucket: string; emoji: string; count: number; note: string }>).map((b, i) => {
                 const has = b.count > 0;
-                const color = has ? '#10B981' : '#6B7A8D';
+                const isActive = coverageFilterSet.has(b.bucket);
+                const baseColor = has ? '#10B981' : '#6B7A8D';
+                const color = isActive ? '#38A9E8' : baseColor;
+                const bg = isActive ? '#38A9E825' : (has ? `${baseColor}15` : '#0A0E1A');
+                const border = isActive ? '#38A9E8' : `${baseColor}40`;
                 return (
-                  <div key={'cov-' + i} title={b.note} style={{ padding: '5px 8px', background: has ? `${color}15` : '#0A0E1A', border: `1px solid ${color}40`, borderRadius: 5, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontSize: 10, color: has ? '#E6EDF3' : '#6B7A8D' }}>{b.emoji} {b.bucket}</span>
+                  <button
+                    key={'cov-' + i}
+                    onClick={() => toggleCoverageBucket(b.bucket)}
+                    disabled={!has}
+                    title={`${b.note}${has ? ' · click to filter list' : ' · no events to filter'}`}
+                    style={{
+                      padding: '5px 8px',
+                      background: bg,
+                      border: `1px solid ${border}`,
+                      borderRadius: 5,
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      gap: 6,
+                      cursor: has ? 'pointer' : 'not-allowed',
+                      opacity: has ? 1 : 0.55,
+                      transition: 'all 0.15s ease',
+                      textAlign: 'left',
+                    }}
+                  >
+                    <span style={{ fontSize: 10, color: isActive ? '#FFFFFF' : (has ? '#E6EDF3' : '#6B7A8D'), fontWeight: isActive ? 800 : 500 }}>
+                      {isActive ? '✓ ' : ''}{b.emoji} {b.bucket}
+                    </span>
                     <span style={{ fontSize: 11, fontWeight: 800, color }}>{b.count}</span>
-                  </div>
+                  </button>
                 );
               })}
             </div>
