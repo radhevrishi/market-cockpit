@@ -803,6 +803,51 @@ function WarrantMomentumFeed() {
         </div>
       )}
 
+      {/* PATCH 0406 — Top 10 Ranked Warrants pinned panel.
+          Mirrors the bullish Top 10 panel: ranks by conviction score
+          (0-10), shows symbol + company + warrant type + premium + size
+          + promoter participation %. Updates whenever days / passingOnly
+          changes via useEffect. */}
+      {data && data.filings.length > 0 && (() => {
+        const ranked = [...data.filings]
+          .sort((a, b) => b.conviction.conviction - a.conviction.conviction)
+          .slice(0, 10);
+        return (
+          <div style={{ marginBottom: 12, padding: 12, background: 'linear-gradient(135deg, #A78BFA10, #22D3EE10)', border: '1px solid #A78BFA50', borderRadius: 10 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 900, color: '#A78BFA', letterSpacing: '0.5px' }}>★ TOP {ranked.length} RANKED — warrant conviction shortlist</div>
+              <div style={{ fontSize: 10, color: '#94A3B8', fontWeight: 600 }}>· window: last {days} day{days === 1 ? '' : 's'}</div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 8 }}>
+              {ranked.map((r, i) => {
+                const cv = r.conviction.conviction;
+                const color = cv >= 8 ? '#10B981' : cv >= 5 ? '#22D3EE' : cv >= 3 ? '#F59E0B' : '#94A3B8';
+                const prem = r.conviction.premium_pct;
+                return (
+                  <div key={r.symbol + '-warr-rank-' + i} style={{ padding: 10, background: '#0A1422', border: `1px solid ${color}50`, borderRadius: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                      <div>
+                        <span style={{ fontSize: 9, color: '#A78BFA', fontWeight: 900, marginRight: 6 }}>#{i + 1}</span>
+                        <span style={{ fontSize: 13, fontWeight: 900, color: '#E6EDF3' }}>{r.symbol || r.company_name}</span>
+                      </div>
+                      <span title={`Conviction = ${cv.toFixed(1)} / 10`} style={{ fontSize: 16, fontWeight: 900, color }}>{cv.toFixed(1)}</span>
+                    </div>
+                    <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 4 }}>{r.company_name}</div>
+                    <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', fontSize: 9 }}>
+                      <span style={{ padding: '1px 5px', borderRadius: 3, background: `${color}20`, color, fontWeight: 800 }}>{r.warrant_type.replace(/_/g, ' ')}</span>
+                      {r.conviction.passes_gate && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98125', color: '#10B981', fontWeight: 800 }}>★ GATE</span>}
+                      {prem != null && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#1A2540', color: prem >= 0 ? '#10B981' : prem >= -10 ? '#F59E0B' : '#EF4444' }}>{prem >= 0 ? '+' : ''}{prem.toFixed(1)}% vs CMP</span>}
+                      {r.details.total_size_cr != null && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#1A2540', color: '#C9D4E0' }}>₹{r.details.total_size_cr.toFixed(0)}Cr</span>}
+                      {r.details.promoter_participation_pct != null && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: '#10B981' }}>Promo {r.details.promoter_participation_pct.toFixed(0)}%</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {(data?.filings || []).slice(0, 50).map((f, i) => {
           const cvColor = f.conviction.conviction >= 8 ? '#10B981' : f.conviction.conviction >= 5 ? '#22D3EE' : f.conviction.conviction >= 3 ? '#F59E0B' : '#94A3B8';

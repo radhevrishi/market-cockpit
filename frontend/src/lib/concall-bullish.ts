@@ -28,15 +28,20 @@ export type ConcallFilingType =
   | 'PRESS_RELEASE'
   | 'WEBCAST';
 
+// PATCH 0406 — broadened patterns so capital-goods / industrial names whose
+// subject just says "Submission of Earnings Presentation" or "Q4 FY26
+// Earnings Update" don't get dropped. User flagged TDPOWERSYS as missing
+// — many such names file under titles that don't include the word
+// "presentation" or "concall" verbatim.
 const RELEVANCE_PATTERNS: Array<{ type: ConcallFilingType; re: RegExp }> = [
-  { type: 'TRANSCRIPT',            re: /transcript|earnings\s+call\s+transcript|conference\s+call\s+transcript/i },
-  { type: 'INVESTOR_PRESENTATION', re: /investor\s+presentation|investor\s+meet\s+presentation/i },
-  { type: 'RESULTS_PRESENTATION',  re: /results\s+presentation|results\s+update|quarterly\s+update|earnings\s+presentation/i },
-  { type: 'CONCALL_INVITE',        re: /\b(?:con\s*call|conference\s+call|earnings\s+call)\b/i },
-  { type: 'ANALYST_MEET',          re: /\banalyst\s+meet\b|\banalyst\s+day\b|institutional\s+investor\s+meet|investor\s+meet\b/i },
-  { type: 'AUDIO_RECORDING',       re: /audio\s+recording|audio\s+file\s+of|recording\s+of\s+the\s+(?:earnings|investor|analyst|conference)/i },
-  { type: 'WEBCAST',               re: /webcast|live\s+stream\s+of/i },
-  { type: 'PRESS_RELEASE',         re: /press\s+release.*(?:result|earnings|guidance|outlook)/i },
+  { type: 'TRANSCRIPT',            re: /transcript|earnings\s+call\s+transcript|conference\s+call\s+transcript|q[1-4]\s+(?:fy)?\s*\d{2,4}\s+transcript/i },
+  { type: 'INVESTOR_PRESENTATION', re: /investor\s+presentation|investor\s+meet\s+presentation|earnings?\s+presentation|investor\s+(?:update|deck)|q[1-4]\s+(?:fy)?\s*\d{2,4}\s+(?:investor|earnings)/i },
+  { type: 'RESULTS_PRESENTATION',  re: /results\s+presentation|results\s+update|quarterly\s+(?:update|results\s+update)|earnings\s+presentation|earnings\s+update|q[1-4]\s+(?:fy)?\s*\d{2,4}\s+(?:results|update)/i },
+  { type: 'CONCALL_INVITE',        re: /\b(?:con\s*call|conference\s+call|earnings\s+call|investor\s+call)\b|conf(?:erence)?\.?\s+call/i },
+  { type: 'ANALYST_MEET',          re: /\banalyst\s+meet(?:ing)?\b|\banalyst\s+day\b|institutional\s+investor\s+meet|investor\s+meet(?:ing)?\b|investor\s+(?:day|conference|forum|summit)|broker\s+meet|institutional\s+meet/i },
+  { type: 'AUDIO_RECORDING',       re: /audio\s+recording|audio\s+file\s+of|recording\s+of\s+the\s+(?:earnings|investor|analyst|conference)|audio[- ]recording/i },
+  { type: 'WEBCAST',               re: /webcast|live\s+stream\s+of|live\s+webcast|web[- ]?cast/i },
+  { type: 'PRESS_RELEASE',         re: /press\s+release.*(?:result|earnings|guidance|outlook|q[1-4]|quarter)|q[1-4]\s+(?:fy)?\s*\d{2,4}\s+press\s+release/i },
 ];
 
 export function classifyFiling(subject: string): ConcallFilingType | null {
@@ -645,6 +650,60 @@ export function scoreBullish(text: string): BullishScore {
     // filing can't enter ULTRA_BULLISH territory. 3+ red flags cap at 6.
     if (redFlagSet.size >= 3) raw = Math.min(raw, 6);
     else if (redFlagSet.size >= 2) raw = Math.min(raw, 7);
+
+    // PATCH 0406 — DEMAND-SUPPLY ASYMMETRY BONUS.
+    // The single highest-conviction concall signal is when management
+    // explicitly says "demand is exceeding our supply / we cannot meet
+    // demand / we are capacity-constrained / production is fully sold out
+    // / sold ahead". This is the TD Power / Pricol / capital-goods
+    // pattern: pricing power + visibility + investment thesis confirmed.
+    // Previously the scorer treated generic "strong demand" the same as
+    // "demand > supply" — buzzword inflation. This bonus surfaces the
+    // real asymmetry signal at the top of the ranking.
+    //
+    // Logic: both DEMAND-side phrase AND SUPPLY-CONSTRAINT phrase must
+    // appear in the same filing (not necessarily same sentence). Dedupe
+    // per filing — at most one bonus fires per filing.
+    const demandPatterns = [
+      /strong\s+demand/i,
+      /robust\s+demand/i,
+      /demand\s+(?:remains|continues)\s+(?:strong|robust|firm|elevated)/i,
+      /demand\s+(?:is|has been)\s+(?:strong|robust|firm|exceptional|unprecedented)/i,
+      /demand\s+(?:outpac|outstripp|exceed|outweigh)/i,
+      /high\s+demand\s+(?:visibility|environment)/i,
+      /order\s+(?:book|inflow)\s+(?:remains?|continues?|is)\s+(?:strong|robust|elevated|healthy)/i,
+      /tight\s+market/i,
+      /demand[- ]?supply\s+(?:gap|mismatch|imbalance)/i,
+    ];
+    const supplyConstraintPatterns = [
+      /capacity[- ]?constrain/i,
+      /(?:fully|fully\s+)?sold\s+out/i,
+      /sold\s+(?:ahead|booked)/i,
+      /(?:order\s+book\s+)?cover(?:age)?\s+(?:of|for)\s+\d/i,    // "order book coverage of 18 months"
+      /(?:cannot|can[' ]t|unable to)\s+(?:meet|fulfill?|service)\s+(?:the\s+)?demand/i,
+      /allocat(?:e|ing|ion)\s+(?:to|amongst|across)\s+customers/i,
+      /production\s+(?:line\s+)?running\s+at\s+(?:peak|full|max|100%)/i,
+      /(?:expanding|adding|debottlenecking)\s+capacity\s+to\s+(?:meet|address|cater)/i,
+      /demand\s+visibility/i,
+      /multi[- ]year\s+order/i,
+      /tight\s+supply/i,
+      /shortage\s+of\s+(?:capacity|supply)/i,
+      /working\s+overtime/i,
+      /three\s+shifts/i,
+      /utilisation\s+(?:at|above|nearing)\s+(?:9[0-9]|100)%/i,
+      /utilization\s+(?:at|above|nearing)\s+(?:9[0-9]|100)%/i,
+    ];
+    const hasDemand = demandPatterns.some(re => re.test(t));
+    const hasConstraint = supplyConstraintPatterns.some(re => re.test(t));
+    if (hasDemand && hasConstraint && !criticalBlocker) {
+      // Tunable bonus — capped so it lifts but never carries a weak filing
+      const asymmetryBonus = 2.0;
+      raw = Math.min(10, raw + asymmetryBonus);
+      tagSet.add('DEMAND_SUPPLY_ASYMMETRY');
+      phraseSet.add('Demand outpaces capacity (asymmetry bonus +2)');
+      // Tag adds to business evidence so 3-layer Quality score reflects it
+      businessEvidence += asymmetryBonus;
+    }
     // PATCH 0396 — EARNINGS ANCHORING RULE per institutional spec:
     // 'A company cannot score >6 unless revenue growth OR margin expansion
     // OR order book growth is explicitly mentioned.' Prevents buzzword-only
