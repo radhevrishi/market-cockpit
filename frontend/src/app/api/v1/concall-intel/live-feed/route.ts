@@ -31,8 +31,11 @@ import { applySectorOverlay, type SectorOverlayResult } from '@/lib/concall-sect
 // Detects supply-chain bottlenecks in concall text and surfaces ecosystem
 // beneficiaries (Modern Insulators read-through pattern).
 import { scanBottleneck, type BottleneckSignal } from '@/lib/bottleneck-scanner';
+// PATCH 0410 — Evidence Hierarchy: filing-type confidence + numeric anchors
+// + boilerplate suppression + strict ULTRA gate.
+import { applyEvidenceHierarchy, type EvidenceHierarchyResult } from '@/lib/evidence-hierarchy';
 
-const CACHE_KEY = (days: number) => `concall-feed:v13:days:${days}`;  // v13: serialized sub-windows (fixes NSE 429)
+const CACHE_KEY = (days: number) => `concall-feed:v14:days:${days}`;  // v14: evidence hierarchy
 // PATCH 0396 — Aggressive live-cache per user spec: 'always take live data'
 const CACHE_TTL_SHORT = 2 * 60;        // 2 min for fresh data (was 5)
 const CACHE_TTL_LONG = 10 * 60;        // 10 min for older lookback (was 30)
@@ -59,6 +62,7 @@ interface ScoredFiling extends FilingRecord {
   pdf_failure_reason?: string;
   sector_overlay?: SectorOverlayResult;   // PATCH 0401
   bottleneck?: BottleneckSignal;          // PATCH 0407 — supply-chain bottleneck detection
+  evidence?: EvidenceHierarchyResult;     // PATCH 0410 — institutional evidence hierarchy
 }
 
 // PATCH 0408 — Cross-Company Theme Cluster.
@@ -302,7 +306,22 @@ export async function GET(req: NextRequest) {
       if (bottleneck.critical && !bullish.tags.includes('CRITICAL_COMPONENT')) bullish.tags.push('CRITICAL_COMPONENT');
     }
 
-    const is_high_bullish = isHighBullishRaw(bullish, rawThreshold);
+    // PATCH 0410 — Apply the Evidence Hierarchy. Replaces tier/composite
+    // with institutionally-calibrated values. Filing-type weight,
+    // numeric-anchor count, boilerplate suppression, and a strict ULTRA
+    // gate all apply here.
+    const evidence = applyEvidenceHierarchy(scoringText, bullish, filing_type, scoredFrom);
+    // Push the adjusted values back onto the bullish object so all
+    // downstream consumers (theme aggregator, ranking, UI) see consistent
+    // scores. The pre-hierarchy values remain visible inside the evidence
+    // object for transparency.
+    (bullish.components as any).composite_score = evidence.adjusted_composite;
+    bullish.tier = evidence.adjusted_tier as any;
+    bullish.score = evidence.adjusted_composite;
+    // is_high_bullish now keyed off the hierarchy tier, not raw threshold.
+    const is_high_bullish =
+      evidence.adjusted_tier === 'ULTRA_BULLISH' ||
+      evidence.adjusted_tier === 'BULLISH';
     all.push({
       ...f,
       filing_type,
@@ -313,6 +332,7 @@ export async function GET(req: NextRequest) {
       pdf_failure_reason: ext?.failure,
       sector_overlay,
       bottleneck: bottleneck.detected ? bottleneck : undefined,
+      evidence,
     });
   }
 

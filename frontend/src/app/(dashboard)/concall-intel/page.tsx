@@ -267,7 +267,11 @@ function LiveBullishFeed() {
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   // PATCH 0391 — tier filter chips. Default to ALL TIERS for full-universe view.
   // PATCH 0397 — Added DATA_PENDING to default set.
-  const [tierFilter, setTierFilter] = useState<Set<string>>(new Set(['ULTRA_BULLISH', 'BULLISH', 'MIXED_POSITIVE', 'NEUTRAL', 'BEARISH', 'DATA_PENDING']));
+  // PATCH 0410 — DATA_PENDING removed from defaults. User feedback: these
+  // clutter the main bullish feed. They live in a separate "Awaiting
+  // extraction" collapsed section below. NEUTRAL also dropped from default
+  // since user wants institutional-grade signals only by default.
+  const [tierFilter, setTierFilter] = useState<Set<string>>(new Set(['ULTRA_BULLISH', 'BULLISH', 'MIXED_POSITIVE']));
   const toggleTier = (t: string) => {
     setTierFilter(prev => {
       const next = new Set(prev);
@@ -660,6 +664,38 @@ function LiveBullishFeed() {
                   )}
                 </div>
               )}
+
+              {/* PATCH 0410 — Evidence Hierarchy transparency chip strip */}
+              {(f as any).evidence && (() => {
+                const ev = (f as any).evidence;
+                const chips: Array<{ label: string; bg: string; fg: string; title?: string }> = [];
+                chips.push({
+                  label: `${ev.filing_type_weight.toFixed(2)}× ${f.filing_type.replace(/_/g, ' ').toLowerCase()}`,
+                  bg: ev.filing_type_weight >= 0.80 ? '#10B98120' : ev.filing_type_weight >= 0.45 ? '#F59E0B20' : '#EF444420',
+                  fg: ev.filing_type_weight >= 0.80 ? '#10B981' : ev.filing_type_weight >= 0.45 ? '#F59E0B' : '#EF4444',
+                  title: 'Filing-type trust weight applied to composite score',
+                });
+                chips.push({
+                  label: `${ev.numeric_evidence_count} numeric`,
+                  bg: ev.numeric_evidence_count >= 2 ? '#10B98120' : '#EF444420',
+                  fg: ev.numeric_evidence_count >= 2 ? '#10B981' : '#EF4444',
+                  title: ev.numeric_examples?.join(' · ') || 'Distinct numeric anchors',
+                });
+                if (ev.has_financial_evidence) chips.push({ label: 'Tier-1 financial ✓', bg: '#10B98125', fg: '#10B981', title: 'Reported margin/PAT/revenue/ROCE/CFO improvement' });
+                if (ev.has_business_evidence)  chips.push({ label: 'Tier-2 business ✓', bg: '#22D3EE25', fg: '#22D3EE', title: 'Order book / capex / commissioning / capacity' });
+                if (ev.has_guidance_evidence)  chips.push({ label: 'Tier-3 guidance ✓', bg: '#A78BFA25', fg: '#A78BFA', title: 'Quantified forward outlook' });
+                if (ev.boilerplate_hits >= 3)  chips.push({ label: `${ev.boilerplate_hits} boilerplate`, bg: '#EF444420', fg: '#EF4444', title: 'Generic deck language detected' });
+                if (ev.cap_reason)             chips.push({ label: 'Capped', bg: '#F59E0B25', fg: '#F59E0B', title: ev.cap_reason });
+                return (
+                  <div style={{ marginTop: 5, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                    {chips.map((c, i) => (
+                      <span key={i} title={c.title} style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, background: c.bg, color: c.fg, letterSpacing: '0.3px' }}>
+                        {c.label}
+                      </span>
+                    ))}
+                  </div>
+                );
+              })()}
 
               {/* PATCH 0389 — Evidence sentences pulled from PDF */}
               {f.bullish.evidence && f.bullish.evidence.length > 0 && (() => {
