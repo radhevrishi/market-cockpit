@@ -238,18 +238,27 @@ export function scanBottleneck(text: string): BottleneckSignal {
     // Must have a bottleneck pattern
     const hasBottleneck = BOTTLENECK_PATTERNS.some(re => re.test(sent));
     if (!hasBottleneck) continue;
-    // PATCH 0422 — Drop slide-header garbage: sentences that read like bullet
-    // lists ('Union Budget 205-26 Political Stability Deeper Reform Agenda
-    // Middle East Crisis Focus on Energy Security and accelerated...') have
-    // very few verbs and very low punctuation density. Real bottleneck
-    // statements are full sentences. Require a verb + reasonable density.
+    // PATCH 0422/0429 — Drop slide-header garbage. ENRIN's evidence:
+    // "Union Budget 205-26 Political Stability Deeper Reform Agenda Middle
+    // East Crisis Focus on Energy Security and accelerated Electrification
+    // Devaluating Rupee Export competitiveness Supply Chain Disruption Make
+    // in India" — 30 words but only 4 stopwords (on/and/and/in) = 13%.
+    // Patch 0422's 10% threshold let it through. Bumped to 16% so capitalized
+    // keyword bullet-dumps get dropped. Also added a CAPS-density check:
+    // slide headers have most words capitalized (Title Case); prose doesn't.
     const hasVerb = /\b(?:is|are|was|were|have|has|had|remain|remains|stay|stays|expect|expected|continue|continues|see|seeing|face|facing|cannot|unable|outpac|outstripping|exceed|exceeds|constrain|booked|sold|delay|delayed|tight|short|shortage)\b/i.test(sent);
     if (!hasVerb) continue;
-    // Sentence-density check: real prose has commas/spacing; slide-headers
-    // are space-joined keywords with few function words.
     const wc = sent.split(/\s+/).filter(Boolean).length;
-    const stopwords = (sent.match(/\b(?:the|a|an|of|in|to|with|for|on|that|this|by|from|and|or|but|as|at|our|we|their|its)\b/gi) || []).length;
-    if (wc > 12 && stopwords / wc < 0.10) continue;   // too keyword-dense → slide header
+    const stopwords = (sent.match(/\b(?:the|a|an|of|in|to|with|for|on|that|this|by|from|and|or|but|as|at|our|we|their|its|it|is|are)\b/gi) || []).length;
+    if (wc > 12 && stopwords / wc < 0.16) continue;   // too keyword-dense → slide header
+    // Slide-header detector: count Title-Case-Like-This words (>=2 capitalized
+    // tokens in a row, or ≥40% of words start with uppercase). Prose averages
+    // 15-20% caps; slide headers average 50-90%.
+    const tokens = sent.split(/\s+/).filter(t => t.length > 1);
+    if (tokens.length >= 10) {
+      const capCount = tokens.filter(t => /^[A-Z]/.test(t)).length;
+      if (capCount / tokens.length > 0.45) continue;
+    }
     // Capture evidence
     if (evidence.length < 6) evidence.push(sent.trim());
     // Check for critical modifiers in the same sentence

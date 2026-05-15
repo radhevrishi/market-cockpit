@@ -37,7 +37,7 @@ import { applyEvidenceHierarchy, type EvidenceHierarchyResult } from '@/lib/evid
 // PATCH 0424 — Economic Translation Layer (institutional review item 4.1-4.4)
 import { predictEarningsDelta, type EarningsDelta } from '@/lib/economic-translation';
 
-const CACHE_KEY = (days: number) => `concall-feed:v24:days:${days}`;  // v24: Patch 0424 adds earnings_delta field per filing
+const CACHE_KEY = (days: number) => `concall-feed:v25:days:${days}`;  // v25: Patch 0429 cross-exchange dedup + scored-filing cache flush
 // PATCH 0396 — Aggressive live-cache per user spec: 'always take live data'
 const CACHE_TTL_SHORT = 2 * 60;        // 2 min for fresh data (was 5)
 const CACHE_TTL_LONG = 10 * 60;        // 10 min for older lookback (was 30)
@@ -306,7 +306,11 @@ async function handleLiveFeed(req: NextRequest) {
   // re-evaluated with Patch 0418's loosened gates. Without this bump,
   // the per-filing cache holds old NEUTRAL tier values from before
   // the recalibration, and Top-10 stays empty.
-  const SCORED_KEY = (hash: string) => `scored-filing:v3:${hash}`;
+  // PATCH 0429 — bumped scored-filing v3 → v4 to flush stale ENRIN
+  // AUTO_TRANSMISSIONS bottleneck data (Patch 0422 fixed the vocab but cached
+  // payloads still had the false-positive) + propagate the Patch 0424
+  // earnings_delta field through to retroactively scored filings.
+  const SCORED_KEY = (hash: string) => `scored-filing:v4:${hash}`;
   // PATCH 0413 — bumped 90 → 180 days per user request (6 months)
   const SCORED_TTL = 180 * 24 * 60 * 60;
 
@@ -636,11 +640,25 @@ function mergeNSEBSE(filings: ScoredFiling[]): ScoredFiling[] {
       .replace(/[^a-z0-9]/g, '')
       .trim();
 
+  // PATCH 0429 — REMOVE filing_type from the dedup key. The Sambhv bug:
+  // BSE labels the same earnings call 'Earnings Call Transcript' (→ TRANSCRIPT)
+  // while NSE labels it 'Analyst/Institutional Investor Meet' (→ ANALYST_MEET).
+  // Same underlying event, different filing_type in our taxonomy. Previous
+  // key included filing_type so they were treated as distinct and BOTH made
+  // it into Top 10. Same root cause for CENTUM ×2, GMRP&UI ×2, JETFREIGHT ×2.
+  //
+  // New key: just company + day. Within the same company on the same day, we
+  // keep the SINGLE highest-quality filing (PDF over subject, higher raw, NSE
+  // over BSE for cleaner symbol). This is the user's mental model — one
+  // company × one day = one entry. Distinct DOCUMENT TYPES (e.g. investor
+  // presentation released morning + earnings call transcript released evening
+  // on same day) WILL collapse to one; the winner exposes both attachment_urls
+  // in its `cross_exchange_dups` field for transparency.
   const clusters = new Map<string, ScoredFiling[]>();
   for (const f of filings) {
     const company = normalizeCompany(f.company_name) || normalizeCompany(f.symbol);
-    const day = f.filing_datetime.slice(0, 10);  // YYYY-MM-DD
-    const key = `${company}|${f.filing_type}|${day}`;
+    const day = f.filing_datetime.slice(0, 10);
+    const key = `${company}|${day}`;
     const arr = clusters.get(key) || [];
     arr.push(f);
     clusters.set(key, arr);
@@ -649,18 +667,28 @@ function mergeNSEBSE(filings: ScoredFiling[]): ScoredFiling[] {
   const out: ScoredFiling[] = [];
   for (const arr of clusters.values()) {
     if (arr.length === 1) { out.push(arr[0]); continue; }
-    // Multiple filings same company/type/day — collapse to winner
+    // Multiple filings same company on same day — collapse to winner
     arr.sort((a, b) => {
       // Prefer PDF-scored over subject
       if (a.scored_from !== b.scored_from) return a.scored_from === 'PDF' ? -1 : 1;
       // Prefer higher raw score
       if (b.bullish.raw_score !== a.bullish.raw_score) return b.bullish.raw_score - a.bullish.raw_score;
-      // Prefer NSE
+      // Prefer NSE (cleaner symbol display)
       if (a.exchange !== b.exchange) return a.exchange === 'NSE' ? -1 : 1;
       // More recent timestamp
       return new Date(b.filing_datetime).getTime() - new Date(a.filing_datetime).getTime();
     });
-    out.push(arr[0]);
+    const winner = arr[0];
+    // Expose the collapsed siblings for transparency
+    const dups = arr.slice(1).map(s => ({
+      exchange: s.exchange,
+      symbol: s.symbol,
+      filing_type: s.filing_type,
+      filing_datetime: s.filing_datetime,
+      source_url: s.source_url,
+    }));
+    if (dups.length > 0) (winner as any).cross_exchange_dups = dups;
+    out.push(winner);
   }
   return out;
 }
