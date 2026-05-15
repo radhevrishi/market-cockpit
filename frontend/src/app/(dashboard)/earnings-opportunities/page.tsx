@@ -74,8 +74,24 @@ type MarketEarningsResponse = {
 // visits load INSTANTLY from disk. Server still revalidates in background
 // only when stale beyond 15 min for "today's month", 6h for past months.
 function useMarketEarnings(months: string[]) {
-  const HUB_LS_PREFIX = 'mc:hub:v2:';
+  // PATCH 0402 — bump v2 → v3 to invalidate stale browser caches that were
+  // written during periods when /api/market/earnings returned empty or sparse
+  // hub data (calendar showing "No filings" for most dates even though
+  // server has recovered). Older versions are wiped on first load below.
+  const HUB_LS_PREFIX = 'mc:hub:v3:';
   const key = months.join(',');
+  // One-time scrub of older versions (v1, v2) so we don't leave orphan keys
+  if (typeof window !== 'undefined') {
+    try {
+      const SCRUB_HUB = 'mc:hub-scrub:v3';
+      if (!localStorage.getItem(SCRUB_HUB)) {
+        for (const k of Object.keys(localStorage)) {
+          if (k.startsWith('mc:hub:v1:') || k.startsWith('mc:hub:v2:')) localStorage.removeItem(k);
+        }
+        localStorage.setItem(SCRUB_HUB, '1');
+      }
+    } catch {}
+  }
   return useQuery<MarketEarningsResponse>({
     queryKey: ['market-earnings-hub', key],
     queryFn: async () => {
@@ -795,10 +811,28 @@ export default function EarningsOpportunitiesPage() {
     return pastDates[0] || '';
   }, [hub, filterDate, todayIso]);
 
-  // PATCH 0187 — localStorage cache (v8). Past dates: 7 days fresh, today: 15 min.
+  // PATCH 0187 — localStorage cache (v9). Past dates: 7 days fresh, today: 15 min.
   // User: "I always open link all loads even when data is there before."
   // Aggressive caching so repeat visits to past dates are zero-network.
-  const LS_PREFIX = 'mc:graded:v8:';
+  //
+  // PATCH 0402 — bumped v8 → v9. Symptom: a past-date snapshot was cached
+  // when the server still had preview-shape rows (all 10 cards as AVOID/score 22
+  // "Financial detail awaiting enrichment"). Because past dates get a 7-day
+  // staleTime, React Query never refetched even after the server backfilled
+  // the real graded payload. Bumping the prefix invalidates every stale
+  // snapshot in one shot. The scrub below removes orphan v8/v7 keys.
+  const LS_PREFIX = 'mc:graded:v9:';
+  if (typeof window !== 'undefined') {
+    try {
+      const SCRUB_GRADED = 'mc:graded-scrub:v9';
+      if (!localStorage.getItem(SCRUB_GRADED)) {
+        for (const k of Object.keys(localStorage)) {
+          if (k.startsWith('mc:graded:v7:') || k.startsWith('mc:graded:v8:')) localStorage.removeItem(k);
+        }
+        localStorage.setItem(SCRUB_GRADED, '1');
+      }
+    } catch {}
+  }
   const readLsCache = (date: string): OpportunitiesPayload | undefined => {
     if (!date || typeof window === 'undefined') return undefined;
     try {
@@ -874,6 +908,43 @@ export default function EarningsOpportunitiesPage() {
     setFreshTickers(new Set());
   }, [resolvedDateForGrading]);
 
+  // PATCH 0402 — CLIENT-SIDE AUTO-HEAL.
+  // Symptom we're fixing: page loads localStorage snapshot from when the
+  // server hadn't enriched the day's filings yet — every card is preview-
+  // shape (sales_yoy_pct + pat_yoy_pct + eps_yoy_pct all null, narrative
+  // "Financial detail awaiting enrichment"). Past dates get a 7-day
+  // staleTime so React Query never refetches. User stares at AVOID/22
+  // cards forever.
+  //
+  // Fix: once per (date, mount) check the snapshot. If ≥3 cards AND ≥70%
+  // are preview-shape, fire ONE force-refresh against the server. The
+  // server already has the real data — we just need to bypass the stale
+  // localStorage. Result: page self-heals on next visit even without a
+  // manual Refresh click.
+  const autoHealFiredRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!gradedData?.by_tier || !resolvedDateForGrading) return;
+    if (autoHealFiredRef.current.has(resolvedDateForGrading)) return;
+    const allCards = (TIER_ORDER as EarningsTier[])
+      .flatMap((t) => gradedData.by_tier?.[t] || []) as ParsedEarning[];
+    if (allCards.length < 3) return;
+    const previewCount = allCards.filter((c) =>
+      c.sales_yoy_pct == null && c.net_profit_yoy_pct == null && c.eps_yoy_pct == null
+    ).length;
+    const previewRatio = previewCount / allCards.length;
+    if (previewRatio < 0.7) return;
+    // Pin so we don't loop
+    autoHealFiredRef.current.add(resolvedDateForGrading);
+    // Wipe the stale snapshot + force a fresh server fetch
+    try {
+      localStorage.removeItem('mc:graded:v9:' + resolvedDateForGrading);
+      localStorage.removeItem('mc:graded:v8:' + resolvedDateForGrading);
+    } catch {}
+    fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}&force=1`, { cache: 'no-store' })
+      .then(() => refetchGraded())
+      .catch(() => {});
+  }, [gradedData, resolvedDateForGrading, refetchGraded]);
+
   // PATCH 0362 — Track ticker set across renders to highlight new arrivals.
   // Fires whenever the gradedData payload changes. The first time the page
   // loads we just record the baseline set (no badges). On subsequent updates
@@ -917,6 +988,13 @@ export default function EarningsOpportunitiesPage() {
   }, [gradedData]);
 
   // PATCH 0165 — prefetch the date before and after when user lands on a date
+  // PATCH 0402 — widen the warm-up to the trailing 7 trading days. User's
+  // complaint was that not just yesterday but the whole prior week was stale
+  // (cached when filings hadn't propagated yet). On first mount per session
+  // we fire force=1 against each of the past 7 weekdays so the server's KV
+  // cache + the user's localStorage both refresh in one sweep.
+  // Subsequent date changes within the same session only warm prev/next.
+  const sessionWarmedRef = useRef(false);
   useEffect(() => {
     if (!resolvedDateForGrading) return;
     const d = new Date(resolvedDateForGrading);
@@ -924,9 +1002,45 @@ export default function EarningsOpportunitiesPage() {
     const next = new Date(d); next.setDate(d.getDate() + 1);
     const prevIso = prev.toISOString().slice(0, 10);
     const nextIso = next.toISOString().slice(0, 10);
+
+    // Build the list of past 7 weekdays from today (skip Sat/Sun) — only
+    // for first mount in this session, to avoid hammering Vercel on every
+    // date-arrow click.
+    const past7: string[] = [];
+    if (!sessionWarmedRef.current) {
+      const cursor = new Date(todayIso);
+      while (past7.length < 7) {
+        const day = cursor.getUTCDay();
+        if (day !== 0 && day !== 6) {                     // not Sun/Sat
+          past7.push(cursor.toISOString().slice(0, 10));
+        }
+        cursor.setUTCDate(cursor.getUTCDate() - 1);
+        if (past7.length === 0 && cursor < new Date('2026-01-01')) break;  // safety
+      }
+      sessionWarmedRef.current = true;
+    }
+
     const timer = setTimeout(() => {
+      // Always warm immediate neighbours (lightweight cache touch, no force)
       fetch(`/api/v1/earnings/graded?date=${prevIso}`).catch(() => {});
       if (nextIso <= todayIso) fetch(`/api/v1/earnings/graded?date=${nextIso}`).catch(() => {});
+
+      // First-mount sweep: hit each past trading day with force=1 so any
+      // stale "all-AVOID-score-22 preview" cache snapshot gets rebuilt
+      // server-side. Stagger by 350ms each so we don't slam Vercel.
+      past7.forEach((iso, i) => {
+        setTimeout(() => {
+          fetch(`/api/v1/earnings/graded?date=${iso}&force=1`, { cache: 'no-store' })
+            .catch(() => {});
+          // Also wipe the matching localStorage entry so the next visit
+          // hydrates from the freshly-rebuilt server payload, not the
+          // stale snapshot.
+          try {
+            localStorage.removeItem('mc:graded:v9:' + iso);
+            localStorage.removeItem('mc:graded:v8:' + iso);
+          } catch {}
+        }, 1500 + i * 350);
+      });
     }, 800);  // delay so current date renders first
     return () => clearTimeout(timer);
   }, [resolvedDateForGrading, todayIso]);
@@ -956,9 +1070,13 @@ export default function EarningsOpportunitiesPage() {
     try {
       // PATCH 0190 — Hard Refresh wipes localStorage for this date + month
       // hub key so user gets a guaranteed fresh view (no stale interference).
+      // PATCH 0402 — wipe both old (v8/v2) and current (v9/v3) keys so users
+      // who installed this patch mid-loop don't get stuck on the old version.
       try {
-        localStorage.removeItem('mc:graded:v8:' + resolvedDateForGrading);
         const monthKeys = monthsToFetch.join(',');
+        localStorage.removeItem('mc:graded:v9:' + resolvedDateForGrading);
+        localStorage.removeItem('mc:graded:v8:' + resolvedDateForGrading);
+        localStorage.removeItem('mc:hub:v3:' + monthKeys);
         localStorage.removeItem('mc:hub:v2:' + monthKeys);
       } catch {}
       // Hit force=1 server-side to rebuild graded payload from a fresh hub fetch
