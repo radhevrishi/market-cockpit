@@ -35,7 +35,7 @@ import { scanBottleneck, type BottleneckSignal } from '@/lib/bottleneck-scanner'
 // + boilerplate suppression + strict ULTRA gate.
 import { applyEvidenceHierarchy, type EvidenceHierarchyResult } from '@/lib/evidence-hierarchy';
 
-const CACHE_KEY = (days: number) => `concall-feed:v19:days:${days}`;  // v19: subwin cache null-guard + broader bottleneck patterns + parallel PDF budget
+const CACHE_KEY = (days: number) => `concall-feed:v20:days:${days}`;  // v20: top-level try/catch, NEUTRAL hidden, null-guards everywhere
 // PATCH 0396 — Aggressive live-cache per user spec: 'always take live data'
 const CACHE_TTL_SHORT = 2 * 60;        // 2 min for fresh data (was 5)
 const CACHE_TTL_LONG = 10 * 60;        // 10 min for older lookback (was 30)
@@ -113,6 +113,27 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;  // PATCH 0388: extended for PDF extraction budget
 
 export async function GET(req: NextRequest) {
+  try {
+    return await handleLiveFeed(req);
+  } catch (err) {
+    // PATCH 0416 — Never return HTTP 500. Any unexpected error becomes
+    // a 200 with an `error` field. UI shows graceful degradation.
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[live-feed] uncaught error', msg);
+    return NextResponse.json({
+      generated_at: new Date().toISOString(),
+      count_total: 0,
+      count_relevant: 0,
+      count_high_bullish: 0,
+      filings: [],
+      theme_clusters: [],
+      sources: { nse: 'NSE_BLOCKED', bse: 'BSE_BLOCKED' },
+      error: `live-feed failed: ${msg.slice(0, 200)}`,
+    });
+  }
+}
+
+async function handleLiveFeed(req: NextRequest) {
   // PATCH 0414 — Hard time-budget guard. Vercel maxDuration=60s. We
   // track elapsed from request start and stop accepting new PDF
   // extractions once we cross 45s. This is the 504-prevention safety net.

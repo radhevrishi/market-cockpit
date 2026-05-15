@@ -267,11 +267,13 @@ function LiveBullishFeed() {
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   // PATCH 0391 — tier filter chips. Default to ALL TIERS for full-universe view.
   // PATCH 0397 — Added DATA_PENDING to default set.
-  // PATCH 0410 — DATA_PENDING removed from defaults. User feedback: these
-  // clutter the main bullish feed. They live in a separate "Awaiting
-  // extraction" collapsed section below. NEUTRAL also dropped from default
-  // since user wants institutional-grade signals only by default.
-  const [tierFilter, setTierFilter] = useState<Set<string>>(new Set(['ULTRA_BULLISH', 'BULLISH', 'MIXED_POSITIVE']));
+  // PATCH 0410 — DATA_PENDING removed from defaults.
+  // PATCH 0416 — Per user: "i only want bearish and bullish .neutral isnot
+  // my importance. i do nothing with such list make it better useful for
+  // investing". So default = actionable signals only (ULTRA, BULLISH,
+  // MIXED_POSITIVE, BEARISH). NEUTRAL and DATA_PENDING hidden behind chip
+  // toggles for when user wants to inspect the broader universe.
+  const [tierFilter, setTierFilter] = useState<Set<string>>(new Set(['ULTRA_BULLISH', 'BULLISH', 'MIXED_POSITIVE', 'BEARISH']));
   const toggleTier = (t: string) => {
     setTierFilter(prev => {
       const next = new Set(prev);

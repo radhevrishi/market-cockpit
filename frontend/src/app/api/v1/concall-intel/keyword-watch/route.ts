@@ -51,6 +51,22 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
+  try {
+    return await handleKeywordWatch(req);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[keyword-watch] uncaught error', msg);
+    return NextResponse.json({
+      generated_at: new Date().toISOString(),
+      count_total: 0, count_relevant: 0, matched_count: 0, total_hits: 0,
+      filings: [], group_counts: {},
+      sources: { nse: 'NSE_BLOCKED', bse: 'BSE_BLOCKED' },
+      error: `keyword-watch failed: ${msg.slice(0, 200)}`,
+    });
+  }
+}
+
+async function handleKeywordWatch(req: NextRequest) {
   // PATCH 0405 — bumped 60 → 90 days for full-quarter view
   // PATCH 0407 — bumped 90 → 180 days for historical signal validation
   const days = Math.min(180, Math.max(1, parseInt(req.nextUrl.searchParams.get('days') || '14')));
@@ -132,7 +148,11 @@ export async function GET(req: NextRequest) {
     subwinMisses.push(...subWindows);
   }
   const allResults: Array<Awaited<ReturnType<typeof fetchSubWindow>>> = [];
-  for (const hit of subwinCacheHits) allResults.push([hit.nse, hit.bse]);
+  // PATCH 0416 — null-guard against malformed cache entries
+  for (const hit of subwinCacheHits) {
+    if (!hit || !hit.nse || !hit.bse || !Array.isArray(hit.nse.filings) || !Array.isArray(hit.bse.filings)) continue;
+    allResults.push([hit.nse, hit.bse]);
+  }
   for (let i = 0; i < subwinMisses.length; i += SUBWIN_CONCURRENCY) {
     const batch = subwinMisses.slice(i, i + SUBWIN_CONCURRENCY);
     const batchResults = await Promise.all(batch.map(w => fetchSubWindow(w.fromIso, w.toIso)));
