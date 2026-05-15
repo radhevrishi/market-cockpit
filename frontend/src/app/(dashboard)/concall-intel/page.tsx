@@ -391,6 +391,7 @@ function LiveBullishFeed() {
             <option value={14}>14 days</option>
             <option value={30}>30 days</option>
             <option value={60}>60 days</option>
+            <option value={90}>90 days</option>
           </select>
           <button onClick={() => fetchFeed(true)} disabled={loading} style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 5, border: '1px solid #22D3EE', background: '#22D3EE20', color: '#22D3EE', cursor: loading ? 'wait' : 'pointer' }}>
             {loading ? '…' : '↻ Refresh'}
@@ -430,10 +431,15 @@ function LiveBullishFeed() {
         </div>
       )}
 
-      {/* PATCH 0395 — Top 3 Ranked Ideas pinned panel
+      {/* PATCH 0395 — Top 10 Ranked Ideas pinned panel
           PATCH 0397: Now ranks by composite_score (0.5*Quality + 0.3*Cycle +
           0.2*Sentiment), the institutional-grade weighting per spec, instead
-          of raw_score which over-favors narrative density. */}
+          of raw_score which over-favors narrative density.
+          PATCH 0405: Widened from Top 3 to Top 10 so a longer lookback
+          window (60 / 90 days) surfaces more institutional ideas. The
+          panel re-derives from `data.filings` on every refetch, so changing
+          the days selector immediately refreshes the shortlist. The
+          chip-count below shows how many days the current window covers. */}
       {data && (() => {
         const ranked = [...data.filings]
           .filter(f => f.bullish.tier && ['ULTRA_BULLISH', 'BULLISH', 'MIXED_POSITIVE'].includes(f.bullish.tier))
@@ -442,11 +448,14 @@ function LiveBullishFeed() {
             const compB = (b.bullish.components as any).composite_score ?? b.bullish.raw_score;
             return compB - compA;
           })
-          .slice(0, 3);
+          .slice(0, 10);
         if (ranked.length === 0) return null;
         return (
           <div style={{ marginBottom: 12, padding: 12, background: 'linear-gradient(135deg, #10B98110, #22D3EE10)', border: '1px solid #10B98150', borderRadius: 10 }}>
-            <div style={{ fontSize: 12, fontWeight: 900, color: '#10B981', letterSpacing: '0.5px', marginBottom: 8 }}>★ TOP 3 RANKED — institutional shortlist (by composite: 0.5×Quality + 0.3×Cycle + 0.2×Sentiment)</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 900, color: '#10B981', letterSpacing: '0.5px' }}>★ TOP {ranked.length} RANKED — institutional shortlist (by composite: 0.5×Quality + 0.3×Cycle + 0.2×Sentiment)</div>
+              <div style={{ fontSize: 10, color: '#94A3B8', fontWeight: 600 }}>· window: last {days} day{days === 1 ? '' : 's'}</div>
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 8 }}>
               {ranked.map((r, i) => {
                 const tierColor = r.bullish.tier === 'ULTRA_BULLISH' ? '#22D3EE' : r.bullish.tier === 'BULLISH' ? '#10B981' : '#F59E0B';
@@ -776,6 +785,7 @@ function WarrantMomentumFeed() {
             <option value={14}>14 days</option>
             <option value={30}>30 days</option>
             <option value={60}>60 days</option>
+            <option value={90}>90 days</option>
           </select>
           <button onClick={() => fetchFeed(true)} disabled={loading} style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 5, border: '1px solid #A78BFA', background: '#A78BFA20', color: '#A78BFA', cursor: loading ? 'wait' : 'pointer' }}>
             {loading ? '…' : '↻ Refresh'}
@@ -1039,6 +1049,7 @@ function KeywordWatchFeed() {
             <option value={14}>14 days</option>
             <option value={30}>30 days</option>
             <option value={60}>60 days</option>
+            <option value={90}>90 days</option>
           </select>
           <button onClick={() => fetchFeed(true)} disabled={loading} style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 5, border: '1px solid #22D3EE', background: '#22D3EE20', color: '#22D3EE', cursor: loading ? 'wait' : 'pointer' }}>
             {loading ? '…' : '↻ Refresh'}

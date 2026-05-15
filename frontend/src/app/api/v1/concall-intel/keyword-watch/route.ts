@@ -51,7 +51,8 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
-  const days = Math.min(60, Math.max(1, parseInt(req.nextUrl.searchParams.get('days') || '14')));
+  // PATCH 0405 — bumped 60 → 90 days for full-quarter view
+  const days = Math.min(90, Math.max(1, parseInt(req.nextUrl.searchParams.get('days') || '14')));
   const keywordsParam = (req.nextUrl.searchParams.get('keywords') || '').trim();
   const groupsParam = (req.nextUrl.searchParams.get('groups') || '').trim();
   const force = req.nextUrl.searchParams.get('force') === '1';

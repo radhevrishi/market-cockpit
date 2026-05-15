@@ -74,7 +74,9 @@ export const maxDuration = 60;  // PATCH 0388: extended for PDF extraction budge
 
 export async function GET(req: NextRequest) {
   // PATCH 0393 — max lookback bumped 30 → 60 days per user request
-  const days = Math.min(60, Math.max(1, parseInt(req.nextUrl.searchParams.get('days') || '7')));
+  // PATCH 0405 — bumped 60 → 90 days so Top-10 surfaces a wider universe
+  // over the full quarter window.
+  const days = Math.min(90, Math.max(1, parseInt(req.nextUrl.searchParams.get('days') || '7')));
   const exchangeFilter = (req.nextUrl.searchParams.get('exchange') || '').toUpperCase();
   const rawThreshold = parseFloat(req.nextUrl.searchParams.get('threshold') || '4');
   const bullishOnly = req.nextUrl.searchParams.get('bullishOnly') === '1';

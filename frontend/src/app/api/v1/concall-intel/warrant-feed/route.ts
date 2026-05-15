@@ -124,7 +124,8 @@ export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
   // PATCH 0393 — max lookback bumped 30 → 60 days per user request
-  const days = Math.min(60, Math.max(1, parseInt(req.nextUrl.searchParams.get('days') || '14')));
+  // PATCH 0405 — bumped 60 → 90 days for full-quarter view
+  const days = Math.min(90, Math.max(1, parseInt(req.nextUrl.searchParams.get('days') || '14')));
   // PATCH 0392 — threshold default dropped 8 → 5 (ranking, not hard gate)
   const threshold = parseFloat(req.nextUrl.searchParams.get('threshold') || '5');
   const passingOnly = req.nextUrl.searchParams.get('passingOnly') === '1';
