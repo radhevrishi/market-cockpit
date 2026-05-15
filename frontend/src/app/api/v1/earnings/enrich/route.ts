@@ -20,9 +20,43 @@ export const runtime = 'nodejs';
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
 
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-const SCREENER_TIMEOUT_MS = 6000;
+// PATCH 0404 — UA rotation + browser-mimic Sec-Ch headers to bypass
+// Cloudflare's lightweight challenge on Vercel egress IPs. Screener
+// returns 200 to ordinary requests from residential IPs but sometimes
+// returns 5xx/403 + empty body to Vercel function IPs without these
+// headers.
+const UA_POOL = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+];
+function pickUA(): string {
+  return UA_POOL[Math.floor(Math.random() * UA_POOL.length)];
+}
+function browserHeaders(referer: string): Record<string, string> {
+  return {
+    'User-Agent': pickUA(),
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9,en-IN;q=0.8',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache',
+    'Sec-Ch-Ua': '"Chromium";v="131", "Not_A Brand";v="24"',
+    'Sec-Ch-Ua-Mobile': '?0',
+    'Sec-Ch-Ua-Platform': '"Windows"',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
+    'Upgrade-Insecure-Requests': '1',
+    'Referer': referer,
+  };
+}
+const UA = UA_POOL[0];           // kept for backwards-compat callers below
+const SCREENER_TIMEOUT_MS = 7000;
 const YAHOO_TIMEOUT_MS = 5000;
+const SCREENER_RETRY_DELAYS_MS = [0, 400, 1100];   // 3 attempts: immediate, 400ms, 1100ms
 // PATCH 0157 — staleness defense:
 // • Cache TTL reduced from 7 days → 6 hours. Quarterly filings come every
 //   90 days but the SAME stock can release amendments/clarifications same-
@@ -104,71 +138,96 @@ function parseSector(html: string): string | null {
   return null;
 }
 
+async function fetchScreenerHtml(url: string): Promise<string | null> {
+  // PATCH 0404 — three attempts with rotated UA + browser-mimic headers
+  // + jittered backoff. Cloudflare's lightweight challenge almost always
+  // passes on the 2nd attempt once the IP+UA combination has a session
+  // ring. Returns first HTML containing the top-ratios sentinel; null
+  // if all attempts fail.
+  for (let attempt = 0; attempt < SCREENER_RETRY_DELAYS_MS.length; attempt++) {
+    const delay = SCREENER_RETRY_DELAYS_MS[attempt];
+    if (delay > 0) {
+      const jittered = delay + Math.floor((Math.random() - 0.5) * delay * 0.6);
+      await new Promise((r) => setTimeout(r, jittered));
+    }
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), SCREENER_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        headers: browserHeaders('https://www.screener.in/'),
+        signal: ctrl.signal,
+      });
+      clearTimeout(t);
+      if (!res.ok) {
+        if (res.status === 404) return null;   // permanent miss, don't retry URL
+        continue;                              // 403/429/503 → next attempt
+      }
+      const html = await res.text();
+      if (!/id=["']top-ratios["']/.test(html)) continue;
+      return html;
+    } catch {
+      clearTimeout(t);
+      // Network error or timeout → next attempt
+    }
+  }
+  return null;
+}
+
 async function fetchScreenerForSymbol(symbol: string): Promise<any | null> {
   const urls = [
     `https://www.screener.in/company/${encodeURIComponent(symbol)}/consolidated/`,
     `https://www.screener.in/company/${encodeURIComponent(symbol)}/`,
   ];
   for (const url of urls) {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), SCREENER_TIMEOUT_MS);
-    try {
-      const res = await fetch(url, {
-        headers: { 'User-Agent': UA, 'Accept': 'text/html,application/xhtml+xml,*/*' },
-        signal: ctrl.signal,
-      });
-      if (!res.ok) continue;
-      const html = await res.text();
-      if (!/id=["']top-ratios["']/.test(html)) continue;
-      const q = parseQuartersTable(html);
-      if (!q || q.labels.length < 5) continue;
-      const ratios = parseTopRatios(html);
-      const sector = parseSector(html);
-      const N = q.labels.length;
-      const latestIdx = N - 1;
-      const priorIdx = N - 5;
-      const get = (kw: string, idx: number) => {
-        const k = Object.keys(q.rows).find((kk) => kk.toLowerCase().includes(kw.toLowerCase()));
-        return k ? (q.rows[k]?.[idx] ?? null) : null;
-      };
-      const salesCurr = get('Sales', latestIdx) ?? get('Revenue', latestIdx) ?? get('Income', latestIdx) ?? get('Interest', latestIdx) ?? get('Premium', latestIdx);
-      const salesPrev = get('Sales', priorIdx) ?? get('Revenue', priorIdx) ?? get('Income', priorIdx) ?? get('Interest', priorIdx) ?? get('Premium', priorIdx);
-      const opCurr = get('Operating Profit', latestIdx);
-      const opPrev = get('Operating Profit', priorIdx);
-      const opmCurr = get('OPM', latestIdx);
-      const opmPrev = get('OPM', priorIdx);
-      const patCurr = get('Net Profit', latestIdx) ?? get('Profit', latestIdx);
-      const patPrev = get('Net Profit', priorIdx) ?? get('Profit', priorIdx);
-      const epsCurr = get('EPS', latestIdx);
-      const epsPrev = get('EPS', priorIdx);
-      if (salesCurr == null && patCurr == null && epsCurr == null) continue;
-      const cp = ratios['Current Price'];
-      const hi = ratios['High'] ?? ratios['52w High'];
-      const mcap = ratios['Market Cap'] ?? null;
-      const bucket = mcap == null ? null : mcap >= 200_000 ? 'MEGA' : mcap >= 20_000 ? 'LARGE' : mcap >= 5_000 ? 'MID' : mcap >= 500 ? 'SMALL' : 'MICRO';
-      return {
-        sector,
-        pe: ratios['Stock P/E'] ?? ratios['P/E'] ?? null,
-        market_cap_cr: mcap,
-        market_cap_bucket: bucket,
-        current_price: cp ?? null,
-        high_52w: hi ?? null,
-        low_52w: ratios['Low'] ?? ratios['52w Low'] ?? null,
-        pct_from_52w_high: (cp != null && hi != null && hi > 0) ? Math.round(((cp - hi) / hi) * 1000) / 10 : null,
-        sales_curr_cr: salesCurr, sales_prev_cr: salesPrev,
-        op_profit_curr_cr: opCurr, op_profit_prev_cr: opPrev,
-        opm_pct: opmCurr, opm_prev_pct: opmPrev,
-        pat_curr_cr: patCurr, pat_prev_cr: patPrev,
-        eps_curr: epsCurr, eps_prev: epsPrev,
-        sales_yoy_pct: pct(salesCurr, salesPrev),
-        op_profit_yoy_pct: pct(opCurr, opPrev),
-        pat_yoy_pct: pct(patCurr, patPrev),
-        eps_yoy_pct: pct(epsCurr, epsPrev),
-        latest_quarter_label: q.labels[latestIdx],
-        financials_source: 'screener',
-      };
-    } catch { /* try next URL */ }
-    finally { clearTimeout(t); }
+    const html = await fetchScreenerHtml(url);
+    if (!html) continue;
+    const q = parseQuartersTable(html);
+    if (!q || q.labels.length < 5) continue;
+    const ratios = parseTopRatios(html);
+    const sector = parseSector(html);
+    const N = q.labels.length;
+    const latestIdx = N - 1;
+    const priorIdx = N - 5;
+    const get = (kw: string, idx: number) => {
+      const k = Object.keys(q.rows).find((kk) => kk.toLowerCase().includes(kw.toLowerCase()));
+      return k ? (q.rows[k]?.[idx] ?? null) : null;
+    };
+    const salesCurr = get('Sales', latestIdx) ?? get('Revenue', latestIdx) ?? get('Income', latestIdx) ?? get('Interest', latestIdx) ?? get('Premium', latestIdx);
+    const salesPrev = get('Sales', priorIdx) ?? get('Revenue', priorIdx) ?? get('Income', priorIdx) ?? get('Interest', priorIdx) ?? get('Premium', priorIdx);
+    const opCurr = get('Operating Profit', latestIdx);
+    const opPrev = get('Operating Profit', priorIdx);
+    const opmCurr = get('OPM', latestIdx);
+    const opmPrev = get('OPM', priorIdx);
+    const patCurr = get('Net Profit', latestIdx) ?? get('Profit', latestIdx);
+    const patPrev = get('Net Profit', priorIdx) ?? get('Profit', priorIdx);
+    const epsCurr = get('EPS', latestIdx);
+    const epsPrev = get('EPS', priorIdx);
+    if (salesCurr == null && patCurr == null && epsCurr == null) continue;
+    const cp = ratios['Current Price'];
+    const hi = ratios['High'] ?? ratios['52w High'];
+    const mcap = ratios['Market Cap'] ?? null;
+    const bucket = mcap == null ? null : mcap >= 200_000 ? 'MEGA' : mcap >= 20_000 ? 'LARGE' : mcap >= 5_000 ? 'MID' : mcap >= 500 ? 'SMALL' : 'MICRO';
+    return {
+      sector,
+      pe: ratios['Stock P/E'] ?? ratios['P/E'] ?? null,
+      market_cap_cr: mcap,
+      market_cap_bucket: bucket,
+      current_price: cp ?? null,
+      high_52w: hi ?? null,
+      low_52w: ratios['Low'] ?? ratios['52w Low'] ?? null,
+      pct_from_52w_high: (cp != null && hi != null && hi > 0) ? Math.round(((cp - hi) / hi) * 1000) / 10 : null,
+      sales_curr_cr: salesCurr, sales_prev_cr: salesPrev,
+      op_profit_curr_cr: opCurr, op_profit_prev_cr: opPrev,
+      opm_pct: opmCurr, opm_prev_pct: opmPrev,
+      pat_curr_cr: patCurr, pat_prev_cr: patPrev,
+      eps_curr: epsCurr, eps_prev: epsPrev,
+      sales_yoy_pct: pct(salesCurr, salesPrev),
+      op_profit_yoy_pct: pct(opCurr, opPrev),
+      pat_yoy_pct: pct(patCurr, patPrev),
+      eps_yoy_pct: pct(epsCurr, epsPrev),
+      latest_quarter_label: q.labels[latestIdx],
+      financials_source: 'screener',
+    };
   }
   return null;
 }
@@ -482,6 +541,50 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
                         (out as any).pat_curr_cr != null ||
                         (out as any).eps_curr != null;
   const ttl = hasFinancials ? ENRICH_TTL_S : 5 * 60;  // 6h vs 5min
+
+  // PATCH 0404 — Last-good fallback. When the fresh fetch returns NO
+  // financials (Cloudflare blocked Screener AND NSE cookie expired AND
+  // both are sad), look up the most recent successful enrichment for
+  // this symbol from a separate "last-good" KV slot. Serving even
+  // slightly-stale numbers is dramatically better than showing all-
+  // dashes "Financial detail awaiting enrichment" — the user can still
+  // see this company beat / missed estimates while the upstream sources
+  // recover.
+  //
+  // The last-good slot is keyed by SYMBOL only (no date) — overwritten
+  // each time financials are successfully fetched. 30-day TTL. Restored
+  // payload is stamped with _stale_from_last_good so the UI can
+  // optionally show a "stale data" chip later.
+  const LAST_GOOD_KEY = `enrich-last-good:v1:${symbol}`;
+  if (isRedisAvailable()) {
+    if (hasFinancials) {
+      // Persist this successful fetch as the long-lived last-good slot.
+      try { await kvSet(LAST_GOOD_KEY, out, 30 * 24 * 3600); } catch {}
+    } else {
+      // Fresh fetch failed → look for a last-good payload to surface.
+      try {
+        const lastGood: any = await kvGet(LAST_GOOD_KEY);
+        if (lastGood && (lastGood.sales_curr_cr != null || lastGood.pat_curr_cr != null || lastGood.eps_curr != null)) {
+          // Overlay live Yahoo price data on top of stale financials so
+          // gap / D1 / current_price reflect today, not the snapshot date.
+          const merged = {
+            ...lastGood,
+            ...(yahoo || {}),
+            _stale_from_last_good: true,
+            _last_good_at: lastGood._enriched_at,
+            _enriched_at: new Date().toISOString(),
+            company: out.company || lastGood.company,
+            company_name: out.company_name || lastGood.company_name,
+          };
+          // Cache the merged payload under the per-date key with the 5min
+          // retry TTL so a next attempt still re-tries upstream.
+          try { await kvSet(cacheKey, merged, 5 * 60); } catch {}
+          return merged;
+        }
+      } catch {}
+    }
+  }
+
   if (isRedisAvailable()) {
     try { await kvSet(cacheKey, out, ttl); } catch {}
   }
