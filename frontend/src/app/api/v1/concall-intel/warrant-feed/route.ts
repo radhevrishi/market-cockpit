@@ -22,8 +22,9 @@ import {
   type WarrantFilingType, type WarrantDetails, type WarrantConvictionScore,
 } from '@/lib/warrant-momentum';
 
-// PATCH 0428 — bumped v7 → v8: weighted-score formula + bucket field added.
-const CACHE_KEY = (days: number) => `warrant-feed:v8:days:${days}`;
+// PATCH 0430 — bumped v8 → v9 to flush the corrupt v8 payload that had
+// count_relevant=0 due to over-budget early-break bug.
+const CACHE_KEY = (days: number) => `warrant-feed:v9:days:${days}`;
 const CACHE_TTL_SHORT = 5 * 60;
 const CACHE_TTL_LONG = 30 * 60;
 // PATCH 0422 — bumped 15 → 40 so more warrant candidates get full PDF
@@ -322,11 +323,20 @@ async function handleWarrantFeed(req: NextRequest) {
   }
 
   // Phase 3: score each
-  // PATCH 0420 — bail per-filing loop early if approaching Vercel hard cap
+  // PATCH 0430 — CRITICAL fix for 0-relevant regression. Previously, if
+  // overBudget() fired BEFORE entering the loop, `all` stayed empty and the
+  // UI showed '76464 filings · 0 warrant-related'. With Patches 0427/0428
+  // adding entity-dedup + weighted scoring, the 45s soft budget was getting
+  // hit before Phase 3 even began on cold 180d cache.
+  //
+  // Fix: ALWAYS process every candidate. When over budget, fall back to a
+  // 'minimum-viable' score that uses subject + warrant_type only — no PDF
+  // text, no Yahoo price fetch, no history. Result: user sees the universe
+  // of warrants in the window even when fundamentals can't be fully scored.
   const all: ScoredWarrantFiling[] = [];
   for (const { filing: f, warrant_type } of candidates) {
-    if (overBudget()) break;
-    const pdfText = extracts.get(f.content_hash) || '';
+    const isOverBudget = overBudget();
+    const pdfText = isOverBudget ? '' : (extracts.get(f.content_hash) || '');
     const combinedText = `${f.subject}\n\n${pdfText}`;
 
     // Extract warrant-specific details from full text
@@ -334,17 +344,20 @@ async function handleWarrantFeed(req: NextRequest) {
 
     // Business momentum from concall scoring on forward-looking sections
     let momentum: number | null = null;
-    if (pdfText.length > 300) {
+    if (!isOverBudget && pdfText.length > 300) {
       const sections = extractSections(pdfText);
       const bullish = scoreBullish(`${f.subject}\n${sections.forward_text}`);
       momentum = bullish.score;
     }
 
-    // Historical warrant memory + price context (parallel)
-    const [history, price] = await Promise.all([
-      getWarrantHistory(f.symbol),
-      fetchPriceContext(f.symbol),
-    ]);
+    // Historical warrant memory + price context (parallel) —
+    // SKIP Yahoo network call when over budget; use neutral fallback values
+    const [history, price] = isOverBudget
+      ? [[] as PriorWarrant[], { cmp: null, perf_90d_pct: null, perf_52w_high_pct: null }]
+      : await Promise.all([
+          getWarrantHistory(f.symbol),
+          fetchPriceContext(f.symbol),
+        ]);
 
     // Compute prior_warrant_perf using stored prices + current price
     const prior_warrant_perf = history.map(h => ({
@@ -376,8 +389,9 @@ async function handleWarrantFeed(req: NextRequest) {
       prior_warrants: history,
     });
 
-    // Append to history (for future runs to compare against)
-    if (price.cmp != null) {
+    // Append to history (for future runs to compare against) — skip when
+    // over budget to avoid KV write storm at end of loop
+    if (!isOverBudget && price.cmp != null) {
       await appendWarrantHistory(f.symbol, {
         date: f.filing_datetime,
         price_at_filing: price.cmp,
