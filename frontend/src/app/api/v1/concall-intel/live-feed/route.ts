@@ -35,7 +35,7 @@ import { scanBottleneck, type BottleneckSignal } from '@/lib/bottleneck-scanner'
 // + boilerplate suppression + strict ULTRA gate.
 import { applyEvidenceHierarchy, type EvidenceHierarchyResult } from '@/lib/evidence-hierarchy';
 
-const CACHE_KEY = (days: number) => `concall-feed:v17:days:${days}`;  // v17: persistent sub-window filings cache + 180d scored TTL
+const CACHE_KEY = (days: number) => `concall-feed:v18:days:${days}`;  // v18: time-budget guard + sector confidence threshold
 // PATCH 0396 — Aggressive live-cache per user spec: 'always take live data'
 const CACHE_TTL_SHORT = 2 * 60;        // 2 min for fresh data (was 5)
 const CACHE_TTL_LONG = 10 * 60;        // 10 min for older lookback (was 30)
@@ -113,6 +113,14 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;  // PATCH 0388: extended for PDF extraction budget
 
 export async function GET(req: NextRequest) {
+  // PATCH 0414 — Hard time-budget guard. Vercel maxDuration=60s. We
+  // track elapsed from request start and stop accepting new PDF
+  // extractions once we cross 45s. This is the 504-prevention safety net.
+  const REQUEST_START = Date.now();
+  const TIME_BUDGET_MS = 45_000;   // hard ceiling — return what we have past this
+  const timeElapsed = () => Date.now() - REQUEST_START;
+  const timeRemaining = () => Math.max(0, TIME_BUDGET_MS - timeElapsed());
+
   // PATCH 0393 — max lookback bumped 30 → 60 days per user request
   // PATCH 0405 — bumped 60 → 90 days so Top-10 surfaces a wider universe
   // PATCH 0407 — bumped 90 → 180 days so user can validate historical
@@ -180,7 +188,9 @@ export async function GET(req: NextRequest) {
   // rate-limited the burst and returned 429, dropping most filings.
   // Symptom: 180d returned 3924 filings while 14d returned 76566. Now
   // we batch 2 at a time with a 600ms jitter between batches.
-  const totalBudgetMs = 14000;            // per sub-window budget (tighter, since serial)
+  // PATCH 0414 — tightened from 14s → 10s per sub-window so the worst
+  // case across 6 sub-windows stays under 32s, leaving 13s+ for PDFs.
+  const totalBudgetMs = 10000;
   const SUBWIN_CONCURRENCY = 2;
   const fetchSubWindow = (fromIsoW: string, toIsoW: string) => {
     const nseCtrl = new AbortController();
@@ -279,33 +289,8 @@ export async function GET(req: NextRequest) {
     new Date(b.filing.filing_datetime).getTime() - new Date(a.filing.filing_datetime).getTime(),
   );
 
-  // PATCH 0412 — Look up cached scored payloads for every candidate.
-  // KV-cached filings are returned immediately; only cache-misses go into
-  // the extraction queue. This is the architectural fix to the "same
-  // names across windows" issue — the universe grows monotonically.
-  let cacheHits = 0;
-  const cachedScored = new Map<string, ScoredFiling>();
-  if (isRedisAvailable()) {
-    const hashes = candidates.map(c => c.filing.content_hash);
-    // Parallel KV reads — Upstash handles this fine in batches
-    const batchSize = 40;
-    for (let i = 0; i < hashes.length; i += batchSize) {
-      const batch = hashes.slice(i, i + batchSize);
-      const reads = await Promise.all(batch.map(h => kvGet<ScoredFiling>(SCORED_KEY(h)).catch(() => null)));
-      for (let j = 0; j < batch.length; j++) {
-        if (reads[j]) {
-          cachedScored.set(batch[j], reads[j]!);
-          cacheHits++;
-        }
-      }
-    }
-  }
-  console.log(`[live-feed] ${cacheHits}/${candidates.length} cached, ${candidates.length - cacheHits} need extraction`);
-
-  // PATCH 0388 — PRIORITY EXTRACTION TIERS for PDF text
-  // Transcript and investor presentation get highest priority (most likely
-  // to contain rich bullish content). Audio recordings and webcasts get
-  // none (no text). Press releases are middle tier.
+  // PATCH 0388 / 0414 — PDF priority tiers hoisted above cache-read so
+  // we can use it to filter candidates.
   const PDF_PRIORITY: Record<ConcallFilingType, number> = {
     TRANSCRIPT: 1,
     INVESTOR_PRESENTATION: 1,
@@ -317,14 +302,62 @@ export async function GET(req: NextRequest) {
     WEBCAST: 9,          // skip — no text
   };
 
+  // PATCH 0412 — Look up cached scored payloads for every candidate.
+  // PATCH 0414 — CRITICAL FIX: previously batched 40-at-a-time SEQUENTIAL
+  // which meant 120 batches × ~150ms = 18s just on cache reads for 180d.
+  // This was the dominant 504 cause. Now: single Promise.all over ALL
+  // priority candidates (typically 500-1500 instead of 4800+). Also
+  // skipped entirely if we're already over the time budget.
+  let cacheHits = 0;
+  const cachedScored = new Map<string, ScoredFiling>();
+  // Only check cache for filings we'd actually consider extracting —
+  // skips 70%+ of irrelevant subject-only filings.
+  const priorityHashes = candidates
+    .filter(c => PDF_PRIORITY[c.filing_type] <= 3)
+    .map(c => c.filing.content_hash);
+  // Cap at 2000 to prevent KV burst-rate-limit
+  const HASHES_TO_CHECK = priorityHashes.slice(0, 2000);
+  if (isRedisAvailable() && timeElapsed() < 25000 && HASHES_TO_CHECK.length > 0) {
+    const ALL_PARALLEL_BUDGET_MS = 4000;     // hard cap on this phase
+    try {
+      const reads = await Promise.race([
+        Promise.all(HASHES_TO_CHECK.map(h =>
+          kvGet<ScoredFiling>(SCORED_KEY(h)).catch(() => null)
+        )),
+        new Promise<null[]>((resolve) =>
+          setTimeout(() => resolve(new Array(HASHES_TO_CHECK.length).fill(null)), ALL_PARALLEL_BUDGET_MS)
+        ),
+      ]) as (ScoredFiling | null)[];
+      for (let i = 0; i < HASHES_TO_CHECK.length; i++) {
+        if (reads[i]) {
+          cachedScored.set(HASHES_TO_CHECK[i], reads[i]!);
+          cacheHits++;
+        }
+      }
+    } catch {}
+  }
+  console.log(`[live-feed] elapsed=${timeElapsed()}ms · ${cacheHits}/${HASHES_TO_CHECK.length} cached (of ${candidates.length} total candidates)`);
+
   // PATCH 0412 — Within the same priority tier, prefer the MOST RECENT
   // filings so longer windows still see fresh content first. Previously
   // a 180d window could waste extraction budget on 5-month-old filings
   // and never reach the past week's transcripts.
-  const maxPdfExtracts = maxPdfExtractsForWindow(days);
+  const maxPdfExtractsBase = maxPdfExtractsForWindow(days);
+  // PATCH 0414 — Dynamically shrink the extraction quota based on REMAINING
+  // budget. If we've already burned 30s on sub-window scraping, only spend
+  // 15s on PDFs (each PDF avg ~2-4s with KV cache, so ~5 extractions).
+  // Prevents the 60s Vercel timeout cold-start 504s.
+  const remainingBeforeExtract = timeRemaining();
+  const estPdfMs = 2500;                       // avg time per PDF (cold + warm mix)
+  const reservedFinalMs = 6000;                // reserve 6s for scoring + theme + KV writes
+  const budgetForPdfs = Math.max(0, remainingBeforeExtract - reservedFinalMs);
+  const maxPdfsByTime = Math.floor(budgetForPdfs / estPdfMs);
+  const maxPdfExtracts = Math.min(maxPdfExtractsBase, maxPdfsByTime);
+  console.log(`[live-feed] elapsed=${timeElapsed()}ms, budget=${budgetForPdfs}ms → maxPdfExtracts=${maxPdfExtracts} (base ${maxPdfExtractsBase})`);
+
   // PATCH 0412 — Exclude cache hits from the extraction queue. The budget
   // is now spent ONLY on filings we haven't scored before.
-  const extractable = candidates
+  const extractable = maxPdfExtracts > 0 ? candidates
     .filter(c => !cachedScored.has(c.filing.content_hash))
     .filter(c => PDF_PRIORITY[c.filing_type] <= 3 && c.filing.attachment_urls.length > 0)
     .sort((a, b) => {
@@ -333,7 +366,7 @@ export async function GET(req: NextRequest) {
       // Within the same tier, most-recent first
       return new Date(b.filing.filing_datetime).getTime() - new Date(a.filing.filing_datetime).getTime();
     })
-    .slice(0, maxPdfExtracts);
+    .slice(0, maxPdfExtracts) : [];
 
   const extractedTexts = new Map<string, { text: string; pages?: number; failure?: string }>();
   if (extractable.length > 0) {

@@ -64,8 +64,17 @@ export function detectSector(text: string): { sector: SectorTag; confidence: num
   }
   let winner: SectorTag = 'UNKNOWN';
   let max = 0;
+  let runnerUp = 0;
   for (const [k, v] of Object.entries(scores)) {
-    if (v > max) { max = v; winner = k as SectorTag; }
+    if (v > max) { runnerUp = max; max = v; winner = k as SectorTag; }
+    else if (v > runnerUp) runnerUp = v;
+  }
+  // PATCH 0414 — Require BOTH (a) absolute score ≥ 4 AND (b) a clear
+  // margin over runner-up (≥ 2 points) to assign a sector confidently.
+  // Previously any weak match won and tagged GESHIP→IT / BIOCON→IT etc.
+  // When ambiguous, return UNKNOWN so the UI doesn't show a misleading chip.
+  if (max < 4 || (max - runnerUp) < 2) {
+    return { sector: 'UNKNOWN', confidence: Math.min(10, max) };
   }
   return { sector: winner, confidence: Math.min(10, max) };
 }
