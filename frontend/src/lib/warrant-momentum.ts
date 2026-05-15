@@ -51,6 +51,18 @@ const WARRANT_PATTERNS: Array<{ type: WarrantFilingType; re: RegExp }> = [
   // Notice/Outcome of EGM/Board for warrants — PATCH 0407
   { type: 'PREFERENTIAL_ALLOTMENT',
     re: /(?:notice|outcome|intimation)\s+of\s+(?:e?gm|annual\s+general\s+meeting|board\s+meeting).*(?:preferential|warrant)|(?:e?gm|board)\s+(?:approval|consent).*(?:preferential|warrant)/i },
+  // PATCH 0419 — even broader nets: most BSE/NSE warrant filings come
+  // through as plain "Fund Raising" / "Allotment of Equity Shares" /
+  // "Issue of Securities" without "warrant" or "preferential" in subject.
+  // Let them through and we'll rank/filter at conviction step.
+  { type: 'OTHER_WARRANT',
+    re: /\b(?:fund[\s-]?raising|fund[\s-]?raise|raising\s+of\s+capital|capital\s+raise|raise\s+capital)\b/i },
+  { type: 'OTHER_WARRANT',
+    re: /\ballotment\s+of\s+(?:equity\s+shares|securities|convertible)/i },
+  { type: 'OTHER_WARRANT',
+    re: /\bissue\s+of\s+(?:securities|equity\s+shares\s+on\s+preferential)/i },
+  { type: 'OTHER_WARRANT',
+    re: /\b(?:promoter|promoter\s+group)\s+(?:participating|subscribing|conversion|allotted)/i },
   // Generic warrant mention as a fallback
   { type: 'OTHER_WARRANT',
     re: /\bwarrants?\b/i },

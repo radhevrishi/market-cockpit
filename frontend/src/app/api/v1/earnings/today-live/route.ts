@@ -168,6 +168,20 @@ async function fetchNseAnnouncements(date: string, signal?: AbortSignal): Promis
 }
 
 export async function GET(req: NextRequest) {
+  try {
+    return await _handleGET(req);
+  } catch (err) {
+    // PATCH 0419 — never return HTTP 500. Empty payload + error field.
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[today-live] uncaught', msg);
+    return NextResponse.json({
+      date: '', fetched_at: new Date().toISOString(), source: 'NSE_BLOCKED' as const,
+      count: 0, filings: [], error: `today-live failed: ${msg.slice(0, 200)}`,
+    });
+  }
+}
+
+async function _handleGET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   let date = searchParams.get('date') || '';
   if (!date) {

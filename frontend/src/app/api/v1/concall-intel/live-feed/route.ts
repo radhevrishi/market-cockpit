@@ -35,7 +35,7 @@ import { scanBottleneck, type BottleneckSignal } from '@/lib/bottleneck-scanner'
 // + boilerplate suppression + strict ULTRA gate.
 import { applyEvidenceHierarchy, type EvidenceHierarchyResult } from '@/lib/evidence-hierarchy';
 
-const CACHE_KEY = (days: number) => `concall-feed:v22:days:${days}`;  // v22: loosened filing-type weights + lower BULLISH/MIXED gates so legit transcripts surface
+const CACHE_KEY = (days: number) => `concall-feed:v23:days:${days}`;  // v23: scored-filing cache bumped v2→v3 so Patch 0418 gates apply
 // PATCH 0396 — Aggressive live-cache per user spec: 'always take live data'
 const CACHE_TTL_SHORT = 2 * 60;        // 2 min for fresh data (was 5)
 const CACHE_TTL_LONG = 10 * 60;        // 10 min for older lookback (was 30)
@@ -299,7 +299,11 @@ async function handleLiveFeed(req: NextRequest) {
   // 90-day TTL. On every request we check cache for ALL candidates first,
   // only extract + score NEW filings (not seen before) within the budget.
   // Universe grows monotonically across refreshes.
-  const SCORED_KEY = (hash: string) => `scored-filing:v2:${hash}`;
+  // PATCH 0419 — bumped v2 → v3 so all cached scored filings get
+  // re-evaluated with Patch 0418's loosened gates. Without this bump,
+  // the per-filing cache holds old NEUTRAL tier values from before
+  // the recalibration, and Top-10 stays empty.
+  const SCORED_KEY = (hash: string) => `scored-filing:v3:${hash}`;
   // PATCH 0413 — bumped 90 → 180 days per user request (6 months)
   const SCORED_TTL = 180 * 24 * 60 * 60;
 
