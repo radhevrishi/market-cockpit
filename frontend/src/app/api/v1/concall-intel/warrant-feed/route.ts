@@ -22,7 +22,10 @@ import {
   type WarrantFilingType, type WarrantDetails, type WarrantConvictionScore,
 } from '@/lib/warrant-momentum';
 
-const CACHE_KEY = (days: number) => `warrant-feed:v3:days:${days}`;  // v3: 60d + ranking
+// PATCH 0423 — bumped v3 → v4 to flush old scored payloads that lack the
+// extraction-diagnostics field and were computed before the broader
+// extractWarrantDetails patterns. Required to surface the new audit UI.
+const CACHE_KEY = (days: number) => `warrant-feed:v4:days:${days}`;
 const CACHE_TTL_SHORT = 5 * 60;
 const CACHE_TTL_LONG = 30 * 60;
 // PATCH 0422 — bumped 15 → 40 so more warrant candidates get full PDF

@@ -1252,6 +1252,38 @@ function WarrantMomentumFeed() {
                 <div style={{ fontSize: 9, color: '#6B7A8D', marginTop: 3, fontStyle: 'italic' }}>
                   Gate (≥ 8/10): A) promoter present · B) pricing ≥ -10% · C) no critical governance · D) breakout OR momentum present
                 </div>
+                {/* PATCH 0423 — extraction diagnostics. Shows user EXACTLY why a
+                    warrant scored low: which fields were missing from the PDF
+                    body, and which conviction gates failed. No black box. */}
+                {(f.conviction as any).diagnostics && (
+                  <div style={{ marginTop: 6, padding: '6px 8px', background: '#0A0E1A', border: '1px solid #1A2540', borderRadius: 4 }}>
+                    <div style={{ fontSize: 9, fontWeight: 800, color: '#94A3B8', letterSpacing: '0.4px', marginBottom: 3 }}>🔍 EXTRACTION DIAGNOSTICS</div>
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 4 }}>
+                      {[
+                        { lbl: 'PDF', ok: (f.conviction as any).diagnostics.pdf_extracted },
+                        { lbl: 'Promoter', ok: (f.conviction as any).diagnostics.promoter_subscribed_found },
+                        { lbl: 'Issue px', ok: (f.conviction as any).diagnostics.issue_price_found },
+                        { lbl: 'Conv period', ok: (f.conviction as any).diagnostics.conversion_period_found },
+                        { lbl: 'CMP', ok: (f.conviction as any).diagnostics.cmp_found },
+                        { lbl: 'Momentum', ok: (f.conviction as any).diagnostics.momentum_found },
+                      ].map((d, j) => (
+                        <span key={j} style={{ fontSize: 8, padding: '1px 5px', borderRadius: 3, background: d.ok ? '#10B98115' : '#EF444415', color: d.ok ? '#10B981' : '#EF4444', fontWeight: 700 }}>
+                          {d.ok ? '✓' : '✗'} {d.lbl}
+                        </span>
+                      ))}
+                    </div>
+                    {(f.conviction as any).diagnostics.gate_failures.length > 0 && (
+                      <div style={{ fontSize: 9, color: '#F59E0B' }}>
+                        <span style={{ fontWeight: 800 }}>FAILED GATES:</span> {(f.conviction as any).diagnostics.gate_failures.join(' · ')}
+                      </div>
+                    )}
+                    {(f.conviction as any).diagnostics.missing_fields.length > 0 && (
+                      <div style={{ fontSize: 9, color: '#94A3B8', fontStyle: 'italic', marginTop: 2 }}>
+                        missing: {(f.conviction as any).diagnostics.missing_fields.join(' · ')}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, color: '#6B7A8D', marginTop: 6 }}>

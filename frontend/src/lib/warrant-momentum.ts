@@ -113,37 +113,103 @@ export function extractWarrantDetails(text: string): WarrantDetails {
     is_promoter_subscribed: false,
   };
 
-  // Issue price: "₹ 150 per warrant", "Rs. 200/-", "issue price of Rs. 75"
-  const priceMatch = t.match(/(?:issue\s+price|warrant\s+price|exercise\s+price|conversion\s+price)\s+(?:of\s+)?(?:Rs\.?|₹|INR)\s*([\d,]+(?:\.\d+)?)/i) ||
-                     t.match(/(?:Rs\.?|₹|INR)\s*([\d,]+(?:\.\d+)?)\s*(?:per\s+warrant|each)/i);
-  if (priceMatch) out.issue_price = parseFloat(priceMatch[1].replace(/,/g, ''));
+  // PATCH 0423 — Substantially broadened. Previous narrow regexes caused every
+  // warrant to score ~2.5 because is_promoter_subscribed / issue_price /
+  // conversion_period_months / promoter_participation_pct were all null.
+  // Real NSE/BSE preferential allotment notices use varied phrasings.
 
-  // Warrant count: "1,00,000 warrants", "50 lakh warrants"
-  const countMatch = t.match(/([\d,]+(?:\.\d+)?)\s*(?:lakh|crore|cr)?\s*warrants?\b/i);
-  if (countMatch) {
-    let cnt = parseFloat(countMatch[1].replace(/,/g, ''));
-    if (/lakh/i.test(countMatch[0])) cnt *= 1e5;
-    if (/crore|cr\b/i.test(countMatch[0])) cnt *= 1e7;
-    out.warrant_count = cnt;
+  // Issue price — many variants
+  const pricePatterns = [
+    /(?:issue\s+price|warrant\s+(?:issue\s+)?price|exercise\s+price|conversion\s+price|subscription\s+price)\s+(?:of\s+|fixed\s+at\s+|determined\s+at\s+)?(?:Rs\.?|₹|INR)\s*([\d,]+(?:\.\d+)?)/i,
+    /(?:Rs\.?|₹|INR)\s*([\d,]+(?:\.\d+)?)\s*(?:\/?-?\s*)?(?:per\s+(?:warrant|equity\s+share|share)|each)/i,
+    /(?:price|at\s+a\s+price\s+of|at)\s+(?:Rs\.?|₹|INR)\s*([\d,]+(?:\.\d+)?)\s*(?:\/?-?\s*)?per\s+(?:warrant|share|equity)/i,
+    /(?:floor\s+price|minimum\s+price)\s+(?:of\s+|at\s+)?(?:Rs\.?|₹|INR)\s*([\d,]+(?:\.\d+)?)/i,
+    /(?:warrants?|shares?)\s+at\s+(?:Rs\.?|₹|INR)\s*([\d,]+(?:\.\d+)?)/i,
+    // ICDR reg 164 / 166 style: "shall not be less than Rs. X"
+    /(?:not\s+less\s+than|not\s+lower\s+than)\s+(?:Rs\.?|₹|INR)\s*([\d,]+(?:\.\d+)?)\s*(?:\/?-?\s*)?per/i,
+  ];
+  for (const re of pricePatterns) {
+    const m = t.match(re);
+    if (m) {
+      const v = parseFloat(m[1].replace(/,/g, ''));
+      if (Number.isFinite(v) && v > 0 && v < 1_000_000) { out.issue_price = v; break; }
+    }
   }
 
-  // Conversion period: "within 18 months", "convertible within 18 months"
-  const convMatch = t.match(/(?:within|over|in)\s+(\d+)\s+months/i);
-  if (convMatch) out.conversion_period_months = parseInt(convMatch[1]);
+  // Warrant count
+  const countMatch = t.match(/([\d,]+(?:\.\d+)?)\s*(?:lakh|crore|cr)?\s*(?:fully\s+(?:paid|paid[\s-]?up)\s+)?(?:convertible\s+)?warrants?\b/i);
+  if (countMatch) {
+    let cnt = parseFloat(countMatch[1].replace(/,/g, ''));
+    if (Number.isFinite(cnt)) {
+      if (/lakh/i.test(countMatch[0])) cnt *= 1e5;
+      if (/crore|\bcr\b/i.test(countMatch[0])) cnt *= 1e7;
+      if (cnt >= 1000) out.warrant_count = cnt;        // ignore tiny matches like "1 warrant"
+    }
+  }
 
-  // Total size: "₹ 250 Cr", "aggregating Rs. 100 crore"
-  const sizeMatch = t.match(/(?:aggregating|total|raising)\s+(?:up\s+to\s+)?(?:Rs\.?|₹|INR)\s*([\d,]+(?:\.\d+)?)\s*(?:cr|crore)/i);
-  if (sizeMatch) out.total_size_cr = parseFloat(sizeMatch[1].replace(/,/g, ''));
+  // Conversion period
+  const convPatterns = [
+    /(?:within|over|in|tenure\s+of|exercisable\s+(?:within|over)|convertible\s+(?:within|in))\s+(\d+)\s+(?:months|month)/i,
+    /(?:within|over|in|tenure\s+of)\s+(\d+(?:\.\d+)?)\s+(?:years|year)/i,
+    /(\d+)[\s-]?month\s+(?:conversion|exercise)\s+period/i,
+    /period\s+of\s+(\d+)\s+months/i,
+  ];
+  for (const re of convPatterns) {
+    const m = t.match(re);
+    if (m) {
+      let months = parseFloat(m[1]);
+      if (/years?\b/i.test(m[0])) months *= 12;
+      if (Number.isFinite(months) && months > 0 && months <= 120) { out.conversion_period_months = Math.round(months); break; }
+    }
+  }
 
-  // Promoter participation
-  out.is_promoter_subscribed = /\b(?:promoter|promoter\s+group)\s+(?:to\s+)?subscrib|allotment\s+to.*promoter|promoter.*subscrib|warrants?\s+(?:issued|allotted)\s+to\s+(?:promoter|promoter\s+group)/i.test(t);
+  // Total size
+  const sizePatterns = [
+    /(?:aggregating(?:\s+up\s+to)?|total|raising|raise(?:\s+up\s+to)?|amount(?:ing)?\s+to|size\s+of)\s+(?:Rs\.?|₹|INR)\s*([\d,]+(?:\.\d+)?)\s*(?:cr|crore|crores)/i,
+    /(?:Rs\.?|₹|INR)\s*([\d,]+(?:\.\d+)?)\s*(?:cr|crore|crores)\s+(?:through|via|by\s+way\s+of|by\s+issuing)/i,
+    /total\s+consideration\s+of\s+(?:Rs\.?|₹|INR)\s*([\d,]+(?:\.\d+)?)\s*(?:cr|crore|crores)/i,
+  ];
+  for (const re of sizePatterns) {
+    const m = t.match(re);
+    if (m) {
+      const v = parseFloat(m[1].replace(/,/g, ''));
+      if (Number.isFinite(v) && v > 0 && v < 200_000) { out.total_size_cr = v; break; }
+    }
+  }
 
-  // Promoter participation pct: "100% to promoter", "promoter participation of 70%"
-  const promPctMatch = t.match(/promoter[\s\w]{0,30}(\d{1,3}(?:\.\d+)?)\s*%/i) ||
-                       t.match(/(\d{1,3}(?:\.\d+)?)\s*%[\s\w]{0,20}promoter/i);
-  if (promPctMatch) {
-    const pct = parseFloat(promPctMatch[1]);
-    if (pct >= 0 && pct <= 100) out.promoter_participation_pct = pct;
+  // Promoter participation — much broader. The previous regex required exact
+  // "promoter ... subscribe" word order; misses real NSE phrasings like:
+  // "preferential allotment of warrants on a preferential basis to promoters",
+  // "warrants proposed to be issued and allotted to the promoter group",
+  // "the promoter and promoter group of the Company has agreed".
+  const promoterPatterns = [
+    /\b(?:promoter|promoter\s+group)\s+(?:has|have)?\s*(?:to\s+)?(?:agreed\s+to\s+|propose[ds]?\s+to\s+)?(?:subscrib|infus|invest)/i,
+    /(?:to|in\s+favour\s+of|in\s+favor\s+of)\s+(?:the\s+)?(?:promoter|promoter\s+group)/i,
+    /allotment\s+(?:to|in\s+favour\s+of|in\s+favor\s+of).{0,80}\bpromoter/i,
+    /(?:warrants?|securities|shares?)\s+(?:proposed\s+(?:to\s+be\s+)?|to\s+be\s+)?(?:issued|allotted)\s+(?:and\s+allotted\s+)?to\s+(?:the\s+)?(?:promoter|promoter\s+group)/i,
+    /promoter[s']?\s+(?:and\s+promoter\s+group['s]?\s+)?(?:participation|contribution|infusion|warrant)/i,
+    /(?:identified|designated)\s+(?:investor|allottee)s?.{0,40}promoter/i,
+    // ICDR Reg 164/166 promoter context
+    /\bpromoter[s']?(?:\s+group)?\s+category\s+(?:of\s+)?allotment/i,
+    // "Investor.*Promoter" table heading in PDFs
+    /\bpromoter\b.{0,30}\b(?:allottee|investor|subscriber|category)\b/i,
+  ];
+  out.is_promoter_subscribed = promoterPatterns.some(re => re.test(t));
+
+  // Promoter participation pct — broader proximity windows
+  const promPctPatterns = [
+    /promoter[\s\w]{0,40}(\d{1,3}(?:\.\d+)?)\s*%/i,
+    /(\d{1,3}(?:\.\d+)?)\s*%[\s\w]{0,40}(?:to\s+)?promoter/i,
+    /promoter\s+(?:and\s+promoter\s+group\s+)?(?:contribution|participation|subscription|allocation)[\s\w]{0,20}(\d{1,3}(?:\.\d+)?)\s*%/i,
+    // "100% of issue size to promoter"
+    /(\d{1,3}(?:\.\d+)?)\s*%\s+of\s+the\s+(?:issue|allotment).{0,40}promoter/i,
+  ];
+  for (const re of promPctPatterns) {
+    const m = t.match(re);
+    if (m) {
+      const pct = parseFloat(m[1]);
+      if (pct >= 0 && pct <= 100) { out.promoter_participation_pct = pct; break; }
+    }
   }
 
   return out;
@@ -155,12 +221,26 @@ export function extractWarrantDetails(text: string): WarrantDetails {
 
 // ─── Scoring engine ────────────────────────────────────────────────────────
 
+export interface WarrantExtractionDiagnostics {
+  pdf_extracted: boolean;            // did we get PDF body text at all?
+  issue_price_found: boolean;
+  promoter_subscribed_found: boolean;
+  promoter_pct_found: boolean;
+  conversion_period_found: boolean;
+  total_size_found: boolean;
+  cmp_found: boolean;                // did Yahoo return a CMP?
+  momentum_found: boolean;           // did concall scoring run?
+  missing_fields: string[];          // human-readable list of what's missing
+  gate_failures: string[];           // which of A/B/C/D failed and why
+}
+
 export interface WarrantConvictionScore {
   conviction: number;                // 0-10 final score
   raw_score: number;                 // pre-cap
   passes_gate: boolean;              // gate per user spec
   signals: string[];                 // POSITIVE drivers
   red_flags: string[];               // NEGATIVE auto-reject reasons
+  diagnostics: WarrantExtractionDiagnostics;  // PATCH 0423 — show user WHY score is low
   components: {
     promoter_participation: number;  // 0-3
     pricing_premium: number;         // -3 to +3 (premium good, discount bad)
@@ -313,12 +393,40 @@ export function scoreWarrantConviction(inputs: ScoreWarrantInputs): WarrantConvi
   const conviction = Math.max(0, Math.min(10, raw));
   const passes_gate = gateA && gateB && gateC && gateD && conviction >= 8;
 
+  // PATCH 0423 — extraction & gate-failure diagnostics so the UI can show
+  // WHY a warrant scored low instead of forcing the user to guess.
+  const missing_fields: string[] = [];
+  if (!details.is_promoter_subscribed) missing_fields.push('promoter participation');
+  if (details.issue_price == null) missing_fields.push('issue price');
+  if (details.conversion_period_months == null) missing_fields.push('conversion period');
+  if (details.total_size_cr == null) missing_fields.push('total size');
+  if (cmp == null) missing_fields.push('CMP (Yahoo)');
+  if (business_momentum_score == null) missing_fields.push('concall narrative score');
+  const gate_failures: string[] = [];
+  if (!gateA) gate_failures.push('A — no promoter subscription detected');
+  if (!gateB) gate_failures.push(`B — pricing deep-discount (${premium_pct?.toFixed(1)}%)`);
+  if (!gateC) gate_failures.push(`C — governance penalty (${c.governance_penalty.toFixed(1)})`);
+  if (!gateD) gate_failures.push('D — no breakout AND no concall momentum');
+  if (gateA && gateB && gateC && gateD && conviction < 8) gate_failures.push(`score ${conviction.toFixed(1)} below ≥8 floor`);
+
   return {
     conviction: Math.round(conviction * 10) / 10,
     raw_score: Math.round(raw * 10) / 10,
     passes_gate,
     signals,
     red_flags: redFlags,
+    diagnostics: {
+      pdf_extracted: details.issue_price != null || details.conversion_period_months != null || details.total_size_cr != null,
+      issue_price_found: details.issue_price != null,
+      promoter_subscribed_found: details.is_promoter_subscribed,
+      promoter_pct_found: details.promoter_participation_pct != null,
+      conversion_period_found: details.conversion_period_months != null,
+      total_size_found: details.total_size_cr != null,
+      cmp_found: cmp != null,
+      momentum_found: business_momentum_score != null,
+      missing_fields,
+      gate_failures,
+    },
     components: {
       promoter_participation: Math.round(c.promoter_participation * 10) / 10,
       pricing_premium: Math.round(c.pricing_premium * 10) / 10,
