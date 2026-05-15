@@ -164,7 +164,9 @@ export async function GET(req: NextRequest) {
     }
   }
   const bsePages = Math.min(12, Math.max(2, Math.ceil(days / 15)));
-  const totalBudgetMs = Math.min(35000, 12000 + Math.floor((days - 30) / 30) * 4000);
+  // PATCH 0409 — serialize sub-window fetches (parallel triggered NSE 429)
+  const totalBudgetMs = 14000;
+  const SUBWIN_CONCURRENCY = 2;
   const fetchSubWindow = (fromIsoW: string, toIsoW: string) => {
     const nseCtrl = new AbortController();
     const bseCtrl = new AbortController();
@@ -175,7 +177,15 @@ export async function GET(req: NextRequest) {
       fetchBSEAnnouncements({ signal: bseCtrl.signal, fromIso: fromIsoW, toIso: toIsoW, pages: bsePages }),
     ]).finally(() => { clearTimeout(tNse); clearTimeout(tBse); });
   };
-  const allResults = await Promise.all(subWindows.map(w => fetchSubWindow(w.fromIso, w.toIso)));
+  const allResults: Array<Awaited<ReturnType<typeof fetchSubWindow>>> = [];
+  for (let i = 0; i < subWindows.length; i += SUBWIN_CONCURRENCY) {
+    const batch = subWindows.slice(i, i + SUBWIN_CONCURRENCY);
+    const batchResults = await Promise.all(batch.map(w => fetchSubWindow(w.fromIso, w.toIso)));
+    allResults.push(...batchResults);
+    if (i + SUBWIN_CONCURRENCY < subWindows.length) {
+      await new Promise(r => setTimeout(r, 600 + Math.random() * 200));
+    }
+  }
 
   const merged = new Map<string, FilingRecord>();
   let nseStatus: string = 'NSE_EMPTY';

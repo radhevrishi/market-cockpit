@@ -32,7 +32,7 @@ import { applySectorOverlay, type SectorOverlayResult } from '@/lib/concall-sect
 // beneficiaries (Modern Insulators read-through pattern).
 import { scanBottleneck, type BottleneckSignal } from '@/lib/bottleneck-scanner';
 
-const CACHE_KEY = (days: number) => `concall-feed:v12:days:${days}`;  // v12: theme clusters + chunked fetch
+const CACHE_KEY = (days: number) => `concall-feed:v13:days:${days}`;  // v13: serialized sub-windows (fixes NSE 429)
 // PATCH 0396 — Aggressive live-cache per user spec: 'always take live data'
 const CACHE_TTL_SHORT = 2 * 60;        // 2 min for fresh data (was 5)
 const CACHE_TTL_LONG = 10 * 60;        // 10 min for older lookback (was 30)
@@ -150,22 +150,34 @@ export async function GET(req: NextRequest) {
   }
   const bsePages = Math.min(12, Math.max(2, Math.ceil(days / 15)));
 
-  // Parallel fetch with timeout budget. Total budget scales with window:
-  // 12s for ≤30d, +4s per additional 30d, capped at 35s.
-  const totalBudgetMs = Math.min(35000, 12000 + Math.floor((days - 30) / 30) * 4000);
+  // PATCH 0409 — serialize sub-window fetches with concurrency cap of 2.
+  // Previous version fired all 6 sub-windows in parallel — NSE
+  // rate-limited the burst and returned 429, dropping most filings.
+  // Symptom: 180d returned 3924 filings while 14d returned 76566. Now
+  // we batch 2 at a time with a 600ms jitter between batches.
+  const totalBudgetMs = 14000;            // per sub-window budget (tighter, since serial)
+  const SUBWIN_CONCURRENCY = 2;
   const fetchSubWindow = (fromIsoW: string, toIsoW: string) => {
     const nseCtrl = new AbortController();
     const bseCtrl = new AbortController();
     const tNse = setTimeout(() => nseCtrl.abort(), totalBudgetMs);
     const tBse = setTimeout(() => bseCtrl.abort(), totalBudgetMs);
-    const p = Promise.all([
+    return Promise.all([
       fetchNSEAnnouncements({ signal: nseCtrl.signal, fromIso: fromIsoW, toIso: toIsoW }),
       fetchBSEAnnouncements({ signal: bseCtrl.signal, fromIso: fromIsoW, toIso: toIsoW, pages: bsePages }),
     ]).finally(() => { clearTimeout(tNse); clearTimeout(tBse); });
-    return p;
   };
 
-  const allResults = await Promise.all(subWindows.map(w => fetchSubWindow(w.fromIso, w.toIso)));
+  const allResults: Array<Awaited<ReturnType<typeof fetchSubWindow>>> = [];
+  for (let i = 0; i < subWindows.length; i += SUBWIN_CONCURRENCY) {
+    const batch = subWindows.slice(i, i + SUBWIN_CONCURRENCY);
+    const batchResults = await Promise.all(batch.map(w => fetchSubWindow(w.fromIso, w.toIso)));
+    allResults.push(...batchResults);
+    // Small inter-batch delay so NSE's per-IP rate-limit window resets
+    if (i + SUBWIN_CONCURRENCY < subWindows.length) {
+      await new Promise(r => setTimeout(r, 600 + Math.random() * 200));
+    }
+  }
 
   // Merge + dedup across ALL sub-windows by content_hash
   const merged = new Map<string, FilingRecord>();
