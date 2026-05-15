@@ -1064,6 +1064,10 @@ function WarrantMomentumFeed() {
   const [passingOnly, setPassingOnly] = useState(true);
   const [days, setDays] = useState(7);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  // PATCH 0425 — ticker search box so user can probe coverage (e.g. is
+  // STLTECH detected at all? if so what fields extracted? if not, was the
+  // subject classified as a warrant filing?).
+  const [tickerSearch, setTickerSearch] = useState('');
 
   const fetchFeed = async (force = false) => {
     setLoading(true);
@@ -1071,7 +1075,8 @@ function WarrantMomentumFeed() {
     try {
       const params = new URLSearchParams({
         days: String(days),
-        threshold: passingOnly ? '8' : '0',
+        // PATCH 0425 — gate floor lowered 8 → 6.5 (also in scoreWarrantConviction)
+        threshold: passingOnly ? '6.5' : '0',
         ...(passingOnly ? { passingOnly: '1' } : {}),
         ...(force ? { force: '1' } : {}),
       });
@@ -1106,13 +1111,20 @@ function WarrantMomentumFeed() {
           <div style={{ fontSize: 10, color: '#94A3B8', marginTop: 2 }}>
             {data ? (
               <>
-                {data.count_total} filings · {data.count_relevant} warrant-related · <strong style={{ color: '#10B981' }}>{data.count_passing} passing strict gate (≥8/10)</strong>
+                {data.count_total} filings · {data.count_relevant} warrant-related · <strong style={{ color: '#10B981' }}>{data.count_passing} passing gate (≥6.5/10)</strong>
                 {lastRefresh && <> · refreshed {lastRefresh.toLocaleTimeString()}</>}
               </>
             ) : loading ? 'Loading…' : '—'}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* PATCH 0425 — ticker coverage probe */}
+          <input
+            value={tickerSearch}
+            onChange={(e) => setTickerSearch(e.target.value.toUpperCase())}
+            placeholder="🔍 ticker (STLTECH...)"
+            style={{ fontSize: 11, padding: '4px 8px', borderRadius: 5, border: `1px solid ${tickerSearch ? '#22D3EE' : '#1A2540'}`, background: '#0A1422', color: '#E6EDF3', width: 160, outline: 'none' }}
+          />
           <button onClick={() => setPassingOnly(v => !v)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: `1px solid ${passingOnly ? '#10B981' : '#1A2540'}`, background: passingOnly ? '#10B98120' : 'transparent', color: passingOnly ? '#10B981' : '#94A3B8', cursor: 'pointer' }}>
             ★ High conviction only {passingOnly ? '✓' : ''}
           </button>
@@ -1165,6 +1177,56 @@ function WarrantMomentumFeed() {
           → Show {data.count_relevant} below-threshold warrant filings (auto-relax gate)
         </button>
       )}
+
+      {/* PATCH 0425 — Ticker coverage probe panel.
+          When user types a ticker (e.g. STLTECH), surface ALL filings in
+          the dataset matching that symbol — classified or not — with
+          their classification + extraction-diagnostics. Answers the
+          'why is X missing?' question directly: was it classified as a
+          warrant filing? did its PDF get extracted? what failed? */}
+      {data && tickerSearch.trim() && (() => {
+        const q = tickerSearch.trim().toUpperCase();
+        const source: any[] = (data as any).ranked_all && (data as any).ranked_all.length > 0
+          ? (data as any).ranked_all
+          : data.filings;
+        const matches = (source || []).filter((r: any) =>
+          (r.symbol || '').toUpperCase().includes(q) ||
+          (r.company_name || '').toUpperCase().includes(q)
+        );
+        return (
+          <div style={{ marginBottom: 12, padding: 12, background: '#0A1422', border: '1px solid #22D3EE60', borderRadius: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 900, color: '#22D3EE', marginBottom: 8 }}>
+              🔍 COVERAGE PROBE: {q} — {matches.length} filing{matches.length === 1 ? '' : 's'} in last {days} days
+            </div>
+            {matches.length === 0 ? (
+              <div style={{ fontSize: 10, color: '#94A3B8', fontStyle: 'italic' }}>
+                Not classified as a warrant filing in this window. Could mean: (a) no warrant filing exists, (b) subject didn&apos;t match warrant patterns (try widening to 180d), (c) filing fell outside the per-sub-window NSE/BSE chunked fetch coverage. Toggle &quot;High conviction only&quot; OFF and widen to 180d for max coverage.
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 6 }}>
+                {matches.slice(0, 10).map((m: any, i: number) => (
+                  <div key={'probe-' + i} style={{ padding: 8, background: '#0D1623', border: '1px solid #1A2540', borderRadius: 5 }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3' }}>
+                      {m.symbol} <span style={{ fontSize: 9, color: '#94A3B8' }}>{m.warrant_type}</span>
+                      <span style={{ float: 'right', color: m.conviction.passes_gate ? '#10B981' : '#F59E0B', fontWeight: 900 }}>{m.conviction.conviction.toFixed(1)}/10</span>
+                    </div>
+                    <div style={{ fontSize: 9, color: '#94A3B8', marginTop: 2 }}>{m.subject?.slice(0, 110)}{m.subject?.length > 110 ? '…' : ''}</div>
+                    {m.conviction.diagnostics && (
+                      <div style={{ fontSize: 9, marginTop: 4, color: '#94A3B8' }}>
+                        {m.conviction.diagnostics.pdf_extracted ? '✓ PDF' : '✗ PDF NOT EXTRACTED'} ·
+                        {m.conviction.diagnostics.promoter_subscribed_found ? ' ✓ Promoter' : ' ✗ Promoter'} ·
+                        {m.conviction.diagnostics.issue_price_found ? ' ✓ Price' : ' ✗ Price'} ·
+                        {m.conviction.diagnostics.cmp_found ? ' ✓ CMP' : ' ✗ CMP'}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 9, color: '#6B7A8D', marginTop: 2 }}>{new Date(m.filing_datetime).toLocaleString()}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* PATCH 0406 — Top 10 Ranked Warrants pinned panel.
           PATCH 0411 — Renders from `ranked_all` (full ranked list,

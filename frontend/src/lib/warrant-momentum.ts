@@ -391,7 +391,13 @@ export function scoreWarrantConviction(inputs: ScoreWarrantInputs): WarrantConvi
   const gateD = c.breakout_relative_strength > 0 || c.business_momentum > 0;
 
   const conviction = Math.max(0, Math.min(10, raw));
-  const passes_gate = gateA && gateB && gateC && gateD && conviction >= 8;
+  // PATCH 0425 — Lowered passing floor 8 → 6.5. A pure-data warrant with
+  // promoter ✓ + near-52w-high + small-discount + concall momentum scores
+  // around 6.5-7.5; the prior 8-floor required ALL components to fire
+  // perfectly which essentially never happened on real-world data. Real
+  // institutional warrants (STLTECH-class promoter infusions) commonly
+  // land in the 6.5-7.5 conviction band, not 8+.
+  const passes_gate = gateA && gateB && gateC && gateD && conviction >= 6.5;
 
   // PATCH 0423 — extraction & gate-failure diagnostics so the UI can show
   // WHY a warrant scored low instead of forcing the user to guess.

@@ -22,10 +22,9 @@ import {
   type WarrantFilingType, type WarrantDetails, type WarrantConvictionScore,
 } from '@/lib/warrant-momentum';
 
-// PATCH 0423 — bumped v3 → v4 to flush old scored payloads that lack the
-// extraction-diagnostics field and were computed before the broader
-// extractWarrantDetails patterns. Required to surface the new audit UI.
-const CACHE_KEY = (days: number) => `warrant-feed:v4:days:${days}`;
+// PATCH 0425 — bumped v4 → v5: extraction priority queue + lowered gate
+// 8 → 6.5 means rankings shift. Flush old cached scored payloads.
+const CACHE_KEY = (days: number) => `warrant-feed:v5:days:${days}`;
 const CACHE_TTL_SHORT = 5 * 60;
 const CACHE_TTL_LONG = 30 * 60;
 // PATCH 0422 — bumped 15 → 40 so more warrant candidates get full PDF
@@ -280,7 +279,29 @@ async function handleWarrantFeed(req: NextRequest) {
     if (!wt) continue;
     candidates.push({ filing: f, warrant_type: wt });
   }
-  candidates.sort((a, b) => new Date(b.filing.filing_datetime).getTime() - new Date(a.filing.filing_datetime).getTime());
+  // PATCH 0425 — Extraction priority. User reported STLTECH/Sterlite
+  // (4.5Cr promoter warrants @ ₹24, ₹108 Cr to Twin Star Overseas) was
+  // missing from Top 10 because its PDF never got extracted. Only 40 of
+  // 129 candidates get full PDF body scoring; before this patch, the
+  // queue was sorted purely by recency, so a generic 'Outcome of Board
+  // Meeting' filing could push a specific 'Preferential Allotment of
+  // Warrants to Promoter Group' filing out of the extraction window.
+  // Now: higher-specificity classifications get PDF-extracted first,
+  // then within each tier by recency.
+  const TYPE_PRIORITY: Record<WarrantFilingType, number> = {
+    PROMOTER_WARRANT:        0,   // strongest signal — extract first
+    CONVERTIBLE_WARRANT:     1,
+    PREFERENTIAL_ALLOTMENT:  2,
+    WARRANT_CONVERSION:      3,
+    QIP_WARRANT:             4,
+    OTHER_WARRANT:           5,   // generic fallback — extract last
+  };
+  candidates.sort((a, b) => {
+    const pa = TYPE_PRIORITY[a.warrant_type];
+    const pb = TYPE_PRIORITY[b.warrant_type];
+    if (pa !== pb) return pa - pb;
+    return new Date(b.filing.filing_datetime).getTime() - new Date(a.filing.filing_datetime).getTime();
+  });
 
   // Phase 2: extract PDFs for top candidates (warrant details + concall context)
   // PATCH 0420 — bail PDF extraction entirely if already over budget
