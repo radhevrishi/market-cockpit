@@ -27,8 +27,12 @@ import { classifyFiling, scoreBullish, isHighBullishRaw, type BullishScore, type
 import { extractFirstPdf } from '@/lib/pdf-text-extractor';
 import { extractSections } from '@/lib/concall-sections';
 import { applySectorOverlay, type SectorOverlayResult } from '@/lib/concall-sector-overlays';
+// PATCH 0407 — Bottleneck Scanner + Sympathy beneficiary map.
+// Detects supply-chain bottlenecks in concall text and surfaces ecosystem
+// beneficiaries (Modern Insulators read-through pattern).
+import { scanBottleneck, type BottleneckSignal } from '@/lib/bottleneck-scanner';
 
-const CACHE_KEY = (days: number) => `concall-feed:v10:days:${days}`;  // v10: sector overlays
+const CACHE_KEY = (days: number) => `concall-feed:v11:days:${days}`;  // v11: bottleneck signals
 // PATCH 0396 — Aggressive live-cache per user spec: 'always take live data'
 const CACHE_TTL_SHORT = 2 * 60;        // 2 min for fresh data (was 5)
 const CACHE_TTL_LONG = 10 * 60;        // 10 min for older lookback (was 30)
@@ -54,6 +58,7 @@ interface ScoredFiling extends FilingRecord {
   pdf_pages?: number;
   pdf_failure_reason?: string;
   sector_overlay?: SectorOverlayResult;   // PATCH 0401
+  bottleneck?: BottleneckSignal;          // PATCH 0407 — supply-chain bottleneck detection
 }
 
 interface FeedPayload {
@@ -75,8 +80,9 @@ export const maxDuration = 60;  // PATCH 0388: extended for PDF extraction budge
 export async function GET(req: NextRequest) {
   // PATCH 0393 — max lookback bumped 30 → 60 days per user request
   // PATCH 0405 — bumped 60 → 90 days so Top-10 surfaces a wider universe
-  // over the full quarter window.
-  const days = Math.min(90, Math.max(1, parseInt(req.nextUrl.searchParams.get('days') || '7')));
+  // PATCH 0407 — bumped 90 → 180 days so user can validate historical
+  // signal calls (Dec 25-27 concalls etc.) against current engine
+  const days = Math.min(180, Math.max(1, parseInt(req.nextUrl.searchParams.get('days') || '7')));
   const exchangeFilter = (req.nextUrl.searchParams.get('exchange') || '').toUpperCase();
   const rawThreshold = parseFloat(req.nextUrl.searchParams.get('threshold') || '4');
   const bullishOnly = req.nextUrl.searchParams.get('bullishOnly') === '1';
@@ -204,6 +210,27 @@ export async function GET(req: NextRequest) {
       const newComp = Math.max(0, Math.min(10, (bullish.components as any).composite_score + compNudge));
       (bullish.components as any).composite_score = Math.round(newComp * 10) / 10;
     }
+    // PATCH 0407 — Run the Bottleneck Scanner on the same text. When a
+    // critical bottleneck fires (single-source / approved-vendor / qualification),
+    // boost the bullish raw + composite score because scarcity = pricing
+    // power = structural rerating fuel. Generic supply tightness gets a
+    // smaller boost.
+    const bottleneck = scanBottleneck(scoringText);
+    if (bottleneck.detected) {
+      // Weight is 3-8 from the scanner; translate to a raw-score nudge of
+      // up to +2.5 so it doesn't crowd out the main bullish signal.
+      const nudge = Math.min(2.5, bottleneck.weight / 3.2);
+      const newRaw = Math.max(-5, Math.min(10, bullish.raw_score + nudge));
+      const newScore = Math.max(0, Math.min(10, newRaw));
+      bullish.raw_score = Math.round(newRaw * 10) / 10;
+      bullish.score = Math.round(newScore * 10) / 10;
+      const newComp = Math.max(0, Math.min(10, (bullish.components as any).composite_score + nudge * 0.7));
+      (bullish.components as any).composite_score = Math.round(newComp * 10) / 10;
+      // Tag for visibility
+      if (!bullish.tags.includes('BOTTLENECK')) bullish.tags.push('BOTTLENECK');
+      if (bottleneck.critical && !bullish.tags.includes('CRITICAL_COMPONENT')) bullish.tags.push('CRITICAL_COMPONENT');
+    }
+
     const is_high_bullish = isHighBullishRaw(bullish, rawThreshold);
     all.push({
       ...f,
@@ -214,6 +241,7 @@ export async function GET(req: NextRequest) {
       pdf_pages: ext?.pages,
       pdf_failure_reason: ext?.failure,
       sector_overlay,
+      bottleneck: bottleneck.detected ? bottleneck : undefined,
     });
   }
 

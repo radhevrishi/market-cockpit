@@ -392,6 +392,7 @@ function LiveBullishFeed() {
             <option value={30}>30 days</option>
             <option value={60}>60 days</option>
             <option value={90}>90 days</option>
+            <option value={180}>180 days</option>
           </select>
           <button onClick={() => fetchFeed(true)} disabled={loading} style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 5, border: '1px solid #22D3EE', background: '#22D3EE20', color: '#22D3EE', cursor: loading ? 'wait' : 'pointer' }}>
             {loading ? '…' : '↻ Refresh'}
@@ -558,6 +559,40 @@ function LiveBullishFeed() {
                   ))}
                 </div>
               )}
+              {/* PATCH 0407 — Bottleneck + sympathy beneficiary read-through */}
+              {(f as any).bottleneck && (f as any).bottleneck.detected && (
+                <div style={{ marginTop: 6, padding: '8px 10px', background: 'linear-gradient(135deg, #F59E0B15, #EF444415)', border: `1px solid ${(f as any).bottleneck.critical ? '#EF4444' : '#F59E0B'}60`, borderRadius: 5 }}>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: (f as any).bottleneck.critical ? '#EF4444' : '#F59E0B', letterSpacing: '0.5px', marginBottom: 4 }}>
+                    {(f as any).bottleneck.critical ? '🚨 CRITICAL BOTTLENECK DETECTED' : '⚠ BOTTLENECK DETECTED'}
+                    {(f as any).bottleneck.components.length > 0 && (
+                      <span style={{ marginLeft: 8, fontSize: 9, color: '#C9D4E0', fontWeight: 700 }}>· components: {(f as any).bottleneck.components.join(', ')}</span>
+                    )}
+                  </div>
+                  {(f as any).bottleneck.evidence && (f as any).bottleneck.evidence.length > 0 && (
+                    <div style={{ fontSize: 10, color: '#C9D4E0', marginBottom: 4, fontStyle: 'italic' }}>
+                      &ldquo;{((f as any).bottleneck.evidence[0] || '').slice(0, 220)}{((f as any).bottleneck.evidence[0]?.length || 0) > 220 ? '…' : ''}&rdquo;
+                    </div>
+                  )}
+                  {(f as any).bottleneck.beneficiaries && (f as any).bottleneck.beneficiaries.length > 0 && (
+                    <div style={{ marginTop: 4 }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: '#94A3B8', letterSpacing: '0.4px', marginBottom: 3 }}>
+                        ★ POTENTIAL READ-THROUGH BENEFICIARIES (verify independently)
+                      </div>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        {((f as any).bottleneck.beneficiaries as string[]).slice(0, 8).map((b: string) => (
+                          <span key={b} style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, background: '#10B98120', color: '#10B981', border: '1px solid #10B98140' }}>{b}</span>
+                        ))}
+                      </div>
+                      {(f as any).bottleneck.sectors && (f as any).bottleneck.sectors.length > 0 && (
+                        <div style={{ fontSize: 9, color: '#94A3B8', marginTop: 3 }}>
+                          · sectors: {((f as any).bottleneck.sectors as string[]).join(' · ')}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* PATCH 0389 — Evidence sentences pulled from PDF */}
               {f.bullish.evidence && f.bullish.evidence.length > 0 && (() => {
                 const bull = f.bullish.evidence.filter(e => e.polarity === 'BULL' && !e.negated);
@@ -786,6 +821,7 @@ function WarrantMomentumFeed() {
             <option value={30}>30 days</option>
             <option value={60}>60 days</option>
             <option value={90}>90 days</option>
+            <option value={180}>180 days</option>
           </select>
           <button onClick={() => fetchFeed(true)} disabled={loading} style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 5, border: '1px solid #A78BFA', background: '#A78BFA20', color: '#A78BFA', cursor: loading ? 'wait' : 'pointer' }}>
             {loading ? '…' : '↻ Refresh'}
@@ -799,8 +835,25 @@ function WarrantMomentumFeed() {
         <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic', padding: '12px 0' }}>
           {data.count_relevant > 0
             ? `No warrants passing the strict gate in current filter. Total relevant: ${data.count_relevant}. Toggle "High conviction only" off to inspect.`
-            : 'No warrant filings detected yet. Try widening the date range.'}
+            : 'No warrant filings detected yet — try widening to 90/180 days or toggling "High conviction only" OFF so partial-conviction names also surface.'}
         </div>
+      )}
+
+      {/* PATCH 0407 — Auto-disable strict gate when zero filings exist
+          at the current threshold so the user sees a ranked list rather
+          than a dead-end empty state. Surfaces a notice that we relaxed
+          the gate. */}
+      {data && data.filings.length === 0 && data.count_relevant > 0 && passingOnly && !loading && (
+        <button
+          onClick={() => setPassingOnly(false)}
+          style={{
+            fontSize: 11, fontWeight: 700, padding: '6px 12px', borderRadius: 5,
+            border: '1px solid #F59E0B', background: '#F59E0B20', color: '#F59E0B',
+            cursor: 'pointer', marginTop: 6,
+          }}
+        >
+          → Show {data.count_relevant} below-threshold warrant filings (auto-relax gate)
+        </button>
       )}
 
       {/* PATCH 0406 — Top 10 Ranked Warrants pinned panel.
@@ -1095,6 +1148,7 @@ function KeywordWatchFeed() {
             <option value={30}>30 days</option>
             <option value={60}>60 days</option>
             <option value={90}>90 days</option>
+            <option value={180}>180 days</option>
           </select>
           <button onClick={() => fetchFeed(true)} disabled={loading} style={{ fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 5, border: '1px solid #22D3EE', background: '#22D3EE20', color: '#22D3EE', cursor: loading ? 'wait' : 'pointer' }}>
             {loading ? '…' : '↻ Refresh'}

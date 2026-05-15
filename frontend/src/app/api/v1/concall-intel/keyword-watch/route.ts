@@ -52,7 +52,8 @@ export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
   // PATCH 0405 — bumped 60 → 90 days for full-quarter view
-  const days = Math.min(90, Math.max(1, parseInt(req.nextUrl.searchParams.get('days') || '14')));
+  // PATCH 0407 — bumped 90 → 180 days for historical signal validation
+  const days = Math.min(180, Math.max(1, parseInt(req.nextUrl.searchParams.get('days') || '14')));
   const keywordsParam = (req.nextUrl.searchParams.get('keywords') || '').trim();
   const groupsParam = (req.nextUrl.searchParams.get('groups') || '').trim();
   const force = req.nextUrl.searchParams.get('force') === '1';

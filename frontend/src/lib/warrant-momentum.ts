@@ -22,22 +22,35 @@ export type WarrantFilingType =
   | 'QIP_WARRANT'
   | 'OTHER_WARRANT';
 
+// PATCH 0407 — broadened: previously many genuine warrant filings on NSE
+// came through as "Preferential Issue / Fund Raising" subjects without the
+// literal word "warrant" appearing — the actual warrant terms were in the
+// PDF body. Result was 0 warrants detected across 4600+ filings. New
+// patterns catch the umbrella categories (preferential / fund raising /
+// EGM consent / board meeting outcome with allotment), and the classifier
+// also accepts body text so PDF-extracted content surfaces warrants too.
 const WARRANT_PATTERNS: Array<{ type: WarrantFilingType; re: RegExp }> = [
   // Promoter warrant — strongest signal
   { type: 'PROMOTER_WARRANT',
     re: /(?:warrants?\s+(?:issued?|allotted?|allotment|to)\s+(?:promoter|promoter\s+group)|promoter[\s-]+warrants?|preferential\s+(?:issue|allotment).*promoter)/i },
-  // Preferential allotment (could be promoter or third-party)
+  // Preferential allotment (could be promoter or third-party). Common subject.
   { type: 'PREFERENTIAL_ALLOTMENT',
-    re: /preferential\s+(?:issue|allotment|offer)/i },
+    re: /preferential\s+(?:issue|allotment|offer|placement)|(?:issue|allotment)\s+on\s+(?:a\s+)?preferential\s+basis|allotment\s+of\s+(?:equity\s+shares\s+(?:and|or|with))?\s*warrants?/i },
   // Convertible warrant / equity warrant
   { type: 'CONVERTIBLE_WARRANT',
     re: /(?:convertible\s+warrants?|equity\s+warrants?|warrants?\s+convertible\s+into\s+equity)/i },
   // Warrant conversion notice (existing warrants being converted)
   { type: 'WARRANT_CONVERSION',
-    re: /(?:warrant\s+conversion|conversion\s+of\s+warrants?|exercise\s+of\s+warrants?)/i },
+    re: /(?:warrant\s+conversion|conversion\s+of\s+warrants?|exercise\s+of\s+warrants?|warrants?\s+(?:into|to)\s+equity\s+shares?)/i },
   // QIP with warrants
   { type: 'QIP_WARRANT',
     re: /(?:qualified\s+institutions?\s+placement|QIP).*warrants?/i },
+  // Fund raising via warrants — PATCH 0407
+  { type: 'PREFERENTIAL_ALLOTMENT',
+    re: /fund[\s-]?rais(?:e|ing).*(?:warrant|preferential)|equity\s+infusion\s+via\s+(?:warrant|preferential)/i },
+  // Notice/Outcome of EGM/Board for warrants — PATCH 0407
+  { type: 'PREFERENTIAL_ALLOTMENT',
+    re: /(?:notice|outcome|intimation)\s+of\s+(?:e?gm|annual\s+general\s+meeting|board\s+meeting).*(?:preferential|warrant)|(?:e?gm|board)\s+(?:approval|consent).*(?:preferential|warrant)/i },
   // Generic warrant mention as a fallback
   { type: 'OTHER_WARRANT',
     re: /\bwarrants?\b/i },
