@@ -22,9 +22,8 @@ import {
   type WarrantFilingType, type WarrantDetails, type WarrantConvictionScore,
 } from '@/lib/warrant-momentum';
 
-// PATCH 0427 — bumped v6 → v7: entity-group dedup + dilution_pct + revised
-// honest panel labeling require fresh re-rank.
-const CACHE_KEY = (days: number) => `warrant-feed:v7:days:${days}`;
+// PATCH 0428 — bumped v7 → v8: weighted-score formula + bucket field added.
+const CACHE_KEY = (days: number) => `warrant-feed:v8:days:${days}`;
 const CACHE_TTL_SHORT = 5 * 60;
 const CACHE_TTL_LONG = 30 * 60;
 // PATCH 0422 — bumped 15 → 40 so more warrant candidates get full PDF

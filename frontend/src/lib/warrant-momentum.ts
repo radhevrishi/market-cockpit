@@ -316,6 +316,16 @@ export interface WarrantConvictionScore {
   capital_use: CapitalUse;
   promoter_intent: PromoterIntent;
   dilution_pct?: number | null;     // PATCH 0427 — % equity expansion if warrants convert
+  // PATCH 0428 — Explicit weighted score per institutional review item 4.A:
+  // Score = funding_quality×0.35 + balance_sheet×0.30 + business_trajectory×0.25 − dilution_penalty×0.10
+  weighted: {
+    funding_quality: number;        // 0-10 — promoter intent + capital use quality
+    balance_sheet: number;          // 0-10 — leverage profile (proxy: lack of distress markers)
+    business_trajectory: number;    // 0-10 — concall momentum + 90d perf + 52w-high distance
+    dilution_penalty: number;       // 0-10 — capped at observed dilution %
+    final: number;                  // 0-10 — weighted composite
+  };
+  bucket: 'GREEN' | 'AMBER' | 'RED';  // PATCH 0428 — hard-filter rule output
   components: {
     promoter_participation: number;  // 0-3
     pricing_premium: number;         // -3 to +3 (premium good, discount bad)
@@ -560,6 +570,93 @@ export function scoreWarrantConviction(inputs: ScoreWarrantInputs): WarrantConvi
     tier_rationale = `Third-party financing; ${distressReasons.length > 0 ? distressReasons.join(', ') : 'unverified intent'}`;
   }
 
+  // PATCH 0428 — Explicit weighted score per institutional review item 4.A.
+  // Production-grade benchmark formula:
+  //   Score = 0.35×funding_quality + 0.30×balance_sheet + 0.25×business_trajectory − 0.10×dilution_penalty
+  //
+  // Each sub-score is 0-10. Funding quality rewards promoter intent +
+  // strategic capital use. Balance sheet rewards lack-of-distress markers.
+  // Business trajectory rewards concall momentum + price RS. Dilution
+  // penalty grows with measured / inferred dilution.
+  let funding_quality = 0;
+  if (details.promoter_intent === 'INCREASING_STAKE')  funding_quality += 4;
+  else if (details.promoter_intent === 'MAINTAINING_STAKE') funding_quality += 2.5;
+  else if (details.promoter_intent === 'THIRD_PARTY_ONLY') funding_quality += 1;
+  // EXITING / UNKNOWN add 0
+  if (details.capital_use === 'CAPEX')        funding_quality += 4;
+  else if (details.capital_use === 'ACQUISITION') funding_quality += 3.5;
+  else if (details.capital_use === 'DEBT_REPAY') funding_quality += 2;
+  else if (details.capital_use === 'WORKING_CAPITAL') funding_quality += 0.5;
+  else if (details.capital_use === 'GENERAL_CORPORATE') funding_quality += 0.5;
+  // Premium pricing supports funding quality
+  if (premium_pct != null && premium_pct >= 0) funding_quality += 2;
+  else if (premium_pct != null && premium_pct >= -10) funding_quality += 1;
+  funding_quality = Math.max(0, Math.min(10, funding_quality));
+
+  // Balance sheet score — proxy: inverse of distress probability
+  let balance_sheet = Math.max(0, 10 - distress * 10);
+  // Bonus when capital use is debt-repay or balance-sheet-strengthening with
+  // promoter support — net positive for the balance sheet
+  if (details.capital_use === 'DEBT_REPAY' && details.is_promoter_subscribed) balance_sheet = Math.min(10, balance_sheet + 1);
+  balance_sheet = Math.max(0, Math.min(10, balance_sheet));
+
+  // Business trajectory — concall momentum + price RS + 52w-high distance
+  let business_trajectory = 0;
+  if (business_momentum_score != null) business_trajectory += Math.min(5, business_momentum_score / 2);
+  if (perf_90d_pct != null) {
+    if (perf_90d_pct >= 30)      business_trajectory += 3;
+    else if (perf_90d_pct >= 15) business_trajectory += 2;
+    else if (perf_90d_pct >= 0)  business_trajectory += 1;
+    else if (perf_90d_pct <= -15) business_trajectory -= 1;
+  }
+  if (perf_52w_high_pct != null) {
+    if (perf_52w_high_pct >= -5) business_trajectory += 2;
+    else if (perf_52w_high_pct >= -15) business_trajectory += 1;
+  }
+  business_trajectory = Math.max(0, Math.min(10, business_trajectory));
+
+  // Dilution penalty — scaled to 0-10 from observed dilution %
+  let dilution_penalty = 0;
+  if (dilution_pct != null) {
+    // ≤5% → 0, 5-10% → 2, 10-20% → 5, ≥20% → 8, ≥30% → 10
+    if (dilution_pct >= 30)      dilution_penalty = 10;
+    else if (dilution_pct >= 20) dilution_penalty = 8;
+    else if (dilution_pct >= 10) dilution_penalty = 5;
+    else if (dilution_pct >= 5)  dilution_penalty = 2;
+  }
+  // Heavy issuer history compounds the dilution penalty
+  if (prior_warrant_perf.length >= 3) dilution_penalty = Math.min(10, dilution_penalty + 2);
+
+  const weighted_final = Math.max(0, Math.min(10,
+    0.35 * funding_quality +
+    0.30 * balance_sheet +
+    0.25 * business_trajectory -
+    0.10 * dilution_penalty
+  ));
+
+  const weighted = {
+    funding_quality:     Math.round(funding_quality * 10) / 10,
+    balance_sheet:       Math.round(balance_sheet * 10) / 10,
+    business_trajectory: Math.round(business_trajectory * 10) / 10,
+    dilution_penalty:    Math.round(dilution_penalty * 10) / 10,
+    final:               Math.round(weighted_final * 10) / 10,
+  };
+
+  // Hard-filter bucket rules — institutional review item 4.C.
+  // GREEN: weighted_final ≥ 6.5 AND tier=TIER_1 AND distress<0.30
+  // RED:   distress ≥ 0.55 OR weighted_final ≤ 3 OR (dilution_pct ≥ 20 AND
+  //        capital_use NOT in {CAPEX, ACQUISITION})
+  // AMBER: everything else
+  let bucket: 'GREEN' | 'AMBER' | 'RED';
+  if (distress >= 0.55 || weighted_final <= 3 ||
+      (dilution_pct != null && dilution_pct >= 20 && details.capital_use !== 'CAPEX' && details.capital_use !== 'ACQUISITION')) {
+    bucket = 'RED';
+  } else if (weighted_final >= 6.5 && tier === 'TIER_1_INSTITUTIONAL' && distress < 0.30) {
+    bucket = 'GREEN';
+  } else {
+    bucket = 'AMBER';
+  }
+
   return {
     conviction: Math.round(conviction * 10) / 10,
     raw_score: Math.round(raw * 10) / 10,
@@ -594,5 +691,7 @@ export function scoreWarrantConviction(inputs: ScoreWarrantInputs): WarrantConvi
     capital_use: details.capital_use,
     promoter_intent: details.promoter_intent,
     dilution_pct: dilution_pct != null ? Math.round(dilution_pct * 10) / 10 : null,
+    weighted: weighted,
+    bucket: bucket,
   };
 }

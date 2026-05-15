@@ -1228,12 +1228,91 @@ function WarrantMomentumFeed() {
         );
       })()}
 
-      {/* PATCH 0406/0411/0427 — Top 10 Ranked Warrants pinned panel.
-          PATCH 0427 — Honest labeling: rename header dynamically based on
-          tier composition. 'CONVICTION SHORTLIST' was misleading when 0
-          filings cross the gate. Now: 'TIER 1 INSTITUTIONAL' when any
-          Tier 1 exists, 'WARRANT EVENT SCANNER' when 0 Tier 1 + 0 passing,
-          so users don't mistake a list of 4.5 scores for actionable alpha. */}
+      {/* PATCH 0428 — BUCKETED RENDERING replaces flat Top 10 list.
+          Production-grade pattern (institutional review item 4.C):
+          🟢 STRATEGIC CAPITAL INFUSION — hard-filter passes
+          🟡 NEUTRAL RESTRUCTURING — partial signals
+          🔴 DISTRESS / SURVIVAL — auto-flagged via dilution + intent + use
+          User sees classification structure FIRST, not a soft-ranked list. */}
+      {data && (() => {
+        const source: any[] = (data as any).ranked_all && (data as any).ranked_all.length > 0
+          ? (data as any).ranked_all
+          : data.filings;
+        if (!source || source.length === 0) return null;
+        const green = source.filter((r: any) => r.conviction.bucket === 'GREEN');
+        const amber = source.filter((r: any) => r.conviction.bucket === 'AMBER').slice(0, 6);
+        const red   = source.filter((r: any) => r.conviction.bucket === 'RED').slice(0, 4);
+        // Sort each bucket by weighted final score
+        const byWeighted = (a: any, b: any) => (b.conviction.weighted?.final ?? 0) - (a.conviction.weighted?.final ?? 0);
+        green.sort(byWeighted); amber.sort(byWeighted); red.sort(byWeighted);
+        return (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 6, fontStyle: 'italic' }}>
+              ⚙ Weighted formula: <strong>0.35×funding_quality + 0.30×balance_sheet + 0.25×business_trajectory − 0.10×dilution_penalty</strong>
+              {' · '}Buckets are hard-filter rules, not soft rankings.
+            </div>
+            {([
+              { label: '🟢 STRATEGIC CAPITAL INFUSION', color: '#10B981', list: green, note: 'Tier 1 + low distress + weighted ≥ 6.5' },
+              { label: '🟡 NEUTRAL RESTRUCTURING',      color: '#F59E0B', list: amber, note: 'Partial signals — balance-sheet repair / unclear capital use / mixed' },
+              { label: '🔴 DISTRESS / SURVIVAL',         color: '#EF4444', list: red,   note: 'Distress ≥55% OR weighted ≤3 OR heavy dilution + non-strategic use' },
+            ] as Array<{ label: string; color: string; list: any[]; note: string }>).map((b, bi) => b.list.length === 0 ? (
+              <div key={'bk-' + bi} style={{ marginBottom: 8, padding: 8, background: `${b.color}08`, border: `1px dashed ${b.color}30`, borderRadius: 6, fontSize: 10, color: '#94A3B8' }}>
+                <strong style={{ color: b.color }}>{b.label}</strong> — none in this window. <span style={{ fontStyle: 'italic' }}>{b.note}</span>
+              </div>
+            ) : (
+              <div key={'bk-' + bi} style={{ marginBottom: 10, padding: 10, background: `${b.color}10`, border: `1px solid ${b.color}50`, borderRadius: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+                  <div style={{ fontSize: 11, fontWeight: 900, color: b.color, letterSpacing: '0.5px' }}>{b.label} · {b.list.length}</div>
+                  <div style={{ fontSize: 9, color: '#94A3B8', fontStyle: 'italic' }}>{b.note}</div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))', gap: 6 }}>
+                  {b.list.map((r: any, i: number) => {
+                    const w = r.conviction.weighted || {};
+                    return (
+                      <div key={'bk-card-' + bi + '-' + i} style={{ padding: 8, background: '#0A1422', border: `1px solid ${b.color}40`, borderRadius: 6 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 3 }}>
+                          <div>
+                            <span style={{ fontSize: 12, fontWeight: 900, color: '#E6EDF3' }}>{r.symbol || r.company_name}</span>
+                            {r.group_aliases && r.group_aliases.length > 0 && (
+                              <span title={`Related group entities: ${r.group_aliases.join(', ')}`} style={{ fontSize: 8, marginLeft: 6, color: '#A78BFA', fontWeight: 700 }}>+{r.group_aliases.length} grp</span>
+                            )}
+                          </div>
+                          <span title={`Weighted = 0.35×F + 0.30×BS + 0.25×BT − 0.10×D`} style={{ fontSize: 14, fontWeight: 900, color: b.color }}>{(w.final ?? 0).toFixed(1)}</span>
+                        </div>
+                        <div style={{ fontSize: 9, color: '#94A3B8', marginBottom: 4 }}>{r.company_name}</div>
+                        <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', fontSize: 8, marginBottom: 3 }}>
+                          <span title="Funding quality (promoter intent + capital use + premium)" style={{ padding: '1px 4px', borderRadius: 3, background: '#10B98115', color: '#10B981' }}>F {(w.funding_quality ?? 0).toFixed(1)}</span>
+                          <span title="Balance sheet (inverse of distress)" style={{ padding: '1px 4px', borderRadius: 3, background: '#22D3EE15', color: '#22D3EE' }}>BS {(w.balance_sheet ?? 0).toFixed(1)}</span>
+                          <span title="Business trajectory (concall + 90d + 52w-high)" style={{ padding: '1px 4px', borderRadius: 3, background: '#A78BFA15', color: '#A78BFA' }}>BT {(w.business_trajectory ?? 0).toFixed(1)}</span>
+                          <span title="Dilution penalty (scaled from dilution %)" style={{ padding: '1px 4px', borderRadius: 3, background: '#EF444415', color: '#EF4444' }}>−D {(w.dilution_penalty ?? 0).toFixed(1)}</span>
+                        </div>
+                        <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', fontSize: 8 }}>
+                          {r.conviction.capital_use && r.conviction.capital_use !== 'UNKNOWN' && (
+                            <span style={{ padding: '1px 4px', borderRadius: 3, background: '#1A2540', color: '#C9D4E0' }}>{r.conviction.capital_use.replace(/_/g, ' ')}</span>
+                          )}
+                          {r.conviction.promoter_intent && r.conviction.promoter_intent !== 'UNKNOWN' && (
+                            <span style={{ padding: '1px 4px', borderRadius: 3, background: '#1A2540', color: '#C9D4E0' }}>{r.conviction.promoter_intent.replace(/_/g, ' ')}</span>
+                          )}
+                          {r.conviction.dilution_pct != null && (
+                            <span style={{ padding: '1px 4px', borderRadius: 3, background: r.conviction.dilution_pct >= 15 ? '#EF444425' : '#1A2540', color: r.conviction.dilution_pct >= 15 ? '#EF4444' : '#94A3B8' }}>Dil {r.conviction.dilution_pct.toFixed(1)}%</span>
+                          )}
+                          {r.details.total_size_cr != null && (
+                            <span style={{ padding: '1px 4px', borderRadius: 3, background: '#1A2540', color: '#C9D4E0' }}>₹{r.details.total_size_cr.toFixed(0)}Cr</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
+
+      {/* PATCH 0406/0411/0427 — Legacy Top 10 Ranked Warrants panel,
+          kept BELOW the bucketed view for users who still want the
+          raw conviction ranking + diagnostics. */}
       {data && (() => {
         const source: any[] = (data as any).ranked_all && (data as any).ranked_all.length > 0
           ? (data as any).ranked_all
