@@ -93,6 +93,13 @@ export function classifyWarrantFiling(subject: string, body: string = ''): Warra
 
 // ─── Extraction helpers ────────────────────────────────────────────────────
 
+// PATCH 0426 — Capital use + promoter intent + tier classification
+// addressing institutional review: distinguish accretive vs dilutive vs
+// distress capital raises.
+export type CapitalUse = 'CAPEX' | 'DEBT_REPAY' | 'WORKING_CAPITAL' | 'ACQUISITION' | 'GENERAL_CORPORATE' | 'UNKNOWN';
+export type PromoterIntent = 'INCREASING_STAKE' | 'MAINTAINING_STAKE' | 'THIRD_PARTY_ONLY' | 'EXITING' | 'UNKNOWN';
+export type WarrantTier = 'TIER_1_INSTITUTIONAL' | 'TIER_2_NEUTRAL' | 'TIER_3_DISTRESS';
+
 export interface WarrantDetails {
   issue_price: number | null;          // ₹ per warrant
   warrant_count: number | null;        // total warrants issued
@@ -100,6 +107,11 @@ export interface WarrantDetails {
   promoter_participation_pct: number | null;  // % of issue going to promoters
   total_size_cr: number | null;        // ₹ Cr total fund-raise
   is_promoter_subscribed: boolean;     // does subject/body mention promoter participation?
+  // PATCH 0426 — new institutional fields
+  capital_use: CapitalUse;             // what the funds will be used for
+  capital_use_evidence: string;        // raw quote substring (debug)
+  promoter_intent: PromoterIntent;     // direction of promoter stake change
+  has_external_investor: boolean;      // non-promoter institutional allottee present
 }
 
 export function extractWarrantDetails(text: string): WarrantDetails {
@@ -111,6 +123,10 @@ export function extractWarrantDetails(text: string): WarrantDetails {
     promoter_participation_pct: null,
     total_size_cr: null,
     is_promoter_subscribed: false,
+    capital_use: 'UNKNOWN',
+    capital_use_evidence: '',
+    promoter_intent: 'UNKNOWN',
+    has_external_investor: false,
   };
 
   // PATCH 0423 — Substantially broadened. Previous narrow regexes caused every
@@ -212,6 +228,58 @@ export function extractWarrantDetails(text: string): WarrantDetails {
     }
   }
 
+  // PATCH 0426 — Capital use tagger. Scan PDF body for "use of proceeds"
+  // language. Tier-1 institutional warrants identify CAPEX or strategic
+  // acquisition; Tier-3 distress warrants identify debt-repay or
+  // general-corporate-purposes (a euphemism for working-capital plug).
+  const CAPITAL_USE_PATTERNS: Array<{ use: CapitalUse; re: RegExp }> = [
+    { use: 'ACQUISITION',
+      re: /\b(?:funding\s+the\s+)?(?:proposed\s+)?acquisition|inorganic\s+(?:growth|expansion)|acquire\s+(?:stake|business|subsidiary|target)|m&a\s+activity|business\s+combination/i },
+    { use: 'CAPEX',
+      re: /\b(?:capex|capital\s+expenditure|capacity\s+expansion|setting\s+up\s+(?:new\s+)?(?:plant|facility|unit|line)|greenfield|brownfield|new\s+(?:manufacturing\s+)?(?:facility|plant|unit)|expansion\s+of\s+(?:existing\s+)?(?:manufacturing|production|capacity))/i },
+    { use: 'DEBT_REPAY',
+      re: /\b(?:debt\s+(?:repayment|reduction)|repay(?:ing|ment)\s+(?:of\s+)?(?:outstanding\s+)?(?:debt|loan|borrowings?)|pre[\s-]?pay(?:ment)?\s+(?:of\s+)?(?:loans?|debt|term\s+loan)|reduce\s+(?:our\s+)?(?:debt|indebtedness|leverage)|deleveraging|balance[\s-]?sheet\s+(?:strengthening|repair|restructuring))/i },
+    { use: 'WORKING_CAPITAL',
+      re: /\bworking\s+capital(?:\s+(?:requirements?|needs|gap|management|support))?|liquidity\s+(?:support|management|cushion)|operational\s+(?:cash\s+)?requirements?/i },
+    { use: 'GENERAL_CORPORATE',
+      re: /\bgeneral\s+corporate\s+(?:purposes?|requirements?)|general\s+(?:business|funding)\s+(?:purposes?|requirements?)/i },
+  ];
+  for (const { use, re } of CAPITAL_USE_PATTERNS) {
+    const m = t.match(re);
+    if (m) {
+      out.capital_use = use;
+      // Capture context around the match for transparency
+      const idx = m.index ?? 0;
+      const ctxStart = Math.max(0, idx - 30);
+      const ctxEnd = Math.min(t.length, idx + m[0].length + 60);
+      out.capital_use_evidence = t.slice(ctxStart, ctxEnd).replace(/\s+/g, ' ').trim();
+      break;
+    }
+  }
+
+  // PATCH 0426 — External investor detection (non-promoter institutional
+  // allottees). FII / FPI / mutual fund / PE name signals a third-party
+  // capital raise.
+  out.has_external_investor = /\b(?:foreign\s+portfolio\s+investor|FPI|FII|mutual\s+fund|private\s+equity|sovereign\s+(?:wealth\s+)?fund|venture\s+capital|institutional\s+investor|qualified\s+institutional\s+(?:buyer|placement)|external\s+investor|public\s+investor)\b/i.test(t) ||
+    // Look for typical third-party allottee patterns (Twin Star Overseas is
+    // a promoter entity but most third-party names follow 'XYZ Holdings',
+    // 'ABC Capital', 'XYZ Partners').
+    /\ballottee[s]?\s*(?:include|are)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Capital|Partners|Holdings|Investments|Advisors|Fund|Trust)/i.test(t);
+
+  // PATCH 0426 — Promoter intent classifier. Combine promoter participation
+  // flag + external-investor flag + explicit stake-direction language.
+  const incRegex = /\b(?:promoter\s+(?:holding|stake)\s+(?:will\s+)?(?:rise|increase|go\s+up)|increase\s+(?:in\s+)?promoter\s+(?:holding|stake|equity))/i;
+  const decRegex = /\b(?:promoter\s+(?:holding|stake)\s+(?:will\s+)?(?:decrease|fall|reduce)|reduction\s+in\s+promoter\s+(?:holding|stake)|promoter\s+(?:exiting|divest))/i;
+  if (decRegex.test(t)) {
+    out.promoter_intent = 'EXITING';
+  } else if (incRegex.test(t) || (out.is_promoter_subscribed && (out.promoter_participation_pct ?? 0) >= 50)) {
+    out.promoter_intent = 'INCREASING_STAKE';
+  } else if (out.is_promoter_subscribed && !out.has_external_investor) {
+    out.promoter_intent = 'MAINTAINING_STAKE';
+  } else if (!out.is_promoter_subscribed && out.has_external_investor) {
+    out.promoter_intent = 'THIRD_PARTY_ONLY';
+  }
+
   return out;
 }
 
@@ -241,6 +309,12 @@ export interface WarrantConvictionScore {
   signals: string[];                 // POSITIVE drivers
   red_flags: string[];               // NEGATIVE auto-reject reasons
   diagnostics: WarrantExtractionDiagnostics;  // PATCH 0423 — show user WHY score is low
+  // PATCH 0426 — Institutional tier rollup + distress probability
+  tier: WarrantTier;                 // institutional / neutral / distress
+  tier_rationale: string;
+  distress_probability: number;     // 0-1 — likelihood this is dilutive/stress financing
+  capital_use: CapitalUse;
+  promoter_intent: PromoterIntent;
   components: {
     promoter_participation: number;  // 0-3
     pricing_premium: number;         // -3 to +3 (premium good, discount bad)
@@ -413,7 +487,54 @@ export function scoreWarrantConviction(inputs: ScoreWarrantInputs): WarrantConvi
   if (!gateB) gate_failures.push(`B — pricing deep-discount (${premium_pct?.toFixed(1)}%)`);
   if (!gateC) gate_failures.push(`C — governance penalty (${c.governance_penalty.toFixed(1)})`);
   if (!gateD) gate_failures.push('D — no breakout AND no concall momentum');
-  if (gateA && gateB && gateC && gateD && conviction < 8) gate_failures.push(`score ${conviction.toFixed(1)} below ≥8 floor`);
+  if (gateA && gateB && gateC && gateD && conviction < 6.5) gate_failures.push(`score ${conviction.toFixed(1)} below ≥6.5 floor`);
+
+  // PATCH 0426 — Distress probability + Tier classification.
+  // Distress signals (each +0.20):
+  //   1. ≥2 prior warrants in history (repeat issuer)
+  //   2. Issue price < CMP × 0.75 (deep discount)
+  //   3. Microcap (<300 Cr if known)
+  //   4. Capital use = DEBT_REPAY or WORKING_CAPITAL or GENERAL_CORPORATE
+  //   5. Third-party only (no promoter participation)
+  let distress = 0;
+  const distressReasons: string[] = [];
+  if (prior_warrant_perf.length >= 2) { distress += 0.20; distressReasons.push('repeat issuer'); }
+  if (premium_pct != null && premium_pct < -25) { distress += 0.25; distressReasons.push('deep discount'); }
+  if (market_cap_cr != null && market_cap_cr < 300) { distress += 0.15; distressReasons.push('microcap'); }
+  if (details.capital_use === 'DEBT_REPAY' || details.capital_use === 'WORKING_CAPITAL' || details.capital_use === 'GENERAL_CORPORATE') {
+    distress += 0.20; distressReasons.push(`capital use = ${details.capital_use.toLowerCase().replace(/_/g, ' ')}`);
+  }
+  if (details.promoter_intent === 'THIRD_PARTY_ONLY') { distress += 0.15; distressReasons.push('no promoter skin'); }
+  if (details.promoter_intent === 'EXITING') { distress += 0.30; distressReasons.push('promoter exiting'); }
+  distress = Math.min(1, distress);
+
+  // Tier classification — institutional / neutral / distress
+  let tier: WarrantTier;
+  let tier_rationale: string;
+  if (details.capital_use === 'CAPEX' || details.capital_use === 'ACQUISITION') {
+    if (details.promoter_intent === 'INCREASING_STAKE' && premium_pct != null && premium_pct >= 0 && distress < 0.30) {
+      tier = 'TIER_1_INSTITUTIONAL';
+      tier_rationale = `Promoter increasing stake + ${details.capital_use === 'CAPEX' ? 'CAPEX' : 'acquisition'} funding + premium pricing`;
+    } else if (distress >= 0.50) {
+      tier = 'TIER_3_DISTRESS';
+      tier_rationale = `Despite ${details.capital_use.toLowerCase()} use, distress signals: ${distressReasons.join(', ')}`;
+    } else {
+      tier = 'TIER_2_NEUTRAL';
+      tier_rationale = `${details.capital_use === 'CAPEX' ? 'CAPEX' : 'Acquisition'} funding but ${distressReasons.length > 0 ? distressReasons.join(', ') : 'mixed signals'}`;
+    }
+  } else if (distress >= 0.50) {
+    tier = 'TIER_3_DISTRESS';
+    tier_rationale = `Distress markers: ${distressReasons.join(', ')}`;
+  } else if (details.capital_use === 'DEBT_REPAY' && details.is_promoter_subscribed && distress < 0.40) {
+    tier = 'TIER_2_NEUTRAL';
+    tier_rationale = 'Balance-sheet repair with promoter support — neutral';
+  } else if (details.is_promoter_subscribed) {
+    tier = 'TIER_2_NEUTRAL';
+    tier_rationale = 'Promoter participating but capital use unclear / non-strategic';
+  } else {
+    tier = 'TIER_3_DISTRESS';
+    tier_rationale = `Third-party financing; ${distressReasons.length > 0 ? distressReasons.join(', ') : 'unverified intent'}`;
+  }
 
   return {
     conviction: Math.round(conviction * 10) / 10,
@@ -443,5 +564,10 @@ export function scoreWarrantConviction(inputs: ScoreWarrantInputs): WarrantConvi
     },
     premium_pct: premium_pct != null ? Math.round(premium_pct * 10) / 10 : null,
     history_summary,
+    tier,
+    tier_rationale,
+    distress_probability: Math.round(distress * 100) / 100,
+    capital_use: details.capital_use,
+    promoter_intent: details.promoter_intent,
   };
 }

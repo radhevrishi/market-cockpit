@@ -1300,6 +1300,45 @@ function WarrantMomentumFeed() {
 
               <div style={{ fontSize: 11, color: '#C9D4E0', marginBottom: 6, lineHeight: 1.4 }}>{f.subject}</div>
 
+              {/* PATCH 0426 — Tier 1/2/3 classification + capital use + promoter intent + distress strip */}
+              {(f.conviction as any).tier && (() => {
+                const tier = (f.conviction as any).tier;
+                const tierColor = tier === 'TIER_1_INSTITUTIONAL' ? '#10B981' : tier === 'TIER_2_NEUTRAL' ? '#22D3EE' : '#EF4444';
+                const tierLabel = tier === 'TIER_1_INSTITUTIONAL' ? '🏆 TIER 1 — INSTITUTIONAL'
+                                : tier === 'TIER_2_NEUTRAL'       ? '◐ TIER 2 — NEUTRAL'
+                                                                  : '⚠ TIER 3 — DISTRESS';
+                const cap = (f.conviction as any).capital_use;
+                const capColor = cap === 'CAPEX' || cap === 'ACQUISITION' ? '#10B981'
+                              : cap === 'DEBT_REPAY' ? '#F59E0B'
+                              : cap === 'WORKING_CAPITAL' || cap === 'GENERAL_CORPORATE' ? '#EF4444'
+                              : '#94A3B8';
+                const intent = (f.conviction as any).promoter_intent;
+                const intentColor = intent === 'INCREASING_STAKE' ? '#10B981'
+                                  : intent === 'MAINTAINING_STAKE' ? '#22D3EE'
+                                  : intent === 'EXITING' ? '#EF4444'
+                                  : intent === 'THIRD_PARTY_ONLY' ? '#F59E0B' : '#94A3B8';
+                const distress = (f.conviction as any).distress_probability ?? 0;
+                return (
+                  <div style={{ marginBottom: 6, padding: '6px 8px', background: `${tierColor}10`, border: `1px solid ${tierColor}50`, borderRadius: 4 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 3 }}>
+                      <span style={{ fontSize: 10, fontWeight: 900, color: tierColor, letterSpacing: '0.4px' }}>{tierLabel}</span>
+                      <span title="0 = clean institutional, 1.0 = clear distress" style={{ fontSize: 9, color: distress >= 0.5 ? '#EF4444' : distress >= 0.3 ? '#F59E0B' : '#10B981', fontWeight: 700 }}>
+                        Distress P = {(distress * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 3 }}>
+                      <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: `${capColor}15`, color: capColor, fontWeight: 700 }}>
+                        💰 Use: {cap?.replace(/_/g, ' ') || 'UNKNOWN'}
+                      </span>
+                      <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: `${intentColor}15`, color: intentColor, fontWeight: 700 }}>
+                        👥 Promoter: {intent?.replace(/_/g, ' ') || 'UNKNOWN'}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 9, color: '#94A3B8', fontStyle: 'italic' }}>{(f.conviction as any).tier_rationale}</div>
+                  </div>
+                );
+              })()}
+
               {/* Key facts */}
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 6, fontSize: 10 }}>
                 {f.details.issue_price != null && (

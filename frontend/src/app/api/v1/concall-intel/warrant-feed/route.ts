@@ -22,9 +22,9 @@ import {
   type WarrantFilingType, type WarrantDetails, type WarrantConvictionScore,
 } from '@/lib/warrant-momentum';
 
-// PATCH 0425 — bumped v4 → v5: extraction priority queue + lowered gate
-// 8 → 6.5 means rankings shift. Flush old cached scored payloads.
-const CACHE_KEY = (days: number) => `warrant-feed:v5:days:${days}`;
+// PATCH 0426 — bumped v5 → v6: dedup + tier classification + capital use +
+// distress probability are new score fields requiring fresh computation.
+const CACHE_KEY = (days: number) => `warrant-feed:v6:days:${days}`;
 const CACHE_TTL_SHORT = 5 * 60;
 const CACHE_TTL_LONG = 30 * 60;
 // PATCH 0422 — bumped 15 → 40 so more warrant candidates get full PDF
@@ -387,8 +387,36 @@ async function handleWarrantFeed(req: NextRequest) {
     }
   }
 
+  // PATCH 0426 — DEDUPLICATION. The same warrant transaction can produce
+  // 3-4 filings (Outcome of Board Meeting + Postal Ballot Notice + EGM
+  // Approval + Allotment Done), each separate content_hash. Top-10 was
+  // showing GMRP&UI ×2, JETFREIGHT ×2, CENTUM ×2. Collapse by
+  // (symbol, 14-day-bucket) keeping the highest-conviction filing with
+  // the richest extraction (most fields populated).
+  const dedupBuckets = new Map<string, typeof all[number]>();
+  for (const sf of all) {
+    const sym = (sf.symbol || sf.company_name || '').toUpperCase();
+    const dateMs = new Date(sf.filing_datetime).getTime();
+    const bucketStart = Math.floor(dateMs / (14 * 24 * 60 * 60 * 1000));
+    const key = `${sym}:${bucketStart}`;
+    const existing = dedupBuckets.get(key);
+    if (!existing) { dedupBuckets.set(key, sf); continue; }
+    // Prefer higher conviction; tie-break on extraction richness
+    const richness = (s: typeof sf) =>
+      (s.conviction.diagnostics.pdf_extracted ? 1 : 0) +
+      (s.conviction.diagnostics.promoter_subscribed_found ? 1 : 0) +
+      (s.conviction.diagnostics.issue_price_found ? 1 : 0) +
+      (s.conviction.diagnostics.conversion_period_found ? 1 : 0) +
+      (s.conviction.diagnostics.total_size_found ? 1 : 0);
+    if (sf.conviction.conviction > existing.conviction.conviction ||
+        (sf.conviction.conviction === existing.conviction.conviction && richness(sf) > richness(existing))) {
+      dedupBuckets.set(key, sf);
+    }
+  }
+  const deduped = Array.from(dedupBuckets.values());
+
   // Sort: passing gate first, then conviction desc
-  all.sort((a, b) => {
+  deduped.sort((a, b) => {
     if (a.conviction.passes_gate !== b.conviction.passes_gate) return a.conviction.passes_gate ? -1 : 1;
     return b.conviction.conviction - a.conviction.conviction;
   });
@@ -396,9 +424,9 @@ async function handleWarrantFeed(req: NextRequest) {
   const payload: WarrantFeedPayload = {
     generated_at: new Date().toISOString(),
     count_total: merged.size,
-    count_relevant: all.length,
-    count_passing: all.filter(x => x.conviction.passes_gate).length,
-    filings: all,
+    count_relevant: deduped.length,
+    count_passing: deduped.filter(x => x.conviction.passes_gate).length,
+    filings: deduped,
     sources: { nse: nseResult.source, bse: bseResult.source },
   };
 
