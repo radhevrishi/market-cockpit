@@ -34,8 +34,10 @@ import { scanBottleneck, type BottleneckSignal } from '@/lib/bottleneck-scanner'
 // PATCH 0410 — Evidence Hierarchy: filing-type confidence + numeric anchors
 // + boilerplate suppression + strict ULTRA gate.
 import { applyEvidenceHierarchy, type EvidenceHierarchyResult } from '@/lib/evidence-hierarchy';
+// PATCH 0424 — Economic Translation Layer (institutional review item 4.1-4.4)
+import { predictEarningsDelta, type EarningsDelta } from '@/lib/economic-translation';
 
-const CACHE_KEY = (days: number) => `concall-feed:v23:days:${days}`;  // v23: scored-filing cache bumped v2→v3 so Patch 0418 gates apply
+const CACHE_KEY = (days: number) => `concall-feed:v24:days:${days}`;  // v24: Patch 0424 adds earnings_delta field per filing
 // PATCH 0396 — Aggressive live-cache per user spec: 'always take live data'
 const CACHE_TTL_SHORT = 2 * 60;        // 2 min for fresh data (was 5)
 const CACHE_TTL_LONG = 10 * 60;        // 10 min for older lookback (was 30)
@@ -73,6 +75,7 @@ interface ScoredFiling extends FilingRecord {
   sector_overlay?: SectorOverlayResult;   // PATCH 0401
   bottleneck?: BottleneckSignal;          // PATCH 0407 — supply-chain bottleneck detection
   evidence?: EvidenceHierarchyResult;     // PATCH 0410 — institutional evidence hierarchy
+  earnings_delta?: EarningsDelta;         // PATCH 0424 — economic translation: revenue/margin direction
 }
 
 // PATCH 0408 — Cross-Company Theme Cluster.
@@ -534,6 +537,26 @@ async function handleLiveFeed(req: NextRequest) {
     const is_high_bullish =
       evidence.adjusted_tier === 'ULTRA_BULLISH' ||
       evidence.adjusted_tier === 'BULLISH';
+    // PATCH 0424 — Economic Translation. Aggregate the per-tag economic
+    // sensitivities into a directional read on revenue / margin / cycle +
+    // the 2-axis Narrative-vs-Financial split (review item 4.5).
+    const positive_tags: string[] = (bullish.tags || []).filter((t: any) =>
+      !/^⚠/.test(String(t)) && !/(Slowdown|Delay|Cancel|One-off|Pricing pressure|GNPA|Lower utiliz|Near-term|Cautious)/i.test(String(t))
+    );
+    const negative_tags: string[] = (bullish.red_flags || []).map((rf: any) =>
+      typeof rf === 'string' ? rf : (rf?.tag || rf?.label || String(rf))
+    );
+    const earnings_delta = predictEarningsDelta({
+      positive_tags,
+      negative_tags,
+      has_numeric_anchor: !!(evidence as any)?.numeric_anchors_count || !!(evidence as any)?.tier1_financial_evidence,
+      has_concrete_guidance: !!(evidence as any)?.has_concrete_guidance || positive_tags.includes('Guidance'),
+      narrative_score_raw: bullish.score ?? 0,
+      composite_score: (bullish.components as any)?.composite_score ?? bullish.score ?? 0,
+      bottleneck_detected: bottleneck.detected,
+      bottleneck_critical: bottleneck.critical,
+    });
+
     const scored: ScoredFiling = {
       ...f,
       filing_type,
@@ -545,6 +568,7 @@ async function handleLiveFeed(req: NextRequest) {
       sector_overlay,
       bottleneck: bottleneck.detected ? bottleneck : undefined,
       evidence,
+      earnings_delta,
     };
     all.push(scored);
     // PATCH 0412 — track for KV write-back so future requests skip extraction

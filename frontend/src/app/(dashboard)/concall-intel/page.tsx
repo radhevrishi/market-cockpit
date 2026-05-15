@@ -871,6 +871,59 @@ function LiveBullishFeed() {
                   </div>
                 );
               })()}
+
+              {/* PATCH 0424 — Earnings Delta Predictor + Narrative-vs-Financial
+                  2-axis split. Institutional review item 4.4 + 4.5.
+                  Translates concall tags into directional revenue / margin
+                  reads + a story-vs-numbers split so users can spot the
+                  "strong story / weak earnings" mismatch class. */}
+              {(f as any).earnings_delta && (
+                <div style={{ marginTop: 6, padding: '7px 9px', background: 'linear-gradient(135deg, #06B6D410, #A78BFA08)', border: '1px solid #06B6D440', borderRadius: 4 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, fontWeight: 800, color: '#06B6D4', letterSpacing: '0.4px' }}>
+                      💡 EARNINGS DELTA · <span style={{ color:
+                        (f as any).earnings_delta.net_read === 'BULLISH' ? '#10B981' :
+                        (f as any).earnings_delta.net_read === 'BEARISH' ? '#EF4444' :
+                        (f as any).earnings_delta.net_read === 'MIXED'   ? '#F59E0B' : '#94A3B8'
+                      }}>{(f as any).earnings_delta.net_read}</span>
+                    </span>
+                    <span style={{ fontSize: 9, color: '#94A3B8', fontStyle: 'italic' }}>{(f as any).earnings_delta.rationale}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
+                    {[
+                      { lbl: 'Revenue',
+                        val: `${(f as any).earnings_delta.revenue_direction === 'POSITIVE' ? '↑' : (f as any).earnings_delta.revenue_direction === 'NEGATIVE' ? '↓' : '→'} ${(f as any).earnings_delta.revenue_magnitude}`,
+                        color: (f as any).earnings_delta.revenue_direction === 'POSITIVE' ? '#10B981' : (f as any).earnings_delta.revenue_direction === 'NEGATIVE' ? '#EF4444' : '#94A3B8' },
+                      { lbl: 'Margin',
+                        val: `${(f as any).earnings_delta.margin_direction === 'POSITIVE' ? '↑' : (f as any).earnings_delta.margin_direction === 'NEGATIVE' ? '↓' : '→'} ${(f as any).earnings_delta.margin_magnitude}`,
+                        color: (f as any).earnings_delta.margin_direction === 'POSITIVE' ? '#10B981' : (f as any).earnings_delta.margin_direction === 'NEGATIVE' ? '#EF4444' : '#94A3B8' },
+                      { lbl: 'Cycle risk',
+                        val: (f as any).earnings_delta.cycle_risk,
+                        color: (f as any).earnings_delta.cycle_risk === 'HIGH' ? '#EF4444' : (f as any).earnings_delta.cycle_risk === 'MEDIUM' ? '#F59E0B' : '#10B981' },
+                    ].map((c, j) => (
+                      <span key={j} style={{ fontSize: 9, padding: '1px 6px', borderRadius: 3, background: `${c.color}15`, color: c.color, fontWeight: 800 }}>
+                        {c.lbl}: {c.val}
+                      </span>
+                    ))}
+                  </div>
+                  {/* Narrative vs Financial split — review item 4.5 */}
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 9 }}>
+                    <span style={{ color: '#94A3B8', fontWeight: 700 }}>NARR vs FIN:</span>
+                    <span title="Narrative strength: story quality (tag breadth + forward language)" style={{ padding: '1px 6px', borderRadius: 3, background: '#A78BFA15', color: '#A78BFA', fontWeight: 800 }}>
+                      📖 {(f as any).earnings_delta.narrative_strength.toFixed(1)}/10
+                    </span>
+                    <span title="Financial strength: actual numbers + concrete guidance + composite score" style={{ padding: '1px 6px', borderRadius: 3, background: '#22D3EE15', color: '#22D3EE', fontWeight: 800 }}>
+                      💰 {(f as any).earnings_delta.financial_strength.toFixed(1)}/10
+                    </span>
+                    {Math.abs((f as any).earnings_delta.narrative_strength - (f as any).earnings_delta.financial_strength) >= 3 && (
+                      <span style={{ color: '#F59E0B', fontStyle: 'italic' }}>
+                        ⚠ {(f as any).earnings_delta.narrative_strength > (f as any).earnings_delta.financial_strength ? 'story-ahead-of-numbers' : 'numbers-ahead-of-story'}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* PATCH 0395+0397 — Decomposed score breakdown (transparency) */}
               <div style={{ marginTop: 6, padding: '6px 8px', background: '#13131a', border: '1px solid #1A2540', borderRadius: 4 }}>
                 <div style={{ fontSize: 9, color: '#94A3B8', fontWeight: 700, marginBottom: 3, letterSpacing: '0.4px' }}>

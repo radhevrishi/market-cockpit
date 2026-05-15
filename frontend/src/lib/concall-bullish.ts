@@ -538,9 +538,29 @@ export function scoreBullish(text: string): BullishScore {
   const useSentences = sentences.length >= 3;
 
   if (useSentences) {
+    // PATCH 0424 — Noise filter (institutional review item 4.2). Drop
+    // sentences that are dominated by generic geopolitical / supply-chain
+    // / macro boilerplate UNLESS they also contain a directional verb.
+    // Without this, ~80% of transcripts inflate the same shared noise into
+    // their "Demand" and "Bottleneck" clusters.
+    const NOISE_RE = [
+      /\bsupply[\s-]chain\s+disruption\b/i,
+      /\bgeopolitical\s+(?:uncertainty|tension|environment)/i,
+      /\bmiddle[\s-]east\s+(?:crisis|conflict|tension)/i,
+      /\bmacro[\s-]?(?:economic\s+)?(?:headwind|uncertainty|environment)/i,
+      /\bevolving\s+(?:regulatory|environment|landscape)/i,
+      /\bglobal\s+(?:headwind|uncertainty|environment)/i,
+      /\bchallenging\s+(?:environment|macro|backdrop)/i,
+      /\b(?:russia[\s-]?ukraine|red\s+sea)\s+(?:war|crisis|conflict|disruption)/i,
+      /\b(?:strait\s+of\s+hormuz|suez)\s+(?:closure|disruption)/i,
+    ];
+    const DIRECTIONAL_RE = /\b(?:grew|increased|up\s+\d|down\s+\d|decreased|declined|expanded|compressed|improved\s+to|recovered\s+to|fell\s+by|gained|lost|outpaced|missed|beat|guidance\s+of|target\s+of|expect(?:ed)?\s+to|will\s+grow|order\s+book|capacity\s+of|margin\s+of|EBITDA\s+(?:margin|grew)|revenue\s+(?:grew|increased))\b/i;
+
     // Score each sentence independently. Track which combos fire per sentence
     // so we can pull representative evidence quotes.
     for (const sent of sentences) {
+      const noiseHits = NOISE_RE.filter(re => re.test(sent)).length;
+      if (noiseHits > 0 && !DIRECTIONAL_RE.test(sent)) continue;   // pure noise — skip
       const hasContradiction = CONTRADICTION_CONNECTORS.test(sent);
       const hasSoftener = SOFTENERS.test(sent);
       // If the sentence contains a contradiction connector, the polarity is
