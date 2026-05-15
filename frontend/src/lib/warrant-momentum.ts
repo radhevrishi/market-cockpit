@@ -315,6 +315,7 @@ export interface WarrantConvictionScore {
   distress_probability: number;     // 0-1 — likelihood this is dilutive/stress financing
   capital_use: CapitalUse;
   promoter_intent: PromoterIntent;
+  dilution_pct?: number | null;     // PATCH 0427 — % equity expansion if warrants convert
   components: {
     promoter_participation: number;  // 0-3
     pricing_premium: number;         // -3 to +3 (premium good, discount bad)
@@ -489,6 +490,29 @@ export function scoreWarrantConviction(inputs: ScoreWarrantInputs): WarrantConvi
   if (!gateD) gate_failures.push('D — no breakout AND no concall momentum');
   if (gateA && gateB && gateC && gateD && conviction < 6.5) gate_failures.push(`score ${conviction.toFixed(1)} below ≥6.5 floor`);
 
+  // PATCH 0427 — Dilution estimation. With warrant_count + issue_price we
+  // know total raise (₹). Approx share count ≈ market_cap_cr × 1e7 / cmp.
+  // Dilution % ≈ warrant_count / (warrant_count + existing_shares) × 100.
+  // Conservative estimate; treats warrants as 1:1 conversion (most are).
+  let dilution_pct: number | null = null;
+  if (details.warrant_count != null && details.warrant_count > 0 && cmp != null && cmp > 0 && market_cap_cr != null && market_cap_cr > 0) {
+    const existingShares = (market_cap_cr * 1e7) / cmp;
+    if (existingShares > 0) {
+      dilution_pct = (details.warrant_count / (existingShares + details.warrant_count)) * 100;
+    }
+  }
+  // Heavy dilution penalty — apply DIRECTLY to raw since governance_penalty
+  // was already folded in above.
+  if (dilution_pct != null && dilution_pct >= 20) {
+    raw -= 2;
+    c.governance_penalty -= 2;
+    redFlags.push(`Heavy dilution ~${dilution_pct.toFixed(1)}%`);
+  } else if (dilution_pct != null && dilution_pct >= 10) {
+    raw -= 1;
+    c.governance_penalty -= 1;
+    redFlags.push(`Material dilution ~${dilution_pct.toFixed(1)}%`);
+  }
+
   // PATCH 0426 — Distress probability + Tier classification.
   // Distress signals (each +0.20):
   //   1. ≥2 prior warrants in history (repeat issuer)
@@ -569,5 +593,6 @@ export function scoreWarrantConviction(inputs: ScoreWarrantInputs): WarrantConvi
     distress_probability: Math.round(distress * 100) / 100,
     capital_use: details.capital_use,
     promoter_intent: details.promoter_intent,
+    dilution_pct: dilution_pct != null ? Math.round(dilution_pct * 10) / 10 : null,
   };
 }

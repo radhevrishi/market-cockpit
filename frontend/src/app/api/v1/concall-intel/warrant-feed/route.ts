@@ -22,9 +22,9 @@ import {
   type WarrantFilingType, type WarrantDetails, type WarrantConvictionScore,
 } from '@/lib/warrant-momentum';
 
-// PATCH 0426 — bumped v5 → v6: dedup + tier classification + capital use +
-// distress probability are new score fields requiring fresh computation.
-const CACHE_KEY = (days: number) => `warrant-feed:v6:days:${days}`;
+// PATCH 0427 — bumped v6 → v7: entity-group dedup + dilution_pct + revised
+// honest panel labeling require fresh re-rank.
+const CACHE_KEY = (days: number) => `warrant-feed:v7:days:${days}`;
 const CACHE_TTL_SHORT = 5 * 60;
 const CACHE_TTL_LONG = 30 * 60;
 // PATCH 0422 — bumped 15 → 40 so more warrant candidates get full PDF
@@ -387,18 +387,56 @@ async function handleWarrantFeed(req: NextRequest) {
     }
   }
 
-  // PATCH 0426 — DEDUPLICATION. The same warrant transaction can produce
-  // 3-4 filings (Outcome of Board Meeting + Postal Ballot Notice + EGM
-  // Approval + Allotment Done), each separate content_hash. Top-10 was
-  // showing GMRP&UI ×2, JETFREIGHT ×2, CENTUM ×2. Collapse by
-  // (symbol, 14-day-bucket) keeping the highest-conviction filing with
-  // the richest extraction (most fields populated).
+  // PATCH 0426/0427 — DEDUPLICATION + ENTITY GROUP CANONICALIZATION.
+  // 0426: collapse (symbol, 14-day-bucket) when same warrant transaction
+  // produces 3-4 filings.
+  // 0427: also collapse listed entities that belong to the SAME corporate
+  // group. STLTECH (Sterlite Technologies, parent) and STLNETWORK (STL
+  // Networks Limited, subsidiary) are separately listed but related —
+  // showing both as distinct "warrants" in the top 10 is misleading
+  // entity-mapping risk. Canonical group map collapses them to a single
+  // group key for ranking purposes; we keep both filings tagged in the
+  // group_aliases field so the UI can show "and related: X, Y".
+  const ENTITY_GROUPS: Record<string, string> = {
+    'STLTECH':     'STERLITE_GROUP',
+    'STLNETWORK':  'STERLITE_GROUP',
+    'STERLITETECH': 'STERLITE_GROUP',
+    // Vedanta group
+    'HZL':         'VEDANTA_GROUP',
+    'VEDL':        'VEDANTA_GROUP',
+    // Adani group (high-promoter-warrant frequency)
+    'ADANIENT':    'ADANI_GROUP',
+    'ADANIPORTS':  'ADANI_GROUP',
+    'ADANIGREEN':  'ADANI_GROUP',
+    'ADANIPOWER':  'ADANI_GROUP',
+    'ADANITRANS':  'ADANI_GROUP',
+    'ATGL':        'ADANI_GROUP',
+    'NDTV':        'ADANI_GROUP',
+    'AMBUJACEM':   'ADANI_GROUP',
+    'ACC':         'ADANI_GROUP',
+    // GMR
+    'GMRINFRA':    'GMR_GROUP',
+    'GMRP&UI':     'GMR_GROUP',
+    'GMRPUI':      'GMR_GROUP',
+    // Reliance — though warrants here would be unusual
+    'RELIANCE':    'RELIANCE_GROUP',
+    'JIOFIN':      'RELIANCE_GROUP',
+  };
+  const canonicalKey = (sym: string): string => {
+    const u = sym.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    return ENTITY_GROUPS[u] || u;
+  };
   const dedupBuckets = new Map<string, typeof all[number]>();
+  const groupAliases = new Map<string, Set<string>>();   // key → {symbol, symbol, …}
   for (const sf of all) {
     const sym = (sf.symbol || sf.company_name || '').toUpperCase();
+    const groupCanon = canonicalKey(sym);
     const dateMs = new Date(sf.filing_datetime).getTime();
     const bucketStart = Math.floor(dateMs / (14 * 24 * 60 * 60 * 1000));
-    const key = `${sym}:${bucketStart}`;
+    const key = `${groupCanon}:${bucketStart}`;
+    // Track aliases for transparency
+    if (!groupAliases.has(key)) groupAliases.set(key, new Set());
+    groupAliases.get(key)!.add(sym);
     const existing = dedupBuckets.get(key);
     if (!existing) { dedupBuckets.set(key, sf); continue; }
     // Prefer higher conviction; tie-break on extraction richness
@@ -413,7 +451,14 @@ async function handleWarrantFeed(req: NextRequest) {
       dedupBuckets.set(key, sf);
     }
   }
-  const deduped = Array.from(dedupBuckets.values());
+  const deduped = Array.from(dedupBuckets.entries()).map(([key, sf]) => {
+    const aliases = Array.from(groupAliases.get(key) || []);
+    const otherEntities = aliases.filter(a => a !== (sf.symbol || sf.company_name || '').toUpperCase());
+    if (otherEntities.length > 0) {
+      (sf as any).group_aliases = otherEntities;
+    }
+    return sf;
+  });
 
   // Sort: passing gate first, then conviction desc
   deduped.sort((a, b) => {

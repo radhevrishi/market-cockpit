@@ -1228,11 +1228,12 @@ function WarrantMomentumFeed() {
         );
       })()}
 
-      {/* PATCH 0406 — Top 10 Ranked Warrants pinned panel.
-          PATCH 0411 — Renders from `ranked_all` (full ranked list,
-          unfiltered by passingOnly) so even when 0 pass the strict gate
-          the user still sees a ranked shortlist of warrant filings in
-          the window. */}
+      {/* PATCH 0406/0411/0427 — Top 10 Ranked Warrants pinned panel.
+          PATCH 0427 — Honest labeling: rename header dynamically based on
+          tier composition. 'CONVICTION SHORTLIST' was misleading when 0
+          filings cross the gate. Now: 'TIER 1 INSTITUTIONAL' when any
+          Tier 1 exists, 'WARRANT EVENT SCANNER' when 0 Tier 1 + 0 passing,
+          so users don't mistake a list of 4.5 scores for actionable alpha. */}
       {data && (() => {
         const source: any[] = (data as any).ranked_all && (data as any).ranked_all.length > 0
           ? (data as any).ranked_all
@@ -1241,12 +1242,25 @@ function WarrantMomentumFeed() {
         const ranked = [...source]
           .sort((a, b) => b.conviction.conviction - a.conviction.conviction)
           .slice(0, 10);
+        // PATCH 0427 — Decide panel mode from data quality
+        const tier1Count = source.filter((r: any) => r.conviction.tier === 'TIER_1_INSTITUTIONAL').length;
+        const passingCount = source.filter((r: any) => r.conviction.passes_gate).length;
+        const isActionable = tier1Count > 0 || passingCount > 0;
+        const headerLabel = isActionable
+          ? `🏆 TIER 1 — INSTITUTIONAL WARRANTS · ${tier1Count} tier-1 + ${passingCount - tier1Count} passing`
+          : `⚠ WARRANT EVENT SCANNER — no Tier 1 alpha in window · best-of-rest ranking`;
+        const headerColor = isActionable ? '#10B981' : '#F59E0B';
         return (
-          <div style={{ marginBottom: 12, padding: 12, background: 'linear-gradient(135deg, #A78BFA10, #22D3EE10)', border: '1px solid #A78BFA50', borderRadius: 10 }}>
+          <div style={{ marginBottom: 12, padding: 12, background: `linear-gradient(135deg, ${headerColor}10, #22D3EE10)`, border: `1px solid ${headerColor}50`, borderRadius: 10 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
-              <div style={{ fontSize: 12, fontWeight: 900, color: '#A78BFA', letterSpacing: '0.5px' }}>★ TOP {ranked.length} RANKED — warrant conviction shortlist</div>
+              <div style={{ fontSize: 12, fontWeight: 900, color: headerColor, letterSpacing: '0.5px' }}>{headerLabel}</div>
               <div style={{ fontSize: 10, color: '#94A3B8', fontWeight: 600 }}>· window: last {days} day{days === 1 ? '' : 's'}</div>
             </div>
+            {!isActionable && (
+              <div style={{ fontSize: 10, color: '#94A3B8', fontStyle: 'italic', marginBottom: 8, padding: '6px 8px', background: '#0A0E1A', border: '1px solid #1A2540', borderRadius: 4 }}>
+                Treat below as an <strong>event scanner</strong>, not alpha signal. Scores 4-6 mean a warrant exists with partial conviction markers — NOT that the stock is a buy. Use Tier-1/2/3 classification + Distress P% on each card for real assessment.
+              </div>
+            )}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 8 }}>
               {ranked.map((r, i) => {
                 const cv = r.conviction.conviction;
@@ -1263,11 +1277,22 @@ function WarrantMomentumFeed() {
                     </div>
                     <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 4 }}>{r.company_name}</div>
                     <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', fontSize: 9 }}>
+                      {/* PATCH 0427 — Tier chip on every Top 10 card */}
+                      {r.conviction.tier && (() => {
+                        const tColor = r.conviction.tier === 'TIER_1_INSTITUTIONAL' ? '#10B981' : r.conviction.tier === 'TIER_2_NEUTRAL' ? '#22D3EE' : '#EF4444';
+                        const tLbl = r.conviction.tier === 'TIER_1_INSTITUTIONAL' ? '🏆 T1' : r.conviction.tier === 'TIER_2_NEUTRAL' ? '◐ T2' : '⚠ T3';
+                        return <span title={r.conviction.tier_rationale || ''} style={{ padding: '1px 5px', borderRadius: 3, background: `${tColor}25`, color: tColor, fontWeight: 900 }}>{tLbl}</span>;
+                      })()}
                       <span style={{ padding: '1px 5px', borderRadius: 3, background: `${color}20`, color, fontWeight: 800 }}>{r.warrant_type.replace(/_/g, ' ')}</span>
                       {r.conviction.passes_gate && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98125', color: '#10B981', fontWeight: 800 }}>★ GATE</span>}
                       {prem != null && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#1A2540', color: prem >= 0 ? '#10B981' : prem >= -10 ? '#F59E0B' : '#EF4444' }}>{prem >= 0 ? '+' : ''}{prem.toFixed(1)}% vs CMP</span>}
                       {r.details.total_size_cr != null && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#1A2540', color: '#C9D4E0' }}>₹{r.details.total_size_cr.toFixed(0)}Cr</span>}
                       {r.details.promoter_participation_pct != null && <span style={{ padding: '1px 5px', borderRadius: 3, background: '#10B98115', color: '#10B981' }}>Promo {r.details.promoter_participation_pct.toFixed(0)}%</span>}
+                      {r.conviction.distress_probability != null && r.conviction.distress_probability >= 0.3 && (
+                        <span title="Distress probability" style={{ padding: '1px 5px', borderRadius: 3, background: '#EF444415', color: '#EF4444', fontWeight: 700 }}>
+                          Distress {(r.conviction.distress_probability * 100).toFixed(0)}%
+                        </span>
+                      )}
                     </div>
                   </div>
                 );
