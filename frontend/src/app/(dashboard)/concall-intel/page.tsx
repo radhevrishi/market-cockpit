@@ -516,42 +516,33 @@ function LiveBullishFeed() {
           the days selector immediately refreshes the shortlist. The
           chip-count below shows how many days the current window covers. */}
       {data && (() => {
-        // PATCH 0411 — When the strict tier filter (ULTRA/BULLISH/MIXED_POSITIVE)
-        // returns <5 names, fall back to including top NEUTRAL candidates so
-        // the user always sees a usable shortlist. Calibration is now strict
-        // enough that 180d windows commonly yield only 1-2 BULLISH+ — that's
-        // CORRECT but UX-bad if the panel goes empty.
-        const strict = [...data.filings]
-          .filter(f => f.bullish.tier && ['ULTRA_BULLISH', 'BULLISH', 'MIXED_POSITIVE'].includes(f.bullish.tier))
+        // PATCH 0417 — HARD-ACTIONABLE ONLY. User: "i want top 10 ranking
+        // bullish not neutral its no news also". No NEUTRAL fallback. If
+        // fewer than 10 actionable signals exist, show fewer. If zero,
+        // render explicit empty state.
+        const ranked = [...data.filings]
+          .filter(f => f.bullish.tier && ['ULTRA_BULLISH', 'BULLISH', 'MIXED_POSITIVE', 'BEARISH'].includes(f.bullish.tier))
           .sort((a, b) => {
             const compA = (a.bullish.components as any).composite_score ?? a.bullish.raw_score;
             const compB = (b.bullish.components as any).composite_score ?? b.bullish.raw_score;
             return compB - compA;
-          });
-        let ranked = strict.slice(0, 10);
-        if (strict.length < 10) {
-          // PATCH 0412 — Window-scaled fallback threshold. Longer windows
-          // need a lower bar because time decay + filing-type cap crush
-          // older composites. 7d=2.0 (current calibration), 30d=1.5,
-          // 90d=1.0, 180d=0.5. Without this scaling, 180d showed Top 3
-          // identical to 7d because older filings couldn't clear 2.0.
-          const fallbackThreshold =
-            days <= 7  ? 2.0 :
-            days <= 30 ? 1.5 :
-            days <= 90 ? 1.0 :
-                         0.5;
-          const fallback = [...data.filings]
-            .filter(f => f.bullish.tier === 'NEUTRAL')
-            .sort((a, b) => {
-              const compA = (a.bullish.components as any).composite_score ?? a.bullish.raw_score;
-              const compB = (b.bullish.components as any).composite_score ?? b.bullish.raw_score;
-              return compB - compA;
-            })
-            .filter(f => ((f.bullish.components as any).composite_score ?? f.bullish.raw_score) >= fallbackThreshold)
-            .slice(0, 10 - strict.length);
-          ranked = [...strict, ...fallback];
+          })
+          .slice(0, 10);
+        if (ranked.length === 0) {
+          return (
+            <div style={{ marginBottom: 12, padding: 16, background: 'linear-gradient(135deg, #10B98110, #22D3EE10)', border: '1px solid #1A2540', borderRadius: 10, textAlign: 'center' }}>
+              <div style={{ fontSize: 13, fontWeight: 900, color: '#94A3B8', letterSpacing: '0.5px', marginBottom: 4 }}>
+                ★ TOP RANKED — institutional shortlist
+              </div>
+              <div style={{ fontSize: 11, color: '#94A3B8', lineHeight: 1.5 }}>
+                No actionable signals in the last {days} day{days === 1 ? '' : 's'} yet.
+                Strict calibration filters out boilerplate. As more PDFs are extracted from
+                background cache (each refresh adds 50-100), real BULLISH / MIXED_POSITIVE
+                transcripts will surface here.
+              </div>
+            </div>
+          );
         }
-        if (ranked.length === 0) return null;
         return (
           <div style={{ marginBottom: 12, padding: 12, background: 'linear-gradient(135deg, #10B98110, #22D3EE10)', border: '1px solid #10B98150', borderRadius: 10 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>

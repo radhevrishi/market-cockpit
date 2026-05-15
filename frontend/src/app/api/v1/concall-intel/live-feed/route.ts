@@ -35,7 +35,7 @@ import { scanBottleneck, type BottleneckSignal } from '@/lib/bottleneck-scanner'
 // + boilerplate suppression + strict ULTRA gate.
 import { applyEvidenceHierarchy, type EvidenceHierarchyResult } from '@/lib/evidence-hierarchy';
 
-const CACHE_KEY = (days: number) => `concall-feed:v20:days:${days}`;  // v20: top-level try/catch, NEUTRAL hidden, null-guards everywhere
+const CACHE_KEY = (days: number) => `concall-feed:v21:days:${days}`;  // v21: theme clusters filtered to actionable tiers only (no NEUTRAL dilution)
 // PATCH 0396 — Aggressive live-cache per user spec: 'always take live data'
 const CACHE_TTL_SHORT = 2 * 60;        // 2 min for fresh data (was 5)
 const CACHE_TTL_LONG = 10 * 60;        // 10 min for older lookback (was 30)
@@ -686,7 +686,16 @@ function classifyConviction(companyCount: number): ThemeCluster['conviction'] {
   return 'WATCH';
 }
 
-function buildThemeClusters(filings: ScoredFiling[]): ThemeCluster[] {
+function buildThemeClusters(allFilings: ScoredFiling[]): ThemeCluster[] {
+  // PATCH 0417 — Per user feedback: Theme Clusters should only count
+  // ACTIONABLE companies (ULTRA / BULLISH / MIXED_POSITIVE / BEARISH).
+  // NEUTRAL companies dilute the conviction signal — a cluster of 10
+  // NEUTRAL companies all mentioning "demand" tells the user nothing
+  // useful. With this filter, INSTITUTIONAL conviction now requires
+  // 10 actionable companies cross-confirming.
+  const filings = allFilings.filter(f =>
+    f.bullish.tier && ['ULTRA_BULLISH', 'BULLISH', 'MIXED_POSITIVE', 'BEARISH'].includes(f.bullish.tier)
+  );
   // Index: clusterKey → { kind, label, participants: Map<symbol,{name,score,one_excerpt}> }
   type Participant = { symbol: string; company_name: string; score: number; excerpt: string };
   type Acc = {
