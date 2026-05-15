@@ -432,6 +432,74 @@ function LiveBullishFeed() {
         </div>
       )}
 
+      {/* PATCH 0408 — Cross-Company Theme Aggregator panel.
+          When ≥3 unrelated companies independently surface the same
+          industrial signal (bottleneck component / tag / sector), that
+          cross-confirmation is institutional-grade conviction. Pinned
+          ABOVE the Top 10 because the read-through value is higher than
+          any single filing — these are the themes the broader market is
+          about to discover. */}
+      {data && (data as any).theme_clusters && (data as any).theme_clusters.length > 0 && (
+        <div style={{ marginBottom: 14, padding: 14, background: 'linear-gradient(135deg, #06B6D420, #A78BFA10)', border: '1px solid #06B6D470', borderRadius: 10 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
+            <div style={{ fontSize: 13, fontWeight: 900, color: '#06B6D4', letterSpacing: '0.5px' }}>
+              🌐 CROSS-COMPANY THEME CLUSTERS — institutional cross-confirmation across the window
+            </div>
+            <div style={{ fontSize: 10, color: '#94A3B8', fontWeight: 600 }}>
+              {(data as any).theme_clusters.length} cluster{(data as any).theme_clusters.length === 1 ? '' : 's'} · last {days}d
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 10 }}>
+            {((data as any).theme_clusters as any[]).slice(0, 12).map((tc, ti) => {
+              const convictionColor = tc.conviction === 'INSTITUTIONAL' ? '#22D3EE'
+                : tc.conviction === 'CONFIRMED' ? '#10B981'
+                : tc.conviction === 'EMERGING' ? '#F59E0B'
+                : '#94A3B8';
+              const kindIcon = tc.kind === 'COMPONENT' ? '🧩' : tc.kind === 'SECTOR' ? '🏷' : '#';
+              return (
+                <div key={tc.key + '-tc-' + ti} style={{ padding: 10, background: '#0A1422', border: `1px solid ${convictionColor}50`, borderRadius: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 5 }}>
+                    <div style={{ fontSize: 12, fontWeight: 900, color: '#E6EDF3' }}>
+                      <span style={{ marginRight: 6 }}>{kindIcon}</span>{tc.label}
+                    </div>
+                    <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 3, background: `${convictionColor}25`, color: convictionColor, fontWeight: 900, letterSpacing: '0.4px' }}>
+                      {tc.conviction}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 6 }}>
+                    {tc.company_count} unique compan{tc.company_count === 1 ? 'y' : 'ies'} · {tc.filing_count} filings · avg composite {tc.avg_score.toFixed(1)}
+                  </div>
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 6 }}>
+                    {tc.top_companies.slice(0, 8).map((c: any) => (
+                      <span key={c.symbol} title={`${c.company_name} · composite ${c.score.toFixed(1)}`} style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, background: '#1A2540', color: '#C9D4E0', border: '1px solid #1A2540' }}>
+                        {c.symbol} <span style={{ color: convictionColor, marginLeft: 3 }}>{c.score.toFixed(1)}</span>
+                      </span>
+                    ))}
+                  </div>
+                  {tc.kind === 'COMPONENT' && Array.isArray(tc.beneficiaries) && tc.beneficiaries.length > 0 && (
+                    <div style={{ marginBottom: 5 }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: '#94A3B8', marginBottom: 3 }}>★ READ-THROUGH BENEFICIARIES (verify independently)</div>
+                      <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+                        {tc.beneficiaries.slice(0, 10).map((b: string) => (
+                          <span key={b} style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3, background: '#10B98120', color: '#10B981', border: '1px solid #10B98140' }}>{b}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {tc.evidence_excerpts && tc.evidence_excerpts.length > 0 && (
+                    <div style={{ fontSize: 9, color: '#94A3B8', fontStyle: 'italic', marginTop: 4, lineHeight: 1.4 }}>
+                      {tc.evidence_excerpts.slice(0, 2).map((ex: string, i: number) => (
+                        <div key={i} style={{ marginBottom: 2 }}>› {ex}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* PATCH 0395 — Top 10 Ranked Ideas pinned panel
           PATCH 0397: Now ranks by composite_score (0.5*Quality + 0.3*Cycle +
           0.2*Sentiment), the institutional-grade weighting per spec, instead

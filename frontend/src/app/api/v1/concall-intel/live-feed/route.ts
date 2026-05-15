@@ -32,7 +32,7 @@ import { applySectorOverlay, type SectorOverlayResult } from '@/lib/concall-sect
 // beneficiaries (Modern Insulators read-through pattern).
 import { scanBottleneck, type BottleneckSignal } from '@/lib/bottleneck-scanner';
 
-const CACHE_KEY = (days: number) => `concall-feed:v11:days:${days}`;  // v11: bottleneck signals
+const CACHE_KEY = (days: number) => `concall-feed:v12:days:${days}`;  // v12: theme clusters + chunked fetch
 // PATCH 0396 — Aggressive live-cache per user spec: 'always take live data'
 const CACHE_TTL_SHORT = 2 * 60;        // 2 min for fresh data (was 5)
 const CACHE_TTL_LONG = 10 * 60;        // 10 min for older lookback (was 30)
@@ -61,12 +61,33 @@ interface ScoredFiling extends FilingRecord {
   bottleneck?: BottleneckSignal;          // PATCH 0407 — supply-chain bottleneck detection
 }
 
+// PATCH 0408 — Cross-Company Theme Cluster.
+// When N unrelated companies independently mention the same tag /
+// component / sector inside the same window, conviction in the underlying
+// industrial signal compounds. The aggregator emits these as a separate
+// payload section that the UI pins above the filings list — institutional
+// users care about cross-confirmation more than about any individual card.
+export interface ThemeCluster {
+  key: string;                    // canonical identifier (tag or component)
+  kind: 'TAG' | 'COMPONENT' | 'SECTOR';
+  label: string;                  // human-readable
+  company_count: number;          // unique tickers
+  filing_count: number;           // total filings (one company can file multiple)
+  avg_score: number;              // mean composite score across participants
+  top_companies: Array<{ symbol: string; company_name: string; score: number }>;
+  evidence_excerpts: string[];    // 1-2 sentence quotes
+  beneficiaries?: string[];       // for COMPONENT kind, expanded via sympathy map
+  sectors?: string[];
+  conviction: 'WATCH' | 'EMERGING' | 'CONFIRMED' | 'INSTITUTIONAL';
+}
+
 interface FeedPayload {
   generated_at: string;
   count_total: number;
   count_relevant: number;
   count_high_bullish: number;
   filings: ScoredFiling[];
+  theme_clusters?: ThemeCluster[];   // PATCH 0408
   sources: {
     nse: 'NSE_OK' | 'NSE_BLOCKED' | 'NSE_EMPTY';
     bse: 'BSE_OK' | 'BSE_BLOCKED' | 'BSE_EMPTY';
@@ -104,25 +125,63 @@ export async function GET(req: NextRequest) {
   const fromIso = fromDate.toISOString().slice(0, 10);
   const toIso = today.toISOString().slice(0, 10);
 
-  // Parallel fetch with timeout budget
-  const nseController = new AbortController();
-  const bseController = new AbortController();
-  const nseTimeout = setTimeout(() => nseController.abort(), 12000);
-  const bseTimeout = setTimeout(() => bseController.abort(), 12000);
-
-  const [nseResult, bseResult] = await Promise.all([
-    fetchNSEAnnouncements({ signal: nseController.signal, fromIso, toIso }),
-    fetchBSEAnnouncements({ signal: bseController.signal, fromIso, toIso, pages: 2 }),
-  ]);
-  clearTimeout(nseTimeout);
-  clearTimeout(bseTimeout);
-
-  // Merge + dedup by content_hash
-  const merged = new Map<string, FilingRecord>();
-  for (const f of nseResult.filings) merged.set(f.content_hash, f);
-  for (const f of bseResult.filings) {
-    if (!merged.has(f.content_hash)) merged.set(f.content_hash, f);
+  // PATCH 0408 — Long-window fetch: chunk NSE into ≤30-day sub-windows
+  // (NSE corp-announcements API caps returned rows per call, so a single
+  // 180-day request gets truncated to the most recent ~500 filings).
+  // Each sub-window runs in parallel. BSE page count scales with window
+  // size: 2 pages per 30 days, capped at 12.
+  const CHUNK_DAYS = 30;
+  const subWindows: Array<{ fromIso: string; toIso: string }> = [];
+  {
+    let cur = new Date(today);
+    let remaining = days;
+    while (remaining > 0) {
+      const chunkSize = Math.min(CHUNK_DAYS, remaining);
+      const winTo = new Date(cur);
+      const winFrom = new Date(cur);
+      winFrom.setDate(winFrom.getDate() - chunkSize + 1);
+      subWindows.push({
+        fromIso: winFrom.toISOString().slice(0, 10),
+        toIso: winTo.toISOString().slice(0, 10),
+      });
+      cur.setDate(cur.getDate() - chunkSize);
+      remaining -= chunkSize;
+    }
   }
+  const bsePages = Math.min(12, Math.max(2, Math.ceil(days / 15)));
+
+  // Parallel fetch with timeout budget. Total budget scales with window:
+  // 12s for ≤30d, +4s per additional 30d, capped at 35s.
+  const totalBudgetMs = Math.min(35000, 12000 + Math.floor((days - 30) / 30) * 4000);
+  const fetchSubWindow = (fromIsoW: string, toIsoW: string) => {
+    const nseCtrl = new AbortController();
+    const bseCtrl = new AbortController();
+    const tNse = setTimeout(() => nseCtrl.abort(), totalBudgetMs);
+    const tBse = setTimeout(() => bseCtrl.abort(), totalBudgetMs);
+    const p = Promise.all([
+      fetchNSEAnnouncements({ signal: nseCtrl.signal, fromIso: fromIsoW, toIso: toIsoW }),
+      fetchBSEAnnouncements({ signal: bseCtrl.signal, fromIso: fromIsoW, toIso: toIsoW, pages: bsePages }),
+    ]).finally(() => { clearTimeout(tNse); clearTimeout(tBse); });
+    return p;
+  };
+
+  const allResults = await Promise.all(subWindows.map(w => fetchSubWindow(w.fromIso, w.toIso)));
+
+  // Merge + dedup across ALL sub-windows by content_hash
+  const merged = new Map<string, FilingRecord>();
+  let nseStatus: string = 'NSE_EMPTY';
+  let bseStatus: string = 'BSE_EMPTY';
+  for (const [nseResult, bseResult] of allResults) {
+    if (nseResult.source === 'NSE_OK') nseStatus = 'NSE_OK';
+    if (bseResult.source === 'BSE_OK') bseStatus = 'BSE_OK';
+    for (const f of nseResult.filings) merged.set(f.content_hash, f);
+    for (const f of bseResult.filings) {
+      if (!merged.has(f.content_hash)) merged.set(f.content_hash, f);
+    }
+  }
+  // Reconstruct top-level result shape for the rest of the pipeline
+  const nseResult = { filings: [] as FilingRecord[], source: nseStatus as any };
+  const bseResult = { filings: [] as FilingRecord[], source: bseStatus as any };
 
   // Phase 1: classify + identify candidates for PDF extraction
   const candidates: Array<{ filing: FilingRecord; filing_type: ConcallFilingType }> = [];
@@ -259,12 +318,20 @@ export async function GET(req: NextRequest) {
     return new Date(b.filing_datetime).getTime() - new Date(a.filing_datetime).getTime();
   });
 
+  // PATCH 0408 — Cross-Company Theme Aggregator.
+  // For each tag / component / sector mentioned across the window, count
+  // how many DIFFERENT companies independently surfaced it. ≥3 = EMERGING,
+  // ≥6 = CONFIRMED, ≥10 = INSTITUTIONAL (i.e. the theme is too obvious for
+  // smart money to ignore — late but high-conviction).
+  const theme_clusters = buildThemeClusters(deduped);
+
   const payload: FeedPayload = {
     generated_at: new Date().toISOString(),
     count_total: merged.size,
     count_relevant: deduped.length,
     count_high_bullish: deduped.filter(x => x.is_high_bullish).length,
     filings: deduped,
+    theme_clusters,
     sources: { nse: nseResult.source, bse: bseResult.source },
   };
 
@@ -330,4 +397,128 @@ function applyFilters(payload: FeedPayload, opts: { exchangeFilter: string; bull
     count_relevant: payload.count_relevant,
     count_high_bullish: payload.count_high_bullish,
   };
+}
+
+// ─── PATCH 0408 — Cross-Company Theme Aggregator ─────────────────────────
+//
+// Walks all scored filings, counts how many UNIQUE COMPANIES independently
+// mentioned each tag / bottleneck component / sector overlay. Clusters
+// that span ≥3 unrelated companies surface as institutional-grade themes,
+// because cross-confirmation by independent management teams is the
+// strongest possible signal for a real industrial inflection.
+//
+// Conviction tiers:
+//   3-5 companies  → EMERGING        (theme has multiple data points)
+//   6-9 companies  → CONFIRMED       (theme broadly visible — institutions catching on)
+//   ≥10 companies  → INSTITUTIONAL   (theme too obvious for smart money to miss — late but high conviction)
+//
+// We exclude generic ambient tags (e.g. 'AI', 'export') from cluster surfacing
+// to focus on industrial-causal themes. Allow tags that map to real
+// engineering / supply-chain nodes.
+const TAG_INCLUDE_FOR_CLUSTERING = new Set<string>([
+  'Order book', 'Capacity', 'Capex', 'Capacity expansion', 'Margin',
+  'Margin expansion', 'Premiumization', 'Cash Flow', 'Demand',
+  'Guidance', 'Deleveraging', 'Market Share', 'Defence', 'Renewable / Solar',
+  'EV / Electric Vehicle', 'Tariff / Duty', 'Semiconductor',
+  'Real estate / RERA', 'GST', 'China', 'Utilization (IT/Mfg)',
+  'New customer / order', 'BOTTLENECK', 'CRITICAL_COMPONENT',
+  'DEMAND_SUPPLY_ASYMMETRY',
+]);
+
+function classifyConviction(companyCount: number): ThemeCluster['conviction'] {
+  if (companyCount >= 10) return 'INSTITUTIONAL';
+  if (companyCount >= 6)  return 'CONFIRMED';
+  if (companyCount >= 3)  return 'EMERGING';
+  return 'WATCH';
+}
+
+function buildThemeClusters(filings: ScoredFiling[]): ThemeCluster[] {
+  // Index: clusterKey → { kind, label, participants: Map<symbol,{name,score,one_excerpt}> }
+  type Participant = { symbol: string; company_name: string; score: number; excerpt: string };
+  type Acc = {
+    kind: ThemeCluster['kind'];
+    label: string;
+    participants: Map<string, Participant>;
+    filings: number;
+    beneficiaries?: Set<string>;
+    sectors?: Set<string>;
+  };
+  const buckets = new Map<string, Acc>();
+
+  const addToBucket = (key: string, kind: ThemeCluster['kind'], label: string, f: ScoredFiling, excerpt: string) => {
+    const sym = (f.symbol || f.company_name || '').toUpperCase();
+    if (!sym) return;
+    let b = buckets.get(key);
+    if (!b) {
+      b = { kind, label, participants: new Map(), filings: 0 };
+      buckets.set(key, b);
+    }
+    b.filings += 1;
+    const existing = b.participants.get(sym);
+    const score = (f.bullish.components as any).composite_score ?? f.bullish.raw_score ?? 0;
+    if (!existing || score > existing.score) {
+      b.participants.set(sym, { symbol: sym, company_name: f.company_name, score, excerpt });
+    }
+  };
+
+  for (const f of filings) {
+    // Tag clustering — only over our whitelist
+    for (const tag of f.bullish.tags || []) {
+      if (!TAG_INCLUDE_FOR_CLUSTERING.has(tag)) continue;
+      // Use first evidence quote (BULL polarity) as excerpt
+      const ex = (f.bullish.evidence || []).find(e => e.polarity === 'BULL' && !e.negated && e.tag === tag);
+      addToBucket(`TAG:${tag}`, 'TAG', tag, f, ex?.text || '');
+    }
+    // Bottleneck component clustering
+    if (f.bottleneck && f.bottleneck.detected) {
+      const trig = f.bottleneck.evidence[0] || '';
+      for (const comp of f.bottleneck.components || []) {
+        const key = `COMP:${comp}`;
+        addToBucket(key, 'COMPONENT', comp.replace(/_/g, ' '), f, trig);
+        const acc = buckets.get(key)!;
+        if (!acc.beneficiaries) acc.beneficiaries = new Set();
+        if (!acc.sectors) acc.sectors = new Set();
+        for (const b of f.bottleneck.beneficiaries || []) acc.beneficiaries.add(b);
+        for (const s of f.bottleneck.sectors || []) acc.sectors.add(s);
+      }
+    }
+    // Sector overlay clustering — surface when many companies in same sector
+    // confirm bullish tilt
+    if (f.sector_overlay && f.sector_overlay.sector !== 'UNKNOWN' && f.sector_overlay.overlay_score > 0) {
+      const sec = f.sector_overlay.sector.replace(/_/g, ' ');
+      addToBucket(`SEC:${sec}`, 'SECTOR', sec, f, '');
+    }
+  }
+
+  // Materialize clusters where ≥3 unique companies
+  const out: ThemeCluster[] = [];
+  for (const [key, b] of buckets) {
+    const companyCount = b.participants.size;
+    if (companyCount < 3) continue;
+    const ranked = Array.from(b.participants.values()).sort((x, y) => y.score - x.score);
+    const top = ranked.slice(0, 8).map(p => ({ symbol: p.symbol, company_name: p.company_name, score: Math.round(p.score * 10) / 10 }));
+    const excerpts = ranked.filter(p => p.excerpt).slice(0, 3).map(p => `[${p.symbol}] "${p.excerpt.slice(0, 240)}${p.excerpt.length > 240 ? '…' : ''}"`);
+    const avgScore = ranked.reduce((s, p) => s + p.score, 0) / ranked.length;
+    out.push({
+      key,
+      kind: b.kind,
+      label: b.label,
+      company_count: companyCount,
+      filing_count: b.filings,
+      avg_score: Math.round(avgScore * 10) / 10,
+      top_companies: top,
+      evidence_excerpts: excerpts,
+      beneficiaries: b.beneficiaries ? Array.from(b.beneficiaries) : undefined,
+      sectors: b.sectors ? Array.from(b.sectors) : undefined,
+      conviction: classifyConviction(companyCount),
+    });
+  }
+  // Rank: COMPONENT first (highest causal value), then by company_count desc
+  const kindWeight: Record<ThemeCluster['kind'], number> = { COMPONENT: 0, TAG: 1, SECTOR: 2 };
+  out.sort((a, b) => {
+    if (kindWeight[a.kind] !== kindWeight[b.kind]) return kindWeight[a.kind] - kindWeight[b.kind];
+    if (b.company_count !== a.company_count) return b.company_count - a.company_count;
+    return b.avg_score - a.avg_score;
+  });
+  return out.slice(0, 20);
 }

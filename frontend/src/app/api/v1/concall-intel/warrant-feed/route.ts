@@ -140,29 +140,56 @@ export async function GET(req: NextRequest) {
     if (cached) return NextResponse.json(applyWarrantFilters(cached, { passingOnly, threshold, topN }));
   }
 
-  // Fetch NSE + BSE filings
+  // PATCH 0408 — Long-window chunked fetch (same as live-feed). NSE
+  // corp-announcements caps per-call rows; one 180-day request returns
+  // only the most recent ~500 filings, silently dropping older ones.
+  // Chunk into 30-day sub-windows + parallel fetch + merge.
   const today = new Date();
-  const fromDate = new Date();
-  fromDate.setDate(fromDate.getDate() - days);
-  const fromIso = fromDate.toISOString().slice(0, 10);
-  const toIso = today.toISOString().slice(0, 10);
-
-  const nseCtrl = new AbortController();
-  const bseCtrl = new AbortController();
-  const nseTimer = setTimeout(() => nseCtrl.abort(), 12000);
-  const bseTimer = setTimeout(() => bseCtrl.abort(), 12000);
-  const [nseResult, bseResult] = await Promise.all([
-    fetchNSEAnnouncements({ signal: nseCtrl.signal, fromIso, toIso }),
-    fetchBSEAnnouncements({ signal: bseCtrl.signal, fromIso, toIso, pages: 2 }),
-  ]);
-  clearTimeout(nseTimer);
-  clearTimeout(bseTimer);
+  const CHUNK_DAYS = 30;
+  const subWindows: Array<{ fromIso: string; toIso: string }> = [];
+  {
+    let cur = new Date(today);
+    let remaining = days;
+    while (remaining > 0) {
+      const chunkSize = Math.min(CHUNK_DAYS, remaining);
+      const winTo = new Date(cur);
+      const winFrom = new Date(cur);
+      winFrom.setDate(winFrom.getDate() - chunkSize + 1);
+      subWindows.push({
+        fromIso: winFrom.toISOString().slice(0, 10),
+        toIso: winTo.toISOString().slice(0, 10),
+      });
+      cur.setDate(cur.getDate() - chunkSize);
+      remaining -= chunkSize;
+    }
+  }
+  const bsePages = Math.min(12, Math.max(2, Math.ceil(days / 15)));
+  const totalBudgetMs = Math.min(35000, 12000 + Math.floor((days - 30) / 30) * 4000);
+  const fetchSubWindow = (fromIsoW: string, toIsoW: string) => {
+    const nseCtrl = new AbortController();
+    const bseCtrl = new AbortController();
+    const tNse = setTimeout(() => nseCtrl.abort(), totalBudgetMs);
+    const tBse = setTimeout(() => bseCtrl.abort(), totalBudgetMs);
+    return Promise.all([
+      fetchNSEAnnouncements({ signal: nseCtrl.signal, fromIso: fromIsoW, toIso: toIsoW }),
+      fetchBSEAnnouncements({ signal: bseCtrl.signal, fromIso: fromIsoW, toIso: toIsoW, pages: bsePages }),
+    ]).finally(() => { clearTimeout(tNse); clearTimeout(tBse); });
+  };
+  const allResults = await Promise.all(subWindows.map(w => fetchSubWindow(w.fromIso, w.toIso)));
 
   const merged = new Map<string, FilingRecord>();
-  for (const f of nseResult.filings) merged.set(f.content_hash, f);
-  for (const f of bseResult.filings) {
-    if (!merged.has(f.content_hash)) merged.set(f.content_hash, f);
+  let nseStatus: string = 'NSE_EMPTY';
+  let bseStatus: string = 'BSE_EMPTY';
+  for (const [nseR, bseR] of allResults) {
+    if (nseR.source === 'NSE_OK') nseStatus = 'NSE_OK';
+    if (bseR.source === 'BSE_OK') bseStatus = 'BSE_OK';
+    for (const f of nseR.filings) merged.set(f.content_hash, f);
+    for (const f of bseR.filings) {
+      if (!merged.has(f.content_hash)) merged.set(f.content_hash, f);
+    }
   }
+  const nseResult = { filings: [] as FilingRecord[], source: nseStatus as any };
+  const bseResult = { filings: [] as FilingRecord[], source: bseStatus as any };
 
   // Phase 1: filter to warrant-relevant filings
   const candidates: Array<{ filing: FilingRecord; warrant_type: WarrantFilingType }> = [];
