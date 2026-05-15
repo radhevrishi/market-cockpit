@@ -213,6 +213,15 @@ interface LiveFeedResp {
   // PATCH 0105
   events?: CanonicalEvent[];
   by_tier?: Record<'TIER_1' | 'TIER_2' | 'WATCHLIST' | 'NOISE', number>;
+  // PATCH 0431 — institutional diagnostics
+  coverage_diagnostic?: Array<{
+    bucket: string;
+    emoji: string;
+    event_types: string[];
+    count: number;
+    note: string;
+  }>;
+  event_type_counts?: Record<string, number>;
 }
 
 function useLiveFeed() {
@@ -489,6 +498,37 @@ export default function SpecialSituationsPage() {
             </button>
           </div>
         </div>
+
+        {/* PATCH 0431 — INSTITUTIONAL COVERAGE DIAGNOSTIC.
+            User asked: "if something is missing reupdate logic — 3 months
+            it should show all such". This panel shows per-bucket counts
+            so they can see which institutional categories the engine is
+            detecting in the active window, and which categories are
+            empty (= either no events occurred OR detector needs more work). */}
+        {feed && (feed as any).coverage_diagnostic && (feed as any).coverage_diagnostic.length > 0 && (
+          <div style={{ marginTop: 8, marginBottom: 8, padding: 10, background: 'linear-gradient(135deg, #0F7ABF15, #FBBF2410)', border: '1px solid #38A9E840', borderRadius: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+              <span style={{ fontSize: 11, fontWeight: 800, color: '#38A9E8', letterSpacing: '0.4px' }}>
+                📋 INSTITUTIONAL COVERAGE — 9 alpha categories
+              </span>
+              <span style={{ fontSize: 9, color: '#6B7A8D', fontStyle: 'italic' }}>
+                empty bucket = either no events in window OR detector gap; verify both
+              </span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 6 }}>
+              {((feed as any).coverage_diagnostic as Array<{ bucket: string; emoji: string; count: number; note: string }>).map((b, i) => {
+                const has = b.count > 0;
+                const color = has ? '#10B981' : '#6B7A8D';
+                return (
+                  <div key={'cov-' + i} title={b.note} style={{ padding: '5px 8px', background: has ? `${color}15` : '#0A0E1A', border: `1px solid ${color}40`, borderRadius: 5, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 10, color: has ? '#E6EDF3' : '#6B7A8D' }}>{b.emoji} {b.bucket}</span>
+                    <span style={{ fontSize: 11, fontWeight: 800, color }}>{b.count}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Tab nav */}
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', paddingTop: 10, borderTop: '1px solid #1A2840' }}>

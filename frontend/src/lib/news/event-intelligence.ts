@@ -50,7 +50,23 @@ export type EventType =
   | 'STAKE_SALE'
   | 'ACQUISITION_PUBLIC'
   | 'NEWS_RUMOR'
-  | 'UNCLASSIFIED';
+  | 'UNCLASSIFIED'
+  // PATCH 0431 — institutional review: missing alpha categories.
+  // These align with lib/specsit-institutional.ts ExtendedEventType.
+  | 'RIGHTS_ISSUE_DEEP'        // deeply-discounted rights w/ detachable warrants
+  | 'CONVERTIBLE_PIPE'         // PIPE financing / FCCB / CCD
+  | 'PROMOTER_BACKSTOP'        // promoter-backstopped capital raise
+  | 'ASSET_SALE_MONETIZATION'  // land / tower / stake / non-core exit
+  | 'NCLT_IBC_ADMISSION'
+  | 'NCLT_IBC_RESOLUTION'
+  | 'INDEX_INCLUSION'
+  | 'INDEX_EXCLUSION'
+  | 'GOVERNANCE_CRISIS'
+  | 'HOLDCO_ARB_TRIGGER'
+  | 'STUB_TRADE_TRIGGER'
+  | 'SEBI_REGULATORY_ACTION'
+  | 'AUDITOR_QUALIFIED'
+  | 'PROMOTER_PLEDGE_UNWIND';
 
 export type LifecycleStage = 'rumor' | 'announced' | 'amended' | 'approved' | 'closed' | 'unknown';
 

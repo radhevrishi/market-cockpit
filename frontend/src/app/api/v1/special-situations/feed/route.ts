@@ -24,6 +24,15 @@ import {
   type LifecycleStage,
   type CatalystScore,
 } from '@/lib/news/event-intelligence';
+// PATCH 0431 — Institutional taxonomy: rights/PIPE/NCLT/index/governance/etc
+import {
+  classifyExtendedEvent,
+  isInstitutionalNoise,
+  computeCoverageDiagnostic,
+  EVENT_PRIORS,
+  type ExtendedEventType,
+  type CoverageBucket,
+} from '@/lib/specsit-institutional';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -31,7 +40,10 @@ export const runtime = 'nodejs';
 // PATCH 0103: rolling 90-day KV cache so classified items persist across pulls
 // (RSS feeds only carry 1-3 days of headlines; Vedanta-class events from
 // weeks ago fall off the live RSS but should still be visible).
-const ROLLING_KEY = 'special-situations:rolling:v2';
+// PATCH 0431 — bumped v2 → v3 so the institutional taxonomy expansion +
+// noise filter take effect (old rolling items have the misclassified
+// event_types that the new filter would reject).
+const ROLLING_KEY = 'special-situations:rolling:v3';
 const ROLLING_TTL_SECONDS = 95 * 86400;
 const ROLLING_RETAIN_DAYS = 90;
 
@@ -503,9 +515,31 @@ async function buildFeed(): Promise<{
   const eventBuckets = new Map<string, FeedItem[]>();
   const itemSignals = new Map<string, ReturnType<typeof extractEventSignals>>();
 
+  // PATCH 0431 — per-event-type counts for coverage diagnostic
+  const eventTypeCounts: Record<string, number> = {};
+
   for (const it of deduped) {
+    const fullText = `${it.title} ${it.description || ''}`;
+
+    // PATCH 0431 — Institutional NOISE FILTER first. Reject ordinary news
+    // (earnings, launches, industry commentary, awards) that was leaking
+    // into the special-situations feed as false-positive 'OPEN_OFFER's etc.
+    if (isInstitutionalNoise(fullText)) continue;
+
     const sig = extractEventSignals({ title: it.title, description: it.description, link: it.link, source: it.source });
+
+    // PATCH 0431 — Extended classification layer. Refines UNCLASSIFIED /
+    // generic types into specific institutional event_types (RIGHTS_ISSUE_DEEP,
+    // CONVERTIBLE_PIPE, NCLT_IBC_ADMISSION, INDEX_INCLUSION, ASSET_SALE_MONETIZATION,
+    // GOVERNANCE_CRISIS, SEBI_REGULATORY_ACTION, etc.) when the existing
+    // taxonomy misclassified them.
+    const extended = classifyExtendedEvent(fullText);
+    if (extended) {
+      sig.event_type = extended as any;
+    }
+
     itemSignals.set(it.id, sig);
+    eventTypeCounts[sig.event_type] = (eventTypeCounts[sig.event_type] || 0) + 1;
 
     // Skip UNCLASSIFIED noise from canonical event grouping (still in by_category for backwards compat)
     if (sig.event_type === 'UNCLASSIFIED') continue;
@@ -519,6 +553,11 @@ async function buildFeed(): Promise<{
     bucket.push(it);
     eventBuckets.set(eid, bucket);
   }
+
+  // PATCH 0431 — Coverage diagnostic. Tells the user which institutional
+  // categories the engine found in this window. Direct response to "if
+  // something is missing reupdate logic — 3 months it should show all such".
+  const coverageDiagnostic: CoverageBucket[] = computeCoverageDiagnostic(eventTypeCounts);
 
   // Build CanonicalEvent objects
   const events: CanonicalEvent[] = [];
@@ -634,7 +673,7 @@ async function buildFeed(): Promise<{
   };
   for (const e of events) by_tier[e.tier] += 1;
 
-  return {
+  const result: any = {
     last_updated: new Date().toISOString(),
     total: deduped.length,
     by_category,
@@ -643,7 +682,12 @@ async function buildFeed(): Promise<{
     fresh_added: fresh.length,
     events,
     by_tier,
+    // PATCH 0431 — institutional diagnostics
+    coverage_diagnostic: coverageDiagnostic,
+    event_type_counts: eventTypeCounts,
+    event_priors: EVENT_PRIORS,
   };
+  return result;
 }
 
 // ─── Handler ────────────────────────────────────────────────────────────────
