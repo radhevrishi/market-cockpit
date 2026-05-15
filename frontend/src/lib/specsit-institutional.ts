@@ -115,56 +115,98 @@ export const EVENT_PRIORS: Record<ExtendedEventType, {
 };
 
 // ─── Extended classification patterns (added to existing taxonomy) ─────────
-// These run AFTER the existing event-intelligence classifier as a refinement
-// layer. Returns null if no pattern matches (caller keeps original classification).
+// PATCH 0432 — Substantially broadened patterns. Previous version had
+// HoldCo/Stub/NCLT/Index at zero because patterns required narrow phrasing.
+// Real-world Indian + US headlines use varied wording — these patterns
+// cover the major variants observed in NSE/BSE corporate filings, SEBI
+// press releases, IBBI orders, MSCI/FTSE rebalance announcements, and
+// general financial press headlines.
+//
+// PRIORITY ORDER (mutually exclusive — first match wins):
+//   1. Index arbitrage (most specific phrasing)
+//   2. NCLT / IBC distressed (legal-specific)
+//   3. Rights / Warrants / PIPE / Convertible (capital action)
+//   4. HoldCo / Stub trades (structural arbitrage)
+//   5. Asset sale / monetization (corporate action)
+//   6. SEBI / regulatory / auditor / pledge (governance lane)
+//   7. Governance crisis catch-all (last — broadest)
 export function classifyExtendedEvent(text: string): ExtendedEventType | null {
+
+  // ── 1. INDEX ARBITRAGE (most specific) ────────────────────────────────────
+  // PATCH 0432 — much broader. Catches MSCI/FTSE/Nifty rebalance language.
+  if (/\b(?:MSCI\s+(?:standard|small[\s-]?cap|emerging\s+markets|india|all\s+country)\s+index|FTSE\s+(?:russell|emerging|all[\s-]?world|all[\s-]?cap)|S&P\s+(?:BSE|500|midcap|smallcap)|nifty\s+\d+|nifty\s+(?:next\s+50|midcap|smallcap|bank|it|fmcg|auto)|sensex)\b.{0,150}(?:add|added|include|inclusion|enter|join|migration)/i.test(text) ||
+      /\b(?:add|adds|added|to\s+add|inclusion\s+in|to\s+be\s+included|joins?|migrate[ds]?|migration\s+to|promoted\s+to)\b.{0,150}\b(?:MSCI|FTSE|nifty|sensex|S&P|midcap\s+index|smallcap\s+index|F&O\s+(?:list|index))\b/i.test(text)) {
+    return 'INDEX_INCLUSION';
+  }
+  if (/\b(?:MSCI|FTSE|nifty|sensex|S&P)\b.{0,150}(?:remov|exclud|drop|deletion|exit|demote)/i.test(text) ||
+      /\b(?:removed\s+from|exclusion\s+from|to\s+be\s+excluded|dropped\s+from|exits?\s+(?:the\s+)?(?:MSCI|FTSE|nifty|sensex)|demoted\s+(?:to|from))\b.{0,80}\b(?:MSCI|FTSE|nifty|sensex|S&P|midcap|smallcap|index)\b/i.test(text)) {
+    return 'INDEX_EXCLUSION';
+  }
+  // Quarterly / semi-annual rebalance announcements
+  if (/\b(?:semi[\s-]?annual|quarterly|periodic)\s+(?:index\s+)?rebalanc(?:e|ing|ed)\b/i.test(text)) {
+    return 'INDEX_INCLUSION';   // default lean — most rebalance news is inclusion-flavor
+  }
+
+  // ── 2. NCLT / IBC / DISTRESSED ───────────────────────────────────────────
+  // PATCH 0432 — much broader. Captures IBBI orders, CIRP language,
+  // resolution professional appointment, lender haircuts, NCLAT verdicts.
+  if (/\b(?:NCLT\s+(?:admit|admits|admitted|moves?|approve[ds]?|sanction[ds]?|directs?)|insolvency\s+(?:petition|admission|filed|proceeding)|CIRP\s+(?:initiated|admitted|underway|process|application)|corporate\s+insolvency\s+resolution\s+process|IBC\s+(?:proceeding|admitted|filed|petition)|files?\s+(?:for\s+)?insolvency|moves?\s+NCLT|IRP\s+appoint(?:ed|s)|RP\s+(?:appoint|takes\s+over)|resolution\s+professional\s+(?:appoint|took\s+over))\b/i.test(text)) {
+    return 'NCLT_IBC_ADMISSION';
+  }
+  if (/\b(?:resolution\s+plan\s+(?:approved|filed|submitted|accepted)|liquidation\s+(?:order|notice|commenced|approved)|liquidator\s+appoint|CoC\s+(?:approved|meeting|votes?|approval)|committee\s+of\s+creditors|lender(?:s)?\s+haircut|one[\s-]?time\s+settlement|OTS\s+(?:offer|approved|deal)|debt\s+resolution\s+plan|NCLAT\s+(?:upholds?|verdict|ruling|directs?)|haircut\s+of\s+\d{2,}%|takes?\s+\d{2,}%\s+haircut|successful\s+resolution\s+applicant)\b/i.test(text)) {
+    return 'NCLT_IBC_RESOLUTION';
+  }
+
+  // ── 3. RIGHTS / WARRANTS / PIPE / CONVERTIBLE ───────────────────────────
   // Rights issue with deep discount + warrants (highest institutional value)
   if (/\b(?:rights\s+issue|rights\s+offer).{0,200}(?:detachable\s+warrant|with\s+warrant|warrant\s+attached|deeply?\s+discount|at\s+a\s+discount\s+of\s+\d{2,}%|discount\s+to\s+(?:market|CMP|VWAP))/i.test(text)) {
     return 'RIGHTS_ISSUE_DEEP';
   }
-  // Convertible PIPE / financing
-  if (/\b(?:PIPE\s+financing|convertible\s+note|convertible\s+debenture|FCCB|optionally\s+convertible|compulsorily\s+convertible)\b/i.test(text)) {
+  // Convertible PIPE / financing — broader phrasing
+  if (/\b(?:PIPE\s+(?:financing|deal|transaction|investment)|convertible\s+(?:note|debenture|preference\s+share|bond|security)|FCCB|foreign\s+currency\s+convertible|optionally\s+convertible|compulsorily\s+convertible|CCD\b|OCD\b|OCCRPS|CCPS\b|CCPRPS)\b/i.test(text)) {
     return 'CONVERTIBLE_PIPE';
   }
   // Promoter backstop pattern
-  if (/\bpromoter[s']?(?:\s+group)?\s+(?:agreed\s+to\s+)?(?:backstop|underwrite|subscribe\s+(?:to|in\s+full))\b/i.test(text)) {
+  if (/\bpromoter[s']?(?:\s+group)?\s+(?:agreed\s+to\s+|to\s+|will\s+|has\s+)?(?:backstop|underwrite|fully\s+subscribe|subscribe\s+(?:to|in\s+full|fully)|infuse\s+(?:Rs\.?|₹|INR))/i.test(text)) {
     return 'PROMOTER_BACKSTOP';
   }
-  // Asset sale / monetization
-  if (/\b(?:divestment|monetiz(?:ation|e|ing)|sell(?:s|ing)?\s+(?:its|the|stake\s+in)|stake\s+sale|spinning?\s+off\s+(?:its|the|non[\s-]?core)|hive[\s-]?off|sale\s+of\s+(?:land|tower|stake|business|division|subsidiary|non[\s-]?core)|non[\s-]?core\s+exit)\b/i.test(text) &&
-      !/\b(?:rumou?r|denied|may\s+consider|in\s+talks)\b/i.test(text)) {
+
+  // ── 4. HOLDCO / STUB TRADES (PATCH 0432 — new detection) ────────────────
+  // HoldCo discount triggers: explicit mention of NAV discount, or news
+  // about a listed parent's stake in a listed subsidiary.
+  if (/\b(?:hold(?:ing\s+|co\s+|ing\s+company\s+)(?:NAV\s+)?discount|NAV\s+discount\s+(?:narrows?|widens?|of\s+\d{2,}%)|trading\s+at\s+(?:a\s+)?\d{2,}%\s+(?:NAV\s+)?discount|sum[\s-]?of[\s-]?(?:the[\s-]?)?parts\s+(?:valuation|unlock)|SoTP\s+(?:unlock|valuation|narrows?)|holding\s+company\s+(?:rerating|unlock|discount)|cross[\s-]?holding\s+(?:simplification|unwind|restructur))\b/i.test(text)) {
+    return 'HOLDCO_ARB_TRIGGER';
+  }
+  // Known Indian HoldCo names — surface news about them as HoldCo trigger
+  // even without explicit "NAV discount" phrasing (any material news on these
+  // is HoldCo-relevant by definition of their business model).
+  if (/\b(?:Bajaj\s+Holdings(?:\s+(?:&|and)\s+Investment)?|Pilani\s+Investment|Maharashtra\s+Scooters|Bombay\s+Burmah\s+Trading|Tata\s+Investment\s+Corporation|JSW\s+Holdings|Kalyani\s+Investment|Williamson\s+Magor|Tata\s+Sons|Aditya\s+Birla\s+Group|Reliance\s+Industrial\s+Investment|Vardhman\s+Holdings|Summit\s+Securities|Kama\s+Holdings|Nahar\s+Capital)\b/i.test(text)) {
+    return 'HOLDCO_ARB_TRIGGER';
+  }
+  // Stub trade — post-spin parent stub or implied stub anomaly
+  if (/\b(?:stub\s+(?:trade|value|valuation|stock)|implied\s+(?:negative\s+)?(?:enterprise\s+value|EV|stub)|core\s+business\s+(?:trades?\s+at\s+|implied\s+)?negative\s+EV|parent\s+stub\s+(?:trading|implies)|post[\s-]?spin\s+stub|tracking\s+stock\s+dislocation)\b/i.test(text)) {
+    return 'STUB_TRADE_TRIGGER';
+  }
+
+  // ── 5. ASSET SALE / MONETIZATION — much broader (PATCH 0432) ────────────
+  if (/\b(?:divestment|divest(?:s|ing|ed)|monetiz(?:ation|e|ed|ing)|stake\s+sale|sells?\s+stake|sale\s+of\s+(?:land|tower|stake|business|division|subsidiary|non[\s-]?core|plant|asset)|spinning?\s+off\s+(?:its|the|non[\s-]?core)|hive[\s-]?off|hiving?[\s-]?off|slump\s+sale|business\s+transfer\s+agreement|BTA\b|non[\s-]?core\s+(?:exit|sale|divestment)|REIT\s+(?:formation|creation|spin|launch)|InvIT\s+(?:formation|creation|spin|launch)|asset\s+monetiz|capital\s+recycling|portfolio\s+rationalization|land\s+(?:unlock|monetiz|sale)|tower\s+(?:sale|monetiz|spin|divest))\b/i.test(text) &&
+      !/\b(?:rumou?r|denied|may\s+consider|in\s+talks(?:\s+to)?|reportedly\s+weighing|exploring)\b/i.test(text)) {
     return 'ASSET_SALE_MONETIZATION';
   }
-  // NCLT / IBC admission
-  if (/\b(?:NCLT\s+(?:admit|admits|admitted)|insolvency\s+(?:petition|admission)|CIRP\s+(?:initiated|admitted)|corporate\s+insolvency\s+resolution\s+process|IBC\s+(?:proceeding|admitted))\b/i.test(text)) {
-    return 'NCLT_IBC_ADMISSION';
-  }
-  // NCLT / IBC resolution
-  if (/\b(?:resolution\s+plan\s+(?:approved|filed|submitted)|liquidation\s+(?:order|notice)|CoC\s+(?:approved|meeting)|lender\s+haircut|one[\s-]?time\s+settlement|debt\s+resolution\s+plan)\b/i.test(text)) {
-    return 'NCLT_IBC_RESOLUTION';
-  }
-  // Index inclusion
-  if (/\b(?:added\s+to|inclusion\s+in|to\s+(?:be\s+)?include[ds]?\s+in)\s+(?:MSCI|FTSE|S&P|NSE|BSE|Sensex|Nifty)\b/i.test(text)) {
-    return 'INDEX_INCLUSION';
-  }
-  // Index exclusion
-  if (/\b(?:removed\s+from|exclusion\s+from|to\s+(?:be\s+)?excluded\s+from|dropped\s+from)\s+(?:MSCI|FTSE|S&P|NSE|BSE|Sensex|Nifty)\b/i.test(text)) {
-    return 'INDEX_EXCLUSION';
-  }
-  // SEBI regulatory action
-  if (/\b(?:SEBI\s+(?:bars?|barred|debars?|debarred|fines?|fined|penalt|order|restrains?|restrained|consent\s+order)|securities\s+market\s+ban)\b/i.test(text)) {
+
+  // ── 6. SEBI / regulatory / auditor / pledge ─────────────────────────────
+  if (/\b(?:SEBI\s+(?:bars?|barred|debars?|debarred|fines?|fined|penalt|order|restrains?|restrained|consent\s+order|adjudicat|directs?)|securities\s+market\s+ban|insider[\s-]?trading\s+ban|SAT\s+(?:upholds?|verdict|appeal))\b/i.test(text)) {
     return 'SEBI_REGULATORY_ACTION';
   }
-  // Auditor resignation / qualified opinion
-  if (/\b(?:auditor[s']?\s+(?:resign|resigned|quit)|qualified\s+(?:opinion|audit\s+report)|going\s+concern\s+(?:doubt|qualification)|material\s+(?:weakness|misstatement))\b/i.test(text)) {
+  if (/\b(?:auditor[s']?\s+(?:resign|resigned|quit|stepped\s+down|removed)|qualified\s+(?:opinion|audit\s+report|report)|going\s+concern\s+(?:doubt|qualification|note|opinion)|material\s+(?:weakness|misstatement|uncertainty)|adverse\s+(?:opinion|auditor\s+remark))\b/i.test(text)) {
     return 'AUDITOR_QUALIFIED';
   }
-  // Promoter pledge action
-  if (/\b(?:promoter\s+pledge\s+(?:release|invoked|invocation|unwind)|pledged\s+shares\s+(?:released|sold|invoked))\b/i.test(text)) {
+  if (/\b(?:promoter\s+(?:share\s+)?pledge\s+(?:release|invoked|invocation|unwind|increase|reduction)|pledged\s+shares\s+(?:released|sold|invoked|reduced)|pledge\s+(?:released|invoked|unwound))\b/i.test(text)) {
     return 'PROMOTER_PLEDGE_UNWIND';
   }
-  // Governance crisis catch-all (low priority — last)
-  if (/\b(?:insider\s+trading\s+(?:charge|probe|allegation)|forensic\s+audit|governance\s+(?:lapse|breach|crisis)|whistleblower|fraud\s+allegation)\b/i.test(text)) {
+
+  // ── 7. Governance crisis catch-all (last — broadest) ────────────────────
+  if (/\b(?:insider\s+trading\s+(?:charge|probe|allegation|investigation|complaint)|forensic\s+audit|governance\s+(?:lapse|breach|crisis|concern|issue)|whistleblower|fraud\s+allegation|accounting\s+(?:irregularit|fraud)|misrepresentation\s+of\s+accounts|round[\s-]?tripping)\b/i.test(text)) {
     return 'GOVERNANCE_CRISIS';
   }
   return null;

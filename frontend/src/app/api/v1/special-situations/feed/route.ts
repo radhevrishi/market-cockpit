@@ -40,10 +40,11 @@ export const runtime = 'nodejs';
 // PATCH 0103: rolling 90-day KV cache so classified items persist across pulls
 // (RSS feeds only carry 1-3 days of headlines; Vedanta-class events from
 // weeks ago fall off the live RSS but should still be visible).
-// PATCH 0431 — bumped v2 → v3 so the institutional taxonomy expansion +
-// noise filter take effect (old rolling items have the misclassified
-// event_types that the new filter would reject).
-const ROLLING_KEY = 'special-situations:rolling:v3';
+// PATCH 0432 — reverted to v2. Patch 0431's v3 bump wiped 90 days of
+// rolling history (Vedanta demerger and other historical events disappeared).
+// The new taxonomy + noise filter run at read time on every request, so
+// they auto-apply to cached events anyway — bumping the key was unnecessary.
+const ROLLING_KEY = 'special-situations:rolling:v2';
 const ROLLING_TTL_SECONDS = 95 * 86400;
 const ROLLING_RETAIN_DAYS = 90;
 
@@ -87,6 +88,13 @@ const SOURCES: ReadonlyArray<FeedSource> = [
   { name: 'SEC SC 13E-3',     url: 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=SC+13E3&company=&dateb=&owner=include&count=40&output=atom', region: 'US' },
   // Global / wires
   { name: 'Yahoo Finance',     url: 'https://finance.yahoo.com/news/rssindex',                                          region: 'GLOBAL' },
+  // PATCH 0432 — Indian legal / regulatory feeds for NCLT/IBC/SEBI coverage.
+  // These directly feed the NCLT_IBC_ADMISSION/RESOLUTION + SEBI_REGULATORY_
+  // ACTION buckets that were sitting at zero. Each carries the institutional
+  // class of headlines our generic business-press sources rarely surface.
+  { name: 'Bar & Bench Corp',  url: 'https://www.barandbench.com/feeds/corporate.rss',                                   region: 'IN' },
+  { name: 'Live Law Corp',     url: 'https://www.livelaw.in/news/corporate.rss',                                         region: 'IN' },
+  { name: 'IBC Laws',          url: 'https://ibclaw.in/feed/',                                                            region: 'IN' },
 ];
 
 // ─── Patterns ───────────────────────────────────────────────────────────────
