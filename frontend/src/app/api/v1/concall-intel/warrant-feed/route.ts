@@ -166,8 +166,12 @@ export async function GET(req: NextRequest) {
   }
   const bsePages = Math.min(12, Math.max(2, Math.ceil(days / 15)));
   // PATCH 0409 — serialize sub-window fetches (parallel triggered NSE 429)
+  // PATCH 0413 — cache closed sub-windows for 6 months so we don't re-scrape
   const totalBudgetMs = 14000;
   const SUBWIN_CONCURRENCY = 2;
+  const todayIsoForCache = new Date().toISOString().slice(0, 10);
+  const SUBWIN_KEY = (fromIso: string, toIso: string) => `subwin-filings:v1:${fromIso}:${toIso}`;
+  const ttlForSubwindow = (toIso: string) => toIso < todayIsoForCache ? 180 * 24 * 60 * 60 : 30 * 60;
   const fetchSubWindow = (fromIsoW: string, toIsoW: string) => {
     const nseCtrl = new AbortController();
     const bseCtrl = new AbortController();
@@ -178,12 +182,39 @@ export async function GET(req: NextRequest) {
       fetchBSEAnnouncements({ signal: bseCtrl.signal, fromIso: fromIsoW, toIso: toIsoW, pages: bsePages }),
     ]).finally(() => { clearTimeout(tNse); clearTimeout(tBse); });
   };
+  type SubWinCache = { fromIso: string; toIso: string; nse: any; bse: any };
+  const subwinCacheHits: SubWinCache[] = [];
+  const subwinMisses: typeof subWindows = [];
+  if (isRedisAvailable() && !force) {
+    const reads = await Promise.all(subWindows.map(w =>
+      kvGet<SubWinCache>(SUBWIN_KEY(w.fromIso, w.toIso)).catch(() => null)
+    ));
+    for (let i = 0; i < subWindows.length; i++) {
+      if (reads[i]) subwinCacheHits.push(reads[i]!);
+      else subwinMisses.push(subWindows[i]);
+    }
+  } else {
+    subwinMisses.push(...subWindows);
+  }
   const allResults: Array<Awaited<ReturnType<typeof fetchSubWindow>>> = [];
-  for (let i = 0; i < subWindows.length; i += SUBWIN_CONCURRENCY) {
-    const batch = subWindows.slice(i, i + SUBWIN_CONCURRENCY);
+  for (const hit of subwinCacheHits) allResults.push([hit.nse, hit.bse]);
+  for (let i = 0; i < subwinMisses.length; i += SUBWIN_CONCURRENCY) {
+    const batch = subwinMisses.slice(i, i + SUBWIN_CONCURRENCY);
     const batchResults = await Promise.all(batch.map(w => fetchSubWindow(w.fromIso, w.toIso)));
+    if (isRedisAvailable()) {
+      for (let j = 0; j < batch.length; j++) {
+        const [nseR, bseR] = batchResults[j];
+        const w = batch[j];
+        const payload: SubWinCache = {
+          fromIso: w.fromIso, toIso: w.toIso,
+          nse: { filings: nseR.filings, source: nseR.source },
+          bse: { filings: bseR.filings, source: bseR.source },
+        };
+        kvSet(SUBWIN_KEY(w.fromIso, w.toIso), payload, ttlForSubwindow(w.toIso)).catch(() => {});
+      }
+    }
     allResults.push(...batchResults);
-    if (i + SUBWIN_CONCURRENCY < subWindows.length) {
+    if (i + SUBWIN_CONCURRENCY < subwinMisses.length) {
       await new Promise(r => setTimeout(r, 600 + Math.random() * 200));
     }
   }

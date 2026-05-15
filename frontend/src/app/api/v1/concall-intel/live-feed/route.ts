@@ -35,7 +35,7 @@ import { scanBottleneck, type BottleneckSignal } from '@/lib/bottleneck-scanner'
 // + boilerplate suppression + strict ULTRA gate.
 import { applyEvidenceHierarchy, type EvidenceHierarchyResult } from '@/lib/evidence-hierarchy';
 
-const CACHE_KEY = (days: number) => `concall-feed:v16:days:${days}`;  // v16: per-filing scored cache + scaled PDF cap + window-aware fallback
+const CACHE_KEY = (days: number) => `concall-feed:v17:days:${days}`;  // v17: persistent sub-window filings cache + 180d scored TTL
 // PATCH 0396 — Aggressive live-cache per user spec: 'always take live data'
 const CACHE_TTL_SHORT = 2 * 60;        // 2 min for fresh data (was 5)
 const CACHE_TTL_LONG = 10 * 60;        // 10 min for older lookback (was 30)
@@ -51,18 +51,16 @@ const CACHE_TTL_LONG = 10 * 60;        // 10 min for older lookback (was 30)
 // hit cached PDFs so the next-poll cost is near-zero. Each refresh adds
 // 25 more PDFs to KV cache, so within ~5 refreshes the top 100+ filings
 // in any window are fully PDF-scored.
-// PATCH 0412 — Scaled PDF extraction cap. Previously fixed at 25 which
-// meant 180d windows had identical Top-N to 7d windows (only 25 most-
-// recent PDFs ever got parsed; thousands stayed DATA_PENDING). Now we
-// scale with window: short windows = 30 (recent filings matter most),
-// long windows = 80 (broader universe). PDFs are KV-cached so the cost
-// is paid once per filing — subsequent visits use the cache.
+// PATCH 0412/0413 — Scaled PDF extraction cap. Each refresh adds MORE
+// scored filings to the persistent store (Patch 0412 per-filing cache).
+// Over multiple visits, DATA_PENDING count drops monotonically until
+// every relevant filing has been parsed once.
 function maxPdfExtractsForWindow(days: number): number {
-  if (days <= 7)   return 35;
-  if (days <= 30)  return 50;
-  if (days <= 60)  return 65;
-  if (days <= 90)  return 75;
-  return 90;                          // 180d
+  if (days <= 7)   return 50;
+  if (days <= 30)  return 70;
+  if (days <= 60)  return 85;
+  if (days <= 90)  return 100;
+  return 120;                         // 180d
 }
 
 interface ScoredFiling extends FilingRecord {
@@ -165,6 +163,17 @@ export async function GET(req: NextRequest) {
     }
   }
   const bsePages = Math.min(12, Math.max(2, Math.ceil(days / 15)));
+  // PATCH 0413 — Per-sub-window raw filings cache. Closed past windows
+  // are immutable (NSE/BSE never republish history); we cache them 180
+  // days. The rolling current window gets 30 min TTL. User feedback:
+  // "what we saved should be saved and not scraped always."
+  const todayIsoForCache = new Date().toISOString().slice(0, 10);
+  const SUBWIN_KEY = (fromIso: string, toIso: string) => `subwin-filings:v1:${fromIso}:${toIso}`;
+  const SUBWIN_TTL_PAST = 180 * 24 * 60 * 60;      // 6 months
+  const SUBWIN_TTL_CURRENT = 30 * 60;              // 30 minutes for rolling window
+  function ttlForSubwindow(toIso: string): number {
+    return toIso < todayIsoForCache ? SUBWIN_TTL_PAST : SUBWIN_TTL_CURRENT;
+  }
 
   // PATCH 0409 — serialize sub-window fetches with concurrency cap of 2.
   // Previous version fired all 6 sub-windows in parallel — NSE
@@ -184,13 +193,49 @@ export async function GET(req: NextRequest) {
     ]).finally(() => { clearTimeout(tNse); clearTimeout(tBse); });
   };
 
+  // PATCH 0413 — cache-first sub-window fetch.
+  // Step 1: try KV for every sub-window. Step 2: scrape only the cache-misses
+  // (typically just the current rolling window).
+  type SubWinCache = { fromIso: string; toIso: string; nse: any; bse: any };
+  const subwinCacheHits: SubWinCache[] = [];
+  const subwinMisses: typeof subWindows = [];
+  if (isRedisAvailable() && !force) {
+    const reads = await Promise.all(subWindows.map(w =>
+      kvGet<SubWinCache>(SUBWIN_KEY(w.fromIso, w.toIso)).catch(() => null)
+    ));
+    for (let i = 0; i < subWindows.length; i++) {
+      if (reads[i]) subwinCacheHits.push(reads[i]!);
+      else subwinMisses.push(subWindows[i]);
+    }
+  } else {
+    subwinMisses.push(...subWindows);
+  }
+  console.log(`[live-feed] sub-windows: ${subwinCacheHits.length} cached, ${subwinMisses.length} need scrape`);
+
   const allResults: Array<Awaited<ReturnType<typeof fetchSubWindow>>> = [];
-  for (let i = 0; i < subWindows.length; i += SUBWIN_CONCURRENCY) {
-    const batch = subWindows.slice(i, i + SUBWIN_CONCURRENCY);
+  for (const hit of subwinCacheHits) {
+    allResults.push([hit.nse, hit.bse]);
+  }
+  for (let i = 0; i < subwinMisses.length; i += SUBWIN_CONCURRENCY) {
+    const batch = subwinMisses.slice(i, i + SUBWIN_CONCURRENCY);
     const batchResults = await Promise.all(batch.map(w => fetchSubWindow(w.fromIso, w.toIso)));
+    // Write each batch result back to KV before moving on
+    if (isRedisAvailable()) {
+      for (let j = 0; j < batch.length; j++) {
+        const [nseR, bseR] = batchResults[j];
+        const w = batch[j];
+        // Persist serializable plain objects (filings array + source)
+        const payload: SubWinCache = {
+          fromIso: w.fromIso,
+          toIso: w.toIso,
+          nse: { filings: nseR.filings, source: nseR.source },
+          bse: { filings: bseR.filings, source: bseR.source },
+        };
+        kvSet(SUBWIN_KEY(w.fromIso, w.toIso), payload, ttlForSubwindow(w.toIso)).catch(() => {});
+      }
+    }
     allResults.push(...batchResults);
-    // Small inter-batch delay so NSE's per-IP rate-limit window resets
-    if (i + SUBWIN_CONCURRENCY < subWindows.length) {
+    if (i + SUBWIN_CONCURRENCY < subwinMisses.length) {
       await new Promise(r => setTimeout(r, 600 + Math.random() * 200));
     }
   }
@@ -218,7 +263,8 @@ export async function GET(req: NextRequest) {
   // only extract + score NEW filings (not seen before) within the budget.
   // Universe grows monotonically across refreshes.
   const SCORED_KEY = (hash: string) => `scored-filing:v2:${hash}`;
-  const SCORED_TTL = 90 * 24 * 60 * 60;
+  // PATCH 0413 — bumped 90 → 180 days per user request (6 months)
+  const SCORED_TTL = 180 * 24 * 60 * 60;
 
   // Phase 1: classify + identify candidates for PDF extraction
   const candidates: Array<{ filing: FilingRecord; filing_type: ConcallFilingType }> = [];
