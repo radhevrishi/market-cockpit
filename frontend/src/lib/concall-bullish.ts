@@ -272,6 +272,23 @@ export const NEG_BLOCKERS: NegBlocker[] = [
   { re: /near[-\s]?term\s+(?:headwind|challenge|pressure)/i,   weight: 0.25, severity: 'LOW', critical: false, tag: 'Near-term headwind' },
   { re: /geopolitical\s+headwind|adverse\s+macro/i,            weight: 0.25, severity: 'LOW', critical: false, tag: 'Macro headwind' },
   { re: /\bcancel(?:l(?:ed|ation))?\b/i,                       weight: 1.5, severity: 'MEDIUM', critical: false, tag: 'Cancellation' },
+
+  // PATCH 0411 — Working-capital / capital-allocation negative detectors.
+  // These are Tier-1 quality signals — when a management slips them
+  // into the prepared remarks or admits them in Q&A, the underlying
+  // story is materially worse than the headline narrative suggests.
+  // Heavier weights than generic "delay" because they show up in actual
+  // financial behavior, not just commentary.
+  { re: /(?:inventory|stock)\s+days?\s+(?:rose|increased|extended|expanded|grew)\s+(?:to\s+|from\s+|by\s+)?\d/i, weight: 2.2, severity: 'MEDIUM', critical: false, tag: 'Inventory days rising' },
+  { re: /(?:debtor|receivable)\s+days?\s+(?:rose|increased|extended|expanded|grew)\s+(?:to\s+|from\s+|by\s+)?\d/i, weight: 2.2, severity: 'MEDIUM', critical: false, tag: 'Receivable days expanding' },
+  { re: /working\s+capital\s+(?:intensity|cycle)\s+(?:expanded|extended|grew|deteriorated)/i, weight: 2.0, severity: 'MEDIUM', critical: false, tag: 'Working capital stress' },
+  { re: /(?:single|one)\s+customer\s+(?:account|contribut)\w*\s+(?:for\s+|to\s+)?\d{2,}\s*%/i, weight: 2.5, severity: 'MEDIUM', critical: false, tag: 'Single customer concentration' },
+  { re: /top\s+(?:five|5|three|3)\s+customers?\s+(?:account|contribut)\w*\s+(?:for\s+|to\s+)?[6-9]\d\s*%/i, weight: 1.8, severity: 'MEDIUM', critical: false, tag: 'Top customer concentration' },
+  { re: /(?:commissioning|project)\s+(?:has\s+been\s+)?(?:delayed|postponed|deferred|pushed\s+out)\s+(?:to|by|until)/i, weight: 2.0, severity: 'MEDIUM', critical: false, tag: 'Delayed commissioning' },
+  { re: /(?:equity\s+|share\s+)?dilution\s+of\s+\d|warrant\s+conversion\s+dilut/i, weight: 2.0, severity: 'MEDIUM', critical: false, tag: 'Dilution' },
+  { re: /cfo\/?\s*pat\s+(?:ratio\s+)?(?:fell|declined|deteriorated|at\s+0\.[0-5])/i, weight: 2.5, severity: 'MEDIUM', critical: false, tag: 'Weak CFO/PAT' },
+  { re: /capex\s+(?:funded\s+by\s+debt|debt[-\s]?funded)/i, weight: 1.8, severity: 'MEDIUM', critical: false, tag: 'Debt-funded capex' },
+  { re: /cost\s+inflation\s+(?:outpac|outstripp|exceed)\w*\s+(?:pricing|realiz|recovery)/i, weight: 2.2, severity: 'MEDIUM', critical: false, tag: 'Cost outpacing pricing' },
 ];
 
 // ─── Scoring engine ────────────────────────────────────────────────────────

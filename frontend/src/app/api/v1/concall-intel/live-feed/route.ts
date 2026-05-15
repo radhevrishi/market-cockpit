@@ -35,7 +35,7 @@ import { scanBottleneck, type BottleneckSignal } from '@/lib/bottleneck-scanner'
 // + boilerplate suppression + strict ULTRA gate.
 import { applyEvidenceHierarchy, type EvidenceHierarchyResult } from '@/lib/evidence-hierarchy';
 
-const CACHE_KEY = (days: number) => `concall-feed:v14:days:${days}`;  // v14: evidence hierarchy
+const CACHE_KEY = (days: number) => `concall-feed:v15:days:${days}`;  // v15: time decay + sector KPI + WC blockers
 // PATCH 0396 — Aggressive live-cache per user spec: 'always take live data'
 const CACHE_TTL_SHORT = 2 * 60;        // 2 min for fresh data (was 5)
 const CACHE_TTL_LONG = 10 * 60;        // 10 min for older lookback (was 30)
@@ -310,7 +310,34 @@ export async function GET(req: NextRequest) {
     // with institutionally-calibrated values. Filing-type weight,
     // numeric-anchor count, boilerplate suppression, and a strict ULTRA
     // gate all apply here.
-    const evidence = applyEvidenceHierarchy(scoringText, bullish, filing_type, scoredFrom);
+    const evidence = applyEvidenceHierarchy(scoringText, bullish, filing_type, scoredFrom, sector_overlay?.sector);
+
+    // PATCH 0411 — Time decay within the selected window. Recent filings
+    // weight more than 6-month-old ones. λ depends on filing type —
+    // transcripts decay slowly (high signal lasts months), investor
+    // presentations decay faster (often re-issued each quarter).
+    // multiplier = exp(-λ × days_old). For transcripts: λ=0.008/day → 30d ≈ 0.79, 90d ≈ 0.49.
+    // For presentations: λ=0.014/day → 30d ≈ 0.66, 90d ≈ 0.28.
+    const filingTs = new Date(f.filing_datetime).getTime();
+    const daysOld = Math.max(0, (Date.now() - filingTs) / 86_400_000);
+    const lambda =
+      filing_type === 'TRANSCRIPT' ? 0.008 :
+      filing_type === 'CONCALL_INVITE' ? 0.008 :
+      filing_type === 'RESULTS_PRESENTATION' ? 0.010 :
+      filing_type === 'ANALYST_MEET' ? 0.012 :
+      filing_type === 'INVESTOR_PRESENTATION' ? 0.014 :
+      0.012;
+    const timeDecay = Math.exp(-lambda * daysOld);
+    if (timeDecay < 0.99) {
+      evidence.adjusted_composite = Math.round(evidence.adjusted_composite * timeDecay * 10) / 10;
+      // Bake the decay into the cap_reason for transparency
+      if (timeDecay < 0.8) {
+        const decayPct = Math.round((1 - timeDecay) * 100);
+        evidence.cap_reason = evidence.cap_reason
+          ? `${evidence.cap_reason} · −${decayPct}% time decay (${Math.round(daysOld)}d old)`
+          : `−${decayPct}% time decay (${Math.round(daysOld)}d old)`;
+      }
+    }
     // Push the adjusted values back onto the bullish object so all
     // downstream consumers (theme aggregator, ranking, UI) see consistent
     // scores. The pre-hierarchy values remain visible inside the evidence

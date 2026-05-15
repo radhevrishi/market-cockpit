@@ -17,6 +17,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import type { BullishScore, ConcallFilingType } from './concall-bullish';
+import { sectorSpecificNumericCount } from './sector-normalization';
+import type { SectorOverlayResult } from './concall-sector-overlays';
 
 // ─── Filing-type trust weights ─────────────────────────────────────────────
 // User spec: "Earnings call transcript 1.00, Result presentation 0.80,
@@ -158,6 +160,7 @@ export function applyEvidenceHierarchy(
   bullish: BullishScore,
   filing_type: ConcallFilingType,
   scored_from: 'PDF' | 'SUBJECT',
+  sector?: SectorOverlayResult['sector'],
 ): EvidenceHierarchyResult {
   const filing_type_weight = FILING_TYPE_WEIGHTS[filing_type] ?? 0.30;
 
@@ -190,7 +193,11 @@ export function applyEvidenceHierarchy(
       numericMatches.add(m[0].trim().toLowerCase());
     }
   }
-  const numeric_evidence_count = numericMatches.size;
+  // PATCH 0411 — Sector-specific KPI patterns layer on top of the generic
+  // numeric anchors. Banks NIM/GNPA, chemicals spreads, IT attrition, etc.
+  // each count as additional numeric evidence in the right sector context.
+  const sectorBonus = sector ? sectorSpecificNumericCount(text, sector) : 0;
+  const numeric_evidence_count = numericMatches.size + sectorBonus;
   const numeric_examples = Array.from(numericMatches).slice(0, 3);
 
   // Boilerplate + hollow theme counts

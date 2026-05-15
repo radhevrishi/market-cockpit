@@ -514,14 +514,32 @@ function LiveBullishFeed() {
           the days selector immediately refreshes the shortlist. The
           chip-count below shows how many days the current window covers. */}
       {data && (() => {
-        const ranked = [...data.filings]
+        // PATCH 0411 — When the strict tier filter (ULTRA/BULLISH/MIXED_POSITIVE)
+        // returns <5 names, fall back to including top NEUTRAL candidates so
+        // the user always sees a usable shortlist. Calibration is now strict
+        // enough that 180d windows commonly yield only 1-2 BULLISH+ — that's
+        // CORRECT but UX-bad if the panel goes empty.
+        const strict = [...data.filings]
           .filter(f => f.bullish.tier && ['ULTRA_BULLISH', 'BULLISH', 'MIXED_POSITIVE'].includes(f.bullish.tier))
           .sort((a, b) => {
             const compA = (a.bullish.components as any).composite_score ?? a.bullish.raw_score;
             const compB = (b.bullish.components as any).composite_score ?? b.bullish.raw_score;
             return compB - compA;
-          })
-          .slice(0, 10);
+          });
+        let ranked = strict.slice(0, 10);
+        if (strict.length < 5) {
+          // Pad with top NEUTRAL by composite ≥ 2.0 — shown as "Below threshold"
+          const fallback = [...data.filings]
+            .filter(f => f.bullish.tier === 'NEUTRAL')
+            .sort((a, b) => {
+              const compA = (a.bullish.components as any).composite_score ?? a.bullish.raw_score;
+              const compB = (b.bullish.components as any).composite_score ?? b.bullish.raw_score;
+              return compB - compA;
+            })
+            .filter(f => ((f.bullish.components as any).composite_score ?? f.bullish.raw_score) >= 2.0)
+            .slice(0, 10 - strict.length);
+          ranked = [...strict, ...fallback];
+        }
         if (ranked.length === 0) return null;
         return (
           <div style={{ marginBottom: 12, padding: 12, background: 'linear-gradient(135deg, #10B98110, #22D3EE10)', border: '1px solid #10B98150', borderRadius: 10 }}>
@@ -961,12 +979,16 @@ function WarrantMomentumFeed() {
       )}
 
       {/* PATCH 0406 — Top 10 Ranked Warrants pinned panel.
-          Mirrors the bullish Top 10 panel: ranks by conviction score
-          (0-10), shows symbol + company + warrant type + premium + size
-          + promoter participation %. Updates whenever days / passingOnly
-          changes via useEffect. */}
-      {data && data.filings.length > 0 && (() => {
-        const ranked = [...data.filings]
+          PATCH 0411 — Renders from `ranked_all` (full ranked list,
+          unfiltered by passingOnly) so even when 0 pass the strict gate
+          the user still sees a ranked shortlist of warrant filings in
+          the window. */}
+      {data && (() => {
+        const source: any[] = (data as any).ranked_all && (data as any).ranked_all.length > 0
+          ? (data as any).ranked_all
+          : data.filings;
+        if (!source || source.length === 0) return null;
+        const ranked = [...source]
           .sort((a, b) => b.conviction.conviction - a.conviction.conviction)
           .slice(0, 10);
         return (

@@ -115,6 +115,7 @@ interface WarrantFeedPayload {
   count_relevant: number;
   count_passing: number;
   filings: ScoredWarrantFiling[];
+  ranked_all?: ScoredWarrantFiling[];   // PATCH 0411 — full ranked list (ignores passingOnly filter) for Top-N
   sources: { nse: string; bse: string };
 }
 
@@ -313,11 +314,16 @@ export async function GET(req: NextRequest) {
 
 function applyWarrantFilters(payload: WarrantFeedPayload, opts: { passingOnly: boolean; threshold: number; topN: number }): WarrantFeedPayload {
   let filings = payload.filings;
+  // PATCH 0411 — Always preserve the FULL ranked list separately so the
+  // Top-N panel can render even when passingOnly empties the main filings
+  // array. Previously the page showed "No warrant filings" because the
+  // panel only looked at `filings` which was filtered to passing-gate ≥8.
+  const ranked_all = payload.filings.slice(0, Math.max(10, opts.topN || 10));
   if (opts.passingOnly) filings = filings.filter(f => f.conviction.passes_gate);
   if (opts.threshold > 0) filings = filings.filter(f => f.conviction.conviction >= opts.threshold);
   // PATCH 0392 — top-N ranking. When topN > 0, return the best N regardless
   // of absolute threshold. Lets the UI show 'top 10 warrant setups this
   // month' even when no filing crosses the strict gate.
   if (opts.topN > 0) filings = filings.slice(0, opts.topN);
-  return { ...payload, filings };
+  return { ...payload, filings, ranked_all };
 }
