@@ -120,6 +120,26 @@ export async function POST(req: NextRequest) {
 
 // ─── GET — compute movers vs reference date ───────────────────────────────
 export async function GET(req: NextRequest) {
+  try {
+    return await _handleGET(req);
+  } catch (err) {
+    // PATCH 0420 — never return HTTP 500. Empty payload + error field.
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[movers] uncaught', msg);
+    return NextResponse.json({
+      generated_at: new Date().toISOString(),
+      today_date: new Date().toISOString().slice(0, 10),
+      reference_date: null,
+      new_entries: [],
+      big_jumps: [],
+      lost_momentum: [],
+      ranking_today: [],
+      error: `movers failed: ${msg.slice(0, 200)}`,
+    });
+  }
+}
+
+async function _handleGET(req: NextRequest) {
   const referenceDate = req.nextUrl.searchParams.get('date');
 
   // Build TODAY's snapshot live (don't write to KV — that's POST's job)

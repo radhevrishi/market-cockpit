@@ -406,7 +406,19 @@ function LiveBullishFeed() {
         </div>
       </div>
 
-      {error && <div style={{ fontSize: 11, color: '#EF4444', marginBottom: 8 }}>⚠ {error}</div>}
+      {/* PATCH 0420 — Suppress red error chip when usable data IS loaded.
+          Vercel's 60s hard timeout can kill the function before our try/catch
+          returns a graceful 200, producing a real HTTP 500 even when the
+          last successful response still has fresh data shown on screen.
+          Show a soft amber notice instead, only if no data is rendered. */}
+      {error && (!data || (data.filings?.length || 0) === 0) && (
+        <div style={{ fontSize: 11, color: '#EF4444', marginBottom: 8 }}>⚠ {error}</div>
+      )}
+      {error && data && (data.filings?.length || 0) > 0 && (
+        <div style={{ fontSize: 10, color: '#F59E0B', marginBottom: 8, fontStyle: 'italic' }}>
+          · last refresh slow ({error}); showing previous results
+        </div>
+      )}
 
       {/* PATCH 0391 — Tier filter chips */}
       {data && bullishOnly && (
@@ -953,7 +965,15 @@ function WarrantMomentumFeed() {
         </div>
       </div>
 
-      {error && <div style={{ fontSize: 11, color: '#EF4444', marginBottom: 8 }}>⚠ {error}</div>}
+      {/* PATCH 0420 — Suppress red HTTP 500 chip when warrant data is loaded */}
+      {error && (!data || data.count_total === 0) && (
+        <div style={{ fontSize: 11, color: '#EF4444', marginBottom: 8 }}>⚠ {error}</div>
+      )}
+      {error && data && data.count_total > 0 && (
+        <div style={{ fontSize: 10, color: '#F59E0B', marginBottom: 8, fontStyle: 'italic' }}>
+          · last refresh slow ({error}); showing previous results
+        </div>
+      )}
 
       {data && data.filings.length === 0 && !loading && (
         <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic', padding: '12px 0' }}>
@@ -1327,7 +1347,15 @@ function KeywordWatchFeed() {
         </div>
       )}
 
-      {error && <div style={{ fontSize: 11, color: '#EF4444', marginBottom: 8 }}>⚠ {error}</div>}
+      {/* PATCH 0420 — soft amber when refresh slow but data is loaded; red only when truly empty */}
+      {error && (!data || (data.filings?.length || 0) === 0) && (
+        <div style={{ fontSize: 11, color: '#EF4444', marginBottom: 8 }}>⚠ {error}</div>
+      )}
+      {error && data && (data.filings?.length || 0) > 0 && (
+        <div style={{ fontSize: 10, color: '#F59E0B', marginBottom: 8, fontStyle: 'italic' }}>
+          · last refresh slow ({error}); showing previous results
+        </div>
+      )}
 
       {data && data.filings.length === 0 && !loading && (
         <div style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic', padding: '12px 0' }}>

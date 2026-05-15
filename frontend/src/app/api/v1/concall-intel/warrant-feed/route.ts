@@ -141,6 +141,14 @@ export async function GET(req: NextRequest) {
 }
 
 async function handleWarrantFeed(req: NextRequest) {
+  // PATCH 0420 — Strict time budget to prevent Vercel 60s hard cap kills.
+  // Hard cap is 60s; soft budget is 45s, bail out of expensive operations
+  // (PDF extraction + per-filing async work) once exceeded and return what
+  // we have. Better partial results with cache write than HTTP 500.
+  const STARTED_AT = Date.now();
+  const TIME_BUDGET_MS = 45_000;
+  const overBudget = () => Date.now() - STARTED_AT > TIME_BUDGET_MS;
+
   // PATCH 0393 — max lookback bumped 30 → 60 days per user request
   // PATCH 0405 — bumped 60 → 90 days for full-quarter view
   // PATCH 0407 — bumped 90 → 180 days for historical validation
@@ -220,6 +228,8 @@ async function handleWarrantFeed(req: NextRequest) {
     allResults.push([hit.nse, hit.bse]);
   }
   for (let i = 0; i < subwinMisses.length; i += SUBWIN_CONCURRENCY) {
+    // PATCH 0420 — stop fetching new sub-windows once over budget; use what we have
+    if (overBudget()) break;
     const batch = subwinMisses.slice(i, i + SUBWIN_CONCURRENCY);
     const batchResults = await Promise.all(batch.map(w => fetchSubWindow(w.fromIso, w.toIso)));
     if (isRedisAvailable()) {
@@ -264,23 +274,29 @@ async function handleWarrantFeed(req: NextRequest) {
   candidates.sort((a, b) => new Date(b.filing.filing_datetime).getTime() - new Date(a.filing.filing_datetime).getTime());
 
   // Phase 2: extract PDFs for top candidates (warrant details + concall context)
+  // PATCH 0420 — bail PDF extraction entirely if already over budget
   const extracts = new Map<string, string>();
-  const toExtract = candidates.slice(0, MAX_PDF_EXTRACTS).filter(c => c.filing.attachment_urls.length > 0);
-  if (toExtract.length > 0) {
-    const results = await Promise.allSettled(
-      toExtract.map(async c => {
-        const ext = await extractFirstPdf(c.filing.attachment_urls);
-        return { hash: c.filing.content_hash, text: ext?.text || '' };
-      }),
-    );
-    for (const r of results) {
-      if (r.status === 'fulfilled' && r.value.text) extracts.set(r.value.hash, r.value.text);
+  if (!overBudget()) {
+    const dynamicPdfCap = overBudget() ? 0 : MAX_PDF_EXTRACTS;
+    const toExtract = candidates.slice(0, dynamicPdfCap).filter(c => c.filing.attachment_urls.length > 0);
+    if (toExtract.length > 0) {
+      const results = await Promise.allSettled(
+        toExtract.map(async c => {
+          const ext = await extractFirstPdf(c.filing.attachment_urls);
+          return { hash: c.filing.content_hash, text: ext?.text || '' };
+        }),
+      );
+      for (const r of results) {
+        if (r.status === 'fulfilled' && r.value.text) extracts.set(r.value.hash, r.value.text);
+      }
     }
   }
 
   // Phase 3: score each
+  // PATCH 0420 — bail per-filing loop early if approaching Vercel hard cap
   const all: ScoredWarrantFiling[] = [];
   for (const { filing: f, warrant_type } of candidates) {
+    if (overBudget()) break;
     const pdfText = extracts.get(f.content_hash) || '';
     const combinedText = `${f.subject}\n\n${pdfText}`;
 
