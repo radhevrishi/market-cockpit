@@ -33,6 +33,10 @@ export interface BottleneckSignal {
 
 // ─── Phrases that signal an active bottleneck ──────────────────────────────
 // Match in the same SENTENCE for context — avoid loose paragraph cross-ref.
+// PATCH 0415 — broadened after Quality Power Q2 FY26 missed signal:
+// "insulators and bushings remain tight in global supply" uses an
+// `[Component] remain tight in global supply` word order our prior
+// regex couldn't catch.
 const BOTTLENECK_PATTERNS: RegExp[] = [
   /(?:cannot|can[' ]?t|unable\s+to)\s+(?:meet|fulfill?|service|deliver|execute)\s+(?:the\s+|all\s+|current\s+)?(?:demand|orders?)/i,
   /(?:supply|component|capacity|production)\s+(?:shortage|constraint|scarc|bottleneck|tight)/i,
@@ -47,6 +51,37 @@ const BOTTLENECK_PATTERNS: RegExp[] = [
   /(?:execution|delivery)\s+(?:delays?|deferral)\s+(?:due\s+to|because\s+of|owing\s+to)/i,
   /procurement\s+(?:challenge|issue|constraint|delay)/i,
   /(?:strategic|critical|key)\s+(?:component|raw\s+material|input)\s+(?:shortage|scarcity|constraint)/i,
+
+  // PATCH 0415 — the Quality Power miss class. "remain tight in global supply",
+  // "stays tight globally", "supply remains tight" etc.
+  /\b(?:remain|remains|stay|stays|are|is|continues?\s+to\s+be|continue\s+to\s+be)\s+tight\s+(?:in|across|globally|worldwide|world[-\s]?wide)\b/i,
+  /\b(?:remain|remains|stay|stays|are|is)\s+tight\s+(?:in\s+)?(?:global\s+)?supply\b/i,
+  /\btight\s+(?:in|across|globally|world[-\s]?wide)\s+(?:supply|market)/i,
+  /\bsupply\s+(?:remains?|stays?|continues?\s+(?:to\s+be|tight))/i,
+
+  // "in short supply" / "in tight supply" idioms
+  /\bin\s+(?:short|tight)\s+supply\b/i,
+  /\bshort\s+in\s+supply\b/i,
+
+  // Supply-chain constraint umbrella phrases
+  /\bsupply[-\s]?chain\s+(?:constraint|disruption|tightness|stress|issue|challenge|bottleneck)/i,
+  /\bsupply[-\s]?side\s+(?:constraint|disruption|tightness|stress|issue|challenge)/i,
+
+  // Critical-input mentions alone (when paired with action verb)
+  /\b(?:critical|key|strategic|essential)\s+(?:input|component|raw\s+material|equipment)s?\b/i,
+
+  // "delays in critical inputs" — Quality Power again
+  /\bdelays?\s+in\s+(?:critical\s+|key\s+|strategic\s+)?(?:input|component|supply|deliver|procurement)/i,
+
+  // Booked-out variants
+  /\b(?:capacity|production|order[-\s]?book)\s+(?:is\s+|are\s+|has\s+been\s+|already\s+)?(?:fully\s+|completely\s+)?(?:booked|sold|filled)\s+(?:out|ahead|for)/i,
+
+  // Import dependency / regulatory bottleneck
+  /\bimport[-\s]?dependen(?:t|cy|ce)\b/i,
+  /\b(?:BIS|CE|UL)\s+(?:license|certification|approval).*(?:slowed|delayed|pending|required)/i,
+
+  // Qualification / approval cycle slowing supply
+  /(?:qualification|certification|approval)\s+(?:cycle|process|window).*(?:slow|long|extended|6\+|12\+|2\+\s*year)/i,
 ];
 
 // ─── Critical modifiers — escalate generic bottleneck to CRITICAL tier ─────

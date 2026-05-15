@@ -35,7 +35,7 @@ import { scanBottleneck, type BottleneckSignal } from '@/lib/bottleneck-scanner'
 // + boilerplate suppression + strict ULTRA gate.
 import { applyEvidenceHierarchy, type EvidenceHierarchyResult } from '@/lib/evidence-hierarchy';
 
-const CACHE_KEY = (days: number) => `concall-feed:v18:days:${days}`;  // v18: time-budget guard + sector confidence threshold
+const CACHE_KEY = (days: number) => `concall-feed:v19:days:${days}`;  // v19: subwin cache null-guard + broader bottleneck patterns + parallel PDF budget
 // PATCH 0396 — Aggressive live-cache per user spec: 'always take live data'
 const CACHE_TTL_SHORT = 2 * 60;        // 2 min for fresh data (was 5)
 const CACHE_TTL_LONG = 10 * 60;        // 10 min for older lookback (was 30)
@@ -224,6 +224,12 @@ export async function GET(req: NextRequest) {
 
   const allResults: Array<Awaited<ReturnType<typeof fetchSubWindow>>> = [];
   for (const hit of subwinCacheHits) {
+    // PATCH 0415 — null-guard against malformed cache entries (was the 500 cause).
+    // Old/partial cache writes could yield { fromIso, toIso } without nested
+    // nse/bse arrays, then for-of on undefined .filings → TypeError → HTTP 500.
+    if (!hit || !hit.nse || !hit.bse || !Array.isArray(hit.nse.filings) || !Array.isArray(hit.bse.filings)) {
+      continue;
+    }
     allResults.push([hit.nse, hit.bse]);
   }
   for (let i = 0; i < subwinMisses.length; i += SUBWIN_CONCURRENCY) {
@@ -348,11 +354,18 @@ export async function GET(req: NextRequest) {
   // 15s on PDFs (each PDF avg ~2-4s with KV cache, so ~5 extractions).
   // Prevents the 60s Vercel timeout cold-start 504s.
   const remainingBeforeExtract = timeRemaining();
-  const estPdfMs = 2500;                       // avg time per PDF (cold + warm mix)
-  const reservedFinalMs = 6000;                // reserve 6s for scoring + theme + KV writes
+  // PATCH 0415 — PDFs run in parallel (Promise.allSettled), so the wall-clock
+  // is governed by the slowest PDF + the 7s timeout in pdf-text-extractor,
+  // NOT by N × avg. Treat PDF extraction as a flat ~8s budget regardless of
+  // count. This unlocks 30-100 extractions per refresh on warm KV.
+  // PATCH 0415 — reservedFinalMs dropped 6s → 3s (scoring + KV writes are <1s).
+  const PDF_WALL_CLOCK_MS = 9000;              // worst-case for parallel batch
+  const reservedFinalMs = 3000;
   const budgetForPdfs = Math.max(0, remainingBeforeExtract - reservedFinalMs);
-  const maxPdfsByTime = Math.floor(budgetForPdfs / estPdfMs);
-  const maxPdfExtracts = Math.min(maxPdfExtractsBase, maxPdfsByTime);
+  // If we have ≥9s left, run full PDF batch; otherwise cap proportionally.
+  const maxPdfExtracts = budgetForPdfs >= PDF_WALL_CLOCK_MS
+    ? maxPdfExtractsBase
+    : Math.floor((budgetForPdfs / PDF_WALL_CLOCK_MS) * maxPdfExtractsBase);
   console.log(`[live-feed] elapsed=${timeElapsed()}ms, budget=${budgetForPdfs}ms → maxPdfExtracts=${maxPdfExtracts} (base ${maxPdfExtractsBase})`);
 
   // PATCH 0412 — Exclude cache hits from the extraction queue. The budget
