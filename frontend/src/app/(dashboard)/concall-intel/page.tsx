@@ -450,6 +450,114 @@ function LiveBullishFeed() {
         </div>
       )}
 
+      {/* PATCH 0421 — DEDICATED BOTTLENECK PANEL pinned ABOVE everything.
+          User asked: "is bottleneck/bushing coming naturally or hardcoded?".
+          Answer: DETECTION is 100% pattern-based regex on concall text
+          (no company-specific hardcoding, no stale data). Only the SYMPATHY
+          BENEFICIARIES (which listed tickers serve a constrained component)
+          are mapped via curated industry knowledge — that's a deliberate
+          read-through aid, not detection.
+          This panel surfaces EVERY bottleneck detection across the window,
+          including single-company ones (the Theme Cluster panel below
+          requires ≥3 companies and skips lone-wolf signals like Quality
+          Power's bushing miss). */}
+      {data && (() => {
+        const filings: any[] = (data.filings || []) as any[];
+        const detected = filings.filter(f => f.bottleneck && f.bottleneck.detected);
+        if (detected.length === 0) return null;
+        // Group by component key (component names normalized in scanner)
+        type Group = { component: string; critical: boolean; companies: Array<{ symbol: string; company_name: string; subject: string; evidence: string }>; beneficiaries: Set<string>; sectors: Set<string> };
+        const groups = new Map<string, Group>();
+        const ungrouped: Array<{ symbol: string; company_name: string; subject: string; evidence: string; critical: boolean }> = [];
+        for (const f of detected) {
+          const ev = (f.bottleneck.evidence || [])[0] || '';
+          const comps: string[] = f.bottleneck.components || [];
+          if (comps.length === 0) {
+            // Bottleneck phrasing fired but no known component vocab match.
+            // Surface raw evidence — this is exactly the "future bottlenecks
+            // I can identify with this" case the user asked for.
+            ungrouped.push({
+              symbol: f.symbol || '',
+              company_name: f.company_name || '',
+              subject: f.subject || '',
+              evidence: ev,
+              critical: !!f.bottleneck.critical,
+            });
+            continue;
+          }
+          for (const c of comps) {
+            const g = groups.get(c) || { component: c, critical: false, companies: [], beneficiaries: new Set<string>(), sectors: new Set<string>() };
+            if (f.bottleneck.critical) g.critical = true;
+            g.companies.push({ symbol: f.symbol || '', company_name: f.company_name || '', subject: f.subject || '', evidence: ev });
+            for (const b of (f.bottleneck.beneficiaries || [])) g.beneficiaries.add(b);
+            for (const s of (f.bottleneck.sectors || [])) g.sectors.add(s);
+            groups.set(c, g);
+          }
+        }
+        const groupArr = Array.from(groups.values()).sort((a, b) => {
+          if (a.critical !== b.critical) return a.critical ? -1 : 1;
+          return b.companies.length - a.companies.length;
+        });
+        return (
+          <div style={{ marginBottom: 14, padding: 14, background: 'linear-gradient(135deg, #EF444415, #F59E0B10)', border: '1px solid #EF444460', borderRadius: 10 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+              <div style={{ fontSize: 13, fontWeight: 900, color: '#EF4444', letterSpacing: '0.5px' }}>
+                🚨 SUPPLY-CHAIN BOTTLENECKS DETECTED — {detected.length} filing{detected.length === 1 ? '' : 's'} across {groupArr.length} component{groupArr.length === 1 ? '' : 's'}{ungrouped.length > 0 ? ` + ${ungrouped.length} unmapped` : ''}
+              </div>
+              <div style={{ fontSize: 10, color: '#94A3B8', fontWeight: 600 }}>last {days}d · pattern-detected</div>
+            </div>
+            <div style={{ fontSize: 10, color: '#94A3B8', marginBottom: 10, fontStyle: 'italic' }}>
+              Detection is 100% regex on concall text — no company hardcoding. Sympathy beneficiaries are mapped from curated industry knowledge; verify independently.
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: 10 }}>
+              {groupArr.slice(0, 12).map((g, gi) => (
+                <div key={g.component + '-bg-' + gi} style={{ padding: 10, background: '#0A1422', border: `1px solid ${g.critical ? '#EF4444' : '#F59E0B'}60`, borderRadius: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+                    <div style={{ fontSize: 12, fontWeight: 900, color: g.critical ? '#EF4444' : '#F59E0B' }}>
+                      {g.critical ? '🚨 ' : '⚠ '}{g.component.replace(/_/g, ' ')}
+                    </div>
+                    <div style={{ fontSize: 10, color: '#94A3B8' }}>{g.companies.length} co{g.companies.length === 1 ? '' : 's'}</div>
+                  </div>
+                  {g.sectors.size > 0 && (
+                    <div style={{ fontSize: 9, color: '#94A3B8', marginBottom: 4 }}>sector: {Array.from(g.sectors).join(' · ')}</div>
+                  )}
+                  <div style={{ fontSize: 10, color: '#C9D4E0', marginBottom: 6, lineHeight: 1.45 }}>
+                    {g.companies.slice(0, 2).map((c, ci) => (
+                      <div key={c.symbol + '-c-' + ci} style={{ marginBottom: 3 }}>
+                        <strong style={{ color: '#22D3EE' }}>[{c.symbol || c.company_name}]</strong> &ldquo;{(c.evidence || '').slice(0, 180)}{(c.evidence || '').length > 180 ? '…' : ''}&rdquo;
+                      </div>
+                    ))}
+                    {g.companies.length > 2 && (
+                      <div style={{ fontSize: 9, color: '#94A3B8' }}>+ {g.companies.length - 2} more</div>
+                    )}
+                  </div>
+                  {g.beneficiaries.size > 0 && (
+                    <div style={{ fontSize: 9, color: '#10B981' }}>
+                      <span style={{ fontWeight: 800 }}>↪ POTENTIAL READ-THROUGH:</span> {Array.from(g.beneficiaries).slice(0, 8).join(' · ')}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            {ungrouped.length > 0 && (
+              <div style={{ marginTop: 10, padding: 10, background: '#0A1422', border: '1px solid #1A2540', borderRadius: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: '#A78BFA', marginBottom: 6, letterSpacing: '0.5px' }}>
+                  📡 RAW BOTTLENECK EVIDENCE (component not in known vocab — surface so future bottlenecks aren't missed)
+                </div>
+                {ungrouped.slice(0, 6).map((u, ui) => (
+                  <div key={u.symbol + '-u-' + ui} style={{ fontSize: 10, color: '#C9D4E0', marginBottom: 4, lineHeight: 1.45 }}>
+                    <strong style={{ color: '#22D3EE' }}>[{u.symbol || u.company_name}]</strong> {u.critical ? '🚨 ' : ''}&ldquo;{(u.evidence || '').slice(0, 200)}{(u.evidence || '').length > 200 ? '…' : ''}&rdquo;
+                  </div>
+                ))}
+                {ungrouped.length > 6 && (
+                  <div style={{ fontSize: 9, color: '#94A3B8', marginTop: 4 }}>+ {ungrouped.length - 6} more raw evidence lines</div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* PATCH 0408 — Cross-Company Theme Aggregator panel.
           When ≥3 unrelated companies independently surface the same
           industrial signal (bottleneck component / tag / sector), that

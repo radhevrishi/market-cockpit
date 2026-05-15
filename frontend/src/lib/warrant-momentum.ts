@@ -63,6 +63,21 @@ const WARRANT_PATTERNS: Array<{ type: WarrantFilingType; re: RegExp }> = [
     re: /\bissue\s+of\s+(?:securities|equity\s+shares\s+on\s+preferential)/i },
   { type: 'OTHER_WARRANT',
     re: /\b(?:promoter|promoter\s+group)\s+(?:participating|subscribing|conversion|allotted)/i },
+  // PATCH 0421 — even broader umbrella subjects. User reported 0/4132 warrant
+  // matches over a 14d window which is implausible. NSE/BSE often file these
+  // under generic subjects without "warrant" / "preferential" in the title;
+  // the real terms are in the PDF body. Let umbrellas through; the strict
+  // conviction gate (≥8/10) still filters at scoring time.
+  { type: 'OTHER_WARRANT',
+    re: /\b(?:postal\s+ballot|special\s+resolution).*(?:preferential|warrant|allotment|issue|capital|securities|fund)/i },
+  { type: 'OTHER_WARRANT',
+    re: /\b(?:notice|outcome|intimation|disclosure)\s+of\s+(?:e?gm|annual\s+general\s+meeting|extra[\s-]?ordinary\s+general\s+meeting|board\s+meeting)/i },
+  { type: 'OTHER_WARRANT',
+    re: /\b(?:e?gm|extra[\s-]?ordinary\s+general\s+meeting)\b/i },
+  { type: 'OTHER_WARRANT',
+    re: /\bissue\s+of\s+(?:warrants?|equity\s+shares|securities|convertible|debenture)/i },
+  { type: 'OTHER_WARRANT',
+    re: /\b(?:reg(?:ulation)?\s*30|sebi\s+reg(?:ulation)?\s*30).*(?:allotment|warrant|preferential|fund|capital|securities|issue)/i },
   // Generic warrant mention as a fallback
   { type: 'OTHER_WARRANT',
     re: /\bwarrants?\b/i },
