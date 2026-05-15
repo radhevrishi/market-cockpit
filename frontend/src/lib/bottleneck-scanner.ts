@@ -157,8 +157,16 @@ const KNOWN_COMPONENTS: Record<string, string> = {
   'aromatic': 'AROMATICS',
   'aromatics': 'AROMATICS',
   // Auto
+  // PATCH 0422 — DO NOT map standalone 'transmission' to AUTO_TRANSMISSIONS.
+  // Power-equipment companies (ENRIN/Siemens Energy India, transformers, T&D)
+  // use 'transmission' to mean electrical-power transmission, not vehicle
+  // transmission. ENRIN was getting flagged as AUTO_TRANSMISSIONS bottleneck.
+  // Use only explicit vehicle-context tokens.
   'gearbox': 'GEARBOXES',
-  'transmission': 'AUTO_TRANSMISSIONS',
+  'auto transmission': 'AUTO_TRANSMISSIONS',
+  'automatic transmission': 'AUTO_TRANSMISSIONS',
+  'vehicle transmission': 'AUTO_TRANSMISSIONS',
+  'drivetrain': 'POWERTRAIN',
   'powertrain': 'POWERTRAIN',
   // Heavy industrials
   'bearing': 'BEARINGS',
@@ -230,6 +238,18 @@ export function scanBottleneck(text: string): BottleneckSignal {
     // Must have a bottleneck pattern
     const hasBottleneck = BOTTLENECK_PATTERNS.some(re => re.test(sent));
     if (!hasBottleneck) continue;
+    // PATCH 0422 — Drop slide-header garbage: sentences that read like bullet
+    // lists ('Union Budget 205-26 Political Stability Deeper Reform Agenda
+    // Middle East Crisis Focus on Energy Security and accelerated...') have
+    // very few verbs and very low punctuation density. Real bottleneck
+    // statements are full sentences. Require a verb + reasonable density.
+    const hasVerb = /\b(?:is|are|was|were|have|has|had|remain|remains|stay|stays|expect|expected|continue|continues|see|seeing|face|facing|cannot|unable|outpac|outstripping|exceed|exceeds|constrain|booked|sold|delay|delayed|tight|short|shortage)\b/i.test(sent);
+    if (!hasVerb) continue;
+    // Sentence-density check: real prose has commas/spacing; slide-headers
+    // are space-joined keywords with few function words.
+    const wc = sent.split(/\s+/).filter(Boolean).length;
+    const stopwords = (sent.match(/\b(?:the|a|an|of|in|to|with|for|on|that|this|by|from|and|or|but|as|at|our|we|their|its)\b/gi) || []).length;
+    if (wc > 12 && stopwords / wc < 0.10) continue;   // too keyword-dense → slide header
     // Capture evidence
     if (evidence.length < 6) evidence.push(sent.trim());
     // Check for critical modifiers in the same sentence
@@ -246,17 +266,36 @@ export function scanBottleneck(text: string): BottleneckSignal {
     }
   }
 
-  // Also scan the full text for components when the bottleneck section
-  // doesn't directly name the component but the doc does (the case where
-  // a transcript opens by saying "we are facing supply constraints" and
-  // 5 sentences later mentions "insulators" by name).
+  // PATCH 0422 — Constrained full-text fallback. The previous fallback
+  // scanned the ENTIRE doc for ANY known component token if a bottleneck
+  // fired anywhere, which generated false positives like ENRIN flagged as
+  // BUSHINGS/TRANSFORMERS/HVDC/AUTO_TRANSMISSIONS from a single slide-header
+  // mention. Now: only include components that appear in sentences with a
+  // STRONGER bottleneck signal (specific shortage/scarcity/tight verbs), not
+  // generic "supply chain disruption" hand-waving. This requires near-token
+  // proximity within 2 sentences of a high-confidence pattern.
+  const HIGH_CONF = [
+    /\bshortage\s+of\b/i, /\bscarcity\b/i, /\btight\s+supply\b/i,
+    /\bin\s+(?:short|tight)\s+supply\b/i, /\bsingle[- ]sourced?\b/i,
+    /\bunable\s+to\s+(?:meet|deliver|supply)/i,
+    /\bdemand\s+(?:significantly\s+)?(?:outpacing|outstripping|exceeds?)\s+(?:current\s+)?(?:supply|capacity)/i,
+    /\bcapacity\s+constraint/i,
+    /\bremain[s]?\s+tight\s+(?:in|across|globally)/i,
+    /\b(?:fully\s+)?sold\s+out\b/i,
+    /\bbooked\s+(?:out|ahead)\b/i,
+    /\blead\s+times?\s+(?:have\s+)?(?:extended|stretched)/i,
+  ];
   if (evidence.length > 0 && componentsFound.size === 0) {
-    const lc = text.toLowerCase();
-    for (const [token, key] of Object.entries(KNOWN_COMPONENTS)) {
-      const wb = new RegExp(`\\b${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
-      if (wb.test(lc)) {
-        componentsFound.add(key);
-        componentsTokens.add(token);
+    // Only sentences that fire a HIGH-confidence pattern are eligible
+    const tightSentences = sentences.filter(s => HIGH_CONF.some(re => re.test(s)));
+    for (const sent of tightSentences) {
+      const lc = sent.toLowerCase();
+      for (const [token, key] of Object.entries(KNOWN_COMPONENTS)) {
+        const wb = new RegExp(`\\b${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+        if (wb.test(lc)) {
+          componentsFound.add(key);
+          componentsTokens.add(token);
+        }
       }
     }
   }

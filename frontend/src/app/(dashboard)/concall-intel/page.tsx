@@ -65,14 +65,19 @@ export default function ConcallIntelPage() {
         🔥 LIVE bullish NSE/BSE concall + investor-presentation filings (auto-poll). ⬇️ Plus manual transcript / PDF analyser below.
       </p>
 
+      {/* PATCH 0422 — Warrant Momentum promoted to TOP. Promoter-warrant +
+          post-breakout setups are the highest-conviction one-shot trades on
+          the page (typically 50–200% in 12–24 months when they qualify).
+          MOVERS / LIVE BULLISH / KEYWORD WATCH all surface signals that need
+          interpretation; warrant gate is binary (pass / fail) so it belongs
+          at the top of the decision funnel. */}
+      <WarrantMomentumFeed />
+
       {/* PATCH 0400 — MOVERS panel (daily delta detection) */}
       <MoversPanel />
 
       {/* PATCH 0387 — LIVE BULLISH FEED */}
       <LiveBullishFeed />
-
-      {/* PATCH 0390 — WARRANT MOMENTUM INTELLIGENCE (separate lane) */}
-      <WarrantMomentumFeed />
 
       {/* PATCH 0394 — KEYWORD WATCH (third intelligence lane) */}
       <KeywordWatchFeed />

@@ -25,7 +25,13 @@ import {
 const CACHE_KEY = (days: number) => `warrant-feed:v3:days:${days}`;  // v3: 60d + ranking
 const CACHE_TTL_SHORT = 5 * 60;
 const CACHE_TTL_LONG = 30 * 60;
-const MAX_PDF_EXTRACTS = 15;
+// PATCH 0422 — bumped 15 → 40 so more warrant candidates get full PDF
+// body scoring. With only 15, most warrants fell back to subject-only
+// (score 2.5 OTHER_WARRANT) and none could cross the strict ≥8/10 gate
+// because issue price / promoter participation / conversion period are
+// only in the PDF body. Time-budget guard (Patch 0420) still bails early
+// if Vercel 45s soft cap is hit.
+const MAX_PDF_EXTRACTS = 40;
 
 // ─── KV-stored historical warrant memory ─────────────────────────────────
 interface PriorWarrant {
