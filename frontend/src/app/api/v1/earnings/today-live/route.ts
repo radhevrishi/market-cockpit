@@ -23,14 +23,49 @@ export const maxDuration = 25;
 const KEY = (date: string) => `today-live:v1:${date}`;
 const CACHE_TTL_SECONDS = 3 * 60;  // 3 minutes — page auto-polls every 4
 
+// PATCH 0403 — POSITIVE patterns: subjects that genuinely indicate the
+// COMPANY HAS ACTUALLY FILED its quarterly/annual financial result on this
+// date. "Outcome of Board Meeting" is the canonical NSE/BSE phrase a
+// company uses when announcing actual results. The "Financial Results for
+// Quarter ended …" and "Audited Financial Results" headers are also direct
+// filings. The lone "/financial\s+result/i" pattern WAS BUGGY — it matched
+// administrative subjects like "Reply to Clarification- Financial results"
+// which are NOT filings, attributing weeks-old data to the wrong date
+// (BHAGYANGR/LLOYDSENGG/STLTECH May-14 ghost-filing bug).
 const RESULT_PATTERNS = [
-  /quarterly\s+result/i,
-  /financial\s+result/i,
-  /annual\s+result/i,
-  /half[\s-]?yearly\s+result/i,
-  /\bQ[1-4]\s+(?:FY)?\s*\d{2,4}/i,
-  /\bFY\s*\d{2,4}\s+result/i,
-  /board\s+meeting.*outcome.*result/i,
+  /outcome\s+of\s+board\s+meeting.*(?:financial\s+result|audited)/i,
+  /audited\s+(?:standalone\s+|consolidated\s+|standalone\s+(?:and|&)\s+consolidated\s+)?financial\s+result/i,
+  /(?:standalone|consolidated)\s+(?:and\s+|&\s+)?(?:audited\s+)?(?:un[- ]?audited\s+)?financial\s+result/i,
+  /financial\s+result.*(?:quarter|year)\s+(?:ended|ending)/i,
+  /\b(?:quarterly|annual|half[\s-]?yearly)\s+result.*(?:declared|announced)/i,
+  /^(?!.*\b(?:reply|notice|intimation|clarification|press\s+release|investor\s+presentation|earnings\s+call|conference|schedule|consider)\b).*(?:quarterly|annual)\s+financial\s+result/i,
+];
+
+// PATCH 0403 — NEGATIVE blocklist: subjects that mention "financial result"
+// but are NOT the actual filing. If the subject matches any of these, drop
+// it even if RESULT_PATTERNS would otherwise accept it.
+const SUBJECT_BLOCKLIST = [
+  /\breply\b/i,
+  /\bclarification\b/i,
+  /\bnotice\b/i,
+  /\bintimation\b/i,
+  /\bconsider(?:ation)?\b.*financial/i,             // "to consider financial results"
+  /\bboard\s+meeting\b(?!.*outcome)/i,              // "Board Meeting on …" without "Outcome"
+  /\bschedul(?:e|ing)\b/i,
+  /\bpress\s+release\b/i,
+  /\binvestor\s+presentation\b/i,
+  /\binvestor\s+(?:call|conference|meet|meeting)\b/i,
+  /\bearnings\s+call\b/i,
+  /\banalyst\s+(?:call|meet|meeting)\b/i,
+  /\btranscript\b/i,
+  /\bdividend\b/i,                                  // dividend-only outcomes
+  /\bbuy[\s-]?back\b/i,
+  /\bcorrigendum\b/i,
+  /\baddendum\b/i,
+  /\berratum\b/i,
+  /\brevised\b/i,
+  /\bcorrection\b/i,
+  /\bdelay(?:ed)?\b/i,
 ];
 
 interface LiveFiling {
@@ -88,7 +123,12 @@ async function fetchNseAnnouncements(date: string, signal?: AbortSignal): Promis
 
     for (const e of entries) {
       const subject = String(e.subject || e.desc || e.title || '');
-      if (!RESULT_PATTERNS.some(re => re.test(subject))) continue;
+      // PATCH 0403 — Hard blocklist first, then positive match.
+      // "Reply to Clarification- Financial results" was leaking through
+      // before this gate and producing ghost-filings (companies appearing
+      // on dates when they actually filed only an admin reply, not Q4).
+      if (SUBJECT_BLOCKLIST.some((re) => re.test(subject))) continue;
+      if (!RESULT_PATTERNS.some((re) => re.test(subject))) continue;
       const symbol = String(e.symbol || e.scrip || '').trim().toUpperCase();
       if (!symbol) continue;
       // Keep only the most recent filing per symbol on this date

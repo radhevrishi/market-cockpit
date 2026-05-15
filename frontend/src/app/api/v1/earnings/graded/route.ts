@@ -579,9 +579,43 @@ export async function GET(req: Request) {
   for (const r of enrichResponses) Object.assign(enrich, r.data || {});
 
   // Join + grade
+  // PATCH 0403 — Defensive guard against today-live ghost-filings.
+  // If a ticker came from today-live ONLY (not hub) AND enrich can't
+  // verify the quarter-end matches the filing_date within 75 days, drop
+  // it. Symptom we're fixing: today-live's regex used to match
+  // "Reply to Clarification- Financial results" subjects, dragging in
+  // companies that hadn't actually filed Q4 — Screener served their
+  // historic latest-quarter data, gradeRow happily produced a
+  // BLOCKBUSTER card attributed to the wrong date. Even with the
+  // today-live regex tightened in this patch, this guard provides
+  // belt-and-suspenders so a future regex regression can't silently
+  // resurrect the bug.
+  const dropGhosts = (m: any, e: any): boolean => {
+    if (m.__source !== 'nse-live') return false;
+    // Has announce_date and matches → OK
+    if (e.announce_date_iso) {
+      const d = new Date(e.announce_date_iso).getTime();
+      const f = new Date(m.resultDate).getTime();
+      if (Math.abs(d - f) <= 3 * 86_400_000) return false;
+    }
+    // Quarter-end within 75 days of filing → OK (filing typically lands
+    // within 45-60 days of quarter end)
+    if (e.latest_quarter_end_iso) {
+      const q = new Date(e.latest_quarter_end_iso).getTime();
+      const f = new Date(m.resultDate).getTime();
+      const daysSince = (f - q) / 86_400_000;
+      if (daysSince >= 0 && daysSince <= 75) return false;
+    }
+    // No verification path → drop
+    return true;
+  };
   const graded: ParsedEarning[] = [];
   for (const m of dayList) {
     const e = enrich[m.ticker] || {};
+    if (dropGhosts(m, e)) {
+      console.log(`[graded] ${date}: dropping ghost-filing ${m.ticker} (no announce_date and quarter_end too far)`);
+      continue;
+    }
     const row = {
       hub_quality: m.quality,
       // PATCH 0369 — Prefer enrich's resolved company name over the
