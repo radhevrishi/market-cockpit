@@ -317,13 +317,36 @@ function fmtAge(iso?: string): string {
 // PATCH 0068 + 0070: pull the rolling ledger by default. Default 365d (1Y).
 // Users can drop to 30/90/6M for recency or extend to 24M (2Y) for full
 // backlog reference.
+// PATCH 0439 BUG-030 — localStorage cache prime so cold load doesn't flash
+// ALL:0 / IN:0 / US:0. The 365-day rolling ledger is persisted on the
+// backend; on the frontend we cache the last successful response in LS so
+// returning users see real counts immediately while React Query refetches
+// fresh in background.
+const SV_LS_KEY = (days: number) => `mc:strategic-vis:v1:${days}`;
+
 function useStrategic(windowDays: number = 365) {
   return useQuery<SVResponse>({
     queryKey: ['news', 'transformational', windowDays],
     queryFn: async () => {
       const { data } = await api.get(`/news?transformational=1&window_days=${windowDays}`);
+      try {
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem(SV_LS_KEY(windowDays), JSON.stringify({ data, ts: Date.now() }));
+        }
+      } catch {}
       return data;
     },
+    initialData: (() => {
+      if (typeof window === 'undefined') return undefined;
+      try {
+        const raw = window.localStorage.getItem(SV_LS_KEY(windowDays));
+        if (!raw) return undefined;
+        const parsed = JSON.parse(raw);
+        // Use cache only if less than 6 hours old
+        if (Date.now() - (parsed.ts || 0) > 6 * 3600_000) return undefined;
+        return parsed.data;
+      } catch { return undefined; }
+    })(),
     refetchInterval: 5 * 60_000,   // 5 min
     staleTime: 5 * 60_000,
   });

@@ -225,6 +225,13 @@ export default function HeatmapPage() {
   }, []);
 
   const fetchEarnings = useCallback(async () => {
+    // PATCH 0439 BUG-002 — 30s wall-clock timeout. Audit reported Post-Earnings
+    // heatmap spinning indefinitely with no error/retry. Now falls back to
+    // 'Post-earnings data unavailable' instead of perpetual spinner.
+    const timeoutId = setTimeout(() => {
+      setError('Post-earnings data timed out after 30s. Backend may be unavailable — try Refresh.');
+      setEarningsLoading(false);
+    }, 30000);
     try {
       setEarningsLoading(true);
       setError(null);
@@ -238,6 +245,7 @@ export default function HeatmapPage() {
         fetch(`/api/market/earnings?market=india&month=${curMonth}`),
         fetch(`/api/market/earnings?market=india&month=${prevMonth}`),
       ]);
+      clearTimeout(timeoutId);
 
       let allResults: EarningsResult[] = [];
       if (curRes.ok) {
@@ -280,6 +288,7 @@ export default function HeatmapPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch earnings');
     } finally {
+      clearTimeout(timeoutId);   // PATCH 0439 BUG-002
       setEarningsLoading(false);
     }
   }, []);
