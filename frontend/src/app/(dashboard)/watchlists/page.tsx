@@ -38,10 +38,43 @@ interface WatchlistItem {
   dayLow: number;
   marketCap?: number | null; // For weighted averages
   flag?: string | null;      // 🟢 🟠 🔴 or null
+  // PATCH 0442 BUG-020 — extra columns
+  volume?: number | null;
+  week52High?: number | null;
+  week52Low?: number | null;
+  peRatio?: number | null;
+  avgVolume?: number | null;
 }
 
-type SortField = 'ticker' | 'company' | 'sector' | 'price' | 'changePercent' | 'dayHigh' | 'dayLow' | 'flag';
+type SortField = 'ticker' | 'company' | 'sector' | 'price' | 'changePercent' | 'dayHigh' | 'dayLow' | 'flag' | 'volume' | 'week52High' | 'week52Low' | 'marketCap' | 'peRatio';
 type SortOrder = 'asc' | 'desc';
+
+// PATCH 0442 BUG-020/027 — Optional columns the user can toggle on. Persisted
+// to localStorage so the choice survives reloads.
+type OptionalCol = 'volume' | 'week52High' | 'week52Low' | 'marketCap' | 'peRatio' | 'avgVolume';
+const OPTIONAL_COLS: Array<{ id: OptionalCol; label: string }> = [
+  { id: 'volume',      label: 'Volume' },
+  { id: 'week52High',  label: '52W High' },
+  { id: 'week52Low',   label: '52W Low' },
+  { id: 'marketCap',   label: 'Market Cap' },
+  { id: 'peRatio',     label: 'P/E (TTM)' },
+  { id: 'avgVolume',   label: 'Avg Vol (20D)' },
+];
+const COL_PREFS_KEY = 'mc:watchlist:cols:v1';
+
+function loadColPrefs(): Set<OptionalCol> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = window.localStorage.getItem(COL_PREFS_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? arr as OptionalCol[] : []);
+  } catch { return new Set(); }
+}
+function saveColPrefs(cols: Set<OptionalCol>): void {
+  if (typeof window === 'undefined') return;
+  try { window.localStorage.setItem(COL_PREFS_KEY, JSON.stringify(Array.from(cols))); } catch {}
+}
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -214,6 +247,31 @@ function WatchlistTable({
   onRemove: (ticker: string) => void;
   onToggleFlag?: (ticker: string) => void;
 }) {
+  // PATCH 0442 BUG-020/027 — column chooser
+  const [activeCols, setActiveCols] = useState<Set<OptionalCol>>(() => loadColPrefs());
+  const [chooserOpen, setChooserOpen] = useState(false);
+  const toggleCol = (id: OptionalCol) => {
+    setActiveCols(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      saveColPrefs(next);
+      return next;
+    });
+  };
+  const formatVolume = (v: number | null | undefined) => {
+    if (v == null || !Number.isFinite(v)) return '—';
+    if (v >= 1e7) return `${(v / 1e7).toFixed(2)} Cr`;
+    if (v >= 1e5) return `${(v / 1e5).toFixed(2)} L`;
+    if (v >= 1e3) return `${(v / 1e3).toFixed(1)}K`;
+    return v.toFixed(0);
+  };
+  const formatMcap = (v: number | null | undefined) => {
+    if (v == null || !Number.isFinite(v)) return '—';
+    if (v >= 1e12) return `₹${(v / 1e12).toFixed(2)}T`;
+    if (v >= 1e9) return `₹${(v / 1e9).toFixed(2)}B`;
+    if (v >= 1e7) return `₹${(v / 1e7).toFixed(0)} Cr`;
+    return `₹${v.toFixed(0)}`;
+  };
   const SortIcon = ({ field }: { field: SortField }) => {
     if (sortField !== field) return <ArrowUpDown style={{ width: '12px', height: '12px', opacity: 0.4 }} />;
     return sortOrder === 'asc' ? (
@@ -272,8 +330,45 @@ function WatchlistTable({
                 Day Low <SortIcon field="dayLow" />
               </div>
             </th>
-            <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '10px', fontWeight: '700', color: '#8BA3C1', letterSpacing: '0.5px' }}>
-              —
+            {/* PATCH 0442 BUG-020 — Optional columns rendered based on chooser state */}
+            {OPTIONAL_COLS.filter(c => activeCols.has(c.id)).map(c => (
+              <th key={c.id} style={{ padding: '12px 16px', textAlign: 'right', fontSize: '10px', fontWeight: '700', color: '#8BA3C1', letterSpacing: '0.5px', cursor: 'pointer' }} onClick={() => onSort(c.id as SortField)}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
+                  {c.label} <SortIcon field={c.id as SortField} />
+                </div>
+              </th>
+            ))}
+            <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '10px', fontWeight: '700', color: '#8BA3C1', letterSpacing: '0.5px', position: 'relative' }}>
+              {/* PATCH 0442 BUG-027 — Working column chooser. Click to toggle
+                  popover; select Volume / 52W / Mcap / PE / Avg Vol columns. */}
+              <button
+                onClick={() => setChooserOpen(o => !o)}
+                title="Configure columns"
+                style={{
+                  background: chooserOpen ? '#0F7ABF30' : 'transparent',
+                  border: `1px solid ${chooserOpen ? '#22D3EE' : '#2A3B4C'}`,
+                  borderRadius: 6, color: chooserOpen ? '#22D3EE' : '#8BA3C1',
+                  cursor: 'pointer', padding: '4px 9px', fontSize: '10px', fontWeight: 700,
+                }}
+              >⚙ Columns ({activeCols.size})</button>
+              {chooserOpen && (
+                <div style={{
+                  position: 'absolute', top: '100%', right: 8, marginTop: 4, zIndex: 50,
+                  minWidth: 200, padding: 8, background: '#0D1B2E', border: '1px solid #2A3B4C',
+                  borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+                }}>
+                  <div style={{ fontSize: 10, color: '#8BA3C1', marginBottom: 6, letterSpacing: '0.4px' }}>SHOW COLUMNS</div>
+                  {OPTIONAL_COLS.map(c => (
+                    <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 4px', cursor: 'pointer', borderRadius: 4 }}>
+                      <input type="checkbox" checked={activeCols.has(c.id)} onChange={() => toggleCol(c.id)} />
+                      <span style={{ fontSize: 11, color: '#F5F7FA' }}>{c.label}</span>
+                    </label>
+                  ))}
+                  <div style={{ fontSize: 9, color: '#4A5B6C', marginTop: 6, fontStyle: 'italic' }}>
+                    Data may be — when source doesn&apos;t return the field
+                  </div>
+                </div>
+              )}
             </th>
           </tr>
         </thead>
@@ -318,6 +413,22 @@ function WatchlistTable({
                 <td style={{ padding: '12px 16px', textAlign: 'right', color: '#F5F7FA', fontVariantNumeric: 'tabular-nums', fontSize: '12px' }}>
                   ₹{item.dayLow.toFixed(2)}
                 </td>
+                {/* PATCH 0442 BUG-020 — Optional column cells */}
+                {OPTIONAL_COLS.filter(c => activeCols.has(c.id)).map(c => {
+                  const val = (item as any)[c.id] as number | null | undefined;
+                  let txt = '—';
+                  if (val != null && Number.isFinite(val)) {
+                    if (c.id === 'volume' || c.id === 'avgVolume') txt = formatVolume(val);
+                    else if (c.id === 'marketCap') txt = formatMcap(val);
+                    else if (c.id === 'peRatio') txt = val.toFixed(1) + 'x';
+                    else txt = `₹${val.toFixed(2)}`;
+                  }
+                  return (
+                    <td key={c.id} style={{ padding: '12px 16px', textAlign: 'right', color: txt === '—' ? '#4A5B6C' : '#F5F7FA', fontVariantNumeric: 'tabular-nums', fontSize: '12px' }}>
+                      {txt}
+                    </td>
+                  );
+                })}
                 <td style={{ padding: '12px 16px', textAlign: 'right' }}>
                   <button
                     onClick={() => onRemove(item.ticker)}
@@ -496,8 +607,8 @@ export default function WatchlistsPage() {
   const sortedItems = useMemo(() => {
     const sorted = [...watchlistItems];
     sorted.sort((a, b) => {
-      let aVal: any = a[sortField];
-      let bVal: any = b[sortField];
+      let aVal: any = (a as any)[sortField];
+      let bVal: any = (b as any)[sortField];
 
       if (typeof aVal === 'string') {
         aVal = aVal.toLowerCase();
