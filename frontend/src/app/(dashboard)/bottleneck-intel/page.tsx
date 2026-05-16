@@ -1848,17 +1848,26 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
         if (!r.latest_at || (a.published_at && a.published_at > r.latest_at)) r.latest_at = a.published_at;
       }
     }
-    // PATCH 0261 — defend against undefined/null quote tickers
-  const qm = new Map<string, QuoteStock>(
-    (quotes || []).filter(q => q?.ticker).map(q => [q.ticker.toUpperCase(), q])
-  );
+    // PATCH 0261 — defend against undefined/null quote tickers.
+    // PATCH 0443 BUG-028 — Normalize ticker keys on BOTH sides. Yahoo Finance
+    // returns symbols with .NS / .BO suffix; article tickers are bare. Result
+    // was 107 quotes loaded but PRICE column showing '—' for every row
+    // because qm.get('NHPC') never matched 'NHPC.NS'. Strip suffix on both
+    // ends so the lookup binds correctly.
+    const stripSuffix = (s: string) => (s || '').toUpperCase()
+      .replace(/^(NSE|BSE|NYSE|NASDAQ):/, '')
+      .replace(/\.(NS|BO|BSE|NSE)$/, '')
+      .trim();
+    const qm = new Map<string, QuoteStock>(
+      (quotes || []).filter(q => q?.ticker).map(q => [stripSuffix(q.ticker), q])
+    );
     return Array.from(map.values())
       .filter(r => r.inUniverse ? r.evidence_count >= 1 : r.evidence_count >= 2) // New picks need 2+ articles to filter news noise
       .map(r => ({
         ...r,
-        price: qm.get(r.symbol.toUpperCase())?.price,
-        change_pct: qm.get(r.symbol.toUpperCase())?.changePercent,
-        market_cap: qm.get(r.symbol.toUpperCase())?.marketCap,
+        price: qm.get(stripSuffix(r.symbol))?.price,
+        change_pct: qm.get(stripSuffix(r.symbol))?.changePercent,
+        market_cap: qm.get(stripSuffix(r.symbol))?.marketCap,
         textSignals: detectTextSignals(r.headlines),
       }))
       .sort((a, b) => {
