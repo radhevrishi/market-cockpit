@@ -593,8 +593,24 @@ export async function GET(request: Request) {
 
       if (matchingSignals.length > 0) {
         const tickers = new Set<string>();
+        // PATCH 0440 BUG-009 — broader ticker extraction so the Workbench
+        // populates 'implicated tickers' instead of 0 across all themes.
+        // Original code only checked s.symbol; signals from different sources
+        // store tickers under different field names.
         for (const s of matchingSignals) {
           if (s.symbol) tickers.add(s.symbol);
+          if (s.ticker) tickers.add(s.ticker);
+          if (Array.isArray(s.tickers)) {
+            for (const t of s.tickers) if (t) tickers.add(t);
+          }
+          if (Array.isArray(s.tags)) {
+            // Tags often hold tickers like 'NSE:RELIANCE' or 'AAPL' — extract
+            for (const tag of s.tags) {
+              if (typeof tag !== 'string') continue;
+              const m = tag.match(/^(?:NSE:|BSE:|NYSE:|NASDAQ:)?([A-Z]{2,10})$/);
+              if (m) tickers.add(m[1]);
+            }
+          }
         }
 
         // Dedup by headline similarity
