@@ -921,10 +921,14 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
           </div>
         </div>
         {/* Info button to open detail overlay */}
+        {/* PATCH 0441 BUG-006 — Add preventDefault so clicking 'View details'
+            inside an <a href> card opens the drawer instead of navigating to
+            the external article URL. Audit reported clicking 'View details'
+            destroyed app state by hard-navigating away. */}
         <button
-          onClick={(e) => { e.stopPropagation(); onSelect(article); }}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSelect(article); }}
           style={{ background: 'none', border: '1px solid #1E2D45', borderRadius: '10px', color: '#4A5B6C', cursor: 'pointer', padding: '10px', flexShrink: 0, display: 'flex', alignItems: 'center', minWidth: '40px', minHeight: '40px', justifyContent: 'center' }}
-          title="View details"
+          title="View details (opens drawer — does not leave app)"
         >
           <ChevronRight style={{ width: '14px', height: '14px' }} />
         </button>

@@ -467,8 +467,13 @@ export default function HeatmapPage() {
             </button>
           </div>
 
-          {/* Index Tab Toggle — only in daily mode */}
-          {!isEarningsMode && (
+          {/* PATCH 0441 BUG-017 — Show Index Tab Toggle on BOTH daily and
+              earnings modes. Audit reported filter buttons disappearing when
+              user switched to Post-Earnings tab, leaving the panel blank.
+              The toggle remains useful in earnings mode too (filtering which
+              index universe to show earnings cards for). */}
+          {(
+
             <div style={{ display: 'flex', backgroundColor: CARD, borderRadius: '8px', border: `1px solid ${BORDER}`, padding: '3px' }}>
               {([
                 { key: 'nifty50' as HeatmapTab, label: 'NIFTY 50' },
