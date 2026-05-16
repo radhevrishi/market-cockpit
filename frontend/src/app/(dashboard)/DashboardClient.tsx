@@ -179,6 +179,10 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
 
   // Live market indices — refresh every 60 s
   // Tries FastAPI backend first, falls back to Next.js /api/market/indices route
+  // PATCH 0437 BUG-001 — localStorage cache prime so the ticker bar doesn't
+  // show all-zeros/dashes on cold load or after navigating back from an
+  // external link. Last successful payload primes initialData; React Query
+  // refetches fresh in background.
   const { data: liveIndices, isLoading, error } = useQuery<MarketIndex[]>({
     queryKey: ['market', 'indices'],
     queryFn: async () => {
@@ -187,6 +191,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
         const { data } = await api.get('/market/indices');
         if (Array.isArray(data) && data.length > 0) {
           setShowLoadingSkeleton(false);
+          try { if (typeof window !== 'undefined') window.localStorage.setItem('mc:ticker-bar:v1', JSON.stringify({ data, ts: Date.now() })); } catch {}
           return data;
         }
       } catch {}
@@ -198,6 +203,7 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
           const data = await res.json();
           if (Array.isArray(data) && data.length > 0) {
             setShowLoadingSkeleton(false);
+            try { if (typeof window !== 'undefined') window.localStorage.setItem('mc:ticker-bar:v1', JSON.stringify({ data, ts: Date.now() })); } catch {}
             return data;
           }
         }
@@ -206,8 +212,21 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
       setShowLoadingSkeleton(false);
       return [];
     },
+    initialData: (() => {
+      if (typeof window === 'undefined') return undefined;
+      try {
+        const raw = window.localStorage.getItem('mc:ticker-bar:v1');
+        if (!raw) return undefined;
+        const parsed = JSON.parse(raw);
+        // Use cache only if less than 30 min old — prevents showing day-old prices
+        if (Date.now() - (parsed.ts || 0) > 30 * 60_000) return undefined;
+        return parsed.data;
+      } catch { return undefined; }
+    })(),
     staleTime: 60_000,
     refetchInterval: 60_000,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
     retry: 2,
   });
 

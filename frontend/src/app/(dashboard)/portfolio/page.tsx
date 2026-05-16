@@ -440,10 +440,31 @@ export default function PortfolioPage() {
       // Old formula (change × qty) was wrong: absolute price change varies across stocks
       const dayPnl = cmp > 0 ? (changePercent / 100) * currentValue : 0;
       const signal = intelligence.get(h.symbol) || intelligence.get(normalized);
+      // PATCH 0437 BUG-021 — fallback Score from Multibagger localStorage when
+      // intelligence signal is missing. Reads mb_excel_scored_v2 (India) and
+      // mb_usa_scored_v1 (USA) caches. Same wire-up logic as Conviction Beats.
+      let fallbackScore: number | undefined = undefined;
+      let fallbackDecision: string | undefined = undefined;
+      if (signal?.weightedScore === undefined && typeof window !== 'undefined') {
+        try {
+          const ind = JSON.parse(window.localStorage.getItem('mb_excel_scored_v2') || '[]');
+          const usa = JSON.parse(window.localStorage.getItem('mb_usa_scored_v1') || '[]');
+          const found = [...ind, ...usa].find((r: any) => (r.symbol || '').toUpperCase() === (h.symbol || '').toUpperCase());
+          if (found) {
+            fallbackScore = found.composite ?? found.score;
+            fallbackDecision = found.grade === 'A+' || found.grade === 'A' ? 'BUY'
+                            : found.grade === 'B+' || found.grade === 'B' ? 'WATCH'
+                            : found.grade === 'C+' || found.grade === 'C' ? 'NEUTRAL'
+                            : found.grade === 'D' ? 'AVOID' : undefined;
+          }
+        } catch {}
+      }
       return { symbol: h.symbol, company: quote?.company || h.symbol, sector: quote?.sector || '—',
         entryPrice: h.entryPrice, quantity: h.quantity, cmp, change, changePercent,
         investedValue, currentValue, pnl, pnlPercent, dayPnl, notes: h.notes, weight: 0,
-        score: signal?.weightedScore, sectorTrend: signal?.sectorTrend, decision: signal?.action };
+        score: signal?.weightedScore ?? fallbackScore,
+        sectorTrend: signal?.sectorTrend,
+        decision: signal?.action ?? fallbackDecision };
     });
     // Second pass: weight by current value (proper risk weighting)
     const totalCurrent = rawRows.reduce((s, r) => s + r.currentValue, 0);
