@@ -64,12 +64,34 @@ export default function TickerExportToolbar({
     }
   };
 
+  // PATCH 0436 — Auto-prefix exchange per ticker. User reported pasting
+  // a mixed list (BSE numeric codes 523850/524717 + named NSE symbols like
+  // LUMAXTECH) into TradingView fails because we naively prefix all with
+  // 'NSE:'. TradingView accepts 'BSE:523850' but rejects 'NSE:523850'.
+  // Heuristic: 6-digit numeric ticker → BSE: prefix; alphabetic → NSE: prefix.
+  // Caller-supplied `exchange` prop still wins when set explicitly.
+  const tvSymbolFor = (raw: string): string => {
+    const t = raw.toUpperCase().trim();
+    // Strip any existing exchange prefix
+    const bare = t.replace(/^(NSE|BSE|NYSE|NASDAQ):/i, '');
+    // If caller pinned a non-default exchange, honor it
+    if (exchange !== 'NSE') return `${exchange}:${bare}`;
+    // 6-digit pure-numeric → BSE scrip code
+    if (/^\d{6}$/.test(bare)) return `BSE:${bare}`;
+    // Default: NSE
+    return `NSE:${bare}`;
+  };
+
   const copyTradingView = async (subset: string[], label: string) => {
     if (subset.length === 0) { toast.error(`No ${label} tickers to copy`); return; }
-    const tv = subset.map((t) => `${exchange}:${t}`).join(',');
+    const tv = subset.map(tvSymbolFor).join(',');
     try {
       await navigator.clipboard.writeText(tv);
-      toast.success(`Copied ${subset.length} ${label} ticker${subset.length === 1 ? '' : 's'} for TradingView`);
+      const bseCount = subset.filter(t => /^\d{6}$/.test(t.toUpperCase().trim().replace(/^(NSE|BSE):/i, ''))).length;
+      const msg = bseCount > 0
+        ? `Copied ${subset.length} tickers (${bseCount} BSE numeric, ${subset.length - bseCount} NSE) for TradingView`
+        : `Copied ${subset.length} ${label} ticker${subset.length === 1 ? '' : 's'} for TradingView`;
+      toast.success(msg);
     } catch {
       toast.error('Clipboard write failed — check browser permission');
     }
@@ -77,7 +99,8 @@ export default function TickerExportToolbar({
 
   const downloadTxt = (subset: string[], label: string) => {
     if (subset.length === 0) { toast.error(`No ${label} tickers to download`); return; }
-    const txt = subset.map((t) => `${exchange}:${t}`).join('\n');
+    // PATCH 0436 — per-ticker BSE/NSE auto-prefix
+    const txt = subset.map(tvSymbolFor).join('\n');
     const blob = new Blob([txt], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -92,10 +115,9 @@ export default function TickerExportToolbar({
 
   const openInTradingView = (subset: string[]) => {
     if (subset.length === 0) { toast.error(`No tickers to open`); return; }
-    // Open single-ticker chart for the first one; copy the full list so user
-    // can paste into their TradingView watchlist after.
-    const first = `${exchange}:${subset[0]}`;
-    const tv = subset.map((t) => `${exchange}:${t}`).join(',');
+    // PATCH 0436 — per-ticker BSE/NSE auto-prefix
+    const first = tvSymbolFor(subset[0]);
+    const tv = subset.map(tvSymbolFor).join(',');
     navigator.clipboard.writeText(tv).catch(() => {});
     window.open(`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(first)}`, '_blank', 'noopener,noreferrer');
     toast.success(`Opened ${first} · ${subset.length} tickers copied for paste`);
