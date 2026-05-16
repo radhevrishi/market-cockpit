@@ -2562,7 +2562,10 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     // negative number.
     valuation: { pass:((row.peg??99)<1.5&&(row.peg??0)>0)||((row.marginOfSafety??-99)>0), label:'Value', detail:row.peg!==undefined&&row.peg>0?`PEG ${row.peg.toFixed(1)}`:row.peg!==undefined&&row.peg<0?`PEG N/A (neg growth)`:row.marginOfSafety!==undefined?`MoS ${row.marginOfSafety.toFixed(0)}%`:'No data' },
     discovery: { pass:(row.fiiPlusDii??100)<25, label:'Discovery', detail:row.fiiPlusDii!==undefined?`FII+DII ${row.fiiPlusDii.toFixed(0)}%`:'No data' },
-    technical: { pass:(row.aboveDMA200??-100)>=0&&(row.return1m??-100)>=-15, label:'Technical', detail:row.aboveDMA200!==undefined?`${row.aboveDMA200>=0?'+':''}${row.aboveDMA200.toFixed(0)}% vs DMA`:'No data' },
+    // PATCH 0440 BUG-031 — When 'No data' shows, hint the user that this is
+    // a CSV-column gap (Screener.in '200 DMA' / 'Current Price' missing for
+    // this row), not a system failure. Helps user know how to fix it.
+    technical: { pass:(row.aboveDMA200??-100)>=0&&(row.return1m??-100)>=-15, label:'Technical', detail:row.aboveDMA200!==undefined?`${row.aboveDMA200>=0?'+':''}${row.aboveDMA200.toFixed(0)}% vs DMA`:'No data (add 200 DMA col)' },
   };
 
   // Compute kill-switch AFTER all scoring is settled
