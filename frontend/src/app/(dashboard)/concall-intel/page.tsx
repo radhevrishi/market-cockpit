@@ -12,6 +12,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useState, useEffect, useMemo } from 'react';
+// PATCH 0437 BUG-026 — decode HTML entities in concall subjects (extends BUG-008)
+import { decodeHTMLEntities } from '@/lib/html-decode';
 
 interface Analysis {
   ticker: string;
@@ -767,7 +769,7 @@ function LiveBullishFeed() {
                   })()}
                 </div>
               </div>
-              <div style={{ fontSize: 11, color: '#C9D4E0', marginBottom: 6, lineHeight: 1.4 }}>{f.subject}</div>
+              <div style={{ fontSize: 11, color: '#C9D4E0', marginBottom: 6, lineHeight: 1.4 }}>{decodeHTMLEntities(f.subject)}</div>
               {f.bullish.tags.length > 0 && (
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 4 }}>
                   {f.bullish.tags.map((t, j) => (
@@ -1412,7 +1414,7 @@ function WarrantMomentumFeed() {
                 </div>
               </div>
 
-              <div style={{ fontSize: 11, color: '#C9D4E0', marginBottom: 6, lineHeight: 1.4 }}>{f.subject}</div>
+              <div style={{ fontSize: 11, color: '#C9D4E0', marginBottom: 6, lineHeight: 1.4 }}>{decodeHTMLEntities(f.subject)}</div>
 
               {/* PATCH 0426 — Tier 1/2/3 classification + capital use + promoter intent + distress strip */}
               {(f.conviction as any).tier && (() => {
@@ -1792,7 +1794,7 @@ function KeywordWatchFeed() {
               </div>
               <span style={{ fontSize: 12, fontWeight: 900, color: '#22D3EE' }}>{f.hit_count} hit{f.hit_count > 1 ? 's' : ''}</span>
             </div>
-            <div style={{ fontSize: 11, color: '#C9D4E0', marginBottom: 6, lineHeight: 1.4 }}>{f.subject}</div>
+            <div style={{ fontSize: 11, color: '#C9D4E0', marginBottom: 6, lineHeight: 1.4 }}>{decodeHTMLEntities(f.subject)}</div>
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 6 }}>
               {Array.from(new Set(f.hits.map(h => `${h.keyword_id}|${h.display}|${h.group}|${h.sentiment}`))).slice(0, 10).map((tag, j) => {
                 const [, display, group, sent] = tag.split('|');

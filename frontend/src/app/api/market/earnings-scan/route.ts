@@ -2340,9 +2340,11 @@ export async function GET(request: Request) {
         batch.map(sym =>
           Promise.race([
             buildEarningsCard(sym, origin),
-            // Per-symbol timeout: 8s. Slower symbols get a DATA_MISSING
-            // card and surface on the failed-symbols panel for retry.
-            new Promise<EarningsScanCard>((_, reject) => setTimeout(() => reject(new Error('Timeout (8s)')), 8000)),
+            // PATCH 0437 BUG-025 — bumped 8s → 20s. Audit found all SCAN
+            // cards showing DATA MISSING with 'Crash: Timeout (8s)' because
+            // Screener.in routinely takes 10-15s per ticker. 20s catches
+            // the long tail without blocking the route's overall budget.
+            new Promise<EarningsScanCard>((_, reject) => setTimeout(() => reject(new Error('Timeout (20s)')), 20000)),
           ]).catch((err) => {
             console.warn(`[Earnings Scan] ${sym} crashed/timed out:`, err);
             // Even on crash, return a DATA_MISSING card

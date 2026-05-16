@@ -224,17 +224,39 @@ interface LiveFeedResp {
   event_type_counts?: Record<string, number>;
 }
 
+// PATCH 0437 BUG-029 — localStorage cache prime so the page doesn't flash
+// all-zeros on cold load. We store the last successful feed payload and
+// serve it as initialData; React Query then refetches in background.
+const SPECSIT_LS_KEY = 'mc:specsit:lastfeed:v1';
+
 function useLiveFeed() {
   return useQuery<LiveFeedResp>({
     queryKey: ['special-situations', 'live-feed'],
     queryFn: async () => {
       const { data } = await api.get('/special-situations/feed');
+      // Prime LS cache for next cold load
+      try {
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem(SPECSIT_LS_KEY, JSON.stringify({ data, ts: Date.now() }));
+        }
+      } catch {}
       return data;
     },
+    initialData: (() => {
+      // PATCH 0437 BUG-029 — read last known feed from LS so initial render
+      // is never "all zeros". Eliminates the 5-second blank-cockpit window.
+      if (typeof window === 'undefined') return undefined;
+      try {
+        const raw = window.localStorage.getItem(SPECSIT_LS_KEY);
+        if (!raw) return undefined;
+        const parsed = JSON.parse(raw);
+        // Only use if less than 6 hours old — older than that, prefer fresh
+        if (Date.now() - (parsed.ts || 0) > 6 * 3600_000) return undefined;
+        return parsed.data;
+      } catch { return undefined; }
+    })(),
     staleTime: 30 * 60_000,
     refetchInterval: 30 * 60_000,
-    // PATCH 0109 — BUG-04: force fetch on every mount so the page doesn't
-    // get stuck in 'Loading...' if a stale cache is in memory.
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
     retry: 1,

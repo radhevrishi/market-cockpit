@@ -170,7 +170,19 @@ export default function IPOsPage() {
           </span>
           {dataSource && (
             <span>
-              Data from {dataSource}. For comprehensive IPO info, visit NSE/BSE.
+              Data from {dataSource}. For comprehensive IPO info, visit{' '}
+              <a href="https://www.nseindia.com/market-data/all-upcoming-issues-ipo"
+                 target="_blank" rel="noopener noreferrer"
+                 style={{ color: '#22D3EE', textDecoration: 'underline' }}>
+                NSE
+              </a>
+              {' / '}
+              <a href="https://www.bseindia.com/markets/PublicIssues/IPOIssues_new.aspx"
+                 target="_blank" rel="noopener noreferrer"
+                 style={{ color: '#22D3EE', textDecoration: 'underline' }}>
+                BSE
+              </a>
+              {' '}directly.
             </span>
           )}
         </div>
