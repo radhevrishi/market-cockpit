@@ -348,11 +348,21 @@ function useEarningsScan(symbols: string[]) {
     queryKey: ['rerating', 'earnings-scan', symbols.slice(0, 50).join(',')],
     queryFn: async () => {
       if (!symbols.length) return [];
+      // PATCH 0435 BUG-005 — Hard 30s timeout so 'Loading earnings-scan…'
+      // doesn't sit forever. Returns [] on timeout; the rerating page will
+      // show "no data" instead of infinite spinner.
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 30000);
       try {
-        const { data } = await api.get('/market/earnings-scan', { params: { symbols: symbols.slice(0, 50).join(',') } });
+        const { data } = await api.get('/market/earnings-scan', {
+          params: { symbols: symbols.slice(0, 50).join(',') },
+          signal: controller.signal,
+        });
         return Array.isArray(data) ? data : (data?.rows || data?.results || []);
       } catch {
         return [];
+      } finally {
+        clearTimeout(t);
       }
     },
     enabled: symbols.length > 0,

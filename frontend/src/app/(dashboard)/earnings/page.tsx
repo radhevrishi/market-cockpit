@@ -1155,6 +1155,12 @@ export default function EarningsPage() {
     setLoading(true);
     setError('');
     setFailedSymbols([]);
+    // PATCH 0434 BUG-003 — Hard 45s wall-clock timeout. Previously if the
+    // earnings-scan endpoint hung, loading sat forever with no fallback.
+    const fetchTimeoutId = setTimeout(() => {
+      setError('Earnings scan timed out after 45s. Try Refresh, or check System Status for backend health.');
+      setLoading(false);
+    }, 45000);
     try {
       // PATCH 0352 — parallelize portfolio + watchlist fetch (was serial).
       // Saves 300-800ms on initial load.
@@ -1353,6 +1359,7 @@ export default function EarningsPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load earnings data');
     } finally {
+      clearTimeout(fetchTimeoutId);
       setLoading(false);
     }
   }, []);
