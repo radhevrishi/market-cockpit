@@ -808,6 +808,19 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
     || article.structural_status === 'CRITICAL'
     || article.structural_status === 'ELEVATED';
 
+  // PATCH 0434 BUG-019 — Structural alerts had no URL → became dead <div>s.
+  // For structural alerts, link to the Bottleneck Workbench page (filter
+  // by theme if we can extract one from tags/title). Otherwise, the card
+  // still calls onSelect to show details.
+  const structuralLink: string | null = isStructural ? (() => {
+    const a = article as any;
+    const tagTheme = (a.tags as string[] | undefined)?.find(t => /^theme:/i.test(t))?.replace(/^theme:/i, '');
+    const theme = tagTheme || a.bottleneck_theme || a.theme_id || '';
+    return theme
+      ? `/bottleneck-workbench?theme=${encodeURIComponent(theme)}`
+      : '/bottleneck-workbench';
+  })() : null;
+
   const handleCardClick = (e: React.MouseEvent) => {
     // If clicking inner buttons, don't navigate
     if ((e.target as HTMLElement).closest('button')) return;
@@ -818,10 +831,10 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
     onSelect(article);
   };
 
-  const CardWrapper = url && url !== '#' ? 'a' : 'div';
+  const CardWrapper = url && url !== '#' ? 'a' : (structuralLink ? 'a' : 'div');
   const cardProps = url && url !== '#'
     ? { href: url, target: '_blank' as const, rel: 'noopener noreferrer' }
-    : {};
+    : (structuralLink ? { href: structuralLink } : {});
 
   return (
     <CardWrapper

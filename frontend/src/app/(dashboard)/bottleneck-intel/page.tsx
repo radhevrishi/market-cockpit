@@ -1606,22 +1606,40 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
           return !isStructural && (v?.week ?? 0) === 0 && (v?.prev ?? 0) === 0;
         };
         const staleBuckets = sorted.filter(isStale);
-        const activeOnly = activeBucket ? sorted.filter(b => b.bucket_id === activeBucket) : sorted.filter(b => !isStale(b));
+        // PATCH 0434 BUG-015 — Data freshness warning when >30% stale.
+        // Audit feedback: "60%+ themes showing as STALE makes matrix a sea
+        // of grey noise". Add prominent banner so user understands data
+        // health, not engine failure.
+        const stalePct = sorted.length > 0 ? (staleBuckets.length / sorted.length) * 100 : 0;
+        const showFreshnessWarning = stalePct > 30 && !activeBucket;
         return staleBuckets.length > 0 && !activeBucket ? (
-          <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
-            <button
-              onClick={() => setShowStale(v => !v)}
-              style={{
-                fontSize: 10, fontWeight: 700, color: '#8A95A3',
-                padding: '4px 10px', borderRadius: 6,
-                border: '1px solid #1A2840', backgroundColor: showStale ? '#1A2840' : 'transparent',
-                cursor: 'pointer', letterSpacing: '0.5px',
-              }}
-            >{showStale ? '▼' : '▶'} {staleBuckets.length} stale themes hidden</button>
-            <span style={{ fontSize: 10, color: '#4A5B6C' }}>
-              0 articles this week + last week · {showStale ? 'showing all' : 'click to expand'}
-            </span>
-          </div>
+          <>
+            {showFreshnessWarning && (
+              <div style={{ marginBottom: 8, padding: '8px 12px', backgroundColor: '#F59E0B15', border: '1px solid #F59E0B40', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
+                <span style={{ fontWeight: 700, color: '#F59E0B' }}>⚠ DATA FRESHNESS WARNING</span>
+                <span style={{ color: '#C9D4E0' }}>
+                  {staleBuckets.length} of {sorted.length} themes ({stalePct.toFixed(0)}%) have 0 articles this week and last.
+                </span>
+                <span style={{ color: '#8A95A3', fontStyle: 'italic' }}>
+                  Could mean: news pipeline lag, theme rolled off, or genuinely quiet. Verify before drawing conviction.
+                </span>
+              </div>
+            )}
+            <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <button
+                onClick={() => setShowStale(v => !v)}
+                style={{
+                  fontSize: 10, fontWeight: 700, color: '#8A95A3',
+                  padding: '4px 10px', borderRadius: 6,
+                  border: '1px solid #1A2840', backgroundColor: showStale ? '#1A2840' : 'transparent',
+                  cursor: 'pointer', letterSpacing: '0.5px',
+                }}
+              >{showStale ? '▼' : '▶'} {staleBuckets.length} stale themes hidden</button>
+              <span style={{ fontSize: 10, color: '#4A5B6C' }}>
+                0 articles this week + last week · {showStale ? 'showing all' : 'click to expand'}
+              </span>
+            </div>
+          </>
         ) : null;
       })()}
 

@@ -229,9 +229,16 @@ export default function StatusPage() {
     setStates(s => ({ ...s, [probe.id]: { ...s[probe.id], status: 'loading' } }));
     // PATCH 0296 — Catch probe-side throws so a single failure can't leave
     // a row stuck in 'loading' state.
+    // PATCH 0434 BUG-014 — Hard 15s timeout. Probes that don't respond in
+    // 15s become TIMEOUT rather than sitting in CHECKING forever.
     let result: ProbeResult;
     try {
-      result = await probe.run();
+      result = await Promise.race<ProbeResult>([
+        probe.run(),
+        new Promise<ProbeResult>((_, reject) =>
+          setTimeout(() => reject(new Error('Probe timed out after 15s')), 15000),
+        ),
+      ]);
     } catch (err) {
       result = {
         ok: false,

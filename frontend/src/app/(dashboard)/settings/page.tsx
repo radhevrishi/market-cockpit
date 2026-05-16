@@ -422,15 +422,20 @@ function ApiKeysSection() {
   };
 
   useEffect(() => {
+    // PATCH 0434 BUG-013 — 5s hard timeout. Previously sat on 'Checking…' forever
+    // when /health hung. Now falls back to 'offline' so user can act.
     const checkHealth = async () => {
       setIsLoadingHealth(true);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
       try {
-        const { data } = await api.get('/health');
+        const { data } = await api.get('/health', { signal: controller.signal });
         parseHealth(data as HealthResponse);
       } catch {
         setApiKeyStatus('offline');
         setAvKeyStatus('offline');
       } finally {
+        clearTimeout(timer);
         setIsLoadingHealth(false);
       }
     };

@@ -7,6 +7,8 @@ import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 import { getConvictionTickers } from '@/lib/conviction-beats';
 // PATCH 0351 — coerce sentiment shape (string OR {direction, magnitude}) at render boundary
 import { coerceSentiment } from '@/lib/safeSentiment';
+// PATCH 0434 BUG-008 — decode HTML entities in news headlines (&amp; etc.)
+import { decodeHTMLEntities } from '@/lib/html-decode';
 
 // Theme
 const BG = '#0A0E1A';
@@ -2732,7 +2734,7 @@ export default function CompanyIntelligencePage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Shield size={22} color={ACCENT} />
           <div>
-            <h1 style={{ fontSize: '20px', fontWeight: 700, margin: 0, color: TEXT1 }}>Company Intelligence</h1>
+            <h1 style={{ fontSize: '20px', fontWeight: 700, margin: 0, color: TEXT1 }}>Signals &amp; Intelligence</h1>
             <p style={{ fontSize: '11px', color: TEXT3, margin: 0 }}>
               Materiality-ranked · Confidence-scored · Evidence-tiered · Deduped
               {computing && <span style={{ marginLeft: '8px', color: ACCENT }}>⟳ Computing...</span>}
@@ -3044,7 +3046,7 @@ export default function CompanyIntelligencePage() {
                     <div style={{ fontSize: '10px', color: TEXT3, marginBottom: '4px' }}>{item.company}</div>
                     <div style={{ fontSize: '10px', color: TEXT2, lineHeight: 1.4,
                       display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                      {item.headline}
+                      {decodeHTMLEntities(item.headline)}
                     </div>
                   </div>
                 );
