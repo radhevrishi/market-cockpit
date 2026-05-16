@@ -2634,7 +2634,8 @@ export default function NewsFeedPage() {
               {liveLabel.toUpperCase()}
             </span>
             <span style={{ marginLeft: 'auto', fontSize: '13px', color: '#4A5B6C' }}>
-              {showPersistent ? '▼ collapse' : '▶ expand'}
+              {/* PATCH 0435 BUG-034 — distinct label vs Forward Calendar expand */}
+              {showPersistent ? '▼ Hide Bottleneck Reading' : '▶ Show Bottleneck Reading'}
             </span>
           </button>
           {showPersistent && (
@@ -3103,7 +3104,9 @@ export default function NewsFeedPage() {
               Tomorrow: {calendar.tomorrow.length} · This week: {calendar.this_week.length} · This month: {calendar.this_month.length}
             </span>
             <span style={{ fontSize: '10px', color: '#4A5B6C', marginLeft: 'auto' }}>
-              {showCalendar ? '▼ collapse' : '▶ expand'}
+              {/* PATCH 0435 BUG-022/034 — distinct label so user can tell these
+                  two stacked expand controls apart */}
+              {showCalendar ? '▼ Hide Calendar' : '▶ Show Calendar'}
             </span>
           </button>
           {showCalendar && (

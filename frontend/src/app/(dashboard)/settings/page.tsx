@@ -486,7 +486,7 @@ function ApiKeysSection() {
         <ol className="space-y-1.5 text-xs text-[#4A5B6C] ml-5 list-decimal">
           <li>Open the <strong className="text-[#8899AA]">market-cockpit</strong> folder on your computer</li>
           <li>Open the <strong className="text-[#8899AA]">.env</strong> file in Notepad / TextEdit</li>
-          <li>Find the line and paste your key: <code className="bg-[#1A2B3C] border border-[#2A3B4C] px-1.5 py-0.5 rounded text-[#0F7ABF]">ANTHROPIC_API_KEY=sk-ant-api03-…</code></li>
+          <li>Find the line and paste your key: <code className="bg-[#1A2B3C] border border-[#2A3B4C] px-1.5 py-0.5 rounded text-[#0F7ABF]">ANTHROPIC_API_KEY=XXXX-your-key-here</code></li>
           <li>Save the file, then run <strong className="text-[#8899AA]">stop.sh</strong> then <strong className="text-[#8899AA]">start.sh</strong></li>
         </ol>
         <div className="flex flex-wrap gap-4 mt-4">

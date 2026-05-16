@@ -335,7 +335,7 @@ export default function EarningsGuidancePage() {
               : pollStopped && !computing
               ? `Stopped after ${MAX_POLLS} attempts. Backend may still be computing — try refreshing manually.`
               : computing
-              ? `Auto-refreshing in 20 seconds (attempt ${pollCount + 1}/${MAX_POLLS}). First run may take up to 3 minutes.`
+              ? `Polling backend pipeline — attempt ${pollCount + 1}/${MAX_POLLS} (${pollCount * 20}s elapsed). Stop polling if backend is offline.`
               : 'Data refreshes automatically via background pipeline. Check back shortly.'}
           </p>
           {computing && !pollStopped && (

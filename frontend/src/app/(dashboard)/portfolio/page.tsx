@@ -396,6 +396,10 @@ export default function PortfolioPage() {
     } catch (e) {
       setLoading(false);
       setFetchError('Live prices unavailable — showing last known data. NSE API may be down.');
+      // PATCH 0435 BUG-032 — Always stamp lastRefresh even on error so the
+      // header shows "Last refreshed: HH:MM:SS" instead of permanent "—".
+      // Indicates last attempt time, not last successful fetch.
+      setLastRefresh(new Date());
     }
     finally { setIsRefreshing(false); }
   }, [holdings]);

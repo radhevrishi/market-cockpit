@@ -290,12 +290,17 @@ function LiveBullishFeed() {
   const fetchFeed = async (force = false) => {
     setLoading(true);
     setError(null);
+    // PATCH 0435 BUG-011 — Hard 50s timeout. Vercel route is 60s; 50s gives
+    // us a chance to display "timed out" instead of letting the browser
+    // hang on the network call indefinitely.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 50000);
     try {
       const params = new URLSearchParams({
         days: String(days),
         ...(force ? { force: '1' } : {}),
       });
-      const res = await fetch(`/api/v1/concall-intel/live-feed?${params}`, { cache: 'no-store' });
+      const res = await fetch(`/api/v1/concall-intel/live-feed?${params}`, { cache: 'no-store', signal: controller.signal });
       if (!res.ok) {
         setError(`HTTP ${res.status}`);
         return;
@@ -304,8 +309,9 @@ function LiveBullishFeed() {
       setData(j);
       setLastRefresh(new Date());
     } catch (e: any) {
-      setError(e?.message || 'fetch failed');
+      setError(e?.name === 'AbortError' ? 'Timed out after 50s — try Refresh' : (e?.message || 'fetch failed'));
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
     }
   };
@@ -1072,6 +1078,9 @@ function WarrantMomentumFeed() {
   const fetchFeed = async (force = false) => {
     setLoading(true);
     setError(null);
+    // PATCH 0435 BUG-011 — Hard 50s timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 50000);
     try {
       const params = new URLSearchParams({
         days: String(days),
@@ -1080,7 +1089,7 @@ function WarrantMomentumFeed() {
         ...(passingOnly ? { passingOnly: '1' } : {}),
         ...(force ? { force: '1' } : {}),
       });
-      const res = await fetch(`/api/v1/concall-intel/warrant-feed?${params}`, { cache: 'no-store' });
+      const res = await fetch(`/api/v1/concall-intel/warrant-feed?${params}`, { cache: 'no-store', signal: controller.signal });
       if (!res.ok) {
         setError(`HTTP ${res.status}`);
         return;
@@ -1089,8 +1098,9 @@ function WarrantMomentumFeed() {
       setData(j);
       setLastRefresh(new Date());
     } catch (e: any) {
-      setError(e?.message || 'fetch failed');
+      setError(e?.name === 'AbortError' ? 'Timed out after 50s — try Refresh' : (e?.message || 'fetch failed'));
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
     }
   };
@@ -1624,6 +1634,9 @@ function KeywordWatchFeed() {
   const fetchFeed = async (force = false) => {
     setLoading(true);
     setError(null);
+    // PATCH 0435 BUG-011 — Hard 50s timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 50000);
     try {
       const params = new URLSearchParams({
         days: String(days),
@@ -1631,13 +1644,15 @@ function KeywordWatchFeed() {
         ...(selectedGroups.size > 0 ? { groups: Array.from(selectedGroups).join(',') } : {}),
         ...(force ? { force: '1' } : {}),
       });
-      const res = await fetch(`/api/v1/concall-intel/keyword-watch?${params}`, { cache: 'no-store' });
+      const res = await fetch(`/api/v1/concall-intel/keyword-watch?${params}`, { cache: 'no-store', signal: controller.signal });
       if (!res.ok) { setError(`HTTP ${res.status}`); return; }
       const j = await res.json();
       setData(j);
       setLastRefresh(new Date());
-    } catch (e: any) { setError(e?.message || 'fetch failed'); }
-    finally { setLoading(false); }
+    } catch (e: any) {
+      setError(e?.name === 'AbortError' ? 'Timed out after 50s — try Refresh' : (e?.message || 'fetch failed'));
+    }
+    finally { clearTimeout(timeoutId); setLoading(false); }
   };
 
   useEffect(() => {
