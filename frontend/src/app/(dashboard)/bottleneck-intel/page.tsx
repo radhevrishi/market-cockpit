@@ -1706,6 +1706,29 @@ function RotationTracker({ dashboard, isLoading, articles }: { dashboard?: BnDas
                       <span style={{ fontSize: '11px', color: '#8A95A3' }}><span style={{ color: sty.badge, fontWeight: '700', fontSize: '15px' }}>{b.signal_count}</span> signals</span>
                       <span style={{ fontSize: '11px', color: '#8A95A3' }}><span style={{ fontWeight: '600', color: '#C9D4E0' }}>{b.article_count}</span> articles</span>
                       {vel && <span style={{ fontSize: '11px', color: isAccel ? '#F59E0B' : '#4A5B6C' }}>{vel.week} this wk</span>}
+                      {/* PATCH 0445 BUG-015 — Per-theme last-article timestamp.
+                          Lets the user verify why a theme is STALE — is it
+                          genuinely cold (last article weeks ago) or is the
+                          velocity calculation wrong (recent article but not
+                          counted)? Tooltip shows absolute timestamp. */}
+                      {(() => {
+                        const sigs = b.signals || [];
+                        let latest: string | null = null;
+                        for (const s of sigs) {
+                          if (s.latest_at && (!latest || s.latest_at > latest)) latest = s.latest_at;
+                        }
+                        if (!latest) return null;
+                        const ageMs = Date.now() - new Date(latest).getTime();
+                        const ageDays = Math.floor(ageMs / 86400000);
+                        const label = ageDays < 1 ? 'today' : ageDays === 1 ? '1d ago' : ageDays < 7 ? `${ageDays}d ago` : ageDays < 30 ? `${Math.floor(ageDays / 7)}w ago` : `${Math.floor(ageDays / 30)}mo ago`;
+                        const color = ageDays < 7 ? '#10B981' : ageDays < 30 ? '#F59E0B' : '#EF4444';
+                        return (
+                          <span title={`Latest article: ${new Date(latest).toLocaleString('en-IN')} (${label})`}
+                            style={{ fontSize: '10px', color, cursor: 'help' }}>
+                            📰 {label}
+                          </span>
+                        );
+                      })()}
                       {/* Evidence diversity with full detail */}
                       {(() => {
                         const div = calcEvidenceDiversity(b.signal_count, b.article_count);
@@ -1849,27 +1872,54 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
       }
     }
     // PATCH 0261 — defend against undefined/null quote tickers.
-    // PATCH 0443 BUG-028 — Normalize ticker keys on BOTH sides. Yahoo Finance
-    // returns symbols with .NS / .BO suffix; article tickers are bare. Result
-    // was 107 quotes loaded but PRICE column showing '—' for every row
-    // because qm.get('NHPC') never matched 'NHPC.NS'. Strip suffix on both
-    // ends so the lookup binds correctly.
+    // PATCH 0445 BUG-028 — Broader symbol normalization. Article tickers can
+    // arrive as '$NVDA', 'NASDAQ:NVDA', 'NVDA.O', '(NVDA)'. Quote keys arrive
+    // as bare 'NVDA' or 'NVDA.NS'. Normalize aggressively on both sides AND
+    // fall back to alternate price fields (regularMarketPrice / lastPrice /
+    // cmp) since /api/market/quotes can re-shape the field by upstream source.
     const stripSuffix = (s: string) => (s || '').toUpperCase()
-      .replace(/^(NSE|BSE|NYSE|NASDAQ):/, '')
-      .replace(/\.(NS|BO|BSE|NSE)$/, '')
+      .replace(/^[\$\(]/, '')         // $NVDA → NVDA, (NVDA) → NVDA)
+      .replace(/[\)]$/, '')           // (NVDA) → (NVDA → NVDA
+      .replace(/^(NSE|BSE|NYSE|NASDAQ|US):/, '')
+      .replace(/\.(NS|BO|BSE|NSE|O|N|OQ|TO|HK|L|PA)$/, '')
       .trim();
+    const priceOf = (q: any): number | undefined => {
+      if (!q) return undefined;
+      const candidates = [q.price, q.regularMarketPrice, q.lastPrice, q.cmp, q.ltp];
+      for (const c of candidates) {
+        const n = Number(c);
+        if (Number.isFinite(n) && n > 0) return n;
+      }
+      return undefined;
+    };
+    const pctOf = (q: any): number | undefined => {
+      if (!q) return undefined;
+      const candidates = [q.changePercent, q.regularMarketChangePercent, q.pChange, q.change_pct];
+      for (const c of candidates) {
+        const n = Number(c);
+        if (Number.isFinite(n)) return n;
+      }
+      return undefined;
+    };
+    const mcapOf = (q: any): number | undefined => {
+      const n = Number(q?.marketCap ?? q?.market_cap ?? q?.mcap);
+      return Number.isFinite(n) && n > 0 ? n : undefined;
+    };
     const qm = new Map<string, QuoteStock>(
-      (quotes || []).filter(q => q?.ticker).map(q => [stripSuffix(q.ticker), q])
+      (quotes || []).filter((q: any) => q?.ticker || q?.symbol).map((q: any) => [stripSuffix(q.ticker || q.symbol), q])
     );
     return Array.from(map.values())
       .filter(r => r.inUniverse ? r.evidence_count >= 1 : r.evidence_count >= 2) // New picks need 2+ articles to filter news noise
-      .map(r => ({
-        ...r,
-        price: qm.get(stripSuffix(r.symbol))?.price,
-        change_pct: qm.get(stripSuffix(r.symbol))?.changePercent,
-        market_cap: qm.get(stripSuffix(r.symbol))?.marketCap,
-        textSignals: detectTextSignals(r.headlines),
-      }))
+      .map(r => {
+        const q = qm.get(stripSuffix(r.symbol));
+        return {
+          ...r,
+          price: priceOf(q),
+          change_pct: pctOf(q),
+          market_cap: mcapOf(q),
+          textSignals: detectTextSignals(r.headlines),
+        };
+      })
       .sort((a, b) => {
         // Discovery score: new picks + velocity + text signals + evidence
         const sigScore = (r: typeof a) => (!r.inUniverse ? 10 : 0) + r.velocity_week * 2 + r.textSignals.length * 3 + r.evidence_count;

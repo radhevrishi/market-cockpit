@@ -120,7 +120,20 @@ export default function BottleneckWorkbenchPage() {
   useEffect(() => { setActiveBucket(themeParam); }, [themeParam]);
 
   const { data: dashboard, isLoading } = useBucket(activeBucket);
-  const buckets = dashboard?.buckets || [];
+  // PATCH 0445 BUG-009 — Flatten signal.ticker_mentions[] into bucket.key_tickers
+  // so the IMPLICATED TICKERS grid is never empty when articles do mention
+  // tickers but the bottleneck-dashboard aggregator didn't roll them up.
+  // Dedupe + uppercase + skip blanks.
+  const buckets: BnBucket[] = useMemo(() => {
+    return (dashboard?.buckets || []).map(b => {
+      const fromSignals = (b.signals || []).flatMap(s => s.ticker_mentions || []);
+      const merged = new Set<string>([
+        ...(b.key_tickers || []),
+        ...fromSignals,
+      ].map(t => (t || '').toUpperCase().trim()).filter(Boolean));
+      return { ...b, key_tickers: Array.from(merged) };
+    });
+  }, [dashboard]);
   const bucket = useMemo(() => buckets.find(b => b.bucket_id === activeBucket), [buckets, activeBucket]);
 
   // PATCH 0278 — Theme-picker search box, sorted by severity desc.

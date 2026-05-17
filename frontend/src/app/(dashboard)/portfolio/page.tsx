@@ -328,6 +328,11 @@ export default function PortfolioPage() {
   const [holdings, setHoldings] = useState<PortfolioHolding[]>([]);
   const [quotes, setQuotes] = useState<StockQuote[]>([]);
   const [intelligence, setIntelligence] = useState<Map<string, Signal>>(new Map());
+  // PATCH 0445 BUG-021 — Per-symbol RRG trend label cache (LEADING /
+  // IMPROVING / WEAKENING / LAGGING) from the new /api/portfolio/trend
+  // endpoint. Hydrates the TREND column when the intelligence service
+  // doesn't carry sectorTrend (the common case for portfolio holdings).
+  const [trendMap, setTrendMap] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
@@ -390,6 +395,22 @@ export default function PortfolioPage() {
           setIntelligence(signalMap);
         }
       } catch (e) { console.error('Intelligence fetch failed:', e); }
+
+      // PATCH 0445 BUG-021 — fetch RRG trend labels in parallel.
+      try {
+        const syms = holdings.map(h => h.symbol).filter(Boolean);
+        if (syms.length > 0) {
+          const trendRes = await fetch(`/api/portfolio/trend?symbols=${syms.join(',')}`);
+          if (trendRes.ok) {
+            const j = await trendRes.json();
+            const m = new Map<string, string>();
+            for (const r of (j.rows || [])) {
+              if (r?.ticker && r?.label) m.set(String(r.ticker).toUpperCase(), r.label);
+            }
+            setTrendMap(m);
+          }
+        }
+      } catch (e) { console.error('Trend fetch failed:', e); }
 
       setLastRefresh(new Date());
       setLoading(false);
@@ -459,17 +480,27 @@ export default function PortfolioPage() {
           }
         } catch {}
       }
+      // PATCH 0445 BUG-021 — Fall back to the RRG trend label when the
+      // intelligence service didn't supply sectorTrend. Map LEADING /
+      // IMPROVING / WEAKENING / LAGGING into Bullish / Neutral / Bearish
+      // tones so the existing badge colors still work.
+      const rrgRaw = trendMap.get(h.symbol.toUpperCase());
+      const rrgTone = rrgRaw === 'LEADING' ? 'Bullish'
+                    : rrgRaw === 'IMPROVING' ? 'Bullish'
+                    : rrgRaw === 'WEAKENING' ? 'Neutral'
+                    : rrgRaw === 'LAGGING' ? 'Bearish'
+                    : undefined;
       return { symbol: h.symbol, company: quote?.company || h.symbol, sector: quote?.sector || '—',
         entryPrice: h.entryPrice, quantity: h.quantity, cmp, change, changePercent,
         investedValue, currentValue, pnl, pnlPercent, dayPnl, notes: h.notes, weight: 0,
         score: signal?.weightedScore ?? fallbackScore,
-        sectorTrend: signal?.sectorTrend,
+        sectorTrend: signal?.sectorTrend ?? rrgTone,
         decision: signal?.action ?? fallbackDecision };
     });
     // Second pass: weight by current value (proper risk weighting)
     const totalCurrent = rawRows.reduce((s, r) => s + r.currentValue, 0);
     return rawRows.map(r => ({ ...r, weight: totalCurrent > 0 ? (r.currentValue / totalCurrent) * 100 : 0 }));
-  }, [holdings, quotes, intelligence]);
+  }, [holdings, quotes, intelligence, trendMap]);
 
   // Sorted rows
   const sortedRows = useMemo(() => {

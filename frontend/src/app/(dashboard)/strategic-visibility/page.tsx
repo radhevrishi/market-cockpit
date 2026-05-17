@@ -554,7 +554,24 @@ export default function StrategicVisibilityPage() {
         )}
 
         {isLoading && (
-          <div style={{ padding: 40, textAlign: 'center', color: '#6B7A8D' }}>Computing strategic visibility…</div>
+          /* PATCH 0445 BUG-030 — Shimmer skeleton rows instead of single
+             centred "Computing…" line so cold-load feels populated. */
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 12, color: '#6B7A8D', marginBottom: 6 }}>
+              📡 Computing strategic visibility…
+            </div>
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} style={{
+                height: 60,
+                background: 'linear-gradient(90deg, #0D1B2E 0%, #1A2840 50%, #0D1B2E 100%)',
+                backgroundSize: '200% 100%',
+                animation: `svShimmer 1.4s linear infinite ${i * 0.08}s`,
+                borderRadius: 8,
+                opacity: 0.7,
+              }} />
+            ))}
+            <style>{`@keyframes svShimmer{0%{background-position:-200% 0;}100%{background-position:200% 0;}}`}</style>
+          </div>
         )}
 
         {!isLoading && articles.length === 0 && (

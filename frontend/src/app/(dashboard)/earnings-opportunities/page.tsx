@@ -2099,19 +2099,30 @@ export default function EarningsOpportunitiesPage() {
           const mostRecent = allDatesWithFilings.length ? allDatesWithFilings[allDatesWithFilings.length - 1] : null;
           // Auto-shift when user explicitly picked a date — but only after a
           // small delay so they can navigate freely. We just SHOW the option.
+          // PATCH 0445 BUG-016 — Better empty state: last-run timestamp,
+          // honest "what's been polled" line, prominent CTA buttons.
+          const lastScraped = (hub as any)?.scraped_at ? new Date((hub as any).scraped_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : null;
           return (
-            <div style={{ color: '#6B7A8D', fontSize: 13, padding: 40, textAlign: 'center', backgroundColor: '#0D1623', border: '1px solid #1A2840', borderRadius: 10 }}>
-              <div style={{ fontSize: 32, marginBottom: 10 }}>📭</div>
-              No earnings filings for <strong style={{ color: '#94A3B8' }}>{filingDateLabel}</strong>.<br/>
-              <span style={{ fontSize: 11 }}>This date had no Q4 results announced. NSE + BSE pipeline polled.</span>
+            <div style={{ color: '#94A3B8', fontSize: 13, padding: '36px 28px', textAlign: 'center', backgroundColor: '#0D1623', border: '1px solid #1A2840', borderRadius: 10 }}>
+              <div style={{ fontSize: 40, marginBottom: 10 }}>📭</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: '#E6EDF3', marginBottom: 4 }}>
+                No earnings filings for {filingDateLabel}
+              </div>
+              <div style={{ fontSize: 12, color: '#6B7A8D', marginBottom: 14, lineHeight: 1.5 }}>
+                NSE + BSE corporate-actions pipeline polled. No Q4 results announced for this date.
+                {lastScraped && <><br/><span style={{ fontSize: 10.5, color: '#4A5B6C' }}>📡 Calendar last refreshed: <strong style={{ color: '#94A3B8' }}>{lastScraped}</strong></span></>}
+              </div>
               {mostRecent && (
-                <div style={{ marginTop: 12, display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
-                  <button onClick={() => setFilterDate(mostRecent)} style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #22D3EE60', backgroundColor: '#22D3EE15', color: '#22D3EE', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
-                    → Jump to {new Date(mostRecent).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })} ({allDatesWithFilings.length > 0 ? 'most recent with filings' : 'latest'})
+                <div style={{ marginTop: 8, display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <button onClick={() => setFilterDate(mostRecent)} style={{ padding: '8px 16px', borderRadius: 6, border: '1px solid #22D3EE60', backgroundColor: '#22D3EE15', color: '#22D3EE', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                    → Jump to {new Date(mostRecent).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}
                   </button>
-                  <button onClick={() => setFilterDate('')} style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #1A2840', backgroundColor: 'transparent', color: '#8A95A3', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+                  <button onClick={() => setFilterDate('')} style={{ padding: '8px 16px', borderRadius: 6, border: '1px solid #1A2840', backgroundColor: 'transparent', color: '#8A95A3', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
                     Auto-pick latest
                   </button>
+                  <a href="https://www.nseindia.com/companies-listing/corporate-filings-financial-results" target="_blank" rel="noopener noreferrer" style={{ padding: '8px 16px', borderRadius: 6, border: '1px solid #F59E0B40', backgroundColor: '#F59E0B10', color: '#F59E0B', fontSize: 12, fontWeight: 700, textDecoration: 'none', cursor: 'pointer' }}>
+                    NSE Filings →
+                  </a>
                 </div>
               )}
             </div>

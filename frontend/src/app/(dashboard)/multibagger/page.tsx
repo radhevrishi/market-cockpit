@@ -1907,7 +1907,11 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   // (5) FALLING-KNIFE + EXPENSIVE COMBO — Stage 4 (below 200 DMA AND down >25%)
   //     with PEG > 2.5 is "catching a knife at premium valuation". Each piece
   //     is penalized in its own pillar, but the combo amplifies risk.
+  // PATCH 0445 BUG-031 — Explicit PEG>0 guard so a negative PEG (negative
+  // earnings growth) doesn't accidentally bypass the > 2.5 test on undefined
+  // coercion or pass through unrelated paths.
   if ((row.aboveDMA200 ?? 0) < -25
+      && (row.peg ?? 0) > 0
       && (row.peg ?? 0) > 2.5
       && (row.return1m ?? 0) < -10) {
     reratingBonus -= 8;
@@ -8687,13 +8691,17 @@ function CapitalAllocationPanel() {
       <div style={{ fontSize: 13, color: MUTED, marginBottom: 16, lineHeight: 1.5 }}>
         How disciplined is management with shareholder capital? Capex efficiency · ROCE shift · dilution · buybacks · dividend rationality · reinvestment runway. Computed from Screener annual data.
       </div>
+      {/* PATCH 0445 BUG-031 — Help text + auto-suffix hint */}
+      <div style={{ fontSize: 11, color: MUTED, marginBottom: 6 }}>
+        Tip: bare tickers like <span style={{ color: TEXT }}>RELIANCE</span> auto-normalise to <span style={{ color: TEXT }}>RELIANCE.NS</span> on submit.
+      </div>
       <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
         <input
           type="text"
           value={ticker}
           onChange={(e) => setTicker(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') onSubmit(); }}
-          placeholder="e.g. RELIANCE.NS"
+          placeholder="e.g. RELIANCE or RELIANCE.NS"
           style={{ flex: 1, padding: '10px 14px', background: '#13131a', color: TEXT, border: '1px solid rgba(255,255,255,0.10)', borderRadius: 6, fontSize: 13 }}
         />
         <button onClick={onSubmit} disabled={loading || !ticker.trim()}

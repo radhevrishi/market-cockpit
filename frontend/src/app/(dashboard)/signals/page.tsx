@@ -1,9 +1,11 @@
-// PATCH 0441 BUG-018 — Add /signals as the canonical URL for what was
-// previously /orders (semantically misleading — the page does corporate
-// signal intelligence, not order management). /orders still works
-// (existing bookmarks unbroken); /signals is the new preferred slug.
-import { redirect } from 'next/navigation';
+// PATCH 0445 BUG-018 — Reverse the canonical direction. /signals now renders
+// the actual page (was previously redirecting to /orders); /orders becomes
+// the redirect target. The page semantically does corporate signal
+// intelligence, not order management, so /signals is the correct slug.
+// Both URLs continue to render the same content for bookmark compatibility.
+'use client';
+import OrdersPage from '../orders/page';
 
-export default function SignalsRedirect() {
-  redirect('/orders');
+export default function SignalsPage() {
+  return <OrdersPage />;
 }

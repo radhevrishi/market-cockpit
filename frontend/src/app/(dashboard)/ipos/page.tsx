@@ -564,7 +564,8 @@ export default function IPOsPage() {
         </div>
       )}
 
-      {/* Empty State */}
+      {/* Empty State — PATCH 0445 BUG-010: prominent NSE + BSE CTA buttons
+          so the user has a one-click path off the dead-end empty screen. */}
       {!loading && !error && ipos.length === 0 && (
         <div style={{
           backgroundColor: THEME.card,
@@ -574,12 +575,49 @@ export default function IPOsPage() {
           textAlign: 'center',
           color: THEME.textSecondary,
         }}>
-          <p style={{ margin: 0, marginBottom: '8px' }}>
+          <div style={{ fontSize: 36, marginBottom: 12 }}>📄</div>
+          <p style={{ margin: 0, marginBottom: '8px', fontSize: 16, fontWeight: 600, color: THEME.textPrimary }}>
             No IPO data available at the moment
           </p>
-          <p style={{ margin: 0, fontSize: '12px' }}>
-            Data from {dataSource || 'API'}. For comprehensive IPO info, visit NSE/BSE.
+          <p style={{ margin: 0, fontSize: '12px', marginBottom: 18 }}>
+            Data from {dataSource || 'API'}. Check the exchange calendars directly:
           </p>
+          <div style={{ display: 'inline-flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
+            <a
+              href="https://www.nseindia.com/market-data/all-upcoming-issues-ipo"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '10px 18px', borderRadius: 8,
+                background: '#22D3EE', color: '#000', fontWeight: 700, fontSize: 13,
+                textDecoration: 'none', letterSpacing: '0.4px',
+              }}
+            >🏦 NSE IPO Calendar →</a>
+            <a
+              href="https://www.bseindia.com/markets/PublicIssues/IPOIssues_new.aspx"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '10px 18px', borderRadius: 8,
+                background: '#F59E0B', color: '#000', fontWeight: 700, fontSize: 13,
+                textDecoration: 'none', letterSpacing: '0.4px',
+              }}
+            >🏛 BSE IPO Calendar →</a>
+            <a
+              href="https://www.chittorgarh.com/report/ipo-list-in-india-bse-nse/83/"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '10px 18px', borderRadius: 8,
+                background: 'transparent', border: `1px solid ${THEME.border}`,
+                color: THEME.textPrimary, fontWeight: 600, fontSize: 13,
+                textDecoration: 'none', letterSpacing: '0.4px',
+              }}
+            >📊 Chittorgarh IPO Tracker →</a>
+          </div>
         </div>
       )}
     </div>

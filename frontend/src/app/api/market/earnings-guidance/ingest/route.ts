@@ -121,6 +121,44 @@ interface GuidanceMeta {
 
 // ==================== HELPERS ====================
 
+// PATCH 0445 BUG-040 — parse Screener period header ('Mar 2023', 'Jun 2025',
+// 'Q4 FY26') into age-in-months relative to today. Returns null when the
+// period is unparseable. Used to suppress stale quarterly results from
+// being surfaced as live guidance.
+const MONTH_MAP: Record<string, number> = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, sept: 8, oct: 9, nov: 10, dec: 11,
+};
+function parsePeriodAgeMonths(period: string | undefined | null): number | null {
+  if (!period || typeof period !== 'string') return null;
+  const p = period.trim().toLowerCase();
+  // 'mar 2023', 'march 2023', 'sep 2024'
+  const m1 = p.match(/^([a-z]+)[ \-]+(\d{4})$/);
+  if (m1) {
+    const mIdx = MONTH_MAP[m1[1].slice(0, 4)] ?? MONTH_MAP[m1[1].slice(0, 3)];
+    const year = parseInt(m1[2], 10);
+    if (mIdx === undefined || !Number.isFinite(year)) return null;
+    const now = new Date();
+    const periodEnd = new Date(year, mIdx + 1, 0); // end-of-month
+    const months = (now.getFullYear() - periodEnd.getFullYear()) * 12 + (now.getMonth() - periodEnd.getMonth());
+    return months;
+  }
+  // 'q4 fy26' — assume calendar end-of-quarter; FY26 in India = Mar 2026
+  const m2 = p.match(/^q([1-4])[ \-]+fy(\d{2,4})$/);
+  if (m2) {
+    const q = parseInt(m2[1], 10);
+    let fy = parseInt(m2[2], 10);
+    if (fy < 100) fy += 2000;
+    // Q1=Jun, Q2=Sep, Q3=Dec, Q4=Mar of fy
+    const monthOfQuarterEnd = q === 1 ? 5 : q === 2 ? 8 : q === 3 ? 11 : 2;
+    const yearOfQuarterEnd = q === 4 ? fy : fy - 1;
+    const periodEnd = new Date(yearOfQuarterEnd, monthOfQuarterEnd + 1, 0);
+    const now = new Date();
+    return (now.getFullYear() - periodEnd.getFullYear()) * 12 + (now.getMonth() - periodEnd.getMonth());
+  }
+  return null;
+}
+
 function gradeFromScore(score: number): { grade: GuidanceEvent['grade']; color: string } {
   if (score >= 75) return { grade: 'STRONG', color: '#7C3AED' };
   if (score >= 55) return { grade: 'POSITIVE', color: '#00C853' };
@@ -616,6 +654,15 @@ async function ingestFromEarningsScan(): Promise<{
         // Source B: Quarterly results data
         if (cached.quarters && Array.isArray(cached.quarters) && cached.quarters.length > 0) {
           const latest = cached.quarters[0];
+          // PATCH 0445 BUG-040 — Skip generating a RESULT event when the
+          // latest reported quarter is older than 12 months. Screener
+          // serves the last-known snapshot even when the company hasn't
+          // filed in years (Mar 2023 was surfacing for stocks with no
+          // recent activity). Period header is e.g. 'Mar 2023' / 'Jun 2025'.
+          const periodAge = parsePeriodAgeMonths(latest?.period);
+          if (periodAge !== null && periodAge > 12) {
+            continue; // stale quarter — don't emit a RESULT event
+          }
           const yoyQuarter = cached.quarters.length >= 4
             ? cached.quarters[3]
             : cached.quarters.length >= 3 ? cached.quarters[2] : null;

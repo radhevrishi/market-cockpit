@@ -344,13 +344,30 @@ function useUniverseSymbols(choice: UniverseChoice, customCsv: string) {
 }
 
 function useEarningsScan(symbols: string[]) {
+  // PATCH 0445 BUG-005 — localStorage cache prime. Previously the rerating
+  // page sat on a 30s spinner each cold visit. Now we read the last
+  // successful payload from localStorage as initialData (zero-flash render)
+  // and refetch fresh in the background. The cache key includes the symbol
+  // set so a universe switch never serves wrong data.
+  const cacheKey = useMemo(
+    () => `mc:rerating-earnings:${symbols.slice(0, 50).join(',') || 'empty'}`,
+    [symbols]
+  );
+  const initial = (() => {
+    if (typeof window === 'undefined') return undefined;
+    try {
+      const raw = window.localStorage.getItem(cacheKey);
+      if (!raw) return undefined;
+      const parsed = JSON.parse(raw);
+      if (!parsed?.ts || Date.now() - parsed.ts > 30 * 60_000) return undefined; // 30-min validity
+      return parsed.data as EarningsRow[];
+    } catch { return undefined; }
+  })();
   return useQuery<EarningsRow[]>({
     queryKey: ['rerating', 'earnings-scan', symbols.slice(0, 50).join(',')],
     queryFn: async () => {
       if (!symbols.length) return [];
-      // PATCH 0435 BUG-005 — Hard 30s timeout so 'Loading earnings-scan…'
-      // doesn't sit forever. Returns [] on timeout; the rerating page will
-      // show "no data" instead of infinite spinner.
+      // Hard 30s timeout so 'Loading earnings-scan…' doesn't sit forever.
       const controller = new AbortController();
       const t = setTimeout(() => controller.abort(), 30000);
       try {
@@ -358,7 +375,12 @@ function useEarningsScan(symbols: string[]) {
           params: { symbols: symbols.slice(0, 50).join(',') },
           signal: controller.signal,
         });
-        return Array.isArray(data) ? data : (data?.rows || data?.results || []);
+        const rows = Array.isArray(data) ? data : (data?.rows || data?.results || []);
+        // Stamp localStorage cache on success
+        if (typeof window !== 'undefined') {
+          try { window.localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), data: rows })); } catch {}
+        }
+        return rows;
       } catch {
         return [];
       } finally {
@@ -366,7 +388,9 @@ function useEarningsScan(symbols: string[]) {
       }
     },
     enabled: symbols.length > 0,
+    initialData: initial,
     staleTime: 5 * 60_000,
+    refetchOnMount: 'always',
     retry: 0,
   });
 }

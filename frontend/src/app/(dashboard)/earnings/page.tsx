@@ -1518,14 +1518,25 @@ export default function EarningsPage() {
         ? [...cards, ...screenerCards]
         : cards;
 
+    // PATCH 0445 BUG-039 — Defensive grade resolver. The filter previously
+    // depended on `c.grade` being exactly one of EXCELLENT/STRONG/GOOD/OK/BAD.
+    // If a cached/legacy payload shaped grade differently (quality/rating/tier)
+    // or set it to lowercase, every specific-grade filter returned 0 even
+    // though 86 cards were loaded. We now coerce + uppercase + fall back to
+    // siblings so the filter is robust to API shape drift.
+    const getGrade = (c: any): string => {
+      const g = c?.grade ?? c?.quality ?? c?.rating ?? c?.tier ?? '';
+      return String(g).toUpperCase().trim() || 'UNKNOWN';
+    };
+
     return [...sourceCards]
       .filter(c => {
         // Multi-select universe filter — OR/union of selected sources
         if (!matchesSelectedUniverses(c)) return false;
         // PATCH 0186 — Conviction-only standalone toggle still composes (AND)
         if (convictionOnly && !convictionTickersState.has(c.symbol)) return false;
-        // Filter by grade
-        if (!filterGrades.includes('ALL') && !filterGrades.includes(c.grade)) return false;
+        // Filter by grade — defensive resolver (PATCH 0445)
+        if (!filterGrades.includes('ALL') && !filterGrades.includes(getGrade(c))) return false;
         // ── Reporting Period Filter ──
         // Determines when earnings were REPORTED (not when the quarter ended).
         // - If resultDate is an actual date like "15-Apr-2026", use it directly.

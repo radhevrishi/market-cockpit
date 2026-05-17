@@ -85,7 +85,15 @@ function filterEvents(
   symbols: string[],
   days: number
 ): GuidanceEvent[] {
-  const cutoffTime = Date.now() - days * 24 * 60 * 60 * 1000;
+  // PATCH 0445 BUG-040 — Hard ceiling at the requested window AND at 180d
+  // regardless of caller. Previously a ticker with a 3-year-old eventDate
+  // (latest Screener snapshot was Mar 2023 because the company hasn't filed
+  // since then) was getting surfaced as if it were current guidance.
+  const HARD_FRESHNESS_MS = 180 * 24 * 60 * 60 * 1000;
+  const cutoffTime = Math.max(
+    Date.now() - days * 24 * 60 * 60 * 1000,
+    Date.now() - HARD_FRESHNESS_MS,
+  );
 
   return allEvents.filter((event) => {
     const eventTime = new Date(event.eventDate).getTime();

@@ -54,8 +54,11 @@ function browserHeaders(referer: string): Record<string, string> {
   };
 }
 const UA = UA_POOL[0];           // kept for backwards-compat callers below
-const SCREENER_TIMEOUT_MS = 7000;
-const YAHOO_TIMEOUT_MS = 5000;
+// PATCH 0445 BUG-025 — Bump per-source timeouts. The previous 7s/5s budget
+// was too tight when Screener has Cloudflare friction or Yahoo rate-limits.
+// New ceilings still fit comfortably under the per-ticker 18s ceiling above.
+const SCREENER_TIMEOUT_MS = 12000;
+const YAHOO_TIMEOUT_MS = 8000;
 const SCREENER_RETRY_DELAYS_MS = [0, 400, 1100];   // 3 attempts: immediate, 400ms, 1100ms
 // PATCH 0157 — staleness defense:
 // • Cache TTL reduced from 7 days → 6 hours. Quarterly filings come every
@@ -604,17 +607,47 @@ export async function GET(req: Request) {
     return NextResponse.json({ data: {}, generated_at: new Date().toISOString(), error: 'no valid symbols' });
   }
   const t0 = Date.now();
-  const entries: Array<[string, any]> = await Promise.all(symbols.map(async (sym): Promise<[string, any]> => {
-    try { return [sym, await enrichOne(sym, filedHint, bypassCache)]; }
-    catch { return [sym, null]; }
-  }));
+  // PATCH 0445 BUG-025 — Replace naked Promise.all with chunked allSettled +
+  // circuit breaker. Previously a single slow / hanging Screener fetch could
+  // poison the whole batch and the 60s Vercel limit fired, returning 0/N
+  // enriched. Now:
+  //   • Concurrency capped at 12 (Screener rate-limits aggressive fan-out).
+  //   • Each ticker wrapped with a per-call 18s hard ceiling so one stuck
+  //     fetch can't drag the batch past Vercel's 60s budget.
+  //   • allSettled means one bad ticker never breaks the others.
+  //   • Hard-stop at 55s — flush whatever is ready and report partial.
+  const HARD_BUDGET_MS = 55_000;
+  const PER_TICKER_MS = 18_000;
+  const CONCURRENCY = 12;
   const data: Record<string, any> = {};
   let ok = 0;
-  for (const [sym, e] of entries) {
-    if (sym && e) { data[sym] = e; ok++; }
+  let truncatedAt: number | null = null;
+  const withTimeout = <T,>(p: Promise<T>, ms: number): Promise<T | null> => {
+    return new Promise<T | null>((resolve) => {
+      const tm = setTimeout(() => resolve(null), ms);
+      p.then((v) => { clearTimeout(tm); resolve(v); })
+       .catch(() => { clearTimeout(tm); resolve(null); });
+    });
+  };
+  outer: for (let i = 0; i < symbols.length; i += CONCURRENCY) {
+    if (Date.now() - t0 > HARD_BUDGET_MS) { truncatedAt = i; break outer; }
+    const chunk = symbols.slice(i, i + CONCURRENCY);
+    const settled = await Promise.allSettled(
+      chunk.map(async (sym): Promise<[string, any]> => {
+        const enriched = await withTimeout(enrichOne(sym, filedHint, bypassCache), PER_TICKER_MS);
+        return [sym, enriched];
+      })
+    );
+    for (const r of settled) {
+      if (r.status === 'fulfilled') {
+        const [sym, e] = r.value;
+        if (sym && e) { data[sym] = e; ok++; }
+      }
+    }
   }
   return NextResponse.json({
     data, generated_at: new Date().toISOString(),
     requested: symbols.length, enriched: ok, ms: Date.now() - t0,
+    truncated_at: truncatedAt,
   });
 }

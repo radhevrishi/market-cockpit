@@ -83,6 +83,11 @@ async function fetchMidSmall50DataWithCache() {
       volume: item.totalTradedVolume || item.trdVol || 0,
       marketCap: ffmc > 0 ? ffmc : Math.round((item.lastPrice || 0) * (item.totalTradedVolume || 1) / 10000),
       previousClose: item.previousClose || item.prevClose || 0,
+      // PATCH 0445 BUG-020/037 — optional columns (Watchlist column chooser)
+      week52High: item.yearHigh ?? item.fiftyTwoWeekHigh ?? null,
+      week52Low: item.yearLow ?? item.fiftyTwoWeekLow ?? null,
+      peRatio: item.pe ?? item.peRatio ?? null,
+      avgVolume: item.totalTradedVolume30Day ?? item.averageDailyVolume3Month ?? null,
       indexGroup: indexLabel,
     };
   };
@@ -153,6 +158,11 @@ async function fetchSmallcap150DataWithCache() {
       volume: item.totalTradedVolume || item.trdVol || 0,
       marketCap: ffmc > 0 ? ffmc : Math.round((item.lastPrice || 0) * (item.totalTradedVolume || 1) / 10000),
       previousClose: item.previousClose || item.prevClose || 0,
+      // PATCH 0445 BUG-020/037 — optional columns (Watchlist column chooser)
+      week52High: item.yearHigh ?? item.fiftyTwoWeekHigh ?? null,
+      week52Low: item.yearLow ?? item.fiftyTwoWeekLow ?? null,
+      peRatio: item.pe ?? item.peRatio ?? null,
+      avgVolume: item.totalTradedVolume30Day ?? item.averageDailyVolume3Month ?? null,
       indexGroup: indexLabel,
     };
   };
@@ -223,6 +233,11 @@ async function fetchMidcap150DataWithCache() {
       volume: item.totalTradedVolume || item.trdVol || 0,
       marketCap: ffmc > 0 ? ffmc : Math.round((item.lastPrice || 0) * (item.totalTradedVolume || 1) / 10000),
       previousClose: item.previousClose || item.prevClose || 0,
+      // PATCH 0445 BUG-020/037 — optional columns (Watchlist column chooser)
+      week52High: item.yearHigh ?? item.fiftyTwoWeekHigh ?? null,
+      week52Low: item.yearLow ?? item.fiftyTwoWeekLow ?? null,
+      peRatio: item.pe ?? item.peRatio ?? null,
+      avgVolume: item.totalTradedVolume30Day ?? item.averageDailyVolume3Month ?? null,
       indexGroup: indexLabel,
     };
   };
@@ -502,6 +517,11 @@ async function fetchUSDataWithCache() {
       volume: q?.regularMarketVolume || 0,
       marketCap: q?.marketCap || 0,
       previousClose: q?.regularMarketPreviousClose || 0,
+      // PATCH 0445 BUG-020/037 — optional columns
+      week52High: q?.fiftyTwoWeekHigh ?? null,
+      week52Low: q?.fiftyTwoWeekLow ?? null,
+      peRatio: q?.trailingPE ?? null,
+      avgVolume: q?.averageDailyVolume3Month ?? null,
     };
   }).filter(s => s.price > 0);
 

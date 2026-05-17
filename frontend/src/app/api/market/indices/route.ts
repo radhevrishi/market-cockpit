@@ -30,44 +30,64 @@ export async function GET(request: Request) {
       nseApiFetch('/api/equity-stockIndices?index=NIFTY%20BANK', 60000).catch(() => null),
     ]);
 
+    // PATCH 0445 BUG-001 — Derive a real change_pct from (last - prevClose)
+    // when NSE's pChange is missing/zero. Hardcoded `change_pct: 0` was the
+    // root cause of the persistent '+0.00%' on the ticker bar.
+    const realPct = (last: any, prev: any, pChange: any): number | null => {
+      const lastN = Number(last);
+      const prevN = Number(prev);
+      const pcN = Number(pChange);
+      if (Number.isFinite(pcN) && Math.abs(pcN) > 0.0001) return pcN;
+      if (Number.isFinite(lastN) && Number.isFinite(prevN) && prevN > 0) {
+        const computed = ((lastN - prevN) / prevN) * 100;
+        if (Number.isFinite(computed) && Math.abs(computed) > 0.0001) return computed;
+      }
+      // Fall back to NSE's pChange even if it's near-zero — at least it's truthful
+      if (Number.isFinite(pcN)) return pcN;
+      return null;
+    };
+
     // NIFTY 50
     if (niftyData?.metadata) {
       const m = niftyData.metadata;
+      const pct = realPct(m.last, m.previousClose, m.pChange);
       indices.push({
         symbol: 'NIFTY 50',
         price: m.last || m.previousClose || 0,
-        change_pct: m.pChange || 0,
-        change: m.change || 0,
+        change_pct: pct,
+        change: m.change ?? null,
       });
     }
 
     // SENSEX — estimated from NIFTY (NSE doesn't serve SENSEX directly)
-    // We'll add it as a placeholder that the frontend can handle
     if (niftyData?.metadata) {
       const niftyPrice = niftyData.metadata.last || 23500;
       const sensexEstimate = Math.round(niftyPrice * 3.28); // rough ratio
+      const pct = realPct(niftyData.metadata.last, niftyData.metadata.previousClose, niftyData.metadata.pChange);
       indices.push({
         symbol: 'SENSEX',
         price: sensexEstimate,
-        change_pct: niftyData.metadata.pChange || 0,
-        change: 0,
+        change_pct: pct,
+        change: null,
       });
     }
 
     // BANK NIFTY
     if (bankNiftyData?.metadata) {
       const m = bankNiftyData.metadata;
+      const pct = realPct(m.last, m.previousClose, m.pChange);
       indices.push({
         symbol: 'BANK NIFTY',
         price: m.last || m.previousClose || 0,
-        change_pct: m.pChange || 0,
-        change: m.change || 0,
+        change_pct: pct,
+        change: m.change ?? null,
       });
     }
 
-    // Add static global indices (these don't change during IST market hours)
+    // Static FX placeholder — explicit null so the front-end renders '—'
+    // instead of a misleading '+0.00%' (PATCH 0445 BUG-001).
     indices.push(
-      { symbol: 'USD/INR', price: 85.50, change_pct: 0, change: 0 },
+      { symbol: 'USD/INR', price: 85.50, change_pct: null, change: null },
     );
 
     _cache = { data: indices, ts: Date.now() };

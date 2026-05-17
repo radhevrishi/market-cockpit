@@ -2499,17 +2499,29 @@ export default function EarningsAnalysisPage() {
     const SCALE = 1e-6;
     const s = (v: any): number|null => { const n=parseFloat(v); return isNaN(n)?null:Math.round(n*SCALE*100)/100; };
 
-    const revenue = s(cur.revenue);
-    const revPrior = s(prev.revenue);
-    const grossProfit = s(cur.grossProfit);
+    // PATCH 0445 BUG-041 — FMP /stable/ endpoint uses different field shapes
+    // than legacy /v3/. NVDA was showing '—' for EBITDA/Margins/FCF because
+    // the field names had drifted. Try every known FMP shape per metric.
+    const pick = (obj: any, keys: string[]): any => {
+      for (const k of keys) {
+        const v = obj?.[k];
+        if (v !== undefined && v !== null && v !== '') return v;
+      }
+      return undefined;
+    };
+    const revenue = s(pick(cur, ['revenue', 'totalRevenue']));
+    const revPrior = s(pick(prev, ['revenue', 'totalRevenue']));
+    const grossProfit = s(pick(cur, ['grossProfit', 'gross_profit']));
     const grossMargin = revenue && grossProfit && revenue > 0 ? Math.round((grossProfit/revenue)*10000)/100 : null;
-    const ebit = s(cur.operatingIncome);
-    const patVal = s(cur.netIncome);
-    const cfoVal = s(cfCur.operatingCashFlow ?? cfCur.netCashProvidedByOperatingActivities);
-    const capexV = s(cfCur.capitalExpenditure);
-    const daVal = s(cur.depreciationAndAmortization);
-    let ebitda = s(cur.ebitda);
+    const ebit = s(pick(cur, ['operatingIncome', 'operating_income', 'ebit', 'operatingProfit']));
+    const patVal = s(pick(cur, ['netIncome', 'net_income', 'netIncomeApplicableToCommonShares']));
+    const cfoVal = s(pick(cfCur, ['operatingCashFlow', 'netCashProvidedByOperatingActivities', 'operating_cash_flow', 'cashflowFromOperations']));
+    const capexV = s(pick(cfCur, ['capitalExpenditure', 'capital_expenditure', 'investmentsInPropertyPlantAndEquipment', 'capex']));
+    const daVal = s(pick(cur, ['depreciationAndAmortization', 'depreciation_and_amortization', 'depreciation']));
+    let ebitda = s(pick(cur, ['ebitda', 'EBITDA']));
     if (!ebitda && ebit !== null && daVal !== null) ebitda = Math.round((ebit + Math.abs(daVal)) * 1000) / 1000;
+    // Direct FCF from FMP if it exposes one
+    const fcfDirect = s(pick(cfCur, ['freeCashFlow', 'free_cash_flow', 'fcf']));
 
     return {
       company: profile.companyName || ticker,
@@ -2532,7 +2544,9 @@ export default function EarningsAnalysisPage() {
       equity: s(bsCur.totalStockholdersEquity ?? bsCur.totalEquity), totalAssets: s(bsCur.totalAssets),
       netDebt: bsCur.totalDebt && bsCur.cashAndCashEquivalents ? s(parseFloat(bsCur.totalDebt)-parseFloat(bsCur.cashAndCashEquivalents)) : null,
       capex: capexV, ar: null, inventory: null, cfo: cfoVal,
-      fcf: cfoVal!==null&&capexV!==null?cfoVal-Math.abs(capexV):null,
+      // PATCH 0445 BUG-041 — Prefer FMP's direct freeCashFlow when available
+      // (more accurate than CFO minus capex when FMP reports them separately).
+      fcf: fcfDirect ?? (cfoVal !== null && capexV !== null ? cfoVal - Math.abs(capexV) : null),
       deRatio: null, cfoPat: cfoVal&&patVal&&patVal!==0?Math.round((cfoVal/patVal)*100)/100:null,
       roce: null, roe: null, roa: null,
       orderBook: null, backlog: null, headcount: profile.fullTimeEmployees||null,

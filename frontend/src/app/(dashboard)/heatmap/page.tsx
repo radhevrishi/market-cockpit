@@ -534,10 +534,37 @@ export default function HeatmapPage() {
         </div>
       </div>
 
-      {/* Loading */}
+      {/* Loading — PATCH 0445 BUG-002: skeleton grid + status text instead of
+          lonely centered spinner. Shows 7×8 colored tiles + ETA text so the
+          user knows the page is fetching, not stuck. */}
       {isLoading && (
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '500px' }}>
-          <div style={{ width: '40px', height: '40px', border: '3px solid #1A2840', borderTop: `3px solid ${ACCENT}`, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: '500px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 18, height: 18, border: `2px solid #1A2840`, borderTop: `2px solid ${ACCENT}`, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+            <span style={{ fontSize: 12, color: '#E2E8F0', fontWeight: 700, letterSpacing: '0.4px' }}>
+              {isEarningsMode ? 'Loading post-earnings cohort…' : 'Loading daily heatmap…'}
+            </span>
+            <span style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic' }}>
+              ≤30s · times out gracefully
+            </span>
+          </div>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(8, 1fr)',
+            gridAutoRows: '60px',
+            gap: 4,
+            opacity: 0.6,
+          }}>
+            {Array.from({ length: 56 }).map((_, i) => (
+              <div key={i} style={{
+                background: `linear-gradient(90deg, #0A1422 0%, #1A2840 50%, #0A1422 100%)`,
+                backgroundSize: '200% 100%',
+                animation: `hmShimmer 1.4s linear infinite ${(i % 8) * 0.05}s`,
+                borderRadius: 4,
+              }} />
+            ))}
+          </div>
+          <style>{`@keyframes hmShimmer{0%{background-position:-200% 0;}100%{background-position:200% 0;}}`}</style>
         </div>
       )}
 

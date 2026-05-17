@@ -514,18 +514,19 @@ export default function SpecialSituationsPage() {
         {/* Aggregate counts */}
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
           {/* PATCH 0252 — Clickable filters. Toggle on click; visual active state. */}
-          <Stat label="Tier 1 (hard catalyst)" value={tier1Count} color="#EF4444"
+          {/* PATCH 0445 BUG-029 — `loading` prop drives shimmer on cold-load zeros. */}
+          <Stat label="Tier 1 (hard catalyst)" value={tier1Count} color="#EF4444" loading={isLoading}
             active={tierFilter === 'TIER_1'}
             onClick={() => setTierFilter(tierFilter === 'TIER_1' ? 'ALL' : 'TIER_1')} />
-          <Stat label="Tier 2 (tradable)" value={tier2Count} color="#F59E0B"
+          <Stat label="Tier 2 (tradable)" value={tier2Count} color="#F59E0B" loading={isLoading}
             active={tierFilter === 'TIER_2'}
             onClick={() => setTierFilter(tierFilter === 'TIER_2' ? 'ALL' : 'TIER_2')} />
-          <Stat label={tier3Label} value={tier3Count} color="#6B7A8D"
+          <Stat label={tier3Label} value={tier3Count} color="#6B7A8D" loading={isLoading}
             active={tierFilter === 'WATCHLIST'}
             onClick={() => setTierFilter(tierFilter === 'WATCHLIST' ? 'ALL' : 'WATCHLIST')} />
           <span style={{ width: 1, backgroundColor: '#1A2840', margin: '4px 4px' }} />
           {(Object.keys(CAT_META) as Category[]).map((c) => (
-            <Stat key={c} label={CAT_META[c].label} value={catCounts[c]} color={CAT_META[c].color} icon={CAT_META[c].icon}
+            <Stat key={c} label={CAT_META[c].label} value={catCounts[c]} color={CAT_META[c].color} icon={CAT_META[c].icon} loading={isLoading}
               active={catFilterSet.has(c)}
               onClick={() => toggleCat(c)} />
           ))}
@@ -639,9 +640,12 @@ export default function SpecialSituationsPage() {
   );
 }
 
-function Stat({ label, value, color, icon, onClick, active }: { label: string; value: number | string; color: string; icon?: string; onClick?: () => void; active?: boolean }) {
+function Stat({ label, value, color, icon, onClick, active, loading }: { label: string; value: number | string; color: string; icon?: string; onClick?: () => void; active?: boolean; loading?: boolean }) {
   // PATCH 0252 — Clickable Stat boxes. When onClick is supplied, render as
   // button; active state lifts the box visually (fill + bolder border).
+  // PATCH 0445 BUG-029 — When loading, render a shimmer skeleton in place
+  // of the literal '0' so the cold-load doesn't flash zeros that look like
+  // genuine empty results.
   const baseStyle: React.CSSProperties = {
     backgroundColor: active ? `${color}25` : '#0A1422',
     border: `1px solid ${active ? color : `${color}30`}`,
@@ -651,7 +655,19 @@ function Stat({ label, value, color, icon, onClick, active }: { label: string; v
     fontFamily: 'inherit', color: 'inherit', textAlign: 'left',
     transition: 'background-color 120ms, border-color 120ms',
   };
-  const inner = (
+  const shimmer = (
+    <>
+      <div style={{
+        width: 28, height: 18, borderRadius: 3,
+        background: `linear-gradient(90deg, ${color}15 0%, ${color}40 50%, ${color}15 100%)`,
+        backgroundSize: '200% 100%',
+        animation: 'specsitShim 1.4s linear infinite',
+      }} />
+      <div style={{ fontSize: 9.5, color: '#6B7A8D', textTransform: 'uppercase', letterSpacing: '0.4px', marginTop: 6, fontWeight: 500 }}>{label}</div>
+      <style>{`@keyframes specsitShim { 0%{background-position:-200% 0;} 100%{background-position:200% 0;} }`}</style>
+    </>
+  );
+  const inner = (loading && (value === 0 || value === '0')) ? shimmer : (
     <>
       <div style={{ fontSize: 18, fontWeight: 800, color, lineHeight: 1.1 }}>{icon ? `${icon} ` : ''}{value}</div>
       <div style={{ fontSize: 9.5, color: active ? color : '#6B7A8D', textTransform: 'uppercase', letterSpacing: '0.4px', marginTop: 2, fontWeight: active ? 700 : 500 }}>{label}{active ? ' ✓' : ''}</div>

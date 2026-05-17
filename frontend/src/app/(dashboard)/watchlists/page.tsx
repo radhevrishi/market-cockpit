@@ -104,6 +104,10 @@ const setStoredTickers = (tickers: string[]) => {
   }
 };
 
+// PATCH 0445 BUG-020/037 — Always include the 6 optional columns when
+// fetching quotes. Previously the response mapper dropped marketCap /
+// volume / 52w / avgVolume / peRatio, so toggling the column chooser
+// surfaced '—' in every row. Now they ride along on every map call.
 const fetchStockQuotes = async (market: string = 'india'): Promise<StockQuote[]> => {
   try {
     const res = await fetch(`/api/market/quotes?market=${market}`);
@@ -119,6 +123,14 @@ const fetchStockQuotes = async (market: string = 'india'): Promise<StockQuote[]>
       changePercent: stock.changePercent || 0,
       dayHigh: stock.dayHigh || stock.price || 0,
       dayLow: stock.dayLow || stock.price || 0,
+      // PATCH 0445 — optional columns
+      volume: stock.volume ?? null,
+      marketCap: stock.marketCap ?? stock.mcap ?? null,
+      previousClose: stock.previousClose ?? null,
+      week52High: stock.week52High ?? stock.fiftyTwoWeekHigh ?? null,
+      week52Low: stock.week52Low ?? stock.fiftyTwoWeekLow ?? null,
+      peRatio: stock.peRatio ?? stock.pe ?? null,
+      avgVolume: stock.avgVolume ?? stock.averageDailyVolume3Month ?? null,
     }));
   } catch (error) {
     console.error('Error fetching quotes:', error);
@@ -149,6 +161,14 @@ const fetchIndividualQuotes = async (symbols: string[]): Promise<StockQuote[]> =
         changePercent: stock.changePercent || 0,
         dayHigh: stock.dayHigh || stock.price || 0,
         dayLow: stock.dayLow || stock.price || 0,
+        // PATCH 0445 — optional columns
+        volume: stock.volume ?? null,
+        marketCap: stock.marketCap ?? stock.mcap ?? null,
+        previousClose: stock.previousClose ?? null,
+        week52High: stock.week52High ?? stock.fiftyTwoWeekHigh ?? null,
+        week52Low: stock.week52Low ?? stock.fiftyTwoWeekLow ?? null,
+        peRatio: stock.peRatio ?? stock.pe ?? null,
+        avgVolume: stock.avgVolume ?? stock.averageDailyVolume3Month ?? null,
       })));
     }
     return results;
