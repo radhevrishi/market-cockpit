@@ -2037,13 +2037,66 @@ async function fetchAllNews(): Promise<any[]> {
   // Per-source cap for diversity
   const PER_SOURCE_CAP = 8;
   const sourceCount: Record<string, number> = {};
-  const diversified = deduped.filter(a => {
+  const perSourceCapped = deduped.filter(a => {
     const src = a.source_name || a.source || 'unknown';
     if (!sourceCount[src]) sourceCount[src] = 0;
     if (sourceCount[src] >= PER_SOURCE_CAP) return false;
     sourceCount[src]++;
     return true;
-  }).slice(0, 500);
+  });
+
+  // PATCH 0451 BUG-057 — Region balance enforcement. Audit reported the
+  // main feed showing ~10 India cards vs ~3 US even though the source mix
+  // is 47 IN / 34 US / 17 GLOBAL. Indian sources publish more frequently
+  // during IST hours so the recency-weighted sort always pushed IN to the
+  // top of the 500-article slice, squeezing out US.
+  //
+  // Fix: split the post-cap pool into three buckets by region, take the
+  // top-K from each (preserving the original score order), then interleave
+  // round-robin so the user sees a balanced mix. Targets per audit:
+  //   IN ≤ 45%   ·  US/GLOBAL ≥ 45%   ·  remainder = backfill
+  // We don't HARDCAP — a slow news day in either region falls back to the
+  // post-cap pool unchanged. The 500-article cap stays.
+  const FINAL_CAP = 500;
+  const inPool = perSourceCapped.filter(a => a.region === 'IN');
+  const usPool = perSourceCapped.filter(a => a.region === 'US');
+  const glPool = perSourceCapped.filter(a => a.region === 'GLOBAL' || (!a.region));
+  // Targets — IN gets up to 45%, US gets up to 35%, GLOBAL gets up to 25%.
+  // If any pool can't hit its target the surplus is absorbed by the others.
+  const targets = {
+    IN:     Math.floor(FINAL_CAP * 0.45),
+    US:     Math.floor(FINAL_CAP * 0.35),
+    GLOBAL: Math.floor(FINAL_CAP * 0.25),
+  };
+  // First pass: take up to target from each.
+  const inTop = inPool.slice(0, targets.IN);
+  const usTop = usPool.slice(0, targets.US);
+  const glTop = glPool.slice(0, targets.GLOBAL);
+  // Second pass: backfill any unused quota from the remaining tails.
+  const used = inTop.length + usTop.length + glTop.length;
+  const leftover = FINAL_CAP - used;
+  const tails = [
+    ...inPool.slice(targets.IN),
+    ...usPool.slice(targets.US),
+    ...glPool.slice(targets.GLOBAL),
+  ].sort((a: any, b: any) => {
+    const da = new Date(a.published_at).getTime() || 0;
+    const db = new Date(b.published_at).getTime() || 0;
+    return db - da;
+  });
+  const backfill = leftover > 0 ? tails.slice(0, leftover) : [];
+  // Round-robin interleave the three top pools so the visible top of the
+  // feed alternates between regions instead of starting with 20 India
+  // cards then dropping off into US.
+  const interleaved: any[] = [];
+  const maxLen = Math.max(inTop.length, usTop.length, glTop.length);
+  for (let i = 0; i < maxLen; i++) {
+    // Order alternates so US gets visibility on every fold.
+    if (i < usTop.length) interleaved.push(usTop[i]);
+    if (i < inTop.length) interleaved.push(inTop[i]);
+    if (i < glTop.length) interleaved.push(glTop[i]);
+  }
+  const diversified = [...interleaved, ...backfill].slice(0, FINAL_CAP);
 
   // ── SYNTHETIC STRUCTURAL ARTICLES ──
   // Convert multi-year structural constraints into event-like articles
