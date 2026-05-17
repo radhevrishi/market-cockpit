@@ -332,12 +332,24 @@ export async function GET(req: Request) {
           c.sales_yoy_pct == null && c.net_profit_yoy_pct == null && c.eps_yoy_pct == null
         ).length;
         const previewRatio = totalCards > 0 ? previewCards / totalCards : 0;
-        // Auto-heal threshold: past date, ≥3 cards in payload, ≥30% previews
-        if (isPast && totalCards >= 3 && previewRatio >= 0.30) {
+        // PATCH 0454 P1-26 — Audit found auto-heal could fire 12×/hour on
+        // hot dates (47-ticker fan-out per fire = enormous load). Added a
+        // KV-backed lockout so a date that just auto-healed can't trigger
+        // again for 30 minutes regardless of how many users hit the route.
+        const HEAL_LOCKOUT_S = 30 * 60;
+        const lockoutKey = `graded:autoheal-lock:${cacheKey}`;
+        let recentlyHealed = false;
+        try {
+          const lock = await kvGet<number>(lockoutKey);
+          if (lock && Date.now() - lock < HEAL_LOCKOUT_S * 1000) recentlyHealed = true;
+        } catch {}
+        // Auto-heal threshold: past date, ≥3 cards in payload, ≥40% previews
+        // (was 30% — too sensitive; raised so we don't re-heal cards that
+        // are genuinely preview-only because sources never published).
+        if (isPast && totalCards >= 3 && previewRatio >= 0.40 && !recentlyHealed) {
           autoPromoteToRefreshMissing = true;
-          // Fall through — partial-refresh block below will see the cached
-          // payload, target the preview cards, run enrich, and write the
-          // healed payload back to KV. No client retry needed.
+          // Set the lockout immediately so other concurrent requests skip.
+          try { await kvSet(lockoutKey, Date.now(), HEAL_LOCKOUT_S); } catch {}
         } else {
           const swr = isPast ? 's-maxage=3600, stale-while-revalidate=86400' : 's-maxage=60, stale-while-revalidate=300';
           return NextResponse.json({ ...cached, _cache: 'hit' }, { headers: { 'Cache-Control': swr } });

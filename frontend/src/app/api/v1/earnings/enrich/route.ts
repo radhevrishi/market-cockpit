@@ -57,9 +57,14 @@ const UA = UA_POOL[0];           // kept for backwards-compat callers below
 // PATCH 0445 BUG-025 — Bump per-source timeouts. The previous 7s/5s budget
 // was too tight when Screener has Cloudflare friction or Yahoo rate-limits.
 // New ceilings still fit comfortably under the per-ticker 18s ceiling above.
-const SCREENER_TIMEOUT_MS = 12000;
-const YAHOO_TIMEOUT_MS = 8000;
-const SCREENER_RETRY_DELAYS_MS = [0, 400, 1100];   // 3 attempts: immediate, 400ms, 1100ms
+// PATCH 0454 P1-25 — Audit found inner Screener chain (3 attempts × 12s +
+// 1.5s jitter delays) could run ~39s while the outer withTimeout was only
+// 18s. The outer just resolved null but the inner kept running in the
+// background, consuming container time. Tightened: 2 attempts × 7s plus
+// max 500ms backoff = ~15s ceiling, comfortably under PER_TICKER_MS=18s.
+const SCREENER_TIMEOUT_MS = 7000;
+const YAHOO_TIMEOUT_MS = 5000;
+const SCREENER_RETRY_DELAYS_MS = [0, 500];  // 2 attempts only
 // PATCH 0157 — staleness defense:
 // • Cache TTL reduced from 7 days → 6 hours. Quarterly filings come every
 //   90 days but the SAME stock can release amendments/clarifications same-

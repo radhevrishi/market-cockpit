@@ -52,6 +52,9 @@ const NAV: NavItem[] = [
   // Bottleneck Workbench and RRG which obscured its connection to earnings.
   { href: '/strategic-visibility', label: 'Strategic Visibility', icon: <Star className="w-5 h-5" /> },
   { href: '/multibagger',   label: 'Multibagger',        icon: <Star className="w-5 h-5" /> },
+  // PATCH 0454 TIER1-A — Decision Logbook (queryable journal of every BUY /
+  // WATCH / NEUTRAL / REJECTED across both markets, with CSV export).
+  { href: '/decisions',     label: 'Decision Logbook',   icon: <BookMarked className="w-5 h-5" /> },
   // PATCH 0093: Single-Stock Sheet — 16-section institutional checklist runner
   { href: '/stock-sheet',   label: 'Stock Sheet',        icon: <BookMarked className="w-5 h-5" /> },
   // PATCH 0094: Re-rating Screener — margin expansion + model shift + multiple expansion

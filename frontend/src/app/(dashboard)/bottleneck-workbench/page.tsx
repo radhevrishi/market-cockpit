@@ -71,7 +71,10 @@ interface ThemedArticle {
   ticker_symbols?: string[];
 }
 
-function useBucket(bucketId: string) {
+// PATCH 0454 P2-28 — Removed unused `bucketId` parameter. The dashboard
+// endpoint returns ALL buckets in one payload; the page filters client-side.
+// Audit flagged the dead arg as a maintainer-confusion risk.
+function useBucketDashboard() {
   return useQuery<BnDashboard>({
     queryKey: ['workbench', 'bottleneck-dashboard'],
     queryFn: async () => {
@@ -119,7 +122,7 @@ export default function BottleneckWorkbenchPage() {
 
   useEffect(() => { setActiveBucket(themeParam); }, [themeParam]);
 
-  const { data: dashboard, isLoading } = useBucket(activeBucket);
+  const { data: dashboard, isLoading } = useBucketDashboard();
   // PATCH 0446 BUG-009 v2 — Flatten ALL the field shapes the upstream API
   // might ship for signal-level tickers (ticker_mentions / tickers / symbols /
   // ticker_symbols). Audit reported 48 articles + 48 signals yet 0 tickers,

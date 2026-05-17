@@ -986,13 +986,52 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
                   </span>
                 );
               }
-              // Cluster size chip — "+N sources"
+              // Cluster size chip — "+N sources" PLUS a corroboration timeline.
+              // PATCH 0454 TIER1-B — When the cluster has timestamps, render
+              // a 60px-wide row of tick marks proportional to time-span. A
+              // 5-min-apart cluster shows ticks tightly clustered (high
+              // conviction breaking news); a 6h-apart cluster shows ticks
+              // spread out (echo chamber rewrites). The eye reads conviction
+              // density at a glance.
               const clusterSize = (article as any).__clusterSize as number | undefined;
+              const clusterTimes = (article as any).__clusterTimes as number[] | undefined;
               if (clusterSize && clusterSize > 1) {
+                const renderTimeline = () => {
+                  if (!clusterTimes || clusterTimes.length < 2) return null;
+                  const min = clusterTimes[0];
+                  const max = clusterTimes[clusterTimes.length - 1];
+                  const span = Math.max(1, max - min);
+                  const spanMin = Math.round(span / 60_000);
+                  const spanLabel = spanMin < 60 ? `${spanMin}m` : spanMin < 1440 ? `${Math.round(spanMin / 60)}h` : `${Math.round(spanMin / 1440)}d`;
+                  return (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 4 }}
+                      title={`Corroboration span: ${spanLabel}. Tight clusters (<30m) = breaking; wide clusters (>4h) = echo chamber rewrites.`}>
+                      <span style={{
+                        position: 'relative', width: 60, height: 8,
+                        borderLeft: '1px solid #10B98140', borderRight: '1px solid #10B98140',
+                      }}>
+                        {clusterTimes.map((t, i) => {
+                          const left = ((t - min) / span) * 100;
+                          return (
+                            <span key={i} style={{
+                              position: 'absolute', left: `${left}%`, top: 0,
+                              width: 1.5, height: 8,
+                              background: '#10B981',
+                              transform: 'translateX(-50%)',
+                            }} />
+                          );
+                        })}
+                      </span>
+                      <span style={{ fontSize: 8, color: '#10B981', fontWeight: 700 }}>{spanLabel}</span>
+                    </span>
+                  );
+                };
                 chips.push(
-                  <span key="cl" title={`This event also reported by ${clusterSize - 1} other source${clusterSize === 2 ? '' : 's'} — clustered under one master article.`}
-                    style={{ fontSize: '9px', fontWeight: '700', padding: '3px 7px', borderRadius: '5px', backgroundColor: '#10B98115', color: '#10B981', border: '1px solid #10B98140', letterSpacing: '0.3px' }}>
+                  <span key="cl"
+                    title={`This event also reported by ${clusterSize - 1} other source${clusterSize === 2 ? '' : 's'} — clustered under one master article.`}
+                    style={{ display: 'inline-flex', alignItems: 'center', fontSize: '9px', fontWeight: '700', padding: '3px 7px', borderRadius: '5px', backgroundColor: '#10B98115', color: '#10B981', border: '1px solid #10B98140', letterSpacing: '0.3px' }}>
                     🔗 +{clusterSize - 1} sources
+                    {renderTimeline()}
                   </span>
                 );
               }
@@ -2181,7 +2220,9 @@ export default function NewsFeedPage() {
     const tickerCounts: Record<string,number> = {};
     for (const a of recent) {
       for (const t of getTickerSymbols(a)) {
-        if (t.length >= 2 && t.length <= 7) tickerCounts[t] = (tickerCounts[t] || 0) + 1;
+        // PATCH 0454 P2-27 — bumped 7 → 12 so India 10-char tickers like
+        // BAJAJFINSV / BAJAJ-AUTO / IDFCFIRSTB / TATACONSUM stop dropping.
+        if (t.length >= 2 && t.length <= 12) tickerCounts[t] = (tickerCounts[t] || 0) + 1;
       }
     }
     const hotTickers = Object.entries(tickerCounts)
@@ -2327,6 +2368,14 @@ export default function NewsFeedPage() {
       (c.master as any).__clusterSources = c.duplicates.map((d: any) =>
         d.source_name || d.source || 'source'
       ).slice(0, 5);
+      // PATCH 0454 TIER1-B — Corroboration TIMESTAMPS, not just count. A
+      // 5-min-apart cluster ≠ a 6h-apart cluster — the former is genuinely
+      // breaking, the latter is rewrites. Stamp the master's published_at
+      // plus each duplicate's so the chip can render a mini-timeline.
+      (c.master as any).__clusterTimes = [c.master, ...c.duplicates]
+        .map((x: any) => Date.parse(x?.published_at || x?.pub_date || ''))
+        .filter((t: number) => Number.isFinite(t))
+        .sort((a: number, b: number) => a - b);
       // PATCH 0449 NEWS-3 — Confidence band derived from source quality +
       // corroboration count (cluster size - 1).
       const cb = confidenceBand((c.master as any).__sourceWeight ?? 0.4, c.cluster_size - 1);

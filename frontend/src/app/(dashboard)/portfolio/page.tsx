@@ -269,12 +269,14 @@ function AddHoldingForm({ onAdd, onCancel, quotes }: { onAdd: (h: PortfolioHoldi
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginBottom: '12px' }}>
         <div>
           <label style={{ fontSize: '11px', color: '#8BA3C1', fontWeight: '600', display: 'block', marginBottom: '4px' }}>ENTRY PRICE (₹)</label>
-          <input type="number" value={entryPrice} onChange={e => setEntryPrice(e.target.value)} placeholder="1250.00" style={inputStyle}
+          {/* PATCH 0454 P2-29 — inputMode='decimal' so mobile users get the
+              numeric keyboard instead of the full keyboard. */}
+          <input type="number" inputMode="decimal" value={entryPrice} onChange={e => setEntryPrice(e.target.value)} placeholder="1250.00" style={inputStyle}
             onKeyDown={e => e.key === 'Enter' && handleSubmit()} />
         </div>
         <div>
           <label style={{ fontSize: '11px', color: '#8BA3C1', fontWeight: '600', display: 'block', marginBottom: '4px' }}>QUANTITY</label>
-          <input type="number" value={quantity} onChange={e => setQuantity(e.target.value)} placeholder="100" style={inputStyle}
+          <input type="number" inputMode="numeric" value={quantity} onChange={e => setQuantity(e.target.value)} placeholder="100" style={inputStyle}
             onKeyDown={e => e.key === 'Enter' && handleSubmit()} />
         </div>
         <div>
@@ -307,7 +309,8 @@ function EditableCell({ value, onSave, type = 'price' }: { value: number; onSave
 
   return (
     <span style={{ display: 'inline-flex', gap: '2px', alignItems: 'center' }}>
-      <input type="number" value={val} onChange={e => setVal(e.target.value)}
+      {/* PATCH 0454 P2-29 — inputMode='decimal' for mobile keyboard. */}
+      <input type="number" inputMode={type === 'qty' ? 'numeric' : 'decimal'} value={val} onChange={e => setVal(e.target.value)}
         style={{ width: '80px', padding: '2px 6px', backgroundColor: '#1A2B3C', border: '1px solid #3B82F6', borderRadius: '4px', color: '#F5F7FA', fontSize: '12px', outline: 'none' }}
         onKeyDown={e => { if (e.key === 'Enter') { onSave(Number(val)); setEditing(false); } if (e.key === 'Escape') setEditing(false); }}
         autoFocus

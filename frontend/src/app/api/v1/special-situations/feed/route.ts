@@ -164,8 +164,17 @@ interface FeedItem {
 }
 
 // ─── Cache ──────────────────────────────────────────────────────────────────
+//
+// PATCH 0454 P1-24 — Audit found this module-level `CACHE` only existed
+// within a single Vercel container. Cold starts re-fetched all RSS sources
+// (slow + rate-limit-prone). Now layered: KV is the cross-container source
+// of truth, the in-memory variable is just a warm-path optimization.
+
+import { kvGet as ssKvGet, kvSet as ssKvSet, isRedisAvailable as ssRedisAvailable } from '@/lib/kv';
 
 const CACHE_TTL_MS = 30 * 60 * 1000;
+const CACHE_KV_KEY = 'specsit:feed:v1';
+const CACHE_KV_TTL_S = Math.round(CACHE_TTL_MS / 1000);
 let CACHE: { data: any; ts: number } | null = null;
 
 // ─── XML parsing ────────────────────────────────────────────────────────────
@@ -628,16 +637,27 @@ async function buildFeed(): Promise<{
     // PATCH 0447 IMP-1 — Classify primary source into the 4-tier institutional
     // hierarchy + detect speculative-language penalty. Used to rank definitive
     // exchange filings ABOVE recycled aggregator headlines of the same story.
-    const T1_RE = /(?:^|[\/\.\-:])(?:sec\.gov|bseindia\.com|nseindia\.com|sebi\.gov|nseindia\.com\.in|bseindia\.in|nsearchives|bseindiacopy)/i;
-    const T2_RE = /prnewswire|globenewswire|business ?wire|company.*press|investor.{0,10}relations/i;
-    const T3_RE = /reorg ?research|mergermarket|debtwire|deal ?reporter|prime ?database|capitaline/i;
-    const inferSourceTier = (link: string): 1 | 2 | 3 | 4 => {
-      if (T1_RE.test(link)) return 1;
-      if (T2_RE.test(link)) return 2;
-      if (T3_RE.test(link)) return 3;
+    // PATCH 0454 P1-23 — Audit found these patterns mis-classified 99% of
+    // RSS items as Tier 4. Two root causes:
+    //   1. The T1_RE prefix anchor was too strict and missed common URL
+    //      shapes (especially Indian press feeds that wrap announcements).
+    //   2. Most RSS items don't have exchange URLs at all — they come from
+    //      ET/Mint/MC. The classifier needs to ALSO match the source name
+    //      (e.g. "BSE Corp Announcements", "PIB India") which DO indicate
+    //      a primary filing even when the link is to a news rewrite.
+    const T1_LINK_RE  = /(sec\.gov|bseindia\.com|nseindia\.com|sebi\.gov\.in|nsearchives\.nseindia|bsedb|rbi\.org\.in|pib\.gov\.in|investor\.[a-z0-9-]+\.com\/news-release)/i;
+    const T2_LINK_RE  = /(prnewswire|globenewswire|business ?wire|press ?release|company.*press|investor.{0,10}relations)/i;
+    const T3_LINK_RE  = /(reorg ?research|mergermarket|debtwire|deal ?reporter|prime ?database|capitaline)/i;
+    const T1_NAME_RE  = /\b(bse corp|nse corp|sec edgar|sebi|rbi|pib india|nseindia|bseindia|moneycontrol announcements|investor ?relations)\b/i;
+    const T2_NAME_RE  = /\b(reuters|bloomberg|wsj|wall street journal|financial times|ft\b|pr ?newswire|globenewswire|business ?wire)\b/i;
+    const T3_NAME_RE  = /\b(reorg|mergermarket|debtwire|deal ?reporter|capitaline|equitymaster|trendforce|digitimes|semianalysis|semi ?wiki)\b/i;
+    const inferSourceTier = (link: string, sourceName: string): 1 | 2 | 3 | 4 => {
+      if (T1_LINK_RE.test(link) || T1_NAME_RE.test(sourceName)) return 1;
+      if (T2_LINK_RE.test(link) || T2_NAME_RE.test(sourceName)) return 2;
+      if (T3_LINK_RE.test(link) || T3_NAME_RE.test(sourceName)) return 3;
       return 4;
     };
-    const sourceTier = inferSourceTier(primary.link);
+    const sourceTier = inferSourceTier(primary.link, primary.source);
     const SPECULATION_RE = /\b(could (?:acquire|buy|merge)|may consider|reportedly weighing|in talks (?:to|with)?|exploring (?:a |the )?(?:sale|merger|deal)|buzz(?:ing)? stock|likely to (?:bid|acquire|merge)|rumou?red|speculation|chatter|sources say|believed to be|allegedly|reportedly plans?|might (?:bid|acquire))\b/i;
     const hasSpeculation = SPECULATION_RE.test(titleAndDesc);
 
@@ -742,12 +762,26 @@ export async function GET(req: Request) {
     const force = url.searchParams.get('refresh') === '1';
     const now = Date.now();
 
+    // PATCH 0454 P1-24 — Two-tier cache lookup: in-memory warm path first
+    // (cheap), then KV (cross-container). Skip both when ?refresh=1.
     if (!force && CACHE && now - CACHE.ts < CACHE_TTL_MS) {
       return NextResponse.json({ ...CACHE.data, cached: true, cache_age_min: Math.round((now - CACHE.ts) / 60000) });
+    }
+    if (!force && ssRedisAvailable()) {
+      try {
+        const persisted = await ssKvGet<{ data: any; ts: number }>(CACHE_KV_KEY);
+        if (persisted && now - persisted.ts < CACHE_TTL_MS) {
+          CACHE = persisted; // warm the in-mem too
+          return NextResponse.json({ ...persisted.data, cached: true, cache_age_min: Math.round((now - persisted.ts) / 60000), cache_origin: 'kv' });
+        }
+      } catch {}
     }
 
     const data = await buildFeed();
     CACHE = { data, ts: now };
+    if (ssRedisAvailable()) {
+      try { await ssKvSet(CACHE_KV_KEY, CACHE, CACHE_KV_TTL_S); } catch {}
+    }
     return NextResponse.json({ ...data, cached: false, cache_age_min: 0 });
   } catch (e: any) {
     return NextResponse.json({
