@@ -489,10 +489,24 @@ function GuidanceCard({ event, expanded, onToggle, compact, isConviction }: { ev
             const priorKeys = Object.keys(symHist).filter(k => k && k < curKey).sort();
             const priorKey = priorKeys.length > 0 ? priorKeys[priorKeys.length - 1] : null;
             const priorScore = priorKey ? symHist[priorKey] : null;
-            // Capture current snapshot (write-through).
+            // PATCH 0460 — write-through DEFERRED off the render path.
+            // Previously this localStorage write fired during render, which
+            // (a) is a React anti-pattern (causes commit-time storage events
+            // to re-trigger renders), and (b) blocked paint for long lists.
+            // queueMicrotask schedules it after render commits without
+            // requiring a useEffect refactor inside this IIFE.
             if (curKey && symHist[curKey] !== event.sentimentScore) {
-              const next = { ...hist, [event.symbol]: { ...symHist, [curKey]: event.sentimentScore } };
-              writeGuidanceHistory(next);
+              const snapshot = event.sentimentScore;
+              const sym = event.symbol;
+              queueMicrotask(() => {
+                try {
+                  const cur = readGuidanceHistory();
+                  const curSym = cur[sym] || {};
+                  if (curSym[curKey] !== snapshot) {
+                    writeGuidanceHistory({ ...cur, [sym]: { ...curSym, [curKey]: snapshot } });
+                  }
+                } catch {}
+              });
             }
             if (priorScore == null) return null;
             const delta = event.sentimentScore - priorScore;

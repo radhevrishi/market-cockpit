@@ -42,6 +42,24 @@ const MAX_DOCS = 50;
 const MAX_DOC_CHARS = 200_000;
 const TTL_S = 365 * 24 * 3600; // 1 year
 
+// PATCH 0460 — gate mutating handlers behind a per-tenant secret OR a same-
+// origin Referer. The intel corpus is shared per-ticker across all users
+// today, so any unauthenticated POST/DELETE could poison or wipe another
+// user's research notes. Until proper auth lands, require either:
+//   - a valid COMPANY_INTEL_SECRET passed as ?secret=...
+//   - a same-origin Referer header (browser UI path)
+// Background workers should pass the secret; users hitting the UI in a
+// browser are fine because the Referer header is automatic.
+function checkMutation(req: NextRequest): NextResponse | null {
+  const secret = req.nextUrl.searchParams.get('secret');
+  const expected = process.env.COMPANY_INTEL_SECRET || process.env.CRON_SECRET;
+  if (expected && secret === expected) return null;
+  const ref = req.headers.get('referer') || '';
+  const origin = req.nextUrl.origin;
+  if (ref && ref.startsWith(origin)) return null;
+  return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+}
+
 // PATCH 0458 — IntelDocument / IntelCorpus types moved to
 // @/lib/company-intel/types so Next.js route file doesn't try to export
 // them. They are imported at the top of the file.
@@ -76,6 +94,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ ticker: string }> }
 ) {
+  // PATCH 0460 — auth gate
+  const auth = checkMutation(req);
+  if (auth) return auth;
   const { ticker } = await params;
   const tk = normalizeTicker(ticker);
   if (!tk) return NextResponse.json({ error: 'invalid ticker' }, { status: 400 });
@@ -169,6 +190,9 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ ticker: string }> }
 ) {
+  // PATCH 0460 — auth gate
+  const auth = checkMutation(req);
+  if (auth) return auth;
   const { ticker } = await params;
   const tk = normalizeTicker(ticker);
   if (!tk) return NextResponse.json({ error: 'invalid ticker' }, { status: 400 });

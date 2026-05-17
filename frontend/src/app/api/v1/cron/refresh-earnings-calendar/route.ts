@@ -46,15 +46,23 @@ function parseNseDate(s: string): string | null {
 }
 
 export async function GET(req: Request) {
-  // Optional auth: ?secret=... must match env var if set (recommended for
-  // production so randos can't hammer the endpoint).
+  // PATCH 0460 — require auth in production. Previously the endpoint was
+  // OPEN to the world when CRON_SECRET was unset (so any external caller
+  // could hammer it and force a costly NSE-universe fetch). Now: missing
+  // env in production rejects; Vercel Cron header bypasses for the cron
+  // pipeline. Dev / preview without env still permits ad-hoc triggers.
   const { searchParams } = new URL(req.url);
   const provided = searchParams.get('secret') || '';
   const expected = process.env.CRON_SECRET || '';
-  if (expected && provided !== expected) {
-    // Vercel Cron sends its own header — also accept that:
-    const vercelHeader = req.headers.get('x-vercel-cron') || req.headers.get('x-vercel-signature') || '';
-    if (!vercelHeader) {
+  const vercelHeader = req.headers.get('x-vercel-cron') || req.headers.get('x-vercel-signature') || '';
+
+  if (!vercelHeader) {
+    if (!expected) {
+      if (process.env.NODE_ENV === 'production') {
+        return NextResponse.json({ error: 'cron-secret-unset' }, { status: 503 });
+      }
+      // dev / preview without env: allow ad-hoc triggers
+    } else if (provided !== expected) {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
     }
   }

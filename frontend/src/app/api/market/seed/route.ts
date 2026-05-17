@@ -51,8 +51,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const { searchParams } = new URL(request.url);
   const secret = searchParams.get('secret');
 
-  // Optional secret check
-  if (secret && secret !== 'mc-bot-2026') {
+  // PATCH 0460 — require CRON_SECRET (or back-compat MC_BOT_SECRET) for
+  // any caller. Previously a hardcoded 'mc-bot-2026' string was the only
+  // gate — anyone could trigger seed jobs from outside Vercel. We now
+  // require env-configured secret; if env is unset we explicitly fail
+  // closed (was: silently let anything through).
+  const required = process.env.CRON_SECRET || process.env.MC_BOT_SECRET;
+  if (!required) {
+    return NextResponse.json({ error: 'cron-secret-unset' }, { status: 503 });
+  }
+  if (secret !== required) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

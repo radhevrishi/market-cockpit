@@ -330,9 +330,19 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const secret = searchParams.get('secret');
   const forceSymbol = searchParams.get('symbol');
-  const testMode = searchParams.get('test') === 'true';
+  // PATCH 0460 — gated testMode. Previously ?test=true bypassed auth
+  // entirely (so anyone could trigger the alert pipeline). testMode is
+  // now ONLY honoured in non-production environments, or when the env
+  // ALLOW_TEST_MODE is set. The hardcoded fallback secret 'mc-bot-2026'
+  // is replaced with CRON_SECRET; missing env fails closed.
+  const testMode = searchParams.get('test') === 'true'
+    && (process.env.NODE_ENV !== 'production' || process.env.ALLOW_TEST_MODE === '1');
 
-  if (secret !== 'mc-bot-2026' && !testMode) {
+  const required = process.env.CRON_SECRET || process.env.MC_BOT_SECRET;
+  if (!required && !testMode) {
+    return NextResponse.json({ error: 'cron-secret-unset' }, { status: 503 });
+  }
+  if (!testMode && secret !== required) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

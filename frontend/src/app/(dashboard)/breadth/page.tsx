@@ -30,7 +30,7 @@ interface BreadthPayload {
 }
 
 export default function BreadthPage() {
-  const { data, isLoading, isFetching, dataUpdatedAt } = useQuery<BreadthPayload>({
+  const { data, isLoading, isFetching, dataUpdatedAt, error, refetch } = useQuery<BreadthPayload>({
     queryKey: ['market-breadth'],
     queryFn: async () => {
       const r = await fetch('/api/v1/breadth');
@@ -39,7 +39,27 @@ export default function BreadthPage() {
     },
     staleTime: 5 * 60_000,
     refetchInterval: 5 * 60_000,
+    retry: 1,
   });
+
+  // PATCH 0460 — explicit error state with Retry. Previously the page hung on
+  // the loading spinner forever when /api/v1/breadth was down.
+  if (error && !data) {
+    return (
+      <div style={{ padding: 40, color: '#94A3B8', fontSize: 13, textAlign: 'center' }}>
+        <div style={{ fontSize: 28, marginBottom: 12 }}>⚠</div>
+        <div style={{ color: '#E6EDF3', fontWeight: 700, marginBottom: 6 }}>Market Breadth unavailable</div>
+        <div style={{ marginBottom: 14 }}>{(error as any)?.message || 'Upstream feed returned an error.'}</div>
+        <button
+          onClick={() => refetch()}
+          style={{
+            padding: '8px 16px', borderRadius: 6, border: '1px solid #1A2840',
+            background: '#0F7ABF', color: '#fff', fontWeight: 700, cursor: 'pointer',
+          }}
+        >Retry</button>
+      </div>
+    );
+  }
 
   if (isLoading || !data) {
     return (

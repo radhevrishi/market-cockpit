@@ -3571,7 +3571,25 @@ export default function NewsFeedPage() {
             </div>
           </div>
           <button
-            onClick={() => { setRegion('ALL'); setArticleType('ALL'); setSourceName('ALL'); setSignalFilter('ALL'); setBottleneckLevel('ALL'); setBottleneckCategory('ALL'); setStructuralOnly(false); setSearch(''); setEarningsSeasonActive(false); setStrategyFilter('ALL'); }}
+            onClick={() => {
+              // PATCH 0460 — also reset lifecycleFilter + sortBy so "Clear
+              // filters" actually returns the user to the default view.
+              // Previously these two were not cleared and a confused user
+              // still saw a filtered list. The useEffect that writes URL
+              // state will sync the URL automatically.
+              setRegion('ALL');
+              setArticleType('ALL');
+              setSourceName('ALL');
+              setSignalFilter('ALL');
+              setBottleneckLevel('ALL');
+              setBottleneckCategory('ALL');
+              setStructuralOnly(false);
+              setSearch('');
+              setEarningsSeasonActive(false);
+              setStrategyFilter('ALL');
+              setLifecycleFilter('LIVE_WARM');
+              setSortBy('impact');
+            }}
             style={{ marginTop: '12px', fontSize: '11px', color: '#4A5B6C', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
           >
             <X style={{ width: '10px', height: '10px' }} /> Clear filters

@@ -2413,7 +2413,11 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
   // Total bonus includes: rerating + trajectory + trigger signals
   const totalBonus = reratingBonus + trajectoryBonus + effectiveTriggerBonus;
 
-  let score = Math.round((penalized - redFlagPenalty + totalBonus) / 5) * 5;
+  // PATCH 0460 — Math.floor (not Math.round) so caps actually bind. With
+  // Math.round, a raw score of 77.5 became 80 and silently jumped the A-grade
+  // boundary — the same bug we fixed in patch 0344 on the USA side. Now the
+  // India side uses the same floor-quantize discipline.
+  let score = Math.floor((penalized - redFlagPenalty + totalBonus) / 5) * 5;
 
   // ── STANDARD RED FLAG CAPS (PATCH 0315 — kind-aware, PATCH 0335 — fresh counts) ───
   if (hasCritFinal)                     score = Math.min(score, 38);

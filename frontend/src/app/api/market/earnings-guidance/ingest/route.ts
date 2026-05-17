@@ -802,13 +802,23 @@ async function runLockedPipeline(): Promise<{
 
 // ==================== ROUTE HANDLERS ====================
 
+// PATCH 0460 — shared secret check. Previously the hardcoded 'mc-bot-2026'
+// was the only gate, and POST had NO gate at all (anyone could re-ingest
+// the entire guidance corpus, wiping KV state). Now both handlers require
+// env-configured secret; missing env fails closed.
+function checkSecret(request: NextRequest): NextResponse | null {
+  const required = process.env.CRON_SECRET || process.env.MC_BOT_SECRET;
+  if (!required) return NextResponse.json({ error: 'cron-secret-unset' }, { status: 503 });
+  const { searchParams } = new URL(request.url);
+  const secret = searchParams.get('secret');
+  if (secret !== required) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  return null;
+}
+
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
-    const { searchParams } = new URL(request.url);
-    const secret = searchParams.get('secret');
-    if (secret && secret !== 'mc-bot-2026') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const auth = checkSecret(request);
+    if (auth) return auth;
 
     const result = await runLockedPipeline();
     return NextResponse.json({
@@ -826,6 +836,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
+    const auth = checkSecret(request);
+    if (auth) return auth;
     const result = await runLockedPipeline();
     return NextResponse.json({ ...result, eventsCount: result.total });
   } catch (error) {

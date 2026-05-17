@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Search, Loader } from 'lucide-react';
+// PATCH 0460 — read ?sector= so Heatmap → Screener pivot lands pre-filtered.
+import { useSearchParams } from 'next/navigation';
 // PATCH 0275 — Shared freshness chip helper.
 import { PanelFreshness } from '@/components/PanelFreshness';
 // PATCH 0276 — Conviction Beats overlay on Screener results.
@@ -218,7 +220,11 @@ export default function ScreenerPage() {
     return convictionSet.has(sym.toUpperCase().replace(/\.NS$|\.BO$/i, ''));
   }, [convictionSet]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedSector, setSelectedSector] = useState('All');
+  // PATCH 0460 — hydrate selectedSector from URL ?sector= so Heatmap
+  // sector-click pivot lands here pre-filtered. Falls back to 'All'.
+  const searchParamsHook = useSearchParams();
+  const initialSector = (typeof searchParamsHook?.get === 'function' && searchParamsHook.get('sector')) || 'All';
+  const [selectedSector, setSelectedSector] = useState(initialSector);
   const [sortBy, setSortBy] = useState('Name');
   const [sortAscending, setSortAscending] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);

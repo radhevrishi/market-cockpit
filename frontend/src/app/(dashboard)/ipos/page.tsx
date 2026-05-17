@@ -68,10 +68,12 @@ export default function IPOsPage() {
       }
 
       const data: IPOResponse = await response.json();
-      setIpos(data.ipos);
-      setLastUpdated(data.updatedAt);
+      // PATCH 0460 — defend against malformed payload (data.ipos can be
+      // undefined when upstream NSE/BSE scraper is down).
+      setIpos(Array.isArray(data?.ipos) ? data.ipos : []);
+      setLastUpdated(data?.updatedAt || '');
       setLastUpdatedMs(Date.now()); // PATCH 0275 — stamp success time for freshness chip
-      setDataSource(data.source);
+      setDataSource(data?.source || '');
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');

@@ -32,7 +32,13 @@ type Overrides = Record<string, Override>;
 
 function requireSecret(req: NextRequest): boolean {
   const expected = process.env.CRON_SECRET;
-  if (!expected) return true; // no secret configured — open in dev
+  // PATCH 0460 — fail closed when CRON_SECRET is not configured. Previously
+  // the route was OPEN to the world in any environment where the env var
+  // happened to be unset (e.g. preview deploys), letting unauthenticated
+  // callers POST/DELETE source-tier overrides into shared KV. Now: missing
+  // env in production rejects; missing env in development still permits
+  // local testing.
+  if (!expected) return process.env.NODE_ENV !== 'production';
   return req.nextUrl.searchParams.get('secret') === expected;
 }
 

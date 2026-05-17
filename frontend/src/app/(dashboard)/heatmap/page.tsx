@@ -2,6 +2,10 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { RefreshCw, BarChart3, TrendingUp } from 'lucide-react';
+// PATCH 0460 — use the Next.js router for sector pivot so it stays a SPA
+// navigation instead of a full page reload (which loses scroll position,
+// re-mounts the rest of the dashboard, and is jarring).
+import { useRouter } from 'next/navigation';
 
 interface Stock {
   ticker: string;
@@ -188,6 +192,8 @@ function mcapToValue(mcap: string): number {
 }
 
 export default function HeatmapPage() {
+  // PATCH 0460 — router for SPA sector pivot
+  const router = useRouter();
   const [tab, setTab] = useState<HeatmapTab>('nifty50');
   const [mode, setMode] = useState<HeatmapMode>('daily');
   const [dataMap, setDataMap] = useState<Record<string, ApiResponse>>({});
@@ -655,7 +661,7 @@ export default function HeatmapPage() {
                 the rect so it captures clicks. */}
             {dailyTreemap.sectorRects.map((sr: any) => (
               <g key={sr.data.sector}
-                onClick={() => { window.location.href = `/screener?sector=${encodeURIComponent(sr.data.sector)}`; }}
+                onClick={() => { router.push(`/screener?sector=${encodeURIComponent(sr.data.sector)}`); }}
                 style={{ cursor: 'pointer' }}>
                 <rect x={sr.x} y={sr.y} width={sr.w} height={sr.h}
                   fill="rgba(0,0,0,0.001)" stroke="#0A0E1A" strokeWidth={2.5}>

@@ -83,13 +83,16 @@ export function clearDecision(symbol: string) {
 /** Hook to subscribe to decision changes (returns the current map, refreshes on update) */
 export function subscribeDecisions(cb: () => void): () => void {
   if (typeof window === 'undefined') return () => {};
-  const handler = () => cb();
-  window.addEventListener(UPDATE_EVENT, handler);
-  // Storage event for cross-tab sync
-  window.addEventListener('storage', (e) => { if (e.key === LS_KEY) cb(); });
+  // PATCH 0460 — keep both handler references so unsubscribe actually removes
+  // them. Previously the storage handler was an inline arrow and removeEventListener
+  // got the wrong reference, leaking listeners across page navigations.
+  const onUpdate = () => cb();
+  const onStorage = (e: StorageEvent) => { if (e.key === LS_KEY) cb(); };
+  window.addEventListener(UPDATE_EVENT, onUpdate);
+  window.addEventListener('storage', onStorage);
   return () => {
-    window.removeEventListener(UPDATE_EVENT, handler);
-    window.removeEventListener('storage', handler);
+    window.removeEventListener(UPDATE_EVENT, onUpdate);
+    window.removeEventListener('storage', onStorage);
   };
 }
 

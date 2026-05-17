@@ -69,8 +69,15 @@ export const maxDuration = 30;
 
 // ─── POST — snapshot today's top picks ────────────────────────────────────
 export async function POST(req: NextRequest) {
+  // PATCH 0460 — drop the 'mc-bot-2026' hardcoded fallback. Require env
+  // CRON_SECRET; if env unset, fail closed (was: anyone with any secret
+  // matched the public fallback).
+  const required = process.env.CRON_SECRET;
+  if (!required) {
+    return NextResponse.json({ error: 'cron-secret-unset' }, { status: 503 });
+  }
   const secret = req.nextUrl.searchParams.get('secret');
-  if (secret && secret !== (process.env.CRON_SECRET || 'mc-bot-2026')) {
+  if (secret !== required) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   if (!isRedisAvailable()) {
