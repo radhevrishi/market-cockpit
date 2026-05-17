@@ -1107,11 +1107,14 @@ export default function EarningsPage() {
     if (selectedUniverses.has('conviction') && convictionTickersState.has(c.symbol)) return true;
     return false;
   };
-  // Date range filter — defaults to last 7 days → today (PATCH 0355).
-  // Earlier default was 30 days; user prefers a tighter window so the
-  // freshest earnings prints surface first.
+  // Date range filter.
+  // PATCH 0446 BUG-039 v2 — Default window was 7 days (Patch 0355). Audit
+  // reported '86 cards loaded but ALL filter shows 0' because every loaded
+  // card had a resultDate older than 7 days. The date filter was silently
+  // eliminating the entire set. Default extended to 60 days so the most
+  // recent quarter's prints always render on first paint.
   const [dateFrom, setDateFrom] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - 7);
+    const d = new Date(); d.setDate(d.getDate() - 60);
     return d.toISOString().slice(0, 10);
   });
   const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
@@ -2341,22 +2344,79 @@ export default function EarningsPage() {
         </div>
       )}
 
-      {/* Empty State */}
+      {/* Empty State — PATCH 0446 BUG-039 v2: Smarter diagnostic message
+          that identifies WHICH filter is eliminating cards (date / universe /
+          grade / dayOne / guidance) instead of always blaming the grade
+          filter. Surfaces a one-click "expand date range" CTA when the date
+          window is the apparent culprit. */}
       {!loading && !error && filteredCards.length === 0 && (
         <div style={{ backgroundColor: CARD, border: `1px solid ${CARD_BORDER}`, borderRadius: '8px', padding: '60px 20px', textAlign: 'center', color: TEXT_DIM }}>
           <div style={{ fontSize: '48px', marginBottom: '16px' }}>📊</div>
-          <p style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: 500 }}>
-            {dayOneFilters.size > 0 && sortedCards.length > 0
-              ? `${sortedCards.length} cards passed other filters but none match the Day-1 close threshold`
-              : cards.length > 0
-                ? `${cards.length} cards loaded but none match "${filterGrades.join(', ')}" filter`
-                : viewMode === 'portfolio' ? 'No portfolio holdings found' : 'No watchlist stocks found'}
-          </p>
-          <p style={{ margin: 0, fontSize: '13px' }}>
-            {dayOneFilters.size > 0 && sortedCards.length > 0
-              ? 'Try a lower threshold or clear the 1d-close filter.'
-              : cards.length > 0 ? 'Try selecting "ALL" grade filter.' : `Add stocks to your ${viewMode === 'portfolio' ? 'portfolio' : 'watchlist'} first.`}
-          </p>
+          {(() => {
+            const total = cards.length;
+            if (total === 0) {
+              return (
+                <>
+                  <p style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: 500 }}>
+                    {viewMode === 'portfolio' ? 'No portfolio holdings found' : 'No watchlist stocks found'}
+                  </p>
+                  <p style={{ margin: 0, fontSize: '13px' }}>
+                    Add stocks to your {viewMode === 'portfolio' ? 'portfolio' : 'watchlist'} first.
+                  </p>
+                </>
+              );
+            }
+            const passedUniverse = cards.filter(c => matchesSelectedUniverses(c)).length;
+            // Which filter eliminated the most?
+            const culpritDate = dateFrom || dateTo;
+            const culpritGrade = !filterGrades.includes('ALL');
+            const culpritDayOne = dayOneFilters.size > 0 && sortedCards.length > 0;
+            const culpritGuidance = guidanceFilter !== 'ALL';
+            const reasons: string[] = [];
+            if (culpritDate) reasons.push(`date range ${dateFrom || '—'} → ${dateTo || '—'}`);
+            if (culpritGrade) reasons.push(`grade filter [${filterGrades.join(', ')}]`);
+            if (culpritDayOne) reasons.push(`Day-1 close threshold`);
+            if (culpritGuidance) reasons.push(`guidance = ${guidanceFilter}`);
+            const reasonLine = reasons.length > 0 ? `Likely cause: ${reasons.join(' AND ')}` : 'Possibly the universe filter — none of your portfolio/watchlist symbols passed.';
+            return (
+              <>
+                <p style={{ margin: '0 0 8px', fontSize: '16px', fontWeight: 500, color: '#E6EDF3' }}>
+                  {total} cards loaded · {passedUniverse} passed universe · 0 visible
+                </p>
+                <p style={{ margin: '0 0 12px', fontSize: '13px' }}>{reasonLine}</p>
+                <div style={{ display: 'inline-flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+                  {culpritDate && (
+                    <button
+                      onClick={() => {
+                        const d = new Date(); d.setFullYear(d.getFullYear() - 1);
+                        setDateFrom(d.toISOString().slice(0, 10));
+                        setDateTo(new Date().toISOString().slice(0, 10));
+                      }}
+                      style={{ padding: '8px 14px', background: '#22D3EE15', border: '1px solid #22D3EE60', color: '#22D3EE', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                    >🗓 Expand to last 12 months</button>
+                  )}
+                  {culpritGrade && (
+                    <button
+                      onClick={() => setFilterGrades(['ALL'])}
+                      style={{ padding: '8px 14px', background: '#10B98115', border: '1px solid #10B98160', color: '#10B981', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                    >Reset grade → ALL</button>
+                  )}
+                  {culpritDayOne && (
+                    <button
+                      onClick={() => setDayOneFilters(new Set())}
+                      style={{ padding: '8px 14px', background: '#F59E0B15', border: '1px solid #F59E0B60', color: '#F59E0B', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                    >Clear Day-1 threshold</button>
+                  )}
+                  {culpritGuidance && (
+                    <button
+                      onClick={() => setGuidanceFilter('ALL')}
+                      style={{ padding: '8px 14px', background: '#8B5CF615', border: '1px solid #8B5CF660', color: '#8B5CF6', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                    >Reset guidance → ALL</button>
+                  )}
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
 

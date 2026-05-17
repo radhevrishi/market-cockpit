@@ -2805,7 +2805,12 @@ function buildColMap(sampleRow: Record<string,unknown>): Record<string,string> {
     else if (!m['marketCapCr']&&c.includes('marketcap')) m['marketCapCr']=col;
     else if (!m['intrinsicValue']&&(c.includes('intrinsic')||c.includes('fairvalue'))) m['intrinsicValue']=col;
     else if (!m['price']&&c.includes('currentprice')) m['price']=col;
-    else if (!m['dma200']&&(c.includes('dma200')||c.includes('200dma'))) m['dma200']=col;
+    // PATCH 0446 BUG-031 v2 — Broaden 200-DMA column matching. Audit reported
+    // 26+ India stocks showing 'Technical: No data' even when the user's
+    // Screener CSV had the column under headers like 'DMA 200' / '200-day
+    // moving avg' / 'Price to DMA200 ratio'. Patterns now accept any
+    // variant with both 200 + DMA in the header text.
+    else if (!m['dma200']&&(c.includes('dma200')||c.includes('200dma')||(c.includes('200')&&c.includes('dma'))||(c.includes('200')&&c.includes('movingavg')))) m['dma200']=col;
     else if (!m['fii']&&c.includes('fii')&&!c.includes('change')) m['fii']=col;
     else if (!m['dii']&&c.includes('dii')&&!c.includes('change')) m['dii']=col;
     else if (!m['fcfAbsolute']&&(c.includes('freecash')||c==='fcf')) m['fcfAbsolute']=col;
@@ -2813,7 +2818,8 @@ function buildColMap(sampleRow: Record<string,unknown>): Record<string,string> {
     else if (!m['netDebt']&&(c.includes('netdebt')||c.includes('borrowing'))) m['netDebt']=col;
     else if (!m['epsGrowth']&&c.includes('epsgrowth')) m['epsGrowth']=col;
     else if (!m['eps']&&(c==='eps'||c.includes('earningspershare'))) m['eps']=col;
-    else if (!m['return1m']&&(c.includes('1month')||c.includes('1mreturn'))) m['return1m']=col;
+    // PATCH 0446 BUG-031 v2 — Broaden 1-month return matching.
+    else if (!m['return1m']&&(c.includes('1month')||c.includes('1mreturn')||c.includes('return1m')||c.includes('1mret')||(c.includes('30day')&&c.includes('return')))) m['return1m']=col;
     else if (!m['roce3yr']&&(c.includes('roce')||c.includes('returnoncap'))&&(c.includes('3yr')||c.includes('3year')||c.includes('3y')&&c.includes('ago'))) m['roce3yr']=col;
     else if (!m['opm3yr']&&(c.includes('opm')||c.includes('operatingmargin'))&&(c.includes('3yr')||c.includes('3year'))) m['opm3yr']=col;
     else if (!m['opmPrev']&&(c.includes('opm')||c.includes('operatingmargin'))&&(c.includes('lastyear')||c.includes('preceding')||c.includes('prevyr')||c.includes('lastyear'))) m['opmPrev']=col;

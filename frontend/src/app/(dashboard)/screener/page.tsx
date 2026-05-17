@@ -1243,7 +1243,15 @@ export default function ScreenerPage() {
         {/* Last Updated */}
         {(data || earningsData) && (
           <div style={{ textAlign: 'center', fontSize: '11px', color: THEME.textSecondary }}>
-            Last updated: {new Date(screenerMode === 'stocks' ? (data?.updatedAt || '') : (earningsData?.updatedAt || '')).toLocaleTimeString()}
+            Last updated: {(() => {
+              // PATCH 0446 BUG-050 — Guard against 'Invalid Date' flicker on
+              // cold mount before the query resolves.
+              const raw = screenerMode === 'stocks' ? data?.updatedAt : earningsData?.updatedAt;
+              if (!raw) return '—';
+              const d = new Date(raw);
+              if (!Number.isFinite(d.getTime())) return '—';
+              return d.toLocaleTimeString();
+            })()}
           </div>
         )}
       </div>

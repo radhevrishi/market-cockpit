@@ -638,9 +638,15 @@ const JUNK = new Set([
   'NPC','NPM','NTP','NVT','OVH','OEM','ODM','PCB','SMT','THD',
 ]);
 
-function isLikelyTicker(t: string): boolean {
-  if (!t) return false;
-  const u = t.toUpperCase();
+function isLikelyTicker(t: any): boolean {
+  // PATCH 0446 BUG-047 — Geo tab crashed with 't.toUpperCase is not a function'
+  // because some payload variants serialize ticker_symbols as { ticker: 'NVDA' }
+  // objects instead of plain strings, and getTickerSymbols passed them through
+  // unchanged. Now coerce defensively before any string op.
+  if (t == null) return false;
+  const s = typeof t === 'string' ? t : (t?.ticker ?? t?.symbol ?? '');
+  if (typeof s !== 'string' || !s) return false;
+  const u = s.toUpperCase();
   if (JUNK.has(u)) return false;
   // Standard ticker OR Asian ticker with 2+ digit suffix (TOWA6315, WIN3105).
   // Single-digit suffix pattern [A-Z]{2,5}[0-9] was causing COHR+T4="COHRT4" false positives.
@@ -653,9 +659,12 @@ function isLikelyTicker(t: string): boolean {
 }
 
 function getTickerSymbols(a: NewsArticle): string[] {
-  const raw = a.ticker_symbols?.length
-    ? a.ticker_symbols
-    : (a.tickers ?? []).map(t => typeof t === 'string' ? t : (t as { ticker: string }).ticker ?? '').filter(Boolean);
+  // PATCH 0446 BUG-047 — Normalize BOTH ticker_symbols AND tickers as the
+  // same string[]. Some upstream payloads ship ticker_symbols as objects.
+  const coerce = (t: any): string => typeof t === 'string' ? t : (t?.ticker ?? t?.symbol ?? '');
+  const raw: string[] = a.ticker_symbols?.length
+    ? (a.ticker_symbols as any[]).map(coerce).filter(Boolean)
+    : (a.tickers ?? []).map(coerce).filter(Boolean);
   return raw.filter(t => isLikelyTicker(t));
 }
 
@@ -765,9 +774,30 @@ function useGeoNews() {
   });
 }
 function useUSQuotes() {
+  // PATCH 0446 BUG-028 v2 — Audit reported NHPC / NTPC scanner prices showed
+  // '—' alongside US tickers. Root cause: this hook only fetched US quotes,
+  // so Indian symbols never bound. Now fetch BOTH markets in parallel and
+  // merge — the scanner has US + India tickers in the same universe.
   return useQuery<QuoteStock[]>({
-    queryKey: ['bn', 'us-quotes'],
-    queryFn: async () => { try { const r = await fetch('/api/market/quotes?market=us'); if (!r.ok) return []; const d = await r.json(); return Array.isArray(d?.stocks) ? d.stocks : []; } catch { return []; } },
+    queryKey: ['bn', 'us-india-quotes'],
+    queryFn: async () => {
+      try {
+        const [usRes, inRes] = await Promise.all([
+          fetch('/api/market/quotes?market=us').catch(() => null),
+          fetch('/api/market/quotes?market=india').catch(() => null),
+        ]);
+        const all: QuoteStock[] = [];
+        if (usRes?.ok) {
+          const d = await usRes.json();
+          if (Array.isArray(d?.stocks)) all.push(...d.stocks);
+        }
+        if (inRes?.ok) {
+          const d = await inRes.json();
+          if (Array.isArray(d?.stocks)) all.push(...d.stocks);
+        }
+        return all;
+      } catch { return []; }
+    },
     refetchInterval: 60_000, staleTime: 45_000, retry: 1,
   });
 }

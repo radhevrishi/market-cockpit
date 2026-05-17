@@ -434,6 +434,27 @@ export default function PortfolioPage() {
     return () => clearInterval(i);
   }, [holdings.length, fetchData]);
 
+  // PATCH 0446 BUG-053 — Belt-and-braces auto-fetch on mount + a backup
+  // poll after 2.5s. The primary useEffect above re-derives fetchData when
+  // holdings change which sometimes left a window where the first quote
+  // fetch never fired (Strict Mode double-mount + dep churn). This guarantees
+  // the user lands on the Portfolio page and prices appear without having
+  // to click Refresh.
+  useEffect(() => {
+    const t1 = setTimeout(() => {
+      if (holdings.length > 0 && !lastRefresh) {
+        fetchData();
+      }
+    }, 200);
+    const t2 = setTimeout(() => {
+      if (holdings.length > 0 && !lastRefresh) {
+        fetchData();
+      }
+    }, 2500);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [holdings.length]);
+
   // Sync holdings to API
   const syncToAPI = useCallback((h: PortfolioHolding[]) => {
     setStoredHoldings(h);
@@ -443,6 +464,11 @@ export default function PortfolioPage() {
       body: JSON.stringify({ chatId: CHAT_ID, secret: BOT_SECRET, action: 'set', holdings: h }),
     }).then(r => { if (!r.ok) console.error('Portfolio sync failed'); }).catch(console.error);
   }, []);
+
+  // PATCH 0446 BUG-021 v2 — Predicate used inside the row mapper to gate
+  // the intraday-tone fallback for the TREND column. Lives above the
+  // memoization block so we don't re-declare it 43 times per render.
+  const hasQuoteFor = (cp: number) => typeof cp === 'number' && Number.isFinite(cp) && cp !== 0;
 
   // Build portfolio rows with P&L and intelligence
   const rows = useMemo((): PortfolioRow[] => {
@@ -490,11 +516,22 @@ export default function PortfolioPage() {
                     : rrgRaw === 'WEAKENING' ? 'Neutral'
                     : rrgRaw === 'LAGGING' ? 'Bearish'
                     : undefined;
+      // PATCH 0446 BUG-021 v2 — Last-resort fallback: classify by today's
+      // changePercent vs market when neither intelligence nor RRG produced a
+      // signal. Yahoo's /chart endpoint often rate-limits for India .NS
+      // tickers so the trend endpoint can return UNKNOWN for hours. This
+      // ensures the TREND column never permanently shows '—' for an active
+      // holding — at minimum it reflects today's price move.
+      const intradayTone = !rrgTone && hasQuoteFor(changePercent)
+        ? changePercent > 1.5 ? 'Bullish'
+        : changePercent < -1.5 ? 'Bearish'
+        : 'Neutral'
+        : undefined;
       return { symbol: h.symbol, company: quote?.company || h.symbol, sector: quote?.sector || '—',
         entryPrice: h.entryPrice, quantity: h.quantity, cmp, change, changePercent,
         investedValue, currentValue, pnl, pnlPercent, dayPnl, notes: h.notes, weight: 0,
         score: signal?.weightedScore ?? fallbackScore,
-        sectorTrend: signal?.sectorTrend ?? rrgTone,
+        sectorTrend: signal?.sectorTrend ?? rrgTone ?? intradayTone,
         decision: signal?.action ?? fallbackDecision };
     });
     // Second pass: weight by current value (proper risk weighting)

@@ -120,17 +120,32 @@ export default function BottleneckWorkbenchPage() {
   useEffect(() => { setActiveBucket(themeParam); }, [themeParam]);
 
   const { data: dashboard, isLoading } = useBucket(activeBucket);
-  // PATCH 0445 BUG-009 — Flatten signal.ticker_mentions[] into bucket.key_tickers
-  // so the IMPLICATED TICKERS grid is never empty when articles do mention
-  // tickers but the bottleneck-dashboard aggregator didn't roll them up.
-  // Dedupe + uppercase + skip blanks.
+  // PATCH 0446 BUG-009 v2 — Flatten ALL the field shapes the upstream API
+  // might ship for signal-level tickers (ticker_mentions / tickers / symbols /
+  // ticker_symbols). Audit reported 48 articles + 48 signals yet 0 tickers,
+  // meaning the previous flatten missed because the field name differed by
+  // route version. Coerce values that may be objects ({ticker: 'NVDA'}).
   const buckets: BnBucket[] = useMemo(() => {
+    const coerce = (t: any): string => typeof t === 'string' ? t : (t?.ticker ?? t?.symbol ?? '');
     return (dashboard?.buckets || []).map(b => {
-      const fromSignals = (b.signals || []).flatMap(s => s.ticker_mentions || []);
+      const fromSignals = (b.signals || []).flatMap((s: any) => [
+        ...(s.ticker_mentions || []),
+        ...(s.tickers || []),
+        ...(s.symbols || []),
+        ...(s.ticker_symbols || []),
+      ]);
+      // Also fold in any article-level tickers when signals reference them
+      const fromArticles = (b.signals || []).flatMap((s: any) =>
+        (s.articles || []).flatMap((a: any) => [
+          ...(a.ticker_symbols || []),
+          ...(a.tickers || []),
+        ])
+      );
       const merged = new Set<string>([
         ...(b.key_tickers || []),
-        ...fromSignals,
-      ].map(t => (t || '').toUpperCase().trim()).filter(Boolean));
+        ...fromSignals.map(coerce),
+        ...fromArticles.map(coerce),
+      ].map(t => (t || '').toUpperCase().trim()).filter(t => t && /^[A-Z0-9.\-]{1,12}$/.test(t)));
       return { ...b, key_tickers: Array.from(merged) };
     });
   }, [dashboard]);

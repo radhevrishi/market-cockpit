@@ -31,31 +31,49 @@ interface TrendRow {
 
 const CACHE_TTL_S = 3600; // 1 hour
 
-async function yahooDailyReturn(symbol: string, days: number): Promise<number | null> {
-  try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 6000);
-    const yahooSym = symbol.includes('.') ? symbol : `${symbol}.NS`;
-    const range = days <= 30 ? '3mo' : '6mo';
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSym)}?range=${range}&interval=1d`;
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-      signal: ctrl.signal,
-    });
-    clearTimeout(t);
-    if (!res.ok) return null;
-    const json = await res.json();
-    const closes: number[] = json?.chart?.result?.[0]?.indicators?.quote?.[0]?.close || [];
-    const valid = closes.filter(c => typeof c === 'number' && c > 0);
-    if (valid.length < days + 1) return null;
-    const last = valid[valid.length - 1];
-    const past = valid[valid.length - 1 - days];
-    if (!past || past === 0) return null;
-    return ((last - past) / past) * 100;
-  } catch {
-    return null;
+async function yahooDailyReturnFor(symbol: string, days: number): Promise<number | null> {
+  // PATCH 0446 BUG-021 v2 — Yahoo /chart endpoint rate-limits India .NS
+  // tickers. Try the bare symbol AND the .NS suffix variant; accept the
+  // first that returns a usable close series. Header tweak (browser UA +
+  // accept) also reduces Cloudflare friction.
+  const tryOne = async (yahooSym: string): Promise<number | null> => {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 6000);
+      const range = days <= 30 ? '3mo' : '6mo';
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSym)}?range=${range}&interval=1d`;
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0 Safari/537.36',
+          'Accept': 'application/json,text/plain,*/*',
+        },
+        signal: ctrl.signal,
+      });
+      clearTimeout(t);
+      if (!res.ok) return null;
+      const json = await res.json();
+      const closes: number[] = json?.chart?.result?.[0]?.indicators?.quote?.[0]?.close || [];
+      const valid = closes.filter(c => typeof c === 'number' && c > 0);
+      if (valid.length < days + 1) return null;
+      const last = valid[valid.length - 1];
+      const past = valid[valid.length - 1 - days];
+      if (!past || past === 0) return null;
+      return ((last - past) / past) * 100;
+    } catch {
+      return null;
+    }
+  };
+  // Index symbols like ^NSEI shouldn't get .NS appended
+  if (symbol.startsWith('^')) {
+    return tryOne(symbol);
   }
+  if (symbol.includes('.')) {
+    return tryOne(symbol);
+  }
+  // Try .NS first (India), fall back to bare ticker (US)
+  return (await tryOne(`${symbol}.NS`)) ?? (await tryOne(symbol));
 }
+const yahooDailyReturn = yahooDailyReturnFor; // legacy alias used below
 
 function classify(rs1m: number | null, rs3m: number | null): TrendRow['label'] {
   if (rs1m === null && rs3m === null) return 'UNKNOWN';

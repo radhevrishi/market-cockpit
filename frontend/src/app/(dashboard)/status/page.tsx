@@ -356,6 +356,33 @@ export default function StatusPage() {
               borderRadius: 6, padding: '6px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
             }}
           >Run All</button>
+          {/* PATCH 0446 BUG-025/015/016 — Force re-ingest button. Pings the
+              critical pipeline cron endpoints in parallel so the user can
+              recover a stuck Vercel cron / GitHub Action without waiting
+              for the next scheduled tick. Operations: refresh-earnings-
+              calendar, earnings-guidance ingest, concall-intel-warm. */}
+          <button
+            onClick={async () => {
+              const endpoints = [
+                '/api/v1/cron/refresh-earnings-calendar',
+                '/api/market/earnings-guidance/ingest',
+                '/api/v1/cron/concall-intel-warm',
+              ];
+              try {
+                await Promise.allSettled(endpoints.map(u => fetch(u, { method: 'GET' })));
+                alert('Re-ingest triggered for all 3 pipelines. Refresh in 60–120s.');
+                runAll();
+              } catch (e) {
+                alert('Re-ingest call failed: ' + (e as any)?.message);
+              }
+            }}
+            title="Force-run earnings calendar + guidance ingest + concall warmer crons"
+            style={{
+              backgroundColor: '#F59E0B',
+              border: 'none', color: '#000',
+              borderRadius: 6, padding: '6px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+            }}
+          >⚡ Force Re-ingest</button>
         </div>
       </div>
 
