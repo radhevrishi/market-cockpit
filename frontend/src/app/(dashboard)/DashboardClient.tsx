@@ -70,6 +70,10 @@ const NAV: NavItem[] = [
   { href: '/transmission',  label: 'Transmission',       icon: <TrendingUp className="w-5 h-5" /> },
   // PATCH 0107 / 0171: Concall Intelligence Engine v2
   { href: '/concall-intel', label: 'Concall Intelligence', icon: <Microscope className="w-5 h-5" /> },
+  // PATCH 0455 — Company Intelligence Hub. Upload concall transcripts /
+  // PPTs / guidance docs once → site-wide retrievable corpus + auto-
+  // extracted guidance items (revenue / EBITDA / capex / peak / orderbook).
+  { href: '/company-intel', label: 'Company Intelligence', icon: <BookMarked className="w-5 h-5" /> },
   { href: '/ipos',          label: 'IPOs',               icon: <Rocket className="w-5 h-5" /> },
   // PATCH 0237: Client-side news alert rules v0
   { href: '/news-alerts',   label: 'News Alerts',        icon: <Bell className="w-5 h-5" /> },

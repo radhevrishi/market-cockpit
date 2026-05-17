@@ -289,25 +289,36 @@ function useUniverseSymbols(choice: UniverseChoice, customCsv: string) {
         // (kept simple here — Multibagger upload already normalizes)
       }
 
-      const addPortfolio = async () => {
+      // PATCH 0455 BUG-058 — Audit found 'Universe: loading' stuck because
+      // the api.get('/portfolio') path resolves to /api/v1/portfolio which
+      // doesn't exist (the actual route is at /api/portfolio, not v1). Use
+      // raw fetch with the correct path + 6s timeout so a slow/missing
+      // endpoint can't wedge the universe query forever.
+      const fetchWithTimeout = async (url: string): Promise<any | null> => {
         try {
-          const { data } = await api.get('/portfolio');
-          const positions = data?.positions || data?.holdings || data || [];
-          for (const p of positions) {
-            const s = p.symbol || p.ticker || p.ticker_symbol;
-            if (s) out.add(String(s).toUpperCase());
-          }
-        } catch {}
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 6000);
+          const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store' });
+          clearTimeout(t);
+          if (!res.ok) return null;
+          return await res.json();
+        } catch { return null; }
+      };
+      const addPortfolio = async () => {
+        const data = await fetchWithTimeout(`/api/portfolio?chatId=${encodeURIComponent('5057319640')}`);
+        const positions = data?.holdings || data?.positions || (Array.isArray(data) ? data : []);
+        for (const p of positions) {
+          const s = p?.symbol || p?.ticker || p?.ticker_symbol;
+          if (s) out.add(String(s).toUpperCase());
+        }
       };
       const addWatchlist = async () => {
-        try {
-          const { data } = await api.get('/watchlist');
-          const items = data?.items || data?.tickers || data || [];
-          for (const w of items) {
-            const s = typeof w === 'string' ? w : (w.symbol || w.ticker || w.ticker_symbol);
-            if (s) out.add(String(s).toUpperCase());
-          }
-        } catch {}
+        const data = await fetchWithTimeout(`/api/watchlist?chatId=${encodeURIComponent('5057319640')}`);
+        const items = data?.watchlist || data?.items || data?.tickers || (Array.isArray(data) ? data : []);
+        for (const w of items) {
+          const s = typeof w === 'string' ? w : (w?.symbol || w?.ticker || w?.ticker_symbol);
+          if (s) out.add(String(s).toUpperCase());
+        }
       };
       const addMultibagger = () => {
         for (const s of readMultibaggerSymbols()) out.add(s);
