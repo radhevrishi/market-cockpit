@@ -67,11 +67,17 @@ const PROBES: ProbeDef[] = [
     run: async () => {
       const t0 = performance.now();
       try {
+        // PATCH 0452 P0-6 — Audit found this probe read non-existent fields
+        // (.india / .global). Route returns { success, total_articles,
+        // buckets[] }. Pill always showed '0 IN · 0 GL' even on healthy data.
         const r = await api.get('/news/bottleneck-dashboard', { timeout: 10_000 });
         const ms = Math.round(performance.now() - t0);
-        const ind = (r.data?.india?.length ?? 0);
-        const glob = (r.data?.global?.length ?? 0);
-        return { ok: r.status === 200, status: r.status, ms, note: `${ind} IN · ${glob} GL` };
+        const buckets: any[] = Array.isArray(r.data?.buckets) ? r.data.buckets : [];
+        const total = Number(r.data?.total_articles ?? 0);
+        const ind = buckets.filter(b => /india|^IN[_-]/i.test(b?.bucket_id || '') || /india/i.test(b?.label || '')).length;
+        const glob = buckets.length - ind;
+        const ok = r.status === 200 && (!!r.data?.success || buckets.length > 0);
+        return { ok, status: r.status, ms, note: `${buckets.length} buckets · ${ind} IN · ${glob} GL · ${total} articles` };
       } catch (e: any) {
         return { ok: false, status: e?.response?.status ?? 0, ms: Math.round(performance.now() - t0), note: e?.message };
       }

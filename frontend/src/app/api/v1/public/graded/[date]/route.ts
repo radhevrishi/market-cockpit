@@ -110,8 +110,14 @@ export async function GET(
     return NextResponse.json({ date, cards: [], total: 0, note: 'no data for this date' });
   }
 
+  // PATCH 0452 P0-3 — Audit found this always returned 0 cards. Main
+  // graded route stores `{ by_tier: { BLOCKBUSTER: [...], STRONG: [...] } }`
+  // — never the legacy `cards` / `items` shapes. Public consumers paying for
+  // the API were getting an empty payload silently. Flatten by_tier here.
   const allCards = Array.isArray(payload?.cards) ? payload.cards
                  : Array.isArray(payload?.items) ? payload.items
+                 : (payload?.by_tier && typeof payload.by_tier === 'object')
+                   ? Object.values(payload.by_tier).flat()
                  : Array.isArray(payload) ? payload : [];
   const redacted = allCards.map(redact).filter(Boolean);
 

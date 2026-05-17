@@ -28,6 +28,32 @@ const KEY = (pipeline: string) => `heartbeat:v1:${pipeline}`;
 const MAX_ENTRIES = 240;
 const TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
 
+// PATCH 0452 P0-8 — Audit flagged this endpoint as a KV pollution risk:
+// anyone could POST 240 entries × 64-char arbitrary pipeline names. Now
+// restricted to a known allowlist of pipeline IDs (matches the /status
+// page probes). Random IDs return 400 — no KV write happens.
+const ALLOWED_PIPELINES = new Set<string>([
+  'news-in-play',
+  'news-bottleneck',
+  'earnings-post-gap',
+  'earnings-enrich',
+  'earnings-graded',
+  'earnings-scan',
+  'earnings-guidance',
+  'special-situations',
+  'bottleneck-dashboard',
+  'transmission',
+  'concall-intel-live',
+  'concall-intel-warrant',
+  'concall-intel-keyword',
+  'strategic-visibility',
+  'breadth',
+  'movers',
+  'multibagger-india',
+  'multibagger-usa',
+  'rerating',
+]);
+
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
@@ -38,6 +64,10 @@ export async function POST(
   const { pipeline } = await params;
   if (!pipeline || pipeline.length > 64 || !/^[a-z0-9_-]+$/i.test(pipeline)) {
     return NextResponse.json({ error: 'invalid pipeline id' }, { status: 400 });
+  }
+  // PATCH 0452 P0-8 — Hard allowlist gate prevents KV pollution.
+  if (!ALLOWED_PIPELINES.has(pipeline)) {
+    return NextResponse.json({ error: 'pipeline not in allowlist' }, { status: 403 });
   }
 
   if (!isRedisAvailable()) {

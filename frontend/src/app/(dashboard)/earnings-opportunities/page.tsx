@@ -1427,11 +1427,14 @@ export default function EarningsOpportunitiesPage() {
             : '';
           setBackfillProgress(`✓ Backfill complete · ${enrichedTotal} dates enriched · ${previewOnlyTotal} had no Screener data · scanned ${processedTotal} weekdays in ${fromIso}–${toIso}${errorTail}`);
           // Invalidate all client caches so the user's next navigation hits fresh data
+          // PATCH 0452 P1-9 — Audit found this scrubbed v8 only; current key
+          // is v9 (Patch 0402). Make version-agnostic so the backfill
+          // success ACTUALLY busts the snapshot the user is sitting on.
           try {
             const keys: string[] = [];
             for (let i = 0; i < localStorage.length; i++) {
               const k = localStorage.key(i);
-              if (k && k.startsWith('mc:graded:v8:')) keys.push(k);
+              if (k && /^mc:graded:v\d+:/.test(k)) keys.push(k);
             }
             for (const k of keys) localStorage.removeItem(k);
           } catch {}
@@ -1493,7 +1496,12 @@ export default function EarningsOpportunitiesPage() {
         };
         // PATCH 0190/0192 — wipe localStorage so the fresh server payload is
         // the source of truth.
-        try { localStorage.removeItem('mc:graded:v8:' + resolvedDateForGrading); } catch {}
+        // PATCH 0452 P1-9 — version-agnostic scrub (also covers v9).
+        try {
+          for (const v of ['v7','v8','v9','v10']) {
+            localStorage.removeItem(`mc:graded:${v}:${resolvedDateForGrading}`);
+          }
+        } catch {}
         // PATCH 0286 — Clearer messaging when upstream genuinely has no data.
         // User feedback: the previous "0/N updated · Worker re-checks in 60s + 5min"
         // message looked like a bug because it never changed on retry. The real

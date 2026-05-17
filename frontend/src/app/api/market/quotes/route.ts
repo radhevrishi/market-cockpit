@@ -386,7 +386,15 @@ async function fetchIndianDataWithCache() {
     const ffmc = item.ffmc || item.freeFloatMktCap || 0;
     const estimatedMcap = ffmc > 0 ? ffmc : Math.round((item.lastPrice || 0) * (item.totalTradedVolume || 1) / 10000);
     // Cap classification: use index membership first, then market cap thresholds
-    const cap = tickerCapMap.get(symbol) || (ffmc > 500_000_000_000 ? 'Large' : ffmc > 100_000_000_000 ? 'Mid' : 'Large');
+    // PATCH 0452 P1-10 — Audit found the fallback returned 'Large' for ANY
+    // ticker not in the index-cap map, even tiny smallcaps with no ffmc.
+    // The third branch had a typo defaulting to 'Large' instead of 'Small'.
+    // This silently corrupted heatmap, movers, and every cap-aware filter.
+    const cap = tickerCapMap.get(symbol)
+      || (ffmc > 500_000_000_000 ? 'Large'
+        : ffmc > 100_000_000_000 ? 'Mid'
+        : ffmc > 5_000_000_000   ? 'Small'
+        : 'Micro');
 
     return {
       ticker: symbol,

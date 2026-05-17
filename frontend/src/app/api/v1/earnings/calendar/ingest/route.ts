@@ -234,7 +234,16 @@ function normaliseRow(r: any): CanonicalItem | null {
 
 export async function POST(req: Request) {
   // Auth
-  const expected = process.env.EARNINGS_INGEST_SECRET || 'dev-only';
+  // PATCH 0452 P0-7 — Audit flagged this hardcoded 'dev-only' fallback as
+  // a calendar-injection vector. Now require the env var to be set in prod;
+  // missing env → 503, never accept a default secret.
+  const expected = process.env.EARNINGS_INGEST_SECRET;
+  if (!expected) {
+    return NextResponse.json(
+      { error: 'EARNINGS_INGEST_SECRET env not configured on server' },
+      { status: 503, headers: corsHeaders() }
+    );
+  }
   const provided = req.headers.get('x-ingest-secret') || '';
   if (provided !== expected) {
     return NextResponse.json({ error: 'Unauthorized — missing or wrong X-Ingest-Secret header' }, { status: 401, headers: corsHeaders() });

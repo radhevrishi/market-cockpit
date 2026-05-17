@@ -366,7 +366,10 @@ export default function HeatmapPage() {
     rects: { x: number; y: number; w: number; h: number; result: EarningsResult; sector: string }[];
     sectorRects: { x: number; y: number; w: number; h: number; data: any }[];
   } | null => {
-    if (!earningsData || !earningsData.results.length || !isEarningsMode) return null;
+    // PATCH 0452 P1-11 — Audit found this branch crashed when the API
+    // returned a payload with only `summary` and no `results` array
+    // (Patch 0281 added the same guard to dailyData; this branch was missed).
+    if (!earningsData || !Array.isArray(earningsData.results) || !earningsData.results.length || !isEarningsMode) return null;
 
     const sectorMap = new Map<string, EarningsResult[]>();
     for (const r of earningsData.results) {

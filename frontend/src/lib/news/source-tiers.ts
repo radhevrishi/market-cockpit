@@ -30,6 +30,16 @@ export type SourceTier =
 const TIER_PATTERNS: Array<{ tier: SourceTier; patterns: RegExp[] }> = [
   {
     tier: 'PRIMARY',
+    // PATCH 0452 P0-4 — Audit found this PRIMARY tier was neutralizing the
+    // Patch 0449 frontend downgrade of ET/Mint/Moneycontrol/BS/BL. Backend
+    // was boosting them ×1.15 while frontend penalized them ×0.35. They
+    // roughly cancelled out — so the institutional source-quality fix
+    // shipped but had near-zero visible effect.
+    //
+    // PRIMARY is now reserved for truly primary international wires
+    // (Reuters / Bloomberg News / WSJ / FT). Indian general business
+    // desks (ET / Mint / MC / BS / BL / FE) drop to GENERALIST where
+    // they belong — they rewrite filings, rarely add reporting.
     patterns: [
       /^reuters\b/i,
       /^bloomberg news\b/i,
@@ -37,14 +47,16 @@ const TIER_PATTERNS: Array<{ tier: SourceTier; patterns: RegExp[] }> = [
       /^wsj\b/i,
       /^financial times\b/i,
       /^ft (markets|news)?\b/i,
-      /^economic times(?: markets| news| auto| pharma| tech| banking)?\b/i,
-      /^business standard\b/i,
-      /^business standard companies\b/i,
-      /^bs (companies|markets|news)\b/i,
-      /^livemint(?: markets| companies| economy)?\b/i,
-      /^mint(?: markets| companies| economy)?\b/i,
-      /^moneycontrol\b/i,
-      /^et (markets|industry|industrial|auto|pharma|tech|banking|energy)\b/i,
+      // Exchange filing / regulator / PR feeds belong here, not aggregator desks.
+      /\bnseindia\b/i,
+      /\bbseindia\b/i,
+      /\bsebi\b/i,
+      /\brbi\b/i,
+      /\bsec\.gov\b/i,
+      /\bpib (india|gov)\b/i,
+      /\bpr ?newswire\b/i,
+      /\bglobenewswire\b/i,
+      /\bbusiness ?wire\b/i,
     ],
   },
   {

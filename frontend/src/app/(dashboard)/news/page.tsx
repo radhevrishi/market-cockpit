@@ -906,9 +906,22 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
               </span>
             ))}
             {/* PATCH 0449 — Institutional detector chips. Each fires only
-                when its regex matches; otherwise the card stays as-is. */}
+                when its regex matches; otherwise the card stays as-is.
+                PATCH 0452 P0-5 — Prefer pre-annotated fields stamped by
+                the server (cheap path); fall back to client-side compute
+                for articles cached before the server-side wiring landed. */}
             {(() => {
-              const ann = annotateArticle({ title: article.title, headline: article.headline, summary: article.summary });
+              const pre = article as any;
+              const ann = (pre.__creditStress !== undefined || pre.__noise !== undefined)
+                ? {
+                    creditStress: pre.__creditStress ?? null,
+                    promoter: pre.__promoter ?? null,
+                    workingCapital: pre.__workingCapital ?? null,
+                    orderQuality: pre.__orderQuality ?? null,
+                    noise: pre.__noise ?? { isListicle: false, isSpeculation: false, qualityMultiplier: 1 },
+                    expectation: pre.__expectation ?? null,
+                  }
+                : annotateArticle({ title: article.title, headline: article.headline, summary: article.summary });
               const chips: React.ReactNode[] = [];
               if (ann.creditStress) chips.push(
                 <span key="cs" title={`Credit stress: ${ann.creditStress.label} — matched "${ann.creditStress.evidence}"`}

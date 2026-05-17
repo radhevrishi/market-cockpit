@@ -10,6 +10,13 @@ import { scoreAnchor, BOTTLENECK_ANCHOR_THRESHOLD, getSourceCredibility, detectR
 // PATCH 0051: 10-year semantic graph architecture
 import { scoreGraph, GRAPH_ANCHOR_THRESHOLD, NODE_DISPLAY } from '@/lib/news/semantic-graph';
 import { classifySourceTier, getTierContribution } from '@/lib/news/source-tiers';
+// PATCH 0452 P0-5 — Run institutional detectors server-side once per cache
+// miss instead of on every NewsCard render in the browser. This is the
+// missing wiring identified in the audit — without it, the credit-stress,
+// promoter-behavior, working-capital, order-quality, noise and expectation
+// chips were recomputed on every render of every card on every page.
+import { annotateArticle as annotateNewsArticle } from '@/lib/news/event-detectors';
+import { sourceQualityWeight } from '@/lib/source-tiers';
 import { recordEvidence, readEvidence } from '@/lib/news/evidence-accumulator';
 // PATCH 0081: beneficiary graph engine
 import { detectAdaptations, recordBeneficiary } from '@/lib/news/beneficiary-graph';
@@ -2470,6 +2477,24 @@ export async function GET(request: Request) {
 
     if (!articles || articles.length === 0) {
       articles = await fetchAllNews();
+      // PATCH 0452 P0-5 — Annotate each article ONCE before caching. Stamps
+      // institutional detector fields the NewsCard previously recomputed on
+      // every render. Also computes the source-quality weight so the
+      // frontend can use it for downstream filters without re-classifying.
+      try {
+        for (const a of articles) {
+          const ann = annotateNewsArticle({ title: a.title, headline: a.headline, summary: a.summary });
+          a.__creditStress = ann.creditStress;
+          a.__promoter = ann.promoter;
+          a.__workingCapital = ann.workingCapital;
+          a.__orderQuality = ann.orderQuality;
+          a.__noise = ann.noise;
+          a.__expectation = ann.expectation;
+          a.__sourceWeight = sourceQualityWeight(a.source_name || a.source, a.source_url || a.url);
+        }
+      } catch (e) {
+        console.warn('[news] annotation pass failed (non-fatal):', e);
+      }
       try { await kvSet(CACHE_KEY, articles, CACHE_TTL); } catch {}
     }
 
