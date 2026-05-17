@@ -2502,17 +2502,21 @@ export async function GET(request: Request) {
     if (type === 'BOTTLENECK') {
       try {
         const persistentBottlenecks = await kvGet<any[]>(BOTTLENECK_PERSISTENT_KEY) || [];
-        const titleSet = new Set<string>();
-        const merged = [
-          ...articles.filter(a => a.article_type === 'BOTTLENECK'),
-          ...persistentBottlenecks.filter(a => {
-            const key = a.title.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 50);
-            if (titleSet.has(key)) return false;
-            titleSet.add(key);
-            return true;
-          }),
-        ];
-        articles = merged;
+        // PATCH 0453 P1-22 — Audit found titleSet was never seeded with the
+        // fresh articles' titles, so a persistent entry with the same title
+        // as a fresh one slipped through (visible duplicate). Now we seed
+        // with fresh keys first so persistent dedup actually checks against
+        // them. Fresh is always preferred over persistent when keys collide.
+        const titleKey = (t: string) => (t || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 50);
+        const fresh = articles.filter(a => a.article_type === 'BOTTLENECK');
+        const titleSet = new Set<string>(fresh.map(a => titleKey(a.title)));
+        const persistentDeduped = persistentBottlenecks.filter(a => {
+          const k = titleKey(a.title);
+          if (titleSet.has(k)) return false;
+          titleSet.add(k);
+          return true;
+        });
+        articles = [...fresh, ...persistentDeduped];
       } catch {
         // Continue with fresh articles only
       }

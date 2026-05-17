@@ -45,9 +45,16 @@ const BASKET = [
 interface YahooPoint { close: number; ts: number; }
 
 async function fetchYahooDaily(symbol: string): Promise<YahooPoint[] | null> {
+  // PATCH 0453 P1-21 — Audit found no fetch timeout. A single hung Yahoo
+  // request can wedge the route up to the Vercel 30s ceiling. 8s per symbol
+  // is plenty since we're firing 25 in parallel inside the route handler.
   try {
     const url = `${YH_BASE}/${encodeURIComponent(symbol)}?range=1y&interval=1d`;
-    const res = await fetch(url, { headers: { 'User-Agent': UA }, cache: 'no-store' });
+    const res = await fetch(url, {
+      headers: { 'User-Agent': UA },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(8000),
+    });
     if (!res.ok) return null;
     const j = await res.json();
     const r = j?.chart?.result?.[0];

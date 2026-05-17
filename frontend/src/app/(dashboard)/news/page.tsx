@@ -2051,9 +2051,12 @@ export default function NewsFeedPage() {
   const [articleType,   setArticleType]   = useState<string>(initParam('type','ALL'));
   const [sourceName,    setSourceName]    = useState<string>(initParam('source','ALL'));
   const [signalFilter,  setSignalFilter]  = useState<string>(initParam('signal','ALL')); // 'ALL' = HIGH+MEDIUM (hides noise), 'HIGH' = only high, 'MEDIUM' = only medium
-  const [bottleneckLevel, setBottleneckLevel] = useState<string>('ALL'); // Bottleneck sub-filter: ALL, CRITICAL_BOTTLENECK, BOTTLENECK, WATCH, RESOLVED_EASING
-  const [bottleneckCategory, setBottleneckCategory] = useState<string>('ALL'); // Sub-tag: MEMORY_STORAGE, INTERCONNECT_PHOTONICS, etc.
-  const [structuralOnly, setStructuralOnly] = useState<boolean>(false); // Show only synthetic/structural signals
+  // PATCH 0453 P1-16 — Audit found these 3 sub-filters weren't URL-hydrated
+  // even though all the other filters were. Bookmarked URLs lost the
+  // bottleneck-level refinement. Now they hydrate from + write back to URL.
+  const [bottleneckLevel, setBottleneckLevel] = useState<string>(initParam('blevel','ALL')); // Bottleneck sub-filter: ALL, CRITICAL_BOTTLENECK, BOTTLENECK, WATCH, RESOLVED_EASING
+  const [bottleneckCategory, setBottleneckCategory] = useState<string>(initParam('bcat','ALL')); // Sub-tag: MEMORY_STORAGE, INTERCONNECT_PHOTONICS, etc.
+  const [structuralOnly, setStructuralOnly] = useState<boolean>(initParam('struct','0') === '1'); // Show only synthetic/structural signals
   const [sortBy,        setSortBy]        = useState<'impact' | 'time'>(initParam('sort','impact') as any); // Default: impact-based sort
   // PATCH 0213 — Lifecycle filter. Defaults to 'LIVE_WARM' (last 48h) so
   // STALE / PERSISTENT items don't pollute the LIVE feed. Tabs let the user
@@ -2077,6 +2080,10 @@ export default function NewsFeedPage() {
     setIf('signal', signalFilter, 'ALL');
     setIf('sort', sortBy, 'impact');
     setIf('lc', lifecycleFilter, 'LIVE_WARM');
+    // PATCH 0453 P1-16 — bottleneck sub-filter URL writeback
+    setIf('blevel', bottleneckLevel, 'ALL');
+    setIf('bcat', bottleneckCategory, 'ALL');
+    if (structuralOnly) params.set('struct', '1');
     if (search) params.set('q', search);
     const qs = params.toString();
     const newUrl = qs ? `${pathname}?${qs}` : pathname;
@@ -2085,7 +2092,7 @@ export default function NewsFeedPage() {
     if (typeof window !== 'undefined' && window.location.pathname + window.location.search !== newUrl) {
       router.replace(newUrl, { scroll: false });
     }
-  }, [region, articleType, sourceName, signalFilter, sortBy, lifecycleFilter, search, pathname, router]);
+  }, [region, articleType, sourceName, signalFilter, sortBy, lifecycleFilter, search, bottleneckLevel, bottleneckCategory, structuralOnly, pathname, router]);
   const [showFilters,   setShowFilters]   = useState(false);
   const [selectedArticle, setSelectedArticle] = useState<NewsArticle | null>(null);
   // PATCH 0121 — IMP-08: Q4 FY26 earnings season quick-filter.
@@ -2510,8 +2517,15 @@ export default function NewsFeedPage() {
       )}
 
       {/* PATCH 0230 — global stale strip when ANY critical panel is very stale */}
+      {/* PATCH 0453 P1-14 — Audit found Math.min(... || Date.now()) reset the
+          age clock to FRESH when one of the two panels hadn't loaded yet.
+          Filter to only non-zero values so a single loaded panel's age is
+          the source of truth. */}
       <PanelStaleStrip
-        dataUpdatedAt={Math.min(inPlayUpdatedAt || Date.now(), dataUpdatedAt || Date.now())}
+        dataUpdatedAt={(() => {
+          const ts = [inPlayUpdatedAt, dataUpdatedAt].filter((t): t is number => typeof t === 'number' && t > 0);
+          return ts.length === 0 ? Date.now() : Math.min(...ts);
+        })()}
         staleAfterMs={5 * 60_000}
         label="news"
         onRefresh={handleRefresh}

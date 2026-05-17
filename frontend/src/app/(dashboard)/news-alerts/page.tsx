@@ -120,10 +120,14 @@ export default function NewsAlertsPage() {
             new Notification(`Alert: ${rule.name}`, { body: headline.slice(0, 200), tag: rule.id });
           } catch {}
         }
+        // PATCH 0453 P1-15 — Audit found a 50-item ring caused old articles
+        // to re-fire alerts after the ring rolled over. Bumped to 2000 so an
+        // article that fired stays "fired" for the foreseeable session
+        // (a rule averaging 1 hit/min × 24h still fits comfortably).
         setRules(rs => rs.map(r => r.id === rule.id ? {
           ...r,
           lastFiredAt: Date.now(),
-          lastFiredArticleIds: [article.id, ...r.lastFiredArticleIds].slice(0, 50),
+          lastFiredArticleIds: [article.id, ...r.lastFiredArticleIds].slice(0, 2000),
         } : r));
       }
     }

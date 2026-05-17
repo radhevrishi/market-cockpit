@@ -245,8 +245,14 @@ async function computeGap(
 ): Promise<GapResult> {
   // PATCH 0206 — cache key bumped to v3, includes calendar provenance so a
   // calendar-resolved date doesn't share a slot with a detector-resolved one.
+  // PATCH 0453 P1-19 — Audit found the source dimension prevented Tier-3
+  // detected entries from being upgraded by Tier-1 kv-calendar resolution
+  // (each variant created a separate KV slot; old entries piled up). Now
+  // we drop source from the key and bump to v4 so a fresh resolution
+  // overwrites the prior entry in place. The result payload still carries
+  // `filing_date_source` so the caller knows the provenance.
   const initialSource: FilingDateSource = knownFromCalendar ? 'kv-calendar' : 'explicit';
-  const cacheKey = `post-gap:v3:${ticker}:${filing_date}:${timing || 'pre'}:${period || ''}:${initialSource}`;
+  const cacheKey = `post-gap:v4:${ticker}:${filing_date}:${timing || 'pre'}:${period || ''}`;
   if (isRedisAvailable()) {
     try {
       const cached = await kvGet<GapResult>(cacheKey);

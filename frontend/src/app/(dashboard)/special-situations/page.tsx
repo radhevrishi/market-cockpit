@@ -148,11 +148,29 @@ const REJECTED_LS_KEY = 'mc:specsit:rejected:v1';
 interface RejectionRecord { reason: string; ts: number; }
 type RejectionMap = Record<string, RejectionRecord>;
 
+// PATCH 0453 P1-20 — Audit found this rejection map grew unbounded — over
+// a year of usage it could blow past the 5MB localStorage cap. Prune
+// entries older than 365 days on load so the user's reject decisions
+// auto-expire when the event is long-gone.
+const REJECTION_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
 function loadRejections(): RejectionMap {
   if (typeof window === 'undefined') return {};
   try {
     const raw = window.localStorage.getItem(REJECTED_LS_KEY);
-    return raw ? (JSON.parse(raw) as RejectionMap) : {};
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as RejectionMap;
+    const now = Date.now();
+    const pruned: RejectionMap = {};
+    let prunedAny = false;
+    for (const [k, v] of Object.entries(parsed)) {
+      if (v?.ts && now - v.ts < REJECTION_MAX_AGE_MS) pruned[k] = v;
+      else prunedAny = true;
+    }
+    // Persist the pruned map so the prune happens at most once per session.
+    if (prunedAny) {
+      try { window.localStorage.setItem(REJECTED_LS_KEY, JSON.stringify(pruned)); } catch {}
+    }
+    return pruned;
   } catch { return {}; }
 }
 function saveRejections(map: RejectionMap) {

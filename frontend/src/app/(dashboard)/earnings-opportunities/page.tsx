@@ -80,8 +80,11 @@ function useMarketEarnings(months: string[]) {
   // server has recovered). Older versions are wiped on first load below.
   const HUB_LS_PREFIX = 'mc:hub:v3:';
   const key = months.join(',');
-  // One-time scrub of older versions (v1, v2) so we don't leave orphan keys
-  if (typeof window !== 'undefined') {
+  // PATCH 0453 P1-12 — Audit found this hub-scrub ran on every render
+  // (50-200ms cost iterating localStorage). Now runs once per app session
+  // via useEffect with a sessionStorage flag, not on every parent render.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
     try {
       const SCRUB_HUB = 'mc:hub-scrub:v3';
       if (!localStorage.getItem(SCRUB_HUB)) {
@@ -91,7 +94,7 @@ function useMarketEarnings(months: string[]) {
         localStorage.setItem(SCRUB_HUB, '1');
       }
     } catch {}
-  }
+  }, []);
   return useQuery<MarketEarningsResponse>({
     queryKey: ['market-earnings-hub', key],
     queryFn: async () => {
@@ -915,9 +918,16 @@ export default function EarningsOpportunitiesPage() {
 
   // PATCH 0362 — Reset baseline on date change so we don't flag every card
   // as "new" the moment user navigates to a different date.
+  // PATCH 0453 P1-13 — Audit found this raced with the gradedData effect on
+  // rapid date arrow clicks — sometimes every card got marked NEW because
+  // the baseline-reset and the gradedData write fired in the wrong order.
+  // Track the last date we baselined so the gradedData effect can detect
+  // "this is a fresh date, baseline silently" vs "real new arrivals".
+  const lastBaselinedDateRef = useRef<string>('');
   useEffect(() => {
     seenTickersRef.current = new Set();
     setFreshTickers(new Set());
+    lastBaselinedDateRef.current = '';
   }, [resolvedDateForGrading]);
 
   // PATCH 0402 — CLIENT-SIDE AUTO-HEAL.
@@ -968,9 +978,12 @@ export default function EarningsOpportunitiesPage() {
         if (c.ticker) currentTickers.add(c.ticker);
       }
     }
-    // First load: just record baseline, no NEW badges
-    if (seenTickersRef.current.size === 0) {
+    // PATCH 0453 P1-13 — First load OR date just changed (lastBaseline !==
+    // current date) → silently baseline, no NEW badges. Fixes the race
+    // where a rapid date click would mark every card NEW.
+    if (seenTickersRef.current.size === 0 || lastBaselinedDateRef.current !== resolvedDateForGrading) {
       seenTickersRef.current = currentTickers;
+      lastBaselinedDateRef.current = resolvedDateForGrading;
       return;
     }
     // Subsequent loads: anything new since last render gets the badge
@@ -994,8 +1007,9 @@ export default function EarningsOpportunitiesPage() {
       }, 10 * 60_000);
     }
     seenTickersRef.current = currentTickers;
+    lastBaselinedDateRef.current = resolvedDateForGrading;
     setLastAutoRefreshMs(Date.now());
-  }, [gradedData]);
+  }, [gradedData, resolvedDateForGrading]);
 
   // PATCH 0165 — prefetch the date before and after when user lands on a date
   // PATCH 0402 — widen the warm-up to the trailing 7 trading days. User's

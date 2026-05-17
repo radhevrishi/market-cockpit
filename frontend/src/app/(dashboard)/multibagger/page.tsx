@@ -6103,25 +6103,32 @@ function applyUSARanking(results: USAResult[]): USAResult[] {
   // Patch 0340-0343). Apply only hard-cap grade adjustments for cases where
   // we want to demote regardless of pillar score: mega-cap (limited 100x
   // runway from here), sub-10% growth, decelerating revenue.
-  return results.map(r => {
-    // Score-based grade is the source of truth (computed in scoreUSARow)
-    let grade: USAGrade = r.grade;
+  // PATCH 0453 P1-17 — Audit found these downgrade rules didn't compound:
+  // each cap only triggered on A+/A, so a stock that's mega-cap AND
+  // sub-10% growth AND decelerating only got demoted once (to B+).
+  // Now each rule walks the grade down one step, so triple-flag rows
+  // land at B or C as intended.
+  const GRADE_ORDER: USAGrade[] = ['A+', 'A', 'B+', 'B', 'C', 'D'];
+  const downgrade = (g: USAGrade, steps: number): USAGrade => {
+    const idx = GRADE_ORDER.indexOf(g);
+    if (idx < 0) return g;
+    return GRADE_ORDER[Math.min(GRADE_ORDER.length - 1, idx + steps)];
+  };
 
-    // Mega-cap downgrade: >$150B mcap cannot reasonably 100× — limit to B+ tier
-    if (r.marketCapB !== undefined && r.marketCapB > 150 && (grade === 'A+' || grade === 'A')) {
-      grade = 'B+';
-    }
-    // Mega-mega-cap downgrade: >$500B mcap can't realistically be a multibagger pick
-    if (r.marketCapB !== undefined && r.marketCapB > 500 && grade === 'B+') {
-      grade = 'B';
-    }
-    // Sub-10% growth in multibagger engine = not the thesis
-    if (r.revenueGrowthAnn !== undefined && r.revenueGrowthAnn < 10 && (grade === 'A+' || grade === 'A')) {
-      grade = 'B+';
-    }
-    // Decelerating revenue = momentum broken
-    if (r.accelSignal === 'DECELERATING' && (grade === 'A+' || grade === 'A')) {
-      grade = 'B+';
+  return results.map(r => {
+    let grade: USAGrade = r.grade;
+    let demoteSteps = 0;
+
+    // Each flag adds ONE step of demotion, regardless of current grade.
+    if (r.marketCapB !== undefined && r.marketCapB > 150) demoteSteps += 1;     // mega-cap
+    if (r.marketCapB !== undefined && r.marketCapB > 500) demoteSteps += 1;     // mega-mega-cap (additive on top of above)
+    if (r.revenueGrowthAnn !== undefined && r.revenueGrowthAnn < 10) demoteSteps += 1;  // not the thesis
+    if (r.accelSignal === 'DECELERATING') demoteSteps += 1;                     // momentum broken
+
+    // Floor at B+ for premium-grade rows (A+/A) — compounding extra steps
+    // pushes them further down per audit recommendation.
+    if (demoteSteps > 0 && (grade === 'A+' || grade === 'A' || grade === 'B+')) {
+      grade = downgrade(grade, demoteSteps);
     }
     return { ...r, grade };
   });
@@ -7423,6 +7430,12 @@ export default function MultibaggerPage() {
     try {
       localStorage.removeItem(STORAGE_KEY);
       localStorage.removeItem(STORAGE_META);
+      // PATCH 0453 P1-18 — Audit found cross-tab pages (Rerating, Signals,
+      // Earnings Scan) kept showing ghost tickers from a cleared upload
+      // because they only listened to the conviction-beats custom event,
+      // not a multibagger-specific signal. Now broadcast 'mb-upload:updated'
+      // so consumers can refresh their derived universes immediately.
+      window.dispatchEvent(new CustomEvent('mb-upload:updated', { detail: { cleared: true } }));
     } catch {}
   }
 
