@@ -11,7 +11,8 @@ import { articleMatchesStrategy } from '@/components/news/NewsCard';
 // PATCH 0214 — semantic color tokens (state / semantic / severity orthogonal)
 import { TOKENS, chipStyle } from '@/lib/design-tokens';
 // PATCH 0232 — Source-tier visuals for Evidence Panel
-import { classifySource, TIER_VISUAL } from '@/lib/source-tiers';
+import { classifySource, TIER_VISUAL, sourceQualityWeight } from '@/lib/source-tiers';
+import { annotateArticle, clusterByCanonical, confidenceBand, CONFIDENCE_VISUAL } from '@/lib/news/event-detectors';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -904,6 +905,86 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
                 {th.replace(/_/g, ' ')}
               </span>
             ))}
+            {/* PATCH 0449 — Institutional detector chips. Each fires only
+                when its regex matches; otherwise the card stays as-is. */}
+            {(() => {
+              const ann = annotateArticle({ title: article.title, headline: article.headline, summary: article.summary });
+              const chips: React.ReactNode[] = [];
+              if (ann.creditStress) chips.push(
+                <span key="cs" title={`Credit stress: ${ann.creditStress.label} — matched "${ann.creditStress.evidence}"`}
+                  style={{ fontSize: '9px', fontWeight: '700', padding: '3px 7px', borderRadius: '5px', backgroundColor: ann.creditStress.color + '15', color: ann.creditStress.color, border: `1px solid ${ann.creditStress.color}40`, letterSpacing: '0.3px' }}>
+                  {ann.creditStress.emoji} {ann.creditStress.label}
+                </span>
+              );
+              if (ann.promoter) chips.push(
+                <span key="pb" title={`Promoter behavior: ${ann.promoter.label} — matched "${ann.promoter.evidence}"`}
+                  style={{ fontSize: '9px', fontWeight: '700', padding: '3px 7px', borderRadius: '5px', backgroundColor: ann.promoter.color + '15', color: ann.promoter.color, border: `1px solid ${ann.promoter.color}40`, letterSpacing: '0.3px' }}>
+                  {ann.promoter.emoji} {ann.promoter.label}
+                </span>
+              );
+              if (ann.workingCapital) chips.push(
+                <span key="wc" title={`Working-capital stress: ${ann.workingCapital.label} — matched "${ann.workingCapital.evidence}"`}
+                  style={{ fontSize: '9px', fontWeight: '700', padding: '3px 7px', borderRadius: '5px', backgroundColor: ann.workingCapital.color + '15', color: ann.workingCapital.color, border: `1px solid ${ann.workingCapital.color}40`, letterSpacing: '0.3px' }}>
+                  {ann.workingCapital.emoji} {ann.workingCapital.label}
+                </span>
+              );
+              if (ann.expectation) chips.push(
+                <span key="eg" title={ann.expectation.label}
+                  style={{ fontSize: '9px', fontWeight: '700', padding: '3px 7px', borderRadius: '5px', backgroundColor: ann.expectation.color + '15', color: ann.expectation.color, border: `1px solid ${ann.expectation.color}40`, letterSpacing: '0.3px' }}>
+                  {ann.expectation.emoji} {ann.expectation.label}
+                </span>
+              );
+              if (ann.orderQuality) {
+                const oq = ann.orderQuality;
+                const lab = [
+                  oq.hasPassThrough ? 'pass-through' : null,
+                  oq.isGovernment ? 'govt' : oq.isPrivate ? 'private' : null,
+                  oq.durationLabel,
+                  oq.marginHint,
+                  oq.concentrationRisk ? '⚠ concentration' : null,
+                ].filter(Boolean).join(' · ');
+                if (lab) chips.push(
+                  <span key="oq" title={`Order-book quality signals: ${lab}`}
+                    style={{ fontSize: '9px', fontWeight: '700', padding: '3px 7px', borderRadius: '5px', backgroundColor: '#0F7ABF15', color: '#22D3EE', border: '1px solid #0F7ABF40', letterSpacing: '0.3px' }}>
+                    📋 {lab}
+                  </span>
+                );
+              }
+              if (ann.noise.isListicle) chips.push(
+                <span key="lst" title="Aggregator listicle — '5 stocks to watch'-style headline. Heavy noise penalty applied to ranking."
+                  style={{ fontSize: '9px', fontWeight: '700', padding: '3px 7px', borderRadius: '5px', backgroundColor: '#94A3B815', color: '#94A3B8', border: '1px solid #94A3B840', letterSpacing: '0.3px' }}>
+                  📋 LISTICLE
+                </span>
+              );
+              if (ann.noise.isSpeculation) chips.push(
+                <span key="spc" title="Speculative headline — 'could acquire' / 'in talks' / 'reportedly'. Penalty applied to ranking."
+                  style={{ fontSize: '9px', fontWeight: '700', padding: '3px 7px', borderRadius: '5px', backgroundColor: '#F59E0B15', color: '#F59E0B', border: '1px solid #F59E0B40', letterSpacing: '0.3px' }}>
+                  💭 SPECULATION
+                </span>
+              );
+              // Confidence band — derived in the parent useMemo from source-weight + cluster size.
+              const cb = (article as any).__confidence as keyof typeof CONFIDENCE_VISUAL | undefined;
+              if (cb && CONFIDENCE_VISUAL[cb]) {
+                const v = CONFIDENCE_VISUAL[cb];
+                chips.push(
+                  <span key="cb" title={v.description}
+                    style={{ fontSize: '9px', fontWeight: '700', padding: '3px 7px', borderRadius: '5px', backgroundColor: v.color + '15', color: v.color, border: `1px solid ${v.color}40`, letterSpacing: '0.3px' }}>
+                    {v.emoji} {v.label}
+                  </span>
+                );
+              }
+              // Cluster size chip — "+N sources"
+              const clusterSize = (article as any).__clusterSize as number | undefined;
+              if (clusterSize && clusterSize > 1) {
+                chips.push(
+                  <span key="cl" title={`This event also reported by ${clusterSize - 1} other source${clusterSize === 2 ? '' : 's'} — clustered under one master article.`}
+                    style={{ fontSize: '9px', fontWeight: '700', padding: '3px 7px', borderRadius: '5px', backgroundColor: '#10B98115', color: '#10B981', border: '1px solid #10B98140', letterSpacing: '0.3px' }}>
+                    🔗 +{clusterSize - 1} sources
+                  </span>
+                );
+              }
+              return chips;
+            })()}
           </div>
           <p style={{ fontSize: '17px', fontWeight: '600', color: '#E8EDF2', margin: '0 0 4px', lineHeight: '1.55' }}>{title}</p>
           {article.impact_statement && (
@@ -2184,11 +2265,20 @@ export default function NewsFeedPage() {
       return { total: parts.importance + parts.severity + parts.structural + parts.recency, parts };
     };
 
-    // Annotate before sorting so the score is stable.
+    // PATCH 0449 NEWS-1/4 — Multiply priority by source-quality weight AND
+    // aggregator-noise quality multiplier. PRIMARY exchange filings now
+    // consistently outrank ET/Mint rewrites of the same news. Listicle
+    // headlines and pure speculation drop to the bottom.
     for (const a of filtered) {
       const { total, parts } = scoreOf(a);
-      (a as any).__priority = Math.round(total * 10) / 10;
-      (a as any).__priorityParts = parts;
+      const srcW = sourceQualityWeight(a.source_name || a.source, a.source_url || a.url);
+      const noise = annotateArticle({ title: a.title, headline: a.headline, summary: a.summary }).noise;
+      const adjusted = total * srcW * noise.qualityMultiplier;
+      (a as any).__priority = Math.round(adjusted * 10) / 10;
+      (a as any).__priorityParts = { ...parts, source_weight: srcW, noise_mult: noise.qualityMultiplier };
+      (a as any).__sourceWeight = srcW;
+      (a as any).__isListicle = noise.isListicle;
+      (a as any).__isSpeculation = noise.isSpeculation;
     }
 
     if (sortBy === 'impact') {
@@ -2201,17 +2291,28 @@ export default function NewsFeedPage() {
       });
     }
 
-    // Deduplicate by headline+source (NOT by id — backend IDs can collide
-    // when multiple articles share the same domain prefix). This catches
-    // true duplicates from persistent + live cache merge.
-    const seen = new Set<string>();
-    const deduped: NewsArticle[] = [];
-    for (const a of filtered) {
-      const key = `${(a.title || a.headline || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 60)}|${(a.source_name || a.source || '').toLowerCase()}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      deduped.push(a);
-    }
+    // PATCH 0449 NEWS-2 — Event canonicalization. Group duplicate stories
+    // (same ticker + event_type + ISO-week) under one master article. The
+    // master is the highest-source-quality + most-recent in each cluster.
+    // Old dedup matched only on headline string; canonical key also collapses
+    // rewrites that paraphrase the same filing.
+    const clusters = clusterByCanonical(filtered, {
+      weightFn: (a: any) => (a.__sourceWeight ?? 0.4),
+    });
+    // Stable order: keep the sort we already applied by masters.
+    clusters.sort((c1, c2) => ((c2.master as any).__priority || 0) - ((c1.master as any).__priority || 0));
+    const deduped: NewsArticle[] = clusters.map(c => {
+      // Stamp cluster metadata so NewsCard can render the "+N more" chip.
+      (c.master as any).__clusterSize = c.cluster_size;
+      (c.master as any).__clusterSources = c.duplicates.map((d: any) =>
+        d.source_name || d.source || 'source'
+      ).slice(0, 5);
+      // PATCH 0449 NEWS-3 — Confidence band derived from source quality +
+      // corroboration count (cluster size - 1).
+      const cb = confidenceBand((c.master as any).__sourceWeight ?? 0.4, c.cluster_size - 1);
+      (c.master as any).__confidence = cb;
+      return c.master;
+    });
 
     return deduped;
   }, [
