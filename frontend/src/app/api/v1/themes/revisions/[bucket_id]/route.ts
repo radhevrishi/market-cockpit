@@ -90,6 +90,17 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ buc
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ bucket_id: string }> }) {
+  // PATCH 0462 — same-origin Referer OR secret gate. Previously this was
+  // unauthenticated, so any external caller could pollute the revision log.
+  const secret = req.nextUrl.searchParams.get('secret');
+  const expected = process.env.CRON_SECRET;
+  const ref = req.headers.get('referer') || '';
+  const origin = req.nextUrl.origin;
+  const okSecret = expected && secret === expected;
+  const okRef = ref && ref.startsWith(origin);
+  if (!okSecret && !okRef) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  }
   const { bucket_id } = await params;
   if (!bucket_id) return NextResponse.json({ error: 'bucket_id required' }, { status: 400 });
   if (!isRedisAvailable()) return NextResponse.json({ error: 'kv-unavailable' }, { status: 503 });

@@ -1014,24 +1014,45 @@ function computeSentimentMagnitude(title: string, desc: string): {
   // Mild-negative (intensity 4-6)
   const mildNeg = /\b(miss(es|ed)?|fell|fall(s)?|drop(s|ped)?|decline|cut|lowered|reduce[ds]?|underperform|downgrade|negative|weak|loss|underweight)\b/i;
 
+  // PATCH 0462 — robust % extractor. Previously the first % match won —
+  // so "16% off the bundle deal" or "10% holding" hijacked the magnitude
+  // away from the actual move. Now we filter out % that follow consumer-
+  // deal verbs (off / discount / coupon / save) and ownership/stake words,
+  // then pick the LARGEST remaining percentage as the move magnitude.
+  function pickPct(t: string, max: number): number | null {
+    const re = /(\d{1,3})\s*%/g;
+    const cands: number[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(t)) !== null) {
+      const n = parseInt(m[1], 10);
+      if (n <= 0 || n > max) continue;
+      // ±20 chars context window
+      const ctx = t.slice(Math.max(0, m.index - 20), Math.min(t.length, m.index + m[0].length + 20)).toLowerCase();
+      if (/\b(off|discount|coupon|save|cashback|hold(ing|s)?|stake|stakeholding|share(holding)?|ownership|equity stake)\b/.test(ctx)) continue;
+      cands.push(n);
+    }
+    if (cands.length === 0) return null;
+    return Math.max(...cands);
+  }
+
   if (strongPos.test(text)) {
-    const m = text.match(/(\d{2,3})\s*%/);
-    const mag = m ? Math.min(10, Math.floor(parseInt(m[1], 10) / 10) + 6) : 8;
+    const n = pickPct(text, 999);
+    const mag = (n !== null && n >= 10) ? Math.min(10, Math.floor(n / 10) + 6) : 8;
     return { direction: 'positive', magnitude: mag };
   }
   if (strongNeg.test(text)) {
-    const m = text.match(/(\d{2,3})\s*%/);
-    const mag = m ? Math.min(10, Math.floor(parseInt(m[1], 10) / 10) + 6) : 8;
+    const n = pickPct(text, 999);
+    const mag = (n !== null && n >= 10) ? Math.min(10, Math.floor(n / 10) + 6) : 8;
     return { direction: 'negative', magnitude: mag };
   }
   if (mildPos.test(text)) {
-    const m = text.match(/(\d{1,2})\s*%/);
-    const mag = m ? Math.min(7, Math.floor(parseInt(m[1], 10) / 5) + 3) : 5;
+    const n = pickPct(text, 99);
+    const mag = (n !== null) ? Math.min(7, Math.floor(n / 5) + 3) : 5;
     return { direction: 'positive', magnitude: mag };
   }
   if (mildNeg.test(text)) {
-    const m = text.match(/(\d{1,2})\s*%/);
-    const mag = m ? Math.min(7, Math.floor(parseInt(m[1], 10) / 5) + 3) : 5;
+    const n = pickPct(text, 99);
+    const mag = (n !== null) ? Math.min(7, Math.floor(n / 5) + 3) : 5;
     return { direction: 'negative', magnitude: mag };
   }
   return { direction: 'neutral', magnitude: 0 };

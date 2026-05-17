@@ -45,6 +45,18 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ eve
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ event_id: string }> }) {
+  // PATCH 0462 — same-origin Referer OR secret gate. Previously this was
+  // unauthenticated, so any external caller could flip lifecycle state on
+  // any event, poisoning shared KV.
+  const secret = req.nextUrl.searchParams.get('secret');
+  const expected = process.env.CRON_SECRET;
+  const ref = req.headers.get('referer') || '';
+  const origin = req.nextUrl.origin;
+  const okSecret = expected && secret === expected;
+  const okRef = ref && ref.startsWith(origin);
+  if (!okSecret && !okRef) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  }
   const { event_id } = await params;
   if (!event_id) return NextResponse.json({ error: 'event_id required' }, { status: 400 });
   if (!isRedisAvailable()) return NextResponse.json({ error: 'kv-unavailable' }, { status: 503 });
