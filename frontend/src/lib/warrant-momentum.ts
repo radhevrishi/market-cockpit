@@ -464,6 +464,47 @@ export function scoreWarrantConviction(inputs: ScoreWarrantInputs): WarrantConvi
   }
   raw += c.governance_penalty;
 
+  // ── PATCH 0459 IMP-5 — Deleveraging-with-inflection bonus. Audit
+  // flagged STL Networks (and similar) as scoring 4.5 when institutional
+  // priors say 6.5-7. Root cause: DEBT_REPAY was treated as PURE distress
+  // (-0.20 to tier classification), even when the deleveraging is
+  // happening at an INFLECTING business with promoter capital infusion.
+  //
+  // Now: when capital_use === DEBT_REPAY AND business momentum is strong
+  // AND promoter participation is heavy, we treat it as the bullish
+  // 'balance-sheet repair at inflection' setup rather than distress.
+  //   • +1.5 to raw score
+  //   • +1.0 if 52w-high breakout also confirms (price is leading the
+  //     deleveraging thesis)
+  //   • +0.5 if mid-cap or larger (size = institutional comfort)
+  if (
+    details.capital_use === 'DEBT_REPAY'
+    && details.is_promoter_subscribed
+    && (details.promoter_participation_pct ?? 0) >= 40
+    && business_momentum_score != null && business_momentum_score >= 5
+  ) {
+    raw += 1.5;
+    signals.push('Deleveraging at inflection — interest savings → EPS uplift');
+    if (perf_52w_high_pct != null && perf_52w_high_pct >= -10) {
+      raw += 1.0;
+      signals.push('Price near 52w high — market already validates the turnaround');
+    }
+    if (market_cap_cr != null && market_cap_cr >= 1000) {
+      raw += 0.5;
+      signals.push(`₹${market_cap_cr.toFixed(0)}Cr mcap — institutional accessibility`);
+    }
+  }
+
+  // ── PATCH 0459 IMP-5 — Post-demerger / group-rerating signal. When the
+  // warrant filing or recent concall mentions 'demerger' / 'spin' /
+  // 'parent company' / 'group' AND the business is on the right side of
+  // separation, we add a structural bonus.
+  const demergerHint = /\b(post[- ]?demerger|after\s+demerger|spin[- ]?off|separated\s+entity|listed\s+(?:subsidiary|arm)|parent\s+(?:group|company)|group[- ]?level\s+rerating)\b/i;
+  if (demergerHint.test(details.capital_use_evidence || '')) {
+    raw += 0.75;
+    signals.push('Post-demerger / group rerating context');
+  }
+
   // ── Hard gate per user spec: only score ≥ 8 passes ────────────────────
   // Gates A, B, C, D must all be cleared:
   //   A. Promoter participation = present

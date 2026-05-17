@@ -194,29 +194,89 @@ export interface CatalystScore {
   components: Array<{ label: string; pts: number }>;
 }
 
+// PATCH 0459 IMP-3 — Event-specific time-decay curves. Earlier version
+// used compressed half-lives (14-90d) which made every event evaporate
+// from the leaderboard within 1-2 months. Institutional priors per audit:
+//   • Buyback tender: 30-60d (≈45d half-life)
+//   • Open offer: 90-180d (≈135d)
+//   • M&A definitive: 90-180d
+//   • Going private: 60-120d
+//   • Spin-off / demerger: 9-18 months (≈360d) — forced flow persists
+//   • Rights / QIP / PIPE: 6-18 months (≈270d) — warrant conversion + dilution unwind
+//   • Convertible PIPE: 12-24 months
+//   • NCLT / IBC: 1-3 years (≈540d) — multi-year resolution lifecycle
+//   • Index inclusion: 60-90d (≈75d)
+//   • HoldCo arb / stub trades: 9-18 months
+//   • Governance crisis: 60-180d
+//   • Turnaround operating: 60-120d (cycle gives time to verify)
+//   • Bonus / split: 14-30d (mechanical, short-lived)
 function eventHalfLifeDays(t: EventType): number {
   switch (t) {
+    // ── Forced-flow / structural — long persistence ──────────────────
     case 'SPIN_OFF':
     case 'DEMERGER_INDIA':
     case 'IPO_SUBSIDIARY':
-      return 90;        // forced-flow window persists for ~3mo
+      return 360;
+    case 'HOLDCO_ARB_TRIGGER':
+    case 'STUB_TRADE_TRIGGER':
+      return 365;
+    // ── M&A / open offer / take-private — multi-month ────────────────
     case 'MERGER_DEFINITIVE':
-    case 'TENDER_OFFER':
-    case 'OPEN_OFFER':
-    case 'GOING_PRIVATE':
     case 'MERGER_RECOMMENDATION':
-      return 30;
+    case 'ACQUISITION_PUBLIC':
+      return 150;
+    case 'OPEN_OFFER':
+      return 135;
+    case 'TENDER_OFFER':
+      return 120;
+    case 'GOING_PRIVATE':
+      return 100;
+    // ── Capital allocation — recurring quarterly events ──────────────
     case 'BUYBACK_TENDER':
+      return 45;
+    case 'BUYBACK_OPEN_MARKET':
+      return 60;
+    case 'DIVIDEND_HIKE':
+      return 30;
+    // ── Rights / PIPE / warrants — dilution overhang multi-quarter ───
     case 'RIGHTS_ISSUE':
+    case 'RIGHTS_ISSUE_DEEP':
+      return 180;
     case 'QIP_PLACEMENT':
-      return 14;
+      return 90;
+    case 'CONVERTIBLE_PIPE':
+    case 'PROMOTER_BACKSTOP':
+      return 365;
+    // ── Asset / stake monetisation ──────────────────────────────────
+    case 'ASSET_SALE_MONETIZATION':
+    case 'STAKE_SALE':
+      return 120;
+    // ── Distressed — long lifecycle ─────────────────────────────────
+    case 'NCLT_IBC_ADMISSION':
+    case 'NCLT_IBC_RESOLUTION':
+      return 540;
     case 'TURNAROUND_OPERATING':
+      return 120;
+    // ── Index inclusion / exclusion ────────────────────────────────
+    case 'INDEX_INCLUSION':
+    case 'INDEX_EXCLUSION':
+      return 75;
+    // ── Governance ─────────────────────────────────────────────────
+    case 'GOVERNANCE_CRISIS':
+    case 'SEBI_REGULATORY_ACTION':
+    case 'AUDITOR_QUALIFIED':
+    case 'PROMOTER_PLEDGE_UNWIND':
+      return 90;
+    // ── Bonus / split — mechanical, fades fast ────────────────────
+    case 'BONUS_ISSUE':
+    case 'STOCK_SPLIT':
       return 21;
+    // ── Soft / speculative ─────────────────────────────────────────
     case 'TURNAROUND_NARRATIVE':
     case 'NEWS_RUMOR':
-      return 5;
+      return 7;
     default:
-      return 14;
+      return 30;
   }
 }
 
