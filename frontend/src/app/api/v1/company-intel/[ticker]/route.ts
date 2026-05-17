@@ -28,8 +28,10 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { kvGet, kvSet, kvDel, isRedisAvailable } from '@/lib/kv';
-import { extractGuidance, guidanceSummary, type GuidanceItem } from '@/lib/company-intel/guidance-extractor';
-import { maintainIndex } from '../index/route';
+import { extractGuidance, guidanceSummary } from '@/lib/company-intel/guidance-extractor';
+// PATCH 0458 — maintainIndex lives in /lib now; route files can't export helpers.
+import { maintainCompanyIntelIndex as maintainIndex } from '@/lib/company-intel/index-maintenance';
+import type { IntelDocument, IntelCorpus } from '@/lib/company-intel/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -40,23 +42,9 @@ const MAX_DOCS = 50;
 const MAX_DOC_CHARS = 200_000;
 const TTL_S = 365 * 24 * 3600; // 1 year
 
-export interface IntelDocument {
-  id: string;
-  kind: 'concall_transcript' | 'earnings_ppt' | 'guidance_doc' | 'investor_presentation' | 'manual' | 'other';
-  title: string;
-  text: string;             // raw extracted text (truncated to MAX_DOC_CHARS)
-  uploaded_at: string;
-  size_chars: number;
-}
-
-export interface IntelCorpus {
-  ticker: string;
-  company?: string;
-  documents: IntelDocument[];
-  guidance: (GuidanceItem & { source_doc_id?: string })[];
-  summary?: string;        // one-line "Growth Guidance" summary for the table view
-  updated_at: string;
-}
+// PATCH 0458 — IntelDocument / IntelCorpus types moved to
+// @/lib/company-intel/types so Next.js route file doesn't try to export
+// them. They are imported at the top of the file.
 
 function normalizeTicker(t: string): string {
   return (t || '').toUpperCase().replace(/^(NSE|BSE):/, '').replace(/\.(NS|BO|BSE|NSE)$/, '').trim();

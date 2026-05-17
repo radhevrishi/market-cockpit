@@ -13,8 +13,21 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
-import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
-import type { IntelCorpus } from '../[ticker]/route';
+import { kvGet, isRedisAvailable } from '@/lib/kv';
+
+// PATCH 0458 — Inline the corpus shape here instead of importing from
+// '../[ticker]/route' because Next.js route files are not type-stable
+// import targets across the build pipeline (the Vercel build pass
+// rejected the export of maintainIndex from this file, and we don't
+// want to risk the type import failing the same way).
+interface IntelCorpus {
+  ticker: string;
+  company?: string;
+  documents: any[];
+  guidance: any[];
+  summary?: string;
+  updated_at: string;
+}
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -63,17 +76,6 @@ export async function GET() {
   return NextResponse.json({ rows, total: rows.length, updated_at: new Date().toISOString() });
 }
 
-/** Helper for the [ticker] POST route to maintain the index set. */
-export async function maintainIndex(ticker: string): Promise<void> {
-  if (!isRedisAvailable()) return;
-  try {
-    const tickers = (await kvGet<string[]>(INDEX_KEY)) || [];
-    const tk = ticker.toUpperCase();
-    if (!tickers.includes(tk)) {
-      tickers.push(tk);
-      // Keep last 500 to bound the set.
-      const trimmed = tickers.slice(-500);
-      await kvSet(INDEX_KEY, trimmed, 365 * 24 * 3600);
-    }
-  } catch {}
-}
+// PATCH 0458 — maintainIndex moved to /lib/company-intel/index-maintenance.ts
+// because Next.js route files can only export GET/POST/DELETE etc. Any other
+// export (even a helper) is rejected by the build.
