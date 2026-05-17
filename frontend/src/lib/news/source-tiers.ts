@@ -183,12 +183,18 @@ export interface TierContribution {
   bottleneck_anchor_required: boolean;  // require strong title anchor for BOTTLENECK
 }
 
+// PATCH 0461 — PRESS_RELEASE is NOT noise. Company-issued press releases
+// are PRIMARY-source material from the company itself (especially when
+// distributed via PR Newswire / Business Wire). Treat them as neutral-to-
+// favourable, not as 0.40-multiplier garbage. Audit found genuinely
+// market-moving company announcements were being suppressed below
+// generalist news commentary because of this misclassification.
 const TIER_TABLE: Record<SourceTier, TierContribution> = {
   PRIMARY:       { tier: 'PRIMARY',       multiplier: 1.15, noise_penalty: 0,  bottleneck_anchor_required: false },
   SPECIALIST:    { tier: 'SPECIALIST',    multiplier: 1.10, noise_penalty: 0,  bottleneck_anchor_required: true  },
   GENERALIST:    { tier: 'GENERALIST',    multiplier: 0.95, noise_penalty: 5,  bottleneck_anchor_required: true  },
   EDITORIAL:     { tier: 'EDITORIAL',     multiplier: 0.55, noise_penalty: 15, bottleneck_anchor_required: true  },
-  PRESS_RELEASE: { tier: 'PRESS_RELEASE', multiplier: 0.40, noise_penalty: 20, bottleneck_anchor_required: true  },
+  PRESS_RELEASE: { tier: 'PRESS_RELEASE', multiplier: 0.95, noise_penalty: 4,  bottleneck_anchor_required: true  },
   SOCIAL:        { tier: 'SOCIAL',        multiplier: 0.30, noise_penalty: 30, bottleneck_anchor_required: true  },
   UNKNOWN:       { tier: 'UNKNOWN',       multiplier: 0.85, noise_penalty: 8,  bottleneck_anchor_required: true  },
 };

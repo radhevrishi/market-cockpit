@@ -375,7 +375,13 @@ const UNTRADABLE_FOR_INDIA_RETAIL: Array<{ pattern: RegExp; reason: string }> = 
     reason: 'European bank consolidation — no NSE/BSE/GDR listing for India retail' },
   { pattern: /\b(spac|special purpose acquisition company)\b.*\b(combination|merger|business combination)\b/i,
     reason: 'SPAC combination — US-listed only, no India retail access' },
-  { pattern: /\b(nclt|insolvency.{0,20}resolution|corporate insolvency resolution|cirp|liquidation order)\b/i,
+  // PATCH 0461 — narrow NCLT match to insolvency-specific phrasing. The
+  // previous regex matched bare 'nclt' anywhere, which incorrectly rejected
+  // DEMERGER_INDIA / scheme-of-arrangement filings (those route through
+  // NCLT too, but for approval — not insolvency). Now we require the NCLT
+  // context to be insolvency / liquidation, OR independent insolvency
+  // phrases. Demerger / scheme / sanction NCLT filings now pass through.
+  { pattern: /\b(nclt[^.]{0,40}(insolvency|liquidation|cirp|moratorium|admit(ted)?)|insolvency.{0,20}resolution|corporate insolvency resolution|cirp|liquidation order)\b/i,
     reason: 'NCLT insolvency — equity typically extinguished, no upside trade' },
 ];
 

@@ -1482,7 +1482,23 @@ function ConcallIntelligence() {
 
   // Read screener stocks from localStorage
   // Combine ALL tracked stocks: Screener + Watchlist + Portfolio (so no stock is missed)
-  const screenerStocks: {symbol:string;company:string;sector:string;source:string;grade?:string;score?:number}[] = (() => {
+  // PATCH 0461 — memoize. Previously the localStorage parse + array build
+  // ran on every render (every state change in the page). With 100+ tracked
+  // stocks this is measurable per-render jank. We use useMemo + a manual
+  // invalidation tick that listens to storage events + custom upload events.
+  const [stocksTick, setStocksTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setStocksTick(t => t + 1);
+    window.addEventListener('storage', bump);
+    window.addEventListener('mb-upload:updated', bump);
+    window.addEventListener('conviction-beats:updated', bump);
+    return () => {
+      window.removeEventListener('storage', bump);
+      window.removeEventListener('mb-upload:updated', bump);
+      window.removeEventListener('conviction-beats:updated', bump);
+    };
+  }, []);
+  const screenerStocks = useMemo<{symbol:string;company:string;sector:string;source:string;grade?:string;score?:number}[]>(() => {
     const seen = new Set<string>();
     const all: {symbol:string;company:string;sector:string;source:string;grade?:string;score?:number}[] = [];
     // 1. Multibagger screener stocks (mb_excel_scored_v2)
@@ -1510,7 +1526,7 @@ function ConcallIntelligence() {
       });
     } catch {}
     return all;
-  })();
+  }, [stocksTick]);
 
   async function fetchConcallData() {
     if (screenerStocks.length === 0) return;

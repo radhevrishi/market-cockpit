@@ -1221,6 +1221,14 @@ function scoreExcelRow(row: ExcelRow): ExcelResult {
     if (row.peg>2.5 && isHighGrowth)  risks.push(`PEG ${row.peg.toFixed(2)} — high but growth >25% may justify`);
   } else if (cyclical && row.peg!==undefined) {
     risks.push(`PEG ${row.peg.toFixed(2)} excluded — cyclical earnings unreliable for growth-adjusted valuation`);
+  } else if (row.peg!==undefined && row.peg<=0 && !cyclical) {
+    // PATCH 0461 — PEG ≤ 0 is NOT a free pass. Negative PEG means either
+    // negative earnings (P/E undefined) OR negative growth. Both are red
+    // flags, not "skip valuation". Previously unprofitable names with
+    // PEG=-1 quietly avoided the entire valuation pillar — that's a
+    // free pass for the riskiest names in the universe.
+    valComponents.push(35);
+    risks.push(`PEG ${row.peg.toFixed(2)} — negative (loss-making or negative growth); valuation pillar penalised`);
   }
   if (row.marginOfSafety!==undefined) {
     const mosScore = row.marginOfSafety>30?92:row.marginOfSafety>15?80:row.marginOfSafety>0?66:row.marginOfSafety>-15?48:row.marginOfSafety>-30?34:18;
@@ -5458,6 +5466,12 @@ function scoreUSARow(row: USARow): USARow & { score: number; grade: USAGrade; co
     valComponents.push(pegS);
     if (row.peg<1.0) strengths.push(`PEG ${row.peg.toFixed(2)} — undervalued relative to growth rate`);
     else if (row.peg>3.0) risks.push(`PEG ${row.peg.toFixed(2)} — expensive relative to growth rate`);
+  } else if (row.peg !== undefined && row.peg <= 0) {
+    // PATCH 0461 — PEG ≤ 0 is a red flag, not a skip. Negative PEG means
+    // negative growth or loss-making. Either way the growth-adjusted
+    // valuation pillar should be penalised, not silently ignored.
+    valComponents.push(35);
+    risks.push(`PEG ${row.peg.toFixed(2)} — negative (loss-making or contracting); valuation pillar penalised`);
   }
   // Forward revenue growth — visibility premium
   if (row.forwardRevGrowth !== undefined) {
@@ -6484,16 +6498,20 @@ const USA_CHECKLIST: USAChecklistItem[] = [
 const USA_CHECKLIST_STORAGE = 'mb_usa_checklist_v1';
 
 function USAChecklist() {
-  // Re-score from localStorage so ALL derived fields (ruleOf40, grossMarginExpansion,
-  // accelSignal etc.) are always current — fixes autoStatus returning null for old data.
-  const usaRows = (() => {
+  // PATCH 0461 — memoize the re-score so this component doesn't burn
+  // 200-800ms re-parsing localStorage + re-running scoreUSARow on every
+  // render. The dependency intentionally includes nothing — we only need
+  // to re-score on mount; manual upload/clear is driven through events
+  // captured below. (Audit found this was the biggest perf hog on the
+  // USA tab.)
+  const usaRows = React.useMemo(() => {
     try {
       const saved = localStorage.getItem('mb_usa_scored_v1');
       if (!saved) return [];
       const parsed = JSON.parse(saved) as USAResult[];
       return parsed.map(r => scoreUSARow(r as unknown as USARow));
     } catch { return []; }
-  })();
+  }, []);
   const [checks, setChecks] = React.useState<Record<string,boolean>>(() => {
     try { return JSON.parse(localStorage.getItem(USA_CHECKLIST_STORAGE)||'{}'); } catch { return {}; }
   });

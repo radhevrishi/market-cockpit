@@ -512,7 +512,22 @@ export async function GET(req: Request) {
   const month = date.slice(0, 7);
   // PATCH 0175 — when force=1, propagate to the hub so its in-memory cache also gets bypassed
   const hubUrl = `${base.protocol}//${base.host}/api/market/earnings?market=india&month=${month}${force ? '&force=1' : ''}`;
-  const hubRes = await fetch(hubUrl, { cache: 'no-store' });
+  // PATCH 0461 — hard 25s timeout on the hub fetch. Previously this could
+  // hang for the full Vercel function lifetime (60s) and return a 504,
+  // poisoning the client's retry loop. AbortController fires at 25s so
+  // we still have a few seconds of budget left for KV write + response.
+  let hubRes: Response;
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 25_000);
+    try {
+      hubRes = await fetch(hubUrl, { cache: 'no-store', signal: ctl.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (e: any) {
+    return NextResponse.json({ error: 'hub fetch timeout', message: e?.message }, { status: 504 });
+  }
   if (!hubRes.ok) {
     return NextResponse.json({ error: 'hub fetch failed', status: hubRes.status }, { status: 502 });
   }
