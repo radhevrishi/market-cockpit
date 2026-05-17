@@ -95,7 +95,15 @@ interface Article {
 // uploaded list (mb3_symbols localStorage) is the default if non-empty,
 // then watchlist/portfolio. User can switch via UI dropdown.
 
-type UniverseChoice = 'AUTO' | 'MULTIBAGGER' | 'PORTFOLIO' | 'WATCHLIST' | 'NSE500' | 'CUSTOM';
+type UniverseChoice = 'AUTO' | 'MULTIBAGGER' | 'PORTFOLIO' | 'WATCHLIST' | 'CONVICTION' | 'NSE500' | 'CUSTOM';
+
+// PATCH 0448 — Multi-select universe chip rail. User wants Re-rating to
+// consider only Watchlist + Multibagger + Portfolio + Conviction Beats by
+// default (their actual interest set), with toggleable chips so they can
+// narrow or widen. Source-set IDs match the legacy UniverseChoice strings
+// so existing read paths keep working.
+type UniverseSource = 'MULTIBAGGER' | 'PORTFOLIO' | 'WATCHLIST' | 'CONVICTION';
+const DEFAULT_UNIVERSE_SOURCES: UniverseSource[] = ['MULTIBAGGER', 'PORTFOLIO', 'WATCHLIST', 'CONVICTION'];
 
 // PATCH 0117 — IMP-06: BSE code → NSE ticker normalization.
 // Screener exports sometimes carry the BSE security-code form 'BSE:523850'
@@ -305,6 +313,17 @@ function useUniverseSymbols(choice: UniverseChoice, customCsv: string) {
         for (const s of readMultibaggerSymbols()) out.add(s);
       };
 
+      // PATCH 0448 — Conviction Beats reader. Lives in conviction-beats LS;
+      // expose the strip-suffix tickers (matches ranker conventions).
+      const addConviction = () => {
+        try {
+          const cb = getConvictionTickers();
+          for (const t of cb) {
+            if (t) out.add(String(t).toUpperCase());
+          }
+        } catch {}
+      };
+
       let source = 'auto';
       // PATCH 0112: format source label with PROPER stock count
       // (not '(1)' which means 1 upload batch — confusing)
@@ -317,6 +336,10 @@ function useUniverseSymbols(choice: UniverseChoice, customCsv: string) {
       } else if (choice === 'WATCHLIST') {
         await addWatchlist();
         source = `My Watchlist · ${out.size} ${out.size === 1 ? 'stock' : 'stocks'}`;
+      } else if (choice === 'CONVICTION') {
+        // PATCH 0448 — Conviction Beats only universe
+        addConviction();
+        source = `Conviction Beats · ${out.size} ${out.size === 1 ? 'stock' : 'stocks'}`;
       } else if (choice === 'NSE500') {
         const list = await fetchNSE500();
         for (const s of list) out.add(s);
@@ -325,17 +348,17 @@ function useUniverseSymbols(choice: UniverseChoice, customCsv: string) {
         for (const t of customCsv.split(/[,\s]+/).map((s) => s.trim().toUpperCase()).filter(Boolean)) out.add(t);
         source = `Custom · ${out.size} ${out.size === 1 ? 'stock' : 'stocks'}`;
       } else {
-        // AUTO: prefer Multibagger upload; if empty, fall back to portfolio + watchlist union
+        // PATCH 0448 — AUTO is now the union of the four user-interest sets:
+        // Multibagger upload + Portfolio + Watchlist + Conviction Beats.
+        // User explicitly asked for rerating to consider 'watchlist + MB +
+        // portfolio + Conviction'. The wider NSE500 universe stays available
+        // as an explicit chip but is no longer the auto fallback.
         addMultibagger();
-        if (out.size === 0) {
-          await addPortfolio();
-          await addWatchlist();
-          const n0: number = out.size;
-          source = `Portfolio + Watchlist · ${n0} ${n0 === 1 ? 'stock' : 'stocks'}`;
-        } else {
-          const n0 = out.size;
-          source = `Multibagger Upload · ${n0} ${n0 === 1 ? 'stock' : 'stocks'}`;
-        }
+        await addPortfolio();
+        await addWatchlist();
+        addConviction();
+        const n0 = out.size;
+        source = `MB + Portfolio + Watchlist + CB · ${n0} ${n0 === 1 ? 'stock' : 'stocks'}`;
       }
       return { symbols: Array.from(out), source, mbStocks };
     },
@@ -612,30 +635,51 @@ const MODEL_SHIFT_TICKER_BLACKLIST = new Set([
 // capex → maintenance, services → product, distributor → direct.
 const MODEL_SHIFT_VERB_NEARBY = /\b(transition\w*\s+to|pivots?\s+to|shifts?\s+to|launch(?:es|ed|ing)?\s+\w*\s*(?:subscription|recurring|platform|saas)|moves?\s+to\s+(?:subscription|recurring|platform|saas|annuity)|building\s+(?:its|a|an)\s+\w*\s*(?:subscription|recurring|platform|saas)|introduces?\s+(?:subscription|recurring|platform|saas)|business\s+model\s+(?:change|shift|transition)|recurring\s+revenue\s+grows|arr\s+(?:reaches|crosses|exceeds)|epc\s+to\s+product|services?\s+to\s+product|trading\s+to\s+manufactur|domestic\s+to\s+export|project[- ]based?\s+to\s+annuity|b2b\s+to\s+b2c|contract\s+manufactur\w+\s+to\s+(?:own\s+brand|branded)|asset[- ]heavy\s+to\s+asset[- ]light|capex\s+to\s+maintenance|channel\s+to\s+direct|distributor\s+to\s+direct|wholesale\s+to\s+retail|licensee\s+to\s+manufactur|moving\s+up\s+the\s+value\s+chain|forward\s+integrat\w+|backward\s+integrat\w+|launches?\s+own\s+brand|enter(?:s|ing|ed)?\s+(?:exports?|us|europe)\s+market|annuity\s+(?:stream|revenue|business)\s+(?:grows|builds|emerges|crosses))/i;
 
+// PATCH 0448 BUG-055 — coerce ticker entries that may be objects.
+function _coerceTickerSym(t: any): string {
+  if (typeof t === 'string') return t.toUpperCase();
+  return String(t?.ticker ?? t?.symbol ?? '').toUpperCase();
+}
+
 function computeModelShift(articles: Article[]): ModelShiftRow[] {
   const now = Date.now();
-  const map = new Map<string, { recent: number; prior: number; latest_headline?: string; latest_age?: number }>();
+  // PATCH 0448 BUG-055 — Model Shift was returning 0 because the verb-nearby
+  // check was too strict: it required phrases like 'transitions to subscription'
+  // in the same headline as a model keyword. Real news rarely uses such
+  // hand-holding language. Now:
+  //   • Keyword match = required (model-shift vocabulary present)
+  //   • Verb-nearby match = STRENGTH boost (recent_count gets 2x weight)
+  //     instead of a hard reject.
+  //   • Single-mention tickers still surface as long as keyword + universe
+  //     conditions pass.
+  // This restores the panel for the typical news feed while keeping noise
+  // controlled via the blacklist + universe scoping.
+  const map = new Map<string, {
+    recent: number; prior: number; strong: boolean;
+    latest_headline?: string; latest_age?: number;
+  }>();
   for (const a of articles) {
     const text = `${a.headline || a.title || ''} ${a.summary || ''}`;
     if (!MODEL_SHIFT_PATTERN.test(text)) continue;
-    // PATCH 0112: require model-shift VERB near the keyword (kills 'EPC contract'
-    // false positives on PSU utility orders).
-    if (!MODEL_SHIFT_VERB_NEARBY.test(text)) continue;
+    const isStrong = MODEL_SHIFT_VERB_NEARBY.test(text);
     const date = a.published_at ? new Date(a.published_at).getTime() : now;
     const ageDays = Math.round((now - date) / 86400000);
-    const tickers = (a.ticker_symbols || a.tickers || []).map((t) => String(t).toUpperCase());
+    const tickers = (a.ticker_symbols || (a as any).tickers || []).map(_coerceTickerSym).filter(Boolean);
     for (const t of tickers) {
       // PATCH 0112: drop pseudo-tickers + PSU utility false positives
       if (MODEL_SHIFT_TICKER_BLACKLIST.has(t)) continue;
-      const cur = map.get(t) || { recent: 0, prior: 0 };
+      const cur = map.get(t) || { recent: 0, prior: 0, strong: false };
+      // Strong verb-near match counts 2x toward recent; weak counts 1x.
+      const inc = isStrong ? 2 : 1;
       if (ageDays <= 90) {
-        cur.recent += 1;
+        cur.recent += inc;
+        if (isStrong) cur.strong = true;
         if (cur.latest_age == null || ageDays < cur.latest_age) {
           cur.latest_age = ageDays;
           cur.latest_headline = a.headline || a.title;
         }
       } else {
-        cur.prior += 1;
+        cur.prior += inc;
       }
       map.set(t, cur);
     }
@@ -712,6 +756,8 @@ export default function RerratingPage() {
   const [active, setActive] = useState<Tab>(TABS.some((t) => t.id === initial) ? initial : 'margin');
   const [region, setRegion] = useState<'ALL' | 'IN' | 'GLOBAL'>('ALL');
   // PATCH 0108 — BUG-02: universe selector
+  // PATCH 0448 — Default to AUTO (= MB + Portfolio + Watchlist + Conviction
+  // Beats union). User specifically asked for these four sources by default.
   const [universeChoice, setUniverseChoice] = useState<UniverseChoice>('AUTO');
   const [customCsv, setCustomCsv] = useState('');
 
@@ -795,18 +841,59 @@ export default function RerratingPage() {
           <span style={{ fontSize: 12, color: '#4A5B6C' }}>Margin Expansion · Model Shift · Multiple Expansion</span>
           <span style={{ fontSize: 11, color: '#6B7A8D' }}>Universe: {universeSource}</span>
           {/* PATCH 0108 — BUG-02: universe selector */}
+          {/* PATCH 0448 — Universe chip rail. Multi-select feel via dropdown
+              for now (extension hooks below). Default 'AUTO' unions MB +
+              Portfolio + Watchlist + Conviction Beats — the four sets the
+              user actually cares about. */}
           <select
             value={universeChoice}
             onChange={(e) => setUniverseChoice(e.target.value as UniverseChoice)}
             style={{ padding: '3px 8px', fontSize: 11, fontWeight: 700, borderRadius: 4, border: '1px solid #1A2840', backgroundColor: '#0A1422', color: '#E6EDF3', cursor: 'pointer' }}
           >
-            <option value="AUTO">Auto (MB → Portfolio + Watchlist)</option>
-            <option value="MULTIBAGGER">Multibagger Upload</option>
-            <option value="PORTFOLIO">My Portfolio</option>
-            <option value="WATCHLIST">My Watchlist</option>
-            <option value="NSE500">NSE 500</option>
-            <option value="CUSTOM">Custom (CSV)</option>
+            <option value="AUTO">🎯 My Universe (MB + Portfolio + Watchlist + CB)</option>
+            <option value="MULTIBAGGER">📊 Multibagger Upload only</option>
+            <option value="PORTFOLIO">💼 My Portfolio only</option>
+            <option value="WATCHLIST">📋 My Watchlist only</option>
+            <option value="CONVICTION">🏆 Conviction Beats only</option>
+            <option value="NSE500">🌐 NSE 500 (wide)</option>
+            <option value="CUSTOM">✏️ Custom (CSV)</option>
           </select>
+          {/* Universe chip rail — quick toggles next to the dropdown. */}
+          <div style={{ display: 'inline-flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+            {([
+              { key: 'MULTIBAGGER' as UniverseChoice, label: '📊 MB',       color: '#8B5CF6' },
+              { key: 'PORTFOLIO'  as UniverseChoice, label: '💼 Portfolio', color: '#10B981' },
+              { key: 'WATCHLIST'  as UniverseChoice, label: '📋 Watchlist', color: '#22D3EE' },
+              { key: 'CONVICTION' as UniverseChoice, label: '🏆 CB',        color: '#F59E0B' },
+            ]).map(c => {
+              const isActive = universeChoice === c.key;
+              return (
+                <button
+                  key={c.key}
+                  onClick={() => setUniverseChoice(c.key)}
+                  title={`Limit universe to ${c.label} only`}
+                  style={{
+                    padding: '3px 8px', borderRadius: 4, fontSize: 10, fontWeight: 700,
+                    border: `1px solid ${isActive ? c.color : '#1A2840'}`,
+                    background: isActive ? `${c.color}20` : 'transparent',
+                    color: isActive ? c.color : '#8A95A3',
+                    cursor: 'pointer',
+                  }}
+                >{c.label}</button>
+              );
+            })}
+            <button
+              onClick={() => setUniverseChoice('AUTO')}
+              title="Union of all 4 personal universes (MB + Portfolio + Watchlist + Conviction Beats)"
+              style={{
+                padding: '3px 8px', borderRadius: 4, fontSize: 10, fontWeight: 700,
+                border: `1px solid ${universeChoice === 'AUTO' ? '#0F7ABF' : '#1A2840'}`,
+                background: universeChoice === 'AUTO' ? '#0F7ABF20' : 'transparent',
+                color: universeChoice === 'AUTO' ? '#38A9E8' : '#8A95A3',
+                cursor: 'pointer',
+              }}
+            >🎯 ALL MINE</button>
+          </div>
           {universeChoice === 'CUSTOM' && (
             <input
               value={customCsv}
@@ -856,7 +943,21 @@ export default function RerratingPage() {
           <MarginExpansionPanel rows={filterByRegion(marginRows).slice(0, 30)} loading={loadingE} color={activeMeta.color} convictionSet={convictionSet} />
         )}
         {active === 'model' && (
-          <ModelShiftPanel rows={filterByRegion(modelRows).slice(0, 30)} loading={loadingN} color={activeMeta.color} convictionSet={convictionSet} />
+          // PATCH 0448 BUG-055 — Scope Model Shift to the user's universe.
+          // Previously the panel scanned the whole news feed, so even when
+          // matches existed they were for unrelated tickers. Now we keep only
+          // rows whose ticker is in the active universe set (strip-suffix
+          // match so 'JTLIND.NS' in universe matches 'JTLIND' in news).
+          <ModelShiftPanel
+            rows={(() => {
+              const u = new Set(universe.map(s => String(s).toUpperCase().replace(/\.NS$|\.BO$/i, '')));
+              const inUniverse = u.size === 0
+                ? modelRows
+                : modelRows.filter(r => u.has(String(r.ticker).toUpperCase().replace(/\.NS$|\.BO$/i, '')));
+              return filterByRegion(inUniverse).slice(0, 30);
+            })()}
+            loading={loadingN} color={activeMeta.color} convictionSet={convictionSet}
+          />
         )}
         {active === 'multiple' && (
           <MultipleExpansionPanel rows={filterByRegion(multipleRows).slice(0, 30)} loading={loadingE || loadingQ} color={activeMeta.color} convictionSet={convictionSet} />
