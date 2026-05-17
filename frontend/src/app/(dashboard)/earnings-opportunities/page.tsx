@@ -868,6 +868,15 @@ export default function EarningsOpportunitiesPage() {
       // HTTP cache when refetchGraded() runs after refreshMissing has updated
       // the server-side KV. Without this, the client could keep seeing the
       // pre-refresh response even after server data has changed.
+      // PATCH 0447 REGRESSION FIX — For past dates (>= 2 days old), if a
+      // valid LS snapshot exists, return it directly. Never hit the network.
+      // User wants 'whatever is loaded already saved → render immediately'.
+      const yIso = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); })();
+      const isPastDate = resolvedDateForGrading < yIso;
+      if (isPastDate) {
+        const cached = readLsCache(resolvedDateForGrading);
+        if (cached) return cached as OpportunitiesPayload;
+      }
       const res = await fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}`, { cache: 'no-store' });
       if (!res.ok) throw new Error('graded fetch failed');
       const payload = await res.json();
@@ -876,10 +885,13 @@ export default function EarningsOpportunitiesPage() {
     },
     // PATCH 0362 — Past dates: 7-day stale (immutable). Today: 3 min so
     // any small action (click Refresh, tab focus) gets a fresh fetch.
-    // User feedback: 'price action plays out before data updates'.
-    staleTime: resolvedDateForGrading < todayIso ? 7 * 24 * 60 * 60_000 : 3 * 60_000,
+    // PATCH 0447 — Bumped past-date staleTime to 30 days (effectively
+    // permanent for the session). Past dates are immutable; revalidation
+    // is pure noise.
+    staleTime: resolvedDateForGrading < todayIso ? 30 * 24 * 60 * 60_000 : 3 * 60_000,
     refetchOnWindowFocus: resolvedDateForGrading >= todayIso,
     refetchOnReconnect: resolvedDateForGrading >= todayIso,
+    refetchOnMount: resolvedDateForGrading >= todayIso,
     // PATCH 0362 — Auto-poll every 4 minutes when viewing today's date,
     // ONLY during Indian market hours (9 AM - 4 PM IST). This is the
     // key fix for 'always late' — user no longer has to manually refresh
@@ -909,22 +921,20 @@ export default function EarningsOpportunitiesPage() {
   }, [resolvedDateForGrading]);
 
   // PATCH 0402 — CLIENT-SIDE AUTO-HEAL.
-  // Symptom we're fixing: page loads localStorage snapshot from when the
-  // server hadn't enriched the day's filings yet — every card is preview-
-  // shape (sales_yoy_pct + pat_yoy_pct + eps_yoy_pct all null, narrative
-  // "Financial detail awaiting enrichment"). Past dates get a 7-day
-  // staleTime so React Query never refetches. User stares at AVOID/22
-  // cards forever.
-  //
-  // Fix: once per (date, mount) check the snapshot. If ≥3 cards AND ≥70%
-  // are preview-shape, fire ONE force-refresh against the server. The
-  // server already has the real data — we just need to bypass the stale
-  // localStorage. Result: page self-heals on next visit even without a
-  // manual Refresh click.
+  // PATCH 0447 REGRESSION FIX — User reported EO was "best" before; now
+  // re-fetching everything every time they open it. The auto-heal was
+  // wiping LS cache for past dates and re-fetching even though past
+  // dates are immutable. Now restrict auto-heal to TODAY + YESTERDAY
+  // only — past dates ALWAYS serve the cached snapshot, no exception.
+  // If a snapshot is preview-shape on a past date, that's because the
+  // server didn't enrich it at the time and a refetch won't fix it.
   const autoHealFiredRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!gradedData?.by_tier || !resolvedDateForGrading) return;
     if (autoHealFiredRef.current.has(resolvedDateForGrading)) return;
+    // Only auto-heal today + yesterday. Past dates trust the cache.
+    const yIso = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); })();
+    if (resolvedDateForGrading !== todayIso && resolvedDateForGrading !== yIso) return;
     const allCards = (TIER_ORDER as EarningsTier[])
       .flatMap((t) => gradedData.by_tier?.[t] || []) as ParsedEarning[];
     if (allCards.length < 3) return;
@@ -935,7 +945,7 @@ export default function EarningsOpportunitiesPage() {
     if (previewRatio < 0.7) return;
     // Pin so we don't loop
     autoHealFiredRef.current.add(resolvedDateForGrading);
-    // Wipe the stale snapshot + force a fresh server fetch
+    // Wipe the stale snapshot + force a fresh server fetch (today/yesterday only)
     try {
       localStorage.removeItem('mc:graded:v9:' + resolvedDateForGrading);
       localStorage.removeItem('mc:graded:v8:' + resolvedDateForGrading);
@@ -943,7 +953,7 @@ export default function EarningsOpportunitiesPage() {
     fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}&force=1`, { cache: 'no-store' })
       .then(() => refetchGraded())
       .catch(() => {});
-  }, [gradedData, resolvedDateForGrading, refetchGraded]);
+  }, [gradedData, resolvedDateForGrading, refetchGraded, todayIso]);
 
   // PATCH 0362 — Track ticker set across renders to highlight new arrivals.
   // Fires whenever the gradedData payload changes. The first time the page

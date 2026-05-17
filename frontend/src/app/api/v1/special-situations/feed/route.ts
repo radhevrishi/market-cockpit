@@ -132,8 +132,11 @@ const CATEGORIES: ReadonlyArray<CategorySpec> = [
   {
     id: 'TURN',
     label: 'Turnarounds',
-    // PATCH 0100: added narrowed-loss / first-profitable / EBITDA-positive / operating-profit phrasings
-    pattern: /\b(turnaround|turn.?around|back to profit|back in (?:the )?black|swung to profit|swing to profit|loss to profit|profit revival|first profit (?:after|since)|exits losses|debt restructur|balance sheet repair|debt reduction|debt prepay|deleverag|recapitalis|operational restructur|cost cutting yields|return to profit|profit after years|profit after \w+ losses|narrowed (?:loss|losses)|narrowing loss(?:es)?|first profitable (?:quarter|year)|ebitda positive|operating profit (?:after|first)|black (?:after|since)|profitable (?:after|since) \w+ (?:years|quarters)|recovers? from loss|emerges? from (?:bankruptcy|restructur|losses)|debt resolution|cdr exit|sdr exit|insolvency exit)\b/i,
+    // PATCH 0447 BUG-054 — Broadened regex. Added NCLT/IBC + asset-sale-for-
+    // debt-repair + improvement-after-stress phrasings the user reported
+    // missing. Catches India-style 'one-time settlement', 'OTS', NPA
+    // recovery, fresh capital infusion when paired with deleverage.
+    pattern: /\b(turnaround|turn.?around|back to profit|back in (?:the )?black|swung to profit|swing to profit|loss to profit|profit revival|first profit (?:after|since)|exits losses|debt restructur|balance sheet repair|debt reduction|debt prepay|deleverag|recapitalis|operational restructur|cost cutting yields|return to profit|profit after years|profit after \w+ losses|narrowed (?:loss|losses)|narrowing loss(?:es)?|first profitable (?:quarter|year)|ebitda positive|operating profit (?:after|first)|black (?:after|since)|profitable (?:after|since) \w+ (?:years|quarters)|recovers? from loss|emerges? from (?:bankruptcy|restructur|losses)|debt resolution|cdr exit|sdr exit|insolvency exit|nclt|ibc[\s_-]?(?:admission|resolution|proceedings)|insolvency (?:proceedings|petition|admitted)|one[\s-]?time settlement|\bots[\s-]?(?:approved|settlement)|npa\s+recovery|asset\s+monetisation|debt[\s-]?for[\s-]?equity\s+swap|promoter\s+infus(?:e|ion)|fresh\s+capital\s+infusion|stake\s+sale\s+for\s+debt|debt\s+repayment|cleanup\s+(?:balance sheet|finances)|recoveries?\s+from\s+npa)\b/i,
     reject: /\b(failed turnaround|turnaround unlikely|fall(?:s|ing|en)?\s+back into loss|swung to loss|return to loss|loss widens|widening loss|loss expands)\b/i,
   },
   {
@@ -515,6 +518,21 @@ async function buildFeed(): Promise<{
   // Step 5: classify tradability — Tier 1 / Tier 2 / Watchlist / Noise.
   // Step 6: generate "why tradable" auto-playbook per event type.
 
+  // PATCH 0447 BUG-054 — Map event_type → Category so the Turnaround chip
+  // (and every other category chip) shows the right count. Prior version
+  // just echoed the regex-matched RSS category, which meant NCLT_IBC_*,
+  // TURNAROUND_*, and any event_type-classified turnaround event never
+  // got bucketed into Category 'TURN'. Now the event_type is the source
+  // of truth — falls back to the regex category only when event_type is
+  // unmapped.
+  const eventTypeToCategory = (eventType: string, fallback: Category): Category => {
+    const et = (eventType || '').toUpperCase();
+    if (['NCLT_IBC_ADMISSION', 'NCLT_IBC_RESOLUTION', 'TURNAROUND_OPERATING', 'TURNAROUND_NARRATIVE'].includes(et)) return 'TURN';
+    if (['TENDER_OFFER', 'MERGER_DEFINITIVE', 'MERGER_RECOMMENDATION', 'GOING_PRIVATE', 'OPEN_OFFER', 'ACQUISITION_PUBLIC', 'STAKE_SALE', 'ASSET_SALE_MONETIZATION'].includes(et)) return 'MA';
+    if (['SPIN_OFF', 'DEMERGER_INDIA', 'IPO_SUBSIDIARY', 'HOLDCO_ARB_TRIGGER', 'STUB_TRADE_TRIGGER'].includes(et)) return 'SPIN';
+    if (['BUYBACK_TENDER', 'BUYBACK_OPEN_MARKET', 'DIVIDEND_HIKE', 'RIGHTS_ISSUE', 'RIGHTS_ISSUE_DEEP', 'CONVERTIBLE_PIPE', 'PROMOTER_BACKSTOP', 'QIP_PLACEMENT', 'BONUS_ISSUE', 'STOCK_SPLIT'].includes(et)) return 'CAP';
+    return fallback;
+  };
   const tickerToCategory = (cat: Category): Category => cat;
   const SEC_PRIMARY_RE = /sec\.gov/i;
   const PR_RE = /prnewswire|globenewswire|business ?wire/i;
@@ -607,6 +625,22 @@ async function buildFeed(): Promise<{
     const hasConsideration = /(\$\s*\d|rs\.?\s*\d|₹\s*\d|deal worth|offer price|per share|gross spread|consideration)/i.test(titleAndDesc);
     const hasSpread = /\b(spread|premium of|trading at|effective consideration)\b/i.test(titleAndDesc);
 
+    // PATCH 0447 IMP-1 — Classify primary source into the 4-tier institutional
+    // hierarchy + detect speculative-language penalty. Used to rank definitive
+    // exchange filings ABOVE recycled aggregator headlines of the same story.
+    const T1_RE = /(?:^|[\/\.\-:])(?:sec\.gov|bseindia\.com|nseindia\.com|sebi\.gov|nseindia\.com\.in|bseindia\.in|nsearchives|bseindiacopy)/i;
+    const T2_RE = /prnewswire|globenewswire|business ?wire|company.*press|investor.{0,10}relations/i;
+    const T3_RE = /reorg ?research|mergermarket|debtwire|deal ?reporter|prime ?database|capitaline/i;
+    const inferSourceTier = (link: string): 1 | 2 | 3 | 4 => {
+      if (T1_RE.test(link)) return 1;
+      if (T2_RE.test(link)) return 2;
+      if (T3_RE.test(link)) return 3;
+      return 4;
+    };
+    const sourceTier = inferSourceTier(primary.link);
+    const SPECULATION_RE = /\b(could (?:acquire|buy|merge)|may consider|reportedly weighing|in talks (?:to|with)?|exploring (?:a |the )?(?:sale|merger|deal)|buzz(?:ing)? stock|likely to (?:bid|acquire|merge)|rumou?red|speculation|chatter|sources say|believed to be|allegedly|reportedly plans?|might (?:bid|acquire))\b/i;
+    const hasSpeculation = SPECULATION_RE.test(titleAndDesc);
+
     const score = scoreCatalyst({
       event_type: eventType,
       is_amendment: primarySig.is_amendment && amendments.length === 0,  // primary itself is an /A and we have nothing earlier
@@ -617,6 +651,8 @@ async function buildFeed(): Promise<{
       has_consideration: hasConsideration,
       has_spread_calc: hasSpread,
       age_hours: ageHours,
+      source_tier: sourceTier,
+      speculation_penalty: hasSpeculation,
     });
 
     const tradability = classifyTradability({
@@ -647,7 +683,7 @@ async function buildFeed(): Promise<{
     events.push({
       event_id: eventId,
       event_type: eventType,
-      category: tickerToCategory(primary.category),
+      category: eventTypeToCategory(eventType, primary.category),
       target_name: primarySig.target_name,
       primary_filing: primary,
       amendments,

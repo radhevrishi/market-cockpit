@@ -175,6 +175,17 @@ export interface CatalystScoreInputs {
   has_consideration: boolean;        // $X / Rs X / x.y x EBITDA in text
   has_spread_calc: boolean;
   age_hours: number;
+  // PATCH 0447 IMP-1 — institutional source tier + speculation penalty.
+  // source_tier mirrors how event-driven hedge funds rank evidence:
+  //   1 = exchange filing (NSE corp-actions, BSE corp-announcements, SEC EDGAR)
+  //   2 = press release (PRN / GlobeNewswire / BusinessWire / company website)
+  //   3 = vertical specialist trade press (Mergermarket, Reorg Research, etc.)
+  //   4 = general media aggregator (ET, Livemint, Yahoo Finance, MarketsMojo)
+  // speculation_penalty applies when the headline uses hedging language
+  // ('could acquire', 'in talks', 'exploring', 'buzzing stocks') — these are
+  // not actionable catalysts and should not outrank real definitive filings.
+  source_tier?: 1 | 2 | 3 | 4;
+  speculation_penalty?: boolean;
 }
 
 export interface CatalystScore {
@@ -241,6 +252,27 @@ export function scoreCatalyst(inp: CatalystScoreInputs): CatalystScore {
   if (inp.is_amendment) { raw -= 20; components.push({ label: '-20 amendment-only filing', pts: -20 }); }
   if (inp.is_fund) { raw -= 15; components.push({ label: '-15 fund/closed-end housekeeping', pts: -15 }); }
   if (!inp.has_primary_source) { raw -= 10; components.push({ label: '-10 no primary-source link', pts: -10 }); }
+
+  // PATCH 0447 IMP-1 — Source-tier boost (institutional hierarchy).
+  //   Tier 1 (exchange filing): +20
+  //   Tier 2 (press release):   +10
+  //   Tier 3 (specialist press): +5
+  //   Tier 4 (general aggregator): no boost — relies on PRIMARY signal only.
+  // The boost is additive to the existing +30 'definitive filing' which is
+  // event-type-driven; together they let SC TO-T / NSE corp-action filings
+  // rank above an ET 'sources say' rehash of the same news.
+  switch (inp.source_tier) {
+    case 1: raw += 20; components.push({ label: '+20 exchange filing (T1)', pts: 20 }); break;
+    case 2: raw += 10; components.push({ label: '+10 press release (T2)', pts: 10 }); break;
+    case 3: raw += 5;  components.push({ label: '+5 specialist press (T3)', pts: 5 }); break;
+    default: break;
+  }
+
+  // PATCH 0447 IMP-1 — Speculation penalty. Hedging headlines ('could
+  // acquire', 'may consider', 'in talks', 'exploring', 'buzzing stocks',
+  // 'reportedly weighing') are NOT actionable. Heavy -15 so they can't
+  // outrank a definitive filing even if they shout louder.
+  if (inp.speculation_penalty) { raw -= 15; components.push({ label: '-15 speculative headline', pts: -15 }); }
 
   // Decay (age-adjusted)
   const halfLife = eventHalfLifeDays(inp.event_type);

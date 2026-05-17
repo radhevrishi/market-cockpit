@@ -1316,6 +1316,21 @@ function CanonicalEventCard({ ev }: { ev: CanonicalEvent }) {
             {annualizedPct != null && (
               <span title={`Assumes ${daysToCloseGuess}d close`}><span style={{ color: '#6B7A8D' }}>Ann:</span> <strong style={{ color: annualizedPct >= 0 ? '#22D3EE' : '#EF4444' }}>{annualizedPct >= 0 ? '+' : ''}{annualizedPct.toFixed(1)}%/yr</strong></span>
             )}
+            {/* PATCH 0447 IMP-2 — Break-price downside. When the deal fails,
+                the stock typically reverts to its pre-announcement standalone
+                value. Heuristic break = offer minus 1.5× current spread (i.e.
+                if deal fails, the premium reverses + adds equal-sized
+                disappointment discount). Surfaces the asymmetric payoff. */}
+            {offer != null && cmp != null && spreadPct != null && (() => {
+              const breakPrice = cmp - Math.abs(offer - cmp) * 1.5;
+              const breakLoss = ((breakPrice - cmp) / cmp) * 100;
+              return (
+                <span title={`If deal fails: stock typically reverts to standalone value ≈ ₹${breakPrice.toFixed(2)} (estimated -${Math.abs(breakLoss).toFixed(1)}% from CMP). Heuristic = CMP − 1.5× current spread.`}
+                  style={{ color: '#6B7A8D' }}>
+                  Break: <strong style={{ color: '#EF4444' }}>{breakLoss.toFixed(1)}%</strong>
+                </span>
+              );
+            })()}
             <span style={{ color: '#6B7A8D' }}>~{daysToCloseGuess}d est. close</span>
           </div>
         )}
