@@ -38,6 +38,8 @@ import { useQuery } from '@tanstack/react-query';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Search, Save, Trash2, FileDown, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import api from '@/lib/api';
+// PATCH 0455 — Surface Company Intelligence guidance items on every stock sheet.
+import { CompanyIntelGuidance } from '@/components/CompanyIntelGuidance';
 
 // PATCH 0108 — BUG-01 fix: defensive scalar extraction.  Some quote APIs
 // return signed-numeric fields as `{direction, magnitude}` objects (their
@@ -1037,6 +1039,11 @@ export default function StockSheetPage() {
               </div>
             )}
           </div>
+
+          {/* PATCH 0455 — Surface uploaded Company Intelligence guidance.
+              If the user has pasted concall transcripts for this ticker via
+              /company-intel, all extracted guidance items render here. */}
+          {activeTicker && <CompanyIntelGuidance ticker={activeTicker} compact={false} />}
 
           {/* Sections */}
           {SECTIONS.map((sec) => {
