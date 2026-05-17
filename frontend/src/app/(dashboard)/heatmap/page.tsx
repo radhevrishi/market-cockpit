@@ -650,16 +650,23 @@ export default function HeatmapPage() {
               );
             })}
 
+            {/* PATCH 0455 TIER1-G — Sector labels clickable: open /screener
+                pre-filtered by that sector. Removes pointerEvents='none' on
+                the rect so it captures clicks. */}
             {dailyTreemap.sectorRects.map((sr: any) => (
-              <g key={sr.data.sector}>
+              <g key={sr.data.sector}
+                onClick={() => { window.location.href = `/screener?sector=${encodeURIComponent(sr.data.sector)}`; }}
+                style={{ cursor: 'pointer' }}>
                 <rect x={sr.x} y={sr.y} width={sr.w} height={sr.h}
-                  fill="none" stroke="#0A0E1A" strokeWidth={2.5} pointerEvents="none" />
+                  fill="rgba(0,0,0,0.001)" stroke="#0A0E1A" strokeWidth={2.5}>
+                  <title>Click to open Screener filtered by {sr.data.sector}</title>
+                </rect>
                 {sr.w > 70 && sr.h > 18 && (
                   <text x={sr.x + 6} y={sr.y + 14}
-                    fill="rgba(255,255,255,0.45)" fontSize="10" fontWeight="600"
+                    fill="rgba(255,255,255,0.55)" fontSize="10" fontWeight="700"
                     fontFamily="'Inter',system-ui,-apple-system,sans-serif" pointerEvents="none"
                   >
-                    {sr.data.sector}
+                    {sr.data.sector} →
                   </text>
                 )}
               </g>

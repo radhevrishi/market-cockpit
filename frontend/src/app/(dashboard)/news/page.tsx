@@ -13,6 +13,8 @@ import { TOKENS, chipStyle } from '@/lib/design-tokens';
 // PATCH 0232 — Source-tier visuals for Evidence Panel
 import { classifySource, TIER_VISUAL, sourceQualityWeight } from '@/lib/source-tiers';
 import { annotateArticle, clusterByCanonical, confidenceBand, CONFIDENCE_VISUAL } from '@/lib/news/event-detectors';
+// PATCH 0455 CLEANUP-3 — Centralized vocab.
+import { JUNK_TICKERS, TICKER_ALIASES } from '@/lib/news/ticker-vocab';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -42,6 +44,24 @@ interface NewsArticle {
   is_synthetic?: boolean;
   structural_status?: string;
   feed_layer?: string;
+  // PATCH 0455 CLEANUP-1 — Pre-annotation fields stamped by the server-side
+  // pipeline (event-detectors / source-quality / canonical clustering).
+  // Promoted from `(article as any).__*` so type-checking catches misuse.
+  __priority?: number;
+  __priorityParts?: Record<string, number>;
+  __sourceWeight?: number;
+  __isListicle?: boolean;
+  __isSpeculation?: boolean;
+  __clusterSize?: number;
+  __clusterSources?: string[];
+  __clusterTimes?: number[];
+  __confidence?: 'VERY_HIGH' | 'HIGH' | 'MEDIUM' | 'LOW';
+  __creditStress?: any;
+  __promoter?: any;
+  __workingCapital?: any;
+  __orderQuality?: any;
+  __noise?: { isListicle: boolean; isSpeculation: boolean; qualityMultiplier: number };
+  __expectation?: any;
 }
 
 // Bottleneck dashboard types
@@ -134,28 +154,7 @@ function getArticleLayer(article: NewsArticle): FeedLayer {
 }
 
 // Ticker alias map for search expansion (ticker → company name keywords)
-const TICKER_ALIASES: Record<string, string[]> = {
-  'NVDA': ['nvidia', 'jensen huang', 'blackwell', 'h100'],
-  'AAPL': ['apple'],
-  'MSFT': ['microsoft', 'azure', 'satya nadella'],
-  'GOOGL': ['alphabet', 'google', 'deepmind'],
-  'AMZN': ['amazon', 'aws'],
-  'META': ['meta platforms', 'facebook', 'zuckerberg'],
-  'TSLA': ['tesla', 'elon musk'],
-  'AMD': ['amd', 'lisa su'],
-  'INTC': ['intel'],
-  'TSM': ['tsmc', 'taiwan semiconductor'],
-  'AVGO': ['broadcom'],
-  'RELIANCE': ['reliance', 'mukesh ambani'],
-  'TCS': ['tata consultancy', 'tcs'],
-  'INFY': ['infosys'],
-  'HDFCBANK': ['hdfc bank'],
-  'WIPRO': ['wipro'],
-  'TATAMOTORS': ['tata motors'],
-  'ADANIENT': ['adani'],
-  'HAL': ['hindustan aeronautics'],
-  'BEL': ['bharat electronics'],
-};
+// PATCH 0455 CLEANUP-3 — TICKER_ALIASES moved to /lib/news/ticker-vocab.ts
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
 
@@ -518,7 +517,7 @@ const decodeHtml = (html: string): string => {
 
 // Tickers that are almost always false positives from NLP extraction
 // 'A' removed — it is Agilent Technologies, a real ticker. 'ON' kept (ambiguous). 'AI' kept (C3.ai).
-const JUNK_TICKERS = new Set(['ON', 'IT', 'ALL', 'AN', 'IS', 'ARE', 'OR', 'SO', 'GO', 'DO', 'HE', 'WE', 'AI']);
+// PATCH 0455 CLEANUP-3 — JUNK_TICKERS moved to /lib/news/ticker-vocab.ts
 
 // Works whether the schema sent ticker_symbols (preferred) or raw tickers dicts
 function getTickerSymbols(article: NewsArticle): string[] {
@@ -885,6 +884,27 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
                 {tier.label}
               </span>
             )}
+            {/* PATCH 0455 TIER1-F — "Why ranked here?" priority badge.
+                Tooltip shows the score breakdown: importance × severity ×
+                structural × recency × source-weight × noise-multiplier. */}
+            {(() => {
+              const pri = (article as any).__priority;
+              const parts = (article as any).__priorityParts;
+              if (typeof pri !== 'number') return null;
+              const tip = parts
+                ? `Priority ${pri.toFixed(1)} = importance ${parts.importance?.toFixed?.(1) ?? '—'} + severity ${parts.severity?.toFixed?.(1) ?? '—'} + structural ${parts.structural?.toFixed?.(1) ?? '—'} + recency ${parts.recency?.toFixed?.(1) ?? '—'} × source-weight ${parts.source_weight?.toFixed?.(2) ?? '—'} × noise ${parts.noise_mult?.toFixed?.(2) ?? '—'}`
+                : `Priority score ${pri.toFixed(1)} — combines impact, severity, source quality, and recency`;
+              return (
+                <span title={tip} style={{
+                  fontSize: '9px', fontWeight: '800', padding: '3px 7px', borderRadius: '5px',
+                  backgroundColor: '#22D3EE15', color: '#22D3EE',
+                  border: '1px solid #22D3EE40', letterSpacing: '0.3px',
+                  cursor: 'help', fontFamily: 'ui-monospace, monospace',
+                }}>
+                  P {pri.toFixed(0)}
+                </span>
+              );
+            })()}
             {sentiment && (
               <span style={{
                 fontSize: '10px', fontWeight: '600', padding: '3px 8px', borderRadius: '5px',

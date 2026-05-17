@@ -2003,6 +2003,34 @@ function StockScanner({ articles, isLoading, quotes, quotesLoading }: {
             )}
           </div>
         )}
+        {/* PATCH 0455 TIER1-H — Bottleneck → Multibagger pivot. Copies the
+            currently-filtered tickers to localStorage and opens Multibagger
+            with a custom universe filter. Lets the user rank bottleneck
+            winners by composite score with one click. */}
+        {(viewMode === 'universe' ? filtered : liveExtra).length > 0 && (
+          <button
+            onClick={() => {
+              const tickers = (viewMode === 'universe' ? filtered : liveExtra)
+                .map((r: any) => (r.ticker || r.symbol || '').toString().toUpperCase().replace(/\.NS$|\.BO$/i, ''))
+                .filter(Boolean);
+              try {
+                localStorage.setItem('mc:bottleneck-pivot:v1', JSON.stringify({ tickers, ts: Date.now() }));
+                window.location.href = `/multibagger?universe=bottleneck&count=${tickers.length}`;
+              } catch (e) {
+                console.error('[bottleneck-pivot] failed', e);
+              }
+            }}
+            title="Open these tickers in Multibagger and rank by composite score"
+            style={{
+              padding: '5px 12px', borderRadius: 7, border: '1px solid #8B5CF660',
+              background: '#8B5CF615', color: '#A78BFA',
+              fontSize: 11, fontWeight: 700, cursor: 'pointer',
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+            }}
+          >
+            🎯 Rank these {(viewMode === 'universe' ? filtered : liveExtra).length} in Multibagger →
+          </button>
+        )}
         <span style={{ fontSize: '11px', color: '#4A5B6C', marginLeft: 'auto' }}>
           {viewMode === 'universe' ? `${filtered.length} stocks` : `${liveExtra.length} tickers from live news`}
         </span>

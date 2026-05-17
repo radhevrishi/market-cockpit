@@ -793,8 +793,59 @@ export default function PortfolioPage() {
                       <td style={{ padding: '10px 12px', textAlign: 'right', color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>
                         <EditableCell value={r.quantity} onSave={v => handleUpdateField(r.symbol, 'quantity', v)} type="qty" />
                       </td>
-                      <td style={{ padding: '10px 12px', textAlign: 'right', color: '#8BA3C1', fontVariantNumeric: 'tabular-nums' }}>
-                        {r.weight.toFixed(1)}%
+                      {/* PATCH 0455 TIER1-D — Rebalancing overlay. Read
+                          Multibagger USA suggestedMaxPositionPct from LS;
+                          if current weight > 2× recommended, flag the cell
+                          red. Use 2x as 'overweight' threshold. */}
+                      <td style={{ padding: '10px 12px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                        {(() => {
+                          const sym = r.symbol.toUpperCase();
+                          let recommendedMax: number | undefined;
+                          try {
+                            const raw = typeof window !== 'undefined' ? localStorage.getItem('mb_usa_scored_v1') : null;
+                            if (raw) {
+                              const rows = JSON.parse(raw);
+                              if (Array.isArray(rows)) {
+                                const hit = rows.find((x: any) => String(x?.symbol || x?.ticker || '').toUpperCase() === sym);
+                                if (hit && typeof hit.suggestedMaxPositionPct === 'number') recommendedMax = hit.suggestedMaxPositionPct;
+                              }
+                            }
+                            // India side: derive from market-cap-bucket heuristic if available.
+                            if (recommendedMax === undefined) {
+                              const inRaw = typeof window !== 'undefined' ? localStorage.getItem('mb_excel_scored_v2') : null;
+                              if (inRaw) {
+                                const rows = JSON.parse(inRaw);
+                                if (Array.isArray(rows)) {
+                                  const hit = rows.find((x: any) => String(x?.symbol || x?.ticker || '').toUpperCase() === sym);
+                                  const mcapCr: number | undefined = hit?.marketCapCr;
+                                  if (typeof mcapCr === 'number' && mcapCr > 0) {
+                                    // India tiered position sizing: <500cr → 1%, <2000cr → 2.5%,
+                                    // <10000cr → 5%, <50000cr → 8%, else 15%.
+                                    recommendedMax = mcapCr < 500 ? 1
+                                      : mcapCr < 2000 ? 2.5
+                                      : mcapCr < 10000 ? 5
+                                      : mcapCr < 50000 ? 8 : 15;
+                                  }
+                                }
+                              }
+                            }
+                          } catch {}
+                          if (recommendedMax === undefined) {
+                            return <span style={{ color: '#8BA3C1' }}>{r.weight.toFixed(1)}%</span>;
+                          }
+                          const overweight = r.weight > recommendedMax * 2;
+                          const warn = r.weight > recommendedMax && !overweight;
+                          const color = overweight ? '#EF4444' : warn ? '#F59E0B' : '#10B981';
+                          return (
+                            <div title={`Recommended max ${recommendedMax}% (per Multibagger sizing). You're at ${r.weight.toFixed(1)}%.`}
+                              style={{ color }}>
+                              {r.weight.toFixed(1)}%
+                              <div style={{ fontSize: 9, color: '#6B7A8D', fontWeight: 600 }}>
+                                {overweight ? `⚠ ${(r.weight / recommendedMax).toFixed(1)}× max` : warn ? `⚠ over ${recommendedMax}%` : `✓ ≤ ${recommendedMax}%`}
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td style={{ padding: '10px 12px', textAlign: 'right', color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>
                         {fmt(r.investedValue)}

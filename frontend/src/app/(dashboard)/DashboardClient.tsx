@@ -173,6 +173,38 @@ export default function DashboardClient({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('openTicker', handler);
   }, []);
 
+  // PATCH 0455 CLEANUP-4 — One-shot scrub of legacy localStorage versions
+  // on app mount. Replaces scattered per-page scrub blocks.
+  useEffect(() => {
+    import('@/lib/kv-keys').then(m => {
+      try { m.scrubLegacyLS(); } catch {}
+    }).catch(() => {});
+  }, []);
+
+  // PATCH 0455 TIER1-C — Cross-page right-click ticker drawer.
+  // Any element with data-ticker="SYMBOL" attribute (or a nested descendant)
+  // captures right-click and opens the existing TickerDrawer. Saves the
+  // user a full page navigation when they want quick context on a ticker
+  // they see ANYWHERE in the dashboard (table cells, chips, watchlist
+  // rows, news cards). Standard institutional UX.
+  useEffect(() => {
+    const onContextMenu = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      const el = target.closest('[data-ticker]') as HTMLElement | null;
+      if (!el) return;
+      const sym = el.getAttribute('data-ticker')?.trim().toUpperCase();
+      if (!sym) return;
+      // Skip if user holds Shift / Ctrl (they may want browser context menu).
+      if (e.shiftKey || e.ctrlKey || e.metaKey) return;
+      e.preventDefault();
+      const exchange = el.getAttribute('data-exchange') || undefined;
+      setDrawerTicker({ symbol: sym, exchange });
+    };
+    document.addEventListener('contextmenu', onContextMenu);
+    return () => document.removeEventListener('contextmenu', onContextMenu);
+  }, []);
+
   // Refetch market data when component re-mounts
   useEffect(() => {
     qc.invalidateQueries({ queryKey: ['market', 'indices'] });
