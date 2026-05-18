@@ -40,16 +40,22 @@ interface NewsArticle {
 // language and surface as institutional move chips above the news feed.
 interface StakeMove {
   direction: 'BUY' | 'ADD' | 'TRIM' | 'EXIT' | 'UNKNOWN';
-  ticker?: string;        // upper-case if found
-  company?: string;       // raw company name as found in the headline
-  stakePct?: number;      // parsed when explicit (e.g. "1.8%") — new resulting stake
-  stakeFromPct?: number;  // PATCH 0485 — previous stake if "from X% to Y%"
-  stakeDeltaPct?: number; // PATCH 0485 — explicit delta if "by N%" / "Y - X"
-  detail?: string;        // PATCH 0485 — the sentence containing the stake change
+  ticker?: string;
+  company?: string;
+  stakePct?: number;       // new resulting stake
+  stakeFromPct?: number;   // previous stake if "from X% to Y%"
+  stakeDeltaPct?: number;  // explicit delta if "by N%"
+  detail?: string;         // sentence with the stake change
   headline: string;
   url: string;
   source: string;
   publishedAt: string;
+  // PATCH 0488 — institutional-grade signal hardening
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW';  // HIGH=explicit stake; MED=add/trim word; LOW=commentary
+  sourceType: 'BSE' | 'NEWS' | 'INTERVIEW' | 'TV' | 'OTHER';
+  hashKey: string;          // dedupe key — same event from multiple sources collapses
+  timeDecay: number;        // 0-1 exponential decay weighted by recency
+  signalScore: number;      // composite confidence × decay × stake weight 0-100
 }
 
 interface ResponseShape {
@@ -367,6 +373,50 @@ function extractMove(article: NewsArticle, investorName: string): StakeMove | nu
 
   const detail = extractDetailSentence(snippet) || extractDetailSentence(headline);
 
+  // PATCH 0488 — confidence + sourceType + dedupe hash + temporal decay.
+  // HIGH: explicit stake disclosed in snippet ("from 3.8% to 4.3%" / "now holds 4.3%")
+  // MEDIUM: directional verb without numeric stake (adds / trims / exits)
+  // LOW: commentary headline only (no stake noun, no explicit direction parsed)
+  let confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  if (stakes && (stakes.resulting != null || stakes.from != null || stakes.delta != null)) {
+    confidence = 'HIGH';
+  } else if (direction === 'EXIT' || direction === 'TRIM' || direction === 'ADD' || direction === 'BUY') {
+    confidence = 'MEDIUM';
+  } else {
+    confidence = 'LOW';
+  }
+  // Filter: refuse to surface bare commentary (e.g. "Kacholia bullish on EMS")
+  // as a move. We need at least a directional verb.
+  if (confidence === 'LOW') return null;
+
+  // Source-type — coarse classify the publisher.
+  const srcLc = (article.source || '').toLowerCase();
+  let sourceType: 'BSE' | 'NEWS' | 'INTERVIEW' | 'TV' | 'OTHER' = 'NEWS';
+  if (/(bse|nse|sebi|regulator|filing|announce)/.test(srcLc) || /(filing|disclosure)/.test(lcCombined)) sourceType = 'BSE';
+  else if (/(interview|podcast|fireside|q&a|youtube)/.test(lcCombined) || /(et now|cnbc|bloomberg|moneycontrol)/.test(srcLc)) sourceType = 'INTERVIEW';
+  else if (/(tv|et now|cnbc|bloomberg)/.test(srcLc)) sourceType = 'TV';
+
+  // Dedupe hash — same (investor + company + direction + day) collapses
+  // identical events syndicated across Google / Moneycontrol / ET / Trendlyne.
+  const day = (article.publishedAt || '').slice(0, 10);
+  const companyKey = (company || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 24);
+  const stakeKey = stakes?.resulting != null ? `r${stakes.resulting.toFixed(1)}`
+    : stakes?.delta != null ? `d${stakes.delta.toFixed(1)}`
+    : '';
+  const hashKey = `${investorName.toLowerCase().replace(/\s+/g, '_')}|${companyKey}|${direction}|${stakeKey}|${day}`;
+
+  // Temporal decay: half-life of 7 days for "live" relevance.
+  const pubMs = new Date(article.publishedAt || Date.now()).getTime();
+  const daysAgo = Math.max(0, (Date.now() - pubMs) / 86_400_000);
+  const timeDecay = Math.exp(-daysAgo / 7);  // 1.0 today → 0.37 at 7d → 0.05 at 21d
+
+  // Composite signal score (0-100)
+  const confFactor = confidence === 'HIGH' ? 1.0 : confidence === 'MEDIUM' ? 0.65 : 0.3;
+  const stakeFactor = stakes?.resulting != null
+    ? Math.min(1, stakes.resulting / 5)
+    : stakes?.delta != null ? Math.min(1, Math.abs(stakes.delta) / 2) : 0.3;
+  const signalScore = Math.round(confFactor * (0.6 + 0.4 * stakeFactor) * timeDecay * 100);
+
   return {
     direction,
     company,
@@ -378,6 +428,11 @@ function extractMove(article: NewsArticle, investorName: string): StakeMove | nu
     url: article.url,
     source: article.source,
     publishedAt: article.publishedAt,
+    confidence,
+    sourceType,
+    hashKey,
+    timeDecay: Math.round(timeDecay * 100) / 100,
+    signalScore,
   };
 }
 
@@ -427,11 +482,28 @@ export async function GET(request: Request): Promise<NextResponse<ResponseShape>
 
   // PATCH 0484 — extract stake-change moves from headlines.
   const investorName = query.split(/\s+(?:portfolio|holdings|stake|Carnelian|Old|Marcellus|MK|Screener|Equity|Wealth)/i)[0].trim();
-  const moves: StakeMove[] = [];
+  const rawMoves: StakeMove[] = [];
   for (const a of merged) {
     const move = extractMove(a, investorName);
-    if (move) moves.push(move);
+    if (move) rawMoves.push(move);
   }
+  // PATCH 0488 — DEDUPE by hashKey. When Moneycontrol + ET + Trendlyne
+  // syndicate the same event we keep one, prefer the higher-confidence /
+  // higher-signal copy and the most authoritative source.
+  const byHash = new Map<string, StakeMove>();
+  for (const m of rawMoves) {
+    const existing = byHash.get(m.hashKey);
+    if (!existing) { byHash.set(m.hashKey, m); continue; }
+    // Higher confidence wins; if tied, higher signalScore wins.
+    const confRank = (c: StakeMove['confidence']) => c === 'HIGH' ? 2 : c === 'MEDIUM' ? 1 : 0;
+    if (confRank(m.confidence) > confRank(existing.confidence) ||
+        (confRank(m.confidence) === confRank(existing.confidence) && m.signalScore > existing.signalScore)) {
+      byHash.set(m.hashKey, m);
+    }
+  }
+  const moves = Array.from(byHash.values())
+    // Sort by signalScore desc — strongest, freshest signal first.
+    .sort((a, b) => b.signalScore - a.signalScore);
 
   const payload: ResponseShape = {
     articles: merged.slice(0, 40),

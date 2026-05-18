@@ -34,13 +34,16 @@ export type DisclosureTier =
   ;
 
 export interface DisclosedHolding {
-  ticker: string;          // NSE symbol
+  ticker: string;          // exchange-specific symbol (NSE / BSE / NYSE / NASDAQ / ASX)
   company: string;
   stakePct?: number;       // ≥ 1% if BSE-disclosed
   disclosedOn: string;     // YYYY-MM-DD — the date the holding was last reported
   tier: DisclosureTier;
   thesis?: string;         // Investor's stated rationale
-  exchange?: 'NSE' | 'BSE';
+  // PATCH 0487 — explicit exchange tag for unambiguous display (NSE:RIG ≠ NYSE:RIG)
+  exchange?: 'NSE' | 'BSE' | 'NYSE' | 'NASDAQ' | 'ASX' | 'LSE' | 'TSE';
+  themeTags?: string[];    // PATCH 0487 — theme labels for Why-This-Matters layer
+  firstSeen?: string;      // PATCH 0487 — date investor first disclosed this position (for persistence)
 }
 
 export interface SuperInvestor {
@@ -152,11 +155,11 @@ export const SUPER_INVESTORS: SuperInvestor[] = [
       // for Dalal Street LLC). The earlier seed had a stale India sleeve from
       // Pabrai Wagons of India (where Rain Industries was a legacy position).
       // 13F filings are the canonical truth for US-listed names.
-      { ticker: 'HCC',         company: 'Warrior Met Coal',    stakePct: 39.5, disclosedOn: '2026-03-31', tier: 'AIF_FILING', thesis: 'Metallurgical coal — capital-cycle bet, largest single position', exchange: 'NSE' },
-      { ticker: 'RIG',         company: 'Transocean',          stakePct: 27.8, disclosedOn: '2026-03-31', tier: 'AIF_FILING', thesis: 'Offshore drilling cycle recovery', exchange: 'NSE' },
-      { ticker: 'AGRO',        company: 'Adriatic Metals',     stakePct: 9.2,  disclosedOn: '2026-03-31', tier: 'AIF_FILING' },
-      { ticker: 'EDELWEISS',   company: 'Edelweiss Financial', stakePct: 1.8,  disclosedOn: '2026-03-31', tier: 'BSE_1PCT', thesis: 'India sleeve' },
-      { ticker: 'RAIN',        company: 'Rain Industries',     stakePct: 1.5,  disclosedOn: '2026-03-31', tier: 'BSE_1PCT', thesis: 'LEGACY India position — much reduced from prior 9%+' },
+      { ticker: 'HCC',         company: 'Warrior Met Coal',    stakePct: 39.5, disclosedOn: '2026-03-31', tier: 'AIF_FILING', exchange: 'NYSE', thesis: 'Metallurgical coal — capital-cycle bet, largest single position', themeTags: ['Coal Cycle', 'Steel Input'] },
+      { ticker: 'RIG',         company: 'Transocean',          stakePct: 27.8, disclosedOn: '2026-03-31', tier: 'AIF_FILING', exchange: 'NYSE', thesis: 'Offshore drilling cycle recovery', themeTags: ['Energy Cycle', 'Drilling Capex'] },
+      { ticker: 'ADT',         company: 'Adriatic Metals',     stakePct: 9.2,  disclosedOn: '2026-03-31', tier: 'AIF_FILING', exchange: 'ASX',  themeTags: ['Base Metals', 'Mining'] },
+      { ticker: 'EDELWEISS',   company: 'Edelweiss Financial', stakePct: 1.8,  disclosedOn: '2026-03-31', tier: 'BSE_1PCT', exchange: 'NSE', thesis: 'India sleeve' },
+      { ticker: 'RAIN',        company: 'Rain Industries',     stakePct: 1.5,  disclosedOn: '2026-03-31', tier: 'BSE_1PCT', exchange: 'NSE', thesis: 'LEGACY — much reduced from prior 9%+' },
     ],
     notes: 'Concentrated US 13F portfolio (Dalal Street fund) — Warrior Met + Transocean ~67% of book. India sleeve much smaller now; Rain Industries is a legacy / much-reduced position.',
   },
@@ -466,3 +469,96 @@ export const TIER_META: Record<DisclosureTier, { label: string; description: str
 export function getInvestor(id: string): SuperInvestor | undefined {
   return SUPER_INVESTORS.find((i) => i.id === id);
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// PATCH 0487 — CONVICTION SCORING ENGINE
+//
+// Weighted Conviction = investorWeight × stakeWeight × tierWeight × recencyWeight
+//
+// Returns 0-100. A 17% Rekha-Jhunjhunwala BSE filing weeks-old scores
+// dramatically higher than a 1% commentary-mentioned satellite stake.
+// ─────────────────────────────────────────────────────────────────────────
+
+// Investor quality weights — concentrated long-term capital allocators
+// get the highest weight; commentary-only / personal-portfolio investors
+// get less. Hand-curated based on portfolio concentration + AUM + track record.
+const INVESTOR_QUALITY: Record<string, number> = {
+  'rekha-jhunjhunwala':    1.00,  // Rare Enterprises legacy — largest single portfolio
+  'ashish-kacholia':       0.95,  // High-conviction, very concentrated
+  'mohnish-pabrai':        0.95,  // World-class concentrated capital allocator
+  'saurabh-mukherjea':     0.90,  // Marcellus institutional PMS — process rigor
+  'kenneth-andrade':       0.90,  // Old Bridge — high-quality thematic
+  'vijay-kedia':           0.85,
+  'sunil-singhania':       0.85,  // Abakkus institutional AIF
+  'vikas-khemani':         0.80,
+  'mukul-agrawal':         0.80,
+  'manish-bhandari':       0.75,
+  'dolly-khanna':          0.75,
+  'porinju-veliyath':      0.70,
+  'anil-kumar-goel':       0.70,
+  'sanjay-bakshi':         0.70,
+  'madhusudan-kela':       0.70,
+  'ramesh-damani':         0.65,
+  'shyam-sekhar':          0.60,
+  'basant-maheshwari':     0.60,
+  'mittal-brothers':       0.60,
+  'nikhil-vora':           0.55,
+  'anand-shah':            0.55,
+};
+
+// Tier reliability multiplier — BSE filings are the gold standard.
+const TIER_WEIGHT: Record<DisclosureTier, number> = {
+  BSE_1PCT:          1.00,
+  AIF_FILING:        0.90,
+  PUBLIC_COMMENTARY: 0.60,
+  INFERRED:          0.40,
+};
+
+function investorWeight(id: string): number {
+  return INVESTOR_QUALITY[id] ?? 0.55;
+}
+
+// Stake-size weight: 0% → 0, 1% → 0.20, 5% → 0.70, 10% → 0.90, 20%+ → 1.0
+function stakeWeight(stakePct?: number): number {
+  if (stakePct == null) return 0.30; // unknown / commentary
+  if (stakePct >= 20) return 1.00;
+  if (stakePct >= 10) return 0.90;
+  if (stakePct >=  5) return 0.70;
+  if (stakePct >=  3) return 0.55;
+  if (stakePct >=  1) return 0.30;
+  return 0.15;
+}
+
+// Recency weight: 0-30d 1.0; 30-90d 0.85; 90-180d 0.65; 180d+ 0.40
+function recencyWeight(disclosedOn: string): number {
+  const t = new Date(disclosedOn).getTime();
+  if (isNaN(t)) return 0.50;
+  const days = (Date.now() - t) / 86_400_000;
+  if (days <= 30) return 1.00;
+  if (days <= 90) return 0.85;
+  if (days <= 180) return 0.65;
+  if (days <= 365) return 0.40;
+  return 0.25;
+}
+
+export interface ConvictionInput {
+  investorId: string;
+  stakePct?: number;
+  tier: DisclosureTier;
+  disclosedOn: string;
+}
+
+/** 0-100 conviction score for a single (investor × holding) pair */
+export function holdingConviction(h: ConvictionInput): number {
+  const iw = investorWeight(h.investorId);
+  const sw = stakeWeight(h.stakePct);
+  const tw = TIER_WEIGHT[h.tier];
+  const rw = recencyWeight(h.disclosedOn);
+  return Math.round(iw * sw * tw * rw * 100);
+}
+
+/** Sum of conviction across all investors holding a ticker → 0-N */
+export function aggregateConviction(holders: ConvictionInput[]): number {
+  return holders.reduce((s, h) => s + holdingConviction(h), 0);
+}
+

@@ -16,6 +16,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   SUPER_INVESTORS, STYLE_META, TIER_META, getInvestor,
+  holdingConviction, aggregateConviction,
   type InvestorStyle, type SuperInvestor,
 } from '@/lib/super-investors';
 
@@ -209,9 +210,12 @@ export default function SuperInvestorsPage() {
 interface PickCount {
   ticker: string;
   company: string;
-  investors: { id: string; name: string; stakePct?: number; style: InvestorStyle }[];
+  investors: { id: string; name: string; stakePct?: number; style: InvestorStyle; conviction: number }[];
   totalStakePct: number;
   styles: Set<InvestorStyle>;
+  // PATCH 0487/0488 — weighted conviction across all holders
+  aggregateConviction: number;
+  exchange?: string;
 }
 
 function buildPickCounts(): PickCount[] {
@@ -222,15 +226,27 @@ function buildPickCounts(): PickCount[] {
         map.set(h.ticker, {
           ticker: h.ticker, company: h.company,
           investors: [], totalStakePct: 0, styles: new Set(),
+          aggregateConviction: 0,
+          exchange: h.exchange,
         });
       }
       const pc = map.get(h.ticker)!;
-      pc.investors.push({ id: inv.id, name: inv.name, stakePct: h.stakePct, style: inv.style });
+      const conv = holdingConviction({
+        investorId: inv.id,
+        stakePct: h.stakePct,
+        tier: h.tier,
+        disclosedOn: h.disclosedOn,
+      });
+      pc.investors.push({ id: inv.id, name: inv.name, stakePct: h.stakePct, style: inv.style, conviction: conv });
       pc.totalStakePct += h.stakePct || 0;
       pc.styles.add(inv.style);
+      pc.aggregateConviction += conv;
+      if (!pc.exchange && h.exchange) pc.exchange = h.exchange;
     }
   }
-  return Array.from(map.values());
+  // PATCH 0488 — primary sort is conviction-weighted (not just count)
+  return Array.from(map.values())
+    .sort((a, b) => b.aggregateConviction - a.aggregateConviction);
 }
 
 function AnalyticsView({ onJumpToInvestor }: { onJumpToInvestor: (id: string) => void }) {
@@ -431,6 +447,7 @@ function ConsensusTable({ rows, onJumpToInvestor }: { rows: PickCount[]; onJumpT
             <th style={thStyle}>Ticker</th>
             <th style={thStyle}>Company</th>
             <th style={{ ...thStyle, textAlign: 'center' }}>Held by</th>
+            <th style={{ ...thStyle, textAlign: 'right' }} title="Weighted conviction: investor quality × stake × tier × recency">Conviction</th>
             <th style={thStyle}>Investors</th>
             <th style={thStyle}>Styles</th>
           </tr>
@@ -443,11 +460,25 @@ function ConsensusTable({ rows, onJumpToInvestor }: { rows: PickCount[]; onJumpT
                   color: TEXT, fontWeight: 700,
                   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
                   textDecoration: 'none',
-                }}>{p.ticker}</a>
+                }}>
+                  {p.exchange ? <span style={{ color: '#22D3EE', fontWeight: 500 }}>{p.exchange}:</span> : null}{p.ticker}
+                </a>
               </td>
               <td style={tdStyle}>{p.company}</td>
               <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 800, color: '#10B981' }}>
                 {p.investors.length}
+              </td>
+              {/* PATCH 0487 — Conviction column */}
+              <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} title={`Aggregate weighted conviction across ${p.investors.length} holders`}>
+                <span style={{
+                  fontSize: 12, fontWeight: 800,
+                  color: p.aggregateConviction >= 200 ? '#10B981'
+                       : p.aggregateConviction >= 120 ? '#22D3EE'
+                       : p.aggregateConviction >= 60  ? '#F59E0B'
+                       : '#94A3B8',
+                }}>
+                  {p.aggregateConviction}
+                </span>
               </td>
               <td style={tdStyle}>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
@@ -794,17 +825,29 @@ interface NewsArticle {
   importance_score?: number;
 }
 
-// PATCH 0484 — parsed stake-change moves from headline text
+// PATCH 0488 — parsed stake-change moves with signal hardening
 interface StakeMove {
   direction: 'BUY' | 'ADD' | 'TRIM' | 'EXIT' | 'UNKNOWN';
   ticker?: string;
   company?: string;
   stakePct?: number;
+  stakeFromPct?: number;
+  stakeDeltaPct?: number;
+  detail?: string;
   headline: string;
   url: string;
   source: string;
   publishedAt: string;
+  confidence?: 'HIGH' | 'MEDIUM' | 'LOW';
+  sourceType?: 'BSE' | 'NEWS' | 'INTERVIEW' | 'TV' | 'OTHER';
+  signalScore?: number;
 }
+
+const CONF_META: Record<string, { color: string; label: string }> = {
+  HIGH:   { color: '#10B981', label: 'HIGH'   },
+  MEDIUM: { color: '#F59E0B', label: 'MED'    },
+  LOW:    { color: '#94A3B8', label: 'LOW'    },
+};
 
 const DIR_META: Record<StakeMove['direction'], { label: string; color: string; icon: string }> = {
   BUY:     { label: 'NEW BUY',  color: '#10B981', icon: '↑' },
@@ -928,16 +971,35 @@ function NewsPanel({ query, investorName }: { query: string; investorName: strin
                   }}>
                     {meta.icon} {meta.label}
                   </span>
-                  {m.stakePct != null && (
+                  {/* PATCH 0488 — confidence chip */}
+                  {m.confidence && (() => {
+                    const cm = CONF_META[m.confidence];
+                    return (
+                      <span title={`Signal confidence: ${m.confidence}${m.signalScore != null ? ` · score ${m.signalScore}/100` : ''}`} style={{
+                        fontSize: 9, fontWeight: 800, letterSpacing: '0.4px',
+                        color: cm.color, border: `1px solid ${cm.color}50`,
+                        backgroundColor: `${cm.color}12`,
+                        padding: '1px 6px', borderRadius: 3,
+                      }}>{cm.label}</span>
+                    );
+                  })()}
+                  {/* Stake column: support from→to format */}
+                  {(m.stakeFromPct != null || m.stakePct != null) && (
                     <span style={{
                       fontSize: 12, fontWeight: 700, color: TEXT,
-                      fontVariantNumeric: 'tabular-nums', minWidth: 50,
+                      fontVariantNumeric: 'tabular-nums', minWidth: 76, whiteSpace: 'nowrap',
                     }}>
-                      {m.stakePct.toFixed(1)}%
+                      {m.stakeFromPct != null && m.stakePct != null
+                        ? `${m.stakeFromPct.toFixed(1)}% → ${m.stakePct.toFixed(1)}%`
+                        : m.stakePct != null
+                          ? `${m.stakePct.toFixed(1)}%`
+                          : m.stakeDeltaPct != null
+                            ? `${m.stakeDeltaPct > 0 ? '+' : ''}${m.stakeDeltaPct.toFixed(1)}%`
+                            : ''}
                     </span>
                   )}
                   {m.company && (
-                    <span style={{ fontSize: 12, fontWeight: 600, color: TEXT, minWidth: 130 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: TEXT, minWidth: 110 }}>
                       {m.company}
                     </span>
                   )}

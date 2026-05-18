@@ -14,8 +14,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useEffect, useMemo, useState } from 'react';
-import { Trash2, Download, Filter } from 'lucide-react';
-import { readDecisions, clearDecision, subscribeDecisions, DECISION_META, type Decision, type DecisionStatus, type DecisionMarket } from '@/lib/decisions';
+import { Trash2, Download, Filter, Plus } from 'lucide-react';
+import { readDecisions, clearDecision, subscribeDecisions, setDecision, DECISION_META, type Decision, type DecisionStatus, type DecisionMarket } from '@/lib/decisions';
 
 type StatusFilter = 'ALL' | DecisionStatus;
 type MarketFilter = 'ALL' | DecisionMarket;
@@ -34,6 +34,27 @@ export default function DecisionsPage() {
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState<SortKey>('date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  // PATCH 0487 QA-#19 — manual entry modal so user can add a decision
+  // directly without having to open Multibagger and expand a row.
+  const [showAdd, setShowAdd] = useState(false);
+  const [addSymbol, setAddSymbol] = useState('');
+  const [addMarket, setAddMarket] = useState<DecisionMarket>('IN');
+  const [addStatus, setAddStatus] = useState<DecisionStatus>('WATCH');
+  const [addCompany, setAddCompany] = useState('');
+  const [addReason, setAddReason] = useState('');
+  const submitNewDecision = () => {
+    const sym = addSymbol.trim().toUpperCase();
+    if (!sym) return;
+    setDecision({
+      symbol: sym, market: addMarket, status: addStatus,
+      company: addCompany.trim() || undefined,
+      reason: addReason.trim(),
+    });
+    // Reset & close
+    setAddSymbol(''); setAddCompany(''); setAddReason('');
+    setAddStatus('WATCH'); setAddMarket('IN');
+    setShowAdd(false);
+  };
 
   // Subscribe to cross-tab decision updates.
   useEffect(() => {
@@ -105,10 +126,22 @@ export default function DecisionsPage() {
             Every BUY / WATCH / NEUTRAL / REJECTED you logged. Survives uploads + clears.
           </span>
           <button
+            onClick={() => setShowAdd(true)}
+            style={{
+              marginLeft: 'auto', padding: '6px 12px', borderRadius: 6,
+              background: '#10B98115', border: '1px solid #10B98160', color: '#10B981',
+              fontSize: 12, fontWeight: 700, cursor: 'pointer',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}
+            title="Add a decision manually without opening Multibagger"
+          >
+            <Plus size={12} /> NEW DECISION
+          </button>
+          <button
             onClick={exportCsv}
             disabled={rows.length === 0}
             style={{
-              marginLeft: 'auto', padding: '6px 12px', borderRadius: 6,
+              padding: '6px 12px', borderRadius: 6,
               background: '#22D3EE15', border: '1px solid #22D3EE60', color: '#22D3EE',
               fontSize: 12, fontWeight: 700, cursor: rows.length ? 'pointer' : 'not-allowed',
               display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -118,6 +151,111 @@ export default function DecisionsPage() {
             <Download size={12} /> EXPORT CSV ({rows.length})
           </button>
         </div>
+
+        {/* PATCH 0487 QA-#19 — Manual decision entry modal */}
+        {showAdd && (
+          <div onClick={() => setShowAdd(false)} style={{
+            position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 200,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <div onClick={(e) => e.stopPropagation()} style={{
+              backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: 10,
+              padding: 24, minWidth: 420, maxWidth: 520, width: '90vw',
+            }}>
+              <h2 style={{ margin: 0, marginBottom: 16, fontSize: 18, fontWeight: 800, color: TEXT }}>
+                + New Decision
+              </h2>
+              <div style={{ display: 'grid', gap: 12 }}>
+                <label style={{ fontSize: 11, color: DIM, fontWeight: 700 }}>
+                  SYMBOL
+                  <input
+                    autoFocus
+                    value={addSymbol}
+                    onChange={(e) => setAddSymbol(e.target.value)}
+                    placeholder="e.g. RELIANCE / TCS / NVDA"
+                    style={{
+                      width: '100%', marginTop: 4, padding: '8px 10px', borderRadius: 5,
+                      border: `1px solid ${BORDER}`, background: BG, color: TEXT,
+                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                      fontSize: 14, fontWeight: 700, textTransform: 'uppercase',
+                    }}
+                  />
+                </label>
+                <label style={{ fontSize: 11, color: DIM, fontWeight: 700 }}>
+                  COMPANY NAME (optional)
+                  <input
+                    value={addCompany}
+                    onChange={(e) => setAddCompany(e.target.value)}
+                    placeholder="e.g. Reliance Industries"
+                    style={{
+                      width: '100%', marginTop: 4, padding: '8px 10px', borderRadius: 5,
+                      border: `1px solid ${BORDER}`, background: BG, color: TEXT, fontSize: 13,
+                    }}
+                  />
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: DIM, fontWeight: 700, marginBottom: 4 }}>MARKET</div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      {(['IN', 'US'] as DecisionMarket[]).map((m) => (
+                        <button key={m} onClick={() => setAddMarket(m)} style={{
+                          flex: 1, padding: '6px 10px', borderRadius: 5,
+                          border: `1px solid ${addMarket === m ? '#22D3EE' : BORDER}`,
+                          background: addMarket === m ? '#22D3EE20' : 'transparent',
+                          color: addMarket === m ? '#22D3EE' : DIM,
+                          fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                        }}>{m}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: DIM, fontWeight: 700, marginBottom: 4 }}>STATUS</div>
+                    <select
+                      value={addStatus}
+                      onChange={(e) => setAddStatus(e.target.value as DecisionStatus)}
+                      style={{
+                        width: '100%', padding: '6px 10px', borderRadius: 5,
+                        border: `1px solid ${BORDER}`, background: BG, color: TEXT, fontSize: 12, fontWeight: 700,
+                      }}
+                    >
+                      {(['BUY','WATCH','NEUTRAL','REJECTED'] as DecisionStatus[]).map((s) => (
+                        <option key={s} value={s}>{DECISION_META[s].emoji} {s}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <label style={{ fontSize: 11, color: DIM, fontWeight: 700 }}>
+                  REASON / NOTE
+                  <textarea
+                    value={addReason}
+                    onChange={(e) => setAddReason(e.target.value)}
+                    placeholder="Why this decision? Thesis, risk note, or trigger."
+                    rows={3}
+                    style={{
+                      width: '100%', marginTop: 4, padding: '8px 10px', borderRadius: 5,
+                      border: `1px solid ${BORDER}`, background: BG, color: TEXT, fontSize: 12,
+                      resize: 'vertical', fontFamily: 'inherit',
+                    }}
+                  />
+                </label>
+                <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                  <button onClick={() => setShowAdd(false)} style={{
+                    flex: 1, padding: '8px 12px', borderRadius: 5,
+                    border: `1px solid ${BORDER}`, background: 'transparent', color: DIM,
+                    fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                  }}>Cancel</button>
+                  <button onClick={submitNewDecision} disabled={!addSymbol.trim()} style={{
+                    flex: 2, padding: '8px 12px', borderRadius: 5,
+                    border: '1px solid #10B981',
+                    background: addSymbol.trim() ? '#10B98125' : 'transparent',
+                    color: addSymbol.trim() ? '#10B981' : DIM,
+                    fontSize: 12, fontWeight: 700, cursor: addSymbol.trim() ? 'pointer' : 'not-allowed',
+                  }}>Save Decision</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Status summary chips */}
         <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
@@ -206,8 +344,14 @@ export default function DecisionsPage() {
             <div style={{ fontSize: 36, marginBottom: 10 }}>📒</div>
             <p style={{ margin: 0, fontWeight: 700, color: TEXT }}>No decisions logged yet</p>
             <p style={{ margin: '6px 0 0', fontSize: 12 }}>
-              Open Multibagger India or USA, expand any row, and click BUY / WATCH / NEUTRAL / REJECTED to start your logbook.
+              Open Multibagger India or USA, expand any row, and click BUY / WATCH / NEUTRAL / REJECTED to start your logbook —
+              or use the <strong style={{ color: '#10B981' }}>+ NEW DECISION</strong> button above to add one manually.
             </p>
+            <button onClick={() => setShowAdd(true)} style={{
+              marginTop: 14, padding: '8px 18px', borderRadius: 6,
+              background: '#10B98115', border: '1px solid #10B98160', color: '#10B981',
+              fontSize: 12, fontWeight: 700, cursor: 'pointer',
+            }}>+ Add Your First Decision</button>
           </div>
         ) : (
           <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, overflow: 'hidden' }}>
