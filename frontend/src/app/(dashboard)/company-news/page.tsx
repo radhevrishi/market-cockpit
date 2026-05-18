@@ -156,7 +156,14 @@ export default function CompanyNewsPage() {
         tickersToFetch = stored ? JSON.parse(stored) : DEFAULT_TICKERS;
       }
       const symbolsParam = (tickersToFetch || DEFAULT_TICKERS).join(',');
-      const response = await fetch(`/api/market/company-news?symbols=${symbolsParam}&days=${selectedDays}&limit=10`);
+      // PATCH 0466 — 20s timeout. Company news fetch can be slow with
+      // many tickers; cap to avoid the spinner hanging forever.
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 20_000);
+      let response: Response;
+      try {
+        response = await fetch(`/api/market/company-news?symbols=${symbolsParam}&days=${selectedDays}&limit=10`, { signal: ctl.signal });
+      } finally { clearTimeout(timer); }
       if (!response.ok) throw new Error('Failed to fetch company news');
       const data: NewsResponse = await response.json();
       setNews(data.news || []);

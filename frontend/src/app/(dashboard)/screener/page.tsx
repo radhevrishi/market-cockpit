@@ -240,9 +240,13 @@ export default function ScreenerPage() {
   const fetchQuotesData = useCallback(async () => {
     setLoading(true);
     setError(null);
+    // PATCH 0466 — 15s timeout. Without this, a hung backend hangs the
+    // screener forever and the spinner never resolves.
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 15_000);
     try {
       const marketParam = market === 'us' ? 'us' : 'india';
-      const response = await fetch(`/api/market/quotes?market=${marketParam}`);
+      const response = await fetch(`/api/market/quotes?market=${marketParam}`, { signal: ctl.signal });
       if (!response.ok) throw new Error('Failed to fetch quotes');
       const result: QuotesData = await response.json();
       setData(result);
@@ -257,6 +261,7 @@ export default function ScreenerPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
+      clearTimeout(timer);
       setLoading(false);
     }
   }, [market]);

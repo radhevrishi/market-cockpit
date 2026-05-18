@@ -38,11 +38,18 @@ export default function ConcallIntelPage() {
     setError(null);
     setResult(null);
     setLoading(true);
+    // PATCH 0466 — 65s timeout (Vercel maxDuration on the route is 60s,
+    // so 65s gives a buffer before client gives up). Previously the
+    // fetch was unbounded and could hang the spinner indefinitely on
+    // network issues.
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 65_000);
     try {
       const res = await fetch('/api/v1/concall/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ticker, pdf_url: pdfUrl, transcript }),
+        signal: ctl.signal,
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
@@ -52,8 +59,9 @@ export default function ConcallIntelPage() {
       const j = await res.json();
       setResult(j);
     } catch (e: any) {
-      setError(e?.message || 'fetch failed');
+      setError(e?.name === 'AbortError' ? 'Request timed out after 65s' : (e?.message || 'fetch failed'));
     } finally {
+      clearTimeout(timer);
       setLoading(false);
     }
   };
@@ -1861,12 +1869,16 @@ function MoversPanel() {
     let mounted = true;
     const load = async () => {
       setLoading(true);
+      // PATCH 0466 — 20s timeout so a stuck movers endpoint doesn't
+      // freeze this panel's loading state forever.
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 20_000);
       try {
-        const r = await fetch('/api/v1/concall-intel/movers', { cache: 'no-store' });
+        const r = await fetch('/api/v1/concall-intel/movers', { cache: 'no-store', signal: ctl.signal });
         if (!r.ok) return;
         const j = await r.json();
         if (mounted) setData(j);
-      } catch {} finally { if (mounted) setLoading(false); }
+      } catch {} finally { clearTimeout(timer); if (mounted) setLoading(false); }
     };
     load();
     const t = setInterval(load, 15 * 60 * 1000);

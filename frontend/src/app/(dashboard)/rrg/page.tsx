@@ -69,15 +69,20 @@ export default function RRGPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
+    // PATCH 0466 — 20s timeout. RRG computation can be slow but a hung
+    // request should not freeze the page forever.
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 20_000);
     try {
       const marketParam = market === 'global' ? 'us' : 'india';
-      const response = await fetch(`/api/market/rrg?market=${marketParam}&timeframe=${timeframe}`);
+      const response = await fetch(`/api/market/rrg?market=${marketParam}&timeframe=${timeframe}`, { signal: ctl.signal });
       if (!response.ok) throw new Error('Failed to fetch RRG data');
       const result: RRGData = await response.json();
       setData(result);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+    } catch (err: any) {
+      setError(err?.name === 'AbortError' ? 'RRG fetch timed out' : (err instanceof Error ? err.message : 'An error occurred'));
     } finally {
+      clearTimeout(timer);
       setLoading(false);
     }
   }, [market, timeframe]);
