@@ -84,27 +84,36 @@ export default function CompanyIntelPage() {
   // ── Loaders ───────────────────────────────────────────────────────────
   const loadIndex = useCallback(async () => {
     setLoading(true);
+    // PATCH 0468 — 15s timeout
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 15_000);
     try {
-      const res = await fetch('/api/v1/company-intel/index', { cache: 'no-store' });
+      const res = await fetch('/api/v1/company-intel/index', { cache: 'no-store', signal: ctl.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const j = await res.json();
       setRows(j.rows || []);
     } catch (e) {
       console.error('[company-intel] index fetch failed', e);
     } finally {
+      clearTimeout(timer);
       setLoading(false);
     }
   }, []);
 
   const loadCorpus = useCallback(async (tk: string) => {
+    // PATCH 0468 — 15s timeout
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 15_000);
     try {
-      const res = await fetch(`/api/v1/company-intel/${encodeURIComponent(tk)}`, { cache: 'no-store' });
+      const res = await fetch(`/api/v1/company-intel/${encodeURIComponent(tk)}`, { cache: 'no-store', signal: ctl.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const j = await res.json();
       setDrillCorpus(j);
     } catch (e) {
       console.error('[company-intel] corpus fetch failed', e);
       setDrillCorpus(null);
+    } finally {
+      clearTimeout(timer);
     }
   }, []);
 
@@ -134,6 +143,9 @@ export default function CompanyIntelPage() {
     }
     setUploading(true);
     setUploadResult(null);
+    // PATCH 0468 — 30s timeout (POST does merge + guidance extraction; can be slow on large transcripts)
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 30_000);
     try {
       const res = await fetch(`/api/v1/company-intel/${encodeURIComponent(ticker.trim().toUpperCase())}`, {
         method: 'POST',
@@ -144,6 +156,7 @@ export default function CompanyIntelPage() {
           title: title || undefined,
           company: company || undefined,
         }),
+        signal: ctl.signal,
       });
       const j = await res.json();
       if (!res.ok) {
@@ -158,8 +171,9 @@ export default function CompanyIntelPage() {
         loadIndex();
       }
     } catch (e: any) {
-      setUploadResult(`⚠ Upload threw: ${e?.message || 'unknown'}`);
+      setUploadResult(`⚠ Upload threw: ${e?.name === 'AbortError' ? 'Request timed out after 30s' : (e?.message || 'unknown')}`);
     } finally {
+      clearTimeout(timer);
       setUploading(false);
     }
   };

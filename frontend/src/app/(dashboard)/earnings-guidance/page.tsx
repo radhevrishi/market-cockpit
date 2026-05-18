@@ -171,7 +171,13 @@ export default function EarningsGuidancePage() {
         return;
       }
 
-      const res = await fetch(`/api/market/earnings-guidance?symbols=${symbols.join(',')}&days=45`);
+      // PATCH 0468 — 25s timeout
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 25_000);
+      let res: Response;
+      try {
+        res = await fetch(`/api/market/earnings-guidance?symbols=${symbols.join(',')}&days=45`, { signal: ctl.signal });
+      } finally { clearTimeout(timer); }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
 
