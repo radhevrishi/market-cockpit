@@ -562,3 +562,208 @@ export function aggregateConviction(holders: ConvictionInput[]): number {
   return holders.reduce((s, h) => s + holdingConviction(h), 0);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PATCH 0491 — SUPER INVESTOR v4 ANALYTICS LAYER
+//
+// Style-adjusted conviction · Sector/theme exposure · Investor similarity ·
+// Idea lifecycle stage · Risk concentration · Early signal detection ·
+// Cross-style divergence.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── 2. STYLE-ADJUSTED CONVICTION ─────────────────────────────────────────
+// Multiplier applied to base conviction. Concentrated-quality + thematic
+// signals are more stable; small/mid-multibagger is noisier but high alpha;
+// scuttlebutt = early signal value.
+export const STYLE_SIGNAL_WEIGHT: Record<InvestorStyle, number> = {
+  CONCENTRATED_QUALITY:   1.20,  // stable conviction signal
+  THEMATIC_STRUCTURAL:    1.15,  // macro confirmation
+  GROWTH_AT_REASONABLE:   1.05,
+  CONTRARIAN_VALUE:       1.10,  // early-cycle signal
+  SMALL_MID_MULTIBAGGER:  1.00,  // high alpha but noisy → baseline
+  SCUTTLEBUTT_QUANT:      0.90,  // commentary-heavy
+};
+
+export function styleAdjustedConviction(
+  base: number,
+  style: InvestorStyle,
+): number {
+  return Math.round(base * STYLE_SIGNAL_WEIGHT[style]);
+}
+
+// ── 7. SECTOR / THEME CLASSIFICATION ─────────────────────────────────────
+// Curated ticker → sector map (extends as roster grows). Used by the
+// sector exposure rollup + theme map in the analytics view.
+export type Sector =
+  | 'Pharma & API'      | 'Chemicals'        | 'EMS / Electronics'
+  | 'Capital Goods'     | 'Auto & Auto Anc'  | 'Consumer'
+  | 'Financials'        | 'IT Services'      | 'Real Estate / REIT'
+  | 'Energy & Power'    | 'Metals & Mining'  | 'Textiles'
+  | 'Sugar / Agri'      | 'Hospitality'      | 'Defence & Aero'
+  | 'Insurance'         | 'Other';
+
+const SECTOR_MAP: Record<string, Sector> = {
+  // Pharma
+  JBCHEPHARM: 'Pharma & API', NEULAND: 'Pharma & API', AMIORG: 'Pharma & API',
+  HIKAL: 'Pharma & API', AARTIIND: 'Pharma & API', AARTIDRUGS: 'Pharma & API',
+  NATCOPHARM: 'Pharma & API', SUNPHARMA: 'Pharma & API', JUBLPHARMA: 'Pharma & API',
+  ALEMBICPHARMA: 'Pharma & API', POLYMED: 'Pharma & API',
+  // Chemicals
+  GMM: 'Chemicals', HLEGLAS: 'Chemicals', SHAILY: 'Chemicals',
+  XPROINDIA: 'Chemicals', MOLDTKPAC: 'Chemicals', STYLAMIND: 'Chemicals',
+  // EMS / Electronics
+  KAYNES: 'EMS / Electronics', SYRMA: 'EMS / Electronics', DIXON: 'EMS / Electronics',
+  AMBER: 'EMS / Electronics', CGPOWER: 'EMS / Electronics',
+  // Capital Goods
+  KPIT: 'Capital Goods', TATAELXSI: 'Capital Goods', ELECON: 'Capital Goods',
+  CARBORUNIV: 'Capital Goods', PATELENG: 'Capital Goods', HONAUT: 'Capital Goods',
+  // Auto
+  TVSMOTOR: 'Auto & Auto Anc', ATULAUTO: 'Auto & Auto Anc', TALBROAUTO: 'Auto & Auto Anc',
+  TATAMOTORS: 'Auto & Auto Anc', BHARATFORG: 'Auto & Auto Anc',
+  // Consumer
+  TITAN: 'Consumer', METROBRAND: 'Consumer', RELAXO: 'Consumer',
+  ASIANPAINT: 'Consumer', PIDILITIND: 'Consumer', DOMSIND: 'Consumer',
+  PAGEIND: 'Consumer', SAFARI: 'Consumer', BARBEQUE: 'Consumer',
+  RADICO: 'Consumer', GLOBUSSPR: 'Consumer',
+  // Financials
+  HDFCBANK: 'Financials', BAJFINANCE: 'Financials', EDELWEISS: 'Financials',
+  IIFL: 'Financials', RBL: 'Financials', BSE: 'Financials', CDSL: 'Financials',
+  CAMS: 'Financials', ESAFSFB: 'Financials', CRISIL: 'Financials',
+  AFFLE: 'Financials',
+  // IT Services
+  TCS: 'IT Services', INFOSYS: 'IT Services', HCLTECH: 'IT Services',
+  INTLLABS: 'IT Services',
+  // Energy & Power
+  TEJASNET: 'Capital Goods', INNOVANA: 'IT Services',
+  // Real Estate
+  NAZARA: 'Consumer',
+  // Insurance
+  STARHEALTH: 'Insurance',
+  // Textiles
+  NITINSPIN: 'Textiles', WELSPUNLIV: 'Textiles', POKARNA: 'Textiles',
+  // Sugar / Agri
+  DWARKESH: 'Sugar / Agri', TRIVENI: 'Sugar / Agri', DHAMPURSUG: 'Sugar / Agri',
+  BANARISUG: 'Sugar / Agri', KCPSUGIND: 'Sugar / Agri', RANAGRO: 'Sugar / Agri',
+  KSL: 'Sugar / Agri', KMSUGAR: 'Sugar / Agri',
+  // Metals & Mining
+  RAIN: 'Metals & Mining', BEEKAYSTL: 'Metals & Mining', PRAKASH: 'Metals & Mining',
+  // Hospitality
+  DEVYANI: 'Hospitality', SAPPHIRE: 'Hospitality',
+  // Defence & Aero
+  // others
+  KERALAYR: 'Pharma & API', ORIENTBELL: 'Capital Goods',
+  ARROWGREEN: 'Chemicals', TVSSCS: 'Capital Goods', YUKEN: 'Capital Goods',
+  DUCON: 'Capital Goods', GUJTHEM: 'Pharma & API', TIRUPATIFL: 'Capital Goods',
+  REPRO: 'Consumer', JKTYRE: 'Auto & Auto Anc', NYKAA: 'Consumer',
+  GTLINFRA: 'Capital Goods', BASILIC: 'IT Services', EVEREADY: 'Consumer',
+  KIRIINDUS: 'Chemicals', AGARIND: 'Capital Goods',
+};
+
+export function tickerSector(ticker: string): Sector {
+  return SECTOR_MAP[ticker.toUpperCase()] || 'Other';
+}
+
+// ── 3/8. IDEA LIFECYCLE STAGE ────────────────────────────────────────────
+// Heuristic from holder count + style mix + disclosure recency.
+export type LifecycleStage =
+  | 'EMERGING'           // 1 investor, recent disclosure
+  | 'EARLY_ENTRY'        // 2 investors
+  | 'CONSENSUS_BUILDING' // 3-4 investors
+  | 'PEAK_OWNERSHIP'     // 5+ investors, multi-style
+  | 'MATURE_COMPOUNDER'  // 3+ quality-style investors, long-held
+  | 'DISTRIBUTION';      // recent exits flagged (requires move data)
+
+export const LIFECYCLE_META: Record<LifecycleStage, { label: string; color: string; icon: string }> = {
+  EMERGING:            { label: 'Emerging Idea',          color: '#22D3EE', icon: '🌱' },
+  EARLY_ENTRY:         { label: 'Early Institutional Entry', color: '#10B981', icon: '🌿' },
+  CONSENSUS_BUILDING:  { label: 'Consensus Building',     color: '#F59E0B', icon: '📈' },
+  PEAK_OWNERSHIP:      { label: 'Peak Ownership',         color: '#8B5CF6', icon: '🏔️' },
+  MATURE_COMPOUNDER:   { label: 'Mature Compounder',      color: '#3B82F6', icon: '🛡️' },
+  DISTRIBUTION:        { label: 'Distribution Phase',     color: '#EF4444', icon: '📉' },
+};
+
+export function classifyLifecycle(args: {
+  holderCount: number;
+  qualityHolderCount: number;
+  recentDisclosures: number; // <= 60 days
+}): LifecycleStage {
+  const { holderCount, qualityHolderCount } = args;
+  if (holderCount === 1) return 'EMERGING';
+  if (holderCount === 2) return 'EARLY_ENTRY';
+  if (holderCount >= 5 && qualityHolderCount >= 2) return 'PEAK_OWNERSHIP';
+  if (qualityHolderCount >= 3) return 'MATURE_COMPOUNDER';
+  if (holderCount >= 3) return 'CONSENSUS_BUILDING';
+  return 'EMERGING';
+}
+
+// ── 6. INVESTOR SIMILARITY MATRIX (Jaccard over holdings sets) ───────────
+export function investorSimilarity(a: SuperInvestor, b: SuperInvestor): number {
+  const sa = new Set(a.topHoldings.map((h) => h.ticker.toUpperCase()));
+  const sb = new Set(b.topHoldings.map((h) => h.ticker.toUpperCase()));
+  if (sa.size === 0 || sb.size === 0) return 0;
+  let inter = 0;
+  for (const t of sa) if (sb.has(t)) inter++;
+  const union = sa.size + sb.size - inter;
+  return union > 0 ? Math.round((inter / union) * 100) / 100 : 0;
+}
+
+export function buildSimilarityPairs(
+  topN = 10,
+): Array<{ a: SuperInvestor; b: SuperInvestor; sim: number; overlap: string[] }> {
+  const pairs: Array<{ a: SuperInvestor; b: SuperInvestor; sim: number; overlap: string[] }> = [];
+  for (let i = 0; i < SUPER_INVESTORS.length; i++) {
+    for (let j = i + 1; j < SUPER_INVESTORS.length; j++) {
+      const a = SUPER_INVESTORS[i];
+      const b = SUPER_INVESTORS[j];
+      const sim = investorSimilarity(a, b);
+      if (sim <= 0) continue;
+      const sa = new Set(a.topHoldings.map((h) => h.ticker.toUpperCase()));
+      const overlap = b.topHoldings
+        .map((h) => h.ticker.toUpperCase())
+        .filter((t) => sa.has(t));
+      pairs.push({ a, b, sim, overlap });
+    }
+  }
+  pairs.sort((x, y) => y.sim - x.sim);
+  return pairs.slice(0, topN);
+}
+
+// ── 9. RISK CONCENTRATION ────────────────────────────────────────────────
+// Top-N share of total conviction signals crowding risk.
+export function concentrationStats(pickConvictions: number[]): {
+  top5Pct: number;
+  top10Pct: number;
+  total: number;
+  hhi: number; // Herfindahl-Hirschman concentration index 0-10000
+} {
+  const sorted = [...pickConvictions].sort((a, b) => b - a);
+  const total = sorted.reduce((s, v) => s + v, 0);
+  if (total === 0) return { top5Pct: 0, top10Pct: 0, total: 0, hhi: 0 };
+  const top5 = sorted.slice(0, 5).reduce((s, v) => s + v, 0);
+  const top10 = sorted.slice(0, 10).reduce((s, v) => s + v, 0);
+  const hhi = sorted.reduce((s, v) => s + (v / total) * (v / total), 0) * 10000;
+  return {
+    top5Pct: Math.round((top5 / total) * 1000) / 10,
+    top10Pct: Math.round((top10 / total) * 1000) / 10,
+    total,
+    hhi: Math.round(hhi),
+  };
+}
+
+// ── 4. CROSS-STYLE DIVERGENCE ────────────────────────────────────────────
+// Detects stocks where opposing-style investors hold simultaneously
+// (growth buying while value selling = re-rating signal indicator).
+export function crossStyleDivergence(styles: InvestorStyle[]): {
+  isDivergent: boolean;
+  pattern?: 'GROWTH_VS_VALUE' | 'QUALITY_VS_MULTIBAGGER';
+} {
+  const has = (s: InvestorStyle) => styles.includes(s);
+  if (has('GROWTH_AT_REASONABLE') && has('CONTRARIAN_VALUE')) {
+    return { isDivergent: true, pattern: 'GROWTH_VS_VALUE' };
+  }
+  if (has('CONCENTRATED_QUALITY') && has('SMALL_MID_MULTIBAGGER')) {
+    return { isDivergent: true, pattern: 'QUALITY_VS_MULTIBAGGER' };
+  }
+  return { isDivergent: false };
+}
+
+

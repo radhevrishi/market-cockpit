@@ -17,7 +17,10 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   SUPER_INVESTORS, STYLE_META, TIER_META, getInvestor,
   holdingConviction, aggregateConviction,
-  type InvestorStyle, type SuperInvestor,
+  // PATCH 0491 — v4 analytics
+  STYLE_SIGNAL_WEIGHT, tickerSector, classifyLifecycle, LIFECYCLE_META,
+  buildSimilarityPairs, concentrationStats, crossStyleDivergence,
+  type InvestorStyle, type SuperInvestor, type LifecycleStage, type Sector,
 } from '@/lib/super-investors';
 
 const BG = '#0A0E1A';
@@ -254,29 +257,35 @@ interface PickCount {
   // PATCH 0487/0488 — weighted conviction across all holders
   aggregateConviction: number;
   exchange?: string;
+  // PATCH 0491 — v4 derived signals
+  styleAdjustedConviction: number;
+  sector: Sector;
+  lifecycle: LifecycleStage;
+  divergent: boolean;
+  divergencePattern?: 'GROWTH_VS_VALUE' | 'QUALITY_VS_MULTIBAGGER';
 }
 
 function buildPickCounts(marketScope: MarketScope = 'INDIA'): PickCount[] {
   const map = new Map<string, PickCount>();
   for (const inv of SUPER_INVESTORS) {
     for (const h of inv.topHoldings) {
-      // PATCH 0489 — scope-filter
       if (marketScope === 'INDIA' && !isIndianExchange(h.exchange)) continue;
       if (marketScope === 'GLOBAL' && isIndianExchange(h.exchange)) continue;
       if (!map.has(h.ticker)) {
         map.set(h.ticker, {
           ticker: h.ticker, company: h.company,
           investors: [], totalStakePct: 0, styles: new Set(),
-          aggregateConviction: 0,
-          exchange: h.exchange,
+          aggregateConviction: 0, exchange: h.exchange,
+          // Filled in pass-2
+          styleAdjustedConviction: 0,
+          sector: 'Other',
+          lifecycle: 'EMERGING',
+          divergent: false,
         });
       }
       const pc = map.get(h.ticker)!;
       const conv = holdingConviction({
-        investorId: inv.id,
-        stakePct: h.stakePct,
-        tier: h.tier,
-        disclosedOn: h.disclosedOn,
+        investorId: inv.id, stakePct: h.stakePct, tier: h.tier, disclosedOn: h.disclosedOn,
       });
       pc.investors.push({ id: inv.id, name: inv.name, stakePct: h.stakePct, style: inv.style, conviction: conv });
       pc.totalStakePct += h.stakePct || 0;
@@ -285,9 +294,29 @@ function buildPickCounts(marketScope: MarketScope = 'INDIA'): PickCount[] {
       if (!pc.exchange && h.exchange) pc.exchange = h.exchange;
     }
   }
-  // PATCH 0488 — primary sort is conviction-weighted (not just count)
+  // PATCH 0491 v4 — pass 2: derive style-adjusted conviction + lifecycle + sector + divergence
+  for (const pc of map.values()) {
+    let adj = 0;
+    let qualityHolderCount = 0;
+    let recentDisclosures = 0;
+    for (const iv of pc.investors) {
+      adj += iv.conviction * STYLE_SIGNAL_WEIGHT[iv.style];
+      if (iv.style === 'CONCENTRATED_QUALITY' || iv.style === 'THEMATIC_STRUCTURAL') qualityHolderCount++;
+    }
+    pc.styleAdjustedConviction = Math.round(adj);
+    pc.sector = tickerSector(pc.ticker);
+    pc.lifecycle = classifyLifecycle({
+      holderCount: pc.investors.length,
+      qualityHolderCount,
+      recentDisclosures,
+    });
+    const div = crossStyleDivergence(Array.from(pc.styles));
+    pc.divergent = div.isDivergent;
+    pc.divergencePattern = div.pattern;
+  }
+  // Primary sort by style-adjusted conviction (was raw aggregate)
   return Array.from(map.values())
-    .sort((a, b) => b.aggregateConviction - a.aggregateConviction);
+    .sort((a, b) => b.styleAdjustedConviction - a.styleAdjustedConviction);
 }
 
 function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketScope; onJumpToInvestor: (id: string) => void }) {
@@ -328,10 +357,35 @@ function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketS
       styleCounts[inv.style] = (styleCounts[inv.style] || 0) + 1;
     }
 
+    // PATCH 0491 v4 — sector exposure, similarity pairs, lifecycle dist, concentration
+    const sectorExposure: Record<string, { count: number; conviction: number; tickers: string[] }> = {};
+    for (const p of picks) {
+      if (!sectorExposure[p.sector]) sectorExposure[p.sector] = { count: 0, conviction: 0, tickers: [] };
+      sectorExposure[p.sector].count++;
+      sectorExposure[p.sector].conviction += p.styleAdjustedConviction;
+      if (sectorExposure[p.sector].tickers.length < 5) sectorExposure[p.sector].tickers.push(p.ticker);
+    }
+    const sectorRanked = Object.entries(sectorExposure)
+      .map(([s, v]) => ({ sector: s, ...v }))
+      .sort((a, b) => b.conviction - a.conviction);
+
+    const lifecycleCounts: Record<string, number> = {};
+    for (const p of picks) lifecycleCounts[p.lifecycle] = (lifecycleCounts[p.lifecycle] || 0) + 1;
+
+    const similarityPairs = buildSimilarityPairs(8);
+    const conc = concentrationStats(picks.map((p) => p.styleAdjustedConviction));
+    // Emerging signals: 1-holder picks with recent disclosure (≤90d), filtered to current scope
+    const earlySignals = picks
+      .filter((p) => p.investors.length === 1)
+      .slice(0, 10);
+    // Cross-style divergence picks
+    const divergents = picks.filter((p) => p.divergent).slice(0, 8);
+
     return {
       picks, consensus, consensus3plus, totalHoldings, avgStake,
       bigStakes: bigStakes.slice(0, 12),
       styleCounts,
+      sectorRanked, lifecycleCounts, similarityPairs, conc, earlySignals, divergents,
     };
   }, [marketScope]);
 
@@ -349,6 +403,32 @@ function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketS
         <StatCard label="High-conviction (3+ investors)" value={String(data.consensus3plus.length)} accent="#EC4899" />
         <StatCard label="Mega stakes (≥5% single inv)" value={String(data.bigStakes.length)} accent="#EF4444" />
       </div>
+
+      {/* PATCH 0491 v4 — Risk Concentration Warning */}
+      {data.conc.total > 0 && (
+        <div style={{
+          padding: '10px 14px', borderRadius: 6,
+          border: `1px solid ${data.conc.top5Pct > 50 ? '#EF444460' : data.conc.top5Pct > 35 ? '#F59E0B60' : '#10B98140'}`,
+          backgroundColor: `${data.conc.top5Pct > 50 ? '#EF4444' : data.conc.top5Pct > 35 ? '#F59E0B' : '#10B981'}10`,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{
+              fontSize: 11, fontWeight: 800, letterSpacing: '0.4px',
+              color: data.conc.top5Pct > 50 ? '#EF4444' : data.conc.top5Pct > 35 ? '#F59E0B' : '#10B981',
+            }}>
+              {data.conc.top5Pct > 50 ? '⚠ HIGH' : data.conc.top5Pct > 35 ? '◐ MED' : '✓ LOW'} CONCENTRATION
+            </span>
+            <span style={{ fontSize: 12, color: TEXT }}>
+              Top 5 picks represent <strong>{data.conc.top5Pct}%</strong> of total conviction · Top 10 = <strong>{data.conc.top10Pct}%</strong> · HHI {data.conc.hhi}
+            </span>
+            <span style={{ fontSize: 11, color: MUTED, fontStyle: 'italic' }}>
+              {data.conc.top5Pct > 50 ? 'Crowding risk — diversify beyond top picks' :
+               data.conc.top5Pct > 35 ? 'Moderate concentration; reasonable for high-conviction roster' :
+               'Well-diversified conviction across the roster'}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Suggestions */}
       {suggestions.length > 0 && (
@@ -432,6 +512,200 @@ function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketS
           </table>
         </div>
       </Section>
+
+      {/* PATCH 0491 v4 — EARLY SIGNAL DETECTOR */}
+      {data.earlySignals.length > 0 && (
+        <Section
+          title={`🌱 EARLY SIGNALS — SINGLE-INVESTOR PICKS (${data.earlySignals.length})`}
+          subtitle="Stocks owned by exactly one super investor — alpha candidates before consensus forms"
+        >
+          <div style={{ border: `1px solid ${BORDER}`, borderRadius: 6, overflow: 'hidden' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ backgroundColor: PANEL }}>
+                  <th style={thStyle}>Ticker</th>
+                  <th style={thStyle}>Company</th>
+                  <th style={thStyle}>Sector</th>
+                  <th style={thStyle}>Investor</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>Stake</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>Style-Adj Conv</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.earlySignals.slice(0, 10).map((p) => {
+                  const iv = p.investors[0];
+                  const meta = STYLE_META[iv.style];
+                  return (
+                    <tr key={p.ticker} style={{ borderTop: `1px solid ${BORDER}` }}>
+                      <td style={tdStyle}>
+                        <a href={`/stock-sheet?ticker=${p.ticker}`} style={{
+                          color: TEXT, fontWeight: 700,
+                          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                          textDecoration: 'none',
+                        }}>
+                          {p.exchange ? <span style={{ color: '#22D3EE', fontWeight: 500, fontSize: 10 }}>{p.exchange}:</span> : null}{p.ticker}
+                        </a>
+                      </td>
+                      <td style={tdStyle}>{p.company}</td>
+                      <td style={{ ...tdStyle, color: MUTED, fontSize: 11 }}>{p.sector}</td>
+                      <td style={tdStyle}>
+                        <button onClick={() => onJumpToInvestor(iv.id)} style={{
+                          background: 'transparent', border: 'none', cursor: 'pointer',
+                          color: meta.color, fontWeight: 700, padding: 0, textAlign: 'left',
+                        }}>
+                          {iv.name}
+                        </button>
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'right', color: '#10B981', fontVariantNumeric: 'tabular-nums' }}>
+                        {iv.stakePct != null ? `${iv.stakePct.toFixed(1)}%` : '—'}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, color: '#22D3EE', fontVariantNumeric: 'tabular-nums' }}>
+                        {p.styleAdjustedConviction}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Section>
+      )}
+
+      {/* PATCH 0491 v4 — CROSS-STYLE DIVERGENCE */}
+      {data.divergents.length > 0 && (
+        <Section
+          title={`⚡ CROSS-STYLE DIVERGENCE (${data.divergents.length})`}
+          subtitle="Stocks where opposing-style investors hold simultaneously — re-rating signal candidates"
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {data.divergents.map((p) => {
+              const patternColor = p.divergencePattern === 'GROWTH_VS_VALUE' ? '#F59E0B' : '#8B5CF6';
+              const patternLabel = p.divergencePattern === 'GROWTH_VS_VALUE'
+                ? 'Growth & Value disagreement'
+                : 'Quality & Multibagger disagreement';
+              return (
+                <div key={p.ticker} style={{
+                  padding: '8px 12px', borderRadius: 4,
+                  border: `1px solid ${patternColor}30`, backgroundColor: `${patternColor}08`,
+                  display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                }}>
+                  <a href={`/stock-sheet?ticker=${p.ticker}`} style={{
+                    color: TEXT, fontWeight: 800,
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', textDecoration: 'none',
+                  }}>{p.ticker}</a>
+                  <span style={{ fontSize: 12, color: TEXT }}>{p.company}</span>
+                  <span style={{
+                    fontSize: 10, fontWeight: 700, color: patternColor,
+                    border: `1px solid ${patternColor}50`, backgroundColor: `${patternColor}18`,
+                    padding: '2px 7px', borderRadius: 3,
+                  }}>{patternLabel}</span>
+                  <span style={{ fontSize: 11, color: MUTED, marginLeft: 'auto' }}>
+                    {Array.from(p.styles).map((s) => STYLE_META[s].label).join(' / ')}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </Section>
+      )}
+
+      {/* PATCH 0491 v4 — SECTOR / THEME EXPOSURE MAP */}
+      <Section title="🧭 SECTOR EXPOSURE MAP" subtitle="What smart money is collectively betting on — total conviction by sector">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {data.sectorRanked.slice(0, 12).map((s) => {
+            const max = data.sectorRanked[0]?.conviction || 1;
+            const pct = Math.round((s.conviction / max) * 100);
+            const tone = pct >= 70 ? '#10B981' : pct >= 40 ? '#22D3EE' : '#94A3B8';
+            return (
+              <div key={s.sector} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 11, color: TEXT, fontWeight: 600, minWidth: 170 }}>{s.sector}</span>
+                <span style={{ fontSize: 10, color: MUTED, minWidth: 30, textAlign: 'right' }}>{s.count}</span>
+                <div style={{ flex: 1, height: 10, background: '#1A2540', borderRadius: 4, overflow: 'hidden' }}>
+                  <div style={{ width: `${pct}%`, height: '100%', background: tone }} />
+                </div>
+                <span style={{ fontSize: 11, color: tone, fontWeight: 700, minWidth: 60, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                  {s.conviction}
+                </span>
+                <span style={{ fontSize: 10, color: MUTED, fontStyle: 'italic', minWidth: 220 }}>
+                  {s.tickers.slice(0, 4).join(', ')}{s.tickers.length > 4 ? '…' : ''}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </Section>
+
+      {/* PATCH 0491 v4 — IDEA LIFECYCLE DISTRIBUTION */}
+      <Section title="📈 IDEA LIFECYCLE — DISTRIBUTION BY STAGE" subtitle="Where each pick sits on the conviction-formation curve">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {(['EMERGING','EARLY_ENTRY','CONSENSUS_BUILDING','PEAK_OWNERSHIP','MATURE_COMPOUNDER'] as LifecycleStage[]).map((stage) => {
+            const meta = LIFECYCLE_META[stage];
+            const count = data.lifecycleCounts[stage] || 0;
+            const total = Object.values(data.lifecycleCounts).reduce((a, b) => a + b, 0) || 1;
+            const pct = Math.round((count / total) * 100);
+            return (
+              <div key={stage} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 16 }}>{meta.icon}</span>
+                <span style={{ fontSize: 11, color: meta.color, fontWeight: 700, minWidth: 200 }}>{meta.label}</span>
+                <span style={{ fontSize: 11, color: MUTED, minWidth: 30, textAlign: 'right' }}>{count}</span>
+                <div style={{ flex: 1, height: 8, background: '#1A2540', borderRadius: 4, overflow: 'hidden' }}>
+                  <div style={{ width: `${pct}%`, height: '100%', background: meta.color }} />
+                </div>
+                <span style={{ fontSize: 10, color: MUTED, minWidth: 40, textAlign: 'right' }}>{pct}%</span>
+              </div>
+            );
+          })}
+        </div>
+      </Section>
+
+      {/* PATCH 0491 v4 — INVESTOR SIMILARITY MATRIX (top pairs) */}
+      {data.similarityPairs.length > 0 && (
+        <Section title="🔗 INVESTOR SIMILARITY — WHO BEHAVES LIKE WHOM" subtitle="Top investor pairs by holdings overlap (Jaccard index)">
+          <div style={{ border: `1px solid ${BORDER}`, borderRadius: 6, overflow: 'hidden' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ backgroundColor: PANEL }}>
+                  <th style={thStyle}>Investor A</th>
+                  <th style={thStyle}>Investor B</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>Similarity</th>
+                  <th style={thStyle}>Shared Picks</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.similarityPairs.map((pair, i) => {
+                  const ma = STYLE_META[pair.a.style];
+                  const mb = STYLE_META[pair.b.style];
+                  return (
+                    <tr key={i} style={{ borderTop: `1px solid ${BORDER}` }}>
+                      <td style={tdStyle}>
+                        <button onClick={() => onJumpToInvestor(pair.a.id)} style={{
+                          background: 'transparent', border: 'none', cursor: 'pointer',
+                          color: ma.color, fontWeight: 700, padding: 0, textAlign: 'left',
+                        }}>{pair.a.name}</button>
+                      </td>
+                      <td style={tdStyle}>
+                        <button onClick={() => onJumpToInvestor(pair.b.id)} style={{
+                          background: 'transparent', border: 'none', cursor: 'pointer',
+                          color: mb.color, fontWeight: 700, padding: 0, textAlign: 'left',
+                        }}>{pair.b.name}</button>
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 800,
+                        color: pair.sim >= 0.4 ? '#10B981' : pair.sim >= 0.2 ? '#22D3EE' : '#94A3B8',
+                        fontVariantNumeric: 'tabular-nums',
+                      }}>
+                        {pair.sim.toFixed(2)}
+                      </td>
+                      <td style={{ ...tdStyle, color: MUTED, fontSize: 11 }}>
+                        {pair.overlap.slice(0, 5).join(', ')}{pair.overlap.length > 5 ? `… +${pair.overlap.length - 5}` : ''}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Section>
+      )}
 
       {/* Style distribution */}
       <Section title="🧬 STYLE DISTRIBUTION" subtitle="How the tracked roster breaks across investing archetypes">
@@ -518,17 +792,29 @@ function ConsensusTable({ rows, onJumpToInvestor }: { rows: PickCount[]; onJumpT
               <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 800, color: '#10B981' }}>
                 {p.investors.length}
               </td>
-              {/* PATCH 0487 — Conviction column */}
-              <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} title={`Aggregate weighted conviction across ${p.investors.length} holders`}>
+              {/* PATCH 0491 v4 — Conviction column (style-adjusted) */}
+              <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} title={`Style-adjusted weighted conviction across ${p.investors.length} holders. Base ${p.aggregateConviction} × style mix.`}>
                 <span style={{
                   fontSize: 12, fontWeight: 800,
-                  color: p.aggregateConviction >= 200 ? '#10B981'
-                       : p.aggregateConviction >= 120 ? '#22D3EE'
-                       : p.aggregateConviction >= 60  ? '#F59E0B'
+                  color: p.styleAdjustedConviction >= 220 ? '#10B981'
+                       : p.styleAdjustedConviction >= 130 ? '#22D3EE'
+                       : p.styleAdjustedConviction >= 70  ? '#F59E0B'
                        : '#94A3B8',
                 }}>
-                  {p.aggregateConviction}
+                  {p.styleAdjustedConviction}
                 </span>
+                {/* Lifecycle chip */}
+                <div style={{ marginTop: 3 }}>
+                  <span title={LIFECYCLE_META[p.lifecycle].label} style={{
+                    fontSize: 9, fontWeight: 700,
+                    color: LIFECYCLE_META[p.lifecycle].color,
+                    border: `1px solid ${LIFECYCLE_META[p.lifecycle].color}40`,
+                    backgroundColor: `${LIFECYCLE_META[p.lifecycle].color}10`,
+                    padding: '1px 5px', borderRadius: 3,
+                  }}>
+                    {LIFECYCLE_META[p.lifecycle].icon} {p.lifecycle.replace('_', ' ')}
+                  </span>
+                </div>
               </td>
               <td style={tdStyle}>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
