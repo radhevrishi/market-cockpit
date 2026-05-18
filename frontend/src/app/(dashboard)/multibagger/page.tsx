@@ -19,6 +19,8 @@ import { getDecision, setDecision, clearDecision, subscribeDecisions, DECISION_M
 import TickerExportToolbar from '@/components/TickerExportToolbar';
 // PATCH 0370 — Turnaround scoring engine
 import { scoreTurnaroundRow, parseTurnaroundRow, type TurnaroundResult, type TurnaroundStage, type TurnaroundArchetype } from '@/lib/turnaround';
+// VALUATION-B — inline fair-value strip from 10 institutional valuation models
+import { ValuationStrip } from '@/components/valuation/ValuationStrip';
 
 // Shared API base — respects NEXT_PUBLIC_API_URL env var so all fetch() calls
 // resolve consistently when the base URL changes (fixes #13: mixed /api/v1 vs /api)
@@ -233,6 +235,9 @@ const CHECKLIST: ChecklistItem[] = [
 // ═══════════════════════════════════════════════════════════════════════════════
 
 interface ExcelRow {
+  // VALUATION-A — raw CSV row passthrough so the valuation engine can
+  // read columns we don't promote to first-class fields.
+  _raw?: Record<string, unknown>;
   symbol: string; company: string; sector: string;
   // Quality
   roce?: number; roe?: number; opm?: number; cfoToPat?: number;
@@ -2796,6 +2801,21 @@ function buildColMap(sampleRow: Record<string,unknown>): Record<string,string> {
       m['highLowRangePct']=col;
     else if (o==='Promoter Group Entities'||o==='Promoter Entities Count')
       m['promoterEntityCount']=col;
+    // ── VALUATION-A: columns for the automated valuation models ─────────────
+    else if (o==='Book value'||o==='Book Value'||o==='BVPS'||o==='Book Value per Share')
+      m['bookValue']=col;
+    else if (o==='EBIT')
+      m['ebit']=col;
+    else if (o==='Enterprise Value'||o==='EV')
+      m['enterpriseValue']=col;
+    else if (o==='Industry PE'||o==='Industry P/E'||o==='Sector PE')
+      m['industryPe']=col;
+    else if (o==='Historical PE 5Years'||o==='Historical PE 5 Years'||o==='Historical PE 5Y'||o==='5Y Median PE')
+      m['historicalPe5y']=col;
+    else if (o==='OPM 5Year'||o==='OPM 5 Year'||o==='OPM 5Y')
+      m['opm5y']=col;
+    else if (o==='Sales' && !m['salesAnnual'])
+      m['salesAnnual']=col;
     // Generic fallbacks
     else if (!m['symbol']&&(c.includes('nsecode')||c.includes('symbol')||c.includes('ticker'))) m['symbol']=col;
     else if (!m['company']&&c.includes('name')&&!c.includes('sector')) m['company']=col;
@@ -2886,6 +2906,10 @@ function rawRowToExcelRow(row: Record<string,unknown>, m: Record<string,string>)
   // Determine which OPM comparison base is available: prefer 3yr, fall back to 1yr
   const opmBase = opm3yr ?? opmPrev;  // undefined if neither available
   return {
+    // VALUATION-A — attach raw CSV row so the valuation engine can read
+    // any of the 60+ columns without us having to promote every one. Safe
+    // because the row is a plain object of primitives.
+    _raw: row,
     symbol:sym,
     company:String(row[m['company']??'']??'').trim(),
     sector:String(row[m['sector']??'']??'INDUSTRIALS').trim()||'INDUSTRIALS',
@@ -4493,6 +4517,18 @@ function ExcelCompare({ rows, setRows }: { rows: ExcelResult[]; setRows:(r:Excel
                             }
                             return null;
                           })()}
+                          {/* VALUATION-B — Inline fair-value strip from 10 valuation models.
+                              Shows FV, MoS%, and how many models agree. Click → /valuations?symbol=X */}
+                          <div style={{ marginTop: 3, paddingTop: 3, borderTop: '1px dashed rgba(255,255,255,0.06)' }}>
+                            <ValuationStrip
+                              row={r}
+                              onClick={() => {
+                                if (typeof window !== 'undefined') {
+                                  window.location.href = `/valuations?symbol=${encodeURIComponent(r.symbol)}`;
+                                }
+                              }}
+                            />
+                          </div>
                         </div>
                       );
                     })()}
