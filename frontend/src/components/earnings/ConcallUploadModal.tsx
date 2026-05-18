@@ -97,7 +97,21 @@ export function ConcallUploadModal({
             : s,
         ),
       );
-      const res = await fetch('/api/concall/parse', { method: 'POST', body: fd });
+      // PATCH 0469 — 60s timeout (PDF parsing can be slow but a hung upload
+      // should not leave files in 'parsing' status forever).
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 60_000);
+      let res: Response;
+      try {
+        res = await fetch('/api/concall/parse', { method: 'POST', body: fd, signal: ctl.signal });
+      } catch (e: any) {
+        clearTimeout(timer);
+        const msg = e?.name === 'AbortError' ? 'Parse timed out after 60s' : (e?.message || 'Network error');
+        setGlobalError(msg);
+        setFiles((prev) => prev.map((s) => s.status === 'parsing' ? { ...s, status: 'error', error: msg } : s));
+        return;
+      }
+      clearTimeout(timer);
       const json = await res.json().catch(() => null);
       if (!res.ok || !json?.ok) {
         const msg = json?.error || `Parse server returned ${res.status}`;

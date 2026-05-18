@@ -32,11 +32,16 @@ export function CompanyIntelGuidance({ ticker, compact = false }: { ticker?: str
     const tk = String(ticker).toUpperCase().replace(/^(NSE|BSE):/, '').replace(/\.(NS|BO|BSE|NSE)$/, '');
     if (!tk) return;
     setLoading(true);
-    fetch(`/api/v1/company-intel/${encodeURIComponent(tk)}`)
+    // PATCH 0469 — 15s timeout + cancel-on-unmount via AbortController so
+    // a slow corpus fetch can't trigger setState on an unmounted component.
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 15_000);
+    fetch(`/api/v1/company-intel/${encodeURIComponent(tk)}`, { signal: ctl.signal })
       .then(r => r.ok ? r.json() : null)
       .then(j => setCorpus(j))
       .catch(() => setCorpus(null))
-      .finally(() => setLoading(false));
+      .finally(() => { clearTimeout(timer); setLoading(false); });
+    return () => { clearTimeout(timer); ctl.abort(); };
   }, [ticker]);
 
   if (!ticker) return null;

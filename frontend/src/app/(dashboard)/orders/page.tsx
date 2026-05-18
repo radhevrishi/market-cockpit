@@ -1531,13 +1531,17 @@ function ConcallIntelligence() {
   async function fetchConcallData() {
     if (screenerStocks.length === 0) return;
     setLoading(true);
+    // PATCH 0469 — 20s timeout per news request via shared AbortController
+    const newsCtl = new AbortController();
+    const newsTimer = setTimeout(() => newsCtl.abort(), 20_000);
     try {
       // Fetch broad news covering last 30 days
       const fetches = await Promise.allSettled([
-        fetch('/api/v1/news?limit=500&importance_min=1&article_type=EARNINGS'),
-        fetch('/api/v1/news?limit=300&importance_min=1&article_type=CORPORATE'),
-        fetch('/api/v1/news?limit=200&importance_min=2&article_type=GENERAL'),
+        fetch('/api/v1/news?limit=500&importance_min=1&article_type=EARNINGS', { signal: newsCtl.signal }),
+        fetch('/api/v1/news?limit=300&importance_min=1&article_type=CORPORATE', { signal: newsCtl.signal }),
+        fetch('/api/v1/news?limit=200&importance_min=2&article_type=GENERAL', { signal: newsCtl.signal }),
       ]);
+      clearTimeout(newsTimer);
       const arrays = await Promise.all(fetches.map(async r => {
         if (r.status !== 'fulfilled' || !r.value.ok) return [];
         try { const d = await r.value.json(); return Array.isArray(d) ? d : []; } catch { return []; }
@@ -1788,6 +1792,7 @@ function ConcallIntelligence() {
       }));
       setLastFetched(new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}));
     } catch(e) { console.error('[Concall]',e); }
+    finally { clearTimeout(newsTimer); }
     setLoading(false);
   }
 
