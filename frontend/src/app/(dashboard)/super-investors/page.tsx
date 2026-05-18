@@ -359,48 +359,170 @@ interface NewsArticle {
   importance_score?: number;
 }
 
+// PATCH 0484 — parsed stake-change moves from headline text
+interface StakeMove {
+  direction: 'BUY' | 'ADD' | 'TRIM' | 'EXIT' | 'UNKNOWN';
+  ticker?: string;
+  company?: string;
+  stakePct?: number;
+  headline: string;
+  url: string;
+  source: string;
+  publishedAt: string;
+}
+
+const DIR_META: Record<StakeMove['direction'], { label: string; color: string; icon: string }> = {
+  BUY:     { label: 'NEW BUY',  color: '#10B981', icon: '↑' },
+  ADD:     { label: 'ADDED',    color: '#22D3EE', icon: '↑' },
+  TRIM:    { label: 'TRIMMED',  color: '#F59E0B', icon: '↓' },
+  EXIT:    { label: 'EXITED',   color: '#EF4444', icon: '↓' },
+  UNKNOWN: { label: '—',        color: '#94A3B8', icon: '·' },
+};
+
 function NewsPanel({ query, investorName }: { query: string; investorName: string }) {
   const [items, setItems] = useState<NewsArticle[]>([]);
+  const [moves, setMoves] = useState<StakeMove[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // PATCH 0484 — live freshness chip + auto-refresh every 5 min.
+  const [fetchedAt, setFetchedAt] = useState<number | null>(null);
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     let alive = true;
-    setLoading(true);
-    setError(null);
-    // Use the existing /api/v1/news endpoint with a search param.
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 12_000);
-    // PATCH 0483 — Switched to dedicated /api/v1/super-investor-news which
-    // fans out across Google News / Moneycontrol / Economic Times /
-    // Trendlyne via RSS, instead of the general /api/v1/news cache (which
-    // is curated for stock events, not investor personality news).
-    fetch(`/api/v1/super-investor-news?query=${encodeURIComponent(query)}`, {
-      signal: controller.signal,
-      cache: 'no-store',
-    })
-      .then((r) => r.ok ? r.json() : Promise.reject(new Error('news fetch failed')))
-      .then((data) => {
-        if (!alive) return;
-        const articles: NewsArticle[] = Array.isArray(data?.articles) ? data.articles : [];
-        setItems(articles.slice(0, 40));
-        setLoading(false);
+    let interval: ReturnType<typeof setInterval> | null = null;
+    const doFetch = () => {
+      setLoading((prev) => prev === true ? true : prev); // keep loading state on first fetch
+      setError(null);
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 12_000);
+      fetch(`/api/v1/super-investor-news?query=${encodeURIComponent(query)}`, {
+        signal: controller.signal,
+        cache: 'no-store',
       })
-      .catch((e) => {
-        if (!alive) return;
-        setError(e?.message || 'fetch error');
-        setLoading(false);
-      })
-      .finally(() => clearTimeout(t));
-    return () => { alive = false; controller.abort(); clearTimeout(t); };
+        .then((r) => r.ok ? r.json() : Promise.reject(new Error('news fetch failed')))
+        .then((data) => {
+          if (!alive) return;
+          const articles: NewsArticle[] = Array.isArray(data?.articles) ? data.articles : [];
+          const moves_: StakeMove[] = Array.isArray(data?.moves) ? data.moves : [];
+          setItems(articles.slice(0, 40));
+          setMoves(moves_);
+          setFetchedAt(Date.now());
+          setLoading(false);
+        })
+        .catch((e) => {
+          if (!alive) return;
+          setError(e?.message || 'fetch error');
+          setLoading(false);
+        })
+        .finally(() => clearTimeout(t));
+    };
+    doFetch();
+    interval = setInterval(doFetch, 5 * 60 * 1000); // auto-refresh every 5 min
+    return () => { alive = false; if (interval) clearInterval(interval); };
   }, [query]);
+
+  // Tick once a minute so the freshness chip re-renders without re-fetching.
+  useEffect(() => {
+    const t = setInterval(() => setTick((x) => x + 1), 30_000);
+    return () => clearInterval(t);
+  }, []);
+  void tick; // suppress unused warning
+
+  const ageMs = fetchedAt ? Date.now() - fetchedAt : 0;
+  const ageLabel = fetchedAt
+    ? ageMs < 60_000 ? 'just now'
+    : ageMs < 60 * 60_000 ? `${Math.floor(ageMs / 60_000)}m ago`
+    : `${Math.floor(ageMs / 3_600_000)}h ago`
+    : '';
 
   return (
     <div>
+      {/* PATCH 0484 — LIVE chip + freshness + Recent Moves panel ───────── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+        <span style={{
+          fontSize: 10, fontWeight: 800, letterSpacing: '0.5px',
+          color: '#10B981',
+          border: '1px solid #10B98150', backgroundColor: '#10B98115',
+          padding: '3px 8px', borderRadius: 3,
+        }}>
+          ● LIVE
+        </span>
+        {fetchedAt && (
+          <span style={{ fontSize: 11, color: MUTED }}>
+            as of {new Date(fetchedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · {ageLabel}
+          </span>
+        )}
+        <span style={{ fontSize: 11, color: MUTED, fontStyle: 'italic' }}>
+          · auto-refresh every 5 min
+        </span>
+      </div>
+
+      {moves.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{
+            fontSize: 12, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.5px',
+            marginBottom: 8,
+          }}>
+            🔁 RECENT MOVES — DETECTED FROM HEADLINES ({moves.length})
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {moves.map((m, idx) => {
+              const meta = DIR_META[m.direction];
+              return (
+                <a
+                  key={idx}
+                  href={m.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '8px 12px', borderRadius: 4,
+                    border: `1px solid ${meta.color}40`,
+                    backgroundColor: `${meta.color}10`,
+                    textDecoration: 'none',
+                  }}
+                >
+                  <span style={{
+                    fontSize: 10, fontWeight: 800, letterSpacing: '0.4px',
+                    color: meta.color,
+                    border: `1px solid ${meta.color}60`,
+                    backgroundColor: `${meta.color}18`,
+                    padding: '2px 7px', borderRadius: 3,
+                    minWidth: 64, textAlign: 'center',
+                  }}>
+                    {meta.icon} {meta.label}
+                  </span>
+                  {m.stakePct != null && (
+                    <span style={{
+                      fontSize: 12, fontWeight: 700, color: TEXT,
+                      fontVariantNumeric: 'tabular-nums', minWidth: 50,
+                    }}>
+                      {m.stakePct.toFixed(1)}%
+                    </span>
+                  )}
+                  {m.company && (
+                    <span style={{ fontSize: 12, fontWeight: 600, color: TEXT, minWidth: 130 }}>
+                      {m.company}
+                    </span>
+                  )}
+                  <span style={{ fontSize: 11, color: MUTED, flex: 1, lineHeight: 1.4 }}>
+                    {m.headline}
+                  </span>
+                  <span style={{ fontSize: 10, color: MUTED, fontStyle: 'italic', whiteSpace: 'nowrap' }}>
+                    {m.source}
+                  </span>
+                </a>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div style={{ fontSize: 11, color: MUTED, marginBottom: 8, lineHeight: 1.5 }}>
         News + interviews matched to <strong style={{ color: ACCENT }}>{investorName}</strong>.
-        Sourced from the user&apos;s existing /news pipeline (PRIMARY / SPECIALIST / SECONDARY / AGGREGATOR
-        tiers). Click any headline to open in a new tab.
+        Live RSS fan-out across Google News + Moneycontrol + Economic Times + Trendlyne.
+        Click any headline to open in a new tab.
       </div>
       {loading && (
         <div style={{ padding: 24, color: MUTED, fontSize: 12, fontStyle: 'italic' }}>

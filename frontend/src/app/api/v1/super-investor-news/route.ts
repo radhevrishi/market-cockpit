@@ -35,8 +35,23 @@ interface NewsArticle {
   snippet?: string;
 }
 
+// PATCH 0484 — parsed stake-change "moves" extracted from headlines.
+// We look for explicit "buys/adds/raises X% in Y" / "exits Y" / "trims Y"
+// language and surface as institutional move chips above the news feed.
+interface StakeMove {
+  direction: 'BUY' | 'ADD' | 'TRIM' | 'EXIT' | 'UNKNOWN';
+  ticker?: string;        // upper-case if found
+  company?: string;       // raw company name as found in the headline
+  stakePct?: number;      // parsed when explicit (e.g. "1.8%")
+  headline: string;
+  url: string;
+  source: string;
+  publishedAt: string;
+}
+
 interface ResponseShape {
   articles: NewsArticle[];
+  moves: StakeMove[];     // PATCH 0484
   sources: { name: string; count: number }[];
   cached: boolean;
   query: string;
@@ -211,18 +226,80 @@ async function fetchTrendlyne(query: string): Promise<NewsArticle[]> {
   }
 }
 
+// ── PATCH 0484 — stake-move extractor ────────────────────────────────────
+// Parses headlines like:
+//   "Ashish Kacholia buys 2.1% stake in XYZ Industries"
+//   "Vijay Kedia adds 1.5% in ABC Ltd"
+//   "Mukul Agrawal exits DEF Pharma"
+//   "Rekha Jhunjhunwala trims stake in GHI"
+// Returns a StakeMove if a clear direction + (ticker|company) can be parsed.
+function extractMove(article: NewsArticle, investorName: string): StakeMove | null {
+  const headline = article.title.trim();
+  if (!headline) return null;
+  const lc = headline.toLowerCase();
+
+  // Direction classifier — order matters (exit before trim before add/buy).
+  let direction: StakeMove['direction'] = 'UNKNOWN';
+  if (/\bexit(s|ed|ing)?\b|\bsold off\b|\boff\-?loads?\b|\bpares stake to zero\b/i.test(lc)) direction = 'EXIT';
+  else if (/\btrims?\b|\bcuts? stake\b|\breduces? stake\b|\bsells?\b/i.test(lc)) direction = 'TRIM';
+  else if (/\badds?\b|\braises? stake\b|\bincreases? stake\b|\bhikes? stake\b/i.test(lc)) direction = 'ADD';
+  else if (/\bbuys?\b|\bpicks? up\b|\bacquires?\b|\bnew (entry|position|stake)\b/i.test(lc)) direction = 'BUY';
+
+  if (direction === 'UNKNOWN') return null;
+
+  // Stake % — pattern like "2.1%", "1.5 percent", "5 per cent".
+  let stakePct: number | undefined;
+  const pctMatch = headline.match(/(\d+(?:\.\d+)?)\s*(?:%|percent|per\s*cent)/i);
+  if (pctMatch) {
+    const v = parseFloat(pctMatch[1]);
+    if (!isNaN(v) && v > 0 && v <= 30) stakePct = v;  // sanity-clip
+  }
+
+  // Company guess — text after "in " (greedy) until end / period / comma.
+  let company: string | undefined;
+  const inMatch = headline.match(/\bin\s+([A-Z][A-Za-z0-9 \-&.()]{2,60})(?:[.,;]|$)/);
+  if (inMatch) {
+    company = inMatch[1].trim();
+    // Strip trailing "shares" / "stake" / "Ltd" remnants if present
+    company = company.replace(/\b(shares|stake|stocks?|company)\b\s*$/i, '').trim();
+  }
+  // Fallback: try "of <COMPANY>"
+  if (!company) {
+    const ofMatch = headline.match(/\bof\s+([A-Z][A-Za-z0-9 \-&.()]{2,60})(?:[.,;]|$)/);
+    if (ofMatch) company = ofMatch[1].trim();
+  }
+
+  // Skip headlines that are clearly about the INVESTOR him/herself, not a stake change
+  // (e.g., "Ashish Kacholia turns 50" doesn't match the directional patterns, but
+  // belt-and-suspenders here)
+  if (!company && stakePct === undefined) return null;
+
+  return {
+    direction,
+    company,
+    stakePct,
+    headline,
+    url: article.url,
+    source: article.source,
+    publishedAt: article.publishedAt,
+  };
+}
+
 // ── Handler ──────────────────────────────────────────────────────────────
 export async function GET(request: Request): Promise<NextResponse<ResponseShape>> {
   const { searchParams } = new URL(request.url);
   const query = (searchParams.get('query') || '').trim();
   if (!query) {
-    return NextResponse.json({ articles: [], sources: [], cached: false, query: '' });
+    return NextResponse.json({ articles: [], moves: [], sources: [], cached: false, query: '' });
   }
 
   const cacheKey = `super-investor-news:v1:${query.toLowerCase().replace(/\s+/g, '_')}`;
   try {
+    // PATCH 0484 — 5-min cache instead of 30. User wants the feed to feel
+    // LIVE so a fresh stake-disclosure shows up quickly. Google News /
+    // Moneycontrol RSS endpoints handle this load fine.
     const cached = await kvGet<ResponseShape & { _ts?: number }>(cacheKey);
-    if (cached && cached._ts && Date.now() - cached._ts < 30 * 60 * 1000) {
+    if (cached && cached._ts && Date.now() - cached._ts < 5 * 60 * 1000) {
       return NextResponse.json({ ...cached, cached: true });
     }
   } catch {}
@@ -252,8 +329,17 @@ export async function GET(request: Request): Promise<NextResponse<ResponseShape>
     return tb - ta;
   });
 
+  // PATCH 0484 — extract stake-change moves from headlines.
+  const investorName = query.split(/\s+(?:portfolio|holdings|stake|Carnelian|Old|Marcellus|MK|Screener|Equity|Wealth)/i)[0].trim();
+  const moves: StakeMove[] = [];
+  for (const a of merged) {
+    const move = extractMove(a, investorName);
+    if (move) moves.push(move);
+  }
+
   const payload: ResponseShape = {
     articles: merged.slice(0, 40),
+    moves: moves.slice(0, 12),
     sources: [
       { name: 'Google News', count: gn.length },
       { name: 'Moneycontrol', count: mc.length },
@@ -265,7 +351,7 @@ export async function GET(request: Request): Promise<NextResponse<ResponseShape>
   };
 
   try {
-    await kvSet(cacheKey, { ...payload, _ts: Date.now() }, 60 * 60); // 1h TTL
+    await kvSet(cacheKey, { ...payload, _ts: Date.now() }, 15 * 60); // 15-min TTL (live feel)
   } catch {}
 
   return NextResponse.json(payload);
