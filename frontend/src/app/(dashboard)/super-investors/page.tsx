@@ -28,7 +28,10 @@ const ACCENT = '#22D3EE';
 
 type Tab = 'HOLDINGS' | 'NEWS';
 
+type View = 'ANALYTICS' | 'INVESTORS';
+
 export default function SuperInvestorsPage() {
+  const [view, setView] = useState<View>('ANALYTICS');
   const [selectedId, setSelectedId] = useState<string>(SUPER_INVESTORS[0].id);
   const [tab, setTab] = useState<Tab>('HOLDINGS');
   const [styleFilter, setStyleFilter] = useState<InvestorStyle | 'ALL'>('ALL');
@@ -57,6 +60,28 @@ export default function SuperInvestorsPage() {
             Holdings + news for growth / small-mid / quality-style Indian investors
           </span>
         </div>
+
+        {/* PATCH 0485 — Top-level view toggle: ANALYTICS vs INVESTORS */}
+        <div style={{ display: 'flex', gap: 4, marginTop: 10, marginBottom: 6 }}>
+          {(['ANALYTICS', 'INVESTORS'] as View[]).map((v) => {
+            const isActive = view === v;
+            return (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                style={{
+                  fontSize: 12, fontWeight: 700, letterSpacing: '0.4px', cursor: 'pointer',
+                  border: 'none', background: 'transparent',
+                  color: isActive ? ACCENT : MUTED,
+                  borderBottom: `2px solid ${isActive ? ACCENT : 'transparent'}`,
+                  padding: '6px 14px',
+                }}
+              >
+                {v === 'ANALYTICS' ? '📊 Cross-Investor Analytics' : '👤 Individual Investors'}
+              </button>
+            );
+          })}
+        </div>
         <p style={{ color: MUTED, fontSize: 12, margin: '6px 0 0', lineHeight: 1.5, maxWidth: 920 }}>
           Coat-tail intelligence. Each investor card surfaces their last-disclosed top holdings (BSE ≥1% filings,
           AIF portfolio disclosures, or public commentary) plus a live news feed for their public statements and
@@ -64,8 +89,8 @@ export default function SuperInvestorsPage() {
           (growth + management quality + small/mid bias).
         </p>
 
-        {/* Style filter chips */}
-        <div style={{ display: 'flex', gap: 6, marginTop: 12, flexWrap: 'wrap' }}>
+        {/* Style filter chips — only relevant in INVESTORS view */}
+        {view === 'INVESTORS' && <div style={{ display: 'flex', gap: 6, marginTop: 12, flexWrap: 'wrap' }}>
           {(['ALL', ...Object.keys(STYLE_META)] as Array<InvestorStyle | 'ALL'>).map((s) => {
             const isActive = styleFilter === s;
             const meta = s === 'ALL' ? null : STYLE_META[s as InvestorStyle];
@@ -87,10 +112,15 @@ export default function SuperInvestorsPage() {
               </button>
             );
           })}
-        </div>
+        </div>}
       </div>
 
-      {/* ── Two-column body ─────────────────────────────────────────────── */}
+      {/* ── Body — analytics OR two-column investors ──────────────────── */}
+      {view === 'ANALYTICS' ? (
+        <div style={{ flex: 1, overflowY: 'auto' }}>
+          <AnalyticsView onJumpToInvestor={(id) => { setView('INVESTORS'); setSelectedId(id); }} />
+        </div>
+      ) : (
       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '320px 1fr', minHeight: 0 }}>
         {/* Left: investor list */}
         <div style={{
@@ -147,9 +177,369 @@ export default function SuperInvestorsPage() {
           <InvestorDetail investor={selected} tab={tab} setTab={setTab} />
         </div>
       </div>
+      )}
     </div>
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// PATCH 0485 — Cross-investor analytics view
+//
+// Aggregates the roster's disclosed holdings to surface:
+//   1. STATS STRIP — total investors, total holdings, average stake, consensus picks
+//   2. CONSENSUS PICKS — stocks held by 3+ investors (highest conviction tickers)
+//   3. TOP STAKES — single-investor positions ≥5% (biggest individual bets)
+//   4. STYLE DISTRIBUTION — how the roster breaks across investing archetypes
+//   5. SUGGESTIONS — actionable patterns: quality-overlap, multibagger-consensus, etc.
+//
+// Everything is computed in-memory from SUPER_INVESTORS so the moment a new
+// investor or new holding is added to the roster, the dashboard reflects it.
+// ─────────────────────────────────────────────────────────────────────────
+
+interface PickCount {
+  ticker: string;
+  company: string;
+  investors: { id: string; name: string; stakePct?: number; style: InvestorStyle }[];
+  totalStakePct: number;
+  styles: Set<InvestorStyle>;
+}
+
+function buildPickCounts(): PickCount[] {
+  const map = new Map<string, PickCount>();
+  for (const inv of SUPER_INVESTORS) {
+    for (const h of inv.topHoldings) {
+      if (!map.has(h.ticker)) {
+        map.set(h.ticker, {
+          ticker: h.ticker, company: h.company,
+          investors: [], totalStakePct: 0, styles: new Set(),
+        });
+      }
+      const pc = map.get(h.ticker)!;
+      pc.investors.push({ id: inv.id, name: inv.name, stakePct: h.stakePct, style: inv.style });
+      pc.totalStakePct += h.stakePct || 0;
+      pc.styles.add(inv.style);
+    }
+  }
+  return Array.from(map.values());
+}
+
+function AnalyticsView({ onJumpToInvestor }: { onJumpToInvestor: (id: string) => void }) {
+  const data = useMemo(() => {
+    const picks = buildPickCounts();
+    const totalHoldings = SUPER_INVESTORS.reduce((s, i) => s + i.topHoldings.length, 0);
+    const allStakes = SUPER_INVESTORS.flatMap((i) =>
+      i.topHoldings.map((h) => h.stakePct).filter((x): x is number => typeof x === 'number')
+    );
+    const avgStake = allStakes.length > 0
+      ? allStakes.reduce((a, b) => a + b, 0) / allStakes.length
+      : 0;
+    const consensus = picks.filter((p) => p.investors.length >= 2)
+      .sort((a, b) => b.investors.length - a.investors.length || b.totalStakePct - a.totalStakePct);
+    const consensus3plus = consensus.filter((p) => p.investors.length >= 3);
+
+    // Top single-investor stakes ≥ 5%
+    const bigStakes: Array<{ inv: SuperInvestor; ticker: string; company: string; stakePct: number }> = [];
+    for (const inv of SUPER_INVESTORS) {
+      for (const h of inv.topHoldings) {
+        if ((h.stakePct || 0) >= 5) {
+          bigStakes.push({ inv, ticker: h.ticker, company: h.company, stakePct: h.stakePct as number });
+        }
+      }
+    }
+    bigStakes.sort((a, b) => b.stakePct - a.stakePct);
+
+    // Style distribution
+    const styleCounts: Record<string, number> = {};
+    for (const inv of SUPER_INVESTORS) {
+      styleCounts[inv.style] = (styleCounts[inv.style] || 0) + 1;
+    }
+
+    return {
+      picks, consensus, consensus3plus, totalHoldings, avgStake,
+      bigStakes: bigStakes.slice(0, 12),
+      styleCounts,
+    };
+  }, []);
+
+  // Build dynamic suggestions
+  const suggestions = useMemo(() => buildSuggestions(data.picks), [data]);
+
+  return (
+    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 22 }}>
+      {/* Stats strip */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
+        <StatCard label="Investors tracked" value={String(SUPER_INVESTORS.length)} accent="#22D3EE" />
+        <StatCard label="Disclosed holdings" value={String(data.totalHoldings)} accent="#10B981" />
+        <StatCard label="Avg disclosed stake" value={`${data.avgStake.toFixed(1)}%`} accent="#F59E0B" />
+        <StatCard label="Consensus picks (2+ investors)" value={String(data.consensus.length)} accent="#8B5CF6" />
+        <StatCard label="High-conviction (3+ investors)" value={String(data.consensus3plus.length)} accent="#EC4899" />
+        <StatCard label="Mega stakes (≥5% single inv)" value={String(data.bigStakes.length)} accent="#EF4444" />
+      </div>
+
+      {/* Suggestions */}
+      {suggestions.length > 0 && (
+        <Section title="💡 PATTERN-BASED SUGGESTIONS" subtitle="Detected across the roster — not a recommendation; analyst starting points only">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {suggestions.map((s, i) => (
+              <div key={i} style={{
+                padding: '10px 12px', borderRadius: 6,
+                border: `1px solid ${s.color}40`, backgroundColor: `${s.color}10`,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <span style={{
+                    fontSize: 10, fontWeight: 800, letterSpacing: '0.4px',
+                    color: s.color, border: `1px solid ${s.color}60`,
+                    backgroundColor: `${s.color}18`,
+                    padding: '2px 7px', borderRadius: 3,
+                  }}>{s.tag}</span>
+                  <span style={{ color: TEXT, fontWeight: 600, fontSize: 13 }}>{s.title}</span>
+                </div>
+                <div style={{ color: '#CBD5E1', fontSize: 12, lineHeight: 1.5 }}>{s.body}</div>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* Consensus picks (3+) */}
+      <Section title={`🏆 CONSENSUS PICKS — 3+ INVESTORS (${data.consensus3plus.length})`} subtitle="Stocks owned by 3 or more super investors — highest conviction across the roster">
+        <ConsensusTable rows={data.consensus3plus} onJumpToInvestor={onJumpToInvestor} />
+      </Section>
+
+      {/* Consensus picks (2 investor overlap) */}
+      <Section title={`🤝 2-INVESTOR OVERLAPS (${data.consensus.length - data.consensus3plus.length})`} subtitle="Stocks held by exactly 2 super investors">
+        <ConsensusTable rows={data.consensus.filter((p) => p.investors.length === 2).slice(0, 25)} onJumpToInvestor={onJumpToInvestor} />
+      </Section>
+
+      {/* Top single stakes */}
+      <Section title={`📈 BIGGEST INDIVIDUAL BETS — STAKE ≥5%`} subtitle="Single-investor positions ≥5% — the strongest conviction bets in the roster">
+        <div style={{
+          border: `1px solid ${BORDER}`, borderRadius: 6, overflow: 'hidden',
+        }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ backgroundColor: PANEL }}>
+                <th style={thStyle}>Investor</th>
+                <th style={thStyle}>Ticker</th>
+                <th style={thStyle}>Company</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}>Stake</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.bigStakes.map((b, i) => {
+                const meta = STYLE_META[b.inv.style];
+                return (
+                  <tr key={i} style={{ borderTop: `1px solid ${BORDER}` }}>
+                    <td style={tdStyle}>
+                      <button onClick={() => onJumpToInvestor(b.inv.id)} style={{
+                        background: 'transparent', border: 'none', cursor: 'pointer',
+                        color: meta.color, fontWeight: 700, padding: 0, textAlign: 'left',
+                      }}>
+                        {b.inv.name}
+                      </button>
+                    </td>
+                    <td style={tdStyle}>
+                      <a href={`/stock-sheet?ticker=${b.ticker}`} style={{
+                        color: TEXT, fontWeight: 700,
+                        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                        textDecoration: 'none',
+                      }}>{b.ticker}</a>
+                    </td>
+                    <td style={tdStyle}>{b.company}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right', color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                      {b.stakePct.toFixed(1)}%
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Section>
+
+      {/* Style distribution */}
+      <Section title="🧬 STYLE DISTRIBUTION" subtitle="How the tracked roster breaks across investing archetypes">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {Object.entries(data.styleCounts)
+            .sort((a, b) => b[1] - a[1])
+            .map(([style, count]) => {
+              const meta = STYLE_META[style as InvestorStyle];
+              const pct = (count / SUPER_INVESTORS.length) * 100;
+              return (
+                <div key={style} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{
+                    fontSize: 11, fontWeight: 700, letterSpacing: '0.3px',
+                    color: meta.color, minWidth: 180,
+                  }}>{meta.label}</span>
+                  <span style={{ fontSize: 11, color: MUTED, minWidth: 24 }}>{count}</span>
+                  <div style={{ flex: 1, height: 8, background: '#1A2540', borderRadius: 4, overflow: 'hidden' }}>
+                    <div style={{ width: `${pct}%`, height: '100%', background: meta.color }} />
+                  </div>
+                  <span style={{ fontSize: 11, color: MUTED, minWidth: 40, textAlign: 'right' }}>{pct.toFixed(0)}%</span>
+                </div>
+              );
+            })}
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+function StatCard({ label, value, accent }: { label: string; value: string; accent: string }) {
+  return (
+    <div style={{
+      padding: '12px 14px', borderRadius: 6,
+      border: `1px solid ${accent}40`, backgroundColor: PANEL,
+    }}>
+      <div style={{ fontSize: 11, color: MUTED, letterSpacing: '0.3px', marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 900, color: accent, fontVariantNumeric: 'tabular-nums' }}>{value}</div>
+    </div>
+  );
+}
+
+function Section({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div style={{ marginBottom: 8 }}>
+        <div style={{ fontSize: 13, color: ACCENT, fontWeight: 700, letterSpacing: '0.4px' }}>{title}</div>
+        {subtitle && <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>{subtitle}</div>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function ConsensusTable({ rows, onJumpToInvestor }: { rows: PickCount[]; onJumpToInvestor: (id: string) => void }) {
+  if (rows.length === 0) {
+    return <div style={{ color: MUTED, fontSize: 12, fontStyle: 'italic', padding: 12 }}>None yet.</div>;
+  }
+  return (
+    <div style={{ border: `1px solid ${BORDER}`, borderRadius: 6, overflow: 'hidden' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <thead>
+          <tr style={{ backgroundColor: PANEL }}>
+            <th style={thStyle}>Ticker</th>
+            <th style={thStyle}>Company</th>
+            <th style={{ ...thStyle, textAlign: 'center' }}>Held by</th>
+            <th style={thStyle}>Investors</th>
+            <th style={thStyle}>Styles</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((p) => (
+            <tr key={p.ticker} style={{ borderTop: `1px solid ${BORDER}` }}>
+              <td style={tdStyle}>
+                <a href={`/stock-sheet?ticker=${p.ticker}`} style={{
+                  color: TEXT, fontWeight: 700,
+                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                  textDecoration: 'none',
+                }}>{p.ticker}</a>
+              </td>
+              <td style={tdStyle}>{p.company}</td>
+              <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 800, color: '#10B981' }}>
+                {p.investors.length}
+              </td>
+              <td style={tdStyle}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {p.investors.map((iv) => {
+                    const meta = STYLE_META[iv.style];
+                    return (
+                      <button
+                        key={iv.id}
+                        onClick={() => onJumpToInvestor(iv.id)}
+                        title={iv.stakePct != null ? `${iv.stakePct.toFixed(1)}% stake` : ''}
+                        style={{
+                          fontSize: 10, fontWeight: 700, cursor: 'pointer',
+                          color: meta.color, border: `1px solid ${meta.color}40`,
+                          backgroundColor: `${meta.color}10`,
+                          padding: '2px 6px', borderRadius: 3,
+                        }}
+                      >
+                        {iv.name.split(' ')[0]}{iv.stakePct != null ? ` ${iv.stakePct.toFixed(1)}%` : ''}
+                      </button>
+                    );
+                  })}
+                </div>
+              </td>
+              <td style={tdStyle}>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {Array.from(p.styles).map((st) => {
+                    const meta = STYLE_META[st];
+                    return (
+                      <span key={st} style={{
+                        fontSize: 9, fontWeight: 700,
+                        color: meta.color, border: `1px solid ${meta.color}40`,
+                        backgroundColor: `${meta.color}08`,
+                        padding: '1px 5px', borderRadius: 3,
+                      }}>{meta.label}</span>
+                    );
+                  })}
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+interface Suggestion { tag: string; title: string; body: string; color: string; }
+
+function buildSuggestions(picks: PickCount[]): Suggestion[] {
+  const out: Suggestion[] = [];
+
+  // 1. Quality compounder overlap (Mukherjea / Bakshi / Rekha J / Damani)
+  const qualityIds = new Set(['saurabh-mukherjea', 'sanjay-bakshi', 'rekha-jhunjhunwala', 'ramesh-damani', 'basant-maheshwari']);
+  const qualityPicks = picks.filter((p) => p.investors.some((i) => qualityIds.has(i.id)) && p.investors.length >= 2);
+  if (qualityPicks.length > 0) {
+    out.push({
+      tag: 'QUALITY COMPOUNDERS',
+      title: `${qualityPicks.length} names held by 2+ quality-style investors`,
+      body: `Compounder-style overlap: ${qualityPicks.slice(0, 6).map((p) => p.ticker).join(', ')}${qualityPicks.length > 6 ? '…' : ''}. These tend to be long-hold core positions — typically lower-volatility long-cycle compounders.`,
+      color: '#22D3EE',
+    });
+  }
+
+  // 2. Small/mid multibagger consensus (Kacholia / Kedia / Mukul / Dolly)
+  const smallMidIds = new Set(['ashish-kacholia', 'vijay-kedia', 'mukul-agrawal', 'dolly-khanna', 'manish-bhandari']);
+  const smCaps = picks.filter((p) => p.investors.some((i) => smallMidIds.has(i.id)) && p.investors.length >= 2);
+  if (smCaps.length > 0) {
+    out.push({
+      tag: 'MULTIBAGGER CONSENSUS',
+      title: `${smCaps.length} small/mid names with 2+ multibagger-style backers`,
+      body: `High-conviction small/mid-cap overlap: ${smCaps.slice(0, 6).map((p) => p.ticker).join(', ')}${smCaps.length > 6 ? '…' : ''}. These are the names most likely to fit the user's Multibagger framework.`,
+      color: '#10B981',
+    });
+  }
+
+  // 3. Cyclical recovery (Porinju / Anil Goel)
+  const cyclicalIds = new Set(['porinju-veliyath', 'anil-kumar-goel']);
+  const cyclicals = picks.filter((p) => p.investors.some((i) => cyclicalIds.has(i.id)));
+  if (cyclicals.length > 0) {
+    out.push({
+      tag: 'CONTRARIAN VALUE',
+      title: `${cyclicals.length} contrarian-value picks (Porinju / Anil Goel overlap with broader roster)`,
+      body: `Cyclical / turnaround candidates that also appear in the broader roster: ${cyclicals.slice(0, 5).map((p) => p.ticker).join(', ')}${cyclicals.length > 5 ? '…' : ''}. Pair with the EO Special-Situations module for filing-date catalysts.`,
+      color: '#F59E0B',
+    });
+  }
+
+  // 4. Structural / Bottleneck overlap (Andrade / Vora / Singhania / Khemani)
+  const themIds = new Set(['kenneth-andrade', 'nikhil-vora', 'sunil-singhania', 'vikas-khemani']);
+  const themPicks = picks.filter((p) => p.investors.some((i) => themIds.has(i.id)) && p.investors.length >= 2);
+  if (themPicks.length > 0) {
+    out.push({
+      tag: 'STRUCTURAL THEMES',
+      title: `${themPicks.length} structural / thematic stocks with overlap`,
+      body: `Bottleneck + supply-side + thematic conviction: ${themPicks.slice(0, 6).map((p) => p.ticker).join(', ')}${themPicks.length > 6 ? '…' : ''}. Cross-check with the Transmission + Bottleneck Intel pages.`,
+      color: '#8B5CF6',
+    });
+  }
+
+  return out;
+}
+
 
 // ──────────────────────────────────────────────────────────────────────────
 

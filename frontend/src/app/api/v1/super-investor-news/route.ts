@@ -42,7 +42,10 @@ interface StakeMove {
   direction: 'BUY' | 'ADD' | 'TRIM' | 'EXIT' | 'UNKNOWN';
   ticker?: string;        // upper-case if found
   company?: string;       // raw company name as found in the headline
-  stakePct?: number;      // parsed when explicit (e.g. "1.8%")
+  stakePct?: number;      // parsed when explicit (e.g. "1.8%") — new resulting stake
+  stakeFromPct?: number;  // PATCH 0485 — previous stake if "from X% to Y%"
+  stakeDeltaPct?: number; // PATCH 0485 — explicit delta if "by N%" / "Y - X"
+  detail?: string;        // PATCH 0485 — the sentence containing the stake change
   headline: string;
   url: string;
   source: string;
@@ -226,58 +229,151 @@ async function fetchTrendlyne(query: string): Promise<NewsArticle[]> {
   }
 }
 
-// ── PATCH 0484 — stake-move extractor ────────────────────────────────────
-// Parses headlines like:
-//   "Ashish Kacholia buys 2.1% stake in XYZ Industries"
-//   "Vijay Kedia adds 1.5% in ABC Ltd"
-//   "Mukul Agrawal exits DEF Pharma"
-//   "Rekha Jhunjhunwala trims stake in GHI"
-// Returns a StakeMove if a clear direction + (ticker|company) can be parsed.
+// ── PATCH 0485 — context-aware stake-move extractor ──────────────────────
+// V1 (0484) blindly grabbed the first "%" in the headline. That mis-fired
+// when a headline mixed price-action language with stake language:
+//   "FMCG Stock Hits 20% Upper Circuit After Kacholia Increases Stake"
+//   ^ "20%" is the price circuit, NOT the stake change.
+// This V2 (a) rejects pct candidates whose context word is price-action
+// ("upper circuit", "rally", "gain", "surge", "jump", "rise", etc.),
+// (b) ALSO scans the article snippet (description text) for "from X% to
+// Y%" patterns, and (c) returns from→to so the move card can render the
+// before / after stake without the user needing to click through.
+
+// Words that, when within 6 tokens of a "%", mark that % as a price move
+// rather than a stake change — used to FILTER OUT false positives.
+const PRICE_NOISE_CONTEXT = new RegExp(
+  '\\b(upper\\s*circuit|lower\\s*circuit|circuit|rally|rallies|rallied|surged?|jumps?|jumped|' +
+  'rises?|rose|falls?|fell|gains?|gained|losses?|lost|drops?|dropped|crashed?|plunged?|' +
+  'soared|skyrocketed|breakout|return|returns?|advanced?|gained?|spiked?|up|down|higher|lower|' +
+  'discount|premium|yield|coupon|growth|cagr|margin|profit|sales|revenue|q[1-4]|fy\\d{2,4})\\b',
+  'i'
+);
+
+// Try to extract a stake number near a stake-language anchor. Returns
+// { resulting, from, delta } if anything found. "Resulting" = the new
+// stake after the move ("now holds X%" / "to Y%" / bare "X% stake").
+function extractStakePcts(text: string): { resulting?: number; from?: number; delta?: number } | null {
+  if (!text) return null;
+  const out: { resulting?: number; from?: number; delta?: number } = {};
+
+  // 1. from X% to Y% — both before and after stake captured.
+  const fromTo = text.match(/from\s+(\d+(?:\.\d+)?)\s*%\s+to\s+(\d+(?:\.\d+)?)\s*%/i);
+  if (fromTo) {
+    const a = parseFloat(fromTo[1]);
+    const b = parseFloat(fromTo[2]);
+    if (a > 0 && a <= 60) out.from = a;
+    if (b > 0 && b <= 60) out.resulting = b;
+    if (a > 0 && b > 0) out.delta = Math.round((b - a) * 100) / 100;
+    return out;
+  }
+
+  // 2. "by N%" — explicit delta language.
+  const byDelta = text.match(/(?:rais(?:ed|es|ing)|increas(?:ed|es|ing)|hike[ds]?|add(?:ed|s|ing)|cut[s]?|trim(?:med|s|ming)|reduc(?:ed|es|ing))\s+(?:his|her|their)?\s*stake\s+by\s+(\d+(?:\.\d+)?)\s*(?:%|percent|per\s*cent|percentage\s*points?|pp|bps?)/i);
+  if (byDelta) {
+    const d = parseFloat(byDelta[1]);
+    if (d > 0 && d <= 30) out.delta = d;
+  }
+
+  // 3. "holds X%" / "stake at X%" / "X% stake" — the new resulting stake,
+  //    but only when explicitly tied to stake/holding/shareholding language.
+  const stakeAt = text.match(
+    /(?:holds?|holding|now\s+holds?|stake(?:\s+now)?\s+(?:at|of|to|stands?\s+at)|raised?\s+(?:his|her|their)\s+stake\s+to|increased?\s+(?:his|her|their)\s+stake\s+to)\s*(\d+(?:\.\d+)?)\s*(?:%|percent|per\s*cent)/i,
+  );
+  if (stakeAt) {
+    const v = parseFloat(stakeAt[1]);
+    if (v > 0 && v <= 60 && out.resulting === undefined) out.resulting = v;
+  }
+
+  // 4. Bare "X% stake / X% shareholding / X% holding" — strict pattern,
+  //    requires the noun "stake / holding / shareholding" immediately after.
+  if (out.resulting === undefined) {
+    const bareStake = text.match(/(\d+(?:\.\d+)?)\s*(?:%|percent|per\s*cent)\s+(?:stake|holding|shareholding)/i);
+    if (bareStake) {
+      const v = parseFloat(bareStake[1]);
+      if (v > 0 && v <= 60) out.resulting = v;
+    }
+  }
+
+  if (out.resulting === undefined && out.from === undefined && out.delta === undefined) return null;
+  return out;
+}
+
+// Pull the sentence that contains the stake-change reference for display.
+function extractDetailSentence(text: string): string | undefined {
+  if (!text) return undefined;
+  // Split by sentence-ish boundaries and pick the one mentioning stake / holding / shareholding.
+  const sentences = text.split(/(?<=[.!?])\s+/);
+  for (const s of sentences) {
+    if (/\b(stake|holding|shareholding|stake)\b/i.test(s)) {
+      const trimmed = s.trim();
+      if (trimmed.length > 8 && trimmed.length < 360) return trimmed;
+    }
+  }
+  return undefined;
+}
+
 function extractMove(article: NewsArticle, investorName: string): StakeMove | null {
   const headline = article.title.trim();
   if (!headline) return null;
-  const lc = headline.toLowerCase();
+  const snippet = (article.snippet || '').trim();
+  const combined = `${headline} ${snippet}`;
+  const lcCombined = combined.toLowerCase();
 
   // Direction classifier — order matters (exit before trim before add/buy).
   let direction: StakeMove['direction'] = 'UNKNOWN';
-  if (/\bexit(s|ed|ing)?\b|\bsold off\b|\boff\-?loads?\b|\bpares stake to zero\b/i.test(lc)) direction = 'EXIT';
-  else if (/\btrims?\b|\bcuts? stake\b|\breduces? stake\b|\bsells?\b/i.test(lc)) direction = 'TRIM';
-  else if (/\badds?\b|\braises? stake\b|\bincreases? stake\b|\bhikes? stake\b/i.test(lc)) direction = 'ADD';
-  else if (/\bbuys?\b|\bpicks? up\b|\bacquires?\b|\bnew (entry|position|stake)\b/i.test(lc)) direction = 'BUY';
+  if (/\bexit(s|ed|ing)?\b|\bsold off\b|\boff\-?loads?\b|\bpares stake to zero\b/i.test(lcCombined)) direction = 'EXIT';
+  else if (/\btrims?\b|\bcuts? stake\b|\breduces? stake\b|\bsells?\s+stake\b/i.test(lcCombined)) direction = 'TRIM';
+  else if (/\badds?\s+(?:to\s+)?stake\b|\braises? stake\b|\bincreases?\s+(?:his|her|their)?\s*stake\b|\bhikes?\s+stake\b|\badd(?:s|ed|ing)?\b\s+\d+\s*%/i.test(lcCombined)) direction = 'ADD';
+  else if (/\bbuys?\s+stake\b|\bpicks? up\b|\bacquires?\s+stake\b|\bnew (entry|position|stake)\b|\bnew\s+\d+\.?\d*\s*%\s*stake\b/i.test(lcCombined)) direction = 'BUY';
 
   if (direction === 'UNKNOWN') return null;
 
-  // Stake % — pattern like "2.1%", "1.5 percent", "5 per cent".
-  let stakePct: number | undefined;
-  const pctMatch = headline.match(/(\d+(?:\.\d+)?)\s*(?:%|percent|per\s*cent)/i);
-  if (pctMatch) {
-    const v = parseFloat(pctMatch[1]);
-    if (!isNaN(v) && v > 0 && v <= 30) stakePct = v;  // sanity-clip
+  // PATCH 0485 — try snippet FIRST (richer source), then headline.
+  let stakes = extractStakePcts(snippet);
+  if (!stakes) stakes = extractStakePcts(headline);
+
+  // Last resort: bare % in headline, but ONLY if context isn't a price move.
+  if (!stakes) {
+    const pctMatches = [...headline.matchAll(/(\d+(?:\.\d+)?)\s*(?:%|percent|per\s*cent)/gi)];
+    for (const pm of pctMatches) {
+      const v = parseFloat(pm[1]);
+      if (isNaN(v) || v <= 0 || v > 30) continue;
+      // Look at the surrounding words (50 chars window) for noise context.
+      const idx = pm.index || 0;
+      const window = headline.slice(Math.max(0, idx - 40), idx + 40);
+      if (PRICE_NOISE_CONTEXT.test(window)) continue; // skip — it's a price move
+      // Require stake-related anchor word nearby.
+      if (!/\b(stake|holding|shareholding)\b/i.test(window)) continue;
+      stakes = { resulting: v };
+      break;
+    }
   }
 
-  // Company guess — text after "in " (greedy) until end / period / comma.
+  // Company name — try snippet "in <COMPANY>" first (often cleaner) then headline.
   let company: string | undefined;
-  const inMatch = headline.match(/\bin\s+([A-Z][A-Za-z0-9 \-&.()]{2,60})(?:[.,;]|$)/);
-  if (inMatch) {
-    company = inMatch[1].trim();
-    // Strip trailing "shares" / "stake" / "Ltd" remnants if present
-    company = company.replace(/\b(shares|stake|stocks?|company)\b\s*$/i, '').trim();
-  }
-  // Fallback: try "of <COMPANY>"
+  const inSnippet = snippet.match(/\bin\s+([A-Z][A-Za-z0-9 \-&.()]{2,60}?)(?:\s+(?:Limited|Ltd|Pvt|Private|Corp(?:oration)?))?\b/);
+  if (inSnippet) company = inSnippet[1].trim();
   if (!company) {
-    const ofMatch = headline.match(/\bof\s+([A-Z][A-Za-z0-9 \-&.()]{2,60})(?:[.,;]|$)/);
-    if (ofMatch) company = ofMatch[1].trim();
+    const inMatch = headline.match(/\bin\s+([A-Z][A-Za-z0-9 \-&.()]{2,60})(?:[.,;]|$)/);
+    if (inMatch) company = inMatch[1].trim();
+  }
+  if (company) {
+    company = company.replace(/\b(shares|stake|stocks?|company|Limited|Ltd)\b\s*$/i, '').trim();
   }
 
-  // Skip headlines that are clearly about the INVESTOR him/herself, not a stake change
-  // (e.g., "Ashish Kacholia turns 50" doesn't match the directional patterns, but
-  // belt-and-suspenders here)
-  if (!company && stakePct === undefined) return null;
+  // Skip when we found NOTHING actionable.
+  if (!company && !stakes) return null;
+
+  const detail = extractDetailSentence(snippet) || extractDetailSentence(headline);
 
   return {
     direction,
     company,
-    stakePct,
+    stakePct: stakes?.resulting,
+    stakeFromPct: stakes?.from,
+    stakeDeltaPct: stakes?.delta,
+    detail,
     headline,
     url: article.url,
     source: article.source,
