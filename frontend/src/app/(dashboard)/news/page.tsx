@@ -2189,8 +2189,18 @@ export default function NewsFeedPage() {
     return () => { clearTimeout(timer); document.removeEventListener('mousedown', handler); };
   }, [showFilters]);
 
+  // PATCH 0463 — debounce the search input so each keystroke doesn't fire a
+  // separate /api/v1/news?search= request. Previously typing "nvidia" fired
+  // 6 fetches against a paginated route; the worst was a slow series of
+  // overlapping requests cancelling each other. 250ms is short enough that
+  // the user perceives instant results but coalesces typing bursts.
+  const [debouncedSearch, setDebouncedSearch] = useState(search);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 250);
+    return () => clearTimeout(t);
+  }, [search]);
   // Fetch ALL articles once — filters applied client-side for instant switching
-  const { data: allArticles, isLoading, error, refetch, dataUpdatedAt } = useNews(search);
+  const { data: allArticles, isLoading, error, refetch, dataUpdatedAt } = useNews(debouncedSearch);
   // Format the last-fetched time for display
   const newsFetchedAt = dataUpdatedAt
     ? new Date(dataUpdatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })

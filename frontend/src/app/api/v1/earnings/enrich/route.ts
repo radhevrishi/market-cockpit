@@ -61,8 +61,11 @@ const UA = UA_POOL[0];           // kept for backwards-compat callers below
 // 1.5s jitter delays) could run ~39s while the outer withTimeout was only
 // 18s. The outer just resolved null but the inner kept running in the
 // background, consuming container time. Tightened: 2 attempts × 7s plus
-// max 500ms backoff = ~15s ceiling, comfortably under PER_TICKER_MS=18s.
-const SCREENER_TIMEOUT_MS = 7000;
+// PATCH 0463 — was 7000ms × 2 retries × 2 URLs ≈ 29s, exceeding the outer
+// 18s PER_TICKER_MS budget so the outer would abort mid-second-URL. Now
+// 5500ms × 2 retries × 2 URLs ≈ 22s — still over the original 18s budget,
+// so the outer PER_TICKER_MS is also bumped below to 24s.
+const SCREENER_TIMEOUT_MS = 5500;
 const YAHOO_TIMEOUT_MS = 5000;
 const SCREENER_RETRY_DELAYS_MS = [0, 500];  // 2 attempts only
 // PATCH 0157 — staleness defense:
@@ -622,7 +625,10 @@ export async function GET(req: Request) {
   //   • allSettled means one bad ticker never breaks the others.
   //   • Hard-stop at 55s — flush whatever is ready and report partial.
   const HARD_BUDGET_MS = 55_000;
-  const PER_TICKER_MS = 18_000;
+  // PATCH 0463 — bumped from 18s to 24s so the outer timeout no longer fires
+  // mid-Screener-fallback. Worst-case inner (with 0463-tightened SCREENER_TIMEOUT_MS)
+  // is ~22s; outer at 24s leaves 2s headroom for parse+merge.
+  const PER_TICKER_MS = 24_000;
   const CONCURRENCY = 12;
   const data: Record<string, any> = {};
   let ok = 0;
