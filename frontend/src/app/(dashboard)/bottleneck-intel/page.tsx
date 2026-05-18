@@ -720,17 +720,36 @@ function exchangeFlag(exchange?: string) {
 
 // ── API hooks ─────────────────────────────────────────────────────────────────
 
+// PATCH 0472 — 20s AbortController per query so a stuck endpoint doesn't
+// pin the workbench in a permanent loading state.
 function useDashboard() {
   return useQuery<BnDashboard>({
     queryKey: ['bn', 'dashboard'],
-    queryFn: async () => { const r = await fetch('/api/v1/news/bottleneck-dashboard'); if (!r.ok) throw new Error(''); return r.json(); },
+    queryFn: async () => {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 20_000);
+      try {
+        const r = await fetch('/api/v1/news/bottleneck-dashboard', { signal: ctl.signal });
+        if (!r.ok) throw new Error('');
+        return await r.json();
+      } finally { clearTimeout(t); }
+    },
     refetchInterval: 180_000, staleTime: 120_000, retry: 1,
   });
 }
 function useBNNews() {
   return useQuery<NewsArticle[]>({
     queryKey: ['bn', 'news'],
-    queryFn: async () => { const r = await fetch('/api/v1/news?limit=400&importance_min=2&article_type=BOTTLENECK'); if (!r.ok) throw new Error(''); const d = await r.json(); return Array.isArray(d) ? d : []; },
+    queryFn: async () => {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 20_000);
+      try {
+        const r = await fetch('/api/v1/news?limit=400&importance_min=2&article_type=BOTTLENECK', { signal: ctl.signal });
+        if (!r.ok) throw new Error('');
+        const d = await r.json();
+        return Array.isArray(d) ? d : [];
+      } finally { clearTimeout(t); }
+    },
     refetchInterval: 90_000, staleTime: 60_000, retry: 1,
   });
 }

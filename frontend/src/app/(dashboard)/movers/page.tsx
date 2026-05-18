@@ -127,10 +127,13 @@ export default function MoversPage() {
   const hasActiveFilters = capFilter !== 'All' || sectorFilter !== 'All' || moveTokens.size > 0;
 
   const fetchData = useCallback(async () => {
+    // PATCH 0472 — 15s timeout
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 15_000);
     try {
       setError(null);
       setIsRefreshing(true);
-      const res = await fetch('/api/market/quotes?market=india');
+      const res = await fetch('/api/market/quotes?market=india', { signal: ctl.signal });
       if (!res.ok) throw new Error(`API error: ${res.status}`);
       const json = await res.json();
 
@@ -151,9 +154,10 @@ export default function MoversPage() {
 
       setAllStocks(stocks);
       setLastUpdated(new Date());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch data');
+    } catch (err: any) {
+      setError(err?.name === 'AbortError' ? 'Movers fetch timed out' : (err instanceof Error ? err.message : 'Failed to fetch data'));
     } finally {
+      clearTimeout(timer);
       setLoading(false);
       setIsRefreshing(false);
     }

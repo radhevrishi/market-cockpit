@@ -65,10 +65,13 @@ export default function SmartMoneyPage() {
   const [searchQuery, setSearchQuery] = useState('');
 
   const fetchData = async () => {
+    // PATCH 0472 — 20s timeout
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 20_000);
     try {
       setError(null);
       setIsRefreshing(true);
-      const response = await fetch('/api/market/smart-money');
+      const response = await fetch('/api/market/smart-money', { signal: ctl.signal });
 
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`);
@@ -77,9 +80,10 @@ export default function SmartMoneyPage() {
       const json = await response.json();
       setData(json);
       setLastUpdated(new Date());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch data');
+    } catch (err: any) {
+      setError(err?.name === 'AbortError' ? 'Smart-money fetch timed out' : (err instanceof Error ? err.message : 'Failed to fetch data'));
     } finally {
+      clearTimeout(timer);
       setLoading(false);
       setIsRefreshing(false);
     }
