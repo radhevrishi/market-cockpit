@@ -7446,8 +7446,9 @@ function detectCsvMarket(headers: string[]): 'IN' | 'US' | 'UNKNOWN' {
 }
 
 export default function MultibaggerPage() {
-  const [activeTab, setActiveTab] = useState<'excel'|'usa'|'turnaround'|'usa-checklist'|'checklist'|'capital-alloc'|'reference'>('excel');
-  // PATCH 0347 — Listen for cross-market tab-switch events fired from upload handlers
+  // PATCH 0492 — 'analytics' tab added as DEFAULT landing view. User wanted to land
+  // on the cross-stock analytics overview, not the per-row ranking table.
+  const [activeTab, setActiveTab] = useState<'analytics'|'excel'|'usa'|'turnaround'|'usa-checklist'|'checklist'|'capital-alloc'|'reference'>('analytics');
   React.useEffect(() => {
     const onSwitch = (e: Event) => {
       const ce = e as CustomEvent<{ tab: 'excel' | 'usa' }>;
@@ -7546,9 +7547,11 @@ export default function MultibaggerPage() {
           </div>
           <div style={{display:'flex',gap:0}}>
             {([
+              // PATCH 0492 — Analytics tab is FIRST (default landing). User asked
+              // to see analytics first, not the ranking table.
+              {id:'analytics',     label:'📊 Analytics'},
               {id:'excel',    label:'🇮🇳 India Multibagger Ranking'},
               {id:'usa',           label:'🇺🇸 USA Multibagger'},
-              // PATCH 0370 — Turnaround tab (specialized scoring for distressed-to-recovery setups)
               {id:'turnaround',    label:'🔄 Turnarounds'},
               {id:'usa-checklist', label:'🇺🇸 USA Checklist'},
               {id:'checklist',label:`📋 Research Checklist${excelRows.length?` (${excelRows.length} loaded)`:''}`},
@@ -7566,6 +7569,7 @@ export default function MultibaggerPage() {
         </div>
       </div>
 
+      {activeTab==='analytics'  && <MultibaggerAnalytics indiaRows={excelRows} onSwitchTab={(t) => setActiveTab(t as any)} />}
       {activeTab==='excel'     && <ExcelCompare rows={excelRows} setRows={setExcelRows} />}
       {activeTab==='usa'          && <USACompare />}
       {activeTab==='turnaround'    && <TurnaroundCompare />}
@@ -7573,6 +7577,305 @@ export default function MultibaggerPage() {
       {activeTab==='checklist' && <MultibaggerChecklist excelRows={excelRows} />}
       {activeTab==='capital-alloc' && <CapitalAllocationPanel />}
       {activeTab==='reference'     && <MultibaggerReference excelRows={excelRows} />}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PATCH 0492 — MULTIBAGGER ANALYTICS TAB (default landing)
+//
+// Cross-stock overview built from the uploaded India + USA scoring data.
+// Stats strip · Grade distribution · Sector exposure · R40/PEG outliers ·
+// Conviction-Beats / Decision-Logbook crossover · Super Investor overlap.
+// ═══════════════════════════════════════════════════════════════════════════
+
+type MbMarketScope = 'INDIA' | 'USA' | 'BOTH';
+
+interface MbAnalyticsStock {
+  symbol: string;
+  company?: string;
+  score: number;
+  grade: string;
+  sector?: string;
+  market: 'INDIA' | 'USA';
+}
+
+function MultibaggerAnalytics({
+  indiaRows,
+  onSwitchTab,
+}: {
+  indiaRows: ExcelResult[];
+  onSwitchTab: (t: string) => void;
+}) {
+  const [scope, setScope] = React.useState<MbMarketScope>('INDIA');
+
+  // Read USA rows from localStorage directly (no shared state in this scope).
+  const usaRows = React.useMemo<any[]>(() => {
+    try {
+      const raw = localStorage.getItem(USA_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  }, []);
+
+  // Conviction Beats overlay
+  const convictionSet = React.useMemo(() => {
+    if (typeof window === 'undefined') return new Set<string>();
+    try { return new Set<string>(getConvictionTickers()); } catch { return new Set<string>(); }
+  }, []);
+
+  // Build unified analytics rows
+  const stocks: MbAnalyticsStock[] = React.useMemo(() => {
+    const ind: MbAnalyticsStock[] = (indiaRows || []).map((r) => ({
+      symbol: r.symbol,
+      company: (r as any).companyName,
+      score: r.score,
+      grade: r.grade,
+      sector: (r as any).sector,
+      market: 'INDIA',
+    }));
+    const us: MbAnalyticsStock[] = (usaRows || []).map((r) => ({
+      symbol: r.symbol,
+      company: r.companyName,
+      score: r.score,
+      grade: r.grade,
+      sector: r.sector,
+      market: 'USA',
+    }));
+    const merged = [...ind, ...us];
+    return scope === 'BOTH' ? merged : merged.filter((s) => s.market === scope);
+  }, [indiaRows, usaRows, scope]);
+
+  const stats = React.useMemo(() => {
+    const total = stocks.length;
+    const grades: Record<string, number> = {};
+    let scoreSum = 0;
+    const sectorMap: Record<string, { count: number; avgScore: number; total: number }> = {};
+    for (const s of stocks) {
+      grades[s.grade] = (grades[s.grade] || 0) + 1;
+      scoreSum += s.score || 0;
+      const sec = s.sector || 'Unclassified';
+      if (!sectorMap[sec]) sectorMap[sec] = { count: 0, avgScore: 0, total: 0 };
+      sectorMap[sec].count++;
+      sectorMap[sec].total += s.score || 0;
+    }
+    for (const k of Object.keys(sectorMap)) {
+      sectorMap[k].avgScore = Math.round(sectorMap[k].total / Math.max(1, sectorMap[k].count));
+    }
+    const sectorRanked = Object.entries(sectorMap)
+      .map(([sector, v]) => ({ sector, ...v }))
+      .sort((a, b) => b.count - a.count);
+    const avg = total > 0 ? Math.round(scoreSum / total) : 0;
+    const aPlus = (grades['A+'] || 0) + (grades['A'] || 0);
+    const topPicks = [...stocks].sort((a, b) => b.score - a.score).slice(0, 10);
+    const convictionOverlap = stocks.filter((s) =>
+      convictionSet.has(s.symbol.toUpperCase().replace(/\.(NS|BO)$/i, ''))
+    );
+    return { total, grades, avg, sectorRanked, aPlus, topPicks, convictionOverlap };
+  }, [stocks, convictionSet]);
+
+  const cardStyle: React.CSSProperties = {
+    backgroundColor: '#0D1623', border: '1px solid #1A2540',
+    borderRadius: 6, padding: '12px 14px',
+  };
+  const labelStyle: React.CSSProperties = {
+    fontSize: 11, color: '#6B7A8D', letterSpacing: '0.3px', marginBottom: 4,
+  };
+
+  if (stats.total === 0) {
+    return (
+      <div style={{ padding: 30, textAlign: 'center', color: '#8A95A3' }}>
+        <div style={{ fontSize: 36, marginBottom: 12 }}>📊</div>
+        <p style={{ margin: 0, fontWeight: 700, color: '#E6EDF3' }}>No Multibagger data uploaded yet</p>
+        <p style={{ margin: '8px 0 16px', fontSize: 12, lineHeight: 1.5, maxWidth: 480, marginLeft: 'auto', marginRight: 'auto' }}>
+          Upload your Screener.in CSV (India) or TradingView CSV (USA) on the ranking tabs.
+          The analytics view will populate the moment data is loaded.
+        </p>
+        <div style={{ display: 'inline-flex', gap: 8 }}>
+          <button onClick={() => onSwitchTab('excel')} style={{
+            padding: '6px 14px', borderRadius: 6, border: '1px solid #10B98160',
+            background: '#10B98115', color: '#10B981', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+          }}>🇮🇳 Upload India CSV</button>
+          <button onClick={() => onSwitchTab('usa')} style={{
+            padding: '6px 14px', borderRadius: 6, border: '1px solid #22D3EE60',
+            background: '#22D3EE15', color: '#22D3EE', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+          }}>🇺🇸 Upload USA CSV</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {/* ── MARKET SCOPE TOGGLE ─────────────────────────────────────────── */}
+      <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 11, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.3px', marginRight: 6 }}>MARKET</span>
+        {(['INDIA', 'USA', 'BOTH'] as MbMarketScope[]).map((m) => {
+          const isActive = scope === m;
+          const color = m === 'INDIA' ? '#10B981' : m === 'USA' ? '#22D3EE' : '#8B5CF6';
+          return (
+            <button
+              key={m}
+              onClick={() => setScope(m)}
+              style={{
+                fontSize: 11, fontWeight: 800, letterSpacing: '0.4px', cursor: 'pointer',
+                border: `1px solid ${isActive ? color : '#1A2540'}`,
+                backgroundColor: isActive ? `${color}22` : 'transparent',
+                color: isActive ? color : '#6B7A8D',
+                padding: '4px 12px', borderRadius: 4,
+              }}
+            >
+              {m === 'INDIA' ? '🇮🇳 INDIA' : m === 'USA' ? '🇺🇸 USA' : '🌐 BOTH'}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── STATS STRIP ─────────────────────────────────────────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
+        <div style={cardStyle}>
+          <div style={labelStyle}>Total stocks loaded</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: '#22D3EE', fontVariantNumeric: 'tabular-nums' }}>{stats.total}</div>
+        </div>
+        <div style={cardStyle}>
+          <div style={labelStyle}>Avg score</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: '#10B981', fontVariantNumeric: 'tabular-nums' }}>{stats.avg}</div>
+        </div>
+        <div style={cardStyle}>
+          <div style={labelStyle}>A / A+ grade count</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: '#F59E0B', fontVariantNumeric: 'tabular-nums' }}>{stats.aPlus}</div>
+        </div>
+        <div style={cardStyle}>
+          <div style={labelStyle}>Conviction Beats overlap</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: '#EC4899', fontVariantNumeric: 'tabular-nums' }}>{stats.convictionOverlap.length}</div>
+        </div>
+        <div style={cardStyle}>
+          <div style={labelStyle}>Sectors represented</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: '#8B5CF6', fontVariantNumeric: 'tabular-nums' }}>{stats.sectorRanked.length}</div>
+        </div>
+      </div>
+
+      {/* ── GRADE DISTRIBUTION ──────────────────────────────────────────── */}
+      <div style={cardStyle}>
+        <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 10 }}>
+          🎯 GRADE DISTRIBUTION
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {(['A+', 'A', 'B+', 'B', 'C', 'D'] as const).map((g) => {
+            const count = stats.grades[g] || 0;
+            const pct = stats.total > 0 ? Math.round((count / stats.total) * 100) : 0;
+            const tone = g === 'A+' ? '#10B981' : g === 'A' ? '#22D3EE'
+              : g === 'B+' ? '#3B82F6' : g === 'B' ? '#F59E0B'
+              : g === 'C' ? '#94A3B8' : '#EF4444';
+            return (
+              <div key={g} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 12, fontWeight: 800, color: tone, minWidth: 30 }}>{g}</span>
+                <span style={{ fontSize: 11, color: '#6B7A8D', minWidth: 35, textAlign: 'right' }}>{count}</span>
+                <div style={{ flex: 1, height: 10, background: '#1A2540', borderRadius: 4, overflow: 'hidden' }}>
+                  <div style={{ width: `${pct}%`, height: '100%', background: tone }} />
+                </div>
+                <span style={{ fontSize: 11, color: tone, fontWeight: 700, minWidth: 40, textAlign: 'right' }}>{pct}%</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── SECTOR EXPOSURE ─────────────────────────────────────────────── */}
+      <div style={cardStyle}>
+        <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+          🧭 SECTOR EXPOSURE
+        </div>
+        <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10 }}>
+          Which sectors dominate your roster and what's the average score per bucket.
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {stats.sectorRanked.slice(0, 15).map((s) => {
+            const max = stats.sectorRanked[0]?.count || 1;
+            const pct = Math.round((s.count / max) * 100);
+            const tone = s.avgScore >= 78 ? '#10B981' : s.avgScore >= 60 ? '#22D3EE'
+              : s.avgScore >= 45 ? '#F59E0B' : '#94A3B8';
+            return (
+              <div key={s.sector} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 11, color: '#E6EDF3', fontWeight: 600, minWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sector}</span>
+                <span style={{ fontSize: 10, color: '#6B7A8D', minWidth: 28, textAlign: 'right' }}>{s.count}</span>
+                <div style={{ flex: 1, height: 8, background: '#1A2540', borderRadius: 4, overflow: 'hidden' }}>
+                  <div style={{ width: `${pct}%`, height: '100%', background: tone }} />
+                </div>
+                <span style={{ fontSize: 11, color: tone, fontWeight: 700, minWidth: 70, textAlign: 'right' }}>avg {s.avgScore}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── TOP 10 BY SCORE ─────────────────────────────────────────────── */}
+      <div style={cardStyle}>
+        <div style={{ fontSize: 13, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 10 }}>
+          🏆 TOP 10 BY SCORE
+        </div>
+        <div style={{ border: '1px solid #1A2540', borderRadius: 4, overflow: 'hidden' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ backgroundColor: '#0A1422' }}>
+                <th style={{ padding: '6px 10px', textAlign: 'left', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>RANK</th>
+                <th style={{ padding: '6px 10px', textAlign: 'left', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>TICKER</th>
+                <th style={{ padding: '6px 10px', textAlign: 'left', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>SECTOR</th>
+                <th style={{ padding: '6px 10px', textAlign: 'right', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>SCORE</th>
+                <th style={{ padding: '6px 10px', textAlign: 'center', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>GRADE</th>
+                <th style={{ padding: '6px 10px', textAlign: 'center', color: '#6B7A8D', fontSize: 10, fontWeight: 700 }}>MKT</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stats.topPicks.map((s, i) => {
+                const inCb = convictionSet.has(s.symbol.toUpperCase().replace(/\.(NS|BO)$/i, ''));
+                return (
+                  <tr key={s.symbol + i} style={{ borderTop: '1px solid #1A2540' }}>
+                    <td style={{ padding: '6px 10px', color: '#6B7A8D' }}>{i + 1}</td>
+                    <td style={{ padding: '6px 10px', color: '#E6EDF3', fontWeight: 700, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                      <a href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`} style={{ color: '#E6EDF3', textDecoration: 'none' }}>
+                        {s.symbol}
+                      </a>
+                      {inCb && <span title="In Conviction Beats" style={{ marginLeft: 5, fontSize: 10, color: '#F59E0B' }}>🏆</span>}
+                    </td>
+                    <td style={{ padding: '6px 10px', color: '#94A3B8', fontSize: 11 }}>{s.sector || '—'}</td>
+                    <td style={{ padding: '6px 10px', textAlign: 'right', color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.score}</td>
+                    <td style={{ padding: '6px 10px', textAlign: 'center', color: s.grade === 'A+' ? '#10B981' : '#22D3EE', fontWeight: 700 }}>{s.grade}</td>
+                    <td style={{ padding: '6px 10px', textAlign: 'center', color: s.market === 'INDIA' ? '#10B981' : '#22D3EE', fontSize: 10, fontWeight: 700 }}>{s.market === 'INDIA' ? '🇮🇳' : '🇺🇸'}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ── CONVICTION BEATS OVERLAP ────────────────────────────────────── */}
+      {stats.convictionOverlap.length > 0 && (
+        <div style={cardStyle}>
+          <div style={{ fontSize: 13, color: '#F59E0B', fontWeight: 700, letterSpacing: '0.4px', marginBottom: 4 }}>
+            🏆 CONVICTION BEATS OVERLAP ({stats.convictionOverlap.length})
+          </div>
+          <div style={{ fontSize: 11, color: '#6B7A8D', marginBottom: 10 }}>
+            Stocks from your Multibagger upload that also sit on the Conviction Beats bench — strongest decision-ready candidates.
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {stats.convictionOverlap.slice(0, 30).map((s) => (
+              <a
+                key={s.symbol}
+                href={`/stock-sheet?ticker=${encodeURIComponent(s.symbol.replace(/\.(NS|BO)$/i, ''))}`}
+                style={{
+                  fontSize: 11, fontWeight: 700, color: '#F59E0B',
+                  border: '1px solid #F59E0B40', backgroundColor: '#F59E0B10',
+                  padding: '3px 8px', borderRadius: 4, textDecoration: 'none',
+                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                }}
+              >
+                {s.symbol} <span style={{ color: '#94A3B8', fontWeight: 500 }}>· {s.score} {s.grade}</span>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
