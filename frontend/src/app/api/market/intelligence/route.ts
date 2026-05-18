@@ -1252,6 +1252,9 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
     const portfolioParam = searchParams.get('portfolio');
     const days = parseInt(searchParams.get('days') || '30');
     const forceRefresh = searchParams.get('force') === 'true';
+    // PATCH 0482 — `universe=all` disables the cached-feed PF/WL filter so
+    // the user sees the full market. Default behaviour stays filtered.
+    const universeAll = searchParams.get('universe') === 'all';
 
     const watchlist = watchlistParam
       ? watchlistParam.split(',').map(s => normalizeTicker(s.trim())).filter(Boolean)
@@ -1285,11 +1288,15 @@ export async function GET(request: Request): Promise<NextResponse<IntelligenceRe
           }
 
           // ── PF+WL ONLY: Filter cached signals to only tracked companies ──
+          // PATCH 0482: respect `universe=all` opt-out from the orders/signals
+          // page. Without this the feed always collapsed to the user's PF+WL
+          // intersection — for users with 170+ conviction tickers, that often
+          // reduced 100+ cached signals to 1.
           let responseData = stored;
           const wSet = new Set(watchlist.map((s: string) => s.toUpperCase()));
           const pSet = new Set(portfolio.map((s: string) => s.toUpperCase()));
           const allUserTracked = new Set([...wSet, ...pSet]);
-          const shouldFilterCached = allUserTracked.size > 0;
+          const shouldFilterCached = !universeAll && allUserTracked.size > 0;
 
           if (shouldFilterCached) {
             const filterToTracked = (arr: any[]) => arr

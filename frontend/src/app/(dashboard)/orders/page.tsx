@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Shield, RefreshCw, TrendingUp, TrendingDown, Minus, Eye, Filter, Zap, AlertTriangle } from 'lucide-react';
 import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 // PATCH 0251 — Conviction Beats overlay on Intelligence/Signals page
@@ -2511,7 +2511,13 @@ export default function CompanyIntelligencePage() {
 
       const wlParam = watchlist.length > 0 ? `&watchlist=${watchlist.join(',')}` : '';
       const pfParam = mergedPortfolio.length > 0 ? `&portfolio=${mergedPortfolio.join(',')}` : '';
-      const res = await fetch(`/api/market/intelligence?days=${daysFilter}${wlParam}${pfParam}&debug=true`);
+      // PATCH 0482 — when the user's universe selector is 'ALL', explicitly
+      // ask the server to bypass the PF/WL cached-feed filter. Without this,
+      // the feed always collapsed to a handful of signals even though the
+      // client UI said "ALL". Watchlist/portfolio are still sent so the
+      // backend enricher universe stays correct.
+      const universeParam = universeFilter === 'ALL' ? '&universe=all' : '';
+      const res = await fetch(`/api/market/intelligence?days=${daysFilter}${wlParam}${pfParam}${universeParam}&debug=true`);
       const data = await res.json();
 
       setTop3(_retag(data.top3 || []));
@@ -2640,6 +2646,18 @@ export default function CompanyIntelligencePage() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [daysFilter]); // Only reruns when daysFilter changes, not on every tab switch
+
+  // PATCH 0482 — when the user toggles between ALL / PORTFOLIO / WATCHLIST /
+  // EXCEL / CONVICTION, refetch so the server-side universe gate is reapplied.
+  // Without this, switching to 'ALL' couldn't recover signals the previous
+  // fetch had filtered out.
+  const lastUniverseRef = useRef<UniverseFilter>('ALL');
+  useEffect(() => {
+    if (lastUniverseRef.current === universeFilter) return;
+    lastUniverseRef.current = universeFilter;
+    fetchData(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [universeFilter]);
 
   // Keep computing poll — needed for background compute jobs
   useEffect(() => {

@@ -84,7 +84,10 @@ export async function GET(req: Request) {
   // 60 is enough for their workflow and improves total backfill latency.
   const fromParam = searchParams.get('from') || isoNDaysAgo(60);
   const toParam = searchParams.get('to') || isoNDaysAgo(1);  // default: yesterday
-  const skipWeekends = searchParams.get('skipWeekends') !== '0';  // default true
+  // PATCH 0482 — default to FALSE. Indian companies file on weekends
+  // (Saturday board meetings are routine; some even file Sunday). The
+  // old default silently skipped Sat/Sun backfill leaving holes in KV.
+  const skipWeekends = searchParams.get('skipWeekends') === '1';  // default false
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fromParam) || !/^\d{4}-\d{2}-\d{2}$/.test(toParam)) {
     return NextResponse.json({ error: 'from / to required as YYYY-MM-DD' }, { status: 400 });

@@ -61,6 +61,11 @@ const NAV: NavItem[] = [
   // PATCH 0454 TIER1-A — Decision Logbook (queryable journal of every BUY /
   // WATCH / NEUTRAL / REJECTED across both markets, with CSV export).
   { href: '/decisions',     label: 'Decision Logbook',   icon: <BookMarked className="w-5 h-5" /> },
+  // PATCH 0482 — Super Investor Tracker. Coat-tail dashboard for 10 Indian
+  // growth-style investors: Kacholia / Kedia / Porinju / Pabrai / Andrade /
+  // Mukherjea / Anand Shah / Khemani / Bakshi / Mittal. Holdings table +
+  // news / interviews per investor.
+  { href: '/super-investors', label: 'Super Investors',  icon: <Star className="w-5 h-5" /> },
   // PATCH 0093: Single-Stock Sheet — 16-section institutional checklist runner
   { href: '/stock-sheet',   label: 'Stock Sheet',        icon: <BookMarked className="w-5 h-5" /> },
   // PATCH 0094: Re-rating Screener — margin expansion + model shift + multiple expansion

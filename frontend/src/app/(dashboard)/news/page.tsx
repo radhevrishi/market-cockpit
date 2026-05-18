@@ -3001,74 +3001,26 @@ export default function NewsFeedPage() {
                                   </span>
                                 )}
                               </div>
-                              {/* PATCH 0082 + 0085: per-ticker chips with exposure + capture + size, doubled */}
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 4 }}>
-                                {adapt.beneficiaries.slice(0, 6).map((bn) => {
-                                  const expColor = bn.exposure_intensity === 'DIRECT' ? '#10B981'
-                                    : bn.exposure_intensity === 'STRONG' ? '#22D3EE'
-                                    : bn.exposure_intensity === 'MEDIUM' ? '#F59E0B'
-                                    : bn.exposure_intensity === 'INDIRECT' ? '#94A3B8'
-                                    : '#6B7A8D';
-                                  const sizeMarker = bn.size_class === 'SMALL_CAP' ? 's'
-                                    : bn.size_class === 'MID_CAP' ? 'm'
-                                    : '';
-                                  return (
-                                    <span
-                                      key={bn.ticker}
-                                      title={`${bn.rationale || ''}\nExposure: ${bn.exposure_intensity || '—'} (${bn.exposure_score || 0}/100)\nCapture: ${bn.economic_capture || '—'} (${bn.capture_score || 0}/100)\nSize: ${bn.size_class || '—'}\nComposite: ${bn.composite_score || 0}`}
-                                      style={{
-                                        fontSize: 13, fontWeight: 700,
-                                        color: expColor,
-                                        border: `1px solid ${expColor}40`,
-                                        backgroundColor: `${expColor}10`,
-                                        padding: '2px 8px', borderRadius: 4,
-                                        display: 'inline-flex', alignItems: 'baseline', gap: 4,
-                                      }}
-                                    >
-                                      <span>{bn.ticker}</span>
-                                      {sizeMarker && (
-                                        <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 400 }}>{sizeMarker}</span>
-                                      )}
-                                      {bn.composite_score !== undefined && (
-                                        <span style={{ fontSize: 10, color: '#94A3B8', fontWeight: 400 }}>
-                                          {Math.round((bn.composite_score || 0) / 10) / 10}
-                                        </span>
-                                      )}
-                                    </span>
-                                  );
-                                })}
+                              {/* PATCH 0482 — ticker chips removed (user: "anyway incorrect").
+                                   Show clean prose rationale + a count indicator instead so the
+                                   sub-theme + duration tag still convey the actionable shape
+                                   without surfacing speculative ticker-tagging. */}
+                              <div style={{ color: '#CBD5E1', fontSize: 12, lineHeight: 1.5, marginTop: 4 }} title={adapt.rationale}>
+                                {adapt.rationale}
                               </div>
-                              <div style={{ color: '#6B7A8D', fontSize: 11, lineHeight: 1.45, marginTop: 3 }} title={adapt.rationale}>
-                                {adapt.rationale.slice(0, 110)}…
-                              </div>
-                              {/* PATCH 0082 + 0085: structural losers per adaptation, doubled */}
-                              {adapt.structural_losers && adapt.structural_losers.length > 0 && (
-                                <div style={{ marginTop: 4, fontSize: 11, color: '#94A3B8', lineHeight: 1.4 }}>
-                                  <span style={{ color: '#EF4444', fontWeight: 700 }}>↘ Losers: </span>
-                                  {adapt.structural_losers.map((l, i) => (
-                                    <span key={l.ticker} title={l.rationale} style={{ color: '#94A3B8' }}>
-                                      {l.ticker}
-                                      <span style={{ color: l.severity === 'HIGH' ? '#EF4444' : l.severity === 'MEDIUM' ? '#F59E0B' : '#6B7A8D', marginLeft: 2 }}>
-                                        ({l.severity[0]})
-                                      </span>
-                                      {i < (adapt.structural_losers?.length ?? 0) - 1 ? ', ' : ''}
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
                             </div>
                           );
                         })}
                       </div>
                     )}
 
-                    {/* ── PATCH 0085: PRICING TRANSMISSION (L1–L6) ──
-                          The architectural-adaptation block above groups beneficiaries by causal pattern
-                          (POWER_EFFICIENCY / ALT_ACCELERATOR / etc.). The block below maps the SAME
-                          bottleneck through the canonical 6-layer pricing-power transmission stack so
-                          AKAM (L3 edge), Sterlite-type names (L4 industrial pass-through), AMD/INTC/ARM
-                          (L2 substitution), ABB / AMKR (L1 capture) all surface explicitly.
-                          Mandatory injects render with an amber star ★ and amber border. */}
+                    {/* ── PATCH 0085 / PATCH 0482 — TRANSMISSION SUB-THEMES ──
+                          User feedback: ticker rosters at L1-L6 were "anyway incorrect" and
+                          made the panel look noisy. Replaced ticker chips with clean
+                          sub-theme rows so the institutional layer-label remains useful
+                          (Direct Scarcity Capture → Compute Substitutes → Edge → ...)
+                          without speculative ticker-tagging. T0-T4 transmission cascade
+                          below is unchanged. */}
                     {b.layered_beneficiaries && b.layered_beneficiaries.fired_layers.length > 0 && (() => {
                       const lb = b.layered_beneficiaries;
                       const LAYER_META: Record<string, { icon: string; label: string; tag: string; color: string }> = {
@@ -3079,84 +3031,31 @@ export default function NewsFeedPage() {
                         L5: { icon: '🏢', label: 'Platform Beneficiaries',       tag: 'Hyperscaler demand aggregators',        color: '#3B82F6' },
                         L6: { icon: '⚡', label: 'Infrastructure / Efficiency',  tag: 'Power, thermal, perf-per-watt',         color: '#D946EF' },
                       };
-                      const LEV_DOT: Record<string, string> = { STRONG: '#10B981', MEDIUM: '#F59E0B', WEAK: '#6B7A8D' };
-                      const SIZE_SUFFIX: Record<string, string> = { LARGE_CAP: '', MID_CAP: 'm', SMALL_CAP: 's' };
                       return (
                         <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed #1A2840' }}>
                           <div style={{ fontSize: 12, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.5px', marginBottom: 8 }}>
-                            🔁 PRICING TRANSMISSION (L1–L6)
+                            🔁 TRANSMISSION SUB-THEMES (L1–L6)
                           </div>
                           {lb.fired_layers.map((L) => {
                             const meta = LAYER_META[L];
-                            const tickers = lb.layers[L] || [];
-                            if (!meta || tickers.length === 0) return null;
-                            // PATCH 0087: chip renderer extracted so L2 can render two sub-clusters
-                            const renderChip = (t: LayerTickerLite) => {
-                              const sizeMark = SIZE_SUFFIX[t.size];
-                              return (
-                                <span
-                                  key={`${t.ticker}-${t.sub_layer ?? ''}`}
-                                  title={`${t.rationale}\nPricing leverage: ${t.pricing_leverage}${t.mandatory ? ' · Mandatory injection (structurally required for ' + lb.bottleneck_label + ')' : ''}`}
-                                  style={{
-                                    fontSize: 13, fontWeight: 700,
-                                    color: t.mandatory ? '#FCD34D' : '#E6EDF3',
-                                    border: t.mandatory ? '1px solid #F59E0B70' : '1px solid #2A3B4C',
-                                    backgroundColor: t.mandatory ? '#F59E0B12' : '#0F1B2E',
-                                    padding: '3px 8px', borderRadius: 4,
-                                    display: 'inline-flex', alignItems: 'center', gap: 5,
-                                  }}
-                                >
-                                  <span style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: LEV_DOT[t.pricing_leverage] || '#6B7A8D' }} />
-                                  <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{t.ticker}</span>
-                                  {sizeMark && <span style={{ fontSize: 10, color: '#6B7A8D', fontWeight: 400 }}>{sizeMark}</span>}
-                                  {t.mandatory && <span style={{ fontSize: 10, color: '#F59E0B' }}>★</span>}
-                                </span>
-                              );
-                            };
+                            if (!meta) return null;
                             return (
-                              <div key={L} style={{ marginBottom: 8 }}>
-                                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-                                  <span style={{
-                                    fontSize: 12, fontWeight: 700,
-                                    color: meta.color,
-                                    border: `1px solid ${meta.color}50`,
-                                    backgroundColor: `${meta.color}15`,
-                                    padding: '2px 7px', borderRadius: 4,
-                                  }}>
-                                    {meta.icon} {L} · {meta.label}
-                                  </span>
-                                  <span style={{ fontSize: 11, color: '#6B7A8D', fontStyle: 'italic' }}>{meta.tag}</span>
-                                </div>
-                                {L === 'L2' ? (() => {
-                                  const gpuSub = tickers.filter((t) => t.sub_layer === 'GPU_SUB');
-                                  const cpuCycle = tickers.filter((t) => t.sub_layer === 'CPU_CYCLE');
-                                  const untagged = tickers.filter((t) => !t.sub_layer);
-                                  return (
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                      {gpuSub.length > 0 && (
-                                        <div>
-                                          <div style={{ fontSize: 11, color: '#A78BFA', marginBottom: 3 }}>
-                                            ⚙️ L2A · GPU substitution <span style={{ color: '#6B7A8D' }}>(in-stack share displacement)</span>
-                                          </div>
-                                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{gpuSub.map(renderChip)}</div>
-                                        </div>
-                                      )}
-                                      {cpuCycle.length > 0 && (
-                                        <div>
-                                          <div style={{ fontSize: 11, color: '#E879F9', marginBottom: 3 }}>
-                                            🧠 L2B · CPU cycle <span style={{ color: '#6B7A8D' }}>(GPU scarcity → CPU attach + AI-PC + perf/watt)</span>
-                                          </div>
-                                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{cpuCycle.map(renderChip)}</div>
-                                        </div>
-                                      )}
-                                      {untagged.length > 0 && (
-                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{untagged.map(renderChip)}</div>
-                                      )}
-                                    </div>
-                                  );
-                                })() : (
-                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{tickers.map(renderChip)}</div>
-                                )}
+                              <div key={L} style={{
+                                display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 6, flexWrap: 'wrap',
+                                paddingLeft: 8, borderLeft: `2px solid ${meta.color}80`,
+                              }}>
+                                <span style={{
+                                  fontSize: 12, fontWeight: 700,
+                                  color: meta.color,
+                                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                                  minWidth: 28,
+                                }}>
+                                  {L}
+                                </span>
+                                <span style={{ fontSize: 13, fontWeight: 600, color: '#E6EDF3' }}>
+                                  {meta.icon} {meta.label}
+                                </span>
+                                <span style={{ fontSize: 11, color: '#6B7A8D', fontStyle: 'italic' }}>{meta.tag}</span>
                               </div>
                             );
                           })}

@@ -930,6 +930,38 @@ export default function EarningsOpportunitiesPage() {
     lastBaselinedDateRef.current = '';
   }, [resolvedDateForGrading]);
 
+  // PATCH 0482 — AUTO-JUMP TO MOST RECENT POPULATED DATE.
+  // When the user lands on the page and the default date has 0 filings (e.g.,
+  // Monday morning before any companies have filed), step backward to find the
+  // most recent past date that has at least one filing. Mirrors EarningsPulse
+  // behaviour where the landing view is always "the most recent populated
+  // filing day". Only fires once per session (autoJumpedRef).
+  const autoJumpedRef = useRef(false);
+  useEffect(() => {
+    if (autoJumpedRef.current) return;
+    if (!gradedData?.by_tier || !resolvedDateForGrading || !hub?.results) return;
+    const allCards = (TIER_ORDER as EarningsTier[])
+      .flatMap((t) => gradedData.by_tier?.[t] || []);
+    if (allCards.length >= 3) {
+      // Already populated — leave the user where they are.
+      autoJumpedRef.current = true;
+      return;
+    }
+    // Find latest past date in hub with at least 1 real filing.
+    const byDate: Record<string, number> = {};
+    for (const r of hub.results) {
+      if (!r.resultDate || r.resultDate > todayIso || r.quality === 'Upcoming') continue;
+      byDate[r.resultDate] = (byDate[r.resultDate] || 0) + 1;
+    }
+    const populated = Object.keys(byDate)
+      .filter((d) => d < resolvedDateForGrading && byDate[d] >= 3)
+      .sort()
+      .reverse();
+    if (populated.length === 0) return;
+    autoJumpedRef.current = true;
+    setFilterDate(populated[0]);
+  }, [gradedData, resolvedDateForGrading, hub, todayIso]);
+
   // PATCH 0402 — CLIENT-SIDE AUTO-HEAL.
   // PATCH 0447 REGRESSION FIX — User reported EO was "best" before; now
   // re-fetching everything every time they open it. The auto-heal was
@@ -1027,19 +1059,17 @@ export default function EarningsOpportunitiesPage() {
     const prevIso = prev.toISOString().slice(0, 10);
     const nextIso = next.toISOString().slice(0, 10);
 
-    // Build the list of past 7 weekdays from today (skip Sat/Sun) — only
-    // for first mount in this session, to avoid hammering Vercel on every
-    // date-arrow click.
+    // PATCH 0482 — INVERTED from the weekday-only warming. Indian companies
+    // file results on weekends (especially Saturdays). We now warm the past
+    // 7 calendar days regardless of weekday so Sat/Sun filings get cached
+    // proactively.
     const past7: string[] = [];
     if (!sessionWarmedRef.current) {
       const cursor = new Date(todayIso);
       while (past7.length < 7) {
-        const day = cursor.getUTCDay();
-        if (day !== 0 && day !== 6) {                     // not Sun/Sat
-          past7.push(cursor.toISOString().slice(0, 10));
-        }
+        past7.push(cursor.toISOString().slice(0, 10));
         cursor.setUTCDate(cursor.getUTCDate() - 1);
-        if (past7.length === 0 && cursor < new Date('2026-01-01')) break;  // safety
+        if (cursor < new Date('2026-01-01')) break;  // safety
       }
       sessionWarmedRef.current = true;
     }
@@ -1651,19 +1681,16 @@ export default function EarningsOpportunitiesPage() {
 
   const counts = TIER_ORDER.map((t) => ({ tier: t, n: view.by_tier[t]?.length || 0 }));
 
-  // PATCH 0193 — Skip Saturdays and Sundays when stepping with ← / →.
-  // Indian markets don't trade on weekends so filings never appear then.
-  // If user explicitly picks a weekend date via the date input, we leave it.
+  // PATCH 0482 — INVERTED from 0193. Indian companies routinely file
+  // quarterly results on Saturdays (board meetings often run weekends)
+  // and even Sundays. EarningsPulse and Trendlyne both surface them on
+  // their actual filing date. Skipping Sat/Sun made users miss entire
+  // batches — for 17 May 2026 (Sunday) EarningsPulse had 99 candidates,
+  // we had zero because ← jumped from Mon to Fri.
   function shiftDate(delta: number) {
     const base = filterDate || todayISO();
     const d = new Date(base);
     d.setDate(d.getDate() + delta);
-    // Skip weekend days: 0 = Sunday, 6 = Saturday
-    let safety = 0;
-    while ((d.getDay() === 0 || d.getDay() === 6) && safety < 7) {
-      d.setDate(d.getDate() + (delta > 0 ? 1 : -1));
-      safety++;
-    }
     setFilterDate(d.toISOString().slice(0, 10));
   }
 
