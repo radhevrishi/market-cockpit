@@ -16,6 +16,18 @@ export function assetFloorModel(inp: ValuationInputs): ModelOutput {
   if (!inp.bookValuePerShare || inp.bookValuePerShare <= 0) {
     return { modelId: 'ASSET_FLOOR', label: 'Asset Floor (P/B)', applicable: false, reason: 'no book value' };
   }
+  // PATCH 0477 — Asset value is irrelevant for high-ROE compounders and
+  // hyper-growth businesses. The economic value vastly exceeds book × P/B.
+  // Include only when ROE is "industrial-normal" (<22%) and growth is modest
+  // (<20%). Otherwise this model just provides a floor reference, not a
+  // valuation vote.
+  if (inp.roe !== undefined && inp.roe > 22) {
+    return { modelId: 'ASSET_FLOOR', label: 'Asset Floor (P/B)', applicable: false, reason: `ROE ${inp.roe.toFixed(0)}% — book understates compounder` };
+  }
+  const g = inp.salesGrowth3y ?? inp.profitGrowth3y;
+  if (g !== undefined && g > 20) {
+    return { modelId: 'ASSET_FLOOR', label: 'Asset Floor (P/B)', applicable: false, reason: `growth ${g.toFixed(0)}% — asset model unfit for growth` };
+  }
   const bvps = inp.bookValuePerShare;
 
   // ROE-tilted: high-ROE → wider premium band

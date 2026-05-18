@@ -21,15 +21,21 @@ export function sectorPeBandModel(inp: ValuationInputs, sc: ScenarioSet): ModelO
   const hpe = inp.historicalPe5y;
   let benchPe: number;
   let source: string;
+  // PATCH 0477 — when Industry PE is given but stock is a much-higher growth
+  // outlier within the sector, the Industry mean materially understates.
+  // We bump Industry PE by the growth-multiplier if growth ≫ sector norm.
+  const growth = inp.salesGrowth3y ?? inp.profitGrowth3y ?? 12;
+  const growthBump = growth > 40 ? 1.5 : growth > 25 ? 1.25 : growth > 15 ? 1.1 : 1.0;
   if (ipe && ipe > 5 && ipe < 100) {
-    benchPe = ipe;
-    source = 'Industry PE';
+    benchPe = ipe * growthBump;
+    source = `Industry PE × growth-tilt (g ${growth.toFixed(0)}%)`;
   } else if (hpe && hpe > 5 && hpe < 100) {
     benchPe = hpe;
     source = 'Own 5y median';
   } else {
+    // sc.exitPe.base already has growth-tilt baked in by scenario builder
     benchPe = sc.exitPe.base;
-    source = 'Sector default';
+    source = 'Sector × growth-tilt';
   }
 
   const bear = inp.eps * benchPe * 0.75;

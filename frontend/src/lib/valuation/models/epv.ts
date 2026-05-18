@@ -12,6 +12,15 @@ import type { ModelOutput, ValuationInputs } from '../types';
 import type { ScenarioSet } from '../scenario';
 
 export function epvModel(inp: ValuationInputs, sc: ScenarioSet): ModelOutput {
+  // PATCH 0477 — EPV is the no-growth value. For high-growth businesses it
+  // SHOULD be much lower than CMP (that's the point — it tells you how much
+  // of the current price is growth premium). But including it in consensus
+  // when growth is healthy drags the median down to "old industrial" values.
+  // Skip when growth > 25% so EPV only contributes for mature/cyclical names.
+  const g = inp.salesGrowth3y ?? inp.profitGrowth3y;
+  if (g !== undefined && g > 25) {
+    return { modelId: 'EPV', label: 'EPV (Greenwald)', applicable: false, reason: `growth ${g.toFixed(0)}% — EPV is no-growth value, doesn't fit growth names` };
+  }
   let ebit = inp.ebitCr;
   // Fall back: derive EBIT from OPM × Sales (proxy — actual EBIT excludes D&A)
   if (ebit === undefined && inp.salesCr && inp.opm) {

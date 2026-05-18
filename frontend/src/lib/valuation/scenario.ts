@@ -30,11 +30,16 @@ export function buildScenarios(inp: ValuationInputs): ScenarioSet {
   const yoy = (inp.yoySalesGrowth ?? sales3y * 100) / 100;
   const guidance = inp.guidanceGrowth !== undefined ? inp.guidanceGrowth / 100 : undefined;
 
-  const baseG = guidance !== undefined ? Math.min(guidance, sales3y) : sales3y;
+  // PATCH 0477 — base case now uses MAX(3y CAGR, guidance) instead of MIN.
+  // Previous behaviour systematically pulled fair value down whenever
+  // guidance happened to be lower than realized historical growth, which
+  // is the wrong direction for forward valuation. Bull-case growth ceiling
+  // also bumped 50% → 70% to accommodate hyper-growth small-caps.
+  const baseG = guidance !== undefined ? Math.max(guidance, sales3y) : sales3y;
   const bearG = Math.max(sales3y * 0.5, 0.05);   // floor 5%
   const bullG = Math.min(
-    Math.max(guidance ?? sales3y, yoy) * 1.1,
-    0.5  // cap at 50% as the practical institutional ceiling
+    Math.max(guidance ?? sales3y, yoy) * 1.15,
+    0.70  // institutional bull-case ceiling
   );
 
   // ── EBITDA margin ───────────────────────────────────────────────────────
@@ -56,19 +61,34 @@ export function buildScenarios(inp: ValuationInputs): ScenarioSet {
   const waccBull = Math.max(a.wacc - 0.01, 0.08);
 
   // ── Exit multiples ──────────────────────────────────────────────────────
-  // Bull = sector default × 1.2; Bear = × 0.8; Base = sector default.
-  // If historical_pe_5y is present and meaningfully different, use it as base.
+  // PATCH 0477 — growth-tilted exit P/E. The original sector default (22-30×)
+  // dramatically understates fair value for 30%+ growers. We now tilt the
+  // exit multiple based on the stock's growth profile:
+  //   growth > 40% → 1.6× sector default
+  //   growth > 25% → 1.3× sector default
+  //   growth > 15% → 1.1× sector default
+  //   growth < 15% → 0.85× sector default
+  // When a 5-year historical P/E is available (older stock), we use it
+  // directly as the base (subject to a cap of sector × 1.6).
   const pe5y = inp.historicalPe5y;
   const sectorPe = a.exitPe;
-  const exitPeBase = pe5y && pe5y > 5 && pe5y < 100 ? Math.min(pe5y, sectorPe * 1.4) : sectorPe;
-  const exitEvBase = a.exitEvEbitda;
+  const growthMult =
+    baseG >= 0.40 ? 1.6 :
+    baseG >= 0.25 ? 1.3 :
+    baseG >= 0.15 ? 1.1 :
+    0.85;
+  const exitPeBase = pe5y && pe5y > 5 && pe5y < 100
+    ? Math.min(pe5y, sectorPe * 1.8)  // cap at 1.8× sector to avoid hyper-bubble multiples
+    : sectorPe * growthMult;
+  // Same growth-tilt for EV/EBITDA
+  const exitEvBase = a.exitEvEbitda * Math.max(0.85, growthMult * 0.95);
 
   return {
     growth5y:        { bear: bearG, base: baseG, bull: bullG },
     ebitdaMargin:    { bear: bearM, base: baseM, bull: bullM },
     wacc:            { bear: waccBear, base: waccBase, bull: waccBull },
-    exitPe:          { bear: exitPeBase * 0.8, base: exitPeBase, bull: exitPeBase * 1.25 },
-    exitEvEbitda:    { bear: exitEvBase * 0.8, base: exitEvBase, bull: exitEvBase * 1.25 },
+    exitPe:          { bear: exitPeBase * 0.8, base: exitPeBase, bull: exitPeBase * 1.30 },
+    exitEvEbitda:    { bear: exitEvBase * 0.8, base: exitEvBase, bull: exitEvBase * 1.30 },
     terminalGrowth:  a.terminalGrowth,
     taxRate:         (inp.effectiveTaxRate ?? 25) / 100,
   };

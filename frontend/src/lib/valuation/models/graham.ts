@@ -17,6 +17,19 @@ export function grahamModel(inp: ValuationInputs): ModelOutput {
   if (!inp.bookValuePerShare || inp.bookValuePerShare <= 0) {
     return { modelId: 'GRAHAM', label: 'Graham Number', applicable: false, reason: 'no book value' };
   }
+  // PATCH 0477 — Graham himself explicitly excludes growth stocks. The
+  // formula assumes "defensive investor" / mean-revert. For high-growth
+  // names (>20% sales CAGR) it gives nonsensically low FV. Skip cleanly
+  // rather than drag the consensus median.
+  const g = inp.salesGrowth3y ?? inp.profitGrowth3y;
+  if (g !== undefined && g > 20) {
+    return { modelId: 'GRAHAM', label: 'Graham Number', applicable: false, reason: `growth ${g.toFixed(0)}% — Graham excludes growth stocks` };
+  }
+  // High-ROE compounders also fail Graham — their economic value massively
+  // exceeds book × earnings × 22.5.
+  if (inp.roe !== undefined && inp.roe > 25) {
+    return { modelId: 'GRAHAM', label: 'Graham Number', applicable: false, reason: `ROE ${inp.roe.toFixed(0)}% — compounder, Graham understates` };
+  }
   const gn = Math.sqrt(22.5 * inp.eps * inp.bookValuePerShare);
   const mos = inp.cmp ? ((gn - inp.cmp) / inp.cmp) * 100 : undefined;
   // Graham doesn't yield bull/bear — it's a single defensive value.
