@@ -78,10 +78,13 @@ function useBucketDashboard() {
   return useQuery<BnDashboard>({
     queryKey: ['workbench', 'bottleneck-dashboard'],
     queryFn: async () => {
-      const { data } = await api.get('/news/bottleneck-dashboard');
+      // PATCH 0474 — explicit 20s timeout (axios default can be longer than
+      // the user is willing to wait for a status panel)
+      const { data } = await api.get('/news/bottleneck-dashboard', { timeout: 20_000 });
       return data;
     },
     staleTime: 120_000,
+    retry: 1,
   });
 }
 
@@ -90,10 +93,12 @@ function useThemedArticles(bucketId: string) {
     queryKey: ['workbench', 'articles', bucketId],
     enabled: !!bucketId,
     queryFn: async () => {
-      const { data } = await api.get(`/news?article_type=BOTTLENECK&category=${encodeURIComponent(bucketId)}&limit=50`);
+      // PATCH 0474 — 20s timeout on themed-articles fetch
+      const { data } = await api.get(`/news?article_type=BOTTLENECK&category=${encodeURIComponent(bucketId)}&limit=50`, { timeout: 20_000 });
       return Array.isArray(data) ? data : (data?.items || []);
     },
     staleTime: 120_000,
+    retry: 1,
   });
 }
 
