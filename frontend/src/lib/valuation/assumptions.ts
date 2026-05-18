@@ -38,8 +38,13 @@ export const SECTOR_ASSUMPTIONS: Record<SectorBucket, SectorAssumption> = {
 export function classifySector(sector?: string): SectorBucket {
   if (!sector) return 'DEFAULT';
   const s = sector.toUpperCase();
-  if (/BANK|NBFC|HOUSING\s*FIN|FINANCE\s*-|MICRO\s*FIN/.test(s)) return 'BANKS_NBFC';
-  if (/INSURANCE/.test(s)) return 'FINANCIAL_OTHER';
+  // PATCH 0479 — broader NBFC/Finance detection. Previously only matched
+  // explicit "FINANCE -" with hyphen, missing names tagged just "Finance"
+  // (Northern Arc, SG Finserve, etc) which then fell to DEFAULT bucket and
+  // got DCF-style multiples applied to lenders. Now catches any of: BANK,
+  // NBFC, HOUSING FIN, MICRO FIN, plain FINANCE, LENDING, CREDIT, asset-mgmt.
+  if (/BANK|NBFC|HOUSING\s*FIN|MICRO\s*FIN|MORTGAGE|LENDING|CONSUMER\s*FIN|AUTO\s*FIN|\bFINANCE\b|^FIN$/i.test(s)) return 'BANKS_NBFC';
+  if (/INSURANCE|REINSURANCE/.test(s)) return 'FINANCIAL_OTHER';
   if (/SOFTWARE/.test(s)) return 'IT_SOFTWARE';
   if (/IT\s*-\s*SERVICE|IT\s*SERVICE|INFOTECH/.test(s)) return 'IT_SERVICES';
   if (/PHARMA|BIOTECH|HEALTHCARE|HOSPITAL|DIAGNOSTIC|MEDICAL/.test(s)) return 'PHARMA_HEALTHCARE';

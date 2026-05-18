@@ -54,7 +54,10 @@ export function computeValuations(row: AnyRow): ValuationReport {
     assetFloorModel(inp),
   ];
 
-  const consensus = buildConsensus(models, inp.cmp);
+  // PATCH 0479 — pass inputs to consensus so quality caps (ROIC<WACC,
+  // ROE<CoE, negative CFO, governance vacuum, high pledge) can override
+  // bullish model output when fundamentals don't support it.
+  const consensus = buildConsensus(models, inp.cmp, inp);
 
   return {
     symbol: inp.symbol,

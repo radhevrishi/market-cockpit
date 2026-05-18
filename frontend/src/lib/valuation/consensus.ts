@@ -6,7 +6,8 @@
 // to one extreme model misbehaving.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import type { ModelOutput, ValuationConsensus } from './types';
+import type { ModelOutput, ValuationConsensus, ValuationInputs } from './types';
+import { getAssumptions } from './assumptions';
 
 /** Weights per model — pure heuristic. DCF and EV/EBITDA carry most signal;
  *  Asset Floor (mostly a floor reference) and Graham (defensive only) less. */
@@ -47,7 +48,7 @@ function weightedMedian(values: { v: number; w: number }[]): number {
   return sorted[sorted.length - 1].v;
 }
 
-export function buildConsensus(models: ModelOutput[], cmp?: number): ValuationConsensus {
+export function buildConsensus(models: ModelOutput[], cmp?: number, inp?: ValuationInputs): ValuationConsensus {
   // Exclude reverse-DCF base from consensus — it just reflects current market price.
   let applicable = models.filter(m => m.applicable && m.base !== undefined && m.modelId !== 'REV_DCF') as Array<ModelOutput & { base: number }>;
   if (applicable.length < 2) {
@@ -84,7 +85,7 @@ export function buildConsensus(models: ModelOutput[], cmp?: number): ValuationCo
 
   // Weighted median of bases (trimmed)
   const weighted = trimmedForMedian.map(m => ({ v: m.base, w: MODEL_WEIGHTS[m.modelId] ?? 1.0 }));
-  const fvBase = weightedMedian(weighted);
+  let fvBase = weightedMedian(weighted);
 
   // P25 / P75 spread across all (bear+base+bull) endpoints from applicable models
   const allPoints: number[] = [];
@@ -93,8 +94,57 @@ export function buildConsensus(models: ModelOutput[], cmp?: number): ValuationCo
     if (m.base !== undefined) allPoints.push(m.base);
     if (m.bull !== undefined) allPoints.push(m.bull);
   }
-  const fvBear = percentile(allPoints, 25);
-  const fvBull = percentile(allPoints, 75);
+  let fvBear = percentile(allPoints, 25);
+  let fvBull = percentile(allPoints, 75);
+
+  // PATCH 0479 — QUALITY CAP. A value-destroying business cannot be
+  // mathematically undervalued — adding capital makes it worth less, not
+  // more. Apply structural caps based on capital efficiency, cash flow,
+  // and governance. Each test individually caps FV. Caps are AND-ed:
+  // strongest cap wins. This catches the Northern Arc case where PE 11
+  // PEG 0.5 looks cheap but ROIC 7% < WACC 13% means future earnings
+  // destroy value.
+  let qualityCapApplied: string | undefined;
+  if (cmp && cmp > 0 && inp) {
+    const a = getAssumptions(inp.sector);
+    const waccPct = a.wacc * 100;
+    const coePct = a.costOfEquity * 100;
+
+    // (1) ROIC < WACC (capital destruction): cap upside to 25%
+    if (inp.roic !== undefined && inp.roic < waccPct - 1) {
+      const cap = cmp * 1.25;
+      if (fvBase > cap) { fvBase = cap; qualityCapApplied = `ROIC ${inp.roic.toFixed(0)}% < WACC ${waccPct.toFixed(0)}% — capital destroying`; }
+      if (fvBull > cmp * 1.5) fvBull = cmp * 1.5;
+    }
+    // (2) ROE < cost of equity (equity value destruction — esp. for banks/NBFCs)
+    if (inp.roe !== undefined && inp.roe < coePct - 1) {
+      const cap = cmp * 1.20;
+      if (fvBase > cap) { fvBase = cap; qualityCapApplied = `ROE ${inp.roe.toFixed(0)}% < CoE ${coePct.toFixed(0)}% — equity destruction`; }
+      if (fvBull > cmp * 1.4) fvBull = cmp * 1.4;
+    }
+    // (3) Negative CFO/PAT (cash bleed): cap upside to 50%
+    if (inp.cfoToPat !== undefined && inp.cfoToPat < 0) {
+      const cap = cmp * 1.50;
+      if (fvBase > cap) { fvBase = cap; qualityCapApplied = `CFO/PAT ${inp.cfoToPat.toFixed(1)}x — cash bleed`; }
+    }
+    // (4) Promoter 0% + high D/E (governance/leverage vacuum)
+    if ((inp.promoter ?? 50) < 5 && (inp.de ?? 0) > 2.0) {
+      const cap = cmp * 1.10;
+      if (fvBase > cap) { fvBase = cap; qualityCapApplied = `Promoter 0% + D/E ${inp.de?.toFixed(1)}x — governance vacuum`; }
+      if (fvBull > cmp * 1.3) fvBull = cmp * 1.3;
+    }
+    // (5) Pledge > 50%: governance disaster
+    if ((inp.pledge ?? 0) > 50) {
+      const cap = cmp * 1.05;
+      if (fvBase > cap) { fvBase = cap; qualityCapApplied = `Pledge ${inp.pledge?.toFixed(0)}% — forced-sale risk`; }
+      if (fvBull > cmp * 1.2) fvBull = cmp * 1.2;
+    }
+    // (6) Very high D/E without offsetting ROE: leveraged but not earning
+    if ((inp.de ?? 0) > 3.0 && (inp.roe ?? 0) < waccPct + 5) {
+      const cap = cmp * 1.20;
+      if (fvBase > cap) { fvBase = cap; qualityCapApplied = `D/E ${inp.de?.toFixed(1)}x + ROE only ${inp.roe?.toFixed(0)}% — leverage unproductive`; }
+    }
+  }
 
   const mos = cmp ? ((fvBase - cmp) / cmp) * 100 : undefined;
   const spreadPct = fvBase > 0 ? ((fvBull - fvBear) / fvBase) * 100 : undefined;
