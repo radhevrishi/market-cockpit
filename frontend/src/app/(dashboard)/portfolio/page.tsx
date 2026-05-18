@@ -83,8 +83,11 @@ const setStoredHoldings = (h: PortfolioHolding[]) => {
 };
 
 const fetchStockQuotes = async (): Promise<StockQuote[]> => {
+  // PATCH 0465 — 12s timeout (matches watchlist pattern)
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 12_000);
   try {
-    const res = await fetch('/api/market/quotes?market=india');
+    const res = await fetch('/api/market/quotes?market=india', { signal: ctl.signal });
     if (!res.ok) throw new Error('Failed');
     const data = await res.json();
     return (data.stocks || []).map((s: any) => ({
@@ -94,6 +97,7 @@ const fetchStockQuotes = async (): Promise<StockQuote[]> => {
       dayLow: s.dayLow || s.price || 0,
     }));
   } catch { return []; }
+  finally { clearTimeout(timer); }
 };
 
 const fetchIndividualQuotes = async (symbols: string[]): Promise<StockQuote[]> => {
@@ -104,7 +108,17 @@ const fetchIndividualQuotes = async (symbols: string[]): Promise<StockQuote[]> =
       const batch = symbols.slice(i, i + 20);
       // Normalize tickers and URL-encode them to handle special chars like &
       const normalizedBatch = batch.map(s => encodeURIComponent(normalizeTicker(s)));
-      const res = await fetch(`/api/market/quote?symbols=${normalizedBatch.join(',')}`);
+      // PATCH 0465 — per-batch 10s timeout (matches watchlist pattern)
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 10_000);
+      let res: Response;
+      try {
+        res = await fetch(`/api/market/quote?symbols=${normalizedBatch.join(',')}`, { signal: ctl.signal });
+      } catch {
+        clearTimeout(timer);
+        continue;
+      }
+      clearTimeout(timer);
       if (!res.ok) continue;
       const data = await res.json();
       results.push(...(data.stocks || []).map((s: any) => ({
@@ -382,8 +396,15 @@ export default function PortfolioPage() {
       setQuotes(allQuotes);
 
       // Fetch intelligence signals
+      // PATCH 0465 — 15s timeout so a slow intelligence pipeline doesn't
+      // block the whole portfolio refresh loop.
       try {
-        const intelRes = await fetch('/api/market/intelligence?days=90');
+        const intelCtl = new AbortController();
+        const intelTimer = setTimeout(() => intelCtl.abort(), 15_000);
+        let intelRes: Response;
+        try {
+          intelRes = await fetch('/api/market/intelligence?days=90', { signal: intelCtl.signal });
+        } finally { clearTimeout(intelTimer); }
         if (intelRes.ok) {
           const intelData = await intelRes.json();
           const signalMap = new Map<string, Signal>();
@@ -400,10 +421,16 @@ export default function PortfolioPage() {
       } catch (e) { console.error('Intelligence fetch failed:', e); }
 
       // PATCH 0445 BUG-021 — fetch RRG trend labels in parallel.
+      // PATCH 0465 — bounded with 15s timeout (trend endpoint can be slow).
       try {
         const syms = holdings.map(h => h.symbol).filter(Boolean);
         if (syms.length > 0) {
-          const trendRes = await fetch(`/api/portfolio/trend?symbols=${syms.join(',')}`);
+          const trendCtl = new AbortController();
+          const trendTimer = setTimeout(() => trendCtl.abort(), 15_000);
+          let trendRes: Response;
+          try {
+            trendRes = await fetch(`/api/portfolio/trend?symbols=${syms.join(',')}`, { signal: trendCtl.signal });
+          } finally { clearTimeout(trendTimer); }
           if (trendRes.ok) {
             const j = await trendRes.json();
             const m = new Map<string, string>();
