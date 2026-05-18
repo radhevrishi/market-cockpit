@@ -109,8 +109,13 @@ const setStoredTickers = (tickers: string[]) => {
 // volume / 52w / avgVolume / peRatio, so toggling the column chooser
 // surfaced '—' in every row. Now they ride along on every map call.
 const fetchStockQuotes = async (market: string = 'india'): Promise<StockQuote[]> => {
+  // PATCH 0464 — bounded fetch. Previously this could hang the watchlist
+  // refresh loop if /api/market/quotes was slow; AbortController fires at
+  // 12s so the page never stalls indefinitely.
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 12_000);
   try {
-    const res = await fetch(`/api/market/quotes?market=${market}`);
+    const res = await fetch(`/api/market/quotes?market=${market}`, { signal: ctl.signal });
     if (!res.ok) throw new Error('Failed to fetch quotes');
     const data = await res.json();
     return (data.stocks || []).map((stock: any) => ({
@@ -135,6 +140,8 @@ const fetchStockQuotes = async (market: string = 'india'): Promise<StockQuote[]>
   } catch (error) {
     console.error('Error fetching quotes:', error);
     return [];
+  } finally {
+    clearTimeout(timer);
   }
 };
 
@@ -148,7 +155,18 @@ const fetchIndividualQuotes = async (symbols: string[]): Promise<StockQuote[]> =
       const batch = symbols.slice(i, i + 20);
       // Normalize tickers and URL-encode them to handle special chars like &
       const normalizedBatch = batch.map(s => encodeURIComponent(normalizeTicker(s)));
-      const res = await fetch(`/api/market/quote?symbols=${normalizedBatch.join(',')}`);
+      // PATCH 0464 — per-batch 10s timeout. Without this, a single hung
+      // batch could block the whole watchlist refresh.
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 10_000);
+      let res: Response;
+      try {
+        res = await fetch(`/api/market/quote?symbols=${normalizedBatch.join(',')}`, { signal: ctl.signal });
+      } catch {
+        clearTimeout(timer);
+        continue;
+      }
+      clearTimeout(timer);
       if (!res.ok) continue;
       const data = await res.json();
       results.push(...(data.stocks || []).map((stock: any) => ({
