@@ -126,6 +126,10 @@ export async function GET(request: Request) {
     // If NSE data is empty, try scraping from chittorgarh as fallback
     if (ipos.length === 0) {
       source = 'Fallback';
+      // PATCH 0470 — 10s timeout on chittorgarh scrape so a slow/blocked
+      // fallback can't pin the Vercel function past its maxDuration budget.
+      const ipoCtl = new AbortController();
+      const ipoTimer = setTimeout(() => ipoCtl.abort(), 10_000);
       try {
         const res = await fetch('https://www.chittorgarh.com/report/ipo-in-india-702-702/702/', {
           headers: {
@@ -133,6 +137,7 @@ export async function GET(request: Request) {
             Accept: 'text/html',
           },
           next: { revalidate: 3600 },
+          signal: ipoCtl.signal,
         });
 
         if (res.ok) {
@@ -163,6 +168,7 @@ export async function GET(request: Request) {
           }
         }
       } catch {}
+      finally { clearTimeout(ipoTimer); }
     }
 
     return NextResponse.json({
