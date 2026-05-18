@@ -30,6 +30,7 @@ export * from './types';
 export { extractInputs } from './inputs';
 export { buildScenarios } from './scenario';
 export { readOverrides, writeOverrides, clearOverrides, applyOverrides } from './overrides';
+export type { ValuationOverrides } from './overrides';
 export { getAssumptions, classifySector } from './assumptions';
 
 /** Compute the full valuation report for a Multibagger row. */

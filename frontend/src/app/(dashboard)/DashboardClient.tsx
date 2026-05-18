@@ -52,6 +52,12 @@ const NAV: NavItem[] = [
   // Bottleneck Workbench and RRG which obscured its connection to earnings.
   { href: '/strategic-visibility', label: 'Strategic Visibility', icon: <Star className="w-5 h-5" /> },
   { href: '/multibagger',   label: 'Multibagger',        icon: <Star className="w-5 h-5" /> },
+  // VALUATION-C — automated valuation models (DCF / EV-EBITDA / Graham / EPV
+  // / Reverse-DCF / Justified-P/E / P/B-ROE / Sector-PE / Owner-Earnings /
+  // Asset-Floor) with Bull/Base/Bear cases and bulk-import for concall
+  // guidance text. Slots next to Multibagger because it shares the same
+  // localStorage upload universe (mb_excel_scored_v2).
+  { href: '/valuations',    label: 'Valuations',         icon: <Star className="w-5 h-5" /> },
   // PATCH 0454 TIER1-A — Decision Logbook (queryable journal of every BUY /
   // WATCH / NEUTRAL / REJECTED across both markets, with CSV export).
   { href: '/decisions',     label: 'Decision Logbook',   icon: <BookMarked className="w-5 h-5" /> },
