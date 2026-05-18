@@ -6750,7 +6750,13 @@ function USACompare() {
   function setRows(r: USAResult[]) {
     const ranked = applyUSARanking(r);
     setRowsState(ranked);
-    try { localStorage.setItem(USA_STORAGE_KEY, JSON.stringify(ranked)); } catch {}
+    try {
+      localStorage.setItem(USA_STORAGE_KEY, JSON.stringify(ranked));
+      // PATCH 0471 — broadcast cross-tab update so Re-rating/Signals refresh
+      // their derived universes immediately after a USA upload (matches
+      // India behaviour set up in 0453 P1-18).
+      window.dispatchEvent(new CustomEvent('mb-upload:updated', { detail: { market: 'USA', count: ranked.length } }));
+    } catch {}
   }
 
   async function handleFiles(files: FileList | File[]) {
@@ -7443,6 +7449,10 @@ export default function MultibaggerPage() {
         savedAt: new Date().toISOString(),
         count: ranked.length,
       }));
+      // PATCH 0471 — broadcast cross-tab update so consumers (Re-rating,
+      // Signals, Earnings Scan) refresh their derived universes immediately
+      // after a fresh India upload. Mirrors the clearExcelRows broadcast.
+      window.dispatchEvent(new CustomEvent('mb-upload:updated', { detail: { market: 'India', count: ranked.length } }));
     } catch {}
   }
 
