@@ -1239,9 +1239,16 @@ export default function EarningsPage() {
         const results = await Promise.allSettled(
           wave.map(async (batch) => {
             const encoded = batch.map(s => encodeURIComponent(s)).join(',');
-            const res = await fetch(`/api/market/earnings-scan?symbols=${encoded}&debug=true`);
-            if (!res.ok) return null;
-            return res.json() as Promise<ScanResponse>;
+            // PATCH 0467 — 25s per-batch timeout. Without this, one stuck
+            // batch would prevent the wave from settling and the user sees
+            // the spinner forever.
+            const ctl = new AbortController();
+            const timer = setTimeout(() => ctl.abort(), 25_000);
+            try {
+              const res = await fetch(`/api/market/earnings-scan?symbols=${encoded}&debug=true`, { signal: ctl.signal });
+              if (!res.ok) return null;
+              return res.json() as Promise<ScanResponse>;
+            } finally { clearTimeout(timer); }
           })
         );
         for (const r of results) {
@@ -1279,7 +1286,13 @@ export default function EarningsPage() {
         // 1) Try bulk quotes (fast, covers index stocks)
         //    Bulk API returns marketCap in raw rupees → convert to Cr by dividing by 1,00,00,000
         try {
-          const quotesRes = await fetch('/api/market/quotes');
+          // PATCH 0467 — bounded bulk quotes fetch
+          const bqCtl = new AbortController();
+          const bqTimer = setTimeout(() => bqCtl.abort(), 12_000);
+          let quotesRes: Response;
+          try {
+            quotesRes = await fetch('/api/market/quotes', { signal: bqCtl.signal });
+          } finally { clearTimeout(bqTimer); }
           if (quotesRes.ok) {
             const quotesData = await quotesRes.json();
             (quotesData.stocks || []).forEach((q: any) => {
@@ -1405,7 +1418,14 @@ export default function EarningsPage() {
         const results = await Promise.allSettled(
           wave.map(async (batch) => {
             const encoded = batch.map(s => encodeURIComponent(s)).join(',');
-            const res = await fetch(`/api/market/earnings-scan?symbols=${encoded}`);
+            // PATCH 0467 — 25s per-batch timeout (matches earlier wave)
+            const ctl = new AbortController();
+            const timer = setTimeout(() => ctl.abort(), 25_000);
+            let res: Response;
+            try {
+              res = await fetch(`/api/market/earnings-scan?symbols=${encoded}`, { signal: ctl.signal });
+            } catch { clearTimeout(timer); return null; }
+            clearTimeout(timer);
             if (!res.ok) return null;
             return res.json() as Promise<ScanResponse>;
           })
