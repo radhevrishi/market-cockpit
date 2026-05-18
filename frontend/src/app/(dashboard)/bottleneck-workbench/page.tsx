@@ -368,7 +368,11 @@ export default function BottleneckWorkbenchPage() {
                     borderRadius: 8, padding: '10px 14px',
                   }}>
                     <div style={{ fontSize: 13, color: TOKENS.surface.text, marginBottom: 6, lineHeight: 1.5 }}>
-                      {s.statement}
+                      {/* PATCH 0486 QA-#2 — fall back to other shape fields when
+                          the workbench signal payload uses different keys
+                          (statement / headline / title / text). Previously rendered
+                          blank rows when only `statement` was checked. */}
+                      {s.statement || (s as any).headline || (s as any).title || (s as any).text || (s as any).summary || `Signal ${s.id || ''}`}
                     </div>
                     <div style={{ display: 'flex', gap: 12, fontSize: 10, color: TOKENS.surface.textMuted, fontFamily: 'ui-monospace, monospace' }}>
                       <span>{s.source_count || 0} sources</span>
@@ -399,7 +403,19 @@ export default function BottleneckWorkbenchPage() {
                 {(relatedArticles || []).slice(0, 30).map(a => {
                   const tier = classifySource(a.source_name ?? a.source, a.source_url ?? a.url);
                   const v = TIER_VISUAL[tier];
-                  const title = a.title || a.headline || '(untitled)';
+                  // PATCH 0486 QA-#11 — decode HTML entities (&apos; / &amp; / &quot; etc.)
+                  // Raw RSS sources sometimes deliver titles with un-decoded entities.
+                  const rawTitle = a.title || a.headline || '(untitled)';
+                  const title = (typeof document !== 'undefined')
+                    ? (() => { const e = document.createElement('textarea'); e.innerHTML = rawTitle; return e.value; })()
+                    : rawTitle
+                        .replace(/&apos;/g, "'")
+                        .replace(/&amp;/g, '&')
+                        .replace(/&quot;/g, '"')
+                        .replace(/&lt;/g, '<')
+                        .replace(/&gt;/g, '>')
+                        .replace(/&#39;/g, "'")
+                        .replace(/&nbsp;/g, ' ');
                   return (
                     <a
                       key={a.id}

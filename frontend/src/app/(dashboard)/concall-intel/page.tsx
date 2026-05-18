@@ -1088,13 +1088,15 @@ function WarrantMomentumFeed() {
   const fetchFeed = async (force = false) => {
     setLoading(true);
     setError(null);
-    // PATCH 0435 BUG-011 — Hard 50s timeout
+    // PATCH 0486 QA-#3 — Tighter 28s timeout (was 50s, but Vercel hobby
+    // caps at 60s anyway). On abort/error, we now set an empty-shape data
+    // object so the empty-state render branch fires and the user is no
+    // longer stuck on "Loading…" forever.
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 50000);
+    const timeoutId = setTimeout(() => controller.abort(), 28000);
     try {
       const params = new URLSearchParams({
         days: String(days),
-        // PATCH 0425 — gate floor lowered 8 → 6.5 (also in scoreWarrantConviction)
         threshold: passingOnly ? '6.5' : '0',
         ...(passingOnly ? { passingOnly: '1' } : {}),
         ...(force ? { force: '1' } : {}),
@@ -1102,13 +1104,16 @@ function WarrantMomentumFeed() {
       const res = await fetch(`/api/v1/concall-intel/warrant-feed?${params}`, { cache: 'no-store', signal: controller.signal });
       if (!res.ok) {
         setError(`HTTP ${res.status}`);
+        setData((prev) => prev || { filings: [], count_total: 0, count_relevant: 0, count_passing: 0 } as any);
         return;
       }
       const j = await res.json();
       setData(j);
       setLastRefresh(new Date());
     } catch (e: any) {
-      setError(e?.name === 'AbortError' ? 'Timed out after 50s — try Refresh' : (e?.message || 'fetch failed'));
+      setError(e?.name === 'AbortError' ? 'Warrant feed slow — retry in a few seconds' : (e?.message || 'fetch failed'));
+      // Surface an empty-shape so the UI rolls forward instead of spinning.
+      setData((prev) => prev || { filings: [], count_total: 0, count_relevant: 0, count_passing: 0 } as any);
     } finally {
       clearTimeout(timeoutId);
       setLoading(false);

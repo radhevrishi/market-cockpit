@@ -146,13 +146,19 @@ export const SUPER_INVESTORS: SuperInvestor[] = [
     firm: 'Pabrai Investment Funds',
     twitter: 'MohnishPabrai',
     website: 'https://chaiwithpabrai.com',
-    newsQuery: 'Mohnish Pabrai India holdings Pabrai Funds',
+    newsQuery: 'Mohnish Pabrai Dalal Street fund 13F holdings Warrior Met Transocean',
     topHoldings: [
-      { ticker: 'RAIN',        company: 'Rain Industries',     stakePct: 9.7, disclosedOn: '2026-03-31', tier: 'BSE_1PCT', thesis: 'Coal-tar pitch / carbon — capital cycle' },
-      { ticker: 'EDELWEISS',   company: 'Edelweiss Financial', stakePct: 4.5, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
-      { ticker: 'SUNPHARMA',   company: 'Sun Pharmaceutical',  tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30', thesis: 'Long-term API + specialty pharma compounder' },
-      { ticker: 'TVSMOTOR',    company: 'TVS Motor',           tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30' },
+      // PATCH 0486 — Pabrai's actual concentrated US holdings (via 13F filings
+      // for Dalal Street LLC). The earlier seed had a stale India sleeve from
+      // Pabrai Wagons of India (where Rain Industries was a legacy position).
+      // 13F filings are the canonical truth for US-listed names.
+      { ticker: 'HCC',         company: 'Warrior Met Coal',    stakePct: 39.5, disclosedOn: '2026-03-31', tier: 'AIF_FILING', thesis: 'Metallurgical coal — capital-cycle bet, largest single position', exchange: 'NSE' },
+      { ticker: 'RIG',         company: 'Transocean',          stakePct: 27.8, disclosedOn: '2026-03-31', tier: 'AIF_FILING', thesis: 'Offshore drilling cycle recovery', exchange: 'NSE' },
+      { ticker: 'AGRO',        company: 'Adriatic Metals',     stakePct: 9.2,  disclosedOn: '2026-03-31', tier: 'AIF_FILING' },
+      { ticker: 'EDELWEISS',   company: 'Edelweiss Financial', stakePct: 1.8,  disclosedOn: '2026-03-31', tier: 'BSE_1PCT', thesis: 'India sleeve' },
+      { ticker: 'RAIN',        company: 'Rain Industries',     stakePct: 1.5,  disclosedOn: '2026-03-31', tier: 'BSE_1PCT', thesis: 'LEGACY India position — much reduced from prior 9%+' },
     ],
+    notes: 'Concentrated US 13F portfolio (Dalal Street fund) — Warrior Met + Transocean ~67% of book. India sleeve much smaller now; Rain Industries is a legacy / much-reduced position.',
   },
   {
     id: 'kenneth-andrade',

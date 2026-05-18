@@ -805,9 +805,15 @@ export default function RerratingPage() {
   const universe = universeData.symbols;
   const universeSource = universeData.source;
   const mbStocks = universeData.mbStocks;
-  const { data: earnings = [], isLoading: loadingE } = useEarningsScan(universe);
-  const { data: quotes = {}, isLoading: loadingQ } = useQuotes(universe);
+  const { data: earnings = [], isLoading: loadingERaw } = useEarningsScan(universe);
+  const { data: quotes = {}, isLoading: loadingQRaw } = useQuotes(universe);
   const { data: feed, isLoading: loadingN } = useNewsFeed();
+  // PATCH 0486 QA-#1 — when the universe is empty (universeSource='loading'
+  // or no symbols), React Query keeps isLoading=true forever because the
+  // query is disabled but never resolved. Treat empty-universe as not-loading
+  // so the Empty state shows instead of an infinite spinner.
+  const loadingE = loadingERaw && universe.length > 0;
+  const loadingQ = loadingQRaw && universe.length > 0;
 
   // PATCH 0112: PRIMARY = read from Multibagger upload CSV data
   // (which already has opm/opmPrev/pe/peg/epsGrowth/accelSignal computed
@@ -951,7 +957,16 @@ export default function RerratingPage() {
       {/* ── Body ───────────────────────────────────────────────────── */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
         {active === 'margin' && (
-          <MarginExpansionPanel rows={filterByRegion(marginRows).slice(0, 30)} loading={loadingE} color={activeMeta.color} convictionSet={convictionSet} />
+          <MarginExpansionPanel
+            rows={(() => {
+              const u = new Set(universe.map(s => String(s).toUpperCase().replace(/\.NS$|\.BO$/i, '')));
+              const inUniverse = u.size === 0
+                ? marginRows
+                : marginRows.filter(r => u.has(String(r.ticker).toUpperCase().replace(/\.NS$|\.BO$/i, '')));
+              return filterByRegion(inUniverse).slice(0, 30);
+            })()}
+            loading={loadingE} color={activeMeta.color} convictionSet={convictionSet}
+          />
         )}
         {active === 'model' && (
           // PATCH 0448 BUG-055 — Scope Model Shift to the user's universe.
@@ -971,7 +986,22 @@ export default function RerratingPage() {
           />
         )}
         {active === 'multiple' && (
-          <MultipleExpansionPanel rows={filterByRegion(multipleRows).slice(0, 30)} loading={loadingE || loadingQ} color={activeMeta.color} convictionSet={convictionSet} />
+          // PATCH 0486 QA-#9 — Scope Multiple Expansion to the active universe.
+          // Previously the panel showed ALL stocks across all universes regardless
+          // of the universe filter chip. Now we filter to the active universe so
+          // MB / Portfolio / Watchlist / Conviction chips actually narrow the list.
+          <MultipleExpansionPanel
+            rows={(() => {
+              const u = new Set(universe.map(s => String(s).toUpperCase().replace(/\.NS$|\.BO$/i, '')));
+              const inUniverse = u.size === 0
+                ? multipleRows
+                : multipleRows.filter(r => u.has(String(r.ticker).toUpperCase().replace(/\.NS$|\.BO$/i, '')));
+              return filterByRegion(inUniverse).slice(0, 30);
+            })()}
+            loading={loadingE || loadingQ}
+            color={activeMeta.color}
+            convictionSet={convictionSet}
+          />
         )}
       </div>
     </div>

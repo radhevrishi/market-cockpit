@@ -74,7 +74,19 @@ const decodeHtml = (html: string): string => {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function TickerDrawer({ symbol, exchange = 'NASDAQ', onClose }: TickerDrawerProps) {
+export default function TickerDrawer({ symbol, exchange, onClose }: TickerDrawerProps) {
+  // PATCH 0486 QA-#5 — infer exchange from suffix when caller doesn't pass one.
+  // Before: defaulted to NASDAQ regardless of ticker, so NTPC.NS showed NASDAQ.
+  const inferredExchange = (() => {
+    if (exchange) return exchange;
+    const sym = (symbol || '').toUpperCase();
+    if (sym.endsWith('.NS')) return 'NSE';
+    if (sym.endsWith('.BO')) return 'BSE';
+    if (/^\d{5,7}$/.test(sym)) return 'BSE';
+    return 'NASDAQ';
+  })();
+  // Use inferredExchange thereafter (rename for clarity)
+  const exchangeLabel = inferredExchange;
   // Close on Escape key
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -83,9 +95,9 @@ export default function TickerDrawer({ symbol, exchange = 'NASDAQ', onClose }: T
   }, [onClose]);
 
   const { data: quote, isLoading: qLoading, error: qError, refetch: qRefetch } = useQuery<Quote>({
-    queryKey: ['quote', symbol, exchange],
+    queryKey: ['quote', symbol, exchangeLabel],
     queryFn: async () => {
-      const { data } = await api.get(`/market/quote/${encodeURIComponent(symbol)}`, { params: { exchange } });
+      const { data } = await api.get(`/market/quote/${encodeURIComponent(symbol)}`, { params: { exchange: exchangeLabel } });
       return data;
     },
     staleTime: 30_000,
@@ -125,7 +137,7 @@ export default function TickerDrawer({ symbol, exchange = 'NASDAQ', onClose }: T
         <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid #1E2D45', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexShrink: 0 }}>
           <div>
             <p style={{ fontSize: '20px', fontWeight: '800', color: '#F5F7FA', margin: '0 0 2px', letterSpacing: '-0.5px' }}>{symbol}</p>
-            <p style={{ fontSize: '12px', color: '#4A5B6C', margin: 0 }}>{exchange}</p>
+            <p style={{ fontSize: '12px', color: '#4A5B6C', margin: 0 }}>{exchangeLabel}</p>
           </div>
           <button
             onClick={onClose}

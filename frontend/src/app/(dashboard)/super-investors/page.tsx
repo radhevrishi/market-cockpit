@@ -41,6 +41,16 @@ export default function SuperInvestorsPage() {
     return SUPER_INVESTORS.filter((i) => i.style === styleFilter);
   }, [styleFilter]);
 
+  // PATCH 0486 QA-#6 — when the style filter changes and the currently
+  // selected investor no longer matches, auto-select the first filtered
+  // investor so the right detail pane updates immediately.
+  useEffect(() => {
+    if (filtered.length === 0) return;
+    if (!filtered.some((i) => i.id === selectedId)) {
+      setSelectedId(filtered[0].id);
+    }
+  }, [filtered, selectedId]);
+
   const selected = getInvestor(selectedId) || SUPER_INVESTORS[0];
 
   return (
@@ -651,8 +661,28 @@ function InvestorDetail({
 // ──────────────────────────────────────────────────────────────────────────
 
 function HoldingsTable({ investor }: { investor: SuperInvestor }) {
+  // PATCH 0486 — disclosure-age helper for freshness chip
+  const ageDays = (iso: string): number => {
+    const t = new Date(iso).getTime();
+    if (isNaN(t)) return 999;
+    return Math.floor((Date.now() - t) / 86_400_000);
+  };
   return (
     <div>
+      {/* PATCH 0486 — Data-quality + disclosure-lag honesty banner */}
+      <div style={{
+        padding: '10px 12px', marginBottom: 12, borderRadius: 6,
+        border: '1px solid #F59E0B40', backgroundColor: '#F59E0B10',
+        fontSize: 11, color: '#FCD34D', lineHeight: 1.5,
+      }}>
+        <strong style={{ color: '#F59E0B' }}>⚠ Disclosure-lag warning · </strong>
+        Indian BSE ≥1% filings and AIF disclosures are backward-looking (typically 1–2 quarters
+        old — March 2026 data shown in May 2026 means real positions may have shifted). For US
+        13F filings (Pabrai etc.) the lag is ~45 days post quarter-end. Use the <strong>📰 News & Interviews</strong> tab
+        to cross-check with the latest investor moves we&apos;ve parsed from headlines (BUY / ADD /
+        TRIM / EXIT chips appear there).
+      </div>
+
       <div style={{ fontSize: 11, color: MUTED, marginBottom: 8, lineHeight: 1.5 }}>
         Last-disclosed positions. Tier ◆ = mandatory BSE / AIF filing.
         ◇ = self-disclosed in interview / book / tweet. ~ = inferred from media.
@@ -705,6 +735,21 @@ function HoldingsTable({ investor }: { investor: SuperInvestor }) {
                   </td>
                   <td style={{ ...tdStyle, textAlign: 'right', color: MUTED, fontVariantNumeric: 'tabular-nums' }}>
                     {h.disclosedOn}
+                    {(() => {
+                      const days = ageDays(h.disclosedOn);
+                      const tone = days > 90 ? { c: '#EF4444', l: `${days}d stale` }
+                        : days > 60 ? { c: '#F59E0B', l: `${days}d old` }
+                        : days > 30 ? { c: '#94A3B8', l: `${days}d` }
+                        : { c: '#10B981', l: 'recent' };
+                      return (
+                        <span title={`Disclosure age: ${days} days. Real position may have moved since.`} style={{
+                          marginLeft: 6, fontSize: 9, fontWeight: 700,
+                          color: tone.c, border: `1px solid ${tone.c}40`,
+                          backgroundColor: `${tone.c}10`, padding: '1px 5px', borderRadius: 3,
+                          display: 'inline-block', whiteSpace: 'nowrap',
+                        }}>{tone.l}</span>
+                      );
+                    })()}
                   </td>
                   <td style={{ ...tdStyle, color: MUTED, fontStyle: h.thesis ? 'normal' : 'italic' }}>
                     {h.thesis || '—'}
