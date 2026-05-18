@@ -25,9 +25,16 @@ export function buildScenarios(inp: ValuationInputs): ScenarioSet {
   // ── Growth ──────────────────────────────────────────────────────────────
   // Base: 3y CAGR (more stable than TTM YOY)
   // Bear: 0.5× 3y CAGR (mean revert)
-  // Bull: max(guidance, max(3y, YOY)) × 1.1 — caps at 50% as floor sanity
+  // Bull: max(guidance, max(3y, YOY)) × 1.15 — caps at 70% as ceiling
+  //
+  // PATCH 0478 — use the BETTER of sales-3y or profit-3y for growth-tilt.
+  // For operating-leveraged businesses sales growth may be modest (15%) but
+  // profit growth is 40%, justifying a premium PE. Using only salesGrowth3y
+  // systematically understated fair value for these names.
   const sales3y = (inp.salesGrowth3y ?? inp.salesGrowthTtm ?? 12) / 100;
-  const yoy = (inp.yoySalesGrowth ?? sales3y * 100) / 100;
+  const profit3y = (inp.profitGrowth3y ?? sales3y * 100) / 100;
+  const effectiveGrowth = Math.max(sales3y, profit3y * 0.85);  // profit gets 85% weight
+  const yoy = (inp.yoySalesGrowth ?? inp.yoyProfitGrowth ?? sales3y * 100) / 100;
   const guidance = inp.guidanceGrowth !== undefined ? inp.guidanceGrowth / 100 : undefined;
 
   // PATCH 0477 — base case now uses MAX(3y CAGR, guidance) instead of MIN.
@@ -35,10 +42,10 @@ export function buildScenarios(inp: ValuationInputs): ScenarioSet {
   // guidance happened to be lower than realized historical growth, which
   // is the wrong direction for forward valuation. Bull-case growth ceiling
   // also bumped 50% → 70% to accommodate hyper-growth small-caps.
-  const baseG = guidance !== undefined ? Math.max(guidance, sales3y) : sales3y;
-  const bearG = Math.max(sales3y * 0.5, 0.05);   // floor 5%
+  const baseG = guidance !== undefined ? Math.max(guidance, effectiveGrowth) : effectiveGrowth;
+  const bearG = Math.max(effectiveGrowth * 0.5, 0.05);   // floor 5%
   const bullG = Math.min(
-    Math.max(guidance ?? sales3y, yoy) * 1.15,
+    Math.max(guidance ?? effectiveGrowth, yoy) * 1.15,
     0.70  // institutional bull-case ceiling
   );
 

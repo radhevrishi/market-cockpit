@@ -49,7 +49,7 @@ function weightedMedian(values: { v: number; w: number }[]): number {
 
 export function buildConsensus(models: ModelOutput[], cmp?: number): ValuationConsensus {
   // Exclude reverse-DCF base from consensus — it just reflects current market price.
-  const applicable = models.filter(m => m.applicable && m.base !== undefined && m.modelId !== 'REV_DCF') as Array<ModelOutput & { base: number }>;
+  let applicable = models.filter(m => m.applicable && m.base !== undefined && m.modelId !== 'REV_DCF') as Array<ModelOutput & { base: number }>;
   if (applicable.length < 2) {
     return {
       modelsBuy: 0,
@@ -58,8 +58,32 @@ export function buildConsensus(models: ModelOutput[], cmp?: number): ValuationCo
     };
   }
 
-  // Weighted median of bases
-  const weighted = applicable.map(m => ({ v: m.base, w: MODEL_WEIGHTS[m.modelId] ?? 1.0 }));
+  // PATCH 0478 — sanity cap. Individual models occasionally produce
+  // FVs > 5× CMP for hyper-growth low-PE names (e.g. Webelsolar showing
+  // +568% MoS). That's almost always noise: a high projected growth × high
+  // exit multiple gives a number the market would never realistically pay.
+  // We clip per-model bases to within [0.25×, 4×] CMP before consensus.
+  if (cmp && cmp > 0) {
+    applicable = applicable.map(m => ({
+      ...m,
+      base: Math.max(cmp * 0.25, Math.min(cmp * 4.0, m.base)),
+      bear: m.bear !== undefined ? Math.max(cmp * 0.20, Math.min(cmp * 3.5, m.bear)) : m.bear,
+      bull: m.bull !== undefined ? Math.max(cmp * 0.30, Math.min(cmp * 5.0, m.bull)) : m.bull,
+    }));
+  }
+
+  // PATCH 0478 — outlier trimming. When ≥ 5 models are applicable, drop the
+  // single highest and single lowest base before computing weighted median.
+  // Stabilises consensus against a single rogue model output (esp. Owner
+  // Earnings on FCF-poor names, or PEG-Implied on hyper-growth).
+  let trimmedForMedian = applicable;
+  if (applicable.length >= 5) {
+    const sortedAsc = [...applicable].sort((a, b) => a.base - b.base);
+    trimmedForMedian = sortedAsc.slice(1, -1);  // drop min + max
+  }
+
+  // Weighted median of bases (trimmed)
+  const weighted = trimmedForMedian.map(m => ({ v: m.base, w: MODEL_WEIGHTS[m.modelId] ?? 1.0 }));
   const fvBase = weightedMedian(weighted);
 
   // P25 / P75 spread across all (bear+base+bull) endpoints from applicable models

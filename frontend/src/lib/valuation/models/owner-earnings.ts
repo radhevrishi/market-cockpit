@@ -19,11 +19,14 @@ export function ownerEarningsModel(inp: ValuationInputs, sc: ScenarioSet): Model
     return { modelId: 'OWNER_EARN', label: 'Owner Earnings', applicable: false, reason: 'shares not derivable' };
   }
 
-  // Per-share FCF × forward multiple. Exit multiple ~ 80% of P/E exit (more conservative).
+  // Per-share FCF × forward multiple.
+  // PATCH 0478 — exit multiple was 0.80× P/E (too punitive for capital-light
+  // growth businesses where FCF≈PAT). Bump to 0.95× base / 0.85× bear /
+  // 1.00× bull so OwnerEarnings doesn't systematically drag consensus down.
   const fcfPerShare = inp.fcfCr / inp.sharesCr;
-  const exitMultBase = sc.exitPe.base * 0.8;
-  const exitMultBear = sc.exitPe.bear * 0.8;
-  const exitMultBull = sc.exitPe.bull * 0.85;
+  const exitMultBase = sc.exitPe.base * 0.95;
+  const exitMultBear = sc.exitPe.bear * 0.85;
+  const exitMultBull = sc.exitPe.bull * 1.00;
 
   const bear = fcfPerShare * (1 + sc.growth5y.bear) * exitMultBear;
   const base = fcfPerShare * (1 + sc.growth5y.base) * exitMultBase;

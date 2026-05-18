@@ -23,6 +23,15 @@ export function justifiedPeModel(inp: ValuationInputs, sc: ScenarioSet): ModelOu
   if (!roe || roe <= 0) {
     return { modelId: 'JUSTIFIED_PE', label: 'Justified P/E', applicable: false, reason: 'no ROE/ROCE' };
   }
+  // PATCH 0478 — Gordon Growth Model fundamentally breaks when growth
+  // approaches cost of equity (denominator → 0). For high-growth names
+  // (>18% sales/profit CAGR) the model has to cap growth at near-terminal
+  // levels, which gives unrealistically low fair P/E. The model is
+  // designed for stable / mature businesses. Skip for growth names.
+  const g = inp.salesGrowth3y ?? inp.profitGrowth3y;
+  if (g !== undefined && g > 18) {
+    return { modelId: 'JUSTIFIED_PE', label: 'Justified P/E', applicable: false, reason: `growth ${g.toFixed(0)}% — Gordon model breaks above 18% growth` };
+  }
   const a = getAssumptions(inp.sector);
   const r = a.costOfEquity;
   const tg = sc.terminalGrowth;
