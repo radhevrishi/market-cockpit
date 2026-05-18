@@ -1034,7 +1034,16 @@ function MarginExpansionPanel({ rows, loading, color, convictionSet }: { rows: M
           </thead>
           <tbody>
             {rows.map((r, i) => (
-              <tr key={r.ticker} style={{ borderTop: '1px solid #1A2840' }}>
+              <tr
+                key={r.ticker}
+                onClick={() => {
+                  // PATCH 0490 QA-#17 — make rows clickable; navigate to Stock Sheet for drill-through.
+                  const t = String(r.ticker).replace(/\.(NS|BO)$/i, '');
+                  if (typeof window !== 'undefined') window.location.href = `/stock-sheet?ticker=${encodeURIComponent(t)}`;
+                }}
+                style={{ borderTop: '1px solid #1A2840', cursor: 'pointer' }}
+                title="Click to open Stock Sheet"
+              >
                 <td style={td()}>{i + 1}</td>
                 <td style={tdMono()}>{r.ticker}<CbBadge ticker={r.ticker} convictionSet={convictionSet} /></td>
                 <td style={{ ...td(), color: r.delta_opm_bps > 0 ? '#10B981' : '#EF4444', fontWeight: 700 }}>
@@ -1116,7 +1125,16 @@ function MultipleExpansionPanel({ rows, loading, color, convictionSet }: { rows:
           </thead>
           <tbody>
             {rows.map((r, i) => (
-              <tr key={r.ticker} style={{ borderTop: '1px solid #1A2840' }}>
+              <tr
+                key={r.ticker}
+                onClick={() => {
+                  // PATCH 0490 QA-#17 — clickable row → Stock Sheet drill-through
+                  const t = String(r.ticker).replace(/\.(NS|BO)$/i, '');
+                  if (typeof window !== 'undefined') window.location.href = `/stock-sheet?ticker=${encodeURIComponent(t)}`;
+                }}
+                style={{ borderTop: '1px solid #1A2840', cursor: 'pointer' }}
+                title="Click to open Stock Sheet"
+              >
                 <td style={td()}>{i + 1}</td>
                 <td style={tdMono()}>{r.ticker}<CbBadge ticker={r.ticker} convictionSet={convictionSet} /></td>
                 <td style={td()}>{r.pe != null ? r.pe.toFixed(1) : '—'}</td>

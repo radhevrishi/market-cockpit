@@ -14,6 +14,8 @@
 import { useState, useEffect, useMemo } from 'react';
 // PATCH 0437 BUG-026 — decode HTML entities in concall subjects (extends BUG-008)
 import { decodeHTMLEntities } from '@/lib/html-decode';
+// PATCH 0490 QA-#14 — resolve raw BSE codes (e.g. 526612) to NSE symbols
+import { resolveTicker } from '@/lib/bse-nse-mapping';
 
 interface Analysis {
   ticker: string;
@@ -1911,8 +1913,18 @@ function MoversPanel() {
           return (
             <div key={m.symbol} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '3px 6px', borderRadius: 4, marginBottom: 3, background: '#0A1422', border: `1px solid ${tc}30`, fontSize: 11 }}>
               <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', minWidth: 0 }}>
-                <span style={{ fontWeight: 800, color: '#E6EDF3' }}>{m.symbol}</span>
-                <span style={{ color: '#94A3B8', fontSize: 9, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.company_name}</span>
+                {(() => {
+                  // PATCH 0490 QA-#14 — display NSE symbol when symbol is a raw BSE code.
+                  const r = resolveTicker(m.symbol);
+                  return (
+                    <span style={{ fontWeight: 800, color: '#E6EDF3' }} title={r.bseCode ? `BSE: ${r.bseCode}` : ''}>
+                      {r.nseSymbol || r.display}
+                    </span>
+                  );
+                })()}
+                <span style={{ color: '#94A3B8', fontSize: 9, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {(() => { const r = resolveTicker(m.symbol); return m.company_name || r.shortName || ''; })()}
+                </span>
               </div>
               <div style={{ display: 'flex', gap: 5, alignItems: 'baseline' }}>
                 {m.delta != null && (
