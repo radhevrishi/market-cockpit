@@ -108,14 +108,23 @@ function parseInrCr(s: string): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-/** Parse the first growth percentage from a sentence ('25% revenue growth', '30%+'). */
+/** Parse the first growth percentage from a sentence ('25% revenue growth',
+ *  '30%+', '23.86%', '22.5% to 22.6%'). Accepts decimals — earlier version
+ *  used `\d{1,3}` which only matched the integer chunk before the dot, so
+ *  '23.86%' was being parsed as just 86 and '22.5%' as just 5.
+ *  PATCH 0480 — handle decimals + bps. */
 function parsePct(s: string): number | undefined {
-  const m = s.match(/(\d{1,3})\s*(?:[-–to]+\s*(\d{1,3}))?\s*%\s*(?:\+)?/);
+  // First try with decimal: '23.86%', '22.5-22.6%'
+  const m = s.match(/(\d{1,3}(?:\.\d{1,3})?)\s*(?:[-–](?:\s*to\s*)?\s*(\d{1,3}(?:\.\d{1,3})?))?\s*%\s*(?:\+)?/);
   if (!m) return undefined;
   const lo = parseFloat(m[1]);
   const hi = m[2] ? parseFloat(m[2]) : lo;
   if (!Number.isFinite(lo)) return undefined;
-  return (lo + hi) / 2;
+  // Sanity: percentages should be 0-200 for growth/margin contexts.
+  // Rare "fold" / "x" multiples or noise values get rejected.
+  const avg = (lo + hi) / 2;
+  if (avg > 200 || avg < 0) return undefined;
+  return avg;
 }
 
 interface PatternRule {
@@ -134,17 +143,18 @@ const RULES: PatternRule[] = [
   // EBITDA growth — must come BEFORE revenue growth so 'EBITDA growth' isn't mis-tagged.
   { category: 'EBITDA_GROWTH', metric: 'ebitda',
     pattern: /\bebitda\b.{0,40}\b(growth|grow|guidance|cagr)\b/i,
-    summarize: (s, y, pct) => pct ? `${pct.toFixed(0)}%+ EBITDA growth${y ? ' for ' + y : ''}` : `EBITDA growth${y ? ' for ' + y : ''}`,
+    // PATCH 0480 — show 1 decimal place when pct has decimals (e.g. 23.86%)
+    summarize: (s, y, pct) => pct ? `${(pct % 1 === 0 ? pct.toFixed(0) : pct.toFixed(1))}%+ EBITDA growth${y ? ' for ' + y : ''}` : `EBITDA growth${y ? ' for ' + y : ''}`,
   },
   // EBITDA margin — explicit margin language
   { category: 'EBITDA_MARGIN', metric: 'margin',
     pattern: /\bebitda\s+margin\b/i,
-    summarize: (s, y, pct) => pct ? `EBITDA margin ${pct.toFixed(0)}%${y ? ' by ' + y : ''}` : `EBITDA margin guidance${y ? ' for ' + y : ''}`,
+    summarize: (s, y, pct) => pct ? `EBITDA margin ${(pct % 1 === 0 ? pct.toFixed(0) : pct.toFixed(1))}%${y ? ' by ' + y : ''}` : `EBITDA margin guidance${y ? ' for ' + y : ''}`,
   },
   // Revenue growth % — broad
   { category: 'REVENUE_GROWTH', metric: 'revenue',
     pattern: /\b(revenue|topline|top\s*line|sales)\b.{0,40}\b(growth|guidance|grow|cagr)\b/i,
-    summarize: (s, y, pct) => pct ? `${pct.toFixed(0)}% revenue growth${y ? ' for ' + y : ''}` : `Revenue growth guidance${y ? ' for ' + y : ''}`,
+    summarize: (s, y, pct) => pct ? `${(pct % 1 === 0 ? pct.toFixed(0) : pct.toFixed(1))}% revenue growth${y ? ' for ' + y : ''}` : `Revenue growth guidance${y ? ' for ' + y : ''}`,
   },
   // Revenue absolute target in crores
   { category: 'REVENUE_TARGET', metric: 'revenue',

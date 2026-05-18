@@ -143,9 +143,11 @@ export default function CompanyIntelPage() {
     }
     setUploading(true);
     setUploadResult(null);
-    // PATCH 0468 — 30s timeout (POST does merge + guidance extraction; can be slow on large transcripts)
+    // PATCH 0480 — 75s timeout (was 30s; large transcripts of 60k+ chars do
+    // merge + guidance extraction + periodic re-derive across retained docs
+    // and exceed 30s. Server route maxDuration also bumped to 60s.)
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), 30_000);
+    const timer = setTimeout(() => ctl.abort(), 75_000);
     try {
       const res = await fetch(`/api/v1/company-intel/${encodeURIComponent(ticker.trim().toUpperCase())}`, {
         method: 'POST',
@@ -171,7 +173,7 @@ export default function CompanyIntelPage() {
         loadIndex();
       }
     } catch (e: any) {
-      setUploadResult(`⚠ Upload threw: ${e?.name === 'AbortError' ? 'Request timed out after 30s' : (e?.message || 'unknown')}`);
+      setUploadResult(`⚠ Upload threw: ${e?.name === 'AbortError' ? 'Request timed out after 75s — try again or split the transcript into smaller chunks' : (e?.message || 'unknown')}`);
     } finally {
       clearTimeout(timer);
       setUploading(false);

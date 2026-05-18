@@ -35,7 +35,10 @@ import type { IntelDocument, IntelCorpus } from '@/lib/company-intel/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 30;
+// PATCH 0480 — bump 30s → 60s. Large concall transcripts (60k+ chars) hit
+// the 30s cap during merge + re-derive-across-corpus. Vercel Pro allows
+// up to 300s; on hobby this is capped at 60.
+export const maxDuration = 60;
 
 const KEY = (t: string) => `company-intel:v1:${t.toUpperCase()}`;
 const MAX_DOCS = 50;
