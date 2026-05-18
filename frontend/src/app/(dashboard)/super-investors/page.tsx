@@ -30,12 +30,23 @@ const ACCENT = '#22D3EE';
 type Tab = 'HOLDINGS' | 'NEWS';
 
 type View = 'ANALYTICS' | 'INVESTORS';
+type MarketScope = 'INDIA' | 'GLOBAL' | 'ALL';
+
+// PATCH 0489 — only NSE / BSE = Indian. Anything else is global.
+function isIndianExchange(ex?: string): boolean {
+  if (!ex) return true; // no tag = assume Indian (legacy data)
+  return ex === 'NSE' || ex === 'BSE';
+}
 
 export default function SuperInvestorsPage() {
   const [view, setView] = useState<View>('ANALYTICS');
   const [selectedId, setSelectedId] = useState<string>(SUPER_INVESTORS[0].id);
   const [tab, setTab] = useState<Tab>('HOLDINGS');
   const [styleFilter, setStyleFilter] = useState<InvestorStyle | 'ALL'>('ALL');
+  // PATCH 0489 — Market scope filter. Default INDIA because the page positions
+  // itself as 'growth-style Indian investors'. User can toggle to GLOBAL to
+  // see Pabrai's US sleeve (Warrior Met / Transocean) and similar.
+  const [marketScope, setMarketScope] = useState<MarketScope>('INDIA');
 
   const filtered = useMemo(() => {
     if (styleFilter === 'ALL') return SUPER_INVESTORS;
@@ -73,7 +84,7 @@ export default function SuperInvestorsPage() {
         </div>
 
         {/* PATCH 0485 — Top-level view toggle: ANALYTICS vs INVESTORS */}
-        <div style={{ display: 'flex', gap: 4, marginTop: 10, marginBottom: 6 }}>
+        <div style={{ display: 'flex', gap: 4, marginTop: 10, marginBottom: 6, alignItems: 'center', flexWrap: 'wrap' }}>
           {(['ANALYTICS', 'INVESTORS'] as View[]).map((v) => {
             const isActive = view === v;
             return (
@@ -92,6 +103,30 @@ export default function SuperInvestorsPage() {
               </button>
             );
           })}
+          {/* PATCH 0489 — Market scope chip group. User flagged Pabrai's US holdings
+              leaking into 'Biggest Bets' on a page positioned as Indian. */}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' }}>
+            <span style={{ fontSize: 10, color: MUTED, fontWeight: 700, letterSpacing: '0.3px', marginRight: 4 }}>MARKET</span>
+            {(['INDIA', 'GLOBAL', 'ALL'] as MarketScope[]).map((m) => {
+              const isActive = marketScope === m;
+              const color = m === 'INDIA' ? '#10B981' : m === 'GLOBAL' ? '#8B5CF6' : '#22D3EE';
+              return (
+                <button
+                  key={m}
+                  onClick={() => setMarketScope(m)}
+                  style={{
+                    fontSize: 10, fontWeight: 800, letterSpacing: '0.4px', cursor: 'pointer',
+                    border: `1px solid ${isActive ? color : BORDER}`,
+                    backgroundColor: isActive ? `${color}22` : 'transparent',
+                    color: isActive ? color : MUTED,
+                    padding: '3px 10px', borderRadius: 4,
+                  }}
+                >
+                  {m === 'INDIA' ? '🇮🇳 INDIA' : m === 'GLOBAL' ? '🌍 GLOBAL' : 'ALL'}
+                </button>
+              );
+            })}
+          </div>
         </div>
         <p style={{ color: MUTED, fontSize: 12, margin: '6px 0 0', lineHeight: 1.5, maxWidth: 920 }}>
           Coat-tail intelligence. Each investor card surfaces their last-disclosed top holdings (BSE ≥1% filings,
@@ -129,7 +164,10 @@ export default function SuperInvestorsPage() {
       {/* ── Body — analytics OR two-column investors ──────────────────── */}
       {view === 'ANALYTICS' ? (
         <div style={{ flex: 1, overflowY: 'auto' }}>
-          <AnalyticsView onJumpToInvestor={(id) => { setView('INVESTORS'); setSelectedId(id); }} />
+          <AnalyticsView
+            marketScope={marketScope}
+            onJumpToInvestor={(id) => { setView('INVESTORS'); setSelectedId(id); }}
+          />
         </div>
       ) : (
       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '320px 1fr', minHeight: 0 }}>
@@ -185,7 +223,7 @@ export default function SuperInvestorsPage() {
 
         {/* Right: investor detail */}
         <div style={{ overflowY: 'auto', padding: 24 }}>
-          <InvestorDetail investor={selected} tab={tab} setTab={setTab} />
+          <InvestorDetail investor={selected} tab={tab} setTab={setTab} marketScope={marketScope} />
         </div>
       </div>
       )}
@@ -218,10 +256,13 @@ interface PickCount {
   exchange?: string;
 }
 
-function buildPickCounts(): PickCount[] {
+function buildPickCounts(marketScope: MarketScope = 'INDIA'): PickCount[] {
   const map = new Map<string, PickCount>();
   for (const inv of SUPER_INVESTORS) {
     for (const h of inv.topHoldings) {
+      // PATCH 0489 — scope-filter
+      if (marketScope === 'INDIA' && !isIndianExchange(h.exchange)) continue;
+      if (marketScope === 'GLOBAL' && isIndianExchange(h.exchange)) continue;
       if (!map.has(h.ticker)) {
         map.set(h.ticker, {
           ticker: h.ticker, company: h.company,
@@ -249,26 +290,33 @@ function buildPickCounts(): PickCount[] {
     .sort((a, b) => b.aggregateConviction - a.aggregateConviction);
 }
 
-function AnalyticsView({ onJumpToInvestor }: { onJumpToInvestor: (id: string) => void }) {
+function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketScope; onJumpToInvestor: (id: string) => void }) {
   const data = useMemo(() => {
-    const picks = buildPickCounts();
-    const totalHoldings = SUPER_INVESTORS.reduce((s, i) => s + i.topHoldings.length, 0);
+    const inScope = (ex?: string) =>
+      marketScope === 'ALL' ? true
+        : marketScope === 'INDIA' ? isIndianExchange(ex)
+        : !isIndianExchange(ex);
+    const picks = buildPickCounts(marketScope);
+    const totalHoldings = SUPER_INVESTORS.reduce(
+      (s, i) => s + i.topHoldings.filter((h) => inScope(h.exchange)).length, 0,
+    );
     const allStakes = SUPER_INVESTORS.flatMap((i) =>
-      i.topHoldings.map((h) => h.stakePct).filter((x): x is number => typeof x === 'number')
+      i.topHoldings.filter((h) => inScope(h.exchange))
+        .map((h) => h.stakePct).filter((x): x is number => typeof x === 'number')
     );
     const avgStake = allStakes.length > 0
       ? allStakes.reduce((a, b) => a + b, 0) / allStakes.length
       : 0;
-    const consensus = picks.filter((p) => p.investors.length >= 2)
-      .sort((a, b) => b.investors.length - a.investors.length || b.totalStakePct - a.totalStakePct);
+    const consensus = picks.filter((p) => p.investors.length >= 2);
     const consensus3plus = consensus.filter((p) => p.investors.length >= 3);
 
-    // Top single-investor stakes ≥ 5%
-    const bigStakes: Array<{ inv: SuperInvestor; ticker: string; company: string; stakePct: number }> = [];
+    // Top single-investor stakes ≥ 5% — within market scope
+    const bigStakes: Array<{ inv: SuperInvestor; ticker: string; company: string; stakePct: number; exchange?: string }> = [];
     for (const inv of SUPER_INVESTORS) {
       for (const h of inv.topHoldings) {
+        if (!inScope(h.exchange)) continue;
         if ((h.stakePct || 0) >= 5) {
-          bigStakes.push({ inv, ticker: h.ticker, company: h.company, stakePct: h.stakePct as number });
+          bigStakes.push({ inv, ticker: h.ticker, company: h.company, stakePct: h.stakePct as number, exchange: h.exchange });
         }
       }
     }
@@ -285,7 +333,7 @@ function AnalyticsView({ onJumpToInvestor }: { onJumpToInvestor: (id: string) =>
       bigStakes: bigStakes.slice(0, 12),
       styleCounts,
     };
-  }, []);
+  }, [marketScope]);
 
   // Build dynamic suggestions
   const suggestions = useMemo(() => buildSuggestions(data.picks), [data]);
@@ -369,7 +417,9 @@ function AnalyticsView({ onJumpToInvestor }: { onJumpToInvestor: (id: string) =>
                         color: TEXT, fontWeight: 700,
                         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
                         textDecoration: 'none',
-                      }}>{b.ticker}</a>
+                      }}>
+                        {b.exchange ? <span style={{ color: '#22D3EE', fontWeight: 500, fontSize: 10 }}>{b.exchange}:</span> : null}{b.ticker}
+                      </a>
                     </td>
                     <td style={tdStyle}>{b.company}</td>
                     <td style={{ ...tdStyle, textAlign: 'right', color: '#10B981', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
@@ -585,11 +635,12 @@ function buildSuggestions(picks: PickCount[]): Suggestion[] {
 // ──────────────────────────────────────────────────────────────────────────
 
 function InvestorDetail({
-  investor, tab, setTab,
+  investor, tab, setTab, marketScope,
 }: {
   investor: SuperInvestor;
   tab: Tab;
   setTab: (t: Tab) => void;
+  marketScope: MarketScope;
 }) {
   const meta = STYLE_META[investor.style];
 
@@ -671,7 +722,7 @@ function InvestorDetail({
       </div>
 
       {tab === 'HOLDINGS' ? (
-        <HoldingsTable investor={investor} />
+        <HoldingsTable investor={investor} marketScope={marketScope} />
       ) : (
         <NewsPanel query={investor.newsQuery} investorName={investor.name} />
       )}
@@ -691,13 +742,19 @@ function InvestorDetail({
 
 // ──────────────────────────────────────────────────────────────────────────
 
-function HoldingsTable({ investor }: { investor: SuperInvestor }) {
+function HoldingsTable({ investor, marketScope }: { investor: SuperInvestor; marketScope: MarketScope }) {
   // PATCH 0486 — disclosure-age helper for freshness chip
   const ageDays = (iso: string): number => {
     const t = new Date(iso).getTime();
     if (isNaN(t)) return 999;
     return Math.floor((Date.now() - t) / 86_400_000);
   };
+  // PATCH 0489 — filter holdings by market scope
+  const filteredHoldings = useMemo(() => {
+    if (marketScope === 'ALL') return investor.topHoldings;
+    if (marketScope === 'INDIA') return investor.topHoldings.filter((h) => isIndianExchange(h.exchange));
+    return investor.topHoldings.filter((h) => !isIndianExchange(h.exchange));
+  }, [investor, marketScope]);
   return (
     <div>
       {/* PATCH 0486 — Data-quality + disclosure-lag honesty banner */}
@@ -734,7 +791,7 @@ function HoldingsTable({ investor }: { investor: SuperInvestor }) {
             </tr>
           </thead>
           <tbody>
-            {investor.topHoldings.map((h, idx) => {
+            {filteredHoldings.map((h, idx) => {
               const tierMeta = TIER_META[h.tier];
               return (
                 <tr key={h.ticker + idx} style={{ borderTop: `1px solid ${BORDER}` }}>
@@ -747,7 +804,7 @@ function HoldingsTable({ investor }: { investor: SuperInvestor }) {
                         textDecoration: 'none',
                       }}
                     >
-                      {h.ticker}
+                      {h.exchange ? <span style={{ color: '#22D3EE', fontWeight: 500, fontSize: 10 }}>{h.exchange}:</span> : null}{h.ticker}
                     </a>
                   </td>
                   <td style={tdStyle}>{h.company}</td>
@@ -788,10 +845,12 @@ function HoldingsTable({ investor }: { investor: SuperInvestor }) {
                 </tr>
               );
             })}
-            {investor.topHoldings.length === 0 && (
+            {filteredHoldings.length === 0 && (
               <tr>
                 <td colSpan={6} style={{ ...tdStyle, color: MUTED, fontStyle: 'italic', textAlign: 'center' }}>
-                  No disclosed holdings yet — check the News tab for public commentary.
+                  {investor.topHoldings.length === 0
+                    ? 'No disclosed holdings yet — check the News tab for public commentary.'
+                    : `No ${marketScope === 'INDIA' ? 'Indian' : 'global'} holdings disclosed — switch market scope or check the other view.`}
                 </td>
               </tr>
             )}
