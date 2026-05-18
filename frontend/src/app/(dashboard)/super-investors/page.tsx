@@ -371,18 +371,19 @@ function NewsPanel({ query, investorName }: { query: string; investorName: strin
     // Use the existing /api/v1/news endpoint with a search param.
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), 12_000);
-    fetch(`/api/v1/news?search=${encodeURIComponent(query)}&limit=30`, {
+    // PATCH 0483 — Switched to dedicated /api/v1/super-investor-news which
+    // fans out across Google News / Moneycontrol / Economic Times /
+    // Trendlyne via RSS, instead of the general /api/v1/news cache (which
+    // is curated for stock events, not investor personality news).
+    fetch(`/api/v1/super-investor-news?query=${encodeURIComponent(query)}`, {
       signal: controller.signal,
       cache: 'no-store',
     })
       .then((r) => r.ok ? r.json() : Promise.reject(new Error('news fetch failed')))
       .then((data) => {
         if (!alive) return;
-        const articles: NewsArticle[] = Array.isArray(data?.articles) ? data.articles
-          : Array.isArray(data?.cards) ? data.cards
-          : Array.isArray(data) ? data
-          : [];
-        setItems(articles.slice(0, 30));
+        const articles: NewsArticle[] = Array.isArray(data?.articles) ? data.articles : [];
+        setItems(articles.slice(0, 40));
         setLoading(false);
       })
       .catch((e) => {

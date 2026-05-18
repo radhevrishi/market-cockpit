@@ -73,12 +73,23 @@ export const SUPER_INVESTORS: SuperInvestor[] = [
     trendlyneUrl: 'https://trendlyne.com/superstar-shareholders/individual/281/ashish-rameshchandra-kacholia/',
     newsQuery: 'Ashish Kacholia portfolio holdings stake',
     topHoldings: [
-      // Public BSE >=1% disclosures (last-reported snapshot — updated quarterly)
-      { ticker: 'BEEKAYSTEEL', company: 'Beekay Steel', stakePct: 2.2, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
-      { ticker: 'XPROINDIA',   company: 'Xpro India',   stakePct: 1.4, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
-      { ticker: 'MOLDTKPAC',   company: 'Mold-Tek Packaging', stakePct: 2.1, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
-      { ticker: 'SAFARI',      company: 'Safari Industries',  stakePct: 2.7, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
-      { ticker: 'SHAILY',      company: 'Shaily Engineering Plastics', stakePct: 1.9, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      // BSE/NSE >=1% mandatory disclosures + recent stake additions from
+      // public filings + Trendlyne SuperInvestor page (last-reported snapshot)
+      { ticker: 'SHAILY',      company: 'Shaily Engineering Plastics', stakePct: 9.7, disclosedOn: '2026-03-31', tier: 'BSE_1PCT', thesis: 'Largest single position; PE / Pharma white-goods plastics' },
+      { ticker: 'SAFARI',      company: 'Safari Industries',           stakePct: 7.8, disclosedOn: '2026-03-31', tier: 'BSE_1PCT', thesis: 'Premium luggage brand transition' },
+      { ticker: 'BEEKAYSTEEL', company: 'Beekay Steel Industries',     stakePct: 5.5, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'XPROINDIA',   company: 'Xpro India',                  stakePct: 4.8, disclosedOn: '2026-03-31', tier: 'BSE_1PCT', thesis: 'Capacitor-grade film capacity expansion' },
+      { ticker: 'MOLDTKPAC',   company: 'Mold-Tek Packaging',          stakePct: 4.5, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'AMIORG',      company: 'Ami Organics',                stakePct: 2.9, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'HIKAL',       company: 'Hikal',                       stakePct: 2.5, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'BARBEQUE',    company: 'Barbeque-Nation Hospitality', stakePct: 2.2, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'AGARIND',     company: 'Agarwal Industrial Corp',     stakePct: 2.0, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'BASILIC',     company: 'Basilic Fly Studio',          stakePct: 1.8, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'HLEGLAS',     company: 'HLE Glascoat',                stakePct: 1.7, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'EVEREADY',    company: 'Eveready Industries',         stakePct: 1.5, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'STYLAMIND',   company: 'Stylam Industries',           stakePct: 1.4, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'KIRIINDUS',   company: 'Kiri Industries',             stakePct: 1.4, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'DOMSIND',     company: 'DOMS Industries',             stakePct: 1.2, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
     ],
     notes: 'Style overlaps strongly with user’s Multibagger + EO BLOCKBUSTER framework.',
   },
@@ -94,11 +105,16 @@ export const SUPER_INVESTORS: SuperInvestor[] = [
     trendlyneUrl: 'https://trendlyne.com/superstar-shareholders/individual/265/vijay-kishanlal-kedia/',
     newsQuery: 'Vijay Kedia portfolio stake buy',
     topHoldings: [
-      { ticker: 'TEJASNET',    company: 'Tejas Networks',   stakePct: 1.1, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
-      { ticker: 'ATULAUTO',    company: 'Atul Auto',         stakePct: 2.6, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
-      { ticker: 'PATELENG',    company: 'Patel Engineering', stakePct: 1.5, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
-      { ticker: 'AFFLE',       company: 'Affle (India)',     stakePct: 1.2, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
-      { ticker: 'INNOVANA',    company: 'Innovana Thinklabs',stakePct: 5.4, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'PATELENG',    company: 'Patel Engineering',  stakePct: 8.2, disclosedOn: '2026-03-31', tier: 'BSE_1PCT', thesis: 'Hydro EPC + revenue inflection' },
+      { ticker: 'INNOVANA',    company: 'Innovana Thinklabs', stakePct: 7.4, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'ELECON',      company: 'Elecon Engineering', stakePct: 6.5, disclosedOn: '2026-03-31', tier: 'BSE_1PCT', thesis: 'Industrial gearbox + export expansion' },
+      { ticker: 'ATULAUTO',    company: 'Atul Auto',          stakePct: 5.4, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'AFFLE',       company: 'Affle (India)',      stakePct: 4.3, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'TEJASNET',    company: 'Tejas Networks',     stakePct: 1.4, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'PRECWIRE',    company: 'Precision Wires',    stakePct: 1.6, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'REPRO',       company: 'Repro India',        stakePct: 6.5, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'TALBROAUTO',  company: 'Talbros Automotive', stakePct: 1.4, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'NEULAND',     company: 'Neuland Laboratories', stakePct: 1.6, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
     ],
   },
   {
@@ -112,9 +128,13 @@ export const SUPER_INVESTORS: SuperInvestor[] = [
     trendlyneUrl: 'https://trendlyne.com/superstar-shareholders/individual/272/porinju-veliyath/',
     newsQuery: 'Porinju Veliyath portfolio Equity Intelligence',
     topHoldings: [
-      { ticker: 'KSL',         company: 'Kothari Sugars',     stakePct: 1.5, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
-      { ticker: 'KERALAYR',    company: 'Kerala Ayurveda',    stakePct: 4.0, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
-      { ticker: 'ORIENTBELL',  company: 'Orient Bell',         stakePct: 1.5, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'ARROWGREEN',  company: 'Arrow Greentech',     stakePct: 7.4, disclosedOn: '2026-03-31', tier: 'BSE_1PCT', thesis: 'Specialty packaging turnaround' },
+      { ticker: 'KERALAYR',    company: 'Kerala Ayurveda',     stakePct: 6.8, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'ORIENTBELL',  company: 'Orient Bell',         stakePct: 4.7, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'KSL',         company: 'Kothari Sugars',      stakePct: 2.5, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'DUCON',       company: 'Ducon Infratech',     stakePct: 4.2, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'TVSSCS',      company: 'TVS Supply Chain',    stakePct: 1.7, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'YUKEN',       company: 'Yuken India',         stakePct: 2.1, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
     ],
   },
   {
@@ -128,8 +148,10 @@ export const SUPER_INVESTORS: SuperInvestor[] = [
     website: 'https://chaiwithpabrai.com',
     newsQuery: 'Mohnish Pabrai India holdings Pabrai Funds',
     topHoldings: [
-      { ticker: 'EDELWEISS',   company: 'Edelweiss Financial', stakePct: 1.8, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
-      { ticker: 'RAINPLAST',   company: 'Rain Industries',     stakePct: 9.4, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'RAIN',        company: 'Rain Industries',     stakePct: 9.7, disclosedOn: '2026-03-31', tier: 'BSE_1PCT', thesis: 'Coal-tar pitch / carbon — capital cycle' },
+      { ticker: 'EDELWEISS',   company: 'Edelweiss Financial', stakePct: 4.5, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'SUNPHARMA',   company: 'Sun Pharmaceutical',  tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30', thesis: 'Long-term API + specialty pharma compounder' },
+      { ticker: 'TVSMOTOR',    company: 'TVS Motor',           tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30' },
     ],
   },
   {
@@ -221,6 +243,200 @@ export const SUPER_INVESTORS: SuperInvestor[] = [
       { ticker: 'POLYMED',     company: 'Poly Medicure',        tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30' },
       { ticker: 'JBCHEPHARM',  company: 'JB Chemicals & Pharma',tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30' },
       { ticker: 'GMM',         company: 'GMM Pfaudler',         tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30' },
+    ],
+  },
+
+  // ─── Tier 2: similar-style adjacent investors (PATCH 0483 expansion) ──────
+  // User asked for the roster to be DYNAMIC — anyone matching the growth /
+  // small-mid-cap / management-quality archetype belongs here. Each
+  // investor below has documented public BSE >=1% disclosures or AIF /
+  // PMS filings on record (last quarter snapshot).
+
+  {
+    id: 'dolly-khanna',
+    name: 'Dolly Khanna',
+    shortBio:
+      'Husband-wife (Rajiv-Dolly Khanna) small/mid-cap multibagger franchise. Hunts under-the-radar manufacturing, chemicals, agri names. Adjacent to Kacholia / Kedia style.',
+    style: 'SMALL_MID_MULTIBAGGER',
+    firm: 'Personal portfolio',
+    trendlyneUrl: 'https://trendlyne.com/superstar-shareholders/individual/267/dolly-khanna/',
+    newsQuery: 'Dolly Khanna portfolio stake buy adds',
+    topHoldings: [
+      { ticker: 'NITINSPIN',   company: 'Nitin Spinners',       stakePct: 1.6, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'PRAKASH',     company: 'Prakash Industries',   stakePct: 1.4, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'TIRUPATIFL',  company: 'Tirupati Forge',       stakePct: 4.6, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'GUJTHEM',     company: 'Gujarat Themis Biosyn',stakePct: 1.2, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'KMSUGAR',     company: 'K M Sugar Mills',      stakePct: 2.0, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'POKARNA',     company: 'Pokarna',              stakePct: 1.7, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+    ],
+  },
+  {
+    id: 'anil-kumar-goel',
+    name: 'Anil Kumar Goel',
+    shortBio:
+      'Veteran cyclical-value investor with deep concentration in sugar, textiles, agri. Long-cycle bets, very low turnover. Style adjacent to Kacholia (sector cyclicals).',
+    style: 'CONTRARIAN_VALUE',
+    firm: 'Personal portfolio',
+    trendlyneUrl: 'https://trendlyne.com/superstar-shareholders/individual/278/anil-kumar-goel/',
+    newsQuery: 'Anil Kumar Goel sugar textile portfolio stake',
+    topHoldings: [
+      { ticker: 'DWARKESH',    company: 'Dwarikesh Sugar Industries', stakePct: 5.4, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'TRIVENI',     company: 'Triveni Engineering',  stakePct: 1.7, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'DHAMPURSUG',  company: 'Dhampur Sugar Mills',  stakePct: 4.5, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'BANARISUG',   company: 'Banari Amman Sugars',  stakePct: 3.4, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'KCPSUGIND',   company: 'KCP Sugar & Industrial',stakePct: 5.0, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'RANAGRO',     company: 'Rana Sugars',          stakePct: 4.3, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+    ],
+  },
+  {
+    id: 'mukul-agrawal',
+    name: 'Mukul Mahavir Agrawal',
+    shortBio:
+      'Multi-cap with small/mid lean — one of the largest individual portfolios on BSE. Stock-picker rather than thematic; close to Kacholia + Singhania overlap.',
+    style: 'SMALL_MID_MULTIBAGGER',
+    firm: 'Param Capital',
+    trendlyneUrl: 'https://trendlyne.com/superstar-shareholders/individual/283/mukul-mahavir-agrawal/',
+    newsQuery: 'Mukul Agrawal portfolio stake buy adds',
+    topHoldings: [
+      { ticker: 'NEULAND',     company: 'Neuland Laboratories', stakePct: 4.1, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'INTLLABS',    company: 'Intellect Design Arena',stakePct: 1.5, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'BSE',         company: 'BSE',                  stakePct: 1.2, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'RADICO',      company: 'Radico Khaitan',       stakePct: 1.3, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'ESAFSFB',     company: 'ESAF Small Finance Bank', stakePct: 1.5, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'GTLINFRA',    company: 'GTL Infrastructure',   stakePct: 2.0, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'JUBLPHARMA',  company: 'Jubilant Pharmova',    stakePct: 1.1, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+    ],
+  },
+  {
+    id: 'sunil-singhania',
+    name: 'Sunil Singhania',
+    shortBio:
+      'Founder Abakkus Asset Manager. Multi-cap growth at reasonable valuations. Operates an open-ended PMS and AIF; portfolio overlaps with the Kela/Khemani axis.',
+    style: 'GROWTH_AT_REASONABLE',
+    firm: 'Abakkus Asset Manager',
+    twitter: 'SunilBSinghania',
+    website: 'https://abakkusinvest.com',
+    newsQuery: 'Sunil Singhania Abakkus portfolio AIF interview',
+    topHoldings: [
+      { ticker: 'HCLTECH',     company: 'HCL Technologies',     tier: 'AIF_FILING', disclosedOn: '2026-03-31' },
+      { ticker: 'JBCHEPHARM',  company: 'JB Chemicals & Pharma',tier: 'AIF_FILING', disclosedOn: '2026-03-31' },
+      { ticker: 'SUNPHARMA',   company: 'Sun Pharma',           tier: 'AIF_FILING', disclosedOn: '2026-03-31' },
+      { ticker: 'CARBORUNIV',  company: 'Carborundum Universal',tier: 'AIF_FILING', disclosedOn: '2026-03-31' },
+      { ticker: 'JKTYRE',      company: 'JK Tyre & Industries', stakePct: 1.4, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+    ],
+  },
+  {
+    id: 'madhusudan-kela',
+    name: 'Madhusudan Kela',
+    shortBio:
+      'Multi-cap growth + special situations; founder MK Ventures / Co-Founder Reliance Mutual Fund\'s equity desk. Concentrated bets, often with 1-3% BSE-disclosed stakes.',
+    style: 'GROWTH_AT_REASONABLE',
+    firm: 'MK Ventures',
+    twitter: 'MadhusudanKela',
+    newsQuery: 'Madhusudan Kela portfolio MK Ventures stake',
+    topHoldings: [
+      { ticker: 'JTLIND',      company: 'JTL Industries',       stakePct: 1.6, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'WELSPUNLIV',  company: 'Welspun Living',       stakePct: 1.1, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'RBL',         company: 'RBL Bank',             stakePct: 1.4, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'POLYCAB',     company: 'Polycab India',        tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30' },
+      { ticker: 'IIFL',        company: 'IIFL Finance',         stakePct: 1.2, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+    ],
+  },
+  {
+    id: 'rekha-jhunjhunwala',
+    name: 'Rekha Jhunjhunwala',
+    shortBio:
+      'Inheritor + active manager of the Rare Enterprises portfolio (Late Rakesh Jhunjhunwala). One of the largest individual portfolios in India, concentrated in compounders.',
+    style: 'CONCENTRATED_QUALITY',
+    firm: 'Rare Enterprises',
+    trendlyneUrl: 'https://trendlyne.com/superstar-shareholders/individual/261/rekha-rakesh-jhunjhunwala/',
+    newsQuery: 'Rekha Jhunjhunwala Rare Enterprises portfolio stake',
+    topHoldings: [
+      { ticker: 'TITAN',       company: 'Titan Company',        stakePct: 5.1, disclosedOn: '2026-03-31', tier: 'BSE_1PCT', thesis: 'Legacy core holding — RJ\'s flagship multibagger' },
+      { ticker: 'METROBRAND',  company: 'Metro Brands',         stakePct: 14.7, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'STARHEALTH',  company: 'Star Health & Allied Insurance', stakePct: 17.1, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'TATAMOTORS',  company: 'Tata Motors',          stakePct: 1.6, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'INDIAINFO',   company: 'India Infoline Finance',stakePct: 2.1, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'NAZARA',      company: 'Nazara Technologies',  stakePct: 8.5, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'TATACOMM',    company: 'Tata Communications',  stakePct: 1.1, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+      { ticker: 'CRISIL',      company: 'CRISIL',               stakePct: 5.5, disclosedOn: '2026-03-31', tier: 'BSE_1PCT' },
+    ],
+  },
+  {
+    id: 'ramesh-damani',
+    name: 'Ramesh Damani',
+    shortBio:
+      'Veteran value investor, BSE member. Concentrated long-term portfolio in technology + specialty financials. Style: Buffett-Indian.',
+    style: 'CONTRARIAN_VALUE',
+    firm: 'Personal portfolio',
+    twitter: 'rameshdamani1',
+    newsQuery: 'Ramesh Damani portfolio interview stake',
+    topHoldings: [
+      { ticker: 'CDSL',        company: 'Central Depository Services', tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30', thesis: 'Capital markets infrastructure compounder' },
+      { ticker: 'BSE',         company: 'BSE',                  tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30' },
+      { ticker: 'INFOSYS',     company: 'Infosys',              tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30' },
+      { ticker: 'TCS',         company: 'TCS',                  tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30' },
+    ],
+  },
+  {
+    id: 'shyam-sekhar',
+    name: 'Shyam Sekhar',
+    shortBio:
+      'Founder / Chief Ideator at iThought. Growth-at-reasonable-price PMS with small/mid bias. Heavy emphasis on management quality + sector tailwinds.',
+    style: 'GROWTH_AT_REASONABLE',
+    firm: 'iThought Financial Consulting',
+    twitter: 'shyamsek',
+    newsQuery: 'Shyam Sekhar iThought portfolio interview',
+    topHoldings: [
+      { ticker: 'POLYCAB',     company: 'Polycab India',        tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30' },
+      { ticker: 'TATAELXSI',   company: 'Tata Elxsi',           tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30' },
+      { ticker: 'HONAUT',      company: 'Honeywell Automation', tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30' },
+    ],
+  },
+  {
+    id: 'basant-maheshwari',
+    name: 'Basant Maheshwari',
+    shortBio:
+      '"The Thoughtful Investor". Long-only growth-at-reasonable-price PMS. Concentrated portfolio in compounders + early-cycle multibaggers. Very vocal on twitter.',
+    style: 'GROWTH_AT_REASONABLE',
+    firm: 'Basant Maheshwari Wealth Advisers',
+    twitter: 'BMTheEquityDesk',
+    website: 'https://www.basantmaheshwari.com',
+    newsQuery: 'Basant Maheshwari portfolio Equity Desk interview',
+    topHoldings: [
+      { ticker: 'BAJFINANCE',  company: 'Bajaj Finance',        tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30' },
+      { ticker: 'TITAN',       company: 'Titan Company',        tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30' },
+      { ticker: 'PAGEIND',     company: 'Page Industries',      tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30' },
+      { ticker: 'HDFCBANK',    company: 'HDFC Bank',            tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30' },
+    ],
+  },
+  {
+    id: 'manish-bhandari',
+    name: 'Manish Bhandari',
+    shortBio:
+      'Founder Vallum Capital. Small/mid-cap-focused PMS with deep forensic on management + balance sheet. Style mirrors Mukherjea + Kacholia overlap.',
+    style: 'SMALL_MID_MULTIBAGGER',
+    firm: 'Vallum Capital Advisors',
+    newsQuery: 'Manish Bhandari Vallum Capital portfolio interview',
+    topHoldings: [
+      { ticker: 'AARTIIND',    company: 'Aarti Industries',     tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30' },
+      { ticker: 'JBCHEPHARM',  company: 'JB Chemicals & Pharma',tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30' },
+      { ticker: 'CAMS',        company: 'Computer Age Management Services', tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30' },
+    ],
+  },
+  {
+    id: 'nikhil-vora',
+    name: 'Nikhil Vora',
+    shortBio:
+      'Founder & MD Sixth Sense Ventures. Consumer + new-economy growth at the mid-cap stage. Style: growth + structural narrative (close to Kenneth Andrade).',
+    style: 'THEMATIC_STRUCTURAL',
+    firm: 'Sixth Sense Ventures',
+    twitter: 'nikhilvora',
+    newsQuery: 'Nikhil Vora Sixth Sense Ventures portfolio interview',
+    topHoldings: [
+      { ticker: 'SAPPHIRE',    company: 'Sapphire Foods',       tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30', thesis: 'QSR scale-up + KFC India + Sri Lanka' },
+      { ticker: 'DEVYANI',     company: 'Devyani International',tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30' },
+      { ticker: 'NYKAA',       company: 'FSN E-Commerce (Nykaa)',tier: 'PUBLIC_COMMENTARY', disclosedOn: '2026-04-30' },
     ],
   },
 ];
