@@ -90,18 +90,24 @@ const PROBES: ProbeDef[] = [
     staleAfterMs: 5 * 60_000,
     run: async () => {
       const t0 = performance.now();
+      // PATCH 0473 — 15s timeout on each probe
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 15_000);
       try {
         const r = await fetch('/api/v1/earnings/post-gap', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ items: [{ ticker: 'RELIANCE', filing_date: '2026-04-15', period: 'Mar 2026', timing: 'post' }] }),
+          signal: ctl.signal,
         });
+        clearTimeout(timer);
         const ms = Math.round(performance.now() - t0);
         const j = await r.json().catch(() => ({}));
         const sourceTier = j?.data?.RELIANCE?.filing_date_source;
         return { ok: r.ok && !!j?.data, status: r.status, ms, note: sourceTier ? `tier: ${sourceTier}` : 'no data' };
       } catch (e: any) {
-        return { ok: false, status: 0, ms: Math.round(performance.now() - t0), note: e?.message };
+        clearTimeout(timer);
+        return { ok: false, status: 0, ms: Math.round(performance.now() - t0), note: e?.name === 'AbortError' ? 'timeout 15s' : e?.message };
       }
     },
   },
@@ -112,14 +118,19 @@ const PROBES: ProbeDef[] = [
     staleAfterMs: 5 * 60_000,
     run: async () => {
       const t0 = performance.now();
+      // PATCH 0473 — 30s timeout (enrich can be slow with cold cache)
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 30_000);
       try {
-        const r = await fetch('/api/v1/earnings/enrich?symbols=RELIANCE');
+        const r = await fetch('/api/v1/earnings/enrich?symbols=RELIANCE', { signal: ctl.signal });
+        clearTimeout(timer);
         const ms = Math.round(performance.now() - t0);
         const j = await r.json().catch(() => ({}));
         const has = !!j?.data?.RELIANCE?.sales_curr_cr;
         return { ok: r.ok && has, status: r.status, ms, note: has ? 'data present' : 'no data' };
       } catch (e: any) {
-        return { ok: false, status: 0, ms: Math.round(performance.now() - t0), note: e?.message };
+        clearTimeout(timer);
+        return { ok: false, status: 0, ms: Math.round(performance.now() - t0), note: e?.name === 'AbortError' ? 'timeout 30s' : e?.message };
       }
     },
   },
@@ -130,15 +141,20 @@ const PROBES: ProbeDef[] = [
     staleAfterMs: 15 * 60_000,
     run: async () => {
       const t0 = performance.now();
+      // PATCH 0473 — 30s timeout (graded for cold today may need to build)
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 30_000);
       try {
         const todayIso = new Date().toISOString().slice(0, 10);
-        const r = await fetch(`/api/v1/earnings/graded?date=${todayIso}`);
+        const r = await fetch(`/api/v1/earnings/graded?date=${todayIso}`, { signal: ctl.signal });
+        clearTimeout(timer);
         const ms = Math.round(performance.now() - t0);
         const j = await r.json().catch(() => ({}));
         const total = j?.candidates_total ?? 0;
         return { ok: r.ok, status: r.status, ms, note: `${total} graded for ${todayIso}` };
       } catch (e: any) {
-        return { ok: false, status: 0, ms: Math.round(performance.now() - t0), note: e?.message };
+        clearTimeout(timer);
+        return { ok: false, status: 0, ms: Math.round(performance.now() - t0), note: e?.name === 'AbortError' ? 'timeout 30s' : e?.message };
       }
     },
   },
@@ -149,14 +165,19 @@ const PROBES: ProbeDef[] = [
     staleAfterMs: 10 * 60_000,
     run: async () => {
       const t0 = performance.now();
+      // PATCH 0473 — 20s timeout
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 20_000);
       try {
-        const r = await fetch('/api/market/earnings-scan?symbols=RELIANCE');
+        const r = await fetch('/api/market/earnings-scan?symbols=RELIANCE', { signal: ctl.signal });
+        clearTimeout(timer);
         const ms = Math.round(performance.now() - t0);
         const j = await r.json().catch(() => ({}));
         const card = j?.cards?.[0];
         return { ok: r.ok && card?.dataStatus !== 'MISSING', status: r.status, ms, note: card ? `status: ${card.dataStatus}` : 'no card' };
       } catch (e: any) {
-        return { ok: false, status: 0, ms: Math.round(performance.now() - t0), note: e?.message };
+        clearTimeout(timer);
+        return { ok: false, status: 0, ms: Math.round(performance.now() - t0), note: e?.name === 'AbortError' ? 'timeout 20s' : e?.message };
       }
     },
   },

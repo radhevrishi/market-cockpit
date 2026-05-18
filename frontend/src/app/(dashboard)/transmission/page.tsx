@@ -509,12 +509,18 @@ export default function TransmissionPage() {
   const { data, isLoading, dataUpdatedAt, isFetching } = useQuery<TransmissionPayload>({
     queryKey: ['commodity-transmission'],
     queryFn: async () => {
-      const r = await fetch('/api/v1/transmission');
-      if (!r.ok) throw new Error('transmission fetch failed');
-      return r.json();
+      // PATCH 0473 — 30s timeout (route hits 34 commodity feeds, can be slow)
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 30_000);
+      try {
+        const r = await fetch('/api/v1/transmission', { signal: ctl.signal });
+        if (!r.ok) throw new Error('transmission fetch failed');
+        return await r.json();
+      } finally { clearTimeout(t); }
     },
     staleTime: 10 * 60_000,
     refetchInterval: 10 * 60_000,
+    retry: 1,
   });
 
   const filteredCommodities = useMemo(() => {
