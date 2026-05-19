@@ -17,6 +17,8 @@ import {
   type ValuationReport, type ValuationOverrides,
 } from '@/lib/valuation';
 import { parseBulkTable, type BulkRow } from '@/lib/valuation/guidance-extractor';
+// PATCH 0494 — Resolve raw BSE codes (e.g. 526612) to NSE symbols throughout the page.
+import { resolveTicker } from '@/lib/bse-nse-mapping';
 
 const BG = '#0a0a0f';
 const CARD = '#13131a';
@@ -306,7 +308,9 @@ Aimtron Electronics Ltd\t40-50% CAGR revenue growth guidance for FY26
                     background: isExp ? 'rgba(167,139,250,0.04)' : 'transparent',
                   }}
                 >
-                  <div style={{ fontWeight: 800, color: PURPLE, fontFamily: 'monospace' }}>{row.symbol}</div>
+                  <div style={{ fontWeight: 800, color: PURPLE, fontFamily: 'monospace' }} title={(() => { const r = resolveTicker(row.symbol); return r.bseCode ? `BSE ${r.bseCode}` : (r.shortName || ''); })()}>
+                    {(() => { const r = resolveTicker(row.symbol); return r.nseSymbol || r.display || row.symbol; })()}
+                  </div>
                   <div>
                     <div style={{ fontWeight: 600, color: TEXT }}>{row.company || row.symbol}</div>
                     <div style={{ fontSize: 9, color: MUTED }}>{row.sector || '—'}</div>

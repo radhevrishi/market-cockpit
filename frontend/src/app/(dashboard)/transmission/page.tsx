@@ -648,7 +648,9 @@ export default function TransmissionPage() {
           Click any card for the full driver matrix. Updates every 10 minutes.
         </p>
 
-        <ScenarioLab commodities={data.commodities} />
+        {/* PATCH 0494 QA-#7 — pass FILTERED commodities so Category/Sensitivity/
+            Sector/Ticker chips narrow the Sector Pressure aggregate too. */}
+        <ScenarioLab commodities={filteredCommodities.length > 0 ? filteredCommodities : data.commodities} />
 
         {/* Top shocks summary */}
         <div style={{ backgroundColor: TOKENS.surface.card, border: `1px solid ${TOKENS.surface.cardBorder}`, borderRadius: 10, padding: '14px 18px', marginBottom: 18 }}>
