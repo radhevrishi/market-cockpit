@@ -2296,12 +2296,46 @@ export default function EarningsOpportunitiesPage() {
                     ))}
                   </div>
                   <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                    {/* PATCH 0496 — Force NSE/BSE re-scan for this specific date.
+                        User feedback: 'companies DO file weekends in earnings season'.
+                        Hub may not have polled this date yet. This bypasses all caches
+                        and hits the upstream pipelines directly. */}
+                    {resolvedDateForGrading && (
+                      <button
+                        onClick={async () => {
+                          try {
+                            const d = resolvedDateForGrading;
+                            // Bypass KV graded cache + force refresh from upstream
+                            await fetch(`/api/v1/earnings/graded?date=${d}&force=1&refreshMissing=1`, { cache: 'no-store' });
+                            // Force NSE today-live scan
+                            await fetch(`/api/v1/earnings/today-live?date=${d}&force=1`, { cache: 'no-store' });
+                            // Force NSE corp-announcements re-pull
+                            await fetch(`/api/v1/earnings/nse-announcements?date=${d}&force=1`, { cache: 'no-store' });
+                            // Wipe local cache + refetch
+                            try { localStorage.removeItem('mc:graded:v9:' + d); localStorage.removeItem('mc:graded:v8:' + d); } catch {}
+                            refetch();
+                            refetchHub();
+                          } catch {}
+                        }}
+                        style={{
+                          padding: '8px 16px', borderRadius: 6,
+                          border: '1px solid #10B981', backgroundColor: '#10B98115',
+                          color: '#10B981', fontSize: 12, fontWeight: 800, cursor: 'pointer',
+                          letterSpacing: '0.3px',
+                        }}
+                      >
+                        🔄 FORCE NSE/BSE RE-SCAN THIS DATE
+                      </button>
+                    )}
                     <button onClick={() => setFilterDate('')} style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #1A2840', backgroundColor: 'transparent', color: '#8A95A3', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
                       Auto-pick latest
                     </button>
                     <a href="https://www.nseindia.com/companies-listing/corporate-filings-financial-results" target="_blank" rel="noopener noreferrer" style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #F59E0B40', backgroundColor: '#F59E0B10', color: '#F59E0B', fontSize: 11, fontWeight: 700, textDecoration: 'none', cursor: 'pointer' }}>
                       NSE Filings →
                     </a>
+                  </div>
+                  <div style={{ marginTop: 10, fontSize: 10.5, color: '#F59E0B', fontStyle: 'italic' }}>
+                    💡 Companies DO file on weekends during peak earnings season. Hit ‘Force re-scan’ if you believe this date should have filings — bypasses all caches and re-polls NSE+BSE directly.
                   </div>
                 </>
               )}
