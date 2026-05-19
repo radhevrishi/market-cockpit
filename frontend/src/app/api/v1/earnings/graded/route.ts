@@ -346,10 +346,26 @@ export async function GET(req: Request) {
         // Auto-heal threshold: past date, ≥3 cards in payload, ≥40% previews
         // (was 30% — too sensitive; raised so we don't re-heal cards that
         // are genuinely preview-only because sources never published).
+        //
+        // PATCH 0497 — Bypass empty-cache for recent past dates so the new
+        // live-NSE augmentation actually runs. Indian companies file Fri/
+        // Sat/Sun/Mon every week; an empty cache from an earlier crawl
+        // shouldn't lock that out for 90 days.
+        const dateAgeDaysForCache = Math.max(0, Math.floor(
+          (new Date(todayIso).getTime() - new Date(date).getTime()) / 86_400_000
+        ));
+        const isRecentPast = isPast && dateAgeDaysForCache <= 14;
+        const isEmptyCache = totalCards === 0;
+        const bypassEmptyCache = isRecentPast && isEmptyCache && !recentlyHealed;
         if (isPast && totalCards >= 3 && previewRatio >= 0.40 && !recentlyHealed) {
           autoPromoteToRefreshMissing = true;
           // Set the lockout immediately so other concurrent requests skip.
           try { await kvSet(lockoutKey, Date.now(), HEAL_LOCKOUT_S); } catch {}
+        } else if (bypassEmptyCache) {
+          // Empty payload for a recent date — try a full rebuild so the
+          // new live-NSE augmentation can fire. Set lockout to throttle.
+          try { await kvSet(lockoutKey, Date.now(), HEAL_LOCKOUT_S); } catch {}
+          // Fall through to rebuild path (don't return cached empty).
         } else {
           const swr = isPast ? 's-maxage=3600, stale-while-revalidate=86400' : 's-maxage=60, stale-while-revalidate=300';
           return NextResponse.json({ ...cached, _cache: 'hit' }, { headers: { 'Cache-Control': swr } });
@@ -534,15 +550,29 @@ export async function GET(req: Request) {
   const hub = await hubRes.json();
   let dayList: any[] = (hub?.results || []).filter((r: any) => r.resultDate === date && r.quality !== 'Upcoming');
 
-  // PATCH 0363 — Augment with live NSE corp-announcements for today's
-  // date. User's complaint: "today's companies not showing at all" because
-  // the hub aggregator lags actual NSE filings by hours. We hit NSE's
-  // corporate-announcements feed directly for today + yesterday and merge
-  // any quarterly-results filings into dayList. Dedupe by ticker so we
-  // don't double-count companies that ARE already in the hub.
-  if (date === todayIso || date === new Date(Date.now() - 86400000).toISOString().slice(0, 10)) {
+  // PATCH 0363 / PATCH 0497 — Augment with live NSE corp-announcements.
+  //
+  // Original (0363): only fired for today + yesterday, on the theory that
+  // older dates already settled in the hub aggregator.
+  //
+  // 0497 rewrite: the hub aggregator routinely misses Fri/Sat/Sun/Mon filings
+  // (Indian companies DO file on weekends — board meetings can be Sat or Sun).
+  // User pasted EarningsPulse showing 47 candidates for Fri 15 May while we
+  // showed 0 with stale Apr 30 as "latest". Root cause: hub never picked
+  // those up, and the live-NSE fallback refused to fire for any date >1d old.
+  //
+  // New rule: fire live-NSE augmentation for ANY past date within last 14
+  // calendar days. NSE corp-announcements is the authoritative filing feed,
+  // and 14d covers the worst-case "I'm browsing last week's filings on
+  // Tuesday" window. Also fire when dayList is sparse (<10 items) even if
+  // the hub is populated — the hub often returns Confirmed entries from
+  // board-meeting forecasts but misses the actual filings.
+  const dateAgeDays = Math.max(0, Math.floor((new Date(todayIso).getTime() - new Date(date).getTime()) / 86_400_000));
+  const isHubSparse = dayList.length < 10;
+  const shouldLiveAugment = dateAgeDays <= 14 && (dateAgeDays <= 1 || isHubSparse);
+  if (shouldLiveAugment) {
     try {
-      const liveUrl = `${base.protocol}//${base.host}/api/v1/earnings/today-live?date=${date}`;
+      const liveUrl = `${base.protocol}//${base.host}/api/v1/earnings/today-live?date=${date}${force ? '&force=1' : ''}`;
       const liveRes = await fetch(liveUrl, {
         cache: 'no-store',
         signal: AbortSignal.timeout(10000),
@@ -570,10 +600,50 @@ export async function GET(req: Request) {
           existingTickers.add(sym);
           addedFromLive++;
         }
-        console.log(`[graded] ${date}: augmented dayList with ${addedFromLive} live NSE filings (hub had ${dayList.length - addedFromLive}, live total ${liveFilings.length})`);
+        console.log(`[graded] ${date} (age=${dateAgeDays}d, sparse=${isHubSparse}): augmented dayList with ${addedFromLive} live NSE filings (hub had ${dayList.length - addedFromLive}, live total ${liveFilings.length})`);
       }
     } catch (err) {
       console.warn(`[graded] today-live fetch failed for ${date}:`, (err as Error).message);
+    }
+  }
+
+  // PATCH 0497 — 2nd-pass live-NSE attempt with force=1 if first pass
+  // returned empty (NSE may have been transiently blocked). Only for recent
+  // past dates where we expect filings to exist.
+  if (dateAgeDays > 0 && dateAgeDays <= 14 && dayList.length === 0) {
+    try {
+      const retryUrl = `${base.protocol}//${base.host}/api/v1/earnings/today-live?date=${date}&force=1`;
+      const retryRes = await fetch(retryUrl, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(10000),
+      });
+      if (retryRes.ok) {
+        const retry: any = await retryRes.json();
+        const filings: any[] = Array.isArray(retry?.filings) ? retry.filings : [];
+        let addedFromRetry = 0;
+        const existingTickers = new Set<string>(dayList.map((r: any) => String(r.ticker || '').toUpperCase()));
+        for (const f of filings) {
+          const sym = String(f.symbol || '').toUpperCase();
+          if (!sym || existingTickers.has(sym)) continue;
+          dayList.push({
+            ticker: sym,
+            company: f.company || sym,
+            resultDate: date,
+            quarter: 'Q4',
+            sector: null,
+            marketCap: null,
+            quality: 'Confirmed',
+            source_url: f.attachment_url || `https://www.nseindia.com/companies-listing/corporate-filings-financial-results?symbol=${encodeURIComponent(sym)}`,
+            filing_iso: f.filing_iso,
+            __source: 'nse-live-retry',
+          });
+          existingTickers.add(sym);
+          addedFromRetry++;
+        }
+        console.log(`[graded] ${date}: 2nd-pass live-NSE retry added ${addedFromRetry} filings`);
+      }
+    } catch (err) {
+      console.warn(`[graded] live-NSE retry failed for ${date}:`, (err as Error).message);
     }
   }
 

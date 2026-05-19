@@ -798,21 +798,27 @@ export default function EarningsOpportunitiesPage() {
   }, [filterDate]);
   const { data: hub, isLoading: hubLoading, error: hubError, refetch: refetchHub } = useMarketEarnings(monthsToFetch);
 
-  // PATCH 0159 — resolve which date to grade (filter-date OR latest-past-with-filings)
-  // and fetch the FULLY-GRADED payload from /api/v1/earnings/graded which caches
-  // per-date in KV (90d for past, 15m for today). One server call, zero client join.
+  // PATCH 0159 / PATCH 0497 — resolve which date to grade.
+  //
+  // Old behaviour: when filterDate is empty (Latest), find the most-recent
+  // past date in hub.results that has ≥1 filed (non-Upcoming) entry. The
+  // problem: the hub aggregator routinely misses recent Fri/Sat/Sun/Mon
+  // filings, so "Latest" could land on a 3-week-old Apr 30 stub while
+  // EarningsPulse showed 47-100 filings per day for the intervening week.
+  //
+  // New behaviour: anchor "Latest" on TODAY. The graded endpoint now has a
+  // live-NSE augmentation that fires for any date in the last 14 days
+  // (server-side fix in /api/v1/earnings/graded). If today is empty, the
+  // auto-walk-back effect below probes yesterday, day-before, etc., via
+  // the SAME graded endpoint (which has the live-NSE fallback) instead of
+  // relying on hub.results. This means Sat/Sun/Mon filings always surface.
   const todayIso = new Date().toISOString().slice(0, 10);
   const resolvedDateForGrading = useMemo(() => {
     if (filterDate) return filterDate;
-    if (!hub?.results) return '';
-    const byDate: Record<string, number> = {};
-    for (const r of hub.results) {
-      if (!r.resultDate || r.resultDate > todayIso || r.quality === 'Upcoming') continue;
-      byDate[r.resultDate] = (byDate[r.resultDate] || 0) + 1;
-    }
-    const pastDates = Object.keys(byDate).sort().reverse();
-    return pastDates[0] || '';
-  }, [hub, filterDate, todayIso]);
+    // Default to today. The auto-walk-back effect (below) will step back
+    // if today is empty.
+    return todayIso;
+  }, [filterDate, todayIso]);
 
   // PATCH 0187 — localStorage cache (v9). Past dates: 7 days fresh, today: 15 min.
   // User: "I always open link all loads even when data is there before."
@@ -930,61 +936,131 @@ export default function EarningsOpportunitiesPage() {
     lastBaselinedDateRef.current = '';
   }, [resolvedDateForGrading]);
 
-  // PATCH 0482 / PATCH 0493 — AUTO-JUMP TO MOST RECENT POPULATED DATE.
-  // User feedback: "show earnings directly on Saturday and Sunday if reported
-  // on those days. no need to show on Monday." The previous threshold was
-  // ≥3 filings before auto-jumping; now lowered to ≥1 so even a sparse
-  // Sat/Sun day gets surfaced rather than rolling the user up to a near-
-  // empty Monday view. Still capped to past dates and excludes 'Upcoming'.
+  // PATCH 0482 / PATCH 0493 / PATCH 0497 — AUTO-WALK-BACK TO POPULATED DATE.
+  // User feedback: "earnings are there on saturday sunday everyday instead of
+  // showing data you say no earnings reported". Indian companies file Sat/Sun.
+  //
+  // 0497 rewrite: probe graded endpoint directly (1 → 7 days back) rather
+  // than only consulting hub.results, which routinely lags by weeks. The
+  // graded endpoint now has live-NSE augmentation so each probe surfaces
+  // any filings NSE knows about, even when the hub aggregator missed them.
+  // Stops the moment we find a populated date.
   const autoJumpedRef = useRef(false);
+  const autoWalkProbingRef = useRef(false);
   useEffect(() => {
+    if (filterDate) return;  // user explicitly picked a date — don't override
     if (autoJumpedRef.current) return;
-    if (!gradedData?.by_tier || !resolvedDateForGrading || !hub?.results) return;
+    if (autoWalkProbingRef.current) return;
+    if (!gradedData?.by_tier || !resolvedDateForGrading) return;
     const allCards = (TIER_ORDER as EarningsTier[])
       .flatMap((t) => gradedData.by_tier?.[t] || []);
-    if (allCards.length >= 5) {
+    if (allCards.length >= 1) {
       autoJumpedRef.current = true;
       return;
     }
-    const byDate: Record<string, number> = {};
-    for (const r of hub.results) {
-      if (!r.resultDate || r.resultDate > todayIso || r.quality === 'Upcoming') continue;
-      byDate[r.resultDate] = (byDate[r.resultDate] || 0) + 1;
-    }
-    // PATCH 0493 — threshold lowered 3 → 1 so weekend-only filings surface.
-    const populated = Object.keys(byDate)
-      .filter((d) => d < resolvedDateForGrading && byDate[d] >= 1)
-      .sort()
-      .reverse();
-    if (populated.length === 0) return;
-    autoJumpedRef.current = true;
-    setFilterDate(populated[0]);
-  }, [gradedData, resolvedDateForGrading, hub, todayIso]);
+    // Current resolved date returned 0 cards → walk back day-by-day via
+    // the graded endpoint until we find one with filings, up to 7 days.
+    autoWalkProbingRef.current = true;
+    (async () => {
+      const start = new Date(resolvedDateForGrading);
+      for (let i = 1; i <= 7; i++) {
+        const d = new Date(start);
+        d.setDate(d.getDate() - i);
+        const iso = d.toISOString().slice(0, 10);
+        try {
+          const res = await fetch(`/api/v1/earnings/graded?date=${iso}`, { cache: 'no-store' });
+          if (!res.ok) continue;
+          const payload = await res.json();
+          const total = Object.values(payload?.by_tier || {}).flat().length;
+          if (total >= 1) {
+            autoJumpedRef.current = true;
+            autoWalkProbingRef.current = false;
+            setFilterDate(iso);
+            return;
+          }
+        } catch {}
+      }
+      autoWalkProbingRef.current = false;
+    })();
+  }, [filterDate, gradedData, resolvedDateForGrading]);
 
-  // PATCH 0493 — Sparse-day hint. When the user IS on a date with few filings
-  // but the previous calendar day (incl Sat/Sun) had filings, show a tappable
-  // hint so they can navigate there instantly.
-  const sparseDayHint = useMemo(() => {
-    if (!resolvedDateForGrading || !hub?.results || !gradedData?.by_tier) return null;
+  // PATCH 0497 — Probe graded endpoint for past 14 days to discover
+  // populated dates the hub aggregator missed. Fires once per resolved date
+  // when current date returned 0 cards. Result feeds:
+  //   • BUSIEST RECENT DATES pills in empty-state
+  //   • sparse-day hint banner
+  const [recentPopulatedDates, setRecentPopulatedDates] = useState<Record<string, number>>({});
+  useEffect(() => {
+    if (!resolvedDateForGrading || !gradedData?.by_tier) return;
     const allCards = (TIER_ORDER as EarningsTier[])
       .flatMap((t) => gradedData.by_tier?.[t] || []);
-    if (allCards.length >= 5) return null;
-    const byDate: Record<string, number> = {};
-    for (const r of hub.results) {
-      if (!r.resultDate || r.resultDate >= resolvedDateForGrading || r.quality === 'Upcoming') continue;
-      byDate[r.resultDate] = (byDate[r.resultDate] || 0) + 1;
-    }
-    const populated = Object.keys(byDate)
-      .filter((d) => byDate[d] >= 1)
-      .sort()
-      .reverse();
-    if (populated.length === 0) return null;
-    const prevDate = populated[0];
-    const count = byDate[prevDate];
-    const d = new Date(prevDate);
-    const dow = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()];
-    return { date: prevDate, count, label: `${dow} ${d.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getUTCMonth()]}` };
-  }, [resolvedDateForGrading, hub, gradedData]);
+    if (allCards.length >= 5) return;
+    // Probe last 14 days serially so we don't hammer the API.
+    let cancelled = false;
+    (async () => {
+      const todayIsoLocal = new Date().toISOString().slice(0, 10);
+      const collected: Record<string, number> = {};
+      const start = new Date(todayIsoLocal);
+      for (let i = 0; i <= 14; i++) {
+        if (cancelled) return;
+        const dd = new Date(start);
+        dd.setDate(dd.getDate() - i);
+        const iso = dd.toISOString().slice(0, 10);
+        try {
+          const res = await fetch(`/api/v1/earnings/graded?date=${iso}`, { cache: 'no-store' });
+          if (!res.ok) continue;
+          const payload = await res.json();
+          const total = Object.values(payload?.by_tier || {}).flat().length;
+          if (total >= 1) {
+            collected[iso] = total;
+            // Push a partial update each time we find a populated date so the
+            // UI surfaces results as they come in (better UX vs waiting 14 probes)
+            if (!cancelled) setRecentPopulatedDates({ ...collected });
+          }
+        } catch {}
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [resolvedDateForGrading, gradedData]);
+
+  // PATCH 0493 / PATCH 0497 — Sparse-day hint. When the user IS on a date
+  // with few filings, show a tappable hint to the most-recently-populated
+  // previous date.
+  //
+  // 0497 rewrite: probe graded endpoint for the 7 previous calendar days
+  // instead of trusting hub.results (which routinely lags by 2-3 weeks).
+  // Result lives in state so it can be async without breaking memo rules.
+  const [sparseDayHint, setSparseDayHint] = useState<{ date: string; count: number; label: string } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setSparseDayHint(null);
+    if (!resolvedDateForGrading || !gradedData?.by_tier) return;
+    const allCards = (TIER_ORDER as EarningsTier[])
+      .flatMap((t) => gradedData.by_tier?.[t] || []);
+    if (allCards.length >= 5) return;
+    (async () => {
+      const start = new Date(resolvedDateForGrading);
+      for (let i = 1; i <= 7; i++) {
+        const dd = new Date(start);
+        dd.setDate(dd.getDate() - i);
+        const iso = dd.toISOString().slice(0, 10);
+        try {
+          const res = await fetch(`/api/v1/earnings/graded?date=${iso}`, { cache: 'no-store' });
+          if (!res.ok) continue;
+          const payload = await res.json();
+          const total = Object.values(payload?.by_tier || {}).flat().length;
+          if (total >= 1) {
+            if (cancelled) return;
+            const dow = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dd.getUTCDay()];
+            const label = `${dow} ${dd.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][dd.getUTCMonth()]}`;
+            setSparseDayHint({ date: iso, count: total, label });
+            return;
+          }
+        } catch {}
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [resolvedDateForGrading, gradedData]);
 
   // PATCH 0402 — CLIENT-SIDE AUTO-HEAL.
   // PATCH 0447 REGRESSION FIX — User reported EO was "best" before; now
@@ -2244,18 +2320,28 @@ export default function EarningsOpportunitiesPage() {
           </div>
         )}
         {viewMode === 'GRADED' && !isLoading && view.candidates_total === 0 && !error && (() => {
-          // PATCH 0152.2 — when picked date has nothing, find a nearby past
-          // date that DOES have filings and offer a one-click jump.
-          // PATCH 0495 — User reported sparse-day confusion. Now rank candidate
-          // jump dates by FILING COUNT (descending) within the past 14 days so
-          // 'Jump to Sat 16 May (36 filings)' surfaces above empty-Sunday.
+          // PATCH 0152.2 / PATCH 0495 / PATCH 0497 — when picked date has
+          // nothing, surface the busiest of the past 14 days as one-click jumps.
+          //
+          // 0497: hub.results was stale (Apr 30 cutoff when EarningsPulse had
+          // 47-100 daily filings May 15-18). Now probe the graded endpoint
+          // directly via the recentPopulatedDates state which is populated by
+          // the effect below. That state reflects live-NSE-augmented graded
+          // data, not the stale hub.
           const todayIso = new Date().toISOString().slice(0, 10);
+          // Fallback: merge hub-results count (for older dates) with the
+          // live-probed graded counts (for recent dates).
           const cutoffDate = new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10);
           const byDate: Record<string, number> = {};
           for (const r of (hub?.results || [])) {
             if (!r.resultDate || r.resultDate > todayIso || r.quality === 'Upcoming') continue;
             if (r.resultDate < cutoffDate) continue;
             byDate[r.resultDate] = (byDate[r.resultDate] || 0) + 1;
+          }
+          // Layer the recently-probed graded counts on top (these are
+          // authoritative — they actually counted graded cards).
+          for (const [d, count] of Object.entries(recentPopulatedDates || {})) {
+            if (count > (byDate[d] || 0)) byDate[d] = count;
           }
           // Rank: filings count desc, then date desc (more recent first as tie-breaker)
           const rankedDates = Object.entries(byDate)
