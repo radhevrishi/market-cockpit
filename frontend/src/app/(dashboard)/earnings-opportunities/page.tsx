@@ -2246,14 +2246,27 @@ export default function EarningsOpportunitiesPage() {
         {viewMode === 'GRADED' && !isLoading && view.candidates_total === 0 && !error && (() => {
           // PATCH 0152.2 — when picked date has nothing, find a nearby past
           // date that DOES have filings and offer a one-click jump.
+          // PATCH 0495 — User reported sparse-day confusion. Now rank candidate
+          // jump dates by FILING COUNT (descending) within the past 14 days so
+          // 'Jump to Sat 16 May (36 filings)' surfaces above empty-Sunday.
           const todayIso = new Date().toISOString().slice(0, 10);
-          const allDatesWithFilings = Array.from(new Set((hub?.results || []).filter((r) => r.resultDate && r.quality !== 'Upcoming' && r.resultDate <= todayIso).map((r) => r.resultDate))).sort();
-          const mostRecent = allDatesWithFilings.length ? allDatesWithFilings[allDatesWithFilings.length - 1] : null;
-          // Auto-shift when user explicitly picked a date — but only after a
-          // small delay so they can navigate freely. We just SHOW the option.
-          // PATCH 0445 BUG-016 — Better empty state: last-run timestamp,
-          // honest "what's been polled" line, prominent CTA buttons.
+          const cutoffDate = new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10);
+          const byDate: Record<string, number> = {};
+          for (const r of (hub?.results || [])) {
+            if (!r.resultDate || r.resultDate > todayIso || r.quality === 'Upcoming') continue;
+            if (r.resultDate < cutoffDate) continue;
+            byDate[r.resultDate] = (byDate[r.resultDate] || 0) + 1;
+          }
+          // Rank: filings count desc, then date desc (more recent first as tie-breaker)
+          const rankedDates = Object.entries(byDate)
+            .sort(([dA, cA], [dB, cB]) => cB - cA || (dB > dA ? 1 : -1))
+            .slice(0, 3);
           const lastScraped = (hub as any)?.scraped_at ? new Date((hub as any).scraped_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : null;
+          const fmtDate = (d: string) => {
+            const dt = new Date(d);
+            const dow = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dt.getUTCDay()];
+            return `${dow} ${dt.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][dt.getUTCMonth()]}`;
+          };
           return (
             <div style={{ color: '#94A3B8', fontSize: 13, padding: '36px 28px', textAlign: 'center', backgroundColor: '#0D1623', border: '1px solid #1A2840', borderRadius: 10 }}>
               <div style={{ fontSize: 40, marginBottom: 10 }}>📭</div>
@@ -2264,18 +2277,33 @@ export default function EarningsOpportunitiesPage() {
                 NSE + BSE corporate-actions pipeline polled. No Q4 results announced for this date.
                 {lastScraped && <><br/><span style={{ fontSize: 10.5, color: '#4A5B6C' }}>📡 Calendar last refreshed: <strong style={{ color: '#94A3B8' }}>{lastScraped}</strong></span></>}
               </div>
-              {mostRecent && (
-                <div style={{ marginTop: 8, display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
-                  <button onClick={() => setFilterDate(mostRecent)} style={{ padding: '8px 16px', borderRadius: 6, border: '1px solid #22D3EE60', backgroundColor: '#22D3EE15', color: '#22D3EE', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
-                    → Jump to {new Date(mostRecent).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}
-                  </button>
-                  <button onClick={() => setFilterDate('')} style={{ padding: '8px 16px', borderRadius: 6, border: '1px solid #1A2840', backgroundColor: 'transparent', color: '#8A95A3', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
-                    Auto-pick latest
-                  </button>
-                  <a href="https://www.nseindia.com/companies-listing/corporate-filings-financial-results" target="_blank" rel="noopener noreferrer" style={{ padding: '8px 16px', borderRadius: 6, border: '1px solid #F59E0B40', backgroundColor: '#F59E0B10', color: '#F59E0B', fontSize: 12, fontWeight: 700, textDecoration: 'none', cursor: 'pointer' }}>
-                    NSE Filings →
-                  </a>
-                </div>
+              {rankedDates.length > 0 && (
+                <>
+                  <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 8, fontWeight: 700, letterSpacing: '0.3px' }}>
+                    📅 BUSIEST RECENT DATES
+                  </div>
+                  <div style={{ marginTop: 4, display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                    {rankedDates.map(([d, count], i) => (
+                      <button key={d} onClick={() => setFilterDate(d)} style={{
+                        padding: '8px 14px', borderRadius: 6,
+                        border: `1px solid ${i === 0 ? '#10B98180' : '#22D3EE40'}`,
+                        backgroundColor: i === 0 ? '#10B98115' : '#22D3EE08',
+                        color: i === 0 ? '#10B981' : '#22D3EE',
+                        fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                      }}>
+                        → {fmtDate(d)} <span style={{ color: i === 0 ? '#10B98199' : '#22D3EE99', fontWeight: 500 }}>({count} filings)</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                    <button onClick={() => setFilterDate('')} style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #1A2840', backgroundColor: 'transparent', color: '#8A95A3', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+                      Auto-pick latest
+                    </button>
+                    <a href="https://www.nseindia.com/companies-listing/corporate-filings-financial-results" target="_blank" rel="noopener noreferrer" style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #F59E0B40', backgroundColor: '#F59E0B10', color: '#F59E0B', fontSize: 11, fontWeight: 700, textDecoration: 'none', cursor: 'pointer' }}>
+                      NSE Filings →
+                    </a>
+                  </div>
+                </>
               )}
             </div>
           );
