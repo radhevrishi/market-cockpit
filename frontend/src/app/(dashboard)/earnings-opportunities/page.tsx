@@ -930,37 +930,61 @@ export default function EarningsOpportunitiesPage() {
     lastBaselinedDateRef.current = '';
   }, [resolvedDateForGrading]);
 
-  // PATCH 0482 — AUTO-JUMP TO MOST RECENT POPULATED DATE.
-  // When the user lands on the page and the default date has 0 filings (e.g.,
-  // Monday morning before any companies have filed), step backward to find the
-  // most recent past date that has at least one filing. Mirrors EarningsPulse
-  // behaviour where the landing view is always "the most recent populated
-  // filing day". Only fires once per session (autoJumpedRef).
+  // PATCH 0482 / PATCH 0493 — AUTO-JUMP TO MOST RECENT POPULATED DATE.
+  // User feedback: "show earnings directly on Saturday and Sunday if reported
+  // on those days. no need to show on Monday." The previous threshold was
+  // ≥3 filings before auto-jumping; now lowered to ≥1 so even a sparse
+  // Sat/Sun day gets surfaced rather than rolling the user up to a near-
+  // empty Monday view. Still capped to past dates and excludes 'Upcoming'.
   const autoJumpedRef = useRef(false);
   useEffect(() => {
     if (autoJumpedRef.current) return;
     if (!gradedData?.by_tier || !resolvedDateForGrading || !hub?.results) return;
     const allCards = (TIER_ORDER as EarningsTier[])
       .flatMap((t) => gradedData.by_tier?.[t] || []);
-    if (allCards.length >= 3) {
-      // Already populated — leave the user where they are.
+    if (allCards.length >= 5) {
       autoJumpedRef.current = true;
       return;
     }
-    // Find latest past date in hub with at least 1 real filing.
     const byDate: Record<string, number> = {};
     for (const r of hub.results) {
       if (!r.resultDate || r.resultDate > todayIso || r.quality === 'Upcoming') continue;
       byDate[r.resultDate] = (byDate[r.resultDate] || 0) + 1;
     }
+    // PATCH 0493 — threshold lowered 3 → 1 so weekend-only filings surface.
     const populated = Object.keys(byDate)
-      .filter((d) => d < resolvedDateForGrading && byDate[d] >= 3)
+      .filter((d) => d < resolvedDateForGrading && byDate[d] >= 1)
       .sort()
       .reverse();
     if (populated.length === 0) return;
     autoJumpedRef.current = true;
     setFilterDate(populated[0]);
   }, [gradedData, resolvedDateForGrading, hub, todayIso]);
+
+  // PATCH 0493 — Sparse-day hint. When the user IS on a date with few filings
+  // but the previous calendar day (incl Sat/Sun) had filings, show a tappable
+  // hint so they can navigate there instantly.
+  const sparseDayHint = useMemo(() => {
+    if (!resolvedDateForGrading || !hub?.results || !gradedData?.by_tier) return null;
+    const allCards = (TIER_ORDER as EarningsTier[])
+      .flatMap((t) => gradedData.by_tier?.[t] || []);
+    if (allCards.length >= 5) return null;
+    const byDate: Record<string, number> = {};
+    for (const r of hub.results) {
+      if (!r.resultDate || r.resultDate >= resolvedDateForGrading || r.quality === 'Upcoming') continue;
+      byDate[r.resultDate] = (byDate[r.resultDate] || 0) + 1;
+    }
+    const populated = Object.keys(byDate)
+      .filter((d) => byDate[d] >= 1)
+      .sort()
+      .reverse();
+    if (populated.length === 0) return null;
+    const prevDate = populated[0];
+    const count = byDate[prevDate];
+    const d = new Date(prevDate);
+    const dow = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()];
+    return { date: prevDate, count, label: `${dow} ${d.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getUTCMonth()]}` };
+  }, [resolvedDateForGrading, hub, gradedData]);
 
   // PATCH 0402 — CLIENT-SIDE AUTO-HEAL.
   // PATCH 0447 REGRESSION FIX — User reported EO was "best" before; now
@@ -1883,6 +1907,21 @@ export default function EarningsOpportunitiesPage() {
             <button onClick={() => shiftDate(-1)} style={{ padding: '6px 10px', background: 'none', border: 'none', color: '#94A3B8', fontSize: 14, cursor: 'pointer' }}>←</button>
             <button onClick={() => shiftDate(1)}  style={{ padding: '6px 10px', background: 'none', border: 'none', color: '#94A3B8', fontSize: 14, cursor: 'pointer' }}>→</button>
           </div>
+          {/* PATCH 0493 — Sparse-day hint banner */}
+          {sparseDayHint && (
+            <button
+              onClick={() => setFilterDate(sparseDayHint.date)}
+              style={{
+                padding: '6px 12px', borderRadius: 8,
+                border: '1px solid #F59E0B60', backgroundColor: '#F59E0B15',
+                color: '#F59E0B', fontSize: 11, fontWeight: 700,
+                cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+              }}
+              title="The previous date with filings — click to view"
+            >
+              ← {sparseDayHint.label} had {sparseDayHint.count} filings
+            </button>
+          )}
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', border: '1px solid #1A2840', borderRadius: 8, backgroundColor: '#0A1422', cursor: 'pointer' }}>
             <CalendarIcon style={{ width: 12, height: 12, color: '#94A3B8' }} />
             <span style={{ fontSize: 11, color: '#94A3B8', fontWeight: 600 }}>Jump to</span>

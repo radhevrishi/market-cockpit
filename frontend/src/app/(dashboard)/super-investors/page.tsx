@@ -319,7 +319,66 @@ function buildPickCounts(marketScope: MarketScope = 'INDIA'): PickCount[] {
     .sort((a, b) => b.styleAdjustedConviction - a.styleAdjustedConviction);
 }
 
+interface FlowRow {
+  ticker: string; company: string;
+  addCount: number; exitCount: number; netActions: number;
+  totalSignalScore: number; investors: string[];
+  topDirection: 'ACCUM' | 'DISTRIB' | 'MIXED' | 'NEUTRAL';
+  lastMoveAt: string;
+}
+
 function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketScope; onJumpToInvestor: (id: string) => void }) {
+  // PATCH 0493 — Flow Momentum (cross-investor accumulation heatmap)
+  const [flowData, setFlowData] = useState<{ rows: FlowRow[]; counts: { total: number; accumulation: number; distribution: number; mixed: number }; cached?: boolean } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/v1/super-investor-flow?days=30', { cache: 'no-store' })
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (alive && d) setFlowData(d); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  // PATCH 0493 — Conviction Delta via client-side snapshot.
+  // Persist today's conviction-by-ticker map to localStorage. On next visit
+  // (different day), compute delta vs prior snapshot.
+  const [convictionDelta, setConvictionDelta] = useState<Record<string, number>>({});
+  useEffect(() => {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const SNAPSHOT_KEY = 'mc:super-investor-conviction-snapshot:v1';
+      const raw = localStorage.getItem(SNAPSHOT_KEY);
+      const cur: Record<string, number> = {};
+      // Build today's map from current picks (computed by parent buildPickCounts)
+      for (const inv of SUPER_INVESTORS) {
+        for (const h of inv.topHoldings) {
+          const k = h.ticker.toUpperCase();
+          const c = holdingConviction({
+            investorId: inv.id, stakePct: h.stakePct, tier: h.tier, disclosedOn: h.disclosedOn,
+          });
+          cur[k] = (cur[k] || 0) + c;
+        }
+      }
+      // Compare with prior snapshot
+      if (raw) {
+        try {
+          const prior = JSON.parse(raw) as { date: string; map: Record<string, number> };
+          if (prior.date && prior.date !== today) {
+            const delta: Record<string, number> = {};
+            const allKeys = new Set([...Object.keys(cur), ...Object.keys(prior.map || {})]);
+            for (const k of allKeys) {
+              const d = (cur[k] || 0) - ((prior.map || {})[k] || 0);
+              if (d !== 0) delta[k] = d;
+            }
+            setConvictionDelta(delta);
+          }
+        } catch {}
+      }
+      // Always write today's snapshot (overwrite same-day)
+      localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({ date: today, map: cur }));
+    } catch {}
+  }, []);
+
   const data = useMemo(() => {
     const inScope = (ex?: string) =>
       marketScope === 'ALL' ? true
@@ -457,12 +516,12 @@ function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketS
 
       {/* Consensus picks (3+) */}
       <Section title={`🏆 CONSENSUS PICKS — 3+ INVESTORS (${data.consensus3plus.length})`} subtitle="Stocks owned by 3 or more super investors — highest conviction across the roster">
-        <ConsensusTable rows={data.consensus3plus} onJumpToInvestor={onJumpToInvestor} />
+        <ConsensusTable rows={data.consensus3plus} onJumpToInvestor={onJumpToInvestor} convictionDelta={convictionDelta} />
       </Section>
 
       {/* Consensus picks (2 investor overlap) */}
       <Section title={`🤝 2-INVESTOR OVERLAPS (${data.consensus.length - data.consensus3plus.length})`} subtitle="Stocks held by exactly 2 super investors">
-        <ConsensusTable rows={data.consensus.filter((p) => p.investors.length === 2).slice(0, 25)} onJumpToInvestor={onJumpToInvestor} />
+        <ConsensusTable rows={data.consensus.filter((p) => p.investors.length === 2).slice(0, 25)} onJumpToInvestor={onJumpToInvestor} convictionDelta={convictionDelta} />
       </Section>
 
       {/* Top single stakes */}
@@ -512,6 +571,61 @@ function AnalyticsView({ marketScope, onJumpToInvestor }: { marketScope: MarketS
           </table>
         </div>
       </Section>
+
+      {/* PATCH 0493 — FLOW MOMENTUM (cross-investor accumulation heatmap) */}
+      {flowData && flowData.rows.length > 0 && (
+        <Section
+          title={`💰 FLOW MOMENTUM — 30D NET ACTIVITY ACROSS ALL INVESTORS (${flowData.counts.accumulation} ACCUM · ${flowData.counts.distribution} DISTRIB · ${flowData.counts.mixed} MIXED)`}
+          subtitle="Aggregated parsed BUY/ADD/TRIM/EXIT moves across the 21-investor roster — institutional accumulation heatmap"
+        >
+          <div style={{ border: `1px solid ${BORDER}`, borderRadius: 6, overflow: 'hidden' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ backgroundColor: PANEL }}>
+                  <th style={thStyle}>Company</th>
+                  <th style={{ ...thStyle, textAlign: 'center' }}>Adds</th>
+                  <th style={{ ...thStyle, textAlign: 'center' }}>Exits</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>Net</th>
+                  <th style={thStyle}>Direction</th>
+                  <th style={thStyle}>Investors</th>
+                </tr>
+              </thead>
+              <tbody>
+                {flowData.rows.slice(0, 25).map((row, i) => {
+                  const dirMeta = row.topDirection === 'ACCUM'   ? { color: '#10B981', icon: '↑', label: 'ACCUMULATION' }
+                                 : row.topDirection === 'DISTRIB' ? { color: '#EF4444', icon: '↓', label: 'DISTRIBUTION' }
+                                 : row.topDirection === 'MIXED'   ? { color: '#F59E0B', icon: '↔', label: 'MIXED FLOW'   }
+                                 : { color: '#94A3B8', icon: '·', label: 'NEUTRAL' };
+                  return (
+                    <tr key={i} style={{ borderTop: `1px solid ${BORDER}` }}>
+                      <td style={tdStyle}>{row.company}</td>
+                      <td style={{ ...tdStyle, textAlign: 'center', color: '#10B981', fontWeight: 700 }}>+{row.addCount}</td>
+                      <td style={{ ...tdStyle, textAlign: 'center', color: '#EF4444', fontWeight: 700 }}>-{row.exitCount}</td>
+                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 800,
+                        color: row.netActions > 0 ? '#10B981' : row.netActions < 0 ? '#EF4444' : MUTED,
+                        fontVariantNumeric: 'tabular-nums',
+                      }}>
+                        {row.netActions > 0 ? '+' : ''}{row.netActions}
+                      </td>
+                      <td style={tdStyle}>
+                        <span style={{
+                          fontSize: 10, fontWeight: 800, letterSpacing: '0.3px',
+                          color: dirMeta.color, border: `1px solid ${dirMeta.color}50`,
+                          backgroundColor: `${dirMeta.color}15`,
+                          padding: '2px 7px', borderRadius: 3,
+                        }}>{dirMeta.icon} {dirMeta.label}</span>
+                      </td>
+                      <td style={{ ...tdStyle, color: MUTED, fontSize: 11 }}>
+                        {row.investors.slice(0, 4).join(', ')}{row.investors.length > 4 ? ` +${row.investors.length - 4}` : ''}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Section>
+      )}
 
       {/* PATCH 0491 v4 — EARLY SIGNAL DETECTOR */}
       {data.earlySignals.length > 0 && (
@@ -759,7 +873,7 @@ function Section({ title, subtitle, children }: { title: string; subtitle?: stri
   );
 }
 
-function ConsensusTable({ rows, onJumpToInvestor }: { rows: PickCount[]; onJumpToInvestor: (id: string) => void }) {
+function ConsensusTable({ rows, onJumpToInvestor, convictionDelta = {} }: { rows: PickCount[]; onJumpToInvestor: (id: string) => void; convictionDelta?: Record<string, number> }) {
   if (rows.length === 0) {
     return <div style={{ color: MUTED, fontSize: 12, fontStyle: 'italic', padding: 12 }}>None yet.</div>;
   }
@@ -792,7 +906,7 @@ function ConsensusTable({ rows, onJumpToInvestor }: { rows: PickCount[]; onJumpT
               <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 800, color: '#10B981' }}>
                 {p.investors.length}
               </td>
-              {/* PATCH 0491 v4 — Conviction column (style-adjusted) */}
+              {/* PATCH 0491 v4 — Conviction column (style-adjusted) + PATCH 0493 delta chip */}
               <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} title={`Style-adjusted weighted conviction across ${p.investors.length} holders. Base ${p.aggregateConviction} × style mix.`}>
                 <span style={{
                   fontSize: 12, fontWeight: 800,
@@ -803,6 +917,15 @@ function ConsensusTable({ rows, onJumpToInvestor }: { rows: PickCount[]; onJumpT
                 }}>
                   {p.styleAdjustedConviction}
                 </span>
+                {/* PATCH 0493 — Conviction Delta vs prior snapshot */}
+                {convictionDelta[p.ticker.toUpperCase()] !== undefined && convictionDelta[p.ticker.toUpperCase()] !== 0 && (
+                  <span title="Change vs prior daily snapshot" style={{
+                    marginLeft: 5, fontSize: 10, fontWeight: 700,
+                    color: convictionDelta[p.ticker.toUpperCase()] > 0 ? '#10B981' : '#EF4444',
+                  }}>
+                    {convictionDelta[p.ticker.toUpperCase()] > 0 ? '▲' : '▼'}{Math.abs(convictionDelta[p.ticker.toUpperCase()])}
+                  </span>
+                )}
                 {/* Lifecycle chip */}
                 <div style={{ marginTop: 3 }}>
                   <span title={LIFECYCLE_META[p.lifecycle].label} style={{
