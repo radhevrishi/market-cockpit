@@ -21,10 +21,6 @@
       "schedule": "0 1 * * *"
     },
     {
-      "path": "/api/v1/cron/prewarm-earnings",
-      "schedule": "15 * * * *"
-    },
-    {
       "path": "/api/v1/cron/concall-intel-warm?secret=mc-bot-2026",
       "schedule": "30 3 * * 1-5"
     },
