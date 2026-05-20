@@ -2735,360 +2735,6 @@ export default function NewsFeedPage() {
         </div>
       )}
 
-      {/* ── PATCH 0079: PERSISTENT BOTTLENECK READING — auto-detected from
-              accumulated evidence with per-domain decay (90d structural,
-              14d cyclical). Surfaces HBM/CoWoS/grid/HALEU even when no
-              fresh news today. ── */}
-      {persistentBottlenecks && persistentBottlenecks.count > 0 && (() => {
-        // PATCH 0086: split items into India / Global panels.  Each card carries
-        // a region tag from the API; default to GLOBAL when missing so legacy
-        // cached responses keep working.
-        // PATCH 0088: within each region, sort latest-first (is_latest === true
-        // first, by ascending first_seen_age_days), so newly-emerged bottlenecks
-        // surface at the top for 10 days then drop back into the normal sort.
-        const sortLatestFirst = (a: PersistentBottleneckItem, b: PersistentBottleneckItem) => {
-          const aLatest = a.is_latest ? 1 : 0;
-          const bLatest = b.is_latest ? 1 : 0;
-          if (aLatest !== bLatest) return bLatest - aLatest;
-          if (aLatest && bLatest) {
-            return (a.first_seen_age_days ?? 999) - (b.first_seen_age_days ?? 999);
-          }
-          return 0;  // preserve server-side confidence/structural sort
-        };
-        const allItems = persistentBottlenecks.items;
-        const indiaItems = allItems.filter((i) => i.region === 'IN').slice().sort(sortLatestFirst);
-        const globalItems = allItems.filter((i) => i.region !== 'IN').slice().sort(sortLatestFirst);
-        const newInLast10dIN = indiaItems.filter((i) => i.is_latest).length;
-        const newInLast10dGL = globalItems.filter((i) => i.is_latest).length;
-        const totalLatest = newInLast10dIN + newInLast10dGL;
-
-        // PATCH 0086: liveness pill — green ≤10min, amber ≤24h, red older.
-        const lastUpdatedIso = persistentBottlenecks.last_updated;
-        const ageMin = lastUpdatedIso
-          ? Math.max(0, Math.round((Date.now() - new Date(lastUpdatedIso).getTime()) / 60000))
-          : null;
-        const liveColor = ageMin == null ? '#6B7A8D'
-          : ageMin <= 10 ? '#10B981'
-          : ageMin <= 24 * 60 ? '#F59E0B'
-          : '#EF4444';
-        const liveLabel = ageMin == null ? 'live'
-          : ageMin < 1 ? 'live · just now'
-          : ageMin < 60 ? `live · ${ageMin}m ago`
-          : ageMin < 24 * 60 ? `live · ${Math.round(ageMin / 60)}h ago`
-          : `stale · ${Math.round(ageMin / 1440)}d ago`;
-
-        // Build a flat list with region-divider sentinels so one .map() can
-        // render headers + cards. Avoids duplicating the (large) card JSX.
-        const flatList: any[] = [];
-        if (indiaItems.length > 0) {
-          flatList.push({ __divider: 'IN', count: indiaItems.length, newCount: newInLast10dIN });
-          flatList.push(...indiaItems);
-        }
-        if (globalItems.length > 0) {
-          flatList.push({ __divider: 'GLOBAL', count: globalItems.length, newCount: newInLast10dGL });
-          flatList.push(...globalItems);
-        }
-
-        return (
-        <div style={{
-          backgroundColor: '#0D1B2E', border: '1px solid #1E2D45',
-          borderLeft: '4px solid #EF4444',
-          // PATCH 0085: doubled padding so the section breathes at larger card sizes
-          borderRadius: '14px', padding: '16px 20px', marginBottom: '16px',
-        }}>
-          <button
-            onClick={() => setShowPersistent(s => !s)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '10px',
-              background: 'none', border: 'none', cursor: 'pointer',
-              padding: 0, margin: 0, width: '100%',
-              color: 'inherit', textAlign: 'left',
-            }}
-          >
-            {/* PATCH 0085: section header doubled — 10px → 15px */}
-            <span style={{ fontSize: '15px', fontWeight: 700, color: '#EF4444', letterSpacing: '0.8px' }}>
-              🚧 PERSISTENT BOTTLENECK READING
-            </span>
-            <span style={{ fontSize: '13px', color: '#4A5B6C' }}>
-              🇮🇳 {indiaItems.length} India · 🌐 {globalItems.length} Global · auto-detected from accumulated evidence
-            </span>
-            {/* PATCH 0212 — freshness chip for bottleneck dashboard */}
-            <PanelFreshness dataUpdatedAt={bnUpdatedAt} isFetching={bnFetching} staleAfterMs={5 * 60_000} />
-            {/* PATCH 0088: 'Latest' pill — bottlenecks first seen in the last 10 days */}
-            {totalLatest > 0 && (
-              <span
-                title={`${totalLatest} bottleneck${totalLatest === 1 ? '' : 's'} first detected in the last 10 days. They surface at the top of each region panel for 10 days, then drop back into normal confidence/structural ranking.`}
-                style={{
-                  fontSize: 12, fontWeight: 800, letterSpacing: '0.5px',
-                  color: '#0A1422',
-                  border: '1px solid #FBBF24',
-                  backgroundColor: '#FBBF24',
-                  padding: '2px 8px', borderRadius: 4,
-                  display: 'inline-flex', alignItems: 'center', gap: 5,
-                }}
-              >
-                🆕 LATEST · {totalLatest} new in 10d
-              </span>
-            )}
-            {/* PATCH 0086: liveness pill — proves the panel is live, not stale */}
-            <span
-              title={lastUpdatedIso ? `Server-side last_updated: ${lastUpdatedIso}\nAuto-refresh every 5 min` : 'Live data'}
-              style={{
-                fontSize: 11, fontWeight: 700, letterSpacing: '0.4px',
-                color: liveColor, border: `1px solid ${liveColor}50`,
-                backgroundColor: `${liveColor}15`,
-                padding: '2px 8px', borderRadius: 4,
-                display: 'inline-flex', alignItems: 'center', gap: 5,
-              }}
-            >
-              <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: liveColor, boxShadow: `0 0 6px ${liveColor}` }} />
-              {liveLabel.toUpperCase()}
-            </span>
-            <span style={{ marginLeft: 'auto', fontSize: '13px', color: '#4A5B6C' }}>
-              {/* PATCH 0435 BUG-034 — distinct label vs Forward Calendar expand */}
-              {showPersistent ? '▼ Hide Bottleneck Reading' : '▶ Show Bottleneck Reading'}
-            </span>
-          </button>
-          {showPersistent && (
-            // PATCH 0085: doubled card width (280→440) and gap so larger cards
-            // don't crush each other.
-            <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(440px, 1fr))', gap: 14 }}>
-              {flatList.map((rowAny: any, idx: number) => {
-                // PATCH 0086: region divider sentinel — full-width sub-header
-                if (rowAny && rowAny.__divider) {
-                  const isIN = rowAny.__divider === 'IN';
-                  const accent = isIN ? '#FBBF24' : '#22D3EE';
-                  return (
-                    <div
-                      key={`__div_${rowAny.__divider}_${idx}`}
-                      style={{
-                        gridColumn: '1 / -1',
-                        display: 'flex', alignItems: 'center', gap: 10,
-                        marginTop: idx === 0 ? 0 : 12,
-                        paddingBottom: 6,
-                        borderBottom: `1px dashed ${accent}50`,
-                      }}
-                    >
-                      <span style={{ fontSize: 16, fontWeight: 800, color: accent, letterSpacing: '0.6px' }}>
-                        {isIN ? '🇮🇳 INDIA' : '🌐 GLOBAL'}
-                      </span>
-                      <span style={{ fontSize: 12, color: '#6B7A8D' }}>
-                        {rowAny.count} {rowAny.count === 1 ? 'bottleneck' : 'bottlenecks'} · {isIN
-                          ? 'NSE-listed beneficiaries only — Indian sources / ₹ / PSU patterns'
-                          : 'global L1–L6 roster — US / EU / Japan / Taiwan / Korea names'}
-                      </span>
-                      {/* PATCH 0088: per-region 'new in last 10 days' counter */}
-                      {rowAny.newCount > 0 && (
-                        <span
-                          title={`${rowAny.newCount} ${isIN ? 'Indian' : 'global'} bottleneck${rowAny.newCount === 1 ? '' : 's'} first detected in the last 10 days — sorted to top of this panel.`}
-                          style={{
-                            marginLeft: 'auto',
-                            fontSize: 11, fontWeight: 700, letterSpacing: '0.4px',
-                            color: '#0A1422',
-                            backgroundColor: '#FBBF24',
-                            border: '1px solid #FBBF24',
-                            padding: '2px 8px', borderRadius: 4,
-                          }}
-                        >
-                          🆕 {rowAny.newCount} new in 10d
-                        </span>
-                      )}
-                    </div>
-                  );
-                }
-                // Type-narrow back to PersistentBottleneckItem for the card render
-                const b = rowAny as PersistentBottleneckItem;
-                const trendColor = b.trend === 'rising' ? '#EF4444'
-                  : b.trend === 'steady' ? '#F59E0B'
-                  : b.trend === 'falling' ? '#22D3EE'
-                  : '#6B7A8D';
-                const trendIcon = b.trend === 'rising' ? '↑' : b.trend === 'steady' ? '→' : b.trend === 'falling' ? '↓' : '·';
-                // PATCH 0080: prefer best specialist sample over most-recent
-                const bestSample = b.best_specialist_sample || b.top_samples[0];
-                const showLabel = b.label || b.node.replace(/_/g, ' ');
-                return (
-                  // PATCH 0085: card padding 8/10 → 14/18, radius 8 → 12
-                  <div key={b.node} style={{
-                    backgroundColor: '#0A1422', border: '1px solid #1A2840',
-                    borderRadius: 12, padding: '14px 18px',
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                      {/* PATCH 0085: card title 11 → 17 */}
-                      <span style={{ fontSize: 17, fontWeight: 800, color: '#F5F7FA', letterSpacing: '0.3px' }}>
-                        {showLabel}
-                      </span>
-                      {b.is_structural && (
-                        <span style={{ fontSize: 11, fontWeight: 700, color: '#8B5CF6', border: '1px solid #8B5CF640', backgroundColor: '#8B5CF610', padding: '2px 6px', borderRadius: 4 }}>
-                          STRUCTURAL
-                        </span>
-                      )}
-                      {/* PATCH 0088: LATEST pill — bottleneck first detected ≤10d ago */}
-                      {b.is_latest && (
-                        <span
-                          title={`First detected ${b.first_seen_age_days ?? '?'} day${b.first_seen_age_days === 1 ? '' : 's'} ago. Surfaces at top of panel for the first 10 days, then drops to confidence/structural ranking.`}
-                          style={{
-                            fontSize: 11, fontWeight: 800, letterSpacing: '0.4px',
-                            color: '#0A1422',
-                            backgroundColor: '#FBBF24',
-                            border: '1px solid #FBBF24',
-                            padding: '2px 7px', borderRadius: 4,
-                            display: 'inline-flex', alignItems: 'center', gap: 4,
-                          }}
-                        >
-                          🆕 LATEST · {b.first_seen_age_days ?? 0}d
-                        </span>
-                      )}
-                      <span style={{ marginLeft: 'auto', fontSize: 15, fontWeight: 700, color: trendColor }}>
-                        {trendIcon} {b.trend}
-                      </span>
-                    </div>
-                    {b.sub && (
-                      // PATCH 0085: sub 10 → 14
-                      <div style={{ fontSize: 14, color: '#94A3B8', lineHeight: 1.4, marginBottom: 8 }}>
-                        {b.sub}
-                      </div>
-                    )}
-                    {/* PATCH 0085: meta row 10 → 13 */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, fontSize: 13, color: '#94A3B8' }}>
-                      <span style={{ color: '#10B981', fontWeight: 700 }}>{b.confidence_pct}% conf</span>
-                      <span>·</span>
-                      <span>{b.sample_count} articles</span>
-                      <span>·</span>
-                      <span>{b.age_days}d ago</span>
-                    </div>
-                    {bestSample && (
-                      // PATCH 0085: top signal 9 → 12
-                      <div style={{ fontSize: 12, color: '#6B7A8D', lineHeight: 1.5, borderTop: '1px solid #1A2840', paddingTop: 8 }}>
-                        <span style={{ color: '#22D3EE', fontWeight: 700 }}>Top signal:</span>{' '}
-                        <span style={{ color: '#CBD5E1' }}>{bestSample.title.slice(0, 110)}</span>
-                        <br/>
-                        <span style={{ color: '#4A5B6C' }}>{bestSample.source} · {bestSample.tier}</span>
-                      </div>
-                    )}
-                    {/* PATCH 0081 + 0082: ARCHITECTURAL BENEFICIARIES — second-order winners
-                        PATCH 0085: typography all bumped ~70% larger so the card actually reads
-                        at desk distance. */}
-                    {b.architectural_adaptations && b.architectural_adaptations.length > 0 && (
-                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed #1A2840' }}>
-                        <div style={{ fontSize: 12, color: '#F59E0B', fontWeight: 700, letterSpacing: '0.5px', marginBottom: 8 }}>
-                          ↪ ARCHITECTURAL BENEFICIARIES (2nd-order)
-                        </div>
-                        {b.architectural_adaptations.map((adapt) => {
-                          // PATCH 0082: duration badge color
-                          const durColor = adapt.duration === 'MULTI_YEAR_STRUCTURAL' ? '#10B981'
-                            : adapt.duration === 'SECULAR' ? '#22D3EE'
-                            : adapt.duration === 'CYCLICAL' ? '#F59E0B'
-                            : adapt.duration === 'POLICY_SENSITIVE' ? '#8B5CF6'
-                            : '#6B7A8D';
-                          const durLabel = adapt.duration === 'MULTI_YEAR_STRUCTURAL' ? 'Multi-year structural'
-                            : adapt.duration === 'SECULAR' ? 'Secular'
-                            : adapt.duration === 'CYCLICAL' ? 'Cyclical'
-                            : adapt.duration === 'POLICY_SENSITIVE' ? 'Policy-sensitive'
-                            : adapt.duration === 'TRADING' ? 'Trading'
-                            : '';
-                          return (
-                            <div key={adapt.adaptation} style={{ marginBottom: 12, fontSize: 13, lineHeight: 1.5 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
-                                <span style={{ color: '#10B981', fontWeight: 700, fontSize: 14 }}>· {adapt.label}</span>
-                                {durLabel && (
-                                  <span style={{
-                                    fontSize: 10, fontWeight: 700, letterSpacing: '0.3px',
-                                    color: durColor, border: `1px solid ${durColor}40`,
-                                    backgroundColor: `${durColor}10`,
-                                    padding: '2px 6px', borderRadius: 3,
-                                  }}>
-                                    {durLabel.toUpperCase()}
-                                  </span>
-                                )}
-                              </div>
-                              {/* PATCH 0482 — ticker chips removed (user: "anyway incorrect").
-                                   Show clean prose rationale + a count indicator instead so the
-                                   sub-theme + duration tag still convey the actionable shape
-                                   without surfacing speculative ticker-tagging. */}
-                              <div style={{ color: '#CBD5E1', fontSize: 12, lineHeight: 1.5, marginTop: 4 }} title={adapt.rationale}>
-                                {adapt.rationale}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {/* ── PATCH 0085 / PATCH 0482 — TRANSMISSION SUB-THEMES ──
-                          User feedback: ticker rosters at L1-L6 were "anyway incorrect" and
-                          made the panel look noisy. Replaced ticker chips with clean
-                          sub-theme rows so the institutional layer-label remains useful
-                          (Direct Scarcity Capture → Compute Substitutes → Edge → ...)
-                          without speculative ticker-tagging. T0-T4 transmission cascade
-                          below is unchanged. */}
-                    {b.layered_beneficiaries && b.layered_beneficiaries.fired_layers.length > 0 && (() => {
-                      const lb = b.layered_beneficiaries;
-                      const LAYER_META: Record<string, { icon: string; label: string; tag: string; color: string }> = {
-                        L1: { icon: '🧱', label: 'Direct Scarcity Capture',     tag: 'Input pricing power',                  color: '#F59E0B' },
-                        L2: { icon: '⚙️', label: 'Compute Substitutes',          tag: 'GPU / CPU / ARM substitution',         color: '#8B5CF6' },
-                        L3: { icon: '🌐', label: 'Edge Distribution',            tag: 'CDN / latency / bandwidth',             color: '#38BDF8' },
-                        L4: { icon: '🧪', label: 'Transmission Winners',         tag: 'Sterlite-type pass-through',            color: '#10B981' },
-                        L5: { icon: '🏢', label: 'Platform Beneficiaries',       tag: 'Hyperscaler demand aggregators',        color: '#3B82F6' },
-                        L6: { icon: '⚡', label: 'Infrastructure / Efficiency',  tag: 'Power, thermal, perf-per-watt',         color: '#D946EF' },
-                      };
-                      return (
-                        <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed #1A2840' }}>
-                          <div style={{ fontSize: 12, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.5px', marginBottom: 8 }}>
-                            🔁 TRANSMISSION SUB-THEMES (L1–L6)
-                          </div>
-                          {lb.fired_layers.map((L) => {
-                            const meta = LAYER_META[L];
-                            if (!meta) return null;
-                            return (
-                              <div key={L} style={{
-                                display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 6, flexWrap: 'wrap',
-                                paddingLeft: 8, borderLeft: `2px solid ${meta.color}80`,
-                              }}>
-                                <span style={{
-                                  fontSize: 12, fontWeight: 700,
-                                  color: meta.color,
-                                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                                  minWidth: 28,
-                                }}>
-                                  {L}
-                                </span>
-                                <span style={{ fontSize: 13, fontWeight: 600, color: '#E6EDF3' }}>
-                                  {meta.icon} {meta.label}
-                                </span>
-                                <span style={{ fontSize: 11, color: '#6B7A8D', fontStyle: 'italic' }}>{meta.tag}</span>
-                              </div>
-                            );
-                          })}
-                          {/* Transmission cascade T0 → T4 */}
-                          <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #1A2840' }}>
-                            <div style={{ fontSize: 11, color: '#6B7A8D', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>Transmission cascade</div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 12 }}>
-                              {([
-                                ['T0', 'now',    lb.transmission.T0, '#22D3EE'],
-                                ['T1', '0–1Q',   lb.transmission.T1, '#38BDF8'],
-                                ['T2', '1–3Q',   lb.transmission.T2, '#10B981'],
-                                ['T3', '3–6Q',   lb.transmission.T3, '#F59E0B'],
-                                ['T4', '6–12Q',  lb.transmission.T4, '#D946EF'],
-                              ] as const).map(([t, q, txt, color]) => (
-                                <div key={t} style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
-                                  <span style={{ color, fontWeight: 700, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', minWidth: 22 }}>{t}</span>
-                                  <span style={{ color: '#6B7A8D', fontSize: 10, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', minWidth: 50 }}>{q}</span>
-                                  <span style={{ color: '#CBD5E1', lineHeight: 1.45 }}>{txt}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-        );
-      })()}
 
       {/* ── PATCH 0068: TRANSFORMATIONAL CONTRACTS — 6-month rolling band
               PATCH 0085: typography + card padding doubled to match the larger
@@ -3870,6 +3516,360 @@ export default function NewsFeedPage() {
             <span style={{ fontSize: 11, opacity: 0.8 }}>View stale →</span>
           </button>
         )}
+      {/* ── PATCH 0079: PERSISTENT BOTTLENECK READING — auto-detected from
+              accumulated evidence with per-domain decay (90d structural,
+              14d cyclical). Surfaces HBM/CoWoS/grid/HALEU even when no
+              fresh news today. ── */}
+      {persistentBottlenecks && persistentBottlenecks.count > 0 && (() => {
+        // PATCH 0086: split items into India / Global panels.  Each card carries
+        // a region tag from the API; default to GLOBAL when missing so legacy
+        // cached responses keep working.
+        // PATCH 0088: within each region, sort latest-first (is_latest === true
+        // first, by ascending first_seen_age_days), so newly-emerged bottlenecks
+        // surface at the top for 10 days then drop back into the normal sort.
+        const sortLatestFirst = (a: PersistentBottleneckItem, b: PersistentBottleneckItem) => {
+          const aLatest = a.is_latest ? 1 : 0;
+          const bLatest = b.is_latest ? 1 : 0;
+          if (aLatest !== bLatest) return bLatest - aLatest;
+          if (aLatest && bLatest) {
+            return (a.first_seen_age_days ?? 999) - (b.first_seen_age_days ?? 999);
+          }
+          return 0;  // preserve server-side confidence/structural sort
+        };
+        const allItems = persistentBottlenecks.items;
+        const indiaItems = allItems.filter((i) => i.region === 'IN').slice().sort(sortLatestFirst);
+        const globalItems = allItems.filter((i) => i.region !== 'IN').slice().sort(sortLatestFirst);
+        const newInLast10dIN = indiaItems.filter((i) => i.is_latest).length;
+        const newInLast10dGL = globalItems.filter((i) => i.is_latest).length;
+        const totalLatest = newInLast10dIN + newInLast10dGL;
+
+        // PATCH 0086: liveness pill — green ≤10min, amber ≤24h, red older.
+        const lastUpdatedIso = persistentBottlenecks.last_updated;
+        const ageMin = lastUpdatedIso
+          ? Math.max(0, Math.round((Date.now() - new Date(lastUpdatedIso).getTime()) / 60000))
+          : null;
+        const liveColor = ageMin == null ? '#6B7A8D'
+          : ageMin <= 10 ? '#10B981'
+          : ageMin <= 24 * 60 ? '#F59E0B'
+          : '#EF4444';
+        const liveLabel = ageMin == null ? 'live'
+          : ageMin < 1 ? 'live · just now'
+          : ageMin < 60 ? `live · ${ageMin}m ago`
+          : ageMin < 24 * 60 ? `live · ${Math.round(ageMin / 60)}h ago`
+          : `stale · ${Math.round(ageMin / 1440)}d ago`;
+
+        // Build a flat list with region-divider sentinels so one .map() can
+        // render headers + cards. Avoids duplicating the (large) card JSX.
+        const flatList: any[] = [];
+        if (indiaItems.length > 0) {
+          flatList.push({ __divider: 'IN', count: indiaItems.length, newCount: newInLast10dIN });
+          flatList.push(...indiaItems);
+        }
+        if (globalItems.length > 0) {
+          flatList.push({ __divider: 'GLOBAL', count: globalItems.length, newCount: newInLast10dGL });
+          flatList.push(...globalItems);
+        }
+
+        return (
+        <div style={{
+          backgroundColor: '#0D1B2E', border: '1px solid #1E2D45',
+          borderLeft: '4px solid #EF4444',
+          // PATCH 0085: doubled padding so the section breathes at larger card sizes
+          borderRadius: '14px', padding: '16px 20px', marginBottom: '16px',
+        }}>
+          <button
+            onClick={() => setShowPersistent(s => !s)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '10px',
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: 0, margin: 0, width: '100%',
+              color: 'inherit', textAlign: 'left',
+            }}
+          >
+            {/* PATCH 0085: section header doubled — 10px → 15px */}
+            <span style={{ fontSize: '15px', fontWeight: 700, color: '#EF4444', letterSpacing: '0.8px' }}>
+              🚧 PERSISTENT BOTTLENECK READING
+            </span>
+            <span style={{ fontSize: '13px', color: '#4A5B6C' }}>
+              🇮🇳 {indiaItems.length} India · 🌐 {globalItems.length} Global · auto-detected from accumulated evidence
+            </span>
+            {/* PATCH 0212 — freshness chip for bottleneck dashboard */}
+            <PanelFreshness dataUpdatedAt={bnUpdatedAt} isFetching={bnFetching} staleAfterMs={5 * 60_000} />
+            {/* PATCH 0088: 'Latest' pill — bottlenecks first seen in the last 10 days */}
+            {totalLatest > 0 && (
+              <span
+                title={`${totalLatest} bottleneck${totalLatest === 1 ? '' : 's'} first detected in the last 10 days. They surface at the top of each region panel for 10 days, then drop back into normal confidence/structural ranking.`}
+                style={{
+                  fontSize: 12, fontWeight: 800, letterSpacing: '0.5px',
+                  color: '#0A1422',
+                  border: '1px solid #FBBF24',
+                  backgroundColor: '#FBBF24',
+                  padding: '2px 8px', borderRadius: 4,
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                }}
+              >
+                🆕 LATEST · {totalLatest} new in 10d
+              </span>
+            )}
+            {/* PATCH 0086: liveness pill — proves the panel is live, not stale */}
+            <span
+              title={lastUpdatedIso ? `Server-side last_updated: ${lastUpdatedIso}\nAuto-refresh every 5 min` : 'Live data'}
+              style={{
+                fontSize: 11, fontWeight: 700, letterSpacing: '0.4px',
+                color: liveColor, border: `1px solid ${liveColor}50`,
+                backgroundColor: `${liveColor}15`,
+                padding: '2px 8px', borderRadius: 4,
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+              }}
+            >
+              <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: liveColor, boxShadow: `0 0 6px ${liveColor}` }} />
+              {liveLabel.toUpperCase()}
+            </span>
+            <span style={{ marginLeft: 'auto', fontSize: '13px', color: '#4A5B6C' }}>
+              {/* PATCH 0435 BUG-034 — distinct label vs Forward Calendar expand */}
+              {showPersistent ? '▼ Hide Bottleneck Reading' : '▶ Show Bottleneck Reading'}
+            </span>
+          </button>
+          {showPersistent && (
+            // PATCH 0085: doubled card width (280→440) and gap so larger cards
+            // don't crush each other.
+            <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(440px, 1fr))', gap: 14 }}>
+              {flatList.map((rowAny: any, idx: number) => {
+                // PATCH 0086: region divider sentinel — full-width sub-header
+                if (rowAny && rowAny.__divider) {
+                  const isIN = rowAny.__divider === 'IN';
+                  const accent = isIN ? '#FBBF24' : '#22D3EE';
+                  return (
+                    <div
+                      key={`__div_${rowAny.__divider}_${idx}`}
+                      style={{
+                        gridColumn: '1 / -1',
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        marginTop: idx === 0 ? 0 : 12,
+                        paddingBottom: 6,
+                        borderBottom: `1px dashed ${accent}50`,
+                      }}
+                    >
+                      <span style={{ fontSize: 16, fontWeight: 800, color: accent, letterSpacing: '0.6px' }}>
+                        {isIN ? '🇮🇳 INDIA' : '🌐 GLOBAL'}
+                      </span>
+                      <span style={{ fontSize: 12, color: '#6B7A8D' }}>
+                        {rowAny.count} {rowAny.count === 1 ? 'bottleneck' : 'bottlenecks'} · {isIN
+                          ? 'NSE-listed beneficiaries only — Indian sources / ₹ / PSU patterns'
+                          : 'global L1–L6 roster — US / EU / Japan / Taiwan / Korea names'}
+                      </span>
+                      {/* PATCH 0088: per-region 'new in last 10 days' counter */}
+                      {rowAny.newCount > 0 && (
+                        <span
+                          title={`${rowAny.newCount} ${isIN ? 'Indian' : 'global'} bottleneck${rowAny.newCount === 1 ? '' : 's'} first detected in the last 10 days — sorted to top of this panel.`}
+                          style={{
+                            marginLeft: 'auto',
+                            fontSize: 11, fontWeight: 700, letterSpacing: '0.4px',
+                            color: '#0A1422',
+                            backgroundColor: '#FBBF24',
+                            border: '1px solid #FBBF24',
+                            padding: '2px 8px', borderRadius: 4,
+                          }}
+                        >
+                          🆕 {rowAny.newCount} new in 10d
+                        </span>
+                      )}
+                    </div>
+                  );
+                }
+                // Type-narrow back to PersistentBottleneckItem for the card render
+                const b = rowAny as PersistentBottleneckItem;
+                const trendColor = b.trend === 'rising' ? '#EF4444'
+                  : b.trend === 'steady' ? '#F59E0B'
+                  : b.trend === 'falling' ? '#22D3EE'
+                  : '#6B7A8D';
+                const trendIcon = b.trend === 'rising' ? '↑' : b.trend === 'steady' ? '→' : b.trend === 'falling' ? '↓' : '·';
+                // PATCH 0080: prefer best specialist sample over most-recent
+                const bestSample = b.best_specialist_sample || b.top_samples[0];
+                const showLabel = b.label || b.node.replace(/_/g, ' ');
+                return (
+                  // PATCH 0085: card padding 8/10 → 14/18, radius 8 → 12
+                  <div key={b.node} style={{
+                    backgroundColor: '#0A1422', border: '1px solid #1A2840',
+                    borderRadius: 12, padding: '14px 18px',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                      {/* PATCH 0085: card title 11 → 17 */}
+                      <span style={{ fontSize: 17, fontWeight: 800, color: '#F5F7FA', letterSpacing: '0.3px' }}>
+                        {showLabel}
+                      </span>
+                      {b.is_structural && (
+                        <span style={{ fontSize: 11, fontWeight: 700, color: '#8B5CF6', border: '1px solid #8B5CF640', backgroundColor: '#8B5CF610', padding: '2px 6px', borderRadius: 4 }}>
+                          STRUCTURAL
+                        </span>
+                      )}
+                      {/* PATCH 0088: LATEST pill — bottleneck first detected ≤10d ago */}
+                      {b.is_latest && (
+                        <span
+                          title={`First detected ${b.first_seen_age_days ?? '?'} day${b.first_seen_age_days === 1 ? '' : 's'} ago. Surfaces at top of panel for the first 10 days, then drops to confidence/structural ranking.`}
+                          style={{
+                            fontSize: 11, fontWeight: 800, letterSpacing: '0.4px',
+                            color: '#0A1422',
+                            backgroundColor: '#FBBF24',
+                            border: '1px solid #FBBF24',
+                            padding: '2px 7px', borderRadius: 4,
+                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                          }}
+                        >
+                          🆕 LATEST · {b.first_seen_age_days ?? 0}d
+                        </span>
+                      )}
+                      <span style={{ marginLeft: 'auto', fontSize: 15, fontWeight: 700, color: trendColor }}>
+                        {trendIcon} {b.trend}
+                      </span>
+                    </div>
+                    {b.sub && (
+                      // PATCH 0085: sub 10 → 14
+                      <div style={{ fontSize: 14, color: '#94A3B8', lineHeight: 1.4, marginBottom: 8 }}>
+                        {b.sub}
+                      </div>
+                    )}
+                    {/* PATCH 0085: meta row 10 → 13 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, fontSize: 13, color: '#94A3B8' }}>
+                      <span style={{ color: '#10B981', fontWeight: 700 }}>{b.confidence_pct}% conf</span>
+                      <span>·</span>
+                      <span>{b.sample_count} articles</span>
+                      <span>·</span>
+                      <span>{b.age_days}d ago</span>
+                    </div>
+                    {bestSample && (
+                      // PATCH 0085: top signal 9 → 12
+                      <div style={{ fontSize: 12, color: '#6B7A8D', lineHeight: 1.5, borderTop: '1px solid #1A2840', paddingTop: 8 }}>
+                        <span style={{ color: '#22D3EE', fontWeight: 700 }}>Top signal:</span>{' '}
+                        <span style={{ color: '#CBD5E1' }}>{bestSample.title.slice(0, 110)}</span>
+                        <br/>
+                        <span style={{ color: '#4A5B6C' }}>{bestSample.source} · {bestSample.tier}</span>
+                      </div>
+                    )}
+                    {/* PATCH 0081 + 0082: ARCHITECTURAL BENEFICIARIES — second-order winners
+                        PATCH 0085: typography all bumped ~70% larger so the card actually reads
+                        at desk distance. */}
+                    {b.architectural_adaptations && b.architectural_adaptations.length > 0 && (
+                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed #1A2840' }}>
+                        <div style={{ fontSize: 12, color: '#F59E0B', fontWeight: 700, letterSpacing: '0.5px', marginBottom: 8 }}>
+                          ↪ ARCHITECTURAL BENEFICIARIES (2nd-order)
+                        </div>
+                        {b.architectural_adaptations.map((adapt) => {
+                          // PATCH 0082: duration badge color
+                          const durColor = adapt.duration === 'MULTI_YEAR_STRUCTURAL' ? '#10B981'
+                            : adapt.duration === 'SECULAR' ? '#22D3EE'
+                            : adapt.duration === 'CYCLICAL' ? '#F59E0B'
+                            : adapt.duration === 'POLICY_SENSITIVE' ? '#8B5CF6'
+                            : '#6B7A8D';
+                          const durLabel = adapt.duration === 'MULTI_YEAR_STRUCTURAL' ? 'Multi-year structural'
+                            : adapt.duration === 'SECULAR' ? 'Secular'
+                            : adapt.duration === 'CYCLICAL' ? 'Cyclical'
+                            : adapt.duration === 'POLICY_SENSITIVE' ? 'Policy-sensitive'
+                            : adapt.duration === 'TRADING' ? 'Trading'
+                            : '';
+                          return (
+                            <div key={adapt.adaptation} style={{ marginBottom: 12, fontSize: 13, lineHeight: 1.5 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+                                <span style={{ color: '#10B981', fontWeight: 700, fontSize: 14 }}>· {adapt.label}</span>
+                                {durLabel && (
+                                  <span style={{
+                                    fontSize: 10, fontWeight: 700, letterSpacing: '0.3px',
+                                    color: durColor, border: `1px solid ${durColor}40`,
+                                    backgroundColor: `${durColor}10`,
+                                    padding: '2px 6px', borderRadius: 3,
+                                  }}>
+                                    {durLabel.toUpperCase()}
+                                  </span>
+                                )}
+                              </div>
+                              {/* PATCH 0482 — ticker chips removed (user: "anyway incorrect").
+                                   Show clean prose rationale + a count indicator instead so the
+                                   sub-theme + duration tag still convey the actionable shape
+                                   without surfacing speculative ticker-tagging. */}
+                              <div style={{ color: '#CBD5E1', fontSize: 12, lineHeight: 1.5, marginTop: 4 }} title={adapt.rationale}>
+                                {adapt.rationale}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* ── PATCH 0085 / PATCH 0482 — TRANSMISSION SUB-THEMES ──
+                          User feedback: ticker rosters at L1-L6 were "anyway incorrect" and
+                          made the panel look noisy. Replaced ticker chips with clean
+                          sub-theme rows so the institutional layer-label remains useful
+                          (Direct Scarcity Capture → Compute Substitutes → Edge → ...)
+                          without speculative ticker-tagging. T0-T4 transmission cascade
+                          below is unchanged. */}
+                    {b.layered_beneficiaries && b.layered_beneficiaries.fired_layers.length > 0 && (() => {
+                      const lb = b.layered_beneficiaries;
+                      const LAYER_META: Record<string, { icon: string; label: string; tag: string; color: string }> = {
+                        L1: { icon: '🧱', label: 'Direct Scarcity Capture',     tag: 'Input pricing power',                  color: '#F59E0B' },
+                        L2: { icon: '⚙️', label: 'Compute Substitutes',          tag: 'GPU / CPU / ARM substitution',         color: '#8B5CF6' },
+                        L3: { icon: '🌐', label: 'Edge Distribution',            tag: 'CDN / latency / bandwidth',             color: '#38BDF8' },
+                        L4: { icon: '🧪', label: 'Transmission Winners',         tag: 'Sterlite-type pass-through',            color: '#10B981' },
+                        L5: { icon: '🏢', label: 'Platform Beneficiaries',       tag: 'Hyperscaler demand aggregators',        color: '#3B82F6' },
+                        L6: { icon: '⚡', label: 'Infrastructure / Efficiency',  tag: 'Power, thermal, perf-per-watt',         color: '#D946EF' },
+                      };
+                      return (
+                        <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed #1A2840' }}>
+                          <div style={{ fontSize: 12, color: '#22D3EE', fontWeight: 700, letterSpacing: '0.5px', marginBottom: 8 }}>
+                            🔁 TRANSMISSION SUB-THEMES (L1–L6)
+                          </div>
+                          {lb.fired_layers.map((L) => {
+                            const meta = LAYER_META[L];
+                            if (!meta) return null;
+                            return (
+                              <div key={L} style={{
+                                display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 6, flexWrap: 'wrap',
+                                paddingLeft: 8, borderLeft: `2px solid ${meta.color}80`,
+                              }}>
+                                <span style={{
+                                  fontSize: 12, fontWeight: 700,
+                                  color: meta.color,
+                                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                                  minWidth: 28,
+                                }}>
+                                  {L}
+                                </span>
+                                <span style={{ fontSize: 13, fontWeight: 600, color: '#E6EDF3' }}>
+                                  {meta.icon} {meta.label}
+                                </span>
+                                <span style={{ fontSize: 11, color: '#6B7A8D', fontStyle: 'italic' }}>{meta.tag}</span>
+                              </div>
+                            );
+                          })}
+                          {/* Transmission cascade T0 → T4 */}
+                          <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #1A2840' }}>
+                            <div style={{ fontSize: 11, color: '#6B7A8D', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>Transmission cascade</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 12 }}>
+                              {([
+                                ['T0', 'now',    lb.transmission.T0, '#22D3EE'],
+                                ['T1', '0–1Q',   lb.transmission.T1, '#38BDF8'],
+                                ['T2', '1–3Q',   lb.transmission.T2, '#10B981'],
+                                ['T3', '3–6Q',   lb.transmission.T3, '#F59E0B'],
+                                ['T4', '6–12Q',  lb.transmission.T4, '#D946EF'],
+                              ] as const).map(([t, q, txt, color]) => (
+                                <div key={t} style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+                                  <span style={{ color, fontWeight: 700, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', minWidth: 22 }}>{t}</span>
+                                  <span style={{ color: '#6B7A8D', fontSize: 10, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', minWidth: 50 }}>{q}</span>
+                                  <span style={{ color: '#CBD5E1', lineHeight: 1.45 }}>{txt}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        );
+      })()}
       </div>
 
       {/* ── Article detail overlay ─────────────────────────────────── */}
