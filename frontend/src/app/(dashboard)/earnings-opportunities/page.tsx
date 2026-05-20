@@ -1030,6 +1030,40 @@ export default function EarningsOpportunitiesPage() {
     return () => { cancelled = true; };
   }, [resolvedDateForGrading, forceRescanning]);
 
+  // PATCH 0505 — Auto-fire Force Re-scan when a recent date loads empty.
+  // User mandate: "no error in future in this tab". If we see 0 cards on
+  // a date within last 14 days AND the today-live source telemetry shows
+  // 0 from both NSE and BSE, fire a force=1 round-trip once. This catches
+  // the case where the KV cache poisoned (e.g. NSE returned BLOCKED at
+  // first probe; we want to retry through BSE this time). One-shot per
+  // date — won't loop.
+  const autoForceFiredRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!resolvedDateForGrading || !gradedData?.by_tier || !coverageStats) return;
+    if (autoForceFiredRef.current.has(resolvedDateForGrading)) return;
+    const allCards = (TIER_ORDER as EarningsTier[])
+      .flatMap((t) => gradedData.by_tier?.[t] || []);
+    if (allCards.length > 0) return;
+    const ageDays = Math.max(0, Math.floor(
+      (new Date(todayIso).getTime() - new Date(resolvedDateForGrading).getTime()) / 86_400_000
+    ));
+    if (ageDays > 14) return;
+    // Only fire when coverage telemetry shows we genuinely have no data —
+    // not when sources returned filings but graded dropped them all (which
+    // would mean a parser/grading problem, not a coverage one).
+    if (coverageStats.total > 0) return;
+    autoForceFiredRef.current.add(resolvedDateForGrading);
+    (async () => {
+      try {
+        await Promise.allSettled([
+          fetch(`/api/v1/earnings/today-live?date=${resolvedDateForGrading}&force=1`, { cache: 'no-store' }),
+          fetch(`/api/v1/earnings/graded?date=${resolvedDateForGrading}&force=1`, { cache: 'no-store' }),
+        ]);
+        await Promise.all([refetchHub(), refetchGraded()]);
+      } catch {}
+    })();
+  }, [resolvedDateForGrading, gradedData, coverageStats, todayIso, refetchHub, refetchGraded]);
+
   // PATCH 0497 — Probe graded endpoint for past 14 days to discover
   // populated dates the hub aggregator missed. Fires once per resolved date
   // when current date returned 0 cards. Result feeds:
