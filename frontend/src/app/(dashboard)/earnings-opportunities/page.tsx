@@ -780,7 +780,10 @@ type ViewMode = 'CALENDAR' | 'GRADED';
 
 export default function EarningsOpportunitiesPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('CALENDAR');
-  const [filterDate, setFilterDate] = useState<string>(todayISO());
+  // PATCH 0498 — Initialize to '' (Latest mode) so auto-walk-back fires
+  // from today and lands on the most-recently-populated date. Previously
+  // initialized to todayISO() which short-circuited the walk-back.
+  const [filterDate, setFilterDate] = useState<string>('');
   const [showAbout, setShowAbout] = useState(false);
   const [expanded, setExpanded] = useState<Record<EarningsTier, boolean>>({
     BLOCKBUSTER: true, STRONG: true, MIXED: false, AVOID: false,
@@ -947,6 +950,14 @@ export default function EarningsOpportunitiesPage() {
   // Stops the moment we find a populated date.
   const autoJumpedRef = useRef(false);
   const autoWalkProbingRef = useRef(false);
+  // PATCH 0498 — Reset autoJumpedRef when filterDate clears (user clicked
+  // Latest button) so the walk-back fires again from today.
+  useEffect(() => {
+    if (!filterDate) {
+      autoJumpedRef.current = false;
+      autoWalkProbingRef.current = false;
+    }
+  }, [filterDate]);
   useEffect(() => {
     if (filterDate) return;  // user explicitly picked a date — don't override
     if (autoJumpedRef.current) return;
@@ -1220,17 +1231,13 @@ export default function EarningsOpportunitiesPage() {
       await Promise.all([refetchHub(), refetchGraded()]);
       return;
     }
-    // PATCH 0450 BUG-056 — Block Hard Refresh on past dates (older than
-    // yesterday). The full enrich rebuild + worker poll is a 20+ second
-    // operation that produces no value when sources have no fresh data
-    // for an immutable past date. Use Backfill 60d for historical gaps.
-    const yIsoLocal2 = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); })();
-    if (resolvedDateForGrading < yIsoLocal2) {
-      const stamp = new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-      setRefreshFeedback(`◯ ${stamp} · Past date — cached snapshot is the source of truth. Hard Refresh is for today / yesterday only.`);
-      setTimeout(() => setRefreshFeedback(null), 6_000);
-      return;
-    }
+    // PATCH 0450 BUG-056 / PATCH 0498 — Previously blocked Hard Refresh on
+    // past dates, but user feedback (May 2026): "fix bugs, india companies
+    // file Sat/Sun every weekend during earnings season". The block prevented
+    // users from forcing a re-scan of weekend filings when the live-NSE
+    // augmentation needed to fire. Now: always allow Hard Refresh. The
+    // server-side rate limit (autoheal lockout 30 min in graded route)
+    // protects upstream sources.
     setHardRefreshing(true);
     try {
       // PATCH 0190 — Hard Refresh wipes localStorage for this date + month
@@ -1599,19 +1606,10 @@ export default function EarningsOpportunitiesPage() {
 
   const refreshMissingMutate = async () => {
     if (!resolvedDateForGrading || refreshing) return;
-    // PATCH 0450 BUG-056 — Past dates are immutable. Block refresh-missing
-    // operations on anything older than yesterday so the user doesn't trigger
-    // a 20-second hammer on a date that will never get fresh data. Show a
-    // clear message instead. This was the root cause of "why is past loading
-    // slow?" — the button was firing the full enrich path + 60s/5min
-    // follow-ups on cached, immutable past-date snapshots.
-    const yIsoLocal = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); })();
-    if (resolvedDateForGrading < yIsoLocal) {
-      const stamp = new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-      setRefreshFeedback(`◯ ${stamp} · Past date — using cached snapshot. Past data is immutable; the Refresh button is for today / yesterday only. Use "Backfill 60d" if you need to populate historical gaps.`);
-      setTimeout(() => setRefreshFeedback(null), 8_000);
-      return;
-    }
+    // PATCH 0450 BUG-056 / PATCH 0498 — Removed past-date block. User
+    // explicitly needs to re-scan weekend filings when our pipeline missed
+    // them on the initial poll. Live-NSE augmentation (server-side) is
+    // protected by a 30-min KV lockout to prevent hammering NSE.
     setRefreshing(true);
     setRefreshFeedback(null);
     try {
@@ -1807,22 +1805,20 @@ export default function EarningsOpportunitiesPage() {
       <div style={{ padding: '20px 24px 14px', borderBottom: '1px solid #1A2540', backgroundColor: '#0D1623' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
           <h1 style={{ fontSize: 22, fontWeight: 900, color: '#E6EDF3', margin: 0 }}>Earnings Opportunities</h1>
-          <button onClick={() => refetch()} disabled={hardRefreshing || isPastDate}
-            title={isPastDate
-              ? 'Past date — cached snapshot is the source of truth. Hard Refresh disabled.'
-              : 'Hard refresh — busts cache, re-fetches NSE/BSE feeds, pulls in newly-filed tickers'}
+          <button onClick={() => refetch()} disabled={hardRefreshing}
+            title="Hard refresh — busts cache, re-fetches NSE/BSE feeds, pulls in newly-filed tickers (works for any date including weekends)"
             style={{
               padding: '4px 10px', borderRadius: 6,
-              border: `1px solid ${isPastDate ? '#1A2840' : '#22D3EE60'}`,
-              background: isPastDate ? 'transparent' : (hardRefreshing ? '#22D3EE30' : '#22D3EE15'),
-              color: isPastDate ? '#4A5B6C' : '#22D3EE',
+              border: '1px solid #22D3EE60',
+              background: hardRefreshing ? '#22D3EE30' : '#22D3EE15',
+              color: '#22D3EE',
               fontSize: 11, fontWeight: 700,
-              cursor: (hardRefreshing || isPastDate) ? 'not-allowed' : 'pointer',
+              cursor: hardRefreshing ? 'not-allowed' : 'pointer',
               display: 'inline-flex', alignItems: 'center', gap: 4,
-              opacity: isPastDate ? 0.5 : (hardRefreshing ? 0.8 : 1),
+              opacity: hardRefreshing ? 0.8 : 1,
             }}>
             <RefreshCw style={{ width: 11, height: 11, animation: hardRefreshing ? 'spin 0.8s linear infinite' : 'none' }} />
-            {hardRefreshing ? 'Refetching…' : (isPastDate ? 'Cached (past date)' : 'Hard Refresh')}
+            {hardRefreshing ? 'Refetching…' : 'Hard Refresh'}
             <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
           </button>
           {/* PATCH 0360 / 0361 — One-shot backfill of the last 60 weekdays.
@@ -1893,24 +1889,20 @@ export default function EarningsOpportunitiesPage() {
                 {missing > 0 && (
                   <button
                     onClick={refreshMissingMutate}
-                    disabled={refreshing || isPastDate}
-                    title={isPastDate
-                      ? 'Past date — Refresh is for today / yesterday only. Past data is cached and immutable. Use Backfill 60d for historical gaps.'
-                      : `Fetch financials for ${missing} cards that don't have data yet — leaves populated cards untouched`}
+                    disabled={refreshing}
+                    title={`Fetch financials for ${missing} cards that don't have data yet — works on past dates too (weekend filings, etc.)`}
                     style={{
                       padding: '4px 10px', borderRadius: 6,
-                      border: `1px solid ${isPastDate ? '#1A2840' : '#F59E0B60'}`,
-                      background: isPastDate ? 'transparent' : (refreshing ? '#F59E0B30' : '#F59E0B15'),
-                      color: isPastDate ? '#4A5B6C' : '#F59E0B',
+                      border: '1px solid #F59E0B60',
+                      background: refreshing ? '#F59E0B30' : '#F59E0B15',
+                      color: '#F59E0B',
                       fontSize: 11,
-                      cursor: (refreshing || isPastDate) ? 'not-allowed' : 'pointer',
+                      cursor: refreshing ? 'not-allowed' : 'pointer',
                       display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 700,
-                      opacity: isPastDate ? 0.5 : (refreshing ? 0.8 : 1),
+                      opacity: refreshing ? 0.8 : 1,
                     }}>
                     <RefreshCw style={{ width: 11, height: 11, animation: refreshing ? 'spin 0.8s linear infinite' : 'none' }} />
-                    {refreshing
-                      ? `Refreshing ${missing}…`
-                      : (isPastDate ? `${missing} missing (cached past date)` : `Refresh ${missing} missing`)}
+                    {refreshing ? `Refreshing ${missing}…` : `Refresh ${missing} missing`}
                   </button>
                 )}
                 {/* Inline feedback right next to the button — impossible to miss */}
