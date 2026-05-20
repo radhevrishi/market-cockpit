@@ -6,7 +6,7 @@ import { CHAT_ID, BOT_SECRET } from '@/lib/config';
 // PATCH 0273 — Conviction Beats overlay on Earnings Guidance.
 import { getConvictionTickers } from '@/lib/conviction-beats';
 // PATCH 0545 — AUDIT #95 debounced LS writes for the guidance history snapshot.
-import { debouncedSetItem } from '@/lib/debounced-storage';
+import { debouncedSetItem, getItemSync } from '@/lib/debounced-storage';
 
 // PATCH 0294 — Q-over-Q score delta + sparkline (audit IMP-04).
 // We snapshot every (symbol, period) guidance score into localStorage on
@@ -20,7 +20,9 @@ interface GuidanceHistoryShape {
 function readGuidanceHistory(): GuidanceHistoryShape {
   if (typeof window === 'undefined') return {};
   try {
-    const raw = localStorage.getItem(GUIDANCE_HISTORY_KEY);
+    // PATCH 0545 — race-aware read so a successive readback in the 250ms
+    // idle window after debouncedSetItem sees the latest snapshot.
+    const raw = getItemSync(GUIDANCE_HISTORY_KEY);
     return raw ? (JSON.parse(raw) as GuidanceHistoryShape) : {};
   } catch { return {}; }
 }

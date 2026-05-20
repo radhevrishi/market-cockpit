@@ -41,6 +41,19 @@ export function flushDebouncedWrites() {
   drain();
 }
 
+/**
+ * PATCH 0545 — Race-aware read. Returns the in-flight pending value if a
+ * `debouncedSetItem` for `key` is still queued; otherwise the actual LS value.
+ * Consumers that read-back-after-write should prefer this over raw getItem so
+ * they don't see stale data within the 250ms idle window (e.g. earnings-ops
+ * date-arrow click re-reading the LS cache right after writing it).
+ */
+export function getItemSync(key: string): string | null {
+  if (pending.has(key)) return pending.get(key) ?? null;
+  if (typeof window === 'undefined') return null;
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+
 // Auto-flush on page hide so users don't lose unsaved state on tab close.
 if (typeof window !== 'undefined') {
   window.addEventListener('pagehide', () => { flushDebouncedWrites(); });

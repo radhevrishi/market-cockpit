@@ -20,7 +20,9 @@ import api from '@/lib/api';
 // PATCH 0186 — Auto-sync BLOCKBUSTER/STRONG cards into Conviction Beats pipeline
 import { syncFromEarningsOps, type ConvictionTier } from '@/lib/conviction-beats';
 // PATCH 0545 — AUDIT #95 debounced LS writes for the hot graded payload writer.
-import { debouncedSetItem } from '@/lib/debounced-storage';
+// getItemSync is race-aware: if a write is still queued within the 250ms idle
+// window, the read returns the pending value instead of the stale LS string.
+import { debouncedSetItem, getItemSync } from '@/lib/debounced-storage';
 
 // ─── Calendar payload types ────────────────────────────────────────────────
 interface CalendarItem {
@@ -126,7 +128,8 @@ function useMarketEarnings(months: string[]) {
     initialData: () => {
       if (typeof window === 'undefined') return undefined;
       try {
-        const raw = localStorage.getItem(HUB_LS_PREFIX + key);
+        // PATCH 0545 — race-aware read (see writeLsCache notes above).
+        const raw = getItemSync(HUB_LS_PREFIX + key);
         if (!raw) return undefined;
         const parsed = JSON.parse(raw);
         // PATCH 0253 — Hub data for PAST months is immutable; for the current
@@ -147,7 +150,7 @@ function useMarketEarnings(months: string[]) {
       // safe pairing: if cache shape is invalid, treat as 0 (force refetch).
       if (typeof window === 'undefined') return undefined;
       try {
-        const raw = localStorage.getItem(HUB_LS_PREFIX + key);
+        const raw = getItemSync(HUB_LS_PREFIX + key);
         if (!raw) return undefined;
         const p = JSON.parse(raw);
         if (!p || !p.results) return undefined;
@@ -872,7 +875,10 @@ export default function EarningsOpportunitiesPage() {
   const readLsCache = (date: string): OpportunitiesPayload | undefined => {
     if (!date || typeof window === 'undefined') return undefined;
     try {
-      const raw = localStorage.getItem(LS_PREFIX + date);
+      // PATCH 0545 — getItemSync prefers any in-flight pending write so a
+      // rapid arrow-click within the 250ms idle window sees the just-written
+      // payload, not the stale LS one.
+      const raw = getItemSync(LS_PREFIX + date);
       if (!raw) return undefined;
       const parsed = JSON.parse(raw);
       const cachedAt = parsed?._cachedAt || 0;

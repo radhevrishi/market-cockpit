@@ -17,7 +17,7 @@ import { annotateArticle, clusterByCanonical, confidenceBand, CONFIDENCE_VISUAL 
 import { JUNK_TICKERS, TICKER_ALIASES } from '@/lib/news/ticker-vocab';
 import { isInReadingList, toggleReadingList } from '@/lib/reading-list';
 // PATCH 0545 — AUDIT #95 debounced LS writes for thesis-notebook autosave.
-import { debouncedSetItem } from '@/lib/debounced-storage';
+import { debouncedSetItem, getItemSync } from '@/lib/debounced-storage';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1139,7 +1139,9 @@ function NewsCard({ article, onSelect }: { article: NewsArticle; onSelect: (a: N
 const NOTE_KEY_PREFIX = 'mc:notes:v1:';
 function loadNote(articleId: string): string {
   if (typeof window === 'undefined') return '';
-  try { return localStorage.getItem(NOTE_KEY_PREFIX + articleId) || ''; } catch { return ''; }
+  // PATCH 0545 — race-aware read so an autosave-in-flight read returns the
+  // freshly-typed text instead of the last-flushed LS value.
+  try { return getItemSync(NOTE_KEY_PREFIX + articleId) || ''; } catch { return ''; }
 }
 function saveNote(articleId: string, text: string) {
   if (typeof window === 'undefined') return;
