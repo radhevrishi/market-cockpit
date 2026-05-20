@@ -27,6 +27,18 @@
     {
       "path": "/api/v1/cron/concall-intel-snapshot?secret=mc-bot-2026",
       "schedule": "30 14 * * 1-5"
+    },
+    {
+      "path": "/api/bot/eo-blockbuster-alert?secret=mc-bot-2026",
+      "schedule": "30 5 * * *"
+    },
+    {
+      "path": "/api/bot/eo-blockbuster-alert?secret=mc-bot-2026",
+      "schedule": "30 8 * * *"
+    },
+    {
+      "path": "/api/bot/eo-blockbuster-alert?secret=mc-bot-2026",
+      "schedule": "30 15 * * *"
     }
   ],
   "rewrites": [
