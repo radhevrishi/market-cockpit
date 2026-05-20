@@ -182,7 +182,9 @@ function saveRejections(map: RejectionMap) {
 // LIVE FEED — single source of truth
 // ═══════════════════════════════════════════════════════════════════════════
 
-type Category = 'SPIN' | 'MA' | 'TURN' | 'CAP';
+// PATCH 0532 — Added CAPEX (Capacity Expansion / New Ventures) and CONCALL
+// (First Presentation / Concall) categories. Mirrors backend.
+type Category = 'SPIN' | 'MA' | 'TURN' | 'CAP' | 'CAPEX' | 'CONCALL';
 
 interface LiveFeedItem {
   id: string;
@@ -341,10 +343,13 @@ function scoreEvent(it: LiveFeedItem): { score: number; tier: Tier; freshness: S
 }
 
 const CAT_META: Record<Category, { label: string; color: string; icon: string }> = {
-  SPIN: { label: 'Spin-off / Demerger', color: '#22D3EE', icon: '🔀' },
-  MA:   { label: 'M&A / Open Offer',    color: '#FBBF24', icon: '🤝' },
-  TURN: { label: 'Turnaround',          color: '#10B981', icon: '↩️' },
-  CAP:  { label: 'Capital Allocation',  color: '#A78BFA', icon: '💰' },
+  SPIN:    { label: 'Spin-off / Demerger',                color: '#22D3EE', icon: '🔀' },
+  MA:      { label: 'M&A / Open Offer / Acquisition',     color: '#FBBF24', icon: '🤝' },
+  TURN:    { label: 'Turnaround',                         color: '#10B981', icon: '↩️' },
+  CAP:     { label: 'Capital Allocation / Fund Raising',  color: '#A78BFA', icon: '💰' },
+  // PATCH 0532 — new categories
+  CAPEX:   { label: 'Capacity Expansion / New Venture',   color: '#F97316', icon: '🏭' },
+  CONCALL: { label: 'First Presentation / Concall',       color: '#60A5FA', icon: '🎙' },
 };
 
 const TIER_META: Record<Tier, { label: string; color: string; tagline: string }> = {
@@ -497,7 +502,7 @@ export default function SpecialSituationsPage() {
   // Aggregate stats per Category for the header
   // PATCH 0109 — BUG-03 fix: badges read from canonical events when populated
   // (otherwise the top counters showed 0 while the list rendered items below).
-  const catCounts: Record<Category, number> = { SPIN: 0, MA: 0, TURN: 0, CAP: 0 };
+  const catCounts: Record<Category, number> = { SPIN: 0, MA: 0, TURN: 0, CAP: 0, CAPEX: 0, CONCALL: 0 };
   if (canonicalEvents.length > 0) {
     for (const e of canonicalEvents) catCounts[e.category as Category]++;
   } else {
@@ -1950,7 +1955,9 @@ function DiscoverScanner({ feed, isLoading, error, refetch, isFetching, region, 
         </button>
       </div>
 
-      {(['SPIN','MA','TURN','CAP'] as Category[]).map((cat) => {
+      {/* PATCH 0532 — include CAPEX (Capacity Expansion / New Ventures) and
+          CONCALL (First Presentation / Concall) so those event types show up. */}
+      {(['SPIN','MA','TURN','CAP','CAPEX','CONCALL'] as Category[]).map((cat) => {
         const items = filterReg(feed.by_category[cat] || []);
         const meta = CAT_META[cat];
         return (

@@ -101,7 +101,13 @@ const SOURCES: ReadonlyArray<FeedSource> = [
 // Tuned wider than the page-side regex so we catch more candidates.  REJECT
 // patterns kill rumour / negation noise.
 
-type Category = 'SPIN' | 'MA' | 'TURN' | 'CAP';
+// PATCH 0532 — Added CAPEX (Capacity Expansion / New Ventures) and CONCALL
+// (First Presentation / Concall). User's institutional event list also
+// includes pure capacity-expansion announcements (new manufacturing
+// facility, capex commitment, fresh foray into a market/business) and
+// first-time investor presentations / concalls. Previously these slipped
+// through the SPIN/MA/TURN/CAP cracks and never appeared.
+type Category = 'SPIN' | 'MA' | 'TURN' | 'CAP' | 'CAPEX' | 'CONCALL';
 
 interface CategorySpec {
   id: Category;
@@ -141,9 +147,39 @@ const CATEGORIES: ReadonlyArray<CategorySpec> = [
   },
   {
     id: 'CAP',
-    label: 'Capital Allocation (Buybacks / Dividends)',
-    pattern: /\b(buyback|share repurchase|repurchas(?:e|ed|ing)\s+shares|repurchase program|tender for own shares|special dividend|interim dividend|bonus issue|capital return|return of capital|debt prepay|treasury shares|reduction of share capital|capital reduction|dividend hike|dividend increase|raise(?:s|d)?\s+dividend|hikes? dividend|stock split|share split|board approves dividend|board recommends dividend|qip\b|qualified institutional placement|preferential (?:allotment|issue)|rights issue|rights offer)\b/i,
+    label: 'Capital Allocation (Buybacks / Dividends / Fund Raising)',
+    // PATCH 0532 — broadened with explicit NCD / debenture / warrant /
+    // FCCB / OFS phrasings so fund-raising announcements (NCDs, warrants
+    // conversion, OFS, preference issues) get bucketed here instead of
+    // falling through unclassified.
+    pattern: /\b(buyback|share repurchase|repurchas(?:e|ed|ing)\s+shares|repurchase program|tender for own shares|special dividend|interim dividend|bonus issue|capital return|return of capital|debt prepay|treasury shares|reduction of share capital|capital reduction|dividend hike|dividend increase|raise(?:s|d)?\s+dividend|hikes? dividend|stock split|share split|board approves dividend|board recommends dividend|qip\b|qualified institutional placement|preferential (?:allotment|issue)|rights issue|rights offer|non[\s-]?convertible debentures?|\bncd\b|ncds\b|debenture\s+issu(?:e|ance)|fccb\b|foreign currency convertible bonds?|warrant(?:s|\s+conversion|\s+issu(?:e|ance))?|ofs\b|offer for sale|secondary offering|via\s+(?:qip|ncds?|preference|preferential|rights|warrants|debentures?|ofs|fccb)|raises?\s+(?:rs\.?\s*)?[\d,]+\s*(?:cr|crore|crores?|lakh\s*crore)\s+via|raises?\s+(?:funds|capital|equity)\s+via)\b/i,
     reject: /\b(buyback program ended|cancel(?:led|s)?\s+(?:the\s+)?buyback|denied buyback|paused\s+(?:the\s+)?buyback|dividend (?:cut|reduced|suspended)|skip dividend|forgoes dividend)\b/i,
+  },
+  // PATCH 0532 — Capacity Expansion / New Ventures.
+  // User's institutional event list includes "Company X to set up a new
+  // <X> manufacturing facility", "X commences production at new unit",
+  // "X to invest <Y> crore towards <facility>", "X forays into <new
+  // segment>", "X expands capacity from N to M TPD", "X signs a new
+  // property in <city>", "X launches a new <residential/commercial>
+  // project". These slipped past SPIN/MA/TURN/CAP entirely.
+  {
+    id: 'CAPEX',
+    label: 'Capacity Expansion / New Ventures',
+    pattern: /\b(?:set\s+up|sets\s+up|setting\s+up|commission(?:s|ed|ing)?|commences?\s+production|inaugurat(?:e|es|ed|ion)|expand(?:s|ed|ing)?\s+(?:its\s+|the\s+)?(?:capacity|production|manufacturing|facility|footprint)|increase(?:s|d)?\s+(?:its\s+)?(?:capacity|production)|capacity\s+expansion|new\s+(?:manufacturing|production|cement|steel|sugar|chemical|plant|unit|facility|line|capacity|venture|business|property|hotel|project|order|order\s+book)|greenfield\s+(?:plant|facility|capacity|investment|project)|brownfield\s+expansion|to\s+invest\s+(?:rs\.?\s*)?[\d,]+\s*(?:cr|crore|crores?|lakh\s*crore|million|bn|billion)\s+(?:towards|in|to\s+(?:set\s+up|build|expand))|forays?\s+into|foray\s+into\s+(?:new|the)|enter(?:s|ed|ing)?\s+(?:into\s+)?(?:new|the)\s+(?:market|business|segment|sector)|launch(?:es|ed|ing)?\s+(?:a\s+)?new\s+(?:hotel|property|project|business|brand|residential|commercial|venture|plant|capacity|product\s+line|division)|signs?\s+(?:a\s+)?new\s+(?:hotel|property|deal|jv|joint\s+venture)|to\s+set\s+up\s+a\s+new|new\s+jv|joint\s+venture|leases?\s+a\s+new\s+(?:manufacturing|production|facility|unit)|new\s+(?:phase|line)\s+(?:of\s+)?(?:production|capacity)|capex\s+(?:of|plan|programme|towards)|spend\s+(?:rs\.?\s*)?[\d,]+\s*(?:cr|crore)\s+(?:towards|on)|increase(?:s|d)?\s+(?:starch|cement|sugar|steel|paper|polymer|capacity)\s+(?:from|to)\s+[\d,]+|secures?\s+(?:govt\s+)?approval\s+to\s+commence)\b/i,
+    reject: /\b(delay(?:s|ed|ing)?\s+(?:the\s+)?(?:capex|expansion|capacity|project)|shelv(?:e|ed|es)\s+(?:the\s+)?(?:capex|expansion|project)|defer(?:s|red)\s+(?:the\s+)?capex|cancels?\s+(?:the\s+)?(?:project|expansion|capex)|put\s+on\s+hold|withdraws?\s+(?:from|the)\s+(?:project|venture)|exits?\s+(?:the\s+)?(?:business|market|venture))\b/i,
+  },
+  // PATCH 0532 — First Presentation / Concall.
+  // Investor concalls + first presentations after IPO are
+  // institutional-grade triggers (first formal management guidance,
+  // sell-side coverage initiation, fresh disclosure of operating data).
+  // The screenshot row "First Presentation - Hester Biosciences" /
+  // "First Concall - KRM Ayurveda" / "First Concall - Pajson Agro" maps
+  // directly here.
+  {
+    id: 'CONCALL',
+    label: 'First Presentation / Concall',
+    pattern: /\b(first\s+(?:investor\s+)?(?:presentation|concall|conference\s+call|earnings\s+call)|maiden\s+(?:investor\s+)?(?:presentation|concall|conference\s+call)|(?:investor|analyst)\s+(?:meet|presentation|day)|debut\s+(?:investor\s+)?(?:presentation|concall)|inaugural\s+(?:concall|conference\s+call|investor\s+presentation)|post[\s-]?ipo\s+(?:concall|presentation)|conference\s+call\s+(?:transcript|recording)|earnings\s+call\s+transcript|q\d\s+(?:concall|conference\s+call|investor\s+presentation)|management\s+meet|sell[\s-]?side\s+(?:initiation|coverage)|coverage\s+initiat(?:ed|ion)|analyst\s+initiat(?:es|ion|ed))\b/i,
+    reject: /\b(skipped\s+(?:the\s+)?(?:concall|conference\s+call)|cancel(?:s|led)?\s+(?:the\s+)?(?:concall|conference|presentation)|postpon(?:e|ed)\s+(?:the\s+)?(?:concall|conference|presentation))\b/i,
   },
 ];
 
@@ -511,7 +547,8 @@ async function buildFeed(): Promise<{
     return db - da;
   });
 
-  const by_category: Record<Category, FeedItem[]> = { SPIN: [], MA: [], TURN: [], CAP: [] };
+  // PATCH 0532 — CAPEX + CONCALL buckets added
+  const by_category: Record<Category, FeedItem[]> = { SPIN: [], MA: [], TURN: [], CAP: [], CAPEX: [], CONCALL: [] };
   for (const it of deduped) by_category[it.category].push(it);
 
   // ── PATCH 0105: EVENT INTELLIGENCE PIPELINE ──
@@ -534,12 +571,16 @@ async function buildFeed(): Promise<{
   // got bucketed into Category 'TURN'. Now the event_type is the source
   // of truth — falls back to the regex category only when event_type is
   // unmapped.
+  // PATCH 0532 — CAPEX_NEW_VENTURE + FIRST_CONCALL event_types routed to
+  // the new buckets; everything else falls back to existing.
   const eventTypeToCategory = (eventType: string, fallback: Category): Category => {
     const et = (eventType || '').toUpperCase();
     if (['NCLT_IBC_ADMISSION', 'NCLT_IBC_RESOLUTION', 'TURNAROUND_OPERATING', 'TURNAROUND_NARRATIVE'].includes(et)) return 'TURN';
     if (['TENDER_OFFER', 'MERGER_DEFINITIVE', 'MERGER_RECOMMENDATION', 'GOING_PRIVATE', 'OPEN_OFFER', 'ACQUISITION_PUBLIC', 'STAKE_SALE', 'ASSET_SALE_MONETIZATION'].includes(et)) return 'MA';
     if (['SPIN_OFF', 'DEMERGER_INDIA', 'IPO_SUBSIDIARY', 'HOLDCO_ARB_TRIGGER', 'STUB_TRADE_TRIGGER'].includes(et)) return 'SPIN';
-    if (['BUYBACK_TENDER', 'BUYBACK_OPEN_MARKET', 'DIVIDEND_HIKE', 'RIGHTS_ISSUE', 'RIGHTS_ISSUE_DEEP', 'CONVERTIBLE_PIPE', 'PROMOTER_BACKSTOP', 'QIP_PLACEMENT', 'BONUS_ISSUE', 'STOCK_SPLIT'].includes(et)) return 'CAP';
+    if (['BUYBACK_TENDER', 'BUYBACK_OPEN_MARKET', 'DIVIDEND_HIKE', 'RIGHTS_ISSUE', 'RIGHTS_ISSUE_DEEP', 'CONVERTIBLE_PIPE', 'PROMOTER_BACKSTOP', 'QIP_PLACEMENT', 'BONUS_ISSUE', 'STOCK_SPLIT', 'NCD_ISSUE', 'WARRANTS_ISSUE', 'OFS', 'FCCB_ISSUE'].includes(et)) return 'CAP';
+    if (['CAPEX_EXPANSION', 'NEW_VENTURE', 'CAPACITY_COMMISSIONED', 'GREENFIELD_PROJECT', 'BROWNFIELD_EXPANSION', 'NEW_MANUFACTURING_FACILITY', 'FORAY_NEW_MARKET'].includes(et)) return 'CAPEX';
+    if (['FIRST_CONCALL', 'INVESTOR_PRESENTATION', 'MAIDEN_PRESENTATION', 'ANALYST_MEET', 'COVERAGE_INITIATED'].includes(et)) return 'CONCALL';
     return fallback;
   };
   const tickerToCategory = (cat: Category): Category => cat;
