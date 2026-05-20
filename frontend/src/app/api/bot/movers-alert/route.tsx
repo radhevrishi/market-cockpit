@@ -9,7 +9,10 @@ export const maxDuration = 55;
 // Server-only — leaked token rotated; set TELEGRAM_BOT_TOKEN_MOVERS
 // (or TELEGRAM_BOT_TOKEN as a shared default) in Vercel env vars.
 const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN_MOVERS || process.env.TELEGRAM_BOT_TOKEN || '';
-const TG_CHAT_ID = '5057319640';
+// Default broadcast chat — set TELEGRAM_CHAT_ID_MOVERS (preferred) or
+// TELEGRAM_CHAT_ID in Vercel env. Empty default avoids leaking a
+// personal chat ID to anyone forking the repo (#1).
+const TG_CHAT_ID = process.env.TELEGRAM_CHAT_ID_MOVERS || process.env.TELEGRAM_CHAT_ID || '';
 const BOT_SECRET = process.env.MC_BOT_SECRET || '';
 const API_BASE = 'https://market-cockpit.vercel.app';
 
@@ -1352,7 +1355,15 @@ export async function GET(request: Request) {
   console.log(`[BOT] Incoming request: mode=${searchParams.get('mode')}, secret=${secret ? 'provided' : 'missing'}`);
   diagnostics.steps.push('request_received');
 
-  if (secret !== BOT_SECRET) {
+  // Fail-closed: when env is unset, refuse all requests rather than
+  // letting an empty `?secret=` match an empty `BOT_SECRET`. Vercel cron
+  // is allowed to bypass via its auto-added x-vercel-cron header.
+  const vercelCron = request.headers.get('x-vercel-cron') || request.headers.get('x-vercel-signature') || '';
+  if (!BOT_SECRET) {
+    if (!vercelCron) {
+      return NextResponse.json({ error: 'server-misconfigured: MC_BOT_SECRET not set' }, { status: 503 });
+    }
+  } else if (!vercelCron && secret !== BOT_SECRET) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   diagnostics.steps.push('auth_passed');

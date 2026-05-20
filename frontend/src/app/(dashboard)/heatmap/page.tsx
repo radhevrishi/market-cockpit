@@ -310,7 +310,14 @@ export default function HeatmapPage() {
   }, []);
 
   useEffect(() => { fetchDaily(); }, [fetchDaily]);
-  useEffect(() => { const i = setInterval(fetchDaily, 60000); return () => clearInterval(i); }, [fetchDaily]);
+  // AUDIT_100 #7 — skip poll when tab is hidden
+  useEffect(() => {
+    const i = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      fetchDaily();
+    }, 60000);
+    return () => clearInterval(i);
+  }, [fetchDaily]);
 
   // Fetch earnings when mode switches
   useEffect(() => {

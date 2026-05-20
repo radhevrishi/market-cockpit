@@ -102,6 +102,14 @@ export default function NewsAlertsPage() {
       for (const a of stream) lastSeenIds.current.add(a.id);
       return;
     }
+    // AUDIT_100 #4 — accumulate hits across the whole stream pass,
+    // then apply ONE setRules update. Previously this loop fired
+    // setRules(...) per match → N renders per tick. With 50 matches
+    // in one poll, React queued 50 renders and froze the page.
+    const newToasts: { id: string; rule: string; headline: string; ts: number }[] = [];
+    const hitsByRule = new Map<string, string[]>(); // ruleId → article ids hit this pass
+    const firedAt = Date.now();
+
     for (const article of stream) {
       if (lastSeenIds.current.has(article.id)) continue;
       lastSeenIds.current.add(article.id);
@@ -114,22 +122,35 @@ export default function NewsAlertsPage() {
         if (rule.lastFiredArticleIds.includes(article.id)) continue;
         if (!matches(article, rule.conditions)) continue;
         const headline = article.headline || article.title || '(no headline)';
-        setToasts(t => [{ id: `${rule.id}-${article.id}`, rule: rule.name, headline, ts: Date.now() }, ...t.slice(0, 19)]);
+        newToasts.push({ id: `${rule.id}-${article.id}`, rule: rule.name, headline, ts: firedAt });
         if (permission === 'granted' && 'Notification' in window) {
           try {
             new Notification(`Alert: ${rule.name}`, { body: headline.slice(0, 200), tag: rule.id });
           } catch {}
         }
-        // PATCH 0453 P1-15 — Audit found a 50-item ring caused old articles
-        // to re-fire alerts after the ring rolled over. Bumped to 2000 so an
-        // article that fired stays "fired" for the foreseeable session
-        // (a rule averaging 1 hit/min × 24h still fits comfortably).
-        setRules(rs => rs.map(r => r.id === rule.id ? {
-          ...r,
-          lastFiredAt: Date.now(),
-          lastFiredArticleIds: [article.id, ...r.lastFiredArticleIds].slice(0, 2000),
-        } : r));
+        const arr = hitsByRule.get(rule.id) || [];
+        arr.push(article.id);
+        hitsByRule.set(rule.id, arr);
       }
+    }
+
+    // Batch all UI state updates into single renders (React doesn't auto-batch
+    // outside event handlers in v17 — and this is a useEffect callback).
+    if (newToasts.length > 0) {
+      setToasts(t => [...newToasts, ...t].slice(0, 20));
+    }
+    if (hitsByRule.size > 0) {
+      // PATCH 0453 P1-15 — 2000-item ring (an active rule firing every minute
+      // for 24h still fits comfortably).
+      setRules(rs => rs.map(r => {
+        const hits = hitsByRule.get(r.id);
+        if (!hits || hits.length === 0) return r;
+        return {
+          ...r,
+          lastFiredAt: firedAt,
+          lastFiredArticleIds: [...hits, ...r.lastFiredArticleIds].slice(0, 2000),
+        };
+      }));
     }
   }, [stream, rules, permission]);
 

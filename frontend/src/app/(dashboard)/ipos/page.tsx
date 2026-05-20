@@ -86,7 +86,11 @@ export default function IPOsPage() {
 
   useEffect(() => {
     fetchIPOs();
-    const interval = setInterval(fetchIPOs, 5 * 60 * 1000);
+    // AUDIT_100 #7 — skip poll when tab is hidden
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      fetchIPOs();
+    }, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
 

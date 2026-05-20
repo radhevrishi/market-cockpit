@@ -576,8 +576,13 @@ export default function WatchlistsPage() {
   const fetchData = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      // Step 1: Get bulk index quotes
-      const bulkQuotes = await fetchStockQuotes('india');
+      // AUDIT_100 #3 — fetch BOTH markets in parallel so US holdings
+      // (NVDA / TSM / RKLB etc.) get live quotes alongside Indian names.
+      const [india, us] = await Promise.all([
+        fetchStockQuotes('india'),
+        fetchStockQuotes('us'),
+      ]);
+      const bulkQuotes = [...india, ...us];
 
       // Step 2: Find tickers NOT in bulk response
       const bulkTickers = new Set(bulkQuotes.map(q => q.ticker));
@@ -616,7 +621,9 @@ export default function WatchlistsPage() {
   useEffect(() => {
     if (tickers.length === 0) return;
 
+    // AUDIT_100 #7 — skip poll when tab is hidden
     const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       fetchData();
     }, 60000);
 

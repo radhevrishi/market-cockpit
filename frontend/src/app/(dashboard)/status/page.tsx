@@ -302,7 +302,11 @@ export default function StatusPage() {
   // Optional 60s auto-refresh
   useEffect(() => {
     if (!autoRefresh) return;
-    const id = setInterval(runAll, 60_000);
+    // AUDIT_100 #7 — skip poll when tab is hidden
+    const id = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      runAll();
+    }, 60_000);
     return () => clearInterval(id);
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [autoRefresh]);

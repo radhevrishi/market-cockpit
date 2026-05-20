@@ -361,13 +361,18 @@ export default function ScreenerPage() {
   }, []);
 
   useEffect(() => {
+    // AUDIT_100 #7 — skip poll when tab is hidden
+    const gate = (fn: () => void) => () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      fn();
+    };
     if (screenerMode === 'stocks') {
       fetchQuotesData();
-      const interval = setInterval(fetchQuotesData, 60000);
+      const interval = setInterval(gate(fetchQuotesData), 60000);
       return () => clearInterval(interval);
     } else {
       fetchEarningsData();
-      const interval = setInterval(fetchEarningsData, 300000);
+      const interval = setInterval(gate(fetchEarningsData), 300000);
       return () => clearInterval(interval);
     }
   }, [screenerMode, fetchQuotesData, fetchEarningsData]);

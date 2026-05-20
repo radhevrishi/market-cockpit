@@ -179,7 +179,15 @@ export default function CompanyNewsPage() {
     }
   };
 
-  useEffect(() => { fetchNews(); const iv = setInterval(() => fetchNews(), 5 * 60 * 1000); return () => clearInterval(iv); }, []);
+  // AUDIT_100 #7 — skip poll when tab is hidden
+  useEffect(() => {
+    fetchNews();
+    const iv = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      fetchNews();
+    }, 5 * 60 * 1000);
+    return () => clearInterval(iv);
+  }, []);
   useEffect(() => { fetchNews(); }, [selectedDays]);
 
   const toggleExpand = (id: string) => {

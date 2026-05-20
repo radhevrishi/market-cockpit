@@ -82,22 +82,30 @@ const setStoredHoldings = (h: PortfolioHolding[]) => {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(h)); } catch {}
 };
 
+// AUDIT_100 #3 — fetch BOTH India + US bulk feeds and merge.
+// Users hold mixed portfolios (NVDA + RELIANCE in one watchlist).
+// Previously only India quotes were fetched → US holdings showed cmp=0.
 const fetchStockQuotes = async (): Promise<StockQuote[]> => {
-  // PATCH 0465 — 12s timeout (matches watchlist pattern)
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 12_000);
-  try {
-    const res = await fetch('/api/market/quotes?market=india', { signal: ctl.signal });
-    if (!res.ok) throw new Error('Failed');
-    const data = await res.json();
-    return (data.stocks || []).map((s: any) => ({
-      ticker: s.ticker, company: s.company || s.ticker, sector: s.sector || '—',
-      industry: s.industry || '—', price: s.price || 0, change: s.change || 0,
-      changePercent: s.changePercent || 0, dayHigh: s.dayHigh || s.price || 0,
-      dayLow: s.dayLow || s.price || 0,
-    }));
-  } catch { return []; }
-  finally { clearTimeout(timer); }
+  const mapQuote = (s: any): StockQuote => ({
+    ticker: s.ticker, company: s.company || s.ticker, sector: s.sector || '—',
+    industry: s.industry || '—', price: s.price || 0, change: s.change || 0,
+    changePercent: s.changePercent || 0, dayHigh: s.dayHigh || s.price || 0,
+    dayLow: s.dayLow || s.price || 0,
+  });
+  const fetchOne = async (market: 'india' | 'us'): Promise<StockQuote[]> => {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 12_000);
+    try {
+      const res = await fetch(`/api/market/quotes?market=${market}`, { signal: ctl.signal });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return (data.stocks || []).map(mapQuote);
+    } catch { return []; }
+    finally { clearTimeout(timer); }
+  };
+  // Parallel — independent failures
+  const [india, us] = await Promise.all([fetchOne('india'), fetchOne('us')]);
+  return [...india, ...us];
 };
 
 const fetchIndividualQuotes = async (symbols: string[]): Promise<StockQuote[]> => {
@@ -460,7 +468,11 @@ export default function PortfolioPage() {
   // Auto-refresh every 60s
   useEffect(() => {
     if (holdings.length === 0) return;
-    const i = setInterval(fetchData, 60000);
+    // AUDIT_100 #7 — skip poll when tab is hidden
+    const i = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      fetchData();
+    }, 60000);
     return () => clearInterval(i);
   }, [holdings.length, fetchData]);
 

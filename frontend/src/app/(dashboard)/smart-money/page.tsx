@@ -94,7 +94,9 @@ export default function SmartMoneyPage() {
   }, []);
 
   useEffect(() => {
+    // AUDIT_100 #7 — skip poll when tab is hidden
     const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       fetchData();
     }, 60000);
 

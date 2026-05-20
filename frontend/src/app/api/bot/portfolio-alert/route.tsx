@@ -997,7 +997,13 @@ export async function GET(request: Request) {
   console.log(`[PORTFOLIO] Incoming request: mode=${searchParams.get('mode')}, secret=${secret ? 'provided' : 'missing'}`);
   diagnostics.steps.push('request_received');
 
-  if (secret !== BOT_SECRET) {
+  // Fail-closed when MC_BOT_SECRET env is unset; allow Vercel-cron header bypass.
+  const vercelCron = request.headers.get('x-vercel-cron') || request.headers.get('x-vercel-signature') || '';
+  if (!BOT_SECRET) {
+    if (!vercelCron) {
+      return NextResponse.json({ error: 'server-misconfigured: MC_BOT_SECRET not set' }, { status: 503 });
+    }
+  } else if (!vercelCron && secret !== BOT_SECRET) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   diagnostics.steps.push('auth_passed');

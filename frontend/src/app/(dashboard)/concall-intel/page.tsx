@@ -331,7 +331,11 @@ function LiveBullishFeed() {
   // Initial fetch + auto-poll every 5 min
   useEffect(() => {
     fetchFeed();
-    const t = setInterval(() => fetchFeed(), 5 * 60 * 1000);
+    // AUDIT_100 #7 — skip poll when tab is hidden
+    const t = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      fetchFeed();
+    }, 5 * 60 * 1000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [days]);
@@ -1125,7 +1129,11 @@ function WarrantMomentumFeed() {
   useEffect(() => {
     fetchFeed();
     // Warrants are slow-moving — refresh every 15 min
-    const t = setInterval(() => fetchFeed(), 15 * 60 * 1000);
+    // AUDIT_100 #7 — skip poll when tab is hidden
+    const t = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      fetchFeed();
+    }, 15 * 60 * 1000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [days, passingOnly]);
@@ -1674,7 +1682,11 @@ function KeywordWatchFeed() {
 
   useEffect(() => {
     fetchFeed();
-    const t = setInterval(() => fetchFeed(), 5 * 60 * 1000);
+    // AUDIT_100 #7 — skip poll when tab is hidden
+    const t = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      fetchFeed();
+    }, 5 * 60 * 1000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [days, selectedKeywords.size, selectedGroups.size]);
@@ -1908,7 +1920,11 @@ function MoversPanel() {
       } catch {} finally { clearTimeout(timer); if (mounted) setLoading(false); }
     };
     load();
-    const t = setInterval(load, 15 * 60 * 1000);
+    // AUDIT_100 #7 — skip poll when tab is hidden
+    const t = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      load();
+    }, 15 * 60 * 1000);
     return () => { mounted = false; clearInterval(t); };
   }, []);
 

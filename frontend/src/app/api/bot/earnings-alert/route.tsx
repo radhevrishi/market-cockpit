@@ -16,8 +16,10 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN_EARNINGS || process.env.TELEGRA
 // Use production alias directly — VERCEL_URL is blocked by Deployment Protection (401)
 const API_BASE = 'https://market-cockpit.vercel.app';
 
-const WATCHLIST_CHAT_ID = '5057319640';
-const INDEX_CHAT_ID = '5057319640';
+// Empty defaults — set TELEGRAM_CHAT_ID_WATCHLIST / _INDEX (preferred)
+// or TELEGRAM_CHAT_ID in Vercel env. No personal chat ID in source (#1).
+const WATCHLIST_CHAT_ID = process.env.TELEGRAM_CHAT_ID_WATCHLIST || process.env.TELEGRAM_CHAT_ID || '';
+const INDEX_CHAT_ID = process.env.TELEGRAM_CHAT_ID_INDEX || process.env.TELEGRAM_CHAT_ID || '';
 
 const sentEarnings = new Set<string>();
 

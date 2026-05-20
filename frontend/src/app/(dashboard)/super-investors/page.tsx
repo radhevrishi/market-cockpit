@@ -1364,7 +1364,11 @@ function NewsPanel({ query, investorName }: { query: string; investorName: strin
         .finally(() => clearTimeout(t));
     };
     doFetch();
-    interval = setInterval(doFetch, 5 * 60 * 1000); // auto-refresh every 5 min
+    // AUDIT_100 #7 — skip poll when tab is hidden
+    interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      doFetch();
+    }, 5 * 60 * 1000); // auto-refresh every 5 min
     return () => { alive = false; if (interval) clearInterval(interval); };
   }, [query]);
 
