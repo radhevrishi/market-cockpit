@@ -1,21 +1,138 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// PATCH 0518 — Proxy-fetch helper.
+// PATCH 0518 / 0519 — Proxy-fetch helper + Worker financials adapter.
 //
-// When PROXY_URL + PROXY_SECRET are set in env, routes outbound requests
-// through a Cloudflare Worker proxy (see cloudflare-worker/ at repo root).
-// Falls back to direct fetch if env vars unset — transparent to callers.
+// User has a Cloudflare Worker already running at
+// https://indiaearninghub.radhev-232.workers.dev that pre-extracts Screener
+// ratios + quarterly tables. Two helpers:
 //
-// Use this for hosts that Cloudflare-block Vercel egress IPs:
-//   - Screener.in (primary motivation)
-//   - NSE corp-announcements (rate-limited on weekends)
-//   - BSE corp-announcements (occasional blocks)
+//   1. proxiedFetch(url, init)  — raw proxy through generic /proxy endpoint
+//      (currently unused since the deployed Worker exposes a richer API)
 //
-// Yahoo Finance does NOT need this (already works from Vercel).
+//   2. fetchWorkerStock(symbol) — calls /stock?symbol=X on the Worker and
+//      returns pre-parsed financials. Use this as a primary enrich source
+//      for Indian symbols — fast (1 hop, no HTML parse), Cloudflare-immune.
 //
-// USAGE:
-//   import { proxiedFetch } from '@/lib/proxy-fetch';
-//   const res = await proxiedFetch('https://www.screener.in/company/RELIANCE/');
+// CONFIG via env:
+//   SCREENER_WORKER_URL — defaults to https://indiaearninghub.radhev-232.workers.dev
+//                         set in Vercel env to override.
 // ═══════════════════════════════════════════════════════════════════════════
+
+const DEFAULT_WORKER_URL = 'https://indiaearninghub.radhev-232.workers.dev';
+
+/**
+ * Pre-parsed financials from the Cloudflare Worker. Maps the Worker's
+ * /stock response into our internal financial-data shape so it slots
+ * into the existing enrich merge logic.
+ */
+export interface WorkerStockData {
+  symbol: string;
+  company?: string;
+  sector?: string;
+  marketCapCr?: number;
+  currentPrice?: number;
+  bookValue?: number;
+  stockPE?: number;
+  dividendYield?: number;
+  roce?: number;
+  roe?: number;
+  faceValue?: number;
+  debtToEquity?: number | null;
+  // Internal-shape financials (computed from Worker's latest/yoy/qoq)
+  sales_curr_cr: number | null;
+  sales_prev_cr: number | null;
+  sales_yoy_pct: number | null;
+  pat_curr_cr: number | null;
+  pat_prev_cr: number | null;
+  pat_yoy_pct: number | null;
+  eps_curr: number | null;
+  eps_prev: number | null;
+  eps_yoy_pct: number | null;
+  opm_pct: number | null;
+  opm_prev_pct: number | null;
+  op_profit_yoy_pct: number | null;
+  period_ended?: string;
+  latest_quarter_end_iso?: string;
+  pe?: number | null;
+  market_cap_cr?: number;
+  financials_source: 'screener-worker';
+}
+
+function workerUrl(): string {
+  return (process.env.SCREENER_WORKER_URL || DEFAULT_WORKER_URL).replace(/\/$/, '');
+}
+
+function monthEndIso(periodLabel: string): string | undefined {
+  // "Mar 2026" → "2026-03-31"
+  const m = String(periodLabel || '').match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})/i);
+  if (!m) return undefined;
+  const months: Record<string, number> = { JAN:0, FEB:1, MAR:2, APR:3, MAY:4, JUN:5, JUL:6, AUG:7, SEP:8, OCT:9, NOV:10, DEC:11 };
+  const monthIdx = months[m[1].toUpperCase().slice(0, 3)];
+  const year = parseInt(m[2], 10);
+  // Last day of that month
+  const d = new Date(Date.UTC(year, monthIdx + 1, 0));
+  return d.toISOString().slice(0, 10);
+}
+
+function yoyPct(curr: number | null | undefined, prev: number | null | undefined): number | null {
+  if (curr == null || prev == null || prev === 0) return null;
+  return ((curr - prev) / Math.abs(prev)) * 100;
+}
+
+/**
+ * Fetch a single ticker's pre-extracted financials from the Cloudflare
+ * Worker. Returns null if Worker unreachable, ticker not found, or response
+ * shape unexpected.
+ */
+export async function fetchWorkerStock(symbol: string, timeoutMs = 10000): Promise<WorkerStockData | null> {
+  const url = `${workerUrl()}/stock?symbol=${encodeURIComponent(symbol)}`;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal });
+    clearTimeout(t);
+    if (!res.ok) return null;
+    const j: any = await res.json();
+    if (!j || !j.symbol || !j.latest) return null;
+    const latest = j.latest;
+    const yoy = j.yoy || {};
+    const period = String(latest?.date || '');
+    return {
+      symbol: j.symbol,
+      company: j.name,
+      sector: j.sector || undefined,
+      marketCapCr: j.marketCapCr,
+      currentPrice: j.currentPrice,
+      bookValue: j.bookValue,
+      stockPE: j.stockPE,
+      dividendYield: j.dividendYield,
+      roce: j.roce,
+      roe: j.roe,
+      faceValue: j.faceValue,
+      debtToEquity: j.debtToEquity,
+      // Map quarters → internal field names + crores normalization
+      sales_curr_cr: latest.revenue ?? null,
+      sales_prev_cr: yoy.revenue ?? null,
+      sales_yoy_pct: yoyPct(latest.revenue, yoy.revenue),
+      pat_curr_cr: latest.netProfit ?? null,
+      pat_prev_cr: yoy.netProfit ?? null,
+      pat_yoy_pct: yoyPct(latest.netProfit, yoy.netProfit),
+      eps_curr: latest.eps ?? null,
+      eps_prev: yoy.eps ?? null,
+      eps_yoy_pct: yoyPct(latest.eps, yoy.eps),
+      opm_pct: latest.opm ?? null,
+      opm_prev_pct: yoy.opm ?? null,
+      op_profit_yoy_pct: yoyPct(latest.operatingProfit, yoy.operatingProfit),
+      period_ended: period,
+      latest_quarter_end_iso: monthEndIso(period),
+      pe: j.stockPE ?? null,
+      market_cap_cr: j.marketCapCr,
+      financials_source: 'screener-worker',
+    };
+  } catch {
+    clearTimeout(t);
+    return null;
+  }
+}
 
 const PROXIED_HOSTS = [
   'www.screener.in',

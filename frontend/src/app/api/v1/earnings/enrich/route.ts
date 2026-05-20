@@ -14,7 +14,7 @@
 
 import { NextResponse } from 'next/server';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
-import { proxiedFetch } from '@/lib/proxy-fetch';
+import { proxiedFetch, fetchWorkerStock } from '@/lib/proxy-fetch';
 import { fetchCompanyFinancialResults } from '@/lib/nse';
 
 export const runtime = 'nodejs';
@@ -612,42 +612,54 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
   }
 
   // Try each variant in parallel via Yahoo + Screener until one returns data.
+  // PATCH 0519 — Worker (indiaearninghub) added as PRIMARY source. Returns
+  // pre-parsed Screener financials via Cloudflare's network — never blocked.
+  // When Worker returns valid data, we still fetch the others as overlays.
   const tryVariant = async (sym: string) => {
-    const [nse, screener, yahoo, yahooFund] = await Promise.all([
+    const [worker, nse, screener, yahoo, yahooFund] = await Promise.all([
+      fetchWorkerStock(sym),
       fetchNseFinancials(sym),
       fetchScreenerForSymbol(sym),
       fetchYahooForSymbol(sym),
       fetchYahooFundamentals(sym),
     ]);
-    const anyHit = nse || screener || yahoo || yahooFund;
-    return { sym, nse, screener, yahoo, yahooFund, anyHit };
+    const anyHit = worker || nse || screener || yahoo || yahooFund;
+    return { sym, worker, nse, screener, yahoo, yahooFund, anyHit };
   };
 
   // Run all variants in parallel; keep the first variant that actually
   // produced ANY data. Variant order matters: original first, then
   // sanitized forms.
-  let nse: any = null, screener: any = null, yahoo: any = null, yahooFund: any = null;
+  let worker: any = null, nse: any = null, screener: any = null, yahoo: any = null, yahooFund: any = null;
   if (symVariants.length === 1) {
     // Fast path — no special chars in symbol, no variant fan-out needed
     const r = await tryVariant(symbol);
-    nse = r.nse; screener = r.screener; yahoo = r.yahoo; yahooFund = r.yahooFund;
+    worker = r.worker; nse = r.nse; screener = r.screener; yahoo = r.yahoo; yahooFund = r.yahooFund;
   } else {
     // Slow path — fan-out to variants in parallel, pick the most-populated.
     const results = await Promise.all(symVariants.map(tryVariant));
-    // Score each result by how many sources returned non-null
+    // Score each result by how many sources returned non-null (Worker counts double — it's pre-parsed)
     const scored = results.map(r => ({
       ...r,
-      score: (r.nse ? 1 : 0) + (r.screener ? 1 : 0) + (r.yahoo ? 1 : 0) + (r.yahooFund ? 1 : 0),
+      score: (r.worker ? 2 : 0) + (r.nse ? 1 : 0) + (r.screener ? 1 : 0) + (r.yahoo ? 1 : 0) + (r.yahooFund ? 1 : 0),
     }));
     scored.sort((a, b) => b.score - a.score);
     const best = scored[0];
-    nse = best.nse; screener = best.screener; yahoo = best.yahoo; yahooFund = best.yahooFund;
+    worker = best.worker; nse = best.nse; screener = best.screener; yahoo = best.yahoo; yahooFund = best.yahooFund;
   }
-  // Merge priority: NSE → Screener → Yahoo fundamentals (last-resort
-  // financials). Yahoo price/chart data always overlays.
-  const fin = nse || screener || yahooFund || {};
-  // Sector/market_cap_bucket from Screener if available, else from Yahoo summaryDetail
-  const meta = screener ? {
+  // Merge priority (most reliable first):
+  //   1. Cloudflare Worker  — pre-parsed, Cloudflare-immune (Patch 0519)
+  //   2. NSE structured     — official Q-data when available
+  //   3. Screener direct    — fallback for tickers not on Worker
+  //   4. Yahoo fundamentals — Cloudflare-blocked Screener bypass
+  //   Always overlay: Yahoo price / RS / Stage / 52w (separate concerns).
+  const fin = worker || nse || screener || yahooFund || {};
+  // Sector/market_cap_bucket from Worker / Screener if available
+  const meta = worker ? {
+    sector: worker.sector,
+    market_cap_cr: worker.market_cap_cr,
+    pe: worker.pe,
+  } : screener ? {
     sector: screener.sector,
     market_cap_bucket: screener.market_cap_bucket,
     market_cap_cr: screener.market_cap_cr,
@@ -657,7 +669,12 @@ async function enrichOne(symbol: string, filedHint?: string, bypassCache = false
     ...fin,
     ...meta,
     ...(yahoo || {}),
-    financials_source: nse ? 'nse' : (screener ? 'screener' : (yahooFund ? 'yahoo-fundamentals' : null)),
+    financials_source:
+      worker ? 'screener-worker' :
+      nse ? 'nse' :
+      screener ? 'screener' :
+      yahooFund ? 'yahoo-fundamentals' :
+      null,
     _enriched_at: new Date().toISOString(),
   };
 
