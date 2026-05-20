@@ -13,6 +13,11 @@ import {
 } from '@/lib/conviction-beats';
 import { peadScore, peadColor, peadLabel } from '@/lib/pead-score';
 import TickerExportToolbar from '@/components/TickerExportToolbar';
+import {
+  EarningsCardComponent,
+  CoverageStatsBar,
+  type EarningsScanCard,
+} from '@/components/EarningsScanCard';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -1098,6 +1103,222 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   return true;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PATCH 0539 — Rich Earnings Hub Scan parity for Conviction Beats.
+// Fetches enriched EarningsScanCard payloads for the bench tickers via the
+// same /api/market/earnings-scan endpoint the /earnings hub uses, caches in
+// localStorage (24h TTL — past quarters are immutable), and surfaces the
+// SAME card UI Earnings Hub Scan renders. Existing compact rows still
+// available via the view-mode toggle.
+// ═══════════════════════════════════════════════════════════════════════════
+const RICH_LS_KEY = 'mc:conviction-enriched:v1';
+const RICH_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+
+interface RichCache {
+  cards: Record<string, { card: EarningsScanCard; ts: number }>;
+}
+
+function readRichCache(): RichCache {
+  if (typeof window === 'undefined') return { cards: {} };
+  try {
+    const raw = localStorage.getItem(RICH_LS_KEY);
+    if (!raw) return { cards: {} };
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || !parsed.cards) return { cards: {} };
+    return parsed as RichCache;
+  } catch { return { cards: {} }; }
+}
+
+function writeRichCache(c: RichCache) {
+  if (typeof window === 'undefined') return;
+  try { localStorage.setItem(RICH_LS_KEY, JSON.stringify(c)); } catch {}
+}
+
+/** Returns the cached card for a ticker if it's fresh, else null. */
+function getCachedCard(ticker: string, cache: RichCache): EarningsScanCard | null {
+  const key = ticker.toUpperCase();
+  const entry = cache.cards[key];
+  if (!entry) return null;
+  if (Date.now() - entry.ts > RICH_TTL_MS) return null;
+  return entry.card;
+}
+
+/** Hook — owns enriched-card state for the bench. */
+function useEnrichedConvictionCards(tickers: string[]) {
+  const [cards, setCards] = useState<Record<string, EarningsScanCard>>({});
+  const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState({ done: 0, total: 0 });
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (tickers.length === 0) return;
+    let cancelled = false;
+    const cache = readRichCache();
+
+    // Hydrate from cache first
+    const fromCache: Record<string, EarningsScanCard> = {};
+    const missing: string[] = [];
+    for (const t of tickers) {
+      const hit = getCachedCard(t, cache);
+      if (hit) fromCache[t.toUpperCase()] = hit;
+      else missing.push(t.toUpperCase());
+    }
+    setCards(fromCache);
+
+    if (missing.length === 0) {
+      setProgress({ done: tickers.length, total: tickers.length });
+      return;
+    }
+
+    setLoading(true);
+    setProgress({ done: tickers.length - missing.length, total: tickers.length });
+    setError(null);
+
+    (async () => {
+      try {
+        const BATCH = 30;
+        const PARALLEL = 3;
+        const batches: string[][] = [];
+        for (let i = 0; i < missing.length; i += BATCH) batches.push(missing.slice(i, i + BATCH));
+        const updated: Record<string, EarningsScanCard> = { ...fromCache };
+        const cacheUpdate = readRichCache();
+
+        for (let w = 0; w < batches.length; w += PARALLEL) {
+          if (cancelled) return;
+          const wave = batches.slice(w, w + PARALLEL);
+          const results = await Promise.allSettled(
+            wave.map(async (batch) => {
+              const ctl = new AbortController();
+              const timer = setTimeout(() => ctl.abort(), 25_000);
+              try {
+                const encoded = batch.map(s => encodeURIComponent(s)).join(',');
+                const res = await fetch(`/api/market/earnings-scan?symbols=${encoded}`, { signal: ctl.signal });
+                clearTimeout(timer);
+                if (!res.ok) return null;
+                return (await res.json()) as { cards: EarningsScanCard[] };
+              } catch {
+                clearTimeout(timer);
+                return null;
+              }
+            })
+          );
+          for (const r of results) {
+            if (r.status === 'fulfilled' && r.value) {
+              for (const c of (r.value.cards || [])) {
+                const key = c.symbol.toUpperCase();
+                updated[key] = { ...c, universeTag: 'conviction', isConviction: true };
+                cacheUpdate.cards[key] = { card: updated[key], ts: Date.now() };
+              }
+            }
+          }
+          if (cancelled) return;
+          setCards({ ...updated });
+          setProgress({ done: Object.keys(updated).length, total: tickers.length });
+        }
+        writeRichCache(cacheUpdate);
+      } catch (e: any) {
+        if (!cancelled) setError(e?.message || 'Failed to fetch enriched cards');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tickers.join('|')]);
+
+  const refetch = useCallback(() => {
+    // Force-bust cache for these tickers, then re-trigger by toggling state
+    const cache = readRichCache();
+    for (const t of tickers) delete cache.cards[t.toUpperCase()];
+    writeRichCache(cache);
+    setCards({});
+    // re-trigger effect via dummy state change (will re-read tickers)
+    setProgress({ done: 0, total: tickers.length });
+    // The effect depends on tickers.join('|'); we have to nudge it via a
+    // ref-like state. Simplest: just re-run the same load logic inline.
+    (async () => {
+      setLoading(true);
+      try {
+        const BATCH = 30;
+        const PARALLEL = 3;
+        const all = tickers.map(t => t.toUpperCase());
+        const batches: string[][] = [];
+        for (let i = 0; i < all.length; i += BATCH) batches.push(all.slice(i, i + BATCH));
+        const updated: Record<string, EarningsScanCard> = {};
+        const cacheUpdate = readRichCache();
+        for (let w = 0; w < batches.length; w += PARALLEL) {
+          const wave = batches.slice(w, w + PARALLEL);
+          const results = await Promise.allSettled(
+            wave.map(async (batch) => {
+              const encoded = batch.map(s => encodeURIComponent(s)).join(',');
+              try {
+                const res = await fetch(`/api/market/earnings-scan?symbols=${encoded}`);
+                if (!res.ok) return null;
+                return (await res.json()) as { cards: EarningsScanCard[] };
+              } catch { return null; }
+            })
+          );
+          for (const r of results) {
+            if (r.status === 'fulfilled' && r.value) {
+              for (const c of (r.value.cards || [])) {
+                const key = c.symbol.toUpperCase();
+                updated[key] = { ...c, universeTag: 'conviction', isConviction: true };
+                cacheUpdate.cards[key] = { card: updated[key], ts: Date.now() };
+              }
+            }
+          }
+          setCards({ ...updated });
+          setProgress({ done: Object.keys(updated).length, total: tickers.length });
+        }
+        writeRichCache(cacheUpdate);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [tickers]);
+
+  return { cards, loading, progress, error, refetch };
+}
+
+// PATCH 0539 — Hub-Scan-style filter rail for the rich view.
+type HubFilters = {
+  grades: Set<'EXCELLENT' | 'STRONG' | 'GOOD' | 'OK' | 'BAD'>;
+  scoreMin: number | null;           // 60 / 75 / 85
+  divergenceOnly: boolean;
+  dataQuality: Set<'FULL' | 'PARTIAL' | 'PRICE_ONLY'>;
+  audience: Set<'PORTFOLIO' | 'WATCHLIST' | 'BOTH' | 'BANK'>;
+};
+const HUB_FILTER_DEFAULT: HubFilters = {
+  grades: new Set(),
+  scoreMin: null,
+  divergenceOnly: false,
+  dataQuality: new Set(),
+  audience: new Set(),
+};
+
+function audienceFromCard(c: EarningsScanCard, watchlistTickers: Set<string>, portfolioTickers: Set<string>): 'PORTFOLIO' | 'WATCHLIST' | 'BOTH' | 'BANK' {
+  const sym = c.symbol.toUpperCase();
+  if (c.isBanking) return 'BANK';
+  const inP = portfolioTickers.has(sym);
+  const inW = watchlistTickers.has(sym);
+  if (inP && inW) return 'BOTH';
+  if (inP) return 'PORTFOLIO';
+  return 'WATCHLIST';
+}
+
+function passesHubFilter(c: EarningsScanCard, f: HubFilters, watchlist: Set<string>, portfolio: Set<string>): boolean {
+  if (f.grades.size > 0 && !f.grades.has(c.grade)) return false;
+  if (f.scoreMin != null && c.totalScore < f.scoreMin) return false;
+  if (f.divergenceOnly && (!c.divergence || c.divergence === 'None')) return false;
+  if (f.dataQuality.size > 0 && !f.dataQuality.has(c.dataQuality)) return false;
+  if (f.audience.size > 0) {
+    const a = audienceFromCard(c, watchlist, portfolio);
+    if (!f.audience.has(a)) return false;
+  }
+  return true;
+}
+
 function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[]; onRemove: (t: string) => void }) {
   if (entries.length === 0) {
     return (
@@ -1127,6 +1348,51 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
   const toggle = <K extends keyof ConvFilters>(k: K, v: ConvFilters[K]) =>
     setFilters((f) => ({ ...f, [k]: f[k] === v ? null : v } as ConvFilters));
 
+  // PATCH 0539 — view-mode toggle (compact rows vs rich Earnings Hub cards)
+  // Default: rich. localStorage so the user's preference survives reloads.
+  const [viewMode, setViewMode] = useState<'rich' | 'compact'>(() => {
+    if (typeof window === 'undefined') return 'rich';
+    try { return (localStorage.getItem('mc:conviction-view') as 'rich' | 'compact') || 'rich'; } catch { return 'rich'; }
+  });
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try { localStorage.setItem('mc:conviction-view', viewMode); } catch {}
+    }
+  }, [viewMode]);
+
+  // PATCH 0539 — Hub-Scan-style filter rail (rich view only)
+  const [hubFilters, setHubFilters] = useState<HubFilters>(HUB_FILTER_DEFAULT);
+
+  // PATCH 0539 — read watchlist + portfolio tickers for audience tagging.
+  const [watchlistSet] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set();
+    try {
+      const raw = localStorage.getItem('mc_watchlist_tickers');
+      if (!raw) return new Set();
+      const arr = JSON.parse(raw);
+      return new Set((Array.isArray(arr) ? arr : []).map((t: string) => String(t).toUpperCase()));
+    } catch { return new Set(); }
+  });
+  const [portfolioSet] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set();
+    try {
+      // Try the common portfolio keys; fall back to empty.
+      for (const key of ['mc_portfolio_tickers', 'mc_portfolio_holdings_v1']) {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const arr = JSON.parse(raw);
+          if (Array.isArray(arr)) {
+            return new Set(arr.map((t: any) => String(typeof t === 'string' ? t : (t?.ticker || '')).toUpperCase()).filter(Boolean));
+          }
+          if (arr && typeof arr === 'object') {
+            return new Set(Object.keys(arr).map(k => k.toUpperCase()));
+          }
+        }
+      }
+    } catch {}
+    return new Set();
+  });
+
   // Apply filters + optional PEAD sort
   let filteredEntries = entries.filter((e) => passesConvictionFilter(e, filters));
   if (filters.sortByPead) {
@@ -1135,6 +1401,19 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
   const blockbusters = filteredEntries.filter((e) => e.tier === 'BLOCKBUSTER');
   const strongs = filteredEntries.filter((e) => e.tier === 'STRONG');
   const allTickers = filteredEntries.map((e) => e.ticker);
+
+  // PATCH 0539 — fetch enriched cards for the bench (cached 24h).
+  // Trigger only when in rich mode and after the first render.
+  const tickersForFetch = useMemo(() => filteredEntries.map(e => e.ticker), [filteredEntries.map(e => e.ticker).join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
+  const { cards: enrichedCards, loading: richLoading, progress: richProgress, refetch: richRefetch } = useEnrichedConvictionCards(
+    viewMode === 'rich' ? tickersForFetch : [],
+  );
+
+  // Apply hub filter on top of the conviction-filtered list.
+  const enrichedList = filteredEntries
+    .map(e => enrichedCards[e.ticker.toUpperCase()])
+    .filter((c): c is EarningsScanCard => Boolean(c));
+  const hubFilteredList = enrichedList.filter(c => passesHubFilter(c, hubFilters, watchlistSet, portfolioSet));
 
   // Counts for each candidate chip — applied INDEPENDENTLY to the
   // post-other-filters universe so the count reflects what the chip would
@@ -1272,34 +1551,322 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
           }, {})
         }
       />
-      {blockbusters.length > 0 && (
-        <div style={{
-          backgroundColor: '#0D1623',
-          border: '1px solid #F59E0B40', borderLeft: '4px solid #F59E0B',
-          borderRadius: 12, padding: '14px 18px',
-        }}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: '#F59E0B', marginBottom: 10, letterSpacing: '0.5px' }}>
-            ⭐ BLOCKBUSTER · {blockbusters.length}
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
-            {blockbusters.map((e) => <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} />)}
-          </div>
+
+      {/* PATCH 0539 — View-mode toggle: Rich (Earnings Hub Scan parity) vs Compact rows */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ display: 'inline-flex', gap: 4, padding: 3, backgroundColor: '#0A1422', border: '1px solid #1A2840', borderRadius: 8 }}>
+          <button onClick={() => setViewMode('rich')}
+            style={{
+              padding: '6px 12px', borderRadius: 6, border: 'none',
+              fontSize: 11, fontWeight: 700, cursor: 'pointer',
+              backgroundColor: viewMode === 'rich' ? '#F59E0B22' : 'transparent',
+              color: viewMode === 'rich' ? '#F59E0B' : '#8BA3C1',
+            }}>📊 Rich (Earnings Hub)</button>
+          <button onClick={() => setViewMode('compact')}
+            style={{
+              padding: '6px 12px', borderRadius: 6, border: 'none',
+              fontSize: 11, fontWeight: 700, cursor: 'pointer',
+              backgroundColor: viewMode === 'compact' ? '#F59E0B22' : 'transparent',
+              color: viewMode === 'compact' ? '#F59E0B' : '#8BA3C1',
+            }}>📋 Compact</button>
         </div>
+        {viewMode === 'rich' && (
+          <div style={{ display: 'inline-flex', gap: 8, alignItems: 'center', fontSize: 11, color: '#8BA3C1' }}>
+            {richLoading && (
+              <span style={{ color: '#22D3EE' }}>Loading enriched cards… {richProgress.done}/{richProgress.total}</span>
+            )}
+            {!richLoading && richProgress.total > 0 && (
+              <span>{Object.keys(enrichedCards).length} of {tickersForFetch.length} enriched</span>
+            )}
+            <button onClick={() => richRefetch()}
+              disabled={richLoading}
+              style={{
+                fontSize: 10, fontWeight: 700, padding: '4px 8px',
+                background: richLoading ? '#1A2840' : '#0A1422',
+                border: '1px solid #2A3B4C', borderRadius: 5,
+                color: richLoading ? '#6B7A8D' : '#22D3EE',
+                cursor: richLoading ? 'not-allowed' : 'pointer',
+              }}>↻ Refresh</button>
+          </div>
+        )}
+      </div>
+
+      {viewMode === 'rich' ? (
+        // ── RICH (Earnings Hub Scan parity) ──────────────────────────────
+        <>
+          {/* PATCH 0539 — Hub-Scan filter rail */}
+          <HubFilterRail
+            cards={enrichedList}
+            filters={hubFilters}
+            setFilters={setHubFilters}
+            watchlistSet={watchlistSet}
+            portfolioSet={portfolioSet}
+          />
+
+          {/* Coverage stats bar (same shape as Earnings Hub Scan) */}
+          <CoverageStatsBar cards={hubFilteredList} totalCount={enrichedList.length} showingCount={hubFilteredList.length} />
+
+          {/* Card grid */}
+          {hubFilteredList.length === 0 && !richLoading && (
+            <div style={{ padding: 24, textAlign: 'center', color: '#8BA3C1', backgroundColor: '#0D1623', border: '1px dashed #2A3B4C', borderRadius: 10 }}>
+              {enrichedList.length === 0
+                ? 'No enriched cards yet — fetch may still be running. Try again in a moment.'
+                : 'No cards match the current hub filters. Adjust filters above.'}
+            </div>
+          )}
+          {hubFilteredList.length > 0 && (() => {
+            const bb = hubFilteredList.filter(c => {
+              const e = entries.find(en => en.ticker.toUpperCase() === c.symbol.toUpperCase());
+              return e?.tier === 'BLOCKBUSTER';
+            });
+            const st = hubFilteredList.filter(c => {
+              const e = entries.find(en => en.ticker.toUpperCase() === c.symbol.toUpperCase());
+              return e?.tier === 'STRONG';
+            });
+            return (
+              <>
+                {bb.length > 0 && (
+                  <div style={{ backgroundColor: '#0D1623', border: '1px solid #F59E0B40', borderLeft: '4px solid #F59E0B', borderRadius: 12, padding: '14px 18px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: '#F59E0B', letterSpacing: '0.5px' }}>
+                        ⭐ BLOCKBUSTER · {bb.length}
+                      </div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: 12 }}>
+                      {bb.map((c) => (
+                        <div key={c.symbol} style={{ position: 'relative' }}>
+                          <EarningsCardComponent card={c} />
+                          <button onClick={() => onRemove(c.symbol)} title="Remove from Conviction Beats"
+                            style={{ position: 'absolute', top: 8, right: 8, background: '#0A1422', border: '1px solid #2A3B4C', color: '#8BA3C1', cursor: 'pointer', padding: '3px 7px', fontSize: 12, borderRadius: 4 }}>×</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {st.length > 0 && (
+                  <div style={{ backgroundColor: '#0D1623', border: '1px solid #10B98140', borderLeft: '4px solid #10B981', borderRadius: 12, padding: '14px 18px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: '#10B981', letterSpacing: '0.5px' }}>
+                        🟢 STRONG · {st.length}
+                      </div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: 12 }}>
+                      {st.map((c) => (
+                        <div key={c.symbol} style={{ position: 'relative' }}>
+                          <EarningsCardComponent card={c} />
+                          <button onClick={() => onRemove(c.symbol)} title="Remove from Conviction Beats"
+                            style={{ position: 'absolute', top: 8, right: 8, background: '#0A1422', border: '1px solid #2A3B4C', color: '#8BA3C1', cursor: 'pointer', padding: '3px 7px', fontSize: 12, borderRadius: 4 }}>×</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            );
+          })()}
+        </>
+      ) : (
+        // ── COMPACT (legacy rows) ───────────────────────────────────────
+        <>
+          {blockbusters.length > 0 && (
+            <div style={{
+              backgroundColor: '#0D1623',
+              border: '1px solid #F59E0B40', borderLeft: '4px solid #F59E0B',
+              borderRadius: 12, padding: '14px 18px',
+            }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: '#F59E0B', marginBottom: 10, letterSpacing: '0.5px' }}>
+                ⭐ BLOCKBUSTER · {blockbusters.length}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
+                {blockbusters.map((e) => <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} />)}
+              </div>
+            </div>
+          )}
+          {strongs.length > 0 && (
+            <div style={{
+              backgroundColor: '#0D1623',
+              border: '1px solid #10B98140', borderLeft: '4px solid #10B981',
+              borderRadius: 12, padding: '14px 18px',
+            }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: '#10B981', marginBottom: 10, letterSpacing: '0.5px' }}>
+                🟢 STRONG · {strongs.length}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
+                {strongs.map((e) => <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} />)}
+              </div>
+            </div>
+          )}
+        </>
       )}
-      {strongs.length > 0 && (
-        <div style={{
-          backgroundColor: '#0D1623',
-          border: '1px solid #10B98140', borderLeft: '4px solid #10B981',
-          borderRadius: 12, padding: '14px 18px',
-        }}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: '#10B981', marginBottom: 10, letterSpacing: '0.5px' }}>
-            🟢 STRONG · {strongs.length}
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
-            {strongs.map((e) => <ConvictionRow key={e.ticker} entry={e} onRemove={onRemove} />)}
-          </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PATCH 0539 — Hub-Scan-style filter rail (rich view only).
+// Composes AND-style with the conviction-level filters. Each chip shows the
+// post-filter count so the user sees how each chip would narrow the view.
+// ═══════════════════════════════════════════════════════════════════════════
+function HubFilterRail({
+  cards, filters, setFilters, watchlistSet, portfolioSet,
+}: {
+  cards: EarningsScanCard[];
+  filters: HubFilters;
+  setFilters: React.Dispatch<React.SetStateAction<HubFilters>>;
+  watchlistSet: Set<string>;
+  portfolioSet: Set<string>;
+}) {
+  const chipBase: React.CSSProperties = {
+    fontSize: 10.5, fontWeight: 700, padding: '4px 9px', borderRadius: 14,
+    cursor: 'pointer', border: '1px solid #2A3B4C', background: '#0A1422',
+    color: '#8BA3C1', whiteSpace: 'nowrap',
+  };
+  const chipActive = (color: string): React.CSSProperties => ({
+    ...chipBase, background: `${color}22`, borderColor: `${color}99`, color,
+  });
+
+  // count helper — probe filter narrows by toggling chip in question
+  const countGradeChip = (g: HubFilters['grades'] extends Set<infer X> ? X : never) => {
+    const next = new Set(filters.grades);
+    if (next.has(g as any)) next.delete(g as any); else next.add(g as any);
+    const probe: HubFilters = { ...filters, grades: next };
+    return cards.filter(c => passesHubFilter(c, probe, watchlistSet, portfolioSet)).length;
+  };
+  const countScoreChip = (v: number) => {
+    const probe: HubFilters = { ...filters, scoreMin: filters.scoreMin === v ? null : v };
+    return cards.filter(c => passesHubFilter(c, probe, watchlistSet, portfolioSet)).length;
+  };
+  const countDivergenceChip = () => {
+    const probe: HubFilters = { ...filters, divergenceOnly: !filters.divergenceOnly };
+    return cards.filter(c => passesHubFilter(c, probe, watchlistSet, portfolioSet)).length;
+  };
+  const countDqChip = (q: HubFilters['dataQuality'] extends Set<infer X> ? X : never) => {
+    const next = new Set(filters.dataQuality);
+    if (next.has(q as any)) next.delete(q as any); else next.add(q as any);
+    const probe: HubFilters = { ...filters, dataQuality: next };
+    return cards.filter(c => passesHubFilter(c, probe, watchlistSet, portfolioSet)).length;
+  };
+  const countAudienceChip = (a: HubFilters['audience'] extends Set<infer X> ? X : never) => {
+    const next = new Set(filters.audience);
+    if (next.has(a as any)) next.delete(a as any); else next.add(a as any);
+    const probe: HubFilters = { ...filters, audience: next };
+    return cards.filter(c => passesHubFilter(c, probe, watchlistSet, portfolioSet)).length;
+  };
+
+  const toggleGrade = (g: 'EXCELLENT' | 'STRONG' | 'GOOD' | 'OK' | 'BAD') =>
+    setFilters(f => {
+      const next = new Set(f.grades);
+      if (next.has(g)) next.delete(g); else next.add(g);
+      return { ...f, grades: next };
+    });
+  const toggleDq = (q: 'FULL' | 'PARTIAL' | 'PRICE_ONLY') =>
+    setFilters(f => {
+      const next = new Set(f.dataQuality);
+      if (next.has(q)) next.delete(q); else next.add(q);
+      return { ...f, dataQuality: next };
+    });
+  const toggleAudience = (a: 'PORTFOLIO' | 'WATCHLIST' | 'BOTH' | 'BANK') =>
+    setFilters(f => {
+      const next = new Set(f.audience);
+      if (next.has(a)) next.delete(a); else next.add(a);
+      return { ...f, audience: next };
+    });
+
+  const isDefault =
+    filters.grades.size === 0 && filters.scoreMin === null && !filters.divergenceOnly &&
+    filters.dataQuality.size === 0 && filters.audience.size === 0;
+
+  const gradeCfg: Array<{ v: 'EXCELLENT' | 'STRONG' | 'GOOD' | 'OK' | 'BAD'; color: string }> = [
+    { v: 'EXCELLENT', color: '#7C3AED' },
+    { v: 'STRONG',    color: '#00C853' },
+    { v: 'GOOD',      color: '#4CAF50' },
+    { v: 'OK',        color: '#FFD600' },
+    { v: 'BAD',       color: '#F44336' },
+  ];
+
+  return (
+    <div style={{
+      padding: '10px 14px', backgroundColor: '#0A1422',
+      border: '1px solid #1A2840', borderRadius: 8,
+      display: 'flex', flexDirection: 'column', gap: 8,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: '#E6EDF3', letterSpacing: '0.4px' }}>
+          HUB FILTERS
         </div>
-      )}
+        <button onClick={() => setFilters(HUB_FILTER_DEFAULT)}
+          disabled={isDefault}
+          style={{ ...chipBase, opacity: isDefault ? 0.4 : 1 }}>Clear</button>
+      </div>
+      {/* GRADE */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>GRADE</span>
+        {gradeCfg.map(g => {
+          const active = filters.grades.has(g.v);
+          return (
+            <button key={g.v} onClick={() => toggleGrade(g.v)}
+              style={active ? chipActive(g.color) : chipBase}>
+              {g.v} <span style={{ color: active ? g.color : '#6B7A8D', marginLeft: 3 }}>({countGradeChip(g.v as any)})</span>
+            </button>
+          );
+        })}
+      </div>
+      {/* SCORE */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>SCORE</span>
+        {[60, 75, 85].map(v => {
+          const active = filters.scoreMin === v;
+          return (
+            <button key={v} onClick={() => setFilters(f => ({ ...f, scoreMin: f.scoreMin === v ? null : v }))}
+              style={active ? chipActive('#22D3EE') : chipBase}>
+              ≥{v} <span style={{ color: active ? '#22D3EE' : '#6B7A8D', marginLeft: 3 }}>({countScoreChip(v)})</span>
+            </button>
+          );
+        })}
+      </div>
+      {/* AUDIENCE */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>AUDIENCE</span>
+        {([
+          { v: 'PORTFOLIO', color: '#10B981' },
+          { v: 'WATCHLIST', color: '#0F7ABF' },
+          { v: 'BOTH',      color: '#8B5CF6' },
+          { v: 'BANK',      color: '#FF9800' },
+        ] as const).map(o => {
+          const active = filters.audience.has(o.v as any);
+          return (
+            <button key={o.v} onClick={() => toggleAudience(o.v as any)}
+              style={active ? chipActive(o.color) : chipBase}>
+              {o.v} <span style={{ color: active ? o.color : '#6B7A8D', marginLeft: 3 }}>({countAudienceChip(o.v as any)})</span>
+            </button>
+          );
+        })}
+      </div>
+      {/* DATA QUALITY */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>QUALITY</span>
+        {([
+          { v: 'FULL', color: '#00C853', lbl: 'Full' },
+          { v: 'PARTIAL', color: '#FFD600', lbl: 'Partial' },
+          { v: 'PRICE_ONLY', color: '#F44336', lbl: 'Price Only' },
+        ] as const).map(o => {
+          const active = filters.dataQuality.has(o.v as any);
+          return (
+            <button key={o.v} onClick={() => toggleDq(o.v as any)}
+              style={active ? chipActive(o.color) : chipBase}>
+              {o.lbl} <span style={{ color: active ? o.color : '#6B7A8D', marginLeft: 3 }}>({countDqChip(o.v as any)})</span>
+            </button>
+          );
+        })}
+      </div>
+      {/* DIVERGENCE */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 9.5, color: '#6B7A8D', fontWeight: 700, letterSpacing: '0.3px', textTransform: 'uppercase' }}>FLAGS</span>
+        <button onClick={() => setFilters(f => ({ ...f, divergenceOnly: !f.divergenceOnly }))}
+          style={filters.divergenceOnly ? chipActive('#F59E0B') : chipBase}>
+          ⚡ Divergence Only <span style={{ color: filters.divergenceOnly ? '#F59E0B' : '#6B7A8D', marginLeft: 3 }}>({countDivergenceChip()})</span>
+        </button>
+      </div>
     </div>
   );
 }
