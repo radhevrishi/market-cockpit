@@ -21,6 +21,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server';
+import { ImageResponse } from 'next/og';
+import React from 'react';
 import { kvGet, kvSet, isRedisAvailable } from '@/lib/kv';
 
 export const runtime = 'nodejs';
@@ -213,6 +215,370 @@ function formatCard(card: GradedCard, rank?: number, total?: number): string {
   lines.push(`🔗 <a href="${escHtml(eoUrl)}">Open card in EO →</a>`);
 
   return lines.join('\n');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SUMMARY IMAGE — institutional dark-themed card rendered as PNG via
+// next/og. No text truncation, clean column alignment, charts-ready.
+// ═══════════════════════════════════════════════════════════════════════════
+
+function cleanCompanyName(raw: string | undefined, ticker: string): string {
+  const src = (raw || ticker || '').trim();
+  if (!src) return ticker;
+  return src
+    .replace(/\s+(Limited|Ltd\.?|Inc\.?|Corp\.?|Corporation|Pvt\.?|Private)\s*$/i, '')
+    .replace(/\s+&\s+/g, ' & ')
+    .trim();
+}
+
+async function generateSummaryImage(
+  cards: GradedCard[],
+  dates: string[],
+): Promise<ArrayBuffer> {
+  const bb = cards
+    .filter((c) => c.tier === 'BLOCKBUSTER')
+    .sort((a, b) => b.composite_score - a.composite_score)
+    .slice(0, 12);
+  const strong = cards
+    .filter((c) => c.tier === 'STRONG')
+    .sort((a, b) => b.composite_score - a.composite_score)
+    .slice(0, 15);
+
+  const windowLabel =
+    dates.length === 1 ? dates[0] : `LAST ${dates.length} DAYS`;
+  const dateRange =
+    dates.length > 1 ? `${dates[dates.length - 1]} → ${dates[0]}` : dates[0];
+
+  const istTimestamp =
+    new Date(Date.now() + 5.5 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(11, 16) + ' IST';
+
+  // Top movers
+  const withMoves = cards
+    .filter((c) => c.move_pct != null && Number.isFinite(c.move_pct))
+    .sort((a, b) => (b.move_pct as number) - (a.move_pct as number));
+  const upMovers = withMoves.slice(0, 3);
+  const downMovers = withMoves
+    .slice(-3)
+    .reverse()
+    .filter((c) => (c.move_pct as number) < 0)
+    .slice(0, 2);
+
+  // Sector mix
+  const sectorMap: Record<string, number> = {};
+  for (const c of cards) {
+    const s = c.sector || 'Other';
+    sectorMap[s] = (sectorMap[s] || 0) + 1;
+  }
+  const sectors = Object.entries(sectorMap)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6);
+
+  // Averages
+  const meanOf = (arr: (number | null | undefined)[]): number | null => {
+    const v = arr.filter((x): x is number => x != null && Number.isFinite(x));
+    return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+  };
+  const avgScore = meanOf(cards.map((c) => c.composite_score));
+  const avgSales = meanOf(cards.map((c) => c.sales_yoy_pct));
+  const avgPat = meanOf(cards.map((c) => c.net_profit_yoy_pct));
+  const avgMove = meanOf(cards.map((c) => c.move_pct ?? null));
+
+  // ── Layout constants ──
+  const W = 1280;
+  const ACCENT_H = 4;
+  const HEADER_H = 90;
+  const STATS_H = 70;
+  const SECTION_H = 38;
+  const COL_HEADER_H = 32;
+  const ROW_H = 38;
+  const MOVERS_H = bb.length + strong.length > 0 && (upMovers.length || downMovers.length) ? 120 : 0;
+  const SECTORS_H = sectors.length > 0 ? 70 : 0;
+  const FOOTER_H = 50;
+
+  const bbBlockH = bb.length > 0 ? SECTION_H + COL_HEADER_H + bb.length * ROW_H : 0;
+  const strongBlockH = strong.length > 0 ? SECTION_H + COL_HEADER_H + strong.length * ROW_H : 0;
+
+  const totalH =
+    ACCENT_H + HEADER_H + STATS_H + bbBlockH + strongBlockH + MOVERS_H + SECTORS_H + FOOTER_H;
+
+  // Color palette — institutional dark
+  const BG = '#0A0F1C';
+  const BG_ROW = '#0F1626';
+  const BG_ROW_ALT = '#131D30';
+  const BG_HEADER = '#162038';
+  const BORDER = '#1F2937';
+  const TEXT_MAIN = '#E5E7EB';
+  const TEXT_DIM = '#94A3B8';
+  const TEXT_LABEL = '#64748B';
+  const GREEN = '#22C55E';
+  const RED = '#EF4444';
+  const AMBER = '#FBBF24';
+  const BLUE = '#60A5FA';
+  const PURPLE = '#A78BFA';
+
+  const fmtPct = (v: number | null | undefined): { txt: string; color: string } => {
+    if (v == null || !Number.isFinite(v)) return { txt: '—', color: TEXT_DIM };
+    const sign = v >= 0 ? '+' : '';
+    const color = v > 0 ? GREEN : v < 0 ? RED : TEXT_DIM;
+    return { txt: `${sign}${Math.round(v)}%`, color };
+  };
+
+  const TableRow = (c: GradedCard, idx: number, accent: string) => {
+    const sales = fmtPct(c.sales_yoy_pct);
+    const pat = fmtPct(c.net_profit_yoy_pct);
+    const move = fmtPct(c.move_pct);
+    const company = cleanCompanyName(c.company, c.ticker);
+    return (
+      <div
+        key={`${c.ticker}-${idx}`}
+        style={{
+          display: 'flex',
+          paddingLeft: '24px',
+          paddingRight: '24px',
+          alignItems: 'center',
+          height: `${ROW_H}px`,
+          backgroundColor: idx % 2 === 0 ? BG_ROW : BG_ROW_ALT,
+          borderBottom: `1px solid ${BORDER}`,
+        }}
+      >
+        <span style={{ width: '36px', color: TEXT_DIM, fontSize: '15px', fontWeight: 600, display: 'flex' }}>
+          {idx + 1}
+        </span>
+        <span style={{ width: '280px', marginLeft: '8px', color: TEXT_MAIN, fontSize: '17px', fontWeight: 700, display: 'flex', overflow: 'hidden' }}>
+          {company.slice(0, 28)}
+        </span>
+        <span style={{ width: '110px', marginLeft: '8px', color: TEXT_DIM, fontSize: '14px', fontWeight: 600, display: 'flex', overflow: 'hidden' }}>
+          {(c.ticker || '').slice(0, 12)}
+        </span>
+        <div style={{ display: 'flex', width: '90px', marginLeft: '8px', justifyContent: 'flex-end' }}>
+          <span style={{ color: accent, fontSize: '17px', fontWeight: 800, fontFamily: 'monospace', display: 'flex' }}>
+            {c.composite_score}
+          </span>
+        </div>
+        <div style={{ display: 'flex', width: '110px', marginLeft: '8px', justifyContent: 'flex-end' }}>
+          <span style={{ color: sales.color, fontSize: '16px', fontWeight: 700, fontFamily: 'monospace', display: 'flex' }}>
+            {sales.txt}
+          </span>
+        </div>
+        <div style={{ display: 'flex', width: '110px', marginLeft: '8px', justifyContent: 'flex-end' }}>
+          <span style={{ color: pat.color, fontSize: '16px', fontWeight: 700, fontFamily: 'monospace', display: 'flex' }}>
+            {pat.txt}
+          </span>
+        </div>
+        <div style={{ display: 'flex', width: '100px', marginLeft: '8px', justifyContent: 'flex-end' }}>
+          <span style={{ color: move.color, fontSize: '16px', fontWeight: 700, fontFamily: 'monospace', display: 'flex' }}>
+            {move.txt}
+          </span>
+        </div>
+        <span style={{ width: '180px', marginLeft: '8px', color: TEXT_LABEL, fontSize: '13px', fontWeight: 600, display: 'flex', overflow: 'hidden' }}>
+          {(c.sector || '—').slice(0, 22)}
+        </span>
+      </div>
+    );
+  };
+
+  const ColumnHeader = () => (
+    <div style={{ display: 'flex', paddingLeft: '24px', paddingRight: '24px', alignItems: 'center', height: `${COL_HEADER_H}px`, backgroundColor: BG_HEADER, borderBottom: `1px solid ${BORDER}` }}>
+      <span style={{ width: '36px', color: TEXT_LABEL, fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>#</span>
+      <span style={{ width: '280px', marginLeft: '8px', color: TEXT_LABEL, fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>Company</span>
+      <span style={{ width: '110px', marginLeft: '8px', color: TEXT_LABEL, fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>Ticker</span>
+      <div style={{ display: 'flex', width: '90px', marginLeft: '8px', justifyContent: 'flex-end' }}>
+        <span style={{ color: TEXT_LABEL, fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>Score</span>
+      </div>
+      <div style={{ display: 'flex', width: '110px', marginLeft: '8px', justifyContent: 'flex-end' }}>
+        <span style={{ color: TEXT_LABEL, fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>Sales YoY</span>
+      </div>
+      <div style={{ display: 'flex', width: '110px', marginLeft: '8px', justifyContent: 'flex-end' }}>
+        <span style={{ color: TEXT_LABEL, fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>PAT YoY</span>
+      </div>
+      <div style={{ display: 'flex', width: '100px', marginLeft: '8px', justifyContent: 'flex-end' }}>
+        <span style={{ color: TEXT_LABEL, fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>Move</span>
+      </div>
+      <span style={{ width: '180px', marginLeft: '8px', color: TEXT_LABEL, fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>Sector</span>
+    </div>
+  );
+
+  const SectionHeader = (label: string, count: number, color: string) => (
+    <div style={{ display: 'flex', paddingLeft: '24px', paddingRight: '24px', alignItems: 'center', height: `${SECTION_H}px`, backgroundColor: BG_HEADER, borderLeft: `4px solid ${color}`, borderBottom: `1px solid ${BORDER}` }}>
+      <span style={{ color: color, fontSize: '17px', fontWeight: 800, letterSpacing: '1px', display: 'flex' }}>
+        {label}
+      </span>
+      <span style={{ marginLeft: '12px', color: TEXT_DIM, fontSize: '14px', fontWeight: 700, display: 'flex' }}>
+        ({count})
+      </span>
+    </div>
+  );
+
+  const element = (
+    <div style={{ display: 'flex', flexDirection: 'column', width: `${W}px`, height: `${totalH}px`, backgroundColor: BG, fontFamily: 'system-ui, sans-serif' }}>
+      {/* Accent bar */}
+      <div style={{ display: 'flex', width: '100%', height: `${ACCENT_H}px`, background: 'linear-gradient(90deg, #F59E0B 0%, #22C55E 100%)' }} />
+
+      {/* Header */}
+      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', paddingLeft: '24px', paddingRight: '24px', height: `${HEADER_H}px`, backgroundColor: BG, borderBottom: `1px solid ${BORDER}` }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: '28px', fontWeight: 800, color: AMBER, letterSpacing: '1px', display: 'flex' }}>
+            EARNINGS PULSE — SUMMARY
+          </span>
+          <span style={{ fontSize: '14px', fontWeight: 700, color: TEXT_DIM, letterSpacing: '0.5px', display: 'flex' }}>
+            {istTimestamp}
+          </span>
+        </div>
+        <div style={{ display: 'flex', marginTop: '8px', alignItems: 'center' }}>
+          <span style={{ fontSize: '14px', color: TEXT_DIM, fontWeight: 600, letterSpacing: '0.5px', display: 'flex' }}>
+            {windowLabel} · {dateRange}
+          </span>
+        </div>
+      </div>
+
+      {/* Stats strip */}
+      <div style={{ display: 'flex', alignItems: 'center', paddingLeft: '24px', paddingRight: '24px', height: `${STATS_H}px`, backgroundColor: BG_HEADER, borderBottom: `1px solid ${BORDER}` }}>
+        <div style={{ display: 'flex', flexDirection: 'column', width: '200px' }}>
+          <span style={{ color: TEXT_LABEL, fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>Total cards</span>
+          <span style={{ color: TEXT_MAIN, fontSize: '24px', fontWeight: 800, display: 'flex' }}>{cards.length}</span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', width: '200px' }}>
+          <span style={{ color: TEXT_LABEL, fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>⭐ Blockbuster</span>
+          <span style={{ color: AMBER, fontSize: '24px', fontWeight: 800, display: 'flex' }}>{bb.length}</span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', width: '200px' }}>
+          <span style={{ color: TEXT_LABEL, fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>🟢 Strong</span>
+          <span style={{ color: GREEN, fontSize: '24px', fontWeight: 800, display: 'flex' }}>{strong.length}</span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', width: '180px' }}>
+          <span style={{ color: TEXT_LABEL, fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>Avg Score</span>
+          <span style={{ color: BLUE, fontSize: '24px', fontWeight: 800, display: 'flex' }}>{avgScore != null ? avgScore.toFixed(0) : '—'}</span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', width: '160px' }}>
+          <span style={{ color: TEXT_LABEL, fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>Avg Sales</span>
+          <span style={{ color: fmtPct(avgSales).color, fontSize: '24px', fontWeight: 800, display: 'flex' }}>{avgSales != null ? fmtPct(avgSales).txt : '—'}</span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', width: '160px' }}>
+          <span style={{ color: TEXT_LABEL, fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>Avg PAT</span>
+          <span style={{ color: fmtPct(avgPat).color, fontSize: '24px', fontWeight: 800, display: 'flex' }}>{avgPat != null ? fmtPct(avgPat).txt : '—'}</span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', width: '140px' }}>
+          <span style={{ color: TEXT_LABEL, fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>Avg Move</span>
+          <span style={{ color: fmtPct(avgMove).color, fontSize: '24px', fontWeight: 800, display: 'flex' }}>{avgMove != null ? fmtPct(avgMove).txt : '—'}</span>
+        </div>
+      </div>
+
+      {/* BLOCKBUSTER */}
+      {bb.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          {SectionHeader('⭐ BLOCKBUSTER', bb.length, AMBER)}
+          <ColumnHeader />
+          {bb.map((c, i) => TableRow(c, i, AMBER))}
+        </div>
+      )}
+
+      {/* STRONG */}
+      {strong.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          {SectionHeader('🟢 STRONG', strong.length, GREEN)}
+          <ColumnHeader />
+          {strong.map((c, i) => TableRow(c, i, GREEN))}
+        </div>
+      )}
+
+      {/* TOP MOVERS row */}
+      {MOVERS_H > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', paddingLeft: '24px', paddingRight: '24px', paddingTop: '14px', paddingBottom: '14px', backgroundColor: BG, borderBottom: `1px solid ${BORDER}`, height: `${MOVERS_H}px` }}>
+          <span style={{ color: TEXT_LABEL, fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>
+            TOP MOVERS — since filing
+          </span>
+          <div style={{ display: 'flex', marginTop: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            {upMovers.map((c, i) => {
+              const m = fmtPct(c.move_pct);
+              return (
+                <div key={`up-${i}`} style={{ display: 'flex', alignItems: 'center', marginRight: '18px' }}>
+                  <span style={{ color: GREEN, fontSize: '16px', fontWeight: 800, display: 'flex', marginRight: '4px' }}>▲</span>
+                  <span style={{ color: TEXT_MAIN, fontSize: '17px', fontWeight: 700, display: 'flex', marginRight: '6px' }}>{cleanCompanyName(c.company, c.ticker).slice(0, 22)}</span>
+                  <span style={{ color: m.color, fontSize: '17px', fontWeight: 800, display: 'flex', fontFamily: 'monospace' }}>{m.txt}</span>
+                </div>
+              );
+            })}
+          </div>
+          {downMovers.length > 0 && (
+            <div style={{ display: 'flex', marginTop: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+              {downMovers.map((c, i) => {
+                const m = fmtPct(c.move_pct);
+                return (
+                  <div key={`dn-${i}`} style={{ display: 'flex', alignItems: 'center', marginRight: '18px' }}>
+                    <span style={{ color: RED, fontSize: '16px', fontWeight: 800, display: 'flex', marginRight: '4px' }}>▼</span>
+                    <span style={{ color: TEXT_MAIN, fontSize: '17px', fontWeight: 700, display: 'flex', marginRight: '6px' }}>{cleanCompanyName(c.company, c.ticker).slice(0, 22)}</span>
+                    <span style={{ color: m.color, fontSize: '17px', fontWeight: 800, display: 'flex', fontFamily: 'monospace' }}>{m.txt}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* SECTOR MIX */}
+      {SECTORS_H > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', paddingLeft: '24px', paddingRight: '24px', paddingTop: '12px', paddingBottom: '12px', backgroundColor: BG_HEADER, borderBottom: `1px solid ${BORDER}`, height: `${SECTORS_H}px` }}>
+          <span style={{ color: TEXT_LABEL, fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', display: 'flex' }}>SECTOR MIX</span>
+          <div style={{ display: 'flex', marginTop: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+            {sectors.map(([s, n], i) => (
+              <div key={`sec-${i}`} style={{ display: 'flex', alignItems: 'center', marginRight: '16px', padding: '4px 10px', backgroundColor: BG_ROW, borderRadius: '4px', border: `1px solid ${BORDER}` }}>
+                <span style={{ color: TEXT_MAIN, fontSize: '14px', fontWeight: 700, display: 'flex', marginRight: '6px' }}>{s}</span>
+                <span style={{ color: PURPLE, fontSize: '14px', fontWeight: 800, display: 'flex' }}>{n}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Footer */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingLeft: '24px', paddingRight: '24px', height: `${FOOTER_H}px`, backgroundColor: BG, borderTop: `1px solid ${BORDER}` }}>
+        <span style={{ fontSize: '13px', fontWeight: 700, color: TEXT_LABEL, letterSpacing: '0.5px', display: 'flex' }}>
+          market-cockpit.vercel.app/earnings-opportunities
+        </span>
+        <span style={{ fontSize: '13px', fontWeight: 700, color: TEXT_LABEL, letterSpacing: '0.5px', display: 'flex' }}>
+          MARKET COCKPIT · {istTimestamp}
+        </span>
+      </div>
+    </div>
+  );
+
+  const response = new ImageResponse(element, { width: W, height: totalH });
+  return response.arrayBuffer();
+}
+
+// Send photo via Telegram sendPhoto endpoint
+async function sendTelegramPhoto(
+  imageBuffer: ArrayBuffer,
+  caption: string,
+  targetChatId?: string,
+): Promise<{ ok: boolean; status?: number; error?: string }> {
+  if (!BOT_TOKEN) return { ok: false, error: 'TELEGRAM_BOT_TOKEN_EARNINGS not set' };
+  const chatId = targetChatId || CHAT_ID;
+  if (!chatId) return { ok: false, error: 'TELEGRAM_CHAT_ID_BLOCKBUSTER not set' };
+  try {
+    const formData = new FormData();
+    formData.append('chat_id', chatId);
+    formData.append('photo', new Blob([imageBuffer], { type: 'image/png' }), 'eo-summary.png');
+    if (caption) {
+      formData.append('caption', caption);
+      formData.append('parse_mode', 'HTML');
+    }
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+      method: 'POST',
+      body: formData,
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      return { ok: false, status: res.status, error: body.slice(0, 200) };
+    }
+    return { ok: true, status: 200 };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message || e) };
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -504,7 +870,7 @@ export async function GET(req: Request) {
     ? `${escHtml(targetDates[0])}`
     : `last ${targetDates.length} days`;
 
-  // ═════ SUMMARY MODE — one consolidated card, no per-stock spam ═════
+  // ═════ SUMMARY MODE — one consolidated IMAGE card, no per-stock spam ═════
   const renderMode = (searchParams.get('mode') || 'cards').toLowerCase();
   if (renderMode === 'summary' && !dryRun) {
     if (allCards.length === 0) {
@@ -513,11 +879,37 @@ export async function GET(req: Request) {
         targetChatId,
       );
     } else {
-      // Summary uses ALL cards (no dedup) — it's a snapshot not a feed
-      const sumText = formatSummary(allCards, targetDates);
-      const sumResult = await sendTelegram(sumText, targetChatId);
-      if (sumResult.ok) sentCount = 1;
-      else failed.push({ ticker: 'SUMMARY', error: sumResult.error || 'unknown' });
+      // ── Try to generate institutional image card ──
+      let imgSent = false;
+      try {
+        const img = await generateSummaryImage(allCards, targetDates);
+        // Short caption — main content is in the image
+        const bbCount = allCards.filter((c) => c.tier === 'BLOCKBUSTER').length;
+        const stCount = allCards.filter((c) => c.tier === 'STRONG').length;
+        const caption = [
+          `📊 <b>EARNINGS PULSE — ${escHtml(windowLabel.toUpperCase())}</b>`,
+          `⭐ ${bbCount} BLOCKBUSTER · 🟢 ${stCount} STRONG · ${allCards.length} total`,
+          ``,
+          `🔗 <a href="${escHtml(API_BASE)}/earnings-opportunities">Full EO dashboard →</a>`,
+        ].join('\n');
+        const photoResult = await sendTelegramPhoto(img, caption, targetChatId);
+        if (photoResult.ok) {
+          imgSent = true;
+          sentCount = 1;
+        } else {
+          failed.push({ ticker: 'SUMMARY_IMG', error: photoResult.error || 'unknown' });
+        }
+      } catch (e: any) {
+        failed.push({ ticker: 'SUMMARY_IMG', error: `gen-failed: ${String(e?.message || e)}` });
+      }
+
+      // ── Text fallback when image fails (so user never sees nothing) ──
+      if (!imgSent) {
+        const sumText = formatSummary(allCards, targetDates);
+        const sumResult = await sendTelegram(sumText, targetChatId);
+        if (sumResult.ok) sentCount = 1;
+        else failed.push({ ticker: 'SUMMARY_TXT', error: sumResult.error || 'unknown' });
+      }
     }
     return NextResponse.json({
       status: 'ok',
