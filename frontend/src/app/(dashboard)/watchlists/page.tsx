@@ -1066,10 +1066,11 @@ type ConvFilters = {
   sales: number | null;     // % threshold
   pat: number | null;
   eps: number | null;
+  pead: number | null;      // USER-REQ — minimum PEAD score (50/60/70/80)
   sortByPead: boolean;
 };
 
-const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, sortByPead: false };
+const FILTER_DEFAULT: ConvFilters = { opLev: null, sales: null, pat: null, eps: null, pead: null, sortByPead: false };
 
 function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   const sales = e.sales_yoy_pct ?? 0;
@@ -1081,6 +1082,10 @@ function passesConvictionFilter(e: ConvictionEntry, f: ConvFilters): boolean {
   if (f.opLev != null) {
     const ratio = pat / Math.max(sales, 0.01);
     if (!(ratio >= f.opLev)) return false;
+  }
+  // USER-REQ — PEAD score threshold filter (combinable with all others)
+  if (f.pead != null) {
+    if (peadScore(e).score < f.pead) return false;
   }
   return true;
 }
@@ -1178,8 +1183,8 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
               🌊 Sort by PEAD {filters.sortByPead ? '✓' : ''}
             </button>
             <button onClick={() => setFilters(FILTER_DEFAULT)}
-              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && !filters.sortByPead}
-              style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && !filters.sortByPead) ? 0.4 : 1 }}>
+              disabled={filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && !filters.sortByPead}
+              style={{ ...chipBase, opacity: (filters.opLev == null && filters.sales == null && filters.pat == null && filters.eps == null && filters.pead == null && !filters.sortByPead) ? 0.4 : 1 }}>
               Clear
             </button>
           </div>
@@ -1196,6 +1201,10 @@ function ConvictionBeatsPanel({ entries, onRemove }: { entries: ConvictionEntry[
         ])}
         {renderChipGroup('EPS YoY', '#F59E0B', 'eps', [
           { v: 20, lbl: '≥20%' }, { v: 40, lbl: '≥40%' }, { v: 60, lbl: '≥60%' },
+        ])}
+        {/* USER-REQ — PEAD score threshold filter (composable with all others) */}
+        {renderChipGroup('PEAD SCORE', '#22D3EE', 'pead', [
+          { v: 50, lbl: '≥50' }, { v: 60, lbl: '≥60' }, { v: 70, lbl: '≥70' }, { v: 80, lbl: '≥80' },
         ])}
       </div>
       <div style={{
