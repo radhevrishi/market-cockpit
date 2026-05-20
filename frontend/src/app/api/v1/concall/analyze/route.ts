@@ -37,6 +37,16 @@ const GUIDANCE_PATTERNS = [
   { kind: 'cut',     re: /\b(lower(?:ed)?|cut|reduce(?:d)?|moderat(?:e|ed))\s+(?:our\s+)?(?:guidance|outlook|expectation)\b[^.]{0,80}\b(\d{1,3}(?:\.\d+)?)\s*%/gi },
   // "withdrew guidance"
   { kind: 'withdraw', re: /\b(withdr(?:aw|ew)|suspend(?:ed|ing)?)\s+(?:our\s+)?(guidance|outlook)\b[^.]{0,80}/gi },
+  // PATCH 0513 — bps guidance patterns. Indian concall transcripts often
+  // express margin guidance in basis points rather than %:
+  //   "EBITDA margin to expand 300 bps"
+  //   "OPM expansion of 250 bps"
+  //   "we expect 400 bps margin improvement"
+  //   "margins up 350 bps over next 2 years"
+  // Stored with kind='margin_bps' so the consumer renders as e.g. '300 bps'.
+  { kind: 'margin_bps', re: /\b(?:EBITDA|operating|gross|net|OPM)\s*margin\s*(?:to\s+(?:rise|expand|improve)|expansion|improvement|gain|uplift|up)\s*(?:of|by)?\s*[~]?\s*(\d{2,4})(?:\s*[-–]\s*\d{2,4})?\s*bps/gi },
+  { kind: 'margin_bps', re: /\b(?:we\s+expect|target(?:ing)?|guidance|aim(?:ing)?)\b[^.]{4,80}\b(\d{2,4})\s*bps/gi },
+  { kind: 'margin_bps', re: /\b(\d{2,4})\s*bps\s*(?:margin|OPM)\s*(?:expansion|improvement|gain|increase)/gi },
 ];
 
 const NUMBER_PATTERN = /\b(revenue|sales|EBITDA|margin|PAT|profit|order book|backlog|ARR|GMV|EPS|capex|capacity|utilis?ation)\b[^.]{0,80}\b(\d{1,5}(?:[.,]\d+)?)\s*(?:%|crore|cr|bps|million|billion|MW|GW|tons|tonnes)\b/gi;
@@ -75,16 +85,22 @@ function scoreToneConfidence(text: string): { score: number; pos: number; neg: n
 
 function extractGuidance(text: string): Array<{ kind: string; pct: string | null; snippet: string }> {
   const out: Array<{ kind: string; pct: string | null; snippet: string }> = [];
+  const seenSnippets = new Set<string>();
   for (const g of GUIDANCE_PATTERNS) {
     g.re.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = g.re.exec(text)) !== null) {
       const matchStart = m.index;
       const snippet = text.slice(Math.max(0, matchStart - 40), Math.min(text.length, matchStart + 180));
+      const snippetKey = snippet.trim().toLowerCase().slice(0, 80);
+      if (seenSnippets.has(snippetKey)) continue;
+      seenSnippets.add(snippetKey);
       const pctStr = m[2] || m[1] || null;
+      // PATCH 0513 — bps kinds render as 'N bps', not 'N%'
+      const isBps = g.kind === 'margin_bps';
       out.push({
         kind: g.kind,
-        pct: pctStr ? `${pctStr}%` : null,
+        pct: pctStr ? (isBps ? `${pctStr} bps` : `${pctStr}%`) : null,
         snippet: snippet.trim(),
       });
       if (out.length >= 20) break;
