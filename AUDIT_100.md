@@ -60,6 +60,13 @@ Shipped autonomously while user was sleeping:
   `mc:guidance-scores:v1` (earnings-guidance), `mc:notes:v1:<id>` (news).
   Adds 250ms-idle coalescing + page-hide flush. Closes AUDIT #95 consumer
   migration.
+- **Patch 0545b** — Defensive guards on `EarningsScanCard.tsx` for
+  partial payloads where `card.quarters` could be missing/null.
+- **Patch 0545c** — Race-aware `getItemSync` in `lib/debounced-storage.ts`
+  + consumer updates so read-back within the 250ms debounce window
+  returns the pending in-flight write instead of the stale LS value.
+  Prevents a subtle race where rapid date-arrow clicks could load an
+  older payload from LS while a fresher one was queued.
 
 ## What to verify when you wake up
 
